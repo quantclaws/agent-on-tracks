@@ -1,2 +1,4 @@
-.tracks/runtime/**/*
-.opencode/agents/
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
