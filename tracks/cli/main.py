@@ -15,6 +15,7 @@ from pathlib import Path
 
 from tracks import paths, templating
 from tracks.executor import Executor, git
+from tracks.executor.validate import check_template
 from tracks.kernel import Command, project
 from tracks.store import Store, new_ulid
 
@@ -234,9 +235,24 @@ def cmd_replay(repo: Path, run_id: str) -> int:
     return 0
 
 
+def cmd_validate(repo: Path, *args) -> int:
+    # FR-150 / AC-1501: `trac validate --file <path>` — standalone template
+    # check (also reused by the outcome / exit-gate validation). No lock/state:
+    # it is a pure read of the given file against its kind template.
+    if len(args) != 2 or args[0] != "--file":
+        return _err("usage: trac validate --file <path>")
+    issues = check_template(Path(args[1]))
+    if issues:
+        for issue in issues:
+            print(issue, file=sys.stderr)
+        return 1
+    print("valid")
+    return 0
+
+
 USAGE = (
     "usage: trac init|start <version>|run|triage <decision>"
-    "|review <action>|status|replay <run-id>"
+    "|review <action>|status|replay <run-id>|validate --file <path>"
 )
 
 # command name -> (handler, positional-arg count); handler signature is (repo, *args) -> int
@@ -248,6 +264,7 @@ _COMMANDS = {
     "review": (cmd_review, 1),
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),
+    "validate": (cmd_validate, 2),
 }
 
 

@@ -8,6 +8,7 @@ later increment.
 from pathlib import Path
 
 from tracks import templating
+from tracks.cli.main import cmd_validate
 from tracks.executor.validate import check_template
 
 
@@ -53,3 +54,22 @@ def test_check_template_unknown_file(tmp_path):
 
 def test_check_template_missing_file(tmp_path):
     assert check_template(tmp_path / "story.md") == ["line:1 missing file"]
+
+
+def test_cli_validate_valid(tmp_path, capsys):
+    p = _story(tmp_path)
+    assert cmd_validate(tmp_path, "--file", str(p)) == 0
+    assert "valid" in capsys.readouterr().out
+
+
+def test_cli_validate_invalid_reports_line(tmp_path, capsys):
+    p = _story(tmp_path)
+    p.write_text(p.read_text(encoding="utf-8").replace("## 6. 必要性", "必要性"),
+                 encoding="utf-8")
+    assert cmd_validate(tmp_path, "--file", str(p)) == 1
+    assert "line:1 missing section" in capsys.readouterr().err
+
+
+def test_cli_validate_usage(tmp_path, capsys):
+    assert cmd_validate(tmp_path, "story.md") == 1
+    assert "usage:" in capsys.readouterr().err
