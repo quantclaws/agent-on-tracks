@@ -28,11 +28,18 @@ last_updated: 2026-07-30
 
 > 早期另有 `.track/` 残留以避免与 GitHub Pages 经典项目心智撞车 + 让目录名与命令/包名不冲突。已清理 `.track/`。
 
-## D-02. 真相源单点化
+## D-02. 真相源与存储：SQLite 事件溯源（自 v0.1 起采用）
 
-- 宿主项目里的真相源：**`.tracks/runtime/events/`** JSONL 日志。
-- `tracks.db`：**可抛弃投影缓存**——删除后必须可由事件回放完整重建。
-- `.tracks/runtime/tracks.db` 不持有任何业务决策性字段；与 `status` / `replay` 等命令相比，仅作为索引或派生副本。
+**问题（用户提出，2026-07-30）**：events 用 JSONL，是这版实现从简，还是"80% 工程都不必用数据库、JSONL 就够"？考虑到 backlog 要实现、且 **v0.15 质量看板必须落地**，sqlite 事实上不可避免——若无特殊理由，是否应从一开始就用数据库，否则后面有不必要的迁移成本？此外长期多版本（v0.1…v0.15）下，扁平 JSONL 会否出现文件名/归属冲突？
+
+**结论/裁定**：自 v0.1 起即以 **SQLite 事件溯源**为存储，不走"先 JSONL 后迁移"。
+
+- **数据模型（承重、永久）**：事件溯源。`events` 表 = **唯一真相源**，只追加（INSERT，`seq` 每 run 单调递增，主键 `(run_id, seq)`）；`runs` / `backlog` / 当前态等为**派生投影表**，drop 后可从 `events` 完整重建。**禁止**状态式原地改行。
+- **物理存储选 SQLite 的理由**：① v0.15 看板需跨 run / 跨版本 SQL 聚合，DB 不可避免——与其"JSONL 真相 + 事后加 sqlite 缓存"两套机制，不如**一套**；② ACID 事务令"落事件 + 更新投影"原子化，**消掉 torn-write 半行恢复**这一类代码；③ 标准库 `sqlite3`，零新增依赖；④ `runtime/` 已整目录 gitignore，事件不进 git，JSONL 的可 diff/可 review 优势不成立。
+- **多版本归属**：事件信封与 `runs` 投影均含 **`version` 字段**（发布版本，如 `0.1`），作为长期多版本的一等查询维度（看板 `GROUP BY version`）。**不**靠目录层级或文件名版本号（会切碎日志、反害跨版本聚合）；ULID `run_id` 本已全局唯一，无命名冲突。
+- **两根版本轴勿混**：`schema_version` = 事件 payload 结构版本（随 trac 发布演进、供 upcast）；`version` = 宿主项目发布版本。
+- **唯一被禁止的动作**：让任何投影/索引成为权威源或持有决策字段——那才会造成真正的迁移代价。
+- **blobs**：payload >8KB 仍内容寻址落 `runtime/blobs/{sha256}`，事件里放 `$ref`，保持 db 精简。
 
 ## D-03. v0.1 体验范围
 
@@ -68,7 +75,7 @@ trac replay <run-id>
 
 ## D-06. NO-GO / PARK / scope_overflow 的分支命运
 
-- **`human.triage(no_go)` / `human.triage(park)`**：记入 backlog + 删除 `releases/v0.1` 分支（flow §4.1 REJECTED）。v0.1 的 backlog 是**最小实现**——`record_backlog` 命令追加 `backlog.recorded` 事件，投影为 `backlog.jsonl`（无独立子系统/UI）；分支删除后 story.md 随之消失，条目仅留存于 backlog。
+- **`human.triage(no_go)` / `human.triage(park)`**：记入 backlog + 删除 `releases/v0.1` 分支（flow §4.1 REJECTED）。v0.1 的 backlog 是**最小实现**——`record_backlog` 命令追加 `backlog.recorded` 事件，投影为 `backlog` 表（无独立子系统/UI）；分支删除后 story.md 随之消失，条目仅留存于 backlog。
 - **`scope_overflow (FR>30)`**：属于需求调整，**不删分支**；保留 release branch 历史并返回 M-STORY 重新切片。（历史保留的具体机制——是否打 tag、如何命名——尚未经用户裁定，留待 spec 明确，不在此臆造。）
 
 > 用户裁定：NO-GO/PARK 路径下"新建分支只包含 story.md，因此删除分支无可惜"。
@@ -112,7 +119,7 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | ID    | 决定日期       | 标题                           | 来源                                                              |
 | :---- | :------------ | :----------------------------- | :---------------------------------------------------------------- |
 | D-01  | 2026-07-30    | 目录与运行时命名                | 用户表态 `目录名已确定为 .tracks, 数据库名为 tracks.db`           |
-| D-02  | 2026-07-30    | 真相源单点化                    | arch.md §2、§5                                                    |
+| D-02  | 2026-07-30    | 真相源与存储：SQLite 事件溯源    | 用户裁定：v0.15 看板必须 + DB 不可避免；arch.md §2、§5             |
 | D-03  | 2026-07-30    | v0.1 体验范围                   | story §原始输入、§范围排除                                         |
 | D-04  | 2026-07-30    | v0.1 CLI 集合                   | 用户表述 `trac review no-comment` 之外 `trac review revise`        |
 | D-05  | 2026-07-30    | status vs replay 不同语义       | 用户表述 `trac status 是查询动作, replay 是执行动作, 两者怎混`     |

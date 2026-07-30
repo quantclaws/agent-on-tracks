@@ -112,11 +112,9 @@ while True:
 │       └── story.md
 ├── runtime/                  # 本机运行态，整目录 gitignore
 │   ├── blobs/                # 大 payload 内容寻址存储（{sha256}）
-│   ├── events/               # 驱动流程前进的输入 + 命令执行结果追加（run-{ULID}.jsonl）
 │   ├── lock                  # 单写者文件锁
-│   ├── runs.jsonl            # run 索引（append-only）
 │   ├── server.log
-│   └── tracks.db
+│   └── tracks.db             # SQLite：events 表（真相源）+ runs/backlog 等派生投影表
 └── wiki/                     # 项目知识文档
     ├── arch.md
     ├── flow.md
@@ -126,37 +124,38 @@ while True:
 语义约定：
 
 - **projects/**：project 的集合。每个 project 是一个将要发行的版本，以 `v{version}` 命名；每次 release 的 story/spec 及设计文档放在此处。用户资产，需通过 git 版本保存。
-- **runtime/**：运行时支撑文件。其中 **events/** 存放驱动流程前进的输入文件，命令执行后的结果追加进来（与 §2 的口径一致：外部输入以事件形式进入系统，事件驱动状态、状态+规则驱动决策）。
-- **tracks.db**：必须是事件日志的**可抛弃投影/缓存**——删掉后可由事件回放完整重建，绝不充当真相源（真相源只有 events/）。
+- **runtime/**：运行时支撑文件。其中 **`tracks.db` 的 `events` 表**存放驱动流程前进的输入，命令执行结果追加进来（与 §2 的口径一致：外部输入以事件形式进入系统，事件驱动状态、状态+规则驱动决策）。
+- **tracks.db**：SQLite 事件溯源存储。`events` 表 = **唯一真相源**（只追加）；`runs`/`backlog`/当前态等**派生投影表**可 drop 后由 `events` 完整重建，绝不充当真相源。DB 单文件，整目录 gitignore（D-02）。
 - 需分享/归档某次 run 的证据：显式 `trac export run <id>` 拷贝到 `projects/` 对应版本目录，日志不天生长在共享区。
 - `.gitignore` 对 `.tracks/` 只需 `/.tracks/runtime/` 一条规则。
 
 ---
 
-## 5. 事件日志规格（已定）
+## 5. 事件存储规格（已定）
 
-### 格式与文件名
+### 存储与表结构
 
-- **JSONL，先不上二进制**。append-only，一行一个完整 JSON。信封设计使日后切换二进制平滑；`jq` 即查询引擎。
-- 一个 run 一个文件：`run-{ULID}.jsonl`。ULID 字典序 = 时间序；无依赖等价方案：`run-{UTC时间戳}-{6位随机}.jsonl`。
-- 按 run 分文件的理由：回放的自然单位是 run；并发 run 各写各的文件天然无锁冲突；清理/归档以文件为单位。
-- `runs.jsonl` 索引：每启动一个 run 追加一行 `{run_id, started_at, task_id, status, finished_at}`；status 变更追加新行，读时取最后一条。
+- **SQLite 单文件 `tracks.db`**（标准库 `sqlite3`，零依赖）。事件溯源，非状态式。
+- **`events` 表 = 唯一真相源**，只追加（INSERT）。列：`run_id`、`seq`、`version`(发布版本，如 `0.1`)、`ts`、`type`、`schema_version`、`payload`(JSON 文本)、`command_id`、`task_id`；主键 `(run_id, seq)`。
+- **派生投影表**（`runs`、`backlog` 等）随事件在**同一事务**内更新；drop 后可由 `events` 折叠完整重建，故不持有任何决策性真相。
+- `run_id` 用 ULID（字典序=时间序），全局唯一——多版本（v0.1…）扁平共表不冲突，靠 `version` 列区分与聚合。
 
 ### 事件信封
 
 ```json
-{ "seq": 1, "ts": "...", "run_id": "...", "task_id": "...",
+{ "seq": 1, "ts": "...", "run_id": "...", "version": "0.1", "task_id": "...",
   "type": "assignment.dispatched", "schema_version": 1, "payload": { } }
 ```
 
 - `seq` 在 run 内单调递增，**回放以 seq 为准**（不信任 ts，时钟可能回拨）。
-- payload 超过 8KB 外置到 `runtime/blobs/{sha256}`，事件里只放引用——事件文件永远小到秒开秒 grep。
+- payload 超过 8KB 外置到 `runtime/blobs/{sha256}`，事件里只放引用——db 保持精简。
+- `schema_version`（payload 结构版本，供 upcast）与 `version`（发布版本）是两根不同的轴。
 
 ### 写入纪律（三条，现在定死）
 
-1. **单写者**：只有 runtime 进程写事件文件；Agent 一切输出经 runtime 转成事件落盘。启动时拿 `runtime/lock` 文件锁，拿不到拒绝启动第二实例。
+1. **单写者**：只有 runtime 进程写 `events` 表；Agent 一切输出经 runtime 转成事件落盘。启动时拿 `runtime/lock` 文件锁，拿不到拒绝启动第二实例。
 2. **Write-ahead**：先落 `command.issued` / `assignment.dispatched` 事件，再执行动作。
-3. **追加后 flush**；恢复时最后一行不完整则直接丢弃（JSONL 做 WAL 的标准处理）。
+3. **一次事务落事件 + 更新投影**；SQLite ACID 保证原子性——崩溃于事务中途则整事务回滚，不产生半截事件（无需 JSONL 的半行截断处理）。
 
 ---
 

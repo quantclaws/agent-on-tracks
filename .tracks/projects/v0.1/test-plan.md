@@ -31,7 +31,7 @@ tests/
 ├── integration/
 │   ├── test_runtime_loop.py   # store+project+decide 主循环（mock executor）
 │   ├── test_executor.py       # executor+agents+validate 协作（真实 git tmp）
-│   └── test_store.py          # JSONL 追加/读取/blob/runs 索引
+│   └── test_store.py          # SQLite events 追加/读取、blob 外置、投影表重建
 ├── e2e/
 │   ├── test_happy_path.py     # 完整用户旅程（见 §4），从真实 init → start 起
 │   ├── test_start_guards.py   # M-START 拒绝路径：空 stdin、脏工作区、init→start 干净交接
@@ -52,7 +52,7 @@ tests/
 | AC-11a, AC-19a（校验逻辑） | unit | test_validate.py |
 | AC-06a, AC-30a（事件序列） | integration | test_runtime_loop.py |
 | AC-13a, AC-14a/b, AC-21a（agent 协作） | integration | test_executor.py |
-| AC-N04a（事件重建：删 runs.jsonl 后仍折叠出终态） | integration | test_store.py |
+| AC-N04a（事件重建：drop 投影表 runs/backlog 后仍从 events 表折叠出终态） | integration | test_store.py |
 | AC-28b（blob 外置 >8KB） | unit | test_store.py |
 | AC-01a/c, AC-04a, AC-05a（init 提交 + start happy） | e2e | test_happy_path.py |
 | AC-01b, AC-02b, AC-03a（幂等 / 空 stdin / 脏工作区拒绝——**拒绝路径独立**，不塞 happy） | e2e | test_start_guards.py |
@@ -107,7 +107,7 @@ FakeAgent 的价值在于**穷举重要路径**，据此保证 tracks 部署到�
 - **原始需求**（stdin）：一个 fixture 占位字符串；FakeAgent 不解析其内容，不影响确定性。
 - **story.md / spec.md 正文**：定值文档**烘焙进 `effects/agents.py`**（不放 `tests/fixtures/`——FakeAgent 是生产一等公民，生产代码不依赖 tests/），按 `(role, simulate)` 取用。happy-path 文档须刚好通过 `validate`。FakeAgent 把文档**真写到磁盘**（经 executor 白名单路径），validate 对真实文件运行——副作用链不 mock。
 - **分支选择**：`TRAC_FAKE_SIMULATE` → assignment.simulate（见 §6）。
-- **断言主源**：事件日志 JSONL；辅以 git 状态、文件、退出码。
+- **断言主源**：`tracks.db` 的 `events` 表；辅以 git 状态、文件、退出码。
 
 > e2e 证明的是引擎管路（状态机/事件时序/锁/恢复/git/dispatch→validate→commit 循环），**不**证明 validate 规则对（归 `test_validate.py`）或真 agent 产出质量（无 LLM，超范围）。FakeAgent 摘掉 LLM 不确定性，使"runtime 本身对不对"可被单独回答。
 
@@ -127,7 +127,7 @@ def trac(host_repo):
 
 @pytest.fixture
 def event_log(host_repo):
-    """返回读取 .tracks/runtime/events/run-*.jsonl 的辅助函数。"""
+    """返回查询 `.tracks/runtime/tracks.db` 的 `events` 表（按 run_id/seq）的辅助函数。"""
 ```
 
 公共断言辅助（提取为 `tests/helpers.py`）：

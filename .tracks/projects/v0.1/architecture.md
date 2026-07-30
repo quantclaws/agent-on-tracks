@@ -40,7 +40,7 @@ def run_loop(run_id: str, workflow: Workflow, deps: RuntimeDeps) -> None:
 ```
 
 > **两类 I/O 边界（回应 R1-02）**：系统只有两处 I/O，纯核心（`project`/`decide`）零 I/O。
-> ① **业务副作用边界** = `effects/executor`（git、agent、文档写）；② **事件持久化边界** = `kernel/store`（append-only JSONL）。
+> ① **业务副作用边界** = `effects/executor`（git、agent、文档写）；② **事件持久化边界** = `kernel/store`（只追加的 SQLite `events` 表）。
 > "唯一副作用边界"一律指 ①；② 是范围极窄、仅 append 的持久化通道，不做任何业务决策。
 
 ## 2. 包结构
@@ -52,7 +52,7 @@ src/tracks/
 ├── cli.py                # 薄入口：参数解析、退出码、信号安装。无业务逻辑。
 ├── kernel/               # 事件溯源内核——与任何具体 stage 无关，最稳定
 │   ├── events.py         # 信封、Event/Command/Result 类型、序列化
-│   ├── store.py          # JSONL append/读取、blob 外置、runs 索引、torn-write 恢复
+│   ├── store.py          # SQLite events 表追加/读取、投影表重建、blob 外置、事务恢复
 │   ├── project.py        # project(events) -> State  纯 fold
 │   ├── decide.py         # decide(state, workflow) -> list[Command]  纯函数
 │   └── runtime.py        # run_loop、锁、信号/关闭钩子、恢复编排
@@ -163,21 +163,22 @@ effects.agents → kernel.events
 
 - 优雅路径：`cli.py` 安装 SIGINT/SIGTERM handler + `atexit`，负责杀子进程组、落 `run.interrupted`、释放锁。
 - 钩子只是礼貌，**不是保证**：`kill -9` 不触发任何钩子。真正的保证来自 write-ahead + fold 恢复（§6）。
-- **torn write**：进程可能死在半行 JSON 上。`kernel/store.py` 读取端忽略/截断末尾不完整行；每次 append 后 `fsync`。这条使 FR-29 的"精确恢复"成立。
+- **崩溃于事务中途**：进程可能死在"落事件 + 更新投影"事务未提交时。SQLite ACID 保证该事务整体回滚——重启后 `events` 表**不出现半截事件**，无需 JSONL 的半行截断处理。这条使 FR-29 的"精确恢复"成立。
 
 ### 5d. 命令关联与悬挂命令恢复（回应 R1-03）
 
 - 每条 `Command` 带 `command_id`（ULID）；`command.issued` 与其结果事件共享该 `command_id`，配对**不依赖位置顺序**。
 - **悬挂命令投影规则**：`project()` 折叠时若见某 `command.issued` 无携同 `command_id` 的后继结果 → 标记为悬挂。恢复时 `decide()` 对悬挂命令**重签发同一命令/assignment**（同 `command_id`/`task_id`），`attempt` 不增（区别于校验失败重派）。这正是崩溃/取消后"证明重签发的是同一 assignment"的依据。
 
-## 6. 事件日志与持久化
+## 6. 事件存储与持久化
 
-- 每 run 一个文件：`.tracks/runtime/events/run-{ULID}.jsonl`
-- 信封：`{seq, ts, run_id, type, schema_version, payload}`
-- `seq` 从 1 逐行递增。回放按 `seq` 排序，忽略 `ts`。
+- SQLite 单文件 `.tracks/runtime/tracks.db`（标准库 `sqlite3`，零依赖）。
+- **`events` 表 = 唯一真相源**，只追加。列：`run_id, seq, version, ts, type, schema_version, payload(JSON), command_id, task_id`；主键 `(run_id, seq)`。
+- 信封：`{seq, ts, run_id, version, type, schema_version, payload}`；`version` = 发布版本（如 `0.1`），供多版本按 `version` 聚合。
+- `seq` 每 run 从 1 递增。回放按 `(run_id, seq)` 排序，忽略 `ts`。
 - payload >8KB → 写入 `runtime/blobs/{sha256}`，payload 变为 `{"$ref": "blobs/{sha256}"}`。
-- `runs.jsonl`：append-only 索引 `{run_id, started_at, status}`。
-- `tracks.db`：可选 SQLite 投影。缺失时所有命令从 JSONL 工作（v0.1 完全跳过 DB）。
+- **派生投影表** `runs`（`{run_id, version, started_at, status}`）、`backlog` 等：随事件在同一事务更新；drop 后可由 `events` 折叠完整重建（AC-N04a）。
+- 落事件 + 更新投影在同一 SQLite 事务内原子提交（见 §5c）。
 
 ## 7. FakeAgent 设计
 
@@ -207,7 +208,7 @@ effects.agents → kernel.events
 横切辅助放进**拥有该概念的最低层模块**；找不到 owner 时建**命名的**专属小模块，绝不建 `utils/helpers/common`：
 
 - `sha256_hex(data)` → `kernel/events.py`（序列化概念的一部分，store/validate/executor 共用）
-- `read_jsonl` / `append_jsonl` → `kernel/store.py`（文件系统概念）
+- 事件读写 / 投影重建 → `kernel/store.py`（SQLite 存储概念）
 - `git(*args)` → `effects/gitops.py`（唯一 git 包装）
 - `fail(msg, code=1)` → `cli.py`（统一错误退出）
 
@@ -215,8 +216,8 @@ effects.agents → kernel.events
 
 ## 10. v0.1 有意识简化
 
-- v0.1 脚手架不含 `tracks.db`（投影缓存延后；事件足够）。
+- v0.1 的 `tracks.db` 只建 `events` + 最小投影表（`runs`、`backlog`）；跨版本聚合/看板查询是 v0.15 交付，不在 v0.1。
 - blob 外置代码路径在 FakeAgent happy-path 不触发（payload 很小），但由 store 单测注入 >8KB payload 专门验证（AC-28b）。
 - 无 `trac export` / `trac cancel` 命令（cancel 见 §5b / D-11）。
-- Backlog = 单个 append-only JSONL 文件 `.tracks/runtime/backlog.jsonl`，是 `backlog.recorded` 事件的**可重建投影**（唯一真相仍是事件日志，与 tracks.db 同地位；删除后可由事件重放重建）。v0.1 只做最小记录（append 一行），不含 backlog 子系统。
+- Backlog = `runtime/tracks.db` 中的 `backlog` 表，是 `backlog.recorded` 事件的**可重建投影**（唯一真相仍是 `events` 表；drop 后可由事件重放重建）。v0.1 只做最小记录（一行/事件），不含 backlog 子系统。
 - `checks/` 目录 v0.1 只有 `validate.py`；trace/reach 是 v0.2 的交付物。

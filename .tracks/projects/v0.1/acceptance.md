@@ -14,7 +14,7 @@ sha:
 - 不断言私有类/函数内部。
 - `$TRAC` 表示已安装的 `trac` CLI 入口。
 - `$HOST` 表示一个临时 git 初始化的宿主项目目录。
-- "JSONL 字段 X" 指解析 `.tracks/runtime/events/run-*.jsonl` 中对应行。
+- "事件字段 X" 指查询 `tracks.db` 的 `events` 表对应行/列（`payload` 内字段解析其 JSON）。
 
 ---
 
@@ -55,7 +55,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-06a | 事件日志包含 `stage.entered`（payload stage=M-START）及随后的 `stage.exited`（stage=M-START）。`runs.jsonl` 有该 run 的一条记录。 |
+| AC-06a | `events` 表包含 `stage.entered`（payload stage=M-START）及随后的 `stage.exited`（stage=M-START）。`runs` 投影表有该 run 的一条记录（含 `version`）。 |
 
 ## FR-07 — run 进入 TRIAGE
 
@@ -190,11 +190,11 @@ sha:
 | AC-27a | 用 `simulate=hang` 的**阻塞式 FakeAgent** 后台启动第一个 `$TRAC run`（执行中持锁）；其持锁期间启动第二个 `$TRAC run` → exit 1，stderr 含第一个进程 PID。（不依赖 awaiting_human 持锁——主循环在该点已释放锁，R1-04。） |
 | AC-27b | 同上持锁期间执行 `$TRAC triage go`（或 `$TRAC review no-comment`）→ exit 1，stderr 含持锁者 PID，事件日志无新增行。 |
 
-## FR-28 — 事件日志格式
+## FR-28 — 事件存储格式
 
 | AC | 断言 |
 |:---|:---|
-| AC-28a | `run-*.jsonl` 每行为合法 JSON，含字段：seq、ts、run_id、type、schema_version、payload。seq 严格递增。 |
+| AC-28a | `events` 表每行含列：run_id、seq、version、ts、type、schema_version、payload（合法 JSON）、command_id。`(run_id, seq)` 唯一，seq 每 run 严格递增。 |
 | AC-28b | store 单测：append 一条 payload >8KB 的事件 → 内容落 `runtime/blobs/{sha256}`，事件行 payload 变为 `{"$ref": "blobs/{sha256}"}`；读取端能还原原 payload（R1-09）。 |
 
 ## FR-29 — 中断/恢复
@@ -203,7 +203,7 @@ sha:
 |:---|:---|
 | AC-29a | 在 awaiting_human 时 kill `$TRAC run`；重新 `$TRAC run` → 从精确子状态恢复（不重派已完成工作）。 |
 | AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill；重新 `$TRAC run` → 重新签发同一命令/assignment（同 `command_id`、同 `task_id`），`attempt` 计数不增加。 |
-| AC-29c | 向事件日志末尾追加半行不完整 JSON 后，`$TRAC status` 与 `$TRAC replay` 仍正常工作（忽略不完整行）。 |
+| AC-29c | 崩溃于"落事件 + 更新投影"事务中途后，重启 `$TRAC status` 与 `$TRAC replay` 正常工作：`events` 表无半截事件（SQLite 回滚未提交事务），投影与事件一致。 |
 
 ## FR-30 — write-ahead 命令
 
@@ -231,11 +231,11 @@ sha:
 |:---|:---|
 | AC-N03a | FakeAgent outcome 声称 "done" 但产出不合格产物 → Runtime 仍产出 `verdict.failed`。 |
 
-## NFR-04 — 可抛弃 DB
+## NFR-04 — 可重建投影
 
 | AC | 断言 |
 |:---|:---|
-| AC-N04a | 删除派生索引 `runs.jsonl`（保留 `events/`）后，`$TRAC status` 与 `$TRAC replay <run-id>` 仍从 `events/*.jsonl` 折叠出正确终态。（v0.1 不建 `tracks.db`，故验证事件重建而非删除不存在之物，R1-07。） |
+| AC-N04a | drop 派生投影表（`runs`、`backlog`，保留 `events` 表）后，`$TRAC status` 与 `$TRAC replay <run-id>` 仍从 `events` 表折叠出正确终态并重建投影（验证事件溯源属性，D-02/R1-07）。 |
 
 ## NFR-05 — 无兼容别名
 

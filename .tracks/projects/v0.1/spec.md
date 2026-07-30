@@ -35,7 +35,7 @@ v0.1 不包含（产品能力排除）：
 | FR-03 | `trac start` 在 git 工作区不干净（存在未提交变更）时拒绝执行。exit 1，stderr 说明原因，不创建任何分支。                                                                                            | Story §行为种子 第2行              |
 | FR-04 | `trac start` 从 **main** 创建分支 `releases/<version>` 并切换（不基于当前 HEAD 所在分支）。                                                                                                        | Story §行为种子 第1行；Flow §3     |
 | FR-05 | `trac start` 写入 `.tracks/projects/<version>/story.md`，含 frontmatter（`story_id`、`created`、`status: draft`、空 `sha`）及原始需求正文；随后由 Runtime 提交该文件——start 成功结束时工作区干净。 | Story §核心操作路径 步骤2；D-08    |
-| FR-06 | `trac start` 追加 `stage.entered(M-START)` 和 `stage.exited(M-START)` 事件。创建 run 并索引到 `runs.jsonl`。                                                                                       | Story §核心操作路径 步骤2；Arch §5 |
+| FR-06 | `trac start` 追加 `stage.entered(M-START)` 和 `stage.exited(M-START)` 事件。创建 run 并写入 `runs` 投影表（含 `version`）。                                                                                       | Story §核心操作路径 步骤2；Arch §5 |
 
 ### M-STORY
 
@@ -72,8 +72,8 @@ v0.1 不包含（产品能力排除）：
 | FR-25 | `trac replay <run-id>` 折叠该 run 全部事件，逐行打印，末尾输出终态摘要。exit 0。未知 run-id → exit 1。                                                                           | Story §核心操作路径 步骤6；D-05   |
 | FR-26 | replay 终态与 `trac status` 对同一 run 报告的状态语义一致。                                                                                                                      | Story §行为种子 第9行             |
 | FR-27 | 单写者锁：**所有写事件日志的命令**（`run`、`start`、`triage`、`review`）执行前必须取得 `runtime/lock` 排他锁。锁被持有时立即失败（exit 1，stderr 报告持锁者 PID）。无轮询/等待。 | Story §行为种子 第11行；D-07      |
-| FR-28 | 事件日志：每 run 一个 JSONL 文件 `run-{ULID}.jsonl`，append-only，`seq` 单调递增。payload >8KB 外置到 `runtime/blobs/{sha256}`。                                                 | Arch §5                           |
-| FR-29 | 进程可在**任意时刻**中断（Ctrl-C / kill），含 Agent 执行中；重新 `trac run` 从事件日志恢复精确子状态。无内存悬挂状态。恢复时对"已签发无结果"的命令重新签发同一 assignment，**不消耗 attempt**（D-11）。读取端忽略末尾不完整 JSON 行（torn write）；每次 append 后 fsync。                              | Story §行为种子 第10行；Flow §4.1；D-11 |
+| FR-28 | 事件存储：SQLite `events` 表，append-only，主键 `(run_id, seq)`，`seq` 每 run 单调递增，每条含 `version`（发布版本）字段。payload >8KB 外置到 `runtime/blobs/{sha256}`。派生投影表（`runs`/`backlog`）可 drop 重建。                                                 | Arch §5                           |
+| FR-29 | 进程可在**任意时刻**中断（Ctrl-C / kill），含 Agent 执行中；重新 `trac run` 从 `events` 表恢复精确子状态。无内存悬挂状态。恢复时对"已签发无结果"的命令重新签发同一 assignment，**不消耗 attempt**（D-11）。落事件 + 更新投影在同一 SQLite 事务内提交；崩溃于事务中途由 SQLite 回滚，不产生半截事件。                              | Story §行为种子 第10行；Flow §4.1；D-11 |
 | FR-30 | Write-ahead：每条命令执行前先落 `command.issued` 事件；结果在执行后落盘。崩溃恢复复用同一循环。                                                                                  | Arch §2 第5点                     |
 
 ## 3. 非功能需求
@@ -83,6 +83,6 @@ v0.1 不包含（产品能力排除）：
 | NFR-01 | v0.1 不接真实 LLM。FakeAgent 是一等公民、确定性执行器替身——不是临时 mock。                  | Story §范围排除；Arch §7  |
 | NFR-02 | `project()` 和 `decide()` 是纯函数：禁止时钟、文件系统、I/O。一切不确定性仅以事件形式进入。 | Arch §2 第3点             |
 | NFR-03 | Runtime 永不信任 Agent 自述。verdict 由 Runtime 对产物运行校验工具后产出。                  | Arch §3c；Flow §2 不变量6 |
-| NFR-04 | 事件日志（`events/*.jsonl`）是**唯一真相源**。一切派生缓存（`runs.jsonl`，未来 `tracks.db`）可删除，`status`/`replay` 仅从事件折叠即复现相同状态。v0.1 不建 `tracks.db`，故此性质以"删除派生索引后仍能重建"验证（非删除不存在之物）。 | D-02；Arch §4；R1-07 |
+| NFR-04 | SQLite `events` 表是**唯一真相源**。一切派生投影表（`runs`、`backlog`）可 drop，`status`/`replay` 仅从 `events` 表折叠即复现相同状态。此性质以"drop 派生投影表后仍能重建终态"验证。任何投影不得成为权威源或持有决策字段。 | D-02；Arch §4；R1-07 |
 | NFR-05 | 无向后兼容别名。不支持 `.track/`。每个概念只有一条规范路径。                                | Handoff；D-01             |
 | NFR-06 | 代码精练；共享逻辑提取为公共函数，模块间无重复。单个生产文件 ≤1000 行。不设 `utils/helpers` 杂物模块：共享概念放 owner 模块或建命名小模块。不限模块数量。 | Human 指令（2026-07-30）；Arch(wiki) §7 结构预算 |

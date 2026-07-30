@@ -26,10 +26,13 @@ class EventEnvelope:
     seq: int                  # run 内单调递增，从 1 开始
     ts: str                   # ISO-8601 UTC（仅诊断用，回放不依赖）
     run_id: str               # ULID
+    version: str              # 宿主项目发布版本，如 "0.1"（多版本按此聚合）
     type: EventType           # Literal 封闭集，见 §3（domain.action 过去式）
-    schema_version: int       # 当前固定 1
+    schema_version: int       # 事件 payload 结构版本，当前固定 1（与 version 是两根轴）
     payload: dict             # 类型化内容，见 §3 各条（后续演进为 per-event dataclass 判别联合）
 ```
+
+> 存储：事件持久化于 SQLite `events` 表（`tracks.db`），主键 `(run_id, seq)`，只追加；上述信封字段即表的列（`payload` 存 JSON 文本）。派生投影表（`runs`/`backlog`）drop 可重建（D-02）。
 
 ## 3. 事件类型清单（v0.1 全集）
 
@@ -184,13 +187,14 @@ class Workflow:
 | `trac status` | 无 | stdout: 状态摘要 | — | 0 |
 | `trac replay <id>` | 无 | stdout: 事件行 + 终态 | stderr: 原因 | 0 / 1 |
 
-## 11. 文件契约
+## 11. 文件/存储契约
 
 | 路径 | 格式 | 写入者 | 读取者 |
 |:-----|:-----|:-------|:-------|
 | `.tracks/projects/<ver>/story.md` | Markdown + YAML frontmatter | executor | validate, agents |
 | `.tracks/projects/<ver>/spec.md` | Markdown + YAML frontmatter | executor | validate, agents |
-| `.tracks/runtime/events/run-{ULID}.jsonl` | JSONL | store | project, cli(replay) |
-| `.tracks/runtime/runs.jsonl` | JSONL | store | cli(status) |
+| `.tracks/runtime/tracks.db` → `events` 表 | SQLite（真相源，只追加） | store | project, cli(replay) |
+| `.tracks/runtime/tracks.db` → `runs` 表 | SQLite（派生投影，可重建） | store | cli(status) |
+| `.tracks/runtime/tracks.db` → `backlog` 表 | SQLite（派生投影，可重建） | store | cli(status) |
+| `.tracks/runtime/blobs/{sha256}` | 内容寻址文件（payload >8KB） | store | project, cli(replay) |
 | `.tracks/runtime/lock` | 纯文本 PID | runtime | runtime |
-| `.tracks/runtime/backlog.jsonl` | JSONL | store | cli(status) |
