@@ -45,7 +45,7 @@ last_updated: 2026-07-30
 
 - v0.1 范围：**M-START → M-STORY → M-SPEC**，再到 `stage.exited(M-SPEC)`，包含 `spec.md` 落 sha 为止。
 - v0.1 不实现：M-ACC+、反 slop 工具、GitHub 集成、Web UI、inline-comments 完整协议、真 LLM Agent。
-- "丢任意 story 生成 spec" 的通用入口是 **v0.2+**；v0.1 仅支持 `v0.1` 这一个项目的固定通路。
+- **入口澄清（回应 R2-09）**：`trac start <version>` 从 stdin 接收原始需求（D-08），是 v0.1 唯一入口——它走**固定** M-START→M-STORY→M-SPEC 通路。这与"丢任意已有 story 文档直接生成 spec"的**通用入口**是两件事：后者属 **v0.2+**，v0.1 不做（见 story §范围排除）。故 `start <version>` 与 D-08 不冲突：version 参数在 v0.1 仅接受 `v0.1`。
 
 ## D-04. v0.1 CLI（人类入口全集）
 
@@ -115,6 +115,14 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 
 ---
 
+## D-12. dispatch 事件模型：`command.issued` 即派发事实
+
+（用户裁定 2026-07-30，回应 R2-02）一次 `dispatch_agent` **不产生**独立的 `assignment.dispatched` 事件——删除该事件类型。`command.issued(dispatch_agent)`（其 payload 已含 `assignment`）本身就是**唯一的 write-ahead 派发事实**：它在 executor 阻塞执行 Agent 之前已落盘，Agent 返回后落 `outcome.received`。正常/hang/SIGINT/kill-9 四条时序都由这一对"issued→（阻塞）→outcome"表达，悬挂即 issued 无 outcome。理由：单结果主循环无法一命令产两事件，且 assignment 本就在命令 payload 内，第二个事件冗余。
+
+## D-13. 副作用可恢复性：per-kind reconcile
+
+（用户裁定 2026-07-30，回应 R2-03）稳定 `command_id` 只能**识别**操作、不能使其幂等；崩溃可能发生在 git/文件写已成功、结果事件未落盘之后，SQLite ACID 管不到边界另一侧。故每个 `Command.kind` 定义 **`reconcile（查真实世界事实）→ execute if needed → observe`** 规则：恢复悬挂命令前先查 git/文件系统实际状态，已完成则跳过、仅补记结果事件（如 `commit_document` 先 `git log --grep=<command_id>` 查该提交是否已存在）。杜绝重复提交/空提交/重复删分支。逐 kind 规则见 architecture §5e。
+
 ## 决策日志
 
 | ID    | 决定日期       | 标题                           | 来源                                                              |
@@ -130,3 +138,5 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-09  | 2026-07-30    | 用户参与方式                    | 用户裁定 + flow.md 不变量 1                                       |
 | D-10  | 2026-07-30    | 文档层级关系                    | arch/flow/story/decisions.md 责任分工                               |
 | D-11  | 2026-07-30    | 取消协议与 cancel 推迟          | 用户裁定：并发取消需求 + 同意 v0.1 仅 Ctrl-C                        |
+| D-12  | 2026-07-30    | dispatch 事件模型（删 assignment.dispatched） | 用户裁定（R2-02 内联）：`command.issued(dispatch_agent)` 即派发事实 |
+| D-13  | 2026-07-30    | 副作用 per-kind reconcile       | 用户裁定（R2-03 内联）：reconcile→按需执行→观察结果                 |

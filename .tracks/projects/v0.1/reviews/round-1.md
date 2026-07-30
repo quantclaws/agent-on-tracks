@@ -3,6 +3,8 @@
 结论：**REVISE**
 
 > **作者回应（round-1 处理）**：逐条批注见各问题下方 `↳ 回应`。采纳项已在基线提交 `2bb8e68` 之后的提交中实现，可 diff 查看。图例：✅ 采纳 / ◐ 部分采纳 / ❌ 不采纳（附理由）。
+>
+> **⚠️ 存储介质批注（round-1 之后）**：R1-02 / R1-06 / R1-07 / R1-08 回应中提及的 `append-only JSONL`、`runs.jsonl`、`events/*.jsonl`、`backlog.jsonl` 等 JSONL 存储表述，**已被 D-02（SQLite 事件溯源）整体取代**——事件改存 `tracks.db` 的 `events` 表，投影为 `runs` / `backlog` 表。此处保留原文以存历史，当时的 I/O 边界二分、悬挂命令、可重建投影等**结论仍成立**，仅落盘介质由 JSONL 变为 SQLite。
 
 ## 核心结论
 

@@ -41,7 +41,7 @@ v0.1 不包含（产品能力排除）：
 
 | ID    | 需求                                                                                                                                                               | Story 来源                             |
 | :---- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------- |
-| FR-07 | `trac run` 投影当前状态；若处于 M-STORY/TRIAGE，分派 Scribe(FakeAgent) 探索，记录 `assignment.dispatched`。                                                        | Story §核心操作路径 步骤3；Flow §4.1   |
+| FR-07 | `trac run` 投影当前状态；若处于 M-STORY/TRIAGE，分派 Scribe(FakeAgent) 探索，落 `command.issued`（kind=dispatch_agent, role=scribe）作为派发事实。                                                        | Story §核心操作路径 步骤3；Flow §4.1   |
 | FR-08 | `trac triage go\|no-go\|park` 追加 `human.triage(decision)` 事件。仅在 state=awaiting_triage 时有效；否则 exit 1。                                                 | Story §核心操作路径 步骤3；D-04        |
 | FR-09 | `human.triage(no_go)` 或 `human.triage(park)`：记入 backlog、checkout 回 main、删除 `releases/<version>` 分支、追加 `run.completed`、exit 0。最终 HEAD 位于 main。 | Story §行为种子 第3-4行；D-06          |
 | FR-10 | `human.triage(go)`：进入 DRAFT，分派 Scribe(FakeAgent) 按模板写 story.md。                                                                                         | Story §核心操作路径 步骤3；Flow §4.1   |
@@ -72,8 +72,8 @@ v0.1 不包含（产品能力排除）：
 | FR-25 | `trac replay <run-id>` 折叠该 run 全部事件，逐行打印，末尾输出终态摘要。exit 0。未知 run-id → exit 1。                                                                           | Story §核心操作路径 步骤6；D-05   |
 | FR-26 | replay 终态与 `trac status` 对同一 run 报告的状态语义一致。                                                                                                                      | Story §行为种子 第9行             |
 | FR-27 | 单写者锁：**所有写事件日志的命令**（`run`、`start`、`triage`、`review`）执行前必须取得 `runtime/lock` 排他锁。锁被持有时立即失败（exit 1，stderr 报告持锁者 PID）。无轮询/等待。 | Story §行为种子 第11行；D-07      |
-| FR-28 | 事件存储：SQLite `events` 表，append-only，主键 `(run_id, seq)`，`seq` 每 run 单调递增，每条含 `version`（发布版本）字段。payload >8KB 外置到 `runtime/blobs/{sha256}`。派生投影表（`runs`/`backlog`）可 drop 重建。                                                 | Arch §5                           |
-| FR-29 | 进程可在**任意时刻**中断（Ctrl-C / kill），含 Agent 执行中；重新 `trac run` 从 `events` 表恢复精确子状态。无内存悬挂状态。恢复时对"已签发无结果"的命令重新签发同一 assignment，**不消耗 attempt**（D-11）。落事件 + 更新投影在同一 SQLite 事务内提交；崩溃于事务中途由 SQLite 回滚，不产生半截事件。                              | Story §行为种子 第10行；Flow §4.1；D-11 |
+| FR-28 | 事件存储：SQLite `events` 表，append-only，主键 `(run_id, seq)`，`seq` 每 run 单调递增，每条含 `version`（发布版本）字段。**存储层仅暴露 append/read，无 update/delete 接口；已写入行字节不可变**。payload >8KB 外置到 `runtime/blobs/{sha256}`。派生投影表（`runs`/`backlog`）可 drop 重建。                                                 | Arch §5；Arch §6                           |
+| FR-29 | 进程可在**任意时刻**中断（Ctrl-C / kill），含 Agent 执行中；重新 `trac run` 从 `events` 表恢复精确子状态。无内存悬挂状态。恢复时对"已签发无结果"的命令重新签发同一 assignment，**不消耗 attempt**（D-11）。落事件 + 更新投影在同一 SQLite 事务内提交；崩溃于事务中途由 SQLite 回滚，不产生半截事件。**副作用命令重执行前先按 kind reconcile**（查 git/文件系统真实事实），已完成则跳过、仅补记结果事件，杜绝重复提交/空提交/重复删分支（D-13，Arch §5e）。                              | Story §行为种子 第10行；Flow §4.1；D-11；D-13 |
 | FR-30 | Write-ahead：每条命令执行前先落 `command.issued` 事件；结果在执行后落盘。崩溃恢复复用同一循环。                                                                                  | Arch §2 第5点                     |
 
 ## 3. 非功能需求

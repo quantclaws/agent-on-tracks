@@ -37,7 +37,7 @@
 **Runtime 的一切状态都是事件日志的投影；分派决策可从日志回放复现。**
 
 ```
-事件日志（事实） → 投影/决策（纯函数） → 执行器（唯一副作用边界）
+事件日志（事实） → 投影/决策（纯函数） → 执行器（业务副作用边界）
 ```
 
 引擎主循环：
@@ -54,7 +54,7 @@ while True:
 
 关键原则：
 
-1. **事件是"事实"（过去式），不是"指令"**。如 `assignment.dispatched`、`outcome.received`、`verdict.failed`。若把指令写进事件文件，它就退化成任务队列，回放会重复执行副作用，可调试/可测试性全部作废。"流程驱动"的准确说法：**事件驱动状态，状态+规则驱动决策**。
+1. **事件是"事实"（过去式），不是"指令"**。如 `command.issued`、`outcome.received`、`verdict.failed`。若把指令写进事件文件，它就退化成任务队列，回放会重复执行副作用，可调试/可测试性全部作废。"流程驱动"的准确说法：**事件驱动状态，状态+规则驱动决策**。
 2. **事实与规则分离**：事件日志（事实，位于宿主项目 `.tracks/runtime/`）+ workflow 流程定义（状态机+守卫+预算，**随安装包分发**，如 `site-packages/tracks/workflow.py`）。流程是 Agent on Tracks 的产品逻辑，不是宿主项目的用户资产，因此不放 `.tracks/`；换流程/加阶段/改重试策略 = 发布新版本的 trac。引擎本体目标几百行。
 3. `project()` 与 `decide()` 是纯函数：禁止调 `time.now()`、禁止读文件系统。一切不确定性（时钟、Agent 输出、工具结果）只能以事件形式进入系统。
 4. 回放模式 = 跳过 `execute()` 只做 fold，一行代码的区别。
@@ -143,8 +143,8 @@ while True:
 ### 事件信封
 
 ```json
-{ "seq": 1, "ts": "...", "run_id": "...", "version": "0.1", "task_id": "...",
-  "type": "assignment.dispatched", "schema_version": 1, "payload": { } }
+{ "seq": 1, "ts": "...", "run_id": "...", "version": "0.1", "command_id": "...", "task_id": "...",
+  "type": "command.issued", "schema_version": 1, "payload": { } }
 ```
 
 - `seq` 在 run 内单调递增，**回放以 seq 为准**（不信任 ts，时钟可能回拨）。
@@ -154,7 +154,7 @@ while True:
 ### 写入纪律（三条，现在定死）
 
 1. **单写者**：只有 runtime 进程写 `events` 表；Agent 一切输出经 runtime 转成事件落盘。启动时拿 `runtime/lock` 文件锁，拿不到拒绝启动第二实例。
-2. **Write-ahead**：先落 `command.issued` / `assignment.dispatched` 事件，再执行动作。
+2. **Write-ahead**：先落 `command.issued` 事件，再执行动作。
 3. **一次事务落事件 + 更新投影**；SQLite ACID 保证原子性——崩溃于事务中途则整事务回滚，不产生半截事件（无需 JSONL 的半行截断处理）。
 
 ---

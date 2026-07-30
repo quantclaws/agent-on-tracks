@@ -42,6 +42,8 @@ def run_loop(run_id: str, workflow: Workflow, deps: RuntimeDeps) -> None:
 > **两类 I/O 边界（回应 R1-02）**：系统只有两处 I/O，纯核心（`project`/`decide`）零 I/O。
 > ① **业务副作用边界** = `effects/executor`（git、agent、文档写）；② **事件持久化边界** = `kernel/store`（只追加的 SQLite `events` 表）。
 > "唯一副作用边界"一律指 ①；② 是范围极窄、仅 append 的持久化通道，不做任何业务决策。
+>
+> **dispatch 事件模型（回应 R2-02，D-12）**：一次 `dispatch_agent` 不产生独立的 `assignment.dispatched` 事件。`command.issued(dispatch_agent)`（其 payload 已含 `assignment`）本身就是**唯一的 write-ahead 派发事实**——它在 `executor.execute` 阻塞执行 Agent **之前**已落盘；Agent 返回后落 `outcome.received`。四条派发时序（正常/hang/SIGINT/kill-9）都由这一对"issued→（阻塞）→outcome"表达，悬挂即 issued 无 outcome（§5d–§5e）。
 
 ## 2. 包结构
 
@@ -81,7 +83,7 @@ src/tracks/
 | `effects/` | 接入真实 Agent、新副作用类型 | 缓慢 |
 | `checks/` | 每个反 slop 工具 +1 文件（trace/reach/ratio/dup…） | 按工具 story 增长 |
 
-> **可扩展性声明（回应 R1-05）**：`kernel/`（events/store/project/decide/runtime）**与具体 stage 无关**——它只认 `Workflow` 数据与事件信封。承载完整 13 阶段 flow 的机制，就是"未来阶段只往 `workflows/` 增声明式数据、往 `events.py` 增事件类型，kernel 不改"。因此 v0.1 **不**预先规定 baseline digest / B·R·G lineage / CI 证据 / 幂等 publish / milestone 闭包等未来阶段合同——它们已在 `wiki/flow.md` 记录，随实现该阶段的版本逐版规格化；此处不建未来阶段空模块。
+> **可扩展性声明（回应 R1-05 / R2-05）**：`kernel/`（events/store/project/decide/runtime）**与具体 stage 无关**——它只认 `Workflow` 数据与事件信封。要区分两件事：kernel 的**机制/协议**（信封形状、fold 算法、命令↔结果配对、dispatch/reconcile 契约）设计为稳定，落地新阶段**不重写**它；kernel 的**枚举/数据**（`events.py` 的 `EventType` 集合、`Command.kind`）随阶段**additive 生长**——往 `Literal` 集合加一个成员是平凡的加法，不是引擎结构性改动。所以承载完整 13 阶段的机制是"新阶段只往 `workflows/` 增声明式数据、往 `events.py` 追加事件类型枚举，**引擎机制不按阶段返工**"，而非"kernel 一字节不改"。因此 v0.1 **不**预先规定 baseline digest / B·R·G lineage / CI 证据 / 幂等 publish / milestone 闭包等未来阶段合同——它们已在 `wiki/flow.md` 记录，随实现该阶段的版本逐版规格化；此处刻意**不建未来阶段空模块、也不提前抽象其扩展接口**（YAGNI）。
 
 ### 结构预算（NFR-06）
 
@@ -170,15 +172,35 @@ effects.agents → kernel.events
 - 每条 `Command` 带 `command_id`（ULID）；`command.issued` 与其结果事件共享该 `command_id`，配对**不依赖位置顺序**。
 - **悬挂命令投影规则**：`project()` 折叠时若见某 `command.issued` 无携同 `command_id` 的后继结果 → 标记为悬挂。恢复时 `decide()` 对悬挂命令**重签发同一命令/assignment**（同 `command_id`/`task_id`），`attempt` 不增（区别于校验失败重派）。这正是崩溃/取消后"证明重签发的是同一 assignment"的依据。
 
+### 5e. 副作用可恢复性：per-kind reconcile（回应 R2-03）
+
+稳定 `command_id` 只能**识别**操作，不能使操作幂等。崩溃可能发生在 git commit / 建删分支 / 写文件**已成功、结果事件尚未落盘**之后——SQLite 事务只覆盖 ①事件+投影，管不到 ②边界另一侧的 git/文件系统。因此每个副作用命令在（重）执行前必须先 **reconcile**：`reconcile（查真实世界事实）→ execute if needed（未完成才执行）→ observe（据实际事实落结果事件）`。commit 通过在提交消息尾加 `Tracks-Command: <command_id>` trailer 使"是否已提交"可被探测。
+
+| kind | reconcile 探测真实事实 | 判为"已完成" | 未完成动作 |
+|:-----|:-----------------------|:-------------|:-----------|
+| `create_branch` | `git rev-parse --verify <branch>` | 分支已存在且指向 base | 创建并切换 |
+| `delete_branch` | `git rev-parse --verify <branch>` | 分支已不存在 | 删除 |
+| `commit_document` | `git log --grep=<command_id>` + 工作区是否 clean | 已有携带该 `command_id` trailer 的提交 | `git add` + commit |
+| `write_frontmatter` | 读目标文件 frontmatter 字段现值 | 字段已等于目标值 | 写入 |
+| `record_backlog` | 查 `events` 是否已有该 `command_id` 的 `backlog.recorded` | 已有 | 追加 |
+| `dispatch_agent` | 查产物文件是否已存在 | —（产物覆盖写，重派天然幂等） | 重派同 assignment |
+| `validate_document` | 纯读校验，天然幂等 | — | 重跑 |
+| `complete_run` | 查是否已有 `run.completed` | 已有 | 追加 |
+| `rollback_stage` | 查是否已有 `stage.rolled_back(to=…)` | 已有 | 执行回退 |
+
+- 恢复悬挂命令时**先 reconcile 再决定是否 execute**，绝不盲目重跑；观察到的真实结果才落结果事件。
+- 测试至少覆盖"`commit_document` 已成功但结果事件未落盘"的恢复：重跑 reconcile 探到已有提交 → 跳过 commit、仅补记 `story.committed`，`git log` 不出现重复/空提交（AC-29d）。
+
 ## 6. 事件存储与持久化
 
 - SQLite 单文件 `.tracks/runtime/tracks.db`（标准库 `sqlite3`，零依赖）。
 - **`events` 表 = 唯一真相源**，只追加。列：`run_id, seq, version, ts, type, schema_version, payload(JSON), command_id, task_id`；主键 `(run_id, seq)`。
-- 信封：`{seq, ts, run_id, version, type, schema_version, payload}`；`version` = 发布版本（如 `0.1`），供多版本按 `version` 聚合。
+- 信封：`{seq, ts, run_id, version, type, schema_version, command_id, task_id, payload}`，字段逐一对应上列（`command_id`/`task_id` 无关联时为 NULL）；`version` = 发布版本（如 `0.1`），供多版本按 `version` 聚合。
 - `seq` 每 run 从 1 递增。回放按 `(run_id, seq)` 排序，忽略 `ts`。
 - payload >8KB → 写入 `runtime/blobs/{sha256}`，payload 变为 `{"$ref": "blobs/{sha256}"}`。
 - **派生投影表** `runs`（`{run_id, version, started_at, status}`）、`backlog` 等：随事件在同一事务更新；drop 后可由 `events` 折叠完整重建（AC-N04a）。
 - 落事件 + 更新投影在同一 SQLite 事务内原子提交（见 §5c）。
+- **不可改写（append-only，回应 R2-07）**：`store` 对 `events` 表**只暴露 `append`/`read`，不提供任何 update/delete API**；已写入的行字节不再变动（新事实一律追加新行）。`(run_id, seq)` 唯一仅防重复 seq，本身不证明不可改写——不可改写由"无改写路径 + 字节级不变"测试证明（AC-28c）。
 
 ## 7. FakeAgent 设计
 

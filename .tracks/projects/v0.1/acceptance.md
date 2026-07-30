@@ -61,7 +61,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-07a | start 后执行 `$TRAC run` → 事件日志新增 `assignment.dispatched`（role=scribe, substate=TRIAGE）。进程 exit 0（等待人类裁决）。 |
+| AC-07a | start 后执行 `$TRAC run` → 事件日志新增 `command.issued`（kind=dispatch_agent, role=scribe, substate=TRIAGE）。进程 exit 0（等待人类裁决）。 |
 
 ## FR-08 — triage 命令
 
@@ -74,39 +74,39 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-09a | `$TRAC triage no-go` + `$TRAC run` 后：分支 `releases/v0.1` 不存在；`git rev-parse --abbrev-ref HEAD` = `main`；事件日志含 `run.completed`；backlog 文件记录了拒绝。 |
+| AC-09a | `$TRAC triage no-go` + `$TRAC run` 后：分支 `releases/v0.1` 不存在；`git rev-parse --abbrev-ref HEAD` = `main`；事件日志含 `run.completed`；`backlog` 投影表（`tracks.db`）记录了拒绝。 |
 | AC-09b | `$TRAC triage park` 同理。 |
 
 ## FR-10 — GO 进入 DRAFT
 
 | AC | 断言 |
 |:---|:---|
-| AC-10a | triage go + run 后：事件日志出现 `assignment.dispatched`（role=scribe, substate=DRAFT）。story.md 内容按模板更新；frontmatter `title` 被 Scribe 写为非空的有意义名字（供人类引用，非编号）。 |
+| AC-10a | triage go + run 后：事件日志出现 `command.issued`（kind=dispatch_agent, role=scribe, substate=DRAFT）。story.md 内容按模板更新；frontmatter `title` 被 Scribe 写为非空的有意义名字（供人类引用，非编号）。 |
 
 ## FR-11 — 校验 + 重派
 
 | AC | 断言 |
 |:---|:---|
-| AC-11a | FakeAgent 产出 schema 不合格的 story.md 时：事件日志出现 `verdict.failed(schema)` 后跟新的 `assignment.dispatched`（payload 含失败证据）。story.md 未被提交。 |
+| AC-11a | FakeAgent 产出 schema 不合格的 story.md 时：事件日志出现 `verdict.failed(schema)` 后跟新的 `command.issued`（kind=dispatch_agent, role=scribe；assignment 含失败证据）。story.md 未被提交。 |
 
 ## FR-12 — 重派上限升级
 
 | AC | 断言 |
 |:---|:---|
-| AC-12a | 同一校验连续 3 次 `verdict.failed` 后：无更多 `assignment.dispatched`；状态为 `awaiting_human`。`$TRAC status` 报告升级。 |
+| AC-12a | 同一校验连续 3 次 `verdict.failed` 后：无更多 `command.issued`（kind=dispatch_agent）；状态为 `awaiting_human`。`$TRAC status` 报告升级。 |
 
 ## FR-13 — SAGE_REVIEW 分派
 
 | AC | 断言 |
 |:---|:---|
-| AC-13a | DRAFT 校验通过后：事件日志出现 `story.committed` 然后 `assignment.dispatched`（role=sage, substate=SAGE_REVIEW）。 |
+| AC-13a | DRAFT 校验通过后：事件日志出现 `story.committed` 然后 `command.issued`（kind=dispatch_agent, role=sage, substate=SAGE_REVIEW）。 |
 
 ## FR-14 — sage verdict 路由
 
 | AC | 断言 |
 |:---|:---|
 | AC-14a | FakeAgent(sage) 返回 pass → 状态变为 HUMAN_REVIEW（awaiting_human）。 |
-| AC-14b | FakeAgent(sage) 返回 comment → 状态变为 RESPOND，新 `assignment.dispatched`（role=scribe）。 |
+| AC-14b | FakeAgent(sage) 返回 comment → 状态变为 RESPOND，新 `command.issued`（kind=dispatch_agent, role=scribe）。 |
 
 ## FR-15 — human review no-comment → EXIT
 
@@ -131,7 +131,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-18a | M-STORY 退出 + `$TRAC run` 后：事件日志出现 `stage.entered(M-SPEC)` 然后 `assignment.dispatched`（role=sage, substate=DRAFT）。`.tracks/projects/v0.1/spec.md` 已创建。 |
+| AC-18a | M-STORY 退出 + `$TRAC run` 后：事件日志出现 `stage.entered(M-SPEC)` 然后 `command.issued`（kind=dispatch_agent, role=sage, substate=DRAFT）。`.tracks/projects/v0.1/spec.md` 已创建。 |
 
 ## FR-19 — spec 校验 + 重派
 
@@ -143,13 +143,13 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-20a | FakeAgent 产出含 31 条 FR 的 spec → `verdict.failed(scope_overflow)` + `stage.rolled_back` 回 M-STORY，落点子状态为 DRAFT（无新的 TRIAGE 分派），新 `assignment.dispatched`（role=scribe）附 overflow 证据。分支 `releases/v0.1` 仍存在。 |
+| AC-20a | FakeAgent 产出含 31 条 FR 的 spec → `verdict.failed(scope_overflow)` + `stage.rolled_back` 回 M-STORY，落点子状态为 DRAFT（无新的 TRIAGE 分派），新 `command.issued`（kind=dispatch_agent, role=scribe）附 overflow 证据。分支 `releases/v0.1` 仍存在。 |
 
 ## FR-21 — LEX_REVIEW
 
 | AC | 断言 |
 |:---|:---|
-| AC-21a | spec 校验通过后：`assignment.dispatched`（role=lex, substate=LEX_REVIEW）。`lex.verdict(pass)` → HUMAN_REVIEW。 |
+| AC-21a | spec 校验通过后：`command.issued`（kind=dispatch_agent, role=lex, substate=LEX_REVIEW）。`lex.verdict(pass)` → HUMAN_REVIEW。 |
 
 ## FR-22 — M-SPEC 人类评审
 
@@ -161,14 +161,14 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-23a | 退出后：事件日志以 `stage.exited(M-SPEC)` + `run.completed` 结尾。`$TRAC status` 报告已完成。 |
+| AC-23a | 退出后：事件日志以 `stage.exited(M-SPEC)` + `run.completed` 结尾。`$TRAC status` → exit 0，报告该 run 的终态为 completed（含 run_id、最终阶段 M-SPEC）。 |
 
 ## FR-24 — trac status
 
 | AC | 断言 |
 |:---|:---|
-| AC-24a | 运行中：`$TRAC status` → exit 0，stdout 含当前阶段名、子状态、待处理动作。 |
-| AC-24b | 无活跃 run：`$TRAC status` → exit 0，stdout 提示无活跃 run。 |
+| AC-24a | 有活跃（未完成）run：`$TRAC status` → exit 0，stdout 含当前阶段名、子状态、待处理动作。 |
+| AC-24b | 数据库中无任何 run（从未 start）：`$TRAC status` → exit 0，stdout 提示无活跃 run。（已完成 run 的报告见 AC-23a——"已完成"与"无 run"是不同输出。） |
 
 ## FR-25 — trac replay
 
@@ -194,16 +194,18 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-28a | `events` 表每行含列：run_id、seq、version、ts、type、schema_version、payload（合法 JSON）、command_id。`(run_id, seq)` 唯一，seq 每 run 严格递增。 |
-| AC-28b | store 单测：append 一条 payload >8KB 的事件 → 内容落 `runtime/blobs/{sha256}`，事件行 payload 变为 `{"$ref": "blobs/{sha256}"}`；读取端能还原原 payload（R1-09）。 |
+| AC-28a | `events` 表每行含列：run_id、seq、version、ts、type、schema_version、command_id、task_id、payload（合法 JSON）。`(run_id, seq)` 唯一，seq 每 run 严格递增；结果事件行 command_id 回指其 `command.issued`。 |
+| AC-28b | 集成级（`test_store.py`）：append 一条 payload >8KB 的事件后，`runtime/blobs/{sha256}` 文件在磁盘上出现，事件行 payload 变为 `{"$ref": "blobs/{sha256}"}`；经 `$TRAC replay` 读回的 payload 与原始一致（R1-09）。 |
+| AC-28c | 不可改写（append-only，R2-07）：`store` 公开接口只有 append/read，无 update/delete。记录既有事件行的字节快照 → 继续跑后续流程并 drop-重建投影 → 断言原有各行逐字节不变，仅新增行。（若以 SQLite trigger 强制，则另断言改写尝试被拒绝。） |
 
 ## FR-29 — 中断/恢复
 
 | AC | 断言 |
 |:---|:---|
-| AC-29a | 在 awaiting_human 时 kill `$TRAC run`；重新 `$TRAC run` → 从精确子状态恢复（不重派已完成工作）。 |
-| AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill；重新 `$TRAC run` → 重新签发同一命令/assignment（同 `command_id`、同 `task_id`），`attempt` 计数不增加。 |
+| AC-29a | 到达 awaiting_human 时 `$TRAC run` 正常退出并释放锁（该状态无待执行命令）；随后新进程执行 Human action（如 `triage go`）+ 再次 `$TRAC run` → 从精确子状态继续，不重复分派已完成工作，状态精确恢复。（此点是"停在人类门可停机重启"，非崩溃；真正 kill 见 AC-29b。） |
+| AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill（Agent 执行中）；重新 `$TRAC run` → 重新签发同一命令/assignment（同 `command_id`、同 `task_id`），`attempt` 计数不增加。 |
 | AC-29c | 崩溃于"落事件 + 更新投影"事务中途后，重启 `$TRAC status` 与 `$TRAC replay` 正常工作：`events` 表无半截事件（SQLite 回滚未提交事务），投影与事件一致。 |
+| AC-29d | reconcile（R2-03）：`commit_document` 的 git 提交已成功、`story.committed` 结果事件未落盘时 kill；重新 `$TRAC run` → reconcile 经 `git log --grep=<command_id>` 探到已有提交 → 跳过 commit、仅补记 `story.committed`；`git log` 无重复提交、无空提交。 |
 
 ## FR-30 — write-ahead 命令
 

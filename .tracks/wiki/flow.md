@@ -161,7 +161,7 @@ stateDiagram-v2
 ### 4.3. 事件清单
 
 ```
-story.requested / stage.entered / assignment.dispatched /
+story.requested / stage.entered / command.issued /
 interview.started / interview.ended / outcome.received /
 verdict.passed | verdict.failed / story.committed /
 writelock.granted | writelock.released /
@@ -239,7 +239,7 @@ stateDiagram-v2
 ### 5.2. 事件清单
 
 ```
-stage.entered / assignment.dispatched / outcome.received /
+stage.entered / command.issued / outcome.received /
 verdict.passed | verdict.failed(scope_overflow|schema|trace) /
 spec.committed / review.round_started /
 human.review(comment|no_comment) / lex.verdict(pass|comment) /
@@ -402,7 +402,7 @@ stateDiagram-v2
 
 ### 8.2. 事件清单
 
-`stage.entered` / `assignment.dispatched` / `outcome.received` / `verdict.passed|failed(schema|trace)` / `design.committed` / `prism.verdict(pass|revise)` / `review.round_started` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `verdict.passed|failed(schema|trace)` / `design.committed` / `prism.verdict(pass|revise)` / `review.round_started` / `stage.exited` / `stage.rolled_back`
 
 ### 8.3. 硬规则
 
@@ -587,7 +587,7 @@ stateDiagram-v2
 
 ### 10.2. 事件清单
 
-`stage.entered` / `assignment.dispatched` / `outcome.received` / `prism.verdict(pass|revise)` / `test.executed(passed|failed)` / `verdict.failed(test_defect|impl_defect)` / `test.committed` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `prism.verdict(pass|revise)` / `test.executed(passed|failed)` / `verdict.failed(test_defect|impl_defect)` / `test.committed` / `stage.exited` / `stage.rolled_back`
 
 ### 10.3. 硬规则
 

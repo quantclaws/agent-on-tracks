@@ -15,8 +15,8 @@ sha:
 - 序列化格式：JSON（事件日志）；内存中为 dataclass 实例。
 - 字段命名：snake_case。事件 type 命名：`domain.action`（过去式）。
 - 本文档是 Architecture §2 各模块间契约的字段级定义。
-- **封闭集用 `Literal`/`Enum`（回应 R1-03b）**：`type`、`kind`、`role`、`decision`、`verdict`、`check`、`status`、`stage`、`substate` 均为受限字面量集合，编译期即可查拼写。下文以 `Literal[...]` 标注；`payload` 走 per-event 具体 dataclass 判别联合为后续方向，v0.1 先以 `Literal` 收口 type。
-- **`guard` 刻意保留字符串**：workflow 是可序列化、可检视的声明式数据（v0.2 doc↔code trace 依赖），guard 是注册表中纯函数的**名字**，由 workflow well-formedness 测试保证每名可解析——非自由字符串，也不改为直接函数引用。
+- **封闭集用 `Literal`/`Enum`（回应 R1-03b）**：事件 `type`、`kind`、`role`、`decision`、`verdict`、`check`，以及**投影状态 `State` 的 `status`/`stage`/`substate`/`awaiting`**（见 §8）均为受限字面量集合，编译期即可查拼写。下文以 `Literal[...]` 标注；`payload` 走 per-event 具体 dataclass 判别联合为后续方向，v0.1 先以 `Literal` 收口 type。
+- **`guard` 及 workflow 中的阶段/子状态名刻意保留字符串**：workflow 是可序列化、可检视的声明式数据（v0.2 doc↔code trace 依赖）。`guard` 是注册表中纯函数的**名字**；`StageDef`/`Transition`（§9）里的 `name`/`substates`/`from_substate`/`to_substate` 是声明式数据里的阶段/子状态**标识符**——两者都由 workflow well-formedness 测试保证每名可解析、与 `State` 的 `Literal` 集一致，故为受测字符串而非自由字符串，也不改为直接函数/枚举引用。
 
 ## 2. 事件信封（EventEnvelope）
 
@@ -29,10 +29,12 @@ class EventEnvelope:
     version: str              # 宿主项目发布版本，如 "0.1"（多版本按此聚合）
     type: EventType           # Literal 封闭集，见 §3（domain.action 过去式）
     schema_version: int       # 事件 payload 结构版本，当前固定 1（与 version 是两根轴）
+    command_id: str | None    # 关联触发命令；结果事件回指其 command.issued，无关联事件为 None
+    task_id: str | None       # 关联 Assignment（dispatch/结果事件）；无关联为 None
     payload: dict             # 类型化内容，见 §3 各条（后续演进为 per-event dataclass 判别联合）
 ```
 
-> 存储：事件持久化于 SQLite `events` 表（`tracks.db`），主键 `(run_id, seq)`，只追加；上述信封字段即表的列（`payload` 存 JSON 文本）。派生投影表（`runs`/`backlog`）drop 可重建（D-02）。
+> 存储：事件持久化于 SQLite `events` 表（`tracks.db`），主键 `(run_id, seq)`，只追加；上述信封字段**逐一对应表的列**（含 `command_id`/`task_id`，`payload` 存 JSON 文本）。派生投影表（`runs`/`backlog`）drop 可重建（D-02）。
 
 ## 3. 事件类型清单（v0.1 全集）
 
@@ -43,9 +45,8 @@ class EventEnvelope:
 | `stage.rolled_back` | `from_stage: str, to_stage: str, reason: str` | runtime |
 | `run.completed` | `terminal_state: str` | runtime |
 | `run.interrupted` | `at_substate: str, reason: "signal" \| "crash_recovered"` | runtime（取消/关闭时，D-11） |
-| `command.issued` | `command: Command`（见 §4） | runtime（write-ahead） |
-| `assignment.dispatched` | `role: str, substate: str, assignment: Assignment`（见 §5） | executor |
-| `outcome.received` | `role: str, status: str, artifact_ref: str \| None, self_report: str` | executor |
+| `command.issued` | `command: Command`（见 §4） | runtime（write-ahead；`kind=dispatch_agent` 即唯一的派发事实，D-12） |
+| `outcome.received` | `role: str, status: str, artifact_ref: str \| None, self_report: str` | executor（dispatch_agent 返回后） |
 | `verdict.passed` | `check: str, detail: str` | executor（validate 后） |
 | `verdict.failed` | `check: str, reason: str, evidence: str, attempt: int` | executor |
 | `story.committed` | `commit_sha: str, story_sha: str` | executor |
@@ -68,7 +69,7 @@ class Command:
     params: dict       # kind 相关参数
 ```
 
-> 结果事件（`outcome.received`、`verdict.*`、`story.committed`、`spec.committed` 等）payload 携带 `command_id`，与其 `command.issued` 配对，不依赖位置顺序。悬挂命令（issued 无同 id 结果）的投影/恢复规则见 Architecture §5d。
+> 结果事件（`outcome.received`、`verdict.*`、`story.committed`、`spec.committed` 等）经**信封 `command_id` 字段**（§2）与其 `command.issued` 配对，不依赖位置顺序；`dispatch_agent` 派发/结果事件另经信封 `task_id` 关联同一 Assignment。悬挂命令（issued 无同 id 结果）的投影/恢复与 reconcile 规则见 Architecture §5d–§5e。
 
 | kind | params | 语义 |
 |:-----|:-------|:-----|
@@ -87,7 +88,7 @@ class Command:
 ```python
 @dataclass(frozen=True)
 class Assignment:
-    task_id: str               # run_id + substate + attempt
+    task_id: str               # run_id + substate + review_round + attempt（含 review_round，避免第二轮评审碰撞）
     role: Literal["scribe", "sage", "lex"]
     objective: str             # 目标描述
     scope_whitelist: list[str] # 允许触碰的文件路径
@@ -124,6 +125,7 @@ class Outcome:
 ```python
 @dataclass(frozen=True)
 class Verdict:
+    command_id: str            # 回指触发校验的 validate_document 命令（写入信封 command_id 列）
     passed: bool
     check: Literal["schema", "scope", "trace", "scope_overflow", "format"]
     reason: str                # 人类可读说明
@@ -137,10 +139,11 @@ class Verdict:
 @dataclass
 class State:
     run_id: str
-    status: str                # "active" | "completed" | "awaiting_human"
-    stage: str                 # "M-START" | "M-STORY" | "M-SPEC"
-    substate: str              # "TRIAGE" | "DRAFT" | "SAGE_REVIEW" | ...
-    awaiting: str | None       # "triage" | "review" | "escalation" | None
+    status: Literal["active", "completed", "awaiting_human"]
+    stage: Literal["M-START", "M-STORY", "M-SPEC"]
+    substate: Literal["TRIAGE", "DRAFT", "SAGE_REVIEW", "LEX_REVIEW",
+                       "HUMAN_REVIEW", "RESPOND", "EXIT"]
+    awaiting: Literal["triage", "review", "escalation"] | None
     current_attempt: int
     review_round: int
     sage_passed_this_round: bool

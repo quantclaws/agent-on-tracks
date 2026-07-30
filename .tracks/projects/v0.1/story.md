@@ -21,18 +21,18 @@ sha:
 ## 核心操作路径
 
 1. `trac init`：在当前项目初始化 .tracks/ 目录
-2. `trac start v0.1`：检查工作区干净 -> 创建 releases/v0.1 分支 -> 创建 projects/v0.1/story.md（仅原始需求）-> 记录 stage.entered(M-START)
+2. `trac start v0.1`：从 **stdin 读取原始需求** -> 检查工作区干净 -> 创建 releases/v0.1 分支 -> 创建 projects/v0.1/story.md（写入 stdin 原始需求原文；title/sha 暂空）-> 记录 stage.entered(M-START)
 3. `trac run`：启动引擎主循环，进入 M-STORY
    - TRIAGE：dispatch Scribe(FakeAgent) 探索 -> 返回 GO/NO-GO/PARK 建议 -> 等人类裁决
    - `trac triage go`：进入 DRAFT
    - DRAFT：dispatch Scribe(FakeAgent) 按 template 写 story.md -> validate(schema+scope) -> 通过则 commit
    - SAGE_REVIEW：dispatch Sage(FakeAgent) 评审 -> verdict(pass) -> commit -> 进入 HUMAN_REVIEW
-   - HUMAN_REVIEW：awaiting_human -> `trac review no-comment` -> 双方通过 -> EXIT
+   - HUMAN_REVIEW：awaiting_human -> `trac review no-comment`（且同轮 Sage 已 pass）-> EXIT；或 `trac review revise`（可直接编辑 story.md，以 Human 署名提交）-> RESPOND：dispatch Scribe 依 diff 修订 -> 回 SAGE_REVIEW 重评
    - EXIT：生成 sha 写入 frontmatter -> commit -> stage.exited(M-STORY)
 4. 引擎自动进入 M-SPEC
    - DRAFT：dispatch Sage(FakeAgent) 写 spec.md -> validate(schema+scope+trace) -> commit
    - LEX_REVIEW：dispatch Lex(FakeAgent) 评审 -> verdict(pass) -> commit
-   - HUMAN_REVIEW：`trac review no-comment` -> EXIT
+   - HUMAN_REVIEW：`trac review no-comment`（且同轮 Lex 已 pass）-> EXIT；或 `trac review revise` -> RESPOND：dispatch Sage 依 diff 修订 -> 回 LEX_REVIEW 重评
    - EXIT：格式终验通过 -> stage.exited(M-SPEC)
 5. `trac status`：随时查看当前阶段、子状态、待处理事件
 6. `trac replay <run-id>`：从事件日志回放，打印最终状态，与运行时状态一致
@@ -65,6 +65,7 @@ sha:
 - 不做反 slop 工具（trac check reach/budget/ratio/dup）——它们随后续 story 引入
 - 不做 inline-comments 的完整协议（v1 评审意见以纯文本 diff 传递）
 - 不做 Agent 会话状态保留（FakeAgent 无状态；真 Agent 的会话保留是另一个 story）
+- 不做"丢任意已有 story 文档直接生成 spec"的通用入口：v0.1 仅支持经 `trac start <version>` 从 stdin 原始需求走固定 M-START→M-STORY→M-SPEC 通路；任意 Story→Spec 通用入口属于 v0.2+（D-03）
 
 ## 参考文档
 - /.tracks/wiki/flow.md

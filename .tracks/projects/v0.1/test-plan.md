@@ -53,7 +53,8 @@ tests/
 | AC-06a, AC-30a（事件序列） | integration | test_runtime_loop.py |
 | AC-13a, AC-14a/b, AC-21a（agent 协作） | integration | test_executor.py |
 | AC-N04a（事件重建：drop 投影表 runs/backlog 后仍从 events 表折叠出终态） | integration | test_store.py |
-| AC-28b（blob 外置 >8KB） | unit | test_store.py |
+| AC-28b（blob 外置 >8KB，磁盘文件 + replay 读回） | integration | test_store.py |
+| AC-28c（append-only 不可改写：无 update/delete、旧行字节不变） | integration | test_store.py |
 | AC-01a/c, AC-04a, AC-05a（init 提交 + start happy） | e2e | test_happy_path.py |
 | AC-01b, AC-02b, AC-03a（幂等 / 空 stdin / 脏工作区拒绝——**拒绝路径独立**，不塞 happy） | e2e | test_start_guards.py |
 | AC-07a ~ AC-17a 中的通过路径（M-STORY happy path） | e2e | test_happy_path.py |
@@ -63,7 +64,7 @@ tests/
 | AC-09a/b（NO-GO/PARK） | e2e | test_rejection.py |
 | AC-12a, AC-N03a（重派/升级） | e2e | test_retry_escalation.py |
 | AC-20a（scope_overflow） | e2e | test_scope_overflow.py |
-| AC-27a/b, AC-29a/b/c（锁/恢复/torn-write） | e2e | test_recovery.py |
+| AC-27a/b, AC-29a/b/c/d（锁/恢复/torn-write/reconcile） | e2e | test_recovery.py |
 | AC-N01a（无网络） | e2e | test_happy_path.py（环境隔离） |
 | AC-N05a（无 .track） | e2e | test_happy_path.py |
 | AC-N06b（文件 ≤1000 行、无 utils 模块） | e2e | test_happy_path.py（或 CI 脚本） |
@@ -80,12 +81,11 @@ tests/
 4. trac triage go                     → 断言事件（AC-08a）
 5. trac run                           → DRAFT → SAGE_REVIEW → HUMAN_REVIEW（AC-10a~14a）
 6. trac review no-comment             → 断言事件（AC-15a 前置）
-7. trac run                           → EXIT M-STORY → M-SPEC DRAFT（AC-17a, AC-18a）
-8. trac run                           → LEX_REVIEW → HUMAN_REVIEW（AC-21a）
-9. trac review no-comment             → 断言事件（AC-22a 前置）
-10. trac run                          → EXIT M-SPEC, run.completed（AC-23a）
-11. trac status                       → 断言终态（AC-24a）
-12. trac replay <run-id>              → 断言事件行 + 终态 ≡ status（AC-25a, AC-26a）
+7. trac run                           → EXIT M-STORY，进入 M-SPEC：DRAFT→校验→LEX_REVIEW→HUMAN_REVIEW 一气跑到人类门（AC-17a, AC-18a, AC-21a）
+8. trac review no-comment             → 断言事件（AC-22a 前置）
+9. trac run                          → EXIT M-SPEC, run.completed（AC-23a）
+10. trac status                       → 断言终态（AC-24a）
+11. trac replay <run-id>              → 断言事件行 + 终态 ≡ status（AC-25a, AC-26a）
 ```
 
 每步断言：exit code、stdout 关键字、事件日志新增行、git 状态、文件存在/内容。
