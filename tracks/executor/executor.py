@@ -1,6 +1,6 @@
 """Command executor: write-ahead `command.issued` (FR-30), per-kind
-execute + reconcile (D-13), FakeAgent dispatch (NFR-01), validate
-pass-through (D-16).
+execute + reconcile (D-13), agent dispatch via the effects backend seam
+(NFR-01; ARCH-003 §4), validate pass-through (D-16).
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 from tracks import paths
-from tracks.executor.fake_agent import FakeAgent
+from tracks.effects import select_backend
 from tracks.executor.validate import validate_document
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
@@ -36,7 +36,7 @@ class Executor:
         self.repo = repo
         self.run_id = run_id
         self.version = store.state(run_id).version or ""
-        self.fake = FakeAgent(repo, self.version)
+        self.backend = select_backend(repo, self.version)
 
     def _emit(self, type: str, payload: dict,
               command_id: str | None = None, task_id: str | None = None):
@@ -97,7 +97,7 @@ class Executor:
         p = cmd.params
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
-        result = self.fake.act(role, substate, doc, doc_path)
+        result = self.backend.act(role, substate, doc, doc_path)
         self._emit("outcome.received",
                    {"role": role, "status": result["status"],
                     "artifact_ref": result.get("artifact_ref"),
@@ -112,7 +112,7 @@ class Executor:
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
         path = self._doc_path(doc)
-        token = self.fake.token("validator", doc, "ok")
+        token = self.backend.token("validator", doc, "ok")
         failure = validate_document(path, doc)
         if failure is None and token != "ok":
             failure = ("schema", f"simulated failure: {token}")

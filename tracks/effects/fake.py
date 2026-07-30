@@ -1,4 +1,7 @@
-"""Deterministic FakeAgent (NFR-01) — first-class executor stand-in, not a mock.
+"""Deterministic FakeBackend (NFR-01) — first-class executor stand-in, not a mock.
+
+Moved from tracks/executor/fake_agent.py (v0.1 FakeAgent) into the effects
+boundary (ARCH-003 §4); behavior is unchanged. Implements ``AgentBackend``.
 
 Behavior injection: TRAC_FAKE_SIMULATE, read ONLY at the cli/executor boundary
 (interfaces §5 note); project()/decide() never see it. Format: semicolon- or
@@ -42,7 +45,9 @@ def _simulate_map() -> dict:
     return out
 
 
-class FakeAgent:
+class FakeBackend:
+    """Deterministic AgentBackend (v0.1 FakeAgent, relocated to effects/)."""
+
     def __init__(self, repo: Path, version: str):
         self.repo = repo
         self.version = version
