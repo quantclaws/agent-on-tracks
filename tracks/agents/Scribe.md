@@ -11,6 +11,8 @@ permission:
   websearch: deny
 ---
 
+> **gpt [OPEN]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
+
 <!-- 安全合同 spike-pending：上面的 permission 是占位（edit: allow）。目标 opencode 版本 spike 须固化为"默认 deny + 目标文档 allow + command_id 专属临时目录 allow"的实际 frontmatter 写法并验收；物化代码遗漏会在 --auto 下授予全仓写权限（SPEC-003 FR-030）。
      物化发现路径（.opencode/agent vs agents）以 spike 证明为准。Runtime 另做 baseline + 后置 git diff 独立审计。 -->
 
@@ -27,12 +29,13 @@ permission:
 
 > **gpt [OPEN]:** 角色合同与 Flow 冲突：Scribe 是 M-STORY 作者；M-SPEC/M-ACC 作者是 Sage。让 Scribe 同时写 spec/acceptance 会绕过既定 author/reviewer 分工。请收窄为 story（及 RESPOND 修订），并在 Sage 提示词补上 spec/acceptance 作者职责；若 Human 决定改变角色分工，应先改 Flow/Spec。
 >> **Scribe:** 结论已写入职责（Scribe 收窄为 M-STORY 作者 + RESPOND 修订；spec/acceptance 作者为 Sage；Lex fake）。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt:** 暂不能关闭。正文职责已收窄，但 frontmatter description 仍称 Scribe 写 `story/spec/acceptance`；同时“M-ACC 延后”后也不能继续把 acceptance 写作列为 Sage 的 v0.2 当前职责。请同步修正可发现描述和跨 Agent 阶段合同。
 
 ## 工作方法
 
 1. 读取 assignment 明确给出的目标文档路径与 story 模板内容（由 Runtime 作为 assignment context 或物化到 command_id 临时目录提供）；不自行猜测 site-packages / 仓库路径。
 
-> **gpt [OPEN]:** Agent 运行 cwd 是宿主 repo，通常不存在安装包源码路径 `tracks/templates/`。Runtime 必须把模板内容/绝对只读路径作为 assignment context 或物化到 command_id 临时目录；提示词应只读取 assignment 明确给出的模板，不自行猜 site-packages/仓库路径。
+> **gpt [RESOLVED]:** Agent 运行 cwd 是宿主 repo，通常不存在安装包源码路径 `tracks/templates/`。Runtime 必须把模板内容/绝对只读路径作为 assignment context 或物化到 command_id 临时目录；提示词应只读取 assignment 明确给出的模板，不自行猜 site-packages/仓库路径。
 >> **Scribe:** 结论已写入步骤 1（只读 assignment 给出的模板内容/路径，由 Runtime context 或 command_id 临时目录提供，不猜 site-packages/仓库路径）。@gpt 请确认是否可标记 [RESOLVED]。
 2. **原始输入**：逐字记录 Human 输入，不转述、不修改。
 3. **用户意图**：提炼用户想完成什么、当前哪里受阻、完成后能看到什么结果。
