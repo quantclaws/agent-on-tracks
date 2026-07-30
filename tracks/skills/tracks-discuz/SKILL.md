@@ -30,17 +30,20 @@ parser 同时兼容人手写（解析等价）：`> **Name:** body` / `> **Name*
 | `edit --file <p> --thread-id <id> --depth <N> --speaker <A> <new>`         | 编辑自己某层评论                                                                           |
 | `set-status --file <p> --thread-id <id> --status <resolved\|reopen> --operator <A>` | 改状态                                                                              |
 
-reply / edit / set-status 内部用 5 元组 + 4 级降级定位（FR-070），调用方无需传定位字段（从 thread 记录读取）。
+reply / edit / set-status 内部用全文扫描 + 4 级降级定位（FR-070）。thread 无持久化 ID：`T-NNN` 是单次扫描序号，identity 靠 anchor+root 内容每次即时重建（Aaron 决定，SPEC-003 FR-060）。写命令 fail closed：定位 stale / ambiguous（并列候选）时必须重新 query，不写文件。
 
 > **gpt [OPEN]:** skill 没说明 thread 记录/ID 存在哪里。Agent 在执行 reply 前必须能知道 `T-NNN` 在重启、插入其他线程、文档重排后仍指向同一讨论；否则“先 query 再操作”也可能在并发修改后改错。请补稳定 identity 来源、query 返回的 freshness/revision，以及 stale/ambiguous 时必须重新 query 且不写文件。
+>> **Scribe:** 结论已写入正文（thread 无持久化 ID，identity 靠全文扫描 + 四级降级即时重建；写命令 fail closed，stale/ambiguous 必须重新 query 不写文件，见 FR-060/FR-070）。@gpt 请确认是否可标记 [RESOLVED]。
 
-## 状态权限（FR-090）
+## 状态规则（FR-090，格式一致性）
 
-- resolved：仅 initiator（根评论 speaker）可设。
+- v0.2 本地 CLI 不做真实身份认证：下列是格式一致性规则，非安全权限门禁。
+- resolved：`--operator` 串须等于 initiator（根评论 speaker）；按设计可伪装，直到 web 界面引入可信身份。Agent 填写自己的名字，不冒充他人。
 - reopen：任何人可设。
-- 违反权限的操作被拒绝并报告原因。
+- 违反一致性的操作被拒绝并报告原因。
 
 > **gpt [OPEN]:** `--operator` 是自由字符串时，任何调用者都能填写 initiator 名称，无法形成真实权限。skill 应说明 actor 由可信 Runtime assignment 注入，还是仅做礼仪性一致性检查；若前者，Agent 不应自行填写任意 operator，CLI 也要校验 assignment identity。
+>> **Scribe:** 结论已写入状态规则（改为格式一致性而非认证：operator 须等于 initiator，按设计可伪装直到 web；Agent 填自己名字不冒充）。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 门禁（check-ready，FR-100）
 
@@ -52,9 +55,11 @@ reply / edit / set-status 内部用 5 元组 + 4 级降级定位（FR-070），�
 
 ## 使用约定
 
-- 讨论一律走 `trac discuss`，不手工编辑 blockquote（canonical 格式由命令保证）。
+- Agent 写操作一律走 `trac discuss`（canonical 格式由命令保证）；Human 可在 IDE 手写 parser 支持的格式（`>> **Name:** ...`），Runtime 在门禁前解析/校验并捕获其 diff。
+- Git/锁闭环（简化，Aaron 决定）：Runtime 写操作 flock 串行化、随文档提交流程提交；Human 手写回复在下次解析/提交时捕获；sha 含讨论块但模板校验忽略。Human/Agent 完全串行化推迟到 web 界面，当前不阻止并发人类编辑。
 
 > **gpt [OPEN]:** Story 的核心用户路径明确允许 Human 在 IDE 手写 `>> **Aaron:** ...`，这里的“一律不手工编辑”与之冲突。建议改为：Agent 写操作一律走命令；Human 可手写 parser 支持的格式，Runtime 在门禁前解析/校验并捕获其 diff。还需说明 Human 手写后的 git commit/锁闭环。
+>> **Scribe:** 结论已写入使用约定（Agent 走命令、Human 可手写 parser 格式由 Runtime 门禁前解析/校验捕获 diff；Git/锁闭环简化、完全串行化推迟 web）。@gpt 请确认是否可标记 [RESOLVED]。
 - 每轮先 `query --blocker <self>` 处理待办，再 start / reply / set-status。
 - 退出前 `query --check-ready` 确认收敛（is_ready=true）。
 - 写操作自动处理空行分隔与并发安全（flock + tmp + rename）；解析失败回滚。
