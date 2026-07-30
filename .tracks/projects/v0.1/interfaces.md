@@ -1,0 +1,184 @@
+---
+interfaces_id: IF-001
+spec_ref: SPEC-001
+arch_ref: ARCH-001
+created: 2026-07-30
+status: draft
+sha:
+---
+
+# Agent on Tracks v0.1 — 接口与类型化 Schema
+
+## 1. 总则
+
+- 所有跨模块数据结构以 Python dataclass 定义，集中在 `track/events.py`。
+- 序列化格式：JSON（事件日志）；内存中为 dataclass 实例。
+- 字段命名：snake_case。事件 type 命名：`domain.action`（过去式）。
+- 本文档是 Architecture §2 各模块间契约的字段级定义。
+
+## 2. 事件信封（EventEnvelope）
+
+```python
+@dataclass(frozen=True)
+class EventEnvelope:
+    seq: int                  # run 内单调递增，从 1 开始
+    ts: str                   # ISO-8601 UTC（仅诊断用，回放不依赖）
+    run_id: str               # ULID
+    type: str                 # 事件类型，见 §3
+    schema_version: int       # 当前固定 1
+    payload: dict             # 类型化内容，见 §3 各条
+```
+
+## 3. 事件类型清单（v0.1 全集）
+
+| type | payload 字段 | 触发者 |
+|:-----|:-------------|:-------|
+| `stage.entered` | `stage: str` | runtime |
+| `stage.exited` | `stage: str` | runtime |
+| `stage.rolled_back` | `from_stage: str, to_stage: str, reason: str` | runtime |
+| `run.completed` | `terminal_state: str` | runtime |
+| `command.issued` | `command: Command`（见 §4） | runtime（write-ahead） |
+| `assignment.dispatched` | `role: str, substate: str, assignment: Assignment`（见 §5） | executor |
+| `outcome.received` | `role: str, status: str, artifact_ref: str \| None, self_report: str` | executor |
+| `verdict.passed` | `check: str, detail: str` | executor（validate 后） |
+| `verdict.failed` | `check: str, reason: str, evidence: str, attempt: int` | executor |
+| `story.committed` | `commit_sha: str, story_sha: str` | executor |
+| `spec.committed` | `commit_sha: str` | executor |
+| `human.triage` | `decision: "go" \| "no_go" \| "park"` | cli → store |
+| `human.review` | `action: "no_comment" \| "comment", diff_ref: str \| None` | cli → store |
+| `sage.verdict` | `verdict: "pass" \| "comment", diff_ref: str \| None` | executor |
+| `lex.verdict` | `verdict: "pass" \| "comment", diff_ref: str \| None` | executor |
+| `backlog.recorded` | `version: str, decision: str, reason: str` | executor |
+
+## 4. Command（命令）
+
+```python
+@dataclass(frozen=True)
+class Command:
+    kind: str          # 见下表
+    params: dict       # kind 相关参数
+```
+
+| kind | params | 语义 |
+|:-----|:-------|:-----|
+| `dispatch_agent` | `role, substate, assignment` | 分派 FakeAgent |
+| `validate_document` | `doc_type, path, checks` | 校验文档 |
+| `commit_document` | `path, message` | git add + commit |
+| `create_branch` | `branch_name, base` | 创建并切换分支 |
+| `delete_branch` | `branch_name` | 删除分支 |
+| `write_frontmatter` | `path, fields: dict` | 更新 frontmatter |
+| `record_backlog` | `version, decision, reason` | 追加 backlog |
+| `complete_run` | `terminal_state` | 标记 run 结束 |
+| `rollback_stage` | `to_stage, reason` | 回退阶段 |
+
+## 5. Assignment（分派给 Agent 的任务）
+
+```python
+@dataclass(frozen=True)
+class Assignment:
+    task_id: str               # run_id + substate + attempt
+    role: str                  # "scribe" | "sage" | "lex"
+    objective: str             # 目标描述
+    scope_whitelist: list[str] # 允许触碰的文件路径
+    budget: Budget
+    context: list[str]         # 显式给定的上下文文件路径
+    failure_evidence: str | None  # 重派时附带上次失败原始输出
+    simulate: str | None       # FakeAgent 控制字段（测试用）
+```
+
+```python
+@dataclass(frozen=True)
+class Budget:
+    max_attempts: int = 3      # 硬性尝试上限
+    max_net_lines: int = 500   # 本次最大净新增行数
+    max_new_files: int = 1     # 最大新文件数
+```
+
+## 6. Outcome（Agent 返回）
+
+```python
+@dataclass(frozen=True)
+class Outcome:
+    status: str                # "done" | "blocked" | "failed"
+    artifact_ref: str | None   # 产出文件路径或 commit ref
+    self_report: str           # Agent 自述（Runtime 不信任）
+```
+
+## 7. Verdict（Runtime 裁定）
+
+```python
+@dataclass(frozen=True)
+class Verdict:
+    passed: bool
+    check: str                 # "schema" | "scope" | "trace" | "scope_overflow" | "format"
+    reason: str                # 人类可读说明
+    evidence: str              # 工具原始输出（非摘要）
+    attempt: int               # 当前尝试次数
+```
+
+## 8. 投影状态（State）
+
+```python
+@dataclass
+class State:
+    run_id: str
+    status: str                # "active" | "completed" | "awaiting_human"
+    stage: str                 # "M-START" | "M-STORY" | "M-SPEC"
+    substate: str              # "TRIAGE" | "DRAFT" | "SAGE_REVIEW" | ...
+    awaiting: str | None       # "triage" | "review" | "escalation" | None
+    current_attempt: int
+    review_round: int
+    sage_passed_this_round: bool
+    lex_passed_this_round: bool
+    last_verdict: Verdict | None
+    version: str               # e.g. "v0.1"
+```
+
+`project(events) -> State` 是纯 fold：按 seq 顺序逐条应用转移规则。
+
+## 9. Workflow 定义类型
+
+```python
+@dataclass(frozen=True)
+class StageDef:
+    name: str
+    substates: list[str]
+    initial_substate: str
+
+@dataclass(frozen=True)
+class Transition:
+    from_substate: str
+    to_substate: str
+    guard: str                 # 守卫表达式名（引用 State 字段）
+    command_kind: str          # 触发时产出的 Command.kind
+
+@dataclass(frozen=True)
+class Workflow:
+    stages: list[StageDef]
+    transitions: list[Transition]
+    max_attempts: int = 3
+    max_fr_count: int = 30
+```
+
+## 10. CLI 接口契约
+
+| 命令 | 输入 | 成功输出 | 失败输出 | exit code |
+|:-----|:-----|:---------|:---------|:----------|
+| `trac init` | 无 | stdout: "initialized" | stderr: 原因 | 0 / 1 |
+| `trac start <ver>` | stdin: 原始需求 | stdout: run_id | stderr: 原因 | 0 / 1 |
+| `trac run` | 无 | stdout: 最终子状态摘要 | stderr: 原因 | 0 / 1 |
+| `trac triage <d>` | 无 | stdout: "recorded" | stderr: 原因 | 0 / 1 |
+| `trac review <a>` | 无（revise 时可附 stdin diff） | stdout: "recorded" | stderr: 原因 | 0 / 1 |
+| `trac status` | 无 | stdout: 状态摘要 | — | 0 |
+| `trac replay <id>` | 无 | stdout: 事件行 + 终态 | stderr: 原因 | 0 / 1 |
+
+## 11. 文件契约
+
+| 路径 | 格式 | 写入者 | 读取者 |
+|:-----|:-----|:-------|:-------|
+| `.tracks/projects/<ver>/story.md` | Markdown + YAML frontmatter | executor | validate, agents |
+| `.tracks/projects/<ver>/spec.md` | Markdown + YAML frontmatter | executor | validate, agents |
+| `.tracks/runtime/events/run-{ULID}.jsonl` | JSONL | store | project, cli(replay) |
+| `.tracks/runtime/runs.jsonl` | JSONL | store | cli(status) |
+| `.tracks/runtime/lock` | 纯文本 PID | runtime | runtime |
+| `.tracks/runtime/backlog.jsonl` | JSONL | store | cli(status) |
