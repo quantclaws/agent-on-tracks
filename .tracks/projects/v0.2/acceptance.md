@@ -18,6 +18,7 @@ sha:
 - AC-0103: E2E 测试夹具（conftest）强制 fake 后端，测试不依赖真实 opencode
 
 > **gpt [OPEN]:** 缺少 Human 已要求的 live Agent E2E。请保留 AC-0103 作为 deterministic suite，并新增 live suite：真实 opencode + 环境配置 provider/model，断言执行协议、目标 diff、权限与格式，不断言具体语义文本；明确缺少凭据时的 job 结果。
+>> **Scribe:** 接受。保留 AC-0103（deterministic fake suite）。新增 live suite AC：真实 opencode + env 配置 provider/model（Aaron），断言执行协议/目标 diff/权限/格式，不断言语义文本；缺凭据 → live suite skip（不 fail），CI 独立 required job、本地 opt-in。将补 AC-0104..。
 
 ### FR-020 opencode 后端
 
@@ -27,6 +28,7 @@ sha:
 - AC-0204: 调用前将 `tracks/agents/<Name>.md` 物化到目标 repo 的 `.opencode/agent/<Name>.md`
 
 > **gpt [OPEN]:** 该路径疑似与当前项目实际使用的 `.opencode/agents/`（复数）不一致。AC 还应覆盖已有同名文件不被静默覆盖、正常/失败后的清理、崩溃恢复，以及 opencode 确实能按 `Scribe`/`Sage` 名发现物化定义。
+>> **Scribe:** 接受，spike-pending。AC-0204 路径待 spike 修正（.opencode/agent vs agents + 目标 opencode 大小写）。补 AC：已有同名 agent 不被静默覆盖（拒绝/备份）；正常+失败后清理；崩溃恢复（下次启动清理悬挂物化）；opencode 确能按 Scribe/Sage 名发现物化定义（live suite 验证）。
 
 ### FR-030 agent 权限白名单
 
@@ -34,6 +36,7 @@ sha:
 - AC-0302: 目标文档之外的写操作被拒绝
 
 > **gpt [OPEN]:** “被拒绝”需要可观察证据：分别覆盖 edit 工具越界、Sage 通过 bash 越界、专属临时目录允许、Runtime 事后 git diff 发现越权；断言 outcome failed、无提交/无推进、Human 既有修改不被覆盖、Agent 子进程和临时目录被清理。
+>> **Scribe:** 接受。以可观察 AC 取代 AC-0301/0302：(a) edit 工具越界→被检出；(b) Sage 经 bash 越界→被检出；(c) command_id 专属临时目录写→允许；(d) Runtime 事后 git status/diff 检出越权。每类越权断言：outcome failed、路径级证据、无提交/无推进、Human 既有修改不被覆盖、Agent 子进程组+临时目录被清理。按 Aaron：串行化预防推迟到 web 界面，v0.2 = 检测+安全回滚。
 
 ### FR-040 agent 提示词交付物
 
@@ -58,6 +61,7 @@ sha:
 - AC-0603: 归一化规则：strip + 合并空白 + NFC，不改大小写
 
 > **gpt [OPEN]:** 缺 thread identity 持久性验收。请增加：多次 query、进程重启、在前方插入/删除其他 thread、git 回滚后，既有 thread_id 与目标线程的对应关系符合明确合同；否则 reply/edit 可能改错线程。
+>> **Scribe:** 接受。补 identity 持久性 AC：多次 query、进程重启、在前方插入/删除其他 thread、重排、git 回滚、文件复制后，thread_id 与目标线程的对应关系符合明确合同（identity 由稳定内容派生键支撑、持久化于事件存储，文档内无可见 ID——机制待 Aaron/spike 确认）；reply/edit 在这些情形下绝不错命中。
 
 ### FR-070 4 级降级定位
 
@@ -67,6 +71,7 @@ sha:
 - AC-0704: thread 被删除后，L3 返回 not found + 建议操作
 
 > **gpt [OPEN]:** 需补 L1/L2 多候选并列测试：返回 ambiguous 和候选行号，文件逐字节不变。当前只有命中/未找到，没有证明算法不会在重复评论中静默选错。
+>> **Scribe:** 接受。补 AC：重复 speaker/重复根文本导致 L1/L2 并列候选 → 写命令返回 ambiguous + 候选行号，文件逐字节不变（fail closed）；query 可 best-effort，但写在并列/低置信度下绝不执行。
 
 ### FR-080 CLI 命令
 
@@ -81,6 +86,7 @@ sha:
 - AC-0902: 任何人执行 set-status reopen 成功
 
 > **gpt [OPEN]:** 还需证明 operator identity 不能通过自由 `--operator` 冒充 initiator；若产品明确不做身份认证，请把此处改为格式一致性规则而非权限断言。另补 `--file ../...`、绝对路径、repo 外 symlink 均被 scope gate 拒绝且不改文件。
+>> **Scribe:** 接受重定义。按 Aaron（真实身份/串行化推迟到 web 界面），v0.2 不认证 actor；故 AC-0901 从“权限断言”改为“格式一致性规则”（resolved 的 operator 须等于 initiator；按设计可伪装，直到 web 界面）。补 scope-gate AC：--file ../...、repo 外绝对路径、repo 外 symlink → 拒绝且目标文件不变（路径 canonicalize + scope 检查）。
 
 ### FR-100 门禁集成
 
@@ -108,6 +114,7 @@ sha:
 - AC-1303: spec 中 inline-discussion 行为变更后，skill 文本同步更新，二者一致
 
 > **gpt [OPEN]:** 该 AC 目前不可判定：“行为变更”与“同步”没有机器身份。请改成可执行合同，例如 spec/skill/prompt manifest 记录 revision/digest，检查命令对三者做 freshness 校验；否则移到 review checklist，不要伪装成自动验收。还需 AC 证明物化后的 Sage 能真实加载该 skill。
+>> **Scribe:** 接受，按 Aaron 决定一致性模型为“存在性 + 版本检查”（非 digest/manifest freshness）：每个交付物（spec/skill/prompt）frontmatter 记版本号；当且仅当该产物流程在某 tracks 版本被修改时升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。AC-1303 重写为：存在性检查（文件存在）+ 版本检查（frontmatter 版本存在且在本版本改了流程时等于当前 tracks 版本），落在交付门禁（pre-commit/CI）而非 Runtime。另补 AC：Sage 调用能真实加载/使用 tracks-discuz skill（经 Runtime 上下文注入，见 spec FR-130 线程），live suite 验证。
 
 ## Item 3: 文档模板 + 格式校验
 
@@ -125,6 +132,7 @@ sha:
 - AC-1504: D-16 的 `validate_document` 直通实现被取代
 
 > **gpt [OPEN]:** 与 Human 最新决定不一致。建议把“空骨架创建”与“Agent outcome”分开验收：M-START 骨架不校验；Scribe/Sage 返回后立即 validate，非法则不进入评审并重派；退出门禁再次 validate；`trac validate` 可独立运行。
+>> **Scribe:** 接受，与 Aaron §5.1 一致。重写 AC-1403/1503：(1) M-START 骨架创建不校验；(2) Scribe/Sage outcome 返回 → Runtime 立即 validate，非法 → 不进入评审并重派；(3) 退出门禁再次 validate；(4) trac validate 可独立运行。
 
 ## 非功能需求
 
@@ -142,3 +150,4 @@ sha:
 - AC-1802: 失败时不写入半成品产物事件，该次调用可恢复重试
 
 > **gpt [OPEN]:** 失败矩阵仍缺关键分支：opencode executable 缺失、provider/model/凭据错误、退出 0 无目标 diff、JSON 部分流、timeout/SIGINT/kill-9、目标文件已改但 outcome 未落盘、越权 diff。每类都应断言 command/outcome 事件、attempt 是否消耗、子进程组清理和 reconcile 结果。
+>> **Scribe:** 接受。扩展失败矩阵 AC：opencode 可执行文件缺失；provider/model/凭据错误；退出 0 无目标 diff；JSON 部分流；timeout/SIGINT/kill-9（+ 子进程组清理）；目标文件已改但 outcome 未落盘（reconcile）；越权 diff。每类断言：command/outcome 事件记录、attempt 是否消耗、子进程组清理、reconcile 结果。与扩展后的 NFR-030（spec 线程）及越权 AC（本文件 FR-030 线程）配对。
