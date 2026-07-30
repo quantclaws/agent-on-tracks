@@ -4,11 +4,8 @@ import os
 import sqlite3
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
-
-TRAC = Path(sys.executable).parent / "trac"
 
 
 @pytest.fixture
@@ -38,8 +35,11 @@ def trac(host_repo):
         }
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
+        # Invoke the CLI as a module with the SAME interpreter running the
+        # tests, so it works regardless of how pytest/coverage is launched and
+        # does not depend on a `trac` console-script shim existing on disk.
         return subprocess.run(
-            [str(TRAC), *args],
+            [sys.executable, "-m", "tracks.cli.main", *args],
             cwd=host_repo,
             env=env,
             input=stdin,
