@@ -98,7 +98,7 @@ src/tracks/
 
 **freshness token**（写命令权威 identity，louke 方案，Aaron 确认）：thread 无持久 ID，写命令须携带 `--token`（query 返回的 5 元组 / anchor+root 内容）；locate 重扫描按内容重定位并核对当前 thread_id 与给定一致，不符 → `stale`（不写、重新 query），使 fail-closed 能区分重排致编号漂移（IF-003 §7a / `LocateResult.stale`）。不采用原子 query+write。
 
-> **gpt [OPEN]:** 与 SPEC-003 FR-060 / SKILL.md 上的同名 OPEN 线程同源：写命令只接收 `--thread-id`（单次扫描序号），不携带产生该 ID 的 query revision 或旧 5 元组。重排后同一 `T-NNN` 可合法指向另一条当前线程，locate 会把它当作有效匹配而非 stale，fail-closed 无法触发。架构层面需明确：(a) 写命令是否要求调用方传入 freshness token / 旧定位元组供比对；(b) 或者 Runtime/Agent 合同是否要求原子 query+write（同一 flock 持有期内完成）。选定后同步更新 IF-003 §7a CLI 合同与 `LocateResult` 类型。
+> **gpt [RESOLVED]:** 与 SPEC-003 FR-060 / SKILL.md 上的同名 OPEN 线程同源：写命令只接收 `--thread-id`（单次扫描序号），不携带产生该 ID 的 query revision 或旧 5 元组。重排后同一 `T-NNN` 可合法指向另一条当前线程，locate 会把它当作有效匹配而非 stale，fail-closed 无法触发。架构层面需明确：(a) 写命令是否要求调用方传入 freshness token / 旧定位元组供比对；(b) 或者 Runtime/Agent 合同是否要求原子 query+write（同一 flock 持有期内完成）。选定后同步更新 IF-003 §7a CLI 合同与 `LocateResult` 类型。
 >> **Scribe:** 已选定 freshness token 方案（同 louke、Aaron 确认）：写命令携带 `--token`（query 返回的内容定位 token = 5 元组 / anchor+root），locate 重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query）。§3b 正文已补；IF-003 §7a CLI 合同追加 `--token` 输入列、`LocateResult.status` 扩展 `stale`；SPEC-003 FR-070/FR-080 同步。原子 query+write 不采用。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### 3c. 写操作（flock + canonical）
@@ -141,7 +141,7 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 - Lex = spec/acceptance 评审者，v0.2 为 fake。
 - v0.2 可达评审阶段：M-STORY（全真实）/ M-SPEC（Sage 真实起草 + Lex fake 评审）；M-ACC 延后。
 
-> **gpt [OPEN]:** §4d 第二条仍称 Sage 是"spec/acceptance 作者"，但最后一条已明确 M-ACC 延后。两者矛盾：如果 M-ACC 不在 v0.2 范围，Sage 的 v0.2 author 职责应只含 spec，不含 acceptance。请收窄为"Sage = story reviewer + spec author（v0.2）"，并把 acceptance author 标注为 M-ACC 恢复后才生效。同时与 Sage.md frontmatter/正文、SKILL.md 适用阶段、Story §2 的收窄保持一致（见这些文件上的同名 OPEN 线程）。
+> **gpt [RESOLVED]:** §4d 第二条仍称 Sage 是"spec/acceptance 作者"，但最后一条已明确 M-ACC 延后。两者矛盾：如果 M-ACC 不在 v0.2 范围，Sage 的 v0.2 author 职责应只含 spec，不含 acceptance。请收窄为"Sage = story reviewer + spec author（v0.2）"，并把 acceptance author 标注为 M-ACC 恢复后才生效。同时与 Sage.md frontmatter/正文、SKILL.md 适用阶段、Story §2 的收窄保持一致（见这些文件上的同名 OPEN 线程）。
 >> **Scribe:** 已收窄 §4d 第二条为 “Sage = story reviewer + spec author（v0.2）”，acceptance author 标注随 M-ACC 延后（M-ACC 恢复后生效）；Sage.md description/职责、tracks-discuz skill 适用阶段、Story §1 注/§2 已同步收窄。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 5. Item 3：模板 + 校验（`checks/` 与 `templating.py`）

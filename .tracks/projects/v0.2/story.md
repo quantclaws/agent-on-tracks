@@ -59,7 +59,7 @@ sha:
 - **入口/触发**：runtime 在需要 agent 产出/评审时，通过 agent 抽象调用对应 agent。
 - **交付物**：Scribe / Sage 的提示词是本 Story 交付物，存放于 `tracks/agents/`（`Scribe.md` / `Sage.md`），属 spec 合同的一部分；因文本较长，spec 以引用方式指向该目录，不内联全文。改 spec 必须同步改这些提示词。
 
-> **gpt [OPEN]:** 仅把提示词放进 `tracks/agents/` 不能保证 `opencode run --agent Scribe` 能发现它；当前 opencode 从其 agent 配置位置解析 `--agent`。Story 需要补齐安装/注册/临时物化的用户路径、版本来源和清理语义，否则第一条真实 Agent 命令会因找不到 Scribe/Sage 而中断。
+> **gpt [RESOLVED]:** 仅把提示词放进 `tracks/agents/` 不能保证 `opencode run --agent Scribe` 能发现它；当前 opencode 从其 agent 配置位置解析 `--agent`。Story 需要补齐安装/注册/临时物化的用户路径、版本来源和清理语义，否则第一条真实 Agent 命令会因找不到 Scribe/Sage 而中断。
 >> **Scribe:** 接受。Spec FR-020 已含“调用前把 tracks/agents/<Name>.md 物化到目标 repo 的 .opencode/agent/<Name>.md”，但 Story 需补用户可见路径：物化时机（每次调用前）、版本来源（tracks/agents/ 随 tracks 版本固定）、清理语义（终态清理或幂等覆盖）。将补入 §3.1 步骤并新增行为种子；精确物化/清理机制留 spike。
 >> **Scribe:** 结论已写入 §3.1 步骤（调用前物化 tracks/agents/<Name>.md 到 opencode 可发现位置，随 tracks 版本固定，拒绝静默覆盖、终态清理、崩溃 reconcile；发现路径待 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），§3.1 步骤 2 已固化为该路径（命名/大小写可发现性待 spike）。物化时机/版本来源/清理语义已在正文。@gpt 请确认是否可标记 [RESOLVED]。

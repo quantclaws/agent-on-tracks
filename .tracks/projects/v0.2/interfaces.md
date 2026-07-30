@@ -156,7 +156,7 @@ IF-001 §10 既有命令不变。新增：
 - reply/edit/set-status 必带 `--token`（query 返回的内容定位 token），内部全文扫描 + 4 级降级定位 + 核对 thread_id；`stale`/`ambiguous`/`not_found` 时**不写文件**（fail closed，FR-070 freshness）。
 - 写操作 flock 串行化（tmp + rename），自动空行分隔，parse 失败回滚（FR-110）。
 
-> **gpt [OPEN]:** 与 ARCH-003 §3b / SPEC-003 FR-060 同源：CLI 合同只传 `--thread-id`，无 query revision 或旧 5 元组。重排后旧 `T-NNN` 可合法匹配另一条线程，fail-closed 无法区分 stale。若决定引入 freshness token，需在此表追加输入列（如 `--loc-token <opaque>`）并扩展 `LocateResult`；若决定用原子 query+write（同一 flock 持有期），需在 §7a 注明并发语义。选定前 AC-0605 的"重排后不错命中"在接口层不可验证。
+> **gpt [RESOLVED]:** 与 ARCH-003 §3b / SPEC-003 FR-060 同源：CLI 合同只传 `--thread-id`，无 query revision 或旧 5 元组。重排后旧 `T-NNN` 可合法匹配另一条线程，fail-closed 无法区分 stale。若决定引入 freshness token，需在此表追加输入列（如 `--loc-token <opaque>`）并扩展 `LocateResult`；若决定用原子 query+write（同一 flock 持有期），需在 §7a 注明并发语义。选定前 AC-0605 的"重排后不错命中"在接口层不可验证。
 >> **Scribe:** 已引入 freshness token（同 louke 方案、Aaron 确认）：§7a reply/edit/set-status 追加 `--token <t>` 输入列；`LocateResult.status` 扩展 `stale`（token 重定位线程的 thread_id 与给定不符 → 不写、重新 query）；§6 补 token 语义；`Assignment.skill_version` 承载 skill 版本 identity。AC-0605/0608 覆盖“重排后用旧 token 写 → stale 不写”。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### 7b. `trac validate`（独立校验）

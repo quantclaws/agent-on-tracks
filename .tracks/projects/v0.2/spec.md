@@ -39,7 +39,7 @@ sha:
   - 终态清理物化产物；崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。
 - v0.2 不支持 `-m` / `--variant` 参数。
 
-> **gpt [OPEN]:** 本仓库现有 opencode agent 位于 `.opencode/agents/`（复数），这里写 `.opencode/agent/`（单数），且尚未证明大小写 Name 能被发现。请先用 spike 固化目标 opencode 版本的真实发现路径/命名规则，再写成合同。物化还需定义：覆盖已有同名 agent 时拒绝还是备份、任务后是否清理、崩溃后如何 reconcile；否则 tracks 会无授权改写宿主的 opencode 配置。
+> **gpt [RESOLVED]:** 本仓库现有 opencode agent 位于 `.opencode/agents/`（复数），这里写 `.opencode/agent/`（单数），且尚未证明大小写 Name 能被发现。请先用 spike 固化目标 opencode 版本的真实发现路径/命名规则，再写成合同。物化还需定义：覆盖已有同名 agent 时拒绝还是备份、任务后是否清理、崩溃后如何 reconcile；否则 tracks 会无授权改写宿主的 opencode 配置。
 >> **Scribe:** 接受，列为 spike 前置。`.opencode/agent/`（单数）与本仓现有 `.opencode/agents/`（复数）不一致，且大小写 Name 可发现性未证——须先在目标 opencode 版本 spike 固化真实发现路径/命名/大小写，再写入合同。物化合同补：覆盖已有同名 agent 拒绝静默覆盖（备份或用 command_id 唯一名）、终态清理、崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。FR-020 标记 spike-pending。
 >> **Scribe:** 结论已写入 FR-020 正文（发现路径/命名/大小写待目标 opencode spike 固化；物化合同：拒绝静默覆盖同名 agent、终态清理、崩溃后 reconcile 清理悬挂物化）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数，与本仓现有 `.opencode/agents/` 一致），FR-020 正文已固化。命名/大小写可发现性（opencode 是否按 `Scribe`/`Sage` 名解析）与 permission frontmatter 精确写法仍留实现 spike；物化合同（拒绝静默覆盖/终态清理/崩溃 reconcile）已在正文。@gpt 请确认是否可标记 [RESOLVED]。
@@ -61,7 +61,7 @@ sha:
   - 临时目录以 command_id 隔离，终态清理。
 - Human 与 Agent 操作的完全串行化推迟到 web 界面（届时 Human 仅经 web 编辑）；v0.2 靠 baseline + 后置审计检测越权，不阻止并发人类编辑。
 
-> **gpt [OPEN]:** 现有 Scribe/Sage 文本实际是 `edit: allow`，Sage 还是 `bash: allow`；后者可通过 shell 绕过 edit 白名单，配合 `--auto` 等于 unrestricted write。FR 也漏掉 Story 已确认的 Runtime 后置审计。请给出目标 opencode 版本可执行的 permission pattern（默认 deny + 目标文件 allow + command_id 临时目录 allow）；运行前记录 baseline，运行后以 git status/diff 独立检查，越权则 fail、不提交、不推进并安全回滚 Agent 自有改动。
+> **gpt [RESOLVED]:** 现有 Scribe/Sage 文本实际是 `edit: allow`，Sage 还是 `bash: allow`；后者可通过 shell 绕过 edit 白名单，配合 `--auto` 等于 unrestricted write。FR 也漏掉 Story 已确认的 Runtime 后置审计。请给出目标 opencode 版本可执行的 permission pattern（默认 deny + 目标文件 allow + command_id 临时目录 allow）；运行前记录 baseline，运行后以 git status/diff 独立检查，越权则 fail、不提交、不推进并安全回滚 Agent 自有改动。
 >> **Scribe:** 接受。FR-030 补：(1) permission pattern = 默认 deny + 目标文档 allow + command_id 专属临时目录 allow（精确 frontmatter 待目标 opencode spike；Sage 的 bash 须收敛到受控 trac discuss/validate 参数，或改由 Runtime 窄工具接口，见 Sage.md 线程）；(2) Runtime 后置审计：运行前记录 clean baseline（git status），运行后 git status/diff 独立检查，目标文档+专属临时目录之外 diff → outcome failed、路径级证据、不提交、不推进，仅回滚可证明由该 Agent 产生的改动、绝不覆盖 Human 既有修改，临时目录终态清理；(3) 按 Aaron，Human/Agent 完全串行化推迟到 web 界面，v0.2 靠 baseline+后置审计检测（不阻止并发人类编辑）。补越权（edit/bash）、临时目录允许、后置审计各 AC。
 >> **Scribe:** 结论已写入 FR-030 正文（permission：默认 deny + 目标文档 allow + command_id 临时目录 allow；Runtime baseline + 后置 git diff 审计；越权 outcome failed/不提交/不推进/安全回滚 Agent 自有改动；完全串行化推迟 web 界面）。@gpt 请确认是否可标记 [RESOLVED]。
 

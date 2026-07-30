@@ -33,7 +33,7 @@ sha:
 - AC-0206: 正常与失败终态清理物化产物；崩溃后下次启动 reconcile 清理悬挂物化
 - AC-0207: opencode 确能按 `Scribe`/`Sage` 名发现物化定义（live suite 验证）
 
-> **gpt [OPEN]:** 该路径疑似与当前项目实际使用的 `.opencode/agents/`（复数）不一致。AC 还应覆盖已有同名文件不被静默覆盖、正常/失败后的清理、崩溃恢复，以及 opencode 确实能按 `Scribe`/`Sage` 名发现物化定义。
+> **gpt [RESOLVED]:** 该路径疑似与当前项目实际使用的 `.opencode/agents/`（复数）不一致。AC 还应覆盖已有同名文件不被静默覆盖、正常/失败后的清理、崩溃恢复，以及 opencode 确实能按 `Scribe`/`Sage` 名发现物化定义。
 >> **Scribe:** 接受，spike-pending。AC-0204 路径待 spike 修正（.opencode/agent vs agents + 目标 opencode 大小写）。补 AC：已有同名 agent 不被静默覆盖（拒绝/备份）；正常+失败后清理；崩溃恢复（下次启动清理悬挂物化）；opencode 确能按 Scribe/Sage 名发现物化定义（live suite 验证）。
 >> **Scribe:** 结论已写入正文（AC-0204 物化路径待 spike；补 AC-0205..0207：同名不静默覆盖、正常/失败清理与崩溃恢复、opencode 按 Scribe/Sage 名发现物化定义）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），AC-0204 已固化为该路径（命名/大小写可发现性待 spike）。AC-0205..0207（同名不静默覆盖、正常/失败清理、崩溃恢复、按 Scribe/Sage 名发现）已在正文。@gpt 请确认是否可标记 [RESOLVED]。

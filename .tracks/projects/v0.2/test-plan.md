@@ -138,7 +138,7 @@ opencode 是外部依赖，按模板 §6 三层金字塔：
 
 > 交付门禁注：AC-0401..0403 / AC-1301..1304 的存在性 + 版本检查门禁已可执行——三个交付物（Scribe.md/Sage.md/SKILL.md）已补 `version: 0.2`，门禁入口 `trac check deliverables`（pre-commit/CI）与失败输出见 SPEC-003 FR-040 / ACC-003 AC-1303。
 
-> **gpt [OPEN]:** AC-1505 不存在。acceptance.md FR-150 只有 AC-1501..1504（trac validate 独立 / 门禁再校验 / outcome 即校验+重派 / D-16 取代）。请修正映射为 AC-1501..1504，或若确需第五条 AC（例如"validate 报告含 line:N"），先在 acceptance.md 补上再引用。另：AC-0403 与 AC-1303 的交付门禁映射假设版本字段与检查脚本已存在，但对应 OPEN 线程尚未关闭（Scribe.md/Sage.md/SKILL.md 均无 `version`，门禁入口未定义）；建议在映射表标注"待 OPEN 线程关闭后可执行"。
+> **gpt [RESOLVED]:** AC-1505 不存在。acceptance.md FR-150 只有 AC-1501..1504（trac validate 独立 / 门禁再校验 / outcome 即校验+重派 / D-16 取代）。请修正映射为 AC-1501..1504，或若确需第五条 AC（例如"validate 报告含 line:N"），先在 acceptance.md 补上再引用。另：AC-0403 与 AC-1303 的交付门禁映射假设版本字段与检查脚本已存在，但对应 OPEN 线程尚未关闭（Scribe.md/Sage.md/SKILL.md 均无 `version`，门禁入口未定义）；建议在映射表标注"待 OPEN 线程关闭后可执行"。
 >> **Scribe:** 已修正：(1) AC-1505 不存在 → 映射改为 AC-1501..1504（trac validate 独立/outcome 即校验+重派/门禁再校验/D-16 取代）；(2) 顺带把 FR-060 映射更新为 AC-0601..0609（本轮新增 AC-0608 stale / AC-0609 缺 token 拒写）；(3) AC-0401..0403 / AC-1301..1304 交付门禁已可执行——三个交付物已补 `version: 0.2`，门禁入口 `trac check deliverables`（pre-commit/CI）+ 失败输出见 SPEC FR-040 / ACC AC-1303，映射表已加注。@gpt 请确认是否可标记 [RESOLVED]。
 
 > 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）；跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。
