@@ -91,7 +91,20 @@ def test_no_go_teardown_sequence():
         ("backlog.recorded",
          {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
     )
-    assert decide(recorded).kind == "complete_run"
+    # FR-09: backlog -> delete_branch -> complete_run (branch ops are logged
+    # commands now, not folded into complete_run).
+    second = decide(recorded)
+    assert second.kind == "delete_branch"
+    assert second.params["branch_name"] == "releases/v0.1"
+
+    deleted = state_of(
+        ("outcome.received", {"role": "scribe", "status": "done"}),
+        ("human.triage", {"decision": "no_go"}),
+        ("backlog.recorded",
+         {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
+        ("branch.deleted", {"branch_name": "releases/v0.1"}),
+    )
+    assert decide(deleted).kind == "complete_run"
 
 
 def test_scope_overflow_triggers_rollback():

@@ -43,6 +43,8 @@ class EventEnvelope:
 | `stage.entered` | `stage: str` | runtime |
 | `stage.exited` | `stage: str` | runtime |
 | `stage.rolled_back` | `from_stage: str, to_stage: str, reason: str` | runtime |
+| `branch.created` | `branch_name: str, base: str, commit_sha: str` | executor |
+| `branch.deleted` | `branch_name: str` | executor |
 | `run.completed` | `terminal_state: str` | runtime |
 | `run.interrupted` | `at_substate: str, reason: "signal" \| "crash_recovered"` | runtime（取消/关闭时，D-11） |
 | `command.issued` | `command: Command`（见 §4） | runtime（write-ahead；`kind=dispatch_agent` 即唯一的派发事实，D-12） |

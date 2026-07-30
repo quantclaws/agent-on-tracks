@@ -14,6 +14,8 @@ EVENT_TYPES = (
     "stage.entered",
     "stage.exited",
     "stage.rolled_back",
+    "branch.created",
+    "branch.deleted",
     "run.completed",
     "run.interrupted",
     "command.issued",

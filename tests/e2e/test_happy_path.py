@@ -57,6 +57,7 @@ def test_happy_path(host_repo, trac, event_log):
     assert git_out(host_repo, "status", "--porcelain") == ""
     evs = types(event_log(run_id))
     assert "stage.entered" in evs and "stage.exited" in evs
+    assert "branch.created" in evs  # FR-04: branch creation is a logged command
 
     # empty stdin rejected (AC-02b)
     r = trac("start", "v0.2", stdin="")

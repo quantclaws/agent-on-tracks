@@ -33,6 +33,7 @@ def test_rejection_tears_down_branch(host_repo, trac, event_log, decision):
         for e in evs
     )
     assert any(e["type"] == "backlog.recorded" for e in evs)
+    assert any(e["type"] == "branch.deleted" for e in evs)  # FR-09: logged delete
 
     # backlog projection row recorded the rejection
     db = host_repo / ".tracks" / "runtime" / "tracks.db"

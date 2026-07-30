@@ -45,6 +45,8 @@ class State:
     last_failure: dict | None = None  # evidence for the next re-dispatch (FR-11)
     scope_overflow: bool = False  # FR-20: pending rollback to M-STORY
     review_diff_ref: str | None = None  # FR-16: human revise commit sha
+    branch_created: bool = False  # release branch exists (M-START create_branch)
+    branch_deleted: bool = False  # release branch torn down (FR-09 reject)
 
 
 def _reset_doc(s: State) -> None:
@@ -200,6 +202,14 @@ def _on_run_completed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.terminal_state = p.get("terminal_state")
 
 
+def _on_branch_created(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.branch_created = True
+
+
+def _on_branch_deleted(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.branch_deleted = True
+
+
 # run.interrupted has no reducer: it changes no state (v0.1); `apply`'s prelude
 # still clears `pending` for it.
 _APPLY = {
@@ -220,6 +230,8 @@ _APPLY = {
     "review.round_started": _on_review_round_started,
     "backlog.recorded": _on_backlog_recorded,
     "run.completed": _on_run_completed,
+    "branch.created": _on_branch_created,
+    "branch.deleted": _on_branch_deleted,
 }
 
 
@@ -247,12 +259,15 @@ def _dispatch(role: str, substate: str, objective: str, doc: str | None = None) 
 
 
 def _decide_reject(s: State) -> Command:
-    """NO-GO / PARK teardown (D-06): record backlog, then complete the run."""
+    """NO-GO / PARK teardown (D-06, FR-09): record backlog → delete the release
+    branch → complete the run, each as its own logged command."""
     if not s.backlog_recorded:
         return Command(
             kind="record_backlog",
             params={"version": s.version, "decision": s.triage_decision, "reason": "triage"},
         )
+    if not s.branch_deleted:
+        return Command(kind="delete_branch", params={"branch_name": f"releases/{s.version}"})
     return Command(kind="complete_run", params={"terminal_state": s.triage_decision})
 
 

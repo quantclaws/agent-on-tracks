@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor import Executor, git
-from tracks.kernel import project
+from tracks.kernel import Command, project
 from tracks.store import Store, new_ulid
 
 
@@ -111,11 +111,14 @@ def cmd_start(repo: Path, version: str) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
     with writer_lock(home):
+        run_id = new_ulid()
         branch = f"releases/{version}"
-        if git(repo, "rev-parse", "--verify", branch, check=False).returncode == 0:
-            git(repo, "checkout", branch)
-        else:
-            git(repo, "checkout", "-b", branch, "main")
+        store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
+        store.append(run_id, version, "stage.entered", {"stage": "M-START"})
+        # FR-04: create the release branch as a logged, reconcilable command.
+        Executor(store, repo, run_id).issue(
+            Command(kind="create_branch", params={"branch_name": branch, "base": "main"})
+        )
         vdir = paths.version_dir(home, version)
         vdir.mkdir(parents=True, exist_ok=True)
         story = vdir / "story.md"
@@ -125,9 +128,6 @@ def cmd_start(repo: Path, version: str) -> int:
         )
         git(repo, "add", str(story))
         git(repo, "commit", "-m", f"M-START: capture raw requirement for {version}")
-        run_id = new_ulid()
-        store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
-        store.append(run_id, version, "stage.entered", {"stage": "M-START"})
         store.append(run_id, version, "stage.exited", {"stage": "M-START"})
         store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     print(f"run {run_id} started on {branch}")

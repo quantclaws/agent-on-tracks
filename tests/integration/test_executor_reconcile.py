@@ -5,6 +5,7 @@ import subprocess
 
 from tracks import paths
 from tracks.executor import Executor
+from tracks.kernel.events import Command
 from tracks.store import Store, new_ulid
 
 
@@ -63,3 +64,51 @@ def test_reconcile_commit_document_skips_existing_commit(tmp_path):
     assert len(committed) == 1
     assert committed[0].payload["commit_sha"] == commit_sha
     assert committed[0].command_id == cid
+
+
+def test_reconcile_create_branch_skips_existing(tmp_path):
+    """R3-03: branch already created & checked out, branch.created lost — recovery
+    skips the git work and only backfills branch.created (no duplicate branch)."""
+    repo = make_repo(tmp_path)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id, cid = new_ulid(), new_ulid()
+
+    g(repo, "checkout", "-b", "releases/v0.1", "main")  # crash left the branch
+    store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
+    store.append(run_id, "v0.1", "stage.entered", {"stage": "M-START"})
+    store.append(
+        run_id, "v0.1", "command.issued",
+        {"command": {"kind": "create_branch",
+                     "params": {"branch_name": "releases/v0.1", "base": "main"},
+                     "command_id": cid}},
+        command_id=cid,
+    )
+
+    branches_before = g(repo, "branch", "--list")
+    Executor(store, repo, run_id)._recover()
+
+    assert g(repo, "branch", "--list") == branches_before  # git untouched
+    created = [e for e in store.events(run_id) if e.type == "branch.created"]
+    assert len(created) == 1
+    assert created[0].command_id == cid
+    assert created[0].payload["branch_name"] == "releases/v0.1"
+
+
+def test_delete_branch_tears_down_and_logs(tmp_path):
+    """FR-09: delete_branch ends with HEAD==main, branch absent, branch.deleted."""
+    repo = make_repo(tmp_path)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = new_ulid()
+
+    g(repo, "checkout", "-b", "releases/v0.1", "main")
+    store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
+    Executor(store, repo, run_id).issue(
+        Command(kind="delete_branch", params={"branch_name": "releases/v0.1"})
+    )
+
+    assert g(repo, "branch", "--list", "releases/v0.1") == ""
+    assert g(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+    deleted = [e for e in store.events(run_id) if e.type == "branch.deleted"]
+    assert len(deleted) == 1 and deleted[0].payload["branch_name"] == "releases/v0.1"

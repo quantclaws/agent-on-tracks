@@ -55,19 +55,27 @@ class Executor:
             cmd = decide(state)
             if cmd is None:
                 return state
-            cid = new_ulid()
-            issued = Command(kind=cmd.kind, params=cmd.params, command_id=cid)
-            task_id = None
-            if cmd.kind == "dispatch_agent":
-                task_id = (f"{self.run_id}:{cmd.params.get('substate')}"
-                           f":{state.review_round}:{state.current_attempt}")
-            self._emit(
-                "command.issued",
-                {"command": {"kind": issued.kind, "params": issued.params,
-                             "command_id": cid}},
-                command_id=cid, task_id=task_id,
-            )
-            self._execute(issued, self.store.state(self.run_id), task_id)
+            self.issue(cmd)
+
+    def issue(self, cmd: Command) -> None:
+        """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler
+        logs the result event that closes it. command_id is assigned here so the
+        result pairs with the issued record. Used by run_loop and by one-shot
+        setup commands (create_branch in `trac start`)."""
+        state = self.store.state(self.run_id)
+        cid = new_ulid()
+        issued = Command(kind=cmd.kind, params=cmd.params, command_id=cid)
+        task_id = None
+        if cmd.kind == "dispatch_agent":
+            task_id = (f"{self.run_id}:{cmd.params.get('substate')}"
+                       f":{state.review_round}:{state.current_attempt}")
+        self._emit(
+            "command.issued",
+            {"command": {"kind": issued.kind, "params": issued.params,
+                         "command_id": cid}},
+            command_id=cid, task_id=task_id,
+        )
+        self._execute(issued, self.store.state(self.run_id), task_id)
 
     def _recover(self) -> None:
         """Hanging command (issued, no result): reconcile first (D-13), reissue
@@ -176,27 +184,35 @@ class Executor:
                    command_id=cmd.command_id)
 
     def _do_complete_run(self, cmd, state, task_id, reconcile):
-        terminal = cmd.params["terminal_state"]
-        if terminal in ("no_go", "park"):
-            self._teardown_branch(f"releases/{self.version}")
-        self._emit("run.completed", {"terminal_state": terminal},
+        # Branch deletion is a separate delete_branch command (FR-09), not here.
+        self._emit("run.completed", {"terminal_state": cmd.params["terminal_state"]},
                    command_id=cmd.command_id)
 
     def _do_create_branch(self, cmd, state, task_id, reconcile):
-        """Reconcile (R3-03): done iff branch exists AND HEAD is on it."""
+        """Create/switch the branch, then log branch.created. Reconcile (R3-03):
+        the git work is skipped iff the branch exists AND HEAD is already on it;
+        branch.created is always logged so the command closes."""
         branch = cmd.params["branch_name"]
         base = cmd.params.get("base", "main")
         exists = git(self.repo, "rev-parse", "--verify", branch,
                      check=False).returncode == 0
-        if exists and self._head() == branch:
-            return
-        if exists:
-            git(self.repo, "checkout", branch)
-        else:
-            git(self.repo, "checkout", "-b", branch, base)
+        if not (exists and self._head() == branch):
+            if exists:
+                git(self.repo, "checkout", branch)
+            else:
+                git(self.repo, "checkout", "-b", branch, base)
+        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        self._emit("branch.created",
+                   {"branch_name": branch, "base": base, "commit_sha": commit_sha},
+                   command_id=cmd.command_id)
 
     def _do_delete_branch(self, cmd, state, task_id, reconcile):
-        self._teardown_branch(cmd.params["branch_name"])
+        """Tear down the branch, then log branch.deleted. Reconcile (R3-03):
+        _teardown_branch is idempotent (done iff HEAD==main AND branch absent)."""
+        branch = cmd.params["branch_name"]
+        self._teardown_branch(branch)
+        self._emit("branch.deleted", {"branch_name": branch},
+                   command_id=cmd.command_id)
 
     def _do_rollback_stage(self, cmd, state, task_id, reconcile):
         self._emit("stage.rolled_back",
