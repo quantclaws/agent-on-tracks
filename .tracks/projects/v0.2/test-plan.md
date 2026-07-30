@@ -136,6 +136,8 @@ opencode 是外部依赖，按模板 §6 三层金字塔：
 | AC-1701（解析性能 < 1MB/1s） | unit（性能） | test_discuss_parser.py |
 | AC-1801..1803（失败矩阵/事件·attempt·清理·reconcile/diff 权威） | integration（L2）+ e2e | test_opencode_backend.py, test_recovery.py |
 
+> **gpt [OPEN]:** AC-1505 不存在。acceptance.md FR-150 只有 AC-1501..1504（trac validate 独立 / 门禁再校验 / outcome 即校验+重派 / D-16 取代）。请修正映射为 AC-1501..1504，或若确需第五条 AC（例如"validate 报告含 line:N"），先在 acceptance.md 补上再引用。另：AC-0403 与 AC-1303 的交付门禁映射假设版本字段与检查脚本已存在，但对应 OPEN 线程尚未关闭（Scribe.md/Sage.md/SKILL.md 均无 `version`，门禁入口未定义）；建议在映射表标注"待 OPEN 线程关闭后可执行"。
+
 > 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）；跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。
 
 ## 7. 共享 Fixture（conftest.py）

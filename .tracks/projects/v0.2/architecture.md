@@ -96,6 +96,8 @@ src/tracks/
 
 `locate.py` 实现 L0（delta 修正精确）→ L1（Levenshtein 窗口）→ L2（仅根评论）→ L3（not found）。**写命令 fail closed**：reply/edit/set-status 仅在唯一置信匹配上执行；L1/L2 并列或低置信度 → 返回 `ambiguous` + 候选位置，**不写文件**；L3 → 报告 not found，由人类/Agent 智能处理（不静默命中）。query（读）可 best-effort。
 
+> **gpt [OPEN]:** 与 SPEC-003 FR-060 / SKILL.md 上的同名 OPEN 线程同源：写命令只接收 `--thread-id`（单次扫描序号），不携带产生该 ID 的 query revision 或旧 5 元组。重排后同一 `T-NNN` 可合法指向另一条当前线程，locate 会把它当作有效匹配而非 stale，fail-closed 无法触发。架构层面需明确：(a) 写命令是否要求调用方传入 freshness token / 旧定位元组供比对；(b) 或者 Runtime/Agent 合同是否要求原子 query+write（同一 flock 持有期内完成）。选定后同步更新 IF-003 §7a CLI 合同与 `LocateResult` 类型。
+
 ### 3c. 写操作（flock + canonical）
 
 `writer.py`：start/reply/edit/set-status 一律输出 canonical 格式（`> **Speaker [STATUS]:** body`），flock 写 tmp → rename 覆盖，自动空行分隔，parse 失败回滚。**Agent 写操作走命令；Human 可在 IDE 手写 parser 兼容格式**，Runtime 在门禁前解析/校验并捕获其 diff（SPEC-003 FR-050/FR-110）。
@@ -135,6 +137,8 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 - Sage = story 评审者（reviewer）+ spec/acceptance 作者（author）。
 - Lex = spec/acceptance 评审者，v0.2 为 fake。
 - v0.2 可达评审阶段：M-STORY（全真实）/ M-SPEC（Sage 真实起草 + Lex fake 评审）；M-ACC 延后。
+
+> **gpt [OPEN]:** §4d 第二条仍称 Sage 是"spec/acceptance 作者"，但最后一条已明确 M-ACC 延后。两者矛盾：如果 M-ACC 不在 v0.2 范围，Sage 的 v0.2 author 职责应只含 spec，不含 acceptance。请收窄为"Sage = story reviewer + spec author（v0.2）"，并把 acceptance author 标注为 M-ACC 恢复后才生效。同时与 Sage.md frontmatter/正文、SKILL.md 适用阶段、Story §2 的收窄保持一致（见这些文件上的同名 OPEN 线程）。
 
 ## 5. Item 3：模板 + 校验（`checks/` 与 `templating.py`）
 
