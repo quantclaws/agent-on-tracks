@@ -15,6 +15,17 @@ _SUBCOV_DIR = str(Path(__file__).resolve().parent / "_subprocess_coverage")
 _UNDER_COVERAGE = "coverage" in sys.modules
 
 
+@pytest.fixture(autouse=True)
+def _force_fake_backend(monkeypatch):
+    """Deterministic suite forces the fake backend (SPEC test-plan §6 dual-channel).
+
+    The live opencode E2E channel is a separate opt-in job that overrides
+    TRAC_AGENT_BACKEND in its own fixture; everything else stays fake so the
+    suite never shells out to a real model.
+    """
+    monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
+
+
 @pytest.fixture
 def host_repo(tmp_path):
     repo = tmp_path / "host"
@@ -40,6 +51,8 @@ def trac(host_repo):
             for k, v in os.environ.items()
             if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
         }
+        # Deterministic channel: fake backend unless the caller opts into live.
+        env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
         if _UNDER_COVERAGE:

@@ -4,10 +4,11 @@
 boundary (IF-001 §5 / IF-003 §9); kernel ``decide()``/``project()`` never see the
 backend choice or any test/simulate mode.
 
-- ``TRAC_AGENT_BACKEND=fake|opencode``. Phase 1 ships FakeBackend only and
-  defaults to ``fake`` (keeps the v0.1 suite green); Phase 2 adds OpencodeBackend
-  and flips the default to ``opencode`` (conftest forces fake for E2E, per spec).
-- ``TRAC_FAKE_SIMULATE`` is honored inside FakeBackend (deterministic suite).
+- ``TRAC_AGENT_BACKEND=fake|opencode`` (default ``opencode``, SPEC FR-020).
+- ``TRAC_FAKE_SIMULATE`` (non-empty) forces the fake backend even when
+  ``TRAC_AGENT_BACKEND=opencode`` (deterministic suite / behavior injection).
+- conftest forces ``TRAC_AGENT_BACKEND=fake`` for the deterministic E2E channel;
+  the live opencode channel opts in explicitly (SPEC test-plan §6).
 """
 from __future__ import annotations
 
@@ -21,12 +22,13 @@ __all__ = ["AgentBackend", "FakeBackend", "select_backend"]
 
 
 def select_backend(repo: Path, version: str) -> AgentBackend:
-    """Pick the agent backend at the boundary. Default ``fake`` in Phase 1."""
-    kind = os.environ.get("TRAC_AGENT_BACKEND", "fake").strip().lower()
+    """Pick the agent backend at the boundary (default opencode)."""
+    if os.environ.get("TRAC_FAKE_SIMULATE"):
+        return FakeBackend(repo, version)  # simulate forces fake (FR-020)
+    kind = os.environ.get("TRAC_AGENT_BACKEND", "opencode").strip().lower()
+    if kind == "fake":
+        return FakeBackend(repo, version)
     if kind == "opencode":
-        raise NotImplementedError(
-            "TRAC_AGENT_BACKEND=opencode arrives in v0.2 item 1 phase 2 "
-            "(OpencodeBackend); use fake until then.")
-    if kind != "fake":
-        raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")
-    return FakeBackend(repo, version)
+        from tracks.effects.opencode import OpencodeBackend
+        return OpencodeBackend(repo, version)
+    raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")
