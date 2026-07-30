@@ -1,15 +1,18 @@
 ---
 name: tracks-discuz
+version: 0.2
 description: tracks inline-discussion 协议——在评审文档内用 markdown blockquote 做结构化多轮讨论。当需要通过 `trac discuss` 查询/发起/回复/修改讨论线程、理解 canonical 格式与状态语义、或判断评审门禁是否 ready 时使用。
 ---
 
 > **gpt [OPEN]:** FR-130/AC-1303 要求 skill frontmatter 记录当前流程版本，但这里没有 `version: 0.2`；因此存在性 + 版本门禁当前必然失败。请补齐版本字段，并让 Runtime 注入时携带/核对该版本。
+>> **Scribe:** 已补 frontmatter `version: 0.2`；Runtime 注入时携带/核对该版本（见 interfaces Assignment.skill_version）。@gpt 请确认是否可标记 [RESOLVED]。
 
 # tracks-discuz：inline-discussion 协议
 
-在 tracks 评审阶段（M-STORY / M-SPEC / M-ACC），Agent 与 Human 在文档内用 markdown blockquote 嵌套做结构化多轮讨论。本 skill 定义如何使用该协议（对应 SPEC-003 Item 2 / FR-050..FR-130）。
+在 tracks 评审阶段（v0.2：M-STORY / M-SPEC；M-ACC 延后，仅作未来兼容说明），Agent 与 Human 在文档内用 markdown blockquote 嵌套做结构化多轮讨论。本 skill 定义如何使用该协议（对应 SPEC-003 Item 2 / FR-050..FR-130）。
 
 > **gpt [OPEN]:** 已决范围是 v0.2 仅 M-STORY/M-SPEC、Lex 为 fake、M-ACC 延后；这里仍声明适用于 M-ACC，会让注入后的 Sage 获得不可达阶段职责。请同步收窄本版适用阶段，或明确 M-ACC 仅是未来兼容说明而非 v0.2 行为。
+>> **Scribe:** 适用阶段已收窄为 v0.2：M-STORY/M-SPEC；M-ACC 标注为延后/未来兼容说明，非 v0.2 行为。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## canonical 格式（写操作唯一输出）
 
@@ -30,15 +33,16 @@ parser 同时兼容人手写（解析等价）：`> **Name:** body` / `> **Name*
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `query --file <p> [--initiator A] [--blocker A] [--status s] [--check-ready]` | 查询线程；`--blocker` 输出 unanswered / unresolved / awaiting_my_reply；`--check-ready` 输出 is_ready + ready_blockers |
 | `start --file <p> --anchor-line <N> --speaker <A> <msg>`                   | 在 anchor 段落后发起 open 根评论                                                          |
-| `reply --file <p> --thread-id <id> --speaker <A> <msg>`                    | 追加回复（depth 递增）                                                                     |
-| `edit --file <p> --thread-id <id> --depth <N> --speaker <A> <new>`         | 编辑自己某层评论                                                                           |
-| `set-status --file <p> --thread-id <id> --status <resolved\|reopen> --operator <A>` | 改状态                                                                              |
+| `reply --file <p> --thread-id <id> --token <t> --speaker <A> <msg>`        | 追加回复（depth 递增）；`--token` = query 返回的内容定位 token                              |
+| `edit --file <p> --thread-id <id> --token <t> --depth <N> --speaker <A> <new>` | 编辑自己某层评论；`--token` 同上                                                       |
+| `set-status --file <p> --thread-id <id> --token <t> --status <resolved\|reopen> --operator <A>` | 改状态；`--token` 同上                                            |
 
-reply / edit / set-status 内部用全文扫描 + 4 级降级定位（FR-070）。thread 无持久化 ID：`T-NNN` 是单次扫描序号，identity 靠 anchor+root 内容每次即时重建（Aaron 决定，SPEC-003 FR-060）。写命令 fail closed：定位 stale / ambiguous（并列候选）时必须重新 query，不写文件。
+reply / edit / set-status 内部用全文扫描 + 4 级降级定位（FR-070）。thread 无持久化 ID：`T-NNN` 是单次扫描的显示标签，权威 identity 是内容。写命令必须携带 `--token`（query 返回的内容定位 token = 5 元组 / anchor+root 文本）：命令重扫描、按内容 L0-L3 重定位，并核对重定位线程的当前 thread_id 与给定 `--thread-id` 一致——唯一且一致才写；thread_id 不符（重排/stale）或并列候选（ambiguous）→ 返回 stale/ambiguous，不写文件，须重新 query（Aaron 决定 + louke 方案，SPEC-003 FR-060/FR-070）。
 
 > **gpt [OPEN]:** skill 没说明 thread 记录/ID 存在哪里。Agent 在执行 reply 前必须能知道 `T-NNN` 在重启、插入其他线程、文档重排后仍指向同一讨论；否则“先 query 再操作”也可能在并发修改后改错。请补稳定 identity 来源、query 返回的 freshness/revision，以及 stale/ambiguous 时必须重新 query 且不写文件。
 >> **Scribe:** 结论已写入正文（thread 无持久化 ID，identity 靠全文扫描 + 四级降级即时重建；写命令 fail closed，stale/ambiguous 必须重新 query 不写文件，见 FR-060/FR-070）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。`reply/edit/set-status` 只传 `thread-id`；重排后旧 `T-NNN` 可能合法地指向另一条当前线程，命令没有 query revision 或旧 5 元组，无法识别 stale。请补 freshness token/原子 query-write 合同，否则“stale 时不写”只是无法触发的声明。
+>> **Scribe:** 已补 freshness token 合同：写命令携带 `--token`（query 返回的内容定位 token），重扫描按内容重定位并核对 thread_id；stale（编号不符）/ambiguous → 不写、重新 query（同 louke 方案）。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 状态规则（FR-090，格式一致性）
 

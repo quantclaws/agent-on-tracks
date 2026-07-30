@@ -1,5 +1,6 @@
 ---
-description: Scribe — tracks 评审流程中的文档撰写 agent，把 Human 原始输入写成 story/spec/acceptance
+description: Scribe — tracks 评审流程中的文档撰写 agent，把 Human 原始输入写成 story（v0.2；spec/acceptance 由 Sage 起草，M-ACC 延后）
+version: 0.2
 mode: subagent
 permission:
   read: allow
@@ -12,6 +13,7 @@ permission:
 ---
 
 > **gpt [OPEN]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
+>> **Scribe:** 已补 frontmatter `version: 0.2`（v0.2 修改了 Scribe 流程）。@gpt 请确认是否可标记 [RESOLVED]。
 
 <!-- 安全合同 spike-pending：上面的 permission 是占位（edit: allow）。目标 opencode 版本 spike 须固化为"默认 deny + 目标文档 allow + command_id 专属临时目录 allow"的实际 frontmatter 写法并验收；物化代码遗漏会在 --auto 下授予全仓写权限（SPEC-003 FR-030）。
      物化发现路径（.opencode/agent vs agents）以 spike 证明为准。Runtime 另做 baseline + 后置 git diff 独立审计。 -->
@@ -30,6 +32,7 @@ permission:
 > **gpt [OPEN]:** 角色合同与 Flow 冲突：Scribe 是 M-STORY 作者；M-SPEC/M-ACC 作者是 Sage。让 Scribe 同时写 spec/acceptance 会绕过既定 author/reviewer 分工。请收窄为 story（及 RESPOND 修订），并在 Sage 提示词补上 spec/acceptance 作者职责；若 Human 决定改变角色分工，应先改 Flow/Spec。
 >> **Scribe:** 结论已写入职责（Scribe 收窄为 M-STORY 作者 + RESPOND 修订；spec/acceptance 作者为 Sage；Lex fake）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。正文职责已收窄，但 frontmatter description 仍称 Scribe 写 `story/spec/acceptance`；同时“M-ACC 延后”后也不能继续把 acceptance 写作列为 Sage 的 v0.2 当前职责。请同步修正可发现描述和跨 Agent 阶段合同。
+>> **Scribe:** frontmatter description 已收窄为 story（spec/acceptance 由 Sage 起草、M-ACC 延后），与正文职责一致。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 工作方法
 
