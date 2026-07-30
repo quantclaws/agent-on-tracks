@@ -49,7 +49,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-05a | `.tracks/projects/v0.1/story.md` 存在；frontmatter 含 `story_id`、`created`、`status: draft`、`sha:`（空）。正文包含 stdin 文本。该文件已由 Runtime 提交——start 结束后 `git status --porcelain` 为空。 |
+| AC-05a | `.tracks/projects/v0.1/story.md` 存在；frontmatter 含 `story_id`、`created`、`status: draft`、`title:`（空）、`sha:`（空）。正文包含 stdin 文本。该文件已由 Runtime 提交——start 结束后 `git status --porcelain` 为空。 |
 
 ## FR-06 — M-START 事件
 
@@ -81,7 +81,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-10a | triage go + run 后：事件日志出现 `assignment.dispatched`（role=scribe, substate=DRAFT）。story.md 内容按模板更新。 |
+| AC-10a | triage go + run 后：事件日志出现 `assignment.dispatched`（role=scribe, substate=DRAFT）。story.md 内容按模板更新；frontmatter `title` 被 Scribe 写为非空的有意义名字（供人类引用，非编号）。 |
 
 ## FR-11 — 校验 + 重派
 

@@ -89,7 +89,8 @@ trac replay <run-id>
 ## D-08. v0.1 原始需求入口（story.md 来源）
 
 - `trac start v0.1` **从 stdin 接收原始需求**。
-- 原始需求被 Runtime 写入 `.tracks/projects/v0.1/story.md`，并设置 frontmatter（含 `story_id`、`created`、`status: draft`、空 `sha`）。
+- 原始需求被 Runtime 写入 `.tracks/projects/v0.1/story.md`，并设置 frontmatter（含 `story_id`、`created`、`status: draft`、空 `title`、空 `sha`）。
+- **`title` 字段**（用户裁定 2026-07-30）：frontmatter 必含 `title`——人类讨论问题时用有意义的名字引用一个 story，而非编号（人不擅长记数字）。start 时留空；由 Scribe 在 DRAFT 起草时写入非空的有意义名，schema 校验其非空（FR-11）。与 `sha`（start 留空、EXIT 填入）同构。
 - 之后 `trac run` 启动 M-STORY 主循环。
 - 用户无须先自行创建 story.md 文件；也不接受 `trac start` 通过文件路径传原始需求——v0.1 体验以 stdin 入口为准。
 - 如未来 v0.2+ 支持 `--story <file>` / 配置路径等通用入口，另立决策条目。

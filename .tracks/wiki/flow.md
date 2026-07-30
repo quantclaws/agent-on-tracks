@@ -153,7 +153,7 @@ stateDiagram-v2
 
 ### 4.2. story.md 结构契约（机器可校验）
 
-- frontmatter：`story_id` / `created` / `status` / `sha`
+- frontmatter：`story_id` / `title` / `created` / `status` / `sha`（`title`：人类引用 story 的有意义名字，非编号；start 时留空，Scribe 起草时写入非空）
 - 固定章节(见 templates/story.md)
 - 本阶段不设规模限制。release 规模由需求阶段控制：一次 release 最多 30 条功能需求，超出则从 story 重新拆起
 - 行为种子须预答"将来用什么断言验证我"。断言是产品级可观察事实（"用户结账后总额减少 20%"），不是技术命令（"curl | jq"）——技术验证路径由 Sage 在 M-ACC 选择。写不出断言的种子说明需求太模糊，须在 interview 中追问到可断言为止

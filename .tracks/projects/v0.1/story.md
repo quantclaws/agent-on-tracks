@@ -1,5 +1,6 @@
 ---
 story_id: S-001
+title: workflow-start-to-spec
 created: 2026-07-30
 status: draft
 sha:

@@ -34,7 +34,7 @@ v0.1 不包含（产品能力排除）：
 | FR-02 | `trac start <version>` 从 **stdin** 读取原始需求文本。stdin 为空 → exit 1，stderr 报错。                                                                                                           | Story §核心操作路径 步骤2；D-08    |
 | FR-03 | `trac start` 在 git 工作区不干净（存在未提交变更）时拒绝执行。exit 1，stderr 说明原因，不创建任何分支。                                                                                            | Story §行为种子 第2行              |
 | FR-04 | `trac start` 从 **main** 创建分支 `releases/<version>` 并切换（不基于当前 HEAD 所在分支）。                                                                                                        | Story §行为种子 第1行；Flow §3     |
-| FR-05 | `trac start` 写入 `.tracks/projects/<version>/story.md`，含 frontmatter（`story_id`、`created`、`status: draft`、空 `sha`）及原始需求正文；随后由 Runtime 提交该文件——start 成功结束时工作区干净。 | Story §核心操作路径 步骤2；D-08    |
+| FR-05 | `trac start` 写入 `.tracks/projects/<version>/story.md`，含 frontmatter（`story_id`、`created`、`status: draft`、空 `title`、空 `sha`）及原始需求正文；随后由 Runtime 提交该文件——start 成功结束时工作区干净。 | Story §核心操作路径 步骤2；D-08    |
 | FR-06 | `trac start` 追加 `stage.entered(M-START)` 和 `stage.exited(M-START)` 事件。创建 run 并写入 `runs` 投影表（含 `version`）。                                                                                       | Story §核心操作路径 步骤2；Arch §5 |
 
 ### M-STORY
@@ -45,7 +45,7 @@ v0.1 不包含（产品能力排除）：
 | FR-08 | `trac triage go\|no-go\|park` 追加 `human.triage(decision)` 事件。仅在 state=awaiting_triage 时有效；否则 exit 1。                                                 | Story §核心操作路径 步骤3；D-04        |
 | FR-09 | `human.triage(no_go)` 或 `human.triage(park)`：记入 backlog、checkout 回 main、删除 `releases/<version>` 分支、追加 `run.completed`、exit 0。最终 HEAD 位于 main。 | Story §行为种子 第3-4行；D-06          |
 | FR-10 | `human.triage(go)`：进入 DRAFT，分派 Scribe(FakeAgent) 按模板写 story.md。                                                                                         | Story §核心操作路径 步骤3；Flow §4.1   |
-| FR-11 | Scribe 产出后：Runtime 校验 story.md（schema + scope：仅允许动 story.md）。失败 → `verdict.failed` + 附带失败证据重派同一 Agent。                                  | Story §行为种子 第6行；Flow §4.1       |
+| FR-11 | Scribe 产出后：Runtime 校验 story.md（schema：含固定章节 + frontmatter `title` 非空；scope：仅允许动 story.md）。失败 → `verdict.failed` + 附带失败证据重派同一 Agent。                                  | Story §行为种子 第6行；Flow §4.1       |
 | FR-12 | 同一校验连续失败 3 次 → 停止重派，进入 `awaiting_human`（升级人类）。                                                                                              | Story §行为种子 第7行；Arch §3d        |
 | FR-13 | 校验通过 + 提交后：进入 SAGE_REVIEW，分派 Sage(FakeAgent) 评审。                                                                                                   | Flow §4.1                              |
 | FR-14 | `sage.verdict(pass)` → 进入 HUMAN_REVIEW。`sage.verdict(comment)` → 进入 RESPOND（分派 Scribe 附 diff）。                                                          | Flow §4.1                              |
