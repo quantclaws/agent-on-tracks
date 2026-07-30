@@ -132,7 +132,7 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 
 ### 4c. 物化与清理
 
-调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 可发现位置。**发现路径/命名/大小写待目标 opencode 版本 spike 固化**（本仓现有 `.opencode/agents/` 复数）。物化合同：已有同名 agent 拒绝静默覆盖（备份或 command_id 唯一名）；终态清理；崩溃后下次启动 reconcile 清理悬挂物化。
+调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定）。**命名/大小写可发现性**仍待目标 opencode 版本 spike 固化。物化合同：已有同名 agent 拒绝静默覆盖（备份或 command_id 唯一名）；终态清理；崩溃后下次启动 reconcile 清理悬挂物化。
 
 ### 4d. 角色分工（按 Flow + Aaron 收窄）
 
@@ -193,7 +193,7 @@ v0.2 **不新增事件类型**，仅 additive 扩展：
 
 ## 9. v0.2 有意识简化与 spike-pending
 
-- **spike-pending**（实现前须在目标 opencode 版本验证）：① opencode agent 发现路径/命名/大小写（`.opencode/agent` vs `agents`）；② permission command-pattern frontmatter 写法（默认 deny + 目标/临时目录 allow，Sage bash 收敛）；③ skill 物化 vs 注入（v0.2 默认注入）。
+- **spike-pending**（实现前须在目标 opencode 版本验证）：① opencode agent 命名/大小写可发现性（发现路径已定 = `.opencode/agents/<Name>.md`，Aaron）；② permission command-pattern frontmatter 写法（默认 deny + 目标/临时目录 allow，Sage bash 收敛）；③ skill 物化 vs 注入（v0.2 默认注入）。
 - 不做真实 Lex / M-ACC（延后）；不做 opencode `-m`/`--variant`；不做 @mention 通知推送；不做讨论跨文件关联/历史版本化（git 提供）。
 - discuss 无持久化 ID（全文扫描即时重建），是 Aaron 决定的有意识简化（换取对文档变化的及时跟随），代价是每次操作全文扫描（< 1MB 文档 < 1s，NFR-020）。
 - 交付物一致性 = 存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。

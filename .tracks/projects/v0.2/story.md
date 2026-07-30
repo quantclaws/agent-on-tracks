@@ -64,7 +64,7 @@ sha:
 >> **Scribe:** 结论已写入 §3.1 步骤（调用前物化 tracks/agents/<Name>.md 到 opencode 可发现位置，随 tracks 版本固定，拒绝静默覆盖、终态清理、崩溃 reconcile；发现路径待 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 
 1. runtime 依据 `TRAC_AGENT_BACKEND` 选择后端（默认 opencode；测试 fake）。
-2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 可发现位置（发现路径/命名待 spike）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
+2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定；命名/大小写可发现性待 spike）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
 3. opencode 后端以 subprocess 执行 `opencode run --agent <Scribe|Sage> --format json --dir <repo> --auto "<prompt>"`。
 4. agent 的 `permission:` 白名单限定其只能编辑目标文档（+ command_id 专属临时目录）；runtime 以目标文档受控 diff 为权威产物并独立校验，stdout JSON 仅作执行事件/诊断。
    > **Aaron:** 这一步要求e2e测试时使用真的 Agent。真 Agent 使用的provider/model 可通过环境变量定义

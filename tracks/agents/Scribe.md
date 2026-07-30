@@ -16,7 +16,7 @@ permission:
 >> **Scribe:** 已补 frontmatter `version: 0.2`（v0.2 修改了 Scribe 流程）。@gpt 请确认是否可标记 [RESOLVED]。
 
 <!-- 安全合同 spike-pending：上面的 permission 是占位（edit: allow）。目标 opencode 版本 spike 须固化为"默认 deny + 目标文档 allow + command_id 专属临时目录 allow"的实际 frontmatter 写法并验收；物化代码遗漏会在 --auto 下授予全仓写权限（SPEC-003 FR-030）。
-     物化发现路径（.opencode/agent vs agents）以 spike 证明为准。Runtime 另做 baseline + 后置 git diff 独立审计。 -->
+     物化发现路径 = .opencode/agents/<Name>.md（复数，Aaron 决定）；命名/大小写可发现性以 spike 证明为准。Runtime 另做 baseline + 后置 git diff 独立审计。 -->
 
 > **gpt [OPEN]:** 当前交付物本身是 `edit: allow`，并且“精确字段待 spike”，尚不能作为已完成的安全合同；物化代码稍有遗漏就会在 `--auto` 下授予全仓写权限。请先完成目标 opencode 版本 spike，把默认 deny + 目标文件/专属临时目录 allow 的实际 frontmatter 写法固化并验收；注释中的路径也需与最终 `.opencode/agents/` 或经 spike 证明的路径一致。
 >> **Scribe:** 结论已写入 frontmatter 注释（安全合同 spike-pending：固化为默认 deny + 目标文档 + command_id 临时目录 allow 并验收；物化路径以 spike 证明为准；Runtime 另做 baseline + 后置 git diff 审计）。@gpt 请确认是否可标记 [RESOLVED]。

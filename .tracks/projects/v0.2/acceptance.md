@@ -28,7 +28,7 @@ sha:
 - AC-0201: opencode 后端以 subprocess 执行 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
 - AC-0202: `<Name>` 仅取 `Scribe` / `Sage`（首字母大写）
 - AC-0203: runtime 解析 stdout 的 JSON 取回 agent 产物/状态
-- AC-0204: 调用前将 `tracks/agents/<Name>.md` 物化到 opencode 可发现位置（确切路径/命名/大小写待 spike 固化）
+- AC-0204: 调用前将 `tracks/agents/<Name>.md` 物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定）；命名/大小写可发现性待 spike 固化
 - AC-0205: 已有同名 agent 不被静默覆盖（拒绝或备份）
 - AC-0206: 正常与失败终态清理物化产物；崩溃后下次启动 reconcile 清理悬挂物化
 - AC-0207: opencode 确能按 `Scribe`/`Sage` 名发现物化定义（live suite 验证）

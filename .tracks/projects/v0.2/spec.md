@@ -33,8 +33,8 @@ sha:
 - `<Name>` ∈ {`Scribe`, `Sage`}（首字母大写）。
 - `--auto` 表示非交互自动执行；`--format json` 输出机器可解析结果。
 - 产物权威：目标文件的受控 diff 为权威产物；stdout JSON 仅作执行协议/诊断，不作为产物来源（见 NFR-030）。
-- 物化：调用前将 canonical 提示词（`tracks/agents/<Name>.md`）物化到 opencode 可发现位置，使 opencode 能按名解析。
-  - 发现路径 / 命名规则 / 大小写敏感性 **待目标 opencode 版本 spike 固化**（本仓现有 `.opencode/agents/`（复数），需确认是否为 `agent` 单数及 `Scribe`/`Sage` 名可发现）；spike 前此项标记 spike-pending。
+- 物化：调用前将 canonical 提示词（`tracks/agents/<Name>.md`）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定），使 opencode 能按名解析。
+  - 发现路径已定 = `.opencode/agents/<Name>.md`（复数，Aaron 决定，与本仓现有 `.opencode/agents/` 一致）。**命名/大小写可发现性**（opencode 是否按首字母大写 `Scribe`/`Sage` 名解析 `Scribe.md`）仍待目标 opencode 版本 spike 固化并验收。
   - 覆盖已有同名 agent：拒绝静默覆盖（备份或使用 command_id 唯一名）。
   - 终态清理物化产物；崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。
 - v0.2 不支持 `-m` / `--variant` 参数。

@@ -176,11 +176,11 @@ IF-001 §11 既有路径不变。新增/明确：
 | `tracks/agents/Scribe.md`、`tracks/agents/Sage.md` | opencode agent 定义（frontmatter + body） | 维护者（spec 交付物） | OpencodeBackend（物化源） |
 | `tracks/skills/tracks-discuz/SKILL.md` | opencode skill（frontmatter + body） | 维护者（spec 交付物） | OpencodeBackend（注入 Sage 上下文） |
 | `tracks/templates/{story,spec,acceptance,...}.md` | Markdown 模板 | 维护者 | templating.py、checks/validate |
-| `<target repo>/.opencode/agent/<Name>.md` | 物化的 agent 定义（**瞬态**） | OpencodeBackend | opencode（按名解析）；终态清理 |
+| `<target repo>/.opencode/agents/<Name>.md` | 物化的 agent 定义（**瞬态**） | OpencodeBackend | opencode（按名解析）；终态清理 |
 | 系统临时目录 `tracks-<command_id>/` | command_id 隔离的 Agent 专属临时目录 | Agent（白名单内） | Agent；终态清理 |
 | `.tracks/projects/<ver>/{story,spec,acceptance}.md` | Markdown + 讨论 blockquote | executor / discuss writer / Human 手写 | validate、discuss parser、agents |
 
-> 交付物（agents/skills/templates）随 tracks 版本固定；其 frontmatter 版本号在对应流程被修改的 tracks 版本升版（存在性 + 版本检查，落交付门禁，ARCH §9）。物化发现路径（`.opencode/agent` vs `agents`）以 spike 证明为准。
+> 交付物（agents/skills/templates）随 tracks 版本固定；其 frontmatter 版本号在对应流程被修改的 tracks 版本升版（存在性 + 版本检查，落交付门禁，ARCH §9）。物化发现路径 = `.opencode/agents/<Name>.md`（复数，Aaron 决定）；命名/大小写可发现性以 spike 证明为准。
 
 ## 9. 后端选择与注入（边界纪律）
 
