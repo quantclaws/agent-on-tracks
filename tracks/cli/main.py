@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-from tracks import paths
+from tracks import paths, templating
 from tracks.executor import Executor, git
 from tracks.kernel import Command, project
 from tracks.store import Store, new_ulid
@@ -69,19 +69,6 @@ def writer_lock(home: Path):
 
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\n"
 
-STORY_TEMPLATE = """---
-story_id: S-001
-created: {created}
-status: draft
-title:
-sha:
----
-
-# 原始需求
-
-{raw}
-"""
-
 
 def cmd_init(repo: Path) -> int:
     home = paths.tracks_home(repo)
@@ -123,7 +110,7 @@ def cmd_start(repo: Path, version: str) -> int:
         vdir.mkdir(parents=True, exist_ok=True)
         story = vdir / "story.md"
         story.write_text(
-            STORY_TEMPLATE.format(created=date.today().isoformat(), raw=raw),
+            templating.render_story_skeleton(raw, date.today().isoformat()),
             encoding="utf-8",
         )
         git(repo, "add", str(story))

@@ -45,6 +45,22 @@ def _simulate_map() -> dict:
     return out
 
 
+def _story_title(body: str) -> str:
+    """Coherent title: the §1 原始输入 request, else the first heading."""
+    in_raw = False
+    for line in body.splitlines():
+        if line.strip() == "## 1. 原始输入":
+            in_raw = True
+            continue
+        if in_raw:
+            if line.startswith("#"):  # reached the next section
+                break
+            if line.startswith(">") and line[1:].strip():
+                return line[1:].strip()[:60]
+    first = next((ln for ln in body.splitlines() if ln.strip()), "untitled")
+    return (first.lstrip("# ").strip() or "untitled")[:60]
+
+
 class FakeBackend:
     """Deterministic AgentBackend (v0.1 FakeAgent, relocated to effects/)."""
 
@@ -81,11 +97,13 @@ class FakeBackend:
     def _write_story(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8")
         head, body = split_frontmatter(text)
-        first = next((line for line in body.splitlines() if line.strip()), "untitled")
-        title = first.lstrip("# ").strip()[:60] or "untitled"
+        title = _story_title(body)
         lines = head.splitlines()
         for i, line in enumerate(lines):
-            if line.startswith("title:") and not line.split(":", 1)[1].strip():
+            if not line.startswith("title:"):
+                continue
+            val = line.split(":", 1)[1].strip()
+            if not val or val.startswith("{"):  # empty or unfilled placeholder
                 lines[i] = f"title: {title}"
         head = "\n".join(lines) + "\n" if lines else ""
         for sec in STORY_SECTIONS:
