@@ -8,15 +8,17 @@ permission:
   glob: allow
   edit: allow
   bash: allow
-  webfetch: deny
-  websearch: deny
+  webfetch: allow
+  websearch: allow
+  external_directory: deny
 ---
 
 > **gpt [RESOLVED]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
 >> **Scribe:** 已补 frontmatter `version: 0.2`（v0.2 修改了 Sage 流程）。@gpt 请确认是否可标记 [RESOLVED]。
 
-<!-- 安全合同 spike-pending：edit: allow + bash: allow 是占位，bash 可在 --auto 下绕过 edit 白名单。目标 opencode 版本 spike 须验证 command-pattern permission，仅允许受控的 trac discuss / trac validate 参数；若做不到，由 Runtime 提供窄工具接口而非开放 bash（SPEC-003 FR-030）。
-     edit 收敛为"默认 deny + 目标文档 allow + command_id 临时目录 allow"；Runtime 另做 baseline + 后置 git diff 独立审计。物化发现路径以 spike 证明为准。 -->
+<!-- 安全合同（spike 已固化，opencode 1.18.1）：frontmatter permission 仅粗粒度，不支持命令级 pattern（实证）。故无法把 bash 收敛到“仅 trac discuss/validate”——Sage bash: allow（需 trac discuss 做 inline-discussion 评审），越权由 Runtime 后置审计强制（FR-030：baseline + git diff，目标 spec 文档 + command_id 临时目录之外的写 → outcome failed/不提交/回滚）。
+     Sage 工具（同 Scribe，Aaron 定）：read/grep/glob/webfetch/websearch allow（调研）；bash allow（trac discuss/validate；禁 trac run/triage/review、禁 commit）；edit allow（粗粒度，靠审计限定到 spec）；external_directory deny。残留风险：bash:allow 下非文件类命令后置审计抓不到，v0.2 接受（完全串行化推迟 web 界面）。
+     物化发现路径 = .opencode/agents/<Name>.md（复数，Aaron 决定，spike 证实大小写保留）。 -->
 
 > **gpt [OPEN]:** `edit: allow` + `bash: allow` + `--auto` 会让 bash 绕过目标文件白名单。不能把“精确字段待 spike”的 unrestricted agent 当交付完成。请用目标 opencode 版本验证 command-pattern permission，只允许 `trac discuss`/`trac validate` 的受控参数；若做不到，应由 Runtime 提供窄工具接口而不是开放 bash，并保留运行后的 git diff 独立审计。
 >> **Scribe:** 结论已写入 frontmatter 注释（spike-pending：command-pattern permission 仅允许受控 trac discuss/validate，否则 Runtime 窄工具接口而非开放 bash；edit 默认 deny + 目标文档 + 临时目录；后置 git diff 审计）。@gpt 请确认是否可标记 [RESOLVED]。

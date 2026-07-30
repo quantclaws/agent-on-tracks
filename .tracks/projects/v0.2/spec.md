@@ -52,7 +52,7 @@ sha:
 
 #### FR-030 agent 权限白名单与后置审计
 
-- permission pattern：默认 deny + 目标文档 allow + command_id 专属临时目录 allow。精确 frontmatter 写法待目标 opencode spike 固化；Sage 的 `bash` 须收敛到受控的 `trac discuss` / `trac validate` 参数，或改由 Runtime 提供窄工具接口（不得开放 bash 绕过 edit 白名单）。
+- permission（spike 已固化，opencode 1.18.1）：frontmatter `permission` 仅粗粒度 `tool: allow|deny`，**不支持文件/命令级 pattern**（实证：array-style permission 的 agent 不被加载）。故“目标文档 allow + 临时目录 allow”无法在 frontmatter 表达，改由 Runtime 后置审计强制（见下）。frontmatter 作粗粒度纵深防御：授予所需工具（read/grep/glob/webfetch/websearch allow，Aaron 定 Scribe/Sage 需 grep、可上网）、拒危险工具（external_directory deny）；Scribe `bash: deny`（不跑 shell/trac，校验由 Runtime 做），Sage `bash: allow`（需 `trac discuss` 评审，越权靠后置审计）。
 - 目标文档与本次专属临时目录之外的写操作即越权。
 - Runtime 后置审计：
   - 运行前记录 clean baseline（git status）。

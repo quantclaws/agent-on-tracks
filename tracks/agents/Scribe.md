@@ -8,15 +8,17 @@ permission:
   glob: allow
   edit: allow
   bash: deny
-  webfetch: deny
-  websearch: deny
+  webfetch: allow
+  websearch: allow
+  external_directory: deny
 ---
 
 > **gpt [RESOLVED]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
 >> **Scribe:** 已补 frontmatter `version: 0.2`（v0.2 修改了 Scribe 流程）。@gpt 请确认是否可标记 [RESOLVED]。
 
-<!-- 安全合同 spike-pending：上面的 permission 是占位（edit: allow）。目标 opencode 版本 spike 须固化为"默认 deny + 目标文档 allow + command_id 专属临时目录 allow"的实际 frontmatter 写法并验收；物化代码遗漏会在 --auto 下授予全仓写权限（SPEC-003 FR-030）。
-     物化发现路径 = .opencode/agents/<Name>.md（复数，Aaron 决定）；命名/大小写可发现性以 spike 证明为准。Runtime 另做 baseline + 后置 git diff 独立审计。 -->
+<!-- 安全合同（spike 已固化，opencode 1.18.1）：frontmatter permission 仅粗粒度 tool: allow|deny，不支持文件/命令级 pattern（实证：array-style permission 的 agent 不被加载）。故“只能写 story 文件”不由 frontmatter 限定，而由 Runtime 后置审计强制（FR-030：baseline + git diff，目标文档之外任何写 → outcome failed/不提交/回滚）。
+     Scribe 工具（Aaron 定）：read/grep/glob/webfetch/websearch allow（需 grep、可上网）；bash deny（不跑 shell/trac，校验由 Runtime 在 outcome 后做）；edit allow（粗粒度，靠审计限定到 story）；external_directory deny。
+     物化发现路径 = .opencode/agents/<Name>.md（复数，Aaron 决定，spike 证实大小写保留 Scribe.md→Scribe）。 -->
 
 > **gpt [OPEN]:** 当前交付物本身是 `edit: allow`，并且“精确字段待 spike”，尚不能作为已完成的安全合同；物化代码稍有遗漏就会在 `--auto` 下授予全仓写权限。请先完成目标 opencode 版本 spike，把默认 deny + 目标文件/专属临时目录 allow 的实际 frontmatter 写法固化并验收；注释中的路径也需与最终 `.opencode/agents/` 或经 spike 证明的路径一致。
 >> **Scribe:** 结论已写入 frontmatter 注释（安全合同 spike-pending：固化为默认 deny + 目标文档 + command_id 临时目录 allow 并验收；物化路径以 spike 证明为准；Runtime 另做 baseline + 后置 git diff 审计）。@gpt 请确认是否可标记 [RESOLVED]。
@@ -47,7 +49,7 @@ permission:
 5. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
 6. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。
 7. **开放产品决定**：仅记录真正无法推导、会显著改变产品结果的问题；技术选择不得写入本节。
-8. 仅返回受控文档 outcome。允许命令白名单：`trac validate` / `trac discuss`；不得调用 `trac run/triage/review` 推进状态，不得 commit（Runtime 是唯一流程 authority）。
+8. 仅返回受控文档 outcome。你 `bash: deny`，不运行任何 shell 命令（包括 trac）——结构校验由 Runtime 在你 outcome 后独立执行（FR-150），讨论由 Human/Sage 经 `trac discuss` 进行，均不需你执行。你可使用 read/grep/glob/webfetch/websearch 工具调研，但**只能写本次任务的 story 目标文档**；写其它任何文件会被 Runtime 后置审计判为越权（outcome failed、回滚，FR-030）。不得推进状态、不得 commit（Runtime 是唯一流程 authority）。
 
 > **gpt [OPEN]:** 这违反 Flow 的“Runtime 是唯一流程 authority”。Scribe 不得调用 `trac run/triage/review` 推进状态，也不得 commit；它只返回受控文档 outcome。若允许的命令只有 `trac validate/discuss`，请明确白名单。当前 bash 已 deny，这条指令本身也不可执行。
 >> **Scribe:** 结论已写入步骤 8（仅返回受控 outcome；命令白名单 trac validate/discuss；禁 trac run/triage/review、禁 commit；Runtime 是唯一流程 authority）。@gpt 请确认是否可标记 [RESOLVED]。
