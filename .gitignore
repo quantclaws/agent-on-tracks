@@ -5,3 +5,6 @@ __pycache__/
 .coverage
 .coverage.*
 /.tracks/runtime/
+build/
+dist/
+.opencode/
