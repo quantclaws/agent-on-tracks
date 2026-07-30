@@ -30,7 +30,7 @@ v0.1 不包含（产品能力排除）：
 
 | ID    | 需求                                                                                                                                                                                               | Story 来源                         |
 | :---- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------- |
-| FR-01 | `trac init` 在当前目录创建 `.tracks/` 目录结构（projects/、runtime/、wiki/）。幂等：对已存在结构重复执行 → exit 0，无副作用。                                                                      | Story §核心操作路径 步骤1          |
+| FR-01 | `trac init` 在当前目录创建 `.tracks/` 目录结构（projects/、runtime/、wiki/）及 runtime 的 `.gitignore`，并**将自身脚手架作为一次提交**（`chore: init tracks`），使工作区干净——保证紧接着的 `trac start` clean-gate 不被 init 自身产物触发。幂等：对已存在结构重复执行 → exit 0，无副作用、无空提交。 | Story §核心操作路径 步骤1；R1-10 |
 | FR-02 | `trac start <version>` 从 **stdin** 读取原始需求文本。stdin 为空 → exit 1，stderr 报错。                                                                                                           | Story §核心操作路径 步骤2；D-08    |
 | FR-03 | `trac start` 在 git 工作区不干净（存在未提交变更）时拒绝执行。exit 1，stderr 说明原因，不创建任何分支。                                                                                            | Story §行为种子 第2行              |
 | FR-04 | `trac start` 从 **main** 创建分支 `releases/<version>` 并切换（不基于当前 HEAD 所在分支）。                                                                                                        | Story §行为种子 第1行；Flow §3     |
@@ -50,7 +50,7 @@ v0.1 不包含（产品能力排除）：
 | FR-13 | 校验通过 + 提交后：进入 SAGE_REVIEW，分派 Sage(FakeAgent) 评审。                                                                                                   | Flow §4.1                              |
 | FR-14 | `sage.verdict(pass)` → 进入 HUMAN_REVIEW。`sage.verdict(comment)` → 进入 RESPOND（分派 Scribe 附 diff）。                                                          | Flow §4.1                              |
 | FR-15 | HUMAN_REVIEW 中：`trac review no-comment` + 同轮 sage pass → EXIT。                                                                                                | Story §核心操作路径 步骤3；Flow §4.1   |
-| FR-16 | `trac review revise` → RESPOND：分派 Scribe 附 Human diff + 评论，之后进入新一轮 SAGE_REVIEW。                                                                     | D-04；Flow §4.1 RESPOND                |
+| FR-16 | `trac review revise`：Human 已在磁盘直接编辑 in-scope 文档（story.md）。Runtime 捕获该文档的工作区 diff → 校验 scope（若白名单外存在脏文件则 exit 1、拒绝，不改状态）→ 以 Human 署名提交该 diff → 记 `human.review(comment, diff_ref=commit_sha)` → 进入 RESPOND：分派 Scribe 携 `diff_ref` + 评论，之后进入新一轮 SAGE_REVIEW。 | D-04；Flow §4.1 RESPOND；R1-11 |
 | FR-17 | EXIT(M-STORY)：计算 story.md 内容 sha256，写入 frontmatter `sha` 字段，提交，追加 `stage.exited(M-STORY)`。                                                        | Story §行为种子 第12行；Flow §4.1 EXIT |
 
 ### M-SPEC
@@ -83,6 +83,6 @@ v0.1 不包含（产品能力排除）：
 | NFR-01 | v0.1 不接真实 LLM。FakeAgent 是一等公民、确定性执行器替身——不是临时 mock。                  | Story §范围排除；Arch §7  |
 | NFR-02 | `project()` 和 `decide()` 是纯函数：禁止时钟、文件系统、I/O。一切不确定性仅以事件形式进入。 | Arch §2 第3点             |
 | NFR-03 | Runtime 永不信任 Agent 自述。verdict 由 Runtime 对产物运行校验工具后产出。                  | Arch §3c；Flow §2 不变量6 |
-| NFR-04 | `tracks.db` 是可抛弃投影/缓存。删除后重放事件必须复现相同状态。事件是唯一真相源。           | D-02；Arch §4             |
+| NFR-04 | 事件日志（`events/*.jsonl`）是**唯一真相源**。一切派生缓存（`runs.jsonl`，未来 `tracks.db`）可删除，`status`/`replay` 仅从事件折叠即复现相同状态。v0.1 不建 `tracks.db`，故此性质以"删除派生索引后仍能重建"验证（非删除不存在之物）。 | D-02；Arch §4；R1-07 |
 | NFR-05 | 无向后兼容别名。不支持 `.track/`。每个概念只有一条规范路径。                                | Handoff；D-01             |
 | NFR-06 | 代码精练；共享逻辑提取为公共函数，模块间无重复。单个生产文件 ≤1000 行。不设 `utils/helpers` 杂物模块：共享概念放 owner 模块或建命名小模块。不限模块数量。 | Human 指令（2026-07-30）；Arch(wiki) §7 结构预算 |

@@ -34,10 +34,14 @@ def run_loop(run_id: str, workflow: Workflow, deps: RuntimeDeps) -> None:
         if not commands:
             break                                   # awaiting_human 或 completed
         for cmd in commands:
-            deps.event_store.append(command_issued(cmd))   # write-ahead
-            result = deps.executor.execute(cmd)             # 唯一副作用
-            deps.event_store.append(result.to_event())
+            deps.event_store.append(command_issued(cmd))   # write-ahead（带 command_id）
+            result = deps.executor.execute(cmd)             # 业务副作用边界
+            deps.event_store.append(result.to_event(cmd.command_id))
 ```
+
+> **两类 I/O 边界（回应 R1-02）**：系统只有两处 I/O，纯核心（`project`/`decide`）零 I/O。
+> ① **业务副作用边界** = `effects/executor`（git、agent、文档写）；② **事件持久化边界** = `kernel/store`（append-only JSONL）。
+> "唯一副作用边界"一律指 ①；② 是范围极窄、仅 append 的持久化通道，不做任何业务决策。
 
 ## 2. 包结构
 
@@ -59,7 +63,7 @@ src/tracks/
 │   ├── m_story.py        # ← v0.1（引用 review.py）
 │   └── m_spec.py         # ← v0.1（引用 review.py）
 │                         #   m_acc.py … m_milestone.py 随后续版本填入本目录
-├── effects/              # 唯一副作用边界
+├── effects/              # 业务副作用唯一边界（git/agent/文档写）
 │   ├── executor.py       # execute(cmd) 分发到具体副作用
 │   ├── gitops.py         # 分支/提交/checkout（唯一 git 包装）
 │   └── agents.py         # Agent 适配（v0.1: 确定性 FakeAgent；将来接真 LLM）
@@ -76,6 +80,8 @@ src/tracks/
 | `workflows/` | 每落地一个 flow.md 阶段 +1 文件 | 计划内线性增长至 ~13 |
 | `effects/` | 接入真实 Agent、新副作用类型 | 缓慢 |
 | `checks/` | 每个反 slop 工具 +1 文件（trace/reach/ratio/dup…） | 按工具 story 增长 |
+
+> **可扩展性声明（回应 R1-05）**：`kernel/`（events/store/project/decide/runtime）**与具体 stage 无关**——它只认 `Workflow` 数据与事件信封。承载完整 13 阶段 flow 的机制，就是"未来阶段只往 `workflows/` 增声明式数据、往 `events.py` 增事件类型，kernel 不改"。因此 v0.1 **不**预先规定 baseline digest / B·R·G lineage / CI 证据 / 幂等 publish / milestone 闭包等未来阶段合同——它们已在 `wiki/flow.md` 记录，随实现该阶段的版本逐版规格化；此处不建未来阶段空模块。
 
 ### 结构预算（NFR-06）
 
@@ -159,6 +165,11 @@ effects.agents → kernel.events
 - 钩子只是礼貌，**不是保证**：`kill -9` 不触发任何钩子。真正的保证来自 write-ahead + fold 恢复（§6）。
 - **torn write**：进程可能死在半行 JSON 上。`kernel/store.py` 读取端忽略/截断末尾不完整行；每次 append 后 `fsync`。这条使 FR-29 的"精确恢复"成立。
 
+### 5d. 命令关联与悬挂命令恢复（回应 R1-03）
+
+- 每条 `Command` 带 `command_id`（ULID）；`command.issued` 与其结果事件共享该 `command_id`，配对**不依赖位置顺序**。
+- **悬挂命令投影规则**：`project()` 折叠时若见某 `command.issued` 无携同 `command_id` 的后继结果 → 标记为悬挂。恢复时 `decide()` 对悬挂命令**重签发同一命令/assignment**（同 `command_id`/`task_id`），`attempt` 不增（区别于校验失败重派）。这正是崩溃/取消后"证明重签发的是同一 assignment"的依据。
+
 ## 6. 事件日志与持久化
 
 - 每 run 一个文件：`.tracks/runtime/events/run-{ULID}.jsonl`
@@ -205,7 +216,7 @@ effects.agents → kernel.events
 ## 10. v0.1 有意识简化
 
 - v0.1 脚手架不含 `tracks.db`（投影缓存延后；事件足够）。
-- blob 外置代码路径存在但实际不触发（FakeAgent payload 很小）。
+- blob 外置代码路径在 FakeAgent happy-path 不触发（payload 很小），但由 store 单测注入 >8KB payload 专门验证（AC-28b）。
 - 无 `trac export` / `trac cancel` 命令（cancel 见 §5b / D-11）。
-- Backlog = 单个 append-only JSONL 文件 `.tracks/runtime/backlog.jsonl`。
+- Backlog = 单个 append-only JSONL 文件 `.tracks/runtime/backlog.jsonl`，是 `backlog.recorded` 事件的**可重建投影**（唯一真相仍是事件日志，与 tracks.db 同地位；删除后可由事件重放重建）。v0.1 只做最小记录（append 一行），不含 backlog 子系统。
 - `checks/` 目录 v0.1 只有 `validate.py`；trace/reach 是 v0.2 的交付物。

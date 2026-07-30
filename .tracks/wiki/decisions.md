@@ -68,8 +68,8 @@ trac replay <run-id>
 
 ## D-06. NO-GO / PARK / scope_overflow 的分支命运
 
-- **`human.triage(no_go)` / `human.triage(park)`**：记入 backlog + 删除 `releases/v0.1` 分支（flow §4.1 REJECTED）。**v0.1 不实现 backlog 子系统**——实际效果是 story.md 与分支一起消失，下次重头来。
-- **`scope_overflow (FR>30)`**：属于需求调整，**不删分支**；Runtime 在 release branch 上打 attic tag（如 `attic/{ver}-pre-spec`）保留历史，并返回 M-STORY 重新切片。
+- **`human.triage(no_go)` / `human.triage(park)`**：记入 backlog + 删除 `releases/v0.1` 分支（flow §4.1 REJECTED）。v0.1 的 backlog 是**最小实现**——`record_backlog` 命令追加 `backlog.recorded` 事件，投影为 `backlog.jsonl`（无独立子系统/UI）；分支删除后 story.md 随之消失，条目仅留存于 backlog。
+- **`scope_overflow (FR>30)`**：属于需求调整，**不删分支**；保留 release branch 历史并返回 M-STORY 重新切片。（历史保留的具体机制——是否打 tag、如何命名——尚未经用户裁定，留待 spec 明确，不在此臆造。）
 
 > 用户裁定：NO-GO/PARK 路径下"新建分支只包含 story.md，因此删除分支无可惜"。
 

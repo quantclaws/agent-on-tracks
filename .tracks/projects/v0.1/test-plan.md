@@ -33,12 +33,13 @@ tests/
 │   ├── test_executor.py       # executor+agents+validate 协作（真实 git tmp）
 │   └── test_store.py          # JSONL 追加/读取/blob/runs 索引
 ├── e2e/
-│   ├── test_happy_path.py     # 完整用户旅程（见 §4）
+│   ├── test_happy_path.py     # 完整用户旅程（见 §4），从真实 init → start 起
+│   ├── test_start_guards.py   # M-START 拒绝路径：空 stdin、脏工作区、init→start 干净交接
 │   ├── test_rejection.py      # NO-GO / PARK 路径
 │   ├── test_retry_escalation.py  # 校验失败 → 重派 → 升级
 │   ├── test_respond_paths.py  # sage comment / review revise 的 RESPOND 循环、错误状态命令拒绝
 │   ├── test_scope_overflow.py # FR>30 回退
-│   └── test_recovery.py       # 中断/恢复、单写者锁
+│   └── test_recovery.py       # 中断/恢复、单写者锁（阻塞式 agent 制造锁竞争）
 └── conftest.py                # 共享 fixture（tmp git repo、installed trac）
 ```
 
@@ -51,10 +52,12 @@ tests/
 | AC-11a, AC-19a（校验逻辑） | unit | test_validate.py |
 | AC-06a, AC-30a（事件序列） | integration | test_runtime_loop.py |
 | AC-13a, AC-14a/b, AC-21a（agent 协作） | integration | test_executor.py |
-| AC-N04a（store 重建） | integration | test_store.py |
-| AC-01a/b ~ AC-05a（init/start） | e2e | test_happy_path.py |
+| AC-N04a（事件重建：删 runs.jsonl 后仍折叠出终态） | integration | test_store.py |
+| AC-28b（blob 外置 >8KB） | unit | test_store.py |
+| AC-01a/c, AC-04a, AC-05a（init 提交 + start happy） | e2e | test_happy_path.py |
+| AC-01b, AC-02b, AC-03a（幂等 / 空 stdin / 脏工作区拒绝——**拒绝路径独立**，不塞 happy） | e2e | test_start_guards.py |
 | AC-07a ~ AC-17a 中的通过路径（M-STORY happy path） | e2e | test_happy_path.py |
-| AC-08b, AC-14b, AC-16a（RESPOND 循环 / 错误状态拒绝，happy path 不覆盖） | e2e | test_respond_paths.py |
+| AC-08b, AC-14b, AC-16a/b（RESPOND 循环 / revise 闭环 / 错误状态拒绝，happy path 不覆盖） | e2e | test_respond_paths.py |
 | AC-18a ~ AC-23a（M-SPEC 全程） | e2e | test_happy_path.py |
 | AC-24a/b, AC-25a/b, AC-26a（status/replay） | e2e | test_happy_path.py |
 | AC-09a/b（NO-GO/PARK） | e2e | test_rejection.py |
@@ -86,6 +89,18 @@ tests/
 ```
 
 每步断言：exit code、stdout 关键字、事件日志新增行、git 状态、文件存在/内容。
+
+> **run-loop 停止语义**（回应 R1-09）：每次 `trac run` 消费队列直至遇到 Human 门（`awaiting_human`，释放锁退出 0）或 run 终结（`run.completed`/`run.parked`）；空队列即停，不忙等。上表每个 `trac run` 步骤对应一次"跑到下一个门"。
+
+### 4.2 前进性不变量（核心断言）
+
+FakeAgent 的价值在于**穷举重要路径**，据此保证 tracks 部署到宿主后各情况下工作流都能前进。故每条 e2e 路径（happy 与所有 `simulate` 分支）末态必须落在三个干净状态之一，**绝不**停在挂起/无恢复崩溃：
+
+- `stage.exited` — 阶段推进（前进）；
+- `run.completed` / `run.parked` — run 终结（终态）；
+- `awaiting_human` — 干净停等人工（可恢复的暂停，锁已释放）。
+
+`test_recovery.py` 额外断言：`simulate=hang` 制造锁竞争后，第二个 `trac run` 被单写者锁拒绝（退出非 0、无写入），锁释放后恢复仍能前进——挂起不等于死锁。
 
 ### 4.1 E2E 测试数据来源
 
@@ -133,8 +148,11 @@ FakeAgent 通过 assignment 中的 `simulate` 字段控制行为：
 | `"schema_fail"` | 产出 schema 不合格文档 | 重派路径 |
 | `"scope_overflow"` | 产出 >30 FR 的 spec | 回退路径 |
 | `"comment"` | 返回 verdict(comment) + diff | RESPOND 路径 |
+| `"hang"` | dispatch 后阻塞不返回（持有 agent 锁） | 恢复路径：制造锁竞争（AC-27a） |
 
 E2E 测试通过环境变量 `TRAC_FAKE_SIMULATE=schema_fail` 注入（仅测试用，生产忽略）。
+
+> `simulate` 是**路径选择器**而非文档作者：它选择 FakeAgent 走哪条确定性分支，e2e 据此断言轨迹与前进性，不断言文档语义。
 
 ## 7. 测试纪律
 

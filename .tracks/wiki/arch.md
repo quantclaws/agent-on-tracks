@@ -116,7 +116,7 @@ while True:
 │   ├── lock                  # 单写者文件锁
 │   ├── runs.jsonl            # run 索引（append-only）
 │   ├── server.log
-│   └── trac.db
+│   └── tracks.db
 └── wiki/                     # 项目知识文档
     ├── arch.md
     ├── flow.md
@@ -127,7 +127,7 @@ while True:
 
 - **projects/**：project 的集合。每个 project 是一个将要发行的版本，以 `v{version}` 命名；每次 release 的 story/spec 及设计文档放在此处。用户资产，需通过 git 版本保存。
 - **runtime/**：运行时支撑文件。其中 **events/** 存放驱动流程前进的输入文件，命令执行后的结果追加进来（与 §2 的口径一致：外部输入以事件形式进入系统，事件驱动状态、状态+规则驱动决策）。
-- **trac.db**：必须是事件日志的**可抛弃投影/缓存**——删掉后可由事件回放完整重建，绝不充当真相源（真相源只有 events/）。
+- **tracks.db**：必须是事件日志的**可抛弃投影/缓存**——删掉后可由事件回放完整重建，绝不充当真相源（真相源只有 events/）。
 - 需分享/归档某次 run 的证据：显式 `trac export run <id>` 拷贝到 `projects/` 对应版本目录，日志不天生长在共享区。
 - `.gitignore` 对 `.tracks/` 只需 `/.tracks/runtime/` 一条规则。
 

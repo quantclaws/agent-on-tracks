@@ -15,6 +15,8 @@ sha:
 - 序列化格式：JSON（事件日志）；内存中为 dataclass 实例。
 - 字段命名：snake_case。事件 type 命名：`domain.action`（过去式）。
 - 本文档是 Architecture §2 各模块间契约的字段级定义。
+- **封闭集用 `Literal`/`Enum`（回应 R1-03b）**：`type`、`kind`、`role`、`decision`、`verdict`、`check`、`status`、`stage`、`substate` 均为受限字面量集合，编译期即可查拼写。下文以 `Literal[...]` 标注；`payload` 走 per-event 具体 dataclass 判别联合为后续方向，v0.1 先以 `Literal` 收口 type。
+- **`guard` 刻意保留字符串**：workflow 是可序列化、可检视的声明式数据（v0.2 doc↔code trace 依赖），guard 是注册表中纯函数的**名字**，由 workflow well-formedness 测试保证每名可解析——非自由字符串，也不改为直接函数引用。
 
 ## 2. 事件信封（EventEnvelope）
 
@@ -24,9 +26,9 @@ class EventEnvelope:
     seq: int                  # run 内单调递增，从 1 开始
     ts: str                   # ISO-8601 UTC（仅诊断用，回放不依赖）
     run_id: str               # ULID
-    type: str                 # 事件类型，见 §3
+    type: EventType           # Literal 封闭集，见 §3（domain.action 过去式）
     schema_version: int       # 当前固定 1
-    payload: dict             # 类型化内容，见 §3 各条
+    payload: dict             # 类型化内容，见 §3 各条（后续演进为 per-event dataclass 判别联合）
 ```
 
 ## 3. 事件类型清单（v0.1 全集）
@@ -56,9 +58,14 @@ class EventEnvelope:
 ```python
 @dataclass(frozen=True)
 class Command:
-    kind: str          # 见下表
+    command_id: str    # ULID，写 command.issued 时生成；结果事件回指此 id
+    kind: Literal["dispatch_agent", "validate_document", "commit_document",
+                  "create_branch", "delete_branch", "write_frontmatter",
+                  "record_backlog", "complete_run", "rollback_stage"]
     params: dict       # kind 相关参数
 ```
+
+> 结果事件（`outcome.received`、`verdict.*`、`story.committed`、`spec.committed` 等）payload 携带 `command_id`，与其 `command.issued` 配对，不依赖位置顺序。悬挂命令（issued 无同 id 结果）的投影/恢复规则见 Architecture §5d。
 
 | kind | params | 语义 |
 |:-----|:-------|:-----|
@@ -78,7 +85,7 @@ class Command:
 @dataclass(frozen=True)
 class Assignment:
     task_id: str               # run_id + substate + attempt
-    role: str                  # "scribe" | "sage" | "lex"
+    role: Literal["scribe", "sage", "lex"]
     objective: str             # 目标描述
     scope_whitelist: list[str] # 允许触碰的文件路径
     budget: Budget
@@ -103,7 +110,8 @@ class Budget:
 ```python
 @dataclass(frozen=True)
 class Outcome:
-    status: str                # "done" | "blocked" | "failed"
+    command_id: str            # 回指触发本产出的命令
+    status: Literal["done", "blocked", "failed"]
     artifact_ref: str | None   # 产出文件路径或 commit ref
     self_report: str           # Agent 自述（Runtime 不信任）
 ```
@@ -114,7 +122,7 @@ class Outcome:
 @dataclass(frozen=True)
 class Verdict:
     passed: bool
-    check: str                 # "schema" | "scope" | "trace" | "scope_overflow" | "format"
+    check: Literal["schema", "scope", "trace", "scope_overflow", "format"]
     reason: str                # 人类可读说明
     evidence: str              # 工具原始输出（非摘要）
     attempt: int               # 当前尝试次数
@@ -153,8 +161,8 @@ class StageDef:
 class Transition:
     from_substate: str
     to_substate: str
-    guard: str                 # 守卫表达式名（引用 State 字段）
-    command_kind: str          # 触发时产出的 Command.kind
+    guard: str                 # 守卫函数名（注册表按名解析为纯函数；见 §1）
+    command_kind: str          # 触发时产出的 Command.kind（同 §4 Literal 集）
 
 @dataclass(frozen=True)
 class Workflow:

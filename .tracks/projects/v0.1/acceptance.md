@@ -23,7 +23,8 @@ sha:
 | AC | 断言 |
 |:---|:---|
 | AC-01a | 在空 git 仓库中执行 `$TRAC init` → exit 0；`.tracks/projects/`、`.tracks/runtime/`、`.tracks/wiki/` 目录存在。 |
-| AC-01b | 再次执行 `$TRAC init` → exit 0，无报错，结构不变。 |
+| AC-01b | 再次执行 `$TRAC init` → exit 0，无报错，结构不变，无新增提交（无空提交）。 |
+| AC-01c | `$TRAC init` 后 `git status --porcelain` 为空（脚手架已由 init 提交，含 runtime `.gitignore`）；紧接 `echo "x" \| $TRAC start v0.1` **不因 init 产物**被 clean-gate 拒绝（R1-10）。 |
 
 ## FR-02 — stdin 需求输入
 
@@ -117,7 +118,8 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-16a | HUMAN_REVIEW 中 `$TRAC review revise` → 事件 `human.review(comment)` 已追加；下次 `$TRAC run` 分派 Scribe 进入 RESPOND。 |
+| AC-16a | HUMAN_REVIEW 中 Human 直接编辑 story.md 后 `$TRAC review revise` → 该 diff 以 Human 署名提交（`git log` 出现对应提交）；事件 `human.review(comment, diff_ref=<commit_sha>)` 已追加；下次 `$TRAC run` 分派 Scribe 进入 RESPOND，assignment 含 `diff_ref`。 |
+| AC-16b | revise 时白名单外存在脏文件 → `$TRAC review revise` exit 1，stderr 提及越界文件，事件日志无新增、状态不变（R1-11）。 |
 
 ## FR-17 — EXIT M-STORY sha
 
@@ -185,21 +187,22 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-27a | 后台启动 `$TRAC run`（停在 awaiting_human 持锁）；再启动第二个 `$TRAC run` → exit 1，stderr 含第一个进程 PID。 |
-| AC-27b | 第一个 `$TRAC run` 持锁期间执行 `$TRAC triage go`（或 `$TRAC review no-comment`）→ exit 1，stderr 含持锁者 PID，事件日志无新增行。 |
+| AC-27a | 用 `simulate=hang` 的**阻塞式 FakeAgent** 后台启动第一个 `$TRAC run`（执行中持锁）；其持锁期间启动第二个 `$TRAC run` → exit 1，stderr 含第一个进程 PID。（不依赖 awaiting_human 持锁——主循环在该点已释放锁，R1-04。） |
+| AC-27b | 同上持锁期间执行 `$TRAC triage go`（或 `$TRAC review no-comment`）→ exit 1，stderr 含持锁者 PID，事件日志无新增行。 |
 
 ## FR-28 — 事件日志格式
 
 | AC | 断言 |
 |:---|:---|
 | AC-28a | `run-*.jsonl` 每行为合法 JSON，含字段：seq、ts、run_id、type、schema_version、payload。seq 严格递增。 |
+| AC-28b | store 单测：append 一条 payload >8KB 的事件 → 内容落 `runtime/blobs/{sha256}`，事件行 payload 变为 `{"$ref": "blobs/{sha256}"}`；读取端能还原原 payload（R1-09）。 |
 
 ## FR-29 — 中断/恢复
 
 | AC | 断言 |
 |:---|:---|
 | AC-29a | 在 awaiting_human 时 kill `$TRAC run`；重新 `$TRAC run` → 从精确子状态恢复（不重派已完成工作）。 |
-| AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill；重新 `$TRAC run` → 重新签发同一 assignment（同 task_id），`attempt` 计数不增加。 |
+| AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill；重新 `$TRAC run` → 重新签发同一命令/assignment（同 `command_id`、同 `task_id`），`attempt` 计数不增加。 |
 | AC-29c | 向事件日志末尾追加半行不完整 JSON 后，`$TRAC status` 与 `$TRAC replay` 仍正常工作（忽略不完整行）。 |
 
 ## FR-30 — write-ahead 命令
@@ -232,7 +235,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-N04a | 删除 `tracks.db`；`$TRAC status` 仍返回正确状态（从事件重建）。 |
+| AC-N04a | 删除派生索引 `runs.jsonl`（保留 `events/`）后，`$TRAC status` 与 `$TRAC replay <run-id>` 仍从 `events/*.jsonl` 折叠出正确终态。（v0.1 不建 `tracks.db`，故验证事件重建而非删除不存在之物，R1-07。） |
 
 ## NFR-05 — 无兼容别名
 
@@ -244,5 +247,5 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-N06a | 模块间无 >5 行的重复逻辑块（代码审查 / `trac check dup` 可用时验证）。 |
+| AC-N06a | 模块间无 >5 行的重复逻辑块（v0.1 以代码审查判定；不依赖未实现的工具）。 |
 | AC-N06b | 无生产 `.py` 文件超过 1000 行；不存在名为 `utils.py`/`helpers.py`/`common.py` 的生产模块。 |
