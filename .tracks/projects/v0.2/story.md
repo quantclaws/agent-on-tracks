@@ -1,5 +1,6 @@
 ---
-story_id: S-002
+story_id: S-003
+title: inline-discussion
 created: 2026-07-30
 status: draft
 sha:
@@ -7,59 +8,46 @@ sha:
 
 ## 原始输入
 
-为 trac 增加需求追踪语法与两个检查工具（trace / reach），使"每条需求可追到测试函数、每个生产模块可达自入口点"成为机器可验证的事实。v0.2 自身豁免 ID 纪律；一旦 v0.2 完成，从 v0.3 起这条追踪链对 tracks 自己的开发变为阻塞门禁。
+迁移自 louke v0.4-004-quote-dialogue + v0.7-003-inline-discussion-protocol。
+
+在 tracks 的评审阶段（M-STORY / M-SPEC / M-ACC），Sage/Lex 与 Human 需要在文档内进行结构化的多轮讨论。当前 flow.md 中提到的 "inline-discussion" 机制没有实现。本 story 定义并实现这个机制：inline-discussion 协议。
 
 ## 用户意图
 
-- 开发者在 story/spec/acceptance 三文档中用统一语法声明 BS / FR / NFR / AC 编号；**文档即真相源**，不设独立注册表（注册表会与文档漂移）
-- **编号文法沿用 louke，不另起炉灶**（Human 裁定）：
-  - `BS-01`：两位，按核心操作路径顺序统一编号，不按路径分组
-  - `FR-0010` / `NFR-0010`：四位；初稿按 100 间隔预留，首轮评审后按 10 间隔插入，二轮评审后连续编号
-  - `AC-FRXXXX-YY`：全称 = AC + FR 四位编号 + FR 内两位序号（YY 从 01 起，跨单元不复用）；所有交叉引用一律用全称
-  - acceptance.md 是 AC 中央登记处；spec.md 只留 FR/NFR 描述与元数据
-- ID 一经分配不可变、不可复用；删除的 ID 留 tombstone 记录（事件日志与历史证据会引用旧 ID）
-- **兼容非全新宿主项目**（Human 裁定）：tracks 安装到宿主项目时，宿主可能带着存量文档与不合本文法的既有编号；trace 检查必须提供兼容能力（存量豁免，不强制重编号——tracks 自己的 v0.1 即为存量样本），具体豁免机制在 spec 阶段裁定
-- 测试函数通过 pytest marker（如 `@pytest.mark.ac("AC-FR0010-01")`）绑定 AC；无测试绑定的 AC 与指向不存在 AC 的测试都能被机器指出（louke 用 docstring 首行约定，trac 升级为可被 pytest 机器枚举的 marker，ID 文法不变）
-- `trac check trace` 对 BS→FR→AC→test 全链做双向孤儿检测：FR↔AC、AC↔test 为硬错误；BS→FR 为 warning-only（行为种子与 FR 不总是 1:1，硬约束会逼人写凑数 FR）
-- `trac check reach` 从声明的入口点（pyproject `[project.scripts]`、`__main__`、显式白名单）做**模块级 import 可达分析**，报告从任何入口都不可达的生产模块（孤岛）——louke 尸检中 79/117 幽灵模块的直接对策
-- 两个工具既可 CLI 手跑，也可被引擎当 verdict 来源调用：输出人类可读与 JSON 双格式，退出码语义稳定
-- 工具只报告、不改写：发现问题时列出证据与位置，修复由作者完成
+- Human 在 IDE 中打开 spec.md / acceptance.md，看到 Sage 或 Lex 留下的提问，直接用 markdown blockquote 回复，不需要任何额外工具或插件
+- Human 也可以主动对文档任意段落发起提问，由 Agent 在下一轮回答
+- Agent 通过 `trac discuss` 命令查询、创建、回复、修改讨论线程，不直接手工编辑 blockquote
+- 讨论有明确的状态（open / resolved / reopen），Runtime 在评审门禁中检查"所有讨论已 resolved"作为退出条件之一
+- 当文档被修改导致行号漂移时，Agent 仍能通过内容定位找到之前的讨论线程
 
 ## 核心操作路径
 
-1. 阅读 `wiki/trace.md`，了解 ID 文法、章节位置约定、不可变与 tombstone 规则（文法承自 louke templates：story/spec/acceptance 三模板）
-2. 按更新后的 templates 撰写 story/spec/acceptance，在规定章节声明 BS-XX / FR-XXXX / NFR-XXXX / AC-FRXXXX-YY
-3. 写测试时用 `@pytest.mark.ac("AC-FRXXXX-YY")` 绑定验收标准
-4. `trac check trace`：解析三文档 + 测试 marker，输出孤儿清单（无 AC 的 FR、回指失败的 AC、无测试的 AC、无主 marker）；`--json` 供机器消费
-5. `trac check reach`：构建 import 图，从入口点集合遍历，列出孤岛模块；`--json` 供机器消费
-6. v0.3 起：tracks 自身开发把两个检查作为合入前硬 gate；M-ACC 引擎阶段（v0.3 交付）落地时将 trace 检查挂入逐轮 validate
-
-> 豁免条款（Human 裁定）：v0.2 自身的 story/spec/acceptance 不做 ID 追踪；v0.2 期间两个工具只对 fixture 项目和 tracks 源码运行，验证工具本身。
+1. Sage 评审 spec.md 时，对某段落有疑问，执行 `trac discuss start --file spec.md --anchor-line 42 --speaker Sage "这里的 FR-030 覆盖范围是否包含 NFR？"`
+2. Runtime 在 anchor 段落后插入格式化的 blockquote 根评论，状态为 open
+3. Human 在 IDE 中打开 spec.md，看到 `> **Sage:** ...`，在下方手动写 `>> **Aaron:** 不包含，NFR 单独处理`
+4. 下一轮 Sage 执行 `trac discuss query --file spec.md --blocker Sage`，看到 awaiting_my_reply 类别中有 Aaron 的回复
+5. Sage 执行 `trac discuss reply --file spec.md --thread-id T-001 --speaker Sage "收到，已更新 FR-030 描述"`
+6. Sage 确认问题解决后执行 `trac discuss set-status --file spec.md --thread-id T-001 --status resolved --operator Sage`
+7. Runtime 在评审退出校验中执行 `trac discuss query --file spec.md --check-ready`，确认所有 thread 已 resolved
 
 ## 行为种子
 
-| 行为                     | 验证断言（将来用什么事实验证我）                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| ID 唯一性                | 文档中出现重复的 FR/AC 编号时，trace 检查失败，并指出冲突双方的文件与行号                            |
-| 编号文法合规             | 出现不合 louke 文法的编号（如 AC 交叉引用未用全称 AC-FRXXXX-YY）时，trace 检查失败并指出位置         |
-| ID 不可复用（tombstone） | 复用已删除（tombstone）ID 时检查失败；tombstone 本身不被计为孤儿                                     |
-| FR↔AC 双向覆盖           | 存在无 AC 的 FR，或回指不存在 FR 的 AC 时，检查失败并列出完整孤儿清单                                |
-| AC↔test 绑定             | 存在无测试绑定的 AC，或 marker 指向不存在 AC 的测试函数时，检查失败                                  |
-| BS→FR 弱链接             | 无 FR 承接的 BS 只产生 warning，不改变退出码；warning 内容包含 BS 编号                               |
-| 孤岛检测                 | 存在从任何声明入口点 import 不可达的生产模块时，reach 非零退出并列出模块名                           |
-| 测试模块豁免             | 纯测试模块（tests/ 下或仅含测试的模块）不计入 reach 分析，不产生误报                                 |
-| 入口点声明               | 入口点来自 pyproject scripts、`__main__` 与显式白名单三处；无任何入口声明时 reach 报错而非静默通过   |
-| 机器可消费               | 两个检查均支持 `--json`；同一输入多次运行输出完全一致；退出码 0=通过、非 0=有硬错误                  |
-| 自举纪律                 | 对 tracks 自身源码运行 reach，结果为零孤岛（arch §6：从第一个 commit 起对自己跑）                    |
-| 只报告不修改             | 任何检查运行前后，被检查项目的文件内容无任何变化                                                     |
+| 行为                     | 验证断言（将来用什么事实验证我）                                                        |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| 创建讨论线程             | 执行 start 后，文档中出现格式化的 blockquote 根评论，包含 speaker 标识和 open 状态      |
+| 回复讨论线程             | 执行 reply 后，文档中根评论下方出现嵌套回复，depth 递增                                 |
+| 状态管理权限             | 非发起人尝试设置 resolved 时被拒绝；任何人可以设置 reopen                               |
+| 行号漂移后定位           | 在讨论线程创建后向文件上方插入若干行，reply/set-status 仍能通过内容定位找到正确线程     |
+| 人类手写兼容             | Human 在 IDE 中手写 `> **Aaron:** ...` 或 `> Aaron: ...`，parser 均能正确识别为讨论线程 |
+| 门禁检查                 | 存在 open 状态的 thread 时，check-ready 返回 false 并列出阻塞项                         |
+| 说明性 blockquote 不误判 | `> **Note:** ...` 或 `> 格式约定: ...` 不被识别为讨论线程                               |
+| 代码块内不解析           | fenced code block 内的同形 blockquote 不被识别为讨论线程                                |
+| 并发写入安全             | 两个进程同时对同一文件执行写操作，不产生数据丢失或格式损坏                              |
 
 ## 范围排除
 
-- 不做 `trac check ratio / dup / budget`（后续 story 引入）
-- 不做函数级调用图可达分析（v2；本版只做模块级 import 图）
-- 不实现 M-ACC 引擎阶段（推后到 v0.3；本版 acceptance.md 以 bootstrap 方式撰写，用独立工具校验）
-- 不做 GitHub Issue 与 ID 的映射
-- 不支持非 Python 宿主项目
-- 不做自动修复/自动重编号（工具只报告）
-- v0.2 自身文档豁免 ID 追踪（见核心操作路径的豁免条款）
-- 不接真实 LLM Agent（延续 v0.1 排除）
+- 不做 Web UI 的讨论渲染（v1 是 CLI + IDE 编辑）
+- 不做 @mention 通知推送（parser 识别 @mention 语法但不触发通知）
+- 不做讨论线程的跨文件关联
+- 不做讨论历史的版本化追溯（git 本身提供）
+- 不做 12 个 agent prompt 的迁移（那是 louke 的事，tracks 的 agent prompt 从头写）
