@@ -59,7 +59,7 @@ tests/
 | AC-01b, AC-02b, AC-03a（幂等 / 空 stdin / 脏工作区拒绝——**拒绝路径独立**，不塞 happy） | e2e | test_start_guards.py |
 | AC-07a ~ AC-17a 中的通过路径（M-STORY happy path） | e2e | test_happy_path.py |
 | AC-08b, AC-14b, AC-16a/b（RESPOND 循环 / revise 闭环 / 错误状态拒绝，happy path 不覆盖） | e2e | test_respond_paths.py |
-| AC-18a ~ AC-23a（M-SPEC 全程） | e2e | test_happy_path.py |
+| AC-18a ~ AC-23b（M-SPEC 全程，含最终 sha 三值相等断言，R4-01） | e2e | test_happy_path.py |
 | AC-24a/b, AC-25a/b, AC-26a（status/replay） | e2e | test_happy_path.py |
 | AC-09a/b（NO-GO/PARK） | e2e | test_rejection.py |
 | AC-12a, AC-N03a（重派/升级） | e2e | test_retry_escalation.py |
@@ -83,7 +83,7 @@ tests/
 6. trac review no-comment             → 断言事件（AC-15a 前置）
 7. trac run                           → EXIT M-STORY，进入 M-SPEC：DRAFT→校验→LEX_REVIEW→HUMAN_REVIEW 一气跑到人类门（AC-17a, AC-18a, AC-21a）
 8. trac review no-comment             → 断言事件（AC-22a 前置）
-9. trac run                          → EXIT M-SPEC, run.completed（AC-23a）
+9. trac run                          → EXIT M-SPEC, run.completed；并断言三值相等：spec.md frontmatter `sha` == `spec.committed(final=true)` 的 `spec_sha` == 正文 sha256（AC-23a, AC-23b）
 10. trac status                       → 断言终态（AC-24a）
 11. trac replay <run-id>              → 断言事件行 + 终态 ≡ status（AC-25a, AC-26a）
 ```

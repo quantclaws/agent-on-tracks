@@ -49,8 +49,8 @@ class EventEnvelope:
 | `outcome.received` | `role: str, status: str, artifact_ref: str \| None, self_report: str` | executor（dispatch_agent 返回后） |
 | `verdict.passed` | `check: str, detail: str` | executor（validate 后） |
 | `verdict.failed` | `check: str, reason: str, evidence: str, attempt: int` | executor |
-| `story.committed` | `commit_sha: str, story_sha: str` | executor |
-| `spec.committed` | `commit_sha: str` | executor |
+| `story.committed` | `commit_sha: str, story_sha: str, final: bool` | executor |
+| `spec.committed` | `commit_sha: str, spec_sha: str, final: bool` | executor |
 | `human.triage` | `decision: "go" \| "no_go" \| "park"` | cli → store（须先取得 `runtime/lock`） |
 | `human.review` | `action: "no_comment" \| "comment", diff_ref: str \| None` | cli → store（须先取得 `runtime/lock`） |
 | `sage.verdict` | `verdict: "pass" \| "comment", diff_ref: str \| None` | executor |
@@ -191,6 +191,8 @@ class Workflow:
 | `trac replay <id>` | 无 | stdout: 事件行 + 终态 | stderr: 原因 | 0 / 1 |
 
 ## 11. 文件/存储契约
+
+> 下列 `.tracks/...` 路径均**相对运行时 cwd** 解析，根可由 `TRACKS_HOME` 环境变量覆盖（D-15）；绝不 hardcode 到项目根，测试在临时 repo 中运行以隔离。
 
 | 路径 | 格式 | 写入者 | 读取者 |
 |:-----|:-----|:-------|:-------|

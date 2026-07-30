@@ -125,7 +125,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-17a | M-STORY 退出后：story.md frontmatter `sha` 字段为 64 位十六进制串，与文件正文 sha256 一致。Git log 含对应提交。 |
+| AC-17a | M-STORY 退出后：story.md frontmatter `sha` 字段为 64 位十六进制串；三值相等：frontmatter `sha` == `story.committed(final=true)` 事件 payload 的 `story_sha` == 正文 sha256（hash 输入 = 不含 frontmatter 的 UTF-8 正文字节，LF 换行，R4-03）。事件匹配须限定 `final=true`，不得命中 DRAFT 阶段的草稿提交（R4-02）。Git log 含对应提交。 |
 
 ## FR-18 — M-SPEC DRAFT
 
@@ -162,6 +162,7 @@ sha:
 | AC | 断言 |
 |:---|:---|
 | AC-23a | 退出后：事件日志以 `stage.exited(M-SPEC)` + `run.completed` 结尾。`$TRAC status` → exit 0，报告该 run 的终态为 completed（含 run_id、最终阶段 M-SPEC）。 |
+| AC-23b | M-SPEC 退出后：spec.md frontmatter `sha` 字段为 64 位十六进制串；三值相等：frontmatter `sha` == `spec.committed(final=true)` 事件 payload 的 `spec_sha` == 正文 sha256（hash 输入同 AC-17a：不含 frontmatter 的 UTF-8 正文字节，LF 换行，R4-03）。事件匹配须限定 `final=true`，不得命中 DRAFT 阶段的草稿提交（R4-02）。Git log 含对应提交（与 AC-17a 对称，D-03/R3-06）。 |
 
 ## FR-24 — trac status
 

@@ -133,6 +133,24 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 
 **结论**：不为 story→spec 语义关联新增确定性 e2e 断言——用"回显哨兵"去测这段只会制造**虚假信心**。R2-01 不采纳。绿灯含义据实限定为"引擎管路贯通 + 形式校验生效 + 前进性"，**不**宣称覆盖语义血缘。（此前 R2-01 内联"LLM 随机"的理由由本条取代为职责划分。）
 
+## D-15. runtime 根解析与测试隔离
+
+（用户裁定 2026-07-30）测试**绝不能**读写 tracks 项目自身的 `.tracks/`，运行时 `runtime/` 目录也不复用，否则污染/损坏本项目数据。
+
+- **runtime 根按运行时 cwd 解析**：`trac` 就地在当前工作目录建立与读取 `.tracks/`（含 `runtime/tracks.db`、`blobs/`、`lock`）；**绝不 hardcode 到项目根**。
+- **可注入 override**：支持环境变量 `TRACKS_HOME` 覆盖 runtime 根，供测试与特殊部署使用。
+- **测试隔离**：每个 E2E 测试用 pytest `tmp_path` 建全新临时 git repo 并在其中运行 `trac`，`tracks.db`/`blobs`/`lock` 全落临时目录，测试结束即弃。
+- 反映到 spec.md FR-01（就地 cwd 建 `.tracks/`）与 interfaces §11（路径相对 cwd/`TRACKS_HOME`，而非项目根）。
+
+## D-16. v0.1 不实现格式校验判据（validate_document 恒 pass）
+
+（用户裁定 2026-07-30）现有 spec 反复引用 `validate_document(schema/scope/trace)`，却从未定义"合法格式"，属欠规格。v0.1 决定：
+
+- **v0.1 不实现真实格式校验**：`validate_document` 退化为**恒 pass**，至多做"文件存在 + frontmatter 可解析"最小检查。FR-11/FR-19 的 schema/scope/trace 具体判据标记为 **v0.2+**。
+- **保留 NFR-03 结构**：verdict 仍由 Runtime 产出（不信 Agent 自述），v0.1 恒真；FakeAgent 仍可用 `simulate=*_bad` 注入失败，走通 ≤3 次重派 + escalation（FR-12），使该支路可测。
+- **与 D-14 关系**：D-14 确立"形式校验归 runtime、可测"的**职责归属**不变；D-16 只是把该职责的**判据实现**推迟到 v0.2+，v0.1 先以恒 pass 打通管路。
+- **sha 落地不受影响**：sha 是完整性锚点、与格式校验无关，FR-17/FR-23/AC-23b 全部保留。
+
 ## 决策日志
 
 | ID    | 决定日期       | 标题                           | 来源                                                              |
@@ -151,3 +169,5 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-12  | 2026-07-30    | dispatch 事件模型（删 assignment.dispatched） | 用户裁定（R2-02 内联）：`command.issued(dispatch_agent)` 即派发事实 |
 | D-13  | 2026-07-30    | 副作用 per-kind reconcile       | 用户裁定（R2-03 内联）：reconcile→按需执行→观察结果                 |
 | D-14  | 2026-07-30    | 产物正确性职责划分：形式校验 vs 语义翻译 | 用户裁定（R2-01）：形式校验归 runtime，语义翻译归 LLM+评审 Agent    |
+| D-15  | 2026-07-30    | runtime 根按 cwd 解析 + 测试隔离 | 用户裁定：测试用临时 repo，不得污染项目 `.tracks/`；可注入 `TRACKS_HOME` |
+| D-16  | 2026-07-30    | v0.1 validate_document 恒 pass | 用户裁定：v0.1 不加格式校验，判据留 v0.2+，先跑 scaffold           |

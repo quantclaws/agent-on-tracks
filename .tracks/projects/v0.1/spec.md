@@ -30,7 +30,7 @@ v0.1 不包含（产品能力排除）：
 
 | ID    | 需求                                                                                                                                                                                               | Story 来源                         |
 | :---- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------- |
-| FR-01 | `trac init` 在当前目录创建 `.tracks/` 目录结构（projects/、runtime/、wiki/）及 runtime 的 `.gitignore`，并**将自身脚手架作为一次提交**（`chore: init tracks`），使工作区干净——保证紧接着的 `trac start` clean-gate 不被 init 自身产物触发。幂等：对已存在结构重复执行 → exit 0，无副作用、无空提交。 | Story §核心操作路径 步骤1；R1-10 |
+| FR-01 | `trac init` 在当前目录创建 `.tracks/` 目录结构（projects/、runtime/、wiki/）；`.tracks/` 根随**运行时 cwd** 解析，可经 `TRACKS_HOME` 环境变量覆盖（D-15，绝不 hardcode 项目根）。写并提交根 `.gitignore`（含 `/.tracks/runtime/`），并**将自身脚手架作为一次提交**（`chore: init tracks`），使工作区干净——保证紧接着的 `trac start` clean-gate 不被 init 自身产物触发。幂等：对已存在结构重复执行 → exit 0，无副作用、无空提交。 | Story §核心操作路径 步骤1；R1-10；R3-05；D-15 |
 | FR-02 | `trac start <version>` 从 **stdin** 读取原始需求文本。stdin 为空 → exit 1，stderr 报错。                                                                                                           | Story §核心操作路径 步骤2；D-08    |
 | FR-03 | `trac start` 在 git 工作区不干净（存在未提交变更）时拒绝执行。exit 1，stderr 说明原因，不创建任何分支。                                                                                            | Story §行为种子 第2行              |
 | FR-04 | `trac start` 从 **main** 创建分支 `releases/<version>` 并切换（不基于当前 HEAD 所在分支）。                                                                                                        | Story §行为种子 第1行；Flow §3     |
@@ -45,24 +45,24 @@ v0.1 不包含（产品能力排除）：
 | FR-08 | `trac triage go\|no-go\|park` 追加 `human.triage(decision)` 事件。仅在 state=awaiting_triage 时有效；否则 exit 1。                                                 | Story §核心操作路径 步骤3；D-04        |
 | FR-09 | `human.triage(no_go)` 或 `human.triage(park)`：记入 backlog、checkout 回 main、删除 `releases/<version>` 分支、追加 `run.completed`、exit 0。最终 HEAD 位于 main。 | Story §行为种子 第3-4行；D-06          |
 | FR-10 | `human.triage(go)`：进入 DRAFT，分派 Scribe(FakeAgent) 按模板写 story.md。                                                                                         | Story §核心操作路径 步骤3；Flow §4.1   |
-| FR-11 | Scribe 产出后：Runtime 校验 story.md（schema：含固定章节 + frontmatter `title` 非空；scope：仅允许动 story.md）。失败 → `verdict.failed` + 附带失败证据重派同一 Agent。                                  | Story §行为种子 第6行；Flow §4.1       |
+| FR-11 | Scribe 产出后：Runtime 校验 story.md。**v0.1：`validate_document` 恒 pass**，至多校验"文件存在 + frontmatter 可解析"；schema（含固定章节 + `title` 非空）、scope（仅允许动 story.md）具体判据留 **v0.2+**（D-16）。失败路径仍在（FakeAgent 可注入 `*_bad`）：`verdict.failed` + 附带失败证据重派同一 Agent。 | Story §行为种子 第6行；Flow §4.1；D-16 |
 | FR-12 | 同一校验连续失败 3 次 → 停止重派，进入 `awaiting_human`（升级人类）。                                                                                              | Story §行为种子 第7行；Arch §3d        |
 | FR-13 | 校验通过 + 提交后：进入 SAGE_REVIEW，分派 Sage(FakeAgent) 评审。                                                                                                   | Flow §4.1                              |
 | FR-14 | `sage.verdict(pass)` → 进入 HUMAN_REVIEW。`sage.verdict(comment)` → 进入 RESPOND（分派 Scribe 附 diff）。                                                          | Flow §4.1                              |
 | FR-15 | HUMAN_REVIEW 中：`trac review no-comment` + 同轮 sage pass → EXIT。                                                                                                | Story §核心操作路径 步骤3；Flow §4.1   |
 | FR-16 | `trac review revise`：Human 已在磁盘直接编辑 in-scope 文档（story.md）。Runtime 捕获该文档的工作区 diff → 校验 scope（若白名单外存在脏文件则 exit 1、拒绝，不改状态）→ 以 Human 署名提交该 diff → 记 `human.review(comment, diff_ref=commit_sha)` → 进入 RESPOND：分派 Scribe 携 `diff_ref` + 评论，之后进入新一轮 SAGE_REVIEW。 | D-04；Flow §4.1 RESPOND；R1-11 |
-| FR-17 | EXIT(M-STORY)：计算 story.md 内容 sha256，写入 frontmatter `sha` 字段，提交，追加 `stage.exited(M-STORY)`。                                                        | Story §行为种子 第12行；Flow §4.1 EXIT |
+| FR-17 | EXIT(M-STORY)：计算 story.md 正文 sha256（**hash 输入 = 不含 frontmatter 的 UTF-8 正文字节，LF 换行**——封 sha 入 frontmatter 不改变正文 hash，无自引用，R4-03），写入 frontmatter `sha` 字段，提交，追加 `story.committed(final=true, commit_sha, story_sha)`（R4-02），再追加 `stage.exited(M-STORY)`。 | Story §行为种子 第12行；Flow §4.1 EXIT；R4-02；R4-03 |
 
 ### M-SPEC
 
 | ID    | 需求                                                                                                                                                                                                    | Story 来源                                |
 | :---- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :---------------------------------------- |
 | FR-18 | `stage.entered(M-SPEC)` 后：进入 DRAFT，分派 Sage(FakeAgent) 继承 M-STORY 上下文写 spec.md。                                                                                                            | Story §核心操作路径 步骤4；Flow §5.1      |
-| FR-19 | Sage 产出后：校验 spec.md（schema + scope + story→spec 覆盖 trace）。失败 → 附证据重派（≤3 次）。                                                                                                       | Flow §5.1；Story §行为种子 第6行          |
+| FR-19 | Sage 产出后：校验 spec.md。**v0.1：恒 pass**（同 FR-11）；schema + scope + story→spec 覆盖 trace 具体判据留 **v0.2+**（D-16）。失败 → 附证据重派（≤3 次）。 | Flow §5.1；Story §行为种子 第6行；D-16 |
 | FR-20 | spec.md 中 FR 超过 30 条：`verdict.failed(scope_overflow)` → `stage.rolled_back` → 回退 M-STORY，落点为 **DRAFT**（不重复 TRIAGE——triage 裁决已存在），重派 Scribe 并附 overflow 证据。分支**不删除**。 | Story §行为种子 第8行；D-06               |
 | FR-21 | 校验通过 + 提交后：进入 LEX_REVIEW，分派 Lex(FakeAgent)。`lex.verdict(pass\|comment)` 协议与 sage 同构。                                                                                                | Flow §5.1                                 |
 | FR-22 | M-SPEC 的 HUMAN_REVIEW：`trac review no-comment` + 同轮 lex pass → EXIT。`trac review revise` → RESPOND。                                                                                               | Flow §5.1；D-04                           |
-| FR-23 | EXIT(M-SPEC)：格式终验通过 → `stage.exited(M-SPEC)`。Run 完成。                                                                                                                                         | Story §核心操作路径 步骤4；Flow §5.1 EXIT |
+| FR-23 | EXIT(M-SPEC)：格式终验通过后，计算 spec.md 正文 sha256（hash 输入同 FR-17：不含 frontmatter 的 UTF-8 正文字节，LF 换行），写入 frontmatter `sha` 字段，提交，追加 `spec.committed(final=true, commit_sha, spec_sha)`（区别于 DRAFT 阶段的草稿提交，R4-02），再追加 `stage.exited(M-SPEC)`。Run 完成。 | Story §核心操作路径 步骤4；Flow §5.1 EXIT；D-03；R4-02；R4-03 |
 
 ### 横切 / CLI
 
