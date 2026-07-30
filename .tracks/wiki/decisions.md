@@ -123,6 +123,16 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 
 （用户裁定 2026-07-30，回应 R2-03）稳定 `command_id` 只能**识别**操作、不能使其幂等；崩溃可能发生在 git/文件写已成功、结果事件未落盘之后，SQLite ACID 管不到边界另一侧。故每个 `Command.kind` 定义 **`reconcile（查真实世界事实）→ execute if needed → observe`** 规则：恢复悬挂命令前先查 git/文件系统实际状态，已完成则跳过、仅补记结果事件（如 `commit_document` 先 `git log --grep=<command_id>` 查该提交是否已存在）。杜绝重复提交/空提交/重复删分支。逐 kind 规则见 architecture §5e。
 
+## D-14. 产物正确性的职责划分：形式校验（runtime，可测）vs 语义翻译（LLM + 评审 Agent）
+
+（用户裁定 2026-07-30，回应 R2-01）Agent 产物的"对不对"分两层，责任主体不同，不可混为一谈：
+
+- **形式/schema 校验 = runtime 的确定性职责、可测**：Scribe 产出的 story.md、Sage 产出的 spec.md 若不合规（schema、scope、story→spec 结构化覆盖 trace），`validate` 必然抓住；e2e 测的正是这层管路是否贯通 + 前进性。
+- **语义翻译忠实度 = 不可确定性测试**：story→spec 是否"翻译"到位取决于 LLM 能力；引用/slop（"BS"）是否成立，由**评审类 Agent**（Lex/Prism + 反 slop 的引用/trace 检查）把关，**不是** runtime 测试能覆盖的。
+- **stdin→story 血缘**已由 AC 断言（start 把 stdin 原文写入 story.md），属形式层、已覆盖。
+
+**结论**：不为 story→spec 语义关联新增确定性 e2e 断言——用"回显哨兵"去测这段只会制造**虚假信心**。R2-01 不采纳。绿灯含义据实限定为"引擎管路贯通 + 形式校验生效 + 前进性"，**不**宣称覆盖语义血缘。（此前 R2-01 内联"LLM 随机"的理由由本条取代为职责划分。）
+
 ## 决策日志
 
 | ID    | 决定日期       | 标题                           | 来源                                                              |
@@ -140,3 +150,4 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-11  | 2026-07-30    | 取消协议与 cancel 推迟          | 用户裁定：并发取消需求 + 同意 v0.1 仅 Ctrl-C                        |
 | D-12  | 2026-07-30    | dispatch 事件模型（删 assignment.dispatched） | 用户裁定（R2-02 内联）：`command.issued(dispatch_agent)` 即派发事实 |
 | D-13  | 2026-07-30    | 副作用 per-kind reconcile       | 用户裁定（R2-03 内联）：reconcile→按需执行→观察结果                 |
+| D-14  | 2026-07-30    | 产物正确性职责划分：形式校验 vs 语义翻译 | 用户裁定（R2-01）：形式校验归 runtime，语义翻译归 LLM+评审 Agent    |

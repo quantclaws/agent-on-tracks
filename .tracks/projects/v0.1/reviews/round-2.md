@@ -16,7 +16,7 @@ Decisions 中没有“FakeAgent 可以忽略需求”的 Human 裁定；D-08 反
 
 要求：确定性 FakeAgent 可以简单，但必须消费上下文并保留可断言的需求血缘；happy-path 必须断言最终 Story/Spec 与 stdin、Human revise 有关联，而不只断言初始写文件和事件顺序。
 
-> **[RESOLVED] Aaron:** 评论无意义。LLM 的输出有随机性，如果采用 LLM 输出，会导致测试无法进行。我们应该有测试覆盖 LLM的可用性，但不要求它输出结果可预期。
+> **[RESOLVED] Aaron（❌ 不采纳，理由见 D-14）：** 此处混淆了两层职责。**(1) 形式/schema 校验**是 runtime 的确定性职责、可测——Scribe 的 story.md、Sage 的 spec.md 若不合规（schema、scope、story→spec 结构化覆盖 trace），`validate` 必然抓住；e2e 正是测这层管路贯通 + 前进性。**(2) story→spec 的语义忠实度**取决于 LLM 把 story"翻译"成 spec 的能力，本质上无法确定性断言；引用/slop 是否成立由**评审类 Agent**（Lex/Prism + 反 slop 引用/trace）把关，不是 runtime 测试能覆盖的。stdin→story 血缘已由 AC 断言（start 原文写入 story.md）。评审要求的"断言 spec 与 stdin 语义关联"落在 (2)：v0.1 无 LLM，也不该用回显哨兵去伪装覆盖——那只会制造虚假信心。故绿灯据实限定为"管路贯通 + 形式校验生效 + 前进性"，不宣称覆盖语义血缘。
 
 ### R2-02 dispatch 的事件时序按当前主循环无法实现
 
