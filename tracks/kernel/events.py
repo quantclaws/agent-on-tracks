@@ -7,7 +7,6 @@ defined in interfaces §3/§4.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 # interfaces §3 — v0.1 closed event set (domain.action, past tense).
 EVENT_TYPES = (
@@ -53,8 +52,8 @@ class EventEnvelope:
     version: str
     type: str
     schema_version: int
-    command_id: Optional[str]
-    task_id: Optional[str]
+    command_id: str | None
+    task_id: str | None
     payload: dict
 
 
@@ -62,4 +61,4 @@ class EventEnvelope:
 class Command:
     kind: str
     params: dict = field(default_factory=dict)
-    command_id: Optional[str] = None  # assigned by store/executor at issue time
+    command_id: str | None = None  # assigned by store/executor at issue time

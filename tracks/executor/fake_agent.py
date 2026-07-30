@@ -76,7 +76,7 @@ class FakeAgent:
     def _write_story(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8")
         head, body = split_frontmatter(text)
-        first = next((l for l in body.splitlines() if l.strip()), "untitled")
+        first = next((line for line in body.splitlines() if line.strip()), "untitled")
         title = first.lstrip("# ").strip()[:60] or "untitled"
         lines = head.splitlines()
         for i, line in enumerate(lines):

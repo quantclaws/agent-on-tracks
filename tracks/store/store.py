@@ -12,9 +12,9 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional
 
 from tracks import paths
 from tracks.kernel.events import EventEnvelope
@@ -115,8 +115,8 @@ class Store:
         version: str,
         type: str,
         payload: dict,
-        command_id: Optional[str] = None,
-        task_id: Optional[str] = None,
+        command_id: str | None = None,
+        task_id: str | None = None,
     ) -> EventEnvelope:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         if len(raw) > BLOB_THRESHOLD:
@@ -173,7 +173,8 @@ class Store:
             "INSERT INTO runs (run_id, version, status, stage, substate, awaiting, updated_ts) "
             "VALUES (?,?,?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
             "version=excluded.version, status=excluded.status, stage=excluded.stage, "
-            "substate=excluded.substate, awaiting=excluded.awaiting, updated_ts=excluded.updated_ts",
+            "substate=excluded.substate, awaiting=excluded.awaiting, "
+            "updated_ts=excluded.updated_ts",
             (
                 run_id,
                 state.version or "",
@@ -209,7 +210,7 @@ class Store:
     def state(self, run_id: str) -> State:
         return project(self.events(run_id))
 
-    def active_run(self) -> Optional[str]:
+    def active_run(self) -> str | None:
         cur = self.conn.execute(
             "SELECT run_id FROM runs WHERE status != 'completed' "
             "ORDER BY updated_ts DESC LIMIT 1"

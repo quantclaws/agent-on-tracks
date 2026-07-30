@@ -1,20 +1,7 @@
 """Validation failure → evidence-carrying re-dispatch → escalation
 (FR-11, FR-12, NFR-03): AC-11a, AC-12a, AC-N03a.
 """
-
-
-def dispatches(evs, substate=None):
-    out = []
-    for e in evs:
-        if e["type"] != "command.issued":
-            continue
-        cmd = e["payload"]["command"]
-        if cmd["kind"] != "dispatch_agent":
-            continue
-        if substate and cmd["params"].get("substate") != substate:
-            continue
-        out.append(e)
-    return out
+from tests.e2e.helpers import dispatches
 
 
 def start_to_draft(trac):

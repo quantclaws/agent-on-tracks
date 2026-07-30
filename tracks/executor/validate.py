@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
 
 from tracks.frontmatter import split_frontmatter
 
@@ -16,7 +15,7 @@ FR_LIMIT = 30
 _FR_ROW = re.compile(r"^\|\s*FR-\d+", re.MULTILINE)
 
 
-def validate_document(path: Path, doc: str) -> Optional[tuple[str, str]]:
+def validate_document(path: Path, doc: str) -> tuple[str, str] | None:
     """Return (check, reason) on failure, None when the document is valid."""
     if not path.exists():
         return ("schema", "missing file")

@@ -247,7 +247,21 @@ def cmd_replay(repo: Path, run_id: str) -> int:
     return 0
 
 
-USAGE = "usage: trac init|start <version>|run|triage <decision>|review <action>|status|replay <run-id>"
+USAGE = (
+    "usage: trac init|start <version>|run|triage <decision>"
+    "|review <action>|status|replay <run-id>"
+)
+
+# command name -> (handler, positional-arg count); handler signature is (repo, *args) -> int
+_COMMANDS = {
+    "init": (cmd_init, 0),
+    "start": (cmd_start, 1),
+    "run": (cmd_run, 0),
+    "triage": (cmd_triage, 1),
+    "review": (cmd_review, 1),
+    "status": (cmd_status, 0),
+    "replay": (cmd_replay, 1),
+}
 
 
 def main(argv=None) -> int:
@@ -255,23 +269,11 @@ def main(argv=None) -> int:
     if not args:
         return _err(USAGE)
     cmd, rest = args[0], args[1:]
-    repo = Path.cwd()
-    try:
-        if cmd == "init" and not rest:
-            return cmd_init(repo)
-        if cmd == "start" and len(rest) == 1:
-            return cmd_start(repo, rest[0])
-        if cmd == "run" and not rest:
-            return cmd_run(repo)
-        if cmd == "triage" and len(rest) == 1:
-            return cmd_triage(repo, rest[0])
-        if cmd == "review" and len(rest) == 1:
-            return cmd_review(repo, rest[0])
-        if cmd == "status" and not rest:
-            return cmd_status(repo)
-        if cmd == "replay" and len(rest) == 1:
-            return cmd_replay(repo, rest[0])
+    entry = _COMMANDS.get(cmd)
+    if entry is None or len(rest) != entry[1]:
         return _err(USAGE)
+    try:
+        return entry[0](Path.cwd(), *rest)
     except LockHeld as e:
         return _err(f"runtime lock held by pid {e.pid}")
     except RuntimeError as e:

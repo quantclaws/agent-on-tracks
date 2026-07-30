@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from tracks import paths
 from tracks.executor.fake_agent import FakeAgent
@@ -40,7 +39,7 @@ class Executor:
         self.fake = FakeAgent(repo, self.version)
 
     def _emit(self, type: str, payload: dict,
-              command_id: Optional[str] = None, task_id: Optional[str] = None):
+              command_id: str | None = None, task_id: str | None = None):
         return self.store.append(self.run_id, self.version, type, payload,
                                  command_id=command_id, task_id=task_id)
 
@@ -81,7 +80,7 @@ class Executor:
             self._execute(cmd, state, None, reconcile=True)
 
     def _execute(self, cmd: Command, state: State,
-                 task_id: Optional[str], reconcile: bool = False) -> None:
+                 task_id: str | None, reconcile: bool = False) -> None:
         getattr(self, "_do_" + cmd.kind)(cmd, state, task_id, reconcile)
 
     # -- per-kind handlers ---------------------------------------------------

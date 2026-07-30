@@ -3,25 +3,13 @@
 """
 import subprocess
 
+from tests.e2e.helpers import dispatches
+
 
 def git_out(repo, *args):
     return subprocess.run(
         ["git", *args], cwd=repo, capture_output=True, text=True, check=True
     ).stdout
-
-
-def dispatches(evs, substate=None):
-    out = []
-    for e in evs:
-        if e["type"] != "command.issued":
-            continue
-        cmd = e["payload"]["command"]
-        if cmd["kind"] != "dispatch_agent":
-            continue
-        if substate and cmd["params"].get("substate") != substate:
-            continue
-        out.append(e)
-    return out
 
 
 def test_wrong_state_commands_rejected(trac, event_log):

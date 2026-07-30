@@ -1,0 +1,6 @@
+; flake8 is used ONLY for cognitive complexity (CCR001) here; ruff handles all
+; other lint. Cognitive complexity is the single metric for branching/nesting
+; depth (it supersedes a separate "max nesting depth" check).
+[flake8]
+select = CCR001
+max-cognitive-complexity = 15

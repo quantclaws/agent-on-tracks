@@ -4,8 +4,15 @@ import os
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SUBCOV_DIR = str(Path(__file__).resolve().parent / "_subprocess_coverage")
+# True when the test session runs under coverage (e.g. `coverage run -m pytest`):
+# coverage imports itself into this process before pytest collects conftest.
+_UNDER_COVERAGE = "coverage" in sys.modules
 
 
 @pytest.fixture
@@ -35,6 +42,15 @@ def trac(host_repo):
         }
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
+        if _UNDER_COVERAGE:
+            # Merge E2E subprocess coverage into the report: the subprocess
+            # auto-starts coverage (sitecustomize on PYTHONPATH), reads config
+            # from COVERAGE_PROCESS_START, and writes a parallel data file under
+            # the absolute COVERAGE_FILE base (its cwd is the tmp host repo, so
+            # a relative path would be lost). `coverage combine` merges these.
+            env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
+            env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
+            env["PYTHONPATH"] = _SUBCOV_DIR + os.pathsep + env.get("PYTHONPATH", "")
         # Invoke the CLI as a module with the SAME interpreter running the
         # tests, so it works regardless of how pytest/coverage is launched and
         # does not depend on a `trac` console-script shim existing on disk.

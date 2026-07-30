@@ -131,7 +131,7 @@ def test_happy_path(host_repo, trac, event_log):
     assert len(finals) == 1  # never matches the DRAFT commit (R4-02)
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["spec_sha"] == body_sha
-    assert f"seal spec.md sha" in git_out(host_repo, "log", "-3", "--format=%s")
+    assert "seal spec.md sha" in git_out(host_repo, "log", "-3", "--format=%s")
     assert git_out(host_repo, "status", "--porcelain") == ""
 
     # AC-30a: every command.issued precedes its result event
@@ -153,7 +153,7 @@ def test_happy_path(host_repo, trac, event_log):
     # 11. replay ≡ status (AC-25a, AC-26a)
     r = trac("replay", run_id)
     assert r.returncode == 0, r.stderr
-    assert len([l for l in r.stdout.splitlines() if "\t" in l]) == len(evs)
+    assert len([ln for ln in r.stdout.splitlines() if "\t" in ln]) == len(evs)
     assert "status=completed" in r.stdout and "stage=M-SPEC" in r.stdout
     assert trac("replay", "nonexistent").returncode == 1  # AC-25b
 

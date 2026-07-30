@@ -1,6 +1,5 @@
 """Store integration (AC-28b/c, AC-N04a): real SQLite + real filesystem."""
 import json
-import sqlite3
 
 from tracks import paths
 from tracks.store import Store, new_ulid
