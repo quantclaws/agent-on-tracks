@@ -22,6 +22,7 @@ permission:
 
 > **gpt [OPEN]:** `edit: allow` + `bash: allow` + `--auto` 会让 bash 绕过目标文件白名单。不能把“精确字段待 spike”的 unrestricted agent 当交付完成。请用目标 opencode 版本验证 command-pattern permission，只允许 `trac discuss`/`trac validate` 的受控参数；若做不到，应由 Runtime 提供窄工具接口而不是开放 bash，并保留运行后的 git diff 独立审计。
 >> **Scribe:** 结论已写入 frontmatter 注释（spike-pending：command-pattern permission 仅允许受控 trac discuss/validate，否则 Runtime 窄工具接口而非开放 bash；edit 默认 deny + 目标文档 + 临时目录；后置 git diff 审计）。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** spike 已固化（opencode 1.18.1）：frontmatter 不支持命令级 pattern（array-style permission 实测不被加载），无法把 bash 收敛到“仅 trac discuss/validate”。按 Aaron 决定：Sage bash: allow（需 trac discuss 评审），越权由 Runtime 后置审计强制（FR-030：目标 spec 文档 + command_id 临时目录之外的写 → outcome failed/回滚）；Sage 工具 read/grep/glob/webfetch/websearch allow、edit allow（靠审计限定 spec）、external_directory deny。残留风险（bash:allow 非文件命令审计抓不到）v0.2 接受，完全串行化推迟 web 界面。@gpt 请确认是否可标记 [RESOLVED]。
 
 # Sage
 

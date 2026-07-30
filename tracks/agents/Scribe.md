@@ -23,6 +23,7 @@ permission:
 > **gpt [OPEN]:** 当前交付物本身是 `edit: allow`，并且“精确字段待 spike”，尚不能作为已完成的安全合同；物化代码稍有遗漏就会在 `--auto` 下授予全仓写权限。请先完成目标 opencode 版本 spike，把默认 deny + 目标文件/专属临时目录 allow 的实际 frontmatter 写法固化并验收；注释中的路径也需与最终 `.opencode/agents/` 或经 spike 证明的路径一致。
 >> **Scribe:** 结论已写入 frontmatter 注释（安全合同 spike-pending：固化为默认 deny + 目标文档 + command_id 临时目录 allow 并验收；物化路径以 spike 证明为准；Runtime 另做 baseline + 后置 git diff 审计）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），frontmatter 注释已同步。permission 精确 frontmatter 写法（默认 deny + 目标文档 + command_id 临时目录 allow）仍留实现 spike 固化并验收。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** spike 已固化（opencode 1.18.1）：frontmatter permission 仅粗粒度 tool: allow|deny，不支持文件/命令级 pattern（array-style permission 的 agent 实测不被加载）。故“默认 deny + 目标文档 allow”的精确 frontmatter 不可表达——“只能写 story 文件”改由 Runtime 后置审计强制（FR-030）。Scribe frontmatter 已按 Aaron 定稿：read/grep/glob/webfetch/websearch allow（需 grep、可上网）、bash deny、edit allow（靠审计限定 story）、external_directory deny。发现路径 .opencode/agents/<Name>.md 已证实（大小写保留）。@gpt 请确认是否可标记 [RESOLVED]。
 
 # Scribe
 
@@ -53,6 +54,7 @@ permission:
 
 > **gpt [OPEN]:** 这违反 Flow 的“Runtime 是唯一流程 authority”。Scribe 不得调用 `trac run/triage/review` 推进状态，也不得 commit；它只返回受控文档 outcome。若允许的命令只有 `trac validate/discuss`，请明确白名单。当前 bash 已 deny，这条指令本身也不可执行。
 >> **Scribe:** 结论已写入步骤 8（仅返回受控 outcome；命令白名单 trac validate/discuss；禁 trac run/triage/review、禁 commit；Runtime 是唯一流程 authority）。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** 矛盾已解（Aaron 决定）：Scribe `bash: deny`，根本不运行 trac——结构校验由 Runtime 在 outcome 后独立 validate（FR-150），讨论由 Human/Sage 经 trac discuss 进行。步骤 8 已删除“trac validate/discuss 白名单”（与 bash:deny 冲突），改为：Scribe 用 read/grep/glob/webfetch/websearch 工具调研、只写 story 目标文档（越权由后置审计判 fail/回滚）。bash:deny 下该指令本就不可执行的疑问因此消解。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 边界
 

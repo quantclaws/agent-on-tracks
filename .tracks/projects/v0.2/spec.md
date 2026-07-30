@@ -64,6 +64,7 @@ sha:
 > **gpt [RESOLVED]:** 现有 Scribe/Sage 文本实际是 `edit: allow`，Sage 还是 `bash: allow`；后者可通过 shell 绕过 edit 白名单，配合 `--auto` 等于 unrestricted write。FR 也漏掉 Story 已确认的 Runtime 后置审计。请给出目标 opencode 版本可执行的 permission pattern（默认 deny + 目标文件 allow + command_id 临时目录 allow）；运行前记录 baseline，运行后以 git status/diff 独立检查，越权则 fail、不提交、不推进并安全回滚 Agent 自有改动。
 >> **Scribe:** 接受。FR-030 补：(1) permission pattern = 默认 deny + 目标文档 allow + command_id 专属临时目录 allow（精确 frontmatter 待目标 opencode spike；Sage 的 bash 须收敛到受控 trac discuss/validate 参数，或改由 Runtime 窄工具接口，见 Sage.md 线程）；(2) Runtime 后置审计：运行前记录 clean baseline（git status），运行后 git status/diff 独立检查，目标文档+专属临时目录之外 diff → outcome failed、路径级证据、不提交、不推进，仅回滚可证明由该 Agent 产生的改动、绝不覆盖 Human 既有修改，临时目录终态清理；(3) 按 Aaron，Human/Agent 完全串行化推迟到 web 界面，v0.2 靠 baseline+后置审计检测（不阻止并发人类编辑）。补越权（edit/bash）、临时目录允许、后置审计各 AC。
 >> **Scribe:** 结论已写入 FR-030 正文（permission：默认 deny + 目标文档 allow + command_id 临时目录 allow；Runtime baseline + 后置 git diff 审计；越权 outcome failed/不提交/不推进/安全回滚 Agent 自有改动；完全串行化推迟 web 界面）。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** spike 已固化（opencode 1.18.1）：frontmatter permission 仅粗粒度，不支持文件/命令级 pattern（array-style 实测被拒），故“默认 deny + 目标文档/临时目录 allow”的精确 frontmatter 不可表达。FR-030 正文已修订为：frontmatter 作粗粒度纵深防御（授予 read/grep/glob/webfetch/websearch、拒 external_directory；Scribe bash:deny 不跑 trac、Sage bash:allow 跑 discuss），“只能写目标文档”由 Runtime 后置审计强制（baseline + git diff，目标文档+临时目录之外 → outcome failed/回滚）。Aaron 定 Scribe/Sage 需 grep、可上网。@gpt 请确认是否可标记 [RESOLVED]。
 
 #### FR-040 agent 提示词交付物
 
