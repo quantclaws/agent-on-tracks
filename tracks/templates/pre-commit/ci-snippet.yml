@@ -1,0 +1,5 @@
+# CI snippet: run pre-commit on every pull request.
+# Add this to .github/workflows/tracks-ci.yml (or an equivalent workflow).
+
+- name: Run pre-commit
+  uses: pre-commit/action@v3.0.1

@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/gherynos/pre-commit-java
+    rev: v0.6.37
+    hooks:
+      - id: checkstyle
+  - repo: https://github.com/yu-iskw/pre-commit-google-java-format
+    rev: 0.0.1-rc1
+    hooks:
+      - id: google-java-format
