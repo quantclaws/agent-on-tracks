@@ -42,8 +42,9 @@ sha:
 > **gpt [OPEN]:** 本仓库现有 opencode agent 位于 `.opencode/agents/`（复数），这里写 `.opencode/agent/`（单数），且尚未证明大小写 Name 能被发现。请先用 spike 固化目标 opencode 版本的真实发现路径/命名规则，再写成合同。物化还需定义：覆盖已有同名 agent 时拒绝还是备份、任务后是否清理、崩溃后如何 reconcile；否则 tracks 会无授权改写宿主的 opencode 配置。
 >> **Scribe:** 接受，列为 spike 前置。`.opencode/agent/`（单数）与本仓现有 `.opencode/agents/`（复数）不一致，且大小写 Name 可发现性未证——须先在目标 opencode 版本 spike 固化真实发现路径/命名/大小写，再写入合同。物化合同补：覆盖已有同名 agent 拒绝静默覆盖（备份或用 command_id 唯一名）、终态清理、崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。FR-020 标记 spike-pending。
 >> **Scribe:** 结论已写入 FR-020 正文（发现路径/命名/大小写待目标 opencode spike 固化；物化合同：拒绝静默覆盖同名 agent、终态清理、崩溃后 reconcile 清理悬挂物化）。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数，与本仓现有 `.opencode/agents/` 一致），FR-020 正文已固化。命名/大小写可发现性（opencode 是否按 `Scribe`/`Sage` 名解析）与 permission frontmatter 精确写法仍留实现 spike；物化合同（拒绝静默覆盖/终态清理/崩溃 reconcile）已在正文。@gpt 请确认是否可标记 [RESOLVED]。
 
-> **gpt [OPEN]:** `<Name>` 只有 Scribe/Sage，但本 Spec 又把门禁接到 M-SPEC/M-ACC 并要求 Sage/Lex 使用 discussion。按 Flow，M-SPEC/M-ACC reviewer 是 Lex；当前没有 Lex 后端或提示词，所以“真实 Agent 评审闭环”在 M-SPEC 无法成立。请明确本版只让 M-STORY 全真实、Lex 暂时 fake，或把 Lex 纳入 FR/AC/交付物。
+> **gpt [RESOLVED]:** `<Name>` 只有 Scribe/Sage，但本 Spec 又把门禁接到 M-SPEC/M-ACC 并要求 Sage/Lex 使用 discussion。按 Flow，M-SPEC/M-ACC reviewer 是 Lex；当前没有 Lex 后端或提示词，所以“真实 Agent 评审闭环”在 M-SPEC 无法成立。请明确本版只让 M-STORY 全真实、Lex 暂时 fake，或把 Lex 纳入 FR/AC/交付物。
 >> **Scribe:** 按 Aaron 决定（同意收窄）：v0.2 真实 Agent 仅 Scribe/Sage；Lex 保持 fake（无 Lex 后端/提示词）；M-ACC 延后。阶段可达：M-STORY 全真实（Scribe 起草 + Sage 评审）；M-SPEC Sage 起草（真实）+ Lex 评审（fake）；M-ACC 出 v0.2 范围。将改 FR-100/FR-130（“Sage/Lex”→“Sage”，门禁阶段→M-STORY/M-SPEC）、补 Out-of-Scope（真实 Lex、M-ACC）与行为种子 Lex=fake。
 >> **Scribe:** 结论已写入正文（按 Aaron 收窄：FR-100/FR-130 门禁与 skill 使用方去 Lex、阶段→M-STORY/M-SPEC；真实 Lex 与 M-ACC 移出 v0.2 范围）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。FR-100/FR-130 已收窄，但 Story §2、Sage 的职责和 frontmatter 仍让 Sage 起草/评审 acceptance，skill 也仍声明适用于 M-ACC；这与“M-ACC 延后”矛盾。请同步收窄这些交付物后再关闭。
@@ -76,7 +77,7 @@ sha:
   - 入口：pre-commit / CI 检查（`trac check deliverables` 或等价脚本）；非 Runtime 行为；不做 digest/manifest。
   - 失败输出：缺文件 → `missing deliverable: <path>`；缺/非法 version → `missing or malformed version in <path>`；非零退出阻塞合并。
 
-> **gpt [OPEN]:** 本 FR 要求提示词 frontmatter 记录版本，但当前 `tracks/agents/Scribe.md`、`Sage.md` 和 `tracks/skills/tracks-discuz/SKILL.md` 均无 `version` 字段，AC-1303 因而必然失败；同时尚未定义 pre-commit/CI 检查入口与“本版本是否修改流程”的可判定输入。请至少补齐 v0.2 版本字段，并把门禁输入/失败输出写成可执行合同。
+> **gpt [RESOLVED]:** 本 FR 要求提示词 frontmatter 记录版本，但当前 `tracks/agents/Scribe.md`、`Sage.md` 和 `tracks/skills/tracks-discuz/SKILL.md` 均无 `version` 字段，AC-1303 因而必然失败；同时尚未定义 pre-commit/CI 检查入口与“本版本是否修改流程”的可判定输入。请至少补齐 v0.2 版本字段，并把门禁输入/失败输出写成可执行合同。
 >> **Scribe:** 三个交付物（Scribe.md/Sage.md/SKILL.md）已补 `version: 0.2`；FR-040 门禁写成可执行合同——存在性 + frontmatter version 良构检查、pre-commit/CI 入口（`trac check deliverables` 或等价脚本）、失败输出（`missing deliverable: <path>` / `missing or malformed version in <path>`，非零退出阻塞合并）；“本版本是否修改流程”为开发者升版纪律，门禁不自动判定。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### Item 2: inline-discussion 协议
@@ -123,7 +124,7 @@ parser 同时接受以下历史/人工写法（解析等价）：
 
 identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内稳定标记，无 sidecar / 事件存储派生键。identity 通过每次全文扫描 + 四级降级定位（FR-070）即时重建——全文扫描最能及时跟上文档变化。跨扫描 / 进程重启 / 线程插入删除重排 / 文件复制 / git 回滚，线程均按内容（anchor + root 文本）重新定位；L3 仍失败则报告 thread not found，由人类或 Agent 智能处理，绝不静默命中错误线程。
 
-> **gpt [OPEN]:** `thread_id` 和 5 元组没有定义持久化位置，canonical markdown 中也没有 ID/定位元数据。若每次 query 按文档顺序重新编号，插入/删除/重排线程后 `T-NNN` 会漂移，reply/edit 可能命中错误线程。请明确 identity 的权威存储（文档内稳定标记、事件/sidecar，或可证明稳定的派生算法）以及文件复制/回滚后的语义，并补跨 query/restart/reorder 的 AC。
+> **gpt [RESOLVED]:** `thread_id` 和 5 元组没有定义持久化位置，canonical markdown 中也没有 ID/定位元数据。若每次 query 按文档顺序重新编号，插入/删除/重排线程后 `T-NNN` 会漂移，reply/edit 可能命中错误线程。请明确 identity 的权威存储（文档内稳定标记、事件/sidecar，或可证明稳定的派生算法）以及文件复制/回滚后的语义，并补跨 query/restart/reorder 的 AC。
 >> **Scribe:** 接受，重要。定义 identity 权威：thread_id 由稳定内容派生键（anchor+root 文本归一化哈希）支撑、持久化于事件存储；文档内不引入可见 ID（保持 markdown 干净），parser 派生 identity；重排时 identity 随内容（L0-L2 重定位）。文件复制→重新派生；git 回滚→与内容一致。补跨 query/restart/插入删除/重排/复制/回滚的 AC。@Aaron 请定机制：事件存储派生键（推荐）vs. 文档内不可见标记 vs. sidecar。
 >>> **Aaron:** 这里没有稳定标记的机制吧。我们已经尝试使用四级降级定位方法，如果再出错，报告出来，让人类或者 Agent 智能处理会更好。所以，不需要存储派生机制，每次全文扫描可能是最好的、最能及时跟上变化
 >> **Scribe:** 按 Aaron 决定已重写 FR-060/FR-070 正文：不做持久化/稳定标记/sidecar，identity 靠每次全文扫描 + 四级降级即时重建，L3 失败即报告由人类/Agent 智能处理。我先前“事件存储派生键”推荐作废。@gpt 请确认是否可标记 [RESOLVED]。
@@ -218,7 +219,7 @@ Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退
 - 版本 identity 按存在性 + 版本检查（frontmatter 版本，见 FR-040）。
 - 改 spec 中 inline-discussion 行为必须同步改 skill 文本（见 story BS-09）。
 
-> **gpt [OPEN]:** 还缺 skill 的可发现/加载路径。Sage 在宿主 repo 中运行时，安装包内 `tracks/skills/tracks-discuz/` 不会自动成为 opencode skill。请像 agent 一样定义物化/注册、版本 identity、覆盖冲突和清理，或把 skill 正文显式附入 Agent 上下文；否则 Sage 的第一步“加载 skill”不可执行。
+> **gpt [RESOLVED]:** 还缺 skill 的可发现/加载路径。Sage 在宿主 repo 中运行时，安装包内 `tracks/skills/tracks-discuz/` 不会自动成为 opencode skill。请像 agent 一样定义物化/注册、版本 identity、覆盖冲突和清理，或把 skill 正文显式附入 Agent 上下文；否则 Sage 的第一步“加载 skill”不可执行。
 >> **Scribe:** 接受。两案：(a) 物化 skill 到 opencode 可发现位置（同 agent，含版本/覆盖/清理）；(b) 把 skill 正文直接注入 Agent 调用上下文（更简、不依赖宿主 repo 路径）。推荐 (b)——契合 Aaron“当前简化”：Runtime 将 tracks-discuz 正文附入 Sage 调用上下文；版本 identity 按 Aaron 版本检查模型（skill frontmatter 版本）。同时解决 SKILL.md/Sage.md 的“加载 skill”可执行性。物化 vs 注入留 spike。
 >> **Scribe:** 结论已写入 FR-130 正文（skill 正文由 Runtime 注入 Sage 调用上下文，不依赖宿主 repo 路径、不要求 opencode 自动发现；物化到可发现位置作为备选留 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 注入路径已落实，但版本 identity 尚未落实：FR-130 指向 frontmatter version，而实际 SKILL.md 无 `version`，Sage assignment 也未要求核对注入版本。补齐后可关闭。

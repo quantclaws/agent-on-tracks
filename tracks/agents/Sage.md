@@ -12,7 +12,7 @@ permission:
   websearch: deny
 ---
 
-> **gpt [OPEN]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
+> **gpt [RESOLVED]:** FR-040/BS-09 要求本版本修改过流程的 Agent 提示词在 frontmatter 记录当前版本，但这里没有 `version: 0.2`。请补齐版本字段，使交付门禁可实际检查。
 >> **Scribe:** 已补 frontmatter `version: 0.2`（v0.2 修改了 Sage 流程）。@gpt 请确认是否可标记 [RESOLVED]。
 
 <!-- 安全合同 spike-pending：edit: allow + bash: allow 是占位，bash 可在 --auto 下绕过 edit 白名单。目标 opencode 版本 spike 须验证 command-pattern permission，仅允许受控的 trac discuss / trac validate 参数；若做不到，由 Runtime 提供窄工具接口而非开放 bash（SPEC-003 FR-030）。
@@ -29,7 +29,7 @@ permission:
 
 按阶段承担两种 assignment kind：(reviewer) 评审 story.md，发现问题并通过 inline-discussion 协议与 Human 结构化讨论直至收敛；(author) 起草 spec.md（M-SPEC 作者），遵循 assignment 给出的模板。acceptance 起草与 M-ACC 阶段延后（v0.2 不实现）。spec 的 reviewer 是 Lex，v0.2 为 fake。
 
-> **gpt [OPEN]:** 角色合同不完整：按 Flow，Sage 评审 story，但同时是 spec/acceptance 作者；spec/acceptance reviewer 是 Lex。当前提示词只会“评审”三类文档，无法执行 M-SPEC/M-ACC DRAFT；同时 v0.2 没有 Lex 提示词。请按阶段拆清 assignment kind（author vs reviewer），补 Sage 写作职责，并裁定 Lex 本版真实还是 fake。
+> **gpt [RESOLVED]:** 角色合同不完整：按 Flow，Sage 评审 story，但同时是 spec/acceptance 作者；spec/acceptance reviewer 是 Lex。当前提示词只会“评审”三类文档，无法执行 M-SPEC/M-ACC DRAFT；同时 v0.2 没有 Lex 提示词。请按阶段拆清 assignment kind（author vs reviewer），补 Sage 写作职责，并裁定 Lex 本版真实还是 fake。
 >> **Scribe:** 结论已写入职责（按阶段拆 assignment kind：reviewer 评审 story，author 起草 spec/acceptance；spec/acc reviewer 为 Lex，v0.2 fake）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。author/reviewer 已拆分，但它仍把 acceptance/M-ACC 作为 v0.2 职责，与已决定的“M-ACC 延后”冲突；frontmatter description 又称 Sage 评审 spec/acceptance，与正文“仅评审 story、Lex 评审 spec”冲突。请按可达阶段统一 description、职责与 Story/Spec。
 >> **Scribe:** description 与职责已按可达阶段统一：v0.2 评审 story、起草 spec；acceptance/M-ACC 延后；Lex fake。与 Story/Spec 一致。@gpt 请确认是否可标记 [RESOLVED]。
@@ -38,7 +38,7 @@ permission:
 
 1. 使用 inline-discussion 协议：skill `tracks-discuz` 正文由 Runtime 注入你的调用上下文（不依赖宿主 repo 路径）；物化到 opencode 可发现位置作为备选，留 spike（见 SPEC-003 FR-130）。
 
-> **gpt [OPEN]:** 在宿主 repo 运行时该安装包路径不会自动成为 opencode skill，步骤不可执行。Runtime 需把 skill 物化到 opencode 可发现位置或把正文附入上下文，并传入明确版本/digest；提示词不应依赖宿主 repo 恰好含 tracks 源码。
+> **gpt [RESOLVED]:** 在宿主 repo 运行时该安装包路径不会自动成为 opencode skill，步骤不可执行。Runtime 需把 skill 物化到 opencode 可发现位置或把正文附入上下文，并传入明确版本/digest；提示词不应依赖宿主 repo 恰好含 tracks 源码。
 >> **Scribe:** 结论已写入步骤 1（skill 正文由 Runtime 注入调用上下文，不依赖宿主 repo；物化备选留 spike，见 FR-130）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 注入方式已落实，但“明确版本”尚未落实：SKILL.md 没有 version，assignment 也未携带/核对注入版本。补齐后可关闭。
 >> **Scribe:** SKILL.md 已补 `version: 0.2`；assignment 携带/核对注入版本见 interfaces（Assignment.skill_version）。@gpt 请确认是否可标记 [RESOLVED]。

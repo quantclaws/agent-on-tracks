@@ -22,7 +22,7 @@ sha:
 >> **Scribe:** 采纳双通道，并与 Aaron 在 §3.1 的决定（E2E 用真 Agent、provider/model 走环境变量）合并：(A) deterministic fake E2E——默认必跑、精确断言工作流；(B) live opencode E2E——真 Agent，provider/model 由 env 配置，只断言启动/权限/产物格式/退出/恢复，不断言具体文本。缺凭据时 (B) skip（不 fail），CI 中为独立 required job、本地 opt-in。据此改写 §1 与 §4.2，消除“conftest 强制 fake”与“真 Agent E2E”的冲突（fake 为默认通道，live 为独立通道）。
 >> **Scribe:** 结论已写入 §4.2 正文（E2E 双通道：fake 默认必跑 + live opencode 真 Agent，缺凭据 skip 为独立 required job）；§1 为逐字原始输入保留不改。@gpt 请确认是否可标记 [RESOLVED]。
 
-> **gpt [OPEN]:** Item 2/用户意图把协议用于 M-ACC 和 Lex，但本 Story 没有实现 M-ACC，也只接入真实 Scribe/Sage，没有 Lex 后端或提示词。若保持当前范围，M-ACC 行为不可达、M-SPEC 的 Lex 评审仍不是真实 Agent。请二选一：把真实 Lex/M-ACC 纳入范围与行为种子，或把 v0.2 可达范围收窄到 M-STORY/M-SPEC，并明确 Lex 暂时 fake。
+> **gpt [RESOLVED]:** Item 2/用户意图把协议用于 M-ACC 和 Lex，但本 Story 没有实现 M-ACC，也只接入真实 Scribe/Sage，没有 Lex 后端或提示词。若保持当前范围，M-ACC 行为不可达、M-SPEC 的 Lex 评审仍不是真实 Agent。请二选一：把真实 Lex/M-ACC 纳入范围与行为种子，或把 v0.2 可达范围收窄到 M-STORY/M-SPEC，并明确 Lex 暂时 fake。
 >> **Scribe:** 这是范围决定，需 Aaron 拍板；Agent 推荐收窄：v0.2 真实 Agent 仅 Scribe/Sage，可达评审阶段收窄到 M-STORY/M-SPEC；Lex 保持 fake（无 Lex 后端/提示词），M-ACC 延后。将修正 §2 用户意图与 §3.3（“Sage/Lex”→“Sage”，M-ACC 移入 §4.3），并在行为种子明确 Lex=fake。@Aaron 请确认：收窄 vs. 纳入真实 Lex/M-ACC。
 >>> **Aaron:** 同意收窄
 >> **Scribe:** 按 Aaron 决定（同意收窄）已写入正文：§2 用户意图收窄到 M-STORY/M-SPEC、Lex fake、M-ACC 延后；§3.3 'Sage/Lex'→'Sage'；§4.3 补 Out-of-Scope（真实 Lex、M-ACC）。@gpt 请确认是否可标记 [RESOLVED]。
@@ -62,6 +62,7 @@ sha:
 > **gpt [OPEN]:** 仅把提示词放进 `tracks/agents/` 不能保证 `opencode run --agent Scribe` 能发现它；当前 opencode 从其 agent 配置位置解析 `--agent`。Story 需要补齐安装/注册/临时物化的用户路径、版本来源和清理语义，否则第一条真实 Agent 命令会因找不到 Scribe/Sage 而中断。
 >> **Scribe:** 接受。Spec FR-020 已含“调用前把 tracks/agents/<Name>.md 物化到目标 repo 的 .opencode/agent/<Name>.md”，但 Story 需补用户可见路径：物化时机（每次调用前）、版本来源（tracks/agents/ 随 tracks 版本固定）、清理语义（终态清理或幂等覆盖）。将补入 §3.1 步骤并新增行为种子；精确物化/清理机制留 spike。
 >> **Scribe:** 结论已写入 §3.1 步骤（调用前物化 tracks/agents/<Name>.md 到 opencode 可发现位置，随 tracks 版本固定，拒绝静默覆盖、终态清理、崩溃 reconcile；发现路径待 spike）。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），§3.1 步骤 2 已固化为该路径（命名/大小写可发现性待 spike）。物化时机/版本来源/清理语义已在正文。@gpt 请确认是否可标记 [RESOLVED]。
 
 1. runtime 依据 `TRAC_AGENT_BACKEND` 选择后端（默认 opencode；测试 fake）。
 2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定；命名/大小写可发现性待 spike）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
@@ -148,7 +149,7 @@ sha:
 
 > **Aaron:** runtime 也要在 Agent 运行结束后，通过 git status 检查Agent 有没有超越权限修改文件。对所有的 Agent，自动授权可以在系统临时目录中，创建目录和文件，修改自己创建的目录和文件。
 
-> **gpt [OPEN]:** 还缺“发现越权后怎么办”的外部结果。建议规定：执行前记录 clean baseline；执行后发现目标文档和本次专属临时目录之外的 diff，即 outcome failed、记录路径级证据、不提交、不推进；只回滚可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改；临时目录使用 command_id 隔离并在终态清理。请为越权和临时目录例外各补行为种子。
+> **gpt [RESOLVED]:** 还缺"发现越权后怎么办”的外部结果。建议规定：执行前记录 clean baseline；执行后发现目标文档和本次专属临时目录之外的 diff，即 outcome failed、记录路径级证据、不提交、不推进；只回滚可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改；临时目录使用 command_id 隔离并在终态清理。请为越权和临时目录例外各补行为种子。
 >> **Scribe:** 接受，并并入 Aaron 在 §3.4.3 的决定。最终合同：(1) 执行前记录 clean baseline（git status）；(2) 所有 Agent 自动授权系统临时目录（command_id 隔离、仅自己的目录/文件，Aaron）；(3) 执行后 git status 检查，目标文档+本次专属临时目录之外的 diff → outcome failed、记录路径级证据、不提交、不推进；(4) 仅回滚可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改；(5) 临时目录终态清理。将为越权检测与临时目录例外各补行为种子，并更新 BS-03。
 >> **Aaron:** 应该让 Human 与 Agent 操作串行化，这样就可以区分了。串行化控制等 web 界面加上后再实施。目前没有技术条件实现，因为人类可以随时改文件。
 >> **Scribe:** 按 Aaron §3.4.3 已更新 BS-03（权限白名单 + 后置 git 审计）并新增 BS-11 越权检测与安全回滚、BS-12 专属临时目录例外行为种子。@gpt 请确认是否可标记 [RESOLVED]。
@@ -189,7 +190,7 @@ sha:
 - 来源: [3.1 / 3.3 / Aaron §3.4.9]
 - 说明: 保护三类产物不脱节；这是交付门禁（存在性 + 版本检查），非 Runtime 行为，不做 digest/manifest。版本随流程变更升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。
 
-> **gpt [OPEN]:** BS-09 目前是开发流程愿望，不是可观察产品行为：测试无法知道一次 spec 修改是否“应该”同步哪些文本。请给三类产物稳定 revision/digest/manifest，并定义一致性检查的输入和失败输出；否则移到交付门禁而不是作为 Runtime 行为种子。
+> **gpt [RESOLVED]:** BS-09 目前是开发流程愿望，不是可观察产品行为：测试无法知道一次 spec 修改是否“应该”同步哪些文本。请给三类产物稳定 revision/digest/manifest，并定义一致性检查的输入和失败输出；否则移到交付门禁而不是作为 Runtime 行为种子。
 >> **Scribe:** 接受。BS-09 现状是流程愿望、非 Runtime 可观察行为。推荐改为交付门禁：给 spec/skill/agent 提示词三类产物稳定 digest/manifest，在 pre-commit/CI 一致性检查中定义输入与失败输出（而非 Runtime 行为种子）。@Aaron 请定：CI/pre-commit 交付门禁（推荐）vs. trac 运行时一致性检查。将据此重写或移除 BS-09。
 >>> **Aaron:** 只做有与无和版本检查。比如，如果 v0.2涉及到 Sage 提示词修改，则 Sage.md 的版本应该是0.2 -- 记录在 frontmatter；v0.3,v0.4没有涉及 Sage 的流程修改，则 Sage.md 版本不动，v0.5涉及Sage流程修改，则Sage.md 内容要改，版本号升级到0.5
 >> **Scribe:** 按 Aaron 决定已重写 BS-09 为交付物存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。@gpt 请确认是否可标记 [RESOLVED]。
