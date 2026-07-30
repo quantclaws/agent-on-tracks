@@ -42,13 +42,13 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-04a | start 成功后，`git branch --list releases/v0.1` 显示该分支；`git rev-parse --abbrev-ref HEAD` = `releases/v0.1`。 |
+| AC-04a | start 成功后，`git branch --list releases/v0.1` 显示该分支；该分支从 main 创建（分支创建点为 main 的 HEAD）；`git rev-parse --abbrev-ref HEAD` = `releases/v0.1`。 |
 
 ## FR-05 — story.md 写入
 
 | AC | 断言 |
 |:---|:---|
-| AC-05a | `.tracks/projects/v0.1/story.md` 存在；frontmatter 含 `story_id`、`created`、`status: draft`、`sha:`（空）。正文包含 stdin 文本。 |
+| AC-05a | `.tracks/projects/v0.1/story.md` 存在；frontmatter 含 `story_id`、`created`、`status: draft`、`sha:`（空）。正文包含 stdin 文本。该文件已由 Runtime 提交——start 结束后 `git status --porcelain` 为空。 |
 
 ## FR-06 — M-START 事件
 
@@ -73,7 +73,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-09a | `$TRAC triage no-go` + `$TRAC run` 后：分支 `releases/v0.1` 不存在；事件日志含 `run.completed`；backlog 文件记录了拒绝。 |
+| AC-09a | `$TRAC triage no-go` + `$TRAC run` 后：分支 `releases/v0.1` 不存在；`git rev-parse --abbrev-ref HEAD` = `main`；事件日志含 `run.completed`；backlog 文件记录了拒绝。 |
 | AC-09b | `$TRAC triage park` 同理。 |
 
 ## FR-10 — GO 进入 DRAFT
@@ -141,7 +141,7 @@ sha:
 
 | AC | 断言 |
 |:---|:---|
-| AC-20a | FakeAgent 产出含 31 条 FR 的 spec → `verdict.failed(scope_overflow)` + `stage.rolled_back` 回 M-STORY。分支 `releases/v0.1` 仍存在。 |
+| AC-20a | FakeAgent 产出含 31 条 FR 的 spec → `verdict.failed(scope_overflow)` + `stage.rolled_back` 回 M-STORY，落点子状态为 DRAFT（无新的 TRIAGE 分派），新 `assignment.dispatched`（role=scribe）附 overflow 证据。分支 `releases/v0.1` 仍存在。 |
 
 ## FR-21 — LEX_REVIEW
 
@@ -186,6 +186,7 @@ sha:
 | AC | 断言 |
 |:---|:---|
 | AC-27a | 后台启动 `$TRAC run`（停在 awaiting_human 持锁）；再启动第二个 `$TRAC run` → exit 1，stderr 含第一个进程 PID。 |
+| AC-27b | 第一个 `$TRAC run` 持锁期间执行 `$TRAC triage go`（或 `$TRAC review no-comment`）→ exit 1，stderr 含持锁者 PID，事件日志无新增行。 |
 
 ## FR-28 — 事件日志格式
 
@@ -198,6 +199,8 @@ sha:
 | AC | 断言 |
 |:---|:---|
 | AC-29a | 在 awaiting_human 时 kill `$TRAC run`；重新 `$TRAC run` → 从精确子状态恢复（不重派已完成工作）。 |
+| AC-29b | 在 `command.issued` 已落盘、结果未落盘时 kill；重新 `$TRAC run` → 重新签发同一 assignment（同 task_id），`attempt` 计数不增加。 |
+| AC-29c | 向事件日志末尾追加半行不完整 JSON 后，`$TRAC status` 与 `$TRAC replay` 仍正常工作（忽略不完整行）。 |
 
 ## FR-30 — write-ahead 命令
 
@@ -213,47 +216,33 @@ sha:
 |:---|:---|
 | AC-N01a | 完整 happy-path 在零网络环境下跑通（无网络调用）。 |
 
-## NFR-02 — ≤10 模块
+## NFR-02 — 纯函数
 
 | AC | 断言 |
 |:---|:---|
-| AC-N02a | `find src/track -name '*.py' ! -name '__init__.py'` 计数 ≤ 10。 |
+| AC-N02a | 单元测试以冻结输入调用 `project()` 和 `decide()`；无需 mock 文件系统或时间。 |
 
-## NFR-03 — 纯函数
-
-| AC | 断言 |
-|:---|:---|
-| AC-N03a | 单元测试以冻结输入调用 `project()` 和 `decide()`；无需 mock 文件系统或时间。 |
-
-## NFR-04 — 不信任自述
+## NFR-03 — 不信任自述
 
 | AC | 断言 |
 |:---|:---|
-| AC-N04a | FakeAgent outcome 声称 "done" 但产出不合格产物 → Runtime 仍产出 `verdict.failed`。 |
+| AC-N03a | FakeAgent outcome 声称 "done" 但产出不合格产物 → Runtime 仍产出 `verdict.failed`。 |
 
-## NFR-05 — 可抛弃 DB
-
-| AC | 断言 |
-|:---|:---|
-| AC-N05a | 删除 `tracks.db`；`$TRAC status` 仍返回正确状态（从事件重建）。 |
-
-## NFR-06 — 无兼容别名
+## NFR-04 — 可抛弃 DB
 
 | AC | 断言 |
 |:---|:---|
-| AC-N06a | 脚手架和运行时中不存在名为 `.track` 的文件/目录。不存在 `tracks.*` 导入路径。 |
+| AC-N04a | 删除 `tracks.db`；`$TRAC status` 仍返回正确状态（从事件重建）。 |
 
-## NFR-07 — 代码精练
+## NFR-05 — 无兼容别名
 
 | AC | 断言 |
 |:---|:---|
-| AC-N07a | 模块间无 >5 行的重复逻辑块（代码审查 / `trac check dup` 可用时验证）。 |
+| AC-N05a | 脚手架和运行时中不存在名为 `.track` 的文件/目录。不存在 `track.*`（单数）导入路径——导入包名唯一为 `tracks`。 |
 
----
+## NFR-06 — 代码精练
 
-## 覆盖矩阵摘要
-
-- 30 条 FR → 42 条 AC（每条 FR ≥1 条 AC）
-- 7 条 NFR → 7 条 AC（每条 NFR ≥1 条 AC）
-- 每条 AC 恰好引用一条 FR 或 NFR
-- 无孤立 AC
+| AC | 断言 |
+|:---|:---|
+| AC-N06a | 模块间无 >5 行的重复逻辑块（代码审查 / `trac check dup` 可用时验证）。 |
+| AC-N06b | 无生产 `.py` 文件超过 1000 行；不存在名为 `utils.py`/`helpers.py`/`common.py` 的生产模块。 |

@@ -11,7 +11,7 @@ sha:
 
 ## 1. 总则
 
-- 所有跨模块数据结构以 Python dataclass 定义，集中在 `track/events.py`。
+- 所有跨模块数据结构以 Python dataclass 定义，集中在 `tracks/kernel/events.py`。
 - 序列化格式：JSON（事件日志）；内存中为 dataclass 实例。
 - 字段命名：snake_case。事件 type 命名：`domain.action`（过去式）。
 - 本文档是 Architecture §2 各模块间契约的字段级定义。
@@ -37,6 +37,7 @@ class EventEnvelope:
 | `stage.exited` | `stage: str` | runtime |
 | `stage.rolled_back` | `from_stage: str, to_stage: str, reason: str` | runtime |
 | `run.completed` | `terminal_state: str` | runtime |
+| `run.interrupted` | `at_substate: str, reason: "signal" \| "crash_recovered"` | runtime（取消/关闭时，D-11） |
 | `command.issued` | `command: Command`（见 §4） | runtime（write-ahead） |
 | `assignment.dispatched` | `role: str, substate: str, assignment: Assignment`（见 §5） | executor |
 | `outcome.received` | `role: str, status: str, artifact_ref: str \| None, self_report: str` | executor |
@@ -44,8 +45,8 @@ class EventEnvelope:
 | `verdict.failed` | `check: str, reason: str, evidence: str, attempt: int` | executor |
 | `story.committed` | `commit_sha: str, story_sha: str` | executor |
 | `spec.committed` | `commit_sha: str` | executor |
-| `human.triage` | `decision: "go" \| "no_go" \| "park"` | cli → store |
-| `human.review` | `action: "no_comment" \| "comment", diff_ref: str \| None` | cli → store |
+| `human.triage` | `decision: "go" \| "no_go" \| "park"` | cli → store（须先取得 `runtime/lock`） |
+| `human.review` | `action: "no_comment" \| "comment", diff_ref: str \| None` | cli → store（须先取得 `runtime/lock`） |
 | `sage.verdict` | `verdict: "pass" \| "comment", diff_ref: str \| None` | executor |
 | `lex.verdict` | `verdict: "pass" \| "comment", diff_ref: str \| None` | executor |
 | `backlog.recorded` | `version: str, decision: str, reason: str` | executor |
@@ -85,6 +86,9 @@ class Assignment:
     failure_evidence: str | None  # 重派时附带上次失败原始输出
     simulate: str | None       # FakeAgent 控制字段（测试用）
 ```
+
+> `simulate` 的值仅允许在 cli/executor 边界读取 `TRAC_FAKE_SIMULATE` 环境变量注入；
+> `project()` 与 `decide()` 禁止读取环境变量或以任何方式感知测试模式——纯函数边界不因测试而破例。
 
 ```python
 @dataclass(frozen=True)

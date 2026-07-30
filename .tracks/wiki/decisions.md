@@ -22,9 +22,9 @@ last_updated: 2026-07-30
 
 - 项目根目录：**`~/workspace/tracks`**
 - 命令行命令：**`trac`**
-- Python 导入包名：**`track`**
+- Python 导入包名：**`tracks`**（2026-07-30 用户裁定：文档与代码一律使用 `tracks`，不用 `track`；与数据目录、PyPI 名一致）
 - PyPI 包名：**`agent-on-tracks`**
-- 项目数据目录：**`.tracks/`**（目录名采用复数形式，与命令/包名区分开）
+- 项目数据目录：**`.tracks/`**（与导入包名一致）
 
 > 早期另有 `.track/` 残留以避免与 GitHub Pages 经典项目心智撞车 + 让目录名与命令/包名不冲突。已清理 `.track/`。
 
@@ -99,6 +99,14 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 
 ---
 
+## D-11. 取消协议：意图走信号，事实走日志
+
+- 取消一个正在执行的 run 的唯一通道是向持锁进程发 OS 信号（PID 在 `runtime/lock` 中）；由唯一写者（runtime 自己）将其转成事实：终止 Agent 子进程、落 `run.interrupted` 事件、释放锁、exit 130。单写者不变量不破。
+- v0.1 前台运行，Ctrl-C 即此通道；**不新增 `trac cancel` 命令**（D-04 CLI 集合不变），`cancel` 推迟到接入真实 LLM Agent 的版本。
+- 取消发生在 `command.issued` 已落盘而结果未落盘时：恢复后 decide 重新签发同一 assignment，**不消耗 attempt**（取消是人类决定，不是 Agent 失败）。
+
+---
+
 ## 决策日志
 
 | ID    | 决定日期       | 标题                           | 来源                                                              |
@@ -113,3 +121,4 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-08  | 2026-07-30    | v0.1 输入来源：stdin           | 用户裁定：`从命令行 stdin 接收`                                   |
 | D-09  | 2026-07-30    | 用户参与方式                    | 用户裁定 + flow.md 不变量 1                                       |
 | D-10  | 2026-07-30    | 文档层级关系                    | arch/flow/story/decisions.md 责任分工                               |
+| D-11  | 2026-07-30    | 取消协议与 cancel 推迟          | 用户裁定：并发取消需求 + 同意 v0.1 仅 Ctrl-C                        |

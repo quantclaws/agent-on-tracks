@@ -18,6 +18,7 @@ sha:
   - `AC-FRXXXX-YY`：全称 = AC + FR 四位编号 + FR 内两位序号（YY 从 01 起，跨单元不复用）；所有交叉引用一律用全称
   - acceptance.md 是 AC 中央登记处；spec.md 只留 FR/NFR 描述与元数据
 - ID 一经分配不可变、不可复用；删除的 ID 留 tombstone 记录（事件日志与历史证据会引用旧 ID）
+- **兼容非全新宿主项目**（Human 裁定）：tracks 安装到宿主项目时，宿主可能带着存量文档与不合本文法的既有编号；trace 检查必须提供兼容能力（存量豁免，不强制重编号——tracks 自己的 v0.1 即为存量样本），具体豁免机制在 spec 阶段裁定
 - 测试函数通过 pytest marker（如 `@pytest.mark.ac("AC-FR0010-01")`）绑定 AC；无测试绑定的 AC 与指向不存在 AC 的测试都能被机器指出（louke 用 docstring 首行约定，trac 升级为可被 pytest 机器枚举的 marker，ID 文法不变）
 - `trac check trace` 对 BS→FR→AC→test 全链做双向孤儿检测：FR↔AC、AC↔test 为硬错误；BS→FR 为 warning-only（行为种子与 FR 不总是 1:1，硬约束会逼人写凑数 FR）
 - `trac check reach` 从声明的入口点（pyproject `[project.scripts]`、`__main__`、显式白名单）做**模块级 import 可达分析**，报告从任何入口都不可达的生产模块（孤岛）——louke 尸检中 79/117 幽灵模块的直接对策

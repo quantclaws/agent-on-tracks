@@ -36,6 +36,7 @@ tests/
 │   ├── test_happy_path.py     # 完整用户旅程（见 §4）
 │   ├── test_rejection.py      # NO-GO / PARK 路径
 │   ├── test_retry_escalation.py  # 校验失败 → 重派 → 升级
+│   ├── test_respond_paths.py  # sage comment / review revise 的 RESPOND 循环、错误状态命令拒绝
 │   ├── test_scope_overflow.py # FR>30 回退
 │   └── test_recovery.py       # 中断/恢复、单写者锁
 └── conftest.py                # 共享 fixture（tmp git repo、installed trac）
@@ -45,24 +46,25 @@ tests/
 
 | AC 范围 | 层 | 测试文件 |
 |:--------|:---|:---------|
-| AC-N03a（纯函数） | unit | test_project.py, test_decide.py |
+| AC-N02a（纯函数） | unit | test_project.py, test_decide.py |
 | AC-28a（事件格式） | unit | test_events.py |
 | AC-11a, AC-19a（校验逻辑） | unit | test_validate.py |
 | AC-06a, AC-30a（事件序列） | integration | test_runtime_loop.py |
 | AC-13a, AC-14a/b, AC-21a（agent 协作） | integration | test_executor.py |
-| AC-N05a（store 重建） | integration | test_store.py |
+| AC-N04a（store 重建） | integration | test_store.py |
 | AC-01a/b ~ AC-05a（init/start） | e2e | test_happy_path.py |
-| AC-07a ~ AC-17a（M-STORY 全程） | e2e | test_happy_path.py |
+| AC-07a ~ AC-17a 中的通过路径（M-STORY happy path） | e2e | test_happy_path.py |
+| AC-08b, AC-14b, AC-16a（RESPOND 循环 / 错误状态拒绝，happy path 不覆盖） | e2e | test_respond_paths.py |
 | AC-18a ~ AC-23a（M-SPEC 全程） | e2e | test_happy_path.py |
 | AC-24a/b, AC-25a/b, AC-26a（status/replay） | e2e | test_happy_path.py |
 | AC-09a/b（NO-GO/PARK） | e2e | test_rejection.py |
-| AC-12a, AC-N04a（重派/升级） | e2e | test_retry_escalation.py |
+| AC-12a, AC-N03a（重派/升级） | e2e | test_retry_escalation.py |
 | AC-20a（scope_overflow） | e2e | test_scope_overflow.py |
-| AC-27a, AC-29a（锁/恢复） | e2e | test_recovery.py |
+| AC-27a/b, AC-29a/b/c（锁/恢复/torn-write） | e2e | test_recovery.py |
 | AC-N01a（无网络） | e2e | test_happy_path.py（环境隔离） |
-| AC-N02a（模块计数） | e2e | test_happy_path.py（或 CI 脚本） |
-| AC-N06a（无 .track） | e2e | test_happy_path.py |
-| AC-N07a（无重复） | — | 代码审查 / 未来 trac check dup |
+| AC-N05a（无 .track） | e2e | test_happy_path.py |
+| AC-N06b（文件 ≤1000 行、无 utils 模块） | e2e | test_happy_path.py（或 CI 脚本） |
+| AC-N06a（无重复） | — | 代码审查 / 未来 trac check dup |
 
 ## 4. E2E Happy Path 用户旅程
 
@@ -84,6 +86,15 @@ tests/
 ```
 
 每步断言：exit code、stdout 关键字、事件日志新增行、git 状态、文件存在/内容。
+
+### 4.1 E2E 测试数据来源
+
+- **原始需求**（stdin）：一个 fixture 占位字符串；FakeAgent 不解析其内容，不影响确定性。
+- **story.md / spec.md 正文**：定值文档**烘焙进 `effects/agents.py`**（不放 `tests/fixtures/`——FakeAgent 是生产一等公民，生产代码不依赖 tests/），按 `(role, simulate)` 取用。happy-path 文档须刚好通过 `validate`。FakeAgent 把文档**真写到磁盘**（经 executor 白名单路径），validate 对真实文件运行——副作用链不 mock。
+- **分支选择**：`TRAC_FAKE_SIMULATE` → assignment.simulate（见 §6）。
+- **断言主源**：事件日志 JSONL；辅以 git 状态、文件、退出码。
+
+> e2e 证明的是引擎管路（状态机/事件时序/锁/恢复/git/dispatch→validate→commit 循环），**不**证明 validate 规则对（归 `test_validate.py`）或真 agent 产出质量（无 LLM，超范围）。FakeAgent 摘掉 LLM 不确定性，使"runtime 本身对不对"可被单独回答。
 
 ## 5. 共享 Fixture 设计（conftest.py）
 
@@ -142,7 +153,7 @@ E2E 测试通过环境变量 `TRAC_FAKE_SIMULATE=schema_fail` 注入（仅测试
 # 脚手架结构完整性
 python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"
 # 目录存在
-test -d src/track && test -d tests/unit && test -d tests/integration && test -d tests/e2e
+test -d src/tracks && test -d tests/unit && test -d tests/integration && test -d tests/e2e
 # 无 .track 残留
 ! test -e .track
 ```
