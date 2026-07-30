@@ -61,6 +61,7 @@ class Assignment:
     # ... IF-001 原有字段不变（task_id, role, objective, scope_whitelist, budget, context, failure_evidence, simulate）
     template_kind: str | None = None   # 需注入的模板 kind（"story"/"spec"/"acceptance"），由 Runtime 从 tracks/templates/ 读取附入
     skill: str | None = None           # 需注入的 skill 名（"tracks-discuz"），正文由 Runtime 附入调用上下文
+    skill_version: str | None = None   # 注入 skill 的版本（取自 SKILL.md frontmatter version），供 Sage 核对版本 identity
 ```
 
 > `role` 内部仍小写 `scribe`/`sage`/`lex`（延续 IF-001）；OpencodeBackend 映射到首字母大写 opencode agent 名（`Scribe`/`Sage`）。`scope_whitelist` 语义 = 目标文档 + command_id 专属临时目录（ARCH §6）。`simulate` 注入纪律不变（仅 cli/executor 边界，纯函数不感知）。
@@ -129,12 +130,13 @@ class DiscussQuery:
 
 @dataclass(frozen=True)
 class LocateResult:
-    status: Literal["unique", "ambiguous", "not_found"]
+    status: Literal["unique", "ambiguous", "not_found", "stale"]
     thread_id: str | None = None     # unique 时填充
     candidates: list[int] | None = None  # ambiguous 时填充候选行号（fail closed，不写文件）
+    # stale：token 重定位到的线程 thread_id 与给定 --thread-id 不符（重排致编号漂移）；不写文件，须重新 query
 ```
 
-> 归一化：strip + 合并连续空白 + Unicode NFC，不改大小写、不去 markdown 格式；speaker 比较 lowercase 归一化、显示保留原大小写（FR-060）。写命令仅在 `LocateResult.status == "unique"` 时执行（fail closed，FR-070）。
+> 归一化：strip + 合并连续空白 + Unicode NFC，不改大小写、不去 markdown 格式；speaker 比较 lowercase 归一化、显示保留原大小写（FR-060）。写命令仅在 `LocateResult.status == "unique"` 时执行（fail closed，FR-070）。freshness token（写命令权威 identity，FR-070）：thread 无持久 ID，`T-NNN` 是单次扫描的显示标签；reply/edit/set-status 携带 `--token`（query 返回的 5 元组 / anchor+root 内容），命令重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query），并列/低置信 → `ambiguous`，L3 → `not_found`。
 
 ## 7. CLI 接口合同（增量）
 
@@ -146,15 +148,16 @@ IF-001 §10 既有命令不变。新增：
 |:---|:---|:---|:---|:---|
 | `trac discuss query --file <p> [--initiator A] [--blocker A] [--status s] [--check-ready]` | 文档路径 + 过滤 | stdout: `DiscussQuery` JSON | stderr: 原因（含 `line:N`） | 0 / 1 |
 | `trac discuss start --file <p> --anchor-line <N> --speaker <A> <msg>` | anchor + 发言 | stdout: 新 `thread_id` | stderr: 原因 | 0 / 1 |
-| `trac discuss reply --file <p> --thread-id <id> --speaker <A> <msg>` | 线程 + 回复 | stdout: "ok" | stderr: ambiguous/not_found（不写文件） | 0 / 1 |
-| `trac discuss edit --file <p> --thread-id <id> --depth <N> --speaker <A> <new>` | 定位 + 新内容 | stdout: "ok" | stderr: 非原作者/ambiguous（不写） | 0 / 1 |
-| `trac discuss set-status --file <p> --thread-id <id> --status <resolved\|reopen> --operator <A>` | 线程 + 状态 | stdout: "ok" | stderr: 一致性违反（operator≠initiator 时 resolved 被拒） | 0 / 1 |
+| `trac discuss reply --file <p> --thread-id <id> --token <t> --speaker <A> <msg>` | 线程 + token + 回复 | stdout: "ok" | stderr: stale/ambiguous/not_found（不写文件） | 0 / 1 |
+| `trac discuss edit --file <p> --thread-id <id> --token <t> --depth <N> --speaker <A> <new>` | 定位 + token + 新内容 | stdout: "ok" | stderr: 非原作者/stale/ambiguous（不写） | 0 / 1 |
+| `trac discuss set-status --file <p> --thread-id <id> --token <t> --status <resolved\|reopen> --operator <A>` | 线程 + token + 状态 | stdout: "ok" | stderr: 一致性违反/stale（operator≠initiator 时 resolved 被拒） | 0 / 1 |
 
 - `--file` canonicalize + scope gate：须落在当前 repo / 授权目标文档内；拒绝 `../`、repo 外绝对路径、逃逸 symlink；违反则拒绝且不改文件（FR-080）。
-- reply/edit/set-status 内部全文扫描 + 4 级降级定位；`ambiguous`/`not_found` 时**不写文件**（fail closed）。
+- reply/edit/set-status 必带 `--token`（query 返回的内容定位 token），内部全文扫描 + 4 级降级定位 + 核对 thread_id；`stale`/`ambiguous`/`not_found` 时**不写文件**（fail closed，FR-070 freshness）。
 - 写操作 flock 串行化（tmp + rename），自动空行分隔，parse 失败回滚（FR-110）。
 
 > **gpt [OPEN]:** 与 ARCH-003 §3b / SPEC-003 FR-060 同源：CLI 合同只传 `--thread-id`，无 query revision 或旧 5 元组。重排后旧 `T-NNN` 可合法匹配另一条线程，fail-closed 无法区分 stale。若决定引入 freshness token，需在此表追加输入列（如 `--loc-token <opaque>`）并扩展 `LocateResult`；若决定用原子 query+write（同一 flock 持有期），需在 §7a 注明并发语义。选定前 AC-0605 的"重排后不错命中"在接口层不可验证。
+>> **Scribe:** 已引入 freshness token（同 louke 方案、Aaron 确认）：§7a reply/edit/set-status 追加 `--token <t>` 输入列；`LocateResult.status` 扩展 `stale`（token 重定位线程的 thread_id 与给定不符 → 不写、重新 query）；§6 补 token 语义；`Assignment.skill_version` 承载 skill 版本 identity。AC-0605/0608 覆盖“重排后用旧 token 写 → stale 不写”。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### 7b. `trac validate`（独立校验）
 

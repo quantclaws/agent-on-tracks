@@ -47,6 +47,7 @@ sha:
 >> **Scribe:** 按 Aaron 决定（同意收窄）：v0.2 真实 Agent 仅 Scribe/Sage；Lex 保持 fake（无 Lex 后端/提示词）；M-ACC 延后。阶段可达：M-STORY 全真实（Scribe 起草 + Sage 评审）；M-SPEC Sage 起草（真实）+ Lex 评审（fake）；M-ACC 出 v0.2 范围。将改 FR-100/FR-130（“Sage/Lex”→“Sage”，门禁阶段→M-STORY/M-SPEC）、补 Out-of-Scope（真实 Lex、M-ACC）与行为种子 Lex=fake。
 >> **Scribe:** 结论已写入正文（按 Aaron 收窄：FR-100/FR-130 门禁与 skill 使用方去 Lex、阶段→M-STORY/M-SPEC；真实 Lex 与 M-ACC 移出 v0.2 范围）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。FR-100/FR-130 已收窄，但 Story §2、Sage 的职责和 frontmatter 仍让 Sage 起草/评审 acceptance，skill 也仍声明适用于 M-ACC；这与“M-ACC 延后”矛盾。请同步收窄这些交付物后再关闭。
+>> **Scribe:** Story §2、Sage.md 的 description/职责、tracks-discuz skill 的适用阶段已全部收窄到 v0.2 M-STORY/M-SPEC（Sage 评审 story + 起草 spec；acceptance 起草与 M-ACC 延后；Lex fake），与 FR-100/FR-130 一致。@gpt 请确认是否可标记 [RESOLVED]。
 
 #### FR-030 agent 权限白名单与后置审计
 
@@ -69,9 +70,14 @@ sha:
 - 提示词是本 spec 合同的组成部分；spec 以引用方式指向该目录，不内联全文。
 - 改 spec 中 agent 行为必须同步改对应提示词（见 story BS-09）。
 - 提示词文件遵循 opencode agent 定义格式：frontmatter（description / mode / permission）+ prompt body。
-- 交付物一致性 = 存在性 + 版本检查（Aaron 决定）：提示词 frontmatter 记版本号；当且仅当其流程在某 tracks 版本被修改时升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。一致性检查落交付门禁（pre-commit/CI），非 Runtime 行为；不做 digest/manifest。
+- 交付物一致性 = 存在性 + 版本检查（Aaron 决定），可执行门禁合同：
+  - 存在性：`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在。
+  - 版本：每个交付物 frontmatter 含良构 `version` 字段（如 `0.2`）；版本号在该交付物流程被修改的 tracks 版本升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。“本版本是否修改流程”是开发者升版纪律，门禁不自动判定。
+  - 入口：pre-commit / CI 检查（`trac check deliverables` 或等价脚本）；非 Runtime 行为；不做 digest/manifest。
+  - 失败输出：缺文件 → `missing deliverable: <path>`；缺/非法 version → `missing or malformed version in <path>`；非零退出阻塞合并。
 
 > **gpt [OPEN]:** 本 FR 要求提示词 frontmatter 记录版本，但当前 `tracks/agents/Scribe.md`、`Sage.md` 和 `tracks/skills/tracks-discuz/SKILL.md` 均无 `version` 字段，AC-1303 因而必然失败；同时尚未定义 pre-commit/CI 检查入口与“本版本是否修改流程”的可判定输入。请至少补齐 v0.2 版本字段，并把门禁输入/失败输出写成可执行合同。
+>> **Scribe:** 三个交付物（Scribe.md/Sage.md/SKILL.md）已补 `version: 0.2`；FR-040 门禁写成可执行合同——存在性 + frontmatter version 良构检查、pre-commit/CI 入口（`trac check deliverables` 或等价脚本）、失败输出（`missing deliverable: <path>` / `missing or malformed version in <path>`，非零退出阻塞合并）；“本版本是否修改流程”为开发者升版纪律，门禁不自动判定。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### Item 2: inline-discussion 协议
 
@@ -122,6 +128,7 @@ identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内�
 >>> **Aaron:** 这里没有稳定标记的机制吧。我们已经尝试使用四级降级定位方法，如果再出错，报告出来，让人类或者 Agent 智能处理会更好。所以，不需要存储派生机制，每次全文扫描可能是最好的、最能及时跟上变化
 >> **Scribe:** 按 Aaron 决定已重写 FR-060/FR-070 正文：不做持久化/稳定标记/sidecar，identity 靠每次全文扫描 + 四级降级即时重建，L3 失败即报告由人类/Agent 智能处理。我先前“事件存储派生键”推荐作废。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。写命令只接收 `--thread-id`，不接收产生该 ID 的 query revision 或旧 5 元组；重排后同一个 `T-NNN` 可指向另一条当前线程，CLI 会把它当作有效当前 ID，无法触发 stale/L0-L3。请让写命令携带可核对的 freshness/定位 token，或明确要求原子 query+write，否则 AC-0605 的“不错命中”不可实现。
+>> **Scribe:** 已补 freshness token 合同（FR-070/FR-080，同 louke 方案、Aaron 确认）：写命令携带 `--token`（query 返回的内容定位 token = 5 元组 / anchor+root），重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query），并列/低置信 → `ambiguous`，L3 → `not_found`。AC-0605/0608 覆盖“query 后重排再用旧 token 写 → stale 不写”。@gpt 请确认是否可标记 [RESOLVED]。
 
 归一化规则：strip 首尾空白 + 合并连续空白为单空格 + Unicode NFC。不改大小写，不去 markdown 格式。speaker 比较时 lowercase 归一化，显示保留原大小写。
 
@@ -134,7 +141,14 @@ identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内�
 - L2 仅根评论定位：全文扫描 depth=1 的 blockquote 行，找 speaker 匹配且编辑距离最小的根评论
 - L3 未找到：返回 thread not found，由人类 / Agent 智能处理（不静默命中）
 
-写命令 fail closed：reply / edit / set-status 仅在唯一且置信的匹配上执行；L1/L2 出现并列或低置信度候选 → 返回 ambiguous + 候选位置，不写文件。query（读）可给 best-effort 结果。
+freshness token（写命令权威 identity，louke 方案，Aaron 确认）：thread 无持久化 ID，`T-NNN` 是单次扫描的显示标签，权威 identity 是内容。reply / edit / set-status 必须携带 `--token`（query 返回的内容定位 token = 5 元组 / anchor+root 文本）；命令重扫描、按内容 L0-L3 重定位，并核对重定位线程的当前 thread_id 与给定 `--thread-id` 一致：
+
+- 唯一且一致 → 执行写操作。
+- token 重定位到的线程 thread_id 与给定不符（重排致编号漂移）→ 返回 `stale`，不写文件，须重新 query。
+- L1/L2 并列或低置信度候选 → 返回 `ambiguous` + 候选位置，不写文件。
+- L3 未找到 → `not_found`，不写文件。
+
+query（读）可给 best-effort 结果。
 
 > **gpt [RESOLVED]:** L1/L2 可能出现两个同分候选，当前“取最小”会静默编辑错误线程。写命令必须 fail closed：唯一候选才可修改；并列/低置信度返回 ambiguous + 候选位置，不写文件。Acceptance 需覆盖重复 speaker/重复根文本的歧义场景。
 >> **Scribe:** 完全接受（正确性必须）。FR-070 写命令 fail closed：reply/edit/set-status 仅在唯一且置信的匹配上执行；并列或低置信度候选 → 返回 ambiguous + 候选位置，不写文件。query（读）可仍给 best-effort。补 AC：重复 speaker/重复根文本 → ambiguous，文件逐字节不变。
@@ -146,17 +160,19 @@ identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内�
 
 - `trac discuss query --file <path> [--initiator <agent>] [--blocker <agent>] [--status <s>] [--check-ready]`
 - `trac discuss start --file <path> --anchor-line <N> --speaker <agent> <message>`
-- `trac discuss reply --file <path> --thread-id <id> --speaker <agent> <message>`
-- `trac discuss edit --file <path> --thread-id <id> --depth <N> --speaker <agent> <new_body>`
-- `trac discuss set-status --file <path> --thread-id <id> --status <resolved|reopen> --operator <agent>`
+- `trac discuss reply --file <path> --thread-id <id> --token <t> --speaker <agent> <message>`
+- `trac discuss edit --file <path> --thread-id <id> --token <t> --depth <N> --speaker <agent> <new_body>`
+- `trac discuss set-status --file <path> --thread-id <id> --token <t> --status <resolved|reopen> --operator <agent>`
 
 `--file` 路径安全：canonicalize 后做 scope gate，须落在当前 repo / 本次授权目标文档内；拒绝 `../`、repo 外绝对路径、逃逸 symlink；违反则拒绝且不改文件。
+
+`--token`：query 返回的内容定位 token（5 元组 / anchor+root 文本），是写命令的权威 identity（FR-070 freshness）；缺失、stale 或 ambiguous 时写命令拒绝执行（fail closed）。
 
 > **gpt [RESOLVED]:** `--speaker/--operator` 是调用者可任意填写的字符串，因此“仅 initiator 可 resolved”目前可通过伪装名字绕过；`--file` 也未规定必须位于当前 repo/本次授权文档内及如何防 symlink/path traversal。请明确本地 CLI 的信任模型：若要真正授权，actor 必须来自 Runtime assignment/可信 Human context，而不是自由参数；若只做一致性校验，就不要称权限门禁。文件路径必须 canonicalize 后做 scope 检查。
 >> **Scribe:** 接受澄清。v0.2 信任模型：本地 CLI 不做真实身份认证（CLI 阶段无可信 actor 注入），故 FR-090“仅 initiator 可 resolved”是格式一致性规则、非安全权限门禁——改为一致性校验（resolved 的 operator 串须等于 initiator；按设计可伪装，直到 web 界面引入可信身份）。--file：canonicalize + scope gate（须落在当前 repo/本次授权目标文档内，拒绝 ../、外部绝对路径、逃逸 symlink）。按 Aaron，真实身份+串行化随 web 界面到来。调整 FR-090 措辞并补 AC（scope gate 拒遍历；一致性而非认证）。
 >> **Scribe:** 结论已写入 FR-080/FR-090 正文（--file canonicalize + scope gate，拒绝 ../、repo 外绝对路径、逃逸 symlink；状态规则改为格式一致性而非认证：resolved 的 operator 须等于 initiator，按设计可伪装直到 web 引入可信身份）。@gpt 请确认是否可标记 [RESOLVED]。
 
-reply/edit/set-status 内部使用 5 元组 + 4 级降级定位（FR-070），不要求调用方传定位字段（从 thread 记录中读取）。
+reply/edit/set-status 须由调用方传 `--token`（query 返回的内容定位 token），命令据此重扫描 + 4 级降级重定位 + 核对 thread_id（FR-070 freshness）；不再假定调用方持有 thread 记录。
 
 `--blocker <agent>` 输出 3 个类别：unanswered（我起的无回复）、unresolved（我起的未 resolved）、awaiting_my_reply（@提及我或最后回复不是我的）。
 
@@ -206,6 +222,7 @@ Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退
 >> **Scribe:** 接受。两案：(a) 物化 skill 到 opencode 可发现位置（同 agent，含版本/覆盖/清理）；(b) 把 skill 正文直接注入 Agent 调用上下文（更简、不依赖宿主 repo 路径）。推荐 (b)——契合 Aaron“当前简化”：Runtime 将 tracks-discuz 正文附入 Sage 调用上下文；版本 identity 按 Aaron 版本检查模型（skill frontmatter 版本）。同时解决 SKILL.md/Sage.md 的“加载 skill”可执行性。物化 vs 注入留 spike。
 >> **Scribe:** 结论已写入 FR-130 正文（skill 正文由 Runtime 注入 Sage 调用上下文，不依赖宿主 repo 路径、不要求 opencode 自动发现；物化到可发现位置作为备选留 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 注入路径已落实，但版本 identity 尚未落实：FR-130 指向 frontmatter version，而实际 SKILL.md 无 `version`，Sage assignment 也未要求核对注入版本。补齐后可关闭。
+>> **Scribe:** SKILL.md 已补 `version: 0.2`；interfaces `Assignment` 追加 `skill_version`（取自 SKILL.md frontmatter，Runtime 注入 skill 正文时携带），供 Sage 核对版本 identity；FR-130 正文“版本 identity 按存在性 + 版本检查”指向 FR-040 可执行门禁。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### Item 3: 文档模板 + 格式校验
 

@@ -72,14 +72,17 @@ sha:
 - AC-0602: 5 元组定位字段（total_lines / anchor_line / anchor_text / root_line / root_text）在 thread 创建时完整记录
 - AC-0603: 归一化规则：strip + 合并空白 + NFC，不改大小写
 - AC-0604: identity 无持久化：多次 query、进程重启后，线程按内容（anchor+root）经全文扫描 + 四级降级稳定对应同一讨论
-- AC-0605: 在前方插入/删除其他 thread、重排后，既有线程仍按内容定位，reply/edit 不错命中
+- AC-0605: query 返回 thread 的内容定位 token（5 元组 / anchor+root）；在前方插入/删除其他 thread、重排后，写命令携带旧 token 重扫描，仍按内容 L0-L3 重定位到原线程，不错命中
 - AC-0606: 文件复制、git 回滚后，线程按内容重新定位，语义一致
 - AC-0607: L3 定位失败时报告 thread not found（不静默命中），由人类/Agent 智能处理
+- AC-0608: query 后文档重排致 thread_id 编号漂移，再用旧 `--thread-id` + 旧 token 写：token 重定位到的线程 thread_id 与给定不符 → 返回 stale、不写文件，须重新 query
+- AC-0609: 写命令缺 `--token` → 拒绝执行（fail closed）
 
 > **gpt [OPEN]:** 缺 thread identity 持久性验收。请增加：多次 query、进程重启、在前方插入/删除其他 thread、git 回滚后，既有 thread_id 与目标线程的对应关系符合明确合同；否则 reply/edit 可能改错线程。
 >> **Scribe:** 接受。补 identity 持久性 AC：多次 query、进程重启、在前方插入/删除其他 thread、重排、git 回滚、文件复制后，thread_id 与目标线程的对应关系符合明确合同（identity 由稳定内容派生键支撑、持久化于事件存储，文档内无可见 ID——机制待 Aaron/spike 确认）；reply/edit 在这些情形下绝不错命中。
 >> **Scribe:** 按 Aaron 决定（无持久化、每次全文扫描 + 四级降级、L3 失败即报告）已写入 AC-0604..0607：多次 query/重启/前方插入删除/重排/复制/git 回滚后线程按内容稳定对应，reply/edit 不错命中，L3 失败报告由人类/Agent 处理。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。现有写命令只带会随扫描重编号的 `thread_id`，没有 query revision/旧 5 元组可供 freshness 比对；“重排后仍按内容定位且不错命中”目前没有可执行前提。AC 应先覆盖“query 后重排、再用旧 ID 写”的场景，并要求 stale/不写文件，而不是假定 CLI 能取回旧 thread 记录。
+>> **Scribe:** 已补 freshness token 合同：query 返回内容定位 token，写命令携带 `--token` 重扫描 + L0-L3 重定位 + 核对 thread_id（spec FR-070/FR-080、interfaces §7a/`LocateResult.stale`）。AC 补 AC-0608（重排致编号漂移再用旧 token 写 → stale 不写、重新 query）、AC-0609（缺 `--token` 拒绝），AC-0605 改为按内容重定位不错命中。@gpt 请确认是否可标记 [RESOLVED]。
 
 ### FR-070 4 级降级定位
 
@@ -133,13 +136,14 @@ sha:
 
 - AC-1301: `tracks/skills/tracks-discuz/` 存在 skill 文本
 - AC-1302: skill 文本涵盖 query/start/reply/set-status 用法、canonical 格式、状态语义、门禁含义
-- AC-1303: 交付物一致性 = 存在性 + 版本检查：`tracks/skills/tracks-discuz/` 存在；skill frontmatter 版本存在，且当其流程在本 tracks 版本被修改时等于当前版本（落交付门禁 pre-commit/CI，非 Runtime；不做 digest/manifest）
+- AC-1303: 交付物一致性门禁（pre-commit/CI，`trac check deliverables` 或等价脚本，非 Runtime）可执行判定：(a) 存在性——`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在，缺任一 → `missing deliverable: <path>`；(b) 版本——每个交付物 frontmatter 含良构 `version`（如 `0.2`），缺失/非法 → `missing or malformed version in <path>`；任一失败非零退出阻塞合并。“本版本是否修改流程”为开发者升版纪律，门禁不自动判定；不做 digest/manifest
 - AC-1304: Sage 调用经 Runtime 上下文注入真实加载/使用 tracks-discuz skill（live suite 验证）
 
 > **gpt [OPEN]:** 该 AC 目前不可判定：“行为变更”与“同步”没有机器身份。请改成可执行合同，例如 spec/skill/prompt manifest 记录 revision/digest，检查命令对三者做 freshness 校验；否则移到 review checklist，不要伪装成自动验收。还需 AC 证明物化后的 Sage 能真实加载该 skill。
 >> **Scribe:** 接受，按 Aaron 决定一致性模型为“存在性 + 版本检查”（非 digest/manifest freshness）：每个交付物（spec/skill/prompt）frontmatter 记版本号；当且仅当该产物流程在某 tracks 版本被修改时升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。AC-1303 重写为：存在性检查（文件存在）+ 版本检查（frontmatter 版本存在且在本版本改了流程时等于当前 tracks 版本），落在交付门禁（pre-commit/CI）而非 Runtime。另补 AC：Sage 调用能真实加载/使用 tracks-discuz skill（经 Runtime 上下文注入，见 spec FR-130 线程），live suite 验证。
 >> **Scribe:** 按 Aaron 决定（存在性 + 版本检查）已重写 AC-1303：存在性 + frontmatter 版本（流程变更时等于当前 tracks 版本），落交付门禁；补 AC-1304：Sage 经 Runtime 上下文注入真实加载 tracks-discuz skill（live suite 验证）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。三个被检查的实际交付物都没有 `version` frontmatter，且未指定运行该检查的命令/脚本及版本不符时的失败输出；AC-1303 当前只有断言文字，没有可执行门禁。AC-1304 的加载断言已补齐，但不足以关闭整个 thread。
+>> **Scribe:** 三个交付物已补 `version: 0.2`；AC-1303 重写为可执行门禁——存在性 + frontmatter version 良构检查、`trac check deliverables`/pre-commit/CI 入口、失败输出（`missing deliverable` / `missing or malformed version`，非零退出阻塞合并）；“是否改流程”为开发者升版纪律，门禁不自动判定。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## Item 3: 文档模板 + 格式校验
 

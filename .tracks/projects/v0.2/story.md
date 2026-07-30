@@ -16,6 +16,8 @@ sha:
 > 2. **inline-discussion 协议 + skill。** 评审阶段（M-STORY / M-SPEC / M-ACC）Sage/Lex 与 Human 在文档内做结构化多轮讨论（markdown blockquote 嵌套）。迁移自 louke v0.4-004-quote-dialogue + v0.7-003-inline-discussion-protocol。
 > 3. **story/spec 模板 + 格式校验落脚点。** `tracks/templates/` 已有模板但没接进 runtime（`cmd_start` 用 main.py 硬编码的 STORY_TEMPLATE；`validate_document` 是 D-16 直通）。v0.2 把模板接进 runtime，并确定格式校验落在哪里。
 
+> 注：以上为逐字原始输入，保留不改。其中 Item 2 提到的 M-ACC、Sage 起草 acceptance、Lex 真实评审属原始意图；经 Aaron 裁定，v0.2 已决范围收窄为——真实 Agent 仅 Scribe/Sage，可达评审阶段 M-STORY/M-SPEC，Lex 保持 fake，M-ACC（含 acceptance 起草）延后。已决范围见 §2 与 §4.3 Out-of-Scope。
+
 > **gpt [RESOLVED]:** 本段同时规定“conftest 为 E2E 强制 fake”，而 3.1 的 Human 批注明确要求 E2E 使用真实 Agent，两者不能同时作为唯一 E2E 策略。建议明确两条测试通道：必跑的 deterministic fake E2E（精确断言工作流）+ 使用可配置 provider/model 的 live opencode E2E（只断言启动、权限、产物格式、退出与恢复，不断言具体文本）；并规定缺少凭据时是 fail、skip 还是独立 required job。
 >> **Scribe:** 采纳双通道，并与 Aaron 在 §3.1 的决定（E2E 用真 Agent、provider/model 走环境变量）合并：(A) deterministic fake E2E——默认必跑、精确断言工作流；(B) live opencode E2E——真 Agent，provider/model 由 env 配置，只断言启动/权限/产物格式/退出/恢复，不断言具体文本。缺凭据时 (B) skip（不 fail），CI 中为独立 required job、本地 opt-in。据此改写 §1 与 §4.2，消除“conftest 强制 fake”与“真 Agent E2E”的冲突（fake 为默认通道，live 为独立通道）。
 >> **Scribe:** 结论已写入 §4.2 正文（E2E 双通道：fake 默认必跑 + live opencode 真 Agent，缺凭据 skip 为独立 required job）；§1 为逐字原始输入保留不改。@gpt 请确认是否可标记 [RESOLVED]。
@@ -25,10 +27,11 @@ sha:
 >>> **Aaron:** 同意收窄
 >> **Scribe:** 按 Aaron 决定（同意收窄）已写入正文：§2 用户意图收窄到 M-STORY/M-SPEC、Lex fake、M-ACC 延后；§3.3 'Sage/Lex'→'Sage'；§4.3 补 Out-of-Scope（真实 Lex、M-ACC）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。§2 仍说 Sage 起草 acceptance，原始 Item 2 仍称 M-ACC/Sage/Lex；更关键的是 Sage.md 与 tracks-discuz skill 仍把 acceptance/M-ACC 列为当前职责/适用阶段。请把“原始输入”与已决范围明确区分，并同步收窄实际交付物。
+>> **Scribe:** 已在 §1 加注区分“逐字原始输入”（含 M-ACC、Sage 起草 acceptance、Lex 真实评审）与“已决范围”（收窄 M-STORY/M-SPEC、Lex fake、M-ACC 延后）；§2 用户意图收窄为 Sage 评审 story + 起草 spec（acceptance 起草随 M-ACC 延后）；Sage.md 与 tracks-discuz skill 的 acceptance/M-ACC 职责/适用阶段已同步移除。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 2. 用户意图
 
-- 用户想让 tracks 的评审阶段真正跑起来（v0.2 收窄到 M-STORY / M-SPEC，Aaron 决定）：Scribe 真实地写出 story，Sage 真实地评审 story 并起草 spec/acceptance，而不是 v0.1 的 FakeAgent 占位。Lex 在 v0.2 保持 fake，M-ACC 延后。
+- 用户想让 tracks 的评审阶段真正跑起来（v0.2 收窄到 M-STORY / M-SPEC，Aaron 决定）：Scribe 真实地写出 story，Sage 真实地评审 story 并起草 spec（acceptance 起草随 M-ACC 延后），而不是 v0.1 的 FakeAgent 占位。Lex 在 v0.2 保持 fake，M-ACC 延后。
 - 当前受阻于三处：(a) 没有真实 agent 调用 seam（只有 FakeAgent）；(b) inline-discussion 协议未实现，Sage/Human 无法在文档内结构化讨论；(c) 模板没接进 runtime，文档格式无校验落脚点。
 - 完成后能看到：`trac start` 捕获原始需求并进入 M-STORY → Human triage go → `trac run` 调起真实 Scribe（opencode）起草 story.md；Sage 评审并通过 inline-discussion 与 Human 多轮讨论；文档按模板校验；整条评审闭环用真实 agent 端到端跑通（开发/测试时可用 fake 后端）。
 
@@ -191,6 +194,7 @@ sha:
 >>> **Aaron:** 只做有与无和版本检查。比如，如果 v0.2涉及到 Sage 提示词修改，则 Sage.md 的版本应该是0.2 -- 记录在 frontmatter；v0.3,v0.4没有涉及 Sage 的流程修改，则 Sage.md 版本不动，v0.5涉及Sage流程修改，则Sage.md 内容要改，版本号升级到0.5
 >> **Scribe:** 按 Aaron 决定已重写 BS-09 为交付物存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** Aaron 已裁定模型，但落地尚未完成：Scribe.md、Sage.md、SKILL.md 均没有 `version` frontmatter，且正文未给 pre-commit/CI 检查入口和失败输出。当前 BS-09 仍不可执行，待交付物和门禁实际补齐后再关闭。
+>> **Scribe:** 三个交付物已补 `version: 0.2`；BS-09 落地为可执行门禁（存在性 + frontmatter version 良构检查、pre-commit/CI 入口、失败输出），见 spec FR-040 / acc AC-1303；“是否改流程”为开发者升版纪律，门禁不自动判定（不做 digest/manifest）。@gpt 请确认是否可标记 [RESOLVED]。
 
 #### 3.4.10. BS-10 agent 调用失败矩阵
 
