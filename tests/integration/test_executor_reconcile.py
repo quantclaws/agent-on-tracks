@@ -112,3 +112,63 @@ def test_delete_branch_tears_down_and_logs(tmp_path):
     assert g(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
     deleted = [e for e in store.events(run_id) if e.type == "branch.deleted"]
     assert len(deleted) == 1 and deleted[0].payload["branch_name"] == "releases/v0.1"
+
+
+class _StubBackend:
+    """Test double standing in for an AgentBackend (returns a fixed outcome)."""
+
+    def __init__(self, outcome):
+        self._outcome = outcome
+
+    def act(self, role, substate, doc, doc_path):
+        return self._outcome
+
+
+def _dispatch(ex, store, run_id, outcome):
+    ex.backend = _StubBackend(outcome)
+    cmd = Command(kind="dispatch_agent",
+                  params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
+                  command_id=new_ulid())
+    ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
+    outcomes = [e.payload for e in store.events(run_id)
+                if e.type == "outcome.received"]
+    assert len(outcomes) == 1
+    return outcomes[0]
+
+
+def _setup(tmp_path):
+    repo = make_repo(tmp_path)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = new_ulid()
+    vdir = paths.version_dir(home, "v0.1")
+    vdir.mkdir(parents=True)
+    (vdir / "story.md").write_text("---\nsha:\n---\n\n# 目标\n", encoding="utf-8")
+    store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
+    store.append(run_id, "v0.1", "stage.entered", {"stage": "M-STORY"})
+    return Executor(store, repo, run_id), store, run_id
+
+
+def test_dispatch_agent_carries_opencode_outcome_fields(tmp_path):
+    """IF-003 §1: diff_ref / audit_evidence / failure_class flow into the
+    outcome.received event so over-reach & failures are observable."""
+    ex, store, run_id = _setup(tmp_path)
+    payload = _dispatch(ex, store, run_id, {
+        "status": "failed", "artifact_ref": None, "self_report": "over-reach",
+        "diff_ref": "diff --git a/story.md", "audit_evidence": "over-reach: EXTRA.md",
+        "failure_class": "over_reach",
+    })
+    assert payload["failure_class"] == "over_reach"
+    assert payload["audit_evidence"] == "over-reach: EXTRA.md"
+    assert payload["diff_ref"] == "diff --git a/story.md"
+
+
+def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
+    """FakeBackend outcomes carry no diff/audit/failure fields (absent, not null)."""
+    ex, store, run_id = _setup(tmp_path)
+    payload = _dispatch(ex, store, run_id, {
+        "status": "done", "artifact_ref": "story.md", "self_report": "wrote story",
+    })
+    assert "failure_class" not in payload
+    assert "audit_evidence" not in payload
+    assert "diff_ref" not in payload

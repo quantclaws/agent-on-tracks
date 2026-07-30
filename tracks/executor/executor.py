@@ -98,10 +98,16 @@ class Executor:
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
         result = self.backend.act(role, substate, doc, doc_path)
-        self._emit("outcome.received",
-                   {"role": role, "status": result["status"],
-                    "artifact_ref": result.get("artifact_ref"),
-                    "self_report": result["self_report"]},
+        payload = {"role": role, "status": result["status"],
+                   "artifact_ref": result.get("artifact_ref"),
+                   "self_report": result["self_report"]}
+        # IF-003 §1 additive Outcome fields (OpencodeBackend; absent for fake):
+        # carry the authoritative diff / audit evidence / failure classification
+        # into the event so over-reach and failures are observable (AC-0301..0306).
+        for key in ("diff_ref", "audit_evidence", "failure_class"):
+            if result.get(key) is not None:
+                payload[key] = result[key]
+        self._emit("outcome.received", payload,
                    command_id=cmd.command_id, task_id=task_id)
         verdict = result.get("verdict")
         if verdict:
