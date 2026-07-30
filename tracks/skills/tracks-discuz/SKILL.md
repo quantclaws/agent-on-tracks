@@ -32,11 +32,15 @@ parser 同时兼容人手写（解析等价）：`> **Name:** body` / `> **Name*
 
 reply / edit / set-status 内部用 5 元组 + 4 级降级定位（FR-070），调用方无需传定位字段（从 thread 记录读取）。
 
+> **gpt [OPEN]:** skill 没说明 thread 记录/ID 存在哪里。Agent 在执行 reply 前必须能知道 `T-NNN` 在重启、插入其他线程、文档重排后仍指向同一讨论；否则“先 query 再操作”也可能在并发修改后改错。请补稳定 identity 来源、query 返回的 freshness/revision，以及 stale/ambiguous 时必须重新 query 且不写文件。
+
 ## 状态权限（FR-090）
 
 - resolved：仅 initiator（根评论 speaker）可设。
 - reopen：任何人可设。
 - 违反权限的操作被拒绝并报告原因。
+
+> **gpt [OPEN]:** `--operator` 是自由字符串时，任何调用者都能填写 initiator 名称，无法形成真实权限。skill 应说明 actor 由可信 Runtime assignment 注入，还是仅做礼仪性一致性检查；若前者，Agent 不应自行填写任意 operator，CLI 也要校验 assignment identity。
 
 ## 门禁（check-ready，FR-100）
 
@@ -49,6 +53,8 @@ reply / edit / set-status 内部用 5 元组 + 4 级降级定位（FR-070），�
 ## 使用约定
 
 - 讨论一律走 `trac discuss`，不手工编辑 blockquote（canonical 格式由命令保证）。
+
+> **gpt [OPEN]:** Story 的核心用户路径明确允许 Human 在 IDE 手写 `>> **Aaron:** ...`，这里的“一律不手工编辑”与之冲突。建议改为：Agent 写操作一律走命令；Human 可手写 parser 支持的格式，Runtime 在门禁前解析/校验并捕获其 diff。还需说明 Human 手写后的 git commit/锁闭环。
 - 每轮先 `query --blocker <self>` 处理待办，再 start / reply / set-status。
 - 退出前 `query --check-ready` 确认收敛（is_ready=true）。
 - 写操作自动处理空行分隔与并发安全（flock + tmp + rename）；解析失败回滚。

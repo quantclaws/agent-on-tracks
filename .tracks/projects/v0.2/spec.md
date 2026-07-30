@@ -21,6 +21,8 @@ sha:
 - fake 后端复用 v0.1 FakeAgent 行为，用于开发/测试，绝不触发 opencode。
 - 测试夹具（conftest）在 E2E 场景强制 fake 后端，保证测试不依赖真实 opencode。
 
+> **gpt [OPEN]:** 这仍与 Story 3.1 的 Human 决定“E2E 使用真的 Agent，provider/model 由环境变量定义”冲突。请把测试合同拆为两类并分别映射 AC：必跑 fake E2E 精确断言状态机；live opencode E2E 断言真实启动、权限、JSON 协议、产物格式和恢复，但不断言文本内容。还要定义 live 环境缺凭据时 fail/skip/独立 required job。
+
 #### FR-020 opencode 后端
 
 - opencode 后端以 subprocess 执行：`opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`。
@@ -30,11 +32,17 @@ sha:
 - tracks 在调用前将 canonical 提示词（`tracks/agents/<Name>.md`）物化到目标 repo 的 `.opencode/agent/<Name>.md`，使 opencode 能按名解析。
 - v0.2 不支持 `-m` / `--variant` 参数。
 
+> **gpt [OPEN]:** 本仓库现有 opencode agent 位于 `.opencode/agents/`（复数），这里写 `.opencode/agent/`（单数），且尚未证明大小写 Name 能被发现。请先用 spike 固化目标 opencode 版本的真实发现路径/命名规则，再写成合同。物化还需定义：覆盖已有同名 agent 时拒绝还是备份、任务后是否清理、崩溃后如何 reconcile；否则 tracks 会无授权改写宿主的 opencode 配置。
+
+> **gpt [OPEN]:** `<Name>` 只有 Scribe/Sage，但本 Spec 又把门禁接到 M-SPEC/M-ACC 并要求 Sage/Lex 使用 discussion。按 Flow，M-SPEC/M-ACC reviewer 是 Lex；当前没有 Lex 后端或提示词，所以“真实 Agent 评审闭环”在 M-SPEC 无法成立。请明确本版只让 M-STORY 全真实、Lex 暂时 fake，或把 Lex 纳入 FR/AC/交付物。
+
 #### FR-030 agent 权限白名单
 
 - agent 定义的 `permission:` 收敛为白名单，仅允许编辑本次任务的目标文档。
 - 目标文档之外的写操作被拒绝。
 - 白名单在 agent 定义 frontmatter 中声明，由 tracks 在物化时按当前任务的目标文档填充/限定。
+
+> **gpt [OPEN]:** 现有 Scribe/Sage 文本实际是 `edit: allow`，Sage 还是 `bash: allow`；后者可通过 shell 绕过 edit 白名单，配合 `--auto` 等于 unrestricted write。FR 也漏掉 Story 已确认的 Runtime 后置审计。请给出目标 opencode 版本可执行的 permission pattern（默认 deny + 目标文件 allow + command_id 临时目录 allow）；运行前记录 baseline，运行后以 git status/diff 独立检查，越权则 fail、不提交、不推进并安全回滚 Agent 自有改动。
 
 #### FR-040 agent 提示词交付物
 
@@ -85,6 +93,8 @@ parser 同时接受以下历史/人工写法（解析等价）：
 - mentioned_agents: thread 内所有 @提及的 agent 列表（去重）
 - 5 元组定位字段：total_lines / anchor_line / anchor_text / root_line / root_text
 
+> **gpt [OPEN]:** `thread_id` 和 5 元组没有定义持久化位置，canonical markdown 中也没有 ID/定位元数据。若每次 query 按文档顺序重新编号，插入/删除/重排线程后 `T-NNN` 会漂移，reply/edit 可能命中错误线程。请明确 identity 的权威存储（文档内稳定标记、事件/sidecar，或可证明稳定的派生算法）以及文件复制/回滚后的语义，并补跨 query/restart/reorder 的 AC。
+
 归一化规则：strip 首尾空白 + 合并连续空白为单空格 + Unicode NFC。不改大小写，不去 markdown 格式。speaker 比较时 lowercase 归一化，显示保留原大小写。
 
 #### FR-070 4 级降级定位
@@ -96,6 +106,8 @@ parser 同时接受以下历史/人工写法（解析等价）：
 - L2 仅根评论定位：全文扫描 depth=1 的 blockquote 行，找 speaker 匹配且编辑距离最小的根评论
 - L3 未找到：返回 thread not found + 建议重新 query
 
+> **gpt [OPEN]:** L1/L2 可能出现两个同分候选，当前“取最小”会静默编辑错误线程。写命令必须 fail closed：唯一候选才可修改；并列/低置信度返回 ambiguous + 候选位置，不写文件。Acceptance 需覆盖重复 speaker/重复根文本的歧义场景。
+
 #### FR-080 CLI 命令（trac discuss）
 
 5 个子命令：
@@ -105,6 +117,8 @@ parser 同时接受以下历史/人工写法（解析等价）：
 - `trac discuss reply --file <path> --thread-id <id> --speaker <agent> <message>`
 - `trac discuss edit --file <path> --thread-id <id> --depth <N> --speaker <agent> <new_body>`
 - `trac discuss set-status --file <path> --thread-id <id> --status <resolved|reopen> --operator <agent>`
+
+> **gpt [OPEN]:** `--speaker/--operator` 是调用者可任意填写的字符串，因此“仅 initiator 可 resolved”目前可通过伪装名字绕过；`--file` 也未规定必须位于当前 repo/本次授权文档内及如何防 symlink/path traversal。请明确本地 CLI 的信任模型：若要真正授权，actor 必须来自 Runtime assignment/可信 Human context，而不是自由参数；若只做一致性校验，就不要称权限门禁。文件路径必须 canonicalize 后做 scope 检查。
 
 reply/edit/set-status 内部使用 5 元组 + 4 级降级定位（FR-070），不要求调用方传定位字段（从 thread 记录中读取）。
 
@@ -148,6 +162,8 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - Sage / Lex 通过加载该 skill 获得 inline-discussion 的使用能力：何时 query / start / reply / set-status、canonical 格式、状态语义、门禁含义。
 - 改 spec 中 inline-discussion 行为必须同步改 skill 文本（见 story BS-09）。
 
+> **gpt [OPEN]:** 还缺 skill 的可发现/加载路径。Sage 在宿主 repo 中运行时，安装包内 `tracks/skills/tracks-discuz/` 不会自动成为 opencode skill。请像 agent 一样定义物化/注册、版本 identity、覆盖冲突和清理，或把 skill 正文显式附入 Agent 上下文；否则 Sage 的第一步“加载 skill”不可执行。
+
 ### Item 3: 文档模板 + 格式校验
 
 #### FR-140 模板接入 runtime
@@ -165,6 +181,8 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - 生成时不强制校验（文档常为空骨架，强制会误报）。
 - 取代 D-16 的 `validate_document` 直通实现。
 
+> **gpt [OPEN]:** 这与 Story 5.1 的最新 Human 批注冲突：Scribe/Sage 生成完成时文档就必须规范，M-START 不校验，门禁再校验。请区分“创建空骨架”和“Agent outcome 完成”：M-START 套模板但不校验；每次 Scribe/Sage outcome 后 Runtime 立即 validate，不合格走重派；评审退出再 validate；另提供 `trac validate`。Acceptance 当前 AC-1403/1503 也需同步。
+
 ## 2. 非功能需求
 
 ### NFR-010 错误信息含行号
@@ -178,3 +196,5 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 ### NFR-030 agent 调用失败处理
 
 opencode 非零退出 / 超时 / stdout JSON 解析失败时，runtime 报告失败原因（含退出码与 stderr 摘要），并保持事件日志一致（不写入半成品产物事件）；该次调用可恢复重试。
+
+> **gpt [OPEN]:** 失败合同还不足以覆盖 D-11/D-13：需定义 opencode 不存在、provider/model/凭据不可用、JSON 流截断、退出 0 但无目标 diff、SIGINT/kill-9、超时后子进程组清理，以及“文件已改但 outcome 未落盘”的 reconcile。另请明确文件 diff 是权威产物、stdout JSON 仅为执行协议/诊断，避免双重产物来源。
