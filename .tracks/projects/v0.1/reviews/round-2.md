@@ -28,6 +28,8 @@ Decisions 中没有“FakeAgent 可以忽略需求”的 Human 裁定；D-08 反
 
 要求：拆成可 write-ahead 的两步命令，或明确 executor/runtime 的分段结果协议；必须画出正常、hang、SIGINT、kill -9 四条精确事件序列。
 
+> **qoder:** 成立。louke flow.md 不变量即采用 write-ahead：先落 `assignment.dispatched`，Agent 返回后再落 `outcome.received`，两段事实分离。v0.1 的 command/result 协议应显式支持一个命令产生多段事件，否则 hang/SIGINT/kill -9 的恢复路径无从测试。
+
 > **Aaron:**  把 command.issued(dispatch_agent) 当作唯一的 write-ahead 派发事实，删掉 assignment.dispatched（最简，assignment 本就在命令 payload 里
 
 ### R2-03 “同 ID 重签发”不等于副作用可恢复
@@ -37,6 +39,8 @@ Decisions 中没有“FakeAgent 可以忽略需求”的 Human 裁定；D-08 反
 崩溃可能发生在 Git commit/branch/file write 已成功、结果事件尚未落盘之后。直接以同 `command_id` 再执行，会重复提交、遇到空提交、覆盖文档或再次删除分支。稳定 ID 只能识别操作，不能自动使操作幂等。
 
 要求：每种 v0.1 副作用定义 `reconcile → execute if needed → observe result` 规则；恢复悬挂命令前先检查 Git/文件系统实际事实。测试至少覆盖“commit 已成功但 result 未记录”的恢复。
+
+> **qoder:** 成立。稳定 command_id 只识别操作，不赋予幂等性。louke M-PUBLISH 即按 `reconcile → execute if needed → observe result` 处理外部副作用，恢复前先查 Git/文件系统实际事实。v0.1 的 commit/branch/file write 需逐一定义 reconcile 规则，并测试“commit 已成功但 result 未记录”的恢复。
 
 > **Aaron:** 给每种 Command.kind 定义 reconcile → 按需执行 → 观察结果 规则（如 commit_document 先查 git log 有没有该 message/sha 再决定是否提交）
 
@@ -94,7 +98,9 @@ Architecture 声称未来只增加 workflow 数据和事件类型、kernel 不�
 
 要求：在 Spec/Acceptance 中补齐这些前置与失败语义，或重新裁定 init 不自动提交的方案；happy-path 之外至少覆盖“当前不在 main”和“无可用 main”场景。
 
-> **Aaron:** init 要检查当前目录是否存在，是否为git repo，检查 gh 命令是否存在,gh 是否授权；授权是否包含了 repo, project等。init 要补齐这些信息，在信息不全时，要求用户输入。
+> **qoder:** louke v0.14-004 FR-0701 已定义这套环境 readiness 门禁，init 应直接采纳：依次确认 (1) 当前目录存在且为 git repo；(2) `gh` 已安装可执行；(3) `gh auth status` 确认目标 host 已登录；(4) token scopes 同时含 `gist`/`project`/`repo`/`workflow`。任一缺失或结果不确定 → fail closed，明确指出未满足项 + 阻断影响 + 可执行修复位置，要求用户补齐；不自动安装工具、不自动改认证（须 Human 授权）。外部检查需有界等待 + 新鲜事实，超时/不可解析/网络错误 fail closed，不沿用过期成功。secret（token/credential）不进日志/事件/错误详情，只展示 redacted identity + scope 名。注意 louke 口径：scope 齐全只表示本门禁通过，后续 push/workflow/release 仍以各自真实结果为准。
+
+> **Aaron:** init 要检查当前目录是否存在，是否为git repo，检查 gh 命令是否存在,gh 是否授权；授权是否包含了 'delete_repo', 'project', 'repo', 'workflow'等。init 要补齐这些信息，在信息不全时，要求用户输入;权限 不足时，要先自行刷新权限。
 
 ### R2-09 权威材料仍有未裁定冲突
 
