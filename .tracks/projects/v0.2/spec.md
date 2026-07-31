@@ -152,7 +152,7 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 - **来源**：`BS-03`、`BS-11`、`BS-12`
 - **交付入口**：无独立入口，依附 FR-0020
 
-- permission（spike 已固化，opencode 1.18.1）：frontmatter `permission` 仅粗粒度 `tool: allow|deny`，**不支持文件/命令级 pattern**（实证：array-style permission 的 agent 不被加载）。故“目标文档 allow + 临时目录 allow”无法在 frontmatter 表达，改由 Runtime 后置审计强制（见下）。frontmatter 作粗粒度纵深防御：授予所需工具（read/grep/glob/webfetch/websearch allow，Aaron 定 Scribe/Sage/Lex 需 grep、可上网）、拒危险工具（external_directory deny）；Scribe `bash: deny`（不跑 shell/trac，校验由 Runtime 做），Sage / Lex `bash: allow`（评审需 `trac discuss`，越权靠后置审计）。
+- permission（spike 已固化，opencode 1.18.1）：frontmatter `permission` 仅粗粒度 `tool: allow|deny`，**不支持文件/命令级 pattern**（实证：array-style permission 的 agent 不被加载）。故“目标文档 allow + 临时目录 allow”无法在 frontmatter 表达，改由 Runtime 后置审计强制（见下）。frontmatter 作粗粒度纵深防御：授予所需工具（read/grep/glob/webfetch/websearch allow，Aaron 定 Scribe/Sage/Lex 需 grep、可上网）、拒危险工具（external_directory deny）；Scribe / Sage / Lex `bash: allow`（Human 定，安全合同变更：Scribe 在 RESPOND 阶段须经 `trac discuss reply` 回复评审线程，frontmatter 无命令级 pattern，无法只放行 trac discuss；约定边界——Scribe 仅 `trac discuss query/reply`（必要时 reopen），Sage / Lex 仅 `trac discuss`/`trac validate`；越权靠后置审计，残留风险同 Sage，v0.2 接受）。
 - 目标文档与本次专属临时目录之外的写操作即越权。
 - Runtime 后置审计：
   - 运行前记录 clean baseline（git status）。
