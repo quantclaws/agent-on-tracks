@@ -100,6 +100,25 @@ def test_check_spec_items_nfr_no_delivery_entry():
     assert check_spec_items(text) == []
 
 
+def test_check_spec_items_nfr_missing_checkbox_rejected():
+    """AC-FR0150-03: no '- [ ] 已决定' line is a format error -> reject (Aaron)."""
+    text = "### NFR-0010 错误信息含行号\n\n- **来源**：story §3.3\n\n描述\n"
+    assert any("已决定 checkbox" in i for i in check_spec_items(text))
+
+
+def test_check_spec_items_missing_source_rejected():
+    """AC-FR0150-03: no '- **来源**：' field is a format error -> reject (Aaron)."""
+    text = "### NFR-0010 错误信息含行号\n\n- [x] 已决定\n\n描述\n"
+    assert any("来源" in i for i in check_spec_items(text))
+
+
+def test_check_spec_items_old_status_format_rejected():
+    """AC-FR0150-03: legacy '- **状态**：…已决定…' is NOT accepted (no compat)."""
+    text = "### NFR-0010 标题\n\n- **状态**：有效·可测·已决定\n- **来源**：BS-01\n\n描述\n"
+    issues = check_spec_items(text)
+    assert any("已决定 checkbox" in i for i in issues)  # rejected, not defaulted
+
+
 # -- FR-150 template check: acceptance skip + HTML comments -------------------
 
 def test_check_template_acceptance_skips_section_names(tmp_path):
