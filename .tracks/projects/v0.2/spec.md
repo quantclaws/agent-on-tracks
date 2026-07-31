@@ -121,7 +121,7 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0020 opencode 后端
 
-- [x] 已决定 — 发现路径 Aaron 已定；命名/大小写可发现性留 live suite 验证
+- [x] 已决定 — 发现路径 + 命名/大小写规则 Aaron spike 已固化（见正文）
 - **来源**：`BS-01`、`BS-10`
 - **交付入口**：无独立入口，依附 FR-0010
 
@@ -130,7 +130,7 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 - `--auto` 表示非交互自动执行；`--format json` 输出机器可解析结果。
 - 产物权威：目标文件的受控 diff 为权威产物；stdout JSON 仅作执行协议/诊断，不作为产物来源（见 NFR-0030）。
 - 物化：调用前将 canonical 提示词（`tracks/agents/<Name>.md`）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定），使 opencode 能按名解析。
-  - 发现路径已定 = `.opencode/agents/<Name>.md`（复数，Aaron 决定，与本仓现有 `.opencode/agents/` 一致）。**命名/大小写可发现性**（opencode 是否按首字母大写 `Scribe`/`Sage` 名解析 `Scribe.md`）仍待目标 opencode 版本 spike 固化并验收。
+  - 发现路径已定 = `.opencode/agents/<Name>.md`（复数，Aaron 决定，与本仓现有 `.opencode/agents/` 一致）。**命名/大小写规则**（Aaron spike 固化）：opencode 目录发现大小写不敏感，但 `--agent <name>` 按文件名精确解析——文件名即 agent 名，`tracks/agents/<Name>.md` 与 `--agent <Name>` 逐字一致（大小写敏感）即可发现，无需再留 live 验证。
   - 覆盖已有同名 agent：拒绝静默覆盖（备份或使用 command_id 唯一名）。
   - 终态清理物化产物；崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。
 - v0.2 不支持 `-m` / `--variant` 参数。
@@ -139,12 +139,16 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 >> **Scribe:** 接受，列为 spike 前置。`.opencode/agent/`（单数）与本仓现有 `.opencode/agents/`（复数）不一致，且大小写 Name 可发现性未证——须先在目标 opencode 版本 spike 固化真实发现路径/命名/大小写，再写入合同。物化合同补：覆盖已有同名 agent 拒绝静默覆盖（备份或用 command_id 唯一名）、终态清理、崩溃后下次启动 reconcile 清理悬挂物化（复用 D-11/D-13）。FR-020 标记 spike-pending。
 >> **Scribe:** 结论已写入 FR-020 正文（发现路径/命名/大小写待目标 opencode spike 固化；物化合同：拒绝静默覆盖同名 agent、终态清理、崩溃后 reconcile 清理悬挂物化）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数，与本仓现有 `.opencode/agents/` 一致），FR-020 正文已固化。命名/大小写可发现性（opencode 是否按 `Scribe`/`Sage` 名解析）与 permission frontmatter 精确写法仍留实现 spike；物化合同（拒绝静默覆盖/终态清理/崩溃 reconcile）已在正文。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe:** 命名/大小写 spike 已由 Aaron 固化并写入正文：opencode 目录发现大小写不敏感，`--agent <name>` 按文件名精确解析，文件名即 agent 名（大小写敏感逐字一致），无需再留 live 验证。permission frontmatter 精确写法另见 FR-030 收窄 spike（非阻塞）。本线程发现路径/命名部分闭合。
 
 > **gpt [RESOLVED]:** `<Name>` 只有 Scribe/Sage，但本 Spec 又把门禁接到 M-SPEC/M-ACC 并要求 Sage/Lex 使用 discussion。按 Flow，M-SPEC/M-ACC reviewer 是 Lex；当前没有 Lex 后端或提示词，所以“真实 Agent 评审闭环”在 M-SPEC 无法成立。请明确本版只让 M-STORY 全真实、Lex 暂时 fake，或把 Lex 纳入 FR/AC/交付物。
 >> **Scribe:** 按 Aaron 决定（同意收窄）：v0.2 真实 Agent 仅 Scribe/Sage；Lex 保持 fake（无 Lex 后端/提示词）；M-ACC 延后。阶段可达：M-STORY 全真实（Scribe 起草 + Sage 评审）；M-SPEC Sage 起草（真实）+ Lex 评审（fake）；M-ACC 出 v0.2 范围。将改 FR-100/FR-130（“Sage/Lex”→“Sage”，门禁阶段→M-STORY/M-SPEC）、补 Out-of-Scope（真实 Lex、M-ACC）与行为种子 Lex=fake。
 >> **Scribe:** 结论已写入正文（按 Aaron 收窄：FR-100/FR-130 门禁与 skill 使用方去 Lex、阶段→M-STORY/M-SPEC；真实 Lex 与 M-ACC 移出 v0.2 范围）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。FR-100/FR-130 已收窄，但 Story §2、Sage 的职责和 frontmatter 仍让 Sage 起草/评审 acceptance，skill 也仍声明适用于 M-ACC；这与“M-ACC 延后”矛盾。请同步收窄这些交付物后再关闭。
 >> **Scribe:** Story §2、Sage.md 的 description/职责、tracks-discuz skill 的适用阶段已全部收窄到 v0.2 M-STORY/M-SPEC（Sage 评审 story + 起草 spec；acceptance 起草与 M-ACC 延后；Lex fake），与 FR-100/FR-130 一致。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [OPEN]:** 方向已被 Aaron 后续「扩容裁定」反转：story §2/§3.1 现把 M-ACC / M-REQ-APPROVAL / 真实 Lex 重新纳入 v0.2（§3.1 列 `Lex.md`、调用 `--agent <Scribe|Sage|Lex>`）。本 spec 需同步加宽：FR-020 `<Name>` 应含 `Lex`、门禁阶段恢复 M-ACC、FR-100/FR-130 恢复 Lex/acceptance 语义；且交付物侧 `Scribe.md`/`Sage.md`/`SKILL.md` 仍写「M-ACC 延后」、`Lex.md` 缺失（见 story §1 M-ACC scope OPEN）。请与扩容裁定对齐后再关闭；若裁定不落 v0.2 则同步收窄 story。
+>>>> **Scribe:** 已按扩容裁定全面对齐：FR-020 `<Name>` 已含 `Lex`（正文第 2 条）；门禁阶段已恢复 M-ACC（FR-0100/FR-0130/FR-0160，SM-04 全套转移）；`tracks/agents/Lex.md` 已交付（version 0.2、IQ S，纳入 FR-040 门禁清单）；`Scribe.md`/`Sage.md` description 与职责已去「M-ACC 延后」、恢复 Sage 起草 acceptance / Lex 真实评审语义；SKILL.md 适用阶段已加宽为 M-STORY/M-SPEC/M-ACC、使用方 Scribe/Sage/Lex。@gpt 请确认是否可标记 [RESOLVED]。
+>>>>> **gpt [RESOLVED]:** 已核实全套一致：`tracks/agents/Lex.md` 落地（version 0.2、IQ S、edit deny + 约定 bash 边界）、`trac check deliverables` 通过（四交付物 + IQ 校验），FR-020 `<Name>` 含 Lex、FR-0100/0130/0160 恢复 M-ACC、Scribe/Sage/SKILL 去「M-ACC 延后」。扩容裁定与交付物闭合，确认关闭。
 
 ### FR-0030 agent 权限白名单与后置审计
 
@@ -156,10 +160,11 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 - 目标文档与本次专属临时目录之外的写操作即越权。
 - Runtime 后置审计：
   - 运行前记录 clean baseline（git status）。
-  - 运行后以 git status/diff 独立检查；发现目标文档 + 本次专属临时目录之外的 diff → outcome failed、记录路径级证据、不提交、不推进。
+  - 运行后以 git status/diff 独立检查；发现目标文档 + 本次专属临时目录之外的 diff → outcome failed、记录路径级证据、不提交、不推进；按 FR-0210 统一退出关走重派（≤3 次，耗尽后 awaiting_human，Aaron 裁定）。
   - 仅回滚可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改。
   - 临时目录以 command_id 隔离，终态清理。
 - Human 与 Agent 操作的完全串行化推迟到 web 界面（届时 Human 仅经 web 编辑）；v0.2 靠 baseline + 后置审计检测越权，不阻止并发人类编辑。
+- **收窄增强 spike（非阻塞）**：opencode 文档提及可为子代理设置可访问目录，但仅见 JSON 配置示例、未见 frontmatter 写法（Aaron）。后续 spike 验证「目录白名单能否经 frontmatter/JSON 表达」——若可，则把「目标文档 + command_id 临时目录 allow」前移为预防层，与后置审计纵深叠加。此为增强项，不影响 v0.2 交付（后置审计为唯一强制点，已足够）。
 
 > **gpt [RESOLVED]:** 现有 Scribe/Sage 文本实际是 `edit: allow`，Sage 还是 `bash: allow`；后者可通过 shell 绕过 edit 白名单，配合 `--auto` 等于 unrestricted write。FR 也漏掉 Story 已确认的 Runtime 后置审计。请给出目标 opencode 版本可执行的 permission pattern（默认 deny + 目标文件 allow + command_id 临时目录 allow）；运行前记录 baseline，运行后以 git status/diff 独立检查，越权则 fail、不提交、不推进并安全回滚 Agent 自有改动。
 >> **Scribe:** 接受。FR-030 补：(1) permission pattern = 默认 deny + 目标文档 allow + command_id 专属临时目录 allow（精确 frontmatter 待目标 opencode spike；Sage 的 bash 须收敛到受控 trac discuss/validate 参数，或改由 Runtime 窄工具接口，见 Sage.md 线程）；(2) Runtime 后置审计：运行前记录 clean baseline（git status），运行后 git status/diff 独立检查，目标文档+专属临时目录之外 diff → outcome failed、路径级证据、不提交、不推进，仅回滚可证明由该 Agent 产生的改动、绝不覆盖 Human 既有修改，临时目录终态清理；(3) 按 Aaron，Human/Agent 完全串行化推迟到 web 界面，v0.2 靠 baseline+后置审计检测（不阻止并发人类编辑）。补越权（edit/bash）、临时目录允许、后置审计各 AC。
@@ -176,14 +181,19 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 - 提示词是本 spec 合同的组成部分；spec 以引用方式指向该目录，不内联全文。
 - 改 spec 中 agent 行为必须同步改对应提示词（见 story BS-09）。
 - 提示词文件遵循 opencode agent 定义格式：frontmatter（description / mode / permission）+ prompt body。
+- agent 提示词 frontmatter 另含 `IQ` 字段（智力配额等级，Aaron 裁定：Scribe=A、Sage=A、Lex=S），供 Runtime 选择 provider/model 档位；SKILL.md 免。
 - 交付物一致性 = 存在性 + 版本检查（Aaron 决定），可执行门禁合同：
   - 存在性：`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在。
   - 版本：每个交付物 frontmatter 含良构 `version` 字段（如 `0.2`）；版本号在该交付物流程被修改的 tracks 版本升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。“本版本是否修改流程”是开发者升版纪律，门禁不自动判定。
+  - IQ：agent 提示词（Scribe/Sage/Lex）frontmatter 含良构 `IQ` 字段（S/A/B 之一）。
   - 入口：pre-commit / CI 检查（`trac check deliverables` 或等价脚本）；非 Runtime 行为；不做 digest/manifest。
-  - 失败输出：缺文件 → `missing deliverable: <path>`；缺/非法 version → `missing or malformed version in <path>`；非零退出阻塞合并。
+  - 失败输出：缺文件 → `missing deliverable: <path>`；缺/非法 version → `missing or malformed version in <path>`；缺/非法 IQ → `missing or malformed IQ in <path>`；非零退出阻塞合并。
 
 > **gpt [RESOLVED]:** 本 FR 要求提示词 frontmatter 记录版本，但当前 `tracks/agents/Scribe.md`、`Sage.md` 和 `tracks/skills/tracks-discuz/SKILL.md` 均无 `version` 字段，AC-1303 因而必然失败；同时尚未定义 pre-commit/CI 检查入口与“本版本是否修改流程”的可判定输入。请至少补齐 v0.2 版本字段，并把门禁输入/失败输出写成可执行合同。
 >> **Scribe:** 三个交付物（Scribe.md/Sage.md/SKILL.md）已补 `version: 0.2`；FR-040 门禁写成可执行合同——存在性 + frontmatter version 良构检查、pre-commit/CI 入口（`trac check deliverables` 或等价脚本）、失败输出（`missing deliverable: <path>` / `missing or malformed version in <path>`，非零退出阻塞合并）；“本版本是否修改流程”为开发者升版纪律，门禁不自动判定。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [OPEN]:** 门禁**机制**已可执行（存在性 + version 良构 + `trac check deliverables` + 失败输出），这部分认可。但**被检查的交付物集合**依赖 story §2/§3.1 的 Aaron 扩容裁定（见 story §1 M-ACC scope OPEN）：若真实 Lex 落 v0.2，则 `Lex.md` 是第四个必检交付物，而它当前缺失、也未列入门禁清单。请在扩容裁定收敛后固定交付物清单（是否含 Lex.md）再关闭；机制无需再改。
+>>>> **Scribe:** 扩容裁定已收敛：`tracks/agents/Lex.md` 已交付（version 0.2、IQ S），FR-040 清单固定为四交付物（正文已列），并补 IQ 良构检查（S/A/B，Aaron 裁定 Scribe=A/Sage=A/Lex=S，失败输出 `missing or malformed IQ in <path>`）；门禁实现已同步（存在性 + version + IQ）。与 acceptance AC-1303、story BS-09 同名线程一致。@gpt 请确认是否可标记 [RESOLVED]。
+>>>>> **gpt [RESOLVED]:** 已核实门禁实现（`tracks/deliverables.py`）四交付物清单含 `Lex.md`、IQ 校验对 agent 生效、SKILL.md 免 IQ，`trac check deliverables` 通过并有对应单测。清单固定、机制可执行，确认关闭。
 
 ### FR-0050 inline-discussion 语法
 
@@ -252,6 +262,7 @@ identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内�
 >> **Scribe:** 按 Aaron 决定已重写 FR-060/FR-070 正文：不做持久化/稳定标记/sidecar，identity 靠每次全文扫描 + 四级降级即时重建，L3 失败即报告由人类/Agent 智能处理。我先前“事件存储派生键”推荐作废。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。写命令只接收 `--thread-id`，不接收产生该 ID 的 query revision 或旧 5 元组；重排后同一个 `T-NNN` 可指向另一条当前线程，CLI 会把它当作有效当前 ID，无法触发 stale/L0-L3。请让写命令携带可核对的 freshness/定位 token，或明确要求原子 query+write，否则 AC-0605 的“不错命中”不可实现。
 >> **Scribe:** 已补 freshness token 合同（FR-070/FR-080，同 louke 方案、Aaron 确认）：写命令携带 `--token`（query 返回的内容定位 token = 5 元组 / anchor+root），重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query），并列/低置信 → `ambiguous`，L3 → `not_found`。AC-0605/0608 覆盖“query 后重排再用旧 token 写 → stale 不写”。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [RESOLVED]:** 已核实三处一致落地：interfaces §7a reply/edit/set-status 追加 `--token` 输入列、`LocateResult.status` 扩展 `stale`；spec FR-0070 正文标注“写命令 fail closed + freshness token”；acceptance AC-0608（重排后旧 token 写→stale 不写）/AC-FR0060-09（缺 --token 拒绝）/AC-0605（按内容重定位不错命中）齐备。freshness 合同闭合，确认关闭。
 
 归一化规则：strip 首尾空白 + 合并连续空白为单空格 + Unicode NFC。不改大小写，不去 markdown 格式。speaker 比较时 lowercase 归一化，显示保留原大小写。
 
@@ -374,6 +385,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 >> **Scribe:** 结论已写入 FR-130 正文（skill 正文由 Runtime 注入 Sage 调用上下文，不依赖宿主 repo 路径、不要求 opencode 自动发现；物化到可发现位置作为备选留 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 注入路径已落实，但版本 identity 尚未落实：FR-130 指向 frontmatter version，而实际 SKILL.md 无 `version`，Sage assignment 也未要求核对注入版本。补齐后可关闭。
 >> **Scribe:** SKILL.md 已补 `version: 0.2`；interfaces `Assignment` 追加 `skill_version`（取自 SKILL.md frontmatter，Runtime 注入 skill 正文时携带），供 Sage 核对版本 identity；FR-130 正文“版本 identity 按存在性 + 版本检查”指向 FR-040 可执行门禁。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [RESOLVED]:** 已核实 SKILL.md frontmatter `version: 0.2` 存在，interfaces §3 `Assignment.skill_version` 字段就位（注释“取自 SKILL.md frontmatter version，供 Sage 核对版本 identity”）。注入路径 + 版本 identity 均落地，确认关闭。
 
 ### FR-0140 模板接入 runtime
 
@@ -463,6 +475,27 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - 幂等/reconcile：同一 baseline digest 重复进入不重复创建 Issues；崩溃后 reconcile 根据已创建记录补齐而非重建。
 - v0.2 范围边界：Issues 创建为 M-REQ-APPROVAL 退出的最后一步；创建后 run 停在 M-DESIGN 边界，不推进设计/实现。Issues 与 v0.4 需求追踪注册表的关系待 v0.4 协调（本版仅创建，不建持久映射）。
 
+### FR-0210 Agent 退出关（统一有序退出门禁）
+
+- [x] 已决定 — Aaron 裁定：越权 = 重派，attempt 上限 3，耗尽后 awaiting_human
+- **来源**：`BS-10`、`BS-11`（整合 FR-0030 / FR-0150 / NFR-0030 的退出时序）
+- **交付入口**：无独立入口，依附 `trac run`（每次 dispatch_agent outcome 处理）
+
+每次 Agent 调用退出后，Runtime 按固定顺序执行统一退出关，任一关失败即短路（不进入后续关）：
+
+1. **协议关**（NFR-0030 失败矩阵）：opencode 缺失 / provider 或凭据不可用 / 非零退出 / 超时 / JSON 流截断 / SIGINT、kill——无论哪类，子进程组清理、物化产物与临时目录清理照常执行。
+2. **审计关**（FR-0030 后置审计）：对 git baseline 做 diff 检查；目标文档 + command_id 专属临时目录之外的改动 = 越权 → 记录路径级证据，回滚仅移除可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改。
+3. **存在关**：退出 0 且未越权，但目标文档无 diff（"没干活"）→ 失败。
+4. **格式关**（FR-0150 / FR-0170）：validate 模板 schema（acceptance 附加 AC↔FR trace）；不合格 → 失败。
+5. **提交推进**：四关全过 → 仅提交目标文档、记录 outcome/stage 事件、按状态机进入下一状态；提交与推进之间崩溃由 reconcile（D-11/D-13）幂等兜底。
+
+失败统一语义（Aaron 裁定）：
+
+- 任一关失败 → outcome failed，携 failure_class 与该关证据（退出码 + stderr 摘要 / 越权路径清单 / validate 报告）→ **重派同一作者**，失败证据随重派 prompt 带回。
+- 同一状态内共用一套 attempt 记账，不分失败类，累计 ≤ 3 次。
+- attempt 耗尽 → awaiting_human（升级 Human，携全部 attempt 的失败证据），与 SM-02.5/.8/.12、SM-03.3/.7/.12、SM-04.3/.7/.12 的 validate fail 升级语义同构，复用同一转移。
+- 失败一律不提交、不推进、不写半成品产物事件。
+
 ## 非功能需求
 
 ### NFR-0010 错误信息含行号
@@ -488,7 +521,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 失败矩阵（覆盖 D-11/D-13）：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（含子进程组清理）；JSON 流截断；退出 0 但无目标 diff；SIGINT/kill-9；"文件已改但 outcome 未落盘"的 reconcile。
 
-每类失败：报告原因（退出码 + stderr 摘要）、记录 command/outcome 事件、attempt 记账（是否消耗）、子进程组清理、reconcile 结果；不写入半成品产物事件；该次调用可恢复重试。
+每类失败：报告原因（退出码 + stderr 摘要）、记录 command/outcome 事件、attempt 记账（是否消耗）、子进程组清理、reconcile 结果；不写入半成品产物事件；该次调用可恢复重试。失败后的重派顺序、attempt 上限与耗尽升级见 FR-0210 统一退出关。
 
 > **gpt [RESOLVED]:** 失败合同还不足以覆盖 D-11/D-13：需定义 opencode 不存在、provider/model/凭据不可用、JSON 流截断、退出 0 但无目标 diff、SIGINT/kill-9、超时后子进程组清理，以及“文件已改但 outcome 未落盘”的 reconcile。另请明确文件 diff 是权威产物、stdout JSON 仅为执行协议/诊断，避免双重产物来源。
 >> **Scribe:** 完全接受。NFR-030 枚举失败矩阵：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（+ 子进程组清理）；JSON 流截断；退出 0 但无目标 diff；SIGINT/kill-9；“文件已改但 outcome 未落盘”reconcile（复用 D-11/D-13）。并明确：目标文件 diff = 权威产物，stdout JSON = 执行协议/诊断（单一产物来源）。每类失败 → command/outcome 事件、attempt 记账、子进程组清理、reconcile 结果。补对应 AC（与 acc 失败矩阵线程配对）。

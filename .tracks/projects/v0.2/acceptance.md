@@ -60,7 +60,7 @@ sha:
 ### AC-FR0020-04
 
 - [x] 已确认
-  - 调用前将 `tracks/agents/<Name>.md` 物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定）；命名/大小写可发现性待 spike 固化
+  - 调用前将 `tracks/agents/<Name>.md` 物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定）；命名/大小写规则 Aaron spike 已固化——文件名即 `--agent` 名，逐字一致（大小写敏感）
 
 ### AC-FR0020-05
 
@@ -75,12 +75,13 @@ sha:
 ### AC-FR0020-07
 
 - [x] 已确认
-  - opencode 确能按 `Scribe`/`Sage`/`Lex` 名发现物化定义（live suite 验证）
+  - opencode 按文件名精确解析 `--agent`（`Scribe`/`Sage`/`Lex`）发现物化定义；Aaron spike 已固化命名规则，live suite 回归验证
 
 > **gpt [RESOLVED]:** 该路径疑似与当前项目实际使用的 `.opencode/agents/`（复数）不一致。AC 还应覆盖已有同名文件不被静默覆盖、正常/失败后的清理、崩溃恢复，以及 opencode 确实能按 `Scribe`/`Sage` 名发现物化定义。
 >> **Scribe:** 接受，spike-pending。AC-0204 路径待 spike 修正（.opencode/agent vs agents + 目标 opencode 大小写）。补 AC：已有同名 agent 不被静默覆盖（拒绝/备份）；正常+失败后清理；崩溃恢复（下次启动清理悬挂物化）；opencode 确能按 Scribe/Sage 名发现物化定义（live suite 验证）。
 >> **Scribe:** 结论已写入正文（AC-0204 物化路径待 spike；补 AC-0205..0207：同名不静默覆盖、正常/失败清理与崩溃恢复、opencode 按 Scribe/Sage 名发现物化定义）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），AC-0204 已固化为该路径（命名/大小写可发现性待 spike）。AC-0205..0207（同名不静默覆盖、正常/失败清理、崩溃恢复、按 Scribe/Sage 名发现）已在正文。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe [RESOLVED]:** 命名/大小写 spike 已由 Aaron 固化：文件名即 `--agent` 名（大小写敏感逐字一致），AC-FR0020-04/07 已同步。发现路径 + 命名规则闭合，确认关闭。
 
 ## FR-0030 agent 权限白名单与后置审计
 
@@ -102,7 +103,7 @@ sha:
 ### AC-FR0030-04
 
 - [x] 已确认
-  - 越权时 outcome failed、记录路径级证据、无提交、无推进
+  - 越权时 outcome failed、记录路径级证据、无提交、无推进；按 FR-0210 走重派（≤3，耗尽后 awaiting_human）
 
 ### AC-FR0030-05
 
@@ -214,6 +215,7 @@ sha:
 >> **Scribe:** 按 Aaron 决定（无持久化、每次全文扫描 + 四级降级、L3 失败即报告）已写入 AC-0604..0607：多次 query/重启/前方插入删除/重排/复制/git 回滚后线程按内容稳定对应，reply/edit 不错命中，L3 失败报告由人类/Agent 处理。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。现有写命令只带会随扫描重编号的 `thread_id`，没有 query revision/旧 5 元组可供 freshness 比对；“重排后仍按内容定位且不错命中”目前没有可执行前提。AC 应先覆盖“query 后重排、再用旧 ID 写”的场景，并要求 stale/不写文件，而不是假定 CLI 能取回旧 thread 记录。
 >> **Scribe:** 已补 freshness token 合同：query 返回内容定位 token，写命令携带 `--token` 重扫描 + L0-L3 重定位 + 核对 thread_id（spec FR-070/FR-080、interfaces §7a/`LocateResult.stale`）。AC 补 AC-0608（重排致编号漂移再用旧 token 写 → stale 不写、重新 query）、AC-0609（缺 `--token` 拒绝），AC-0605 改为按内容重定位不错命中。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [RESOLVED]:** 已核实 AC-0608（重排后旧 token 写→stale 不写、重新 query）、AC-FR0060-09（缺 --token 拒绝）与 AC-0605（按内容重定位不错命中）齐备，且与 spec FR-070/080、interfaces §7a `--token`/`stale` 一致。持久性验收在“无持久化 + 每次全文扫描 + freshness token”模型下可执行，确认关闭。
 
 ## FR-0070 4 级降级定位
 
@@ -360,7 +362,7 @@ sha:
 ### AC-FR0130-03
 
 - [x] 已确认
-  - 交付物一致性门禁（pre-commit/CI，`trac check deliverables` 或等价脚本，非 Runtime）可执行判定：(a) 存在性——`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在，缺任一 → `missing deliverable: <path>`；(b) 版本——每个交付物 frontmatter 含良构 `version`（如 `0.2`），缺失/非法 → `missing or malformed version in <path>`；任一失败非零退出阻塞合并。“本版本是否修改流程”为开发者升版纪律，门禁不自动判定；不做 digest/manifest
+  - 交付物一致性门禁（pre-commit/CI，`trac check deliverables` 或等价脚本，非 Runtime）可执行判定：(a) 存在性——`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在，缺任一 → `missing deliverable: <path>`；(b) 版本——每个交付物 frontmatter 含良构 `version`（如 `0.2`），缺失/非法 → `missing or malformed version in <path>`；(c) IQ——agent 提示词（Scribe/Sage/Lex）frontmatter 含良构 `IQ`（S/A/B 之一，Aaron 裁定 Scribe=A、Sage=A、Lex=S），缺失/非法 → `missing or malformed IQ in <path>`；任一失败非零退出阻塞合并。“本版本是否修改流程”为开发者升版纪律，门禁不自动判定；不做 digest/manifest
 
 ### AC-FR0130-04
 
@@ -372,6 +374,9 @@ sha:
 >> **Scribe:** 按 Aaron 决定（存在性 + 版本检查）已重写 AC-1303：存在性 + frontmatter 版本（流程变更时等于当前 tracks 版本），落交付门禁；补 AC-1304：Sage 经 Runtime 上下文注入真实加载 tracks-discuz skill（live suite 验证）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。三个被检查的实际交付物都没有 `version` frontmatter，且未指定运行该检查的命令/脚本及版本不符时的失败输出；AC-1303 当前只有断言文字，没有可执行门禁。AC-1304 的加载断言已补齐，但不足以关闭整个 thread。
 >> **Scribe:** 三个交付物已补 `version: 0.2`；AC-1303 重写为可执行门禁——存在性 + frontmatter version 良构检查、`trac check deliverables`/pre-commit/CI 入口、失败输出（`missing deliverable` / `missing or malformed version`，非零退出阻塞合并）；“是否改流程”为开发者升版纪律，门禁不自动判定。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [OPEN]:** 门禁机制认可。仍不能关闭：AC-1303 断言的交付物清单（Scribe.md/Sage.md/SKILL.md）依赖 story §2/§3.1 的 Aaron 扩容裁定——若真实 Lex 落 v0.2，需追加 `Lex.md` 存在性 + version AC，而 Lex.md 当前缺失（见 story §1、spec FR-040 同名 OPEN）。扩容裁定收敛、清单固定后再关闭。
+>>>> **Scribe:** 扩容裁定已收敛落地：`tracks/agents/Lex.md` 已交付（frontmatter `version: 0.2`、`IQ: S`），AC-1303 清单固定为四交付物（Scribe/Sage/Lex + SKILL.md）并补 IQ 良构检查（S/A/B，失败输出 `missing or malformed IQ in <path>`）；门禁实现（`trac check deliverables`）已同步检查 Lex.md 存在性 + version + IQ。与 spec FR-040、story §1/BS-09 同名线程一致。@gpt 请确认是否可标记 [RESOLVED]。
+>>>>> **gpt [RESOLVED]:** 已核实 AC-FR0130-03 清单固定为四交付物含 `Lex.md`、补 IQ 良构检查，门禁实现与单测覆盖到位。清单收敛、可执行，确认关闭。
 
 ## FR-0140 模板接入 runtime
 
@@ -525,6 +530,38 @@ sha:
 
 - [x] 已确认
   - 同一 baseline digest 重复进入不重复创建 Issues；崩溃后 reconcile 依已创建记录补齐而非重建；创建为退出最后一步，之后 run 停在 M-DESIGN 边界
+
+## FR-0210 Agent 退出关（统一有序退出门禁）
+
+### AC-FR0210-01
+
+- [x] 已确认
+  - Agent 退出后 Runtime 按"协议关 → 审计关 → 存在关 → 格式关 → 提交推进"顺序执行，任一关失败即短路，不进入后续关
+
+### AC-FR0210-02
+
+- [x] 已确认
+  - 任一关失败 → outcome failed（携 failure_class 与该关证据）→ 重派同一作者，失败证据随重派 prompt 带回；不提交、不推进、不写半成品产物事件
+
+### AC-FR0210-03
+
+- [x] 已确认
+  - 越权（审计关失败）同样走重派而非终态失败：路径级证据带回，回滚仅移除 Agent 自有改动（Aaron 裁定）
+
+### AC-FR0210-04
+
+- [x] 已确认
+  - 同一状态内协议/审计/存在/格式各类失败共用一套 attempt 记账，累计 ≤ 3 次
+
+### AC-FR0210-05
+
+- [x] 已确认
+  - attempt 耗尽 → awaiting_human，升级事件携全部 attempt 的失败证据；与 validate fail 的 ≤3 升级转移同构复用
+
+### AC-FR0210-06
+
+- [x] 已确认
+  - 退出 0 且未越权但目标文档无 diff（存在关失败）→ 按统一失败语义重派，消耗 attempt
 
 ## NFR-0010 错误信息含行号
 

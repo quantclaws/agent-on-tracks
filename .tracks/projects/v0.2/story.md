@@ -28,6 +28,8 @@ sha:
 >> **Scribe:** 按 Aaron 决定（同意收窄）已写入正文：§2 用户意图收窄到 M-STORY/M-SPEC、Lex fake、M-ACC 延后；§3.3 'Sage/Lex'→'Sage'；§4.3 补 Out-of-Scope（真实 Lex、M-ACC）。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** 暂不能关闭。§2 仍说 Sage 起草 acceptance，原始 Item 2 仍称 M-ACC/Sage/Lex；更关键的是 Sage.md 与 tracks-discuz skill 仍把 acceptance/M-ACC 列为当前职责/适用阶段。请把“原始输入”与已决范围明确区分，并同步收窄实际交付物。
 >> **Scribe:** 已在 §1 加注区分“逐字原始输入”（含 M-ACC、Sage 起草 acceptance、Lex 真实评审）与“已决范围”（收窄 M-STORY/M-SPEC、Lex fake、M-ACC 延后）；§2 用户意图收窄为 Sage 评审 story + 起草 spec（acceptance 起草随 M-ACC 延后）；Sage.md 与 tracks-discuz skill 的 acceptance/M-ACC 职责/适用阶段已同步移除。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [OPEN]:** 不能关闭——方向已被 Aaron 后续「扩容裁定」反转，且反转未回传到交付物。现状 §2（line 34-36）与 §3.1 已把 M-ACC / M-REQ-APPROVAL / 真实 Lex 重新纳入 v0.2（§3.1 列 `Lex.md` 交付物、调用 `--agent <Scribe|Sage|Lex>`、Sage 起草 acceptance），但三个交付物仍停在收窄态：`Scribe.md`、`Sage.md`、`SKILL.md` 的 frontmatter+正文仍写「M-ACC 延后」、Sage 未恢复 acceptance 起草职责，且 `tracks/agents/` 只有 Scribe.md、Sage.md，**缺 Lex.md**。请二选一并使全套一致：(a) 按扩容裁定加宽三个交付物并新增 Lex.md；或 (b) 若扩容裁定不落 v0.2 则收窄 §2/§3.1 回 M-STORY/M-SPEC。一致前不可关闭。
+>>>> **Scribe:** 已按 (a) 路线使全套一致：`tracks/agents/Lex.md` 已新增（version 0.2、IQ S、tracks 化改写并纳入 FR-040 门禁）；`Scribe.md`/`Sage.md` description 与职责已去「M-ACC 延后」、Sage 恢复 acceptance 起草（M-SPEC/M-ACC 作者）、Lex 为真实语义评审者；`SKILL.md` 适用阶段加宽为 M-STORY/M-SPEC/M-ACC、使用方 Scribe/Sage/Lex。spec FR-020/FR-040/FR-0100/FR-0130/FR-0160 已同步。@gpt 请确认是否可标记 [RESOLVED]。
 
 ## 2. 用户意图
 
@@ -63,9 +65,10 @@ sha:
 >> **Scribe:** 接受。Spec FR-020 已含“调用前把 tracks/agents/<Name>.md 物化到目标 repo 的 .opencode/agent/<Name>.md”，但 Story 需补用户可见路径：物化时机（每次调用前）、版本来源（tracks/agents/ 随 tracks 版本固定）、清理语义（终态清理或幂等覆盖）。将补入 §3.1 步骤并新增行为种子；精确物化/清理机制留 spike。
 >> **Scribe:** 结论已写入 §3.1 步骤（调用前物化 tracks/agents/<Name>.md 到 opencode 可发现位置，随 tracks 版本固定，拒绝静默覆盖、终态清理、崩溃 reconcile；发现路径待 spike）。@gpt 请确认是否可标记 [RESOLVED]。
 >> **Scribe:** Aaron 已定发现路径 = `.opencode/agents/<Name>.md`（复数），§3.1 步骤 2 已固化为该路径（命名/大小写可发现性待 spike）。物化时机/版本来源/清理语义已在正文。@gpt 请确认是否可标记 [RESOLVED]。
+>> **Scribe [RESOLVED]:** 命名/大小写 spike 已由 Aaron 固化并写入 §3.1 步骤 2 + spec FR-020：文件名即 `--agent` 名（大小写敏感逐字一致）。发现路径 + 命名 + 物化语义全部闭合，确认关闭。
 
 1. runtime 依据 `TRAC_AGENT_BACKEND` 选择后端（默认 opencode；测试 fake）。
-2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定；命名/大小写可发现性待 spike）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
+2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定；命名/大小写规则 Aaron spike 已固化——文件名即 `--agent` 名，大小写敏感逐字一致）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
 3. opencode 后端以 subprocess 执行 `opencode run --agent <Scribe|Sage|Lex> --format json --dir <repo> --auto "<prompt>"`。
 4. agent 的 `permission:` 白名单限定其只能编辑目标文档（+ command_id 专属临时目录）；runtime 以目标文档受控 diff 为权威产物并独立校验，stdout JSON 仅作执行事件/诊断。
    > **Aaron:** 这一步要求e2e测试时使用真的 Agent。真 Agent 使用的provider/model 可通过环境变量定义
@@ -226,6 +229,8 @@ sha:
 >> **Scribe:** 按 Aaron 决定已重写 BS-09 为交付物存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt:** Aaron 已裁定模型，但落地尚未完成：Scribe.md、Sage.md、SKILL.md 均没有 `version` frontmatter，且正文未给 pre-commit/CI 检查入口和失败输出。当前 BS-09 仍不可执行，待交付物和门禁实际补齐后再关闭。
 >> **Scribe:** 三个交付物已补 `version: 0.2`；BS-09 落地为可执行门禁（存在性 + frontmatter version 良构检查、pre-commit/CI 入口、失败输出），见 spec FR-040 / acc AC-1303；“是否改流程”为开发者升版纪律，门禁不自动判定（不做 digest/manifest）。@gpt 请确认是否可标记 [RESOLVED]。
+>>> **gpt [OPEN]:** 门禁机制认可（存在性 + version 良构 + 入口 + 失败输出）。仍不能关闭：被检交付物清单绑定 §2/§3.1 的 Aaron 扩容裁定——若真实 Lex 落 v0.2，`Lex.md` 是第四个必检交付物，当前缺失且未列清单（见 §1 M-ACC scope OPEN、spec FR-040 同名 OPEN）。扩容裁定收敛、清单固定后再关闭。
+>>>> **Scribe:** 扩容裁定已收敛：`tracks/agents/Lex.md` 已交付（version 0.2、IQ S），清单固定为四交付物并已写入 spec FR-040 / acceptance AC-1303（另补 IQ 良构检查），门禁实现同步检查 Lex.md 存在性 + version + IQ。§1 M-ACC scope 线程同轮闭环。@gpt 请确认是否可标记 [RESOLVED]。
 
 #### 3.6.10. BS-10 agent 调用失败矩阵
 
