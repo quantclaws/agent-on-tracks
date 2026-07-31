@@ -13,7 +13,7 @@ sha:
 
 ## 状态与生命周期
 
-本节是 v0.2 可达阶段（M-START → M-ACC）子状态机的 normative 转移合同：未列出的转移即不允许；FR/AC/测试以转移行号引用（如 `SM-02.5`）。源自 `wiki/flow.md` §3–§6（mermaid 全图，仅作示意）；与 flow.md 漂移时以本节为准并须回改 flow.md。SM-01/SM-02/SM-03 是 v0.1/v0.2 已有行为的 normative 重述（变更基线），SM-04 随 FR-0160 新增。
+本节是 v0.2 可达阶段（M-START → M-ACC）子状态机的 normative 转移合同：未列出的转移即不允许；FR/AC/测试以转移行号引用（如 `SM-02.5`）。源自 `.tracks/wiki/flow.md` §3–§6（mermaid 全图，仅作示意）；与 flow.md 漂移时以本节为准并须回改 flow.md。SM-01/SM-02/SM-03 是 v0.1/v0.2 已有行为的 normative 重述（变更基线），SM-04 随 FR-0160 新增。
 
 ### SM-01 M-START（trac start）
 
