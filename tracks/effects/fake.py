@@ -22,15 +22,24 @@ STORY_SECTIONS = ("## 目标", "## 范围", "## 验收标准")
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
-## 能力边界
+## 功能需求
+
+### FR-0010 覆盖 story 目标
+
+- [x] 已决定 — FakeAgent 确定性草案
+- **来源**：story §目标
+- **交付入口**：无独立入口，依附 story
 
 由 story.md 派生的确定性规格草案。
 
-## 功能需求
+## 非功能需求
 
-| ID | 需求 | Story 来源 |
-| :--- | :--- | :--- |
-| FR-01 | 覆盖 story 目标章节 | story §目标 |
+### NFR-0010 确定性输出
+
+- [x] 已决定
+- **来源**：story §目标
+
+FakeAgent 输出确定、可复现。
 """
 
 
@@ -132,6 +141,7 @@ class FakeBackend:
         path.write_text(
             "---\n"
             "spec_id: SPEC-001\n"
+            "created: 1970-01-01\n"
             "story_ref: S-001\n"
             "status: draft\n"
             "sha:\n"

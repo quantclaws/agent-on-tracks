@@ -123,7 +123,20 @@ def test_exit_issues_frontmatter_seal_once():
         ("sage.verdict", {"verdict": "pass"}),
         ("human.review", {"action": "no_comment"}),
     )
+    # AC-1502: EXIT first issues the review-exit gate (template + discussion_ready).
     cmd = decide(at_exit)
+    assert cmd.kind == "validate_document" and cmd.params["doc"] == "story.md"
+    assert cmd.params["checks"] == ["template", "discussion_ready"]
+
+    # Once the gate passes (exit_validated), EXIT seals the frontmatter sha.
+    gated = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("story.committed", {"commit_sha": "c", "story_sha": "s"}),
+        ("sage.verdict", {"verdict": "pass"}),
+        ("human.review", {"action": "no_comment"}),
+        ("verdict.passed", {"check": "template,discussion_ready"}),
+    )
+    cmd = decide(gated)
     assert cmd.kind == "write_frontmatter" and cmd.params["doc"] == "story.md"
 
     sealed = state_of(
@@ -131,10 +144,24 @@ def test_exit_issues_frontmatter_seal_once():
         ("story.committed", {"commit_sha": "c", "story_sha": "s"}),
         ("sage.verdict", {"verdict": "pass"}),
         ("human.review", {"action": "no_comment"}),
+        ("verdict.passed", {"check": "template,discussion_ready"}),
         ("story.committed", {"commit_sha": "c2", "story_sha": "s2", "final": True}),
         ("stage.exited", {"stage": "M-STORY"}),
     )
     assert decide(sealed) is None
+
+
+def test_exit_gate_failure_blocks_exit():
+    blocked = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("story.committed", {"commit_sha": "c", "story_sha": "s"}),
+        ("sage.verdict", {"verdict": "pass"}),
+        ("human.review", {"action": "no_comment"}),
+        ("verdict.failed", {"check": "discussion_ready", "reason": "unresolved thread"}),
+    )
+    # AC-1502: a failed review-exit gate blocks exit and awaits human.
+    assert blocked.status == "awaiting_human" and blocked.awaiting == "review"
+    assert decide(blocked) is None
 
 
 def test_completed_run_halts():

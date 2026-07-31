@@ -41,6 +41,7 @@ class State:
     reviewer_dispatched: bool = False
     reviewer_produced: bool = False
     stage_exited: bool = False
+    exit_validated: bool = False  # FR-150/AC-1502: review-exit gate passed
     pending: dict | None = None  # last issued command without a result
     last_failure: dict | None = None  # evidence for the next re-dispatch (FR-11)
     scope_overflow: bool = False  # FR-20: pending rollback to M-STORY
@@ -71,6 +72,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     _reset_review(s)
     s.current_attempt = 0
     s.stage_exited = False
+    s.exit_validated = False
     s.review_round = 1
     s.sage_passed_this_round = s.lex_passed_this_round = False
 
@@ -111,12 +113,20 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.doc_validated = True
+    if s.substate == "EXIT":
+        s.exit_validated = True  # review-exit gate passed (AC-1502)
+    else:
+        s.doc_validated = True
     s.last_failure = None
 
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    if s.substate == "EXIT":
+        # AC-1502: gate failed at review exit -> block exit, await human.
+        s.status = "awaiting_human"
+        s.awaiting = "review"
+        return
     _reset_doc(s)
     if p.get("check") == "scope_overflow":
         s.scope_overflow = True  # FR-20: rollback, never escalation
@@ -286,8 +296,9 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     if not s.doc_produced:
         return None
     if not s.doc_validated:
-        # v0.1: validate is pass-through (D-16); the pipe still runs.
-        return Command(kind="validate_document", params={"doc": doc, "checks": []})
+        # FR-150/AC-1503: outcome-time format gate — Scribe/Sage must produce a
+        # template-conforming doc before it is committed / enters review.
+        return Command(kind="validate_document", params={"doc": doc, "checks": ["template"]})
     if not committed:
         return Command(
             kind="commit_document", params={"doc": doc, "message": f"{stage}: draft {doc}"}
@@ -296,10 +307,15 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
 
 
 def _decide_exit(s: State, stage: str) -> Command | None:
-    """EXIT: seal the document sha once (FR-17/FR-23)."""
+    """EXIT: gate-validate (FR-150/AC-1502) then seal the document sha (FR-17/FR-23)."""
     if s.stage_exited:
         return None
     doc = "story.md" if stage == "M-STORY" else "spec.md"
+    if not s.exit_validated:
+        # review-exit gate: template conformance + all discussion threads resolved.
+        return Command(
+            kind="validate_document",
+            params={"doc": doc, "checks": ["template", "discussion_ready"]})
     # Executor seals frontmatter sha, commits, emits stage.exited
     # (+ story/spec.committed final sha, + next stage.entered / run.completed).
     return Command(

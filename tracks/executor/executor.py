@@ -118,8 +118,9 @@ class Executor:
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
         path = self._doc_path(doc)
+        checks = cmd.params.get("checks") or []
         token = self.backend.token("validator", doc, "ok")
-        failure = validate_document(path, doc)
+        failure = validate_document(path, doc, checks)
         if failure is None and token != "ok":
             failure = ("schema", f"simulated failure: {token}")
         if failure:
@@ -130,7 +131,7 @@ class Executor:
             self._emit("verdict.failed", payload, command_id=cmd.command_id)
         else:
             self._emit("verdict.passed",
-                       {"check": "schema", "detail": "v0.1 pass-through (D-16)"},
+                       {"check": ",".join(checks) or "schema", "detail": "format checks"},
                        command_id=cmd.command_id)
 
     def _do_commit_document(self, cmd, state, task_id, reconcile):

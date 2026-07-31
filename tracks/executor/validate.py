@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 from tracks import templating
+from tracks.discuss.gate import check_ready
 from tracks.frontmatter import split_frontmatter
 
 FR_LIMIT = 30
@@ -46,17 +47,31 @@ _HEADING = re.compile(r"^(#+)\s+(.*\S)\s*$")
 _NUM_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 
 
-def validate_document(path: Path, doc: str) -> tuple[str, str] | None:
-    """Return (check, reason) on failure, None when the document is valid."""
+def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | None:
+    """Return (check, reason) on the first failure, None when valid.
+
+    schema (+ spec scope_overflow) always run (v0.1 D-16 + FR-20); ``checks``
+    adds the v0.2 gates: 'template' (FR-150) and 'discussion_ready' (FR-100).
+    """
+    checks = checks or []
     if not path.exists():
         return ("schema", "missing file")
-    head, body = split_frontmatter(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    head, body = split_frontmatter(text)
     if not head:
         return ("schema", "no frontmatter")
     if doc == "spec.md":
         n = _valid_fr_count(body)
         if n > FR_LIMIT:
             return ("scope_overflow", f"{n} FRs > {FR_LIMIT}")
+    if "template" in checks:
+        issues = check_template(path)
+        if issues:
+            return ("template", "; ".join(issues))
+    if "discussion_ready" in checks:
+        ready, blockers = check_ready(text)
+        if not ready:
+            return ("discussion_ready", "unresolved threads: " + ", ".join(blockers))
     return None
 
 
