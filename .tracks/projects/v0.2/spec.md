@@ -406,7 +406,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0160 M-ACC 阶段可达（acceptance 起草与评审闭环）
 
-- [ ] 已决定 — M-ACC 纳入 v0.2 为 Aaron 扩容裁定；本条细化（退出边界、回退目标）待 Human 评审
+- [x] 已决定 — M-ACC 纳入 v0.2（Aaron 扩容裁定）；退出边界、回退目标经 Human 评审通过
 - **来源**：`BS-13`
 - **交付入口**：无独立入口，依附 `trac run`（M-SPEC 退出后自动进入）
 
@@ -418,7 +418,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0170 acceptance 双向覆盖校验（AC↔FR trace）
 
-- [ ] 已决定 — trace 规则的硬/软约束划分待 Human 评审（本条均为硬错误）
+- [x] 已决定 — trace 规则均为硬错误，经 Human 评审通过
 - **来源**：`BS-13`
 - **交付入口**：`trac validate --file acceptance.md`（亦由 M-ACC 逐轮 validate / 退出门禁调用）
 
@@ -431,7 +431,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0180 M-REQ-APPROVAL 阶段可达（需求 baseline 审批门禁）
 
-- [ ] 已决定 — M-REQ-APPROVAL 纳入 v0.2 为 Aaron 扩容裁定（形成完整需求故事）；本条细化（退出边界、回退目标）待 Human 评审
+- [x] 已决定 — M-REQ-APPROVAL 纳入 v0.2（Aaron 扩容裁定，形成完整需求故事）；退出边界、回退目标经 Human 评审通过
 - **来源**：`BS-15`
 - **交付入口**：无独立入口，依附 `trac run`（M-ACC 退出后自动进入）+ Human 批准动作
 
@@ -443,7 +443,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0190 需求 baseline、approval identity 与 freshness
 
-- [ ] 已决定 — digest 算法与 stale 传播范围（仅阻断下游 vs 同时失效已建 Issues）待 Human/design 定
+- [x] 已决定 — 经 Human 评审通过；digest 算法与 stale 传播范围（仅阻断下游 vs 同时失效已建 Issues）的具体实现留 design 阶段落地
 - **来源**：`BS-15`
 - **交付入口**：无独立入口，依附 FR-0180
 
@@ -454,7 +454,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0200 spec → GitHub Issues 拆分与 Project 关联
 
-- [ ] 已决定 — Issues=需求追踪身份与 v0.4（trace/reach 注册表）可能重叠；拆分粒度、失败/幂等/reconcile 语义待 Human/design 定
+- [x] 已决定 — 经 Human 评审通过；Issues=需求追踪身份，与 v0.4（trace/reach 注册表）的关系待 v0.4 协调；拆分粒度、失败/幂等/reconcile 语义的具体实现留 design 阶段落地
 - **来源**：`BS-16`
 - **交付入口**：无独立入口，依附 FR-0180（APPROVED 后自动触发）
 
@@ -496,7 +496,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### NFR-0040 集成测试状态机全覆盖
 
-- [ ] 已决定 — 覆盖核对机制（test-plan 人工清单 vs 测试 marker）待 Human/design 定；v0.2 先用 test-plan 清单
+- [x] 已决定 — 经 Human 评审通过；v0.2 覆盖核对用 test-plan 人工清单（机器化 marker 属 v0.3 范围）
 - **来源**：`BS-14`
 
 - fake 通道集成/E2E 测试套件必须完整覆盖「状态与生命周期」SM-01～SM-05 的每个状态与每条转移：每条转移至少被一个测试走到一次。
