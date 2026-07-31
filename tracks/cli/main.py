@@ -17,7 +17,7 @@ from tracks import paths, templating
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
-from tracks.executor.validate import check_template
+from tracks.executor.validate import check_template, check_trace_file
 from tracks.kernel import Command, project
 from tracks.store import Store, new_ulid
 
@@ -243,7 +243,10 @@ def cmd_validate(repo: Path, *args) -> int:
     # it is a pure read of the given file against its kind template.
     if len(args) != 2 or args[0] != "--file":
         return _err("usage: trac validate --file <path>")
-    issues = check_template(Path(args[1]))
+    path = Path(args[1])
+    issues = check_template(path)
+    if path.name == "acceptance.md":  # FR-0170: trace auto-runs for acceptance
+        issues += check_trace_file(path)
     if issues:
         for issue in issues:
             print(issue, file=sys.stderr)

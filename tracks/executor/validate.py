@@ -8,6 +8,8 @@ fields and level-2 sections must match its kind template (tracks/templates/).
 ``check_template`` is pure (reads only the file + its template) and returns a
 list of ``line:N`` non-conformance messages (empty = valid); it will back
 ``trac validate`` and the outcome / exit-gate validation. Pure w.r.t. state.
+``check_trace`` (FR-0170) is the AC<->FR bidirectional coverage check; it runs
+always-on for acceptance.md (not via the checks list, like scope_overflow).
 
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
@@ -39,6 +41,11 @@ _ITEM_OK = re.compile(r"^### (?:FR|NFR)-\d{4} \S")
 _STATUS = re.compile(r"^- \[[xX]\] 已决定\b")
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
+# FR-0170 acceptance grammar: '## FR-XXXX' coverage section + '### AC-FRXXXX-YY'
+# item whose embedded ID back-references the spec FR/NFR.
+_ACC_SECTION = re.compile(r"^## (N?FR-\d{4})\b")
+_ACC_AC = re.compile(r"^### (AC-(N?FR)(\d{4})-\d+)\b")
+
 _KIND_BY_FILE = {
     "story.md": "story",
     "spec.md": "spec",
@@ -67,6 +74,10 @@ def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | No
         n = _valid_fr_count(body)
         if n > FR_LIMIT:
             return ("scope_overflow", f"{n} FRs > {FR_LIMIT}")
+    if doc == "acceptance.md":  # FR-0170: trace always runs, not via `checks`
+        issues = check_trace_file(path)
+        if issues:
+            return ("trace", "; ".join(issues))
     if "template" in checks:
         issues = check_template(path)
         if issues:
@@ -111,6 +122,69 @@ def _valid_fr_count(text: str) -> int:
         1 for _, heading, _ in _spec_items(text)
         if _ITEM_HEAD.match(heading).group(1).upper().startswith("FR-")
     )
+
+
+def _acc_scan(acc_text: str) -> tuple[dict, list]:
+    """Acceptance-side scan: ``({section_id: line_no}, [(ac_id, ref_id, line_no,
+    section_id)])``. Fenced code and discussion blocks ('>' lines) skipped;
+    a non-section level-2 heading closes the open section."""
+    sections: dict = {}
+    acs: list = []
+    fence = False
+    current = None
+    for i, line in enumerate(acc_text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence or line.lstrip().startswith(">"):
+            continue
+        if m := _ACC_SECTION.match(line):
+            current = m.group(1).upper()
+            sections.setdefault(current, i)
+        elif m := _ACC_AC.match(line):
+            ref = f"{m.group(2)}-{m.group(3)}".upper()
+            acs.append((m.group(1), ref, i, current))
+        elif (h := _HEADING.match(line)) and len(h.group(1)) == 2:
+            current = None
+    return sections, acs
+
+
+def check_trace(spec_text: str, acc_text: str) -> list:
+    """FR-0170 AC<->FR bidirectional coverage (both hard errors). Returns the
+    complete orphan list with ``line:N`` messages (no short-circuit); [] = pass.
+
+    Forward: every spec ``### FR-XXXX``/``### NFR-XXXX`` needs an acceptance
+    ``## FR-XXXX`` section containing >=1 ``### AC-FRXXXX-YY`` back-referencing
+    it (orphan -> item ID + spec line:N). Reverse: every acceptance AC must
+    back-reference an existing spec item (orphan -> AC ID + acceptance line:N).
+    Discussion blocks ('>' lines) and fenced code are ignored. No I/O."""
+    spec_ids: dict = {}
+    for line_no, heading, _ in _spec_items(spec_text):
+        spec_ids.setdefault(_ITEM_HEAD.match(heading).group(1).upper(), line_no)
+    sections, acs = _acc_scan(acc_text)
+    covered = {section for _, ref, _, section in acs if section == ref}
+    issues = [
+        f"line:{line_no} {item_id} has no '## {item_id}' section in acceptance"
+        if item_id not in sections else
+        f"line:{line_no} {item_id} acceptance section has no AC item for it"
+        for item_id, line_no in spec_ids.items()
+        if item_id not in sections or item_id not in covered
+    ]
+    issues += [
+        f"line:{line_no} {ac_id} refers to missing {ref} in spec"
+        for ac_id, ref, line_no, _ in acs if ref not in spec_ids
+    ]
+    return issues
+
+
+def check_trace_file(path: Path) -> list:
+    """FR-0170 trace for an on-disk acceptance doc (reads the sibling spec.md).
+    Used by validate_document (always-on for acceptance.md) and trac validate."""
+    spec_path = path.parent / "spec.md"
+    if not spec_path.exists():
+        return ["line:1 acceptance validate requires spec.md in same dir"]
+    return check_trace(spec_path.read_text(encoding="utf-8"),
+                       path.read_text(encoding="utf-8"))
 
 
 def check_spec_items(text: str) -> list:
