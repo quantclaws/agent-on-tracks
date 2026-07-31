@@ -51,6 +51,47 @@ def token_for(thread) -> dict:
     }
 
 
+def comment_token(comment, parent_text: str = "") -> dict:
+    """Content token identifying a comment within its thread (FR-050 nesting).
+
+    Content-based (text + depth + speaker + parent text) so it survives reorder
+    of OTHER threads; reply/edit use it to target a specific comment. Relocated
+    within a freshly-relocated thread by exact content match (fail closed).
+    """
+    return {
+        "text": comment.text,
+        "depth": comment.depth,
+        "speaker": comment.speaker,
+        "parent": parent_text,
+    }
+
+
+def locate_comment(thread, token):
+    """Relocate a comment within a freshly-relocated thread by content token.
+
+    Returns ``(status, payload)``: ``('unique', Comment)``, ``('ambiguous',
+    candidate_lines)``, or ``('not_found', None)``. Exact content match
+    (text+depth+speaker+parent); the thread is already fresh, so no Levenshtein
+    degrade is needed. Writes proceed only on 'unique' (fail closed).
+    """
+    matches: list = []
+
+    def walk(comment, parent_text):
+        if (comment.text == token["text"] and comment.depth == token["depth"]
+                and speaker_key(comment.speaker) == speaker_key(token["speaker"])
+                and parent_text == token.get("parent", "")):
+            matches.append(comment)
+        for child in comment.children:
+            walk(child, comment.text)
+
+    walk(thread.root, "")
+    if len(matches) == 1:
+        return "unique", matches[0]
+    if matches:
+        return "ambiguous", tuple(m.line for m in matches)
+    return "not_found", None
+
+
 def _l0(threads, token, delta):
     target = token["root_line"] + delta
     return [t for t in threads

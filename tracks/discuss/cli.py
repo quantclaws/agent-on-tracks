@@ -15,7 +15,7 @@ from pathlib import Path
 
 from tracks.discuss import writer
 from tracks.discuss.gate import check_ready
-from tracks.discuss.locate import token_for
+from tracks.discuss.locate import comment_token, token_for
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 
@@ -54,11 +54,20 @@ def _atomic_write(path: Path, transform) -> None:
             fcntl.flock(lockf, fcntl.LOCK_UN)
 
 
+def _comment_json(c, parent_text: str = "") -> dict:
+    return {
+        "depth": c.depth, "speaker": c.speaker, "body": c.body, "line": c.line,
+        "mentions": list(c.mentions), "token": comment_token(c, parent_text),
+        "children": [_comment_json(ch, c.text) for ch in c.children],
+    }
+
+
 def _thread_json(t) -> dict:
     return {
         "thread_id": t.thread_id, "initiator": t.initiator, "status": t.status,
         "last_speaker": t.last_speaker, "reply_count": t.reply_count,
         "snippet": t.snippet, "mentioned_agents": list(t.mentioned_agents),
+        "root": _comment_json(t.root),
         "total_lines": t.total_lines, "anchor_line": t.anchor_line,
         "anchor_text": t.anchor_text, "root_line": t.root_line,
         "root_text": t.root_text, "token": token_for(t),
