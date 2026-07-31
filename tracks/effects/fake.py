@@ -18,8 +18,6 @@ from pathlib import Path
 
 from tracks.frontmatter import split_frontmatter
 
-STORY_SECTIONS = ("## 目标", "## 范围", "## 验收标准")
-
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
 ## 功能需求
@@ -115,9 +113,8 @@ class FakeBackend:
             if not val or val.startswith("{"):  # empty or unfilled placeholder
                 lines[i] = f"title: {title}"
         head = "\n".join(lines) + "\n" if lines else ""
-        for sec in STORY_SECTIONS:
-            if sec not in body:
-                body += f"\n{sec}\n\n（FakeAgent 确定性填充）\n"
+        # The M-START skeleton (templating.render_story_skeleton) already carries
+        # every required section, so FakeAgent only fills the title (FR-150 gate).
         path.write_text(head + body, encoding="utf-8")
 
     def _write_spec(self, path: Path, token: str = "ok") -> None:
