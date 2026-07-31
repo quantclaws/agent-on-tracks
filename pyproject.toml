@@ -38,7 +38,12 @@ tracks = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# performance benchmarks (NFR-0020) are opt-in: excluded from the default suite,
+# run on demand with `pytest -m performance`.
+addopts = "-q -m 'not performance'"
+markers = [
+    "performance: opt-in NFR-0020 perf benchmark; excluded from default runs (run: pytest -m performance)",
+]
 
 [tool.coverage.run]
 # E2E drives the CLI in subprocesses; parallel mode lets each process (the test
