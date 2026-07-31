@@ -103,6 +103,16 @@ check: Literal["schema", "scope", "trace", "scope_overflow", "format",
 
 ```python
 @dataclass(frozen=True)
+class Comment:
+    depth: int                # '>' 个数（1=根）；depth=N 回复上方最近的 depth=N-1 评论（FR-050）
+    speaker: str              # 显示大小写（'@' 已剥离）
+    body: str
+    line: int                 # 评论首行（1-indexed）
+    text: str                 # 首行原文（rstripped）
+    mentions: list[str]       # 本评论 body 中的 @提及（独立语义：请求谁回答）
+    children: list["Comment"] # 嵌套下级回复（depth+1）
+
+@dataclass(frozen=True)
 class Thread:
     thread_id: str            # "T-NNN"，单次全文扫描内序号（非持久 ID，ARCH §3a）
     initiator: str            # 根评论 speaker
@@ -111,6 +121,7 @@ class Thread:
     reply_count: int
     snippet: str              # 根评论 body 前 80 字
     mentioned_agents: list[str]   # 去重
+    root: Comment             # 回复树（根评论 + 嵌套 children）
     # 5 元组定位字段（L0/L1 定位提示，非持久 identity）
     total_lines: int
     anchor_line: int
@@ -136,6 +147,8 @@ class LocateResult:
     # stale：token 重定位到的线程 thread_id 与给定 --thread-id 不符（重排致编号漂移）；不写文件，须重新 query
 ```
 
+> 嵌套（FR-050，Aaron 决定 A）：`depth` 编码"回复谁"——depth=N 评论回复其上方最近的 depth=N-1 评论；要回复某条具体回复就再加一层 `>`。`Comment.children` 承载回复树。**评论级 token**（`comment_token` = text+depth+speaker+parent 文本，内容派生）用于 reply/edit 定位具体评论：在已重定位（fresh）的 thread 内按内容精确匹配，唯一才写、并列 → ambiguous、无 → not_found（fail closed）。**@mention 与 depth 正交**：`@Name` 表示"请求 Name 增加一个回答"，不表示"当前回复是对谁的回复"；`awaiting_my_reply` = 被 @mention 请求且该评论尚无下级回复。
+
 > 归一化：strip + 合并连续空白 + Unicode NFC，不改大小写、不去 markdown 格式；speaker 比较 lowercase 归一化、显示保留原大小写（FR-060）。写命令仅在 `LocateResult.status == "unique"` 时执行（fail closed，FR-070）。freshness token（写命令权威 identity，FR-070）：thread 无持久 ID，`T-NNN` 是单次扫描的显示标签；reply/edit/set-status 携带 `--token`（query 返回的 5 元组 / anchor+root 内容），命令重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query），并列/低置信 → `ambiguous`，L3 → `not_found`。
 
 ## 7. CLI 接口合同（增量）
@@ -148,7 +161,7 @@ IF-001 §10 既有命令不变。新增：
 |:---|:---|:---|:---|:---|
 | `trac discuss query --file <p> [--initiator A] [--blocker A] [--status s] [--check-ready]` | 文档路径 + 过滤 | stdout: `DiscussQuery` JSON | stderr: 原因（含 `line:N`） | 0 / 1 |
 | `trac discuss start --file <p> --anchor-line <N> --speaker <A> <msg>` | anchor + 发言 | stdout: 新 `thread_id` | stderr: 原因 | 0 / 1 |
-| `trac discuss reply --file <p> --thread-id <id> --token <t> --speaker <A> <msg>` | 线程 + token + 回复 | stdout: "ok" | stderr: stale/ambiguous/not_found（不写文件） | 0 / 1 |
+| `trac discuss reply --file <p> --thread-id <id> --token <t> --speaker <A> [--reply-to-token <ct>] <msg>` | 线程 + token + 回复（`--reply-to-token` 省略 = 回复根） | stdout: "ok" | stderr: stale/ambiguous/not_found（不写文件） | 0 / 1 |
 | `trac discuss edit --file <p> --thread-id <id> --token <t> --depth <N> --speaker <A> <new>` | 定位 + token + 新内容 | stdout: "ok" | stderr: 非原作者/stale/ambiguous（不写） | 0 / 1 |
 | `trac discuss set-status --file <p> --thread-id <id> --token <t> --status <resolved\|reopen> --operator <A>` | 线程 + token + 状态 | stdout: "ok" | stderr: 一致性违反/stale（operator≠initiator 时 resolved 被拒） | 0 / 1 |
 

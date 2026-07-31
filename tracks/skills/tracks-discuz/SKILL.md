@@ -21,9 +21,18 @@ description: tracks inline-discussion 协议——在评审文档内用 markdown
 >> **Speaker:** reply body
 ```
 
-- 根评论 depth=1（单个 `>`），回复 depth 递增（`>>`、`>>>`…）。
+- 根评论 depth=1（单个 `>`）。**depth 编码"回复谁"**：depth=N 的评论回复其上方最近的 depth=N-1 评论；要回复某条具体回复，就再加一层 `>`：
+
+  ```markdown
+  > **Aaron:** I don't know                    # depth 1：根（议题）
+  >> **Sage:** please read line 5 and revise   # depth 2：回复 Aaron 的根
+  >>> **Scribe:** done                         # depth 3：回复 Sage 那条（不是 Aaron）
+  >> **Aaron:** thanks                         # depth 2：回复根，与 Sage 平级
+  ```
+
+  上例 `>>> **Scribe:**` 回复的是 Sage（上方最近的 depth 2），不是根。若写成 `>> **Scribe:**`（depth 2）则回复的是 Aaron 的根、与 Sage 平级——**Sage 的请求就无人应答**。"某条回复有没有人理" = 它有没有 depth+1 的下级回复。
 - 状态仅 3 种：open / resolved / reopen，状态标记仅根评论行有效，嵌套回复中的方括号作普通文本。
-- @提及：speaker tag 可写 `**@Speaker:**`（与 `**Speaker:**` 等价）；body 中 `@Name` 会被收集到 mentioned_agents。
+- @提及（独立语义，与 depth 正交）：speaker tag 可写 `**@Speaker:**`（与 `**Speaker:**` 等价），body 中 `@Name` 收集到 mentioned_agents。**`@Name` 表示"请求 Name 增加一个回答"，不表示"当前回复是对谁的回复"**（那是 depth）。`--blocker` 的 awaiting_my_reply = 被 @mention 请求且该评论尚无下级回复。
 
 parser 同时兼容人手写（解析等价）：`> **Name:** body` / `> **Name**: body` / `> **Name** [RESOLVED]: body` / `> Name: body`（Name 为 ASCII identifier）/ 带前导缩进。不识别无冒号 bold、说明标签（Note/Warning/Tip…）、无 speaker 的普通 blockquote。
 
@@ -33,7 +42,7 @@ parser 同时兼容人手写（解析等价）：`> **Name:** body` / `> **Name*
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `query --file <p> [--initiator A] [--blocker A] [--status s] [--check-ready]` | 查询线程；`--blocker` 输出 unanswered / unresolved / awaiting_my_reply；`--check-ready` 输出 is_ready + ready_blockers |
 | `start --file <p> --anchor-line <N> --speaker <A> <msg>`                   | 在 anchor 段落后发起 open 根评论                                                          |
-| `reply --file <p> --thread-id <id> --token <t> --speaker <A> <msg>`        | 追加回复（depth 递增）；`--token` = query 返回的内容定位 token                              |
+| `reply --file <p> --thread-id <id> --token <t> --speaker <A> [--reply-to-token <ct>] <msg>` | 追加回复；`--reply-to-token`（query 返回的评论 token）指定回复到哪条评论（depth=父+1，插在其子树后），省略 = 回复根（depth 2）；`--token` = 线程内容定位 token |
 | `edit --file <p> --thread-id <id> --token <t> --depth <N> --speaker <A> <new>` | 编辑自己某层评论；`--token` 同上                                                       |
 | `set-status --file <p> --thread-id <id> --token <t> --status <resolved\|reopen> --operator <A>` | 改状态；`--token` 同上                                            |
 
