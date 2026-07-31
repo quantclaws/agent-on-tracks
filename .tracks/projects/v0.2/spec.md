@@ -8,6 +8,96 @@ sha:
 # SPEC-003: v0.2 评审闭环——真实 Agent、inline-discussion、文档模板
 
 > 三项范围，实现顺序 1 → 3 → 2。inline-discussion（item 2）以 skill `tracks-discuz` 交付，agent 行为以提示词交付；二者均为本合同的组成部分，存放于外部目录、以引用方式纳入（见 FR-0040 / FR-0130）。
+>
+> Aaron 扩容裁定（spec 仅用 15/30 条 FR 预算）：M-ACC 与真实 Lex 纳入 v0.2（FR-0160 / FR-0170；Scribe/Sage/Lex 全真实）；M-REQ-APPROVAL 也纳入 v0.2（FR-0180 / FR-0190 / FR-0200）以形成完整需求故事（story→spec→acceptance→批准 baseline→Issues）；集成测试须把状态机完全走到（NFR-0040），normative 转移清单见「状态与生命周期」。
+
+## 状态与生命周期
+
+本节是 v0.2 可达阶段（M-START → M-ACC）子状态机的 normative 转移合同：未列出的转移即不允许；FR/AC/测试以转移行号引用（如 `SM-02.5`）。源自 `wiki/flow.md` §3–§6（mermaid 全图，仅作示意）；与 flow.md 漂移时以本节为准并须回改 flow.md。SM-01/SM-02/SM-03 是 v0.1/v0.2 已有行为的 normative 重述（变更基线），SM-04 随 FR-0160 新增。
+
+### SM-01 M-START（trac start）
+
+1. （发起）→ CHECK_ACTIVE：Human 执行 `trac start`
+2. CHECK_ACTIVE → BACKLOG：有活跃 run（需求记入 backlog，退出，不建分支）
+3. CHECK_ACTIVE → CHECK_WORKSPACE：无活跃 run
+4. CHECK_WORKSPACE → FAILED：工作区有未提交修改（报告原因，拒绝 start）
+5. CHECK_WORKSPACE → CHECK_BRANCHES：工作区干净
+6. CHECK_BRANCHES → AWAIT_CONFIRM：有未合并分支（提示后果，awaiting_human）
+7. CHECK_BRANCHES → CREATE_BRANCH：全部已合并
+8. AWAIT_CONFIRM → CREATE_BRANCH：Human 确认继续
+9. AWAIT_CONFIRM → （终止）：Human 取消
+10. CREATE_BRANCH → WRITE_STORY：`releases/v{x}` 创建成功
+11. WRITE_STORY → （退出 → M-STORY）：story.md 骨架含原始需求，stage.exited
+
+### SM-02 M-STORY
+
+1. （进入）→ TRIAGE：stage.entered(M-STORY)
+2. TRIAGE → REJECTED：human.triage(no_go | park)（记入 backlog，删除 release 分支，run.completed）
+3. TRIAGE → DRAFT：human.triage(go)
+4. DRAFT → SAGE_REVIEW：Scribe outcome validate pass，committed
+5. DRAFT → DRAFT：validate fail，重派 Scribe（≤3，超限升级 Human）
+6. SAGE_REVIEW → HUMAN_REVIEW：sage.verdict(pass)，validate pass，committed
+7. SAGE_REVIEW → RESPOND：sage.verdict(comment)，validate pass，committed
+8. SAGE_REVIEW → SAGE_REVIEW：validate fail，重派 Sage（≤3，超限升级 Human）
+9. HUMAN_REVIEW → EXIT：human.review(no_comment) 且本轮 sage pass
+10. HUMAN_REVIEW → RESPOND：human.review(comment)
+11. RESPOND → SAGE_REVIEW：Scribe 响应 validate pass，committed，新一轮
+12. RESPOND → RESPOND：validate fail，重派 Scribe（≤3，超限升级 Human）
+13. EXIT → （退出 → M-SPEC）：生成 sha 写入 frontmatter，story.committed(final)，stage.exited
+
+可休眠点：TRIAGE、HUMAN_REVIEW（awaiting_human，decide() 返回空 command，事件回放恢复）。
+
+### SM-03 M-SPEC
+
+1. （进入）→ DRAFT：stage.entered(M-SPEC)（Sage 起草 spec.md，继承 M-STORY review 上下文）
+2. DRAFT → LEX_REVIEW：validate pass，committed
+3. DRAFT → DRAFT：validate fail，重派 Sage（≤3，超限升级 Human）
+4. DRAFT → ROLLBACK：scope_overflow（有效 FR > 30，不重派压缩）
+5. LEX_REVIEW → HUMAN_REVIEW：lex.verdict(pass)，validate pass，committed
+6. LEX_REVIEW → RESPOND：lex.verdict(comment)，validate pass，committed
+7. LEX_REVIEW → LEX_REVIEW：validate fail，重派 Lex（≤3，超限升级 Human）
+8. HUMAN_REVIEW → EXIT：human.review(no_comment) 且本轮 lex pass
+9. HUMAN_REVIEW → RESPOND：human.review(comment)
+10. HUMAN_REVIEW → ROLLBACK：Human 裁定需改 story
+11. RESPOND → LEX_REVIEW：Sage 响应 validate pass，committed，新一轮
+12. RESPOND → RESPOND：validate fail，重派 Sage（≤3，超限升级 Human）
+13. EXIT → （退出 → M-ACC）：格式终验 pass，stage.exited
+14. EXIT → DRAFT：格式终验 fail，重派 Sage
+15. ROLLBACK → （回退 M-STORY）：stage.rolled_back，落点 DRAFT（不重复 TRIAGE）
+
+可休眠点：HUMAN_REVIEW。Lex 为真实 agent（FR-0020，Aaron 扩容裁定）。
+
+### SM-04 M-ACC（同构复用 SM-03，随 FR-0160 新增）
+
+1. （进入）→ DRAFT：stage.entered(M-ACC)（Sage 起草 acceptance.md，继承 M-SPEC review 上下文）
+2. DRAFT → LEX_REVIEW：validate pass（schema + AC↔FR 双向 trace，FR-0170），committed
+3. DRAFT → DRAFT：validate fail，重派 Sage（≤3，超限升级 Human）
+4. DRAFT → ROLLBACK：trace 缺口不可在本文档修复（需改 spec/story）
+5. LEX_REVIEW → HUMAN_REVIEW：lex.verdict(pass)，validate pass，committed
+6. LEX_REVIEW → RESPOND：lex.verdict(comment)，validate pass，committed
+7. LEX_REVIEW → LEX_REVIEW：validate fail，重派 Lex（≤3，超限升级 Human）
+8. HUMAN_REVIEW → EXIT：human.review(no_comment) 且本轮 lex pass
+9. HUMAN_REVIEW → RESPOND：human.review(comment)
+10. HUMAN_REVIEW → ROLLBACK：Human 裁定需改 spec/story
+11. RESPOND → LEX_REVIEW：Sage 响应 validate pass，committed，新一轮
+12. RESPOND → RESPOND：validate fail，重派 Sage（≤3，超限升级 Human）
+13. EXIT → （退出 → M-REQ-APPROVAL）：格式终验 pass，stage.exited（M-REQ-APPROVAL 经 FR-0180 纳入 v0.2）
+14. EXIT → DRAFT：格式终验 fail，重派 Sage
+15. ROLLBACK → （回退 M-SPEC 或 M-STORY）：stage.rolled_back
+
+可休眠点：HUMAN_REVIEW。
+
+### SM-05 M-REQ-APPROVAL（随 FR-0180 新增）
+
+1. （进入）→ PREVIEW：stage.entered(M-REQ-APPROVAL)（M-ACC 退出后）
+2. PREVIEW → AWAIT_HUMAN：baseline preview 就绪（三件套 revision digest + 摘要，FR-0190）
+3. AWAIT_HUMAN → APPROVED：human.approval（绑定三件套 digest；Agent 不能代批）
+4. AWAIT_HUMAN → RETURNED：human.return（产品理由 + 目标阶段）
+5. APPROVED → ISSUES：三件套设为只读、记录 approval identity（FR-0190）
+6. ISSUES → （退出边界）：Runtime 拆分 spec → GitHub Issues + 关联 Project（FR-0200），stage.exited → M-DESIGN（不在 v0.2 范围，run 停在该边界）
+7. RETURNED → （回退 M-STORY / M-SPEC / M-ACC）：stage.rolled_back
+
+freshness：三件套任一文档变化立即使 approval stale（digest 不匹配），下游阻断，须重走 M-REQ-APPROVAL（FR-0190）。可休眠点：AWAIT_HUMAN、退出边界（SM-05.6 后 run 停在 M-DESIGN 边界、事件回放恢复）。
 
 ## 功能需求
 
@@ -36,7 +126,7 @@ sha:
 - **交付入口**：无独立入口，依附 FR-0010
 
 - opencode 后端以 subprocess 执行：`opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`。
-- `<Name>` ∈ {`Scribe`, `Sage`}（首字母大写）。
+- `<Name>` ∈ {`Scribe`, `Sage`, `Lex`}（首字母大写；Lex 经 Aaron 扩容裁定纳入）。
 - `--auto` 表示非交互自动执行；`--format json` 输出机器可解析结果。
 - 产物权威：目标文件的受控 diff 为权威产物；stdout JSON 仅作执行协议/诊断，不作为产物来源（见 NFR-0030）。
 - 物化：调用前将 canonical 提示词（`tracks/agents/<Name>.md`）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定），使 opencode 能按名解析。
@@ -62,7 +152,7 @@ sha:
 - **来源**：`BS-03`、`BS-11`、`BS-12`
 - **交付入口**：无独立入口，依附 FR-0020
 
-- permission（spike 已固化，opencode 1.18.1）：frontmatter `permission` 仅粗粒度 `tool: allow|deny`，**不支持文件/命令级 pattern**（实证：array-style permission 的 agent 不被加载）。故“目标文档 allow + 临时目录 allow”无法在 frontmatter 表达，改由 Runtime 后置审计强制（见下）。frontmatter 作粗粒度纵深防御：授予所需工具（read/grep/glob/webfetch/websearch allow，Aaron 定 Scribe/Sage 需 grep、可上网）、拒危险工具（external_directory deny）；Scribe `bash: deny`（不跑 shell/trac，校验由 Runtime 做），Sage `bash: allow`（需 `trac discuss` 评审，越权靠后置审计）。
+- permission（spike 已固化，opencode 1.18.1）：frontmatter `permission` 仅粗粒度 `tool: allow|deny`，**不支持文件/命令级 pattern**（实证：array-style permission 的 agent 不被加载）。故“目标文档 allow + 临时目录 allow”无法在 frontmatter 表达，改由 Runtime 后置审计强制（见下）。frontmatter 作粗粒度纵深防御：授予所需工具（read/grep/glob/webfetch/websearch allow，Aaron 定 Scribe/Sage/Lex 需 grep、可上网）、拒危险工具（external_directory deny）；Scribe `bash: deny`（不跑 shell/trac，校验由 Runtime 做），Sage / Lex `bash: allow`（评审需 `trac discuss`，越权靠后置审计）。
 - 目标文档与本次专属临时目录之外的写操作即越权。
 - Runtime 后置审计：
   - 运行前记录 clean baseline（git status）。
@@ -82,12 +172,12 @@ sha:
 - **来源**：`BS-09`
 - **交付入口**：`trac check deliverables`（pre-commit / CI）
 
-- Scribe / Sage 的 canonical 提示词存放于 `tracks/agents/Scribe.md`、`tracks/agents/Sage.md`。
+- Scribe / Sage / Lex 的 canonical 提示词存放于 `tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`。
 - 提示词是本 spec 合同的组成部分；spec 以引用方式指向该目录，不内联全文。
 - 改 spec 中 agent 行为必须同步改对应提示词（见 story BS-09）。
 - 提示词文件遵循 opencode agent 定义格式：frontmatter（description / mode / permission）+ prompt body。
 - 交付物一致性 = 存在性 + 版本检查（Aaron 决定），可执行门禁合同：
-  - 存在性：`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在。
+  - 存在性：`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在。
   - 版本：每个交付物 frontmatter 含良构 `version` 字段（如 `0.2`）；版本号在该交付物流程被修改的 tracks 版本升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。“本版本是否修改流程”是开发者升版纪律，门禁不自动判定。
   - 入口：pre-commit / CI 检查（`trac check deliverables` 或等价脚本）；非 Runtime 行为；不做 digest/manifest。
   - 失败输出：缺文件 → `missing deliverable: <path>`；缺/非法 version → `missing or malformed version in <path>`；非零退出阻塞合并。
@@ -239,7 +329,7 @@ reply/edit/set-status 须由调用方传 `--token`（query 返回的内容定位
 
 ready 判定：文件内所有讨论线程状态均为 resolved。open 和 reopen 都算阻塞。
 
-Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退出条件之一（M-ACC 与真实 Lex 不在 v0.2 范围；Lex 在 v0.2 为 fake）。
+Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，作为退出条件之一（M-ACC 与真实 Lex 经 Aaron 扩容裁定纳入 v0.2，见 FR-0160）。
 
 ### FR-0110 写操作语义
 
@@ -270,12 +360,12 @@ Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退
 
 - [x] 已决定 — skill 正文由 Runtime 注入调用上下文（Aaron 定简化）
 - **来源**：`BS-09`
-- **交付入口**：`tracks/skills/tracks-discuz/SKILL.md`（Runtime 注入 Sage 上下文）
+- **交付入口**：`tracks/skills/tracks-discuz/SKILL.md`（Runtime 注入 Sage / Lex 上下文）
 
 - inline-discussion 以 skill `tracks-discuz` 形式交付，skill 文本存放于 `tracks/skills/tracks-discuz/`。
 - skill 文本是本 spec 合同的组成部分；spec 以引用方式指向该目录，不内联全文。
-- 加载方式（简化，Aaron 决定）：Runtime 将 tracks-discuz skill 正文直接注入 Sage 调用上下文，不依赖宿主 repo 路径、不要求 opencode 自动发现；物化到 opencode 可发现位置作为备选，留 spike。
-- Sage 通过该 skill 获得 inline-discussion 的使用能力：何时 query / start / reply / set-status、canonical 格式、状态语义、门禁含义（Lex 在 v0.2 为 fake，不使用）。
+- 加载方式（简化，Aaron 决定）：Runtime 将 tracks-discuz skill 正文直接注入 Sage / Lex 调用上下文，不依赖宿主 repo 路径、不要求 opencode 自动发现；物化到 opencode 可发现位置作为备选，留 spike。
+- Sage / Lex 通过该 skill 获得 inline-discussion 的使用能力：何时 query / start / reply / set-status、canonical 格式、状态语义、门禁含义。
 - 版本 identity 按存在性 + 版本检查（frontmatter 版本，见 FR-0040）。
 - 改 spec 中 inline-discussion 行为必须同步改 skill 文本（见 story BS-09）。
 
@@ -305,13 +395,73 @@ Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退
 
 - M-START 空骨架创建：不校验。
 - Scribe / Sage outcome 完成：Runtime 立即 validate；不合格 → 不进入评审、走重派。
-- 门禁强制：评审退出校验（M-STORY / M-SPEC）再次 validate，结构不符则阻塞退出。
+- 门禁强制：评审退出校验（M-STORY / M-SPEC / M-ACC）再次 validate，结构不符则阻塞退出；acceptance 的 validate 附加 AC↔FR 双向 trace（FR-0170）。
 - 独立命令 `trac validate --file <path>`：按对应模板校验文档结构（必备章节 / frontmatter 字段），报告不符项（含位置 `line:N`），可独立运行。
 - 取代 D-16 的 `validate_document` 直通实现。
+- spec 条目格式合同（机器强制，与 `templates/spec.md` 同步）：每条为 `### FR-XXXX 标题` / `### NFR-XXXX 标题`（大写、4 位零填充、ID 唯一；废弃即删除、ID 不复用），其后须具备**勾选的** `- [x] 已决定` 行（only YES means YES——未勾选 `- [ ]` 表示「未决定」，与缺行同样被拒，绝不默认为已决定）、`- **来源**：` 字段；FR 还须 `- **交付入口**：`（NFR 免）。模板 HTML 注释忽略。
 
 > **gpt [RESOLVED]:** 这与 Story 5.1 的最新 Human 批注冲突：Scribe/Sage 生成完成时文档就必须规范，M-START 不校验，门禁再校验。请区分“创建空骨架”和“Agent outcome 完成”：M-START 套模板但不校验；每次 Scribe/Sage outcome 后 Runtime 立即 validate，不合格走重派；评审退出再 validate；另提供 `trac validate`。Acceptance 当前 AC-1403/1503 也需同步。
 >> **Scribe:** 接受，与 Aaron §5.1 一致。最终合同：(1) M-START 套模板创建骨架、不校验；(2) 每次 Scribe/Sage outcome 完成 → Runtime 立即 validate，不合格 → 不进入评审、走重派；(3) 评审退出门禁再次强制 validate；(4) trac validate 独立。将重写 FR-140/FR-150 区分“骨架创建”与“outcome 完成”，并同步 AC-1403/1503。
 >> **Scribe:** 结论已写入 FR-140/FR-150 正文（M-START 空骨架不校验；Scribe/Sage outcome 完成后 Runtime 立即 validate、不合格不进入评审走重派；评审退出门禁再次 validate；trac validate 独立）。@gpt 请确认是否可标记 [RESOLVED]。
+
+### FR-0160 M-ACC 阶段可达（acceptance 起草与评审闭环）
+
+- [ ] 已决定 — M-ACC 纳入 v0.2 为 Aaron 扩容裁定；本条细化（退出边界、回退目标）待 Human 评审
+- **来源**：`BS-13`
+- **交付入口**：无独立入口，依附 `trac run`（M-SPEC 退出后自动进入）
+
+- M-SPEC 评审退出（SM-03.13）后，Runtime 进入 M-ACC，dispatch Sage 起草 acceptance.md（套 acceptance 模板 FR-0140，继承 M-SPEC review 上下文）。
+- 评审状态机 = SM-04（与 SM-03 同构）：Lex 为真实 agent（FR-0020，Aaron 扩容裁定），Human 评审 + inline-discussion（FR-0050～FR-0130）照常可用。
+- validate = 模板 schema（FR-0150）+ AC↔FR 双向覆盖 trace（FR-0170）；失败重派同一作者，≤3 次，超限升级 Human。
+- 退出门禁：check-ready（FR-0100）+ 格式终验；退出事件 stage.exited → M-REQ-APPROVAL（SM-04.13，经 FR-0180 纳入 v0.2）。
+- 回退：Human 裁定需改 spec/story，或 trace 缺口不可在本文档修复 → stage.rolled_back 目标 M-SPEC 或 M-STORY（SM-04.4 / SM-04.10 / SM-04.15）。
+
+### FR-0170 acceptance 双向覆盖校验（AC↔FR trace）
+
+- [ ] 已决定 — trace 规则的硬/软约束划分待 Human 评审（本条均为硬错误）
+- **来源**：`BS-13`
+- **交付入口**：`trac validate --file acceptance.md`（亦由 M-ACC 逐轮 validate / 退出门禁调用）
+
+- 对 acceptance 文档的 validate 在模板 schema 之上附加双向覆盖 trace（均为硬错误）：
+  - spec 每条 FR/NFR 至少对应一个 `## FR-XXXX` / `## NFR-XXXX` 章节且章节内至少一条 AC；
+  - 每条 AC（`### AC-FRXXXX-YY` / `### AC-NFRXXXX-YY`）回指 spec 中存在的条目；
+  - 孤立项（无 AC 的 FR、回指失败的 AC）→ `verdict.failed(trace)`，报告完整孤儿清单（含编号与 `line:N`）。
+- trace 以同一工作区的 spec.md 为基准；讨论块不参与 trace（与模板校验同，忽略讨论块）。
+- 仅适用于 acceptance 文档种类；story/spec 的 validate 规则不变。
+
+### FR-0180 M-REQ-APPROVAL 阶段可达（需求 baseline 审批门禁）
+
+- [ ] 已决定 — M-REQ-APPROVAL 纳入 v0.2 为 Aaron 扩容裁定（形成完整需求故事）；本条细化（退出边界、回退目标）待 Human 评审
+- **来源**：`BS-15`
+- **交付入口**：无独立入口，依附 `trac run`（M-ACC 退出后自动进入）+ Human 批准动作
+
+- M-ACC 评审退出（SM-04.13）后，Runtime 进入 M-REQ-APPROVAL，生成 baseline preview（三件套 digest + 摘要，FR-0190）并进入 awaiting_human。
+- 状态机 = SM-05：AWAIT_HUMAN → APPROVED（human.approval）或 RETURNED（human.return）。
+- Human gate 硬规则：Agent 不能批准/拒绝/代 Human 回答；无 `human.approval` 事件，decide() 不产出任何进入下游（M-DESIGN）的 command。
+- RETURNED（human.return 携产品理由 + 目标阶段）→ stage.rolled_back 回退 M-STORY / M-SPEC / M-ACC（SM-05.7）。
+- 退出：ISSUES 完成后 stage.exited 目标 M-DESIGN；M-DESIGN 不在 v0.2 范围，run 停在该边界（可休眠、事件回放恢复）。
+
+### FR-0190 需求 baseline、approval identity 与 freshness
+
+- [ ] 已决定 — digest 算法与 stale 传播范围（仅阻断下游 vs 同时失效已建 Issues）待 Human/design 定
+- **来源**：`BS-15`
+- **交付入口**：无独立入口，依附 FR-0180
+
+- baseline preview：Runtime 由 story/spec/acceptance 三件套内容算出 revision digest + 人类可读摘要，供 Human 审阅。
+- APPROVED：human.approval 事件绑定当时三件套 digest；三件套设为只读；记录 approval identity（actor + digest + 时间）。
+- freshness：三件套任一文档内容变化 → digest 不匹配 → approval stale；下游（M-DESIGN 及之后）被阻断，必须重走 M-REQ-APPROVAL。
+- stale 判定以内容 digest 为准（非时间戳）；判定可重现、可经事件回放恢复。
+
+### FR-0200 spec → GitHub Issues 拆分与 Project 关联
+
+- [ ] 已决定 — Issues=需求追踪身份与 v0.4（trace/reach 注册表）可能重叠；拆分粒度、失败/幂等/reconcile 语义待 Human/design 定
+- **来源**：`BS-16`
+- **交付入口**：无独立入口，依附 FR-0180（APPROVED 后自动触发）
+
+- APPROVED 后 Runtime 拆分 spec 为 GitHub Issues（Issues = 需求追踪身份，非执行单元）并关联 Project。
+- 外部副作用：调用 GitHub API（认证、网络）；失败处理参照 NFR-0030 风格（报告原因、command/outcome 事件、不写半成品、可恢复重试）。
+- 幂等/reconcile：同一 baseline digest 重复进入不重复创建 Issues；崩溃后 reconcile 根据已创建记录补齐而非重建。
+- v0.2 范围边界：Issues 创建为 M-REQ-APPROVAL 退出的最后一步；创建后 run 停在 M-DESIGN 边界，不推进设计/实现。Issues 与 v0.4 需求追踪注册表的关系待 v0.4 协调（本版仅创建，不建持久映射）。
 
 ## 非功能需求
 
@@ -343,3 +493,12 @@ Runtime 在 M-STORY / M-SPEC 的评审退出校验中调用此命令，作为退
 > **gpt [RESOLVED]:** 失败合同还不足以覆盖 D-11/D-13：需定义 opencode 不存在、provider/model/凭据不可用、JSON 流截断、退出 0 但无目标 diff、SIGINT/kill-9、超时后子进程组清理，以及“文件已改但 outcome 未落盘”的 reconcile。另请明确文件 diff 是权威产物、stdout JSON 仅为执行协议/诊断，避免双重产物来源。
 >> **Scribe:** 完全接受。NFR-030 枚举失败矩阵：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（+ 子进程组清理）；JSON 流截断；退出 0 但无目标 diff；SIGINT/kill-9；“文件已改但 outcome 未落盘”reconcile（复用 D-11/D-13）。并明确：目标文件 diff = 权威产物，stdout JSON = 执行协议/诊断（单一产物来源）。每类失败 → command/outcome 事件、attempt 记账、子进程组清理、reconcile 结果。补对应 AC（与 acc 失败矩阵线程配对）。
 >> **Scribe:** 结论已写入 NFR-030 正文（目标文件 diff = 权威产物、stdout JSON = 执行协议/诊断；完整失败矩阵 + 子进程组清理 + reconcile，复用 D-11/D-13）。@gpt 请确认是否可标记 [RESOLVED]。
+
+### NFR-0040 集成测试状态机全覆盖
+
+- [ ] 已决定 — 覆盖核对机制（test-plan 人工清单 vs 测试 marker）待 Human/design 定；v0.2 先用 test-plan 清单
+- **来源**：`BS-14`
+
+- fake 通道集成/E2E 测试套件必须完整覆盖「状态与生命周期」SM-01～SM-05 的每个状态与每条转移：每条转移至少被一个测试走到一次。
+- 非 happy path 不得缺席，至少含：validate fail 重派、≤3 超限升级 Human、REJECTED（SM-02.2）、scope_overflow 回退（SM-03.4/SM-03.15）、格式终验 fail（SM-03.14/SM-04.14）、trace 失败（SM-04.3/SM-04.4）、M-REQ-APPROVAL RETURNED 回退（SM-05.7）、approval stale 阻断下游（FR-0190）、GitHub Issues 创建失败/reconcile（FR-0200）、awaiting_human 休眠后事件回放恢复。
+- 覆盖核对：test-plan 维护「转移（SM-XX.N）→ 测试用例」清单，逐条对应、无缺口；清单中的测试必须存在且通过。缺口或失败即合入前检查失败（tracks 自身开发纪律；机器化 trace 工具属 v0.3 范围，不在本版）。

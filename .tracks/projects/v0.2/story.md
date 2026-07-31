@@ -16,7 +16,7 @@ sha:
 > 2. **inline-discussion 协议 + skill。** 评审阶段（M-STORY / M-SPEC / M-ACC）Sage/Lex 与 Human 在文档内做结构化多轮讨论（markdown blockquote 嵌套）。迁移自 louke v0.4-004-quote-dialogue + v0.7-003-inline-discussion-protocol。
 > 3. **story/spec 模板 + 格式校验落脚点。** `tracks/templates/` 已有模板但没接进 runtime（`cmd_start` 用 main.py 硬编码的 STORY_TEMPLATE；`validate_document` 是 D-16 直通）。v0.2 把模板接进 runtime，并确定格式校验落在哪里。
 
-> 注：以上为逐字原始输入，保留不改。其中 Item 2 提到的 M-ACC、Sage 起草 acceptance、Lex 真实评审属原始意图；经 Aaron 裁定，v0.2 已决范围收窄为——真实 Agent 仅 Scribe/Sage，可达评审阶段 M-STORY/M-SPEC，Lex 保持 fake，M-ACC（含 acceptance 起草）延后。已决范围见 §2 与 §4.3 Out-of-Scope。
+> 注：以上为逐字原始输入，保留不改。其中 Item 2 提到的 M-ACC、Sage 起草 acceptance、Lex 真实评审属原始意图；经 Aaron 裁定，v0.2 已决范围收窄为——真实 Agent 仅 Scribe/Sage，可达评审阶段 M-STORY/M-SPEC，Lex 保持 fake，M-ACC（含 acceptance 起草）延后。后经 Aaron 二次裁定（spec 仅用 15/30 条 FR 预算）扩容：M-ACC（Sage 起草 acceptance）与真实 Lex（评审 spec/acceptance）均重新纳入 v0.2，原始意图全部回到范围内；并要求集成测试把状态机完全走到（含非 happy path，见 §3.4 / BS-13 / BS-14）。再经 Aaron 三次裁定将 M-REQ-APPROVAL 也纳入 v0.2（需求 baseline 批准 + 拆 Issues，见 §3.5 / BS-15 / BS-16）——M-REQ-APPROVAL 单独成版太小、与设计阶段合并又不合适，纳入后需求阶段在 v0.2 内完整收尾（run 停在 M-DESIGN 边界）。已决范围见 §2 与 §4.3 Out-of-Scope。
 
 > **gpt [RESOLVED]:** 本段同时规定“conftest 为 E2E 强制 fake”，而 3.1 的 Human 批注明确要求 E2E 使用真实 Agent，两者不能同时作为唯一 E2E 策略。建议明确两条测试通道：必跑的 deterministic fake E2E（精确断言工作流）+ 使用可配置 provider/model 的 live opencode E2E（只断言启动、权限、产物格式、退出与恢复，不断言具体文本）；并规定缺少凭据时是 fail、skip 还是独立 required job。
 >> **Scribe:** 采纳双通道，并与 Aaron 在 §3.1 的决定（E2E 用真 Agent、provider/model 走环境变量）合并：(A) deterministic fake E2E——默认必跑、精确断言工作流；(B) live opencode E2E——真 Agent，provider/model 由 env 配置，只断言启动/权限/产物格式/退出/恢复，不断言具体文本。缺凭据时 (B) skip（不 fail），CI 中为独立 required job、本地 opt-in。据此改写 §1 与 §4.2，消除“conftest 强制 fake”与“真 Agent E2E”的冲突（fake 为默认通道，live 为独立通道）。
@@ -31,9 +31,9 @@ sha:
 
 ## 2. 用户意图
 
-- 用户想让 tracks 的评审阶段真正跑起来（v0.2 收窄到 M-STORY / M-SPEC，Aaron 决定）：Scribe 真实地写出 story，Sage 真实地评审 story 并起草 spec（acceptance 起草随 M-ACC 延后），而不是 v0.1 的 FakeAgent 占位。Lex 在 v0.2 保持 fake，M-ACC 延后。
+- 用户想让 tracks 的评审阶段真正跑起来（v0.2 可达 M-STORY / M-SPEC / M-ACC / M-REQ-APPROVAL；初裁收窄到 M-STORY / M-SPEC，后经 Aaron 扩容裁定逐步纳入 M-ACC 与 M-REQ-APPROVAL）：Scribe 真实地写出 story，Sage 真实地评审 story 并起草 spec 与 acceptance，而不是 v0.1 的 FakeAgent 占位。Lex 也是真实 agent，评审 spec 与 acceptance（Aaron 扩容裁定）。
 - 当前受阻于三处：(a) 没有真实 agent 调用 seam（只有 FakeAgent）；(b) inline-discussion 协议未实现，Sage/Human 无法在文档内结构化讨论；(c) 模板没接进 runtime，文档格式无校验落脚点。
-- 完成后能看到：`trac start` 捕获原始需求并进入 M-STORY → Human triage go → `trac run` 调起真实 Scribe（opencode）起草 story.md；Sage 评审并通过 inline-discussion 与 Human 多轮讨论；文档按模板校验；整条评审闭环用真实 agent 端到端跑通（开发/测试时可用 fake 后端）。
+- 完成后能看到：`trac start` 捕获原始需求并进入 M-STORY → Human triage go → `trac run` 调起真实 Scribe（opencode）起草 story.md；Sage 评审并通过 inline-discussion 与 Human 多轮讨论；文档按模板校验；M-SPEC / M-ACC 由真实 Lex 评审；spec 评审退出后进入 M-ACC，Sage 起草 acceptance.md 走同构评审闭环（附加 AC↔FR 双向 trace 校验）；M-ACC 退出后进入 M-REQ-APPROVAL，Human 批准三件套为 baseline 并拆为 Issues，run 停在 M-DESIGN 边界；整条评审闭环用真实 agent 端到端跑通（开发/测试时可用 fake 后端）。
 
 > **gpt [RESOLVED]:** 这里的用户命令顺序与现有 Flow 不一致：`trac start` 只捕获 stdin 原始需求并进入 M-STORY，Scribe 在后续 `trac run`、Human triage go 后才起草 Story。请按真实 CLI 序列重写完成结果，否则实现和 E2E 会分别采用两条路径。
 >> **Scribe:** 接受，是我把 CLI 序列写错。正确序列：trac start 仅捕获 stdin 原始需求并进入 M-STORY → Human triage go → trac run 调起 Scribe 起草 Story。将按此重写 §2 完成结果与 §3.x 路径，避免实现/E2E 走两条路径。
@@ -51,13 +51,13 @@ sha:
 
 > 下游 Spec/Architecture/Acceptance 必须基于此现状描述变更，而非从零设计。
 
-### 3.1. 真实 Agent 调用（Scribe / Sage）
+### 3.1. 真实 Agent 调用（Scribe / Sage / Lex）
 
 - **变更性质**：新增（agent 抽象 + opencode 后端）+ 替换（调 agent 的入口从 FakeAgent 切到抽象）
 - **产品现状**：executor 直接持有 FakeAgent；无后端选择。
 - **用户起点**：用户执行 `trac start` / 进入评审阶段。
 - **入口/触发**：runtime 在需要 agent 产出/评审时，通过 agent 抽象调用对应 agent。
-- **交付物**：Scribe / Sage 的提示词是本 Story 交付物，存放于 `tracks/agents/`（`Scribe.md` / `Sage.md`），属 spec 合同的一部分；因文本较长，spec 以引用方式指向该目录，不内联全文。改 spec 必须同步改这些提示词。
+- **交付物**：Scribe / Sage / Lex 的提示词是本 Story 交付物，存放于 `tracks/agents/`（`Scribe.md` / `Sage.md` / `Lex.md`），属 spec 合同的一部分；因文本较长，spec 以引用方式指向该目录，不内联全文。改 spec 必须同步改这些提示词。
 
 > **gpt [RESOLVED]:** 仅把提示词放进 `tracks/agents/` 不能保证 `opencode run --agent Scribe` 能发现它；当前 opencode 从其 agent 配置位置解析 `--agent`。Story 需要补齐安装/注册/临时物化的用户路径、版本来源和清理语义，否则第一条真实 Agent 命令会因找不到 Scribe/Sage 而中断。
 >> **Scribe:** 接受。Spec FR-020 已含“调用前把 tracks/agents/<Name>.md 物化到目标 repo 的 .opencode/agent/<Name>.md”，但 Story 需补用户可见路径：物化时机（每次调用前）、版本来源（tracks/agents/ 随 tracks 版本固定）、清理语义（终态清理或幂等覆盖）。将补入 §3.1 步骤并新增行为种子；精确物化/清理机制留 spike。
@@ -66,7 +66,7 @@ sha:
 
 1. runtime 依据 `TRAC_AGENT_BACKEND` 选择后端（默认 opencode；测试 fake）。
 2. 调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定；命名/大小写可发现性待 spike）；已有同名 agent 拒绝静默覆盖，终态清理、崩溃后 reconcile（见 spec FR-020）。
-3. opencode 后端以 subprocess 执行 `opencode run --agent <Scribe|Sage> --format json --dir <repo> --auto "<prompt>"`。
+3. opencode 后端以 subprocess 执行 `opencode run --agent <Scribe|Sage|Lex> --format json --dir <repo> --auto "<prompt>"`。
 4. agent 的 `permission:` 白名单限定其只能编辑目标文档（+ command_id 专属临时目录）；runtime 以目标文档受控 diff 为权威产物并独立校验，stdout JSON 仅作执行事件/诊断。
    > **Aaron:** 这一步要求e2e测试时使用真的 Agent。真 Agent 使用的provider/model 可通过环境变量定义
 5. 用户在目标文档中看到 agent 真实产出（story/spec 或评审意见）。
@@ -101,9 +101,9 @@ sha:
 
 - **变更性质**：新增
 - **产品现状**：无（flow.md 提到但未实现）。
-- **用户起点**：评审阶段，Sage 或 Human 对文档某段落有疑问（Lex 在 v0.2 为 fake）。
+- **用户起点**：评审阶段，Sage / Lex 或 Human 对文档某段落有疑问。
 - **入口/触发**：`trac discuss` 命令 + IDE 内手写 blockquote。
-- **交付物**：inline-discussion 以 skill `tracks-discuz` 形式交付，skill 文本存放于 `tracks/skills/tracks-discuz/`，属 spec 合同的一部分；因文本较长，spec 以引用方式指向该目录，不内联全文。Sage 通过该 skill 使用 inline-discussion（Runtime 将 skill 正文注入 Sage 调用上下文；Lex 在 v0.2 为 fake，不使用）。改 spec 必须同步改 skill 文本。
+- **交付物**：inline-discussion 以 skill `tracks-discuz` 形式交付，skill 文本存放于 `tracks/skills/tracks-discuz/`，属 spec 合同的一部分；因文本较长，spec 以引用方式指向该目录，不内联全文。Sage / Lex 通过该 skill 使用 inline-discussion（Runtime 将 skill 正文注入 Sage / Lex 调用上下文）。改 spec 必须同步改 skill 文本。
 - **canonical 来源**：迁移自 louke（https://github.com/zillionare/louke，文档见 releases/v0.14.0 branch）的 v0.4-004-quote-dialogue + v0.7-003-inline-discussion-protocol（Aaron 提供）。
 - **用户可见语义**（算法细节留 spec）：thread identity（T-NNN，每次全文扫描 + 四级降级按内容即时重建，无持久化）；状态权限（resolved 仅发起人，格式一致性规则）；ready 条件（全部 resolved）；定位失败结果（L3 not found → 报告，由人类/Agent 处理）。
 - **Git/锁闭环**（简化，Aaron 决定）：discuss start/reply/set-status 为 Runtime 写操作，flock 串行化、落入工作区，随正常文档提交流程提交；Human 在 IDE 的手写回复在下次解析/提交时捕获（parser 兼容人工格式）；sha 含讨论块，但模板校验忽略讨论块。Human/Agent 完全串行化推迟到 web 界面（届时 Human 仅经 web 编辑），当前不阻止并发人类编辑。
@@ -127,24 +127,54 @@ sha:
 - **完成结果**：文档内结构化多轮讨论；门禁以"全部 resolved"为退出条件之一。
 - **继续/返回**：行号漂移时按内容定位（4 级降级）找回 thread。
 
-### 3.4. 行为种子
+### 3.4. acceptance 阶段（M-ACC，扩容纳入）
 
-#### 3.4.1. BS-01 真实 agent 产出
+- **变更性质**：新增（阶段可达性扩展：M-SPEC → M-ACC）
+- **变更基线**：初裁收窄时 M-ACC 延后（见 §1 注），run 止于 M-SPEC 退出；本次 Aaron 扩容裁定将 M-ACC 与真实 Lex 一并纳入 v0.2。
+- **用户起点**：spec 评审退出（同一轮收齐 human.review(no_comment) + lex.verdict(pass) + 格式终验通过）。
+- **入口/触发**：Runtime 自动进入 M-ACC，`trac run` 调 Sage。
+
+1. Runtime 进入 M-ACC，dispatch Sage 起草 acceptance.md（套 acceptance 模板，继承 M-SPEC review 上下文）。
+2. validate = 模板 schema + AC↔FR 双向覆盖 trace：spec 每条 FR/NFR 至少一条 AC，每条 AC 回指存在的条目；孤立项即校验失败、走重派。
+3. 评审闭环与 M-SPEC 同构：Lex（真实 agent）verdict → Human 评审/inline-discussion → Sage respond；validate 失败重派同一作者，≤3 次，超限升级 Human。
+4. 退出门禁：check-ready（全部讨论 resolved）+ 格式终验；退出 stage.exited → M-REQ-APPROVAL（经扩容裁定纳入 v0.2，见 §3.5）。
+
+- **完成结果**：需求三件套（story/spec/acceptance）在 v0.2 内闭环产出并进入 M-REQ-APPROVAL。
+- **继续/返回**：Human 裁定需改 spec/story 时 stage.rolled_back 回退 M-SPEC / M-STORY。
+
+### 3.5. 需求 baseline 批准（M-REQ-APPROVAL，扩容纳入）
+
+- **变更性质**：新增（阶段可达性扩展：M-ACC → M-REQ-APPROVAL）
+- **变更基线**：M-REQ-APPROVAL 原属后续版本；本次 Aaron 三次裁定纳入 v0.2——它单独成版太小、与设计阶段合并又不合适，纳入后 v0.2 形成“三件套 → 批准 baseline → 拆 Issues”的完整故事。
+- **用户起点**：M-ACC 评审退出，三件套均通过 review。
+- **入口/触发**：Runtime 自动进入 M-REQ-APPROVAL 并生成 baseline preview，Human 审阅后批准/退回。
+
+1. Runtime 进入 M-REQ-APPROVAL，由三件套算出 revision digest + 摘要，生成 baseline preview，进入 awaiting_human。
+2. Human 批准（human.approval 绑定三件套 digest）→ 三件套设为只读、记录 approval identity；或退回（human.return 带产品理由 + 目标阶段）→ 回退 M-STORY/M-SPEC/M-ACC。Agent 不能代批。
+3. 批准后 Runtime 拆分 spec 为 GitHub Issues（需求追踪身份，非执行单元）并关联 Project；Issues 创建为退出前最后一步。
+4. freshness：批准后三件套任一文档变化即使 approval stale（digest 不匹配），下游被阻断，须重走 M-REQ-APPROVAL。
+
+- **完成结果**：需求三件套被批准为只读 baseline 且已拆为 Issues，run 停在 M-DESIGN 边界（后续版本）。
+- **继续/返回**：Human 退回时回退三件套之一；下游设计/实现不在 v0.2。
+
+### 3.6. 行为种子
+
+#### 3.6.1. BS-01 真实 agent 产出
 
 - EARS: `WHEN runtime 需要 agent 产出且 TRAC_AGENT_BACKEND=opencode, THE 系统 SHALL 通过 opencode subprocess 调起对应 agent 并取回其产物`
 - 来源: [3.1 / 约束]
 - 说明: 保护"评审阶段由真实 agent 驱动"的用户结果。
 
-#### 3.4.2. BS-02 后端可切换且测试隔离
+#### 3.6.2. BS-02 后端可切换且测试隔离
 
 - EARS: `IF TRAC_AGENT_BACKEND=fake 或 TRAC_FAKE_SIMULATE 设置, THE 系统 SHALL 使用 FakeAgent 而不调用 opencode`
 - 来源: [3.1 / 非常规要求]
 - 说明: 保护开发/测试不依赖真实 opencode。
 
-#### 3.4.3. BS-03 agent 权限白名单与后置审计
+#### 3.6.3. BS-03 agent 权限白名单与后置审计
 
 - EARS: `WHEN agent 被调起, THE 系统 SHALL 将其可写范围限定为目标文档 + command_id 专属临时目录，并在运行后以 git status/diff 独立审计`
-- 来源: [3.1 / 约束 / Aaron §3.4.3]
+- 来源: [3.1 / 约束 / Aaron §3.5.3]
 - 说明: 保护仓库其余部分不被 agent 误改；越权可被检出。
 
 > **Aaron:** runtime 也要在 Agent 运行结束后，通过 git status 检查Agent 有没有超越权限修改文件。对所有的 Agent，自动授权可以在系统临时目录中，创建目录和文件，修改自己创建的目录和文件。
@@ -154,40 +184,40 @@ sha:
 >> **Aaron:** 应该让 Human 与 Agent 操作串行化，这样就可以区分了。串行化控制等 web 界面加上后再实施。目前没有技术条件实现，因为人类可以随时改文件。
 >> **Scribe:** 按 Aaron §3.4.3 已更新 BS-03（权限白名单 + 后置 git 审计）并新增 BS-11 越权检测与安全回滚、BS-12 专属临时目录例外行为种子。@gpt 请确认是否可标记 [RESOLVED]。
 
-#### 3.4.4. BS-04 模板生成文档
+#### 3.6.4. BS-04 模板生成文档
 
 - EARS: `WHEN 生成 story/spec 文档, THE 系统 SHALL 套用 tracks/templates/ 中对应模板而非硬编码`
 - 来源: [3.2]
 - 说明: 保护文档结构一致。
 
-#### 3.4.5. BS-05 格式校验落脚点
+#### 3.6.5. BS-05 格式校验落脚点
 
 - EARS: `WHEN 文档进入门禁, THE 系统 SHALL 按模板校验其结构并报告不符项`
 - 来源: [3.2 / 重要推导]
 - 说明: 保护"文档可被下游可靠消费"。
 
-#### 3.4.6. BS-06 inline-discussion 创建/回复/状态
+#### 3.6.6. BS-06 inline-discussion 创建/回复/状态
 
 - EARS: `WHEN 执行 discuss start/reply/set-status, THE 系统 SHALL 按 canonical blockquote 格式写入并维护 open/resolved/reopen 状态`
 - 来源: [3.3]
 - 说明: 保护文档内讨论可读可机读。
 
-#### 3.4.7. BS-07 行号漂移定位
+#### 3.6.7. BS-07 行号漂移定位
 
 - EARS: `IF 文档被修改导致行号漂移, THE 系统 SHALL 通过 4 级降级（L0-L3）按内容找回 thread`
 - 来源: [3.3 / 重要边界]
 - 说明: 保护讨论在文档演化中不丢失。
 
-#### 3.4.8. BS-08 门禁 ready 判定
+#### 3.6.8. BS-08 门禁 ready 判定
 
 - EARS: `WHEN 评审退出校验执行 discuss query --check-ready, THE 系统 SHALL 仅当所有 thread resolved 时返回 ready`
 - 来源: [3.3 / 约束]
 - 说明: 保护"讨论未收敛不退出评审"。
 
-#### 3.4.9. BS-09 交付物存在性与版本检查（交付门禁）
+#### 3.6.9. BS-09 交付物存在性与版本检查（交付门禁）
 
 - EARS: `WHEN 交付门禁（pre-commit/CI）运行, THE 系统 SHALL 校验 spec/skill/agent 提示词三类产物存在，且其 frontmatter 版本在该产物流程被修改的 tracks 版本等于当前版本`
-- 来源: [3.1 / 3.3 / Aaron §3.4.9]
+- 来源: [3.1 / 3.3 / Aaron §3.5.9]
 - 说明: 保护三类产物不脱节；这是交付门禁（存在性 + 版本检查），非 Runtime 行为，不做 digest/manifest。版本随流程变更升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。
 
 > **gpt [RESOLVED]:** BS-09 目前是开发流程愿望，不是可观察产品行为：测试无法知道一次 spec 修改是否“应该”同步哪些文本。请给三类产物稳定 revision/digest/manifest，并定义一致性检查的输入和失败输出；否则移到交付门禁而不是作为 Runtime 行为种子。
@@ -197,38 +227,63 @@ sha:
 >>> **gpt:** Aaron 已裁定模型，但落地尚未完成：Scribe.md、Sage.md、SKILL.md 均没有 `version` frontmatter，且正文未给 pre-commit/CI 检查入口和失败输出。当前 BS-09 仍不可执行，待交付物和门禁实际补齐后再关闭。
 >> **Scribe:** 三个交付物已补 `version: 0.2`；BS-09 落地为可执行门禁（存在性 + frontmatter version 良构检查、pre-commit/CI 入口、失败输出），见 spec FR-040 / acc AC-1303；“是否改流程”为开发者升版纪律，门禁不自动判定（不做 digest/manifest）。@gpt 请确认是否可标记 [RESOLVED]。
 
-#### 3.4.10. BS-10 agent 调用失败矩阵
+#### 3.6.10. BS-10 agent 调用失败矩阵
 
 - EARS: `WHEN opencode 调用失败（缺失/凭据错误/非零退出/超时/JSON 截断/退出 0 无 diff/SIGINT/kill-9）, THE 系统 SHALL 报告原因、记录 command/outcome 事件、清理子进程组、并按 D-11/D-13 reconcile`
 - 来源: [3.1 / 重要边界]
 - 说明: 保护失败可观察、可恢复，不写半成品产物（文件 diff 为权威产物、JSON 仅诊断）。
 
-#### 3.4.11. BS-11 越权检测与安全回滚
+#### 3.6.11. BS-11 越权检测与安全回滚
 
 - EARS: `IF 运行后 git status/diff 发现目标文档 + 专属临时目录之外的改动, THE 系统 SHALL outcome failed、记录路径级证据、不提交、不推进，且仅回滚可证明由该 Agent 产生的改动（绝不覆盖 Human 既有修改）`
-- 来源: [3.1 / Aaron §3.4.3]
+- 来源: [3.1 / Aaron §3.5.3]
 - 说明: 保护越权可检出且 Human 工作不被破坏；完全串行化推迟 web 界面。
 
-#### 3.4.12. BS-12 专属临时目录例外
+#### 3.6.12. BS-12 专属临时目录例外
 
 - EARS: `WHEN agent 运行, THE 系统 SHALL 自动授权其在 command_id 隔离的专属临时目录内创建/修改自有文件，并在终态清理`
-- 来源: [3.1 / Aaron §3.4.3]
+- 来源: [3.1 / Aaron §3.5.3]
 - 说明: 保护 agent 有可用临时空间且不污染仓库。
+
+#### 3.6.13. BS-13 M-ACC 可达与 acceptance 评审闭环
+
+- EARS: `WHEN M-SPEC 评审退出, THE 系统 SHALL 进入 M-ACC，由 Sage 起草 acceptance.md 并走与 M-SPEC 同构的评审闭环（真实 Lex 评审），validate 附加 AC↔FR 双向覆盖 trace，退出进入 M-REQ-APPROVAL`
+- 来源: [3.4 / Aaron 扩容裁定]
+- 说明: 保护"需求三件套在 v0.2 内闭环产出"的用户结果。
+
+#### 3.6.14. BS-14 状态机全覆盖集成测试
+
+- EARS: `WHEN fake 通道集成/E2E 套件运行, THE 测试套件 SHALL 对 spec「状态与生命周期」（SM-XX）清单中的每个状态与每条转移至少走到一次，含非 happy path（validate 失败重派、≤3 超限升级、REJECTED、scope_overflow 回退、格式终验失败、awaiting_human 休眠恢复）`
+- 来源: [4.2 / Aaron 扩容裁定]
+- 说明: 保护"流程行为全部被验证过"，非 happy path 不留盲区；覆盖核对机制见 spec NFR-0040。
+
+#### 3.6.15. BS-15 M-REQ-APPROVAL 需求 baseline 批准
+
+- EARS: `WHEN M-ACC 评审退出且三件套均通过 review, THE 系统 SHALL 进入 M-REQ-APPROVAL，生成 baseline preview（三件套 digest + 摘要）并 awaiting_human；仅 human.approval 可推进下游，human.return 回退三件套之一，三件套任一变化使 approval stale`
+- 来源: [3.5 / Aaron 扩容裁定]
+- 说明: 保护"需求 baseline 被 Human 显式批准且内容变动即失效"的用户结果（Human gate，Agent 不代批）。
+
+#### 3.6.16. BS-16 spec 拆为 GitHub Issues
+
+- EARS: `WHEN human.approval 对当前三件套 digest 生效, THE 系统 SHALL 拆分 spec 为 GitHub Issues（需求追踪身份）并关联 Project；同一 baseline 重复进入不重复创建，失败可报告与恢复`
+- 来源: [3.5 / Aaron 扩容裁定]
+- 说明: 保护"需求阶段收尾产出可追踪 Issues"的用户结果；Issues 与 v0.4 需求追踪注册表的关系待 v0.4 协调。
 
 ## 4. 范围、约束与例外
 
 ### 4.1. 必须保持的产品约束
 
 - runtime 传输无关（CLI 现在，web server 将来）；agent 调用不得耦合 CLI。
-- Agent 名首字母大写（Scribe / Sage）。
+- Agent 名首字母大写（Scribe / Sage / Lex）。
 - 事件溯源合同不变（v0.1 的 append-only events + projections）。
-- skill 文本（`tracks-discuz`）与 agent 提示词（Scribe / Sage）是 spec 合同的组成部分：改 spec 必须同步改这些文本；因文本较长，单独存放于 `tracks/skills/tracks-discuz/` 与 `tracks/agents/`，spec 以引用方式指向，不内联全文。
+- skill 文本（`tracks-discuz`）与 agent 提示词（Scribe / Sage / Lex）是 spec 合同的组成部分：改 spec 必须同步改这些文本；因文本较长，单独存放于 `tracks/skills/tracks-discuz/` 与 `tracks/agents/`，spec 以引用方式指向，不内联全文。
 
 ### 4.2. 非常规要求
 
 - tracks 位于 opencode 之上（subprocess 调用），不做 opencode 插件/扩展。
 - agent 后端用环境变量选择（TRAC_AGENT_BACKEND / TRAC_FAKE_SIMULATE）。
 - E2E 双通道（合并 Aaron §3.1 决定）：(A) fake E2E 默认必跑、精确断言工作流（conftest 于此通道强制 fake）；(B) live opencode E2E 用真 Agent、provider/model 由 env 配置，只断言启动/权限/产物格式/退出/恢复，不断言具体文本；缺凭据时 (B) skip（不 fail），CI 独立 required job、本地 opt-in。
+- 集成测试状态机全覆盖（Aaron 扩容裁定）：fake 通道集成/E2E 套件须把状态机完全走到——spec「状态与生命周期」清单中每个状态、每条转移（含全部非 happy path）至少覆盖一次（见 BS-14 / spec NFR-0040）。
 
 ### 4.3. Out-of-Scope
 
@@ -237,7 +292,7 @@ sha:
 - 不做 @mention 通知推送（parser 识别但不触发通知）。
 - 不做讨论线程跨文件关联、讨论历史版本化（git 提供）。
 - 不迁移 louke 的 12 个 agent prompt（tracks agent prompt 从头写）。
-- v0.2 不接入真实 Lex（Lex 保持 fake），不实现 M-ACC（延后）。
+- M-DESIGN 及之后阶段不在 v0.2 范围（M-REQ-APPROVAL 退出后 run 停在该边界）。
 
 ## 5. 开放产品决定
 

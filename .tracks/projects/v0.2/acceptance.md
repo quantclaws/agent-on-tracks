@@ -50,7 +50,7 @@ sha:
 ### AC-FR0020-02
 
 - [x] 已确认
-  - `<Name>` 仅取 `Scribe` / `Sage`（首字母大写）
+  - `<Name>` 仅取 `Scribe` / `Sage` / `Lex`（首字母大写）
 
 ### AC-FR0020-03
 
@@ -75,7 +75,7 @@ sha:
 ### AC-FR0020-07
 
 - [x] 已确认
-  - opencode 确能按 `Scribe`/`Sage` 名发现物化定义（live suite 验证）
+  - opencode 确能按 `Scribe`/`Sage`/`Lex` 名发现物化定义（live suite 验证）
 
 > **gpt [RESOLVED]:** 该路径疑似与当前项目实际使用的 `.opencode/agents/`（复数）不一致。AC 还应覆盖已有同名文件不被静默覆盖、正常/失败后的清理、崩溃恢复，以及 opencode 确实能按 `Scribe`/`Sage` 名发现物化定义。
 >> **Scribe:** 接受，spike-pending。AC-0204 路径待 spike 修正（.opencode/agent vs agents + 目标 opencode 大小写）。补 AC：已有同名 agent 不被静默覆盖（拒绝/备份）；正常+失败后清理；崩溃恢复（下次启动清理悬挂物化）；opencode 确能按 Scribe/Sage 名发现物化定义（live suite 验证）。
@@ -123,7 +123,7 @@ sha:
 ### AC-FR0040-01
 
 - [x] 已确认
-  - `tracks/agents/Scribe.md` 与 `tracks/agents/Sage.md` 存在
+  - `tracks/agents/Scribe.md`、`tracks/agents/Sage.md` 与 `tracks/agents/Lex.md` 存在
 
 ### AC-FR0040-02
 
@@ -360,12 +360,12 @@ sha:
 ### AC-FR0130-03
 
 - [x] 已确认
-  - 交付物一致性门禁（pre-commit/CI，`trac check deliverables` 或等价脚本，非 Runtime）可执行判定：(a) 存在性——`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在，缺任一 → `missing deliverable: <path>`；(b) 版本——每个交付物 frontmatter 含良构 `version`（如 `0.2`），缺失/非法 → `missing or malformed version in <path>`；任一失败非零退出阻塞合并。“本版本是否修改流程”为开发者升版纪律，门禁不自动判定；不做 digest/manifest
+  - 交付物一致性门禁（pre-commit/CI，`trac check deliverables` 或等价脚本，非 Runtime）可执行判定：(a) 存在性——`tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md` 均存在，缺任一 → `missing deliverable: <path>`；(b) 版本——每个交付物 frontmatter 含良构 `version`（如 `0.2`），缺失/非法 → `missing or malformed version in <path>`；任一失败非零退出阻塞合并。“本版本是否修改流程”为开发者升版纪律，门禁不自动判定；不做 digest/manifest
 
 ### AC-FR0130-04
 
 - [x] 已确认
-  - Sage 调用经 Runtime 上下文注入真实加载/使用 tracks-discuz skill（live suite 验证）
+  - Sage / Lex 调用经 Runtime 上下文注入真实加载/使用 tracks-discuz skill（live suite 验证）
 
 > **gpt [RESOLVED]:** 该 AC 目前不可判定：“行为变更”与“同步”没有机器身份。请改成可执行合同，例如 spec/skill/prompt manifest 记录 revision/digest，检查命令对三者做 freshness 校验；否则移到 review checklist，不要伪装成自动验收。还需 AC 证明物化后的 Sage 能真实加载该 skill。
 >> **Scribe:** 接受，按 Aaron 决定一致性模型为“存在性 + 版本检查”（非 digest/manifest freshness）：每个交付物（spec/skill/prompt）frontmatter 记版本号；当且仅当该产物流程在某 tracks 版本被修改时升版（如 Sage.md 随 v0.2→0.2，v0.3/v0.4 不动，v0.5→0.5）。AC-1303 重写为：存在性检查（文件存在）+ 版本检查（frontmatter 版本存在且在本版本改了流程时等于当前 tracks 版本），落在交付门禁（pre-commit/CI）而非 Runtime。另补 AC：Sage 调用能真实加载/使用 tracks-discuz skill（经 Runtime 上下文注入，见 spec FR-130 线程），live suite 验证。
@@ -412,9 +412,119 @@ sha:
 - [x] 已确认
   - D-16 的 `validate_document` 直通实现被取代
 
+### AC-FR0150-05
+
+- [x] 已确认
+  - spec 条目格式合同被机器强制：每条须为 `### FR-XXXX 标题`/`### NFR-XXXX 标题`（大写、4 位、ID 唯一），含**勾选的** `- [x] 已决定`（only YES means YES——`- [ ]` 未决定与缺行均被拒，不默认为已决定）、`- **来源**：`，FR 另须 `- **交付入口**：`；不符报 `line:N`
+
 > **gpt [RESOLVED]:** 与 Human 最新决定不一致。建议把“空骨架创建”与“Agent outcome”分开验收：M-START 骨架不校验；Scribe/Sage 返回后立即 validate，非法则不进入评审并重派；退出门禁再次 validate；`trac validate` 可独立运行。
 >> **Scribe:** 接受，与 Aaron §5.1 一致。重写 AC-1403/1503：(1) M-START 骨架创建不校验；(2) Scribe/Sage outcome 返回 → Runtime 立即 validate，非法 → 不进入评审并重派；(3) 退出门禁再次 validate；(4) trac validate 可独立运行。
 >> **Scribe:** 结论已写入正文（重写 AC-1403/1502/1503：M-START 骨架不校验；Scribe/Sage outcome 后立即 validate、非法不进入评审并重派；退出门禁（M-STORY/M-SPEC）再 validate；trac validate 独立）。@gpt 请确认是否可标记 [RESOLVED]。
+
+## FR-0160 M-ACC 阶段可达（acceptance 起草与评审闭环）
+
+### AC-FR0160-01
+
+- [ ] 已确认
+  - M-SPEC 评审退出（SM-03.13）后事件流出现 stage.entered(M-ACC)，且 dispatch Sage 起草 acceptance.md（套 FR-0140 模板、继承 M-SPEC review 上下文）
+
+### AC-FR0160-02
+
+- [ ] 已确认
+  - M-ACC 评审闭环按 SM-04 执行：真实 Lex 评审（opencode 后端；测试可走 fake 通道）、Human 评审 + inline-discussion 照常可用；同轮 lex pass 且 human.review(no_comment) 才可退出
+
+### AC-FR0160-03
+
+- [ ] 已确认
+  - M-ACC 逐轮 validate 失败 → 不进入评审、重派同一作者，≤3 次；超限升级 Human
+
+### AC-FR0160-04
+
+- [ ] 已确认
+  - 退出门禁 check-ready + 格式终验通过后 stage.exited 目标为 M-REQ-APPROVAL（进入审批门禁 FR-0180，不再停在该边界）
+
+### AC-FR0160-05
+
+- [ ] 已确认
+  - Human 裁定需改 spec/story 或 trace 缺口不可在本文档修复 → stage.rolled_back，落点 M-SPEC 或 M-STORY（SM-04.4 / SM-04.10 / SM-04.15）
+
+## FR-0170 acceptance 双向覆盖校验（AC↔FR trace）
+
+### AC-FR0170-01
+
+- [ ] 已确认
+  - spec 中存在无对应 AC 章节（或章节内无 AC）的 FR/NFR 时，`trac validate --file acceptance.md` 失败，报告缺口条目编号及 `line:N`
+
+### AC-FR0170-02
+
+- [ ] 已确认
+  - acceptance 中存在回指 spec 不存在条目的 AC 时，validate 失败，报告完整孤儿 AC 清单（含编号与 `line:N`）
+
+### AC-FR0170-03
+
+- [ ] 已确认
+  - 模板 schema 与双向 trace 均通过时退出码 0；讨论块不参与 trace；story/spec 的 validate 规则不受影响
+
+### AC-FR0170-04
+
+- [ ] 已确认
+  - M-ACC 逐轮 validate 的 trace 失败产生 `verdict.failed(trace)` 并触发重派（≤3），基准为同一工作区的 spec.md
+
+## FR-0180 M-REQ-APPROVAL 阶段可达（需求 baseline 审批门禁）
+
+### AC-FR0180-01
+
+- [ ] 已确认
+  - M-ACC 评审退出（SM-04.13）后事件流出现 stage.entered(M-REQ-APPROVAL)，Runtime 生成 baseline preview 并进入 awaiting_human（SM-05.1 / SM-05.2）
+
+### AC-FR0180-02
+
+- [ ] 已确认
+  - 无 `human.approval` 事件时 decide() 不产出任何进入下游（M-DESIGN）的 command；Agent 不能批准/拒绝/代 Human 回答
+
+### AC-FR0180-03
+
+- [ ] 已确认
+  - human.approval → APPROVED → ISSUES → stage.exited 目标 M-DESIGN，run 停在该边界（可休眠、事件回放恢复）（SM-05.3 / SM-05.5 / SM-05.6）
+
+### AC-FR0180-04
+
+- [ ] 已确认
+  - human.return（携产品理由 + 目标阶段）→ stage.rolled_back 回退 M-STORY / M-SPEC / M-ACC（SM-05.7）
+
+## FR-0190 需求 baseline、approval identity 与 freshness
+
+### AC-FR0190-01
+
+- [ ] 已确认
+  - baseline preview 由 story/spec/acceptance 三件套内容算出 revision digest + 人类可读摘要，供 Human 审阅
+
+### AC-FR0190-02
+
+- [ ] 已确认
+  - APPROVED 时 human.approval 绑定当时三件套 digest，三件套设为只读，并记录 approval identity（actor + digest + 时间）
+
+### AC-FR0190-03
+
+- [ ] 已确认
+  - 批准后三件套任一文档内容变化 → digest 不匹配 → approval stale，下游被阻断须重走 M-REQ-APPROVAL；stale 以内容 digest 判定（非时间戳），可经事件回放恢复
+
+## FR-0200 spec → GitHub Issues 拆分与 Project 关联
+
+### AC-FR0200-01
+
+- [ ] 已确认
+  - APPROVED 后 Runtime 拆分 spec 为 GitHub Issues（Issues = 需求追踪身份，非执行单元）并关联 Project
+
+### AC-FR0200-02
+
+- [ ] 已确认
+  - GitHub API 调用失败按 NFR-0030 风格处理：报告原因、记录 command/outcome 事件、不写半成品、可恢复重试
+
+### AC-FR0200-03
+
+- [ ] 已确认
+  - 同一 baseline digest 重复进入不重复创建 Issues；崩溃后 reconcile 依已创建记录补齐而非重建；创建为退出最后一步，之后 run 停在 M-DESIGN 边界
 
 ## NFR-0010 错误信息含行号
 
@@ -450,3 +560,20 @@ sha:
 > **gpt [RESOLVED]:** 失败矩阵仍缺关键分支：opencode executable 缺失、provider/model/凭据错误、退出 0 无目标 diff、JSON 部分流、timeout/SIGINT/kill-9、目标文件已改但 outcome 未落盘、越权 diff。每类都应断言 command/outcome 事件、attempt 是否消耗、子进程组清理和 reconcile 结果。
 >> **Scribe:** 接受。扩展失败矩阵 AC：opencode 可执行文件缺失；provider/model/凭据错误；退出 0 无目标 diff；JSON 部分流；timeout/SIGINT/kill-9（+ 子进程组清理）；目标文件已改但 outcome 未落盘（reconcile）；越权 diff。每类断言：command/outcome 事件记录、attempt 是否消耗、子进程组清理、reconcile 结果。与扩展后的 NFR-030（spec 线程）及越权 AC（本文件 FR-030 线程）配对。
 >> **Scribe:** 结论已写入正文（扩展 AC-1801..1803 失败矩阵：opencode 缺失/凭据错误/退出 0 无 diff/JSON 部分流/timeout·SIGINT·kill-9/outcome 未落盘/越权 diff；每类断言 command·outcome 事件、attempt 记账、子进程组清理、reconcile；文件 diff 为权威产物）。@gpt 请确认是否可标记 [RESOLVED]。
+
+## NFR-0040 集成测试状态机全覆盖
+
+### AC-NFR0040-01
+
+- [ ] 已确认
+  - test-plan 含 SM-01～SM-05 全部转移的「转移（SM-XX.N）→ 测试用例」清单，逐条对应、无缺口
+
+### AC-NFR0040-02
+
+- [ ] 已确认
+  - 每条转移（含非 happy path：validate fail 重派、≤3 超限升级、REJECTED、scope_overflow 回退、格式终验 fail、trace 失败、M-REQ-APPROVAL RETURNED 回退（SM-05.7）、approval stale 阻断下游、GitHub Issues 创建失败/reconcile、awaiting_human 休眠后回放恢复）至少被一个 fake 通道测试走到
+
+### AC-NFR0040-03
+
+- [ ] 已确认
+  - 清单中的测试均存在且通过；清单缺口或测试失败使合入前检查失败
