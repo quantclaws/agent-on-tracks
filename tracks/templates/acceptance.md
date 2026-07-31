@@ -5,38 +5,35 @@ status: draft
 sha:
 ---
 
-# {Feature Title} — Acceptance Criteria
+# {功能标题} — 验收标准
 
-> Central registry of acceptance criteria. spec.md only keeps FR/NFR requirement descriptions and metadata (testability/resolved/valid);
-> detailed observable, assertable pass conditions live in this table.
->
-> Numbering convention:
-> - Full AC reference: **AC-FRXXXX-YY** (4-digit FR number + 2-digit AC sequence within that FR)
-> - Within each FR/NFR unit, YY starts from 01 and increments sequentially; cannot be reused across units
-> - Heading and all cross-references (test-plan, tests, issues) use the full form AC-FRXXXX-YY
->
-> During Lex phase 1/2 review, verify: (1) this table exists; (2) every FR/NFR in spec.md has a corresponding section here; (3) each AC can be tested/asserted.
+<!-- 模板指引（生成文档时阅读；填写完成后删除本注释，交付的文档只留验收内容）：
+  - 职责边界：本文档是验收标准的唯一登记处；spec.md 只留需求描述，test-plan.md 以本文档为输入。
+  - 组织：spec 中每条有效 FR/NFR 一个二级章节（标题与 spec 一致），其下每条 AC 一个三级标题
+    `### AC-FRXXXX-YY`（四位 FR 编号 + 两位序号；YY 在条目内从 01 递增，不跨条目复用）。
+  - 同步：FR 删除时对应章节一并删除（历史经 git 追溯），已用过的 YY 序号不再复用。
+  - 内容约束：每条 AC 只写可从系统外部观察、可断言的通过条件（暴露的 API/CLI/UI 行为、
+    结构化日志、落盘数据），不引用内部状态或实现细节；成功路径与边界/异常路径分开立条。
+  - 已确认 checkbox：每条 AC 一行 `- [ ] 已确认`，通过条件作为其缩进子列表（勾选即认可全部子条件）；
+    Agent 起草一律留空，由 Human 评审勾选（Human 沉默不构成批准）。
+-->
 
-## FR-0010 {title}
+## FR-0001 {标题}
 
-### AC-FR0010-01
-- {Observable, assertable success condition}
-- {Observable, assertable success condition}
+### AC-FR0001-01
 
-### AC-FR0010-02
-- {Boundary condition / exception path / error handling}
-- {Boundary condition / exception path / error handling}
+- [ ] 已确认
+  - {可观察、可断言的成功条件}
+  - {可观察、可断言的成功条件}
 
-## FR-0020 {title}
+### AC-FR0001-02
 
-### AC-FR0020-01
-- ...
+- [ ] 已确认
+  - {边界条件 / 异常路径 / 错误处理}
 
-### AC-FR0020-02
-- ...
+## NFR-0001 {标题}
 
-## NFR-0010 {title}
+### AC-NFR0001-01
 
-### AC-NFR0010-01
-- {Performance / security / compatibility / maintainability - quantifiable metric}
-- ...
+- [ ] 已确认
+  - {性能 / 安全 / 兼容性 / 可维护性——可量化指标}
