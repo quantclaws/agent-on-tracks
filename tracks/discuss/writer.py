@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 
-from tracks.discuss.locate import locate
-from tracks.discuss.model import speaker_key
+from tracks.discuss.locate import locate, locate_comment
+from tracks.discuss.model import LocateResult, speaker_key
 from tracks.discuss.parser import parse_tag, parse_threads
 
 _BQ = re.compile(r"^\s*(>+)\s*(.*)$")
@@ -87,31 +87,53 @@ def _thread(text: str, thread_id: str, token: dict):
     return next(t for t in parse_threads(text) if t.thread_id == thread_id)
 
 
-def _thread_end_index(lines: list, thread) -> int:
-    """0-indexed last line of the thread block (root + depth>=2 replies)."""
-    i = thread.root_line          # line after the 1-indexed root
+def _subtree_end_index(lines: list, comment) -> int:
+    """0-indexed insert position just after ``comment``'s subtree block.
+
+    The subtree spans the comment + its descendants (depth > comment.depth) plus
+    body-continuation lines; it ends before a sibling/uncle comment (a speaker-
+    tagged blockquote at depth <= comment.depth) or non-blockquote content.
+    """
+    i = comment.line              # 0-indexed line after the 1-indexed comment
     n = len(lines)
-    last = thread.root_line - 1
+    last = comment.line - 1
     while i < n:
         m = _BQ.match(lines[i])
-        if m and len(m.group(1)) >= 2:
-            last = i
+        if m is None:
+            if lines[i].strip():
+                break
             i += 1
-        elif not lines[i].strip():
-            i += 1
-        else:
-            break
-    while last > thread.root_line - 1 and not lines[last].strip():
+            continue
+        if parse_tag(m.group(2)) is not None and len(m.group(1)) <= comment.depth:
+            break  # a sibling / uncle comment ends this subtree
+        last = i                  # descendant comment or body-continuation line
+        i += 1
+    while last > comment.line - 1 and not lines[last].strip():
         last -= 1
-    return last
+    return last + 1
 
 
-def reply(text: str, thread_id: str, token: dict, speaker: str, message: str) -> str:
-    """Append a depth-2 reply after the thread's last line (FR-110)."""
+def reply(text: str, thread_id: str, token: dict, speaker: str, message: str,
+          reply_to: dict | None = None) -> str:
+    """Append a reply (FR-050 nesting, FR-110).
+
+    ``reply_to=None`` replies to the root (depth 2, at the thread end);
+    ``reply_to=<comment token>`` replies to that comment (depth+1, inserted
+    after its subtree). Fail closed: a non-unique thread OR comment locate
+    raises LocateFailure and nothing is written.
+    """
     thread = _thread(text, thread_id, token)
     lines = text.splitlines()
-    at = _thread_end_index(lines, thread) + 1
-    block = _format_reply(speaker, message)
+    if reply_to is None:
+        target = thread.root
+    else:
+        status, payload = locate_comment(thread, reply_to)
+        if status != "unique":
+            raise LocateFailure(
+                LocateResult(status, candidates=payload if status == "ambiguous" else None))
+        target = payload
+    at = _subtree_end_index(lines, target)
+    block = _format_reply(speaker, message, target.depth + 1)
     out = list(lines)
     out[at:at] = block
     nxt = at + len(block)

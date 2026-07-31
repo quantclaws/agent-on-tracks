@@ -119,7 +119,9 @@ def _start(repo: Path, ns) -> int:
 def _reply(repo: Path, ns) -> int:
     target = _scope_check(repo, ns.file)
     token = json.loads(ns.token)
-    _atomic_write(target, lambda t: writer.reply(t, ns.thread_id, token, ns.speaker, ns.message))
+    reply_to = json.loads(ns.reply_to_token) if ns.reply_to_token else None
+    _atomic_write(target, lambda t: writer.reply(
+        t, ns.thread_id, token, ns.speaker, ns.message, reply_to))
     print("ok")
     return 0
 
@@ -170,6 +172,8 @@ def _build_parser() -> _Parser:
         sp.add_argument("--token", required=True)
         if name == "reply":
             sp.add_argument("--speaker", required=True)
+            sp.add_argument("--reply-to-token",
+                            help="comment token to reply to (omit = reply to root)")
         if name == "edit":
             sp.add_argument("--depth", type=int, required=True)
             sp.add_argument("--speaker", required=True)

@@ -1,7 +1,7 @@
 """inline-discussion writer (FR-090/FR-110, AC-0505/0901/0902/1101/1102/1103)."""
 import pytest
 
-from tracks.discuss.locate import token_for
+from tracks.discuss.locate import comment_token, token_for
 from tracks.discuss.parser import parse_threads
 from tracks.discuss.writer import (
     LocateFailure,
@@ -98,3 +98,39 @@ def test_reply_stale_raises_locate_failure():
     with pytest.raises(LocateFailure) as exc:
         reply(reordered, "T-001", _tok(orig), "Sage", "x")
     assert exc.value.result.status == "stale"
+
+
+# -- nesting: reply to a specific comment (FR-050 depth = reply to whom) ------
+
+def _sage_token(text):
+    t = parse_threads(text)[0]
+    sage = next(c for c in t.root.children if c.speaker == "Sage")
+    return token_for(t), comment_token(sage, t.root.text)
+
+
+def test_reply_to_comment_nests_under_it():
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n>> **Aaron:** thanks\n"
+    thread_tok, sage_tok = _sage_token(text)
+    out = reply(text, "T-001", thread_tok, "Scribe", "done", reply_to=sage_tok)
+    # Scribe is depth 3, inserted right after Sage and before the next sibling
+    assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
+    assert out.index(">>> **Scribe:** done") < out.index(">> **Aaron:** thanks")
+
+
+def test_reply_to_root_appends_depth2():
+    text = "# H\n\n> **Aaron:** root\n"
+    t = parse_threads(text)[0]
+    out = reply(text, "T-001", token_for(t), "Sage", "reply",
+                reply_to=comment_token(t.root, ""))
+    assert ">> **Sage:** reply" in out  # depth 2 (root.depth + 1)
+
+
+def test_reply_to_ambiguous_comment_fails_closed():
+    # two identical Sage replies under the root -> comment token is ambiguous
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** same\n>> **Sage:** same\n"
+    t = parse_threads(text)[0]
+    sage = t.root.children[0]
+    dup_tok = comment_token(sage, t.root.text)
+    with pytest.raises(LocateFailure) as exc:
+        reply(text, "T-001", token_for(t), "Scribe", "x", reply_to=dup_tok)
+    assert exc.value.result.status == "ambiguous"

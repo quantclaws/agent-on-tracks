@@ -119,6 +119,22 @@ def test_stale_token_leaves_file_unchanged(tmp_path, capsys):
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
 
 
+def test_reply_to_comment_via_cli(tmp_path, capsys):
+    # FR-050 nesting via CLI: reply to Sage -> depth-3 child under Sage
+    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
+                   ">> **Aaron:** thanks\n")
+    t = _query(tmp_path, capsys)["threads"][0]
+    thread_tok = json.dumps(t["token"])
+    sage = next(c for c in t["root"]["children"] if c["speaker"] == "Sage")
+    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id",
+                                t["thread_id"], "--token", thread_tok,
+                                "--reply-to-token", json.dumps(sage["token"]),
+                                "--speaker", "Scribe", "done"])
+    assert rc == 0
+    out = (tmp_path / "story.md").read_text(encoding="utf-8")
+    assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
+
+
 # -- AC-1104: flock serializes concurrent writes ------------------------------
 
 def test_concurrent_starts_no_lost_writes(tmp_path):
