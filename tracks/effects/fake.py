@@ -113,13 +113,13 @@ class FakeBackend:
 
     def _write_spec(self, path: Path, token: str = "ok") -> None:
         if token == "scope_overflow":
-            rows = "\n".join(
-                f"| FR-{i:02d} | 需求 {i} | story §目标 |" for i in range(1, 32)
+            items = "\n".join(
+                f"### FR-{i:04d} 需求 {i}\n\n- [x] 已决定\n- **来源**：story §目标\n"
+                "- **交付入口**：无独立入口\n" for i in range(1, 32)
             )
             body = (
                 f"# {self.version} — 功能规格（FakeAgent 过量草案）\n\n"
-                "## 功能需求\n\n| ID | 需求 | Story 来源 |\n| :--- | :--- | :--- |\n"
-                + rows + "\n"
+                "## 功能需求\n\n" + items
             )
             path.write_text(
                 "---\nspec_id: SPEC-001\nstory_ref: S-001\nstatus: draft\nsha:\n---\n\n"

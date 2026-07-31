@@ -58,13 +58,13 @@ def test_valid_document_passes(tmp_path):
 
 
 def test_spec_fr_count_gate(tmp_path):
-    rows_30 = "\n".join(f"| FR-{i:02d} | x | y |" for i in range(1, 31))
-    rows_31 = "\n".join(f"| FR-{i:02d} | x | y |" for i in range(1, 32))
+    def items(n):
+        return "\n".join(f"### FR-{i:04d} 需求\n\n描述\n" for i in range(1, n + 1))
     p = tmp_path / "spec.md"
 
-    p.write_text(FM + rows_30 + "\n", encoding="utf-8")
+    p.write_text(FM + items(30) + "\n", encoding="utf-8")
     assert validate_document(p, "spec.md") is None  # 30 is within scope
 
-    p.write_text(FM + rows_31 + "\n", encoding="utf-8")
+    p.write_text(FM + items(31) + "\n", encoding="utf-8")
     check, reason = validate_document(p, "spec.md")
     assert check == "scope_overflow" and "31" in reason

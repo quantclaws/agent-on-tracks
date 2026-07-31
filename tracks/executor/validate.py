@@ -12,8 +12,11 @@ list of ``line:N`` non-conformance messages (empty = valid); it will back
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
 ``### FR-XXXX 标题`` / ``### NFR-XXXX 标题`` (uppercase, 4-digit zero-padded,
-unique, permanent ID), followed by field lines 状态 / 来源 (+ 交付入口 for valid FRs).
-Items marked 有效 ❌ keep their ID but do not count toward FR_LIMIT.
+unique ID; obsolete items are deleted, IDs never reused), followed by a
+``- [ ] 已决定`` / ``- [x] 已决定`` checkbox line, a ``- **来源**：`` field, and
+(for FRs) a ``- **交付入口**：`` field. All present FR items count toward
+FR_LIMIT (invalid ones are deleted, not marked). Template HTML comments are
+ignored; acceptance level-2 sections vary per FR/NFR so are not name-checked.
 """
 from __future__ import annotations
 
@@ -28,8 +31,9 @@ FR_LIMIT = 30
 # spec item grammar: loose head (to find/flag malformed items) + strict form.
 _ITEM_HEAD = re.compile(r"^###\s+((?:N?FR)-\d+)\b(.*)$", re.IGNORECASE)
 _ITEM_OK = re.compile(r"^### (?:FR|NFR)-\d{4} \S")
-_STATUS = re.compile(
-    r"^- \*\*状态\*\*：有效 (✅|❌) · 可测 (✅|⚠️[^·]*) · 已决定 (✅|⚠️|❌)(?: .*)?$")
+# 已决定 checkbox: '- [ ] 已决定' (undecided) or '- [x] 已决定' (decided).
+_STATUS = re.compile(r"^- \[( |[xX])\] 已决定\b")
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 _KIND_BY_FILE = {
     "story.md": "story",
@@ -83,22 +87,20 @@ def _status_match(block: list):
 
 
 def _valid_fr_count(text: str) -> int:
-    """FR-20 scope count: FR items not marked 有效 ❌ (NFRs never count)."""
-    n = 0
-    for _, heading, block in _spec_items(text):
-        if not _ITEM_HEAD.match(heading).group(1).upper().startswith("FR-"):
-            continue
-        m = _status_match(block)
-        if m is None or m.group(1) == "✅":  # no status line -> count (fail closed)
-            n += 1
-    return n
+    """FR-20 scope count: all FR items (obsolete ones are deleted, not marked;
+    NFRs never count)."""
+    return sum(
+        1 for _, heading, _ in _spec_items(text)
+        if _ITEM_HEAD.match(heading).group(1).upper().startswith("FR-")
+    )
 
 
 def check_spec_items(text: str) -> list:
     """FR-150 spec item lint — the machine-enforced half of the spec format.
 
-    Checks per item: strict heading form, unique ID, 状态 field line,
-    来源 field, and 交付入口 for valid FRs. Returns ``line:N`` messages.
+    Checks per item: strict heading form, unique ID, a '- [ ] 已决定' /
+    '- [x] 已决定' checkbox line, a '- **来源**：' field, and (for FRs) a
+    '- **交付入口**：' field. Returns ``line:N`` messages.
     """
     issues: list = []
     seen: dict = {}
@@ -111,17 +113,21 @@ def check_spec_items(text: str) -> list:
             issues.append(f"line:{line_no} duplicate id {item_id}"
                           f" (first at line:{seen[item_id]})")
         seen.setdefault(item_id, line_no)
-        status = _status_match(block)
-        if status is None:
-            issues.append(f"line:{line_no} {item_id} missing status line"
-                          " '- **状态**：有效 … · 可测 … · 已决定 …'")
+        if _status_match(block) is None:
+            issues.append(f"line:{line_no} {item_id} missing 已决定 checkbox line"
+                          " ('- [ ] 已决定' or '- [x] 已决定')")
         if not any(ln.startswith("- **来源**：") for ln in block):
             issues.append(f"line:{line_no} {item_id} missing '- **来源**：' field")
-        valid = status is None or status.group(1) == "✅"
-        if (item_id.startswith("FR-") and valid
+        if (item_id.startswith("FR-")
                 and not any(ln.startswith("- **交付入口**：") for ln in block)):
             issues.append(f"line:{line_no} {item_id} missing '- **交付入口**：' field")
     return issues
+
+
+def _strip_comments(text: str) -> str:
+    """Drop HTML comment blocks (template guidance / commented-out conditional
+    sections must not be read as required content)."""
+    return _HTML_COMMENT.sub("", text)
 
 
 def _norm_heading(line: str) -> str | None:
@@ -144,27 +150,30 @@ def check_template(path: Path) -> list:
     """FR-150 'template' check.
 
     Required frontmatter fields and level-2 sections must match the kind
-    template; spec docs additionally pass the item lint (``check_spec_items``).
-    Returns ``line:N ...`` non-conformance messages; ``[]`` = valid.
+    template (HTML comments ignored); spec docs additionally pass the item lint
+    (``check_spec_items``). Acceptance level-2 sections vary per FR/NFR, so only
+    frontmatter is name-checked there. Returns ``line:N ...`` messages; [] = valid.
     """
     kind = _KIND_BY_FILE.get(path.name)
     if kind is None:
         return [f"line:1 no template mapping for {path.name!r}"]
     try:
-        tpl_head, tpl_body = split_frontmatter(templating.load_template(kind))
+        tpl_text = templating.load_template(kind)
     except FileNotFoundError:
         return [f"line:1 no template for kind {kind!r}"]
     if not path.exists():
         return ["line:1 missing file"]
     text = path.read_text(encoding="utf-8")
-    head, body = split_frontmatter(text)
+    tpl_head, tpl_body = split_frontmatter(_strip_comments(tpl_text))
+    head, body = split_frontmatter(_strip_comments(text))
     issues = [
         f"line:1 missing frontmatter field '{f}'"
         for f in sorted(_fm_fields(tpl_head) - _fm_fields(head))
     ]
-    tpl_secs = {s for s in (_norm_heading(ln) for ln in tpl_body.splitlines()) if s}
-    doc_secs = {s for s in (_norm_heading(ln) for ln in body.splitlines()) if s}
-    issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
+    if kind != "acceptance":  # acceptance sections vary per FR/NFR (FR-150)
+        tpl_secs = {s for s in (_norm_heading(ln) for ln in tpl_body.splitlines()) if s}
+        doc_secs = {s for s in (_norm_heading(ln) for ln in body.splitlines()) if s}
+        issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
     if kind == "spec":
         issues += check_spec_items(text)  # true file line numbers (full text scan)
     return issues
