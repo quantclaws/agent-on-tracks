@@ -10,10 +10,11 @@ import json
 import os
 import sys
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from tracks import paths, templating
+from tracks.baseline import baseline_summary, revision_digest
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
@@ -199,6 +200,82 @@ def cmd_review(repo: Path, action: str) -> int:
     return 0
 
 
+def _approval_gate(store: Store, run_id: str):
+    """FR-0180: approve/return are only legal at the AWAIT_HUMAN gate."""
+    state = store.state(run_id)
+    if state.stage != "M-REQ-APPROVAL" or state.awaiting != "approval":
+        return None, (f"run not awaiting approval (stage={state.stage} "
+                      f"awaiting={state.awaiting or 'nothing'})")
+    return state, None
+
+
+def cmd_approve(repo: Path, *args) -> int:
+    args = list(args)
+    if args and (args[0] != "--actor" or len(args) != 2):
+        return _err("usage: trac approve [--actor NAME]")
+    actor = args[1] if args else None
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err("no active run")
+    with writer_lock(home):  # AC-27b: lock before the state gate
+        state, err = _approval_gate(store, run_id)
+        if err:
+            return _err(err)
+        vdir = paths.version_dir(home, state.version)
+        digest = revision_digest(vdir)
+        previews = [e for e in store.events(run_id)
+                    if e.type == "preview.generated"]
+        if not previews or previews[-1].payload["digest"] != digest:
+            # C-02: the trio changed under the reviewed preview — reject THIS
+            # approve (not the run) and regenerate the preview for re-review.
+            store.append(run_id, state.version, "preview.generated",
+                         {"digest": digest, "summary": baseline_summary(vdir)})
+            return _err("baseline changed since preview: approve rejected, "
+                        "preview regenerated — review and approve again")
+        if actor is None:
+            actor = git(repo, "config", "user.name",
+                        check=False).stdout.strip() or "human"
+        store.append(run_id, state.version, "human.approval",
+                     {"actor": actor, "digest": digest,
+                      "ts": datetime.now(timezone.utc).isoformat()})
+    print(f"approved {digest}")
+    return 0
+
+
+_RETURN_STAGES = ("M-STORY", "M-SPEC", "M-ACC")
+
+
+def cmd_return(repo: Path, *args) -> int:
+    opts = {}
+    args = list(args)
+    while args:
+        flag = args.pop(0)
+        if flag not in ("--to", "--reason") or not args or flag in opts:
+            return _err("usage: trac return --to <M-STORY|M-SPEC|M-ACC> --reason TEXT")
+        opts[flag] = args.pop(0)
+    if set(opts) != {"--to", "--reason"}:
+        return _err("usage: trac return --to <M-STORY|M-SPEC|M-ACC> --reason TEXT")
+    if opts["--to"] not in _RETURN_STAGES:
+        # SM-05.7/C-03: closed set, explicitly validated — no event on reject.
+        return _err(f"invalid --to {opts['--to']}: must be one of "
+                    + "|".join(_RETURN_STAGES))
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err("no active run")
+    with writer_lock(home):  # AC-27b: lock before the state gate
+        state, err = _approval_gate(store, run_id)
+        if err:
+            return _err(err)
+        store.append(run_id, state.version, "human.return",
+                     {"reason": opts["--reason"], "to_stage": opts["--to"]})
+    print(f"returned to {opts['--to']}")
+    return 0
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -278,7 +355,8 @@ def cmd_check(repo: Path, *args) -> int:
 
 USAGE = (
     "usage: trac init|start <version>|run|triage <decision>"
-    "|review <action>|status|replay <run-id>|validate --file <path>"
+    "|review <action>|approve [--actor NAME]|return --to <stage> --reason TEXT"
+    "|status|replay <run-id>|validate --file <path>"
     "|discuss <query|start|reply|edit|set-status> ...|check deliverables"
 )
 
@@ -289,6 +367,8 @@ _COMMANDS = {
     "run": (cmd_run, 0),
     "triage": (cmd_triage, 1),
     "review": (cmd_review, 1),
+    "approve": (cmd_approve, None),
+    "return": (cmd_return, None),
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),
     "validate": (cmd_validate, 2),

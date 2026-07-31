@@ -5,10 +5,13 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tracks import paths
+from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
+from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
 from tracks.executor.validate import validate_document
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
@@ -29,8 +32,9 @@ def _commit_if_staged(repo: Path, message: str) -> None:
 
 
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
-# stage.entered; stages absent here end the run. Inc-3 adds M-ACC -> M-REQ-APPROVAL.
-_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC"}
+# stage.entered; stages absent here (M-REQ-APPROVAL) end the run at the
+# M-DESIGN boundary: run.completed(terminal_state="boundary") (SM-05.6).
+_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC", "M-ACC": "M-REQ-APPROVAL"}
 
 # doc -> (committed event type, body-sha payload key)
 _COMMITTED_EVENT = {
@@ -49,6 +53,7 @@ class Executor:
         self.run_id = run_id
         self.version = store.state(run_id).version or ""
         self.backend = select_backend(repo, self.version)
+        self._issue_backend = None  # lazy: created on first create_issues
 
     def _emit(self, type: str, payload: dict,
               command_id: str | None = None, task_id: str | None = None):
@@ -172,26 +177,29 @@ class Executor:
 
     def _do_write_frontmatter(self, cmd, state, task_id, reconcile):
         """EXIT seal (FR-17/FR-23): body sha256 -> frontmatter `sha` -> commit ->
-        stage.exited (+ next stage.entered / run.completed)."""
-        doc, stage = cmd.params["doc"], cmd.params["stage"]
+        stage.exited (+ next stage.entered / run.completed). Without a `doc`
+        (M-REQ-APPROVAL boundary, SM-05.6) there is nothing to seal."""
+        doc, stage = cmd.params.get("doc"), cmd.params["stage"]
         if reconcile and state.stage_exited:
             return
-        path = self._doc_path(doc)
-        set_frontmatter_field(path, "sha", doc_body_sha(path))
-        git(self.repo, "add", str(path))
-        _commit_if_staged(self.repo,
-                          f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}")
-        # R4-02: the sealed commit gets its own final committed event so ACs
-        # match `final=true` and never the DRAFT-stage commit.
-        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        self._emit_committed(doc, commit_sha, cmd.command_id, final=True)
+        if doc:
+            path = self._doc_path(doc)
+            set_frontmatter_field(path, "sha", doc_body_sha(path))
+            git(self.repo, "add", str(path))
+            _commit_if_staged(self.repo,
+                              f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}")
+            # R4-02: the sealed commit gets its own final committed event so ACs
+            # match `final=true` and never the DRAFT-stage commit.
+            commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+            self._emit_committed(doc, commit_sha, cmd.command_id, final=True)
         self._emit("stage.exited", {"stage": stage}, command_id=cmd.command_id)
         nxt = _NEXT_STAGE.get(stage)
         if nxt:
             self._emit("stage.entered", {"stage": nxt},
                        command_id=cmd.command_id)
         else:
-            self._emit("run.completed", {"terminal_state": "completed"},
+            # SM-05.6 / IF-003 §10f: no successor -> stop at the M-DESIGN boundary.
+            self._emit("run.completed", {"terminal_state": "boundary"},
                        command_id=cmd.command_id)
 
     def _do_record_backlog(self, cmd, state, task_id, reconcile):
@@ -236,6 +244,82 @@ class Executor:
                    {"from_stage": state.stage,
                     "to_stage": cmd.params["to_stage"],
                     "reason": cmd.params.get("reason", "")},
+                   command_id=cmd.command_id)
+
+    # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------
+
+    def _vdir(self) -> Path:
+        return paths.version_dir(self.store.home, self.version)
+
+    def _do_generate_preview(self, cmd, state, task_id, reconcile):
+        if reconcile and state.preview_ready:
+            return
+        vdir = self._vdir()
+        self._emit("preview.generated",
+                   {"digest": revision_digest(vdir),
+                    "summary": baseline_summary(vdir)},
+                   command_id=cmd.command_id)
+
+    def _stale_regenerate(self, cmd, approved_digest: str) -> bool:
+        """FR-0190 entry gate (D-02/D-03): post-approval commands recompute the
+        trio digest; a mismatch means the approval is stale — regenerate the
+        preview (back to the human gate) instead of proceeding downstream."""
+        vdir = self._vdir()
+        current = revision_digest(vdir)
+        if current == approved_digest:
+            return False
+        self._emit("preview.generated",
+                   {"digest": current, "summary": baseline_summary(vdir)},
+                   command_id=cmd.command_id)
+        return True
+
+    def _do_record_approval(self, cmd, state, task_id, reconcile):
+        if reconcile and state.substate == "ISSUES":
+            return
+        if self._stale_regenerate(cmd, cmd.params["digest"]):
+            return
+        self._emit("approval.recorded",
+                   {"actor": cmd.params["actor"], "digest": cmd.params["digest"],
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "readonly": True},
+                   command_id=cmd.command_id)
+
+    def _do_create_issues(self, cmd, state, task_id, reconcile):
+        digest = cmd.params["digest"]
+        if reconcile and state.issues_created:
+            return
+        if self._stale_regenerate(cmd, digest):
+            return
+        if self._issue_backend is None:
+            self._issue_backend = select_issue_backend(self.repo, self.version)
+        backend = self._issue_backend
+        # D-06 breakpoint resume: item_ids already logged are never rebuilt.
+        done = {e.payload["item_id"]: e.payload["issue_id"]
+                for e in self.store.events(self.run_id)
+                if e.type == "issue.created"}
+        try:
+            for item_id, title, body in issue_items(self._vdir(), digest):
+                if item_id in done:
+                    continue
+                issue_id = backend.create_issue(title, body, [self.version])
+                backend.add_to_project(issue_id, backend.project)
+                done[item_id] = issue_id
+                self._emit("issue.created",
+                           {"item_id": item_id, "issue_id": issue_id,
+                            "digest": digest},
+                           command_id=cmd.command_id)
+        except GithubIssuesError as e:
+            # NFR-0030 style: no half-written summary; the reducer counts the
+            # failed outcome as an attempt (3rd escalates to Human).
+            self._emit("outcome.received",
+                       {"role": "github", "status": "failed",
+                        "failure_class": e.classification,
+                        "self_report": str(e)},
+                       command_id=cmd.command_id)
+            return
+        self._emit("issues.created",
+                   {"digest": digest, "mapping": done,
+                    "project": backend.project},
                    command_id=cmd.command_id)
 
     # -- git helpers -----------------------------------------------------------

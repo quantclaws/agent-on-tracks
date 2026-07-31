@@ -31,6 +31,13 @@ EVENT_TYPES = (
     "lex.verdict",
     "backlog.recorded",
     "review.round_started",
+    # v0.2 scope expansion (IF-003 §10a): M-REQ-APPROVAL + GitHub Issues
+    "preview.generated",
+    "human.approval",
+    "human.return",
+    "approval.recorded",
+    "issue.created",
+    "issues.created",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -44,6 +51,10 @@ COMMAND_KINDS = (
     "record_backlog",
     "complete_run",
     "rollback_stage",
+    # v0.2 scope expansion (IF-003 §10b): M-REQ-APPROVAL / FR-0200
+    "generate_preview",
+    "record_approval",
+    "create_issues",
 )
 
 

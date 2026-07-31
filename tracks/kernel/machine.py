@@ -22,9 +22,9 @@ class State:
     run_id: str | None = None
     version: str | None = None
     status: str = "active"  # active | completed | awaiting_human
-    stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC
+    stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL
     substate: str | None = None
-    awaiting: str | None = None  # triage | review | escalation
+    awaiting: str | None = None  # triage | review | escalation | approval
     current_attempt: int = 0
     review_round: int = 0
     sage_passed_this_round: bool = False
@@ -35,6 +35,14 @@ class State:
     acceptance_committed: bool = False
     backlog_recorded: bool = False
     terminal_state: str | None = None
+    # M-REQ-APPROVAL (FR-0180/0190/0200, IF-003 §10c)
+    preview_ready: bool = False
+    approved: bool = False
+    returned: bool = False
+    return_target: str | None = None  # human.return target stage
+    approval_digest: str | None = None  # revision digest (D-01)
+    approval_actor: str | None = None
+    issues_created: bool = False  # idempotency key semantics = D-06
     # micro-progress inside the current substate
     doc_dispatched: bool = False
     doc_produced: bool = False
@@ -88,7 +96,8 @@ def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["stage"]
-    s.substate = {"M-STORY": "TRIAGE", "M-SPEC": "DRAFT", "M-ACC": "DRAFT"}.get(s.stage)
+    s.substate = {"M-STORY": "TRIAGE", "M-SPEC": "DRAFT", "M-ACC": "DRAFT",
+                  "M-REQ-APPROVAL": "PREVIEW"}.get(s.stage)
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0
@@ -96,6 +105,10 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.exit_validated = False
     s.review_round = 1
     s.sage_passed_this_round = s.lex_passed_this_round = False
+    if s.stage == "M-REQ-APPROVAL":
+        # re-entry after RETURNED rollback restarts the approval cycle fresh
+        s.preview_ready = s.approved = s.returned = s.issues_created = False
+        s.return_target = s.approval_digest = s.approval_actor = None
 
 
 def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -112,6 +125,8 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.story_committed = False  # the redone story must be re-committed
     s.acceptance_committed = False
     s.scope_overflow = False
+    s.returned = False
+    s.return_target = None
 
 
 def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -126,6 +141,16 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
+    if s.substate == "ISSUES":
+        # FR-0200 / NFR-0030 style: a failed create_issues outcome consumes an
+        # attempt; the 3rd failure escalates. Per-item progress is recorded by
+        # issue.created events, so retries resume instead of rebuilding (D-06).
+        if p.get("status") == "failed":
+            s.current_attempt += 1
+            if s.current_attempt >= 3:
+                s.status = "awaiting_human"
+                s.awaiting = "escalation"
+        return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"
     elif s.substate in ("SAGE_REVIEW", "LEX_REVIEW"):
@@ -232,6 +257,46 @@ def _on_backlog_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
     s.backlog_recorded = True
 
 
+def _on_preview_generated(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-05.2 (also the C-02 / stale re-preview path: back to the human gate)
+    s.preview_ready = True
+    s.approved = False
+    s.substate = "AWAIT_HUMAN"
+    s.awaiting = "approval"
+    s.status = "awaiting_human"
+
+
+def _on_human_approval(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-05.3 — the ONLY entry into APPROVED (FR-0180 hard human gate)
+    s.approved = True
+    s.awaiting = None
+    s.status = "active"
+    s.substate = "APPROVED"
+    s.approval_digest = p["digest"]
+    s.approval_actor = p["actor"]
+
+
+def _on_human_return(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-05.4/.7
+    s.returned = True
+    s.awaiting = None
+    s.status = "active"
+    s.substate = "RETURNED"
+    s.return_target = p["to_stage"]
+
+
+def _on_approval_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-05.5 (C-01): recording the approval identity IS the APPROVED->ISSUES
+    # transition, materializing ISSUES as an observable substate.
+    s.approval_digest = p["digest"]
+    s.approval_actor = p["actor"]
+    s.substate = "ISSUES"
+
+
+def _on_issues_created(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.issues_created = True
+
+
 def _on_run_completed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.status = "completed"
     s.awaiting = None
@@ -269,6 +334,13 @@ _APPLY = {
     "run.completed": _on_run_completed,
     "branch.created": _on_branch_created,
     "branch.deleted": _on_branch_deleted,
+    # M-REQ-APPROVAL (SM-05). issue.created has no reducer: per-item progress
+    # is reconciled by the executor from the event log (D-06), not from State.
+    "preview.generated": _on_preview_generated,
+    "human.approval": _on_human_approval,
+    "human.return": _on_human_return,
+    "approval.recorded": _on_approval_recorded,
+    "issues.created": _on_issues_created,
 }
 
 
@@ -372,4 +444,29 @@ def decide(s: State) -> Command | None:
         return None if s.reviewer_dispatched else _dispatch(reviewer, sub, f"{reviewer} review")
     if sub == "EXIT":
         return _decide_exit(s, stage)
+    return _decide_approval(s, stage, sub)
+
+
+def _decide_approval(s: State, stage: str, sub: str) -> Command | None:
+    # M-REQ-APPROVAL (SM-05, FR-0180). AWAIT_HUMAN halts at the top of
+    # decide() via awaiting="approval": without a human.approval event
+    # decide() never produces a downstream command (hard human gate).
+    if sub == "PREVIEW":
+        return None if s.preview_ready else Command(kind="generate_preview")
+    if sub == "APPROVED":
+        # SM-05.5: record the approval identity; its approval.recorded event
+        # moves the substate to ISSUES (C-01).
+        return Command(kind="record_approval",
+                       params={"actor": s.approval_actor, "digest": s.approval_digest})
+    if sub == "ISSUES":
+        if not s.issues_created:
+            return Command(kind="create_issues", params={"digest": s.approval_digest})
+        if s.stage_exited:
+            return None  # crash-hole parity with _decide_exit: never re-exit
+        # SM-05.6: boundary exit — no document to seal; the executor emits
+        # stage.exited + run.completed(terminal_state="boundary").
+        return Command(kind="write_frontmatter", params={"stage": stage})
+    if sub == "RETURNED":
+        return Command(kind="rollback_stage",
+                       params={"to_stage": s.return_target, "reason": "human_return"})
     return None  # HUMAN_REVIEW or unknown: halt

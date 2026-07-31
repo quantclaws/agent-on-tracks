@@ -1,4 +1,6 @@
-"""E2E happy path (test-plan §4): init → start → run/triage/review → completed.
+"""E2E happy path (TP-003 §4/4a): init → start → run/triage/review → M-SPEC
+exit → stage.entered(M-ACC). The remaining walk (M-ACC seal, M-REQ-APPROVAL,
+boundary completion) lives in test_full_journey.py.
 
 Asserts external observables only: exit codes, stdout, event rows, git state,
 file contents. Ends with the NFR-04 drop-and-rebuild check (AC-N04a).
@@ -142,23 +144,9 @@ def test_happy_path(host_repo, trac, event_log):
     )
     assert "awaiting=review" in r.stdout
 
-    # 9b. review no-comment → EXIT M-ACC, run.completed (AC-23a, AC-23b)
-    assert trac("review", "no-comment").returncode == 0
-    r = trac("run")
-    assert r.returncode == 0, r.stderr
-    evs = event_log(run_id)
-    assert types(evs)[-2:] == ["stage.exited", "run.completed"]
-    fm, body = parse_frontmatter(acceptance)
-    body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    finals = [
-        e for e in evs
-        if e["type"] == "acceptance.committed" and e["payload"].get("final")
-    ]
-    assert len(finals) == 1
-    assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
-    assert fm["sha"] == finals[0]["payload"]["acceptance_sha"] == body_sha
-    assert "seal acceptance.md sha" in git_out(host_repo, "log", "-3", "--format=%s")
-    assert git_out(host_repo, "status", "--porcelain") == ""
+    # 9b. TP-003 §4a: the happy path stops here — M-SPEC exit semantics changed
+    # from run.completed to stage.entered(M-ACC) (SM-03.13); the walk through
+    # M-ACC and the M-REQ-APPROVAL boundary lives in test_full_journey.py.
 
     # AC-30a: every command.issued precedes its result event
     for e in evs:
@@ -171,16 +159,16 @@ def test_happy_path(host_repo, trac, event_log):
             ]
             assert issue_seqs and min(issue_seqs) < e["seq"]
 
-    # 10. status reports completed run (AC-23a, AC-24a)
+    # 10. status reports the active M-ACC run (AC-24a)
     r = trac("status")
-    assert r.returncode == 0 and "completed" in r.stdout and run_id in r.stdout
-    assert "M-ACC" in r.stdout
+    assert r.returncode == 0 and run_id in r.stdout
+    assert "stage=M-ACC" in r.stdout and "awaiting=review" in r.stdout
 
     # 11. replay ≡ status (AC-25a, AC-26a)
     r = trac("replay", run_id)
     assert r.returncode == 0, r.stderr
     assert len([ln for ln in r.stdout.splitlines() if "\t" in ln]) == len(evs)
-    assert "status=completed" in r.stdout and "stage=M-ACC" in r.stdout
+    assert "stage=M-ACC" in r.stdout and "awaiting=review" in r.stdout
     assert trac("replay", "nonexistent").returncode == 1  # AC-25b
 
     # NFR-04 (AC-N04a): drop projections, status/replay still fold from events
@@ -191,9 +179,9 @@ def test_happy_path(host_repo, trac, event_log):
     conn.commit()
     conn.close()
     r = trac("status")
-    assert r.returncode == 0 and "completed" in r.stdout and run_id in r.stdout
+    assert r.returncode == 0 and "stage=M-ACC" in r.stdout and run_id in r.stdout
     r = trac("replay", run_id)
-    assert r.returncode == 0 and "status=completed" in r.stdout
+    assert r.returncode == 0 and "awaiting=review" in r.stdout
 
     # AC-N05a: no singular `.track` residue
     assert not (host_repo / ".track").exists()
