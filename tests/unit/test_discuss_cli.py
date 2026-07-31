@@ -135,6 +135,20 @@ def test_reply_to_comment_via_cli(tmp_path, capsys):
     assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
 
 
+def test_blocker_awaiting_mention_without_child(tmp_path, capsys):
+    # FR-050 orthogonal @mention: requests an answer; awaiting iff no child reply
+    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** @Scribe please revise\n")
+    q = _query(tmp_path, capsys, "--blocker", "Scribe")
+    assert q["awaiting_my_reply"] == ["T-001"]  # Sage @mentioned Scribe, unanswered
+
+
+def test_blocker_awaiting_cleared_by_child_reply(tmp_path, capsys):
+    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** @Scribe please revise\n"
+                   ">>> **Scribe:** done\n")
+    q = _query(tmp_path, capsys, "--blocker", "Scribe")
+    assert q["awaiting_my_reply"] == []  # Scribe replied (child) -> no longer awaiting
+
+
 # -- AC-1104: flock serializes concurrent writes ------------------------------
 
 def test_concurrent_starts_no_lost_writes(tmp_path):

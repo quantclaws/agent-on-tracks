@@ -16,7 +16,7 @@ from pathlib import Path
 from tracks.discuss import writer
 from tracks.discuss.gate import check_ready
 from tracks.discuss.locate import comment_token, token_for
-from tracks.discuss.model import speaker_key
+from tracks.discuss.model import iter_comments, speaker_key
 from tracks.discuss.parser import parse_threads
 
 
@@ -77,13 +77,18 @@ def _thread_json(t) -> dict:
 def _blocker_categories(threads, agent: str) -> dict:
     key = speaker_key(agent)
     mine = [t for t in threads if speaker_key(t.initiator) == key]
+    # awaiting_my_reply (FR-050 orthogonal @mention semantic): a comment that
+    # @mentions me (requests my answer) AND has no child reply yet.
+    awaiting = []
+    for t in threads:
+        for c in iter_comments(t.root):
+            if not c.children and any(speaker_key(m) == key for m in c.mentions):
+                awaiting.append(t.thread_id)
+                break
     return {
         "unanswered": [t.thread_id for t in mine if t.reply_count == 0],
         "unresolved": [t.thread_id for t in mine if t.status != "resolved"],
-        "awaiting_my_reply": [
-            t.thread_id for t in threads
-            if agent in t.mentioned_agents or speaker_key(t.last_speaker) != key
-        ],
+        "awaiting_my_reply": awaiting,
     }
 
 
