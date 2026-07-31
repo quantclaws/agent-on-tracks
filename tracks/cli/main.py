@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from tracks import paths, templating
+from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
 from tracks.executor.validate import check_template
 from tracks.kernel import Command, project
@@ -250,12 +251,20 @@ def cmd_validate(repo: Path, *args) -> int:
     return 0
 
 
+def cmd_discuss(repo: Path, *args) -> int:
+    # FR-080: `trac discuss <query|start|reply|edit|set-status> ...` — doc-level
+    # inline-discussion bypass (not in the event loop). Subcommand/flag parsing,
+    # scope gate, token freshness and flock writes live in tracks/discuss/cli.py.
+    return run_discuss(repo, list(args))
+
+
 USAGE = (
     "usage: trac init|start <version>|run|triage <decision>"
     "|review <action>|status|replay <run-id>|validate --file <path>"
+    "|discuss <query|start|reply|edit|set-status> ..."
 )
 
-# command name -> (handler, positional-arg count); handler signature is (repo, *args) -> int
+# command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
 _COMMANDS = {
     "init": (cmd_init, 0),
     "start": (cmd_start, 1),
@@ -265,6 +274,7 @@ _COMMANDS = {
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),
     "validate": (cmd_validate, 2),
+    "discuss": (cmd_discuss, None),
 }
 
 
@@ -274,7 +284,7 @@ def main(argv=None) -> int:
         return _err(USAGE)
     cmd, rest = args[0], args[1:]
     entry = _COMMANDS.get(cmd)
-    if entry is None or len(rest) != entry[1]:
+    if entry is None or (entry[1] is not None and len(rest) != entry[1]):
         return _err(USAGE)
     try:
         return entry[0](Path.cwd(), *rest)

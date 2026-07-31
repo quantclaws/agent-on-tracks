@@ -32,7 +32,7 @@ class WriteError(DiscussError):
     """A write was refused for a non-locate reason (author / status rule)."""
 
 
-def _format_root(speaker: str, status: str, body: str) -> list:
+def format_root(speaker: str, status: str, body: str) -> list:
     marker = f" [{status.upper()}]" if status in ("resolved", "reopen") else ""
     parts = body.splitlines() or [""]
     return [f"> **{speaker}{marker}:** {parts[0]}"] + [f"> {ln}" for ln in parts[1:]]
@@ -75,7 +75,7 @@ def start(text: str, anchor_line: int, speaker: str, message: str) -> str:
     """Insert a new open root thread after the anchor paragraph (FR-110)."""
     lines = text.splitlines()
     idx = _anchor_insert_index(lines, anchor_line)
-    block = _format_root(speaker, "open", message)
+    block = format_root(speaker, "open", message)
     return "\n".join(_splice(lines, idx, block)) + _nl(text)
 
 
@@ -156,7 +156,7 @@ def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str,
     if idx is None:
         raise WriteError(f"no comment at depth {depth} by {speaker!r} (or not author)")
     if depth == 1:
-        lines[idx:idx + 1] = _format_root(thread.initiator, thread.status, new_body)
+        lines[idx:idx + 1] = format_root(thread.initiator, thread.status, new_body)
     else:
         lines[idx:idx + 1] = _format_reply(speaker, new_body, depth)
     return "\n".join(lines) + _nl(text)
@@ -176,5 +176,5 @@ def set_status(text: str, thread_id: str, token: dict, status: str,
     lines = text.splitlines()
     idx = thread.root_line - 1
     tag = parse_tag(_BQ.match(lines[idx]).group(2))
-    lines[idx] = _format_root(thread.initiator, status, tag[2])[0]
+    lines[idx] = format_root(thread.initiator, status, tag[2])[0]
     return "\n".join(lines) + _nl(text)
