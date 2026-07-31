@@ -35,3 +35,15 @@ def dispatches(evs, substate=None):
             continue
         out.append(e)
     return out
+
+
+def assert_escalation_after_three_failures(trac, evs, run_result, fails, substate="DRAFT"):
+    """Shared escalation assertion (NFR-06a de-dup): exactly 3 failed attempts,
+    no dispatch after the last failure, awaiting=escalation in run + status."""
+    assert len(fails) == 3  # exactly 3 attempts, then stop
+    assert len(dispatches(evs, substate)) == 3
+    last_fail_seq = fails[-1]["seq"]
+    assert not [d for d in dispatches(evs) if d["seq"] > last_fail_seq]
+    assert "awaiting=escalation" in run_result.stdout
+    r = trac("status")
+    assert r.returncode == 0 and "escalation" in r.stdout

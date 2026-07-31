@@ -33,3 +33,58 @@ def test_dirty_worktree_rejected(host_repo, trac):
     assert r.returncode == 1
     assert "dirty" in r.stderr or "uncommitted" in r.stderr
     assert git_out(host_repo, "branch", "--list", "releases/v0.1") == ""  # AC-03a
+
+
+def test_active_run_queues_to_backlog(host_repo, trac):
+    """SM-01.2: active run → requirement recorded into backlog, no branch."""
+    assert trac("init").returncode == 0
+    assert trac("start", "v0.1", stdin="第一个需求").returncode == 0
+    assert "releases/v0.1" in git_out(host_repo, "branch", "--list", "releases/v0.1")
+
+    # second start while a run is active → queued, not started
+    r = trac("start", "v0.2", stdin="排队的需求")
+    assert r.returncode == 0, r.stderr
+    assert "backlog" in r.stdout
+    assert "releases/v0.2" not in git_out(host_repo, "branch", "--list", "releases/v0.2")
+    assert not (host_repo / ".tracks" / "projects" / "v0.2" / "story.md").exists()
+
+    # backlog row recorded (query the DB)
+    import sqlite3
+    db = host_repo / ".tracks" / "runtime" / "tracks.db"
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT version, decision, reason FROM backlog ORDER BY ts"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert any(v == "v0.2" and d == "queued" and rsn == "active_run"
+               for v, d, rsn in rows)
+
+
+def test_unmerged_branch_requires_confirm(host_repo, trac):
+    """SM-01.6/.8/.9: unmerged release branch → AWAIT_CONFIRM (--confirm/--cancel)."""
+    assert trac("init").returncode == 0
+    # create an unmerged release branch directly in git (simulating leftovers)
+    git_out(host_repo, "checkout", "-b", "releases/v0.9")
+    (host_repo / "leak.txt").write_text("leftover\n", encoding="utf-8")
+    git_out(host_repo, "add", "leak.txt")
+    git_out(host_repo, "commit", "-m", "leftover release work")
+    git_out(host_repo, "checkout", "main")
+
+    # no flag → prompt (exit 2), no branch created
+    r = trac("start", "v0.1", stdin="需求")
+    assert r.returncode == 2
+    assert "--confirm" in r.stderr
+    assert "releases/v0.1" not in git_out(host_repo, "branch", "--list", "releases/v0.1")
+
+    # --cancel → abort, no branch
+    r = trac("start", "v0.1", "--cancel", stdin="需求")
+    assert r.returncode == 0
+    assert "cancelled" in r.stdout
+    assert "releases/v0.1" not in git_out(host_repo, "branch", "--list", "releases/v0.1")
+
+    # --confirm → proceed
+    r = trac("start", "v0.1", "--confirm", stdin="需求")
+    assert r.returncode == 0, r.stderr
+    assert "releases/v0.1" in git_out(host_repo, "branch", "--list", "releases/v0.1")

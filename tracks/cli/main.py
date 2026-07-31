@@ -93,7 +93,8 @@ def cmd_init(repo: Path) -> int:
     return 0
 
 
-def cmd_start(repo: Path, version: str) -> int:
+def cmd_start(repo: Path, *args: str) -> int:
+    version, confirm = _parse_start_args(args)
     raw = sys.stdin.read().strip()
     if not raw:
         return _err("empty stdin: pipe the raw requirement into `trac start <version>`")
@@ -102,6 +103,31 @@ def cmd_start(repo: Path, version: str) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
     with writer_lock(home):
+        # SM-01.2: an active run exists → record the requirement into the
+        # backlog and exit WITHOUT creating a branch (normative: flow.md §3.1).
+        active = store.active_run()
+        if active is not None:
+            bid = new_ulid()
+            store.append(
+                bid, version, "backlog.recorded",
+                {"version": version, "decision": "queued", "reason": "active_run"},
+            )
+            print(
+                f"active run {active}; requirement queued to backlog (run not started)"
+            )
+            return 0
+        # SM-01.6: local unmerged release branches → AWAIT_CONFIRM gate.
+        unmerged = _unmerged_branches(repo)
+        if unmerged:
+            if confirm is None:
+                _err(
+                    "unmerged release branches detected; run `trac start "
+                    f"{version} --confirm` to proceed anyway, or --cancel to abort"
+                )
+                return 2
+            if confirm == "cancel":
+                print("start cancelled (unmerged release branches)")
+                return 0
         run_id = new_ulid()
         branch = f"releases/{version}"
         store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
@@ -123,6 +149,35 @@ def cmd_start(repo: Path, version: str) -> int:
         store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     print(f"run {run_id} started on {branch}")
     return 0
+
+
+def _parse_start_args(args: tuple[str, ...]) -> tuple[str, str | None]:
+    """`start <version> [--confirm|--cancel]`. Returns (version, confirm)."""
+    confirm = None
+    parts = list(args)
+    if "--confirm" in parts:
+        confirm = "confirm"
+        parts.remove("--confirm")
+    elif "--cancel" in parts:
+        confirm = "cancel"
+        parts.remove("--cancel")
+    if len(parts) != 1:
+        raise SystemExit(
+            "usage: trac start <version> [--confirm|--cancel]"
+        )
+    return parts[0], confirm
+
+
+def _unmerged_branches(repo: Path) -> list[str]:
+    """Local branches not fully merged into `main` (SM-01.6 CHECK_BRANCHES)."""
+    merged = git(repo, "branch", "--merged", "main", check=False).stdout.splitlines()
+    merged = {ln.strip().lstrip("*").strip() for ln in merged}
+    allb = git(repo, "branch", "--list", "releases/*", check=False).stdout.splitlines()
+    return [
+        ln.strip().lstrip("*").strip()
+        for ln in allb
+        if ln.strip().lstrip("*").strip() not in merged
+    ]
 
 
 def cmd_run(repo: Path) -> int:
@@ -363,7 +418,7 @@ USAGE = (
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
 _COMMANDS = {
     "init": (cmd_init, 0),
-    "start": (cmd_start, 1),
+    "start": (cmd_start, None),
     "run": (cmd_run, 0),
     "triage": (cmd_triage, 1),
     "review": (cmd_review, 1),

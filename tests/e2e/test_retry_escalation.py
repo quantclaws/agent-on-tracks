@@ -1,7 +1,7 @@
 """Validation failure → evidence-carrying re-dispatch → escalation
 (FR-11, FR-12, NFR-03): AC-11a, AC-12a, AC-N03a.
 """
-from tests.e2e.helpers import dispatches
+from tests.e2e.helpers import assert_escalation_after_three_failures, dispatches
 
 
 def start_to_draft(trac):
@@ -48,12 +48,4 @@ def test_three_failures_escalate(trac, event_log):
     assert r.returncode == 0, r.stderr
     evs = event_log()
     fails = [e for e in evs if e["type"] == "verdict.failed"]
-    assert len(fails) == 3  # AC-12a: exactly 3 attempts, then stop
-    assert len(dispatches(evs, "DRAFT")) == 3
-    # no dispatch after the third failure
-    last_fail_seq = fails[-1]["seq"]
-    assert not [d for d in dispatches(evs) if d["seq"] > last_fail_seq]
-    assert "awaiting=escalation" in r.stdout
-
-    r = trac("status")
-    assert r.returncode == 0 and "escalation" in r.stdout
+    assert_escalation_after_three_failures(trac, evs, r, fails)
