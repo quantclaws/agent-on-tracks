@@ -28,6 +28,18 @@ def _commit_if_staged(repo: Path, message: str) -> None:
         git(repo, "commit", "-m", message)
 
 
+# Stage-transition table (design §1, single source of truth): EXIT seal -> next
+# stage.entered; stages absent here end the run. Inc-3 adds M-ACC -> M-REQ-APPROVAL.
+_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC"}
+
+# doc -> (committed event type, body-sha payload key)
+_COMMITTED_EVENT = {
+    "story.md": ("story.committed", "story_sha"),
+    "spec.md": ("spec.committed", "spec_sha"),
+    "acceptance.md": ("acceptance.committed", "acceptance_sha"),
+}
+
+
 class Executor:
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
@@ -151,17 +163,12 @@ class Executor:
         self._emit_committed(doc, commit_sha, cmd.command_id)
 
     def _emit_committed(self, doc, commit_sha, command_id, final=False):
-        sha = doc_body_sha(self._doc_path(doc))
-        if doc == "story.md":
-            self._emit("story.committed",
-                       {"commit_sha": commit_sha, "story_sha": sha,
-                        "final": final},
-                       command_id=command_id)
-        else:
-            self._emit("spec.committed",
-                       {"commit_sha": commit_sha, "spec_sha": sha,
-                        "final": final},
-                       command_id=command_id)
+        ev_type, sha_key = _COMMITTED_EVENT[doc]
+        self._emit(ev_type,
+                   {"commit_sha": commit_sha,
+                    sha_key: doc_body_sha(self._doc_path(doc)),
+                    "final": final},
+                   command_id=command_id)
 
     def _do_write_frontmatter(self, cmd, state, task_id, reconcile):
         """EXIT seal (FR-17/FR-23): body sha256 -> frontmatter `sha` -> commit ->
@@ -179,8 +186,9 @@ class Executor:
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         self._emit_committed(doc, commit_sha, cmd.command_id, final=True)
         self._emit("stage.exited", {"stage": stage}, command_id=cmd.command_id)
-        if stage == "M-STORY":
-            self._emit("stage.entered", {"stage": "M-SPEC"},
+        nxt = _NEXT_STAGE.get(stage)
+        if nxt:
+            self._emit("stage.entered", {"stage": nxt},
                        command_id=cmd.command_id)
         else:
             self._emit("run.completed", {"terminal_state": "completed"},

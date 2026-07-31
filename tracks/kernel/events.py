@@ -24,6 +24,7 @@ EVENT_TYPES = (
     "verdict.failed",
     "story.committed",
     "spec.committed",
+    "acceptance.committed",
     "human.triage",
     "human.review",
     "sage.verdict",

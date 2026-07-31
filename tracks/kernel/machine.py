@@ -22,7 +22,7 @@ class State:
     run_id: str | None = None
     version: str | None = None
     status: str = "active"  # active | completed | awaiting_human
-    stage: str | None = None  # M-START | M-STORY | M-SPEC
+    stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC
     substate: str | None = None
     awaiting: str | None = None  # triage | review | escalation
     current_attempt: int = 0
@@ -32,6 +32,7 @@ class State:
     triage_decision: str | None = None
     story_committed: bool = False
     spec_committed: bool = False
+    acceptance_committed: bool = False
     backlog_recorded: bool = False
     terminal_state: str | None = None
     # micro-progress inside the current substate
@@ -58,6 +59,26 @@ def _reset_review(s: State) -> None:
     s.reviewer_dispatched = s.reviewer_produced = False
 
 
+# FR-0160: stage -> (drafting role, target doc). M-ACC mirrors M-SPEC's review
+# loop (Sage drafts, Lex reviews) on acceptance.md.
+_STAGE_ROLE_DOC = {
+    "M-STORY": ("scribe", "story.md"),
+    "M-SPEC": ("sage", "spec.md"),
+    "M-ACC": ("sage", "acceptance.md"),
+}
+
+_COMMITTED_FLAG = {
+    "M-STORY": "story_committed",
+    "M-SPEC": "spec_committed",
+    "M-ACC": "acceptance_committed",
+}
+
+
+def _uncommit(s: State) -> None:
+    """RESPOND must re-commit the current stage's doc to re-enter review."""
+    setattr(s, _COMMITTED_FLAG.get(s.stage, "story_committed"), False)
+
+
 # -- event reducers: one small handler per event type, looked up by `apply`.
 # Each is `(state, payload, envelope) -> None` and mutates state in place.
 
@@ -67,7 +88,7 @@ def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["stage"]
-    s.substate = {"M-STORY": "TRIAGE", "M-SPEC": "DRAFT"}.get(s.stage)
+    s.substate = {"M-STORY": "TRIAGE", "M-SPEC": "DRAFT", "M-ACC": "DRAFT"}.get(s.stage)
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0
@@ -89,6 +110,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.current_attempt = 0
     s.spec_committed = False
     s.story_committed = False  # the redone story must be re-committed
+    s.acceptance_committed = False
     s.scope_overflow = False
 
 
@@ -151,6 +173,13 @@ def _on_spec_committed(s: State, p: dict, ev: EventEnvelope) -> None:
         _reset_review(s)
 
 
+def _on_acceptance_committed(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.acceptance_committed = True
+    if not p.get("final"):
+        s.substate = "LEX_REVIEW"
+        _reset_review(s)
+
+
 def _on_sage_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     if p["verdict"] == "pass":
         s.sage_passed_this_round = True
@@ -170,7 +199,7 @@ def _on_lex_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     s.substate = "RESPOND"
     _reset_doc(s)
-    s.spec_committed = False
+    _uncommit(s)  # spec or acceptance, by current stage (FR-0160)
 
 
 def _on_human_triage(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -190,10 +219,7 @@ def _on_human_review(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     _reset_doc(s)
     s.review_diff_ref = p.get("diff_ref")
-    if s.stage == "M-STORY":
-        s.story_committed = False
-    else:
-        s.spec_committed = False
+    _uncommit(s)
 
 
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -233,6 +259,7 @@ _APPLY = {
     "verdict.failed": _on_verdict_failed,
     "story.committed": _on_story_committed,
     "spec.committed": _on_spec_committed,
+    "acceptance.committed": _on_acceptance_committed,
     "sage.verdict": _on_sage_verdict,
     "lex.verdict": _on_lex_verdict,
     "human.triage": _on_human_triage,
@@ -283,9 +310,8 @@ def _decide_reject(s: State) -> Command:
 
 def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     """DRAFT / RESPOND pipeline: dispatch -> validate -> commit."""
-    role = "scribe" if stage == "M-STORY" else "sage"
-    doc = "story.md" if stage == "M-STORY" else "spec.md"
-    committed = s.story_committed if stage == "M-STORY" else s.spec_committed
+    role, doc = _STAGE_ROLE_DOC[stage]
+    committed = getattr(s, _COMMITTED_FLAG[stage])
     if not s.doc_dispatched:
         cmd = _dispatch(role, sub, f"write {doc}", doc)
         if s.last_failure:
@@ -310,7 +336,7 @@ def _decide_exit(s: State, stage: str) -> Command | None:
     """EXIT: gate-validate (FR-150/AC-1502) then seal the document sha (FR-17/FR-23)."""
     if s.stage_exited:
         return None
-    doc = "story.md" if stage == "M-STORY" else "spec.md"
+    doc = _STAGE_ROLE_DOC[stage][1]
     if not s.exit_validated:
         # review-exit gate: template conformance + all discussion threads resolved.
         return Command(

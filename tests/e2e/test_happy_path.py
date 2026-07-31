@@ -117,12 +117,14 @@ def test_happy_path(host_repo, trac, event_log):
         e["type"] == "lex.verdict" and e["payload"]["verdict"] == "pass" for e in evs
     )  # AC-21a
 
-    # 8-9. review no-comment → EXIT M-SPEC, run.completed (AC-22a, AC-23a, AC-23b)
+    # 8-9. review no-comment → EXIT M-SPEC, into M-ACC (AC-22a, FR-0160)
     assert trac("review", "no-comment").returncode == 0
     r = trac("run")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    assert types(evs)[-2:] == ["stage.exited", "run.completed"]
+    assert any(
+        e["type"] == "stage.exited" and e["payload"]["stage"] == "M-SPEC" for e in evs
+    )
     fm, body = parse_frontmatter(spec)
     body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
     finals = [
@@ -132,7 +134,30 @@ def test_happy_path(host_repo, trac, event_log):
     assert len(finals) == 1  # never matches the DRAFT commit (R4-02)
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["spec_sha"] == body_sha
-    assert "seal spec.md sha" in git_out(host_repo, "log", "-3", "--format=%s")
+    assert "seal spec.md sha" in git_out(host_repo, "log", "-5", "--format=%s")
+    acceptance = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
+    assert acceptance.exists()  # Sage drafted acceptance in M-ACC
+    assert any(
+        e["type"] == "stage.entered" and e["payload"]["stage"] == "M-ACC" for e in evs
+    )
+    assert "awaiting=review" in r.stdout
+
+    # 9b. review no-comment → EXIT M-ACC, run.completed (AC-23a, AC-23b)
+    assert trac("review", "no-comment").returncode == 0
+    r = trac("run")
+    assert r.returncode == 0, r.stderr
+    evs = event_log(run_id)
+    assert types(evs)[-2:] == ["stage.exited", "run.completed"]
+    fm, body = parse_frontmatter(acceptance)
+    body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    finals = [
+        e for e in evs
+        if e["type"] == "acceptance.committed" and e["payload"].get("final")
+    ]
+    assert len(finals) == 1
+    assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
+    assert fm["sha"] == finals[0]["payload"]["acceptance_sha"] == body_sha
+    assert "seal acceptance.md sha" in git_out(host_repo, "log", "-3", "--format=%s")
     assert git_out(host_repo, "status", "--porcelain") == ""
 
     # AC-30a: every command.issued precedes its result event
@@ -149,13 +174,13 @@ def test_happy_path(host_repo, trac, event_log):
     # 10. status reports completed run (AC-23a, AC-24a)
     r = trac("status")
     assert r.returncode == 0 and "completed" in r.stdout and run_id in r.stdout
-    assert "M-SPEC" in r.stdout
+    assert "M-ACC" in r.stdout
 
     # 11. replay ≡ status (AC-25a, AC-26a)
     r = trac("replay", run_id)
     assert r.returncode == 0, r.stderr
     assert len([ln for ln in r.stdout.splitlines() if "\t" in ln]) == len(evs)
-    assert "status=completed" in r.stdout and "stage=M-SPEC" in r.stdout
+    assert "status=completed" in r.stdout and "stage=M-ACC" in r.stdout
     assert trac("replay", "nonexistent").returncode == 1  # AC-25b
 
     # NFR-04 (AC-N04a): drop projections, status/replay still fold from events

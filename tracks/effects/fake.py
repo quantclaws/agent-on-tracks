@@ -13,10 +13,14 @@ reviews "pass". Token "hang" blocks (recovery/lock tests, AC-27a).
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 
 from tracks.frontmatter import split_frontmatter
+
+# spec items the fake acceptance draft must cover (FR-0170 trace)
+_SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
@@ -93,6 +97,8 @@ class FakeBackend:
                 time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
             if doc == "story.md":
                 self._write_story(doc_path)
+            elif doc == "acceptance.md":
+                self._write_acceptance(doc_path, token)
             else:
                 self._write_spec(doc_path, token)
             return {"status": "done", "artifact_ref": str(doc_path),
@@ -143,5 +149,25 @@ class FakeBackend:
             "status: draft\n"
             "sha:\n"
             "---\n\n" + SPEC_TEMPLATE.format(version=self.version),
+            encoding="utf-8",
+        )
+
+    def _write_acceptance(self, path: Path, token: str = "ok") -> None:
+        """Deterministic acceptance draft: full AC coverage derived from the
+        sibling spec.md (FR-0170). Token "trace_orphan" leaves the last spec
+        item uncovered so the trace gate fails and re-dispatches."""
+        spec = path.parent / "spec.md"
+        items = _SPEC_ITEM.findall(spec.read_text(encoding="utf-8")) if spec.exists() else []
+        if token == "trace_orphan":
+            items = items[:-1]
+        sections = "\n".join(
+            f"## {iid} {title}\n\n"
+            f"### AC-{iid.replace('-', '')}-01 外部可观察\n\n"
+            f"- [ ] 已确认\n  - 条件：{title or iid} 可在系统外断言\n"
+            for iid, title in items
+        )
+        path.write_text(
+            "---\nacc_id: ACC-001\ncreated: 1970-01-01\nstatus: draft\nsha:\n---\n\n"
+            f"# {self.version} — 验收标准（FakeAgent 草案）\n\n" + sections,
             encoding="utf-8",
         )
