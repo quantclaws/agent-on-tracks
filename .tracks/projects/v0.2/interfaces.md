@@ -94,7 +94,7 @@ check: Literal["schema", "scope", "trace", "scope_overflow", "format",
                "discussion_ready"]   # + v0.2：文件内讨论线程全部 resolved（FR-100，只读查询 discuss）
 ```
 
-- `template`：`validate_document(checks=["template"])` → 按 `tracks/templates/<kind>.md` 校验必备章节/frontmatter 字段，`evidence` 含不符项 `line:N`。
+- `template`：`validate_document(checks=["template"])` → 按 `tracks/templates/<kind>.md` 校验必备 frontmatter 字段 + level-2 章节（模板的 HTML 注释忽略；acceptance 的 level-2 章节随 FR/NFR 变化故不做章节名匹配），`evidence` 含不符项 `line:N`。spec 文档另过条目 lint（`check_spec_items`：`### FR-XXXX 标题` + `- [ ]/[- x] 已决定` checkbox + `- **来源**：` + FR 的 `- **交付入口**：`；FR-20 scope 数所有 FR 条目，废弃项删除而非标记）。
 - `discussion_ready`：`validate_document(checks=["discussion_ready"])` → 只读调 `discuss` query --check-ready；`is_ready=false` 时 `verdict.failed`，`evidence` 含 `ready_blockers`。
 
 ## 6. inline-discussion 旁路类型（新增，非事件）
