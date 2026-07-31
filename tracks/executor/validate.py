@@ -13,10 +13,12 @@ Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
 ``### FR-XXXX 标题`` / ``### NFR-XXXX 标题`` (uppercase, 4-digit zero-padded,
 unique ID; obsolete items are deleted, IDs never reused), followed by a
-``- [ ] 已决定`` / ``- [x] 已决定`` checkbox line, a ``- **来源**：`` field, and
-(for FRs) a ``- **交付入口**：`` field. All present FR items count toward
-FR_LIMIT (invalid ones are deleted, not marked). Template HTML comments are
-ignored; acceptance level-2 sections vary per FR/NFR so are not name-checked.
+CHECKED ``- [x] 已决定`` checkbox line (only YES means YES: an unchecked
+``- [ ]`` means 'undecided' and is rejected, as is a missing line), a
+``- **来源**：`` field, and (for FRs) a ``- **交付入口**：`` field. All present
+FR items count toward FR_LIMIT (invalid ones are deleted, not marked).
+Template HTML comments are ignored; acceptance level-2 sections vary per
+FR/NFR so are not name-checked.
 """
 from __future__ import annotations
 
@@ -32,8 +34,9 @@ FR_LIMIT = 30
 # spec item grammar: loose head (to find/flag malformed items) + strict form.
 _ITEM_HEAD = re.compile(r"^###\s+((?:N?FR)-\d+)\b(.*)$", re.IGNORECASE)
 _ITEM_OK = re.compile(r"^### (?:FR|NFR)-\d{4} \S")
-# 已决定 checkbox: '- [ ] 已决定' (undecided) or '- [x] 已决定' (decided).
-_STATUS = re.compile(r"^- \[( |[xX])\] 已决定\b")
+# 已决定 checkbox: only a CHECKED '- [x] 已决定' passes (only YES means YES).
+# '- [ ]' = undecided and a missing line are both rejected (FR-150, Aaron).
+_STATUS = re.compile(r"^- \[[xX]\] 已决定\b")
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 _KIND_BY_FILE = {
@@ -129,8 +132,8 @@ def check_spec_items(text: str) -> list:
                           f" (first at line:{seen[item_id]})")
         seen.setdefault(item_id, line_no)
         if _status_match(block) is None:
-            issues.append(f"line:{line_no} {item_id} missing 已决定 checkbox line"
-                          " ('- [ ] 已决定' or '- [x] 已决定')")
+            issues.append(f"line:{line_no} {item_id} missing 已决定 checkbox"
+                          " (require '- [x] 已决定'; '- [ ]' = undecided -> rejected)")
         if not any(ln.startswith("- **来源**：") for ln in block):
             issues.append(f"line:{line_no} {item_id} missing '- **来源**：' field")
         if (item_id.startswith("FR-")

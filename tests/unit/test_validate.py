@@ -91,7 +91,7 @@ def test_check_spec_items_missing_checkbox():
 
 
 def test_check_spec_items_fr_requires_delivery_entry():
-    text = "### FR-0010 标题\n\n- [ ] 已决定\n- **来源**：BS-01\n\n描述\n"
+    text = "### FR-0010 标题\n\n- [x] 已决定\n- **来源**：BS-01\n\n描述\n"
     assert any("交付入口" in i for i in check_spec_items(text))
 
 
@@ -101,8 +101,14 @@ def test_check_spec_items_nfr_no_delivery_entry():
 
 
 def test_check_spec_items_nfr_missing_checkbox_rejected():
-    """AC-FR0150-03: no '- [ ] 已决定' line is a format error -> reject (Aaron)."""
+    """AC-FR0150-03: a missing decided-checkbox line is a format error -> reject."""
     text = "### NFR-0010 错误信息含行号\n\n- **来源**：story §3.3\n\n描述\n"
+    assert any("已决定 checkbox" in i for i in check_spec_items(text))
+
+
+def test_check_spec_items_undecided_checkbox_rejected():
+    """AC-FR0150-03: only YES means YES — '- [ ] 已决定' (undecided) is rejected."""
+    text = "### NFR-0010 标题\n\n- [ ] 已决定\n- **来源**：BS-01\n\n描述\n"
     assert any("已决定 checkbox" in i for i in check_spec_items(text))
 
 
