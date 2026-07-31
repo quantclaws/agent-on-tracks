@@ -134,3 +134,56 @@ def test_reply_to_ambiguous_comment_fails_closed():
     with pytest.raises(LocateFailure) as exc:
         reply(text, "T-001", token_for(t), "Scribe", "x", reply_to=dup_tok)
     assert exc.value.result.status == "ambiguous"
+
+
+def test_reply_to_comment_with_descendant_appends_after_subtree():
+    # _subtree_end_index must span the target's descendants (Scribe) so the new
+    # reply lands after the whole subtree, not between Sage and Scribe.
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n>>> **Scribe:** done\n"
+    thread_tok, sage_tok = _sage_token(text)
+    out = reply(text, "T-001", thread_tok, "Aaron", "noted", reply_to=sage_tok)
+    assert ">>> **Scribe:** done\n>>> **Aaron:** noted" in out
+
+
+def test_reply_to_comment_before_prose():
+    # the subtree scan stops at the following prose (non-blockquote) content
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n\nSome prose.\n"
+    thread_tok, sage_tok = _sage_token(text)
+    out = reply(text, "T-001", thread_tok, "Scribe", "done", reply_to=sage_tok)
+    assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
+    assert out.index(">>> **Scribe:** done") < out.index("Some prose.")
+
+
+# -- edit a non-root comment (FR-110 depth>1, AC-1103 author-only) -------------
+
+def test_edit_reply_replaces_body():
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
+    out = edit(text, "T-001", _tok(text), 2, "Sage", "updated request")
+    assert ">> **Sage:** updated request" in out
+    assert "please revise" not in out
+    assert "> **Aaron:** root" in out  # root untouched
+
+
+def test_edit_reply_author_only():
+    # Aaron authored the root, not the depth-2 reply -> refused
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
+    with pytest.raises(WriteError):
+        edit(text, "T-001", _tok(text), 2, "Aaron", "x")
+
+
+def test_edit_reply_missing_scans_past_blanks_and_content():
+    # no Bob reply exists; the scan skips the intra-thread blank and stops at the
+    # following prose -> no match -> WriteError (fail closed)
+    text = "# H\n\n> **Aaron:** root\n>> **Sage:** x\n\nSome content.\n"
+    with pytest.raises(WriteError):
+        edit(text, "T-001", _tok(text), 2, "Bob", "x")
+
+
+# -- start: blank-line separation when the anchor has no trailing blank --------
+
+def test_start_anchor_at_eof_inserts_blank_before():
+    # anchor paragraph ends the doc with no trailing blank -> _splice inserts a
+    # separating blank line before the new thread
+    text = "# H\n\nanchor para"
+    out = start(text, 3, "Aaron", "comment")
+    assert "anchor para\n\n> **Aaron:** comment" in out

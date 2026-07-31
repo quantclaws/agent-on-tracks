@@ -108,8 +108,6 @@ def _subtree_end_index(lines: list, comment) -> int:
             break  # a sibling / uncle comment ends this subtree
         last = i                  # descendant comment or body-continuation line
         i += 1
-    while last > comment.line - 1 and not lines[last].strip():
-        last -= 1
     return last + 1
 
 
