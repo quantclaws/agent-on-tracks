@@ -90,3 +90,33 @@ def test_anchor_is_nearest_non_blockquote_line():
     # AC-1203
     t = _one("first\nsecond\n\n> **Aaron:** x")
     assert t.anchor_text == "second" and t.anchor_line == 2
+
+
+# -- FR-050 nesting (depth = reply to whom) -----------------------------------
+
+def test_reply_tree_nesting():
+    text = ("> **Aaron:** I don't know\n"
+            ">> **Sage:** please revise line 5\n"
+            ">>> **Scribe:** done\n"
+            ">> **Aaron:** thanks\n")
+    t = _one(text)
+    assert t.initiator == "Aaron" and t.reply_count == 3
+    kids = t.root.children
+    assert [c.speaker for c in kids] == ["Sage", "Aaron"]  # both depth 2
+    assert all(c.depth == 2 for c in kids)
+    # Scribe (depth 3) is a child of Sage, NOT the root
+    assert [c.speaker for c in kids[0].children] == ["Scribe"]
+    assert kids[0].children[0].depth == 3
+    assert kids[1].children == ()  # Aaron's depth-2 reply has no child
+
+
+def test_depth3_with_no_depth2_attaches_to_root():
+    t = _one("> **Aaron:** root\n>>> **Sage:** deep\n")
+    assert t.root.children[0].speaker == "Sage"
+    assert t.root.children[0].depth == 3  # nearest shallower ancestor = root
+
+
+def test_iter_comments_preorder():
+    from tracks.discuss.model import iter_comments
+    t = _one("> **A:** r\n>> **B:** b\n>>> **C:** c\n>> **D:** d\n")
+    assert [c.speaker for c in iter_comments(t.root)] == ["A", "B", "C", "D"]

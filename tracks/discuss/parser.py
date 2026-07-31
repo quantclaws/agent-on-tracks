@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from tracks.discuss.model import SNIPPET_LEN, Thread, normalize
+from tracks.discuss.model import SNIPPET_LEN, Comment, Thread, normalize
 
 _LABELS = frozenset({
     "note", "warning", "tip", "important", "definition", "example",
@@ -55,15 +55,44 @@ def _mentions(text: str) -> list:
     return _MENTION.findall(text)
 
 
+class _CommentBuilder:
+    """Mutable comment node while scanning; ``freeze`` -> immutable Comment."""
+
+    __slots__ = ("depth", "speaker", "body", "line", "text", "mentions", "children")
+
+    def __init__(self, depth, speaker, body, line, text, mentions):
+        self.depth = depth
+        self.speaker = speaker
+        self.body = body
+        self.line = line
+        self.text = text
+        self.mentions = list(mentions)
+        self.children: list = []
+
+    def freeze(self) -> Comment:
+        return Comment(
+            depth=self.depth, speaker=self.speaker, body=self.body,
+            line=self.line, text=self.text, mentions=tuple(self.mentions),
+            children=tuple(c.freeze() for c in self.children),
+        )
+
+
 class _Accumulator:
-    """Folds document lines into threads; one full scan, no persistence."""
+    """Folds document lines into threads; one full scan, no persistence.
+
+    Builds each thread's reply tree: a depth-N comment attaches as a child of
+    the nearest preceding comment with depth < N (FR-050 nesting).
+    """
 
     def __init__(self, total: int):
         self.total = total
         self.threads: list = []
         self._anchor_text = ""
         self._anchor_line = 0
-        self._root = None
+        self._root = None          # _CommentBuilder root of the current thread
+        self._root_status = "open"
+        self._root_anchor = (0, "")
+        self._stack: list = []     # ancestor chain root..most-recent comment
         self._reply_count = 0
         self._last = ""
         self._mentioned: list = []
@@ -77,11 +106,7 @@ class _Accumulator:
         if tag is None:
             return  # blockquote but not a comment (label / plain); ignore
         name, status, body = tag
-        if len(m.group(1)) == 1:
-            self.flush()
-            self._start_root(idx, raw.rstrip(), name, status, body)
-        else:
-            self._add_reply(idx, raw.rstrip(), name, body)
+        self._add_comment(idx, raw.rstrip(), len(m.group(1)), name, status, body)
 
     def _on_non_bq(self, idx: int, raw: str) -> None:
         if not raw.strip():
@@ -90,43 +115,51 @@ class _Accumulator:
         self._anchor_text = raw.strip()
         self._anchor_line = idx
 
-    def _start_root(self, idx, root_text, name, status, body) -> None:
-        self._root = {
-            "name": name, "status": status or "open", "body": body,
-            "root_line": idx, "root_text": root_text,
-            "anchor_line": self._anchor_line, "anchor_text": self._anchor_text,
-        }
-        self._reply_count = 0
-        self._last = name
-        self._mentioned = list(_mentions(body))
-
-    def _add_reply(self, idx, root_text, name, body) -> None:
-        if self._root is None:  # orphan reply: promote to a root (best-effort)
-            self._start_root(idx, root_text, name, None, body)
+    def _add_comment(self, idx, text, depth, name, status, body) -> None:
+        node = _CommentBuilder(depth, name, body, idx, text, _mentions(body))
+        if depth == 1:
+            self.flush()
+            self._root = node
+            self._root_status = status or "open"
+            self._root_anchor = (self._anchor_line, self._anchor_text)
+            self._stack = [node]
+            self._reply_count = 0
+            self._last = name
+            self._mentioned = list(node.mentions)
             return
+        if self._root is None:  # orphan reply: promote to a root (best-effort)
+            self._add_comment(idx, text, 1, name, status, body)
+            return
+        while len(self._stack) > 1 and self._stack[-1].depth >= depth:
+            self._stack.pop()
+        self._stack[-1].children.append(node)  # nearest shallower ancestor
+        self._stack.append(node)
         self._reply_count += 1
         self._last = name
-        self._mentioned.extend(_mentions(body))
+        self._mentioned.extend(node.mentions)
 
     def flush(self) -> None:
         if self._root is None:
             return
         seq = len(self.threads) + 1
+        anchor_line, anchor_text = self._root_anchor
         self.threads.append(Thread(
             thread_id=f"T-{seq:03d}",
-            initiator=self._root["name"],
-            status=self._root["status"],
+            initiator=self._root.speaker,
+            status=self._root_status,
             last_speaker=self._last,
             reply_count=self._reply_count,
-            snippet=normalize(self._root["body"])[:SNIPPET_LEN],
+            snippet=normalize(self._root.body)[:SNIPPET_LEN],
             mentioned_agents=tuple(dict.fromkeys(self._mentioned)),
+            root=self._root.freeze(),
             total_lines=self.total,
-            anchor_line=self._root["anchor_line"],
-            anchor_text=self._root["anchor_text"],
-            root_line=self._root["root_line"],
-            root_text=self._root["root_text"],
+            anchor_line=anchor_line,
+            anchor_text=anchor_text,
+            root_line=self._root.line,
+            root_text=self._root.text,
         ))
         self._root = None
+        self._stack = []
 
 
 def parse_threads(text: str) -> list:

@@ -26,6 +26,32 @@ def speaker_key(name: str) -> str:
 
 
 @dataclass(frozen=True)
+class Comment:
+    """One comment in a thread's reply tree (FR-050 nesting).
+
+    ``depth`` = number of '>' (1 = root). A depth-N comment replies to the
+    nearest preceding depth-(N-1) comment; ``children`` are its depth+1 replies
+    (nested). ``depth`` thus encodes 'reply to whom'; ``mentions`` is the
+    orthogonal '@request someone to answer' semantic (FR-050).
+    """
+
+    depth: int
+    speaker: str          # display case ('@' stripped)
+    body: str
+    line: int             # 1-indexed first line of the comment
+    text: str             # raw first line (rstripped)
+    mentions: tuple       # @mentions in this comment's body
+    children: tuple       # tuple[Comment] — nested replies
+
+
+def iter_comments(comment: Comment):
+    """Yield ``comment`` then all descendants in scan (pre) order."""
+    yield comment
+    for child in comment.children:
+        yield from iter_comments(child)
+
+
+@dataclass(frozen=True)
 class Thread:
     """One discussion thread as seen in a single full scan (FR-060)."""
 
@@ -36,6 +62,7 @@ class Thread:
     reply_count: int
     snippet: str              # root body, first SNIPPET_LEN chars
     mentioned_agents: tuple   # deduped @mentions (display case)
+    root: Comment             # the reply tree (root comment + nested children)
     # 5-tuple locate hints (L0/L1); content is the authority, not these numbers.
     total_lines: int
     anchor_line: int
