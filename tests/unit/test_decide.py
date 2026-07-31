@@ -123,7 +123,7 @@ def test_exit_issues_frontmatter_seal_once():
         ("sage.verdict", {"verdict": "pass"}),
         ("human.review", {"action": "no_comment"}),
     )
-    # AC-1502: EXIT first issues the review-exit gate (template + discussion_ready).
+    # AC-FR0150-02: EXIT first issues the review-exit gate (template + discussion_ready).
     cmd = decide(at_exit)
     assert cmd.kind == "validate_document" and cmd.params["doc"] == "story.md"
     assert cmd.params["checks"] == ["template", "discussion_ready"]
@@ -159,7 +159,7 @@ def test_exit_gate_failure_blocks_exit():
         ("human.review", {"action": "no_comment"}),
         ("verdict.failed", {"check": "discussion_ready", "reason": "unresolved thread"}),
     )
-    # AC-1502: a failed review-exit gate blocks exit and awaits human.
+    # AC-FR0150-02: a failed review-exit gate blocks exit and awaits human.
     assert blocked.status == "awaiting_human" and blocked.awaiting == "review"
     assert decide(blocked) is None
 

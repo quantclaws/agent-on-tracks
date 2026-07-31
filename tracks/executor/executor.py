@@ -119,7 +119,9 @@ class Executor:
         doc = cmd.params["doc"]
         path = self._doc_path(doc)
         checks = cmd.params.get("checks") or []
-        token = self.backend.token("validator", doc, "ok")
+        # token() is FakeBackend's optional TRAC_FAKE_SIMULATE hook; production
+        # backends (OpencodeBackend) implement only act() -> "ok" (no simulation).
+        token = getattr(self.backend, "token", lambda *_: "ok")("validator", doc, "ok")
         failure = validate_document(path, doc, checks)
         if failure is None and token != "ok":
             failure = ("schema", f"simulated failure: {token}")

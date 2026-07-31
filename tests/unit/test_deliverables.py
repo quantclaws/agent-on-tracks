@@ -1,4 +1,4 @@
-"""Deliverable consistency gate (FR-040/FR-130, AC-1303)."""
+"""Deliverable consistency gate (FR-040/FR-130, AC-FR0130-03)."""
 from tracks.cli.main import cmd_check
 from tracks.deliverables import check_deliverables
 

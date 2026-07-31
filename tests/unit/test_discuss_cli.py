@@ -1,4 +1,4 @@
-"""trac discuss CLI (FR-080, AC-0801..0804/0609/0903/1104)."""
+"""trac discuss CLI (FR-080, AC-FR0080-01..04, AC-FR0060-09, AC-FR0090-03, AC-FR0110-04)."""
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -21,7 +21,7 @@ def _query(tmp_path, capsys, *extra):
     return json.loads(capsys.readouterr().out)
 
 
-# -- AC-0801: five subcommands callable ---------------------------------------
+# -- AC-FR0080-01: five subcommands callable ---------------------------------------
 
 def test_five_subcommands_callable(tmp_path, capsys):
     _doc(tmp_path)
@@ -45,10 +45,10 @@ def test_five_subcommands_callable(tmp_path, capsys):
                                   "--operator", "Aaron"]) == 0
 
 
-# -- AC-0802/0803/0804: query output ------------------------------------------
+# -- AC-FR0080-02/03/04: query output ------------------------------------------
 
 def test_query_json_has_five_tuple_and_token(tmp_path, capsys):
-    # AC-0802
+    # AC-FR0080-02
     _doc(tmp_path)
     _start(tmp_path)
     capsys.readouterr()
@@ -59,7 +59,7 @@ def test_query_json_has_five_tuple_and_token(tmp_path, capsys):
 
 
 def test_query_blocker_categories(tmp_path, capsys):
-    # AC-0803
+    # AC-FR0080-03
     _doc(tmp_path)
     _start(tmp_path)  # Aaron initiates an open, unreplied thread
     capsys.readouterr()
@@ -70,7 +70,7 @@ def test_query_blocker_categories(tmp_path, capsys):
 
 
 def test_query_check_ready(tmp_path, capsys):
-    # AC-0804
+    # AC-FR0080-04
     _doc(tmp_path)
     _start(tmp_path)
     capsys.readouterr()
@@ -78,7 +78,7 @@ def test_query_check_ready(tmp_path, capsys):
     assert q["is_ready"] is False and q["ready_blockers"] == ["T-001"]
 
 
-# -- AC-0903: scope gate ------------------------------------------------------
+# -- AC-FR0090-03: scope gate ------------------------------------------------------
 
 def test_scope_gate_rejects_traversal(tmp_path, capsys):
     _doc(tmp_path)
@@ -91,7 +91,7 @@ def test_scope_gate_rejects_external_absolute(tmp_path, capsys):
     assert run_discuss(tmp_path, ["query", "--file", "/etc/passwd"]) == 1
 
 
-# -- AC-0609: missing token refused (fail closed) -----------------------------
+# -- AC-FR0060-09: missing token refused (fail closed) -----------------------------
 
 def test_write_without_token_refused(tmp_path, capsys):
     _doc(tmp_path)
@@ -102,7 +102,7 @@ def test_write_without_token_refused(tmp_path, capsys):
     assert rc == 1
 
 
-# -- AC-0608: stale token does not write --------------------------------------
+# -- AC-FR0060-08: stale token does not write --------------------------------------
 
 def test_stale_token_leaves_file_unchanged(tmp_path, capsys):
     _doc(tmp_path)
@@ -149,7 +149,7 @@ def test_blocker_awaiting_cleared_by_child_reply(tmp_path, capsys):
     assert q["awaiting_my_reply"] == []  # Scribe replied (child) -> no longer awaiting
 
 
-# -- AC-1104: flock serializes concurrent writes ------------------------------
+# -- AC-FR0110-04: flock serializes concurrent writes ------------------------------
 
 def test_concurrent_starts_no_lost_writes(tmp_path):
     _doc(tmp_path)

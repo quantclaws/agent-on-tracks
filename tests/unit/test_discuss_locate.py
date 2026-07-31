@@ -1,7 +1,7 @@
 """inline-discussion locate (FR-070 4-level degrade + freshness).
 
-Covers AC-0605 (relocate by content, no wrong hit), AC-0607/0704 (not_found),
-AC-0608 (stale on reorder drift), AC-0701..0703 (L0/L1/L2), AC-0705 (ambiguous).
+Covers AC-FR0060-05 (relocate by content, no wrong hit), AC-FR0060-07, AC-FR0070-04 (not_found),
+AC-FR0060-08 (stale on reorder drift), AC-FR0070-01..03 (L0/L1/L2), AC-FR0070-05 (ambiguous).
 """
 from tracks.discuss.locate import _levenshtein, locate, token_for
 from tracks.discuss.parser import parse_threads
@@ -24,7 +24,7 @@ def test_unique_match():
 
 
 def test_l0_delta_correction():
-    # AC-0701: insert 10 lines above; L0 still hits via delta correction
+    # AC-FR0070-01: insert 10 lines above; L0 still hits via delta correction
     orig = "# H\n\n> **Aaron:** comment"
     tok = _token(orig)
     shifted = "\n".join(f"line{i}" for i in range(10)) + "\n# H\n\n> **Aaron:** comment"
@@ -33,27 +33,27 @@ def test_l0_delta_correction():
 
 
 def test_l1_anchor_tweaked():
-    # AC-0702: anchor edited within threshold -> L1 window hit
+    # AC-FR0070-02: anchor edited within threshold -> L1 window hit
     orig = "# Heading\n\n> **Aaron:** comment"
     tweaked = "# HeadinX\n\n> **Aaron:** comment"
     assert locate(tweaked, _token(orig), "T-001").status == "unique"
 
 
 def test_l2_anchor_rewritten():
-    # AC-0703: anchor fully rewritten -> L2 root-only hit
+    # AC-FR0070-03: anchor fully rewritten -> L2 root-only hit
     orig = "# Heading\n\n> **Aaron:** comment"
     rewritten = "# COMPLETELY DIFFERENT ANCHOR TEXT\n\n> **Aaron:** comment"
     assert locate(rewritten, _token(orig), "T-001").status == "unique"
 
 
 def test_l3_deleted_not_found():
-    # AC-0607 / AC-0704: thread deleted -> not_found (no silent hit)
+    # AC-FR0060-07 / AC-FR0070-04: thread deleted -> not_found (no silent hit)
     orig = "# H\n\n> **Aaron:** comment"
     assert locate("# H\n\nplain text only", _token(orig), "T-001").status == "not_found"
 
 
 def test_ambiguous_duplicate_root():
-    # AC-0705: duplicate speaker/root -> ambiguous + candidate line numbers
+    # AC-FR0070-05: duplicate speaker/root -> ambiguous + candidate line numbers
     orig = "# X\n\n> **Aaron:** dup"
     dup = "# Y\n\n> **Aaron:** dup\n\n> **Aaron:** dup"
     r = locate(dup, _token(orig), "T-001")
@@ -62,7 +62,7 @@ def test_ambiguous_duplicate_root():
 
 
 def test_stale_on_reorder():
-    # AC-0608: a thread inserted before drifts Aaron T-001 -> T-002 -> stale
+    # AC-FR0060-08: a thread inserted before drifts Aaron T-001 -> T-002 -> stale
     orig = "# H\n\n> **Aaron:** comment"
     reordered = "# H\n\n> **Zed:** newfirst\n\n> **Aaron:** comment"
     assert locate(reordered, _token(orig), "T-001").status == "stale"

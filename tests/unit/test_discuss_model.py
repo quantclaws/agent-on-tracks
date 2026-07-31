@@ -1,11 +1,10 @@
-"""inline-discussion model + normalization (FR-060, AC-0603)."""
+"""inline-discussion model + normalization (FR-060, AC-FR0060-03)."""
 import dataclasses
 
 import pytest
 
 from tracks.discuss.model import (
     Comment,
-    DiscussQuery,
     LocateResult,
     Thread,
     normalize,
@@ -22,7 +21,7 @@ def test_normalize_nfc():
 
 
 def test_normalize_preserves_case():
-    assert normalize("AbC") == "AbC"  # AC-0603: no case change
+    assert normalize("AbC") == "AbC"  # AC-FR0060-03: no case change
 
 
 def test_normalize_preserves_markdown():
@@ -55,6 +54,5 @@ def test_thread_is_frozen():
         t.status = "resolved"
 
 
-def test_query_and_locate_defaults():
-    assert DiscussQuery(threads=()).is_ready is None
+def test_locate_defaults():
     assert LocateResult(status="unique", thread_id="T-001").candidates is None

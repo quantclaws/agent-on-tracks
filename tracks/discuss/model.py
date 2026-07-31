@@ -72,18 +72,6 @@ class Thread:
 
 
 @dataclass(frozen=True)
-class DiscussQuery:
-    """Result of `trac discuss query` (IF-003 §6)."""
-
-    threads: tuple
-    is_ready: bool | None = None              # only with --check-ready
-    ready_blockers: tuple | None = None
-    unanswered: tuple | None = None           # only with --blocker
-    unresolved: tuple | None = None
-    awaiting_my_reply: tuple | None = None
-
-
-@dataclass(frozen=True)
 class LocateResult:
     """Result of relocating a thread for a write command (FR-070, IF-003 §6).
 

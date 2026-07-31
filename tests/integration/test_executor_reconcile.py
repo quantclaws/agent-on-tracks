@@ -172,3 +172,19 @@ def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
     assert "failure_class" not in payload
     assert "audit_evidence" not in payload
     assert "diff_ref" not in payload
+
+
+def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
+    """Production backends (OpencodeBackend) implement only act() — no token().
+    validate_document must not assume the FakeBackend-only simulation hook, or
+    the production default (TRAC_AGENT_BACKEND=opencode) raises AttributeError."""
+    ex, store, run_id = _setup(tmp_path)
+    ex.backend = _StubBackend({"status": "done"})  # act-only, like OpencodeBackend
+    cmd = Command(kind="validate_document",
+                  params={"doc": "story.md", "checks": []},
+                  command_id=new_ulid())
+    ex._do_validate_document(cmd, store.state(run_id), None, False)
+    verdicts = [e for e in store.events(run_id)
+                if e.type in ("verdict.passed", "verdict.failed")]
+    assert len(verdicts) == 1
+    assert verdicts[0].type == "verdict.passed"  # token defaulted to "ok", no crash
