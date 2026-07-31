@@ -140,16 +140,38 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
         s.doc_dispatched = True
 
 
+def _consume_attempt(s: State) -> None:
+    """Shared attempt accounting: increment; escalate to awaiting_human at >=3."""
+    s.current_attempt += 1
+    if s.current_attempt >= 3:
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+
+
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.substate == "ISSUES":
         # FR-0200 / NFR-0030 style: a failed create_issues outcome consumes an
         # attempt; the 3rd failure escalates. Per-item progress is recorded by
         # issue.created events, so retries resume instead of rebuilding (D-06).
         if p.get("status") == "failed":
-            s.current_attempt += 1
-            if s.current_attempt >= 3:
-                s.status = "awaiting_human"
-                s.awaiting = "escalation"
+            _consume_attempt(s)
+        return
+    if p.get("status") == "failed":
+        # FR-0210 exit gate: a failed dispatch_agent outcome (protocol / audit /
+        # existence failure, incl. over-reach) is NOT a produced document. It
+        # consumes an attempt from the same accounting as verdict.failed, carries
+        # failure evidence into the re-dispatch prompt (FR-11), and escalates to
+        # awaiting_human at the 3rd attempt (Aaron: over-reach re-dispatches, <=3).
+        s.last_failure = {
+            "check": p.get("failure_class", "agent_failed"),
+            "reason": p.get("self_report"),
+            "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
+        }
+        if s.substate in ("SAGE_REVIEW", "LEX_REVIEW"):
+            _reset_review(s)
+        else:
+            _reset_doc(s)
+        _consume_attempt(s)
         return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"

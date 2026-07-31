@@ -93,6 +93,14 @@ class FakeBackend:
                     "self_report": "explored raw requirement"}
         if substate in ("DRAFT", "RESPOND"):
             token = self.token(role, substate, "ok")
+            if token in ("over_reach", "timeout", "no_target_diff",
+                         "non_zero_exit", "json_truncated", "fail"):
+                # FR-0210 exit gate: a failed agent run is not a produced doc.
+                fclass = "agent_failed" if token == "fail" else token
+                return {"status": "failed", "artifact_ref": None,
+                        "failure_class": fclass,
+                        "audit_evidence": f"simulated {fclass}",
+                        "self_report": f"agent exit gate failed: {fclass}"}
             if token == "hang":
                 time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
             if doc == "story.md":
