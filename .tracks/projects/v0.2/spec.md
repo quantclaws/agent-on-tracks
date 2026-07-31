@@ -94,6 +94,17 @@ canonical 写法（写操作唯一输出格式）：
 >> **Speaker:** reply body
 ```
 
+**嵌套语义（depth = 回复谁）**：一条评论的 depth（`>` 个数）表示它**回复的对象**——depth=N 的评论是对其上方最近的 depth=N-1 评论的回复（depth=1 是根，回复整个议题）。"回复谁"由缩进层级表达；要回复某条具体回复，就再加一层 `>`：
+
+```markdown
+> **Aaron:** I don't know                    # depth 1：根（议题）
+>> **Sage:** please read line 5 and revise   # depth 2：回复 Aaron 的根
+>>> **Scribe:** done                         # depth 3：回复 Sage 那条（不是回复 Aaron）
+>> **Aaron:** thanks                         # depth 2：回复根，与 Sage 平级
+```
+
+上例中 `>>> **Scribe:**` 是 depth 3，回复的是上方最近的 depth 2（Sage），**不是**根（Aaron）。若 Scribe 写成 `>> **Scribe:** done`（depth 2），则它回复的是 Aaron 的根、与 Sage 平级——**Sage 的请求就无人应答**。判定"某条回复有没有人理" = 该评论有没有 depth+1 的下级回复。
+
 parser 同时接受以下历史/人工写法（解析等价）：
 
 | 形式           | 例                            | 说明                                   |
@@ -106,7 +117,7 @@ parser 同时接受以下历史/人工写法（解析等价）：
 
 不识别为讨论的形式：无冒号 bold speaker（`> **Name** body`）、说明标签（Note/Warning/Tip/Important/Definition/Example/Remark/Attention/Caution）、缺少 speaker tag 的普通 blockquote。
 
-@mention 语法：speaker tag 支持 `**@Speaker:**` 前缀表示"@提及某 agent"，与 `**Speaker:**` 等价。回复 body 中的 `@Name` 也被收集到 thread 的 mentioned_agents 列表。`--blocker` 过滤时包含被 mention 的 agent（即使不是 last_speaker）。
+@mention 语法（独立语义，与 depth 正交）：speaker tag 支持 `**@Speaker:**` 前缀（与 `**Speaker:**` 等价），body 中的 `@Name` 被收集到 thread 的 mentioned_agents 列表。**@mention 表示"要求被提及者增加一个回答"（一个请求动作），并不表示"当前评论是对谁的回复"**——后者由 depth 嵌套表达。例：`>> **Sage:** @Scribe please revise` 是 Sage 在回复根的同时请求 Scribe 回应；Scribe 是否真的回应，看有没有下级回复 `>>> **Scribe:** ...`，而不是看 @mention。`--blocker` 的 awaiting_my_reply 据此判定：被 @mention 请求、且该评论尚无下级回复 → 待我回应。
 
 状态仅 3 种：open / resolved / reopen。状态标记仅根评论行有效，嵌套回复中的方括号作普通文本。
 
