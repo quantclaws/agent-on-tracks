@@ -44,9 +44,9 @@ sha:
 
 | 层 | 目录 | 职责 | 频率 |
 |:---|:-----|:-----|:-----|
-| unit | `tests/unit/` | discuss parser/locate/writer、templating、validate（template/discussion_ready）、后端选择逻辑、events 字段扩展 | 每次保存 |
-| integration | `tests/integration/` | OpencodeBackend（fake opencode stand-in）+ audit 协作、discuss+validate 门禁协作、runtime gate（discussion_ready verdict） | 每次提交 |
-| e2e（fake 通道） | `tests/e2e/` | deterministic 工作流（继承 TP-001）+ discuss CLI 旅程 + validate 门禁 | 每次提交（CI 必跑） |
+| unit | `tests/unit/` | discuss parser/locate/writer、templating、validate（template/discussion_ready）、**check_trace（FR-0170）**、**M-ACC / M-REQ-APPROVAL 新 reducer/decide 分支（SM-04/05）**、后端选择逻辑、events 字段扩展 | 每次保存 |
+| integration | `tests/integration/` | OpencodeBackend（fake opencode stand-in）+ audit 协作、discuss+validate 门禁协作、runtime gate（discussion_ready verdict）、**M-ACC validate+trace 门禁协作**、**M-REQ-APPROVAL Human gate（awaiting halt / approve / return）** | 每次提交 |
+| e2e（fake 通道） | `tests/e2e/` | deterministic 工作流（继承 TP-001）+ discuss CLI 旅程 + validate 门禁 + **M-ACC 起草/评审旅程 + approve/return/boundary 旅程** | 每次提交（CI 必跑） |
 | e2e（live 通道） | `tests/e2e_live/` | 真 opencode + env provider/model，断言协议/权限/目标 diff/格式/恢复，**不断言文本** | 缺凭据 skip；CI 独立 required job、本地 opt-in |
 
 ```
@@ -57,14 +57,21 @@ tests/
 │   ├── test_discuss_writer.py     # canonical 输出、空行分隔、状态权限一致性
 │   ├── test_templating.py         # 模板加载（按 kind）
 │   ├── test_validate.py           # template 结构校验 + discussion_ready（~ TP-001 test_validate.py 扩展）
+│   ├── test_trace.py              # check_trace 双向覆盖/孤儿清单/line:N（FR-0170，ground truth §3a）
+│   ├── test_machine_acc.py        # M-ACC reducer/decide 分支（SM-04：acceptance_committed、_STAGE_ROLE_DOC、回退重置）
+│   ├── test_machine_approval.py   # M-REQ-APPROVAL reducer/decide 分支（SM-05：PREVIEW/AWAIT_HUMAN/APPROVED/ISSUES/RETURNED、Human gate halt）
 │   └── test_backend_select.py     # TRAC_AGENT_BACKEND / TRAC_FAKE_SIMULATE 边界注入（纯函数不感知）
 ├── integration/
 │   ├── test_opencode_backend.py   # fake opencode stand-in：物化、prompt 构造、diff 为产物、失败矩阵、reconcile
 │   ├── test_audit.py              # baseline + 后置 git diff、越权 fail/不回滚 Human 修改、临时目录清理
 │   ├── test_discuss_gate.py       # discussion_ready 经 validate_document → verdict → decide 门禁
+│   ├── test_trace_gate.py         # acceptance 恒跑 trace → verdict.failed(trace) → 重派/≤3 升级 Human
 │   └── test_runtime_loop.py       # ~ TP-001（含 outcome 扩展字段）
 ├── e2e/                           # fake 通道（deterministic，CI 必跑）
-│   ├── test_happy_path.py         # ~ TP-001 + Scribe/Sage 真实后端（fake）起草/评审
+│   ├── test_happy_path.py         # M-START→M-SPEC 止（断言变更见 §4a）
+│   ├── test_full_journey.py       # 全流程：M-STORY→M-SPEC→M-ACC→M-REQ-APPROVAL→boundary（run.completed(terminal_state="boundary")）
+│   ├── test_acc_journey.py        # M-ACC 起草/评审/trace 失败重派/回退旅程（SM-04）
+│   ├── test_approval_journey.py   # trac approve / trac return 旅程 + AWAIT_HUMAN 休眠回放（SM-05）
 │   ├── test_discuss_cli.py        # query/start/reply/edit/set-status 旅程 + blocker 三类别 + check-ready
 │   ├── test_validation_gate.py    # M-START 不校验 / outcome 即校验+重派 / 门禁再校验 / trac validate 独立
 │   ├── test_over_reach.py         # 越权检测（edit/bash 越界）→ outcome failed / 不提交 / Human 修改不被覆盖
@@ -86,11 +93,23 @@ inline-discussion 解析与 4 级降级定位属"规则/算法正确性"，须�
 - 解析 ground truth：手工标注的 markdown fixture（含 canonical/人工写法、说明标签、fenced code、嵌套回复），参考实现独立产出 thread 集，与 `discuss/parser.py` 输出比对。
 - 定位 ground truth：构造行号漂移/anchor 微调/重写/并列候选 fixture，参考实现给出预期 L0-L3 命中或 ambiguous/not_found，与 `locate.py` 比对（**重复 speaker/根文本 → ambiguous，文件逐字节不变**）。
 
+### 3a. check_trace ground truth（FR-0170）
+
+trace 属"规则正确性"，同样用手工标注 fixture（期望硬编码于 fixture 侧，不用被测实现计算）：
+
+- 全覆盖 pass（每 FR/NFR 有章节且 ≥1 AC；每 AC 回指存在）→ `[]`。
+- 正向孤儿：spec 有 FR 但 acceptance 缺 `## FR-XXXX` 章节 / 章节存在但内无 AC → 报 FR ID + spec `line:N`。
+- 反向孤儿：AC 回指 spec 不存在的 FR/NFR → 报 AC ID + acceptance `line:N`。
+- 不误判：讨论块（`>` 行）与 fenced code 内的假 FR/AC ID 忽略。
+- 完整清单：多处孤儿一次全报（不短路），顺序稳定。
+
 ## 4. 双通道 E2E
 
 ### 4a. fake 通道（deterministic，CI 必跑）
 
 conftest 强制 fake 后端（`TRAC_AGENT_BACKEND=fake`）。继承 TP-001 §4 前进性不变量：每条路径末态落在 `stage.exited` / `run.completed`·`run.parked` / `awaiting_human` 之一，绝不停在挂起。FakeAgent（FakeBackend）经 `simulate` 选分支，e2e 断言轨迹与事件时序，不断言文档语义。
+
+> **断言变更（扩范围，design §10 风险项）**：M-SPEC 退出语义从 `run.completed` 改为 `stage.entered(M-ACC)`。既有 `test_happy_path.py` 结尾断言（`stage.exited + run.completed`）随 Inc-2 拆分为两个 e2e：`test_happy_path.py`（M-START→M-SPEC 止，结尾断言 `stage.exited(M-SPEC) + stage.entered(M-ACC)`）与 `test_full_journey.py`（走到 M-REQ-APPROVAL 边界，结尾断言 `run.completed(terminal_state="boundary")`）。
 
 ### 4b. live 通道（真 opencode，缺凭据 skip）
 
@@ -135,6 +154,12 @@ opencode 是外部依赖，按模板 §6 三层金字塔：
 | AC-1601（错误信息含 line:N） | unit | test_discuss_parser.py, test_validate.py |
 | AC-1701（解析性能 < 1MB/1s） | unit（性能） | test_discuss_parser.py |
 | AC-1801..1803（失败矩阵/事件·attempt·清理·reconcile/diff 权威） | integration（L2）+ e2e | test_opencode_backend.py, test_recovery.py |
+| AC-FR0160-01..05（M-ACC 阶段可达/评审闭环/退出→M-REQ-APPROVAL/回退） | unit + integration + e2e | test_machine_acc.py, test_trace_gate.py, test_acc_journey.py |
+| AC-FR0170-01..04（AC↔FR 双向 trace/孤儿清单/line:N/恒跑接线） | unit + ground_truth + integration | test_trace.py, test_trace_gate.py |
+| AC-FR0180-01..04（Human gate/approve/return/Agent 不可代批） | unit + e2e | test_machine_approval.py, test_approval_journey.py |
+| AC-FR0190-01..03（digest/approval identity/stale 阻断下游）已冻结 D-01~D-03+C-02 | unit + e2e | test_digest.py（D-01 算法/固定标签拼接）, test_approval_journey.py::test_stale_blocks_downstream, ::test_approve_digest_mismatch_regenerates_preview（C-02） |
+| AC-FR0200-01..03（Issues 拆分/Project 关联/幂等 reconcile）已冻结 D-04~D-07 | integration（stand-in）+ e2e | test_github_effects.py（D-04 粒度/D-05 env 边界/D-06 per-item reconcile 断点续传；fake 通道不触网） |
+| AC-NFR0040-01..03（SM-01~05 全覆盖/非 happy path 必含/清单核对） | 全层 | §10 转移覆盖清单（合入前逐条核对） |
 
 > 交付门禁注：AC-0401..0403 / AC-1301..1304 的存在性 + 版本检查门禁已可执行——三个交付物（Scribe.md/Sage.md/SKILL.md）已补 `version: 0.2`，门禁入口 `trac check deliverables`（pre-commit/CI）与失败输出见 SPEC-003 FR-040 / ACC-003 AC-1303。
 
@@ -182,3 +207,43 @@ trac agent archer ci-scan \
 - [ ] 失败矩阵各分支断言 command/outcome 事件 + attempt + 子进程组清理 + reconcile
 - [ ] 每个 AC 可回溯到测试代码；interfaces.md 出口与测试断言闭合
 - [ ] e2e 限于 happy path，边界/错误归 integration/unit
+- [ ] §10 SM-01~05 转移覆盖清单逐条有测试且通过（NFR-0040，合入前核对）
+
+## 10. SM 转移覆盖清单（NFR-0040，normative 依据 SPEC-003「状态与生命周期」）
+
+> 每条转移 ≥1 测试走到一次；清单内测试须存在且通过（机器化 trace 工具属 v0.3，本版合入前人工核对）。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。`【待冻结】` 行随 Inc-4/5 冻结后补测试名。
+
+| 转移 | 内容摘要 | 层 | 测试 |
+|:---|:---|:---|:---|
+| SM-01.1–.11 | trac start：backlog / 脏工作区拒绝 / 未合并分支确认·取消 / 建分支写骨架 | e2e | test_happy_path.py::test_start_*（既有 TP-001 套件，含 backlog/dirty/confirm 分支） |
+| SM-02.1–.3 | 进入 TRIAGE；no_go\|park → REJECTED；go → DRAFT | e2e | test_happy_path.py::test_triage_go, test_full_journey.py; REJECTED → test_happy_path.py::test_triage_reject |
+| SM-02.4–.5 | Scribe 起草 validate pass/fail 重派（≤3 升级） | unit + e2e | test_machine（既有）, test_validation_gate.py::test_redispatch_and_escalate |
+| SM-02.6–.12 | SAGE_REVIEW/HUMAN_REVIEW/RESPOND 评审回路 | e2e | test_happy_path.py::test_story_review_loop |
+| SM-02.13 | EXIT → M-SPEC（story.committed(final)） | e2e | test_happy_path.py |
+| SM-03.1–.3 | M-SPEC 起草 validate pass/fail | e2e | test_happy_path.py |
+| SM-03.4/.15 | scope_overflow → ROLLBACK → M-STORY | integration + e2e | 既有 scope_overflow 测试（test_runtime_loop.py / test_validation_gate.py） |
+| SM-03.5–.12 | LEX_REVIEW/HUMAN_REVIEW/RESPOND 回路 | e2e | test_happy_path.py::test_spec_review_loop |
+| SM-03.13 | EXIT → **M-ACC**（语义变更） | e2e | test_happy_path.py（结尾断言，§4a）+ test_full_journey.py |
+| SM-03.14 | 格式终验 fail → DRAFT | e2e | test_validation_gate.py::test_exit_format_fail |
+| SM-04.1 | 进入 M-ACC → DRAFT（Sage 起草 acceptance） | unit + e2e | test_machine_acc.py::test_enter_draft, test_acc_journey.py |
+| SM-04.2 | DRAFT → LEX_REVIEW（validate + trace pass, committed） | unit + e2e | test_machine_acc.py, test_acc_journey.py |
+| SM-04.3 | validate/trace fail 重派 Sage（≤3 升级） | integration | test_trace_gate.py::test_trace_fail_redispatch |
+| SM-04.4 | trace 缺口不可修复 → ROLLBACK | unit + e2e | test_machine_acc.py::test_trace_rollback, test_acc_journey.py |
+| SM-04.5–.7 | LEX_REVIEW pass/comment/fail 重派 Lex | unit + e2e | test_machine_acc.py, test_acc_journey.py::test_lex_loop |
+| SM-04.8–.10 | HUMAN_REVIEW no_comment/comment/rollback | unit + e2e | test_machine_acc.py, test_acc_journey.py::test_human_review |
+| SM-04.11–.12 | RESPOND 回路 validate pass/fail | unit | test_machine_acc.py::test_respond_loop |
+| SM-04.13 | EXIT → M-REQ-APPROVAL | e2e | test_full_journey.py |
+| SM-04.14 | 格式终验 fail → DRAFT | unit | test_machine_acc.py::test_exit_format_fail |
+| SM-04.15 | ROLLBACK → M-SPEC 或 M-STORY（重置 committed 标志） | unit + e2e | test_machine_acc.py::test_rollback_targets, test_acc_journey.py |
+| SM-05.1–.2 | 进入 PREVIEW → preview.generated → AWAIT_HUMAN | unit + e2e | test_machine_approval.py, test_approval_journey.py |
+| SM-05.3 | human.approval → APPROVED（Agent 不可代批：无事件则 decide halt） | unit + e2e | test_machine_approval.py::test_human_gate_halt, test_approval_journey.py::test_approve |
+| SM-05.3a（C-02） | approve 时 digest ≠ preview digest → 拒绝本次 approve（不落事件、不 fail run）+ 重生 preview | unit（CLI）+ e2e | test_cli_approval.py::test_approve_digest_mismatch_rejected, test_approval_journey.py::test_approve_digest_mismatch_regenerates_preview |
+| SM-05.4/.7 | human.return → RETURNED → 回退目标阶段 | unit + e2e | test_machine_approval.py, test_approval_journey.py::test_return |
+| SM-05.7a（C-03） | trac return 非法 to_stage（前向/自身/未知）→ CLI 报错拒绝、不落事件 | unit（CLI） | test_cli_approval.py::test_return_invalid_to_stage_rejected |
+| SM-05.5 | APPROVED → ISSUES（approval.recorded reducer 置 substate="ISSUES"，Inc-3 即可测——record_approval 归 Inc-3 机制、占位 digest，IF-003 §10b 已对齐） | unit + e2e | test_machine_approval.py::test_approval_recorded_to_issues, test_approval_journey.py；approval identity 实算断言（D-01/D-02）Inc-4 补 test_digest.py |
+| SM-05.6 | ISSUES → 退出边界（Issues 创建 + run.completed(boundary)，D-04~D-06 已冻结） | integration + e2e | test_github_effects.py（stand-in 失败 + per-item reconcile 断点续传必含，Inc-5）；boundary 终态先由 test_full_journey.py 覆盖（Inc-3 阶段 ISSUES 分支在 create_issues 前直接 exit→boundary，substate="ISSUES" 可断言） |
+| FR-0190 stale | approval 后改三件套 → digest 不符 → 下游阻断（D-03：仅阻断 M-DESIGN+，不失效 Issues） | e2e | test_approval_journey.py::test_stale_blocks_downstream（Inc-4） |
+| 休眠回放 | TRIAGE / HUMAN_REVIEW / AWAIT_HUMAN / boundary 休眠后事件回放恢复 | e2e | test_recovery.py（既有）+ test_approval_journey.py::test_replay_await_human |
+
+> **Prism [RESOLVED]:** Prism 确认（收尾）：TP-003 分层/双通道/ground truth/SM-01~05 转移覆盖清单完整；AC-FR0160-01..05 / FR0170-01..04 / FR0180-01..04 / FR0190-01..03 / FR0200-01..03 / NFR0040-01..03 与 acceptance.md 逐一对应、无悬空引用（AC-1505 类问题已排查）。一个依赖项：§10 SM-05.5「Inc-3 即可测」成立的前提是 IF-003 §10b 把 record_approval 归 Inc-3（见 interfaces.md 对应线程），二者须一并对齐，否则 ISSUES 分支在 Inc-3 不可达。【待冻结】行（FR-0190 stale、FR-0200 Issues/reconcile）随 design D-01~D-07 / C-02 冻结后补测试名。测试计划整体通过。
+>> **Archer:** Archer：确认收尾。依赖项已解除——IF-003 §10b 已按 interfaces T-002 裁定把 record_approval 归 Inc-3 机制（占位 digest），SM-05.5「Inc-3 即可测」成立，§10 该行已注明对齐。原【待冻结】行随 design D-01~D-07 + C-02 冻结已补测试名：FR-0190 → test_digest.py + test_approval_journey.py::test_stale_blocks_downstream / ::test_approve_digest_mismatch_regenerates_preview；FR-0200/SM-05.6 → test_github_effects.py（stand-in 失败 + per-item reconcile 断点续传必含）。另按 design.md T-005 增补两行显式覆盖：SM-05.3a（C-02 digest-mismatch 拒绝并重生 preview）与 SM-05.7a（C-03 非法 to_stage CLI 拒绝不落事件），映射表 AC-FR0190/0200 行同步去除【待冻结】。@Prism 复核后请 RESOLVED。

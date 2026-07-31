@@ -9,7 +9,7 @@ sha:
 
 # Agent on Tracks v0.2 — 接口与类型化 Schema（增量）
 
-> 本文是 IF-001（v0.1）的**增量**。事件信封（§2）、Command 基础结构（§4）、State 投影（§8）、Workflow 类型（§9）等**不变**，凡未提及者继承 IF-001。v0.2 不新增事件类型，仅扩展既有 payload 字段与封闭枚举，并新增 inline-discussion 旁路类型与 CLI 合同。
+> 本文是 IF-001（v0.1）的**增量**。事件信封（§2）、Command 基础结构（§4）、State 投影（§8）、Workflow 类型（§9）等**不变**，凡未提及者继承 IF-001。原 v0.2 范围不新增事件类型，仅扩展既有 payload 字段与封闭枚举，并新增 inline-discussion 旁路类型与 CLI 合同。**扩范围增量（FR-0160~0200，Aaron 扩容裁定）见 §10**：新增事件类型、Command kind、State 字段与 `trac approve` / `trac return` CLI 合同；§1「不新增事件类型」的陈述仅适用于原 v0.2 范围。
 
 ## 0. 延续性（什么不变）
 
@@ -96,6 +96,7 @@ check: Literal["schema", "scope", "trace", "scope_overflow", "format",
 
 - `template`：`validate_document(checks=["template"])` → 按 `tracks/templates/<kind>.md` 校验必备 frontmatter 字段 + level-2 章节（模板的 HTML 注释忽略；acceptance 的 level-2 章节随 FR/NFR 变化故不做章节名匹配），`evidence` 含不符项 `line:N`。spec 文档另过条目 lint（`check_spec_items`：`### FR-XXXX 标题` + `- [ ]/[- x] 已决定` checkbox + `- **来源**：` + FR 的 `- **交付入口**：`；FR-20 scope 数所有 FR 条目，废弃项删除而非标记）。
 - `discussion_ready`：`validate_document(checks=["discussion_ready"])` → 只读调 `discuss` query --check-ready；`is_ready=false` 时 `verdict.failed`，`evidence` 含 `ready_blockers`。
+- `trace`（v0.2 扩范围语义，FR-0170）：`validate_document` 对 `doc == "acceptance.md"` **恒跑**（不经 `checks` 列表，类比 spec 恒跑 scope_overflow）：AC↔FR 双向覆盖校验（§10d），失败 → `verdict.failed(check="trace")`，`evidence` 为**完整孤儿清单**（含 `line:N`，不在首个失败处短路）。
 
 ## 6. inline-discussion 旁路类型（新增，非事件）
 
@@ -201,3 +202,89 @@ IF-001 §11 既有路径不变。新增/明确：
 - `TRAC_FAKE_SIMULATE`：强制 fake 后端（即使 `TRAC_AGENT_BACKEND=opencode`）；并如 IF-001 经 `assignment.simulate` 控制 FakeAgent 分支。
 - live opencode E2E 的 provider/model 由环境变量配置（Aaron §3.1）。
 - `project()`/`decide()` 禁止读取环境变量或感知后端/测试模式（延续 IF-001 §5 纯函数边界）。
+
+## 10. 扩范围增量（FR-0160~0200 + NFR-0040，Aaron 扩容裁定）
+
+> normative 合同以 SPEC-003 SM-04/SM-05、FR-0160~0200 与 ACC-003 为准；实现设计见 design.md §1~§6。**全部合同已冻结、可编码**（design D-01~D-07 + C-01~C-03 经 Prism inline-discussion 裁定，见 design.md 各节线程）；原 `【待冻结】` 标注按 §10g 对应表落地。
+
+### 10a. 新事件类型（IF-001 §3 清单追加）
+
+| 事件类型 | payload | 发出者 | 备注 |
+|:---|:---|:---|:---|
+| `acceptance.committed` | `commit_sha, acceptance_sha, final: bool` | executor（`_emit_committed` 三分支） | 镜像 `spec.committed`（FR-0160）；非 final → substate=LEX_REVIEW + reset review |
+| `preview.generated` | `digest, summary` | executor（`generate_preview` handler） | SM-05.2；digest 算法 = D-01（design §5，已冻结）；Inc-3 可先用占位 digest，Inc-4 换 D-01 实算；summary = 三件套标题 + 条目计数 |
+| `human.approval` | `actor, digest, ts` | CLI `trac approve`（仅 Human） | SM-05.3；Agent 不可代批（FR-0180 硬规则）；approve 前校验当前 digest == preview digest，不符拒绝并重生 preview（C-02） |
+| `human.return` | `reason, to_stage: "M-STORY"\|"M-SPEC"\|"M-ACC"` | CLI `trac return`（仅 Human） | SM-05.4/7；CLI 显式校验 to_stage 合法，非法值报错拒绝、不落事件（C-03） |
+| `approval.recorded` | `actor, digest, ts, readonly: true` | executor（`record_approval` handler） | 记账事件（FR-0190）+ reducer 置 `substate="ISSUES"`（SM-05.5，C-01）。**Inc-3 机制**（占位 digest 即可触发）；approval identity 载荷实算（digest=D-01、readonly=D-02）Inc-4 落地 |
+| `issue.created` | `item_id, issue_id, digest` | executor（`create_issues`，per-item 子事件） | 断点续传 reconcile（D-06，已冻结；item = 每 FR/每 NFR，D-04）（design §6） |
+| `issues.created` | `digest, mapping: {item_id: issue_id}, project` | executor（`create_issues` 汇总） | 幂等键 = digest（D-06，已冻结） |
+
+### 10b. Command kind 增量（IF-001 §4 Literal 追加）
+
+```python
+kind: Literal[...,               # IF-001 原有成员不变
+      "generate_preview",        # SM-05.1→2（Inc-3；digest = D-01 已冻结，Inc-3 可先用占位 digest）
+      "record_approval",         # SM-05.5（Inc-3 机制——占位 digest 触发 approval.recorded→substate=ISSUES；identity 载荷实算 Inc-4）
+      "create_issues"]           # SM-05.6（Inc-5；D-04~D-06 已冻结）
+```
+
+`validate_document` / `commit_document` / `dispatch_agent` / `write_frontmatter` / `rollback_stage` 复用不变；新 kind 同样遵守写前日志（FR-30）+ 每 kind execute/reconcile（D-13）。
+
+> **Prism [RESOLVED]:** Prism 评审（1 应修）：§10b 把 record_approval 标为 Inc-4【待冻结】，与 design §9（Inc-3 含 M-REQ-APPROVAL 事件/reducer/decide）、TP-003 §10 SM-05.5「Inc-3 即可测」/ SM-05.6「Inc-3 阶段 substate=ISSUES 可断言」及 C-01（ISSUES 物化为可测状态）冲突——若 record_approval 延到 Inc-4，则 APPROVED→ISSUES（SM-05.5）在 Inc-3 不可达，ISSUES 子状态无法按 NFR-0040 分阶段覆盖。裁定：record_approval 与 generate_preview 同处理——Inc-3 机制（用占位/临时 digest 触发 approval.recorded→substate=ISSUES），仅 approval identity 载荷（approval_digest/actor/readonly + digest 算法）保留【待冻结】待 Inc-4。请把 §10b record_approval 注释与 §10a approval.recorded 行的 Inc 标注按此对齐。
+>> **Archer:** Archer：采纳裁定。§10b 已改——record_approval 注释为「SM-05.5（Inc-3 机制——占位 digest 触发 approval.recorded→substate=ISSUES；identity 载荷实算 Inc-4）」，与 generate_preview 同口径；§10a approval.recorded 行同步标注 Inc-3 机制 + C-01 substate=ISSUES 语义；design §9 Inc-3 加对应注记，三处对齐。另因 design D-01~D-07 + C-02 已全部冻结（见 design.md 各节线程），本文其余【待冻结】标注一并落地：§10a preview/issue.created/issues.created 行改引 D-01/D-04/D-06（issue 事件键统一为 item_id，覆盖每 NFR 1 Issue 的 D-04），§10c approval_digest/issues_created 注释改引 D-01/D-06，§10g 改为冻结记录。@Prism 复核后请 RESOLVED。
+
+### 10c. State 字段增量（IF-001 §8 追加）
+
+```python
+acceptance_committed: bool = False    # M-ACC（镜像 spec_committed）
+preview_ready: bool = False           # M-REQ-APPROVAL
+approved: bool = False
+returned: bool = False
+return_target: str | None = None      # human.return 的目标阶段
+approval_digest: str | None = None    # digest 算法 = D-01（Inc-3 占位、Inc-4 实算）
+approval_actor: str | None = None
+issues_created: bool = False          # 幂等键语义 = D-06
+```
+
+- `stage` 取值追加 `M-ACC`、`M-REQ-APPROVAL`。
+- M-REQ-APPROVAL substate 封闭集：`PREVIEW | AWAIT_HUMAN | APPROVED | RETURNED | ISSUES`（SM-05）。
+- `AWAIT_HUMAN` 时 `awaiting="approval"`、`status="awaiting_human"`（decide 顶部 halt，天然 Human gate）。
+- `_STAGE_ROLE_DOC` 阶段表：`M-STORY→(scribe, story.md)`、`M-SPEC→(sage, spec.md)`、`M-ACC→(sage, acceptance.md)`。
+
+### 10d. check_trace 纯函数（validate.py，FR-0170）
+
+```python
+def check_trace(spec_text: str, acc_text: str) -> list[str]:
+    """FR-0170 AC↔FR 双向覆盖（均硬错误）。返回完整孤儿清单消息（含 line:N），[] = 通过。
+    正向：spec 每条 ### FR-XXXX / ### NFR-XXXX 须在 acceptance 有 ## FR-XXXX 章节且内含
+         ≥1 条 ### AC-FRXXXX-YY；缺失 → 孤儿（报 FR ID + spec line:N）。
+    反向：acceptance 每条 ### AC-FRXXXX-YY 回指的 FR/NFR 须在 spec 存在；
+         失败 → 孤儿（报 AC ID + acceptance line:N）。
+    不短路；讨论块（'>' 起始行）与 fenced code 跳过；无 I/O。"""
+```
+
+接线：`validate_document` 对 `doc == "acceptance.md"` 恒跑（从同目录读 `spec.md`；缺失 → `("trace", "acceptance validate requires spec.md in same dir")`）。M-ACC 的 checks 列表仍为 `["template"]`（outcome 即校验）/ `["template","discussion_ready"]`（退出门禁），trace 自动附加、不进 checks；`trac validate --file acceptance.md` 同样自动触发。
+
+### 10e. CLI 合同增量（Human 审批动作）
+
+IF-001 §10 / 本文 §7 既有命令不变。新增：
+
+| 命令 | 输入 | 前置校验 | 成功输出 | 失败输出 | exit |
+|:---|:---|:---|:---|:---|:---|
+| `trac approve [--actor NAME]` | actor（缺省 git user） | 当前处于 M-REQ-APPROVAL / AWAIT_HUMAN | stdout: `approved <digest>` | stderr: 阶段/子状态不符 | 0 / 1 |
+| `trac return --to <M-STORY\|M-SPEC\|M-ACC> --reason TEXT` | 目标阶段 + 产品理由 | 同上；目标须在封闭集内 | stdout: `returned to <stage>` | stderr: 阶段不符 / 目标非法 | 0 / 1 |
+
+- 二者经 store.append 落 `human.approval` / `human.return` 事件（同 `trac triage` / `trac review` 模式），**不直接改状态**。
+- Human gate 硬规则（FR-0180）：无 `human.approval` 事件，`decide()` 绝不产出进入下游（M-DESIGN）的 command；Agent 无 approve/return 能力（仅 CLI Human 动作）。
+
+### 10f. 阶段转移表（executor 单一事实来源）
+
+```python
+_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC", "M-ACC": "M-REQ-APPROVAL"}
+```
+
+查不到（M-REQ-APPROVAL）→ `run.completed(terminal_state="boundary")`（SM-05.6：停在 M-DESIGN 边界，可休眠、事件回放恢复）。**M-SPEC 退出语义变更**：原 `run.completed` → `stage.entered(M-ACC)`（影响既有 e2e happy_path 断言，见 TP-003 §4a）。回退不经此表（走 `rollback_stage`）。
+
+### 10g. 冻结记录（原【待冻结】清单，Prism 裁定）
+
+FR-0190：digest 算法 = **D-01**（sha256_hex 固定标签拼接三件套 doc_body_sha）；readonly = **D-02**（逻辑只读：digest 快照 + 入口 stale 校验，不用文件权限）；stale 传播 = **D-03**（仅阻断 M-DESIGN+ 下游，不失效已建 Issues）；preview/approve 一致性 = **C-02**（不符拒绝 approve 并重生 preview）。FR-0200：拆分粒度 = **D-04**（每 FR/每 NFR 各 1 Issue）；Project 指定 = **D-05**（env：GITHUB_TOKEN + TRAC_GITHUB_PROJECT，仅效应边界读）；reconcile = **D-06**（per-item 子事件断点续传 + 汇总幂等）；v0.4 边界 = **D-07**（仅创建 + 记 digest/mapping，无持久注册表）。record_approval 归 **Inc-3 机制**（占位 digest），identity 载荷实算归 Inc-4。裁定原文见 design.md §4~§6 / 本文 §10b 讨论线程。

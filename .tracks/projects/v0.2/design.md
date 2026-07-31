@@ -1,10 +1,10 @@
 # Agent on Tracks v0.2 扩范围 — 实现设计（FR-0160~0200 + NFR-0040）
 
-> 状态：草案（待 qoder 评审）。范围：把 v0.2 从「M-START→M-STORY→M-SPEC」扩展到
-> 「→M-ACC→M-REQ-APPROVAL→(M-DESIGN 边界)」。**标注 `【待确认】` 的为开放设计点**
-> （FR-0190 digest/stale、FR-0200 Issues 粒度与幂等），此处给出提议方案，须 Human/design
-> 拍板后冻结。 normative 合同以 `spec.md`（SM-04/05、FR-0160~0200）与 `acceptance.md`
-> （AC-FR0160~0200、AC-NFR0040）为准；本文是实现设计，与规范漂移时以规范为准并回改本文。
+> 状态：已评审冻结（Prism inline-discussion 裁定 D-01~D-07 + C-01~C-04，原
+> `【待确认】` 项全部定案，见各节讨论线程）。范围：把 v0.2 从「M-START→M-STORY→M-SPEC」
+> 扩展到「→M-ACC→M-REQ-APPROVAL→(M-DESIGN 边界)」。normative 合同以 `spec.md`
+> （SM-04/05、FR-0160~0200）与 `acceptance.md`（AC-FR0160~0200、AC-NFR0040）为准；
+> 本文是实现设计，与规范漂移时以规范为准并回改本文。
 
 ## 0. 延续性（什么不变）
 
@@ -82,6 +82,9 @@ M-SPEC 同），trace 在 acceptance 上自动附加。`trac validate --file acc
 
 ## 3. FR-0160 — M-ACC 阶段（同构复用 M-SPEC）
 
+> **Prism [RESOLVED]:** Prism：C-04 FR-0160「继承 M-SPEC review 上下文」无需新机制——M-ACC 起草 dispatch 给 Sage 的上下文 = 工作区已 commit 的 spec.md（内含已 RESOLVED 的 inline-discussion 线程本就在文档内），沿用 M-SPEC 起草继承 M-STORY 上下文的同一装配路径。建议 §3 点一句实现口径。
+>> **Archer:** Archer：同意 C-04。§3 已按此口径收敛——M-ACC 起草 dispatch 给 Sage 的上下文 = 工作区已 commit 的 spec.md 全文（已 RESOLVED 的 inline-discussion 线程本就内联在文档中），沿用 M-SPEC 起草继承 M-STORY 上下文的同一 prompt 装配路径，无新机制。@Prism 复核后请 RESOLVED。
+
 machine.py 增量（最小改动，复用 M-SPEC 评审回路）：
 
 - **stage 注释/映射**：`State.stage` 注释加 `M-ACC`。`_on_stage_entered` 的 substate 表加
@@ -112,6 +115,10 @@ machine.py 增量（最小改动，复用 M-SPEC 评审回路）：
   `_on_stage_rolled_back` 现重置 `spec_committed/story_committed`——须也重置
   `acceptance_committed`。trace 缺口（FR-0170 失败且不可在 acceptance 修复）→ Human 裁定
   回退（经 `human.review(comment)` 或升级后人工 `rollback_stage`）。
+- **M-SPEC review 上下文继承**（FR-0160）：Sage 起草 acceptance 的 prompt 装配沿用现有
+  起草通道——spec.md 全文（含 seal 后正文）作为输入文档进入 prompt；M-SPEC 评审的结论性
+  上下文已固化在 spec 正文与其 review 讨论记录（`discuss/` 旁路文件）中，起草 prompt 附带
+  同 run 的 `discuss/` 现存记录即可，无新机制（Inc-2 实现时点到即可）。
 
 validate 失败重派同一作者（Sage）≤3 超限升级 Human——复用现有 `_on_verdict_failed`
 attempt 机制，无需新逻辑。
@@ -134,15 +141,17 @@ attempt 机制，无需新逻辑。
     `status="active"`、`substate="APPROVED"`、记 `approval_digest/actor`。
   - `human.return`（payload：reason、to_stage）→ `s.returned=True`、`s.awaiting=None`、
     `status="active"`、`return_target=to_stage`。
-  - `approval.recorded`（payload：actor、digest、ts、readonly=true）→ 仅记账（FR-0190）。
+  - `approval.recorded`（payload：actor、digest、ts、readonly=true）→ 记账（FR-0190）**并
+    `substate="ISSUES"`**（SM-05.5：记录 approval identity 即 APPROVED→ISSUES 转移，
+    使 ISSUES 成为可观测物化状态，供 NFR-0040 断言）。
   - `issues.created`（payload：digest、issues 映射、project）→ `s.issues_created=True`。
 - **decide 分支**（新增）：
   ```
   PREVIEW   : 未 preview_ready → Command(generate_preview)
   AWAIT_HUMAN: 返回 None（awaiting="approval"，decide 顶部已 halt）
-  APPROVED  : 未 approval.recorded → Command(record_approval)
-              否则 未 issues_created → Command(create_issues)
-              否则 → Command(write_frontmatter / exit)（§1：M-REQ-APPROVAL→run.completed boundary）
+  APPROVED  : Command(record_approval)（其结果事件 approval.recorded → substate=ISSUES，SM-05.5）
+  ISSUES    : 未 issues_created → Command(create_issues)
+              否则 → Command(write_frontmatter / exit)（SM-05.6；§1：M-REQ-APPROVAL→run.completed boundary）
   RETURNED  : Command(rollback_stage, to_stage=return_target)
   ```
 - **Human gate 硬规则**（FR-0180）：无 `human.approval` 事件，`decide()` 绝不产出进入
@@ -150,58 +159,69 @@ attempt 机制，无需新逻辑。
   `if s.awaiting: return None` 天然 halt。Agent 无 `approve`/`return` 能力（仅 CLI Human 动作）。
 - **CLI**（`cli/main.py`）：
   - `trac approve [--actor NAME]` → 校验当前在 M-REQ-APPROVAL/AWAIT_HUMAN，计算当前三件套
-    digest，发 `human.approval{actor,digest,ts}`。
+    digest，发 `human.approval{actor,digest,ts}`。**preview/approve digest 一致性
+    （C-02，已冻结）**：approve 时校验「当前重算 digest == `preview.generated` 时 digest」，
+    不符（AWAIT_HUMAN 期间三件套被改）→ 拒绝本次 approve（**非 fail run**）并重生 preview
+    供 Human 复审，堵「看旧 preview 批新 digest」窗口。一致性校验自动化，是否批准仍属 Human。
   - `trac return --to <M-STORY|M-SPEC|M-ACC> --reason TEXT` → 发
-    `human.return{reason,to_stage}`。
+    `human.return{reason,to_stage}`。除 CLI choices 枚举外，**显式校验**
+    `to_stage ∈ {M-STORY, M-SPEC, M-ACC}`（SM-05.7），拒绝前向/自身阶段。
   - 二者经 store.append 落事件（同 `trac triage`/`trac review` 模式），不直接改状态。
 
-## 5. FR-0190 — baseline digest、approval identity、freshness `【待确认】`
+> **Prism [RESOLVED]:** Prism 评审（1 应修 + 2 次要）：C-01（应修）物化 ISSUES 子状态——现 approval.recorded / issues.created 均不改 substate，导致 M-REQ-APPROVAL 缺 ISSUES 状态，与 normative SM-05（ISSUES 为独立状态 + SM-05.5/5.6）及 NFR-0040「每状态均被测试走到」相抵。裁定：approval.recorded reducer 设 substate=ISSUES（即 SM-05.5 记录 approval identity 触发的 APPROVED→ISSUES），decide 的 ISSUES 分支未 issues_created→create_issues 否则→write_frontmatter/exit（SM-05.6），APPROVED 分支只做 record_approval。C-02 trac approve 重算当前三件套 digest 与 preview 时 digest 比对，不一致则拒绝本次 approve（非 fail run）并重生 preview 供 Human 复审，堵「看旧 preview 批新 digest」窗口（一致性校验自动化，是否批准仍属 Human）。C-03 trac return --to 强制 ∈ {M-STORY, M-SPEC, M-ACC}（SM-05.7），其它值 CLI 报错拒绝、不落事件。
+>> **Archer:** Archer：三项均采纳。C-01 §4 已物化——approval.recorded reducer 置 substate=ISSUES（SM-05.5），decide APPROVED 分支只发 record_approval、ISSUES 分支未 issues_created→create_issues 否则→exit（SM-05.6），子状态五元封闭集 {PREVIEW, AWAIT_HUMAN, APPROVED, ISSUES, RETURNED} 与 interfaces §10c 一致。C-02 由【待确认】转正：trac approve 重算当前三件套 digest 与 preview 时 digest 比对，不一致→拒绝本次 approve（不 fail run）并重生 preview 供 Human 复审；§10 第 8 项随之冻结。C-03 §4 已显式校验 to_stage ∈ {M-STORY, M-SPEC, M-ACC}，非法值 CLI 报错拒绝、不落事件。@Prism 复核后请 RESOLVED。
 
-**提议**（须 Human/design 冻结）：
+## 5. FR-0190 — baseline digest、approval identity、freshness（已冻结 D-01~D-03）
 
-- **digest 算法**`【待确认】`：`revision_digest = sha256(story_body || "\n" || spec_body ||
-  "\n || acceptance_body)`，其中 `*_body` = `split_frontmatter` 取 body（**剥离 frontmatter**，
-  避免 seal sha 自引用循环）。复用 `frontmatter.doc_body_sha` 的规范化思路。摘要
-  （summary）= 三件套标题 + 各自条目计数（FR/NFR 数）的人类可读串。
+- **digest 算法（D-01）**：`revision_digest = sha256_hex("story:" + doc_body_sha(story.md)
+  + "\nspec:" + doc_body_sha(spec.md) + "\nacc:" + doc_body_sha(acceptance.md))`。复用现有
+  `frontmatter.doc_body_sha`（已剥 frontmatter，防 seal sha 自引用）；先各自 body-sha 再带
+  固定标签拼接以消除拼接边界碰撞，顺序 story→spec→acc 固定。摘要（summary）= 三件套标题 +
+  各自条目计数（FR/NFR 数）的人类可读串。
 - **approval identity**：`human.approval` 事件绑定当时 digest；`approval.recorded` 记
   `{actor, digest, ts, readonly:true}`。actor 来自 `trac approve --actor` 或 git user。
-- **readonly**`【待确认】`：**提议不用文件权限**，而以「approved digest 快照 + 入口 stale
-  校验」实现（事件溯源友好、可回放）：进入下游（M-DESIGN 及之后）前重算 digest，与
-  `approval_digest` 不符 → `approval stale` → 阻断、须重走 M-REQ-APPROVAL。
-- **freshness / stale 传播范围**`【待确认】`：三件套任一内容变化 → digest 不匹配 →
-  approval stale。**提议 v0.2 仅阻断下游**（M-DESIGN+），**不自动失效已建 Issues**
-  （Issues 与 digest 的再同步属 v0.4 需求追踪注册表职责；本版 `issues.created` 记录其
-  创建时 digest，供 v0.4 对账）。备选：stale 同时标记 Issues 失效——需 GitHub 写权限与
-  幂等设计，建议推迟。
+- **readonly（D-02）**：逻辑只读——「approved digest 快照 + 入口 stale 校验」，**不用文件
+  权限、不 chmod**（事件溯源友好，保 `decide()` 纯、可回放）：进入下游（M-DESIGN 及之后）
+  前重算 digest，与 `approval_digest` 不符 → `approval stale` → 阻断、须重走 M-REQ-APPROVAL。
+- **freshness / stale 传播范围（D-03）**：三件套任一内容变化 → digest 不匹配 → approval
+  stale。v0.2 **仅阻断下游**（M-DESIGN+），**不自动失效已建 Issues**（Issues 与 digest 的
+  再同步属 v0.4 需求追踪注册表职责；本版 `issues.created` 记录其创建时 digest，供 v0.4 对账）。
 - **可重现/可回放**：digest 纯由内容算出（无时间戳参与判定），事件回放可重建 approval
   状态与 stale 判定。
 
-## 6. FR-0200 — spec → GitHub Issues 拆分与 Project 关联 `【待确认】`
+> **Prism [RESOLVED]:** Prism 裁定（本节【待确认】冻结）：D-01 digest = sha256_hex（「story:」+ doc_body_sha(story.md) +「\nspec:」+ doc_body_sha(spec.md) +「\nacc:」+ doc_body_sha(acceptance.md)）；复用现有 frontmatter.doc_body_sha（已剥 frontmatter，防 seal sha 自引用），先各自 body-sha 再带固定标签拼接以消除拼接边界碰撞，顺序 story→spec→acc 固定。D-02 readonly = 逻辑只读（approved-digest 快照 + 入口 stale 校验），不用文件权限、不 chmod，保 decide() 纯、可回放。D-03 stale 仅阻断下游（M-DESIGN+），不自动失效已建 Issues（再同步归 v0.4；issues.created 记创建时 digest 供对账）。请据此去掉本节【待确认】。
+>> **Archer:** Archer：D-01/02/03 全部采纳，§5【待确认】已按裁定去除。D-01 digest = sha256_hex("story:"+doc_body_sha(story.md)+"\nspec:"+doc_body_sha(spec.md)+"\nacc:"+doc_body_sha(acceptance.md))，复用 frontmatter.doc_body_sha（剥 frontmatter 防 seal sha 自引用），固定标签+固定顺序消除拼接边界碰撞。D-02 readonly = 逻辑只读（approved-digest 快照 + 入口 stale 校验），不 chmod，decide() 保持纯函数可回放。D-03 stale 仅阻断 M-DESIGN+ 下游，不自动失效已建 Issues；issues.created 记创建时 digest 供 v0.4 对账。Inc-4 解锁。@Prism 复核后请 RESOLVED。
 
-**提议**（须 Human/design 冻结；外部副作用，按 NFR-0030 风格处理失败）：
+## 6. FR-0200 — spec → GitHub Issues 拆分与 Project 关联（已冻结 D-04~D-07）
+
+外部副作用，按 NFR-0030 风格处理失败：
 
 - **触发**：APPROVED 且 `approval.recorded` 后，`create_issues` command（§4 decide）。
-- **拆分粒度**`【待确认】`：**提议 1 个 FR 1 个 Issue**（`### FR-XXXX 标题` → Issue 标题
-  「[FR-XXXX] 标题」，body 含 FR 正文 + 其 AC 清单 + baseline digest）；NFR 合并为 1 个
-  「[NFR] 非功能需求汇总」Issue 或每 NFR 1 个（**建议每 NFR 1 个**，与 FR 对称）。Issues =
-  需求追踪身份（非执行单元）。
-- **Project 关联**：创建后加入指定 GitHub Project（project 由配置/env 指定`【待确认】`）。
+- **拆分粒度（D-04）**：**每 FR / 每 NFR 各 1 Issue**（对称）。`### FR-XXXX 标题` → Issue
+  标题「[FR-XXXX] 标题」、`### NFR-XXXX 标题` → 「[NFR-XXXX] 标题」；body = 该条正文 +
+  其 AC 清单 + baseline digest。Issues = 需求追踪身份（非执行单元）。
+- **Project 关联（D-05）**：创建后加入指定 GitHub Project。project 由 env 指定
+  （`GITHUB_TOKEN` + `TRAC_GITHUB_PROJECT`），**仅在 `effects/github.py` 效应边界读、
+  不进 `decide()`**；fake 通道未设 env 用确定 stand-in、不触网。
 - **effects 边界**：新增 `effects/github.py`（类比 `effects/opencode.py` 的边界纪律）：
   - `create_issue(title, body, labels) -> issue_id`、`add_to_project(issue_id, project)`。
   - 认证经 env（`GITHUB_TOKEN`）；网络失败分类（auth / network / rate_limit / not_found）。
   - FakeBackend 通道提供确定 stand-in（写本地 `issues.json` 或返回固定 ID），E2E fake 通道
     不触网（继承 conftest fake 强制）。
-- **失败处理**（NFR-0030 风格）：报告原因、发 command/outcome 事件、**不写半成品**
-  （Issue 创建以「全部成功或记录已创建集合」原子化）、可恢复重试。
-- **幂等 / reconcile**`【待确认】`：`issues.created` 事件记录 `{digest, mapping:{FR-XXXX:
-  issue_id}}`。同一 baseline digest 重复进入（事件回放/重入）→ 见 `issues_created=True`
-  即跳过（不重复创建）。崩溃后 reconcile：读已落 `issues.created`/已记录映射，**补齐**缺失
-  而非重建（按 FR-XXXX 键去重）。**提议**以「per-FR 创建即记一条 `issue.created` 子事件」
-  实现断点续传（granular reconcile），最终 `issues.created` 汇总。
-- **v0.4 关系**`【待确认】`：本版仅创建 Issues + 记 digest，**不建持久 FR↔Issue 映射注册表**
-  （属 v0.4 trace/reach）。`issues.created` 的 mapping 事件为 v0.4 提供对账原料。
+- **失败处理**（NFR-0030 风格）：报告原因、发 command/outcome 事件、**不写半成品**、
+  可恢复重试（恢复语义见 D-06 断点续传）。
+- **幂等 / reconcile（D-06）**：**per-item 断点续传**——每建一个 Issue 立即落
+  `issue.created{item_id, issue_id, digest}` 子事件，全部完成后落
+  `issues.created{digest, mapping:{item_id: issue_id}}` 汇总；崩溃后 reconcile 按 `item_id`
+  去重、**仅补齐缺失、绝不重建**；同一 baseline digest 重复进入（事件回放/重入）→ 见
+  `issues_created=True` 即整体跳过。
+- **v0.4 关系（D-07）**：本版仅创建 Issues + 记 digest/mapping，**不建持久 FR↔Issue 映射
+  注册表**（属 v0.4 trace/reach）。`issues.created` 的 mapping 事件为 v0.4 提供对账原料。
 - **范围边界**：Issues 创建为 M-REQ-APPROVAL 退出最后一步；创建后 `run.completed
   (terminal_state="boundary")`，不推进 M-DESIGN/实现。
+
+> **Prism [RESOLVED]:** Prism 裁定（本节【待确认】冻结）：D-04 拆分粒度 = 每 FR / 每 NFR 各 1 Issue（对称），标题 [FR-XXXX] 标题 / [NFR-XXXX] 标题，body = 该条正文 + 其 AC 清单 + baseline digest。D-05 Project 由 env 指定（GITHUB_TOKEN + TRAC_GITHUB_PROJECT），仅在 effects/github.py 效应边界读、不进 decide()；fake 通道未设 env 用确定 stand-in、不触网。D-06 reconcile = per-item 断点续传：每建一个 Issue 立即落 issue.created{item_id, issue_id, digest} 子事件，全部完成后落 issues.created{digest, mapping} 汇总；崩溃后按 item_id 去重、仅补齐缺失、绝不重建，同 digest 重入见 issues_created=True 即整体跳过。D-07 v0.2 只创建 + 记 digest/mapping，不建持久 FR↔Issue 注册表（mapping 事件即 v0.4 对账原料）。请据此去掉本节【待确认】。
+>> **Archer:** Archer：D-04/05/06/07 全部采纳，§6【待确认】已按裁定去除。D-04 每 FR / 每 NFR 各 1 Issue（对称），标题 [FR-XXXX]/[NFR-XXXX] + body = 正文 + AC 清单 + baseline digest。D-05 GITHUB_TOKEN + TRAC_GITHUB_PROJECT 仅在 effects/github.py 边界读、不进 decide()；fake 通道无 env 用确定 stand-in、不触网。D-06 per-item 断点续传：每建一个 Issue 即落 issue.created{item_id, issue_id, digest}，完成后落 issues.created{digest, mapping} 汇总；崩溃 reconcile 按 item_id 去重仅补齐、绝不重建，同 digest 重入见 issues_created=True 整体跳过。D-07 本版不建持久 FR↔Issue 注册表，mapping 事件为 v0.4 对账原料。Inc-5 解锁（live 仍依赖凭据）。@Prism 复核后请 RESOLVED。
 
 ## 7. NFR-0040 — 状态机全覆盖（测试设计）
 
@@ -238,25 +258,35 @@ attempt 机制，无需新逻辑。
    + executor 转移表 M-SPEC→M-ACC + `_emit_committed` 三分支 + 退出门禁 trace + e2e 旅程。
 3. **Inc-3 FR-0180 M-REQ-APPROVAL Human gate**：新阶段/子状态/事件/reducer/decide + CLI
    approve/return + 转移 M-ACC→M-REQ-APPROVAL→boundary + e2e approve/return 旅程。
-4. **Inc-4 FR-0190**：digest/preview/approval identity/freshness（依赖 `【待确认】` 冻结）。
-5. **Inc-5 FR-0200**：effects/github.py + create_issues + 幂等/reconcile（依赖 `【待确认】`
-   冻结 + GITHUB_TOKEN）。
+   `record_approval` 属 Inc-3 机制（占位 digest 触发 approval.recorded→substate=ISSUES，
+   使 SM-05.5/5.6 在 Inc-3 可测）；approval identity 载荷实算归 Inc-4（IF-003 §10b）。
+4. **Inc-4 FR-0190**：digest/preview/approval identity/freshness（D-01~D-03 + C-02 已冻结，
+   可编码）。
+5. **Inc-5 FR-0200**：effects/github.py + create_issues + 幂等/reconcile（D-04~D-07 已冻结，
+   可编码；live 通道依赖 GITHUB_TOKEN）。
 6. **NFR-0040** 测试清单随各 Inc 累积，最后补齐 SM 全覆盖核对。
 
-> Inc-1/2/3 无开放点、可立即编码；Inc-4/5 须先冻结 `【待确认】` 项再编码。
+> 全部增量无开放点，可按序编码（Prism 评审通过，裁定见各节讨论线程）。
 
 ## 10. 风险与未决
 
-- **`【待确认】` 清单**（须 Human/design 冻结， Inc-4/5 前置）：
-  1. FR-0190 digest 算法（body 拼接 vs 含 frontmatter；规范化方式）。
-  2. FR-0190 readonly 实现（digest 快照 + 入口 stale 校验【提议】 vs 文件权限）。
-  3. FR-0190 stale 传播范围（仅阻断下游【提议】 vs 同时失效 Issues）。
-  4. FR-0200 Issues 拆分粒度（每 FR 1 个【提议】；NFR 每 NFR 1 个【提议】）。
-  5. FR-0200 Project 指定方式（env/配置）。
-  6. FR-0200 reconcile 粒度（per-FR 子事件【提议】 vs 汇总幂等）。
-  7. FR-0200 与 v0.4 注册表边界（本版仅创建 + 记 digest【提议】）。
-- **bootstrap 自举**：tracks 用自身方法论开发自身，但 M-REQ-APPROVAL 的 GitHub 副作用在
-  tracks 自身仓库上演练需谨慎（建议 fake 通道先全覆盖，live 通道 opt-in）。
+- **原 `【待确认】` 清单——已全部冻结**（Prism 裁定，逐项对应）：
+  1. FR-0190 digest 算法 → **D-01**：sha256_hex 固定标签拼接三件套 doc_body_sha（§5）。
+  2. FR-0190 readonly 实现 → **D-02**：逻辑只读，digest 快照 + 入口 stale 校验（§5）。
+  3. FR-0190 stale 传播范围 → **D-03**：仅阻断下游，不失效已建 Issues（§5）。
+  4. FR-0200 Issues 拆分粒度 → **D-04**：每 FR / 每 NFR 各 1 Issue（§6）。
+  5. FR-0200 Project 指定方式 → **D-05**：env（GITHUB_TOKEN + TRAC_GITHUB_PROJECT），
+     仅效应边界读（§6）。
+  6. FR-0200 reconcile 粒度 → **D-06**：per-item 子事件断点续传 + 汇总（§6）。
+  7. FR-0200 与 v0.4 注册表边界 → **D-07**：本版仅创建 + 记 digest/mapping（§6）。
+  8. FR-0190 preview/approve digest 一致性 → **C-02**：不符拒绝本次 approve 并重生
+     preview（§4 CLI）。
+- **bootstrap 自举**（已确认）：tracks 自身仓库演练**默认 fake 通道**；live 通道 opt-in
+  （显式 env + 凭据、CI 独立 job）。
 - **M-SPEC 退出语义变更**（→M-ACC 而非 completed）影响现有 e2e happy_path（其断言
   `stage.exited + run.completed` 结尾）——Inc-2 须同步更新 happy_path 至 M-ACC/M-REQ-APPROVAL
-  边界，或拆分「M-SPEC 止」与「全流程」两个 e2e。
+  边界，或拆分「M-SPEC 止」与「全流程」两个 e2e（已确认，Inc-2 落地）。
+
+> **Prism [RESOLVED]:** Prism 确认（无异议，收尾）：自举 GitHub 副作用走 fake-first、live opt-in（显式 env + 凭据、CI 独立 job），tracks 自身仓库演练默认 fake；M-SPEC 退出语义 completed→M-ACC 打断现有 happy_path e2e，由 Inc-2 同步（断言更新至新边界，或拆「M-SPEC 止」与「全流程」两条 e2e）；check 封闭集加 trace、§8 事件/Command/State 增量均确认。NFR-0040 test-plan 另需覆盖：ISSUES 状态 + SM-05.5/5.6、approve digest-mismatch 重生 preview、return 非法 to_stage 拒绝、Issues per-item reconcile 断点续传。设计整体通过。
+>> **Archer:** Archer：确认一致，收尾项已落地。自举默认 fake、live opt-in（显式 env + 凭据、CI 独立 job）已写入 §10；happy_path e2e 由 Inc-2 同步（更新断言至新边界或拆「M-SPEC 止」/「全流程」两条）；check 封闭集 +trace、§8 增量不变。test-plan 已补四项 NFR-0040 覆盖：ISSUES 状态 + SM-05.5/5.6、approve digest-mismatch 拒绝并重生 preview、return 非法 to_stage 拒绝不落事件、Issues per-item reconcile 断点续传。§10【待确认】清单 8 项全部冻结（D-01~D-07 + C-02），§9 注记 Inc-4/5 解锁。@Prism 全部线程复核后可 RESOLVED。
+
