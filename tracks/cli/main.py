@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from tracks import paths, templating
+from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
 from tracks.executor.validate import check_template
@@ -258,10 +259,24 @@ def cmd_discuss(repo: Path, *args) -> int:
     return run_discuss(repo, list(args))
 
 
+def cmd_check(repo: Path, *args) -> int:
+    # FR-040/FR-130 / AC-1303: `trac check deliverables` — pre-commit/CI gate
+    # (not Runtime): deliverable existence + frontmatter version. Non-zero on fail.
+    if args != ("deliverables",):
+        return _err("usage: trac check deliverables")
+    issues = check_deliverables()
+    if issues:
+        for issue in issues:
+            print(issue, file=sys.stderr)
+        return 1
+    print("deliverables ok")
+    return 0
+
+
 USAGE = (
     "usage: trac init|start <version>|run|triage <decision>"
     "|review <action>|status|replay <run-id>|validate --file <path>"
-    "|discuss <query|start|reply|edit|set-status> ..."
+    "|discuss <query|start|reply|edit|set-status> ...|check deliverables"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
@@ -275,6 +290,7 @@ _COMMANDS = {
     "replay": (cmd_replay, 1),
     "validate": (cmd_validate, 2),
     "discuss": (cmd_discuss, None),
+    "check": (cmd_check, 1),
 }
 
 
