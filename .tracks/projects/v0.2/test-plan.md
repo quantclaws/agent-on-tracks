@@ -230,7 +230,7 @@ trac agent archer ci-scan \
 | SM-02.4–.5 | Scribe 起草 validate pass/fail 重派（≤3 升级） | unit + e2e | test_machine_acc.py（既有）, test_retry_escalation.py::test_failed_validation_redispatches_with_evidence |
 | SM-02.6–.12 | SAGE_REVIEW/HUMAN_REVIEW/RESPOND 评审回路 | e2e | test_happy_path.py::test_story_review_loop |
 | SM-02.13 | EXIT → M-SPEC（story.committed(final)） | e2e | test_happy_path.py |
-| SM-03.1–.3 | M-SPEC 起草 validate pass/fail；Sage DRAFT/RESPOND 必须全部 `[ ]`，提前 `[x]` 拒绝 | unit + e2e | test_events_validate.py::test_spec_decision_checks_are_stage_specific, test_happy_path.py |
+| SM-03.1–.3 | M-SPEC 起草 validate pass/fail（结构/template 门禁，决定记录在 inline-discussion） | unit + e2e | test_events_validate.py::test_spec_items_need_only_source_and_delivery_metadata, test_happy_path.py |
 | SM-03.4/.15 | scope_overflow → ROLLBACK → M-STORY | integration + e2e | 既有 scope_overflow 测试（test_scope_overflow.py / test_store.py） |
 | SM-03.5–.12 | LEX_REVIEW/HUMAN_REVIEW/RESPOND 回路 | e2e | test_happy_path.py::test_spec_review_loop |
 | SM-03.13 | EXIT → `discussion_ready` 门禁（仅未 resolved inline-discussion 阻塞）→ **M-ACC** | unit + integration + e2e | test_decide.py::test_spec_and_acceptance_exit_use_only_discussion_gate, test_happy_path.py（final seal 前通过 discussion_ready）, test_full_journey.py |
