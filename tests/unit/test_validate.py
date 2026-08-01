@@ -9,7 +9,12 @@ from pathlib import Path
 
 from tracks import templating
 from tracks.cli.main import cmd_validate
-from tracks.executor.validate import check_spec_items, check_template
+from tracks.executor.validate import (
+    check_spec_decisions,
+    check_spec_items,
+    check_template,
+    finalize_spec_decisions,
+)
 
 
 def _story(tmp_path: Path) -> Path:
@@ -106,10 +111,35 @@ def test_check_spec_items_nfr_missing_checkbox_rejected():
     assert any("已决定 checkbox" in i for i in check_spec_items(text))
 
 
-def test_check_spec_items_undecided_checkbox_rejected():
-    """AC-FR0150-03: only YES means YES — '- [ ] 已决定' (undecided) is rejected."""
+def test_check_spec_items_accepts_undecided_structure():
+    """Structure accepts an unchecked declaration; final state is checked separately."""
     text = "### NFR-0010 标题\n\n- [ ] 已决定\n- **来源**：BS-01\n\n描述\n"
-    assert any("已决定 checkbox" in i for i in check_spec_items(text))
+    assert check_spec_items(text) == []
+    assert check_spec_decisions(text, decided=False) == []
+    assert check_spec_decisions(text, decided=True)
+
+
+def test_check_spec_items_rejects_agent_self_approval_in_draft():
+    text = "### NFR-0010 标题\n\n- [x] 已决定\n- **来源**：BS-01\n\n描述\n"
+    assert check_spec_items(text) == []
+    assert check_spec_decisions(text, decided=False)
+    assert check_spec_decisions(text, decided=True) == []
+
+
+def test_finalize_spec_decisions_only_touches_item_checkboxes():
+    text = (
+        "# 规格\n\n- [ ] 已决定（普通文本，不应改）\n\n"
+        "### FR-0010 标题\n\n- [ ] 已决定\n- **来源**：BS-01\n"
+        "- **交付入口**：x\n\n描述\n\n"
+        "```md\n### NFR-9999 示例\n- [ ] 已决定\n```\n"
+    )
+    out, count = finalize_spec_decisions(text)
+    assert count == 1
+    assert "### FR-0010 标题\n\n- [x] 已决定" in out
+    assert "- [ ] 已决定（普通文本，不应改）" in out
+    assert "### NFR-9999 示例\n- [ ] 已决定" in out
+    again, count = finalize_spec_decisions(out)
+    assert again == out and count == 0
 
 
 def test_check_spec_items_missing_source_rejected():

@@ -14,14 +14,30 @@
   `command.issued` 再执行、结果事件闭合，崩溃经 command_id 探针 reconcile。
 - 后端 seam 不变：`AgentBackend.act()`（生产 OpencodeBackend / 确定 FakeBackend）；
   M-ACC 评审复用 Lex 真实 agent（FR-0020 已扩容为真实）。
-- FR-150 格式门禁不变（outcome 即校验 `checks=["template"]`、退出门禁
-  `["template","discussion_ready"]`、only YES means YES）。M-ACC 在其上**附加** FR-0170 trace。
+- FR-150 outcome/退出门禁继续复用 `validate_document`；M-SPEC decision checkbox 采用
+  Aaron 后续裁定的两阶段协议（§0a），M-ACC 在模板门禁上**附加** FR-0170 trace。
 - inline-discussion 旁路（`discuss/`）不变，M-ACC 评审照常可用。
 
 **变更面**：`kernel/machine.py`（新阶段/子状态/事件/reducer/decide 分支）、
 `executor/executor.py`（阶段转移表 + 新 command handler + acceptance.committed）、
-`executor/validate.py`（FR-0170 trace）、`kernel/events.py`（新事件类型登记）、
+`executor/validate.py`（FR-0170 trace + spec decision 两阶段校验）、`kernel/events.py`（新事件类型登记）、
 `cli/main.py`（`trac approve` / `trac return`）、新增 `effects/github.py`（FR-0200）。
+
+### 0a. M-SPEC decision checkbox 两阶段协议（Aaron 后续裁定）
+
+1. Sage 的 DRAFT/RESPOND 产出必须为每条 FR/NFR 提供唯一 `- [ ] 已决定`；
+   outcome checks=`["template","draft_undecided"]`。Agent 提前输出 `[x]` 是自批，拒绝重派。
+2. Lex pass + Human `no_comment` 后进入 EXIT；先跑
+   `["template","discussion_ready","draft_undecided"]`，确认结构/讨论就绪且仍为未决定态。
+3. Runtime 发写前日志 command `finalize_spec_decisions`，仅将真实 FR/NFR item 内
+   `[ ]→[x]`，结果事件 `spec.decisions_finalized{converted}`；handler 幂等，崩溃重放时已
+   转换文件 converted=0 但仍补结果事件。
+4. reducer 置 `decisions_finalized=True` 并把 `exit_validated=False`，强制第二次
+   `["template","discussion_ready","final_decided"]`；全部 `[x]`（only YES means YES）
+   后才 `write_frontmatter` seal/commit。最终勾选因此发生在 Lex/Human 审核完成之后，
+   不由 Sage/Lex/Human 手工修改。
+5. Human RETURNED 回 M-SPEC 后，Sage 重绘 draft 必须恢复 `[ ]`；FakeBackend 以确定性
+   `[x]→[ ]` 模拟真实 Sage 重绘，生产 Agent 由 `draft_undecided` gate 强制。
 
 ## 1. 阶段转移表（executor 单一事实来源）
 
@@ -238,17 +254,17 @@ attempt 机制，无需新逻辑。
 
 ## 8. 事件 / Command / State 增量汇总
 
-**新事件类型**（events.py 登记）：`acceptance.committed`、`preview.generated`、
+**新事件类型**（events.py 登记）：`spec.decisions_finalized`、`acceptance.committed`、`preview.generated`、
 `human.approval`、`human.return`、`approval.recorded`、`issue.created`（子）、
 `issues.created`（汇总）。
 
-**新 Command kind**：`generate_preview`、`record_approval`、`create_issues`。
+**新 Command kind**：`finalize_spec_decisions`、`generate_preview`、`record_approval`、`create_issues`。
 （`validate_document`/`commit_document`/`write_frontmatter`/`rollback_stage` 复用。）
 
-**新 State 字段**：`acceptance_committed`、`preview_ready`、`approved`、`returned`、
+**新 State 字段**：`decisions_finalized`、`acceptance_committed`、`preview_ready`、`approved`、`returned`、
 `approval_digest`、`approval_actor`、`issues_created`、`return_target`。
 
-**IF-003 §5 check 封闭集**：新增 `trace`。
+**IF-003 §5 check 封闭集**：新增 `trace`、`draft_undecided`、`final_decided`。
 
 ## 9. 实现增量排序（建议）
 
@@ -289,4 +305,3 @@ attempt 机制，无需新逻辑。
 
 > **Prism [RESOLVED]:** Prism 确认（无异议，收尾）：自举 GitHub 副作用走 fake-first、live opt-in（显式 env + 凭据、CI 独立 job），tracks 自身仓库演练默认 fake；M-SPEC 退出语义 completed→M-ACC 打断现有 happy_path e2e，由 Inc-2 同步（断言更新至新边界，或拆「M-SPEC 止」与「全流程」两条 e2e）；check 封闭集加 trace、§8 事件/Command/State 增量均确认。NFR-0040 test-plan 另需覆盖：ISSUES 状态 + SM-05.5/5.6、approve digest-mismatch 重生 preview、return 非法 to_stage 拒绝、Issues per-item reconcile 断点续传。设计整体通过。
 >> **Archer:** Archer：确认一致，收尾项已落地。自举默认 fake、live opt-in（显式 env + 凭据、CI 独立 job）已写入 §10；happy_path e2e 由 Inc-2 同步（更新断言至新边界或拆「M-SPEC 止」/「全流程」两条）；check 封闭集 +trace、§8 增量不变。test-plan 已补四项 NFR-0040 覆盖：ISSUES 状态 + SM-05.5/5.6、approve digest-mismatch 拒绝并重生 preview、return 非法 to_stage 拒绝不落事件、Issues per-item reconcile 断点续传。§10【待确认】清单 8 项全部冻结（D-01~D-07 + C-02），§9 注记 Inc-4/5 解锁。@Prism 全部线程复核后可 RESOLVED。
-

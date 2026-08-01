@@ -33,6 +33,7 @@ class State:
     story_committed: bool = False
     spec_committed: bool = False
     acceptance_committed: bool = False
+    decisions_finalized: bool = False  # M-SPEC EXIT: Runtime changed [ ] -> [x]
     backlog_recorded: bool = False
     terminal_state: str | None = None
     # M-REQ-APPROVAL (FR-0180/0190/0200, IF-003 §10c)
@@ -103,6 +104,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.current_attempt = 0
     s.stage_exited = False
     s.exit_validated = False
+    s.decisions_finalized = False
     s.review_round = 1
     s.sage_passed_this_round = s.lex_passed_this_round = False
     if s.stage == "M-REQ-APPROVAL":
@@ -124,6 +126,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.spec_committed = False
     s.story_committed = False  # the redone story must be re-committed
     s.acceptance_committed = False
+    s.decisions_finalized = False
     s.scope_overflow = False
     s.returned = False
     s.return_target = None
@@ -218,6 +221,12 @@ def _on_spec_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     if not p.get("final"):
         s.substate = "LEX_REVIEW"
         _reset_review(s)
+
+
+def _on_spec_decisions_finalized(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Runtime finalized Human-approved spec decisions; require a final gate."""
+    s.decisions_finalized = True
+    s.exit_validated = False
 
 
 def _on_acceptance_committed(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -346,6 +355,7 @@ _APPLY = {
     "verdict.failed": _on_verdict_failed,
     "story.committed": _on_story_committed,
     "spec.committed": _on_spec_committed,
+    "spec.decisions_finalized": _on_spec_decisions_finalized,
     "acceptance.committed": _on_acceptance_committed,
     "sage.verdict": _on_sage_verdict,
     "lex.verdict": _on_lex_verdict,
@@ -418,7 +428,10 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     if not s.doc_validated:
         # FR-150/AC-1503: outcome-time format gate — Scribe/Sage must produce a
         # template-conforming doc before it is committed / enters review.
-        return Command(kind="validate_document", params={"doc": doc, "checks": ["template"]})
+        checks = ["template"]
+        if stage == "M-SPEC":
+            checks.append("draft_undecided")  # Agent cannot self-approve [x]
+        return Command(kind="validate_document", params={"doc": doc, "checks": checks})
     if not committed:
         return Command(
             kind="commit_document", params={"doc": doc, "message": f"{stage}: draft {doc}"}
@@ -431,6 +444,18 @@ def _decide_exit(s: State, stage: str) -> Command | None:
     if s.stage_exited:
         return None
     doc = _STAGE_ROLE_DOC[stage][1]
+    if stage == "M-SPEC":
+        # Two-phase decision gate: before finalization all items must remain [ ]
+        # (reviewed but not yet Runtime-approved); after the atomic Runtime
+        # conversion every item must be [x] (only YES means YES).
+        if not s.exit_validated:
+            decision_check = "final_decided" if s.decisions_finalized else "draft_undecided"
+            return Command(
+                kind="validate_document",
+                params={"doc": doc,
+                        "checks": ["template", "discussion_ready", decision_check]})
+        if not s.decisions_finalized:
+            return Command(kind="finalize_spec_decisions", params={"doc": doc})
     if not s.exit_validated:
         # review-exit gate: template conformance + all discussion threads resolved.
         return Command(

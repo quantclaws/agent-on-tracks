@@ -91,10 +91,14 @@ IF-001 §7 `Verdict.check` Literal 追加两个成员：
 ```python
 check: Literal["schema", "scope", "trace", "scope_overflow", "format",
                "template",           # + v0.2：文档结构符合对应模板（FR-150）
+               "draft_undecided",    # + v0.2：M-SPEC Sage draft/response 全部 [ ]
+               "final_decided",      # + v0.2：Runtime finalization 后全部 [x]
                "discussion_ready"]   # + v0.2：文件内讨论线程全部 resolved（FR-100，只读查询 discuss）
 ```
 
-- `template`：`validate_document(checks=["template"])` → 按 `tracks/templates/<kind>.md` 校验必备 frontmatter 字段 + level-2 章节（模板的 HTML 注释忽略；acceptance 的 level-2 章节随 FR/NFR 变化故不做章节名匹配），`evidence` 含不符项 `line:N`。spec 文档另过条目 lint（`check_spec_items`：`### FR-XXXX 标题` + `- [ ]/[- x] 已决定` checkbox + `- **来源**：` + FR 的 `- **交付入口**：`；FR-20 scope 数所有 FR 条目，废弃项删除而非标记）。
+- `template`：`validate_document(checks=["template"])` → 按 `tracks/templates/<kind>.md` 校验必备 frontmatter 字段 + level-2 章节（模板的 HTML 注释忽略；acceptance 的 level-2 章节随 FR/NFR 变化故不做章节名匹配），`evidence` 含不符项 `line:N`。spec 文档另过结构 lint（`check_spec_items`：`### FR-XXXX 标题` + **唯一** `- [ ] 已决定`/`- [x] 已决定` checkbox + `- **来源**：` + FR 的 `- **交付入口**：`；结构检查不判定 checkbox 状态；FR-20 scope 数所有 FR 条目，废弃项删除而非标记）。
+- `draft_undecided`：仅 M-SPEC DRAFT/RESPOND 与 EXIT 转换前使用；每条 FR/NFR 必须为 `- [ ] 已决定`。Agent 产出 `[x]` 视为自批，`verdict.failed(check="draft_undecided")`。
+- `final_decided`：仅 Runtime `finalize_spec_decisions` 后使用；每条 FR/NFR 必须为 `- [x] 已决定`，否则 `verdict.failed(check="final_decided")`（only YES means YES）。
 - `discussion_ready`：`validate_document(checks=["discussion_ready"])` → 只读调 `discuss` query --check-ready；`is_ready=false` 时 `verdict.failed`，`evidence` 含 `ready_blockers`。
 - `trace`（v0.2 扩范围语义，FR-0170）：`validate_document` 对 `doc == "acceptance.md"` **恒跑**（不经 `checks` 列表，类比 spec 恒跑 scope_overflow）：AC↔FR 双向覆盖校验（§10d），失败 → `verdict.failed(check="trace")`，`evidence` 为**完整孤儿清单**（含 `line:N`，不在首个失败处短路）。
 
@@ -211,6 +215,7 @@ IF-001 §11 既有路径不变。新增/明确：
 
 | 事件类型 | payload | 发出者 | 备注 |
 |:---|:---|:---|:---|
+| `spec.decisions_finalized` | `converted: int` | executor（`finalize_spec_decisions` handler） | Lex pass + Human `no_comment` + discussion-ready 后；reducer 置 `decisions_finalized=true`、`exit_validated=false`，强制 final gate；reconcile 重放 converted 可为 0 |
 | `acceptance.committed` | `commit_sha, acceptance_sha, final: bool` | executor（`_emit_committed` 三分支） | 镜像 `spec.committed`（FR-0160）；非 final → substate=LEX_REVIEW + reset review |
 | `preview.generated` | `digest, summary` | executor（`generate_preview` handler） | SM-05.2；digest 算法 = D-01（design §5，已冻结）；Inc-3 可先用占位 digest，Inc-4 换 D-01 实算；summary = 三件套标题 + 条目计数 |
 | `human.approval` | `actor, digest, ts` | CLI `trac approve`（仅 Human） | SM-05.3；Agent 不可代批（FR-0180 硬规则）；approve 前校验当前 digest == preview digest，不符拒绝并重生 preview（C-02） |
@@ -223,6 +228,7 @@ IF-001 §11 既有路径不变。新增/明确：
 
 ```python
 kind: Literal[...,               # IF-001 原有成员不变
+      "finalize_spec_decisions",# M-SPEC EXIT：Runtime 原子 [ ]→[x]，随后 final_decided 复验
       "generate_preview",        # SM-05.1→2（Inc-3；digest = D-01 已冻结，Inc-3 可先用占位 digest）
       "record_approval",         # SM-05.5（Inc-3 机制——占位 digest 触发 approval.recorded→substate=ISSUES；identity 载荷实算 Inc-4）
       "create_issues"]           # SM-05.6（Inc-5；D-04~D-06 已冻结）
@@ -237,6 +243,7 @@ kind: Literal[...,               # IF-001 原有成员不变
 
 ```python
 acceptance_committed: bool = False    # M-ACC（镜像 spec_committed）
+decisions_finalized: bool = False     # M-SPEC EXIT：Runtime 已完成 [ ]→[x]
 preview_ready: bool = False           # M-REQ-APPROVAL
 approved: bool = False
 returned: bool = False

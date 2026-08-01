@@ -136,6 +136,16 @@ def test_happy_path(host_repo, trac, event_log):
     assert len(finals) == 1  # never matches the DRAFT commit (R4-02)
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["spec_sha"] == body_sha
+    assert "- [x] 已决定" in body and "- [ ] 已决定" not in body
+    finalized = [e for e in evs if e["type"] == "spec.decisions_finalized"]
+    assert len(finalized) == 1 and finalized[0]["payload"]["converted"] >= 1
+    finalize_i = evs.index(finalized[0])
+    human_i = max(
+        i for i, e in enumerate(evs)
+        if e["type"] == "human.review" and e["payload"]["action"] == "no_comment"
+    )
+    final_commit_i = evs.index(finals[0])
+    assert human_i < finalize_i < final_commit_i  # Runtime, never Agent, checks the boxes
     assert "seal spec.md sha" in git_out(host_repo, "log", "-5", "--format=%s")
     acceptance = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
     assert acceptance.exists()  # Sage drafted acceptance in M-ACC

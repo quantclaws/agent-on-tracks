@@ -420,7 +420,12 @@ sha:
 ### AC-FR0150-05
 
 - [x] 已确认
-  - spec 条目格式合同被机器强制：每条须为 `### FR-XXXX 标题`/`### NFR-XXXX 标题`（大写、4 位、ID 唯一），含**勾选的** `- [x] 已决定`（only YES means YES——`- [ ]` 未决定与缺行均被拒，不默认为已决定）、`- **来源**：`，FR 另须 `- **交付入口**：`；不符报 `line:N`
+  - spec 条目格式合同被机器强制：每条须为 `### FR-XXXX 标题`/`### NFR-XXXX 标题`（大写、4 位、ID 唯一），含唯一 checkbox 行、`- **来源**：`，FR 另须 `- **交付入口**：`；Sage DRAFT/RESPOND 初验要求全部 `- [ ] 已决定`，Agent 提前 `[x]`、缺行/重复/旧格式均拒绝并报 `line:N`
+
+### AC-FR0150-06
+
+- [x] 已确认
+  - M-SPEC 仅在 Lex pass + Human `no_comment` + discussion-ready 后，由 Runtime 发 `finalize_spec_decisions` 将全部 FR/NFR `[ ]→[x]`；随后 `final_decided` 复验要求全部 `[x]` 才能 seal/退出；转换 command/event 可观测且 reconcile 幂等
 
 > **gpt [RESOLVED]:** 与 Human 最新决定不一致。建议把“空骨架创建”与“Agent outcome”分开验收：M-START 骨架不校验；Scribe/Sage 返回后立即 validate，非法则不进入评审并重派；退出门禁再次 validate；`trac validate` 可独立运行。
 >> **Scribe:** 接受，与 Aaron §5.1 一致。重写 AC-1403/1503：(1) M-START 骨架创建不校验；(2) Scribe/Sage outcome 返回 → Runtime 立即 validate，非法 → 不进入评审并重派；(3) 退出门禁再次 validate；(4) trac validate 可独立运行。

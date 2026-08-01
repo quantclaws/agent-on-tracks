@@ -160,7 +160,7 @@ opencode 是外部依赖，按模板 §6 三层金字塔：
 | AC-1201..1203（解析边界） | unit + ground_truth | test_discuss_parser.py |
 | AC-1301..1304（skill 交付物存在/内容/版本/Sage 加载） | unit + e2e_live | 交付门禁检查, test_live_agent.py |
 | AC-1401..1403（模板接入/去硬编码/M-START 骨架不校验） | unit + e2e | test_templating.py, test_validation_gate.py |
-| AC-1501..1504（trac validate 独立/outcome 即校验+重派/门禁再校验/D-16 取代） | unit + e2e | test_validate.py, test_retry_escalation.py |
+| AC-FR0150-01..06（trac validate/结构 lint/Sage draft 全 `[ ]`/Runtime finalize 全 `[x]`/双阶段门禁/reconcile） | unit + integration + e2e | test_validate.py（结构 + draft/final + item-aware 转换）, test_events_validate.py::test_spec_decision_checks_are_stage_specific, test_decide.py::test_spec_exit_runtime_finalizes_decisions_then_revalidates, test_executor_reconcile.py::test_finalize_spec_decisions_is_idempotent_for_reconcile, test_happy_path.py（Human review < decisions_finalized < final commit） |
 | AC-1601（错误信息含 line:N） | unit | test_discuss_parser.py, test_validate.py |
 | AC-1701（解析性能 < 1MB/1s） | unit（性能） | test_discuss_parser.py |
 | AC-1801..1803（失败矩阵/事件·attempt·清理·reconcile/diff 权威） | integration（L2）+ e2e | test_opencode_backend.py, test_recovery.py |
@@ -230,10 +230,10 @@ trac agent archer ci-scan \
 | SM-02.4–.5 | Scribe 起草 validate pass/fail 重派（≤3 升级） | unit + e2e | test_machine_acc.py（既有）, test_retry_escalation.py::test_failed_validation_redispatches_with_evidence |
 | SM-02.6–.12 | SAGE_REVIEW/HUMAN_REVIEW/RESPOND 评审回路 | e2e | test_happy_path.py::test_story_review_loop |
 | SM-02.13 | EXIT → M-SPEC（story.committed(final)） | e2e | test_happy_path.py |
-| SM-03.1–.3 | M-SPEC 起草 validate pass/fail | e2e | test_happy_path.py |
+| SM-03.1–.3 | M-SPEC 起草 validate pass/fail；Sage DRAFT/RESPOND 必须全部 `[ ]`，提前 `[x]` 拒绝 | unit + e2e | test_events_validate.py::test_spec_decision_checks_are_stage_specific, test_happy_path.py |
 | SM-03.4/.15 | scope_overflow → ROLLBACK → M-STORY | integration + e2e | 既有 scope_overflow 测试（test_scope_overflow.py / test_store.py） |
 | SM-03.5–.12 | LEX_REVIEW/HUMAN_REVIEW/RESPOND 回路 | e2e | test_happy_path.py::test_spec_review_loop |
-| SM-03.13 | EXIT → **M-ACC**（语义变更） | e2e | test_happy_path.py（结尾断言，§4a）+ test_full_journey.py |
+| SM-03.13 | EXIT 预门禁（全部 `[ ]`）→ Runtime `spec.decisions_finalized`（全部 `[x]`）→ final gate → **M-ACC** | unit + integration + e2e | test_decide.py::test_spec_exit_runtime_finalizes_decisions_then_revalidates, test_executor_reconcile.py::test_finalize_spec_decisions_is_idempotent_for_reconcile, test_happy_path.py（事件顺序 + 最终 body 全 `[x]`）, test_full_journey.py |
 | SM-03.14 | 格式终验 fail → DRAFT | e2e | test_retry_escalation.py::test_three_failures_escalate（格式终验 fail 逻辑同 SM-02.5 重派升级，复用同一测试） |
 | SM-04.1 | 进入 M-ACC → DRAFT（Sage 起草 acceptance） | unit + e2e | test_machine_acc.py::test_enter_draft, # 待补 e2e（目前仅 unit 覆盖） |
 | SM-04.2 | DRAFT → LEX_REVIEW（validate + trace pass, committed） | unit + e2e | test_machine_acc.py, # 待补 e2e |

@@ -12,7 +12,7 @@ from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
-from tracks.executor.validate import validate_document
+from tracks.executor.validate import finalize_spec_decisions, validate_document
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State, decide
@@ -201,6 +201,23 @@ class Executor:
             # SM-05.6 / IF-003 §10f: no successor -> stop at the M-DESIGN boundary.
             self._emit("run.completed", {"terminal_state": "boundary"},
                        command_id=cmd.command_id)
+
+    def _do_finalize_spec_decisions(self, cmd, state, task_id, reconcile):
+        """M-SPEC EXIT: Runtime atomically checks every reviewed decision.
+
+        Idempotent for reconcile: after a crash/retry an already-finalized file
+        converts zero lines and emits the missing result event. The subsequent
+        final_decided validation + EXIT seal commit make the conversion durable.
+        """
+        path = self._doc_path(cmd.params["doc"])
+        text = path.read_text(encoding="utf-8")
+        finalized, count = finalize_spec_decisions(text)
+        if finalized != text:
+            tmp = path.with_name(path.name + ".decisions.tmp")
+            tmp.write_text(finalized, encoding="utf-8")
+            tmp.replace(path)
+        self._emit("spec.decisions_finalized", {"converted": count},
+                   command_id=cmd.command_id)
 
     def _do_record_backlog(self, cmd, state, task_id, reconcile):
         if reconcile and state.backlog_recorded:

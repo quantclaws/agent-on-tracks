@@ -66,6 +66,20 @@ def test_draft_pipeline_order():
     assert decide(validated).kind == "commit_document"
 
 
+def test_spec_draft_requires_unchecked_decisions():
+    produced = state_of(
+        ("stage.entered", {"stage": "M-SPEC"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent",
+                                        "params": {"role": "sage",
+                                                   "substate": "DRAFT"},
+                                        "command_id": "C1"}}),
+        ("outcome.received", {"role": "sage", "status": "done"}),
+    )
+    cmd = decide(produced)
+    assert cmd.kind == "validate_document"
+    assert cmd.params == {"doc": "spec.md", "checks": ["template", "draft_undecided"]}
+
+
 def test_redispatch_carries_failure_evidence():
     failed = state_of(
         ("human.triage", {"decision": "go"}),
@@ -162,6 +176,49 @@ def test_exit_gate_failure_blocks_exit():
     # AC-FR0150-02: a failed review-exit gate blocks exit and awaits human.
     assert blocked.status == "awaiting_human" and blocked.awaiting == "review"
     assert decide(blocked) is None
+
+
+def _spec_exit_state(*extra):
+    return state_of(
+        ("stage.entered", {"stage": "M-SPEC"}),
+        ("spec.committed", {"commit_sha": "c", "spec_sha": "s"}),
+        ("lex.verdict", {"verdict": "pass"}),
+        ("human.review", {"action": "no_comment"}),
+        *extra,
+    )
+
+
+def test_spec_exit_runtime_finalizes_decisions_then_revalidates():
+    """Only Lex + Human-approved spec decisions are changed [ ] -> [x]."""
+    first = decide(_spec_exit_state())
+    assert first.kind == "validate_document"
+    assert first.params == {
+        "doc": "spec.md",
+        "checks": ["template", "discussion_ready", "draft_undecided"],
+    }
+
+    finalize = decide(_spec_exit_state(
+        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
+    ))
+    assert finalize.kind == "finalize_spec_decisions"
+    assert finalize.params == {"doc": "spec.md"}
+
+    final_gate = decide(_spec_exit_state(
+        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
+        ("spec.decisions_finalized", {"converted": 2}),
+    ))
+    assert final_gate.kind == "validate_document"
+    assert final_gate.params == {
+        "doc": "spec.md",
+        "checks": ["template", "discussion_ready", "final_decided"],
+    }
+
+    seal = decide(_spec_exit_state(
+        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
+        ("spec.decisions_finalized", {"converted": 2}),
+        ("verdict.passed", {"check": "template,discussion_ready,final_decided"}),
+    ))
+    assert seal.kind == "write_frontmatter" and seal.params["doc"] == "spec.md"
 
 
 def test_completed_run_halts():

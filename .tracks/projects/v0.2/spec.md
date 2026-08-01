@@ -50,7 +50,7 @@ sha:
 ### SM-03 M-SPEC
 
 1. （进入）→ DRAFT：stage.entered(M-SPEC)（Sage 起草 spec.md，继承 M-STORY review 上下文）
-2. DRAFT → LEX_REVIEW：validate pass，committed
+2. DRAFT → LEX_REVIEW：validate pass（每条 FR/NFR checkbox 必须存在且保持 `- [ ] 已决定`，Agent 不可自批），committed
 3. DRAFT → DRAFT：validate fail，重派 Sage（≤3，超限升级 Human）
 4. DRAFT → ROLLBACK：scope_overflow（有效 FR > 30，不重派压缩）
 5. LEX_REVIEW → HUMAN_REVIEW：lex.verdict(pass)，validate pass，committed
@@ -59,9 +59,9 @@ sha:
 8. HUMAN_REVIEW → EXIT：human.review(no_comment) 且本轮 lex pass
 9. HUMAN_REVIEW → RESPOND：human.review(comment)
 10. HUMAN_REVIEW → ROLLBACK：Human 裁定需改 story
-11. RESPOND → LEX_REVIEW：Sage 响应 validate pass，committed，新一轮
+11. RESPOND → LEX_REVIEW：Sage 响应 validate pass（决策仍保持 `[ ]`），committed，新一轮
 12. RESPOND → RESPOND：validate fail，重派 Sage（≤3，超限升级 Human）
-13. EXIT → （退出 → M-ACC）：格式终验 pass，stage.exited
+13. EXIT → （退出 → M-ACC）：Lex pass + Human `no_comment` 后先过结构/讨论门禁（决策仍为 `[ ]`）；Runtime 发 `finalize_spec_decisions` 将所有 FR/NFR 原子改为 `[x]`，再过 final-decided 复验，随后 stage.exited
 14. EXIT → DRAFT：格式终验 fail，重派 Sage
 15. ROLLBACK → （回退 M-STORY）：stage.rolled_back，落点 DRAFT（不重复 TRIAGE）
 
@@ -406,11 +406,11 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 采纳 story Q-01 决定并按 Aaron §5.1 细化，区分"空骨架创建"与"Agent outcome 完成"：
 
 - M-START 空骨架创建：不校验。
-- Scribe / Sage outcome 完成：Runtime 立即 validate；不合格 → 不进入评审、走重派。
-- 门禁强制：评审退出校验（M-STORY / M-SPEC / M-ACC）再次 validate，结构不符则阻塞退出；acceptance 的 validate 附加 AC↔FR 双向 trace（FR-0170）。
+- Scribe / Sage outcome 完成：Runtime 立即 validate；不合格 → 不进入评审、走重派。M-SPEC 的 Sage DRAFT/RESPOND 必须为每条 FR/NFR 保留**唯一且未勾选**的 `- [ ] 已决定`；Agent 产出 `[x]` 视为自批并拒绝。
+- 门禁强制：评审退出校验（M-STORY / M-SPEC / M-ACC）再次 validate，结构不符则阻塞退出；acceptance 的 validate 附加 AC↔FR 双向 trace（FR-0170）。M-SPEC 在 Lex pass + Human `no_comment` + discussion-ready 后，由 Runtime 原子执行 `finalize_spec_decisions`（全部 `[ ]→[x]`），再以 `final_decided` 复验，only YES means YES；转换前不允许 `[x]`，转换后不允许 `[ ]`。
 - 独立命令 `trac validate --file <path>`：按对应模板校验文档结构（必备章节 / frontmatter 字段），报告不符项（含位置 `line:N`），可独立运行。
 - 取代 D-16 的 `validate_document` 直通实现。
-- spec 条目格式合同（机器强制，与 `templates/spec.md` 同步）：每条为 `### FR-XXXX 标题` / `### NFR-XXXX 标题`（大写、4 位零填充、ID 唯一；废弃即删除、ID 不复用），其后须具备**勾选的** `- [x] 已决定` 行（only YES means YES——未勾选 `- [ ]` 表示「未决定」，与缺行同样被拒，绝不默认为已决定）、`- **来源**：` 字段；FR 还须 `- **交付入口**：`（NFR 免）。模板 HTML 注释忽略。
+- spec 条目格式合同（机器强制，与 `templates/spec.md` 同步）：每条为 `### FR-XXXX 标题` / `### NFR-XXXX 标题`（大写、4 位零填充、ID 唯一；废弃即删除、ID 不复用），其后须具备**唯一** `- [ ] 已决定` / `- [x] 已决定` checkbox 行、`- **来源**：` 字段；FR 还须 `- **交付入口**：`（NFR 免）。阶段语义：Sage 初稿/响应一律 `[ ]`（未决定）；Lex 与 Human 审核完成后仅 Runtime 可统一改为 `[x]`，final gate 要求全部 `[x]`（only YES means YES）。旧状态格式、缺行、重复 checkbox、Agent 提前 `[x]`、Runtime 终验仍 `[ ]` 均拒绝并报 `line:N`。模板 HTML 注释忽略。
 
 > **gpt [RESOLVED]:** 这与 Story 5.1 的最新 Human 批注冲突：Scribe/Sage 生成完成时文档就必须规范，M-START 不校验，门禁再校验。请区分“创建空骨架”和“Agent outcome 完成”：M-START 套模板但不校验；每次 Scribe/Sage outcome 后 Runtime 立即 validate，不合格走重派；评审退出再 validate；另提供 `trac validate`。Acceptance 当前 AC-1403/1503 也需同步。
 >> **Scribe:** 接受，与 Aaron §5.1 一致。最终合同：(1) M-START 套模板创建骨架、不校验；(2) 每次 Scribe/Sage outcome 完成 → Runtime 立即 validate，不合格 → 不进入评审、走重派；(3) 评审退出门禁再次强制 validate；(4) trac validate 独立。将重写 FR-140/FR-150 区分“骨架创建”与“outcome 完成”，并同步 AC-1403/1503。
