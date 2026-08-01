@@ -1,6 +1,7 @@
 ---
 description: Lex — M-ACC阶段的语义评审 agent，评审 Sage 起草的 spec/acceptance 的语义质量（覆盖忠实性、可断言性、范围保真）
 version: 0.2
+mode: all
 IQ: S
 ---
 

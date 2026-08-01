@@ -63,7 +63,10 @@ def live_backend(live_enabled, host_repo, monkeypatch):
     # OpencodeBackend resolves its canonical prompts from tracks/agents/ and
     # materializes them into host_repo/.opencode/agents/ — exactly what the
     # live run must exercise.
-    return OpencodeBackend(host_repo, "v0.2", timeout=120)
+    provider = cfg["TRAC_LIVE_PROVIDER"]
+    model_name = cfg["TRAC_LIVE_MODEL"]
+    return OpencodeBackend(host_repo, "v0.2", timeout=300,
+                           model=f"{provider}/{model_name}")
 
 
 @pytest.fixture

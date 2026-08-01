@@ -40,10 +40,15 @@ class OpencodeError(Exception):
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
 
-    def __init__(self, repo: Path, version: str, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, repo: Path, version: str, timeout: int = DEFAULT_TIMEOUT,
+                 model: str | None = None):
         self.repo = Path(repo)
         self.version = version
         self.timeout = timeout
+        # Explicit provider/model (e.g. "opencode/deepseek-v4-flash-free") for
+        # the live channel; when None, opencode resolves its own configured
+        # default model (spec §3.1: provider/model by env, ARCH §4a).
+        self.model = model
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
 
     # -- AgentBackend -------------------------------------------------------
@@ -119,6 +124,8 @@ class OpencodeBackend:
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
                "--dir", str(self.repo), "--auto", prompt]
+        if self.model:
+            cmd.extend(["--model", self.model])
         try:
             return subprocess.run(cmd, cwd=self.repo, capture_output=True,
                                   text=True, timeout=self.timeout,

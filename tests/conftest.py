@@ -1,4 +1,5 @@
 """Shared fixtures: tmp host git repo + installed `trac` CLI + event-log query."""
+
 import json
 import os
 import sqlite3
@@ -7,6 +8,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from tests.steps import StepLog
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SUBCOV_DIR = str(Path(__file__).resolve().parent / "_subprocess_coverage")
@@ -27,6 +30,21 @@ def _force_fake_backend(monkeypatch):
 
 
 @pytest.fixture
+def steps(request):
+    """Per-test structured step log (NDJSON). See tests/steps.py.
+
+    Usage::
+
+        steps.step("trac init", returncode=0)
+        ...
+        steps.step("assert awaiting=review", status="fail" if cond else "ok")
+    """
+    log = StepLog(request.node.nodeid, truncate=True)
+    yield log
+    log.close()
+
+
+@pytest.fixture
 def host_repo(tmp_path):
     repo = tmp_path / "host"
     repo.mkdir()
@@ -44,12 +62,10 @@ def host_repo(tmp_path):
 
 
 @pytest.fixture
-def trac(host_repo):
+def trac(host_repo, steps):
     def run(*args, stdin=None, simulate=None):
         env = {
-            k: v
-            for k, v in os.environ.items()
-            if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
+            k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
         }
         # Deterministic channel: fake backend unless the caller opts into live.
         env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
@@ -67,7 +83,7 @@ def trac(host_repo):
         # Invoke the CLI as a module with the SAME interpreter running the
         # tests, so it works regardless of how pytest/coverage is launched and
         # does not depend on a `trac` console-script shim existing on disk.
-        return subprocess.run(
+        proc = subprocess.run(
             [sys.executable, "-m", "tracks.cli.main", *args],
             cwd=host_repo,
             env=env,
@@ -75,6 +91,12 @@ def trac(host_repo):
             capture_output=True,
             text=True,
         )
+        steps.step(
+            "trac " + " ".join(args),
+            status="ok" if proc.returncode == 0 else "fail",
+            returncode=proc.returncode,
+        )
+        return proc
 
     return run
 
@@ -86,8 +108,7 @@ def event_log(host_repo):
         conn = sqlite3.connect(db)
         try:
             rows = conn.execute(
-                "SELECT run_id, seq, type, payload, command_id FROM events "
-                "ORDER BY run_id, seq"
+                "SELECT run_id, seq, type, payload, command_id FROM events ORDER BY run_id, seq"
             ).fetchall()
         finally:
             conn.close()
