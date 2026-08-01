@@ -1,7 +1,7 @@
 ---
 doc: decisions
 status: active
-last_updated: 2026-07-30
+last_updated: 2026-08-01
 ---
 
 # 已决定事项
@@ -156,6 +156,72 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 在 Devon 单元测试通过后，运行质量检测工具（认知复杂度，超长文件、超长方法、重复代码检测），执行重构。
 质量检测工具，特别是认知复杂度，超长文件，越长方法都不针对测试文件
 
+## D-18. 真实外部依赖的三层验证机制（fake 每次跑 / live 周期跑 / milestone 硬门禁）
+
+**问题（用户提出，2026-08-01）**：像真实 opencode、真实 GitHub、真实网络这类**外部依赖**，不应在每次测试跑（慢、需凭据、污染），但**MILESTONE 之前必须至少真实跑一次**，否则 live 通道腐烂而无人察觉。要如何设计，才能既"平时不阻塞"、又"发布前强制验证"？更进一步——tracks 要运行在**宿主项目**时，Archer 必须能**自动为宿主项目也设计出同样的三层机制**，并**只在恰当的时候触发**，而不是靠碰巧。
+
+**业界标准：三层机制（当作测试设计模式固化）**
+
+这是"真实外部依赖"类的通用解法（可复用、可判据化），**机制语义与具体工具解耦**——下方用本项目的 pytest/GitHub 作为具体实例，但宿主项目落地时由 Archer 依据其既定技术栈选择等价工具（测试框架的 exclude/only 过滤、CI 平台的 secrets + tag/cron 触发器、mock 框架等）：
+
+1. **通道隔离**——live 测试标记为独立通道，默认套件排除（本项目：`@pytest.mark.live` + `addopts -m 'not live'`；先例：`performance` marker）。
+2. **环境探测 + skip（不 fail）**——live 测试的 fixture 检查外部凭据/可执行文件是否齐备；缺失则 skip 并输出显式 `LIVE_SKIPPED: missing <X>`（对齐 AC-0105"缺凭据 skip 不 fail"）。
+3. **周期/里程碑 job 强制**——CI 独立 job 只跑 live 通道，**配真凭据**（secrets），触发策略二者其一或兼有：① release/tag 触发（milestone 门禁，job 必须 pass 才能发版，**硬 gate**）；② nightly cron（回归真实通道，防止腐烂）。
+
+**关键纪律**：
+- **skip ≠ silent**：skip 时输出显式 `LIVE_SKIPPED: missing <X>`，milestone 前人工核对"非空跑"（空跑 = live job 全 skip 仍绿，等于没验证）。
+- **fake 是每次、live 是周期**：二者 AC 不重叠；fake 保证日常回归 + 前进性，live 只保证"真实通道不烂"。
+- **单测站岗、live 验证**：`mock` 外部依赖的单测（**不走网络**）每次跑，覆盖分类/边界逻辑；`live` 网络测试只在里程碑/夜间跑。两者互补，单测不能被 live 替代，live 也不能被单测替代。
+
+**判据——何时才需要 live 通道（宿主项目 Archer 据此判定）**：
+
+- **触发模型 = B + A 兜底**：主判据（B）触发——**spec 中出现宿主自身技术栈之外的外部依赖**（外部服务 API、模型 provider、子进程可执行文件、真实网络/凭据握手，或任何"只能由真实环境验证的行为"：权限实际生效、凭据握手、真实产物格式）；辅以（A）Archer 交付 test-plan 时必跑 checklist：**扫描 spec 是否存在外部依赖 → 存在则必须已产出三层机制**，作为强制兜底。
+- **技术栈无关**：opencode、GitHub、pytest 都**不是**触发依据——它们只是本项目宿主的技术栈偶合。判据只看"是否存在超出宿主自身技术栈、仅在真实环境可验证的依赖"。宿主是 python 或非 python、依赖 GitHub 或 GitLab/内部服务，不影响判据成立与否。
+- **方案的生成绑定 Archer 的技术栈决策**：三层机制的**具体实现**（测试框架过滤、CI secrets/tag/cron、mock 框架）由 Archer 依据其之前为宿主定下的技术栈选择，不预设 python/GitHub。
+- 判定在**本质上是 Agent 的主观判断**——高能力 Agent 依据 spec 内容自行判正误，不依赖外部检查器；上述判据是可判定的启发式锚点，不是机械规则。
+- 仅当**确实没有任何外部依赖**（纯本地确定性逻辑）时，才允许跳过 live 通道。
+
+**本项目的落点**：tracks 自己的 live 通道 = `pytest -m live`（`e2e_live/test_live_agent.py` 真实 opencode + `test_github_live_network.py` 真实 GitHub）。`test_github_live.py`（mock urlopen）是"单测站岗"那层，每次跑；新增的 network 测试是"live 验证"那层，里程碑/夜间跑。
+
+**要求 M-DESIGN 固化（细化待 M-DESIGN）**：这条三层机制要在 M-DESIGN 阶段作为**可复用测试设计模式**进入 Archer 的能力——当宿主 spec 出现"宿主技术栈之外的外部依赖"判据，Archer 自动产出（通道隔离 + 环境探测 skip + CI milestone 硬门禁）三件套，实现层依据宿主技术栈选择等价工具，而不是依赖遇到新项目现场想。状态机泛化（StageDef 表驱动）应把"外部依赖 → 该阶段测试计划模板"作为可推导规则绑定，使 O(1) 接入时 live 通道测试也被自动生成。
+
+## D-19. Harness 配置与 Agent 提示词分离；`trac init` 改写 harness 配置
+
+（用户裁定 2026-08-01）Agent 提示词（`tracks/agents/*.md`）保持 **harness 无关**——不含 permission 块、不引用特定 harness 的配置文件名。harness 特定的权限与目录访问控制放在 **harness 自己的项目级配置文件**中，且以 **per-agent** 方式设置（不写全局 `permission`，避免与宿主项目设置冲突）。`trac init`（adoption 阶段）负责改写宿主项目的 harness 配置。
+
+**当前 harness = opencode 时**，`trac init` 改写项目根 `opencode.json` 的 `agent` 节（若已有 opencode.json 则合并，不覆盖宿主既有配置）：
+
+```json
+{
+  "agent": {
+    "Scribe": { "permission": { "external_directory": { "*": "deny", "{env:TMPDIR}tracks/*": "allow" } } },
+    "Sage":   { "permission": { "external_directory": { "*": "deny", "{env:TMPDIR}tracks/*": "allow" } } },
+    "Lex":    { "permission": { "external_directory": { "*": "deny", "{env:TMPDIR}tracks/*": "allow" } } }
+  }
+}
+```
+
+- `external_directory: {"*": "deny", "{env:TMPDIR}tracks/*": "allow"}`——阻断 agent 访问项目 worktree 与 `$TMPDIR/tracks/` 之外的一切目录。`{env:TMPDIR}` 是 opencode 环境变量替换语法；**注意**：`$TMPDIR` 在 macOS 以 `/` 结尾，故 pattern 用 `{env:TMPDIR}tracks/*`（不加额外 `/`）；Linux 上 `$TMPDIR` 可能无尾 `/`，`trac init` 生成配置时应解析并规范化路径（确保有且仅有一个 `/`），或写入字面值。
+- per-agent 设置仅影响 Scribe/Sage/Lex，不干扰宿主项目的其它 agent 或全局配置（spike 已验证）。
+- Runtime 将 command_id 专属临时目录创建在 `$TMPDIR/tracks/trac-{command_id}/` 下。
+
+**Agent 提示词的权限约定**（harness 无关，写在提示词正文中）：
+
+- 读：不限。
+- 写：仅 assignment 指定的目标文档（Scribe = story.md；Sage = story/spec/acceptance；Lex = spec/acceptance via discuss）。
+- bash：不限（harness 层已阻断外部目录；项目内越权写由 Runtime 后置 git 审计检出并撤销）。
+- 临时目录：assignment 提供的 command_id 专属路径。
+
+**换 harness 时**（如将来的 pi）：只需替换配置文件（`opencode.json` → `pi.json` 或等价物），agent 提示词不动。临时目录路径可能需要适配新 harness 的内置放行路径——这是 Runtime 的 harness 适配层职责。
+
+**Spike 依据**（opencode 1.18.1，2026-08-01）：
+
+- 全局 `external_directory: "deny"`（`opencode.json`）对无 permission 块的 agent 生效，同时阻断 read 工具和 bash。但全局设置会影响宿主项目所有 agent，故 tracks 采用 **per-agent** 设置（`agent.Scribe.permission` 等），仅约束 Scribe/Sage/Lex（spike 已验证：per-agent deny 阻断目标 agent，maestro 等不受影响）。
+- agent frontmatter 中的 permission 会覆盖 opencode.json 的 per-agent 配置（如 maestro 的 `external_directory: ask`）。tracks agent 不含 permission 块，故 opencode.json 的 per-agent 设置生效。
+- `$TMPDIR/opencode/*` 是 opencode 内置放行路径，deny 不影响。
+- `mode: subagent` 不能被 `opencode run --agent` 调用（fallback 到默认 agent）；tracks agent 已移除 mode 字段（默认 `all`）。
+- object-style permission pattern 在 **frontmatter** 中可被解析但执行不可靠（`edit` 的 sub-pattern 匹配工具名而非文件路径）；array-style 报配置错误且阻塞所有 agent 发现。但在 **opencode.json** 中，`external_directory` 的 object-style pattern（glob → action）经 spike 验证可靠执行（`{env:TMPDIR}*` 放行 + `*` deny 阻断）。frontmatter 仅用 shorthand `allow/deny`；细粒度目录控制放 opencode.json。
+
 ## 决策日志
 
 | ID   | 决定日期   | 标题                                          | 来源                                                                     |
@@ -176,3 +242,6 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-14 | 2026-07-30 | 产物正确性职责划分：形式校验 vs 语义翻译      | 用户裁定（R2-01）：形式校验归 runtime，语义翻译归 LLM+评审 Agent         |
 | D-15 | 2026-07-30 | runtime 根按 cwd 解析 + 测试隔离              | 用户裁定：测试用临时 repo，不得污染项目 `.tracks/`；可注入 `TRACKS_HOME` |
 | D-16 | 2026-07-30 | v0.1 validate_document 恒 pass                | 用户裁定：v0.1 不加格式校验，判据留 v0.2+，先跑 scaffold                 |
+| D-17 | 2026-07-30 | Devon R-G-R                                  | 用户裁定：Devon 跑质量工具并重构；复杂度不针对测试文件                  |
+| D-18 | 2026-08-01 | 真实外部依赖三层验证机制（fake 每次/live 周期/milestone 硬门禁） | 用户裁定：live 通道不每次跑、里程碑前必跑；B+A 触发（判据为主 + checklist 兜底）；判据技术栈无关、方案绑定 Archer 技术栈；M-DESIGN 固化为可复用测试模式 |
+| D-19 | 2026-08-01 | Harness 配置与 Agent 提示词分离；`trac init` 改写 harness 配置 | 用户裁定：agent .md harness 无关；harness 权限放 harness 配置文件；`trac init` 改写 `opencode.json`（`external_directory: deny` + 允许 `$TMPDIR`）；换 harness 只换配置文件 |

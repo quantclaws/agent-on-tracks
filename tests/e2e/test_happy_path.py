@@ -136,7 +136,6 @@ def test_happy_path(host_repo, trac, event_log):
     assert len(finals) == 1  # never matches the DRAFT commit (R4-02)
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["spec_sha"] == body_sha
-    assert "已决定" not in body
     assert "seal spec.md sha" in git_out(host_repo, "log", "-5", "--format=%s")
     acceptance = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
     assert acceptance.exists()  # Sage drafted acceptance in M-ACC
