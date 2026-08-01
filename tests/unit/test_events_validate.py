@@ -25,13 +25,12 @@ def test_envelope_is_frozen():
 def test_closed_sets_cover_v01_usage():
     for t in ("command.issued", "outcome.received", "verdict.passed",
               "verdict.failed", "story.committed", "spec.committed",
-              "spec.decisions_finalized",
               "human.triage", "human.review", "sage.verdict", "lex.verdict",
               "backlog.recorded", "run.completed", "stage.rolled_back"):
         assert t in EVENT_TYPES
     for k in ("dispatch_agent", "validate_document", "commit_document",
               "write_frontmatter", "record_backlog", "complete_run",
-              "rollback_stage", "finalize_spec_decisions"):
+              "rollback_stage"):
         assert k in COMMAND_KINDS
 
 
@@ -71,19 +70,14 @@ def test_spec_fr_count_gate(tmp_path):
     assert check == "scope_overflow" and "31" in reason
 
 
-def test_spec_decision_checks_are_stage_specific(tmp_path):
+def test_spec_items_need_only_source_and_delivery_metadata(tmp_path):
     p = tmp_path / "spec.md"
     p.write_text(
-        FM + "### FR-0010 标题\n\n- [ ] 已决定\n"
-        "- **来源**：BS\n- **交付入口**：x\n",
+        "---\nspec_id: SPEC-001\ncreated: 2026-01-01\nstatus: draft\nsha:\n---\n\n"
+        "## 功能需求\n\n### FR-0010 标题\n\n"
+        "- **来源**：BS\n- **交付入口**：x\n\n描述\n\n"
+        "## 非功能需求\n\n"
+        "### NFR-0020 标题\n\n- **来源**：BS\n\n描述\n",
         encoding="utf-8",
     )
-    assert validate_document(p, "spec.md", ["draft_undecided"]) is None
-    check, reason = validate_document(p, "spec.md", ["final_decided"])
-    assert check == "final_decided" and "FR-0010" in reason
-
-    p.write_text(p.read_text(encoding="utf-8").replace("[ ]", "[x]"),
-                 encoding="utf-8")
-    assert validate_document(p, "spec.md", ["final_decided"]) is None
-    check, reason = validate_document(p, "spec.md", ["draft_undecided"])
-    assert check == "draft_undecided" and "FR-0010" in reason
+    assert validate_document(p, "spec.md", ["template"]) is None

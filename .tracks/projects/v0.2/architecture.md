@@ -77,7 +77,7 @@ src/tracks/
 |:---|:---|:---|
 | `effects/` | `opencode.py` / `audit.py` 新增，`agents.py` 抽后端协议 | 接入真实 Agent（item 1） |
 | `discuss/` | 新包（model/parser/locate/writer） | inline-discussion（item 2） |
-| `checks/` | `validate.py` 追加 template/discussion_ready/trace/draft_undecided/final_decided | 模板、讨论、trace 与 spec decision 两阶段门禁 |
+| `checks/` | `validate.py` 追加 template/discussion_ready/trace | 模板、讨论与 acceptance trace 门禁 |
 | `templating.py` | 新命名小模块 | 模板接入（item 3） |
 | `kernel/` | 仅 `events.py` 枚举/字段 additive | 收口新 check 与 outcome 字段 |
 | `workflows/` | `review.py` EXIT 守卫追加门禁项（声明式） | 门禁集成 |
@@ -155,12 +155,11 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 | 时机 | 校验 |
 |:---|:---|
 | M-START 空骨架创建 | **不校验** |
-| Scribe/Sage outcome 完成 | Runtime 立即 `validate_document`；M-SPEC 另加 `draft_undecided`，要求 Sage 产出的 FR/NFR 全部保持 `[ ]`；不合格 → 不进入评审、走重派 |
-| M-SPEC 评审退出门禁 | 先以 `[ ]` 跑 template + discussion_ready；Lex/Human 通过后 Runtime 发 `finalize_spec_decisions` 原子改全部 `[ ]→[x]`，再以 `final_decided` 复验，之后才 seal |
-| 其它阶段评审退出门禁 | 强制 `validate_document`（template + discussion_ready），不符阻塞退出 |
+| Scribe/Sage outcome 完成 | Runtime 立即 `validate_document`；结构或 scope 不合格 → 不进入评审、走重派 |
+| M-STORY/M-SPEC/M-ACC 评审退出门禁 | 强制 `validate_document`（template + discussion_ready；acceptance 另自动跑 trace）；只有未 resolved 的 inline-discussion 阻塞退出 |
 | `trac validate --file <path>` | 独立命令，按模板校验结构，报告不符项含 `line:N`，可独立运行 |
 
-`checks/validate.py` 追加 `template`（结构）、`draft_undecided`（Sage draft 全 `[ ]`）、`final_decided`（Runtime finalization 后全 `[x]`）与 `discussion_ready`（调 `discuss` 只读 query --check-ready）。均经既有 `validate_document` → `verdict.*` 事件路径；决定态转换经写前日志 command `finalize_spec_decisions` → `spec.decisions_finalized`，`decide()` 仍只看 State（§1b）。取代 D-16 的 `validate_document` 直通。
+`checks/validate.py` 追加 `template`（结构）、`discussion_ready`（调 `discuss` 只读 query --check-ready）与 acceptance 的 `trace`（AC↔FR 双向覆盖）。均经既有 `validate_document` → `verdict.*` 事件路径；除结构、scope 与 acceptance trace 外，评审退出只由未 resolved 的 inline-discussion 阻塞。
 
 ## 6. 安全与权限模型（baseline + 后置审计）
 
@@ -183,13 +182,10 @@ permission pattern：**默认 deny + 目标文档 allow + command_id 专属临�
 
 ## 8. 事件 / 接口增量（详见 IF-003）
 
-原 v0.2 discuss/agent/template 范围不新增事件类型；扩范围（M-ACC/M-REQ-APPROVAL）及
-M-SPEC decision 两阶段协议新增类型，完整封闭集见 IF-003 §10。所有新增仍为 additive：
+原 v0.2 discuss/agent/template 范围不新增事件类型；扩范围（M-ACC/M-REQ-APPROVAL）新增
+类型，完整封闭集见 IF-003 §10。所有新增仍为 additive：
 
-- `Verdict.check` Literal 追加 `"template"`、`"discussion_ready"`、`"trace"`、
-  `"draft_undecided"`、`"final_decided"`。
-- M-SPEC decision 转换新增 command/event：`finalize_spec_decisions` →
-  `spec.decisions_finalized`；写前日志 + 幂等 reconcile，见 design §0a / IF-003 §10。
+- `Verdict.check` Literal 追加 `"template"`、`"discussion_ready"`、`"trace"`。
 - M-ACC/M-REQ-APPROVAL 新事件/Command/State 见 IF-003 §10a~§10c。
 - `Outcome` / `outcome.received` payload 追加可选字段：`diff_ref`（受控 diff）、`audit_evidence`（越权路径级证据）、`failure_class`（失败矩阵分类）。
 - `Assignment` 追加可选字段以承载模板/skill 注入语义（`template_kind`、`skill`），或由 OpencodeBackend 据 role 从 canonical 文件构造（实现层定）。

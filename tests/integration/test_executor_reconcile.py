@@ -188,25 +188,3 @@ def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
                 if e.type in ("verdict.passed", "verdict.failed")]
     assert len(verdicts) == 1
     assert verdicts[0].type == "verdict.passed"  # token defaulted to "ok", no crash
-
-
-def test_finalize_spec_decisions_is_idempotent_for_reconcile(tmp_path):
-    ex, store, run_id = _setup(tmp_path)
-    spec = ex._doc_path("spec.md")
-    spec.write_text(
-        "---\nspec_id: S\n---\n\n### FR-0010 标题\n\n- [ ] 已决定\n"
-        "- **来源**：BS\n- **交付入口**：x\n",
-        encoding="utf-8",
-    )
-    cmd = Command(kind="finalize_spec_decisions", params={"doc": "spec.md"},
-                  command_id=new_ulid())
-    ex._do_finalize_spec_decisions(cmd, store.state(run_id), None, False)
-    once = spec.read_text(encoding="utf-8")
-    assert "- [x] 已决定" in once and "- [ ] 已决定" not in once
-
-    replay = Command(kind="finalize_spec_decisions", params={"doc": "spec.md"},
-                     command_id=new_ulid())
-    ex._do_finalize_spec_decisions(replay, store.state(run_id), None, True)
-    assert spec.read_text(encoding="utf-8") == once
-    events = [e for e in store.events(run_id) if e.type == "spec.decisions_finalized"]
-    assert [e.payload["converted"] for e in events] == [1, 0]

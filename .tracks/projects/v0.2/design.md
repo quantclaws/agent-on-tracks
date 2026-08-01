@@ -15,29 +15,24 @@
 - 后端 seam 不变：`AgentBackend.act()`（生产 OpencodeBackend / 确定 FakeBackend）；
   M-ACC 评审复用 Lex 真实 agent（FR-0020 已扩容为真实）。
 - FR-150 outcome/退出门禁继续复用 `validate_document`；M-SPEC decision checkbox 采用
-  Aaron 后续裁定的两阶段协议（§0a），M-ACC 在模板门禁上**附加** FR-0170 trace。
+  inline-discussion 门禁协议，M-ACC 在模板门禁上**附加** FR-0170 trace。
 - inline-discussion 旁路（`discuss/`）不变，M-ACC 评审照常可用。
 
 **变更面**：`kernel/machine.py`（新阶段/子状态/事件/reducer/decide 分支）、
 `executor/executor.py`（阶段转移表 + 新 command handler + acceptance.committed）、
-`executor/validate.py`（FR-0170 trace + spec decision 两阶段校验）、`kernel/events.py`（新事件类型登记）、
+`executor/validate.py`（FR-0170 trace + discussion_ready 门禁）、`kernel/events.py`（新事件类型登记）、
 `cli/main.py`（`trac approve` / `trac return`）、新增 `effects/github.py`（FR-0200）。
 
-### 0a. M-SPEC decision checkbox 两阶段协议（Aaron 后续裁定）
+### 0a. M-SPEC / M-ACC inline-discussion 门禁
 
-1. Sage 的 DRAFT/RESPOND 产出必须为每条 FR/NFR 提供唯一 `- [ ] 已决定`；
-   outcome checks=`["template","draft_undecided"]`。Agent 提前输出 `[x]` 是自批，拒绝重派。
-2. Lex pass + Human `no_comment` 后进入 EXIT；先跑
-   `["template","discussion_ready","draft_undecided"]`，确认结构/讨论就绪且仍为未决定态。
-3. Runtime 发写前日志 command `finalize_spec_decisions`，仅将真实 FR/NFR item 内
-   `[ ]→[x]`，结果事件 `spec.decisions_finalized{converted}`；handler 幂等，崩溃重放时已
-   转换文件 converted=0 但仍补结果事件。
-4. reducer 置 `decisions_finalized=True` 并把 `exit_validated=False`，强制第二次
-   `["template","discussion_ready","final_decided"]`；全部 `[x]`（only YES means YES）
-   后才 `write_frontmatter` seal/commit。最终勾选因此发生在 Lex/Human 审核完成之后，
-   不由 Sage/Lex/Human 手工修改。
-5. Human RETURNED 回 M-SPEC 后，Sage 重绘 draft 必须恢复 `[ ]`；FakeBackend 以确定性
-   `[x]→[ ]` 模拟真实 Sage 重绘，生产 Agent 由 `draft_undecided` gate 强制。
+1. Sage 的 DRAFT/RESPOND 产出只需通过对应文档的结构/template 校验；需求决定与
+   异议记录在文档内 inline-discussion，不使用决定 checkbox。
+2. Lex pass + Human `no_comment` 后进入 EXIT，Runtime 执行
+   `["template", "discussion_ready"]`；`discussion_ready` 只读扫描当前文档的讨论线程。
+3. 线程状态为 `resolved` 或文档没有 inline-discussion 时门禁通过；任一 `open` 或
+   `reopened` 线程都阻塞退出，并由既有 review 重派/等待 Human 路径处理。
+4. M-SPEC 与 M-ACC 使用完全相同的退出门禁；acceptance 额外自动执行 AC↔FR 双向
+   trace，但 trace 是 acceptance 的结构一致性约束，不改变 discussion_ready 语义。
 
 ## 1. 阶段转移表（executor 单一事实来源）
 
@@ -254,17 +249,17 @@ attempt 机制，无需新逻辑。
 
 ## 8. 事件 / Command / State 增量汇总
 
-**新事件类型**（events.py 登记）：`spec.decisions_finalized`、`acceptance.committed`、`preview.generated`、
+**新事件类型**（events.py 登记）：`acceptance.committed`、`preview.generated`、
 `human.approval`、`human.return`、`approval.recorded`、`issue.created`（子）、
 `issues.created`（汇总）。
 
-**新 Command kind**：`finalize_spec_decisions`、`generate_preview`、`record_approval`、`create_issues`。
+**新 Command kind**：`generate_preview`、`record_approval`、`create_issues`。
 （`validate_document`/`commit_document`/`write_frontmatter`/`rollback_stage` 复用。）
 
-**新 State 字段**：`decisions_finalized`、`acceptance_committed`、`preview_ready`、`approved`、`returned`、
+**新 State 字段**：`acceptance_committed`、`preview_ready`、`approved`、`returned`、
 `approval_digest`、`approval_actor`、`issues_created`、`return_target`。
 
-**IF-003 §5 check 封闭集**：新增 `trace`、`draft_undecided`、`final_decided`。
+**IF-003 §5 check 封闭集**：新增 `trace`；`discussion_ready` 继续作为 inline-discussion 退出门禁。
 
 ## 9. 实现增量排序（建议）
 

@@ -50,7 +50,7 @@ sha:
 ### SM-03 M-SPEC
 
 1. （进入）→ DRAFT：stage.entered(M-SPEC)（Sage 起草 spec.md，继承 M-STORY review 上下文）
-2. DRAFT → LEX_REVIEW：validate pass（每条 FR/NFR checkbox 必须存在且保持 `- [ ] 已决定`，Agent 不可自批），committed
+2. DRAFT → LEX_REVIEW：validate pass（结构有效且无阻塞性未决 inline-discussion），committed
 3. DRAFT → DRAFT：validate fail，重派 Sage（≤3，超限升级 Human）
 4. DRAFT → ROLLBACK：scope_overflow（有效 FR > 30，不重派压缩）
 5. LEX_REVIEW → HUMAN_REVIEW：lex.verdict(pass)，validate pass，committed
@@ -59,9 +59,9 @@ sha:
 8. HUMAN_REVIEW → EXIT：human.review(no_comment) 且本轮 lex pass
 9. HUMAN_REVIEW → RESPOND：human.review(comment)
 10. HUMAN_REVIEW → ROLLBACK：Human 裁定需改 story
-11. RESPOND → LEX_REVIEW：Sage 响应 validate pass（决策仍保持 `[ ]`），committed，新一轮
+11. RESPOND → LEX_REVIEW：Sage 响应 validate pass（未决 inline-discussion 可继续讨论），committed，新一轮
 12. RESPOND → RESPOND：validate fail，重派 Sage（≤3，超限升级 Human）
-13. EXIT → （退出 → M-ACC）：Lex pass + Human `no_comment` 后先过结构/讨论门禁（决策仍为 `[ ]`）；Runtime 发 `finalize_spec_decisions` 将所有 FR/NFR 原子改为 `[x]`，再过 final-decided 复验，随后 stage.exited
+13. EXIT → （退出 → M-ACC）：Lex pass + Human `no_comment` 后过结构/讨论门禁；仅未 resolved 的 inline-discussion 阻塞退出，随后 stage.exited
 14. EXIT → DRAFT：格式终验 fail，重派 Sage
 15. ROLLBACK → （回退 M-STORY）：stage.rolled_back，落点 DRAFT（不重复 TRIAGE）
 
@@ -103,7 +103,6 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0010 agent 抽象与后端选择
 
-- [x] 已决定 — 测试双通道合同 Aaron 定稿（线程 RESOLVED）
 - **来源**：`BS-01`、`BS-02`
 - **交付入口**：环境变量 `TRAC_AGENT_BACKEND`
 
@@ -121,7 +120,6 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0020 opencode 后端
 
-- [x] 已决定 — 发现路径 + 命名/大小写规则 Aaron spike 已固化（见正文）
 - **来源**：`BS-01`、`BS-10`
 - **交付入口**：无独立入口，依附 FR-0010
 
@@ -152,7 +150,6 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0030 agent 权限白名单与后置审计
 
-- [x] 已决定 — permission spike 已固化；粗粒度纵深防御 + 后置审计（Aaron 定）
 - **来源**：`BS-03`、`BS-11`、`BS-12`
 - **交付入口**：无独立入口，依附 FR-0020
 
@@ -173,7 +170,6 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0040 agent 提示词交付物
 
-- [x] 已决定 — 一致性 = 存在性 + 版本检查（Aaron 定）
 - **来源**：`BS-09`
 - **交付入口**：`trac check deliverables`（pre-commit / CI）
 
@@ -197,7 +193,6 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 
 ### FR-0050 inline-discussion 语法
 
-- [x] 已决定 — 嵌套语义与 @mention 正交语义定稿
 - **来源**：`BS-06`
 - **交付入口**：受控文档内 markdown 讨论线程（经 FR-0080 CLI 写入）
 
@@ -239,7 +234,6 @@ parser 同时接受以下历史/人工写法（解析等价）：
 
 ### FR-0060 讨论线程数据结构
 
-- [x] 已决定 — 无持久化、每次全文扫描重建（Aaron 定）
 - **来源**：`BS-06`、`BS-07`
 - **交付入口**：无独立入口，依附 FR-0080
 
@@ -268,7 +262,6 @@ identity 权威（Aaron 决定）：thread 不做持久化存储，无文档内�
 
 ### FR-0070 4 级降级定位
 
-- [x] 已决定 — 写命令 fail closed + freshness token（louke 方案，Aaron 确认）
 - **来源**：`BS-07`
 - **交付入口**：无独立入口，依附 FR-0080
 
@@ -294,7 +287,6 @@ query（读）可给 best-effort 结果。
 
 ### FR-0080 CLI 命令（trac discuss）
 
-- [x] 已决定 — 5 子命令 + token 合同定稿
 - **来源**：`BS-06`、`BS-08`
 - **交付入口**：`trac discuss` CLI
 
@@ -320,7 +312,6 @@ reply/edit/set-status 须由调用方传 `--token`（query 返回的内容定位
 
 ### FR-0090 状态规则（格式一致性）
 
-- [x] 已决定 — 一致性规则非认证，真实身份随 web 界面（Aaron 定）
 - **来源**：`BS-06`
 - **交付入口**：无独立入口，依附 FR-0080
 
@@ -332,7 +323,6 @@ reply/edit/set-status 须由调用方传 `--token`（query 返回的内容定位
 
 ### FR-0100 门禁集成（check-ready）
 
-- [x] 已决定
 - **来源**：`BS-08`
 - **交付入口**：`trac discuss query --check-ready`
 
@@ -344,7 +334,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0110 写操作语义
 
-- [x] 已决定
 - **来源**：`BS-06`
 - **交付入口**：无独立入口，依附 FR-0080
 
@@ -358,7 +347,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0120 解析边界
 
-- [x] 已决定
 - **来源**：`BS-06`
 - **交付入口**：无独立入口，依附 FR-0080
 
@@ -369,7 +357,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0130 tracks-discuz skill 交付物
 
-- [x] 已决定 — skill 正文由 Runtime 注入调用上下文（Aaron 定简化）
 - **来源**：`BS-09`
 - **交付入口**：`tracks/skills/tracks-discuz/SKILL.md`（Runtime 注入 Sage / Lex 上下文）
 
@@ -389,7 +376,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0140 模板接入 runtime
 
-- [x] 已决定
 - **来源**：`BS-04`
 - **交付入口**：`tracks/templates/*.md`（Runtime M-START 读取）
 
@@ -399,18 +385,17 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0150 格式校验（outcome 即校验 + 门禁 + trac validate）
 
-- [x] 已决定 — Q-01 落点按 Aaron §5.1 定稿
 - **来源**：`BS-05`、story `§5.1`
 - **交付入口**：`trac validate --file <path>`
 
 采纳 story Q-01 决定并按 Aaron §5.1 细化，区分"空骨架创建"与"Agent outcome 完成"：
 
 - M-START 空骨架创建：不校验。
-- Scribe / Sage outcome 完成：Runtime 立即 validate；不合格 → 不进入评审、走重派。M-SPEC 的 Sage DRAFT/RESPOND 必须为每条 FR/NFR 保留**唯一且未勾选**的 `- [ ] 已决定`；Agent 产出 `[x]` 视为自批并拒绝。
-- 门禁强制：评审退出校验（M-STORY / M-SPEC / M-ACC）再次 validate，结构不符则阻塞退出；acceptance 的 validate 附加 AC↔FR 双向 trace（FR-0170）。M-SPEC 在 Lex pass + Human `no_comment` + discussion-ready 后，由 Runtime 原子执行 `finalize_spec_decisions`（全部 `[ ]→[x]`），再以 `final_decided` 复验，only YES means YES；转换前不允许 `[x]`，转换后不允许 `[ ]`。
+- Scribe / Sage outcome 完成：Runtime 立即 validate；不合格 → 不进入评审、走重派。需求决定记录在 inline-discussion 中。
+- 门禁强制：评审退出校验（M-STORY / M-SPEC / M-ACC）再次 validate，结构不符则阻塞退出；acceptance 的 validate 附加 AC↔FR 双向 trace（FR-0170）。三个文档阶段统一使用 `discussion_ready`：只有未 resolved 的 inline-discussion 阻塞退出，resolved 或不存在的讨论不阻塞。
 - 独立命令 `trac validate --file <path>`：按对应模板校验文档结构（必备章节 / frontmatter 字段），报告不符项（含位置 `line:N`），可独立运行。
 - 取代 D-16 的 `validate_document` 直通实现。
-- spec 条目格式合同（机器强制，与 `templates/spec.md` 同步）：每条为 `### FR-XXXX 标题` / `### NFR-XXXX 标题`（大写、4 位零填充、ID 唯一；废弃即删除、ID 不复用），其后须具备**唯一** `- [ ] 已决定` / `- [x] 已决定` checkbox 行、`- **来源**：` 字段；FR 还须 `- **交付入口**：`（NFR 免）。阶段语义：Sage 初稿/响应一律 `[ ]`（未决定）；Lex 与 Human 审核完成后仅 Runtime 可统一改为 `[x]`，final gate 要求全部 `[x]`（only YES means YES）。旧状态格式、缺行、重复 checkbox、Agent 提前 `[x]`、Runtime 终验仍 `[ ]` 均拒绝并报 `line:N`。模板 HTML 注释忽略。
+- spec 条目格式合同（机器强制，与 `templates/spec.md` 同步）：每条为 `### FR-XXXX 标题` / `### NFR-XXXX 标题`（大写、4 位零填充、ID 唯一；废弃即删除、ID 不复用），须具备 `- **来源**：` 字段；FR 还须 `- **交付入口**：`（NFR 免）。决定与异议通过 inline-discussion 记录，模板 HTML 注释忽略；只有未 resolved 的 inline-discussion 才能阻塞评审退出。
 
 > **gpt [RESOLVED]:** 这与 Story 5.1 的最新 Human 批注冲突：Scribe/Sage 生成完成时文档就必须规范，M-START 不校验，门禁再校验。请区分“创建空骨架”和“Agent outcome 完成”：M-START 套模板但不校验；每次 Scribe/Sage outcome 后 Runtime 立即 validate，不合格走重派；评审退出再 validate；另提供 `trac validate`。Acceptance 当前 AC-1403/1503 也需同步。
 >> **Scribe:** 接受，与 Aaron §5.1 一致。最终合同：(1) M-START 套模板创建骨架、不校验；(2) 每次 Scribe/Sage outcome 完成 → Runtime 立即 validate，不合格 → 不进入评审、走重派；(3) 评审退出门禁再次强制 validate；(4) trac validate 独立。将重写 FR-140/FR-150 区分“骨架创建”与“outcome 完成”，并同步 AC-1403/1503。
@@ -418,7 +403,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0160 M-ACC 阶段可达（acceptance 起草与评审闭环）
 
-- [x] 已决定 — M-ACC 纳入 v0.2（Aaron 扩容裁定）；退出边界、回退目标经 Human 评审通过
 - **来源**：`BS-13`
 - **交付入口**：无独立入口，依附 `trac run`（M-SPEC 退出后自动进入）
 
@@ -430,7 +414,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0170 acceptance 双向覆盖校验（AC↔FR trace）
 
-- [x] 已决定 — trace 规则均为硬错误，经 Human 评审通过
 - **来源**：`BS-13`
 - **交付入口**：`trac validate --file acceptance.md`（亦由 M-ACC 逐轮 validate / 退出门禁调用）
 
@@ -443,7 +426,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0180 M-REQ-APPROVAL 阶段可达（需求 baseline 审批门禁）
 
-- [x] 已决定 — M-REQ-APPROVAL 纳入 v0.2（Aaron 扩容裁定，形成完整需求故事）；退出边界、回退目标经 Human 评审通过
 - **来源**：`BS-15`
 - **交付入口**：无独立入口，依附 `trac run`（M-ACC 退出后自动进入）+ Human 批准动作
 
@@ -455,7 +437,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0190 需求 baseline、approval identity 与 freshness
 
-- [x] 已决定 — 经 Human 评审通过；digest 算法与 stale 传播范围（仅阻断下游 vs 同时失效已建 Issues）的具体实现留 design 阶段落地
 - **来源**：`BS-15`
 - **交付入口**：无独立入口，依附 FR-0180
 
@@ -466,7 +447,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0200 spec → GitHub Issues 拆分与 Project 关联
 
-- [x] 已决定 — 经 Human 评审通过；Issues=需求追踪身份，与 v0.4（trace/reach 注册表）的关系待 v0.4 协调；拆分粒度、失败/幂等/reconcile 语义的具体实现留 design 阶段落地
 - **来源**：`BS-16`
 - **交付入口**：无独立入口，依附 FR-0180（APPROVED 后自动触发）
 
@@ -477,7 +457,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### FR-0210 Agent 退出关（统一有序退出门禁）
 
-- [x] 已决定 — Aaron 裁定：越权 = 重派，attempt 上限 3，耗尽后 awaiting_human
 - **来源**：`BS-10`、`BS-11`（整合 FR-0030 / FR-0150 / NFR-0030 的退出时序）
 - **交付入口**：无独立入口，依附 `trac run`（每次 dispatch_agent outcome 处理）
 
@@ -500,21 +479,18 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### NFR-0010 错误信息含行号
 
-- [x] 已决定
 - **来源**：story `§3.3`
 
 当 blockquote 缺 speaker、格式不合法时，错误信息包含 `line:N` 位置信息，便于 IDE 跳转。
 
 ### NFR-0020 解析性能
 
-- [x] 已决定
 - **来源**：story `§3.3`
 
 单文件 < 1MB 的文档，端到端解析时间 < 1 秒。
 
 ### NFR-0030 agent 调用失败处理
 
-- [x] 已决定 — 失败矩阵与产物权威定稿
 - **来源**：`BS-10`
 
 产物权威：目标文件的受控 diff 为权威产物；stdout JSON 仅作执行协议 / 诊断（单一产物来源，避免双重产物）。
@@ -529,7 +505,6 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 ### NFR-0040 集成测试状态机全覆盖
 
-- [x] 已决定 — 经 Human 评审通过；v0.2 覆盖核对用 test-plan 人工清单（机器化 marker 属 v0.3 范围）
 - **来源**：`BS-14`
 
 - fake 通道集成/E2E 测试套件必须完整覆盖「状态与生命周期」SM-01～SM-05 的每个状态与每条转移：每条转移至少被一个测试走到一次。

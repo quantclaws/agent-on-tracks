@@ -66,7 +66,7 @@ def test_draft_pipeline_order():
     assert decide(validated).kind == "commit_document"
 
 
-def test_spec_draft_requires_unchecked_decisions():
+def test_spec_draft_uses_template_validation_only():
     produced = state_of(
         ("stage.entered", {"stage": "M-SPEC"}),
         ("command.issued", {"command": {"kind": "dispatch_agent",
@@ -77,7 +77,7 @@ def test_spec_draft_requires_unchecked_decisions():
     )
     cmd = decide(produced)
     assert cmd.kind == "validate_document"
-    assert cmd.params == {"doc": "spec.md", "checks": ["template", "draft_undecided"]}
+    assert cmd.params == {"doc": "spec.md", "checks": ["template"]}
 
 
 def test_redispatch_carries_failure_evidence():
@@ -178,47 +178,33 @@ def test_exit_gate_failure_blocks_exit():
     assert decide(blocked) is None
 
 
-def _spec_exit_state(*extra):
+def _doc_exit_state(stage, committed_event, *extra):
     return state_of(
-        ("stage.entered", {"stage": "M-SPEC"}),
-        ("spec.committed", {"commit_sha": "c", "spec_sha": "s"}),
+        ("stage.entered", {"stage": stage}),
+        (committed_event, {"commit_sha": "c", "spec_sha": "s",
+                           "acceptance_sha": "a"}),
         ("lex.verdict", {"verdict": "pass"}),
         ("human.review", {"action": "no_comment"}),
         *extra,
     )
 
 
-def test_spec_exit_runtime_finalizes_decisions_then_revalidates():
-    """Only Lex + Human-approved spec decisions are changed [ ] -> [x]."""
-    first = decide(_spec_exit_state())
-    assert first.kind == "validate_document"
-    assert first.params == {
-        "doc": "spec.md",
-        "checks": ["template", "discussion_ready", "draft_undecided"],
-    }
+def test_spec_and_acceptance_exit_use_only_discussion_gate():
+    for stage, event, doc in (
+        ("M-SPEC", "spec.committed", "spec.md"),
+        ("M-ACC", "acceptance.committed", "acceptance.md"),
+    ):
+        first = decide(_doc_exit_state(stage, event))
+        assert first.kind == "validate_document"
+        assert first.params == {"doc": doc,
+                                "checks": ["template", "discussion_ready"]}
 
-    finalize = decide(_spec_exit_state(
-        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
-    ))
-    assert finalize.kind == "finalize_spec_decisions"
-    assert finalize.params == {"doc": "spec.md"}
-
-    final_gate = decide(_spec_exit_state(
-        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
-        ("spec.decisions_finalized", {"converted": 2}),
-    ))
-    assert final_gate.kind == "validate_document"
-    assert final_gate.params == {
-        "doc": "spec.md",
-        "checks": ["template", "discussion_ready", "final_decided"],
-    }
-
-    seal = decide(_spec_exit_state(
-        ("verdict.passed", {"check": "template,discussion_ready,draft_undecided"}),
-        ("spec.decisions_finalized", {"converted": 2}),
-        ("verdict.passed", {"check": "template,discussion_ready,final_decided"}),
-    ))
-    assert seal.kind == "write_frontmatter" and seal.params["doc"] == "spec.md"
+        gated = decide(_doc_exit_state(
+            stage, event,
+            ("verdict.passed", {"check": "template,discussion_ready"}),
+        ))
+        assert gated.kind == "write_frontmatter"
+        assert gated.params["doc"] == doc
 
 
 def test_completed_run_halts():

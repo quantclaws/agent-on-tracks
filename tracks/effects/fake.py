@@ -28,7 +28,6 @@ SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
 ### FR-0010 覆盖 story 目标
 
-- [ ] 已决定 — FakeAgent 确定性草案，待 Lex + Human 评审
 - **来源**：story §目标
 - **交付入口**：无独立入口，依附 story
 
@@ -38,7 +37,6 @@ SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
 ### NFR-0010 确定性输出
 
-- [ ] 已决定
 - **来源**：story §目标
 
 FakeAgent 输出确定、可复现。
@@ -134,7 +132,7 @@ class FakeBackend:
     def _write_spec(self, path: Path, token: str = "ok") -> None:
         if token == "scope_overflow":
             items = "\n".join(
-                f"### FR-{i:04d} 需求 {i}\n\n- [ ] 已决定\n- **来源**：story §目标\n"
+                f"### FR-{i:04d} 需求 {i}\n\n- **来源**：story §目标\n"
                 "- **交付入口**：无独立入口\n" for i in range(1, 32)
             )
             body = (
@@ -148,12 +146,6 @@ class FakeBackend:
             )
             return
         if path.exists():
-            # A RETURNED rollback may reopen a Runtime-finalized spec whose
-            # decisions are all [x]. Real Sage rewrites the draft; Fake mirrors
-            # that transition deterministically by returning them to [ ].
-            text = path.read_text(encoding="utf-8")
-            draft = re.sub(r"(?m)^- \[[xX]\] 已决定\b", "- [ ] 已决定", text)
-            path.write_text(draft, encoding="utf-8")
             return
         path.write_text(
             "---\n"
@@ -177,7 +169,7 @@ class FakeBackend:
         sections = "\n".join(
             f"## {iid} {title}\n\n"
             f"### AC-{iid.replace('-', '')}-01 外部可观察\n\n"
-            f"- [ ] 已确认\n  - 条件：{title or iid} 可在系统外断言\n"
+            f"- 条件：{title or iid} 可在系统外断言\n"
             for iid, title in items
         )
         path.write_text(

@@ -14,14 +14,11 @@ always-on for acceptance.md (not via the checks list, like scope_overflow).
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
 ``### FR-XXXX 标题`` / ``### NFR-XXXX 标题`` (uppercase, 4-digit zero-padded,
-unique ID; obsolete items are deleted, IDs never reused), followed by exactly
-one ``- [ ] 已决定`` / ``- [x] 已决定`` checkbox line, a ``- **来源**：`` field,
-and (for FRs) a ``- **交付入口**：`` field. Draft validation requires every
-checkbox unchecked (Agent cannot self-approve); after Lex + Human review the
-Runtime atomically checks every box and final validation requires ``[x]``
-(only YES means YES). All present FR items count toward FR_LIMIT. Template
-HTML comments are ignored; acceptance level-2 sections vary per FR/NFR so are
-not name-checked.
+unique ID; obsolete items are deleted, IDs never reused), with a
+``- **来源**：`` field and (for FRs) a ``- **交付入口**：`` field. Decisions are
+recorded in inline discussions; only unresolved discussions block review exit.
+All present FR items count toward FR_LIMIT. Template HTML comments are ignored;
+acceptance level-2 sections vary per FR/NFR so are not name-checked.
 """
 from __future__ import annotations
 
@@ -39,9 +36,6 @@ _ITEM_HEAD = re.compile(r"^###\s+((?:N?FR)-\d+)\b(.*)$", re.IGNORECASE)
 _ITEM_OK = re.compile(r"^### (?:FR|NFR)-\d{4} \S")
 # Structure accepts either state. Stage-specific checks enforce that Agent
 # drafts are all unchecked and Runtime-finalized specs are all checked.
-_STATUS = re.compile(r"^- \[( |[xX])\] 已决定\b")
-_UNDECIDED_STATUS = re.compile(r"^- \[ \] 已决定\b")
-_DECIDED_STATUS = re.compile(r"^- \[[xX]\] 已决定\b")
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 # FR-0170 acceptance grammar: '## FR-XXXX' coverage section + '### AC-FRXXXX-YY'
@@ -64,9 +58,8 @@ def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | No
     """Return (check, reason) on the first failure, None when valid.
 
     schema (+ spec scope_overflow) always run (v0.1 D-16 + FR-20); ``checks``
-    adds the v0.2 gates: 'template' (FR-150), 'discussion_ready' (FR-100),
-    'draft_undecided' (Agent draft: every spec item must be '[ ]'), and
-    'final_decided' (Runtime-finalized spec: every item must be '[x]').
+    adds the v0.2 gate 'discussion_ready' (FR-100), which blocks only when
+    inline discussions remain unresolved.
     """
     checks = checks or []
     if not path.exists():
@@ -79,7 +72,6 @@ def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | No
         (_scope_failure, (doc, body)),
         (_trace_failure, (path, doc)),
         (_template_failure, (path, checks)),
-        (_decision_failure, (doc, text, checks)),
         (_discussion_failure, (text, checks)),
     )
     for check, args in steps:
@@ -108,17 +100,6 @@ def _template_failure(path: Path, checks: list):
         return None
     issues = check_template(path)
     return ("template", "; ".join(issues)) if issues else None
-
-
-def _decision_failure(doc: str, text: str, checks: list):
-    if doc != "spec.md":
-        return None
-    for check, decided in (("draft_undecided", False), ("final_decided", True)):
-        if check in checks:
-            issues = check_spec_decisions(text, decided=decided)
-            if issues:
-                return (check, "; ".join(issues))
-    return None
 
 
 def _discussion_failure(text: str, checks: list):
@@ -150,10 +131,6 @@ def _spec_items(text: str) -> list:
         elif cur:
             cur[2].append(line)
     return items
-
-
-def _status_matches(block: list) -> list:
-    return list(filter(None, map(_STATUS.match, block)))
 
 
 def _valid_fr_count(text: str) -> int:
@@ -231,9 +208,9 @@ def check_trace_file(path: Path) -> list:
 def check_spec_items(text: str) -> list:
     """FR-150 spec item lint — the machine-enforced half of the spec format.
 
-    Checks per item: strict heading form, unique ID, a '- [ ] 已决定' /
-    '- [x] 已决定' checkbox line, a '- **来源**：' field, and (for FRs) a
-    '- **交付入口**：' field. Returns ``line:N`` messages.
+    Checks per item: strict heading form, unique ID, a '- **来源**：' field,
+    and (for FRs) a '- **交付入口**：' field. Decisions live in discussions;
+    discussion_ready is checked separately. Returns ``line:N`` messages.
     """
     issues: list = []
     seen: dict = {}
@@ -246,73 +223,12 @@ def check_spec_items(text: str) -> list:
             issues.append(f"line:{line_no} duplicate id {item_id}"
                           f" (first at line:{seen[item_id]})")
         seen.setdefault(item_id, line_no)
-        statuses = _status_matches(block)
-        if not statuses:
-            issues.append(f"line:{line_no} {item_id} missing 已决定 checkbox"
-                          " (require exactly one '- [ ] 已决定' / '- [x] 已决定' line)")
-        elif len(statuses) > 1:
-            issues.append(f"line:{line_no} {item_id} has duplicate 已决定 checkboxes"
-                          " (require exactly one)")
         if not any(ln.startswith("- **来源**：") for ln in block):
             issues.append(f"line:{line_no} {item_id} missing '- **来源**：' field")
         if (item_id.startswith("FR-")
                 and not any(ln.startswith("- **交付入口**：") for ln in block)):
             issues.append(f"line:{line_no} {item_id} missing '- **交付入口**：' field")
     return issues
-
-
-def check_spec_decisions(text: str, *, decided: bool) -> list:
-    """Stage-specific spec decision state; [] = all items match.
-
-    ``decided=False`` is the Sage draft contract: every item is ``[ ]`` and an
-    Agent-produced ``[x]`` is rejected as self-approval. ``decided=True`` is
-    the final contract after Runtime conversion: every item must be ``[x]``.
-    Structural presence/uniqueness remains ``check_spec_items``'s concern.
-    """
-    expected = _DECIDED_STATUS if decided else _UNDECIDED_STATUS
-    want = "- [x] 已决定" if decided else "- [ ] 已决定"
-    state = "decided" if decided else "undecided draft"
-    issues = []
-    for line_no, heading, block in _spec_items(text):
-        item_id = _ITEM_HEAD.match(heading).group(1).upper()
-        if not any(expected.match(line) for line in block):
-            issues.append(f"line:{line_no} {item_id} must be {state} ('{want}')")
-    return issues
-
-
-def _rewrite_spec_decisions(text: str, source: re.Pattern, replacement: str) -> tuple[str, int]:
-    """Rewrite decision lines only inside real FR/NFR item blocks."""
-    lines = text.splitlines(keepends=True)
-    fence = False
-    in_item = False
-    converted = 0
-    for i, line in enumerate(lines):
-        raw = line.rstrip("\r\n")
-        if raw.lstrip().startswith("```"):
-            fence = not fence
-            continue
-        if fence:
-            continue
-        if _ITEM_HEAD.match(raw):
-            in_item = True
-            continue
-        if (heading := _HEADING.match(raw)) and len(heading.group(1)) <= 3:
-            in_item = False
-            continue
-        if in_item and source.match(raw):
-            marker = source.match(raw).group(0)
-            lines[i] = line.replace(marker, replacement, 1)
-            converted += 1
-    return "".join(lines), converted
-
-
-def finalize_spec_decisions(text: str) -> tuple[str, int]:
-    """Runtime: convert item ``[ ]`` to ``[x]`` after Lex + Human approval.
-
-    Fenced code, discussion examples, and unrelated checkboxes remain unchanged.
-    Returns ``(new_text, converted_count)`` and is idempotent for reconcile.
-    """
-    return _rewrite_spec_decisions(text, _UNDECIDED_STATUS, "- [x] 已决定")
 
 
 def _strip_comments(text: str) -> str:

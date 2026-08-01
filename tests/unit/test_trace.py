@@ -11,10 +11,9 @@ from tracks.cli.main import cmd_validate
 from tracks.executor.validate import check_trace, check_trace_file, validate_document
 
 # Spec fixture line numbers (hardcoded ground truth):
-#   line 1  ### FR-0010    line 9  ### NFR-0020
+#   line 1  ### FR-0010    line 8  ### NFR-0020
 SPEC = """### FR-0010 功能甲
 
-- [x] 已决定
 - **来源**：BS-01
 - **交付入口**：trac x
 
@@ -22,7 +21,6 @@ SPEC = """### FR-0010 功能甲
 
 ### NFR-0020 质量乙
 
-- [x] 已决定
 - **来源**：BS-02
 
 描述。
@@ -32,13 +30,10 @@ ACC_FULL = """## FR-0010 功能甲
 
 ### AC-FR0010-01 已覆盖
 
-- [ ] 已确认
-
 ## NFR-0020 质量乙
 
 ### AC-NFR0020-01 已覆盖
 
-- [ ] 已确认
 """
 
 
@@ -49,14 +44,14 @@ def test_full_coverage_passes():
 def test_forward_orphan_missing_section():
     acc = "## FR-0010 功能甲\n\n### AC-FR0010-01 已覆盖\n"
     assert check_trace(SPEC, acc) == [
-        "line:9 NFR-0020 has no '## NFR-0020' section in acceptance"
+        "line:8 NFR-0020 has no '## NFR-0020' section in acceptance"
     ]
 
 
 def test_forward_orphan_section_without_ac():
-    acc = ACC_FULL.replace("### AC-NFR0020-01 已覆盖\n\n- [ ] 已确认\n", "待补。\n")
+    acc = ACC_FULL.replace("### AC-NFR0020-01 已覆盖\n", "待补。\n")
     assert check_trace(SPEC, acc) == [
-        "line:9 NFR-0020 acceptance section has no AC item for it"
+        "line:8 NFR-0020 acceptance section has no AC item for it"
     ]
 
 
@@ -64,13 +59,13 @@ def test_forward_orphan_section_ac_for_other_item_does_not_cover():
     # a section whose only AC back-references another item covers nothing
     acc = ACC_FULL.replace("AC-NFR0020-01", "AC-FR0010-02")
     issues = check_trace(SPEC, acc)
-    assert "line:9 NFR-0020 acceptance section has no AC item for it" in issues
+    assert "line:8 NFR-0020 acceptance section has no AC item for it" in issues
 
 
 def test_reverse_orphan_ac_refers_missing_item():
     acc = ACC_FULL + "\n## FR-0999 幽灵\n\n### AC-FR0999-01 幽灵\n"
     assert check_trace(SPEC, acc) == [
-        "line:15 AC-FR0999-01 refers to missing FR-0999 in spec"
+        "line:12 AC-FR0999-01 refers to missing FR-0999 in spec"
     ]
 
 
@@ -88,7 +83,7 @@ def test_complete_orphan_list_stable_order():
     acc = "## FR-0777 无中生有\n\n### AC-FR0777-01 无中生有\n"
     assert check_trace(SPEC, acc) == [
         "line:1 FR-0010 has no '## FR-0010' section in acceptance",
-        "line:9 NFR-0020 has no '## NFR-0020' section in acceptance",
+            "line:8 NFR-0020 has no '## NFR-0020' section in acceptance",
         "line:3 AC-FR0777-01 refers to missing FR-0777 in spec",
     ]
 
