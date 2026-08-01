@@ -288,3 +288,89 @@ _NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC", "M-ACC": "M-REQ-APPROVAL"
 ### 10g. 冻结记录（原【待冻结】清单，Prism 裁定）
 
 FR-0190：digest 算法 = **D-01**（sha256_hex 固定标签拼接三件套 doc_body_sha）；readonly = **D-02**（逻辑只读：digest 快照 + 入口 stale 校验，不用文件权限）；stale 传播 = **D-03**（仅阻断 M-DESIGN+ 下游，不失效已建 Issues）；preview/approve 一致性 = **C-02**（不符拒绝 approve 并重生 preview）。FR-0200：拆分粒度 = **D-04**（每 FR/每 NFR 各 1 Issue）；Project 指定 = **D-05**（env：GITHUB_TOKEN + TRAC_GITHUB_PROJECT，仅效应边界读）；reconcile = **D-06**（per-item 子事件断点续传 + 汇总幂等）；v0.4 边界 = **D-07**（仅创建 + 记 digest/mapping，无持久注册表）。record_approval 归 **Inc-3 机制**（占位 digest），identity 载荷实算归 Inc-4。裁定原文见 design.md §4~§6 / 本文 §10b 讨论线程。
+
+## 11. 工作流审计与报告接口（FR-0220 / NFR-0050）
+
+### 11a. `trac report`
+
+```text
+trac report --run-id <run-id> --output <dir> [--format md|html] [--serve]
+```
+
+- 命令必须在带 `.git` 的宿主项目中运行；默认从当前 Git 根目录读取 `.tracks/runtime/tracks.db`。
+- `--run-id` 指定唯一 run；若未指定且当前项目有多个 run，命令拒绝猜测并报告可选 run 列表。
+- `report.md` 是规范化报告；`--format html` 额外生成 `index.html` 与固定版本的本地 Markdown renderer 资源，不从 CDN 加载。
+- `--serve`（如提供）只绑定 `127.0.0.1`，服务 `--output` 目录，不提供写接口。
+- 报告生成只读，不写事件、不修改文档、不创建 commit。
+
+### 11b. 报告活动模型
+
+报告生成器把事件折叠为以下展示模型；它不是新的持久化事实源：
+
+```python
+@dataclass(frozen=True)
+class ReportActivity:
+    activity_id: str
+    run_id: str
+    stage: str | None
+    substate: str | None
+    actor: str | None
+    kind: str
+    attempt: int | None
+    started_at: str
+    ended_at: str | None
+    params: dict
+    result: dict
+    audit: dict | None
+    audit_completeness: str  # complete | partial | missing
+    audit_gaps: tuple[dict, ...]
+    artifacts: tuple[dict, ...]
+```
+
+- `command.issued` 是活动开始；同 `command_id` 的 outcome/verdict/commit 是结束或结果。
+- 无结束事件 → `interrupted`/`unknown`。
+- 可变参数与 Agent JSON 使用脱敏 blob ref；生成物使用 commit hash；审计结果保留越权路径与回滚结果。
+- 普通成功 validate 不生成独立 activity；导致重试/阻塞的失败必须进入 `result`。
+- audit blob 写入失败时 `audit_completeness` 为 partial/missing，`audit_gaps` 记录 phase/reason；禁止生成不存在的 blob ref。
+
+### 11c. Agent I/O 捕获接口
+
+```python
+@dataclass(frozen=True)
+class AgentIOEvidence:
+    input_ref: str | None       # 脱敏 canonical Assignment JSON blob
+    output_ref: str | None      # 脱敏完整 stdout JSON/NDJSON blob
+    input_sha256: str | None
+    output_sha256: str | None
+    output_format: str          # json | ndjson | partial | absent
+    completeness: str           # complete | partial | missing
+    gaps: tuple[dict, ...]
+```
+
+数据通路：
+
+1. Executor 在 `command.issued` 前形成 canonical Assignment，先脱敏后写 audit blob；成功则 payload 记录 ref/digest，失败则记录 input gap。
+2. OpencodeBackend 保留 `subprocess.run(..., capture_output=True)` 捕获到的完整 stdout；完成后解析 JSON/NDJSON、脱敏并返回 Runtime。
+3. Runtime 先 best-effort 写 output audit blob，再写小型 `outcome.received`；audit blob 失败不改变原 outcome status，payload 仅记录 gap。
+4. 截断/非法 JSON 分支仍保存可用的脱敏原始部分，`output_format="partial"`，并按既有 failure_class 失败。
+5. Store 必须保证 committed ref 对应 blob 已存在；写 blob 失败时不得提交悬空 ref。
+
+### 11d. Actor 派生规则
+
+| 活动/事件 | actor 来源 | 旧事件回退 |
+|:---|:---|:---|
+| `dispatch_agent` / `outcome.received` | `command.issued.params.role` | `Agent` |
+| `sage.verdict` / `lex.verdict` | 事件类型固定派生 `Sage` / `Lex` | 同左 |
+| `human.approval` | payload `actor` | `Human` |
+| `human.triage` / `human.review` / `human.return` | payload 可选 `actor`；新事件应写入 CLI 的 git user/显式 actor | `Human` |
+| Runtime command、validate/verdict、commit、stage、reconcile | 固定 `Runtime` | 同左 |
+
+报告不得从 `self_report` 或自然语言猜 actor。
+
+### 11e. Commit URL 与 E2E 环境
+
+- GitHub remote `git@github.com:owner/repo.git` 或 HTTPS remote 转换为 `https://github.com/owner/repo/commit/<sha>`。
+- 无法识别 remote 时只显示 hash，并给出 `git show <sha>` 回退语义。
+- tracks 自身 live E2E 要求 `TRACKS_E2E_GITHUB_REPO`；该环境变量只由测试 fixture 读取，普通 `trac report` 忽略它。
+- GitHub token 必须只授权可丢弃测试仓库；fixture 配置唯一预期 remote 和测试分支，结束后通过 `gh` 回读 branch refs，出现非预期分支变化即测试失败。此检查是外部副作用审计，不宣称通用 bash 被 branch 级强制限制。
+- live journey fixture 启动和结束都输出 `host_repo`, `report_dir`, `remote_repo`, `branch` 的绝对/完整标识；本地宿主不由测试主动删除。

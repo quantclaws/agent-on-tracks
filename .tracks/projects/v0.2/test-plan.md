@@ -257,3 +257,78 @@ trac agent archer ci-scan \
 
 > **Prism [RESOLVED]:** Prism 确认（收尾）：TP-003 分层/双通道/ground truth/SM-01~05 转移覆盖清单完整；AC-FR0160-01..05 / FR0170-01..04 / FR0180-01..04 / FR0190-01..03 / FR0200-01..03 / NFR0040-01..03 与 acceptance.md 逐一对应、无悬空引用（AC-1505 类问题已排查）。一个依赖项：§10 SM-05.5「Inc-3 即可测」成立的前提是 IF-003 §10b 把 record_approval 归 Inc-3（见 interfaces.md 对应线程），二者须一并对齐，否则 ISSUES 分支在 Inc-3 不可达。【待冻结】行（FR-0190 stale、FR-0200 Issues/reconcile）随 design D-01~D-07 / C-02 冻结后补测试名。测试计划整体通过。
 >> **Archer:** Archer：确认收尾。依赖项已解除——IF-003 §10b 已按 interfaces T-002 裁定把 record_approval 归 Inc-3 机制（占位 digest），SM-05.5「Inc-3 即可测」成立，§10 该行已注明对齐。原【待冻结】行随 design D-01~D-07 + C-02 冻结已补测试名：FR-0190 → test_digest.py + test_approval_journey.py::test_stale_blocks_downstream / ::test_approve_digest_mismatch_regenerates_preview；FR-0200/SM-05.6 → test_github_effects.py（stand-in 失败 + per-item reconcile 断点续传必含）。另按 design.md T-005 增补两行显式覆盖：SM-05.3a（C-02 digest-mismatch 拒绝并重生 preview）与 SM-05.7a（C-03 非法 to_stage CLI 拒绝不落事件），映射表 AC-FR0190/0200 行同步去除【待冻结】。@Prism 复核后请 RESOLVED。
+
+## 11. 工作流审计报告测试（FR-0220 / NFR-0050）
+
+### 11.1 断言边界
+
+- 报告测试只断言外部可观察的 `report.md`、`index.html`、exit code、Git 工作区和链接输出；不直接依赖报告生成器的内部对象。
+- Runtime event store 是报告的 ground truth；`tests/steps.py` 仍是测试步骤摘要，不作为报告事实来源。
+- Agent JSON 断言脱敏、引用存在和结构字段；不对 Agent 文本内容做固定语义断言。
+
+### 11.2 测试分层
+
+| AC | 测试层 | 计划测试 |
+|:---|:---|:---|
+| AC-FR0220-01 | integration | `test_report.py::test_report_uses_current_git_host_and_db` |
+| AC-FR0220-02 | integration | `test_report.py::test_markdown_contains_timeline_params_audit_retry_and_commits` |
+| AC-FR0220-03 | unit + integration | `test_report.py::test_github_commit_url`、`::test_local_commit_fallback` |
+| AC-FR0220-04 | integration | `test_report.py::test_static_html_uses_pinned_local_renderer_and_escapes_content` |
+| AC-FR0220-05 | integration | `test_report.py::test_report_is_read_only_and_serve_binds_loopback` |
+| AC-NFR0050-01 | unit + integration | `test_report.py::test_unclosed_activity_is_interrupted` |
+| AC-NFR0050-02 | unit | `test_report.py::test_utc_localized_time_and_blob_reference` |
+| AC-NFR0050-03 | unit + integration | `test_report.py::test_sensitive_values_are_redacted` |
+| AC-NFR0050-04 | integration | `test_report.py::test_overreach_rollback_and_retry_chain_are_explained` |
+| AC-NFR0050-05 | unit + integration | `test_report.py::test_audit_blob_failure_marks_gap_without_changing_outcome` |
+| AC-NFR0050-06 | unit | `test_report.py::test_actor_derivation_table` |
+| AC-NFR0060-01 | e2e_live fixture | `test_full_journey.py::test_missing_test_repo_is_configuration_error` |
+| AC-NFR0060-02 | e2e_live | `test_full_journey.py::test_only_expected_remote_branch_changed` |
+| AC-NFR0060-03 | e2e_live | `test_full_journey.py::test_host_and_report_paths_are_printed_and_preserved` |
+| AC-NFR0060-04 | e2e_live | `test_full_journey.py::test_bounded_human_scripted_journey` |
+
+### 11.3 Agent I/O 捕获专项
+
+- 使用 stand-in opencode 输出多条 NDJSON，断言 Runtime 保存全部脱敏记录而非仅 `self_report`；大输出走 blob，小型 outcome 只持 ref/digest。
+- 覆盖 JSON、NDJSON、非法/截断流和 audit blob 写入失败；最后一种情况下业务 outcome 不变、无悬空 ref、报告显示 gap。
+- 输入断言以 canonical Assignment JSON 为准，不要求把固定目标路径等上下文重复写入每个活动。
+- 脱敏 ground truth 使用包含 API key、Authorization header、普通业务参数的固定 fixture，证明敏感字段消失而非敏感字段保留。
+
+## 12. Live E2E 宿主与完整旅程
+
+### 12.1 宿主配置合同
+
+- live E2E 必须读取 `TRACKS_E2E_GITHUB_REPO`；该值为可丢弃的 GitHub 仓库，缺失时报告明确配置错误，不把本地仓库默认为远端。
+- 测试根目录本身创建为 Git 宿主 repo，`.tracks/runtime/tracks.db` 和 commit history 由该宿主提供；测试完成后不得主动删除本地宿主目录。
+- GitHub token 只授权可丢弃测试仓库；测试脚本配置唯一预期 remote/临时分支并传入 Agent/fixture。通用 bash 无法形成 branch 级安全强制，故结束后必须用 `gh` 回读 refs，发现预期分支之外的远端变化即失败并报告。
+- provider/model 凭据缺失沿用 live 通道的 skip 合同；测试宿主 repo 缺失是配置错误，不得以 skip 伪造有效 live 测试。
+- fixture 创建宿主后立即打印 `LIVE_E2E_HOST=<absolute path>`；结束时再次打印 host、report_dir、remote_repo、branch。即使失败/超时也不得主动删除本地宿主。
+
+### 12.2 完整 live 旅程
+
+新增 `tests/e2e_live/test_full_journey.py`，以原始 story seed 作为输入，真实运行可达的需求流程：
+
+```text
+story seed
+→ Scribe story draft
+→ Sage story review / discussion
+→ Scribe response
+→ Sage spec draft
+→ Lex spec review / revise
+→ Sage spec response
+→ Lex pass
+→ Sage acceptance draft
+→ Lex acceptance review
+→ M-REQ-APPROVAL boundary
+→ trac report
+```
+
+- 该测试替换当前 live 通道中仅调用单个 Lex/Agent 的 smoke 作为主要 live workflow 证据；`tests/e2e/test_full_journey.py` 的 fake 全流程保留，继续承担每次 CI 的 deterministic 回归。
+- 旅程的每一轮都通过 Runtime 产生事件和 commit；测试断言审计报告能解释 Agent 输入/输出、discussion、commit、越权审计、失败重派和成功原因。
+- live 测试不固定断言 Agent 生成的自然语言文本；只断言结构、阶段、协议、审计、commit 和最终边界结果。
+- 测试输出 report 目录作为运行结果；不主动删除本地宿主，方便用户在测试结束后执行 `trac report` 或启动静态网页。
+- Human 输入由测试脚本以明确 actor（例如 `LiveE2E-Human`）调用 `trac triage`、`trac review`、`trac approve` 注入；不得等待交互式 Human。
+- 测试标记为独立 opt-in（不进入普通 fake suite）；设置 per-agent timeout、最大 review round 和整条旅程总 timeout。超限即失败，报告最后状态和未收敛 discussion，不无限循环。
+
+### 12.3 现有 live smoke 的保留范围
+
+现有 `test_real_startup_and_json_protocol`、权限、provider error、target diff 等测试保留为低成本 backend contract smoke；`test_lex_review_runs` 不再作为完整流程证据，改为对 Lex reviewer 的 no-change/discussion 语义进行独立验证。

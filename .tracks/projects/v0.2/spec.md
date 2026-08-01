@@ -475,6 +475,18 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - attempt 耗尽 → awaiting_human（升级 Human，携全部 attempt 的失败证据），与 SM-02.5/.8/.12、SM-03.3/.7/.12、SM-04.3/.7/.12 的 validate fail 升级语义同构，复用同一转移。
 - 失败一律不提交、不推进、不写半成品产物事件。
 
+### FR-0220 工作流审计报告（trac report）
+
+- **来源**：flow.md §2、§17；NFR-0050
+- **交付入口**：`trac report --run-id <run-id> --output <dir>`
+
+- `trac report` 必须在带 `.git` 的宿主项目目录中运行，并从当前 Git 根目录读取该项目的 `.tracks/runtime/tracks.db` 与 Git 信息；不得固定读取 tracks 源码仓库的数据库。
+- 报告以 Runtime 事件为事实来源，按 stage/substate/attempt/actor 展示工作流活动的开始与结束、可变参数、Agent JSON 输出引用、审计结果、重试因果链和生成物 commit hash。
+- 生成的 `report.md` 是报告的规范化文本产物；报告同时可生成静态 `index.html`，由本地固定版本的 Markdown renderer 展示，不引入 Web 服务端或第二事实源。
+- commit hash 有可识别的 GitHub remote 时展开为 commit 链接；无 remote 或无法识别时保留 hash，并提供本地 `git show <sha>` 语义的回退信息。
+- `--serve`（如实现）仅在 `127.0.0.1` 启动静态文件服务；不允许把报告目录暴露到所有网络接口。
+- 报告生成只读，不提交、不修改工作区、不改变事件或 Git 历史。
+
 ## 非功能需求
 
 ### NFR-0010 错误信息含行号
@@ -510,3 +522,23 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - fake 通道集成/E2E 测试套件必须完整覆盖「状态与生命周期」SM-01～SM-05 的每个状态与每条转移：每条转移至少被一个测试走到一次。
 - 非 happy path 不得缺席，至少含：validate fail 重派、≤3 超限升级 Human、REJECTED（SM-02.2）、scope_overflow 回退（SM-03.4/SM-03.15）、格式终验 fail（SM-03.14/SM-04.14）、trace 失败（SM-04.3/SM-04.4）、M-REQ-APPROVAL RETURNED 回退（SM-05.7）、approval stale 阻断下游（FR-0190）、GitHub Issues 创建失败/reconcile（FR-0200）、awaiting_human 休眠后事件回放恢复。
 - 覆盖核对：test-plan 维护「转移（SM-XX.N）→ 测试用例」清单，逐条对应、无缺口；清单中的测试必须存在且通过。缺口或失败即合入前检查失败（tracks 自身开发纪律；机器化 trace 工具属 v0.3 范围，不在本版）。
+
+### NFR-0050 工作流审计轨迹
+
+- **来源**：FR-0210、FR-0220、flow.md §2
+
+- 每个需要向 Human 解释的 Runtime 活动都有可配对的开始/结束记录；只有开始没有结束时，报告必须显示为 interrupted/unknown，不得推断成功。
+- 权威时间以 UTC 保存，报告按查看环境本地化显示；elapsed 由开始/结束时间计算，不作为唯一事实存储。
+- Agent 输入以 canonical Assignment JSON 记录；OpencodeBackend 必须捕获 `opencode run --format json` 的完整 stdout JSON/NDJSON 流，解析后脱敏，再通过 content-addressed audit blob 入库。解析失败/截断时仍保存脱敏后的可用部分并标记失败类别。audit blob 写入失败不得阻断正常 outcome：事件记录显式 audit gap，不写悬空引用。
+- 普通成功校验不要求单独显示为工作流节点；但导致重试、回退或升级的失败必须记录检查类别、证据、attempt 和后续动作。
+- 审计必须能解释：Agent 做了什么、生成物由哪个 commit 产生、越权修改了什么、是否回滚、为何重派以及重派为何成功或继续失败。
+- 审计数据写入既有 append-only Runtime event store；测试步骤摘要不是第二事实源。审计记录失败不得改变被审计工作流的结果；报告必须把缺失记录显示为 partial/missing gap，不得把“未记录”解释为“未发生”或“成功”。
+
+### NFR-0060 Live E2E 宿主与远端分支隔离
+
+- **来源**：FR-0220、test-plan §12、flow.md §2
+
+- tracks 自身的 live E2E 必须由用户或 CI 显式提供 `TRACKS_E2E_GITHUB_REPO`，指向可丢弃的 GitHub 测试仓库；缺失该配置时测试不得静默退化为本地假远端。
+- 测试脚本负责创建临时分支并配置唯一预期 remote；测试凭据必须限制在可丢弃测试仓库范围内。单一分支是测试合同而非 bash 安全边界：测试结束后必须审计远端，只允许预期分支发生变化，发现其它分支/remote 副作用即失败并报告。该合同仅适用于 tracks 自身测试，不改变最终用户运行 `trac report` 的宿主仓库语义。
+- live E2E 的本地测试根目录必须是独立 Git 仓库；其中的 `.tracks/runtime/tracks.db` 与 commit 历史是 `trac report` 的数据源。
+- 测试不得主动删除本地临时宿主仓库；测试开始即打印宿主绝对路径，结束时再次打印宿主、报告目录、远端仓库和临时分支。远端临时分支是否清理由测试脚本明确决定并在报告中显示。

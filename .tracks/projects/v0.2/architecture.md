@@ -163,14 +163,14 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 
 ## 6. 安全与权限模型（baseline + 后置审计）
 
-permission pattern：**默认 deny + 目标文档 allow + command_id 专属临时目录 allow**（精确 frontmatter 待目标 opencode spike；Sage 的 `bash` 须收敛到受控 `trac discuss`/`trac validate` 参数，或改由 Runtime 窄工具接口，不得开放 bash 绕过 edit 白名单）。
+项目内 `.opencode/opencode.json` 控制 Agent 的文件系统边界：允许当前项目目录与系统临时目录 `$TMPDIR/tracks`，拒绝其它项目外目录。Agent frontmatter 不再承担目录或工具级 permission 声明；Agent body 只声明本角色可写的业务文档范围。
 
 `audit.py` 后置审计（运行级）：
 
-1. 运行前记录 clean baseline（git status）。
-2. 运行后 git status/diff 独立比对；目标文档 + 本次专属临时目录**之外**的 diff → outcome failed、记录路径级证据、不提交、不推进。
-3. 仅回滚可证明由该 Agent 产生的改动，**绝不覆盖 Human 既有修改**。
-4. 临时目录以 command_id 隔离，终态清理。
+1. Runtime 在 dispatch 前提交或 stash 当前 baseline，并记录 baseline identity。
+2. Agent 使用工具不做 frontmatter 级限制；assignment/body 明确本次角色可写范围：Scribe 仅 story.md；Sage 可写 story/spec/acceptance；Lex 可写 spec/acceptance。读取原则上不限制在项目目录内。
+3. 在 repo 根信任模式下，角色业务范围由 assignment/body 提示词约束；Agent 退出后，Runtime 独立比较 baseline 与工作区 diff，以 `.opencode/opencode.json` 声明的目录边界作为强制审计边界。越出项目目录或 `$TMPDIR/tracks` 的写入即越权，记录路径级证据，通过 Git 撤销 Agent 产生的越权改动，并重派同一任务。
+4. 只回滚可证明由该 Agent 产生的改动，绝不覆盖 baseline 中已有的 Human 修改；系统临时目录 `$TMPDIR/tracks` 按 command_id 隔离。
 
 > Human/Agent 完全串行化推迟到 web 界面（届时 Human 仅经 web 编辑）；v0.2 靠 baseline + 后置审计**检测**越权，不阻止并发人类编辑（Aaron 决定）。
 
@@ -195,8 +195,34 @@ permission pattern：**默认 deny + 目标文档 allow + command_id 专属临�
 
 ## 9. v0.2 有意识简化与 spike-pending
 
-- **spike-pending**（实现前须在目标 opencode 版本验证）：① opencode agent 命名/大小写可发现性（发现路径已定 = `.opencode/agents/<Name>.md`，Aaron）；② permission command-pattern frontmatter 写法（默认 deny + 目标/临时目录 allow，Sage bash 收敛）；③ skill 物化 vs 注入（v0.2 默认注入）。
-- 不做真实 Lex / M-ACC（延后）；不做 opencode `-m`/`--variant`；不做 @mention 通知推送；不做讨论跨文件关联/历史版本化（git 提供）。
+- **spike-pending**（实现前须在目标 opencode 版本验证）：① opencode agent 命名/大小写可发现性（发现路径已定 = `.opencode/agents/<Name>.md`）；② skill 物化 vs 注入（v0.2 默认注入）；③ 项目 `.opencode/opencode.json` 对当前项目与 `$TMPDIR/tracks` 的目录边界验证。
+- M-ACC 与真实 Lex 已纳入本版本；不做 M-DESIGN 及之后阶段；不做 opencode `-m`/`--variant`；不做 @mention 通知推送；不做讨论跨文件关联/历史版本化（git 提供）。
 - discuss 无持久化 ID（全文扫描即时重建），是 Aaron 决定的有意识简化（换取对文档变化的及时跟随），代价是每次操作全文扫描（< 1MB 文档 < 1s，NFR-020）。
 - 交付物一致性 = 存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。
 - Human/Agent 串行化、真实 actor 身份认证：推迟 web 界面。
+
+## 10. 工作流审计轨迹与报告
+
+### 10.1 事实来源
+
+审计报告不创建测试专用日志真相源。Runtime 既有 append-only `events` 表是唯一事实来源；`command.issued` 作为活动开始，关联的 outcome/verdict/commit 事件作为结束或结果。没有结束事件的活动在报告中显示为 `interrupted`/`unknown`。
+
+### 10.2 记录边界
+
+只记录需要 Human 解释的工作流活动：Agent dispatch、Human gate、失败/重试/回退、审计、生成物提交和阶段转移。普通成功 `validate` 不单独显示；导致重试或阻塞的校验失败必须作为 attempt 结果证据记录。Agent 输入/输出和大参数使用脱敏 blob 引用，生成物使用 commit hash。
+
+### 10.2a Agent I/O 数据通路
+
+canonical Assignment 是 Agent 输入事实，随 `command.issued` 记录（固定路径等上下文不重复展开）。OpencodeBackend 已由 subprocess 捕获 stdout；本次将其从“只做 JSON 诊断”扩展为：捕获完整 JSON/NDJSON → 解析 → 统一脱敏 → Runtime 写 content-addressed audit blob → `outcome.received` 仅保存 ref、digest 与结构摘要。失败/截断也保留脱敏可用部分。
+
+audit blob 是 best-effort 辅助证据，不与状态推进使用同一失败域：blob 写入失败时不引用缺失 blob，outcome 仍按业务结果落盘，并附 `audit_completeness="partial"` 与 gap 原因。报告遇到 gap 显式展示，不进行反向推断。
+
+### 10.3 报告生成
+
+`trac report --run-id <run-id> --output <dir>` 从当前 Git 根目录解析 `.tracks/runtime/tracks.db` 和 Git remote，生成规范化 `report.md`；静态 `index.html` 使用固定版本的轻量 Markdown renderer 读取该 Markdown。Renderer 不承担事实推导，报告生成器负责 timeline、retry/audit 因果链和 commit URL。
+
+### 10.4 Live E2E 宿主
+
+tracks 自身 live E2E 要求 `TRACKS_E2E_GITHUB_REPO` 指向可丢弃 GitHub 仓库；测试根目录是本地宿主 Git repo，测试脚本决定临时分支。安全边界是只授权该测试仓库的凭据，而不是声称通用 bash 能被强制限定到单一分支；结束后通过 GitHub/gh 回读审计只有预期分支变化。普通用户运行 `trac report` 不读取该环境变量，仅使用当前宿主 repo。
+
+完整 live journey 是独立 opt-in 测试。测试脚本以测试 actor 注入 triage/review/approval Human 事件，设置每次 Agent timeout、最大 review round 和整条旅程总时限；失败/超时保留宿主目录。测试开始、结束都打印本地宿主、报告、remote 和 branch，解决临时目录不可发现问题。

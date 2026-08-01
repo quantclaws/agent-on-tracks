@@ -516,3 +516,84 @@ sha:
 ### AC-NFR0040-03
 
   - 清单中的测试均存在且通过；清单缺口或测试失败使合入前检查失败
+
+## FR-0220 工作流审计报告（trac report）
+
+### AC-FR0220-01
+
+- [ ] 已确认
+  - 在带 `.git` 且存在 `.tracks/runtime/tracks.db` 的宿主项目中运行 `trac report --run-id <run-id> --output <dir>`，报告读取当前宿主项目的事件与 Git 历史，而不是 tracks 安装目录的数据库
+
+### AC-FR0220-02
+
+- [ ] 已确认
+  - 生成 `report.md`，按工作流节点展示活动开始/结束时间、stage/substate、actor、attempt、可变参数、Agent JSON 输出引用、审计结果、重试因果链和生成物 commit hash
+
+### AC-FR0220-03
+
+- [ ] 已确认
+  - 报告中的 GitHub remote commit hash 展开为 commit 链接；没有可识别 remote 时保留 hash 并给出本地 `git show <sha>` 回退信息
+
+### AC-FR0220-04
+
+- [ ] 已确认
+  - 报告同时生成可由本地 Markdown renderer 展示的静态网页；网页不依赖未固定的外部 CDN，且 Agent JSON、讨论内容和 stderr 不会作为未转义 HTML 执行
+
+### AC-FR0220-05
+
+- [ ] 已确认
+  - `trac report` 生成过程不修改事件、文档、Git 工作区或 commit 历史；`--serve`（如提供）只绑定 `127.0.0.1`
+
+## NFR-0050 工作流审计轨迹
+
+### AC-NFR0050-01
+
+- [ ] 已确认
+  - 对 Agent dispatch、Runtime 结果和生成物提交，报告能将开始与结束记录配对；只有开始记录的中断活动显示 `interrupted` 或 `unknown`，不显示为成功
+
+### AC-NFR0050-02
+
+- [ ] 已确认
+  - 事件以 UTC 保存，报告显示本地化日期时间和由起止时间计算的 elapsed；command.issued 记录脱敏 canonical Assignment JSON；OpencodeBackend 捕获完整 stdout JSON/NDJSON，脱敏后经 audit blob 引用加载
+
+### AC-NFR0050-03
+
+- [ ] 已确认
+  - Agent 输入/输出、失败证据和 audit 结果中的 API key、Authorization、凭据及敏感环境变量被脱敏；报告仍保留足以解释执行结果的非敏感字段
+
+### AC-NFR0050-04
+
+- [ ] 已确认
+  - 对越权写入、回滚、重派、attempt 耗尽和成功重派，报告分别展示越权路径、回滚结果、失败原因、attempt 链和后续结果；普通成功 validate 不产生独立工作流节点
+
+### AC-NFR0050-05
+
+- [ ] 已确认
+  - 模拟 audit blob 写入失败时，工作流 outcome 和状态推进保持原语义；报告显示 `partial`/`missing` audit gap 及失败原因，不产生悬空 blob 引用，也不把缺失记录解释为成功
+
+### AC-NFR0050-06
+
+- [ ] 已确认
+  - 报告 actor 派生符合接口表：Agent dispatch/verdict 来自 role 或事件类型，Human 事件来自 payload actor（旧事件缺失时显示 Human），Runtime command/verdict/commit/stage 事件显示 Runtime
+
+## NFR-0060 Live E2E 宿主与远端分支隔离
+
+### AC-NFR0060-01
+
+- [ ] 已确认
+  - live E2E 缺少 `TRACKS_E2E_GITHUB_REPO` 时以明确配置错误终止，不静默把本地仓库当作远端测试仓库；CI 可通过环境变量提供该值
+
+### AC-NFR0060-02
+
+- [ ] 已确认
+  - live E2E 的测试根目录是独立 Git 仓库，凭据仅授权可丢弃测试仓库；测试脚本配置预期 remote/临时分支，并在结束后验证远端没有预期分支之外的新增或修改；普通最终用户运行 `trac report` 不读取测试环境变量
+
+### AC-NFR0060-03
+
+- [ ] 已确认
+  - live E2E 开始和结束时 stdout 均打印本地宿主绝对路径；完成后本地测试仓库仍可用于生成报告，测试不主动删除，并同时打印报告目录、远端仓库与临时分支
+
+### AC-NFR0060-04
+
+- [ ] 已确认
+  - 完整 live journey 由测试脚本以明确测试 actor 注入 triage、review、approval 等 Human 事件；测试标为独立 opt-in，配置每次 Agent timeout、最大评审轮次和总时限，超限时失败并保留宿主及审计报告
