@@ -8,12 +8,20 @@ fail (AC-0105).
 
 This conftest deliberately OVERRIDES the root ``_force_fake_backend`` autouse
 fixture so the deterministic fake channel cannot hijack the live job.
+
+Working directory: every test gets its own git repo under
+``${TMPDIR}/tracks/live-e2e/`` — never inside the workspace. Provider/model
+config lives in ``.opencode/opencode.json`` (mirroring the project's own
+``.opencode/`` layout), and ``OpencodeBackend`` materializes agents into
+``.opencode/agents/`` under the same root.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -51,31 +59,49 @@ def live_enabled():
 
 
 @pytest.fixture
-def live_backend(live_enabled, host_repo, monkeypatch):
-    """OpencodeBackend wired to a real opencode + the env provider/model.
+def live_root(live_enabled, tmp_path_factory):
+    """A clean, per-test git working root under ${TMPDIR}/tracks/live-e2e/.
 
-    Also exports the provider env to the subprocess so opencode can resolve
-    provider credentials beyond what opencode.json references via {env:...}.
+    Each test gets its own subdirectory (indexed) so runs never collide. The
+    root is a real git repo (the agent's working tree) and hosts the opencode
+    configuration under ``.opencode/opencode.json`` + materialized ``agents/``
+    — mirroring the project's own ``tracks/.opencode/`` layout. Lives under
+    the system temp dir, never inside the workspace.
     """
-    cfg = live_enabled
-    for k, v in cfg.items():
-        monkeypatch.setenv(k, v)
-    # OpencodeBackend resolves its canonical prompts from tracks/agents/ and
-    # materializes them into host_repo/.opencode/agents/ — exactly what the
-    # live run must exercise.
-    provider = cfg["TRAC_LIVE_PROVIDER"]
-    model_name = cfg["TRAC_LIVE_MODEL"]
-    return OpencodeBackend(host_repo, "v0.2", timeout=300,
-                           model=f"{provider}/{model_name}")
+    base = Path(os.environ.get("TMPDIR", "/tmp")) / "tracks" / "live-e2e"
+    base.mkdir(parents=True, exist_ok=True)
+    # Unique per test even under parallel runs.
+    n = 0
+    while True:
+        candidate = base / f"run{n:03d}"
+        try:
+            candidate.mkdir(parents=False)
+            break
+        except FileExistsError:
+            n += 1
+    repo = candidate
+    for args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    (repo / "README.md").write_text("live e2e host\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+    return repo
 
 
 @pytest.fixture
-def host_with_opencode_config(host_repo, live_enabled):
-    """Write opencode.json into the host repo so `opencode run` resolves the
-    provider/model/baseURL. Keys are referenced via {env:...} — never inlined
-    into the repo tree."""
+def host_with_opencode_config(live_root, live_enabled):
+    """Lay down ``.opencode/opencode.json`` in the live root so ``opencode run
+    --dir <root>`` resolves provider/model/baseURL. API key is referenced via
+    ``{env:...}`` — never inlined into the tree. Mirrors the project's own
+    ``.opencode/opencode.json`` structure (config under .opencode/)."""
     cfg = live_enabled
-    (host_repo / "opencode.json").write_text(
+    dot = live_root / ".opencode"
+    dot.mkdir(parents=True, exist_ok=True)
+    (dot / "opencode.json").write_text(
         json.dumps(
             {
                 "$schema": "https://opencode.ai/config.json",
@@ -93,4 +119,19 @@ def host_with_opencode_config(host_repo, live_enabled):
         ),
         encoding="utf-8",
     )
-    return host_repo
+    return live_root
+
+
+@pytest.fixture
+def live_backend(live_root, live_enabled, monkeypatch):
+    """OpencodeBackend wired to a real opencode + the env provider/model.
+
+    Exports the provider env to the subprocess so opencode can resolve provider
+    credentials referenced via ``{env:...}`` in ``.opencode/opencode.json``.
+    """
+    cfg = live_enabled
+    for k, v in cfg.items():
+        monkeypatch.setenv(k, v)
+    provider = cfg["TRAC_LIVE_PROVIDER"]
+    model_name = cfg["TRAC_LIVE_MODEL"]
+    return OpencodeBackend(live_root, "v0.2", timeout=300, model=f"{provider}/{model_name}")

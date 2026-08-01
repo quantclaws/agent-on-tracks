@@ -131,17 +131,19 @@ def test_no_target_diff(fake_opencode, target_doc, host_repo, monkeypatch):
     assert out["failure_class"] == "no_target_diff"
 
 
-def test_over_reach_detected_and_rolled_back(
+def test_in_repo_write_is_allowed_not_over_reach(
         fake_opencode, target_doc, host_repo, monkeypatch):
-    extra = host_repo / "EXTRA.md"
+    """The repo root is trusted (FR-030 sandbox): a run-produced file INSIDE the
+    working tree (tmp/lock/agent scratch) is NOT over-reach, it is accepted."""
+    scratch = host_repo / "agent_scratch.tmp"
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_extra")
     monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
-    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(extra))
+    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(scratch))
     out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc)
-    assert out["status"] == "failed"
-    assert out["failure_class"] == "over_reach"
-    assert "EXTRA.md" in out["audit_evidence"]
-    assert not extra.exists()  # agent-produced over-reach rolled back
+    assert out["status"] == "done"
+    assert "over_reach" not in out.get("failure_class", "")
+    # The agent's in-repo scratch file survives (allowed write).
+    assert scratch.exists()
 
 
 def test_materialize_backs_up_and_restores_human_agent(

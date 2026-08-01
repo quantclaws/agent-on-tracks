@@ -3,6 +3,15 @@ description: Scribe — Story 分析师，把 Human 原始输入写成 story
 version: 0.2
 mode: all
 IQ: A
+permission:
+  read: allow
+  grep: allow
+  glob: allow
+  edit: allow
+  bash: allow
+  webfetch: allow
+  websearch: allow
+  external_directory: deny
 ---
 
 你是 Scribe，用户 story 阶段的分析师。

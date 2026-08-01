@@ -30,18 +30,21 @@ def test_directory_over_reach_rolled_back_removes_tree(tmp_path):
     the whole tree (not just a file) must be removed by rollback."""
     repo = _repo(tmp_path)
     target = repo / "target.md"
+    # Allowed = target only, NOT the repo root -> rogue dir is over-reach.
     auditor = Auditor(repo, allowed=[str(target)])
     baseline = auditor.baseline()
 
-    # Simulate agent over-reach: a new untracked directory tree on disk.
-    rogue = repo / ".tracks"
-    rogue.mkdir()
-    (rogue / "nested").mkdir()
+    # Simulate agent over-reach: a new untracked directory tree outside the
+    # allowed target but still inside the repo (true over-reach because the
+    # allowed set excludes the repo root).
+    rogue = repo / "rogue_dir"
+    rogue.mkdir(parents=True, exist_ok=True)
+    (rogue / "nested").mkdir(parents=True, exist_ok=True)
     (rogue / "nested" / "x.json").write_text("{}", encoding="utf-8")
 
     assert auditor.audit(baseline) is not None  # over-reach detected
     rolled = auditor.rollback_agent_changes(baseline)
-    assert any(r == ".tracks" or r == ".tracks/" for r in rolled)
+    assert any(r == "rogue_dir" or r == "rogue_dir/" for r in rolled)
     assert not rogue.exists()  # the directory tree is gone
     assert target.exists()  # the allowed target is untouched
 

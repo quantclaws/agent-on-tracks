@@ -65,7 +65,11 @@ class OpencodeBackend:
         materialized = self._materialize(name)
         # Allowed write set = target doc + the materialized agent definition
         # (a Runtime artifact, created before baseline so also in the snapshot).
-        auditor = Auditor(self.repo, allowed=[doc_path, materialized["dest"]])
+        # The repo root itself is also allowed so the agent can write temp files,
+        # lock files, or any work-in-progress artifacts inside the sandboxed
+        # working tree (FR-030: coarse-grained frontmatter + post-run audit;
+        # only writes OUTSIDE the repo are true over-reach).
+        auditor = Auditor(self.repo, allowed=[doc_path, materialized["dest"], self.repo])
         baseline = auditor.baseline()
         try:
             prompt = self._prompt(role, substate, doc, doc_path)

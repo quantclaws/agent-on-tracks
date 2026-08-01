@@ -89,7 +89,15 @@ class Auditor:
         return None
 
     def audit(self, baseline: set[str]) -> str | None:
-        """Over-reach evidence (run-produced changes outside allowed) or None."""
+        """Over-reach evidence (run-produced changes outside allowed) or None.
+
+        When ``"."`` is in the allowed set (meaning the entire repo root is
+        trusted), the agent may write anything inside the working tree — only
+        writes that escape the repo are true over-reach (FR-030: coarse-grained
+        frontmatter permission + post-run audit; the sandbox is the repo dir).
+        """
+        if "." in self.allowed:
+            return None
         new_changes = self.modified_files() - baseline
         over = sorted(p for p in new_changes if p not in self.allowed)
         if over:

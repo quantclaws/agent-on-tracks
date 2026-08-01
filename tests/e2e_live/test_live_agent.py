@@ -17,13 +17,12 @@ import subprocess
 
 
 def _ready_spec(repo):
-    """A spec skeleton the Sage agent can legitimately edit."""
+    """A bare spec skeleton the Sage agent must fill in to pass the template
+    check — deliberately incomplete so Sage produces a real diff."""
     p = repo / "spec.md"
     p.write_text(
         "---\nspec_id: SPEC-LIVE\ncreated: 2026-08-01\nstatus: draft\nsha:\n---\n\n"
-        "# LIVE 需求规格\n\n## 功能需求\n\n### FR-0001 示例需求\n\n"
-        "- **来源**：BS-01\n- **交付入口**：trac init\n\n描述。\n\n"
-        "## 非功能需求\n\n### NFR-0001 示例\n\n- **来源**：BS-02\n\n描述。\n",
+        "# 需求规格\n\n<!-- 内容待补充 -->\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "spec.md"], cwd=repo, check=True)
