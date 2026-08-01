@@ -158,7 +158,18 @@ def test_materialize_backs_up_and_restores_human_agent(
     assert human.read_text(encoding="utf-8") == "HUMAN AGENT\n"
 
 
-def test_unknown_role_is_fake_only(fake_opencode, target_doc, host_repo):
-    out = backend(host_repo).act("lex", "LEX_REVIEW", "spec.md", target_doc)
+def test_unknown_role_returns_provider_unavailable(fake_opencode, target_doc, host_repo):
+    out = backend(host_repo).act("unknown_role", "DRAFT", "spec.md", target_doc)
     assert out["status"] == "failed"
     assert out["failure_class"] == "provider_unavailable"
+
+
+def test_lex_edits_target_like_other_agents(fake_opencode, target_doc, host_repo, monkeypatch):
+    """Lex is a real opencode agent (FR-020, Aaron 扩容裁定), same pipeline."""
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    out = backend(host_repo).act("lex", "LEX_REVIEW", "spec.md", target_doc)
+    assert out["status"] == "done"
+    assert "agent edit" in out["diff_ref"]
+    # materialized Lex.md is cleaned up after the run
+    assert not (host_repo / ".opencode" / "agents" / "Lex.md").exists()

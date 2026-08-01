@@ -18,8 +18,10 @@ from pathlib import Path
 
 from tracks.effects.audit import Auditor
 
-# role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a)
-AGENT_NAME = {"scribe": "Scribe", "sage": "Sage"}
+# role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
+# Lex is a real reviewer agent (FR-020, Aaron 扩容裁定): Scribe起草/Sage评审/
+# Lex语义评审 — all three run on opencode (spec FR-020 §2, agents/Lex.md).
+AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex"}
 
 DEFAULT_TIMEOUT = 600  # seconds
 
@@ -50,7 +52,7 @@ class OpencodeBackend:
             doc_path: Path | None) -> dict:
         name = AGENT_NAME.get(role)
         if name is None:
-            # Lex etc. are fake in v0.2; only Scribe/Sage run on opencode.
+            # Unknown role (not Scribe/Sage/Lex) has no opencode agent.
             return {"status": "failed", "artifact_ref": None,
                     "self_report": f"no opencode agent for role {role!r}",
                     "failure_class": "provider_unavailable"}
@@ -196,4 +198,10 @@ class OpencodeBackend:
                         f"仅编辑该目标文档，不要写其它文件。")
             return (f"评审文档：{target}。用 trac discuss 在文档内结构化提出问题，"
                     f"直至收敛；除目标文档外不要写其它文件。")
+        # Lex: semantic reviewer for spec/acceptance (FR-0020, Aaron 扩容裁定).
+        # edit denied（frontmatter edit: deny）；评审意见经 inline-discussion 汇报。
+        if role == "lex":
+            return (f"语义评审文档：{target}。审查 spec/acceptance 的覆盖忠实性、"
+                    f"可断言性与范围保真，用 trac discuss 在文档内结构化提出问题；"
+                    f"不得编辑或写任何文件（frontmatter edit: deny）。")
         return f"处理文档：{target}（role={role}, substate={substate}）。"
