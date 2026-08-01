@@ -15,6 +15,7 @@ Model:
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -110,6 +111,8 @@ class Auditor:
             full = self.repo / p
             if p in tracked_set:
                 _git(self.repo, "checkout", "--", p, check=False)
+            elif full.is_dir():
+                shutil.rmtree(full, ignore_errors=True)
             elif full.exists():
                 full.unlink()
             rolled.append(p)
