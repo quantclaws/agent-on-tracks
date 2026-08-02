@@ -6,18 +6,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+from tests.runtime_resources import RUNTIME_RESOURCE_PATHS
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURRENT_PYTHON = Path(sys.executable).resolve()
-RESOURCE_PATHS = (
-    "agents/Scribe.md",
-    "agents/Sage.md",
-    "agents/Lex.md",
-    "skills/tracks-discuz/SKILL.md",
-    "templates/story.md",
-    "templates/spec.md",
-    "templates/acceptance.md",
-    "assets/marked.min.js",
-)
 
 PROBE = f"""
 import json
@@ -29,7 +21,7 @@ from pathlib import Path
 from tracks.effects.opencode import OpencodeBackend
 import tracks
 
-resource_paths = {RESOURCE_PATHS!r}
+resource_paths = {RUNTIME_RESOURCE_PATHS!r}
 package_root = files("tracks")
 resource_bytes = {{}}
 for resource_path in resource_paths:
@@ -103,7 +95,7 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
 
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
-    assert {f"tracks/{path}" for path in RESOURCE_PATHS} <= names
+    assert {f"tracks/{path}" for path in RUNTIME_RESOURCE_PATHS} <= names
     assert not any(
         name.startswith(("tests/", "e2e_live/", "scenarios/")) for name in names
     )
@@ -144,4 +136,4 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
     tracks_file = Path(result["tracks_file"])
     assert tracks_file.is_relative_to(isolated_venv / "lib")
     assert not tracks_file.is_relative_to(PROJECT_ROOT)
-    assert result["resources"] == sorted(RESOURCE_PATHS)
+    assert result["resources"] == sorted(RUNTIME_RESOURCE_PATHS)

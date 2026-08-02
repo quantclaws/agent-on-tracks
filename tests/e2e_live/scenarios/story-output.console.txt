@@ -1,0 +1,3 @@
+tracks-live-console/v1
+actor=LiveE2E-Human
+answer.output_placement=Print the statistics to CLI stdout so the user sees the result in the command line.

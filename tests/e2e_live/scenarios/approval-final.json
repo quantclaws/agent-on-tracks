@@ -1,0 +1,10 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-REQ-APPROVAL",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 0,
+  "comment_style": "concise",
+  "review_mode": "normal",
+  "required_finding": null,
+  "required_action": "No agent dispatch is expected; complete only the installed Runtime approval boundary."
+}

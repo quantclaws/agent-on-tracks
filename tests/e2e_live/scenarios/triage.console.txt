@@ -1,0 +1,5 @@
+tracks-live-console/v1
+actor=LiveE2E-Human
+answer.surface=Use the CLI as the delivery entry point; do not provide a library API.
+answer.blank_lines=Blank lines do not count as code lines.
+answer.error_behavior=Print errors to stderr and return a non-zero exit code.

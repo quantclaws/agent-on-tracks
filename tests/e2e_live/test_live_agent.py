@@ -41,6 +41,10 @@ def _outcome_ok(out) -> bool:
         "diff_ref",
         "audit_evidence",
         "failure_class",
+        "agent_io",
+        "verdict",
+        "discussion_evidence",
+        "materialization_evidence",
     }
     assert out["status"] in ("done", "failed")
     return out["status"] == "done"
@@ -67,6 +71,7 @@ def test_real_startup_and_json_protocol(host_with_opencode_config, live_backend,
     ok = _outcome_ok(out)
     assert ok, f"real startup should succeed but got {out.get('failure_class')}"
     assert out["diff_ref"], "live run claims done but has no target diff"
+    assert out["agent_io"]["prompt"]
     steps.step("asserted done + target diff present")
 
 

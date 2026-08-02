@@ -1,0 +1,14 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-STORY",
+  "agent": "Scribe",
+  "kind": "RESPOND",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "required_finding": "[FINDING:STORY-OUTPUT-PLACEMENT]",
+  "expected_responder": "Scribe",
+  "adopted_product_slot": "output_placement",
+  "console_file": "story-output.console.txt",
+  "required_action": "Use installed trac discuss to reply to Sage, then revise story.md with the adopted answer."
+}

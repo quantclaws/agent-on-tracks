@@ -1,0 +1,13 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-STORY",
+  "agent": "Sage",
+  "kind": "SAGE_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "required_finding": "[FINDING:STORY-OUTPUT-PLACEMENT]",
+  "finding_condition": "The story has no user-visible output placement.",
+  "expected_responder": "Scribe",
+  "required_action": "Open exactly one concise finding with the required marker; leave it open for Scribe."
+}

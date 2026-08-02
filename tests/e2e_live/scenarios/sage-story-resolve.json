@@ -1,0 +1,12 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-STORY",
+  "agent": "Sage",
+  "kind": "SAGE_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "required_finding": "[FINDING:STORY-OUTPUT-PLACEMENT]",
+  "expected_responder": "Scribe",
+  "required_action": "Re-read the adopted answer, reply if needed, resolve the Sage finding, and pass only when the story is ready."
+}

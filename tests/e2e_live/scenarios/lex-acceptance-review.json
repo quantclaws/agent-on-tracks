@@ -1,0 +1,13 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-ACC",
+  "agent": "Lex",
+  "kind": "LEX_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "expected_responder": "Sage",
+  "required_finding": null,
+  "review_mode": "normal",
+  "required_action": "Run a normal semantic review; do not create a test finding when the acceptance is ready."
+}

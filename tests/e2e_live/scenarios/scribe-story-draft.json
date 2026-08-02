@@ -1,0 +1,14 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-STORY",
+  "agent": "Scribe",
+  "kind": "DRAFT",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "allowed_product_slots": ["output_placement"],
+  "required_finding": "[FINDING:STORY-OUTPUT-PLACEMENT]",
+  "finding_condition": "The story must leave output placement unresolved for Sage review.",
+  "expected_responder": "Sage",
+  "reasonable_default": "Choose ordinary technical details without asking Human."
+}
