@@ -101,6 +101,21 @@ class Store:
         os.replace(tmp, final)
         return sha
 
+    def write_audit_blob(self, payload: dict | list | str) -> str | None:
+        """Best-effort content-addressed evidence write.
+
+        Audit evidence is supplementary: callers must be able to record the
+        business outcome even when the evidence filesystem is unavailable.
+        """
+        try:
+            if isinstance(payload, str):
+                raw = payload.encode("utf-8")
+            else:
+                raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            return self._write_blob(raw)
+        except (OSError, TypeError, ValueError):
+            return None
+
     def load_payload(self, payload: dict) -> dict:
         if set(payload) == {"$ref"}:
             data = (paths.blobs_dir(self.home) / payload["$ref"]).read_bytes()

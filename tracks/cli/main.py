@@ -20,6 +20,7 @@ from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
 from tracks.executor.validate import check_template, check_trace_file
 from tracks.kernel import Command, project
+from tracks.report import generate_report
 from tracks.store import Store, new_ulid
 
 
@@ -369,6 +370,49 @@ def cmd_replay(repo: Path, run_id: str) -> int:
     return 0
 
 
+_REPORT_USAGE = (
+    "usage: trac report --run-id ID --output DIR [--format md|html]"
+)
+
+
+def _parse_report_args(args: tuple[str, ...]) -> tuple[str, str, str] | None:
+    run_id = None
+    output = None
+    report_format = "md"
+    index = 0
+    while index < len(args):
+        flag = args[index]
+        if flag not in ("--run-id", "--output", "--format") or index + 1 >= len(args):
+            return None
+        value = args[index + 1]
+        if flag == "--run-id":
+            run_id = value
+        elif flag == "--output":
+            output = value
+        elif flag == "--format":
+            report_format = value
+        index += 2
+    if not run_id or not output or report_format not in ("md", "html"):
+        return None
+    return run_id, output, report_format
+
+
+def cmd_report(repo: Path, *args: str) -> int:
+    """Generate a read-only Markdown/HTML report for one Runtime run."""
+    parsed = _parse_report_args(args)
+    if parsed is None:
+        return _err(_REPORT_USAGE)
+    run_id, output, report_format = parsed
+    try:
+        report_md, index_html = generate_report(repo, run_id, output)
+    except (RuntimeError, ValueError) as exc:
+        return _err(str(exc))
+    selected = report_md if report_format == "md" else index_html
+    print(f"report: {selected}")
+    print(f"html: {index_html}")
+    return 0
+
+
 def cmd_validate(repo: Path, *args) -> int:
     # FR-150 / AC-1501: `trac validate --file <path>` — standalone template
     # check (also reused by the outcome / exit-gate validation). No lock/state:
@@ -412,6 +456,7 @@ USAGE = (
     "usage: trac init|start <version>|run|triage <decision>"
     "|review <action>|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|status|replay <run-id>|validate --file <path>"
+    "|report --run-id <run-id> --output <dir> [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ...|check deliverables"
 )
 
@@ -426,6 +471,7 @@ _COMMANDS = {
     "return": (cmd_return, None),
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),
+    "report": (cmd_report, None),
     "validate": (cmd_validate, 2),
     "discuss": (cmd_discuss, None),
     "check": (cmd_check, 1),
