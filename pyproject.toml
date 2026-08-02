@@ -30,6 +30,8 @@ include = ["tracks*"]
 
 [tool.setuptools.package-data]
 tracks = [
+    "agents/*.md",
+    "skills/tracks-discuz/*.md",
     "templates/*.md",
     "templates/pre-commit/*.md",
     "templates/pre-commit/*.yaml",
