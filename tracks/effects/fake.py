@@ -85,7 +85,8 @@ class FakeBackend:
         self._calls[key] = n + 1
         return seq[min(n, len(seq) - 1)].strip()
 
-    def act(self, role: str, substate: str, doc: str | None, doc_path: Path | None) -> dict:
+    def act(self, role: str, substate: str, doc: str | None,
+            doc_path: Path | None, assignment: dict | None = None) -> dict:
         if substate == "TRIAGE":
             return {"status": "done", "artifact_ref": None,
                     "self_report": "explored raw requirement"}

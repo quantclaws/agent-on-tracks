@@ -120,7 +120,7 @@ class _StubBackend:
     def __init__(self, outcome):
         self._outcome = outcome
 
-    def act(self, role, substate, doc, doc_path):
+    def act(self, role, substate, doc, doc_path, assignment=None):
         return self._outcome
 
 
@@ -172,6 +172,62 @@ def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
     assert "failure_class" not in payload
     assert "audit_evidence" not in payload
     assert "diff_ref" not in payload
+
+
+def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(tmp_path):
+    """Stage-specific outcomes remain machine-observable in the event log."""
+    ex, store, run_id = _setup(tmp_path)
+    ex.backend = _StubBackend({
+        "status": "done", "artifact_ref": None,
+        "self_report": "triage complete", "discussion_evidence": {"ready": False},
+        "agent_io": {"stdout": "triage", "stderr": "", "stdout_bytes": 6,
+                     "stderr_bytes": 0},
+    })
+    triage_cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "scribe", "substate": "TRIAGE", "doc": "story.md",
+                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        command_id=new_ulid(),
+    )
+    ex._do_dispatch_agent(triage_cmd, store.state(run_id), None, False)
+    triage = [e for e in store.events(run_id) if e.type == "outcome.received"][-1]
+    assert triage.payload["artifact_ref"] is None
+    assert triage.payload["discussion_evidence"]["ready"] is False
+    assert triage.payload["agent_io"]["input_ref"]
+
+    ex.backend = _StubBackend({
+        "status": "done", "artifact_ref": "story.md", "self_report": "draft",
+        "diff_ref": "diff --git a/story.md", "agent_io": {
+            "stdout": "author", "stderr": "", "stdout_bytes": 6, "stderr_bytes": 0,
+        },
+    })
+    author_cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md",
+                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        command_id=new_ulid(),
+    )
+    ex._do_dispatch_agent(author_cmd, store.state(run_id), None, False)
+    author = [e for e in store.events(run_id) if e.type == "outcome.received"][-1]
+    assert author.payload["artifact_ref"] == "story.md"
+    assert author.payload["diff_ref"].startswith("diff --git")
+
+    ex.backend = _StubBackend({
+        "status": "done", "artifact_ref": None, "self_report": "review",
+        "verdict": "revise", "discussion_evidence": {"ready": False},
+    })
+    reviewer_cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "sage", "substate": "SAGE_REVIEW", "doc": "story.md",
+                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        command_id=new_ulid(),
+    )
+    ex._do_dispatch_agent(reviewer_cmd, store.state(run_id), None, False)
+    reviewer = [e for e in store.events(run_id) if e.type == "outcome.received"][-1]
+    assert reviewer.payload["verdict"] == "revise"
+    assert [e for e in store.events(run_id) if e.type == "sage.verdict"][-1].payload[
+        "verdict"
+    ] == "revise"
 
 
 def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):

@@ -181,14 +181,88 @@ def _unmerged_branches(repo: Path) -> list[str]:
     ]
 
 
-def cmd_run(repo: Path) -> int:
+def _human_actor(repo: Path) -> str:
+    return git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
+
+
+def _parse_action_actor(
+    args: tuple[str, ...], usage: str
+) -> tuple[str, str | None] | None:
+    if not args or len(args) > 3 or (len(args) == 3 and args[1] != "--actor"):
+        _err(usage)
+        return None
+    return args[0].replace("-", "_"), args[2] if len(args) == 3 else None
+
+
+def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None]:
+    if len(args) % 2:
+        raise ValueError(
+            "usage: trac run [--assignment-overlay PATH] [--max-dispatches N]"
+        )
+    values = {}
+    for flag, value in zip(args[::2], args[1::2], strict=True):
+        if flag not in ("--assignment-overlay", "--max-dispatches"):
+            raise ValueError(
+                "usage: trac run [--assignment-overlay PATH] [--max-dispatches N]"
+            )
+        if flag in values:
+            raise ValueError(f"{flag} may be specified only once")
+        values[flag] = value
+    return values.get("--assignment-overlay"), _positive_dispatch_limit(
+        values.get("--max-dispatches")
+    )
+
+
+def _positive_dispatch_limit(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("--max-dispatches must be a positive integer") from exc
+    if value < 1:
+        raise ValueError("--max-dispatches must be a positive integer")
+    return value
+
+
+def _read_assignment_overlay(path: str) -> dict:
+    overlay_path = Path(path)
+    try:
+        raw = overlay_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError(f"assignment overlay not found: {path}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"cannot read assignment overlay {path}: {exc}") from exc
+    try:
+        overlay = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid assignment overlay JSON {path}: {exc.msg}") from exc
+    if not isinstance(overlay, dict):
+        raise ValueError("assignment overlay JSON must be an object")
+    return overlay
+
+
+def cmd_run(repo: Path, *args: str) -> int:
+    try:
+        overlay_path, max_dispatches = _parse_run_args(args)
+        assignment_overlay = (
+            _read_assignment_overlay(overlay_path) if overlay_path is not None else None
+        )
+    except ValueError as exc:
+        return _err(str(exc))
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
     if run_id is None:
         return _err("no active run; `trac start <version>` first")
     with writer_lock(home):
-        state = Executor(store, repo, run_id).run_loop()
+        state = Executor(
+            store,
+            repo,
+            run_id,
+            assignment_overlay=assignment_overlay,
+            max_dispatches=max_dispatches,
+        ).run_loop()
     print(
         f"run {run_id}: stage={state.stage} substate={state.substate} "
         f"status={state.status} awaiting={state.awaiting or '-'}"
@@ -196,10 +270,14 @@ def cmd_run(repo: Path) -> int:
     return 0
 
 
-def cmd_triage(repo: Path, decision: str) -> int:
-    decision = decision.replace("-", "_")
+def cmd_triage(repo: Path, *args: str) -> int:
+    usage = "usage: trac triage go|no-go|park [--actor NAME]"
+    parsed = _parse_action_actor(args, usage)
+    if parsed is None:
+        return 1
+    decision, actor = parsed
     if decision not in ("go", "no_go", "park"):
-        return _err("usage: trac triage go|no-go|park")
+        return _err(usage)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
@@ -211,15 +289,22 @@ def cmd_triage(repo: Path, decision: str) -> int:
         state = store.state(run_id)
         if state.awaiting != "triage":
             return _err(f"run not awaiting triage (awaiting={state.awaiting or 'nothing'})")
-        store.append(run_id, state.version, "human.triage", {"decision": decision})
+        store.append(
+            run_id, state.version, "human.triage",
+            {"decision": decision, "actor": actor or _human_actor(repo)},
+        )
     print(f"triage recorded: {decision}")
     return 0
 
 
-def cmd_review(repo: Path, action: str) -> int:
-    action = action.replace("-", "_")
+def cmd_review(repo: Path, *args: str) -> int:
+    usage = "usage: trac review no-comment|revise [--actor NAME]"
+    parsed = _parse_action_actor(args, usage)
+    if parsed is None:
+        return 1
+    action, actor = parsed
     if action not in ("no_comment", "revise"):
-        return _err("usage: trac review no-comment|revise")
+        return _err(usage)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
@@ -230,7 +315,7 @@ def cmd_review(repo: Path, action: str) -> int:
         if state.awaiting != "review":
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
         if action == "no_comment":
-            payload = {"action": "no_comment"}
+            payload = {"action": "no_comment", "actor": actor or _human_actor(repo)}
         else:
             allowed = f".tracks/projects/{state.version}/"
             dirty = [
@@ -250,7 +335,8 @@ def cmd_review(repo: Path, action: str) -> int:
                 git(repo, "commit", "-m",
                     f"HUMAN_REVIEW: human revise ({state.stage})")
                 diff_ref = git(repo, "rev-parse", "HEAD").stdout.strip()
-            payload = {"action": "comment", "diff_ref": diff_ref}
+            payload = {"action": "comment", "diff_ref": diff_ref,
+                       "actor": actor or _human_actor(repo)}
         store.append(run_id, state.version, "human.review", payload)
     print(f"review recorded: {action}")
     return 0
@@ -453,8 +539,9 @@ def cmd_check(repo: Path, *args) -> int:
 
 
 USAGE = (
-    "usage: trac init|start <version>|run|triage <decision>"
-    "|review <action>|approve [--actor NAME]|return --to <stage> --reason TEXT"
+    "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
+    "|triage <decision> [--actor NAME]"
+    "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|status|replay <run-id>|validate --file <path>"
     "|report --run-id <run-id> --output <dir> [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ...|check deliverables"
@@ -464,9 +551,9 @@ USAGE = (
 _COMMANDS = {
     "init": (cmd_init, 0),
     "start": (cmd_start, None),
-    "run": (cmd_run, 0),
-    "triage": (cmd_triage, 1),
-    "review": (cmd_review, 1),
+    "run": (cmd_run, None),
+    "triage": (cmd_triage, None),
+    "review": (cmd_review, None),
     "approve": (cmd_approve, None),
     "return": (cmd_return, None),
     "status": (cmd_status, 0),

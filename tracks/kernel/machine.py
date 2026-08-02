@@ -382,10 +382,25 @@ def project(events: Iterable[EventEnvelope]) -> State:
     return s
 
 
-def _dispatch(role: str, substate: str, objective: str, doc: str | None = None) -> Command:
+def _dispatch(role: str, substate: str, objective: str, doc: str | None = None,
+              stage: str | None = None, attempt: int | None = None,
+              review_round: int | None = None) -> Command:
     params = {"role": role, "substate": substate, "objective": objective}
     if doc:
         params["doc"] = doc
+    if stage:
+        params["stage"] = stage
+    if attempt is not None:
+        params["attempt"] = attempt
+    if review_round is not None:
+        params["review_round"] = review_round
+    assignment = {
+        "kind": substate,
+        "template_kind": doc.removesuffix(".md") if doc else None,
+        "skill": "tracks-discuz",
+        "skill_version": "0.2",
+    }
+    params["assignment"] = assignment
     return Command(kind="dispatch_agent", params=params)
 
 
@@ -407,7 +422,11 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     role, doc = _STAGE_ROLE_DOC[stage]
     committed = getattr(s, _COMMITTED_FLAG[stage])
     if not s.doc_dispatched:
-        cmd = _dispatch(role, sub, f"write {doc}", doc)
+        cmd = _dispatch(
+            role, sub, f"write {doc}", doc,
+            stage=stage, attempt=s.current_attempt + 1,
+            review_round=s.review_round,
+        )
         if s.last_failure:
             cmd.params["evidence"] = dict(s.last_failure)  # FR-11
         if sub == "RESPOND" and s.review_diff_ref:
@@ -461,10 +480,20 @@ def decide(s: State) -> Command | None:
     if sub == "TRIAGE":
         if s.doc_dispatched:
             return None  # awaiting triage (set on outcome.received)
-        return _dispatch("scribe", "TRIAGE", "explore raw requirement")
+        return _dispatch(
+            "scribe", "TRIAGE", "explore raw requirement", "story.md",
+            stage=stage, attempt=s.current_attempt + 1,
+            review_round=s.review_round,
+        )
     if sub in ("SAGE_REVIEW", "LEX_REVIEW"):
         reviewer = "sage" if sub == "SAGE_REVIEW" else "lex"
-        return None if s.reviewer_dispatched else _dispatch(reviewer, sub, f"{reviewer} review")
+        doc = _STAGE_ROLE_DOC[stage][1]
+        return (None if s.reviewer_dispatched
+                else _dispatch(
+                    reviewer, sub, f"{reviewer} review", doc,
+                    stage=stage, attempt=s.current_attempt + 1,
+                    review_round=s.review_round,
+                ))
     if sub == "EXIT":
         return _decide_exit(s, stage)
     return _decide_approval(s, stage, sub)

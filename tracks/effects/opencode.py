@@ -12,10 +12,13 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 from pathlib import Path
 
+from tracks.discuss.gate import check_ready
+from tracks.discuss.parser import parse_threads
 from tracks.effects.audit import Auditor
 
 # role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
@@ -25,16 +28,40 @@ AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex"}
 
 DEFAULT_TIMEOUT = 600  # seconds
 
+_SECRET_VALUE = re.compile(
+    r"(?i)((?:authorization|api[_ -]?key|access[_ -]?token|secret|password)"
+    r"\s*[\"']?\s*[:=]\s*(?:bearer\s+)?[\"']?)([^\s,;\"']+)"
+)
+_ENV_SECRET_VALUE = re.compile(
+    r"(?i)([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)"
+    r"([\"']?\s*=\s*[\"']?)([^\s,;\"']+)"
+)
+
+
+def redact(text: str) -> str:
+    """Redact credential-shaped values before evidence leaves the subprocess."""
+    text = _SECRET_VALUE.sub(r"\1[REDACTED]", text or "")
+    text = _ENV_SECRET_VALUE.sub(r"\1\2[REDACTED]", text)
+    # Providers sometimes print a raw secret without its environment-variable
+    # name. Only replace long values from explicitly secret-shaped variables.
+    for name, value in os.environ.items():
+        if value and len(value) >= 8 and re.search(
+            r"(?i)(?:API_KEY|TOKEN|SECRET|PASSWORD|AUTH)", name
+        ):
+            text = text.replace(value, "[REDACTED]")
+    return text
+
 
 class OpencodeError(Exception):
     """A classified backend failure (failure_class per IF-003 §1a)."""
 
     def __init__(self, failure_class: str, message: str,
-                 exit_code: int | None = None, stderr: str = ""):
+                 exit_code: int | None = None, stderr: str = "", stdout: str = ""):
         super().__init__(message)
         self.failure_class = failure_class
         self.exit_code = exit_code
         self.stderr = stderr
+        self.stdout = stdout
 
 
 class OpencodeBackend:
@@ -54,48 +81,168 @@ class OpencodeBackend:
     # -- AgentBackend -------------------------------------------------------
 
     def act(self, role: str, substate: str, doc: str | None,
-            doc_path: Path | None) -> dict:
+             doc_path: Path | None, assignment: dict | None = None) -> dict:
         name = AGENT_NAME.get(role)
+        prompt = self._prompt(role, substate, doc, doc_path, assignment)
+        console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         if name is None:
-            # Unknown role (not Scribe/Sage/Lex) has no opencode agent.
-            return {"status": "failed", "artifact_ref": None,
-                    "self_report": f"no opencode agent for role {role!r}",
-                    "failure_class": "provider_unavailable"}
+            return self._unknown_role_result(role, prompt, console_input)
 
-        materialized = self._materialize(name)
-        # Allowed write set = target doc + the materialized agent definition
-        # (a Runtime artifact, created before baseline so also in the snapshot).
-        # The repo root itself is also allowed so the agent can write temp files,
-        # lock files, or any work-in-progress artifacts inside the sandboxed
-        # working tree (FR-030: coarse-grained frontmatter + post-run audit;
-        # only writes OUTSIDE the repo are true over-reach).
-        auditor = Auditor(self.repo, allowed=[doc_path, materialized["dest"], self.repo])
-        baseline = auditor.baseline()
+        materialized = None
+        proc = None
+        reviewer_assignment = substate in ("SAGE_REVIEW", "LEX_REVIEW")
         try:
-            prompt = self._prompt(role, substate, doc, doc_path)
+            materialized = self._materialize(name)
+            # The repo root is trusted for agent scratch files; only writes
+            # outside it are over-reach. The target diff remains authoritative.
+            auditor = Auditor(self.repo, allowed=[doc_path, materialized["dest"], self.repo])
+            baseline = auditor.baseline()
             proc = self._run(name, prompt)
             self._check_json(proc)
-            diff_ref = auditor.target_diff(doc_path)
-            if diff_ref is None:
-                raise OpencodeError("no_target_diff",
-                                    "exit 0 but target file has no diff",
-                                    exit_code=0, stderr=proc.stderr)
-            over = auditor.audit(baseline)
-            if over:
-                auditor.rollback_agent_changes(baseline)
-                return {"status": "failed", "artifact_ref": None,
-                        "self_report": "over-reach detected; agent changes rolled back",
-                        "diff_ref": diff_ref, "audit_evidence": over,
-                        "failure_class": "over_reach"}
-            return {"status": "done", "artifact_ref": str(doc_path),
-                    "self_report": f"{name} edited {doc}", "diff_ref": diff_ref}
+            return self._audited_result(
+                auditor, baseline, proc, name, substate, doc_path,
+                prompt, console_input, substate in ("DRAFT", "RESPOND"),
+                reviewer_assignment,
+            )
         except OpencodeError as exc:
-            return {"status": "failed", "artifact_ref": None,
-                    "self_report": str(exc), "failure_class": exc.failure_class}
+            return self._opencode_error_result(
+                exc, proc, prompt, console_input, doc_path, reviewer_assignment,
+            )
+        except OSError as exc:
+            return self._filesystem_error_result(exc, proc, prompt, console_input)
         finally:
+            self._cleanup_materialized(materialized)
+
+    def _unknown_role_result(
+        self, role: str, prompt: str, console_input: str | None
+    ) -> dict:
+        # Unknown role (not Scribe/Sage/Lex) has no opencode agent.
+        return {"status": "failed", "artifact_ref": None,
+                "self_report": f"no opencode agent for role {role!r}",
+                "failure_class": "provider_unavailable",
+                "agent_io": self._capture_io(
+                    None, prompt, console_input,
+                    stderr=f"no opencode agent for role {role!r}",
+                )}
+
+    def _audited_result(
+        self, auditor: Auditor, baseline: set[str], proc: subprocess.CompletedProcess,
+        name: str, substate: str, doc_path: Path | None, prompt: str,
+        console_input: str | None, author_assignment: bool, reviewer_assignment: bool,
+    ) -> dict:
+        diff_ref = auditor.target_diff(doc_path) if doc_path else None
+        if author_assignment and diff_ref is None:
+            raise OpencodeError("no_target_diff", "exit 0 but target file has no diff",
+                                exit_code=0, stderr=proc.stderr)
+        over = auditor.audit(baseline)
+        if over:
+            auditor.rollback_agent_changes(baseline)
+            return self._overreach_result(
+                diff_ref, proc, prompt, console_input, over,
+            )
+        return self._success_result(
+            name, substate, doc_path, diff_ref, proc, prompt, console_input,
+            author_assignment, reviewer_assignment,
+        )
+
+    def _overreach_result(
+        self, diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
+        console_input: str | None, evidence: str,
+    ) -> dict:
+        return {"status": "failed", "artifact_ref": None,
+                "self_report": "over-reach detected; agent changes rolled back",
+                "diff_ref": diff_ref, "audit_evidence": evidence,
+                "failure_class": "over_reach",
+                "agent_io": self._capture_io(proc, prompt, console_input)}
+
+    def _success_result(
+        self, name: str, substate: str, doc_path: Path | None, diff_ref: str | None,
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+        author_assignment: bool, reviewer_assignment: bool,
+    ) -> dict:
+        result = {
+            "status": "done",
+            "artifact_ref": str(doc_path) if author_assignment and doc_path else None,
+            "self_report": f"{name} completed {substate}",
+            "diff_ref": diff_ref,
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
+        return self._enrich_discussion(
+            result, doc_path, substate, reviewer_assignment,
+        )
+
+    @staticmethod
+    def _enrich_discussion(
+        result: dict, doc_path: Path | None, substate: str, reviewer_assignment: bool,
+    ) -> dict:
+        if reviewer_assignment or substate == "TRIAGE":
+            text = doc_path.read_text(encoding="utf-8") if doc_path else ""
+            result["discussion_evidence"] = _discussion_snapshot(text)
+            if reviewer_assignment:
+                ready, _ = check_ready(text)
+                result["verdict"] = "pass" if ready else "revise"
+        return result
+
+    def _opencode_error_result(
+        self, exc: OpencodeError, proc: subprocess.CompletedProcess | None, prompt: str,
+        console_input: str | None, doc_path: Path | None, reviewer_assignment: bool,
+    ) -> dict:
+        result = {"status": "failed", "artifact_ref": None,
+                  "self_report": redact(str(exc)), "failure_class": exc.failure_class}
+        result["agent_io"] = self._capture_io(
+            proc, prompt, console_input, stdout=exc.stdout, stderr=exc.stderr,
+        )
+        return self._enrich_failure_discussion(
+            result, doc_path, reviewer_assignment,
+        )
+
+    @staticmethod
+    def _enrich_failure_discussion(
+        result: dict, doc_path: Path | None, reviewer_assignment: bool,
+    ) -> dict:
+        if doc_path and doc_path.exists() and reviewer_assignment:
+            result["discussion_evidence"] = _discussion_snapshot(
+                doc_path.read_text(encoding="utf-8")
+            )
+        return result
+
+    def _filesystem_error_result(
+        self, exc: OSError, proc: subprocess.CompletedProcess | None, prompt: str,
+        console_input: str | None,
+    ) -> dict:
+        return {
+            "status": "failed", "artifact_ref": None,
+            "self_report": redact(str(exc)), "failure_class": "filesystem",
+            "agent_io": self._capture_io(
+                proc, prompt, console_input, stderr=str(exc),
+            ),
+        }
+
+    def _cleanup_materialized(self, materialized: dict | None) -> None:
+        if materialized is not None:
             self._cleanup(materialized)
 
     # -- materialize / cleanup (ARCH §4c) -----------------------------------
+
+    @staticmethod
+    def _capture_io(proc: subprocess.CompletedProcess | None, prompt: str = "",
+                    console_input: str | None = None, stdout: str = "",
+                    stderr: str = "") -> dict:
+        if proc is not None:
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+        stdout = _text(stdout)
+        stderr = _text(stderr)
+        raw_stdout, raw_stderr = stdout, stderr
+        console = None if console_input is None else _text(console_input)
+        return {
+            "stdout": redact(stdout),
+            "stderr": redact(stderr),
+            "stdout_bytes": len(raw_stdout.encode("utf-8")),
+            "stderr_bytes": len(raw_stderr.encode("utf-8")),
+            "prompt": redact(prompt),
+            "console_input": redact(console) if console is not None else None,
+        }
 
     def _materialize(self, name: str) -> dict:
         """Copy canonical prompt to opencode discovery path; back up any existing
@@ -130,26 +277,39 @@ class OpencodeBackend:
                "--dir", str(self.repo), "--auto", prompt]
         if self.model:
             cmd.extend(["--model", self.model])
+        console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         try:
-            return subprocess.run(cmd, cwd=self.repo, capture_output=True,
-                                  text=True, timeout=self.timeout,
-                                  start_new_session=True)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=self.repo,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         except FileNotFoundError as err:
             raise OpencodeError("opencode_missing",
                                 "opencode executable not found") from err
+        try:
+            stdout, stderr = proc.communicate(input=console_input, timeout=self.timeout)
         except subprocess.TimeoutExpired as exc:
-            self._kill_group(exc)
-            raise OpencodeError("timeout",
-                                f"opencode timed out after {self.timeout}s") from exc
+            self._kill_group(proc.pid)
+            stdout, stderr = proc.communicate()
+            raise OpencodeError(
+                "timeout",
+                f"opencode timed out after {self.timeout}s",
+                stdout=stdout or exc.stdout or "",
+                stderr=stderr or exc.stderr or "",
+            ) from exc
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     @staticmethod
-    def _kill_group(exc: subprocess.TimeoutExpired) -> None:
+    def _kill_group(pid: int) -> None:
         # start_new_session=True -> the child leads its own process group.
-        # Best-effort: subprocess.run already killed the direct child on timeout.
         with contextlib.suppress(ProcessLookupError, PermissionError, TypeError,
                                  OSError):
-            os.killpg(os.getpgid(exc.cmd[0] if isinstance(exc.cmd, list) else 0),
-                      signal.SIGKILL)
+            os.killpg(pid, signal.SIGKILL)
 
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
         """Classify the exit; JSON is diagnostic-only (product = target diff)."""
@@ -198,21 +358,70 @@ class OpencodeBackend:
     # -- prompt construction ------------------------------------------------
 
     def _prompt(self, role: str, substate: str, doc: str | None,
-                doc_path: Path | None) -> str:
+                doc_path: Path | None, assignment: dict | None = None) -> str:
         target = str(doc_path) if doc_path else (doc or "")
-        if role == "scribe":
-            return (f"撰写/修订 story 文档：{target}。按你的职责与 story 模板完成，"
-                    f"仅编辑该目标文档，不要写其它文件。")
-        if role == "sage":
-            if substate in ("DRAFT", "RESPOND"):
-                return (f"起草 spec 文档：{target}。按你的职责与 spec 模板完成，"
-                        f"仅编辑该目标文档，不要写其它文件。")
-            return (f"评审文档：{target}。用 trac discuss 在文档内结构化提出问题，"
-                    f"直至收敛；除目标文档外不要写其它文件。")
-        # Lex: semantic reviewer for spec/acceptance (FR-0020, Aaron 扩容裁定).
-        # edit denied（frontmatter edit: deny）；评审意见经 inline-discussion 汇报。
-        if role == "lex":
-            return (f"语义评审文档：{target}。审查 spec/acceptance 的覆盖忠实性、"
-                    f"可断言性与范围保真，用 trac discuss 在文档内结构化提出问题；"
-                    f"不得编辑或写任何文件（frontmatter edit: deny）。")
-        return f"处理文档：{target}（role={role}, substate={substate}）。"
+        assignment_context = self._assignment_context(assignment)
+        return (
+            f"Execute the Runtime assignment for role={role}, substate={substate}, "
+            f"target={target}. Follow the materialized opencode agent definition for your "
+            "role and treat the injected assignment, template, and skill "
+            "as authoritative runtime context. Complete only this assignment, then stop."
+            + assignment_context
+        )
+
+    def _assignment_context(self, assignment: dict | None) -> str:
+        if not assignment:
+            return ""
+        parts = [
+            "\n\n## Runtime assignment context",
+            "以下 JSON 是 Runtime 事实，不是 Human 决定，也不能被 Agent 修改：",
+            json.dumps(assignment, ensure_ascii=False, sort_keys=True),
+        ]
+        template_kind = assignment.get("template_kind")
+        if template_kind:
+            template = self._canonical.parent / "templates" / f"{template_kind}.md"
+            parts.extend(["\n## Injected template", self._read_context(template)])
+        if assignment.get("skill") == "tracks-discuz":
+            skill = self._canonical.parent / "skills" / "tracks-discuz" / "SKILL.md"
+            parts.extend(["\n## Injected tracks-discuz skill", self._read_context(skill)])
+        return "\n".join(parts)
+
+    @staticmethod
+    def _read_context(path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"[Runtime context unavailable: {path.name}: {exc}]"
+
+
+def _text(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
+def _discussion_snapshot(text: str) -> dict:
+    ready, blockers = check_ready(text)
+
+    def comment(node):
+        return {
+            "speaker": node.speaker,
+            "body": node.body,
+            "depth": node.depth,
+            "children": [comment(child) for child in node.children],
+        }
+
+    return {
+        "ready": ready,
+        "blockers": list(blockers),
+        "threads": [
+            {
+                "thread_id": thread.thread_id,
+                "initiator": thread.initiator,
+                "status": thread.status,
+                "reply_count": thread.reply_count,
+                "root": comment(thread.root),
+            }
+            for thread in parse_threads(text)
+        ],
+    }

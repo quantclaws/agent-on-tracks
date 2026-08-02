@@ -23,6 +23,6 @@ class AgentBackend(Protocol):
     """
 
     def act(self, role: str, substate: str, doc: str | None,
-            doc_path: Path | None) -> dict:
+            doc_path: Path | None, assignment: dict | None = None) -> dict:
         """Execute the agent's work for one dispatch; return the Outcome dict."""
         ...

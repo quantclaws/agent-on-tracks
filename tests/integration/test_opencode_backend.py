@@ -12,6 +12,7 @@ import subprocess
 
 import pytest
 
+from tracks.discuss import writer
 from tracks.effects.opencode import OpencodeBackend
 
 STANDIN = '''#!/usr/bin/env python3
@@ -131,6 +132,37 @@ def test_no_target_diff(fake_opencode, target_doc, host_repo, monkeypatch):
     assert out["failure_class"] == "no_target_diff"
 
 
+def test_triage_does_not_require_target_diff(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("scribe", "TRIAGE", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out["diff_ref"] is None
+
+
+def test_reviewer_without_questions_passes_without_target_diff(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out["verdict"] == "pass"
+    assert out["diff_ref"] is None
+
+
+def test_reviewer_open_discussion_requests_revision(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    text = target_doc.read_text(encoding="utf-8")
+    target_doc.write_text(writer.start(text, 5, "Sage", "Which output policy?"),
+                          encoding="utf-8")
+    subprocess.run(["git", "add", "story.md"], cwd=host_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "add open discussion"], cwd=host_repo,
+                   check=True, capture_output=True)
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out["verdict"] == "revise"
+
+
 def test_in_repo_write_is_allowed_not_over_reach(
         fake_opencode, target_doc, host_repo, monkeypatch):
     """The repo root is trusted (FR-030 sandbox): a run-produced file INSIDE the
@@ -158,6 +190,31 @@ def test_materialize_backs_up_and_restores_human_agent(
     assert out["status"] == "done"
     # Human's pre-existing agent is restored, not clobbered (ARCH §4c)
     assert human.read_text(encoding="utf-8") == "HUMAN AGENT\n"
+
+
+def test_console_input_is_forwarded_only_when_explicitly_configured(host_repo, monkeypatch):
+    """A normal backend call does not invent Human input for the Agent."""
+    seen = []
+
+    class Process:
+        pid = 123
+        returncode = 0
+
+        def communicate(self, input, timeout):
+            seen.append(input)
+            return "{}", ""
+
+    monkeypatch.setattr(
+        "tracks.effects.opencode.subprocess.Popen",
+        lambda *args, **kwargs: Process(),
+    )
+    monkeypatch.delenv("TRAC_AGENT_CONSOLE_INPUT", raising=False)
+    backend(host_repo)._run("Sage", "normal trac assignment")
+    assert seen == [None]
+
+    monkeypatch.setenv("TRAC_AGENT_CONSOLE_INPUT", "actor=Test-Actor\nanswer=CLI")
+    backend(host_repo)._run("Sage", "explicit console assignment")
+    assert seen[-1] == "actor=Test-Actor\nanswer=CLI"
 
 
 def test_unknown_role_returns_provider_unavailable(fake_opencode, target_doc, host_repo):

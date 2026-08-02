@@ -30,5 +30,6 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
         return FakeBackend(repo, version)
     if kind == "opencode":
         from tracks.effects.opencode import OpencodeBackend
-        return OpencodeBackend(repo, version)
+        timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "600"))
+        return OpencodeBackend(repo, version, timeout=timeout)
     raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")

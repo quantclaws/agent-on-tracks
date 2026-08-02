@@ -63,7 +63,12 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     revise_sha = git_out(host_repo, "rev-parse", "HEAD").strip()
     assert "human revise" in git_out(host_repo, "log", "-1", "--format=%s")
     reviews = [e for e in event_log() if e["type"] == "human.review"]
-    assert reviews[-1]["payload"] == {"action": "comment", "diff_ref": revise_sha}
+    review_payload = reviews[-1]["payload"]
+    assert review_payload["action"] == "comment"
+    assert review_payload["diff_ref"] == revise_sha
+    assert review_payload["actor"] == git_out(
+        host_repo, "config", "user.name"
+    ).strip()
 
     # next run dispatches Scribe into RESPOND with the diff_ref in the assignment
     r = trac("run")

@@ -4,7 +4,10 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +34,53 @@ def _commit_if_staged(repo: Path, message: str) -> None:
         git(repo, "commit", "-m", message)
 
 
+def _agent_io_evidence(store: Store, assignment: dict, captured: dict) -> dict:
+    """Persist input/output evidence without making it a workflow failure."""
+    input_payload = dict(assignment)
+    for key in ("prompt", "console_input"):
+        if key in captured:
+            input_payload[key] = captured[key]
+    input_ref = store.write_audit_blob(input_payload)
+    output_raw = json.dumps(captured, ensure_ascii=False, sort_keys=True)
+    output_ref = store.write_audit_blob(captured)
+    digest = hashlib.sha256(output_raw.encode("utf-8")).hexdigest()
+    gaps = []
+    if input_ref is None:
+        gaps.append("assignment_blob_write_failed")
+    if output_ref is None:
+        gaps.append("agent_output_blob_write_failed")
+    evidence = {
+        "input_ref": input_ref,
+        "output_ref": output_ref,
+        "output_digest": digest,
+        "output_summary": {
+            "stdout_bytes": captured.get("stdout_bytes", 0),
+            "stderr_bytes": captured.get("stderr_bytes", 0),
+        },
+        "audit_completeness": "partial" if gaps else "complete",
+    }
+    if gaps:
+        evidence["audit_gaps"] = gaps
+    return evidence
+
+
+def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
+    payload = {
+        "role": params["role"],
+        "status": result["status"],
+        "artifact_ref": result.get("artifact_ref"),
+        "self_report": result["self_report"],
+    }
+    captured = result.get("agent_io")
+    if captured is not None:
+        payload["agent_io"] = _agent_io_evidence(store, dict(params), captured)
+    for key in ("diff_ref", "audit_evidence", "failure_class", "verdict",
+                "discussion_evidence"):
+        if result.get(key) is not None:
+            payload[key] = result[key]
+    return payload
+
+
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
 # stage.entered; stages absent here (M-REQ-APPROVAL) end the run at the
 # M-DESIGN boundary: run.completed(terminal_state="boundary") (SM-05.6).
@@ -47,12 +97,23 @@ _COMMITTED_EVENT = {
 class Executor:
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
-    def __init__(self, store: Store, repo: Path, run_id: str):
+    def __init__(self, store: Store, repo: Path, run_id: str,
+                 assignment_overlay: dict | None = None,
+                 max_dispatches: int | None = None):
+        if assignment_overlay is not None and not isinstance(assignment_overlay, dict):
+            raise TypeError("assignment_overlay must be a dict or None")
+        if max_dispatches is not None and (
+                isinstance(max_dispatches, bool)
+                or not isinstance(max_dispatches, int)
+                or max_dispatches < 1):
+            raise ValueError("max_dispatches must be a positive integer or None")
         self.store = store
         self.repo = repo
         self.run_id = run_id
         self.version = store.state(run_id).version or ""
         self.backend = select_backend(repo, self.version)
+        self.assignment_overlay = deepcopy(assignment_overlay)
+        self.max_dispatches = max_dispatches
         self._issue_backend = None  # lazy: created on first create_issues
 
     def _emit(self, type: str, payload: dict,
@@ -66,12 +127,17 @@ class Executor:
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
     def run_loop(self) -> State:
-        self._recover()
+        recovered_dispatch = self._recover()
+        dispatches = 1 if recovered_dispatch else 0
         while True:
             state = self.store.state(self.run_id)
             cmd = decide(state)
             if cmd is None:
                 return state
+            if cmd.kind == "dispatch_agent" and self.max_dispatches is not None:
+                if dispatches >= self.max_dispatches:
+                    return state
+                dispatches += 1
             self.issue(cmd)
 
     def issue(self, cmd: Command) -> None:
@@ -81,7 +147,12 @@ class Executor:
         setup commands (create_branch in `trac start`)."""
         state = self.store.state(self.run_id)
         cid = new_ulid()
-        issued = Command(kind=cmd.kind, params=cmd.params, command_id=cid)
+        params = dict(cmd.params)
+        if cmd.kind == "dispatch_agent" and self.assignment_overlay is not None:
+            assignment = dict(params.get("assignment") or {})
+            assignment["scenario_context"] = deepcopy(self.assignment_overlay)
+            params["assignment"] = assignment
+        issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
             task_id = (f"{self.run_id}:{cmd.params.get('substate')}"
@@ -94,7 +165,7 @@ class Executor:
         )
         self._execute(issued, self.store.state(self.run_id), task_id)
 
-    def _recover(self) -> None:
+    def _recover(self) -> bool:
         """Hanging command (issued, no result): reconcile first (D-13), reissue
         the same assignment without consuming an attempt (D-11)."""
         state = self.store.state(self.run_id)
@@ -103,6 +174,8 @@ class Executor:
                           params=state.pending.get("params", {}),
                           command_id=state.pending.get("command_id"))
             self._execute(cmd, state, None, reconcile=True)
+            return cmd.kind == "dispatch_agent"
+        return False
 
     def _execute(self, cmd: Command, state: State,
                  task_id: str | None, reconcile: bool = False) -> None:
@@ -114,22 +187,15 @@ class Executor:
         p = cmd.params
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
-        result = self.backend.act(role, substate, doc, doc_path)
-        payload = {"role": role, "status": result["status"],
-                   "artifact_ref": result.get("artifact_ref"),
-                   "self_report": result["self_report"]}
-        # IF-003 §1 additive Outcome fields (OpencodeBackend; absent for fake):
-        # carry the authoritative diff / audit evidence / failure classification
-        # into the event so over-reach and failures are observable (AC-0301..0306).
-        for key in ("diff_ref", "audit_evidence", "failure_class"):
-            if result.get(key) is not None:
-                payload[key] = result[key]
-        self._emit("outcome.received", payload,
+        result = self.backend.act(
+            role, substate, doc, doc_path, assignment=p.get("assignment")
+        )
+        self._emit("outcome.received", _dispatch_payload(self.store, p, result),
                    command_id=cmd.command_id, task_id=task_id)
         verdict = result.get("verdict")
         if verdict:
             ev = "sage.verdict" if role == "sage" else "lex.verdict"
-            self._emit(ev, {"verdict": verdict, "diff_ref": None},
+            self._emit(ev, {"verdict": verdict, "diff_ref": result.get("diff_ref")},
                        command_id=cmd.command_id, task_id=task_id)
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
