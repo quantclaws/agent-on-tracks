@@ -3,8 +3,8 @@
   "permission": {
     "external_directory": {
       "*": "ask",
-      "{env:TMPDIR}tracks/**": "allow",
-      "/private{env:TMPDIR}tracks/**": "allow"
+      "{env:TMPDIR}**": "allow",
+      "/private{env:TMPDIR}**": "allow"
     }
   },
   "agent": {
@@ -12,8 +12,8 @@
       "permission": {
         "external_directory": {
           "*": "deny",
-          "{env:TMPDIR}tracks/**": "allow",
-          "/private{env:TMPDIR}tracks/**": "allow"
+          "{env:TMPDIR}**": "allow",
+          "/private{env:TMPDIR}**": "allow"
         }
       }
     },
@@ -21,8 +21,8 @@
       "permission": {
         "external_directory": {
           "*": "deny",
-          "{env:TMPDIR}tracks/**": "allow",
-          "/private{env:TMPDIR}tracks/**": "allow"
+          "{env:TMPDIR}**": "allow",
+          "/private{env:TMPDIR}**": "allow"
         }
       }
     },
@@ -30,8 +30,8 @@
       "permission": {
         "external_directory": {
           "*": "deny",
-          "{env:TMPDIR}tracks/**": "allow",
-          "/private{env:TMPDIR}tracks/**": "allow"
+          "{env:TMPDIR}**": "allow",
+          "/private{env:TMPDIR}**": "allow"
         }
       }
     }
