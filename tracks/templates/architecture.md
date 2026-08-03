@@ -9,6 +9,7 @@ sha:
 # {版本} — 架构
 
 <!-- 模板指引（生成文档时阅读；填写完成后删除本注释，交付的文档只留内容）：
+  - 交付文档中出现的 blockquote 一律是 inline-discussion 讨论线程，模板指引不得残留为 blockquote。
   - 职责边界：本文档只描述架构决策——模块边界、技术选型与宿主项目 machine contracts。
     跨模块的类型化 schema / CLI 合同写入 interfaces.md；测试策略写入 test-plan.md。
   - 延续性优先：若存在上一版架构，§0 必须逐条声明继承或变更；未提及者一律继承。

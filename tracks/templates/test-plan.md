@@ -7,6 +7,17 @@ sha:
 
 # {Feature Title} — Test Plan
 
+<!-- Template guidance (read when generating the document; delete every guidance comment
+     before delivery — the delivered document keeps content only):
+  - 交付文档中出现的 blockquote 一律是 inline-discussion 讨论线程，模板指引不得残留为 blockquote。
+    (In delivered docs every blockquote is an inline-discussion thread; template guidance
+    must never survive as a blockquote.)
+  - Conditional sections (§2.4 Test Data, §2.5 Installation & Isolation, §3 Ground Truth,
+    §6 External Dependency Layered Testing) carry a When needed / Lifecycle guidance
+    comment stating when the whole section may be omitted; omit heading and content when
+    the condition does not apply, otherwise fill the section in.
+-->
+
 - **Related acceptance**: `.tracks/projects/{version}/acceptance.md`
 - **Related interfaces**: `.tracks/projects/{version}/interfaces.md` (assertion basis — see §6.5)
 
@@ -29,7 +40,7 @@ This test plan only declares test methods that are **observable from outside the
 - Intermediate data structures
 - Implementation details (internal queues, registries, state variables)
 
-> **Observable contract**: Any internal state that acceptance validation needs must be provided by the implementation layer via dump/log/DB observation points. This is the responsibility of **interfaces.md** — if an AC needs to observe internal state, interfaces.md must have a corresponding outlet (see §6.5).
+**Observable contract**: Any internal state that acceptance validation needs must be provided by the implementation layer via dump/log/DB observation points. This is the responsibility of **interfaces.md** — if an AC needs to observe internal state, interfaces.md must have a corresponding outlet (see §6.5).
 
 ### 1.3. Cheating Patterns (CI enforced interception)
 
@@ -91,9 +102,12 @@ tests/
 └── ground_truth/  # Optional: pure/reference implementation; must not import the system under test (see §3.2)
 ```
 
-> - Unit tests and E2E use different data (separated by time/scenario) to prevent overfitting
-> - E2E **must not** mock internal framework implementation (if mocking is necessary, the AC should be rewritten)
-> - E2E **must not** depend on framework private APIs
+<!-- Template guidance (delete before delivery):
+  - Unit tests and E2E use different data (separated by time/scenario) to prevent overfitting.
+  - E2E must not mock internal framework implementation (if mocking is necessary, the AC
+    should be rewritten).
+  - E2E must not depend on framework private APIs.
+-->
 
 ### 2.2. Naming Conventions
 
@@ -109,7 +123,11 @@ tests/
 
 ### 2.4. Test Data (project optional)
 
-> **When needed**: Required when the project has external data dependencies (historical data, third-party APIs, hardware input, etc.); pure algorithm / pure internal logic may omit.
+<!-- Template guidance (delete before delivery; conditional section):
+  **When needed**: Required when the project has external data dependencies (historical data,
+  third-party APIs, hardware input, etc.); pure algorithm / pure internal logic may omit
+  this whole section.
+-->
 
 - **Source**: Built-in / remote API fetch / synthetic generation
 - **Reproducible**: Each CI run should produce consistent results
@@ -119,9 +137,16 @@ tests/
 
 ### 2.5. Installation & Isolation (project with build artifact)
 
-> **When needed**: Required when the project produces an installable artifact (CLI tool, library, service image, etc.). Pure script / pure in-repo tooling may omit.
->
-> **Lifecycle**: This section is established in the **first release's design** and inherited by subsequent releases. It is only revised when the installation method itself changes (new platform, new package manager, new distribution channel). Unchanged does not mean untested — CI still runs the installation step on every E2E pass; it means the *specification* here is not re-authored.
+<!-- Template guidance (delete before delivery; conditional section):
+  **When needed**: Required when the project produces an installable artifact (CLI tool,
+  library, service image, etc.). Pure script / pure in-repo tooling may omit this whole
+  section.
+  **Lifecycle**: This section is established in the first release's design and inherited by
+  subsequent releases. It is only revised when the installation method itself changes (new
+  platform, new package manager, new distribution channel). Unchanged does not mean
+  untested — CI still runs the installation step on every E2E pass; it means the
+  specification here is not re-authored.
+-->
 
 - **Installation method**: Must be identical to the end user's (e.g. `pip install dist/*.whl`, `npm install -g <pkg>.tgz`, `docker load < image.tar`). E2E must not import from the source tree or use editable/development installs.
 - **Install target**: An isolated prefix per CI run / test session (e.g. a fresh venv, `$TMPDIR/<run-id>/prefix`, a throwaway container). Must not pollute the system environment or the source tree.
@@ -133,7 +158,11 @@ tests/
 
 ## 3. Ground Truth Method
 
-> **When needed**: Required when the project has "algorithm correctness / rule correctness / computation result correctness" to verify (financial computation, rule engines, parsers, serialization, etc.); pure CRUD / UI rendering may omit.
+<!-- Template guidance (delete before delivery; conditional section):
+  **When needed**: Required when the project has "algorithm correctness / rule correctness /
+  computation result correctness" to verify (financial computation, rule engines, parsers,
+  serialization, etc.); pure CRUD / UI rendering may omit this whole section.
+-->
 
 ### 3.1. General Principle
 
@@ -145,7 +174,7 @@ tests/
 | Evaluation metrics (Sharpe / win rate / annualized, etc.) | **Third-party library** (the project's chosen metrics library) |
 | Simple rules (is it a holiday, does it satisfy a condition) | **The data itself**: Test dataset as the single source of truth |
 
-> Key design: ground truth is a **recomputable script**, not a documented fixed value. At test runtime, the same data + ground truth script is called and compared with the framework output.
+Key design: ground truth is a **recomputable script**, not a documented fixed value. At test runtime, the same data + ground truth script is called and compared with the framework output.
 
 ### 3.2. Ground Truth Isolation (mandatory rule)
 
@@ -172,8 +201,8 @@ This test plan covers all requirements in spec.md in the same directory (and any
 ## 5. Acceptance Criteria
 
 1. Unit test coverage ≥95% (specific tooling depends on project language)
-2. Every cross-module interface contract defined in interfaces.md has at least one integration test (happy + key error/edge paths)
-   > A **cross-module interface** = an interfaces.md entry whose `modules` column lists 2+ modules (Archer marks this from architecture.md's module boundaries). Shield reads this column as a checklist; it does not infer module boundaries.
+2. Every cross-module interface contract defined in interfaces.md has at least one integration test (happy + key error/edge paths).
+   A **cross-module interface** = an interfaces.md entry whose `modules` column lists 2+ modules (Archer marks this from architecture.md's module boundaries). Shield reads this column as a checklist; it does not infer module boundaries.
 3. User scenarios in Stories and Spec are fully covered by e2e happy paths and pass
 4. All FRs have corresponding test coverage (AC reference closure)
 5. If §6 external dependency layered testing is enabled: L1/L2 pass by default in CI; L3 is runnable in the corresponding environment
@@ -182,9 +211,12 @@ This test plan covers all requirements in spec.md in the same directory (and any
 
 ## 6. External Dependency Layered Testing (project optional)
 
-> **When needed**: Required when the project has external dependencies (databases, third-party APIs, hardware, real time, remote services, etc.); pure internal logic may omit.
->
-> This section is an **extension of §1's black-box stance**: when the system interacts with the external world, how tests handle these external dependencies.
+<!-- Template guidance (delete before delivery; conditional section):
+  **When needed**: Required when the project has external dependencies (databases,
+  third-party APIs, hardware, real time, remote services, etc.); pure internal logic may
+  omit this whole section. This section is an extension of §1's black-box stance: when the
+  system interacts with the external world, how tests handle these external dependencies.
+-->
 
 ### 6.1. Three Unavoidable Constraints
 
@@ -194,14 +226,17 @@ This test plan covers all requirements in spec.md in the same directory (and any
 | C2  | Cannot wait for real time                 | Cross-day / cross-week strategy cycle tests are infeasible  |
 | C3  | Cannot mock framework internals           | Replacing/patching bypasses the behavior under test, violating the black-box stance |
 
-> §2's offline data environment alone cannot make paths with external dependencies run — this section exists for that purpose.
+<!-- Template guidance (delete before delivery):
+  §2's offline data environment alone cannot make paths with external dependencies run —
+  this section exists for that purpose.
+-->
 
 ### 6.2. Stance: Controllable vs Mock
 
 - **Replace external dependencies** (controllable): Wall clock, external services, remote APIs, hardware — these are **external dependencies** of the framework under test and can be replaced with deterministic stand-ins
 - **Cannot mock internal implementation**: The framework's own matching, scheduling, rules — these are **the object under test** and must not be mocked
 
-> **Boundary iron rule**: Under no circumstances may you replace or bypass the framework's own critical implementation to "make the test pass". If a test finds it must bypass to pass, it means the AC's observability design is wrong; revise interfaces/acceptance instead of patching the test side.
+**Boundary iron rule**: Under no circumstances may you replace or bypass the framework's own critical implementation to "make the test pass". If a test finds it must bypass to pass, it means the AC's observability design is wrong; revise interfaces/acceptance instead of patching the test side.
 
 ### 6.3. Three-Layer Test Pyramid
 
@@ -217,11 +252,15 @@ Divided into three layers by fidelity/cost/speed. The ACs covered by each layer 
 - **L2 Contract sim**: Start a stand-in service that follows the same protocol (database/gateway/external API); the framework interacts with the stand-in
 - **L3 Real env smoke**: Real calendar + real dependencies, single round-trip smoke (≤1 transaction); deselected by default, only runs in environments with real dependencies
 
-> Any L3 test **must** be tagged with the corresponding marker (replacing the skip in §1.4); it must not evade L3 with a skip that has no issue link.
+Any L3 test **must** be tagged with the corresponding marker (replacing the skip in §1.4); it must not evade L3 with a skip that has no issue link.
 
 ### 6.4. Responsibility Contract of Test Infrastructure
 
-> Defines the **responsibilities + external observable boundaries** of stand-in components, for test engineers to implement. **Does not prescribe internal implementation details** (specific class names, method signatures are determined by the implementation layer).
+<!-- Template guidance (delete before delivery):
+  Defines the responsibilities + external observable boundaries of stand-in components, for
+  test engineers to implement. Does not prescribe internal implementation details (specific
+  class names, method signatures are determined by the implementation layer).
+-->
 
 | Component        | Responsibility (external)              | Boundary (what it does not implement) |
 | ---------------- | --------------------------------------- | -------------------------------------- |
@@ -239,7 +278,7 @@ Test assertions **may only** land on the external observable outlets defined in 
 - Structured log entries
 - File schema
 
-> If a state needed by an AC has **no** corresponding observable outlet in interfaces.md, this is an observability gap; revise interfaces/acceptance to add the outlet, rather than snooping internal state in the test.
+If a state needed by an AC has **no** corresponding observable outlet in interfaces.md, this is an observability gap; revise interfaces/acceptance to add the outlet, rather than snooping internal state in the test.
 
 ---
 

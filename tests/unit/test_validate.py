@@ -9,12 +9,16 @@ from pathlib import Path
 
 from tracks import templating
 from tracks.cli.main import cmd_validate
+from tracks.discuss.parser import parse_threads
+from tracks.effects.fake import FakeBackend
 from tracks.executor.validate import (
+    _design_guidance_markers,
     check_design_trace,
     check_spec_items,
     check_template,
     validate_document,
 )
+from tracks.kernel.machine import DESIGN_DOCS
 
 
 def _story(tmp_path: Path) -> Path:
@@ -195,3 +199,75 @@ def test_cli_validate_test_plan_runs_design_trace(tmp_path, capsys, monkeypatch)
     assert cmd_validate(Path("."), "--file", "test-plan.md") == 1  # orphan AC
     err = capsys.readouterr().err
     assert "AC-FR0010-01" in err and "layer attribution" in err
+
+
+# -- run044: design docs reserve blockquotes for discussion threads -----------
+# Leftover template-guidance blockquotes (> **When needed**: ...) were misread
+# as open inline-discussion threads, forcing a bogus revise -> escalation.
+
+def test_design_guidance_markers_derived_from_templates():
+    # single source: the '**Marker**:' lines in the design templates' guidance
+    assert _design_guidance_markers() == {"When needed", "Lifecycle"}
+
+
+def test_design_templates_carry_no_blockquotes():
+    # blockquotes in delivered design docs are discussion threads, so the
+    # templates must model that: no blockquote line, no parseable thread
+    for kind in ("architecture", "interfaces", "test-plan"):
+        text = templating.load_template(kind)
+        assert not [ln for ln in text.splitlines()
+                    if ln.lstrip().startswith(">")], kind
+        assert parse_threads(text) == [], kind
+
+
+def test_check_template_leftover_guidance_blockquote_fails(tmp_path):
+    p = _design_doc(tmp_path, "test-plan", "test-plan.md")
+    text = p.read_text(encoding="utf-8")
+    idx = text.index("## 3. Ground Truth Method")
+    p.write_text(text[:idx] + "> **When needed**: Required when ...\n\n" + text[idx:],
+                 encoding="utf-8")
+    issues = check_template(p)
+    assert any(i.startswith("line:") and "template guidance blockquote left in doc"
+               in i and "'When needed'" in i for i in issues)
+
+
+def test_validate_document_leftover_guidance_failed(tmp_path):
+    # the marker set is trio-wide: an architecture doc fails on Lifecycle too
+    p = _design_doc(tmp_path, "architecture", "architecture.md")
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\n> **Lifecycle**: This section is inherited.\n", encoding="utf-8")
+    failure = validate_document(p, "architecture.md", ["template"])
+    assert failure is not None and failure[0] == "template"
+    assert "template guidance blockquote left in doc" in failure[1]
+    assert "'Lifecycle'" in failure[1]
+
+
+def test_check_template_guidance_comment_and_fence_pass(tmp_path):
+    # guidance as HTML comment is the sanctioned vehicle; fenced examples too
+    p = _design_doc(tmp_path, "test-plan", "test-plan.md")
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\n<!-- Template guidance (delete before delivery):\n"
+                   "  **When needed**: Required when ...\n-->\n\n"
+                   "```text\n> **Lifecycle**: example\n```\n", encoding="utf-8")
+    assert check_template(p) == []
+
+
+def test_check_template_discussion_thread_is_not_guidance(tmp_path):
+    p = _design_doc(tmp_path, "architecture", "architecture.md")
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\n> **Prism [open]:** 模块边界能否再细化？\n", encoding="utf-8")
+    assert check_template(p) == []  # thread blockquotes pass the template check
+
+
+def test_fake_design_trio_has_no_blockquotes(tmp_path):
+    # fake-backend parity: the deterministic trio stays guard-clean
+    vdir = tmp_path / ".tracks" / "projects" / "v0.1"
+    vdir.mkdir(parents=True)
+    (vdir / "acceptance.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    FakeBackend(tmp_path, "v0.1")._write_design("ok")
+    for name in DESIGN_DOCS:
+        text = (vdir / name).read_text(encoding="utf-8")
+        assert not [ln for ln in text.splitlines()
+                    if ln.lstrip().startswith(">")], name
+        assert check_template(vdir / name) == [], name

@@ -143,6 +143,7 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 - 完成时必须能回答：Shield 能否据此准备环境、数据和测试用例，Devon 能否据此直接实现；任一答案为否就返回可定位 gap。
 - architecture.md 包含：模块边界、依赖关系、技术选型、关键取舍。
 - interfaces.md 使用表格或列表；禁止用散文方式混合契约。
+- 交付的三文档中不得残留模板指引 blockquote——blockquote 只保留 inline-discussion 讨论线程；模板指引在填写后删除。
 
 ## 工具与权限
 

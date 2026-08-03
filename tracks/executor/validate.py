@@ -15,7 +15,11 @@ v0.3 adds the design trio kinds (architecture / interfaces / test-plan,
 flow.md §8): the ``template`` check works generically from their templates,
 and ``check_design_trace`` (BS-06) is the design ``trace`` check — every AC
 of acceptance.md must carry a test-layer attribution (unit/integration/e2e)
-in test-plan.md. Unlike the acceptance trace it is checks-list gated.
+in test-plan.md. Unlike the acceptance trace it is checks-list gated. Design
+docs reserve blockquotes for inline-discussion threads, so the design-kinds
+``template`` check also rejects leftover template-guidance blockquotes
+(live run044): the marker set is derived from the design templates' guidance
+comments (single source).
 
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
@@ -61,6 +65,17 @@ _KIND_BY_FILE = {
 }
 _HEADING = re.compile(r"^(#+)\s+(.*\S)\s*$")
 _NUM_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+_FENCE = re.compile(r"^\s*(```|~~~)")
+
+# run044 guidance-blockquote guard: conditional-section guidance lives in the
+# design templates' HTML comments as '**Marker**:' lines (When needed /
+# Lifecycle); the same bold prefix as a blockquote in a delivered doc is
+# leftover template guidance that the discuss parser would misread as an open
+# inline-discussion thread.
+_DESIGN_KINDS = ("architecture", "interfaces", "test-plan")
+_BOLD_MARKER = r"\*\*([A-Za-z][A-Za-z0-9 ]*?)(?::\*\*|\*\*\s*:)"
+_COMMENT_MARKER = re.compile(r"^\s*" + _BOLD_MARKER, re.M)
+_BQ_GUIDANCE = re.compile(r"^\s*>+\s*" + _BOLD_MARKER)
 
 # BS-06 design trace: a test-plan line attributes a layer to an AC when both
 # the AC id and a layer token share one (non-comment, non-fenced) line.
@@ -308,13 +323,58 @@ def _fm_fields(head: str) -> set:
     return out
 
 
+def _design_guidance_markers() -> frozenset:
+    """Guidance marker set, derived from the design trio templates (single
+    source): '**Marker**:' lines inside their HTML guidance comments are the
+    converted conditional-section guidance (When needed / Lifecycle)."""
+    markers: set = set()
+    for kind in _DESIGN_KINDS:
+        try:
+            tpl_text = templating.load_template(kind)
+        except FileNotFoundError:
+            continue
+        for comment in _HTML_COMMENT.findall(tpl_text):
+            markers.update(_COMMENT_MARKER.findall(comment))
+    return frozenset(markers)
+
+
+def _guidance_blockquote_issues(text: str) -> list:
+    """Leftover template-guidance blockquotes (run044): delivered design docs
+    reserve blockquotes for inline-discussion threads, so any blockquote whose
+    bold prefix matches a guidance marker fails the template check. HTML
+    comment and fenced-code lines are ignored. Returns ``line:N`` messages."""
+    markers = _design_guidance_markers()
+    if not markers:
+        return []
+    hidden: set = set()
+    for m in _HTML_COMMENT.finditer(text):
+        first = text.count("\n", 0, m.start()) + 1
+        hidden.update(range(first, first + m.group(0).count("\n") + 1))
+    issues: list = []
+    fence = False
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if line_no in hidden:
+            continue
+        if _FENCE.match(line):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        if (m := _BQ_GUIDANCE.match(line)) and m.group(1) in markers:
+            issues.append(f"line:{line_no} template guidance blockquote left "
+                          f"in doc ('{m.group(1)}')")
+    return issues
+
+
 def check_template(path: Path) -> list:
     """FR-150 'template' check.
 
     Required frontmatter fields and level-2 sections must match the kind
     template (HTML comments ignored); spec docs additionally pass the item lint
     (``check_spec_items``). Acceptance level-2 sections vary per FR/NFR, so only
-    frontmatter is name-checked there. Returns ``line:N ...`` messages; [] = valid.
+    frontmatter is name-checked there. Design trio docs additionally reject
+    leftover template-guidance blockquotes (run044). Returns ``line:N ...``
+    messages; [] = valid.
     """
     kind = _KIND_BY_FILE.get(path.name)
     if kind is None:
@@ -338,4 +398,6 @@ def check_template(path: Path) -> list:
         issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
     if kind == "spec":
         issues += check_spec_items(text)  # true file line numbers (full text scan)
+    if kind in _DESIGN_KINDS:  # run044: blockquote = discussion thread only
+        issues += _guidance_blockquote_issues(text)
     return issues

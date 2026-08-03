@@ -7,5 +7,5 @@
   "max_new_threads": 0,
   "comment_style": "concise",
   "required_finding": null,
-  "required_action": "Draft architecture.md, interfaces.md and test-plan.md from the approved story/spec/acceptance in one pass. Every required AC must carry a unit/integration/e2e layer attribution in test-plan.md; architecture.md must include a composition root section. Every document must keep the frontmatter block from its template in tracks/templates/. Do not stop at planning: write all three documents into the project directory before you finish."
+  "required_action": "Draft architecture.md, interfaces.md and test-plan.md from the approved story/spec/acceptance in one pass. Every required AC must carry a unit/integration/e2e layer attribution in test-plan.md; architecture.md must include a composition root section. Every document must keep the frontmatter block from its template in tracks/templates/. No template-guidance blockquotes may remain in the delivered documents (e.g. `> **When needed**`, `> **Lifecycle**`): blockquotes are reserved for inline-discussion threads; delete template guidance after filling it in. Do not stop at planning: write all three documents into the project directory before you finish."
 }
