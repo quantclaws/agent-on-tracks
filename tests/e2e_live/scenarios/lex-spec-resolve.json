@@ -6,6 +6,7 @@
   "human_actor": "LiveE2E-Human",
   "max_new_threads": 1,
   "comment_style": "concise",
+  "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
   "expected_responder": "Sage",
-  "required_action": "Run a normal semantic review of spec.md; do not create test findings. When the spec is semantically ready, pass directly without opening discussion threads."
+  "required_action": "Re-read Sage's adopted answer, resolve the Lex finding, and pass only when spec.md is semantically ready."
 }

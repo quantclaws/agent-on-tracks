@@ -1,0 +1,13 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-SPEC",
+  "agent": "Lex",
+  "kind": "LEX_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
+  "finding_condition": "The spec does not define whether blank lines count as code lines.",
+  "expected_responder": "Sage",
+  "required_action": "Open exactly one concise finding with the required marker; do not resolve it in this review."
+}
