@@ -75,12 +75,19 @@ class LiveInstall:
     probe: dict
 
 
+# tracks/kernel/machine.py `_consume_attempt`: a failed outcome consumes one
+# attempt and only at the 3rd failure escalates to awaiting=escalation. The
+# harness must mirror that budget instead of failing on the first flake.
+ESCALATION_FAILURES = 3
+
+
 @dataclass
 class _Bounds:
     stage_counts: dict[str, int] = field(default_factory=dict)
     review_counts: dict[tuple[str, int], int] = field(default_factory=dict)
     review_outcomes: dict[tuple[str, str], int] = field(default_factory=dict)
     dispatch_by_command: dict = field(default_factory=dict)
+    failed_outcomes: dict[tuple[str, str], int] = field(default_factory=dict)
 
 
 def require_current_virtualenv() -> None:
@@ -671,11 +678,26 @@ class LiveTracDriver:
         key = (stage, round_id)
         bounds.review_counts[key] = bounds.review_counts.get(key, 0) + 1
 
+    def _observe_failed_outcome(self, event: dict, bounds: _Bounds) -> None:
+        # The runtime retries a failed dispatch outcome: each failure consumes
+        # one attempt, carries failure evidence into the re-dispatch prompt, and
+        # only at the 3rd failure escalates to awaiting=escalation (the journey
+        # is genuinely dead). Count per (stage, substate) and fail only there.
+        params = bounds.dispatch_by_command.get(event["command_id"], {})
+        key = (str(params.get("stage", "unknown")), str(params.get("substate") or "unknown"))
+        bounds.failed_outcomes[key] = bounds.failed_outcomes.get(key, 0) + 1
+        if bounds.failed_outcomes[key] >= ESCALATION_FAILURES:
+            self.fail(
+                f"live provider/backend outcome failed {bounds.failed_outcomes[key]} times "
+                f"for stage={key[0]} substate={key[1]}; the runtime escalates to "
+                f"awaiting=escalation at the 3rd failure: {event['payload']}"
+            )
+
     def _observe_event(self, event: dict, bounds: _Bounds) -> None:
         if event["type"] == "run.interrupted":
             self.fail(f"Runtime reported interrupted activity: {event['payload']}")
         if event["type"] == "outcome.received" and event["payload"].get("status") == "failed":
-            self.fail(f"live provider/backend outcome failed: {event['payload']}")
+            self._observe_failed_outcome(event, bounds)
         if event["type"] == "command.issued":
             self._observe_dispatch(event, bounds)
         if not event["type"].endswith(".verdict"):
@@ -711,6 +733,16 @@ class LiveTracDriver:
         print(f"LIVE_E2E_REMOTE={remote}", flush=True)
         print(f"LIVE_E2E_BRANCH={branch}", flush=True)
 
+    @staticmethod
+    def _dispatch_budget(scenario: Scenario) -> int:
+        # Author steps (DRAFT/RESPOND) may flake; the runtime retries a failed
+        # dispatch outcome internally and escalates at the 3rd attempt, so they
+        # get a 3-dispatch budget. Reviewer/human-gate steps keep one dispatch;
+        # the global bounds remain the outer safety net.
+        if scenario.data.get("kind") in ("DRAFT", "RESPOND"):
+            return 3
+        return 1
+
     def _command_args(
         self, args: tuple[str, ...], scenario: str | None, console_input: str | None
     ) -> tuple[list[str], str]:
@@ -725,7 +757,7 @@ class LiveTracDriver:
                 "--assignment-overlay",
                 str(selected.path),
                 "--max-dispatches",
-                "1",
+                str(self._dispatch_budget(selected)),
             ]
         )
         return command_args, selected.console_input if console_input is None else console_input

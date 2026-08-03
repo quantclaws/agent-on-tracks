@@ -138,18 +138,40 @@ class Executor:
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
     def run_loop(self) -> State:
+        pending = self.store.state(self.run_id).pending
         recovered_dispatch = self._recover()
         dispatches = 1 if recovered_dispatch else 0
+        # Bounded mode is one substate + retries (see _dispatch_gate): a
+        # recovered dispatch belongs to that remembered substate too.
+        bound_substate = None
+        if recovered_dispatch and self.max_dispatches is not None:
+            bound_substate = (pending or {}).get("params", {}).get("substate")
         while True:
             state = self.store.state(self.run_id)
             cmd = decide(state)
             if cmd is None:
                 return state
             if cmd.kind == "dispatch_agent" and self.max_dispatches is not None:
-                if dispatches >= self.max_dispatches:
+                stop, bound_substate = self._dispatch_gate(
+                    cmd, dispatches, bound_substate)
+                if stop:
                     return state
                 dispatches += 1
             self.issue(cmd)
+
+    def _dispatch_gate(self, cmd, dispatches: int,
+                        bound_substate: str | None) -> tuple[bool, str | None]:
+        """Bounded-mode gate: stop (True) at budget exhaustion or before a
+        dispatch for a different substate; remember the first dispatch's
+        substate. The assignment overlay is per-invocation, so a dispatch for
+        another substate would run under a stale overlay — hand control back
+        instead. Retries within the remembered substate pass."""
+        if dispatches >= self.max_dispatches:
+            return True, bound_substate
+        substate = cmd.params.get("substate")
+        if bound_substate is None:
+            return False, substate
+        return substate != bound_substate, bound_substate
 
     def issue(self, cmd: Command) -> None:
         """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler

@@ -97,6 +97,63 @@ def test_max_dispatches_stops_after_closed_dispatch_and_next_run_continues(
     assert not [event for event in event_log(run_id) if event["type"] == "run.interrupted"]
 
 
+def _substates(event_log, run_id):
+    return [
+        event["payload"]["command"]["params"]["substate"]
+        for event in _dispatches(event_log, run_id)
+    ]
+
+
+def test_bounded_run_stops_at_substate_transition_with_budget_remaining(
+    trac, event_log
+):
+    """Bounded mode is one substate + retries: after the first attempt of a
+    DRAFT succeeds the loop must return at the review substate instead of
+    dispatching its reviewer under the stale per-invocation overlay."""
+    started = _start(trac)
+    run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
+    assert trac("run", "--max-dispatches", "3").returncode == 0  # TRIAGE
+    assert trac("triage", "go").returncode == 0
+
+    result = trac("run", "--max-dispatches", "3")
+
+    assert result.returncode == 0
+    assert "substate=SAGE_REVIEW" in result.stdout
+    assert _substates(event_log, run_id) == ["TRIAGE", "DRAFT"]
+
+
+def test_bounded_run_retries_within_substate_up_to_budget(trac, event_log):
+    """Failed outcomes retry inside the SAME substate until the budget; a
+    failed->failed->success sequence stays one step (no reviewer dispatch)."""
+    started = _start(trac)
+    run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
+    assert trac("run", "--max-dispatches", "1").returncode == 0  # TRIAGE
+    assert trac("triage", "go").returncode == 0
+
+    result = trac(
+        "run", "--max-dispatches", "3", simulate="scribe:DRAFT=fail|fail|ok"
+    )
+
+    assert result.returncode == 0
+    assert "substate=SAGE_REVIEW" in result.stdout
+    assert _substates(event_log, run_id) == ["TRIAGE", "DRAFT", "DRAFT", "DRAFT"]
+
+
+def test_unbounded_run_flows_across_substates(trac, event_log):
+    """Regression pin: a plain `trac run` keeps flowing across substates —
+    the DRAFT success is immediately followed by the reviewer dispatch."""
+    started = _start(trac)
+    run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
+    assert trac("run").returncode == 0  # TRIAGE
+    assert trac("triage", "go").returncode == 0
+
+    result = trac("run")
+
+    assert result.returncode == 0
+    assert "awaiting=review" in result.stdout
+    assert _substates(event_log, run_id) == ["TRIAGE", "DRAFT", "SAGE_REVIEW"]
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "not-an-integer"])
 def test_invalid_dispatch_limit_fails_closed(trac, event_log, value):
     started = _start(trac)

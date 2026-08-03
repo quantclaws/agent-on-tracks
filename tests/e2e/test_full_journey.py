@@ -14,7 +14,7 @@ import hashlib
 import re
 import sqlite3
 
-from tests.e2e.helpers import walk_to_await_human, walk_to_design_complete
+from tests.e2e.helpers import dispatches, walk_to_await_human, walk_to_design_complete
 from tests.e2e.test_happy_path import git_out, parse_frontmatter, types
 
 
@@ -152,3 +152,60 @@ def test_walk_to_design_complete(trac, event_log):
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
     assert [e["payload"]["stage"] for e in evs
             if e["type"] == "stage.exited"][-1] == "M-DESIGN"
+
+
+def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
+    """The live-harness journey on the deterministic fake channel: each step
+    runs with its own dispatch budget (3 for author steps, 1 otherwise) and
+    must end exactly at the next substate boundary — no step over-runs and
+    dispatches the following substate's agent under a stale overlay."""
+    assert trac("init").returncode == 0
+    r = trac("start", "v0.1", stdin="构建一个事件溯源运行时")
+    assert r.returncode == 0, r.stderr
+    run_id = re.search(r"run (\S+) started", r.stdout).group(1)
+    budget = {"author": ("--max-dispatches", "3"), "other": ("--max-dispatches", "1")}
+    steps = 0
+
+    def step(expect_substates, expect_stdout, kind="other", simulate=None):
+        nonlocal steps
+        before = len(dispatches(event_log(run_id)))
+        r = trac("run", *budget[kind], simulate=simulate)
+        assert r.returncode == 0, r.stderr
+        new = dispatches(event_log(run_id))[before:]
+        assert [d["payload"]["command"]["params"]["substate"] for d in new
+                ] == expect_substates, f"step {steps} over-ran"
+        assert expect_stdout in r.stdout
+        steps += 1
+        return r
+
+    step(["TRIAGE"], "awaiting=triage")
+    assert trac("triage", "go").returncode == 0
+
+    step(["DRAFT"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-draft
+    step(["SAGE_REVIEW"], "substate=RESPOND",
+         simulate="sage:SAGE_REVIEW=revise")               # sage-story-finding
+    step(["RESPOND"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-respond
+    step(["SAGE_REVIEW"], "awaiting=review")               # sage-story-resolve
+    assert trac("review", "no-comment").returncode == 0
+
+    step(["DRAFT"], "substate=LEX_REVIEW", kind="author")  # sage-spec-draft
+    step(["LEX_REVIEW"], "substate=RESPOND",
+         simulate="lex:LEX_REVIEW=revise")                 # lex-spec-finding
+    step(["RESPOND"], "substate=LEX_REVIEW", kind="author")  # sage-spec-respond
+    step(["LEX_REVIEW"], "awaiting=review")                # lex-spec-resolve
+    assert trac("review", "no-comment").returncode == 0
+
+    step(["DRAFT"], "substate=LEX_REVIEW", kind="author")  # sage-acceptance-draft
+    step(["LEX_REVIEW"], "awaiting=review")                # lex-acceptance-review
+    assert trac("review", "no-comment").returncode == 0
+
+    step([], "awaiting=approval")                          # approval-final: preview
+    assert trac("approve", "--actor", "LiveE2E-Human").returncode == 0
+
+    step(["DRAFT"], "substate=PRISM_REVIEW", kind="author")  # archer-design-draft
+    step(["PRISM_REVIEW"], "status=completed")             # prism-design-review
+
+    evs = event_log(run_id)
+    assert types(evs)[-2:] == ["stage.exited", "run.completed"]
+    assert evs[-1]["payload"]["terminal_state"] == "boundary"
+    assert steps == 14

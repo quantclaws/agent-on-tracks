@@ -185,7 +185,14 @@ def live_backend(host_with_opencode_config, live_root, live_enabled, live_instal
 
 @pytest.fixture
 def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
-    """Return a bounded driver for the installed ``trac`` console script."""
+    """Return a bounded driver for the installed ``trac`` console script.
+
+    Author steps (DRAFT/RESPOND) carry a 3-dispatch budget so the runtime can
+    exercise its own retry/escalation semantics; a retrying author run may also
+    pull in the follow-up reviewer/respond dispatches, so the stage/review
+    bounds below are sized to that legitimate worst case while remaining the
+    outer safety net against runaway dispatch loops.
+    """
     driver = LiveTracDriver(
         live_root,
         live_install,
@@ -194,9 +201,9 @@ def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
         timeout_env("TRAC_LIVE_COMMAND_TIMEOUT", 360),
         timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 1800),
         timeout_env("TRAC_LIVE_MAX_COMMANDS", 48),
-        timeout_env("TRAC_LIVE_MAX_STAGE_DISPATCHES", 8),
-        timeout_env("TRAC_LIVE_MAX_REVIEW_DISPATCHES", 2),
-        timeout_env("TRAC_LIVE_MAX_REVIEW_ROUNDS", 2),
+        timeout_env("TRAC_LIVE_MAX_STAGE_DISPATCHES", 12),
+        timeout_env("TRAC_LIVE_MAX_REVIEW_DISPATCHES", 6),
+        timeout_env("TRAC_LIVE_MAX_REVIEW_ROUNDS", 4),
     )
     request.addfinalizer(driver.finalize)
     return driver.run
