@@ -67,24 +67,70 @@ def _reset_review(s: State) -> None:
     s.reviewer_dispatched = s.reviewer_produced = False
 
 
-# FR-0160: stage -> (drafting role, target doc). M-ACC mirrors M-SPEC's review
-# loop (Sage drafts, Lex reviews) on acceptance.md.
-_STAGE_ROLE_DOC = {
-    "M-STORY": ("scribe", "story.md"),
-    "M-SPEC": ("sage", "spec.md"),
-    "M-ACC": ("sage", "acceptance.md"),
-}
+# FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
+# exactly once; decide() and the reducers consult it (directly or through the
+# derived indexes below) instead of per-stage dicts/branches. Adding a stage is
+# one more StageDef. Genuinely stage-specific *control flow* (triage reject
+# teardown, scope_overflow rollback, the M-REQ-APPROVAL approval sequence,
+# rollback_stage handling) stays explicit. M-START is not registered: it has
+# no agent dispatch/review structure.
+@dataclass(frozen=True)
+class StageDef:
+    stage: str
+    initial_substate: str  # substate on stage.entered
+    drafting_role: str | None = None  # agent drafting the stage's doc
+    doc: str | None = None  # target doc (draft / validate / seal)
+    committed_event: str | None = None  # event recording the doc commit
+    committed_flag: str | None = None  # State field tracking that commit
+    review_substate: str | None = None  # substate after a non-final commit
+    reviewer: str | None = None  # agent dispatched in the review substate
+    verdict_event: str | None = None  # the reviewer's verdict event
+    reviewer_passed_flag: str | None = None  # State field: reviewer passed
 
-_COMMITTED_FLAG = {
-    "M-STORY": "story_committed",
-    "M-SPEC": "spec_committed",
-    "M-ACC": "acceptance_committed",
-}
+
+_STAGES = {sd.stage: sd for sd in (
+    StageDef(stage="M-STORY", initial_substate="TRIAGE",
+             drafting_role="scribe", doc="story.md",
+             committed_event="story.committed", committed_flag="story_committed",
+             review_substate="SAGE_REVIEW", reviewer="sage",
+             verdict_event="sage.verdict",
+             reviewer_passed_flag="sage_passed_this_round"),
+    # M-ACC mirrors M-SPEC's review loop (Sage drafts, Lex reviews),
+    # on acceptance.md.
+    StageDef(stage="M-SPEC", initial_substate="DRAFT",
+             drafting_role="sage", doc="spec.md",
+             committed_event="spec.committed", committed_flag="spec_committed",
+             review_substate="LEX_REVIEW", reviewer="lex",
+             verdict_event="lex.verdict",
+             reviewer_passed_flag="lex_passed_this_round"),
+    StageDef(stage="M-ACC", initial_substate="DRAFT",
+             drafting_role="sage", doc="acceptance.md",
+             committed_event="acceptance.committed",
+             committed_flag="acceptance_committed",
+             review_substate="LEX_REVIEW", reviewer="lex",
+             verdict_event="lex.verdict",
+             reviewer_passed_flag="lex_passed_this_round"),
+    StageDef(stage="M-REQ-APPROVAL", initial_substate="PREVIEW"),
+)}
+
+# Derived lookups, keyed like the facts they replace.
+_COMMITTED_EVENT = {sd.committed_event: sd
+                    for sd in _STAGES.values() if sd.committed_event}
+# review substate -> an owning StageDef (read for its reviewer role).
+_REVIEW_SUBSTATE = {sd.review_substate: sd
+                    for sd in _STAGES.values() if sd.review_substate}
+# verdict event -> owning stages; a verdict event may be shared by several
+# stages (lex.verdict: M-SPEC/M-ACC). See _on_reviewer_verdict.
+_VERDICT_OWNERS: dict[str, list[StageDef]] = {}
+for sd in _STAGES.values():
+    if sd.verdict_event:
+        _VERDICT_OWNERS.setdefault(sd.verdict_event, []).append(sd)
 
 
 def _uncommit(s: State) -> None:
     """RESPOND must re-commit the current stage's doc to re-enter review."""
-    setattr(s, _COMMITTED_FLAG.get(s.stage, "story_committed"), False)
+    sd = _STAGES.get(s.stage)
+    setattr(s, (sd.committed_flag if sd else None) or "story_committed", False)
 
 
 # -- event reducers: one small handler per event type, looked up by `apply`.
@@ -96,8 +142,8 @@ def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["stage"]
-    s.substate = {"M-STORY": "TRIAGE", "M-SPEC": "DRAFT", "M-ACC": "DRAFT",
-                  "M-REQ-APPROVAL": "PREVIEW"}.get(s.stage)
+    sd = _STAGES.get(s.stage)
+    s.substate = sd.initial_substate if sd else None
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0
@@ -134,7 +180,7 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     s.pending = cmd
     if cmd.get("kind") != "dispatch_agent":
         return
-    if s.substate in ("SAGE_REVIEW", "LEX_REVIEW"):
+    if s.substate in _REVIEW_SUBSTATE:
         s.reviewer_dispatched = True
     else:
         s.doc_dispatched = True
@@ -167,7 +213,7 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
             "reason": p.get("self_report"),
             "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
         }
-        if s.substate in ("SAGE_REVIEW", "LEX_REVIEW"):
+        if s.substate in _REVIEW_SUBSTATE:
             _reset_review(s)
         else:
             _reset_doc(s)
@@ -175,7 +221,7 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"
-    elif s.substate in ("SAGE_REVIEW", "LEX_REVIEW"):
+    elif s.substate in _REVIEW_SUBSTATE:
         s.reviewer_produced = True
     else:
         s.doc_produced = True
@@ -206,47 +252,32 @@ def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
         s.awaiting = "escalation"
 
 
-def _on_story_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.story_committed = True
+def _on_doc_committed(s: State, p: dict, ev: EventEnvelope) -> None:
+    # story/spec/acceptance.committed share one shape: the committed flag,
+    # then (non-final) the stage's review substate. Facts come from the stage
+    # owning this committed event, not from s.stage (FR-0160).
+    sd = _COMMITTED_EVENT[ev.type]
+    setattr(s, sd.committed_flag, True)
     if not p.get("final"):
-        s.substate = "SAGE_REVIEW"
+        s.substate = sd.review_substate
         _reset_review(s)
 
 
-def _on_spec_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.spec_committed = True
-    if not p.get("final"):
-        s.substate = "LEX_REVIEW"
-        _reset_review(s)
-
-
-def _on_acceptance_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.acceptance_committed = True
-    if not p.get("final"):
-        s.substate = "LEX_REVIEW"
-        _reset_review(s)
-
-
-def _on_sage_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    owners = _VERDICT_OWNERS[ev.type]
     if p["verdict"] == "pass":
-        s.sage_passed_this_round = True
+        setattr(s, owners[0].reviewer_passed_flag, True)
         s.substate = "HUMAN_REVIEW"
         s.awaiting = "review"
         return
     s.substate = "RESPOND"
     _reset_doc(s)
-    s.story_committed = False  # RESPOND must re-commit to re-enter review
-
-
-def _on_lex_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
-    if p["verdict"] == "pass":
-        s.lex_passed_this_round = True
-        s.substate = "HUMAN_REVIEW"
-        s.awaiting = "review"
-        return
-    s.substate = "RESPOND"
-    _reset_doc(s)
-    _uncommit(s)  # spec or acceptance, by current stage (FR-0160)
+    if len(owners) == 1:
+        # RESPOND must re-commit to re-enter review; a uniquely owned verdict
+        # event (sage.verdict -> story) names the doc itself.
+        setattr(s, owners[0].committed_flag, False)
+    else:
+        _uncommit(s)  # shared verdict event: the current stage picks the doc
 
 
 def _on_human_triage(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -344,11 +375,11 @@ _APPLY = {
     "outcome.received": _on_outcome_received,
     "verdict.passed": _on_verdict_passed,
     "verdict.failed": _on_verdict_failed,
-    "story.committed": _on_story_committed,
-    "spec.committed": _on_spec_committed,
-    "acceptance.committed": _on_acceptance_committed,
-    "sage.verdict": _on_sage_verdict,
-    "lex.verdict": _on_lex_verdict,
+    "story.committed": _on_doc_committed,
+    "spec.committed": _on_doc_committed,
+    "acceptance.committed": _on_doc_committed,
+    "sage.verdict": _on_reviewer_verdict,
+    "lex.verdict": _on_reviewer_verdict,
     "human.triage": _on_human_triage,
     "human.review": _on_human_review,
     "review.round_started": _on_review_round_started,
@@ -419,11 +450,10 @@ def _decide_reject(s: State) -> Command:
 
 def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     """DRAFT / RESPOND pipeline: dispatch -> validate -> commit."""
-    role, doc = _STAGE_ROLE_DOC[stage]
-    committed = getattr(s, _COMMITTED_FLAG[stage])
+    sd = _STAGES[stage]
     if not s.doc_dispatched:
         cmd = _dispatch(
-            role, sub, f"write {doc}", doc,
+            sd.drafting_role, sub, f"write {sd.doc}", sd.doc,
             stage=stage, attempt=s.current_attempt + 1,
             review_round=s.review_round,
         )
@@ -437,10 +467,12 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     if not s.doc_validated:
         # FR-150/AC-1503: outcome-time format gate — Scribe/Sage must produce a
         # template-conforming doc before it is committed / enters review.
-        return Command(kind="validate_document", params={"doc": doc, "checks": ["template"]})
-    if not committed:
+        return Command(kind="validate_document",
+                       params={"doc": sd.doc, "checks": ["template"]})
+    if not getattr(s, sd.committed_flag):
         return Command(
-            kind="commit_document", params={"doc": doc, "message": f"{stage}: draft {doc}"}
+            kind="commit_document",
+            params={"doc": sd.doc, "message": f"{stage}: draft {sd.doc}"},
         )
     return None
 
@@ -449,7 +481,7 @@ def _decide_exit(s: State, stage: str) -> Command | None:
     """EXIT: gate-validate (FR-150/AC-1502) then seal the document sha (FR-17/FR-23)."""
     if s.stage_exited:
         return None
-    doc = _STAGE_ROLE_DOC[stage][1]
+    doc = _STAGES[stage].doc
     if not s.exit_validated:
         # Review-exit gate: only unresolved inline discussions block beyond
         # ordinary document/template validity.
@@ -480,14 +512,15 @@ def decide(s: State) -> Command | None:
     if sub == "TRIAGE":
         if s.doc_dispatched:
             return None  # awaiting triage (set on outcome.received)
+        sd = _STAGES[stage]
         return _dispatch(
-            "scribe", "TRIAGE", "explore raw requirement", "story.md",
+            sd.drafting_role, "TRIAGE", "explore raw requirement", sd.doc,
             stage=stage, attempt=s.current_attempt + 1,
             review_round=s.review_round,
         )
-    if sub in ("SAGE_REVIEW", "LEX_REVIEW"):
-        reviewer = "sage" if sub == "SAGE_REVIEW" else "lex"
-        doc = _STAGE_ROLE_DOC[stage][1]
+    if sub in _REVIEW_SUBSTATE:
+        reviewer = _REVIEW_SUBSTATE[sub].reviewer
+        doc = _STAGES[stage].doc
         return (None if s.reviewer_dispatched
                 else _dispatch(
                     reviewer, sub, f"{reviewer} review", doc,
