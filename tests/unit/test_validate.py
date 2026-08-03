@@ -9,7 +9,12 @@ from pathlib import Path
 
 from tracks import templating
 from tracks.cli.main import cmd_validate
-from tracks.executor.validate import check_spec_items, check_template
+from tracks.executor.validate import (
+    check_design_trace,
+    check_spec_items,
+    check_template,
+    validate_document,
+)
 
 
 def _story(tmp_path: Path) -> Path:
@@ -125,3 +130,68 @@ def test_check_template_spec_conditional_sections_optional(tmp_path):
         encoding="utf-8",
     )
     assert check_template(p) == []
+
+
+# -- v0.3 design trio: template kinds + BS-06 AC→layer trace ------------------
+
+def _design_doc(tmp_path: Path, kind: str, name: str) -> Path:
+    # template text with guidance comments stripped is structurally conformant
+    import re
+    p = tmp_path / name
+    p.write_text(re.sub(r"<!--.*?-->", "", templating.load_template(kind),
+                        flags=re.S), encoding="utf-8")
+    return p
+
+
+def test_design_kinds_template_conformant(tmp_path):
+    # architecture/interfaces are registered kinds validated from their templates
+    assert check_template(_design_doc(tmp_path, "architecture",
+                                      "architecture.md")) == []
+    assert check_template(_design_doc(tmp_path, "interfaces",
+                                      "interfaces.md")) == []
+
+
+def test_design_template_missing_section(tmp_path):
+    p = _design_doc(tmp_path, "architecture", "architecture.md")
+    text = p.read_text(encoding="utf-8")
+    idx = text.rfind("## 4.")  # drop the last required section
+    p.write_text(text[:idx], encoding="utf-8")
+    issues = check_template(p)
+    assert any("missing section" in i for i in issues)
+
+
+def test_check_design_trace_covered_and_orphan():
+    acc = ("---\nstatus: draft\nsha:\n---\n\n# acc\n\n## FR-0010 t\n\n"
+           "### AC-FR0010-01 x\n\n### AC-FR0010-02 y\n")
+    covered = "# plan\n\n- AC-FR0010-01: unit\n- AC-FR0010-02: e2e\n"
+    assert check_design_trace(acc, covered) == []
+    orphan = "# plan\n\n- AC-FR0010-01: unit\n"  # AC-FR0010-02 unattributed
+    issues = check_design_trace(acc, orphan)
+    assert len(issues) == 1 and "AC-FR0010-02" in issues[0]
+
+
+def test_check_design_trace_requires_layer_token():
+    acc = "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n"
+    mentioned_no_layer = "# plan\n\nAC-FR0010-01 is planned.\n"
+    assert check_design_trace(acc, mentioned_no_layer)  # id present, no layer
+
+
+def test_validate_document_test_plan_trace_gated(tmp_path):
+    # the design trace runs for test-plan.md only when 'trace' is requested
+    (tmp_path / "acceptance.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    plan = _design_doc(tmp_path, "test-plan", "test-plan.md")
+    template_only = validate_document(plan, "test-plan.md", ["template"])
+    assert template_only is None  # no trace requested -> passes
+    with_trace = validate_document(plan, "test-plan.md", ["template", "trace"])
+    assert with_trace[0] == "trace"  # orphan AC reported
+
+
+def test_cli_validate_test_plan_runs_design_trace(tmp_path, capsys, monkeypatch):
+    (tmp_path / "acceptance.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    _design_doc(tmp_path, "test-plan", "test-plan.md")
+    monkeypatch.chdir(tmp_path)
+    assert cmd_validate(Path("."), "--file", "test-plan.md") == 1  # orphan AC
+    err = capsys.readouterr().err
+    assert "AC-FR0010-01" in err and "layer attribution" in err

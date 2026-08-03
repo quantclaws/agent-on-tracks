@@ -38,6 +38,9 @@ EVENT_TYPES = (
     "approval.recorded",
     "issue.created",
     "issues.created",
+    # v0.3 scope expansion (flow.md §8.2): M-DESIGN (Archer drafts, Prism reviews)
+    "design.committed",
+    "prism.verdict",
 )
 
 # interfaces §4 — v0.1 closed command set.

@@ -38,7 +38,9 @@ def test_approve_binds_preview_digest_and_default_actor(trac, event_log):
 def test_return_journey_reworks_then_completes(trac, event_log):
     # SM-05.4/.7: return rolls back to M-SPEC, the review loop reruns from
     # there, a FRESH preview reopens the gate, and approval then completes
-    # the run at the boundary.
+    # the run at the boundary. v0.3 (BS-02): the single post-approval run now
+    # also drives M-DESIGN before completing — no assertion change needed,
+    # terminal=boundary holds either way (Decision A keeps the terminal state).
     run_id = walk_to_await_human(trac)
     r = trac("return", "--to", "M-SPEC", "--reason", "范围要收")
     assert r.returncode == 0 and "returned to M-SPEC" in r.stdout
@@ -79,7 +81,10 @@ def test_stale_blocks_downstream(host_repo, trac, event_log):
     assert types(evs).count("preview.generated") == 2
     assert "approval.recorded" not in types(evs)
     assert "issue.created" not in types(evs)
-    # the fresh preview is approvable and the run then completes normally
+    # the fresh preview is approvable and the run then completes normally.
+    # v0.3 (BS-02): completion now comes after M-DESIGN (single post-approval
+    # run drives the design stage to its boundary exit) — the last-event
+    # assertions below are unchanged because the terminal state is the same.
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run")
     assert r.returncode == 0, r.stderr

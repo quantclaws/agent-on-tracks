@@ -11,6 +11,12 @@ list of ``line:N`` non-conformance messages (empty = valid); it will back
 ``check_trace`` (FR-0170) is the AC<->FR bidirectional coverage check; it runs
 always-on for acceptance.md (not via the checks list, like scope_overflow).
 
+v0.3 adds the design trio kinds (architecture / interfaces / test-plan,
+flow.md §8): the ``template`` check works generically from their templates,
+and ``check_design_trace`` (BS-06) is the design ``trace`` check — every AC
+of acceptance.md must carry a test-layer attribution (unit/integration/e2e)
+in test-plan.md. Unlike the acceptance trace it is checks-list gated.
+
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
 ``### FR-XXXX 标题`` / ``### NFR-XXXX 标题`` (uppercase, 4-digit zero-padded,
@@ -49,9 +55,16 @@ _KIND_BY_FILE = {
     "acceptance.md": "acceptance",
     "test-plan.md": "test-plan",
     "prd.md": "prd",
+    # v0.3 design trio (flow.md §8 / BS-03)
+    "architecture.md": "architecture",
+    "interfaces.md": "interfaces",
 }
 _HEADING = re.compile(r"^(#+)\s+(.*\S)\s*$")
 _NUM_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+# BS-06 design trace: a test-plan line attributes a layer to an AC when both
+# the AC id and a layer token share one (non-comment, non-fenced) line.
+_LAYER = re.compile(r"\b(unit|integration|e2e)\b", re.I)
 
 
 def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | None:
@@ -71,6 +84,7 @@ def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | No
     steps = (
         (_scope_failure, (doc, body)),
         (_trace_failure, (path, doc)),
+        (_design_trace_failure, (path, doc, checks)),
         (_template_failure, (path, checks)),
         (_discussion_failure, (text, checks)),
     )
@@ -92,6 +106,13 @@ def _trace_failure(path: Path, doc: str):
     if doc != "acceptance.md":
         return None
     issues = check_trace_file(path)
+    return ("trace", "; ".join(issues)) if issues else None
+
+
+def _design_trace_failure(path: Path, doc: str, checks: list):
+    if doc != "test-plan.md" or "trace" not in checks:
+        return None
+    issues = check_design_trace_file(path)
     return ("trace", "; ".join(issues)) if issues else None
 
 
@@ -203,6 +224,40 @@ def check_trace_file(path: Path) -> list:
         return ["line:1 acceptance validate requires spec.md in same dir"]
     return check_trace(spec_path.read_text(encoding="utf-8"),
                        path.read_text(encoding="utf-8"))
+
+
+def check_design_trace(acc_text: str, plan_text: str) -> list:
+    """BS-06 design trace: every AC id in acceptance.md must appear in
+    test-plan.md with a test-layer attribution (unit/integration/e2e) on the
+    same line. Returns the complete orphan list with ``line:N`` messages (the
+    acceptance line of the AC; no short-circuit); [] = pass. HTML comments and
+    fenced code are ignored on the plan side. No I/O."""
+    _, acs = _acc_scan(acc_text)
+    visible: list = []
+    fence = False
+    for line in _strip_comments(plan_text).splitlines():
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if not fence:
+            visible.append(line)
+    return [
+        f"line:{line_no} {ac_id} has no layer attribution "
+        "(unit/integration/e2e) in test-plan.md"
+        for ac_id, _ref, line_no, _section in acs
+        if not any(ac_id in ln and _LAYER.search(ln) for ln in visible)
+    ]
+
+
+def check_design_trace_file(path: Path) -> list:
+    """BS-06 trace for an on-disk test-plan doc (reads the sibling
+    acceptance.md). Used by validate_document (checks=["trace"]) and
+    trac validate."""
+    acc_path = path.parent / "acceptance.md"
+    if not acc_path.exists():
+        return ["line:1 test-plan validate requires acceptance.md in same dir"]
+    return check_design_trace(acc_path.read_text(encoding="utf-8"),
+                              path.read_text(encoding="utf-8"))
 
 
 def check_spec_items(text: str) -> list:

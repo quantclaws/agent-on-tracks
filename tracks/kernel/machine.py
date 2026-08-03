@@ -22,7 +22,7 @@ class State:
     run_id: str | None = None
     version: str | None = None
     status: str = "active"  # active | completed | awaiting_human
-    stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL
+    stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL | M-DESIGN
     substate: str | None = None
     awaiting: str | None = None  # triage | review | escalation | approval
     current_attempt: int = 0
@@ -43,6 +43,11 @@ class State:
     approval_digest: str | None = None  # revision digest (D-01)
     approval_actor: str | None = None
     issues_created: bool = False  # idempotency key semantics = D-06
+    # M-DESIGN (flow.md §8): one Archer assignment covers three docs; progress
+    # is counted, not flagged. Safe defaults keep pre-v0.3 replays unchanged.
+    design_validated: int = 0  # docs validated in the current validate sequence
+    design_committed: int = 0  # design.committed events in the current cycle
+    prism_passed_this_round: bool = False
     # micro-progress inside the current substate
     doc_dispatched: bool = False
     doc_produced: bool = False
@@ -111,11 +116,27 @@ _STAGES = {sd.stage: sd for sd in (
              verdict_event="lex.verdict",
              reviewer_passed_flag="lex_passed_this_round"),
     StageDef(stage="M-REQ-APPROVAL", initial_substate="PREVIEW"),
+    # M-DESIGN (flow.md §8): pure technical stage — no human.review/approval
+    # gates (BS-05). Multi-doc: one Archer dispatch drafts all DESIGN_DOCS;
+    # the per-doc control flow is explicit (_decide_design_draft/_exit), like
+    # _decide_approval. doc is None: no single target doc.
+    StageDef(stage="M-DESIGN", initial_substate="DRAFT",
+             drafting_role="archer", doc=None,
+             committed_event="design.committed",
+             review_substate="PRISM_REVIEW", reviewer="prism",
+             verdict_event="prism.verdict",
+             reviewer_passed_flag="prism_passed_this_round"),
 )}
 
+# M-DESIGN deliverables (flow.md §8): architecture, interfaces, test-plan.
+DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")
+
 # Derived lookups, keyed like the facts they replace.
+# committed_flag None (M-DESIGN's multi-doc design.committed) is routed through
+# its own reducer (_on_design_committed), not _on_doc_committed.
 _COMMITTED_EVENT = {sd.committed_event: sd
-                    for sd in _STAGES.values() if sd.committed_event}
+                    for sd in _STAGES.values()
+                    if sd.committed_event and sd.committed_flag}
 # review substate -> an owning StageDef (read for its reviewer role).
 _REVIEW_SUBSTATE = {sd.review_substate: sd
                     for sd in _STAGES.values() if sd.review_substate}
@@ -151,6 +172,8 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.exit_validated = False
     s.review_round = 1
     s.sage_passed_this_round = s.lex_passed_this_round = False
+    s.prism_passed_this_round = False
+    s.design_validated = s.design_committed = 0
     if s.stage == "M-REQ-APPROVAL":
         # re-entry after RETURNED rollback restarts the approval cycle fresh
         s.preview_ready = s.approved = s.returned = s.issues_created = False
@@ -228,7 +251,13 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
-    if s.substate == "EXIT":
+    if s.stage == "M-DESIGN":
+        # Multi-doc sequence: each passed validate advances one design doc
+        # (DRAFT/RESPOND pipeline and the EXIT gate share the counter).
+        s.design_validated += 1
+        if s.substate == "EXIT" and s.design_validated >= len(DESIGN_DOCS):
+            s.exit_validated = True
+    elif s.substate == "EXIT":
         s.exit_validated = True  # review-exit gate passed (AC-1502)
     else:
         s.doc_validated = True
@@ -237,6 +266,20 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    if s.stage == "M-DESIGN":
+        # BS-05: no human gate in M-DESIGN — a failed validate, even at the
+        # EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates
+        # (same budget as the DRAFT three-attempt escalation pattern).
+        s.design_validated = 0
+        if s.substate == "EXIT":
+            s.exit_validated = False
+            s.substate = "RESPOND"
+        _reset_doc(s)
+        s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
+        if s.current_attempt >= 3:
+            s.status = "awaiting_human"
+            s.awaiting = "escalation"
+        return
     if s.substate == "EXIT":
         # AC-1502: gate failed at review exit -> block exit, await human.
         s.status = "awaiting_human"
@@ -261,6 +304,29 @@ def _on_doc_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     if not p.get("final"):
         s.substate = sd.review_substate
         _reset_review(s)
+
+
+def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
+    # M-DESIGN: one design.committed event per doc (payload carries `doc`).
+    # After the third doc of the cycle the stage enters PRISM_REVIEW.
+    s.design_committed += 1
+    if s.design_committed >= len(DESIGN_DOCS):
+        s.substate = _STAGES["M-DESIGN"].review_substate
+        _reset_review(s)
+
+
+def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    # M-DESIGN has no human review gate (BS-05 / flow.md §8.3): pass goes
+    # straight to EXIT; revise re-dispatches Archer via RESPOND.
+    s.prism_passed_this_round = p["verdict"] == "pass"
+    if p["verdict"] == "pass":
+        s.substate = "EXIT"
+        s.design_validated = 0  # the exit gate re-validates all three docs
+        return
+    s.substate = "RESPOND"
+    _reset_doc(s)
+    s.design_validated = 0
+    s.design_committed = 0
 
 
 def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -304,6 +370,7 @@ def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
     s.review_round += 1
     _reset_review(s)
     s.sage_passed_this_round = s.lex_passed_this_round = False
+    s.prism_passed_this_round = False
 
 
 def _on_backlog_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -378,8 +445,12 @@ _APPLY = {
     "story.committed": _on_doc_committed,
     "spec.committed": _on_doc_committed,
     "acceptance.committed": _on_doc_committed,
+    "design.committed": _on_design_committed,
     "sage.verdict": _on_reviewer_verdict,
     "lex.verdict": _on_reviewer_verdict,
+    # M-DESIGN (flow.md §8): Prism's verdict has its own reducer — pass goes
+    # to EXIT (never HUMAN_REVIEW), revise to RESPOND (BS-05: no human gate).
+    "prism.verdict": _on_prism_verdict,
     "human.triage": _on_human_triage,
     "human.review": _on_human_review,
     "review.round_started": _on_review_round_started,
@@ -477,6 +548,56 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     return None
 
 
+def _decide_design_draft(s: State, sub: str) -> Command | None:
+    """M-DESIGN DRAFT/RESPOND pipeline (flow.md §8): ONE Archer dispatch covers
+    all three docs (Decision A); validate per doc (template + AC trace, BS-06),
+    then commit per doc (each commit emits design.committed); after the third
+    commit the reducer enters PRISM_REVIEW."""
+    sd = _STAGES["M-DESIGN"]
+    if not s.doc_dispatched:
+        cmd = Command(kind="dispatch_agent", params={
+            "role": sd.drafting_role, "substate": sub,
+            "objective": f"write {', '.join(DESIGN_DOCS)}",
+            "stage": "M-DESIGN",
+            "attempt": s.current_attempt + 1,
+            "review_round": s.review_round,
+            "docs": list(DESIGN_DOCS),
+            "assignment": {"kind": sub, "template_kind": None,
+                           "skill": "tracks-discuz", "skill_version": "0.2"},
+        })
+        if s.last_failure:
+            cmd.params["evidence"] = dict(s.last_failure)  # FR-11
+        return cmd
+    if not s.doc_produced:
+        return None
+    if s.design_validated < len(DESIGN_DOCS):
+        return Command(
+            kind="validate_document",
+            params={"doc": DESIGN_DOCS[s.design_validated],
+                    "checks": ["template", "trace"]})
+    if s.design_committed < len(DESIGN_DOCS):
+        doc = DESIGN_DOCS[s.design_committed]
+        return Command(kind="commit_document",
+                       params={"doc": doc,
+                               "message": f"M-DESIGN: {sub.lower()} {doc}"})
+    return None
+
+
+def _decide_design_exit(s: State) -> Command | None:
+    """M-DESIGN EXIT (flow.md §8 / Decision A): gate-validate the three docs
+    (template + discussion_ready), write nothing extra, then exit — the executor
+    completes the run at the M-IMPL boundary (M-IMPL is not in v0.3)."""
+    if s.stage_exited:
+        return None  # crash-hole parity with _decide_exit
+    if not s.exit_validated:
+        return Command(
+            kind="validate_document",
+            params={"doc": DESIGN_DOCS[min(s.design_validated,
+                                           len(DESIGN_DOCS) - 1)],
+                    "checks": ["template", "discussion_ready"]})
+    return Command(kind="write_frontmatter", params={"stage": "M-DESIGN"})
+
+
 def _decide_exit(s: State, stage: str) -> Command | None:
     """EXIT: gate-validate (FR-150/AC-1502) then seal the document sha (FR-17/FR-23)."""
     if s.stage_exited:
@@ -495,6 +616,42 @@ def _decide_exit(s: State, stage: str) -> Command | None:
     )
 
 
+def _decide_pipeline(s: State, stage: str, sub: str) -> Command | None:
+    """DRAFT/RESPOND: M-DESIGN runs its own multi-doc pipeline (flow.md §8)."""
+    if stage == "M-DESIGN":
+        return _decide_design_draft(s, sub)
+    return _decide_draft(s, stage, sub)
+
+
+def _decide_triage(s: State, stage: str) -> Command | None:
+    if s.doc_dispatched:
+        return None  # awaiting triage (set on outcome.received)
+    sd = _STAGES[stage]
+    return _dispatch(
+        sd.drafting_role, "TRIAGE", "explore raw requirement", sd.doc,
+        stage=stage, attempt=s.current_attempt + 1,
+        review_round=s.review_round,
+    )
+
+
+def _decide_review(s: State, stage: str, sub: str) -> Command | None:
+    reviewer = _REVIEW_SUBSTATE[sub].reviewer
+    doc = _STAGES[stage].doc
+    if s.reviewer_dispatched:
+        return None
+    return _dispatch(
+        reviewer, sub, f"{reviewer} review", doc,
+        stage=stage, attempt=s.current_attempt + 1,
+        review_round=s.review_round,
+    )
+
+
+def _decide_exit_gate(s: State, stage: str) -> Command | None:
+    if stage == "M-DESIGN":
+        return _decide_design_exit(s)
+    return _decide_exit(s, stage)
+
+
 def decide(s: State) -> Command | None:
     """Next command to issue, or None to halt (awaiting human / completed)."""
     if s.status != "active" or s.awaiting:
@@ -508,27 +665,13 @@ def decide(s: State) -> Command | None:
             kind="rollback_stage", params={"to_stage": "M-STORY", "reason": "scope_overflow"}
         )
     if sub in ("DRAFT", "RESPOND"):
-        return _decide_draft(s, stage, sub)
+        return _decide_pipeline(s, stage, sub)
     if sub == "TRIAGE":
-        if s.doc_dispatched:
-            return None  # awaiting triage (set on outcome.received)
-        sd = _STAGES[stage]
-        return _dispatch(
-            sd.drafting_role, "TRIAGE", "explore raw requirement", sd.doc,
-            stage=stage, attempt=s.current_attempt + 1,
-            review_round=s.review_round,
-        )
+        return _decide_triage(s, stage)
     if sub in _REVIEW_SUBSTATE:
-        reviewer = _REVIEW_SUBSTATE[sub].reviewer
-        doc = _STAGES[stage].doc
-        return (None if s.reviewer_dispatched
-                else _dispatch(
-                    reviewer, sub, f"{reviewer} review", doc,
-                    stage=stage, attempt=s.current_attempt + 1,
-                    review_round=s.review_round,
-                ))
+        return _decide_review(s, stage, sub)
     if sub == "EXIT":
-        return _decide_exit(s, stage)
+        return _decide_exit_gate(s, stage)
     return _decide_approval(s, stage, sub)
 
 

@@ -21,6 +21,20 @@ def walk_to_await_human(trac, stdin="构建一个事件溯源运行时"):
     return run_id
 
 
+def walk_to_design_complete(trac, stdin="构建一个事件溯源运行时"):
+    """approval → M-DESIGN (Archer drafts the trio, Prism passes) →
+    run.completed(terminal_state="boundary") — no human gate in M-DESIGN
+    (BS-05), so a single `trac run` after approval reaches the terminal state
+    (Decision A: M-IMPL not implemented in v0.3)."""
+    run_id = walk_to_await_human(trac, stdin=stdin)
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    r = trac("run")
+    assert r.returncode == 0, r.stderr
+    assert "status=completed" in r.stdout
+    assert "awaiting=-" in r.stdout
+    return run_id
+
+
 def dispatches(evs, substate=None):
     """Filter event-log rows to `dispatch_agent` command.issued events,
     optionally narrowed to a substate."""

@@ -17,10 +17,19 @@ import re
 import time
 from pathlib import Path
 
+from tracks import paths, templating
 from tracks.frontmatter import split_frontmatter
 
 # spec items the fake acceptance draft must cover (FR-0170 trace)
 _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
+# AC items the fake test-plan must attribute a test layer (BS-06 design trace)
+_ACC_ITEM = re.compile(r"^### (AC-[A-Z0-9]+-\d+)\b", re.M)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_FENCE = re.compile(r"^\s*(```|~~~)")
+_LAYERS = ("unit", "integration", "e2e")
+# FR-0210 exit gate tokens: a failed agent run is not a produced document.
+_FAILED_TOKENS = ("over_reach", "timeout", "no_target_diff",
+                  "non_zero_exit", "json_truncated", "fail")
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
@@ -77,6 +86,7 @@ class FakeBackend:
         self.repo = repo
         self.version = version
         self._calls: dict = {}
+        self._design_revisions = 0
 
     def token(self, key_left: str, key_right: str, default: str) -> str:
         key = f"{key_left}:{key_right}"
@@ -91,28 +101,116 @@ class FakeBackend:
             return {"status": "done", "artifact_ref": None,
                     "self_report": "explored raw requirement"}
         if substate in ("DRAFT", "RESPOND"):
-            token = self.token(role, substate, "ok")
-            if token in ("over_reach", "timeout", "no_target_diff",
-                         "non_zero_exit", "json_truncated", "fail"):
-                # FR-0210 exit gate: a failed agent run is not a produced doc.
-                fclass = "agent_failed" if token == "fail" else token
-                return {"status": "failed", "artifact_ref": None,
-                        "failure_class": fclass,
-                        "audit_evidence": f"simulated {fclass}",
-                        "self_report": f"agent exit gate failed: {fclass}"}
-            if token == "hang":
-                time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
-            if doc == "story.md":
-                self._write_story(doc_path)
-            elif doc == "acceptance.md":
-                self._write_acceptance(doc_path, token)
-            else:
-                self._write_spec(doc_path, token)
-            return {"status": "done", "artifact_ref": str(doc_path),
-                    "self_report": f"wrote {doc} ({token})"}
+            return self._act_draft(role, substate, doc, doc_path)
         verdict = self.token(role, substate, "pass")
         return {"status": "done", "artifact_ref": None,
                 "self_report": f"review: {verdict}", "verdict": verdict}
+
+    def _act_draft(self, role: str, substate: str, doc: str | None,
+                   doc_path: Path | None) -> dict:
+        token = self.token(role, substate, "ok")
+        if token in _FAILED_TOKENS:
+            fclass = "agent_failed" if token == "fail" else token
+            return {"status": "failed", "artifact_ref": None,
+                    "failure_class": fclass,
+                    "audit_evidence": f"simulated {fclass}",
+                    "self_report": f"agent exit gate failed: {fclass}"}
+        if token == "hang":
+            time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
+        if role == "archer":
+            return self._act_design(substate, token)
+        self._write_stage_doc(doc, doc_path, token)
+        return {"status": "done", "artifact_ref": str(doc_path),
+                "self_report": f"wrote {doc} ({token})"}
+
+    def _act_design(self, substate: str, token: str) -> dict:
+        # BS-03/Decision A: one assignment covers all three design docs.
+        if substate == "RESPOND":
+            vdir = self._revise_design(token)
+            report = f"revised design trio ({token})"
+        else:
+            vdir = self._write_design(token)
+            report = f"wrote design trio ({token})"
+        return {"status": "done", "artifact_ref": str(vdir),
+                "self_report": report}
+
+    def _write_stage_doc(self, doc: str | None, doc_path: Path | None,
+                         token: str) -> None:
+        if doc == "story.md":
+            self._write_story(doc_path)
+        elif doc == "acceptance.md":
+            self._write_acceptance(doc_path, token)
+        else:
+            self._write_spec(doc_path, token)
+
+    # -- M-DESIGN (Archer draft/revise; BS-03/BS-06) -------------------------
+
+    def _design_vdir(self) -> Path:
+        return paths.version_dir(paths.tracks_home(self.repo), self.version)
+
+    def _design_doc(self, kind: str) -> str:
+        """Template-conformant body: the canonical template with its HTML
+        guidance comments removed (all required frontmatter fields and
+        level-2 sections are present by construction). Blockquote lines are
+        dropped: the discuss parser reads `> **Name:** ...` as inline-discussion
+        threads, and unresolved threads would block the discussion_ready gate."""
+        out: list = []
+        fence = False
+        for line in _HTML_COMMENT.sub("", templating.load_template(kind)).splitlines():
+            if _FENCE.match(line):
+                fence = not fence
+            if not fence and line.lstrip().startswith(">"):
+                continue
+            out.append(line)
+        return "\n".join(out) + "\n"
+
+    def _write_design(self, token: str) -> Path:
+        """Write architecture.md + interfaces.md + test-plan.md (one DRAFT
+        covers all three). Tokens: template_broken drops architecture.md's
+        last required section (template gate fails); trace_orphan leaves the
+        last acceptance AC without a test-layer attribution (BS-06 fails)."""
+        vdir = self._design_vdir()
+        arch = self._design_doc("architecture")
+        if token == "template_broken":
+            idx = max(i for i, ln in enumerate(arch.splitlines())
+                      if ln.startswith("## "))
+            arch = "\n".join(arch.splitlines()[:idx]) + "\n"
+        (vdir / "architecture.md").write_text(arch, encoding="utf-8")
+        (vdir / "interfaces.md").write_text(self._design_doc("interfaces"),
+                                            encoding="utf-8")
+        (vdir / "test-plan.md").write_text(
+            self._design_doc("test-plan") + self._ac_coverage(token),
+            encoding="utf-8")
+        return vdir
+
+    def _ac_coverage(self, token: str) -> str:
+        """BS-06 section: every acceptance AC with a layer attribution."""
+        acc = self._design_vdir() / "acceptance.md"
+        acs = (_ACC_ITEM.findall(acc.read_text(encoding="utf-8"))
+               if acc.exists() else [])
+        if token == "trace_orphan":
+            acs = acs[:-1]
+        rows = "\n".join(f"- {ac_id}: {_LAYERS[i % len(_LAYERS)]}"
+                         for i, ac_id in enumerate(acs))
+        return "\n## AC Coverage\n\n" + rows + "\n"
+
+    def _revise_design(self, token: str) -> Path:
+        """RESPOND: revise the committed trio (Prism comments incorporated);
+        the docs must stay validate-clean for the new PRISM_REVIEW round."""
+        if token == "trace_orphan":
+            return self._write_design(token)
+        vdir = self._design_vdir()
+        self._design_revisions += 1
+        note = (f"\n\nArcher revision {self._design_revisions}: addressed "
+                "Prism review comments (fake deterministic revision).\n")
+        for name in ("architecture.md", "interfaces.md", "test-plan.md"):
+            path = vdir / name
+            if not path.exists():  # reconcile-safe: rebuild a missing doc
+                self._write_design(token)
+                return vdir
+            path.write_text(path.read_text(encoding="utf-8") + note,
+                            encoding="utf-8")
+        return vdir
 
     def _write_story(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8")

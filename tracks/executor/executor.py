@@ -82,16 +82,27 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
 
 
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
-# stage.entered; stages absent here (M-REQ-APPROVAL) end the run at the
-# M-DESIGN boundary: run.completed(terminal_state="boundary") (SM-05.6).
-_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC", "M-ACC": "M-REQ-APPROVAL"}
+# stage.entered; stages absent here (M-DESIGN) end the run at the M-IMPL
+# boundary: run.completed(terminal_state="boundary") (SM-05.6 / v0.3 Decision A:
+# M-IMPL is not implemented, so the run completes after M-DESIGN EXIT).
+_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC",
+               "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN"}
 
 # doc -> (committed event type, body-sha payload key)
 _COMMITTED_EVENT = {
     "story.md": ("story.committed", "story_sha"),
     "spec.md": ("spec.committed", "spec_sha"),
     "acceptance.md": ("acceptance.committed", "acceptance_sha"),
+    # v0.3 design trio: one event type serves all three docs; the payload's
+    # `doc` field (see _emit_committed) identifies which one.
+    "architecture.md": ("design.committed", "architecture_sha"),
+    "interfaces.md": ("design.committed", "interfaces_sha"),
+    "test-plan.md": ("design.committed", "test_plan_sha"),
 }
+
+# reviewer role -> its verdict event type
+_VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
+                  "prism": "prism.verdict"}
 
 
 class Executor:
@@ -194,9 +205,16 @@ class Executor:
                    command_id=cmd.command_id, task_id=task_id)
         verdict = result.get("verdict")
         if verdict:
-            ev = "sage.verdict" if role == "sage" else "lex.verdict"
+            ev = _VERDICT_EVENT[role]
             self._emit(ev, {"verdict": verdict, "diff_ref": result.get("diff_ref")},
                        command_id=cmd.command_id, task_id=task_id)
+            if ev == "prism.verdict" and verdict != "pass":
+                # flow.md §8.2: a revise verdict opens the next review round
+                # (reducer bumps review_round and resets the reviewer flags).
+                self._emit("review.round_started",
+                           {"stage": p.get("stage"),
+                            "round": state.review_round + 1},
+                           command_id=cmd.command_id, task_id=task_id)
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
@@ -235,16 +253,18 @@ class Executor:
 
     def _emit_committed(self, doc, commit_sha, command_id, final=False):
         ev_type, sha_key = _COMMITTED_EVENT[doc]
-        self._emit(ev_type,
-                   {"commit_sha": commit_sha,
-                    sha_key: doc_body_sha(self._doc_path(doc)),
-                    "final": final},
-                   command_id=command_id)
+        payload = {"commit_sha": commit_sha,
+                   sha_key: doc_body_sha(self._doc_path(doc)),
+                   "final": final}
+        if ev_type == "design.committed":
+            payload["doc"] = doc  # one event type serves all three design docs
+        self._emit(ev_type, payload, command_id=command_id)
 
     def _do_write_frontmatter(self, cmd, state, task_id, reconcile):
         """EXIT seal (FR-17/FR-23): body sha256 -> frontmatter `sha` -> commit ->
         stage.exited (+ next stage.entered / run.completed). Without a `doc`
-        (M-REQ-APPROVAL boundary, SM-05.6) there is nothing to seal."""
+        (M-REQ-APPROVAL boundary SM-05.6; M-DESIGN EXIT, which writes nothing
+        extra per flow.md §8) there is nothing to seal."""
         doc, stage = cmd.params.get("doc"), cmd.params["stage"]
         if reconcile and state.stage_exited:
             return
@@ -264,7 +284,8 @@ class Executor:
             self._emit("stage.entered", {"stage": nxt},
                        command_id=cmd.command_id)
         else:
-            # SM-05.6 / IF-003 §10f: no successor -> stop at the M-DESIGN boundary.
+            # SM-05.6 / IF-003 §10f: no successor -> stop at the next-stage
+            # boundary (M-DESIGN boundary pre-v0.3; M-IMPL boundary since).
             self._emit("run.completed", {"terminal_state": "boundary"},
                        command_id=cmd.command_id)
 

@@ -18,7 +18,11 @@ from tracks.baseline import baseline_summary, revision_digest
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
-from tracks.executor.validate import check_template, check_trace_file
+from tracks.executor.validate import (
+    check_design_trace_file,
+    check_template,
+    check_trace_file,
+)
 from tracks.kernel import Command, project
 from tracks.report import generate_report
 from tracks.store import Store, new_ulid
@@ -509,6 +513,8 @@ def cmd_validate(repo: Path, *args) -> int:
     issues = check_template(path)
     if path.name == "acceptance.md":  # FR-0170: trace auto-runs for acceptance
         issues += check_trace_file(path)
+    if path.name == "test-plan.md":  # BS-06: design trace (AC -> test layer)
+        issues += check_design_trace_file(path)
     if issues:
         for issue in issues:
             print(issue, file=sys.stderr)
