@@ -9,5 +9,5 @@
   "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
   "expected_responder": "Sage",
   "adopted_product_slot": "blank_lines",
-  "required_action": "Use installed trac discuss to reply to Lex, then revise spec.md with the established blank-line policy."
+  "required_action": "Use installed trac discuss to reply to Lex, then revise spec.md with the established blank-line policy. IMPORTANT: do not stop at planning or exploration only; you MUST actually execute the trac discuss reply command and save the revised spec.md on disk before you finish."
 }

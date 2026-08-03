@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .coverage
 .coverage.*
+.env
 /.tracks/runtime/
 build/
 dist/

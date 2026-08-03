@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import subprocess
 from pathlib import Path
 
@@ -113,6 +114,13 @@ def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
     monkeypatch.setenv("TRAC_GITHUB_REPO", slug)
     monkeypatch.setenv("GITHUB_TOKEN", token)
     print(f"LIVE_E2E_REMOTE=git@github.com:{slug}.git", flush=True)
+    # python.org macOS builds ship no CA bundle; use the macOS system bundle for api.github.com.
+    if (
+        os.environ.get("SSL_CERT_FILE") is None
+        and ssl.get_default_verify_paths().cafile is None
+        and Path("/etc/ssl/cert.pem").exists()
+    ):
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/ssl/cert.pem")
     return slug
 
 

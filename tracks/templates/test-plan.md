@@ -117,6 +117,18 @@ tests/
 - **Sensitive data**: Must not be committed; must be mocked or use synthetic data
 - **Version snapshot** (if applicable): Use a manifest to record data version and generation time; CI validates the manifest
 
+### 2.5. Installation & Isolation (project with build artifact)
+
+> **When needed**: Required when the project produces an installable artifact (CLI tool, library, service image, etc.). Pure script / pure in-repo tooling may omit.
+>
+> **Lifecycle**: This section is established in the **first release's design** and inherited by subsequent releases. It is only revised when the installation method itself changes (new platform, new package manager, new distribution channel). Unchanged does not mean untested — CI still runs the installation step on every E2E pass; it means the *specification* here is not re-authored.
+
+- **Installation method**: Must be identical to the end user's (e.g. `pip install dist/*.whl`, `npm install -g <pkg>.tgz`, `docker load < image.tar`). E2E must not import from the source tree or use editable/development installs.
+- **Install target**: An isolated prefix per CI run / test session (e.g. a fresh venv, `$TMPDIR/<run-id>/prefix`, a throwaway container). Must not pollute the system environment or the source tree.
+- **Working directory**: E2E runs from a directory **unrelated to the source tree** (e.g. `$TMPDIR/<run-id>/workdir`), simulating a user invoking the tool from an arbitrary location.
+- **Initialization**: If the product requires an init/scaffold step (e.g. `trac init`, `git init`, `npm init`), E2E performs it in the isolated working directory as the first action, exactly as a new user would.
+- **Verification**: After installation, E2E asserts the artifact is discoverable (on PATH / importable / service reachable) before proceeding to functional assertions.
+
 ---
 
 ## 3. Ground Truth Method
