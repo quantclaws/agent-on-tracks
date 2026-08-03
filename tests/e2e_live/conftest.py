@@ -126,12 +126,26 @@ def host_with_opencode_config(live_root, live_enabled):
         json.dumps(
             {
                 "$schema": "https://opencode.ai/config.json",
+                "permission": {
+                    "external_directory": {
+                        "*": "deny",
+                        "{env:TMPDIR}**": "allow",
+                        "/private{env:TMPDIR}**": "allow",
+                    }
+                },
                 "provider": {
                     config["TRAC_LIVE_PROVIDER"]: {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": f"{config['TRAC_LIVE_PROVIDER']} (live e2e)",
                         "options": {
                             "baseURL": config["TRAC_LIVE_BASE_URL"],
                             "apiKey": "{env:TRAC_LIVE_API_KEY}",
-                        }
+                        },
+                        "models": {
+                            config["TRAC_LIVE_MODEL"]: {
+                                "name": config["TRAC_LIVE_MODEL"],
+                            }
+                        },
                     }
                 },
                 "model": f"{config['TRAC_LIVE_PROVIDER']}/{config['TRAC_LIVE_MODEL']}",

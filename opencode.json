@@ -8,6 +8,9 @@
     }
   },
   "agent": {
+    "build": {
+      "model": "litellm/deepseek-v4-flash"
+    },
     "Scribe": {
       "permission": {
         "external_directory": {
