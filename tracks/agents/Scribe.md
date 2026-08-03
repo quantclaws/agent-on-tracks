@@ -93,7 +93,7 @@ review-ready 的 story 必须满足：
 - **读**：不限。read / grep / glob 调查宿主项目事实；webfetch / websearch 做竞品与惯例调研（借鉴以补全路径，不替代 Human 决定价值）。
 - **写**：仅本次 assignment 的 story 目标文档。不写 spec / acceptance / 设计文档 / 代码。
 - **bash**：不限。常用 `trac discuss`（query / start / reply / set-status）。commit / push / 状态推进对流程无效（Runtime 是唯一流程 authority）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
-- **Skill `tracks-discuz`**：inline-discussion 协议（canonical 格式、depth 语义、token/freshness 合同、状态规则），由 Runtime 注入。讨论写操作一律走 `trac discuss`，不手工编辑 blockquote。
+- **Skill `tracks-discuz`**：inline-discussion 协议（canonical 格式、depth 语义、token/freshness 合同、状态规则），已物化到 `.opencode/skills/`，opencode 自动发现。讨论写操作一律走 `trac discuss`，不手工编辑 blockquote。
 - **临时目录**：Human 已批准 Agent 访问整个 `$TMPDIR`（包括所有子目录），可在其中创建、修改、删除自有文件；非临时目录的外部路径仍然拒绝访问。
 
 ## 边界与反模式

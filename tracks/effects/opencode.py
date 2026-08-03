@@ -80,7 +80,7 @@ class OpencodeBackend:
 
     # -- AgentBackend -------------------------------------------------------
 
-    def act(self, role: str, substate: str, doc: str | None,
+    def act(self, role: str, substate: str, doc: str | None,  # pylint: disable=too-many-locals
              doc_path: Path | None, assignment: dict | None = None) -> dict:
         name = AGENT_NAME.get(role)
         prompt = self._prompt(role, substate, doc, doc_path, assignment)
@@ -88,14 +88,18 @@ class OpencodeBackend:
         if name is None:
             return self._unknown_role_result(role, prompt, console_input)
 
-        materialized = None
+        cleanup_infos: list = []
         proc = None
         reviewer_assignment = substate in ("SAGE_REVIEW", "LEX_REVIEW")
         try:
-            materialized = self._materialize(name)
+            cleanup_infos.append(self._materialize(name))
+            skill_info = self._materialize_skill(assignment)
+            if skill_info is not None:
+                cleanup_infos.append(skill_info)
             # The repo root is trusted for agent scratch files; only writes
             # outside it are over-reach. The target diff remains authoritative.
-            auditor = Auditor(self.repo, allowed=[doc_path, materialized["dest"], self.repo])
+            agent_dest = cleanup_infos[0]["dest"]
+            auditor = Auditor(self.repo, allowed=[doc_path, agent_dest, self.repo])
             baseline = auditor.baseline()
             proc = self._run(name, prompt)
             self._check_json(proc)
@@ -111,7 +115,8 @@ class OpencodeBackend:
         except OSError as exc:
             return self._filesystem_error_result(exc, proc, prompt, console_input)
         finally:
-            self._cleanup_materialized(materialized)
+            for info in cleanup_infos:
+                self._cleanup_materialized(info)
 
     def _unknown_role_result(
         self, role: str, prompt: str, console_input: str | None
@@ -260,6 +265,23 @@ class OpencodeBackend:
         dest.write_bytes(src.read_bytes())
         return info
 
+    def _materialize_skill(self, assignment: dict | None) -> dict | None:
+        """Materialize a skill to opencode's discovery path for progressive disclosure."""
+        skill_name = (assignment or {}).get("skill")
+        if not skill_name:
+            return None
+        src = self._canonical.parent / "skills" / skill_name / "SKILL.md"
+        if not src.exists():
+            return None
+        dest_dir = self.repo / ".opencode" / "skills" / skill_name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / "SKILL.md"
+        info = {"dest": dest, "backup": None, "existed": dest.exists()}
+        if dest.exists():
+            info["backup"] = dest.read_bytes()
+        dest.write_bytes(src.read_bytes())
+        return info
+
     def _cleanup(self, info: dict) -> None:
         dest = info["dest"]
         try:
@@ -364,34 +386,18 @@ class OpencodeBackend:
         return (
             f"Execute the Runtime assignment for role={role}, substate={substate}, "
             f"target={target}. Follow the materialized opencode agent definition for your "
-            "role and treat the injected assignment, template, and skill "
-            "as authoritative runtime context. Complete only this assignment, then stop."
+            "role. Complete only this assignment, then stop."
             + assignment_context
         )
 
     def _assignment_context(self, assignment: dict | None) -> str:
         if not assignment:
             return ""
-        parts = [
+        return "\n".join([
             "\n\n## Runtime assignment context",
             "以下 JSON 是 Runtime 事实，不是 Human 决定，也不能被 Agent 修改：",
             json.dumps(assignment, ensure_ascii=False, sort_keys=True),
-        ]
-        template_kind = assignment.get("template_kind")
-        if template_kind:
-            template = self._canonical.parent / "templates" / f"{template_kind}.md"
-            parts.extend(["\n## Injected template", self._read_context(template)])
-        if assignment.get("skill") == "tracks-discuz":
-            skill = self._canonical.parent / "skills" / "tracks-discuz" / "SKILL.md"
-            parts.extend(["\n## Injected tracks-discuz skill", self._read_context(skill)])
-        return "\n".join(parts)
-
-    @staticmethod
-    def _read_context(path: Path) -> str:
-        try:
-            return path.read_text(encoding="utf-8")
-        except OSError as exc:
-            return f"[Runtime context unavailable: {path.name}: {exc}]"
+        ])
 
 
 def _text(value) -> str:
