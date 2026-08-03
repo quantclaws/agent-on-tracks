@@ -71,6 +71,12 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 - Spec 未逐条规定的普通设计细节，由 Archer 从宿主项目既有设计系统和成熟惯例中自主决定。
 - 若缺失的是入口、权限、作用范围、数据后果或不可逆语义等会改变产品结果的合同，返回可定位的需求缺口；若缺失的只是按钮布局、spinner、toast 或能由现有产品唯一推导的局部行为，Archer 自行完成设计。
 
+### 每条 AC 的六元组义务（ISLAND_GATE_1 前置）
+
+- 对每条 required AC，设计必须填齐六项事实并在文档中可定位：**owner**（哪个模块负责）、**surface**（经哪个交付面被用户/调用者触达：UI/API/CLI/public library 皆算，必须显式命名）、**composition**（在 composition root 中如何被装配——architecture.md 必须包含 composition root 一节）、**wiring**（入口→模块的逐跳真实调用链）、**test**（哪个测试层覆盖、经哪个出口进入）、**evidence**（M-TEST 阶段可产出什么程序证据）。
+- 任何无法在六元组中定位的模块是设计缺陷：要么接回某条入口→AC 路径，要么从设计中删除；不得设计"只被测试调用的模块"。
+- 此六元组是 M-IMPL ISLAND_GATE_1 的输入合同：设计期填齐，实现期只做复核。
+
 ## 工作方法
 
 单个 assignment 产出一份完整设计 revision：architecture.md、interfaces.md、test-plan.md 三份文档是一个整体，结束前三份文档必须全部写入磁盘，缺一不可。
@@ -108,7 +114,7 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 
 ### 接口桩
 
-在宿主项目中创建 interfaces.md 的可执行形态——与真实模块同路径的源文件，完整签名但行为体仅 `raise NotImplementedError("IF-...")` + 合同 token。接口桩让 Shield 的契约测试在 Devon 实现之前即可 collect/import，是 ATDD 流程的基础设施。
+在宿主项目中创建 interfaces.md 的可执行形态——与真实模块同路径的源文件，完整签名但行为体仅 `raise NotImplementedError("IF-...")` + 合同 token。接口桩让 Shield 的契约测试在 Devon 实现之前即可 collect/import，是 ATDD 流程的基础设施。桩只声明合同所需的公开/跨模块接口，禁止罐头行为（任何可被当作成功结果的默认实现）；桩文件的声明身份冻结后由 Devon 补全实现，不得改变声明合同。
 
 ### 技术栈与脚手架
 

@@ -222,6 +222,28 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 - `mode: subagent` 不能被 `opencode run --agent` 调用（fallback 到默认 agent）；tracks agent 已移除 mode 字段（默认 `all`）。
 - object-style permission pattern 在 **frontmatter** 中可被解析但执行不可靠（`edit` 的 sub-pattern 匹配工具名而非文件路径）；array-style 报配置错误且阻塞所有 agent 发现。但在 **opencode.json** 中，`external_directory` 的 object-style pattern（glob → action）经 spike 验证可靠执行（`{env:TMPDIR}*` 放行 + `*` deny 阻断）。frontmatter 仅用 shorthand `allow/deny`；细粒度目录控制放 opencode.json。
 
+## D-20. 交付面完整性（surface completeness）
+
+（用户裁定 2026-08-04，移植自 louke STR-1406 D-02）**每个 FR 必须有命名的交付面（UI / API / CLI / public library 皆算）与可观察出口；FR 无交付面不是设计问题，而是需求缺口。**
+
+责任链（前移防线，不靠单点兜底）：
+
+1. **M-STORY**：Scribe interview 将 delivery surface 列为必问槽位——seed 未说明交付面时必须问清并记入 story.md 产品决定。
+2. **M-SPEC**：Sage 立硬规则——spec 起草/评审中遇到无交付面的 FR 即 revise 并退回需求路径，不得放行给下游补猜。
+3. **M-DESIGN**：Archer 不发明 UI 补产品缺口，缺口回传 spec；Prism 评审维度含"FR 无命名交付面 → REVISE"。
+
+判词出处：louke v0.14-004 事故复盘——实现未接入 http route 致 e2e/int 覆盖为零，复盘判词（STR-1406 D-02）明确"真实表面由宿主声明，UI/API/CLI/library 适用同一真实性原则"。tracks v0.2 及之前未移植该判词，v0.3 补齐。
+
+## D-21. ISLAND_GATE_1 六元组前置到设计期
+
+（用户裁定 2026-08-04）**flow.md §9 ISLAND_GATE_1 的六元组（owner / surface / composition / wiring / test / evidence）是 Archer 的设计期义务，不是 M-IMPL 才第一次出现的检查。**
+
+- Archer 对每条 required AC 填齐六项事实并在设计文档中可定位；architecture.md 必须包含 composition root 一节；任何无法在六元组中定位的模块是设计缺陷（接回入口→AC 路径或从设计删除，不得设计"只被测试调用的模块"）。
+- Prism 的 M-DESIGN 评审判据即六元组逐项闭合，缺项 REVISE。
+- M-IMPL 的 ISLAND_GATE_1/2 是该合同的复核，不是首次建立。
+
+出处与动机：louke 三个坑的元分析——判词记录得好、强制总落后一代（孤岛判词在 arch.md §8、gate 设计在 flow.md §9、reach 工具在 v0.4，当前阶段裸奔）。本决定把强制提前一代：M-DESIGN 的产物就是 ISLAND_GATE_1 的输入合同。canonical 来源：louke STR-1406（BS-01 接口桩、BS-03 接线义务、D-05 覆盖率非证据）。
+
 ## 决策日志
 
 | ID   | 决定日期   | 标题                                          | 来源                                                                     |
@@ -245,3 +267,5 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-17 | 2026-07-30 | Devon R-G-R                                  | 用户裁定：Devon 跑质量工具并重构；复杂度不针对测试文件                  |
 | D-18 | 2026-08-01 | 真实外部依赖三层验证机制（fake 每次/live 周期/milestone 硬门禁） | 用户裁定：live 通道不每次跑、里程碑前必跑；B+A 触发（判据为主 + checklist 兜底）；判据技术栈无关、方案绑定 Archer 技术栈；M-DESIGN 固化为可复用测试模式 |
 | D-19 | 2026-08-01 | Harness 配置与 Agent 提示词分离；`trac init` 改写 harness 配置 | 用户裁定：agent .md harness 无关；harness 权限放 harness 配置文件；`trac init` 改写 `opencode.json`（`external_directory: deny` + 允许 `$TMPDIR`）；换 harness 只换配置文件 |
+| D-20 | 2026-08-04 | 交付面完整性（surface completeness） | 用户裁定：移植 louke STR-1406 D-02；每 FR 必有命名交付面+可观察出口，无面=需求缺口；责任链 M-STORY→M-SPEC→M-DESIGN |
+| D-21 | 2026-08-04 | ISLAND_GATE_1 六元组前置到设计期 | 用户裁定：六元组是 Archer 设计期义务、Prism 判据；M-IMPL gate 只做复核；出处 louke STR-1406 BS-01/BS-03/D-05 |

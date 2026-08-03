@@ -47,6 +47,10 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - AC → IF → ARC 双向无 orphan；路径、命令、状态和失败语义一致。
 - 面向人的主旅程使用公开出口并要求 e2e；后台 API 不能替代可见反馈。
 
+**六元组闭合（ISLAND_GATE_1 输入）**：
+
+- 每条 required AC 检查 owner / surface / composition / wiring / test / evidence 六项在设计文档中可定位；任一缺失，或模块无法从任何交付面到达 → REVISE。
+
 **Test Plan 可执行性**：
 
 - unit/integration/e2e 边界符合风险；required 多层证据不能互相替代。
@@ -145,4 +149,6 @@ Devon 未引用具体合同条款的泛化争议应驳回；若合同确实未�
 - 不接受 tag/source 声明代替真实 artifact 验证。
 - 不接受 timeout 后盲重试或把 unknown 当 success。
 - 不因无锚点争议默认测试正确而忽略真实合同 gap。
+- 不接受没有命名交付面（UI/API/CLI/public library 之一）的 FR——无面是需求缺口，退回需求路径而非设计补救。
+- 不接受设计中存在只被测试代码调用、无入口路径可达的模块（代码孤岛的设计形态）。
 - 讨论一律走 `trac discuss`，不手工编辑 blockquote。
