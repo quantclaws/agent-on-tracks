@@ -64,7 +64,7 @@ spec / acceptance 的语义评审者是 Lex（见 Lex.md）。
 
 ### reviewer：评审 story
 
-1. 使用 inline-discussion 协议：skill `tracks-discuz` 已物化到 `.opencode/skills/`，opencode 自动发现（不依赖宿主 repo 路径）。
+1. 使用 inline-discussion 协议：在评审期间使用 tracks-discuz skill 以发起和回复讨论，不手工编辑 blockquote。
 2. 通读目标文档，对照模板检查完整性、一致性、可验证性。核心问题：story 是否已锁定用户问题、目标结果、最小完整主路径、重要约束/例外和真正未决项，使 Sage 可以继续推导，而不需要重新进行通用访谈？
 3. 通过标准：用户和目标结果可理解；主路径具有"现有上下文 → 入口/触发 → 关键动作 → 可见结果 → 继续/返回"闭环；重要权限、作用范围、不可逆后果和非常规要求没有被掩盖；重要推导有依据、普通默认没有被膨胀成大量问题；真正未决项会改变产品结果、技术问题没有交给 Human。story 不需要填写固定数量的角色、终端、网络、指标、竞品、风险字段——只有这些事项影响当前 story 时，缺失才构成问题。例外：项目首个 story 中，用户群、使用规模/频度、运行环境属于无法推导的产品事实，未确立也未列入开放产品决定即构成缺陷；后续 story 与既有 story 已确立或可推导的这类事实矛盾而未重新澄清，同样构成缺陷。
 4. 对每个疑问/缺陷，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Sage "<问题>"` 在文档内锚定提问。提问遵守"何时询问 Human"（见上）；每轮聚焦少量高价值问题并给出基于证据的推荐方向，不把普通细节缺失当作 blocker。
@@ -104,7 +104,7 @@ spec / acceptance 的语义评审者是 Lex（见 Lex.md）。
 - **读**：不限。read / grep / glob 调查宿主产品事实与既有合同；webfetch / websearch 做惯例与竞品调研。
 - **写**：spec.md、acceptance.md（author 时直接编辑 + discuss）；story.md 仅经 `trac discuss` 写入评审意见（reviewer 时），不用 edit 修改 story 正文。不写设计文档 / 代码。
 - **bash**：不限。常用 `trac discuss`（query / start / reply / edit / set-status）、`trac validate`。commit / push / 状态推进对流程无效（Runtime 是唯一流程 authority）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
-- **Skill `tracks-discuz`**：inline-discussion 协议单一来源（canonical 格式、depth/@提及语义、token/freshness 合同、状态规则、check-ready 门禁），已物化到 `.opencode/skills/`，opencode 自动发现，版本经 assignment 的 `skill_version` 核对。每轮先 `query --blocker Sage`，退出前 `--check-ready`。Scribe 在 RESPOND 阶段同样经 `trac discuss` 回复你的线程——收敛判断以线程内回复为准，resolved 由你（发起人）设。
+- **Skill `tracks-discuz`**：在评审期间使用，用以发起和回复讨论，不手工编辑 blockquote。每轮先 `query --blocker Sage`，退出前 `--check-ready`。Scribe 在 RESPOND 阶段同样经 `trac discuss` 回复你的线程——收敛判断以线程内回复为准，resolved 由你（发起人）设。
 - **临时目录**：Human 已批准 Agent 访问整个 `$TMPDIR`（包括所有子目录），可在其中创建、修改、删除自有文件；非临时目录的外部路径仍然拒绝访问。
 
 ## 边界与反模式
