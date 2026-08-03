@@ -13,6 +13,8 @@ import subprocess
 import pytest
 
 from tracks.discuss import writer
+from tracks.discuss.locate import token_for
+from tracks.discuss.parser import parse_threads
 from tracks.effects.opencode import OpencodeBackend
 
 STANDIN = '''#!/usr/bin/env python3
@@ -386,3 +388,102 @@ def test_prism_review_open_thread_in_any_doc_requests_revision(
     assert out["status"] == "done"
     assert out["verdict"] == "revise"
     assert out["discussion_evidence"]["ready"] is False
+
+
+# -- DRAFT thread-closure audit (live run041: verify closure from program facts,
+#    flow.md invariant 6 / arch.md 永不信自述) ----------------------------------
+
+
+def seed_thread(doc, speaker, resolved=False):
+    """Give the target doc one discussion thread INITIATED by ``speaker``
+    (anchored at the heading line, the repo-wide convention in these tests)."""
+    text = writer.start(doc.read_text(encoding="utf-8"), 5, speaker,
+                        "Which delivery surface?")
+    if resolved:
+        thread = parse_threads(text)[0]
+        text = writer.set_status(text, thread.thread_id, token_for(thread),
+                                 "resolved", speaker)
+    doc.write_text(text, encoding="utf-8")
+
+
+def commit_doc(host_repo, name, message="seed discussion thread"):
+    subprocess.run(["git", "add", name], cwd=host_repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=host_repo, check=True,
+                   capture_output=True)
+
+
+def test_draft_own_thread_left_open_fails(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """run041 family: an author DRAFT that finishes without resolving its own
+    discussion thread must fail from the doc's program facts — the diff audit
+    alone (the story changed) is not enough; the failure names the thread so
+    the retry re-dispatch carries it as evidence."""
+    seed_thread(target_doc, "Scribe")
+    commit_doc(host_repo, "story.md")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc)
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "unresolved_threads"
+    assert "T-001" in out["self_report"]
+    assert out["audit_evidence"] == "unresolved_threads: T-001"
+    assert "agent edit" in out["diff_ref"]  # the diff product was captured
+
+
+def test_draft_own_thread_resolved_passes(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """Same dispatch with the author's thread closed: the pass path is
+    unchanged (the audit keys on unresolved, not merely self-initiated)."""
+    seed_thread(target_doc, "Scribe", resolved=True)
+    commit_doc(host_repo, "story.md")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert "agent edit" in out["diff_ref"]
+
+
+def test_reviewer_dispatch_leaving_open_thread_unaffected(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """Reviewer dispatches are EXEMPT: a finding thread legitimately stays
+    open for the author (verdict semantics unchanged)."""
+    seed_thread(target_doc, "Sage")
+    commit_doc(host_repo, "story.md")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out.get("failure_class") != "unresolved_threads"
+    assert out["verdict"] == "revise"  # open thread blocks readiness, as before
+
+
+def test_respond_dispatch_leaving_open_thread_unaffected(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """RESPOND is EXEMPT: the author's threads legitimately stay open until the
+    other party's next round — an open self-initiated thread is not a failure."""
+    seed_thread(target_doc, "Scribe")
+    commit_doc(host_repo, "story.md")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    out = backend(host_repo).act("scribe", "RESPOND", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out.get("failure_class") != "unresolved_threads"
+
+
+@pytest.mark.parametrize("blocked", DESIGN_DOCS)
+def test_design_draft_open_own_thread_in_any_doc_fails(
+        blocked, fake_opencode, design_vdir, host_repo, monkeypatch):
+    """M-DESIGN trio is doc-set aware: an Archer-initiated thread left open in
+    ANY of the three docs fails the whole dispatch, naming doc and thread id."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    seeded = design_vdir / blocked
+    seeded.write_text("---\nsha:\n---\n\n# design\n", encoding="utf-8")
+    seed_thread(seeded, "Archer")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "unresolved_threads"
+    assert f"{blocked}:T-001" in out["self_report"]

@@ -4,9 +4,11 @@ Pipeline per dispatch: materialize canonical prompt -> baseline snapshot ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
 (process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
 the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
-whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6).
-Failures map to IF-003 §1a FailureClass. The agent's stdout JSON is NEVER the
-product; the controlled target diff is.
+whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6:
+over-reach, and — for author DRAFT dispatches — that the agent resolved every
+discussion thread it initiated in the target doc-set). Failures map to IF-003
+§1a FailureClass. The agent's stdout JSON is NEVER the product; the controlled
+target diff is.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.discuss.gate import check_ready
+from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 from tracks.effects.audit import Auditor
 
@@ -109,7 +112,7 @@ class OpencodeBackend:
             proc = self._run(name, prompt)
             self._check_json(proc)
             return self._audited_result(
-                auditor, baseline, proc, name, substate, doc_paths,
+                auditor, baseline, proc, role, substate, doc_paths,
                 prompt, console_input, substate in ("DRAFT", "RESPOND"),
                 reviewer_assignment,
             )
@@ -151,29 +154,32 @@ class OpencodeBackend:
 
     def _audited_result(
         self, auditor: Auditor, baseline: set[str], proc: subprocess.CompletedProcess,
-        name: str, substate: str, doc_paths: list[Path], prompt: str,
+        role: str, substate: str, doc_paths: list[Path], prompt: str,
         console_input: str | None, author_assignment: bool, reviewer_assignment: bool,
     ) -> dict:
         diffs = [auditor.target_diff(path) for path in doc_paths]
-        missing = [str(path)
-                   for path, diff in zip(doc_paths, diffs, strict=True)
-                   if diff is None]
         diff_ref = "\n".join(diff for diff in diffs if diff) or None
-        if author_assignment and (not doc_paths or missing):
-            raise OpencodeError(
-                "no_target_diff",
-                "exit 0 but the target doc-set has no diff"
-                + (f": {', '.join(missing)}" if missing else ""),
-                exit_code=0, stderr=proc.stderr)
+        _require_target_diff(doc_paths, diffs, author_assignment, proc)
         over = auditor.audit(baseline)
         if over:
             auditor.rollback_agent_changes(baseline)
             return self._overreach_result(
                 diff_ref, proc, prompt, console_input, over,
             )
+        if substate == "DRAFT":
+            # flow.md 不变量 6 / arch.md 永不信自述: closure is verified from the
+            # doc's discussion state, not the agent's report (live run041: Scribe
+            # finished the interview DRAFT leaving its own thread open). RESPOND
+            # and reviewer dispatches are exempt: replies/findings legitimately
+            # stay open for the other party's next round.
+            offending = _unresolved_author_threads(doc_paths, role)
+            if offending:
+                return self._unresolved_threads_result(
+                    diff_ref, offending, proc, prompt, console_input,
+                )
         return self._success_result(
-            name, substate, doc_paths, diff_ref, proc, prompt, console_input,
-            author_assignment, reviewer_assignment,
+            AGENT_NAME[role], substate, doc_paths, diff_ref, proc, prompt,
+            console_input, author_assignment, reviewer_assignment,
         )
 
     def _overreach_result(
@@ -184,6 +190,18 @@ class OpencodeBackend:
                 "self_report": "over-reach detected; agent changes rolled back",
                 "diff_ref": diff_ref, "audit_evidence": evidence,
                 "failure_class": "over_reach",
+                "agent_io": self._capture_io(proc, prompt, console_input)}
+
+    def _unresolved_threads_result(
+        self, diff_ref: str | None, offending: list[str],
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+    ) -> dict:
+        threads = ", ".join(offending)
+        return {"status": "failed", "artifact_ref": None,
+                "self_report": f"author-initiated discussion thread(s) unresolved: {threads}",
+                "diff_ref": diff_ref,
+                "audit_evidence": f"unresolved_threads: {threads}",
+                "failure_class": "unresolved_threads",
                 "agent_io": self._capture_io(proc, prompt, console_input)}
 
     def _success_result(
@@ -445,6 +463,43 @@ def _text(value) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
+
+
+def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
+                         author_assignment: bool,
+                         proc: subprocess.CompletedProcess) -> None:
+    """An author (DRAFT/RESPOND) dispatch must leave a controlled diff on EVERY
+    doc of its target set; exit 0 with no product is classified, never trusted."""
+    missing = [str(path)
+               for path, diff in zip(doc_paths, diffs, strict=True)
+               if diff is None]
+    if author_assignment and (not doc_paths or missing):
+        raise OpencodeError(
+            "no_target_diff",
+            "exit 0 but the target doc-set has no diff"
+            + (f": {', '.join(missing)}" if missing else ""),
+            exit_code=0, stderr=proc.stderr)
+
+
+def _unresolved_author_threads(doc_paths: list[Path], role: str) -> list[str]:
+    """Threads in the target doc-set INITIATED by ``role`` and not resolved.
+
+    Audit predicate for author DRAFT dispatches: ``speaker_key(initiator) ==
+    speaker_key(role)`` and ``status != "resolved"`` (open and reopen both
+    block, as in the discussion gate), checked across the WHOLE doc-set. With a
+    single target doc the offenders are thread ids; a multi-doc set (the
+    M-DESIGN trio) names them ``doc:T-NNN`` so the ids stay unambiguous."""
+    role_key = speaker_key(role)
+    multi = len(doc_paths) > 1
+    offending = []
+    for path in doc_paths:
+        if not path.exists():
+            continue
+        for thread in parse_threads(path.read_text(encoding="utf-8")):
+            if speaker_key(thread.initiator) == role_key and thread.status != "resolved":
+                label = f"{path.name}:{thread.thread_id}" if multi else thread.thread_id
+                offending.append(label)
+    return offending
 
 
 def _docset_text(doc_paths: list[Path]) -> str:

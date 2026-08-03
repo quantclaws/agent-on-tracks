@@ -69,7 +69,7 @@ permission:
 6. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
 7. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项，不强迫用户列举"不做什么"。
 8. **开放产品决定**：一个问题必须同时满足三个条件才能写入——(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。
-9. 写完 story 后，如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）。
+9. 写完 story 后，如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）。结束前必须确认你发起的 interview 线程已 set-status resolved（未闭合会被 Runtime 判为失败并重派）。
 
 ### RESPOND（修订 story）
 
