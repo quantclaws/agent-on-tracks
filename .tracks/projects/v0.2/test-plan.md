@@ -270,21 +270,21 @@ trac agent archer ci-scan \
 
 | AC | 测试层 | 计划测试 |
 |:---|:---|:---|
-| AC-FR0220-01 | integration | `test_report.py::test_report_uses_current_git_host_and_db` |
-| AC-FR0220-02 | integration | `test_report.py::test_markdown_contains_timeline_params_audit_retry_and_commits` |
-| AC-FR0220-03 | unit + integration | `test_report.py::test_github_commit_url`、`::test_local_commit_fallback` |
-| AC-FR0220-04 | integration | `test_report.py::test_static_html_uses_pinned_local_renderer_and_escapes_content` |
-| AC-FR0220-05 | integration | `test_report.py::test_report_is_read_only_and_serve_binds_loopback` |
-| AC-NFR0050-01 | unit + integration | `test_report.py::test_unclosed_activity_is_interrupted` |
-| AC-NFR0050-02 | unit | `test_report.py::test_utc_localized_time_and_blob_reference` |
-| AC-NFR0050-03 | unit + integration | `test_report.py::test_sensitive_values_are_redacted` |
-| AC-NFR0050-04 | integration | `test_report.py::test_overreach_rollback_and_retry_chain_are_explained` |
-| AC-NFR0050-05 | unit + integration | `test_report.py::test_audit_blob_failure_marks_gap_without_changing_outcome` |
-| AC-NFR0050-06 | unit | `test_report.py::test_actor_derivation_table` |
-| AC-NFR0060-01 | e2e_live fixture | `test_full_journey.py::test_missing_test_repo_is_configuration_error` |
-| AC-NFR0060-02 | e2e_live | `test_full_journey.py::test_only_expected_remote_branch_changed` |
-| AC-NFR0060-03 | e2e_live | `test_full_journey.py::test_host_and_report_paths_are_printed_and_preserved` |
-| AC-NFR0060-04 | e2e_live | `test_full_journey.py::test_bounded_human_scripted_journey` |
+| AC-FR0220-01 | integration | `test_report.py::test_report_uses_current_git_host_and_escapes_agent_output` |
+| AC-FR0220-02 | integration | `test_report.py::test_report_uses_current_git_host_and_escapes_agent_output`、`::test_report_expands_agent_blobs_and_discussion_participants` |
+| AC-FR0220-03 | integration | `test_report.py::test_report_uses_current_git_host_and_escapes_agent_output`（local fallback）；GitHub remote URL 独立 case 待补 |
+| AC-FR0220-04 | integration | `test_report.py::test_report_cli_writes_static_files`、`::test_report_uses_current_git_host_and_escapes_agent_output` |
+| AC-FR0220-05 | integration | `test_report.py::test_report_uses_current_git_host_and_escapes_agent_output`（DB/worktree read-only） |
+| AC-NFR0050-01 | integration | `test_report.py::test_report_marks_unclosed_activity_interrupted` |
+| AC-NFR0050-02 | planned gap | UTC/localized time 与 blob reference 独立 case 待补 |
+| AC-NFR0050-03 | unit + integration | `test_agent_io.py::test_redact_masks_credentials_and_preserves_non_sensitive_fields`、`test_report.py::test_report_uses_current_git_host_and_escapes_agent_output` |
+| AC-NFR0050-04 | planned gap | overreach rollback/retry chain 独立 report case 待补 |
+| AC-NFR0050-05 | unit + integration | `test_agent_io.py::test_audit_blob_failure_is_partial_without_dangling_references`、live report gap 断言 |
+| AC-NFR0050-06 | planned gap | actor derivation table 独立 case 待补 |
+| AC-NFR0060-01 | e2e_live fixture | `test_full_journey.py::test_bounded_scripted_real_agent_journey`（`live_github_repo` fail-closed） |
+| AC-NFR0060-02 | e2e_live | `test_full_journey.py::test_bounded_scripted_real_agent_journey`（`ls-remote` 前后审计） |
+| AC-NFR0060-03 | e2e_live | `test_full_journey.py::test_bounded_scripted_real_agent_journey`（保留并打印宿主/report/remote/branch） |
+| AC-NFR0060-04 | e2e_live | `test_full_journey.py::test_bounded_scripted_real_agent_journey` |
 
 ### 11.3 Agent I/O 捕获专项
 
@@ -305,30 +305,146 @@ trac agent archer ci-scan \
 
 ### 12.2 完整 live 旅程
 
-新增 `tests/e2e_live/test_full_journey.py`，以原始 story seed 作为输入，真实运行可达的需求流程：
+新增 `tests/e2e_live/test_full_journey.py`，以固定 seed 真实运行完整需求流程。
+
+#### 12.2a Seed 原文
 
 ```text
-story seed
-→ Scribe story draft
-→ Sage story review / discussion
-→ Scribe response
-→ Sage spec draft
-→ Lex spec review / revise
-→ Sage spec response
-→ Lex pass
-→ Sage acceptance draft
-→ Lex acceptance review
-→ M-REQ-APPROVAL boundary
-→ trac report
+构建一个简单的代码行数统计工具。
+
+用户指定一个文件路径，工具输出该文件的代码行数。
+
+以下产品决定尚未做出，需要在需求评审中澄清：
+- 交付入口是 CLI 还是 library；
+- 空白行是否计入代码行数；
+- 指定路径无效时用户看到什么。
+
+实现语言、框架、CI、架构和测试策略由 Agent 采用合理默认，不交给 Human 决定。
 ```
+
+seed 刻意保留三个产品槽位（见 SPEC-003 §FR-0130 Seed 产品槽位），使 reviewer 有真实缺陷可发现。seed 不预先给出答案；答案只存在于 live fixture 的有限 transcript 中。
+
+#### 12.2b 产品槽位与预录答案
+
+| slot_id | 问题 | 决定者 | 预录答案（`LiveE2E-Human`） |
+|:---|:---|:---|:---|
+| `surface` | 交付入口是 CLI 还是 library | Human | 交付入口使用 CLI，不提供 library 入口。 |
+| `blank_lines` | 空白行是否计入代码行数 | Human | 空白行不计入代码行数。 |
+| `error_behavior` | 无效路径时用户看到什么 | Human | 输出错误信息到 stderr 并返回非零退出码。 |
+
+以下不是产品槽位，Agent 采用合理默认：实现语言、框架、依赖、CI、架构、测试策略。
+
+预录答案以 `tracks-live-console/v1` 格式注入，每行 `answer.<slot_id>=<答案>`，带 `actor=LiveE2E-Human`。transcript 有限；用尽、问题无法归类或需要新产品决定时 fail-closed，不静默采用默认。
+
+#### 12.2c Finding ID 与 scenario overlay
+
+live harness 从 `tests/e2e_live/scenarios/` 选择 test-only JSON，并通过 `trac run --assignment-overlay <scenario.json>` 嵌套到 `assignment.scenario_context`（IF-003 §3a）；scenario 不进入 wheel 的 production resources，也不能覆盖基础 assignment。live journey 使用以下固定 finding：
+
+| finding_id | 阶段 | reviewer | 条件 | 期望回复者 |
+|:---|:---|:---|:---|:---|
+| `STORY-OUTPUT-PLACEMENT` | M-STORY SAGE_REVIEW | Sage | story 未定义统计结果的展示位置（stdout / 文件 / 返回值） | Scribe |
+| `SPEC-BLANK-LINE-SEMANTICS` | M-SPEC LEX_REVIEW | Lex | spec 未明确空白行判定规则（空字符串 / 仅空白字符 / 含注释） | Sage |
+
+- reviewer 创建的 thread body 必须以 `[FINDING:<finding_id>]` 开头。
+- 条件适用时未创建 thread → live journey fail-closed，保留 report。
+- 条件不适用时不创建不失败。
+- 测试按 finding_id 匹配 thread，不断言 thread body 的其余自然语言。
+
+#### 12.2d 旅程流程
+
+```text
+trac start（seed 原文）
+→ Scribe TRIAGE：读取 seed，识别产品槽位，用 trac discuss 提问
+→ live fixture 注入 surface/blank_lines/error_behavior 预录答案到 console
+→ Scribe 用 trac discuss reply 写入回答并 resolve 自己的 thread
+→ trac triage go
+→ Scribe DRAFT story
+→ Sage SAGE_REVIEW：scenario_context 含 [FINDING:STORY-OUTPUT-PLACEMENT]
+  → Sage 发现 story 未定义结果展示位置
+  → Sage trac discuss start [FINDING:STORY-OUTPUT-PLACEMENT]
+  → verdict=revise（open thread）
+→ Scribe RESPOND：
+  → trac discuss query --blocker Scribe
+  → trac discuss reply（采纳 Human 预录答案：结果打印到 stdout）
+  → 修改 story 正文，产生 diff
+  → Runtime commit story
+→ Sage 再次 SAGE_REVIEW：
+  → 确认 reply 和 diff
+  → trac discuss set-status resolved --operator Sage
+  → verdict=pass
+→ trac review no-comment
+→ Sage DRAFT spec
+→ Lex LEX_REVIEW：scenario_context 含 [FINDING:SPEC-BLANK-LINE-SEMANTICS]
+  → Lex 发现 spec 未明确空白行判定
+  → Lex trac discuss start [FINDING:SPEC-BLANK-LINE-SEMANTICS]
+  → verdict=revise
+→ Sage RESPOND：
+  → trac discuss query --blocker Sage
+  → trac discuss reply（明确空白行 = 仅含空白字符的行，不计入）
+  → 修改 spec，产生 diff
+  → Runtime commit spec
+→ Lex 再次 LEX_REVIEW：
+  → 确认 reply 和 diff
+  → trac discuss set-status resolved --operator Lex
+  → verdict=pass
+→ trac review no-comment
+→ Sage DRAFT acceptance
+→ Lex LEX_REVIEW（无额外 required finding；可 pass 或自主提问）
+→ trac review no-comment
+→ M-REQ-APPROVAL
+→ trac approve --actor LiveE2E-Human
+→ trac run → run.completed(boundary)
+→ trac report --run-id <id> --output report
+```
+
+#### 12.2e 断言合同
+
+测试必须断言以下证据，缺任何一项即失败并保留宿主和 report：
+
+1. **Sage↔Scribe 闭环**：story.md 中存在 initiator=Sage、body 含 `[FINDING:STORY-OUTPUT-PLACEMENT]` 的 thread；reply speaker 含 Scribe；`reply_count > 0`；status=resolved；RESPOND outcome 有 `diff_ref`；story commit 事件存在；最终 `sage.verdict(pass)`。
+2. **Lex↔Sage 闭环**：spec.md 中存在 initiator=Lex、body 含 `[FINDING:SPEC-BLANK-LINE-SEMANTICS]` 的 thread；reply speaker 含 Sage；`reply_count > 0`；status=resolved；RESPOND outcome 有 `diff_ref`；spec commit 事件存在；最终 `lex.verdict(pass)`。
+3. **Human 预录答案落地**：story.md 的 discussion reply 中可检索到 CLI、stdout、空白行不计入、stderr/非零退出码等关键语义。
+4. **Report 完整性**：report.md 含 assignment 展开、Agent I/O 摘要、discussion thread/reply/status、attempt、commit、audit gap、interrupted activity、阶段和最终状态。
+5. **远端审计**：`git ls-remote` 前后一致（无意外远端副作用）。
+6. **宿主保留**：测试结束打印 `LIVE_E2E_HOST`、`LIVE_E2E_REPORT_DIR`、`LIVE_E2E_REMOTE`、`LIVE_E2E_BRANCH`。
+
+#### 12.2f 通用纪律
 
 - 该测试替换当前 live 通道中仅调用单个 Lex/Agent 的 smoke 作为主要 live workflow 证据；`tests/e2e/test_full_journey.py` 的 fake 全流程保留，继续承担每次 CI 的 deterministic 回归。
 - 旅程的每一轮都通过 Runtime 产生事件和 commit；测试断言审计报告能解释 Agent 输入/输出、discussion、commit、越权审计、失败重派和成功原因。
-- live 测试不固定断言 Agent 生成的自然语言文本；只断言结构、阶段、协议、审计、commit 和最终边界结果。
-- 测试输出 report 目录作为运行结果；不主动删除本地宿主，方便用户在测试结束后执行 `trac report` 或启动静态网页。
-- Human 输入由测试脚本以明确 actor（例如 `LiveE2E-Human`）调用 `trac triage`、`trac review`、`trac approve` 注入；不得等待交互式 Human。
-- 测试标记为独立 opt-in（不进入普通 fake suite）；设置 per-agent timeout、最大 review round 和整条旅程总 timeout。超限即失败，报告最后状态和未收敛 discussion，不无限循环。
+- live 测试不固定断言 Agent 生成的完整自然语言文本；只对预设产品 slot 和 finding_id 做关键词/ID 匹配。无法分类的问题 fail-closed，并打印原问题与保留的宿主路径。
+- Human 产品回答只由 live fixture 以明确 actor `LiveE2E-Human` 注入真实 Agent 子进程的有限 console transcript；Agent 必须再用 `trac discuss reply` 写入权威文档。`trac triage`、`trac review`、`trac approve` 仍由测试驱动器调用，不等待交互式 Human；普通 trac 运行不隐式注入 console。
+- 每个 Human review gate 前查询当前文档并要求所有已观察线程均为 resolved；存在 discussion 时还必须有 reply，证明 author/reviewer 闭环而非直接改状态。reviewer 必须发现 seed 中刻意保留的缺陷并提问；若模型直接 pass，测试带 report 失败，不静默跳过。
+- 测试标记为独立 opt-in（不进入普通 fake suite）；设置 per-agent timeout、每次 `trac run` timeout 和整条旅程总 timeout，三者共同限制 discussion/review 循环。超限即失败并保留宿主，供报告最后状态和未收敛 discussion，不无限循环。
 
 ### 12.3 现有 live smoke 的保留范围
 
 现有 `test_real_startup_and_json_protocol`、权限、provider error、target diff 等测试保留为低成本 backend contract smoke；`test_lex_review_runs` 不再作为完整流程证据，改为对 Lex reviewer 的 no-change/discussion 语义进行独立验证。
+
+## 13. 可安装发行物与 live E2E 安装边界
+
+### 13.1 安装合同
+
+- live E2E 开始前由测试使用当前项目的 `.venv/bin/python` 构建临时标准 wheel；不得把源码目录直接作为运行时 package，也不得使用 editable install。
+- 测试在每个临时宿主内创建隔离虚拟环境，使用该 wheel 安装 `agent-on-tracks`，并以该环境的 `trac`/`python -m tracks.cli.main` 驱动旅程。测试命令移除 workspace `PYTHONPATH`；workspace `.venv/bin` 只可作为外部 `opencode` 可执行文件的显式工具来源，不得提供 tracks import。
+- 安装后 probe 必须确认 `tracks.__file__` 位于隔离环境、`trac` 入口可执行，并确认以下 package data 存在：
+  - `tracks/agents/Scribe.md`
+  - `tracks/agents/Sage.md`
+  - `tracks/agents/Lex.md`
+  - `tracks/skills/tracks-discuz/SKILL.md`
+  - `tracks/templates/*.md` 与 report renderer 资源
+- `OpencodeBackend` 使用安装环境中的 canonical agents；dispatch 前把对应角色定义物化到测试宿主 `.opencode/agents/<Name>.md`，与安装包中的字节一致。测试断言 opencode 发现的是该文件，结束后断言清理/恢复，不在 backend `_prompt` 复制角色职责。
+
+### 13.2 新增测试映射
+
+| AC | 测试类型 | 测试落点 |
+|:---|:---|:---|
+| AC-NFR0070-01 | integration + e2e_live | `tests/integration/test_distribution.py::test_wheel_is_installable_and_contains_runtime_resources`、`test_full_journey.py::test_bounded_scripted_real_agent_journey` |
+| AC-NFR0070-02 | integration + e2e_live | `tests/integration/test_distribution.py::test_wheel_is_installable_and_contains_runtime_resources`、`tests/e2e_live/test_full_journey.py::test_live_environment_removes_workspace_import_hooks` |
+| AC-NFR0070-03 | integration + e2e_live | `tests/integration/test_distribution.py::test_wheel_is_installable_and_contains_runtime_resources`、`tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey` |
+| AC-NFR0070-04 | e2e_live | `tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey` |
+
+### 13.3 失败与保留
+
+- wheel 构建、隔离环境创建、pip 安装、probe、入口执行或 package data 校验任何一步失败，live job 失败并保留临时宿主、安装日志和 report；不 skip、不 fallback 到 fake。
+- 普通未配置 live provider 的 suite 仍按 NFR-0060 skip；安装合同只在 opt-in live job 中执行。

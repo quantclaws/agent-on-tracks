@@ -25,9 +25,12 @@ sha:
 
 | 字段 | 类型 | 语义 |
 |:---|:---|:---|
-| `diff_ref` | `str \| None` | 目标文件受控 diff 的引用（**权威产物**；artifact 真相，见 ARCH §4b） |
+| `diff_ref` | `str \| None` | 目标文件受控 diff 的引用；author 必需，TRIAGE/reviewer 可选（见 ARCH §4b） |
 | `audit_evidence` | `str \| None` | 越权路径级证据（baseline 之外 diff 的路径列表；无越权为 None） |
 | `failure_class` | `str \| None` | 失败矩阵分类（见 §1a）；成功为 None |
+| `verdict` | `"pass" \| "revise" \| None` | 仅 reviewer；Runtime 从目标文档 discussion ready 状态派生 |
+| `agent_io` | `dict \| None` | 脱敏 assignment/input 与 stdout/stderr 的 content-addressed audit refs；写入失败标记 audit gap |
+| `discussion_evidence` | `dict \| None` | TRIAGE/reviewer 对目标文档的只读 thread snapshot；权威内容仍是文档 + `trac discuss query` |
 
 `verdict.passed` / `verdict.failed` 的 `check` 字段取值集合扩展（见 §5）。
 
@@ -36,11 +39,12 @@ sha:
 ```python
 FailureClass = Literal[
     "opencode_missing",      # opencode 可执行文件缺失
+    "filesystem",            # materialize/cleanup 文件系统失败
     "provider_unavailable",  # provider/model/凭据不可用
     "non_zero_exit",         # 非零退出
     "timeout",               # 超时（含子进程组清理）
     "json_truncated",        # stdout JSON 流截断/解析失败
-    "no_target_diff",        # 退出 0 但目标文件无 diff
+    "no_target_diff",        # author DRAFT/RESPOND 退出 0 但目标文件无 diff
     "signal",                # SIGINT/kill-9
     "outcome_not_persisted", # 文件已改但 outcome 未落盘（reconcile）
     "over_reach",            # 后置审计发现越权 diff
@@ -53,7 +57,7 @@ FailureClass = Literal[
 
 ## 3. Assignment 增量
 
-在 IF-001 §5 `Assignment` 基础上追加**可选**字段，承载模板/skill 注入语义（实现层亦可由 `role` 从 canonical 文件构造，二者择一）：
+在 IF-001 §5 `Assignment` 基础上追加**可选**字段，承载模板/skill 注入语义，并为显式测试场景保留一个不覆盖基础 assignment 的命名空间（实现层亦可由 `role` 从 canonical 文件构造，二者择一）：
 
 ```python
 @dataclass(frozen=True)
@@ -62,7 +66,17 @@ class Assignment:
     template_kind: str | None = None   # 需注入的模板 kind（"story"/"spec"/"acceptance"），由 Runtime 从 tracks/templates/ 读取附入
     skill: str | None = None           # 需注入的 skill 名（"tracks-discuz"），正文由 Runtime 附入调用上下文
     skill_version: str | None = None   # 注入 skill 的版本（取自 SKILL.md frontmatter version），供 Sage 核对版本 identity
+    scenario_context: dict | None = None  # 外部 overlay 的原样副本；不能覆盖上述字段或 IF-001 基础字段
 ```
+
+### 3a. 测试场景 overlay 与 finding marker
+
+`trac run --assignment-overlay <scenario.json>` 读取一个 JSON object，并把它完整嵌套到 `assignment.scenario_context`。Runtime 不把 overlay merge 到 assignment 根部，因此 overlay 不能覆盖 `role`、`objective`、scope、budget、template/skill 或其它 workflow 字段。该接口用于可复现测试/诊断场景，不是 Agent 内容的第二发布来源；canonical Agent 仍来自安装包。
+
+- scenario JSON 可描述 `scenario_id`、phase、agent/kind、有限 Human actor、评论上限、`required_finding`、适用条件、期望回复者和必需动作；这些 key 属于 fixture，不成为 Runtime 状态机字段。
+- reviewer 场景中的 `required_finding` 使用稳定 `[FINDING:<finding_id>]` marker。测试和 report 按 marker 匹配 thread，不依赖其余自然语言全文。
+- Runtime 只负责传递和审计 `scenario_context`，不解释 finding 的语义，也不据此派生 verdict。fixture 负责条件、thread/reply/RESPOND/resolve 和 fail-closed 断言。
+- `trac run --max-dispatches <N>` 提供正整数 dispatch boundary；达到边界后停止本次 run loop，但不改写工作流状态机或伪造成功 outcome。
 
 > `role` 内部仍小写 `scribe`/`sage`/`lex`（延续 IF-001）；OpencodeBackend 映射到首字母大写 opencode agent 名（`Scribe`/`Sage`）。`scope_whitelist` 语义 = 目标文档 + command_id 专属临时目录（ARCH §6）。`simulate` 注入纪律不变（仅 cli/executor 边界，纯函数不感知）。
 
@@ -80,9 +94,54 @@ class Outcome:
     diff_ref: str | None = None    # 目标文件受控 diff（权威产物）
     audit_evidence: str | None = None  # 越权证据（路径级）
     failure_class: FailureClass | None = None  # 失败分类（§1a）
+    verdict: Literal["pass", "revise"] | None = None  # reviewer only
+    agent_io: dict | None = None       # 脱敏输入/输出 blob refs + audit completeness
+    discussion_evidence: dict | None = None  # TRIAGE/reviewer read-only snapshot
 ```
 
-> 产物权威：`diff_ref`（目标文件受控 diff）为真相；`self_report` 与 stdout JSON 仅诊断，Runtime 不信任（ARCH §4b）。
+> 分派合同：TRIAGE 可 no-change；author 的 `diff_ref`（目标文件受控 diff）为产物真相；reviewer 可 no-change，其 `verdict` 由 Runtime 重新解析目标文档 discussion 状态得到。`self_report` 与 stdout JSON 仅诊断，Runtime 不信任（ARCH §4b）。
+
+### 4a. Assignment kind outcome matrix
+
+该矩阵是接口可观察语义，具体 backend 可以不同：
+
+| kind | 成功条件 | `diff_ref` | `verdict` 来源 |
+|:---|:---|:---|:---|
+| `TRIAGE` | `status=done` 可无目标 diff；之后必须等待 Human triage | optional | Markdown parser/`trac discuss query` snapshot + `human.triage` |
+| `DRAFT` | 目标文档 diff 存在且 validate 通过 | required | Runtime validate/commit |
+| `RESPOND` | `trac discuss reply` 证据、目标文档 diff 和 validate 均存在 | required | Runtime validate/commit 后重新 dispatch reviewer |
+| `SAGE_REVIEW` / `LEX_REVIEW` | reviewer 可 no-change；问题必须以 discussion 写入目标文档 | optional | parser/query：open/reopen=`revise`，全部 resolved/无讨论=`pass` |
+
+Agent 自述、stdout JSON 和 console 文本不产生 `human.*` 事件，不改变 thread status，也不能代替 Runtime 派生 verdict。
+
+### 4b. Live journey test-harness interface
+
+以下是测试 harness 与 Runtime 的审计边界，不是用户运行 `trac run` 的隐藏产品开关：
+
+```python
+@dataclass(frozen=True)
+class HumanTranscriptEntry:
+    actor: str                 # 例如 "LiveE2E-Human"
+    question_slot: str         # seed 中已登记的产品问题 ID
+    answer: str                # 有限预录答案；不得是空泛确认
+
+@dataclass(frozen=True)
+class LiveJourneyConfig:
+    provider: str
+    model: str
+    base_url: str
+    api_key_ref: str
+    github_repo: str | None
+    command_timeout_s: int
+    total_timeout_s: int
+    max_review_dispatches: int
+    max_review_rounds: int
+    transcript: tuple[HumanTranscriptEntry, ...]
+```
+
+- 普通测试缺任一 provider 配置时明确 skip，不切换到 fake 作为同一测试结果；provider 配置完整后，配置或验证失败是 configuration/provider failure。完整 GitHub journey 另要求 disposable repo。
+- 每个真实 dispatch 以 `command_id` 作为可审计活动边界；每个 Agent、每个 review round 和整条 journey 都遵守对应 timeout。若 harness 需要 dispatch count boundary，它必须作为显式配置和 report 字段提供，不能用未批准的环境变量暗中改变状态机。
+- `HumanTranscriptEntry` 只能由 fixture 以其 `actor` 注入 console；fixture 不直接调用 `trac discuss reply`、不编辑目标文档、不生成 Human 事件。Agent actor 与 Human actor 分离，Agent 不得冒充 Human。
 
 ## 5. Verdict 增量（check 封闭集扩展）
 
@@ -151,6 +210,21 @@ class LocateResult:
 > 嵌套（FR-050，Aaron 决定 A）：`depth` 编码"回复谁"——depth=N 评论回复其上方最近的 depth=N-1 评论；要回复某条具体回复就再加一层 `>`。`Comment.children` 承载回复树。**评论级 token**（`comment_token` = text+depth+speaker+parent 文本，内容派生）用于 reply/edit 定位具体评论：在已重定位（fresh）的 thread 内按内容精确匹配，唯一才写、并列 → ambiguous、无 → not_found（fail closed）。**@mention 与 depth 正交**：`@Name` 表示"请求 Name 增加一个回答"，不表示"当前回复是对谁的回复"；`awaiting_my_reply` = 被 @mention 请求且该评论尚无下级回复。
 
 > 归一化：strip + 合并连续空白 + Unicode NFC，不改大小写、不去 markdown 格式；speaker 比较 lowercase 归一化、显示保留原大小写（FR-060）。写命令仅在 `LocateResult.status == "unique"` 时执行（fail closed，FR-070）。freshness token（写命令权威 identity，FR-070）：thread 无持久 ID，`T-NNN` 是单次扫描的显示标签；reply/edit/set-status 携带 `--token`（query 返回的 5 元组 / anchor+root 内容），命令重扫描按内容 L0-L3 重定位并核对当前 thread_id 与给定一致；不符 → `stale`（不写、重新 query），并列/低置信 → `ambiguous`，L3 → `not_found`。
+
+用于 outcome/report 的 discussion 证据是 parser 的只读快照，权威来源声明如下：
+
+```python
+@dataclass(frozen=True)
+class DiscussionEvidence:
+    source: Literal["markdown_parser", "trac_discuss_query"]
+    file: str
+    captured_at: str
+    threads: tuple[dict, ...]  # Thread 字段 + root/reply tree；不得只保存 snippet
+    ready: bool
+    blockers: tuple[str, ...]
+```
+
+`DiscussionEvidence` 不从 Agent stdout、console 或测试步骤摘要构造；thread 的 initiator、参与者、每条 reply、reply_count、status 和定位字段必须可回放。它是审计快照，不是第二份 discussion truth。
 
 ## 7. CLI 接口合同（增量）
 
@@ -294,13 +368,13 @@ FR-0190：digest 算法 = **D-01**（sha256_hex 固定标签拼接三件套 doc_
 ### 11a. `trac report`
 
 ```text
-trac report --run-id <run-id> --output <dir> [--format md|html] [--serve]
+trac report --run-id <run-id> --output <dir> [--format md|html]
 ```
 
 - 命令必须在带 `.git` 的宿主项目中运行；默认从当前 Git 根目录读取 `.tracks/runtime/tracks.db`。
 - `--run-id` 指定唯一 run；若未指定且当前项目有多个 run，命令拒绝猜测并报告可选 run 列表。
-- `report.md` 是规范化报告；`--format html` 额外生成 `index.html` 与固定版本的本地 Markdown renderer 资源，不从 CDN 加载。
-- `--serve`（如提供）只绑定 `127.0.0.1`，服务 `--output` 目录，不提供写接口。
+- `report.md` 是规范化报告（主产物）；`--format html` 额外生成自包含 `index.html` 查看器，内联固定版本 `marked.js`（package data `tracks/assets/marked.min.js`，生成时注入，不从 CDN 加载），浏览器端 `fetch("report.md")` 渲染。查看器仅测试/临时用途，非 tracks Markdown 渲染功能。
+- 命令不启动 Web server；需要浏览时由用户在输出目录显式运行 `python -m http.server`。
 - 报告生成只读，不写事件、不修改文档、不创建 commit。
 
 ### 11b. 报告活动模型

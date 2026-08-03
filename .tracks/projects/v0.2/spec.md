@@ -113,10 +113,26 @@ freshness：三件套任一文档变化立即使 approval stale（digest 不匹�
 - 测试双通道：
   - (A) fake E2E——必跑、deterministic、精确断言状态机；conftest 默认强制 fake 后端于此通道，保证不依赖真实 opencode。
   - (B) live opencode E2E——真 Agent，provider/model 由环境变量配置；断言真实启动、权限、JSON 协议、目标 diff 产物格式与恢复，不断言具体文本内容；缺凭据时 (B) skip（不 fail），在 CI 中为独立 required job、本地 opt-in。
+- live journey 是 (B) 的完整、独立、opt-in 旅程：启用后必须由真实的 `opencode` 子进程运行 `Scribe`、`Sage`、`Lex`，并由真实 Runtime、Git 和 `trac report` 完成；不得用 fake Agent、直接写文档的测试驱动器或测试步骤摘要替代其中任一事实来源。缺少 provider/model/凭据时，未启用的 live job 明确 `skip` 且不得退化为 fake；已显式启用但配置不完整或 provider 无法连接时为配置/运行失败，保留宿主并报告原因。
+- live journey 使用固定 seed 和有限 Human transcript。seed 至少保留两个产品未决槽位：交付入口（CLI 或 library）与空白行是否计入统计；结果展示位置可作为 reviewer 用来验证闭环的第三个产品槽位。实现语言、框架、CI 和架构不进入 Human 决策，Agent 对这些技术选择采用合理默认。每个槽位的预录答案带明确 actor（例如 `LiveE2E-Human`）注入真实 Agent 的 console fixture；console 只提供 Human mock 输入，不是讨论或产物真相。
+- live harness 还必须验证配置失败边界：完整旅程缺少或不能验证 `TRACKS_E2E_GITHUB_REPO` 时失败，不得把本地仓库冒充远端；provider 配置在显式启用后失效时按 `provider_unavailable` 失败。provider 未配置导致的默认 skip 与 GitHub 宿主配置错误不得混为一类。
 
 > **gpt [RESOLVED]:** 这仍与 Story 3.1 的 Human 决定“E2E 使用真的 Agent，provider/model 由环境变量定义”冲突。请把测试合同拆为两类并分别映射 AC：必跑 fake E2E 精确断言状态机；live opencode E2E 断言真实启动、权限、JSON 协议、产物格式和恢复，但不断言文本内容。还要定义 live 环境缺凭据时 fail/skip/独立 required job。
 >> **Scribe:** 接受。FR-010 测试合同拆两类并分别映射 AC：(A) fake E2E——必跑、deterministic、精确断言状态机（保留 AC-0103）；(B) live opencode E2E——真 Agent、provider/model 由 env 配置（Aaron §3.1），断言真实启动/权限/JSON 协议/目标 diff 产物格式/恢复，不断言文本内容。缺凭据时 (B) skip（不 fail），CI 独立 required job、本地 opt-in。
 >> **Scribe:** 结论已写入 FR-010 正文（fake/live 双通道；live 真 Agent + env 配 provider/model，断言协议/权限/目标 diff/格式不断言文本；缺凭据 skip 为独立 required job）。@gpt 请确认是否可标记 [RESOLVED]。
+
+#### 分派 outcome 合同（FR-0010 / FR-0020 / FR-0210）
+
+Runtime 按 assignment kind 解释 Agent outcome，不能把所有 dispatch 当作同一种作者任务：
+
+| kind | 允许的成功 outcome | 目标 diff | 权威判定 |
+|:---|:---|:---|:---|
+| `TRIAGE` | `status=done`；没有目标 diff 仍是合法成功，随后进入 Human triage gate | 可选；讨论提问/回答须由 `trac discuss` 写入 story | Runtime 读取 parser 产生的 discussion snapshot，并等待 `human.triage(go\|no_go\|park)`；Agent 不能自行作出 triage 决定 |
+| `DRAFT` | `status=done` | 当前阶段目标文档必须有受控 diff；缺 diff 是 `no_target_diff` 失败 | Runtime validate，通过后才 commit 并进入 reviewer |
+| `RESPOND` | `status=done` | 当前阶段目标文档必须有受控 diff；必需的 discussion reply 与该 diff 属于同一轮证据 | Runtime validate，通过后才 commit 并重新 dispatch reviewer |
+| `SAGE_REVIEW` / `LEX_REVIEW` | `status=done`，`verdict` 由 Runtime 产生 `pass\|revise` | reviewer 可无目标文档 diff；提出问题时以 discussion diff 作为证据 | Runtime 重新运行 Markdown parser/`trac discuss query`：存在 open/reopen 为 `revise`，全部 resolved 或无讨论才为 `pass`；不信任 stdout 自报 verdict |
+
+`self_report`、stdout JSON 和 console 文本都只能作为诊断或审计 I/O；它们不能直接完成 triage、review、approval、return，也不能使 discussion 变为 resolved。Agent 只能以 assignment 授权的 Agent actor 写 discussion；Human 决定必须由显式 Human actor 注入并产生对应 `human.*` 事件。
 
 ### FR-0020 opencode 后端
 
@@ -374,6 +390,49 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 >> **Scribe:** SKILL.md 已补 `version: 0.2`；interfaces `Assignment` 追加 `skill_version`（取自 SKILL.md frontmatter，Runtime 注入 skill 正文时携带），供 Sage 核对版本 identity；FR-130 正文“版本 identity 按存在性 + 版本检查”指向 FR-040 可执行门禁。@gpt 请确认是否可标记 [RESOLVED]。
 >>> **gpt [RESOLVED]:** 已核实 SKILL.md frontmatter `version: 0.2` 存在，interfaces §3 `Assignment.skill_version` 字段就位（注释“取自 SKILL.md frontmatter version，供 Sage 核对版本 identity”）。注入路径 + 版本 identity 均落地，确认关闭。
 
+#### live journey 必需的 discussion / RESPOND / review 链路
+
+以下是 live journey 的闭环合同，不是对 Agent 自然语言的建议：
+
+1. **Sage↔Scribe（M-STORY）**：Sage 以 `tracks-discuz` query/start 在 `story.md` 提出至少一个由 seed 产生的产品问题；Scribe 必须以 `trac discuss reply` 使用自己的 Agent actor 回复该 thread，并在随后的 `RESPOND` assignment 中修改 `story.md`。该轮必须产生非空目标 diff 和 Runtime 记录的 commit。Sage 再次作为 reviewer 查询 Markdown thread，确认 reply 和文档 diff，使用 `trac discuss set-status ... --status resolved` 关闭自己发起的 thread，Runtime 才能记录 `sage.verdict(pass)`。
+2. **Lex↔Sage（M-SPEC 或 M-ACC）**：Lex 以 `tracks-discuz` query/start 在 `spec.md` 或 `acceptance.md` 提出至少一个可验证问题；Sage 必须以 `trac discuss reply` 回复该 thread，并在随后的 `RESPOND` assignment 中修改相应目标文档，产生非空目标 diff 和 commit。Lex 再次 reviewer 查询 parser 结果，确认 reply 和 diff，关闭自己发起的 thread，Runtime 才能记录 `lex.verdict(pass)`。
+3. 两条链路都必须由文档 Markdown parser / `trac discuss query` 复核；Agent stdout、stdout JSON、测试步骤摘要或 Human console 文本都不能单独证明提问、回复、resolved 或 pass。reviewer 直接 pass 而没有对应 thread、reply、RESPOND diff/commit 的 live run 必须 fail-closed，并保留 report。
+4. console fixture 只向真实 Agent 进程提供有限的、带 actor 的 Human 预录答案。它不能写讨论、修改 story/spec/acceptance 或产生 Human 事件；Agent 不得以 `Human` actor 冒充 Human 写决定。普通可推导的技术问题可以使用合理默认；产品结果问题只能使用 seed 中明确的 transcript answer，否则 live journey 失败或停在可审计的 awaiting 状态。
+
+#### Finding ID 合同
+
+live fixture 通过 `trac run --assignment-overlay <scenario.json>` 把 test-only JSON 嵌套到 `assignment.scenario_context`（IF-003 §3a）；reviewer 场景的 `required_finding` 使用稳定 `[FINDING:<finding_id>]` marker。reviewer 创建的 thread body 必须包含该 marker，使测试和 report 可以按 ID 匹配，而不依赖自然语言全文。Runtime 只传递和审计场景，不解释 finding 语义。
+
+live journey 使用以下固定 finding：
+
+| finding_id | 阶段 | reviewer | 条件 | 期望回复者 |
+|:---|:---|:---|:---|:---|
+| `STORY-OUTPUT-PLACEMENT` | M-STORY | Sage | story 未定义统计结果的展示位置 | Scribe |
+| `SPEC-BLANK-LINE-SEMANTICS` | M-SPEC | Lex | spec 未明确空白行是否计入及如何判定 | Sage |
+
+- 条件适用时 reviewer 必须创建对应 thread；未创建则 live journey fail-closed。
+- 条件不适用（例如 story 已经定义了展示位置）时不创建不失败。
+- finding_id 是测试断言标识，不是 Agent 必须逐字使用的自然语言；thread body 中 `[FINDING:...]` 前缀之外的措辞由 Agent 自主决定。
+
+#### Seed 产品槽位
+
+live journey seed 刻意保留以下产品未决槽位：
+
+| slot_id | 问题 | 决定者 | 预录答案 |
+|:---|:---|:---|:---|
+| `surface` | 交付入口是 CLI 还是 library | Human | 交付入口使用 CLI，不提供 library 入口 |
+| `blank_lines` | 空白行是否计入代码行数 | Human | 空白行不计入代码行数 |
+| `error_behavior` | 无效路径时用户看到什么 | Human | 输出错误信息到 stderr 并返回非零退出码 |
+
+以下不是产品槽位，Agent 采用合理默认，不向 Human 提问：
+
+- 实现语言（例如 Python）；
+- 框架、依赖管理；
+- CI 配置和测试策略；
+- 架构和模块划分。
+
+`error_behavior` 是真正影响可测试性的产品决定：它决定了 CLI 的失败路径是否有明确的用户可观察行为，后续 acceptance 和测试用例依赖它。seed 不预先给出答案，由 Sage reviewer 通过 `STORY-OUTPUT-PLACEMENT` 或独立 thread 发现缺失，Scribe RESPOND 时根据 Human 预录答案补齐。
+
 ### FR-0140 模板接入 runtime
 
 - **来源**：`BS-04`
@@ -464,8 +523,8 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 1. **协议关**（NFR-0030 失败矩阵）：opencode 缺失 / provider 或凭据不可用 / 非零退出 / 超时 / JSON 流截断 / SIGINT、kill——无论哪类，子进程组清理、物化产物与临时目录清理照常执行。
 2. **审计关**（FR-0030 后置审计）：对 git baseline 做 diff 检查；目标文档 + command_id 专属临时目录之外的改动 = 越权 → 记录路径级证据，回滚仅移除可证明由该 Agent 产生的改动，绝不覆盖 Human 既有修改。
-3. **存在关**：退出 0 且未越权，但目标文档无 diff（"没干活"）→ 失败。
-4. **格式关**（FR-0150 / FR-0170）：validate 模板 schema（acceptance 附加 AC↔FR trace）；不合格 → 失败。
+3. **存在关**：按上面的 assignment outcome 合同判定；只有 `DRAFT` / `RESPOND` 退出 0 且目标文档无 diff 才是 `no_target_diff` 失败，`TRIAGE` 和 reviewer 的 no-change 成功不因无目标 diff 失败。
+4. **格式关**（FR-0150 / FR-0170）：author outcome validate 模板 schema（acceptance 附加 AC↔FR trace）；reviewer 只读复核 `discussion_ready` 并由 Runtime 派生 verdict；不合格或证据缺失 → 失败/`revise`，不得由 stdout 自报通过。
 5. **提交推进**：四关全过 → 仅提交目标文档、记录 outcome/stage 事件、按状态机进入下一状态；提交与推进之间崩溃由 reconcile（D-11/D-13）幂等兜底。
 
 失败统一语义（Aaron 裁定）：
@@ -481,10 +540,11 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - **交付入口**：`trac report --run-id <run-id> --output <dir>`
 
 - `trac report` 必须在带 `.git` 的宿主项目目录中运行，并从当前 Git 根目录读取该项目的 `.tracks/runtime/tracks.db` 与 Git 信息；不得固定读取 tracks 源码仓库的数据库。
-- 报告以 Runtime 事件为事实来源，按 stage/substate/attempt/actor 展示工作流活动的开始与结束、可变参数、Agent JSON 输出引用、审计结果、重试因果链和生成物 commit hash。
-- 生成的 `report.md` 是报告的规范化文本产物；报告同时可生成静态 `index.html`，由本地固定版本的 Markdown renderer 展示，不引入 Web 服务端或第二事实源。
+- 报告以 Runtime 事件为事实来源，按 stage/substate/round/attempt/actor 展示工作流活动的开始与结束、可变参数、Agent JSON 输出引用、审计结果、重试因果链和生成物 commit hash；discussion 内容从目标 Markdown 经 parser/`trac discuss query` 读取，不从 Agent stdout 推断。
+- `report.md` 必须提供稳定且可由 Agent 分析的章节/字段：assignment（脱敏 canonical JSON 或其引用）、Agent I/O（脱敏 summary + 可展开的完整 blob 引用；缺失时明确 gap）、discussion thread（thread id、initiator、参与者、每条 reply、status、定位/来源）、attempt/失败/重试因果、commit link 或本地 `git show <sha>` fallback、audit gap、interrupted/unknown activity、阶段/子状态时间线和最终状态。摘要不得隐藏失败或未决 thread，完整证据不可用时必须显示缺失原因。
+- 生成的 `report.md` 是报告的规范化文本产物（主产物）。报告同时生成一个自包含的静态 `index.html` 查看器：内联固定版本的 `marked.js`（作为 tracks package data 分发，不从 CDN 加载），在浏览器端 `fetch` 同目录 `report.md` 并客户端渲染，用户可用 `python -m http.server` 本地查看。该查看器仅为测试/临时查看用途，不是 tracks 的 Markdown 渲染功能，未来 web 查看功能上线后可移除；不引入 Web 服务端或第二事实源。
 - commit hash 有可识别的 GitHub remote 时展开为 commit 链接；无 remote 或无法识别时保留 hash，并提供本地 `git show <sha>` 语义的回退信息。
-- `--serve`（如实现）仅在 `127.0.0.1` 启动静态文件服务；不允许把报告目录暴露到所有网络接口。
+- tracks 不启动报告 Web server；需要浏览时，用户在输出目录显式运行 `python -m http.server`。
 - 报告生成只读，不提交、不修改工作区、不改变事件或 Git 历史。
 
 ## 非功能需求
@@ -507,7 +567,7 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 
 产物权威：目标文件的受控 diff 为权威产物；stdout JSON 仅作执行协议 / 诊断（单一产物来源，避免双重产物）。
 
-失败矩阵（覆盖 D-11/D-13）：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（含子进程组清理）；JSON 流截断；退出 0 但无目标 diff；SIGINT/kill-9；"文件已改但 outcome 未落盘"的 reconcile。
+失败矩阵（覆盖 D-11/D-13）：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（含子进程组清理）；JSON 流截断；`DRAFT`/`RESPOND` 退出 0 但无目标 diff；SIGINT/kill-9；"文件已改但 outcome 未落盘"的 reconcile。TRIAGE 和 reviewer 的合法 no-change 不属于 `no_target_diff`。
 
 每类失败：报告原因（退出码 + stderr 摘要）、记录 command/outcome 事件、attempt 记账（是否消耗）、子进程组清理、reconcile 结果；不写入半成品产物事件；该次调用可恢复重试。失败后的重派顺序、attempt 上限与耗尽升级见 FR-0210 统一退出关。
 
@@ -533,6 +593,8 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - 普通成功校验不要求单独显示为工作流节点；但导致重试、回退或升级的失败必须记录检查类别、证据、attempt 和后续动作。
 - 审计必须能解释：Agent 做了什么、生成物由哪个 commit 产生、越权修改了什么、是否回滚、为何重派以及重派为何成功或继续失败。
 - 审计数据写入既有 append-only Runtime event store；测试步骤摘要不是第二事实源。审计记录失败不得改变被审计工作流的结果；报告必须把缺失记录显示为 partial/missing gap，不得把“未记录”解释为“未发生”或“成功”。
+- 每个 Agent activity 的报告记录至少包括脱敏 Assignment 输入、stdout JSON/NDJSON 与 stderr 的 summary/ref、输出格式和完整性；`<details>` 或等价展开入口只能展开已脱敏内容。每个 discussion snapshot 至少包括根评论、参与者、完整回复树和根 status，并标明 `markdown_parser` / `trac discuss query` 来源。任何仅由 Agent 自报的 verdict、Human 决策或讨论状态都不算证据。
+- 报告必须把 assignment、I/O、discussion、attempt、failure/retry、commit、audit gap、interrupted activity、stage/substate 和 final state 关联到稳定的 activity/command/run 标识，使另一个 Agent 不读取内部数据库也能判断旅程是否完整、是否有缺口及最终是否成功。
 
 ### NFR-0060 Live E2E 宿主与远端分支隔离
 
@@ -542,3 +604,15 @@ Runtime 在 M-STORY / M-SPEC / M-ACC 的评审退出校验中调用此命令，�
 - 测试脚本负责创建临时分支并配置唯一预期 remote；测试凭据必须限制在可丢弃测试仓库范围内。单一分支是测试合同而非 bash 安全边界：测试结束后必须审计远端，只允许预期分支发生变化，发现其它分支/remote 副作用即失败并报告。该合同仅适用于 tracks 自身测试，不改变最终用户运行 `trac report` 的宿主仓库语义。
 - live E2E 的本地测试根目录必须是独立 Git 仓库；其中的 `.tracks/runtime/tracks.db` 与 commit 历史是 `trac report` 的数据源。
 - 测试不得主动删除本地临时宿主仓库；测试开始即打印宿主绝对路径，结束时再次打印宿主、报告目录、远端仓库和临时分支。远端临时分支是否清理由测试脚本明确决定并在报告中显示。
+- live journey 只有在测试 harness 明确 opt-in 时才执行；普通 fake suite 不因 live 未配置而改变结果。未 opt-in 或缺 provider 凭据的 live job 明确 skip；已 opt-in 后的 provider/model/endpoint/credential 无效、opencode 不可启动或 GitHub 仓库/凭据不可验证，必须是带 `failure_class` 的配置/运行失败，不得静默 skip 或 fallback。
+- live harness 的公开运行配置必须包含每次 Agent dispatch timeout、每个 review round timeout、整条 journey timeout 以及 review round 上限；每项都在 report 中回显实际值和触发结果。若 harness 采用单次 dispatch boundary，boundary 必须是可审计的 Runtime/test harness 输入和 `command_id` 活动边界，而不是隐藏的环境开关或未批准的产品状态转移。
+- 任一 timeout、配置失败、远端审计失败或 Agent 链路未闭环都必须保留本地宿主、事件库、工作区 diff、已生成 report（若可生成）和远端标识；报告最终状态显示 failed/interrupted/awaiting_human 及未完成的 thread，不得清理后只留下 skip。
+
+### NFR-0070 可安装发行物与运行时资源完整性
+
+- **来源**：FR-0010、FR-0040、NFR-0060、test-plan §13
+
+- 项目必须能通过标准 PEP 517 打包流程生成可安装发行物；发行物安装到全新的虚拟环境时，`trac` 入口、Python package、templates、skills 和 `tracks/agents/*.md` 角色定义必须完整可用。
+- 生产形态和 live E2E 均不得依赖 editable install、workspace `PYTHONPATH`、源码树相对路径或未打包的交付物。live E2E 必须从临时发行物创建隔离虚拟环境并运行其中的 `trac`。
+- `OpencodeBackend` 必须从已安装发行物读取 `Scribe.md`、`Sage.md`、`Lex.md`，在每次对应 dispatch 前将当前角色定义逐字物化到宿主项目 `.opencode/agents/<Name>.md`；不得在 backend prompt 中复制角色职责/工作方法。dispatch 结束后必须按既有合同清理或恢复该文件。
+- 缺失或损坏的发行物资源必须以明确的安装/资源失败终止，不得回退到 workspace 源码、复制另一份角色 prompt 或静默使用默认 Agent。

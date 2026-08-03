@@ -35,6 +35,18 @@ sha:
 >> **Scribe:** 接受。保留 AC-0103（deterministic fake suite）。新增 live suite AC：真实 opencode + env 配置 provider/model（Aaron），断言执行协议/目标 diff/权限/格式，不断言语义文本；缺凭据 → live suite skip（不 fail），CI 独立 required job、本地 opt-in。将补 AC-0104..。
 >> **Scribe:** 结论已写入正文（保留 AC-0103 deterministic fake suite；新增 live suite AC-0104/0105：真 opencode + env provider/model，断言协议/目标 diff/权限/格式不断言文本；缺凭据 skip 为独立 required job）。@gpt 请确认是否可标记 [RESOLVED]。
 
+### AC-FR0010-06
+
+  - 显式 opt-in 的完整 live journey 真实启动 opencode 并实际运行 `Scribe`、`Sage`、`Lex`，由真实 Runtime 产生事件/状态推进、由宿主 Git 产生提交、由 `trac report` 读取该宿主的事件与 Git；fake Agent、测试步骤摘要或测试驱动器直接写目标文档均不能替代这些环节。`tests/e2e/test_full_journey.py::test_full_journey_to_boundary` 仍保留并继续作为 fake deterministic 流程，不被 live 流程替换。
+
+### AC-FR0010-07
+
+  - live seed 至少使 Scribe 必须处理“交付入口 CLI vs library”和“空白行是否计入”两个产品问题；有限 transcript 以明确 actor（`LiveE2E-Human`）注入真实 Agent console，并可观察地被 Agent 通过 `trac discuss` 写入权威 Markdown。实现语言、框架、CI、架构等技术选择不产生 Human 问题；未知产品问题或 transcript 耗尽时 fail-closed，不使用合理默认。
+
+### AC-FR0010-08
+
+  - 普通未 opt-in live suite 在缺 provider/model/凭据时明确 skip 且不触发 fake fallback；显式 opt-in 后 provider 配置无效/不可达时报告 `provider_unavailable` 并失败。完整 live journey 缺失或无法验证 `TRACKS_E2E_GITHUB_REPO` 时报告配置错误，不把本地仓库当远端。
+
 ## FR-0020 opencode 后端
 
 ### AC-FR0020-01
@@ -317,6 +329,26 @@ sha:
 >>>> **Scribe:** 扩容裁定已收敛落地：`tracks/agents/Lex.md` 已交付（frontmatter `version: 0.2`、`IQ: S`），AC-1303 清单固定为四交付物（Scribe/Sage/Lex + SKILL.md）并补 IQ 良构检查（S/A/B，失败输出 `missing or malformed IQ in <path>`）；门禁实现（`trac check deliverables`）已同步检查 Lex.md 存在性 + version + IQ。与 spec FR-040、story §1/BS-09 同名线程一致。@gpt 请确认是否可标记 [RESOLVED]。
 >>>>> **gpt [RESOLVED]:** 已核实 AC-FR0130-03 清单固定为四交付物含 `Lex.md`、补 IQ 良构检查，门禁实现与单测覆盖到位。清单收敛、可执行，确认关闭。
 
+### AC-FR0130-05
+
+  - discussion 的 thread、reply、status 和 ready 判定只能由目标 Markdown 经 parser/`trac discuss query` 得出；Agent stdout、stdout JSON、console transcript 或测试步骤摘要不能单独产生 discussion 证据或关闭 thread。对应 live 断言见 `tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey`。
+
+### AC-FR0130-06
+
+  - 显式 live journey 中，Sage/Scribe 和 Lex/Sage 各有一条可由 parser 观察的真实闭环：提问者通过 `tracks-discuz` start/query 提问，另一方通过 `trac discuss reply` 回复，author 在 `RESPOND` 修改目标文档并产生 commit，提问者复审后 set-status resolved，Runtime 记录对应 reviewer pass；缺任一 reply、RESPOND diff/commit、resolved 或 pass 即 fail-closed。当前落点：`tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey`。
+
+### AC-FR0130-07
+
+  - Human console fixture 只注入带明确 actor 的有限预录答案；Agent 不能以 Human actor 调用 triage/review/approval/return 或写入 Human 决定。transcript 耗尽、问题无法归类或需要新产品决定时，测试失败或保留 awaiting 状态，不静默采用默认答案。
+
+### AC-FR0130-08
+
+  - live fixture 通过 `trac run --assignment-overlay <scenario.json>` 把 test-only JSON 嵌套到 `assignment.scenario_context`，不能覆盖基础 assignment。reviewer 场景的 `required_finding` 是稳定 `[FINDING:<finding_id>]` marker；测试和 report 按 marker 匹配 thread，不依赖自然语言全文。场景条件适用却未创建对应 thread时，live journey fail-closed。当前固定 finding 见 SPEC-003 §FR-0130 Finding ID 合同和 TP-003 §12.2c。
+
+### AC-FR0130-09
+
+  - live journey seed 保留三个产品槽位（`surface`、`blank_lines`、`error_behavior`），预录答案以 `tracks-live-console/v1` 格式、带 `actor=LiveE2E-Human` 注入。实现语言、框架、CI、架构不是产品槽位，Agent 采用合理默认。seed 原文见 TP-003 §12.2a；预录答案表见 TP-003 §12.2b。
+
 ## FR-0140 模板接入 runtime
 
 ### AC-FR0140-01
@@ -471,7 +503,35 @@ sha:
 
 ### AC-FR0210-06
 
-  - 退出 0 且未越权但目标文档无 diff（存在关失败）→ 按统一失败语义重派，消耗 attempt
+  - 仅 `DRAFT` / `RESPOND` 退出 0 且未越权但目标文档无 diff（存在关失败）→ 按统一失败语义重派并消耗 attempt；TRIAGE 无 diff 和 reviewer pass/no-change 不失败。
+
+### AC-FR0210-07
+
+  - `TRIAGE` 的 `status=done` 可无目标 diff，但其产品问题/回答必须出现在 `trac discuss query` 的 thread snapshot 中，随后仍必须等待明确 `human.triage(go|no_go|park)`；Agent 自报 triage 结果不推进状态。
+
+### AC-FR0210-08
+
+  - `DRAFT` 和 `RESPOND` 的成功 outcome 必须包含当前目标文档受控 diff，且通过立即 validate 后才可 commit/推进；RESPOND 还必须有对应 `trac discuss reply` 的文档证据。缺 diff、validate 失败或仅 stdout 有回答均为失败，不提交、不推进。
+
+### AC-FR0210-09
+
+  - `SAGE_REVIEW` / `LEX_REVIEW` 允许无目标文档 diff；Runtime 必须重新 parser/query 当前文档，open/reopen thread 只能产生 `verdict=revise`，全部 resolved 或无讨论才能产生 `verdict=pass`，不接受 Agent stdout 自报 verdict。
+
+### AC-FR0210-10
+
+  - live M-STORY 中 Sage 提问、Scribe `trac discuss reply`、Scribe RESPOND 修改 `story.md` 并产生 commit、Sage 复审后 resolve、`sage.verdict(pass)` 六个证据均存在且参与者正确；缺任何一项则 journey 失败并保留 report。当前落点：`tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey`。
+
+### AC-FR0210-11
+
+  - live M-SPEC 或 M-ACC 中 Lex 提问、Sage `trac discuss reply`、Sage RESPOND 修改 `spec.md` 或 `acceptance.md` 并产生 commit、Lex 复审后 resolve、`lex.verdict(pass)` 六个证据均存在且参与者正确；缺任何一项则 journey 失败并保留 report。当前落点：`tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey`。
+
+### AC-FR0210-12
+
+  - Agent 进程不能产生 `human.triage`、`human.review`、`human.approval` 或 `human.return` 作为 Human 决定；这些事件只能由显式 Human actor 注入的测试驱动器/console fixture 产生，报告 actor 不得从 Agent 自报文本推导。
+
+### AC-FR0210-13
+
+  - live M-STORY 中 Sage 创建的 thread body 含 `[FINDING:STORY-OUTPUT-PLACEMENT]`；live M-SPEC 中 Lex 创建的 thread body 含 `[FINDING:SPEC-BLANK-LINE-SEMANTICS]`。测试按 finding_id 匹配 thread 并断言 initiator、reply speaker、reply_count、status、RESPOND diff/commit 和最终 verdict；缺任何一项即失败。finding_id 之外的 thread 措辞由 Agent 自主决定，测试不断言。
 
 ## NFR-0010 错误信息含行号
 
@@ -489,7 +549,7 @@ sha:
 
 ### AC-NFR0030-01
 
-  - 失败矩阵各分支均报告原因（退出码 + stderr 摘要）：opencode 可执行文件缺失；provider/model/凭据错误；非零退出；JSON 部分/截断流；退出 0 但无目标 diff；timeout/SIGINT/kill-9；目标文件已改但 outcome 未落盘；越权 diff
+  - 失败矩阵各分支均报告原因（退出码 + stderr 摘要）：opencode 可执行文件缺失；provider/model/凭据错误；非零退出；JSON 部分/截断流；`DRAFT`/`RESPOND` 退出 0 但无目标 diff；timeout/SIGINT/kill-9；目标文件已改但 outcome 未落盘；越权 diff；TRIAGE/reviewer 的合法 no-change 不得被误报为该失败
 
 ### AC-NFR0030-02
 
@@ -537,12 +597,32 @@ sha:
 ### AC-FR0220-04
 
 - [ ] 已确认
-  - 报告同时生成可由本地 Markdown renderer 展示的静态网页；网页不依赖未固定的外部 CDN，且 Agent JSON、讨论内容和 stderr 不会作为未转义 HTML 执行
+  - 报告同时生成自包含的静态 `index.html` 查看器：内联固定版本 `marked.js`（package data，不从 CDN 加载），浏览器端 `fetch("report.md")` 渲染，`python -m http.server` 可查看；Agent JSON、讨论内容和 stderr 经 `marked.js` 转义，不会作为未转义 HTML 执行
 
 ### AC-FR0220-05
 
 - [ ] 已确认
-  - `trac report` 生成过程不修改事件、文档、Git 工作区或 commit 历史；`--serve`（如提供）只绑定 `127.0.0.1`
+  - `trac report` 生成过程不修改事件、文档、Git 工作区或 commit 历史，也不启动 Web server；需要浏览时由用户在输出目录显式运行 `python -m http.server`
+
+### AC-FR0220-06
+
+- [ ] 已确认
+  - `report.md` 含稳定可检索的 assignment、Agent I/O、discussion、attempt/failure/retry、commit、audit gap、interrupted activity、stage/substate timeline 和 final state 章节或等价字段；每项可关联到 run/activity/command 标识，缺失证据显示原因而不是省略。
+
+### AC-FR0220-07
+
+- [ ] 已确认
+  - report 中每个已观察 discussion thread 展示 thread id、initiator、所有参与者、每条 reply、reply 数量、status 和定位/来源；内容来自 Markdown parser/`trac discuss query`，不来自 Agent stdout 或测试步骤摘要。
+
+### AC-FR0220-08
+
+- [ ] 已确认
+  - report 对每次 Agent assignment 展示脱敏输入 summary 和完整 I/O 的可展开引用/摘要（stdout JSON/NDJSON、stderr、输出格式、完整性）；敏感值不出现，audit blob 缺失显示 `partial`/`missing` gap 且不得生成悬空引用。
+
+### AC-FR0220-09
+
+- [ ] 已确认
+  - Agent 仅凭 `report.md`（不读 Runtime 内部实现）即可判断每个阶段是否完成：能把 Sage↔Scribe、Lex↔Sage 的 thread/reply/resolve/pass 与 RESPOND diff/commit 对上，区分成功、失败重试、awaiting、interrupted 和最终 boundary/failed 状态。
 
 ## NFR-0050 工作流审计轨迹
 
@@ -576,6 +656,11 @@ sha:
 - [ ] 已确认
   - 报告 actor 派生符合接口表：Agent dispatch/verdict 来自 role 或事件类型，Human 事件来自 payload actor（旧事件缺失时显示 Human），Runtime command/verdict/commit/stage 事件显示 Runtime
 
+### AC-NFR0050-07
+
+- [ ] 已确认
+  - 报告对缺少结束事件的活动显示 `interrupted`/`unknown`，对 audit 写入失败显示 `partial`/`missing` 和原因；任何缺失证据都不得被解释为成功，且不改变被审计工作流的业务 outcome。
+
 ## NFR-0060 Live E2E 宿主与远端分支隔离
 
 ### AC-NFR0060-01
@@ -596,4 +681,78 @@ sha:
 ### AC-NFR0060-04
 
 - [ ] 已确认
-  - 完整 live journey 由测试脚本以明确测试 actor 注入 triage、review、approval 等 Human 事件；测试标为独立 opt-in，配置每次 Agent timeout、最大评审轮次和总时限，超限时失败并保留宿主及审计报告
+  - 完整 live journey 由测试驱动器以明确测试 actor 注入 triage、review、approval 等 Human 事件；console fixture 只向真实 Agent 注入有限预录答案，不直接写 discussion 或 Human 事件；测试标为独立 opt-in
+
+### AC-NFR0060-05
+
+- [ ] 已确认
+  - live harness 显式配置并回显每次 Agent command timeout、整条 journey timeout、review dispatch/round 上限；任一超限终止为失败/中断，不无限重派，且保留宿主、事件库、工作区、远端标识和已生成 report。当前落点：`tests/e2e_live/test_full_journey.py::test_bounded_scripted_real_agent_journey`；timeout 值进入规范化 `report.md` 的独立断言仍是 coverage gap。
+
+### AC-NFR0060-06
+
+- [ ] 已确认
+  - 未提供 provider 凭据的 live job 明确 skip 且不退化为 fake；provider 配置完整后，provider/model/credential 无效报告配置/`provider_unavailable` 失败；完整旅程缺失/无权访问 `TRACKS_E2E_GITHUB_REPO` 报配置失败，不使用本地假远端。当前 provider smoke 落点：`tests/e2e_live/test_live_agent.py::test_provider_error_is_classified`；GitHub 配置由 `test_bounded_scripted_real_agent_journey` 的 `live_github_repo` fixture fail-closed。
+
+### AC-NFR0060-07
+
+- [ ] 已确认
+  - live 旅程使用真实 opencode/Scribe/Sage/Lex/Runtime/Git/report；开始/结束打印 `host_repo`、`report_dir`、remote、branch，结束后远端只有预期分支变化；若 harness 使用单次 dispatch boundary，boundary 由可审计测试配置/Runtime activity 提供，不由隐藏环境开关定义产品行为。
+
+## NFR-0070 可安装发行物与运行时资源完整性
+
+### AC-NFR0070-01
+
+- [ ] 已确认
+  - 测试从当前项目生成标准 wheel，在全新临时虚拟环境中以非 editable、无 workspace `PYTHONPATH` 方式安装；安装环境中的 `trac` 可执行，`tracks.__file__` 不位于当前源码 workspace。
+
+### AC-NFR0070-02
+
+- [ ] 已确认
+  - 安装后的发行物包含 `tracks/agents/Scribe.md`、`tracks/agents/Sage.md`、`tracks/agents/Lex.md`、`tracks/skills/tracks-discuz/SKILL.md`、templates 和 report renderer 所需 package data；任一缺失即安装/资源失败，不回退源码。
+
+### AC-NFR0070-03
+
+- [ ] 已确认
+  - live dispatch 使用安装环境中的 `OpencodeBackend`；当前角色定义逐字出现在测试宿主 `.opencode/agents/<Name>.md` 并被 `opencode --agent <Name>` 发现，dispatch 后新建文件被清理、已有 Human 文件被恢复。backend 的动态 assignment 只注入 Runtime 合同，不复制 `tracks/agents/*.md` 的角色提示词。
+
+### AC-NFR0070-04
+
+- [ ] 已确认
+  - 完整 live journey 的 `trac`、report 和 Agent dispatch 不读取 workspace 源码或 workspace `.venv` 中的 tracks package；安装失败、资源缺失、入口不可执行时测试失败并保留宿主和证据，而不是 skip 或 fake fallback。
+
+## 新增/修订 AC↔FR/NFR Trace
+
+本表只列本轮新增或改变的 AC；原有 AC 的编号、章节和已解决结论保持不变。`primary` 是验收直接所属合同，`related` 是必须同时满足的交叉门禁。
+
+| AC | primary | related |
+|:---|:---|:---|
+| AC-FR0010-06 | FR-0010 | NFR-0040, NFR-0060 |
+| AC-FR0010-07 | FR-0010 | FR-0050, FR-0130, NFR-0060 |
+| AC-FR0010-08 | FR-0010 | NFR-0030, NFR-0060 |
+| AC-FR0130-05 | FR-0130 | FR-0050, FR-0080, FR-0100, NFR-0050 |
+| AC-FR0130-06 | FR-0130 | FR-0160, FR-0210, NFR-0060 |
+| AC-FR0130-07 | FR-0130 | FR-0180, NFR-0050, NFR-0060 |
+| AC-FR0130-08 | FR-0130 | FR-0210, NFR-0050, NFR-0060 |
+| AC-FR0130-09 | FR-0130 | FR-0010, NFR-0060 |
+| AC-FR0210-06 | FR-0210 | FR-0010, NFR-0030 |
+| AC-FR0210-07 | FR-0210 | FR-0010, FR-0100, FR-0180 |
+| AC-FR0210-08 | FR-0210 | FR-0150, FR-0170 |
+| AC-FR0210-09 | FR-0210 | FR-0100, FR-0130 |
+| AC-FR0210-10 | FR-0210 | FR-0130, NFR-0050, NFR-0060 |
+| AC-FR0210-11 | FR-0210 | FR-0130, FR-0160, NFR-0050, NFR-0060 |
+| AC-FR0210-12 | FR-0210 | FR-0180, NFR-0050 |
+| AC-FR0210-13 | FR-0210 | FR-0130, NFR-0050, NFR-0060 |
+| AC-NFR0030-01 | NFR-0030 | FR-0010, FR-0210 |
+| AC-FR0220-06 | FR-0220 | NFR-0050 |
+| AC-FR0220-07 | FR-0220 | FR-0050, FR-0060, FR-0070, FR-0080, NFR-0050 |
+| AC-FR0220-08 | FR-0220 | NFR-0050 |
+| AC-FR0220-09 | FR-0220 | FR-0130, FR-0210, NFR-0040, NFR-0050 |
+| AC-NFR0050-07 | NFR-0050 | FR-0210, FR-0220 |
+| AC-NFR0060-04 | NFR-0060 | FR-0010, FR-0180 |
+| AC-NFR0060-05 | NFR-0060 | FR-0210, NFR-0030, NFR-0050 |
+| AC-NFR0060-06 | NFR-0060 | FR-0010, FR-0200, NFR-0030 |
+| AC-NFR0060-07 | NFR-0060 | FR-0020, FR-0220, NFR-0050 |
+| AC-NFR0070-01 | NFR-0070 | FR-0010, FR-0040, NFR-0060 |
+| AC-NFR0070-02 | NFR-0070 | FR-0040, NFR-0050 |
+| AC-NFR0070-03 | NFR-0070 | FR-0010, FR-0040, NFR-0050 |
+| AC-NFR0070-04 | NFR-0070 | FR-0010, NFR-0030, NFR-0060 |

@@ -24,6 +24,12 @@ sha:
 
 > **判定原则**：除非 story/spec 明确或暗含修改架构的需求，否则一律延续 v0.1。v0.2 的三项（真实 Agent / inline-discussion / 模板校验）均落在既有增长轴上，无结构性返工。
 
+### 0a. 产品合同与实现选择的边界
+
+以下是必须可观察、可验收的产品合同：fake deterministic E2E 与 live real-agent E2E 双通道并存；显式 opt-in 的 live journey 必须真实运行 opencode、Scribe、Sage、Lex、Runtime、Git 和 report；有限 Human transcript 只能通过明确 actor 注入；TRIAGE、author、reviewer 的 outcome 语义不同；Sage↔Scribe 与 Lex↔Sage 的 discussion/RESPOND/review/pass 闭环必须由 Markdown parser/`trac discuss` 证据证明；report 必须包含可由 Agent 分析的 assignment、脱敏 I/O、discussion、attempt/retry、commit、audit gap、interrupted activity、阶段和最终状态。
+
+以下是可替换的实现选择：opencode subprocess 的具体封装、console fixture 的载体、audit blob 的物理存储、Markdown renderer 的实现、临时目录命名、测试 runner 的配置传递方式和是否设置单次 dispatch 上限。实现选择改变时不得改变上述外部合同；任何 per-agent/per-round/总 timeout 或 dispatch boundary 必须作为 `LiveJourneyConfig`/Runtime activity 的显式可审计输入。未在 SPEC-003/ACC-003 中批准的环境变量或内部开关不是产品行为，不能作为通过 live journey 的隐含前提。
+
 ## 1. 生产路径（一条工作流路径 + 一条 doc 级旁路）
 
 ### 1a. 工作流路径（不变）
@@ -41,6 +47,7 @@ trac discuss …  →  tracks.cli:main()  →  tracks.discuss（parser/locate/wr
 - 它**不经过** `kernel.runtime` / `effects.executor`，**不产生事件**——直接对文档文件做 flock 串行化读写（SPEC-003 FR-110）。这与 v0.1 已存在的只读旁路（`trac status`/`replay` 直读 store）同类：并非所有 CLI 都走 run_loop，"唯一生产路径"约束的是**状态变更工作流命令**。
 - 调用者：Agent（经 bash 执行 `trac discuss`）与 Human（IDE 手写 + CLI）；tracks 不在 v0.2 强制 Human/Agent 串行化（推迟到 web 界面，Aaron 决定）。
 - **Runtime 只读集成**：评审退出门禁通过一次 `validate_document`（`checks=["discussion_ready"]`）只读查询讨论收敛状态，落 `verdict.*` 事件；`decide()` 仍纯——它只看 State 里的 verdict，不直接读文档（§5）。
+- discussion 命令本身不产生事件，但每次 Agent outcome/评审门禁可记录由 Markdown parser/`trac discuss query` 生成的只读 `discussion_evidence` snapshot，供 report 关联；snapshot 是审计证据，不取代目标 Markdown。Agent stdout 或 stdout JSON 不能改变 thread/status/verdict。
 
 > 这条旁路是**附加**的，不扰动事件溯源核心。讨论数据活在文档里（markdown blockquote），不进 `events` 表。
 
@@ -120,29 +127,51 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 `agents.py` 抽出 `AgentBackend` 协议：`dispatch(assignment) -> Outcome`。两个实现：
 
 - `FakeBackend`：原 FakeAgent 确定性行为（`(assignment) -> outcome`，由 `simulate` 控制分支），**绝不触发 opencode**。
-- `OpencodeBackend`（`opencode.py`）：subprocess 执行 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`，`<Name>` ∈ {`Scribe`, `Sage`}（首字母大写）。
+- `OpencodeBackend`（`opencode.py`）：subprocess 执行 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`，`<Name>` ∈ {`Scribe`, `Sage`, `Lex`}（首字母大写）。
 
 **后端选择**在 cli/executor 边界由 `TRAC_AGENT_BACKEND=fake|opencode`（默认 opencode）注入；`TRAC_FAKE_SIMULATE` 强制 fake；conftest 于 E2E fake 通道强制 fake。`project()`/`decide()` 不感知后端（纯函数边界不破例，同 v0.1 `simulate` 纪律）。
 
-> `Assignment.role` 内部仍用小写 `scribe`/`sage`/`lex`（延续 IF-001 §5），由 OpencodeBackend 映射到首字母大写的 opencode agent 名（`Scribe`/`Sage`）。Lex 在 v0.2 为 fake（无 Lex 后端/提示词）。
+> `Assignment.role` 内部仍用小写 `scribe`/`sage`/`lex`（延续 IF-001 §5），由 OpencodeBackend 映射到首字母大写的 opencode agent 名（`Scribe`/`Sage`/`Lex`）。
 
 ### 4b. 产物权威（文件 diff，非 JSON）
 
 **目标文件的受控 diff = 权威产物；stdout JSON 仅作执行协议/诊断**（单一产物来源）。Runtime 记录 baseline → Agent 运行（直接编辑目标文档，经 permission 白名单授权）→ 对目标文档取受控 diff 为产物并独立校验。
 
+该规则按 assignment kind 收窄，避免把只读活动误判为作者失败：
+
+| assignment | 目标文档 | diff 合同 | 结构化结果 |
+|:---|:---|:---|:---|
+| `TRIAGE` | story（读取原始需求，可经 discuss 提问） | 可选；无 diff 是合法成功 | `status=done`，随后进入 Human triage gate |
+| `DRAFT` / `RESPOND` | 当前阶段文档 | **必需**；无 diff 才分类为 `no_target_diff` | 产物进入 validate/commit |
+| `SAGE_REVIEW` / `LEX_REVIEW` | 当前阶段文档 | 可选；pass/no-change 合法，提问时 diff 记录 discussion | Runtime 以权威文档的 `discussion_ready` 派生 `verdict=pass|revise` |
+
+因此 reviewer verdict 不信任自然语言 stdout：评审结束后重新解析目标文档；存在 open/reopen 线程即 `revise`，全部 resolved 或无问题即 `pass`。reviewer 的 no-change pass 合法，但 live journey 另须检查指定 discussion 是否真的有 reply、RESPOND 目标 diff/commit 和 initiator resolve。
+
 ### 4c. 物化与清理
 
-调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，Aaron 决定）。**命名/大小写可发现性**仍待目标 opencode 版本 spike 固化。物化合同：已有同名 agent 拒绝静默覆盖（备份或 command_id 唯一名）；终态清理；崩溃后下次启动 reconcile 清理悬挂物化。
+调用前将 canonical 提示词（`tracks/agents/<Name>.md`，随 tracks 版本固定）物化到已批准的 opencode 发现路径 `.opencode/agents/<Name>.md`（复数，文件名与 `--agent` 名逐字一致）。物化合同：已有同名 agent 拒绝静默覆盖（备份或 command_id 唯一名）；终态清理；崩溃后下次启动 reconcile 清理悬挂物化。具体备份名、清理时机实现可选，但不得留下未审计的宿主配置修改。
 
 ### 4d. 角色分工（按 Flow + Aaron 收窄）
 
-- Scribe = M-STORY 作者（+ RESPOND 修订）；不写 spec/acceptance。
-- Sage = story 评审者（reviewer）+ spec 作者（author，v0.2）；acceptance 作者职责随 M-ACC 延后（M-ACC 恢复后才生效）。
-- Lex = spec/acceptance 评审者，v0.2 为 fake。
-- v0.2 可达评审阶段：M-STORY（全真实）/ M-SPEC（Sage 真实起草 + Lex fake 评审）；M-ACC 延后。
+- Scribe = TRIAGE 中的 story discussion actor 与 M-STORY 作者（+ RESPOND 修订）；不写 spec/acceptance。
+- Sage = M-STORY reviewer、M-SPEC/M-ACC author（+ RESPOND 修订）以及对应 discussion 的响应者；Sage 不能写 Human 决定。
+- Lex = M-SPEC/M-ACC reviewer，v0.2 live journey 使用真实 Lex；Lex 不能写 Human 决定。
+- v0.2 可达评审阶段：M-STORY（Sage 真实评审 + Scribe 真实 RESPOND）、M-SPEC（Sage 真实起草/RESPOND + Lex 真实评审）、M-ACC（Sage 真实起草 + Lex 真实评审），随后进入 M-REQ-APPROVAL Human gate。
 
 > **gpt [RESOLVED]:** §4d 第二条仍称 Sage 是"spec/acceptance 作者"，但最后一条已明确 M-ACC 延后。两者矛盾：如果 M-ACC 不在 v0.2 范围，Sage 的 v0.2 author 职责应只含 spec，不含 acceptance。请收窄为"Sage = story reviewer + spec author（v0.2）"，并把 acceptance author 标注为 M-ACC 恢复后才生效。同时与 Sage.md frontmatter/正文、SKILL.md 适用阶段、Story §2 的收窄保持一致（见这些文件上的同名 OPEN 线程）。
 >> **Scribe:** 已收窄 §4d 第二条为 “Sage = story reviewer + spec author（v0.2）”，acceptance author 标注随 M-ACC 延后（M-ACC 恢复后生效）；Sage.md description/职责、tracks-discuz skill 适用阶段、Story §1 注/§2 已同步收窄。@gpt 请确认是否可标记 [RESOLVED]。
+
+### 4e. Assignment 构造与测试场景 overlay
+
+Runtime 在 `decide()` 产出 `dispatch_agent` command 时构造基础 Assignment payload。author assignment（`DRAFT`/`RESPOND`）携带 `template_kind`、`skill`、`skill_version`。显式传入 `trac run --assignment-overlay <scenario.json>` 时，Runtime 把 JSON object 完整嵌套到 `assignment.scenario_context`；不 merge 到 assignment 根部，因而不能覆盖 workflow 字段（IF-003 §3a）。
+
+测试场景的传递路径：
+
+1. **来源**：scenario JSON 位于 test-only fixture 目录或由操作者显式提供，不写入 canonical Agent Markdown，也不打入 wheel 的 production resources。
+2. **传递**：CLI 校验 overlay 是 JSON object；Executor 深拷贝到每个 dispatch 的 `params.assignment.scenario_context`，随 command/audit evidence 持久化。
+3. **Agent 可见性**：OpencodeBackend 把完整 assignment 序列化到 prompt；Agent 可读取场景中的 finding marker、条件和动作约束。
+4. **Runtime 不解释**：Runtime 不解析场景语义，不根据它改变状态机或 verdict 派生。verdict 仍由 Markdown parser/`trac discuss query` 的 thread 状态决定。
+5. **边界**：`--max-dispatches <N>` 只限制一次 `trac run` 调用的 dispatch 数，不伪造 outcome；fixture 另外按 finding marker 检查 thread、reply、RESPOND diff/commit、resolved 与 pass。
 
 ## 5. Item 3：模板 + 校验（`checks/` 与 `templating.py`）
 
@@ -163,22 +192,22 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 
 ## 6. 安全与权限模型（baseline + 后置审计）
 
-项目内 `.opencode/opencode.json` 控制 Agent 的文件系统边界：允许当前项目目录与系统临时目录 `$TMPDIR/tracks`，拒绝其它项目外目录。Agent frontmatter 不再承担目录或工具级 permission 声明；Agent body 只声明本角色可写的业务文档范围。
+Agent frontmatter 提供 opencode 支持的粗粒度工具纵深防御；它不是 v0.2 的文件级授权真相。每次 assignment 的 scope 合同是目标文档与该 command_id 专属临时目录，Runtime 的 baseline + 后置 git 审计是“只能写授权范围”的强制门禁。
 
 `audit.py` 后置审计（运行级）：
 
-1. Runtime 在 dispatch 前提交或 stash 当前 baseline，并记录 baseline identity。
-2. Agent 使用工具不做 frontmatter 级限制；assignment/body 明确本次角色可写范围：Scribe 仅 story.md；Sage 可写 story/spec/acceptance；Lex 可写 spec/acceptance。读取原则上不限制在项目目录内。
-3. 在 repo 根信任模式下，角色业务范围由 assignment/body 提示词约束；Agent 退出后，Runtime 独立比较 baseline 与工作区 diff，以 `.opencode/opencode.json` 声明的目录边界作为强制审计边界。越出项目目录或 `$TMPDIR/tracks` 的写入即越权，记录路径级证据，通过 Git 撤销 Agent 产生的越权改动，并重派同一任务。
-4. 只回滚可证明由该 Agent 产生的改动，绝不覆盖 baseline 中已有的 Human 修改；系统临时目录 `$TMPDIR/tracks` 按 command_id 隔离。
+1. Runtime 在 dispatch 前记录 clean baseline identity，不提交或 stash 以掩盖 Human 既有修改。
+2. assignment/body 明确本次角色可写范围：Scribe 仅 story.md；Sage 依当前 stage 写目标 spec/acceptance 或 RESPOND 目标；Lex 仅 reviewer 可写的 spec/acceptance discussion。Agent 不能写 Human 决定事件。
+3. Agent 退出后，Runtime 独立比较 baseline 与工作区 diff；目标文档和专属临时目录之外的写入即越权，记录路径级证据，失败且不推进。
+4. 只回滚可证明由该 Agent 产生的改动，绝不覆盖 baseline 中已有的 Human 修改；临时目录按 command_id 隔离并在终态/reconcile 清理。
 
 > Human/Agent 完全串行化推迟到 web 界面（届时 Human 仅经 web 编辑）；v0.2 靠 baseline + 后置审计**检测**越权，不阻止并发人类编辑（Aaron 决定）。
 
 ## 7. 失败矩阵与 reconcile（NFR-030）
 
-`OpencodeBackend` 枚举失败分支：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（含**子进程组清理**）；JSON 流截断；退出 0 但无目标 diff；SIGINT/kill-9；"文件已改但 outcome 未落盘"的 reconcile。每类失败：报告原因（退出码 + stderr 摘要）、记录 command/outcome 事件、attempt 记账、子进程组清理、reconcile 结果；不写半成品产物事件；可恢复重试。
+`OpencodeBackend` 枚举失败分支：opencode 可执行文件缺失；provider/model/凭据不可用；非零退出；超时（含**子进程组清理**）；JSON 流截断；作者 `DRAFT/RESPOND` 退出 0 但无目标 diff；SIGINT/kill-9；"文件已改但 outcome 未落盘"的 reconcile。TRIAGE 无 diff、reviewer no-change/pass 不属于 no-target-diff。每类失败：报告原因（退出码 + stderr 摘要）、记录 command/outcome 事件、attempt 记账、子进程组清理、reconcile 结果；不写半成品产物事件；可恢复重试。
 
-`dispatch_agent` 的 per-kind reconcile（ARCH-001 §5e）扩展：reconcile 时除探产物外，**清理上次悬挂的物化 agent 定义与 command_id 临时目录**，再决定是否重派。`dispatch_agent` 产物覆盖写天然幂等不变。
+`dispatch_agent` 的 per-kind reconcile（ARCH-001 §5e）扩展：reconcile 时除探产物外，**清理上次悬挂的物化 agent 定义与 command_id 临时目录**，再决定是否重派。若目标文档已有 diff 但 outcome 未落盘，reconcile 只能根据 baseline、受控 diff、validate 和 commit 证据决定恢复；不能凭 stdout 或文件存在推断成功。`dispatch_agent` 产物覆盖写天然幂等不变。
 
 ## 8. 事件 / 接口增量（详见 IF-003）
 
@@ -195,11 +224,11 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 
 ## 9. v0.2 有意识简化与 spike-pending
 
-- **spike-pending**（实现前须在目标 opencode 版本验证）：① opencode agent 命名/大小写可发现性（发现路径已定 = `.opencode/agents/<Name>.md`）；② skill 物化 vs 注入（v0.2 默认注入）；③ 项目 `.opencode/opencode.json` 对当前项目与 `$TMPDIR/tracks` 的目录边界验证。
+- **实现前 spike/验证**（不改变产品合同）：① 目标 opencode 版本的 agent 加载/权限配置；② skill 通过 Runtime 上下文注入并核对 `skill_version`；③ 项目 `.opencode/opencode.json` 对当前项目与 command_id 临时目录的目录边界验证；④ live fixture 的有限 console transcript 与子进程边界。agent 发现路径和大小写的已批准合同 = `.opencode/agents/<Name>.md`、文件名与 `--agent` 逐字一致；spike 不能把尚未审议的实现细节升级为产品行为。
 - M-ACC 与真实 Lex 已纳入本版本；不做 M-DESIGN 及之后阶段；不做 opencode `-m`/`--variant`；不做 @mention 通知推送；不做讨论跨文件关联/历史版本化（git 提供）。
 - discuss 无持久化 ID（全文扫描即时重建），是 Aaron 决定的有意识简化（换取对文档变化的及时跟随），代价是每次操作全文扫描（< 1MB 文档 < 1s，NFR-020）。
 - 交付物一致性 = 存在性 + 版本检查（frontmatter 版本随流程变更升版），落交付门禁（pre-commit/CI），非 Runtime 行为，不做 digest/manifest。
-- Human/Agent 串行化、真实 actor 身份认证：推迟 web 界面。
+- Human/Agent 真实身份认证和通用并发串行化：推迟 web 界面；v0.2 live fixture 仍必须使用显式 actor 注入，不能以自由的 Agent 字符串冒充 Human。live journey 的 per-agent/per-round/total timeout、review round 上限和失败宿主保留是测试/Runtime 可审计合同，不是隐藏环境变量语义。
 
 ## 10. 工作流审计轨迹与报告
 
@@ -209,7 +238,7 @@ inline-discussion 以 skill `tracks-discuz` 交付（`tracks/skills/tracks-discu
 
 ### 10.2 记录边界
 
-只记录需要 Human 解释的工作流活动：Agent dispatch、Human gate、失败/重试/回退、审计、生成物提交和阶段转移。普通成功 `validate` 不单独显示；导致重试或阻塞的校验失败必须作为 attempt 结果证据记录。Agent 输入/输出和大参数使用脱敏 blob 引用，生成物使用 commit hash。
+只记录需要 Human 解释的工作流活动：Agent dispatch、Human gate、失败/重试/回退、审计、生成物提交和阶段转移。普通成功 `validate` 不单独显示；导致重试或阻塞的校验失败必须作为 attempt 结果证据记录。Agent 输入/输出和大参数使用脱敏 blob 引用，生成物使用 commit hash。每个活动必须可由 activity/command/run 标识关联 stage/substate、attempt、开始/结束和最终结果。
 
 ### 10.2a Agent I/O 数据通路
 
@@ -219,10 +248,10 @@ audit blob 是 best-effort 辅助证据，不与状态推进使用同一失败�
 
 ### 10.3 报告生成
 
-`trac report --run-id <run-id> --output <dir>` 从当前 Git 根目录解析 `.tracks/runtime/tracks.db` 和 Git remote，生成规范化 `report.md`；静态 `index.html` 使用固定版本的轻量 Markdown renderer 读取该 Markdown。Renderer 不承担事实推导，报告生成器负责 timeline、retry/audit 因果链和 commit URL。
+`trac report --run-id <run-id> --output <dir>` 从当前 Git 根目录解析 `.tracks/runtime/tracks.db` 和 Git remote，生成规范化 `report.md`（主产物）。同时生成自包含 `index.html` 查看器：内联固定版本 `marked.js`（package data `tracks/assets/marked.min.js`，文件头注释标明版本与来源；生成时读取注入 HTML，不从 CDN 加载），浏览器端 `fetch("report.md")` 客户端渲染，`python -m http.server` 即可查看。查看器仅为测试/临时用途，不是 tracks 的 Markdown 渲染能力，未来 web 功能可替代移除。报告生成器负责 timeline、retry/audit 因果链和 commit URL；`marked.js` 只做展示渲染，不承担事实推导。报告至少展开或提供可展开引用：脱敏 assignment/I/O、Markdown parser/query 产生的 discussion thread/reply/status/参与者、attempt/failure/retry、commit link/fallback、audit gap、interrupted/unknown、阶段和最终状态。XSS 防护由 `marked.js` 的 HTML 转义保证；Agent JSON、讨论内容和 stderr 不得作为未转义 HTML 执行。
 
 ### 10.4 Live E2E 宿主
 
-tracks 自身 live E2E 要求 `TRACKS_E2E_GITHUB_REPO` 指向可丢弃 GitHub 仓库；测试根目录是本地宿主 Git repo，测试脚本决定临时分支。安全边界是只授权该测试仓库的凭据，而不是声称通用 bash 能被强制限定到单一分支；结束后通过 GitHub/gh 回读审计只有预期分支变化。普通用户运行 `trac report` 不读取该环境变量，仅使用当前宿主 repo。
+tracks 自身 live E2E 要求显式 opt-in，并由 `TRACKS_E2E_GITHUB_REPO` 指向可丢弃 GitHub 仓库；测试根目录是本地宿主 Git repo，测试脚本决定临时分支。安全边界是只授权该测试仓库的凭据，而不是声称通用 bash 能被强制限定到单一分支；结束后通过 GitHub/gh 回读审计只有预期分支变化。普通用户运行 `trac report` 不读取该环境变量，仅使用当前宿主 repo。缺失或不可验证的远端是配置失败，不是本地 fallback。
 
-完整 live journey 是独立 opt-in 测试。测试脚本以测试 actor 注入 triage/review/approval Human 事件，设置每次 Agent timeout、最大 review round 和整条旅程总时限；失败/超时保留宿主目录。测试开始、结束都打印本地宿主、报告、remote 和 branch，解决临时目录不可发现问题。
+完整 live journey 是独立 opt-in 测试。测试脚本以测试 actor 注入 triage/review/approval Human 事件；有限 console transcript 只作为 Human mock 输入交给真实 Agent，不能由 fixture 直接写 discussion 或目标文档。测试设置并记录每次 Agent timeout、每个 review round timeout、最大 review round 和整条旅程总时限；失败/超时保留宿主目录、事件库、diff 和报告。测试开始、结束都打印本地宿主、报告、remote 和 branch，解决临时目录不可发现问题。单次 dispatch boundary（如需要）是显式 harness/runtime activity 配置，不是隐藏环境变量。
