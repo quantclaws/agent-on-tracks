@@ -6,5 +6,5 @@
   "human_actor": "LiveE2E-Human",
   "max_new_threads": 0,
   "comment_style": "concise",
-  "required_action": "Read Prism's findings (discussion threads in the design docs and the failure evidence in your assignment), reply to each thread with trac discuss reply, and revise architecture.md / interfaces.md / test-plan.md accordingly. Do not stop at planning: reply to every open Prism thread and save the revised documents before you finish."
+  "required_action": "Read Prism's findings (discussion threads in the design docs and the failure evidence in your assignment), reply to each thread with trac discuss reply, and revise architecture.md / interfaces.md / test-plan.md accordingly. Every document must keep the frontmatter block from its template in tracks/templates/. Do not stop at planning: reply to every open Prism thread and save the revised documents before you finish."
 }

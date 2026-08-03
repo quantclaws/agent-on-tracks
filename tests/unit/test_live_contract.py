@@ -211,6 +211,28 @@ def test_prompt_is_generic_and_exposes_scenario_json(tmp_path):
         assert forbidden not in prompt
 
 
+def test_prompt_serializes_retry_evidence_from_the_assignment(tmp_path):
+    """FR-11 terminus: the executor merges the machine's failed-outcome
+    evidence into the assignment; _assignment_context serializes the whole
+    assignment as JSON, so check/reason/evidence/attempt all land in the
+    prompt text the agent actually receives (live run043: "no frontmatter")."""
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    assignment = {
+        "kind": "RESPOND",
+        "template_kind": None,
+        "docs": ["architecture.md", "interfaces.md", "test-plan.md"],
+        "evidence": {"check": "template", "reason": "no frontmatter",
+                     "evidence": ".tracks/projects/v0.1/architecture.md",
+                     "attempt": 2},
+    }
+
+    prompt = backend._prompt("archer", "RESPOND", None, None, assignment)
+
+    for needle in ("no frontmatter", '"check": "template"', '"attempt": 2',
+                   ".tracks/projects/v0.1/architecture.md"):
+        assert needle in prompt
+
+
 def test_role_map_covers_every_tracks_role():
     # Every Runtime role (IF-001 §5) maps to a shipped opencode agent Name —
     # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews).

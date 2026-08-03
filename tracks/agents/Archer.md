@@ -131,6 +131,8 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 - `.tracks/projects/{version}/interfaces.md`
 - 宿主项目中的接口桩文件
 
+三份文档必须严格以 tracks/templates/architecture.md / interfaces.md / test-plan.md 为起点起草，完整保留各自的 YAML frontmatter 块（architecture_id / spec_ref / created / status / sha 等字段）；缺失 frontmatter 的文档无法通过 validate，会白白浪费一次重派 attempt。
+
 文档使用与 story/spec 相同的语言；专有名词、API 名称和文件路径保留英文。
 
 ## 质量标准

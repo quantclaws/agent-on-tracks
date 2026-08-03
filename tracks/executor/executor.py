@@ -220,8 +220,15 @@ class Executor:
         p = cmd.params
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
+        assignment = p.get("assignment")
+        if p.get("evidence") is not None:
+            # FR-11: failed-outcome evidence rides params["evidence"]; merge it
+            # into the assignment so the backend renders it into the prompt
+            # (opencode._assignment_context serializes the whole assignment).
+            assignment = dict(assignment or {})
+            assignment["evidence"] = p["evidence"]
         result = self.backend.act(
-            role, substate, doc, doc_path, assignment=p.get("assignment")
+            role, substate, doc, doc_path, assignment=assignment
         )
         self._emit("outcome.received", _dispatch_payload(self.store, p, result),
                    command_id=cmd.command_id, task_id=task_id)

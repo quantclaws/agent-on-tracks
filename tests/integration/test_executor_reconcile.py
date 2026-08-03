@@ -163,6 +163,60 @@ def test_dispatch_agent_carries_opencode_outcome_fields(tmp_path):
     assert payload["diff_ref"] == "diff --git a/story.md"
 
 
+def test_dispatch_agent_merges_failure_evidence_into_assignment(tmp_path):
+    """FR-11 wiring: the machine's re-dispatch evidence (params['evidence'],
+    machine.py _on_verdict_failed) must reach the backend inside the assignment
+    dict — opencode._assignment_context renders the assignment JSON into the
+    agent prompt, so only an assignment-carried evidence reaches the agent."""
+    ex, store, run_id = _setup(tmp_path)
+
+    class _RecordingBackend:
+        def __init__(self):
+            self.assignment = None
+
+        def act(self, role, substate, doc, doc_path, assignment=None):
+            self.assignment = assignment
+            return {"status": "done", "artifact_ref": "story.md",
+                    "self_report": "wrote story.md"}
+
+    backend = _RecordingBackend()
+    ex.backend = backend
+    evidence = {"check": "schema", "reason": "no frontmatter",
+                "evidence": ".tracks/projects/v0.1/architecture.md", "attempt": 2}
+    cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md",
+                "assignment": {"kind": "DRAFT", "template_kind": "story"},
+                "evidence": evidence},
+        command_id=new_ulid(),
+    )
+    ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
+    assert backend.assignment["kind"] == "DRAFT"
+    assert backend.assignment["evidence"] == evidence
+
+
+def test_dispatch_agent_keeps_assignment_untouched_without_evidence(tmp_path):
+    """No retry evidence -> the assignment passes through unmodified."""
+    ex, store, run_id = _setup(tmp_path)
+
+    class _RecordingBackend:
+        def __init__(self):
+            self.assignment = "unset"
+
+        def act(self, role, substate, doc, doc_path, assignment=None):
+            self.assignment = assignment
+            return {"status": "done", "artifact_ref": "story.md",
+                    "self_report": "wrote story.md"}
+
+    backend = _RecordingBackend()
+    ex.backend = backend
+    cmd = Command(kind="dispatch_agent",
+                  params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
+                  command_id=new_ulid())
+    ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
+    assert backend.assignment is None
+
+
 def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
     """FakeBackend outcomes carry no diff/audit/failure fields (absent, not null)."""
     ex, store, run_id = _setup(tmp_path)
