@@ -363,6 +363,7 @@ def test_prism_review_passes_on_settled_design_trio(
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
     out = backend(host_repo).act("prism", "PRISM_REVIEW", None, None,
                                  assignment=design_assignment("PRISM_REVIEW"))
+    assert out.get("failure_class") is None  # pass without threads stays legal
     assert out["status"] == "done"
     assert out["verdict"] == "pass"
     assert out["diff_ref"] is None
@@ -454,7 +455,8 @@ def test_reviewer_dispatch_leaving_open_thread_unaffected(
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
     out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
     assert out["status"] == "done"
-    assert out.get("failure_class") != "unresolved_threads"
+    # revise anchored by the reviewer's own finding thread stays legal
+    assert out.get("failure_class") is None
     assert out["verdict"] == "revise"  # open thread blocks readiness, as before
 
 
@@ -474,7 +476,7 @@ def test_respond_dispatch_leaving_open_thread_unaffected(
 @pytest.mark.parametrize("blocked", DESIGN_DOCS)
 def test_design_draft_open_own_thread_in_any_doc_fails(
         blocked, fake_opencode, design_vdir, host_repo, monkeypatch):
-    """M-DESIGN trio is doc-set aware: an Archer-initiated thread left open in
+    """M-DESIGN trio is doc-set-aware: an Archer-initiated thread left open in
     ANY of the three docs fails the whole dispatch, naming doc and thread id."""
     docs = [design_vdir / name for name in DESIGN_DOCS]
     seeded = design_vdir / blocked
@@ -487,3 +489,74 @@ def test_design_draft_open_own_thread_in_any_doc_fails(
     assert out["status"] == "failed"
     assert out["failure_class"] == "unresolved_threads"
     assert f"{blocked}:T-001" in out["self_report"]
+
+
+# -- reviewer revise audit (live run042: a revise verdict must anchor every
+#    blocking finding via `trac discuss start`; a bare revise is classified,
+#    never trusted — verdict pass stays legal, authors are exempt) -------------
+
+
+def test_reviewer_revise_with_own_open_finding_thread_unchanged(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """A revise anchored by the reviewer's own open finding thread stays the
+    legal done/revise outcome — the audit requires anchored findings, not a
+    settled doc-set, and keys on unresolved (a resolved thread by the same
+    reviewer does not count)."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    seed_thread(design_vdir / "architecture.md", "Prism")
+    seed_thread(design_vdir / "test-plan.md", "Prism", resolved=True)
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("prism", "PRISM_REVIEW", None, None,
+                                 assignment=design_assignment("PRISM_REVIEW"))
+    assert out.get("failure_class") is None  # anchored finding satisfies audit
+    assert out["status"] == "done"
+    assert out["verdict"] == "revise"
+
+
+def test_reviewer_revise_without_findings_fails(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """run042 family: verdict=revise but the reviewer INITIATED zero threads —
+    a bare outcome Archer's RESPOND has nothing anchored to answer. Classified
+    failure (failed-outcome retry path: attempt consumed, evidence named), and
+    no verdict leaks into the outcome for the executor to emit."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    seed_thread(design_vdir / "interfaces.md", "Archer")  # open, not Prism's
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("prism", "PRISM_REVIEW", None, None,
+                                 assignment=design_assignment("PRISM_REVIEW"))
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "revise_without_findings"
+    assert "trac discuss start" in out["self_report"]
+    assert out["audit_evidence"].startswith("revise_without_findings:")
+    assert "Prism" in out["audit_evidence"]
+    assert out.get("verdict") is None
+
+
+def test_single_doc_reviewer_revise_without_findings_fails(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """The audit is doc-set-agnostic: a single-doc reviewer revise whose only
+    blocking thread was initiated by the author fails the same way."""
+    seed_thread(target_doc, "Scribe")
+    commit_doc(host_repo, "story.md")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    out = backend(host_repo).act("sage", "SAGE_REVIEW", "story.md", target_doc)
+    assert out.get("verdict") is None  # the failed outcome emits no verdict
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "revise_without_findings"
+
+
+def test_author_dispatch_unaffected_by_revise_finding_audit(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """Authors are exempt: an Archer RESPOND whose own thread stays open is
+    legal — the finding-anchor audit binds reviewer dispatches only."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    seed_thread(design_vdir / "architecture.md", "Archer")
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "RESPOND", None, None,
+                                 assignment=design_assignment("RESPOND"))
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None

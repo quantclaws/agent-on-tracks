@@ -165,6 +165,29 @@ def test_exit_gate_fail_falls_back_to_respond_not_human():
     assert escalated.awaiting == "escalation"
 
 
+def test_prism_review_failed_outcome_redispatch_carries_evidence():
+    # A failed reviewer outcome (e.g. the opencode revise_without_findings
+    # audit, live run042) is not a produced verdict: the review resets and the
+    # Prism re-dispatch carries the failure evidence (FR-11), like DRAFT
+    # pipelines; the attempt accounting shares the escalation budget.
+    items = draft_cycle() + [
+        PRISM_DISPATCH,
+        ("outcome.received", {"role": "prism", "status": "failed",
+                              "failure_class": "revise_without_findings",
+                              "self_report": "revise must anchor findings",
+                              "audit_evidence":
+                                  "revise_without_findings: verdict=revise"}),
+    ]
+    s = state_of(*items)
+    assert s.substate == "PRISM_REVIEW" and not s.reviewer_dispatched
+    assert s.last_failure["check"] == "revise_without_findings"
+    cmd = decide(s)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "PRISM_REVIEW"
+    assert cmd.params["evidence"]["check"] == "revise_without_findings"
+    assert cmd.params["evidence"]["evidence"].startswith("revise_without_findings")
+
+
 def _drive(items):
     """Pure-machine walk: apply decide() and append the events the executor
     would log for each command until decide() halts. Happy-path fake semantics

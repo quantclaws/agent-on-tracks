@@ -233,6 +233,31 @@ def _assert_finding_lifecycle(
     )
 
 
+def _run_design_review_loop(live_trac):
+    """Prism review <-> Archer RESPOND loop, bounded to 2 review rounds
+    (TRAC_LIVE_MAX_REVIEW_ROUNDS stays the wider outer net). Each round runs
+    prism-design-review: a pass round completes the run at the M-IMPL
+    boundary; a revise round halts in RESPOND (live run042 died here while
+    unscripted), Archer must answer every finding and return the state to
+    PRISM_REVIEW, and the next round starts."""
+    for review_round in range(1, 3):
+        review = live_trac("run", scenario="prism-design-review")
+        if "status=completed" in review.stdout:
+            return review
+        assert "stage=M-DESIGN" in review.stdout, review.stdout
+        assert "substate=RESPOND" in review.stdout, (
+            f"review round {review_round} neither completed nor opened RESPOND: "
+            f"{review.stdout}"
+        )
+        respond = live_trac("run", scenario="archer-design-respond")
+        assert "stage=M-DESIGN" in respond.stdout, respond.stdout
+        assert "substate=PRISM_REVIEW" in respond.stdout, (
+            f"review round {review_round}: Archer RESPOND did not return to "
+            f"PRISM_REVIEW: {respond.stdout}"
+        )
+    raise AssertionError("M-DESIGN review loop did not complete within 2 review rounds")
+
+
 def test_bounded_scripted_real_agent_journey(
     live_root,
     host_with_opencode_config,
@@ -241,7 +266,8 @@ def test_bounded_scripted_real_agent_journey(
     live_trac,
 ):
     """Exercise triage, both required finding loops, approval, GitHub Issues,
-    and the M-DESIGN stage (Archer draft, Prism pass, boundary completion)."""
+    and the M-DESIGN stage (Archer draft, bounded Prism review <-> Archer
+    RESPOND revise loop, boundary completion)."""
     version = "live-e2e-code-stats"
     slug = live_github_repo
     remote = f"git@github.com:{slug}.git"
@@ -364,8 +390,9 @@ def test_bounded_scripted_real_agent_journey(
 
     # M-DESIGN (flow.md §8, BS-05): no human gate after approval. One
     # Archer dispatch drafts the design trio, validates and commits it, then
-    # waits in PRISM_REVIEW; a single Prism dispatch passes and the run
-    # completes at the M-IMPL boundary after the M-DESIGN EXIT gate.
+    # waits in PRISM_REVIEW. Prism may revise (anchored findings) and Archer
+    # RESPONDs until a pass round completes the run at the M-IMPL boundary
+    # after the M-DESIGN EXIT gate.
     design = live_trac("run", scenario="archer-design-draft")
     assert "stage=M-DESIGN" in design.stdout
     assert "substate=PRISM_REVIEW" in design.stdout
@@ -382,7 +409,7 @@ def test_bounded_scripted_real_agent_journey(
         if event["type"] == "design.committed"
     ) == ["architecture.md", "interfaces.md", "test-plan.md"]
 
-    final = live_trac("run", scenario="prism-design-review")
+    final = _run_design_review_loop(live_trac)
     assert "status=completed" in final.stdout
     assert "awaiting=-" in final.stdout
 

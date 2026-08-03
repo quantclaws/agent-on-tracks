@@ -47,6 +47,7 @@ REQUIRED_SCENARIOS = {
     "approval-final",
     "archer-design-draft",
     "prism-design-review",
+    "archer-design-respond",
 }
 
 
@@ -735,11 +736,14 @@ class LiveTracDriver:
 
     @staticmethod
     def _dispatch_budget(scenario: Scenario) -> int:
-        # Author steps (DRAFT/RESPOND) may flake; the runtime retries a failed
-        # dispatch outcome internally and escalates at the 3rd attempt, so they
-        # get a 3-dispatch budget. Reviewer/human-gate steps keep one dispatch;
-        # the global bounds remain the outer safety net.
-        if scenario.data.get("kind") in ("DRAFT", "RESPOND"):
+        # Author steps (DRAFT/RESPOND) and reviewer steps (*_REVIEW) may flake;
+        # the runtime retries a failed dispatch outcome internally and escalates
+        # at the 3rd attempt, so they get a 3-dispatch budget. Successful verdict
+        # paths never consume more than one dispatch, so the extra budget is only
+        # reachable on failed outcomes. Human-gate steps (no kind) keep one
+        # dispatch; the global bounds remain the outer safety net.
+        kind = scenario.data.get("kind") or ""
+        if kind in ("DRAFT", "RESPOND") or kind.endswith("_REVIEW"):
             return 3
         return 1
 

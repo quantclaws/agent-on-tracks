@@ -156,14 +156,19 @@ def test_walk_to_design_complete(trac, event_log):
 
 def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     """The live-harness journey on the deterministic fake channel: each step
-    runs with its own dispatch budget (3 for author steps, 1 otherwise) and
-    must end exactly at the next substate boundary — no step over-runs and
-    dispatches the following substate's agent under a stale overlay."""
+    runs with its own dispatch budget (3 for author and reviewer steps, 1
+    otherwise) and must end exactly at the next substate boundary — no step
+    over-runs and dispatches the following substate's agent under a stale
+    overlay."""
     assert trac("init").returncode == 0
     r = trac("start", "v0.1", stdin="构建一个事件溯源运行时")
     assert r.returncode == 0, r.stderr
     run_id = re.search(r"run (\S+) started", r.stdout).group(1)
-    budget = {"author": ("--max-dispatches", "3"), "other": ("--max-dispatches", "1")}
+    budget = {
+        "author": ("--max-dispatches", "3"),
+        "reviewer": ("--max-dispatches", "3"),
+        "other": ("--max-dispatches", "1"),
+    }
     steps = 0
 
     def step(expect_substates, expect_stdout, kind="other", simulate=None):
@@ -182,28 +187,28 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     assert trac("triage", "go").returncode == 0
 
     step(["DRAFT"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-draft
-    step(["SAGE_REVIEW"], "substate=RESPOND",
+    step(["SAGE_REVIEW"], "substate=RESPOND", kind="reviewer",
          simulate="sage:SAGE_REVIEW=revise")               # sage-story-finding
     step(["RESPOND"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-respond
-    step(["SAGE_REVIEW"], "awaiting=review")               # sage-story-resolve
+    step(["SAGE_REVIEW"], "awaiting=review", kind="reviewer")  # sage-story-resolve
     assert trac("review", "no-comment").returncode == 0
 
     step(["DRAFT"], "substate=LEX_REVIEW", kind="author")  # sage-spec-draft
-    step(["LEX_REVIEW"], "substate=RESPOND",
+    step(["LEX_REVIEW"], "substate=RESPOND", kind="reviewer",
          simulate="lex:LEX_REVIEW=revise")                 # lex-spec-finding
     step(["RESPOND"], "substate=LEX_REVIEW", kind="author")  # sage-spec-respond
-    step(["LEX_REVIEW"], "awaiting=review")                # lex-spec-resolve
+    step(["LEX_REVIEW"], "awaiting=review", kind="reviewer")  # lex-spec-resolve
     assert trac("review", "no-comment").returncode == 0
 
     step(["DRAFT"], "substate=LEX_REVIEW", kind="author")  # sage-acceptance-draft
-    step(["LEX_REVIEW"], "awaiting=review")                # lex-acceptance-review
+    step(["LEX_REVIEW"], "awaiting=review", kind="reviewer")  # lex-acceptance-review
     assert trac("review", "no-comment").returncode == 0
 
     step([], "awaiting=approval")                          # approval-final: preview
     assert trac("approve", "--actor", "LiveE2E-Human").returncode == 0
 
     step(["DRAFT"], "substate=PRISM_REVIEW", kind="author")  # archer-design-draft
-    step(["PRISM_REVIEW"], "status=completed")             # prism-design-review
+    step(["PRISM_REVIEW"], "status=completed", kind="reviewer")  # prism-design-review
 
     evs = event_log(run_id)
     assert types(evs)[-2:] == ["stage.exited", "run.completed"]

@@ -5,9 +5,11 @@ Pipeline per dispatch: materialize canonical prompt -> baseline snapshot ->
 (process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
 the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
 whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6:
-over-reach, and — for author DRAFT dispatches — that the agent resolved every
-discussion thread it initiated in the target doc-set). Failures map to IF-003
-§1a FailureClass. The agent's stdout JSON is NEVER the product; the controlled
+over-reach; for author DRAFT dispatches, that the agent resolved every
+discussion thread it initiated in the target doc-set; for reviewer dispatches,
+that a revise verdict anchors its findings — at least one open discussion
+thread the reviewer initiated, live run042). Failures map to IF-003 §1a
+FailureClass. The agent's stdout JSON is NEVER the product; the controlled
 target diff is.
 """
 from __future__ import annotations
@@ -166,21 +168,48 @@ class OpencodeBackend:
             return self._overreach_result(
                 diff_ref, proc, prompt, console_input, over,
             )
-        if substate == "DRAFT":
-            # flow.md 不变量 6 / arch.md 永不信自述: closure is verified from the
-            # doc's discussion state, not the agent's report (live run041: Scribe
-            # finished the interview DRAFT leaving its own thread open). RESPOND
-            # and reviewer dispatches are exempt: replies/findings legitimately
-            # stay open for the other party's next round.
-            offending = _unresolved_author_threads(doc_paths, role)
-            if offending:
-                return self._unresolved_threads_result(
-                    diff_ref, offending, proc, prompt, console_input,
-                )
+        audit = self._discussion_audit_result(
+            role, substate, doc_paths, diff_ref, proc, prompt, console_input,
+            reviewer_assignment,
+        )
+        if audit is not None:
+            return audit
         return self._success_result(
             AGENT_NAME[role], substate, doc_paths, diff_ref, proc, prompt,
             console_input, author_assignment, reviewer_assignment,
         )
+
+    def _discussion_audit_result(
+        self, role: str, substate: str, doc_paths: list[Path],
+        diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
+        console_input: str | None, reviewer_assignment: bool,
+    ) -> dict | None:
+        """Discussion-state audits (flow.md 不变量 6 / arch.md 永不信自述): the
+        outcome is classified from the doc's discussion state, never the
+        agent's report. Returns the failed-outcome result, or None to pass."""
+        if substate == "DRAFT":
+            # Author DRAFT (live run041): every thread the author initiated
+            # must be resolved before the dispatch may finish. RESPOND and
+            # reviewer dispatches are exempt: replies/findings legitimately
+            # stay open for the other party's next round.
+            offending = _unresolved_role_threads(doc_paths, role)
+            if offending:
+                return self._unresolved_threads_result(
+                    diff_ref, offending, proc, prompt, console_input,
+                )
+        if reviewer_assignment:
+            # Reviewer contract (live run042): a REVISE verdict must anchor
+            # every blocking finding as a discussion thread the reviewer
+            # INITIATED via `trac discuss start`; a bare revise gives the
+            # author's RESPOND nothing anchored to reply to. Verdict revise
+            # with no open reviewer-initiated thread in the doc-set ->
+            # classified failure; verdict pass stays legal without threads.
+            ready, blockers = check_ready(_docset_text(doc_paths))
+            if not ready and not _unresolved_role_threads(doc_paths, role):
+                return self._revise_without_findings_result(
+                    diff_ref, role, blockers, proc, prompt, console_input,
+                )
+        return None
 
     def _overreach_result(
         self, diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
@@ -202,6 +231,25 @@ class OpencodeBackend:
                 "diff_ref": diff_ref,
                 "audit_evidence": f"unresolved_threads: {threads}",
                 "failure_class": "unresolved_threads",
+                "agent_io": self._capture_io(proc, prompt, console_input)}
+
+    def _revise_without_findings_result(
+        self, diff_ref: str | None, role: str, blockers: tuple,
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+    ) -> dict:
+        # No `verdict` key: a bare revise is not a produced verdict, so the
+        # executor emits no verdict event and the machine's failed-outcome
+        # retry path applies (attempt consumed, evidence into re-dispatch).
+        threads = ", ".join(blockers)
+        return {"status": "failed", "artifact_ref": None,
+                "self_report": "revise verdict must anchor findings via `trac discuss "
+                               f"start`: open each blocking finding as a discussion "
+                               f"thread before returning revise (open: {threads})",
+                "diff_ref": diff_ref,
+                "audit_evidence": (f"revise_without_findings: verdict=revise, open "
+                                   f"thread(s) {threads}, none initiated by reviewer "
+                                   f"{AGENT_NAME[role]}"),
+                "failure_class": "revise_without_findings",
                 "agent_io": self._capture_io(proc, prompt, console_input)}
 
     def _success_result(
@@ -481,13 +529,15 @@ def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
             exit_code=0, stderr=proc.stderr)
 
 
-def _unresolved_author_threads(doc_paths: list[Path], role: str) -> list[str]:
+def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
     """Threads in the target doc-set INITIATED by ``role`` and not resolved.
 
-    Audit predicate for author DRAFT dispatches: ``speaker_key(initiator) ==
-    speaker_key(role)`` and ``status != "resolved"`` (open and reopen both
-    block, as in the discussion gate), checked across the WHOLE doc-set. With a
-    single target doc the offenders are thread ids; a multi-doc set (the
+    Audit predicate: ``speaker_key(initiator) == speaker_key(role)`` and
+    ``status != "resolved"`` (open and reopen both block, as in the discussion
+    gate), checked across the WHOLE doc-set. For author DRAFT dispatches any
+    such thread is an offence (closure unverified); for reviewer dispatches
+    these threads ARE the anchored findings a revise verdict must carry. With
+    a single target doc the offenders are thread ids; a multi-doc set (the
     M-DESIGN trio) names them ``doc:T-NNN`` so the ids stay unambiguous."""
     role_key = speaker_key(role)
     multi = len(doc_paths) > 1

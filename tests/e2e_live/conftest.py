@@ -187,11 +187,12 @@ def live_backend(host_with_opencode_config, live_root, live_enabled, live_instal
 def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
     """Return a bounded driver for the installed ``trac`` console script.
 
-    Author steps (DRAFT/RESPOND) carry a 3-dispatch budget so the runtime can
-    exercise its own retry/escalation semantics; a retrying author run may also
-    pull in the follow-up reviewer/respond dispatches, so the stage/review
-    bounds below are sized to that legitimate worst case while remaining the
-    outer safety net against runaway dispatch loops.
+    Author steps (DRAFT/RESPOND) and reviewer steps (*_REVIEW) carry a
+    3-dispatch budget so the runtime can exercise its own retry/escalation
+    semantics; a retrying run may also pull in the follow-up reviewer/respond
+    dispatches, so the stage/review bounds below are sized to that legitimate
+    worst case while remaining the outer safety net against runaway dispatch
+    loops.
     """
     driver = LiveTracDriver(
         live_root,

@@ -340,9 +340,10 @@ def test_third_failed_outcome_escalates_and_fails_mentioning_escalation(tmp_path
     assert "no_target_diff" in message  # the rich payload survives the failure
 
 
-def test_dispatch_budget_is_three_only_for_author_steps(tmp_path):
-    """Author steps (kind DRAFT/RESPOND) get a 3-dispatch budget so the runtime
-    can retry internally; reviewer/human-gate steps keep a single dispatch."""
+def test_dispatch_budget_is_three_for_author_and_reviewer_steps(tmp_path):
+    """Author steps (kind DRAFT/RESPOND) and reviewer steps (kind *_REVIEW) get
+    a 3-dispatch budget so the runtime can retry a failed outcome internally;
+    human-gate steps (no kind) keep a single dispatch."""
     driver = _mechanic_driver(tmp_path)
 
     def budget(name):
@@ -350,11 +351,12 @@ def test_dispatch_budget_is_three_only_for_author_steps(tmp_path):
         return args[args.index("--max-dispatches") + 1]
 
     for name in ("scribe-story-draft", "sage-spec-draft", "sage-acceptance-draft",
-                 "archer-design-draft", "scribe-story-respond", "sage-spec-respond"):
-        assert budget(name) == "3", name
-    for name in ("triage", "sage-story-finding", "sage-story-resolve",
+                 "archer-design-draft", "scribe-story-respond", "sage-spec-respond",
+                 "archer-design-respond", "sage-story-finding", "sage-story-resolve",
                  "lex-spec-finding", "lex-spec-resolve", "lex-acceptance-review",
-                 "prism-design-review", "approval-final"):
+                 "prism-design-review"):
+        assert budget(name) == "3", name
+    for name in ("triage", "approval-final"):
         assert budget(name) == "1", name
     non_run, _ = driver._command_args(("status",), None, None)
     assert "--max-dispatches" not in non_run

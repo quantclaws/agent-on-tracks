@@ -648,6 +648,8 @@ def _decide_review(s: State, stage: str, sub: str) -> Command | None:
         stage=stage, attempt=s.current_attempt + 1,
         review_round=s.review_round,
     )
+    if s.last_failure:
+        cmd.params["evidence"] = dict(s.last_failure)  # FR-11
     if sd.docs:
         # Multi-doc stage (M-DESIGN): the reviewer's assignment names the whole
         # doc set like the drafter's (flow.md §8; no single target doc).
