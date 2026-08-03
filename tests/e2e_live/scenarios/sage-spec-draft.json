@@ -6,9 +6,5 @@
   "human_actor": "LiveE2E-Human",
   "max_new_threads": 1,
   "comment_style": "concise",
-  "allowed_product_slots": ["blank_lines"],
-  "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
-  "finding_condition": "The spec must omit blank-line counting semantics so Lex can identify this blocker.",
-  "expected_responder": "Sage",
-  "required_action": "Do not silently add the blank-line policy in this draft; keep ordinary technical choices reasonable."
+  "required_action": "Draft a slim spec: at most 2 functional requirements and at most 2 non-functional requirements, each expressed concisely. Adopt the product decisions already established in story.md (including any answered interview slot); keep ordinary technical choices reasonable."
 }

@@ -204,11 +204,14 @@ def _assert_respond_diff(
     assert commits, f"no author commit after RESPOND for {doc}"
 
 
-def _assert_reviewer_pass(events: list[dict], event_type: str):
+def _assert_reviewer_pass(
+    events: list[dict], event_type: str, expect_revise: bool = True
+):
     verdicts = [event for event in events if event["type"] == event_type]
     assert verdicts, f"missing {event_type} event"
     assert verdicts[-1]["payload"].get("verdict") == "pass"
-    assert any(event["payload"].get("verdict") == "revise" for event in verdicts)
+    if expect_revise:
+        assert any(event["payload"].get("verdict") == "revise" for event in verdicts)
 
 
 def _assert_finding_lifecycle(
@@ -240,7 +243,8 @@ def test_bounded_scripted_real_agent_journey(
     live_scenarios,
     live_trac,
 ):
-    """Exercise triage, both required finding loops, approval, and GitHub Issues."""
+    """Exercise triage, M-STORY finding loop, single-pass M-SPEC review, approval, and
+    GitHub Issues."""
     version = "live-e2e-code-stats"
     slug = live_github_repo
     remote = f"git@github.com:{slug}.git"
@@ -294,39 +298,13 @@ def test_bounded_scripted_real_agent_journey(
 
     assert live_trac("review", "no-comment", "--actor", "LiveE2E-Human").returncode == 0
 
-    spec = f".tracks/projects/{version}/spec.md"
     acceptance = f".tracks/projects/{version}/acceptance.md"
     assert "substate=LEX_REVIEW" in live_trac(
         "run", scenario="sage-spec-draft"
     ).stdout
-    assert "substate=RESPOND" in live_trac(
-        "run", scenario="lex-spec-finding"
-    ).stdout
-    _assert_finding_lifecycle(
-        live_trac,
-        live_root,
-        run_id,
-        spec,
-        "SPEC-BLANK-LINE-SEMANTICS",
-        "Lex",
-        "lex.verdict",
-    )
-    assert "substate=LEX_REVIEW" in live_trac(
-        "run", scenario="sage-spec-respond"
-    ).stdout
-    state = _discussion_state(live_trac, spec)
-    spec_thread = _finding_thread(state, "SPEC-BLANK-LINE-SEMANTICS", "Lex")
-    assert any(reply["speaker"] == "Sage" for reply in _replies(spec_thread))
-    _assert_respond_diff(_events(live_root, run_id), "sage", "spec.md", "spec.committed")
-
-    assert "awaiting=review" in live_trac(
-        "run", scenario="lex-spec-resolve"
-    ).stdout
-    state = _discussion_state(live_trac, spec)
-    resolved_spec = _finding_thread(state, "SPEC-BLANK-LINE-SEMANTICS", "Lex")
-    assert resolved_spec["status"] == "resolved"
-    assert any(reply["speaker"] == "Sage" for reply in _replies(resolved_spec))
-    _assert_reviewer_pass(_events(live_root, run_id), "lex.verdict")
+    lex_pass = live_trac("run", scenario="lex-spec-pass")
+    assert "awaiting=review" in lex_pass.stdout
+    _assert_reviewer_pass(_events(live_root, run_id), "lex.verdict", expect_revise=False)
 
     assert live_trac("review", "no-comment", "--actor", "LiveE2E-Human").returncode == 0
     assert "substate=LEX_REVIEW" in live_trac(
