@@ -1,0 +1,12 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-DESIGN",
+  "agent": "Prism",
+  "kind": "PRISM_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 0,
+  "comment_style": "concise",
+  "required_finding": null,
+  "review_mode": "normal",
+  "required_action": "Run a normal semantic review of the three design documents against story/spec/acceptance; do not create test findings. When the design is semantically closed, pass directly without opening discussion threads."
+}

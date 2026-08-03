@@ -240,7 +240,8 @@ def test_bounded_scripted_real_agent_journey(
     live_scenarios,
     live_trac,
 ):
-    """Exercise triage, both required finding loops, approval, and GitHub Issues."""
+    """Exercise triage, both required finding loops, approval, GitHub Issues,
+    and the M-DESIGN stage (Archer draft, Prism pass, boundary completion)."""
     version = "live-e2e-code-stats"
     slug = live_github_repo
     remote = f"git@github.com:{slug}.git"
@@ -360,8 +361,30 @@ def test_bounded_scripted_real_agent_journey(
     assert "stage=M-REQ-APPROVAL" in waiting.stdout
     assert "awaiting=approval" in waiting.stdout
     assert live_trac("approve", "--actor", "LiveE2E-Human").returncode == 0
-    final = live_trac("run", scenario="approval-final")
+
+    # M-DESIGN (flow.md §8, BS-05): no human gate after approval. One
+    # Archer dispatch drafts the design trio, validates and commits it, then
+    # waits in PRISM_REVIEW; a single Prism dispatch passes and the run
+    # completes at the M-IMPL boundary after the M-DESIGN EXIT gate.
+    design = live_trac("run", scenario="archer-design-draft")
+    assert "stage=M-DESIGN" in design.stdout
+    assert "substate=PRISM_REVIEW" in design.stdout
+    design_dir = live_root / ".tracks" / "projects" / version
+    for design_doc in ("architecture.md", "interfaces.md", "test-plan.md"):
+        assert (design_dir / design_doc).is_file()
+    design_events = _events(live_root, run_id)
+    assert _dispatches(design_events, "archer", "DRAFT", None), (
+        "missing Archer DRAFT dispatch for the design trio"
+    )
+    assert sorted(
+        event["payload"]["doc"]
+        for event in design_events
+        if event["type"] == "design.committed"
+    ) == ["architecture.md", "interfaces.md", "test-plan.md"]
+
+    final = live_trac("run", scenario="prism-design-review")
     assert "status=completed" in final.stdout
+    assert "awaiting=-" in final.stdout
 
     report_dir = live_root / "report"
     assert live_trac(
@@ -384,7 +407,7 @@ def test_bounded_scripted_real_agent_journey(
         "## Audit",
         "audit gaps:",
         "status: `completed`",
-        "stage: `M-REQ-APPROVAL`",
+        "stage: `M-DESIGN`",
     ):
         assert required in report
     assert (report_dir / "index.html").is_file()
@@ -393,6 +416,21 @@ def test_bounded_scripted_real_agent_journey(
     final_events = _events(live_root, run_id)
     assert final_events[-1]["type"] == "run.completed"
     assert final_events[-1]["payload"]["terminal_state"] == "boundary"
+    assert _dispatches(final_events, "prism", "PRISM_REVIEW", None), (
+        "missing Prism PRISM_REVIEW dispatch for the design trio"
+    )
+    prism_verdicts = [
+        event for event in final_events if event["type"] == "prism.verdict"
+    ]
+    assert prism_verdicts and prism_verdicts[-1]["payload"]["verdict"] == "pass"
+    approval_seq = next(
+        event["seq"] for event in final_events if event["type"] == "human.approval"
+    )
+    assert not [
+        event
+        for event in final_events
+        if event["type"].startswith("human.") and event["seq"] > approval_seq
+    ], "M-DESIGN must carry no human gate (BS-05)"
     issue_events = [event for event in final_events if event["type"] == "issue.created"]
     assert issue_events and all(
         str(event["payload"]["issue_id"]).isdigit() for event in issue_events

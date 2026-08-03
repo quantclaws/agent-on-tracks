@@ -69,7 +69,7 @@ def _commit_link(repo: Path, sha: str) -> str:
 def _actor(event_type: str, payload: dict) -> str:
     if event_type.startswith("human."):
         return str(payload.get("actor") or "Human")
-    if event_type in ("sage.verdict", "lex.verdict"):
+    if event_type.endswith(".verdict"):
         return event_type.split(".", maxsplit=1)[0]
     if event_type == "dispatch_agent":
         return str(payload.get("role") or "Runtime")

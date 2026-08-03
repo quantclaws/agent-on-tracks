@@ -4,6 +4,8 @@ RUNTIME_RESOURCE_PATHS = (
     "agents/Scribe.md",
     "agents/Sage.md",
     "agents/Lex.md",
+    "agents/Archer.md",
+    "agents/Prism.md",
     "skills/tracks-discuz/SKILL.md",
     "templates/story.md",
     "templates/spec.md",

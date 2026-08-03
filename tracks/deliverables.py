@@ -1,10 +1,10 @@
 """Deliverable consistency gate (FR-040/FR-130, AC-1303).
 
-A pre-commit / CI gate (NOT Runtime): the spec deliverables (Scribe/Sage/Lex
-agents + tracks-discuz skill) must ship with tracks and carry a well-formed
-frontmatter ``version``; agent prompts must also carry a well-formed ``IQ``
-grade. Existence + version + IQ only — no digest/manifest. Any failure exits
-non-zero to block merge.
+A pre-commit / CI gate (NOT Runtime): the spec deliverables (all shipped agent
+prompts — Scribe/Sage/Lex/Archer/Prism — + tracks-discuz skill) must ship with
+tracks and carry a well-formed frontmatter ``version``; agent prompts must also
+carry a well-formed ``IQ`` grade. Existence + version + IQ only — no
+digest/manifest. Any failure exits non-zero to block merge.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ AGENT_DELIVERABLES = (
     _PKG / "agents" / "Scribe.md",
     _PKG / "agents" / "Sage.md",
     _PKG / "agents" / "Lex.md",
+    _PKG / "agents" / "Archer.md",
+    _PKG / "agents" / "Prism.md",
 )
 
 DELIVERABLES = AGENT_DELIVERABLES + (

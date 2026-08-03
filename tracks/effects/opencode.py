@@ -3,7 +3,8 @@
 Pipeline per dispatch: materialize canonical prompt -> baseline snapshot ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
 (process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
-target-file diff (authoritative product, ARCH §4b) -> post-run audit (ARCH §6).
+the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
+whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6).
 Failures map to IF-003 §1a FailureClass. The agent's stdout JSON is NEVER the
 product; the controlled target diff is.
 """
@@ -17,14 +18,16 @@ import signal
 import subprocess
 from pathlib import Path
 
+from tracks import paths
 from tracks.discuss.gate import check_ready
 from tracks.discuss.parser import parse_threads
 from tracks.effects.audit import Auditor
 
 # role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
-# Lex is a real reviewer agent (FR-020, Aaron 扩容裁定): Scribe起草/Sage评审/
-# Lex语义评审 — all three run on opencode (spec FR-020 §2, agents/Lex.md).
-AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex"}
+# Every tracks role is a real opencode agent (spec FR-020 §2): Scribe起草 /
+# Sage起草+评审 / Lex语义评审 / Archer设计三件套起草 / Prism设计评审.
+AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
+              "archer": "Archer", "prism": "Prism"}
 
 DEFAULT_TIMEOUT = 600  # seconds
 
@@ -88,9 +91,10 @@ class OpencodeBackend:
         if name is None:
             return self._unknown_role_result(role, prompt, console_input)
 
+        doc_paths = self._target_paths(doc_path, assignment)
         cleanup_infos: list = []
         proc = None
-        reviewer_assignment = substate in ("SAGE_REVIEW", "LEX_REVIEW")
+        reviewer_assignment = substate.endswith("_REVIEW")
         try:
             cleanup_infos.append(self._materialize(name))
             skill_info = self._materialize_skill(assignment)
@@ -99,18 +103,19 @@ class OpencodeBackend:
             # The repo root is trusted for agent scratch files; only writes
             # outside it are over-reach. The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
-            auditor = Auditor(self.repo, allowed=[doc_path, agent_dest, self.repo])
+            auditor = Auditor(self.repo,
+                              allowed=[*doc_paths, agent_dest, self.repo])
             baseline = auditor.baseline()
             proc = self._run(name, prompt)
             self._check_json(proc)
             return self._audited_result(
-                auditor, baseline, proc, name, substate, doc_path,
+                auditor, baseline, proc, name, substate, doc_paths,
                 prompt, console_input, substate in ("DRAFT", "RESPOND"),
                 reviewer_assignment,
             )
         except OpencodeError as exc:
             return self._opencode_error_result(
-                exc, proc, prompt, console_input, doc_path, reviewer_assignment,
+                exc, proc, prompt, console_input, doc_paths, reviewer_assignment,
             )
         except OSError as exc:
             return self._filesystem_error_result(exc, proc, prompt, console_input)
@@ -121,7 +126,7 @@ class OpencodeBackend:
     def _unknown_role_result(
         self, role: str, prompt: str, console_input: str | None
     ) -> dict:
-        # Unknown role (not Scribe/Sage/Lex) has no opencode agent.
+        # Unknown role (no AGENT_NAME entry) has no opencode agent.
         return {"status": "failed", "artifact_ref": None,
                 "self_report": f"no opencode agent for role {role!r}",
                 "failure_class": "provider_unavailable",
@@ -130,15 +135,36 @@ class OpencodeBackend:
                     stderr=f"no opencode agent for role {role!r}",
                 )}
 
+    def _target_paths(self, doc_path: Path | None,
+                      assignment: dict | None) -> list[Path]:
+        """Doc set of this dispatch: the explicit target doc, else the
+        assignment's ``docs`` set resolved against the version dir (a multi-doc
+        M-DESIGN DRAFT legitimately writes all three design docs, flow.md §8).
+        Single-doc stages are unaffected: they always carry ``doc_path``."""
+        if doc_path is not None:
+            return [doc_path]
+        docs = (assignment or {}).get("docs")
+        if not docs:
+            return []
+        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
+        return [vdir / str(name) for name in docs]
+
     def _audited_result(
         self, auditor: Auditor, baseline: set[str], proc: subprocess.CompletedProcess,
-        name: str, substate: str, doc_path: Path | None, prompt: str,
+        name: str, substate: str, doc_paths: list[Path], prompt: str,
         console_input: str | None, author_assignment: bool, reviewer_assignment: bool,
     ) -> dict:
-        diff_ref = auditor.target_diff(doc_path) if doc_path else None
-        if author_assignment and diff_ref is None:
-            raise OpencodeError("no_target_diff", "exit 0 but target file has no diff",
-                                exit_code=0, stderr=proc.stderr)
+        diffs = [auditor.target_diff(path) for path in doc_paths]
+        missing = [str(path)
+                   for path, diff in zip(doc_paths, diffs, strict=True)
+                   if diff is None]
+        diff_ref = "\n".join(diff for diff in diffs if diff) or None
+        if author_assignment and (not doc_paths or missing):
+            raise OpencodeError(
+                "no_target_diff",
+                "exit 0 but the target doc-set has no diff"
+                + (f": {', '.join(missing)}" if missing else ""),
+                exit_code=0, stderr=proc.stderr)
         over = auditor.audit(baseline)
         if over:
             auditor.rollback_agent_changes(baseline)
@@ -146,7 +172,7 @@ class OpencodeBackend:
                 diff_ref, proc, prompt, console_input, over,
             )
         return self._success_result(
-            name, substate, doc_path, diff_ref, proc, prompt, console_input,
+            name, substate, doc_paths, diff_ref, proc, prompt, console_input,
             author_assignment, reviewer_assignment,
         )
 
@@ -161,27 +187,34 @@ class OpencodeBackend:
                 "agent_io": self._capture_io(proc, prompt, console_input)}
 
     def _success_result(
-        self, name: str, substate: str, doc_path: Path | None, diff_ref: str | None,
+        self, name: str, substate: str, doc_paths: list[Path], diff_ref: str | None,
         proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
         author_assignment: bool, reviewer_assignment: bool,
     ) -> dict:
+        artifact_ref = None
+        if author_assignment and doc_paths:
+            # Single target doc names the doc; a multi-doc assignment (the
+            # M-DESIGN trio) names the version dir holding the whole set.
+            artifact_ref = (str(doc_paths[0].parent) if len(doc_paths) > 1
+                            else str(doc_paths[0]))
         result = {
             "status": "done",
-            "artifact_ref": str(doc_path) if author_assignment and doc_path else None,
+            "artifact_ref": artifact_ref,
             "self_report": f"{name} completed {substate}",
             "diff_ref": diff_ref,
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
         return self._enrich_discussion(
-            result, doc_path, substate, reviewer_assignment,
+            result, doc_paths, substate, reviewer_assignment,
         )
 
     @staticmethod
     def _enrich_discussion(
-        result: dict, doc_path: Path | None, substate: str, reviewer_assignment: bool,
+        result: dict, doc_paths: list[Path], substate: str,
+        reviewer_assignment: bool,
     ) -> dict:
         if reviewer_assignment or substate == "TRIAGE":
-            text = doc_path.read_text(encoding="utf-8") if doc_path else ""
+            text = _docset_text(doc_paths)
             result["discussion_evidence"] = _discussion_snapshot(text)
             if reviewer_assignment:
                 ready, _ = check_ready(text)
@@ -190,7 +223,7 @@ class OpencodeBackend:
 
     def _opencode_error_result(
         self, exc: OpencodeError, proc: subprocess.CompletedProcess | None, prompt: str,
-        console_input: str | None, doc_path: Path | None, reviewer_assignment: bool,
+        console_input: str | None, doc_paths: list[Path], reviewer_assignment: bool,
     ) -> dict:
         result = {"status": "failed", "artifact_ref": None,
                   "self_report": redact(str(exc)), "failure_class": exc.failure_class}
@@ -198,17 +231,17 @@ class OpencodeBackend:
             proc, prompt, console_input, stdout=exc.stdout, stderr=exc.stderr,
         )
         return self._enrich_failure_discussion(
-            result, doc_path, reviewer_assignment,
+            result, doc_paths, reviewer_assignment,
         )
 
     @staticmethod
     def _enrich_failure_discussion(
-        result: dict, doc_path: Path | None, reviewer_assignment: bool,
+        result: dict, doc_paths: list[Path], reviewer_assignment: bool,
     ) -> dict:
-        if doc_path and doc_path.exists() and reviewer_assignment:
-            result["discussion_evidence"] = _discussion_snapshot(
-                doc_path.read_text(encoding="utf-8")
-            )
+        if reviewer_assignment and doc_paths:
+            text = _docset_text(doc_paths)
+            if text:
+                result["discussion_evidence"] = _discussion_snapshot(text)
         return result
 
     def _filesystem_error_result(
@@ -381,7 +414,15 @@ class OpencodeBackend:
 
     def _prompt(self, role: str, substate: str, doc: str | None,
                 doc_path: Path | None, assignment: dict | None = None) -> str:
-        target = str(doc_path) if doc_path else (doc or "")
+        docs = (assignment or {}).get("docs")
+        if doc_path:
+            target = str(doc_path)
+        elif doc:
+            target = doc
+        elif docs:
+            target = ", ".join(str(name) for name in docs)
+        else:
+            target = ""
         assignment_context = self._assignment_context(assignment)
         return (
             f"Execute the Runtime assignment for role={role}, substate={substate}, "
@@ -404,6 +445,14 @@ def _text(value) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
+
+
+def _docset_text(doc_paths: list[Path]) -> str:
+    """Discussion text of a target doc-set: one doc reads as itself (the
+    pre-multi-doc behavior); a set concatenates every existing doc."""
+    texts = [path.read_text(encoding="utf-8")
+             for path in doc_paths if path.exists()]
+    return "\n\n".join(texts)
 
 
 def _discussion_snapshot(text: str) -> dict:

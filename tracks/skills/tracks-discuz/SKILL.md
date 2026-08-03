@@ -6,7 +6,7 @@ description: tracks inline-discussion 协议——在评审文档内用 markdown
 
 # tracks-discuz：inline-discussion 协议
 
-在 tracks 评审阶段（v0.2：M-STORY / M-SPEC / M-ACC，Aaron 扩容裁定；使用方 Scribe / Sage / Lex，由 Runtime 注入调用上下文），Agent 与 Human 在文档内用 markdown blockquote 嵌套做结构化多轮讨论。本 skill 定义如何使用该协议。
+在 tracks 评审/修订阶段（M-STORY / M-SPEC / M-ACC / M-DESIGN；使用方为全部 tracks 角色——Scribe / Sage / Lex / Archer / Prism，由 Runtime 注入调用上下文），Agent 与 Human 在文档内用 markdown blockquote 嵌套做结构化多轮讨论。本 skill 定义如何使用该协议。
 
 ## canonical 格式（写操作唯一输出）
 

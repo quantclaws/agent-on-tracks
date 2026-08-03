@@ -70,6 +70,38 @@ def test_tracked_over_reach_restored_from_head(tmp_path):
     assert other.read_text(encoding="utf-8") == "base2\n"
 
 
+def test_doc_set_allowed_accepts_trio_and_rejects_outside_writes(tmp_path):
+    """Multi-doc contract (M-DESIGN DRAFT): allowed = the design trio. Writes to
+    every doc of the set are legitimate; a write outside the set is over-reach,
+    is detected with path-level evidence and rolled back — the trio survives."""
+    repo = _repo(tmp_path)
+    vdir = repo / ".tracks" / "projects" / "v0.3"
+    vdir.mkdir(parents=True)
+    trio = [vdir / doc for doc in
+            ("architecture.md", "interfaces.md", "test-plan.md")]
+    for path in trio:  # the trio already belongs to the version dir (like the
+        path.write_text("# skeleton\n", encoding="utf-8")  # committed docs do)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "trio"], cwd=repo, check=True, capture_output=True
+    )
+
+    auditor = Auditor(repo, allowed=[str(path) for path in trio])
+    baseline = auditor.baseline()
+
+    for path in trio:  # the legitimate multi-doc product
+        path.write_text("# draft\n", encoding="utf-8")
+    rogue = repo / "rogue.md"  # outside the doc set
+    rogue.write_text("out-of-scope\n", encoding="utf-8")
+
+    evidence = auditor.audit(baseline)
+    assert evidence is not None and "rogue.md" in evidence
+    assert all(path.name not in evidence for path in trio)
+    rolled = auditor.rollback_agent_changes(baseline)
+    assert "rogue.md" in rolled and not rogue.exists()
+    assert all(path.exists() for path in trio)  # the trio is untouched
+
+
 def test_baseline_human_changes_never_rolled_back(tmp_path):
     """Human's pre-existing modifications (in baseline) are never reverted."""
     repo = _repo(tmp_path)

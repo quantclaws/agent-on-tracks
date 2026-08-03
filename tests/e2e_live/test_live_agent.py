@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import subprocess
 
+from tracks.effects.opencode import AGENT_NAME
+
 # -- helpers ---------------------------------------------------------------
 
 
@@ -178,6 +180,6 @@ def test_provider_error_is_classified(host_with_opencode_config, live_backend, m
     )
     _outcome_ok(out)
     # Whatever the classified result, the materialized agent is gone (cleanup).
-    for name in ("Sage", "Scribe", "Lex"):
+    for name in AGENT_NAME.values():
         assert not (repo / ".opencode" / "agents" / f"{name}.md").exists()
     steps.step("asserted materialized agents cleaned up")

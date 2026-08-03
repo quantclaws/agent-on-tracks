@@ -56,6 +56,18 @@ def test_enter_draft_dispatches_archer_for_all_three_docs():
     assert cmd.params["assignment"]["kind"] == "DRAFT"
 
 
+def test_design_dispatch_assignments_carry_doc_set():
+    # The opencode contract derives the target doc-set from the assignment
+    # (not from role names): both the Archer DRAFT/RESPOND dispatch and the
+    # Prism review dispatch name the whole trio (flow.md §8, Decision A).
+    draft = decide(state_of())
+    assert draft.params["assignment"]["docs"] == list(DESIGN_DOCS)
+    review = decide(state_of(*draft_cycle()))
+    assert review.params["substate"] == "PRISM_REVIEW"
+    assert review.params["docs"] == list(DESIGN_DOCS)
+    assert review.params["assignment"]["docs"] == list(DESIGN_DOCS)
+
+
 def test_validate_walks_the_trio_with_template_and_trace():
     items = [DISPATCHED, PRODUCED]
     for doc in DESIGN_DOCS:

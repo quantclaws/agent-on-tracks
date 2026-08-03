@@ -5,7 +5,7 @@ import json
 import pytest
 
 from tracks.effects import select_backend
-from tracks.effects.opencode import OpencodeBackend
+from tracks.effects.opencode import AGENT_NAME, OpencodeBackend
 
 
 def _start(trac):
@@ -154,14 +154,62 @@ def test_prompt_is_generic_and_exposes_scenario_json(tmp_path):
         assert forbidden not in prompt
 
 
-def test_materialized_agent_is_byte_identical_to_canonical(tmp_path):
+def test_role_map_covers_every_tracks_role():
+    # Every Runtime role (IF-001 §5) maps to a shipped opencode agent Name —
+    # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews).
+    assert AGENT_NAME == {
+        "scribe": "Scribe",
+        "sage": "Sage",
+        "lex": "Lex",
+        "archer": "Archer",
+        "prism": "Prism",
+    }
+
+
+@pytest.mark.parametrize("role,name", sorted(AGENT_NAME.items()))
+def test_materialize_cleanup_cycle_for_every_agent(tmp_path, role, name):
+    """Each agent definition materializes byte-identical and is removed on
+    cleanup (ARCH §4c) — identical contract for Archer/Prism."""
     backend = OpencodeBackend(tmp_path, "v0.1")
-    source = backend._canonical / "Scribe.md"
-    info = backend._materialize("Scribe")
+    source = backend._canonical / f"{name}.md"
+    assert source.exists()  # canonical prompt ships with the package
+    info = backend._materialize(name)
     try:
         assert info["dest"].read_bytes() == source.read_bytes()
     finally:
         backend._cleanup(info)
+    assert not info["dest"].exists()
+
+
+def test_target_paths_single_doc_passthrough(tmp_path):
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    doc = tmp_path / "story.md"
+    assert backend._target_paths(doc, None) == [doc]
+    assert backend._target_paths(None, None) == []
+    assert backend._target_paths(None, {"kind": "DRAFT"}) == []
+
+
+def test_target_paths_doc_set_derived_from_assignment(tmp_path, monkeypatch):
+    """A multi-doc assignment (M-DESIGN DRAFT) resolves its whole doc set under
+    .tracks/projects/{version}/ — derived from the assignment, not the role."""
+    monkeypatch.delenv("TRACKS_HOME", raising=False)
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    assignment = {"kind": "DRAFT",
+                  "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
+    vdir = tmp_path / ".tracks" / "projects" / "v0.1"
+    assert backend._target_paths(None, assignment) == [
+        vdir / "architecture.md",
+        vdir / "interfaces.md",
+        vdir / "test-plan.md",
+    ]
+
+
+def test_prompt_names_the_doc_set_of_a_multi_doc_assignment(tmp_path):
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    assignment = {"kind": "DRAFT",
+                  "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
+    prompt = backend._prompt("archer", "DRAFT", None, None, assignment)
+    assert "architecture.md, interfaces.md, test-plan.md" in prompt
 
 
 def test_agent_timeout_uses_generic_environment_name(monkeypatch, tmp_path):

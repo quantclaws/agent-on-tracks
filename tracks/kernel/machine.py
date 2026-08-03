@@ -85,6 +85,9 @@ class StageDef:
     initial_substate: str  # substate on stage.entered
     drafting_role: str | None = None  # agent drafting the stage's doc
     doc: str | None = None  # target doc (draft / validate / seal)
+    docs: tuple = ()  # multi-doc target set (doc is None): one dispatch covers
+    # the whole set (M-DESIGN trio, flow.md §8 / Decision A); single-doc
+    # stages keep () and name their one doc in `doc`.
     committed_event: str | None = None  # event recording the doc commit
     committed_flag: str | None = None  # State field tracking that commit
     review_substate: str | None = None  # substate after a non-final commit
@@ -92,6 +95,9 @@ class StageDef:
     verdict_event: str | None = None  # the reviewer's verdict event
     reviewer_passed_flag: str | None = None  # State field: reviewer passed
 
+
+# M-DESIGN deliverables (flow.md §8): architecture, interfaces, test-plan.
+DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")
 
 _STAGES = {sd.stage: sd for sd in (
     StageDef(stage="M-STORY", initial_substate="TRIAGE",
@@ -121,15 +127,12 @@ _STAGES = {sd.stage: sd for sd in (
     # the per-doc control flow is explicit (_decide_design_draft/_exit), like
     # _decide_approval. doc is None: no single target doc.
     StageDef(stage="M-DESIGN", initial_substate="DRAFT",
-             drafting_role="archer", doc=None,
+             drafting_role="archer", doc=None, docs=DESIGN_DOCS,
              committed_event="design.committed",
              review_substate="PRISM_REVIEW", reviewer="prism",
              verdict_event="prism.verdict",
              reviewer_passed_flag="prism_passed_this_round"),
 )}
-
-# M-DESIGN deliverables (flow.md §8): architecture, interfaces, test-plan.
-DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")
 
 # Derived lookups, keyed like the facts they replace.
 # committed_flag None (M-DESIGN's multi-doc design.committed) is routed through
@@ -563,7 +566,8 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
             "review_round": s.review_round,
             "docs": list(DESIGN_DOCS),
             "assignment": {"kind": sub, "template_kind": None,
-                           "skill": "tracks-discuz", "skill_version": "0.2"},
+                           "skill": "tracks-discuz", "skill_version": "0.2",
+                           "docs": list(DESIGN_DOCS)},
         })
         if s.last_failure:
             cmd.params["evidence"] = dict(s.last_failure)  # FR-11
@@ -635,15 +639,21 @@ def _decide_triage(s: State, stage: str) -> Command | None:
 
 
 def _decide_review(s: State, stage: str, sub: str) -> Command | None:
+    sd = _STAGES[stage]
     reviewer = _REVIEW_SUBSTATE[sub].reviewer
-    doc = _STAGES[stage].doc
     if s.reviewer_dispatched:
         return None
-    return _dispatch(
-        reviewer, sub, f"{reviewer} review", doc,
+    cmd = _dispatch(
+        reviewer, sub, f"{reviewer} review", sd.doc,
         stage=stage, attempt=s.current_attempt + 1,
         review_round=s.review_round,
     )
+    if sd.docs:
+        # Multi-doc stage (M-DESIGN): the reviewer's assignment names the whole
+        # doc set like the drafter's (flow.md §8; no single target doc).
+        cmd.params["docs"] = list(sd.docs)
+        cmd.params["assignment"]["docs"] = list(sd.docs)
+    return cmd
 
 
 def _decide_exit_gate(s: State, stage: str) -> Command | None:

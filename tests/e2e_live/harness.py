@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from tests.runtime_resources import RUNTIME_RESOURCE_PATHS
+from tracks.effects.opencode import AGENT_NAME
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURRENT_PYTHON = Path(sys.executable).resolve()
@@ -30,7 +31,7 @@ LIVE_ENV = (
     "TRAC_LIVE_BASE_URL",
     "TRAC_LIVE_API_KEY",
 )
-AGENT_NAMES = ("Scribe", "Sage", "Lex")
+AGENT_NAMES = tuple(sorted(AGENT_NAME.values()))
 REQUIRED_SCENARIOS = {
     "triage",
     "scribe-story-draft",
@@ -44,6 +45,8 @@ REQUIRED_SCENARIOS = {
     "sage-acceptance-draft",
     "lex-acceptance-review",
     "approval-final",
+    "archer-design-draft",
+    "prism-design-review",
 }
 
 
@@ -268,7 +271,7 @@ import os
 from importlib.resources import files
 from pathlib import Path
 
-from tracks.effects.opencode import OpencodeBackend
+from tracks.effects.opencode import AGENT_NAME, OpencodeBackend
 
 request = json.loads(os.environ["TRAC_LIVE_BACKEND_REQUEST"])
 repo = Path(request["repo"])
@@ -278,7 +281,7 @@ backend = OpencodeBackend(
     timeout=int(request["timeout"]),
     model=request["model"],
 )
-agent_name = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex"}[request["role"]]
+agent_name = AGENT_NAME[request["role"]]
 expected = files("tracks").joinpath("agents", agent_name + ".md").read_bytes()
 evidence = {"agent": agent_name, "materialized": False, "cleaned": False}
 original_materialize = backend._materialize
@@ -662,7 +665,7 @@ class LiveTracDriver:
         stage = str(params.get("stage", "unknown"))
         bounds.stage_counts[stage] = bounds.stage_counts.get(stage, 0) + 1
         bounds.dispatch_by_command[event["command_id"]] = params
-        if params.get("substate") not in ("SAGE_REVIEW", "LEX_REVIEW"):
+        if not str(params.get("substate") or "").endswith("_REVIEW"):
             return
         round_id = int(params.get("review_round", 0))
         key = (stage, round_id)
@@ -675,7 +678,7 @@ class LiveTracDriver:
             self.fail(f"live provider/backend outcome failed: {event['payload']}")
         if event["type"] == "command.issued":
             self._observe_dispatch(event, bounds)
-        if event["type"] not in ("sage.verdict", "lex.verdict"):
+        if not event["type"].endswith(".verdict"):
             return
         params = bounds.dispatch_by_command.get(event["command_id"], {})
         key = (str(params.get("stage", "unknown")), event["type"])
