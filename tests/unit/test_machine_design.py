@@ -62,10 +62,16 @@ def test_design_dispatch_assignments_carry_doc_set():
     # Prism review dispatch name the whole trio (flow.md §8, Decision A).
     draft = decide(state_of())
     assert draft.params["assignment"]["docs"] == list(DESIGN_DOCS)
+    # Archer drafts from the template trio: the assignment names every kind so
+    # the backend materializes them into the host repo (live run043).
+    assert draft.params["assignment"]["templates"] == [
+        doc.removesuffix(".md") for doc in DESIGN_DOCS]
+    assert draft.params["assignment"]["template_kind"] is None
     review = decide(state_of(*draft_cycle()))
     assert review.params["substate"] == "PRISM_REVIEW"
     assert review.params["docs"] == list(DESIGN_DOCS)
     assert review.params["assignment"]["docs"] == list(DESIGN_DOCS)
+    assert "templates" not in review.params["assignment"]  # reviewers draft nothing
 
 
 def test_validate_walks_the_trio_with_template_and_trace():

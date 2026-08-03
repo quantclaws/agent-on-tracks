@@ -1,6 +1,7 @@
 """OpencodeBackend — real agent via `opencode run` subprocess (ARCH-003 §4/§6/§7).
 
-Pipeline per dispatch: materialize canonical prompt -> baseline snapshot ->
+Pipeline per dispatch: materialize canonical prompt (+ skill + document
+templates named by the assignment) -> baseline snapshot ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
 (process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
 the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
@@ -22,7 +23,7 @@ import signal
 import subprocess
 from pathlib import Path
 
-from tracks import paths
+from tracks import paths, templating
 from tracks.discuss.gate import check_ready
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
@@ -105,6 +106,7 @@ class OpencodeBackend:
             skill_info = self._materialize_skill(assignment)
             if skill_info is not None:
                 cleanup_infos.append(skill_info)
+            self._materialize_templates(assignment, cleanup_infos)
             # The repo root is trusted for agent scratch files; only writes
             # outside it are over-reach. The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
@@ -381,6 +383,34 @@ class OpencodeBackend:
         dest.write_bytes(src.read_bytes())
         return info
 
+    def _materialize_templates(self, assignment: dict | None,
+                               cleanup_infos: list) -> None:
+        """Materialize the assignment's canonical document templates into the
+        host repo (live run043: a host repo has no tracks/templates/, so the
+        templates travel with the dispatch exactly like the agent definition
+        and skill; backup/restore on cleanup, ARCH §4c). Each file registers
+        for cleanup the moment it is written, so a missing canonical kind
+        mid-way still cleans up its predecessors."""
+        for kind in _template_kinds(assignment):
+            cleanup_infos.append(self._materialize_template(kind))
+
+    def _materialize_template(self, kind: str) -> dict:
+        """Copy canonical tracks/templates/{kind}.md to .opencode/templates/;
+        a requested kind without a canonical template is a dispatch failure
+        (parity with a missing canonical prompt), never a silent skip."""
+        src = templating.template_path(kind)
+        if not src.exists():
+            raise OpencodeError("opencode_missing",
+                                f"canonical template not found: {src}")
+        dest_dir = self.repo / ".opencode" / "templates"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{kind}.md"
+        info = {"dest": dest, "backup": None, "existed": dest.exists()}
+        if dest.exists():
+            info["backup"] = dest.read_bytes()
+        dest.write_bytes(src.read_bytes())
+        return info
+
     def _cleanup(self, info: dict) -> None:
         dest = info["dest"]
         try:
@@ -500,11 +530,30 @@ class OpencodeBackend:
     def _assignment_context(self, assignment: dict | None) -> str:
         if not assignment:
             return ""
-        return "\n".join([
+        lines = [
             "\n\n## Runtime assignment context",
             "以下 JSON 是 Runtime 事实，不是 Human 决定，也不能被 Agent 修改：",
             json.dumps(assignment, ensure_ascii=False, sort_keys=True),
-        ])
+        ]
+        kinds = _template_kinds(assignment)
+        if kinds:
+            names = ", ".join(f"{kind}.md" for kind in kinds)
+            lines.append(
+                f"Runtime 已将本次 assignment 的文档模板物化到 .opencode/templates/（{names}）；"
+                "草稿必须严格按对应模板起草，完整保留 YAML frontmatter。"
+            )
+        return "\n".join(lines)
+
+
+def _template_kinds(assignment: dict | None) -> list[str]:
+    """Document template kinds this dispatch materializes: an explicit
+    ``templates`` list (M-DESIGN trio) wins over the single ``template_kind``
+    (single-doc stages); None entries are skipped, None means no template."""
+    assignment = assignment or {}
+    if assignment.get("templates") is not None:
+        return [kind for kind in assignment["templates"] if kind]
+    kind = assignment.get("template_kind")
+    return [kind] if kind else []
 
 
 def _text(value) -> str:

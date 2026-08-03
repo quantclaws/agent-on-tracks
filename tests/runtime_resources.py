@@ -10,5 +10,8 @@ RUNTIME_RESOURCE_PATHS = (
     "templates/story.md",
     "templates/spec.md",
     "templates/acceptance.md",
+    "templates/architecture.md",
+    "templates/interfaces.md",
+    "templates/test-plan.md",
     "assets/marked.min.js",
 )

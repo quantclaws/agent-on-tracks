@@ -566,6 +566,8 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
             "review_round": s.review_round,
             "docs": list(DESIGN_DOCS),
             "assignment": {"kind": sub, "template_kind": None,
+                           "templates": [doc.removesuffix(".md")
+                                         for doc in DESIGN_DOCS],
                            "skill": "tracks-discuz", "skill_version": "0.2",
                            "docs": list(DESIGN_DOCS)},
         })

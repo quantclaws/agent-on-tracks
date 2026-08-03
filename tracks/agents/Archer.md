@@ -87,11 +87,11 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 
 - assignment 指定的当前 Story、Spec、Acceptance 及其 revision identity。
 - 当前 assignment 允许写入的 artifact paths、Human diff、inline discussions、上一轮 review findings。
-- `tracks/templates/test-plan.md`（全局模板）。
+- Runtime 在派发时将本次 assignment 的文档模板物化到 `.opencode/templates/`（architecture.md / interfaces.md / test-plan.md；源模板为 tracks/templates/），三文档必须严格按模板起草（含 frontmatter）。
 
 ### 测试计划
 
-以 `tracks/templates/test-plan.md` 为起点，根据本项目特点填充，不删除模板中的必填章节。
+以 `.opencode/templates/test-plan.md` 为起点，根据本项目特点填充，不删除模板中的必填章节。
 
 先建立当前 Acceptance 的语义覆盖清单：每个 AC 都必须记录可观察接口、必需测试层、CI gate/job 和分配理由。对面向人的 Happy Path，还至少记录 surface/context、动作、输入、可见结果、可用条件和反馈出口。
 
@@ -131,7 +131,7 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 - `.tracks/projects/{version}/interfaces.md`
 - 宿主项目中的接口桩文件
 
-三份文档必须严格以 tracks/templates/architecture.md / interfaces.md / test-plan.md 为起点起草，完整保留各自的 YAML frontmatter 块（architecture_id / spec_ref / created / status / sha 等字段）；缺失 frontmatter 的文档无法通过 validate，会白白浪费一次重派 attempt。
+三份文档必须严格按 Runtime 物化到 `.opencode/templates/` 的模板（architecture.md / interfaces.md / test-plan.md）起草，完整保留各自的 YAML frontmatter 块（architecture_id / spec_ref / created / status / sha 等字段）；缺失 frontmatter 的文档无法通过 validate，会白白浪费一次重派 attempt。
 
 文档使用与 story/spec 相同的语言；专有名词、API 名称和文件路径保留英文。
 

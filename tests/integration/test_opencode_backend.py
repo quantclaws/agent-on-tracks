@@ -12,10 +12,11 @@ import subprocess
 
 import pytest
 
+from tracks import templating
 from tracks.discuss import writer
 from tracks.discuss.locate import token_for
 from tracks.discuss.parser import parse_threads
-from tracks.effects.opencode import OpencodeBackend
+from tracks.effects.opencode import OpencodeBackend, OpencodeError
 
 STANDIN = '''#!/usr/bin/env python3
 import os, sys, json, time, signal
@@ -23,6 +24,14 @@ behavior = os.environ.get("FAKE_OPENCODE_BEHAVIOR", "edit_target")
 target = os.environ.get("FAKE_OPENCODE_TARGET")
 extra = os.environ.get("FAKE_OPENCODE_EXTRA")
 docs = os.environ.get("FAKE_OPENCODE_DOCS")
+required_templates = os.environ.get("FAKE_OPENCODE_TEMPLATES")
+if required_templates:
+    # The agent runs AFTER the Runtime materialized the assignment's templates:
+    # any missing file is a materialization failure, never a silent absence.
+    for required in required_templates.split(","):
+        if not os.path.exists(required):
+            sys.stderr.write("missing template " + required + "\\n")
+            sys.exit(1)
 if behavior == "sleep":
     time.sleep(30); sys.exit(0)
 if behavior == "self_kill":
@@ -251,9 +260,14 @@ def test_lex_edits_target_like_other_agents(fake_opencode, target_doc, host_repo
 
 
 def design_assignment(substate):
-    return {"kind": substate, "template_kind": None,
-            "skill": "tracks-discuz", "skill_version": "0.2",
-            "docs": list(DESIGN_DOCS)}
+    """Mirrors the machine's M-DESIGN assignment: Archer DRAFT/RESPOND carries
+    the template trio; Prism's review dispatch drafts nothing (no templates)."""
+    assignment = {"kind": substate, "template_kind": None,
+                  "skill": "tracks-discuz", "skill_version": "0.2",
+                  "docs": list(DESIGN_DOCS)}
+    if substate in ("DRAFT", "RESPOND"):
+        assignment["templates"] = ["architecture", "interfaces", "test-plan"]
+    return assignment
 
 
 @pytest.fixture
@@ -389,6 +403,139 @@ def test_prism_review_open_thread_in_any_doc_requests_revision(
     assert out["status"] == "done"
     assert out["verdict"] == "revise"
     assert out["discussion_evidence"]["ready"] is False
+
+
+# -- template materialization (live run043: a host repo has no tracks/templates/,
+#    so document templates travel with the dispatch exactly like the agent
+#    definition and skill, ARCH §4c) --------------------------------------------
+
+
+def template_paths(host_repo):
+    tdir = host_repo / ".opencode" / "templates"
+    return [tdir / f"{kind}.md"
+            for kind in ("architecture", "interfaces", "test-plan")]
+
+
+def test_archer_design_draft_materializes_and_cleans_templates(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """One Archer DRAFT materializes all three design templates into the host
+    repo (the fake agent refuses to draft with any of them missing) and the
+    cleanup removes them after the dispatch."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    templates = template_paths(host_repo)
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_TEMPLATES", ",".join(map(str, templates)))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "done"  # every template existed during the run
+    for path in templates:
+        assert not path.exists()  # cleanup removes what the Runtime created
+
+
+def test_materialized_templates_are_byte_identical_and_cleaned(host_repo):
+    """The template materialize/cleanup cycle matches agents/skills: a
+    byte-identical copy of each canonical template, removed on cleanup."""
+    be = backend(host_repo)
+    infos: list = []
+    be._materialize_templates(design_assignment("DRAFT"), infos)
+    try:
+        assert [info["dest"].name for info in infos] == list(DESIGN_DOCS)
+        for info in infos:
+            canonical = templating.template_path(info["dest"].stem)
+            assert info["dest"].read_bytes() == canonical.read_bytes()
+    finally:
+        for info in infos:
+            be._cleanup_materialized(info)
+    for info in infos:
+        assert not info["dest"].exists()
+
+
+def test_template_materialize_backs_up_and_restores_human_template(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """A Human's pre-existing template at the destination is backed up and
+    restored, never clobbered — the same contract as agent definitions."""
+    tdir = host_repo / ".opencode" / "templates"
+    tdir.mkdir(parents=True)
+    human = tdir / "interfaces.md"
+    human.write_text("HUMAN TEMPLATE\n", encoding="utf-8")
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "done"
+    assert human.read_text(encoding="utf-8") == "HUMAN TEMPLATE\n"
+    # the Runtime's own copies are gone; the Human file stays
+    assert not (tdir / "architecture.md").exists()
+    assert not (tdir / "test-plan.md").exists()
+
+
+def test_single_doc_stage_materializes_its_template_kind(
+        fake_opencode, host_repo, monkeypatch):
+    """A single-doc stage keeps the template_kind path: Sage DRAFT gets the
+    spec template materialized, the prompt names the location, and cleanup
+    removes it afterwards."""
+    spec = host_repo / "spec.md"
+    spec.write_text("---\nspec_id: SPEC-001\nsha:\n---\n\n# Spec\n",
+                    encoding="utf-8")
+    subprocess.run(["git", "add", "spec.md"], cwd=host_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "spec skeleton"], cwd=host_repo,
+                   check=True, capture_output=True)
+    template = host_repo / ".opencode" / "templates" / "spec.md"
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(spec))
+    monkeypatch.setenv("FAKE_OPENCODE_TEMPLATES", str(template))
+    assignment = {"kind": "DRAFT", "template_kind": "spec",
+                  "skill": "tracks-discuz", "skill_version": "0.2"}
+    out = backend(host_repo).act("sage", "DRAFT", "spec.md", spec,
+                                 assignment=assignment)
+    assert out["status"] == "done"  # the template existed during the run
+    assert ".opencode/templates/" in out["agent_io"]["prompt"]
+    assert not template.exists()
+
+
+def test_assignment_prompt_names_the_materialized_templates(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """The rendered prompt tells the agent where the Runtime placed the
+    templates and that drafts must conform (frontmatter included)."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    prompt = out["agent_io"]["prompt"]
+    assert ".opencode/templates/" in prompt
+    for name in DESIGN_DOCS:
+        assert name in prompt
+    assert "frontmatter" in prompt
+
+
+def test_missing_canonical_template_fails_loudly(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """A requested kind without a canonical template is a classified dispatch
+    failure (parity with a missing canonical prompt), never a silent skip;
+    already-materialized templates are still cleaned up."""
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    assignment = {"kind": "DRAFT", "templates": ["spec", "no-such-template"],
+                  "skill": "tracks-discuz", "skill_version": "0.2"}
+    out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc,
+                                 assignment=assignment)
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "opencode_missing"
+    assert "no-such-template" in out["self_report"]
+    assert not (host_repo / ".opencode" / "templates" / "spec.md").exists()
+
+
+def test_materialize_templates_missing_kind_raises(host_repo):
+    infos: list = []
+    with pytest.raises(OpencodeError) as excinfo:
+        backend(host_repo)._materialize_templates(
+            {"templates": ["bogus-kind"]}, infos)
+    assert excinfo.value.failure_class == "opencode_missing"
+    assert "bogus-kind" in str(excinfo.value)
+    assert infos == []  # nothing was registered for cleanup
 
 
 # -- DRAFT thread-closure audit (live run041: verify closure from program facts,
