@@ -6,9 +6,12 @@
   "human_actor": "LiveE2E-Human",
   "max_new_threads": 1,
   "comment_style": "concise",
-  "allowed_product_slots": ["output_placement"],
+  "allowed_product_slots": ["surface", "blank_lines", "error_behavior"],
   "required_finding": "[FINDING:STORY-OUTPUT-PLACEMENT]",
   "finding_condition": "The story must leave output placement unresolved for Sage review.",
   "expected_responder": "Sage",
-  "reasonable_default": "Choose ordinary technical details without asking Human."
+  "reasonable_default": "Choose ordinary technical details without asking Human.",
+  "console_file": "scribe-story-draft.console.txt",
+  "console_contract": "One Human interview in DRAFT only: ask exactly ONE product question, then read the matching answer.<slot>=<answer> line from the finite stdin transcript. The transcript is finite; fail closed if the question has no matching answer instead of inventing one.",
+  "required_action": "Interview Human: ask exactly ONE question about a product decision the seed leaves open (one of surface, blank_lines, error_behavior), record the question against story.md with installed trac discuss, read Human's answer from console_input stdin, persist the adopted answer with installed trac discuss as a reply from LiveE2E-Human, then resolve the interview thread (you are the initiator) and write story.md per the story template incorporating the answer. Leave output placement unresolved for Sage review."
 }

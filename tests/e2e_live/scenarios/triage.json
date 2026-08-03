@@ -2,11 +2,9 @@
   "scenario_id": "code-stats",
   "phase": "TRIAGE",
   "human_actor": "LiveE2E-Human",
-  "max_new_threads": 1,
+  "max_new_threads": 0,
   "comment_style": "concise",
-  "allowed_product_slots": ["surface", "blank_lines", "error_behavior"],
-  "expected_responder": "LiveE2E-Human",
   "console_file": "triage.console.txt",
-  "console_contract": "Read the finite stdin transcript and persist each adopted answer with installed trac discuss.",
-  "start_requirement": "Build a small code statistics tool.\n\nA user provides a file path and the tool outputs its code-line count.\n\nThe following product decisions must be clarified in triage:\n- delivery surface: CLI or library\n- whether blank lines count\n- behavior for an invalid path\n\nUse reasonable defaults for ordinary technical choices. Do not ask Human to choose language, framework, CI, architecture, or test strategy.\n\nDo not specify where the statistics result is displayed; a real reviewer must find that omission."
+  "required_action": "TRIAGE only: read the raw requirement (seed), explore the project for existing similar stories (there are none in this test), and propose GO, NO-GO, or PARK in your final outcome. Do NOT interview Human, do NOT open discussion threads, and do NOT write or modify story.md content. Exit after proposing GO.",
+  "start_requirement": "Build a small code statistics tool.\n\nA user provides a file path and the tool outputs its code-line count.\n\nThe following product decisions are still open; they are clarified by interviewing Human while drafting the story, not during triage:\n- delivery surface: CLI or library\n- whether blank lines count\n- behavior for an invalid path\n\nUse reasonable defaults for ordinary technical choices. Do not ask Human to choose language, framework, CI, architecture, or test strategy.\n\nDo not specify where the statistics result is displayed; a real reviewer must find that omission."
 }

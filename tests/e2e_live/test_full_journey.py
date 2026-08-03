@@ -135,16 +135,28 @@ def _finding_thread(state: dict, finding_id: str, initiator: str) -> dict:
 
 
 def _assert_triage(state: dict):
-    threads = [
-        thread
-        for thread in state["threads"]
-        if thread["initiator"].casefold() == "scribe"
-    ]
-    assert threads, "TRIAGE produced no Scribe discussion"
+    # TRIAGE dispatches Scribe to explore the seed and propose GO/NO-GO/PARK
+    # in the outcome. No Human interview happens in TRIAGE, so story.md must
+    # carry no discussion threads after the TRIAGE dispatch.
+    threads = state.get("threads", [])
+    assert threads == [], f"TRIAGE must not create discussion threads: {threads}"
+
+
+def _assert_draft_interview(state: dict):
+    # DRAFT is where Scribe interviews Human: one question recorded in the
+    # story discussion, answered by LiveE2E-Human via the console_input
+    # transcript, and the thread converged before the story enters review.
+    threads = state.get("threads", [])
+    assert threads, "DRAFT produced no Scribe interview discussion"
     for thread in threads:
+        assert thread["initiator"].casefold() == "scribe", (
+            f"unexpected DRAFT thread initiator: {thread['initiator']}"
+        )
         assert thread["status"] == "resolved"
         human_replies = [reply for reply in _replies(thread) if reply["speaker"] == "LiveE2E-Human"]
-        assert human_replies, f"Human transcript was not persisted in {thread['thread_id']}"
+        assert human_replies, (
+            f"Human console answer was not persisted in {thread['thread_id']}"
+        )
         assert all(reply["body"].strip() for reply in human_replies)
 
 
@@ -246,6 +258,7 @@ def test_bounded_scripted_real_agent_journey(
 
     draft = live_trac("run", scenario="scribe-story-draft")
     assert "substate=SAGE_REVIEW" in draft.stdout
+    _assert_draft_interview(_discussion_state(live_trac, story))
     finding_run = live_trac("run", scenario="sage-story-finding")
     assert "substate=RESPOND" in finding_run.stdout
     _assert_finding_lifecycle(
