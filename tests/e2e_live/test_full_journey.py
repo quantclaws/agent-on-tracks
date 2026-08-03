@@ -87,21 +87,27 @@ def _git(repo: Path, *args: str, check: bool = True) -> str:
 
 def _events(repo: Path, run_id: str) -> list[dict]:
     database = repo / ".tracks" / "runtime" / "tracks.db"
+    blob_dir = repo / ".tracks" / "runtime" / "blobs"
     with sqlite3.connect(database) as connection:
         rows = connection.execute(
             "SELECT seq, type, command_id, payload FROM events "
             "WHERE run_id = ? ORDER BY seq",
             (run_id,),
         ).fetchall()
-    return [
-        {
+    events = []
+    for seq, event_type, command_id, payload in rows:
+        data = json.loads(payload)
+        if isinstance(data, dict) and set(data.keys()) == {"$ref"}:
+            ref_path = blob_dir / data["$ref"]
+            if ref_path.exists():
+                data = json.loads(ref_path.read_text(encoding="utf-8"))
+        events.append({
             "seq": seq,
             "type": event_type,
             "command_id": command_id,
-            "payload": json.loads(payload),
-        }
-        for seq, event_type, command_id, payload in rows
-    ]
+            "payload": data,
+        })
+    return events
 
 
 def _discussion_state(live_trac, doc: str) -> dict:
