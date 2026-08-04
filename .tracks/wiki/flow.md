@@ -5,7 +5,7 @@
 
 ```
 M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
-→ M-IMPL → M-TEST → M-VERIFY → M-SECURITY → M-RELEASE → M-PUBLISH → M-MILESTONE
+→ M-TEST → M-IMPL → M-VERIFY → M-SECURITY → M-RELEASE → M-PUBLISH → M-MILESTONE
 ```
 
 | 阶段           | 主要作者/执行者                         | 评审 / Human 参与                    | 权威退出条件                           |
@@ -15,9 +15,9 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 | M-SPEC         | Sage                                    | Lex 独立评审；Human 评审             | 语义+程序校验通过（含 FR≤30）          |
 | M-ACC          | Sage                                    | Lex 独立评审；Human 评审             | 覆盖+程序校验通过                      |
 | M-REQ-APPROVAL | Runtime 生成 baseline preview           | **Human Approve/Return**             | approval 绑定三件套 digest             |
-| M-DESIGN       | Archer（三文档 + machine contracts）    | Prism 独立评审；Human 可选、允许缺席 | Prism + 程序校验通过，不等 Human       |
-| M-IMPL         | Archer 拆 task graph；Devon 逐 task RGR | Prism 评 Red checkpoint 与最终 range | 全部 task 完成，lineage/trace/孤岛闭合 |
-| M-TEST         | Shield（integration/e2e）               | Prism                                | 测试资产齐备且执行通过                 |
+| M-DESIGN       | Archer（三文档 + 接口桩 + machine contracts） | Prism 独立评审；Human 可选、允许缺席 | Prism + 程序校验通过，不等 Human       |
+| M-TEST         | Shield（integration/e2e，对着接口桩写） | Prism 审测试合约                     | 可 collect + 合法 Red + AC trace 闭合  |
+| M-IMPL         | Archer 拆 task graph；Devon 逐 task RGR | Prism 评 Red checkpoint 与最终 range | 全部 task 完成且全量 int+e2e 绿，孤岛闭合 |
 | M-VERIFY       | Runtime 冻结 candidate                  | Prism 整体一致性复审                 | 全量回归+CI+build/artifact gate 通过   |
 | M-SECURITY     | Runtime 程序扫描；Judge 语义审计        | Judge                                | security gate 通过或合法 policy skip   |
 | M-RELEASE      | Runtime 生成发布预览                    | **Human Release/Delay/Return**       | release approval 绑定 candidate        |
@@ -31,7 +31,7 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 1. **Runtime 是唯一流程 authority**：只有 Runtime 可创建/推进/回拨阶段、授予写权限、执行 commit/push、外部 API、CI、发布和归档副作用。
 2. **Agent 只产出专业语义或代码**：不 commit/push、不写 PASS artifact、不改变 Issue/run 状态。
 3. **Human 不承担技术决策**：Agent 不把架构/测试/实现/CI/修复方案当选择题推给 Human；只有产品意图、需求范围、发布时机、授权与不可逆外部冲突需要 Human。
-4. **技术设计可按流程修订**：M-IMPL→M-SECURITY 期间任何 Agent 可提有锚点的 design-gap advisory；Archer+Prism 双确认即回 M-DESIGN，不需 Human；涉及产品意图/需求范围才回 M-SPEC/M-ACC 并经 Human 批准。
+4. **技术设计可按流程修订**：M-TEST→M-SECURITY 期间任何 Agent 可提有锚点的 design-gap advisory；Archer+Prism 双确认即回 M-DESIGN，不需 Human；涉及产品意图/需求范围才回 M-SPEC/M-ACC 并经 Human 批准。
 5. **所有结果绑定身份**：task/diff/review/test/CI/artifact/finding/gate 均绑定 baseline digest + commit + attempt + actor；上游变化使受影响结果 stale。
 6. **Agent 自报不是证据**：“tests passed”、命令输出摘要或聊天文本不能推进阶段；Runtime 必须从权威程序出口重新执行或读取证据（即 arch.md 的“永不信自述”）。
 7. **实现发生在当前 release branch**：普通 feature 不建 per-task branch/worktree，Runtime 串行授予单写者 lease；仅 hotfix 建隔离 `fix/{issue}` 分支。
@@ -363,7 +363,7 @@ stateDiagram-v2
 
 ## 8. M-DESIGN
 
-**目的**：Archer 产出 Test Plan、Architecture、Interfaces 三文档及宿主项目 machine contracts（至少覆盖 integration/e2e、GitHub CI、pre-commit、release version、build/artifact、发布恢复）；Prism 独立评审。这是纯技术阶段：Human 是可选 reviewer，允许缺席，意见不是批准门禁。
+**目的**：Archer 产出 Test Plan、Architecture、Interfaces 三文档、接口桩（interfaces.md 的可执行形态：与真实模块同路径、完整签名、行为体仅 raise + 合同 token）及宿主项目 machine contracts（至少覆盖 integration/e2e、GitHub CI、pre-commit、release version、build/artifact、发布恢复）；Prism 独立评审。这是纯技术阶段：Human 是可选 reviewer，允许缺席，意见不是批准门禁。接口桩是 ATDD 次序的基础设施：M-TEST 的 Shield 对着它们写 integration/e2e，保证实现之前即可 collect/import。
 
 **进入条件**：`human.approval` 对当前三件套 digest 有效（M-REQ-APPROVAL 通过且未 stale）。
 
@@ -392,11 +392,11 @@ stateDiagram-v2
     RESPOND --> PRISM_REVIEW : validate pass, committed, 新一轮
     RESPOND --> RESPOND : validate fail, 重派 Archer (<=3)
 
-    EXIT : 设计 revision = 实现基线
-    EXIT --> [*] : stage.exited -> M-IMPL
+    EXIT : 设计 revision = 测试与实现基线
+    EXIT --> [*] : stage.exited -> M-TEST
 ```
 
-> validate = 文档结构 + AC→Test Plan 分层覆盖（每条 AC 有 test layer 归属）+ contracts 清单完整性。
+> validate = 文档结构 + AC→Test Plan 分层覆盖（每条 AC 有 test layer 归属）+ 每条 integration/e2e 声明变绿条件（所依赖接口的 IF- 标识，供 M-IMPL task 变绿子集划分）+ contracts 清单完整性。
 > **不等待 Human 批准**：退出只要求 validate pass + prism.verdict(pass)。Human 缺席不阻塞，建议由 Archer 技术裁量。
 > 可休眠点：无（Human 不参与门禁）。
 
@@ -410,9 +410,9 @@ stateDiagram-v2
 2. contracts 由 Archer 设计，**安装/更新/回读副作用只归 Runtime**；Devon 不得安装或修改 hook 绕过门禁。
 3. 设计文档与 contracts 均有 revision/digest，修订使依赖旧 revision 的下游证据 stale。
 
-## 9. M-IMPL
+## 9. M-TEST
 
-**目的**：Archer 把需求/设计基线拆成可独立验证的 implementation task graph；Devon 逐 task 以 Red→Green→Refactor 完成实现；Prism 在 Red checkpoint 与最终 task range 两处独立评审。
+**目的**：Shield 按 Test Plan 对着接口桩编写 integration/e2e 测试；Prism 独立评审测试合约；Runtime 独立验证"可 collect 且合法地失败（合法 Red）"。本阶段交付的是测试资产（Red 状态），不是绿色结果——变绿是 M-IMPL 的职责。
 
 **进入条件**：M-DESIGN 通过（`prism.verdict(pass)` + 程序校验通过）。
 
@@ -422,10 +422,85 @@ stateDiagram-v2
 stateDiagram-v2
     direction TB
 
+    [*] --> DISPATCH : stage.entered(M-TEST)
+
+    DISPATCH : Runtime 按 Test Plan 创建 Shield tasks
+    DISPATCH : 每条 AC 的 layer + 变绿条件 (IF- 归属)
+
+    DISPATCH --> WRITE : tasks 就绪
+
+    WRITE : dispatch Shield 写测试
+    WRITE : integration (happy + 关键错误/边界)
+    WRITE : e2e (仅 happy path)
+    WRITE : 不选新框架/不降层/不改产品代码与桩
+
+    WRITE --> COLLECT : outcome
+    WRITE --> WRITE : validate fail, 重派 Shield (<=3)
+
+    COLLECT : Runtime 独立执行 collection/import
+    COLLECT : 全部测试必须可 collect (桩保证可 import)
+
+    COLLECT --> PRISM_REVIEW : collection 成功
+    COLLECT --> WRITE : collection 失败 -> Shield
+
+    PRISM_REVIEW : dispatch Prism 审测试合约
+    PRISM_REVIEW : 忠于 AC + 断言落在公开出口
+    PRISM_REVIEW : 无伪测试 + counterexample 绑定
+
+    PRISM_REVIEW --> RED_CHECK : prism.verdict(pass)
+    PRISM_REVIEW --> WRITE : revise -> Shield
+
+    RED_CHECK : Runtime 独立执行 integration/e2e
+    RED_CHECK : 失败必须全部为合法 Red
+    RED_CHECK : 行为断言失败 / 桩合同 token 失败 / symbol 缺失
+    RED_CHECK : collection/语法/fixture/import 错误 = 非法
+
+    RED_CHECK --> EXIT : 合法 Red 成立
+    RED_CHECK --> DIAGNOSE : 非法失败或意外通过
+
+    DIAGNOSE : Prism 四路诊断
+    DIAGNOSE --> WRITE : 测试缺陷 -> Shield
+    DIAGNOSE --> [*] : 桩/接口/架构不足 -> M-DESIGN
+    DIAGNOSE --> [*] : AC/Spec 缺口 -> M-ACC/M-SPEC
+
+    EXIT : Runtime 创建受控测试 commit
+    EXIT : 冻结测试资产 + AC trace 闭合 (trac check trace)
+    EXIT --> [*] : stage.exited -> M-IMPL
+```
+
+> 退出是"测试资产齐备且 Red 合法"，不是"执行全部通过"；通过的要求推迟到 M-IMPL 出口门禁。
+> AC trace 闭合的依据是 `trac check trace` 程序证据：每条 required AC 至少一条测试绑定（长格式 marker `AC-FRXXXX-YY@<version>`），无测试的 AC 与无主 marker 均为硬错误；trace 不闭合不得退出——需求追踪（trace/reach）因此必须与 M-TEST 同一 release 交付。
+> 本阶段测试意外通过是异常（桩只 raise，通过通常说明测试没有真正命中桩）→ DIAGNOSE。
+> "测试错还是接口错"的分流永不交给 Human；需语义判断时分派 Prism diagnostic review。
+> 修复后重跑受影响测试并要求 Prism 对新 revision 重新 review。
+
+### 9.2. 事件清单
+
+`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(test_defect|stub_gap)` / `test.committed` / `stage.exited` / `stage.rolled_back`
+
+### 9.3. 硬规则
+
+1. Shield 不 git add/commit/push、不判定 PASS；collection 与执行结果以 Runtime 复跑为准。
+2. Shield 不修改产品代码与接口桩；桩或接口缺口走 gap advisory 回 M-DESIGN，不得在测试侧绕过。
+3. 本阶段接受并要求 Red：每条测试的失败原因必须可分类为合法 Red，且 AC 层归属与 Test Plan 一致；Runtime 复跑是唯一证据来源。
+4. 退出依据全部是程序证据：collection、合法 Red 分类与 `trac check trace` 闭合均由 Runtime 复跑取得；Shield 的覆盖自述（"每条 AC 都有测试"）不构成退出依据。
+
+## 10. M-IMPL
+
+**目的**：Archer 把需求/设计基线拆成可独立验证的 implementation task graph；Devon 逐 task 以 Red→Green→Refactor 完成实现，把 Shield 的 integration/e2e 测试变绿并补齐单元测试；Prism 在 Red checkpoint 与最终 task range 两处独立评审。
+
+**进入条件**：M-TEST 退出条件成立（事件：`stage.exited(M-TEST)`，测试资产已冻结并进入 baseline）。
+
+### 10.1. 子状态机
+
+```mermaid
+stateDiagram-v2
+    direction TB
+
     [*] --> BASELINE : stage.entered(M-IMPL)
 
     BASELINE : Runtime 重算 baseline
-    BASELINE : 三件套 + 设计三文档 digest
+    BASELINE : 三件套 + 设计三文档 + 冻结测试资产 digest
     BASELINE : contracts + Issues + branch + approval
 
     BASELINE --> PLANNING : baseline current
@@ -437,6 +512,7 @@ stateDiagram-v2
 
     PLANNING : dispatch Archer 拆 task graph
     PLANNING : 纵向切片 + scope 白名单 + 预算
+    PLANNING : 每 task 声明实现的接口 (IF- 集合)
 
     PLANNING --> ISLAND_GATE_1 : validate pass (DAG/scope/coverage)
     PLANNING --> PLANNING : validate fail, 重派 Archer
@@ -455,11 +531,12 @@ stateDiagram-v2
 
     TASK_DISPATCH : Runtime 按依赖选 ready task
     TASK_DISPATCH : 单写者 lease + 创建 manifest
+    TASK_DISPATCH : task 变绿子集 = 单测 + 变绿条件命中本 task IF 集合的 int
     TASK_DISPATCH --> RED : task.started
 
     RED : dispatch Devon (phase=red)
-    RED : 只添加 unit/contract test
-    RED : 不碰产品代码
+    RED : 只添加 unit test
+    RED : 不碰产品代码与 Shield 测试
 
     RED --> RED_GATE : outcome (test-only diff)
     RED_GATE : Runtime 校验预期失败
@@ -480,10 +557,23 @@ stateDiagram-v2
     GREEN : 最小实现, R 测试不可改
 
     GREEN --> GREEN_GATE : outcome
-    GREEN_GATE : targeted + 全部历史单测
+    GREEN_GATE : targeted 单测 + 全部历史单测
+    GREEN_GATE : + 本 task 的 int 子集 (第一轮不跑 e2e)
     GREEN_GATE : lint/format/type/static + 合同
     GREEN_GATE --> GREEN_COMMIT : 全过
-    GREEN_GATE --> GREEN : 失败, 重派 Devon
+    GREEN_GATE --> GREEN : 实现缺陷, 重派 Devon
+    GREEN_GATE --> DIAGNOSE : int 失败归因不明
+
+    DIAGNOSE : Prism 四路诊断
+    DIAGNOSE : 测试错还是实现错
+    DIAGNOSE --> GREEN : 实现缺陷 -> Devon
+    DIAGNOSE --> SHIELD_FIX : 测试缺陷 -> Shield
+    DIAGNOSE --> [*] : 接口/架构不足 -> M-DESIGN
+    DIAGNOSE --> [*] : AC/Spec 缺口 -> M-ACC/M-SPEC
+
+    SHIELD_FIX : dispatch Shield 修测试 (Devon 不得改)
+    SHIELD_FIX : Runtime 创建受控测试 commit
+    SHIELD_FIX --> GREEN_GATE : 重跑受影响测试
 
     GREEN_COMMIT : 创建正式 commit G (parent=B)
     GREEN_COMMIT : trailers 记录 R/task identity
@@ -514,91 +604,37 @@ stateDiagram-v2
     TASK_DONE --> TASK_DISPATCH : 还有 ready task
     TASK_DONE --> ISLAND_GATE_2 : 全部 task 完成
 
-    ISLAND_GATE_2 : 最终孤岛闭合复查
-    ISLAND_GATE_2 --> [*] : 通过 -> stage.exited -> M-TEST
+    ISLAND_GATE_2 : 最终孤岛闭合复查 (trac check reach)
+    ISLAND_GATE_2 : 全量 integration + e2e 变绿 (出口门禁)
+    ISLAND_GATE_2 --> [*] : 通过 -> stage.exited -> M-VERIFY
+    ISLAND_GATE_2 --> DIAGNOSE : 全量执行有失败
     ISLAND_GATE_2 --> PLANNING : verdict.failed(island)
 ```
 
-> 可休眠点：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
+> 绿的粒度：task 级 GREEN_GATE 只跑该 task 单测与 test-plan 变绿条件归属的 int 子集，第一轮实现不跑 e2e；全量 integration+e2e 变绿是 M-IMPL 出口门禁（ISLAND_GATE_2）。
+> 孤岛闭合以 `trac check reach` 为依据：从声明入口点做模块级 import 可达分析，报告不可达的生产模块；与 trace 同属需求追踪工具，消费点还有 M-VERIFY 的反 slop 门禁。
 > Red 测试先于实现是程序可验证的 lineage 事实（B/R/G commit 拓扑），不是 Agent 自报。
+> 单写者纪律：Devon 不得修改 Shield 的测试；测试缺陷经 DIAGNOSE→SHIELD_FIX 由 Shield 修复并产生受控测试 commit。
+> 可休眠：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
 > 同一 attempt 重试只能得到同一 R（compare-and-set），否则产生新 attempt；旧 attempt 不被改写。
-
-### 9.2. 事件清单
-
-`stage.entered` / `baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `prism.verdict(pass|revise)` / `green.committed` / `refactor.committed|no_change` / `verdict.failed(red_invalid|regression|budget|island|scope)` / `task.completed` / `stage.exited` / `stage.rolled_back`
-
-### 9.3. 硬规则
-
-1. Devon 只能编辑 manifest 授权文件；不碰需求/设计 artifact、task 状态、Git history、Issue；不 commit/push（正式 commit 均由 Runtime 创建）。
-2. Red 测试先于实现是程序可验证的 lineage 事实（B/R/G commit 拓扑），不是 Agent 自报。
-3. 同一 attempt 重试只能得到同一 R（compare-and-set），否则产生新 attempt；旧 attempt 不被改写。
-4. 可休眠：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
-
-## 10. M-TEST
-
-**目的**：Shield 按 Test Plan 编写 integration/e2e 测试；Prism 先审测试合约，Runtime 独立执行。
-
-**进入条件**：M-IMPL 退出条件成立（事件：`stage.exited(M-IMPL)`）。
-
-### 10.1. 子状态机
-
-```mermaid
-stateDiagram-v2
-    direction TB
-
-    [*] --> DISPATCH : stage.entered(M-TEST)
-
-    DISPATCH : Runtime 按 Test Plan 创建 Shield tasks
-    DISPATCH : 每条 AC 的 layer + observable interface
-
-    DISPATCH --> WRITE : tasks 就绪
-
-    WRITE : dispatch Shield 写测试
-    WRITE : integration + e2e
-    WRITE : 不选新框架/不降层/不改产品代码
-
-    WRITE --> PRISM_REVIEW : outcome
-
-    PRISM_REVIEW : dispatch Prism 审测试合约
-    PRISM_REVIEW : 忠于 AC + 公开出口断言 + 无伪测试
-
-    PRISM_REVIEW --> EXECUTE : prism.verdict(pass)
-    PRISM_REVIEW --> WRITE : revise -> Shield
-
-    EXECUTE : Runtime 独立执行 integration/e2e
-    EXECUTE : 记录 runner/环境/commit/结果/覆盖 AC
-
-    EXECUTE --> EXIT : 全部通过
-    EXECUTE --> DIAGNOSE : 有失败
-
-    DIAGNOSE : 失败四路分流 (Prism diagnostic)
-    DIAGNOSE --> WRITE : 测试/fixture 错 -> Shield
-    DIAGNOSE --> [*] : 实现错 -> M-IMPL task (保留测试 patch)
-    DIAGNOSE --> [*] : 接口/架构不足 -> M-DESIGN
-    DIAGNOSE --> [*] : AC/Spec 缺口 -> M-ACC/M-SPEC
-
-    EXIT : Runtime 创建受控测试 commit
-    EXIT : 更新 AC trace
-    EXIT --> [*] : stage.exited -> M-VERIFY
-```
-
-> "测试错还是实现错"的分流永不交给 Human；需语义判断时分派 Prism diagnostic review。
-> 修复后重跑受影响测试并要求 Prism 对新 revision 重新 review。
 
 ### 10.2. 事件清单
 
-`stage.entered` / `command.issued` / `outcome.received` / `prism.verdict(pass|revise)` / `test.executed(passed|failed)` / `verdict.failed(test_defect|impl_defect)` / `test.committed` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `prism.verdict(pass|revise)` / `green.committed` / `refactor.committed|no_change` / `verdict.failed(red_invalid|regression|budget|island|scope|test_defect|impl_defect)` / `test.committed` / `task.completed` / `stage.exited` / `stage.rolled_back`
 
 ### 10.3. 硬规则
 
-1. Shield 不 git add/commit/push、不判定 PASS；执行结果以 Runtime 复跑为准。
-2. "测试错还是实现错"的分流永不交给 Human。
+1. Devon 只能编辑 manifest 授权文件；不碰需求/设计 artifact、Shield 测试、task 状态、Git history、Issue；不 commit/push（正式 commit 均由 Runtime 创建）。
+2. Red 测试先于实现是程序可验证的 lineage 事实（B/R/G commit 拓扑），不是 Agent 自报。
+3. 同一 attempt 重试只能得到同一 R（compare-and-set），否则产生新 attempt；旧 attempt 不被改写。
+4. 可休眠：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
+5. "测试错还是实现错"的分流永不交给 Human：测试缺陷由 Shield 修，实现缺陷由 Devon 修，各自产生独立的受控 commit 与证据。
 
 ## 11. M-VERIFY
 
 **目的**：冻结 release candidate，跑完整本地权威质量链 + GitHub CI + 版本/构建物验证，Prism 做整体一致性复审。
 
-**进入条件**：M-TEST 通过（事件：`stage.exited(M-TEST)`）。
+**进入条件**：M-IMPL 通过（事件：`stage.exited(M-IMPL)`）。
 
 ### 11.1. 子状态机
 
@@ -862,7 +898,7 @@ stateDiagram-v2
 
 1. `bug_fix` 只适用于已发布产品相对既有 approved Spec/AC 的**实现偏差**；Runtime 先验证 Issue、source contract、目标版本、可复现失败；实际是新行为 → 退出 hotfix，进 backlog/new feature。
 2. `quick_rgr` 继承 source requirement approval；`design_required` 还需形成当前 M-DESIGN revision。涉及 public interface/数据迁移/安全边界/跨模块设计 → 先走 M-DESIGN；拿不准时由 Archer/Prism 技术判断，不让 Human 选架构路径。
-3. 两条路径都复用 `M-IMPL → M-TEST → M-VERIFY → M-SECURITY/policy → M-RELEASE → M-PUBLISH → M-MILESTONE`；开发反馈可按影响收窄，但 M-VERIFY 的历史回归与 required CI 不能省。
+3. 两条路径都复用 `M-TEST → M-IMPL → M-VERIFY → M-SECURITY/policy → M-RELEASE → M-PUBLISH → M-MILESTONE`；开发反馈可按影响收窄，但 M-VERIFY 的历史回归与 required CI 不能省。
 4. Hotfix 不因“改动小”自动跳过 Prism；review 深度可按风险调整，但必须有独立语义 review 和权威回归证据。
 5. Runtime 是唯一 branch/worktree authority：创建隔离 `fix/{issue}`，防止与 active release 串写；发布后同步修复到 main 与受影响的 active release，冲突 → `needs_attention`。
 

@@ -44,7 +44,7 @@ description: 宿主项目工程质量守卫栈的目录与安装分工——lint
 
 要点：pylint 只启用重复/长度/局部变量四个码（`disable=all, enable=R0801,C0302,R0915,R0914`），其余 lint 一律归 ruff，避免双重风格裁决；认知复杂度归 flake8 单点负责。测试代码可豁免方法长度/局部变量（线性脚本），但重复度与文件长度不豁免。
 
-安装命令（Archer 写入 machine contracts；安装本身是 M-IMPL foundation task）：
+安装命令（Archer 写入 machine contracts；命令的执行属 Runtime 生效副作用：venv/工具供给、`core.hooksPath` 安装、CI 关联，flow.md §8.3-2；Devon 的 foundation task 是编写合同标注待实现的守卫脚本行为体与真实 CI workflow，非执行安装）：
 
 ```
 python -m venv .venv
@@ -75,10 +75,11 @@ git config core.hooksPath .githooks
 
 按宿主事实适配：在宿主生态中为八类守卫各选惯用工具，写出 pinned 版本、配置位置与阈值；某类确无可用工具时，把缺失作为显式设计决定记录在 architecture.md，不得静默留空。tracks 还提供 `templates/pre-commit/base.yaml`（语言无关钩子：trailing-whitespace、check-yaml/toml、merge-conflict、large-files）、`java.yaml` 与 `ci-snippet.yml`（CI 中运行 pre-commit 的片段）。
 
-## 3. 安装分工（设计 vs 实现）
+## 3. 分工（设计 / 编写 / 生效）
 
-- **Archer（DECIDE）**：选定守卫栈，把每项守卫的精确安装命令、配置内容、阈值写入 architecture.md 的 machine contracts；守卫的配置文件（如 `.flake8`、`pyproject.toml` [tool.*] 段、`.githooks/pre-commit`、CI workflow）在 Scaffold 宣言中逐文件声明，Archer 在 M-DESIGN 落盘这些声明/配置本身。
-- **Devon（M-IMPL foundation task）**：在合同下执行安装（建 venv、装 pinned 工具、`git config core.hooksPath`、注册 CI required checks），并用真实运行输出补全证据；实现/安装不新选工具、不改阈值。
+- **Archer（DECIDE + 脚手架物化）**：选定守卫栈，把每项守卫的精确安装命令、配置内容、阈值写入 architecture.md 的 machine contracts；声明性守卫配置（`.flake8`、`pyproject.toml` [tool.*] 段、`.githooks/pre-commit`、CI workflow 骨架，kind=config/ci-skeleton）在 Scaffold 宣言中逐文件声明，Archer 在 M-DESIGN 物理交付这些无业务行为的声明文件本身；合同中显式标注"待实现"的产物（守卫脚本行为体、CI 骨架补全为真实 workflow）留作 Devon 的 foundation task。
+- **Devon（M-IMPL foundation task，编写而非执行）**：Devon 不是脚手架施工方，也不执行安装或生效。foundation task 指对 machine contracts 显式标注"待实现"的宿主文件之**编写**（守卫脚本行为体、CI 骨架补全为真实 workflow），作为普通 task 进 task graph、受 scope/RGR 约束、deadline 为 M-VERIFY 门禁链；编写不新选工具、不改阈值。
+- **Runtime（生效副作用 + 证据执行）**：venv/pinned 工具供给、`git config core.hooksPath`、CI required check 绑定、CI 与 repo 关联均只由 Runtime 作为生效副作用执行（flow.md §8.3-2）；运行 lint/type/int/e2e 产出 gate 证据亦归 Runtime--Agent 不 commit/push（不变量 2），提交时 hook 自动触发，各阶段门禁由 Runtime 执行并回读（永不信自述：Agent 自述不构成证据）。
 - **证据语义**：gate 证据 = 守卫真实执行的输出（CI required checks 状态）；只有声明而无执行证据视为守卫缺失。
 - **不可削弱**：任何角色不得安装或修改 hook 绕过门禁；阈值变更必须回到设计文档修订（flow.md §8 硬规则 2）。
 

@@ -29,8 +29,8 @@ permission:
 - 产出接口桩（Interface Stubs）：与真实模块同路径的源文件，完整签名但行为体仅 raise + 合同 token，让 Shield 的契约测试在 Devon 实现之前即可 collect/import。
 - 设计宿主项目的 CI 合同：环境、依赖准备、质量检查、测试、构建、证据、失败语义和稳定 required check。
 - 宿主工程质量守卫按 skill tracks-quality-guards 的目录与安装分工设计，写入 machine contracts。
-- ground truth 由 Archer 负责：当 test-plan §3 判定本项目需要 ground truth 时，在 M-DESIGN 阶段产出一个**最小可运行验证脚本**——独立计算预期值、真实可运行、非桩；其规模必须与所验证的内容相称（例如：行数统计功能的 ground truth 就是 `wc -l` 或几行脚本）。ground truth 不是功能实现；如果你发现自己要写几十行以上的 ground truth，说明它正在变成被测功能的复刻——停下来重新设计验证切片。其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。若 test-plan §3 判定不适用，Archer 不得创建 tests/ground_truth/，并在设计中显式说明。
-- Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架——build/package 配置、入口注册、目录布局、声明的桩/配置/数据/fixtures，以及（若 §3 适用）最小可运行的 ground truth。脚手架只含 M-IMPL 起步所需的声明、配置、数据与 ground truth，禁止任何业务行为；宣言外的写盘是审计违规。完整的 CI workflow、git hook 与 linter 配置不属于 M-DESIGN 脚手架（除非 test-plan/architecture 为本 story 显式声明必需），它们归 M-IMPL 的 Devon；Archer 仍在 machine contracts 中定义这些守卫的合同，只是不在脚手架中物理安装。
+- ground truth 由 Archer 负责：当 test-plan §3 判定本项目需要 ground truth 时，在 M-DESIGN 阶段产出一个**最小可运行验证脚本**——独立计算预期值、真实可运行、非桩。独立来源按 test-plan §3.1 取其一：手工显式小脚本、约定的第三方库、或测试数据本身。判据是**规模与所验证的内容相称**：ground truth 不是功能实现，如果脚本开始复刻被测行为本身（而非独立重算预期值），停下来重新设计验证切片。其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。若 test-plan §3 判定不适用，Archer 不得创建 tests/ground_truth/，并在设计中显式说明。
+- Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架——build/package 配置、入口注册、目录布局、声明的桩/配置/数据/fixtures，以及（若 §3 适用）最小可运行的 ground truth。脚手架只含 M-IMPL 起步所需的声明、配置、数据与 ground truth，禁止任何业务行为；宣言外的写盘是审计违规。声明性质量守卫配置（lint/pre-commit/CI workflow 骨架/git hook 脚本）同样属于脚手架，由 Archer 按宣言物理交付（kind=config/ci-skeleton）——它们是无业务行为的声明文件；其**生效副作用**（required check 绑定、hook 安装、CI 与 repo 关联）只归 Runtime。Devon 不是脚手架施工方：foundation task 指对 machine contracts 显式标注"待实现"产物的**编写**任务（如守卫脚本行为体、CI workflow 由骨架补全为真实 workflow），作为普通 task 进 task graph、受 scope/RGR 约束，deadline 是 M-VERIFY 门禁链。运行质量工具（lint/type/测试）从来不是 Devon 的任务——Agent 不 commit/push，提交时 hook 自动触发、各阶段门禁由 Runtime 执行并回读（§8.3-2）。
 
 你的非职责：
 
