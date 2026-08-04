@@ -26,6 +26,7 @@ import pytest
 
 from tests.e2e_live import test_full_journey as _journey
 from tests.e2e_live.test_full_journey import (
+    _assert_issue_events,
     _find_baseline_for_sha,
     _read_manifest,
 )
@@ -267,3 +268,75 @@ def test_baseline_force_decision_matrix(monkeypatch, tmp_path):
     )
     assert decide(force=False) == "skip-none"
     assert decide(force=True) == "skip-none"
+
+
+# -- _assert_issue_events helper tests -------------------------------------
+
+
+def _issue_event(issue_id) -> dict:
+    """Build a minimal issue.created event dict for the helper."""
+    return {"type": "issue.created", "payload": {"issue_id": issue_id}}
+
+
+def test_assert_issue_events_empty_fails_both_modes():
+    # An empty event list has no issue.created events.
+    with pytest.raises(AssertionError, match="missing issue.created event"):
+        _assert_issue_events([], expect_real_issues=True)
+    with pytest.raises(AssertionError, match="missing issue.created event"):
+        _assert_issue_events([], expect_real_issues=False)
+    # A non-empty list with no issue.created events also fails (the helper
+    # filters by type before asserting presence).
+    other = [{"type": "run.completed", "payload": {}}]
+    with pytest.raises(AssertionError, match="missing issue.created event"):
+        _assert_issue_events(other, expect_real_issues=True)
+    with pytest.raises(AssertionError, match="missing issue.created event"):
+        _assert_issue_events(other, expect_real_issues=False)
+
+
+def test_assert_issue_events_real_only_matrix():
+    """expect_real_issues=True: all-digits pass; FAKE- and mixed fail."""
+    # all-digits ids pass.
+    _assert_issue_events(
+        [_issue_event("123"), _issue_event("456")], expect_real_issues=True
+    )
+    # FAKE- id fails (the baseline-resume bug being scoped out).
+    with pytest.raises(AssertionError):
+        _assert_issue_events([_issue_event("FAKE-1")], expect_real_issues=True)
+    # mixed digits + FAKE fails.
+    with pytest.raises(AssertionError):
+        _assert_issue_events(
+            [_issue_event("123"), _issue_event("FAKE-2")],
+            expect_real_issues=True,
+        )
+
+
+def test_assert_issue_events_fake_accepted_matrix():
+    """expect_real_issues=False: all-digits and FAKE- both pass (alone or
+    mixed); a non-digit/non-FAKE id still fails."""
+    # all-digits pass.
+    _assert_issue_events(
+        [_issue_event("123"), _issue_event("456")], expect_real_issues=False
+    )
+    # FAKE- ids pass (the kernel's fake channel format, FAKE-<n>).
+    _assert_issue_events(
+        [_issue_event("FAKE-1"), _issue_event("FAKE-2")],
+        expect_real_issues=False,
+    )
+    # mixed digits + FAKE pass.
+    _assert_issue_events(
+        [_issue_event("123"), _issue_event("FAKE-2")], expect_real_issues=False
+    )
+    # a non-digit, non-FAKE id still fails under the lenient mode.
+    with pytest.raises(AssertionError):
+        _assert_issue_events(
+            [_issue_event("abc")], expect_real_issues=False
+        )
+
+
+def test_assert_issue_events_payload_must_carry_issue_id():
+    """The always-true contract: every issue.created payload has an issue_id."""
+    missing = [{"type": "issue.created", "payload": {}}]
+    with pytest.raises(AssertionError, match="missing issue_id"):
+        _assert_issue_events(missing, expect_real_issues=True)
+    with pytest.raises(AssertionError, match="missing issue_id"):
+        _assert_issue_events(missing, expect_real_issues=False)

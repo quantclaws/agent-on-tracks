@@ -8,26 +8,16 @@ Environment variables
   disposable GitHub repo for the full/resume journeys' issue-creation and
   remote-ref assertions.
 * ``TRAC_AGENT_TIMEOUT`` - per-dispatch agent (opencode subprocess) timeout.
-  Default 120s; M-DESIGN DRAFT/RESPOND dispatches override to 1800s via the
-  ``agent_timeout`` per-call parameter (the design trio + scaffold + quality
-  guard installation is too big for 1200s; live run049 attempt2 was ~90% done
-  when killed at 1200s and run050 attempt1 hit the 1200s kernel timeout
-  exactly).
+  Default 120s; M-DESIGN DRAFT/RESPOND override to 1800s via ``agent_timeout``
+  (design trio + scaffold + quality-guard is too big for 1200s).
 * ``TRAC_LIVE_DESIGN_AGENT_TIMEOUT`` - env override for the M-DESIGN
   DRAFT/RESPOND ``agent_timeout`` (default 1800s; read at call time so
   observation runs can raise the cap without code changes). Non-integer or
-  <=0 values raise ``ValueError``. Observation mode: set a generous cap
-  (e.g. 3600) while monitoring opencode logs/events to calibrate the real
-  budget; the kernel/opencode hard timeout still applies as a watchdog
-  above the outer command timeout
-  (``max_dispatches × (agent_timeout + 300)``).
+  <=0 raises ``ValueError``; the kernel/opencode hard timeout still applies
+  as a watchdog above ``max_dispatches × (agent_timeout + 300)``.
 * ``TRAC_LIVE_COMMAND_TIMEOUT`` - outer ``trac run`` subprocess timeout.
-  Default 1500s (raised from 360s so a 1800s agent dispatch + overhead is not
-  clipped; the per-call ``agent_timeout`` override automatically bumps the
-  command timeout to ``max_dispatches * (agent_timeout + 300)`` when the
-  caller does not pass an explicit ``timeout``, so a 3-attempt retry budget
-  at 1800s each is not clipped; live run049 was killed mid-flight because the
-  old single-attempt formula only budgeted ``agent_timeout + 300``).
+  Default 1500s; auto-bumps to ``max_dispatches * (agent_timeout + 300)`` when
+  no explicit ``timeout`` so a 3-attempt 1800s retry budget is not clipped.
 * ``TRAC_LIVE_TOTAL_TIMEOUT`` - whole-journey deadline. Default 10800s (raised
   from 3600s so the 3-attempt retry budget at 1800s each is not clipped).
 * ``TRAC_LIVE_SKIP_BASELINE=1`` - skip baseline snapshot capture after the
@@ -323,6 +313,20 @@ def _assert_finding_lifecycle(
     )
 
 
+def _assert_issue_events(final_events: list[dict], expect_real_issues: bool) -> None:
+    """issue.created events present; ids digits-only (expect_real_issues) else
+    digits/FAKE- (baseline resume fake channel, tracks/effects/github.py)."""
+    evs = [e for e in final_events if e["type"] == "issue.created"]
+    assert evs, "missing issue.created event"
+    assert all("issue_id" in e["payload"] for e in evs), "missing issue_id"
+    ids = [str(e["payload"]["issue_id"]) for e in evs]
+    if expect_real_issues:
+        assert all(i.isdigit() for i in ids)
+    else:
+        assert all(i.isdigit() or i.startswith("FAKE-") for i in ids), (
+            "issue_id is neither all digits nor a FAKE- fake id")
+
+
 def _run_design_review_loop(live_trac):
     """Prism review <-> Archer RESPOND loop, bounded to 2 review rounds
     (TRAC_LIVE_MAX_REVIEW_ROUNDS stays the wider outer net). Each round runs
@@ -510,6 +514,7 @@ def _phase_design(
     version: str,
     remote_url_before: str,
     remote_refs_before: str,
+    expect_real_issues: bool,
 ):
     """Everything after approve: archer-design-draft assertions, design review
     loop, report assertions, final event assertions (run.completed, prism pass,
@@ -587,10 +592,7 @@ def _phase_design(
         for event in final_events
         if event["type"].startswith("human.") and event["seq"] > approval_seq
     ], "M-DESIGN must carry no human gate (BS-05)"
-    issue_events = [event for event in final_events if event["type"] == "issue.created"]
-    assert issue_events and all(
-        str(event["payload"]["issue_id"]).isdigit() for event in issue_events
-    )
+    _assert_issue_events(final_events, expect_real_issues)
     assert _git(live_root, "remote", "get-url", "origin") == remote_url_before
     remote_refs_after = _git(live_root, "ls-remote", "origin")
     assert remote_refs_after == remote_refs_before
@@ -789,6 +791,7 @@ def test_bounded_scripted_real_agent_journey(
     _phase_design(
         live_trac, live_root, run_id, version,
         remote_url_before, remote_refs_before,
+        expect_real_issues=True,
     )
 
 
@@ -843,6 +846,7 @@ def test_journey_from_req_approved_baseline(
             _phase_design(
                 live_trac, live_root, run_id, version,
                 remote_url_before, remote_refs_before,
+                expect_real_issues=False,
             )
             return
         pytest.skip(
@@ -874,6 +878,7 @@ def test_journey_from_req_approved_baseline(
     _phase_design(
         live_trac, live_root, run_id, version,
         remote_url_before, remote_refs_before,
+        expect_real_issues=False,
     )
 
 
