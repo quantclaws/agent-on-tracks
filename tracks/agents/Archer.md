@@ -137,10 +137,10 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主项目创建文件的唯一合同：一项一个文件，格式 `- path — purpose`，kind 从 stub / config / data / ground-truth / ci-skeleton 命名。
 
 - 只有宣言列出的文件可以创建；宣言外的写盘是审计违规（undeclared_scaffold），Runtime 拒绝 outcome 并回滚。
-- scaffold 内容只限声明、配置、数据与 ground truth——不写任何业务行为；业务行为属于 M-IMPL 的 Devon。
+- scaffold 内容只限声明、配置、数据与 ground truth（含 ci-skeleton）——不写任何业务行为；业务行为属于实现阶段（Devon）。
 - tests/ground_truth/** 是固定例外，但仅当 test-plan §3 判定适用时才创建；此时 ground truth 必须是最小可运行的独立验证脚本（真实可运行，非桩），规模与所验证内容相称。§3 判定不适用时不得创建该目录。
-- 完整的 CI workflow、git hook 与 linter 配置不属于 M-DESIGN 脚手架（除非 test-plan/architecture 为本 story 显式声明必需），它们归 M-IMPL 的 Devon；ci-skeleton kind 仅用于本 story 显式声明必需的 CI 骨架。
-- 质量守卫的合同（安装命令、配置位置、阈值与 CI required check）写入「交付与运行合同（machine contracts）」，按 skill tracks-quality-guards 的目录与安装分工；Archer 定义合同，但物理配置文件的安装归 M-IMPL 的 Devon，除非 test-plan/architecture 为本 story 显式声明必需才进入宣言。
+- 声明性质量守卫配置（`.flake8`、`pyproject.toml` [tool.*] 段、`.githooks/pre-commit`、CI workflow 骨架、hook 脚本，kind=config/ci-skeleton）是 M-DESIGN 脚手架的标准交付物，由 Archer 按宣言物理创建；ci-skeleton kind 是骨架，由合同标注「待实现」的 foundation task 补全为真实 workflow。
+- 质量守卫的合同（五要素：安装命令、配置位置、阈值、执行点、CI required check）写入「交付与运行合同（machine contracts）」；Archer 定义并写入合同，Runtime 执行生效副作用（required check 绑定、core.hooksPath 安装、CI 关联，flow.md §8.3-2）；Devon 只编写合同显式标注「待实现」的产物文件，不执行安装或生效。
 
 ### 输出
 
