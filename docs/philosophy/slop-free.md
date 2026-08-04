@@ -28,3 +28,4 @@ Tracks 并没有发明新的检测方法 -- 我们只不过是应用了成熟的
 
 > [!info] 与 SpecKit 对比
 > Spec Kit 用九项 Article 宪法 + Phase -1 Simplicity/Anti-Abstraction Gate + test-first 文件顺序，约束写在 markdown 模板里由 Agent 自己勾选。与 Agent on Tracks 相比，它主打 Agent 自觉，无法强制 Agent 执行。此外，Speckit 是同一个会话中进行 Agent 提示词互换，但上下文依然是共享的。这种模式上，难免受到代码实施者的干扰。
+

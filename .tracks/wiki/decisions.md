@@ -1,7 +1,7 @@
 ---
 doc: decisions
 status: active
-last_updated: 2026-08-01
+last_updated: 2026-08-04
 ---
 
 # 已决定事项
@@ -236,13 +236,80 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 
 ## D-21. ISLAND_GATE_1 六元组前置到设计期
 
-（用户裁定 2026-08-04）**flow.md §9 ISLAND_GATE_1 的六元组（owner / surface / composition / wiring / test / evidence）是 Archer 的设计期义务，不是 M-IMPL 才第一次出现的检查。**
+（用户裁定 2026-08-04）**flow.md §10 ISLAND_GATE_1 的六元组（owner / surface / composition / wiring / test / evidence）是 Archer 的设计期义务，不是 M-IMPL 才第一次出现的检查。**
 
 - Archer 对每条 required AC 填齐六项事实并在设计文档中可定位；architecture.md 必须包含 composition root 一节；任何无法在六元组中定位的模块是设计缺陷（接回入口→AC 路径或从设计删除，不得设计"只被测试调用的模块"）。
 - Prism 的 M-DESIGN 评审判据即六元组逐项闭合，缺项 REVISE。
 - M-IMPL 的 ISLAND_GATE_1/2 是该合同的复核，不是首次建立。
 
 出处与动机：louke 三个坑的元分析——判词记录得好、强制总落后一代（孤岛判词在 arch.md §8、gate 设计在 flow.md §9、reach 工具在 v0.4，当前阶段裸奔）。本决定把强制提前一代：M-DESIGN 的产物就是 ISLAND_GATE_1 的输入合同。canonical 来源：louke STR-1406（BS-01 接口桩、BS-03 接线义务、D-05 覆盖率非证据）。
+
+## D-22. ground truth 最小化与条件适用；M-DESIGN 脚手架收窄
+
+（用户裁定 2026-08-04）
+
+- ground truth 是**最小可运行验证脚本**（如 code-stats 项目就是 `wc -l` 级别），不是功能实现；是否适用由 test-plan §3 判定，并非每个项目都需要。
+- 完整 CI workflow/git hook/linter 配置不属 M-DESIGN 脚手架（归 M-IMPL），Archer 只在 machine contracts 定义合同。
+- 证据：run049/050/053 中旧措辞「完整实现参考实现」导致单次 DRAFT >22min（含 .github/.githooks/src 全套脚手架）。
+
+## D-23. live E2E 迭代方法学：基线恢复 + 观测定预算
+
+（用户裁定 2026-08-04）
+
+- 迭代不重跑全程——M-REQ-APPROVED 时刻捕获基线快照，迭代只恢复基线重跑 M-DESIGN（releases/v0.3 已实现 `test_journey_from_req_approved_baseline`）。
+- 派发预算不靠猜——用事件时间戳 + opencode 日志观测真实耗时，超时配置只做看门狗（`TRAC_LIVE_DESIGN_AGENT_TIMEOUT` 可配）。
+
+## D-24. 脚手架物化边界两分（修订 D-22 收窄条款）；GT 措辞去项目特例
+
+（用户裁定 2026-08-04）M-DESIGN 物化判据两条：
+
+- ①凡 M-TEST collect 依赖的宿主文件（build/包配置、目录布局、接口桩树、测试 runner 配置、fixtures/data、条件性最小 GT）必须 Archer 物理交付。
+- ②声明性质量守卫配置（lint/pre-commit/CI 骨架/hook 脚本）同由 Archer 按 Scaffold 宣言物理交付，**生效副作用**（required check 绑定、hook 安装、CI 关联）只归 Runtime（§8.3-2）。
+- Devon 不是脚手架施工方，只执行合同显式标注待实现的 foundation task（守卫脚本行为体、真实 CI workflow），deadline M-VERIFY 门禁链。
+- Prism 宣言⇔创建逐项审计不变；GT 最小化（D-22）维持，提示词措辞采用「规模与所验证内容相称」的一般判据，不带 wc -l 等项目特例（d0e2f70 的错误归因一并修正）。
+
+## D-25. foundation task 判据：编写而非执行（补 D-24）
+
+（用户裁定 2026-08-04）
+
+- foundation task = machine contracts 显式标注待实现的宿主项目文件之**编写**任务（守卫脚本行为体、CI workflow 由骨架补全等），作为普通 task 进 task graph、受 scope/RGR 约束、deadline M-VERIFY 门禁链。
+- 运行 lint/type/int/e2e、安装 hook、绑定 required check 从来不是 Devon 的任务——Agent 不 commit/push（不变量 2），提交时 hook 自动触发，各阶段门禁由 Runtime 执行并回读（永不信自述）。
+
+## D-26. Harness 无关原则重申：移除迁移残留的 frontmatter permission 块
+
+（用户裁定 2026-08-04，decisions 漂移审计）D-19 的原则维持不变：agent 提示词（`tracks/agents/*.md`）harness 无关，不含 permission 块；harness 特定的权限控制只放 harness 自己的配置文件（`trac init` per-agent 改写）。
+
+- Archer/Prism/Shield frontmatter 中的 permission 块是从 louke 迁移时未处理的残留，已移除；三个 agent 恢复到与 Scribe/Sage/Lex 一致的形态。
+- 迁移纪律：今后从 louke（或其它 harness 绑定来源）迁移 agent 提示词，必须剥离 frontmatter permission 块；权限语义以 D-19「Agent 提示词的权限约定」为准（读不限／写仅 assignment 目标文档／bash 不限／临时目录 command_id 专属）。
+- 之所以移除而非追认：按 D-19 的 spike 结论，frontmatter permission 优先并覆盖 harness 配置文件的 per-agent 设置——残留块若保留，会静默架空 `trac init` 写入的配置，且把 harness 语义焊死在提示词里，违背「换 harness 只换配置文件」。
+
+## D-27. 取代索引与相容性解释（漂移审计）
+
+（2026-08-04，编辑性裁定）append-only 纪律下旧条目不改写；为防止后出裁定被旧措辞遮蔽，显式登记取代关系：
+
+- D-22 的「M-DESIGN 脚手架收窄」条款（完整 CI workflow/git hook/linter 配置不属脚手架、Archer 只在 machine contracts 定义合同）**已被 D-24 条件②取代**——声明性质量守卫配置由 Archer 按 Scaffold 宣言物理交付，生效副作用归 Runtime。
+- D-24 中「Devon……只执行合同显式标注待实现的 foundation task」的措辞**以 D-25 为准**——foundation task 是待实现产物的**编写**任务；运行、安装、绑定归 Runtime。
+- D-17 与 D-25 相容：D-17「Devon 跑质量工具并重构」指 RGR 循环中 Devon 对本地工作副本的自检与重构（行为反馈，不是 task、不是门禁）；D-25 指权威门禁的执行与回读归 Runtime。
+- 勘误：D-21 正文「flow.md §9 ISLAND_GATE_1」随 TDD 次序重排应为 §10（M-IMPL），已就地修正；本文件 frontmatter `last_updated` 一并更新。另 D-22～D-25 此前仅存在于决策日志表格行，本次升格为正文条目（内容逐字保留），表格行缩为短引用。
+
+## D-28. 输入 identity/完整性校验归 Runtime，Agent 不自校验（对所有 Agent）
+
+（用户裁定 2026-08-04）
+
+- assignment 的 revision/digest 与磁盘文件核对、输入集完整性（如 M-DESIGN 四件套同一 revision）是形式检查，由 Runtime 在派发前完成（可测；职责划分见 D-14），并确保正确调度。
+- Agent 对 assignment 列出的输入集直接使用，不设自检阶段——连「读 frontmatter revision 比对」这样的轻量操作也不做。适用于所有 Agent（Archer/Shield/Prism/Devon……），不只是 Prism。
+- Agent 侧唯一的 identity 残留是传播：verdict/outcome 引用 assignment 给定的输入 identity 供 Runtime 关联，不是校验。
+- 理由：Agent 执行慢、异常罕见；Agent 自校验本身是自述、不构成保障；保障落点与缺陷修复都归 Runtime 测试。
+
+## D-29. Prism 评审管线与判据包 skill 化进入 v0.4 spec
+
+（用户裁定 2026-08-04）
+
+- Prism 单次评审执行管线定为四阶段：①判据提取（上游合同 + assignment 指定的判据包）→ ②逐项符合性检查 → ③反证（anti-slop）→ ④裁决（blocker 经 trac discuss 锚定线程，verdict 绑定输入 identity）。输入校验不列为阶段（见 D-28）。
+- 各评审类型的判据集拆为 skill（判据包）；管线、独立性原则与裁决格式常驻 Prism.md。
+- 必须的配套（反自述三件套）：assignment 写明应加载判据包的名称+版本（Runtime 决定，Prism 不自选）；verdict outcome 携带实际加载判据包的 identity；Runtime 回读核对，不匹配判失败重派。
+- v0.4 必须交付：测试资产判据包（M-TEST 的 PRISM_REVIEW 子状态消费）与配套 Runtime 机制；M-DESIGN 判据抽取、代码评审/争议诊断判据包按 release 节奏（判据与规模相称）。
+- 形式校验不得混入判据包（D-14 边界）。
 
 ## 决策日志
 
@@ -269,7 +336,11 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-19 | 2026-08-01 | Harness 配置与 Agent 提示词分离；`trac init` 改写 harness 配置 | 用户裁定：agent .md harness 无关；harness 权限放 harness 配置文件；`trac init` 改写 `opencode.json`（`external_directory: deny` + 允许 `$TMPDIR`）；换 harness 只换配置文件 |
 | D-20 | 2026-08-04 | 交付面完整性（surface completeness） | 用户裁定：移植 louke STR-1406 D-02；每 FR 必有命名交付面+可观察出口，无面=需求缺口；责任链 M-STORY→M-SPEC→M-DESIGN |
 | D-21 | 2026-08-04 | ISLAND_GATE_1 六元组前置到设计期 | 用户裁定：六元组是 Archer 设计期义务、Prism 判据；M-IMPL gate 只做复核；出处 louke STR-1406 BS-01/BS-03/D-05 |
-| D-22 | 2026-08-04 | ground truth 最小化与条件适用；M-DESIGN 脚手架收窄 | 用户裁定：ground truth 是**最小可运行验证脚本**（如 code-stats 项目就是 `wc -l` 级别），不是功能实现；是否适用由 test-plan §3 判定，并非每个项目都需要；完整 CI workflow/git hook/linter 配置不属 M-DESIGN 脚手架（归 M-IMPL），Archer 只在 machine contracts 定义合同。run049/050/053 证据：旧措辞「完整实现参考实现」导致单次 DRAFT >22min（含 .github/.githooks/src 全套脚手架） |
-| D-23 | 2026-08-04 | live E2E 迭代方法学：基线恢复 + 观测定预算 | 用户裁定：迭代不重跑全程——M-REQ-APPROVED 时刻捕获基线快照，迭代只恢复基线重跑 M-DESIGN（releases/v0.3 已实现 `test_journey_from_req_approved_baseline`）；派发预算不靠猜——用事件时间戳 + opencode 日志观测真实耗时，超时配置只做看门狗（`TRAC_LIVE_DESIGN_AGENT_TIMEOUT` 可配） |
-| D-24 | 2026-08-04 | 脚手架物化边界两分（修订 D-22 收窄条款）；GT 措辞去项目特例 | 用户裁定：M-DESIGN 物化判据两条——①凡 M-TEST collect 依赖的宿主文件（build/包配置、目录布局、接口桩树、测试 runner 配置、fixtures/data、条件性最小 GT）必须 Archer 物理交付；②声明性质量守卫配置（lint/pre-commit/CI 骨架/hook 脚本）同由 Archer 按 Scaffold 宣言物理交付，**生效副作用**（required check 绑定、hook 安装、CI 关联）只归 Runtime（§8.3-2）；Devon 不是脚手架施工方，只执行合同显式标注待实现的 foundation task（守卫脚本行为体、真实 CI workflow），deadline M-VERIFY 门禁链。Prism 宣言⇔创建逐项审计不变；GT 最小化（D-22）维持，提示词措辞采用「规模与所验证内容相称」的一般判据，不带 wc -l 等项目特例（d0e2f70 的错误归因一并修正） |
-| D-25 | 2026-08-04 | foundation task 判据：编写而非执行（补 D-24） | 用户裁定：foundation task = machine contracts 显式标注待实现的宿主项目文件之**编写**任务（守卫脚本行为体、CI workflow 由骨架补全等），作为普通 task 进 task graph、受 scope/RGR 约束、deadline M-VERIFY 门禁链；运行 lint/type/int/e2e、安装 hook、绑定 required check 从来不是 Devon 的任务——Agent 不 commit/push（不变量 2），提交时 hook 自动触发，各阶段门禁由 Runtime 执行并回读（永不信自述） |
+| D-22 | 2026-08-04 | ground truth 最小化与条件适用；M-DESIGN 脚手架收窄 | 用户裁定：GT=最小验证脚本、按 test-plan §3 条件适用；脚手架收窄（收窄条款后被 D-24 修订）；run049/050/053 证据 |
+| D-23 | 2026-08-04 | live E2E 迭代方法学：基线恢复 + 观测定预算 | 用户裁定：基线快照恢复重跑 M-DESIGN；事件时间戳+opencode 观测定预算，超时只做看门狗 |
+| D-24 | 2026-08-04 | 脚手架物化边界两分（修订 D-22 收窄条款）；GT 措辞去项目特例 | 用户裁定：物化判据两条（collect 依赖文件+声明性守卫配置归 Archer 物理交付；生效副作用归 Runtime）；foundation task 措辞后被 D-25 澄清 |
+| D-25 | 2026-08-04 | foundation task 判据：编写而非执行（补 D-24） | 用户裁定：foundation task=编写任务；运行/安装/绑定归 Runtime，Agent 不 commit/push |
+| D-26 | 2026-08-04 | Harness 无关原则重申：移除迁移残留 permission 块 | 用户裁定：恢复 harness 无关、无 permission 块；Archer/Prism/Shield 残留块系 louke 迁移遗漏，已移除 |
+| D-27 | 2026-08-04 | 取代索引与相容性解释（漂移审计） | 漂移审计：D-22→D-24、D-24→D-25 取代登记；D-17/D-25 相容解释；D-21 节号勘误；D-22~25 升格正文 |
+| D-28 | 2026-08-04 | 输入 identity/完整性校验归 Runtime，Agent 不自校验 | 用户裁定：形式检查由 Runtime 派发前完成（适用所有 Agent）；Agent 直接使用输入集，verdict 仅传播 identity |
+| D-29 | 2026-08-04 | Prism 评审管线与判据包 skill 化进入 v0.4 spec | 用户裁定：四阶段管线；判据包 skill 化；配套三件套（assignment 指定/outcome 携带/Runtime 回读）；v0.4 交付测试资产判据包与 Runtime 机制 |
