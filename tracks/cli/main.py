@@ -426,8 +426,15 @@ def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
     store.rebuild_projections()  # NFR-04: survives dropped projection tables
+    # Skip backlog-only phantom rows (SM-01.2): a `backlog.recorded` event on a
+    # run with no `stage.entered` is a queue placeholder, not a real run. The
+    # `stage IS NULL` filter is robust to stale projection rows (it derives from
+    # the absence of stage.entered events, not from status); `status != 'backlog'`
+    # catches the post-rebuild case where the reducer has marked the phantom.
     row = store.conn.execute(
-        "SELECT run_id FROM runs ORDER BY updated_ts DESC LIMIT 1"
+        "SELECT run_id FROM runs "
+        "WHERE status != 'backlog' AND stage IS NOT NULL "
+        "ORDER BY updated_ts DESC LIMIT 1"
     ).fetchone()
     if row is None:
         print("no runs yet")

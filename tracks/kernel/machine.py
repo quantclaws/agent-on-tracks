@@ -393,6 +393,17 @@ def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_backlog_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
     s.backlog_recorded = True
+    # SM-01.2 phantom guard: a `backlog.recorded` event on a run with no prior
+    # `stage.entered` (queue-while-active, flow.md §3.1) is a placeholder, not a
+    # live run. Mark it `backlog` so `active_run()` / `cmd_status` skip it - it
+    # must never count as the active run and block future starts. The reject
+    # teardown path (FR-09) reaches this reducer with `stage` already set
+    # (M-STORY), so the conditional leaves that flow's `status='active'` intact
+    # for `decide()` to continue with delete_branch -> complete_run. This is the
+    # projection source of truth: `rebuild_projections()` re-folds events
+    # through this reducer, so the distinction survives a drop+rebuild.
+    if s.stage is None:
+        s.status = "backlog"
 
 
 def _on_preview_generated(s: State, p: dict, ev: EventEnvelope) -> None:

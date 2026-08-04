@@ -62,6 +62,36 @@ def test_active_run_queues_to_backlog(host_repo, trac):
                for v, d, rsn in rows)
 
 
+def test_backlog_phantom_does_not_block_later_start(host_repo, trac):
+    """SM-01.2 regression: a previously-queued backlog phantom must not keep
+    `active_run()` returning the phantom forever. After the real run is
+    completed (FR-09 reject teardown), a fresh `trac start` must proceed and
+    create a new branch - not be blocked by the lingering phantom row."""
+    assert trac("init").returncode == 0
+    assert trac("start", "v0.1", stdin="第一个需求").returncode == 0
+    # queue a second requirement while v0.1 is active -> creates phantom
+    assert trac("start", "v0.2", stdin="排队的需求").returncode == 0
+
+    # `trac status` must report the real v0.1 run, not the v0.2 phantom
+    r = trac("status")
+    assert r.returncode == 0
+    assert "stage=M-STORY" in r.stdout
+    assert "substate=None" not in r.stdout  # phantom has substate=None
+
+    # complete v0.1 via the reject path (triage no_go -> run -> teardown)
+    assert trac("run").returncode == 0
+    assert trac("triage", "no-go").returncode == 0
+    assert trac("run").returncode == 0
+    assert "completed" in trac("status").stdout
+
+    # Now no real run is active. The v0.2 phantom still exists in `runs` but
+    # must NOT block a new start: `trac start v0.3` proceeds, creates branch.
+    r = trac("start", "v0.3", stdin="第三个需求")
+    assert r.returncode == 0, r.stderr
+    assert "started" in r.stdout
+    assert "releases/v0.3" in git_out(host_repo, "branch", "--list", "releases/v0.3")
+
+
 def test_unmerged_branch_requires_confirm(host_repo, trac):
     """SM-01.6/.8/.9: unmerged release branch → AWAIT_CONFIRM (--confirm/--cancel)."""
     assert trac("init").returncode == 0

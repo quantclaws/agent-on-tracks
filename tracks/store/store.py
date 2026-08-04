@@ -227,7 +227,8 @@ class Store:
 
     def active_run(self) -> str | None:
         cur = self.conn.execute(
-            "SELECT run_id FROM runs WHERE status != 'completed' "
+            "SELECT run_id FROM runs "
+            "WHERE status NOT IN ('completed', 'backlog') AND stage IS NOT NULL "
             "ORDER BY updated_ts DESC LIMIT 1"
         )
         row = cur.fetchone()
