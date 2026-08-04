@@ -727,7 +727,12 @@ def _scaffold_declared_paths(arch_text: str) -> set[str]:
     nxt = re.search(r"^##\s", rest, re.M)  # the next level-2 heading closes it
     if nxt:
         rest = rest[:nxt.start()]
-    return set(_SCAFFOLD_BULLET.findall(_HTML_COMMENT.sub("", rest)))
+    declared = set()
+    for raw in _SCAFFOLD_BULLET.findall(_HTML_COMMENT.sub("", rest)):
+        path = raw.strip("`'\"")
+        if path:
+            declared.add(path)
+    return declared
 
 
 def _docset_text(doc_paths: list[Path]) -> str:

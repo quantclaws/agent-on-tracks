@@ -912,3 +912,54 @@ def test_scaffold_declared_paths_parser():
     unnumbered = text.replace("## 2. Scaffold 宣言", "## Scaffold 宣言")
     assert _scaffold_declared_paths(unnumbered) == {"pyproject.toml",
                                                     "src/pkg/__init__.py"}
+
+
+def test_scaffold_declared_paths_strips_backticks():
+    # run060 exact format: `- `path` — purpose（kind: X）` - the captured group
+    # keeps the surrounding backticks; the parser must strip them so the
+    # declared set holds clean repo-relative paths. The separator after the
+    # path is an em-dash (U+2014), matching _SCAFFOLD_BULLET's anchor.
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets="- `code_stats/__init__.py` — 包初始化（kind: stub）\n"
+                "- `pyproject.toml` — 构建配置（kind: config）\n")
+    assert _scaffold_declared_paths(text) == {"code_stats/__init__.py",
+                                              "pyproject.toml"}
+
+
+def test_scaffold_declared_paths_plain_bullets_regression():
+    # plain bullets without any quoting still parse (regression guard).
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets="- pyproject.toml — build config\n"
+                "- src/pkg/__init__.py — package root (kind: stub)\n")
+    assert _scaffold_declared_paths(text) == {"pyproject.toml",
+                                              "src/pkg/__init__.py"}
+
+
+def test_scaffold_declared_paths_strips_quotes():
+    # double-quoted variant strips just like backticks; single quotes too.
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets='- "code_stats/cli.py" — CLI entry (kind: stub)\n'
+                "- 'code_stats/counter.py' — counter (kind: stub)\n")
+    assert _scaffold_declared_paths(text) == {"code_stats/cli.py",
+                                              "code_stats/counter.py"}
+
+
+def test_scaffold_declared_paths_mixed_manifest():
+    # a real manifest mixes backticked and plain bullets; the declared set is
+    # the union of clean paths.
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets="- `code_stats/__init__.py` — 包初始化（kind: stub）\n"
+                "- pyproject.toml — 构建配置（kind: config）\n"
+                "- `.flake8` — lint 配置（kind: config）\n")
+    assert _scaffold_declared_paths(text) == {"code_stats/__init__.py",
+                                              "pyproject.toml",
+                                              ".flake8"}
+
+
+def test_scaffold_declared_paths_drops_empty_after_strip():
+    # a bullet whose captured token is ONLY backticks/quotes collapses to an
+    # empty path after stripping and must be dropped (not added as "").
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets="- `` — placeholder bullet with empty token\n"
+                "- `code_stats/__init__.py` — real file（kind: stub）\n")
+    assert _scaffold_declared_paths(text) == {"code_stats/__init__.py"}
