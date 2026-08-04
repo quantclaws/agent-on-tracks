@@ -199,26 +199,68 @@ def append_log(log_path: Path, text: str) -> None:
         stream.write(text)
 
 
+def _kill_descendants(pid: int) -> None:
+    """Recursively SIGKILL all descendant processes of ``pid`` (best-effort).
+
+    ``pgrep -P`` finds children by parent PID even when they have started
+    their own process group via ``setsid`` (as ``opencode`` does), so this
+    catches orphans that a plain ``killpg`` would miss. Best-effort: if
+    ``pgrep`` is unavailable the caller's ``killpg`` remains the safety net.
+    """
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(pid)],
+            capture_output=True, text=True, timeout=5, check=False,
+            start_new_session=True,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return
+    for token in result.stdout.split():
+        if not token.strip().isdigit():
+            continue
+        child_pid = int(token.strip())
+        _kill_descendants(child_pid)
+        with suppress(ProcessLookupError, PermissionError, OSError):
+            os.kill(child_pid, signal.SIGKILL)
+
+
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process, its process group, and all descendants (best-effort).
+
+    ``start_new_session=True`` puts the direct child in its own process group,
+    but a grandchild that calls ``setsid`` (e.g. ``opencode``) escapes
+    ``killpg``. Walk the tree with ``pgrep`` to catch those orphans first,
+    then kill the whole group (live run049: ``opencode`` kept running for
+    minutes after the harness killed ``trac``)."""
+    _kill_descendants(pid)
+    with suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(pid, signal.SIGKILL)
+
+
 def run_logged(
     command: list[str], cwd: Path, env: dict[str, str], log_path: Path, timeout: int = 300
 ) -> subprocess.CompletedProcess:
     append_log(log_path, f"\n$ {shlex.join(command)}\n")
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        process = subprocess.run(
-            command,
-            cwd=cwd,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        _kill_process_tree(process.pid)
+        process.communicate()
         append_log(log_path, f"timeout after {timeout}s: {exc}\n")
         raise RuntimeError(f"command timed out after {timeout}s: {shlex.join(command)}") from exc
-    append_log(log_path, process.stdout or "")
-    append_log(log_path, process.stderr or "")
-    return process
+    append_log(log_path, stdout or "")
+    append_log(log_path, stderr or "")
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def select_wheel(wheelhouse: Path) -> Path:
@@ -380,8 +422,7 @@ def run_bounded(
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        with suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(process.pid, signal.SIGKILL)
+        _kill_process_tree(process.pid)
         stdout, stderr = process.communicate()
         raise RuntimeError(
             f"command timed out after {timeout}s: {shlex.join(command)}\n"
@@ -605,6 +646,59 @@ class InstalledBackend:
         return result
 
 
+_OPENCODE_LOG_PATH = Path.home() / ".local" / "share" / "opencode" / "log" / "opencode.log"
+_OPENCODE_LOG_TAIL_BYTES = 20 * 1024 * 1024  # 20MB - read the tail, not the whole file
+_OPENCODE_LOG_TAIL_LINES = 80
+
+
+def capture_opencode_log_tail(
+    host_path: Path,
+    report_dir: Path,
+    log_path: Path | None = None,
+    tail_bytes: int = _OPENCODE_LOG_TAIL_BYTES,
+    tail_lines: int = _OPENCODE_LOG_TAIL_LINES,
+) -> Path | None:
+    """Best-effort: extract the last ~80 opencode log lines whose
+    ``directory=`` matches ``host_path`` and write them to
+    ``<report_dir>/opencode-session-tail.log``.
+
+    The opencode CLI logs to ``~/.local/share/opencode/log/opencode.log``
+    (NDJSON-ish lines with ``directory=<host path>``). The events DB only
+    shows outcomes after the fact; operators need log-level visibility when
+    a dispatch hangs or dies silently. Best-effort only - never raises.
+
+    Returns the output path, or ``None`` if no matching lines or any error.
+    """
+    try:
+        src = log_path or _OPENCODE_LOG_PATH
+        if not src.is_file():
+            return None
+        host_resolved = str(Path(host_path).resolve())
+        host_str = str(host_path)
+        with src.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - tail_bytes))
+            chunk = stream.read().decode("utf-8", errors="replace")
+        matching = [
+            line
+            for line in chunk.splitlines()
+            if f"directory={host_resolved}" in line
+            or f"directory={host_str}" in line
+            or f'"directory":"{host_resolved}"' in line
+            or f'"directory":"{host_str}"' in line
+        ]
+        if not matching:
+            return None
+        out_dir = Path(report_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / "opencode-session-tail.log"
+        out.write_text("\n".join(matching[-tail_lines:]) + "\n", encoding="utf-8")
+        return out
+    except (OSError, PermissionError, ValueError):
+        return None
+
+
 class LiveTracDriver:
     """Bounded installed-CLI driver used by the full-journey fixture."""
 
@@ -658,23 +752,16 @@ class LiveTracDriver:
         report_dir = self.live_root / "report"
         env = live_env(self.install, {"TRAC_AGENT_TIMEOUT": str(self.agent_timeout)})
         env.pop("TRAC_AGENT_CONSOLE_INPUT", None)
-        with suppress(OSError, subprocess.TimeoutExpired):
-            subprocess.run(
-                installed_trac_command(
-                    self.install.isolated_bin,
-                    "report",
-                    "--run-id",
-                    self.run_id,
-                    "--output",
-                    str(report_dir),
-                ),
-                cwd=self.live_root,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=min(60, self.command_timeout),
-                check=False,
-            )
+        report_cmd = installed_trac_command(
+            self.install.isolated_bin,
+            "report",
+            "--run-id",
+            self.run_id,
+            "--output",
+            str(report_dir),
+        )
+        with suppress(OSError, RuntimeError):
+            run_bounded(report_cmd, self.live_root, env, min(60, self.command_timeout))
         return report_dir.resolve()
 
     def metadata(self) -> tuple[str, str]:
@@ -696,6 +783,9 @@ class LiveTracDriver:
 
     def fail(self, message: str):
         report_dir = self.preserve_report()
+        log_tail = capture_opencode_log_tail(
+            self.live_root, report_dir or (self.live_root / "report")
+        )
         report_value = report_dir if report_dir and report_dir.exists() else "not-generated"
         remote, branch = self.metadata()
         print(f"LIVE_E2E_HOST={self.live_root.resolve()}", flush=True)
@@ -705,6 +795,7 @@ class LiveTracDriver:
         raise AssertionError(
             f"{message}; host={self.live_root.resolve()}; report={report_value}; "
             f"install_log={self.install.install_log}; remote={remote}; branch={branch}"
+            + (f"; opencode_session_tail={log_tail}" if log_tail else "")
         )
 
     def _observe_dispatch(self, event: dict, bounds: _Bounds) -> None:
@@ -789,6 +880,32 @@ class LiveTracDriver:
             return 3
         return 1
 
+    def _scenario_budget(self, scenario: str | None) -> int:
+        """The dispatch budget for the given scenario (mirrors --max-dispatches)."""
+        selected = self.scenarios.get(scenario or "triage") if self.scenarios else None
+        return self._dispatch_budget(selected) if selected is not None else 1
+
+    def _effective_command_timeout(
+        self, *, timeout: int | None, agent_timeout: int | None,
+        max_dispatches: int | None, scenario: str | None,
+    ) -> int:
+        """Compute the outer command timeout for a ``trac run`` invocation.
+
+        When a per-call ``agent_timeout`` overrides the default, the outer
+        command timeout must cover ALL dispatch attempts a single ``trac run``
+        may consume (``--max-dispatches`` from the scenario budget; each attempt
+        takes up to ``agent_timeout + pre/post overhead``), unless the caller
+        passed an explicit ``timeout``. Without this, live run049 attempt2 was
+        killed mid-flight at 1500s while ~90% through a 3-attempt run because
+        the old formula only budgeted for one attempt (``agent_timeout + 300``).
+        """
+        effective = timeout or self.command_timeout
+        if agent_timeout and not timeout:
+            budget = (max_dispatches if max_dispatches is not None
+                      else self._scenario_budget(scenario))
+            effective = max(effective, budget * (agent_timeout + 300))
+        return effective
+
     def _command_args(
         self, args: tuple[str, ...], scenario: str | None, console_input: str | None
     ) -> tuple[list[str], str]:
@@ -812,8 +929,7 @@ class LiveTracDriver:
         try:
             return process.communicate(input=stdin, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            with suppress(ProcessLookupError, PermissionError, OSError):
-                os.killpg(process.pid, signal.SIGKILL)
+            _kill_process_tree(process.pid)
             stdout, stderr = process.communicate()
             self.fail(
                 f"trac {' '.join(command_args)} timed out; "
@@ -821,7 +937,7 @@ class LiveTracDriver:
             )
 
     def run(self, *args, stdin=None, console_input=None, scenario=None,
-            timeout=None, agent_timeout=None):
+            timeout=None, agent_timeout=None, max_dispatches=None):
         self.command_count += 1
         if self.command_count > self.max_commands:
             self.fail(f"live command bound exceeded ({self.max_commands})")
@@ -849,13 +965,10 @@ class LiveTracDriver:
             text=True,
             start_new_session=True,
         )
-        # When a per-call agent_timeout overrides the default, the outer command
-        # timeout must accommodate it (agent time + pre/post overhead) unless the
-        # caller passed an explicit `timeout`.
-        effective_command_timeout = timeout or self.command_timeout
-        if agent_timeout and not timeout:
-            effective_command_timeout = max(effective_command_timeout,
-                                            agent_timeout + 300)
+        effective_command_timeout = self._effective_command_timeout(
+            timeout=timeout, agent_timeout=agent_timeout,
+            max_dispatches=max_dispatches, scenario=scenario,
+        )
         stdout, stderr = self._communicate(
             process, command_args, stdin,
             min(effective_command_timeout, remaining),

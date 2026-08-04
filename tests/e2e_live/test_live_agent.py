@@ -12,15 +12,20 @@ autouse fake-forcing fixture is overridden here).
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
+import sys
+import time
 
 import pytest
 
 from tests.e2e_live.harness import (
     LiveInstall,
     LiveTracDriver,
+    capture_opencode_log_tail,
     load_scenarios,
+    run_bounded,
 )
 from tracks.effects.opencode import AGENT_NAME
 
@@ -360,3 +365,165 @@ def test_dispatch_budget_is_three_for_author_and_reviewer_steps(tmp_path):
         assert budget(name) == "1", name
     non_run, _ = driver._command_args(("status",), None, None)
     assert "--max-dispatches" not in non_run
+
+
+# -- 7. command timeout covers all attempts (Fix 1, live run049) ------------
+
+
+def test_command_timeout_covers_all_dispatch_attempts(tmp_path):
+    """Fix 1: when agent_timeout is given, the command timeout must cover ALL
+    dispatch attempts (max_dispatches * (agent_timeout + 300)), not just one.
+    Explicit timeout= wins. live run049 attempt2 was killed mid-flight at 1500s
+    while ~90% through a 3-attempt run because the old formula only budgeted
+    agent_timeout + 300."""
+    driver = _mechanic_driver(tmp_path)
+    base = driver.command_timeout  # _mechanic_driver sets 1
+    # agent_timeout=1200, archer-design-draft (budget=3):
+    # effective = max(1, 3 * (1200 + 300)) = 4500
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=1200, max_dispatches=None,
+        scenario="archer-design-draft",
+    ) == 4500
+    # Explicit timeout= overrides everything (even with agent_timeout set):
+    assert driver._effective_command_timeout(
+        timeout=600, agent_timeout=1200, max_dispatches=None,
+        scenario="archer-design-draft",
+    ) == 600
+    # Explicit max_dispatches wins over scenario budget:
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=1200, max_dispatches=5,
+        scenario="archer-design-draft",
+    ) == 5 * (1200 + 300)
+    # No agent_timeout: formula does not apply, returns command_timeout:
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=None, max_dispatches=None,
+        scenario="archer-design-draft",
+    ) == base
+    # Non-author/review scenario (budget=1):
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=300, max_dispatches=None,
+        scenario="triage",
+    ) == max(base, 1 * (300 + 300))
+
+
+# -- 8. process-tree kill on timeout (Fix 2, live run049 orphan) ------------
+
+
+def test_run_bounded_kills_entire_process_tree_on_timeout(tmp_path):
+    """Fix 2: on timeout, run_bounded must kill the entire process tree,
+    including grandchildren that started their own process group via setsid
+    (live run049: opencode survived trac's kill because setsid put it in a
+    different group). This test forks a grandchild that calls setsid(), then
+    verifies the grandchild is dead after the timeout."""
+    grandchild_pid_file = tmp_path / "grandchild.pid"
+    script = tmp_path / "orphan.py"
+    script.write_text(
+        "import os, sys, time\n"
+        "from pathlib import Path\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"
+        "    os.setsid()\n"
+        f"    Path({str(grandchild_pid_file)!r}).write_text(str(os.getpid()))\n"
+        "    time.sleep(300)\n"
+        "else:\n"
+        "    time.sleep(300)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="timed out"):
+        run_bounded(
+            [sys.executable, str(script)],
+            cwd=tmp_path,
+            env={"PATH": os.environ["PATH"]},
+            timeout=2,
+        )
+    # Wait for the grandchild pid file to appear.
+    for _ in range(20):
+        if grandchild_pid_file.is_file():
+            break
+        time.sleep(0.1)
+    assert grandchild_pid_file.is_file(), "grandchild never started"
+    grandchild_pid = int(grandchild_pid_file.read_text().strip())
+    # Give SIGKILL time to take effect.
+    time.sleep(0.5)
+    alive = False
+    try:
+        os.kill(grandchild_pid, 0)
+        alive = True
+    except (ProcessLookupError, PermissionError):
+        pass
+    assert not alive, (
+        f"grandchild pid={grandchild_pid} survived timeout; "
+        "process tree was not killed"
+    )
+
+
+# -- 9. opencode log-tail helper (Fix 3, failure visibility) ---------------
+
+
+def test_capture_opencode_log_tail_filters_by_host_and_writes_tail(tmp_path):
+    """Fix 3: capture_opencode_log_tail extracts the last ~80 lines matching
+    the host path from the opencode log and writes them to the report dir."""
+    host = tmp_path / "host"
+    host.mkdir()
+    report_dir = tmp_path / "report"
+    log_file = tmp_path / "opencode.log"
+    other_host = tmp_path / "other-host"
+    lines = []
+    for i in range(100):
+        lines.append(
+            f'{{"ts":"2026-08-04T00:00:{i:02d}Z",'
+            f'"directory={host}","msg":"event {i}"}}'
+        )
+    for i in range(10):
+        lines.append(
+            f'{{"ts":"2026-08-04T00:00:{i:02d}Z",'
+            f'"directory={other_host}","msg":"other {i}"}}'
+        )
+    log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    result = capture_opencode_log_tail(host, report_dir, log_path=log_file)
+    assert result is not None
+    assert result == report_dir / "opencode-session-tail.log"
+    written_lines = result.read_text(encoding="utf-8").strip().split("\n")
+    assert len(written_lines) == 80  # last 80 of 100 matching lines
+    assert str(host) in written_lines[-1]
+    assert str(other_host) not in result.read_text(encoding="utf-8")
+
+
+def test_capture_opencode_log_tail_returns_none_when_no_match(tmp_path):
+    """When no log lines match the host path, the helper returns None and
+    does not create the output file."""
+    host = tmp_path / "host"
+    host.mkdir()
+    report_dir = tmp_path / "report"
+    log_file = tmp_path / "opencode.log"
+    log_file.write_text(
+        f'{{"directory={tmp_path / "other"}","msg":"unrelated"}}\n',
+        encoding="utf-8",
+    )
+    result = capture_opencode_log_tail(host, report_dir, log_path=log_file)
+    assert result is None
+    assert not (report_dir / "opencode-session-tail.log").exists()
+
+
+def test_capture_opencode_log_tail_returns_none_when_log_missing(tmp_path):
+    """When the opencode log file does not exist, the helper returns None
+    without raising (best-effort only)."""
+    host = tmp_path / "host"
+    host.mkdir()
+    result = capture_opencode_log_tail(
+        host, tmp_path / "report", log_path=tmp_path / "nonexistent.log"
+    )
+    assert result is None
+
+
+def test_capture_opencode_log_tail_creates_report_dir(tmp_path):
+    """The helper creates the report dir if it does not exist."""
+    host = tmp_path / "host"
+    host.mkdir()
+    report_dir = tmp_path / "report" / "nested"
+    log_file = tmp_path / "opencode.log"
+    log_file.write_text(f'directory={host} event\n', encoding="utf-8")
+    result = capture_opencode_log_tail(host, report_dir, log_path=log_file)
+    assert result is not None
+    assert report_dir.is_dir()
+    assert result.exists()

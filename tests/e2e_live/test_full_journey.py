@@ -14,8 +14,10 @@ Environment variables
 * ``TRAC_LIVE_COMMAND_TIMEOUT`` - outer ``trac run`` subprocess timeout.
   Default 1500s (raised from 360s so a 1200s agent dispatch + overhead is not
   clipped; the per-call ``agent_timeout`` override automatically bumps the
-  command timeout to ``agent_timeout + 300`` when the caller does not pass an
-  explicit ``timeout``).
+  command timeout to ``max_dispatches * (agent_timeout + 300)`` when the
+  caller does not pass an explicit ``timeout``, so a 3-attempt retry budget
+  at 1200s each is not clipped; live run049 was killed mid-flight because the
+  old single-attempt formula only budgeted ``agent_timeout + 300``).
 * ``TRAC_LIVE_TOTAL_TIMEOUT`` - whole-journey deadline. Default 3600s (raised
   from 1800s so the 3-attempt retry budget at 1200s each is not clipped).
 * ``TRAC_LIVE_SKIP_BASELINE=1`` - skip baseline snapshot capture after the
