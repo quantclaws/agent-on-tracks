@@ -2,7 +2,7 @@
 spec_id: SPEC-004
 created: 2026-08-05
 status: draft
-sha:
+sha: 556cd48eeec09bd961e27419178ab7ebf2547fa450403613503d8279df12b598
 ---
 
 # M-TEST 阶段与需求追踪工具 - 需求规格
@@ -149,7 +149,7 @@ EXIT（SM-01.14）：M-TEST 退出门禁 = collection 成功 + 合法 Red + Pris
 
 trace 闭合要求：每条 required AC（integration|e2e 层归属）至少一条长格式 marker `AC-FRXXXX-YY@<version>` 绑定、无无主 marker。`trac check trace` 统一检查所有 AC（不感知调用方阶段），M-TEST 退出门禁自行过滤只看 required AC（integration|e2e 层 AC）--依据 §1 需求描述 Part B 与 flow.md §9.3。trace 不闭合不得退出。
 
-> **Lex:** SM-01 为 normative（'未列出的状态转移即不允许'），但 EXIT 仅列 SM-01.14 一条出边且前置条件为 'trace 闭合 + 测试资产冻结'。FR-0070 明确 'trace 不闭合不得退出'，且 BS-05 排除 Human 门禁。当 trac check trace 在 EXIT 复跑失败（Prism 通过后仍检出无测试绑定的 required AC、无主 marker 或短格式 marker）时，SM-01 未列任何恢复转移，run 既无法退出也无重派路径。既有 M-DESIGN EXIT 门禁失败走 RESPOND 重派 Archer（3 次升级，machine.py _on_verdict_failed L283-290），M-STORY/M-SPEC/M-ACC 走 awaiting_human（L292-296）；M-TEST 无 Human 门禁，需对应程序化恢复路径。建议在 SM-01 增补 EXIT 门禁失败转移（如 EXIT -> WRITE 重派 Shield，复用 <=3 升级预算），或明确 trace 闭合在 EXIT 前已由 PRISM_REVIEW 保证、EXIT 仅为终验且失败按不变量违例处理（需定义该违例的处置路径）。
+> **Lex [RESOLVED]:** SM-01 为 normative（'未列出的状态转移即不允许'），但 EXIT 仅列 SM-01.14 一条出边且前置条件为 'trace 闭合 + 测试资产冻结'。FR-0070 明确 'trace 不闭合不得退出'，且 BS-05 排除 Human 门禁。当 trac check trace 在 EXIT 复跑失败（Prism 通过后仍检出无测试绑定的 required AC、无主 marker 或短格式 marker）时，SM-01 未列任何恢复转移，run 既无法退出也无重派路径。既有 M-DESIGN EXIT 门禁失败走 RESPOND 重派 Archer（3 次升级，machine.py _on_verdict_failed L283-290），M-STORY/M-SPEC/M-ACC 走 awaiting_human（L292-296）；M-TEST 无 Human 门禁，需对应程序化恢复路径。建议在 SM-01 增补 EXIT 门禁失败转移（如 EXIT -> WRITE 重派 Shield，复用 <=3 升级预算），或明确 trace 闭合在 EXIT 前已由 PRISM_REVIEW 保证、EXIT 仅为终验且失败按不变量违例处理（需定义该违例的处置路径）。
 >> **Sage:** 确认成立。trace 闭合（trac check trace）是 EXIT 的程序门禁，与 PRISM_REVIEW 的语义评审（D-29 判据包：忠于 AC + 断言落公开出口 + counterexample 绑定 + 无伪测试）是不同检查--Prism 可放行语义合格的测试合约，但 marker 长格式/绑定完整性/无主 marker 是结构化程序校验，仍可在 EXIT 复跑失败。采纳推荐方案一：SM-01 增补 EXIT -> WRITE（.15），携带 trace findings 重派 Shield 修复 marker/绑定，复用 <=3 升级预算（第 3 次升级 awaiting_human/escalation），与既有 M-DESIGN EXIT 门禁失败走 RESPOND 重派 Archer（machine.py _on_verdict_failed L283-290）同构。FR-0070 已增补恢复路径描述。escalation 不违反 BS-05：BS-05 约束退出不等待 human.review/human.approval，escalation 是反复修复失败后的处置（与 WRITE validate 失败 <=3 升级同构），非退出前置门禁。
 
 trace 闭合复跑失败的程序化恢复（SM-01.15）：trace 闭合与 PRISM_REVIEW 的语义评审（忠于 AC + 断言落公开出口 + counterexample 绑定 + 无伪测试，D-29 判据包）是不同检查--Prism 可放行语义合格的测试合约，但 marker 长格式/绑定完整性/无主 marker 是结构化程序校验，仍可在 EXIT 复跑失败（Shield 用短格式 marker、漏绑 required AC 或产生无主 marker）。EXIT 复跑 `trac check trace` 失败时不退出也不阻塞：Runtime 携带 trace findings 重派 Shield 修复 marker/绑定（EXIT -> WRITE），复用 <=3 升级预算（第 3 次升级 `awaiting_human`/escalation，与 WRITE validate 失败同构）。此恢复与既有 M-DESIGN EXIT 门禁失败走 RESPOND 重派 Archer（machine.py `_on_verdict_failed` L283-290，3 次升级）同构--无 Human 门禁的阶段以程序化重派 + escalation 作为门禁失败处置，而非 awaiting_human(review)。escalation 不违反 BS-05：BS-05 约束的是退出不等待 `human.review`/`human.approval`，escalation 是反复修复失败后的处置（与 WRITE validate 失败的 <=3 升级同构），非退出前置门禁。
