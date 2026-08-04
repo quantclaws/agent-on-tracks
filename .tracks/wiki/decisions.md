@@ -340,6 +340,7 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-23 | 2026-08-04 | live E2E 迭代方法学：基线恢复 + 观测定预算 | 用户裁定：基线快照恢复重跑 M-DESIGN；事件时间戳+opencode 观测定预算，超时只做看门狗 |
 | D-24 | 2026-08-04 | 脚手架物化边界两分（修订 D-22 收窄条款）；GT 措辞去项目特例 | 用户裁定：物化判据两条（collect 依赖文件+声明性守卫配置归 Archer 物理交付；生效副作用归 Runtime）；foundation task 措辞后被 D-25 澄清 |
 | D-25 | 2026-08-04 | foundation task 判据：编写而非执行（补 D-24） | 用户裁定：foundation task=编写任务；运行/安装/绑定归 Runtime，Agent 不 commit/push |
+| D-26 | 2026-08-04 | 没有 story/spec 不做功能；交付物=构建物+完整规格书；模型档位解析延后 | 用户裁定：任何功能必须经 story/spec 流程才实现（本次 IQ→模型解析 `80e284f` 属越序，保留但不再扩展）；产品交付必须含与实际功能逐一对应的完整规格书，最终用户据此知功能与用法；IQ 档位解析未来是 web UI 拖拽功能，CLI 层解析意义有限；当前焦点=v0.4 测试能力（M-TEST）与需求追踪（trace/reach）——测试能力是 tracks 设计哲学的核心保证 |
 | D-26 | 2026-08-04 | Harness 无关原则重申：移除迁移残留 permission 块 | 用户裁定：恢复 harness 无关、无 permission 块；Archer/Prism/Shield 残留块系 louke 迁移遗漏，已移除 |
 | D-27 | 2026-08-04 | 取代索引与相容性解释（漂移审计） | 漂移审计：D-22→D-24、D-24→D-25 取代登记；D-17/D-25 相容解释；D-21 节号勘误；D-22~25 升格正文 |
 | D-28 | 2026-08-04 | 输入 identity/完整性校验归 Runtime，Agent 不自校验 | 用户裁定：形式检查由 Runtime 派发前完成（适用所有 Agent）；Agent 直接使用输入集，verdict 仅传播 identity |

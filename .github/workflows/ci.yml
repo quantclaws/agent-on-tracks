@@ -1,0 +1,115 @@
+# CI workflow skeleton (kind: ci-skeleton).
+#
+# Foundation task (Devon M-IMPL): complete this skeleton into a real GitHub
+# Actions workflow. The stable required check names are defined in
+# architecture.md §4.2; Devon fills in runner setup, cache, and activation
+# steps marked `# TODO(devon):` below. Archer defines the contract (job names,
+# commands, required checks); Devon implements the workflow mechanics.
+#
+# Stable required checks (merge only recognizes CI conclusion):
+#   1. lint        - ruff + flake8 + pylint (pre-commit equivalent)
+#   2. coverage    - coverage report --fail-under=95
+#   3. test        - pytest (unit + integration + e2e fake channel)
+#   4. deliverables - trac check deliverables
+#   5. trace       - trac check trace --json (foundation task: activate after
+#                    Devon implements the subcommand)
+#   6. reach       - trac check reach --json (foundation task: activate after
+#                    Devon implements the subcommand)
+#
+# Live channel (tests/e2e_live/): skip on missing credentials (independent
+# opt-in job), NOT a required check.
+
+name: ci
+
+on:
+  push:
+    branches: [main, 'releases/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install dev deps, run pre-commit equivalent
+      - name: ruff
+        run: |
+          pip install ruff==0.16.0
+          ruff check tracks tests
+      - name: cognitive complexity
+        run: |
+          pip install flake8==7.3.0 flake8-cognitive-complexity==0.1.0
+          flake8 tracks
+      - name: pylint (dup + length + method + locals)
+        run: |
+          pip install pylint==4.0.6
+          pylint --disable=all --enable=R0801,C0302 tracks tests
+          pylint --disable=all --enable=R0915,R0914 tracks
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install -e '.[dev]'
+      - name: coverage
+        run: |
+          pip install -e '.[dev]'
+          coverage run -m pytest -q -m 'not performance'
+          coverage combine
+          coverage report --fail-under=95
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install -e '.[dev]'
+      - name: pytest
+        run: |
+          pip install -e '.[dev]'
+          pytest -q -m 'not performance'
+
+  deliverables:
+    name: deliverables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install -e '.[dev]'
+      - name: trac check deliverables
+        run: |
+          pip install -e '.[dev]'
+          trac check deliverables
+
+  # Foundation task: activate after Devon implements `trac check trace`.
+  # Until then this job is allowed to fail without blocking merge.
+  trace:
+    name: trace
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install -e '.[dev]'
+      - name: trac check trace
+        run: |
+          pip install -e '.[dev]'
+          trac check trace --json || true
+
+  # Foundation task: activate after Devon implements `trac check reach`.
+  # Until then this job is allowed to fail without blocking merge.
+  reach:
+    name: reach
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # TODO(devon): setup-python, install -e '.[dev]'
+      - name: trac check reach
+        run: |
+          pip install -e '.[dev]'
+          trac check reach --json || true
