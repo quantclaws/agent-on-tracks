@@ -37,7 +37,7 @@ sha:
     stub / config / data / ground-truth / ci-skeleton 中命名。
   - 只有本节列出的文件可以被创建；scaffold 内容仅限声明、配置、数据与
     ground truth——不得包含任何业务行为（业务行为属于实现阶段）。
-  - tests/ground_truth/** 为固定例外：ground truth 必须存在且被完整实现。
+  - tests/ground_truth/** 为固定例外：仅当 test-plan §3 判定适用时才创建，且必须是最小可运行的独立验证脚本（真实可运行，非桩，规模与所验证内容相称）；§3 判定不适用时不得创建。
   - 未声明的写盘是审计违规（undeclared_scaffold）：Runtime 拒绝该 outcome 并回滚。
   - 质量守卫的配置文件在这里逐一列出；守卫的安装命令与 CI required check
     写入「交付与运行合同（machine contracts）」，分工见 skill tracks-quality-guards。

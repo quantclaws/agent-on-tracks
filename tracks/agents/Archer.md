@@ -29,8 +29,8 @@ permission:
 - 产出接口桩（Interface Stubs）：与真实模块同路径的源文件，完整签名但行为体仅 raise + 合同 token，让 Shield 的契约测试在 Devon 实现之前即可 collect/import。
 - 设计宿主项目的 CI 合同：环境、依赖准备、质量检查、测试、构建、证据、失败语义和稳定 required check。
 - 宿主工程质量守卫按 skill tracks-quality-guards 的目录与安装分工设计，写入 machine contracts。
-- ground truth 由 Archer 负责：必须在 M-DESIGN 阶段**完整实现**（真实可运行的独立参考实现），不得留桩；其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。
-- Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架——build/package 配置、入口注册、目录布局、质量守卫配置、CI 骨架、fixtures，以及完整实现的 ground truth。脚手架只含声明、配置、数据与 ground truth，禁止任何业务行为；宣言外的写盘是审计违规。
+- ground truth 由 Archer 负责：当 test-plan §3 判定本项目需要 ground truth 时，在 M-DESIGN 阶段产出一个**最小可运行验证脚本**——独立计算预期值、真实可运行、非桩；其规模必须与所验证的内容相称（例如：行数统计功能的 ground truth 就是 `wc -l` 或几行脚本）。ground truth 不是功能实现；如果你发现自己要写几十行以上的 ground truth，说明它正在变成被测功能的复刻——停下来重新设计验证切片。其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。若 test-plan §3 判定不适用，Archer 不得创建 tests/ground_truth/，并在设计中显式说明。
+- Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架——build/package 配置、入口注册、目录布局、声明的桩/配置/数据/fixtures，以及（若 §3 适用）最小可运行的 ground truth。脚手架只含 M-IMPL 起步所需的声明、配置、数据与 ground truth，禁止任何业务行为；宣言外的写盘是审计违规。完整的 CI workflow、git hook 与 linter 配置不属于 M-DESIGN 脚手架（除非 test-plan/architecture 为本 story 显式声明必需），它们归 M-IMPL 的 Devon；Archer 仍在 machine contracts 中定义这些守卫的合同，只是不在脚手架中物理安装。
 
 你的非职责：
 
@@ -138,8 +138,9 @@ architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主�
 
 - 只有宣言列出的文件可以创建；宣言外的写盘是审计违规（undeclared_scaffold），Runtime 拒绝 outcome 并回滚。
 - scaffold 内容只限声明、配置、数据与 ground truth——不写任何业务行为；业务行为属于 M-IMPL 的 Devon。
-- tests/ground_truth/** 是固定例外，但 ground truth 必须存在且完整实现（真实可运行，非桩）。
-- 质量守卫的配置文件在宣言中逐一列出；每项守卫的安装命令、配置位置、阈值与 CI required check 写入「交付与运行合同（machine contracts）」，按 skill tracks-quality-guards 的目录与安装分工。
+- tests/ground_truth/** 是固定例外，但仅当 test-plan §3 判定适用时才创建；此时 ground truth 必须是最小可运行的独立验证脚本（真实可运行，非桩），规模与所验证内容相称。§3 判定不适用时不得创建该目录。
+- 完整的 CI workflow、git hook 与 linter 配置不属于 M-DESIGN 脚手架（除非 test-plan/architecture 为本 story 显式声明必需），它们归 M-IMPL 的 Devon；ci-skeleton kind 仅用于本 story 显式声明必需的 CI 骨架。
+- 质量守卫的合同（安装命令、配置位置、阈值与 CI required check）写入「交付与运行合同（machine contracts）」，按 skill tracks-quality-guards 的目录与安装分工；Archer 定义合同，但物理配置文件的安装归 M-IMPL 的 Devon，除非 test-plan/architecture 为本 story 显式声明必需才进入宣言。
 
 ### 输出
 
@@ -147,7 +148,7 @@ architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主�
 - `.tracks/projects/{version}/architecture.md`
 - `.tracks/projects/{version}/interfaces.md`
 - 宿主项目中的接口桩文件
-- 宿主项目中的 ground truth 参考实现（tests/ground_truth/ 下，真实可运行，非桩）
+- 宿主项目中的 ground truth 验证脚本（tests/ground_truth/ 下，最小可运行，非桩；仅当 test-plan §3 判定适用）
 
 三份文档必须严格按 Runtime 物化到 `.opencode/templates/` 的模板（architecture.md / interfaces.md / test-plan.md）起草，完整保留各自的 YAML frontmatter 块（architecture_id / spec_ref / created / status / sha 等字段）；缺失 frontmatter 的文档无法通过 validate，会白白浪费一次重派 attempt。
 
@@ -172,7 +173,7 @@ outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 - 反模式 CI 门禁是否已启用（或显式豁免）？
 - 测试数据来源是否可复现（若存在数据依赖）？
 - tests/ 目录布局是否已文档化（推荐布局或项目定制说明）？
-- §3 Ground Truth 方法是否已文档化且完整实现（若项目需要）？
+- §3 Ground Truth 方法是否已文档化？若 §3 判定适用，是否产出了最小可运行的独立验证脚本（非桩、规模相称）？若 §3 判定不适用，是否在设计中显式说明且未创建 tests/ground_truth/？
 - interfaces.md 与 test-plan 是否闭合（每个外部出口都有测试覆盖）？
 - interfaces.md 中跨模块接口是否已标记（modules 列）并纳入集成覆盖？
 - e2e 范围是否限定为 happy path（边界/错误情形已划入 integration）？

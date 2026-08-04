@@ -65,7 +65,7 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - 反模式 CI 门禁是否已启用或显式豁免。
 - 测试数据来源是否可复现（若存在数据依赖）。
 - tests/ 目录布局是否已文档化（推荐布局或项目定制说明）。
-- Ground Truth 方法是否已文档化且完整实现（若项目需要）。
+- Ground Truth 方法：若 test-plan §3 判定不适用，是否在设计中显式说明且未创建 tests/ground_truth/；若 §3 判定适用，ground truth 是否已文档化且为最小可运行的独立验证脚本（非桩、规模相称）。
 - interfaces.md 与 test-plan 是否闭合：每个外部出口都有测试覆盖。
 - 跨模块接口是否已标记（modules 列）并纳入集成覆盖。
 - e2e 范围是否限定为 happy path（边界/错误情形划入 integration）。
@@ -85,7 +85,7 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 
 - 引用不存在的命令/工具/路径（把待实现物写成既有事实而未标注 foundation task）。
 - 作者自证的评审清单（文档中出现作者勾选的 review checklist）。
-- ground truth 未完整实现、或被测系统 import、或算法与实现策略雷同。
+- ground truth 与 test-plan §3 判定不符：§3 适用却缺 ground truth、或非最小可运行验证脚本（桩/不可运行/规模失控）、或被测系统 import、或算法与实现策略雷同；§3 不适用却创建了 tests/ground_truth/。
 - 六元组 evidence 列为泛词（无具体命令/可观察输出）。
 - 宿主工程质量守卫缺失或不完整（无 lint/复杂度/pre-commit/覆盖率/CI required check 的 machine contracts）。
 
@@ -93,7 +93,7 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 
 - architecture.md 必须有 Scaffold 宣言；宿主项目中 Archer 实际创建的文件与宣言逐项一致——宣言外文件、或宣言列出但未创建的文件 → REVISE。
 - scaffold 内容只含声明、配置、数据与 ground truth；脚手架中出现任何业务行为（可运行业务逻辑、罐头行为）→ REVISE。
-- ground truth 必须存在且完整实现（真实可运行的独立参考实现，非桩）——与合同真实性中的 ground truth 审核一致。
+- ground truth（当 §3 适用时）必须是最小可运行的独立验证脚本（真实可运行，非桩，规模相称）；§3 不适用时不得存在——与合同真实性中的 ground truth 审核一致。
 - 每项质量守卫在 machine contracts 中有安装命令、配置位置、阈值与执行点（对照 skill tracks-quality-guards 的目录）。
 
 ### 评审维度（M-IMPL）
