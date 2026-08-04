@@ -4,9 +4,9 @@
   "agent": "Lex",
   "kind": "LEX_REVIEW",
   "human_actor": "LiveE2E-Human",
-  "max_new_threads": 1,
+  "max_new_threads": 0,
   "comment_style": "concise",
-  "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
   "expected_responder": "Sage",
-  "required_action": "Re-read Sage's adopted answer, resolve the Lex finding, and pass only when spec.md is semantically ready."
+  "required_finding": null,
+  "required_action": "Re-review spec.md after Sage's RESPOND: verify the revision addresses your finding, resolve your own open finding thread via trac discuss set-status, then pass only when spec.md is genuinely closed. Do not open new findings in this round."
 }

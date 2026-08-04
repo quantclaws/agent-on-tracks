@@ -1,0 +1,12 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-SPEC",
+  "agent": "Lex",
+  "kind": "LEX_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 1,
+  "comment_style": "concise",
+  "expected_responder": "Sage",
+  "required_finding": null,
+  "required_action": "Review spec.md against story.md and the acceptance criteria. If you find a genuine blocking semantic problem, anchor it as exactly one concise finding thread in spec.md via trac discuss start (use a stable marker like [FINDING:SPEC-<TOPIC>]) and return REVISE; if the spec is genuinely closed, pass without opening threads. On re-review after Sage has responded and revised spec.md, verify the revision addresses your finding, resolve your own open finding thread via trac discuss set-status, then pass."
+}

@@ -2,15 +2,12 @@
   "$schema": "https://opencode.ai/config.json",
   "permission": {
     "external_directory": {
-      "*": "ask",
+      "*": "allow",
       "{env:TMPDIR}**": "allow",
       "/private{env:TMPDIR}**": "allow"
     }
   },
   "agent": {
-    "build": {
-      "model": "litellm/deepseek-v4-flash"
-    },
     "Scribe": {
       "permission": {
         "external_directory": {

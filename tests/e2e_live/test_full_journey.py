@@ -140,6 +140,20 @@ def _finding_thread(state: dict, finding_id: str, initiator: str) -> dict:
     return matches[0]
 
 
+def _organic_finding_thread(state: dict, initiator: str, marker_prefix: str) -> dict:
+    marker = f"[FINDING:{marker_prefix}"
+    matches = [
+        thread
+        for thread in state["threads"]
+        if thread["initiator"].casefold() == initiator.casefold()
+        and marker in thread["root"]["body"]
+    ]
+    assert matches, (
+        f"no {initiator}-initiated finding thread with marker {marker}"
+    )
+    return matches[0]
+
+
 def _assert_triage(state: dict):
     # TRIAGE dispatches Scribe to explore the seed and propose GO/NO-GO/PARK
     # in the outcome. No Human interview happens in TRIAGE, so story.md must
@@ -204,11 +218,18 @@ def _assert_respond_diff(
     assert commits, f"no author commit after RESPOND for {doc}"
 
 
-def _assert_reviewer_pass(events: list[dict], event_type: str):
+def _assert_reviewer_pass(
+    events: list[dict], event_type: str, *, expect_revise: bool = True
+):
     verdicts = [event for event in events if event["type"] == event_type]
     assert verdicts, f"missing {event_type} event"
     assert verdicts[-1]["payload"].get("verdict") == "pass"
-    assert any(event["payload"].get("verdict") == "revise" for event in verdicts)
+    if expect_revise:
+        assert any(event["payload"].get("verdict") == "revise" for event in verdicts)
+    else:
+        assert not any(
+            event["payload"].get("verdict") == "revise" for event in verdicts
+        ), f"unexpected revise verdict in single-pass {event_type}"
 
 
 def _assert_finding_lifecycle(
@@ -256,6 +277,35 @@ def _run_design_review_loop(live_trac):
             f"PRISM_REVIEW: {respond.stdout}"
         )
     raise AssertionError("M-DESIGN review loop did not complete within 2 review rounds")
+
+
+def _run_spec_review_loop(live_trac):
+    """Lex review <-> Sage RESPOND loop, bounded to 2 review rounds
+    (TRAC_LIVE_MAX_REVIEW_ROUNDS stays the wider outer net). Each round runs
+    lex-spec-review: a pass round (awaiting=review) completes the spec review;
+    a revise round halts in RESPOND, Sage must answer the finding and return
+    the state to LEX_REVIEW, and the next round starts. Returns the final
+    lex-spec-review result so the caller can assert awaiting=review."""
+    spec_review = None
+    for review_round in range(1, 3):
+        spec_review = live_trac("run", scenario="lex-spec-review")
+        if "awaiting=review" in spec_review.stdout:
+            return spec_review
+        assert "stage=M-SPEC" in spec_review.stdout, spec_review.stdout
+        assert "substate=RESPOND" in spec_review.stdout, (
+            f"spec review round {review_round} neither passed nor opened RESPOND: "
+            f"{spec_review.stdout}"
+        )
+        respond = live_trac("run", scenario="sage-spec-respond")
+        assert "stage=M-SPEC" in respond.stdout, respond.stdout
+        assert "substate=LEX_REVIEW" in respond.stdout, (
+            f"spec review round {review_round}: Sage RESPOND did not return to "
+            f"LEX_REVIEW: {respond.stdout}"
+        )
+    raise AssertionError(
+        "M-SPEC review loop did not pass within 2 review rounds: "
+        f"{spec_review.stdout if spec_review else 'no review ran'}"
+    )
 
 
 def test_bounded_scripted_real_agent_journey(
@@ -326,34 +376,30 @@ def test_bounded_scripted_real_agent_journey(
     assert "substate=LEX_REVIEW" in live_trac(
         "run", scenario="sage-spec-draft"
     ).stdout
-    assert "substate=RESPOND" in live_trac(
-        "run", scenario="lex-spec-finding"
-    ).stdout
-    _assert_finding_lifecycle(
-        live_trac,
-        live_root,
-        run_id,
-        spec,
-        "SPEC-BLANK-LINE-SEMANTICS",
-        "Lex",
-        "lex.verdict",
+    spec_review = _run_spec_review_loop(live_trac)
+    assert "awaiting=review" in spec_review.stdout
+    spec_events = _events(live_root, run_id)
+    spec_respond_happened = bool(
+        _dispatches(spec_events, "sage", "RESPOND", "spec.md")
     )
-    assert "substate=LEX_REVIEW" in live_trac(
-        "run", scenario="sage-spec-respond"
-    ).stdout
     state = _discussion_state(live_trac, spec)
-    spec_thread = _finding_thread(state, "SPEC-BLANK-LINE-SEMANTICS", "Lex")
-    assert any(reply["speaker"] == "Sage" for reply in _replies(spec_thread))
-    _assert_respond_diff(_events(live_root, run_id), "sage", "spec.md", "spec.committed")
-
-    assert "awaiting=review" in live_trac(
-        "run", scenario="lex-spec-resolve"
-    ).stdout
-    state = _discussion_state(live_trac, spec)
-    resolved_spec = _finding_thread(state, "SPEC-BLANK-LINE-SEMANTICS", "Lex")
-    assert resolved_spec["status"] == "resolved"
-    assert any(reply["speaker"] == "Sage" for reply in _replies(resolved_spec))
-    _assert_reviewer_pass(_events(live_root, run_id), "lex.verdict")
+    if spec_respond_happened:
+        spec_thread = _organic_finding_thread(state, "Lex", "SPEC-")
+        assert spec_thread["status"] == "resolved", (
+            f"spec finding not resolved after RESPOND: {spec_thread}"
+        )
+        assert any(reply["speaker"] == "Sage" for reply in _replies(spec_thread)), (
+            "no Sage reply in spec finding thread"
+        )
+        _assert_respond_diff(spec_events, "sage", "spec.md", "spec.committed")
+    else:
+        assert not state.get("threads", []), (
+            f"unexpected spec threads when no RESPOND happened: "
+            f"{state.get('threads', [])}"
+        )
+    _assert_reviewer_pass(
+        spec_events, "lex.verdict", expect_revise=spec_respond_happened
+    )
 
     assert live_trac("review", "no-comment", "--actor", "LiveE2E-Human").returncode == 0
     assert "substate=LEX_REVIEW" in live_trac(

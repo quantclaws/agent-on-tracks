@@ -6,9 +6,7 @@
   "human_actor": "LiveE2E-Human",
   "max_new_threads": 1,
   "comment_style": "concise",
-  "allowed_product_slots": ["blank_lines"],
-  "required_finding": "[FINDING:SPEC-BLANK-LINE-SEMANTICS]",
-  "finding_condition": "The spec must omit blank-line counting semantics so Lex can identify this blocker.",
   "expected_responder": "Sage",
-  "required_action": "Do not silently add the blank-line policy in this draft; keep ordinary technical choices reasonable."
+  "required_finding": null,
+  "required_action": "Draft spec.md from the approved story.md. ADOPT every product decision already established in story.md - explicitly, blank-line semantics and the delivery surface are decided; do not reopen them. Write a complete, closed spec with no planted gaps; keep ordinary technical choices reasonable. Do not open any discussion thread about decided matters."
 }

@@ -39,7 +39,7 @@ REQUIRED_SCENARIOS = {
     "scribe-story-respond",
     "sage-story-resolve",
     "sage-spec-draft",
-    "lex-spec-finding",
+    "lex-spec-review",
     "sage-spec-respond",
     "lex-spec-resolve",
     "sage-acceptance-draft",

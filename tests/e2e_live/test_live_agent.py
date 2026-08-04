@@ -353,7 +353,7 @@ def test_dispatch_budget_is_three_for_author_and_reviewer_steps(tmp_path):
     for name in ("scribe-story-draft", "sage-spec-draft", "sage-acceptance-draft",
                  "archer-design-draft", "scribe-story-respond", "sage-spec-respond",
                  "archer-design-respond", "sage-story-finding", "sage-story-resolve",
-                 "lex-spec-finding", "lex-spec-resolve", "lex-acceptance-review",
+                 "lex-spec-review", "lex-spec-resolve", "lex-acceptance-review",
                  "prism-design-review"):
         assert budget(name) == "3", name
     for name in ("triage", "approval-final"):
