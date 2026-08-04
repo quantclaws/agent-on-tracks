@@ -12,6 +12,9 @@ sha:
   - 组织：spec 中每条有效 FR/NFR 一个二级章节（标题与 spec 一致），其下每条 AC 一个三级标题
     `### AC-FRXXXX-YY`（四位 FR 编号 + 两位序号；YY 在条目内从 01 递增，不跨条目复用）。
   - 同步：FR 删除时对应章节一并删除（历史经 git 追溯），已用过的 YY 序号不再复用。
+    删除的 ID 留 tombstone（`<!-- tombstone: AC-FRXXXX-YY -->`）。
+  - 跨版本引用（FR-0130）：本版本内引用保持短格式；跨版本引用且存在歧义时附加版本限定
+    `AC-FRXXXX-YY@<version>`（如 `AC-FR0010-01@v0.1`）。限定语法 opt-in，parser 不强制。
   - 内容约束：每条 AC 只写可从系统外部观察、可断言的通过条件（暴露的 API/CLI/UI 行为、
     结构化日志、落盘数据），不引用内部状态或实现细节；成功路径与边界/异常路径分开立条。
    - 决策记录在 inline-discussion 中；只有未 resolved 的 inline-discussion 才能阻塞评审退出。

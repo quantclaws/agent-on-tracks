@@ -15,6 +15,8 @@ from pathlib import Path
 
 from tracks import paths, templating
 from tracks.baseline import baseline_summary, revision_digest
+from tracks.checks.reach import check_reach_file
+from tracks.checks.trace import check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
@@ -537,18 +539,142 @@ def cmd_discuss(repo: Path, *args) -> int:
     return run_discuss(repo, list(args))
 
 
+def _latest_version(home: Path) -> str | None:
+    """Return the latest version directory name under .tracks/projects/."""
+    projects = paths.projects_dir(home)
+    if not projects.exists():
+        return None
+    versions = sorted(
+        d.name for d in projects.iterdir() if d.is_dir() and d.name.startswith("v")
+    )
+    return versions[-1] if versions else None
+
+
+def _load_baseline(home: Path) -> dict | None:
+    """Read .tracks/legacy-baseline.json if it exists (FR-0100)."""
+    import json as _json
+    bp = home / "legacy-baseline.json"
+    if bp.exists():
+        return _json.loads(bp.read_text(encoding="utf-8"))
+    return None
+
+
+def _parse_check_trace_args(args: list[str]) -> tuple[bool, str | None] | None:
+    """Parse `trace [--json] [--version <ver>]`. Returns (json, version) or None."""
+    use_json = False
+    version = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--json":
+            use_json = True
+            i += 1
+        elif args[i] == "--version" and i + 1 < len(args):
+            version = args[i + 1]
+            i += 2
+        else:
+            return None
+    return use_json, version
+
+
+def _parse_check_reach_args(args: list[str]) -> tuple[bool, list[str]] | None:
+    """Parse `reach [--json] [--entry <module>]...`. Returns (json, entries)."""
+    use_json = False
+    entries: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--json":
+            use_json = True
+            i += 1
+        elif args[i] == "--entry" and i + 1 < len(args):
+            entries.append(args[i + 1])
+            i += 2
+        else:
+            return None
+    return use_json, entries
+
+
+def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
+    """Handle `trac check trace [--json] [--version <ver>]`."""
+    parsed = _parse_check_trace_args(rest)
+    if parsed is None:
+        return _err("usage: trac check trace [--json] [--version <ver>]")
+    use_json, version = parsed
+    home = paths.tracks_home(repo)
+    if version is None:
+        version = _latest_version(home)
+    if version is None:
+        return _err("no .tracks/projects/v* version directories found")
+    vdir = paths.version_dir(home, version)
+    if not vdir.exists():
+        return _err(f"version directory not found: {vdir}")
+    tests_dir = repo / "tests"
+    baseline = _load_baseline(home)
+    report = check_trace_full_file(vdir, tests_dir, baseline)
+    if use_json:
+        print(json.dumps({
+            "status": report.status,
+            "hard_errors": list(report.hard_errors),
+            "warnings": list(report.warnings),
+        }, ensure_ascii=False))
+    else:
+        for e in report.hard_errors:
+            print(e)
+        for w in report.warnings:
+            print(f"warning: {w}")
+        if not report.hard_errors:
+            print("trace ok")
+    return 1 if report.status == "fail" else 0
+
+
+def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
+    """Handle `trac check reach [--json] [--entry <module>]...`."""
+    parsed = _parse_check_reach_args(rest)
+    if parsed is None:
+        return _err("usage: trac check reach [--json] [--entry <module>]...")
+    use_json, entries = parsed
+    home = paths.tracks_home(repo)
+    baseline = _load_baseline(home)
+    report = check_reach_file(repo, baseline, entries)
+    if use_json:
+        print(json.dumps({
+            "status": report.status,
+            "islands": list(report.islands),
+            "entrypoints": list(report.entrypoints),
+            "errors": list(report.errors),
+        }, ensure_ascii=False))
+    else:
+        for e in report.errors:
+            print(e, file=sys.stderr)
+        for island in report.islands:
+            print(f"island module: {island}")
+        if not report.islands and not report.errors:
+            print("reach ok")
+    return 1 if report.status == "fail" else 0
+
+
 def cmd_check(repo: Path, *args) -> int:
-    # FR-040/FR-130 / AC-1303: `trac check deliverables` — pre-commit/CI gate
-    # (not Runtime): deliverable existence + frontmatter version. Non-zero on fail.
-    if args != ("deliverables",):
-        return _err("usage: trac check deliverables")
-    issues = check_deliverables()
-    if issues:
-        for issue in issues:
-            print(issue, file=sys.stderr)
-        return 1
-    print("deliverables ok")
-    return 0
+    # FR-040/FR-130 / AC-1303: `trac check deliverables` - pre-commit/CI gate
+    # FR-0080: `trac check trace [--json] [--version <ver>]`
+    # FR-0090: `trac check reach [--json] [--entry <module>]...`
+    args = list(args)
+    if not args:
+        return _err("usage: trac check <deliverables|trace|reach>")
+    sub, rest = args[0], args[1:]
+    if sub == "deliverables":
+        if rest:
+            return _err("usage: trac check deliverables")
+        issues = check_deliverables()
+        if issues:
+            for issue in issues:
+                print(issue, file=sys.stderr)
+            return 1
+        print("deliverables ok")
+        return 0
+    if sub == "trace":
+        return _cmd_check_trace(repo, rest)
+    if sub == "reach":
+        return _cmd_check_reach(repo, rest)
+    return _err("usage: trac check <deliverables|trace|reach>")
 
 
 USAGE = (
@@ -557,7 +683,7 @@ USAGE = (
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|status|replay <run-id>|validate --file <path>"
     "|report --run-id <run-id> --output <dir> [--format md|html]"
-    "|discuss <query|start|reply|edit|set-status> ...|check deliverables"
+    "|discuss <query|start|reply|edit|set-status> ...|check <deliverables|trace|reach>"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
@@ -574,7 +700,7 @@ _COMMANDS = {
     "report": (cmd_report, None),
     "validate": (cmd_validate, 2),
     "discuss": (cmd_discuss, None),
-    "check": (cmd_check, 1),
+    "check": (cmd_check, None),
 }
 
 

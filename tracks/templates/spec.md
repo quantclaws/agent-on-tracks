@@ -12,7 +12,9 @@ sha:
     不复制正文；验收标准写入 acceptance.md（AC-FRXXXX-YY）。
   - 条目格式：`### FR-XXXX {标题}`（FR/NFR 大写、四位补零），下接字段行，再写需求描述。
   - ID 唯一且不复用：新条目取下一个未用序号，可插入文档任意位置；废弃/被拒绝的需求直接删除条目
-    （历史经 git 追溯），已用过的编号不再复用。
+    （历史经 git 追溯），已用过的编号不再复用。删除的 ID 留 tombstone（`<!-- tombstone: FR-XXXX -->`）。
+  - 跨版本引用（FR-0130）：本版本内引用保持短格式；跨版本引用且存在歧义时附加版本限定
+    `AC-FRXXXX-YY@<version>`（如 `AC-FR0010-01@v0.1`）。限定语法 opt-in，parser 不强制。
   - 范围上限：有效 FR 不超过 30 条（NFR 不计），超限会被 scope 门禁退回拆分。
   - 决策记录在 inline-discussion 中；只有未 resolved 的 inline-discussion 才能阻塞评审退出。
   - 例外才写：可测性有保留时加一行 `- **可测性保留**：{理由}`；无保留不写。

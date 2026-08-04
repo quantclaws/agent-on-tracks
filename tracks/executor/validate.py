@@ -84,6 +84,16 @@ _BQ_GUIDANCE = re.compile(r"^\s*>+\s*" + _BOLD_MARKER)
 # the AC id and a layer token share one (non-comment, non-fenced) line.
 _LAYER = re.compile(r"\b(unit|integration|e2e)\b", re.I)
 
+# FR-0130 BS-XX heading grammar (story.md): two-digit, unique ID.
+_BS_ITEM_HEAD = re.compile(r"^###\s+(BS-\d+)\b(.*)$", re.IGNORECASE)
+_BS_ITEM_OK = re.compile(r"^### BS-\d{2} \S")
+
+# FR-0140 IF- identifier pattern (interfaces.md §5 registry).
+_IF_ID = re.compile(r"IF-[A-Z]+-\d{3}")
+
+# FR-0130 cross-version qualified reference: AC-FRXXXX-YY@vX.Y
+_VERSION_QUALIFIED = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@(v\d+\.\d+)")
+
 # run045 contract realism: canonical `trac` subcommand set — keep in sync with
 # the USAGE constant in tracks/cli/main.py (tests/unit/test_validate.py pins
 # the parity). A design doc invoking `trac <token>` with any other token
@@ -255,14 +265,40 @@ def check_trace_file(path: Path) -> list:
                        path.read_text(encoding="utf-8"))
 
 
-def check_design_trace(acc_text: str, plan_text: str) -> list:
-    """BS-06 design trace: every AC id in acceptance.md must appear in
-    test-plan.md with a test-layer attribution (unit/integration/e2e) on the
-    same line. Returns the complete orphan list with ``line:N`` messages (the
-    acceptance line of the AC; no short-circuit); [] = pass. HTML comments and
-    fenced code are ignored on the plan side. No I/O."""
-    _, acs = _acc_scan(acc_text)
-    visible: list = []
+def _check_if_line(
+    ac_id: str, line_no: int, ln: str, if_registry: set[str],
+) -> list[str]:
+    """Check IF- attribution on a single test-plan line."""
+    if not _LAYER.search(ln):
+        return []
+    lower = ln.lower()
+    if "integration" not in lower and "e2e" not in lower:
+        return []
+    if_ids = _IF_ID.findall(ln)
+    if not if_ids:
+        return [f"line:{line_no} {ac_id} integration/e2e AC missing IF- attribution"]
+    return [
+        f"line:{line_no} {if_id} not defined in interfaces.md §5"
+        for if_id in if_ids if if_id not in if_registry
+    ]
+
+
+def _check_if_attribution(
+    ac_id: str,
+    line_no: int,
+    ac_lines: list[str],
+    if_registry: set[str],
+) -> list[str]:
+    """FR-0140: validate IF- attribution for integration/e2e ACs."""
+    issues: list[str] = []
+    for ln in ac_lines:
+        issues += _check_if_line(ac_id, line_no, ln, if_registry)
+    return issues
+
+
+def _visible_plan_lines(plan_text: str) -> list[str]:
+    """Strip HTML comments and fenced code from plan text."""
+    visible: list[str] = []
     fence = False
     for line in _strip_comments(plan_text).splitlines():
         if line.lstrip().startswith("```"):
@@ -270,23 +306,69 @@ def check_design_trace(acc_text: str, plan_text: str) -> list:
             continue
         if not fence:
             visible.append(line)
-    return [
-        f"line:{line_no} {ac_id} has no layer attribution "
-        "(unit/integration/e2e) in test-plan.md"
-        for ac_id, _ref, line_no, _section in acs
-        if not any(ac_id in ln and _LAYER.search(ln) for ln in visible)
-    ]
+    return visible
+
+
+def _check_ac_layer_and_if(
+    ac_id: str,
+    line_no: int,
+    visible: list[str],
+    if_registry: set[str] | None,
+) -> list[str]:
+    """Check layer attribution and IF- attribution for one AC."""
+    ac_lines = [ln for ln in visible if ac_id in ln]
+    if not any(_LAYER.search(ln) for ln in ac_lines):
+        return [
+            f"line:{line_no} {ac_id} has no layer attribution "
+            "(unit/integration/e2e) in test-plan.md"
+        ]
+    if if_registry is not None:
+        return _check_if_attribution(ac_id, line_no, ac_lines, if_registry)
+    return []
+
+
+def check_design_trace(
+    acc_text: str, plan_text: str, if_registry: set[str] | None = None,
+) -> list:
+    """BS-06 design trace: every AC id in acceptance.md must appear in
+    test-plan.md with a test-layer attribution (unit/integration/e2e) on the
+    same line. Returns the complete orphan list with ``line:N`` messages (the
+    acceptance line of the AC; no short-circuit); [] = pass. HTML comments and
+    fenced code are ignored on the plan side. No I/O.
+
+    FR-0140 extension: when ``if_registry`` is provided, also validates that
+    every integration/e2e AC has an IF- attribution and that each IF- identifier
+    is registered in interfaces.md §5."""
+    _, acs = _acc_scan(acc_text)
+    visible = _visible_plan_lines(plan_text)
+    issues: list = []
+    for ac_id, _ref, line_no, _section in acs:
+        issues += _check_ac_layer_and_if(ac_id, line_no, visible, if_registry)
+    return issues
+
+
+def _extract_if_registry(interfaces_text: str) -> set[str]:
+    """FR-0140: extract IF- identifiers from interfaces.md §5 table."""
+    return set(_IF_ID.findall(interfaces_text))
 
 
 def check_design_trace_file(path: Path) -> list:
     """BS-06 trace for an on-disk test-plan doc (reads the sibling
     acceptance.md). Used by validate_document (checks=["trace"]) and
-    trac validate."""
+    trac validate. FR-0140: also reads sibling interfaces.md for IF- registry."""
     acc_path = path.parent / "acceptance.md"
     if not acc_path.exists():
         return ["line:1 test-plan validate requires acceptance.md in same dir"]
-    return check_design_trace(acc_path.read_text(encoding="utf-8"),
-                              path.read_text(encoding="utf-8"))
+    if_path = path.parent / "interfaces.md"
+    if_registry: set[str] | None = None
+    if if_path.exists():
+        registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
+        if_registry = registry if registry else None
+    return check_design_trace(
+        acc_path.read_text(encoding="utf-8"),
+        path.read_text(encoding="utf-8"),
+        if_registry,
+    )
 
 
 def check_spec_items(text: str) -> list:
@@ -312,6 +394,55 @@ def check_spec_items(text: str) -> list:
         if (item_id.startswith("FR-")
                 and not any(ln.startswith("- **交付入口**：") for ln in block)):
             issues.append(f"line:{line_no} {item_id} missing '- **交付入口**：' field")
+    return issues
+
+
+def _story_bs_items(text: str) -> list:
+    """``(line_no, heading, block_lines)`` per BS-XX item in story.md; fenced
+    code skipped, any heading (level <= 3) that is not itself an item closes
+    the open block."""
+    items: list = []
+    cur = None
+    fence = False
+    for i, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        if _BS_ITEM_HEAD.match(line):
+            cur = (i, line, [])
+            items.append(cur)
+        elif (m := _HEADING.match(line)) and len(m.group(1)) <= 3:
+            cur = None
+        elif cur:
+            cur[2].append(line)
+    return items
+
+
+def check_story_items(text: str) -> list:
+    """FR-0130 story item lint - BS-XX grammar enforcement.
+
+    Checks per item: strict heading form (``### BS-XX 标题``, two-digit,
+    uppercase), unique ID. ID immutability/tombstone rules are enforced by the
+    trace tool (FR-0080); this validates the heading grammar. Returns
+    ``line:N`` messages.
+    """
+    issues: list = []
+    seen: dict = {}
+    for line_no, heading, _block in _story_bs_items(text):
+        item_id = _BS_ITEM_HEAD.match(heading).group(1).upper()
+        if not _BS_ITEM_OK.match(heading):
+            issues.append(
+                f"line:{line_no} bad item heading {heading!r}"
+                " (expect '### BS-XX 标题', uppercase, 2-digit)"
+            )
+        if item_id in seen:
+            issues.append(
+                f"line:{line_no} duplicate id {item_id}"
+                f" (first at line:{seen[item_id]})"
+            )
+        seen.setdefault(item_id, line_no)
     return issues
 
 
@@ -435,6 +566,8 @@ def check_template(path: Path) -> list:
         issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
     if kind == "spec":
         issues += check_spec_items(text)  # true file line numbers (full text scan)
+    if kind == "story":  # FR-0130: BS-XX grammar enforcement
+        issues += check_story_items(text)
     if kind in _DESIGN_KINDS:  # run044: blockquote = discussion thread only
         issues += _guidance_blockquote_issues(text)
         # run045: no fabricated `trac` calls (full text -> true file line numbers)

@@ -58,9 +58,11 @@ This test plan only declares test methods that are **observable from outside the
 ### 1.4. Safeguards (CI checks + PR process)
 
 1. **AC mandatory tracing**
-   - The first line of each test function's docstring/comment must contain `AC-FRXXXX-YY` (4-digit FR number + 2-digit AC number)
+   - The first line of each test function's docstring/comment must contain `AC-FRXXXX-YY@v0.4` (long-format marker, FR-0080/FR-0130).
    - CI scans `tests/`, verifying: each test references at least one AC; each AC is referenced by at least one test
    - Any check failure blocks merge
+   - 变绿条件（FR-0140）：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识），
+     供 M-IMPL task 变绿子集划分。IF- 标识取值来自 interfaces.md §5 注册表。
 
 2. **Assertion taboos** (CI static checks, violations block merge)
    - No `assert True` / `assert 1` / `assert <obj> is not None` as the sole assertion
