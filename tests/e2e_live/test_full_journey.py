@@ -653,11 +653,13 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
 
 
 def _find_baseline_for_sha(version: str) -> Path | None:
-    """Locate a baseline whose manifest tracks SHA matches the current HEAD.
+    """Locate a baseline for the current HEAD.
 
-    Lookup order: ``TRAC_LIVE_BASELINE_DIR`` (explicit path) else newest
-    ``baselines/baseline-*`` whose manifest SHA matches. On SHA mismatch the
-    caller decides (via ``TRAC_LIVE_FORCE_BASELINE=1``) whether to use it."""
+    Lookup order: ``TRAC_LIVE_BASELINE_DIR`` (explicit path) else the newest
+    ``baselines/baseline-*`` with a readable manifest. An exact SHA match is
+    preferred; on SHA mismatch the caller decides (via
+    ``TRAC_LIVE_FORCE_BASELINE=1``) whether to use it. Candidates whose
+    manifest is missing or unreadable are skipped in both passes."""
     explicit = os.environ.get("TRAC_LIVE_BASELINE_DIR", "").strip()
     if explicit:
         path = Path(explicit)
@@ -674,9 +676,16 @@ def _find_baseline_for_sha(version: str) -> Path | None:
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
+    # First pass: prefer an exact SHA match among readable manifests.
     for path in candidates:
         manifest = _read_manifest(path)
         if manifest and manifest.get("tracks_sha") == sha:
+            return path
+    # Fallback: newest candidate with a readable manifest; the caller
+    # (test_journey_from_req_approved_baseline) handles SHA mismatch via
+    # TRAC_LIVE_FORCE_BASELINE.
+    for path in candidates:
+        if _read_manifest(path) is not None:
             return path
     return None
 
