@@ -352,6 +352,41 @@ def test_archer_design_draft_incomplete_trio_fails(
     assert "test-plan.md" in out["self_report"]  # the missing doc is named
 
 
+def test_archer_respond_partial_docset_passes(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """run061 regression: RESPOND revises only the docs that carry findings -
+    the reviewer may have flagged a subset of the trio. A RESPOND that produces
+    a real diff on ANY doc of the set satisfies the author-must-produce
+    contract; the no_target_diff rule must not fire just because an unflagged
+    doc (here test-plan.md, skipped by edit_docs_partial) has no diff."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)  # committed baseline: RESPOND revises, not drafts
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_partial")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "RESPOND", None, None,
+                                 assignment=design_assignment("RESPOND"))
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert "architecture.md" in out["diff_ref"]  # the two revised docs appear
+    assert "interfaces.md" in out["diff_ref"]     # in the captured diff; the
+    assert "test-plan.md" not in out["diff_ref"]  # unedited one does not
+
+
+def test_archer_respond_no_change_still_fails(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """True no-change RESPOND (zero diffs across the whole set) still classifies
+    as no_target_diff - the lenient RESPOND rule only accepts a PARTIAL doc-set,
+    never an empty one."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    out = backend(host_repo).act("archer", "RESPOND", None, None,
+                                 assignment=design_assignment("RESPOND"))
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "no_target_diff"
+
+
 @pytest.mark.parametrize("substate", ["DRAFT", "RESPOND"])
 def test_archer_author_undeclared_scaffold_write_fails(
         substate, fake_opencode, design_vdir, host_repo, monkeypatch):

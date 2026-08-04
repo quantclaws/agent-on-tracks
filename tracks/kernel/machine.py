@@ -336,6 +336,9 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     _reset_doc(s)
     s.design_validated = 0
     s.design_committed = 0
+    # Fresh 3-attempt budget for RESPOND (flow.md §8.3: 重派 Archer <=3 per
+    # RESPOND round); DRAFT/EXIT failures must not consume the RESPOND budget.
+    s.current_attempt = 0
 
 
 def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -347,6 +350,9 @@ def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     s.substate = "RESPOND"
     _reset_doc(s)
+    # Fresh 3-attempt budget for RESPOND (flow.md: 重派 <=3 per RESPOND round);
+    # DRAFT failures must not consume the RESPOND budget.
+    s.current_attempt = 0
     if len(owners) == 1:
         # RESPOND must re-commit to re-enter review; a uniquely owned verdict
         # event (sage.verdict -> story) names the doc itself.
@@ -372,6 +378,9 @@ def _on_human_review(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     _reset_doc(s)
     s.review_diff_ref = p.get("diff_ref")
+    # Fresh 3-attempt budget for the new RESPOND round triggered by the human
+    # comment; prior DRAFT/RESPOND failures must not consume it.
+    s.current_attempt = 0
     _uncommit(s)
 
 

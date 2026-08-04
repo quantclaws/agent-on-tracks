@@ -169,7 +169,7 @@ def test_prism_revise_enters_respond_and_new_round():
 
 
 def test_exit_gate_fail_falls_back_to_respond_not_human():
-    # BS-05: even the EXIT gate never awaits a human in M-DESIGN — a failed
+    # BS-05: even the EXIT gate never awaits a human in M-DESIGN - a failed
     # exit validate falls back to RESPOND; the shared attempt budget escalates.
     def fail(n):
         return ("verdict.failed", {"check": "discussion_ready",
@@ -183,6 +183,50 @@ def test_exit_gate_fail_falls_back_to_respond_not_human():
                          DISPATCHED, PRODUCED, fail(3))
     assert escalated.status == "awaiting_human"
     assert escalated.awaiting == "escalation"
+
+
+def test_draft_failure_does_not_consume_respond_budget():
+    # run061 regression: a DRAFT validate failure consumed an attempt from the
+    # shared counter; when Prism later revised, RESPOND inherited the stale
+    # count and escalated after only 2 RESPOND failures (3 total with the
+    # DRAFT one). flow.md §8.3 mandates a fresh 重派 Archer <=3 budget per
+    # RESPOND round, so prism.verdict=revise resets current_attempt.
+    def draft_fail(n):
+        return ("verdict.failed", {"check": "template", "reason": "bad",
+                                   "attempt": n})
+    def respond_fail():
+        return ("outcome.received", {"role": "archer", "status": "failed",
+                                     "failure_class": "no_target_diff",
+                                     "self_report": "no diff"})
+    # DRAFT attempt 1 fails validation, attempt 2 succeeds and reaches Prism.
+    base = [DISPATCHED, PRODUCED, draft_fail(1),
+            DISPATCHED, PRODUCED, PASSED, PASSED, PASSED]
+    base += [("design.committed", {"doc": doc, "commit_sha": "c", "final": False})
+             for doc in DESIGN_DOCS]
+    base += [PRISM_DISPATCH, PRISM_PRODUCED,
+             ("prism.verdict", {"verdict": "revise"}),
+             ("review.round_started", {"stage": "M-DESIGN", "round": 2})]
+    s = state_of(*base)
+    assert s.substate == "RESPOND" and s.current_attempt == 0, (
+        "prism.verdict=revise must reset the attempt budget for RESPOND; "
+        f"got current_attempt={s.current_attempt}"
+    )
+    # Two RESPOND failures must NOT escalate (the 3rd is the budget).
+    after_two = state_of(*base, DISPATCHED, respond_fail(),
+                         DISPATCHED, respond_fail())
+    assert after_two.status == "active", (
+        "two RESPOND failures after a DRAFT failure must not escalate; "
+        f"got status={after_two.status}"
+    )
+    assert after_two.current_attempt == 2
+    # The third RESPOND failure escalates (the documented <=3 budget).
+    after_three = state_of(*base, DISPATCHED, respond_fail(),
+                           DISPATCHED, respond_fail(),
+                           DISPATCHED, respond_fail())
+    assert after_three.status == "awaiting_human"
+    assert after_three.awaiting == "escalation"
+
+
 
 
 def test_prism_review_failed_outcome_redispatch_carries_evidence():

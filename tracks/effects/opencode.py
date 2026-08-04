@@ -180,7 +180,7 @@ class OpencodeBackend:
         author_assignment: bool, reviewer_assignment: bool,
     ) -> dict:
         diff_ref = _capture_target_diffs(
-            auditor, doc_paths, author_assignment, proc)
+            auditor, doc_paths, substate, proc)
         guard = self._write_guard_result(
             auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
             diff_ref, proc, prompt, console_input,
@@ -666,25 +666,42 @@ def _text(value) -> str:
 
 
 def _capture_target_diffs(auditor: Auditor, doc_paths: list[Path],
-                          author_assignment: bool,
+                          substate: str,
                           proc: subprocess.CompletedProcess) -> str | None:
     """Capture the controlled diff of every target doc (the authoritative
     product) BEFORE any audit rollback can touch it, then enforce the
     author-must-produce contract on the captured set."""
     diffs = [auditor.target_diff(path) for path in doc_paths]
-    _require_target_diff(doc_paths, diffs, author_assignment, proc)
+    _require_target_diff(doc_paths, diffs, substate, proc)
     return "\n".join(diff for diff in diffs if diff) or None
 
 
 def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
-                         author_assignment: bool,
+                         substate: str,
                          proc: subprocess.CompletedProcess) -> None:
-    """An author (DRAFT/RESPOND) dispatch must leave a controlled diff on EVERY
-    doc of its target set; exit 0 with no product is classified, never trusted."""
+    """An author dispatch must leave a controlled diff; exit 0 with no product
+    is classified, never trusted.
+
+    DRAFT must produce a diff on EVERY doc of its target set (a draft that
+    skips a doc has no product for it). RESPOND revises only the docs that
+    carry findings - the reviewer may have flagged a subset, so a diff on ANY
+    doc of the set satisfies the contract; a true no-change RESPOND (zero
+    diffs across the whole set) still fails."""
+    if substate not in ("DRAFT", "RESPOND"):
+        return
+    if substate == "RESPOND":
+        # Any diff in the set is a real revision; only zero diffs across the
+        # whole set is the no-product failure.
+        if not doc_paths or not any(d is not None for d in diffs):
+            raise OpencodeError(
+                "no_target_diff",
+                "exit 0 but the target doc-set has no diff",
+                exit_code=0, stderr=proc.stderr)
+        return
     missing = [str(path)
                for path, diff in zip(doc_paths, diffs, strict=True)
                if diff is None]
-    if author_assignment and (not doc_paths or missing):
+    if not doc_paths or missing:
         raise OpencodeError(
             "no_target_diff",
             "exit 0 but the target doc-set has no diff"
