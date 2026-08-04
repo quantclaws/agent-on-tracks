@@ -28,7 +28,7 @@ sha:
 
 ### 1a. 新事件类型（EVENT_TYPES 追加）
 
-> modules 列标注实现/消费该事件的模块（跨模块接口 = 2+ 模块，Shield 须有 integration 覆盖）。
+**modules** 列标注实现/消费该事件的模块（跨模块接口 = 2+ 模块，Shield 须有 integration 覆盖）。
 
 | 事件类型 | payload | 发出者 | modules | 备注 |
 |:---|:---|:---|:---|:---|
@@ -71,7 +71,10 @@ diagnose_classification: str | None = None  # DIAGNOSE 路由分类
 
 ### 1d. checks/trace.py 纯函数（FR-0080）
 
-> modules: checks/trace.py（实现）、cli/main.py（消费）、executor/executor.py（消费，M-TEST EXIT 门禁）--跨模块接口，须有 integration 覆盖。
+> **Prism:** BLOCKER-001 [severity=blocker, artifact=interfaces.md, anchor=§1d/§1f/§1g/§1h 行74/123/154/182, 关联=M-DESIGN 退出收敛门禁]：interfaces.md 四处跨模块接口标注使用 `> modules: ...` blockquote 格式（§1d 行74、§1f 行123、§1g 行154、§1h 行182）。inline-discussion parser 将 `> modules:` 解析为 speaker='modules' 的 open 根评论（当前 T-001~T-004），导致 `trac discuss query --check-ready` 报 is_ready=false、ready_blockers=[T-001,T-002,T-003,T-004]，阻塞 M-DESIGN 退出收敛校验。这些 blockquote 是 Archer 的跨模块接口标注（非真实讨论），但格式 `> <ASCII-identifier>:` 与讨论协议 `> Speaker: body` 冲突（tracks-discuz SKILL：`> Name: body` Name 为 ASCII identifier 即被识别为线程）。Prism 无法自行 resolve（set-status resolved 要求 operator==initiator='modules'，冒充违反协议）。预期修订：Archer 将四处 `> modules:` 标注重排为 parser 不识别的格式——去掉 `>` 改为普通段落（如 `**modules**: ...`），或加说明标签前缀（`> Note: modules: ...`，parser 不识别 Note/Warning/Tip 说明标签），清除 4 个 false-positive open 线程，使 is_ready=true。
+>> **Archer:** 已修订：将 interfaces.md §1d/§1f/§1g/§1h 四处 `> modules:` blockquote 标注（及 §1a 表前说明 `> modules 列...`）全部重排为普通段落 `**modules**: ...`（去掉 `>` 前缀）。重排后 `trac discuss query` 已确认原 T-002~T-005 四个 false-positive open 线程消失，仅剩本线程 T-001 待 Prism resolve。重排不改变跨模块接口标注的语义内容（modules 列仍标注实现/消费方，Shield 仍据此识别 integration 覆盖义务），只调整格式使 parser 不再误识别为讨论线程。
+
+**modules**: checks/trace.py（实现）、cli/main.py（消费）、executor/executor.py（消费，M-TEST EXIT 门禁）--跨模块接口，须有 integration 覆盖。
 
 ```python
 @dataclass(frozen=True)
@@ -120,7 +123,7 @@ check: Literal[...,  # 既有：schema/scope/trace/scope_overflow/format/templat
 
 ### 1f. checks/reach.py 纯函数（FR-0090）
 
-> modules: checks/reach.py（实现）、cli/main.py（消费）--跨模块接口，须有 integration 覆盖。
+**modules**: checks/reach.py（实现）、cli/main.py（消费）--跨模块接口，须有 integration 覆盖。
 
 ```python
 @dataclass(frozen=True)
@@ -151,7 +154,7 @@ def check_reach_file(
 
 ### 1g. Red 分类封闭集（FR-0050）
 
-> modules: executor/executor.py（实现 `_do_run_tests` 内分类）、kernel/machine.py（消费 `red.validated` 事件）--跨模块接口，须有 integration 覆盖。
+**modules**: executor/executor.py（实现 `_do_run_tests` 内分类）、kernel/machine.py（消费 `red.validated` 事件）--跨模块接口，须有 integration 覆盖。
 
 ```python
 RedClass = Literal[
@@ -179,7 +182,7 @@ def classify_red(
 
 ### 1h. 存量基线 schema（FR-0100）
 
-> modules: checks/trace.py + checks/reach.py（读取）、cli/main.py（CLI 传递）、`.tracks/legacy-baseline.json`（存储）--跨模块接口，须有 integration 覆盖。
+**modules**: checks/trace.py + checks/reach.py（读取）、cli/main.py（CLI 传递）、`.tracks/legacy-baseline.json`（存储）--跨模块接口，须有 integration 覆盖。
 
 ```python
 # .tracks/legacy-baseline.json（由 trac init adoption 声明，Archer 设计 schema）
