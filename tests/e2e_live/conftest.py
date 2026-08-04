@@ -171,7 +171,7 @@ def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
         live_scenarios,
         timeout_env("TRAC_AGENT_TIMEOUT", 120),
         timeout_env("TRAC_LIVE_COMMAND_TIMEOUT", 1500),
-        timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 3600),
+        timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 10800),
         timeout_env("TRAC_LIVE_MAX_COMMANDS", 48),
         timeout_env("TRAC_LIVE_MAX_STAGE_DISPATCHES", 12),
         timeout_env("TRAC_LIVE_MAX_REVIEW_DISPATCHES", 6),

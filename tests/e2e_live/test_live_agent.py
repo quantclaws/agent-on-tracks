@@ -384,6 +384,12 @@ def test_command_timeout_covers_all_dispatch_attempts(tmp_path):
         timeout=None, agent_timeout=1200, max_dispatches=None,
         scenario="archer-design-draft",
     ) == 4500
+    # archer-design-draft now uses agent_timeout=1800 in the journey (run050):
+    # effective = max(1, 3 * (1800 + 300)) = 6300
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=1800, max_dispatches=None,
+        scenario="archer-design-draft",
+    ) == 6300
     # Explicit timeout= overrides everything (even with agent_timeout set):
     assert driver._effective_command_timeout(
         timeout=600, agent_timeout=1200, max_dispatches=None,

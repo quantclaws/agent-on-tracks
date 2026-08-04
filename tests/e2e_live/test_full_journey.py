@@ -8,18 +8,20 @@ Environment variables
   disposable GitHub repo for the full/resume journeys' issue-creation and
   remote-ref assertions.
 * ``TRAC_AGENT_TIMEOUT`` - per-dispatch agent (opencode subprocess) timeout.
-  Default 120s; M-DESIGN DRAFT/RESPOND dispatches override to 1200s via the
+  Default 120s; M-DESIGN DRAFT/RESPOND dispatches override to 1800s via the
   ``agent_timeout`` per-call parameter (the design trio + scaffold + quality
-  guard installation is too big for 600s; live run048 timed out twice at 600s).
+  guard installation is too big for 1200s; live run049 attempt2 was ~90% done
+  when killed at 1200s and run050 attempt1 hit the 1200s kernel timeout
+  exactly).
 * ``TRAC_LIVE_COMMAND_TIMEOUT`` - outer ``trac run`` subprocess timeout.
-  Default 1500s (raised from 360s so a 1200s agent dispatch + overhead is not
+  Default 1500s (raised from 360s so a 1800s agent dispatch + overhead is not
   clipped; the per-call ``agent_timeout`` override automatically bumps the
   command timeout to ``max_dispatches * (agent_timeout + 300)`` when the
   caller does not pass an explicit ``timeout``, so a 3-attempt retry budget
-  at 1200s each is not clipped; live run049 was killed mid-flight because the
+  at 1800s each is not clipped; live run049 was killed mid-flight because the
   old single-attempt formula only budgeted ``agent_timeout + 300``).
-* ``TRAC_LIVE_TOTAL_TIMEOUT`` - whole-journey deadline. Default 3600s (raised
-  from 1800s so the 3-attempt retry budget at 1200s each is not clipped).
+* ``TRAC_LIVE_TOTAL_TIMEOUT`` - whole-journey deadline. Default 10800s (raised
+  from 3600s so the 3-attempt retry budget at 1800s each is not clipped).
 * ``TRAC_LIVE_SKIP_BASELINE=1`` - skip baseline snapshot capture after the
   M-REQ-APPROVAL checkpoint in the full journey.
 * ``TRAC_LIVE_BASELINE_DIR`` - explicit baseline directory for the resume test.
@@ -299,8 +301,9 @@ def _run_design_review_loop(live_trac):
     PRISM_REVIEW, and the next round starts.
 
     Archer DRAFT/RESPOND carry the design trio + scaffold + quality-guard
-    installation - too big for the 600s default, so agent_timeout=1200 is
-    plumbed per call (live run048 timed out twice at 600s). Prism review
+    installation - too big for the 1200s budget, so agent_timeout=1800 is
+    plumbed per call (live run049 attempt2 was ~90% done when killed at 1200s;
+    run050 attempt1 hit the 1200s kernel timeout exactly). Prism review
     steps stay at the default timeout.
     """
     for review_round in range(1, 3):
@@ -313,7 +316,7 @@ def _run_design_review_loop(live_trac):
             f"{review.stdout}"
         )
         respond = live_trac(
-            "run", scenario="archer-design-respond", agent_timeout=1200
+            "run", scenario="archer-design-respond", agent_timeout=1800
         )
         assert "stage=M-DESIGN" in respond.stdout, respond.stdout
         assert "substate=PRISM_REVIEW" in respond.stdout, (
@@ -484,7 +487,7 @@ def _phase_design(
     # waits in PRISM_REVIEW. Prism may revise (anchored findings) and Archer
     # RESPONDs until a pass round completes the run at the M-IMPL boundary
     # after the M-DESIGN EXIT gate.
-    design = live_trac("run", scenario="archer-design-draft", agent_timeout=1200)
+    design = live_trac("run", scenario="archer-design-draft", agent_timeout=1800)
     assert "stage=M-DESIGN" in design.stdout
     assert "substate=PRISM_REVIEW" in design.stdout
     design_dir = live_root / ".tracks" / "projects" / version
