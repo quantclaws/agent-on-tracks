@@ -27,6 +27,7 @@ from tests.e2e_live.harness import (
     load_scenarios,
     run_bounded,
 )
+from tests.e2e_live.test_full_journey import _design_agent_timeout
 from tracks.effects.opencode import AGENT_NAME
 
 # -- helpers ---------------------------------------------------------------
@@ -410,6 +411,44 @@ def test_command_timeout_covers_all_dispatch_attempts(tmp_path):
         timeout=None, agent_timeout=300, max_dispatches=None,
         scenario="triage",
     ) == max(base, 1 * (300 + 300))
+
+
+def test_command_timeout_resolves_design_agent_timeout_env_to_formula(monkeypatch, tmp_path):
+    """TRAC_LIVE_DESIGN_AGENT_TIMEOUT=3600 must resolve both design-step
+    scenarios' command timeout to 3×(3600+300)=11700, mirroring how the journey
+    plumbs the env-derived ``agent_timeout`` into ``_effective_command_timeout``.
+    The kernel/opencode hard timeout still applies as a watchdog above this
+    outer command timeout."""
+    monkeypatch.setenv("TRAC_LIVE_DESIGN_AGENT_TIMEOUT", "3600")
+    driver = _mechanic_driver(tmp_path)
+    agent_timeout = _design_agent_timeout()
+    assert agent_timeout == 3600
+    for scenario in ("archer-design-draft", "archer-design-respond"):
+        assert driver._effective_command_timeout(
+            timeout=None, agent_timeout=agent_timeout, max_dispatches=None,
+            scenario=scenario,
+        ) == 3 * (3600 + 300) == 11700
+
+
+# -- 7b. TRAC_LIVE_DESIGN_AGENT_TIMEOUT helper contract ----------------------
+
+
+def test_design_agent_timeout_defaults_to_1800_when_env_unset(monkeypatch):
+    monkeypatch.delenv("TRAC_LIVE_DESIGN_AGENT_TIMEOUT", raising=False)
+    assert _design_agent_timeout() == 1800
+
+
+@pytest.mark.parametrize("value", ["3600", "7200", "1800", "2400"])
+def test_design_agent_timeout_reads_env_override(monkeypatch, value):
+    monkeypatch.setenv("TRAC_LIVE_DESIGN_AGENT_TIMEOUT", value)
+    assert _design_agent_timeout() == int(value)
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "0", "-1", "1.5", "12s"])
+def test_design_agent_timeout_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("TRAC_LIVE_DESIGN_AGENT_TIMEOUT", value)
+    with pytest.raises(ValueError, match="TRAC_LIVE_DESIGN_AGENT_TIMEOUT"):
+        _design_agent_timeout()
 
 
 # -- 8. process-tree kill on timeout (Fix 2, live run049 orphan) ------------

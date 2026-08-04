@@ -13,6 +13,14 @@ Environment variables
   guard installation is too big for 1200s; live run049 attempt2 was ~90% done
   when killed at 1200s and run050 attempt1 hit the 1200s kernel timeout
   exactly).
+* ``TRAC_LIVE_DESIGN_AGENT_TIMEOUT`` - env override for the M-DESIGN
+  DRAFT/RESPOND ``agent_timeout`` (default 1800s; read at call time so
+  observation runs can raise the cap without code changes). Non-integer or
+  <=0 values raise ``ValueError``. Observation mode: set a generous cap
+  (e.g. 3600) while monitoring opencode logs/events to calibrate the real
+  budget; the kernel/opencode hard timeout still applies as a watchdog
+  above the outer command timeout
+  (``max_dispatches × (agent_timeout + 300)``).
 * ``TRAC_LIVE_COMMAND_TIMEOUT`` - outer ``trac run`` subprocess timeout.
   Default 1500s (raised from 360s so a 1800s agent dispatch + overhead is not
   clipped; the per-call ``agent_timeout`` override automatically bumps the
@@ -58,6 +66,29 @@ from tests.e2e_live.harness import (
 )
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import project as machine_project
+
+
+def _design_agent_timeout() -> int:
+    """Resolve the per-call agent timeout (seconds) for the M-DESIGN DRAFT and
+    RESPOND steps. Reads ``TRAC_LIVE_DESIGN_AGENT_TIMEOUT`` at call time so
+    observation runs can raise the cap without code changes; defaults to 1800s.
+    Non-integer or non-positive values raise ``ValueError`` so a typo fails
+    fast instead of silently falling back to the default."""
+    raw = os.environ.get("TRAC_LIVE_DESIGN_AGENT_TIMEOUT", "").strip()
+    if not raw:
+        return 1800
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be an integer number of "
+            f"seconds, got {raw!r}"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be > 0, got {value}"
+        )
+    return value
 
 
 def test_live_scenarios_are_external_test_only_inputs():
@@ -316,7 +347,8 @@ def _run_design_review_loop(live_trac):
             f"{review.stdout}"
         )
         respond = live_trac(
-            "run", scenario="archer-design-respond", agent_timeout=1800
+            "run", scenario="archer-design-respond",
+            agent_timeout=_design_agent_timeout(),
         )
         assert "stage=M-DESIGN" in respond.stdout, respond.stdout
         assert "substate=PRISM_REVIEW" in respond.stdout, (
@@ -487,7 +519,10 @@ def _phase_design(
     # waits in PRISM_REVIEW. Prism may revise (anchored findings) and Archer
     # RESPONDs until a pass round completes the run at the M-IMPL boundary
     # after the M-DESIGN EXIT gate.
-    design = live_trac("run", scenario="archer-design-draft", agent_timeout=1800)
+    design = live_trac(
+        "run", scenario="archer-design-draft",
+        agent_timeout=_design_agent_timeout(),
+    )
     assert "stage=M-DESIGN" in design.stdout
     assert "substate=PRISM_REVIEW" in design.stdout
     design_dir = live_root / ".tracks" / "projects" / version
