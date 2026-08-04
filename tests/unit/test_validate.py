@@ -5,13 +5,15 @@ sections against its kind template; returns line:N issues ([] = valid). Isolated
 here: wiring into validate_document(checks=[...]) / outcome / exit-gate is a
 later increment.
 """
+import re
 from pathlib import Path
 
 from tracks import templating
-from tracks.cli.main import cmd_validate
+from tracks.cli.main import USAGE, cmd_validate
 from tracks.discuss.parser import parse_threads
 from tracks.effects.fake import FakeBackend
 from tracks.executor.validate import (
+    TRAC_SUBCOMMANDS,
     _design_guidance_markers,
     check_design_trace,
     check_spec_items,
@@ -271,3 +273,57 @@ def test_fake_design_trio_has_no_blockquotes(tmp_path):
         assert not [ln for ln in text.splitlines()
                     if ln.lstrip().startswith(">")], name
         assert check_template(vdir / name) == [], name
+
+
+# -- run045: design docs must not invoke fabricated `trac` subcommands --------
+# Fabricated tooling (`trac agent archer ci-scan`) passed all gates in live
+# run045; the template check now rejects any `trac <token>` outside the real
+# CLI surface.
+
+def test_trac_subcommands_pin_parity_with_cli_usage():
+    # parity pin: the command names spelled in tracks/cli/main.py USAGE must
+    # equal TRAC_SUBCOMMANDS exactly — a new CLI command forces a set update.
+    names = {
+        m.group(1)
+        for part in re.sub(r"<[^>]*>", "",
+                           USAGE.removeprefix("usage: trac ")).split("|")
+        if (m := re.match(r"([a-z][a-z-]*)(?=\s|$)", part.strip()))
+    }
+    assert names == set(TRAC_SUBCOMMANDS)
+
+
+def test_design_doc_unknown_trac_subcommand_fails(tmp_path):
+    # the invocation hides inside a code fence; it is still line-located
+    p = _design_doc(tmp_path, "test-plan", "test-plan.md")
+    text = p.read_text(encoding="utf-8")
+    p.write_text(text + "\n```bash\ntrac agent archer ci-scan\n```\n",
+                 encoding="utf-8")
+    line_no = text.count("\n") + 3
+    issues = check_template(p)
+    assert any(i.startswith(f"line:{line_no} ")
+               and "unknown trac subcommand 'agent'" in i for i in issues)
+
+
+def test_design_doc_known_trac_subcommands_pass(tmp_path):
+    p = _design_doc(tmp_path, "architecture", "architecture.md")
+    p.write_text(p.read_text(encoding="utf-8")
+                 + "\n自检用 `trac validate --file <path>`；"
+                   "讨论用 `trac discuss start`。\n", encoding="utf-8")
+    assert check_template(p) == []
+
+
+def test_unknown_trac_subcommand_scoped_to_design_kinds(tmp_path):
+    # the guard covers architecture/interfaces/test-plan only
+    p = _story(tmp_path)
+    p.write_text(p.read_text(encoding="utf-8") + "\ntrac frobnicate now\n",
+                 encoding="utf-8")
+    assert check_template(p) == []
+
+
+def test_validate_document_fails_on_unknown_trac_subcommand(tmp_path):
+    p = _design_doc(tmp_path, "interfaces", "interfaces.md")
+    p.write_text(p.read_text(encoding="utf-8") + "\ntrac archive push\n",
+                 encoding="utf-8")
+    failure = validate_document(p, "interfaces.md", ["template"])
+    assert failure is not None and failure[0] == "template"
+    assert "unknown trac subcommand 'archive'" in failure[1]

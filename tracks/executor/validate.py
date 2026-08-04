@@ -19,7 +19,10 @@ in test-plan.md. Unlike the acceptance trace it is checks-list gated. Design
 docs reserve blockquotes for inline-discussion threads, so the design-kinds
 ``template`` check also rejects leftover template-guidance blockquotes
 (live run044): the marker set is derived from the design templates' guidance
-comments (single source).
+comments (single source). Design docs additionally reject fabricated ``trac``
+invocations (live run045): every ``trac <token>`` in the doc text (code
+fences included) must name a subcommand that actually exists
+(``TRAC_SUBCOMMANDS``, kept in parity with tracks/cli/main.py USAGE).
 
 Spec item grammar (kept in sync with templates/spec.md; the template itself
 carries no format prose — this module IS the format contract): every item is
@@ -80,6 +83,17 @@ _BQ_GUIDANCE = re.compile(r"^\s*>+\s*" + _BOLD_MARKER)
 # BS-06 design trace: a test-plan line attributes a layer to an AC when both
 # the AC id and a layer token share one (non-comment, non-fenced) line.
 _LAYER = re.compile(r"\b(unit|integration|e2e)\b", re.I)
+
+# run045 contract realism: canonical `trac` subcommand set — keep in sync with
+# the USAGE constant in tracks/cli/main.py (tests/unit/test_validate.py pins
+# the parity). A design doc invoking `trac <token>` with any other token
+# fabricates tooling (run045 finding: `trac agent archer ci-scan` never
+# existed); to-be-created tooling must be marked as a foundation task instead.
+TRAC_SUBCOMMANDS = frozenset({
+    "approve", "check", "discuss", "init", "replay", "report", "return",
+    "review", "run", "start", "status", "triage", "validate",
+})
+_TRAC_CALL = re.compile(r"\btrac\s+([A-Za-z][A-Za-z0-9_-]*)")
 
 
 def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | None:
@@ -366,6 +380,28 @@ def _guidance_blockquote_issues(text: str) -> list:
     return issues
 
 
+def _trac_command_issues(text: str) -> list:
+    """run045 fabricated-command guard: every ``trac <token>`` invocation in
+    the doc text (code fences included — fabricated commands hide there) must
+    name a subcommand from ``TRAC_SUBCOMMANDS``. HTML comments are ignored.
+    Returns ``line:N`` messages (true file line numbers)."""
+    hidden: set = set()
+    for m in _HTML_COMMENT.finditer(text):
+        first = text.count("\n", 0, m.start()) + 1
+        hidden.update(range(first, first + m.group(0).count("\n") + 1))
+    issues: list = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if line_no in hidden:
+            continue
+        for token in _TRAC_CALL.findall(line):
+            if token not in TRAC_SUBCOMMANDS:
+                issues.append(
+                    f"line:{line_no} unknown trac subcommand {token!r} "
+                    "(no such command; mark to-be-created tooling as a "
+                    "foundation task)")
+    return issues
+
+
 def check_template(path: Path) -> list:
     """FR-150 'template' check.
 
@@ -373,8 +409,9 @@ def check_template(path: Path) -> list:
     template (HTML comments ignored); spec docs additionally pass the item lint
     (``check_spec_items``). Acceptance level-2 sections vary per FR/NFR, so only
     frontmatter is name-checked there. Design trio docs additionally reject
-    leftover template-guidance blockquotes (run044). Returns ``line:N ...``
-    messages; [] = valid.
+    leftover template-guidance blockquotes (run044) and fabricated ``trac``
+    subcommand invocations (run045). Returns ``line:N ...`` messages;
+    [] = valid.
     """
     kind = _KIND_BY_FILE.get(path.name)
     if kind is None:
@@ -400,4 +437,6 @@ def check_template(path: Path) -> list:
         issues += check_spec_items(text)  # true file line numbers (full text scan)
     if kind in _DESIGN_KINDS:  # run044: blockquote = discussion thread only
         issues += _guidance_blockquote_issues(text)
+        # run045: no fabricated `trac` calls (full text -> true file line numbers)
+        issues += _trac_command_issues(text)
     return issues

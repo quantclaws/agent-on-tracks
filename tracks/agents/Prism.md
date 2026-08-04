@@ -58,6 +58,18 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - ground truth 独立于被测 validator；不得 mock 核心后声称 integration PASS。
 - 若项目产出可安装构建物：E2E 必须通过真实安装路径执行（与最终用户一致的安装命令、隔离安装目标、非源码树工作目录），不得从源码导入或 editable install 冒充（test-plan §2.5）。首版设计必须声明，后续版本仅安装方式变更时修订；未声明即 REVISE。
 
+**评审清单（逐项对照工件核验，不采信作者自述）**：
+
+- 测试策略是否覆盖主要风险：对照 acceptance 的风险面核验 test-plan 的策略与层分配。
+- 每条 AC 是否可追溯到测试层与 interfaces 出口（不止是 ID 出现）。
+- 反模式 CI 门禁是否已启用或显式豁免。
+- 测试数据来源是否可复现（若存在数据依赖）。
+- tests/ 目录布局是否已文档化（推荐布局或项目定制说明）。
+- Ground Truth 方法是否已文档化且完整实现（若项目需要）。
+- interfaces.md 与 test-plan 是否闭合：每个外部出口都有测试覆盖。
+- 跨模块接口是否已标记（modules 列）并纳入集成覆盖。
+- e2e 范围是否限定为 happy path（边界/错误情形划入 integration）。
+
 **架构与接口**：
 
 - 模块边界清晰，依赖方向合理，技术选型有取舍记录。
@@ -68,6 +80,14 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 
 - Devon/Shield 无需再选择 schema、adapter、版本源、build、runner、CI DAG 或失败语义。
 - 不把 Spec 外产品决定伪装为架构；真正产品 gap 必须锚定 FR/AC 并 `REVISE`。
+
+**合同真实性（以下任一情形直接 REVISE）**：
+
+- 引用不存在的命令/工具/路径（把待实现物写成既有事实而未标注 foundation task）。
+- 作者自证的评审清单（文档中出现作者勾选的 review checklist）。
+- ground truth 未完整实现、或被测系统 import、或算法与实现策略雷同。
+- 六元组 evidence 列为泛词（无具体命令/可观察输出）。
+- 宿主工程质量守卫缺失或不完整（无 lint/复杂度/pre-commit/覆盖率/CI required check 的 machine contracts）。
 
 ### 评审维度（M-IMPL）
 

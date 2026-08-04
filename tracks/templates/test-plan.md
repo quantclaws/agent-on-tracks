@@ -284,30 +284,16 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ## 7. CI Gate
 
-```bash
-trac agent archer ci-scan \
-  --acceptance .tracks/projects/{version}/acceptance.md \
-  --tests tests/
-```
+<!-- Template guidance (delete before delivery):
+  Name here the host-repo CI required checks designed in architecture.md's CI
+  contract, together with their validation items and failure semantics. Only
+  cite commands/tools that exist; anything to be created first must be
+  explicitly marked as to-be-implemented (listed as a Devon foundation task).
+-->
 
-Validation items:
-- AC reference closure (each AC ≥1 test, each test ≥1 AC)
-- Anti-pattern static scan (see §1.3)
-- Coverage ≥95%
-- §3.2 ground truth isolation (if ground_truth/ is enabled)
-
----
-
-## 8. Judge Review Checklist
-
-- [ ] Test strategy covers main risks
-- [ ] Each AC can be traced back to test code
-- [ ] test-plan does not maintain specific test lists / coverage matrices
-- [ ] Anti-pattern CI gate is enabled or explicitly exempted
-- [ ] Test data source is reproducible (if there are data dependencies)
-- [ ] tests/ layout is documented (using recommended layout or explaining project customization)
-- [ ] §3 Ground Truth method is documented (if the project needs it)
-- [ ] §6 External dependency layered testing is documented (if the project has external dependencies)
-- [ ] interfaces.md is closed with test-plan (every external outlet has test coverage)
-- [ ] Cross-module interfaces in interfaces.md are marked (modules column) and scoped for integration coverage
-- [ ] e2e scope is limited to happy paths (edge/error/boundary cases routed to integration tests)
+- **Required check**: {host CI check names from architecture.md's CI contract}
+- **Validation items**:
+  - AC reference closure (each AC ≥1 test, each test ≥1 AC)
+  - Anti-pattern static scan (see §1.3)
+  - Coverage ≥95%
+  - §3.2 ground truth isolation (if ground_truth/ is enabled)
