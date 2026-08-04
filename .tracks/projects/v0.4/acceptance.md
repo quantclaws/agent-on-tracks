@@ -2,7 +2,7 @@
 acc_id: ACC-004
 created: 2026-08-05
 status: draft
-sha:
+sha: c12dce683a9862968cee65f9498cab35809f84bb3c3792e5dfcaca392aba576b
 ---
 
 # M-TEST 阶段与需求追踪工具 - 验收标准
