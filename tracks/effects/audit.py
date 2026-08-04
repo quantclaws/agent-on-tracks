@@ -88,6 +88,29 @@ class Auditor:
                         check=False).stdout or None
         return None
 
+    def untracked_under(self, prefix: str) -> set[str]:
+        """Untracked files under ``prefix``. A directory-level status entry
+        (``dir/``, emitted when everything under it is untracked) hides
+        per-file detail; audits that judge individual paths need the file
+        granularity this provides."""
+        out = _git(self.repo, "ls-files", "--others", "--exclude-standard",
+                   "--", prefix).stdout
+        return {line.strip().strip('"')
+                for line in out.splitlines() if line.strip()}
+
+    def file_level(self, paths: set[str]) -> set[str]:
+        """``paths`` at FILE granularity: every directory-level entry (``dir/``)
+        is expanded into the untracked files it contains, so audits judge
+        files, not collapsed directories (a dir that expands to nothing is
+        kept as-is)."""
+        files: set[str] = set()
+        for path in paths:
+            if path.endswith("/"):
+                files |= self.untracked_under(path) or {path}
+            else:
+                files.add(path)
+        return files
+
     def audit(self, baseline: set[str]) -> str | None:
         """Over-reach evidence (run-produced changes outside allowed) or None.
 
@@ -104,13 +127,18 @@ class Auditor:
             return "over-reach: " + ", ".join(over)
         return None
 
-    def rollback_agent_changes(self, baseline: set[str]) -> list[str]:
+    def rollback_agent_changes(self, baseline: set[str],
+                               new_changes: set[str] | None = None) -> list[str]:
         """Revert only run-produced over-reach paths; never Human's baseline.
 
         Returns the paths rolled back. Tracked modifications are restored from
-        HEAD; untracked new files are removed.
+        HEAD; untracked new files are removed. ``new_changes`` — when given,
+        the authoritative run-produced changed-file set (file granularity, as
+        computed by the batch B scaffold audit); otherwise derived from the
+        baseline difference.
         """
-        new_changes = self.modified_files() - baseline
+        if new_changes is None:
+            new_changes = self.modified_files() - baseline
         over = [p for p in new_changes if p not in self.allowed]
         rolled: list[str] = []
         tracked = _git(self.repo, "ls-files").stdout.splitlines()

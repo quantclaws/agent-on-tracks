@@ -568,7 +568,10 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
             "assignment": {"kind": sub, "template_kind": None,
                            "templates": [doc.removesuffix(".md")
                                          for doc in DESIGN_DOCS],
-                           "skill": "tracks-discuz", "skill_version": "0.2",
+                           # batch B: multi-skill — the design doc-set plus the
+                           # host guard-stack catalog (single-skill shape stays
+                           # for every other stage, see _dispatch).
+                           "skills": ["tracks-discuz", "tracks-quality-guards"],
                            "docs": list(DESIGN_DOCS)},
         })
         if s.last_failure:

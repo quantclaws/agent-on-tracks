@@ -74,6 +74,20 @@ def test_design_dispatch_assignments_carry_doc_set():
     assert "templates" not in review.params["assignment"]  # reviewers draft nothing
 
 
+def test_design_author_assignment_carries_both_skills():
+    # batch B: the M-DESIGN author assignment is multi-skill — the discussion
+    # protocol plus the host guard-stack catalog; the single-skill shape stays
+    # the contract everywhere else (reviewer included).
+    draft = decide(state_of())
+    assignment = draft.params["assignment"]
+    assert assignment["skills"] == ["tracks-discuz", "tracks-quality-guards"]
+    assert "skill" not in assignment
+    review = decide(state_of(*draft_cycle()))
+    review_assignment = review.params["assignment"]
+    assert review_assignment["skill"] == "tracks-discuz"
+    assert "skills" not in review_assignment
+
+
 def test_validate_walks_the_trio_with_template_and_trace():
     items = [DISPATCHED, PRODUCED]
     for doc in DESIGN_DOCS:

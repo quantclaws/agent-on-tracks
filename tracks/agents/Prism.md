@@ -89,6 +89,13 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - 六元组 evidence 列为泛词（无具体命令/可观察输出）。
 - 宿主工程质量守卫缺失或不完整（无 lint/复杂度/pre-commit/覆盖率/CI required check 的 machine contracts）。
 
+**脚手架（Scaffold 宣言）**：
+
+- architecture.md 必须有 Scaffold 宣言；宿主项目中 Archer 实际创建的文件与宣言逐项一致——宣言外文件、或宣言列出但未创建的文件 → REVISE。
+- scaffold 内容只含声明、配置、数据与 ground truth；脚手架中出现任何业务行为（可运行业务逻辑、罐头行为）→ REVISE。
+- ground truth 必须存在且完整实现（真实可运行的独立参考实现，非桩）——与合同真实性中的 ground truth 审核一致。
+- 每项质量守卫在 machine contracts 中有安装命令、配置位置、阈值与执行点（对照 skill tracks-quality-guards 的目录）。
+
 ### 评审维度（M-IMPL）
 
 - 实现是否遵循锁定 Architecture/Interfaces，不允许实现者重新选择设计。

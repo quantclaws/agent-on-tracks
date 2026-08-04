@@ -160,10 +160,28 @@ def test_design_kinds_template_conformant(tmp_path):
 def test_design_template_missing_section(tmp_path):
     p = _design_doc(tmp_path, "architecture", "architecture.md")
     text = p.read_text(encoding="utf-8")
-    idx = text.rfind("## 4.")  # drop the last required section
+    idx = text.rfind("## 5.")  # drop the last required section
     p.write_text(text[:idx], encoding="utf-8")
     issues = check_template(p)
     assert any("missing section" in i for i in issues)
+
+
+def test_architecture_requires_scaffold_manifest_section(tmp_path):
+    # batch B: the scaffold manifest is a REQUIRED architecture section — the
+    # template check derives it from the template like every other section.
+    p = _design_doc(tmp_path, "architecture", "architecture.md")
+    text = p.read_text(encoding="utf-8")
+    assert "Scaffold 宣言" in text  # the template carries the section
+    p.write_text(text.replace("## 2. Scaffold 宣言", "Scaffold 宣言"),
+                 encoding="utf-8")
+    issues = check_template(p)
+    assert "line:1 missing section 'Scaffold 宣言'" in issues
+    assert validate_document(p, "architecture.md", ["template"]) is not None
+    # the other design kinds have no scaffold requirement
+    for kind in ("interfaces", "test-plan"):
+        doc = _design_doc(tmp_path, kind, f"{kind}.md")
+        assert "Scaffold 宣言" not in doc.read_text(encoding="utf-8")
+        assert check_template(doc) == []
 
 
 def test_check_design_trace_covered_and_orphan():
@@ -273,6 +291,21 @@ def test_fake_design_trio_has_no_blockquotes(tmp_path):
         assert not [ln for ln in text.splitlines()
                     if ln.lstrip().startswith(">")], name
         assert check_template(vdir / name) == [], name
+
+
+def test_fake_design_architecture_carries_scaffold_manifest(tmp_path):
+    # fake-backend parity (batch B): the deterministic Archer output keeps the
+    # required Scaffold 宣言 section, and its manifest declares no real host
+    # path (the fake writes nothing beyond the doc-set — no undeclared files).
+    from tracks.effects.opencode import _scaffold_declared_paths
+    vdir = tmp_path / ".tracks" / "projects" / "v0.1"
+    vdir.mkdir(parents=True)
+    (vdir / "acceptance.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    FakeBackend(tmp_path, "v0.1")._write_design("ok")
+    text = (vdir / "architecture.md").read_text(encoding="utf-8")
+    assert "Scaffold 宣言" in text
+    assert _scaffold_declared_paths(text) <= {"{path}"}  # template placeholder
 
 
 # -- run045: design docs must not invoke fabricated `trac` subcommands --------

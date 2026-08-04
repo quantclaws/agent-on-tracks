@@ -29,6 +29,27 @@ def test_triage_dispatches_scribe_once():
     assert decide(dispatched) is None
 
 
+def test_single_doc_stages_keep_the_single_skill_shape():
+    # batch B pin: only the M-DESIGN author assignment is multi-skill; every
+    # other stage keeps `skill` (tracks-discuz) + `skill_version`, no list.
+    cmd = decide(state_of())  # M-STORY TRIAGE
+    assignment = cmd.params["assignment"]
+    assert assignment["skill"] == "tracks-discuz"
+    assert assignment["skill_version"] == "0.2"
+    assert "skills" not in assignment
+    drafted = state_of(
+        ("command.issued", {"command": {"kind": "dispatch_agent",
+                                        "params": {"role": "scribe",
+                                                   "substate": "TRIAGE"},
+                                        "command_id": "C1"}}),
+        ("outcome.received", {"role": "scribe", "status": "done"}),
+        ("human.triage", {"decision": "go"}),
+    )
+    draft_cmd = decide(drafted)  # M-STORY DRAFT
+    assert draft_cmd.params["assignment"]["skill"] == "tracks-discuz"
+    assert "skills" not in draft_cmd.params["assignment"]
+
+
 def test_awaiting_states_halt():
     awaiting = state_of(("outcome.received", {"role": "scribe", "status": "done"}))
     assert awaiting.awaiting == "triage" and decide(awaiting) is None

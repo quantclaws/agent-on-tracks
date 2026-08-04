@@ -1,17 +1,18 @@
 """OpencodeBackend — real agent via `opencode run` subprocess (ARCH-003 §4/§6/§7).
 
-Pipeline per dispatch: materialize canonical prompt (+ skill + document
+Pipeline per dispatch: materialize canonical prompt (+ skills + document
 templates named by the assignment) -> baseline snapshot ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
 (process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
 the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
 whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6:
-over-reach; for author DRAFT dispatches, that the agent resolved every
-discussion thread it initiated in the target doc-set; for reviewer dispatches,
-that a revise verdict anchors its findings — at least one open discussion
-thread the reviewer initiated, live run042). Failures map to IF-003 §1a
-FailureClass. The agent's stdout JSON is NEVER the product; the controlled
-target diff is.
+over-reach; for M-DESIGN author dispatches, that host-project writes stay
+within the architecture.md Scaffold 宣言 manifest (batch B); for author DRAFT
+dispatches, that the agent resolved every discussion thread it initiated in the
+target doc-set; for reviewer dispatches, that a revise verdict anchors its
+findings — at least one open discussion thread the reviewer initiated, live
+run042). Failures map to IF-003 §1a FailureClass. The agent's stdout JSON is
+NEVER the product; the controlled target diff is.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from tracks import paths, templating
 from tracks.discuss.gate import check_ready
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
-from tracks.effects.audit import Auditor
+from tracks.effects.audit import Auditor, _rel
 
 # role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
 # Every tracks role is a real opencode agent (spec FR-020 §2): Scribe起草 /
@@ -45,6 +46,16 @@ _ENV_SECRET_VALUE = re.compile(
     r"(?i)([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)"
     r"([\"']?\s*=\s*[\"']?)([^\s,;\"']+)"
 )
+
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# batch B scaffold manifest: the freshly-written architecture.md's
+# `## Scaffold 宣言` section enumerates `- path — purpose` bullets — the only
+# host files an M-DESIGN author dispatch may create outside its doc-set.
+_SCAFFOLD_HEADING = re.compile(
+    r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?Scaffold 宣言\s*$", re.M)
+_SCAFFOLD_BULLET = re.compile(r"^\s*-\s+(\S+)\s+—", re.M)
+_OPENCODE_PREFIX = ".opencode/"
+_GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 
 
 def redact(text: str) -> str:
@@ -103,22 +114,27 @@ class OpencodeBackend:
         reviewer_assignment = substate.endswith("_REVIEW")
         try:
             cleanup_infos.append(self._materialize(name))
-            skill_info = self._materialize_skill(assignment)
-            if skill_info is not None:
-                cleanup_infos.append(skill_info)
+            self._materialize_skills(assignment, cleanup_infos)
             self._materialize_templates(assignment, cleanup_infos)
             # The repo root is trusted for agent scratch files; only writes
-            # outside it are over-reach. The target diff remains authoritative.
+            # outside it are over-reach (M-DESIGN author dispatches are
+            # additionally bounded by their Scaffold 宣言, see the audit
+            # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
             auditor = Auditor(self.repo,
                               allowed=[*doc_paths, agent_dest, self.repo])
             baseline = auditor.baseline()
+            author = substate in ("DRAFT", "RESPOND")
+            # File-granular baseline for the batch B scaffold subset rule: a
+            # directory-level status entry present here must not mask files the
+            # agent creates inside it during the run.
+            scaffold_baseline = (auditor.file_level(baseline)
+                                 if author and len(doc_paths) > 1 else None)
             proc = self._run(name, prompt)
             self._check_json(proc)
             return self._audited_result(
-                auditor, baseline, proc, role, substate, doc_paths,
-                prompt, console_input, substate in ("DRAFT", "RESPOND"),
-                reviewer_assignment,
+                auditor, baseline, scaffold_baseline, proc, role, substate,
+                doc_paths, prompt, console_input, author, reviewer_assignment,
             )
         except OpencodeError as exc:
             return self._opencode_error_result(
@@ -157,19 +173,20 @@ class OpencodeBackend:
         return [vdir / str(name) for name in docs]
 
     def _audited_result(
-        self, auditor: Auditor, baseline: set[str], proc: subprocess.CompletedProcess,
-        role: str, substate: str, doc_paths: list[Path], prompt: str,
-        console_input: str | None, author_assignment: bool, reviewer_assignment: bool,
+        self, auditor: Auditor, baseline: set[str],
+        scaffold_baseline: set[str] | None,
+        proc: subprocess.CompletedProcess, role: str, substate: str,
+        doc_paths: list[Path], prompt: str, console_input: str | None,
+        author_assignment: bool, reviewer_assignment: bool,
     ) -> dict:
-        diffs = [auditor.target_diff(path) for path in doc_paths]
-        diff_ref = "\n".join(diff for diff in diffs if diff) or None
-        _require_target_diff(doc_paths, diffs, author_assignment, proc)
-        over = auditor.audit(baseline)
-        if over:
-            auditor.rollback_agent_changes(baseline)
-            return self._overreach_result(
-                diff_ref, proc, prompt, console_input, over,
-            )
+        diff_ref = _capture_target_diffs(
+            auditor, doc_paths, author_assignment, proc)
+        guard = self._write_guard_result(
+            auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
+            diff_ref, proc, prompt, console_input,
+        )
+        if guard is not None:
+            return guard
         audit = self._discussion_audit_result(
             role, substate, doc_paths, diff_ref, proc, prompt, console_input,
             reviewer_assignment,
@@ -179,6 +196,28 @@ class OpencodeBackend:
         return self._success_result(
             AGENT_NAME[role], substate, doc_paths, diff_ref, proc, prompt,
             console_input, author_assignment, reviewer_assignment,
+        )
+
+    def _write_guard_result(
+        self, auditor: Auditor, baseline: set[str],
+        scaffold_baseline: set[str] | None, doc_paths: list[Path],
+        author_assignment: bool, diff_ref: str | None,
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+    ) -> dict | None:
+        """Post-write audits: over-reach (ARCH §6) first, then the batch B
+        scaffold subset rule when this dispatch carries a scaffold baseline;
+        None passes both."""
+        over = auditor.audit(baseline)
+        if over:
+            auditor.rollback_agent_changes(baseline)
+            return self._overreach_result(
+                diff_ref, proc, prompt, console_input, over,
+            )
+        if scaffold_baseline is None:
+            return None
+        return self._scaffold_audit_result(
+            auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
+            diff_ref, proc, prompt, console_input,
         )
 
     def _discussion_audit_result(
@@ -221,6 +260,53 @@ class OpencodeBackend:
                 "self_report": "over-reach detected; agent changes rolled back",
                 "diff_ref": diff_ref, "audit_evidence": evidence,
                 "failure_class": "over_reach",
+                "agent_io": self._capture_io(proc, prompt, console_input)}
+
+    def _scaffold_audit_result(
+        self, auditor: Auditor, baseline: set[str], scaffold_baseline: set[str],
+        doc_paths: list[Path], author_assignment: bool, diff_ref: str | None,
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+    ) -> dict | None:
+        """batch B scaffold audit: the M-DESIGN author dispatch (DRAFT/RESPOND
+        with the multi-doc design set) is contractually bounded by the scaffold
+        manifest it just wrote — every run-produced write outside the doc-set,
+        ``.opencode/**`` and the ``tests/ground_truth/**`` exception must be an
+        enumerated ``- path —`` bullet of the freshly-written architecture.md's
+        Scaffold 宣言 section. Undeclared writes fail the dispatch as
+        ``undeclared_scaffold``. Single-doc stages and reviewer dispatches keep
+        the plain repo-root audit (returns None)."""
+        if not author_assignment or len(doc_paths) <= 1:
+            return None
+        arch = next((p for p in doc_paths if p.name == "architecture.md"), None)
+        declared = (_scaffold_declared_paths(arch.read_text(encoding="utf-8"))
+                    if arch is not None and arch.exists() else set())
+        docset = {_rel(self.repo, path) for path in doc_paths}
+        new_files = (auditor.file_level(auditor.modified_files())
+                     - scaffold_baseline)
+        offending = sorted(
+            path for path in new_files
+            if path not in docset
+            and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
+            and path not in declared
+        )
+        if not offending:
+            return None
+        auditor.rollback_agent_changes(baseline, new_changes=new_files)
+        return self._undeclared_scaffold_result(
+            diff_ref, offending, proc, prompt, console_input,
+        )
+
+    def _undeclared_scaffold_result(
+        self, diff_ref: str | None, offending: list[str],
+        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+    ) -> dict:
+        paths = ", ".join(offending)
+        return {"status": "failed", "artifact_ref": None,
+                "self_report": f"undeclared scaffold writes: {paths}; "
+                               "agent changes rolled back",
+                "diff_ref": diff_ref,
+                "audit_evidence": f"undeclared_scaffold: {paths}",
+                "failure_class": "undeclared_scaffold",
                 "agent_io": self._capture_io(proc, prompt, console_input)}
 
     def _unresolved_threads_result(
@@ -366,11 +452,17 @@ class OpencodeBackend:
         dest.write_bytes(src.read_bytes())
         return info
 
-    def _materialize_skill(self, assignment: dict | None) -> dict | None:
-        """Materialize a skill to opencode's discovery path for progressive disclosure."""
-        skill_name = (assignment or {}).get("skill")
-        if not skill_name:
-            return None
+    def _materialize_skills(self, assignment: dict | None,
+                            cleanup_infos: list) -> None:
+        """Materialize every skill of the assignment (batch B: ``skills`` list,
+        backward compatible with the single ``skill`` string); each materialized
+        skill registers for cleanup the moment it is written (ARCH §4c)."""
+        for skill_name in _skill_names(assignment):
+            cleanup_infos.append(self._materialize_skill(skill_name))
+
+    def _materialize_skill(self, skill_name: str) -> dict | None:
+        """Materialize one skill to opencode's discovery path for progressive
+        disclosure."""
         src = self._canonical.parent / "skills" / skill_name / "SKILL.md"
         if not src.exists():
             return None
@@ -545,6 +637,17 @@ class OpencodeBackend:
         return "\n".join(lines)
 
 
+def _skill_names(assignment: dict | None) -> list[str]:
+    """Skills this dispatch materializes: an explicit ``skills`` list (batch B:
+    the M-DESIGN author assignment carries several) wins over the legacy single
+    ``skill`` string; falsy entries are skipped, [] means no skill."""
+    assignment = assignment or {}
+    if assignment.get("skills") is not None:
+        return [name for name in assignment["skills"] if name]
+    skill = assignment.get("skill")
+    return [skill] if skill else []
+
+
 def _template_kinds(assignment: dict | None) -> list[str]:
     """Document template kinds this dispatch materializes: an explicit
     ``templates`` list (M-DESIGN trio) wins over the single ``template_kind``
@@ -560,6 +663,17 @@ def _text(value) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value or ""
+
+
+def _capture_target_diffs(auditor: Auditor, doc_paths: list[Path],
+                          author_assignment: bool,
+                          proc: subprocess.CompletedProcess) -> str | None:
+    """Capture the controlled diff of every target doc (the authoritative
+    product) BEFORE any audit rollback can touch it, then enforce the
+    author-must-produce contract on the captured set."""
+    diffs = [auditor.target_diff(path) for path in doc_paths]
+    _require_target_diff(doc_paths, diffs, author_assignment, proc)
+    return "\n".join(diff for diff in diffs if diff) or None
 
 
 def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
@@ -599,6 +713,21 @@ def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
                 label = f"{path.name}:{thread.thread_id}" if multi else thread.thread_id
                 offending.append(label)
     return offending
+
+
+def _scaffold_declared_paths(arch_text: str) -> set[str]:
+    """batch B scaffold manifest parse: the repo-relative paths enumerated as
+    ``- path —`` bullets inside the ``## Scaffold 宣言`` section of
+    architecture.md (empty set when the section is absent). HTML comments are
+    stripped so leftover template guidance can never declare a path. No I/O."""
+    m = _SCAFFOLD_HEADING.search(arch_text)
+    if not m:
+        return set()
+    rest = arch_text[m.end():]
+    nxt = re.search(r"^##\s", rest, re.M)  # the next level-2 heading closes it
+    if nxt:
+        rest = rest[:nxt.start()]
+    return set(_SCAFFOLD_BULLET.findall(_HTML_COMMENT.sub("", rest)))
 
 
 def _docset_text(doc_paths: list[Path]) -> str:

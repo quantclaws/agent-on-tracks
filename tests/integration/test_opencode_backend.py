@@ -16,7 +16,12 @@ from tracks import templating
 from tracks.discuss import writer
 from tracks.discuss.locate import token_for
 from tracks.discuss.parser import parse_threads
-from tracks.effects.opencode import OpencodeBackend, OpencodeError
+from tracks.effects.opencode import (
+    OpencodeBackend,
+    OpencodeError,
+    _scaffold_declared_paths,
+    _skill_names,
+)
 
 STANDIN = '''#!/usr/bin/env python3
 import os, sys, json, time, signal
@@ -25,6 +30,14 @@ target = os.environ.get("FAKE_OPENCODE_TARGET")
 extra = os.environ.get("FAKE_OPENCODE_EXTRA")
 docs = os.environ.get("FAKE_OPENCODE_DOCS")
 required_templates = os.environ.get("FAKE_OPENCODE_TEMPLATES")
+required_skills = os.environ.get("FAKE_OPENCODE_SKILLS")
+if required_skills:
+    # Same contract for skills: every skill the assignment names must be
+    # materialized before the agent runs (multi-skill dispatches, batch B).
+    for required in required_skills.split(","):
+        if not os.path.exists(required):
+            sys.stderr.write("missing skill " + required + "\\n")
+            sys.exit(1)
 if required_templates:
     # The agent runs AFTER the Runtime materialized the assignment's templates:
     # any missing file is a materialization failure, never a silent absence.
@@ -60,6 +73,15 @@ sys.stdout.write(json.dumps({"type": "result", "status": "done"})); sys.exit(0)
 '''
 
 DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")
+
+# Minimal design-doc frontmatter + a Scaffold 宣言 section whose bullets the
+# parameterized test injects (batch B audit parses `- path —` bullets).
+ARCH_WITH_SCAFFOLD = (
+    "---\narchitecture_id: ARCH-001\nspec_ref: SPEC-001\ncreated: 1970-01-01\n"
+    "status: draft\nsha:\n---\n\n# design\n\n"
+    "## 2. Scaffold 宣言\n\n{bullets}\n\n"
+    "## 4. 交付与运行合同（machine contracts）\n\n- contract\n"
+)
 
 
 @pytest.fixture
@@ -261,12 +283,16 @@ def test_lex_edits_target_like_other_agents(fake_opencode, target_doc, host_repo
 
 def design_assignment(substate):
     """Mirrors the machine's M-DESIGN assignment: Archer DRAFT/RESPOND carries
-    the template trio; Prism's review dispatch drafts nothing (no templates)."""
+    the template trio and the multi-skill list (batch B); Prism's review
+    dispatch drafts nothing and keeps the single-skill shape."""
     assignment = {"kind": substate, "template_kind": None,
                   "skill": "tracks-discuz", "skill_version": "0.2",
                   "docs": list(DESIGN_DOCS)}
     if substate in ("DRAFT", "RESPOND"):
         assignment["templates"] = ["architecture", "interfaces", "test-plan"]
+        assignment["skills"] = ["tracks-discuz", "tracks-quality-guards"]
+        assignment.pop("skill")
+        assignment.pop("skill_version")
     return assignment
 
 
@@ -326,12 +352,63 @@ def test_archer_design_draft_incomplete_trio_fails(
     assert "test-plan.md" in out["self_report"]  # the missing doc is named
 
 
-def test_archer_draft_in_repo_scratch_write_stays_allowed(
-        fake_opencode, design_vdir, host_repo, monkeypatch):
-    """Repo-root trust (FR-030 sandbox) is unchanged for multi-doc DRAFT: an
-    in-repo scratch write beside the trio is accepted, never over-reach — the
-    doc-set change must not silently tighten or weaken the audit."""
+@pytest.mark.parametrize("substate", ["DRAFT", "RESPOND"])
+def test_archer_author_undeclared_scaffold_write_fails(
+        substate, fake_opencode, design_vdir, host_repo, monkeypatch):
+    """batch B tightens the M-DESIGN author audit (DRAFT and RESPOND alike): an
+    in-repo write beside the trio that the freshly-written architecture.md
+    Scaffold 宣言 does not enumerate is a classified failure (never silent),
+    and the write is rolled back. Single-doc stages keep repo-root trust (see
+    the Scribe test)."""
     docs = [design_vdir / name for name in DESIGN_DOCS]
+    (design_vdir / "architecture.md").write_text(
+        ARCH_WITH_SCAFFOLD.format(bullets="- pyproject.toml — build config"),
+        encoding="utf-8")
+    scratch = host_repo / "agent_scratch.tmp"
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_extra")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(scratch))
+    out = backend(host_repo).act("archer", substate, None, None,
+                                 assignment=design_assignment(substate))
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "undeclared_scaffold"
+    assert "agent_scratch.tmp" in out["self_report"]
+    assert out["audit_evidence"] == "undeclared_scaffold: agent_scratch.tmp"
+    assert not scratch.exists()  # the undeclared write is rolled back
+    assert "architecture.md" in out["diff_ref"]  # the product was captured
+
+
+def test_archer_draft_undeclared_write_inside_new_directory_fails(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """File granularity (not directory entries) is judged: an undeclared file
+    inside the same fully-untracked directory tree as the doc-set must not hide
+    behind the collapsed `dir/` status entry."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    (design_vdir / "architecture.md").write_text(
+        ARCH_WITH_SCAFFOLD.format(bullets="- pyproject.toml — build config"),
+        encoding="utf-8")
+    evil = design_vdir / "evil.txt"  # sibling of the docs, undeclared
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_extra")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(evil))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "undeclared_scaffold"
+    assert ".tracks/projects/v0.2/evil.txt" in out["self_report"]
+    assert not evil.exists()  # rolled back
+
+
+def test_archer_draft_declared_scaffold_write_passes(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """The manifest is the contract, not a ban: a write enumerated as a
+    `- path —` bullet of the freshly-written Scaffold 宣言 is accepted."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    (design_vdir / "architecture.md").write_text(
+        ARCH_WITH_SCAFFOLD.format(
+            bullets="- pyproject.toml — build config\n"
+                    "- agent_scratch.tmp — declared scaffold file"),
+        encoding="utf-8")
     scratch = host_repo / "agent_scratch.tmp"
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_extra")
     monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
@@ -339,8 +416,47 @@ def test_archer_draft_in_repo_scratch_write_stays_allowed(
     out = backend(host_repo).act("archer", "DRAFT", None, None,
                                  assignment=design_assignment("DRAFT"))
     assert out["status"] == "done"
-    assert "over_reach" not in (out.get("failure_class") or "")
-    assert scratch.exists()  # the agent's in-repo scratch file survives
+    assert out.get("failure_class") is None
+    assert scratch.exists()  # the declared scaffold file survives
+
+
+def test_archer_draft_ground_truth_write_exempt_without_declaration(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """tests/ground_truth/** is the standing exception (b): ground truth must
+    exist and be fully implemented, so its writes pass undeclared."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    (design_vdir / "architecture.md").write_text(
+        ARCH_WITH_SCAFFOLD.format(bullets="- pyproject.toml — build config"),
+        encoding="utf-8")
+    gt_dir = host_repo / "tests" / "ground_truth"
+    gt_dir.mkdir(parents=True)
+    ground_truth = gt_dir / "reference.py"
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_extra")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(ground_truth))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert ground_truth.exists()
+
+
+def test_prism_review_write_audit_stays_repo_root_trusted(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """The scaffold audit binds AUTHOR dispatches only: a reviewer dispatch
+    over the same multi-doc set keeps the plain repo-root trust — an extra
+    in-repo write is accepted, never undeclared_scaffold."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    scratch = host_repo / "agent_scratch.tmp"
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs_extra")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(scratch))
+    out = backend(host_repo).act("prism", "PRISM_REVIEW", None, None,
+                                 assignment=design_assignment("PRISM_REVIEW"))
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert scratch.exists()
 
 
 @pytest.mark.parametrize("role,name,substate", [
@@ -707,3 +823,92 @@ def test_author_dispatch_unaffected_by_revise_finding_audit(
                                  assignment=design_assignment("RESPOND"))
     assert out["status"] == "done"
     assert out.get("failure_class") is None
+
+
+# -- batch B: multi-skill materialization + scaffold manifest audit ------------
+
+
+def skill_path(host_repo, name):
+    return host_repo / ".opencode" / "skills" / name / "SKILL.md"
+
+
+def test_multi_skill_materialization_and_cleanup_restores(host_repo):
+    """A ``skills`` list materializes every named skill (byte-identical to the
+    canonical SKILL.md) and cleanup removes each one, like agents/templates."""
+    be = backend(host_repo)
+    infos: list = []
+    be._materialize_skills(design_assignment("DRAFT"), infos)
+    try:
+        assert sorted(info["dest"].parent.name for info in infos) == [
+            "tracks-discuz", "tracks-quality-guards"]
+        for info in infos:
+            canonical = be._canonical.parent / "skills" / \
+                info["dest"].parent.name / "SKILL.md"
+            assert info["dest"].read_bytes() == canonical.read_bytes()
+    finally:
+        for info in infos:
+            be._cleanup(info)
+    assert all(not info["dest"].exists() for info in infos)
+
+
+def test_multi_skill_materialization_end_to_end(
+        fake_opencode, design_vdir, host_repo, monkeypatch):
+    """During the dispatch BOTH skills are present in the host repo's
+    .opencode/skills/ (the fake agent refuses to run with any missing), and
+    the cleanup removes both afterwards."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    skills = [skill_path(host_repo, name)
+              for name in ("tracks-discuz", "tracks-quality-guards")]
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_docs")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_SKILLS", ",".join(map(str, skills)))
+    out = backend(host_repo).act("archer", "DRAFT", None, None,
+                                 assignment=design_assignment("DRAFT"))
+    assert out["status"] == "done"  # the stand-in saw both skills during run
+    assert not skills[0].exists() and not skills[1].exists()  # cleaned up
+
+
+def test_single_skill_backward_compat(fake_opencode, design_vdir, host_repo,
+                                      monkeypatch):
+    """The legacy single ``skill`` string keeps working untouched: only that
+    skill materializes (no skills list), and cleanup removes it."""
+    docs = [design_vdir / name for name in DESIGN_DOCS]
+    commit_trio(host_repo, docs)
+    assignment = design_assignment("PRISM_REVIEW")
+    assert "skills" not in assignment and assignment["skill"] == "tracks-discuz"
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
+    monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
+    monkeypatch.setenv("FAKE_OPENCODE_SKILLS",
+                       str(skill_path(host_repo, "tracks-discuz")))
+    out = backend(host_repo).act("prism", "PRISM_REVIEW", None, None,
+                                 assignment=assignment)
+    assert out["status"] == "done"
+    assert not skill_path(host_repo, "tracks-discuz").exists()
+    assert not (host_repo / ".opencode" / "skills"
+                / "tracks-quality-guards").exists()
+
+
+def test_skill_names_resolution():
+    assert _skill_names({"skills": ["a", "b"]}) == ["a", "b"]
+    assert _skill_names({"skill": "a"}) == ["a"]  # legacy single-skill shape
+    assert _skill_names({"skills": []}) == []  # explicit list wins over skill
+    assert _skill_names({"skills": ["a", None], "skill": "z"}) == ["a"]
+    assert _skill_names({}) == [] and _skill_names(None) == []
+
+
+def test_scaffold_declared_paths_parser():
+    text = ARCH_WITH_SCAFFOLD.format(
+        bullets="- pyproject.toml — build config\n"
+                "- src/pkg/__init__.py — package root (kind: stub)\n"
+                "<!-- - hidden.md — comment bullets never declare -->\n")
+    assert _scaffold_declared_paths(text) == {"pyproject.toml",
+                                              "src/pkg/__init__.py"}
+    # a bullet-shaped line in the NEXT level-2 section is not a declaration
+    extended = text + "\n## 6. 附录\n\n- later.md — outside the manifest\n"
+    assert _scaffold_declared_paths(extended) == {"pyproject.toml",
+                                                  "src/pkg/__init__.py"}
+    assert _scaffold_declared_paths("# arch\n\n## 1. 模块边界\n") == set()
+    # numbered and unnumbered headings both match
+    unnumbered = text.replace("## 2. Scaffold 宣言", "## Scaffold 宣言")
+    assert _scaffold_declared_paths(unnumbered) == {"pyproject.toml",
+                                                    "src/pkg/__init__.py"}
