@@ -3,7 +3,7 @@ story_id: S-004
 title: 推进流程到 M-TEST 阶段（含需求追踪）
 created: 2026-08-04
 status: draft
-sha:
+sha: 15106e1f9c91c375152bae1c2b63dbbeb6f1e0d833c01619377cd164c673ea0e
 ---
 
 # S-004: 推进流程到 M-TEST 阶段（含需求追踪）
@@ -70,7 +70,7 @@ sha:
 > - 不做 `trac check ratio / dup / budget`（后续 story）；不做注册表与语义层去重；不做函数级调用图（本版 reach 只做模块级 import 图）；不做自动修复/自动重编号。
 > - 不接真实 LLM Agent（延续 v0.1-v0.3 排除，FakeAgent 验证）。
 
-> **Sage:** D-29（decisions.md L304-312）裁定 v0.4 必须交付「测试资产判据包（M-TEST 的 PRISM_REVIEW 子状态消费）+ 配套反自述三件套」：① assignment 写明应加载判据包的名称+版本（Runtime 决定，Prism 不自选）；② verdict outcome 携带实际加载判据包的 identity；③ Runtime 回读核对，不匹配判失败重派。S-004 工作项 7 仅写「Prism 测试资产审查派发接线」，BS-05 只要求 prism.verdict(pass)，均未覆盖判据包 skill 本体与回读机制；判据包也未列入 §5 Out-of-Scope。这是 D-29 已裁定的 v0.4 强制交付物，缺它则 M-TEST 退出门禁（BS-05）的 Prism 评审无程序化判据来源、也不满足 D-29 的反自述约束。推荐：补一条工作项（测试资产判据包 skill 物化 + 反自述三件套接线）与对应行为种子（Prism verdict 须绑定实际加载判据包 identity，Runtime 回读不匹配判失败重派）。若有意顺延，请在 §6 开放产品决定登记并说明与 D-29 v0.4 强制条款的关系。
+> **Sage [RESOLVED]:** D-29（decisions.md L304-312）裁定 v0.4 必须交付「测试资产判据包（M-TEST 的 PRISM_REVIEW 子状态消费）+ 配套反自述三件套」：① assignment 写明应加载判据包的名称+版本（Runtime 决定，Prism 不自选）；② verdict outcome 携带实际加载判据包的 identity；③ Runtime 回读核对，不匹配判失败重派。S-004 工作项 7 仅写「Prism 测试资产审查派发接线」，BS-05 只要求 prism.verdict(pass)，均未覆盖判据包 skill 本体与回读机制；判据包也未列入 §5 Out-of-Scope。这是 D-29 已裁定的 v0.4 强制交付物，缺它则 M-TEST 退出门禁（BS-05）的 Prism 评审无程序化判据来源、也不满足 D-29 的反自述约束。推荐：补一条工作项（测试资产判据包 skill 物化 + 反自述三件套接线）与对应行为种子（Prism verdict 须绑定实际加载判据包 identity，Runtime 回读不匹配判失败重派）。若有意顺延，请在 §6 开放产品决定登记并说明与 D-29 v0.4 强制条款的关系。
 >> **Scribe:** 已采纳，D-29 是 v0.4 强制交付物，不作为开放产品决定顺延。已将判据包与反自述三件套纳入 story 正文（非 §1 原始输入块内的工作项清单——那是 Aaron 的规划框架，逐字保留）：① §3.1 step 6 PRISM_REVIEW 增补「按 assignment 指定的测试资产判据包（D-29）审测试合约；Prism verdict 携带实际加载判据包 identity，Runtime 回读核对不匹配判失败重派」；② 新增 BS-14「Prism 判据包绑定与反自述回读」（EARS 覆盖 assignment 指定名称+版本 / verdict 携带 identity / Runtime 回读三件套）；③ §5 必须保持的产品约束增补 D-29 反自述三件套条款。BS-05（M-TEST 无 Human 门禁）保持聚焦「退出依据全是程序证据」，判据包绑定由 BS-14 专责。判据包 skill 本体物化与 Runtime 回读机制属 spec/design 层展开，story 已锁定行为边界。
 
 ## 2. 用户意图
@@ -132,7 +132,7 @@ sha:
 - **变更基线**：修改 - 部分已有：spec 模板已含 FR-XXXX/NFR-XXXX 文法并由 validate.check_spec_items 强制（严格标题 ### FR-XXXX、唯一 ID、来源/交付入口字段），acceptance 模板已含 AC-FRXXXX-YY 文法指引（validate 仅校验 acceptance frontmatter，AC 格式靠模板指引）。本次补的缺口：story 模板无 BS-XX 强制文法（仅有编号约定、无机器校验与不可变/tombstone 规则），三模板均无 @version 跨版本引用与 tombstone 规则，测试 marker 长格式未强制，test-plan.md template 无变绿条件字段，design-trace validator（check_design_trace）只校验 AC->layer 归属不校验 IF- 标识，trace/reach 工具不存在
 - **入口/触发**：Archer 起草设计文档 / Shield 起草测试时读取模板；validate 按模板校验
 
-> **Sage:** 基线称「story/spec/acceptance templates 无 ID 文法约束（编号无统一格式要求）」，但 spec.md 模板已含 FR-XXXX/NFR-XXXX 文法指引（tracks/templates/spec.md L13 注释 + validate.check_spec_items 强制：严格标题 ### FR-XXXX、唯一 ID、来源/交付入口字段），acceptance.md 模板已含 AC-FRXXXX-YY 文法（tracks/templates/acceptance.md L13）。真实缺口是：story 模板无 BS-XX 强制文法、三模板均无 @version 跨版本引用与 tombstone 规则、test marker 长格式未强制、trace/reach 工具不存在。基线应改为「部分已有（FR-XXXX/AC-FRXXXX-YY 已在 spec/acceptance 模板与 validate 中强制），本次补 BS 文法、@version 跨版本引用、tombstone、marker 长格式与 trace/reach 工具」，避免下游误以为要从零设计已有文法、重复实现 check_spec_items 已覆盖的校验。
+> **Sage [RESOLVED]:** 基线称「story/spec/acceptance templates 无 ID 文法约束（编号无统一格式要求）」，但 spec.md 模板已含 FR-XXXX/NFR-XXXX 文法指引（tracks/templates/spec.md L13 注释 + validate.check_spec_items 强制：严格标题 ### FR-XXXX、唯一 ID、来源/交付入口字段），acceptance.md 模板已含 AC-FRXXXX-YY 文法（tracks/templates/acceptance.md L13）。真实缺口是：story 模板无 BS-XX 强制文法、三模板均无 @version 跨版本引用与 tombstone 规则、test marker 长格式未强制、trace/reach 工具不存在。基线应改为「部分已有（FR-XXXX/AC-FRXXXX-YY 已在 spec/acceptance 模板与 validate 中强制），本次补 BS 文法、@version 跨版本引用、tombstone、marker 长格式与 trace/reach 工具」，避免下游误以为要从零设计已有文法、重复实现 check_spec_items 已覆盖的校验。
 >> **Scribe:** 已采纳，基线修正为「部分已有」。核实项目事实：spec 模板 L13 已含 FR-XXXX/NFR-XXXX 文法（四位补零、唯一 ID、来源/交付入口字段），validate.check_spec_items 强制（严格标题 ### FR-XXXX、重复 ID、缺来源/交付入口字段判失败）；acceptance 模板 L13 已含 AC-FRXXXX-YY 文法指引（validate 仅校验 acceptance frontmatter，AC 格式靠模板指引）。§3.4 变更基线已改为「部分已有：spec 已含并由 check_spec_items 强制，acceptance 已含文法指引；本次补的缺口：story 无 BS-XX 强制文法（仅编号约定、无机器校验与不可变/tombstone 规则）、三模板均无 @version 跨版本引用与 tombstone、marker 长格式未强制、test-plan 无变绿条件字段、design-trace validator 不校验 IF-、trace/reach 工具不存在」，避免下游误以为从零设计已有文法。
 
 1. story/spec/acceptance templates 增补 ID 文法（BS-XX / FR-XXXX / NFR-XXXX / AC-FRXXXX-YY）与跨版本引用规则（AC-FRXXXX-YY@<version>）；文档中短格式与长格式（带版本号）均允许，短格式 opt-in 消歧
