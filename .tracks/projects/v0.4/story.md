@@ -1,67 +1,136 @@
 ---
-story_id: S-004
-title: 推进流程到 M-TEST 阶段（含需求追踪）
+story_id: S-001
+title: {一句话标题}
 created: 2026-08-04
 status: draft
 sha:
 ---
 
-# S-004: 推进流程到 M-TEST 阶段（含需求追踪）
+# S-001: {一句话标题}
+
+<!-- 模板指引（生成文档时阅读；填写完成后删除本注释，交付的文档只留内容）：
+  - §1 逐字记录 Human 原始输入，不修改、不转述。
+  - §3 每条操作路径复制 3.1 的小节结构（3.2、3.3……）。修改类路径的「变更基线」必须写清
+    当前行为与本次变更——下游（Sage/Archer/Shield/Devon）基于此描述变更，而非从零设计；
+    新增路径写“无（新增路径）”。
+  - §4 只提取需要下游继续展开的用户结果和重要边界，不枚举普通微交互；按路径顺序统一编号
+    BS-01、BS-02……（不按路径分组）。
+  - §5 各项没有时写“无”；Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项。
+  - §6 每个问题一个段落，粗体一句话开头（格式见正文占位）；不编号、机器不校验。只写无法
+    可靠推导、且不同答案会显著改变价值/范围/权限/数据安全/合规或产生不可逆后果的产品问题；
+    技术选择不写。没有则整节写“无”。
+  - §7 重要风险只写会改变范围或使 story 不成立的。
+-->
 
 ## 1. 原始输入
 
-> 2. 绿的粒度问题 -- 对，不能让 devon 每实现一部分代码，就运行（runtime）一次全部的 end to end，这样会比较花时间。只能运行对应的 int 测试。如果能指定 e2e 子集也可以，不过我觉得 devon 的第一轮实现最好不运行 end to end / 其它没有问题，请修改 flow.md。这是v0.4的内容？不管是不是，我们需要一个新的 release 来将流程推进到 M-TEST 阶段。请着手规划，并完成 shield.md(请借鉴 louke)
+> ---
+> story_id: S-004
+> title: 推进流程到 M-TEST 阶段（含需求追踪）
+> created: 2026-08-04
+> status: draft
+> sha:
+> ---
 >
-> —— Aaron，2026-08-04
-
-> 这个功能放0.5，是次序错误吧。M-TEST 没有实现的话，需求追踪不可能完整实现吧？
+> # S-004: 推进流程到 M-TEST 阶段（含需求追踪）
 >
-> 当 M-TEST 实现后，尽管由于 Devon 没有实现，但已经可以做静态的需求追踪。而且正是需求追踪，也让 Shield 的工作多了一个评估指标 -- 它写的测试脚本够不够，有没有覆盖需求
+> ## 1. 原始输入
 >
-> —— Aaron，2026-08-04
-
-> 不，需求追踪应该是 M-TEST 的一部分。不做完需求追踪，M-TEST退出没有依据。
+> > 2. 绿的粒度问题 -- 对，不能让 devon 每实现一部分代码，就运行（runtime）一次全部的 end to end，这样会比较花时间。只能运行对应的 int 测试。如果能指定 e2e 子集也可以，不过我觉得 devon 的第一轮实现最好不运行 end to end / 其它没有问题，请修改 flow.md。这是v0.4的内容？不管是不是，我们需要一个新的 release 来将流程推进到 M-TEST 阶段。请着手规划，并完成 shield.md(请借鉴 louke)
+> >
+> > —— Aaron，2026-08-04
 >
-> —— Aaron，2026-08-04（据此裁定：原 S-002 需求追踪不顺延，并入本 release，作为 M-TEST 退出的程序依据）
+> > 这个功能放0.5，是次序错误吧。M-TEST 没有实现的话，需求追踪不可能完整实现吧？
+> >
+> > 当 M-TEST 实现后，尽管由于 Devon 没有实现，但已经可以做静态的需求追踪。而且正是需求追踪，也让 Shield 的工作多了一个评估指标 -- 它写的测试脚本够不够，有没有覆盖需求
+> >
+> > —— Aaron，2026-08-04
+>
+> > 不，需求追踪应该是 M-TEST 的一部分。不做完需求追踪，M-TEST退出没有依据。
+> >
+> > —— Aaron，2026-08-04（据此裁定：原 S-002 需求追踪不顺延，并入本 release，作为 M-TEST 退出的程序依据）
+>
+> ## 2. 需求描述（原始要求，待 M-STORY 展开）
+>
+> 本 release 交付两个互为前提的部分：**需求追踪（trace/reach）**与 **M-TEST 阶段（Shield-first 测试资产）**。flow.md 已更新为 M-DESIGN → M-TEST → M-IMPL 次序。
+>
+> ### 2.1. Part A：需求追踪（原 S-002，并入本 release）
+>
+> 完整草稿见同目录 `story-S002-draft.md`（用户意图、核心操作路径、行为种子、范围排除均已成型，M-STORY 以此为输入）。要点：
+>
+> - ID 文法沿用 louke：BS-01 / FR-0010 / NFR-0010 / AC-FRXXXX-YY；ID 不可变不可复用，删除留 tombstone；跨版本限定引用 `AC-FRXXXX-YY@<version>`（文档短/长格式均可，测试 marker 强制长格式）。
+> - `trac check trace`：BS→FR→AC→test 双向孤儿检测；FR↔AC、AC↔test 为硬错误，BS→FR 仅 warning。
+> - `trac check reach`：从声明入口点做模块级 import 可达分析，报告孤岛生产模块。
+> - 存量基线（legacy baseline）豁免清单兼容非全新宿主项目；工具只报告不改写；CLI + 引擎双消费者，人类可读与 `--json` 双格式，退出码语义稳定。
+>
+> ### 2.2. Part B：M-TEST 阶段
+>
+> M-DESIGN 退出后 `trac run` 进入 M-TEST：Runtime 按 test-plan 的层归属与变绿条件派发 Shield 对着接口桩编写 integration/e2e 测试。出口门禁 = **collection 成功 + 合法 Red + Prism 测试合约审查 + `trac check trace` 闭合**——trace 闭合是退出的程序依据（Aaron 裁定），无 trace 不得退出。本 release 完成时，`trac run` 能从 M-DESIGN 出口跑通 M-TEST 完整循环并停在 M-TEST→M-IMPL 边界，collection / Red 分类 / trace / 审查证据全部落事件。M-IMPL 的实现不在本 release 范围。
+>
+> 关键语义（已获 Human 确认）：
+>
+> - **合法 Red**：失败必须可归为行为断言失败、桩合同 token 失败（`NotImplementedError("IF-...")`）或合同声明的 symbol 缺失；collection/语法/fixture/import 错误为非法；测试意外通过视为异常。
+> - **绿的粒度**（约束 M-IMPL 设计，本 release 只需 test-plan 携带变绿条件字段）：task 级 GREEN_GATE = 单测 + 该 task 的 int 子集（变绿条件 = 所依赖接口的 IF- 归属）；Devon 第一轮不跑 e2e；全量 integration+e2e 变绿是 M-IMPL 出口门禁。
+> - **trace 闭合作为 Shield 的程序化评估指标**：每条 required AC（integration|e2e 层归属）至少一条测试以长格式 marker 绑定；无测试绑定的 AC 与无主 marker 由 `trac check trace` 指出——Shield 写的测试够不够、覆不覆盖需求，有了机器判据。
+> - **reach 的消费点**：M-IMPL ISLAND_GATE（孤岛闭合）与 M-VERIFY 反 slop 门禁（flow.md 已标注）；本 release 交付工具本体，消费随后续阶段接入。
+> - 单写者纪律：Shield 不 commit/push、不改产品代码与接口桩；测试缺陷在 M-IMPL 经 DIAGNOSE→SHIELD_FIX 由 Shield 返场修复（本 release 预留事件与路由定义，不实现 M-IMPL 侧）。
+>
+> ## 3. 工作项（规划层，供 M-STORY/M-SPEC 展开）
+>
+> 1. 需求追踪工具：ID 文法与 `@version` 跨版本引用进 templates（story/spec/acceptance/test-plan）；`trac check trace`；`trac check reach`；legacy baseline 豁免机制；双格式输出与稳定退出码。
+> 2. machine.py：M-TEST StageDef（draft/exit decide；validate = collect + legit_red + `trac check trace` 闭合；exit gate = collect + legit_red + discussion_ready + trace）。
+> 3. executor：`_NEXT_STAGE` 增补 M-DESIGN→M-TEST、M-TEST→M-IMPL；M-IMPL 未注册处以 boundary 收尾。
+> 4. legit-red gate：复用 RED_GATE 分类并扩展"桩合同 token 失败合法、意外通过非法"。
+> 5. opencode backend：AGENT_NAME 增补 shield→Shield；Shield prompt/skill（tracks-discuz）物化与回收；写范围审计（仅 tests/**）。
+> 6. templates：test-plan.md 增补变绿条件字段；design-trace validator 扩展（每条 integration/e2e 的 IF- 归属）。
+> 7. agents：tracks/agents/Shield.md 已就位（v0.1）；Prism 测试资产审查派发接线。
+> 8. 测试：FakeAgent 端到端 M-DESIGN exit→M-TEST 循环→boundary；非法 Red / 意外通过 / trace 孤儿（无测试的 AC、无主 marker）负例。
+>
+> ## 4. 范围排除
+>
+> - 不实现 M-IMPL（Devon/RGR/task graph）；只停在 M-TEST→M-IMPL 边界。
+> - 不做 `trac check ratio / dup / budget`（后续 story）；不做注册表与语义层去重；不做函数级调用图（本版 reach 只做模块级 import 图）；不做自动修复/自动重编号。
+> - 不接真实 LLM Agent（延续 v0.1-v0.3 排除，FakeAgent 验证）。
 
-## 2. 需求描述（原始要求，待 M-STORY 展开）
+## 2. 用户意图
 
-本 release 交付两个互为前提的部分：**需求追踪（trace/reach）**与 **M-TEST 阶段（Shield-first 测试资产）**。flow.md 已更新为 M-DESIGN → M-TEST → M-IMPL 次序。
+- {用户想完成什么}
+- {当前哪里受阻}
+- {完成后能看到什么结果}
 
-### 2.1. Part A：需求追踪（原 S-002，并入本 release）
+## 3. 核心操作路径
 
-完整草稿见同目录 `story-S002-draft.md`（用户意图、核心操作路径、行为种子、范围排除均已成型，M-STORY 以此为输入）。要点：
+### 3.1. {路径名}
 
-- ID 文法沿用 louke：BS-01 / FR-0010 / NFR-0010 / AC-FRXXXX-YY；ID 不可变不可复用，删除留 tombstone；跨版本限定引用 `AC-FRXXXX-YY@<version>`（文档短/长格式均可，测试 marker 强制长格式）。
-- `trac check trace`：BS→FR→AC→test 双向孤儿检测；FR↔AC、AC↔test 为硬错误，BS→FR 仅 warning。
-- `trac check reach`：从声明入口点做模块级 import 可达分析，报告孤岛生产模块。
-- 存量基线（legacy baseline）豁免清单兼容非全新宿主项目；工具只报告不改写；CLI + 引擎双消费者，人类可读与 `--json` 双格式，退出码语义稳定。
+- **变更基线**：[新增 / 替换 / 修改 / 重命名] — {此路径在当前版本的行为与实现；新增路径写“无（新增路径）”}
+- **入口/触发**：{用户从现有哪个任务、对象或公开入口，如何进入本能力}
 
-### 2.2. Part B：M-TEST 阶段
+1. {改变用户任务状态的关键步骤 1}
+2. {关键步骤 ...}
+3. {用户在何处看到可验证的完成结果}
 
-M-DESIGN 退出后 `trac run` 进入 M-TEST：Runtime 按 test-plan 的层归属与变绿条件派发 Shield 对着接口桩编写 integration/e2e 测试。出口门禁 = **collection 成功 + 合法 Red + Prism 测试合约审查 + `trac check trace` 闭合**——trace 闭合是退出的程序依据（Aaron 裁定），无 trace 不得退出。本 release 完成时，`trac run` 能从 M-DESIGN 出口跑通 M-TEST 完整循环并停在 M-TEST→M-IMPL 边界，collection / Red 分类 / trace / 审查证据全部落事件。M-IMPL 的实现不在本 release 范围。
+- **完成结果**：{可观察的完成状态；完成、取消或可恢复失败后，用户接下来能做什么}
 
-关键语义（已获 Human 确认）：
+## 4. 行为种子
 
-- **合法 Red**：失败必须可归为行为断言失败、桩合同 token 失败（`NotImplementedError("IF-...")`）或合同声明的 symbol 缺失；collection/语法/fixture/import 错误为非法；测试意外通过视为异常。
-- **绿的粒度**（约束 M-IMPL 设计，本 release 只需 test-plan 携带变绿条件字段）：task 级 GREEN_GATE = 单测 + 该 task 的 int 子集（变绿条件 = 所依赖接口的 IF- 归属）；Devon 第一轮不跑 e2e；全量 integration+e2e 变绿是 M-IMPL 出口门禁。
-- **trace 闭合作为 Shield 的程序化评估指标**：每条 required AC（integration|e2e 层归属）至少一条测试以长格式 marker 绑定；无测试绑定的 AC 与无主 marker 由 `trac check trace` 指出——Shield 写的测试够不够、覆不覆盖需求，有了机器判据。
-- **reach 的消费点**：M-IMPL ISLAND_GATE（孤岛闭合）与 M-VERIFY 反 slop 门禁（flow.md 已标注）；本 release 交付工具本体，消费随后续阶段接入。
-- 单写者纪律：Shield 不 commit/push、不改产品代码与接口桩；测试缺陷在 M-IMPL 经 DIAGNOSE→SHIELD_FIX 由 Shield 返场修复（本 release 预留事件与路由定义，不实现 M-IMPL 侧）。
+### 4.1. BS-01 {行为种子标题}
 
-## 3. 工作项（规划层，供 M-STORY/M-SPEC 展开）
+- EARS: `WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {用户可观察行为}`
+- 来源: [{路径编号} / 约束 / 非常规要求 / 重要推导]
+- 说明: {这项行为保护什么用户结果}
 
-1. 需求追踪工具：ID 文法与 `@version` 跨版本引用进 templates（story/spec/acceptance/test-plan）；`trac check trace`；`trac check reach`；legacy baseline 豁免机制；双格式输出与稳定退出码。
-2. machine.py：M-TEST StageDef（draft/exit decide；validate = collect + legit_red + `trac check trace` 闭合；exit gate = collect + legit_red + discussion_ready + trace）。
-3. executor：`_NEXT_STAGE` 增补 M-DESIGN→M-TEST、M-TEST→M-IMPL；M-IMPL 未注册处以 boundary 收尾。
-4. legit-red gate：复用 RED_GATE 分类并扩展"桩合同 token 失败合法、意外通过非法"。
-5. opencode backend：AGENT_NAME 增补 shield→Shield；Shield prompt/skill（tracks-discuz）物化与回收；写范围审计（仅 tests/**）。
-6. templates：test-plan.md 增补变绿条件字段；design-trace validator 扩展（每条 integration/e2e 的 IF- 归属）。
-7. agents：tracks/agents/Shield.md 已就位（v0.1）；Prism 测试资产审查派发接线。
-8. 测试：FakeAgent 端到端 M-DESIGN exit→M-TEST 循环→boundary；非法 Red / 意外通过 / trace 孤儿（无测试的 AC、无主 marker）负例。
+## 5. 范围、约束与例外
 
-## 4. 范围排除
+- **必须保持的产品约束**：{用户明确要求或既有合同中不能改变的约束；无则写“无”}
+- **非常规要求**：{有意偏离宿主项目惯例、安全或可用性默认的要求及理由；无则写“无”}
+- **Out-of-Scope**：{明确排除的事项；无则写“无”}
 
-- 不实现 M-IMPL（Devon/RGR/task graph）；只停在 M-TEST→M-IMPL 边界。
-- 不做 `trac check ratio / dup / budget`（后续 story）；不做注册表与语义层去重；不做函数级调用图（本版 reach 只做模块级 import 图）；不做自动修复/自动重编号。
-- 不接真实 LLM Agent（延续 v0.1-v0.3 排除，FakeAgent 验证）。
+## 6. 开放产品决定
+
+**{问题一句话}** — {不同答案会改变什么产品结果}。方向：A) {…} B) {…}。推荐 {A}，因为 {理由}。
+
+## 7. 必要性与风险
+
+- **既有能力**：{可复用或相关的现有功能/合同；无则写“未发现直接覆盖”}
+- **冲突**：{与既有产品方向的实质冲突；无则写“无”}
+- **重要风险**：{只写会改变范围或使 story 不成立的风险；无则写“无阻塞风险”}
