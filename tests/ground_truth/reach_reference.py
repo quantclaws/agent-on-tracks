@@ -29,39 +29,76 @@ def _module_name(path: Path, root: Path) -> str:
     return ".".join(parts)
 
 
-def _extract_imports(tree: ast.AST) -> set[str]:
+def _resolve_relative(package: str, level: int, module: str | None) -> str | None:
+    """Resolve a relative import to an absolute base module name.
+
+    ``package`` is the importing module's package (the module itself when it is
+    an ``__init__.py``). ``level`` >= 1; ``module`` is the ``from`` part (may
+    be None for ``from . import X``). Returns the absolute base, or None when
+    the resolution climbs above the top level.
+    """
+    parts = package.split(".") if package else []
+    up = level - 1
+    if up > len(parts):
+        return None
+    base = ".".join(parts[: len(parts) - up])
+    if module:
+        return f"{base}.{module}" if base else module
+    return base
+
+
+def _extract_imports(tree: ast.AST, package: str = "") -> set[str]:
     """Extract imported module names from an AST.
 
     Returns full dotted module paths (e.g. "tracks.kernel.machine"), not just
-    top-level packages. Relative imports (level > 0) are skipped (cannot
-    resolve without package context; reach is module-level, not function-level).
+    top-level packages. Relative imports (level > 0) are resolved against
+    ``package`` (the importing module's package).
+
+    For ``from pkg import name`` (absolute) both ``pkg`` and ``pkg.name`` are
+    emitted, so an imported name that is itself a submodule connects to it
+    (FR-0090 package-edge: ``from tracks import paths`` -> ``tracks.paths``).
     """
     modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 modules.add(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            modules.add(node.module)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                if node.module:
+                    modules.add(node.module)
+                    for alias in node.names:
+                        modules.add(f"{node.module}.{alias.name}")
+            else:
+                base = _resolve_relative(package, node.level, node.module)
+                if base:
+                    modules.add(base)
+                    for alias in node.names:
+                        modules.add(f"{base}.{alias.name}")
     return modules
 
 
 def build_import_graph(
     py_files: dict[str, str],
+    packages: set[str] | None = None,
 ) -> tuple[dict[str, set[str]], set[str]]:
     """Build module-level import graph from {module_name: file_content}.
 
-    Returns (import_graph, all_modules) where:
-    - import_graph: {module_name: {top_level_imported_package, ...}}
-    - all_modules: set of all module names discovered
+    ``packages`` names modules that are packages (``__init__.py``); their
+    package context for relative-import resolution is themselves, while a
+    regular module's context is its parent. Returns (import_graph, all_modules)
+    where import_graph maps module_name -> set of imported module names.
     """
+    packages = packages or set()
     import_graph: dict[str, set[str]] = {}
     all_modules: set[str] = set()
     for mod_name, content in py_files.items():
         all_modules.add(mod_name)
+        package = (mod_name if mod_name in packages
+                   else mod_name.rsplit(".", 1)[0] if "." in mod_name else "")
         try:
             tree = ast.parse(content)
-            imports = _extract_imports(tree)
+            imports = _extract_imports(tree, package)
         except SyntaxError:
             imports = set()
         import_graph[mod_name] = imports
@@ -103,6 +140,18 @@ def find_main_modules(py_files: dict[str, str]) -> list[str]:
     return [name for name in py_files if name.endswith(".__main__")]
 
 
+def _ancestors_in_graph(mod: str, all_modules: set[str]) -> list[str]:
+    """Ancestor packages of ``mod`` that are themselves modules in the graph.
+
+    Importing a module implicitly imports every parent package (Python executes
+    each ``__init__.py`` on the path), so a reachable module makes its ancestor
+    packages reachable too.
+    """
+    parts = mod.split(".")
+    return [".".join(parts[:i]) for i in range(len(parts) - 1, 0, -1)
+            if ".".join(parts[:i]) in all_modules]
+
+
 def compute_reach(
     entrypoints: list[str],
     import_graph: dict[str, set[str]],
@@ -115,7 +164,8 @@ def compute_reach(
     "errors": [...]}.
 
     BFS from entrypoints through the import graph; unreachable production
-    modules are islands. Test modules (tests/...) are excluded.
+    modules are islands. Test modules (tests/...) are excluded. Visiting a
+    module also visits its ancestor packages (implicit parent imports).
     """
     if baseline is None:
         baseline = set()
@@ -142,7 +192,7 @@ def compute_reach(
                         targets.add(other)
         adj[mod] = targets
 
-    # BFS from entrypoints
+    # BFS from entrypoints (with ancestor-package reachability).
     reachable: set[str] = set()
     queue: deque[str] = deque()
     for ep in entrypoints:
@@ -158,6 +208,9 @@ def compute_reach(
         if mod in reachable:
             continue
         reachable.add(mod)
+        for anc in _ancestors_in_graph(mod, all_modules):
+            if anc not in reachable:
+                queue.append(anc)
         for neighbor in adj.get(mod, set()):
             if neighbor not in reachable:
                 queue.append(neighbor)

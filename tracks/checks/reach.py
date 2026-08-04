@@ -57,10 +57,27 @@ def _build_adjacency(
     return adj
 
 
+def _ancestors_in_graph(mod: str, all_modules: set[str]) -> list[str]:
+    """Ancestor packages of ``mod`` that are themselves modules in the graph.
+
+    Importing a module implicitly imports every parent package (Python executes
+    each ``__init__.py`` on the path), so a reachable module makes its ancestor
+    packages reachable too -- otherwise empty ``__init__.py`` files whose only
+    submodule is imported would be false-positive islands.
+    """
+    parts = mod.split(".")
+    return [".".join(parts[:i]) for i in range(len(parts) - 1, 0, -1)
+            if ".".join(parts[:i]) in all_modules]
+
+
 def _bfs_reachable(
     entrypoints: list[str], adj: dict[str, set[str]], all_modules: set[str],
 ) -> set[str]:
-    """BFS from entrypoints through the adjacency graph."""
+    """BFS from entrypoints through the adjacency graph.
+
+    Visiting a module also visits its ancestor packages (implicit parent
+    imports) so package ``__init__.py`` files are not false-positive islands.
+    """
     reachable: set[str] = set()
     queue: deque[str] = deque()
     for ep in entrypoints:
@@ -72,6 +89,9 @@ def _bfs_reachable(
         if mod in reachable:
             continue
         reachable.add(mod)
+        for anc in _ancestors_in_graph(mod, all_modules):
+            if anc not in reachable:
+                queue.append(anc)
         queue.extend(
             n for n in adj.get(mod, set()) if n not in reachable
         )
@@ -127,15 +147,54 @@ def _module_name(path: Path, root: Path) -> str:
     return ".".join(parts)
 
 
-def _extract_imports(tree: ast.AST) -> set[str]:
-    """Extract imported module names from an AST."""
+def _resolve_relative(package: str, level: int, module: str | None) -> str | None:
+    """Resolve a relative import to an absolute base module name.
+
+    `package` is the importing module's package (the module itself when it is
+    an ``__init__.py``). ``level`` >= 1; ``module`` is the ``from`` part (may
+    be None for ``from . import X``). Returns the absolute base, or None when
+    the resolution climbs above the top level.
+    """
+    parts = package.split(".") if package else []
+    up = level - 1  # level 1 = current package, 2 = parent, ...
+    if up > len(parts):
+        return None
+    base = ".".join(parts[: len(parts) - up])
+    if module:
+        return f"{base}.{module}" if base else module
+    return base
+
+
+def _importfrom_targets(node: ast.ImportFrom, package: str) -> set[str]:
+    """Resolve an ImportFrom node to its target module names (absolute + the
+    ``module.name`` candidates for the imported names)."""
+    if node.level == 0:
+        if not node.module:
+            return set()
+        base = node.module
+    else:
+        base = _resolve_relative(package, node.level, node.module) or ""
+    if not base:
+        return set()
+    targets = {base}
+    targets.update(f"{base}.{alias.name}" for alias in node.names)
+    return targets
+
+
+def _extract_imports(tree: ast.AST, package: str = "") -> set[str]:
+    """Extract imported module names from an AST.
+
+    For ``from pkg import name`` (absolute) both ``pkg`` and ``pkg.name`` are
+    emitted, so an imported name that is itself a submodule connects to it
+    (FR-0090 package-edge: ``from tracks import paths`` -> ``tracks.paths``).
+    Relative imports (level > 0) are resolved against ``package``.
+    """
     modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                modules.add(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            modules.add(node.module)
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.update(_importfrom_targets(node, package))
     return modules
 
 
@@ -195,14 +254,21 @@ def _discover_entrypoints(repo: Path, py_files: list[Path], extra: list[str]) ->
 def _build_graph(
     py_files: list[Path], repo: Path,
 ) -> tuple[dict[str, set[str]], set[str]]:
-    """Build import graph and production module set."""
+    """Build import graph and production module set.
+
+    The package context for relative-import resolution is the module itself
+    when it is an ``__init__.py`` (the package), otherwise its parent.
+    """
     import_graph: dict[str, set[str]] = {}
     production: set[str] = set()
     for py_file in py_files:
         mod_name = _module_name(py_file, repo)
+        is_init = py_file.name == "__init__.py"
+        package = (mod_name if is_init
+                   else mod_name.rsplit(".", 1)[0] if "." in mod_name else "")
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
-            imports = _extract_imports(tree)
+            imports = _extract_imports(tree, package)
         except SyntaxError:
             imports = set()
         import_graph[mod_name] = imports

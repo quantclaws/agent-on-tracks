@@ -1,0 +1,2 @@
+[project.scripts]
+mytool = "pkg.main:main"

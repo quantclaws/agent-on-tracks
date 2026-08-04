@@ -25,32 +25,37 @@ from reach_reference import (  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent.parent / "assets" / "reach_fixtures"
 
 
-def _read_fixture(name: str) -> dict[str, str]:
-    """Read all .py files from a reach fixture as {module_name: content}."""
+def _read_fixture(name: str) -> tuple[dict[str, str], set[str]]:
+    """Read all .py files from a reach fixture as {module_name: content}
+    plus the set of module names that are packages (``__init__.py``)."""
     d = FIXTURES / name
     py_files = {}
+    packages: set[str] = set()
     for py in sorted(d.rglob("*.py")):
         rel = py.relative_to(d)
         parts = list(rel.parts)
-        if parts[-1] == "__init__.py":
+        is_init = parts[-1] == "__init__.py"
+        if is_init:
             parts = parts[:-1]
         else:
             parts[-1] = parts[-1][:-3]
         mod_name = ".".join(parts)
         py_files[mod_name] = py.read_text(encoding="utf-8")
-    return py_files
+        if is_init:
+            packages.add(mod_name)
+    return py_files, packages
 
 
 def _compare(name: str) -> None:
     """Compare check_reach_file vs compute_reach on a fixture."""
     d = FIXTURES / name
-    py_files = _read_fixture(name)
+    py_files, packages = _read_fixture(name)
 
     # Implementation output
     impl = check_reach_file(d)
 
     # Oracle: build expected output using ground truth helpers
-    import_graph, all_modules = build_import_graph(py_files)
+    import_graph, all_modules = build_import_graph(py_files, packages)
 
     entrypoints: list[str] = []
     pyproject = d / "pyproject.toml"
@@ -87,3 +92,10 @@ def test_island_parity():
 def test_no_entries_parity():
     """AC-FR0090-04@v0.4 no-entries fixture: error on no entrypoints."""
     _compare("no_entries")
+
+
+def test_package_edge_parity():
+    """AC-FR0090-01@v0.4 package-edge fixture: ``from pkg import name``
+    connects the submodule; relative imports (``from .sub import X``) resolve;
+    package ``__init__.py`` files are reachable as implicit parent packages."""
+    _compare("package_edge")
