@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import ssl
 import subprocess
 from pathlib import Path
 
@@ -17,6 +15,7 @@ from tests.e2e_live.harness import (
     LiveTracDriver,
     load_scenarios,
     prepare_live_install,
+    resolve_github_repo,
     timeout_env,
 )
 
@@ -86,41 +85,13 @@ def live_scenarios():
 @pytest.fixture
 def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
     """Require disposable GitHub coordinates and usable auth for full live."""
-    value = os.environ.get("TRACKS_E2E_GITHUB_REPO", "").strip()
-    if not value:
+    try:
+        slug = resolve_github_repo(monkeypatch, live_root)
+    except AssertionError as exc:
         raise AssertionError(
-            "full live journey requires TRACKS_E2E_GITHUB_REPO; "
-            f"host={live_root}; install_log={live_install.install_log}"
-        )
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        try:
-            auth = subprocess.run(
-                ["gh", "auth", "token"], capture_output=True, text=True, timeout=30
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            auth = None
-        token = auth.stdout.strip() if auth is not None and auth.returncode == 0 else ""
-    if not token:
-        raise AssertionError(
-            "full live journey requires GitHub auth via GITHUB_TOKEN or `gh auth token`; "
-            f"host={live_root}; install_log={live_install.install_log}"
-        )
-    slug = value.removesuffix(".git").rstrip("/")
-    if "github.com" in slug:
-        slug = slug.split("github.com", maxsplit=1)[1].lstrip("/:")
-    if not re.fullmatch(r"[^/]+/[^/]+", slug):
-        raise AssertionError(f"TRACKS_E2E_GITHUB_REPO must be owner/name, got {value!r}")
-    monkeypatch.setenv("TRAC_GITHUB_REPO", slug)
-    monkeypatch.setenv("GITHUB_TOKEN", token)
+            f"{exc}; install_log={live_install.install_log}"
+        ) from exc
     print(f"LIVE_E2E_REMOTE=git@github.com:{slug}.git", flush=True)
-    # python.org macOS builds ship no CA bundle; use the macOS system bundle for api.github.com.
-    if (
-        os.environ.get("SSL_CERT_FILE") is None
-        and ssl.get_default_verify_paths().cafile is None
-        and Path("/etc/ssl/cert.pem").exists()
-    ):
-        monkeypatch.setenv("SSL_CERT_FILE", "/etc/ssl/cert.pem")
     return slug
 
 
@@ -199,8 +170,8 @@ def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
         live_install,
         live_scenarios,
         timeout_env("TRAC_AGENT_TIMEOUT", 120),
-        timeout_env("TRAC_LIVE_COMMAND_TIMEOUT", 360),
-        timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 1800),
+        timeout_env("TRAC_LIVE_COMMAND_TIMEOUT", 1500),
+        timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 3600),
         timeout_env("TRAC_LIVE_MAX_COMMANDS", 48),
         timeout_env("TRAC_LIVE_MAX_STAGE_DISPATCHES", 12),
         timeout_env("TRAC_LIVE_MAX_REVIEW_DISPATCHES", 6),

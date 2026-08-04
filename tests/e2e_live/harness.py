@@ -9,6 +9,7 @@ import shlex
 import shutil
 import signal
 import sqlite3
+import ssl
 import subprocess
 import sys
 import time
@@ -150,6 +151,47 @@ def timeout_env(name: str, default: int) -> int:
     if value < 1:
         raise RuntimeError(f"{name} must be a positive integer")
     return value
+
+
+def resolve_github_repo(monkeypatch, live_root: Path) -> str:
+    """Validate TRACKS_E2E_GITHUB_REPO + auth, set the env vars the issue
+    backend needs, and return the ``owner/name`` slug. Shared by the
+    ``live_github_repo`` fixture (conftest) and the resume test's deferred
+    GitHub setup so the R0801 duplicate-code gate stays green."""
+    value = os.environ.get("TRACKS_E2E_GITHUB_REPO", "").strip()
+    if not value:
+        raise AssertionError(
+            "full live journey requires TRACKS_E2E_GITHUB_REPO; "
+            f"host={live_root}"
+        )
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        try:
+            auth = subprocess.run(
+                ["gh", "auth", "token"], capture_output=True, text=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            auth = None
+        token = auth.stdout.strip() if auth is not None and auth.returncode == 0 else ""
+    if not token:
+        raise AssertionError(
+            "full live journey requires GitHub auth via GITHUB_TOKEN or `gh auth token`; "
+            f"host={live_root}"
+        )
+    slug = value.removesuffix(".git").rstrip("/")
+    if "github.com" in slug:
+        slug = slug.split("github.com", maxsplit=1)[1].lstrip("/:")
+    if not re.fullmatch(r"[^/]+/[^/]+", slug):
+        raise AssertionError(f"TRACKS_E2E_GITHUB_REPO must be owner/name, got {value!r}")
+    monkeypatch.setenv("TRAC_GITHUB_REPO", slug)
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+    if (
+        os.environ.get("SSL_CERT_FILE") is None
+        and ssl.get_default_verify_paths().cafile is None
+        and Path("/etc/ssl/cert.pem").exists()
+    ):
+        monkeypatch.setenv("SSL_CERT_FILE", "/etc/ssl/cert.pem")
+    return slug
 
 
 def append_log(log_path: Path, text: str) -> None:
@@ -778,7 +820,8 @@ class LiveTracDriver:
                 f"stdout={stdout or exc.stdout or ''}; stderr={stderr or exc.stderr or ''}"
             )
 
-    def run(self, *args, stdin=None, console_input=None, scenario=None, timeout=None):
+    def run(self, *args, stdin=None, console_input=None, scenario=None,
+            timeout=None, agent_timeout=None):
         self.command_count += 1
         if self.command_count > self.max_commands:
             self.fail(f"live command bound exceeded ({self.max_commands})")
@@ -786,10 +829,11 @@ class LiveTracDriver:
         if remaining <= 0:
             self.fail("live journey total timeout exceeded")
         command_args, selected_console = self._command_args(args, scenario, console_input)
+        effective_agent_timeout = agent_timeout or self.agent_timeout
         env = live_env(
             self.install,
             {
-                "TRAC_AGENT_TIMEOUT": str(self.agent_timeout),
+                "TRAC_AGENT_TIMEOUT": str(effective_agent_timeout),
                 "TRAC_AGENT_CONSOLE_INPUT": selected_console,
             },
         )
@@ -805,8 +849,16 @@ class LiveTracDriver:
             text=True,
             start_new_session=True,
         )
+        # When a per-call agent_timeout overrides the default, the outer command
+        # timeout must accommodate it (agent time + pre/post overhead) unless the
+        # caller passed an explicit `timeout`.
+        effective_command_timeout = timeout or self.command_timeout
+        if agent_timeout and not timeout:
+            effective_command_timeout = max(effective_command_timeout,
+                                            agent_timeout + 300)
         stdout, stderr = self._communicate(
-            process, command_args, stdin, min(timeout or self.command_timeout, remaining)
+            process, command_args, stdin,
+            min(effective_command_timeout, remaining),
         )
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode != 0:

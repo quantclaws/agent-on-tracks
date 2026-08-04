@@ -221,21 +221,27 @@ def _consume_attempt(s: State) -> None:
 
 
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
+    status = p.get("status")
     if s.substate == "ISSUES":
         # FR-0200 / NFR-0030 style: a failed create_issues outcome consumes an
         # attempt; the 3rd failure escalates. Per-item progress is recorded by
         # issue.created events, so retries resume instead of rebuilding (D-06).
-        if p.get("status") == "failed":
+        # run048 hardening: any non-done status (failed/None/unknown) consumes an
+        # attempt so a missing/unparseable backend result never silently passes.
+        if status != "done":
             _consume_attempt(s)
         return
-    if p.get("status") == "failed":
+    if status != "done":
         # FR-0210 exit gate: a failed dispatch_agent outcome (protocol / audit /
         # existence failure, incl. over-reach) is NOT a produced document. It
         # consumes an attempt from the same accounting as verdict.failed, carries
         # failure evidence into the re-dispatch prompt (FR-11), and escalates to
         # awaiting_human at the 3rd attempt (Aaron: over-reach re-dispatches, <=3).
+        # run048 hardening: a None/absent/unknown status (unparseable opencode
+        # result) is treated as `failed` with `agent_error` so the 3-attempt
+        # escalation evidence stays meaningful instead of silently succeeding.
         s.last_failure = {
-            "check": p.get("failure_class", "agent_failed"),
+            "check": p.get("failure_class") or "agent_error",
             "reason": p.get("self_report"),
             "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
         }
