@@ -36,6 +36,20 @@ from tracks.effects.audit import Auditor, _rel
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
               "archer": "Archer", "prism": "Prism"}
 
+# Agent IQ -> model mapping (user policy): an agent's model for live dispatch
+# is determined by its IQ frontmatter field in tracks/agents/<Name>.md (e.g.
+# Scribe.md has `IQ: A`). Mapping: S -> (TBD), A -> ark/glm-5.2, B -> (TBD).
+# An explicit TRAC_AGENT_MODEL env var overrides everything (existing c54490a
+# behavior, applied in select_backend -> OpencodeBackend.model). S and B are
+# intentionally absent here for now - they fall through to opencode's own
+# configured default (no --model flag); add them here when the policy lands so
+# future S/B entries land predictably.
+IQ_MODEL = {"A": "ark/glm-5.2"}
+
+# Tolerant frontmatter `IQ:` line parser (single-token value, optional spaces
+# after the colon); only matched inside the leading YAML frontmatter block.
+_IQ_LINE = re.compile(r"^IQ:\s*(\S+)\s*$", re.M)
+
 DEFAULT_TIMEOUT = 600  # seconds
 
 _SECRET_VALUE = re.compile(
@@ -92,9 +106,13 @@ class OpencodeBackend:
         self.repo = Path(repo)
         self.version = version
         self.timeout = timeout
-        # Explicit provider/model (e.g. "opencode/deepseek-v4-flash-free") for
-        # the live channel; when None, opencode resolves its own configured
-        # default model (spec §3.1: provider/model by env, ARCH §4a).
+        # Model resolution is three-layer per dispatch (spec §3.1, ARCH §4a):
+        # (1) explicit self.model (TRAC_AGENT_MODEL via select_backend) wins;
+        # (2) else the agent's IQ frontmatter (canonical tracks/agents/<Name>.md)
+        #     mapped via IQ_MODEL - missing file/missing IQ/unrecognized IQ ->
+        #     None;
+        # (3) None means opencode resolves its own configured default (no
+        # --model flag, see _resolve_model/_run).
         self.model = model
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
 
@@ -515,11 +533,22 @@ class OpencodeBackend:
 
     # -- subprocess + failure matrix (ARCH §7) ------------------------------
 
+    def _resolve_model(self, name: str) -> str | None:
+        """Three-layer model resolution per dispatch (see __init__ docstring):
+        explicit ``self.model`` wins; else the agent's IQ frontmatter mapped
+        via ``IQ_MODEL``; ``None`` means opencode resolves its own configured
+        default (no ``--model`` flag)."""
+        if self.model:
+            return self.model
+        iq = _parse_iq(self._canonical / f"{name}.md")
+        return IQ_MODEL.get(iq) if iq else None
+
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
                "--dir", str(self.repo), "--auto", prompt]
-        if self.model:
-            cmd.extend(["--model", self.model])
+        model = self._resolve_model(name)
+        if model:
+            cmd.extend(["--model", model])
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         try:
             proc = subprocess.Popen(
@@ -657,6 +686,26 @@ def _template_kinds(assignment: dict | None) -> list[str]:
         return [kind for kind in assignment["templates"] if kind]
     kind = assignment.get("template_kind")
     return [kind] if kind else []
+
+
+def _parse_iq(path: Path) -> str | None:
+    """Tolerant frontmatter ``IQ:`` parser for a canonical agent definition
+    file. Returns the IQ token (e.g. ``"A"``, ``"S"``) from the leading YAML
+    frontmatter block, or ``None`` when the file is missing, has no
+    frontmatter, has no ``IQ:`` line, or the frontmatter is unclosed - the
+    caller (``_resolve_model``) then maps the token via ``IQ_MODEL`` and
+    unrecognized tokens fall through to ``None`` (opencode default)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)  # closing delimiter of the frontmatter block
+    if end == -1:
+        return None  # unclosed frontmatter - tolerant: treat IQ as absent
+    m = _IQ_LINE.search(text[:end])
+    return m.group(1) if m else None
 
 
 def _text(value) -> str:

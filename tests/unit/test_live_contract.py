@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tests.unit.helpers import capture_popen_cmd
 from tracks.effects import select_backend
 from tracks.effects.opencode import AGENT_NAME, OpencodeBackend
 
@@ -300,42 +301,23 @@ def test_agent_timeout_uses_generic_environment_name(monkeypatch, tmp_path):
 
 
 def test_run_cmd_omits_model_flag_when_model_none(monkeypatch, tmp_path):
-    """No --model flag in the opencode command when model is None (spec §3.1:
-    opencode resolves its own configured default)."""
-    captured = {}
-
-    class Process:
-        pid = 123
-        returncode = 0
-
-        def communicate(self, input, timeout):
-            return "{}", ""
-
-    def fake_popen(*args, **kwargs):
-        captured["cmd"] = args[0]
-        return Process()
-
-    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", fake_popen)
-    OpencodeBackend(tmp_path, "v0.1")._run("Scribe", "prompt")
+    """No --model flag when no model resolves (spec §3.1: opencode resolves its
+    own configured default): explicit model is None AND the agent's canonical
+    definition carries no IQ (so the IQ layer falls through too)."""
+    captured = capture_popen_cmd(monkeypatch)
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    canonical = tmp_path / "agents"
+    canonical.mkdir()
+    (canonical / "Scribe.md").write_text(
+        "---\ndescription: x\n---\nbody\n", encoding="utf-8")
+    backend._canonical = canonical
+    backend._run("Scribe", "prompt")
     assert "--model" not in captured["cmd"]
 
 
 def test_run_cmd_includes_model_flag_when_model_set(monkeypatch, tmp_path):
     """A configured model is passed as --model <value> to opencode run."""
-    captured = {}
-
-    class Process:
-        pid = 123
-        returncode = 0
-
-        def communicate(self, input, timeout):
-            return "{}", ""
-
-    def fake_popen(*args, **kwargs):
-        captured["cmd"] = args[0]
-        return Process()
-
-    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", fake_popen)
+    captured = capture_popen_cmd(monkeypatch)
     OpencodeBackend(tmp_path, "v0.1",
                     model="litellm/deepseek-v4-flash")._run("Scribe", "prompt")
     cmd = captured["cmd"]
