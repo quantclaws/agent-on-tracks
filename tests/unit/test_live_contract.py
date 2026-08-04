@@ -297,3 +297,47 @@ def test_agent_timeout_uses_generic_environment_name(monkeypatch, tmp_path):
     backend = select_backend(tmp_path, "v0.1")
     assert isinstance(backend, OpencodeBackend)
     assert backend.timeout == 17
+
+
+def test_run_cmd_omits_model_flag_when_model_none(monkeypatch, tmp_path):
+    """No --model flag in the opencode command when model is None (spec §3.1:
+    opencode resolves its own configured default)."""
+    captured = {}
+
+    class Process:
+        pid = 123
+        returncode = 0
+
+        def communicate(self, input, timeout):
+            return "{}", ""
+
+    def fake_popen(*args, **kwargs):
+        captured["cmd"] = args[0]
+        return Process()
+
+    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", fake_popen)
+    OpencodeBackend(tmp_path, "v0.1")._run("Scribe", "prompt")
+    assert "--model" not in captured["cmd"]
+
+
+def test_run_cmd_includes_model_flag_when_model_set(monkeypatch, tmp_path):
+    """A configured model is passed as --model <value> to opencode run."""
+    captured = {}
+
+    class Process:
+        pid = 123
+        returncode = 0
+
+        def communicate(self, input, timeout):
+            return "{}", ""
+
+    def fake_popen(*args, **kwargs):
+        captured["cmd"] = args[0]
+        return Process()
+
+    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", fake_popen)
+    OpencodeBackend(tmp_path, "v0.1",
+                    model="litellm/deepseek-v4-flash")._run("Scribe", "prompt")
+    cmd = captured["cmd"]
+    assert "--model" in cmd
+    assert cmd[cmd.index("--model") + 1] == "litellm/deepseek-v4-flash"

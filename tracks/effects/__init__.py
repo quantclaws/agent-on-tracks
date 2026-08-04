@@ -7,6 +7,8 @@ backend choice or any test/simulate mode.
 - ``TRAC_AGENT_BACKEND=fake|opencode`` (default ``opencode``, SPEC FR-020).
 - ``TRAC_FAKE_SIMULATE`` (non-empty) forces the fake backend even when
   ``TRAC_AGENT_BACKEND=opencode`` (deterministic suite / behavior injection).
+- ``TRAC_AGENT_MODEL`` (opencode path only) overrides the opencode default
+  model; empty/unset lets opencode resolve its own configured model (spec §3.1).
 - conftest forces ``TRAC_AGENT_BACKEND=fake`` for the deterministic E2E channel;
   the live opencode channel opts in explicitly (SPEC test-plan §6).
 """
@@ -31,5 +33,6 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
     if kind == "opencode":
         from tracks.effects.opencode import OpencodeBackend
         timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "600"))
-        return OpencodeBackend(repo, version, timeout=timeout)
+        model = os.environ.get("TRAC_AGENT_MODEL", "").strip() or None
+        return OpencodeBackend(repo, version, timeout=timeout, model=model)
     raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")
