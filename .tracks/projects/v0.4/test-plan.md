@@ -304,7 +304,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ## 8. AC -> 测试层映射
 
-> **Prism:** BLOCKER-002 [severity=blocker, artifact=test-plan.md, anchor=§8 行305-487, 关联=FR-0140/AC-IF-closure/BS-12]：test-plan §8「IF- 归属」列将全部 M-TEST 状态机 AC（FR-0010~0070 共 40 条）、Shield 接入 AC（FR-0120 共 6 条）及 M-TEST NFR AC（NFR-0030/0040 共 4 条）——合计 50/90 条 AC——统一归属为 IF-TRACE-001。但 IF-TRACE-001 是 tracks/checks/trace.py:42 定义的桩合同 token（NotImplementedError("IF-TRACE-001 check_trace_full")），专指 check_trace_full 孤儿检测纯函数。M-TEST 状态机 AC 依赖的是 kernel/machine.py _decide_m_test 与 executor/executor.py 的 collect_tests/run_tests/check_trace/commit_tests handler（architecture.md §1.2/§1.3），与 check_trace_full 无关。这导致三个闭合问题：(1) AC->IF->ARC 路径断裂——AC-FR0010-01（M-TEST 进入）经 IF-TRACE-001 指向 checks/trace.py，而非 kernel/machine.py，路径、命令与失败语义不一致；(2) 变绿条件错误——FR-0140 要求「所依赖接口的 IF- 标识，供 M-IMPL task 变绿子集划分」，Devon 实现 check_trace_full 不会使 M-TEST 状态机测试变绿，green condition 语义无效；(3) IF- 标识未在 interfaces.md 定义——IF-TRACE-001/002、IF-REACH-001/002 仅作为 NotImplementedError token 存在于桩代码中，interfaces.md §1a-§1h 未定义这些标识，design-trace validator（check_design_trace）无法对 IF- 标识做有效性校验（只能做存在性检查）。根因：M-TEST 状态机接口（§1a 事件/§1b 命令/§1c 状态）无 IF- 标识定义，test-plan 机械地用 IF-TRACE-001 填充。预期修订：Archer 在 interfaces.md 为 M-TEST 状态机接口定义 IF- 标识（如 IF-MTEST-001 对应 §1a/§1b/§1c 的事件/命令/状态合同，或在 Scaffold 为 machine.py/executor.py M-TEST 新增声明桩并赋 IF- token），并将 test-plan §8 中 50 条 M-TEST 状态机/Shield/NFR AC 的 IF- 归属更新为正确标识；同时确认 design-trace validator 能校验 IF- 标识有效性（非仅存在性）。
+> **Prism [RESOLVED]:** BLOCKER-002 [severity=blocker, artifact=test-plan.md, anchor=§8 行305-487, 关联=FR-0140/AC-IF-closure/BS-12]：test-plan §8「IF- 归属」列将全部 M-TEST 状态机 AC（FR-0010~0070 共 40 条）、Shield 接入 AC（FR-0120 共 6 条）及 M-TEST NFR AC（NFR-0030/0040 共 4 条）——合计 50/90 条 AC——统一归属为 IF-TRACE-001。但 IF-TRACE-001 是 tracks/checks/trace.py:42 定义的桩合同 token（NotImplementedError("IF-TRACE-001 check_trace_full")），专指 check_trace_full 孤儿检测纯函数。M-TEST 状态机 AC 依赖的是 kernel/machine.py _decide_m_test 与 executor/executor.py 的 collect_tests/run_tests/check_trace/commit_tests handler（architecture.md §1.2/§1.3），与 check_trace_full 无关。这导致三个闭合问题：(1) AC->IF->ARC 路径断裂——AC-FR0010-01（M-TEST 进入）经 IF-TRACE-001 指向 checks/trace.py，而非 kernel/machine.py，路径、命令与失败语义不一致；(2) 变绿条件错误——FR-0140 要求「所依赖接口的 IF- 标识，供 M-IMPL task 变绿子集划分」，Devon 实现 check_trace_full 不会使 M-TEST 状态机测试变绿，green condition 语义无效；(3) IF- 标识未在 interfaces.md 定义——IF-TRACE-001/002、IF-REACH-001/002 仅作为 NotImplementedError token 存在于桩代码中，interfaces.md §1a-§1h 未定义这些标识，design-trace validator（check_design_trace）无法对 IF- 标识做有效性校验（只能做存在性检查）。根因：M-TEST 状态机接口（§1a 事件/§1b 命令/§1c 状态）无 IF- 标识定义，test-plan 机械地用 IF-TRACE-001 填充。预期修订：Archer 在 interfaces.md 为 M-TEST 状态机接口定义 IF- 标识（如 IF-MTEST-001 对应 §1a/§1b/§1c 的事件/命令/状态合同，或在 Scaffold 为 machine.py/executor.py M-TEST 新增声明桩并赋 IF- token），并将 test-plan §8 中 50 条 M-TEST 状态机/Shield/NFR AC 的 IF- 归属更新为正确标识；同时确认 design-trace validator 能校验 IF- 标识有效性（非仅存在性）。
 
 > 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）。跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。
 >> **Archer:** 已修订，三处闭合问题全部解决：
@@ -412,33 +412,36 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ### 8i. FR-0090 trac check reach
 
+> **Prism:** BLOCKER-003 [severity=blocker, artifact=test-plan.md, anchor=§8i 行413（FR-0090），波及 §8j/§8k/§8o/§8p，关联=FR-0140/BS-12/FR-0090/FR-0100/FR-0110/NFR-0010/NFR-0020]：test-plan §8 全部 reach 相关 integration AC 的 IF- 归属为 IF-REACH-001（check_reach 纯函数），但 integration 测试经 CLI（test_check_reach_cli.py）调用 check_reach_file（IF-REACH-002），Devon 仅实现 IF-REACH-001 不会使 CLI integration 测试变绿--check_reach_file 仍 raise NotImplementedError("IF-REACH-002")。具体：(1) FR-0090 integration AC（AC-FR0090-01/04/06，layer 含 integration，测试 test_check_reach_cli.py::*）IF-=IF-REACH-001，应为 IF-REACH-002（或 IF-REACH-001+IF-REACH-002）；(2) FR-0100/0110、NFR-0010/0020 的 reach integration AC 同样标 IF-REACH-001，应含 IF-REACH-002。对照 trace 侧（FR-0080）integration AC 正确使用 IF-TRACE-002（file wrapper）--因 check_trace_full_file 调用 check_trace_full，实现 IF-TRACE-002 隐含实现 IF-TRACE-001；reach 侧反向：check_reach_file 调用 check_reach，实现 IF-REACH-001 不隐含 IF-REACH-002。三文档不一致：architecture.md §1.3 六元组 FR-0090 写 IF-=IF-REACH-001/IF-REACH-002、FR-0100/0110 写 IF-=IF-TRACE-002/IF-REACH-002；interfaces.md §5 IF-REACH-002 关联 FR 列含 FR-0090-01/FR-0100/FR-0110/NFR-0010/NFR-0020；但 test-plan §8 仅写 IF-REACH-001。预期修订：将 test-plan §8i/§8j/§8k/§8o/§8p 中 layer 含 integration 的 reach AC 的 IF- 归属更新为 IF-REACH-002（或 IF-REACH-001+IF-REACH-002），与 trace 侧 IF-TRACE-002 模式对称，使变绿条件（BS-12/FR-0140）语义有效。
+>> **Archer:** 已修订：将 test-plan §8i/§8j/§8k/§8o/§8p 中全部 layer 含 integration 的 reach AC 的 IF- 归属从 IF-REACH-001 更新为 IF-REACH-002，与 trace 侧 IF-TRACE-002 模式对称。具体变更（14 条 integration AC）：§8i AC-FR0090-01/04/06；§8j AC-FR0100-01/02/04/05；§8k AC-FR0110-01/02/03；§8o AC-NFR0010-01/02；§8p AC-NFR0020-01/02。另将 §8j 两条 baseline unit AC（AC-FR0100-03/06）从 IF-REACH-001 更新为 IF-REACH-002：LegacyBaseline schema 按 interfaces.md §5 属于 IF-REACH-002（file wrapper 读取基线），非 IF-REACH-001（纯函数接收 baseline dict 参数）；trace 侧同 AC 已用 IF-TRACE-002，reach 侧对称修正。保留 IF-REACH-001 的 3 条 AC（AC-FR0090-02/03/05）均为 unit-only、直接测试 check_reach 纯函数，归属正确。变绿条件（BS-12/FR-0140）语义现在有效：Devon 实现 IF-REACH-002 使 CLI integration 测试变绿（check_reach_file 不再 raise NotImplementedError），实现 IF-REACH-001 使纯函数 unit 测试变绿。三文档 trac validate 通过。
+
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0090-01（从声明入口点构建模块级 import 图；可独立 CLI） | unit + integration + ground_truth | test_check_reach.py::test_build_import_graph, test_check_reach_cli.py::test_independent_cli, ground_truth reach_reference.py | IF-REACH-001 |
+| AC-FR0090-01（从声明入口点构建模块级 import 图；可独立 CLI） | unit + integration + ground_truth | test_check_reach.py::test_build_import_graph, test_check_reach_cli.py::test_independent_cli, ground_truth reach_reference.py | IF-REACH-002 |
 | AC-FR0090-02（报告不可达的生产模块孤岛） | unit + ground_truth | test_check_reach.py::test_islands_reported, reach_reference.py | IF-REACH-001 |
 | AC-FR0090-03（纯测试模块不计入，不产生误报） | unit | test_check_reach.py::test_test_modules_excluded | IF-REACH-001 |
-| AC-FR0090-04（无入口声明时报错，非零退出） | unit + integration | test_check_reach.py::test_no_entrypoints_error, test_check_reach_cli.py::test_no_entries_fail | IF-REACH-001 |
+| AC-FR0090-04（无入口声明时报错，非零退出） | unit + integration | test_check_reach.py::test_no_entrypoints_error, test_check_reach_cli.py::test_no_entries_fail | IF-REACH-002 |
 | AC-FR0090-05（只做模块级 import 图，不做函数级调用图） | unit | test_check_reach.py::test_no_function_level_graph | IF-REACH-001 |
-| AC-FR0090-06（可被引擎当 verdict 来源调用） | integration | test_check_reach_cli.py::test_verdict_source | IF-REACH-001 |
+| AC-FR0090-06（可被引擎当 verdict 来源调用） | integration | test_check_reach_cli.py::test_verdict_source | IF-REACH-002 |
 
 ### 8j. FR-0100 存量基线豁免
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0100-01（trace 与 reach 提供同一份存量基线豁免清单；.tracks/ 下声明文件） | integration | test_baseline_exemption.py::test_baseline_file_schema | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0100-02（基线内文档/编号 trace 不计孤儿；基线内模块 reach 不计孤岛） | integration + ground_truth | test_baseline_exemption.py::test_trace_baseline_exemption + test_reach_baseline_exemption, trace_reference.py, reach_reference.py | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0100-03（基线只冻结采纳时刻存量，不回填历史） | unit | test_baseline.py::test_baseline_freezes_adoption_only | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0100-04（基线后新增同形内容仍正常报错） | integration | test_baseline_exemption.py::test_new_content_still_reported | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0100-05（不强制重编号/补链路；工具只报告不改写） | integration | test_baseline_exemption.py::test_no_auto_fix（git 工作区无变化，NFR-0010） | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0100-06（schema 由 Archer 裁定，FR 锁定语义与范围） | unit | test_baseline.py::test_schema_fields | IF-TRACE-002, IF-REACH-001 |
+| AC-FR0100-01（trace 与 reach 提供同一份存量基线豁免清单；.tracks/ 下声明文件） | integration | test_baseline_exemption.py::test_baseline_file_schema | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0100-02（基线内文档/编号 trace 不计孤儿；基线内模块 reach 不计孤岛） | integration + ground_truth | test_baseline_exemption.py::test_trace_baseline_exemption + test_reach_baseline_exemption, trace_reference.py, reach_reference.py | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0100-03（基线只冻结采纳时刻存量，不回填历史） | unit | test_baseline.py::test_baseline_freezes_adoption_only | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0100-04（基线后新增同形内容仍正常报错） | integration | test_baseline_exemption.py::test_new_content_still_reported | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0100-05（不强制重编号/补链路；工具只报告不改写） | integration | test_baseline_exemption.py::test_no_auto_fix（git 工作区无变化，NFR-0010） | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0100-06（schema 由 Archer 裁定，FR 锁定语义与范围） | unit | test_baseline.py::test_schema_fields | IF-TRACE-002, IF-REACH-002 |
 
 ### 8k. FR-0110 双格式输出与稳定退出码
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0110-01（trace 与 reach 均支持人类可读 + --json） | integration | test_check_trace_cli.py::test_json_output + test_human_readable_output, test_check_reach_cli.py::test_json_output + test_human_readable_output | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0110-02（退出码稳定：0=通过、非0=有硬错误；多次运行一致） | integration | test_check_trace_cli.py::test_exit_code_stable, test_check_reach_cli.py::test_exit_code_stable | IF-TRACE-002, IF-REACH-001 |
-| AC-FR0110-03（CLI 与引擎双消费者：人类读默认格式、引擎读 --json + 退出码） | integration | test_check_trace_cli.py::test_engine_consumer, test_check_reach_cli.py::test_engine_consumer | IF-TRACE-002, IF-REACH-001 |
+| AC-FR0110-01（trace 与 reach 均支持人类可读 + --json） | integration | test_check_trace_cli.py::test_json_output + test_human_readable_output, test_check_reach_cli.py::test_json_output + test_human_readable_output | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0110-02（退出码稳定：0=通过、非0=有硬错误；多次运行一致） | integration | test_check_trace_cli.py::test_exit_code_stable, test_check_reach_cli.py::test_exit_code_stable | IF-TRACE-002, IF-REACH-002 |
+| AC-FR0110-03（CLI 与引擎双消费者：人类读默认格式、引擎读 --json + 退出码） | integration | test_check_trace_cli.py::test_engine_consumer, test_check_reach_cli.py::test_engine_consumer | IF-TRACE-002, IF-REACH-002 |
 
 ### 8l. FR-0120 Shield opencode agent 接入与写范围审计
 
@@ -475,15 +478,15 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-NFR0010-01（运行前后文件内容无变化） | integration | test_check_trace_cli.py::test_no_file_changes + test_check_reach_cli.py::test_no_file_changes | IF-TRACE-002, IF-REACH-001 |
-| AC-NFR0010-02（工具只报告，不做自动修复/重编号） | integration | test_check_trace_cli.py::test_no_auto_fix + test_check_reach_cli.py::test_no_auto_fix | IF-TRACE-002, IF-REACH-001 |
+| AC-NFR0010-01（运行前后文件内容无变化） | integration | test_check_trace_cli.py::test_no_file_changes + test_check_reach_cli.py::test_no_file_changes | IF-TRACE-002, IF-REACH-002 |
+| AC-NFR0010-02（工具只报告，不做自动修复/重编号） | integration | test_check_trace_cli.py::test_no_auto_fix + test_check_reach_cli.py::test_no_auto_fix | IF-TRACE-002, IF-REACH-002 |
 
 ### 8p. NFR-0020 trace/reach 输出确定性与幂等
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-NFR0020-01（同一输入多次运行输出完全一致，字节级） | integration | test_check_trace_cli.py::test_output_deterministic + test_check_reach_cli.py::test_output_deterministic | IF-TRACE-002, IF-REACH-001 |
-| AC-NFR0020-02（无随机顺序/时间戳/环境漂移；清单顺序稳定） | unit + integration | test_check_trace.py::test_stable_order, test_check_reach_cli.py::test_stable_order | IF-TRACE-002, IF-REACH-001 |
+| AC-NFR0020-01（同一输入多次运行输出完全一致，字节级） | integration | test_check_trace_cli.py::test_output_deterministic + test_check_reach_cli.py::test_output_deterministic | IF-TRACE-002, IF-REACH-002 |
+| AC-NFR0020-02（无随机顺序/时间戳/环境漂移；清单顺序稳定） | unit + integration | test_check_trace.py::test_stable_order, test_check_reach_cli.py::test_stable_order | IF-TRACE-002, IF-REACH-002 |
 
 ### 8q. NFR-0030 M-TEST 控制流维持 kernel 纯函数边界
 
