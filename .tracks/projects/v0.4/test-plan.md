@@ -304,82 +304,95 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ## 8. AC -> 测试层映射
 
+> **Prism:** BLOCKER-002 [severity=blocker, artifact=test-plan.md, anchor=§8 行305-487, 关联=FR-0140/AC-IF-closure/BS-12]：test-plan §8「IF- 归属」列将全部 M-TEST 状态机 AC（FR-0010~0070 共 40 条）、Shield 接入 AC（FR-0120 共 6 条）及 M-TEST NFR AC（NFR-0030/0040 共 4 条）——合计 50/90 条 AC——统一归属为 IF-TRACE-001。但 IF-TRACE-001 是 tracks/checks/trace.py:42 定义的桩合同 token（NotImplementedError("IF-TRACE-001 check_trace_full")），专指 check_trace_full 孤儿检测纯函数。M-TEST 状态机 AC 依赖的是 kernel/machine.py _decide_m_test 与 executor/executor.py 的 collect_tests/run_tests/check_trace/commit_tests handler（architecture.md §1.2/§1.3），与 check_trace_full 无关。这导致三个闭合问题：(1) AC->IF->ARC 路径断裂——AC-FR0010-01（M-TEST 进入）经 IF-TRACE-001 指向 checks/trace.py，而非 kernel/machine.py，路径、命令与失败语义不一致；(2) 变绿条件错误——FR-0140 要求「所依赖接口的 IF- 标识，供 M-IMPL task 变绿子集划分」，Devon 实现 check_trace_full 不会使 M-TEST 状态机测试变绿，green condition 语义无效；(3) IF- 标识未在 interfaces.md 定义——IF-TRACE-001/002、IF-REACH-001/002 仅作为 NotImplementedError token 存在于桩代码中，interfaces.md §1a-§1h 未定义这些标识，design-trace validator（check_design_trace）无法对 IF- 标识做有效性校验（只能做存在性检查）。根因：M-TEST 状态机接口（§1a 事件/§1b 命令/§1c 状态）无 IF- 标识定义，test-plan 机械地用 IF-TRACE-001 填充。预期修订：Archer 在 interfaces.md 为 M-TEST 状态机接口定义 IF- 标识（如 IF-MTEST-001 对应 §1a/§1b/§1c 的事件/命令/状态合同，或在 Scaffold 为 machine.py/executor.py M-TEST 新增声明桩并赋 IF- token），并将 test-plan §8 中 50 条 M-TEST 状态机/Shield/NFR AC 的 IF- 归属更新为正确标识；同时确认 design-trace validator 能校验 IF- 标识有效性（非仅存在性）。
+
 > 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）。跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。
+>> **Archer:** 已修订，三处闭合问题全部解决：
+>> 
+>> (1) AC->IF->ARC 路径修复：interfaces.md §5 新增 IF- 标识注册表，定义 8 个标识--IF-MTEST-001（kernel 状态机：§1a reducer + §1b Command 产出 + §1c State + _decide_m_test，实现模块 kernel/machine.py + kernel/events.py）、IF-MTEST-002（executor handler：_do_collect_tests/_do_run_tests/_do_check_trace/_do_commit_tests + classify_red + 判据包物化，实现模块 executor/executor.py）、IF-SHIELD-001（Shield 接入：AGENT_NAME + deliverables + Auditor 写范围，实现模块 effects/opencode.py + deliverables.py）、IF-TRACE-001/002（checks/trace.py，原桩 token 现正式定义）、IF-REACH-001/002（checks/reach.py，原桩 token 现正式定义）、IF-VALIDATE-001（validate.py M-TEST 扩展：check_design_trace IF- 校验 + BS-XX 文法 + @version，实现模块 executor/validate.py + templates/）。architecture.md §1.3 六元组每条 FR 增补 IF-= 字段，AC->IF->ARC 路径连续。
+>> 
+>> (2) 变绿条件修复：test-plan §8 全部 50 条 M-TEST/Shield/NFR AC 的 IF- 归属从 IF-TRACE-001 更新为正确标识--FR-0010 全部 IF-MTEST-001；FR-0020 按 kernel 路由/Shield 写范围拆分 IF-MTEST-001 + IF-SHIELD-001；FR-0030/0040/0050/0060/0070 按 kernel 路由/executor 执行拆分 IF-MTEST-001 + IF-MTEST-002（FR-0070-02/03/04 trace 相关 AC 另加 IF-TRACE-002）；FR-0120 全部 IF-SHIELD-001；NFR-0030 IF-MTEST-001；NFR-0040 IF-MTEST-001 + IF-MTEST-002。另发现 FR-0130/FR-0140 原 IF-TRACE-002 同类错误（validate.py 扩展不等于 checks/trace.py），已修正为 IF-VALIDATE-001。Devon 实现对应 IF- 标识可使依赖该标识的测试变绿，green condition 语义有效。
+>> 
+>> (3) IF- 标识有效性校验：interfaces.md §5 定义 design-trace validator 扩展机制--validator 解析 §5 注册表表格第 2 列构建已定义 IF- 标识集合，解析 test-plan §8 每条 integration/e2e AC 的 IF- 归属列，未注册标识判硬错误（line:N IF-id not defined in interfaces.md §5）；缺 IF- 归属判硬错误。unit AC 的 IF- 归属为 informational。architecture.md §5.1 记取舍：IF- 标识粒度对齐增长轴（Devon task 边界）而非函数签名，因 kernel/effects/executor 是既有文件无桩；IF- 标识注册表在 interfaces.md §5 而非桩代码。
+>> 
+>> 三文档已 trac validate 通过。
+
+「IF- 归属」列的取值只能来自 interfaces.md §5 IF- 标识注册表（IF-MTEST-001 / IF-MTEST-002 / IF-SHIELD-001 / IF-TRACE-001 / IF-TRACE-002 / IF-REACH-001 / IF-REACH-002 / IF-VALIDATE-001）。design-trace validator（`check_design_trace`，FR-0140 扩展）校验：每条 integration/e2e AC 的 IF- 归属非空、且每个 IF- 标识在 interfaces.md §5 已定义（有效性校验，非仅存在性）。粒度对齐 architecture.md §1.1 增长轴（Devon 实现 task 边界）：kernel 状态机 -> IF-MTEST-001；executor handler -> IF-MTEST-002；Shield 接入 -> IF-SHIELD-001；validate.py 扩展 -> IF-VALIDATE-001；trace/reach 工具 -> IF-TRACE-001/002、IF-REACH-001/002。
 
 ### 8a. FR-0010 M-TEST 阶段注册与子状态机驱动
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0010-01（M-DESIGN EXIT -> stage.entered(M-TEST), substate=DISPATCH） | unit + integration | test_machine_m_test.py::test_enter_m_test_from_design_exit, test_m_test_cycle.py::test_enter_dispatch | IF-TRACE-001 |
-| AC-FR0010-02（trac status 报告 stage=M-TEST + substate；_NEXT_STAGE 接续 + boundary） | unit + e2e | test_machine_m_test.py::test_next_stage_design_to_m_test, test_m_test_journey.py::test_boundary_after_m_test | IF-TRACE-001 |
-| AC-FR0010-03（SM-01 转移严格遵循清单；非法转移不产出） | unit + integration | test_machine_m_test.py::test_sm01_transitions_enforced, test_m_test_cycle.py::test_illegal_transition_rejected | IF-TRACE-001 |
-| AC-FR0010-04（既有阶段行为不变；M-DESIGN 之前事件前缀稳定） | e2e | test_full_journey.py::test_full_journey_to_boundary（更新：M-DESIGN 前缀稳定 + M-TEST 接续 + boundary 移至 M-TEST 后） | IF-TRACE-001 |
-| AC-FR0010-05（显式控制流驱动；kernel 纯函数边界） | unit | test_machine_m_test.py::test_explicit_control_flow + test_kernel_purity_m_test | IF-TRACE-001 |
+| AC-FR0010-01（M-DESIGN EXIT -> stage.entered(M-TEST), substate=DISPATCH） | unit + integration | test_machine_m_test.py::test_enter_m_test_from_design_exit, test_m_test_cycle.py::test_enter_dispatch | IF-MTEST-001 |
+| AC-FR0010-02（trac status 报告 stage=M-TEST + substate；_NEXT_STAGE 接续 + boundary） | unit + e2e | test_machine_m_test.py::test_next_stage_design_to_m_test, test_m_test_journey.py::test_boundary_after_m_test | IF-MTEST-001 |
+| AC-FR0010-03（SM-01 转移严格遵循清单；非法转移不产出） | unit + integration | test_machine_m_test.py::test_sm01_transitions_enforced, test_m_test_cycle.py::test_illegal_transition_rejected | IF-MTEST-001 |
+| AC-FR0010-04（既有阶段行为不变；M-DESIGN 之前事件前缀稳定） | e2e | test_full_journey.py::test_full_journey_to_boundary（更新：M-DESIGN 前缀稳定 + M-TEST 接续 + boundary 移至 M-TEST 后） | IF-MTEST-001 |
+| AC-FR0010-05（显式控制流驱动；kernel 纯函数边界） | unit | test_machine_m_test.py::test_explicit_control_flow + test_kernel_purity_m_test | IF-MTEST-001 |
 
 ### 8b. FR-0020 M-TEST WRITE
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0020-01（DISPATCH 按 test-plan 层归属创建 Shield tasks -> WRITE） | unit + integration | test_machine_m_test.py::test_dispatch_creates_shield_tasks, test_shield_dispatch.py::test_dispatch_uses_test_plan_layers | IF-TRACE-001 |
-| AC-FR0020-02（Shield 写入 tests/integration/、tests/e2e/、tests/assets/、tests/counterexamples/） | integration + e2e | test_shield_dispatch.py::test_shield_writes_test_files, test_m_test_journey.py | IF-TRACE-001 |
-| AC-FR0020-03（可 collect 且全部合法失败的测试文件） | integration | test_shield_dispatch.py::test_collectable_legit_red_tests | IF-TRACE-001 |
-| AC-FR0020-04（validate 失败重派 Shield <=3 -> escalation） | unit + integration | test_machine_m_test.py::test_write_retry_escalation, test_shield_dispatch.py::test_validate_fail_redispatch | IF-TRACE-001 |
-| AC-FR0020-05（Shield 不 commit/push/不改产品代码/接口桩；写范围审计回滚） | integration | test_shield_dispatch.py::test_shield_no_commit + test_over_reach_rolled_back | IF-TRACE-001 |
+| AC-FR0020-01（DISPATCH 按 test-plan 层归属创建 Shield tasks -> WRITE） | unit + integration | test_machine_m_test.py::test_dispatch_creates_shield_tasks, test_shield_dispatch.py::test_dispatch_uses_test_plan_layers | IF-MTEST-001, IF-SHIELD-001 |
+| AC-FR0020-02（Shield 写入 tests/integration/、tests/e2e/、tests/assets/、tests/counterexamples/） | integration + e2e | test_shield_dispatch.py::test_shield_writes_test_files, test_m_test_journey.py | IF-SHIELD-001 |
+| AC-FR0020-03（可 collect 且全部合法失败的测试文件） | integration | test_shield_dispatch.py::test_collectable_legit_red_tests | IF-SHIELD-001 |
+| AC-FR0020-04（validate 失败重派 Shield <=3 -> escalation） | unit + integration | test_machine_m_test.py::test_write_retry_escalation, test_shield_dispatch.py::test_validate_fail_redispatch | IF-MTEST-001 |
+| AC-FR0020-05（Shield 不 commit/push/不改产品代码/接口桩；写范围审计回滚） | integration | test_shield_dispatch.py::test_shield_no_commit + test_over_reach_rolled_back | IF-SHIELD-001 |
 
 ### 8c. FR-0030 M-TEST COLLECT
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0030-01（Runtime 独立 collection，不读 Shield 自述） | integration | test_m_test_cycle.py::test_collect_independent | IF-TRACE-001 |
-| AC-FR0030-02（collection 成功 -> test.collected(passed) -> PRISM_REVIEW；失败 -> WRITE） | unit + integration | test_machine_m_test.py::test_collect_passed_to_prism + test_collect_failed_to_write, test_m_test_cycle.py | IF-TRACE-001 |
-| AC-FR0030-03（复跑证据落事件；Shield 自述不构成通过证据） | integration | test_m_test_cycle.py::test_collected_event_evidence | IF-TRACE-001 |
+| AC-FR0030-01（Runtime 独立 collection，不读 Shield 自述） | integration | test_m_test_cycle.py::test_collect_independent | IF-MTEST-002 |
+| AC-FR0030-02（collection 成功 -> test.collected(passed) -> PRISM_REVIEW；失败 -> WRITE） | unit + integration | test_machine_m_test.py::test_collect_passed_to_prism + test_collect_failed_to_write, test_m_test_cycle.py | IF-MTEST-001 |
+| AC-FR0030-03（复跑证据落事件；Shield 自述不构成通过证据） | integration | test_m_test_cycle.py::test_collected_event_evidence | IF-MTEST-002 |
 
 ### 8d. FR-0040 M-TEST PRISM_REVIEW
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0040-01（dispatch Prism 按判据包审测试合约 -> PRISM_REVIEW） | unit + integration | test_machine_m_test.py::test_prism_dispatch, test_criteria_pack.py::test_prism_reviews_with_criteria_pack | IF-TRACE-001 |
-| AC-FR0040-02（反自述三件套：assignment 含判据包、verdict 携带 identity、Runtime 回读不匹配判失败） | unit + integration | test_machine_m_test.py::test_criteria_pack_mismatch, test_criteria_pack.py::test_anti_self_report_triple | IF-TRACE-001 |
-| AC-FR0040-03（prism.verdict(pass) -> RED_CHECK；revise -> WRITE） | unit | test_machine_m_test.py::test_prism_pass_to_red + test_prism_revise_to_write | IF-TRACE-001 |
-| AC-FR0040-04（revise 必须经 trac discuss 锚定线程；无锚定 -> revise_without_findings） | integration | test_criteria_pack.py::test_revise_without_findings_rejected | IF-TRACE-001 |
-| AC-FR0040-05（判据包 skill 内容为语义判据，不含形式校验规则） | unit | test_criteria_pack.py::test_criteria_pack_no_formal_rules（读取 SKILL.md 文本，断言无 marker/ID 文法规则） | IF-TRACE-001 |
-| AC-FR0040-06（判据包 skill 物化与回收与 tracks-discuz 同构） | integration | test_criteria_pack.py::test_criteria_pack_materialization_lifecycle | IF-TRACE-001 |
+| AC-FR0040-01（dispatch Prism 按判据包审测试合约 -> PRISM_REVIEW） | unit + integration | test_machine_m_test.py::test_prism_dispatch, test_criteria_pack.py::test_prism_reviews_with_criteria_pack | IF-MTEST-001, IF-MTEST-002 |
+| AC-FR0040-02（反自述三件套：assignment 含判据包、verdict 携带 identity、Runtime 回读不匹配判失败） | unit + integration | test_machine_m_test.py::test_criteria_pack_mismatch, test_criteria_pack.py::test_anti_self_report_triple | IF-MTEST-001, IF-MTEST-002 |
+| AC-FR0040-03（prism.verdict(pass) -> RED_CHECK；revise -> WRITE） | unit | test_machine_m_test.py::test_prism_pass_to_red + test_prism_revise_to_write | IF-MTEST-001 |
+| AC-FR0040-04（revise 必须经 trac discuss 锚定线程；无锚定 -> revise_without_findings） | integration | test_criteria_pack.py::test_revise_without_findings_rejected | IF-MTEST-001 |
+| AC-FR0040-05（判据包 skill 内容为语义判据，不含形式校验规则） | unit | test_criteria_pack.py::test_criteria_pack_no_formal_rules（读取 SKILL.md 文本，断言无 marker/ID 文法规则） | IF-MTEST-002 |
+| AC-FR0040-06（判据包 skill 物化与回收与 tracks-discuz 同构） | integration | test_criteria_pack.py::test_criteria_pack_materialization_lifecycle | IF-MTEST-002 |
 
 ### 8e. FR-0050 M-TEST RED_CHECK
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0050-01（Runtime 独立复跑 integration/e2e；复跑证据落事件） | integration | test_red_check.py::test_red_check_independent_rerun | IF-TRACE-001 |
-| AC-FR0050-02（合法 Red 分类：行为断言失败 / 桩 token 失败 / symbol 缺失） | unit + integration | test_red_classifier.py::test_legit_red_classes, test_red_check.py::test_legit_red_validated | IF-TRACE-001 |
-| AC-FR0050-03（非法 Red 分类：collection/语法/fixture/import 错误） | unit + integration | test_red_classifier.py::test_illegit_red_classes, test_red_check.py::test_illegit_red_to_diagnose | IF-TRACE-001 |
-| AC-FR0050-04（测试意外通过视为非法） | unit + integration | test_red_classifier.py::test_unexpected_pass, test_red_check.py::test_unexpected_pass_to_diagnose | IF-TRACE-001 |
-| AC-FR0050-05（全部合法 -> red.validated(valid) -> EXIT；非法/意外通过 -> DIAGNOSE） | unit | test_machine_m_test.py::test_red_valid_to_exit + test_red_invalid_to_diagnose | IF-TRACE-001 |
-| AC-FR0050-06（非常规要求：全部意外通过时不退出 M-TEST） | integration | test_red_check.py::test_all_pass_does_not_exit | IF-TRACE-001 |
+| AC-FR0050-01（Runtime 独立复跑 integration/e2e；复跑证据落事件） | integration | test_red_check.py::test_red_check_independent_rerun | IF-MTEST-002 |
+| AC-FR0050-02（合法 Red 分类：行为断言失败 / 桩 token 失败 / symbol 缺失） | unit + integration | test_red_classifier.py::test_legit_red_classes, test_red_check.py::test_legit_red_validated | IF-MTEST-002 |
+| AC-FR0050-03（非法 Red 分类：collection/语法/fixture/import 错误） | unit + integration | test_red_classifier.py::test_illegit_red_classes, test_red_check.py::test_illegit_red_to_diagnose | IF-MTEST-002 |
+| AC-FR0050-04（测试意外通过视为非法） | unit + integration | test_red_classifier.py::test_unexpected_pass, test_red_check.py::test_unexpected_pass_to_diagnose | IF-MTEST-002 |
+| AC-FR0050-05（全部合法 -> red.validated(valid) -> EXIT；非法/意外通过 -> DIAGNOSE） | unit | test_machine_m_test.py::test_red_valid_to_exit + test_red_invalid_to_diagnose | IF-MTEST-001 |
+| AC-FR0050-06（非常规要求：全部意外通过时不退出 M-TEST） | integration | test_red_check.py::test_all_pass_does_not_exit | IF-MTEST-002 |
 
 ### 8f. FR-0060 M-TEST DIAGNOSE
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0060-01（DIAGNOSE 在非法 Red/意外通过时进入；不交给 Human） | unit + integration | test_machine_m_test.py::test_diagnose_entered, test_diagnose.py::test_diagnose_no_human | IF-TRACE-001 |
-| AC-FR0060-02（test_defect -> WRITE 重派 Shield） | unit + integration | test_machine_m_test.py::test_diagnose_test_defect_to_write, test_diagnose.py::test_test_defect_redispatch | IF-TRACE-001 |
-| AC-FR0060-03（stub_gap -> rollback M-DESIGN，不经 Human） | unit + integration | test_machine_m_test.py::test_diagnose_stub_gap_to_design, test_diagnose.py::test_stub_gap_no_human | IF-TRACE-001 |
-| AC-FR0060-04（ac_gap -> rollback M-ACC，需 Human 批准） | unit + integration | test_machine_m_test.py::test_diagnose_ac_gap_to_acc, test_diagnose.py::test_ac_gap_needs_human | IF-TRACE-001 |
-| AC-FR0060-05（spec_gap -> rollback M-SPEC，需 Human 批准） | unit + integration | test_machine_m_test.py::test_diagnose_spec_gap_to_spec, test_diagnose.py::test_spec_gap_needs_human | IF-TRACE-001 |
-| AC-FR0060-06（verdict.failed 携带 classification/target_stage/artifact_disposition） | integration | test_diagnose.py::test_verdict_failed_payload | IF-TRACE-001 |
-| AC-FR0060-07（M-IMPL 侧 SHIELD_FIX/DIAGNOSE 不实现，不产出 M-IMPL 事件） | unit | test_machine_m_test.py::test_no_m_impl_events | IF-TRACE-001 |
+| AC-FR0060-01（DIAGNOSE 在非法 Red/意外通过时进入；不交给 Human） | unit + integration | test_machine_m_test.py::test_diagnose_entered, test_diagnose.py::test_diagnose_no_human | IF-MTEST-001 |
+| AC-FR0060-02（test_defect -> WRITE 重派 Shield） | unit + integration | test_machine_m_test.py::test_diagnose_test_defect_to_write, test_diagnose.py::test_test_defect_redispatch | IF-MTEST-001 |
+| AC-FR0060-03（stub_gap -> rollback M-DESIGN，不经 Human） | unit + integration | test_machine_m_test.py::test_diagnose_stub_gap_to_design, test_diagnose.py::test_stub_gap_no_human | IF-MTEST-001 |
+| AC-FR0060-04（ac_gap -> rollback M-ACC，需 Human 批准） | unit + integration | test_machine_m_test.py::test_diagnose_ac_gap_to_acc, test_diagnose.py::test_ac_gap_needs_human | IF-MTEST-001 |
+| AC-FR0060-05（spec_gap -> rollback M-SPEC，需 Human 批准） | unit + integration | test_machine_m_test.py::test_diagnose_spec_gap_to_spec, test_diagnose.py::test_spec_gap_needs_human | IF-MTEST-001 |
+| AC-FR0060-06（verdict.failed 携带 classification/target_stage/artifact_disposition） | integration | test_diagnose.py::test_verdict_failed_payload | IF-MTEST-002 |
+| AC-FR0060-07（M-IMPL 侧 SHIELD_FIX/DIAGNOSE 不实现，不产出 M-IMPL 事件） | unit | test_machine_m_test.py::test_no_m_impl_events | IF-MTEST-001 |
 
 ### 8g. FR-0070 M-TEST EXIT
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0070-01（EXIT 门禁 = collection + 合法 Red + Prism pass + trace 闭合） | integration | test_m_test_exit.py::test_exit_gate_all_conditions | IF-TRACE-001 |
-| AC-FR0070-02（trace 闭合：每条 required AC ≥1 长格式 marker、无无主 marker） | integration | test_m_test_exit.py::test_trace_closure_required_acs | IF-TRACE-001 |
-| AC-FR0070-03（trace 统一检查所有 AC；M-TEST 门禁过滤 required AC；non-required 不阻塞） | integration | test_m_test_exit.py::test_trace_filters_required_only | IF-TRACE-001 |
-| AC-FR0070-04（trace 不闭合不退出：无 stage.exited） | integration | test_m_test_exit.py::test_trace_fail_no_exit | IF-TRACE-001 |
-| AC-FR0070-05（trace 复跑失败 -> EXIT->WRITE 重派 Shield <=3 -> escalation） | unit + integration | test_machine_m_test.py::test_trace_fail_to_write, test_m_test_exit.py::test_trace_fail_redispatch | IF-TRACE-001 |
-| AC-FR0070-06（M-TEST 无 Human 门禁：退出依据全程序证据，无 human.review/approval） | e2e | test_m_test_journey.py::test_no_human_gate | IF-TRACE-001 |
-| AC-FR0070-07（受控测试 commit 冻结测试资产 -> test.committed + stage.exited） | integration + e2e | test_m_test_exit.py::test_test_committed, test_m_test_journey.py | IF-TRACE-001 |
-| AC-FR0070-08（stage.exited(M-TEST) -> run.completed(boundary)） | e2e | test_m_test_journey.py::test_boundary_after_m_test | IF-TRACE-001 |
+| AC-FR0070-01（EXIT 门禁 = collection + 合法 Red + Prism pass + trace 闭合） | integration | test_m_test_exit.py::test_exit_gate_all_conditions | IF-MTEST-002 |
+| AC-FR0070-02（trace 闭合：每条 required AC ≥1 长格式 marker、无无主 marker） | integration | test_m_test_exit.py::test_trace_closure_required_acs | IF-MTEST-002, IF-TRACE-002 |
+| AC-FR0070-03（trace 统一检查所有 AC；M-TEST 门禁过滤 required AC；non-required 不阻塞） | integration | test_m_test_exit.py::test_trace_filters_required_only | IF-MTEST-002, IF-TRACE-002 |
+| AC-FR0070-04（trace 不闭合不退出：无 stage.exited） | integration | test_m_test_exit.py::test_trace_fail_no_exit | IF-MTEST-002, IF-TRACE-002 |
+| AC-FR0070-05（trace 复跑失败 -> EXIT->WRITE 重派 Shield <=3 -> escalation） | unit + integration | test_machine_m_test.py::test_trace_fail_to_write, test_m_test_exit.py::test_trace_fail_redispatch | IF-MTEST-001 |
+| AC-FR0070-06（M-TEST 无 Human 门禁：退出依据全程序证据，无 human.review/approval） | e2e | test_m_test_journey.py::test_no_human_gate | IF-MTEST-001 |
+| AC-FR0070-07（受控测试 commit 冻结测试资产 -> test.committed + stage.exited） | integration + e2e | test_m_test_exit.py::test_test_committed, test_m_test_journey.py | IF-MTEST-002 |
+| AC-FR0070-08（stage.exited(M-TEST) -> run.completed(boundary)） | e2e | test_m_test_journey.py::test_boundary_after_m_test | IF-MTEST-001 |
 
 ### 8h. FR-0080 trac check trace
 
@@ -431,32 +444,32 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0120-01（AGENT_NAME 增补 shield->Shield；物化与回收同构） | unit + integration | test_deliverables.py::test_shield_agent_name, test_shield_dispatch.py::test_materialization_lifecycle | IF-TRACE-001 |
-| AC-FR0120-02（Shield.md 加入 deliverables 一致性集合） | unit | test_deliverables.py::test_shield_in_deliverables（既有 test 扩展） | IF-TRACE-001 |
-| AC-FR0120-03（Shield 写范围仅限四目录） | integration | test_shield_dispatch.py::test_write_scope_four_dirs | IF-TRACE-001 |
-| AC-FR0120-04（越权写被审计检出并 git 回滚：over_reach failure_class） | integration | test_shield_dispatch.py::test_over_reach_rolled_back | IF-TRACE-001 |
-| AC-FR0120-05（Shield 不写产品代码/接口桩/ground_truth/设计文档） | integration | test_shield_dispatch.py::test_no_product_code_writes | IF-TRACE-001 |
-| AC-FR0120-06（Shield 读 test-plan/interfaces/acceptance + 桩 -> 写测试 -> 自检 -> outcome） | integration + e2e | test_shield_dispatch.py::test_shield_workflow, test_m_test_journey.py | IF-TRACE-001 |
+| AC-FR0120-01（AGENT_NAME 增补 shield->Shield；物化与回收同构） | unit + integration | test_deliverables.py::test_shield_agent_name, test_shield_dispatch.py::test_materialization_lifecycle | IF-SHIELD-001 |
+| AC-FR0120-02（Shield.md 加入 deliverables 一致性集合） | unit | test_deliverables.py::test_shield_in_deliverables（既有 test 扩展） | IF-SHIELD-001 |
+| AC-FR0120-03（Shield 写范围仅限四目录） | integration | test_shield_dispatch.py::test_write_scope_four_dirs | IF-SHIELD-001 |
+| AC-FR0120-04（越权写被审计检出并 git 回滚：over_reach failure_class） | integration | test_shield_dispatch.py::test_over_reach_rolled_back | IF-SHIELD-001 |
+| AC-FR0120-05（Shield 不写产品代码/接口桩/ground_truth/设计文档） | integration | test_shield_dispatch.py::test_no_product_code_writes | IF-SHIELD-001 |
+| AC-FR0120-06（Shield 读 test-plan/interfaces/acceptance + 桩 -> 写测试 -> 自检 -> outcome） | integration + e2e | test_shield_dispatch.py::test_shield_workflow, test_m_test_journey.py | IF-SHIELD-001 |
 
 ### 8m. FR-0130 ID 文法与跨版本引用进模板
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0130-01（三模板增补 ID 文法：BS-XX / FR-XXXX / NFR-XXXX / AC-FRXXXX-YY） | unit + integration | test_id_grammar.py::test_bs_grammar + test_fr_grammar + test_ac_grammar, test_id_grammar_cli.py::test_validate_story_bs | IF-TRACE-002 |
-| AC-FR0130-02（ID 不可变/不可复用；tombstone 不计孤儿） | unit | test_id_grammar.py::test_id_immutable + test_tombstone | IF-TRACE-002 |
-| AC-FR0130-03（跨版本限定引用 @version opt-in；解析失败 NOT_FOUND） | unit | test_id_grammar.py::test_version_qualified_reference | IF-TRACE-002 |
-| AC-FR0130-04（文档短/长格式均允许；测试 marker 必须长格式） | unit + integration | test_id_grammar.py::test_doc_short_long_allowed, test_check_trace.py::test_test_marker_must_be_long | IF-TRACE-002 |
-| AC-FR0130-05（trac validate 校验编号文法与跨版本引用） | integration | test_id_grammar_cli.py::test_validate_rejects_bad_grammar | IF-TRACE-002 |
-| AC-FR0130-06（既有 check_spec_items 行为不回归） | unit | test_id_grammar.py::test_existing_spec_validation_unchanged（既有 test_trace.py 子集） | IF-TRACE-002 |
+| AC-FR0130-01（三模板增补 ID 文法：BS-XX / FR-XXXX / NFR-XXXX / AC-FRXXXX-YY） | unit + integration | test_id_grammar.py::test_bs_grammar + test_fr_grammar + test_ac_grammar, test_id_grammar_cli.py::test_validate_story_bs | IF-VALIDATE-001 |
+| AC-FR0130-02（ID 不可变/不可复用；tombstone 不计孤儿） | unit | test_id_grammar.py::test_id_immutable + test_tombstone | IF-VALIDATE-001 |
+| AC-FR0130-03（跨版本限定引用 @version opt-in；解析失败 NOT_FOUND） | unit | test_id_grammar.py::test_version_qualified_reference | IF-VALIDATE-001 |
+| AC-FR0130-04（文档短/长格式均允许；测试 marker 必须长格式） | unit + integration | test_id_grammar.py::test_doc_short_long_allowed, test_check_trace.py::test_test_marker_must_be_long | IF-VALIDATE-001 |
+| AC-FR0130-05（trac validate 校验编号文法与跨版本引用） | integration | test_id_grammar_cli.py::test_validate_rejects_bad_grammar | IF-VALIDATE-001 |
+| AC-FR0130-06（既有 check_spec_items 行为不回归） | unit | test_id_grammar.py::test_existing_spec_validation_unchanged（既有 test_trace.py 子集） | IF-VALIDATE-001 |
 
 ### 8n. FR-0140 test-plan 变绿条件字段与 design-trace IF- 校验
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-FR0140-01（test-plan 模板增补变绿条件字段） | unit | test_green_condition.py::test_template_has_green_condition_field | IF-TRACE-002 |
-| AC-FR0140-02（check_design_trace 扩展：校验每条 integration/e2e 的 IF- 归属） | unit | test_green_condition.py::test_check_design_trace_if_attribution | IF-TRACE-002 |
-| AC-FR0140-03（trac validate --file test-plan.md 校验变绿条件与 IF- 归属） | integration | test_green_condition_cli.py::test_validate_test_plan_if | IF-TRACE-002 |
-| AC-FR0140-04（绿的粒度约束 M-IMPL 设计，本 release 只携字段不实现变绿执行） | unit | test_green_condition.py::test_field_carries_if_not_execution | IF-TRACE-002 |
+| AC-FR0140-01（test-plan 模板增补变绿条件字段） | unit | test_green_condition.py::test_template_has_green_condition_field | IF-VALIDATE-001 |
+| AC-FR0140-02（check_design_trace 扩展：校验每条 integration/e2e 的 IF- 归属） | unit | test_green_condition.py::test_check_design_trace_if_attribution | IF-VALIDATE-001 |
+| AC-FR0140-03（trac validate --file test-plan.md 校验变绿条件与 IF- 归属） | integration | test_green_condition_cli.py::test_validate_test_plan_if | IF-VALIDATE-001 |
+| AC-FR0140-04（绿的粒度约束 M-IMPL 设计，本 release 只携字段不实现变绿执行） | unit | test_green_condition.py::test_field_carries_if_not_execution | IF-VALIDATE-001 |
 
 ### 8o. NFR-0010 trace/reach 工具只报告不改写
 
@@ -476,15 +489,15 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-NFR0030-01（decide()/project() 不碰 IO/clock/env/文件系统） | unit | test_machine_m_test.py::test_kernel_purity_no_io | IF-TRACE-001 |
-| AC-NFR0030-02（副作用归 executor；drop 投影表后重建一致） | unit + integration | test_machine_m_test.py::test_rebuild_from_events, test_m_test_cycle.py::test_drop_rebuild | IF-TRACE-001 |
+| AC-NFR0030-01（decide()/project() 不碰 IO/clock/env/文件系统） | unit | test_machine_m_test.py::test_kernel_purity_no_io | IF-MTEST-001 |
+| AC-NFR0030-02（副作用归 executor；drop 投影表后重建一致） | unit + integration | test_machine_m_test.py::test_rebuild_from_events, test_m_test_cycle.py::test_drop_rebuild | IF-MTEST-001, IF-MTEST-002 |
 
 ### 8r. NFR-0040 M-TEST 事件维持 append-only 事件溯源
 
 | AC | 层 | 测试 | IF- 归属 |
 |:---|:---|:---|:---|
-| AC-NFR0040-01（M-TEST 全程事件 append-only，不改写既有行） | integration | test_m_test_cycle.py::test_events_append_only | IF-TRACE-001 |
-| AC-NFR0040-02（投影表可从事件完整重建） | integration | test_m_test_cycle.py::test_rebuild_projections | IF-TRACE-001 |
+| AC-NFR0040-01（M-TEST 全程事件 append-only，不改写既有行） | integration | test_m_test_cycle.py::test_events_append_only | IF-MTEST-001, IF-MTEST-002 |
+| AC-NFR0040-02（投影表可从事件完整重建） | integration | test_m_test_cycle.py::test_rebuild_projections | IF-MTEST-001, IF-MTEST-002 |
 
 ---
 
