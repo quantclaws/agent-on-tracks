@@ -23,10 +23,13 @@ sha:
 - `discuss/` 旁路类型与 CLI 合同（IF-003 §6/§7a）不变。
 - `trac validate` CLI 合同（IF-003 §7b）不变；`trac check` 扩展为三子命令（§2）。
 - 既有 `check_trace`（IF-003 §10d，FR-0170 acceptance AC<->FR）行为不变；新增 `check_trace_full`（§1d，FR-0080 全链）是独立函数。
+- §5 IF- 标识注册表是 v0.4 新增（FR-0140 变绿条件基础）；IF-001/IF-003 未定义 IF- 标识注册表，v0.4 首次建立。IF-TRACE-001/002 与 IF-REACH-001/002 原仅作为桩代码 NotImplementedError token 存在，v0.4 在 §5 正式定义为接口合同标识。
 
 ## 1. 跨模块合同
 
-### 1a. 新事件类型（EVENT_TYPES 追加）
+### 1a. 新事件类型（EVENT_TYPES 追加，IF-MTEST-001 / IF-MTEST-002）
+
+事件由 executor（IF-MTEST-002）产出、kernel reducer（IF-MTEST-001）消费；两者共同实现该跨模块合同。
 
 **modules** 列标注实现/消费该事件的模块（跨模块接口 = 2+ 模块，Shield 须有 integration 覆盖）。
 
@@ -38,7 +41,9 @@ sha:
 
 `prism.verdict` 事件（v0.3 既有，modules: executor, kernel）payload 追加可选字段 `criteria_pack: dict | None`（M-TEST PRISM_REVIEW 时填充，M-DESIGN 时为 None）。`verdict.failed` 事件（v0.1 既有，modules: executor, kernel）payload 的 `check` 字段取值集合扩展（见 §1e）。
 
-### 1b. Command kind 增量（COMMAND_KINDS 追加）
+### 1b. Command kind 增量（COMMAND_KINDS 追加，IF-MTEST-001 / IF-MTEST-002）
+
+命令由 kernel `_decide_m_test`（IF-MTEST-001）产出、executor handler（IF-MTEST-002）执行；两者共同实现该跨模块合同。
 
 ```python
 kind: Literal[...,               # IF-001/IF-003 原有成员不变
@@ -50,7 +55,7 @@ kind: Literal[...,               # IF-001/IF-003 原有成员不变
 
 `dispatch_agent` / `validate_document` / `commit_document` / `rollback_stage` / `write_frontmatter` 复用不变；新 kind 同样遵守写前日志（FR-30）+ 每 kind execute/reconcile（D-13）。
 
-### 1c. State 字段增量（IF-001 §8 追加）
+### 1c. State 字段增量（IF-001 §8 追加，IF-MTEST-001）
 
 ```python
 # M-TEST (SM-01, FR-0010~0070)
@@ -69,9 +74,9 @@ diagnose_classification: str | None = None  # DIAGNOSE 路由分类
 - `_STAGES` 增补 `StageDef(stage="M-TEST", initial_substate="DISPATCH")`（无 drafting_role/doc/reviewer--M-TEST 的 Shield/Prism dispatch 由 `_decide_m_test` 显式控制）。
 - `_NEXT_STAGE` 增补 `"M-DESIGN": "M-TEST"`。`"M-TEST"` 不在表中 -> `run.completed(terminal_state="boundary")`（M-IMPL 未注册）。
 
-### 1d. checks/trace.py 纯函数（FR-0080）
+### 1d. checks/trace.py 纯函数（FR-0080，IF-TRACE-001 / IF-TRACE-002）
 
-> **Prism:** BLOCKER-001 [severity=blocker, artifact=interfaces.md, anchor=§1d/§1f/§1g/§1h 行74/123/154/182, 关联=M-DESIGN 退出收敛门禁]：interfaces.md 四处跨模块接口标注使用 `> modules: ...` blockquote 格式（§1d 行74、§1f 行123、§1g 行154、§1h 行182）。inline-discussion parser 将 `> modules:` 解析为 speaker='modules' 的 open 根评论（当前 T-001~T-004），导致 `trac discuss query --check-ready` 报 is_ready=false、ready_blockers=[T-001,T-002,T-003,T-004]，阻塞 M-DESIGN 退出收敛校验。这些 blockquote 是 Archer 的跨模块接口标注（非真实讨论），但格式 `> <ASCII-identifier>:` 与讨论协议 `> Speaker: body` 冲突（tracks-discuz SKILL：`> Name: body` Name 为 ASCII identifier 即被识别为线程）。Prism 无法自行 resolve（set-status resolved 要求 operator==initiator='modules'，冒充违反协议）。预期修订：Archer 将四处 `> modules:` 标注重排为 parser 不识别的格式——去掉 `>` 改为普通段落（如 `**modules**: ...`），或加说明标签前缀（`> Note: modules: ...`，parser 不识别 Note/Warning/Tip 说明标签），清除 4 个 false-positive open 线程，使 is_ready=true。
+> **Prism [RESOLVED]:** BLOCKER-001 [severity=blocker, artifact=interfaces.md, anchor=§1d/§1f/§1g/§1h 行74/123/154/182, 关联=M-DESIGN 退出收敛门禁]：interfaces.md 四处跨模块接口标注使用 `> modules: ...` blockquote 格式（§1d 行74、§1f 行123、§1g 行154、§1h 行182）。inline-discussion parser 将 `> modules:` 解析为 speaker='modules' 的 open 根评论（当前 T-001~T-004），导致 `trac discuss query --check-ready` 报 is_ready=false、ready_blockers=[T-001,T-002,T-003,T-004]，阻塞 M-DESIGN 退出收敛校验。这些 blockquote 是 Archer 的跨模块接口标注（非真实讨论），但格式 `> <ASCII-identifier>:` 与讨论协议 `> Speaker: body` 冲突（tracks-discuz SKILL：`> Name: body` Name 为 ASCII identifier 即被识别为线程）。Prism 无法自行 resolve（set-status resolved 要求 operator==initiator='modules'，冒充违反协议）。预期修订：Archer 将四处 `> modules:` 标注重排为 parser 不识别的格式——去掉 `>` 改为普通段落（如 `**modules**: ...`），或加说明标签前缀（`> Note: modules: ...`，parser 不识别 Note/Warning/Tip 说明标签），清除 4 个 false-positive open 线程，使 is_ready=true。
 >> **Archer:** 已修订：将 interfaces.md §1d/§1f/§1g/§1h 四处 `> modules:` blockquote 标注（及 §1a 表前说明 `> modules 列...`）全部重排为普通段落 `**modules**: ...`（去掉 `>` 前缀）。重排后 `trac discuss query` 已确认原 T-002~T-005 四个 false-positive open 线程消失，仅剩本线程 T-001 待 Prism resolve。重排不改变跨模块接口标注的语义内容（modules 列仍标注实现/消费方，Shield 仍据此识别 integration 覆盖义务），只调整格式使 parser 不再误识别为讨论线程。
 
 **modules**: checks/trace.py（实现）、cli/main.py（消费）、executor/executor.py（消费，M-TEST EXIT 门禁）--跨模块接口，须有 integration 覆盖。
@@ -121,7 +126,7 @@ check: Literal[...,  # 既有：schema/scope/trace/scope_overflow/format/templat
 
 `verdict.failed(test_defect|stub_gap|ac_gap|spec_gap)` 事件 payload 另含 `target_stage: str`（M-DESIGN/M-ACC/M-SPEC）与 `artifact_disposition: str`（FR-0060）。
 
-### 1f. checks/reach.py 纯函数（FR-0090）
+### 1f. checks/reach.py 纯函数（FR-0090，IF-REACH-001 / IF-REACH-002）
 
 **modules**: checks/reach.py（实现）、cli/main.py（消费）--跨模块接口，须有 integration 覆盖。
 
@@ -152,7 +157,7 @@ def check_reach_file(
     ast 解析 .py 文件构建 import 图，调用 check_reach。"""
 ```
 
-### 1g. Red 分类封闭集（FR-0050）
+### 1g. Red 分类封闭集（FR-0050，IF-MTEST-002）
 
 **modules**: executor/executor.py（实现 `_do_run_tests` 内分类）、kernel/machine.py（消费 `red.validated` 事件）--跨模块接口，须有 integration 覆盖。
 
@@ -180,7 +185,7 @@ def classify_red(
     """
 ```
 
-### 1h. 存量基线 schema（FR-0100）
+### 1h. 存量基线 schema（FR-0100，IF-TRACE-002 / IF-REACH-002）
 
 **modules**: checks/trace.py + checks/reach.py（读取）、cli/main.py（CLI 传递）、`.tracks/legacy-baseline.json`（存储）--跨模块接口，须有 integration 覆盖。
 
@@ -213,7 +218,7 @@ IF-003 §7b 既有 `trac check deliverables` 不变。新增：
 - 两个工具只报告不改写（NFR-0010）；同一输入多次运行输出完全一致（NFR-0020）。
 - CLI 与引擎双消费者：人类经默认格式读证据；引擎调用读取 `--json` 与退出码（AC-FR0110-03）。
 
-### 2b. `trac validate`（扩展校验范围）
+### 2b. `trac validate`（扩展校验范围，IF-VALIDATE-001）
 
 IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.4 扩展：
 
@@ -223,7 +228,7 @@ IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.4 扩展：
 
 ## 3. 文件 / 存储契约
 
-### 3a. Assignment 增量
+### 3a. Assignment 增量（IF-MTEST-001 / IF-SHIELD-001）
 
 `Assignment`（IF-003 §3）追加可选字段：
 
@@ -320,3 +325,30 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | git 工作区 | 工具运行前后无文件变化（NFR-0010） | AC-NFR0010-01 |
 | `tracks/agents/Shield.md` | frontmatter version + IQ | AC-FR0120-02 |
 | `tracks/skills/test-asset-criteria/SKILL.md` | frontmatter name + version；内容为语义判据 | AC-FR0040-05/06 |
+
+## 5. IF- 标识定义（变绿条件基础，FR-0140）
+
+每个 IF- 标识代表一个可独立实现的接口合同，是 test-plan §8「IF- 归属」列的唯一合法取值来源。design-trace validator（`check_design_trace`，FR-0140 扩展）校验 IF- 标识的**有效性**（非仅存在性）：test-plan §8 中出现的每个 IF- 标识必须在此注册表中定义，未注册的标识判失败并指出位置。
+
+IF- 标识的粒度对齐 architecture.md §1.1 增长轴（Devon 的实现 task 边界）：同一增长轴的扩展归为一个 IF- 标识，使 M-IMPL task 变绿子集划分可据此裁剪。
+
+| # | IF- 标识 | 合同（实现什么） | 实现模块 | 对应 §section | 关联 FR |
+|:---|:---|:---|:---|:---|:---|
+| 1 | IF-MTEST-001 | M-TEST kernel 状态机合同：§1a 事件 reducer + §1b Command 产出 + §1c State 字段 + SM-01 控制流（`_decide_m_test`）+ StageDef 注册 + `_NEXT_STAGE` 接续 | kernel/machine.py, kernel/events.py | §1a, §1b, §1c | FR-0010, FR-0020-04, FR-0030-02, FR-0040-01/02/03/04, FR-0050-05, FR-0060-01/02/03/04/05/07, FR-0070-05/06, NFR-0030, NFR-0040 |
+| 2 | IF-MTEST-002 | M-TEST executor handler 合同：`_do_collect_tests` / `_do_run_tests` / `_do_check_trace` / `_do_commit_tests` 命令执行 + §1a 事件产出 + §1g Red 分类（`classify_red`）+ verdict.failed 携带 classification/target_stage/artifact_disposition + 判据包物化与回收（Prism dispatch 基础设施） | executor/executor.py | §1a, §1g | FR-0020-01/03, FR-0030-01/03, FR-0040-01/02/05/06, FR-0050-01/02/03/04/06, FR-0060-06, FR-0070-01/02/03/04/07/08, NFR-0040 |
+| 3 | IF-SHIELD-001 | Shield agent 接入与写范围审计合同：`AGENT_NAME["shield"]` + Shield.md deliverables 一致性 + Auditor 写范围（四目录 allowed）+ 越权写 git 回滚（`over_reach`） | effects/opencode.py, deliverables.py | §3a | FR-0020-01/02/03/05, FR-0120-01~06 |
+| 4 | IF-TRACE-001 | `check_trace_full` 纯函数合同：BS->FR->AC->test 全链双向孤儿检测（纯函数，无 I/O） | checks/trace.py | §1d | FR-0080-01~09 |
+| 5 | IF-TRACE-002 | `check_trace_full_file` 文件包装合同 + §1h LegacyBaseline 读取：从 version_dir/tests_dir 读文档与 marker，调用 IF-TRACE-001，应用基线豁免 | checks/trace.py | §1d, §1h | FR-0080-01/10/11, FR-0100, FR-0110, NFR-0010, NFR-0020 |
+| 6 | IF-REACH-001 | `check_reach` 纯函数合同：模块级 import 图 BFS 孤岛检测（纯函数，无 I/O） | checks/reach.py | §1f | FR-0090-01~06 |
+| 7 | IF-REACH-002 | `check_reach_file` 文件包装合同 + §1h LegacyBaseline 读取：解析 pyproject/scripts + ast import 图，调用 IF-REACH-001，应用基线豁免 | checks/reach.py | §1f, §1h | FR-0090-01, FR-0100, FR-0110, NFR-0010, NFR-0020 |
+| 8 | IF-VALIDATE-001 | validate.py M-TEST 扩展合同：`check_design_trace` IF- 归属校验扩展（FR-0140）+ `check_story_items` BS-XX 文法 / `@version` 跨版本引用 / tombstone 规则（FR-0130）+ test-plan 模板变绿条件字段 | executor/validate.py, tracks/templates/ | §2b | FR-0130-01~06, FR-0140-01~04 |
+
+**有效性校验机制**（design-trace validator 扩展，FR-0140）：
+
+- validator 解析本注册表（§5 表格第 2 列 `IF- 标识`），构建已定义 IF- 标识集合。
+- validator 解析 test-plan §8 每条 integration/e2e AC 的「IF- 归属」列，提取逗号分隔的 IF- 标识。
+- 每个提取的 IF- 标识必须在已定义集合中；未注册 -> 硬错误（`line:N <IF-id> not defined in interfaces.md §5`）。
+- integration/e2e AC 缺 IF- 归属（空值）-> 硬错误（`line:N <AC-id> integration/e2e AC missing IF- attribution`）。
+- unit AC 的 IF- 归属为 informational（validator 不校验 unit AC 的 IF- 有效性，但若填写仍须合法）。
+
+IF- 标识一经分配不可变、不可复用（与 FR-0130 ID 不可变规则同构）；删除的 IF- 标识留 tombstone，不被 validator 计为已定义。
