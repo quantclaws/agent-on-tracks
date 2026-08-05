@@ -479,6 +479,30 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
     _copy_tree(baseline_dir, live_root)
 
 
+def _setup_baseline_remote(live_root: Path) -> tuple[str, str]:
+    """Capture the restored origin URL and refs, optionally using a local bare remote.
+
+    ``TRAC_LIVE_LOCAL_REMOTE=1`` is an explicit offline-test switch. The bare
+    repository lives beside the host in the run's artifact directory, so it
+    cannot appear in the restored worktree or Shield's scope check. All git
+    failures propagate; this helper never falls back from a configured local
+    remote or from the restored remote when the switch is disabled.
+    """
+    if os.environ.get("TRAC_LIVE_LOCAL_REMOTE", "").strip() == "1":
+        resolved_root = live_root.resolve()
+        artifact_dir = resolved_root.parent / f"{resolved_root.name}-artifacts"
+        local_remote = artifact_dir / "baseline-local-remote.git"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        if not (local_remote / "HEAD").is_file():
+            local_remote.mkdir(parents=True, exist_ok=True)
+            _git(local_remote, "init", "--bare")
+        _git(resolved_root, "remote", "set-url", "origin", str(local_remote))
+
+    remote_url = _git(live_root, "remote", "get-url", "origin")
+    remote_refs = _git(live_root, "ls-remote", "origin")
+    return remote_url, remote_refs
+
+
 def _read_manifest(path: Path) -> dict | None:
     manifest_path = path / ".tracks-baseline-manifest.json"
     if not manifest_path.is_file():

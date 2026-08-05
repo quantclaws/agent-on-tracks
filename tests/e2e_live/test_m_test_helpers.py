@@ -8,6 +8,7 @@ import pytest
 
 from tests.e2e_live.m_test_helpers import (
     _git,
+    _setup_baseline_remote,
     assert_criteria_pack_triple,
     assert_shield_assignment_contract,
     assert_shield_no_commit_scope,
@@ -316,3 +317,43 @@ def test_single_test_commit_contract_rejects_extra_commit(tmp_path):
             repo,
             {"payload": {"commit_sha": _git(repo, "rev-parse", "HEAD")}},
         )
+
+
+def test_baseline_remote_preserves_origin_when_disabled(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    monkeypatch.delenv("TRAC_LIVE_LOCAL_REMOTE", raising=False)
+    expected = (
+        _git(repo, "remote", "get-url", "origin"),
+        _git(repo, "ls-remote", "origin"),
+    )
+
+    assert _setup_baseline_remote(repo) == expected
+    assert _git(repo, "remote", "get-url", "origin") == expected[0]
+
+
+def test_baseline_remote_uses_local_bare_origin_when_enabled(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    original_url = _git(repo, "remote", "get-url", "origin")
+    monkeypatch.setenv("TRAC_LIVE_LOCAL_REMOTE", "1")
+
+    remote_url, remote_refs = _setup_baseline_remote(repo)
+
+    local_remote = tmp_path / "repo-artifacts" / "baseline-local-remote.git"
+    assert remote_url == str(local_remote)
+    assert remote_url != original_url
+    assert local_remote.is_dir()
+    assert (local_remote / "HEAD").is_file()
+    assert remote_refs == ""
+    assert _git(repo, "ls-remote", "origin") == ""
+
+
+def test_baseline_remote_setup_is_idempotent(tmp_path, monkeypatch):
+    repo = _git_repo(tmp_path)
+    monkeypatch.setenv("TRAC_LIVE_LOCAL_REMOTE", "1")
+
+    first = _setup_baseline_remote(repo)
+    second = _setup_baseline_remote(repo)
+
+    assert second == first
+    assert _git(repo, "remote", "get-url", "origin") == first[0]
+    assert _git(repo, "ls-remote", "origin") == first[1]

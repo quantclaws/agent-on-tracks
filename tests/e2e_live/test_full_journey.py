@@ -27,6 +27,8 @@ Environment variables
   (story/spec/acceptance/approval) on a fresh host, snapshot, then continue.
 * ``TRAC_LIVE_FORCE_BASELINE=1`` - use a baseline even when its tracks SHA does
   not match the current HEAD (otherwise the resume test skips on mismatch).
+* ``TRAC_LIVE_LOCAL_REMOTE=1`` - for restored baseline-resume tests only, use
+  an empty local bare ``origin`` under the current run's artifact directory.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ from tests.e2e_live.m_test_helpers import (
     _restore_baseline,
     _sanity_check_design_exit_host,
     _sanity_check_resumed_host,
+    _setup_baseline_remote,
     _tracks_short_sha,
     assert_criteria_pack_triple,
     assert_m_test_boundary,
@@ -776,11 +779,9 @@ def test_journey_from_req_approved_baseline(
 
     _restore_baseline(baseline, live_root)
 
-    # The baseline's .git already has the origin remote (set up before the
-    # prefix phases). Capture refs_before AFTER restore so the baseline's
-    # local commits are in place.
-    remote_url_before = _git(live_root, "remote", "get-url", "origin")
-    remote_refs_before = _git(live_root, "ls-remote", "origin")
+    # Capture refs_before AFTER restore so the baseline's local commits are in
+    # place. The explicit local-remote switch rewires origin before ls-remote.
+    remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
 
     run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
     _phase_design_to_m_test(live_trac, live_root, run_id, version)
@@ -863,8 +864,7 @@ def test_m_test_from_design_exit_baseline(
 
     _restore_baseline(baseline, live_root)
 
-    remote_url_before = _git(live_root, "remote", "get-url", "origin")
-    remote_refs_before = _git(live_root, "ls-remote", "origin")
+    remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
 
     run_id = _sanity_check_design_exit_host(live_trac, live_root, baseline)
     _phase_m_test_to_boundary(
