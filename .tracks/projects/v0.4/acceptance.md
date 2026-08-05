@@ -218,7 +218,7 @@ sha: c12dce683a9862968cee65f9498cab35809f84bb3c3792e5dfcaca392aba576b
 
 ### AC-FR0080-06
 
-  - 测试 marker 必须使用长格式 `AC-FRXXXX-YY@<version>`（代码不按版本分目录，所有版本测试共存于同一棵 tests/ 树）：短格式 marker（缺版本号）触发 trace 检查失败并指出位置
+  - 测试 marker = 测试函数定义紧邻上方的独立标记注释行 `( # | // ) AC-FRXXXX-YY@<version> TRACKS-TRACE + 可选说明`（修订日志 R-1）：长格式强制；带特征词的行缺 @version -> 硬错误并指出位置；不带特征词的 AC-ID 提及（任何位置）为正常引用，不识别、不报错
 
 ### AC-FR0080-07
 
@@ -239,6 +239,14 @@ sha: c12dce683a9862968cee65f9498cab35809f84bb3c3792e5dfcaca392aba576b
 ### AC-FR0080-11
 
   - 工具可被引擎在 M-TEST EXIT 当 verdict 来源调用（FR-0070 消费 trace）：引擎调用读取退出码（与 `--json` 输出）作为门禁判据
+
+### AC-FR0080-12
+
+  - 语言中立行级检测（R-1）：后缀白名单覆盖前 10 名通用开发语言（SQL 除外）测试文件；未知后缀文件跳过不报错；tests_dir 无任何可识别测试文件时产生 warning（退出码 0），不谎报全部 AC 无绑定
+
+### AC-FR0080-13
+
+  - Shield 测试资产义务（R-1）：Shield 所写每个测试函数必须有带 `TRACKS-TRACE` 特征词的标记注释行；由测试资产判据包（Prism 消费）与 M-TEST EXIT trace 门禁（Runtime 复跑）双重强制；缺标记的测试函数由 trace 以"AC 无绑定"或非法 marker 检出
 
 ## FR-0090 trac check reach：模块级孤岛检测
 

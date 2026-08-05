@@ -7,6 +7,15 @@ sha: 556cd48eeec09bd961e27419178ab7ebf2547fa450403613503d8279df12b598
 
 # M-TEST 阶段与需求追踪工具 - 需求规格
 
+## 修订日志
+
+### R-1（2026-08-05，Aaron 裁定）：marker 约定简化与语言中立化
+
+- **决定**：marker 不绑定宿主语言的文档注释生态（JSDoc/docstring/godoc 等），统一为**测试函数定义紧邻上方的标记注释行**：`( # | // ) + 可选空白 + AC-FRXXXX-YY@<version> + 空格 + TRACKS-TRACE + 可选一行人话说明`。特征词 `TRACKS-TRACE` 区分"绑定 marker"与"普通引用"：不带特征词的 AC-ID 提及（文档、注释、字符串、代码）均为正常引用，永不误报。`#`/`//` 覆盖前 10 名通用开发语言（SQL 除外），检测为单条行级正则，零 AST、零第三方依赖（tree-sitter/pylint 路线作废）。
+- **Shield 义务**：Shield 所写每个测试函数必须有标记注释行；由测试资产判据包（Prism 消费）与 M-TEST EXIT trace 门禁（Runtime 复跑）双重强制，不信自述。
+- **取代**：spec FR-0080 marker 条款原版、acceptance AC-FR0080-06 原文、test-plan §1.4/§2.2/§5 marker 措辞、interfaces §1d 扫描实现描述。新增 acceptance AC-FR0080-12/13。
+- **reach 语言范围澄清**：reach（FR-0090）v0.4 仅 Python（AST import 图为实现基础）；多语言 reach 属未来独立主题。
+
 ## 界面与入口
 
 ### E-01 `trac check` 子命令（trace / reach）
@@ -166,13 +175,15 @@ M-TEST 无 Human 门禁（BS-05）：不等待 `human.review` 或 `human.approva
 - FR<->AC 与 AC<->test 为硬错误（非零退出）：存在无 AC 的 FR、回指不存在 FR 的 AC、无测试绑定的 AC、marker 指向不存在 AC 的测试函数均判失败，并列出完整孤儿清单（含文件与行号，不短路）。
 - BS->FR 仅 warning（不改变退出码，warning 内容含 BS 编号）--行为种子与 FR 不总是 1:1，硬约束会逼人写凑数 FR。
 
-测试 marker 必须使用长格式 `AC-FRXXXX-YY@<version>`（代码不按版本分目录，所有版本测试共存于同一棵 tests/ 树，缺版本号无法定位 AC 所属版本）：短格式 marker（缺版本号）触发 trace 检查失败并指出位置；长格式 marker 引用不存在的 AC 显式报错（NOT_FOUND），不静默回退到同名 AC。
+测试 marker 约定（修订日志 R-1）：marker 为测试函数定义紧邻上方的独立标记注释行，文法 `( # | // ) + 可选空白 + AC-FRXXXX-YY@<version> + 空白 + TRACKS-TRACE + 可选一行人话说明`（`#`/`//` 覆盖前 10 名通用开发语言，SQL 除外；不绑定宿主语言文档注释生态；特征词 `TRACKS-TRACE` 区分绑定 marker 与普通引用）。长格式强制（代码不按版本分目录，所有版本测试共存于同一棵 tests/ 树，缺版本号无法定位 AC 所属版本）：带特征词的行缺 @version = 短格式 -> 硬错误并指出位置；marker 引用不存在的 AC 显式报错（NOT_FOUND），不静默回退到同名 AC。不带特征词的 AC-ID 提及（无论位于注释、字符串、docstring 还是代码）均为正常引用，不识别、不报错（误报根除）。检测为单条行级正则（零 AST、零第三方依赖）；tests_dir 默认 repo/tests，按后缀白名单（前 10 语言测试文件后缀）扫描，未知后缀文件跳过不报错；tests_dir 无任何可识别测试文件时产生 warning（退出码 0），不谎报全部 AC 无绑定。Shield 编写测试资产的义务：每个测试函数必须有标记注释行（FR-0120 判据包消费 + M-TEST EXIT 复跑，不信自述）。
 
 ID 唯一性：文档中出现重复 FR/AC 编号时 trace 失败并指出冲突双方的文件与行号；tombstone ID 不被计为孤儿（FR-0130）。
 
 trace 统一检查所有 AC，不感知调用方阶段；M-TEST 退出门禁自行过滤 required AC（FR-0070）。工具可独立 CLI 运行，也可被引擎在 M-TEST EXIT 当 verdict 来源调用。
 
 ### FR-0090 trac check reach：模块级孤岛检测
+
+- **语言范围（R-1 附注）**：v0.4 仅支持 Python 项目（实现基于 Python AST import 图）；仓库无可识别 Python 文件时产生 warning 并以退出码 0 返回（不阻塞、不谎报），多语言 reach 属未来独立主题。
 
 - **来源**：`BS-08` / `§3.2` / story-S002-draft
 - **交付入口**：`trac check reach`
@@ -236,7 +247,7 @@ ID 一经分配不可变、不可复用；删除的 ID 留 tombstone（事件日
 
 跨版本限定引用：本版本内引用保持短格式 `AC-FRXXXX-YY`；跨版本引用且存在歧义时附加版本限定 `AC-FRXXXX-YY@<version>`（如 `AC-FR0010-01@v0.1`）。限定语法 opt-in--仅在歧义时使用，parser 不强制、不把短格式自动升级为限定形式；限定引用只信任目标版本文档，解析失败显式报错（NOT_FOUND），不静默回退到短格式。
 
-文档与测试的约束不对称：文档中短格式与长格式（带版本号）均允许，短格式 opt-in 消歧；测试文件中 marker 必须使用长格式（FR-0080 强制）。
+文档与测试的约束不对称：文档中短格式与长格式（带版本号）均允许，短格式 opt-in 消歧；测试文件中 marker 必须使用长格式且位于标记注释行（测试函数定义紧邻上方，FR-0080 强制，修订日志 R-1）。
 
 既有事实（避免下游重复实现）：spec 模板已含 `FR-XXXX`/`NFR-XXXX` 文法并由 `check_spec_items` 强制（严格标题、唯一 ID、来源/交付入口字段）；acceptance 模板已含 `AC-FRXXXX-YY` 文法指引。本次补的缺口：story 模板无 `BS-XX` 强制文法（仅编号约定、无机器校验与不可变/tombstone 规则）、三模板均无 `@version` 跨版本引用与 tombstone 规则、marker 长格式未强制。`trac validate` 可校验编号文法与跨版本引用。
 

@@ -96,7 +96,7 @@ def check_trace_full(
     - FR<->AC 硬错误：spec FR 无 acceptance AC、acceptance AC 回指不存在 FR。
     - AC<->test 硬错误：AC 无长格式 marker、marker 指向不存在 AC。
     - BS->FR warning：BS 无 FR 承接（不改变退出码）。
-    - 短格式 marker（缺 @version）-> 硬错误。
+    - 带 TRACKS-TRACE 特征词的行缺 @version（短格式）-> 硬错误；不带特征词的 AC-ID 提及不识别。
     - 重复 FR/AC ID -> 硬错误（指出冲突双方 line:N）。
     - tombstone ID 不计为孤儿。
     完整清单不短路；顺序稳定可复现（NFR-0020）。"""
@@ -105,11 +105,12 @@ def check_trace_full_file(
     version_dir: Path, tests_dir: Path, baseline: dict | None = None,
 ) -> TraceReport:
     """FR-0080 文件读取包装：从 version_dir 读 story/spec/acceptance，
-    从 tests_dir 扫描 .py 文件中的长格式 marker，调用 check_trace_full。
+    从 tests_dir 按 R-1 语言中立行级约定提取标记注释行（后缀白名单，
+    跳过 assets/ground_truth 数据目录），调用 check_trace_full。
     baseline 为存量基线豁免（FR-0100），被列入基线的 ID/文档不计孤儿。"""
 ```
 
-`check_trace_full` 复用 `executor/validate.py` 的 `_spec_items`/`_acc_scan` 扫描助手（import，不重复实现）。新增 BS 扫描（`### BS-XX` heading regex）与 test marker 扫描（`AC-(N?FR)\d{4}-\d{2}@(v\d+\.\d+)` regex）。
+`check_trace_full` 复用 `executor/validate.py` 的 `_spec_items`/`_acc_scan` 扫描助手（import，不重复实现）。新增 BS 扫描（`### BS-XX` heading regex）与 test marker 扫描（修订日志 R-1）：单条行级正则 `^\s*(#|//)\s*(AC-(?:N?FR)\d{4}-\d{2})(@\S+)?\s+TRACKS-TRACE\b(.*)$`（特征词必填，区分绑定 marker 与普通引用），扫描 tests_dir 后缀白名单文件（前 10 语言，SQL 除外；跳过 assets/ground_truth 数据目录），零 AST、零第三方依赖；IF-TRACE-001/002 合同（TraceReport + 纯函数签名）冻结不变，仅扫描实现语义更新。
 
 ### 1e. verdict.failed check 字段扩展
 

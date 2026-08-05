@@ -50,7 +50,7 @@ This test plan only declares test methods that are **observable from outside the
 ### 1.4. Safeguards (CI checks + PR process)
 
 1. **AC mandatory tracing**
-   - The first line of each test function's docstring/comment must contain `AC-FRXXXX-YY@v0.4` (long-format marker, FR-0080/FR-0130).
+   - Each test function must carry a marker comment line directly above its definition: `( # | // ) AC-FRXXXX-YY@v0.4 TRACKS-TRACE [description]` (R-1 convention, long format + TRACKS-TRACE token mandatory, FR-0080/FR-0130).
    - CI scans `tests/`, verifying: each test references at least one AC; each required AC (integration|e2e layer) is referenced by at least one test.
    - Any check failure blocks merge.
 
@@ -130,7 +130,7 @@ tests/
 
 - File: `test_<scenario>__<subscenario>.py`
 - Function: `test_ac_<id>_<subscenario>`, e.g. `test_ac_0080_06_short_format_marker_rejected`
-- Marker: docstring 首行含 `AC-FRXXXX-YY@v0.4`（长格式强制，FR-0080/FR-0130）
+- Marker: 测试函数定义紧邻上方一行标记注释 `# AC-FRXXXX-YY@v0.4 TRACKS-TRACE 说明`（R-1 约定，长格式 + 特征词强制，FR-0080/FR-0130）
 
 ### 2.3. Execution
 
@@ -187,7 +187,8 @@ Key design: ground truth is a **recomputable script**, not a documented fixed va
 - 反向孤儿：acceptance AC 回指不存在 FR -> 硬错误（AC ID + acceptance line:N）。
 - AC 无 test marker -> 硬错误（AC ID + acceptance line:N）。
 - marker 指向不存在 AC -> 硬错误（marker + test file line:N）。
-- 短格式 marker（缺 @version）-> 硬错误（test file line:N）。
+- 带 TRACKS-TRACE 特征词的行缺 @version（短格式）-> 硬错误（test file line:N）；不带特征词的 AC-ID 提及不识别（不报错）。
+- 参照实现须覆盖 R-1 语言中立行级约定：fixture 含 .py 与 .js/.ts 样本各一。
 - BS 无 FR 承接 -> warning（BS ID + story line:N），不改变退出码。
 - 重复 FR/AC ID -> 硬错误（冲突双方 line:N）。
 - tombstone ID 不计孤儿。
