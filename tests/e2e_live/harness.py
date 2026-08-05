@@ -750,23 +750,54 @@ class LiveTracDriver:
         self.command_count = 0
         self.run_id: str | None = None
 
+    # Bounded retry for transient SQLite read errors during ``events()``.
+    # ``sqlite3.OperationalError("database is locked")`` and the occasional
+    # ``sqlite3.DatabaseError("database disk image is malformed")`` have been
+    # observed in the live harness when the Runtime writer is shutting down
+    # and the WAL is mid-checkpoint. These are transient: the writer's
+    # shutdown completes within a few hundred ms and the read succeeds on
+    # retry. The retry is bounded (5 x 100ms) so a *persistent* corruption
+    # (e.g. a real on-disk page tear) still fails loudly, and on final
+    # failure we run ``PRAGMA integrity_check`` to surface whether the
+    # corruption is genuine (it returns a non-"ok" string) or just a flake.
+    EVENT_READ_RETRIES = 5
+    EVENT_READ_RETRY_DELAY = 0.100
+
     def events(self) -> list[dict]:
         database = self.live_root / ".tracks" / "runtime" / "tracks.db"
         if not database.is_file():
             return []
-        with sqlite3.connect(database) as connection:
-            rows = connection.execute(
-                "SELECT seq, type, command_id, payload FROM events ORDER BY seq"
-            ).fetchall()
-        return [
-            {
-                "seq": seq,
-                "type": kind,
-                "command_id": command_id,
-                "payload": json.loads(payload),
-            }
-            for seq, kind, command_id, payload in rows
-        ]
+        last_error: Exception | None = None
+        for attempt in range(self.EVENT_READ_RETRIES):
+            try:
+                with sqlite3.connect(database, timeout=1.0) as connection:
+                    rows = connection.execute(
+                        "SELECT seq, type, command_id, payload "
+                        "FROM events ORDER BY seq"
+                    ).fetchall()
+                return [
+                    {
+                        "seq": seq,
+                        "type": kind,
+                        "command_id": command_id,
+                        "payload": json.loads(payload),
+                    }
+                    for seq, kind, command_id, payload in rows
+                ]
+            except (sqlite3.OperationalError, sqlite3.DatabaseError) as exc:
+                last_error = exc
+                if attempt + 1 < self.EVENT_READ_RETRIES:
+                    time.sleep(self.EVENT_READ_RETRY_DELAY)
+        # Final failure: run integrity_check if possible and include its
+        # result + the original error so operators can tell a flake (locked)
+        # from a genuine page tear (corrupt).
+        integrity = "unavailable"
+        with suppress(sqlite3.Error), sqlite3.connect(database, timeout=1.0) as connection:
+            integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        raise AssertionError(
+            f"LiveTracDriver.events() failed after {self.EVENT_READ_RETRIES} retries: "
+            f"{last_error!r}; integrity_check={integrity!r}; db={database}"
+        ) from last_error
 
     def preserve_report(self) -> Path | None:
         if not self.run_id:

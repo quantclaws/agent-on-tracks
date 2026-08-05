@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -603,3 +605,340 @@ def test_baseline_remote_setup_is_idempotent(tmp_path, monkeypatch):
     assert second == first
     assert _git(repo, "remote", "get-url", "origin") == first[0]
     assert _git(repo, "ls-remote", "origin") == first[1]
+
+
+# -- runtime DB snapshot consistency (WAL/sidecar handling) ----------------
+#
+# The runtime event store is SQLite WAL: committed transactions may live in
+# ``tracks.db-wal`` until a checkpoint. Raw-copying the trio is unsafe (the
+# sidecars are only valid with the original page file + writer). The snapshot
+# must exclude all three and rebuild a clean ``tracks.db`` in the target via
+# the ``sqlite3`` backup API so every committed event survives and the
+# target is sidecar-free.
+
+
+def _seed_runtime_db(
+    host: Path, events: list[dict], *, keep_wal: bool = False
+) -> sqlite3.Connection | None:
+    """Write events into ``host/.tracks/runtime/tracks.db`` in WAL mode.
+
+    When *keep_wal* is True, an extra row (seq=9999) is written via a second
+    connection while a reader holds a read lock, leaving an un-checkpointed
+    WAL/SHM trio on disk. The reader connection is returned and the caller
+    MUST close it after the snapshot is taken (SQLite deletes the WAL/SHM on
+    the last connection close, so keeping the reader open is the only way to
+    guarantee the trio is present when ``_copy_tree`` runs).
+
+    When *keep_wal* is False (default), no extra row is written and no WAL
+    is left on disk; returns None."""
+    runtime = host / ".tracks" / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    blobs = runtime / "blobs"
+    blobs.mkdir(exist_ok=True)
+    db = runtime / "tracks.db"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        "CREATE TABLE events ("
+        "run_id TEXT, seq INTEGER, ts TEXT, version TEXT, type TEXT,"
+        " schema_version INTEGER, command_id TEXT, task_id TEXT, payload TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                ev.get("run_id", "R1"),
+                ev["seq"],
+                ev.get("ts", "2026-08-05T00:00:00Z"),
+                ev.get("version", "v1"),
+                ev["type"],
+                1,
+                ev.get("command_id"),
+                None,
+                json.dumps(ev["payload"]),
+            )
+            for ev in events
+        ],
+    )
+    conn.commit()
+    conn.close()
+    if not keep_wal:
+        return None
+    # Force the WAL to retain un-checkpointed pages: a second connection
+    # holding a read lock prevents the writer's commit from truncating the
+    # WAL, so ``tracks.db-wal`` is present on disk when the snapshot runs.
+    reader = sqlite3.connect(db)
+    reader.execute("BEGIN").fetchone()
+    reader.execute("SELECT * FROM events").fetchall()
+    writer = sqlite3.connect(db)
+    writer.execute(
+        "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("R1", 9999, "2026-08-05T00:00:01Z", "v1", "noop", 1, None, None, "{}"),
+    )
+    writer.commit()
+    writer.close()
+    wal_path = runtime / "tracks.db-wal"
+    assert wal_path.is_file(), "test seed did not produce a WAL sidecar"
+    return reader
+
+
+def _runtime_files(host: Path) -> set[str]:
+    runtime = host / ".tracks" / "runtime"
+    return {p.name for p in runtime.iterdir()} if runtime.is_dir() else set()
+
+
+def test_wal_backed_source_capture_restores_all_committed_events(tmp_path):
+    """A snapshot taken while the source DB has an un-checkpointed WAL must
+    copy every committed event into the target via the backup API - never
+    raw-copy the WAL/SHM trio and never lose the WAL-resident commits."""
+    src = tmp_path / "host"
+    src.mkdir()
+    reader = _seed_runtime_db(
+        src,
+        [
+            {"seq": 1, "type": "run.started", "payload": {"v": "v0.5"}},
+            {"seq": 2, "type": "stage.entered", "payload": {"stage": "M-REQ"}},
+        ],
+        keep_wal=True,
+    )
+    assert reader is not None
+    # Sanity: the source has a real WAL+SHM trio (reader holds it open).
+    assert "tracks.db-wal" in _runtime_files(src)
+    assert "tracks.db-shm" in _runtime_files(src)
+
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    try:
+        _helpers._copy_tree(src, target)
+    finally:
+        reader.close()
+
+    target_files = _runtime_files(target)
+    assert "tracks.db" in target_files
+    assert "tracks.db-wal" not in target_files, (
+        "snapshot leaked WAL sidecar into target"
+    )
+    assert "tracks.db-shm" not in target_files, (
+        "snapshot leaked SHM sidecar into target"
+    )
+    # All committed events survive - including the WAL-resident one (seq=9999).
+    conn = sqlite3.connect(target / ".tracks" / "runtime" / "tracks.db")
+    seqs = [r[0] for r in conn.execute("SELECT seq FROM events ORDER BY seq")]
+    conn.close()
+    assert seqs == [1, 2, 9999], f"snapshot lost WAL-resident commits: {seqs}"
+
+
+def test_snapshot_excludes_db_trio_even_when_sidecars_present(tmp_path):
+    """The snapshot must exclude ``tracks.db``, ``tracks.db-wal``, and
+    ``tracks.db-shm`` from the raw tree copy and rebuild only ``tracks.db``
+    in the target. Verifies the exclusion at the file-name level with a real
+    WAL/SHM trio held open by a reader connection."""
+    src = tmp_path / "host"
+    src.mkdir()
+    reader = _seed_runtime_db(
+        src, [{"seq": 1, "type": "run.started", "payload": {}}], keep_wal=True
+    )
+    assert reader is not None
+    # All three files are present (real WAL+SHM, not bogus bytes).
+    runtime = src / ".tracks" / "runtime"
+    captured = {p.name for p in runtime.iterdir()}
+    assert {"tracks.db", "tracks.db-wal", "tracks.db-shm"} <= captured
+
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    try:
+        _helpers._copy_tree(src, target)
+    finally:
+        reader.close()
+
+    target_files = _runtime_files(target)
+    assert target_files == {"tracks.db", "blobs"}, (
+        f"target runtime must contain only tracks.db + blobs, got {target_files}"
+    )
+
+
+def test_restore_removes_destination_stale_sidecars(tmp_path):
+    """``_restore_baseline`` must remove any stale ``-wal``/``-shm`` in the
+    destination before writing the baseline DB, so a stale WAL cannot attach
+    to the freshly-restored main file and corrupt it on the next open."""
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    runtime = live_root / ".tracks" / "runtime"
+    runtime.mkdir(parents=True)
+    # Stale sidecars from a previous run.
+    (runtime / "tracks.db").write_bytes(b"stale main")
+    (runtime / "tracks.db-wal").write_bytes(b"stale wal")
+    (runtime / "tracks.db-shm").write_bytes(b"stale shm")
+
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    _seed_runtime_db(
+        baseline,
+        [{"seq": 1, "type": "run.started", "payload": {"ok": True}}],
+    )
+
+    _helpers._restore_baseline(baseline, live_root)
+
+    restored = _runtime_files(live_root)
+    assert "tracks.db" in restored
+    assert "tracks.db-wal" not in restored
+    assert "tracks.db-shm" not in restored
+    conn = sqlite3.connect(live_root / ".tracks" / "runtime" / "tracks.db")
+    rows = conn.execute("SELECT seq, type FROM events ORDER BY seq").fetchall()
+    conn.close()
+    assert rows == [(1, "run.started")]
+
+
+def test_restore_into_host_with_stale_sidecars_does_not_corrupt(tmp_path):
+    """A restored baseline DB must open cleanly even when the destination
+    had stale sidecars before restore. The wipe + backup-API path produces
+    a self-contained file that ``PRAGMA integrity_check`` reports as ok."""
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    runtime = live_root / ".tracks" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "tracks.db").write_bytes(b"junk")
+    (runtime / "tracks.db-wal").write_bytes(b"junk-wal")
+    (runtime / "tracks.db-shm").write_bytes(b"junk-shm")
+
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    _seed_runtime_db(
+        baseline,
+        [{"seq": i, "type": f"e{i}", "payload": {}} for i in range(1, 6)],
+    )
+
+    _helpers._restore_baseline(baseline, live_root)
+
+    conn = sqlite3.connect(live_root / ".tracks" / "runtime" / "tracks.db")
+    integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    conn.close()
+    assert integrity == "ok"
+    assert count == 5
+
+
+# -- LiveTracDriver.events() transient-error retries -----------------------
+#
+# ``LiveTracDriver.events()`` may race the Runtime writer's shutdown and see
+# a transient ``sqlite3.DatabaseError``/``OperationalError``. The driver must
+# retry a bounded number of times and only fail with diagnostics on
+# persistent corruption.
+
+
+def _mechanic_driver_for_events(tmp_path):
+    """A ``LiveTracDriver`` wired to ``tmp_path`` with no provider/agents,
+    for exercising ``events()`` in isolation."""
+    from tests.e2e_live.test_live_agent import _mechanic_driver
+
+    return _mechanic_driver(tmp_path)
+
+
+def _seed_simple_events(host: Path) -> None:
+    runtime = host / ".tracks" / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(runtime / "tracks.db")
+    conn.execute(
+        "CREATE TABLE events (seq INTEGER, type TEXT, command_id TEXT, payload TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO events VALUES (?, ?, ?, ?)",
+        (1, "run.started", None, json.dumps({"v": "live"})),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_events_transient_database_error_retries_then_succeeds(monkeypatch, tmp_path):
+    """A transient ``sqlite3.DatabaseError`` (the run050 shutdown race) must
+    be retried up to ``EVENT_READ_RETRIES`` times; once the read succeeds the
+    driver returns the events without raising."""
+    driver = _mechanic_driver_for_events(tmp_path)
+    _seed_simple_events(tmp_path)
+
+    real_connect = sqlite3.connect
+    calls = {"n": 0}
+
+    def flaky_connect(database, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise sqlite3.DatabaseError("database disk image is malformed")
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr("tests.e2e_live.harness.sqlite3.connect", flaky_connect)
+    # Shorten the retry delay so the test is fast.
+    monkeypatch.setattr(driver, "EVENT_READ_RETRY_DELAY", 0.001)
+
+    events = driver.events()
+
+    assert len(events) == 1
+    assert events[0]["type"] == "run.started"
+    assert calls["n"] == 3, f"expected 2 flaky + 1 success, got {calls['n']}"
+
+
+def test_events_transient_locked_error_retries_then_succeeds(monkeypatch, tmp_path):
+    """``sqlite3.OperationalError("database is locked")`` from a racing writer
+    is also retried and succeeds once the writer releases."""
+    driver = _mechanic_driver_for_events(tmp_path)
+    _seed_simple_events(tmp_path)
+
+    real_connect = sqlite3.connect
+    calls = {"n": 0}
+
+    def flaky_connect(database, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr("tests.e2e_live.harness.sqlite3.connect", flaky_connect)
+    monkeypatch.setattr(driver, "EVENT_READ_RETRY_DELAY", 0.001)
+
+    events = driver.events()
+
+    assert len(events) == 1
+    assert calls["n"] == 2
+
+
+def test_events_persistent_database_error_fails_with_diagnostics(monkeypatch, tmp_path):
+    """A persistent ``sqlite3.DatabaseError`` (real on-disk corruption, not a
+    flake) must fail after the bounded retries with diagnostics, including a
+    ``PRAGMA integrity_check`` result. The retry must never mask persistent
+    corruption."""
+    driver = _mechanic_driver_for_events(tmp_path)
+    _seed_simple_events(tmp_path)
+
+    def always_fails(database, *args, **kwargs):
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    # The integrity_check path opens its own connection; let it succeed so we
+    # can assert the diagnostic surfaces the check result rather than masking.
+    real_connect = sqlite3.connect
+    integrity_calls = {"n": 0}
+
+    def connect_for_read_or_integrity(database, *args, **kwargs):
+        # Distinguish the events() read (first attempts) from the final
+        # integrity_check connection by counting: events() opens 1 connection
+        # per attempt; the integrity_check is the very last open.
+        integrity_calls["n"] += 1
+        if integrity_calls["n"] <= driver.EVENT_READ_RETRIES:
+            raise sqlite3.DatabaseError("database disk image is malformed")
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr("tests.e2e_live.harness.sqlite3.connect", connect_for_read_or_integrity)
+    monkeypatch.setattr(driver, "EVENT_READ_RETRY_DELAY", 0.001)
+
+    with pytest.raises(AssertionError) as excinfo:
+        driver.events()
+
+    message = str(excinfo.value)
+    assert "failed after 5 retries" in message
+    assert "database disk image is malformed" in message
+    assert "integrity_check=" in message
+
+
+def test_events_returns_empty_when_db_absent(tmp_path):
+    """No runtime DB on disk (e.g. before ``trac init``) returns an empty
+    list without raising or retrying."""
+    driver = _mechanic_driver_for_events(tmp_path)
+    assert driver.events() == []

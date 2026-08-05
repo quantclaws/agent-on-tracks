@@ -18,7 +18,9 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -450,10 +452,39 @@ def _baseline_dir(version: str, sha: str, checkpoint: str = "M-REQ-APPROVAL") ->
 
 _SNAPSHOT_EXCLUDE_NAMES = {"node_modules"}
 
+# The runtime event store uses SQLite WAL mode: at any moment the live DB may
+# have sidecar files ``tracks.db-wal`` and ``tracks.db-shm`` carrying
+# un-checkpointed committed transactions. Raw-copying these sidecars with the
+# main DB risks an inconsistent snapshot (the WAL/SHM are only valid in the
+# presence of the original page file plus an active writer). Instead the
+# snapshot excludes all three and rebuilds a clean ``tracks.db`` in the
+# target via the Python ``sqlite3`` backup API, which walks the live source
+# under a read connection and produces a single self-contained file with no
+# sidecars and all committed transactions folded in.
+_RUNTIME_DB_NAME = "tracks.db"
+_RUNTIME_DB_SIDECARS = (_RUNTIME_DB_NAME + "-wal", _RUNTIME_DB_NAME + "-shm")
+_SNAPSHOT_EXCLUDE_DB_NAMES = {_RUNTIME_DB_NAME, *_RUNTIME_DB_SIDECARS}
+
+
+def _snapshot_ignore(directory: str, names: list[str]) -> set[str]:
+    """``shutil.copytree`` ignore callback: skip the runtime DB trio
+    (``tracks.db`` + ``-wal`` + ``-shm``) only inside ``.tracks/runtime/``.
+
+    The runtime DB is rebuilt in the target via ``_snapshot_runtime_db`` so
+    the raw files must be excluded from the tree copy. The guard is
+    positional so it applies only at the runtime dir, never elsewhere."""
+    dir_path = Path(directory)
+    if dir_path.name == "runtime" and dir_path.parent.name == ".tracks":
+        return {name for name in names if name in _SNAPSHOT_EXCLUDE_DB_NAMES}
+    return set()
+
 
 def _copy_tree(src: Path, dst: Path) -> None:
     """Copy src into dst, excluding opencode's node_modules (recreated on
-    demand) and the baseline manifest itself."""
+    demand), the baseline manifest itself, and the runtime SQLite DB trio
+    (``tracks.db`` + ``-wal`` + ``-shm``). The runtime DB is rebuilt in the
+    target via ``_snapshot_runtime_db`` so the snapshot is internally
+    consistent and sidecar-free."""
     for entry in src.iterdir():
         if entry.name in _SNAPSHOT_EXCLUDE_NAMES and entry.is_dir():
             continue
@@ -461,9 +492,49 @@ def _copy_tree(src: Path, dst: Path) -> None:
             continue
         dest = dst / entry.name
         if entry.is_dir():
-            shutil.copytree(entry, dest, dirs_exist_ok=True)
+            shutil.copytree(entry, dest, dirs_exist_ok=True, ignore=_snapshot_ignore)
         else:
             shutil.copy2(entry, dest)
+    _snapshot_runtime_db(src, dst)
+
+
+def _snapshot_runtime_db(src_host: Path, dst_host: Path) -> None:
+    """Copy the live runtime ``tracks.db`` into the target host using the
+    Python ``sqlite3`` backup API, so the WAL/SHM sidecars are not raw-copied
+    and the target DB contains every committed event in a single file.
+
+    Idempotent and silent: skips when the source runtime dir or DB is absent
+    (e.g. capture before ``trac init``) and never emits sidecars into the
+    target. The backup API reads the live source under a read-only URI
+    connection while the source remains readable by any active writer."""
+    src_runtime = src_host / ".tracks" / "runtime"
+    src_db = src_runtime / _RUNTIME_DB_NAME
+    if not src_db.is_file():
+        return
+    dst_runtime = dst_host / ".tracks" / "runtime"
+    dst_runtime.mkdir(parents=True, exist_ok=True)
+    dst_db = dst_runtime / _RUNTIME_DB_NAME
+    # Defensive: never inherit a stale sidecar in the target (restore path
+    # may have pre-existing sidecars from a previous run).
+    for sidecar in _RUNTIME_DB_SIDECARS:
+        with suppress(FileNotFoundError):
+            (dst_runtime / sidecar).unlink()
+    source = sqlite3.connect(f"file:{src_db.as_posix()}?mode=ro", uri=True)
+    try:
+        target = sqlite3.connect(str(dst_db))
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+    # The backup API never creates sidecars in the destination, but assert
+    # the invariant explicitly so a future regression fails loudly here
+    # instead of producing a corrupt snapshot.
+    for sidecar in _RUNTIME_DB_SIDECARS:
+        assert not (dst_runtime / sidecar).exists(), (
+            f"snapshot leaked sidecar into target runtime: {sidecar}"
+        )
 
 
 def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
@@ -474,7 +545,13 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
     absolute paths from the original host but are used only as evidence
     strings (``last_failure`` re-dispatch context), never for file access.
     So restoring to a different path is safe - the runtime re-derives every
-    path from the new cwd."""
+    path from the new cwd.
+
+    Stale sidecar removal: the destination ``tracks.db-wal``/``-shm`` from a
+    prior run are removed (via the full wipe of ``live_root`` below, plus a
+    defensive pass inside ``_snapshot_runtime_db``) before the baseline DB
+    is rebuilt via the backup API, so a stale WAL/SHM pair can never attach
+    to the freshly-written main file."""
     for entry in list(live_root.iterdir()):
         if entry.is_dir():
             shutil.rmtree(entry)
