@@ -19,6 +19,8 @@ from tests.e2e.test_happy_path import git_out, parse_frontmatter, types
 
 
 def test_full_journey_to_boundary(host_repo, trac, event_log):
+    """AC-FR0010-04@v0.4: pre-M-DESIGN event prefix byte-stable; M-TEST
+    integration does not change transitions, events, or boundary terminal."""
     run_id = walk_to_await_human(trac)
     evs = event_log(run_id)
 

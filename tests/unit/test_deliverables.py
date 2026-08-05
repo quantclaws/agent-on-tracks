@@ -4,6 +4,8 @@ from tracks.deliverables import check_deliverables
 
 
 def test_real_deliverables_consistent():
+    """AC-FR0120-02@v0.4: Shield.md in deliverables set, checked for
+    existence + version + IQ alongside the other five agent prompts."""
     # Scribe/Sage agents + tracks-discuz skill ship with version 0.2
     assert check_deliverables() == []
 

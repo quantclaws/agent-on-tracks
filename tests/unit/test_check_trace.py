@@ -6,7 +6,7 @@ AC-FR0080-05@v0.4 no short circuit, AC-FR0080-06@v0.4 short format rejected,
 AC-FR0080-07@v0.4 NOT_FOUND no silent fallback, AC-FR0080-08@v0.4 duplicate IDs,
 AC-FR0080-09@v0.4 tombstone not orphan, AC-FR0130-04@v0.4 test marker must be long.
 """
-from tracks.checks.trace import check_trace_full
+from tracks.checks.trace import _scan_test_markers, check_trace_full
 
 STORY = """## 4. 行为种子
 
@@ -201,3 +201,38 @@ def test_stable_order():
     assert r1 == r2
     assert r1.hard_errors == tuple(sorted(r1.hard_errors))
     assert r1.warnings == tuple(sorted(r1.warnings))
+
+
+def test_scan_skips_data_dirs(tmp_path):
+    """AC-FR0080-01@v0.4 _scan_test_markers skips assets/ and ground_truth/ dirs.
+
+    Fixture trees under tests/assets/ and oracle files under tests/ground_truth/
+    are test data, not test assets to bind ACs to. Their markers must neither
+    bind nor error.
+    """
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    # Real test file with a long-format marker
+    (tests_dir / "test_real.py").write_text(
+        '"""AC-FR0010-01@v0.4 real marker"""\n', encoding="utf-8"
+    )
+    # Fixture file under assets/ with short-format + orphan markers
+    assets_dir = tests_dir / "assets" / "trace_fixtures" / "orphans" / "tests"
+    assets_dir.mkdir(parents=True)
+    (assets_dir / "test_orphans.py").write_text(
+        '"""AC-FR0010-01 AC-FR0010-99@v0.4 AC-FR0030-01"""\n', encoding="utf-8"
+    )
+    # Oracle file under ground_truth/ with marker-shaped strings
+    gt_dir = tests_dir / "ground_truth"
+    gt_dir.mkdir()
+    (gt_dir / "trace_reference.py").write_text(
+        '"""AC-FR0999-01@v0.4 ground truth"""\n', encoding="utf-8"
+    )
+    markers = _scan_test_markers(tests_dir)
+    # Real marker is picked up
+    assert "AC-FR0010-01" in markers
+    assert markers["AC-FR0010-01"] == ["AC-FR0010-01@v0.4"]
+    # Fixture / ground_truth markers are NOT picked up
+    assert "AC-FR0010-99" not in markers
+    assert "AC-FR0030-01" not in markers
+    assert "AC-FR0999-01" not in markers

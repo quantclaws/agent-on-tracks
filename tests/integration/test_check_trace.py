@@ -108,6 +108,7 @@ def test_warnings_do_not_change_exit_code(tmp_path, capsys):
 
 
 def test_trace_version_flag(tmp_path, capsys):
-    """--version flag selects specific version directory."""
+    """AC-FR0080-10@v0.4: trac check trace checks all ACs uniformly via
+    --version, not stage-aware; M-TEST gate filters required ACs separately."""
     repo = setup_trace_repo(tmp_path, "clean")
     assert cmd_check(repo, "trace", "--version", "v0.4") == 0

@@ -188,10 +188,21 @@ def check_trace_full(
     )
 
 
+_DATA_DIRS = frozenset({"assets", "ground_truth"})
+
+
 def _scan_test_markers(tests_dir: Path) -> dict[str, list[str]]:
-    """Scan .py files in tests_dir for AC markers."""
+    """Scan .py files in tests_dir for AC markers.
+
+    Skips data directories (``assets`` and ``ground_truth``) by project
+    convention -- those contain fixture trees and oracle reference files,
+    not test assets to bind ACs to.
+    """
     markers: dict[str, list[str]] = {}
     for py_file in sorted(tests_dir.rglob("*.py")):
+        rel_parts = py_file.relative_to(tests_dir).parts
+        if _DATA_DIRS & set(rel_parts):
+            continue
         content = py_file.read_text(encoding="utf-8")
         for m in _TEST_MARKER.finditer(content):
             ac_id = f"AC-{m.group(1)}-{m.group(2)}"
