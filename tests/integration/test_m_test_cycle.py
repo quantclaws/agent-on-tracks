@@ -8,6 +8,7 @@ from tests.e2e.test_happy_path import types
 from tests.integration.helpers import assert_sm01_event_sequence, m_test_events
 
 
+# AC-FR0010-01@v0.4 TRACKS-TRACE enter dispatch
 def test_enter_dispatch(trac, event_log):
     """AC-FR0010-01@v0.4: M-DESIGN EXIT -> stage.entered(M-TEST) -> DISPATCH."""
     run_id = walk_to_m_test_complete(trac)
@@ -20,6 +21,7 @@ def test_enter_dispatch(trac, event_log):
     assert dispatch["payload"]["command"]["params"]["substate"] == "WRITE"
 
 
+# AC-FR0030-01@v0.4 TRACKS-TRACE collect independent
 def test_collect_independent(trac, event_log):
     """AC-FR0030-01@v0.4: Runtime independently collects (collect_tests command)."""
     run_id = walk_to_m_test_complete(trac)
@@ -29,6 +31,7 @@ def test_collect_independent(trac, event_log):
     assert len(collect) == 1  # exactly one independent collection
 
 
+# AC-FR0030-03@v0.4 TRACKS-TRACE collected event evidence
 def test_collected_event_evidence(trac, event_log):
     """AC-FR0030-03@v0.4: collection evidence lands in test.collected event."""
     run_id = walk_to_m_test_complete(trac)
@@ -40,6 +43,7 @@ def test_collected_event_evidence(trac, event_log):
     assert collected[0]["payload"]["errors"] == []
 
 
+# AC-FR0010-03@v0.4 TRACKS-TRACE full M-TEST cycle
 def test_full_m_test_cycle(trac, event_log):
     """AC-FR0010-03@v0.4: SM-01 transition sequence in the event log."""
     run_id = walk_to_m_test_complete(trac)
@@ -52,6 +56,7 @@ def test_full_m_test_cycle(trac, event_log):
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
 
 
+# AC-NFR0040-01@v0.4 TRACKS-TRACE events append only
 def test_events_append_only(trac, event_log, host_repo):
     """AC-NFR0040-01@v0.4: M-TEST events are append-only (seq monotonic, no
     rewrites). Verified by checking seq continuity in the events table."""
@@ -65,6 +70,7 @@ def test_events_append_only(trac, event_log, host_repo):
     assert seqs == list(range(1, len(seqs) + 1))  # contiguous, no gaps/rewrites
 
 
+# AC-NFR0040-02@v0.4 TRACKS-TRACE rebuild projections
 def test_rebuild_projections(trac, event_log, host_repo):
     """AC-NFR0040-02@v0.4: drop projections, rebuild from events -> same state."""
     import sqlite3

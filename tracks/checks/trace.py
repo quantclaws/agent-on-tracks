@@ -16,8 +16,21 @@ from tracks.executor.validate import _acc_scan, _spec_items
 # BS-XX heading: two-digit, story `### BS-XX` (interfaces.md §1d / FR-0130).
 _BS_HEADING = re.compile(r"^###\s+BS-(\d{2})\s", re.M)
 
-# Long-format test marker: AC-FRXXXX-YY@vX.Y (interfaces.md §3d / FR-0080).
-_TEST_MARKER = re.compile(r"AC-((?:N?FR)\d{4})-(\d{2})(@\S+)?")
+# R-1 line-level marker: standalone comment line directly above test function.
+# `( # | // ) + optional whitespace + AC-FRXXXX-YY@<version> + TRACKS-TRACE +
+# optional one-line description`. The TRACKS-TRACE token is mandatory -- it
+# distinguishes a binding marker from a normal AC-ID reference (revision log
+# R-1 / interfaces.md §1d). Zero AST, zero third-party deps.
+_MARKER_LINE = re.compile(
+    r"^\s*(#|//)\s*(AC-(?:N?FR)\d{4}-\d{2})(@\S+)?\s+TRACKS-TRACE\b(.*)$", re.M
+)
+
+# Suffix whitelist: top-10 general-purpose languages (SQL excluded).
+_TEST_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
+    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
+    ".kt", ".swift",
+})
 
 # tombstone: HTML comment `<!-- tombstone: ID -->` (interfaces.md §3e / FR-0130).
 _TOMBSTONE = re.compile(
@@ -191,23 +204,42 @@ def check_trace_full(
 _DATA_DIRS = frozenset({"assets", "ground_truth"})
 
 
-def _scan_test_markers(tests_dir: Path) -> dict[str, list[str]]:
-    """Scan .py files in tests_dir for AC markers.
+def _scan_test_markers(
+    tests_dir: Path,
+) -> tuple[dict[str, list[str]], bool]:
+    """Scan whitelisted test files in tests_dir for R-1 marker comment lines.
+
+    R-1 convention (revision log R-1): marker = standalone comment line
+    ``( # | // ) AC-FRXXXX-YY@<version> [description]`` directly above the
+    test function definition.  Detection is a single line-level regex --
+    no AST, no third-party deps.  Non-marker positions (string literals,
+    docstring bodies, code lines) are not matched because the regex
+    requires the line to start with ``#`` or ``//``.
 
     Skips data directories (``assets`` and ``ground_truth``) by project
-    convention -- those contain fixture trees and oracle reference files,
-    not test assets to bind ACs to.
+    convention and silently ignores unknown suffixes.
+
+    Returns ``(markers, has_files)`` where *markers* maps
+    ``{ac_id: [marker_str, ...]}`` and *has_files* is True iff at least
+    one whitelisted test file was found outside data dirs.
     """
     markers: dict[str, list[str]] = {}
-    for py_file in sorted(tests_dir.rglob("*.py")):
-        rel_parts = py_file.relative_to(tests_dir).parts
+    has_files = False
+    for path in sorted(tests_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix not in _TEST_SUFFIXES:
+            continue
+        rel_parts = path.relative_to(tests_dir).parts
         if _DATA_DIRS & set(rel_parts):
             continue
-        content = py_file.read_text(encoding="utf-8")
-        for m in _TEST_MARKER.finditer(content):
-            ac_id = f"AC-{m.group(1)}-{m.group(2)}"
-            markers.setdefault(ac_id, []).append(m.group(0))
-    return markers
+        has_files = True
+        content = path.read_text(encoding="utf-8")
+        for m in _MARKER_LINE.finditer(content):
+            ac_id = m.group(2)
+            version = m.group(3) or ""
+            markers.setdefault(ac_id, []).append(ac_id + version)
+    return markers, has_files
 
 
 def _apply_baseline(report: TraceReport, baseline: dict | None) -> TraceReport:
@@ -238,8 +270,13 @@ def check_trace_full_file(
     baseline: dict | None = None,
 ) -> TraceReport:
     """FR-0080 file-reading wrapper: reads story/spec/acceptance from
-    version_dir, scans .py files in tests_dir for markers, calls
-    check_trace_full. baseline is the legacy exemption (FR-0100).
+    version_dir, scans whitelisted test files in tests_dir for R-1 marker
+    comment lines, calls check_trace_full. baseline is the legacy exemption
+    (FR-0100).
+
+    If tests_dir yields zero whitelisted test files, returns a report with
+    a warning and zero hard errors (AC-FR0080-12) -- does not falsely
+    report all ACs as unbound.
     """
     story = (version_dir / "story.md")
     spec = (version_dir / "spec.md")
@@ -247,6 +284,13 @@ def check_trace_full_file(
     story_text = story.read_text(encoding="utf-8") if story.exists() else ""
     spec_text = spec.read_text(encoding="utf-8") if spec.exists() else ""
     acc_text = acc.read_text(encoding="utf-8") if acc.exists() else ""
-    test_markers = _scan_test_markers(tests_dir)
+    test_markers, has_files = _scan_test_markers(tests_dir)
+    if not has_files:
+        report = TraceReport(
+            status="pass",
+            hard_errors=(),
+            warnings=("no supported test files found",),
+        )
+        return _apply_baseline(report, baseline)
     report = check_trace_full(story_text, spec_text, acc_text, test_markers)
     return _apply_baseline(report, baseline)

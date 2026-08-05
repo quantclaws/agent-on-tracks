@@ -56,6 +56,7 @@ def _full_cycle():
 
 # -- AC-FR0010-01@v0.4: M-DESIGN EXIT -> stage.entered(M-TEST), substate=DISPATCH ----
 
+# AC-FR0010-01@v0.4 TRACKS-TRACE enter M-TEST from design exit
 def test_enter_m_test_from_design_exit():
     """AC-FR0010-01@v0.4"""
     s = state_of()
@@ -66,6 +67,7 @@ def test_enter_m_test_from_design_exit():
 
 # -- AC-FR0010-02@v0.4: _NEXT_STAGE + boundary ---------------------------------------
 
+# AC-FR0010-02@v0.4 TRACKS-TRACE next stage design to M-TEST
 def test_next_stage_design_to_m_test():
     """AC-FR0010-02@v0.4"""
     assert _NEXT_STAGE["M-DESIGN"] == "M-TEST"
@@ -74,6 +76,7 @@ def test_next_stage_design_to_m_test():
 
 # -- AC-FR0010-03@v0.4: SM-01 transition enforcement ---------------------------------
 
+# AC-FR0010-03@v0.4 TRACKS-TRACE SM-01 transitions enforced
 def test_sm01_transitions_enforced():
     """AC-FR0010-03@v0.4: DISPATCH -> WRITE -> COLLECT -> PRISM_REVIEW ->
     RED_CHECK -> EXIT follows SM-01 exactly."""
@@ -92,6 +95,7 @@ def test_sm01_transitions_enforced():
 
 # -- AC-FR0010-05@v0.4: explicit control flow + kernel purity ------------------------
 
+# AC-FR0010-05@v0.4 TRACKS-TRACE explicit control flow
 def test_explicit_control_flow():
     """AC-FR0010-05@v0.4: decide() produces M-TEST-specific commands that the
     DRAFT/REVIEW/EXIT pattern cannot yield."""
@@ -109,6 +113,7 @@ def test_explicit_control_flow():
     assert decide(s3).kind == "run_tests"
 
 
+# AC-NFR0030-01@v0.4 TRACKS-TRACE kernel purity no IO
 def test_kernel_purity_no_io():
     """AC-NFR0030-01@v0.4: decide()/project() perform no I/O -- they are pure
     folds over events. Verified by construction: no filesystem/clock/env access
@@ -120,6 +125,7 @@ def test_kernel_purity_no_io():
 
 # -- AC-FR0010-05@v0.4 / SM-01.1: stage.entered resets M-TEST fields -----------------
 
+# AC-FR0010-05@v0.4 TRACKS-TRACE enter M-TEST resets fields
 def test_enter_m_test_resets_fields():
     """AC-FR0010-05@v0.4: entering M-TEST resets all per-cycle fields."""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
@@ -134,6 +140,7 @@ def test_enter_m_test_resets_fields():
 
 # -- AC-FR0020-01@v0.4: DISPATCH creates Shield tasks -> WRITE -----------------------
 
+# AC-FR0020-01@v0.4 TRACKS-TRACE dispatch creates Shield tasks
 def test_dispatch_creates_shield_tasks():
     """AC-FR0020-01@v0.4"""
     s = state_of()
@@ -146,6 +153,7 @@ def test_dispatch_creates_shield_tasks():
 
 # -- AC-FR0020-04@v0.4: WRITE validate failure <=3 -> escalation ---------------------
 
+# AC-FR0020-04@v0.4 TRACKS-TRACE write retry escalation
 def test_write_retry_escalation():
     """AC-FR0020-04@v0.4: three Shield failures escalate to awaiting_human."""
     fail = ("outcome.received", {"role": "shield", "status": "failed",
@@ -160,6 +168,7 @@ def test_write_retry_escalation():
 
 # -- AC-FR0030-02@v0.4: collection pass/fail routing --------------------------------
 
+# AC-FR0030-02@v0.4 TRACKS-TRACE collect passed to prism
 def test_collect_passed_to_prism():
     """AC-FR0030-02@v0.4"""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
@@ -167,6 +176,7 @@ def test_collect_passed_to_prism():
     assert s.test_collected is True
 
 
+# AC-FR0030-02@v0.4 TRACKS-TRACE collect failed to write
 def test_collect_failed_to_write():
     """AC-FR0030-02@v0.4: collection failure -> WRITE re-dispatch."""
     failed = ("test.collected", {"status": "failed", "collected_count": 0,
@@ -179,6 +189,7 @@ def test_collect_failed_to_write():
 
 # -- AC-FR0040-01@v0.4/02/03: PRISM_REVIEW + criteria pack --------------------------
 
+# AC-FR0040-01@v0.4 TRACKS-TRACE prism dispatch
 def test_prism_dispatch():
     """AC-FR0040-01@v0.4: PRISM_REVIEW dispatches Prism with criteria pack."""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
@@ -188,6 +199,7 @@ def test_prism_dispatch():
     assert cmd.params["assignment"]["criteria_pack"] == dict(_CRITERIA_PACK)
 
 
+# AC-FR0040-02@v0.4 TRACKS-TRACE criteria pack mismatch
 def test_criteria_pack_mismatch():
     """AC-FR0040-02@v0.4: verdict.failed(criteria_pack_mismatch) re-dispatches."""
     mismatch = ("verdict.failed", {"check": "criteria_pack_mismatch",
@@ -201,6 +213,7 @@ def test_criteria_pack_mismatch():
     assert cmd.params["role"] == "prism"
 
 
+# AC-FR0040-03@v0.4 TRACKS-TRACE prism pass to red
 def test_prism_pass_to_red():
     """AC-FR0040-03@v0.4"""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
@@ -208,6 +221,7 @@ def test_prism_pass_to_red():
     assert s.substate == "RED_CHECK"
 
 
+# AC-FR0040-03@v0.4 TRACKS-TRACE prism revise to write
 def test_prism_revise_to_write():
     """AC-FR0040-03@v0.4"""
     revise = ("prism.verdict", {"verdict": "revise",
@@ -220,6 +234,7 @@ def test_prism_revise_to_write():
 
 # -- AC-FR0050-05@v0.4: RED_CHECK routing -------------------------------------------
 
+# AC-FR0050-05@v0.4 TRACKS-TRACE red valid to exit
 def test_red_valid_to_exit():
     """AC-FR0050-05@v0.4"""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
@@ -228,6 +243,7 @@ def test_red_valid_to_exit():
     assert s.red_validated is True
 
 
+# AC-FR0050-05@v0.4 TRACKS-TRACE red invalid to diagnose
 def test_red_invalid_to_diagnose():
     """AC-FR0050-05@v0.4"""
     invalid = ("red.validated", {"status": "invalid",
@@ -255,6 +271,7 @@ def _diagnose_state(classification):
                     verdict)
 
 
+# AC-FR0060-01@v0.4 TRACKS-TRACE diagnose entered
 def test_diagnose_entered():
     """AC-FR0060-01@v0.4"""
     s = _diagnose_state("test_defect")
@@ -263,6 +280,7 @@ def test_diagnose_entered():
     assert s2.diagnose_classification == "stub_gap"
 
 
+# AC-FR0060-02@v0.4 TRACKS-TRACE diagnose test defect to write
 def test_diagnose_test_defect_to_write():
     """AC-FR0060-02@v0.4"""
     s = _diagnose_state("test_defect")
@@ -273,6 +291,7 @@ def test_diagnose_test_defect_to_write():
     assert cmd.params["role"] == "shield"
 
 
+# AC-FR0060-03@v0.4 TRACKS-TRACE diagnose stub gap to design
 def test_diagnose_stub_gap_to_design():
     """AC-FR0060-03@v0.4: stub_gap -> rollback M-DESIGN, no Human."""
     s = _diagnose_state("stub_gap")
@@ -282,6 +301,7 @@ def test_diagnose_stub_gap_to_design():
     assert s.status == "active"  # no awaiting_human
 
 
+# AC-FR0060-04@v0.4 TRACKS-TRACE diagnose ac gap to acc
 def test_diagnose_ac_gap_to_acc():
     """AC-FR0060-04@v0.4: ac_gap -> awaiting Human, then rollback M-ACC."""
     s = _diagnose_state("ac_gap")
@@ -302,6 +322,7 @@ def test_diagnose_ac_gap_to_acc():
     assert cmd.params["to_stage"] == "M-ACC"
 
 
+# AC-FR0060-05@v0.4 TRACKS-TRACE diagnose spec gap to spec
 def test_diagnose_spec_gap_to_spec():
     """AC-FR0060-05@v0.4: spec_gap -> awaiting Human, then rollback M-SPEC."""
     s = _diagnose_state("spec_gap")
@@ -312,6 +333,7 @@ def test_diagnose_spec_gap_to_spec():
 
 # -- AC-FR0060-07@v0.4: no M-IMPL events --------------------------------------------
 
+# AC-FR0060-07@v0.4 TRACKS-TRACE no M-IMPL events
 def test_no_m_impl_events():
     """AC-FR0060-07@v0.4: M-TEST produces no M-IMPL events (SHIELD_FIX etc.)."""
     s = state_of(*_full_cycle())
@@ -322,6 +344,7 @@ def test_no_m_impl_events():
 
 # -- AC-FR0070-05@v0.4: trace fail -> WRITE redispatch ------------------------------
 
+# AC-FR0070-05@v0.4 TRACKS-TRACE trace fail to write
 def test_trace_fail_to_write():
     """AC-FR0070-05@v0.4: trace gate failure -> EXIT->WRITE, consumes budget."""
     trace_fail = ("verdict.failed", {"check": "trace", "reason": "orphan",
@@ -336,6 +359,7 @@ def test_trace_fail_to_write():
 
 # -- AC-NFR0030-02@v0.4: rebuild from events ----------------------------------------
 
+# AC-NFR0030-02@v0.4 TRACKS-TRACE rebuild from events
 def test_rebuild_from_events():
     """AC-NFR0030-02@v0.4: projecting the same events yields identical state."""
     evs = seq(*ENTER_M_TEST, *_full_cycle())

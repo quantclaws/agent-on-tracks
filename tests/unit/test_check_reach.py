@@ -4,9 +4,10 @@ AC-FR0090-01@v0.4 build import graph, AC-FR0090-02@v0.4 islands reported,
 AC-FR0090-03@v0.4 test modules excluded, AC-FR0090-04@v0.4 no entrypoints error,
 AC-FR0090-05@v0.4 module-level only, AC-NFR0020-02@v0.4 stable order.
 """
-from tracks.checks.reach import check_reach
+from tracks.checks.reach import check_reach, check_reach_file
 
 
+# AC-FR0090-01@v0.4 TRACKS-TRACE build import graph
 def test_build_import_graph():
     """AC-FR0090-01@v0.4 build module-level import graph from entrypoints."""
     graph = {
@@ -23,6 +24,7 @@ def test_build_import_graph():
     assert "pkg.main" in r.entrypoints
 
 
+# AC-FR0090-02@v0.4 TRACKS-TRACE islands reported
 def test_islands_reported():
     """AC-FR0090-02@v0.4 unreachable production modules reported as islands."""
     graph = {
@@ -38,6 +40,7 @@ def test_islands_reported():
     assert "pkg.orphan" in r.islands
 
 
+# AC-FR0090-03@v0.4 TRACKS-TRACE test modules excluded
 def test_test_modules_excluded():
     """AC-FR0090-03@v0.4 pure test modules not counted as islands."""
     graph = {
@@ -53,6 +56,7 @@ def test_test_modules_excluded():
     assert "tests.test_x" not in r.islands
 
 
+# AC-FR0090-04@v0.4 TRACKS-TRACE no entrypoints error
 def test_no_entrypoints_error():
     """AC-FR0090-04@v0.4 no entrypoint declaration -> error, non-zero."""
     graph = {"pkg.mod_a": set()}
@@ -61,6 +65,7 @@ def test_no_entrypoints_error():
     assert any("no entrypoints" in e for e in r.errors)
 
 
+# AC-FR0090-05@v0.4 TRACKS-TRACE no function level graph
 def test_no_function_level_graph():
     """AC-FR0090-05@v0.4 only module-level import graph, no function-level."""
     graph = {
@@ -72,6 +77,7 @@ def test_no_function_level_graph():
     assert r.islands == ()
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE baseline exemption for reach
 def test_baseline_exemption():
     """AC-FR0100-02@v0.4 baseline-exempted modules not counted as islands."""
     graph = {
@@ -88,6 +94,7 @@ def test_baseline_exemption():
     assert "pkg.legacy" not in r.islands
 
 
+# AC-NFR0020-02@v0.4 TRACKS-TRACE stable order
 def test_stable_order():
     """AC-NFR0020-02@v0.4 output order stable and reproducible."""
     graph = {
@@ -117,3 +124,15 @@ def test_package_import_connects_children():
     )
     assert r.status == "pass"
     assert "pkg.sub.mod_a" not in r.islands
+
+
+# AC-FR0090-05@v0.4 TRACKS-TRACE no python files warning exit zero
+def test_no_python_files_warning(tmp_path):
+    """AC-FR0090-05@v0.4 no Python files -> warning, status pass, exit 0."""
+    (tmp_path / "README.md").write_text("not a python project", encoding="utf-8")
+    r = check_reach_file(tmp_path)
+    assert r.status == "pass"
+    assert len(r.warnings) == 1
+    assert "no Python files" in r.warnings[0]
+    assert r.islands == ()
+    assert r.errors == ()

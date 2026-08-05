@@ -34,6 +34,7 @@ class ReachReport:
     islands: tuple[str, ...]
     entrypoints: tuple[str, ...]
     errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def _build_adjacency(
@@ -288,6 +289,14 @@ def check_reach_file(
     """
     extra_entries = extra_entries or []
     py_files = _find_py_files(repo)
+    if not py_files:
+        return ReachReport(
+            status="pass",
+            islands=(),
+            entrypoints=(),
+            errors=(),
+            warnings=("no Python files found; reach check not applicable",),
+        )
     entrypoints = _discover_entrypoints(repo, py_files, extra_entries)
     import_graph, production = _build_graph(py_files, repo)
     return check_reach(entrypoints, import_graph, production, baseline)

@@ -12,6 +12,8 @@ from tests.integration.helpers import (
 )
 
 
+# AC-FR0010-02@v0.4 TRACKS-TRACE boundary after M-TEST
+# AC-FR0070-08@v0.4 TRACKS-TRACE boundary after M-TEST
 def test_boundary_after_m_test(trac, event_log):
     """AC-FR0010-02@v0.4, AC-FR0070-08@v0.4: M-DESIGN EXIT -> M-TEST ->
     run.completed(boundary)."""
@@ -29,6 +31,7 @@ def test_boundary_after_m_test(trac, event_log):
     assert exited[-1]["payload"]["stage"] == "M-TEST"
 
 
+# AC-FR0070-06@v0.4 TRACKS-TRACE no human gate
 def test_no_human_gate(trac, event_log):
     """AC-FR0070-06@v0.4: M-TEST has no Human gate (BS-05)."""
     run_id = walk_to_m_test_complete(trac)
@@ -36,6 +39,7 @@ def test_no_human_gate(trac, event_log):
     assert_no_human_events_in_m_test(evs)
 
 
+# AC-FR0010-05@v0.4 TRACKS-TRACE M-TEST substate sequence
 def test_m_test_substate_sequence(trac, event_log):
     """AC-FR0010-05@v0.4: M-TEST substate sequence follows SM-01."""
     run_id = walk_to_m_test_complete(trac)

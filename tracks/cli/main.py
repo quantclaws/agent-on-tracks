@@ -655,10 +655,13 @@ def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
             "islands": list(report.islands),
             "entrypoints": list(report.entrypoints),
             "errors": list(report.errors),
+            "warnings": list(report.warnings),
         }, ensure_ascii=False))
     else:
         for e in report.errors:
             print(e, file=sys.stderr)
+        for w in report.warnings:
+            print(f"warning: {w}")
         for island in report.islands:
             print(f"island module: {island}")
         if not report.islands and not report.errors:

@@ -5,7 +5,7 @@ returncode + stdout/stderr is the single source of truth for the expected class.
 """
 from tracks.executor.executor import classify_red
 
-# AC-FR0050-02@v0.4: legit Red classes
+# AC-FR0050-02@v0.4 TRACKS-TRACE legit Red classes
 
 
 def test_legit_red_classes():
@@ -22,7 +22,7 @@ def test_legit_red_classes():
     assert classify_red("t5", 1, "", "NameError: name 'foo' is not defined") == "symbol_missing"
 
 
-# AC-FR0050-03@v0.4: illegit Red classes
+# AC-FR0050-03@v0.4 TRACKS-TRACE illegit Red classes
 
 
 def test_illegit_red_classes():
@@ -35,7 +35,7 @@ def test_illegit_red_classes():
     assert classify_red("t5", 1, "ERROR collecting tests/test_x.py", "") == "collection_error"
 
 
-# AC-FR0050-04@v0.4: unexpected pass
+# AC-FR0050-04@v0.4 TRACKS-TRACE unexpected pass
 
 
 def test_unexpected_pass():
@@ -44,7 +44,7 @@ def test_unexpected_pass():
     assert classify_red("t2", 0, "", "") == "unexpected_pass"
 
 
-# AC-FR0050-05@v0.4: unclassified fallback
+# AC-FR0050-05@v0.4 TRACKS-TRACE unclassified fallback
 
 
 def test_unclassified():

@@ -3,6 +3,12 @@ from pathlib import Path
 
 from tracks import paths
 
+_TEST_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
+    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
+    ".kt", ".swift",
+})
+
 
 def setup_trace_repo(tmp_path: Path, scenario: str = "clean") -> Path:
     """Set up a trace fixture in tmp_path/.tracks/projects/v0.4/."""
@@ -21,10 +27,11 @@ def setup_trace_repo(tmp_path: Path, scenario: str = "clean") -> Path:
     tests_dir.mkdir(exist_ok=True)
     src_tests = fixtures / "tests"
     if src_tests.exists():
-        for py in src_tests.rglob("*.py"):
-            (tests_dir / py.name).write_text(
-                py.read_text(encoding="utf-8"), encoding="utf-8"
-            )
+        for tf in sorted(src_tests.rglob("*")):
+            if tf.is_file() and tf.suffix in _TEST_SUFFIXES:
+                (tests_dir / tf.name).write_text(
+                    tf.read_text(encoding="utf-8"), encoding="utf-8"
+                )
     return tmp_path
 
 

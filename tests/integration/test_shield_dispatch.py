@@ -7,6 +7,7 @@ from tests.e2e.helpers import dispatches
 from tests.integration.helpers import walk_to_m_test
 
 
+# AC-FR0020-01@v0.4 TRACKS-TRACE dispatch uses test plan layers
 def test_dispatch_uses_test_plan_layers(trac, event_log):
     """AC-FR0020-01@v0.4: DISPATCH creates Shield tasks per test-plan layers."""
     run_id = walk_to_m_test(trac)
@@ -18,6 +19,7 @@ def test_dispatch_uses_test_plan_layers(trac, event_log):
     assert shield_dispatches[0]["payload"]["command"]["params"]["stage"] == "M-TEST"
 
 
+# AC-FR0020-02@v0.4 TRACKS-TRACE shield writes test files
 def test_shield_writes_test_files(trac, event_log, host_repo):
     """AC-FR0020-02@v0.4: Shield writes tests to tests/integration/, tests/e2e/."""
     walk_to_m_test(trac)
@@ -30,6 +32,7 @@ def test_shield_writes_test_files(trac, event_log, host_repo):
     assert test_files
 
 
+# AC-FR0020-03@v0.4 TRACKS-TRACE collectable legit red tests
 def test_collectable_legit_red_tests(trac, event_log):
     """AC-FR0020-03@v0.4: tests are collectable and all legit-failing."""
     run_id = walk_to_m_test(trac)
@@ -41,6 +44,7 @@ def test_collectable_legit_red_tests(trac, event_log):
     assert red[0]["payload"]["status"] == "valid"
 
 
+# AC-FR0020-04@v0.4 TRACKS-TRACE validate fail redispatch
 def test_validate_fail_redispatch(trac, event_log):
     """AC-FR0020-04@v0.4: Shield failure re-dispatches, 3rd escalates."""
     run_id = walk_to_m_test(trac)
@@ -54,6 +58,7 @@ def test_validate_fail_redispatch(trac, event_log):
     assert not [d for d in dispatches(evs) if d["seq"] > fails[-1]["seq"]]
 
 
+# AC-FR0020-05@v0.4 TRACKS-TRACE shield no commit
 def test_shield_no_commit(trac, event_log, host_repo):
     """AC-FR0020-05@v0.4: Shield does not commit; Runtime creates the test commit."""
     import subprocess
@@ -70,6 +75,7 @@ def test_shield_no_commit(trac, event_log, host_repo):
     assert "M-TEST: freeze test assets" in log
 
 
+# AC-FR0120-04@v0.4 TRACKS-TRACE over reach rolled back
 def test_over_reach_rolled_back(trac, event_log):
     """AC-FR0120-04@v0.4: over_reach failure_class -> outcome failed, re-dispatch."""
     run_id = walk_to_m_test(trac)
@@ -84,6 +90,7 @@ def test_over_reach_rolled_back(trac, event_log):
     assert completed
 
 
+# AC-FR0120-03@v0.4 TRACKS-TRACE write scope four dirs
 def test_write_scope_four_dirs(trac, event_log, host_repo):
     """AC-FR0120-03@v0.4: Shield may only write tests/integration, tests/e2e,
     tests/assets, tests/counterexamples."""
@@ -94,6 +101,7 @@ def test_write_scope_four_dirs(trac, event_log, host_repo):
         assert (host_repo / "tests" / d).exists()
 
 
+# AC-FR0120-05@v0.4 TRACKS-TRACE no product code writes
 def test_no_product_code_writes(trac, event_log, host_repo):
     """AC-FR0120-05@v0.4: Shield does not write product code or design docs."""
     run_id = walk_to_m_test(trac)
@@ -105,6 +113,7 @@ def test_no_product_code_writes(trac, event_log, host_repo):
     assert not over
 
 
+# AC-FR0120-01@v0.4 TRACKS-TRACE materialization lifecycle
 def test_materialization_lifecycle(trac, event_log, host_repo):
     """AC-FR0120-01@v0.4: Shield agent is materialized and cleaned up."""
     walk_to_m_test(trac)
@@ -115,6 +124,7 @@ def test_materialization_lifecycle(trac, event_log, host_repo):
     assert not agent_dest.exists() or agent_dest.read_text() != ""
 
 
+# AC-FR0120-06@v0.4 TRACKS-TRACE shield workflow
 def test_shield_workflow(trac, event_log):
     """AC-FR0120-06@v0.4: Shield reads context docs -> writes tests -> outcome."""
     run_id = walk_to_m_test(trac)

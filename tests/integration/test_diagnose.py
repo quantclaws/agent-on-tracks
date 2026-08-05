@@ -7,6 +7,7 @@ awaiting Human + rollback M-SPEC.
 from tests.integration.helpers import assert_no_human_events_in_m_test, walk_to_m_test
 
 
+# AC-FR0060-01@v0.4 TRACKS-TRACE diagnose no human
 def test_diagnose_no_human(trac, event_log):
     """AC-FR0060-01@v0.4: DIAGNOSE routing is never a Human gate."""
     run_id = walk_to_m_test(trac)
@@ -18,6 +19,7 @@ def test_diagnose_no_human(trac, event_log):
     assert_no_human_events_in_m_test(evs)
 
 
+# AC-FR0060-02@v0.4 TRACKS-TRACE test defect redispatch
 def test_test_defect_redispatch(trac, event_log):
     """AC-FR0060-02@v0.4: test_defect -> WRITE re-dispatch Shield."""
     run_id = walk_to_m_test(trac)
@@ -31,6 +33,7 @@ def test_test_defect_redispatch(trac, event_log):
     assert any(e["type"] == "run.completed" for e in evs)
 
 
+# AC-FR0060-03@v0.4 TRACKS-TRACE stub gap no human
 def test_stub_gap_no_human(trac, event_log):
     """AC-FR0060-03@v0.4: stub_gap -> rollback M-DESIGN, no Human."""
     run_id = walk_to_m_test(trac)
@@ -53,6 +56,7 @@ def test_stub_gap_no_human(trac, event_log):
     assert not human_between
 
 
+# AC-FR0060-04@v0.4 TRACKS-TRACE ac gap needs human
 def test_ac_gap_needs_human(trac, event_log):
     """AC-FR0060-04@v0.4: ac_gap -> awaiting Human, then rollback M-ACC."""
     run_id = walk_to_m_test(trac)
@@ -74,6 +78,7 @@ def test_ac_gap_needs_human(trac, event_log):
     assert rolled[0]["payload"]["to_stage"] == "M-ACC"
 
 
+# AC-FR0060-05@v0.4 TRACKS-TRACE spec gap needs human
 def test_spec_gap_needs_human(trac, event_log):
     """AC-FR0060-05@v0.4: spec_gap -> awaiting Human, then rollback M-SPEC."""
     run_id = walk_to_m_test(trac)
@@ -95,6 +100,7 @@ def test_spec_gap_needs_human(trac, event_log):
     assert rolled[0]["payload"]["to_stage"] == "M-SPEC"
 
 
+# AC-FR0060-06@v0.4 TRACKS-TRACE verdict failed payload
 def test_verdict_failed_payload(trac, event_log):
     """AC-FR0060-06@v0.4: verdict.failed carries classification, target_stage,
     artifact_disposition."""

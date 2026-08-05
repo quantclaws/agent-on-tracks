@@ -206,22 +206,24 @@ class FakeBackend:
         subdir = tests_dir / layer
         slug = ac_id.lower().replace("-", "_")
         fname = f"test_{slug}.py"
-        marker = f"{ac_id}@{self.version}"
+        # R-1 marker: standalone comment line directly above the test def,
+        # mandatory TRACKS-TRACE token (FR-0080/FR-0130, revision log R-1).
         if token == "short_marker":
-            marker = ac_id  # short format -> trace gate fails (SM-01.15)
-        body = f'"""{marker}"""\n'
+            marker = f"# {ac_id} TRACKS-TRACE short format (no @version)"
+        else:
+            marker = f"# {ac_id}@{self.version} TRACKS-TRACE {layer} test"
         if token == "illegit_red":
             # Import inside the test body so collection passes but the test
             # fails at runtime with ImportError (illegit Red -> DIAGNOSE).
-            body += f"def test_{slug}():\n"
+            body = f"{marker}\ndef test_{slug}():\n"
             body += "    import nonexistent_module  # illegit Red\n"
         elif token == "pass_red":
             # Test passes instead of failing (unexpected pass -> DIAGNOSE).
-            body += f"def test_{slug}():\n"
+            body = f"{marker}\ndef test_{slug}():\n"
             body += "    pass\n"
         else:
             token_stmt = 'NotImplementedError("IF-MTEST-001")'
-            body += f"def test_{slug}():\n"
+            body = f"{marker}\ndef test_{slug}():\n"
             body += f"    raise {token_stmt}\n"
         (subdir / fname).write_text(body, encoding="utf-8")
 

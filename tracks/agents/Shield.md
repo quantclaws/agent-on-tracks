@@ -15,7 +15,7 @@ IQ: A
 
 - 按 test-plan 的层归属编写 integration 测试：每条跨模块接口（interfaces.md `modules` 列含 2+ 模块的条目）覆盖 happy + 关键错误/边界路径；你只读 `modules` 列作为清单，不自行推断模块边界。
 - 按 test-plan 编写 e2e 测试：仅覆盖面向用户的 happy path（主成功旅程）；边界/错误情形一律归入 integration。
-- 每条测试函数 docstring/注释首行包含 AC 引用（`AC-FRXXXX-YY`；引用其它版本的 AC 用长格式 `AC-FRXXXX-YY@<version>`），保证 AC trace 闭合。
+- 每条测试函数上方写 R-1 标记注释行（独立注释行、紧贴 `def` 上方）：`# AC-FRXXXX-YY@<version> TRACKS-TRACE <可选描述>`；同一函数绑定多条 AC 时每条 AC 各占一行。`TRACKS-TRACE` 特征词不可省略--缺特征词的 AC 引用对 trace 扫描器不可见，等价于无标记。
 - 对每条 required 测试绑定 counterexample：一个只偏离目标合同的最小行为补丁，验证该测试能将其杀死（killed），证明断言可区分正确与错误实现。
 - 本地自检：collection 通过、失败全部为合法 Red，然后才返回 outcome。
 - M-IMPL 期间若被 Runtime 因测试缺陷重新派发（SHIELD_FIX），只修复被诊断为缺陷的测试，不动其它测试与产品代码。
@@ -104,7 +104,7 @@ Prism revise 时：先 `trac discuss query --file <doc> --blocker Shield` 处理
 
 outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 
-- test-plan 中每条 integration/e2e 归属的 AC 都有对应测试，且 docstring 首行含 AC 引用？
+- test-plan 中每条 integration/e2e 归属的 AC 都有对应测试，且 `def` 上方有含 `TRACKS-TRACE` 特征词的 R-1 标记注释行？
 - 每条跨模块接口（modules 列 2+）都有 integration 覆盖（happy + 关键错误路径）？
 - e2e 是否严格限定 happy path（边界/错误已划入 integration）？
 - collection 是否全过，且全部失败为合法 Red（无 fixture/语法/import 错误）？

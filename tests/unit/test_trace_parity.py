@@ -21,6 +21,12 @@ from trace_reference import compute_trace  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent.parent / "assets" / "trace_fixtures"
 
+_TEST_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
+    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
+    ".kt", ".swift",
+})
+
 
 def _read_fixture(name: str) -> tuple[str, str, str, dict[str, str]]:
     """Read fixture files: (story, spec, acc, {test_file_path: content})."""
@@ -31,8 +37,9 @@ def _read_fixture(name: str) -> tuple[str, str, str, dict[str, str]]:
     test_files = {}
     tests_dir = d / "tests"
     if tests_dir.exists():
-        for py in sorted(tests_dir.rglob("*.py")):
-            test_files[str(py)] = py.read_text(encoding="utf-8")
+        for tf in sorted(tests_dir.rglob("*")):
+            if tf.is_file() and tf.suffix in _TEST_SUFFIXES:
+                test_files[str(tf)] = tf.read_text(encoding="utf-8")
     return story, spec, acc, test_files
 
 
@@ -61,31 +68,37 @@ def _compare(name: str, baseline: dict | None = None) -> None:
     )
 
 
+# AC-FR0080-01@v0.4 TRACKS-TRACE clean fixture parity
 def test_clean_parity():
     """AC-FR0080-01@v0.4 clean fixture parity (full coverage pass)."""
     _compare("clean")
 
 
+# AC-FR0080-02@v0.4 TRACKS-TRACE orphans fixture parity
 def test_orphans_parity():
     """AC-FR0080-02@v0.4 AC-FR0080-03@v0.4 AC-FR0080-05@v0.4 orphans fixture parity."""
     _compare("orphans")
 
 
+# AC-FR0080-09@v0.4 TRACKS-TRACE tombstone fixture parity
 def test_tombstone_parity():
     """AC-FR0080-09@v0.4 tombstone fixture parity."""
     _compare("tombstone")
 
 
+# AC-FR0080-08@v0.4 TRACKS-TRACE duplicates fixture parity
 def test_duplicates_parity():
     """AC-FR0080-08@v0.4 duplicates fixture parity."""
     _compare("duplicates")
 
 
+# AC-FR0080-06@v0.4 TRACKS-TRACE short marker fixture parity
 def test_short_marker_parity():
     """AC-FR0080-06@v0.4 short-format marker fixture parity."""
     _compare("short_marker")
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE baseline exemption parity
 def test_baseline_exemption_parity():
     """AC-FR0100-02@v0.4 baseline exemption: exempted IDs not in output."""
     story, spec, acc, test_files = _read_fixture("baseline")

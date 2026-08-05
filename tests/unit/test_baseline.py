@@ -7,6 +7,7 @@ from tracks.checks.reach import check_reach
 from tracks.checks.trace import check_trace_full
 
 
+# AC-FR0100-06@v0.4 TRACKS-TRACE baseline schema fields
 def test_schema_fields():
     """AC-FR0100-06@v0.4 baseline schema has required fields."""
     baseline = {
@@ -21,6 +22,7 @@ def test_schema_fields():
     assert "pkg.legacy" in baseline["reach_exemptions"]["modules"]
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE trace baseline exempts ids
 def test_trace_baseline_exempts_ids():
     """AC-FR0100-02@v0.4 baseline-exempted IDs not counted as trace orphans."""
     spec = "### FR-0010 A\n\n- **来源**：BS-01\n- **交付入口**：trac x\n\nD.\n"
@@ -37,6 +39,7 @@ def test_trace_baseline_exempts_ids():
     assert not any("FR-0990" in e for e in exempted.hard_errors)
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE reach baseline exempts modules
 def test_reach_baseline_exempts_modules():
     """AC-FR0100-02@v0.4 baseline-exempted modules not counted as islands."""
     graph = {"app": {"pkg.mod_a"}, "pkg.mod_a": set(), "pkg.legacy": set()}
@@ -45,6 +48,7 @@ def test_reach_baseline_exempts_modules():
     assert "pkg.legacy" not in r.islands
 
 
+# AC-FR0100-03@v0.4 TRACKS-TRACE baseline freezes adoption only
 def test_baseline_freezes_adoption_only():
     """AC-FR0100-03@v0.4 baseline only freezes adoption-time存量."""
     baseline = {

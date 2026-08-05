@@ -7,6 +7,7 @@ recovery path (trace fail -> WRITE re-dispatch).
 from tests.integration.helpers import m_test_events, walk_to_m_test
 
 
+# AC-FR0070-01@v0.4 TRACKS-TRACE exit gate all conditions
 def test_exit_gate_all_conditions(trac, event_log):
     """AC-FR0070-01@v0.4: EXIT gate = collection + legit Red + Prism pass + trace."""
     run_id = walk_to_m_test(trac)
@@ -21,6 +22,7 @@ def test_exit_gate_all_conditions(trac, event_log):
     assert any(e["type"] == "stage.exited" and e["payload"]["stage"] == "M-TEST" for e in evs)
 
 
+# AC-FR0070-02@v0.4 TRACKS-TRACE trace closure required ACs
 def test_trace_closure_required_acs(trac, event_log):
     """AC-FR0070-02@v0.4: trace closure verifies required AC markers."""
     run_id = walk_to_m_test(trac)
@@ -31,6 +33,7 @@ def test_trace_closure_required_acs(trac, event_log):
     assert trace_pass  # trace gate passed
 
 
+# AC-FR0070-03@v0.4 TRACKS-TRACE trace filters required only
 def test_trace_filters_required_only(trac, event_log):
     """AC-FR0070-03@v0.4: trace gate filters required ACs (integration|e2e);
     unit-only AC gaps don't block M-TEST exit."""
@@ -41,6 +44,7 @@ def test_trace_filters_required_only(trac, event_log):
     assert any(e["type"] == "run.completed" for e in evs)
 
 
+# AC-FR0070-04@v0.4 TRACKS-TRACE trace fail no exit
 def test_trace_fail_no_exit(trac, event_log):
     """AC-FR0070-04@v0.4: trace gate failure -> no stage.exited(M-TEST)."""
     run_id = walk_to_m_test(trac)
@@ -57,6 +61,8 @@ def test_trace_fail_no_exit(trac, event_log):
     assert any(e["type"] == "run.completed" for e in evs)
 
 
+# AC-FR0070-05@v0.4 TRACKS-TRACE trace fail redispatch
+# AC-FR0080-13@v0.4 TRACKS-TRACE Shield marker obligation enforced by trace
 def test_trace_fail_redispatch(trac, event_log):
     """AC-FR0070-05@v0.4: trace fail -> EXIT->WRITE re-dispatch Shield."""
     run_id = walk_to_m_test(trac)
@@ -75,6 +81,7 @@ def test_trace_fail_redispatch(trac, event_log):
     assert shield_redispatch  # Shield was re-dispatched to fix markers
 
 
+# AC-FR0080-11@v0.4 TRACKS-TRACE trace as verdict source
 def test_trace_as_verdict_source(trac, event_log):
     """AC-FR0080-11@v0.4: engine reads trace as verdict source (verdict.passed)."""
     run_id = walk_to_m_test(trac)
@@ -87,6 +94,7 @@ def test_trace_as_verdict_source(trac, event_log):
     assert trace_verdicts[0]["type"] == "verdict.passed"  # happy path
 
 
+# AC-FR0070-07@v0.4 TRACKS-TRACE test committed
 def test_test_committed(trac, event_log, host_repo):
     """AC-FR0070-07@v0.4: controlled test commit -> test.committed + stage.exited."""
     import subprocess
@@ -103,6 +111,7 @@ def test_test_committed(trac, event_log, host_repo):
     assert "M-TEST: freeze test assets" in log
 
 
+# AC-FR0070-08@v0.4 TRACKS-TRACE boundary after M-TEST
 def test_boundary_after_m_test(trac, event_log):
     """AC-FR0070-08@v0.4: stage.exited(M-TEST) -> run.completed(boundary)."""
     run_id = walk_to_m_test(trac)
@@ -116,6 +125,7 @@ def test_boundary_after_m_test(trac, event_log):
     assert completed[0]["payload"]["terminal_state"] == "boundary"
 
 
+# AC-FR0070-06@v0.4 TRACKS-TRACE no human gate in M-TEST
 def test_no_human_gate_in_m_test(trac, event_log):
     """AC-FR0070-06@v0.4: M-TEST has no Human gate (no human.review/approval
     as exit prerequisite in the happy path)."""

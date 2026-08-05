@@ -37,6 +37,7 @@ def _setup_design_trio(tmp_path: Path, plan_text: str, if_text: str = "") -> Pat
     return plan
 
 
+# AC-FR0140-03@v0.4 TRACKS-TRACE validate test plan IF
 def test_validate_test_plan_if(tmp_path, capsys):
     """AC-FR0140-03@v0.4 trac validate --file test-plan.md validates IF- attribution."""
     # Valid: integration AC has IF- attribution
@@ -45,6 +46,7 @@ def test_validate_test_plan_if(tmp_path, capsys):
     assert "valid" in capsys.readouterr().out
 
 
+# AC-FR0140-03@v0.4 TRACKS-TRACE validate test plan missing IF
 def test_validate_test_plan_missing_if(tmp_path, capsys):
     """AC-FR0140-03@v0.4 integration/e2e AC missing IF- -> validate fails."""
     plan = _setup_design_trio(tmp_path, "- AC-FR0010-01: integration\n")
@@ -53,6 +55,7 @@ def test_validate_test_plan_missing_if(tmp_path, capsys):
     assert "missing IF- attribution" in err
 
 
+# AC-FR0140-03@v0.4 TRACKS-TRACE validate test plan bad IF
 def test_validate_test_plan_bad_if(tmp_path, capsys):
     """AC-FR0140-03@v0.4 unregistered IF- identifier -> validate fails."""
     plan = _setup_design_trio(tmp_path, "- AC-FR0010-01: integration IF-FAKE-999\n")
@@ -61,6 +64,7 @@ def test_validate_test_plan_bad_if(tmp_path, capsys):
     assert "IF-FAKE-999 not defined" in err
 
 
+# AC-FR0140-02@v0.4 TRACKS-TRACE validate test plan unit no IF required
 def test_validate_test_plan_unit_no_if_required(tmp_path, capsys):
     """AC-FR0140-02@v0.4 unit AC does not require IF- attribution."""
     plan = _setup_design_trio(tmp_path, "- AC-FR0010-01: unit\n")

@@ -7,6 +7,7 @@ from tests.integration.helpers import m_test_events, walk_to_m_test
 from tracks.kernel.machine import _CRITERIA_PACK
 
 
+# AC-FR0040-01@v0.4 TRACKS-TRACE prism reviews with criteria pack
 def test_prism_reviews_with_criteria_pack(trac, event_log):
     """AC-FR0040-01@v0.4: dispatch Prism with criteria pack in assignment."""
     run_id = walk_to_m_test(trac)
@@ -18,6 +19,7 @@ def test_prism_reviews_with_criteria_pack(trac, event_log):
     assert assignment["criteria_pack"] == dict(_CRITERIA_PACK)
 
 
+# AC-FR0040-02@v0.4 TRACKS-TRACE anti self report triple
 def test_anti_self_report_triple(trac, event_log):
     """AC-FR0040-02@v0.4: assignment carries pack, verdict echoes it, match."""
     run_id = walk_to_m_test(trac)
@@ -37,6 +39,7 @@ def test_anti_self_report_triple(trac, event_log):
     assert not mismatches
 
 
+# AC-FR0040-04@v0.4 TRACKS-TRACE revise without findings rejected
 def test_revise_without_findings_rejected(trac, event_log):
     """AC-FR0040-04@v0.4: Prism revise in M-TEST -> WRITE re-dispatch (Shield)."""
     run_id = walk_to_m_test(trac)
@@ -52,6 +55,7 @@ def test_revise_without_findings_rejected(trac, event_log):
     assert any(e["type"] == "run.completed" for e in evs)
 
 
+# AC-FR0040-05@v0.4 TRACKS-TRACE criteria pack no formal rules
 def test_criteria_pack_no_formal_rules():
     """AC-FR0040-05@v0.4: criteria pack skill contains semantic criteria, not
     formal validation rules. The D-14 boundary section explicitly excludes
@@ -71,6 +75,7 @@ def test_criteria_pack_no_formal_rules():
     assert "Runtime 程序校验" in text or "归 Runtime" in text
 
 
+# AC-FR0040-06@v0.4 TRACKS-TRACE criteria pack materialization lifecycle
 def test_criteria_pack_materialization_lifecycle(trac, event_log, host_repo):
     """AC-FR0040-06@v0.4: criteria pack skill is materialized for Prism M-TEST
     dispatch and cleaned up after (same lifecycle as tracks-discuz)."""

@@ -79,21 +79,25 @@ def _compare(name: str) -> None:
     )
 
 
+# AC-FR0090-01@v0.4 TRACKS-TRACE clean fixture parity
 def test_clean_parity():
     """AC-FR0090-01@v0.4 clean fixture: all modules reachable."""
     _compare("clean")
 
 
+# AC-FR0090-02@v0.4 TRACKS-TRACE island fixture parity
 def test_island_parity():
     """AC-FR0090-02@v0.4 island fixture: orphan module detected."""
     _compare("island")
 
 
+# AC-FR0090-04@v0.4 TRACKS-TRACE no entries fixture parity
 def test_no_entries_parity():
     """AC-FR0090-04@v0.4 no-entries fixture: error on no entrypoints."""
     _compare("no_entries")
 
 
+# AC-FR0090-01@v0.4 TRACKS-TRACE package edge fixture parity
 def test_package_edge_parity():
     """AC-FR0090-01@v0.4 package-edge fixture: ``from pkg import name``
     connects the submodule; relative imports (``from .sub import X``) resolve;

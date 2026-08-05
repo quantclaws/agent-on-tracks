@@ -58,7 +58,7 @@ This test plan only declares test methods that are **observable from outside the
 ### 1.4. Safeguards (CI checks + PR process)
 
 1. **AC mandatory tracing**
-   - The first line of each test function's docstring/comment must contain `AC-FRXXXX-YY@v0.4` (long-format marker, FR-0080/FR-0130).
+   - Each test function must have an R-1 marker comment line directly above its `def`: `# AC-FRXXXX-YY@v0.4 TRACKS-TRACE <optional description>` (long-format marker with `TRACKS-TRACE` token, FR-0080/FR-0130). The `TRACKS-TRACE` token is mandatory—without it the marker is invisible to the trace scanner. Multiple ACs bound to the same function get one marker line per AC.
    - CI scans `tests/`, verifying: each test references at least one AC; each AC is referenced by at least one test
    - Any check failure blocks merge
    - 变绿条件（FR-0140）：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识），

@@ -45,6 +45,7 @@ STORY_DUPLICATE = """## 4. 行为种子
 """
 
 
+# AC-FR0130-01@v0.4 TRACKS-TRACE BS grammar
 def test_bs_grammar():
     """AC-FR0130-01@v0.4 BS-XX grammar: two-digit, uppercase."""
     assert check_story_items(STORY_GOOD) == []
@@ -54,12 +55,14 @@ def test_bs_grammar():
     assert any("bs-02" in i and "bad item heading" for i in issues)
 
 
+# AC-FR0130-02@v0.4 TRACKS-TRACE id immutable
 def test_id_immutable():
     """AC-FR0130-02@v0.4 duplicate BS IDs detected."""
     issues = check_story_items(STORY_DUPLICATE)
     assert any("duplicate id BS-01" in i for i in issues)
 
 
+# AC-FR0130-02@v0.4 TRACKS-TRACE tombstone
 def test_tombstone():
     """AC-FR0130-02@v0.4 tombstone markers are HTML comments."""
     story = STORY_GOOD + "<!-- tombstone: BS-99 -->\n"
@@ -67,6 +70,7 @@ def test_tombstone():
     assert issues == []
 
 
+# AC-FR0130-03@v0.4 TRACKS-TRACE version qualified reference
 def test_version_qualified_reference():
     """AC-FR0130-03@v0.4 version-qualified reference is opt-in."""
     # In documents, both short and long formats are allowed.
@@ -76,6 +80,7 @@ def test_version_qualified_reference():
     assert "AC-FR0010-01@v0.1" in acc
 
 
+# AC-FR0130-04@v0.4 TRACKS-TRACE doc short long allowed
 def test_doc_short_long_allowed():
     """AC-FR0130-04@v0.4 documents allow both short and long format."""
     # In docs, short format AC-FRXXXX-YY is allowed (opt-in disambiguation).
@@ -86,6 +91,7 @@ def test_doc_short_long_allowed():
     assert "AC-FR0010-01@v0.1" in acc_long
 
 
+# AC-FR0130-06@v0.4 TRACKS-TRACE existing spec validation unchanged
 def test_existing_spec_validation_unchanged():
     """AC-FR0130-06@v0.4 existing check_spec_items behavior not regressed."""
     spec = "### FR-0010 A\n\n- **来源**：BS-01\n- **交付入口**：trac x\n\nD.\n"

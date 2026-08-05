@@ -6,6 +6,7 @@ failures, and routes to EXIT (valid) or DIAGNOSE (invalid).
 from tests.integration.helpers import walk_to_m_test
 
 
+# AC-FR0050-01@v0.4 TRACKS-TRACE red check independent rerun
 def test_red_check_independent_rerun(trac, event_log):
     """AC-FR0050-01@v0.4: Runtime independently re-runs (run_tests command)."""
     run_id = walk_to_m_test(trac)
@@ -16,6 +17,7 @@ def test_red_check_independent_rerun(trac, event_log):
     assert len(run_cmds) == 1  # exactly one independent re-run
 
 
+# AC-FR0050-02@v0.4 TRACKS-TRACE legit red validated
 def test_legit_red_validated(trac, event_log):
     """AC-FR0050-02@v0.4: legit Red (stub_token_failure) -> red.validated(valid)."""
     run_id = walk_to_m_test(trac)
@@ -27,6 +29,7 @@ def test_legit_red_validated(trac, event_log):
     assert findings[0]["classification"] == "stub_token_failure"
 
 
+# AC-FR0050-03@v0.4 TRACKS-TRACE illegit red to diagnose
 def test_illegit_red_to_diagnose(trac, event_log):
     """AC-FR0050-03@v0.4: illegit Red (ImportError) -> red.validated(invalid) -> DIAGNOSE."""
     run_id = walk_to_m_test(trac)
@@ -41,6 +44,7 @@ def test_illegit_red_to_diagnose(trac, event_log):
     assert completed
 
 
+# AC-FR0050-04@v0.4 TRACKS-TRACE unexpected pass to diagnose
 def test_unexpected_pass_to_diagnose(trac, event_log):
     """AC-FR0050-04@v0.4: unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
     run_id = walk_to_m_test(trac)
@@ -52,6 +56,7 @@ def test_unexpected_pass_to_diagnose(trac, event_log):
     assert red[0]["payload"]["findings"][0]["classification"] == "unexpected_pass"
 
 
+# AC-FR0050-06@v0.4 TRACKS-TRACE all pass does not exit
 def test_all_pass_does_not_exit(trac, event_log):
     """AC-FR0050-06@v0.4: all tests pass -> does NOT exit M-TEST (enters DIAGNOSE)."""
     run_id = walk_to_m_test(trac)

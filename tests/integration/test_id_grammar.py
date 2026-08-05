@@ -14,6 +14,8 @@ _BS_TEMPLATE = (
 )
 
 
+# AC-FR0130-01@v0.4 TRACKS-TRACE validate story BS
+# AC-FR0130-05@v0.4 TRACKS-TRACE validate story BS
 def test_validate_story_bs(tmp_path, capsys):
     """AC-FR0130-01@v0.4 AC-FR0130-05@v0.4 trac validate --file story.md validates BS-XX."""
     p = tmp_path / "story.md"
@@ -27,6 +29,7 @@ def test_validate_story_bs(tmp_path, capsys):
     assert "valid" in capsys.readouterr().out
 
 
+# AC-FR0130-05@v0.4 TRACKS-TRACE validate rejects bad grammar
 def test_validate_rejects_bad_grammar(tmp_path, capsys):
     """AC-FR0130-05@v0.4 trac validate rejects bad BS-XX grammar."""
     p = tmp_path / "story.md"
@@ -41,6 +44,7 @@ def test_validate_rejects_bad_grammar(tmp_path, capsys):
     assert "bad item heading" in err
 
 
+# AC-FR0130-02@v0.4 TRACKS-TRACE validate rejects duplicate BS
 def test_validate_rejects_duplicate_bs(tmp_path, capsys):
     """AC-FR0130-02@v0.4 trac validate rejects duplicate BS IDs."""
     p = tmp_path / "story.md"

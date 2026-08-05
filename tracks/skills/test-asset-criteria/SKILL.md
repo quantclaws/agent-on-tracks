@@ -10,7 +10,7 @@ Prism 在 M-TEST PRISM_REVIEW 按 assignment 指定的名称+版本加载本判�
 
 ## 判据 1：忠于 AC
 
-每条测试必须忠于其引用的 AC（docstring/注释首行的 `AC-FRXXXX-YY@<version>` marker）：
+每条测试必须忠于其引用的 AC。AC 引用由 `def` 上方的 R-1 标记注释行声明（`# AC-FRXXXX-YY@<version> TRACKS-TRACE <描述>`），`TRACKS-TRACE` 特征词不可省略：
 
 - 测试断言的行为与 AC 描述的可观察效果一致，不断言 AC 未要求的内容。
 - 测试不通过"重新定义成功条件"来适配实现（cheating pattern #1）。

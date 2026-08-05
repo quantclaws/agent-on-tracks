@@ -23,11 +23,19 @@ _FR_HEADING = re.compile(r"^###\s+(N?FR)-(\d{4})\s", re.M)
 # AC-FRXXXX-YY: acceptance `### AC-FRXXXX-YY` heading
 _AC_HEADING = re.compile(
     r"^###\s+AC-((?:N?FR)\d{4})-(\d{2})\s", re.M)
-# Long-format test marker: AC-FRXXXX-YY@vX.Y in test file docstrings/comments
-_TEST_MARKER_LONG = re.compile(
-    r"AC-((?:N?FR)\d{4})-(\d{2})@(v\d+\.\d+)")
-# Short-format marker (missing @version) - detected as hard error
-_TEST_MARKER_SHORT = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}(?!@)")
+# R-1 line-level marker: standalone comment line directly above test def.
+# `( # | // ) AC-FRXXXX-YY@<version> TRACKS-TRACE [description]` -- the
+# TRACKS-TRACE token is mandatory (distinguishes binding marker from normal
+# reference). Zero AST.
+_MARKER_LINE = re.compile(
+    r"^\s*(#|//)\s*(AC-(?:N?FR)\d{4}-\d{2})(@\S+)?\s+TRACKS-TRACE\b(.*)$", re.M
+)
+# Suffix whitelist: top-10 general-purpose languages (SQL excluded).
+_TEST_SUFFIXES = frozenset({
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
+    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
+    ".kt", ".swift",
+})
 # tombstone: HTML comment or frontmatter
 _TOMBSTONE = re.compile(r"<!--\s*tombstone:\s*((?:N?FR)-\d{4}|BS-\d{2})\s*-->")
 
@@ -96,15 +104,25 @@ def _scan_test_markers(
 ) -> list[tuple[str, str, int, bool]]:
     """Return [(marker_str, ac_id, line, is_long_format)] from test files.
 
+    R-1 convention: marker = standalone comment line ``( # | // ) AC-...``
+    directly above the test function definition.  Only files with
+    whitelisted suffixes are scanned; marker-shaped text in string
+    literals, docstring bodies, or code lines is not matched (the regex
+    requires the line to start with ``#`` or ``//``).
+
     test_files: {file_path: file_content}
     """
     result: list[tuple[str, str, int, bool]] = []
-    for _fpath, content in test_files.items():
-        for m in re.finditer(r"AC-((?:N?FR)\d{4})-(\d{2})(@\S+)?", content):
-            ac_id = f"AC-{m.group(1)}-{m.group(2)}"
+    for fpath, content in test_files.items():
+        suffix = "." + fpath.rsplit(".", 1)[-1] if "." in fpath else ""
+        if suffix not in _TEST_SUFFIXES:
+            continue
+        for m in _MARKER_LINE.finditer(content):
+            ac_id = m.group(2)
+            version = m.group(3) or ""
             line = _line_of(content, m.start())
-            is_long = m.group(3) is not None
-            result.append((m.group(0), ac_id, line, is_long))
+            is_long = bool(version)
+            result.append((ac_id + version, ac_id, line, is_long))
     return result
 
 

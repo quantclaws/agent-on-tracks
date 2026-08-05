@@ -18,6 +18,7 @@ from tests.e2e.helpers import dispatches, walk_to_await_human, walk_to_m_test_co
 from tests.e2e.test_happy_path import git_out, parse_frontmatter, types
 
 
+# AC-FR0010-04@v0.4 TRACKS-TRACE full journey to boundary
 def test_full_journey_to_boundary(host_repo, trac, event_log):
     """AC-FR0010-04@v0.4: pre-M-DESIGN event prefix byte-stable; M-TEST
     integration does not change transitions, events, or boundary terminal."""

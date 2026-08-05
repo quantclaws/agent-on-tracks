@@ -39,6 +39,7 @@ PLAN_BAD_IF = """## 8. AC Coverage
 REGISTRY = {"IF-TRACE-001", "IF-TRACE-002", "IF-REACH-001", "IF-REACH-002"}
 
 
+# AC-FR0140-01@v0.4 TRACKS-TRACE template has green condition field
 def test_template_has_green_condition_field():
     """AC-FR0140-01@v0.4 test-plan template has green condition field."""
     tpl = templating.load_template("test-plan")
@@ -46,6 +47,7 @@ def test_template_has_green_condition_field():
     assert "IF-" in tpl
 
 
+# AC-FR0140-02@v0.4 TRACKS-TRACE check design trace IF attribution
 def test_check_design_trace_if_attribution():
     """AC-FR0140-02@v0.4 integration/e2e ACs require valid IF- attribution."""
     # With valid IF- -> no issues
@@ -61,6 +63,7 @@ def test_check_design_trace_if_attribution():
     assert any("IF-FAKE-999 not defined" in i for i in issues)
 
 
+# AC-FR0140-04@v0.4 TRACKS-TRACE field carries IF not execution
 def test_field_carries_if_not_execution():
     """AC-FR0140-04@v0.4 field carries IF info, does not execute greening."""
     tpl = templating.load_template("test-plan")

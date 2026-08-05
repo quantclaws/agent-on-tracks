@@ -52,6 +52,7 @@ ACC = """## FR-0010 Feature A
 """
 
 
+# AC-FR0080-01@v0.4 TRACKS-TRACE full chain pass
 def test_full_chain_pass():
     """AC-FR0080-01@v0.4 full chain bidirectional orphan detection pass."""
     markers = {
@@ -64,6 +65,7 @@ def test_full_chain_pass():
     assert r.hard_errors == ()
 
 
+# AC-FR0080-02@v0.4 TRACKS-TRACE FR AC hard errors
 def test_fr_ac_hard_errors():
     """AC-FR0080-02@v0.4 FR without AC and AC referencing non-existent FR."""
     spec = SPEC + "### FR-0030 Orphan\n\n- **来源**：BS-01\n- **交付入口**：trac x\n\nDesc.\n"
@@ -80,6 +82,7 @@ def test_fr_ac_hard_errors():
     assert any("AC-FR0990-01" in e and "non-existent FR-0990" for e in r.hard_errors)
 
 
+# AC-FR0080-03@v0.4 TRACKS-TRACE AC test hard errors
 def test_ac_test_hard_errors():
     """AC-FR0080-03@v0.4 AC without marker and marker pointing at non-existent AC."""
     markers = {
@@ -93,6 +96,7 @@ def test_ac_test_hard_errors():
     assert any("AC-FR0020-99" in e and "non-existent" for e in r.hard_errors)
 
 
+# AC-FR0080-04@v0.4 TRACKS-TRACE BS FR warning only
 def test_bs_fr_warning_only():
     """AC-FR0080-04@v0.4 BS->FR warning does not change exit code."""
     markers = {
@@ -106,6 +110,7 @@ def test_bs_fr_warning_only():
     assert all("BS->FR weak link" in w for w in r.warnings)
 
 
+# AC-FR0080-05@v0.4 TRACKS-TRACE no short circuit
 def test_no_short_circuit():
     """AC-FR0080-05@v0.4 orphan list complete, no short-circuit."""
     spec = SPEC + "### FR-0030 Orphan1\n\n- **来源**：BS-01\n- **交付入口**：trac x\n\nD.\n"
@@ -121,6 +126,7 @@ def test_no_short_circuit():
     assert any("FR-0040" in e for e in r.hard_errors)
 
 
+# AC-FR0080-06@v0.4 TRACKS-TRACE short format rejected
 def test_short_format_rejected():
     """AC-FR0080-06@v0.4 short-format marker triggers hard error."""
     markers = {
@@ -133,6 +139,7 @@ def test_short_format_rejected():
     assert any("short format" in e for e in r.hard_errors)
 
 
+# AC-FR0080-07@v0.4 TRACKS-TRACE not found no silent fallback
 def test_not_found_no_silent_fallback():
     """AC-FR0080-07@v0.4 long-format marker referencing non-existent AC -> NOT_FOUND."""
     markers = {
@@ -146,6 +153,7 @@ def test_not_found_no_silent_fallback():
     assert any("AC-FR0099-01" in e and "non-existent" for e in r.hard_errors)
 
 
+# AC-FR0080-08@v0.4 TRACKS-TRACE duplicate ids
 def test_duplicate_ids():
     """AC-FR0080-08@v0.4 duplicate FR/AC IDs trigger hard error with both line:N."""
     dup_spec = SPEC + "### FR-0010 Duplicate\n\n- **来源**：BS-01\n- **交付入口**：trac x\n\nD.\n"
@@ -161,6 +169,7 @@ def test_duplicate_ids():
     assert any("duplicate AC-FR0010-01" in e for e in r.hard_errors)
 
 
+# AC-FR0080-09@v0.4 TRACKS-TRACE tombstone not orphan
 def test_tombstone_not_orphan():
     """AC-FR0080-09@v0.4 tombstone IDs not counted as orphans."""
     story = STORY + "<!-- tombstone: BS-99 -->\n"
@@ -177,6 +186,7 @@ def test_tombstone_not_orphan():
     assert not any("BS-99" in w for w in r.warnings)
 
 
+# AC-FR0130-04@v0.4 TRACKS-TRACE test marker must be long
 def test_test_marker_must_be_long():
     """AC-FR0130-04@v0.4 test marker must use long format (with @version)."""
     markers = {
@@ -189,6 +199,7 @@ def test_test_marker_must_be_long():
     assert any("short format" in e for e in r.hard_errors)
 
 
+# AC-NFR0020-02@v0.4 TRACKS-TRACE stable order
 def test_stable_order():
     """AC-NFR0020-02@v0.4 output order is stable and reproducible."""
     markers = {
@@ -203,6 +214,7 @@ def test_stable_order():
     assert r1.warnings == tuple(sorted(r1.warnings))
 
 
+# AC-FR0080-01@v0.4 TRACKS-TRACE scan skips data dirs
 def test_scan_skips_data_dirs(tmp_path):
     """AC-FR0080-01@v0.4 _scan_test_markers skips assets/ and ground_truth/ dirs.
 
@@ -212,23 +224,27 @@ def test_scan_skips_data_dirs(tmp_path):
     """
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
-    # Real test file with a long-format marker
+    # Real test file with an R-1 marker comment line
     (tests_dir / "test_real.py").write_text(
-        '"""AC-FR0010-01@v0.4 real marker"""\n', encoding="utf-8"
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE real marker\n"
+        "def test_real():\n    pass\n", encoding="utf-8"
     )
     # Fixture file under assets/ with short-format + orphan markers
     assets_dir = tests_dir / "assets" / "trace_fixtures" / "orphans" / "tests"
     assets_dir.mkdir(parents=True)
     (assets_dir / "test_orphans.py").write_text(
-        '"""AC-FR0010-01 AC-FR0010-99@v0.4 AC-FR0030-01"""\n', encoding="utf-8"
+        "# AC-FR0010-01 TRACKS-TRACE\n"
+        "# AC-FR0010-99@v0.4 TRACKS-TRACE\n# AC-FR0030-01\n"
+        "def test_orphans():\n    pass\n", encoding="utf-8"
     )
     # Oracle file under ground_truth/ with marker-shaped strings
     gt_dir = tests_dir / "ground_truth"
     gt_dir.mkdir()
     (gt_dir / "trace_reference.py").write_text(
-        '"""AC-FR0999-01@v0.4 ground truth"""\n', encoding="utf-8"
+        "# AC-FR0999-01@v0.4 TRACKS-TRACE ground truth\n"
+        "def test_gt():\n    pass\n", encoding="utf-8"
     )
-    markers = _scan_test_markers(tests_dir)
+    markers, has_files = _scan_test_markers(tests_dir)
     # Real marker is picked up
     assert "AC-FR0010-01" in markers
     assert markers["AC-FR0010-01"] == ["AC-FR0010-01@v0.4"]
@@ -236,3 +252,102 @@ def test_scan_skips_data_dirs(tmp_path):
     assert "AC-FR0010-99" not in markers
     assert "AC-FR0030-01" not in markers
     assert "AC-FR0999-01" not in markers
+    assert has_files
+
+
+# AC-FR0080-06@v0.4 TRACKS-TRACE scan r1 comment vs string vs docstring
+def test_scan_r1_comment_vs_string_vs_docstring(tmp_path):
+    """AC-FR0080-06@v0.4 R-1 regex only matches comment lines, not strings or
+    docstring bodies.  String literals and docstring first-lines don't start
+    with ``#`` or ``//`` so the line-level regex skips them."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_placement.py").write_text(
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE real comment marker\n"
+        "def test_a():\n"
+        "    pass\n"
+        "\n"
+        'x = "AC-FR0020-01@v0.4 TRACKS-TRACE string literal"\n'
+        "\n"
+        'def test_b():\n'
+        '    """AC-FR0030-01@v0.4 TRACKS-TRACE docstring first line"""\n'
+        "    pass\n",
+        encoding="utf-8",
+    )
+    markers, _ = _scan_test_markers(tests_dir)
+    # Only the real comment marker is detected
+    assert "AC-FR0010-01" in markers
+    assert "AC-FR0020-01" not in markers
+    assert "AC-FR0030-01" not in markers
+
+
+# AC-FR0080-12@v0.4 TRACKS-TRACE scan hash and slash prefixes
+def test_scan_hash_and_slash_prefixes(tmp_path):
+    """AC-FR0080-12@v0.4 R-1 regex matches both ``#`` (Python/Ruby) and
+    ``//`` (JS/TS/Java/Go/Rust/C#/C++/Kotlin/Swift) comment prefixes."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_py.py").write_text(
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE py marker\n"
+        "def test_py():\n    pass\n", encoding="utf-8"
+    )
+    (tests_dir / "test_js.js").write_text(
+        "// AC-FR0020-01@v0.4 TRACKS-TRACE js marker\n"
+        "function testJs() {}\n", encoding="utf-8"
+    )
+    (tests_dir / "test_ts.ts").write_text(
+        "// AC-FR0030-01@v0.4 TRACKS-TRACE ts marker\n"
+        "function testTs(): void {}\n", encoding="utf-8"
+    )
+    markers, has_files = _scan_test_markers(tests_dir)
+    assert "AC-FR0010-01" in markers
+    assert "AC-FR0020-01" in markers
+    assert "AC-FR0030-01" in markers
+    assert has_files
+
+
+# AC-FR0080-12@v0.4 TRACKS-TRACE scan whitelist skip unknown suffixes
+def test_scan_whitelist_skip_unknown_suffixes(tmp_path):
+    """AC-FR0080-12@v0.4 unknown suffixes (e.g. .txt, .md) are silently
+    skipped -- not an error, just ignored."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_real.py").write_text(
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE\n"
+        "def test_real():\n    pass\n", encoding="utf-8"
+    )
+    (tests_dir / "notes.txt").write_text(
+        "# AC-FR0999-01@v0.4 TRACKS-TRACE txt file not scanned\n", encoding="utf-8"
+    )
+    (tests_dir / "readme.md").write_text(
+        "# AC-FR0888-01@v0.4 TRACKS-TRACE md file not scanned\n", encoding="utf-8"
+    )
+    markers, has_files = _scan_test_markers(tests_dir)
+    assert "AC-FR0010-01" in markers
+    assert "AC-FR0999-01" not in markers
+    assert "AC-FR0888-01" not in markers
+    assert has_files
+
+
+# AC-FR0080-12@v0.4 TRACKS-TRACE scan empty tests dir warning
+def test_scan_empty_tests_dir_warning(tmp_path):
+    """AC-FR0080-12@v0.4 tests_dir with zero whitelisted files -> report
+    with warning and zero hard errors (does not falsely report all ACs
+    as unbound)."""
+    from tracks.checks.trace import check_trace_full_file
+    vdir = tmp_path / ".tracks" / "projects" / "v0.4"
+    vdir.mkdir(parents=True)
+    (vdir / "story.md").write_text(
+        "### BS-01 X\n\n- 来源: [3.1]\n", encoding="utf-8")
+    (vdir / "spec.md").write_text(
+        "### FR-0010 X\n\n- **来源**：BS-01\n\nD.\n", encoding="utf-8")
+    (vdir / "acceptance.md").write_text(
+        "## FR-0010 X\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    # Only a .txt file -- not whitelisted
+    (tests_dir / "notes.txt").write_text("no test files here\n", encoding="utf-8")
+    report = check_trace_full_file(vdir, tests_dir, None)
+    assert report.status == "pass"
+    assert report.hard_errors == ()
+    assert any("no supported test files found" in w for w in report.warnings)

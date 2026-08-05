@@ -12,6 +12,7 @@ from tracks import paths
 from tracks.cli.main import cmd_check
 
 
+# AC-FR0100-01@v0.4 TRACKS-TRACE baseline file schema
 def test_baseline_file_schema(tmp_path, capsys):
     """AC-FR0100-01@v0.4 baseline file is read and applied."""
     repo = setup_trace_repo(tmp_path, "baseline")
@@ -22,6 +23,7 @@ def test_baseline_file_schema(tmp_path, capsys):
     assert not any("FR-0020" in e for e in data["hard_errors"])
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE trace baseline exemption
 def test_trace_baseline_exemption(tmp_path, capsys):
     """AC-FR0100-02@v0.4 baseline-exempted IDs not in trace output."""
     repo = setup_trace_repo(tmp_path, "baseline")
@@ -35,6 +37,7 @@ def test_trace_baseline_exemption(tmp_path, capsys):
     assert not any("FR-0020" in e for e in data["hard_errors"])
 
 
+# AC-FR0100-04@v0.4 TRACKS-TRACE new content still reported
 def test_new_content_still_reported(tmp_path, capsys):
     """AC-FR0100-04@v0.4 exempted IDs don't suppress new content errors."""
     repo = setup_trace_repo(tmp_path, "baseline")
@@ -42,6 +45,7 @@ def test_new_content_still_reported(tmp_path, capsys):
     assert cmd_check(repo, "trace", "--json") == 0
 
 
+# AC-FR0100-05@v0.4 TRACKS-TRACE no auto fix
 def test_no_auto_fix(tmp_path):
     """AC-FR0100-05@v0.4 baseline does not trigger file modifications."""
     repo = setup_trace_repo(tmp_path, "baseline")
@@ -52,6 +56,7 @@ def test_no_auto_fix(tmp_path):
     assert (vdir / "spec.md").read_text(encoding="utf-8") == before
 
 
+# AC-FR0100-02@v0.4 TRACKS-TRACE reach baseline exemption
 def test_reach_baseline_exemption(tmp_path, capsys):
     """AC-FR0100-02@v0.4 baseline-exempted modules not in reach output."""
     fixtures = (

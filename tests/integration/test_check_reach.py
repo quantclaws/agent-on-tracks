@@ -24,6 +24,7 @@ def _setup_reach_repo(tmp_path: Path, scenario: str = "clean") -> Path:
     return tmp_path
 
 
+# AC-FR0090-01@v0.4 TRACKS-TRACE independent CLI
 def test_independent_cli(tmp_path, capsys):
     """AC-FR0090-01@v0.4 trac check reach runs as independent CLI."""
     repo = _setup_reach_repo(tmp_path, "clean")
@@ -31,6 +32,7 @@ def test_independent_cli(tmp_path, capsys):
     assert "reach ok" in capsys.readouterr().out
 
 
+# AC-FR0090-02@v0.4 TRACKS-TRACE islands reported
 def test_islands_reported(tmp_path, capsys):
     """AC-FR0090-02@v0.4 islands reported in human-readable output."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -40,6 +42,7 @@ def test_islands_reported(tmp_path, capsys):
     assert "orphan" in out
 
 
+# AC-FR0090-04@v0.4 TRACKS-TRACE no entries fail
 def test_no_entries_fail(tmp_path, capsys):
     """AC-FR0090-04@v0.4 no entrypoint declaration -> error, non-zero exit."""
     repo = _setup_reach_repo(tmp_path, "no_entries")
@@ -48,6 +51,7 @@ def test_no_entries_fail(tmp_path, capsys):
     assert "no entrypoints" in err
 
 
+# AC-FR0110-01@v0.4 TRACKS-TRACE JSON output
 def test_json_output(tmp_path, capsys):
     """AC-FR0110-01@v0.4 --json output is valid JSON."""
     repo = _setup_reach_repo(tmp_path, "clean")
@@ -57,6 +61,7 @@ def test_json_output(tmp_path, capsys):
     assert data["islands"] == []
 
 
+# AC-FR0110-01@v0.4 TRACKS-TRACE human readable output
 def test_human_readable_output(tmp_path, capsys):
     """AC-FR0110-01@v0.4 default human-readable output."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -65,6 +70,7 @@ def test_human_readable_output(tmp_path, capsys):
     assert "island module" in out
 
 
+# AC-FR0110-02@v0.4 TRACKS-TRACE exit code stable
 def test_exit_code_stable(tmp_path):
     """AC-FR0110-02@v0.4 exit code stable across multiple runs."""
     repo = _setup_reach_repo(tmp_path, "clean")
@@ -75,6 +81,8 @@ def test_exit_code_stable(tmp_path):
     assert all(c == 1 for c in codes)
 
 
+# AC-FR0110-03@v0.4 TRACKS-TRACE engine consumer
+# AC-FR0090-06@v0.4 TRACKS-TRACE engine consumer
 def test_engine_consumer(tmp_path, capsys):
     """AC-FR0110-03@v0.4 AC-FR0090-06@v0.4 engine reads --json + exit code."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -85,6 +93,7 @@ def test_engine_consumer(tmp_path, capsys):
     assert len(data["islands"]) > 0
 
 
+# AC-NFR0010-01@v0.4 TRACKS-TRACE no file changes
 def test_no_file_changes(tmp_path):
     """AC-NFR0010-01@v0.4 running reach does not modify any files."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -98,6 +107,7 @@ def test_no_file_changes(tmp_path):
         assert Path(fpath).read_text(encoding="utf-8") == content
 
 
+# AC-NFR0010-02@v0.4 TRACKS-TRACE no auto fix
 def test_no_auto_fix(tmp_path, capsys):
     """AC-NFR0010-02@v0.4 reach reports issues without auto-fixing."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -108,6 +118,7 @@ def test_no_auto_fix(tmp_path, capsys):
     assert before == after
 
 
+# AC-NFR0020-01@v0.4 TRACKS-TRACE output deterministic
 def test_output_deterministic(tmp_path, capsys):
     """AC-NFR0020-01@v0.4 same input produces byte-identical output."""
     repo = _setup_reach_repo(tmp_path, "island")
@@ -123,3 +134,26 @@ def test_entry_flag(tmp_path, capsys):
     repo = _setup_reach_repo(tmp_path, "no_entries")
     # With --entry, the no-entries fixture has an entrypoint
     assert cmd_check(repo, "reach", "--entry", "pkg.mod_a") == 0
+
+
+# AC-FR0090-05@v0.4 TRACKS-TRACE no python files warning exit zero
+def test_no_python_files_warning(tmp_path, capsys):
+    """AC-FR0090-05@v0.4 no Python files -> warning printed, exit 0."""
+    repo = _setup_reach_repo(tmp_path, "no_python")
+    assert cmd_check(repo, "reach") == 0
+    out = capsys.readouterr().out
+    assert "warning:" in out
+    assert "no Python files" in out
+    assert "reach ok" in out
+
+
+# AC-FR0090-05@v0.4 TRACKS-TRACE no python files json warning
+def test_no_python_files_json(tmp_path, capsys):
+    """AC-FR0090-05@v0.4 no Python files -> JSON status pass with warning."""
+    repo = _setup_reach_repo(tmp_path, "no_python")
+    assert cmd_check(repo, "reach", "--json") == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "pass"
+    assert len(data["warnings"]) == 1
+    assert "no Python files" in data["warnings"][0]
+    assert data["islands"] == []
