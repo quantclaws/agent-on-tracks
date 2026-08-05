@@ -316,9 +316,9 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 （Maestro 运行记录 2026-08-05，非用户裁定；供 Aaron 复核）
 
 - **发现 1（kernel 缺口）**：v04 M-DESIGN attempt 2 中 Archer 交付物（GT 参考实现）被 pre-commit 拦截（ruff 6 错误），`_decide_design_commit` 静默退出——钩子输出未转为失败证据重派，形成死锁。当时以 bootstrap 例外人工修复（`291cf0a`）。**后续项 F-1**：commit 被拒后应把钩子输出写为 evidence 并在预算内重派（需 story/spec 立项，D-26）。
-- **发现 2（存量标记）**：`trac check trace` 在本仓报 192 hard errors，均为 v0.1–v0.3 短格式 marker 存量，非回归；M-TEST EXIT 门禁按版本过滤 required AC（FR-0070），不受影响。**后续项 F-2**：为 tracks 自身声明 `.tracks/legacy-baseline.json`（FR-0100 设计的采纳路径，故事明言「tracks 自己的 v0.1 即为存量样本」），由 Aaron 决定时点。
+- **发现 2（存量标记）**：`trac check trace` 在本仓报 192 hard errors，均为 v0.1–v0.3 短格式 marker 存量，非回归；M-TEST EXIT 门禁按版本过滤 required AC（FR-0070），不受影响。**后续项 F-2**：为 tracks 自身声明 `.tracks/legacy-baseline.json`（FR-0100 设计的采纳路径，故事明言「tracks 自己的 v0.1 即为存量样本」），由 Aaron 决定时点。（结局：Aaron 裁定走声明路线；实施中经 R-1/D-31 语义变更，存量残留自然归零，最终未创建基线文件即达成 trace pass——FR-0100 机制保留备用。）
 - **发现 3（边界迁移完成）**：v0.4 后 `run.completed(boundary)` 发生于 M-TEST EXIT 之后（M-IMPL 未注册）；tests/e2e/test_full_journey.py 边界期望已迁移并列入 Task B 交付。
-- **进展（2026-08-05）**：F-1 已修复（`41a4ed4`：verdict.failed(check=commit) 证据回写 + WRITE 重派 + 预算内重提交，12 测试）；F-2 走 R-1 路线（D-31）收尾中——scanner 已按 R-1 重写大半（工作区未提交），剩余：FakeBackend 对齐、本仓 marker 迁移、Shield/SKILL、legacy-baseline 声明、reach warning。子代理通道当日故障（Authentication Error），等待修复后重派收尾。
+- **进展（2026-08-05，已闭环）**：F-1 已修复（`41a4ed4`：verdict.failed(check=commit) 证据回写 + WRITE 重派 + 预算内重提交，12 测试）。F-2 经 R-1（D-31）闭环（`69cc6f5`）：R-1 语义下旧 marker 不带 TRACKS-TRACE 特征词即普通引用，存量残留自然归零——**无需 legacy-baseline.json 声明**（默认路径 trace/reach 均 pass）；92 条 v0.4 AC 全部绑定；本仓 23 个测试文件完成迁移；Shield/SKILL/template 措辞对齐；reach 无 Python 文件 warning+exit 0。tag v0.4 重指 `69cc6f5`。
 
 ## D-31. R-1 需求变更：marker 约定简化与语言中立化（TRACKS-TRACE 特征词）
 
@@ -329,7 +329,7 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 - 检测 = 单条行级正则，零 AST、零第三方依赖；`#`/`//` 覆盖前 10 名通用开发语言（SQL 除外）；树-sitter/pylint 路线作废。
 - Shield 义务：每个测试函数必须有 TRACKS-TRACE 标记行（判据包 + M-TEST EXIT 门禁双重强制，不信自述）。
 - reach（FR-0090）语言范围澄清：v0.4 仅 Python；无 Python 文件时 warning + 退出码 0。
-- 合同落点：spec/acceptance/test-plan/interfaces 已修订并提交（`4b2ad5f`）；scanner 部分实现完成于工作区（未提交，待收尾）。
+- 合同落点：spec/acceptance/test-plan/interfaces 已修订并提交（`4b2ad5f`）；全量实现与存量迁移完成于 `69cc6f5`（scanner/FakeBackend/GT/fixtures/23 文件迁移/Shield 措辞/reach warning；606 passed；tag v0.4 重指该提交）。
 
 ## 决策日志
 
