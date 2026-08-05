@@ -465,18 +465,20 @@ stateDiagram-v2
 
     EXIT : Runtime 创建受控测试 commit
     EXIT : 冻结测试资产 + AC trace 闭合 (trac check trace)
-    EXIT --> [*] : stage.exited -> M-IMPL
+    EXIT --> [*] : trace 闭合 -> stage.exited -> M-IMPL
+    EXIT --> WRITE : trace 不闭合 -> Shield 补 marker (共享 <=3 预算, 超限 escalation)
 ```
 
 > 退出是"测试资产齐备且 Red 合法"，不是"执行全部通过"；通过的要求推迟到 M-IMPL 出口门禁。
-> AC trace 闭合的依据是 `trac check trace` 程序证据：每条 required AC 至少一条测试绑定（长格式 marker `AC-FRXXXX-YY@<version>`），无测试的 AC 与无主 marker 均为硬错误；trace 不闭合不得退出——需求追踪（trace/reach）因此必须与 M-TEST 同一 release 交付。
-> 本阶段测试意外通过是异常（桩只 raise，通过通常说明测试没有真正命中桩）→ DIAGNOSE。
+> AC trace 闭合的依据是 `trac check trace` 程序证据：每条 required AC 至少一条测试绑定（R-1 长格式 marker `#|// AC-FRXXXX-YY@<version> TRACKS-TRACE ...`，特征词强制），无测试的 AC 与无主 marker 均为硬错误；trace 不闭合不得退出--需求追踪（trace/reach）因此必须与 M-TEST 同一 release 交付。
+> 本阶段测试意外通过是异常（桩只 raise，通过通常说明测试没有真正命中桩）-> DIAGNOSE。
 > "测试错还是接口错"的分流永不交给 Human；需语义判断时分派 Prism diagnostic review。
 > 修复后重跑受影响测试并要求 Prism 对新 revision 重新 review。
+> M-TEST 共享 <=3 重派预算：WRITE 校验失败、PRISM revise、trace 不闭合、criteria_pack_mismatch、commit 被拒、test_defect 均消费同一计数器；第 3 次仍未通过 -> escalation (awaiting_human)。
 
 ### 9.2. 事件清单
 
-`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(test_defect|stub_gap)` / `test.committed` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(trace|criteria_pack_mismatch|test_defect|stub_gap|ac_gap|spec_gap|commit)` / `test.committed` / `stage.exited` / `stage.rolled_back`
 
 ### 9.3. 硬规则
 
