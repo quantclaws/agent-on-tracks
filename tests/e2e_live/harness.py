@@ -910,7 +910,8 @@ class LiveTracDriver:
         return effective
 
     def _command_args(
-        self, args: tuple[str, ...], scenario: str | None, console_input: str | None
+        self, args: tuple[str, ...], scenario: str | None, console_input: str | None,
+        max_dispatches: int | None = None,
     ) -> tuple[list[str], str]:
         command_args = list(args)
         if not command_args or command_args[0] != "run":
@@ -923,7 +924,11 @@ class LiveTracDriver:
                 "--assignment-overlay",
                 str(selected.path),
                 "--max-dispatches",
-                str(self._dispatch_budget(selected)),
+                str(
+                    max_dispatches
+                    if max_dispatches is not None
+                    else self._dispatch_budget(selected)
+                ),
             ]
         )
         return command_args, selected.console_input if console_input is None else console_input
@@ -940,22 +945,29 @@ class LiveTracDriver:
             )
 
     def run(self, *args, stdin=None, console_input=None, scenario=None,
-            timeout=None, agent_timeout=None, max_dispatches=None):
+            timeout=None, agent_timeout=None, max_dispatches=None,
+            backend: str = "opencode"):
         self.command_count += 1
         if self.command_count > self.max_commands:
             self.fail(f"live command bound exceeded ({self.max_commands})")
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             self.fail("live journey total timeout exceeded")
-        command_args, selected_console = self._command_args(args, scenario, console_input)
+        command_args, selected_console = self._command_args(
+            args, scenario, console_input, max_dispatches
+        )
         effective_agent_timeout = agent_timeout or self.agent_timeout
         env = live_env(
             self.install,
             {
+                "TRAC_AGENT_BACKEND": backend,
                 "TRAC_AGENT_TIMEOUT": str(effective_agent_timeout),
-                "TRAC_AGENT_CONSOLE_INPUT": selected_console,
             },
         )
+        if backend.strip().lower() == "fake":
+            env.pop("TRAC_AGENT_CONSOLE_INPUT", None)
+        else:
+            env["TRAC_AGENT_CONSOLE_INPUT"] = selected_console
         assert_host_agents(self.install, self.live_root)
         command = installed_trac_command(self.install.isolated_bin, *command_args)
         process = subprocess.Popen(

@@ -231,6 +231,70 @@ def _mechanic_driver(live_root):
     )
 
 
+def _capture_driver_run(monkeypatch, driver):
+    captured = {}
+
+    class Process:
+        pid = 1
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            return "", ""
+
+    def popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr("tests.e2e_live.harness.subprocess.Popen", popen)
+    monkeypatch.setattr("tests.e2e_live.harness.assert_host_agents", lambda *args: None)
+    monkeypatch.setattr(driver, "check_bounds", lambda: None)
+    return captured
+
+
+def test_driver_defaults_to_opencode_env_and_scenario_args(monkeypatch, tmp_path):
+    driver = _mechanic_driver(tmp_path)
+    captured = _capture_driver_run(monkeypatch, driver)
+
+    driver.run("run", scenario="triage")
+
+    assert captured["kwargs"]["env"]["TRAC_AGENT_BACKEND"] == "opencode"
+    assert (
+        captured["kwargs"]["env"]["TRAC_AGENT_CONSOLE_INPUT"]
+        == driver.scenarios["triage"].console_input
+    )
+    assert captured["command"] == [
+        str(tmp_path / "trac"),
+        "run",
+        "--assignment-overlay",
+        str(driver.scenarios["triage"].path),
+        "--max-dispatches",
+        "1",
+    ]
+
+
+def test_driver_fake_backend_omits_console_env(monkeypatch, tmp_path):
+    driver = _mechanic_driver(tmp_path)
+    captured = _capture_driver_run(monkeypatch, driver)
+    monkeypatch.setenv("TRAC_AGENT_CONSOLE_INPUT", "host console input")
+
+    driver.run("run", scenario="triage", backend="fake")
+
+    env = captured["kwargs"]["env"]
+    assert env["TRAC_AGENT_BACKEND"] == "fake"
+    assert "TRAC_AGENT_CONSOLE_INPUT" not in env
+
+
+def test_driver_max_dispatches_overrides_scenario_budget(tmp_path):
+    driver = _mechanic_driver(tmp_path)
+
+    args, _ = driver._command_args(
+        ("run",), "sage-spec-draft", None, max_dispatches=5
+    )
+
+    assert args[args.index("--max-dispatches") + 1] == "5"
+
+
 def _dispatch_event(seq, command_id, stage, substate):
     return {
         "seq": seq,
