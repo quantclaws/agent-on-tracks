@@ -3,7 +3,13 @@ name = "agent-on-tracks"
 version = "0.1.0"
 description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.1)"
 requires-python = ">=3.10"
-dependencies = []
+# pytest is a runtime dependency, not only a dev tool: the M-TEST executor
+# (FR-0030/0050) shells out to `[sys.executable, "-m", "pytest"]` for collection
+# and RED_CHECK during a normal `trac run` (architecture.md §3.2). An installed
+# wheel must therefore make pytest importable without a separate dev install.
+dependencies = [
+    "pytest==9.1.1",
+]
 
 [project.scripts]
 trac = "tracks.cli.main:main"
@@ -13,7 +19,6 @@ trac = "tracks.cli.main:main"
 # Install: `.venv/bin/pip install -e '.[dev]'`
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
     "coverage==7.15.2",
     "ruff==0.16.0",
     "pylint==4.0.6",

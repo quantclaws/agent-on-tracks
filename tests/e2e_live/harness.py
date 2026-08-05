@@ -343,7 +343,17 @@ from importlib.resources import files
 from pathlib import Path
 
 import tracks
+import pytest
 from tracks.effects.opencode import OpencodeBackend
+
+# pytest is a declared runtime dependency: the M-TEST executor shells out to
+# `[sys.executable, "-m", "pytest"]` during a normal `trac run` (architecture.md
+# §3.2). A --no-deps install would leave it absent; fail here with a clear
+# message (logged via the install log) rather than mid-journey in M-TEST.
+assert pytest.__file__.startswith(sys.prefix), (
+    f"pytest resolved outside the isolated venv: {{pytest.__file__}} "
+    f"(install must pull declared dependencies, not use --no-deps)"
+)
 
 resource_paths = {RUNTIME_RESOURCE_PATHS!r}
 workspace = Path(os.environ["WORKSPACE_ROOT"]).resolve()
@@ -373,6 +383,7 @@ for agent_name in {AGENT_NAMES!r}:
 print(json.dumps({{
     "tracks_file": str(tracks_file),
     "venv": str(venv),
+    "pytest": pytest.__version__,
     "resources": sorted(resource_paths),
     "materialized": materialized,
 }}))
@@ -519,21 +530,9 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         append_log(install_log, f"external_opencode={opencode_source}\nshim={opencode}\n")
         clean = clean_env()
         build = run_logged(
-            [
-                str(CURRENT_PYTHON),
-                "-m",
-                "pip",
-                "wheel",
-                str(PROJECT_ROOT),
-                "--no-deps",
-                "--no-build-isolation",
-                "--wheel-dir",
-                str(wheelhouse),
-            ],
-            PROJECT_ROOT,
-            clean,
-            install_log,
-            timeout=install_timeout,
+            [str(CURRENT_PYTHON), "-m", "pip", "wheel", str(PROJECT_ROOT),
+             "--no-deps", "--no-build-isolation", "--wheel-dir", str(wheelhouse)],
+            PROJECT_ROOT, clean, install_log, timeout=install_timeout,
         )
         if build.returncode != 0:
             failed(f"wheel build failed: {build.stderr.strip()}")
@@ -549,7 +548,7 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         if create.returncode != 0:
             failed(f"isolated venv creation failed: {create.stderr.strip()}")
         install = run_logged(
-            [str(isolated_python), "-m", "pip", "install", "--no-deps", str(wheel)],
+            [str(isolated_python), "-m", "pip", "install", str(wheel)],
             artifact_dir,
             clean,
             install_log,
@@ -599,16 +598,11 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
     print(f"LIVE_E2E_ISOLATED_VENV={isolated_venv}", flush=True)
     print(f"LIVE_E2E_WHEEL={wheel}", flush=True)
     print(f"LIVE_E2E_INSTALL_LOG={install_log}", flush=True)
-    wheel_command = [
-        str(CURRENT_PYTHON),
-        "-m",
-        "pip",
-        "wheel",
-        str(PROJECT_ROOT),
-        "--no-deps",
-        "--no-build-isolation",
-    ]
-    print(f"LIVE_E2E_WHEEL_COMMAND={shlex.join(wheel_command)}", flush=True)
+    wheel_command = shlex.join([
+        str(CURRENT_PYTHON), "-m", "pip", "wheel", str(PROJECT_ROOT),
+        "--no-deps", "--no-build-isolation",
+    ])
+    print(f"LIVE_E2E_WHEEL_COMMAND={wheel_command}", flush=True)
     return info
 
 
