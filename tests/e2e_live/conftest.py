@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -17,6 +16,9 @@ from tests.e2e_live.harness import (
     prepare_live_install,
     resolve_github_repo,
     timeout_env,
+)
+from tests.e2e_live.harness import (
+    live_root as configured_live_root,
 )
 
 
@@ -45,8 +47,8 @@ def live_enabled():
 
 @pytest.fixture
 def live_root(live_enabled):
-    """Create a disposable Git host outside the workspace."""
-    base = Path(os.environ.get("TMPDIR", "/tmp")) / "tracks" / "live-e2e"
+    """Create a disposable Git host under TRAC_LIVE_ROOT (never TMPDIR)."""
+    base = configured_live_root()
     base.mkdir(parents=True, exist_ok=True)
     index = 0
     while True:
@@ -95,42 +97,37 @@ def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
     return slug
 
 
+def _host_config(config: dict[str, str]) -> dict:
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {"external_directory": "deny"},
+        "provider": {
+            config["TRAC_LIVE_PROVIDER"]: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": f"{config['TRAC_LIVE_PROVIDER']} (live e2e)",
+                "options": {
+                    "baseURL": config["TRAC_LIVE_BASE_URL"],
+                    "apiKey": "{env:TRAC_LIVE_API_KEY}",
+                },
+                "models": {
+                    config["TRAC_LIVE_MODEL"]: {
+                        "name": config["TRAC_LIVE_MODEL"],
+                    }
+                },
+            }
+        },
+        "model": f"{config['TRAC_LIVE_PROVIDER']}/{config['TRAC_LIVE_MODEL']}",
+    }
+
+
 @pytest.fixture
 def host_with_opencode_config(live_root, live_enabled):
-    """Write provider configuration only; never create Agent definitions."""
+    """Write provider config with cwd-only access; never create Agent definitions."""
     config = live_enabled
     dot = live_root / ".opencode"
     dot.mkdir(parents=True, exist_ok=True)
     (dot / "opencode.json").write_text(
-        json.dumps(
-            {
-                "$schema": "https://opencode.ai/config.json",
-                "permission": {
-                    "external_directory": {
-                        "*": "deny",
-                        "{env:TMPDIR}**": "allow",
-                        "/private{env:TMPDIR}**": "allow",
-                    }
-                },
-                "provider": {
-                    config["TRAC_LIVE_PROVIDER"]: {
-                        "npm": "@ai-sdk/openai-compatible",
-                        "name": f"{config['TRAC_LIVE_PROVIDER']} (live e2e)",
-                        "options": {
-                            "baseURL": config["TRAC_LIVE_BASE_URL"],
-                            "apiKey": "{env:TRAC_LIVE_API_KEY}",
-                        },
-                        "models": {
-                            config["TRAC_LIVE_MODEL"]: {
-                                "name": config["TRAC_LIVE_MODEL"],
-                            }
-                        },
-                    }
-                },
-                "model": f"{config['TRAC_LIVE_PROVIDER']}/{config['TRAC_LIVE_MODEL']}",
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(_host_config(config), ensure_ascii=False),
         encoding="utf-8",
     )
     return live_root

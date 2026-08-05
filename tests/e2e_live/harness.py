@@ -25,6 +25,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURRENT_PYTHON = Path(sys.executable).resolve()
 CURRENT_VENV_BIN = Path(sys.prefix).resolve() / "bin"
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
+DEFAULT_LIVE_ROOT = Path("/tmp/tracks/live-e2e")
+
+
+def live_root() -> Path:
+    """Return the fixed root used for live hosts, baselines, and artifacts."""
+    configured = os.environ.get("TRAC_LIVE_ROOT", "").strip()
+    return Path(configured) if configured else DEFAULT_LIVE_ROOT
+
 
 LIVE_ENV = (
     "TRAC_LIVE_PROVIDER",

@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e_live.harness import live_root as configured_live_root
+
 # -- event/db helpers (shared with test_full_journey) ----------------------
 
 
@@ -433,7 +435,7 @@ def _tracks_short_sha() -> str:
 
 
 def _baselines_root() -> Path:
-    return Path(os.environ.get("TMPDIR", "/tmp")) / "tracks" / "live-e2e" / "baselines"
+    return configured_live_root() / "baselines"
 
 
 def _baseline_dir(version: str, sha: str, checkpoint: str = "M-REQ-APPROVAL") -> Path:

@@ -4,6 +4,9 @@ Environment variables
 ---------------------
 * ``TRAC_LIVE_PROVIDER/MODEL/BASE_URL/API_KEY`` - live provider config; the
   directory's ``live_enabled`` fixture skips when any is absent.
+* ``TRAC_LIVE_ROOT`` - fixed parent for disposable hosts, baselines, and
+  artifacts; defaults to ``/tmp/tracks/live-e2e`` and is not derived from
+  ``TMPDIR``.
 * ``TRACKS_E2E_GITHUB_REPO`` + ``GITHUB_TOKEN`` (or ``gh auth token``) - the
   disposable GitHub repo for the full/resume journeys' issue-creation and
   remote-ref assertions.

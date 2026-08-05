@@ -20,6 +20,7 @@ import time
 
 import pytest
 
+from tests.e2e_live.conftest import _host_config
 from tests.e2e_live.harness import (
     LiveInstall,
     LiveTracDriver,
@@ -31,6 +32,19 @@ from tests.e2e_live.test_full_journey import _design_agent_timeout
 from tracks.effects.opencode import AGENT_NAME
 
 # -- helpers ---------------------------------------------------------------
+
+
+def test_generated_live_host_config_denies_external_directory():
+    config = {
+        "TRAC_LIVE_PROVIDER": "provider",
+        "TRAC_LIVE_MODEL": "model",
+        "TRAC_LIVE_BASE_URL": "https://example.test/v1",
+        "TRAC_LIVE_API_KEY": "unused",
+    }
+
+    generated = _host_config(config)
+
+    assert generated["permission"]["external_directory"] == "deny"
 
 
 def _ready_spec(repo):

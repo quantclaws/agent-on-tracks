@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e_live import m_test_helpers as _helpers
+from tests.e2e_live.harness import DEFAULT_LIVE_ROOT, live_root
 from tests.e2e_live.m_test_helpers import (
     _assert_issue_events,
     _baseline_dir,
@@ -80,6 +81,20 @@ def _patch_finder_env(monkeypatch, root: Path, sha: str) -> None:
     monkeypatch.delenv("TRAC_LIVE_FORCE_BASELINE", raising=False)
     monkeypatch.setattr(f"{_BASELINE_MODULE}._baselines_root", lambda: root)
     monkeypatch.setattr(f"{_BASELINE_MODULE}._tracks_short_sha", lambda: sha)
+
+
+def test_live_root_defaults_when_env_is_unset(monkeypatch):
+    monkeypatch.delenv("TRAC_LIVE_ROOT", raising=False)
+
+    assert live_root() == DEFAULT_LIVE_ROOT
+
+
+def test_live_root_override_aligns_baseline_root(monkeypatch, tmp_path):
+    configured = tmp_path / "live-hosts"
+    monkeypatch.setenv("TRAC_LIVE_ROOT", str(configured))
+
+    assert live_root() == configured
+    assert _helpers._baselines_root() == configured / "baselines"
 
 
 def test_read_manifest_returns_none_for_missing_or_corrupt(tmp_path):
