@@ -47,16 +47,34 @@ class Auditor:
     # -- snapshot -----------------------------------------------------------
 
     def modified_files(self) -> set[str]:
-        """Repo-relative paths currently modified/untracked vs HEAD."""
-        out = _git(self.repo, "status", "--porcelain").stdout
+        """Repo-relative paths currently modified/untracked vs HEAD.
+
+        Untracked directories are expanded to leaf files
+        (``--untracked-files=all``) so a clean host that gains only allowed
+        nested files (e.g. ``tests/integration/foo.py`` + ``tests/e2e/bar.py``)
+        is NOT mis-flagged as over-reach via a collapsed ``?? tests/`` directory
+        entry (E2E run001 audit bug: the whole ``tests/`` parent was reported
+        as over-reach even though every leaf was allowed). NUL-delimited
+        (``-z``) parsing is robust to paths containing spaces, quotes, and
+        other special characters (no C-quoting in -z mode); renames keep their
+        new path (the old path is a separate NUL entry with no XY prefix and
+        is skipped)."""
+        out = _git(self.repo, "status", "--porcelain=v1", "-z",
+                   "--untracked-files=all").stdout
         files: set[str] = set()
-        for line in out.splitlines():
-            if len(line) < 4:
+        entries = out.split("\0")
+        i = 0
+        while i < len(entries):
+            entry = entries[i]
+            i += 1
+            if len(entry) < 4:
                 continue
-            path = line[3:].strip()
-            if " -> " in path:  # rename: keep the new path
-                path = path.split(" -> ", 1)[1]
-            files.add(path.strip('"'))
+            xy, path = entry[:2], entry[3:]
+            if (xy[0] == "R" or xy[1] == "R") and i < len(entries):
+                # Rename: the next NUL entry is the old path (no XY prefix);
+                # keep the new path, skip the old.
+                i += 1
+            files.add(path)
         return files
 
     def baseline(self) -> set[str]:
@@ -160,4 +178,17 @@ class Auditor:
             elif full.exists():
                 full.unlink()
             rolled.append(p)
+            # Prune now-empty parent dirs created by the run so a leaf-only
+            # rollback (file granularity, not ``dir/``) does not leave an
+            # empty ``tests/`` skeleton behind (the directory-tree-is-gone
+            # invariant of the directory-level rollback). Stop at repo root
+            # and never remove tracked dirs or non-empty dirs.
+            parent = full.parent
+            while parent != self.repo and parent.exists():
+                if any(parent.iterdir()):
+                    break
+                if str(parent.relative_to(self.repo)) in tracked_set:
+                    break  # don't delete a tracked (even if empty) dir
+                parent.rmdir()
+                parent = parent.parent
         return rolled

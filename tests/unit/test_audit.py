@@ -44,8 +44,11 @@ def test_directory_over_reach_rolled_back_removes_tree(tmp_path):
 
     assert auditor.audit(baseline) is not None  # over-reach detected
     rolled = auditor.rollback_agent_changes(baseline)
-    assert any(r == "rogue_dir" or r == "rogue_dir/" for r in rolled)
-    assert not rogue.exists()  # the directory tree is gone
+    # Leaf granularity (run001 fix): the rolled entry is the actual untracked
+    # file, not a collapsed ``rogue_dir/`` directory entry. Empty parent dirs
+    # are pruned so the whole tree is still removed.
+    assert "rogue_dir/nested/x.json" in rolled
+    assert not rogue.exists()  # the directory tree is gone (prune-empty)
     assert target.exists()  # the allowed target is untouched
 
 
@@ -116,3 +119,107 @@ def test_baseline_human_changes_never_rolled_back(tmp_path):
     rolled = auditor.rollback_agent_changes(baseline)
     assert "human.md" not in rolled
     assert human.exists()
+
+
+# -- run001 regression: collapsed ``?? tests/`` directory entries ----------------
+#
+# A clean host has no tests/ directory; Shield writes only two allowed nested
+# files. Git's default porcelain collapses these to ``?? tests/`` so the audit
+# reported ``over-reach: tests/`` even though both leaf files are allowed. The
+# fix enumerates actual untracked leaf paths and enforces the allowed-path
+# policy per leaf. The whole tests/ parent is NOT allowed.
+
+
+def test_clean_host_two_allowed_nested_files_accepted(tmp_path):
+    """run001: repo initially lacks tests/; creating only two allowed nested
+    files (tests/integration/test_code_stats_contract.py and
+    tests/e2e/test_code_stats_happy.py) is accepted, NOT flagged as over-reach
+    via a collapsed ``?? tests/`` directory entry."""
+    repo = _repo(tmp_path)
+    # Shield scope (FR-0120 RP-01): the four test-asset directories, no
+    # repo-root trust, no ``tests/`` parent in the allowed set.
+    allowed = [repo / d for d in
+               ("tests/integration", "tests/e2e",
+                "tests/assets", "tests/counterexamples")]
+    auditor = Auditor(repo, allowed=allowed)
+    baseline = auditor.baseline()
+    assert not any(p.startswith("tests") for p in baseline)  # clean host
+
+    # Shield writes exactly the two allowed nested files (no tests/ existed).
+    integration = repo / "tests" / "integration" / "test_code_stats_contract.py"
+    e2e = repo / "tests" / "e2e" / "test_code_stats_happy.py"
+    integration.parent.mkdir(parents=True)
+    e2e.parent.mkdir(parents=True)
+    integration.write_text("def test_contract(): pass\n", encoding="utf-8")
+    e2e.write_text("def test_happy(): pass\n", encoding="utf-8")
+
+    assert auditor.audit(baseline) is None  # both leaves are allowed
+
+
+def test_allowed_nested_file_plus_rogue_over_reach_rolled_back(tmp_path):
+    """One allowed nested file plus ``tests/rogue.py`` is over-reach; rollback
+    removes only the rogue file (and the now-empty dir it alone occupied), never
+    the allowed sibling file or its directory."""
+    repo = _repo(tmp_path)
+    allowed = [repo / d for d in
+               ("tests/integration", "tests/e2e",
+                "tests/assets", "tests/counterexamples")]
+    auditor = Auditor(repo, allowed=allowed)
+    baseline = auditor.baseline()
+
+    allowed_file = (repo / "tests" / "integration"
+                    / "test_code_stats_contract.py")
+    rogue = repo / "tests" / "rogue.py"
+    allowed_file.parent.mkdir(parents=True)  # creates tests/ + tests/integration/
+    rogue.parent.mkdir(parents=True, exist_ok=True)  # tests/ already exists
+    allowed_file.write_text("def test_contract(): pass\n", encoding="utf-8")
+    rogue.write_text("# over-reach\n", encoding="utf-8")
+
+    evidence = auditor.audit(baseline)
+    assert evidence is not None
+    assert "tests/rogue.py" in evidence
+    assert "test_code_stats_contract.py" not in evidence
+
+    rolled = auditor.rollback_agent_changes(baseline)
+    assert "tests/rogue.py" in rolled
+    assert "tests/integration/test_code_stats_contract.py" not in rolled
+    assert not rogue.exists()  # rogue removed
+    assert allowed_file.exists()  # allowed sibling survives rollback
+    assert allowed_file.parent.exists()  # tests/integration/ survives
+
+
+def test_nul_parsing_handles_renames_spaces_and_untracked_leaves(tmp_path):
+    """NUL-delimited (-z) porcelain parsing: renames keep the new path (old
+    path skipped), paths with spaces are preserved (no C-quoting in -z mode),
+    and untracked files under a new directory are enumerated as leaves (not
+    collapsed to a ``dir/`` directory entry)."""
+    repo = _repo(tmp_path)
+    old = repo / "old_name.txt"
+    tracked = repo / "tracked.md"
+    for path in (old, tracked):
+        path.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo,
+                   check=True, capture_output=True)
+    # rename: old_name.txt -> renamed.txt
+    subprocess.run(["git", "mv", "old_name.txt", "renamed.txt"], cwd=repo,
+                   check=True, capture_output=True)
+    # modify a tracked file
+    tracked.write_text("changed\n", encoding="utf-8")
+    # untracked file with spaces in the name
+    spaced = repo / "with space.txt"
+    spaced.write_text("sp\n", encoding="utf-8")
+    # untracked file nested under a new directory
+    nested = repo / "newdir" / "leaf.py"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("# new\n", encoding="utf-8")
+
+    auditor = Auditor(repo, allowed=[str(repo / "target.md")])
+    files = auditor.modified_files()
+
+    assert "renamed.txt" in files          # rename: new path kept
+    assert "old_name.txt" not in files     # rename: old path skipped
+    assert "tracked.md" in files           # tracked modification
+    assert "with space.txt" in files       # spaces preserved (no C-quoting)
+    assert "newdir/leaf.py" in files       # untracked dir expanded to leaf
+    assert not any(p == "newdir/" or p == "newdir" for p in files)  # not collapsed
