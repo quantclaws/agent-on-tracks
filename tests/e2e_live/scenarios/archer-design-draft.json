@@ -7,5 +7,13 @@
   "max_new_threads": 0,
   "comment_style": "concise",
   "required_finding": null,
+  "fake_scaffold": [
+    {
+      "path": "code-stats",
+      "description": "public CLI stub for IF-MTEST-001 (kind: stub)",
+      "content": "#!/usr/bin/env python3\nraise NotImplementedError(\"IF-MTEST-001 code-stats CLI\")\n",
+      "mode": "executable"
+    }
+  ],
   "required_action": "Draft architecture.md, interfaces.md and test-plan.md from the approved story/spec/acceptance in one pass. Every required AC must carry a unit/integration/e2e layer attribution in test-plan.md; architecture.md must include a composition root section. Every document must keep the frontmatter block from its template in tracks/templates/. No template-guidance blockquotes may remain in the delivered documents (e.g. `> **When needed**`, `> **Lifecycle**`): blockquotes are reserved for inline-discussion threads; delete template guidance after filling it in. As the team-lead scaffolder, also declare the scaffold manifest in architecture.md's Scaffold 宣言 section enumerating every file you will create in the host project (only declared files may be created and the scaffold carries no business behavior), design the full host quality-guard stack into the machine contracts per the tracks-quality-guards skill, and (if test-plan §3 declares ground truth applicable) produce the minimal runnable ground-truth verification script (not a feature reimplementation; size proportionate to what it verifies); if §3 says not applicable, do not create tests/ground_truth/ and state so in the design. Do not stop at planning: write all three documents into the project directory before you finish."
 }

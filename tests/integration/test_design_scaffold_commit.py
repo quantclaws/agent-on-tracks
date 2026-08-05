@@ -1,8 +1,12 @@
 """M-DESIGN architecture commits own the declared host scaffold."""
+import stat
 import subprocess
 
 import pytest
 
+from tests.e2e.helpers import walk_to_await_human
+from tests.e2e_live.harness import SCENARIO_DIR
+from tests.e2e_live.m_test_helpers import _assert_design_exit_adjacency
 from tests.integration.test_executor_reconcile import _setup as setup_story
 from tests.integration.test_executor_reconcile import make_repo
 from tracks import paths
@@ -172,3 +176,55 @@ def test_architecture_scaffold_hook_rejection_keeps_commit_evidence(tmp_path):
         "scaffold.cfg",
     ]
     assert not [e for e in store.events(run_id) if e.type == "design.committed"]
+
+
+def test_fake_design_tail_materializes_declared_cli_before_m_test_dispatch(
+    trac, event_log, host_repo
+):
+    run_id = walk_to_await_human(trac)
+    stub = host_repo / "code-stats"
+    assert not stub.exists()
+    assert _git(host_repo, "status", "--porcelain", "--", "code-stats") == ""
+
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    design = trac(
+        "run",
+        "--assignment-overlay",
+        str(SCENARIO_DIR / "archer-design-draft.json"),
+        "--max-dispatches",
+        "2",
+    )
+
+    assert design.returncode == 0, design.stderr
+    assert "stage=M-DESIGN" in design.stdout
+    assert "substate=PRISM_REVIEW" in design.stdout
+    review = trac("run", "--max-dispatches", "1")
+    assert review.returncode == 0, review.stderr
+    assert "stage=M-TEST" in review.stdout
+    assert "substate=DISPATCH" in review.stdout
+    assert "status=active" in review.stdout
+    version_dir = host_repo / ".tracks" / "projects" / "v0.1"
+    for name in ("architecture.md", "interfaces.md", "test-plan.md"):
+        assert (version_dir / name).is_file(), name
+    assert stub.read_text(encoding="utf-8") == (
+        "#!/usr/bin/env python3\n"
+        "raise NotImplementedError(\"IF-MTEST-001 code-stats CLI\")\n"
+    )
+    assert stub.stat().st_mode & stat.S_IXUSR
+    assert _git(host_repo, "ls-files", "--error-unmatch", "code-stats").strip() == (
+        "code-stats"
+    )
+    assert _git(host_repo, "status", "--porcelain", "--", "code-stats") == ""
+
+    events = event_log(run_id)
+    _assert_design_exit_adjacency(events)
+    scaffold_commit = _git(
+        host_repo, "log", "-1", "--format=%H", "--", "code-stats"
+    ).strip()
+    committed_paths = _git(
+        host_repo, "show", "--format=", "--name-only", scaffold_commit
+    ).splitlines()
+    assert sorted(committed_paths) == [
+        ".tracks/projects/v0.1/architecture.md",
+        "code-stats",
+    ]
