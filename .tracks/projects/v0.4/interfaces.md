@@ -237,9 +237,16 @@ IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.4 扩展：
 criteria_pack: dict | None = None  # M-TEST PRISM_REVIEW 时由 Runtime 填入
                                    # {"name": "test-asset-criteria", "version": "0.1"}
                                    # Prism 不自选，按 assignment 加载（D-29 反自述三件套①）
+
+test_tasks: list[dict] | None = None  # M-TEST Shield WRITE 时由 Runtime 填入（D-28）
+                                      # [{"ac_id": "AC-FRXXXX-YY",
+                                      #   "layers": ["integration"|"e2e", ...],
+                                      #   "if_ids": ["IF-XXX-NNN", ...]}, ...]
+                                      # 从 test-plan §8 AC Coverage 表解析；
+                                      # Shield 按此结构写测试，不自衍 AC 层归属。
 ```
 
-Shield assignment 不携带 `criteria_pack`（仅 Prism 在 M-TEST PRISM_REVIEW 时携带）。Shield assignment 携带 `skills: ["tracks-discuz"]` 与 `docs: ["test-plan", "interfaces", "acceptance"]`（只读上下文，非目标文档）。
+Shield assignment 不携带 `criteria_pack`（仅 Prism 在 M-TEST PRISM_REVIEW 时携带）。Shield assignment 携带 `skills: ["tracks-discuz"]` 与 `docs: ["test-plan", "interfaces", "acceptance"]`（只读上下文，非目标文档），以及 `test_tasks`（Runtime 从 test-plan §8 解析的 AC 层归属 + IF 变绿条件，D-28 输入完备性）。
 
 ### 3b. Outcome 增量
 
@@ -302,7 +309,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | `run.completed` | terminal_state="boundary" | AC-FR0070-08 |
 | `stage.rolled_back` | from_stage, to_stage, reason | AC-FR0060-03/04/05 |
 | `outcome.received` (shield) | role, status, audit_evidence, failure_class | AC-FR0020-04/05, AC-FR0120-04 |
-| `command.issued` (dispatch_agent shield/prism) | command.params.role, .substate, .assignment.criteria_pack | AC-FR0020-01, AC-FR0040-02 |
+| `command.issued` (dispatch_agent shield/prism) | command.params.role, .substate, .assignment.criteria_pack, .assignment.test_tasks | AC-FR0020-01, AC-FR0040-02 |
 
 ### 4b. CLI 出口
 

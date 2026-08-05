@@ -293,6 +293,16 @@ def test_fake_design_trio_has_no_blockquotes(tmp_path):
         assert check_template(vdir / name) == [], name
 
 
+def test_fake_shield_missing_test_tasks_fails(tmp_path):
+    backend = FakeBackend(tmp_path, "v0.4")
+
+    result = backend.act("shield", "WRITE", None, None, {})
+
+    assert result["status"] == "failed"
+    assert result["failure_class"] == "invalid_test_tasks"
+    assert not (tmp_path / "tests").exists()
+
+
 def test_fake_design_architecture_carries_scaffold_manifest(tmp_path):
     # fake-backend parity (batch B): the deterministic Archer output keeps the
     # required Scaffold 宣言 section, and its manifest declares no real host

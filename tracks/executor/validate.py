@@ -350,6 +350,199 @@ def required_ac_ids(acc_path: Path, plan_path: Path) -> set[str]:
             if _layer_of(ac_id, visible) in ("integration", "e2e")}
 
 
+# AC id pattern scoped to a single test-plan §8 coverage-table row.
+_AC_ID_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
+_AC_COVERAGE_HEADING = re.compile(r"^##\s+(?:8\.\s*)?AC Coverage\b", re.I)
+_LAYER_HEADER = re.compile(r"layer|层", re.I)
+_IF_HEADER = re.compile(r"\bif\b|归属", re.I)
+_LAYER_CELL_SEPARATOR = re.compile(r"\s*(?:\+|,|/|、|&|\band\b)\s*", re.I)
+_IF_CELL_SEPARATOR = re.compile(r"[\s,;/+、&]+")
+
+
+def _table_cells(line: str) -> list[str]:
+    if "|" not in line:
+        return []
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _table_separator(cells: list[str]) -> bool:
+    return not cells or all(set(cell) <= {"-", ":", " "} for cell in cells)
+
+
+def _coverage_columns(cells: list[str]) -> tuple[int, int]:
+    layer_idx = next((i for i, cell in enumerate(cells)
+                      if _LAYER_HEADER.search(cell)), None)
+    if_idx = next((i for i, cell in enumerate(cells)
+                   if _IF_HEADER.search(cell)), None)
+    return (layer_idx if layer_idx is not None else -1,
+            if_idx if if_idx is not None else -1)
+
+
+def _cell_at(cells: list[str], index: int) -> str | None:
+    return cells[index] if 0 <= index < len(cells) else None
+
+
+def _coverage_row_items(
+    line: str, cells: list[str], columns: tuple[int, int],
+) -> list[tuple[str, str | None, str | None]]:
+    layer_idx, if_idx = columns
+    return [
+        (ac_id, _cell_at(cells, layer_idx), _cell_at(cells, if_idx))
+        for ac_id in _AC_ID_IN_ROW.findall(line)
+    ]
+
+
+def _coverage_line(
+    line: str, in_coverage: bool, columns: tuple[int, int] | None,
+) -> tuple[bool, tuple[int, int] | None, list[tuple[str, str | None, str | None]]]:
+    stripped = line.strip()
+    if stripped.startswith(">"):
+        return in_coverage, columns, []
+    if stripped.startswith("## "):
+        return bool(_AC_COVERAGE_HEADING.match(stripped)), None, []
+    if not in_coverage or "|" not in line:
+        return in_coverage, columns, []
+    cells = _table_cells(line)
+    if _table_separator(cells):
+        return in_coverage, columns, []
+    if columns is None:
+        columns = _coverage_columns(cells)
+        if columns != (-1, -1):
+            return in_coverage, columns, []
+    return in_coverage, columns, _coverage_row_items(line, cells, columns)
+
+
+def _coverage_rows(plan_text: str) -> list[tuple[str, str | None, str | None]]:
+    """Read AC rows from the test-plan §8 table.
+
+    The column positions come from the table header instead of from the row's
+    prose. This keeps a malformed layer/IF cell attached to its AC so the
+    assignment can fail closed rather than silently dropping that AC.
+    """
+    rows: list[tuple[str, str | None, str | None]] = []
+    in_coverage = False
+    columns: tuple[int, int] | None = None
+    for line in _visible_plan_lines(plan_text):
+        in_coverage, columns, line_rows = _coverage_line(
+            line, in_coverage, columns,
+        )
+        rows.extend(line_rows)
+    return rows
+
+
+def _parse_layer_cell(raw: str | None) -> tuple[set[str], bool]:
+    if raw is None or not raw.strip():
+        return set(), False
+    parts = [part.strip().lower() for part in _LAYER_CELL_SEPARATOR.split(raw)]
+    if not parts or any(part not in ("unit", "integration", "e2e") for part in parts):
+        return set(), False
+    return set(parts), True
+
+
+def _parse_if_cell(raw: str | None) -> tuple[set[str], bool]:
+    if raw is None or not raw.strip():
+        return set(), False
+    if_ids = set(_IF_ID.findall(raw))
+    residue = _IF_CELL_SEPARATOR.sub("", _IF_ID.sub("", raw))
+    if not if_ids or residue:
+        return set(), False
+    return if_ids, True
+
+
+def _parse_ac_row(
+    rows: list[tuple[str | None, str | None]],
+) -> tuple[list[str], list[str]] | None:
+    """Parse one AC's coverage rows, preserving malformed required rows."""
+    candidate_layers: set[str] = set()
+    required_rows: list[tuple[str | None, str | None]] = []
+    malformed_layer = False
+    for layer_cell, if_cell in rows:
+        parsed_layers, layer_ok = _parse_layer_cell(layer_cell)
+        if not layer_ok:
+            malformed_layer = True
+        required = parsed_layers & {"integration", "e2e"}
+        if required:
+            candidate_layers.update(required)
+            required_rows.append((layer_cell, if_cell))
+    if not candidate_layers and not malformed_layer:
+        return None  # valid unit-only coverage is not a Shield task
+    if malformed_layer:
+        return [], []
+    if_ids: set[str] = set()
+    malformed_if = False
+    for _layer_cell, if_cell in required_rows:
+        parsed_if_ids, if_ok = _parse_if_cell(if_cell)
+        if not if_ok:
+            malformed_if = True
+        if_ids.update(parsed_if_ids)
+    return (sorted(candidate_layers),
+            [] if malformed_if else sorted(if_ids))
+
+
+def _known_ac_ids(acc_text: str) -> set[str]:
+    _, acs = _acc_scan(acc_text)
+    return {ac_id for ac_id, _ref, _line_no, _section in acs}
+
+
+def _rows_for_ac(
+    ac_id: str, rows: list[tuple[str, str | None, str | None]],
+) -> list[tuple[str | None, str | None]]:
+    return [
+        (layer, if_cell)
+        for row_ac, layer, if_cell in rows
+        if row_ac == ac_id
+    ]
+
+
+def _empty_test_task(ac_id: str) -> dict:
+    return {"ac_id": ac_id, "layers": [], "if_ids": []}
+
+
+def _test_task_for_ac(
+    ac_id: str, rows: list[tuple[str, str | None, str | None]],
+) -> dict | None:
+    ac_rows = _rows_for_ac(ac_id, rows)
+    if not ac_rows:
+        return _empty_test_task(ac_id)
+    parsed = _parse_ac_row(ac_rows)
+    if parsed is None:
+        return None
+    layers, if_ids = parsed
+    return {"ac_id": ac_id, "layers": layers, "if_ids": if_ids}
+
+
+def _test_tasks(
+    ac_ids: set[str], rows: list[tuple[str, str | None, str | None]],
+) -> list[dict]:
+    tasks: list[dict] = []
+    for ac_id in sorted(ac_ids):
+        task = _test_task_for_ac(ac_id, rows)
+        if task is not None:
+            tasks.append(task)
+    return tasks
+
+
+def parse_test_tasks(acc_path: Path, plan_path: Path) -> list[dict]:
+    """D-28: Runtime-side parse of test-plan §8 AC Coverage rows into the
+    structured ``test_tasks`` list injected into the Shield WRITE assignment.
+
+    Each row maps a required AC to its non-unit test layer(s) and the IF-
+    green-condition identifiers that own it. Unit-only ACs are dropped (they
+    do not block M-TEST exit and Shield writes only integration/e2e tests).
+
+    Returns a deterministic list of ``{"ac_id", "layers", "if_ids"}`` dicts,
+    sorted by ac_id, with layers and if_ids de-duplicated and sorted. An AC
+    row missing a non-unit layer or carrying no IF- attribution is still
+    included (fail-closed: the Shield sees the gap and the trace/Prism gates
+    surface it) - this parser only structures the input, it does not gate.
+    """
+    if not acc_path.exists() or not plan_path.exists():
+        return []
+    known = _known_ac_ids(acc_path.read_text(encoding="utf-8"))
+    rows = _coverage_rows(plan_path.read_text(encoding="utf-8"))
+    return _test_tasks(known, rows)
+
+
 def check_design_trace(
     acc_text: str, plan_text: str, if_registry: set[str] | None = None,
 ) -> list:

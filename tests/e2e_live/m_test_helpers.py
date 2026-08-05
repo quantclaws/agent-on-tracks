@@ -145,16 +145,11 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
       * assignment.docs includes test-plan.md, interfaces.md, acceptance.md
         (the context docs the Shield needs to derive AC layer attribution)
       * assignment.skills includes tracks-discuz
-
-    **Product gap (reported, not loosened)**: the machine's
-    ``_m_test_shield_dispatch`` does NOT embed Test Plan-derived required AC
-    layer attribution or IF green-condition tokens/ownership directly in the
-    assignment payload. The fake backend derives these by re-reading
-    acceptance.md + test-plan.md itself (``_required_ac_layers`` in
-    fake.py:179). A real Shield agent must do the same derivation from the
-    context docs, or the machine must be extended to embed them. This test
-    asserts what IS available (context docs + skills) so the gap is visible
-    without weakening the P0 contract."""
+      * assignment.test_tasks is a non-empty list of {ac_id, layers, if_ids}
+        dicts, parsed by the Runtime from test-plan §8 (D-28). Every ac_id is
+        unique, every layer is integration or e2e, every if_ids list is
+        non-empty (IF green-condition ownership).
+    """
     shield_dispatches = _dispatches(events, "shield", "WRITE", None)
     assert shield_dispatches, "missing Shield WRITE dispatch"
     dispatch = shield_dispatches[0]
@@ -176,6 +171,23 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
     assert "tracks-discuz" in skills, (
         f"Shield assignment.skills missing tracks-discuz: {skills}"
     )
+    test_tasks = assignment.get("test_tasks")
+    assert isinstance(test_tasks, list) and test_tasks, (
+        f"Shield assignment.test_tasks missing or empty: {test_tasks}"
+    )
+    seen_acs: set[str] = set()
+    for task in test_tasks:
+        ac_id = task.get("ac_id")
+        assert ac_id and ac_id not in seen_acs, (
+            f"test_tasks duplicate/empty ac_id: {ac_id}"
+        )
+        seen_acs.add(ac_id)
+        layers = task.get("layers", [])
+        assert layers and all(
+            lay in ("integration", "e2e") for lay in layers
+        ), f"test_tasks {ac_id} invalid layers: {layers}"
+        if_ids = task.get("if_ids", [])
+        assert if_ids, f"test_tasks {ac_id} has empty if_ids"
 
 
 # -- P0: Shield scope + no commit ------------------------------------------

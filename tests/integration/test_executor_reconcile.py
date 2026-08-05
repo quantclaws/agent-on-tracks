@@ -4,6 +4,7 @@ recovery probes git by command_id, skips the commit, only backfills the event.
 import subprocess
 
 from tracks import paths
+from tracks.effects import FakeBackend
 from tracks.executor import Executor
 from tracks.kernel.events import Command
 from tracks.store import Store, new_ulid
@@ -298,3 +299,67 @@ def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
                 if e.type in ("verdict.passed", "verdict.failed")]
     assert len(verdicts) == 1
     assert verdicts[0].type == "verdict.passed"  # token defaulted to "ok", no crash
+
+
+def _setup_m_test(tmp_path):
+    """Like _setup but seeds M-TEST stage + acceptance/test-plan docs."""
+    repo = make_repo(tmp_path)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = new_ulid()
+    vdir = paths.version_dir(home, "v0.4")
+    vdir.mkdir(parents=True)
+    (vdir / "acceptance.md").write_text(
+        "## FR-0010 F\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8")
+    (vdir / "test-plan.md").write_text(
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0010-01（d） | integration | test_a | IF-MTEST-001 |\n",
+        encoding="utf-8")
+    store.append(run_id, "v0.4", "story.requested", {"raw_chars": 1})
+    store.append(run_id, "v0.4", "stage.entered", {"stage": "M-TEST"})
+    return Executor(store, repo, run_id), store, run_id
+
+
+def test_issue_shield_write_enriches_assignment_with_test_tasks(tmp_path):
+    """D-28: executor.issue() enriches the Shield WRITE assignment with
+    test_tasks parsed from test-plan §8, and the persisted command.issued
+    event carries the expanded assignment."""
+    ex, store, run_id = _setup_m_test(tmp_path)
+    ex.backend = _StubBackend(
+        {"status": "done", "artifact_ref": "tests", "self_report": "wrote"})
+    cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
+                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
+                               "docs": ["test-plan.md", "interfaces.md",
+                                        "acceptance.md"]}},
+        command_id=new_ulid())
+    ex.issue(cmd)
+    issued = [e for e in store.events(run_id) if e.type == "command.issued"]
+    assert len(issued) == 1
+    params = issued[0].payload["command"]["params"]
+    tasks = params["assignment"].get("test_tasks")
+    assert isinstance(tasks, list) and tasks
+    assert tasks[0]["ac_id"] == "AC-FR0010-01"
+    assert tasks[0]["layers"] == ["integration"]
+    assert tasks[0]["if_ids"] == ["IF-MTEST-001"]
+
+
+def test_fake_shield_rejects_missing_or_malformed_test_tasks(tmp_path):
+    """Shield cannot silently fall back to rereading the design documents."""
+    backend = FakeBackend(make_repo(tmp_path), "v0.4")
+    assignments = (
+        None,
+        {},
+        {"test_tasks": []},
+        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": [],
+                          "if_ids": ["IF-MTEST-001"]}]},
+        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": ["integration"],
+                          "if_ids": []}]},
+    )
+    for assignment in assignments:
+        result = backend.act("shield", "WRITE", None, None, assignment)
+        assert result["status"] == "failed"
+        assert result["failure_class"] == "invalid_test_tasks"
+    assert not (backend.repo / "tests").exists()

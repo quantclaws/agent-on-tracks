@@ -17,7 +17,7 @@ from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
-from tracks.executor.validate import required_ac_ids, validate_document
+from tracks.executor.validate import parse_test_tasks, required_ac_ids, validate_document
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State, decide
@@ -264,6 +264,24 @@ class Executor:
         if cmd.kind == "dispatch_agent" and self.assignment_overlay is not None:
             assignment = dict(params.get("assignment") or {})
             assignment["scenario_context"] = deepcopy(self.assignment_overlay)
+            params["assignment"] = assignment
+        # D-28: Runtime enriches the Shield WRITE assignment with structured
+        # test_tasks parsed from test-plan §8 (AC layer + IF green conditions)
+        # before write-ahead logging so the persisted command.issued evidence
+        # carries the complete input (architecture.md §1.2 DISPATCH).
+        if (cmd.kind == "dispatch_agent"
+                and params.get("role") == "shield"
+                and params.get("substate") == "WRITE"
+                and state.stage == "M-TEST"
+                and "test_tasks" not in (params.get("assignment") or {})):
+            vdir = self._vdir()
+            tasks = parse_test_tasks(vdir / "acceptance.md",
+                                     vdir / "test-plan.md")
+            assignment = dict(params.get("assignment") or {})
+            # Preserve an empty/malformed parse result as evidence-bearing input;
+            # FakeBackend must turn it into a failed outcome instead of allowing
+            # Shield to fall back to rereading the design documents.
+            assignment["test_tasks"] = tasks
             params["assignment"] = assignment
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None

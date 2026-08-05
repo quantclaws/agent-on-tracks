@@ -24,10 +24,11 @@ from tracks.frontmatter import split_frontmatter
 _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
 # AC items the fake test-plan must attribute a test layer (BS-06 design trace)
 _ACC_ITEM = re.compile(r"^### (AC-[A-Z0-9]+-\d+)\b", re.M)
-_LAYER_RE = re.compile(r"\b(unit|integration|e2e)\b", re.I)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 _FENCE = re.compile(r"^\s*(```|~~~)")
-_LAYERS = ("unit", "integration", "e2e")
+_LAYERS = ("integration", "e2e")
+_TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
+_TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 # FR-0210 exit gate tokens: a failed agent run is not a produced document.
 _FAILED_TOKENS = ("over_reach", "timeout", "no_target_diff",
                   "non_zero_exit", "json_truncated", "fail")
@@ -159,15 +160,31 @@ class FakeBackend:
         (integration|e2e) AC in the host project's test-plan, with long-format
         markers. Tokens: ``fail``/``over_reach`` simulate a failed outcome;
         ``illegit_red`` writes an ImportError-raising test (illegit Red);
-        ``short_marker`` writes a short-format marker (trace gate fails)."""
+        ``short_marker`` writes a short-format marker (trace gate fails).
+
+        D-28: the assignment's ``test_tasks`` (Runtime-parsed from test-plan
+        §8) is the only input. Missing or malformed task data is a failed
+        outcome; this backend never re-derives it from the design documents."""
         token = self.token("shield", substate, "ok")
         if token in _FAILED_TOKENS:
             return {"status": "failed", "artifact_ref": None,
                     "failure_class": "agent_failed" if token == "fail" else token,
                     "audit_evidence": f"simulated {token}",
                     "self_report": f"shield exit gate failed: {token}"}
-        vdir = self._design_vdir()
-        required = self._required_ac_layers(vdir)
+        tasks = assignment.get("test_tasks") if isinstance(assignment, dict) else None
+        if not self._valid_test_tasks(tasks):
+            return {
+                "status": "failed",
+                "artifact_ref": None,
+                "failure_class": "invalid_test_tasks",
+                "audit_evidence": (
+                    "assignment.test_tasks must be a non-empty list of "
+                    "{ac_id, layers, if_ids}"
+                ),
+                "self_report": "Shield assignment.test_tasks is missing or malformed",
+            }
+        required = [(task["ac_id"], layer)
+                    for task in tasks for layer in task["layers"]]
         tests_dir = self.repo / "tests"
         for subdir in ("integration", "e2e", "assets", "counterexamples"):
             (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
@@ -176,30 +193,32 @@ class FakeBackend:
         return {"status": "done", "artifact_ref": str(tests_dir),
                 "self_report": f"wrote {len(required)} test files ({token})"}
 
-    def _required_ac_layers(self, vdir: Path) -> list[tuple[str, str]]:
-        """Return [(ac_id, layer)] for integration|e2e ACs from the host
-        project's acceptance.md + test-plan.md AC Coverage section."""
-        acc = vdir / "acceptance.md"
-        plan = vdir / "test-plan.md"
-        if not acc.exists() or not plan.exists():
-            return []
-        acs = _ACC_ITEM.findall(acc.read_text(encoding="utf-8"))
-        plan_text = plan.read_text(encoding="utf-8")
-        out: list[tuple[str, str]] = []
-        for ac_id in acs:
-            layer = self._layer_of(ac_id, plan_text)
-            if layer in ("integration", "e2e"):
-                out.append((ac_id, layer))
-        return out
-
     @staticmethod
-    def _layer_of(ac_id: str, plan_text: str) -> str | None:
-        for ln in plan_text.splitlines():
-            if ac_id in ln:
-                m = _LAYER_RE.search(ln)
-                if m:
-                    return m.group(1).lower()
-        return None
+    def _valid_test_tasks(tasks: object) -> bool:
+        if not isinstance(tasks, list) or not tasks:
+            return False
+        seen: set[str] = set()
+        for task in tasks:
+            if not isinstance(task, dict):
+                return False
+            ac_id = task.get("ac_id")
+            layers = task.get("layers")
+            if_ids = task.get("if_ids")
+            if (not isinstance(ac_id, str) or not _TASK_AC_ID.fullmatch(ac_id)
+                    or ac_id in seen):
+                return False
+            if (not isinstance(layers, list) or not layers
+                    or any(layer not in _LAYERS for layer in layers)
+                    or len(set(layers)) != len(layers)):
+                return False
+            if (not isinstance(if_ids, list) or not if_ids
+                    or any(not isinstance(if_id, str)
+                           or not _TASK_IF_ID.fullmatch(if_id)
+                           for if_id in if_ids)
+                    or len(set(if_ids)) != len(if_ids)):
+                return False
+            seen.add(ac_id)
+        return True
 
     def _write_test_file(self, tests_dir: Path, ac_id: str, layer: str,
                          token: str) -> None:
@@ -274,9 +293,16 @@ class FakeBackend:
                if acc.exists() else [])
         if token == "trace_orphan":
             acs = acs[:-1]
-        rows = "\n".join(f"- {ac_id}: {_LAYERS[i % len(_LAYERS)]}"
-                         for i, ac_id in enumerate(acs))
-        return "\n## AC Coverage\n\n" + rows + "\n"
+        rows = "\n".join(
+            f"| {ac_id} | {_LAYERS[i % len(_LAYERS)]} | "
+            f"test_{ac_id.lower().replace('-', '_')} | IF-MTEST-001 |"
+            for i, ac_id in enumerate(acs)
+        )
+        return (
+            "\n## 8. AC Coverage\n\n"
+            "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+            + rows + "\n"
+        )
 
     def _revise_design(self, token: str) -> Path:
         """RESPOND: revise the committed trio (Prism comments incorporated);
