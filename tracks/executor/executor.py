@@ -31,9 +31,19 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return proc
 
 
-def _commit_if_staged(repo: Path, message: str) -> None:
-    if git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0:
-        git(repo, "commit", "-m", message)
+def _commit_if_staged(repo: Path, message: str) -> subprocess.CompletedProcess | None:
+    """Attempt to commit staged changes (check=False). Returns None if nothing
+    was staged, or the CompletedProcess so the caller can inspect ``.returncode``
+    for pre-commit hook rejection without crashing."""
+    if git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
+        return None
+    return git(repo, "commit", "-m", message, check=False)
+
+
+def _hook_output(proc: subprocess.CompletedProcess, limit: int = 4096) -> str:
+    """Combined stdout+stderr from a failed ``git commit``, truncated."""
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    return combined[:limit]
 
 
 def _agent_io_evidence(store: Store, assignment: dict, captured: dict) -> dict:
@@ -188,6 +198,19 @@ class Executor:
               command_id: str | None = None, task_id: str | None = None):
         return self.store.append(self.run_id, self.version, type, payload,
                                  command_id=command_id, task_id=task_id)
+
+    def _emit_commit_failure(self, proc: subprocess.CompletedProcess,
+                             state: State, command_id: str) -> None:
+        """D-30/F-1: pre-commit hook rejected the commit -> emit the established
+        failure-evidence event (verdict.failed -> s.last_failure via
+        _on_verdict_failed) carrying the hook's combined output, so decide()
+        re-dispatches the agent to fix the deliverable (FR-11)."""
+        self._emit("verdict.failed",
+                   {"check": "commit",
+                    "reason": "pre-commit hook rejected the commit",
+                    "evidence": _hook_output(proc),
+                    "attempt": state.current_attempt + 1},
+                   command_id=command_id)
 
     def _doc_path(self, doc: str) -> Path:
         return paths.version_dir(self.store.home, self.version) / doc
@@ -363,7 +386,10 @@ class Executor:
                 self._emit_committed(doc, probe.stdout.split()[0], cmd.command_id)
                 return
         git(self.repo, "add", str(self._doc_path(doc)))
-        _commit_if_staged(self.repo, f"{message}\n\n{marker}")
+        proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
+        if proc is not None and proc.returncode != 0:
+            self._emit_commit_failure(proc, state, cmd.command_id)
+            return
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         self._emit_committed(doc, commit_sha, cmd.command_id)
 
@@ -388,8 +414,12 @@ class Executor:
             path = self._doc_path(doc)
             set_frontmatter_field(path, "sha", doc_body_sha(path))
             git(self.repo, "add", str(path))
-            _commit_if_staged(self.repo,
-                              f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}")
+            proc = _commit_if_staged(
+                self.repo,
+                f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}")
+            if proc is not None and proc.returncode != 0:
+                self._emit_commit_failure(proc, state, cmd.command_id)
+                return
             # R4-02: the sealed commit gets its own final committed event so ACs
             # match `final=true` and never the DRAFT-stage commit.
             commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
@@ -540,8 +570,11 @@ class Executor:
         tests_dir = self.repo / "tests"
         if tests_dir.exists():
             git(self.repo, "add", "tests")
-        _commit_if_staged(self.repo,
-                          f"M-TEST: freeze test assets\n\n{marker}")
+        proc = _commit_if_staged(
+            self.repo, f"M-TEST: freeze test assets\n\n{marker}")
+        if proc is not None and proc.returncode != 0:
+            self._emit_commit_failure(proc, state, cmd.command_id)
+            return
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
         self._emit("test.committed",

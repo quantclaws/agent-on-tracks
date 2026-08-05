@@ -329,14 +329,28 @@ def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
         _on_m_test_verdict_failed(s, p)
         return
     if s.stage == "M-DESIGN":
-        # BS-05: no human gate in M-DESIGN — a failed validate, even at the
+        # BS-05: no human gate in M-DESIGN - a failed validate, even at the
         # EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates
-        # (same budget as the DRAFT three-attempt escalation pattern).
+        # (same budget as DRAFT). D-30/F-1: design_committed also resets
+        # (mirrors _on_prism_verdict revise + _on_stage_rolled_back).
         s.design_validated = 0
+        s.design_committed = 0
         if s.substate == "EXIT":
             s.exit_validated = False
             s.substate = "RESPOND"
         _reset_doc(s)
+        s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
+        if s.current_attempt >= 3:
+            s.status = "awaiting_human"
+            s.awaiting = "escalation"
+        return
+    if p.get("check") == "commit":
+        # D-30/F-1: hook rejected commit (document or EXIT seal) -> re-dispatch
+        # drafter with evidence; mirror DRAFT validate-failure budget, not AC-1502.
+        _reset_doc(s)
+        _uncommit(s)
+        s.exit_validated = False
+        s.substate = "DRAFT"
         s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
         if s.current_attempt >= 3:
             s.status = "awaiting_human"
@@ -589,6 +603,14 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         _consume_attempt(s)
         return
     if check == "trace":
+        s.trace_passed = False
+        s.substate = "WRITE"
+        _reset_doc(s)
+        _consume_attempt(s)
+        return
+    if check == "commit":
+        # D-30/F-1: hook rejected test commit -> re-dispatch Shield (mirrors
+        # check=="trace": reset trace_passed, WRITE, consume budget).
         s.trace_passed = False
         s.substate = "WRITE"
         _reset_doc(s)
