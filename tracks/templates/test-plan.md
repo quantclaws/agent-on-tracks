@@ -123,6 +123,23 @@ tests/
 - **CI**: Run the full suite on every push
 - **Isolation**: Integration and e2e use the project framework's marker/tag/select mechanism (e.g. pytest `@pytest.mark.integration` / `@pytest.mark.e2e`, jest `--testPathPattern`, `go test -run`, `cargo test --test`) to avoid mixing with unit tests
 
+### 2.3.1. Test Execution Contract (`.tracks/project/project.toml`)
+
+The host project test execution contract is declared in `.tracks/project/project.toml` (produced by Archer in M-DESIGN). M-TEST uses this contract to collect and run tests independently.
+
+- **Integration**:
+  - framework: {e.g. pytest}
+  - paths: {e.g. ["tests/integration/"]}
+  - collect: {e.g. `.venv/bin/python -m pytest --collect-only -q tests/integration/`}
+  - run: {e.g. `.venv/bin/python -m pytest tests/integration/ --tb=short -q`}
+  - cwd: {e.g. "."}
+- **E2e** (if applicable):
+  - framework: {e.g. pytest}
+  - paths: {e.g. ["tests/e2e/"]}
+  - collect: {e.g. `.venv/bin/python -m pytest --collect-only -q tests/e2e/`}
+  - run: {e.g. `.venv/bin/python -m pytest tests/e2e/ --tb=short -q`}
+  - cwd: {e.g. "."}
+
 ### 2.4. Test Data (project optional)
 
 <!-- Template guidance (delete before delivery; conditional section):

@@ -343,17 +343,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import tracks
-import pytest
 from tracks.effects.opencode import OpencodeBackend
-
-# pytest is a declared runtime dependency: the M-TEST executor shells out to
-# `[sys.executable, "-m", "pytest"]` during a normal `trac run` (architecture.md
-# §3.2). A --no-deps install would leave it absent; fail here with a clear
-# message (logged via the install log) rather than mid-journey in M-TEST.
-assert pytest.__file__.startswith(sys.prefix), (
-    f"pytest resolved outside the isolated venv: {{pytest.__file__}} "
-    f"(install must pull declared dependencies, not use --no-deps)"
-)
 
 resource_paths = {RUNTIME_RESOURCE_PATHS!r}
 workspace = Path(os.environ["WORKSPACE_ROOT"]).resolve()
@@ -383,7 +373,6 @@ for agent_name in {AGENT_NAMES!r}:
 print(json.dumps({{
     "tracks_file": str(tracks_file),
     "venv": str(venv),
-    "pytest": pytest.__version__,
     "resources": sorted(resource_paths),
     "materialized": materialized,
 }}))
@@ -548,7 +537,7 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         if create.returncode != 0:
             failed(f"isolated venv creation failed: {create.stderr.strip()}")
         install = run_logged(
-            [str(isolated_python), "-m", "pip", "install", str(wheel)],
+            [str(isolated_python), "-m", "pip", "install", "--no-deps", str(wheel)],
             artifact_dir,
             clean,
             install_log,
@@ -713,6 +702,23 @@ def capture_opencode_log_tail(
         return out
     except (OSError, PermissionError, ValueError):
         return None
+
+
+def prepare_host_venv(host: Path, install: LiveInstall) -> Path:
+    """Create host ``.venv`` with pytest for M-TEST (architecture.md §3.2)."""
+    host_venv = host / ".venv"
+    if host_venv.exists():
+        return host_venv
+    clean = clean_env()
+    to, log = timeout_env("TRAC_LIVE_INSTALL_TIMEOUT", 300), install.install_log
+    host_py = host_venv / "bin" / "python"
+    cmds = [("venv", [str(install.isolated_python), "-m", "venv", str(host_venv)]),
+            ("pytest", [str(host_py), "-m", "pip", "install", "pytest==9.1.1"])]
+    for label, argv in cmds:
+        proc = run_logged(argv, host, clean, log, timeout=to)
+        if proc.returncode != 0:
+            raise AssertionError(f"host {label} failed: {proc.stderr.strip()}; log={log}")
+    return host_venv
 
 
 class LiveTracDriver:

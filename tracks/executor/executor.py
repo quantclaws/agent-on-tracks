@@ -7,8 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 import subprocess
-import sys
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +21,7 @@ from tracks.executor.validate import parse_test_tasks, required_ac_ids, validate
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State, decide
+from tracks.project import ContractError, load_contract
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
@@ -424,6 +425,7 @@ class Executor:
                 )
                 return
             stage_paths.extend(scaffold_paths)
+            stage_paths.extend(self._project_contract_paths())
         git(self.repo, "add", *(str(path) for path in stage_paths))
         proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
         if proc is not None and proc.returncode != 0:
@@ -445,6 +447,12 @@ class Executor:
             assert path is not None
             paths.append(path)
         return paths, None
+
+    def _project_contract_paths(self) -> list[Path]:
+        """Return the project.toml path if it exists, for staging alongside
+        architecture.md during M-DESIGN."""
+        toml_path = paths.project_toml_path(paths.tracks_home(self.repo))
+        return [toml_path] if toml_path.exists() else []
 
     def _stageable_scaffold_path(self, raw: str) -> tuple[Path | None, str | None]:
         raw_path = Path(raw)
@@ -563,39 +571,81 @@ class Executor:
 
     # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
 
+    def _run_contract_sections(self, cmd, state, field: str
+                               ) -> tuple[int, str, str, str | None]:
+        """Execute the contract's ``collect`` or ``run`` command across all
+        declared sections. Returns ``(rc, stdout, stderr, error_msg)``.
+        On success ``error_msg`` is None; on contract/shlex error it is a
+        human-readable string and the caller should emit a failure event."""
+        try:
+            contract = load_contract(self.repo)
+        except ContractError as exc:
+            return -1, "", "", f"contract error: {exc.reason}"
+        sections = [contract.integration]
+        if contract.e2e is not None:
+            sections.append(contract.e2e)
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        rc = 0
+        for section in sections:
+            try:
+                argv = shlex.split(getattr(section, field))
+            except ValueError as exc:
+                return -1, "", "", f"contract {field} command invalid: {exc}"
+            cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+            proc = subprocess.run(
+                argv, cwd=cwd, capture_output=True, text=True,
+            )
+            stdout_parts.append(proc.stdout)
+            stderr_parts.append(proc.stderr)
+            rc = rc or proc.returncode
+        return rc, "\n".join(stdout_parts), "\n".join(stderr_parts), None
+
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
-        """SM-01.5: Runtime independently collects tests/integration + tests/e2e
-        via pytest --collect-only (architecture.md §3.2). Never trusts the
-        Shield self-report."""
+        """SM-01.5: Runtime independently collects integration + e2e tests via
+        the host project contract's ``collect`` command (architecture.md §3.2).
+        Never trusts the Shield self-report."""
         if reconcile and state.test_collected:
             return
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "--collect-only", "-q",
-             "tests/integration/", "tests/e2e/"],
-            cwd=self.repo, capture_output=True, text=True,
-        )
-        if proc.returncode == 0:
-            count = _parse_collected_count(proc.stdout)
+        rc, stdout, stderr, error = self._run_contract_sections(cmd, state, "collect")
+        if error is not None:
+            self._emit("test.collected",
+                       {"status": "failed", "collected_count": 0,
+                        "errors": [error]},
+                       command_id=cmd.command_id)
+            return
+        if rc == 0:
+            count = _parse_collected_count(stdout)
             self._emit("test.collected",
                        {"status": "passed", "collected_count": count, "errors": []},
                        command_id=cmd.command_id)
         else:
             self._emit("test.collected",
                        {"status": "failed", "collected_count": 0,
-                        "errors": [proc.stderr.strip() or proc.stdout.strip()]},
+                        "errors": [stderr.strip() or stdout.strip()]},
                        command_id=cmd.command_id)
 
     def _do_run_tests(self, cmd, state, task_id, reconcile):
-        """SM-01.9: Runtime independently re-runs integration/e2e and classifies
-        each failure (FR-0050). All-legit -> red.validated(valid) -> EXIT; any
-        illegit or unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/integration/", "tests/e2e/",
-             "--tb=short", "-q"],
-            cwd=self.repo, capture_output=True, text=True,
-        )
-        output = f"{proc.stdout}\n{proc.stderr}"
-        red_class = classify_red("*", proc.returncode, proc.stdout, proc.stderr)
+        """SM-01.9: Runtime independently re-runs integration/e2e via the host
+        project contract's ``run`` command and classifies each failure
+        (FR-0050). All-legit -> red.validated(valid) -> EXIT; any illegit or
+        unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
+        rc, stdout, stderr, error = self._run_contract_sections(cmd, state, "run")
+        if error is not None:
+            findings = [{"test_id": "*", "classification": "collection_error",
+                         "detail": error}]
+            self._emit("red.validated",
+                       {"status": "invalid", "findings": findings},
+                       command_id=cmd.command_id)
+            self._emit("verdict.failed",
+                       {"check": "contract_error", "target_stage": "M-DESIGN",
+                        "artifact_disposition": "rollback",
+                        "reason": error,
+                        "attempt": state.current_attempt + 1},
+                       command_id=cmd.command_id)
+            return
+        output = f"{stdout}\n{stderr}"
+        red_class = classify_red("*", rc, stdout, stderr)
         legit = red_class in _LEGIT_RED
         findings = [{"test_id": "*", "classification": red_class,
                      "detail": _short_detail(output)}]

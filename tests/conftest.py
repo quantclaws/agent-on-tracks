@@ -56,7 +56,12 @@ def host_repo(tmp_path):
     g("config", "user.email", "test@example.com")
     g("config", "user.name", "Test Human")
     (repo / "README.md").write_text("host project\n", encoding="utf-8")
-    g("add", "README.md")
+    # M-TEST contract commands use `.venv/bin/python`; symlink to the test
+    # runner's venv so pytest is importable without a separate install step.
+    venv_target = Path(sys.prefix).resolve()
+    (repo / ".venv").symlink_to(venv_target, target_is_directory=True)
+    (repo / ".gitignore").write_text(".venv\n", encoding="utf-8")
+    g("add", "README.md", ".gitignore")
     g("commit", "-m", "initial")
     return repo
 

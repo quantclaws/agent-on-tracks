@@ -1,0 +1,127 @@
+"""Host project test execution contract (``.tracks/project/project.toml``).
+
+Reads the host project's test execution contract committed at
+``.tracks/project/project.toml`` during M-TEST.  The contract declares the
+framework, paths, and shell commands for collecting and running tests, plus
+the working directory to execute them from.
+
+v0.4 supports only ``framework = "pytest"``.  An unsupported framework or a
+missing/malformed contract fails closed as an infrastructure finding — the
+runtime never falls back to ``sys.executable -m pytest``.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import tomllib
+
+from tracks import paths
+
+_SUPPORTED_FRAMEWORKS = frozenset({"pytest"})
+
+
+class ContractError(Exception):
+    """Raised when the host project contract is missing, malformed, or
+    declares an unsupported framework."""
+
+    def __init__(self, reason: str, *, kind: str = "contract"):
+        super().__init__(reason)
+        self.reason = reason
+        self.kind = kind
+
+
+@dataclass(frozen=True, slots=True)
+class TestSection:
+    framework: str
+    paths: list[str]
+    collect: str
+    run: str
+    cwd: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectContract:
+    integration: TestSection
+    e2e: TestSection | None = None
+
+
+def contract_path(repo: Path) -> Path:
+    return paths.project_toml_path(paths.tracks_home(repo))
+
+
+def load_contract(repo: Path) -> ProjectContract:
+    """Load and validate the host project contract.
+
+    Raises ``ContractError`` if the file is missing, unreadable, malformed,
+    or declares an unsupported framework.
+    """
+    toml_path = contract_path(repo)
+    if not toml_path.exists():
+        raise ContractError(
+            f"project contract not found: {toml_path}", kind="contract",
+        )
+    try:
+        raw = toml_path.read_bytes()
+        data = tomllib.loads(raw.decode("utf-8"))
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        raise ContractError(
+            f"project contract unreadable: {exc}", kind="contract",
+        ) from exc
+    return _build_contract(data)
+
+
+def _build_contract(data: dict) -> ProjectContract:
+    integration = _build_section(data, "integration")
+    e2e_raw = data.get("e2e")
+    e2e: TestSection | None = None
+    if e2e_raw is not None:
+        e2e = _build_section(data, "e2e")
+    return ProjectContract(integration=integration, e2e=e2e)
+
+
+def _build_section(data: dict, name: str) -> TestSection:
+    section = data.get(name)
+    if not isinstance(section, dict):
+        raise ContractError(
+            f"[{name}] section missing in project contract", kind="contract",
+        )
+    framework = section.get("framework")
+    if not isinstance(framework, str) or not framework.strip():
+        raise ContractError(
+            f"[{name}].framework must be a non-empty string", kind="contract",
+        )
+    if framework not in _SUPPORTED_FRAMEWORKS:
+        raise ContractError(
+            f"[{name}].framework {framework!r} is not supported "
+            f"(supported: {sorted(_SUPPORTED_FRAMEWORKS)})",
+            kind="framework",
+        )
+    raw_paths = section.get("paths")
+    if not isinstance(raw_paths, list) or not raw_paths:
+        raise ContractError(
+            f"[{name}].paths must be a non-empty list", kind="contract",
+        )
+    section_paths = [str(p) for p in raw_paths]
+    collect = section.get("collect")
+    if not isinstance(collect, str) or not collect.strip():
+        raise ContractError(
+            f"[{name}].collect must be a non-empty string", kind="contract",
+        )
+    run = section.get("run")
+    if not isinstance(run, str) or not run.strip():
+        raise ContractError(
+            f"[{name}].run must be a non-empty string", kind="contract",
+        )
+    cwd = section.get("cwd", ".")
+    if not isinstance(cwd, str) or not cwd.strip():
+        raise ContractError(
+            f"[{name}].cwd must be a non-empty string", kind="contract",
+        )
+    return TestSection(
+        framework=framework,
+        paths=section_paths,
+        collect=collect.strip(),
+        run=run.strip(),
+        cwd=cwd.strip(),
+    )

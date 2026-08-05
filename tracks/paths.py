@@ -30,6 +30,14 @@ def runtime_dir(home: Path) -> Path:
     return home / "runtime"
 
 
+def project_dir(home: Path) -> Path:
+    return home / "project"
+
+
+def project_toml_path(home: Path) -> Path:
+    return project_dir(home) / "project.toml"
+
+
 def wiki_dir(home: Path) -> Path:
     return home / "wiki"
 

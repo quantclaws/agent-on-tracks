@@ -62,8 +62,25 @@ sha:
 
 ## 4. 交付与运行合同（machine contracts）
 
-{至少覆盖：integration/e2e 测试基础设施、GitHub CI、pre-commit、release version、
-build/artifact、发布恢复。每项写合同（外部可观察）与责任方（Runtime / 门禁 / Agent）}
+<!-- 模板指引（填写完成后删除本注释，交付的文档只留内容）：
+  - 至少覆盖：integration/e2e 测试基础设施、GitHub CI、pre-commit、release version、
+    build/artifact、发布恢复。每项写合同（外部可观察）与责任方（Runtime / 门禁 / Agent）
+  - 测试执行合同：Archer 必须在 M-DESIGN 阶段产出 `.tracks/project/project.toml`，
+    声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。
+    v0.4 仅支持 framework = "pytest"。collect/run 命令必须使用宿主项目自己的
+    Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的
+    解释器或依赖。该合同在 M-DESIGN 阶段随 architecture.md 一起提交。
+-->
+
+### 4.1 测试执行合同（`.tracks/project/project.toml`）
+
+{声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。
+collect 命令用于 M-TEST 测试收集阶段（SM-01.5），run 命令用于 RED_CHECK（SM-01.9）。
+命令通过 shlex.split + subprocess(shell=False) 执行，cwd 相对于宿主项目根目录。}
+
+### 4.2 CI / pre-commit / release
+
+{CI 合同、pre-commit 钩子、release version 合同等}
 
 ## 5. 有意识简化与风险
 

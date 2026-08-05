@@ -420,6 +420,7 @@ class FakeBackend:
                 encoding="utf-8",
             )
         self._materialize_fake_scaffold(scaffold)
+        self._write_project_contract()
 
     def _design_vdir(self) -> Path:
         return paths.version_dir(paths.tracks_home(self.repo), self.version)
@@ -470,7 +471,29 @@ class FakeBackend:
             self._design_doc("test-plan") + self._ac_coverage(token),
             encoding="utf-8")
         self._materialize_fake_scaffold(scaffold)
+        self._write_project_contract()
         return vdir
+
+    def _write_project_contract(self) -> None:
+        """Write a demo host test execution contract at
+        ``.tracks/project/project.toml`` (v0.4: pytest framework)."""
+        toml_path = paths.project_toml_path(paths.tracks_home(self.repo))
+        toml_path.parent.mkdir(parents=True, exist_ok=True)
+        toml_path.write_text(
+            '[integration]\n'
+            'framework = "pytest"\n'
+            'paths = ["tests/integration/"]\n'
+            'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
+            'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
+            'cwd = "."\n\n'
+            '[e2e]\n'
+            'framework = "pytest"\n'
+            'paths = ["tests/e2e/"]\n'
+            'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+            'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
+            'cwd = "."\n',
+            encoding="utf-8",
+        )
 
     def _ac_coverage(self, token: str) -> str:
         """BS-06 section: every acceptance AC with a layer attribution."""

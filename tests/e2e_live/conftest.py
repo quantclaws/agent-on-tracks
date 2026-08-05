@@ -13,6 +13,7 @@ from tests.e2e_live.harness import (
     InstalledBackend,
     LiveTracDriver,
     load_scenarios,
+    prepare_host_venv,
     prepare_live_install,
     resolve_github_repo,
     timeout_env,
@@ -162,6 +163,7 @@ def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
     worst case while remaining the outer safety net against runaway dispatch
     loops.
     """
+    prepare_host_venv(live_root, live_install)
     driver = LiveTracDriver(
         live_root,
         live_install,

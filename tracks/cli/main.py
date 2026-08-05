@@ -83,7 +83,8 @@ RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\n"
 
 def cmd_init(repo: Path) -> int:
     home = paths.tracks_home(repo)
-    for d in (paths.projects_dir(home), paths.runtime_dir(home), paths.wiki_dir(home)):
+    for d in (paths.projects_dir(home), paths.runtime_dir(home),
+              paths.project_dir(home), paths.wiki_dir(home)):
         d.mkdir(parents=True, exist_ok=True)
     gitignore = paths.runtime_dir(home) / ".gitignore"
     if not gitignore.exists():

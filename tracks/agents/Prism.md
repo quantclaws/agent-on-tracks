@@ -49,6 +49,14 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - ground truth 独立于被测 validator；不得 mock 核心后声称 integration PASS。
 - 若项目产出可安装构建物：E2E 必须通过真实安装路径执行（与最终用户一致的安装命令、隔离安装目标、非源码树工作目录），不得从源码导入或 editable install 冒充（test-plan §2.5）。首版设计必须声明，后续版本仅安装方式变更时修订；未声明即 REVISE。
 
+**宿主项目测试执行合同（`.tracks/project/project.toml`）**：
+
+- M-DESIGN 交付必须包含 `.tracks/project/project.toml`；缺失即 REVISE。
+- 合同必须声明 `[integration]` 段（`framework`、`paths`、`collect`、`run`、`cwd`）；`[e2e]` 段在 test-plan 有 e2e 层时必须存在，否则可选。
+- `framework` 必须为 `pytest`（v0.4 唯一支持）；其他值即 REVISE。
+- `collect`/`run` 命令必须使用宿主项目自己的 Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的解释器或依赖。
+- `paths` 必须与 test-plan 声明的测试层路径一致。
+
 **评审清单（逐项对照工件核验，不采信作者自述）**：
 
 - 测试策略是否覆盖主要风险：对照 acceptance 的风险面核验 test-plan 的策略与层分配。
