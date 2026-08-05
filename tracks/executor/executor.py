@@ -21,6 +21,7 @@ from tracks.executor.validate import parse_test_tasks, required_ac_ids, validate
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State, decide
+from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
 
@@ -44,6 +45,9 @@ def _hook_output(proc: subprocess.CompletedProcess, limit: int = 4096) -> str:
     """Combined stdout+stderr from a failed ``git commit``, truncated."""
     combined = (proc.stdout or "") + (proc.stderr or "")
     return combined[:limit]
+
+
+_SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
 
 
 def _agent_io_evidence(store: Store, assignment: dict, captured: dict) -> dict:
@@ -205,11 +209,18 @@ class Executor:
         failure-evidence event (verdict.failed -> s.last_failure via
         _on_verdict_failed) carrying the hook's combined output, so decide()
         re-dispatches the agent to fix the deliverable (FR-11)."""
+        self._emit_commit_failure_evidence(
+            state, command_id, "pre-commit hook rejected the commit",
+            _hook_output(proc),
+        )
+
+    def _emit_commit_failure_evidence(self, state: State, command_id: str,
+                                      reason: str, evidence: str) -> None:
         self._emit("verdict.failed",
                    {"check": "commit",
-                    "reason": "pre-commit hook rejected the commit",
-                    "evidence": _hook_output(proc),
-                    "attempt": state.current_attempt + 1},
+                     "reason": reason,
+                     "evidence": evidence,
+                     "attempt": state.current_attempt + 1},
                    command_id=command_id)
 
     def _doc_path(self, doc: str) -> Path:
@@ -403,13 +414,66 @@ class Executor:
             if probe.stdout.split():
                 self._emit_committed(doc, probe.stdout.split()[0], cmd.command_id)
                 return
-        git(self.repo, "add", str(self._doc_path(doc)))
+        doc_path = self._doc_path(doc)
+        stage_paths = [doc_path]
+        if state.stage == "M-DESIGN" and doc == "architecture.md":
+            scaffold_paths, issue = self._design_scaffold_paths(doc_path)
+            if issue is not None:
+                self._emit_commit_failure_evidence(
+                    state, cmd.command_id, "declared scaffold path rejected", issue,
+                )
+                return
+            stage_paths.extend(scaffold_paths)
+        git(self.repo, "add", *(str(path) for path in stage_paths))
         proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         self._emit_committed(doc, commit_sha, cmd.command_id)
+
+    def _design_scaffold_paths(self, architecture: Path) -> tuple[list[Path], str | None]:
+        try:
+            text = architecture.read_text(encoding="utf-8")
+        except OSError as exc:
+            return [], f"scaffold manifest unreadable: {exc}"
+        paths = []
+        for raw in sorted(_scaffold_declared_paths(text)):
+            path, issue = self._stageable_scaffold_path(raw)
+            if issue is not None:
+                return [], issue
+            assert path is not None
+            paths.append(path)
+        return paths, None
+
+    def _stageable_scaffold_path(self, raw: str) -> tuple[Path | None, str | None]:
+        raw_path = Path(raw)
+        candidate = raw_path if raw_path.is_absolute() else self.repo / raw_path
+        try:
+            resolved = candidate.resolve(strict=False)
+            relative = resolved.relative_to(self.repo.resolve())
+        except (OSError, RuntimeError, ValueError):
+            return None, f"scaffold path escapes repository: {raw}"
+        if raw_path.is_absolute():
+            return None, f"scaffold path is not allowed (must be repo-relative): {raw}"
+        if not relative.parts or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS:
+            return None, f"scaffold path is not allowed: {raw}"
+        if candidate.is_symlink():
+            return None, f"scaffold path is not allowed (symlink): {raw}"
+        if not candidate.exists():
+            return None, f"scaffold path is missing: {raw}"
+        if candidate.is_dir():
+            return None, f"scaffold path is a directory: {raw}"
+        if not candidate.is_file():
+            return None, f"scaffold path is not allowed: {raw}"
+        relative_text = str(relative)
+        tracked = git(self.repo, "ls-files", "--error-unmatch", "--",
+                      relative_text, check=False).returncode == 0
+        ignored = git(self.repo, "check-ignore", "--quiet", "--no-index", "--",
+                      relative_text, check=False).returncode == 0
+        if ignored and not tracked:
+            return None, f"scaffold path is not allowed (ignored): {raw}"
+        return self.repo / relative, None
 
     def _emit_committed(self, doc, commit_sha, command_id, final=False):
         ev_type, sha_key = _COMMITTED_EVENT[doc]

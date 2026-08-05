@@ -29,6 +29,7 @@ from tracks.discuss.gate import check_ready
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
 from tracks.effects.audit import Auditor, _rel
+from tracks.scaffold import _scaffold_declared_paths
 
 # role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
 # Every tracks role is a real opencode agent (spec FR-020 §2): Scribe起草 /
@@ -62,13 +63,6 @@ _ENV_SECRET_VALUE = re.compile(
     r"([\"']?\s*=\s*[\"']?)([^\s,;\"']+)"
 )
 
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-# batch B scaffold manifest: the freshly-written architecture.md's
-# `## Scaffold 宣言` section enumerates `- path — purpose` bullets — the only
-# host files an M-DESIGN author dispatch may create outside its doc-set.
-_SCAFFOLD_HEADING = re.compile(
-    r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?Scaffold 宣言\s*$", re.M)
-_SCAFFOLD_BULLET = re.compile(r"^\s*-\s+(\S+)\s+—", re.M)
 _OPENCODE_PREFIX = ".opencode/"
 _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 # FR-0120 Shield write scope (RP-01): the four test-asset directories. Writes
@@ -794,26 +788,6 @@ def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
                 label = f"{path.name}:{thread.thread_id}" if multi else thread.thread_id
                 offending.append(label)
     return offending
-
-
-def _scaffold_declared_paths(arch_text: str) -> set[str]:
-    """batch B scaffold manifest parse: the repo-relative paths enumerated as
-    ``- path —`` bullets inside the ``## Scaffold 宣言`` section of
-    architecture.md (empty set when the section is absent). HTML comments are
-    stripped so leftover template guidance can never declare a path. No I/O."""
-    m = _SCAFFOLD_HEADING.search(arch_text)
-    if not m:
-        return set()
-    rest = arch_text[m.end():]
-    nxt = re.search(r"^##\s", rest, re.M)  # the next level-2 heading closes it
-    if nxt:
-        rest = rest[:nxt.start()]
-    declared = set()
-    for raw in _SCAFFOLD_BULLET.findall(_HTML_COMMENT.sub("", rest)):
-        path = raw.strip("`'\"")
-        if path:
-            declared.add(path)
-    return declared
 
 
 def _docset_text(doc_paths: list[Path]) -> str:

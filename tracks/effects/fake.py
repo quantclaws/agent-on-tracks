@@ -264,6 +264,8 @@ class FakeBackend:
                 fence = not fence
             if not fence and line.lstrip().startswith(">"):
                 continue
+            if kind == "architecture" and line.lstrip().startswith("- {path} —"):
+                continue
             out.append(line)
         return "\n".join(out) + "\n"
 
