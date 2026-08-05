@@ -21,11 +21,12 @@ def walk_to_await_human(trac, stdin="构建一个事件溯源运行时"):
     return run_id
 
 
-def walk_to_design_complete(trac, stdin="构建一个事件溯源运行时"):
-    """approval → M-DESIGN (Archer drafts the trio, Prism passes) →
-    run.completed(terminal_state="boundary") — no human gate in M-DESIGN
-    (BS-05), so a single `trac run` after approval reaches the terminal state
-    (Decision A: M-IMPL not implemented in v0.3)."""
+def walk_to_m_test_complete(trac, stdin="构建一个事件溯源运行时"):
+    """approval -> M-DESIGN (Archer drafts the trio, Prism passes) ->
+    M-TEST (Shield writes tests, Prism reviews, Runtime verifies Red + trace)
+    -> run.completed(terminal_state="boundary") - no human gate in M-DESIGN
+    or M-TEST (BS-05), so a single `trac run` after approval reaches the
+    terminal state (v0.4: boundary moved from M-DESIGN to M-TEST->M-IMPL)."""
     run_id = walk_to_await_human(trac, stdin=stdin)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run")
@@ -33,6 +34,11 @@ def walk_to_design_complete(trac, stdin="构建一个事件溯源运行时"):
     assert "status=completed" in r.stdout
     assert "awaiting=-" in r.stdout
     return run_id
+
+
+# Backward-compatible alias (pre-v0.4 name; the walk now reaches the M-TEST
+# boundary, not the M-DESIGN one).
+walk_to_design_complete = walk_to_m_test_complete
 
 
 def dispatches(evs, substate=None):

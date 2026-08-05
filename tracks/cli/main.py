@@ -349,8 +349,13 @@ def cmd_review(repo: Path, *args: str) -> int:
 
 
 def _approval_gate(store: Store, run_id: str):
-    """FR-0180: approve/return are only legal at the AWAIT_HUMAN gate."""
+    """FR-0180: approve/return are only legal at a Human gate.
+
+    Two gates accept ``approve``: M-REQ-APPROVAL (awaiting=approval) and
+    M-TEST DIAGNOSE ac_gap/spec_gap rollback (awaiting=rollback, SM-01.13)."""
     state = store.state(run_id)
+    if state.awaiting == "rollback" and state.stage == "M-TEST":
+        return state, None  # SM-01.13: Human approves the rollback
     if state.stage != "M-REQ-APPROVAL" or state.awaiting != "approval":
         return None, (f"run not awaiting approval (stage={state.stage} "
                       f"awaiting={state.awaiting or 'nothing'})")
@@ -371,6 +376,15 @@ def cmd_approve(repo: Path, *args) -> int:
         state, err = _approval_gate(store, run_id)
         if err:
             return _err(err)
+        # SM-01.13: M-TEST rollback approval needs no digest check
+        if state.stage == "M-TEST" and state.awaiting == "rollback":
+            actor = actor or git(repo, "config", "user.name",
+                                 check=False).stdout.strip() or "human"
+            store.append(run_id, state.version, "human.approval",
+                         {"actor": actor, "digest": None,
+                          "ts": datetime.now(timezone.utc).isoformat()})
+            print(f"approved rollback to {state.return_target}")
+            return 0
         vdir = paths.version_dir(home, state.version)
         digest = revision_digest(vdir)
         previews = [e for e in store.events(run_id)

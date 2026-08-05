@@ -235,14 +235,16 @@ def test_prompt_serializes_retry_evidence_from_the_assignment(tmp_path):
 
 
 def test_role_map_covers_every_tracks_role():
-    # Every Runtime role (IF-001 §5) maps to a shipped opencode agent Name —
-    # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews).
+    # Every Runtime role (IF-001 §5) maps to a shipped opencode agent Name -
+    # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews) and the
+    # v0.4 M-TEST Shield (integration/e2e test writer, FR-0120).
     assert AGENT_NAME == {
         "scribe": "Scribe",
         "sage": "Sage",
         "lex": "Lex",
         "archer": "Archer",
         "prism": "Prism",
+        "shield": "Shield",
     }
 
 

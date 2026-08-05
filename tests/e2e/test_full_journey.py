@@ -14,7 +14,7 @@ import hashlib
 import re
 import sqlite3
 
-from tests.e2e.helpers import dispatches, walk_to_await_human, walk_to_design_complete
+from tests.e2e.helpers import dispatches, walk_to_await_human, walk_to_m_test_complete
 from tests.e2e.test_happy_path import git_out, parse_frontmatter, types
 
 
@@ -64,13 +64,15 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     assert completed["terminal_state"] == "boundary"
 
     # v0.3 M-DESIGN (flow.md §8): entered right after M-REQ-APPROVAL exits,
-    # Archer commits the trio, Prism passes, EXIT gate re-validates, and the
-    # run completes at the M-IMPL boundary with no human.* event after
-    # approval (BS-05).
+    # Archer commits the trio, Prism passes. v0.4: M-DESIGN EXIT enters M-TEST
+    # (not run.completed); M-TEST runs to completion (Shield writes tests,
+    # Prism reviews, Runtime verifies Red + trace, commits test assets).
     approval_seq = next(e["seq"] for e in evs if e["type"] == "human.approval")
     entered = [e for e in evs if e["type"] == "stage.entered"]
-    assert entered[-1]["payload"]["stage"] == "M-DESIGN"
+    assert entered[-1]["payload"]["stage"] == "M-TEST"
     assert entered[-1]["seq"] > approval_seq
+    assert [e["payload"]["stage"] for e in evs
+            if e["type"] == "stage.exited"][-1] == "M-TEST"
     committed = [e for e in evs if e["type"] == "design.committed"]
     assert sorted(e["payload"]["doc"] for e in committed) == [
         "architecture.md", "interfaces.md", "test-plan.md"]
@@ -78,9 +80,16 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     for doc in ("architecture.md", "interfaces.md", "test-plan.md"):
         assert (vdir / doc).exists()  # BS-03: the trio on disk, validate-clean
     verdicts = [e for e in evs if e["type"] == "prism.verdict"]
-    assert [e["payload"]["verdict"] for e in verdicts] == ["pass"]
+    # v0.4: two prism.verdict(pass) -- M-DESIGN review + M-TEST PRISM_REVIEW
+    assert [e["payload"]["verdict"] for e in verdicts] == ["pass", "pass"]
+    # M-TEST events: test.collected, red.validated, test.committed
+    assert [e["payload"]["status"] for e in evs
+            if e["type"] == "test.collected"] == ["passed"]
+    assert [e["payload"]["status"] for e in evs
+            if e["type"] == "red.validated"] == ["valid"]
+    assert any(e["type"] == "test.committed" for e in evs)
     assert not [e for e in evs if e["type"].startswith("human.")
-                and e["seq"] > approval_seq]  # BS-05: no gate in M-DESIGN
+                and e["seq"] > approval_seq]  # BS-05: no gate in M-DESIGN/M-TEST
 
     recorded = [e for e in evs if e["type"] == "approval.recorded"]
     assert len(recorded) == 1
@@ -125,9 +134,10 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
 
 
 def test_prism_revise_drives_a_second_review_round(trac, event_log):
-    # flow.md §8.1: verdict(revise) → RESPOND (Archer revises the trio) →
-    # validate → commit → a NEW PRISM_REVIEW round (review.round_started),
-    # then pass exits and completes the run — still no human gate (BS-05).
+    # flow.md §8.1: verdict(revise) -> RESPOND (Archer revises the trio) ->
+    # validate -> commit -> a NEW PRISM_REVIEW round (review.round_started),
+    # then pass exits M-DESIGN and enters M-TEST (v0.4: no longer run.completed
+    # at M-DESIGN; M-TEST runs to the boundary) - still no human gate (BS-05).
     run_id = walk_to_await_human(trac)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run", simulate="prism:PRISM_REVIEW=revise|pass")
@@ -135,23 +145,30 @@ def test_prism_revise_drives_a_second_review_round(trac, event_log):
     assert "status=completed" in r.stdout
     evs = event_log(run_id)
     ts = types(evs)
+    # v0.4: three prism.verdict events - M-DESIGN revise, M-DESIGN re-review
+    # pass, M-TEST PRISM_REVIEW pass (simulate `revise|pass` applies to both
+    # stages' PRISM_REVIEW; the last token sticks for the M-TEST call).
     assert [e["payload"]["verdict"] for e in evs
-            if e["type"] == "prism.verdict"] == ["revise", "pass"]
+            if e["type"] == "prism.verdict"] == ["revise", "pass", "pass"]
     assert ts.count("review.round_started") == 1
     assert ts.count("design.committed") == 6  # 3 draft + 3 respond re-commits
     assert ts[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
+    # v0.4: the final stage.exited is M-TEST (not M-DESIGN)
+    assert [e["payload"]["stage"] for e in evs
+            if e["type"] == "stage.exited"][-1] == "M-TEST"
 
 
 def test_walk_to_design_complete(trac, event_log):
-    # The shared helper drives approval → M-DESIGN → run.completed in a single
-    # `trac run` after approval (no human gate in M-DESIGN, BS-05).
-    run_id = walk_to_design_complete(trac)
+    # The shared helper drives approval -> M-DESIGN -> M-TEST -> run.completed
+    # in a single `trac run` after approval (no human gate in M-DESIGN or
+    # M-TEST, BS-05). v0.4: the boundary moved from M-DESIGN to M-TEST.
+    run_id = walk_to_m_test_complete(trac)
     evs = event_log(run_id)
     assert types(evs)[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
     assert [e["payload"]["stage"] for e in evs
-            if e["type"] == "stage.exited"][-1] == "M-DESIGN"
+            if e["type"] == "stage.exited"][-1] == "M-TEST"
 
 
 def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
@@ -208,9 +225,20 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     assert trac("approve", "--actor", "LiveE2E-Human").returncode == 0
 
     step(["DRAFT"], "substate=PRISM_REVIEW", kind="author")  # archer-design-draft
-    step(["PRISM_REVIEW"], "status=completed", kind="reviewer")  # prism-design-review
+    # v0.4: M-DESIGN Prism pass -> EXIT -> stage.entered(M-TEST); the Shield
+    # dispatch (WRITE) is a different substate -> gated, run stops at DISPATCH.
+    step(["PRISM_REVIEW"], "stage=M-TEST", kind="reviewer")  # prism-design-review
+
+    # v0.4 M-TEST: Shield dispatch (WRITE) -> collect_tests (not a dispatch) ->
+    # stops at PRISM_REVIEW (Prism M-TEST dispatch is a different substate).
+    step(["WRITE"], "substate=PRISM_REVIEW", kind="author")  # shield writes tests
+    # Prism M-TEST dispatch -> run_tests/check_trace/commit_tests (not dispatches)
+    # all execute in this step -> run.completed at the M-TEST->M-IMPL boundary.
+    step(["PRISM_REVIEW"], "status=completed", kind="reviewer")  # prism M-TEST review
 
     evs = event_log(run_id)
     assert types(evs)[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
-    assert steps == 14
+    assert [e["payload"]["stage"] for e in evs
+            if e["type"] == "stage.exited"][-1] == "M-TEST"
+    assert steps == 16

@@ -20,10 +20,12 @@ AGENT_DELIVERABLES = (
     _PKG / "agents" / "Lex.md",
     _PKG / "agents" / "Archer.md",
     _PKG / "agents" / "Prism.md",
+    _PKG / "agents" / "Shield.md",  # v0.4 M-TEST (FR-0120)
 )
 
 DELIVERABLES = AGENT_DELIVERABLES + (
     _PKG / "skills" / "tracks-discuz" / "SKILL.md",
+    _PKG / "skills" / "test-asset-criteria" / "SKILL.md",  # v0.4 D-29 (FR-0040)
 )
 
 IQ_GRADES = ("S", "A", "B")

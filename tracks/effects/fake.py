@@ -24,6 +24,7 @@ from tracks.frontmatter import split_frontmatter
 _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
 # AC items the fake test-plan must attribute a test layer (BS-06 design trace)
 _ACC_ITEM = re.compile(r"^### (AC-[A-Z0-9]+-\d+)\b", re.M)
+_LAYER_RE = re.compile(r"\b(unit|integration|e2e)\b", re.I)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _LAYERS = ("unit", "integration", "e2e")
@@ -100,11 +101,19 @@ class FakeBackend:
         if substate == "TRIAGE":
             return {"status": "done", "artifact_ref": None,
                     "self_report": "explored raw requirement"}
+        if role == "shield":
+            return self._act_shield(substate, assignment)
         if substate in ("DRAFT", "RESPOND"):
             return self._act_draft(role, substate, doc, doc_path)
         verdict = self.token(role, substate, "pass")
-        return {"status": "done", "artifact_ref": None,
-                "self_report": f"review: {verdict}", "verdict": verdict}
+        result = {"status": "done", "artifact_ref": None,
+                  "self_report": f"review: {verdict}", "verdict": verdict}
+        # D-29 triple ②: M-TEST Prism echoes the criteria-pack identity.
+        if role == "prism" and substate == "PRISM_REVIEW":
+            assigned_pack = (assignment or {}).get("criteria_pack")
+            if assigned_pack:
+                result["criteria_pack"] = dict(assigned_pack)
+        return result
 
     def _act_draft(self, role: str, substate: str, doc: str | None,
                    doc_path: Path | None) -> dict:
@@ -142,6 +151,79 @@ class FakeBackend:
             self._write_acceptance(doc_path, token)
         else:
             self._write_spec(doc_path, token)
+
+    # -- M-TEST (Shield writes tests; FR-0020/FR-0120) ------------------------
+
+    def _act_shield(self, substate: str, assignment: dict | None) -> dict:
+        """Shield writes collectable, legit-Red test files for every required
+        (integration|e2e) AC in the host project's test-plan, with long-format
+        markers. Tokens: ``fail``/``over_reach`` simulate a failed outcome;
+        ``illegit_red`` writes an ImportError-raising test (illegit Red);
+        ``short_marker`` writes a short-format marker (trace gate fails)."""
+        token = self.token("shield", substate, "ok")
+        if token in _FAILED_TOKENS:
+            return {"status": "failed", "artifact_ref": None,
+                    "failure_class": "agent_failed" if token == "fail" else token,
+                    "audit_evidence": f"simulated {token}",
+                    "self_report": f"shield exit gate failed: {token}"}
+        vdir = self._design_vdir()
+        required = self._required_ac_layers(vdir)
+        tests_dir = self.repo / "tests"
+        for subdir in ("integration", "e2e", "assets", "counterexamples"):
+            (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
+        for ac_id, layer in required:
+            self._write_test_file(tests_dir, ac_id, layer, token)
+        return {"status": "done", "artifact_ref": str(tests_dir),
+                "self_report": f"wrote {len(required)} test files ({token})"}
+
+    def _required_ac_layers(self, vdir: Path) -> list[tuple[str, str]]:
+        """Return [(ac_id, layer)] for integration|e2e ACs from the host
+        project's acceptance.md + test-plan.md AC Coverage section."""
+        acc = vdir / "acceptance.md"
+        plan = vdir / "test-plan.md"
+        if not acc.exists() or not plan.exists():
+            return []
+        acs = _ACC_ITEM.findall(acc.read_text(encoding="utf-8"))
+        plan_text = plan.read_text(encoding="utf-8")
+        out: list[tuple[str, str]] = []
+        for ac_id in acs:
+            layer = self._layer_of(ac_id, plan_text)
+            if layer in ("integration", "e2e"):
+                out.append((ac_id, layer))
+        return out
+
+    @staticmethod
+    def _layer_of(ac_id: str, plan_text: str) -> str | None:
+        for ln in plan_text.splitlines():
+            if ac_id in ln:
+                m = _LAYER_RE.search(ln)
+                if m:
+                    return m.group(1).lower()
+        return None
+
+    def _write_test_file(self, tests_dir: Path, ac_id: str, layer: str,
+                         token: str) -> None:
+        subdir = tests_dir / layer
+        slug = ac_id.lower().replace("-", "_")
+        fname = f"test_{slug}.py"
+        marker = f"{ac_id}@{self.version}"
+        if token == "short_marker":
+            marker = ac_id  # short format -> trace gate fails (SM-01.15)
+        body = f'"""{marker}"""\n'
+        if token == "illegit_red":
+            # Import inside the test body so collection passes but the test
+            # fails at runtime with ImportError (illegit Red -> DIAGNOSE).
+            body += f"def test_{slug}():\n"
+            body += "    import nonexistent_module  # illegit Red\n"
+        elif token == "pass_red":
+            # Test passes instead of failing (unexpected pass -> DIAGNOSE).
+            body += f"def test_{slug}():\n"
+            body += "    pass\n"
+        else:
+            token_stmt = 'NotImplementedError("IF-MTEST-001")'
+            body += f"def test_{slug}():\n"
+            body += f"    raise {token_stmt}\n"
+        (subdir / fname).write_text(body, encoding="utf-8")
 
     # -- M-DESIGN (Archer draft/revise; BS-03/BS-06) -------------------------
 

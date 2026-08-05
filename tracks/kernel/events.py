@@ -41,6 +41,11 @@ EVENT_TYPES = (
     # v0.3 scope expansion (flow.md §8.2): M-DESIGN (Archer drafts, Prism reviews)
     "design.committed",
     "prism.verdict",
+    # v0.4 scope expansion (flow.md §9): M-TEST (Shield writes tests, Runtime
+    # independently collects/runs, Prism reviews the test contract).
+    "test.collected",
+    "red.validated",
+    "test.committed",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -58,6 +63,11 @@ COMMAND_KINDS = (
     "generate_preview",
     "record_approval",
     "create_issues",
+    # v0.4 scope expansion (IF-004 §1b): M-TEST executor handlers
+    "collect_tests",
+    "run_tests",
+    "check_trace",
+    "commit_tests",
 )
 
 

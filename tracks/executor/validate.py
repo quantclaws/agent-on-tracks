@@ -327,6 +327,29 @@ def _check_ac_layer_and_if(
     return []
 
 
+def _layer_of(ac_id: str, visible: list[str]) -> str | None:
+    """Return the test-layer attribution (unit/integration/e2e) of ``ac_id``
+    from the visible test-plan lines, or None when unattributed."""
+    for ln in visible:
+        if ac_id in ln:
+            m = _LAYER.search(ln)
+            if m:
+                return m.group(1).lower()
+    return None
+
+
+def required_ac_ids(acc_path: Path, plan_path: Path) -> set[str]:
+    """FR-0070 EXIT gate helper: AC IDs with an integration|e2e layer
+    attribution in test-plan.md (the ``required`` ACs whose marker binding the
+    M-TEST trace gate must verify). Unit-only ACs do not block M-TEST exit."""
+    if not acc_path.exists() or not plan_path.exists():
+        return set()
+    _, acs = _acc_scan(acc_path.read_text(encoding="utf-8"))
+    visible = _visible_plan_lines(plan_path.read_text(encoding="utf-8"))
+    return {ac_id for ac_id, _ref, _ln, _sec in acs
+            if _layer_of(ac_id, visible) in ("integration", "e2e")}
+
+
 def check_design_trace(
     acc_text: str, plan_text: str, if_registry: set[str] | None = None,
 ) -> list:

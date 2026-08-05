@@ -62,6 +62,16 @@ class State:
     review_diff_ref: str | None = None  # FR-16: human revise commit sha
     branch_created: bool = False  # release branch exists (M-START create_branch)
     branch_deleted: bool = False  # release branch torn down (FR-09 reject)
+    # M-TEST (flow.md §9 / SM-01, FR-0010~0070). The shared <=3 attempt budget
+    # reuses `current_attempt` (reset on stage.entered); the fields below track
+    # the per-substate progress that decide() / reducers consult.
+    test_collected: bool = False  # COLLECT succeeded
+    red_validated: bool = False  # RED_CHECK: all failures are legit Red
+    red_findings: list | None = None  # RED_CHECK per-failure classifications
+    trace_passed: bool = False  # EXIT trac check trace closure
+    test_committed: bool = False  # test asset frozen (commit_tests done)
+    criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
+    diagnose_classification: str | None = None  # DIAGNOSE routing verdict
 
 
 def _reset_doc(s: State) -> None:
@@ -132,6 +142,11 @@ _STAGES = {sd.stage: sd for sd in (
              review_substate="PRISM_REVIEW", reviewer="prism",
              verdict_event="prism.verdict",
              reviewer_passed_flag="prism_passed_this_round"),
+    # M-TEST (flow.md §9 / SM-01): no drafting_role/doc/reviewer -- the Shield
+    # and Prism dispatches are driven by the explicit `_decide_m_test` control
+    # flow (like `_decide_approval`), not by the StageDef table. initial_substate
+    # is DISPATCH (SM-01.1).
+    StageDef(stage="M-TEST", initial_substate="DISPATCH"),
 )}
 
 # Derived lookups, keyed like the facts they replace.
@@ -181,6 +196,13 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         # re-entry after RETURNED rollback restarts the approval cycle fresh
         s.preview_ready = s.approved = s.returned = s.issues_created = False
         s.return_target = s.approval_digest = s.approval_actor = None
+    if s.stage == "M-TEST":
+        # SM-01.1: fresh M-TEST cycle. current_attempt (shared <=3 budget) is
+        # already reset above; reset the per-substate progress fields.
+        s.test_collected = s.red_validated = s.trace_passed = False
+        s.test_committed = False
+        s.red_findings = s.criteria_pack_loaded = None
+        s.diagnose_classification = None
 
 
 def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -199,12 +221,27 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.scope_overflow = False
     s.returned = False
     s.return_target = None
+    # M-DESIGN re-entry after stub_gap rollback (SM-01.12): reset the design
+    # doc counters so _decide_design_draft re-validates and re-commits the trio.
+    if s.stage == "M-DESIGN":
+        s.design_validated = s.design_committed = 0
+        s.prism_passed_this_round = False
+        s.exit_validated = False
 
 
 def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     cmd = p.get("command", {})
     s.pending = cmd
     if cmd.get("kind") != "dispatch_agent":
+        if s.stage == "M-TEST" and cmd.get("kind") == "collect_tests":
+            s.substate = "COLLECT"  # SM-01.3: WRITE -> COLLECT
+        return
+    if s.stage == "M-TEST":
+        # SM-01.2: DISPATCH -> WRITE on the first Shield dispatch. Subsequent
+        # Shield re-dispatches (WRITE/SM-01.4/.6/.8/.11/.15) stay in WRITE.
+        if s.substate == "DISPATCH":
+            s.substate = "WRITE"
+        s.doc_dispatched = True  # track Shield dispatch state
         return
     if s.substate in _REVIEW_SUBSTATE:
         s.reviewer_dispatched = True
@@ -245,11 +282,18 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
             "reason": p.get("self_report"),
             "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
         }
+        if s.stage == "M-TEST":
+            _reset_doc(s)
+            _consume_attempt(s)
+            return
         if s.substate in _REVIEW_SUBSTATE:
             _reset_review(s)
         else:
             _reset_doc(s)
         _consume_attempt(s)
+        return
+    if s.stage == "M-TEST":
+        _on_m_test_outcome_done(s)
         return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"
@@ -260,6 +304,12 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
+    if s.stage == "M-TEST":
+        # EXIT trace gate passed (SM-01.14): trace closure verified; the next
+        # decide() step issues commit_tests.
+        s.trace_passed = True
+        s.last_failure = None
+        return
     if s.stage == "M-DESIGN":
         # Multi-doc sequence: each passed validate advances one design doc
         # (DRAFT/RESPOND pipeline and the EXIT gate share the counter).
@@ -275,6 +325,9 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    if s.stage == "M-TEST":
+        _on_m_test_verdict_failed(s, p)
+        return
     if s.stage == "M-DESIGN":
         # BS-05: no human gate in M-DESIGN — a failed validate, even at the
         # EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates
@@ -325,6 +378,18 @@ def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    if s.stage == "M-TEST":
+        # SM-01.7/.8: pass -> RED_CHECK; revise -> WRITE (re-dispatch Shield).
+        # The shared <=3 budget is consumed on revise (NOT reset -- unlike
+        # M-DESIGN, M-TEST shares one budget across WRITE/PRISM_REVIEW/EXIT).
+        s.criteria_pack_loaded = p.get("criteria_pack")
+        if p["verdict"] == "pass":
+            s.substate = "RED_CHECK"
+            return
+        s.substate = "WRITE"
+        _reset_doc(s)
+        _consume_attempt(s)
+        return
     # M-DESIGN has no human review gate (BS-05 / flow.md §8.3): pass goes
     # straight to EXIT; revise re-dispatches Archer via RESPOND.
     s.prism_passed_this_round = p["verdict"] == "pass"
@@ -416,7 +481,14 @@ def _on_preview_generated(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_human_approval(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-05.3 — the ONLY entry into APPROVED (FR-0180 hard human gate)
+    if s.stage == "M-TEST" and s.awaiting == "rollback":
+        # SM-01.13: Human approved the ac_gap/spec_gap rollback -- clear the
+        # gate and let decide() produce rollback_stage(return_target).
+        s.awaiting = None
+        s.status = "active"
+        s.substate = "RETURNED"
+        return
+    # SM-05.3 - the ONLY entry into APPROVED (FR-0180 hard human gate)
     s.approved = True
     s.awaiting = None
     s.status = "active"
@@ -460,6 +532,84 @@ def _on_branch_deleted(s: State, p: dict, ev: EventEnvelope) -> None:
     s.branch_deleted = True
 
 
+# -- M-TEST reducers (flow.md §9 / SM-01, FR-0010~0070) -----------------------
+
+def _on_m_test_outcome_done(s: State) -> None:
+    """SM-01.3: Shield outcome done -> COLLECT; Prism outcome -> produced."""
+    if s.substate == "WRITE":
+        s.substate = "COLLECT"
+    elif s.substate == "PRISM_REVIEW":
+        s.reviewer_produced = True
+
+
+def _on_test_collected(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-01.5/.6: passed -> PRISM_REVIEW; failed -> WRITE (re-dispatch Shield).
+    if p["status"] == "passed":
+        s.test_collected = True
+        s.substate = "PRISM_REVIEW"
+        _reset_review(s)
+    else:
+        s.test_collected = False
+        s.substate = "WRITE"
+        _reset_doc(s)
+        _consume_attempt(s)  # shared <=3 budget
+
+
+def _on_red_validated(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-01.9/.10: valid -> EXIT; invalid -> DIAGNOSE.
+    s.red_findings = p.get("findings")
+    if p["status"] == "valid":
+        s.red_validated = True
+        s.substate = "EXIT"
+    else:
+        s.red_validated = False
+        s.substate = "DIAGNOSE"
+
+
+def _on_test_committed(s: State, p: dict, ev: EventEnvelope) -> None:
+    # SM-01.14: test asset frozen. The executor follows up with stage.exited +
+    # run.completed (M-IMPL not registered -> boundary).
+    s.test_committed = True
+
+
+def _on_m_test_verdict_failed(s: State, p: dict) -> None:
+    """M-TEST verdict.failed routing (FR-0040/0060/0070).
+
+    - ``criteria_pack_mismatch`` (PRISM_REVIEW): re-dispatch Prism, consume
+      the shared <=3 budget (anti-self-report triple, D-29).
+    - ``trace`` (EXIT, SM-01.15): re-dispatch Shield (WRITE), consume budget.
+    - ``test_defect`` (DIAGNOSE, SM-01.11): re-dispatch Shield (WRITE), consume.
+    - ``stub_gap`` (DIAGNOSE, SM-01.12): rollback M-DESIGN, no Human.
+    - ``ac_gap``/``spec_gap`` (DIAGNOSE, SM-01.13): await Human approval, then
+      rollback M-ACC / M-SPEC.
+    """
+    check = p.get("check")
+    if check == "criteria_pack_mismatch":
+        _reset_review(s)
+        _consume_attempt(s)
+        return
+    if check == "trace":
+        s.trace_passed = False
+        s.substate = "WRITE"
+        _reset_doc(s)
+        _consume_attempt(s)
+        return
+    classification = check  # test_defect | stub_gap | ac_gap | spec_gap
+    s.diagnose_classification = classification
+    if classification == "test_defect":
+        s.substate = "WRITE"
+        _reset_doc(s)
+        _consume_attempt(s)
+    elif classification == "stub_gap":
+        # rollback M-DESIGN -- decide() produces rollback_stage(M-DESIGN)
+        s.diagnose_classification = "stub_gap"
+    elif classification in ("ac_gap", "spec_gap"):
+        # Human must approve the rollback (SM-01.13)
+        s.status = "awaiting_human"
+        s.awaiting = "rollback"
+        s.return_target = "M-ACC" if classification == "ac_gap" else "M-SPEC"
+
+
 # run.interrupted has no reducer: it changes no state (v0.1); `apply`'s prelude
 # still clears `pending` for it.
 _APPLY = {
@@ -494,6 +644,10 @@ _APPLY = {
     "human.return": _on_human_return,
     "approval.recorded": _on_approval_recorded,
     "issues.created": _on_issues_created,
+    # v0.4 M-TEST (flow.md §9 / SM-01)
+    "test.collected": _on_test_collected,
+    "red.validated": _on_red_validated,
+    "test.committed": _on_test_committed,
 }
 
 
@@ -695,6 +849,105 @@ def _decide_exit_gate(s: State, stage: str) -> Command | None:
     return _decide_exit(s, stage)
 
 
+# -- M-TEST control flow (flow.md §9 / SM-01, FR-0010~0070) -------------------
+
+# D-29 criteria pack identity (architecture.md §3.4): Runtime decides the pack
+# name+version; Prism loads it and echoes the identity in its verdict.
+_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+# Shield / M-TEST Prism read-only context docs (interfaces.md §3a).
+_M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
+
+
+def _m_test_shield_dispatch(s: State) -> Command:
+    """DISPATCH/WRITE: dispatch Shield to write integration/e2e tests."""
+    params = {
+        "role": "shield", "substate": "WRITE",
+        "objective": "write integration/e2e tests against interface stubs",
+        "stage": "M-TEST",
+        "attempt": s.current_attempt + 1,
+        "docs": list(_M_TEST_CONTEXT_DOCS),
+        "assignment": {
+            "kind": "WRITE",
+            "skills": ["tracks-discuz"],
+            "docs": list(_M_TEST_CONTEXT_DOCS),
+        },
+    }
+    if s.last_failure:
+        params["evidence"] = dict(s.last_failure)  # FR-11
+    return Command(kind="dispatch_agent", params=params)
+
+
+def _m_test_prism_dispatch(s: State) -> Command:
+    """PRISM_REVIEW: dispatch Prism with the criteria pack (D-29 triple ①)."""
+    params = {
+        "role": "prism", "substate": "PRISM_REVIEW",
+        "objective": "review test contract against the criteria pack",
+        "stage": "M-TEST",
+        "attempt": s.current_attempt + 1,
+        "docs": list(_M_TEST_CONTEXT_DOCS),
+        "assignment": {
+            "kind": "PRISM_REVIEW",
+            "skill": "tracks-discuz",
+            "docs": list(_M_TEST_CONTEXT_DOCS),
+            "criteria_pack": dict(_CRITERIA_PACK),
+        },
+    }
+    if s.last_failure:
+        params["evidence"] = dict(s.last_failure)
+    return Command(kind="dispatch_agent", params=params)
+
+
+def _decide_m_test(s: State, sub: str) -> Command | None:
+    """M-TEST explicit control flow (architecture.md §1.2, SM-01).
+
+    Pure (NFR-0030): no I/O, no clock/env. Each substate maps to at most one
+    Command; substates not listed produce None (halt / awaiting result).
+    """
+    if sub == "DISPATCH":
+        return _m_test_shield_dispatch(s)  # SM-01.2: first Shield dispatch
+    if sub == "WRITE":
+        if s.doc_dispatched:
+            return None  # awaiting Shield outcome
+        return _m_test_shield_dispatch(s)  # SM-01.4/.6/.8/.11/.15 re-dispatch
+    if sub == "COLLECT":
+        return Command(kind="collect_tests", params={"stage": "M-TEST"})  # SM-01.5
+    if sub == "PRISM_REVIEW":
+        if s.reviewer_dispatched:
+            return None  # awaiting Prism verdict
+        return _m_test_prism_dispatch(s)  # SM-01.7
+    if sub == "RED_CHECK":
+        return Command(kind="run_tests", params={"stage": "M-TEST"})  # SM-01.9
+    if sub == "EXIT":
+        return _m_test_exit_route(s)  # SM-01.14/.15
+    if sub == "DIAGNOSE":
+        return _m_test_diagnose_route(s)  # SM-01.11/.12/.13
+    if sub == "RETURNED":
+        # SM-01.13: Human approved ac_gap/spec_gap rollback.
+        return Command(kind="rollback_stage",
+                       params={"to_stage": s.return_target, "reason": "diagnose_rollback"})
+    return None
+
+
+def _m_test_exit_route(s: State) -> Command | None:
+    """EXIT: trace gate -> commit tests. trace_passed and test_committed are
+    set by reducers; decide() only fires the next step."""
+    if not s.trace_passed:
+        return Command(kind="check_trace", params={"stage": "M-TEST"})  # SM-01.14
+    if not s.test_committed:
+        return Command(kind="commit_tests", params={"stage": "M-TEST"})  # SM-01.14
+    return None  # executor emits stage.exited + run.completed
+
+
+def _m_test_diagnose_route(s: State) -> Command | None:
+    """DIAGNOSE four-way routing (FR-0060). test_defect and ac_gap/spec_gap
+    are routed by the reducer (WRITE / awaiting_human); stub_gap produces the
+    rollback command here (no Human gate, SM-01.12)."""
+    if s.diagnose_classification == "stub_gap":
+        return Command(kind="rollback_stage",
+                       params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
+    return None  # test_defect -> WRITE (reducer); ac_gap/spec_gap -> awaiting
+
+
 def decide(s: State) -> Command | None:
     """Next command to issue, or None to halt (awaiting human / completed)."""
     if s.status != "active" or s.awaiting:
@@ -703,10 +956,12 @@ def decide(s: State) -> Command | None:
     if stage == "M-STORY" and s.triage_decision in ("no_go", "park"):
         return _decide_reject(s)
     if s.scope_overflow:
-        # FR-20: >30 FRs in spec — roll back to M-STORY, re-scope the story.
+        # FR-20: >30 FRs in spec - roll back to M-STORY, re-scope the story.
         return Command(
             kind="rollback_stage", params={"to_stage": "M-STORY", "reason": "scope_overflow"}
         )
+    if stage == "M-TEST":
+        return _decide_m_test(s, sub)
     if sub in ("DRAFT", "RESPOND"):
         return _decide_pipeline(s, stage, sub)
     if sub == "TRIAGE":

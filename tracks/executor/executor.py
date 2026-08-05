@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
+import sys
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +17,7 @@ from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
-from tracks.executor.validate import validate_document
+from tracks.executor.validate import required_ac_ids, validate_document
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State, decide
@@ -82,11 +84,12 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
 
 
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
-# stage.entered; stages absent here (M-DESIGN) end the run at the M-IMPL
-# boundary: run.completed(terminal_state="boundary") (SM-05.6 / v0.3 Decision A:
-# M-IMPL is not implemented, so the run completes after M-DESIGN EXIT).
+# stage.entered; stages absent here (M-TEST) end the run at the M-IMPL
+# boundary: run.completed(terminal_state="boundary") (SM-05.6 / v0.4: M-IMPL is
+# not implemented, so the run completes after M-TEST EXIT).
 _NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC",
-               "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN"}
+               "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN",
+               "M-DESIGN": "M-TEST"}
 
 # doc -> (committed event type, body-sha payload key)
 _COMMITTED_EVENT = {
@@ -103,6 +106,60 @@ _COMMITTED_EVENT = {
 # reviewer role -> its verdict event type
 _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
                   "prism": "prism.verdict"}
+
+# D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
+# read back by the executor to enforce the anti-self-report triple.
+_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+
+# IF-004 §1g RedClass closed set (legit = the test fails for the right reason).
+_LEGIT_RED = frozenset({"assertion_failure", "stub_token_failure", "symbol_missing"})
+# Failure keywords -> illegit Red class (collection/syntax/fixture/import).
+_ILLEGIT_KEYWORDS = (
+    "ImportError", "ModuleNotFoundError", "SyntaxError",
+    "FixtureLookupError", "collection error", "ERROR collecting",
+)
+
+
+def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str:
+    """FR-0050 classify a single test failure (IF-004 §1g, pure).
+
+    Based on returncode + keyword matching (no traceback structure parsing):
+    - ``NotImplementedError("IF-`` -> ``stub_token_failure`` (legit).
+    - ``AssertionError``/``assert`` -> ``assertion_failure`` (legit).
+    - ImportError/ModuleNotFoundError/SyntaxError/FixtureLookupError/collection
+      error -> ``collection_error`` (illegit).
+    - returncode == 0 (test should fail but passed) -> ``unexpected_pass``.
+    - otherwise -> ``unclassified`` (illegit, enters DIAGNOSE).
+    """
+    combined = f"{stdout}\n{stderr}"
+    if returncode == 0:
+        return "unexpected_pass"
+    if 'NotImplementedError("IF-' in combined or "NotImplementedError('IF-" in combined:
+        return "stub_token_failure"
+    if "AssertionError" in combined or "\nassert " in combined or "assert " in combined:
+        return "assertion_failure"
+    for kw in _ILLEGIT_KEYWORDS:
+        if kw in combined:
+            return "collection_error"
+    if "AttributeError" in combined or "NameError" in combined:
+        return "symbol_missing"
+    return "unclassified"
+
+
+def _parse_collected_count(stdout: str) -> int:
+    """Parse the test count from pytest --collect-only -q output (last line
+    like ``N tests collected`` or ``N errors``)."""
+    m = re.findall(r"(\d+) tests? collected", stdout)
+    if m:
+        return int(m[-1])
+    m = re.findall(r"(\d+) errors?", stdout)
+    return int(m[-1]) if m else 0
+
+
+def _short_detail(output: str, limit: int = 200) -> str:
+    """Truncate pytest output for the red.validated findings detail field."""
+    output = output.strip()
+    return output[:limit] + ("..." if len(output) > limit else "")
 
 
 class Executor:
@@ -233,17 +290,47 @@ class Executor:
         self._emit("outcome.received", _dispatch_payload(self.store, p, result),
                    command_id=cmd.command_id, task_id=task_id)
         verdict = result.get("verdict")
+        # D-29 anti-self-report triple ③: M-TEST PRISM_REVIEW criteria-pack
+        # mismatch -> verdict.failed, re-dispatch Prism (no prism.verdict).
+        if self._criteria_pack_mismatch(role, substate, state, verdict,
+                                        assignment, result, cmd):
+            return
         if verdict:
-            ev = _VERDICT_EVENT[role]
-            self._emit(ev, {"verdict": verdict, "diff_ref": result.get("diff_ref")},
+            self._emit_verdict(role, verdict, result, state, p, cmd, task_id)
+
+    def _criteria_pack_mismatch(self, role, substate, state, verdict,
+                                assignment, result, cmd) -> bool:
+        """Return True when the criteria-pack identity mismatch was emitted
+        (caller should skip the normal verdict emission)."""
+        if not (verdict and role == "prism" and substate == "PRISM_REVIEW"
+                and state.stage == "M-TEST"):
+            return False
+        assigned_pack = (assignment or {}).get("criteria_pack")
+        outcome_pack = result.get("criteria_pack")
+        if assigned_pack and outcome_pack != assigned_pack:
+            self._emit("verdict.failed",
+                       {"check": "criteria_pack_mismatch",
+                        "reason": f"expected {assigned_pack}, got {outcome_pack}",
+                        "attempt": state.current_attempt + 1,
+                        "evidence": str(outcome_pack)},
+                       command_id=cmd.command_id)
+            return True
+        return False
+
+    def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
+        """Emit the verdict event (+ review.round_started for Prism revise)."""
+        ev = _VERDICT_EVENT[role]
+        payload = {"verdict": verdict, "diff_ref": result.get("diff_ref")}
+        if role == "prism" and state.stage == "M-TEST":
+            payload["criteria_pack"] = result.get("criteria_pack")
+        self._emit(ev, payload, command_id=cmd.command_id, task_id=task_id)
+        if ev == "prism.verdict" and verdict != "pass":
+            # flow.md §8.2: a revise verdict opens the next review round
+            # (reducer bumps review_round and resets the reviewer flags).
+            self._emit("review.round_started",
+                       {"stage": p.get("stage"),
+                        "round": state.review_round + 1},
                        command_id=cmd.command_id, task_id=task_id)
-            if ev == "prism.verdict" and verdict != "pass":
-                # flow.md §8.2: a revise verdict opens the next review round
-                # (reducer bumps review_round and resets the reviewer flags).
-                self._emit("review.round_started",
-                           {"stage": p.get("stage"),
-                            "round": state.review_round + 1},
-                           command_id=cmd.command_id, task_id=task_id)
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
@@ -361,6 +448,119 @@ class Executor:
                     "to_stage": cmd.params["to_stage"],
                     "reason": cmd.params.get("reason", "")},
                    command_id=cmd.command_id)
+
+    # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
+
+    def _do_collect_tests(self, cmd, state, task_id, reconcile):
+        """SM-01.5: Runtime independently collects tests/integration + tests/e2e
+        via pytest --collect-only (architecture.md §3.2). Never trusts the
+        Shield self-report."""
+        if reconcile and state.test_collected:
+            return
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             "tests/integration/", "tests/e2e/"],
+            cwd=self.repo, capture_output=True, text=True,
+        )
+        if proc.returncode == 0:
+            count = _parse_collected_count(proc.stdout)
+            self._emit("test.collected",
+                       {"status": "passed", "collected_count": count, "errors": []},
+                       command_id=cmd.command_id)
+        else:
+            self._emit("test.collected",
+                       {"status": "failed", "collected_count": 0,
+                        "errors": [proc.stderr.strip() or proc.stdout.strip()]},
+                       command_id=cmd.command_id)
+
+    def _do_run_tests(self, cmd, state, task_id, reconcile):
+        """SM-01.9: Runtime independently re-runs integration/e2e and classifies
+        each failure (FR-0050). All-legit -> red.validated(valid) -> EXIT; any
+        illegit or unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/integration/", "tests/e2e/",
+             "--tb=short", "-q"],
+            cwd=self.repo, capture_output=True, text=True,
+        )
+        output = f"{proc.stdout}\n{proc.stderr}"
+        red_class = classify_red("*", proc.returncode, proc.stdout, proc.stderr)
+        legit = red_class in _LEGIT_RED
+        findings = [{"test_id": "*", "classification": red_class,
+                     "detail": _short_detail(output)}]
+        if legit:
+            self._emit("red.validated",
+                       {"status": "valid", "findings": findings},
+                       command_id=cmd.command_id)
+            return
+        # Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed.
+        self._emit("red.validated",
+                   {"status": "invalid", "findings": findings},
+                   command_id=cmd.command_id)
+        classification = self._diagnose_classification()
+        target = {"test_defect": "M-TEST", "stub_gap": "M-DESIGN",
+                  "ac_gap": "M-ACC", "spec_gap": "M-SPEC"}.get(classification, "M-TEST")
+        self._emit("verdict.failed",
+                   {"check": classification, "target_stage": target,
+                    "artifact_disposition": "rewrite" if classification == "test_defect"
+                    else "rollback", "reason": red_class,
+                    "attempt": state.current_attempt + 1},
+                   command_id=cmd.command_id)
+
+    def _do_check_trace(self, cmd, state, task_id, reconcile):
+        """SM-01.14 EXIT gate: trac check trace closure, filtered to required
+        ACs (integration|e2e layer, FR-0070 decision A / architecture.md §5.1)."""
+        if reconcile and state.trace_passed:
+            return
+        from tracks.checks.trace import check_trace_full_file  # lazy: avoid circular import
+        vdir = self._vdir()
+        tests_dir = self.repo / "tests"
+        report = check_trace_full_file(vdir, tests_dir)
+        required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
+        blocking = [e for e in report.hard_errors
+                    if any(rid in e for rid in required)] if required else list(
+                        report.hard_errors)
+        if not blocking:
+            self._emit("verdict.passed",
+                       {"check": "trace", "detail": "trace closure verified"},
+                       command_id=cmd.command_id)
+        else:
+            self._emit("verdict.failed",
+                       {"check": "trace",
+                        "reason": "; ".join(blocking),
+                        "evidence": "trac check trace",
+                        "attempt": state.current_attempt + 1},
+                       command_id=cmd.command_id)
+
+    def _do_commit_tests(self, cmd, state, task_id, reconcile):
+        """SM-01.14: freeze the test asset via a controlled git commit of tests/
+        -> test.committed + stage.exited(M-TEST) + run.completed(boundary)."""
+        if reconcile and state.test_committed:
+            return
+        marker = f"command_id: {cmd.command_id}"
+        tests_dir = self.repo / "tests"
+        if tests_dir.exists():
+            git(self.repo, "add", "tests")
+        _commit_if_staged(self.repo,
+                          f"M-TEST: freeze test assets\n\n{marker}")
+        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
+        self._emit("test.committed",
+                   {"commit_sha": commit_sha, "test_count": test_count},
+                   command_id=cmd.command_id)
+        self._emit("stage.exited", {"stage": "M-TEST"}, command_id=cmd.command_id)
+        # M-TEST has no successor (M-IMPL not registered) -> boundary.
+        self._emit("run.completed", {"terminal_state": "boundary"},
+                   command_id=cmd.command_id)
+
+    def _diagnose_classification(self) -> str:
+        """Read the DIAGNOSE classification from the fake backend's simulate
+        token (default ``test_defect``). The real channel dispatches Prism for
+        diagnostic review; the fake channel keeps it deterministic."""
+        token = getattr(self.backend, "token",
+                        lambda *_: "test_defect")("diagnose", "classification",
+                                                  "test_defect")
+        return token if token in ("test_defect", "stub_gap", "ac_gap",
+                                  "spec_gap") else "test_defect"
 
     # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------
 

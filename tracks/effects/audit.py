@@ -122,10 +122,18 @@ class Auditor:
         if "." in self.allowed:
             return None
         new_changes = self.modified_files() - baseline
-        over = sorted(p for p in new_changes if p not in self.allowed)
+        over = sorted(p for p in new_changes if not self._is_allowed(p))
         if over:
             return "over-reach: " + ", ".join(over)
         return None
+
+    def _is_allowed(self, path: str) -> bool:
+        """A path is allowed when it is an exact match or lives under an
+        allowed directory (prefix match), so a directory entry in ``allowed``
+        covers every file written beneath it."""
+        if path in self.allowed:
+            return True
+        return any(path.startswith(a + "/") for a in self.allowed)
 
     def rollback_agent_changes(self, baseline: set[str],
                                new_changes: set[str] | None = None) -> list[str]:
@@ -139,7 +147,7 @@ class Auditor:
         """
         if new_changes is None:
             new_changes = self.modified_files() - baseline
-        over = [p for p in new_changes if p not in self.allowed]
+        over = [p for p in new_changes if not self._is_allowed(p)]
         rolled: list[str] = []
         tracked = _git(self.repo, "ls-files").stdout.splitlines()
         tracked_set = set(tracked)

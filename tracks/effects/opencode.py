@@ -32,9 +32,10 @@ from tracks.effects.audit import Auditor, _rel
 
 # role (lowercase, IF-001 §5) -> opencode agent Name (capitalized, ARCH §4a).
 # Every tracks role is a real opencode agent (spec FR-020 §2): Scribe起草 /
-# Sage起草+评审 / Lex语义评审 / Archer设计三件套起草 / Prism设计评审.
+# Sage起草+评审 / Lex语义评审 / Archer设计三件套起草 / Prism设计评审 /
+# Shield集成/e2e测试编写 (v0.4 M-TEST, FR-0120).
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
-              "archer": "Archer", "prism": "Prism"}
+              "archer": "Archer", "prism": "Prism", "shield": "Shield"}
 
 # Agent IQ -> model mapping (user policy): an agent's model for live dispatch
 # is determined by its IQ frontmatter field in tracks/agents/<Name>.md (e.g.
@@ -70,6 +71,11 @@ _SCAFFOLD_HEADING = re.compile(
 _SCAFFOLD_BULLET = re.compile(r"^\s*-\s+(\S+)\s+—", re.M)
 _OPENCODE_PREFIX = ".opencode/"
 _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
+# FR-0120 Shield write scope (RP-01): the four test-asset directories. Writes
+# outside these (product code, interface stubs, design docs, ground truth) are
+# over-reach and rolled back.
+_SHIELD_SCOPE = ("tests/integration", "tests/e2e", "tests/assets",
+                 "tests/counterexamples")
 
 
 def redact(text: str) -> str:
@@ -139,8 +145,8 @@ class OpencodeBackend:
             # additionally bounded by their Scaffold 宣言, see the audit
             # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
-            auditor = Auditor(self.repo,
-                              allowed=[*doc_paths, agent_dest, self.repo])
+            allowed = self._allowed_paths(doc_paths, agent_dest, role)
+            auditor = Auditor(self.repo, allowed=allowed)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
             # File-granular baseline for the batch B scaffold subset rule: a
@@ -163,6 +169,15 @@ class OpencodeBackend:
         finally:
             for info in cleanup_infos:
                 self._cleanup_materialized(info)
+
+    def _allowed_paths(self, doc_paths: list[Path], agent_dest: Path,
+                       role: str) -> list[Path | str | None]:
+        """Build the audit allowed list. Shield (FR-0120) is scoped to the four
+        test-asset directories (no full-repo trust); every other role keeps the
+        repo-root trust (the agent_dest + target docs are always allowed)."""
+        if role == "shield":
+            return [self.repo / d for d in _SHIELD_SCOPE] + [agent_dest]
+        return [*doc_paths, agent_dest, self.repo]
 
     def _unknown_role_result(
         self, role: str, prompt: str, console_input: str | None

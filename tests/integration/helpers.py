@@ -40,3 +40,40 @@ def write_baseline(repo: Path, ids=None, modules=None):
         "trace_exemptions": {"documents": [], "ids": ids or []},
         "reach_exemptions": {"modules": modules or []},
     }), encoding="utf-8")
+
+
+# -- M-TEST shared helpers (de-duplicate integration/e2e test setup) -----------
+
+def walk_to_m_test(trac):
+    """Approve the awaiting-human run and return the run_id; the next
+    ``trac run`` enters M-DESIGN -> M-TEST."""
+    from tests.e2e.helpers import walk_to_await_human
+    run_id = walk_to_await_human(trac)
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    return run_id
+
+
+def m_test_events(evs):
+    """Slice events from the first stage.entered(M-TEST) onward."""
+    start = next(i for i, e in enumerate(evs) if e["type"] == "stage.entered"
+                 and e["payload"]["stage"] == "M-TEST")
+    return evs[start:]
+
+
+def assert_no_human_events_in_m_test(evs):
+    """Assert no human.* events appear during M-TEST (BS-05)."""
+    m_test_evs = m_test_events(evs)
+    human_evs = [e for e in m_test_evs if e["type"].startswith("human.")]
+    assert not human_evs
+
+
+_M_TEST_EVENT_TYPES = (
+    "test.collected", "prism.verdict", "red.validated",
+    "test.committed", "stage.exited", "run.completed",
+)
+
+
+def assert_sm01_event_sequence(types_seq):
+    """Assert the M-TEST SM-01 milestone event types are all present."""
+    for evt in _M_TEST_EVENT_TYPES:
+        assert evt in types_seq
