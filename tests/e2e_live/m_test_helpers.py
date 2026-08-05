@@ -177,23 +177,34 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
     )
     seen_acs: set[str] = set()
     for task in test_tasks:
+        assert isinstance(task, dict), f"test_tasks entry is not an object: {task}"
         ac_id = task.get("ac_id")
-        assert ac_id and ac_id not in seen_acs, (
-            f"test_tasks duplicate/empty ac_id: {ac_id}"
+        assert isinstance(ac_id, str) and _TASK_AC_ID.fullmatch(ac_id), (
+            f"test_tasks invalid ac_id: {ac_id}"
         )
+        assert ac_id not in seen_acs, f"test_tasks duplicate ac_id: {ac_id}"
         seen_acs.add(ac_id)
         layers = task.get("layers", [])
-        assert layers and all(
+        assert isinstance(layers, list) and layers and all(
             lay in ("integration", "e2e") for lay in layers
-        ), f"test_tasks {ac_id} invalid layers: {layers}"
+        ) and len(set(layers)) == len(layers), (
+            f"test_tasks {ac_id} invalid layers: {layers}"
+        )
         if_ids = task.get("if_ids", [])
-        assert if_ids, f"test_tasks {ac_id} has empty if_ids"
+        assert isinstance(if_ids, list) and if_ids and all(
+            isinstance(if_id, str) and _TASK_IF_ID.fullmatch(if_id)
+            for if_id in if_ids
+        ) and len(set(if_ids)) == len(if_ids), (
+            f"test_tasks {ac_id} invalid if_ids: {if_ids}"
+        )
 
 
 # -- P0: Shield scope + no commit ------------------------------------------
 
 
 _ALLOWED_TEST_DIRS = ("integration", "e2e", "assets", "counterexamples")
+_TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
+_TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 
 
 def snapshot_git_state(repo: Path) -> dict:

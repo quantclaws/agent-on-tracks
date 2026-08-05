@@ -344,6 +344,27 @@ def _run_spec_review_loop(live_trac):
     )
 
 
+def _run_m_test_review_loop(live_trac):
+    """Run the M-TEST Prism review, repairing Shield revisions at most once."""
+    for review_round in range(1, 3):
+        prism = live_trac("run", scenario="prism-test-review")
+        if "status=completed" in prism.stdout:
+            return prism
+        assert "stage=M-TEST" in prism.stdout, prism.stdout
+        assert "substate=WRITE" in prism.stdout, (
+            f"M-TEST Prism review round {review_round} neither completed nor "
+            f"halted at WRITE: {prism.stdout}"
+        )
+
+        respond = live_trac("run", scenario="shield-test-respond")
+        assert "stage=M-TEST" in respond.stdout, respond.stdout
+        assert "substate=PRISM_REVIEW" in respond.stdout, (
+            f"M-TEST Shield RESPOND round {review_round} did not return to "
+            f"PRISM_REVIEW: {respond.stdout}"
+        )
+    raise AssertionError("M-TEST Prism review did not pass within 2 rounds")
+
+
 # -- phase helpers (deliverable #1) ----------------------------------------
 
 
@@ -535,11 +556,9 @@ def _phase_m_test_to_boundary(
 
     shield = live_trac("run", scenario="shield-test-draft")
     assert "stage=M-TEST" in shield.stdout, shield.stdout
-    if "substate=PRISM_REVIEW" not in shield.stdout and "substate=WRITE" in shield.stdout:
-        respond = live_trac("run", scenario="shield-test-respond")
-        assert "substate=PRISM_REVIEW" in respond.stdout, (
-            f"shield-test-respond did not return to PRISM_REVIEW: {respond.stdout}"
-        )
+    assert "substate=PRISM_REVIEW" in shield.stdout, (
+        f"shield-test-draft did not return to PRISM_REVIEW: {shield.stdout}"
+    )
 
     m_test_events = _events(live_root, run_id)
     assert_shield_assignment_contract(m_test_events, version)
@@ -555,7 +574,7 @@ def _phase_m_test_to_boundary(
     assert (tests_dir / "e2e").is_dir(), "tests/e2e/ missing"
     assert_test_markers(tracks_tests_dir=tests_dir, version=version)
 
-    prism = live_trac("run", scenario="prism-test-review")
+    prism = _run_m_test_review_loop(live_trac)
     assert "status=completed" in prism.stdout, (
         f"M-TEST should complete at boundary: {prism.stdout}"
     )
