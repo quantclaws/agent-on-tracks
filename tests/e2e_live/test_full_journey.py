@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -534,6 +535,31 @@ def _phase_design_to_m_test(
     ], "M-DESIGN must carry no human gate (BS-05)"
 
 
+def _assert_design_exit_adjacency(events: list[dict]) -> None:
+    """Require the historical M-DESIGN exit -> M-TEST entry adjacency."""
+    design_exit = next(
+        (event for event in events
+         if event["type"] == "stage.exited"
+         and event["payload"].get("stage") == "M-DESIGN"),
+        None,
+    )
+    m_test_entered = next(
+        (event for event in events
+         if event["type"] == "stage.entered"
+         and event["payload"].get("stage") == "M-TEST"),
+        None,
+    )
+    assert design_exit and m_test_entered, "missing design-exit transition events"
+    assert m_test_entered["seq"] == design_exit["seq"] + 1, (
+        f"stage.exited(M-DESIGN) at seq={design_exit['seq']} is not immediately "
+        f"followed by stage.entered(M-TEST) at seq={m_test_entered['seq']}"
+    )
+    assert not any(
+        event["type"] == "run.completed" and event["seq"] <= design_exit["seq"]
+        for event in events
+    ), "M-DESIGN exit must not complete the run"
+
+
 def _phase_m_test_to_boundary(
     live_trac,
     live_root: Path,
@@ -713,6 +739,19 @@ def _require_github(monkeypatch, live_root: Path) -> str:
     return resolve_github_repo(monkeypatch, live_root)
 
 
+def _skip_baseline_sha_mismatch(baseline: Path) -> None:
+    manifest = _read_manifest(baseline)
+    if (
+        manifest
+        and manifest.get("tracks_sha") != _tracks_short_sha()
+        and os.environ.get("TRAC_LIVE_FORCE_BASELINE", "").strip() != "1"
+    ):
+        pytest.skip(
+            f"baseline SHA {manifest.get('tracks_sha')} != HEAD "
+            f"{_tracks_short_sha()}; set TRAC_LIVE_FORCE_BASELINE=1 to override"
+        )
+
+
 def test_journey_from_req_approved_baseline(
     live_root,
     host_with_opencode_config,
@@ -766,16 +805,7 @@ def test_journey_from_req_approved_baseline(
         )
 
     # SHA mismatch: skip unless forced.
-    manifest = _read_manifest(baseline)
-    if (
-        manifest
-        and manifest.get("tracks_sha") != _tracks_short_sha()
-        and os.environ.get("TRAC_LIVE_FORCE_BASELINE", "").strip() != "1"
-    ):
-        pytest.skip(
-            f"baseline SHA {manifest.get('tracks_sha')} != HEAD "
-            f"{_tracks_short_sha()}; set TRAC_LIVE_FORCE_BASELINE=1 to override"
-        )
+    _skip_baseline_sha_mismatch(baseline)
 
     _restore_baseline(baseline, live_root)
 
@@ -815,11 +845,46 @@ def test_m_test_from_design_exit_baseline(
 
     Build path (``TRAC_LIVE_BUILD_BASELINE=1``): run the prefix phases +
     Archer DRAFT + Prism design review loop, snapshot at design-exit, then
-    continue to ``_phase_m_test_to_boundary``."""
+    continue to ``_phase_m_test_to_boundary``.
+
+    Accelerated command:
+    ``TRAC_LIVE_FAKE_DESIGN_BASELINE=1 TRAC_LIVE_LOCAL_REMOTE=1 pytest -q \
+tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
     version = "live-e2e-code-stats"
 
     baseline = _find_design_exit_baseline(version)
     if baseline is None:
+        if os.environ.get("TRAC_LIVE_FAKE_DESIGN_BASELINE", "").strip() == "1":
+            req_baseline = _find_baseline_for_sha(version)
+            if req_baseline is None:
+                pytest.skip(
+                    "TRAC_LIVE_FAKE_DESIGN_BASELINE=1 but no M-REQ-APPROVED "
+                    "baseline exists; run the full journey first"
+                )
+            _skip_baseline_sha_mismatch(req_baseline)
+            _restore_baseline(req_baseline, live_root)
+            remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
+            run_id = _sanity_check_resumed_host(live_trac, live_root, req_baseline)
+            fake_design_trac = partial(live_trac, backend="fake", max_dispatches=2)
+            _phase_design_to_m_test(fake_design_trac, live_root, run_id, version)
+            _assert_design_exit_adjacency(_events(live_root, run_id))
+            baseline = _capture_design_exit_baseline(live_root, version, run_id)
+            if baseline is None:
+                pytest.skip(
+                    "TRAC_LIVE_FAKE_DESIGN_BASELINE=1 but capture was skipped "
+                    "(TRAC_LIVE_SKIP_BASELINE=1)"
+                )
+            run_id = _sanity_check_design_exit_host(live_trac, live_root, baseline)
+            _phase_m_test_to_boundary(
+                live_trac,
+                live_root,
+                run_id,
+                version,
+                remote_url_before,
+                remote_refs_before,
+                expect_real_issues=False,
+            )
+            return
         if os.environ.get("TRAC_LIVE_BUILD_BASELINE", "").strip() == "1":
             slug = _require_github(monkeypatch, live_root)
             run_id, remote_url_before, remote_refs_before, _ = _setup_host(
@@ -851,16 +916,7 @@ def test_m_test_from_design_exit_baseline(
             " or set TRAC_LIVE_BUILD_BASELINE=1"
         )
 
-    manifest = _read_manifest(baseline)
-    if (
-        manifest
-        and manifest.get("tracks_sha") != _tracks_short_sha()
-        and os.environ.get("TRAC_LIVE_FORCE_BASELINE", "").strip() != "1"
-    ):
-        pytest.skip(
-            f"baseline SHA {manifest.get('tracks_sha')} != HEAD "
-            f"{_tracks_short_sha()}; set TRAC_LIVE_FORCE_BASELINE=1 to override"
-        )
+    _skip_baseline_sha_mismatch(baseline)
 
     _restore_baseline(baseline, live_root)
 

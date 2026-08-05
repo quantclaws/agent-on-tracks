@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.e2e_live import test_full_journey as _journey
 from tests.e2e_live.m_test_helpers import (
     _git,
     _setup_baseline_remote,
@@ -244,6 +245,149 @@ def test_m_test_review_loop_raises_after_two_revises():
         "prism-test-review",
         "shield-test-respond",
     ]
+
+
+class _DesignTailDriver:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return SimpleNamespace(
+            stdout="run RUN: stage=M-TEST substate=WRITE status=active awaiting=-"
+        )
+
+
+def _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline):
+    calls = {
+        "find_req": [],
+        "restore": [],
+        "remote": [],
+        "sanity_req": [],
+        "capture": [],
+        "sanity_design": [],
+        "m_test": [],
+    }
+    monkeypatch.setattr(_journey, "_find_design_exit_baseline", lambda _: None)
+
+    def find_req(version):
+        calls["find_req"].append(version)
+        return req_baseline
+
+    monkeypatch.setattr(_journey, "_find_baseline_for_sha", find_req)
+    monkeypatch.setattr(
+        _journey,
+        "_restore_baseline",
+        lambda baseline, root: calls["restore"].append((baseline, root)),
+    )
+    monkeypatch.setattr(
+        _journey,
+        "_setup_baseline_remote",
+        lambda root: calls["remote"].append(root) or ("origin", ""),
+    )
+
+    def sanity_req(driver, root, baseline):
+        calls["sanity_req"].append((driver, root, baseline))
+        return "REQ-RUN"
+
+    monkeypatch.setattr(_journey, "_sanity_check_resumed_host", sanity_req)
+
+    def phase_design(driver, root, run_id, version):
+        driver("run", scenario="archer-design-draft")
+
+    monkeypatch.setattr(_journey, "_phase_design_to_m_test", phase_design)
+    monkeypatch.setattr(
+        _journey,
+        "_events",
+        lambda *_: [
+            {"seq": 10, "type": "stage.exited", "payload": {"stage": "M-DESIGN"}},
+            {"seq": 11, "type": "stage.entered", "payload": {"stage": "M-TEST"}},
+        ],
+    )
+
+    def capture(root, version, run_id):
+        calls["capture"].append((root, version, run_id))
+        return tmp_path / "design-exit"
+
+    monkeypatch.setattr(_journey, "_capture_design_exit_baseline", capture)
+
+    def sanity_design(driver, root, baseline):
+        calls["sanity_design"].append((driver, root, baseline))
+        return "DESIGN-RUN"
+
+    monkeypatch.setattr(_journey, "_sanity_check_design_exit_host", sanity_design)
+    monkeypatch.setattr(
+        _journey,
+        "_phase_m_test_to_boundary",
+        lambda *args, **kwargs: calls["m_test"].append((args, kwargs)),
+    )
+    return calls
+
+
+def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TRAC_LIVE_FAKE_DESIGN_BASELINE", "1")
+    monkeypatch.delenv("TRAC_LIVE_BUILD_BASELINE", raising=False)
+    req_baseline = tmp_path / "req-baseline"
+    calls = _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline)
+    driver = _DesignTailDriver()
+
+    _journey.test_m_test_from_design_exit_baseline(
+        tmp_path, None, None, driver, monkeypatch
+    )
+
+    assert calls["find_req"] == ["live-e2e-code-stats"]
+    assert calls["restore"] == [(req_baseline, tmp_path)]
+    assert calls["remote"] == [tmp_path]
+    assert calls["sanity_req"] == [(driver, tmp_path, req_baseline)]
+    assert driver.calls == [
+        (
+            ("run",),
+            {
+                "scenario": "archer-design-draft",
+                "backend": "fake",
+                "max_dispatches": 2,
+            },
+        )
+    ]
+    assert calls["capture"] == [(tmp_path, "live-e2e-code-stats", "REQ-RUN")]
+    assert calls["sanity_design"] == [
+        (driver, tmp_path, tmp_path / "design-exit")
+    ]
+    assert calls["m_test"][0][0][0] is driver
+
+
+def test_fake_design_baseline_skips_without_req_baseline(monkeypatch, tmp_path):
+    monkeypatch.setenv("TRAC_LIVE_FAKE_DESIGN_BASELINE", "1")
+    monkeypatch.setenv("TRAC_LIVE_BUILD_BASELINE", "1")
+    calls = _patch_design_exit_resume(monkeypatch, tmp_path, None)
+    driver = _DesignTailDriver()
+
+    with pytest.raises(pytest.skip.Exception, match="no M-REQ-APPROVED baseline"):
+        _journey.test_m_test_from_design_exit_baseline(
+            tmp_path, None, None, driver, monkeypatch
+        )
+
+    assert calls["restore"] == []
+    assert driver.calls == []
+    assert calls["m_test"] == []
+
+
+def test_design_exit_without_fake_flag_preserves_existing_skip(monkeypatch, tmp_path):
+    monkeypatch.delenv("TRAC_LIVE_FAKE_DESIGN_BASELINE", raising=False)
+    monkeypatch.delenv("TRAC_LIVE_BUILD_BASELINE", raising=False)
+    monkeypatch.setattr(_journey, "_find_design_exit_baseline", lambda _: None)
+    monkeypatch.setattr(
+        _journey,
+        "_find_baseline_for_sha",
+        lambda *_: pytest.fail("new fake branch must be opt-in"),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="no DESIGN_EXIT_OBSERVED baseline"):
+        _journey.test_m_test_from_design_exit_baseline(
+            tmp_path, None, None, _DesignTailDriver(), monkeypatch
+        )
 
 
 def _git_repo(tmp_path):
