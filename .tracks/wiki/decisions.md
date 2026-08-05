@@ -311,6 +311,14 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 - v0.4 必须交付：测试资产判据包（M-TEST 的 PRISM_REVIEW 子状态消费）与配套 Runtime 机制；M-DESIGN 判据抽取、代码评审/争议诊断判据包按 release 节奏（判据与规模相称）。
 - 形式校验不得混入判据包（D-14 边界）。
 
+## D-30. v0.4 dogfood 运行记录：钩子拦截死锁缺口与本仓存量标记采纳策略
+
+（Maestro 运行记录 2026-08-05，非用户裁定；供 Aaron 复核）
+
+- **发现 1（kernel 缺口）**：v04 M-DESIGN attempt 2 中 Archer 交付物（GT 参考实现）被 pre-commit 拦截（ruff 6 错误），`_decide_design_commit` 静默退出——钩子输出未转为失败证据重派，形成死锁。当时以 bootstrap 例外人工修复（`291cf0a`）。**后续项 F-1**：commit 被拒后应把钩子输出写为 evidence 并在预算内重派（需 story/spec 立项，D-26）。
+- **发现 2（存量标记）**：`trac check trace` 在本仓报 192 hard errors，均为 v0.1–v0.3 短格式 marker 存量，非回归；M-TEST EXIT 门禁按版本过滤 required AC（FR-0070），不受影响。**后续项 F-2**：为 tracks 自身声明 `.tracks/legacy-baseline.json`（FR-0100 设计的采纳路径，故事明言「tracks 自己的 v0.1 即为存量样本」），由 Aaron 决定时点。
+- **发现 3（边界迁移完成）**：v0.4 后 `run.completed(boundary)` 发生于 M-TEST EXIT 之后（M-IMPL 未注册）；tests/e2e/test_full_journey.py 边界期望已迁移并列入 Task B 交付。
+
 ## 决策日志
 
 | ID   | 决定日期   | 标题                                          | 来源                                                                     |
@@ -345,3 +353,4 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-27 | 2026-08-04 | 取代索引与相容性解释（漂移审计） | 漂移审计：D-22→D-24、D-24→D-25 取代登记；D-17/D-25 相容解释；D-21 节号勘误；D-22~25 升格正文 |
 | D-28 | 2026-08-04 | 输入 identity/完整性校验归 Runtime，Agent 不自校验 | 用户裁定：形式检查由 Runtime 派发前完成（适用所有 Agent）；Agent 直接使用输入集，verdict 仅传播 identity |
 | D-29 | 2026-08-04 | Prism 评审管线与判据包 skill 化进入 v0.4 spec | 用户裁定：四阶段管线；判据包 skill 化；配套三件套（assignment 指定/outcome 携带/Runtime 回读）；v0.4 交付测试资产判据包与 Runtime 机制 |
+| D-30 | 2026-08-05 | v0.4 dogfood 运行记录：钩子拦截死锁缺口与本仓存量标记采纳策略 | Maestro 运行记录（非用户裁定）：F-1 commit 被拒死锁待立项；F-2 本仓 legacy-baseline 采纳时点待 Aaron 决定 |
