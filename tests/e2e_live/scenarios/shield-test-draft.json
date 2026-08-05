@@ -1,0 +1,11 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-TEST",
+  "agent": "Shield",
+  "kind": "WRITE",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 0,
+  "comment_style": "concise",
+  "required_finding": null,
+  "required_action": "Read the Test Plan and write integration and e2e tests against the interface stubs declared in interfaces.md. Every test function must carry a marker comment line directly above its definition: `# AC-FRXXXX-YY@v0.4 TRACKS-TRACE [description]` (R-1 convention, long format + TRACKS-TRACE token mandatory). Write tests to tests/integration/ and tests/e2e/ only; do not modify product code or interface stubs. Tests must be collectable by pytest and must fail with a legitimate Red (behavioral assertion failure or stub contract token failure, not ImportError/syntax/fixture errors). If Prism has opened discussion threads with findings on your previous test write, read them via trac discuss query, reply to each thread with trac discuss reply, and revise the tests accordingly. Do not stop at planning: write the test files into tests/integration/ and tests/e2e/ before you finish."
+}

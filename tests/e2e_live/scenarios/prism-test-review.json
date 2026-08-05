@@ -1,0 +1,12 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-TEST",
+  "agent": "Prism",
+  "kind": "PRISM_REVIEW",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 0,
+  "comment_style": "concise",
+  "required_finding": null,
+  "review_mode": "normal",
+  "required_action": "Review the test assets written by Shield against the acceptance criteria and the criteria pack. Verify: every required AC (integration|e2e layer) has at least one test with a valid long-format marker (AC-FRXXXX-YY@v0.4 TRACKS-TRACE); tests assert on public exits (not internal implementation); tests fail with legitimate Red (not ImportError/syntax/fixture); no pseudo-tests or counterexample gaps. Anchor every blocking finding as a discussion thread via trac discuss start and return REVISE; pass only when the test contract is genuinely closed."
+}

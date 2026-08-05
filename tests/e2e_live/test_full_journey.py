@@ -33,11 +33,7 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import sqlite3
-import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -53,6 +49,28 @@ from tests.e2e_live.harness import (
     require_current_virtualenv,
     resolve_github_repo,
     select_wheel,
+)
+from tests.e2e_live.m_test_helpers import (
+    _assert_issue_events,
+    _capture_baseline,
+    _capture_design_exit_baseline,
+    _dispatches,
+    _events,
+    _find_baseline_for_sha,
+    _find_design_exit_baseline,
+    _git,
+    _read_manifest,
+    _restore_baseline,
+    _sanity_check_design_exit_host,
+    _sanity_check_resumed_host,
+    _tracks_short_sha,
+    assert_criteria_pack_triple,
+    assert_m_test_boundary,
+    assert_shield_assignment_contract,
+    assert_shield_no_commit_scope,
+    assert_single_test_commit,
+    assert_test_markers,
+    snapshot_git_state,
 )
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import project as machine_project
@@ -71,13 +89,10 @@ def _design_agent_timeout() -> int:
         value = int(raw)
     except ValueError as exc:
         raise ValueError(
-            f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be an integer number of "
-            f"seconds, got {raw!r}"
+            f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be an integer number of seconds, got {raw!r}"
         ) from exc
     if value <= 0:
-        raise ValueError(
-            f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be > 0, got {value}"
-        )
+        raise ValueError(f"TRAC_LIVE_DESIGN_AGENT_TIMEOUT must be > 0, got {value}")
     return value
 
 
@@ -137,38 +152,6 @@ def test_live_path_uses_only_isolated_and_external_tool_bins(tmp_path):
     assert parts[2:] == ["/usr/bin", "/bin"]
 
 
-def _git(repo: Path, *args: str, check: bool = True) -> str:
-    process = subprocess.run(
-        ["git", *args], cwd=repo, check=check, capture_output=True, text=True
-    )
-    return process.stdout.strip()
-
-
-def _events(repo: Path, run_id: str) -> list[dict]:
-    database = repo / ".tracks" / "runtime" / "tracks.db"
-    blob_dir = repo / ".tracks" / "runtime" / "blobs"
-    with sqlite3.connect(database) as connection:
-        rows = connection.execute(
-            "SELECT seq, type, command_id, payload FROM events "
-            "WHERE run_id = ? ORDER BY seq",
-            (run_id,),
-        ).fetchall()
-    events = []
-    for seq, event_type, command_id, payload in rows:
-        data = json.loads(payload)
-        if isinstance(data, dict) and set(data.keys()) == {"$ref"}:
-            ref_path = blob_dir / data["$ref"]
-            if ref_path.exists():
-                data = json.loads(ref_path.read_text(encoding="utf-8"))
-        events.append({
-            "seq": seq,
-            "type": event_type,
-            "command_id": command_id,
-            "payload": data,
-        })
-    return events
-
-
 def _discussion_state(live_trac, doc: str) -> dict:
     result = live_trac("discuss", "query", "--file", doc, "--check-ready")
     return json.loads(result.stdout)
@@ -207,9 +190,7 @@ def _organic_finding_thread(state: dict, initiator: str, marker_prefix: str) -> 
         if thread["initiator"].casefold() == initiator.casefold()
         and marker in thread["root"]["body"]
     ]
-    assert matches, (
-        f"no {initiator}-initiated finding thread with marker {marker}"
-    )
+    assert matches, f"no {initiator}-initiated finding thread with marker {marker}"
     return matches[0]
 
 
@@ -233,35 +214,18 @@ def _assert_draft_interview(state: dict):
         )
         assert thread["status"] == "resolved"
         human_replies = [reply for reply in _replies(thread) if reply["speaker"] == "LiveE2E-Human"]
-        assert human_replies, (
-            f"Human console answer was not persisted in {thread['thread_id']}"
-        )
+        assert human_replies, f"Human console answer was not persisted in {thread['thread_id']}"
         assert all(reply["body"].strip() for reply in human_replies)
 
 
-def _dispatches(events: list[dict], role: str, substate: str, doc: str) -> list[dict]:
-    return [
-        event
-        for event in events
-        if event["type"] == "command.issued"
-        and event["payload"].get("command", {}).get("kind") == "dispatch_agent"
-        and event["payload"].get("command", {}).get("params", {}).get("role") == role
-        and event["payload"].get("command", {}).get("params", {}).get("substate") == substate
-        and event["payload"].get("command", {}).get("params", {}).get("doc") == doc
-    ]
-
-
-def _assert_respond_diff(
-    events: list[dict], role: str, doc: str, committed_type: str
-) -> None:
+def _assert_respond_diff(events: list[dict], role: str, doc: str, committed_type: str) -> None:
     dispatches = _dispatches(events, role, "RESPOND", doc)
     assert dispatches, f"missing {role} RESPOND dispatch for {doc}"
     dispatch = dispatches[-1]
     outcomes = [
         event
         for event in events
-        if event["type"] == "outcome.received"
-        and event["command_id"] == dispatch["command_id"]
+        if event["type"] == "outcome.received" and event["command_id"] == dispatch["command_id"]
     ]
     assert outcomes and outcomes[-1]["payload"].get("status") == "done"
     diff_ref = outcomes[-1]["payload"].get("diff_ref")
@@ -277,18 +241,16 @@ def _assert_respond_diff(
     assert commits, f"no author commit after RESPOND for {doc}"
 
 
-def _assert_reviewer_pass(
-    events: list[dict], event_type: str, *, expect_revise: bool = True
-):
+def _assert_reviewer_pass(events: list[dict], event_type: str, *, expect_revise: bool = True):
     verdicts = [event for event in events if event["type"] == event_type]
     assert verdicts, f"missing {event_type} event"
     assert verdicts[-1]["payload"].get("verdict") == "pass"
     if expect_revise:
         assert any(event["payload"].get("verdict") == "revise" for event in verdicts)
     else:
-        assert not any(
-            event["payload"].get("verdict") == "revise" for event in verdicts
-        ), f"unexpected revise verdict in single-pass {event_type}"
+        assert not any(event["payload"].get("verdict") == "revise" for event in verdicts), (
+            f"unexpected revise verdict in single-pass {event_type}"
+        )
 
 
 def _assert_finding_lifecycle(
@@ -307,33 +269,23 @@ def _assert_finding_lifecycle(
 
     events = _events(live_root, run_id)
     assert any(
-        event["type"] == verdict_type
-        and event["payload"].get("verdict") == "revise"
+        event["type"] == verdict_type and event["payload"].get("verdict") == "revise"
         for event in events
     )
-
-
-def _assert_issue_events(final_events: list[dict], expect_real_issues: bool) -> None:
-    """issue.created events present; ids digits-only (expect_real_issues) else
-    digits/FAKE- (baseline resume fake channel, tracks/effects/github.py)."""
-    evs = [e for e in final_events if e["type"] == "issue.created"]
-    assert evs, "missing issue.created event"
-    assert all("issue_id" in e["payload"] for e in evs), "missing issue_id"
-    ids = [str(e["payload"]["issue_id"]) for e in evs]
-    if expect_real_issues:
-        assert all(i.isdigit() for i in ids)
-    else:
-        assert all(i.isdigit() or i.startswith("FAKE-") for i in ids), (
-            "issue_id is neither all digits nor a FAKE- fake id")
 
 
 def _run_design_review_loop(live_trac):
     """Prism review <-> Archer RESPOND loop, bounded to 2 review rounds
     (TRAC_LIVE_MAX_REVIEW_ROUNDS stays the wider outer net). Each round runs
-    prism-design-review: a pass round completes the run at the M-IMPL
-    boundary; a revise round halts in RESPOND (live run042 died here while
-    unscripted), Archer must answer every finding and return the state to
-    PRISM_REVIEW, and the next round starts.
+    prism-design-review: a pass round transitions to M-TEST (the dispatch
+    gate stops at Shield WRITE, substate change from PRISM_REVIEW); a revise
+    round halts in RESPOND (live run042 died here while unscripted), Archer
+    must answer every finding and return the state to PRISM_REVIEW, and the
+    next round starts.
+
+    v0.4: Prism pass no longer completes the run -- it transitions M-DESIGN
+    EXIT -> M-TEST DISPATCH -> Shield WRITE. The dispatch gate stops at the
+    substate change, so the output shows ``stage=M-TEST substate=WRITE``.
 
     Archer DRAFT/RESPOND carry the design trio + scaffold + quality-guard
     installation - too big for the 1200s budget, so agent_timeout=1800 is
@@ -343,15 +295,16 @@ def _run_design_review_loop(live_trac):
     """
     for review_round in range(1, 3):
         review = live_trac("run", scenario="prism-design-review")
-        if "status=completed" in review.stdout:
+        if "stage=M-TEST" in review.stdout:
             return review
         assert "stage=M-DESIGN" in review.stdout, review.stdout
         assert "substate=RESPOND" in review.stdout, (
-            f"review round {review_round} neither completed nor opened RESPOND: "
-            f"{review.stdout}"
+            f"review round {review_round} neither transitioned to M-TEST nor "
+            f"opened RESPOND: {review.stdout}"
         )
         respond = live_trac(
-            "run", scenario="archer-design-respond",
+            "run",
+            scenario="archer-design-respond",
             agent_timeout=_design_agent_timeout(),
         )
         assert "stage=M-DESIGN" in respond.stdout, respond.stdout
@@ -441,15 +394,11 @@ def _phase_spec_and_acceptance(live_trac, live_root: Path, run_id: str, version:
     sage-acceptance-draft, lex-acceptance-review, human review."""
     spec = f".tracks/projects/{version}/spec.md"
     acceptance = f".tracks/projects/{version}/acceptance.md"
-    assert "substate=LEX_REVIEW" in live_trac(
-        "run", scenario="sage-spec-draft"
-    ).stdout
+    assert "substate=LEX_REVIEW" in live_trac("run", scenario="sage-spec-draft").stdout
     spec_review = _run_spec_review_loop(live_trac)
     assert "awaiting=review" in spec_review.stdout
     spec_events = _events(live_root, run_id)
-    spec_respond_happened = bool(
-        _dispatches(spec_events, "sage", "RESPOND", "spec.md")
-    )
+    spec_respond_happened = bool(_dispatches(spec_events, "sage", "RESPOND", "spec.md"))
     state = _discussion_state(live_trac, spec)
     if spec_respond_happened:
         spec_thread = _organic_finding_thread(state, "Lex", "SPEC-")
@@ -462,31 +411,23 @@ def _phase_spec_and_acceptance(live_trac, live_root: Path, run_id: str, version:
         _assert_respond_diff(spec_events, "sage", "spec.md", "spec.committed")
     else:
         assert not state.get("threads", []), (
-            f"unexpected spec threads when no RESPOND happened: "
-            f"{state.get('threads', [])}"
+            f"unexpected spec threads when no RESPOND happened: {state.get('threads', [])}"
         )
-    _assert_reviewer_pass(
-        spec_events, "lex.verdict", expect_revise=spec_respond_happened
-    )
+    _assert_reviewer_pass(spec_events, "lex.verdict", expect_revise=spec_respond_happened)
 
     assert live_trac("review", "no-comment", "--actor", "LiveE2E-Human").returncode == 0
-    assert "substate=LEX_REVIEW" in live_trac(
-        "run", scenario="sage-acceptance-draft"
-    ).stdout
+    assert "substate=LEX_REVIEW" in live_trac("run", scenario="sage-acceptance-draft").stdout
     acceptance_review = live_trac("run", scenario="lex-acceptance-review")
     assert "awaiting=review" in acceptance_review.stdout
     assert _discussion_state(live_trac, acceptance)["is_ready"]
     acceptance_events = _events(live_root, run_id)
-    acceptance_dispatch = _dispatches(
-        acceptance_events, "lex", "LEX_REVIEW", "acceptance.md"
-    )
+    acceptance_dispatch = _dispatches(acceptance_events, "lex", "LEX_REVIEW", "acceptance.md")
     assert acceptance_dispatch, "missing normal Lex acceptance review dispatch"
     acceptance_command = acceptance_dispatch[-1]["command_id"]
     acceptance_outcomes = [
         event
         for event in acceptance_events
-        if event["type"] == "outcome.received"
-        and event["command_id"] == acceptance_command
+        if event["type"] == "outcome.received" and event["command_id"] == acceptance_command
     ]
     assert acceptance_outcomes[-1]["payload"].get("status") == "done"
     assert any(
@@ -507,25 +448,22 @@ def _phase_approval(live_trac):
     assert live_trac("approve", "--actor", "LiveE2E-Human").returncode == 0
 
 
-def _phase_design(
+def _phase_design_to_m_test(
     live_trac,
     live_root: Path,
     run_id: str,
     version: str,
-    remote_url_before: str,
-    remote_refs_before: str,
-    expect_real_issues: bool,
 ):
-    """Everything after approve: archer-design-draft assertions, design review
-    loop, report assertions, final event assertions (run.completed, prism pass,
-    no human gate after approval, issue events, remote refs, branch check)."""
-    # M-DESIGN (flow.md §8, BS-05): no human gate after approval. One
-    # Archer dispatch drafts the design trio, validates and commits it, then
-    # waits in PRISM_REVIEW. Prism may revise (anchored findings) and Archer
-    # RESPONDs until a pass round completes the run at the M-IMPL boundary
-    # after the M-DESIGN EXIT gate.
+    """Archer DRAFT + design review loop -> M-TEST WRITE (design-exit
+    checkpoint). The run halts at ``stage=M-TEST substate=WRITE`` because
+    the dispatch gate stops at the substate change (PRISM_REVIEW -> WRITE).
+
+    v0.4: Prism pass transitions M-DESIGN EXIT -> M-TEST DISPATCH -> Shield
+    WRITE; ``trac run`` stops before the Shield dispatch (different substate
+    from the Prism review that drove the pass)."""
     design = live_trac(
-        "run", scenario="archer-design-draft",
+        "run",
+        scenario="archer-design-draft",
         agent_timeout=_design_agent_timeout(),
     )
     assert "stage=M-DESIGN" in design.stdout
@@ -538,25 +476,114 @@ def _phase_design(
         "missing Archer DRAFT dispatch for the design trio"
     )
     assert sorted(
-        event["payload"]["doc"]
-        for event in design_events
-        if event["type"] == "design.committed"
+        event["payload"]["doc"] for event in design_events if event["type"] == "design.committed"
     ) == ["architecture.md", "interfaces.md", "test-plan.md"]
 
     final = _run_design_review_loop(live_trac)
-    assert "status=completed" in final.stdout
-    assert "awaiting=-" in final.stdout
+    # v0.4: Prism pass transitions to M-TEST, not run.completed. The dispatch
+    # gate stops at the Shield WRITE dispatch (substate change from
+    # PRISM_REVIEW to WRITE), so the run is still active at M-TEST/WRITE.
+    assert "stage=M-TEST" in final.stdout, (
+        f"Prism design pass should transition to M-TEST: {final.stdout}"
+    )
+    assert "substate=WRITE" in final.stdout, (
+        f"design-exit should halt at M-TEST WRITE: {final.stdout}"
+    )
+    assert "status=active" in final.stdout, (
+        f"run should still be active at M-TEST WRITE: {final.stdout}"
+    )
+
+    design_exit_events = _events(live_root, run_id)
+    assert _dispatches(design_exit_events, "prism", "PRISM_REVIEW", None), (
+        "missing Prism PRISM_REVIEW dispatch for the design trio"
+    )
+    prism_verdicts = [event for event in design_exit_events if event["type"] == "prism.verdict"]
+    assert prism_verdicts and prism_verdicts[-1]["payload"]["verdict"] == "pass"
+    # BS-05: no human gate after approval in M-DESIGN.
+    approval_seq = next(
+        event["seq"] for event in design_exit_events if event["type"] == "human.approval"
+    )
+    assert not [
+        event
+        for event in design_exit_events
+        if event["type"].startswith("human.") and event["seq"] > approval_seq
+    ], "M-DESIGN must carry no human gate (BS-05)"
+
+
+def _phase_m_test_to_boundary(
+    live_trac,
+    live_root: Path,
+    run_id: str,
+    version: str,
+    remote_url_before: str,
+    remote_refs_before: str,
+    expect_real_issues: bool,
+):
+    """M-TEST: Shield writes tests -> Runtime collection -> Prism reviews ->
+    Runtime Red validation -> trace gate -> controlled test commit ->
+    stage.exited(M-TEST) -> run.completed(boundary).
+
+    P0 assertions:
+      * Shield assignment contract (docs, skills, kind, stage, role)
+      * Shield scope/no-commit (HEAD unchanged, only tests/ written)
+      * Criteria-pack anti-self-report triple (assigned + echoed + no mismatch)
+      * Test markers (R-1 TRACKS-TRACE in tests/integration|e2e/)
+      * Strict boundary adjacency (stage.exited + stage.entered/run.completed)
+      * Single test commit (exactly one new commit, matches test.committed)
+    """
+    git_before = snapshot_git_state(live_root)
+
+    shield = live_trac("run", scenario="shield-test-draft")
+    assert "stage=M-TEST" in shield.stdout, shield.stdout
+    if "substate=PRISM_REVIEW" not in shield.stdout and "substate=WRITE" in shield.stdout:
+        respond = live_trac("run", scenario="shield-test-respond")
+        assert "substate=PRISM_REVIEW" in respond.stdout, (
+            f"shield-test-respond did not return to PRISM_REVIEW: {respond.stdout}"
+        )
+
+    m_test_events = _events(live_root, run_id)
+    assert_shield_assignment_contract(m_test_events, version)
+    assert_shield_no_commit_scope(git_before, live_root, remote_refs_before)
+    collected = [
+        e
+        for e in m_test_events
+        if e["type"] == "test.collected" and e["payload"].get("status") == "passed"
+    ]
+    assert collected, "missing test.collected(passed) event after Shield WRITE"
+    tests_dir = live_root / "tests"
+    assert (tests_dir / "integration").is_dir(), "tests/integration/ missing"
+    assert (tests_dir / "e2e").is_dir(), "tests/e2e/ missing"
+    assert_test_markers(tracks_tests_dir=tests_dir, version=version)
+
+    prism = live_trac("run", scenario="prism-test-review")
+    assert "status=completed" in prism.stdout, (
+        f"M-TEST should complete at boundary: {prism.stdout}"
+    )
+    assert "awaiting=-" in prism.stdout, prism.stdout
+
+    final_events = _events(live_root, run_id)
+    assert_m_test_boundary(final_events)
+
+    test_committed = [e for e in final_events if e["type"] == "test.committed"]
+    assert len(test_committed) == 1, (
+        f"expected exactly one test.committed, got {len(test_committed)}"
+    )
+    assert_single_test_commit(git_before["head"], live_root, test_committed[0])
+    assert_criteria_pack_triple(final_events)
 
     report_dir = live_root / "report"
-    assert live_trac(
-        "report",
-        "--run-id",
-        run_id,
-        "--output",
-        str(report_dir),
-        "--format",
-        "html",
-    ).returncode == 0
+    assert (
+        live_trac(
+            "report",
+            "--run-id",
+            run_id,
+            "--output",
+            str(report_dir),
+            "--format",
+            "html",
+        ).returncode
+        == 0
+    )
     report = (report_dir / "report.md").read_text(encoding="utf-8")
     for required in (
         "scenario_id",
@@ -568,30 +595,12 @@ def _phase_design(
         "## Audit",
         "audit gaps:",
         "status: `completed`",
-        "stage: `M-DESIGN`",
+        "stage: `M-TEST`",
     ):
         assert required in report
     assert (report_dir / "index.html").is_file()
     assert "marked v15.0.7" in (report_dir / "index.html").read_text(encoding="utf-8")
 
-    final_events = _events(live_root, run_id)
-    assert final_events[-1]["type"] == "run.completed"
-    assert final_events[-1]["payload"]["terminal_state"] == "boundary"
-    assert _dispatches(final_events, "prism", "PRISM_REVIEW", None), (
-        "missing Prism PRISM_REVIEW dispatch for the design trio"
-    )
-    prism_verdicts = [
-        event for event in final_events if event["type"] == "prism.verdict"
-    ]
-    assert prism_verdicts and prism_verdicts[-1]["payload"]["verdict"] == "pass"
-    approval_seq = next(
-        event["seq"] for event in final_events if event["type"] == "human.approval"
-    )
-    assert not [
-        event
-        for event in final_events
-        if event["type"].startswith("human.") and event["seq"] > approval_seq
-    ], "M-DESIGN must carry no human gate (BS-05)"
     _assert_issue_events(final_events, expect_real_issues)
     assert _git(live_root, "remote", "get-url", "origin") == remote_url_before
     remote_refs_after = _git(live_root, "ls-remote", "origin")
@@ -604,140 +613,6 @@ def _phase_design(
 
 
 # -- baseline snapshot (deliverable #2) ------------------------------------
-
-
-def _tracks_short_sha() -> str:
-    return subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        cwd=Path(__file__).resolve().parents[2],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-
-
-def _baselines_root() -> Path:
-    return Path(os.environ.get("TMPDIR", "/tmp")) / "tracks" / "live-e2e" / "baselines"
-
-
-def _baseline_dir(version: str, sha: str) -> Path:
-    return _baselines_root() / f"baseline-{sha}-{version}"
-
-
-# opencode-managed files recreated on demand; excluded from the snapshot so
-# the baseline stays small and the resumed test rebuilds them from scratch.
-_SNAPSHOT_EXCLUDE_DIRS = {".opencode" + os.sep + "node_modules"}
-_SNAPSHOT_EXCLUDE_NAMES = {"node_modules"}
-
-
-def _capture_baseline(live_root: Path, version: str, run_id: str) -> Path | None:
-    """Capture a baseline snapshot of the live host immediately after the
-    M-REQ-APPROVED checkpoint. The snapshot is a copy of the host directory
-    (.tracks/ runtime DB + project docs, .opencode/ provider config, the git
-    checkout) minus opencode's node_modules (recreated on demand). The
-    isolated venv + wheel live outside the host in runNNN-artifacts/ and are
-    NOT snapshotted: the resumed test rebuilds them from the current working
-    tree so code iteration takes effect."""
-    if os.environ.get("TRAC_LIVE_SKIP_BASELINE", "").strip() == "1":
-        print("LIVE_E2E_BASELINE=skipped (TRAC_LIVE_SKIP_BASELINE=1)", flush=True)
-        return None
-    sha = _tracks_short_sha()
-    target = _baseline_dir(version, sha)
-    if target.exists():
-        print(f"LIVE_E2E_BASELINE=exists {target}", flush=True)
-        return target
-    target.mkdir(parents=True, exist_ok=True)
-    _copy_tree(live_root, target)
-    manifest = {
-        "tracks_sha": sha,
-        "version": version,
-        "run_id": run_id,
-        "captured_at": datetime.now(timezone.utc).isoformat(),
-        "source_host": str(live_root.resolve()),
-    }
-    (target / ".tracks-baseline-manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(f"LIVE_E2E_BASELINE=captured {target}", flush=True)
-    return target
-
-
-def _copy_tree(src: Path, dst: Path) -> None:
-    """Copy src into dst, excluding opencode's node_modules (recreated on
-    demand) and the baseline manifest itself."""
-    for entry in src.iterdir():
-        if entry.name in _SNAPSHOT_EXCLUDE_NAMES and entry.is_dir():
-            continue
-        if entry.is_dir() and entry.name == "node_modules":
-            continue
-        dest = dst / entry.name
-        if entry.is_dir():
-            shutil.copytree(entry, dest, dirs_exist_ok=True)
-        else:
-            shutil.copy2(entry, dest)
-
-
-def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
-    """Restore a baseline snapshot into the test's live host directory.
-
-    Path-stability: the runtime resolves ``.tracks/`` from the runtime cwd
-    (``paths.tracks_home``), and ``artifact_ref`` fields in the DB carry
-    absolute paths from the original host but are used only as evidence
-    strings (``last_failure`` re-dispatch context), never for file access.
-    So restoring to a different path is safe - the runtime re-derives every
-    path from the new cwd."""
-    for entry in list(live_root.iterdir()):
-        if entry.is_dir():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
-    _copy_tree(baseline_dir, live_root)
-
-
-def _find_baseline_for_sha(version: str) -> Path | None:
-    """Locate a baseline for the current HEAD.
-
-    Lookup order: ``TRAC_LIVE_BASELINE_DIR`` (explicit path) else the newest
-    ``baselines/baseline-*`` with a readable manifest. An exact SHA match is
-    preferred; on SHA mismatch the caller decides (via
-    ``TRAC_LIVE_FORCE_BASELINE=1``) whether to use it. Candidates whose
-    manifest is missing or unreadable are skipped in both passes."""
-    explicit = os.environ.get("TRAC_LIVE_BASELINE_DIR", "").strip()
-    if explicit:
-        path = Path(explicit)
-        manifest = _read_manifest(path)
-        if manifest is None:
-            pytest.skip(f"TRAC_LIVE_BASELINE_DIR has no manifest: {path}")
-        return path
-    sha = _tracks_short_sha()
-    root = _baselines_root()
-    if not root.is_dir():
-        return None
-    candidates = sorted(
-        (p for p in root.glob(f"baseline-*-{version}") if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    # First pass: prefer an exact SHA match among readable manifests.
-    for path in candidates:
-        manifest = _read_manifest(path)
-        if manifest and manifest.get("tracks_sha") == sha:
-            return path
-    # Fallback: newest candidate with a readable manifest; the caller
-    # (test_journey_from_req_approved_baseline) handles SHA mismatch via
-    # TRAC_LIVE_FORCE_BASELINE.
-    for path in candidates:
-        if _read_manifest(path) is not None:
-            return path
-    return None
-
-
-def _read_manifest(path: Path) -> dict | None:
-    manifest_path = path / ".tracks-baseline-manifest.json"
-    if not manifest_path.is_file():
-        return None
-    try:
-        return json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
 
 
 # -- full journey (deliverable #1) -----------------------------------------
@@ -757,9 +632,7 @@ def _setup_host(
     _git(live_root, "commit", "-m", "configure live e2e host")
 
     assert live_trac("init").returncode == 0
-    started = live_trac(
-        "start", version, stdin=live_scenarios["triage"].start_requirement
-    )
+    started = live_trac("start", version, stdin=live_scenarios["triage"].start_requirement)
     run_id = started.stdout.split("run ", maxsplit=1)[1].split(" started", maxsplit=1)[0]
     return run_id, remote_url_before, remote_refs_before, remote
 
@@ -772,10 +645,11 @@ def test_bounded_scripted_real_agent_journey(
     live_trac,
 ):
     """Exercise triage, both required finding loops, approval, GitHub Issues,
-    and the M-DESIGN stage (Archer draft, bounded Prism review <-> Archer
-    RESPOND revise loop, boundary completion). After the approval checkpoint
-    a baseline snapshot is captured so the resume test can re-run only the
-    M-DESIGN tail."""
+    and the M-DESIGN + M-TEST stages. After the approval checkpoint a
+    baseline snapshot is captured so the resume test can re-run only
+    ``_phase_design``. After the M-DESIGN tail (design-exit) a second
+    baseline is captured so the M-TEST resume test can re-run only
+    ``_phase_m_test_to_boundary``."""
     version = "live-e2e-code-stats"
     run_id, remote_url_before, remote_refs_before, remote = _setup_host(
         live_trac, live_root, live_github_repo, live_scenarios, version
@@ -788,9 +662,20 @@ def test_bounded_scripted_real_agent_journey(
     # Baseline snapshot at the M-REQ-APPROVED checkpoint (deliverable #2).
     _capture_baseline(live_root, version, run_id)
 
-    _phase_design(
-        live_trac, live_root, run_id, version,
-        remote_url_before, remote_refs_before,
+    _phase_design_to_m_test(live_trac, live_root, run_id, version)
+
+    # Design-exit baseline (v0.4 M-TEST milestone): snapshot at
+    # stage=M-TEST substate=WRITE so the M-TEST resume test skips the
+    # expensive prefix + Archer DRAFT + Prism review loop.
+    _capture_design_exit_baseline(live_root, version, run_id)
+
+    _phase_m_test_to_boundary(
+        live_trac,
+        live_root,
+        run_id,
+        version,
+        remote_url_before,
+        remote_refs_before,
         expect_real_issues=True,
     )
 
@@ -839,19 +724,23 @@ def test_journey_from_req_approved_baseline(
             baseline = _capture_baseline(live_root, version, run_id)
             if baseline is None:
                 pytest.skip(
-                    "TRAC_LIVE_BUILD_BASELINE=1 but capture was skipped "
-                    "(TRAC_LIVE_SKIP_BASELINE=1)"
+                    "TRAC_LIVE_BUILD_BASELINE=1 but capture was skipped (TRAC_LIVE_SKIP_BASELINE=1)"
                 )
             run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
-            _phase_design(
-                live_trac, live_root, run_id, version,
-                remote_url_before, remote_refs_before,
+            _phase_design_to_m_test(live_trac, live_root, run_id, version)
+            _capture_design_exit_baseline(live_root, version, run_id)
+            _phase_m_test_to_boundary(
+                live_trac,
+                live_root,
+                run_id,
+                version,
+                remote_url_before,
+                remote_refs_before,
                 expect_real_issues=False,
             )
             return
         pytest.skip(
-            "no M-REQ-APPROVED baseline; run the full journey or set "
-            "TRAC_LIVE_BUILD_BASELINE=1"
+            "no M-REQ-APPROVED baseline; run the full journey or set TRAC_LIVE_BUILD_BASELINE=1"
         )
 
     # SHA mismatch: skip unless forced.
@@ -875,46 +764,99 @@ def test_journey_from_req_approved_baseline(
     remote_refs_before = _git(live_root, "ls-remote", "origin")
 
     run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
-    _phase_design(
-        live_trac, live_root, run_id, version,
-        remote_url_before, remote_refs_before,
+    _phase_design_to_m_test(live_trac, live_root, run_id, version)
+    _capture_design_exit_baseline(live_root, version, run_id)
+    _phase_m_test_to_boundary(
+        live_trac,
+        live_root,
+        run_id,
+        version,
+        remote_url_before,
+        remote_refs_before,
         expect_real_issues=False,
     )
 
 
-def _sanity_check_resumed_host(live_trac, live_root: Path, baseline: Path) -> str:
-    """Assert the restored host is at the M-REQ-APPROVED checkpoint:
-    stage=M-REQ-APPROVAL, substate=APPROVED, active (not escalation), and no
-    failed outcomes in the DB. Returns the run_id from the manifest."""
+def test_m_test_from_design_exit_baseline(
+    live_root,
+    host_with_opencode_config,
+    live_scenarios,
+    live_trac,
+    monkeypatch,
+):
+    """Resume the journey from an M-TEST/WRITE (design-exit) baseline:
+    restore the snapshot, sanity-check the M-TEST/WRITE state, then run
+    ONLY ``_phase_m_test_to_boundary``. Never replays triage/scribe/sage/
+    acceptance/approval/Archer-DRAFT/Prism-design-review.
+
+    Gating: ``live_enabled`` (via live_root) skips when the provider env is
+    absent. The baseline check runs BEFORE the GitHub requirement so a
+    missing baseline skips cleanly.
+
+    Build path (``TRAC_LIVE_BUILD_BASELINE=1``): run the prefix phases +
+    Archer DRAFT + Prism design review loop, snapshot at design-exit, then
+    continue to ``_phase_m_test_to_boundary``."""
+    version = "live-e2e-code-stats"
+
+    baseline = _find_design_exit_baseline(version)
+    if baseline is None:
+        if os.environ.get("TRAC_LIVE_BUILD_BASELINE", "").strip() == "1":
+            slug = _require_github(monkeypatch, live_root)
+            run_id, remote_url_before, remote_refs_before, _ = _setup_host(
+                live_trac, live_root, slug, live_scenarios, version
+            )
+            _phase_story(live_trac, live_root, run_id, version)
+            _phase_spec_and_acceptance(live_trac, live_root, run_id, version)
+            _phase_approval(live_trac)
+            _capture_baseline(live_root, version, run_id)
+            _phase_design_to_m_test(live_trac, live_root, run_id, version)
+            baseline = _capture_design_exit_baseline(live_root, version, run_id)
+            if baseline is None:
+                pytest.skip(
+                    "TRAC_LIVE_BUILD_BASELINE=1 but capture was skipped (TRAC_LIVE_SKIP_BASELINE=1)"
+                )
+            run_id = _sanity_check_design_exit_host(live_trac, live_root, baseline)
+            _phase_m_test_to_boundary(
+                live_trac,
+                live_root,
+                run_id,
+                version,
+                remote_url_before,
+                remote_refs_before,
+                expect_real_issues=False,
+            )
+            return
+        pytest.skip(
+            "no DESIGN_EXIT_OBSERVED baseline; run the full journey"
+            " or set TRAC_LIVE_BUILD_BASELINE=1"
+        )
+
     manifest = _read_manifest(baseline)
-    assert manifest, f"baseline missing manifest: {baseline}"
-    run_id = manifest["run_id"]
+    if (
+        manifest
+        and manifest.get("tracks_sha") != _tracks_short_sha()
+        and os.environ.get("TRAC_LIVE_FORCE_BASELINE", "").strip() != "1"
+    ):
+        pytest.skip(
+            f"baseline SHA {manifest.get('tracks_sha')} != HEAD "
+            f"{_tracks_short_sha()}; set TRAC_LIVE_FORCE_BASELINE=1 to override"
+        )
 
-    status = live_trac("status")
-    assert "stage=M-REQ-APPROVAL" in status.stdout, (
-        f"baseline is not at M-REQ-APPROVAL: {status.stdout}"
-    )
-    assert "substate=APPROVED" in status.stdout, (
-        f"baseline is not in APPROVED substate: {status.stdout}"
-    )
-    assert "status=active" in status.stdout, (
-        f"baseline is not active (escalation?): {status.stdout}"
-    )
-    assert "awaiting=-" in status.stdout, (
-        f"baseline is awaiting (escalation?): {status.stdout}"
-    )
+    _restore_baseline(baseline, live_root)
 
-    # No escalation evidence: no failed outcomes in the baseline DB events.
-    events = _events(live_root, run_id)
-    failed = [
-        e for e in events
-        if e["type"] == "outcome.received" and e["payload"].get("status") != "done"
-    ]
-    assert not failed, (
-        f"baseline has non-done outcomes (escalation evidence): "
-        f"{[(e['seq'], e['payload'].get('status')) for e in failed]}"
+    remote_url_before = _git(live_root, "remote", "get-url", "origin")
+    remote_refs_before = _git(live_root, "ls-remote", "origin")
+
+    run_id = _sanity_check_design_exit_host(live_trac, live_root, baseline)
+    _phase_m_test_to_boundary(
+        live_trac,
+        live_root,
+        run_id,
+        version,
+        remote_url_before,
+        remote_refs_before,
+        expect_real_issues=False,
     )
-    return run_id
 
 
 # -- deterministic unit test for outcome status=None hardening (deliverable #5) --
@@ -923,11 +865,19 @@ def _sanity_check_resumed_host(live_trac, live_root: Path, baseline: Path) -> st
 def _unit_envelopes(*items: tuple[str, dict]) -> list[EventEnvelope]:
     out = []
     for i, (etype, payload) in enumerate(items, start=1):
-        out.append(EventEnvelope(
-            seq=i, ts="2026-08-04T00:00:00+00:00", run_id="RUN",
-            version="v0.1", type=etype, schema_version=1,
-            command_id=f"C{i}", task_id=None, payload=payload,
-        ))
+        out.append(
+            EventEnvelope(
+                seq=i,
+                ts="2026-08-04T00:00:00+00:00",
+                run_id="RUN",
+                version="v0.1",
+                type=etype,
+                schema_version=1,
+                command_id=f"C{i}",
+                task_id=None,
+                payload=payload,
+            )
+        )
     return out
 
 
@@ -945,51 +895,76 @@ def test_outcome_with_none_status_is_treated_as_failure():
         ("story.requested", {"raw_chars": 5}),
         ("stage.entered", {"stage": "M-DESIGN"}),
     ]
-    dispatched = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                  "params": {"role": "archer",
-                                                             "substate": "DRAFT"},
-                                                  "command_id": "C1"}})
+    dispatched = (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "archer", "substate": "DRAFT"},
+                "command_id": "C1",
+            }
+        },
+    )
     # status=None - the bug: previously treated as success (doc_produced=True).
-    none_outcome = ("outcome.received", {"role": "archer", "status": None,
-                                          "self_report": "unparseable"})
+    none_outcome = (
+        "outcome.received",
+        {"role": "archer", "status": None, "self_report": "unparseable"},
+    )
 
     one = machine_project(_unit_envelopes(*enter, dispatched, none_outcome))
     # The None status must consume an attempt (not set doc_produced).
-    assert one.doc_produced is False, (
-        "status=None must not be treated as a produced document"
-    )
+    assert one.doc_produced is False, "status=None must not be treated as a produced document"
     assert one.current_attempt == 1, (
         f"status=None must consume an attempt; got {one.current_attempt}"
     )
     assert one.last_failure is not None
     assert one.last_failure["check"] == "agent_error", (
-        f"missing/None status must classify as agent_error; "
-        f"got {one.last_failure['check']}"
+        f"missing/None status must classify as agent_error; got {one.last_failure['check']}"
     )
     assert one.status == "active", "first None-status outcome must not escalate"
 
     # Two more None-status outcomes escalate (3-attempt budget).
-    two = machine_project(_unit_envelopes(
-        *enter, dispatched, none_outcome,
-        dispatched, none_outcome,
-    ))
+    two = machine_project(
+        _unit_envelopes(
+            *enter,
+            dispatched,
+            none_outcome,
+            dispatched,
+            none_outcome,
+        )
+    )
     assert two.current_attempt == 2
     assert two.status == "active", "second None-status outcome must not escalate yet"
 
-    three = machine_project(_unit_envelopes(
-        *enter, dispatched, none_outcome,
-        dispatched, none_outcome,
-        dispatched, none_outcome,
-    ))
+    three = machine_project(
+        _unit_envelopes(
+            *enter,
+            dispatched,
+            none_outcome,
+            dispatched,
+            none_outcome,
+            dispatched,
+            none_outcome,
+        )
+    )
     assert three.status == "awaiting_human"
     assert three.awaiting == "escalation", (
         f"third None-status outcome must escalate; got awaiting={three.awaiting}"
     )
-    assert machine_project(_unit_envelopes(
-        *enter, dispatched, none_outcome,
-        dispatched, none_outcome,
-        dispatched, none_outcome,
-    )).stage == "M-DESIGN"
+    assert (
+        machine_project(
+            _unit_envelopes(
+                *enter,
+                dispatched,
+                none_outcome,
+                dispatched,
+                none_outcome,
+                dispatched,
+                none_outcome,
+            )
+        ).stage
+        == "M-DESIGN"
+    )
 
     # A done status still passes through as a produced doc (regression guard).
     done_outcome = ("outcome.received", {"role": "archer", "status": "done"})

@@ -49,6 +49,9 @@ REQUIRED_SCENARIOS = {
     "archer-design-draft",
     "prism-design-review",
     "archer-design-respond",
+    "shield-test-draft",
+    "shield-test-respond",
+    "prism-test-review",
 }
 
 

@@ -1,0 +1,11 @@
+{
+  "scenario_id": "code-stats",
+  "phase": "M-TEST",
+  "agent": "Shield",
+  "kind": "RESPOND",
+  "human_actor": "LiveE2E-Human",
+  "max_new_threads": 0,
+  "comment_style": "concise",
+  "required_finding": null,
+  "required_action": "Read the Prism review discussion threads via trac discuss query, reply to each blocking finding thread with trac discuss reply explaining the fix, and revise the test files in tests/integration/ and tests/e2e/ to address the findings. Every revised test must retain its R-1 long-format marker (AC-FRXXXX-YY@v0.4 TRACKS-TRACE). Do not modify product code or interface stubs. After revising, the tests must remain collectable by pytest and fail with a legitimate Red."
+}
