@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from tests.e2e_live import m_test_helpers as _helpers
 from tests.e2e_live import test_full_journey as _journey
 from tests.e2e_live.m_test_helpers import (
     _git,
@@ -248,13 +250,17 @@ def test_m_test_review_loop_raises_after_two_revises():
 
 
 class _DesignTailDriver:
-    def __init__(self):
+    def __init__(self, substate="DISPATCH"):
         self.calls = []
+        self.substate = substate
 
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         return SimpleNamespace(
-            stdout="run RUN: stage=M-TEST substate=WRITE status=active awaiting=-"
+            stdout=(
+                f"run RUN: stage=M-TEST substate={self.substate} "
+                "status=active awaiting=-"
+            )
         )
 
 
@@ -264,6 +270,7 @@ def _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline):
         "restore": [],
         "remote": [],
         "sanity_req": [],
+        "phase_design": [],
         "capture": [],
         "sanity_design": [],
         "m_test": [],
@@ -292,7 +299,8 @@ def _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline):
 
     monkeypatch.setattr(_journey, "_sanity_check_resumed_host", sanity_req)
 
-    def phase_design(driver, root, run_id, version):
+    def phase_design(driver, root, run_id, version, expected_substate="WRITE"):
+        calls["phase_design"].append(expected_substate)
         driver("run", scenario="archer-design-draft")
 
     monkeypatch.setattr(_journey, "_phase_design_to_m_test", phase_design)
@@ -305,8 +313,8 @@ def _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline):
         ],
     )
 
-    def capture(root, version, run_id):
-        calls["capture"].append((root, version, run_id))
+    def capture(root, version, run_id, checkpoint_substate="WRITE"):
+        calls["capture"].append((root, version, run_id, checkpoint_substate))
         return tmp_path / "design-exit"
 
     monkeypatch.setattr(_journey, "_capture_design_exit_baseline", capture)
@@ -341,6 +349,7 @@ def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
     assert calls["restore"] == [(req_baseline, tmp_path)]
     assert calls["remote"] == [tmp_path]
     assert calls["sanity_req"] == [(driver, tmp_path, req_baseline)]
+    assert calls["phase_design"] == ["DISPATCH"]
     assert driver.calls == [
         (
             ("run",),
@@ -351,11 +360,104 @@ def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
             },
         )
     ]
-    assert calls["capture"] == [(tmp_path, "live-e2e-code-stats", "REQ-RUN")]
+    assert calls["capture"] == [
+        (tmp_path, "live-e2e-code-stats", "REQ-RUN", "DISPATCH")
+    ]
     assert calls["sanity_design"] == [
         (driver, tmp_path, tmp_path / "design-exit")
     ]
     assert calls["m_test"][0][0][0] is driver
+
+
+def test_design_exit_capture_records_dispatch_substate(monkeypatch, tmp_path):
+    root = tmp_path / "host"
+    root.mkdir()
+    monkeypatch.delenv("TRAC_LIVE_SKIP_BASELINE", raising=False)
+    monkeypatch.setattr(_helpers, "_baselines_root", lambda: tmp_path / "baselines")
+    monkeypatch.setattr(_helpers, "_tracks_short_sha", lambda: "abc1234")
+
+    baseline = _helpers._capture_design_exit_baseline(
+        root, "v1", "RUN", checkpoint_substate="DISPATCH"
+    )
+
+    assert baseline is not None
+    manifest = _helpers._read_manifest(baseline)
+    assert manifest["checkpoint"] == "DESIGN_EXIT_OBSERVED"
+    assert manifest["checkpoint_substate"] == "DISPATCH"
+
+
+def _design_exit_baseline(tmp_path, checkpoint_substate="DISPATCH"):
+    baseline = tmp_path / f"baseline-{checkpoint_substate or 'legacy'}"
+    baseline.mkdir()
+    manifest = {
+        "run_id": "RUN",
+        "checkpoint": "DESIGN_EXIT_OBSERVED",
+    }
+    if checkpoint_substate is not None:
+        manifest["checkpoint_substate"] = checkpoint_substate
+    (baseline / ".tracks-baseline-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return baseline
+
+
+def _patch_design_exit_events(monkeypatch, *, adjacent=True):
+    events = [
+        {"seq": 1, "type": "stage.exited", "payload": {"stage": "M-DESIGN"}},
+    ]
+    if not adjacent:
+        events.append({"seq": 2, "type": "audit.written", "payload": {}})
+    events.append(
+        {
+            "seq": len(events) + 1,
+            "type": "stage.entered",
+            "payload": {"stage": "M-TEST"},
+        }
+    )
+    monkeypatch.setattr(_helpers, "_events", lambda *_: events)
+
+
+def _status_driver(substate):
+    def status(*_):
+        return SimpleNamespace(
+            stdout=f"run RUN: stage=M-TEST substate={substate} status=active awaiting=-"
+        )
+
+    return status
+
+
+def test_design_exit_sanity_accepts_dispatch_manifest(monkeypatch, tmp_path):
+    baseline = _design_exit_baseline(tmp_path, "DISPATCH")
+    _patch_design_exit_events(monkeypatch)
+    status = _status_driver("DISPATCH")
+
+    assert _helpers._sanity_check_design_exit_host(status, tmp_path, baseline) == "RUN"
+
+
+def test_design_exit_sanity_rejects_wrong_declared_substate(monkeypatch, tmp_path):
+    baseline = _design_exit_baseline(tmp_path, "DISPATCH")
+    _patch_design_exit_events(monkeypatch)
+    status = _status_driver("WRITE")
+
+    with pytest.raises(AssertionError, match="DISPATCH"):
+        _helpers._sanity_check_design_exit_host(status, tmp_path, baseline)
+
+
+def test_design_exit_sanity_accepts_legacy_write_manifest(monkeypatch, tmp_path):
+    baseline = _design_exit_baseline(tmp_path, None)
+    _patch_design_exit_events(monkeypatch)
+    status = _status_driver("WRITE")
+
+    assert _helpers._sanity_check_design_exit_host(status, tmp_path, baseline) == "RUN"
+
+
+def test_design_exit_sanity_rejects_non_adjacent_design_transition(monkeypatch, tmp_path):
+    baseline = _design_exit_baseline(tmp_path, "DISPATCH")
+    _patch_design_exit_events(monkeypatch, adjacent=False)
+    status = _status_driver("DISPATCH")
+
+    with pytest.raises(AssertionError, match="not immediately followed"):
+        _helpers._sanity_check_design_exit_host(status, tmp_path, baseline)
 
 
 def test_fake_design_baseline_skips_without_req_baseline(monkeypatch, tmp_path):

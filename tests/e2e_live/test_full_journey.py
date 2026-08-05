@@ -24,7 +24,9 @@ Environment variables
   M-REQ-APPROVAL checkpoint in the full journey.
 * ``TRAC_LIVE_BASELINE_DIR`` - explicit baseline directory for the resume test.
 * ``TRAC_LIVE_BUILD_BASELINE=1`` - if no baseline exists, run the prefix phases
-  (story/spec/acceptance/approval) on a fresh host, snapshot, then continue.
+   (story/spec/acceptance/approval) on a fresh host, snapshot, then continue.
+* ``TRAC_LIVE_FAKE_DESIGN_BASELINE=1`` - build a deterministic design-exit
+   baseline at M-TEST DISPATCH-ready, then resume the real Shield tail.
 * ``TRAC_LIVE_FORCE_BASELINE=1`` - use a baseline even when its tracks SHA does
   not match the current HEAD (otherwise the resume test skips on mismatch).
 * ``TRAC_LIVE_LOCAL_REMOTE=1`` - for restored baseline-resume tests only, use
@@ -54,6 +56,7 @@ from tests.e2e_live.harness import (
     select_wheel,
 )
 from tests.e2e_live.m_test_helpers import (
+    _assert_design_exit_adjacency,
     _assert_issue_events,
     _capture_baseline,
     _capture_design_exit_baseline,
@@ -281,15 +284,14 @@ def _assert_finding_lifecycle(
 def _run_design_review_loop(live_trac):
     """Prism review <-> Archer RESPOND loop, bounded to 2 review rounds
     (TRAC_LIVE_MAX_REVIEW_ROUNDS stays the wider outer net). Each round runs
-    prism-design-review: a pass round transitions to M-TEST (the dispatch
-    gate stops at Shield WRITE, substate change from PRISM_REVIEW); a revise
-    round halts in RESPOND (live run042 died here while unscripted), Archer
-    must answer every finding and return the state to PRISM_REVIEW, and the
-    next round starts.
+    prism-design-review: a pass round transitions to an active M-TEST
+    design-exit checkpoint; a revise round halts in RESPOND (live run042 died
+    here while unscripted), Archer must answer every finding and return the
+    state to PRISM_REVIEW, and the next round starts.
 
-    v0.4: Prism pass no longer completes the run -- it transitions M-DESIGN
-    EXIT -> M-TEST DISPATCH -> Shield WRITE. The dispatch gate stops at the
-    substate change, so the output shows ``stage=M-TEST substate=WRITE``.
+    The normal live gate leaves ``stage=M-TEST substate=WRITE``. The
+    accelerated two-dispatch fake leaves ``M-TEST DISPATCH-ready`` before the
+    real Shield dispatch.
 
     Archer DRAFT/RESPOND carry the design trio + scaffold + quality-guard
     installation - too big for the 1200s budget, so agent_timeout=1800 is
@@ -478,14 +480,15 @@ def _phase_design_to_m_test(
     live_root: Path,
     run_id: str,
     version: str,
+    expected_substate: str = "WRITE",
 ):
-    """Archer DRAFT + design review loop -> M-TEST WRITE (design-exit
-    checkpoint). The run halts at ``stage=M-TEST substate=WRITE`` because
-    the dispatch gate stops at the substate change (PRISM_REVIEW -> WRITE).
+    """Archer DRAFT + design review loop -> an active M-TEST design-exit
+    checkpoint. The normal live path is ``M-TEST/WRITE``; the accelerated
+    two-dispatch fake path is ``M-TEST DISPATCH-ready`` before Shield.
 
-    v0.4: Prism pass transitions M-DESIGN EXIT -> M-TEST DISPATCH -> Shield
-    WRITE; ``trac run`` stops before the Shield dispatch (different substate
-    from the Prism review that drove the pass)."""
+    ``expected_substate`` keeps the fake checkpoint before the third, real
+    Shield dispatch while preserving the existing live WRITE baseline."""
+    assert expected_substate in ("DISPATCH", "WRITE"), expected_substate
     design = live_trac(
         "run",
         scenario="archer-design-draft",
@@ -505,17 +508,17 @@ def _phase_design_to_m_test(
     ) == ["architecture.md", "interfaces.md", "test-plan.md"]
 
     final = _run_design_review_loop(live_trac)
-    # v0.4: Prism pass transitions to M-TEST, not run.completed. The dispatch
-    # gate stops at the Shield WRITE dispatch (substate change from
-    # PRISM_REVIEW to WRITE), so the run is still active at M-TEST/WRITE.
+    checkpoint_label = "DISPATCH-ready" if expected_substate == "DISPATCH" else "WRITE"
+    # Prism pass transitions to M-TEST, not run.completed. The bounded fake
+    # stops before Shield at DISPATCH; the normal live gate stops at WRITE.
     assert "stage=M-TEST" in final.stdout, (
         f"Prism design pass should transition to M-TEST: {final.stdout}"
     )
-    assert "substate=WRITE" in final.stdout, (
-        f"design-exit should halt at M-TEST WRITE: {final.stdout}"
+    assert f"substate={expected_substate}" in final.stdout, (
+        f"design-exit should halt at M-TEST {checkpoint_label}: {final.stdout}"
     )
     assert "status=active" in final.stdout, (
-        f"run should still be active at M-TEST WRITE: {final.stdout}"
+        f"run should still be active at M-TEST {checkpoint_label}: {final.stdout}"
     )
 
     design_exit_events = _events(live_root, run_id)
@@ -534,32 +537,6 @@ def _phase_design_to_m_test(
         if event["type"].startswith("human.") and event["seq"] > approval_seq
     ], "M-DESIGN must carry no human gate (BS-05)"
 
-
-def _assert_design_exit_adjacency(events: list[dict]) -> None:
-    """Require the historical M-DESIGN exit -> M-TEST entry adjacency."""
-    design_exit = next(
-        (event for event in events
-         if event["type"] == "stage.exited"
-         and event["payload"].get("stage") == "M-DESIGN"),
-        None,
-    )
-    m_test_entered = next(
-        (event for event in events
-         if event["type"] == "stage.entered"
-         and event["payload"].get("stage") == "M-TEST"),
-        None,
-    )
-    assert design_exit and m_test_entered, "missing design-exit transition events"
-    assert m_test_entered["seq"] == design_exit["seq"] + 1, (
-        f"stage.exited(M-DESIGN) at seq={design_exit['seq']} is not immediately "
-        f"followed by stage.entered(M-TEST) at seq={m_test_entered['seq']}"
-    )
-    assert not any(
-        event["type"] == "run.completed" and event["seq"] <= design_exit["seq"]
-        for event in events
-    ), "M-DESIGN exit must not complete the run"
-
-
 def _phase_m_test_to_boundary(
     live_trac,
     live_root: Path,
@@ -569,7 +546,8 @@ def _phase_m_test_to_boundary(
     remote_refs_before: str,
     expect_real_issues: bool,
 ):
-    """M-TEST: Shield writes tests -> Runtime collection -> Prism reviews ->
+    """M-TEST from DISPATCH-ready or WRITE: the first run executes the real
+    Shield, then Runtime collection -> Prism reviews ->
     Runtime Red validation -> trace gate -> controlled test commit ->
     stage.exited(M-TEST) -> run.completed(boundary).
 
@@ -597,7 +575,7 @@ def _phase_m_test_to_boundary(
         for e in m_test_events
         if e["type"] == "test.collected" and e["payload"].get("status") == "passed"
     ]
-    assert collected, "missing test.collected(passed) event after Shield WRITE"
+    assert collected, "missing test.collected(passed) event after real Shield dispatch"
     tests_dir = live_root / "tests"
     assert (tests_dir / "integration").is_dir(), "tests/integration/ missing"
     assert (tests_dir / "e2e").is_dir(), "tests/e2e/ missing"
@@ -712,10 +690,12 @@ def test_bounded_scripted_real_agent_journey(
 
     _phase_design_to_m_test(live_trac, live_root, run_id, version)
 
-    # Design-exit baseline (v0.4 M-TEST milestone): snapshot at
-    # stage=M-TEST substate=WRITE so the M-TEST resume test skips the
-    # expensive prefix + Archer DRAFT + Prism review loop.
-    _capture_design_exit_baseline(live_root, version, run_id)
+    # Design-exit baseline (v0.4 M-TEST milestone): snapshot at the declared
+    # live checkpoint, M-TEST/WRITE, so the resume test skips the expensive
+    # prefix + Archer DRAFT + Prism review loop.
+    _capture_design_exit_baseline(
+        live_root, version, run_id, checkpoint_substate="WRITE"
+    )
 
     _phase_m_test_to_boundary(
         live_trac,
@@ -789,7 +769,9 @@ def test_journey_from_req_approved_baseline(
                 )
             run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
             _phase_design_to_m_test(live_trac, live_root, run_id, version)
-            _capture_design_exit_baseline(live_root, version, run_id)
+            _capture_design_exit_baseline(
+                live_root, version, run_id, checkpoint_substate="WRITE"
+            )
             _phase_m_test_to_boundary(
                 live_trac,
                 live_root,
@@ -815,7 +797,9 @@ def test_journey_from_req_approved_baseline(
 
     run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
     _phase_design_to_m_test(live_trac, live_root, run_id, version)
-    _capture_design_exit_baseline(live_root, version, run_id)
+    _capture_design_exit_baseline(
+        live_root, version, run_id, checkpoint_substate="WRITE"
+    )
     _phase_m_test_to_boundary(
         live_trac,
         live_root,
@@ -834,9 +818,10 @@ def test_m_test_from_design_exit_baseline(
     live_trac,
     monkeypatch,
 ):
-    """Resume the journey from an M-TEST/WRITE (design-exit) baseline:
-    restore the snapshot, sanity-check the M-TEST/WRITE state, then run
-    ONLY ``_phase_m_test_to_boundary``. Never replays triage/scribe/sage/
+    """Resume the journey from a DESIGN_EXIT_OBSERVED baseline (legacy/live
+    M-TEST/WRITE or accelerated M-TEST DISPATCH-ready): restore the snapshot,
+    sanity-check its declared state, then run ONLY
+    ``_phase_m_test_to_boundary``. Never replays triage/scribe/sage/
     acceptance/approval/Archer-DRAFT/Prism-design-review.
 
     Gating: ``live_enabled`` (via live_root) skips when the provider env is
@@ -866,9 +851,20 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
             remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
             run_id = _sanity_check_resumed_host(live_trac, live_root, req_baseline)
             fake_design_trac = partial(live_trac, backend="fake", max_dispatches=2)
-            _phase_design_to_m_test(fake_design_trac, live_root, run_id, version)
+            _phase_design_to_m_test(
+                fake_design_trac,
+                live_root,
+                run_id,
+                version,
+                expected_substate="DISPATCH",
+            )
             _assert_design_exit_adjacency(_events(live_root, run_id))
-            baseline = _capture_design_exit_baseline(live_root, version, run_id)
+            baseline = _capture_design_exit_baseline(
+                live_root,
+                version,
+                run_id,
+                checkpoint_substate="DISPATCH",
+            )
             if baseline is None:
                 pytest.skip(
                     "TRAC_LIVE_FAKE_DESIGN_BASELINE=1 but capture was skipped "
@@ -895,7 +891,9 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
             _phase_approval(live_trac)
             _capture_baseline(live_root, version, run_id)
             _phase_design_to_m_test(live_trac, live_root, run_id, version)
-            baseline = _capture_design_exit_baseline(live_root, version, run_id)
+            baseline = _capture_design_exit_baseline(
+                live_root, version, run_id, checkpoint_substate="WRITE"
+            )
             if baseline is None:
                 pytest.skip(
                     "TRAC_LIVE_BUILD_BASELINE=1 but capture was skipped (TRAC_LIVE_SKIP_BASELINE=1)"
@@ -912,8 +910,8 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
             )
             return
         pytest.skip(
-            "no DESIGN_EXIT_OBSERVED baseline; run the full journey"
-            " or set TRAC_LIVE_BUILD_BASELINE=1"
+            "no DESIGN_EXIT_OBSERVED baseline (M-TEST WRITE or DISPATCH-ready); "
+            "run the full journey or set TRAC_LIVE_BUILD_BASELINE=1"
         )
 
     _skip_baseline_sha_mismatch(baseline)

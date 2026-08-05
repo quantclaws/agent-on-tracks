@@ -86,27 +86,7 @@ def assert_strict_boundary_adjacency(final_events: list[dict]) -> None:
     adjacency is the correct assertion. If the store ever inserts
     bookkeeping events between them, this will fail loudly rather than
     silently weakening."""
-    design_exit = _find_event(final_events, "stage.exited", stage="M-DESIGN")
-    assert design_exit, "missing stage.exited(M-DESIGN)"
-    m_test_entered = _find_event(final_events, "stage.entered", stage="M-TEST")
-    assert m_test_entered, "missing stage.entered(M-TEST)"
-    # Adjacency: stage.entered(M-TEST) must be the very next event after
-    # stage.exited(M-DESIGN).
-    assert m_test_entered["seq"] == design_exit["seq"] + 1, (
-        f"stage.exited(M-DESIGN) at seq={design_exit['seq']} is not "
-        f"immediately followed by stage.entered(M-TEST) at "
-        f"seq={m_test_entered['seq']}; boundary adjacency violated"
-    )
-    # No run.completed at M-DESIGN.
-    run_completed_before_m_test = [
-        e
-        for e in final_events
-        if e["type"] == "run.completed" and e["seq"] <= design_exit["seq"]
-    ]
-    assert not run_completed_before_m_test, (
-        f"run.completed at M-DESIGN (before stage.exited at "
-        f"seq={design_exit['seq']}): {[e['seq'] for e in run_completed_before_m_test]}"
-    )
+    _assert_design_exit_adjacency(final_events)
 
     # M-TEST -> boundary adjacency.
     m_test_exit = _find_event(final_events, "stage.exited", stage="M-TEST")
@@ -132,6 +112,28 @@ def _find_event(events: list[dict], event_type: str, **payload_filter) -> dict |
         if all(event["payload"].get(k) == v for k, v in payload_filter.items()):
             return event
     return None
+
+
+def _assert_design_exit_adjacency(events: list[dict]) -> None:
+    """Require strict ``stage.exited(M-DESIGN)`` -> ``stage.entered(M-TEST)``."""
+    design_exit = _find_event(events, "stage.exited", stage="M-DESIGN")
+    assert design_exit, "missing stage.exited(M-DESIGN)"
+    m_test_entered = _find_event(events, "stage.entered", stage="M-TEST")
+    assert m_test_entered, "missing stage.entered(M-TEST)"
+    assert m_test_entered["seq"] == design_exit["seq"] + 1, (
+        f"stage.exited(M-DESIGN) at seq={design_exit['seq']} is not "
+        f"immediately followed by stage.entered(M-TEST) at "
+        f"seq={m_test_entered['seq']}; boundary adjacency violated"
+    )
+    completed_before_exit = [
+        event
+        for event in events
+        if event["type"] == "run.completed" and event["seq"] <= design_exit["seq"]
+    ]
+    assert not completed_before_exit, (
+        f"run.completed before M-DESIGN exit at seq={design_exit['seq']}: "
+        f"{[event['seq'] for event in completed_before_exit]}"
+    )
 
 
 # -- P0: Shield assignment contract ----------------------------------------
@@ -514,7 +516,11 @@ def _read_manifest(path: Path) -> dict | None:
 
 
 def _capture_baseline(
-    live_root: Path, version: str, run_id: str, checkpoint: str = "M-REQ-APPROVAL"
+    live_root: Path,
+    version: str,
+    run_id: str,
+    checkpoint: str = "M-REQ-APPROVAL",
+    checkpoint_substate: str | None = None,
 ) -> Path | None:
     """Capture a baseline snapshot of the live host at a named checkpoint.
     The snapshot is a copy of the host directory (.tracks/ runtime DB +
@@ -526,7 +532,8 @@ def _capture_baseline(
 
     The ``checkpoint`` field in the manifest identifies which state the
     snapshot was taken at (default ``M-REQ-APPROVAL`` for backward
-    compatibility with the existing resume test)."""
+    compatibility with the existing resume test). Design-exit snapshots also
+    record ``checkpoint_substate`` when supplied."""
     if os.environ.get("TRAC_LIVE_SKIP_BASELINE", "").strip() == "1":
         print("LIVE_E2E_BASELINE=skipped (TRAC_LIVE_SKIP_BASELINE=1)", flush=True)
         return None
@@ -545,10 +552,20 @@ def _capture_baseline(
         "source_host": str(live_root.resolve()),
         "checkpoint": checkpoint,
     }
+    if checkpoint_substate is not None:
+        manifest["checkpoint_substate"] = checkpoint_substate
     (target / ".tracks-baseline-manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"LIVE_E2E_BASELINE=captured {target} checkpoint={checkpoint}", flush=True)
+    substate = (
+        f" checkpoint_substate={checkpoint_substate}"
+        if checkpoint_substate is not None
+        else ""
+    )
+    print(
+        f"LIVE_E2E_BASELINE=captured {target} checkpoint={checkpoint}{substate}",
+        flush=True,
+    )
     return target
 
 
@@ -604,31 +621,38 @@ def _find_baseline_for_sha(
 
 # -- design-exit checkpoint (v0.4 M-TEST milestone) ------------------------
 #
-# Checkpoint truth: the snapshot is captured at ``stage=M-TEST
-# substate=WRITE`` AFTER the Prism design review passed and the machine
-# transitioned M-DESIGN EXIT -> M-TEST DISPATCH -> Shield WRITE. The
-# dispatch gate (executor.py _dispatch_gate) stops ``trac run`` at the
-# substate change from PRISM_REVIEW to WRITE, so the run halts with
-# Shield's dispatch pending (not yet executed). The checkpoint name
-# ``DESIGN_EXIT_OBSERVED`` reflects this: the design-exit transition has
-# been observed in the event log, and the host is ready for the M-TEST
-# WRITE phase. Pre-EXIT capture is impossible because the dispatch gate
-# boundary is at the substate change, not at the stage transition.
+# Checkpoint truth: the snapshot is captured after the Prism design review
+# passed and the machine transitioned M-DESIGN EXIT -> M-TEST. The normal live
+# gate stops at ``M-TEST/WRITE`` with Shield's dispatch pending; the accelerated
+# two-dispatch fake stops earlier at ``M-TEST/DISPATCH``. Both are ready for
+# the real Shield dispatch when the resume test continues.
 
 DESIGN_EXIT_OBSERVED_CHECKPOINT = "DESIGN_EXIT_OBSERVED"
+_DESIGN_EXIT_SUBSTATES = frozenset(("DISPATCH", "WRITE"))
 
 
 def _capture_design_exit_baseline(
-    live_root: Path, version: str, run_id: str
+    live_root: Path,
+    version: str,
+    run_id: str,
+    checkpoint_substate: str = "WRITE",
 ) -> Path | None:
-    """Capture a baseline at the design-exit-observed checkpoint: after
-    Prism design review passed and the machine transitioned to M-TEST
-    WRITE. The dispatch gate stops ``trac run`` at the substate change
-    (PRISM_REVIEW -> WRITE), so the run halts at ``stage=M-TEST
-    substate=WRITE`` with Shield's dispatch pending. Pre-EXIT capture is
-    impossible because the gate boundary is at the substate change."""
+    """Capture a design-exit baseline at the declared M-TEST substate.
+
+    ``WRITE`` is the existing live checkpoint; accelerated design capture is
+    ``DISPATCH`` because the two-dispatch cap stops before Shield is issued.
+    """
+    if checkpoint_substate not in _DESIGN_EXIT_SUBSTATES:
+        raise ValueError(
+            "design-exit checkpoint_substate must be DISPATCH or WRITE, "
+            f"got {checkpoint_substate!r}"
+        )
     return _capture_baseline(
-        live_root, version, run_id, checkpoint=DESIGN_EXIT_OBSERVED_CHECKPOINT
+        live_root,
+        version,
+        run_id,
+        checkpoint=DESIGN_EXIT_OBSERVED_CHECKPOINT,
+        checkpoint_substate=checkpoint_substate,
     )
 
 
@@ -674,9 +698,12 @@ def _sanity_check_resumed_host(live_trac, live_root: Path, baseline: Path) -> st
 def _sanity_check_design_exit_host(
     live_trac, live_root: Path, baseline: Path
 ) -> str:
-    """Assert the restored host is at the design-exit-observed checkpoint:
-    stage=M-TEST, substate=WRITE, active (not escalation), and no failed
-    outcomes in the DB. Returns the run_id from the manifest."""
+    """Assert a restored design-exit host is active at its manifest substate.
+
+    New manifests declare ``DISPATCH`` or ``WRITE``. A missing declaration is
+    the legacy/live ``WRITE`` baseline. The transition into M-TEST must remain
+    strictly adjacent to the M-DESIGN exit in the event log.
+    """
     manifest = _read_manifest(baseline)
     assert manifest, f"baseline missing manifest: {baseline}"
     run_id = manifest["run_id"]
@@ -685,19 +712,26 @@ def _sanity_check_design_exit_host(
         f"{DESIGN_EXIT_OBSERVED_CHECKPOINT}, got "
         f"{manifest.get('checkpoint')}"
     )
+    checkpoint_substate = manifest.get("checkpoint_substate", "WRITE")
+    assert checkpoint_substate in _DESIGN_EXIT_SUBSTATES, (
+        "design-exit manifest checkpoint_substate must be DISPATCH or WRITE, "
+        f"got {checkpoint_substate!r}"
+    )
 
     status = live_trac("status")
     assert "stage=M-TEST" in status.stdout, (
         f"design-exit baseline is not at M-TEST: {status.stdout}"
     )
-    assert "substate=WRITE" in status.stdout, (
-        f"design-exit baseline is not in WRITE substate: {status.stdout}"
+    assert f"substate={checkpoint_substate}" in status.stdout.split(), (
+        f"design-exit baseline is not in manifest-declared "
+        f"{checkpoint_substate} substate: {status.stdout}"
     )
     assert "status=active" in status.stdout, (
         f"design-exit baseline is not active (escalation?): {status.stdout}"
     )
 
     events = _events(live_root, run_id)
+    _assert_design_exit_adjacency(events)
     failed = [
         e
         for e in events
