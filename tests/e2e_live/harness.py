@@ -142,6 +142,17 @@ def live_env(install: LiveInstall, extra: dict[str, str] | None = None) -> dict[
     env.pop("TRAC_FAKE_SIMULATE", None)
     if extra:
         env.update(extra)
+    backend = env["TRAC_AGENT_BACKEND"].strip().lower()
+    if backend == "fake":
+        env.pop("TRAC_AGENT_MODEL", None)
+    elif backend == "opencode":
+        model = env.get("TRAC_LIVE_MODEL", "").strip()
+        if model:
+            if "/" not in model:
+                provider = env.get("TRAC_LIVE_PROVIDER", "").strip()
+                if provider:
+                    model = f"{provider}/{model}"
+            env["TRAC_AGENT_MODEL"] = model
     return env
 
 

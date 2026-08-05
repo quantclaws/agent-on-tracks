@@ -273,6 +273,41 @@ def test_driver_defaults_to_opencode_env_and_scenario_args(monkeypatch, tmp_path
     ]
 
 
+def test_driver_opencode_uses_configured_live_model(monkeypatch, tmp_path):
+    driver = _mechanic_driver(tmp_path)
+    captured = _capture_driver_run(monkeypatch, driver)
+    monkeypatch.setenv("TRAC_LIVE_PROVIDER", "litellm")
+    monkeypatch.setenv("TRAC_LIVE_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("TRAC_AGENT_MODEL", "ark/glm-5.2")
+
+    driver.run("run", scenario="triage")
+
+    assert captured["kwargs"]["env"]["TRAC_AGENT_MODEL"] == "litellm/deepseek-v4-flash"
+
+
+def test_driver_opencode_preserves_prefixed_live_model(monkeypatch, tmp_path):
+    driver = _mechanic_driver(tmp_path)
+    captured = _capture_driver_run(monkeypatch, driver)
+    monkeypatch.setenv("TRAC_LIVE_PROVIDER", "litellm")
+    monkeypatch.setenv("TRAC_LIVE_MODEL", "other-provider/deepseek-v4-flash")
+
+    driver.run("run", scenario="triage")
+
+    assert captured["kwargs"]["env"]["TRAC_AGENT_MODEL"] == (
+        "other-provider/deepseek-v4-flash"
+    )
+
+
+def test_driver_fake_backend_clears_model_override(monkeypatch, tmp_path):
+    driver = _mechanic_driver(tmp_path)
+    captured = _capture_driver_run(monkeypatch, driver)
+    monkeypatch.setenv("TRAC_AGENT_MODEL", "ark/glm-5.2")
+
+    driver.run("run", scenario="triage", backend="fake")
+
+    assert "TRAC_AGENT_MODEL" not in captured["kwargs"]["env"]
+
+
 def test_driver_fake_backend_omits_console_env(monkeypatch, tmp_path):
     driver = _mechanic_driver(tmp_path)
     captured = _capture_driver_run(monkeypatch, driver)
