@@ -1,10 +1,9 @@
 #!/bin/sh
 # Quality gate (install once: `git config core.hooksPath .githooks`).
 #   ruff   -> general lint + line length            (tracks + tests)
-#   flake8 -> cognitive complexity, CCR001          (tracks; tests are linear
-#              journey scripts and are exempt from complexity gating)
-#   pylint -> duplication R0801 + file length C0302 (tracks only; tests exempt)
-#           -> method length R0915 / locals R0914   (tracks only; test exempt)
+#   flake8 -> cognitive complexity, CCR001          (tracks; tests exempt)
+#   pylint -> duplication R0801 + file length C0302 (tracks + tests)
+#           -> method length R0915 / locals R0914   (tracks only; tests exempt)
 # Thresholds live in pyproject [tool.pylint.*] and .flake8.
 set -e
 ROOT="$(git rev-parse --show-toplevel)"
@@ -18,8 +17,8 @@ echo "[pre-commit] ruff"
 "$BIN/ruff" check tracks tests
 echo "[pre-commit] cognitive complexity (tracks)"
 "$BIN/flake8" tracks
-echo "[pre-commit] pylint: duplication + file length (tracks)"
-"$BIN/pylint" --disable=all --enable=R0801,C0302 tracks
+echo "[pre-commit] pylint: duplication + file length (tracks + tests)"
+"$BIN/pylint" --disable=all --enable=R0801,C0302 tracks tests
 echo "[pre-commit] pylint: method length + locals (tracks)"
 "$BIN/pylint" --disable=all --enable=R0915,R0914 tracks
 echo "[pre-commit] OK"
