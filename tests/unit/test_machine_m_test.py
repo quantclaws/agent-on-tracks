@@ -196,7 +196,7 @@ def test_prism_dispatch():
     cmd = decide(s)
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "prism"
-    assert cmd.params["assignment"]["skills"] == ["tracks-discuz", "test-asset-criteria"]
+    assert cmd.params["assignment"]["skills"] == ["tracks-discuz", "tracks-prism-test"]
     assert cmd.params["assignment"]["criteria_pack"] == dict(_CRITERIA_PACK)
 
 

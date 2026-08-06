@@ -1,5 +1,5 @@
 ---
-name: test-asset-criteria
+name: tracks-prism-test
 version: 0.1
 description: D-29 测试资产判据包 - Prism 在 M-TEST PRISM_REVIEW 消费的语义判据
 ---

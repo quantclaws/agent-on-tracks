@@ -106,7 +106,7 @@ def test_shield_assignment_contract_validates_test_tasks():
             assert_shield_assignment_contract(_shield_events(test_tasks), "v0.4")
 
 
-_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+_CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 
 def _criteria_events(
@@ -128,7 +128,7 @@ def _criteria_events(
                         "substate": "PRISM_REVIEW",
                         "assignment": {
                             "criteria_pack": assigned,
-                            "skills": ["tracks-discuz", "test-asset-criteria"],
+                            "skills": ["tracks-discuz", "tracks-prism-test"],
                         },
                     },
                 }

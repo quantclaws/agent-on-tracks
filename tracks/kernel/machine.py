@@ -866,6 +866,12 @@ def _decide_review(s: State, stage: str, sub: str) -> Command | None:
         # doc set like the drafter's (flow.md §8; no single target doc).
         cmd.params["docs"] = list(sd.docs)
         cmd.params["assignment"]["docs"] = list(sd.docs)
+        # D-29: Prism's M-DESIGN review consumes the design criteria pack
+        # (tracks-prism-design) alongside the discussion protocol; switch the
+        # single-skill shape to the multi-skill list, like the Archer DRAFT.
+        cmd.params["assignment"].pop("skill", None)
+        cmd.params["assignment"].pop("skill_version", None)
+        cmd.params["assignment"]["skills"] = ["tracks-discuz", "tracks-prism-design"]
     return cmd
 
 
@@ -879,7 +885,7 @@ def _decide_exit_gate(s: State, stage: str) -> Command | None:
 
 # D-29 criteria pack identity (architecture.md §3.4): Runtime decides the pack
 # name+version; Prism loads it and echoes the identity in its verdict.
-_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+_CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 # Shield / M-TEST Prism read-only context docs (interfaces.md §3a).
 _M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
 
@@ -913,7 +919,7 @@ def _m_test_prism_dispatch(s: State) -> Command:
         "docs": list(_M_TEST_CONTEXT_DOCS),
         "assignment": {
             "kind": "PRISM_REVIEW",
-            "skills": ["tracks-discuz", "test-asset-criteria"],
+            "skills": ["tracks-discuz", "tracks-prism-test"],
             "docs": list(_M_TEST_CONTEXT_DOCS),
             "criteria_pack": dict(_CRITERIA_PACK),
         },

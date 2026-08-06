@@ -317,7 +317,7 @@ def assert_single_test_commit(
 # -- P0: criteria-pack anti-self-report triple -----------------------------
 
 
-_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+_CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 
 def assert_criteria_pack_triple(events: list[dict]) -> None:
@@ -350,11 +350,11 @@ def assert_criteria_pack_triple(events: list[dict]) -> None:
         f"got {assigned_pack}"
     )
     # D-29: the criteria pack skill is declared for materialization (not just
-    # identity metadata); assignment.skills names test-asset-criteria so the
+    # identity metadata); assignment.skills names tracks-prism-test so the
     # backend materializes it for Prism to consume.
     assigned_skills = prism_assignment.get("skills", [])
-    assert "test-asset-criteria" in assigned_skills, (
-        f"Prism M-TEST dispatch assignment.skills missing test-asset-criteria: "
+    assert "tracks-prism-test" in assigned_skills, (
+        f"Prism M-TEST dispatch assignment.skills missing tracks-prism-test: "
         f"got {assigned_skills}"
     )
 

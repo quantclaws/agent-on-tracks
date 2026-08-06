@@ -116,9 +116,9 @@ def _host_config(config: dict[str, str]) -> dict:
                     "apiKey": "{env:TRAC_LIVE_API_KEY}",
                 },
                 "models": {
-                    config["TRAC_LIVE_MODEL"]: {
-                        "name": config["TRAC_LIVE_MODEL"],
-                    }
+                    "glm-5.2": {"name": "glm-5.2"},
+                    "qwen-3.8-max": {"name": "qwen-3.8-max"},
+                    "deepseek-v4-flash": {"name": "deepseek-v4-flash"},
                 },
             }
         },

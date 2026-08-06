@@ -40,13 +40,12 @@ AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
 
 # Agent IQ -> model mapping (user policy): an agent's model for live dispatch
 # is determined by its IQ frontmatter field in tracks/agents/<Name>.md (e.g.
-# Scribe.md has `IQ: A`). Mapping: S -> (TBD), A -> ark/glm-5.2, B -> (TBD).
-# An explicit TRAC_AGENT_MODEL env var overrides everything (existing c54490a
-# behavior, applied in select_backend -> OpencodeBackend.model). S and B are
-# intentionally absent here for now - they fall through to opencode's own
-# configured default (no --model flag); add them here when the policy lands so
-# future S/B entries land predictably.
-IQ_MODEL = {"A": "ark/glm-5.2"}
+# Scribe.md has `IQ: A`). Mapping: S -> litellm/glm-5.2, A -> litellm/qwen-3.8-max,
+# B -> litellm/deepseek-v4-flash. An explicit TRAC_AGENT_MODEL env var overrides
+# everything (existing c54490a behavior, applied in select_backend ->
+# OpencodeBackend.model).
+IQ_MODEL = {"S": "litellm/glm-5.2", "A": "litellm/qwen-3.8-max",
+            "B": "litellm/deepseek-v4-flash"}
 
 # Tolerant frontmatter `IQ:` line parser (single-token value, optional spaces
 # after the colon); only matched inside the leading YAML frontmatter block.

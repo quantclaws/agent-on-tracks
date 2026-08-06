@@ -25,7 +25,9 @@ AGENT_DELIVERABLES = (
 
 DELIVERABLES = AGENT_DELIVERABLES + (
     _PKG / "skills" / "tracks-discuz" / "SKILL.md",
-    _PKG / "skills" / "test-asset-criteria" / "SKILL.md",  # v0.4 D-29 (FR-0040)
+    _PKG / "skills" / "tracks-prism-test" / "SKILL.md",  # v0.4 D-29 (FR-0040)
+    _PKG / "skills" / "tracks-prism-design" / "SKILL.md",  # v0.5 D-29 design criteria
+    _PKG / "skills" / "tracks-prism-impl" / "SKILL.md",  # v0.5 D-29 impl criteria
 )
 
 IQ_GRADES = ("S", "A", "B")

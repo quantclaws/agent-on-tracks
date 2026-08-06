@@ -124,7 +124,7 @@ _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
 
 # D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
 # read back by the executor to enforce the anti-self-report triple.
-_CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
+_CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 # IF-004 §1g RedClass closed set (legit = the test fails for the right reason).
 _LEGIT_RED = frozenset({"assertion_failure", "stub_token_failure", "symbol_missing"})

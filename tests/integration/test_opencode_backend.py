@@ -284,13 +284,18 @@ def test_lex_edits_target_like_other_agents(fake_opencode, target_doc, host_repo
 def design_assignment(substate):
     """Mirrors the machine's M-DESIGN assignment: Archer DRAFT/RESPOND carries
     the template trio and the multi-skill list (batch B); Prism's review
-    dispatch drafts nothing and keeps the single-skill shape."""
+    dispatch drafts nothing and carries its own multi-skill list (D-29 design
+    criteria pack)."""
     assignment = {"kind": substate, "template_kind": None,
                   "skill": "tracks-discuz", "skill_version": "0.2",
                   "docs": list(DESIGN_DOCS)}
     if substate in ("DRAFT", "RESPOND"):
         assignment["templates"] = ["architecture", "interfaces", "test-plan"]
         assignment["skills"] = ["tracks-discuz", "tracks-quality-guards"]
+        assignment.pop("skill")
+        assignment.pop("skill_version")
+    elif substate == "PRISM_REVIEW":
+        assignment["skills"] = ["tracks-discuz", "tracks-prism-design"]
         assignment.pop("skill")
         assignment.pop("skill_version")
     return assignment
@@ -906,10 +911,14 @@ def test_multi_skill_materialization_end_to_end(
 def test_single_skill_backward_compat(fake_opencode, design_vdir, host_repo,
                                       monkeypatch):
     """The legacy single ``skill`` string keeps working untouched: only that
-    skill materializes (no skills list), and cleanup removes it."""
+    skill materializes (no skills list), and cleanup removes it. Uses a
+    hand-built single-skill assignment since the machine's M-DESIGN review is
+    now multi-skill (D-29 design criteria pack)."""
     docs = [design_vdir / name for name in DESIGN_DOCS]
     commit_trio(host_repo, docs)
-    assignment = design_assignment("PRISM_REVIEW")
+    assignment = {"kind": "PRISM_REVIEW", "template_kind": None,
+                  "skill": "tracks-discuz", "skill_version": "0.2",
+                  "docs": list(DESIGN_DOCS)}
     assert "skills" not in assignment and assignment["skill"] == "tracks-discuz"
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "no_edit")
     monkeypatch.setenv("FAKE_OPENCODE_DOCS", ",".join(map(str, docs)))
@@ -920,7 +929,7 @@ def test_single_skill_backward_compat(fake_opencode, design_vdir, host_repo,
     assert out["status"] == "done"
     assert not skill_path(host_repo, "tracks-discuz").exists()
     assert not (host_repo / ".opencode" / "skills"
-                / "tracks-quality-guards").exists()
+                / "tracks-prism-design").exists()
 
 
 def test_skill_names_resolution():
