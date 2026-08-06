@@ -286,12 +286,16 @@ def test_target_paths_doc_set_derived_from_assignment(tmp_path, monkeypatch):
     ]
 
 
-def test_prompt_names_the_doc_set_of_a_multi_doc_assignment(tmp_path):
+def test_prompt_names_the_doc_set_of_a_multi_doc_assignment(tmp_path, monkeypatch):
+    monkeypatch.delenv("TRACKS_HOME", raising=False)
     backend = OpencodeBackend(tmp_path, "v0.1")
     assignment = {"kind": "DRAFT",
                   "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
     prompt = backend._prompt("archer", "DRAFT", None, None, assignment)
-    assert "architecture.md, interfaces.md, test-plan.md" in prompt
+    vdir = tmp_path / ".tracks" / "projects" / "v0.1"
+    expected = ", ".join(str(vdir / name) for name in
+                         ["architecture.md", "interfaces.md", "test-plan.md"])
+    assert expected in prompt
 
 
 def test_agent_timeout_uses_generic_environment_name(monkeypatch, tmp_path):

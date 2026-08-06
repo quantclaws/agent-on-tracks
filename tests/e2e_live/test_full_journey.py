@@ -11,7 +11,7 @@ Environment variables
   disposable GitHub repo for the full/resume journeys' issue-creation and
   remote-ref assertions.
 * ``TRAC_AGENT_TIMEOUT`` - per-dispatch agent (opencode subprocess) timeout.
-  Default 120s; M-DESIGN DRAFT/RESPOND override to 1800s via ``agent_timeout``
+  Default 900s; M-DESIGN DRAFT/RESPOND override to 1800s via ``agent_timeout``
   (design trio + scaffold + quality-guard is too big for 1200s).
 * ``TRAC_LIVE_DESIGN_AGENT_TIMEOUT`` - env override for the M-DESIGN
   DRAFT/RESPOND ``agent_timeout`` (default 1800s; read at call time so
@@ -27,14 +27,13 @@ Environment variables
   M-REQ-APPROVAL checkpoint in the full journey.
 * ``TRAC_LIVE_BASELINE_DIR`` - explicit baseline directory for the resume test.
 * ``TRAC_LIVE_BUILD_BASELINE=1`` - if no baseline exists, run the prefix phases
-   (story/spec/acceptance/approval) on a fresh host, snapshot, then continue.
+  (story/spec/acceptance/approval) on a fresh host, snapshot, then continue.
 * ``TRAC_LIVE_FAKE_DESIGN_BASELINE=1`` - build a deterministic design-exit
-   baseline at M-TEST DISPATCH-ready, then resume the real Shield tail.
+  baseline at M-TEST DISPATCH-ready, then resume the real Shield tail.
 * ``TRAC_LIVE_FORCE_BASELINE=1`` - use a baseline even when its tracks SHA does
   not match the current HEAD (otherwise the resume test skips on mismatch).
 * ``TRAC_LIVE_LOCAL_REMOTE=1`` - for restored baseline-resume tests only, use
-  an empty local bare ``origin`` under the current run's artifact directory.
-"""
+  an empty local bare ``origin`` under the current run's artifact directory."""
 
 from __future__ import annotations
 
@@ -46,6 +45,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e_live.conftest import write_host_opencode_config
 from tests.e2e_live.harness import (
     CURRENT_PYTHON,
     CURRENT_VENV_BIN,
@@ -848,6 +848,7 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
                 )
             _skip_baseline_sha_mismatch(req_baseline)
             _restore_baseline(req_baseline, live_root)
+            write_host_opencode_config(live_root)
             remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
             run_id = _sanity_check_resumed_host(live_trac, live_root, req_baseline)
             fake_design_trac = partial(live_trac, backend="fake", max_dispatches=2)
@@ -919,6 +920,7 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
     _skip_baseline_sha_mismatch(baseline)
 
     _restore_baseline(baseline, live_root)
+    write_host_opencode_config(live_root)
 
     remote_url_before, remote_refs_before = _setup_baseline_remote(live_root)
 

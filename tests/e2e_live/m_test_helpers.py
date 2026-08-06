@@ -211,7 +211,7 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
 _ALLOWED_TEST_DIRS = ("integration", "e2e", "assets", "counterexamples")
 # Runtime-owned locations are not Shield writes (document locks, runtime DB
 # sidecars, provider config) and are skipped by the scope check below.
-_RUNTIME_OWNED_TOP_DIRS = frozenset({".tracks", ".opencode"})
+_RUNTIME_OWNED_TOP_DIRS = frozenset({".tracks", ".opencode", ".venv"})
 _TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
 _TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 
@@ -261,10 +261,13 @@ def assert_shield_no_commit_scope(
     # Every new/modified path must be within tests/<allowed>/; runtime-owned
     # prefixes (.tracks/, .opencode/) are not Shield writes and are skipped.
     status = _git(repo, "status", "--porcelain")
-    if status.strip():
-        for line in status.strip().splitlines():
-            # porcelain format: XY <path>
-            path = line[3:].strip().strip('"')
+    lines = [ln for ln in status.splitlines() if ln.strip()]
+    if lines:
+        for line in lines:
+            # porcelain format: XY <path> (2 status chars + 1 space + path).
+            # _git returns stdout.strip() which eats the first line's leading
+            # space (X=" "), so split on first space(s) to get the path.
+            path = line[2:].lstrip().strip('"')
             # Porcelain collapses a fully-untracked directory into a single
             # ``?? dir/`` entry (trailing "/"); expand to its untracked leaf
             # files so the scope check judges actual files, not the collapsed

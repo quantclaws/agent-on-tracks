@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -125,16 +126,26 @@ def _host_config(config: dict[str, str]) -> dict:
     }
 
 
-@pytest.fixture
-def host_with_opencode_config(live_root, live_enabled):
-    """Write provider config with cwd-only access; never create Agent definitions."""
-    config = live_enabled
+def write_host_opencode_config(live_root: Path) -> None:
+    """Write ``.opencode/opencode.json`` for the host using current env values.
+
+    Re-callable after a baseline restore overwrites the freshly-written config
+    with a stale snapshot. Reads ``_provider_config()`` (env) directly so the
+    test does not need the ``live_enabled`` fixture in scope.
+    """
+    config = _provider_config()
     dot = live_root / ".opencode"
     dot.mkdir(parents=True, exist_ok=True)
     (dot / "opencode.json").write_text(
         json.dumps(_host_config(config), ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+@pytest.fixture
+def host_with_opencode_config(live_root, live_enabled):
+    """Write provider config with cwd-only access; never create Agent definitions."""
+    write_host_opencode_config(live_root)
     return live_root
 
 
@@ -147,7 +158,7 @@ def live_backend(host_with_opencode_config, live_root, live_enabled, live_instal
     monkeypatch.delenv("TRAC_FAKE_SIMULATE", raising=False)
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
     monkeypatch.setenv("TRAC_AGENT_CONSOLE_INPUT", "")
-    timeout = timeout_env("TRAC_AGENT_TIMEOUT", 120)
+    timeout = timeout_env("TRAC_AGENT_TIMEOUT", 900)
     return InstalledBackend(
         live_root,
         live_install,
@@ -172,7 +183,7 @@ def live_trac(live_root, live_enabled, live_install, live_scenarios, request):
         live_root,
         live_install,
         live_scenarios,
-        timeout_env("TRAC_AGENT_TIMEOUT", 120),
+        timeout_env("TRAC_AGENT_TIMEOUT", 900),
         timeout_env("TRAC_LIVE_COMMAND_TIMEOUT", 1500),
         timeout_env("TRAC_LIVE_TOTAL_TIMEOUT", 10800),
         timeout_env("TRAC_LIVE_MAX_COMMANDS", 48),

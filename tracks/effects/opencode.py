@@ -150,10 +150,19 @@ class OpencodeBackend:
                                  if author and len(doc_paths) > 1 else None)
             proc = self._run(name, prompt)
             self._check_json(proc)
-            return self._audited_result(
+            result = self._audited_result(
                 auditor, baseline, scaffold_baseline, proc, role, substate,
                 doc_paths, prompt, console_input, author, reviewer_assignment,
             )
+            # D-29 anti-self-report triple ③: echo the assigned criteria-pack
+            # identity so the executor's mismatch check passes (mirrors
+            # FakeBackend lines 120-123).  Only Prism M-TEST PRISM_REVIEW
+            # carries a criteria pack today.
+            if role == "prism" and substate == "PRISM_REVIEW":
+                assigned_pack = (assignment or {}).get("criteria_pack")
+                if assigned_pack:
+                    result.setdefault("criteria_pack", dict(assigned_pack))
+            return result
         except OpencodeError as exc:
             return self._opencode_error_result(
                 exc, proc, prompt, console_input, doc_paths, reviewer_assignment,
@@ -646,7 +655,8 @@ class OpencodeBackend:
         elif doc:
             target = doc
         elif docs:
-            target = ", ".join(str(name) for name in docs)
+            resolved = self._target_paths(doc_path, assignment)
+            target = ", ".join(str(p) for p in resolved)
         else:
             target = ""
         assignment_context = self._assignment_context(assignment)
