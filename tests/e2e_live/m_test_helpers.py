@@ -452,6 +452,14 @@ def _baseline_dir(version: str, sha: str, checkpoint: str = "M-REQ-APPROVAL") ->
 
 _SNAPSHOT_EXCLUDE_NAMES = {"node_modules"}
 
+# Snapshot metadata written into the baseline dir by ``_capture_baseline``.
+# It describes the snapshot itself, not host state, so it must never be
+# restored into the live host (otherwise ``git status`` flags it as an
+# untracked top-level file and trips the Shield scope assertion that every
+# new path lives under ``tests/``). Capture still writes it into the baseline
+# dir; only the restore copy skips it.
+_BASELINE_MANIFEST_NAME = ".tracks-baseline-manifest.json"
+
 # The runtime event store uses SQLite WAL mode: at any moment the live DB may
 # have sidecar files ``tracks.db-wal`` and ``tracks.db-shm`` carrying
 # un-checkpointed committed transactions. Raw-copying these sidecars with the
@@ -479,16 +487,25 @@ def _snapshot_ignore(directory: str, names: list[str]) -> set[str]:
     return set()
 
 
-def _copy_tree(src: Path, dst: Path) -> None:
+def _copy_tree(
+    src: Path, dst: Path, *, ignore_names: set[str] | None = None
+) -> None:
     """Copy src into dst, excluding opencode's node_modules (recreated on
     demand), the baseline manifest itself, and the runtime SQLite DB trio
     (``tracks.db`` + ``-wal`` + ``-shm``). The runtime DB is rebuilt in the
     target via ``_snapshot_runtime_db`` so the snapshot is internally
-    consistent and sidecar-free."""
+    consistent and sidecar-free.
+
+    ``ignore_names`` skips matching top-level entries in ``src`` (e.g. the
+    baseline manifest marker when restoring into the live host); it does not
+    recurse into subdirectories."""
+    ignored = ignore_names or set()
     for entry in src.iterdir():
         if entry.name in _SNAPSHOT_EXCLUDE_NAMES and entry.is_dir():
             continue
         if entry.is_dir() and entry.name == "node_modules":
+            continue
+        if entry.name in ignored:
             continue
         dest = dst / entry.name
         if entry.is_dir():
@@ -559,7 +576,12 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
             shutil.rmtree(entry)
         else:
             entry.unlink()
-    _copy_tree(baseline_dir, live_root)
+    # The baseline manifest is snapshot metadata, not host state; restore
+    # must not drop it into the live host or Shield's scope assertion trips
+    # on the untracked top-level marker.
+    _copy_tree(
+        baseline_dir, live_root, ignore_names={_BASELINE_MANIFEST_NAME}
+    )
 
 
 def _setup_baseline_remote(live_root: Path) -> tuple[str, str]:

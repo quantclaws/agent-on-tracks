@@ -539,3 +539,34 @@ def test_find_design_exit_baseline_coexists_with_req_approved(monkeypatch, tmp_p
     _set_mtime(design_exit, 2_000_000)
     assert _find_baseline_for_sha(version) == req_approved
     assert _find_design_exit_baseline(version) == design_exit
+
+
+def test_restore_drops_baseline_manifest_marker(tmp_path):
+    """Restore drops ``.tracks-baseline-manifest.json`` (snapshot metadata,
+    not host state) while keeping all other host content. Leaving the marker
+    would make ``git status`` report an untracked top-level file and trip the
+    Shield scope assertion that every new path lives under ``tests/``."""
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    (baseline / "README.md").write_text("host doc\n", encoding="utf-8")
+    (baseline / "tests" / "integration").mkdir(parents=True)
+    (baseline / "tests" / "integration" / "test_a.py").write_text(
+        "# AC-FR0001-01@v0.5 TRACKS-TRACE\n", encoding="utf-8"
+    )
+    manifest_name = _helpers._BASELINE_MANIFEST_NAME
+    (baseline / manifest_name).write_text(
+        json.dumps({"tracks_sha": "abc1234", "checkpoint": "M-REQ-APPROVAL"}),
+        encoding="utf-8",
+    )
+
+    _helpers._restore_baseline(baseline, live_root)
+
+    assert not (live_root / manifest_name).exists(), (
+        "restore leaked baseline manifest marker into live host"
+    )
+    assert (live_root / "README.md").read_text(encoding="utf-8") == "host doc\n"
+    assert (
+        live_root / "tests" / "integration" / "test_a.py"
+    ).read_text(encoding="utf-8") == "# AC-FR0001-01@v0.5 TRACKS-TRACE\n"
