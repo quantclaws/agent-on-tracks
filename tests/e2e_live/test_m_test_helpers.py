@@ -344,7 +344,7 @@ def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
     driver = _DesignTailDriver()
 
     _journey.test_m_test_from_design_exit_baseline(
-        tmp_path, None, None, driver, monkeypatch
+        tmp_path, None, None, driver, monkeypatch, None
     )
 
     assert calls["find_req"] == ["live-e2e-code-stats"]
@@ -470,7 +470,7 @@ def test_fake_design_baseline_skips_without_req_baseline(monkeypatch, tmp_path):
 
     with pytest.raises(pytest.skip.Exception, match="no M-REQ-APPROVED baseline"):
         _journey.test_m_test_from_design_exit_baseline(
-            tmp_path, None, None, driver, monkeypatch
+            tmp_path, None, None, driver, monkeypatch, None
         )
 
     assert calls["restore"] == []
@@ -490,7 +490,7 @@ def test_design_exit_without_fake_flag_preserves_existing_skip(monkeypatch, tmp_
 
     with pytest.raises(pytest.skip.Exception, match="no DESIGN_EXIT_OBSERVED baseline"):
         _journey.test_m_test_from_design_exit_baseline(
-            tmp_path, None, None, _DesignTailDriver(), monkeypatch
+            tmp_path, None, None, _DesignTailDriver(), monkeypatch, None
         )
 
 

@@ -51,9 +51,11 @@ from tests.e2e_live.harness import (
     CURRENT_VENV_BIN,
     REQUIRED_SCENARIOS,
     SCENARIO_DIR,
+    LiveInstall,
     clean_env,
     installed_trac_command,
     live_path,
+    prepare_host_venv,
     require_current_virtualenv,
     resolve_github_repo,
     select_wheel,
@@ -548,6 +550,7 @@ def _phase_m_test_to_boundary(
     remote_url_before: str,
     remote_refs_before: str,
     expect_real_issues: bool,
+    install: LiveInstall,
 ):
     """M-TEST from DISPATCH-ready or WRITE: the first run executes the real
     Shield, then Runtime collection -> Prism reviews ->
@@ -562,6 +565,7 @@ def _phase_m_test_to_boundary(
       * Strict boundary adjacency (stage.exited + stage.entered/run.completed)
       * Single test commit (exactly one new commit, matches test.committed)
     """
+    prepare_host_venv(live_root, install)
     git_before = snapshot_git_state(live_root)
 
     shield = live_trac("run", scenario="shield-test-draft")
@@ -603,28 +607,17 @@ def _phase_m_test_to_boundary(
     report_dir = live_root / "report"
     assert (
         live_trac(
-            "report",
-            "--run-id",
-            run_id,
-            "--output",
-            str(report_dir),
-            "--format",
-            "html",
+            "report", "--run-id", run_id,
+            "--output", str(report_dir),
+            "--format", "html",
         ).returncode
         == 0
     )
     report = (report_dir / "report.md").read_text(encoding="utf-8")
     for required in (
-        "scenario_id",
-        "assignment expanded",
-        "agent input ref=",
-        "## Discussions",
-        "attempt=",
-        "commit:",
-        "## Audit",
-        "audit gaps:",
-        "status: `completed`",
-        "stage: `M-TEST`",
+        "scenario_id", "assignment expanded", "agent input ref=",
+        "## Discussions", "attempt=", "commit:", "## Audit", "audit gaps:",
+        "status: `completed`", "stage: `M-TEST`",
     ):
         assert required in report
     assert (report_dir / "index.html").is_file()
@@ -639,8 +632,6 @@ def _phase_m_test_to_boundary(
     print(f"LIVE_E2E_BRANCH=releases/{version}", flush=True)
     print(f"LIVE_E2E_REMOTE_REFS_BEFORE={remote_refs_before!r}", flush=True)
     print(f"LIVE_E2E_REMOTE_REFS_AFTER={remote_refs_after!r}", flush=True)
-
-
 # -- baseline snapshot (deliverable #2) ------------------------------------
 
 
@@ -672,6 +663,7 @@ def test_bounded_scripted_real_agent_journey(
     live_github_repo,
     live_scenarios,
     live_trac,
+    live_install,
 ):
     """Exercise triage, both required finding loops, approval, GitHub Issues,
     and the M-DESIGN + M-TEST stages. After the approval checkpoint a
@@ -708,6 +700,7 @@ def test_bounded_scripted_real_agent_journey(
         remote_url_before,
         remote_refs_before,
         expect_real_issues=True,
+        install=live_install,
     )
 
 
@@ -740,6 +733,7 @@ def test_journey_from_req_approved_baseline(
     host_with_opencode_config,
     live_scenarios,
     live_trac,
+    live_install,
     monkeypatch,
 ):
     """Resume the journey from an M-REQ-APPROVED baseline: restore the
@@ -783,6 +777,7 @@ def test_journey_from_req_approved_baseline(
                 remote_url_before,
                 remote_refs_before,
                 expect_real_issues=False,
+                install=live_install,
             )
             return
         pytest.skip(
@@ -811,6 +806,7 @@ def test_journey_from_req_approved_baseline(
         remote_url_before,
         remote_refs_before,
         expect_real_issues=False,
+        install=live_install,
     )
 
 
@@ -819,6 +815,7 @@ def test_m_test_from_design_exit_baseline(
     host_with_opencode_config,
     live_scenarios,
     live_trac,
+    live_install,
     monkeypatch,
 ):
     """Resume the journey from a DESIGN_EXIT_OBSERVED baseline (legacy/live
@@ -882,6 +879,7 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
                 remote_url_before,
                 remote_refs_before,
                 expect_real_issues=False,
+                install=live_install,
             )
             return
         if os.environ.get("TRAC_LIVE_BUILD_BASELINE", "").strip() == "1":
@@ -910,6 +908,7 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
                 remote_url_before,
                 remote_refs_before,
                 expect_real_issues=False,
+                install=live_install,
             )
             return
         pytest.skip(
@@ -932,6 +931,7 @@ tests/e2e_live/test_full_journey.py::test_m_test_from_design_exit_baseline``"""
         remote_url_before,
         remote_refs_before,
         expect_real_issues=False,
+        install=live_install,
     )
 
 
