@@ -21,6 +21,7 @@ _SHIELD_REQUIRED_FRAGMENTS = (
     "tests/e2e/test_code_stats_happy.py",
     "exactly two files",
     "TRACKS-TRACE",
+    "@live-e2e-code-stats",
     "tmp_path",
     "Runtime owns evidence",
     "5 minutes",

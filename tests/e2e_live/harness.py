@@ -922,15 +922,15 @@ class LiveTracDriver:
 
     @staticmethod
     def _dispatch_budget(scenario: Scenario) -> int:
-        # Author steps (DRAFT/RESPOND), WRITE steps (M-TEST), and reviewer steps
-        # (*_REVIEW) may flake; the runtime retries a failed dispatch outcome
-        # internally and escalates at the 3rd attempt, so they get a 3-dispatch
-        # budget. Successful paths never consume more than one dispatch, so the
-        # extra budget is only reachable on failed outcomes. Human-gate steps (no
-        # kind) keep one dispatch; the global bounds remain the outer safety net.
+        # Author/WRITE/reviewer steps may flake; the runtime retries a failed
+        # dispatch internally and escalates at the 3rd attempt, so they get a
+        # 3-dispatch budget. Successful paths consume only one. Human-gate steps
+        # (no kind) keep one dispatch; the global bounds remain the outer net.
+        # S4: TRAC_LIVE_DEV_BUDGET=1 is a dev-only opt-in that reduces the retry
+        # budget to 1 for fast failure exposure; prod (budget=3) is unchanged.
         kind = scenario.data.get("kind") or ""
         if kind in ("DRAFT", "RESPOND", "WRITE") or kind.endswith("_REVIEW"):
-            return 3
+            return 1 if os.environ.get("TRAC_LIVE_DEV_BUDGET") else 3
         return 1
 
     def _scenario_budget(self, scenario: str | None) -> int:
