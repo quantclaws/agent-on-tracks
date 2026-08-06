@@ -101,7 +101,11 @@ def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
 def _host_config(config: dict[str, str]) -> dict:
     return {
         "$schema": "https://opencode.ai/config.json",
-        "permission": {"external_directory": "deny"},
+        "permission": {
+            "external_directory": "deny",
+            "bash": {"*": "allow"},
+            "edit": {"*": "allow"},
+        },
         "provider": {
             config["TRAC_LIVE_PROVIDER"]: {
                 "npm": "@ai-sdk/openai-compatible",

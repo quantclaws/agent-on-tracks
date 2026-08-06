@@ -47,6 +47,28 @@ def test_generated_live_host_config_denies_external_directory():
     assert generated["permission"]["external_directory"] == "deny"
 
 
+def test_generated_live_host_config_allows_noninteractive_bash_and_edit():
+    """Headless opencode hangs forever when its first bash/edit tool call lands
+    in interactive ``ask`` state (no tty can ever approve). The generated host
+    config must pre-approve bash/edit so non-interactive runs never block on
+    permission prompts, while external_directory stays denied by default and no
+    other permission keys are emitted."""
+    config = {
+        "TRAC_LIVE_PROVIDER": "provider",
+        "TRAC_LIVE_MODEL": "model",
+        "TRAC_LIVE_BASE_URL": "https://example.test/v1",
+        "TRAC_LIVE_API_KEY": "unused",
+    }
+
+    generated = _host_config(config)
+
+    permission = generated["permission"]
+    assert permission["external_directory"] == "deny"
+    assert permission["bash"] == {"*": "allow"}
+    assert permission["edit"] == {"*": "allow"}
+    assert set(permission) == {"external_directory", "bash", "edit"}
+
+
 def _ready_spec(repo):
     """A bare spec skeleton the Sage agent must fill in to pass the template
     check — deliberately incomplete so Sage produces a real diff."""
