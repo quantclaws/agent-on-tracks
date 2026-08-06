@@ -79,6 +79,7 @@ def writer_lock(home: Path):
 
 
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\n"
+PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
 
 
 def cmd_init(repo: Path) -> int:
@@ -89,6 +90,14 @@ def cmd_init(repo: Path) -> int:
     gitignore = paths.runtime_dir(home) / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(RUNTIME_GITIGNORE, encoding="utf-8")
+    # Runtime-owned transient files under projects/ (the discuss writer's flock
+    # lock files ``<doc>.md.lock`` and tmp-before-rename ``<doc>.md.tmp``) are
+    # intentionally left in place - deleting would break flock serialization -
+    # so they must be gitignored in every stage or they pollute host git status.
+    # Idempotent: write only if absent (mirrors the runtime gitignore above).
+    projects_gitignore = paths.projects_dir(home) / ".gitignore"
+    if not projects_gitignore.exists():
+        projects_gitignore.write_text(PROJECTS_GITIGNORE, encoding="utf-8")
     for d in (paths.projects_dir(home), paths.wiki_dir(home)):
         keep = d / ".gitkeep"
         if not keep.exists():

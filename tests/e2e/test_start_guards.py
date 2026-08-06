@@ -18,6 +18,49 @@ def test_reinit_is_idempotent(host_repo, trac):
         assert (host_repo / ".tracks" / sub).is_dir()
 
 
+def test_init_creates_projects_gitignore_for_runtime_lock_and_tmp(host_repo, trac):
+    """Fix 2: ``trac init`` must scaffold ``.tracks/projects/.gitignore`` so the
+    discuss writer's flock lock files (``<doc>.md.lock``) and tmp-before-rename
+    files (``<doc>.md.tmp``) - runtime-owned, permanently left in place because
+    deleting would break flock serialization - stay invisible to host git status
+    in every stage."""
+    assert trac("init").returncode == 0
+    gitignore = host_repo / ".tracks" / "projects" / ".gitignore"
+    assert gitignore.is_file()
+    text = gitignore.read_text(encoding="utf-8")
+    assert "*.lock" in text
+    assert "*.tmp" in text
+
+
+def test_init_projects_gitignore_is_idempotent_and_preserved(host_repo, trac):
+    """Re-init keeps an existing projects .gitignore (write-only-if-absent); a
+    pre-existing, even user-customized, projects .gitignore is left untouched."""
+    assert trac("init").returncode == 0
+    gitignore = host_repo / ".tracks" / "projects" / ".gitignore"
+    # Re-init must not overwrite the scaffolded file (idempotent):
+    assert trac("init").returncode == 0
+    assert "*.lock" in gitignore.read_text(encoding="utf-8")
+    # A user-customized projects .gitignore survives re-init byte-for-byte:
+    custom = "*.lock\n*.tmp\n*.bak\n"
+    gitignore.write_text(custom, encoding="utf-8")
+    assert trac("init").returncode == 0
+    assert gitignore.read_text(encoding="utf-8") == custom
+
+
+def test_init_runtime_gitignore_behavior_unchanged(host_repo, trac):
+    """Fix 2 must not alter the runtime .gitignore scaffold or its patterns."""
+    assert trac("init").returncode == 0
+    runtime_gitignore = host_repo / ".tracks" / "runtime" / ".gitignore"
+    assert runtime_gitignore.is_file()
+    text = runtime_gitignore.read_text(encoding="utf-8")
+    assert "tracks.db*" in text
+    assert "blobs/" in text
+    assert "lock" in text
+    # The projects-only patterns must not leak into the runtime gitignore:
+    assert "*.lock" not in text
+    assert "*.tmp" not in text
+
+
 def test_empty_stdin_rejected(host_repo, trac):
     assert trac("init").returncode == 0
     r = trac("start", "v0.1", stdin="")
