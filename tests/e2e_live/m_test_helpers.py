@@ -553,7 +553,9 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
     is rebuilt via the backup API, so a stale WAL/SHM pair can never attach
     to the freshly-written main file."""
     for entry in list(live_root.iterdir()):
-        if entry.is_dir():
+        if entry.is_symlink():
+            entry.unlink()
+        elif entry.is_dir():
             shutil.rmtree(entry)
         else:
             entry.unlink()

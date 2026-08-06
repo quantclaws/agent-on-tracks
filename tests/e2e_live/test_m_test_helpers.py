@@ -610,13 +610,9 @@ def test_baseline_remote_setup_is_idempotent(tmp_path, monkeypatch):
 
 
 # -- runtime DB snapshot consistency (WAL/sidecar handling) ----------------
-#
-# The runtime event store is SQLite WAL: committed transactions may live in
-# ``tracks.db-wal`` until a checkpoint. Raw-copying the trio is unsafe (the
-# sidecars are only valid with the original page file + writer). The snapshot
-# must exclude all three and rebuild a clean ``tracks.db`` in the target via
-# the ``sqlite3`` backup API so every committed event survives and the
-# target is sidecar-free.
+# SQLite WAL: committed txns may live in ``tracks.db-wal`` until a checkpoint.
+# Raw-copying the trio is unsafe; the snapshot excludes all three and rebuilds
+# a clean ``tracks.db`` in the target via the backup API.
 
 
 def _seed_runtime_db(
@@ -624,15 +620,10 @@ def _seed_runtime_db(
 ) -> sqlite3.Connection | None:
     """Write events into ``host/.tracks/runtime/tracks.db`` in WAL mode.
 
-    When *keep_wal* is True, an extra row (seq=9999) is written via a second
-    connection while a reader holds a read lock, leaving an un-checkpointed
-    WAL/SHM trio on disk. The reader connection is returned and the caller
-    MUST close it after the snapshot is taken (SQLite deletes the WAL/SHM on
-    the last connection close, so keeping the reader open is the only way to
-    guarantee the trio is present when ``_copy_tree`` runs).
-
-    When *keep_wal* is False (default), no extra row is written and no WAL
-    is left on disk; returns None."""
+    With *keep_wal*, an extra row (seq=9999) is written while a reader holds
+    a read lock so the WAL/SHM trio stays on disk; the reader is returned
+    and the caller MUST close it after the snapshot runs. Otherwise returns
+    None."""
     runtime = host / ".tracks" / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     blobs = runtime / "blobs"
@@ -691,8 +682,7 @@ def _runtime_files(host: Path) -> set[str]:
 
 def test_wal_backed_source_capture_restores_all_committed_events(tmp_path):
     """A snapshot taken while the source DB has an un-checkpointed WAL must
-    copy every committed event into the target via the backup API - never
-    raw-copy the WAL/SHM trio and never lose the WAL-resident commits."""
+    copy every committed event into the target via the backup API."""
     src = tmp_path / "host"
     src.mkdir()
     reader = _seed_runtime_db(
@@ -731,10 +721,7 @@ def test_wal_backed_source_capture_restores_all_committed_events(tmp_path):
 
 
 def test_snapshot_excludes_db_trio_even_when_sidecars_present(tmp_path):
-    """The snapshot must exclude ``tracks.db``, ``tracks.db-wal``, and
-    ``tracks.db-shm`` from the raw tree copy and rebuild only ``tracks.db``
-    in the target. Verifies the exclusion at the file-name level with a real
-    WAL/SHM trio held open by a reader connection."""
+    """The snapshot must exclude the db trio and rebuild only ``tracks.db``."""
     src = tmp_path / "host"
     src.mkdir()
     reader = _seed_runtime_db(
@@ -760,9 +747,7 @@ def test_snapshot_excludes_db_trio_even_when_sidecars_present(tmp_path):
 
 
 def test_restore_removes_destination_stale_sidecars(tmp_path):
-    """``_restore_baseline`` must remove any stale ``-wal``/``-shm`` in the
-    destination before writing the baseline DB, so a stale WAL cannot attach
-    to the freshly-restored main file and corrupt it on the next open."""
+    """Stale ``-wal``/``-shm`` in the destination are wiped before restore."""
     live_root = tmp_path / "live"
     live_root.mkdir()
     runtime = live_root / ".tracks" / "runtime"
@@ -792,9 +777,8 @@ def test_restore_removes_destination_stale_sidecars(tmp_path):
 
 
 def test_restore_into_host_with_stale_sidecars_does_not_corrupt(tmp_path):
-    """A restored baseline DB must open cleanly even when the destination
-    had stale sidecars before restore. The wipe + backup-API path produces
-    a self-contained file that ``PRAGMA integrity_check`` reports as ok."""
+    """A restored DB opens cleanly even when the destination had stale
+    sidecars before restore."""
     live_root = tmp_path / "live"
     live_root.mkdir()
     runtime = live_root / ".tracks" / "runtime"
@@ -820,12 +804,42 @@ def test_restore_into_host_with_stale_sidecars_does_not_corrupt(tmp_path):
     assert count == 5
 
 
+def test_restore_wipes_host_with_symlinked_venv_and_normal_entries(tmp_path):
+    """Symlinked entries (file or dir targets) are unlinked, not rmtree'd;
+    real dirs still go through rmtree. Host .venv is a symlink to the runner
+    venv, which ``rmtree`` refuses."""
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    runner_venv = tmp_path / "runner-venv"
+    runner_venv.mkdir()
+    (runner_venv / "pyvenv.cfg").write_text("home=/usr/bin\n", encoding="utf-8")
+    linked_file_target = tmp_path / "linked-file-target"
+    linked_file_target.write_text("elsewhere\n", encoding="utf-8")
+    (live_root / ".venv").symlink_to(runner_venv)
+    (live_root / "linked-file").symlink_to(linked_file_target)
+    (live_root / "work").mkdir()
+    (live_root / "work" / "f.txt").write_text("x\n", encoding="utf-8")
+    (live_root / "plain.txt").write_text("y\n", encoding="utf-8")
+    baseline = tmp_path / "baseline"
+    baseline.mkdir()
+    _seed_runtime_db(baseline, [{"seq": 1, "type": "run.started", "payload": {}}])
+    _helpers._restore_baseline(baseline, live_root)
+    assert not (live_root / ".venv").is_symlink()
+    assert not (live_root / "linked-file").is_symlink()
+    assert (runner_venv / "pyvenv.cfg").read_text(encoding="utf-8") == "home=/usr/bin\n"
+    assert linked_file_target.read_text(encoding="utf-8") == "elsewhere\n"
+    assert not (live_root / "work").exists()
+    assert not (live_root / "plain.txt").exists()
+    conn = sqlite3.connect(live_root / ".tracks" / "runtime" / "tracks.db")
+    rows = conn.execute("SELECT seq, type FROM events ORDER BY seq").fetchall()
+    conn.close()
+    assert rows == [(1, "run.started")]
+
+
 # -- LiveTracDriver.events() transient-error retries -----------------------
-#
-# ``LiveTracDriver.events()`` may race the Runtime writer's shutdown and see
-# a transient ``sqlite3.DatabaseError``/``OperationalError``. The driver must
-# retry a bounded number of times and only fail with diagnostics on
-# persistent corruption.
+# ``events()`` may race the Runtime writer's shutdown and see a transient
+# ``sqlite3.DatabaseError``/``OperationalError``; it must retry a bounded
+# number of times and only fail with diagnostics on persistent corruption.
 
 
 def _mechanic_driver_for_events(tmp_path):
@@ -852,9 +866,8 @@ def _seed_simple_events(host: Path) -> None:
 
 
 def test_events_transient_database_error_retries_then_succeeds(monkeypatch, tmp_path):
-    """A transient ``sqlite3.DatabaseError`` (the run050 shutdown race) must
-    be retried up to ``EVENT_READ_RETRIES`` times; once the read succeeds the
-    driver returns the events without raising."""
+    """A transient ``DatabaseError`` (the run050 shutdown race) is retried up
+    to ``EVENT_READ_RETRIES`` times; once the read succeeds, events return."""
     driver = _mechanic_driver_for_events(tmp_path)
     _seed_simple_events(tmp_path)
 
@@ -903,10 +916,8 @@ def test_events_transient_locked_error_retries_then_succeeds(monkeypatch, tmp_pa
 
 
 def test_events_persistent_database_error_fails_with_diagnostics(monkeypatch, tmp_path):
-    """A persistent ``sqlite3.DatabaseError`` (real on-disk corruption, not a
-    flake) must fail after the bounded retries with diagnostics, including a
-    ``PRAGMA integrity_check`` result. The retry must never mask persistent
-    corruption."""
+    """A persistent ``DatabaseError`` fails after the bounded retries with
+    diagnostics, including a ``PRAGMA integrity_check`` result."""
     driver = _mechanic_driver_for_events(tmp_path)
     _seed_simple_events(tmp_path)
 
@@ -947,19 +958,13 @@ def test_events_returns_empty_when_db_absent(tmp_path):
 
 
 # -- prepare_host_venv offline-first symlink provisioning -------------------
-#
-# PyPI may be unreachable in the live environment (proxy SSL EOF). The
-# harness must provision the host ``.venv`` without pip/network by symlinking
-# to the current virtualenv (the one running the live E2E), mirroring the
-# deterministic ``host_repo`` fixture in ``tests/conftest.py``.
+# The harness provisions the host ``.venv`` without pip/network by symlinking
+# to the current virtualenv, mirroring ``tests/conftest.py``'s ``host_repo``.
 
 
 def _mechanic_install(live_root: Path) -> LiveInstall:
-    """Synthetic ``LiveInstall`` for offline harness tests (no wheel, no venv).
-
-    Mirrors ``test_live_agent._mechanic_driver``'s install fields so the
-    R0801 duplicate-code gate stays green across the two test modules.
-    """
+    """Synthetic ``LiveInstall`` mirroring ``test_live_agent._mechanic_driver``
+    so the R0801 duplicate-code gate stays green across both modules."""
     from tests.e2e_live.test_live_agent import _mechanic_driver
 
     return _mechanic_driver(live_root).install
