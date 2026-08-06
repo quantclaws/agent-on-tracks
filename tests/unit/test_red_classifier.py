@@ -13,9 +13,9 @@ def test_legit_red_classes():
     # stub_token_failure: NotImplementedError("IF-...")
     assert classify_red("t1", 1, "",
                         'raise NotImplementedError("IF-MTEST-001")') == "stub_token_failure"
-    # assertion_failure: AssertionError / assert
+    # assertion_failure: AssertionError / pytest E-prefix assert line
     assert classify_red("t2", 1, "", "AssertionError: 1 != 2") == "assertion_failure"
-    assert classify_red("t3", 1, "def test_x():\n    assert False\n", "") == "assertion_failure"
+    assert classify_red("t3", 1, "E   assert False\n", "") == "assertion_failure"
     # symbol_missing: AttributeError / NameError
     assert classify_red("t4", 1, "",
                         "AttributeError: 'NoneType' object has no attribute") == "symbol_missing"
@@ -51,3 +51,23 @@ def test_unclassified():
     """AC-FR0050-05@v0.4: unclassifiable failure -> illegit, enters DIAGNOSE."""
     assert classify_red("t1", 1, "", "some weird error") == "unclassified"
     assert classify_red("t2", 2, "segfault", "") == "unclassified"
+
+
+# AC-FR0050-03@v0.4 TRACKS-TRACE adversarial: assert substring in collection error
+
+
+def test_collection_error_with_assert_substring():
+    """R1-02: 'assert ' appearing in a collection-error traceback (source
+    frame text, module name, etc.) must NOT be misclassified as
+    assertion_failure.  Only AssertionError or a pytest E-prefix line
+    (``E   assert``) triggers assertion_failure."""
+    # Source frame with 'assert' in a collection error traceback
+    assert classify_red("t1", 1,
+                        "tests/test_x.py:5: in <module>\n"
+                        "    assert something  # source frame\n"
+                        "ImportError: No module named 'foo'",
+                        "") == "collection_error"
+    # 'assert ' in an error message but no AssertionError / E-line
+    assert classify_red("t2", 1, "",
+                        "ModuleNotFoundError: No module named 'assert_helper'"
+                        ) == "collection_error"

@@ -67,3 +67,23 @@ def test_all_pass_does_not_exit(trac, event_log):
               and e["payload"]["stage"] == "M-TEST"]
     assert not exited
     assert "awaiting=escalation" in r.stdout
+
+
+# AC-FR0050-07@v0.4 TRACKS-TRACE mixed section per-section classification
+def test_mixed_red_per_section(trac, event_log):
+    """R1-01: integration section legit (assertion_failure) + e2e section
+    illegit (collection_error) -> overall invalid -> DIAGNOSE."""
+    run_id = walk_to_m_test(trac)
+    r = trac("run", simulate="shield:WRITE=mixed_red|ok,diagnose:classification=test_defect")
+    assert r.returncode == 0, r.stderr
+    evs = event_log(run_id)
+    red = [e for e in evs if e["type"] == "red.validated"]
+    assert red[0]["payload"]["status"] == "invalid"
+    findings = red[0]["payload"]["findings"]
+    # Per-section classification: integration=assertion_failure, e2e=collection_error
+    classes = {f["test_id"]: f["classification"] for f in findings}
+    assert classes.get("integration") == "assertion_failure"
+    assert classes.get("e2e") == "collection_error"
+    # DIAGNOSE -> test_defect -> re-dispatch -> eventually completes
+    completed = [e for e in evs if e["type"] == "run.completed"]
+    assert completed

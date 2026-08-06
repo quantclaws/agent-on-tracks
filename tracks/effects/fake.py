@@ -248,6 +248,15 @@ class FakeBackend:
             # fails at runtime with ImportError (illegit Red -> DIAGNOSE).
             body = f"{marker}\ndef test_{slug}():\n"
             body += "    import nonexistent_module  # illegit Red\n"
+        elif token == "mixed_red":
+            # R1-01 per-section classification: integration layer fails with
+            # a legit assertion_failure; e2e layer fails with an illegit
+            # ImportError. Overall verdict must be invalid (DIAGNOSE).
+            body = f"{marker}\ndef test_{slug}():\n"
+            if layer == "integration":
+                body += "    assert False  # legit Red (assertion_failure)\n"
+            else:
+                body += "    import nonexistent_module  # illegit Red\n"
         elif token == "pass_red":
             # Test passes instead of failing (unexpected pass -> DIAGNOSE).
             body = f"{marker}\ndef test_{slug}():\n"

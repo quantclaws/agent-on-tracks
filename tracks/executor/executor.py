@@ -128,6 +128,11 @@ _CRITERIA_PACK = {"name": "test-asset-criteria", "version": "0.1"}
 
 # IF-004 §1g RedClass closed set (legit = the test fails for the right reason).
 _LEGIT_RED = frozenset({"assertion_failure", "stub_token_failure", "symbol_missing"})
+# DIAGNOSE classification -> target stage for rollback/rewrite.
+_DIAGNOSE_TARGET = {"test_defect": "M-TEST", "stub_gap": "M-DESIGN",
+                    "ac_gap": "M-ACC", "spec_gap": "M-SPEC"}
+# pytest short-traceback E-prefix assertion line (``E   assert ...``).
+_ASSERT_E_LINE = re.compile(r"^E\s+assert\b", re.MULTILINE)
 # Failure keywords -> illegit Red class (collection/syntax/fixture/import).
 _ILLEGIT_KEYWORDS = (
     "ImportError", "ModuleNotFoundError", "SyntaxError",
@@ -140,7 +145,8 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
     Based on returncode + keyword matching (no traceback structure parsing):
     - ``NotImplementedError("IF-`` -> ``stub_token_failure`` (legit).
-    - ``AssertionError``/``assert`` -> ``assertion_failure`` (legit).
+    - ``AssertionError`` or pytest ``E   assert`` line -> ``assertion_failure``
+      (legit).
     - ImportError/ModuleNotFoundError/SyntaxError/FixtureLookupError/collection
       error -> ``collection_error`` (illegit).
     - returncode == 0 (test should fail but passed) -> ``unexpected_pass``.
@@ -151,7 +157,7 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
         return "unexpected_pass"
     if 'NotImplementedError("IF-' in combined or "NotImplementedError('IF-" in combined:
         return "stub_token_failure"
-    if "AssertionError" in combined or "\nassert " in combined or "assert " in combined:
+    if "AssertionError" in combined or _ASSERT_E_LINE.search(combined):
         return "assertion_failure"
     for kw in _ILLEGIT_KEYWORDS:
         if kw in combined:
@@ -162,13 +168,13 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
 
 def _parse_collected_count(stdout: str) -> int:
-    """Parse the test count from pytest --collect-only -q output (last line
-    like ``N tests collected`` or ``N errors``)."""
+    """Parse the test count from pytest --collect-only -q output (lines
+    like ``N tests collected`` or ``N errors``). Sums across sections."""
     m = re.findall(r"(\d+) tests? collected", stdout)
     if m:
-        return int(m[-1])
+        return sum(int(n) for n in m)
     m = re.findall(r"(\d+) errors?", stdout)
-    return int(m[-1]) if m else 0
+    return sum(int(n) for n in m) if m else 0
 
 
 def _short_detail(output: str, limit: int = 200) -> str:
@@ -572,34 +578,30 @@ class Executor:
     # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
 
     def _run_contract_sections(self, cmd, state, field: str
-                               ) -> tuple[int, str, str, str | None]:
+                               ) -> tuple[list[tuple[str, int, str, str]], str | None]:
         """Execute the contract's ``collect`` or ``run`` command across all
-        declared sections. Returns ``(rc, stdout, stderr, error_msg)``.
-        On success ``error_msg`` is None; on contract/shlex error it is a
-        human-readable string and the caller should emit a failure event."""
+        declared sections. Returns ``(results, error_msg)`` where ``results``
+        is a list of ``(section_name, rc, stdout, stderr)`` per section.
+        On contract/shlex error ``error_msg`` is set and ``results`` is empty."""
         try:
             contract = load_contract(self.repo)
         except ContractError as exc:
-            return -1, "", "", f"contract error: {exc.reason}"
-        sections = [contract.integration]
+            return [], f"contract error: {exc.reason}"
+        sections = [("integration", contract.integration)]
         if contract.e2e is not None:
-            sections.append(contract.e2e)
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
-        rc = 0
-        for section in sections:
+            sections.append(("e2e", contract.e2e))
+        results: list[tuple[str, int, str, str]] = []
+        for name, section in sections:
             try:
                 argv = shlex.split(getattr(section, field))
             except ValueError as exc:
-                return -1, "", "", f"contract {field} command invalid: {exc}"
+                return [], f"contract {field} command invalid: {exc}"
             cwd = self.repo / section.cwd if section.cwd != "." else self.repo
             proc = subprocess.run(
                 argv, cwd=cwd, capture_output=True, text=True,
             )
-            stdout_parts.append(proc.stdout)
-            stderr_parts.append(proc.stderr)
-            rc = rc or proc.returncode
-        return rc, "\n".join(stdout_parts), "\n".join(stderr_parts), None
+            results.append((name, proc.returncode, proc.stdout, proc.stderr))
+        return results, None
 
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
         """SM-01.5: Runtime independently collects integration + e2e tests via
@@ -607,22 +609,26 @@ class Executor:
         Never trusts the Shield self-report."""
         if reconcile and state.test_collected:
             return
-        rc, stdout, stderr, error = self._run_contract_sections(cmd, state, "collect")
+        results, error = self._run_contract_sections(cmd, state, "collect")
         if error is not None:
             self._emit("test.collected",
                        {"status": "failed", "collected_count": 0,
                         "errors": [error]},
                        command_id=cmd.command_id)
             return
-        if rc == 0:
-            count = _parse_collected_count(stdout)
+        all_stdout = "\n".join(r[2] for r in results)
+        any_failed = any(r[1] != 0 for r in results)
+        if not any_failed:
+            count = _parse_collected_count(all_stdout)
             self._emit("test.collected",
                        {"status": "passed", "collected_count": count, "errors": []},
                        command_id=cmd.command_id)
         else:
+            errors = [r[3].strip() or r[2].strip()
+                      for r in results if r[1] != 0]
             self._emit("test.collected",
                        {"status": "failed", "collected_count": 0,
-                        "errors": [stderr.strip() or stdout.strip()]},
+                        "errors": errors},
                        command_id=cmd.command_id)
 
     def _do_run_tests(self, cmd, state, task_id, reconcile):
@@ -630,7 +636,7 @@ class Executor:
         project contract's ``run`` command and classifies each failure
         (FR-0050). All-legit -> red.validated(valid) -> EXIT; any illegit or
         unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
-        rc, stdout, stderr, error = self._run_contract_sections(cmd, state, "run")
+        results, error = self._run_contract_sections(cmd, state, "run")
         if error is not None:
             findings = [{"test_id": "*", "classification": "collection_error",
                          "detail": error}]
@@ -644,12 +650,15 @@ class Executor:
                         "attempt": state.current_attempt + 1},
                        command_id=cmd.command_id)
             return
-        output = f"{stdout}\n{stderr}"
-        red_class = classify_red("*", rc, stdout, stderr)
-        legit = red_class in _LEGIT_RED
-        findings = [{"test_id": "*", "classification": red_class,
-                     "detail": _short_detail(output)}]
-        if legit:
+        findings: list[dict] = []
+        all_legit = True
+        for name, rc, stdout, stderr in results:
+            red_class = classify_red(name, rc, stdout, stderr)
+            if red_class not in _LEGIT_RED:
+                all_legit = False
+            findings.append({"test_id": name, "classification": red_class,
+                             "detail": _short_detail(f"{stdout}\n{stderr}")})
+        if all_legit:
             self._emit("red.validated",
                        {"status": "valid", "findings": findings},
                        command_id=cmd.command_id)
@@ -659,12 +668,13 @@ class Executor:
                    {"status": "invalid", "findings": findings},
                    command_id=cmd.command_id)
         classification = self._diagnose_classification()
-        target = {"test_defect": "M-TEST", "stub_gap": "M-DESIGN",
-                  "ac_gap": "M-ACC", "spec_gap": "M-SPEC"}.get(classification, "M-TEST")
         self._emit("verdict.failed",
-                   {"check": classification, "target_stage": target,
+                   {"check": classification,
+                    "target_stage": _DIAGNOSE_TARGET.get(classification, "M-TEST"),
                     "artifact_disposition": "rewrite" if classification == "test_defect"
-                    else "rollback", "reason": red_class,
+                    else "rollback",
+                    "reason": next((f["classification"] for f in findings
+                                   if f["classification"] not in _LEGIT_RED), "invalid"),
                     "attempt": state.current_attempt + 1},
                    command_id=cmd.command_id)
 
@@ -704,7 +714,15 @@ class Executor:
             git(self.repo, "add", "tests")
         proc = _commit_if_staged(
             self.repo, f"M-TEST: freeze test assets\n\n{marker}")
-        if proc is not None and proc.returncode != 0:
+        if proc is None:
+            # No staged changes -> Shield wrote nothing new; refuse to emit a
+            # test.committed pointing at a stale HEAD (R1-03).
+            self._emit_commit_failure_evidence(
+                state, cmd.command_id, "no_staged_test_assets",
+                "git add tests staged nothing; Shield produced no test files",
+            )
+            return
+        if proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
