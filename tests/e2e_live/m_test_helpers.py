@@ -349,6 +349,14 @@ def assert_criteria_pack_triple(events: list[dict]) -> None:
         f"Prism M-TEST dispatch assignment criteria_pack != {_CRITERIA_PACK}: "
         f"got {assigned_pack}"
     )
+    # D-29: the criteria pack skill is declared for materialization (not just
+    # identity metadata); assignment.skills names test-asset-criteria so the
+    # backend materializes it for Prism to consume.
+    assigned_skills = prism_assignment.get("skills", [])
+    assert "test-asset-criteria" in assigned_skills, (
+        f"Prism M-TEST dispatch assignment.skills missing test-asset-criteria: "
+        f"got {assigned_skills}"
+    )
 
     # 2. Prism outcome/verdict echoes the same identity.
     m_test_prism_verdicts = [

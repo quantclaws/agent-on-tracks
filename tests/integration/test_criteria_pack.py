@@ -17,6 +17,7 @@ def test_prism_reviews_with_criteria_pack(trac, event_log):
                      and e["payload"]["command"]["params"].get("role") == "prism")
     assignment = prism_cmd["payload"]["command"]["params"]["assignment"]
     assert assignment["criteria_pack"] == dict(_CRITERIA_PACK)
+    assert assignment["skills"] == ["tracks-discuz", "test-asset-criteria"]
 
 
 # AC-FR0040-02@v0.4 TRACKS-TRACE anti self report triple
@@ -30,6 +31,11 @@ def test_anti_self_report_triple(trac, event_log):
                      and e["payload"]["command"]["params"].get("role") == "prism")
     assigned = prism_cmd["payload"]["command"]["params"]["assignment"]["criteria_pack"]
     assert assigned == dict(_CRITERIA_PACK)
+    # D-29: the criteria pack skill is declared for materialization (not just
+    # identity metadata); assignment.skills names test-asset-criteria so the
+    # backend materializes it for Prism to consume.
+    assert prism_cmd["payload"]["command"]["params"]["assignment"]["skills"] == [
+        "tracks-discuz", "test-asset-criteria"]
     # ② verdict echoes it
     verdict = next(e for e in evs if e["type"] == "prism.verdict")
     assert verdict["payload"]["criteria_pack"] == dict(_CRITERIA_PACK)
@@ -79,8 +85,17 @@ def test_criteria_pack_no_formal_rules():
 def test_criteria_pack_materialization_lifecycle(trac, event_log, host_repo):
     """AC-FR0040-06@v0.4: criteria pack skill is materialized for Prism M-TEST
     dispatch and cleaned up after (same lifecycle as tracks-discuz)."""
-    walk_to_m_test(trac)
+    run_id = walk_to_m_test(trac)
     trac("run")
+    evs = m_test_events(event_log(run_id))
+    # The Prism M-TEST dispatch declares test-asset-criteria in assignment.skills
+    # so the backend materializes it (D-29: skill materialization + identity).
+    prism_cmd = next(e for e in evs if e["type"] == "command.issued"
+                     and e["payload"]["command"]["params"].get("role") == "prism"
+                     and e["payload"]["command"]["params"].get("substate")
+                     == "PRISM_REVIEW")
+    prism_assignment = prism_cmd["payload"]["command"]["params"]["assignment"]
+    assert "test-asset-criteria" in prism_assignment["skills"]
     # After the run, materialized skills are cleaned up
     skill_dest = host_repo / ".opencode" / "skills" / "test-asset-criteria" / "SKILL.md"
     # The canonical source exists (deliverable)

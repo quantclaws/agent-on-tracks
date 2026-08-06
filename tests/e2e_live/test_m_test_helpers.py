@@ -126,7 +126,10 @@ def _criteria_events(
                     "params": {
                         "role": "prism",
                         "substate": "PRISM_REVIEW",
-                        "assignment": {"criteria_pack": assigned},
+                        "assignment": {
+                            "criteria_pack": assigned,
+                            "skills": ["tracks-discuz", "test-asset-criteria"],
+                        },
                     },
                 }
             },

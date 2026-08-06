@@ -913,7 +913,7 @@ def _m_test_prism_dispatch(s: State) -> Command:
         "docs": list(_M_TEST_CONTEXT_DOCS),
         "assignment": {
             "kind": "PRISM_REVIEW",
-            "skill": "tracks-discuz",
+            "skills": ["tracks-discuz", "test-asset-criteria"],
             "docs": list(_M_TEST_CONTEXT_DOCS),
             "criteria_pack": dict(_CRITERIA_PACK),
         },
