@@ -209,6 +209,9 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
 
 
 _ALLOWED_TEST_DIRS = ("integration", "e2e", "assets", "counterexamples")
+# Runtime-owned locations are not Shield writes (document locks, runtime DB
+# sidecars, provider config) and are skipped by the scope check below.
+_RUNTIME_OWNED_TOP_DIRS = frozenset({".tracks", ".opencode"})
 _TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
 _TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 
@@ -234,6 +237,10 @@ def assert_shield_no_commit_scope(
       * every new/modified path is within tests/integration, tests/e2e,
         tests/assets, tests/counterexamples
       * no product/stub/design-doc write
+
+    Runtime-owned locations (``.tracks/``, ``.opencode/``) are not Shield
+    writes (document locks, runtime DB sidecars, provider config) and are
+    skipped before the tests-only scope assertion.
     """
     after_head = _git(repo, "rev-parse", "HEAD")
     assert after_head == before["head"], (
@@ -243,7 +250,8 @@ def assert_shield_no_commit_scope(
     assert remote_refs_after == remote_refs_before, (
         "Shield pushed: remote refs changed"
     )
-    # Every new/modified path must be within tests/<allowed>/.
+    # Every new/modified path must be within tests/<allowed>/; runtime-owned
+    # prefixes (.tracks/, .opencode/) are not Shield writes and are skipped.
     status = _git(repo, "status", "--porcelain")
     if status.strip():
         for line in status.strip().splitlines():
@@ -251,6 +259,8 @@ def assert_shield_no_commit_scope(
             path = line[3:].strip().strip('"')
             # Strip submodule/quote handling
             top = path.split("/")[0] if "/" in path else path
+            if top in _RUNTIME_OWNED_TOP_DIRS:
+                continue
             assert top == "tests", (
                 f"Shield wrote outside tests/: {path}"
             )
