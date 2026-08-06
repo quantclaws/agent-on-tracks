@@ -414,6 +414,8 @@ stateDiagram-v2
 
 **目的**：Shield 按 Test Plan 对着接口桩编写 integration/e2e 测试；Prism 独立评审测试合约；Runtime 独立验证"可 collect 且合法地失败（合法 Red）"。本阶段交付的是测试资产（Red 状态），不是绿色结果——变绿是 M-IMPL 的职责。
 
+**定位（外圈合同循环）**：本阶段写下"大小两个测试循环"的**外圈**——integration/e2e 测试是实现存在之前写好的合同：先行变红、冻结为基线，M-IMPL 阶段的目标就是把这一圈全部变绿。内圈 RGR 循环见 §10（D-32）。
+
 **进入条件**：M-DESIGN 通过（`prism.verdict(pass)` + 程序校验通过）。
 
 ### 9.1. 子状态机
@@ -490,6 +492,8 @@ stateDiagram-v2
 ## 10. M-IMPL
 
 **目的**：Archer 把需求/设计基线拆成可独立验证的 implementation task graph；Devon 逐 task 以 Red→Green→Refactor 完成实现，把 Shield 的 integration/e2e 测试变绿并补齐单元测试；Prism 在 Red checkpoint 与最终 task range 两处独立评审。
+
+**定位（内圈 RGR 循环）**：本阶段是"大小两个测试循环"的**内圈**——Devon 逐 task 走 Red→Green→Refactor，用这一圈圈的小循环去驱动外圈合同循环（Shield 的 integration/e2e 测试，见 §9）变绿。内圈保证每一步的质量，外圈负责最终验收（D-32）。
 
 **进入条件**：M-TEST 退出条件成立（事件：`stage.exited(M-TEST)`，测试资产已冻结并进入 baseline）。
 

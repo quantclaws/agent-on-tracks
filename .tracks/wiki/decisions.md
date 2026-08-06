@@ -1,7 +1,7 @@
 ---
 doc: decisions
 status: active
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 ---
 
 # 已决定事项
@@ -331,6 +331,13 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 - reach（FR-0090）语言范围澄清：v0.4 仅 Python；无 Python 文件时 warning + 退出码 0。
 - 合同落点：spec/acceptance/test-plan/interfaces 已修订并提交（`4b2ad5f`）；全量实现与存量迁移完成于 `69cc6f5`（scanner/FakeBackend/GT/fixtures/23 文件迁移/Shield 措辞/reach warning；606 passed；tag v0.4 重指该提交）。
 
+## D-32. “大小两个测试循环”正式命名（外圈合同循环 / 内圈 RGR 循环）
+
+（用户裁定 2026-08-05）
+
+- tracks 测试体系的两大循环正式命名：**外圈合同循环**——Shield 在 M-TEST 对着接口桩与验收标准编写 integration/e2e 合同测试，先行变红、冻结为基线；**内圈 RGR 循环**——M-IMPL 中 Devon 逐 task 走 Red→Green→Refactor（Runtime 校验合法 Red、Prism 评 Red checkpoint）。内圈保证每一步的质量，外圈负责最终验收：M-IMPL 的目标即把外圈合同全部变绿。
+- 该提法由 flow.md M-TEST/M-IMPL 的既有职责提炼（原文此前无此词），裁定“这个说法成立”后在 flow.md §9/§10 加定位锚点；docs/philosophy/why-evidence-wins.md 的对外表述以此为正名出处。
+
 ## 决策日志
 
 | ID   | 决定日期   | 标题                                          | 来源                                                                     |
@@ -367,3 +374,4 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-29 | 2026-08-04 | Prism 评审管线与判据包 skill 化进入 v0.4 spec | 用户裁定：四阶段管线；判据包 skill 化；配套三件套（assignment 指定/outcome 携带/Runtime 回读）；v0.4 交付测试资产判据包与 Runtime 机制 |
 | D-30 | 2026-08-05 | v0.4 dogfood 运行记录：钩子拦截死锁缺口与本仓存量标记采纳策略 | Maestro 运行记录（非用户裁定）：F-1 commit 被拒死锁待立项；F-2 本仓 legacy-baseline 采纳时点待 Aaron 决定 |
 | D-31 | 2026-08-05 | R-1：marker 约定简化与语言中立化（TRACKS-TRACE 特征词） | 用户裁定：标记注释行 + TRACKS-TRACE 特征词 + 行级正则零依赖检测（spec `4b2ad5f`）；Shield 写测试必带标记行；reach v0.4 仅 Python |
+| D-32 | 2026-08-05 | “大小两个测试循环”正式命名（外圈合同循环 / 内圈 RGR 循环） | 用户裁定：“这个说法成立”；flow.md §9/§10 定位锚点；why-evidence-wins.md 对外表述以此为准 |
