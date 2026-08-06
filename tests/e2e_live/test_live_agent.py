@@ -503,6 +503,29 @@ def test_dispatch_budget_is_three_for_author_and_reviewer_steps(tmp_path):
     assert "--max-dispatches" not in non_run
 
 
+def test_dispatch_budget_is_three_for_write_steps(tmp_path):
+    """Fix: WRITE steps (M-TEST draft, kind=WRITE) get the same 3-dispatch
+    budget as DRAFT/RESPOND/*_REVIEW. The runtime re-dispatches a failed WRITE
+    outcome (e.g. real Shield timed out on one attempt) up to the 3rd attempt
+    before escalating to awaiting=escalation; --max-dispatches 1 strangled that
+    retry in live run009 and the run exited at WRITE."""
+    driver = _mechanic_driver(tmp_path)
+
+    def budget(name):
+        args, _ = driver._command_args(("run",), name, None)
+        return args[args.index("--max-dispatches") + 1]
+
+    # WRITE step now gets 3 (was 1):
+    assert budget("shield-test-draft") == "3"
+    # DRAFT/RESPOND/*_REVIEW stay 3 (regression guard):
+    for name in ("scribe-story-draft", "scribe-story-respond",
+                 "lex-spec-review", "sage-story-finding"):
+        assert budget(name) == "3", name
+    # Plain human-gate steps (no kind) keep a single dispatch:
+    for name in ("triage", "approval-final"):
+        assert budget(name) == "1", name
+
+
 # -- 7. command timeout covers all attempts (Fix 1, live run049) ------------
 
 
@@ -546,6 +569,25 @@ def test_command_timeout_covers_all_dispatch_attempts(tmp_path):
         timeout=None, agent_timeout=300, max_dispatches=None,
         scenario="triage",
     ) == max(base, 1 * (300 + 300))
+
+
+def test_command_timeout_covers_all_dispatch_attempts_for_write(tmp_path):
+    """The WRITE retry budget (3, see _dispatch_budget) feeds the same outer
+    command-timeout formula: effective = max(command_timeout, 3 * (agent_timeout
+    + 300)), so a Shield WRITE run that retries after a flake is not killed
+    mid-flight. Explicit timeout= still wins."""
+    driver = _mechanic_driver(tmp_path)
+    # agent_timeout=1200, shield-test-draft (WRITE, budget=3):
+    # effective = max(1, 3 * (1200 + 300)) = 4500
+    assert driver._effective_command_timeout(
+        timeout=None, agent_timeout=1200, max_dispatches=None,
+        scenario="shield-test-draft",
+    ) == 3 * (1200 + 300)
+    # Explicit timeout= overrides the formula even for WRITE:
+    assert driver._effective_command_timeout(
+        timeout=600, agent_timeout=1200, max_dispatches=None,
+        scenario="shield-test-draft",
+    ) == 600
 
 
 def test_command_timeout_resolves_design_agent_timeout_env_to_formula(monkeypatch, tmp_path):
