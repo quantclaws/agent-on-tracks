@@ -227,6 +227,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
         s.design_validated = s.design_committed = 0
         s.prism_passed_this_round = False
         s.exit_validated = False
+        s.review_round = 1
 
 
 def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -239,6 +240,9 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.stage == "M-TEST":
         # SM-01.2: DISPATCH -> WRITE on the first Shield dispatch. Subsequent
         # Shield re-dispatches (WRITE/SM-01.4/.6/.8/.11/.15) stay in WRITE.
+        # M-TEST outcomes are processed synchronously in run_loop; decide()
+        # never inspects reviewer_dispatched in this path. Do not set it here
+        # without auditing _decide_m_test retry branches.
         if s.substate == "DISPATCH":
             s.substate = "WRITE"
         s.doc_dispatched = True  # track Shield dispatch state
