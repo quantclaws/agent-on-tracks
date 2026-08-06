@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import pytest
 
 from tests.e2e_live import m_test_helpers as _helpers
 from tests.e2e_live import test_full_journey as _journey
+from tests.e2e_live.harness import LiveInstall, prepare_host_venv
 from tests.e2e_live.m_test_helpers import (
     _git,
     _setup_baseline_remote,
@@ -942,3 +944,101 @@ def test_events_returns_empty_when_db_absent(tmp_path):
     list without raising or retrying."""
     driver = _mechanic_driver_for_events(tmp_path)
     assert driver.events() == []
+
+
+# -- prepare_host_venv offline-first symlink provisioning -------------------
+#
+# PyPI may be unreachable in the live environment (proxy SSL EOF). The
+# harness must provision the host ``.venv`` without pip/network by symlinking
+# to the current virtualenv (the one running the live E2E), mirroring the
+# deterministic ``host_repo`` fixture in ``tests/conftest.py``.
+
+
+def _mechanic_install(live_root: Path) -> LiveInstall:
+    """Synthetic ``LiveInstall`` for offline harness tests (no wheel, no venv).
+
+    Mirrors ``test_live_agent._mechanic_driver``'s install fields so the
+    R0801 duplicate-code gate stays green across the two test modules.
+    """
+    from tests.e2e_live.test_live_agent import _mechanic_driver
+
+    return _mechanic_driver(live_root).install
+
+
+def test_prepare_host_venv_symlinks_current_prefix_and_logs_method(tmp_path):
+    host = tmp_path / "host"
+    host.mkdir()
+    install = _mechanic_install(tmp_path)
+    install.install_log.write_text("", encoding="utf-8")
+
+    result = prepare_host_venv(host, install)
+
+    assert result == host / ".venv"
+    assert result.is_symlink()
+    assert result.resolve() == Path(sys.prefix).resolve()
+    log_text = install.install_log.read_text(encoding="utf-8")
+    assert f"host_venv=symlink:{Path(sys.prefix).resolve()}" in log_text
+
+
+def test_prepare_host_venv_is_idempotent_for_symlink(tmp_path):
+    host = tmp_path / "host"
+    host.mkdir()
+    install = _mechanic_install(tmp_path)
+    install.install_log.write_text("", encoding="utf-8")
+
+    first = prepare_host_venv(host, install)
+    log_after_first = install.install_log.read_text(encoding="utf-8")
+    second = prepare_host_venv(host, install)
+    log_after_second = install.install_log.read_text(encoding="utf-8")
+
+    assert second == first
+    assert log_after_second == log_after_first, (
+        "idempotent re-entry must not append a second provisioning line"
+    )
+
+
+def test_prepare_host_venv_is_idempotent_for_real_directory(tmp_path):
+    host = tmp_path / "host"
+    host.mkdir()
+    (host / ".venv").mkdir()
+    install = _mechanic_install(tmp_path)
+    install.install_log.write_text("", encoding="utf-8")
+
+    result = prepare_host_venv(host, install)
+
+    assert result == host / ".venv"
+    assert not result.is_symlink()
+    assert install.install_log.read_text(encoding="utf-8") == "", (
+        "pre-existing real .venv dir must not trigger provisioning log"
+    )
+
+
+def test_prepare_host_venv_uses_no_network(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    install = _mechanic_install(tmp_path)
+    install.install_log.write_text("", encoding="utf-8")
+
+    def fail_subprocess(*args, **kwargs):
+        raise AssertionError(
+            f"prepare_host_venv must not spawn subprocesses; got {args!r}"
+        )
+
+    monkeypatch.setattr("tests.e2e_live.harness.subprocess.run", fail_subprocess)
+    monkeypatch.setattr("tests.e2e_live.harness.subprocess.Popen", fail_subprocess)
+
+    result = prepare_host_venv(host, install)
+
+    assert result.is_symlink()
+
+
+def test_prepare_host_venv_fails_clearly_when_pytest_unimportable(tmp_path, monkeypatch):
+    host = tmp_path / "host"
+    host.mkdir()
+    install = _mechanic_install(tmp_path)
+    install.install_log.write_text("", encoding="utf-8")
+    monkeypatch.setitem(sys.modules, "pytest", None)
+
+    with pytest.raises(AssertionError, match="no importable pytest"):
+        prepare_host_venv(host, install)
+    assert not (host / ".venv").exists()

@@ -705,19 +705,19 @@ def capture_opencode_log_tail(
 
 
 def prepare_host_venv(host: Path, install: LiveInstall) -> Path:
-    """Create host ``.venv`` with pytest for M-TEST (architecture.md §3.2)."""
+    """Create host ``.venv`` for M-TEST (§3.2) by symlinking to the current
+    virtualenv, mirroring ``tests/conftest.py``'s ``host_repo`` fixture.
+    No pip/network: the current venv already has pytest 9.1.1."""
     host_venv = host / ".venv"
-    if host_venv.exists():
+    if host_venv.is_symlink() or host_venv.exists():
         return host_venv
-    clean = clean_env()
-    to, log = timeout_env("TRAC_LIVE_INSTALL_TIMEOUT", 300), install.install_log
-    host_py = host_venv / "bin" / "python"
-    cmds = [("venv", [str(install.isolated_python), "-m", "venv", str(host_venv)]),
-            ("pytest", [str(host_py), "-m", "pip", "install", "pytest==9.1.1"])]
-    for label, argv in cmds:
-        proc = run_logged(argv, host, clean, log, timeout=to)
-        if proc.returncode != 0:
-            raise AssertionError(f"host {label} failed: {proc.stderr.strip()}; log={log}")
+    target = Path(sys.prefix).resolve()
+    try:
+        import pytest  # noqa: F401
+    except ImportError as exc:
+        raise AssertionError(f"no importable pytest in venv {sys.prefix!r}: {exc}") from exc
+    host_venv.symlink_to(target, target_is_directory=True)
+    append_log(install.install_log, f"host_venv=symlink:{target}\n")
     return host_venv
 
 
