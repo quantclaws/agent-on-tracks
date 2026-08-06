@@ -496,7 +496,7 @@ def test_design_exit_without_fake_flag_preserves_existing_skip(monkeypatch, tmp_
         )
 
 
-def _git_repo(tmp_path):
+def _git_repo(tmp_path, *, with_tests: bool = True):
     repo = tmp_path / "repo"
     origin = tmp_path / "origin.git"
     repo.mkdir()
@@ -506,10 +506,11 @@ def _git_repo(tmp_path):
     _git(repo, "config", "user.email", "tests@example.invalid")
     _git(repo, "config", "user.name", "M-TEST tests")
     (repo / "README.md").write_text("initial\n", encoding="utf-8")
-    for layer in ("integration", "e2e"):
-        layer_dir = repo / "tests" / layer
-        layer_dir.mkdir(parents=True)
-        (layer_dir / ".gitkeep").write_text("", encoding="utf-8")
+    if with_tests:
+        for layer in ("integration", "e2e"):
+            layer_dir = repo / "tests" / layer
+            layer_dir.mkdir(parents=True)
+            (layer_dir / ".gitkeep").write_text("", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "initial")
     _git(repo, "remote", "add", "origin", str(origin))

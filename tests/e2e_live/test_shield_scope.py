@@ -43,3 +43,38 @@ def test_scope_contract_ignores_runtime_owned_but_fails_other_outside(tmp_path):
 
     with pytest.raises(AssertionError, match="outside tests"):
         assert_shield_no_commit_scope(before, repo, remote_refs)
+
+
+def test_scope_contract_expands_collapsed_tests_dir_then_catches_rogue_leaf(tmp_path):
+    """A porcelain-collapsed ``?? tests/`` (every leaf untracked) is expanded
+    to its leaf files: with only allowed leaves the scope check passes, and a
+    rogue ``tests/rogue.py`` leaf is caught after expansion (run010 harness
+    twin of the run001 product bug)."""
+    repo = _git_repo(tmp_path, with_tests=False)
+    before = snapshot_git_state(repo)
+    remote_refs = _git(repo, "ls-remote", "origin")
+
+    # Write only allowed leaves under a previously-absent tests/ tree so git
+    # porcelain collapses the whole dir to a single ``?? tests/`` entry.
+    for rel in (
+        "tests/integration/test_ok.py",
+        "tests/e2e/test_ok.py",
+        "tests/assets/fixture.json",
+        "tests/counterexamples/case.py",
+    ):
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x\n", encoding="utf-8")
+
+    # Sanity: porcelain really did collapse to ``?? tests/``.
+    assert _git(repo, "status", "--porcelain").strip() == "?? tests/"
+
+    # Expanded to leaves, every path is under tests/<allowed>/ -> passes.
+    assert_shield_no_commit_scope(before, repo, remote_refs)
+
+    # A rogue leaf (not under any allowed tests/<dir>/) is caught after
+    # expansion; porcelain still collapses to ``?? tests/``.
+    (repo / "tests" / "rogue.py").write_text("x = 1\n", encoding="utf-8")
+    assert _git(repo, "status", "--porcelain").strip() == "?? tests/"
+    with pytest.raises(AssertionError, match="Shield wrote to tests/"):
+        assert_shield_no_commit_scope(before, repo, remote_refs)

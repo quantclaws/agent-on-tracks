@@ -228,6 +228,14 @@ def snapshot_git_state(repo: Path) -> dict:
     }
 
 
+def _untracked_leaves(repo: Path, prefix: str) -> list[str]:
+    """Untracked leaf files under ``prefix`` (a porcelain-collapsed ``?? dir/``
+    entry), mirroring ``Auditor.untracked_under`` so the scope check judges
+    files, not collapsed directories (the run010 harness twin of run001)."""
+    out = _git(repo, "ls-files", "--others", "--exclude-standard", "--", prefix)
+    return [line.strip().strip('"') for line in out.splitlines() if line.strip()]
+
+
 def assert_shield_no_commit_scope(
     before: dict, repo: Path, remote_refs_before: str
 ) -> None:
@@ -257,19 +265,29 @@ def assert_shield_no_commit_scope(
         for line in status.strip().splitlines():
             # porcelain format: XY <path>
             path = line[3:].strip().strip('"')
-            # Strip submodule/quote handling
-            top = path.split("/")[0] if "/" in path else path
-            if top in _RUNTIME_OWNED_TOP_DIRS:
-                continue
-            assert top == "tests", (
-                f"Shield wrote outside tests/: {path}"
-            )
-            if "/" in path:
-                second = path.split("/")[1]
-                assert second in _ALLOWED_TEST_DIRS, (
-                    f"Shield wrote to tests/{second}/ (not in "
-                    f"{_ALLOWED_TEST_DIRS}): {path}"
+            # Porcelain collapses a fully-untracked directory into a single
+            # ``?? dir/`` entry (trailing "/"); expand to its untracked leaf
+            # files so the scope check judges actual files, not the collapsed
+            # dir (mirrors Auditor.file_level; the run001 product bug's twin).
+            # A dir that expands to nothing is kept as-is so the check still
+            # applies.
+            if path.endswith("/"):
+                paths = _untracked_leaves(repo, path) or [path]
+            else:
+                paths = [path]
+            for p in paths:
+                top = p.split("/")[0] if "/" in p else p
+                if top in _RUNTIME_OWNED_TOP_DIRS:
+                    continue
+                assert top == "tests", (
+                    f"Shield wrote outside tests/: {p}"
                 )
+                if "/" in p:
+                    second = p.split("/")[1]
+                    assert second in _ALLOWED_TEST_DIRS, (
+                        f"Shield wrote to tests/{second}/ (not in "
+                        f"{_ALLOWED_TEST_DIRS}): {p}"
+                    )
 
 
 def assert_single_test_commit(
