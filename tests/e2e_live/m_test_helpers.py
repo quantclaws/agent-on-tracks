@@ -382,7 +382,8 @@ def assert_test_markers(tracks_tests_dir: Path, version: str) -> None:
     at least one R-1 long-format marker (``AC-FRXXXX-YY@<version>
     TRACKS-TRACE``). Shield must not write tests outside these dirs."""
     marker_re = re.compile(
-        r"^\s*(#|//)\s*AC-(?:N?FR)\d{4}-\d{2}@(\S+)\s+TRACKS-TRACE\b"
+        r"^\s*(#|//)\s*AC-(?:N?FR)\d{4}-\d{2}@(\S+)\s+TRACKS-TRACE\b",
+        re.MULTILINE,
     )
     found = False
     for subdir in ("integration", "e2e"):
