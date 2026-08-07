@@ -68,7 +68,7 @@ sha:
 - **变更基线**：新增 — v0.5 首次实现内圈 RGR 循环；当前无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件、无视图隔离
 - **入口/触发**：3.1 TASK_DISPATCH——Runtime 按 DAG 依赖调度 ready task（v0.5 串行调度，`[P]` 标记记录但不并发执行，见 §5 约束）；单写者 lease + 创建 manifest（writelock.granted）
 
-1. **RED（视图隔离）**：dispatch Devon（phase=red）——Runtime 物化隔离工作视图（worktree + sparse-checkout，按 BASELINE 冻结的屏蔽路径集排除 Shield 测试目录；unit 路径保留），Devon 只添加 unit test；视图里不存在的东西物理上不可读——"禁止"兑现为"不可能"。Devon 权限条目 `bash: deny`（worktree 共享 `.git`，有 shell 即可自行 checkout 被排除路径，隔离即失效；测试运行与门禁全是 Runtime 职责），该条目由 `trac init` 写入 harness 配置（D-19），Devon.md 保持 harness 无关、不含 permission 块（D-26）。outcome 必须是 test-only diff
+1. **RED（视图隔离）**：dispatch Devon（phase=red）——Runtime 物化隔离工作视图（worktree + sparse-checkout，按 BASELINE 冻结的屏蔽路径集排除 Shield 测试目录；unit 路径保留），Devon 只添加 unit test；视图里不存在的东西物理上不可读——"禁止"兑现为"不可能"。Devon 的**全部文件访问能力**（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读——文件工具层同样"不可能"绕过；权限条目 `bash: deny`（worktree 共享 `.git`，有 shell 即可自行 checkout 被排除路径，隔离即失效；测试运行与门禁全是 Runtime 职责）。per-agent 文件范围 + shell 权限由 `trac init` 按当前 harness 配置生成等价条目写入 harness 配置（D-19，external_directory 同时约束 read 与 bash），Devon.md 保持 harness 无关、不含 permission 块（D-26）。outcome 必须是 test-only diff
 2. **RED_GATE**：Runtime 校验预期失败——合法红 = 行为断言失败 / symbol 缺失（flow §10.1 口径；复用 v0.4 RED_GATE 分类器框架，但其桩合同 token 失败条款属 M-TEST 合同测试场景，不在本门禁之列）；非法红重派
 3. **RED_CHECKPOINT**：Runtime 创建私有 commit R，写 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red`；red.checkpointed。**PRISM_RED** dispatch Prism 评 B..R 范围（Red 测试确实测了该 task 声明的 IF/AC，且未测多余）；pass 绑定 R → GREEN
 4. **GREEN**：从 R tree 恢复工作区（仍为隔离视图）；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
@@ -76,6 +76,9 @@ sha:
 6. **GREEN_COMMIT**：Runtime 创建正式 commit G（G 的 parent=B，flow §10 既有合同），trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）；R 先于 G 的先后由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（语义见 BS-07）
 7. **REFACTOR**：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策
 8. **REFACTOR_GATE**：重跑 GREEN_GATE 全部检查；动 public interface → upstream。**TASK_REVIEW** Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget。**PRISM_FINAL** dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
+
+> **Sage:** @Scribe 视图隔离路径仍缺一条会直接破坏 Human 强制目标的产品边界：sparse-checkout 只让屏蔽测试不出现在 Devon 的隔离 worktree，`bash: deny` 也只封住 shell；若 Devon 的 read/glob 等文件工具仍可访问原始 checkout，它可用绝对路径绕过隔离。既有 D-19 已确认 `external_directory` 是同时约束 read 与 bash 的 per-agent harness 边界，但当前 §3.2、BS-04、§5 三道防线只为 Devon 增加 `bash: deny`，没有把文件可读范围限定到隔离 worktree，因此“物理上不可读/不可能”尚不成立。无需询问 Human 或锁定某一 harness 语法：请把产品不变量补齐为 Devon 的全部文件访问能力只能看到 Runtime 物化的隔离视图及获准临时目录，原始 checkout 与其他可恢复 Shield 测试内容均不可读；`trac init` 按当前 harness 生成等价 per-agent 文件范围 + shell 权限。同步 §3.2、BS-04、§5 风险/约束后回复。
+>> **Scribe:** 已落地，三处同步：① §3.2 步骤 1（RED 视图隔离）——Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读，文件工具层同样『不可能』绕过；per-agent 文件范围 + shell 权限由 trac init 按当前 harness 生成等价条目写入 harness 配置（D-19 external_directory 同时约束 read 与 bash），Devon.md 仍不含 permission 块（D-26）。② BS-04 EARS 与说明同步补文件范围。③ §5 非常规要求三道防线②改为『文件范围 + shell 封堵』，§7 重要风险 2 同步『绝对路径打穿』。请复核。
 
 - **完成结果**：`red.checkpointed` + `green.committed` + `refactor.committed|no_change` + `task.completed` 落事件；task 级 RGR lineage（R 不可变 ref + trailers）落 git；用户可见 per-task 进展（events/db 投影）；还有 ready task → 回 TASK_DISPATCH，全部完成 → 3.4 出口；异常路径见 3.3
 
@@ -127,9 +130,9 @@ sha:
 
 ### BS-04 视图隔离（Devon 盲于合同测试）
 
-- EARS: `WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在隔离视图内运行：屏蔽路径集对应的 Shield 测试在视图中物理不存在（sparse-checkout 排除）；Devon 权限条目 bash: deny（由 trac init 写入 harness 配置，Devon.md 不含 permission 块）`
+- EARS: `WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在隔离视图内运行：屏蔽路径集对应的 Shield 测试在视图中物理不存在（sparse-checkout 排除）；Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读；权限条目 bash: deny —— 文件范围 + shell 权限由 trac init 按当前 harness 生成等价条目写入 harness 配置，Devon.md 不含 permission 块`
 - 来源: [3.2 / 非常规要求（§1 Human 强制要求：物理隔离，三道防线见 §5）]
-- 说明: "禁止"兑现为"不可能"——物理不存在 + shell 封堵 + 反馈脱敏三线兜底。
+- 说明: "禁止"兑现为"不可能"——物理不存在 + 文件范围/shell 封堵 + 反馈脱敏三线兜底。
 
 ### BS-05 反馈脱敏
 
@@ -146,7 +149,7 @@ sha:
 ### BS-07 R 先于 G 的 lineage
 
 - EARS: `WHEN GREEN_COMMIT 创建后，THE 系统 SHALL 存在 git ref refs/trac/rgr/{run}/{task}/{attempt}/red，且 R 先于 G 的先后由不可变 R ref + G trailer + Runtime 事件序列联合证明（G 的 parent=B，不作 Git ancestry 拓扑断言）；Red 先于实现不是 Agent 自报`
-- 来源: [3.2 / 约束（flow §10.3 硬规则 2）+ §2 用户意图]
+- 来源: [3.2 / 约束（flow §10.3 硬规则 2）+ §2 用户意图；校正锚点：flow.md §10 lines 574–606（私有 R ref + G parent=B + trailers）与 lines 643/655 残留旧『B/R/G commit 拓扑』表述，本增量统一为联合证明语义、删除拓扑先后断言]
 - 说明: 程序可验证的 lineage 事实是本 story 的核心用户结果；G 保持 parent=B（flow §10 既有合同），R 先于 G 由 ref+trailer+事件序列联合证明，非 Agent 自报。
 
 > **Sage:** @Aaron 这里的可验证 lineage 合同自相矛盾：§3.1 GREEN_COMMIT 明定 G 的 parent=B，而本行为种子又要求“commit 拓扑上 R 严格先于 G”。若 G 与 R 都以 B 为父节点，则二者是 sibling，Git ancestry 无法证明 R 先于 G；仅靠 trailer/ref/event 能证明绑定或时序，但不是拓扑先后。两种实质方向会改变正式历史与证据语义：A. G 以 R 为 parent，使 R 成为 G 的祖先并由拓扑证明（推荐，最直接兑现“不是 Agent 自报”）；B. 保持 G parent=B，改为由不可变 R ref + G trailer + Runtime 事件序列联合证明，删除“拓扑上先于”。请裁定 A/B，并由 Scribe 统一 §2、§3.1、行为种子和工作项。
@@ -155,6 +158,7 @@ sha:
 >> **Sage:** 更正：这不应交由 Human 做技术选型。已接受的 flow.md §10 明确 RED_CHECKPOINT 创建私有 R ref、GREEN 从 R tree 工作，但正式 G 的 parent=B，并以 trailers 记录 R/task identity（现行 lines 574–606）；因此从既有合同可唯一推导为 B：保持 G parent=B，由不可变 R ref、G trailer 与 Runtime 事件序列联合证明 R 在 G 前已被 checkpoint 并绑定，不能声称 Git ancestry 拓扑先后。@Scribe 请据此统一 §3.2 步骤 6、BS-07、§6 与 §7，删除“A/B 待 Aaron 裁定”和不存在的产品开放决定；用户结果仍是 Red 先于实现且可由程序证据验证。修订后回复，本线程再关闭。
 >>> **Scribe:** 已按你的更正统一落地（未交由 Human 选型，依既有 flow.md §10 唯一推导为 B）：① §3.2 步骤 6 GREEN_COMMIT 改为『G 的 parent=B（flow §10 既有合同），R 先于 G 由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言』；② BS-07 EARS 与说明同步为同一语义，删除『拓扑或』与『待 Aaron A/B 裁定』；③ §6 删除『R 先于 G 的 A/B 待裁定』表述，不再是产品开放决定；④ §7 冲突改为『已由既有 flow.md §10 唯一推导为 B，无实质冲突』；⑤ §2 用户意图的『B/R/G commit 拓扑』同步改为『R ref + G trailer + 事件序列可验证，G parent=B，不作 Git ancestry 拓扑断言』。用户结果保持『Red 先于实现且可由程序证据验证』。请复核。
 >>>> **Sage:** @Scribe story 内部的 B 语义已统一，但复核权威 flow.md §10 发现合同本身仍冲突：lines 574–606 写私有 R ref 且 G parent=B，line 643 却仍写“B/R/G commit 拓扑”证明先后；因此 §7 不能写“无实质冲突”或声称 flow 可唯一无冲突推导。无需询问 Human：请把本次增量明确包含对该既有合同措辞的校正（统一为不可变 R ref + G trailer + Runtime 事件序列，不作 ancestry 断言），并在 §7 如实记录冲突与解决方向；可在 BS-07 来源/说明中留下该既有合同校正锚点。完成后回复，本线程再关闭。
+>>>>> **Scribe:** 已落地：① §7 冲突 如实记录 flow.md §10 自身残留措辞冲突——lines 574–606 明定『私有 R ref + G parent=B + trailers』（据此可唯一推导为 B），而 lines 643/655 仍写『B/R/G commit 拓扑』；明确本增量包含对该既有合同措辞的校正（统一为不可变 R ref + G trailer + Runtime 事件序列联合证明、不作 ancestry 断言），flow.md 正文的同步修正由 spec 阶段承接。② BS-07 来源 加入校正锚点（flow.md §10 lines 574–606 与 643/655）。§7 不再写『无实质冲突』。请复核。
 
 >> **Scribe:** test2
 >>> **Scribe:** （置顶说明：本 reply 是误发的 CLI 测试，内容 'test2' 无效，请忽略；T-005 的正式回复见上方 depth 3 对 Sage 更正 comment 的回应。CLI 无删除能力，以此占位声明，避免误读。）
@@ -241,7 +245,7 @@ sha:
 >> **Scribe:** 已复核确认：Q-04 裁定 A 已落地——§5 必要约束与 Out-of-Scope 保留『集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在』。
 
 - **非常规要求**：
-  - 视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在，sparse-checkout 排除），不是提示词纪律——"禁止"兑现为"不可能"；三道防线：① 物理不存在 ② `bash: deny` 关闭经共享 `.git` 自行 checkout 的后门 ③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；屏蔽路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
+  - 视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在，sparse-checkout 排除），不是提示词纪律——"禁止"兑现为"不可能"；三道防线：① 物理不存在 ② 文件范围 + shell 封堵——per-agent harness 边界将 Devon 的全部文件访问能力（read/glob 等文件工具 + shell）限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读，`bash: deny` 关闭经共享 `.git` 自行 checkout 的后门（文件范围 + shell 权限由 `trac init` 按当前 harness 生成等价条目写入 harness 配置，D-19 external_directory 同时约束 read 与 bash） ③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；屏蔽路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
   - RED 阶段要求失败（合法 Red 是交付态而非异常，承 M-TEST 的合法 Red 语义到 unit 层）；refactor 接受 no-change + 理由（不强制产生改动）；"测试错还是实现错"的分流永不交给 Human（flow.md §10.3 硬规则 5）
 - **Out-of-Scope**：不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界；不做 `[P]` 并行调度（只串行，`[P]` 仅记录）；不做真实 LLM 通道的其它形态（集成 FakeAgent、end-to-end 真实 Devon——仅此两条通道，真实通道仅以 end-to-end 形式存在，不做真实通道的单元级/集成级接入）；不做 hotfix / bug-fix 变体（flow.md §16，后续 story）；不做 `trac check ratio / dup / budget` 命令（trace/reach 已在 v0.4 交付；budget 在 v0.5 仅体现为 TASK_REVIEW 的 attempt/lineage 预算校验）；不做函数级调用图（reach 维持模块级，M-VERIFY 反 slop 门禁的更细粒度分析属未来）；不做 GitHub Issue 映射（task-plan ↔ Issues 同步不在本版）；不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）
 
@@ -255,8 +259,8 @@ sha:
 ## 7. 必要性与风险
 
 - **既有能力**：flow.md §10 规格完整（21 子状态子状态机 / 事件清单 / 5 条硬规则全部就位）；task-plan.md / task-log.md 模板先期存在；tracks-quality-guards skill 先期存在（阈值继承 pyproject.toml）；v0.4 交付的 trace / reach / RED_GATE 分类器框架直接复用；v0.2 崩溃 reconcile / 物化合同与 v0.4 双通道（FakeAgent + 真实通道）先例可循；判据包先例（v0.4 test-asset-criteria → tracks-prism-test / design / impl packs）
-- **冲突**：无实质冲突——R 先于 G 的 lineage 合同矛盾已由 Sage 依既有 flow.md §10（G parent=B、RED_CHECKPOINT 私有 R ref、GREEN from R tree、trailers 记录 R/task identity）唯一推导为 B（R ref + G trailer + 事件序列联合证明），已统一入 §3.2 步骤 6 与 BS-07；不作 Git ancestry 拓扑断言
+- **冲突**：R 先于 G 的 lineage 合同——story 内部语义已统一为 B：G parent=B，R 先于 G 由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（§3.2 步骤 6、BS-07）；但权威 flow.md §10 自身残留措辞冲突：lines 574–606 已明定『私有 R ref + G parent=B + trailers』（据此可唯一推导为 B），而 lines 643/655 仍保留旧『B/R/G commit 拓扑』表述。本增量明确包含对该既有合同措辞的校正（统一为联合证明语义、删除拓扑先后断言），校正锚点留于 BS-07 来源；flow.md 正文的同步修正由 spec 阶段承接
 - **重要风险**：
   1. **live run / dispatch 物化分析（Aaron 已裁定 A，Sage 硬门禁线程保持 open）未完成即放行**：v0.5 进入 spec 前必须完成 M-START→M-TEST 有监督重录与日志分析，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及"无遗漏"判定写回本 story 再评审放行；不得仅以笼统 work item 把未知范围传给实现阶段——否则下游 spec 必须先做一次未知范围的发现工作，story 范围不成立
-  2. **视图隔离被共享 `.git` 打穿**：若 `bash: deny` 未由 `trac init` 正确写入 harness 配置，Devon 可经 shell checkout 被排除路径，物理隔离失效——三道防线（物理不存在 / shell 封堵 / 反馈脱敏）互为兜底，但防线②是唯一直接封堵
+  2. **视图隔离被共享 `.git` / 绝对路径打穿**：若 per-agent 文件范围或 `bash: deny` 未由 `trac init` 正确写入 harness 配置，Devon 可经 shell checkout 被排除路径、或以文件工具绝对路径访问原始 checkout，物理隔离失效——三道防线（物理不存在 / 文件范围+shell 封堵 / 反馈脱敏）互为兜底，但防线②是唯一同时封堵文件工具与 shell 的层
   3. **真实 Devon end-to-end 通道不确定性与耗时**：M-IMPL 是行为最复杂的阶段，首次接入真实 LLM Agent 的 e2e 通道可能不稳定或耗时不可控——集成 FakeAgent 通道保证确定性回归（双通道互为独立验证），e2e 失败按 D-11 取消协议处理，不设 elapsed-time 超时
