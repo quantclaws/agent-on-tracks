@@ -42,9 +42,9 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 
 ## 3. M-START (创建新的 release)
 
-**目的**：建立 release 工作基础——release 分支、projects/v{x}/ 目录、初始 story.md（含原始需求）。
+**目的**：建立 release 工作基础——release 分支、projects/v{x}/ 目录、初始 story.md。支持两种 Human 启动输入：(1) 原始 seed（一行/简短设想），逐字记入 story 骨架；(2) 已写就的完整 story，原样采纳为初始 story 文档（绝不将其整体引用/包裹进 §1 原始输入）。
 
-**进入条件**：Human 发起新 release 请求。
+**进入条件**：Human 发起新 release 请求，并提供原始 seed 或已写就的完整 story。
 
 ### 3.1. 子状态机
 
@@ -78,21 +78,30 @@ stateDiagram-v2
     AWAIT_CONFIRM --> [*] : Human 取消
 
     CREATE_BRANCH : 从 main 创建 releases/v{x}
-    CREATE_BRANCH --> WRITE_STORY : 分支创建成功
+    CREATE_BRANCH --> CLASSIFY_INPUT : 分支创建成功
 
-    WRITE_STORY : 创建 projects/v{x}/story.md
-    WRITE_STORY : 写入原始需求
-    WRITE_STORY --> [*] : stage.exited -> M-STORY
+    CLASSIFY_INPUT : 识别 Human 输入形态
+    CLASSIFY_INPUT : raw seed vs complete story
+    CLASSIFY_INPUT --> WRITE_SEED : raw seed
+    CLASSIFY_INPUT --> ADOPT_STORY : complete story
+
+    WRITE_SEED : 创建 projects/v{x}/story.md
+    WRITE_SEED : seed 逐字写入骨架, 不扩写
+    WRITE_SEED --> [*] : stage.exited -> M-STORY
+
+    ADOPT_STORY : 创建 projects/v{x}/story.md
+    ADOPT_STORY : 采纳完整 story 原文, 不包裹/重写
+    ADOPT_STORY --> [*] : stage.exited -> M-STORY
 ```
 
 > 可休眠点：AWAIT_CONFIRM。
-> 退出条件：release 分支存在 + story.md 含原始需求 + stage.entered(M-START) 已落盘。
+> 退出条件：release 分支存在 + story.md 就位（raw seed 骨架或被采纳的完整 story）+ stage.entered(M-START) 已落盘。
 
 ## 4. M-STORY
 
-**目的**：将原始需求转化为人类已裁定、机器可校验的 story.md。本阶段唯一产物是文档，不产生代码。
+**目的**：将 release 启动输入转化为人类已裁定、机器可校验的 story.md。本阶段唯一产物是文档，不产生代码。两条输入路径在 TRIAGE/DRAFT 行为上分流：raw seed 由 Scribe 在 GO 后按模板展开；complete story 原样作为基线，TRIAGE 仅评审、DRAFT 只落地已 resolved 讨论结论与显式 Human 编辑。
 
-**进入条件**：M-START 通过（release 分支已创建，`projects/v{x}/` 就位）；原始需求已写入 story.md
+**进入条件**：M-START 通过（release 分支已创建，`projects/v{x}/story.md` 就位--raw seed 骨架或被采纳的完整 story）。
 
 ### 4.1. 子状态机
 
@@ -102,8 +111,10 @@ stateDiagram-v2
 
     [*] --> TRIAGE : stage.entered(M-STORY)
 
-    TRIAGE : dispatch Scribe 探索
-    TRIAGE : 检查与已有 story 的关系
+    TRIAGE : dispatch Scribe
+    TRIAGE : 判定 raw seed/skeleton vs complete story
+    TRIAGE : raw: 评估可行性, 仅提阻塞产品问题
+    TRIAGE : complete: 仅评审, 发起锚定讨论, 不改稿
     TRIAGE : 提出 GO / NO-GO / PARK
 
     TRIAGE --> REJECTED : human.triage(no_go | park)
@@ -113,8 +124,10 @@ stateDiagram-v2
     TRIAGE --> DRAFT : human.triage(go)
 
     DRAFT : dispatch Scribe
-    DRAFT : 探索 + interview Human
-    DRAFT : 按 template 写 story.md
+    DRAFT : raw: 按 template 扩写 story.md (保留 seed 原文)
+    DRAFT : complete: 仅落地已 resolved 讨论结论 + Human 显式编辑
+    DRAFT : complete: 无变更则 no-op, 直达 validation
+    DRAFT : 探索 + interview Human (按需)
 
     DRAFT --> SAGE_REVIEW : outcome -> validate pass, committed
     DRAFT --> DRAFT : validate fail, 重派 Scribe (<=3)
@@ -151,14 +164,22 @@ stateDiagram-v2
 > 退出硬条件：同一轮收齐 human.review(no_comment) + sage.verdict(pass)。
 
 
-### 4.2. story.md 结构契约（机器可校验）
+### 4.2. 两条输入路径（M-START 分类，M-STORY 继承）
+
+M-START 据 Human 输入形态分流，M-STORY 的 TRIAGE/DRAFT 按同一形态行为分支；两种路径共用同一 go/no-go/park Human gate 与后续 Sage/Human review。
+
+- **Raw seed 路径**：Human 提供一行/简短设想。M-START 将 seed 逐字记入 story 骨架（不扩写、不转述）。TRIAGE 评估可行性、就阻塞性产品问题发起锚定讨论，提出 go/no-go/park；**不在 TRIAGE 展开 story**。Human 选 GO 后，DRAFT 按 story 模板把骨架展开为完整 story.md，原始 seed 原文必须保留在 §1。
+- **Complete story 路径**：Human 提供或采纳已写就的完整 story。M-START 原样采纳为初始 story 文档，**绝不把整篇 story 引用/包裹进 §1 原始输入**。TRIAGE 仅评审既有 story 并发起锚定讨论；**绝不改写、重排章节、模板迁移、表格/散文互转、以「spec 泄漏」删除内容或重建文档**。GO 后 DRAFT 以既有 story 为基线，仅落地已 resolved 的讨论结论与 Human 显式编辑；两者皆无则为 no-op，直接进入 validation/review，不因 latest-template 差异而回溯迁移。
+
+
+### 4.3. story.md 结构契约（机器可校验）
 
 - frontmatter：`story_id` / `title` / `created` / `status` / `sha`（`title`：人类引用 story 的有意义名字，非编号；start 时留空，Scribe 起草时写入非空）
 - 固定章节(见 templates/story.md)
 - 本阶段不设规模限制。release 规模由需求阶段控制：一次 release 最多 30 条功能需求，超出则从 story 重新拆起
 - 行为种子须预答"将来用什么断言验证我"。断言是产品级可观察事实（"用户结账后总额减少 20%"），不是技术命令（"curl | jq"）——技术验证路径由 Sage 在 M-ACC 选择。写不出断言的种子说明需求太模糊，须在 interview 中追问到可断言为止
 
-### 4.3. 事件清单
+### 4.4. 事件清单
 
 ```
 story.requested / stage.entered / command.issued /
@@ -171,7 +192,7 @@ stage.exited
 ```
 
 
-### 4.4. 硬规则
+### 4.5. 硬规则
 
 1. 人类裁定与评审结论都是一等事件：没有 `human.triage(go)`，且未收齐 `human.review(no_comment)` + `sage.verdict(pass)`，decide() 不会产出进入 M-SPEC 的 command。story.md 里的分流表格只是事件的投影展示。
 2. 单写者纪律：任一时刻只有一个 actor 持有编辑权（顺序评审天然保证）；Scribe/Sage/Human 的所有落盘变更均由 Runtime 提交为独立 commit。

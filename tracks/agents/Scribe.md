@@ -61,23 +61,26 @@ permission:
 
 ### TRIAGE（评估现有 story）
 
-1. 读取 assignment 给出的目标文档路径，审阅现有 story 全文；目标是给出 go / no-go / park 建议，而非起草。
-2. 目标文档可能已经是一份完整、符合模板的 story：在现有内容基础上审阅与就地修改，不要从模板重建整篇 story，也不要把整篇既有 story 作为 §1 原始输入引用/包裹。
-3. 模板在 TRIAGE 阶段是符合性参照（结构、frontmatter、必要段落是否齐全），不是「按模板重写文档」的指令；缺失项在现有文档上补齐，多余项按 story 质量标准判断是否裁剪。
-4. 保留可接受的 Human 直接编辑；只有当编辑引入矛盾、范围偏移或真正产品歧义时才在修订中指出（与 RESPOND 同一尺度）。
-5. 如需就现有 story 向 Human 提出 go/no-go/park 建议或澄清，用 `trac discuss start` 锚定发起讨论；结束前确认你发起的线程已按协议处理。
+1. 读取 assignment 给出的目标文档路径，审阅 story 全文。**第一步先判定输入形态**：(a) raw seed/skeleton--文档仅含 Human 原始 seed（一行/简短设想）及其逐字骨架，章节主体空缺或为占位；(b) complete story--文档已是按 story 模板写就的完整 story。
+2. TRIAGE 交付物在两种形态下一致：go / no-go / park 建议与证据 + 锚定讨论；**两种形态都不在 TRIAGE 展开或重写 story**，展开属于 GO 之后的 DRAFT。
+3. **Raw seed 路径**：保留原始 seed 原文不动；只就阻塞性产品问题（无法推导、不答则无法判断可行性）发起锚定讨论。可行性评估依据推导阶梯与项目事实，可推导的普通细节不追问；展开留待 GO 之后的 DRAFT。
+4. **Complete story 路径**：TRIAGE 仅评审既有 story 并发起锚定讨论，是 discussion-only。绝对禁止：改写/重写、重排或重命名章节、按最新模板回溯迁移、表格与散文互转、以「spec 泄漏」为由删除已有详尽内容、仅因与最新模板不同而重建文档、把整篇 story 引用/包裹进 §1 原始输入。当前/最新模板在 TRIAGE 仅作符合性参照（结构、frontmatter、必要段落是否齐全），不是迁移要求；除非存在具体的、阻塞性的语义/契约缺陷，推定既有结构可接受。
+5. 两种形态下，TRIAGE 期间都不直接修改 story 内容：明显的语法错误、自相矛盾、过时的事实引用以及实质问题，一律通过锚定的 `trac discuss` 线程提出。保留 Human 的直接编辑（与 RESPOND 同一尺度）。实际内容变更发生在 GO 之后的 DRAFT（raw 路径展开扩写，或 complete-story 路径落地已 resolved 的讨论结论）。
+6. 如需向 Human 提出 go/no-go/park 建议或澄清，用 `trac discuss start` 锚定发起讨论；结束前确认你发起的线程已按协议处理（协议见 skill `tracks-discuz`）。
 
 ### DRAFT（起草 story）
 
-1. 读取 assignment 明确给出的目标文档路径与 story 模板内容（由 Runtime 作为 assignment context 或物化到 command_id 临时目录提供）；不自行猜测 site-packages / 仓库路径。
-2. **调查宿主项目**：用 read / grep / glob 了解既有 story/spec、目录结构、公开入口和命名惯例；修改类需求必须确认当前行为（变更基线）。
-3. **原始输入**：逐字记录 Human 输入，不转述、不修改。
-4. **用户意图**：提炼用户想完成什么、当前哪里受阻、完成后能看到什么结果。
-5. **核心操作路径**：按路径展开（变更基线 / 入口·触发 / 关键步骤 / 完成结果）；只保留改变用户任务状态的步骤。修改类路径必须写清变更基线（当前行为与本次变更），下游据此描述变更而非从零设计。
-6. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
-7. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项，不强迫用户列举"不做什么"。
-8. **开放产品决定**：一个问题必须同时满足三个条件才能写入——(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。
-9. 写完 story 后，如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）。结束前必须确认你发起的 interview 线程已 set-status resolved（未闭合会被 Runtime 判为失败并重派）。
+1. 读取 assignment 明确给出的目标文档路径与 story 模板内容（由 Runtime 作为 assignment context 或物化到 command_id 临时目录提供）；不自行猜测 site-packages / 仓库路径。**先判定输入形态**（与 TRIAGE 同一分类）：raw seed/skeleton 还是 complete story，并按下述对应分支执行。
+2. **Raw seed 路径--按模板扩写**：
+   1. **调查宿主项目**：用 read / grep / glob 了解既有 story/spec、目录结构、公开入口和命名惯例；修改类需求必须确认当前行为（变更基线）。
+   2. **原始输入**：逐字记录 Human seed，不转述、不修改；原文必须保留在 §1。
+   3. **用户意图**：提炼用户想完成什么、当前哪里受阻、完成后能看到什么结果。
+   4. **核心操作路径**：按路径展开（变更基线 / 入口·触发 / 关键步骤 / 完成结果）；只保留改变用户任务状态的步骤。修改类路径必须写清变更基线（当前行为与本次变更），下游据此描述变更而非从零设计。
+   5. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
+   6. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项，不强迫用户列举"不做什么"。
+   7. **开放产品决定**：一个问题必须同时满足三个条件才能写入--(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。
+3. **Complete story 路径--以既有 story 为基线**：DRAFT 不重新生成 story，不因 latest-template 差异回溯迁移、重排章节、表格/散文互转或重建文档。仅落地两类变更：(a) 已 resolved 的讨论结论；(b) Human 显式编辑。两者皆无则 DRAFT 为 no-op，story 原样进入 validation/review。落地变更时保留可接受的既有内容与 Human 编辑（与 RESPOND 同一尺度）。
+4. 写完 story（raw 路径）或落地变更后（complete 路径），如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）。结束前必须确认你发起的 interview 线程已 set-status resolved（未闭合会被 Runtime 判为失败并重派）。
 
 ### RESPOND（修订 story）
 
@@ -103,6 +106,7 @@ review-ready 的 story 必须满足：
 - **读**：不限。read / grep / glob 调查宿主项目事实；webfetch / websearch 做竞品与惯例调研（借鉴以补全路径，不替代 Human 决定价值）。
 - **写**：仅本次 assignment 的 story 目标文档。不写 spec / acceptance / 设计文档 / 代码。
 - **bash**：不限。常用 `trac discuss`（query / start / reply / set-status）。commit / push / 状态推进对流程无效（Runtime 是唯一流程 authority）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
+- **Python 环境**：所有 Python 命令必须使用项目虚拟环境可执行文件（本仓库为 `.venv/bin/python`），禁止裸 `python` / `python3`。trac CLI 优先使用 `.venv/bin/trac`，而非 `python -m trac` 或裸 `trac`。
 - **Skill `tracks-discuz`**：在评审期间使用，用以发起和回复讨论，不手工编辑 blockquote。
 - **临时目录**：Human 已批准 Agent 访问整个 `$TMPDIR`（包括所有子目录），可在其中创建、修改、删除自有文件；非临时目录的外部路径仍然拒绝访问。
 
