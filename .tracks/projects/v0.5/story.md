@@ -35,14 +35,15 @@ sha:
 
 - 将 tracks 流程从 M-TEST 出口推进到 M-IMPL 阶段：`trac run` 能驱动 M-IMPL 完整循环（BASELINE 重算 → Archer 拆 task graph → ISLAND_GATE_1 → Prism 评审切片 → Devon 逐 task Red→Green→Refactor → Prism Red checkpoint 与最终 range 评审 → ISLAND_GATE_2 出口），停在 M-IMPL → M-VERIFY 边界
 - 落地"大小两个测试循环"的内圈（D-32）：Devon 逐 task 走 RGR，用内圈小循环驱动外圈合同循环（Shield 的 integration/e2e，v0.4 已冻结为 baseline）变绿；全量 integration + e2e 变绿是 M-IMPL 出口门禁
-- Red 测试先于实现在 v0.5 第一次成为**程序可验证的 lineage 事实**（B/R/G commit 拓扑），而不是 Agent 自报
+- Red 测试先于实现在 v0.5 第一次成为**程序可验证的 lineage 事实**（R ref + G trailer + 事件序列可验证，G parent=B，不作 Git ancestry 拓扑断言），而不是 Agent 自报
 - 当前受阻：M-IMPL 未注册（executor `_NEXT_STAGE` 止于 M-TEST、boundary 收尾）；`tracks/agents/` 无 Devon.md；task graph 模板（task-plan.md / task-log.md）存在但未接入 runtime；无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件；Runtime dispatch 物化不完整（v0.4 `_prompt()` 路径未具体化等案例，Agent 需盲目搜索）
 - 完成后：`trac run` 从 M-TEST 出口进入 M-IMPL 并跑通完整循环；task graph / RGR lineage / 门禁证据全部落事件；end-to-end 真实 Devon 通道贯通；M-VERIFY 的实现不在本 release 范围
 
 ## 3. 核心操作路径
 
-> **Sage:** @Scribe 当前草稿未按本 assignment 已物化的 story 模板组织：模板 §3 要求“核心操作路径”逐路径包含变更基线、现有公开入口/触发、关键步骤、可见完成结果与继续/恢复出口；§4 要求以 `### BS-XX` 稳定编号记录行为种子；§5/§6/§7 分别为范围、开放产品决定、必要性与风险。现稿却以规划层生命周期 + 工作项为 §3/§4，并将开放决定、范围、分流建议放在不同章节，导致主交付面虽提到 `trac run`，但没有按模板形成可供 spec 接续的完整操作路径和稳定 BS 追踪锚点。请严格保留 frontmatter，并依当前模板重构正文：把 M-TEST 出口经 `trac run` 进入 M-IMPL、自动循环、可见事件/产物、异常恢复/上游返回以及 boundary 出口整理为最小完整路径；将实现文件/命令清单降为必要约束或移出 story，不得替代用户路径；现有行为种子改为稳定 BS 编号，并补齐 §7 的既有能力、冲突、重要风险。
+> **Sage [RESOLVED]:** @Scribe 当前草稿未按本 assignment 已物化的 story 模板组织：模板 §3 要求“核心操作路径”逐路径包含变更基线、现有公开入口/触发、关键步骤、可见完成结果与继续/恢复出口；§4 要求以 `### BS-XX` 稳定编号记录行为种子；§5/§6/§7 分别为范围、开放产品决定、必要性与风险。现稿却以规划层生命周期 + 工作项为 §3/§4，并将开放决定、范围、分流建议放在不同章节，导致主交付面虽提到 `trac run`，但没有按模板形成可供 spec 接续的完整操作路径和稳定 BS 追踪锚点。请严格保留 frontmatter，并依当前模板重构正文：把 M-TEST 出口经 `trac run` 进入 M-IMPL、自动循环、可见事件/产物、异常恢复/上游返回以及 boundary 出口整理为最小完整路径；将实现文件/命令清单降为必要约束或移出 story，不得替代用户路径；现有行为种子改为稳定 BS 编号，并补齐 §7 的既有能力、冲突、重要风险。
 >> **Scribe:** 已按当前模板重构正文，frontmatter 原样保留：§3 核心操作路径改为 3.1 进入（trac run 从 M-TEST 出口）、3.2 单 task RGR 内圈、3.3 诊断/上游返回、3.4 出口 boundary，每条路径含变更基线/入口·触发/关键步骤/完成结果；§4 行为种子改为稳定 ### BS-01…BS-15 锚点（含来源/说明）；原实现文件/命令清单已移出 story，仅把契约级约束降入 §5 必要约束；§5 范围、§6 开放决定（无，均已裁定）、§7 必要性与风险（既有能力/冲突/重要风险）补齐。请复核。
+>> **Sage:** 复核通过：正文已按物化模板形成 §3.1–§3.4 连续操作路径，明确 trac run 入口、可观察产物/事件、恢复与上游返回、boundary 出口；§4 已改为稳定 BS-01…BS-15，§5–§7 结构亦已补齐。本线程可关闭。
 
 ### 3.1. 进入 M-IMPL：`trac run` 从 M-TEST 出口启动 M-IMPL
 
@@ -60,6 +61,7 @@ sha:
 >> **Scribe:** 已落地：§4 工作项 1 升级为【前置（T-001 裁定 A，硬门禁）】并补充放行判据——重录 M-START→M-TEST 后须将具体发现、证据位置、需物化 assignment 字段/路径/范围及【无遗漏】判定写回本 story 相应章节，再进入 spec/实现阶段；明确不得仅以笼统发现任务把未知范围传给下游。§3.1 dispatch 派发在本版按分析结论物化上下文。
 >>> **Sage:** @Scribe 这只写入了“未来应完成”的门禁，尚未完成门禁本身：正文仍没有 live run 的实际日志/证据位置、逐项发现、对应 assignment 物化字段/路径/范围及无遗漏结论。因此本线程保持 open；请在重录与分析实际完成后写回具体结果，再回复本线程供复核。
 >> **Scribe:** 已复核你的要求。正文已把该前置记录为硬门禁（§7 重要风险 1 与 §3.1 步骤 1/2 落点），明确『进入 spec 前必须完成 M-START→M-TEST 有监督重录与日志分析，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及无遗漏判定写回本 story 再评审放行』。但需如实说明：本次 RESPOND 仅重构/修订 story 文档，并未实际执行有监督 live run 重录与日志分析，因此正文无法伪造尚未产出的分析结果与证据位置——该门禁的真实结果必须在重录与分析实际完成后回填，本线程按你的要求保持 open，待实际执行完成写回后请你复核放行。
+>> **Scribe:** 本 RESPOND 轮正文修订已完成：该前置已作为进入 spec 前的硬门禁记录于 §7 重要风险 1 与 §3.1 步骤 1/2——要求完成 M-START→M-TEST 有监督重录与日志分析后，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及『无遗漏』判定写回本 story 再评审放行；dispatch 派发按分析结论物化上下文。如实说明：本次 RESPOND 仅修订 story 文档，并未实际执行 live run 重录与分析，因此正文不能伪造尚未产出的分析结果与证据位置。该门禁真实结果必须在重录与分析实际完成后回填，本线程按你的要求保持 open，待实际执行完成写回后请你复核放行。
 
 ### 3.2. Devon 逐 task RGR 内圈循环（单 task 完整路径）
 
@@ -71,7 +73,7 @@ sha:
 3. **RED_CHECKPOINT**：Runtime 创建私有 commit R，写 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red`；red.checkpointed。**PRISM_RED** dispatch Prism 评 B..R 范围（Red 测试确实测了该 task 声明的 IF/AC，且未测多余）；pass 绑定 R → GREEN
 4. **GREEN**：从 R tree 恢复工作区（仍为隔离视图）；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
 5. **GREEN_GATE**：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF 集合的 int 子集 + lint/format/type/static + 合同；**第一轮不跑 e2e**（v0.4 既定粒度）；**反馈脱敏**——单测失败回完整输出，int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文：隔离不能被测试输出侧信道打穿。int 失败归因不明 → 3.3 DIAGNOSE
-6. **GREEN_COMMIT**：Runtime 创建正式 commit G，trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`），R 先于 G 的先后由可验证机制证明（拓扑或 ref+trailer+事件联合，语义见 BS-07，A/B 待 Aaron 裁定）
+6. **GREEN_COMMIT**：Runtime 创建正式 commit G（G 的 parent=B，flow §10 既有合同），trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）；R 先于 G 的先后由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（语义见 BS-07）
 7. **REFACTOR**：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策
 8. **REFACTOR_GATE**：重跑 GREEN_GATE 全部检查；动 public interface → upstream。**TASK_REVIEW** Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget。**PRISM_FINAL** dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
 
@@ -103,6 +105,7 @@ sha:
 > **Aaron:** 不得使用表格。可以使用类似 yaml 的列表。
 >> **Scribe:** 已落地：全文不使用 markdown 表格，行为种子（§3.2）采用 yaml 风格列表，符合你的格式裁定。
 >> **Scribe:** restructure 后已确认：全文仍不使用 markdown 表格，行为种子（§4 BS-01…BS-15）保持 yaml 风格列表，符合你的格式裁定。
+>> **Scribe:** 已复核确认：全文不使用 markdown 表格，行为种子（§4 BS-01…BS-15）采用 yaml 风格列表，各节正文亦无表格，符合你的格式裁定。
 
 ### BS-01 task graph 校验
 
@@ -142,13 +145,18 @@ sha:
 
 ### BS-07 R 先于 G 的 lineage
 
-- EARS: `WHEN GREEN_COMMIT 创建后，THE 系统 SHALL 存在 git ref refs/trac/rgr/{run}/{task}/{attempt}/red，且 R 先于 G 的先后由可验证机制证明（拓扑或 ref+trailer+事件联合，语义待 Aaron A/B 裁定）；Red 先于实现不是 Agent 自报`
+- EARS: `WHEN GREEN_COMMIT 创建后，THE 系统 SHALL 存在 git ref refs/trac/rgr/{run}/{task}/{attempt}/red，且 R 先于 G 的先后由不可变 R ref + G trailer + Runtime 事件序列联合证明（G 的 parent=B，不作 Git ancestry 拓扑断言）；Red 先于实现不是 Agent 自报`
 - 来源: [3.2 / 约束（flow §10.3 硬规则 2）+ §2 用户意图]
-- 说明: 程序可验证的 lineage 事实是本 story 的核心用户结果；Aaron A/B 未裁定前不单方改写 G parent 语义。
+- 说明: 程序可验证的 lineage 事实是本 story 的核心用户结果；G 保持 parent=B（flow §10 既有合同），R 先于 G 由 ref+trailer+事件序列联合证明，非 Agent 自报。
 
 > **Sage:** @Aaron 这里的可验证 lineage 合同自相矛盾：§3.1 GREEN_COMMIT 明定 G 的 parent=B，而本行为种子又要求“commit 拓扑上 R 严格先于 G”。若 G 与 R 都以 B 为父节点，则二者是 sibling，Git ancestry 无法证明 R 先于 G；仅靠 trailer/ref/event 能证明绑定或时序，但不是拓扑先后。两种实质方向会改变正式历史与证据语义：A. G 以 R 为 parent，使 R 成为 G 的祖先并由拓扑证明（推荐，最直接兑现“不是 Agent 自报”）；B. 保持 G parent=B，改为由不可变 R ref + G trailer + Runtime 事件序列联合证明，删除“拓扑上先于”。请裁定 A/B，并由 Scribe 统一 §2、§3.1、行为种子和工作项。
 >> **Scribe:** 收到，此修改类 contract 矛盾需要你的 A/B 裁定后才可统一，未擅自改正文。请裁定 A（G 以 R 为 parent，由 Git ancestry 拓扑证明 R 先于 G，最直接兑现【非 Agent 自报】）/ B（保持 G 以 B 为 parent，联合 R ref 不可变 + G trailer + Runtime 事件序列证明，删除【拓扑上先于】）。你裁定后我据此同步 §2、§3.1 GREEN_COMMIT、行为种子 R 先于 G 与工作项 5 lineage。
 >> **Scribe:** 正文重构后保持不单方裁决：§3.2 步骤 6 与 BS-07 仍并列保留『G parent=B』与『R 先于 G 的可验证机制证明』两种表述，均标注 A/B 待 Aaron 裁定；§7 冲突 亦明示『若裁定 A 需同步 §3.2 步骤 6 与 BS-07』。未在 Aaron 裁定前改写任何一方语义，等待 A/B 裁决后统一。
+>> **Sage:** 更正：这不应交由 Human 做技术选型。已接受的 flow.md §10 明确 RED_CHECKPOINT 创建私有 R ref、GREEN 从 R tree 工作，但正式 G 的 parent=B，并以 trailers 记录 R/task identity（现行 lines 574–606）；因此从既有合同可唯一推导为 B：保持 G parent=B，由不可变 R ref、G trailer 与 Runtime 事件序列联合证明 R 在 G 前已被 checkpoint 并绑定，不能声称 Git ancestry 拓扑先后。@Scribe 请据此统一 §3.2 步骤 6、BS-07、§6 与 §7，删除“A/B 待 Aaron 裁定”和不存在的产品开放决定；用户结果仍是 Red 先于实现且可由程序证据验证。修订后回复，本线程再关闭。
+>>> **Scribe:** 已按你的更正统一落地（未交由 Human 选型，依既有 flow.md §10 唯一推导为 B）：① §3.2 步骤 6 GREEN_COMMIT 改为『G 的 parent=B（flow §10 既有合同），R 先于 G 由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言』；② BS-07 EARS 与说明同步为同一语义，删除『拓扑或』与『待 Aaron A/B 裁定』；③ §6 删除『R 先于 G 的 A/B 待裁定』表述，不再是产品开放决定；④ §7 冲突改为『已由既有 flow.md §10 唯一推导为 B，无实质冲突』；⑤ §2 用户意图的『B/R/G commit 拓扑』同步改为『R ref + G trailer + 事件序列可验证，G parent=B，不作 Git ancestry 拓扑断言』。用户结果保持『Red 先于实现且可由程序证据验证』。请复核。
+
+>> **Scribe:** test2
+>>> **Scribe:** （置顶说明：本 reply 是误发的 CLI 测试，内容 'test2' 无效，请忽略；T-005 的正式回复见上方 depth 3 对 Sage 更正 comment 的回应。CLI 无删除能力，以此占位声明，避免误读。）
 
 ### BS-08 GREEN_GATE 粒度
 
@@ -214,18 +222,22 @@ sha:
 > **Aaron:** 不并行，只串行
 >> **Scribe:** 已落地：§3.1 条目 5 声明 v0.5 串行调度、[P] 标记记录但不并发执行；§6 Out-of-Scope 同步『不做 [P] 并行调度』。
 >> **Scribe:** restructure 后已确认：§3.2 入口与 §5 必要约束均保留『v0.5 串行调度、[P] 标记记录但不并发』，§5 Out-of-Scope 同步『不做 [P] 并行调度』。
+>> **Scribe:** 已复核确认：§3.2 入口与 §5 必要约束/Out-of-Scope 均保留『v0.5 串行调度、[P] 标记记录但不并发执行、不做 [P] 并行调度』，符合『不并行，只串行』裁定。
 
 > **Aaron:** 真相放 task-plan.md， 当前完成了哪一步可能要放 db.
 >> **Scribe:** 已落地：§3.1 条目 2 与 §4 工作项 4 以 task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入。『当前完成了哪一步』放 db 的进展投影归 events 层，正文已按『文档为真相源、进展入 events/db』处理。
 >> **Scribe:** restructure 后已确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』。
+>> **Scribe:** 已复核确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为 task graph 内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』，符合你的裁定。
 
 > **Aaron:** A
 >> **Scribe:** 已落地：Q-03 裁定 A——§3.1 条目 13、§4 工作项 8、行为种子『质量门禁』均写为 refactor 门禁 = tracks-quality-guards 四段全跑（ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914），失败计 attempt。
 >> **Scribe:** restructure 后已确认：Q-03 裁定 A 已在 §3.2 步骤 7、BS-11、§5 必要约束保留（refactor 门禁 = tracks-quality-guards，生产四段 / 测试仅重复+文件长度，失败计 attempt）。
+>> **Scribe:** 已复核确认：Q-03 裁定 A 已落地——§3.2 步骤 7、BS-11、§5 必要约束均为 refactor 门禁 = tracks-quality-guards（生产代码 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914 四段；测试代码仅重复 R0801 + 文件长度 C0302），失败计 attempt。
 
 > **Aaron:** 集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon。过去的开发充分证明了，end to end 使用真实 Agent 的意义
 >> **Scribe:** 已落地：Q-04 裁定 A——§4 工作项 10（集成，FakeAgent）与工作项 11（end-to-end，真实 Devon）双通道；§6 Out-of-Scope 改为『仅此两条通道，真实通道仅以 end-to-end 形式存在』，已删除待裁定的『不接真实 LLM Agent』表述。
 >> **Scribe:** restructure 后已确认：Q-04 裁定 A 在 §5 必要约束与 Out-of-Scope 保留（集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在）。
+>> **Scribe:** 已复核确认：Q-04 裁定 A 已落地——§5 必要约束与 Out-of-Scope 保留『集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在』。
 
 - **非常规要求**：
   - 视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在，sparse-checkout 排除），不是提示词纪律——"禁止"兑现为"不可能"；三道防线：① 物理不存在 ② `bash: deny` 关闭经共享 `.git` 自行 checkout 的后门 ③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；屏蔽路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
@@ -237,12 +249,12 @@ sha:
 
 ## 6. 开放产品决定
 
-**无** — Q-01（并行调度：只串行）、Q-02（task graph 真相源：task-plan.md）、Q-03（refactor 门禁严格度：四段全跑）、Q-04（真实 Agent 接入：集成 FakeAgent + e2e 真实 Devon）均已由 Aaron 裁定并落入 §3 / §5 约束；R 先于 G 的可验证机制 A/B（Sage 发起、待 Aaron 裁定）属行为种子语义澄清，见 BS-07，不算新产品决定。
+**无** — Q-01（并行调度：只串行）、Q-02（task graph 真相源：task-plan.md）、Q-03（refactor 门禁严格度：四段全跑）、Q-04（真实 Agent 接入：集成 FakeAgent + e2e 真实 Devon）均已由 Aaron 裁定并落入 §3 / §5 约束。
 
 ## 7. 必要性与风险
 
 - **既有能力**：flow.md §10 规格完整（21 子状态子状态机 / 事件清单 / 5 条硬规则全部就位）；task-plan.md / task-log.md 模板先期存在；tracks-quality-guards skill 先期存在（阈值继承 pyproject.toml）；v0.4 交付的 trace / reach / RED_GATE 分类器框架直接复用；v0.2 崩溃 reconcile / 物化合同与 v0.4 双通道（FakeAgent + 真实通道）先例可循；判据包先例（v0.4 test-asset-criteria → tracks-prism-test / design / impl packs）
-- **冲突**：R 先于 G 的可验证 lineage 合同矛盾待 Aaron A/B 裁定（G parent=B 与 "R 拓扑先于 G" 不可同时由 Git ancestry 证明）——若裁定 A（G 以 R 为 parent）需同步 §3.2 步骤 6 与 BS-07 表述；其余与既有产品方向无实质冲突
+- **冲突**：无实质冲突——R 先于 G 的 lineage 合同矛盾已由 Sage 依既有 flow.md §10（G parent=B、RED_CHECKPOINT 私有 R ref、GREEN from R tree、trailers 记录 R/task identity）唯一推导为 B（R ref + G trailer + 事件序列联合证明），已统一入 §3.2 步骤 6 与 BS-07；不作 Git ancestry 拓扑断言
 - **重要风险**：
   1. **live run / dispatch 物化分析（Aaron 已裁定 A，Sage 硬门禁线程保持 open）未完成即放行**：v0.5 进入 spec 前必须完成 M-START→M-TEST 有监督重录与日志分析，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及"无遗漏"判定写回本 story 再评审放行；不得仅以笼统 work item 把未知范围传给实现阶段——否则下游 spec 必须先做一次未知范围的发现工作，story 范围不成立
   2. **视图隔离被共享 `.git` 打穿**：若 `bash: deny` 未由 `trac init` 正确写入 harness 配置，Devon 可经 shell checkout 被排除路径，物理隔离失效——三道防线（物理不存在 / shell 封堵 / 反馈脱敏）互为兜底，但防线②是唯一直接封堵
