@@ -38,15 +38,6 @@ from tracks.scaffold import _scaffold_declared_paths
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
               "archer": "Archer", "prism": "Prism", "shield": "Shield"}
 
-# Agent IQ -> model mapping (user policy): an agent's model for live dispatch
-# is determined by its IQ frontmatter field in tracks/agents/<Name>.md (e.g.
-# Scribe.md has `IQ: A`). Mapping: S -> litellm/glm-5.2, A -> ali/qwen3.8-max,
-# B -> litellm/deepseek-v4-flash. An explicit TRAC_AGENT_MODEL env var overrides
-# everything (existing c54490a behavior, applied in select_backend ->
-# OpencodeBackend.model).
-IQ_MODEL = {"S": "litellm/glm-5.2", "A": "ali/qwen3.8-max",
-            "B": "litellm/deepseek-v4-flash"}
-
 # Tolerant frontmatter `IQ:` line parser (single-token value, optional spaces
 # after the colon); only matched inside the leading YAML frontmatter block.
 _IQ_LINE = re.compile(r"^IQ:\s*(\S+)\s*$", re.M)
@@ -108,7 +99,6 @@ class OpencodeBackend:
         # Model resolution is three-layer per dispatch (spec §3.1, ARCH §4a):
         # (1) explicit self.model (TRAC_AGENT_MODEL via select_backend) wins;
         # (2) else the agent's IQ frontmatter (canonical tracks/agents/<Name>.md)
-        #     mapped via IQ_MODEL - missing file/missing IQ/unrecognized IQ ->
         #     None;
         # (3) None means opencode resolves its own configured default (no
         # --model flag, see _resolve_model/_run).
@@ -553,12 +543,11 @@ class OpencodeBackend:
     def _resolve_model(self, name: str) -> str | None:
         """Three-layer model resolution per dispatch (see __init__ docstring):
         explicit ``self.model`` wins; else the agent's IQ frontmatter mapped
-        via ``IQ_MODEL``; ``None`` means opencode resolves its own configured
+        ; ``None`` means opencode resolves its own configured
         default (no ``--model`` flag)."""
         if self.model:
             return self.model
-        iq = _parse_iq(self._canonical / f"{name}.md")
-        return IQ_MODEL.get(iq) if iq else None
+        return None
 
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
@@ -711,7 +700,7 @@ def _parse_iq(path: Path) -> str | None:
     file. Returns the IQ token (e.g. ``"A"``, ``"S"``) from the leading YAML
     frontmatter block, or ``None`` when the file is missing, has no
     frontmatter, has no ``IQ:`` line, or the frontmatter is unclosed - the
-    caller (``_resolve_model``) then maps the token via ``IQ_MODEL`` and
+    caller (``_resolve_model``) and
     unrecognized tokens fall through to ``None`` (opencode default)."""
     try:
         text = path.read_text(encoding="utf-8")
