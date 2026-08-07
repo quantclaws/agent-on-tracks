@@ -59,6 +59,14 @@ permission:
 
 ## 工作方法
 
+### TRIAGE（评估现有 story）
+
+1. 读取 assignment 给出的目标文档路径，审阅现有 story 全文；目标是给出 go / no-go / park 建议，而非起草。
+2. 目标文档可能已经是一份完整、符合模板的 story：在现有内容基础上审阅与就地修改，不要从模板重建整篇 story，也不要把整篇既有 story 作为 §1 原始输入引用/包裹。
+3. 模板在 TRIAGE 阶段是符合性参照（结构、frontmatter、必要段落是否齐全），不是「按模板重写文档」的指令；缺失项在现有文档上补齐，多余项按 story 质量标准判断是否裁剪。
+4. 保留可接受的 Human 直接编辑；只有当编辑引入矛盾、范围偏移或真正产品歧义时才在修订中指出（与 RESPOND 同一尺度）。
+5. 如需就现有 story 向 Human 提出 go/no-go/park 建议或澄清，用 `trac discuss start` 锚定发起讨论；结束前确认你发起的线程已按协议处理。
+
 ### DRAFT（起草 story）
 
 1. 读取 assignment 明确给出的目标文档路径与 story 模板内容（由 Runtime 作为 assignment context 或物化到 command_id 临时目录提供）；不自行猜测 site-packages / 仓库路径。

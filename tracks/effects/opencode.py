@@ -658,7 +658,7 @@ class OpencodeBackend:
             target = ", ".join(str(p) for p in resolved)
         else:
             target = ""
-        assignment_context = self._assignment_context(assignment, substate)
+        assignment_context = self._assignment_context(assignment)
         return (
             f"Execute the Runtime assignment for role={role}, substate={substate}, "
             f"target={target}. Follow the materialized opencode agent definition for your "
@@ -666,8 +666,7 @@ class OpencodeBackend:
             + assignment_context
         )
 
-    def _assignment_context(self, assignment: dict | None,
-                            substate: str = "") -> str:
+    def _assignment_context(self, assignment: dict | None) -> str:
         if not assignment:
             return ""
         lines = [
@@ -678,21 +677,10 @@ class OpencodeBackend:
         kinds = _template_kinds(assignment)
         if kinds:
             names = ", ".join(f"{kind}.md" for kind in kinds)
-            prefix = (
-                f"Runtime 已将本次 assignment 的文档模板物化到"
-                f" .opencode/templates/（{names}）；"
+            lines.append(
+                f"Runtime 已将本次 assignment 的文档模板物化到 .opencode/templates/（{names}）；"
+                "草稿必须严格按对应模板起草，完整保留 YAML frontmatter。"
             )
-            if substate == "TRIAGE":
-                lines.append(
-                    prefix
-                    + "目标文档已存在，请审阅现有内容是否符合模板规范，"
-                    "在现有基础上修改而非从模板重建。"
-                )
-            else:
-                lines.append(
-                    prefix
-                    + "草稿必须严格按对应模板起草，完整保留 YAML frontmatter。"
-                )
         return "\n".join(lines)
 
 
