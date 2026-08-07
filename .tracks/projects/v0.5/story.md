@@ -26,13 +26,18 @@ sha:
 >
 > -- Aaron，2026-08-06
 
+> **Scribe [RESOLVED]:** §1 第四条原始输入（live run 重录 + dispatch 物化分析作为 v0.5 输入）逐字保留，但 §2/§3/§4/§6 均未承接其范围归属。三种可能：(A) 它是 v0.5 范围内的前置工作项（live-run 分析产出 → 据此在 v0.5 设计 Runtime dispatch 物化上下文，减少 Agent 盲目搜索），应在 §4 增列工作项并影响 §3 路径；(B) 它是 v0.5 的上游输入（分析在 v0.5 story 之外先行完成，结论喂给 v0.5），story 只记录'已消费'，不需展开为工作项；(C) 它是独立于 M-IMPL 主线的并行 story，本 S-005 不覆盖。请裁定属于哪种，我据此在 §2/§4 落地对应范围声明。当前 story 对此输入只有 §1 原文、无下游承接，是 §1→§2 traceability 的阻塞性缺口。
+>> **Aaron:** 你说的§2/§3/§4/§6是什么？
+>>> **Scribe:** 我指的是当前 story 文档自己的章节号：§2=用户意图，§3=需求描述（含 3.2 行为种子），§4=工作项，§6=范围、约束与例外。我原话的意思是：§1 第四条原始输入（有监督地重录一次完整 live run M-START→M-TEST + dispatch 物化分析，作为 v0.5 输入）目前只在 §1 原文出现，没有在任何下游章节承接其范围归属——即这三种皆未落地：(A) 作为 v0.5 内的前置工作项在 §4 增列并影响 §3；(B) 作为上游输入在 story 外先完成、story 只记\u0027已消费\u0027；(C) 独立 story 不覆盖。这是我发起此线程请裁定的问题，请给出 A/B/C。
+>>>> **Aaron:** A -- 必须完成这一步，不然 end to end 测试运行起来会很不顺利，甚至失败。
+
 ## 2. 用户意图
 
 - 将 tracks 流程从 M-TEST 出口推进到 M-IMPL 阶段：`trac run` 能驱动 M-IMPL 完整循环（BASELINE 重算 → Archer 拆 task graph → ISLAND_GATE_1 → Prism 评审切片 → Devon 逐 task Red→Green→Refactor → Prism Red checkpoint 与最终 range 评审 → ISLAND_GATE_2 出口），停在 M-IMPL → M-VERIFY 边界
 - 落地"大小两个测试循环"的内圈（D-32）：Devon 逐 task 走 RGR，用内圈小循环驱动外圈合同循环（Shield 的 integration/e2e，v0.4 已冻结为 baseline）变绿；全量 integration + e2e 变绿是 M-IMPL 出口门禁
 - Red 测试先于实现在 v0.5 第一次成为**程序可验证的 lineage 事实**（B/R/G commit 拓扑），而不是 Agent 自报
-- 当前受阻：M-IMPL 未注册（executor `_NEXT_STAGE` 止于 M-TEST、boundary 收尾）；`tracks/agents/` 无 Devon.md；task graph 模板（task-plan.md / task-log.md）存在但未接入 runtime；无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件
-- 完成后：`trac run` 从 M-TEST 出口进入 M-IMPL 并跑通完整循环；task graph / RGR lineage / 门禁证据全部落事件；M-VERIFY 的实现不在本 release 范围
+- 当前受阻：M-IMPL 未注册（executor `_NEXT_STAGE` 止于 M-TEST、boundary 收尾）；`tracks/agents/` 无 Devon.md；task graph 模板（task-plan.md / task-log.md）存在但未接入 runtime；无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件；Runtime dispatch 物化不完整（v0.4 `_prompt()` 路径未具体化等案例，Agent 需盲目搜索）
+- 完成后：`trac run` 从 M-TEST 出口进入 M-IMPL 并跑通完整循环；task graph / RGR lineage / 门禁证据全部落事件；end-to-end 真实 Devon 通道贯通；M-VERIFY 的实现不在本 release 范围
 
 ## 3. 需求描述（规划层，待 M-STORY 展开）
 
@@ -58,7 +63,7 @@ sha:
 10. GREEN：从 R tree 恢复工作区（仍为隔离视图）；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
 11. GREEN_GATE：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF 集合的 int 子集 + lint/format/type/static + 合同；**第一轮不跑 e2e**（v0.4 既定粒度）；**反馈脱敏**——单测失败回完整输出，int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文：隔离不能被测试输出侧信道打穿。int 失败归因不明 → DIAGNOSE
 12. GREEN_COMMIT：Runtime 创建正式 commit G（parent=B），trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）
-13. REFACTOR：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（严格度待 Q-03 裁定；推荐 A = tracks-quality-guards 四段全跑：ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914）
+13. REFACTOR：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定为 A = tracks-quality-guards 四段全跑：ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914）
 14. REFACTOR_GATE：重跑 GREEN_GATE 全部检查；动 public interface → upstream
 15. TASK_REVIEW：Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget
 16. PRISM_FINAL：dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
@@ -77,35 +82,39 @@ sha:
 
 ### 3.2. 行为种子（规划层，EARS 句式）
 
-| 行为 | 验证断言 |
-|------|---------|
-| task graph 校验 | WHEN Archer 产出 task graph 存在环 / scope 重叠 / required AC 未被任何 task IF 覆盖，THE 系统 SHALL 重派（≤3）且不进入 PRISM_PLAN |
-| R 先于 G 的 lineage | WHEN GREEN_COMMIT 创建后，THE 系统 SHALL 存在 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red` 且 commit 拓扑上 R 严格先于 G |
-| R 不可变 | IF 同一 attempt 重试试图改写 R，THE 系统 SHALL compare-and-set 失败并开新 attempt，旧 attempt 不被改写 |
-| GREEN_GATE 粒度 | WHEN task 级 GREEN_GATE 执行，THE 系统 SHALL 只跑该 task 单测 + 全部历史单测 + 变绿条件命中的 int 子集，且 SHALL NOT 跑 e2e |
-| 视图隔离（Devon 盲于合同测试） | WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在隔离视图内运行：屏蔽路径集（按宿主惯例声明、非硬编码）对应的 Shield 测试在视图中物理不存在；Devon 权限条目 bash: deny（trac init 写入 harness 配置，Devon.md 不含 permission）；IF 屏蔽路径集缺层归属声明，THE 系统 SHALL 硬错误、不静默放行 |
-| 反馈脱敏 | WHEN GREEN_GATE 向 Devon 回传 int/e2e 失败，THE 系统 SHALL 只回分类诊断，SHALL NOT 回断言原文 |
-| 判据包绑定与反自述回读 | WHEN Runtime dispatch Prism（plan/red/final/diagnostic 任一），THE 系统 SHALL 在 assignment 写明应加载判据包的名称+版本，verdict outcome 携带实际加载判据包 identity，Runtime 回读核对——不匹配判失败重派（D-29） |
-| manifest 越界 | IF Devon 修改 manifest 白名单之外的文件，THE 系统 SHALL outcome failed、记录路径级证据、不提交 |
-| refactor no-change | WHEN Devon 返回 no-change + 理由且 REFACTOR_GATE 全绿，THE 系统 SHALL 接受该 task 并进入 TASK_REVIEW |
-| 自动分流 | WHEN GREEN_GATE int 失败，THE 系统 SHALL 自动归因到 Devon/Shield/M-DESIGN/M-ACC 四路之一，SHALL NOT 转给 Human 裁决 |
-| 质量门禁 | WHEN refactor 产物被 ruff / flake8(CCR001) / pylint(R0801,C0302,R0915,R0914) 任一判失败，THE 系统 SHALL 重派 Devon |
-| 孤岛闭合出口 | WHEN 全部 task 完成，THE 系统 SHALL 仅在 `trac check reach` 闭合且全量 integration+e2e 变绿后退出 M-IMPL |
-| 可休眠 | 流程在任一 phase 边界被 kill -9 打断后重启，THE 系统 SHALL 从 lineage + 事件回放恢复到精确 phase，不重跑已完成的 task |
-| 边界收尾 | WHEN M-IMPL 退出，THE 系统 SHALL 落 stage.exited(M-IMPL) + run.completed(terminal_state="boundary")，SHALL NOT 进入 M-VERIFY |
+行为种子采用 yaml 风格列表（Aaron 裁定，见下）：
+- **task graph 校验**：WHEN Archer 产出 task graph 存在环 / scope 重叠 / required AC 未被任何 task IF 覆盖，THE 系统 SHALL 重派（≤3）且不进入 PRISM_PLAN
+- **R 先于 G 的 lineage**：WHEN GREEN_COMMIT 创建后，THE 系统 SHALL 存在 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red` 且 commit 拓扑上 R 严格先于 G
+- **R 不可变**：IF 同一 attempt 重试试图改写 R，THE 系统 SHALL compare-and-set 失败并开新 attempt，旧 attempt 不被改写
+- **GREEN_GATE 粒度**：WHEN task 级 GREEN_GATE 执行，THE 系统 SHALL 只跑该 task 单测 + 全部历史单测 + 变绿条件命中的 int 子集，且 SHALL NOT 跑 e2e
+- **视图隔离（Devon 盲于合同测试）**：WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在隔离视图内运行：屏蔽路径集（按宿主惯例声明、非硬编码）对应的 Shield 测试在视图中物理不存在；Devon 权限条目 bash: deny（trac init 写入 harness 配置，Devon.md 不含 permission）；IF 屏蔽路径集缺层归属声明，THE 系统 SHALL 硬错误、不静默放行
+- **反馈脱敏**：WHEN GREEN_GATE 向 Devon 回传 int/e2e 失败，THE 系统 SHALL 只回分类诊断，SHALL NOT 回断言原文
+- **判据包绑定与反自述回读**：WHEN Runtime dispatch Prism（plan/red/final/diagnostic 任一），THE 系统 SHALL 在 assignment 写明应加载判据包的名称+版本，verdict outcome 携带实际加载判据包 identity，Runtime 回读核对——不匹配判失败重派（D-29）
+- **manifest 越界**：IF Devon 修改 manifest 白名单之外的文件，THE 系统 SHALL outcome failed、记录路径级证据、不提交
+- **refactor no-change**：WHEN Devon 返回 no-change + 理由且 REFACTOR_GATE 全绿，THE 系统 SHALL 接受该 task 并进入 TASK_REVIEW
+- **自动分流**：WHEN GREEN_GATE int 失败，THE 系统 SHALL 自动归因到 Devon/Shield/M-DESIGN/M-ACC 四路之一，SHALL NOT 转给 Human 裁决
+- **质量门禁**：WHEN refactor 产物被 ruff / flake8(CCR001) / pylint(R0801,C0302,R0915,R0914) 任一判失败，THE 系统 SHALL 重派 Devon
+- **孤岛闭合出口**：WHEN 全部 task 完成，THE 系统 SHALL 仅在 `trac check reach` 闭合且全量 integration+e2e 变绿后退出 M-IMPL
+- **可休眠**：流程在任一 phase 边界被 kill -9 打断后重启，THE 系统 SHALL 从 lineage + 事件回放恢复到精确 phase，不重跑已完成的 task
+- **边界收尾**：WHEN M-IMPL 退出，THE 系统 SHALL 落 stage.exited(M-IMPL) + run.completed(terminal_state="boundary")，SHALL NOT 进入 M-VERIFY
+
+> **Aaron:** 不得使用表格。可以使用类似 yaml 的列表。
+>> **Scribe:** 已落地：全文不使用 markdown 表格，行为种子（§3.2）采用 yaml 风格列表，符合你的格式裁定。
 
 ## 4. 工作项
 
-1. **machine.py**：M-IMPL StageDef（21 子状态含 NEEDS_ATTENTION 的 decide 路由）；writelock / task identity 进 State
-2. **executor**：`_NEXT_STAGE` 增补 M-TEST→M-IMPL、M-IMPL→M-VERIFY（未注册处 boundary）；新命令 kind——`create_task_graph` / `dispatch_devon`（phase=red|green|refactor）/ `create_r_checkpoint` / `create_green_commit` / `create_refactor_commit` / `dispatch_prism`（plan/red/final/diagnostic 四种 assignment）/ `run_green_gate` / `run_refactor_gate` / `diagnose` / `shield_fix` / `task_completed`
-3. **task graph**：`task-plan.md` 解析 + validate（DAG 无环 / scope 白名单不重叠 / required AC 覆盖闭合 / 六项字段非空）；`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份）
-4. **RGR lineage**：`refs/trac/rgr/{run}/{task}/{attempt}/red` git ref 管理；B/R/G(-Refactor) trailers（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）；compare-and-set 语义。注：R/G/Refactor/受控测试 commit 均由 Runtime 创建、触发宿主 pre-commit 钩子；钩子拒绝按 F-1（D-30，`41a4ed4`）写钩子输出为证据并在预算内重派，不得静默退出死锁
-5. **manifest + writelock**：per-task scope 白名单；`writelock.granted` / `writelock.released` 事件；越界 → outcome failed（复用 v0.2 baseline + 后置审计，写范围收窄到 manifest）
-5a. **视图隔离**：test-plan.md 层归属字段扩展为"路径 → 层（unit/integration/e2e）"清单（Archer 按宿主语言惯例填写，Python `tests/integration`、Java `src/it`、Go build-tag 目录等同等合法）；BASELINE 冻结屏蔽路径集进测试资产 digest；dispatch Devon 前物化 sparse-checkout 隔离视图（opencode cwd 指向视图）、`bash: deny`（harness 配置中 Devon 权限条目，由 `trac init` 写入，D-19；Devon.md harness 无关、不含 permission 块，D-26）、回灌后终态清理 + 崩溃 reconcile；GREEN_GATE 反馈按层脱敏
-6. **agents**：`tracks/agents/Devon.md`（首次交付——frontmatter version: 0.5，遵循 opencode agent 定义格式；harness 无关、不含 permission 块，D-26，隔离权限见工作项 5a）；Prism 的 plan/red/final/diagnostic 四种判据包接线与 skill 物化（判据包本体新建，参照 v0.4 test-asset-criteria 先例；承 D-29 反自述三件套）
-7. **skills**：`tracks-quality-guards` 接入 refactor 门禁（ruff / flake8 CCR001 / pylint 重复+体量——阈值继承 pyproject.toml，不重复定义）
-8. **events**：`events.py` 追加事件类型——`baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `green.committed` / `refactor.committed|no_change` / `test.committed`（SHIELD_FIX 受控测试 commit）/ `task.completed`；`verdict.failed` 增补 reason（red_invalid / regression / budget / island / scope / test_defect / impl_defect）
-9. **测试**：FakeAgent 端到端——M-TEST 出口 → M-IMPL 全循环（含 2 个串行 task）→ boundary；负例——非法红、manifest 越界、R 被改写（compare-and-set 拒绝）、budget/scope fail 回 GREEN、test_defect vs impl_defect 分流、ISLAND_GATE_2 孤岛阻断出口、**视图中屏蔽路径物理不存在（Devon 读不到）、屏蔽清单缺层归属声明硬错误、int/e2e 失败反馈不含断言原文**；RGR lineage ground truth（git ref 拓扑独立校验脚本，不 import tracks）
+1. **前置（T-001 裁定 A）——live run 重录与 dispatch 物化分析**：v0.5 启动前有监督地重录一次完整 live run（M-START → M-TEST），日志分析定位 runtime dispatch 中未物化上下文的点（v0.4 `_prompt()` 路径未具体化为典型案例——Runtime 本可传绝对路径却让 Agent 自行搜索，疑似尚存类似点），产出 dispatch 物化要求（路径、文件名、范围物化，减少 Agent 盲目搜索）；分析结论作为 v0.5 输入，据此在 work item 3（executor）落地 dispatch 上下文物化
+2. **machine.py**：M-IMPL StageDef（21 子状态含 NEEDS_ATTENTION 的 decide 路由）；writelock / task identity 进 State
+3. **executor**：`_NEXT_STAGE` 增补 M-TEST→M-IMPL、M-IMPL→M-VERIFY（未注册处 boundary）；新命令 kind——`create_task_graph` / `dispatch_devon`（phase=red|green|refactor）/ `create_r_checkpoint` / `create_green_commit` / `create_refactor_commit` / `dispatch_prism`（plan/red/final/diagnostic 四种 assignment）/ `run_green_gate` / `run_refactor_gate` / `diagnose` / `shield_fix` / `task_completed`；按 work item 1 分析结论物化 dispatch 上下文
+4. **task graph**：`task-plan.md` 解析 + validate（DAG 无环 / scope 白名单不重叠 / required AC 覆盖闭合 / 六项字段非空）；`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份）
+5. **RGR lineage**：`refs/trac/rgr/{run}/{task}/{attempt}/red` git ref 管理；B/R/G(-Refactor) trailers（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）；compare-and-set 语义。注：R/G/Refactor/受控测试 commit 均由 Runtime 创建、触发宿主 pre-commit 钩子；钩子拒绝按 F-1（D-30，`41a4ed4`）写钩子输出为证据并在预算内重派，不得静默退出死锁
+6. **manifest + writelock**：per-task scope 白名单；`writelock.granted` / `writelock.released` 事件；越界 → outcome failed（复用 v0.2 baseline + 后置审计，写范围收窄到 manifest）
+6a. **视图隔离**：test-plan.md 层归属字段扩展为"路径 → 层（unit/integration/e2e）"清单（Archer 按宿主语言惯例填写，Python `tests/integration`、Java `src/it`、Go build-tag 目录等同等合法）；BASELINE 冻结屏蔽路径集进测试资产 digest；dispatch Devon 前物化 sparse-checkout 隔离视图（opencode cwd 指向视图）、`bash: deny`（harness 配置中 Devon 权限条目，由 `trac init` 写入，D-19；Devon.md harness 无关、不含 permission 块，D-26）、回灌后终态清理 + 崩溃 reconcile；GREEN_GATE 反馈按层脱敏
+7. **agents**：`tracks/agents/Devon.md`（首次交付——frontmatter version: 0.5，遵循 opencode agent 定义格式；harness 无关、不含 permission 块，D-26，隔离权限见 work item 6a）；Prism 的 plan/red/final/diagnostic 四种判据包接线与 skill 物化（判据包本体新建，参照 v0.4 test-asset-criteria 先例；承 D-29 反自述三件套）
+8. **skills**：`tracks-quality-guards` 接入 refactor 门禁（ruff / flake8 CCR001 / pylint 重复+体量——阈值继承 pyproject.toml，不重复定义）
+9. **events**：`events.py` 追加事件类型——`baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `green.committed` / `refactor.committed|no_change` / `test.committed`（SHIELD_FIX 受控测试 commit）/ `task.completed`；`verdict.failed` 增补 reason（red_invalid / regression / budget / island / scope / test_defect / impl_defect）
+10. **测试（集成，FakeAgent）**：FakeAgent 集成测试——M-TEST 出口 → M-IMPL 全循环（含 2 个串行 task）→ boundary；负例——非法红、manifest 越界、R 被改写（compare-and-set 拒绝）、budget/scope fail 回 GREEN、test_defect vs impl_defect 分流、ISLAND_GATE_2 孤岛阻断出口、**视图中屏蔽路径物理不存在（Devon 读不到）、屏蔽清单缺层归属声明硬错误、int/e2e 失败反馈不含断言原文**；RGR lineage ground truth（git ref 拓扑独立校验脚本，不 import tracks）
+11. **测试（end-to-end，真实 Devon）**：end-to-end 使用真实 Devon（Q-04 裁定，见 §5）跑通 M-IMPL 完整循环——M-TEST 出口 → task graph → 串行 task RGR → 门禁 → ISLAND_GATE_2 → boundary；与集成测试（work item 10，FakeAgent）互为独立通道，验证真实 Agent 通道在 M-IMPL 贯通（按 v0.2 双通道模式）
 
 ## 5. 开放产品决定
 
@@ -114,6 +123,8 @@ sha:
 - **为什么必须由 Human 决定**：flow.md 的 `[P]` 并行标记与"单写者 lease"存在张力——真并行需要多 Devon 并发 lease 与文件级冲突仲裁，改变 Runtime 写者模型的产品语义
 - **可选方向**：A. v0.5 串行调度，`[P]` 只记录不并发（推荐）；B. v0.5 即实现并发 lease
 - **Agent 推荐**：A——单写者纪律是 tracks 的承重墙，v0.5 的目标是把内圈循环跑通，并发留给独立 story
+> **Aaron:** 不并行，只串行
+>> **Scribe:** 已落地：§3.1 条目 5 声明 v0.5 串行调度、[P] 标记记录但不并发执行；§6 Out-of-Scope 同步『不做 [P] 并行调度』。
 
 ### Q-02 task graph 的真相源
 
@@ -121,23 +132,35 @@ sha:
 - **可选方向**：A. task-plan.md 为内容真相源，Runtime 解析（推荐，同 story/spec 纪律）；B. 存 tracks.db 投影表
 - **Agent 推荐**：A——"文档即内容真相源"是 tracks 既成纪律（story/spec/test-plan 内容真相源皆在文档；D-02 裁定的是事件流存 SQLite，与内容真相源分属两层），task graph 与 spec 同级
 
+> **Aaron:** 真相放 task-plan.md， 当前完成了哪一步可能要放 db.
+>> **Scribe:** 已落地：§3.1 条目 2 与 §4 工作项 4 以 task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入。『当前完成了哪一步』放 db 的进展投影归 events 层，正文已按『文档为真相源、进展入 events/db』处理。
+
 ### Q-03 refactor 质量门禁的严格度
 
 - **为什么必须由 Human 决定**：重构阶段跑 ruff/flake8/pylint 是把 pre-commit 门禁搬进 Runtime——门禁失败会触发重派 Devon，影响 attempt 预算消耗速度
 - **可选方向**：A. refactor 门禁 = pre-commit 四段全跑，失败计 attempt（推荐）；B. 只跑 flake8 CCR001（认知复杂度一项）
 - **Agent 推荐**：A——tracks-quality-guards 已就位，复用成本最低；认知复杂度之外的重复/超长同样是 slop 来源
 
+> **Aaron:** A
+>> **Scribe:** 已落地：Q-03 裁定 A——§3.1 条目 13、§4 工作项 8、行为种子『质量门禁』均写为 refactor 门禁 = tracks-quality-guards 四段全跑（ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914），失败计 attempt。
+
 ### Q-04 Devon 是否接真实 agent
 
 - **为什么必须由 Human 决定**：延续 v0.1–v0.4 的"不接真实 LLM"排除，还是借 M-IMPL（行为最复杂的阶段）首次接真实 agent
-- **可选方向**：A. 继续 FakeAgent（推荐）；B. Devon 走 opencode 真实调用
-- **Agent 推荐**：A——M-IMPL 状态机本身够复杂，先证明流程贯通（fake 通道），真实 agent 通道按 v0.2 双通道模式另立 story
+- **可选方向**：A. 集成测试用 FakeAgent、end-to-end 用真实 Devon（裁定，见下）；B. 全部 FakeAgent
+- **Agent 推荐**：A（Aaron 裁定）——集成测试用 FakeAgent 保证确定性回归，end-to-end 用真实 Devon 验证真实 Agent 通道贯通（work item 10/11 双通道落地）
+
+> **Aaron:** 集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon。过去的开发充分证明了，end to end 使用真实 Agent 的意义
+>> **Scribe:** 已落地：Q-04 裁定 A——§4 工作项 10（集成，FakeAgent）与工作项 11（end-to-end，真实 Devon）双通道；§6 Out-of-Scope 改为『仅此两条通道，真实通道仅以 end-to-end 形式存在』，已删除待裁定的『不接真实 LLM Agent』表述。
 
 ## 6. 范围、约束与例外
 
 - **必须保持的产品约束**：kernel 纯函数边界（decide/project 不碰 IO）；事件溯源 append-only；Agent 不 commit/push、不推进状态（Runtime 是唯一流程 authority，正式 commit 均由 Runtime 创建）；单写者纪律（per-task manifest 白名单 + writelock lease，Devon 不得改 Shield 测试）；D-28（输入 revision/digest/完整性校验归 Runtime 派发前形式检查，Agent 不自校验，verdict 仅传播 identity）；D-29 反自述三件套（assignment 写明判据包名称+版本 / verdict 携带实际加载 identity / Runtime 回读核对不匹配判失败重派，适用于 plan/red/final/diagnostic 全部四种 Prism 派发）；D-19/D-26（权限在 harness 配置、由 `trac init` 写入，agent 定义 harness 无关、不含 permission 块）；D-31（AC 绑定用测试函数紧邻上方 TRACKS-TRACE 标记行，行级正则、零依赖）；D-32（大小两个测试循环，M-IMPL 为内圈 RGR 循环，驱动外圈合同循环变绿）
 - **非常规要求**：视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在），不是提示词纪律——"禁止"兑现为"不可能"；RED 阶段要求失败（合法 Red 是交付态而非异常，承 M-TEST 的合法 Red 语义到 unit 层）；refactor 接受 no-change + 理由（不强制产生改动）；"测试错还是实现错"的分流永不交给 Human（flow.md §10.3 硬规则 5）
-- **Out-of-Scope**：不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界；不接真实 LLM Agent（延续 v0.1–v0.4 排除，FakeAgent 验证；待 Q-04 裁定）；不做 `[P]` 并行调度（待 Q-01 裁定；推荐串行）；不做 hotfix / bug-fix 变体（flow.md §16，后续 story）；不做 `trac check ratio / dup / budget` 命令（trace/reach 已在 v0.4 交付；budget 在 v0.5 仅体现为 TASK_REVIEW 的 attempt/lineage 预算校验）；不做函数级调用图（reach 维持模块级，M-VERIFY 反 slop 门禁的更细粒度分析属未来）；不做 GitHub Issue 映射（task-plan ↔ Issues 同步不在本版）；不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）
+- **Out-of-Scope**：不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界；不做 `[P]` 并行调度（Q-01 已裁定：只串行，`[P]` 仅记录）；不做真实 LLM 通道的其它形态（Q-04 已裁定：集成测试用 FakeAgent、end-to-end 用真实 Devon——仅此两条通道，真实通道仅以 end-to-end 形式存在，不做真实通道的单元级/集成级接入）；不做 hotfix / bug-fix 变体（flow.md §16，后续 story）；不做 `trac check ratio / dup / budget` 命令（trace/reach 已在 v0.4 交付；budget 在 v0.5 仅体现为 TASK_REVIEW 的 attempt/lineage 预算校验）；不做函数级调用图（reach 维持模块级，M-VERIFY 反 slop 门禁的更细粒度分析属未来）；不做 GitHub Issue 映射（task-plan ↔ Issues 同步不在本版）；不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）
+
+> **Scribe [RESOLVED]:** Q-04 裁定与正文冲突（TRIAGE 阻断项）：您已裁定 line 145「集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon」，但正文未承接该裁定——§6 Out-of-Scope line 151 仍写「不接真实 LLM Agent（延续 v0.1–v0.4 排除，FakeAgent 验证；待 Q-04 裁定）」且标着待裁定；§4 工作项 9（line 112）仍只写「FakeAgent 端到端——M-TEST 出口 → M-IMPL 全循环」。两者矛盾：若 e2e 必须用真实 Devon，则 v0.5 需纳入 real-Devon 通道（work item 9 拆分为集成用 FakeAgent + e2e 用真实 Devon），且 Out-of-Scope 的「不接真实 LLM Agent」「待 Q-04 裁定」须删除；若我理解有误（例如「真实 Devon」仅指 e2e 验收方式、实现仍按 FakeAgent 通道先贯通），请澄清边界。请裁定 Work Item 9 与 Out-of-Scope 如何修订，TRIAGE 据此给出 go 建议。
+>> **Aaron:** 按我裁定，文档中意思统一是你的工作。
 
 ## 7. 分流建议
 
