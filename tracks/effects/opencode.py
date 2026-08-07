@@ -3,7 +3,7 @@
 Pipeline per dispatch: materialize canonical prompt (+ skills + document
 templates named by the assignment) -> baseline snapshot ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
-(process group + timeout) -> parse JSON (diagnostic/truncation only) -> capture
+(process group) -> parse JSON (diagnostic/truncation only) -> capture
 the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
 whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6:
 over-reach; for M-DESIGN author dispatches, that host-project writes stay
@@ -37,12 +37,6 @@ from tracks.scaffold import _scaffold_declared_paths
 # Shield集成/e2e测试编写 (v0.4 M-TEST, FR-0120).
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
               "archer": "Archer", "prism": "Prism", "shield": "Shield"}
-
-# Tolerant frontmatter `IQ:` line parser (single-token value, optional spaces
-# after the colon); only matched inside the leading YAML frontmatter block.
-_IQ_LINE = re.compile(r"^IQ:\s*(\S+)\s*$", re.M)
-
-DEFAULT_TIMEOUT = 600  # seconds
 
 _SECRET_VALUE = re.compile(
     r"(?i)((?:authorization|api[_ -]?key|access[_ -]?token|secret|password)"
@@ -91,17 +85,13 @@ class OpencodeError(Exception):
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
 
-    def __init__(self, repo: Path, version: str, timeout: int = DEFAULT_TIMEOUT,
-                 model: str | None = None):
+    def __init__(self, repo: Path, version: str, model: str | None = None):
         self.repo = Path(repo)
         self.version = version
-        self.timeout = timeout
-        # Model resolution is three-layer per dispatch (spec §3.1, ARCH §4a):
+        # Model resolution is two-layer per dispatch (spec §3.1, ARCH §4a):
         # (1) explicit self.model (TRAC_AGENT_MODEL via select_backend) wins;
-        # (2) else the agent's IQ frontmatter (canonical tracks/agents/<Name>.md)
-        #     None;
-        # (3) None means opencode resolves its own configured default (no
-        # --model flag, see _resolve_model/_run).
+        # (2) else no --model flag, so opencode resolves its own configured
+        #     default (agent/project config, never hardcoded by tracks).
         self.model = model
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
 
@@ -541,13 +531,11 @@ class OpencodeBackend:
     # -- subprocess + failure matrix (ARCH §7) ------------------------------
 
     def _resolve_model(self, name: str) -> str | None:
-        """Three-layer model resolution per dispatch (see __init__ docstring):
-        explicit ``self.model`` wins; else the agent's IQ frontmatter mapped
-        ; ``None`` means opencode resolves its own configured
-        default (no ``--model`` flag)."""
-        if self.model:
-            return self.model
-        return None
+        """Two-layer model resolution per dispatch (see __init__ docstring):
+        explicit ``self.model`` wins; otherwise ``None`` means opencode
+        resolves its own configured default (no ``--model`` flag). Model
+        selection is an opencode-config concern, never hardcoded by tracks."""
+        return self.model
 
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
@@ -569,17 +557,21 @@ class OpencodeBackend:
         except FileNotFoundError as err:
             raise OpencodeError("opencode_missing",
                                 "opencode executable not found") from err
+        # No production timeout: the Runtime Agent runs to completion and is
+        # monitored via its output, never killed for elapsed time (prior
+        # commit ddd2f71 lived only on a deleted release branch). Operator
+        # cancellation (Ctrl-C) is honored: start_new_session=True gives the
+        # child its own process group, so SIGINT to the operator's foreground
+        # group does not reach it - we catch KeyboardInterrupt, terminate/kill
+        # the child group, reap it, then re-raise so the operator stays in
+        # control. This is operator cancellation, not a Runtime kill policy.
         try:
-            stdout, stderr = proc.communicate(input=console_input, timeout=self.timeout)
-        except subprocess.TimeoutExpired as exc:
+            stdout, stderr = proc.communicate(input=console_input)
+        except KeyboardInterrupt:
             self._kill_group(proc.pid)
-            stdout, stderr = proc.communicate()
-            raise OpencodeError(
-                "timeout",
-                f"opencode timed out after {self.timeout}s",
-                stdout=stdout or exc.stdout or "",
-                stderr=stderr or exc.stderr or "",
-            ) from exc
+            with contextlib.suppress(Exception):
+                proc.communicate(timeout=5)
+            raise
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     @staticmethod
@@ -693,26 +685,6 @@ def _template_kinds(assignment: dict | None) -> list[str]:
         return [kind for kind in assignment["templates"] if kind]
     kind = assignment.get("template_kind")
     return [kind] if kind else []
-
-
-def _parse_iq(path: Path) -> str | None:
-    """Tolerant frontmatter ``IQ:`` parser for a canonical agent definition
-    file. Returns the IQ token (e.g. ``"A"``, ``"S"``) from the leading YAML
-    frontmatter block, or ``None`` when the file is missing, has no
-    frontmatter, has no ``IQ:`` line, or the frontmatter is unclosed - the
-    caller (``_resolve_model``) and
-    unrecognized tokens fall through to ``None`` (opencode default)."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    if not text.startswith("---"):
-        return None
-    end = text.find("\n---", 3)  # closing delimiter of the frontmatter block
-    if end == -1:
-        return None  # unclosed frontmatter - tolerant: treat IQ as absent
-    m = _IQ_LINE.search(text[:end])
-    return m.group(1) if m else None
 
 
 def _text(value) -> str:

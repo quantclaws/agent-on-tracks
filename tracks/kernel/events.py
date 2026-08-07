@@ -27,6 +27,7 @@ EVENT_TYPES = (
     "acceptance.committed",
     "human.triage",
     "human.review",
+    "human.retry",
     "sage.verdict",
     "lex.verdict",
     "backlog.recorded",

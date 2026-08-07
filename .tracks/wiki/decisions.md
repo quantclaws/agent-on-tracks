@@ -1,7 +1,7 @@
 ---
 doc: decisions
 status: active
-last_updated: 2026-08-05
+last_updated: 2026-08-07
 ---
 
 # 已决定事项
@@ -338,6 +338,15 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 - tracks 测试体系的两大循环正式命名：**外圈合同循环**——Shield 在 M-TEST 对着接口桩与验收标准编写 integration/e2e 合同测试，先行变红、冻结为基线；**内圈 RGR 循环**——M-IMPL 中 Devon 逐 task 走 Red→Green→Refactor（Runtime 校验合法 Red、Prism 评 Red checkpoint）。内圈保证每一步的质量，外圈负责最终验收：M-IMPL 的目标即把外圈合同全部变绿。
 - 该提法由 flow.md M-TEST/M-IMPL 的既有职责提炼（原文此前无此词），裁定“这个说法成立”后在 flow.md §9/§10 加定位锚点；docs/philosophy/why-evidence-wins.md 的对外表述以此为正名出处。
 
+## D-33. 生产 Runtime Agent 执行所有权 / 模型配置 / 升级可观测性
+
+（用户裁定 2026-08-07）
+
+- **per-Agent elapsed 超时取消**：生产 Runtime 对单次 Agent 派发**不设** elapsed-time 超时——工作中的 Agent 不会仅因 N 秒过去而被杀死。活动性由 Runtime/operator 观测；显式 Human Ctrl-C 取消并清理进程组（D-11 信号→事件协议不变）。D-23 历史上只描述 live-E2E harness 的观测/总看门狗做法，**并未**显式规定生产 Runtime 的 per-Agent 超时；本条**澄清 D-23 不适用于生产 Runtime 的 per-Agent elapsed time**，D-23 的 live harness 看门狗实践仍有效（测试 harness/网络/CI 总看门狗属独立测试/IO 关注点，可保留有界超时）。
+- **模型选择归 harness 配置**：模型由 opencode agent/project 配置决定；tracks **不得**在应用代码中把 IQ 档位映射到 provider/model。显式 `TRAC_AGENT_MODEL` 仅作 operator override。历史上 D-26 ID 重复，本条所指为决策日志中标题含「模型档位解析延后」/ commit `80e284f` 的记录（非 harness 无关原则那条）；D-33 **关闭该记录遗留的 IQ 路由残留**——在 tracks 代码中**禁止** IQ→model 映射（`80e284f` 的越序 IQ→模型映射不再扩展）。
+- **升级可观测与 Human retry**：<=3 次失败后升级时，`trac run` 与 `trac status` 必须暴露 attempt 计数 + 失败类 + 原因。Human 可运行 `trac retry`：追加 `human.retry` 事件、清除升级 gate、重置一份新的 <=3 attempt 预算、保留失败证据，且**不**自动重新派发——后续由显式 `trac run` 恢复。
+- **长派发控制台活动**：`trac run` 必须为长 Agent 派发发出简洁、已 flush 的控制台活动（开始：时间戳/Agent/stage(substate)/task(attempt)；完成：状态/失败 + 耗时），不得流式输出海量 Agent stdout。
+
 ## 决策日志
 
 | ID   | 决定日期   | 标题                                          | 来源                                                                     |
@@ -375,3 +384,4 @@ v0.1 全部人类动作通过 CLI 命令传入（见 D-04）。人类不编辑�
 | D-30 | 2026-08-05 | v0.4 dogfood 运行记录：钩子拦截死锁缺口与本仓存量标记采纳策略 | Maestro 运行记录（非用户裁定）：F-1 commit 被拒死锁待立项；F-2 本仓 legacy-baseline 采纳时点待 Aaron 决定 |
 | D-31 | 2026-08-05 | R-1：marker 约定简化与语言中立化（TRACKS-TRACE 特征词） | 用户裁定：标记注释行 + TRACKS-TRACE 特征词 + 行级正则零依赖检测（spec `4b2ad5f`）；Shield 写测试必带标记行；reach v0.4 仅 Python |
 | D-32 | 2026-08-05 | “大小两个测试循环”正式命名（外圈合同循环 / 内圈 RGR 循环） | 用户裁定：“这个说法成立”；flow.md §9/§10 定位锚点；why-evidence-wins.md 对外表述以此为准 |
+| D-33 | 2026-08-07 | 生产 Runtime Agent 执行所有权 / 模型配置 / 升级可观测性 | 用户裁定：生产 per-Agent 派发无 elapsed 超时（澄清 D-23 不适用生产 Runtime per-Agent elapsed time，D-23 live-E2E 看门狗有效）；模型选择归 opencode 配置、tracks 禁止 IQ->model 映射（关闭标题含「模型档位解析延后」/ commit `80e284f` 的决策日志记录遗留的 IQ 路由残留，非 harness 无关原则那条 D-26）；升级暴露 attempt+失败类+原因，`trac retry`->`human.retry` 清 gate+重置 <=3 预算+保留证据+不自动派发；`trac run` 简洁 flushed 控制台活动 |

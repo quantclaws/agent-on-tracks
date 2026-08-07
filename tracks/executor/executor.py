@@ -9,6 +9,8 @@ import json
 import re
 import shlex
 import subprocess
+import sys
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -255,7 +257,25 @@ class Executor:
                 if stop:
                     return state
                 dispatches += 1
+            self._progress(cmd, state)
             self.issue(cmd)
+
+    def _progress(self, cmd: Command, state: State) -> None:
+        """Concise non-agent progress to stderr (validate/commit/seal). Agent
+        dispatch progress is emitted in ``_do_dispatch_agent`` around
+        ``backend.act()`` so both normal and recovered paths share it."""
+        if cmd.kind == "validate_document":
+            doc = cmd.params.get("doc", "?")
+            print(f"  [{state.stage}] validate {doc}",
+                  file=sys.stderr, flush=True)
+        elif cmd.kind == "commit_document":
+            doc = cmd.params.get("doc", "?")
+            print(f"  [{state.stage}] commit {doc}",
+                  file=sys.stderr, flush=True)
+        elif cmd.kind == "write_frontmatter":
+            stage = cmd.params.get("stage", state.stage or "?")
+            print(f"  [{state.stage}] seal frontmatter ({stage})",
+                  file=sys.stderr, flush=True)
 
     def _dispatch_gate(self, cmd, dispatches: int,
                         bound_substate: str | None) -> tuple[bool, str | None]:
@@ -343,9 +363,13 @@ class Executor:
             # (opencode._assignment_context serializes the whole assignment).
             assignment = dict(assignment or {})
             assignment["evidence"] = p["evidence"]
+        self._dispatch_log_start(p, state)
+        t0 = time.monotonic()
         result = self.backend.act(
             role, substate, doc, doc_path, assignment=assignment
         )
+        elapsed = time.monotonic() - t0
+        self._dispatch_log_end(p, result, elapsed)
         self._emit("outcome.received", _dispatch_payload(self.store, p, result),
                    command_id=cmd.command_id, task_id=task_id)
         verdict = result.get("verdict")
@@ -356,6 +380,49 @@ class Executor:
             return
         if verdict:
             self._emit_verdict(role, verdict, result, state, p, cmd, task_id)
+
+    @staticmethod
+    def _dispatch_log_start(p: dict, state: State) -> None:
+        """Fix 5: emit a start line to stderr before the backend call so the
+        operator sees what is being dispatched during a long ``trac run``.
+        Flushed immediately; does not print agent stdout."""
+        role = p.get("role", "?")
+        substate = p.get("substate", "?")
+        attempt = p.get("attempt", "?")
+        objective = p.get("objective") or ""
+        if not objective:
+            assignment = p.get("assignment") or {}
+            objective = assignment.get("kind") or ""
+            if not objective:
+                docs = p.get("docs")
+                doc = p.get("doc")
+                if docs:
+                    objective = ", ".join(docs)
+                elif doc:
+                    objective = doc
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+        print(
+            f"  {ts} [{state.stage}] dispatch {role} ({substate}, attempt {attempt})"
+            f" {objective}".rstrip(),
+            file=sys.stderr, flush=True,
+        )
+
+    @staticmethod
+    def _dispatch_log_end(p: dict, result: dict, elapsed: float) -> None:
+        """Fix 5: emit a completion line to stderr after the backend returns.
+        For failures, includes failure_class and a one-line self_report."""
+        role = p.get("role", "?")
+        status = result.get("status", "?")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S%z")
+        line = f"  {ts} {role} {status} ({elapsed:.1f}s)"
+        if status != "done":
+            fc = result.get("failure_class") or "?"
+            report = (result.get("self_report") or "").strip()
+            report = report.splitlines()[0] if report else ""
+            line += f" [{fc}]"
+            if report:
+                line += f" {report}"
+        print(line, file=sys.stderr, flush=True)
 
     def _criteria_pack_mismatch(self, role, substate, state, verdict,
                                 assignment, result, cmd) -> bool:

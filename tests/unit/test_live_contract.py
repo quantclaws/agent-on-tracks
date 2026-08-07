@@ -298,25 +298,22 @@ def test_prompt_names_the_doc_set_of_a_multi_doc_assignment(tmp_path, monkeypatc
     assert expected in prompt
 
 
-def test_agent_timeout_uses_generic_environment_name(monkeypatch, tmp_path):
+def test_select_backend_no_production_timeout(monkeypatch, tmp_path):
+    """No production timeout: OpencodeBackend no longer carries a ``timeout``
+    attribute; the Runtime Agent runs to completion (ARCH §7)."""
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
     monkeypatch.setenv("TRAC_AGENT_TIMEOUT", "17")
     backend = select_backend(tmp_path, "v0.1")
     assert isinstance(backend, OpencodeBackend)
-    assert backend.timeout == 17
+    assert not hasattr(backend, "timeout")
 
 
 def test_run_cmd_omits_model_flag_when_model_none(monkeypatch, tmp_path):
-    """No --model flag when no model resolves (spec §3.1: opencode resolves its
-    own configured default): explicit model is None AND the agent's canonical
-    definition carries no IQ (so the IQ layer falls through too)."""
+    """No --model flag when no model is configured: opencode resolves its own
+    configured default (spec §3.1; model selection is an opencode-config
+    concern, never hardcoded by tracks)."""
     captured = capture_popen_cmd(monkeypatch)
     backend = OpencodeBackend(tmp_path, "v0.1")
-    canonical = tmp_path / "agents"
-    canonical.mkdir()
-    (canonical / "Scribe.md").write_text(
-        "---\ndescription: x\n---\nbody\n", encoding="utf-8")
-    backend._canonical = canonical
     backend._run("Scribe", "prompt")
     assert "--model" not in captured["cmd"]
 

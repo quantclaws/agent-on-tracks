@@ -28,7 +28,7 @@ def capture_popen_cmd(monkeypatch,
         pid = 123
         returncode = 0
 
-        def communicate(self, input, timeout):
+        def communicate(self, input=None, timeout=None):
             return "{}", ""
 
     def _fake_popen(*args, **kwargs):

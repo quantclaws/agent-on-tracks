@@ -392,7 +392,6 @@ repo = Path(request["repo"])
 backend = OpencodeBackend(
     repo,
     request["version"],
-    timeout=int(request["timeout"]),
     model=request["model"],
 )
 agent_name = AGENT_NAME[request["role"]]
@@ -622,7 +621,6 @@ class InstalledBackend:
                         "repo": str(self.host),
                         "version": "v0.2",
                         "model": self.model,
-                        "timeout": self.timeout,
                         "role": role,
                         "substate": substate,
                         "doc": doc,

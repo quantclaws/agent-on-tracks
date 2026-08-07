@@ -100,8 +100,8 @@ _VERSION_QUALIFIED = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@(v\d+\.\d+)")
 # fabricates tooling (run045 finding: `trac agent archer ci-scan` never
 # existed); to-be-created tooling must be marked as a foundation task instead.
 TRAC_SUBCOMMANDS = frozenset({
-    "approve", "check", "discuss", "init", "replay", "report", "return",
-    "review", "run", "start", "status", "triage", "validate",
+    "approve", "check", "discuss", "init", "replay", "report", "retry",
+    "return", "review", "run", "start", "status", "triage", "validate",
 })
 _TRAC_CALL = re.compile(r"\btrac\s+([A-Za-z][A-Za-z0-9_-]*)")
 

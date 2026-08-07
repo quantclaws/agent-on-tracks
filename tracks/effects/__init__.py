@@ -9,6 +9,8 @@ backend choice or any test/simulate mode.
   ``TRAC_AGENT_BACKEND=opencode`` (deterministic suite / behavior injection).
 - ``TRAC_AGENT_MODEL`` (opencode path only) overrides the opencode default
   model; empty/unset lets opencode resolve its own configured model (spec §3.1).
+  The Runtime Agent runs to completion with no production timeout; operator
+  cancellation (Ctrl-C) is honored via process-group kill (ARCH §7).
 - conftest forces ``TRAC_AGENT_BACKEND=fake`` for the deterministic E2E channel;
   the live opencode channel opts in explicitly (SPEC test-plan §6).
 """
@@ -32,7 +34,6 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
         return FakeBackend(repo, version)
     if kind == "opencode":
         from tracks.effects.opencode import OpencodeBackend
-        timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "600"))
         model = os.environ.get("TRAC_AGENT_MODEL", "").strip() or None
-        return OpencodeBackend(repo, version, timeout=timeout, model=model)
+        return OpencodeBackend(repo, version, model=model)
     raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")

@@ -41,6 +41,25 @@ def _err(msg: str) -> int:
     return 1
 
 
+def _format_state(state) -> str:
+    """Shared one-line state format for run/status/replay (Fix 3: escalation
+    reason visibility). When awaiting escalation, append the attempt count,
+    failure check, and one-line reason so the operator sees why the run halted."""
+    line = (
+        f"stage={state.stage} substate={state.substate} "
+        f"status={state.status} awaiting={state.awaiting or '-'}"
+    )
+    if state.awaiting == "escalation":
+        line += f" attempts={state.current_attempt}"
+        if state.last_failure:
+            check = state.last_failure.get("check") or "?"
+            reason = state.last_failure.get("reason") or ""
+            reason = reason.strip().splitlines()[0] if reason else ""
+            snippet = f"[{check}] {reason}" if reason else f"[{check}]"
+            line += f" reason={snippet}"
+    return line
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -279,10 +298,7 @@ def cmd_run(repo: Path, *args: str) -> int:
             assignment_overlay=assignment_overlay,
             max_dispatches=max_dispatches,
         ).run_loop()
-    print(
-        f"run {run_id}: stage={state.stage} substate={state.substate} "
-        f"status={state.status} awaiting={state.awaiting or '-'}"
-    )
+    print(f"run {run_id}: {_format_state(state)}")
     return 0
 
 
@@ -355,6 +371,37 @@ def cmd_review(repo: Path, *args: str) -> int:
                        "actor": actor or _human_actor(repo)}
         store.append(run_id, state.version, "human.review", payload)
     print(f"review recorded: {action}")
+    return 0
+
+
+def cmd_retry(repo: Path, *args: str) -> int:
+    usage = "usage: trac retry [--actor NAME]"
+    actor = None
+    args = list(args)
+    if args:
+        if len(args) == 2 and args[0] == "--actor":
+            actor = args[1]
+        elif len(args) == 0:
+            pass
+        else:
+            return _err(usage)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err("no active run")
+    with writer_lock(home):
+        state = store.state(run_id)
+        if state.awaiting != "escalation":
+            return _err(
+                f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
+            )
+        store.append(
+            run_id, state.version, "human.retry",
+            {"actor": actor or _human_actor(repo)},
+        )
+        state = store.state(run_id)
+    print(f"run {run_id}: {_format_state(state)}")
     return 0
 
 
@@ -469,10 +516,7 @@ def cmd_status(repo: Path) -> int:
     if s.status == "completed":
         print(f"run {row[0]}: completed terminal={s.terminal_state} stage={s.stage}")
     else:
-        print(
-            f"run {row[0]}: stage={s.stage} substate={s.substate} "
-            f"status={s.status} awaiting={s.awaiting or '-'}"
-        )
+        print(f"run {row[0]}: {_format_state(s)}")
     return 0
 
 
@@ -486,10 +530,7 @@ def cmd_replay(repo: Path, run_id: str) -> int:
         payload = json.dumps(ev.payload, ensure_ascii=False, sort_keys=True)
         print(f"{ev.seq}\t{ev.ts}\t{ev.type}\t{payload}")
     s = project(events)
-    print(
-        f"final: stage={s.stage} substate={s.substate} "
-        f"status={s.status} awaiting={s.awaiting or '-'}"
-    )
+    print(f"final: {_format_state(s)}")
     return 0
 
 
@@ -708,7 +749,7 @@ USAGE = (
     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
-    "|status|replay <run-id>|validate --file <path>"
+    "|retry [--actor NAME]|status|replay <run-id>|validate --file <path>"
     "|report --run-id <run-id> --output <dir> [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ...|check <deliverables|trace|reach>"
 )
@@ -722,6 +763,7 @@ _COMMANDS = {
     "review": (cmd_review, None),
     "approve": (cmd_approve, None),
     "return": (cmd_return, None),
+    "retry": (cmd_retry, None),
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),
     "report": (cmd_report, None),

@@ -467,6 +467,18 @@ def _on_human_review(s: State, p: dict, ev: EventEnvelope) -> None:
     _uncommit(s)
 
 
+def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
+    # Fix 4: human.retry clears escalation and lets decide() re-dispatch from
+    # the current substate with a fresh attempt budget. last_failure is
+    # preserved so the re-dispatch prompt still carries failure evidence (FR-11)
+    # for the agent to act on. Failure handling has already reset the
+    # appropriate dispatch flag (doc/review) before escalation; no need to
+    # indiscriminately reset both here.
+    s.awaiting = None
+    s.status = "active"
+    s.current_attempt = 0
+
+
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
     s.review_round += 1
     _reset_review(s)
@@ -658,6 +670,7 @@ _APPLY = {
     "prism.verdict": _on_prism_verdict,
     "human.triage": _on_human_triage,
     "human.review": _on_human_review,
+    "human.retry": _on_human_retry,
     "review.round_started": _on_review_round_started,
     "backlog.recorded": _on_backlog_recorded,
     "run.completed": _on_run_completed,

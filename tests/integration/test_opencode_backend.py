@@ -7,6 +7,7 @@ is exercised without a live model. We never mock tracks' own code.
 """
 import os
 import shutil
+import signal
 import stat
 import subprocess
 
@@ -106,8 +107,8 @@ def target_doc(host_repo):
     return doc
 
 
-def backend(host_repo, timeout=10):
-    return OpencodeBackend(host_repo, "v0.2", timeout=timeout)
+def backend(host_repo):
+    return OpencodeBackend(host_repo, "v0.2")
 
 
 def test_happy_path_edits_target_and_captures_diff(
@@ -146,11 +147,46 @@ def test_provider_unavailable(fake_opencode, target_doc, host_repo, monkeypatch)
     assert out["failure_class"] == "provider_unavailable"
 
 
-def test_timeout_kills_and_classifies(fake_opencode, target_doc, host_repo, monkeypatch):
+def test_operator_cancel_kills_process_group(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """Operator cancellation (Ctrl-C) kills the child process group and
+    re-raises KeyboardInterrupt; no production timeout is enforced.
+
+    Uses a real sleeping subprocess to verify process-group cleanup and reap
+    behavior deterministically - no fake communicate that loops forever."""
+    import contextlib
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "sleep")
-    out = backend(host_repo, timeout=1).act("scribe", "DRAFT", "story.md", target_doc)
-    assert out["status"] == "failed"
-    assert out["failure_class"] == "timeout"
+    b = backend(host_repo)
+    real_popen = subprocess.Popen
+    captured_pid = []
+
+    class _CancelOnFirstCommunicate(real_popen):
+        def communicate(self, input=None, timeout=None):
+            if not getattr(self, "_cancel_done", False):
+                self._cancel_done = True
+                # Assert the real child is alive before simulating Ctrl-C
+                assert self.poll() is None, "child should be alive"
+                captured_pid.append(self.pid)
+                raise KeyboardInterrupt
+            # Second call: real reap of the killed child
+            return super().communicate(input=input, timeout=timeout)
+
+    monkeypatch.setattr(
+        "tracks.effects.opencode.subprocess.Popen", _CancelOnFirstCommunicate)
+    with pytest.raises(KeyboardInterrupt):
+        b._run("scribe", "prompt")
+
+    # Assert the child process group was killed and reaped
+    assert len(captured_pid) == 1
+    pid = captured_pid[0]
+    # The process should be completely gone (killed by killpg + reaped by
+    # the second communicate call)
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.kill(pid, 0)
+        # If os.kill succeeds, the process is still alive - cleanup and fail
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pid, signal.SIGKILL)
+        raise AssertionError(f"child process {pid} still alive after cancel")
 
 
 def test_signal(fake_opencode, target_doc, host_repo, monkeypatch):
@@ -244,7 +280,7 @@ def test_console_input_is_forwarded_only_when_explicitly_configured(host_repo, m
         pid = 123
         returncode = 0
 
-        def communicate(self, input, timeout):
+        def communicate(self, input=None, timeout=None):
             seen.append(input)
             return "{}", ""
 
