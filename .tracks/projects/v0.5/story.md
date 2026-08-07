@@ -63,7 +63,7 @@ sha:
 10. GREEN：从 R tree 恢复工作区（仍为隔离视图）；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
 11. GREEN_GATE：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF 集合的 int 子集 + lint/format/type/static + 合同；**第一轮不跑 e2e**（v0.4 既定粒度）；**反馈脱敏**——单测失败回完整输出，int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文：隔离不能被测试输出侧信道打穿。int 失败归因不明 → DIAGNOSE
 12. GREEN_COMMIT：Runtime 创建正式 commit G（parent=B），trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）
-13. REFACTOR：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定为 A = tracks-quality-guards 四段全跑：ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914）
+13. REFACTOR：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定为 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略与 T-002）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策）
 14. REFACTOR_GATE：重跑 GREEN_GATE 全部检查；动 public interface → upstream
 15. TASK_REVIEW：Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget
 16. PRISM_FINAL：dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
@@ -93,17 +93,26 @@ sha:
 - **manifest 越界**：IF Devon 修改 manifest 白名单之外的文件，THE 系统 SHALL outcome failed、记录路径级证据、不提交
 - **refactor no-change**：WHEN Devon 返回 no-change + 理由且 REFACTOR_GATE 全绿，THE 系统 SHALL 接受该 task 并进入 TASK_REVIEW
 - **自动分流**：WHEN GREEN_GATE int 失败，THE 系统 SHALL 自动归因到 Devon/Shield/M-DESIGN/M-ACC 四路之一，SHALL NOT 转给 Human 裁决
-- **质量门禁**：WHEN refactor 产物被 ruff / flake8(CCR001) / pylint(R0801,C0302,R0915,R0914) 任一判失败，THE 系统 SHALL 重派 Devon
+- **质量门禁（生产/测试分层）**：WHEN refactor 产物为**生产代码**且被 ruff / flake8(CCR001) / pylint(R0801,C0302,R0915,R0914) 中任一判失败，THE 系统 SHALL 重派 Devon；IF refactor 产物为**测试代码**，THE 系统 SHALL 仅以重复 R0801 与文件长度 C0302（或宿主等价守卫）判失败，且 SHALL NOT 套用 CCR001/R0915/R0914
 - **孤岛闭合出口**：WHEN 全部 task 完成，THE 系统 SHALL 仅在 `trac check reach` 闭合且全量 integration+e2e 变绿后退出 M-IMPL
 - **可休眠**：流程在任一 phase 边界被 kill -9 打断后重启，THE 系统 SHALL 从 lineage + 事件回放恢复到精确 phase，不重跑已完成的 task
 - **边界收尾**：WHEN M-IMPL 退出，THE 系统 SHALL 落 stage.exited(M-IMPL) + run.completed(terminal_state="boundary")，SHALL NOT 进入 M-VERIFY
 
+> **Sage:** §1 已明确测试代码只接受 R0801/C0302（重复、文件长度），不得套用 CCR001/R0915/R0914（认知复杂度、函数/方法长度）；但本行为种子及 §3.1 refactor、§4 quality-guards 均写“四段全跑”，未声明生产代码与测试代码的差异化适用范围，可能直接违背 Human 的强制要求。此处不是新的产品选择：请 Scribe 将门禁统一写清为生产代码执行完整四段，测试代码仅执行重复与文件长度（或宿主等价守卫），并让 Archer 生成的配置与 Runtime 门禁继承同一分层政策。
+>> **Scribe:** 已落地分层门禁，正文三处统一为生产/测试差异化（遵循 §1 强制策略）：① 行为种子『质量门禁（生产/测试分层）』——生产代码按 ruff/flake8(CCR001)/pylint(R0801,C0302,R0915,R0914) 四段判失败重派，测试代码仅以重复 R0801 与文件长度 C0302（或宿主等价守卫）判失败且 SHALL NOT 套用 CCR001/R0915/R0914；② §3.1 条目 13 REFACTOR——生产四段、测试仅重复+文件长度，宿主守卫配置与 Runtime 门禁继承同一分层政策；③ §4 工作项 8 skills——分层执行并明示 Archer 生成的宿主守卫配置继承同一政策。Q-03 裁定 A 与 Human『测试代码只收 R0801/C0302』的强制要求不再冲突。
+
+> **Sage:** @Aaron 这里的可验证 lineage 合同自相矛盾：§3.1 GREEN_COMMIT 明定 G 的 parent=B，而本行为种子又要求“commit 拓扑上 R 严格先于 G”。若 G 与 R 都以 B 为父节点，则二者是 sibling，Git ancestry 无法证明 R 先于 G；仅靠 trailer/ref/event 能证明绑定或时序，但不是拓扑先后。两种实质方向会改变正式历史与证据语义：A. G 以 R 为 parent，使 R 成为 G 的祖先并由拓扑证明（推荐，最直接兑现“不是 Agent 自报”）；B. 保持 G parent=B，改为由不可变 R ref + G trailer + Runtime 事件序列联合证明，删除“拓扑上先于”。请裁定 A/B，并由 Scribe 统一 §2、§3.1、行为种子和工作项。
+>> **Scribe:** 收到，此修改类 contract 矛盾需要你的 A/B 裁定后才可统一，未擅自改正文。请裁定 A（G 以 R 为 parent，由 Git ancestry 拓扑证明 R 先于 G，最直接兑现【非 Agent 自报】）/ B（保持 G 以 B 为 parent，联合 R ref 不可变 + G trailer + Runtime 事件序列证明，删除【拓扑上先于】）。你裁定后我据此同步 §2、§3.1 GREEN_COMMIT、行为种子 R 先于 G 与工作项 5 lineage。
+
 > **Aaron:** 不得使用表格。可以使用类似 yaml 的列表。
 >> **Scribe:** 已落地：全文不使用 markdown 表格，行为种子（§3.2）采用 yaml 风格列表，符合你的格式裁定。
 
+> **Sage:** T-001 已裁定该 live run/dispatch 分析是 v0.5 必须完成的前置输入，但当前正文仍只有“疑似尚存类似点、产出要求后据此落地”的开放式发现任务，没有记录分析结果、具体受影响 dispatch、完成判据或可追踪产物。这样下游 spec 仍必须先做一次未知范围的发现工作，无法锁定 v0.5 实际产品增量。建议将前置设为进入 spec 前的硬门禁：完成 M-START→M-TEST 重录后，把具体发现、证据位置、需物化的 assignment 字段/路径/范围及“无遗漏”的判定写回本 story，再评审放行；不得仅以笼统 work item 把未知范围传给实现阶段。
+>> **Scribe:** 已落地：§4 工作项 1 升级为【前置（T-001 裁定 A，硬门禁）】并补充放行判据——重录 M-START→M-TEST 后须将具体发现、证据位置、需物化 assignment 字段/路径/范围及【无遗漏】判定写回本 story 相应章节，再进入 spec/实现阶段；明确不得仅以笼统发现任务把未知范围传给下游。§3.1 dispatch 派发在本版按分析结论物化上下文。
+
 ## 4. 工作项
 
-1. **前置（T-001 裁定 A）——live run 重录与 dispatch 物化分析**：v0.5 启动前有监督地重录一次完整 live run（M-START → M-TEST），日志分析定位 runtime dispatch 中未物化上下文的点（v0.4 `_prompt()` 路径未具体化为典型案例——Runtime 本可传绝对路径却让 Agent 自行搜索，疑似尚存类似点），产出 dispatch 物化要求（路径、文件名、范围物化，减少 Agent 盲目搜索）；分析结论作为 v0.5 输入，据此在 work item 3（executor）落地 dispatch 上下文物化
+1. **前置（T-001 裁定 A，硬门禁）——live run 重录与 dispatch 物化分析**：v0.5 进入 spec 评审前的硬门禁——有监督地重录一次完整 live run（M-START → M-TEST），日志分析定位 runtime dispatch 中未物化上下文的点（v0.4 `_prompt()` 路径未具体化为典型案例——如 Runtime 本已可传绝对路径却让 Agent 自行搜索，疑似尚存其它可优化点），产出 dispatch 物化要求（路径、文件名、范围物化，减少 Agent 盲目搜索）。**放行判据**：重录完成后，须将具体发现、证据位置、需物化的 assignment 字段/路径/范围及"无遗漏"判定写回本 story（§3.1 / 本工作项），再进入 spec/实现阶段——不得仅以笼统的发现任务把未知范围传给下游；分析与发现作为 v0.5 输入，据此在 work item 3（executor）和 §3.1 dispatch 派发落地上下文物化
 2. **machine.py**：M-IMPL StageDef（21 子状态含 NEEDS_ATTENTION 的 decide 路由）；writelock / task identity 进 State
 3. **executor**：`_NEXT_STAGE` 增补 M-TEST→M-IMPL、M-IMPL→M-VERIFY（未注册处 boundary）；新命令 kind——`create_task_graph` / `dispatch_devon`（phase=red|green|refactor）/ `create_r_checkpoint` / `create_green_commit` / `create_refactor_commit` / `dispatch_prism`（plan/red/final/diagnostic 四种 assignment）/ `run_green_gate` / `run_refactor_gate` / `diagnose` / `shield_fix` / `task_completed`；按 work item 1 分析结论物化 dispatch 上下文
 4. **task graph**：`task-plan.md` 解析 + validate（DAG 无环 / scope 白名单不重叠 / required AC 覆盖闭合 / 六项字段非空）；`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份）
@@ -111,7 +120,7 @@ sha:
 6. **manifest + writelock**：per-task scope 白名单；`writelock.granted` / `writelock.released` 事件；越界 → outcome failed（复用 v0.2 baseline + 后置审计，写范围收窄到 manifest）
 6a. **视图隔离**：test-plan.md 层归属字段扩展为"路径 → 层（unit/integration/e2e）"清单（Archer 按宿主语言惯例填写，Python `tests/integration`、Java `src/it`、Go build-tag 目录等同等合法）；BASELINE 冻结屏蔽路径集进测试资产 digest；dispatch Devon 前物化 sparse-checkout 隔离视图（opencode cwd 指向视图）、`bash: deny`（harness 配置中 Devon 权限条目，由 `trac init` 写入，D-19；Devon.md harness 无关、不含 permission 块，D-26）、回灌后终态清理 + 崩溃 reconcile；GREEN_GATE 反馈按层脱敏
 7. **agents**：`tracks/agents/Devon.md`（首次交付——frontmatter version: 0.5，遵循 opencode agent 定义格式；harness 无关、不含 permission 块，D-26，隔离权限见 work item 6a）；Prism 的 plan/red/final/diagnostic 四种判据包接线与 skill 物化（判据包本体新建，参照 v0.4 test-asset-criteria 先例；承 D-29 反自述三件套）
-8. **skills**：`tracks-quality-guards` 接入 refactor 门禁（ruff / flake8 CCR001 / pylint 重复+体量——阈值继承 pyproject.toml，不重复定义）
+8. **skills**：`tracks-quality-guards` 接入 refactor 门禁，分层执行（遵循 §1 强制策略与 T-002）——**生产代码** ruff + flake8 CCR001 + pylint 重复+体量；**测试代码**仅重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914；Archer 生成的宿主守卫配置与 Runtime 门禁继承同一分层政策；阈值继承 pyproject.toml，不重复定义
 9. **events**：`events.py` 追加事件类型——`baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `green.committed` / `refactor.committed|no_change` / `test.committed`（SHIELD_FIX 受控测试 commit）/ `task.completed`；`verdict.failed` 增补 reason（red_invalid / regression / budget / island / scope / test_defect / impl_defect）
 10. **测试（集成，FakeAgent）**：FakeAgent 集成测试——M-TEST 出口 → M-IMPL 全循环（含 2 个串行 task）→ boundary；负例——非法红、manifest 越界、R 被改写（compare-and-set 拒绝）、budget/scope fail 回 GREEN、test_defect vs impl_defect 分流、ISLAND_GATE_2 孤岛阻断出口、**视图中屏蔽路径物理不存在（Devon 读不到）、屏蔽清单缺层归属声明硬错误、int/e2e 失败反馈不含断言原文**；RGR lineage ground truth（git ref 拓扑独立校验脚本，不 import tracks）
 11. **测试（end-to-end，真实 Devon）**：end-to-end 使用真实 Devon（Q-04 裁定，见 §5）跑通 M-IMPL 完整循环——M-TEST 出口 → task graph → 串行 task RGR → 门禁 → ISLAND_GATE_2 → boundary；与集成测试（work item 10，FakeAgent）互为独立通道，验证真实 Agent 通道在 M-IMPL 贯通（按 v0.2 双通道模式）
