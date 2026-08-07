@@ -14,6 +14,7 @@ trac = "tracks.cli.main:main"
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
+    "pytest-xdist==3.8.0",
     "coverage==7.15.2",
     "ruff==0.16.0",
     "pylint==4.0.6",
@@ -41,6 +42,10 @@ tracks = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Parallelism is opt-in and limited to tracks' own unit suite; integration/e2e
+# must stay serial, so -n is intentionally absent from addopts. Run unit tests
+# in parallel with:
+#   .venv/bin/python -m pytest tests/unit -n 4 --dist loadscope -q
 # performance benchmarks (NFR-0020) are opt-in: excluded from the default suite,
 # run on demand with `pytest -m performance`.
 addopts = "-q -m 'not performance'"
