@@ -22,20 +22,20 @@ def _write_agent(canonical, name, body):
 
 
 def test_iq_a_resolves_to_model_when_model_none(tmp_path, monkeypatch):
-    """Layer 2: an A-IQ agent resolves to litellm/qwen-3.8-max when self.model
-    is None (policy: A -> litellm/qwen-3.8-max). Uses the real shipped
+    """Layer 2: an A-IQ agent resolves to ali/qwen3.8-max when self.model
+    is None (policy: A -> ali/qwen3.8-max). Uses the real shipped
     Scribe.md (IQ: A)."""
     backend = OpencodeBackend(tmp_path, "v0.1")
     assert (backend._canonical / "Scribe.md").exists()
     cmd = _capture_cmd(monkeypatch, backend, "Scribe")
     assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == IQ_MODEL["A"] == "litellm/qwen-3.8-max"
+    assert cmd[cmd.index("--model") + 1] == IQ_MODEL["A"] == "ali/qwen3.8-max"
 
 
 def test_explicit_model_overrides_iq_mapping(tmp_path, monkeypatch):
     """Layer 1 wins: explicit self.model (TRAC_AGENT_MODEL via select_backend)
     overrides the agent's IQ mapping even when IQ would resolve a model
-    (Scribe IQ: A -> litellm/qwen-3.8-max is bypassed for the explicit value)."""
+    (Scribe IQ: A -> ali/qwen3.8-max is bypassed for the explicit value)."""
     backend = OpencodeBackend(tmp_path, "v0.1",
                               model="litellm/deepseek-v4-flash")
     cmd = _capture_cmd(monkeypatch, backend, "Scribe")
