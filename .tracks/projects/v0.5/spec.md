@@ -15,6 +15,8 @@ sha:
 - **取代**：flow.md §10 lines 643/655 残留的「B/R/G commit 拓扑」措辞；BS-07 来源中标注的校正锚点由 spec 阶段承接（本文档完成该承接）。
 - **影响 FR**：FR-0070（R 不可变 ref + compare-and-set）、FR-0080（G commit parent=B + trailers）。
 
+> **Lex:** 修订日志与 FR 正文存在若干 FR 交叉引用错位，影响下游 M-DESIGN/M-IMPL 的可追踪性（trac validate 不校验修订日志/正文中的 FR 引用语义，故提请 Sage 修订）：(1) R-1 line 16「影响 FR：FR-0070（R 不可变 ref + compare-and-set）、FR-0080（G commit parent=B + trailers）」——FR-0080 是 RED_GATE 合法 Red 分类，不含 G commit；「G commit parent=B + trailers」在 FR-0120（GREEN_COMMIT），应改为 FR-0120。(2) R-2 line 20/22「dispatch materialization 合同的确定性回归基线（FR-0150）」「影响 FR：FR-0150（dispatch 物化完整性合同）」——FR-0150 是 DIAGNOSE 四路诊断与 SHIELD_FIX，不含 dispatch 物化合同；10 项物化增量在 FR-0190（dispatch 物化完整性合同），应改为 FR-0190。(3) FR-0070 line 198 与 FR-0110 line 230 均以「（FR-0130）」标注 gate worktree 组合运行机制，但 FR-0130（REFACTOR 与质量门禁分层）未定义该三 worktree 方案；该机制在 FR-0070 自身正文定义，应自引 FR-0070 或删除括注。以上均为引用错位、FR 实体内容无误，非阻塞。
+
 ### R-2（2026-08-09）：live run dispatch 物化分析结论承接
 
 - **决定**：S-005 §7 重要风险 1 已完成有监督 M-START→M-TEST 重录（run `01KZ5QCRPMBVC1A6HYEHMKKGVH`）与日志分析，结论为「未知范围发现任务不再传给 spec」。本版本承接其 10 项逐项物化增量作为 dispatch materialization 合同的确定性回归基线（FR-0150）。
@@ -327,6 +329,8 @@ Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整
 8. **rollback evidence**：仅 M-TEST `stub_gap`→M-DESIGN 清 stale failure，`scope_overflow` 等语义回退仍保留 evidence。
 9. **dispatch materialization 完整性**：绝对 target doc/doc-set、role/substate/attempt/review_round、docs/templates/skills、criteria-pack identity、test_tasks、pre_dirty_snapshot、result/checkpoint identity 均由 Runtime 物化；agent 不得自行搜索/猜。
 10. **覆盖范围**：覆盖 Scribe TRIAGE/DRAFT/RESPOND、Sage、Lex、Archer DRAFT、Prism design/test review、Shield WRITE，以及 Runtime validate/checkpoint/publish/collect/run/red/commit/seal。
+
+> **Lex:** FR-0190 物化字段集第 1 项将 S-005 §7 逐项发现的「M-TEST escalation 必须允许 to_stage=M-DESIGN」改为「M-IMPL escalation 必须允许 to_stage=M-DESIGN」。该 live run 分析（run 01KZ5QCRPMBVC1A6HYEHMKKGVH）的发现场景是 M-TEST stub_gap->M-DESIGN 回退（seq 223-224），story §7 据此把 M-TEST escalation 锁为 v0.5 确定性回归基线。本 FR 声称「承自 S-005 §7 ... 10 项逐项增量」但该项的 stage 引用发生了变更。请确认：(a) 这是有意将发现泛化到 v0.5 新增的 M-IMPL escalation（SM-01.12/27 -> M-DESIGN）吗？若是，建议写为「M-TEST/M-IMPL escalation」以同时覆盖既有回归与新场景；(b) M-TEST escalation 的回归基线是否仍由第 10 项覆盖范围（Runtime validate/checkpoint/publish/collect/run/red/commit/seal）隐式锁定，还是需要在此显式保留 M-TEST 引用？非阻塞，但影响 dispatch 物化合同的回归覆盖可断言性。
 
 本 FR 锁定物化合同的不变量与覆盖范围；具体字段 schema 与物化实现属设计层（Archer architecture.md 承接），本 FR 不指定内部实现。
 
