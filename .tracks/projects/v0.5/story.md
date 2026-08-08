@@ -63,6 +63,7 @@ sha:
 >> **Scribe:** 已复核你的要求。正文已把该前置记录为硬门禁（§7 重要风险 1 与 §3.1 步骤 1/2 落点），明确『进入 spec 前必须完成 M-START→M-TEST 有监督重录与日志分析，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及无遗漏判定写回本 story 再评审放行』。但需如实说明：本次 RESPOND 仅重构/修订 story 文档，并未实际执行有监督 live run 重录与日志分析，因此正文无法伪造尚未产出的分析结果与证据位置——该门禁的真实结果必须在重录与分析实际完成后回填，本线程按你的要求保持 open，待实际执行完成写回后请你复核放行。
 >> **Scribe:** 本 RESPOND 轮正文修订已完成：该前置已作为进入 spec 前的硬门禁记录于 §7 重要风险 1 与 §3.1 步骤 1/2——要求完成 M-START→M-TEST 有监督重录与日志分析后，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及『无遗漏』判定写回本 story 再评审放行；dispatch 派发按分析结论物化上下文。如实说明：本次 RESPOND 仅修订 story 文档，并未实际执行 live run 重录与分析，因此正文不能伪造尚未产出的分析结果与证据位置。该门禁真实结果必须在重录与分析实际完成后回填，本线程按你的要求保持 open，待实际执行完成写回后请你复核放行。
 >> **Sage:** @Scribe 本轮复核 Runtime 事实仍未满足门禁：tracks.db 最新可用上游 run 仍是 v0.4 的 01KZ6GJS292V02CJCYK00P296M，止于 M-DESIGN/EXIT；其余 v0.5 记录是当前 M-STORY 流程，并非 M-START→M-TEST 有监督重录。故没有新增日志分析、逐项 dispatch 发现或‘无遗漏’结论可供复核，本线程继续 open。完成该前置后，请把 run/event 证据位置及逐项物化增量写回正文再回复。
+>>> **Scribe:** 确认本轮仍无新的 M-START→M-TEST 有监督重录及日志分析产物；因此正文保持 §7 风险 1 的真实阻塞状态，不写入虚构证据或『无遗漏』结论。待该前置由相应运行任务实际完成后，我将把 run/event 证据位置、逐项 dispatch 发现及物化增量写回 story，再请你复核。
 
 ### 3.2. Devon 逐 task RGR 内圈循环（单 task 完整路径）
 
@@ -111,6 +112,7 @@ sha:
 >> **Scribe:** 已落地：全文不使用 markdown 表格，行为种子（§3.2）采用 yaml 风格列表，符合你的格式裁定。
 >> **Scribe:** restructure 后已确认：全文仍不使用 markdown 表格，行为种子（§4 BS-01…BS-15）保持 yaml 风格列表，符合你的格式裁定。
 >> **Scribe:** 已复核确认：全文不使用 markdown 表格，行为种子（§4 BS-01…BS-15）采用 yaml 风格列表，各节正文亦无表格，符合你的格式裁定。
+>> **Scribe:** 本轮复核无变化：正文仍无 Markdown 表格，§4 行为种子维持 YAML 风格列表。该裁定已完整落地，请由发起人确认后关闭线程。
 
 ### BS-01 task graph 校验
 
@@ -231,21 +233,25 @@ sha:
 >> **Scribe:** 已落地：§3.1 条目 5 声明 v0.5 串行调度、[P] 标记记录但不并发执行；§6 Out-of-Scope 同步『不做 [P] 并行调度』。
 >> **Scribe:** restructure 后已确认：§3.2 入口与 §5 必要约束均保留『v0.5 串行调度、[P] 标记记录但不并发』，§5 Out-of-Scope 同步『不做 [P] 并行调度』。
 >> **Scribe:** 已复核确认：§3.2 入口与 §5 必要约束/Out-of-Scope 均保留『v0.5 串行调度、[P] 标记记录但不并发执行、不做 [P] 并行调度』，符合『不并行，只串行』裁定。
+>> **Scribe:** 本轮复核无变化：§3.2 与 §5 均保持 v0.5 只串行执行，[P] 仅记录、不并发；Out-of-Scope 亦明确排除并行调度。该裁定已完整落地，请由发起人确认后关闭线程。
 
 > **Aaron:** 真相放 task-plan.md， 当前完成了哪一步可能要放 db.
 >> **Scribe:** 已落地：§3.1 条目 2 与 §4 工作项 4 以 task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入。『当前完成了哪一步』放 db 的进展投影归 events 层，正文已按『文档为真相源、进展入 events/db』处理。
 >> **Scribe:** restructure 后已确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』。
 >> **Scribe:** 已复核确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为 task graph 内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』，符合你的裁定。
+>> **Scribe:** 本轮复核无变化：§3.1 步骤 2 与 §5 继续以 task-plan.md 为 task graph 内容真相源，并将当前进展投影到 events/db；task-log.md 仍由 Runtime 在 phase 边界写入。该裁定已完整落地，请由发起人确认后关闭线程。
 
 > **Aaron:** A
 >> **Scribe:** 已落地：Q-03 裁定 A——§3.1 条目 13、§4 工作项 8、行为种子『质量门禁』均写为 refactor 门禁 = tracks-quality-guards 四段全跑（ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914），失败计 attempt。
 >> **Scribe:** restructure 后已确认：Q-03 裁定 A 已在 §3.2 步骤 7、BS-11、§5 必要约束保留（refactor 门禁 = tracks-quality-guards，生产四段 / 测试仅重复+文件长度，失败计 attempt）。
 >> **Scribe:** 已复核确认：Q-03 裁定 A 已落地——§3.2 步骤 7、BS-11、§5 必要约束均为 refactor 门禁 = tracks-quality-guards（生产代码 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914 四段；测试代码仅重复 R0801 + 文件长度 C0302），失败计 attempt。
+>> **Scribe:** 本轮复核无变化：Q-03 的 A 裁定仍在 §3.2、BS-11 与 §5 一致落地，并遵守测试代码仅重复+文件长度守卫的后续强制政策。该裁定已完整落地，请由发起人确认后关闭线程。
 
 > **Aaron:** 集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon。过去的开发充分证明了，end to end 使用真实 Agent 的意义
 >> **Scribe:** 已落地：Q-04 裁定 A——§4 工作项 10（集成，FakeAgent）与工作项 11（end-to-end，真实 Devon）双通道；§6 Out-of-Scope 改为『仅此两条通道，真实通道仅以 end-to-end 形式存在』，已删除待裁定的『不接真实 LLM Agent』表述。
 >> **Scribe:** restructure 后已确认：Q-04 裁定 A 在 §5 必要约束与 Out-of-Scope 保留（集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在）。
 >> **Scribe:** 已复核确认：Q-04 裁定 A 已落地——§5 必要约束与 Out-of-Scope 保留『集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在』。
+>> **Scribe:** 本轮复核无变化：§5 仍明确集成测试使用 FakeAgent、end-to-end 使用真实 Devon，且真实通道仅以 end-to-end 形态存在。该裁定已完整落地，请由发起人确认后关闭线程。
 
 - **非常规要求**：
   - 视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在，sparse-checkout 排除），不是提示词纪律——"禁止"兑现为"不可能"；三道防线：① 物理不存在 ② 文件范围 + shell 封堵——per-agent harness 边界将 Devon 的全部文件访问能力（read/glob 等文件工具 + shell）限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读，`bash: deny` 关闭经共享 `.git` 自行 checkout 的后门（文件范围 + shell 权限由 `trac init` 按当前 harness 生成等价条目写入 harness 配置，D-19 external_directory 同时约束 read 与 bash） ③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；屏蔽路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
