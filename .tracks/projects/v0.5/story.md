@@ -108,7 +108,7 @@ sha:
 
 ## 4. 行为种子
 
-> **Aaron:** 不得使用表格。可以使用类似 yaml 的列表。
+> **Aaron [RESOLVED]:** 不得使用表格。可以使用类似 yaml 的列表。
 >> **Scribe:** 已落地：全文不使用 markdown 表格，行为种子（§3.2）采用 yaml 风格列表，符合你的格式裁定。
 >> **Scribe:** restructure 后已确认：全文仍不使用 markdown 表格，行为种子（§4 BS-01…BS-15）保持 yaml 风格列表，符合你的格式裁定。
 >> **Scribe:** 已复核确认：全文不使用 markdown 表格，行为种子（§4 BS-01…BS-15）采用 yaml 风格列表，各节正文亦无表格，符合你的格式裁定。
@@ -229,25 +229,25 @@ sha:
   - 测试代码守卫分层（§1 Human 强制策略）：生产代码 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914 完整四段；测试代码仅重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914；宿主守卫配置与 Runtime 门禁继承同一分层政策（Q-03 裁定 A）
   - 测试通道（Q-04 裁定）：集成测试用 FakeAgent（确定性回归）、end-to-end 用真实 Devon（验证真实 Agent 通道贯通）——仅此两条通道，真实通道仅以 end-to-end 形式存在
 
-> **Aaron:** 不并行，只串行
+> **Aaron [RESOLVED]:** 不并行，只串行
 >> **Scribe:** 已落地：§3.1 条目 5 声明 v0.5 串行调度、[P] 标记记录但不并发执行；§6 Out-of-Scope 同步『不做 [P] 并行调度』。
 >> **Scribe:** restructure 后已确认：§3.2 入口与 §5 必要约束均保留『v0.5 串行调度、[P] 标记记录但不并发』，§5 Out-of-Scope 同步『不做 [P] 并行调度』。
 >> **Scribe:** 已复核确认：§3.2 入口与 §5 必要约束/Out-of-Scope 均保留『v0.5 串行调度、[P] 标记记录但不并发执行、不做 [P] 并行调度』，符合『不并行，只串行』裁定。
 >> **Scribe:** 本轮复核无变化：§3.2 与 §5 均保持 v0.5 只串行执行，[P] 仅记录、不并发；Out-of-Scope 亦明确排除并行调度。该裁定已完整落地，请由发起人确认后关闭线程。
 
-> **Aaron:** 真相放 task-plan.md， 当前完成了哪一步可能要放 db.
+> **Aaron [RESOLVED]:** 真相放 task-plan.md， 当前完成了哪一步可能要放 db.
 >> **Scribe:** 已落地：§3.1 条目 2 与 §4 工作项 4 以 task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入。『当前完成了哪一步』放 db 的进展投影归 events 层，正文已按『文档为真相源、进展入 events/db』处理。
 >> **Scribe:** restructure 后已确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』。
 >> **Scribe:** 已复核确认：§3.1 步骤 2 与 §5 必要约束保留『task-plan.md 为 task graph 内容真相源、Runtime 解析；task-log.md 由 Runtime 在 phase 边界写入；当前完成了哪一步的进展投影入 events/db』，符合你的裁定。
 >> **Scribe:** 本轮复核无变化：§3.1 步骤 2 与 §5 继续以 task-plan.md 为 task graph 内容真相源，并将当前进展投影到 events/db；task-log.md 仍由 Runtime 在 phase 边界写入。该裁定已完整落地，请由发起人确认后关闭线程。
 
-> **Aaron:** A
+> **Aaron [RESOLVED]:** A
 >> **Scribe:** 已落地：Q-03 裁定 A——§3.1 条目 13、§4 工作项 8、行为种子『质量门禁』均写为 refactor 门禁 = tracks-quality-guards 四段全跑（ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914），失败计 attempt。
 >> **Scribe:** restructure 后已确认：Q-03 裁定 A 已在 §3.2 步骤 7、BS-11、§5 必要约束保留（refactor 门禁 = tracks-quality-guards，生产四段 / 测试仅重复+文件长度，失败计 attempt）。
 >> **Scribe:** 已复核确认：Q-03 裁定 A 已落地——§3.2 步骤 7、BS-11、§5 必要约束均为 refactor 门禁 = tracks-quality-guards（生产代码 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914 四段；测试代码仅重复 R0801 + 文件长度 C0302），失败计 attempt。
 >> **Scribe:** 本轮复核无变化：Q-03 的 A 裁定仍在 §3.2、BS-11 与 §5 一致落地，并遵守测试代码仅重复+文件长度守卫的后续强制政策。该裁定已完整落地，请由发起人确认后关闭线程。
 
-> **Aaron:** 集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon。过去的开发充分证明了，end to end 使用真实 Agent 的意义
+> **Aaron [RESOLVED]:** 集成测试使用 FakeAgent; end to end 仍然要使用真实 Devon。过去的开发充分证明了，end to end 使用真实 Agent 的意义
 >> **Scribe:** 已落地：Q-04 裁定 A——§4 工作项 10（集成，FakeAgent）与工作项 11（end-to-end，真实 Devon）双通道；§6 Out-of-Scope 改为『仅此两条通道，真实通道仅以 end-to-end 形式存在』，已删除待裁定的『不接真实 LLM Agent』表述。
 >> **Scribe:** restructure 后已确认：Q-04 裁定 A 在 §5 必要约束与 Out-of-Scope 保留（集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在）。
 >> **Scribe:** 已复核确认：Q-04 裁定 A 已落地——§5 必要约束与 Out-of-Scope 保留『集成测试用 FakeAgent、end-to-end 用真实 Devon，仅此两条通道，真实通道仅以 end-to-end 形式存在』。

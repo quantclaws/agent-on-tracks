@@ -6,5 +6,6 @@
       "/tmp/tracks/**": "allow",
       "/private/tmp/tracks/**": "allow"
     }
-  }
+  },
+  "plugin": ["./.opencode/local-plugins/opencode-prompt-tracker.js", "opencode-logger"]
 }
