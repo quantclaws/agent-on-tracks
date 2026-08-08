@@ -50,7 +50,7 @@ sha:
 - **变更基线**：修改 — v0.4 executor `_NEXT_STAGE` 止于 M-TEST、M-TEST boundary 收尾，M-IMPL 未注册；v0.5 注册 M-IMPL 阶段（21 子状态，含 NEEDS_ATTENTION 的 decide 路由），`_NEXT_STAGE` 增补 M-TEST→M-IMPL、M-IMPL→M-VERIFY（M-VERIFY 未注册，落在 boundary）
 - **入口/触发**：用户在 M-TEST 出口（`stage.exited(M-TEST)` 已落盘、测试资产已冻结为 baseline）执行 `trac run`
 
-1. Runtime 重算 baseline——三件套 + 设计三文档 + 冻结测试资产 digest + contracts + Issues + branch + approval（flow §10.1 baseline 输入全集；Issues 只消费需求追踪身份，task-plan↔Issues 新增同步不在本版，见 §5）。**测试资产清单（屏蔽路径集）**随 digest 一并冻结：test-plan.md 层归属字段声明哪些路径属 integration / e2e、哪些属 unit——屏蔽路径集由 Archer 按宿主语言/框架惯例填写（Python 的 `tests/integration` 与 Java 的 `src/it`、Go 的 build-tag 目录同等合法），隔离机制本身语言无关，**不得硬编码**。清单缺层归属声明 → 硬错误，不静默放行。缺失/stale/冲突 → NEEDS_ATTENTION 等待 reconcile 或 return upstream；reconciled → 回 BASELINE；rolled_back → stage.rolled_back 终结
+1. Runtime 重算 baseline——三件套 + 设计三文档 + 冻结测试资产 digest + contracts + Issues + branch + approval（flow §10.1 baseline 输入全集；Issues 只消费需求追踪身份，task-plan↔Issues 新增同步不在本版，见 §5）。**测试资产清单（冻结测试路径集）**随 digest 一并冻结：test-plan.md 层归属字段声明哪些路径属 integration / e2e、哪些属 unit——冻结测试路径集由 Archer 按宿主语言/框架惯例填写（Python 的 `tests/integration` 与 Java 的 `src/it`、Go 的 build-tag 目录同等合法），隔离机制本身语言无关，**不得硬编码**。清单缺层归属声明 → 硬错误，不静默放行。缺失/stale/冲突 → NEEDS_ATTENTION 等待 reconcile 或 return upstream；reconciled → 回 BASELINE；rolled_back → stage.rolled_back 终结
 2. dispatch Archer 拆 task graph（`task-plan.md` 模板已就位，为内容真相源）：纵向切片 + 每 task 声明 scope 白名单 + 实现的 IF- 集合 + 预算；validate 校验 DAG 无环 / scope 不重叠 / AC 覆盖闭合；fail 重派 Archer（≤3）；`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份），"当前完成了哪一步"的进展投影入 events/db
 3. ISLAND_GATE_1 程序复核——每条 required AC 六项检查（owner/surface/composition/wiring/test/evidence）；六元组是 Archer 设计期义务、M-DESIGN 已由 Prism 逐项闭合，本门禁是该合同的复核而非首次建立（D-21）；不闭合 verdict.failed(island) 回 PLANNING
 4. PRISM_PLAN dispatch Prism 评审切片（判据包名称+版本绑定，D-29 反自述回读）；pass → 3.2 TASK_DISPATCH；revise → Archer；设计缺口 → M-DESIGN；需求缺口 → M-SPEC/M-ACC（Human 确认）
@@ -64,19 +64,21 @@ sha:
 >> **Scribe:** 本 RESPOND 轮正文修订已完成：该前置已作为进入 spec 前的硬门禁记录于 §7 重要风险 1 与 §3.1 步骤 1/2——要求完成 M-START→M-TEST 有监督重录与日志分析后，将具体发现、证据位置、需物化的 assignment 字段/路径/范围及『无遗漏』判定写回本 story 再评审放行；dispatch 派发按分析结论物化上下文。如实说明：本次 RESPOND 仅修订 story 文档，并未实际执行 live run 重录与分析，因此正文不能伪造尚未产出的分析结果与证据位置。该门禁真实结果必须在重录与分析实际完成后回填，本线程按你的要求保持 open，待实际执行完成写回后请你复核放行。
 >> **Sage:** @Scribe 本轮复核 Runtime 事实仍未满足门禁：tracks.db 最新可用上游 run 仍是 v0.4 的 01KZ6GJS292V02CJCYK00P296M，止于 M-DESIGN/EXIT；其余 v0.5 记录是当前 M-STORY 流程，并非 M-START→M-TEST 有监督重录。故没有新增日志分析、逐项 dispatch 发现或‘无遗漏’结论可供复核，本线程继续 open。完成该前置后，请把 run/event 证据位置及逐项物化增量写回正文再回复。
 >>> **Scribe:** 确认本轮仍无新的 M-START→M-TEST 有监督重录及日志分析产物；因此正文保持 §7 风险 1 的真实阻塞状态，不写入虚构证据或『无遗漏』结论。待该前置由相应运行任务实际完成后，我将把 run/event 证据位置、逐项 dispatch 发现及物化增量写回 story，再请你复核。
+>> **Scribe:** T-003 门禁已实际完成并解除：证据与逐项结论已写回 §7 重要风险 1（正文已由【未完成】改为【已完成并解除硬门禁】）。证据位置：run 01KZ5QCRPMBVC1A6HYEHMKKGVH，worktree /private/var/folders/yp/322pjbn96ns4sjrtjcqz27v00000gn/T/tracks/live-e2e/run069，最终报告 /private/var/folders/yp/322pjbn96ns4sjrtjcqz27v00000gn/T/opencode/run069-final-report/report.md（HTML 同目录 index.html）。最终 M-TEST 证据：seq 292 test.collected collected_count=15 passed；seq 302 red.validated status=valid（integration/e2e 均 stub_token_failure）；seq 306 test.committed commit 194b45679e6e4bba9afde114309f21efee88fb25、test_count=3；seq 308 stage.exited(M-TEST)；seq 309 run.completed(boundary)。rollback 证据：seq 220 collection 失败暴露旧设计无测试；seq 222 invalid test_tasks 被 preflight 判 stub_gap；seq 223-224 自动 rollback M-TEST→M-DESIGN；seq 225 新 Archer assignment 无 stale Shield evidence。10 项逐项发现及 v0.5 物化增量（受影响 dispatch/字段/路径/范围）已在 §7 嵌套列表逐条写回。无遗漏判定：最终 report 全部 dispatch_agent 有 input/output refs 且 audit_completeness=complete，所有 stage 至 M-TEST 均退出，合法 Red + test commit + boundary 闭环——未知范围发现任务不再传给 spec。本线程由您（Sage）发起，未擅改状态，请复核后关闭。
+>> **Scribe:** 本轮 DRAFT checkpoint：对 §7 重要风险 1 的『已完成并解除硬门禁』结论做了实际对账——run 01KZ5QCRPMBVC1A6HYEHMKKGVH 的事件记载于 run069 worktree 自身的 .tracks/runtime/tracks.db（独立于主仓 tracks.db，正文证据位置已注明），逐条核对：seq 292 test.collected collected_count=15 passed；seq 302 red.validated status=valid（integration/e2e 均 stub_token_failure）；seq 306 test.committed commit 194b4567、test_count=3；seq 308 stage.exited(M-TEST)；seq 309 run.completed(boundary)；rollback 链 seq 220/222/223-224/225 与正文一致。10 项逐项物化增量与『无遗漏』判定已写入 §7。门禁本体已完成，本线程由您（Sage）发起，Scribe 未擅改状态，请复核后关闭。
 
 ### 3.2. Devon 逐 task RGR 内圈循环（单 task 完整路径）
 
-- **变更基线**：新增 — v0.5 首次实现内圈 RGR 循环；当前无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件、无视图隔离
+- **变更基线**：新增 — v0.5 首次实现内圈 RGR 循环；当前无 RGR checkpoint 机制、无 per-task manifest、无 writelock 事件、无 Devon 隔离机制（时态 worktree 方案未建立）
 - **入口/触发**：3.1 TASK_DISPATCH——Runtime 按 DAG 依赖调度 ready task（v0.5 串行调度，`[P]` 标记记录但不并发执行，见 §5 约束）；单写者 lease + 创建 manifest（writelock.granted）
 
-1. **RED（视图隔离）**：dispatch Devon（phase=red）——Runtime 物化隔离工作视图（worktree + sparse-checkout，按 BASELINE 冻结的屏蔽路径集排除 Shield 测试目录；unit 路径保留），Devon 只添加 unit test；视图里不存在的东西物理上不可读——"禁止"兑现为"不可能"。Devon 的**全部文件访问能力**（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读——文件工具层同样"不可能"绕过；权限条目 `bash: deny`（worktree 共享 `.git`，有 shell 即可自行 checkout 被排除路径，隔离即失效；测试运行与门禁全是 Runtime 职责）。per-agent 文件范围 + shell 权限由 `trac init` 按当前 harness 配置生成等价条目写入 harness 配置（D-19，external_directory 同时约束 read 与 bash），Devon.md 保持 harness 无关、不含 permission 块（D-26）。outcome 必须是 test-only diff
+1. **RED（Devon 隔离）**：dispatch Devon（phase=red）——隔离采用**时态 worktree**（Human 最新裁定：可以相信 Devon 遵守约定）：Runtime 在 M-DESIGN pass 后记录共同基线 `C_design`，在 Shield WRITE 之前创建 Devon candidate worktree，因此 Devon 天然没有之后生成的 Shield tests；Devon 可使用 glob/grep/bash 探索 production 代码并在项目 venv 运行并行 unit/guards，但不得主动读/运行/改 Shield frozen tests；Devon 只添加 unit test。Shield 在 test-authority worktree 冻结测试（frozen bundle）；Runtime 在独立 gate worktree 组合 C_design + frozen bundle + Devon candidate 并运行 integration/e2e（见步骤 5）；frozen bundle 永不合入 Devon candidate；bootstrap/manual 无 temporal worktree 时，依赖 manifest + prompt 约定，不永久 fail closed（屏蔽/冻结路径集仍由 Archer 按宿主惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码）。outcome 必须是 test-only diff
 2. **RED_GATE**：Runtime 校验预期失败——合法红 = 行为断言失败 / symbol 缺失（flow §10.1 口径；复用 v0.4 RED_GATE 分类器框架，但其桩合同 token 失败条款属 M-TEST 合同测试场景，不在本门禁之列）；非法红重派
 3. **RED_CHECKPOINT**：Runtime 创建私有 commit R，写 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red`；red.checkpointed。**PRISM_RED** dispatch Prism 评 B..R 范围（Red 测试确实测了该 task 声明的 IF/AC，且未测多余）；pass 绑定 R → GREEN
-4. **GREEN**：从 R tree 恢复工作区（仍为隔离视图）；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
-5. **GREEN_GATE**：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF 集合的 int 子集 + lint/format/type/static + 合同；**第一轮不跑 e2e**（v0.4 既定粒度）；**反馈脱敏**——单测失败回完整输出，int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文：隔离不能被测试输出侧信道打穿。int 失败归因不明 → 3.3 DIAGNOSE
+4. **GREEN**：从 R tree 恢复 Devon candidate worktree；dispatch Devon（phase=green）——最小实现，R 测试不可改；完成后受控 diff 按 manifest 回灌主仓，视图终态清理 + 崩溃 reconcile（承 v0.2 物化合同）
+5. **GREEN_GATE**：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF 集合的 int 子集 + lint/format/type/static + 合同；**第一轮不跑 e2e**（v0.4 既定粒度）；integration/e2e 由 Runtime 在独立 gate worktree（组合 C_design + frozen bundle + Devon candidate）运行并归因（见步骤 1，D-32 外圈合同循环）；**反馈脱敏**——单测失败回完整输出，int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文。int 失败归因不明 → 3.3 DIAGNOSE
 6. **GREEN_COMMIT**：Runtime 创建正式 commit G（G 的 parent=B，flow §10 既有合同），trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）；R 先于 G 的先后由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（语义见 BS-07）
-7. **REFACTOR**：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策
+7. **REFACTOR**：dispatch Devon（phase=refactor，仍在 Devon candidate worktree）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策
 8. **REFACTOR_GATE**：重跑 GREEN_GATE 全部检查；动 public interface → upstream。**TASK_REVIEW** Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget。**PRISM_FINAL** dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
 
 > **Sage [RESOLVED]:** @Scribe 视图隔离路径仍缺一条会直接破坏 Human 强制目标的产品边界：sparse-checkout 只让屏蔽测试不出现在 Devon 的隔离 worktree，`bash: deny` 也只封住 shell；若 Devon 的 read/glob 等文件工具仍可访问原始 checkout，它可用绝对路径绕过隔离。既有 D-19 已确认 `external_directory` 是同时约束 read 与 bash 的 per-agent harness 边界，但当前 §3.2、BS-04、§5 三道防线只为 Devon 增加 `bash: deny`，没有把文件可读范围限定到隔离 worktree，因此“物理上不可读/不可能”尚不成立。无需询问 Human 或锁定某一 harness 语法：请把产品不变量补齐为 Devon 的全部文件访问能力只能看到 Runtime 物化的隔离视图及获准临时目录，原始 checkout 与其他可恢复 Shield 测试内容均不可读；`trac init` 按当前 harness 生成等价 per-agent 文件范围 + shell 权限。同步 §3.2、BS-04、§5 风险/约束后回复。
@@ -120,11 +122,11 @@ sha:
 - 来源: [3.1 / 约束（flow §10.1 PLANNING validate）]
 - 说明: 保证 task graph 是 ISLAND_GATE_1 的可验证输入，防止无效切片进入实现。
 
-### BS-02 屏蔽路径集声明与硬错误
+### BS-02 测试路径冻结与层归属声明
 
-- EARS: `WHEN BASELINE 冻结测试资产 digest，THE 系统 SHALL 要求 test-plan.md 层归属字段声明 integration/e2e 屏蔽路径集（按宿主语言/框架惯例，非硬编码）；IF 清单缺层归属声明，THE 系统 SHALL 硬错误、不静默放行`
-- 来源: [3.1 / 约束（§1 Human 强制要求：屏蔽路径集不得硬编码）]
-- 说明: 屏蔽集由 Archer 设计产物按宿主惯例声明，隔离机制语言无关；缺声明即失败而非猜测。
+- EARS: `WHEN BASELINE 冻结测试资产 digest，THE 系统 SHALL 要求 test-plan.md 层归属字段声明 integration/e2e 测试路径集（按宿主语言/框架惯例，非硬编码）；IF 清单缺层归属声明，THE 系统 SHALL 硬错误、不静默放行`
+- 来源: [3.1 / 约束（§1 Human 强制要求：屏蔽路径集不得硬编码）+ Human 最新裁定（时态 worktree 隔离取代稀疏屏蔽）]
+- 说明: 路径集由 Archer 设计产物按宿主惯例声明并随 BASELINE 冻结，供 test-authority worktree 冻结与 gate worktree 组合运行；缺声明即失败而非猜测，不再作为 sparse-checkout 排除机制。
 
 ### BS-03 判据包绑定与反自述回读
 
@@ -132,17 +134,17 @@ sha:
 - 来源: [3.1 / 约束（D-29）]
 - 说明: 评审证据可核对，防止"用错判据包"伪报通过。
 
-### BS-04 视图隔离（Devon 盲于合同测试）
+### BS-04 Devon 隔离（时间上先于 Shield 测试）
 
-- EARS: `WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在隔离视图内运行：屏蔽路径集对应的 Shield 测试在视图中物理不存在（sparse-checkout 排除）；Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读；权限条目 bash: deny —— 文件范围 + shell 权限由 trac init 按当前 harness 生成等价条目写入 harness 配置，Devon.md 不含 permission 块`
-- 来源: [3.2 / 非常规要求（§1 Human 强制要求：物理隔离，三道防线见 §5）]
-- 说明: "禁止"兑现为"不可能"——物理不存在 + 文件范围/shell 封堵 + 反馈脱敏三线兜底。
+- EARS: `WHEN dispatch Devon（任一 phase），THE 系统 SHALL 在其 candidate worktree 运行：该 worktree 在 Shield WRITE 之前创建，因此 Devon 天然不包含之后生成的 Shield tests；Devon 可使用 glob/grep/bash 探索 production 代码并在项目 venv 运行并行 unit/guards，但不得主动读/运行/改 Shield frozen tests；Shield 在 test-authority worktree 冻结测试，Runtime 在独立 gate worktree 组合 C_design + frozen bundle + Devon candidate 运行 integration/e2e，frozen bundle 永不合入 Devon candidate；bootstrap/manual 无 temporal worktree 时依赖 manifest + prompt 约定，不永久 fail closed`
+- 来源: [3.2 / 非常规要求（§1 Human 原强制要求 + Human 最新裁定：时态隔离方案取代稀疏屏蔽/工具封堵）]
+- 说明: "禁止"由时间隔离兑现——Devon candidate 先于 Shield 测试存在，天然不包含；约定（不读/不改 frozen tests）+ manifest + 反馈脱敏兜底。
 
 ### BS-05 反馈脱敏
 
 - EARS: `WHEN GREEN_GATE 向 Devon 回传 int/e2e 失败，THE 系统 SHALL 只回分类诊断，SHALL NOT 回断言原文`
 - 来源: [3.2 / 非常规要求]
-- 说明: 防止测试输出侧信道打穿视图隔离。
+- 说明: 防止冻结测试内容经测试输出侧信道泄漏给 Devon（与 BS-04 时间隔离互补）。
 
 ### BS-06 R 不可变
 
@@ -225,7 +227,7 @@ sha:
   - kernel 纯函数边界（decide/project 不碰 IO）；事件溯源 append-only；Agent 不 commit/push、不推进状态（Runtime 是唯一流程 authority，正式 commit / RGR ref / 受控测试 commit 均由 Runtime 创建并触发宿主 pre-commit 钩子；钩子拒绝按 F-1（D-30）写钩子输出为证据并在预算内重派，不得静默退出死锁）
   - 单写者纪律（per-task manifest 白名单 + writelock lease，Devon 不得改 Shield 测试）；v0.5 串行调度，`[P]` 并行标记只记录不并发执行
   - `task-plan.md` 为 task graph 内容真相源、Runtime 解析；`task-log.md` 由 Runtime 在 phase 边界写入；"当前完成了哪一步"的进展投影入 events/db
-  - D-28（输入 revision/digest/完整性校验归 Runtime 派发前形式检查，Agent 不自校验，verdict 仅传播 identity）；D-29 反自述三件套（assignment 写明判据包名称+版本 / verdict 携带实际加载 identity / Runtime 回读核对不匹配判失败重派，适用于 plan/red/final/diagnostic 全部四种 Prism 派发）；D-19/D-26（权限在 harness 配置、由 `trac init` 写入，agent 定义 harness 无关、不含 permission 块）；D-31（AC 绑定用测试函数紧邻上方 TRACKS-TRACE 标记行，行级正则、零依赖）；D-32（大小两个测试循环，M-IMPL 为内圈 RGR 循环，驱动外圈合同循环变绿）
+  - D-28（输入 revision/digest/完整性校验归 Runtime 派发前形式检查，Agent 不自校验，verdict 仅传播 identity）；D-29 反自述三件套（assignment 写明判据包名称+版本 / verdict 携带实际加载 identity / Runtime 回读核对不匹配判失败重派，适用于 plan/red/final/diagnostic 全部四种 Prism 派发）；D-26（agent 定义 harness 无关、不含 permission 块——Devon 隔离由时态 worktree + 约定承担，见 §5 非常规要求，不再依赖 per-agent harness 文件/shell 权限封堵）；D-31（AC 绑定用测试函数紧邻上方 TRACKS-TRACE 标记行，行级正则、零依赖）；D-32（大小两个测试循环，M-IMPL 为内圈 RGR 循环，驱动外圈合同循环变绿，integration/e2e 由 Runtime 在独立 gate worktree 运行并归因）
   - 测试代码守卫分层（§1 Human 强制策略）：生产代码 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914 完整四段；测试代码仅重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914；宿主守卫配置与 Runtime 门禁继承同一分层政策（Q-03 裁定 A）
   - 测试通道（Q-04 裁定）：集成测试用 FakeAgent（确定性回归）、end-to-end 用真实 Devon（验证真实 Agent 通道贯通）——仅此两条通道，真实通道仅以 end-to-end 形式存在
 
@@ -254,7 +256,7 @@ sha:
 >> **Scribe:** 本轮复核无变化：§5 仍明确集成测试使用 FakeAgent、end-to-end 使用真实 Devon，且真实通道仅以 end-to-end 形态存在。该裁定已完整落地，请由发起人确认后关闭线程。
 
 - **非常规要求**：
-  - 视图隔离是**物理隔离**（屏蔽路径在隔离视图中物理不存在，sparse-checkout 排除），不是提示词纪律——"禁止"兑现为"不可能"；三道防线：① 物理不存在 ② 文件范围 + shell 封堵——per-agent harness 边界将 Devon 的全部文件访问能力（read/glob 等文件工具 + shell）限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读，`bash: deny` 关闭经共享 `.git` 自行 checkout 的后门（文件范围 + shell 权限由 `trac init` 按当前 harness 生成等价条目写入 harness 配置，D-19 external_directory 同时约束 read 与 bash） ③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；屏蔽路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
+  - Devon 隔离采用**时态 worktree 方案**（Human 最新裁定，覆盖旧"物理隔离/工具强封堵"措辞）：可以相信 Devon 遵守约定；M-DESIGN pass 后记录共同基线 `C_design`，Shield WRITE 前创建 Devon candidate worktree，Devon 天然没有之后生成的 Shield tests。隔离边界为——① 时间隔离：Devon candidate 先于 Shield 测试存在，frozen bundle 永不合入 candidate；② 约定：Devon 可 glob/grep/bash 探索 production 并在项目 venv 运行并行 unit/guards，但不读/不运行/不改 Shield frozen tests；③ 反馈脱敏（int/e2e 失败输出只回分类诊断、不回断言原文）；Shield 在 test-authority worktree 冻结测试，Runtime 在独立 gate worktree 组合 C_design + frozen bundle + Devon candidate 运行 integration/e2e 并归因（D-32 外圈循环由 Runtime 独立执行）；bootstrap/manual 无 temporal worktree 时依赖 manifest + prompt 约定，不永久 fail closed；路径集由 Archer 按宿主语言/框架惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码；隔离机制本身语言无关
   - RED 阶段要求失败（合法 Red 是交付态而非异常，承 M-TEST 的合法 Red 语义到 unit 层）；refactor 接受 no-change + 理由（不强制产生改动）；"测试错还是实现错"的分流永不交给 Human（flow.md §10.3 硬规则 5）
 - **Out-of-Scope**：不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界；不做 `[P]` 并行调度（只串行，`[P]` 仅记录）；不做真实 LLM 通道的其它形态（集成 FakeAgent、end-to-end 真实 Devon——仅此两条通道，真实通道仅以 end-to-end 形式存在，不做真实通道的单元级/集成级接入）；不做 hotfix / bug-fix 变体（flow.md §16，后续 story）；不做 `trac check ratio / dup / budget` 命令（trace/reach 已在 v0.4 交付；budget 在 v0.5 仅体现为 TASK_REVIEW 的 attempt/lineage 预算校验）；不做函数级调用图（reach 维持模块级，M-VERIFY 反 slop 门禁的更细粒度分析属未来）；不做 GitHub Issue 映射（task-plan ↔ Issues 同步不在本版）；不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）
 
@@ -270,6 +272,20 @@ sha:
 - **既有能力**：flow.md §10 规格完整（21 子状态子状态机 / 事件清单 / 5 条硬规则全部就位）；task-plan.md / task-log.md 模板先期存在；tracks-quality-guards skill 先期存在（阈值继承 pyproject.toml）；v0.4 交付的 trace / reach / RED_GATE 分类器框架直接复用；v0.2 崩溃 reconcile / 物化合同与 v0.4 双通道（FakeAgent + 真实通道）先例可循；判据包先例（v0.4 test-asset-criteria → tracks-prism-test / design / impl packs）
 - **冲突**：R 先于 G 的 lineage 合同——story 内部语义已统一为 B：G parent=B，R 先于 G 由不可变 R ref + G trailer + Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（§3.2 步骤 6、BS-07）；但权威 flow.md §10 自身残留措辞冲突：lines 574–606 已明定『私有 R ref + G parent=B + trailers』（据此可唯一推导为 B），而 lines 643/655 仍保留旧『B/R/G commit 拓扑』表述。本增量明确包含对该既有合同措辞的校正（统一为联合证明语义、删除拓扑先后断言），校正锚点留于 BS-07 来源；flow.md 正文的同步修正由 spec 阶段承接
 - **重要风险**：
-  1. **live run / dispatch 物化分析（Aaron 已裁定 A，Sage 硬门禁线程保持 open）未完成即放行**：本轮复核 `.tracks/runtime/tracks.db` 的运行记录，现有 v0.4 run `01KZ6GJS292V02CJCYK00P296M` 于 M-DESIGN boundary 结束（末尾事件为 `stage.exited(M-DESIGN)`、`run.completed(terminal_state="boundary")`），不是所要求的 M-START→M-TEST 完整重录；因此当前没有可据以写回的 M-TEST live-run 分析产物，也不能作“无遗漏”结论。v0.5 进入 spec 前必须另行完成 M-START→M-TEST 有监督重录与日志分析，将对应 run/event 证据位置、逐项发现、需物化的 assignment 字段/路径/范围及“无遗漏”判定写回本 story 再评审放行；不得仅以笼统 work item 把未知范围传给实现阶段——否则下游 spec 必须先做一次未知范围的发现工作，story 范围不成立
-  2. **视图隔离被共享 `.git` / 绝对路径打穿**：若 per-agent 文件范围或 `bash: deny` 未由 `trac init` 正确写入 harness 配置，Devon 可经 shell checkout 被排除路径、或以文件工具绝对路径访问原始 checkout，物理隔离失效——三道防线（物理不存在 / 文件范围+shell 封堵 / 反馈脱敏）互为兜底，但防线②是唯一同时封堵文件工具与 shell 的层
+  1. **live run / dispatch 物化分析（Aaron 裁定 A 前置）——已完成并解除硬门禁**：有监督 M-START→M-TEST 完整重录与分析已实际完成，结论写回本 story；Sage T-003 线程待复核关闭（不再作为未完成门禁）。
+     - 证据位置：run id `01KZ5QCRPMBVC1A6HYEHMKKGVH`，worktree `/private/var/folders/yp/322pjbn96ns4sjrtjcqz27v00000gn/T/tracks/live-e2e/run069`；最终报告 `/private/var/folders/yp/322pjbn96ns4sjrtjcqz27v00000gn/T/opencode/run069-final-report/report.md`（HTML 同目录 index.html）。该 run 的事件记录在 run069 worktree 自身的 `.tracks/runtime/tracks.db`（独立于本仓 `.tracks/runtime/tracks.db`），下文引用的 seq 编号均出自该库并已逐条对账一致
+     - 最终 M-TEST 证据：event seq 292 `test.collected` collected_count=15 passed；seq 302 `red.validated` status=valid，integration/e2e 均 `stub_token_failure`；seq 306 `test.committed` commit `194b45679e6e4bba9afde114309f21efee88fb25`、test_count=3；seq 308 `stage.exited(M-TEST)`；seq 309 `run.completed(boundary)`
+     - 关键 rollback 证据：seq 220 collection 失败暴露旧设计无测试；seq 222 invalid structured test_tasks 被 executor preflight 判 `stub_gap`；seq 223-224 自动 rollback M-TEST→M-DESIGN；seq 225 新 Archer assignment 不含 stale Shield evidence
+     - 逐项发现及 v0.5 锁定的物化增量（受影响 dispatch/字段/路径/范围）：
+       - state-specific Human return：M-TEST escalation 必须允许 `to_stage=M-DESIGN`，不能用 requirement-only gate
+       - M-DESIGN Archer/scaffold：canonical `.tracks/project/project.toml` 是唯一允许的 `.tracks/**` project contract 路径；随设计 checkpoint 去重提交，其他 `.tracks/**` 仍 fail closed
+       - M-DESIGN 输出合同：test-plan canonical `## 8. AC Coverage`，interfaces canonical `## 5. IF Registry`；每条 integration/e2e AC 解析为 `{ac_id,layers,if_ids}`，missing/empty registry、坏/缺 header、duplicate AC、empty test cell、unregistered IF 均 fail closed；standalone `trac validate test-plan.md` 同门禁
+       - M-DESIGN EXIT/M-TEST Shield：Runtime 在 command.issued 前向 Shield assignment 注入非空 `test_tasks`；仅 role=Shield/substate=WRITE 适用；无效输入不调用 backend，failed outcome=`stub_gap`，自动回 M-DESIGN
+       - ResultCheckpoint：invalid result retry 必须按 actor/substate 清 dispatch flags；Shield WRITE `requires_diff=true`，无 tests diff 不得发布 `test.written`；动态 test path allowed/artifact 集合从 WAL 持久化 `pre_dirty_snapshot` 与 post 内容身份比较，不可只做路径集合差；crash recovery 复用 persisted snapshot；不混入 unchanged Human dirty files
+       - M-TEST collection：所有 `tests/**/*.py`（含 conftest/helper）可 checkpoint，但 collect-only 只对 `test_*.py`/`*_test.py` test modules；只有 helper 时 fail closed；conftest 不得被单独判 no-tests
+       - host project command：contract 中相对 `.venv/bin/python{,3}` 在宿主 worktree 不存在时，只能回退当前 Runtime 的 venv `sys.executable`，不得系统 Python；项目自有 venv 存在时优先
+       - rollback evidence：仅 M-TEST `stub_gap`→M-DESIGN 清 stale failure，scope_overflow 等语义回退仍保留 evidence
+       - dispatch materialization 完整性：绝对 target doc/doc-set、role/substate/attempt/review_round、docs/templates/skills、criteria-pack identity、test_tasks、pre_dirty_snapshot、result/checkpoint identity 均由 Runtime 物化；Agent 不得自行搜索/猜。最终覆盖 Scribe TRIAGE/DRAFT/RESPOND、Sage、Lex、Archer DRAFT、Prism design/test review、Shield WRITE，以及 Runtime validate/checkpoint/publish/collect/run/red/commit/seal
+       - "无遗漏"判定：最终 report 的全部 dispatch_agent 都有 input/output refs 且 audit_completeness=complete；所有 stage 至 M-TEST 均退出，最终合法 Red + test commit + boundary 闭环；因此 M-START→M-TEST 物化调查完成，未知范围发现任务不再传给 spec。后续风险限定为上述合同的确定性回归，不再称未完成
+  2. **三 worktree identity/组合错误风险**：Devon candidate / test-authority / gate 三 worktree 的创建时序与组合若出错（如 candidate 晚于 Shield WRITE、gate 组合时用了错误基线/未冻结 bundle、frozen bundle 误合入 candidate），隔离或门禁证据即失效——以共同基线 C_design、frozen bundle digest、candidate identity、gate 组合证据相互绑定缓解；Devon 违反"不主动读/运行/改 frozen tests"约定属约定违背而非机制失效，由 manifest + prompt 约定兜底（Human 最新裁定：可相信 Devon 遵守约定；bootstrap/manual 无 temporal worktree 时依赖 manifest + prompt 约定，不永久 fail closed）
   3. **真实 Devon end-to-end 通道不确定性与耗时**：M-IMPL 是行为最复杂的阶段，首次接入真实 LLM Agent 的 e2e 通道可能不稳定或耗时不可控——集成 FakeAgent 通道保证确定性回归（双通道互为独立验证），e2e 失败按 D-11 取消协议处理，不设 elapsed-time 超时
