@@ -227,5 +227,7 @@ def test_fake_design_tail_materializes_declared_cli_before_m_test_dispatch(
     assert sorted(committed_paths) == [
         ".tracks/project/project.toml",
         ".tracks/projects/v0.1/architecture.md",
+        ".tracks/projects/v0.1/interfaces.md",
+        ".tracks/projects/v0.1/test-plan.md",
         "code-stats",
     ]

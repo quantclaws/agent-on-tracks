@@ -35,7 +35,9 @@ acceptance level-2 sections vary per FR/NFR so are not name-checked.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 from tracks import templating
@@ -79,6 +81,7 @@ _DESIGN_KINDS = ("architecture", "interfaces", "test-plan")
 _BOLD_MARKER = r"\*\*([A-Za-z][A-Za-z0-9 ]*?)(?::\*\*|\*\*\s*:)"
 _COMMENT_MARKER = re.compile(r"^\s*" + _BOLD_MARKER, re.M)
 _BQ_GUIDANCE = re.compile(r"^\s*>+\s*" + _BOLD_MARKER)
+_BQ = re.compile(r"^\s*(>+)\s*(.*)$")
 
 # BS-06 design trace: a test-plan line attributes a layer to an AC when both
 # the AC id and a layer token share one (non-comment, non-fenced) line.
@@ -749,6 +752,36 @@ def _trac_command_issues(text: str) -> list:
     return issues
 
 
+# Legacy story profile (pre-latest-template structure). The latest template
+# (tracks/templates/story.md) carries: 原始输入 / 用户意图 / 核心操作路径 /
+# 行为种子 / 范围、约束与例外 / 开放产品决定 / 必要性与风险. Legacy stories
+# use a different section set: 原始输入 / 用户意图 / 需求描述(suffixable) /
+# 工作项 / 开放产品决定 / 范围、约束与例外 / 分流建议. The product contract:
+# a complete legacy story is not force-migrated for latest-template diffs.
+# Strong legacy signal = >=2 legacy-only level-2 headings present (工作项 /
+# 分流建议 / 需求描述…); then the full legacy required-set is enforced.
+_LEGACY_ONLY_EXACT = ("工作项", "分流建议")
+_LEGACY_REQUIRED_EXACT = (
+    "原始输入", "用户意图", "工作项",
+    "开放产品决定", "范围、约束与例外", "分流建议",
+)
+_LEGACY_REQUIRED_PREFIX = "需求描述"
+
+
+def _legacy_signal_count(doc_secs: set) -> int:
+    n = sum(1 for h in _LEGACY_ONLY_EXACT if h in doc_secs)
+    n += sum(1 for s in doc_secs if s.startswith(_LEGACY_REQUIRED_PREFIX))
+    return n
+
+
+def _legacy_section_issues(doc_secs: set) -> list:
+    issues = [f"line:1 missing section '{s}'"
+              for s in _LEGACY_REQUIRED_EXACT if s not in doc_secs]
+    if not any(s.startswith(_LEGACY_REQUIRED_PREFIX) for s in doc_secs):
+        issues.append(f"line:1 missing section '{_LEGACY_REQUIRED_PREFIX}'")
+    return sorted(issues)
+
+
 def check_template(path: Path) -> list:
     """FR-150 'template' check.
 
@@ -759,6 +792,10 @@ def check_template(path: Path) -> list:
     leftover template-guidance blockquotes (run044) and fabricated ``trac``
     subcommand invocations (run045). Returns ``line:N ...`` messages;
     [] = valid.
+
+    Story legacy compatibility: a complete legacy-structured story (strong
+    legacy signal = >=2 legacy-only level-2 headings) is validated against the
+    legacy required-section set, not force-migrated to the latest template.
     """
     kind = _KIND_BY_FILE.get(path.name)
     if kind is None:
@@ -779,7 +816,10 @@ def check_template(path: Path) -> list:
     if kind != "acceptance":  # acceptance sections vary per FR/NFR (FR-150)
         tpl_secs = {s for s in (_norm_heading(ln) for ln in tpl_body.splitlines()) if s}
         doc_secs = {s for s in (_norm_heading(ln) for ln in body.splitlines()) if s}
-        issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
+        if kind == "story" and _legacy_signal_count(doc_secs) >= 2:
+            issues += _legacy_section_issues(doc_secs)
+        else:
+            issues += [f"line:1 missing section '{s}'" for s in sorted(tpl_secs - doc_secs)]
     if kind == "spec":
         issues += check_spec_items(text)  # true file line numbers (full text scan)
     if kind == "story":  # FR-0130: BS-XX grammar enforcement
@@ -789,3 +829,129 @@ def check_template(path: Path) -> list:
         # run045: no fabricated `trac` calls (full text -> true file line numbers)
         issues += _trac_command_issues(text)
     return issues
+
+
+# -- v0.5 pipeline helpers (diff policy, digests, staged changes) -----------
+
+def _git(repo, *args, check=True):
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=check)
+
+
+def has_diff(repo, doc_path, base_sha):
+    """Check if doc has any diff vs base_sha."""
+    proc = _git(repo, "diff", base_sha, "--", str(doc_path), check=False)
+    return bool(proc.stdout.strip())
+
+
+def _load_base_text(repo, doc_path, base_sha):
+    """Load base version of doc from git, or None if not found."""
+    rel_path = str(doc_path.relative_to(repo.resolve()))
+    base_proc = _git(repo, "show", f"{base_sha}:{rel_path}", check=False)
+    if base_proc.returncode != 0:
+        return None
+    return base_proc.stdout
+
+
+def _discussion_line_numbers(text):
+    """Return a set of 1-indexed line numbers that are parser-recognized
+    discussion comment lines (via parse_threads + iter_comments).
+
+    Only canonical ``> **Name:**`` tags are recognised; raw blockquotes,
+    ``> note:`` labels, and fenced-code ``>`` are NOT included."""
+    from tracks.discuss.model import iter_comments
+    from tracks.discuss.parser import parse_threads
+    lines: set[int] = set()
+    for thread in parse_threads(text):
+        for comment in iter_comments(thread.root):
+            lines.add(comment.line)
+    return lines
+
+
+def _strip_discussion_lines(text, discussion_lines):
+    """Remove parser-recognized discussion comment lines and blank lines.
+
+    Non-discussion blockquotes (raw quotes, labels) and fenced-code ``>`` are
+    preserved so any non-discussion change is detected in the body comparison."""
+    result = []
+    for idx, raw in enumerate(text.splitlines(), start=1):
+        if idx in discussion_lines:
+            continue
+        if not raw.strip():
+            continue
+        result.append(raw)
+    return "\n".join(result)
+
+
+def is_discussion_diff(repo, doc_path, base_sha):
+    """Check if the diff of doc vs base_sha is only canonical discussion
+    changes (blockquote threads parseable by the discuss parser).
+
+    Structural validation using the discuss parser:
+    1. Body text (all lines except parser-recognized discussion comments and
+       blank lines) must be identical between base and current.  Non-discussion
+       blockquotes (raw quotes, ``> note:`` labels) are preserved in the body,
+       so any modification to them is rejected.
+    2. The current version must contain at least one canonical discussion
+       thread (parse_threads returns non-empty).
+    3. Every added/modified discussion line in current must be
+       parser-recognized (guaranteed by construction: we strip only
+       parser-recognized lines, so if the body matches, any diff must be in
+       recognized discussion lines).
+    4. Every removed/modified discussion line in base must be parser-recognized
+       in base (same guarantee: if the body matches after stripping base's
+       recognized discussion lines, any removal was a discussion line)."""
+    from tracks.discuss.parser import parse_threads
+
+    base_text = _load_base_text(repo, doc_path, base_sha)
+    if base_text is None:
+        return False
+    try:
+        current_text = doc_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    base_dl = _discussion_line_numbers(base_text)
+    current_dl = _discussion_line_numbers(current_text)
+
+    base_body = _strip_discussion_lines(base_text, base_dl)
+    current_body = _strip_discussion_lines(current_text, current_dl)
+    if base_body != current_body:
+        return False
+
+    if not parse_threads(current_text):
+        return False
+
+    return base_text != current_text
+
+
+def capture_digests(doc_paths):
+    """sha256 of each artifact file content at capture time, for anti-tamper
+    re-verification at checkpoint. ``doc_paths`` is {doc_name: Path}."""
+    digests = {}
+    for doc, path in doc_paths.items():
+        if path.exists():
+            digests[doc] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digests
+
+
+def verify_digests(doc_paths, submitted_digests):
+    """Re-verify artifact digests. Returns (doc, path) for the first drifted
+    artifact, or (None, None) if all match."""
+    for doc, submitted in submitted_digests.items():
+        path = doc_paths.get(doc)
+        if path and path.exists():
+            current = hashlib.sha256(path.read_bytes()).hexdigest()
+            if current != submitted:
+                return doc, path
+    return None, None
+
+
+def has_staged_changes(repo, doc_paths):
+    """Check if any doc path has uncommitted changes."""
+    for path in doc_paths.values():
+        proc = _git(repo, "status", "--porcelain", "--", str(path),
+                    check=False)
+        if proc.stdout.strip():
+            return True
+    return False

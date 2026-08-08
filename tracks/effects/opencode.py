@@ -614,16 +614,33 @@ class OpencodeBackend:
             return True
         except json.JSONDecodeError:
             pass
-        # NDJSON fallback: every non-empty line is a JSON object.
+        # NDJSON fallback: opencode --format json emits one JSON event per
+        # line, but may also emit non-JSON log lines on stdout (e.g.
+        # "[Opencode Logger] Plugin initialized!"). A line starting with
+        # "{" that fails to parse is a truncated JSON event -> reject; a
+        # non-"{" line is diagnostic log noise -> skip. At least one valid
+        # JSON event line is required. Exit 0 already confirmed the process
+        # completed; true truncation (process killed) surfaces as a signal
+        # or non-zero exit before this check runs.
         lines = [ln for ln in out.splitlines() if ln.strip()]
         if not lines:
             return False
+        has_json = False
         for ln in lines:
-            try:
-                json.loads(ln)
-            except json.JSONDecodeError:
-                return False
-        return True
+            stripped = ln.strip()
+            if stripped.startswith("{"):
+                try:
+                    json.loads(ln)
+                except json.JSONDecodeError:
+                    return False
+                has_json = True
+            else:
+                try:
+                    json.loads(ln)
+                    has_json = True
+                except json.JSONDecodeError:
+                    pass
+        return has_json
 
     # -- prompt construction ------------------------------------------------
 

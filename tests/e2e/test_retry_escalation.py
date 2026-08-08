@@ -135,6 +135,142 @@ def test_retry_rejected_when_not_escalated(trac, event_log):
     assert not [e for e in event_log() if e["type"] == "human.retry"]
 
 
+def test_retry_clear_evidence_at_escalation_drops_evidence(trac, event_log):
+    """`trac retry --clear-evidence` at escalation records clear_evidence=true
+    and drops the stale failure evidence; the next `trac run` dispatches DRAFT
+    at attempt=1 with NO evidence in the command params."""
+    start_to_draft(trac)
+    r = trac("run", simulate="validator:story.md=schema_fail")
+    assert "awaiting=escalation" in r.stdout
+
+    r = trac("retry", "--clear-evidence")
+    assert r.returncode == 0, r.stderr
+    assert "status=active" in r.stdout
+    assert "awaiting=-" in r.stdout
+
+    evs = event_log()
+    retry_ev = [e for e in evs if e["type"] == "human.retry"][-1]
+    assert retry_ev["payload"]["clear_evidence"] is True
+    assert retry_ev["payload"]["actor"]
+
+    # next run dispatches DRAFT with no evidence, attempt=1
+    r = trac("run")
+    assert r.returncode == 0, r.stderr
+    evs = event_log()
+    after = [d for d in dispatches(evs, "DRAFT") if d["seq"] > retry_ev["seq"]]
+    assert after, "no DRAFT dispatch after clear-evidence retry"
+    params = after[0]["payload"]["command"]["params"]
+    assert params["attempt"] == 1
+    assert "evidence" not in params
+
+
+def test_retry_clear_evidence_in_active_state_recovers(trac, host_repo, event_log):
+    """Recovery scenario: ordinary retry cleared escalation, a DRAFT dispatch
+    was issued (carrying stale evidence) and killed before producing a result,
+    leaving the run active with doc_dispatched stuck True. `trac retry
+    --clear-evidence` is accepted at active state, records clear_evidence=true,
+    and the next run dispatches attempt=1 with no evidence."""
+    start_to_draft(trac)
+    r = trac("run", simulate="validator:story.md=schema_fail")
+    assert "awaiting=escalation" in r.stdout
+    # ordinary retry -> active
+    assert trac("retry").returncode == 0
+    assert "status=active" in trac("status").stdout
+
+    # a run issues a DRAFT dispatch carrying the stale evidence; kill it before
+    # it produces a result, simulating Maestro killing the dispatch.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env["TRAC_AGENT_BACKEND"] = "fake"
+    env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "tracks.cli.main", "run"],
+        cwd=host_repo, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        # wait for the DRAFT dispatch command.issued to land
+        for _ in range(100):
+            evs = event_log()
+            last_issued = [e for e in evs if e["type"] == "command.issued"]
+            if last_issued and last_issued[-1]["payload"]["command"]["params"].get(
+                    "substate") == "DRAFT":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("killed run never issued a DRAFT dispatch")
+        proc.send_signal(signal.SIGKILL)
+        proc.wait(timeout=10)
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=10)
+        raise
+
+    # active state: ordinary retry rejected
+    r = trac("retry")
+    assert r.returncode != 0
+    assert "not awaiting escalation" in r.stderr
+
+    # clear-evidence retry accepted at active state
+    r = trac("retry", "--clear-evidence")
+    assert r.returncode == 0, r.stderr
+    assert "status=active" in r.stdout
+    assert "awaiting=-" in r.stdout
+    retry_ev = [e for e in event_log() if e["type"] == "human.retry"][-1]
+    assert retry_ev["payload"]["clear_evidence"] is True
+
+    # next run dispatches DRAFT attempt=1 with no evidence
+    r = trac("run")
+    assert r.returncode == 0, r.stderr
+    after = [d for d in dispatches(event_log(), "DRAFT")
+             if d["seq"] > retry_ev["seq"]]
+    assert after
+    params = after[0]["payload"]["command"]["params"]
+    assert params["attempt"] == 1
+    assert "evidence" not in params
+
+
+def test_retry_clear_evidence_respects_writer_lock(trac, host_repo, event_log):
+    """`trac retry --clear-evidence` acquires the writer lock; if a `trac run`
+    holds it, the retry is rejected with the holder PID and appends nothing
+    (same lock discipline as every mutating command)."""
+    start_to_draft(trac)
+    # escalate, ordinary retry -> active state (the recovery scenario target)
+    r = trac("run", simulate="validator:story.md=schema_fail")
+    assert "awaiting=escalation" in r.stdout
+    assert trac("retry").returncode == 0
+    assert "status=active" in trac("status").stdout
+    # spawn a hanging run that holds the lock
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env["TRAC_AGENT_BACKEND"] = "fake"
+    env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "tracks.cli.main", "run"],
+        cwd=host_repo, env=env,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        lock = host_repo / ".tracks" / "runtime" / "lock"
+        for _ in range(100):
+            if lock.exists():
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("hanging run never acquired lock")
+        holder = lock.read_text().strip()
+        before = len([e for e in event_log() if e["type"] == "human.retry"])
+        # clear-evidence retry rejected while the run holds the lock
+        r = trac("retry", "--clear-evidence")
+        assert r.returncode == 1
+        assert holder in r.stderr
+        after = len([e for e in event_log() if e["type"] == "human.retry"])
+        assert after == before  # nothing appended
+    finally:
+        proc.send_signal(signal.SIGKILL)
+        proc.wait(timeout=10)
+
+
 def test_progress_start_line_flushed_before_blocking_backend(trac, host_repo):
     """Fix 5: the dispatch start line is flushed to stderr before the backend
     call blocks. Uses a hang-token FakeBackend (time.sleep(600)) and reads

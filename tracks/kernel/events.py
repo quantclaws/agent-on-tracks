@@ -47,6 +47,14 @@ EVENT_TYPES = (
     "test.collected",
     "red.validated",
     "test.committed",
+    # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
+    # capture -> validate -> independent checkpoint -> publish result/verdict.
+    "result.submitted",
+    "result.validated",
+    "result.checkpointed",
+    # v0.5 ResultCheckpoint pipeline (batch 2: M-DESIGN/M-TEST):
+    # test.written is published after Shield WRITE checkpoint (WRITE -> COLLECT).
+    "test.written",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -69,6 +77,10 @@ COMMAND_KINDS = (
     "run_tests",
     "check_trace",
     "commit_tests",
+    # v0.5 ResultCheckpoint pipeline (batch 1): validate -> checkpoint -> publish.
+    "validate_result",
+    "checkpoint_result",
+    "publish_result",
 )
 
 

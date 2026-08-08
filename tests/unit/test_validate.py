@@ -18,6 +18,7 @@ from tracks.executor.validate import (
     check_design_trace,
     check_spec_items,
     check_template,
+    is_discussion_diff,
     validate_document,
 )
 from tracks.kernel.machine import DESIGN_DOCS
@@ -370,3 +371,179 @@ def test_validate_document_fails_on_unknown_trac_subcommand(tmp_path):
     failure = validate_document(p, "interfaces.md", ["template"])
     assert failure is not None and failure[0] == "template"
     assert "unknown trac subcommand 'archive'" in failure[1]
+
+
+# -- story legacy template compatibility ---------------------------------------
+# A complete legacy-structured story (strong legacy signal = >=2 legacy-only
+# level-2 headings: 工作项 / 分流建议 / 需求描述…) is validated against the
+# legacy required-section set, not force-migrated to the latest template.
+
+_LEGACY_FM = "---\nstory_id: S-005\ntitle: test\ncreated: 2026-01-01\nstatus: draft\nsha:\n---\n\n"
+_LEGACY_SECTIONS = (
+    "## 1. 原始输入\n\nraw\n\n"
+    "## 2. 用户意图\n\nintent\n\n"
+    "## 3. 需求描述（规划层，待 M-STORY 展开）\n\ndesc\n\n"
+    "## 4. 工作项\n\nitems\n\n"
+    "## 5. 开放产品决定\n\ndecisions\n\n"
+    "## 6. 范围、约束与例外\n\nscope\n\n"
+    "## 7. 分流建议\n\nGo\n"
+)
+
+
+def _legacy_story(tmp_path: Path) -> Path:
+    p = tmp_path / "story.md"
+    p.write_text(_LEGACY_FM + "# S-005: test\n\n" + _LEGACY_SECTIONS,
+                 encoding="utf-8")
+    return p
+
+
+def test_legacy_story_passes_template_check(tmp_path):
+    assert check_template(_legacy_story(tmp_path)) == []
+
+
+def test_legacy_story_missing_required_section_fails(tmp_path):
+    p = _legacy_story(tmp_path)
+    text = p.read_text(encoding="utf-8")
+    p.write_text(text.replace("## 7. 分流建议", "分流建议"), encoding="utf-8")
+    issues = check_template(p)
+    assert "line:1 missing section '分流建议'" in issues
+
+
+def test_legacy_story_missing_frontmatter_fails(tmp_path):
+    p = _legacy_story(tmp_path)
+    p.write_text(p.read_text(encoding="utf-8").replace("sha:\n", ""), encoding="utf-8")
+    assert "line:1 missing frontmatter field 'sha'" in check_template(p)
+
+
+def test_legacy_story_missing_demand_desc_fails(tmp_path):
+    p = _legacy_story(tmp_path)
+    text = p.read_text(encoding="utf-8")
+    p.write_text(text.replace("## 3. 需求描述（规划层，待 M-STORY 展开）",
+                              "需求描述（规划层，待 M-STORY 展开）"), encoding="utf-8")
+    assert "line:1 missing section '需求描述'" in check_template(p)
+
+
+def test_latest_story_missing_required_section_still_fails(tmp_path):
+    """Latest-template stories without legacy signal are strictly checked."""
+    p = _story(tmp_path)
+    p.write_text(
+        p.read_text(encoding="utf-8").replace("## 7. 必要性与风险", "必要性与风险"),
+        encoding="utf-8",
+    )
+    assert "line:1 missing section '必要性与风险'" in check_template(p)
+
+
+def test_weak_legacy_signal_not_enough_single_section(tmp_path):
+    """A single legacy-only heading (工作项 but no 分流建议/需求描述) is not a
+    strong signal -> strict latest-template check applies -> fails on missing
+    latest sections."""
+    p = tmp_path / "story.md"
+    p.write_text(
+        _LEGACY_FM + "# S-NNN: test\n\n"
+        "## 1. 原始输入\n\nraw\n\n"
+        "## 2. 用户意图\n\nintent\n\n"
+        "## 4. 工作项\n\nitems\n\n",
+        encoding="utf-8",
+    )
+    issues = check_template(p)
+    assert any("missing section '核心操作路径'" in i for i in issues)
+
+
+# -- is_discussion_diff unit tests (item 1: canonical discussion-only) -------
+
+
+def _setup_disc_repo(tmp_path: Path, base_text: str) -> tuple[Path, Path]:
+    """Create a git repo, write base_text to doc, commit, return (repo, doc)."""
+    import subprocess
+    repo = tmp_path / "host"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"],
+                   cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"],
+                   cwd=repo, check=True, capture_output=True)
+    doc = repo / "doc.md"
+    doc.write_text(base_text, encoding="utf-8")
+    subprocess.run(["git", "add", "doc.md"], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True,
+                   capture_output=True)
+    return repo, doc
+
+
+_BASE_DOC = (
+    "# Title\n\n"
+    "## Body\n\n"
+    "Some content here.\n\n"
+    "> Raw blockquote from human input.\n"
+)
+
+
+def test_discussion_diff_pure_canonical_add_passes(tmp_path):
+    """Adding a canonical discussion thread passes."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    doc.write_text(_BASE_DOC + "\n> **Sage:** Need more detail.\n",
+                   encoding="utf-8")
+    assert is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_modify_existing_canonical_thread_passes(tmp_path):
+    """Modifying an existing canonical thread (e.g. resolve status) passes."""
+    base = _BASE_DOC + "\n> **Sage [open]:** Need more detail.\n"
+    repo, doc = _setup_disc_repo(tmp_path, base)
+    doc.write_text(
+        _BASE_DOC + "\n> **Sage [resolved]:** Need more detail.\n",
+        encoding="utf-8")
+    assert is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_modify_raw_blockquote_plus_canonical_rejects(tmp_path):
+    """Modifying a raw blockquote AND adding canonical discussion is rejected."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    current = _BASE_DOC.replace(
+        "> Raw blockquote from human input.",
+        "> Modified raw blockquote.") + "\n> **Sage:** comment.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_illegal_label_plus_canonical_rejects(tmp_path):
+    """Adding a > note: label (non-canonical) + canonical discussion rejects."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    current = _BASE_DOC + "\n> note: this is a label.\n> **Sage:** comment.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_body_text_change_rejects(tmp_path):
+    """Changing body text (non-blockquote) is rejected."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    current = _BASE_DOC.replace("Some content here.", "Changed content.") \
+        + "\n> **Sage:** comment.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_fenced_code_quote_change_rejects(tmp_path):
+    """Changing a > line inside a fenced code block is rejected (it's body)."""
+    base = _BASE_DOC + "\n```python\n> print('hello')\n```\n"
+    repo, doc = _setup_disc_repo(tmp_path, base)
+    current = base.replace("> print('hello')", "> print('world')") \
+        + "\n> **Sage:** comment.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_no_diff_rejects(tmp_path):
+    """No diff at all returns False."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_only_raw_blockquote_added_rejects(tmp_path):
+    """Adding only a raw (non-canonical) blockquote is rejected."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    current = _BASE_DOC + "\n> Another raw quote.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")

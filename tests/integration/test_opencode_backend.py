@@ -58,6 +58,13 @@ if behavior == "bad_json":
     if target:
         open(target, "a").write("\\nagent edit\\n")
     sys.stdout.write("{not valid json"); sys.exit(0)
+if behavior == "jsonl_with_log":
+    if target:
+        open(target, "a").write("\\nagent edit\\n")
+    sys.stdout.write("[Opencode Logger] Plugin initialized!\\n")
+    sys.stdout.write(json.dumps({"type": "step_start"}) + "\\n")
+    sys.stdout.write(json.dumps({"type": "step_finish"}) + "\\n")
+    sys.exit(0)
 if behavior in ("edit_target", "edit_extra") and target:
     open(target, "a").write("\\nagent edit\\n")
 if behavior == "edit_extra" and extra:
@@ -202,6 +209,20 @@ def test_json_truncated(fake_opencode, target_doc, host_repo, monkeypatch):
     out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc)
     assert out["status"] == "failed"
     assert out["failure_class"] == "json_truncated"
+
+
+def test_jsonl_with_log_prefix_not_truncated(
+        fake_opencode, target_doc, host_repo, monkeypatch):
+    """opencode --format json emits non-JSON log lines (e.g. "[Opencode
+    Logger] Plugin initialized!") on stdout alongside JSON event lines. The
+    parser must tolerate these log lines and not classify the dispatch as
+    json_truncated when the JSON event stream is complete and exit is 0."""
+    monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "jsonl_with_log")
+    monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(target_doc))
+    out = backend(host_repo).act("scribe", "DRAFT", "story.md", target_doc)
+    assert out["status"] == "done"
+    assert out.get("failure_class") is None
+    assert "agent edit" in out["diff_ref"]
 
 
 def test_no_target_diff(fake_opencode, target_doc, host_repo, monkeypatch):

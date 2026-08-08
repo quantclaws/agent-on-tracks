@@ -7,7 +7,7 @@ boundary (NFR-0030).
 from tests.unit.helpers import seq
 from tracks.executor.executor import _NEXT_STAGE
 from tracks.kernel import decide, project
-from tracks.kernel.machine import _CRITERIA_PACK
+from tracks.kernel.machine import _CRITERIA_PACK, _M_TEST_CONTEXT_DOCS
 
 ENTER_M_TEST = [
     ("story.requested", {"raw_chars": 5}),
@@ -51,7 +51,9 @@ def _full_cycle():
     """DISPATCH -> WRITE -> COLLECT -> PRISM_REVIEW -> RED_CHECK -> EXIT."""
     return [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
             PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, RED_VALID,
-            TRACE_CMD, TRACE_PASS, COMMIT_CMD, TEST_COMMITTED]
+            TRACE_CMD, TRACE_PASS, COMMIT_CMD, TEST_COMMITTED,
+            ("stage.exited", {"stage": "M-TEST"}),
+            ("run.completed", {"terminal_state": "boundary"})]
 
 
 # -- AC-FR0010-01@v0.4: M-DESIGN EXIT -> stage.entered(M-TEST), substate=DISPATCH ----
@@ -423,3 +425,133 @@ def test_diagnose_stub_gap():
     cmd = decide(s)
     assert cmd.kind == "rollback_stage"
     assert cmd.params["to_stage"] == "M-DESIGN"
+
+
+# -- v0.5 batch 2: ResultCheckpoint pipeline for M-TEST ------------------------
+
+def _shield_checkpoint(cmd_id="C1"):
+    """Minimal result_checkpoint payload for M-TEST Shield WRITE."""
+    return {
+        "source": "shield", "stage": "M-TEST", "substate": "WRITE",
+        "actor_kind": "agent",
+        "artifacts": ["tests/integration/test_ac_fr0010_01.py"],
+        "allowed_paths": ["tests/integration/test_ac_fr0010_01.py"],
+        "base_sha": "b", "checks": ["write_scope", "collection"],
+        "requires_diff": False, "forbid_diff": False,
+        "discussion_only": False,
+        "commit_label": "M-TEST: shield commit",
+        "result_id": cmd_id, "digests": {},
+        "domain_event": {"type": "test.written", "payload": {}},
+    }
+
+
+def _prism_checkpoint(verdict="pass", cmd_id="C3"):
+    """Minimal result_checkpoint payload for M-TEST Prism review."""
+    return {
+        "source": "prism", "stage": "M-TEST",
+        "substate": "PRISM_REVIEW", "actor_kind": "agent",
+        "verdict": verdict,
+        "artifacts": list(_M_TEST_CONTEXT_DOCS),
+        "allowed_paths": list(_M_TEST_CONTEXT_DOCS),
+        "base_sha": "b", "checks": ["template"],
+        "requires_diff": verdict != "pass", "forbid_diff": False,
+        "discussion_only": True,
+        "commit_label": f"M-TEST: prism ({verdict}) checkpoint",
+        "result_id": cmd_id, "digests": {},
+        "domain_event": {"type": "prism.verdict",
+                          "payload": {"verdict": verdict,
+                                      "criteria_pack": dict(_CRITERIA_PACK)}},
+    }
+
+
+SHIELD_DONE_CP = ("outcome.received",
+                  {"role": "shield", "status": "done",
+                   "result_checkpoint": _shield_checkpoint()})
+
+
+def test_shield_write_outcome_sets_active_result():
+    """Shield WRITE outcome with result_checkpoint sets active_result;
+    decide() drives validate_result (test file artifacts, write_scope+collection checks)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE_CP)
+    assert s.active_result is not None
+    assert s.active_result["domain_event"]["type"] == "test.written"
+    cmd = decide(s)
+    assert cmd.kind == "validate_result"
+    assert "write_scope" in cmd.params["checks"]
+    assert "collection" in cmd.params["checks"]
+
+
+def test_test_written_transitions_write_to_collect():
+    """After pipeline publishes test.written, the reducer transitions
+    WRITE -> COLLECT and clears active_result."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE_CP,
+                 ("result.validated",
+                  {"artifacts": ["tests/integration/test_ac_fr0010_01.py"],
+                   "base_sha": "b", "result_id": "C1"}),
+                 ("result.checkpointed", {"created_commit": True,
+                                          "commit_sha": "c", "base_sha": "b",
+                                          "result_id": "C1"}),
+                 ("test.written", {"commit_sha": "c", "result_id": "C1"}))
+    assert s.active_result is None
+    assert s.substate == "COLLECT"
+
+
+def test_prism_verdict_outcome_sets_active_result():
+    """M-TEST Prism outcome with result_checkpoint sets active_result;
+    decide() drives validate_result for the context docs."""
+    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+            PRISM_DISPATCH]
+    prism_done = ("outcome.received",
+                  {"role": "prism", "status": "done",
+                   "result_checkpoint": _prism_checkpoint("pass"),
+                   "criteria_pack": dict(_CRITERIA_PACK)})
+    s = state_of(*base, prism_done)
+    assert s.active_result is not None
+    cmd = decide(s)
+    assert cmd.kind == "validate_result"
+    assert set(cmd.params["artifacts"]) == set(_M_TEST_CONTEXT_DOCS)
+
+
+def test_prism_pass_pipeline_publishes_verdict():
+    """Full pipeline for M-TEST Prism pass: validate -> checkpoint ->
+    publish -> prism.verdict(pass) -> RED_CHECK, active_result cleared."""
+    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+            PRISM_DISPATCH]
+    prism_done = ("outcome.received",
+                  {"role": "prism", "status": "done",
+                   "result_checkpoint": _prism_checkpoint("pass"),
+                   "criteria_pack": dict(_CRITERIA_PACK)})
+    s = state_of(*base, prism_done,
+                 ("result.validated", {"artifacts": list(_M_TEST_CONTEXT_DOCS),
+                                       "base_sha": "b", "result_id": "C3"}),
+                 ("result.checkpointed", {"created_commit": False,
+                                          "commit_sha": "c", "base_sha": "b",
+                                          "result_id": "C3"}),
+                 ("prism.verdict", {"verdict": "pass",
+                                    "criteria_pack": dict(_CRITERIA_PACK),
+                                    "result_id": "C3"}))
+    assert s.active_result is None
+    assert s.substate == "RED_CHECK"
+
+
+def test_prism_revise_pipeline_transitions_to_write():
+    """Full pipeline for M-TEST Prism revise: publish -> prism.verdict(revise)
+    -> WRITE, active_result cleared, attempt consumed."""
+    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+            PRISM_DISPATCH]
+    prism_done = ("outcome.received",
+                  {"role": "prism", "status": "done",
+                   "result_checkpoint": _prism_checkpoint("revise"),
+                   "criteria_pack": dict(_CRITERIA_PACK)})
+    s = state_of(*base, prism_done,
+                 ("result.validated", {"artifacts": list(_M_TEST_CONTEXT_DOCS),
+                                       "base_sha": "b", "result_id": "C3"}),
+                 ("result.checkpointed", {"created_commit": True,
+                                          "commit_sha": "c", "base_sha": "b",
+                                          "result_id": "C3"}),
+                 ("prism.verdict", {"verdict": "revise",
+                                    "criteria_pack": dict(_CRITERIA_PACK),
+                                    "result_id": "C3"}))
+    assert s.active_result is None
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 1

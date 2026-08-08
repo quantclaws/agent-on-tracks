@@ -111,6 +111,151 @@ def test_redispatch_carries_failure_evidence():
     assert cmd.params["evidence"]["check"] == "schema"  # FR-11
 
 
+def test_triage_to_draft_fresh_retry_budget_after_triage_failures():
+    """TRIAGE failures (json_truncated / outcome failed) must not bleed their
+    attempt budget or evidence into the subsequent DRAFT. After human go, DRAFT
+    starts at attempt 0 with no stale last_failure, so decide() emits
+    attempt=1 and carries no TRIAGE evidence."""
+    failed_triage_then_go = state_of(
+        ("outcome.received", {"role": "scribe", "status": "failed",
+                              "failure_class": "json_truncated",
+                              "self_report": "stdout JSON unparseable"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent",
+                                        "params": {"role": "scribe",
+                                                   "substate": "TRIAGE"},
+                                        "command_id": "C2"}}),
+        ("outcome.received", {"role": "scribe", "status": "done"}),
+        ("human.triage", {"decision": "go"}),
+    )
+    assert failed_triage_then_go.substate == "DRAFT"
+    assert failed_triage_then_go.current_attempt == 0
+    assert failed_triage_then_go.last_failure is None
+    cmd = decide(failed_triage_then_go)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["attempt"] == 1
+    assert "evidence" not in cmd.params
+
+
+def test_human_retry_gives_fresh_draft_budget_after_escalation():
+    """After DRAFT exhausts its budget and Human issues `trac retry`, the
+    resumed DRAFT must start from a fresh attempt=0 budget. The last_failure
+    evidence is preserved so the re-dispatch prompt still carries it (FR-11)."""
+    escalated = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+    )
+    assert escalated.status == "awaiting_human"
+    assert escalated.current_attempt == 3
+    retried = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+        ("human.retry", {}),
+    )
+    assert retried.status == "active"
+    assert retried.current_attempt == 0
+    cmd = decide(retried)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["attempt"] == 1
+    assert cmd.params["evidence"]["check"] == "schema"
+
+
+def test_human_retry_clear_evidence_drops_failure_after_escalation():
+    """`human.retry` with clear_evidence=true at escalation drops last_failure
+    and resets the dispatch flag, so decide() re-dispatches DRAFT at attempt=1
+    with NO evidence. The operator signaled the underlying validator/config was
+    fixed, so the old failure evidence is stale."""
+    retried = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+        ("human.retry", {"clear_evidence": True}),
+    )
+    assert retried.status == "active"
+    assert retried.current_attempt == 0
+    assert retried.last_failure is None
+    assert retried.doc_dispatched is False
+    cmd = decide(retried)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["attempt"] == 1
+    assert "evidence" not in cmd.params
+
+
+def test_human_retry_clear_evidence_recovers_active_killed_dispatch():
+    """Recovery scenario: an ordinary retry cleared escalation, then a DRAFT
+    dispatch was issued (attempt=1, carrying stale evidence) and killed by
+    Maestro before producing a result. The run is active with doc_dispatched
+    stuck True and stale last_failure. `human.retry` with clear_evidence=true
+    resets the dispatch state so decide() issues a fresh attempt=1 dispatch
+    with no evidence; the abandoned command.issued stays in the log untouched
+    (append-only) but is no longer pending."""
+    killed = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+        ("human.retry", {}),
+        ("command.issued", {"command": {"kind": "dispatch_agent",
+                                        "params": {"role": "scribe",
+                                                   "substate": "DRAFT",
+                                                   "attempt": 1,
+                                                   "evidence": {"check": "schema"}},
+                                        "command_id": "C1"}}),
+    )
+    assert killed.status == "active"
+    assert killed.doc_dispatched is True
+    assert killed.pending is not None
+    assert killed.last_failure["check"] == "schema"
+    cleared = state_of(
+        ("human.triage", {"decision": "go"}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+        ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+        ("human.retry", {}),
+        ("command.issued", {"command": {"kind": "dispatch_agent",
+                                        "params": {"role": "scribe",
+                                                   "substate": "DRAFT",
+                                                   "attempt": 1,
+                                                   "evidence": {"check": "schema"}},
+                                        "command_id": "C1"}}),
+        ("human.retry", {"clear_evidence": True}),
+    )
+    assert cleared.status == "active"
+    assert cleared.current_attempt == 0
+    assert cleared.last_failure is None
+    assert cleared.doc_dispatched is False
+    assert cleared.pending is None
+    cmd = decide(cleared)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["attempt"] == 1
+    assert "evidence" not in cmd.params
+
+
+def test_human_retry_ordinary_preserves_evidence_after_escalation():
+    """Ordinary `human.retry` (no clear_evidence) preserves last_failure so the
+    re-dispatch prompt carries the failure evidence (FR-11). Backward compat:
+    a payload without the clear_evidence key behaves like clear_evidence=false."""
+    for payload in ({}, {"clear_evidence": False}):
+        retried = state_of(
+            ("human.triage", {"decision": "go"}),
+            ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 1}),
+            ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
+            ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
+            ("human.retry", payload),
+        )
+        assert retried.last_failure["check"] == "schema"
+        cmd = decide(retried)
+        assert cmd.params["evidence"]["check"] == "schema"
+
+
 def test_no_go_teardown_sequence():
     rejected = state_of(
         ("outcome.received", {"role": "scribe", "status": "done"}),

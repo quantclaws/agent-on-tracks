@@ -1,7 +1,7 @@
 """NFR-0050 Agent I/O evidence contracts."""
 
 from tracks.effects.opencode import redact
-from tracks.executor.executor import _agent_io_evidence
+from tracks.executor.helpers import _agent_io_evidence
 
 
 def test_redact_masks_credentials_and_preserves_non_sensitive_fields():

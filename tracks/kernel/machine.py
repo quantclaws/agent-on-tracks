@@ -15,6 +15,24 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .events import Command, EventEnvelope
+from .m_test import (
+    _CRITERIA_PACK,  # noqa: F401
+    _M_TEST_CONTEXT_DOCS,  # noqa: F401
+    _consume_attempt,
+    _decide_m_test,
+    _m_test_diagnose_route,  # noqa: F401
+    _m_test_exit_route,  # noqa: F401
+    _m_test_prism_dispatch,  # noqa: F401
+    _m_test_shield_dispatch,  # noqa: F401
+    _on_m_test_outcome_done,
+    _on_m_test_verdict_failed,
+    _on_red_validated,
+    _on_test_collected,
+    _on_test_committed,
+    _on_test_written,
+    _reset_doc,
+    _reset_review,
+)
 
 
 @dataclass
@@ -72,14 +90,11 @@ class State:
     test_committed: bool = False  # test asset frozen (commit_tests done)
     criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
     diagnose_classification: str | None = None  # DIAGNOSE routing verdict
-
-
-def _reset_doc(s: State) -> None:
-    s.doc_dispatched = s.doc_produced = s.doc_validated = False
-
-
-def _reset_review(s: State) -> None:
-    s.reviewer_dispatched = s.reviewer_produced = False
+    # v0.5 ResultCheckpoint pipeline (batch 1): when set, decide() drives
+    # validate_result -> checkpoint_result -> publish_result instead of the
+    # normal substate logic. Cleared by the domain event reducer (or
+    # verdict.failed). None on old replays (backward compatible).
+    active_result: dict | None = None
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -192,6 +207,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.sage_passed_this_round = s.lex_passed_this_round = False
     s.prism_passed_this_round = False
     s.design_validated = s.design_committed = 0
+    s.active_result = None  # v0.5: clear pipeline on stage transition
     if s.stage == "M-REQ-APPROVAL":
         # re-entry after RETURNED rollback restarts the approval cycle fresh
         s.preview_ready = s.approved = s.returned = s.issues_created = False
@@ -221,6 +237,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.scope_overflow = False
     s.returned = False
     s.return_target = None
+    s.active_result = None  # v0.5: clear pipeline on rollback
     # M-DESIGN re-entry after stub_gap rollback (SM-01.12): reset the design
     # doc counters so _decide_design_draft re-validates and re-commits the trio.
     if s.stage == "M-DESIGN":
@@ -240,12 +257,15 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.stage == "M-TEST":
         # SM-01.2: DISPATCH -> WRITE on the first Shield dispatch. Subsequent
         # Shield re-dispatches (WRITE/SM-01.4/.6/.8/.11/.15) stay in WRITE.
-        # M-TEST outcomes are processed synchronously in run_loop; decide()
-        # never inspects reviewer_dispatched in this path. Do not set it here
-        # without auditing _decide_m_test retry branches.
+        # PRISM_REVIEW dispatches set reviewer_dispatched so _decide_m_test
+        # can guard against re-dispatch while awaiting the verdict.
         if s.substate == "DISPATCH":
             s.substate = "WRITE"
-        s.doc_dispatched = True  # track Shield dispatch state
+        sub = cmd.get("params", {}).get("substate")
+        if sub == "PRISM_REVIEW":
+            s.reviewer_dispatched = True
+        else:
+            s.doc_dispatched = True
         return
     if s.substate in _REVIEW_SUBSTATE:
         s.reviewer_dispatched = True
@@ -253,51 +273,24 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
         s.doc_dispatched = True
 
 
-def _consume_attempt(s: State) -> None:
-    """Shared attempt accounting: increment; escalate to awaiting_human at >=3."""
-    s.current_attempt += 1
-    if s.current_attempt >= 3:
-        s.status = "awaiting_human"
-        s.awaiting = "escalation"
-
-
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
     status = p.get("status")
     if s.substate == "ISSUES":
-        # FR-0200 / NFR-0030 style: a failed create_issues outcome consumes an
-        # attempt; the 3rd failure escalates. Per-item progress is recorded by
-        # issue.created events, so retries resume instead of rebuilding (D-06).
-        # run048 hardening: any non-done status (failed/None/unknown) consumes an
-        # attempt so a missing/unparseable backend result never silently passes.
         if status != "done":
             _consume_attempt(s)
         return
     if status != "done":
-        # FR-0210 exit gate: a failed dispatch_agent outcome (protocol / audit /
-        # existence failure, incl. over-reach) is NOT a produced document. It
-        # consumes an attempt from the same accounting as verdict.failed, carries
-        # failure evidence into the re-dispatch prompt (FR-11), and escalates to
-        # awaiting_human at the 3rd attempt (Aaron: over-reach re-dispatches, <=3).
-        # run048 hardening: a None/absent/unknown status (unparseable opencode
-        # result) is treated as `failed` with `agent_error` so the 3-attempt
-        # escalation evidence stays meaningful instead of silently succeeding.
-        s.last_failure = {
-            "check": p.get("failure_class") or "agent_error",
-            "reason": p.get("self_report"),
-            "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
-        }
-        if s.stage == "M-TEST":
-            _reset_doc(s)
-            _consume_attempt(s)
-            return
-        if s.substate in _REVIEW_SUBSTATE:
-            _reset_review(s)
-        else:
-            _reset_doc(s)
-        _consume_attempt(s)
+        _handle_failed_outcome(s, p)
         return
+    # v0.5: when the outcome carries a result_checkpoint payload, atomically
+    # project active_result in the same event - no crash window between
+    # outcome.received and a separate result.submitted event.
+    checkpoint = p.get("result_checkpoint")
+    if checkpoint is not None:
+        s.active_result = dict(checkpoint)
     if s.stage == "M-TEST":
-        _on_m_test_outcome_done(s)
+        if checkpoint is None:
+            _on_m_test_outcome_done(s)
         return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"
@@ -305,6 +298,28 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
         s.reviewer_produced = True
     else:
         s.doc_produced = True
+
+
+def _handle_failed_outcome(s: State, p: dict) -> None:
+    """FR-0210: a failed dispatch_agent outcome consumes an attempt from the
+    same accounting as verdict.failed, carries failure evidence into the
+    re-dispatch prompt (FR-11), and escalates to awaiting_human at the 3rd
+    attempt. run048: None/absent/unknown status is treated as ``failed`` with
+    ``agent_error`` so the 3-attempt escalation evidence stays meaningful."""
+    s.last_failure = {
+        "check": p.get("failure_class") or "agent_error",
+        "reason": p.get("self_report"),
+        "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
+    }
+    if s.stage == "M-TEST":
+        _reset_doc(s)
+        _consume_attempt(s)
+        return
+    if s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    _consume_attempt(s)
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -329,50 +344,69 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    is_human = bool(s.active_result
+                    and s.active_result.get("actor_kind") == "human")
+    s.active_result = None  # v0.5: pipeline failure clears the checkpoint
+    if is_human:
+        # Human pipeline failure: keep the awaiting gate, no agent retry,
+        # no escalation, no substate change.
+        return
     if s.stage == "M-TEST":
         _on_m_test_verdict_failed(s, p)
         return
     if s.stage == "M-DESIGN":
-        # BS-05: no human gate in M-DESIGN - a failed validate, even at the
-        # EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates
-        # (same budget as DRAFT). D-30/F-1: design_committed also resets
-        # (mirrors _on_prism_verdict revise + _on_stage_rolled_back).
-        s.design_validated = 0
-        s.design_committed = 0
-        if s.substate == "EXIT":
-            s.exit_validated = False
-            s.substate = "RESPOND"
-        _reset_doc(s)
-        s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
-        if s.current_attempt >= 3:
-            s.status = "awaiting_human"
-            s.awaiting = "escalation"
+        _on_design_verdict_failed(s, p)
         return
     if p.get("check") == "commit":
         # D-30/F-1: hook rejected commit (document or EXIT seal) -> re-dispatch
         # drafter with evidence; mirror DRAFT validate-failure budget, not AC-1502.
-        _reset_doc(s)
-        _uncommit(s)
+        # v0.5: if the failure came from a reviewer checkpoint (substate is a
+        # review substate), reset the reviewer instead of the author.
+        if s.substate in _REVIEW_SUBSTATE:
+            _reset_review(s)
+        else:
+            _reset_doc(s)
+            _uncommit(s)
+            s.substate = "DRAFT"
         s.exit_validated = False
-        s.substate = "DRAFT"
-        s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
-        if s.current_attempt >= 3:
-            s.status = "awaiting_human"
-            s.awaiting = "escalation"
+        _escalate_or_continue(s, p)
         return
     if s.substate == "EXIT":
         # AC-1502: gate failed at review exit -> block exit, await human.
         s.status = "awaiting_human"
         s.awaiting = "review"
         return
-    _reset_doc(s)
+    # v0.5: if the failure came from a reviewer pipeline (substate is a review
+    # substate), reset the reviewer instead of the author doc.
+    if s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
     if p.get("check") == "scope_overflow":
         s.scope_overflow = True  # FR-20: rollback, never escalation
         return
+    _escalate_or_continue(s, p)
+
+
+def _escalate_or_continue(s: State, p: dict) -> None:
+    """Consume an attempt and escalate on the 3rd failure."""
     s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
     if s.current_attempt >= 3:
         s.status = "awaiting_human"
         s.awaiting = "escalation"
+
+
+def _on_design_verdict_failed(s: State, p: dict) -> None:
+    """BS-05: no human gate in M-DESIGN - a failed validate, even at the
+    EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates.
+    D-30/F-1: design_committed also resets."""
+    s.design_validated = 0
+    s.design_committed = 0
+    if s.substate == "EXIT":
+        s.exit_validated = False
+        s.substate = "RESPOND"
+    _reset_doc(s)
+    _escalate_or_continue(s, p)
 
 
 def _on_doc_committed(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -381,6 +415,7 @@ def _on_doc_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     # owning this committed event, not from s.stage (FR-0160).
     sd = _COMMITTED_EVENT[ev.type]
     setattr(s, sd.committed_flag, True)
+    s.active_result = None  # v0.5: pipeline publish complete
     if not p.get("final"):
         s.substate = sd.review_substate
         _reset_review(s)
@@ -389,13 +424,18 @@ def _on_doc_committed(s: State, p: dict, ev: EventEnvelope) -> None:
 def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     # M-DESIGN: one design.committed event per doc (payload carries `doc`).
     # After the third doc of the cycle the stage enters PRISM_REVIEW.
+    # v0.5: active_result is only cleared after the last doc — publish_result
+    # emits all 3 design.committed events in one call; clearing on the first
+    # would break reconcile (active_result=None → publish skipped).
     s.design_committed += 1
     if s.design_committed >= len(DESIGN_DOCS):
+        s.active_result = None  # pipeline publish complete (all docs)
         s.substate = _STAGES["M-DESIGN"].review_substate
         _reset_review(s)
 
 
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.active_result = None  # v0.5: pipeline publish complete
     if s.stage == "M-TEST":
         # SM-01.7/.8: pass -> RED_CHECK; revise -> WRITE (re-dispatch Shield).
         # The shared <=3 budget is consumed on revise (NOT reset -- unlike
@@ -425,6 +465,7 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.active_result = None  # v0.5: pipeline publish complete
     owners = _VERDICT_OWNERS[ev.type]
     if p["verdict"] == "pass":
         setattr(s, owners[0].reviewer_passed_flag, True)
@@ -445,16 +486,25 @@ def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_human_triage(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.active_result = None  # v0.5: pipeline publish complete
     s.awaiting = None
     s.triage_decision = p["decision"]
     if p["decision"] == "go":
         s.substate = "DRAFT"
         _reset_doc(s)
+        # Fresh retry budget: TRIAGE failures (and their evidence) must not
+        # carry into DRAFT -- the two substates share `current_attempt` but
+        # budget per substate (FR-11).  DRAFT starts at attempt 0 so decide()
+        # emits attempt=1; last_failure=None so no stale TRIAGE evidence leaks
+        # into the DRAFT dispatch prompt.
+        s.current_attempt = 0
+        s.last_failure = None
     else:
         s.substate = None
 
 
 def _on_human_review(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.active_result = None  # v0.5: pipeline publish complete
     s.awaiting = None
     s.substate = "EXIT" if p["action"] == "no_comment" else "RESPOND"
     if s.substate != "RESPOND":
@@ -474,6 +524,19 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     # for the agent to act on. Failure handling has already reset the
     # appropriate dispatch flag (doc/review) before escalation; no need to
     # indiscriminately reset both here.
+    #
+    # --clear-evidence (payload clear_evidence=true): the operator signals the
+    # underlying program/config/validator was fixed, so the old failure
+    # evidence is stale. last_failure is dropped and the dispatch flag reset so
+    # decide() re-dispatches from a clean slate (attempt=1, no evidence). This
+    # also covers the active-state recovery path: an ordinary retry already
+    # cleared escalation, a dispatch was issued and then killed by Maestro
+    # (doc_dispatched stays True, no result), and the stale evidence must not
+    # leak into the next dispatch. apply() already cleared s.pending (any non-
+    # command.issued event does); _reset_doc lets decide() issue a fresh one.
+    if p.get("clear_evidence"):
+        s.last_failure = None
+        _reset_doc(s)
     s.awaiting = None
     s.status = "active"
     s.current_attempt = 0
@@ -562,94 +625,46 @@ def _on_branch_deleted(s: State, p: dict, ev: EventEnvelope) -> None:
     s.branch_deleted = True
 
 
-# -- M-TEST reducers (flow.md §9 / SM-01, FR-0010~0070) -----------------------
-
-def _on_m_test_outcome_done(s: State) -> None:
-    """SM-01.3: Shield outcome done -> COLLECT; Prism outcome -> produced."""
-    if s.substate == "WRITE":
-        s.substate = "COLLECT"
-    elif s.substate == "PRISM_REVIEW":
-        s.reviewer_produced = True
-
-
-def _on_test_collected(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-01.5/.6: passed -> PRISM_REVIEW; failed -> WRITE (re-dispatch Shield).
-    if p["status"] == "passed":
-        s.test_collected = True
-        s.substate = "PRISM_REVIEW"
-        _reset_review(s)
-    else:
-        s.test_collected = False
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)  # shared <=3 budget
-
-
-def _on_red_validated(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-01.9/.10: valid -> EXIT; invalid -> DIAGNOSE.
-    s.red_findings = p.get("findings")
-    if p["status"] == "valid":
-        s.red_validated = True
-        s.substate = "EXIT"
-    else:
-        s.red_validated = False
-        s.substate = "DIAGNOSE"
-
-
-def _on_test_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-01.14: test asset frozen. The executor follows up with stage.exited +
-    # run.completed (M-IMPL not registered -> boundary).
-    s.test_committed = True
-
-
-def _on_m_test_verdict_failed(s: State, p: dict) -> None:
-    """M-TEST verdict.failed routing (FR-0040/0060/0070).
-
-    - ``criteria_pack_mismatch`` (PRISM_REVIEW): re-dispatch Prism, consume
-      the shared <=3 budget (anti-self-report triple, D-29).
-    - ``trace`` (EXIT, SM-01.15): re-dispatch Shield (WRITE), consume budget.
-    - ``test_defect`` (DIAGNOSE, SM-01.11): re-dispatch Shield (WRITE), consume.
-    - ``stub_gap`` (DIAGNOSE, SM-01.12): rollback M-DESIGN, no Human.
-    - ``ac_gap``/``spec_gap`` (DIAGNOSE, SM-01.13): await Human approval, then
-      rollback M-ACC / M-SPEC.
-    """
-    check = p.get("check")
-    if check == "criteria_pack_mismatch":
-        _reset_review(s)
-        _consume_attempt(s)
-        return
-    if check == "trace":
-        s.trace_passed = False
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)
-        return
-    if check == "commit":
-        # D-30/F-1: hook rejected test commit -> re-dispatch Shield (mirrors
-        # check=="trace": reset trace_passed, WRITE, consume budget).
-        s.trace_passed = False
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)
-        return
-    classification = check  # test_defect | stub_gap | ac_gap | spec_gap
-    s.diagnose_classification = classification
-    if classification == "test_defect":
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)
-    elif classification == "stub_gap":
-        # rollback M-DESIGN -- decide() produces rollback_stage(M-DESIGN)
-        s.diagnose_classification = "stub_gap"
-    elif classification in ("ac_gap", "spec_gap"):
-        # Human must approve the rollback (SM-01.13)
-        s.status = "awaiting_human"
-        s.awaiting = "rollback"
-        s.return_target = "M-ACC" if classification == "ac_gap" else "M-SPEC"
-
-
 # run.interrupted has no reducer: it changes no state (v0.1); `apply`'s prelude
 # still clears `pending` for it.
+
+# -- v0.5 ResultCheckpoint pipeline reducers (batch 1: M-STORY/M-SPEC/M-ACC) ---
+
+def _on_result_submitted(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Capture a result into the pipeline. The payload carries everything the
+    pipeline needs: source actor, stage/substate, artifacts to validate,
+    allowed_paths to checkpoint, base_sha, checks, domain_event to publish,
+    actor_kind (agent|human), commit_label for checkpoint commits.
+
+    v0.5 review-A: result_id (stable audit identity), digests (artifact sha256
+    at capture time, re-verified at checkpoint), forbid_diff (no-comment gate),
+    discussion_only (reviewer diff must be canonical discussion change)."""
+    s.active_result = dict(p)
+    s.pending = None
+
+
+def _on_result_validated(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Validation passed; mark the active result as validated. For author
+    (DRAFT/RESPOND) results, also set doc_validated so decide() never re-issues
+    validate_document after the pipeline completes."""
+    s.pending = None
+    if s.active_result is None:
+        return
+    s.active_result["validated"] = True
+    if s.active_result.get("substate") in ("DRAFT", "RESPOND"):
+        s.doc_validated = True
+
+
+def _on_result_checkpointed(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Checkpoint committed (or no-change); mark the active result."""
+    s.pending = None
+    if s.active_result is None:
+        return
+    s.active_result["checkpointed"] = True
+    s.active_result["commit_sha"] = p.get("commit_sha")
+    s.active_result["created_commit"] = p.get("created_commit", False)
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -687,6 +702,12 @@ _APPLY = {
     "test.collected": _on_test_collected,
     "red.validated": _on_red_validated,
     "test.committed": _on_test_committed,
+    # v0.5 batch 2: M-TEST Shield WRITE pipeline publish
+    "test.written": _on_test_written,
+    # v0.5 ResultCheckpoint pipeline (batch 1)
+    "result.submitted": _on_result_submitted,
+    "result.validated": _on_result_validated,
+    "result.checkpointed": _on_result_checkpointed,
 }
 
 
@@ -772,9 +793,8 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
 
 def _decide_design_draft(s: State, sub: str) -> Command | None:
     """M-DESIGN DRAFT/RESPOND pipeline (flow.md §8): ONE Archer dispatch covers
-    all three docs (Decision A); validate per doc (template + AC trace, BS-06),
-    then commit per doc (each commit emits design.committed); after the third
-    commit the reducer enters PRISM_REVIEW."""
+    all three docs (Decision A). v0.5 batch 2: the ResultCheckpoint pipeline
+    handles validate+checkpoint+publish; decide() only fires the dispatch."""
     sd = _STAGES["M-DESIGN"]
     if not s.doc_dispatched:
         cmd = Command(kind="dispatch_agent", params={
@@ -796,19 +816,7 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
         if s.last_failure:
             cmd.params["evidence"] = dict(s.last_failure)  # FR-11
         return cmd
-    if not s.doc_produced:
-        return None
-    if s.design_validated < len(DESIGN_DOCS):
-        return Command(
-            kind="validate_document",
-            params={"doc": DESIGN_DOCS[s.design_validated],
-                    "checks": ["template", "trace"]})
-    if s.design_committed < len(DESIGN_DOCS):
-        doc = DESIGN_DOCS[s.design_committed]
-        return Command(kind="commit_document",
-                       params={"doc": doc,
-                               "message": f"M-DESIGN: {sub.lower()} {doc}"})
-    return None
+    return None  # awaiting outcome -> pipeline drives validate+checkpoint+publish
 
 
 def _decide_design_exit(s: State) -> Command | None:
@@ -894,108 +902,69 @@ def _decide_exit_gate(s: State, stage: str) -> Command | None:
     return _decide_exit(s, stage)
 
 
-# -- M-TEST control flow (flow.md §9 / SM-01, FR-0010~0070) -------------------
+def _decide_result_pipeline(s: State) -> Command | None:
+    """v0.5 ResultCheckpoint pipeline: validate -> checkpoint -> publish.
 
-# D-29 criteria pack identity (architecture.md §3.4): Runtime decides the pack
-# name+version; Prism loads it and echoes the identity in its verdict.
-_CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
-# Shield / M-TEST Prism read-only context docs (interfaces.md §3a).
-_M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
-
-
-def _m_test_shield_dispatch(s: State) -> Command:
-    """DISPATCH/WRITE: dispatch Shield to write integration/e2e tests."""
-    params = {
-        "role": "shield", "substate": "WRITE",
-        "objective": "write integration/e2e tests against interface stubs",
-        "stage": "M-TEST",
-        "attempt": s.current_attempt + 1,
-        "docs": list(_M_TEST_CONTEXT_DOCS),
-        "assignment": {
-            "kind": "WRITE",
-            "skills": ["tracks-discuz"],
-            "docs": list(_M_TEST_CONTEXT_DOCS),
-        },
-    }
-    if s.last_failure:
-        params["evidence"] = dict(s.last_failure)  # FR-11
-    return Command(kind="dispatch_agent", params=params)
-
-
-def _m_test_prism_dispatch(s: State) -> Command:
-    """PRISM_REVIEW: dispatch Prism with the criteria pack (D-29 triple ①)."""
-    params = {
-        "role": "prism", "substate": "PRISM_REVIEW",
-        "objective": "review test contract against the criteria pack",
-        "stage": "M-TEST",
-        "attempt": s.current_attempt + 1,
-        "docs": list(_M_TEST_CONTEXT_DOCS),
-        "assignment": {
-            "kind": "PRISM_REVIEW",
-            "skills": ["tracks-discuz", "tracks-prism-test"],
-            "docs": list(_M_TEST_CONTEXT_DOCS),
-            "criteria_pack": dict(_CRITERIA_PACK),
-        },
-    }
-    if s.last_failure:
-        params["evidence"] = dict(s.last_failure)
-    return Command(kind="dispatch_agent", params=params)
-
-
-def _decide_m_test(s: State, sub: str) -> Command | None:
-    """M-TEST explicit control flow (architecture.md §1.2, SM-01).
-
-    Pure (NFR-0030): no I/O, no clock/env. Each substate maps to at most one
-    Command; substates not listed produce None (halt / awaiting result).
-    """
-    if sub == "DISPATCH":
-        return _m_test_shield_dispatch(s)  # SM-01.2: first Shield dispatch
-    if sub == "WRITE":
-        if s.doc_dispatched:
-            return None  # awaiting Shield outcome
-        return _m_test_shield_dispatch(s)  # SM-01.4/.6/.8/.11/.15 re-dispatch
-    if sub == "COLLECT":
-        return Command(kind="collect_tests", params={"stage": "M-TEST"})  # SM-01.5
-    if sub == "PRISM_REVIEW":
-        if s.reviewer_dispatched:
-            return None  # awaiting Prism verdict
-        return _m_test_prism_dispatch(s)  # SM-01.7
-    if sub == "RED_CHECK":
-        return Command(kind="run_tests", params={"stage": "M-TEST"})  # SM-01.9
-    if sub == "EXIT":
-        return _m_test_exit_route(s)  # SM-01.14/.15
-    if sub == "DIAGNOSE":
-        return _m_test_diagnose_route(s)  # SM-01.11/.12/.13
-    if sub == "RETURNED":
-        # SM-01.13: Human approved ac_gap/spec_gap rollback.
-        return Command(kind="rollback_stage",
-                       params={"to_stage": s.return_target, "reason": "diagnose_rollback"})
-    return None
-
-
-def _m_test_exit_route(s: State) -> Command | None:
-    """EXIT: trace gate -> commit tests. trace_passed and test_committed are
-    set by reducers; decide() only fires the next step."""
-    if not s.trace_passed:
-        return Command(kind="check_trace", params={"stage": "M-TEST"})  # SM-01.14
-    if not s.test_committed:
-        return Command(kind="commit_tests", params={"stage": "M-TEST"})  # SM-01.14
-    return None  # executor emits stage.exited + run.completed
-
-
-def _m_test_diagnose_route(s: State) -> Command | None:
-    """DIAGNOSE four-way routing (FR-0060). test_defect and ac_gap/spec_gap
-    are routed by the reducer (WRITE / awaiting_human); stub_gap produces the
-    rollback command here (no Human gate, SM-01.12)."""
-    if s.diagnose_classification == "stub_gap":
-        return Command(kind="rollback_stage",
-                       params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
-    return None  # test_defect -> WRITE (reducer); ac_gap/spec_gap -> awaiting
+    Generic and stage-agnostic. ``active_result`` carries everything the
+    executor needs: artifacts to validate, allowed_paths to checkpoint,
+    checks to run, and the domain_event to publish. The domain event's
+    reducer clears ``active_result`` (or verdict.failed on failure)."""
+    ar = s.active_result
+    result_id = ar.get("result_id")
+    digests = ar.get("digests")
+    if not ar.get("validated"):
+        return Command(kind="validate_result", params={
+            "artifacts": ar.get("artifacts", []),
+            "checks": ar.get("checks", []),
+            "base_sha": ar.get("base_sha"),
+            "requires_diff": ar.get("requires_diff", False),
+            "forbid_diff": ar.get("forbid_diff", False),
+            "discussion_only": ar.get("discussion_only", False),
+            "verdict": ar.get("verdict"),
+            "actor_kind": ar.get("actor_kind"),
+            "result_id": result_id,
+            "digests": digests,
+        })
+    if not ar.get("checkpointed"):
+        return Command(kind="checkpoint_result", params={
+            "allowed_paths": ar.get("allowed_paths", []),
+            "base_sha": ar.get("base_sha"),
+            "source": ar.get("source"),
+            "stage": ar.get("stage"),
+            "requires_diff": ar.get("requires_diff", False),
+            "forbid_diff": ar.get("forbid_diff", False),
+            "verdict": ar.get("verdict"),
+            "commit_label": ar.get("commit_label"),
+            "actor_kind": ar.get("actor_kind"),
+            "result_id": result_id,
+            "digests": digests,
+        })
+    return Command(kind="publish_result", params={
+        "domain_event": ar.get("domain_event", {}),
+        "commit_sha": ar.get("commit_sha"),
+        "created_commit": ar.get("created_commit", False),
+        "source": ar.get("source"),
+        "stage": ar.get("stage"),
+        "substate": ar.get("substate"),
+        "artifacts": ar.get("artifacts", []),
+        "verdict": ar.get("verdict"),
+        "actor_kind": ar.get("actor_kind"),
+        "base_sha": ar.get("base_sha"),
+        "result_id": result_id,
+    })
 
 
 def decide(s: State) -> Command | None:
     """Next command to issue, or None to halt (awaiting human / completed)."""
-    if s.status != "active" or s.awaiting:
+    # v0.5 ResultCheckpoint pipeline takes absolute priority: when
+    # active_result is set, drive validate->checkpoint->publish regardless
+    # of status or awaiting. This allows the human pipeline to run under
+    # the awaiting gate.
+    if s.active_result is not None:
+        return _decide_result_pipeline(s)
+    if s.status != "active":
+        return None
+    if s.awaiting:
         return None
     stage, sub = s.stage, s.substate
     if stage == "M-STORY" and s.triage_decision in ("no_go", "park"):

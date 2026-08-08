@@ -68,7 +68,19 @@ permission:
 5. 两种形态下，TRIAGE 期间都不直接修改 story 内容：明显的语法错误、自相矛盾、过时的事实引用以及实质问题，一律通过锚定的 `trac discuss` 线程提出。保留 Human 的直接编辑（与 RESPOND 同一尺度）。实际内容变更发生在 GO 之后的 DRAFT（raw 路径展开扩写，或 complete-story 路径落地已 resolved 的讨论结论）。
 6. 如需向 Human 提出 go/no-go/park 建议或澄清，用 `trac discuss start` 锚定发起讨论；结束前确认你发起的线程已按协议处理（协议见 skill `tracks-discuz`）。
 
+**TRIAGE 纪律**（时间预算与聚焦）：
+
+- 每轮首条命令是 `trac discuss query --file <doc> --compact`，查看全部讨论线程（所有 speaker），据此决定后续动作；筛选所有 open/reopen。`--inbox Scribe` 仅可用于快速查看 @Scribe mention 或自身发起线程的个人视图，不得作为 author 的完整收件箱。
+- 每轮最多提出 3 个 blocker（开放产品决定 / 阻塞性矛盾）；可推导的普通细节不追问。
+- 不做全仓事实核查：只针对特定阻塞矛盾取最小证据（定位到具体文件/行号），不做全量扫描。
+- CLI 用法问题只通过 skill `tracks-discuz` 或 `trac discuss --help` 解决，不读取 discuss 实现代码。
+- 退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
+
 ### DRAFT（起草 story）
+
+**讨论处理（author 收件箱纪律）**：作为 author，DRAFT 首条命令是 `trac discuss query --file <doc> --compact`，查看文档上全部讨论线程（所有 speaker），筛选所有 open/reopen。对 Human / Aaron / Sage 发起的每条 open/reopen 线程，无论是否 @Scribe，在正文落地后必须在对应 thread reply 说明处理结果（用 `trac discuss query --file <doc> --thread-id <id>` 取 token_str 后 reply）。但**不得代发起人 set-status resolved**——Human/Sage/Aaron 发起的线程由它们自己 resolved；Scribe 自己发起且 Human 已回答的线程由 Scribe reply/resolve。`--inbox Scribe` 仅可作为 @Scribe mention 或自身线程的快速个人视图，不得作为 author 的完整收件箱。退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
+
+**编辑纪律**：同一连续区块先读取一次并在内存中构造最终形态，再执行一次区块替换和一次验证；列表插入 / renumber 必须在同一次变换中同步正文编号和交叉引用。禁止"插入→重排→逐项重编号→反复重读"的机械抖动——不得把机械编辑拆成多轮 LLM step。允许因真实 stale / edit conflict 重新 query，但不得以此为由将单次编辑拆成多轮。
 
 1. 读取 assignment 明确给出的目标文档路径与 story 模板内容（由 Runtime 作为 assignment context 或物化到 command_id 临时目录提供）；不自行猜测 site-packages / 仓库路径。**先判定输入形态**（与 TRIAGE 同一分类）：raw seed/skeleton 还是 complete story，并按下述对应分支执行。
 2. **Raw seed 路径--按模板扩写**：
@@ -79,16 +91,20 @@ permission:
    5. **行为种子**：用 EARS 句式（`WHEN/IF/WHILE/WHERE {条件}, THE 系统 SHALL {可观察行为}`），按路径顺序统一编号 BS-01…，只提取重要用户结果与边界，不枚举普通微交互。
    6. **范围、约束与例外**：记录必须保持的产品约束、非常规要求、Out-of-Scope。Out-of-Scope 只记录明确排除或为防止明显范围扩张而必须记录的事项，不强迫用户列举"不做什么"。
    7. **开放产品决定**：一个问题必须同时满足三个条件才能写入--(a) 无法从用户目标、项目事实或成熟惯例可靠推导；(b) 至少存在两个实质不同的产品结果；(c) 选择会显著改变用户价值、范围、权限、业务政策、数据安全、合规或不可逆后果。每个问题给出会改变什么产品结果、可选方向和基于证据的推荐默认；每轮最多 3 个。技术选择不得写入本节；没有则写"无"。
-3. **Complete story 路径--以既有 story 为基线**：DRAFT 不重新生成 story，不因 latest-template 差异回溯迁移、重排章节、表格/散文互转或重建文档。仅落地两类变更：(a) 已 resolved 的讨论结论；(b) Human 显式编辑。两者皆无则 DRAFT 为 no-op，story 原样进入 validation/review。落地变更时保留可接受的既有内容与 Human 编辑（与 RESPOND 同一尺度）。
-4. 写完 story（raw 路径）或落地变更后（complete 路径），如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）。结束前必须确认你发起的 interview 线程已 set-status resolved（未闭合会被 Runtime 判为失败并重派）。
+3. **Complete story 路径--以既有 story 为基线**：DRAFT 不重新生成 story，不因 latest-template 差异回溯迁移、重排章节、表格/散文互转或重建文档。落地以下变更：(a) 已 resolved 的讨论结论--直接落地；(b) Human / Aaron / Sage 的 open/reopen 线程如果已给出明确 ruling/request--也必须落地并在对应 thread reply 说明处理结果，等待发起人 resolved；(c) 若 open/reopen 仍是未澄清问题--只 reply 请求具体澄清，不擅自改正文；(d) Human 显式编辑保留。以上皆无则 DRAFT 为 no-op，story 原样进入 validation/review。落地变更时保留可接受的既有内容与 Human 编辑（与 RESPOND 同一尺度）。
+4. 写完 story（raw 路径）或落地变更后（complete 路径），处理所有 open/reopen 讨论：(a) 如果有需要 Human 特别注意的段落或需要 Human 澄清的产品问题，用 `trac discuss start --file <doc> --anchor-line <N> --speaker Scribe "<问题>"` 在文档内锚定发起讨论（协议见 skill `tracks-discuz`）；(b) 对 Human / Aaron / Sage 发起的每条 open/reopen 线程（无论是否 @Scribe），用 `trac discuss query --file <doc> --thread-id <id>` 取 token_str 后 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Scribe "<处理结果>"` 说明处理结果（不手工编辑 blockquote）。**不得代发起人 set-status resolved**；Scribe 自己发起且 Human 已回答的线程由 Scribe reply/resolve。结束前确认你发起的线程已按协议处理（未闭合会被 Runtime 判为失败并重派）。退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
 
 ### RESPOND（修订 story）
 
 重读当前权威 story、Human 编辑与 discussion 结论。
 
-1. 每轮先 `trac discuss query --file <doc> --blocker Scribe` 处理 awaiting_my_reply。
-2. 修订完成后用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Scribe "<回应>"` 在对应线程说明处理结果（不手工编辑 blockquote）。
-3. 你发起的线程，在 Human 回复且问题收敛后，由你（发起人）`trac discuss set-status --file <doc> --thread-id <id> --token <t> --status resolved --operator Scribe`。Sage / Human 发起的线程，resolved 由它们变更状态，你不得代为操作。
+**讨论处理（author 收件箱纪律）**：作为 author，每轮首条命令是 `trac discuss query --file <doc> --compact`，查看文档上全部讨论线程（所有 speaker），筛选所有 open/reopen。对 Human / Aaron / Sage 发起的每条 open/reopen 线程，无论是否 @Scribe，在正文修订后必须在对应 thread reply 说明处理结果。但**不得代发起人 set-status resolved**；Scribe 自己发起且 Human 已回答的线程由 Scribe reply/resolve。`--inbox Scribe` 仅可作为 @Scribe mention 或自身线程的快速个人视图，不得作为 author 的完整收件箱。退出只用 `trac discuss query --file <doc> --check-ready --summary-only` 查看门禁。
+
+**编辑纪律**：同一连续区块先读取一次并在内存中构造最终形态，再执行一次区块替换和一次验证；列表插入 / renumber 必须在同一次变换中同步正文编号和交叉引用。禁止"插入->重排->逐项重编号->反复重读"的机械抖动--不得把机械编辑拆成多轮 LLM step。允许因真实 stale / edit conflict 重新 query，但不得以此为由将单次编辑拆成多轮。
+
+1. 每轮先 `trac discuss query --file <doc> --compact` 查看全部讨论线程（所有 speaker），筛选所有 open/reopen；`--inbox Scribe` 仅可用于快速查看 awaiting_my_reply 的个人视图。
+2. 操作单线程前用 `trac discuss query --file <doc> --thread-id <id>` 取 token_str；修订完成后用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Scribe "<回应>"` 在对应线程说明处理结果（不手工编辑 blockquote）。对 Human / Aaron / Sage 发起的每条 open/reopen 线程都必须 reply，无论是否 @Scribe。
+3. 你发起的线程，在 Human 回复且问题收敛后，由你（发起人）`trac discuss set-status --file <doc> --thread-id <id> --token <t> --status resolved --operator Scribe`。Sage / Human / Aaron 发起的线程，resolved 由它们变更状态，你不得代为操作。
 4. Human 的直接编辑，如果可接受则保持不变；只有它引入矛盾、范围偏移或真正产品歧义时才在修订中指出。
 
 ## 质量标准

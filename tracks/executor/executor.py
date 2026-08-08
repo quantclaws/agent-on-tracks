@@ -4,9 +4,6 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 """
 from __future__ import annotations
 
-import hashlib
-import json
-import re
 import shlex
 import subprocess
 import sys
@@ -19,85 +16,38 @@ from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
-from tracks.executor.validate import parse_test_tasks, required_ac_ids, validate_document
+from tracks.executor.helpers import (
+    _DIAGNOSE_TARGET,
+    _LEGIT_RED,
+    _commit_if_staged,
+    _dispatch_payload,
+    _hook_output,
+    _parse_collected_count,
+    _short_detail,
+    classify_red,
+    git,
+)
+from tracks.executor.result_checkpoint import (
+    _COMMITTED_EVENT,
+    ResultCheckpointMixin,
+)
+from tracks.executor.validate import (
+    parse_test_tasks,
+    required_ac_ids,
+    validate_document,
+)
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
-from tracks.kernel.machine import State, decide
+from tracks.kernel.machine import (
+    _REVIEW_SUBSTATE,
+    State,
+    decide,
+)
 from tracks.project import ContractError, load_contract
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
-
-def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
-    if check and proc.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
-    return proc
-
-
-def _commit_if_staged(repo: Path, message: str) -> subprocess.CompletedProcess | None:
-    """Attempt to commit staged changes (check=False). Returns None if nothing
-    was staged, or the CompletedProcess so the caller can inspect ``.returncode``
-    for pre-commit hook rejection without crashing."""
-    if git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
-        return None
-    return git(repo, "commit", "-m", message, check=False)
-
-
-def _hook_output(proc: subprocess.CompletedProcess, limit: int = 4096) -> str:
-    """Combined stdout+stderr from a failed ``git commit``, truncated."""
-    combined = (proc.stdout or "") + (proc.stderr or "")
-    return combined[:limit]
-
-
 _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
-
-
-def _agent_io_evidence(store: Store, assignment: dict, captured: dict) -> dict:
-    """Persist input/output evidence without making it a workflow failure."""
-    input_payload = dict(assignment)
-    for key in ("prompt", "console_input"):
-        if key in captured:
-            input_payload[key] = captured[key]
-    input_ref = store.write_audit_blob(input_payload)
-    output_raw = json.dumps(captured, ensure_ascii=False, sort_keys=True)
-    output_ref = store.write_audit_blob(captured)
-    digest = hashlib.sha256(output_raw.encode("utf-8")).hexdigest()
-    gaps = []
-    if input_ref is None:
-        gaps.append("assignment_blob_write_failed")
-    if output_ref is None:
-        gaps.append("agent_output_blob_write_failed")
-    evidence = {
-        "input_ref": input_ref,
-        "output_ref": output_ref,
-        "output_digest": digest,
-        "output_summary": {
-            "stdout_bytes": captured.get("stdout_bytes", 0),
-            "stderr_bytes": captured.get("stderr_bytes", 0),
-        },
-        "audit_completeness": "partial" if gaps else "complete",
-    }
-    if gaps:
-        evidence["audit_gaps"] = gaps
-    return evidence
-
-
-def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
-    payload = {
-        "role": params["role"],
-        "status": result["status"],
-        "artifact_ref": result.get("artifact_ref"),
-        "self_report": result["self_report"],
-    }
-    captured = result.get("agent_io")
-    if captured is not None:
-        payload["agent_io"] = _agent_io_evidence(store, dict(params), captured)
-    for key in ("diff_ref", "audit_evidence", "failure_class", "verdict",
-                "discussion_evidence"):
-        if result.get(key) is not None:
-            payload[key] = result[key]
-    return payload
 
 
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
@@ -108,18 +58,6 @@ _NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC",
                "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN",
                "M-DESIGN": "M-TEST"}
 
-# doc -> (committed event type, body-sha payload key)
-_COMMITTED_EVENT = {
-    "story.md": ("story.committed", "story_sha"),
-    "spec.md": ("spec.committed", "spec_sha"),
-    "acceptance.md": ("acceptance.committed", "acceptance_sha"),
-    # v0.3 design trio: one event type serves all three docs; the payload's
-    # `doc` field (see _emit_committed) identifies which one.
-    "architecture.md": ("design.committed", "architecture_sha"),
-    "interfaces.md": ("design.committed", "interfaces_sha"),
-    "test-plan.md": ("design.committed", "test_plan_sha"),
-}
-
 # reviewer role -> its verdict event type
 _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
                   "prism": "prism.verdict"}
@@ -128,64 +66,8 @@ _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
 # read back by the executor to enforce the anti-self-report triple.
 _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
-# IF-004 §1g RedClass closed set (legit = the test fails for the right reason).
-_LEGIT_RED = frozenset({"assertion_failure", "stub_token_failure", "symbol_missing"})
-# DIAGNOSE classification -> target stage for rollback/rewrite.
-_DIAGNOSE_TARGET = {"test_defect": "M-TEST", "stub_gap": "M-DESIGN",
-                    "ac_gap": "M-ACC", "spec_gap": "M-SPEC"}
-# pytest short-traceback E-prefix assertion line (``E   assert ...``).
-_ASSERT_E_LINE = re.compile(r"^E\s+assert\b", re.MULTILINE)
-# Failure keywords -> illegit Red class (collection/syntax/fixture/import).
-_ILLEGIT_KEYWORDS = (
-    "ImportError", "ModuleNotFoundError", "SyntaxError",
-    "FixtureLookupError", "collection error", "ERROR collecting",
-)
 
-
-def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str:
-    """FR-0050 classify a single test failure (IF-004 §1g, pure).
-
-    Based on returncode + keyword matching (no traceback structure parsing):
-    - ``NotImplementedError("IF-`` -> ``stub_token_failure`` (legit).
-    - ``AssertionError`` or pytest ``E   assert`` line -> ``assertion_failure``
-      (legit).
-    - ImportError/ModuleNotFoundError/SyntaxError/FixtureLookupError/collection
-      error -> ``collection_error`` (illegit).
-    - returncode == 0 (test should fail but passed) -> ``unexpected_pass``.
-    - otherwise -> ``unclassified`` (illegit, enters DIAGNOSE).
-    """
-    combined = f"{stdout}\n{stderr}"
-    if returncode == 0:
-        return "unexpected_pass"
-    if 'NotImplementedError("IF-' in combined or "NotImplementedError('IF-" in combined:
-        return "stub_token_failure"
-    if "AssertionError" in combined or _ASSERT_E_LINE.search(combined):
-        return "assertion_failure"
-    for kw in _ILLEGIT_KEYWORDS:
-        if kw in combined:
-            return "collection_error"
-    if "AttributeError" in combined or "NameError" in combined:
-        return "symbol_missing"
-    return "unclassified"
-
-
-def _parse_collected_count(stdout: str) -> int:
-    """Parse the test count from pytest --collect-only -q output (lines
-    like ``N tests collected`` or ``N errors``). Sums across sections."""
-    m = re.findall(r"(\d+) tests? collected", stdout)
-    if m:
-        return sum(int(n) for n in m)
-    m = re.findall(r"(\d+) errors?", stdout)
-    return sum(int(n) for n in m) if m else 0
-
-
-def _short_detail(output: str, limit: int = 200) -> str:
-    """Truncate pytest output for the red.validated findings detail field."""
-    output = output.strip()
-    return output[:limit] + ("..." if len(output) > limit else "")
-
-
-class Executor:
+class Executor(ResultCheckpointMixin):
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
     def __init__(self, store: Store, repo: Path, run_id: str,
@@ -235,6 +117,38 @@ class Executor:
     def _doc_path(self, doc: str) -> Path:
         return paths.version_dir(self.store.home, self.version) / doc
 
+    def _doc_paths(self, docs: list[str]) -> dict:
+        """Map doc names to their filesystem paths."""
+        return {doc: self._doc_path(doc) for doc in docs}
+
+    def _artifact_path(self, name: str) -> Path:
+        """Resolve an artifact name to its filesystem path for checkpoint
+        operations. Known doc names (in ``_COMMITTED_EVENT``) resolve to the
+        version dir; other names (e.g. ``tests/``) are repo-relative."""
+        if name in _COMMITTED_EVENT:
+            return self._doc_path(name)
+        return self.repo / name
+
+    def _artifact_paths(self, names: list[str]) -> dict:
+        """Map artifact names to filesystem paths (version-dir docs or
+        repo-relative paths)."""
+        return {name: self._artifact_path(name) for name in names}
+
+    def _dirty_files(self) -> set[str]:
+        """Return repo-relative paths of all dirty (modified, staged, or
+        untracked) files, excluding ignored files. Used to capture the
+        exact file set written by Shield during M-TEST WRITE."""
+        proc = git(self.repo, "status", "--porcelain", "-uall", check=False)
+        files: set[str] = set()
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:]
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            files.add(path.strip().strip('"'))
+        return files
+
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
     def run_loop(self) -> State:
@@ -260,6 +174,20 @@ class Executor:
             self._progress(cmd, state)
             self.issue(cmd)
 
+    def run_pipeline(self) -> State:
+        """Drive only the ResultCheckpoint pipeline (validate->checkpoint->
+        publish). No agent dispatch, no recovery, no cross-substate flow.
+        Returns when active_result is cleared (published or failed)."""
+        while True:
+            state = self.store.state(self.run_id)
+            if state.active_result is None:
+                return state
+            cmd = decide(state)
+            if cmd is None:
+                return state
+            self._progress(cmd, state)
+            self.issue(cmd)
+
     def _progress(self, cmd: Command, state: State) -> None:
         """Concise non-agent progress to stderr (validate/commit/seal). Agent
         dispatch progress is emitted in ``_do_dispatch_agent`` around
@@ -275,6 +203,18 @@ class Executor:
         elif cmd.kind == "write_frontmatter":
             stage = cmd.params.get("stage", state.stage or "?")
             print(f"  [{state.stage}] seal frontmatter ({stage})",
+                  file=sys.stderr, flush=True)
+        elif cmd.kind == "validate_result":
+            source = cmd.params.get("source", "?")
+            print(f"  [{state.stage}] validate result ({source})",
+                  file=sys.stderr, flush=True)
+        elif cmd.kind == "checkpoint_result":
+            source = cmd.params.get("source", "?")
+            print(f"  [{state.stage}] checkpoint ({source})",
+                  file=sys.stderr, flush=True)
+        elif cmd.kind == "publish_result":
+            ev = cmd.params.get("domain_event", {}).get("type", "?")
+            print(f"  [{state.stage}] publish {ev}",
                   file=sys.stderr, flush=True)
 
     def _dispatch_gate(self, cmd, dispatches: int,
@@ -365,21 +305,43 @@ class Executor:
             assignment["evidence"] = p["evidence"]
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
+        pre_dirty = self._dirty_files() if (
+            state.stage == "M-TEST" and substate == "WRITE") else None
         result = self.backend.act(
             role, substate, doc, doc_path, assignment=assignment
         )
-        elapsed = time.monotonic() - t0
-        self._dispatch_log_end(p, result, elapsed)
-        self._emit("outcome.received", _dispatch_payload(self.store, p, result),
-                   command_id=cmd.command_id, task_id=task_id)
-        verdict = result.get("verdict")
+        self._dispatch_log_end(p, result, time.monotonic() - t0)
         # D-29 anti-self-report triple ③: M-TEST PRISM_REVIEW criteria-pack
         # mismatch -> verdict.failed, re-dispatch Prism (no prism.verdict).
-        if self._criteria_pack_mismatch(role, substate, state, verdict,
+        # Must be checked before emitting outcome.received so a mismatch
+        # short-circuits without entering the pipeline.
+        if self._criteria_pack_mismatch(role, substate, state,
+                                        result.get("verdict"),
                                         assignment, result, cmd):
+            self._emit("outcome.received",
+                       _dispatch_payload(self.store, p, result),
+                       command_id=cmd.command_id, task_id=task_id)
             return
-        if verdict:
-            self._emit_verdict(role, verdict, result, state, p, cmd, task_id)
+        # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
+        # embed the full pipeline capture in outcome.received so the reducer
+        # atomically sets active_result in the same event — no crash window
+        # between outcome.received and a separate result.submitted event.
+        # Failed outcomes (status != "done") are handled by _on_outcome_received
+        # (attempt consumed, substate reset) — no pipeline payload.
+        payload = _dispatch_payload(self.store, p, result)
+        if (state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
+                and result.get("status") == "done"
+                and (substate in ("DRAFT", "RESPOND", "WRITE")
+                     or substate in _REVIEW_SUBSTATE)):
+            payload["result_checkpoint"] = self._result_checkpoint_payload(
+                cmd, state, result, p, substate, role, doc, pre_dirty
+            )
+        self._emit("outcome.received", payload,
+                   command_id=cmd.command_id, task_id=task_id)
+        if "result_checkpoint" in payload:
+            return  # pipeline drives the domain event
+        if result.get("verdict"):
+            self._emit_verdict(role, result["verdict"], result, state, p, cmd, task_id)
 
     @staticmethod
     def _dispatch_log_start(p: dict, state: State) -> None:
@@ -556,11 +518,14 @@ class Executor:
             return None, f"scaffold path is not allowed (ignored): {raw}"
         return self.repo / relative, None
 
-    def _emit_committed(self, doc, commit_sha, command_id, final=False):
+    def _emit_committed(self, doc, commit_sha, command_id, final=False,
+                        result_id=None):
         ev_type, sha_key = _COMMITTED_EVENT[doc]
         payload = {"commit_sha": commit_sha,
                    sha_key: doc_body_sha(self._doc_path(doc)),
                    "final": final}
+        if result_id is not None:
+            payload["result_id"] = result_id
         if ev_type == "design.committed":
             payload["doc"] = doc  # one event type serves all three design docs
         self._emit(ev_type, payload, command_id=command_id)
@@ -772,7 +737,8 @@ class Executor:
 
     def _do_commit_tests(self, cmd, state, task_id, reconcile):
         """SM-01.14: freeze the test asset via a controlled git commit of tests/
-        -> test.committed + stage.exited(M-TEST) + run.completed(boundary)."""
+        -> test.committed. stage.exited + run.completed are handled by the
+        subsequent write_frontmatter command (v0.5 batch 2)."""
         if reconcile and state.test_committed:
             return
         marker = f"command_id: {cmd.command_id}"
@@ -781,25 +747,16 @@ class Executor:
             git(self.repo, "add", "tests")
         proc = _commit_if_staged(
             self.repo, f"M-TEST: freeze test assets\n\n{marker}")
-        if proc is None:
-            # No staged changes -> Shield wrote nothing new; refuse to emit a
-            # test.committed pointing at a stale HEAD (R1-03).
-            self._emit_commit_failure_evidence(
-                state, cmd.command_id, "no_staged_test_assets",
-                "git add tests staged nothing; Shield produced no test files",
-            )
-            return
-        if proc.returncode != 0:
+        if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
+        # proc is None when there's nothing new to stage — tests were already
+        # committed during the WRITE pipeline. That's OK: emit test.committed
+        # pointing at the current HEAD (the existing freeze commit).
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
         self._emit("test.committed",
                    {"commit_sha": commit_sha, "test_count": test_count},
-                   command_id=cmd.command_id)
-        self._emit("stage.exited", {"stage": "M-TEST"}, command_id=cmd.command_id)
-        # M-TEST has no successor (M-IMPL not registered) -> boundary.
-        self._emit("run.completed", {"terminal_state": "boundary"},
                    command_id=cmd.command_id)
 
     def _diagnose_classification(self) -> str:

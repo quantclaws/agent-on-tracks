@@ -220,6 +220,33 @@ def _human_actor(repo: Path) -> str:
     return git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
 
 
+def _reject_dirty_staged(repo: Path, version: str, label: str) -> int:
+    """v0.5 review-A: reject dirty files outside the allowlist and pre-staged
+    content before any event is appended. Returns 0 if clean, non-zero on
+    rejection (with stderr message)."""
+    allowed_prefix = f".tracks/projects/{version}/"
+    dirty = [
+        line[3:].strip()
+        for line in git(repo, "status", "--porcelain",
+                        check=False).stdout.splitlines()
+        if line.strip()
+    ]
+    outside = [f for f in dirty if not f.startswith(allowed_prefix)]
+    if outside:
+        return _err(f"{label} touches files outside {allowed_prefix}: "
+                    + ", ".join(sorted(outside)))
+    staged = [
+        line[3:].strip()
+        for line in git(repo, "diff", "--cached", "--name-only",
+                        check=False).stdout.splitlines()
+        if line.strip()
+    ]
+    if staged:
+        return _err("pre-staged content found; unstage first: "
+                    + ", ".join(sorted(staged)))
+    return 0
+
+
 def _parse_action_actor(
     args: tuple[str, ...], usage: str
 ) -> tuple[str, str | None] | None:
@@ -302,6 +329,90 @@ def cmd_run(repo: Path, *args: str) -> int:
     return 0
 
 
+def _stage_doc(stage: str) -> str | None:
+    """Return the doc name for the current stage (deferred import to avoid
+    circular dependency)."""
+    from tracks.kernel.machine import _STAGES
+    sd = _STAGES.get(stage)
+    return sd.doc if sd else None
+
+
+def _triage_artifacts(doc: str | None) -> tuple[list[str], list[str]]:
+    """Returns (artifacts, checks). Triage always validates the stage doc
+    with template check when a doc exists — no-diff is a legitimate no-change
+    checkpoint. String basename matching against git paths is unreliable."""
+    if doc:
+        return [doc], ["template"]
+    return [], []
+
+
+def _review_action_params(action: str, stage: str) -> dict:
+    """Returns pipeline params for a review action."""
+    if action == "revise":
+        return {"requires_diff": True, "forbid_diff": False,
+                "discussion_only": False, "checks": ["template"],
+                "commit_label": f"{stage}: human revise",
+                "verdict": "comment"}
+    return {"requires_diff": False, "forbid_diff": True,
+            "discussion_only": False, "checks": [],
+            "commit_label": f"{stage}: human no-comment",
+            "verdict": "no_comment"}
+
+
+def _do_triage_pipeline(repo, state, store, run_id, decision, actor):
+    """Execute the triage pipeline inside the writer lock.
+    Returns (rc, (final_state, awaiting_before)) or (rc, None) on early exit."""
+    rc = _reject_dirty_staged(repo, state.version, "triage")
+    if rc:
+        return rc, None
+    doc = _stage_doc(state.stage)
+    allowed_paths = [doc] if doc else []
+    artifacts, checks = _triage_artifacts(doc)
+    actor_name = actor or _human_actor(repo)
+    awaiting_before = state.awaiting
+    ex = Executor(store, repo, run_id)
+    ex.submit_human_result(
+        state=state,
+        domain_event_type="human.triage",
+        payload={"actor": actor_name},
+        verdict=decision,
+        artifacts=artifacts,
+        allowed_paths=allowed_paths,
+        checks=checks,
+        requires_diff=False,
+        commit_label=f"{state.stage}: human triage ({decision})",
+    )
+    return 0, (ex.run_pipeline(), awaiting_before)
+
+
+def _do_review_pipeline(repo, state, store, run_id, action, actor):
+    """Execute the review pipeline inside the writer lock.
+    Returns (rc, (final_state, awaiting_before)) or (rc, None) on early exit."""
+    rc = _reject_dirty_staged(repo, state.version, "review")
+    if rc:
+        return rc, None
+    actor_name = actor or _human_actor(repo)
+    doc = _stage_doc(state.stage)
+    allowed_paths = [doc] if doc else []
+    params = _review_action_params(action, state.stage)
+    awaiting_before = state.awaiting
+    ex = Executor(store, repo, run_id)
+    ex.submit_human_result(
+        state=state,
+        domain_event_type="human.review",
+        payload={"actor": actor_name},
+        verdict=params["verdict"],
+        artifacts=[doc] if doc else [],
+        allowed_paths=allowed_paths,
+        checks=params["checks"],
+        requires_diff=params["requires_diff"],
+        commit_label=params["commit_label"],
+        forbid_diff=params["forbid_diff"],
+        discussion_only=params["discussion_only"],
+    )
+    return 0, (ex.run_pipeline(), awaiting_before)
+
+
 def cmd_triage(repo: Path, *args: str) -> int:
     usage = "usage: trac triage go|no-go|park [--actor NAME]"
     parsed = _parse_action_actor(args, usage)
@@ -315,16 +426,17 @@ def cmd_triage(repo: Path, *args: str) -> int:
     run_id = store.active_run()
     if run_id is None:
         return _err("no active run")
-    # AC-27b: lock precedes the state gate — a held lock aborts with holder
-    # PID before any state read, and no event is appended.
     with writer_lock(home):
         state = store.state(run_id)
         if state.awaiting != "triage":
             return _err(f"run not awaiting triage (awaiting={state.awaiting or 'nothing'})")
-        store.append(
-            run_id, state.version, "human.triage",
-            {"decision": decision, "actor": actor or _human_actor(repo)},
-        )
+        rc, result = _do_triage_pipeline(repo, state, store, run_id, decision, actor)
+        if rc:
+            return rc
+    final_state, awaiting_before = result
+    if final_state.awaiting == awaiting_before:
+        reason = (final_state.last_failure or {}).get("reason", "unknown")
+        return _err(f"triage pipeline failed: {reason}")
     print(f"triage recorded: {decision}")
     return 0
 
@@ -342,47 +454,34 @@ def cmd_review(repo: Path, *args: str) -> int:
     run_id = store.active_run()
     if run_id is None:
         return _err("no active run")
-    with writer_lock(home):  # AC-27b: lock before the state gate
+    with writer_lock(home):
         state = store.state(run_id)
         if state.awaiting != "review":
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
-        if action == "no_comment":
-            payload = {"action": "no_comment", "actor": actor or _human_actor(repo)}
-        else:
-            allowed = f".tracks/projects/{state.version}/"
-            dirty = [
-                line[3:].strip()
-                for line in git(repo, "status", "--porcelain",
-                                check=False).stdout.splitlines()
-                if line.strip()
-            ]
-            outside = [f for f in dirty if not f.startswith(allowed)]
-            if outside:
-                # AC-16b: reject before any event is appended; state unchanged.
-                return _err(f"revise touches files outside {allowed}: "
-                            + ", ".join(sorted(outside)))
-            diff_ref = None
-            if dirty:
-                git(repo, "add", "--", *dirty)
-                git(repo, "commit", "-m",
-                    f"HUMAN_REVIEW: human revise ({state.stage})")
-                diff_ref = git(repo, "rev-parse", "HEAD").stdout.strip()
-            payload = {"action": "comment", "diff_ref": diff_ref,
-                       "actor": actor or _human_actor(repo)}
-        store.append(run_id, state.version, "human.review", payload)
+        rc, result = _do_review_pipeline(repo, state, store, run_id, action, actor)
+        if rc:
+            return rc
+    final_state, awaiting_before = result
+    if final_state.awaiting == awaiting_before:
+        reason = (final_state.last_failure or {}).get("reason", "unknown")
+        return _err(f"review pipeline failed: {reason}")
     print(f"review recorded: {action}")
     return 0
 
 
 def cmd_retry(repo: Path, *args: str) -> int:
-    usage = "usage: trac retry [--actor NAME]"
+    usage = "usage: trac retry [--actor NAME] [--clear-evidence]"
     actor = None
+    clear_evidence = False
     args = list(args)
-    if args:
-        if len(args) == 2 and args[0] == "--actor":
-            actor = args[1]
-        elif len(args) == 0:
-            pass
+    i = 0
+    while i < len(args):
+        if args[i] == "--actor" and i + 1 < len(args):
+            actor = args[i + 1]
+            i += 2
+        elif args[i] == "--clear-evidence":
+            clear_evidence = True
+            i += 1
         else:
             return _err(usage)
     home = paths.tracks_home(repo)
@@ -392,13 +491,30 @@ def cmd_retry(repo: Path, *args: str) -> int:
         return _err("no active run")
     with writer_lock(home):
         state = store.state(run_id)
-        if state.awaiting != "escalation":
+        if clear_evidence:
+            # Operator signals the underlying program/config/validator was
+            # fixed and the old failure evidence is stale. Allowed at escalation
+            # (same as ordinary retry) OR at a clean active state (the recovery
+            # path: ordinary retry already happened, a dispatch was killed, and
+            # stale evidence must not leak into the next dispatch). Other
+            # awaiting gates (review/approval/triage/rollback) are NOT relaxed.
+            if state.awaiting != "escalation" and not (
+                state.status == "active" and state.awaiting is None
+            ):
+                return _err(
+                    "retry --clear-evidence requires escalation or a clean "
+                    f"active state (status={state.status} "
+                    f"awaiting={state.awaiting or 'nothing'})"
+                )
+        elif state.awaiting != "escalation":
+            # Ordinary retry: only at escalation, preserves evidence (FR-11).
             return _err(
                 f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
             )
         store.append(
             run_id, state.version, "human.retry",
-            {"actor": actor or _human_actor(repo)},
+            {"actor": actor or _human_actor(repo),
+             "clear_evidence": clear_evidence},
         )
         state = store.state(run_id)
     print(f"run {run_id}: {_format_state(state)}")
@@ -749,7 +865,7 @@ USAGE = (
     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
-    "|retry [--actor NAME]|status|replay <run-id>|validate --file <path>"
+    "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
     "|report --run-id <run-id> --output <dir> [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ...|check <deliverables|trace|reach>"
 )

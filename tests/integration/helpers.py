@@ -1,4 +1,5 @@
 """Shared helpers for integration tests."""
+import subprocess
 from pathlib import Path
 
 from tracks import paths
@@ -8,6 +9,26 @@ _TEST_SUFFIXES = frozenset({
     ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
     ".kt", ".swift",
 })
+
+
+def g(repo, *args):
+    """Run a git command in *repo*, returning stdout."""
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def make_repo(tmp_path):
+    """Create a minimal git repo at tmp_path/host and return the Path."""
+    repo = tmp_path / "host"
+    repo.mkdir()
+    g(repo, "init", "-b", "main")
+    g(repo, "config", "user.email", "t@example.com")
+    g(repo, "config", "user.name", "T")
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    g(repo, "add", "README.md")
+    g(repo, "commit", "-m", "initial")
+    return repo
 
 
 def setup_trace_repo(tmp_path: Path, scenario: str = "clean") -> Path:

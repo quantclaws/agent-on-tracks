@@ -7,6 +7,7 @@ Pure machine tests: simulate the failure-evidence event in each affected
 sub-state and assert the established WRITE redispatch + budget semantics.
 """
 from tests.unit.helpers import seq
+from tests.unit.test_machine_design import _design_author_checkpoint
 from tests.unit.test_machine_m_test import (
     COLLECT_CMD,
     COLLECTED,
@@ -26,21 +27,22 @@ from tests.unit.test_machine_m_test import (
 from tracks.kernel import decide, project
 from tracks.kernel.machine import DESIGN_DOCS
 
-# -- M-DESIGN (multi-doc DRAFT commit failure) --------------------------------
+# -- M-DESIGN (pipeline checkpoint commit failure) -----------------------------
 
 ENTER_DESIGN = [
     ("story.requested", {"raw_chars": 5}),
     ("stage.entered", {"stage": "M-DESIGN"}),
 ]
 DESIGN_DISPATCHED = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                    "params": {"role": "archer",
-                                                               "substate": "DRAFT"},
-                                                    "command_id": "C1"}})
-DESIGN_PRODUCED = ("outcome.received", {"role": "archer", "status": "done"})
-DESIGN_PASSED = ("verdict.passed", {"check": "template,trace", "detail": "d"})
-def DESIGN_COMMITTED(doc):
-    return ("design.committed", {"doc": doc, "commit_sha": "c",
-                                 "final": False})
+                                                     "params": {"role": "archer",
+                                                                "substate": "DRAFT"},
+                                                     "command_id": "C1"}})
+DESIGN_PRODUCED = ("outcome.received",
+                   {"role": "archer", "status": "done",
+                    "result_checkpoint": _design_author_checkpoint()})
+RESULT_VALIDATED = ("result.validated",
+                    {"artifacts": list(DESIGN_DOCS),
+                     "base_sha": "b", "result_id": "C1"})
 
 
 def _design_state(*items):
@@ -55,14 +57,11 @@ def _design_commit_fail(attempt):
 
 
 def test_m_design_commit_failure_resets_counters_and_redispatches():
-    """One doc committed, next commit rejected by hook: design_committed and
-    design_validated both reset to 0 so the WRITE redispatch re-validates and
+    """Pipeline checkpoint commit rejected by hook: design_committed and
+    design_validated both reset to 0 so the redispatch re-validates and
     re-commits all three docs; Archer is dispatched with hook evidence."""
-    items = [DESIGN_DISPATCHED, DESIGN_PRODUCED]
-    # validate + commit architecture.md, validate interfaces.md
-    items += [DESIGN_PASSED, DESIGN_COMMITTED("architecture.md"), DESIGN_PASSED]
-    # commit interfaces.md rejected by hook
-    items += [_design_commit_fail(1)]
+    items = [DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
+             _design_commit_fail(1)]
     s = _design_state(*items)
     assert s.design_validated == 0 and s.design_committed == 0
     assert s.substate == "DRAFT" and s.doc_dispatched is False
@@ -72,26 +71,26 @@ def test_m_design_commit_failure_resets_counters_and_redispatches():
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "archer"
     assert cmd.params["evidence"]["check"] == "commit"
-    # after redispatch + produce, decide re-validates from doc 0
+    # after redispatch + produce, decide re-validates via pipeline (batch)
     s2 = _design_state(*items, DESIGN_DISPATCHED, DESIGN_PRODUCED)
     cmd2 = decide(s2)
-    assert cmd2.kind == "validate_document"
-    assert cmd2.params["doc"] == DESIGN_DOCS[0]  # architecture.md, not interfaces.md
+    assert cmd2.kind == "validate_result"
+    assert set(cmd2.params["artifacts"]) == set(DESIGN_DOCS)
 
 
 def test_m_design_commit_failure_escalation():
     """Three consecutive commit failures exhaust the <=3 budget."""
-    base = [DESIGN_DISPATCHED, DESIGN_PRODUCED, DESIGN_PASSED]
+    base = [DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED]
     one = _design_state(*base, _design_commit_fail(1))
     assert one.current_attempt == 1 and one.status == "active"
     two = _design_state(*base, _design_commit_fail(1),
-                        DESIGN_DISPATCHED, DESIGN_PRODUCED, DESIGN_PASSED,
+                        DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
                         _design_commit_fail(2))
     assert two.current_attempt == 2 and two.status == "active"
     three = _design_state(*base, _design_commit_fail(1),
-                          DESIGN_DISPATCHED, DESIGN_PRODUCED, DESIGN_PASSED,
+                          DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
                           _design_commit_fail(2),
-                          DESIGN_DISPATCHED, DESIGN_PRODUCED, DESIGN_PASSED,
+                          DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
                           _design_commit_fail(3))
     assert three.status == "awaiting_human" and three.awaiting == "escalation"
     assert decide(three) is None

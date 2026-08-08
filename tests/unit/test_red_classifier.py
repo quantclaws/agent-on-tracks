@@ -3,7 +3,7 @@
 The test data itself is the ground truth (TP-004 §3.1 row 3): each fixture's
 returncode + stdout/stderr is the single source of truth for the expected class.
 """
-from tracks.executor.executor import classify_red
+from tracks.executor.helpers import classify_red
 
 # AC-FR0050-02@v0.4 TRACKS-TRACE legit Red classes
 

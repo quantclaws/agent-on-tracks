@@ -1,41 +1,18 @@
 """Executor reconcile (D-13, AC-29d): commit succeeded, result event lost —
 recovery probes git by command_id, skips the commit, only backfills the event.
 """
-import subprocess
-
-from tracks import paths
+from tests.integration.helpers import g, make_repo
+from tests.integration.result_checkpoint_support import _init_workspace, _StubBackend
+from tracks import templating
 from tracks.effects import FakeBackend
 from tracks.executor import Executor
 from tracks.kernel.events import Command
-from tracks.store import Store, new_ulid
-
-
-def g(repo, *args):
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout
-
-
-def make_repo(tmp_path):
-    repo = tmp_path / "host"
-    repo.mkdir()
-    g(repo, "init", "-b", "main")
-    g(repo, "config", "user.email", "t@example.com")
-    g(repo, "config", "user.name", "T")
-    (repo / "README.md").write_text("x\n", encoding="utf-8")
-    g(repo, "add", "README.md")
-    g(repo, "commit", "-m", "initial")
-    return repo
+from tracks.store import new_ulid
 
 
 def test_reconcile_commit_document_skips_existing_commit(tmp_path):
-    repo = make_repo(tmp_path)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id, cid = new_ulid(), new_ulid()
-
-    vdir = paths.version_dir(home, "v0.1")
-    vdir.mkdir(parents=True)
+    repo, home, store, run_id, vdir = _init_workspace(tmp_path)
+    cid = new_ulid()
     story = vdir / "story.md"
     story.write_text("---\nsha:\n---\n\n# 目标\n", encoding="utf-8")
 
@@ -70,10 +47,8 @@ def test_reconcile_commit_document_skips_existing_commit(tmp_path):
 def test_reconcile_create_branch_skips_existing(tmp_path):
     """R3-03: branch already created & checked out, branch.created lost — recovery
     skips the git work and only backfills branch.created (no duplicate branch)."""
-    repo = make_repo(tmp_path)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id, cid = new_ulid(), new_ulid()
+    repo, home, store, run_id = _init_workspace(tmp_path)[:4]
+    cid = new_ulid()
 
     g(repo, "checkout", "-b", "releases/v0.1", "main")  # crash left the branch
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
@@ -98,10 +73,7 @@ def test_reconcile_create_branch_skips_existing(tmp_path):
 
 def test_delete_branch_tears_down_and_logs(tmp_path):
     """FR-09: delete_branch ends with HEAD==main, branch absent, branch.deleted."""
-    repo = make_repo(tmp_path)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = new_ulid()
+    repo, home, store, run_id = _init_workspace(tmp_path)[:4]
 
     g(repo, "checkout", "-b", "releases/v0.1", "main")
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
@@ -113,16 +85,6 @@ def test_delete_branch_tears_down_and_logs(tmp_path):
     assert g(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
     deleted = [e for e in store.events(run_id) if e.type == "branch.deleted"]
     assert len(deleted) == 1 and deleted[0].payload["branch_name"] == "releases/v0.1"
-
-
-class _StubBackend:
-    """Test double standing in for an AgentBackend (returns a fixed outcome)."""
-
-    def __init__(self, outcome):
-        self._outcome = outcome
-
-    def act(self, role, substate, doc, doc_path, assignment=None):
-        return self._outcome
 
 
 def _dispatch(ex, store, run_id, outcome):
@@ -138,13 +100,10 @@ def _dispatch(ex, store, run_id, outcome):
 
 
 def _setup(tmp_path):
-    repo = make_repo(tmp_path)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = new_ulid()
-    vdir = paths.version_dir(home, "v0.1")
-    vdir.mkdir(parents=True)
-    (vdir / "story.md").write_text("---\nsha:\n---\n\n# 目标\n", encoding="utf-8")
+    repo, home, store, run_id, vdir = _init_workspace(tmp_path)
+    (vdir / "story.md").write_text(
+        templating.render_story_skeleton("做一个X", "2026-07-31"),
+        encoding="utf-8")
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-STORY"})
     return Executor(store, repo, run_id), store, run_id
@@ -266,10 +225,15 @@ def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(t
     author = [e for e in store.events(run_id) if e.type == "outcome.received"][-1]
     assert author.payload["artifact_ref"] == "story.md"
     assert author.payload["diff_ref"].startswith("diff --git")
+    # v0.5: DRAFT dispatch starts the ResultCheckpoint pipeline. Run the real
+    # pipeline (validate -> checkpoint -> publish) instead of manually appending
+    # story.committed. The template-compliant story.md passes validation.
+    ex.run_pipeline()
+    assert [e for e in store.events(run_id) if e.type == "story.committed"]
 
     ex.backend = _StubBackend({
         "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": "revise", "discussion_evidence": {"ready": False},
+        "verdict": "pass", "discussion_evidence": {"ready": False},
     })
     reviewer_cmd = Command(
         kind="dispatch_agent",
@@ -279,10 +243,12 @@ def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(t
     )
     ex._do_dispatch_agent(reviewer_cmd, store.state(run_id), None, False)
     reviewer = [e for e in store.events(run_id) if e.type == "outcome.received"][-1]
-    assert reviewer.payload["verdict"] == "revise"
+    assert reviewer.payload["verdict"] == "pass"
+    # v0.5: verdict is emitted by the publish_result pipeline step.
+    ex.run_pipeline()
     assert [e for e in store.events(run_id) if e.type == "sage.verdict"][-1].payload[
         "verdict"
-    ] == "revise"
+    ] == "pass"
 
 
 def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
@@ -303,12 +269,7 @@ def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
 
 def _setup_m_test(tmp_path):
     """Like _setup but seeds M-TEST stage + acceptance/test-plan docs."""
-    repo = make_repo(tmp_path)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = new_ulid()
-    vdir = paths.version_dir(home, "v0.4")
-    vdir.mkdir(parents=True)
+    repo, home, store, run_id, vdir = _init_workspace(tmp_path, "v0.4")
     (vdir / "acceptance.md").write_text(
         "## FR-0010 F\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8")
     (vdir / "test-plan.md").write_text(

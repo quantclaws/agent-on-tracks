@@ -55,9 +55,13 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     assert len(event_log()) == before
     subprocess.run(["git", "checkout", "--", "README.md"], cwd=host_repo, check=True)
 
-    # AC-16a: human edits story.md, revise commits it and carries diff_ref
-    story.write_text(story.read_text(encoding="utf-8") + "\n人类补充意见。\n",
-                     encoding="utf-8")
+    # AC-16a: human edits story.md with a discussion annotation, revise commits
+    # it and carries diff_ref
+    story.write_text(
+        story.read_text(encoding="utf-8")
+        + "\n\n> **Human:** 人类补充意见。\n",
+        encoding="utf-8",
+    )
     r = trac("review", "revise")
     assert r.returncode == 0, r.stderr
     revise_sha = git_out(host_repo, "rev-parse", "HEAD").strip()

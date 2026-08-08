@@ -116,6 +116,15 @@ class FakeBackend:
         verdict = self.token(role, substate, "pass")
         result = {"status": "done", "artifact_ref": None,
                   "self_report": f"review: {verdict}", "verdict": verdict}
+        # v0.5 ResultCheckpoint: non-pass verdicts must produce a diff
+        # (discussion annotation) so the pipeline can checkpoint it.
+        if verdict in ("revise", "comment"):
+            annotate_path = doc_path
+            if annotate_path is None and assignment and assignment.get("docs"):
+                annotate_path = self._design_vdir() / assignment["docs"][0]
+            if annotate_path and annotate_path.exists():
+                self._annotate_review(annotate_path, role, verdict)
+                result["diff_ref"] = "annotation"
         # D-29 triple ②: M-TEST Prism echoes the criteria-pack identity.
         if role == "prism" and substate == "PRISM_REVIEW":
             assigned_pack = (assignment or {}).get("criteria_pack")
@@ -140,6 +149,8 @@ class FakeBackend:
                 return failure
             return self._act_design(substate, token, scaffold)
         self._write_stage_doc(doc, doc_path, token)
+        if substate == "RESPOND" and doc_path and doc_path.exists():
+            self._resolve_open_threads(doc_path)
         return {"status": "done", "artifact_ref": str(doc_path),
                 "self_report": f"wrote {doc} ({token})"}
 
@@ -164,6 +175,30 @@ class FakeBackend:
             self._write_acceptance(doc_path, token)
         else:
             self._write_spec(doc_path, token)
+
+    @staticmethod
+    def _annotate_review(doc_path: Path, role: str, verdict: str) -> None:
+        """Append a canonical discussion annotation to the doc so the
+        checkpoint pipeline has a diff to stage for non-pass verdicts."""
+        text = doc_path.read_text(encoding="utf-8")
+        name = role.capitalize()
+        annotation = f"\n\n> **{name}:** review annotation ({verdict})\n"
+        doc_path.write_text(text + annotation, encoding="utf-8")
+
+    @staticmethod
+    def _resolve_open_threads(doc_path: Path) -> None:
+        """Resolve all open discussion threads in the doc.
+
+        Simulates the author addressing reviewer comments during RESPOND:
+        changes ``> **Name:**`` (open) to ``> **Name [resolved]:**`` so the
+        EXIT ``discussion_ready`` gate passes."""
+        text = doc_path.read_text(encoding="utf-8")
+        changed = re.sub(
+            r'^(>\s*\*\*@?[^*\[\]]+?)\s*:\*\*',
+            r'\1 [resolved]:**',
+            text, flags=re.M)
+        if changed != text:
+            doc_path.write_text(changed, encoding="utf-8")
 
     # -- M-TEST (Shield writes tests; FR-0020/FR-0120) ------------------------
 
@@ -543,6 +578,7 @@ class FakeBackend:
             path = vdir / name
             path.write_text(path.read_text(encoding="utf-8") + note,
                             encoding="utf-8")
+            self._resolve_open_threads(path)
         return vdir
 
     def _write_story(self, path: Path) -> None:
