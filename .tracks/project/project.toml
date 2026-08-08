@@ -1,0 +1,18 @@
+# Host project test execution contract (FR-0190).
+# Produced by Archer in M-DESIGN. Consumed by project.py load_contract() and
+# the executor (collect / run commands for M-TEST and M-IMPL GREEN_GATE /
+# ISLAND_GATE_2).
+
+[integration]
+framework = "pytest"
+paths = ["tests/integration/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"
+run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"
+cwd = "."
+
+[e2e]
+framework = "pytest"
+paths = ["tests/e2e/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
+run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"
+cwd = "."
