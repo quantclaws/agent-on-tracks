@@ -3,7 +3,7 @@ story_id: S-005
 title: 推进流程到 M-IMPL 阶段（Devon 逐 task RGR）
 created: 2026-08-05
 status: draft
-sha:
+sha: b89b64756233209662a2532c1905dc25206ae6a28190d01b544822dfdfc496cf
 ---
 
 # S-005: 推进流程到 M-IMPL 阶段（Devon 逐 task RGR）
