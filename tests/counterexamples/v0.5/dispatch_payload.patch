@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.executor.executor M-IMPL dispatch assignment materialization
+# mutation: omit pre_dirty_snapshot from the public command.issued assignment payload

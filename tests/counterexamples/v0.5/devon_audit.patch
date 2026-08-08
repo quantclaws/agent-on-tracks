@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.effects.audit Devon manifest enforcement
+# mutation: accept a changed path outside manifest.allowed_paths without rollback or over_reach evidence

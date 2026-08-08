@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/worktree.py b/tracks/executor/worktree.py
+--- a/tracks/executor/worktree.py
++++ b/tracks/executor/worktree.py
+@@ -49 +49 @@ def create_test_authority_worktree(
+-    raise NotImplementedError("IF-IMPL-006")
++    return WorktreeHandle(repo, c_design_sha, "devon_candidate")

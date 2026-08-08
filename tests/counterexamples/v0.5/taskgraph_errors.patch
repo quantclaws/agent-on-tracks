@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/taskgraph.py b/tracks/executor/taskgraph.py
+--- a/tracks/executor/taskgraph.py
++++ b/tracks/executor/taskgraph.py
+@@ -56 +56 @@ def validate_dag(
+-    raise NotImplementedError("IF-IMPL-003")
++    return (True, None)

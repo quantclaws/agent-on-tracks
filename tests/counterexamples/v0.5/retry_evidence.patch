@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.cli.main trac retry command
+# mutation: clear last_failure by default and automatically redispatch after human.retry

@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/rgr.py b/tracks/executor/rgr.py
+--- a/tracks/executor/rgr.py
++++ b/tracks/executor/rgr.py
+@@ -91 +91 @@ def classify_red(
+-    raise NotImplementedError("IF-IMPL-004")
++    return "assertion_failure"

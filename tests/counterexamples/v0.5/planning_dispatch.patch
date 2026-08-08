@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.kernel.machine and tracks.executor.executor planning dispatch
+# mutation: schedule a task marked parallel concurrently without a writelock.granted event

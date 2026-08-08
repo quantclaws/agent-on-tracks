@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/worktree.py b/tracks/executor/worktree.py
+--- a/tracks/executor/worktree.py
++++ b/tracks/executor/worktree.py
+@@ -67 +67 @@ def create_gate_worktree(
+-    raise NotImplementedError("IF-IMPL-006")
++    return WorktreeHandle(repo, c_design_sha, "devon_candidate")

@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.executor.executor M-IMPL reconcile/replay handler
+# mutation: replay a completed task by dispatching it again instead of preserving task.completed evidence

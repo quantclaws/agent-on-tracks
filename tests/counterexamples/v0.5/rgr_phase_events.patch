@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.executor.executor RED/GREEN/REFACTOR handlers
+# mutation: emit green.committed before red.checkpointed and omit outcome phase audit evidence

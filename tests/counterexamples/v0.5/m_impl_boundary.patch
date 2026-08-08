@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.kernel.machine M-IMPL exit progression
+# mutation: require human approval and enter M-VERIFY instead of emitting boundary completion

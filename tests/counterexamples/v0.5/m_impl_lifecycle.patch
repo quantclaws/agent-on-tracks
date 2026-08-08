@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.kernel.machine M-IMPL StageDef and event projection
+# mutation: enter M-IMPL at PLANNING and rewrite an existing event row

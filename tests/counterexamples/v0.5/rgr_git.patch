@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/rgr.py b/tracks/executor/rgr.py
+--- a/tracks/executor/rgr.py
++++ b/tracks/executor/rgr.py
+@@ -56 +56 @@ def create_red_ref(
+-    raise NotImplementedError("IF-IMPL-004")
++    return RedRef("refs/trac/rgr/wrong", base_sha, False)

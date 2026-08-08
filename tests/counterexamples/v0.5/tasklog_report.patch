@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.executor.executor task-log projection and trac report
+# mutation: omit a phase-boundary task-log update while retaining task.completed

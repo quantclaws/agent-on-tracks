@@ -1,0 +1,3 @@
+# pending-implementation
+# target: tracks.kernel.machine stage progression
+# mutation: terminate at the former M-TEST boundary instead of entering M-IMPL
