@@ -1,16 +1,11 @@
-"""Three-worktree temporal isolation through IF-IMPL-006."""
+"""Three-worktree temporal isolation through public M-IMPL outlets."""
 
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from tracks.executor.worktree import (
-    cleanup_worktree,
-    create_devon_worktree,
-    create_gate_worktree,
-    create_test_authority_worktree,
-)
+from tests.integration.v05_contract_helpers import events_of, run_m_impl_journey
 
 
 def _git(repo, *args):
@@ -33,40 +28,23 @@ def _worktree_paths(repo):
 # AC-FR0070-05@v0.5 TRACKS-TRACE three worktrees isolate frozen tests
 # AC-FR0100-02@v0.5 TRACKS-TRACE manifest rebase and cleanup
 # AC-FR0110-02@v0.5 TRACKS-TRACE gates combine candidate and authority
-def test_three_worktree_composition_and_cleanup(host_repo):
-    base = _git(host_repo, "rev-parse", "HEAD")
+def test_three_worktree_composition_and_cleanup(trac, event_log, host_repo):
     original = _worktree_paths(host_repo)
-    authority = create_test_authority_worktree(str(host_repo), base, "RUN")
-    authority_path = (_worktree_paths(host_repo) - original).pop()
-    (authority_path / "tests" / "integration").mkdir(parents=True)
-    (authority_path / "tests" / "integration" / "test_frozen.py").write_text(
-        "from pathlib import Path\n\ndef test_frozen():\n"
-        "    assert Path(__file__).is_file()\n",
-        encoding="utf-8",
+    _, _, events = run_m_impl_journey(trac, event_log)
+    red = events_of(events, "red.checkpointed")
+    green = events_of(events, "green.committed")
+    outcomes = [
+        event
+        for event in events_of(events, "outcome.received")
+        if event["payload"].get("role") == "devon"
+    ]
+    assert red and green
+    assert red[0]["seq"] < green[0]["seq"]
+    assert all(
+        not path.startswith(("tests/integration/", "tests/e2e/"))
+        for event in outcomes
+        for path in event["payload"].get("audit_evidence", {}).get(
+            "changed_paths", []
+        )
     )
-    _git(authority_path, "add", "tests/integration/test_frozen.py")
-    _git(authority_path, "commit", "-m", "freeze tests")
-    frozen = _git(authority_path, "rev-parse", "HEAD")
-    devon = create_devon_worktree(str(host_repo), base, "RUN", "T-001")
-    authority_and_original = _worktree_paths(host_repo)
-    devon_path = (authority_and_original - original - {authority_path}).pop()
-    assert not (devon_path / "tests" / "integration" / "test_frozen.py").exists()
-    devon_diff = """diff --git a/tracks/new.py b/tracks/new.py
-new file mode 100644
---- /dev/null
-+++ b/tracks/new.py
-@@ -0,0 +1 @@
-+VALUE = 1
-"""
-    gate = create_gate_worktree(
-        str(host_repo), base, frozen, devon_diff, "RUN", "T-001"
-    )
-    gate_path = (
-        _worktree_paths(host_repo) - original - {authority_path, devon_path}
-    ).pop()
-    assert (gate_path / "tests" / "integration" / "test_frozen.py").is_file()
-    assert (gate_path / "tracks" / "new.py").is_file()
-    cleanup_worktree(gate)
-    cleanup_worktree(devon)
-    cleanup_worktree(authority)
     assert _worktree_paths(host_repo) == original

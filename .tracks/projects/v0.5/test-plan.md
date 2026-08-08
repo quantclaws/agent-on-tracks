@@ -283,9 +283,13 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   - reach 闭合（`trac check reach` 无孤岛）
 - **Failure semantics**: Any required check failure blocks merge. live 通道（`tests/e2e_live/`）缺凭据 skip，非 required check。
 
+> **Prism:** [PRISM-TEST-B3 | blocker | criterion 1 + CI gate: trace closure hard errors] trac check trace --json returns status=fail with hard_errors: (1) 'AC-FR0170-02 has no test marker bound' -- acceptance line 286, AC-FR0170-02 (Devon.md deliverables: frontmatter version+IQ, no permission block) has zero test coverage in any v0.5 test file; §8q maps it to test_deliverables.py::test_devon_in_deliverables + test_no_permission_block, but test_deliverables.py uses stale @v0.4 markers only. (2) ~68 stale @v0.4 markers reference non-existent ACs (AC-FR0020-05, AC-FR0040-03~06, AC-FR0050-05~07, AC-FR0060-04~07, AC-FR0070-06~08, AC-FR0080-03~13, AC-FR0090-03~06, AC-FR0100-03~06, AC-FR0120-03~06, AC-FR0130-04~06, AC-FR0140-04, AC-NFR0040-01~02) from test_diagnose.py and test_deliverables.py. §7 CI Gate requires 'trac check trace 无硬错误' as a required check. §1.4 requires @v0.5 markers. Criterion 1 (忠于 AC) requires every AC to have a faithful test; AC-FR0170-02 has none. Expected revision: add AC-FR0170-02@v0.5 marker with assertions on Devon.md frontmatter (version+IQ) and deliverables gate via trac check deliverables; update or remove stale @v0.4 markers in test_diagnose.py and test_deliverables.py. Related AC: AC-FR0170-02.
+
 ---
 
 ## 8. AC Coverage
+
+> **Prism:** [PRISM-TEST-B1 | blocker | criterion 3: counterexample binding] tests/counterexamples/v0.5/ contains only an empty contract_mutants.patch.lock (0 bytes). No .patch counterexample files exist for ANY integration/e2e test. Criterion 3 (tracks-prism-test v0.1) requires every required integration/e2e test to bind a counterexample: a minimal behavioral git patch that the test kills, with kill evidence traceable in tests/counterexamples/. All ~30 integration tests and 2 e2e tests listed in §8 lack counterexample binding entirely. Anti-slop verification is impossible -- no test has been demonstrated to distinguish correct from incorrect implementations. Expected revision: create per-test .patch files in tests/counterexamples/v0.5/ (one per required integration/e2e test), each a minimal mutation of the target contract that the corresponding test kills. Kill evidence must be recorded (patch filename + kill result). Related AC: all integration/e2e ACs in §8.
 
 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）。跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。
 
