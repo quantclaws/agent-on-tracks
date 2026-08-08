@@ -4,23 +4,39 @@ Contract: collection runs ``pytest --collect-only`` only on test module
 targets (``test_*.py`` / ``*_test.py``). ``conftest.py`` and helper files
 are support files that pytest auto-loads when collecting the parent
 directory; they must NOT be collected as standalone test nodes (pytest
-returns rc=5 / no tests). At least one test module target is required;
-otherwise fail closed with check=collection.
+returns rc=5 / no tests).
+
+When no test module targets are present (support-only revision: only
+``*.patch`` / ``*.json`` / ``conftest.py`` / helper assets), collection
+is validated through the host project test contract's ``collect``
+command - never silently skipped. If the contract is missing, its
+collection returns non-zero, or no suite is collectible, the check
+fails closed with check=collection.
 """
 
 import subprocess
 from pathlib import Path
 
-from tracks.executor.result_checkpoint import ResultCheckpointMixin
+from tracks.executor.result_checkpoint import (
+    ResultCheckpointMixin,
+    _is_regular_file_identity,
+)
 
 
 class _FakeExecutor(ResultCheckpointMixin):
-    """Minimal host providing repo, _artifact_path, and _emit for
-    _check_collection tests."""
+    """Minimal host providing repo, _artifact_path, _emit, and
+    _run_contract_sections for _check_collection tests.
+
+    ``contract_results`` / ``contract_error`` configure the
+    _run_contract_sections return for support-only revision tests.
+    Default: no contract (fail closed)."""
 
     def __init__(self, repo):
         self.repo = Path(repo)
         self.failed_events = []
+        self.contract_results = None
+        self.contract_error = (
+            "contract error: project contract not found")
 
     def _artifact_path(self, name):
         return self.repo / name
@@ -28,6 +44,9 @@ class _FakeExecutor(ResultCheckpointMixin):
     def _emit(self, event_type, payload, command_id=None, task_id=None):
         if event_type == "verdict.failed":
             self.failed_events.append(payload)
+
+    def _run_contract_sections(self, cmd, state, field):
+        return self.contract_results, self.contract_error
 
 
 def _spy_subprocess_run(monkeypatch, captured):
@@ -151,3 +170,109 @@ def test_collection_syntax_error_test_module_fails_precisely(tmp_path):
     assert len(fake.failed_events) == 1
     assert fake.failed_events[0]["check"] == "collection"
     assert "test_broken" in fake.failed_events[0]["reason"]
+
+
+# -- RED 5: support-only revision passes when contract collects ----------
+
+
+def test_collection_support_only_revision_passes_when_contract_collects(
+        tmp_path):
+    """A support-only revision (no test module targets, only .patch/.json
+    assets) passes when the host project contract's collect command
+    succeeds — an existing M-TEST suite is present and collectible."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    fake.contract_results = [("integration", 0, "3 tests collected", "")]
+    fake.contract_error = None
+
+    result = fake._check_collection(
+        ["tests/counterexamples/fix.patch", "tests/assets/data.json"],
+        attempt=1, command_id="cmd-1")
+
+    assert result is False, (
+        "support-only revision must pass when contract collection succeeds")
+    assert fake.failed_events == []
+
+
+# -- RED 6: support-only revision fails when contract collection fails ----
+
+
+def test_collection_support_only_revision_fails_when_contract_collection_fails(
+        tmp_path):
+    """A support-only revision fails closed when the contract's collect
+    command returns non-zero (no existing suite / collection error)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    fake.contract_results = [("integration", 1, "", "no tests collected")]
+    fake.contract_error = None
+
+    result = fake._check_collection(
+        ["tests/counterexamples/fix.patch"],
+        attempt=1, command_id="cmd-1")
+
+    assert result is True
+    assert len(fake.failed_events) == 1
+    assert fake.failed_events[0]["check"] == "collection"
+    assert "support-only" in fake.failed_events[0]["reason"]
+
+
+# -- RED 7: support-only revision fails closed with no contract ----------
+
+
+def test_collection_support_only_revision_fails_closed_no_contract(tmp_path):
+    """A support-only revision with no project contract fails closed
+    (cannot validate collection through the contract)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    # Default: contract_error set, contract_results None
+
+    result = fake._check_collection(
+        ["tests/assets/data.json"],
+        attempt=1, command_id="cmd-1")
+
+    assert result is True
+    assert len(fake.failed_events) == 1
+    assert fake.failed_events[0]["check"] == "collection"
+    assert "contract error" in fake.failed_events[0]["reason"]
+
+
+# -- FOLLOW-UP: support-only revision fails closed on empty contract results
+
+
+def test_collection_support_only_revision_fails_closed_empty_results(
+        tmp_path):
+    """A support-only revision fails closed when the contract returns an
+    empty results list with no error - no collectible suite is verified,
+    so the check must not silently pass (Prism advisory: fail closed
+    with check=collection)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    fake.contract_results = []
+    fake.contract_error = None
+
+    result = fake._check_collection(
+        ["tests/assets/data.json"],
+        attempt=1, command_id="cmd-1")
+
+    assert result is True
+    assert len(fake.failed_events) == 1
+    assert fake.failed_events[0]["check"] == "collection"
+    assert "no collectible suite" in fake.failed_events[0]["reason"]
+
+
+# -- RED 8: _is_regular_file_identity helper ----------------------------
+
+
+def test_is_regular_file_identity_distinguishes_regular_from_non_regular():
+    """The identity classifier must accept sha256 hashes and reject
+    symlinks, missing, and unreadable entries."""
+    assert _is_regular_file_identity(
+        "a" * 64) is True, "sha256 hash is a regular file"
+    assert _is_regular_file_identity(
+        "symlink:/etc/passwd") is False, "symlink is not a regular file"
+    assert _is_regular_file_identity("missing") is False
+    assert _is_regular_file_identity("unreadable") is False

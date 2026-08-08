@@ -263,6 +263,25 @@ def test_materialize_cleanup_cycle_for_every_agent(tmp_path, role, name):
     assert not info["dest"].exists()
 
 
+def test_prism_m_test_revise_anchors_in_test_plan_not_executable_files(tmp_path):
+    """Bug 2: Prism's M-TEST REVISE findings must be anchored in test-plan.md
+    (a Markdown document), never in executable test files (.py) via
+    ``trac discuss start --file <test_file>``. Discuss blockquotes are
+    only valid in Markdown documents; inserting them into .py files
+    corrupts executable test code."""
+    backend = OpencodeBackend(tmp_path, "v0.1")
+    source = backend._canonical / "Prism.md"
+    text = source.read_text(encoding="utf-8")
+    assert "trac discuss start --file <test_file>" not in text, (
+        "Prism.md must not reference <test_file> as discuss target; "
+        "M-TEST REVISE findings anchor in test-plan.md")
+    assert "trac discuss start --file test-plan.md" in text, (
+        "Prism.md must anchor M-TEST REVISE findings in test-plan.md")
+    assert ".py" in text, (
+        "Prism.md should still reference test artifact paths (.py) "
+        "within finding text for Shield to locate")
+
+
 def test_target_paths_single_doc_passthrough(tmp_path):
     backend = OpencodeBackend(tmp_path, "v0.1")
     doc = tmp_path / "story.md"

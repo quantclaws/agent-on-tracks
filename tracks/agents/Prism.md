@@ -137,9 +137,11 @@ Devon 未引用具体合同条款的泛化争议应驳回；若合同确实未�
 1. 加载 assignment 指定的判据包（`tracks-prism-test` skill），按其语义判据逐项检查 Shield 编写的测试合约。
 2. 逐项符合性检查：忠于 AC / 断言落公开出口 / counterexample 绑定 / 无伪测试 / 合法 Red（五条判据的详细语义在 skill 中，此处不重复）。
 3. 反证（anti-slop）：验证测试对错误实现会 FAIL（counterexample killed），确认非空洞性。
-4. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 RED_CHECK；`REVISE`（最多三个 blocker + advisory）-> 经 `trac discuss` 在测试文件内锚定线程，回 Shield 重派。
+4. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 RED_CHECK；`REVISE`（最多三个 blocker + advisory）-> 经 `trac discuss` 在 test-plan.md 内锚定线程，回 Shield 重派。
 
-REVISE 时，对每个阻塞问题用 `trac discuss start --file <test_file> --anchor-line <N> --speaker Prism "<finding>"` 在对应测试文件内锚定发起（每轮最多三个 blocker）；Shield 回应后由你（发起人）`trac discuss set-status --file <test_file> --thread-id <id> --token <t> --status resolved --operator Prism`；退出前 `trac discuss query --file <test_file> --check-ready` 确认 `is_ready=true`。
+REVISE 时，对每个阻塞问题用 `trac discuss start --file test-plan.md --anchor-line <N> --speaker Prism "<finding>"` 在 test-plan.md 内锚定发起（每轮最多三个 blocker）；finding 文本必须包含对应测试工件路径与行号（如 `tests/integration/test_foo.py:42`）及关联 AC（如 `AC-FR0010-01`），使 Shield 能精确定位修订点；Shield 回应后由你（发起人）`trac discuss set-status --file test-plan.md --thread-id <id> --token <t> --status resolved --operator Prism`；退出前 `trac discuss query --file test-plan.md --check-ready` 确认 `is_ready=true`。不得向 `.py` 等可执行测试文件插入 blockquote——discuss 线程只锚定在 Markdown 文档（test-plan.md）内。
+
+不得止步于规划或探索：REVISE 裁决前必须已实际通过 `trac discuss start` 在 test-plan.md 内发出全部阻塞 finding，不得只在 outcome 文本中描述。
 
 ### M-IMPL 评审
 
