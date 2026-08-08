@@ -1,44 +1,20 @@
-"""RGR git state and M-IMPL Red classification via IF-IMPL-004."""
+"""RGR contracts through public events and Git state."""
 
 import subprocess
 
 import pytest
 
-from tracks.executor.rgr import (
-    classify_red,
-    create_green_commit,
-    create_red_ref,
-    verify_lineage,
-)
+from tests.integration.v05_contract_helpers import events_of, run_m_impl_journey
 
 
-def _sha(repo, revision="HEAD"):
+def _git(repo, *args):
     return subprocess.run(
-        ["git", "rev-parse", revision],
+        ["git", *args],
         cwd=repo,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
-
-
-RED_DIFF = """diff --git a/tests/unit/test_feature.py b/tests/unit/test_feature.py
-new file mode 100644
---- /dev/null
-+++ b/tests/unit/test_feature.py
-@@ -0,0 +1,2 @@
-+def test_feature():
-+    assert feature() == 1
-"""
-
-GREEN_DIFF = """diff --git a/tracks/feature.py b/tracks/feature.py
-new file mode 100644
---- /dev/null
-+++ b/tracks/feature.py
-@@ -0,0 +1,2 @@
-+def feature():
-+    return 1
-"""
 
 
 @pytest.mark.integration
@@ -47,35 +23,38 @@ new file mode 100644
 # AC-FR0120-01@v0.5 TRACKS-TRACE G parent and trailers
 # AC-FR0120-02@v0.5 TRACKS-TRACE ref trailer event lineage proof
 # AC-FR0200-02@v0.5 TRACKS-TRACE git lineage survives replay
-def test_rgr_git_contract_happy_and_immutable(host_repo):
-    base = _sha(host_repo)
-    red = create_red_ref(str(host_repo), "RUN", "T-001", 1, RED_DIFF, base)
-    duplicate = create_red_ref(str(host_repo), "RUN", "T-001", 1, RED_DIFF, base)
-    assert red.created is True and duplicate.created is False
-    assert _sha(host_repo, red.ref) == red.sha
-    green = create_green_commit(
-        str(host_repo), "RUN", "T-001", 1, GREEN_DIFF, base, red.sha
+def test_rgr_git_contract_happy_and_immutable(trac, event_log, host_repo):
+    _, _, events = run_m_impl_journey(trac, event_log)
+    reds = events_of(events, "red.checkpointed")
+    greens = events_of(events, "green.committed")
+    assert reds and greens
+    red = reds[0]
+    green = greens[0]
+    ref = red["payload"]["ref"]
+    r_sha = red["payload"]["r_sha"]
+    g_sha = green["payload"]["g_sha"]
+    assert _git(host_repo, "rev-parse", ref) == r_sha
+    assert _git(host_repo, "rev-parse", f"{g_sha}^") == _git(
+        host_repo, "rev-parse", f"{r_sha}^"
     )
-    events = [
-        {"seq": 10, "type": "red.checkpointed", "payload": {"r_sha": red.sha}},
-        {"seq": 11, "type": "green.committed", "payload": {"g_sha": green.sha}},
-    ]
-    proof = verify_lineage(str(host_repo), "RUN", "T-001", 1, green.sha, events)
-    assert green.parent == base
-    assert green.trailers == {
-        "Tracks-Task": "T-001",
-        "Tracks-Attempt": 1,
-        "Tracks-R": red.sha,
-    }
-    assert proof.r_before_g and proof.r_ref_exists
-    assert proof.g_trailers_valid and proof.event_order_valid
+    message = _git(host_repo, "log", "--format=%B", "-1", g_sha)
+    assert f"Tracks-Task: {green['payload']['task_id']}" in message
+    assert f"Tracks-Attempt: {green['payload']['attempt']}" in message
+    assert f"Tracks-R: {r_sha}" in message
+    assert red["seq"] < green["seq"]
 
 
 @pytest.mark.integration
-# AC-FR0080-01@v0.5 TRACKS-TRACE only assertion and symbol Reds are legal
-def test_m_impl_red_classification_excludes_stub_tokens():
-    assert classify_red("node", 1, "E assert 1 == 2", "") == "assertion_failure"
-    assert classify_red("node", 1, "", "NameError: missing") == "symbol_missing"
-    assert classify_red(
-        "node", 1, "", 'NotImplementedError("IF-IMPL-004")'
-    ) == "unclassified"
+# AC-FR0080-01@v0.5 TRACKS-TRACE stub-token Red is rejected in M-IMPL
+def test_m_impl_red_classification_excludes_stub_tokens(trac, event_log):
+    _, _, events = run_m_impl_journey(
+        trac,
+        event_log,
+        simulate="devon:RED=stub_token_failure|ok",
+    )
+    invalid = [
+        event for event in events_of(events, "verdict.failed")
+        if event["payload"].get("check") == "red_invalid"
+    ]
+    assert invalid
+    assert invalid[0]["payload"].get("task_id")

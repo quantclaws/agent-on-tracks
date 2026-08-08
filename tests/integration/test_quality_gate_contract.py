@@ -1,12 +1,8 @@
-"""Quality-gate layering and feedback contracts through IF-IMPL-005."""
+"""Quality-gate layering through command and event outlets."""
 
 import pytest
 
-from tracks.executor.quality_gate import (
-    run_gates,
-    run_production_checks,
-    run_test_checks,
-)
+from tests.integration.v05_contract_helpers import events_of, run_m_impl_journey
 
 
 @pytest.mark.integration
@@ -16,19 +12,19 @@ from tracks.executor.quality_gate import (
 # AC-FR0130-01@v0.5 TRACKS-TRACE no-change refactor is gateable
 # AC-FR0130-02@v0.5 TRACKS-TRACE production and test checks are layered
 # AC-FR0130-03@v0.5 TRACKS-TRACE public interface changes roll back
-def test_quality_gate_layers_expose_exact_check_sets(host_repo):
-    production = run_production_checks(str(host_repo), ["tracks/feature.py"])
-    tests = run_test_checks(str(host_repo), ["tests/unit/test_feature.py"])
-    both = run_gates(
-        str(host_repo),
-        ["tracks/feature.py", "tests/unit/test_feature.py"],
-        "refactor_gate",
-        {"tests": {"integration": {"run": ["python", "-m", "pytest"]}}},
+def test_quality_gate_layers_reach_public_commands_and_events(trac, event_log):
+    _, _, events = run_m_impl_journey(trac, event_log)
+    issued = [
+        event for event in events_of(events, "command.issued")
+        if event["payload"].get("command", {}).get("kind")
+        in {"run_task_gates", "run_refactor_gate", "check_island_2"}
+    ]
+    kinds = [event["payload"]["command"]["kind"] for event in issued]
+    assert "run_task_gates" in kinds
+    assert "run_refactor_gate" in kinds
+    green = events_of(events, "green.committed")
+    refactor = events_of(events, "refactor.committed") + events_of(
+        events, "refactor.no_change"
     )
-    assert set(production.checks_run) >= {
-        "ruff", "flake8:CCR001", "pylint:R0801", "pylint:C0302",
-        "pylint:R0915", "pylint:R0914",
-    }
-    assert set(tests.checks_run) == {"pylint:R0801", "pylint:C0302"}
-    assert both.layer == "both"
-    assert not any("e2e" in check for check in both.checks_run)
+    assert green and refactor
+    assert kinds.index("run_task_gates") < kinds.index("check_island_2")

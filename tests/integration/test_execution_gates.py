@@ -30,25 +30,51 @@ def test_rgr_phase_events_and_audit_evidence(trac, event_log):
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("classification", "expected_target", "shield_fix"),
+    [
+        ("impl_defect", "M-IMPL", False),
+        ("test_defect", "M-IMPL", True),
+        ("stub_gap", "M-DESIGN", False),
+        ("ac_gap", "M-ACC", False),
+        ("spec_gap", "M-SPEC", False),
+    ],
+)
 # AC-FR0150-01@v0.5 TRACKS-TRACE diagnose routes without Human
 # AC-FR0150-02@v0.5 TRACKS-TRACE failure reason is a closed set
 # AC-FR0150-03@v0.5 TRACKS-TRACE Shield fix commits frozen tests
 # AC-FR0150-04@v0.5 TRACKS-TRACE rollback supersedes old evidence
 # AC-FR0160-02@v0.5 TRACKS-TRACE island failure routes diagnose or planning
-def test_diagnose_and_shield_fix_public_routes(trac, event_log):
-    _, _, events = run_m_impl_journey(trac, event_log)
+def test_diagnose_and_shield_fix_public_routes(
+    trac, event_log, classification, expected_target, shield_fix
+):
+    _, _, events = run_m_impl_journey(
+        trac,
+        event_log,
+        simulate=(
+            "devon:RED=fail|ok;"
+            f"diagnose:classification={classification};"
+            "shield:SHIELD_FIX=ok"
+        ),
+    )
     failures = events_of(events, "verdict.failed")
     allowed = {
         "red_invalid", "regression", "budget", "island", "scope",
         "test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap",
     }
-    assert failures
+    classified = [
+        event for event in failures
+        if event["payload"].get("check") == classification
+    ]
+    assert classified
     assert all(event["payload"].get("check") in allowed for event in failures)
     shield_commits = events_of(events, "test.committed")
+    assert bool(shield_commits) is shield_fix
     assert all(event["payload"]["test_count"] > 0 for event in shield_commits)
+    assert classified[-1]["payload"].get("target_stage") == expected_target
     assert not any(
         event["type"].startswith("human.")
         for event in events
-        if event["seq"] > failures[0]["seq"]
-        and failures[0]["payload"].get("check") in {"test_defect", "impl_defect"}
+        if event["seq"] > classified[0]["seq"]
+        and classification in {"test_defect", "impl_defect", "stub_gap"}
     )

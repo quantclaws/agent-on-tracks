@@ -3,10 +3,10 @@
 from tests.integration.helpers import walk_to_m_test
 
 
-def run_m_impl_journey(trac, event_log):
+def run_m_impl_journey(trac, event_log, *, simulate=None):
     """Drive the public CLI through M-TEST and return the persisted event stream."""
     run_id = walk_to_m_test(trac)
-    result = trac("run")
+    result = trac("run", simulate=simulate) if simulate else trac("run")
     assert result.returncode == 0, result.stderr
     return run_id, result, event_log(run_id)
 

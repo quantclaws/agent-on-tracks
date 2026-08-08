@@ -2,7 +2,11 @@
 
 import pytest
 
-from tests.integration.v05_contract_helpers import command_dispatches, run_m_impl_journey
+from tests.integration.v05_contract_helpers import (
+    command_dispatches,
+    first_m_impl_index,
+    run_m_impl_journey,
+)
 
 
 @pytest.mark.integration
@@ -18,7 +22,7 @@ from tests.integration.v05_contract_helpers import command_dispatches, run_m_imp
 # AC-FR0190-10@v0.5 TRACKS-TRACE all agent and runtime operations materialize
 def test_dispatch_assignments_have_complete_public_payload(trac, event_log):
     _, _, events = run_m_impl_journey(trac, event_log)
-    dispatches = command_dispatches(events)
+    dispatches = command_dispatches(events[first_m_impl_index(events):])
     assert dispatches
     required = {
         "target_doc", "doc_set", "role", "substate", "attempt", "review_round",
