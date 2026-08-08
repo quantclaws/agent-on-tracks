@@ -13,15 +13,16 @@ sha:
 
 - **决定**：flow.md §10 lines 574–606 已明定「私有 R ref + G parent=B + trailers」，但 lines 643/655 仍保留旧「B/R/G commit 拓扑」表述。本版本统一为：R 先于 G 的 lineage 由不可变 R ref（`refs/trac/rgr/{run}/{task}/{attempt}/red`）+ G trailer（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）+ Runtime 事件序列联合证明，G 的 parent=B，不作 Git ancestry 拓扑断言。Red 先于实现是程序可验证的 lineage 事实，不是 Agent 自报。
 - **取代**：flow.md §10 lines 643/655 残留的「B/R/G commit 拓扑」措辞；BS-07 来源中标注的校正锚点由 spec 阶段承接（本文档完成该承接）。
-- **影响 FR**：FR-0070（R 不可变 ref + compare-and-set）、FR-0080（G commit parent=B + trailers）。
+- **影响 FR**：FR-0070（R 不可变 ref + compare-and-set）、FR-0120（G commit parent=B + trailers）。
 
 > **Lex:** 修订日志与 FR 正文存在若干 FR 交叉引用错位，影响下游 M-DESIGN/M-IMPL 的可追踪性（trac validate 不校验修订日志/正文中的 FR 引用语义，故提请 Sage 修订）：(1) R-1 line 16「影响 FR：FR-0070（R 不可变 ref + compare-and-set）、FR-0080（G commit parent=B + trailers）」——FR-0080 是 RED_GATE 合法 Red 分类，不含 G commit；「G commit parent=B + trailers」在 FR-0120（GREEN_COMMIT），应改为 FR-0120。(2) R-2 line 20/22「dispatch materialization 合同的确定性回归基线（FR-0150）」「影响 FR：FR-0150（dispatch 物化完整性合同）」——FR-0150 是 DIAGNOSE 四路诊断与 SHIELD_FIX，不含 dispatch 物化合同；10 项物化增量在 FR-0190（dispatch 物化完整性合同），应改为 FR-0190。(3) FR-0070 line 198 与 FR-0110 line 230 均以「（FR-0130）」标注 gate worktree 组合运行机制，但 FR-0130（REFACTOR 与质量门禁分层）未定义该三 worktree 方案；该机制在 FR-0070 自身正文定义，应自引 FR-0070 或删除括注。以上均为引用错位、FR 实体内容无误，非阻塞。
+>> **Sage:** 已逐项核实并修订（trac validate=valid）：(1) R-1 line 16 FR-0080→FR-0120（GREEN_COMMIT 才是 G commit parent=B + trailers，FR-0080 是 RED_GATE 合法 Red 分类）。(2) R-2 line 22/24 FR-0150→FR-0190（dispatch 物化完整性合同在 FR-0190，FR-0150 是 DIAGNOSE 四路诊断与 SHIELD_FIX）。(3) line 200 删除「（FR-0130）」改为「三 worktree 方案在本 FR 定义」（FR-0070 自身正文即定义处，自引冗余）；line 232「FR-0130」→「三 worktree 方案见 FR-0070」（FR-0130 是 REFACTOR 与质量门禁分层，未定义该机制，应交叉引用 FR-0070）。三处 FR 实体内容均未改动，仅校正引用归属。请闭环。
 
 ### R-2（2026-08-09）：live run dispatch 物化分析结论承接
 
-- **决定**：S-005 §7 重要风险 1 已完成有监督 M-START→M-TEST 重录（run `01KZ5QCRPMBVC1A6HYEHMKKGVH`）与日志分析，结论为「未知范围发现任务不再传给 spec」。本版本承接其 10 项逐项物化增量作为 dispatch materialization 合同的确定性回归基线（FR-0150）。
+- **决定**：S-005 §7 重要风险 1 已完成有监督 M-START→M-TEST 重录（run `01KZ5QCRPMBVC1A6HYEHMKKGVH`）与日志分析，结论为「未知范围发现任务不再传给 spec」。本版本承接其 10 项逐项物化增量作为 dispatch materialization 合同的确定性回归基线（FR-0190）。
 - **取代**：S-005 §1 第四条原始输入（作为 v0.5 输入的开放式发现任务）。
-- **影响 FR**：FR-0150（dispatch 物化完整性合同）。
+- **影响 FR**：FR-0190（dispatch 物化完整性合同）。
 
 ## 界面与入口
 
@@ -197,7 +198,7 @@ task 变绿子集 = 单测 + 变绿条件（test-plan 声明的 IF- 归属）命
 
 RED（SM-01.15）：dispatch Devon（phase=red）在 Devon candidate worktree 运行。Devon 只添加 unit test，不碰产品代码与 Shield 测试（flow §10.3 硬规则 1）。outcome 必须是 test-only diff。
 
-**Devon 隔离（时态 worktree 方案，BS-04）**：Runtime 在 M-DESIGN pass 后记录共同基线 `C_design`，在 Shield WRITE 之前创建 Devon candidate worktree，因此 Devon 天然没有之后生成的 Shield tests。Devon 可使用 glob/grep/bash 探索 production 代码并在项目 venv 运行并行 unit/guards，但不得主动读/运行/改 Shield frozen tests。Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读。Shield 在 test-authority worktree 冻结测试（frozen bundle）；Runtime 在独立 gate worktree 组合 C_design + frozen bundle + Devon candidate 运行 integration/e2e（FR-0130）。frozen bundle 永不合入 Devon candidate。bootstrap/manual 无 temporal worktree 时依赖 manifest + prompt 约定，不永久 fail closed（屏蔽/冻结路径集仍由 Archer 按宿主惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码）。per-agent 文件范围 + shell 权限由 `trac init` 按当前 harness 生成等价条目写入 harness 配置（D-19 external_directory 同时约束 read 与 bash）。Devon.md 不含 permission 块（D-26）。
+**Devon 隔离（时态 worktree 方案，BS-04）**：Runtime 在 M-DESIGN pass 后记录共同基线 `C_design`，在 Shield WRITE 之前创建 Devon candidate worktree，因此 Devon 天然没有之后生成的 Shield tests。Devon 可使用 glob/grep/bash 探索 production 代码并在项目 venv 运行并行 unit/guards，但不得主动读/运行/改 Shield frozen tests。Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读。Shield 在 test-authority worktree 冻结测试（frozen bundle）；Runtime 在独立 gate worktree 组合 C_design + frozen bundle + Devon candidate 运行 integration/e2e（三 worktree 方案在本 FR 定义）。frozen bundle 永不合入 Devon candidate。bootstrap/manual 无 temporal worktree 时依赖 manifest + prompt 约定，不永久 fail closed（屏蔽/冻结路径集仍由 Archer 按宿主惯例在 test-plan 层归属字段声明、随 BASELINE 冻结、不得硬编码）。per-agent 文件范围 + shell 权限由 `trac init` 按当前 harness 生成等价条目写入 harness 配置（D-19 external_directory 同时约束 read 与 bash）。Devon.md 不含 permission 块（D-26）。
 
 RED_CHECKPOINT（SM-01.18）：Runtime 创建私有 commit R，写 git ref `refs/trac/rgr/{run}/{task}/{attempt}/red`；`red.checkpointed` 事件。**R 不可变（BS-06）**：同一 attempt 重试试图改写 R 时 compare-and-set 失败并开新 attempt，旧 attempt 不被改写。
 
@@ -229,7 +230,7 @@ GREEN（SM-01.21）：从 R tree 恢复 Devon candidate worktree；dispatch Devo
 - **来源**：`BS-05` / `BS-08` / `§3.2 步骤 5` / flow §10.1
 - **交付入口**：`E-01` / `trac run`
 
-GREEN_GATE（SM-01.22–.24）：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF- 集合的 int 子集 + lint/format/type/static + 合同。**第一轮不跑 e2e**（v0.4 既定粒度，BS-08）。integration/e2e 由 Runtime 在独立 gate worktree（组合 C_design + frozen bundle + Devon candidate）运行并归因（D-32 外圈合同循环，FR-0130）。
+GREEN_GATE（SM-01.22–.24）：targeted 单测 + 全部历史单测 + test-plan 变绿条件命中本 task IF- 集合的 int 子集 + lint/format/type/static + 合同。**第一轮不跑 e2e**（v0.4 既定粒度，BS-08）。integration/e2e 由 Runtime 在独立 gate worktree（组合 C_design + frozen bundle + Devon candidate）运行并归因（D-32 外圈合同循环，三 worktree 方案见 FR-0070）。
 
 **反馈脱敏（BS-05）**：单测失败回完整输出；int/e2e 失败只回分类诊断（哪条 IF 契约失败 / symbol 缺失类型），不回断言原文——防止冻结测试内容经测试输出侧信道泄漏给 Devon（与 BS-04 时间隔离互补）。int 失败归因不明 → DIAGNOSE（SM-01.24）。
 
@@ -319,7 +320,7 @@ task-plan.md 模板既有 Task List（ID / Task description / Related test / Tar
 
 Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整上下文，agent 不得自行搜索/猜。物化字段集（承自 S-005 §7 live run 分析结论的 10 项逐项增量，修订日志 R-2）：
 
-1. **state-specific Human return**：M-IMPL escalation 必须允许 `to_stage=M-DESIGN`，不能用 requirement-only gate。
+1. **state-specific Human return**：M-TEST/M-IMPL escalation 必须允许 `to_stage=M-DESIGN`，不能用 requirement-only gate（M-TEST 为既有回归基线，run 01KZ5QCRPMBVC1A6HYEHMKKGVH seq 223-224；M-IMPL 为 v0.5 新增 escalation 路径 SM-01.12/27 → M-DESIGN，同一不变量覆盖）。
 2. **canonical 路径**：canonical `.tracks/project/project.toml` 是唯一允许的 `.tracks/**` project contract 路径；随设计 checkpoint 去重提交，其他 `.tracks/**` 仍 fail closed。
 3. **M-DESIGN 输出合同**：test-plan canonical `## 8. AC Coverage`，interfaces canonical `## 5. IF Registry`；每条 integration/e2e AC 解析为 `{ac_id, layers, if_ids}`，missing/empty registry、坏/缺 header、duplicate AC、empty test cell、unregistered IF 均 fail closed；standalone `trac validate test-plan.md` 同门禁。
 4. **test_tasks 注入**：Runtime 在 `command.issued` 前向 Shield assignment 注入非空 `test_tasks`；仅 role=Shield/substate=WRITE 适用；无效输入不调用 backend，failed outcome=`stub_gap`，自动回 M-DESIGN。
@@ -331,6 +332,7 @@ Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整
 10. **覆盖范围**：覆盖 Scribe TRIAGE/DRAFT/RESPOND、Sage、Lex、Archer DRAFT、Prism design/test review、Shield WRITE，以及 Runtime validate/checkpoint/publish/collect/run/red/commit/seal。
 
 > **Lex:** FR-0190 物化字段集第 1 项将 S-005 §7 逐项发现的「M-TEST escalation 必须允许 to_stage=M-DESIGN」改为「M-IMPL escalation 必须允许 to_stage=M-DESIGN」。该 live run 分析（run 01KZ5QCRPMBVC1A6HYEHMKKGVH）的发现场景是 M-TEST stub_gap->M-DESIGN 回退（seq 223-224），story §7 据此把 M-TEST escalation 锁为 v0.5 确定性回归基线。本 FR 声称「承自 S-005 §7 ... 10 项逐项增量」但该项的 stage 引用发生了变更。请确认：(a) 这是有意将发现泛化到 v0.5 新增的 M-IMPL escalation（SM-01.12/27 -> M-DESIGN）吗？若是，建议写为「M-TEST/M-IMPL escalation」以同时覆盖既有回归与新场景；(b) M-TEST escalation 的回归基线是否仍由第 10 项覆盖范围（Runtime validate/checkpoint/publish/collect/run/red/commit/seal）隐式锁定，还是需要在此显式保留 M-TEST 引用？非阻塞，但影响 dispatch 物化合同的回归覆盖可断言性。
+>> **Sage:** 采用建议 (a)：第 1 项改为「M-TEST/M-IMPL escalation 必须允许 to_stage=M-DESIGN」，并括注依据（M-TEST 为既有回归基线 run 01KZ5QCRPMBVC1A6HYEHMKKGVH seq 223-224；M-IMPL 为 v0.5 新增 escalation 路径 SM-01.12/27 → M-DESIGN，同一不变量覆盖）。理由：story §7 line 282 锁定的回归基线是 M-TEST escalation（run 实际场景即 stub_gap→M-DESIGN），不应丢失；M-IMPL 新增 SM-01.12/27→M-DESIGN 同属 dispatch 物化不变量，与 M-TEST 共享同一「state-specific Human return」语义，合并表述既保留回归可断言性又覆盖新场景。第 4/8 项仍保留 M-TEST 语义不动（其发现场景本就是 M-TEST），无需改动。第 10 项覆盖范围（Runtime validate/checkpoint/publish/collect/run/red/commit/seal）是横切覆盖，不按 stage 区分，足以隐式锁定两个 stage 的回归。trac validate=valid。请闭环。
 
 本 FR 锁定物化合同的不变量与覆盖范围；具体字段 schema 与物化实现属设计层（Archer architecture.md 承接），本 FR 不指定内部实现。
 
