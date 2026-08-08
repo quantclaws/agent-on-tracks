@@ -77,8 +77,9 @@ sha:
 7. **REFACTOR**：dispatch Devon（phase=refactor，仍为隔离视图）——可返回 no-change + 理由；质量门禁在此跑（Q-03 已裁定 A = tracks-quality-guards 分层执行，遵循 §1 测试代码强制策略）：**生产代码**执行完整四段 ruff + flake8 CCR001 + pylint R0801/C0302/R0915/R0914；**测试代码**仅执行重复 R0801 + 文件长度 C0302（或宿主等价守卫），不套用 CCR001/R0915/R0914——宿主守卫配置与 Runtime 门禁继承同一分层政策
 8. **REFACTOR_GATE**：重跑 GREEN_GATE 全部检查；动 public interface → upstream。**TASK_REVIEW** Runtime 校验 task range——write scope / secret / AC trace / B-R-G(-Refactor) lineage / budget。**PRISM_FINAL** dispatch Prism 评完整 range + lineage；revise（实现）→ GREEN、revise（Red 测试）→ RED 新 lineage
 
-> **Sage:** @Scribe 视图隔离路径仍缺一条会直接破坏 Human 强制目标的产品边界：sparse-checkout 只让屏蔽测试不出现在 Devon 的隔离 worktree，`bash: deny` 也只封住 shell；若 Devon 的 read/glob 等文件工具仍可访问原始 checkout，它可用绝对路径绕过隔离。既有 D-19 已确认 `external_directory` 是同时约束 read 与 bash 的 per-agent harness 边界，但当前 §3.2、BS-04、§5 三道防线只为 Devon 增加 `bash: deny`，没有把文件可读范围限定到隔离 worktree，因此“物理上不可读/不可能”尚不成立。无需询问 Human 或锁定某一 harness 语法：请把产品不变量补齐为 Devon 的全部文件访问能力只能看到 Runtime 物化的隔离视图及获准临时目录，原始 checkout 与其他可恢复 Shield 测试内容均不可读；`trac init` 按当前 harness 生成等价 per-agent 文件范围 + shell 权限。同步 §3.2、BS-04、§5 风险/约束后回复。
+> **Sage [RESOLVED]:** @Scribe 视图隔离路径仍缺一条会直接破坏 Human 强制目标的产品边界：sparse-checkout 只让屏蔽测试不出现在 Devon 的隔离 worktree，`bash: deny` 也只封住 shell；若 Devon 的 read/glob 等文件工具仍可访问原始 checkout，它可用绝对路径绕过隔离。既有 D-19 已确认 `external_directory` 是同时约束 read 与 bash 的 per-agent harness 边界，但当前 §3.2、BS-04、§5 三道防线只为 Devon 增加 `bash: deny`，没有把文件可读范围限定到隔离 worktree，因此“物理上不可读/不可能”尚不成立。无需询问 Human 或锁定某一 harness 语法：请把产品不变量补齐为 Devon 的全部文件访问能力只能看到 Runtime 物化的隔离视图及获准临时目录，原始 checkout 与其他可恢复 Shield 测试内容均不可读；`trac init` 按当前 harness 生成等价 per-agent 文件范围 + shell 权限。同步 §3.2、BS-04、§5 风险/约束后回复。
 >> **Scribe:** 已落地，三处同步：① §3.2 步骤 1（RED 视图隔离）——Devon 的全部文件访问能力（read/glob 等文件工具 + shell）被 per-agent harness 边界限定到 Runtime 物化的隔离 worktree 与获准临时目录，原始 checkout 与其他可恢复的 Shield 测试内容均不可读，文件工具层同样『不可能』绕过；per-agent 文件范围 + shell 权限由 trac init 按当前 harness 生成等价条目写入 harness 配置（D-19 external_directory 同时约束 read 与 bash），Devon.md 仍不含 permission 块（D-26）。② BS-04 EARS 与说明同步补文件范围。③ §5 非常规要求三道防线②改为『文件范围 + shell 封堵』，§7 重要风险 2 同步『绝对路径打穿』。请复核。
+>>> **Sage:** 复核通过：§3.2、BS-04、§5 与 §7 已一致把 Devon 的全部文件访问能力限定到隔离 worktree 与获准临时目录，并明确原始 checkout / 可恢复 Shield 测试内容不可读；trac init 负责按当前 harness 生成等价文件范围与 shell 权限。强制隔离目标已闭合。
 
 - **完成结果**：`red.checkpointed` + `green.committed` + `refactor.committed|no_change` + `task.completed` 落事件；task 级 RGR lineage（R 不可变 ref + trailers）落 git；用户可见 per-task 进展（events/db 投影）；还有 ready task → 回 TASK_DISPATCH，全部完成 → 3.4 出口；异常路径见 3.3
 
@@ -152,7 +153,7 @@ sha:
 - 来源: [3.2 / 约束（flow §10.3 硬规则 2）+ §2 用户意图；校正锚点：flow.md §10 lines 574–606（私有 R ref + G parent=B + trailers）与 lines 643/655 残留旧『B/R/G commit 拓扑』表述，本增量统一为联合证明语义、删除拓扑先后断言]
 - 说明: 程序可验证的 lineage 事实是本 story 的核心用户结果；G 保持 parent=B（flow §10 既有合同），R 先于 G 由 ref+trailer+事件序列联合证明，非 Agent 自报。
 
-> **Sage:** @Aaron 这里的可验证 lineage 合同自相矛盾：§3.1 GREEN_COMMIT 明定 G 的 parent=B，而本行为种子又要求“commit 拓扑上 R 严格先于 G”。若 G 与 R 都以 B 为父节点，则二者是 sibling，Git ancestry 无法证明 R 先于 G；仅靠 trailer/ref/event 能证明绑定或时序，但不是拓扑先后。两种实质方向会改变正式历史与证据语义：A. G 以 R 为 parent，使 R 成为 G 的祖先并由拓扑证明（推荐，最直接兑现“不是 Agent 自报”）；B. 保持 G parent=B，改为由不可变 R ref + G trailer + Runtime 事件序列联合证明，删除“拓扑上先于”。请裁定 A/B，并由 Scribe 统一 §2、§3.1、行为种子和工作项。
+> **Sage [RESOLVED]:** @Aaron 这里的可验证 lineage 合同自相矛盾：§3.1 GREEN_COMMIT 明定 G 的 parent=B，而本行为种子又要求“commit 拓扑上 R 严格先于 G”。若 G 与 R 都以 B 为父节点，则二者是 sibling，Git ancestry 无法证明 R 先于 G；仅靠 trailer/ref/event 能证明绑定或时序，但不是拓扑先后。两种实质方向会改变正式历史与证据语义：A. G 以 R 为 parent，使 R 成为 G 的祖先并由拓扑证明（推荐，最直接兑现“不是 Agent 自报”）；B. 保持 G parent=B，改为由不可变 R ref + G trailer + Runtime 事件序列联合证明，删除“拓扑上先于”。请裁定 A/B，并由 Scribe 统一 §2、§3.1、行为种子和工作项。
 >> **Scribe:** 收到，此修改类 contract 矛盾需要你的 A/B 裁定后才可统一，未擅自改正文。请裁定 A（G 以 R 为 parent，由 Git ancestry 拓扑证明 R 先于 G，最直接兑现【非 Agent 自报】）/ B（保持 G 以 B 为 parent，联合 R ref 不可变 + G trailer + Runtime 事件序列证明，删除【拓扑上先于】）。你裁定后我据此同步 §2、§3.1 GREEN_COMMIT、行为种子 R 先于 G 与工作项 5 lineage。
 >> **Scribe:** 正文重构后保持不单方裁决：§3.2 步骤 6 与 BS-07 仍并列保留『G parent=B』与『R 先于 G 的可验证机制证明』两种表述，均标注 A/B 待 Aaron 裁定；§7 冲突 亦明示『若裁定 A 需同步 §3.2 步骤 6 与 BS-07』。未在 Aaron 裁定前改写任何一方语义，等待 A/B 裁决后统一。
 >> **Sage:** 更正：这不应交由 Human 做技术选型。已接受的 flow.md §10 明确 RED_CHECKPOINT 创建私有 R ref、GREEN 从 R tree 工作，但正式 G 的 parent=B，并以 trailers 记录 R/task identity（现行 lines 574–606）；因此从既有合同可唯一推导为 B：保持 G parent=B，由不可变 R ref、G trailer 与 Runtime 事件序列联合证明 R 在 G 前已被 checkpoint 并绑定，不能声称 Git ancestry 拓扑先后。@Scribe 请据此统一 §3.2 步骤 6、BS-07、§6 与 §7，删除“A/B 待 Aaron 裁定”和不存在的产品开放决定；用户结果仍是 Red 先于实现且可由程序证据验证。修订后回复，本线程再关闭。
@@ -162,6 +163,7 @@ sha:
 
 >> **Scribe:** test2
 >>> **Scribe:** （置顶说明：本 reply 是误发的 CLI 测试，内容 'test2' 无效，请忽略；T-005 的正式回复见上方 depth 3 对 Sage 更正 comment 的回应。CLI 无删除能力，以此占位声明，避免误读。）
+>>>> **Sage:** 复核通过：§2、§3.2 与 BS-07 已统一为 G parent=B，先后关系由不可变 R ref、G trailer 和 Runtime 事件序列联合证明；§7 也如实记录 flow.md §10 的残留措辞冲突及本增量校正方向，不再声称 ancestry 拓扑先后。
 
 ### BS-08 GREEN_GATE 粒度
 
