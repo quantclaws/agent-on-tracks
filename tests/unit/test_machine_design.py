@@ -173,7 +173,9 @@ def test_three_commits_enter_prism_review():
 def test_prism_pass_goes_straight_to_exit_no_human_gate():
     # BS-05: pass → EXIT without any awaiting; the exit gate re-validates the
     # trio (template + discussion_ready) and exits with a stage-only
-    # write_frontmatter (nothing extra is written, Decision A).
+    # write_frontmatter (nothing extra is written, Decision A). The test-plan
+    # additionally runs the design trace + structured test-task contract
+    # checks (D-28) so an invalid M-DESIGN→M-TEST contract never exits.
     items = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED,
                              ("prism.verdict", {"verdict": "pass"})]
     s = state_of(*items)
@@ -182,12 +184,86 @@ def test_prism_pass_goes_straight_to_exit_no_human_gate():
     for doc in DESIGN_DOCS:
         cmd = decide(state_of(*items))
         assert cmd.kind == "validate_document"
-        assert cmd.params == {"doc": doc,
-                              "checks": ["template", "discussion_ready"]}
+        expected = {"doc": doc,
+                    "checks": ["template", "discussion_ready"]}
+        if doc == "test-plan.md":
+            expected["checks"] += ["trace", "test_tasks"]
+        assert cmd.params == expected
         items.append(EXIT_PASSED)  # each pass advances the exit sequence
     cmd = decide(state_of(*items))
     assert cmd.kind == "write_frontmatter"
     assert cmd.params == {"stage": "M-DESIGN"}  # no doc: nothing to seal
+
+
+def test_exit_test_tasks_gate_fail_falls_back_to_archer_respond():
+    # D-32/D-28: an invalid structured test-task contract (e.g. §8 missing an
+    # AC row / no IF- green condition) fails the M-DESIGN EXIT validation and
+    # routes back to Archer RESPOND — never a Human, never M-TEST.
+    def fail(n):
+        return ("verdict.failed", {"check": "test_tasks",
+                                   "reason": "AC-FR0010-02 missing IF- ids",
+                                   "attempt": n})
+    base = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED,
+                            ("prism.verdict", {"verdict": "pass"}),
+                            EXIT_PASSED, EXIT_PASSED, fail(1)]
+    s = state_of(*base)
+    assert s.substate == "RESPOND" and s.awaiting is None
+    assert s.status == "active" and not s.exit_validated
+    cmd = decide(s)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer"
+    assert cmd.params["substate"] == "RESPOND"
+
+
+def test_prism_checkpoint_no_diff_retries_and_replay_is_deterministic():
+    """An invalid Prism result retries Prism; it is not a revise verdict."""
+    checkpoint = _design_review_checkpoint(verdict="revise")
+    produced = ("outcome.received", {
+        "role": "prism", "status": "done", "result_checkpoint": checkpoint,
+    })
+    failed = ("verdict.failed", {
+        "check": "no_diff", "reason": "verdict requires a diff",
+        "evidence": "architecture.md", "attempt": 1,
+    })
+    events = [*draft_cycle(), PRISM_DISPATCH, produced, failed]
+
+    state = state_of(*events)
+    assert state.substate == "PRISM_REVIEW"
+    assert state.current_attempt == 1
+    assert state.last_failure["check"] == "no_diff"
+    assert not state.reviewer_dispatched and not state.reviewer_produced
+    assert state.design_committed == len(DESIGN_DOCS)
+
+    command = decide(state)
+    assert command.kind == "dispatch_agent"
+    assert command.params["role"] == "prism"
+    assert command.params["attempt"] == 2
+    assert command.params["evidence"]["check"] == "no_diff"
+    assert decide(state_of(*events)) == command
+
+
+def test_prism_checkpoint_third_validation_failure_escalates():
+    checkpoint = _design_review_checkpoint(verdict="revise")
+    produced = ("outcome.received", {
+        "role": "prism", "status": "done", "result_checkpoint": checkpoint,
+    })
+    events = [*draft_cycle()]
+    for attempt in range(1, 4):
+        events.extend([
+            PRISM_DISPATCH,
+            produced,
+            ("verdict.failed", {
+                "check": "no_diff", "reason": "verdict requires a diff",
+                "attempt": attempt,
+            }),
+        ])
+
+    state = state_of(*events)
+    assert state.current_attempt == 3
+    assert state.status == "awaiting_human"
+    assert state.awaiting == "escalation"
+    assert not state.reviewer_dispatched and not state.reviewer_produced
+    assert decide(state) is None
 
 
 def test_prism_revise_enters_respond_and_new_round():

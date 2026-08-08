@@ -4,6 +4,8 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import shlex
 import subprocess
 import sys
@@ -15,6 +17,7 @@ from pathlib import Path
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.effects import select_backend
+from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
 from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
@@ -48,6 +51,40 @@ from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
 _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
+# D-XX scaffold safety: the canonical host test-execution contract location is
+# the ONLY .tracks/** path a Scaffold 宣言 may declare (it is where the fake /
+# production backend writes the collect/run contract consumed by M-TEST). Every
+# other .tracks/** stays rejected (the tracked project documents live under
+# .tracks/projects/ and are staged via _emit_committed, never via the manifest).
+_CANONICAL_CONTRACT_PATH = (".tracks", "project", "project.toml")
+
+# Relative project-venv interpreter paths a contract may declare as argv[0].
+# Used by _resolve_contract_argv0 to decide whether to substitute the Runtime's
+# own interpreter when the project worktree lacks a .venv (live replay fix).
+_VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
+
+
+def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
+    """Resolve a contract command's argv[0] against the project cwd.
+
+    Live replay fix: an external worktree's project.toml contract may declare
+    ``.venv/bin/python -m pytest ...`` while the worktree itself has no
+    ``.venv`` (it was created from a host that does). When argv[0] is the
+    relative project venv interpreter and it does not exist under cwd,
+    substitute the Runtime's own ``sys.executable`` — but ONLY when that
+    executable is itself running inside a venv (so we never fall back to a
+    system Python). If the project carries its own ``.venv/bin/python`` it is
+    used as-is (project interpreter is authoritative); non-Python commands,
+    absolute paths, and other missing executables keep their original
+    subprocess error / contract-failure semantics.
+    """
+    if not argv or argv[0] not in _VENV_PYTHON_RELS:
+        return argv
+    if (cwd / argv[0]).exists():
+        return argv
+    if sys.prefix != sys.base_prefix and os.access(sys.executable, os.X_OK):
+        return [sys.executable, *argv[1:]]
+    return argv
 
 
 # Stage-transition table (design §1, single source of truth): EXIT seal -> next
@@ -148,6 +185,52 @@ class Executor(ResultCheckpointMixin):
                 path = path.split(" -> ", 1)[1]
             files.add(path.strip().strip('"'))
         return files
+
+    def _dirty_snapshot(self) -> dict[str, str]:
+        """Content-identity snapshot of all dirty files: {path: identity}.
+
+        identity is sha256(content) for regular files, ``symlink:{target}``
+        for symlinks, ``missing`` for deleted entries, ``unreadable`` for
+        non-regular/permission-denied files. No mtime — deterministic and
+        JSON-serializable so it can be persisted in ``command.issued`` and
+        compared after the Agent returns (or after crash recovery)."""
+        proc = git(self.repo, "status", "--porcelain", "-uall", check=False)
+        snapshot: dict[str, str] = {}
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:]
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]
+            path = path.strip().strip('"')
+            snapshot[path] = self._path_identity(self.repo / path)
+        return snapshot
+
+    @staticmethod
+    def _path_identity(path: Path) -> str:
+        if path.is_symlink():
+            return f"symlink:{os.readlink(path)}"
+        if not path.exists():
+            return "missing"
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return "unreadable"
+
+    def _resolve_pre_dirty(self, state, substate, params):
+        """Resolve the pre-dispatch dirty baseline for M-TEST Shield WRITE.
+
+        Prefers the persisted content-identity snapshot (new commands); falls
+        back to the legacy path-set for backward compat with old WALs; finally
+        falls back to a fresh snapshot. Returns ``None`` outside M-TEST/WRITE.
+        """
+        if not (state.stage == "M-TEST" and substate == "WRITE"):
+            return None
+        if "pre_dirty_snapshot" in params:
+            return params["pre_dirty_snapshot"]
+        if "pre_dirty" in params:
+            return set(params["pre_dirty"])
+        return self._dirty_snapshot()
 
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
@@ -261,6 +344,12 @@ class Executor(ResultCheckpointMixin):
             # Shield to fall back to rereading the design documents.
             assignment["test_tasks"] = tasks
             params["assignment"] = assignment
+        if (cmd.kind == "dispatch_agent"
+                and params.get("role") == "shield"
+                and params.get("substate") == "WRITE"
+                and state.stage == "M-TEST"):
+            params["pre_dirty"] = sorted(self._dirty_files())
+            params["pre_dirty_snapshot"] = self._dirty_snapshot()
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
@@ -303,10 +392,17 @@ class Executor(ResultCheckpointMixin):
             # (opencode._assignment_context serializes the whole assignment).
             assignment = dict(assignment or {})
             assignment["evidence"] = p["evidence"]
+        # D-32: fail-closed M-DESIGN→M-TEST gate. After the persisted
+        # assignment.test_tasks enrichment (issue()), an invalid test-task
+        # contract must NOT reach the (production or fake) backend: emit a
+        # stub_gap failed outcome instead, which the reducer routes straight
+        # to DIAGNOSE/stub_gap → rollback M-DESIGN (no attempt, no Human).
+        if self._reject_invalid_test_tasks(state, role, substate, assignment,
+                                           cmd, task_id):
+            return
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
-        pre_dirty = self._dirty_files() if (
-            state.stage == "M-TEST" and substate == "WRITE") else None
+        pre_dirty = self._resolve_pre_dirty(state, substate, p)
         result = self.backend.act(
             role, substate, doc, doc_path, assignment=assignment
         )
@@ -342,6 +438,28 @@ class Executor(ResultCheckpointMixin):
             return  # pipeline drives the domain event
         if result.get("verdict"):
             self._emit_verdict(role, result["verdict"], result, state, p, cmd, task_id)
+
+    def _reject_invalid_test_tasks(self, state, role, substate, assignment,
+                                   cmd, task_id) -> bool:
+        """D-32 fail-closed gate: return True (and emit a stub_gap failed
+        outcome) when an M-TEST Shield WRITE assignment carries an invalid
+        test-task contract, so the backend is never called."""
+        if not (state.stage == "M-TEST" and substate == "WRITE"
+                and role == "shield"
+                and not valid_test_tasks((assignment or {}).get("test_tasks"))):
+            return False
+        self._emit("outcome.received",
+                   {"role": role, "status": "failed",
+                    "failure_class": "stub_gap",
+                    "self_report": "M-DESIGN test-task contract invalid",
+                    "audit_evidence": (
+                        "assignment.test_tasks must be a non-empty list of "
+                        "{ac_id, layers, if_ids} with non-empty layers "
+                        "(integration/e2e) and registered IF- ids; got "
+                        f"{assignment.get('test_tasks') if assignment else None}"
+                    )},
+                   command_id=cmd.command_id, task_id=task_id)
+        return True
 
     @staticmethod
     def _dispatch_log_start(p: dict, state: State) -> None:
@@ -459,8 +577,10 @@ class Executor(ResultCheckpointMixin):
                     state, cmd.command_id, "declared scaffold path rejected", issue,
                 )
                 return
-            stage_paths.extend(scaffold_paths)
-            stage_paths.extend(self._project_contract_paths())
+            # Dedup: the canonical project.toml may be both declared in the
+            # manifest and returned by _project_contract_paths(); stage once.
+            stage_paths.extend(dict.fromkeys(
+                [*scaffold_paths, *self._project_contract_paths()]))
         git(self.repo, "add", *(str(path) for path in stage_paths))
         proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
         if proc is not None and proc.returncode != 0:
@@ -499,7 +619,11 @@ class Executor(ResultCheckpointMixin):
             return None, f"scaffold path escapes repository: {raw}"
         if raw_path.is_absolute():
             return None, f"scaffold path is not allowed (must be repo-relative): {raw}"
-        if not relative.parts or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS:
+        if (not relative.parts
+                or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS
+                and tuple(relative.parts) != _CANONICAL_CONTRACT_PATH):
+            # exactly the canonical .tracks/project/project.toml is allowed;
+            # every other .tracks/** (and .git/.opencode/**) is rejected.
             return None, f"scaffold path is not allowed: {raw}"
         if candidate.is_symlink():
             return None, f"scaffold path is not allowed (symlink): {raw}"
@@ -629,6 +753,7 @@ class Executor(ResultCheckpointMixin):
             except ValueError as exc:
                 return [], f"contract {field} command invalid: {exc}"
             cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+            argv = _resolve_contract_argv0(argv, cwd)
             proc = subprocess.run(
                 argv, cwd=cwd, capture_output=True, text=True,
             )

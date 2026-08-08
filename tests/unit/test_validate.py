@@ -215,11 +215,39 @@ def test_validate_document_test_plan_trace_gated(tmp_path):
 def test_cli_validate_test_plan_runs_design_trace(tmp_path, capsys, monkeypatch):
     (tmp_path / "acceptance.md").write_text(
         "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    (tmp_path / "interfaces.md").write_text(
+        "---\ninterfaces_id: IF-NNN\nstatus: draft\nsha:\n---\n\n"
+        "## 5. IF Registry\n\n### IF-MTEST-001\n",
+        encoding="utf-8")
     _design_doc(tmp_path, "test-plan", "test-plan.md")
     monkeypatch.chdir(tmp_path)
     assert cmd_validate(Path("."), "--file", "test-plan.md") == 1  # orphan AC
     err = capsys.readouterr().err
     assert "AC-FR0010-01" in err and "layer attribution" in err
+
+
+def test_cli_validate_test_plan_runs_test_tasks_contract(tmp_path, capsys, monkeypatch):
+    """Item 3 (BLOCKER): `trac validate --file test-plan.md` must run both the
+    design trace AND check_test_tasks_contract_file (FR-0140). A test-plan
+    whose §8 passes design_trace (every AC has a layer) but fails the
+    test-task contract (e.g. missing IF- attribution for integration layer)
+    must return 1 with a test_tasks error."""
+    (tmp_path / "acceptance.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n### AC-FR0010-01 x\n", encoding="utf-8")
+    (tmp_path / "interfaces.md").write_text(
+        "---\ninterfaces_id: IF-NNN\nstatus: draft\nsha:\n---\n\n"
+        "## 5. IF Registry\n\n### IF-MTEST-001\n",
+        encoding="utf-8")
+    (tmp_path / "test-plan.md").write_text(
+        "---\nstatus: draft\nsha:\n---\n\n# Plan\n\n"
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0010-01 | integration | test_a | IF-FAKE-999 |\n",
+        encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert cmd_validate(Path("."), "--file", "test-plan.md") == 1
+    err = capsys.readouterr().err
+    assert "IF-FAKE-999" in err or "test_tasks" in err
 
 
 # -- run044: design docs reserve blockquotes for discussion threads -----------

@@ -383,6 +383,98 @@ def test_dispatch_to_write():
     assert s.substate == "WRITE"
 
 
+def test_stub_gap_failed_outcome_routes_to_diagnose_not_retry():
+    """D-32 / SM-01.12: an invalid M-DESIGN test-task contract (stub_gap
+    failed outcome, emitted instead of dispatching) routes straight to
+    DIAGNOSE/stub_gap: decide() emits rollback_stage(M-DESIGN), no attempt
+    consumed, no Human, no three wasted Shield attempts."""
+    stub = ("outcome.received", {"role": "shield", "status": "failed",
+                                 "failure_class": "stub_gap",
+                                 "self_report": "M-DESIGN test-task contract invalid",
+                                 "audit_evidence": "empty test_tasks"})
+    s = state_of(SHIELD_DISPATCH, stub)
+    assert s.substate == "DIAGNOSE"
+    assert s.diagnose_classification == "stub_gap"
+    assert s.current_attempt == 0  # no attempt consumed -> no escalation
+    assert s.status == "active" and s.awaiting is None
+    cmd = decide(s)
+    assert cmd.kind == "rollback_stage"
+    assert cmd.params["to_stage"] == "M-DESIGN"
+
+
+def test_stub_gap_rollback_to_design_clears_stale_evidence():
+    """SM-01.12 evidence scoping: ONLY the stub_gap rollback (M-TEST ->
+    M-DESIGN) clears last_failure, because the M-TEST stub_gap/failed-outcome
+    evidence is stale relative to the M-DESIGN Archer re-dispatch that follows
+    (the contract gap is in the design, not the test run). Other rollbacks
+    (scope_overflow, ac_gap, spec_gap, human_return) PRESERVE last_failure so
+    the downstream drafter still receives the original failure evidence
+    (FR-11) -- see test_scope_overflow_rollback_preserves_evidence.
+
+    Here the stub_gap route clears, and the M-DESIGN re-entry state semantics
+    (DRAFT, counters reset) are preserved."""
+    stub = ("outcome.received", {"role": "shield", "status": "failed",
+                                 "failure_class": "stub_gap",
+                                 "self_report": "M-DESIGN test-task contract invalid",
+                                 "audit_evidence": "empty test_tasks"})
+    # M-TEST stub_gap captured failure evidence, then decide() rolls back.
+    pre = state_of(SHIELD_DISPATCH, stub)
+    assert pre.last_failure is not None  # stub_gap evidence captured
+    assert pre.diagnose_classification == "stub_gap"
+    # Executor processes rollback_stage(M-DESIGN) -> stage.rolled_back event.
+    s = state_of(SHIELD_DISPATCH, stub,
+                 ("stage.rolled_back", {"from_stage": "M-TEST",
+                                        "to_stage": "M-DESIGN",
+                                        "reason": "stub_gap"}))
+    assert s.stage == "M-DESIGN"
+    assert s.current_attempt == 0
+    assert s.last_failure is None
+    # Existing rollback state semantics preserved (SM-01.12 / M-DESIGN re-entry)
+    assert s.substate == "DRAFT"
+    assert s.design_validated == 0
+    assert s.design_committed == 0
+    assert s.prism_passed_this_round is False
+
+
+ENTER_M_SPEC = [
+    ("story.requested", {"raw_chars": 5}),
+    ("stage.entered", {"stage": "M-SPEC"}),
+]
+
+
+def test_scope_overflow_rollback_preserves_evidence():
+    """FR-20 / AC-20a: a scope_overflow rollback (M-SPEC -> M-STORY) must
+    PRESERVE last_failure so the Scribe re-dispatch carries the overflow
+    evidence into the next DRAFT. This is the regression flipped from the
+    stub_gap clearing rule: scope_overflow evidence is NOT stale -- it is the
+    reason for the rollback and Scribe needs it to re-scope the story."""
+    overflow = ("verdict.failed", {"check": "scope_overflow",
+                                   "reason": "31 FRs in spec", "attempt": 0})
+    pre = project(seq(*ENTER_M_SPEC, overflow))
+    assert pre.last_failure is not None
+    assert pre.last_failure["check"] == "scope_overflow"
+    assert pre.scope_overflow is True
+    # Executor processes rollback_stage(M-STORY) -> stage.rolled_back event,
+    # carrying from_stage/to_stage/reason in the payload (not implicit state).
+    s = project(seq(*ENTER_M_SPEC, overflow,
+                    ("stage.rolled_back", {"from_stage": "M-SPEC",
+                                           "to_stage": "M-STORY",
+                                           "reason": "scope_overflow"})))
+    assert s.stage == "M-STORY"
+    assert s.substate == "DRAFT"
+    assert s.scope_overflow is False  # rollback consumed the flag
+    assert s.story_committed is False  # the redone story must be re-committed
+    # Evidence preserved for the Scribe re-dispatch (FR-11).
+    assert s.last_failure is not None
+    assert s.last_failure["check"] == "scope_overflow"
+    # decide() re-dispatches Scribe DRAFT carrying the overflow evidence.
+    cmd = decide(s)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "scribe"
+    assert cmd.params["substate"] == "DRAFT"
+    assert cmd.params["evidence"]["check"] == "scope_overflow"
+
+
 def test_write_to_collect():
     """SM-01.3@v0.4"""
     s = state_of(SHIELD_DISPATCH, SHIELD_DONE)

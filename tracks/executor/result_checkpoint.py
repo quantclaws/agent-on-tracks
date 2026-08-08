@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import PurePath
 
 from tracks.executor.helpers import _commit_if_staged, git
 from tracks.executor.validate import (
@@ -33,6 +34,16 @@ _COMMITTED_EVENT = {
     "interfaces.md": ("design.committed", "interfaces_sha"),
     "test-plan.md": ("design.committed", "test_plan_sha"),
 }
+
+
+def _is_test_module_target(path: str) -> bool:
+    """Return True iff the path is a pytest test module target
+    (``test_*.py`` or ``*_test.py``). ``conftest.py`` and helpers are
+    support files pytest auto-loads when collecting the parent directory;
+    they must NOT be collected as standalone test nodes."""
+    name = PurePath(path).name
+    return name.startswith("test_") and name.endswith(".py") or \
+        name.endswith("_test.py")
 
 
 class ResultCheckpointMixin:
@@ -122,13 +133,29 @@ class ResultCheckpointMixin:
         return self._m_test_prism_payload(result, base_sha, result_id)
 
     def _m_test_write_payload(self, base_sha, result_id, pre_dirty):
-        """M-TEST Shield WRITE: commit test files in tests/."""
-        post_dirty = self._dirty_files()
-        changed = (post_dirty - pre_dirty) if pre_dirty is not None \
-            else post_dirty
-        test_files = sorted(
-            f for f in changed if f.startswith("tests/")
-            and f.endswith(".py"))
+        """M-TEST Shield WRITE: commit test files in tests/.
+
+        ``pre_dirty`` is either a content-identity snapshot (``dict[str,str]``
+        persisted in ``command.issued`` params) or a legacy path-set
+        (``set[str]`` / ``None``). When a snapshot is available, a test
+        path is attributed iff its identity changed between dispatch and
+        Agent return — catching pre-existing dirty/untracked test files
+        that Shield *modified* (which the legacy path-set diff missed).
+        Legacy path-sets fall back to conservative set-diff semantics."""
+        if isinstance(pre_dirty, dict):
+            post_snapshot = self._dirty_snapshot()
+            test_files = sorted(
+                f for f in post_snapshot
+                if f.startswith("tests/") and f.endswith(".py")
+                and pre_dirty.get(f) != post_snapshot[f]
+            )
+        else:
+            post_dirty = self._dirty_files()
+            changed = (post_dirty - pre_dirty) if pre_dirty is not None \
+                else post_dirty
+            test_files = sorted(
+                f for f in changed if f.startswith("tests/")
+                and f.endswith(".py"))
         artifacts = list(test_files)
         digests = capture_digests({f: self.repo / f for f in test_files})
         return {
@@ -137,7 +164,10 @@ class ResultCheckpointMixin:
             "artifacts": artifacts, "allowed_paths": test_files,
             "base_sha": base_sha,
             "checks": ["write_scope", "collection"],
-            "requires_diff": False, "forbid_diff": False,
+            # D-32: WRITE requires an attributable tests/**/*.py diff, so a
+            # done/no-diff Shield output fails validation and can never
+            # publish test.written / reach COLLECT (it retries/escalates).
+            "requires_diff": True, "forbid_diff": False,
             "discussion_only": False,
             "commit_label": "M-TEST: shield commit",
             "result_id": result_id, "digests": digests,
@@ -361,8 +391,23 @@ class ResultCheckpointMixin:
         return False
 
     def _check_collection(self, artifacts, attempt, command_id):
-        """Run pytest --collect-only on each test file. Returns True on failure."""
-        for artifact in artifacts:
+        """Run pytest --collect-only on test module targets only
+        (``test_*.py`` / ``*_test.py``). ``conftest.py`` and helper files
+        are support files that pytest auto-loads when collecting the parent
+        directory; they must not be collected as standalone test nodes
+        (pytest returns rc=5 / no tests). At least one test module target
+        is required; otherwise fail closed with check=collection. Returns
+        True on failure."""
+        test_modules = [a for a in artifacts if _is_test_module_target(a)]
+        if not test_modules:
+            self._emit("verdict.failed",
+                       {"check": "collection",
+                        "reason": "no test modules to collect "
+                                  "(only conftest/helper artifacts)",
+                        "evidence": str(artifacts), "attempt": attempt},
+                       command_id=command_id)
+            return True
+        for artifact in test_modules:
             path = self._artifact_path(artifact)
             if not path.exists():
                 self._emit("verdict.failed",
@@ -404,13 +449,24 @@ class ResultCheckpointMixin:
                 return True
         return False
 
+    def _has_artifact_diff(self, doc, base_sha):
+        """A diff exists for an artifact if it differs from base_sha OR is
+        new/untracked (Shield WRITE creates fresh tests/**/*.py files that
+        `git diff <base_sha>` would not show)."""
+        path = self._artifact_path(doc)
+        if has_diff(self.repo, path, base_sha):
+            return True
+        proc = git(self.repo, "status", "--porcelain", "--",
+                   str(path), check=False)
+        return bool(proc.stdout.strip())
+
     def _validate_diff_policy(self, cmd, artifacts, base_sha, attempt):
         """Enforce requires_diff (batch-level) and per-doc diff policy.
         Returns True if a failure was emitted (caller should abort)."""
         requires_diff = cmd.params.get("requires_diff", False)
         if requires_diff:
             any_diff = any(
-                has_diff(self.repo, self._artifact_path(doc), base_sha)
+                self._has_artifact_diff(doc, base_sha)
                 for doc in artifacts)
             if not any_diff:
                 self._emit("verdict.failed",
@@ -562,9 +618,11 @@ class ResultCheckpointMixin:
         for sp in scaffold_paths:
             if str(sp) not in already_staged:
                 stage_paths.append(sp)
+                already_staged.add(str(sp))
         for cp in self._project_contract_paths():
             if str(cp) not in already_staged:
                 stage_paths.append(cp)
+                already_staged.add(str(cp))
         return False
 
     # -- publish --------------------------------------------------------------

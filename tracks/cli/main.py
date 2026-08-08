@@ -23,6 +23,7 @@ from tracks.executor import Executor, git
 from tracks.executor.validate import (
     check_design_trace_file,
     check_template,
+    check_test_tasks_contract_file,
     check_trace_file,
 )
 from tracks.kernel import Command, project
@@ -579,32 +580,87 @@ def cmd_approve(repo: Path, *args) -> int:
     return 0
 
 
-_RETURN_STAGES = ("M-STORY", "M-SPEC", "M-ACC")
+# trac return target sets (item: state-specific M-DESIGN). The syntax union
+# includes M-DESIGN, but each gate enforces its own closed target set:
+#   - M-REQ-APPROVAL (awaiting=approval): only upstream requirement stages;
+#     forward M-DESIGN is rejected (no event, SM-05.7a / C-03).
+#   - any author/review stage (M-STORY|M-SPEC|M-ACC|M-DESIGN|M-TEST) at
+#     awaiting=escalation: current-or-earlier author stage (per-stage closed
+#     set, see _escalation_return_targets). M-TEST itself is not a re-author
+#     target (existing semantics); M-REQ-APPROVAL is never a return target.
+_RETURN_STAGES_APPROVAL = ("M-STORY", "M-SPEC", "M-ACC")
+_RETURN_STAGES_ESCALATION = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
+# Author-stage chain in dependency order. M-TEST escalation reuses the full
+# chain (M-TEST itself is never a target); M-REQ-APPROVAL is intentionally
+# absent - it is never a return target.
+_RETURN_AUTHOR_STAGES = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
+
+
+def _escalation_return_targets(stage: str) -> tuple[str, ...]:
+    """Closed per-stage set of `--to` targets for an escalation return.
+
+    The Human may return to the current or an earlier author stage:
+    M-STORY -> {M-STORY}; M-SPEC -> {M-STORY,M-SPEC}; M-ACC -> ...+M-ACC;
+    M-DESIGN -> ...+M-DESIGN; M-TEST -> all four author stages (M-TEST itself
+    is not a re-author target, existing semantics). Forward targets and
+    M-REQ-APPROVAL are never allowed. Returns () for stages that cannot
+    escalate-return (M-REQ-APPROVAL, M-START, unknown)."""
+    if stage in _RETURN_AUTHOR_STAGES:
+        return _RETURN_AUTHOR_STAGES[:_RETURN_AUTHOR_STAGES.index(stage) + 1]
+    if stage == "M-TEST":
+        return _RETURN_STAGES_ESCALATION
+    return ()
+
+
+def _return_gate(store: Store, run_id: str):
+    """trac return gate. Returns (state, allowed_targets, err).
+
+    Two gates accept `return`:
+      - M-REQ-APPROVAL (awaiting=approval): upstream requirement stages only.
+      - an author/review stage (M-STORY|M-SPEC|M-ACC|M-DESIGN|M-TEST) at
+        awaiting=escalation: current-or-earlier author stage (per-stage set).
+    M-TEST (awaiting=rollback) is handled by `approve`, not `return`."""
+    state = store.state(run_id)
+    if state.stage == "M-REQ-APPROVAL" and state.awaiting == "approval":
+        return state, _RETURN_STAGES_APPROVAL, None
+    if state.awaiting == "escalation":
+        allowed = _escalation_return_targets(state.stage)
+        if allowed:
+            return state, allowed, None
+        return state, (), (
+            f"escalation at stage {state.stage} has no return targets"
+        )
+    return state, (), (
+        f"run not awaiting approval or escalation (stage={state.stage} "
+        f"awaiting={state.awaiting or 'nothing'})"
+    )
 
 
 def cmd_return(repo: Path, *args) -> int:
     opts = {}
     args = list(args)
+    usage = "usage: trac return --to <M-STORY|M-SPEC|M-ACC|M-DESIGN> --reason TEXT"
     while args:
         flag = args.pop(0)
         if flag not in ("--to", "--reason") or not args or flag in opts:
-            return _err("usage: trac return --to <M-STORY|M-SPEC|M-ACC> --reason TEXT")
+            return _err(usage)
         opts[flag] = args.pop(0)
     if set(opts) != {"--to", "--reason"}:
-        return _err("usage: trac return --to <M-STORY|M-SPEC|M-ACC> --reason TEXT")
-    if opts["--to"] not in _RETURN_STAGES:
-        # SM-05.7/C-03: closed set, explicitly validated — no event on reject.
-        return _err(f"invalid --to {opts['--to']}: must be one of "
-                    + "|".join(_RETURN_STAGES))
+        return _err(usage)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
     if run_id is None:
         return _err("no active run")
     with writer_lock(home):  # AC-27b: lock before the state gate
-        state, err = _approval_gate(store, run_id)
+        state, allowed, err = _return_gate(store, run_id)
         if err:
             return _err(err)
+        if opts["--to"] not in allowed:
+            # SM-05.7a/C-03: closed per-gate set, explicitly validated — no
+            # event on reject.
+            return _err(f"invalid --to {opts['--to']}: must be one of "
+                        + "|".join(allowed))
         store.append(run_id, state.version, "human.return",
                      {"reason": opts["--reason"], "to_stage": opts["--to"]})
     print(f"returned to {opts['--to']}")
@@ -705,6 +761,7 @@ def cmd_validate(repo: Path, *args) -> int:
         issues += check_trace_file(path)
     if path.name == "test-plan.md":  # BS-06: design trace (AC -> test layer)
         issues += check_design_trace_file(path)
+        issues += check_test_tasks_contract_file(path)  # FR-0140
     if issues:
         for issue in issues:
             print(issue, file=sys.stderr)

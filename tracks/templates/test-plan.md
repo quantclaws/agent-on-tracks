@@ -316,3 +316,32 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   - Anti-pattern static scan (see §1.3)
   - Coverage ≥95%
   - §3.2 ground truth isolation (if ground_truth/ is enabled)
+
+---
+
+## 8. AC Coverage
+
+<!-- Template guidance (delete before delivery; delivered docs keep only the table):
+  This table (D-28 / M-DESIGN→M-TEST contract) is the ONLY machine-readable
+  source of AC test tasks. Runtime validates it at the M-DESIGN EXIT gate and
+  builds `assignment.test_tasks` from it before any Shield WRITE dispatch.
+  Semantics:
+  - Fixed header `AC id | layer | test | IF` (columns located by header cell;
+    order is fixed: AC | layer | test | IF). The ZH canonical header
+    `| AC | 层 | 测试 | IF- 归属 |` is also accepted (legacy v0.4).
+  - Every acceptance AC (acceptance.md) must have a row here; a unit-only row
+    is allowed and is NOT a Shield task.
+  - `layer` ∈ {unit, integration, e2e}; use `+`/`、`/`,` to list several.
+  - An integration/e2e row must carry one or more registered IF- identifiers
+    (interfaces.md §5 registry, the FR-0140 green condition); a missing or
+    unregistered IF- fails the M-DESIGN EXIT gate closed.
+  - `test` is a human-readable test function/file name suggestion only; the
+    blockquote is reserved for inline-discussion.
+  Example row (replace with real coverage; do NOT keep example AC/IF ids):
+  | AC id | layer | test | IF |
+  |---|---|---|---|
+  | AC-FR0000-01（示例） | unit + integration | test_ac_fr0000_01 | IF-MTEST-001 |
+-->
+
+| AC id | layer | test | IF |
+|---|---|---|---|

@@ -42,10 +42,12 @@ tracks = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Parallelism is opt-in and limited to tracks' own unit suite; integration/e2e
-# must stay serial, so -n is intentionally absent from addopts. Run unit tests
-# in parallel with:
+# Parallelism is opt-in; unit plus deterministic integration/e2e suites may
+# run with xdist, so -n is intentionally absent from addopts. `tests/e2e_live`
+# is the real Agent/external-channel suite and remains serial because it relies
+# on live Agent/session/shared external state. Run them in parallel with:
 #   .venv/bin/python -m pytest tests/unit -n 4 --dist loadscope -q
+#   .venv/bin/python -m pytest tests/integration tests/e2e -n 4 --dist loadscope -q
 # performance benchmarks (NFR-0020) are opt-in: excluded from the default suite,
 # run on demand with `pytest -m performance`.
 addopts = "-q -m 'not performance'"

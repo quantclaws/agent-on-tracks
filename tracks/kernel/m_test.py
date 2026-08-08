@@ -217,9 +217,11 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
     if sub == "DIAGNOSE":
         return _m_test_diagnose_route(s)  # SM-01.11/.12/.13
     if sub == "RETURNED":
-        # SM-01.13: Human approved ac_gap/spec_gap rollback.
+        # SM-01.13: Human approved ac_gap/spec_gap rollback (diagnose_rollback)
+        # or SM-05.7: Human return from escalation (human_return).
+        reason = "human_return" if s.returned else "diagnose_rollback"
         return Command(kind="rollback_stage",
-                       params={"to_stage": s.return_target, "reason": "diagnose_rollback"})
+                       params={"to_stage": s.return_target, "reason": reason})
     return None
 
 

@@ -42,6 +42,14 @@ from pathlib import Path
 
 from tracks import templating
 from tracks.discuss.gate import check_ready
+from tracks.executor.validation_shared import (
+    _ACC_AC,  # noqa: F401  (re-export for backward compat)
+    _ACC_SECTION,  # noqa: F401  (re-export for backward compat)
+    _HEADING,
+    _HTML_COMMENT,
+    _acc_scan,
+    _strip_comments,
+)
 from tracks.frontmatter import split_frontmatter
 
 FR_LIMIT = 30
@@ -49,14 +57,6 @@ FR_LIMIT = 30
 # spec item grammar: loose head (to find/flag malformed items) + strict form.
 _ITEM_HEAD = re.compile(r"^###\s+((?:N?FR)-\d+)\b(.*)$", re.IGNORECASE)
 _ITEM_OK = re.compile(r"^### (?:FR|NFR)-\d{4} \S")
-# Structure accepts either state. Stage-specific checks enforce that Agent
-# drafts are all unchecked and Runtime-finalized specs are all checked.
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-
-# FR-0170 acceptance grammar: '## FR-XXXX' coverage section + '### AC-FRXXXX-YY'
-# item whose embedded ID back-references the spec FR/NFR.
-_ACC_SECTION = re.compile(r"^## (N?FR-\d{4})\b")
-_ACC_AC = re.compile(r"^### (AC-(N?FR)(\d{4})-\d+)\b")
 
 _KIND_BY_FILE = {
     "story.md": "story",
@@ -68,7 +68,6 @@ _KIND_BY_FILE = {
     "architecture.md": "architecture",
     "interfaces.md": "interfaces",
 }
-_HEADING = re.compile(r"^(#+)\s+(.*\S)\s*$")
 _NUM_PREFIX = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 
@@ -83,16 +82,9 @@ _COMMENT_MARKER = re.compile(r"^\s*" + _BOLD_MARKER, re.M)
 _BQ_GUIDANCE = re.compile(r"^\s*>+\s*" + _BOLD_MARKER)
 _BQ = re.compile(r"^\s*(>+)\s*(.*)$")
 
-# BS-06 design trace: a test-plan line attributes a layer to an AC when both
-# the AC id and a layer token share one (non-comment, non-fenced) line.
-_LAYER = re.compile(r"\b(unit|integration|e2e)\b", re.I)
-
 # FR-0130 BS-XX heading grammar (story.md): two-digit, unique ID.
 _BS_ITEM_HEAD = re.compile(r"^###\s+(BS-\d+)\b(.*)$", re.IGNORECASE)
 _BS_ITEM_OK = re.compile(r"^### BS-\d{2} \S")
-
-# FR-0140 IF- identifier pattern (interfaces.md §5 registry).
-_IF_ID = re.compile(r"IF-[A-Z]+-\d{3}")
 
 # FR-0130 cross-version qualified reference: AC-FRXXXX-YY@vX.Y
 _VERSION_QUALIFIED = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@(v\d+\.\d+)")
@@ -127,6 +119,7 @@ def validate_document(path: Path, doc: str, checks=None) -> tuple[str, str] | No
         (_scope_failure, (doc, body)),
         (_trace_failure, (path, doc)),
         (_design_trace_failure, (path, doc, checks)),
+        (_test_tasks_failure, (path, doc, checks)),
         (_template_failure, (path, checks)),
         (_discussion_failure, (text, checks)),
     )
@@ -156,6 +149,13 @@ def _design_trace_failure(path: Path, doc: str, checks: list):
         return None
     issues = check_design_trace_file(path)
     return ("trace", "; ".join(issues)) if issues else None
+
+
+def _test_tasks_failure(path: Path, doc: str, checks: list):
+    if doc != "test-plan.md" or "test_tasks" not in checks:
+        return None
+    issues = check_test_tasks_contract_file(path)
+    return ("test_tasks", "; ".join(issues)) if issues else None
 
 
 def _template_failure(path: Path, checks: list):
@@ -205,31 +205,6 @@ def _valid_fr_count(text: str) -> int:
     )
 
 
-def _acc_scan(acc_text: str) -> tuple[dict, list]:
-    """Acceptance-side scan: ``({section_id: line_no}, [(ac_id, ref_id, line_no,
-    section_id)])``. Fenced code and discussion blocks ('>' lines) skipped;
-    a non-section level-2 heading closes the open section."""
-    sections: dict = {}
-    acs: list = []
-    fence = False
-    current = None
-    for i, line in enumerate(acc_text.splitlines(), start=1):
-        if line.lstrip().startswith("```"):
-            fence = not fence
-            continue
-        if fence or line.lstrip().startswith(">"):
-            continue
-        if m := _ACC_SECTION.match(line):
-            current = m.group(1).upper()
-            sections.setdefault(current, i)
-        elif m := _ACC_AC.match(line):
-            ref = f"{m.group(2)}-{m.group(3)}".upper()
-            acs.append((m.group(1), ref, i, current))
-        elif (h := _HEADING.match(line)) and len(h.group(1)) == 2:
-            current = None
-    return sections, acs
-
-
 def check_trace(spec_text: str, acc_text: str) -> list:
     """FR-0170 AC<->FR bidirectional coverage (both hard errors). Returns the
     complete orphan list with ``line:N`` messages (no short-circuit); [] = pass.
@@ -268,326 +243,15 @@ def check_trace_file(path: Path) -> list:
                        path.read_text(encoding="utf-8"))
 
 
-def _check_if_line(
-    ac_id: str, line_no: int, ln: str, if_registry: set[str],
-) -> list[str]:
-    """Check IF- attribution on a single test-plan line."""
-    if not _LAYER.search(ln):
-        return []
-    lower = ln.lower()
-    if "integration" not in lower and "e2e" not in lower:
-        return []
-    if_ids = _IF_ID.findall(ln)
-    if not if_ids:
-        return [f"line:{line_no} {ac_id} integration/e2e AC missing IF- attribution"]
-    return [
-        f"line:{line_no} {if_id} not defined in interfaces.md §5"
-        for if_id in if_ids if if_id not in if_registry
-    ]
-
-
-def _check_if_attribution(
-    ac_id: str,
-    line_no: int,
-    ac_lines: list[str],
-    if_registry: set[str],
-) -> list[str]:
-    """FR-0140: validate IF- attribution for integration/e2e ACs."""
-    issues: list[str] = []
-    for ln in ac_lines:
-        issues += _check_if_line(ac_id, line_no, ln, if_registry)
-    return issues
-
-
-def _visible_plan_lines(plan_text: str) -> list[str]:
-    """Strip HTML comments and fenced code from plan text."""
-    visible: list[str] = []
-    fence = False
-    for line in _strip_comments(plan_text).splitlines():
-        if line.lstrip().startswith("```"):
-            fence = not fence
-            continue
-        if not fence:
-            visible.append(line)
-    return visible
-
-
-def _check_ac_layer_and_if(
-    ac_id: str,
-    line_no: int,
-    visible: list[str],
-    if_registry: set[str] | None,
-) -> list[str]:
-    """Check layer attribution and IF- attribution for one AC."""
-    ac_lines = [ln for ln in visible if ac_id in ln]
-    if not any(_LAYER.search(ln) for ln in ac_lines):
-        return [
-            f"line:{line_no} {ac_id} has no layer attribution "
-            "(unit/integration/e2e) in test-plan.md"
-        ]
-    if if_registry is not None:
-        return _check_if_attribution(ac_id, line_no, ac_lines, if_registry)
-    return []
-
-
-def _layer_of(ac_id: str, visible: list[str]) -> str | None:
-    """Return the test-layer attribution (unit/integration/e2e) of ``ac_id``
-    from the visible test-plan lines, or None when unattributed."""
-    for ln in visible:
-        if ac_id in ln:
-            m = _LAYER.search(ln)
-            if m:
-                return m.group(1).lower()
-    return None
-
-
-def required_ac_ids(acc_path: Path, plan_path: Path) -> set[str]:
-    """FR-0070 EXIT gate helper: AC IDs with an integration|e2e layer
-    attribution in test-plan.md (the ``required`` ACs whose marker binding the
-    M-TEST trace gate must verify). Unit-only ACs do not block M-TEST exit."""
-    if not acc_path.exists() or not plan_path.exists():
-        return set()
-    _, acs = _acc_scan(acc_path.read_text(encoding="utf-8"))
-    visible = _visible_plan_lines(plan_path.read_text(encoding="utf-8"))
-    return {ac_id for ac_id, _ref, _ln, _sec in acs
-            if _layer_of(ac_id, visible) in ("integration", "e2e")}
-
-
-# AC id pattern scoped to a single test-plan §8 coverage-table row.
-_AC_ID_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
-_AC_COVERAGE_HEADING = re.compile(r"^##\s+(?:8\.\s*)?AC Coverage\b", re.I)
-_LAYER_HEADER = re.compile(r"layer|层", re.I)
-_IF_HEADER = re.compile(r"\bif\b|归属", re.I)
-_LAYER_CELL_SEPARATOR = re.compile(r"\s*(?:\+|,|/|、|&|\band\b)\s*", re.I)
-_IF_CELL_SEPARATOR = re.compile(r"[\s,;/+、&]+")
-
-
-def _table_cells(line: str) -> list[str]:
-    if "|" not in line:
-        return []
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
-
-
-def _table_separator(cells: list[str]) -> bool:
-    return not cells or all(set(cell) <= {"-", ":", " "} for cell in cells)
-
-
-def _coverage_columns(cells: list[str]) -> tuple[int, int]:
-    layer_idx = next((i for i, cell in enumerate(cells)
-                      if _LAYER_HEADER.search(cell)), None)
-    if_idx = next((i for i, cell in enumerate(cells)
-                   if _IF_HEADER.search(cell)), None)
-    return (layer_idx if layer_idx is not None else -1,
-            if_idx if if_idx is not None else -1)
-
-
-def _cell_at(cells: list[str], index: int) -> str | None:
-    return cells[index] if 0 <= index < len(cells) else None
-
-
-def _coverage_row_items(
-    line: str, cells: list[str], columns: tuple[int, int],
-) -> list[tuple[str, str | None, str | None]]:
-    layer_idx, if_idx = columns
-    return [
-        (ac_id, _cell_at(cells, layer_idx), _cell_at(cells, if_idx))
-        for ac_id in _AC_ID_IN_ROW.findall(line)
-    ]
-
-
-def _coverage_line(
-    line: str, in_coverage: bool, columns: tuple[int, int] | None,
-) -> tuple[bool, tuple[int, int] | None, list[tuple[str, str | None, str | None]]]:
-    stripped = line.strip()
-    if stripped.startswith(">"):
-        return in_coverage, columns, []
-    if stripped.startswith("## "):
-        return bool(_AC_COVERAGE_HEADING.match(stripped)), None, []
-    if not in_coverage or "|" not in line:
-        return in_coverage, columns, []
-    cells = _table_cells(line)
-    if _table_separator(cells):
-        return in_coverage, columns, []
-    if columns is None:
-        columns = _coverage_columns(cells)
-        if columns != (-1, -1):
-            return in_coverage, columns, []
-    return in_coverage, columns, _coverage_row_items(line, cells, columns)
-
-
-def _coverage_rows(plan_text: str) -> list[tuple[str, str | None, str | None]]:
-    """Read AC rows from the test-plan §8 table.
-
-    The column positions come from the table header instead of from the row's
-    prose. This keeps a malformed layer/IF cell attached to its AC so the
-    assignment can fail closed rather than silently dropping that AC.
-    """
-    rows: list[tuple[str, str | None, str | None]] = []
-    in_coverage = False
-    columns: tuple[int, int] | None = None
-    for line in _visible_plan_lines(plan_text):
-        in_coverage, columns, line_rows = _coverage_line(
-            line, in_coverage, columns,
-        )
-        rows.extend(line_rows)
-    return rows
-
-
-def _parse_layer_cell(raw: str | None) -> tuple[set[str], bool]:
-    if raw is None or not raw.strip():
-        return set(), False
-    parts = [part.strip().lower() for part in _LAYER_CELL_SEPARATOR.split(raw)]
-    if not parts or any(part not in ("unit", "integration", "e2e") for part in parts):
-        return set(), False
-    return set(parts), True
-
-
-def _parse_if_cell(raw: str | None) -> tuple[set[str], bool]:
-    if raw is None or not raw.strip():
-        return set(), False
-    if_ids = set(_IF_ID.findall(raw))
-    residue = _IF_CELL_SEPARATOR.sub("", _IF_ID.sub("", raw))
-    if not if_ids or residue:
-        return set(), False
-    return if_ids, True
-
-
-def _parse_ac_row(
-    rows: list[tuple[str | None, str | None]],
-) -> tuple[list[str], list[str]] | None:
-    """Parse one AC's coverage rows, preserving malformed required rows."""
-    candidate_layers: set[str] = set()
-    required_rows: list[tuple[str | None, str | None]] = []
-    malformed_layer = False
-    for layer_cell, if_cell in rows:
-        parsed_layers, layer_ok = _parse_layer_cell(layer_cell)
-        if not layer_ok:
-            malformed_layer = True
-        required = parsed_layers & {"integration", "e2e"}
-        if required:
-            candidate_layers.update(required)
-            required_rows.append((layer_cell, if_cell))
-    if not candidate_layers and not malformed_layer:
-        return None  # valid unit-only coverage is not a Shield task
-    if malformed_layer:
-        return [], []
-    if_ids: set[str] = set()
-    malformed_if = False
-    for _layer_cell, if_cell in required_rows:
-        parsed_if_ids, if_ok = _parse_if_cell(if_cell)
-        if not if_ok:
-            malformed_if = True
-        if_ids.update(parsed_if_ids)
-    return (sorted(candidate_layers),
-            [] if malformed_if else sorted(if_ids))
-
-
-def _known_ac_ids(acc_text: str) -> set[str]:
-    _, acs = _acc_scan(acc_text)
-    return {ac_id for ac_id, _ref, _line_no, _section in acs}
-
-
-def _rows_for_ac(
-    ac_id: str, rows: list[tuple[str, str | None, str | None]],
-) -> list[tuple[str | None, str | None]]:
-    return [
-        (layer, if_cell)
-        for row_ac, layer, if_cell in rows
-        if row_ac == ac_id
-    ]
-
-
-def _empty_test_task(ac_id: str) -> dict:
-    return {"ac_id": ac_id, "layers": [], "if_ids": []}
-
-
-def _test_task_for_ac(
-    ac_id: str, rows: list[tuple[str, str | None, str | None]],
-) -> dict | None:
-    ac_rows = _rows_for_ac(ac_id, rows)
-    if not ac_rows:
-        return _empty_test_task(ac_id)
-    parsed = _parse_ac_row(ac_rows)
-    if parsed is None:
-        return None
-    layers, if_ids = parsed
-    return {"ac_id": ac_id, "layers": layers, "if_ids": if_ids}
-
-
-def _test_tasks(
-    ac_ids: set[str], rows: list[tuple[str, str | None, str | None]],
-) -> list[dict]:
-    tasks: list[dict] = []
-    for ac_id in sorted(ac_ids):
-        task = _test_task_for_ac(ac_id, rows)
-        if task is not None:
-            tasks.append(task)
-    return tasks
-
-
-def parse_test_tasks(acc_path: Path, plan_path: Path) -> list[dict]:
-    """D-28: Runtime-side parse of test-plan §8 AC Coverage rows into the
-    structured ``test_tasks`` list injected into the Shield WRITE assignment.
-
-    Each row maps a required AC to its non-unit test layer(s) and the IF-
-    green-condition identifiers that own it. Unit-only ACs are dropped (they
-    do not block M-TEST exit and Shield writes only integration/e2e tests).
-
-    Returns a deterministic list of ``{"ac_id", "layers", "if_ids"}`` dicts,
-    sorted by ac_id, with layers and if_ids de-duplicated and sorted. An AC
-    row missing a non-unit layer or carrying no IF- attribution is still
-    included (fail-closed: the Shield sees the gap and the trace/Prism gates
-    surface it) - this parser only structures the input, it does not gate.
-    """
-    if not acc_path.exists() or not plan_path.exists():
-        return []
-    known = _known_ac_ids(acc_path.read_text(encoding="utf-8"))
-    rows = _coverage_rows(plan_path.read_text(encoding="utf-8"))
-    return _test_tasks(known, rows)
-
-
-def check_design_trace(
-    acc_text: str, plan_text: str, if_registry: set[str] | None = None,
-) -> list:
-    """BS-06 design trace: every AC id in acceptance.md must appear in
-    test-plan.md with a test-layer attribution (unit/integration/e2e) on the
-    same line. Returns the complete orphan list with ``line:N`` messages (the
-    acceptance line of the AC; no short-circuit); [] = pass. HTML comments and
-    fenced code are ignored on the plan side. No I/O.
-
-    FR-0140 extension: when ``if_registry`` is provided, also validates that
-    every integration/e2e AC has an IF- attribution and that each IF- identifier
-    is registered in interfaces.md §5."""
-    _, acs = _acc_scan(acc_text)
-    visible = _visible_plan_lines(plan_text)
-    issues: list = []
-    for ac_id, _ref, line_no, _section in acs:
-        issues += _check_ac_layer_and_if(ac_id, line_no, visible, if_registry)
-    return issues
-
-
-def _extract_if_registry(interfaces_text: str) -> set[str]:
-    """FR-0140: extract IF- identifiers from interfaces.md §5 table."""
-    return set(_IF_ID.findall(interfaces_text))
-
-
-def check_design_trace_file(path: Path) -> list:
-    """BS-06 trace for an on-disk test-plan doc (reads the sibling
-    acceptance.md). Used by validate_document (checks=["trace"]) and
-    trac validate. FR-0140: also reads sibling interfaces.md for IF- registry."""
-    acc_path = path.parent / "acceptance.md"
-    if not acc_path.exists():
-        return ["line:1 test-plan validate requires acceptance.md in same dir"]
-    if_path = path.parent / "interfaces.md"
-    if_registry: set[str] | None = None
-    if if_path.exists():
-        registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
-        if_registry = registry if registry else None
-    return check_design_trace(
-        acc_path.read_text(encoding="utf-8"),
-        path.read_text(encoding="utf-8"),
-        if_registry,
-    )
+from tracks.executor.test_tasks import (  # noqa: E402,F401
+    _extract_if_registry,
+    check_design_trace,
+    check_design_trace_file,
+    check_test_tasks,
+    check_test_tasks_contract_file,
+    parse_test_tasks,
+    required_ac_ids,
+)
 
 
 def check_spec_items(text: str) -> list:
@@ -663,12 +327,6 @@ def check_story_items(text: str) -> list:
             )
         seen.setdefault(item_id, line_no)
     return issues
-
-
-def _strip_comments(text: str) -> str:
-    """Drop HTML comment blocks (template guidance / commented-out conditional
-    sections must not be read as required content)."""
-    return _HTML_COMMENT.sub("", text)
 
 
 def _norm_heading(line: str) -> str | None:

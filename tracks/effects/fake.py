@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from tracks import paths, templating
+from tracks.effects.backend import SHIELD_LAYERS, valid_test_tasks
 from tracks.frontmatter import split_frontmatter
 
 # spec items the fake acceptance draft must cover (FR-0170 trace)
@@ -26,14 +27,17 @@ _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
 _ACC_ITEM = re.compile(r"^### (AC-[A-Z0-9]+-\d+)\b", re.M)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 _FENCE = re.compile(r"^\s*(```|~~~)")
-_LAYERS = ("integration", "e2e")
-_TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
-_TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 _SCAFFOLD_HEADING = re.compile(
     r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?Scaffold 宣言\s*$", re.M
 )
+_COVERAGE_HEADING = re.compile(
+    r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?AC Coverage\s*$", re.M
+)
 _CLI_HEADING = re.compile(
     r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?CLI 接口合同\s*$", re.M
+)
+_IF_REGISTRY = re.compile(
+    r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?IF Registry\s*$", re.M
 )
 _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
 # FR-0210 exit gate tokens: a failed agent run is not a produced document.
@@ -96,6 +100,7 @@ class FakeBackend:
         self.version = version
         self._calls: dict = {}
         self._design_revisions = 0
+        self._shield_writes = 0
 
     def token(self, key_left: str, key_right: str, default: str) -> str:
         key = f"{key_left}:{key_right}"
@@ -237,35 +242,38 @@ class FakeBackend:
             (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
         for ac_id, layer in required:
             self._write_test_file(tests_dir, ac_id, layer, token)
+        # D-32: WRITE checkpoints require an attributable tests/**/*.py diff.
+        # A re-dispatch (e.g. after Prism revise) that rewrites identical bytes
+        # would be a done/no-diff no-op and fail the pipeline. The re-write
+        # appends a deterministic marker attributed to the review/failure
+        # evidence that drove the re-dispatch (FR-11 evidence, not an arbitrary
+        # counter) — a faithful stand-in for "Shield revises the tests".
+        self._shield_writes += 1
+        self._append_revision_marker(tests_dir, assignment)
         return {"status": "done", "artifact_ref": str(tests_dir),
                 "self_report": f"wrote {len(required)} test files ({token})"}
 
+    def _append_revision_marker(self, tests_dir: Path,
+                                assignment: dict | None) -> None:
+        """Append a deterministic revision marker to existing test files when
+        a re-dispatch carries evidence (FR-11). No-op without evidence."""
+        evidence = (assignment or {}).get("evidence")
+        if not evidence or not tests_dir.exists():
+            return
+        existing = sorted(tests_dir.rglob("test_*.py"))
+        if not existing:
+            return
+        reason = evidence.get("reason") or evidence.get("check") or "revision"
+        marker = f"# shield revision: {reason}\n"
+        for path in existing:
+            path.write_text(path.read_text(encoding="utf-8") + marker,
+                            encoding="utf-8")
+
     @staticmethod
     def _valid_test_tasks(tasks: object) -> bool:
-        if not isinstance(tasks, list) or not tasks:
-            return False
-        seen: set[str] = set()
-        for task in tasks:
-            if not isinstance(task, dict):
-                return False
-            ac_id = task.get("ac_id")
-            layers = task.get("layers")
-            if_ids = task.get("if_ids")
-            if (not isinstance(ac_id, str) or not _TASK_AC_ID.fullmatch(ac_id)
-                    or ac_id in seen):
-                return False
-            if (not isinstance(layers, list) or not layers
-                    or any(layer not in _LAYERS for layer in layers)
-                    or len(set(layers)) != len(layers)):
-                return False
-            if (not isinstance(if_ids, list) or not if_ids
-                    or any(not isinstance(if_id, str)
-                           or not _TASK_IF_ID.fullmatch(if_id)
-                           for if_id in if_ids)
-                    or len(set(if_ids)) != len(if_ids)):
-                return False
-            seen.add(ac_id)
-        return True
+        # D-28: single shared validator (effects boundary) so the executor's
+        # pre-dispatch gate and the fake's own guard agree exactly.
+        return valid_test_tasks(tasks)
 
     def _write_test_file(self, tests_dir: Path, ac_id: str, layer: str,
                          token: str) -> None:
@@ -510,13 +518,25 @@ class FakeBackend:
             interfaces = self._append_section_lines(
                 interfaces, _CLI_HEADING, interface_lines
             )
+        interfaces = self._append_section_lines(
+            interfaces, _IF_REGISTRY,
+            ["### IF-MTEST-001 M-TEST 接口"],
+        )
         (vdir / "interfaces.md").write_text(interfaces, encoding="utf-8")
+        plan_body = self._drop_coverage_section(self._design_doc("test-plan"))
         (vdir / "test-plan.md").write_text(
-            self._design_doc("test-plan") + self._ac_coverage(token),
+            plan_body.rstrip("\n") + "\n" + self._ac_coverage(token),
             encoding="utf-8")
         self._materialize_fake_scaffold(scaffold)
         self._write_project_contract()
         return vdir
+
+    def _drop_coverage_section(self, text: str) -> str:
+        """Drop the template's ``## 8. AC Coverage`` section (heading onward);
+        ``_ac_coverage`` regenerates the real machine-readable table with the
+        actual acceptance AC rows, so the delivered doc carries exactly one."""
+        m = _COVERAGE_HEADING.search(text)
+        return text[:m.start()] if m else text
 
     def _write_project_contract(self) -> None:
         """Write a demo host test execution contract at
@@ -547,7 +567,7 @@ class FakeBackend:
         if token == "trace_orphan":
             acs = acs[:-1]
         rows = "\n".join(
-            f"| {ac_id} | {_LAYERS[i % len(_LAYERS)]} | "
+            f"| {ac_id} | {SHIELD_LAYERS[i % len(SHIELD_LAYERS)]} | "
             f"test_{ac_id.lower().replace('-', '_')} | IF-MTEST-001 |"
             for i, ac_id in enumerate(acs)
         )

@@ -127,6 +127,17 @@ def _setup_m_test(tmp_path):
     return Executor(store, repo, run_id), store, run_id
 
 
+def _recover_and_artifacts(ex, store, run_id, original_execute):
+    """Restore _execute, run crash recovery, return result_checkpoint
+    artifacts. Shared by crash-attribution test suites."""
+    ex._execute = original_execute
+    ex._recover()
+    outcomes = [e for e in store.events(run_id) if e.type == "outcome.received"]
+    assert outcomes, "outcome.received must be emitted after recovery"
+    rc = outcomes[-1].payload.get("result_checkpoint", {})
+    return rc.get("artifacts", [])
+
+
 def _setup_design(tmp_path):
     """Set up M-DESIGN stage with 3 template-compliant design docs on disk,
     DRAFT committed, state in PRISM_REVIEW (ready for Prism dispatch)."""

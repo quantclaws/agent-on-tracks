@@ -41,3 +41,16 @@ sha:
 
 {测试可断言的外部出口清单（CLI 输出 / 文件 / 事件 / 日志）；
 test-plan 的断言只能落在这里（test-plan §6.5 闭环）}
+
+## 5. IF Registry
+
+{本版接口的 IF- 标识符清单，test-plan §8 AC Coverage 的 IF 归属列只能引用此处的标识符；
+每条格式：``### IF-XXX-NNN 名称``}
+
+<!-- Template guidance (delete before delivery; replace with real entries):
+  The example below MUST be deleted and replaced with actual `### IF-XXX-NNN 名称`
+  entries. An unmaterialized example would make the validator treat the registry
+  as non-empty (fail-open); keeping it in a comment ensures the template itself
+  never manufactures a fake registry.
+### IF-EXAMPLE-001 示例接口
+-->

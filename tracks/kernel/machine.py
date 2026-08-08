@@ -231,6 +231,19 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0
+    # SM-01.12 evidence scoping: ONLY the stub_gap rollback (M-TEST ->
+    # M-DESIGN) clears last_failure -- the failed-outcome evidence describes a
+    # design-contract gap, not a test-run gap, so it is stale relative to the
+    # Archer re-dispatch and must not leak into it. Every other rollback
+    # (scope_overflow/ac_gap/spec_gap/human_return) PRESERVES last_failure so
+    # the downstream drafter still receives the original failure evidence
+    # (FR-11, AC-20a: Scribe re-scopes the story from the overflow evidence).
+    # The route is read from the stage.rolled_back payload, not from the
+    # already-mutated current state, so the decision is replay-stable.
+    if (p.get("from_stage") == "M-TEST"
+            and p.get("to_stage") == "M-DESIGN"
+            and p.get("reason") == "stub_gap"):
+        s.last_failure = None
     s.spec_committed = False
     s.story_committed = False  # the redone story must be re-committed
     s.acceptance_committed = False
@@ -312,6 +325,16 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
         "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
     }
     if s.stage == "M-TEST":
+        # D-32/SM-01.12: an invalid M-DESIGN test-task contract surfaces as a
+        # stub_gap failed outcome (emitted by the executor instead of calling
+        # the backend). It routes straight to DIAGNOSE/stub_gap — no attempt
+        # consumed, no Human, no three wasted Shield attempts — and decide()
+        # rolls back to M-DESIGN.
+        if p.get("failure_class") == "stub_gap":
+            _reset_doc(s)
+            s.diagnose_classification = "stub_gap"
+            s.substate = "DIAGNOSE"
+            return
         _reset_doc(s)
         _consume_attempt(s)
         return
@@ -399,7 +422,15 @@ def _escalate_or_continue(s: State, p: dict) -> None:
 def _on_design_verdict_failed(s: State, p: dict) -> None:
     """BS-05: no human gate in M-DESIGN - a failed validate, even at the
     EXIT gate, falls back to Archer re-dispatch; 3rd attempt escalates.
-    D-30/F-1: design_committed also resets."""
+    D-30/F-1: design_committed also resets.
+    D-32: a failed reviewer ResultCheckpoint (e.g. Prism review no_diff) resets
+    only the reviewer flags and retries the same actor — it is NOT a revise
+    verdict, must not discard the already-committed design docs, and never a
+    Human."""
+    if s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+        _escalate_or_continue(s, p)
+        return
     s.design_validated = 0
     s.design_committed = 0
     if s.substate == "EXIT":
@@ -822,15 +853,21 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
 def _decide_design_exit(s: State) -> Command | None:
     """M-DESIGN EXIT (flow.md §8 / Decision A): gate-validate the three docs
     (template + discussion_ready), write nothing extra, then exit — the executor
-    completes the run at the M-IMPL boundary (M-IMPL is not in v0.3)."""
+    completes the run at the M-IMPL boundary (M-IMPL is not in v0.3).
+
+    D-28: the test-plan additionally runs the design trace + the structured
+    test-task contract check (checks=["trace", "test_tasks"]) so an invalid
+    M-DESIGN→M-TEST contract never exits."""
     if s.stage_exited:
         return None  # crash-hole parity with _decide_exit
     if not s.exit_validated:
+        doc = DESIGN_DOCS[min(s.design_validated, len(DESIGN_DOCS) - 1)]
+        checks = ["template", "discussion_ready"]
+        if doc == "test-plan.md":
+            checks += ["trace", "test_tasks"]
         return Command(
             kind="validate_document",
-            params={"doc": DESIGN_DOCS[min(s.design_validated,
-                                           len(DESIGN_DOCS) - 1)],
-                    "checks": ["template", "discussion_ready"]})
+            params={"doc": doc, "checks": checks})
     return Command(kind="write_frontmatter", params={"stage": "M-DESIGN"})
 
 

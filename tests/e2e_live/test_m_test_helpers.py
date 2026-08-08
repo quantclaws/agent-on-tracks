@@ -25,6 +25,7 @@ from tests.e2e_live.m_test_helpers import (
     snapshot_git_state,
 )
 from tests.e2e_live.test_full_journey import _run_m_test_review_loop
+from tests.m_test_support import make_dispatch_agent_payload
 
 
 def _event(seq: int, event_type: str, payload: dict) -> dict:
@@ -78,15 +79,10 @@ def _shield_events(test_tasks: object = _VALID_TEST_TASKS) -> list[dict]:
             1,
             "command.issued",
             {
-                "command": {
-                    "kind": "dispatch_agent",
-                    "params": {
-                        "role": "shield",
-                        "substate": "WRITE",
-                        "stage": "M-TEST",
-                        "assignment": assignment,
-                    },
-                }
+                "command": make_dispatch_agent_payload(
+                    stage="M-TEST",
+                    assignment=assignment,
+                ),
             },
         )
     ]

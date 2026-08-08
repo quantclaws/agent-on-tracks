@@ -110,7 +110,5 @@ def test_no_scenario_metadata_keeps_generic_fake_design(tmp_path):
 
     assert result["status"] == "done"
     architecture = (vdir / "architecture.md").read_text(encoding="utf-8")
-    interfaces = (vdir / "interfaces.md").read_text(encoding="utf-8")
     assert not (tmp_path / "code-stats").exists()
-    assert "IF-MTEST-001" not in interfaces
     assert _scaffold_declared_paths(architecture) <= {"{path}"}
