@@ -20,9 +20,21 @@ sha: caacbbda538ff009ef42cd5d3701b7b8253aee82966bfe4e6f385891461c7fe0
 
 ### R-2（2026-08-09）：live run dispatch 物化分析结论承接
 
-- **决定**：S-005 §7 重要风险 1 已完成有监督 M-START→M-TEST 重录（run `01KZ5QCRPMBVC1A6HYEHMKKGVH`）与日志分析，结论为「未知范围发现任务不再传给 spec」。本版本承接其 10 项逐项物化增量作为 dispatch materialization 合同的确定性回归基线（FR-0190）。
+- **决定**：S-005 §7 重要风险 1 已完成有监督 M-START->M-TEST 重录（run `01KZ5QCRPMBVC1A6HYEHMKKGVH`）与日志分析，结论为「未知范围发现任务不再传给 spec」。本版本承接其 10 项逐项物化增量作为 dispatch materialization 合同的确定性回归基线（FR-0190）。
 - **取代**：S-005 §1 第四条原始输入（作为 v0.5 输入的开放式发现任务）。
 - **影响 FR**：FR-0190（dispatch 物化完整性合同）。
+
+### R-3（2026-08-10）：v0.5 planning contract 四项缺口补全
+
+- **决定**：Human return（event seq 395）指出 v0.5 planning contract 存在四项缺口需在 FR/ACC 补全后方可恢复 M-TEST，并裁决数据生命周期：(1) Archer 在 M-IMPL/PLANNING 产出的 `tasks.json` 为 task graph 唯一机器真相（替代原 `task-plan.md`），`tasks.md` 仅为人类可读投影、由 Runtime 确定性生成；(2) `test-plan.md`（M-DESIGN）继续指导 Shield 的 M-TEST 环境、fixture、ground-truth、分层与冻结，不复制到 `tasks.json`；(3) 每个 Devon task 必须携带 GitHub issue number + FR/NFR/ACC/IF/test 引用 + 依赖/批次信息 + 实现意图；Devon 提交时在 commit trailers 中包含 issue# 和 FR/NFR/ACC provenance；(4) Runtime 只做确定性结构校验（schema/引用/DAG/issue shape/scope 边界），语义评审由 Prism 负责；(5) 不预声明精确输出文件集，observed diff 为权威，允许 refactor 和文件拆分。本版本补全四项：FR-0180 扩展为 `tasks.json` schema + 校验语义不变量；新增 FR-0210（Shield test-plan 测试归属边界）；新增 FR-0220（Issues 消费语义）。
+- **取代**：FR-0180 原 `task-plan.md` 为真相源的描述性措辞升级为 `tasks.json` 机器真相 + `tasks.md` 投影；FR-0220 原「派发不引用 issue」措辞修正为 task 必须携带 issue number；范围排除「不做 GitHub Issue 映射」条目补充 FR-0220 引用。
+- **影响 FR**：FR-0180（扩展 schema + 校验语义）、FR-0210（新增）、FR-0220（新增）。acceptance.md 需平行增补对应 AC（另行 assignment）。
+
+### R-4（2026-08-10）：planning contract FR 级不变量显式化
+
+- **决定**：R-3 在 revision log 与 FR 正文中完成了 tasks.json/task-plan.md 真相源替换与 issue 引用补全，但 Human 裁定的两项产品不变量尚未在 FR 级显式落定：(1)「不将 Shield 准备复制到 tasks.json」——R-3 仅在 revision log 述及「不复制到 tasks.json」，未作为 FR 级不变量；本版本在 FR-0210 增补第 6 项「test-plan 与 tasks.json 内容边界」，显式声明 test-plan.md（M-DESIGN）是 Shield 准备（环境/fixtures/测试数据/ground-truth/黑盒边界/测试层归属/冻结测试权限）的权威来源，tasks.json 不复制 Shield 准备内容、两者职责不重叠。(2) tasks.json schema 的「test 引用」——R-3 schema 标题含「test」但描述仅列 AC/FR/NFR/IF 标识，未显式包含 test 函数/文件引用；本版本在 FR-0180 schema 补全 test 引用描述（test-plan.md §8 AC Coverage 表中归属本 task 的 test 函数/文件标识）。
+- **取代**：R-3 revision log 中「不复制到 tasks.json」的隐式表述升级为 FR-0210 第 6 项显式不变量；FR-0180 schema「FR/NFR/ACC/IF/test 引用」描述补全 test 标识。
+- **影响 FR**：FR-0180（schema test 引用补全）、FR-0210（新增第 6 项内容边界不变量）。
 
 ## 界面与入口
 
@@ -123,8 +135,8 @@ $ echo $?
 | 1   | 写 unit test（Red phase 只添加）             | ✅     | ❌      | ❌      | ❌     | ✅（受控 commit R） | ❌     |
 | 2   | 写产品代码（Green/Refactor phase）           | ✅     | ❌      | ❌      | ❌     | ✅（受控 commit G） | ❌     |
 | 3   | 写 integration/e2e/assets/counterexamples    | ❌     | ✅（SHIELD_FIX） | ❌ | ❌ | ✅（受控 test commit） | ❌     |
-| 4   | 写 task-plan.md（task graph 内容真相源）     | ❌     | ❌      | ✅      | ❌     | ✅（解析/校验） | ❌     |
-| 5   | 写 task-log.md（phase 边界进展投影）         | ❌     | ❌      | ❌      | ❌     | ✅       | ❌     |
+| 4   | 写 tasks.json（task graph 机器真相源）       | ❌     | ❌      | ✅      | ❌     | ✅（解析/校验/生成 tasks.md 投影） | ❌     |
+| 5   | 写 tasks.md（人类可读投影，Runtime 确定性生成） | ❌     | ❌      | ❌      | ❌     | ✅       | ❌     |
 | 6   | 创建 git ref `refs/trac/rgr/...`             | ❌     | ❌      | ❌      | ❌     | ✅       | ❌     |
 | 7   | 创建正式 commit G（parent=B + trailers）     | ❌     | ❌      | ❌      | ❌     | ✅       | ❌     |
 | 8   | 评审 task range / Red checkpoint / final range | ❌  | ❌      | ❌      | ✅     | ❌       | ❌     |
@@ -151,7 +163,7 @@ M-IMPL 子状态机与既有 DRAFT/REVIEW/EXIT 模式差异较大，`decide()` �
 - **来源**：`§3.1 步骤 1` / flow §10.1
 - **交付入口**：`E-01` / `trac run`
 
-BASELINE（SM-01.1–.5）：Runtime 重算 baseline，输入集 = 三件套（story/spec/acceptance）+ 设计三文档（architecture/interfaces/test-plan）+ 冻结测试资产 digest + contracts + Issues + branch + approval（flow §10.1 baseline 输入全集；Issues 只消费需求追踪身份，task-plan↔Issues 同步不在本版）。baseline current → PLANNING（SM-01.2）；缺失/stale/冲突 → NEEDS_ATTENTION（SM-01.3），等待 reconcile（→ BASELINE，SM-01.4）或 return upstream（→ `stage.rolled_back`，SM-01.5）。
+BASELINE（SM-01.1–.5）：Runtime 重算 baseline，输入集 = 三件套（story/spec/acceptance）+ 设计三文档（architecture/interfaces/test-plan）+ 冻结测试资产 digest + contracts + Issues + branch + approval（flow §10.1 baseline 输入全集；Issues 只消费需求追踪身份，tasks.json↔Issues 双向同步不在本版）。baseline current → PLANNING（SM-01.2）；缺失/stale/冲突 → NEEDS_ATTENTION（SM-01.3），等待 reconcile（→ BASELINE，SM-01.4）或 return upstream（→ `stage.rolled_back`，SM-01.5）。
 
 **测试资产清单冻结**：随 baseline digest 一并冻结测试路径集（frozen test path set）。test-plan.md 层归属字段声明哪些路径属 integration/e2e、哪些属 unit——冻结测试路径集由 Archer 按宿主语言/框架惯例填写（Python 的 `tests/integration` 与 Java 的 `src/it`、Go 的 build-tag 目录同等合法），隔离机制本身语言无关，**不得硬编码**。清单缺层归属声明 → 硬错误，不静默放行（BS-02）。冻结的测试路径集供 test-authority worktree 冻结与 gate worktree 组合运行（FR-0130）。
 
@@ -160,11 +172,11 @@ BASELINE（SM-01.1–.5）：Runtime 重算 baseline，输入集 = 三件套（s
 - **来源**：`BS-01` / `§3.1 步骤 2` / flow §10.1
 - **交付入口**：`E-01` / `trac run`
 
-PLANNING（SM-01.6–.7）：dispatch Archer 拆 task graph。`task-plan.md` 为 task graph 内容真相源（Runtime 解析）。每个 task 纵向切片 + 声明 scope 白名单（manifest 授权文件集）+ 实现的 IF- 集合 + 预算。
+PLANNING（SM-01.6–.7）：dispatch Archer 拆 task graph。`tasks.json` 为 task graph 唯一机器真相（Runtime 解析），`tasks.md` 为人类可读投影（Runtime 确定性生成）。每个 task 纵向切片 + 声明 GitHub issue number + FR/NFR/ACC/IF/test 引用 + 依赖/批次信息 + 实现意图 + scope 边界（manifest 授权范围，不预声明精确输出文件集）+ IF- 集合 + 预算。
 
-validate 校验（SM-01.6→ISLAND_GATE_1 的前置）：DAG 无环 / scope 不重叠 / required AC 被至少一个 task 的 IF- 集合覆盖（AC 覆盖闭合）。validate fail 重派 Archer（≤3，第 3 次升级 `awaiting_human`/escalation）。
+validate 校验（SM-01.6→ISLAND_GATE_1 的前置）：DAG 无环 / scope 边界不重叠 / required AC 被至少一个 task 的 IF- 集合覆盖（AC 覆盖闭合）/ issue number 非空且为正整数。validate fail 重派 Archer（≤3，第 3 次升级 `awaiting_human`/escalation）。
 
-`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份），「当前完成了哪一步」的进展投影入 events/db（task-plan.md 为内容真相源、task-log.md 为 Runtime 写入的进展投影）。
+`tasks.md` 由 Runtime 确定性生成（从 `tasks.json` 投影），「当前完成了哪一步」的进展投影入 events/db（`tasks.json` 为机器真相源、`tasks.md` 为 Runtime 生成的人类可读投影）。
 
 ### FR-0040 ISLAND_GATE_1：程序复核
 
@@ -241,7 +253,7 @@ GREEN_GATE（SM-01.22–.24）：targeted 单测 + 全部历史单测 + test-pla
 - **来源**：`BS-07` / `§3.2 步骤 6` / flow §10.3 硬规则 2 / 修订日志 R-1
 - **交付入口**：`E-01` / `trac run`
 
-GREEN_COMMIT（SM-01.30）：Runtime 创建正式 commit G（G 的 parent=B，flow §10 既有合同）。trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）。`green.committed` 事件。
+GREEN_COMMIT（SM-01.30）：Runtime 创建正式 commit G（G 的 parent=B，flow §10 既有合同）。trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）+ issue# + FR/NFR/ACC provenance（Human 裁定：Devon 提交时在 trailers 中包含 issue# 和 FR/NFR/ACC 引用，使后续 bug fix 保留 provenance）。`green.committed` 事件。
 
 **R 先于 G 的 lineage 证明（BS-07，修订日志 R-1）**：R 先于 G 由不可变 R ref（`refs/trac/rgr/{run}/{task}/{attempt}/red`）+ G trailer（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）+ Runtime 事件序列联合证明，不作 Git ancestry 拓扑断言（G 与 R 均以 B 为父节点，Git ancestry 无法证明 R 先于 G）。Red 先于实现不是 Agent 自报——程序可验证的 lineage 事实由 ref + trailer + 事件序列三件联合兑现。本版本校正 flow.md §10 lines 643/655 残留的「B/R/G commit 拓扑」措辞（修订日志 R-1）。
 
@@ -304,14 +316,38 @@ Devon 作为真实 opencode agent 接入（承自 v0.3 Archer/Prism 与 v0.4 Shi
 
 **manifest 越界审计（BS-09）**：Devon 修改 manifest 白名单之外的文件时 outcome failed、记录路径级证据、不提交。越权写文件被审计检出并通过 git 回滚（`over_reach` failure_class，承自 v0.3 写范围审计机制）。单写者纪律的强制边界，越界即失败并留路径级证据。
 
-### FR-0180 task-plan / task-log 真相源与 Runtime 解析
+### FR-0180 tasks.json / tasks.md 真相源、schema 与校验语义
 
-- **来源**：`§3.1 步骤 2` / `§5 约束` / Aaron 裁定（task-plan.md 为真相源）
-- **交付入口**：`trac run`（Runtime 解析 task-plan.md）+ `trac validate --file task-plan.md`
+- **来源**：`§3.1 步骤 2` / `§5 约束` / Human 裁定（tasks.json 为唯一机器真相） / flow §10.1 PLANNING / 修订日志 R-3
+- **交付入口**：`trac run`（Runtime 解析 tasks.json）+ `trac validate --file tasks.json`（独立 CLI 校验）
 
-`task-plan.md` 为 task graph 内容真相源、Runtime 解析（Aaron 裁定：真相放 task-plan.md）。`task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份）。「当前完成了哪一步」的进展投影入 events/db（Aaron 裁定：当前完成了哪一步放 db）。
+**`tasks.json` 为 task graph 唯一机器真相**（Human 裁定：tasks.json 是 Archer 在 M-IMPL/PLANNING 为 Devon 产生的唯一机器真相），Runtime 解析驱动 DAG 调度（FR-0030）。`tasks.md` 为人类可读投影，由 Runtime 确定性生成（Human 裁定：tasks.md 仅为人类可读投影，宜由 Runtime 确定性生成）。「当前完成了哪一步」的进展投影入 events/db。
 
-task-plan.md 模板既有 Task List（ID / Task description / Related test / Target file / Depends on / Parallel marker / Status）+ Dependency Graph + Runtime Review Result。M-IMPL PLANNING（FR-0030）解析 task-plan.md 驱动 DAG 调度；validate 校验 DAG 无环 / scope 不重叠 / required AC 覆盖闭合。task-log.md 模板既有 Phase 1 Red / Phase 2 Green / Phase 3 Refactor / Runtime Quality Gate，由 Runtime 在对应 phase 边界写入。
+**`tasks.json` schema（产品不变量，修订日志 R-3）**：Archer 在 PLANNING 产出的 `tasks.json` 必须为每个 task 声明以下信息项，缺任一项判 validate fail（SM-01.7）：
+
+- **task ID**：唯一标识（如 `T-001`），DAG 依赖引用此标识
+- **GitHub issue number**：关联的 GitHub issue 编号（正整数）；Devon 提交时在 commit trailers 中包含 issue# + FR/NFR/ACC provenance（Human 裁定）
+- **纵向切片描述 + 实现意图**（flow §10.1：纵向切片）
+- **FR/NFR/ACC/IF/test 引用**：本 task 覆盖的 AC 标识（如 `AC-FR0030-01`）+ 关联 FR/NFR 标识 + IF- 标识列表 + 关联 test 引用（test-plan.md §8 AC Coverage 表中归属本 task 的 test 函数/文件标识），供 required AC 覆盖校验与 provenance 追溯
+- **scope 边界**：manifest 授权范围（FR-0030，flow §10.1）；不预声明精确输出文件集，observed diff 为权威，允许 refactor 和文件拆分（Human 裁定）
+- **依赖/批次信息**：依赖的 task ID 列表（`-` 表示无依赖，可立即调度）+ 批次标记
+- **并行标记**：`[P]` 表示可并行（v0.5 串行只记录不并发执行，范围排除）；空表示串行
+- **IF- 集合**：本 task 实现的 IF- 标识列表（flow §10.1：每 task 声明实现的接口）；标识必须在 interfaces.md §5 注册表中已定义（有效性校验）
+- **预算**：本 task 的 attempt 预算（≤3，与 `m_impl_attempt` 共享）
+
+`tasks.json` 还须包含 Dependency Graph（与 task 依赖列一致的有向图）与 Runtime Review Result checklist（each task associated with correct test / dependencies marked correctly / parallel markers reasonable / no missing spec requirements）。具体 JSON schema 由设计层（interfaces.md §1d TaskNode）承接。
+
+**`trac validate --file tasks.json` 校验语义（产品不变量，修订日志 R-3）**：独立 CLI 与 PLANNING 内联校验（SM-01.6）使用同一组校验规则——Runtime 只做确定性结构校验，语义评审由 Prism 负责（Human 裁定）：
+
+1. **DAG 无环**：依赖关系形成的有向图无环（拓扑排序）；环 -> fail，错误指明环路（如 `cycle: T-001->T-002->T-001`）
+2. **scope 边界不重叠**：各 task 的 scope 边界集合交集为空；重叠 -> fail，错误指明冲突 task 与范围
+3. **required AC 覆盖闭合**：acceptance.md 中每个 required AC 至少被一个 task 的关联 AC + IF- 集合覆盖；缺口 -> fail，错误指明未覆盖 AC ID
+4. **IF- 标识有效性**：task 声明的 IF- 标识在 interfaces.md §5 注册表中已定义；未注册 -> fail
+5. **issue number 有效性**：每个 task 的 GitHub issue number 非空且为正整数；缺失/非法 -> fail
+
+任一校验不满足 -> 非零退出 + stderr 指明位置（task ID / AC ID / issue number）。PLANNING 内联校验 fail 重派 Archer（≤3，SM-01.7，第 3 次升级 `awaiting_human`/escalation）；独立 CLI 校验 fail 仅报告不重派。既有 IF- 归属校验（v0.4 FR-0140，每条 integration/e2e AC 的 IF- 归属非空且已注册）行为不回归。
+
+**Runtime 与 Prism 职责分工（Human 裁定）**：Runtime 校验 schema / 引用 / DAG / issue shape / scope 边界等确定性结构不变量；Prism 评审语义质量（task 分解合理性、issue 分组质量、ground truth 正确性、tasks.md 语义保真度）。`tasks.md` 语义保真度不由 Runtime 校验，由 Prism 评审。
 
 ### FR-0190 dispatch 物化完整性合同
 
@@ -343,6 +379,36 @@ Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整
 
 每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase，不重跑已完成的 task（BS-15）。崩溃 reconcile 承 v0.2 物化合同：受控 diff 回灌后视图终态清理。R ref 不可变（FR-0070）保证崩溃后 lineage 证据不丢失；G commit 的 trailers 保证崩溃后 R-G 绑定可重建。
 
+### FR-0210 Shield test-plan 测试归属与黑盒边界
+
+- **来源**：`§3.3` / `§5 约束` / flow §9 / D-32 外圈合同循环 / test-plan §1.1/§1.2 / 修订日志 R-3
+- **交付入口**：`trac run`（M-IMPL SHIELD_FIX 派发 Shield，SM-01.26）+ `trac validate`（test-plan.md 层归属校验，FR-0190 第 3 项 M-DESIGN 输出合同）
+
+Shield 在 M-IMPL 承担 integration/e2e 测试的**测试归属与黑盒边界**不变量（D-32 外圈合同循环；既有 v0.4 Shield WRITE 模式延续）：
+
+1. **测试层归属**：integration 测试覆盖 interfaces.md 模块接口契约；e2e 测试覆盖用户可见的 happy path；ground truth 由独立方提供（非实现者）。Devon 写 unit test（Red phase），Shield 写 integration/e2e（SHIELD_FIX，SM-01.26）；Devon 不得改 Shield 测试（flow §10.3 硬规则 1，FR-0070）。
+2. **黑盒可观察边界（test-plan §1.1/§1.2）**：测试只断言系统外部可观察对象——CLI stdout/stderr/exit code、`.tracks/runtime/tracks.db` events 表、文档文件、git refs/commits/worktree、`project.toml`/agent 提示词 schema、`trac check` 结构化输出、`command.issued` payload。内部数据结构（kernel State 字段、executor subprocess 管理、taskgraph/rgr/worktree/quality_gate 内部表示、opencode prompt 构造、audit manifest 表示）不直接依赖——需要时可观察的内部状态必须经 interfaces.md 提供出口（test-plan §1.2 Observable contract）。
+3. **AC 变绿条件**：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识，interfaces.md §5 注册表取值）；M-IMPL task 变绿子集划分按此归属筛选命中本 task IF- 集合的 integration 测试（FR-0060/FR-0140）。
+4. **测试修改边界**：Shield 仅在 SHIELD_FIX（SM-01.26，DIAGNOSE 判定测试缺陷，SM-01.25→.26）写 integration/e2e/assets/counterexamples；Runtime 创建受控测试 commit（`test.committed`）→ 重跑 GREEN_GATE（SM-01.29）。Shield 不写 unit test（Devon 职责）、不改产品代码（Devon 职责）、不写 tasks.json（Archer 职责，RP-01 第 4 项）。
+5. **test_tasks 注入消费**：Shield WRITE 按 Runtime 注入的 `test_tasks` 修测试，不自衍 AC 层归属（FR-0190 第 4 项，FR-0150 SHIELD_FIX 路由）。
+6. **test-plan 与 tasks.json 内容边界（Human 裁定）**：test-plan.md（M-DESIGN）是 Shield 准备的权威来源——Shield 环境、fixtures/测试数据、ground-truth 来源、黑盒可观察边界、测试层归属、冻结测试权限均由 test-plan.md 定义。tasks.json（FR-0180）仅为 Devon 实现规划与 Runtime 调度服务，**不复制 Shield 准备内容**（Human 裁定：不将 Shield 准备复制到 tasks.json）；两者职责不重叠，tasks.json 的 task 条目通过 AC/IF-/test 引用关联到 test-plan.md 声明的测试归属，不在自身内重复声明测试环境或 fixture 细节。
+
+本 FR 锁定测试归属与黑盒边界不变量；具体测试文件布局、fixtures、CI 钩子属设计层（test-plan.md / architecture.md 承接）。
+
+### FR-0220 Issues 消费语义
+
+- **来源**：`§3.1 步骤 1` / flow §10.1 BASELINE 输入全集 / flow §7.2 硬规则 3 / 修订日志 R-3
+- **交付入口**：`trac run`（M-IMPL BASELINE 重算，SM-01.1→.2）+ `trac validate`（baseline 完整性校验）
+
+**Issues 作为 BASELINE 只读输入**（flow §10.1 baseline 输入全集；flow §7.2 硬规则 3：Issues 是需求追踪身份，非执行单元）：
+
+1. **消费语义**：M-IMPL BASELINE 重算时，Issues 作为 baseline digest 输入之一参与 freshness 判定（与三件套 + 设计三文档 + 冻结测试资产 + contracts + branch + approval 并列）。Issues 只消费其**需求追踪身份**（issue number + 关联 spec section），不消费 issue 状态（open/closed）、评论、assignee 等执行元数据。
+2. **非执行单元**（flow §7.2 硬规则 3）：实施切片（task graph）在 M-IMPL PLANNING 由 Archer 产出（FR-0030），与 Issues 映射但**不互相冒充**——task graph 不是 Issues 的镜像，Issues 不作为 DAG 节点。
+3. **task 携带 issue number（Human 裁定）**：每个 Devon task 在 tasks.json 中必须携带 GitHub issue number（FR-0180 schema 必填项）；Devon dispatch 的 assignment payload 携带 task 关联的 issue number + FR/NFR/ACC provenance；Devon 提交时在 commit trailers 中包含 issue# + FR/NFR/ACC 引用，使后续 bug fix 保留 provenance。Devon 按 tasks.json 的 task ID + IF- 集合 + issue number 工作。
+4. **范围排除（tasks.json ↔ Issues 双向同步）**：本版不做 tasks.json task 与 GitHub Issue 的双向同步——issue 创建/更新由 M-REQ-APPROVAL 阶段（v0.2 FR-0200）一次性创建，tasks.json 中 issue number 为只读引用（从 M-REQ-APPROVAL 产出继承），M-IMPL 不回写 task 状态到 issue、不创建子 issue、不关闭 issue。Issues 只在 BASELINE 重算时被读取一次，digest 变化触发 NEEDS_ATTENTION（SM-01.3）。
+
+本 FR 锁定 Issues 消费语义不变量；具体 issue 读取实现（GitHub API / 本地缓存 / mock）属设计层，本 FR 不指定。范围排除条目引用本 FR（见范围排除）。
+
 ## 非功能需求
 
 ### NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
@@ -371,6 +437,6 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 - 不做 hotfix / bug-fix 变体（flow.md §16，后续 story）。
 - 不做 `trac check ratio / dup / budget` 命令（trace/reach 已在 v0.4 交付；budget 在 v0.5 仅体现为 TASK_REVIEW 的 attempt/lineage 预算校验）。
 - 不做函数级调用图（reach 维持模块级，M-VERIFY 反 slop 门禁的更细粒度分析属未来）。
-- 不做 GitHub Issue 映射（task-plan ↔ Issues 同步不在本版，Issues 只消费需求追踪身份）。
+- 不做 GitHub Issue 映射（tasks.json ↔ Issues 双向同步不在本版；tasks.json 中 issue number 为只读引用，FR-0220 锁定消费语义，范围排除的是 tasks.json ↔ Issues 双向同步）。
 - 不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）。
 - pre-commit hook 钩子拒绝按 F-1（D-30）写钩子输出为证据并在预算内重派，不静默退出死锁——此为既有约束继承，不在本版本新增。
