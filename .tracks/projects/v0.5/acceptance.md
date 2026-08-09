@@ -53,17 +53,17 @@ sha: 3285e01cf027ec46d2249a5717ce797951bd25fcb2f012c440d833f5a362574e
 
 ### AC-FR0030-01
 
-  - PLANNING（SM-01.6）：dispatch Archer 拆 task graph，`task-plan.md` 为内容真相源（Runtime 解析）；事件流出现 `taskgraph.committed`，`trac status` 报告 `substate=PLANNING`
-  - 每个 task 纵向切片 + 声明 scope 白名单（manifest 授权文件集）+ 实现的 IF- 集合 + 预算
+  - PLANNING（SM-01.6）：dispatch Archer 拆 task graph，`tasks.json` 为 task graph 唯一机器真相（Runtime 解析）、`tasks.md` 为人类可读投影（Runtime 确定性生成）；事件流出现 `taskgraph.committed`，`trac status` 报告 `substate=PLANNING`
+  - 每个 task 纵向切片 + 声明 GitHub issue number + FR/NFR/ACC/IF/test 引用 + 依赖/批次信息 + 实现意图 + scope 边界（manifest 授权范围，不预声明精确输出文件集）+ IF- 集合 + 预算
 
 ### AC-FR0030-02
 
-  - validate 校验（SM-01.6 前置）：DAG 无环 / scope 不重叠 / required AC 被至少一个 task 的 IF- 集合覆盖（AC 覆盖闭合）；任一不满足不进入 ISLAND_GATE_1
+  - validate 校验（SM-01.6 前置）：DAG 无环 / scope 边界不重叠 / required AC 被至少一个 task 的 IF- 集合覆盖（AC 覆盖闭合）/ issue number 非空且为正整数；任一不满足不进入 ISLAND_GATE_1
   - validate fail 重派 Archer（≤3）：第 1/2 次失败后重派同一 Archer；第 3 次失败 -> `status=awaiting_human`、`awaiting=escalation`，`trac run` 不再产出 Archer 派发 command
 
 ### AC-FR0030-03
 
-  - `task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份）；"当前完成了哪一步"的进展投影入 events/db，`trac report` 可展示 per-task 进展；task-plan.md 为内容真相源、task-log.md 为 Runtime 写入的进展投影
+  - `tasks.md` 由 Runtime 从 `tasks.json` 确定性生成（人类可读投影）；"当前完成了哪一步"的进展投影入 events/db（`tasks.json` 为机器真相源、`tasks.md` 为 Runtime 生成的人类可读投影），`trac report` 可展示 per-task 进展
 
 ## FR-0040 ISLAND_GATE_1：程序复核
 
@@ -197,7 +197,7 @@ sha: 3285e01cf027ec46d2249a5717ce797951bd25fcb2f012c440d833f5a362574e
 ### AC-FR0120-01
 
   - GREEN_COMMIT（SM-01.30）：Runtime 创建正式 commit G，事件流出现 `green.committed`；`trac status` 报告 `substate=GREEN_COMMIT`
-  - `git log` 中 G 的 parent=B（flow §10 既有合同）；G 的 trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`），`git log --format='%B' -1 <G>` 含三个 trailer
+  - `git log` 中 G 的 parent=B（flow §10 既有合同）；G 的 trailers 记录 R/task/attempt identity（`Tracks-Task` / `Tracks-Attempt` / `Tracks-R`）+ issue# + FR/NFR/ACC provenance（Human 裁定：Devon 提交时在 trailers 中包含 issue# 和 FR/NFR/ACC 引用，使后续 bug fix 保留 provenance），`git log --format='%B' -1 <G>` 含上述 trailer
 
 ### AC-FR0120-02
 
@@ -293,20 +293,43 @@ sha: 3285e01cf027ec46d2249a5717ce797951bd25fcb2f012c440d833f5a362574e
   - manifest 越界审计（BS-09）：Devon 修改 manifest 白名单之外的文件时 outcome failed、记录路径级证据、不提交；越权写文件被审计检出并通过 git 回滚（`over_reach` failure_class，承自 v0.3 写范围审计机制）
   - 回滚仅移除可证明由 Devon 产生的改动，Human 既有修改不被覆盖
 
-## FR-0180 task-plan / task-log 真相源与 Runtime 解析
+## FR-0180 tasks.json / tasks.md 真相源、schema 与校验语义
 
 ### AC-FR0180-01
 
-  - `task-plan.md` 为 task graph 内容真相源、Runtime 解析（Aaron 裁定：真相放 task-plan.md）；M-IMPL PLANNING（FR-0030）解析 task-plan.md 驱动 DAG 调度
-  - task-plan.md 模板既有 Task List（ID / Task description / Related test / Target file / Depends on / Parallel marker / Status）+ Dependency Graph + Runtime Review Result
+  - `tasks.json` 为 task graph 唯一机器真相（Human 裁定），Runtime 解析驱动 DAG 调度（FR-0030）；`tasks.md` 为人类可读投影，由 Runtime 从 `tasks.json` 确定性生成；"当前完成了哪一步"的进展投影入 events/db，`trac report` 可重建 per-task 进展
 
 ### AC-FR0180-02
 
-  - `trac validate --file task-plan.md` 校验 DAG 无环 / scope 不重叠 / required AC 覆盖闭合；任一不满足判失败（非零退出）
+  - `tasks.json` schema（产品不变量，修订日志 R-3/R-4）：Archer 在 PLANNING 产出的 `tasks.json` 必须为每个 task 声明以下信息项，缺任一项判 validate fail（SM-01.7）：
+    - task ID（唯一标识，DAG 依赖引用此标识）
+    - GitHub issue number（正整数）
+    - 纵向切片描述 + 实现意图
+    - FR/NFR/ACC/IF/test 引用（覆盖的 AC 标识 + 关联 FR/NFR 标识 + IF- 标识列表 + 关联 test 引用，test 引用取自 test-plan.md §8 AC Coverage 表中归属本 task 的 test 函数/文件标识）
+    - scope 边界（manifest 授权范围，不预声明精确输出文件集，observed diff 为权威）
+    - 依赖/批次信息（依赖的 task ID 列表，`-` 表示无依赖 + 批次标记）
+    - 并行标记（`[P]` 表示可并行，v0.5 串行只记录不并发执行；空表示串行）
+    - IF- 集合（本 task 实现的 IF- 标识列表，标识必须在 interfaces.md §5 注册表中已定义）
+    - 预算（本 task 的 attempt 预算，≤3，与 `m_impl_attempt` 共享）
+  - `tasks.json` 还须包含 Dependency Graph（与 task 依赖列一致的有向图）与 Runtime Review Result checklist；具体 JSON schema 由设计层（interfaces.md §1d TaskNode）承接，本 AC 不指定内部结构
 
-### AC-FR0180-03
+<!-- tombstone: AC-FR0180-03（原 task-log.md Runtime 写入；R-3 真相源替换为 tasks.json/tasks.md 后该 AC 概念并入 AC-FR0180-01） -->
 
-  - `task-log.md` 由 Runtime 在 phase 边界写入（每 task 一份），模板既有 Phase 1 Red / Phase 2 Green / Phase 3 Refactor / Runtime Quality Gate；"当前完成了哪一步"的进展投影入 events/db（Aaron 裁定：当前完成了哪一步放 db），`trac report` 可重建 per-task 进展
+### AC-FR0180-04
+
+  - `trac validate --file tasks.json` 校验语义（独立 CLI 与 PLANNING 内联校验使用同一组规则，Runtime 只做确定性结构校验，语义评审由 Prism 负责，AC-FR0180-05）：
+    1. DAG 无环（拓扑排序；环 -> fail，错误指明环路，如 `cycle: T-001->T-002->T-001`）
+    2. scope 边界不重叠（各 task scope 集合交集为空；重叠 -> fail，错误指明冲突 task 与范围）
+    3. required AC 覆盖闭合（acceptance.md 中每个 required AC 至少被一个 task 的关联 AC + IF- 集合覆盖；缺口 -> fail，错误指明未覆盖 AC ID）
+    4. IF- 标识有效性（task 声明的 IF- 标识在 interfaces.md §5 注册表中已定义；未注册 -> fail）
+    5. issue number 有效性（每个 task 的 GitHub issue number 非空且为正整数；缺失/非法 -> fail）
+  - 任一校验不满足 -> 非零退出 + stderr 指明位置（task ID / AC ID / issue number）；PLANNING 内联校验 fail 重派 Archer（≤3，SM-01.7，第 3 次升级 `awaiting_human`/escalation），独立 CLI 校验 fail 仅报告不重派
+  - 既有 IF- 归属校验（v0.4 FR-0140，每条 integration/e2e AC 的 IF- 归属非空且已注册）行为不回归
+
+### AC-FR0180-05
+
+  - Runtime 与 Prism 职责分工（Human 裁定）：Runtime 校验 schema / 引用 / DAG / issue shape / scope 边界等确定性结构不变量；Prism 评审语义质量（task 分解合理性、issue 分组质量、ground truth 正确性、tasks.md 语义保真度）
+  - `tasks.md` 语义保真度不由 Runtime 校验，由 Prism 评审
 
 ## FR-0190 dispatch 物化完整性合同
 
@@ -361,6 +384,57 @@ sha: 3285e01cf027ec46d2249a5717ce797951bd25fcb2f012c440d833f5a362574e
   - R ref 不可变（FR-0070）保证崩溃后 lineage 证据不丢失：崩溃重启后 `refs/trac/rgr/{run}/{task}/{attempt}/red` 仍指向崩溃前的同一 SHA
   - G commit 的 trailers 保证崩溃后 R-G 绑定可重建：崩溃重启后 `git log --format='%B' -1 <G>` 仍含 `Tracks-Task` / `Tracks-Attempt` / `Tracks-R` trailer，可重建 R-G 绑定
   - 崩溃 reconcile 承 v0.2 物化合同：受控 diff 回灌后视图终态清理
+
+## FR-0210 Shield test-plan 测试归属与黑盒边界
+
+### AC-FR0210-01
+
+  - 测试层归属（spec FR-0210 第 1 项）：integration 测试覆盖 interfaces.md 模块接口契约；e2e 测试覆盖用户可见的 happy path；ground truth 由独立方提供（非实现者）
+  - Devon 写 unit test（Red phase），Shield 写 integration/e2e（SHIELD_FIX，SM-01.26）；Devon 不得改 Shield 测试（flow §10.3 硬规则 1，FR-0070）
+
+### AC-FR0210-02
+
+  - 黑盒可观察边界（test-plan §1.1/§1.2）：测试只断言系统外部可观察对象--CLI stdout/stderr/exit code、`.tracks/runtime/tracks.db` events 表、文档文件、git refs/commits/worktree、`project.toml`/agent 提示词 schema、`trac check` 结构化输出、`command.issued` payload
+  - 内部数据结构（kernel State 字段、executor subprocess 管理、taskgraph/rgr/worktree/quality_gate 内部表示、opencode prompt 构造、audit manifest 表示）不直接依赖；需要时可观察的内部状态必须经 interfaces.md 提供出口
+
+### AC-FR0210-03
+
+  - AC 变绿条件（spec FR-0210 第 3 项）：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识，interfaces.md §5 注册表取值）；M-IMPL task 变绿子集划分按此归属筛选命中本 task IF- 集合的 integration 测试（FR-0060/FR-0140）
+
+### AC-FR0210-04
+
+  - 测试修改边界（spec FR-0210 第 4 项）：Shield 仅在 SHIELD_FIX（SM-01.26，DIAGNOSE 判定测试缺陷 SM-01.25->.26）写 integration/e2e/assets/counterexamples；Runtime 创建受控测试 commit（`test.committed`）-> 重跑 GREEN_GATE（SM-01.29）
+  - Shield 不写 unit test（Devon 职责）、不改产品代码（Devon 职责）、不写 tasks.json（Archer 职责，RP-01 第 4 项）
+
+### AC-FR0210-05
+
+  - test_tasks 注入消费（spec FR-0210 第 5 项）：Shield WRITE 按 Runtime 注入的 `test_tasks` 修测试，不自衍 AC 层归属（FR-0190 第 4 项，FR-0150 SHIELD_FIX 路由）
+
+### AC-FR0210-06
+
+  - test-plan 与 tasks.json 内容边界（Human 裁定，修订日志 R-4）：test-plan.md（M-DESIGN）是 Shield 准备的权威来源--Shield 环境、fixtures/测试数据、ground-truth 来源、黑盒可观察边界、测试层归属、冻结测试权限均由 test-plan.md 定义
+  - tasks.json（FR-0180）仅为 Devon 实现规划与 Runtime 调度服务，不复制 Shield 准备内容（Human 裁定：不将 Shield 准备复制到 tasks.json）；两者职责不重叠，tasks.json 的 task 条目通过 AC/IF-/test 引用关联到 test-plan.md 声明的测试归属，不在自身内重复声明测试环境或 fixture 细节
+
+## FR-0220 Issues 消费语义
+
+### AC-FR0220-01
+
+  - Issues 作为 BASELINE 只读输入（flow §10.1 baseline 输入全集；flow §7.2 硬规则 3）：M-IMPL BASELINE 重算时，Issues 作为 baseline digest 输入之一参与 freshness 判定（与三件套 + 设计三文档 + 冻结测试资产 + contracts + branch + approval 并列）
+  - Issues 只消费其需求追踪身份（issue number + 关联 spec section），不消费 issue 状态（open/closed）、评论、assignee 等执行元数据
+
+### AC-FR0220-02
+
+  - 非执行单元（flow §7.2 硬规则 3）：实施切片（task graph）在 M-IMPL PLANNING 由 Archer 产出（FR-0030），与 Issues 映射但不互相冒充--task graph 不是 Issues 的镜像，Issues 不作为 DAG 节点
+
+### AC-FR0220-03
+
+  - task 携带 issue number（Human 裁定）：每个 Devon task 在 tasks.json 中必须携带 GitHub issue number（FR-0180 schema 必填项）；Devon dispatch 的 assignment payload 携带 task 关联的 issue number + FR/NFR/ACC provenance；Devon 提交时在 commit trailers 中包含 issue# + FR/NFR/ACC 引用（FR-0120），使后续 bug fix 保留 provenance
+  - Devon 按 tasks.json 的 task ID + IF- 集合 + issue number 工作
+
+### AC-FR0220-04
+
+  - 范围排除（tasks.json ↔ Issues 双向同步）：本版不做 tasks.json task 与 GitHub Issue 的双向同步--issue 创建/更新由 M-REQ-APPROVAL 阶段（v0.2 FR-0200）一次性创建，tasks.json 中 issue number 为只读引用（从 M-REQ-APPROVAL 产出继承），M-IMPL 不回写 task 状态到 issue、不创建子 issue、不关闭 issue
+  - Issues 只在 BASELINE 重算时被读取一次，digest 变化触发 NEEDS_ATTENTION（SM-01.3）
 
 ## NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
 
