@@ -163,7 +163,7 @@ def test_m_test_shield_write_pipeline_publishes_test_written(tmp_path):
 
 def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
     """The checkpoint step creates a real git commit for test files with the
-    command_id marker."""
+    suggested message and command_id marker."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
     base_sha = g(repo, "rev-parse", "HEAD").strip()
@@ -171,6 +171,52 @@ def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
     ex.backend = _ShieldBackend(repo, {
         "tests/integration/test_a.py": "def test_a():\n    pass\n",
     })
+    command_id = new_ulid()
+    cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
+                "attempt": 1, "review_round": 1,
+                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
+                               "docs": ["test-plan.md", "interfaces.md",
+                                        "acceptance.md"]}},
+        command_id=command_id,
+    )
+    ex.issue(cmd)
+    ex.run_pipeline()
+
+    checkpointed = [e for e in store.events(run_id)
+                    if e.type == "result.checkpointed"]
+    assert checkpointed[0].payload["created_commit"] is True
+    assert checkpointed[0].payload["commit_sha"] != base_sha
+    log = g(repo, "log", "-1", "--format=%B")
+    assert "M-TEST: shield suggested commit" in log
+    assert f"command_id: {checkpointed[0].command_id}" in log
+
+
+@pytest.mark.parametrize("include", [
+    [],
+    [
+        {"path": "tests/integration/test_a.py", "kind": "test_asset",
+         "role": "integration"},
+        {"path": "tests/integration/extra.json", "kind": "test_asset",
+         "role": "integration"},
+    ],
+])
+def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path,
+                                                              include):
+    """A manifest that omits or over-reports observed files fails closed."""
+    ex, store, run_id = _setup_m_test(tmp_path)
+    repo = ex.repo
+    base_sha = g(repo, "rev-parse", "HEAD").strip()
+    outcome = {
+        "status": "done", "artifact_ref": "tests", "self_report": "wrote",
+        "artifact_manifest": {"include": include},
+        "suggested_commit_message": "M-TEST: shield suggested commit",
+    }
+    ex.backend = _ShieldBackend(repo, {
+        "tests/integration/test_a.py": "def test_a():\n    pass\n",
+    }, outcome=outcome)
+
     cmd = Command(
         kind="dispatch_agent",
         params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
@@ -183,12 +229,13 @@ def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
     ex.issue(cmd)
     ex.run_pipeline()
 
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
-    assert checkpointed[0].payload["created_commit"] is True
-    assert checkpointed[0].payload["commit_sha"] != base_sha
-    log = g(repo, "log", "-1", "--format=%B")
-    assert "command_id:" in log
+    failures = [e for e in store.events(run_id)
+                if e.type == "verdict.failed"
+                and e.payload.get("check") == "manifest"]
+    assert failures
+    assert not [e for e in store.events(run_id)
+                if e.type == "result.checkpointed"]
+    assert g(repo, "rev-parse", "HEAD").strip() == base_sha
 
 
 def test_m_test_shield_write_crash_recovery(tmp_path):

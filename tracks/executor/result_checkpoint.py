@@ -7,10 +7,6 @@ access shared infrastructure (``_emit``, ``_doc_path``, ``_artifact_path``,
 """
 from __future__ import annotations
 
-import subprocess
-import sys
-from pathlib import PurePath
-
 from tracks.executor.helpers import _commit_if_staged, git
 from tracks.executor.validate import (
     capture_digests,
@@ -34,16 +30,6 @@ _COMMITTED_EVENT = {
     "interfaces.md": ("design.committed", "interfaces_sha"),
     "test-plan.md": ("design.committed", "test_plan_sha"),
 }
-
-
-def _is_test_module_target(path: str) -> bool:
-    """Return True iff the path is a pytest test module target
-    (``test_*.py`` or ``*_test.py``). ``conftest.py`` and helpers are
-    support files pytest auto-loads when collecting the parent directory;
-    they must NOT be collected as standalone test nodes."""
-    name = PurePath(path).name
-    return name.startswith("test_") and name.endswith(".py") or \
-        name.endswith("_test.py")
 
 
 def _is_regular_file_identity(identity: str) -> bool:
@@ -142,10 +128,11 @@ class ResultCheckpointMixin:
                         result_id, pre_dirty):
         """M-TEST: Shield WRITE (tests/) or Prism PRISM_REVIEW."""
         if substate == "WRITE":
-            return self._m_test_write_payload(base_sha, result_id, pre_dirty)
+            return self._m_test_write_payload(
+                result, base_sha, result_id, pre_dirty)
         return self._m_test_prism_payload(result, base_sha, result_id)
 
-    def _m_test_write_payload(self, base_sha, result_id, pre_dirty):
+    def _m_test_write_payload(self, result, base_sha, result_id, pre_dirty):
         """M-TEST Shield WRITE: commit test files and support assets in tests/.
 
     ``pre_dirty`` is either a content-identity snapshot (``dict[str,str]``
@@ -178,12 +165,21 @@ class ResultCheckpointMixin:
                 f for f in changed if f.startswith("tests/")
                 and (self.repo / f).is_file()
                 and not (self.repo / f).is_symlink())
-        artifacts = list(test_files)
-        digests = capture_digests({f: self.repo / f for f in test_files})
+        include = (result.get("artifact_manifest") or {}).get("include", [])
+        include_paths = [entry.get("path") for entry in include]
+        manifest_error = None
+        if set(include_paths) != set(test_files):
+            manifest_error = (
+                "artifact_manifest include paths do not match observed "
+                f"tests/ files: include={sorted(include_paths)}, "
+                f"observed={test_files}"
+            )
+        artifacts = list(include_paths if manifest_error is None else test_files)
+        digests = capture_digests({f: self.repo / f for f in artifacts})
         return {
             "source": "shield", "stage": "M-TEST", "substate": "WRITE",
             "actor_kind": "agent",
-            "artifacts": artifacts, "allowed_paths": test_files,
+            "artifacts": artifacts, "allowed_paths": artifacts,
             "base_sha": base_sha,
             "checks": ["write_scope", "collection"],
             # D-32: WRITE requires an attributable tests/ diff (test modules
@@ -192,8 +188,10 @@ class ResultCheckpointMixin:
             # (it retries/escalates).
             "requires_diff": True, "forbid_diff": False,
             "discussion_only": False,
-            "commit_label": "M-TEST: shield commit",
+            "commit_label": result.get("suggested_commit_message"),
             "result_id": result_id, "digests": digests,
+            "artifact_manifest": result.get("artifact_manifest"),
+            "manifest_error": manifest_error,
             "domain_event": {"type": "test.written", "payload": {}},
         }
 
@@ -360,8 +358,14 @@ class ResultCheckpointMixin:
         return False
 
     def _do_validate_result(self, cmd, state, task_id, reconcile):
-        """Validate artifacts captured by result.submitted. Runs the declared
-        checks (template, etc.) on each artifact. Then enforces diff policy:
+        """Enforce diff policy first, then run declared artifact checks.
+
+        Diff policy (requires_diff/forbid_diff/discussion_only) is checked
+        before artifact checks (template/collection): when a diff is required
+        but none was produced (e.g. Shield done/no-diff), ``no_diff`` must
+        fire before collection runs on empty artifacts - otherwise the
+        missing project contract masks the real failure with
+        ``check=collection`` (D-32).
 
         - forbid_diff: target doc must have NO diff vs base_sha (no-comment gate).
         - discussion_only: if a diff exists, it must be canonical discussion
@@ -377,10 +381,17 @@ class ResultCheckpointMixin:
         checks = cmd.params.get("checks", [])
         base_sha = cmd.params.get("base_sha")
         attempt = state.current_attempt + 1
-        if self._validate_artifacts(artifacts, checks, attempt, cmd.command_id):
-            return
         if base_sha and self._validate_diff_policy(
                 cmd, artifacts, base_sha, attempt):
+            return
+        manifest_error = cmd.params.get("manifest_error")
+        if manifest_error:
+            self._emit("verdict.failed",
+                       {"check": "manifest", "reason": manifest_error,
+                        "evidence": str(artifacts), "attempt": attempt},
+                       command_id=cmd.command_id)
+            return
+        if self._validate_artifacts(artifacts, checks, attempt, cmd.command_id):
             return
         self._emit("result.validated",
                    {"artifacts": artifacts, "base_sha": base_sha,
@@ -414,71 +425,25 @@ class ResultCheckpointMixin:
         return False
 
     def _check_collection(self, artifacts, attempt, command_id):
-        """Run pytest --collect-only on test module targets when present.
-        For support-only revisions (no test module targets), validate
-        collection through the host project test contract's collect
-        command — never silently skip. At least one collectible test
-        suite is required; otherwise fail closed with check=collection.
-        Returns True on failure."""
-        test_modules = [a for a in artifacts if _is_test_module_target(a)]
-        if test_modules:
-            return self._collect_test_modules(
-                test_modules, attempt, command_id)
+        """Validate M-TEST collection through the host project contract."""
         return self._collect_via_contract(artifacts, attempt, command_id)
 
-    def _collect_test_modules(self, test_modules, attempt, command_id):
-        """Collect each test module target with pytest --collect-only.
-        ``conftest.py`` and helper files are support files that pytest
-        auto-loads when collecting the parent directory; they must not
-        be collected as standalone test nodes (pytest returns rc=5 / no
-        tests). Returns True on failure."""
-        for artifact in test_modules:
-            path = self._artifact_path(artifact)
-            if not path.exists():
-                self._emit("verdict.failed",
-                           {"check": "collection",
-                            "reason": f"test file missing: {artifact}",
-                            "evidence": str(path), "attempt": attempt},
-                           command_id=command_id)
-                return True
-            proc = subprocess.run(
-                [sys.executable, "-m", "pytest", "--collect-only", "-q",
-                 str(path)],
-                cwd=self.repo, capture_output=True, text=True, timeout=30)
-            if proc.returncode != 0:
-                self._emit("verdict.failed",
-                           {"check": "collection",
-                            "reason": f"pytest collection failed: {artifact}",
-                            "evidence": proc.stderr.strip() or
-                            proc.stdout.strip(),
-                            "attempt": attempt},
-                           command_id=command_id)
-                return True
-        return False
-
     def _collect_via_contract(self, artifacts, attempt, command_id):
-        """Support-only revision (no test module targets in artifacts):
-        validate collection through the host project test contract's
-        ``collect`` command so an existing M-TEST suite is verified
-        rather than silently skipped. Fails closed if no contract,
-        contract error, collection returns non-zero (no tests /
-        errors), or the contract returns an empty results list with
-        no error (no collectible suite verified). Returns True on
-        failure."""
+        """Run host project ``collect`` contracts and fail closed on errors."""
         results, error = self._run_contract_sections(None, None, "collect")
         if error is not None:
             self._emit("verdict.failed",
                        {"check": "collection",
-                        "reason": f"no test modules in artifacts and "
-                                  f"contract error: {error}",
+                        "reason": f"host project contract collection error: "
+                                  f"{error}",
                         "evidence": str(artifacts), "attempt": attempt},
                        command_id=command_id)
             return True
         if not results:
             self._emit("verdict.failed",
                        {"check": "collection",
-                        "reason": "no test modules in artifacts and contract "
-                                  "returned no collectible suite",
+                        "reason": "host project contract returned no "
+                                  "collection results",
                         "evidence": str(artifacts), "attempt": attempt},
                        command_id=command_id)
             return True
@@ -486,8 +451,8 @@ class ResultCheckpointMixin:
             if rc != 0:
                 self._emit("verdict.failed",
                            {"check": "collection",
-                            "reason": f"contract {name} collection failed "
-                                      f"(support-only revision)",
+                            "reason": f"host project contract {name} "
+                                      "collection failed",
                             "evidence": stderr.strip() or
                             stdout.strip(),
                             "attempt": attempt},

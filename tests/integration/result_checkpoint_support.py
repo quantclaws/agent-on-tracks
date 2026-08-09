@@ -2,6 +2,8 @@
 
 Extracted from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
+import sys
+
 from tests.integration.helpers import g, make_repo
 from tracks import paths, templating
 from tracks.effects.fake import FakeBackend
@@ -25,16 +27,23 @@ class _ShieldBackend:
     def __init__(self, repo, files, outcome=None):
         self._repo = repo
         self._files = files
-        self._outcome = outcome or {
-            "status": "done", "artifact_ref": "tests", "self_report": "wrote",
-        }
+        self._outcome = outcome
 
     def act(self, role, substate, doc, doc_path, assignment=None):
         for rel, content in self._files.items():
             path = self._repo / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
-        return self._outcome
+        if self._outcome is not None:
+            return self._outcome
+        return {
+            "status": "done", "artifact_ref": "tests", "self_report": "wrote",
+            "artifact_manifest": {"include": [
+                {"path": rel, "kind": "test_asset", "role": "integration"}
+                for rel in self._files
+            ]},
+            "suggested_commit_message": "M-TEST: shield suggested commit",
+        }
 
 
 def _init_workspace(tmp_path, version="v0.1"):
@@ -112,6 +121,18 @@ def _setup_spec_stage(tmp_path, stage):
 def _setup_m_test(tmp_path):
     """Set up M-TEST stage with test-plan.md and acceptance.md on disk."""
     repo, home, store, run_id, vdir = _init_workspace(tmp_path, "v0.4")
+    contract_path = paths.project_toml_path(home)
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        '[integration]\n'
+        'framework = "pytest"\n'
+        'paths = ["tests/integration/"]\n'
+        f'collect = "{sys.executable} -m pytest --collect-only -q '
+        'tests/integration/"\n'
+        f'run = "{sys.executable} -m pytest -q tests/integration/"\n'
+        'cwd = "."\n',
+        encoding="utf-8",
+    )
     (vdir / "test-plan.md").write_text(
         "# Test Plan\n\n## 8. AC Coverage\n\n"
         "| AC id | layer | test | IF |\n|---|---|---|---|\n"

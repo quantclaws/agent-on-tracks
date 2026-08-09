@@ -97,6 +97,8 @@ Prism revise 时：先 `trac discuss query --file <doc> --blocker Shield` 处理
 - 宿主项目 `tests/integration/`、`tests/e2e/`（按 test-plan §2.1 布局与命名）。
 - `tests/assets/` 下的测试数据（若需新增）。
 - `tests/counterexamples/` 下的 counterexample patch 与 kill manifest。
+- WRITE 的最终文本只返回一个原始 JSON object，不加 Markdown fence、解释或其它文字：`{"artifact_manifest":{"include":[{"path":"tests/...","kind":"...","role":"..."}]},"suggested_commit_message":"..."}`。`include` 必须非空，每项给出非空的 repo-relative `path`、`kind` 与 `role`。
+- 该 manifest 与 commit message 只是 Shield 的提议；Runtime authority 负责验证 manifest，并在验证通过后执行 commit。Shield 不自行 commit。
 
 ## 质量标准
 

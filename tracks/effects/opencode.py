@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 
 from tracks import paths, templating
+from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.gate import check_ready
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
@@ -118,7 +119,8 @@ class OpencodeBackend:
             # additionally bounded by their Scaffold 宣言, see the audit
             # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
-            allowed = self._allowed_paths(doc_paths, agent_dest, role)
+            allowed = self._allowed_paths(doc_paths, agent_dest, role,
+                                          substate)
             auditor = Auditor(self.repo, allowed=allowed)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
@@ -129,19 +131,18 @@ class OpencodeBackend:
                                  if author and len(doc_paths) > 1 else None)
             proc = self._run(name, prompt)
             self._check_json(proc)
+            manifest_info, manifest_error = self._manifest_for_dispatch(
+                role, substate, proc, prompt, console_input,
+            )
+            if manifest_error is not None:
+                return manifest_error
             result = self._audited_result(
                 auditor, baseline, scaffold_baseline, proc, role, substate,
                 doc_paths, prompt, console_input, author, reviewer_assignment,
             )
-            # D-29 anti-self-report triple ③: echo the assigned criteria-pack
-            # identity so the executor's mismatch check passes (mirrors
-            # FakeBackend lines 120-123).  Only Prism M-TEST PRISM_REVIEW
-            # carries a criteria pack today.
-            if role == "prism" and substate == "PRISM_REVIEW":
-                assigned_pack = (assignment or {}).get("criteria_pack")
-                if assigned_pack:
-                    result.setdefault("criteria_pack", dict(assigned_pack))
-            return result
+            return self._attach_dispatch_metadata(
+                result, role, substate, manifest_info, assignment,
+            )
         except OpencodeError as exc:
             return self._opencode_error_result(
                 exc, proc, prompt, console_input, doc_paths, reviewer_assignment,
@@ -152,13 +153,54 @@ class OpencodeBackend:
             for info in cleanup_infos:
                 self._cleanup_materialized(info)
 
+    def _manifest_for_dispatch(
+        self, role: str, substate: str, proc: subprocess.CompletedProcess,
+        prompt: str, console_input: str | None,
+    ) -> tuple[tuple[dict | None, str | None] | None, dict | None]:
+        if role != "shield" or substate != "WRITE":
+            return None, None
+        manifest, commit_msg, error = self._extract_manifest(proc)
+        if error is not None:
+            return None, self._manifest_malformed_result(
+                error, proc, prompt, console_input)
+        return (manifest, commit_msg), None
+
+    @staticmethod
+    def _attach_dispatch_metadata(
+        result: dict, role: str, substate: str,
+        manifest_info: tuple[dict | None, str | None] | None,
+        assignment: dict | None,
+    ) -> dict:
+        if result.get("status") == "done" and manifest_info is not None:
+            manifest, commit_msg = manifest_info
+            result["artifact_manifest"] = manifest
+            result["suggested_commit_message"] = commit_msg
+        # D-29 anti-self-report triple ③: echo the assigned criteria-pack
+        # identity so the executor's mismatch check passes (mirrors
+        # FakeBackend lines 120-123).  Only Prism M-TEST PRISM_REVIEW
+        # carries a criteria pack today.
+        if role == "prism" and substate == "PRISM_REVIEW":
+            assigned_pack = (assignment or {}).get("criteria_pack")
+            if assigned_pack:
+                result.setdefault("criteria_pack", dict(assigned_pack))
+        return result
+
     def _allowed_paths(self, doc_paths: list[Path], agent_dest: Path,
-                       role: str) -> list[Path | str | None]:
+                       role: str, substate: str) -> list[Path | str | None]:
         """Build the audit allowed list. Shield (FR-0120) is scoped to the four
         test-asset directories (no full-repo trust); every other role keeps the
-        repo-root trust (the agent_dest + target docs are always allowed)."""
+        repo-root trust (the agent_dest + target docs are always allowed).
+
+        Shield M-TEST WRITE additionally admits the assignment doc paths so
+        that canonical discussion replies (``trac discuss reply``) are not
+        flagged as over-reach — a separate discussion-only diff guard
+        (``_shield_doc_audit_result``) enforces that only canonical discussion
+        lines reach those docs, rolling back the entire run on any body edit."""
         if role == "shield":
-            return [self.repo / d for d in _SHIELD_SCOPE] + [agent_dest]
+            allowed = [self.repo / d for d in _SHIELD_SCOPE] + [agent_dest]
+            if substate == "WRITE":
+                allowed = [*doc_paths, *allowed]
+            return allowed
         return [*doc_paths, agent_dest, self.repo]
 
     def _unknown_role_result(
@@ -196,12 +238,25 @@ class OpencodeBackend:
     ) -> dict:
         diff_ref = _capture_target_diffs(
             auditor, doc_paths, substate, proc)
-        guard = self._write_guard_result(
-            auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
-            diff_ref, proc, prompt, console_input,
-        )
-        if guard is not None:
-            return guard
+        # Shield M-TEST WRITE gets one atomic audit/rollback decision
+        # (Blocker 2): the generic over-reach guard must NOT early-return and
+        # leave allowed doc edits behind.  Instead the doc-delta check and the
+        # generic over-reach check run together; if either fails, every
+        # agent-changed path is rolled back in one force pass.
+        if role == "shield" and substate == "WRITE":
+            guard = self._shield_write_audit(
+                auditor, baseline, doc_paths, diff_ref, proc, prompt,
+                console_input,
+            )
+            if guard is not None:
+                return guard
+        else:
+            guard = self._write_guard_result(
+                auditor, baseline, scaffold_baseline, doc_paths,
+                author_assignment, diff_ref, proc, prompt, console_input,
+            )
+            if guard is not None:
+                return guard
         audit = self._discussion_audit_result(
             role, substate, doc_paths, diff_ref, proc, prompt, console_input,
             reviewer_assignment,
@@ -234,6 +289,129 @@ class OpencodeBackend:
             auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
             diff_ref, proc, prompt, console_input,
         )
+
+    def _shield_write_audit(
+        self, auditor: Auditor, baseline: set[str], doc_paths: list[Path],
+        diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
+        console_input: str | None,
+    ) -> dict | None:
+        """Shield M-TEST WRITE atomic audit (FR-0120): assignment docs
+        (test-plan.md, interfaces.md, acceptance.md) may receive only canonical
+        discussion replies - any body/prose edit or type swap is over-reach and
+        rolls back the ENTIRE run (including allowed test-asset writes and
+        out-of-scope writes), so a partially-valid run never persists.
+        Test-asset writes are checkpointed separately by ResultCheckpoint.
+
+        One atomic decision (Blocker 2): the doc-delta check and the generic
+        over-reach check run together; if **either** fails, every agent-changed
+        path is rolled back in one force pass.  This avoids the early-return
+        trap where a generic over-reach rollback would leave allowed doc body
+        edits behind.
+
+        The post-agent doc delta is validated against the **pre-dispatch byte
+        snapshot**, not HEAD (Blocker 1): a canonical discussion reply appended
+        to Human-dirty body content must pass and preserve the body; removing/
+        replacing Human content plus adding a discussion must fail and restore
+        the pre-dispatch bytes.
+
+        Path/symlink handling is lexical, no-follow, and type-aware (Blocker 3):
+        a regular assignment doc replaced by a file/directory/dangling symlink
+        is detected; rollback unlinks the replacement symlink without following
+        it and restores the original from the pre-dispatch snapshot or HEAD.
+        """
+        agent_changed = auditor.agent_changed_paths(baseline)
+        doc_offending = self._check_doc_deltas(auditor, doc_paths, agent_changed)
+        over_paths = sorted(
+            p for p in agent_changed if not auditor._is_allowed(p))
+        if doc_offending or over_paths:
+            auditor.rollback_agent_changes(
+                baseline, new_changes=agent_changed, force=True)
+            parts: list[str] = []
+            if doc_offending:
+                parts.append("non-discussion edit to "
+                             + ", ".join(sorted(doc_offending)))
+            if over_paths:
+                parts.append("over-reach: " + ", ".join(over_paths))
+            return self._overreach_result(
+                diff_ref, proc, prompt, console_input,
+                evidence="; ".join(parts),
+            )
+        return None
+
+    def _check_doc_deltas(
+        self, auditor: Auditor, doc_paths: list[Path],
+        agent_changed: set[str],
+    ) -> list[str]:
+        """Return repo-relative paths of assignment docs whose post-agent delta
+        is NOT a canonical discussion reply.
+
+        For each doc:
+        - **Type-aware touch detection** (no-follow): a symlink or directory
+          replacement is always offending.  For regular files, the agent
+          touched the doc only if its current bytes differ from the pre-dispatch
+          snapshot (pre-dirty) or it entered ``agent_changed`` (clean->changed).
+        - **Delta validation against the pre-dispatch snapshot** (Blocker 1):
+          when the doc was pre-dirty, the base text is the snapshot bytes (NOT
+          HEAD); when clean at dispatch, HEAD is the correct base.  A canonical
+          discussion reply appended to Human-dirty body content thus passes;
+          removing/replacing Human content fails.
+        """
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=self.repo,
+            capture_output=True, text=True,
+        ).stdout.strip()
+        return [
+            _rel(self.repo, doc)
+            for doc in doc_paths
+            if self._doc_offending(auditor, doc, agent_changed, head)
+        ]
+
+    def _doc_offending(
+        self, auditor: Auditor, doc_path: Path, agent_changed: set[str],
+        head: str,
+    ) -> bool:
+        """True if this assignment doc's post-agent delta is NOT a canonical
+        discussion reply.
+
+        Type-aware, no-follow (Blocker 3): a symlink or directory replacement
+        is always offending.  For regular files, delegates to the pre-dirty
+        (snapshot-based) or clean (HEAD-based) delta check."""
+        if doc_path.is_symlink() or doc_path.is_dir():
+            return True
+        rel = _rel(self.repo, doc_path)
+        snap = auditor.baseline_content(rel)
+        if snap is not None:
+            return self._predirty_doc_offending(doc_path, snap)
+        if rel in agent_changed:
+            return self._clean_doc_offending(doc_path, rel, head)
+        return False
+
+    def _predirty_doc_offending(self, doc_path: Path, snap: bytes) -> bool:
+        """Blocker 1: a pre-dirty doc's delta is validated against the
+        pre-dispatch byte snapshot, NOT HEAD.  A canonical discussion reply
+        appended to Human-dirty body content passes; removing/replacing Human
+        content fails."""
+        try:
+            current = doc_path.read_bytes()
+        except OSError:
+            return True
+        if current == snap:
+            return False  # not touched
+        return not is_discussion_delta(snap, current)
+
+    def _clean_doc_offending(
+        self, doc_path: Path, rel: str, head: str,
+    ) -> bool:
+        """Clean at dispatch, now changed: HEAD is the correct base.  A doc
+        new at HEAD (untracked) or whose delta is not discussion-only is
+        offending."""
+        try:
+            current = doc_path.read_bytes()
+        except OSError:
+            return True
+        head_bytes = _load_head_bytes(self.repo, rel, head)
+        return head_bytes is None or not is_discussion_delta(
+            head_bytes, current)
 
     def _discussion_audit_result(
         self, role: str, substate: str, doc_paths: list[Path],
@@ -642,6 +820,108 @@ class OpencodeBackend:
                     pass
         return has_json
 
+    # -- BOOT-ATTRIBUTION-001: Shield WRITE manifest extraction -------------
+
+    @staticmethod
+    def _extract_manifest(
+        proc: subprocess.CompletedProcess,
+    ) -> tuple[dict | None, str | None, str | None]:
+        """Parse Shield WRITE's raw JSON object from the final text event."""
+        text_event = OpencodeBackend._final_text_event(proc)
+        if text_event is None:
+            return None, None, "final type=text event is missing"
+        payload, error = OpencodeBackend._manifest_payload(text_event)
+        if error is not None:
+            return None, None, error
+        include, error = OpencodeBackend._manifest_include(payload)
+        if error is not None:
+            return None, None, error
+
+        commit_msg = payload.get("suggested_commit_message")
+        if not isinstance(commit_msg, str) or not commit_msg.strip():
+            return None, None, (
+                "suggested_commit_message must be a non-empty string"
+            )
+        return {"include": include}, commit_msg, None
+
+    @staticmethod
+    def _final_text_event(
+        proc: subprocess.CompletedProcess,
+    ) -> dict | None:
+        out = (proc.stdout or "").strip()
+        for line in reversed(out.splitlines()):
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "text":
+                return event
+        return None
+
+    @staticmethod
+    def _manifest_payload(
+        text_event: dict,
+    ) -> tuple[dict | None, str | None]:
+        part = text_event.get("part")
+        if not isinstance(part, dict) or not isinstance(part.get("text"), str):
+            return None, "final type=text event must contain part.text"
+        try:
+            payload = json.loads(part["text"].strip())
+        except json.JSONDecodeError:
+            return None, "final part.text must be a raw JSON object"
+        if not isinstance(payload, dict):
+            return None, "final part.text must be a JSON object"
+        return payload, None
+
+    @staticmethod
+    def _manifest_include(
+        payload: dict,
+    ) -> tuple[list | None, str | None]:
+        raw_manifest = payload.get("artifact_manifest")
+        if not isinstance(raw_manifest, dict):
+            return None, "artifact_manifest must be an object"
+        include = raw_manifest.get("include")
+        if not isinstance(include, list) or not include:
+            return None, "artifact_manifest.include must be a non-empty list"
+        for index, item in enumerate(include):
+            error = OpencodeBackend._manifest_item_error(index, item)
+            if error is not None:
+                return None, error
+        return include, None
+
+    @staticmethod
+    def _manifest_item_error(index: int, item: object) -> str | None:
+        if not isinstance(item, dict):
+            return f"artifact_manifest.include[{index}] must be an object"
+        for field in ("path", "kind", "role"):
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return (
+                    f"artifact_manifest.include[{index}].{field} "
+                    "must be a non-empty string"
+                )
+        if Path(item["path"]).is_absolute():
+            return (
+                f"artifact_manifest.include[{index}].path "
+                "must be repo-relative"
+            )
+        return None
+
+    def _manifest_malformed_result(
+        self, error: str, proc: subprocess.CompletedProcess,
+        prompt: str, console_input: str | None,
+    ) -> dict:
+        return {
+            "status": "failed", "artifact_ref": None,
+            "self_report": f"manifest malformed: {error}",
+            "failure_class": "manifest_malformed",
+            "audit_evidence": f"manifest_malformed: {error}",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
+
     # -- prompt construction ------------------------------------------------
 
     def _prompt(self, role: str, substate: str, doc: str | None,
@@ -719,6 +999,18 @@ def _capture_target_diffs(auditor: Auditor, doc_paths: list[Path],
     diffs = [auditor.target_diff(path) for path in doc_paths]
     _require_target_diff(doc_paths, diffs, substate, proc)
     return "\n".join(diff for diff in diffs if diff) or None
+
+
+def _load_head_bytes(repo: Path, rel: str, head: str) -> bytes | None:
+    """Load the content of ``rel`` as of ``head`` from git, or None if the
+    path is not tracked at that commit (new/untracked file)."""
+    proc = subprocess.run(
+        ["git", "show", f"{head}:{rel}"], cwd=repo,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
 
 
 def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],

@@ -22,7 +22,6 @@ from tests.integration.result_checkpoint_support import (
     _ShieldBackend,
 )
 from tests.m_test_support import make_m_test_dispatch_cmd
-from tracks import paths
 
 _PATCH_CONTENT = (
     "--- a/tests/integration/test_a.py\n"
@@ -46,23 +45,6 @@ _TEST_A_CONTENT = (
 _EXISTING_TEST = (
     "def test_existing():\n    assert True\n"
 )
-
-_CONTRACT_TOML = (
-    '[integration]\n'
-    'framework = "pytest"\n'
-    'paths = ["tests/integration/"]\n'
-    'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-    'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
-    'cwd = "."\n'
-)
-
-
-def _write_project_contract(repo):
-    """Write a host project test contract at .tracks/project/project.toml."""
-    toml_path = paths.project_toml_path(paths.tracks_home(repo))
-    toml_path.parent.mkdir(parents=True, exist_ok=True)
-    toml_path.write_text(_CONTRACT_TOML, encoding="utf-8")
-
 
 def _commit_existing_suite(repo):
     """Create and commit an existing test suite under tests/integration/."""
@@ -124,7 +106,6 @@ def test_support_only_revision_with_existing_suite_passes(tmp_path):
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
     _commit_existing_suite(repo)
-    _write_project_contract(repo)
 
     ex.backend = _ShieldBackend(repo, {
         "tests/counterexamples/fix.patch": _PATCH_CONTENT,
@@ -166,6 +147,7 @@ def test_support_only_write_with_no_suite_fails_closed(tmp_path):
     test.written, no COLLECT."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
+    (repo / ".tracks" / "project" / "project.toml").unlink()
 
     ex.backend = _ShieldBackend(repo, {
         "tests/counterexamples/fix.patch": _PATCH_CONTENT,
@@ -193,7 +175,6 @@ def test_support_only_write_with_contract_but_no_suite_fails_closed(tmp_path):
     fail closed with check=collection."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
-    _write_project_contract(repo)
     (repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
 
     ex.backend = _ShieldBackend(repo, {
@@ -207,8 +188,8 @@ def test_support_only_write_with_contract_but_no_suite_fails_closed(tmp_path):
                 and e.payload.get("check") == "collection"]
     assert failures, (
         "support-only WRITE with contract but no suite must fail closed")
-    assert "support-only" in failures[0].payload.get("reason", ""), (
-        f"failure reason must mention support-only; "
+    assert "host project contract" in failures[0].payload.get("reason", ""), (
+        f"failure reason must identify the host project contract; "
         f"reason={failures[0].payload.get('reason')}")
     written = [e for e in store.events(run_id) if e.type == "test.written"]
     assert not written, "test.written must NOT be published (fail closed)"

@@ -77,7 +77,73 @@ if behavior in ("edit_docs", "edit_docs_partial", "edit_docs_extra") and docs:
         open(path, "a").write("\\nagent edit\\n")
 if behavior == "edit_docs_extra" and extra:
     open(extra, "a").write("\\nscratch\\n")
-sys.stdout.write(json.dumps({"type": "result", "status": "done"})); sys.exit(0)
+if behavior == "shield_reply" and docs:
+    for path in docs.split(","):
+        open(path, "a").write("\\n> **Shield:** question about coverage\\n")
+    if extra:
+        os.makedirs(os.path.dirname(extra), exist_ok=True)
+        open(extra, "w").write("# test file\\n")
+if behavior == "shield_test" and extra:
+    os.makedirs(os.path.dirname(extra), exist_ok=True)
+    open(extra, "w").write("# test file\\n")
+if behavior == "shield_body_edit" and docs:
+    for path in docs.split(","):
+        open(path, "a").write("\\nagent edit\\n")
+    if extra:
+        os.makedirs(os.path.dirname(extra), exist_ok=True)
+        open(extra, "w").write("# test file\\n")
+if behavior == "shield_pre_dirty_reply" and docs:
+    # Agent appends a canonical discussion reply to pre-dirty body content.
+    for path in docs.split(","):
+        open(path, "a").write("\\n> **Shield:** reply on pre-dirty body\\n")
+    if extra:
+        os.makedirs(os.path.dirname(extra), exist_ok=True)
+        open(extra, "w").write("# test file\\n")
+if behavior == "shield_replace_body_plus_reply" and docs:
+    # Agent removes/replaces Human body content then adds a discussion reply.
+    for path in docs.split(","):
+        open(path, "w").write("---\\nsha:\\n---\\n\\n# replaced\\n\\n> **Shield:** reply\\n")
+    if extra:
+        os.makedirs(os.path.dirname(extra), exist_ok=True)
+        open(extra, "w").write("# test file\\n")
+if behavior == "shield_asset_edit_plus_doc_edit" and docs:
+    # Pre-dirty test asset modified by agent AND invalid doc edit.
+    if extra:
+        with open(extra, "a") as f:
+            f.write("\\nagent asset edit\\n")
+    for path in docs.split(","):
+        open(path, "a").write("\\nagent body edit\\n")
+if behavior == "shield_doc_to_symlink" and docs:
+    # Agent replaces a regular assignment doc with a symlink pointing outside.
+    target = os.environ.get("FAKE_OPENCODE_SYMLINK_TARGET", "/tmp/evil")
+    for path in docs.split(","):
+        if os.path.exists(path):
+            os.unlink(path)
+        os.symlink(target, path)
+if behavior == "shield_doc_to_dir_symlink" and docs:
+    # Agent replaces a regular assignment doc with a directory symlink.
+    target = os.environ.get("FAKE_OPENCODE_SYMLINK_TARGET", "/tmp")
+    for path in docs.split(","):
+        if os.path.exists(path):
+            os.unlink(path)
+        os.symlink(target, path)
+if behavior == "shield_doc_to_dangling_symlink" and docs:
+    # Agent replaces a regular assignment doc with a dangling symlink.
+    for path in docs.split(","):
+        if os.path.exists(path):
+            os.unlink(path)
+        os.symlink("/nonexistent/evil/target", path)
+_final_text = os.environ.get("FAKE_OPENCODE_FINAL_TEXT", json.dumps({
+    "artifact_manifest": {"include": [{
+        "path": "tests/integration/default.py",
+        "kind": "integration",
+        "role": "required",
+    }]},
+    "suggested_commit_message": "M-TEST: add tests",
+}))
+sys.stdout.write(json.dumps({"type": "text", "part": {"text": "progress"}}) + "\\n")
+sys.stdout.write(json.dumps({"type": "text", "part": {"text": _final_text}}) + "\\n")
+sys.exit(0)
 '''
 
 DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")

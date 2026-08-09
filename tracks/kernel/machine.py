@@ -961,6 +961,7 @@ def _decide_result_pipeline(s: State) -> Command | None:
             "actor_kind": ar.get("actor_kind"),
             "result_id": result_id,
             "digests": digests,
+            "manifest_error": ar.get("manifest_error"),
         })
     if not ar.get("checkpointed"):
         return Command(kind="checkpoint_result", params={

@@ -3,6 +3,8 @@
 Ground truth locked here so the live channel's directory-level over-reach fix
 (directory rollback via shutil.rmtree) cannot silently regress.
 """
+import os
+import shutil
 import subprocess
 
 from tracks.effects.audit import Auditor
@@ -121,6 +123,33 @@ def test_baseline_human_changes_never_rolled_back(tmp_path):
     assert human.exists()
 
 
+def test_force_rollback_restores_predirty_symlink_without_following(tmp_path):
+    """A replaced pre-dirty symlink is recreated with its exact lexical target."""
+    repo = _repo(tmp_path)
+    link = repo / "linked.md"
+    os.symlink("committed-target", link)
+    subprocess.run(["git", "add", "linked.md"], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "link"], cwd=repo, check=True,
+                   capture_output=True)
+
+    link.unlink()
+    os.symlink("../human-target", link)
+    external = repo.parent / "human-target"
+    external.write_bytes(b"human external bytes\n")
+    auditor = Auditor(repo, allowed=[link])
+    baseline = auditor.baseline()
+
+    link.unlink()
+    link.write_bytes(b"agent replacement\n")
+    changed = auditor.agent_changed_paths(baseline)
+    auditor.rollback_agent_changes(baseline, changed, force=True)
+
+    assert link.is_symlink()
+    assert os.readlink(link) == "../human-target"
+    assert external.read_bytes() == b"human external bytes\n"
+
+
 # -- run001 regression: collapsed ``?? tests/`` directory entries ----------------
 #
 # A clean host has no tests/ directory; Shield writes only two allowed nested
@@ -223,3 +252,167 @@ def test_nul_parsing_handles_renames_spaces_and_untracked_leaves(tmp_path):
     assert "with space.txt" in files       # spaces preserved (no C-quoting)
     assert "newdir/leaf.py" in files       # untracked dir expanded to leaf
     assert not any(p == "newdir/" or p == "newdir" for p in files)  # not collapsed
+
+
+# -- BOOT-ROLLBACK-001: ancestor symlink escape protection -------------------
+#
+# ``_rollback_one("nested/victim", ...)`` only did no-follow on the FINAL
+# component.  When ``nested`` is a symlink to a directory OUTSIDE the repo,
+# every FS operation on ``nested/victim`` follows the ancestor symlink and
+# mutates the external target (delete / restore-through / parent-cleanup).
+# The rollback set comes from a ``set`` with unstable ordering, so the child
+# may be processed before the ancestor.
+#
+# Fix: (a) sort rollback paths shallowest-first so ancestors are restored
+# before descendants; (b) add ``_ancestor_escapes_repo`` safety check that
+# fail-closes (skips) any path whose ancestor symlink resolves outside the
+# repo (or is dangling), so the external target is never touched.
+
+
+def _git_lsfiles(repo):
+    out = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True,
+                         text=True).stdout
+    return set(out.splitlines())
+
+
+def test_rollback_one_child_of_ancestor_symlink_preserves_external(tmp_path):
+    """BOOT-ROLLBACK-001: ``_rollback_one`` on a child path whose ancestor is
+    a symlink to an external directory must NOT follow the ancestor symlink
+    and delete/modify the external target.
+
+    Directly calls ``_rollback_one("nested/victim", ...)`` to reproduce the
+    dangerous child-first order that unstable set iteration can produce: the
+    ancestor symlink is still in place, so the child path resolves outside
+    the repo.  The safety check must fail closed."""
+    repo = _repo(tmp_path)
+    nested = repo / "nested"
+    nested.mkdir()
+    victim = nested / "victim"
+    victim.write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo,
+                   check=True, capture_output=True)
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_victim = outside / "victim"
+    outside_victim.write_bytes(b"external bytes\n")
+
+    # Agent replaces nested/ directory with a symlink to the external dir.
+    shutil.rmtree(nested)
+    os.symlink(outside, nested)
+
+    auditor = Auditor(repo, allowed=[repo / "target.md"])
+    tracked_set = _git_lsfiles(repo)
+
+    # Dangerous order: child before ancestor.  Must fail closed.
+    result = auditor._rollback_one("nested/victim", tracked_set)
+
+    assert result is False  # skipped, external untouched
+    assert outside_victim.exists()
+    assert outside_victim.read_bytes() == b"external bytes\n"
+
+
+def test_rollback_ancestor_symlink_full_rollback_preserves_external(tmp_path):
+    """BOOT-ROLLBACK-001: ``rollback_agent_changes`` with both the ancestor
+    symlink and its child in the set processes the ancestor first (shallowest
+    sort), restoring it to a real directory before the child is touched.
+    The external target remains byte-identical; the repo state is restored."""
+    repo = _repo(tmp_path)
+    nested = repo / "nested"
+    nested.mkdir()
+    victim = nested / "victim"
+    victim.write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo,
+                   check=True, capture_output=True)
+
+    auditor = Auditor(repo, allowed=[repo / "target.md"])
+    baseline = auditor.baseline()  # clean - before agent changes
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_victim = outside / "victim"
+    outside_victim.write_bytes(b"external bytes\n")
+
+    # Agent replaces nested/ directory with a symlink to the external dir.
+    shutil.rmtree(nested)
+    os.symlink(outside, nested)
+
+    # Explicitly include both paths to test the sort + safety check together.
+    rolled = auditor.rollback_agent_changes(
+        baseline, new_changes={"nested/victim", "nested"}, force=True)
+
+    assert outside_victim.exists()
+    assert outside_victim.read_bytes() == b"external bytes\n"
+    assert not nested.is_symlink()
+    assert nested.is_dir()
+    assert victim.read_text(encoding="utf-8") == "original\n"
+    assert "nested" in rolled
+    assert "nested/victim" in rolled
+
+
+def test_rollback_dangling_ancestor_symlink_fails_closed(tmp_path):
+    """BOOT-ROLLBACK-001: a dangling ancestor symlink (target does not exist)
+    is treated as an escape (fail closed).  Rollback of a child path is
+    skipped; no crash."""
+    repo = _repo(tmp_path)
+    nested = repo / "nested"
+    os.symlink("/nonexistent/dangling/target", nested)
+
+    auditor = Auditor(repo, allowed=[repo / "target.md"])
+    tracked_set = _git_lsfiles(repo)
+
+    result = auditor._rollback_one("nested/victim", tracked_set)
+    assert result is False
+
+
+def test_rollback_ancestor_symlink_to_external_file_fails_closed(tmp_path):
+    """BOOT-ROLLBACK-001: an ancestor symlink pointing to an external file
+    (not a directory) is also treated as an escape.  Rollback of a child
+    path is skipped; the external file is unchanged."""
+    repo = _repo(tmp_path)
+    external_file = tmp_path / "external.txt"
+    external_file.write_bytes(b"external file\n")
+    nested = repo / "nested"
+    os.symlink(external_file, nested)
+
+    auditor = Auditor(repo, allowed=[repo / "target.md"])
+    tracked_set = _git_lsfiles(repo)
+
+    result = auditor._rollback_one("nested/victim", tracked_set)
+    assert result is False
+    assert external_file.read_bytes() == b"external file\n"
+
+
+def test_rollback_predirty_ancestor_symlink_escape_fails_closed(tmp_path):
+    """BOOT-ROLLBACK-001: a pre-dirty ancestor symlink to an external
+    directory is in baseline but NOT in the rollback set (the agent did not
+    change the ancestor itself).  A child path behind it IS in the rollback
+    set.  The child must be skipped (fail closed) because the ancestor
+    still escapes after rollback.  The external target is unchanged."""
+    repo = _repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_victim = outside / "victim"
+    outside_victim.write_bytes(b"external bytes\n")
+
+    nested = repo / "nested"
+    os.symlink(outside, nested)  # pre-dirty ancestor symlink to external dir
+    subprocess.run(["git", "add", "nested"], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "link"], cwd=repo,
+                   check=True, capture_output=True)
+
+    auditor = Auditor(repo, allowed=[repo / "target.md"])
+    baseline = auditor.baseline()
+    # Agent "changes" nested/victim (behind the symlink).  The ancestor
+    # nested itself is NOT in new_changes (agent did not touch it).
+    rolled = auditor.rollback_agent_changes(
+        baseline, new_changes={"nested/victim"}, force=True)
+
+    assert "nested/victim" not in rolled  # skipped (fail closed)
+    assert outside_victim.exists()
+    assert outside_victim.read_bytes() == b"external bytes\n"

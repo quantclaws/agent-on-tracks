@@ -41,6 +41,7 @@ import subprocess
 from pathlib import Path
 
 from tracks import templating
+from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.gate import check_ready
 from tracks.executor.validation_shared import (
     _ACC_AC,  # noqa: F401  (re-export for backward compat)
@@ -505,82 +506,33 @@ def has_diff(repo, doc_path, base_sha):
 def _load_base_text(repo, doc_path, base_sha):
     """Load base version of doc from git, or None if not found."""
     rel_path = str(doc_path.relative_to(repo.resolve()))
-    base_proc = _git(repo, "show", f"{base_sha}:{rel_path}", check=False)
+    base_proc = subprocess.run(
+        ["git", "show", f"{base_sha}:{rel_path}"], cwd=repo,
+        capture_output=True,
+    )
     if base_proc.returncode != 0:
         return None
     return base_proc.stdout
-
-
-def _discussion_line_numbers(text):
-    """Return a set of 1-indexed line numbers that are parser-recognized
-    discussion comment lines (via parse_threads + iter_comments).
-
-    Only canonical ``> **Name:**`` tags are recognised; raw blockquotes,
-    ``> note:`` labels, and fenced-code ``>`` are NOT included."""
-    from tracks.discuss.model import iter_comments
-    from tracks.discuss.parser import parse_threads
-    lines: set[int] = set()
-    for thread in parse_threads(text):
-        for comment in iter_comments(thread.root):
-            lines.add(comment.line)
-    return lines
-
-
-def _strip_discussion_lines(text, discussion_lines):
-    """Remove parser-recognized discussion comment lines and blank lines.
-
-    Non-discussion blockquotes (raw quotes, labels) and fenced-code ``>`` are
-    preserved so any non-discussion change is detected in the body comparison."""
-    result = []
-    for idx, raw in enumerate(text.splitlines(), start=1):
-        if idx in discussion_lines:
-            continue
-        if not raw.strip():
-            continue
-        result.append(raw)
-    return "\n".join(result)
 
 
 def is_discussion_diff(repo, doc_path, base_sha):
     """Check if the diff of doc vs base_sha is only canonical discussion
     changes (blockquote threads parseable by the discuss parser).
 
-    Structural validation using the discuss parser:
-    1. Body text (all lines except parser-recognized discussion comments and
-       blank lines) must be identical between base and current.  Non-discussion
-       blockquotes (raw quotes, ``> note:`` labels) are preserved in the body,
-       so any modification to them is rejected.
-    2. The current version must contain at least one canonical discussion
-       thread (parse_threads returns non-empty).
-    3. Every added/modified discussion line in current must be
-       parser-recognized (guaranteed by construction: we strip only
-       parser-recognized lines, so if the body matches, any diff must be in
-       recognized discussion lines).
-    4. Every removed/modified discussion line in base must be parser-recognized
-       in base (same guarantee: if the body matches after stripping base's
-       recognized discussion lines, any removal was a discussion line)."""
-    from tracks.discuss.parser import parse_threads
-
+    Thin I/O wrapper around ``tracks.discuss.delta.is_discussion_delta``:
+    loads the base text from git at *base_sha*, reads the current on-disk
+    content, then delegates to the pure delta check.  Returns False when the
+    base text cannot be loaded (untracked path) or the current file is
+    unreadable.
+    """
     base_text = _load_base_text(repo, doc_path, base_sha)
     if base_text is None:
         return False
     try:
-        current_text = doc_path.read_text(encoding="utf-8")
+        current_text = doc_path.read_bytes()
     except OSError:
         return False
-
-    base_dl = _discussion_line_numbers(base_text)
-    current_dl = _discussion_line_numbers(current_text)
-
-    base_body = _strip_discussion_lines(base_text, base_dl)
-    current_body = _strip_discussion_lines(current_text, current_dl)
-    if base_body != current_body:
-        return False
-
-    if not parse_threads(current_text):
-        return False
-
-    return base_text != current_text
+    return is_discussion_delta(base_text, current_text)
 
 
 def capture_digests(doc_paths):

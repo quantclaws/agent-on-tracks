@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tracks import templating
 from tracks.cli.main import USAGE, cmd_validate
+from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.parser import parse_threads
 from tracks.effects.fake import FakeBackend
 from tracks.executor.validate import (
@@ -574,4 +575,83 @@ def test_discussion_diff_only_raw_blockquote_added_rejects(tmp_path):
     repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
     current = _BASE_DOC + "\n> Another raw quote.\n"
     doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_unrelated_blank_deletion_rejects(tmp_path):
+    """Deleting an unrelated body blank line is not a framing-blank change."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    current = _BASE_DOC.replace(
+        "## Body\n\nSome content here.", "## Body\nSome content here.",
+    ) + "\n> **Sage:** comment.\n"
+    doc.write_text(current, encoding="utf-8")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_crlf_to_lf_plus_discussion_passes(tmp_path):
+    """Contract 2: a pure CRLF->LF newline-style change is allowed alongside a
+    canonical discussion change - it is not a discussion finding. Only CRLF/LF
+    is normalized to the same logical line ending; body bytes are otherwise
+    compared exactly."""
+    base = _BASE_DOC.replace("\n", "\r\n")
+    repo, doc = _setup_disc_repo(tmp_path, base)
+    current = base.replace("\r\n", "\n") + "\n> **Sage:** comment.\n"
+    doc.write_bytes(current.encode("utf-8"))
+    assert is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_crlf_body_content_mutation_rejects(tmp_path):
+    """A canonical reply cannot hide a body content change. CRLF->LF alone is
+    allowed, but mutating the body text itself is still rejected."""
+    base = _BASE_DOC.replace("\n", "\r\n")
+    repo, doc = _setup_disc_repo(tmp_path, base)
+    current = base.replace("Some content here.\r\n", "Changed content.\r\n")
+    doc.write_bytes(current.encode("utf-8") + b"\r\n> **Sage:** comment.\r\n")
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_blank_to_space_tab_rejects(tmp_path):
+    """BOOT-DELTA-001 contract 3: a truly empty framing line turning into a
+    space/tab whitespace-only line is body whitespace mutation and must be
+    rejected (not hidden as framing)."""
+    base = b"body\n\n> **Sage [open]:** x\n"
+    repo, doc = _setup_disc_repo(tmp_path, base.decode("utf-8"))
+    # A space/tab whitespace-only line replaces the empty framing separator.
+    current = b"body\n \t\n> **Sage [resolved]:** x\n"
+    doc.write_bytes(current)
+    assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_diff_pure_newline_style_plus_discussion_passes(tmp_path):
+    """Contract 2: a pure LF->CRLF newline-style change plus a canonical
+    discussion status change passes (newline style is not a finding)."""
+    base = b"body\n\n> **Sage [open]:** x\n"
+    repo, doc = _setup_disc_repo(tmp_path, base.decode("utf-8"))
+    current = b"body\r\n\r\n> **Sage [resolved]:** x\r\n"
+    doc.write_bytes(current)
+    assert is_discussion_diff(repo, doc, "HEAD")
+
+
+def test_discussion_delta_blank_to_space_tab_rejects():
+    """BOOT-DELTA-001 counterexample (pure-function level): a space/tab
+    whitespace-only line masquerading as a framing separator is rejected."""
+    base = b"body\n\n> **Sage [open]:** x\n"
+    current = b"body\n \t\n> **Sage [resolved]:** x\n"
+    assert not is_discussion_delta(base, current)
+
+
+def test_discussion_delta_trailing_space_on_body_rejects():
+    """Contract 4: trailing spaces on body text are not hidden by a discussion
+    change - they are body whitespace and must reject."""
+    base = _BASE_DOC
+    current = _BASE_DOC.replace(
+        "Some content here.\n", "Some content here.   \n"
+    ) + "\n> **Sage:** comment.\n"
+    assert not is_discussion_delta(base, current)
+
+
+def test_discussion_diff_invalid_utf8_rejects(tmp_path):
+    """Discussion-looking bytes do not permit an invalid UTF-8 document."""
+    repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
+    doc.write_bytes(_BASE_DOC.encode() + b"\xff\n> **Sage:** comment.\n")
     assert not is_discussion_diff(repo, doc, "HEAD")
