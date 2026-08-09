@@ -58,7 +58,11 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 
 ## 工作方法
 
-单个 assignment 交付一套完整的测试资产：结束前所有测试文件必须写入磁盘并通过本地自检，不得止步于规划。assignment 可能来自 M-TEST（全量编写）或 M-IMPL DIAGNOSE（修复被诊断为缺陷的测试）；后者的写范围限于被点名的测试。
+单个 assignment 交付一套完整的测试资产：结束前所有测试文件必须写入磁盘并通过本地自检，不得止步于规划。assignment 可能来自 M-TEST（全量编写）、M-IMPL DIAGNOSE（修复被诊断为缺陷的测试，写范围限于被点名的测试），或 M-TEST/WRITE 重派携带 retry/review evidence（按下方"定点修订"处理）。
+
+### 带 retry/review evidence 的定点修订
+
+assignment 携带 retry 或 review evidence 时，这不是全量编写：先 `trac discuss query --file <doc> --blocker Shield` 定点读取 open Prism findings，只修复 findings 指名的 tests/ 资产，修订后用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Shield "<回应>"` 逐条回应；不重新盘点整个测试树，不重写 finding 未指名的资产。若 finding 已在 HEAD 修复且无合法测试资产 diff 可产生（如 fixture 被上游 commit 抢先提交），立即在 outcome 返回明确 gap：声明 finding 已在 HEAD 满足、本轮无对应写动作；不循环探索、不制造 no-op diff、不为凑变更重写已合规的资产。
 
 ### 输入
 
