@@ -21,7 +21,7 @@ sha:
 - `Assignment`（IF-003 §3）追加可选字段 `manifest`（§3a）；既有字段不变。
 - `Outcome`（IF-003 §4）追加可选字段 `phase`（§3b）；既有字段不变。
 - `discuss/` 旁路类型与 CLI 合同（IF-003 §6/§7a）不变。
-- `trac validate` CLI 合同（IF-003 §7b）不变；`trac check` 三子命令不变；v0.5 扩展 `trac validate --file task-plan.md` DAG/scope/AC 覆盖校验（§2a），新增 `trac retry` 命令（§2b）。
+- `trac validate` CLI 合同（IF-003 §7b）不变；`trac check` 三子命令不变；v0.5 扩展 `trac validate --file tasks.json` DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验（§2a），新增 `trac retry` 命令（§2b）。
 - 既有 `check_trace_full` / `check_trace_full_file`（IF-004 §1d）、`check_reach` / `check_reach_file`（IF-004 §1f）、`classify_red`（IF-004 §1g）行为不变；M-IMPL 的 `classify_red` 复用 v0.4 RedClass 封闭集，但 `stub_token_failure` 不在 M-IMPL 合法红之列（§1g 说明）。
 - §5 IF- 标识注册表是 v0.4 建立的合同基础；v0.4 的 8 个 IF- 标识（IF-MTEST-001/002、IF-SHIELD-001、IF-TRACE-001/002、IF-REACH-001/002、IF-VALIDATE-001）不可变、不可复用；v0.5 §5 列出 cross-reference 条目供 validator 解析（定义仍以 IF-004 §5 为准），并增补 IF-IMPL-001~007 与 IF-DEVON-001 共 8 个新标识。
 
@@ -55,7 +55,7 @@ sha:
 ```python
 kind: Literal[...,               # IF-001/IF-003/IF-004 原有成员不变
       "recompute_baseline",      # SM-01.2：Runtime 重算 baseline digest + 冻结测试路径集
-      "validate_taskgraph",      # SM-01.6：Runtime 解析 task-plan.md + DAG/scope/AC 覆盖校验
+      "validate_taskgraph",      # SM-01.6：Runtime 解析 tasks.json + DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验
       "check_island",            # SM-01.8：ISLAND_GATE_1 六元组复核
       "start_task",              # SM-01.14：DAG ready task 选 + writelock lease + manifest 创建
       "classify_red",            # SM-01.16：RED_GATE 合法红分类
@@ -78,8 +78,8 @@ m_impl_attempt: int = 0             # PLANNING/RED/GREEN/REFACTOR 各子状态�
 baseline_frozen: bool = False       # BASELINE 重算完成
 baseline_digest: str | None = None  # baseline digest（三件套 + 设计三文档 + 冻结测试资产 + contracts + branch + approval）
 frozen_test_paths: list | None = None  # 冻结测试路径集（integration/e2e/unit 层归属）
-taskgraph_committed: bool = False   # task-plan.md 解析 + 校验通过
-taskgraph_tasks: list | None = None  # 解析后的 task list（ID/scope/IF-/depends_on/budget）
+taskgraph_committed: bool = False   # tasks.json 解析 + 校验通过
+taskgraph_tasks: list | None = None  # 解析后的 task list（ID/issue#/scope/IF-/depends_on/budget）
 island_gate_1_passed: bool = False  # 六元组复核通过
 current_task_id: str | None = None  # 当前正在执行的 task ID
 current_task_attempt: int = 0       # 当前 task 的 RGR attempt 计数
@@ -103,56 +103,70 @@ diagnose_classification: str | None = None  # DIAGNOSE 四路路由分类（复�
 - `_STAGES` 增补 `StageDef(stage="M-IMPL", initial_substate="BASELINE")`（无 drafting_role/doc/reviewer--M-IMPL 的 Devon/Archer/Prism/Shield dispatch 由 `_decide_m_impl` 显式控制）。
 - `_NEXT_STAGE` 增补 `"M-TEST": "M-IMPL"` 与 `"M-IMPL": "M-VERIFY"`。`"M-VERIFY"` 不在表中 -> `run.completed(terminal_state="boundary")`（M-VERIFY 未注册）。boundary 从 M-TEST->M-IMPL 移至 M-IMPL->M-VERIFY。
 
-### 1d. executor/taskgraph.py 纯函数（FR-0030/FR-0180，IF-IMPL-003）
+### 1d. executor/taskgraph.py 纯函数（FR-0030/FR-0180/FR-0220，IF-IMPL-003）
 
-**modules**: executor/taskgraph.py（实现）、executor/executor.py（消费，`_do_validate_taskgraph`）、cli/main.py（消费，`trac validate --file task-plan.md`）--跨模块接口，须有 integration 覆盖。
+**modules**: executor/taskgraph.py（实现）、executor/executor.py（消费，`_do_validate_taskgraph`）、cli/main.py（消费，`trac validate --file tasks.json`）--跨模块接口，须有 integration 覆盖。
 
 ```python
 @dataclass(frozen=True)
 class TaskNode:
     task_id: str
-    description: str
-    target_files: tuple[str, ...]     # manifest 白名单（scope）
+    issue_number: int                 # GitHub issue number（正整数，FR-0180/FR-0220）
+    description: str                  # 纵向切片描述 + 实现意图
+    ac_refs: tuple[str, ...]          # 覆盖的 AC ID（如 AC-FR0030-01）
+    fr_refs: tuple[str, ...]          # 关联 FR/NFR ID（如 FR-0030, NFR-0010）
     if_ids: tuple[str, ...]           # 实现的 IF- 集合
-    depends_on: tuple[str, ...]       # 依赖的 task ID
+    test_refs: tuple[str, ...]        # test-plan §8 测试引用（file::case 标识符）
+    scope_boundary: str               # manifest 授权范围（非预声明输出文件集；observed diff 为权威）
+    depends_on: tuple[str, ...]       # 依赖的 task ID（[] 或 ["-"] = 无依赖，立即可调度）
+    batch: str                        # 批次标记
     parallel: bool                    # [P] 标记（v0.5 串行，只记录）
-    budget: int                       # attempt 预算
+    budget: int                       # attempt 预算（<=3，与 m_impl_attempt 共享）
 
 @dataclass(frozen=True)
 class TaskGraphReport:
     status: Literal["pass", "fail"]
     tasks: tuple[TaskNode, ...]
-    errors: tuple[str, ...]           # DAG 环 / scope 重叠 / AC 覆盖缺口（含 task_id + 原因）
+    errors: tuple[str, ...]           # DAG 环 / scope 重叠 / AC 覆盖缺口 / IF- 无效 / issue number 无效
     ac_coverage: dict[str, list[str]] # {ac_id: [task_id, ...]} required AC 覆盖映射
 
-def parse_taskgraph(
-    taskplan_text: str,
+def parse_tasks_json(
+    tasks_json_text: str,
 ) -> tuple[list[TaskNode], str | None]:
-    """FR-0030/FR-0180 解析 task-plan.md Task List 表格 + Dependency Graph。
-    返回 (task_nodes, error)。解析容错（跳过空行/注释行）。
-    表格列：ID / Task description / Related test / Target file / Depends on / Parallel marker / Status。"""
+    """FR-0030/FR-0180 解析 tasks.json（task graph 唯一机器真相）。
+    返回 (task_nodes, error)。容错解析（缺失必填字段产出错误，未知字段跳过）。
+    tasks.json schema：task 对象数组，字段对应 TaskNode。
+    tasks.md 仅为人类可读投影，由 Runtime 从 tasks.json 确定性生成（不作为解析来源）。"""
 
 def validate_dag(
     tasks: list[TaskNode],
 ) -> tuple[bool, str | None]:
-    """FR-0030 DAG 无环校验（Kahn's algorithm 拓扑排序）。
+    """FR-0030/FR-0180 DAG 无环校验（Kahn's algorithm 拓扑排序）。
     返回 (is_acyclic, cycle_description)。环 -> (False, 'cycle: T-001->T-002->T-001')。"""
 
 def validate_scope(
     tasks: list[TaskNode],
 ) -> tuple[bool, list[str]]:
-    """FR-0030 scope 不重叠校验（manifest 白名单集合交集为空）。
-    返回 (no_overlap, overlap_errors)。重叠 -> (False, ['T-001 and T-002 both target tracks/foo.py'])。"""
+    """FR-0030/FR-0180 scope 边界不重叠校验（manifest 白名单集合交集为空）。
+    scope_boundary 是 manifest 授权范围（非预声明输出文件集）。
+    返回 (no_overlap, overlap_errors)。重叠 -> (False, ['T-001 and T-002 scope overlap'])。"""
 
 def validate_ac_coverage(
     tasks: list[TaskNode],
     required_acs: list[str],     # acceptance.md 中所有 required AC ID
     if_registry: set[str],       # interfaces.md §5 已定义的 IF- 标识集合
 ) -> tuple[bool, list[str]]:
-    """FR-0030 required AC 覆盖闭合校验。
-    每个 required AC 至少被一个 task 的 IF- 集合覆盖。
+    """FR-0030/FR-0180 required AC 覆盖闭合 + IF- 有效性校验。
+    每个 required AC 至少被一个 task 的 ac_refs + if_ids 覆盖。
     返回 (all_covered, gap_errors)。缺口 -> (False, ['AC-FR0010-01 not covered by any task'])。
-    task 声明的 IF- 标识必须在 if_registry 中（有效性校验）。"""
+    task 声明的 IF- 标识必须在 if_registry 中（有效性校验，AC-FR0180-04 check 4）。"""
+
+def validate_issue_numbers(
+    tasks: list[TaskNode],
+) -> tuple[bool, list[str]]:
+    """FR-0180/FR-0220 issue number 有效性校验（AC-FR0180-04 check 5）。
+    每个 task 的 issue_number 必须是正整数（>=1）。
+    返回 (all_valid, errors)。无效 -> (False, ['T-001 issue_number=0 is not a positive integer'])。"""
 ```
 
 ### 1e. verdict.failed check 字段扩展（M-IMPL）
@@ -188,13 +202,13 @@ class RedRef:
 class GreenCommit:
     sha: str          # G commit SHA
     parent: str       # B commit SHA（base）
-    trailers: dict    # {"Tracks-Task": task_id, "Tracks-Attempt": attempt, "Tracks-R": r_sha}
+    trailers: dict    # {"Tracks-Task": task_id, "Tracks-Attempt": attempt, "Tracks-R": r_sha, "Tracks-Issue": issue_number, "Tracks-AC": ac_refs}
 
 @dataclass(frozen=True)
 class LineageProof:
     r_before_g: bool          # R ref 存在 + G trailer 含 Tracks-R + 事件序列 red.checkpointed.seq < green.committed.seq
     r_ref_exists: bool        # git rev-parse refs/trac/rgr/.../red 成功
-    g_trailers_valid: bool    # git log --format='%B' -1 <G> 含三个 trailer
+    g_trailers_valid: bool    # git log --format='%B' -1 <G> 含五个 trailer
     event_order_valid: bool   # red.checkpointed 事件 seq < green.committed 事件 seq
 
 def create_red_ref(
@@ -219,13 +233,18 @@ def create_green_commit(
     impl_diff: str,     # Devon GREEN outcome 的产品代码 diff
     base_sha: str,      # B commit SHA（parent=B）
     r_sha: str,         # R commit SHA（用于 trailer）
+    issue_number: int,  # GitHub issue number（FR-0220，trailer Tracks-Issue）
+    ac_refs: list[str], # AC/FR/NFR provenance（FR-0220，trailer Tracks-AC）
 ) -> GreenCommit:
     """FR-0120 创建正式 commit G（parent=B + trailers）。
     git commit-tree（impl_diff as tree patch on base_sha）with trailers:
       Tracks-Task: {task_id}
       Tracks-Attempt: {attempt}
       Tracks-R: {r_sha}
-    G 的 parent=B（不作 Git ancestry 拓扑断言，R 不是 G 的祖先，R-1）。"""
+      Tracks-Issue: {issue_number}
+      Tracks-AC: {ac_refs}
+    G 的 parent=B（不作 Git ancestry 拓扑断言，R 不是 G 的祖先，R-1）。
+    Tracks-Issue/Tracks-AC 在 R-3/R-4 新增：Devon 提交时在 trailers 中包含 issue# + FR/NFR/ACC provenance。"""
 
 def classify_red(
     test_id: str, returncode: int, stdout: str, stderr: str,
@@ -354,11 +373,11 @@ DIAGNOSE 分流结论落 `verdict.failed(reason)` 事件，`reason` 取值限于
 
 ## 2. CLI 接口合同
 
-### 2a. `trac validate --file task-plan.md`（扩展校验范围，IF-IMPL-003 / IF-VALIDATE-001）
+### 2a. `trac validate --file tasks.json`（扩展校验范围，IF-IMPL-003 / IF-VALIDATE-001）
 
 IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.5 扩展：
 
-- `trac validate --file task-plan.md`：`check_design_trace` 扩展为校验 task-plan.md 的 DAG 无环 / scope 不重叠 / required AC 覆盖闭合（FR-0180）。校验调用 `taskgraph.parse_taskgraph` + `taskgraph.validate_dag` + `taskgraph.validate_scope` + `taskgraph.validate_ac_coverage`（IF-IMPL-003）。任一不满足判失败（非零退出）并指出位置。
+- `trac validate --file tasks.json`：`check_design_trace` 扩展为校验 tasks.json 的 DAG 无环 / scope 边界不重叠 / required AC 覆盖闭合 / IF- 有效性 / issue number 有效性（FR-0180）。校验调用 `taskgraph.parse_tasks_json` + `taskgraph.validate_dag` + `taskgraph.validate_scope` + `taskgraph.validate_ac_coverage` + `taskgraph.validate_issue_numbers`（IF-IMPL-003）。任一不满足判失败（非零退出）并指出位置。tasks.md 为人类可读投影，由 Runtime 从 tasks.json 确定性生成（不作为校验来源）。
 - 既有 IF- 归属校验（v0.4 FR-0140）行为不回归：每条 integration/e2e AC 的 IF- 归属非空且在 interfaces.md §5 已定义。
 - `trac validate --file architecture.md` / `interfaces.md`：既有行为不变。
 
@@ -410,7 +429,7 @@ test_tasks: list[dict] | None = None  # M-IMPL SHIELD_FIX 时由 Runtime 填入�
                                       # Shield 按 test_tasks 修测试，不自衍 AC 层归属
 ```
 
-Devon assignment 携带 `skills: ["tracks-prism-impl"]`（M-IMPL 评审判据包，Prism 消费；Devon 自身不消费判据包 skill，但 assignment 需要物化判据包 identity 供 Prism 反自述回读）。Devon assignment 携带 `docs: ["task-plan", "interfaces", "architecture"]`（只读上下文）与 `manifest`（per-task 白名单）+ `phase`（red/green/refactor）。
+Devon assignment 携带 `skills: ["tracks-prism-impl"]`（M-IMPL 评审判据包，Prism 消费；Devon 自身不消费判据包 skill，但 assignment 需要物化判据包 identity 供 Prism 反自述回读）。Devon assignment 携带 `docs: ["tasks.json", "interfaces", "architecture"]`（只读上下文）与 `manifest`（per-task 白名单）+ `phase`（red/green/refactor）+ `issue_number` + `ac_refs`（FR-0220：commit trailers provenance 来源）。
 
 ### 3b. Outcome 增量
 
@@ -435,8 +454,8 @@ no_change: bool | None = None     # REFACTOR Devon outcome 可含 no_change=True
 | `tracks/agents/Devon.md` | opencode agent（frontmatter + body，无 permission 块） | 维护者（spec 交付物，v0.4 已创建） | OpencodeBackend（物化源）、check_deliverables |
 | `tracks/skills/tracks-prism-impl/SKILL.md` | opencode skill（frontmatter + body） | 维护者（v0.4 已创建） | OpencodeBackend（M-IMPL Prism 派发物化到上下文） |
 | `.tracks/project/project.toml` | TOML（canonical 宿主项目测试执行合同） | Archer（M-DESIGN 创建） | project.py（load_contract）、executor（collect/run 命令） |
-| `.tracks/projects/{ver}/task-plan.md` | Markdown（task-plan 模板） | Archer（M-IMPL PLANNING） | executor（解析驱动 DAG 调度）、trac validate |
-| `.tracks/projects/{ver}/task-log.md` | Markdown（task-log 模板） | Runtime（phase 边界写入） | trac report（per-task 进展重建） |
+| `.tracks/projects/{ver}/tasks.json` | JSON（task graph 唯一机器真相） | Archer（M-IMPL PLANNING） | executor（解析驱动 DAG 调度）、trac validate |
+| `.tracks/projects/{ver}/tasks.md` | Markdown（人类可读投影，Runtime 确定性生成） | Runtime（从 tasks.json 生成） | trac report（per-task 进展重建）、Human 阅读 |
 | `refs/trac/rgr/{run}/{task}/{attempt}/red` | git ref（指向私有 commit R） | executor（`_do_create_red_checkpoint`） | executor（lineage 证明）、tests（git rev-parse） |
 | git commit G | git commit（parent=B + trailers） | executor（`_do_create_green_commit`） | tests（git log --format='%B'）、executor（lineage 证明） |
 | git commit R | git commit（test-only diff on B） | executor（`_do_create_red_checkpoint`） | tests（git show）、executor（GREEN 从 R tree 恢复） |
@@ -457,17 +476,21 @@ R ref 不可变（BS-06）：
 - 同一 attempt 重试试图改写 R ref 时 compare-and-set 失败，旧 attempt 的 R ref 不被改写。
 - `git rev-parse refs/trac/rgr/{run}/{task}/{attempt}/red` 在重试前后指向同一 SHA（AC-FR0070-04）。
 
-### 3e. G commit trailer 格式（FR-0120）
+### 3e. G commit trailer 格式（FR-0120/FR-0220）
 
-G commit message 含三个 trailer（Git ≥ 2.32 `--trailer` 选项；低于 2.32 回退到手动构造 commit message）：
+G commit message 含五个 trailer（Git ≥ 2.32 `--trailer` 选项；低于 2.32 回退到手动构造 commit message）：
 
 ```
 Tracks-Task: {task_id}
 Tracks-Attempt: {attempt}
 Tracks-R: {r_sha}
+Tracks-Issue: {issue_number}
+Tracks-AC: {ac_refs}
 ```
 
-`git log --format='%B' -1 <G_sha>` 输出含以上三个 trailer 行（AC-FR0120-01）。G 的 parent=B（`git log --format='%P' -1 <G_sha>` 输出 B 的 SHA，无 R SHA）。
+`Tracks-Issue` / `Tracks-AC` 在 R-3/R-4 新增（FR-0220）：Devon 提交时在 trailers 中包含 issue# + FR/NFR/ACC provenance，使后续 bug fix 保留 provenance。`ac_refs` 为逗号分隔的 AC/FR/NFR 标识列表。
+
+`git log --format='%B' -1 <G_sha>` 输出含以上五个 trailer 行（AC-FR0120-01）。G 的 parent=B（`git log --format='%P' -1 <G_sha>` 输出 B 的 SHA，无 R SHA）。
 
 ### 3f. `.tracks/project/project.toml` canonical 路径约束（FR-0190 第 2 项）
 
@@ -498,6 +521,8 @@ Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整
     "manifest": dict | None,           # Devon 派发时的 per-task 白名单
     "phase": str | None,               # Devon 派发时的 phase（red/green/refactor）
     "r_tree_identity": dict | None,    # Devon GREEN 时的 R tree identity
+    "issue_number": int | None,        # Devon 派发时的 GitHub issue number（FR-0220，trailer provenance 来源）
+    "ac_refs": list[str] | None,       # Devon 派发时的 AC/FR/NFR provenance（FR-0220，trailer provenance 来源）
     "pre_dirty_snapshot": dict | None, # ResultCheckpoint 持久化的 pre-dirty 快照
     "result_identity": dict | None,    # result/checkpoint identity
 }
@@ -525,7 +550,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | `task.started` | task_id, attempt, manifest | AC-FR0060-01/03 |
 | `red.checkpointed` | task_id, attempt, r_sha, ref | AC-FR0070-03/04 |
 | `verdict.failed(red_invalid)` | check=red_invalid | AC-FR0080-02 |
-| `green.committed` | task_id, attempt, g_sha, r_sha, trailers | AC-FR0120-01/02 |
+| `green.committed` | task_id, attempt, g_sha, r_sha, trailers | AC-FR0120-01/02, AC-FR0220-03 |
 | `refactor.committed` | task_id, refactor_sha | AC-FR0130-01/03 |
 | `refactor.no_change` | task_id, reason | AC-FR0130-01 |
 | `verdict.failed(public_interface_changed)` | check=public_interface_changed | AC-FR0130-03 |
@@ -538,7 +563,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | `stage.rolled_back` (DIAGNOSE) | from_stage, to_stage, reason | AC-FR0150-01/04 |
 | `outcome.received` (devon) | role, status, phase, audit_evidence, failure_class | AC-FR0070-02, AC-FR0100-01/02, AC-FR0170-03 |
 | `outcome.received` (shield) | role, status, audit_evidence, failure_class | AC-FR0150-03 |
-| `command.issued` (dispatch_agent devon) | command.params.role, .substate, .assignment.manifest, .assignment.phase, .assignment.r_tree_identity, .assignment.criteria_pack | AC-FR0070-01/02, AC-FR0100-01, AC-FR0050-01 |
+| `command.issued` (dispatch_agent devon) | command.params.role, .substate, .assignment.manifest, .assignment.phase, .assignment.r_tree_identity, .assignment.criteria_pack, .assignment.issue_number, .assignment.ac_refs | AC-FR0070-01/02, AC-FR0100-01, AC-FR0050-01, AC-FR0220-03 |
 | `command.issued` (dispatch_agent prism) | command.params.assignment.criteria_pack | AC-FR0050-01/04, AC-FR0090-01, AC-FR0140-02 |
 | `human.retry` | (无 payload) | AC-NFR0030-03 |
 
@@ -547,7 +572,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | 命令 | 可观察输出 | 关联 AC |
 |:---|:---|:---|
 | `trac status` | stdout（stage=M-IMPL, substate=BASELINE/PLANNING/.../SHIELD_FIX, attempt 计数, failure 类） | AC-FR0010-02, AC-NFR0030-02 |
-| `trac validate --file task-plan.md` | stdout/stderr（DAG/scope/AC 覆盖校验结果）、exit code | AC-FR0180-02 |
+| `trac validate --file tasks.json` | stdout/stderr（DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验结果）、exit code | AC-FR0180-02/04 |
 | `trac retry` | stdout（`human.retry event appended...`）、exit code | AC-NFR0030-03 |
 | `trac check reach` | stdout/stderr（孤岛清单）、`--json` ReachReport、exit code | AC-FR0160-01 |
 | `trac check deliverables` | stdout/stderr（含 Devon.md）、exit code | AC-FR0170-02 |
@@ -557,10 +582,10 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 
 | 路径 | 可观察内容 | 关联 AC |
 |:---|:---|:---|
-| `.tracks/projects/{ver}/task-plan.md` | Task List 表格 + Dependency Graph + Runtime Review Result | AC-FR0030-01, AC-FR0180-01 |
-| `.tracks/projects/{ver}/task-log.md` | Phase 1 Red / Phase 2 Green / Phase 3 Refactor / Runtime Quality Gate | AC-FR0030-03, AC-FR0180-03 |
+| `.tracks/projects/{ver}/tasks.json` | task graph JSON schema 合规（TaskNode 字段 + DAG + scope + AC 覆盖 + IF- 有效性 + issue number） | AC-FR0030-01, AC-FR0180-01/02/04, AC-FR0220-01 |
+| `.tracks/projects/{ver}/tasks.md` | 人类可读投影（Runtime 从 tasks.json 确定性生成） | AC-FR0030-03, AC-FR0180-03 |
 | `refs/trac/rgr/{run}/{task}/{attempt}/red` | git ref 存在 + 指向 test-only diff commit | AC-FR0070-03/04 |
-| git commit G | parent=B + trailers（Tracks-Task/Tracks-Attempt/Tracks-R） | AC-FR0120-01/02 |
+| git commit G | parent=B + trailers（Tracks-Task/Tracks-Attempt/Tracks-R/Tracks-Issue/Tracks-AC） | AC-FR0120-01/02, AC-FR0220-03 |
 | git commit R | test-only diff on B | AC-FR0070-03 |
 | `.tracks/project/project.toml` | TOML schema 合规（integration/e2e framework/paths/collect/run/cwd） | AC-FR0190-03 |
 | `tracks/agents/Devon.md` | frontmatter version + IQ，无 permission 块 | AC-FR0170-02 |
@@ -608,10 +633,10 @@ v0.4 已建立的 8 个 IF- 标识在 IF-004 §5 定义，合同不变、不可�
 
 ### IF-IMPL-003 task graph 解析与校验合同
 
-- **合同**：`parse_taskgraph` / `validate_dag` / `validate_scope` / `validate_ac_coverage` 纯函数合同：解析 task-plan.md Task List + Dependency Graph，DAG 无环（Kahn's algorithm）、scope 不重叠（manifest 白名单交集为空）、required AC 覆盖闭合（每个 required AC 至少被一个 task 的 IF- 集合覆盖）+ IF- 标识有效性校验。
+- **合同**：`parse_tasks_json` / `validate_dag` / `validate_scope` / `validate_ac_coverage` / `validate_issue_numbers` 纯函数合同：解析 tasks.json（task graph 唯一机器真相），DAG 无环（Kahn's algorithm）、scope 边界不重叠（manifest 白名单交集为空，scope_boundary 是授权范围而非预声明输出文件集）、required AC 覆盖闭合（每个 required AC 至少被一个 task 的 ac_refs + if_ids 覆盖）+ IF- 标识有效性校验 + issue number 有效性校验（正整数 >=1）。
 - **实现模块**：executor/taskgraph.py。
 - **对应 §section**：§1d, §2a。
-- **关联 FR**：FR-0030-02, FR-0180-01/02。
+- **关联 FR**：FR-0030-02, FR-0180-01/02/04, FR-0210-01, FR-0220-01。
 
 ### IF-IMPL-004 RGR git 操作合同
 
@@ -634,12 +659,12 @@ v0.4 已建立的 8 个 IF- 标识在 IF-004 §5 定义，合同不变、不可�
 - **对应 §section**：§1h。
 - **关联 FR**：FR-0070-01/02/05, FR-0100-02, FR-0110-02, FR-0150-03。
 
-### IF-IMPL-007 task-plan/task-log 真相源合同
+### IF-IMPL-007 tasks.json/tasks.md 真相源合同
 
-- **合同**：task-plan.md 为 task graph 内容真相源（Runtime 解析）、task-log.md 由 Runtime 在 phase 边界写入（每 task 一份）、「当前完成了哪一步」进展投影入 events/db + `trac report` 可重建 per-task 进展 + `trac validate --file task-plan.md` DAG/scope/AC 覆盖校验（与 IF-IMPL-003 协同）。
-- **实现模块**：executor/executor.py（task-log 写入）、executor/validate.py（task-plan 校验）、tracks/templates/（模板）。
+- **合同**：tasks.json 为 task graph 唯一机器真相（Runtime 解析驱动 DAG 调度），tasks.md 仅为人类可读投影由 Runtime 从 tasks.json 确定性生成、「当前完成了哪一步」进展投影入 events/db + `trac report` 可重建 per-task 进展 + `trac validate --file tasks.json` DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验（与 IF-IMPL-003 协同）+ test-plan §8 测试归属边界（不复制到 tasks.json，FR-0210）。
+- **实现模块**：executor/executor.py（tasks.md 生成）、executor/validate.py（tasks.json 校验）、tracks/templates/（模板）。
 - **对应 §section**：§2a, §3c。
-- **关联 FR**：FR-0030-03, FR-0180-01/02/03。
+- **关联 FR**：FR-0030-03, FR-0180-01/02/03, FR-0210-01/02/03, FR-0220-01。
 
 ### IF-DEVON-001 Devon agent 接入与 manifest 越界审计合同
 

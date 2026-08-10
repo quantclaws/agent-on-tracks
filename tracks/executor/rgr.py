@@ -24,14 +24,16 @@ class RedRef:
 class GreenCommit:
     sha: str          # G commit SHA
     parent: str       # B commit SHA (base)
-    trailers: dict    # {"Tracks-Task": task_id, "Tracks-Attempt": attempt, "Tracks-R": r_sha}
+    trailers: dict    # {"Tracks-Task": task_id, "Tracks-Attempt": attempt,
+                      #  "Tracks-R": r_sha, "Tracks-Issue": issue_number,
+                      #  "Tracks-AC": ac_refs}
 
 
 @dataclass(frozen=True)
 class LineageProof:
     r_before_g: bool          # R ref exists + G trailer has Tracks-R + event seq
     r_ref_exists: bool        # git rev-parse refs/trac/rgr/.../red succeeds
-    g_trailers_valid: bool    # git log --format='%B' -1 <G> has three trailers
+    g_trailers_valid: bool    # git log --format='%B' -1 <G> has five trailers
     event_order_valid: bool   # red.checkpointed event seq < green.committed event seq
 
 
@@ -64,6 +66,8 @@ def create_green_commit(
     impl_diff: str,     # Devon GREEN outcome product code diff
     base_sha: str,      # B commit SHA (parent=B)
     r_sha: str,         # R commit SHA (for trailer)
+    issue_number: int,  # GitHub issue number (FR-0220, trailer Tracks-Issue)
+    ac_refs: list[str], # AC/FR/NFR provenance (FR-0220, trailer Tracks-AC)
 ) -> GreenCommit:
     """FR-0120 create formal commit G (parent=B + trailers).
 
@@ -71,7 +75,11 @@ def create_green_commit(
       Tracks-Task: {task_id}
       Tracks-Attempt: {attempt}
       Tracks-R: {r_sha}
+      Tracks-Issue: {issue_number}
+      Tracks-AC: {ac_refs}
     G parent=B (no Git ancestry topology assertion, R is not G's ancestor, R-1).
+    Tracks-Issue/Tracks-AC added in R-3/R-4: Devon commit trailers carry
+    issue# + FR/NFR/ACC provenance for downstream bug-fix traceability.
     """
     raise NotImplementedError("IF-IMPL-004")
 
