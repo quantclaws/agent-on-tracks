@@ -655,3 +655,79 @@ def test_discussion_diff_invalid_utf8_rejects(tmp_path):
     repo, doc = _setup_disc_repo(tmp_path, _BASE_DOC)
     doc.write_bytes(_BASE_DOC.encode() + b"\xff\n> **Sage:** comment.\n")
     assert not is_discussion_diff(repo, doc, "HEAD")
+
+
+# -- is_discussion_diff unit tests (multi-line canonical threads) -------------
+
+
+def test_discussion_delta_multiline_canonical_root_passes():
+    """A canonical multi-line root comment (as produced by format_root) is
+    accepted as a discussion delta.
+
+    Regression: continuation lines (``> second line``) without speaker tags
+    are part of the thread block and must not be treated as body changes.
+    """
+    base = b"# Title\n\nSome content.\n"
+    current = (
+        b"# Title\n\nSome content.\n\n"
+        b"> **Prism:** This is a blocker\n"
+        b"> Second line of the finding\n"
+        b"> Third line with details\n"
+    )
+    assert is_discussion_delta(base, current)
+
+
+def test_discussion_delta_multiline_reply_passes():
+    """A canonical multi-line reply (depth-2) with continuation lines passes."""
+    base = (
+        b"# Title\n\nSome content.\n\n"
+        b"> **Prism:** Root finding.\n"
+    )
+    current = (
+        b"# Title\n\nSome content.\n\n"
+        b"> **Prism:** Root finding.\n"
+        b">\n"
+        b">> **Sage:** Reply line one\n"
+        b">> Reply line two\n"
+        b">> Reply line three\n"
+    )
+    assert is_discussion_delta(base, current)
+
+
+def test_discussion_delta_raw_blockquote_continuation_rejects():
+    """Raw blockquote lines before the first speaker tag are NOT discussion
+    lines and must cause rejection when they are the only change."""
+    base = b"# Title\n\nSome content.\n"
+    current = (
+        b"# Title\n\nSome content.\n\n"
+        b"> Raw quote line one\n"
+        b"> Raw quote line two\n"
+    )
+    assert not is_discussion_delta(base, current)
+
+
+def test_discussion_delta_mixed_raw_then_tagged_rejects():
+    """Raw blockquote lines followed by a tagged comment: the raw lines are
+    not part of the thread block (they precede the tag), so they are treated
+    as body changes and must reject."""
+    base = b"# Title\n\nSome content.\n"
+    current = (
+        b"# Title\n\nSome content.\n\n"
+        b"> Raw quote\n"
+        b"> **Prism:** Tagged comment.\n"
+    )
+    assert not is_discussion_delta(base, current)
+
+
+def test_discussion_delta_fenced_code_blockquote_not_thread():
+    """Blockquote lines inside a fenced code block are not discussion lines
+    even if they look like speaker tags."""
+    base = b"# Title\n\nSome content.\n"
+    current = (
+        b"# Title\n\nSome content.\n\n"
+        b"```python\n"
+        b"> **Prism:** Not a real comment.\n"
+        b"> Continuation.\n"
+        b"```\n"
+    )
+    assert not is_discussion_delta(base, current)

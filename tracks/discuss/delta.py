@@ -31,22 +31,68 @@ Structural validation:
 from __future__ import annotations
 
 import difflib
+import re
 
 from tracks.discuss.model import iter_comments
 from tracks.discuss.parser import parse_threads
 
+_BQ_RE = re.compile(r"^\s*(>+)\s*(.*)$")
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
 
 def _discussion_line_numbers(text: str) -> set[int]:
-    """1-indexed line numbers that are parser-recognized discussion comment
-    lines (via ``parse_threads`` + ``iter_comments``).
+    """1-indexed line numbers of all lines belonging to canonical discussion
+    thread blocks: speaker-tagged comments AND their blockquote continuation
+    lines.
 
-    Only canonical ``> **Name:**`` tags are recognised; raw blockquotes,
-    ``> note:`` labels, and fenced-code ``>`` are NOT included."""
-    lines: set[int] = set()
+    Only canonical ``> **Name:**`` tags start a thread; raw blockquotes,
+    ``> note:`` labels, and fenced-code ``>`` are NOT thread starters.  However,
+    once a thread is started, all subsequent blockquote lines in the same
+    blockquote run (continuation lines produced by ``format_root`` /
+    ``_format_reply``) are part of the thread block and must be treated as
+    discussion lines — otherwise a canonical multi-line comment is incorrectly
+    flagged as a body-text change.
+
+    A thread block ends at a non-blockquote, non-blank line (or EOF).  Lines
+    inside fenced code blocks are excluded.
+    """
+    # Identify speaker-tagged comment lines from the parser.
+    tagged: set[int] = set()
     for thread in parse_threads(text):
         for comment in iter_comments(thread.root):
-            lines.add(comment.line)
-    return lines
+            tagged.add(comment.line)
+
+    if not tagged:
+        return set()
+
+    # Walk through the text and mark all blockquote lines that are part of
+    # a discussion thread block (after the first tagged comment in a run).
+    lines = text.splitlines(keepends=True)
+    result: set[int] = set()
+    in_thread = False
+    in_fence = False
+
+    for idx, raw in enumerate(lines, start=1):
+        if _FENCE_RE.match(raw):
+            in_fence = not in_fence
+            in_thread = False  # fence is non-blockquote content, ends thread
+            continue
+        if in_fence:
+            continue
+
+        if _BQ_RE.match(raw) is not None:
+            if idx in tagged:
+                result.add(idx)
+                in_thread = True
+            elif in_thread:
+                result.add(idx)
+            # else: blockquote before any tagged comment in this run — skip
+        else:
+            if raw.rstrip("\r\n").strip():
+                in_thread = False
+            # blank lines don't end the thread block
+
+    return result
 
 
 def _is_framing(line: str) -> bool:
