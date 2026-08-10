@@ -133,6 +133,14 @@ if behavior == "shield_doc_to_dangling_symlink" and docs:
         if os.path.exists(path):
             os.unlink(path)
         os.symlink("/nonexistent/evil/target", path)
+if behavior == "quota_error":
+    # Simulate LLM quota exceeded mid-stream: stderr carries the provider
+    # error, stdout has valid JSON events, but the final text is truncated
+    # (not a valid JSON manifest) because the stream was interrupted.
+    # The caller must set FAKE_OPENCODE_FINAL_TEXT to a non-JSON string.
+    sys.stderr.write(
+        "stream error: AI_APICallError: code=4008 "
+        "msg=Your requests have exceeded the quota.\\n")
 _final_text = os.environ.get("FAKE_OPENCODE_FINAL_TEXT", json.dumps({
     "artifact_manifest": {"include": [{
         "path": "tests/integration/default.py",

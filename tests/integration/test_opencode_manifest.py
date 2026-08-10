@@ -154,6 +154,27 @@ def test_shield_write_non_json_final_text_fails(
     assert out["failure_class"] == "manifest_malformed"
 
 
+def test_shield_write_quota_error_classified_as_provider_unavailable(
+        fake_opencode, host_repo, monkeypatch):
+    """When the LLM stream is interrupted by a quota error, opencode exits 0
+    with valid JSON events on stdout but a truncated final text.  The manifest
+    is malformed, but the root cause is provider quota — classify as
+    provider_unavailable so the runtime retries instead of wasting dispatch
+    attempts."""
+    from tracks import paths
+    vdir = paths.version_dir(paths.tracks_home(host_repo), "v0.4")
+    vdir.mkdir(parents=True, exist_ok=True)
+    _commit_m_test_docs(host_repo, vdir)
+    docs = [vdir / n for n in _M_TEST_DOCS]
+    test_file = host_repo / "tests" / "integration" / "test_quota.py"
+    _set_shield_env(monkeypatch, "quota_error", docs, test_file)
+    monkeypatch.setenv("FAKE_OPENCODE_FINAL_TEXT", "manifest truncated")
+    out = OpencodeBackend(host_repo, "v0.4").act(
+        "shield", "WRITE", None, None, assignment=_m_test_assignment_v04())
+    assert out["status"] == "failed"
+    assert out["failure_class"] == "provider_unavailable"
+
+
 def test_other_role_does_not_require_manifest(
         fake_opencode, target_doc, host_repo, monkeypatch):
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "edit_target")

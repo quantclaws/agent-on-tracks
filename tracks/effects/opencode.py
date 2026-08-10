@@ -823,7 +823,10 @@ class OpencodeBackend:
         low = (stderr or "").lower()
         return any(k in low for k in
                    ("provider", "model", "credential", "unauthorized", "api key",
-                    "authentication", "401", "403"))
+                    "authentication", "401", "403",
+                    # quota / rate-limit signals (e.g. litellm code 4008)
+                    "quota", "exceeded", "rate_limit", "rate limit",
+                    "429", "4008"))
 
     @staticmethod
     def _parses_json(out: str) -> bool:
@@ -985,6 +988,20 @@ class OpencodeBackend:
         self, error: str, proc: subprocess.CompletedProcess,
         prompt: str, console_input: str | None,
     ) -> dict:
+        # When opencode exits 0 but the manifest is malformed, check whether
+        # the root cause is a provider error (e.g. quota exceeded mid-stream).
+        # opencode logs stream errors to stderr but continues, so the manifest
+        # is simply truncated.  Re-classify as provider_unavailable so the
+        # runtime can retry instead of wasting dispatch attempts.
+        stderr = proc.stderr or ""
+        if self._looks_provider_error(stderr):
+            return {
+                "status": "failed", "artifact_ref": None,
+                "self_report": f"provider unavailable: {error}",
+                "failure_class": "provider_unavailable",
+                "audit_evidence": f"provider_unavailable: {error}",
+                "agent_io": self._capture_io(proc, prompt, console_input),
+            }
         return {
             "status": "failed", "artifact_ref": None,
             "self_report": f"manifest malformed: {error}",
