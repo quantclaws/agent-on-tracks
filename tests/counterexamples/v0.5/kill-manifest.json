@@ -1,12 +1,13 @@
 {
   "version": "v0.5",
-  "contract": "Each required Shield test binds one minimal contract mutation.",
+  "contract": "Each required Shield test binds one minimal contract mutation. In the M-TEST Red phase all production stubs raise NotImplementedError; integration/e2e tests enter via the public CLI and fail at the CLI-routing / event-observation layer before reaching any mutable stub. A mutation applied to a stub the test never reaches cannot change the test outcome, so no counterexample can be killed (verified) until Devon implements the routing that makes the stub reachable. All bindings are therefore pending-implementation; the patches describe the minimal deviation to apply once the routing exists.",
   "bindings": [
     {
       "test": "tests/integration/test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics",
       "patch": "baseline_events.patch",
-      "result": "killed",
-      "mutation": "test-authority worktree is mislabeled as a Devon candidate"
+      "result": "pending-implementation",
+      "mutation": "test-authority worktree is mislabeled as a Devon candidate",
+      "verification": "applied patch; test still failed identically (assert 0 == 1) because run_m_impl_journey never reaches create_test_authority_worktree — M-IMPL stubs raise before worktree creation"
     },
     {
       "test": "tests/integration/test_crash_recovery.py::test_replay_does_not_duplicate_completed_task_evidence",
@@ -59,32 +60,37 @@
     {
       "test": "tests/integration/test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events",
       "patch": "quality_gate.patch",
-      "result": "killed",
-      "mutation": "all quality gates report pass without running checks"
+      "result": "pending-implementation",
+      "mutation": "all quality gates report pass without running checks",
+      "verification": "applied patch; test still failed identically (assert 'run_task_gates' in []) because the test observes event kinds that the executor never emits — run_gates is never called"
     },
     {
       "test": "tests/integration/test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable",
       "patch": "rgr_git.patch",
-      "result": "killed",
-      "mutation": "R ref uses the wrong name and reports not-created"
+      "result": "pending-implementation",
+      "mutation": "R ref uses the wrong name and reports not-created",
+      "verification": "applied patch; test still failed identically (assert []) because the test observes red/green events that are never emitted — create_red_ref is never reached"
     },
     {
       "test": "tests/integration/test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens",
       "patch": "red_classification.patch",
-      "result": "killed",
-      "mutation": "stub-token failure is misclassified as a legitimate assertion failure"
+      "result": "pending-implementation",
+      "mutation": "stub-token failure is misclassified as a legitimate assertion failure",
+      "verification": "applied patch; test still failed identically (assert []) because the test observes red.classification events that are never emitted — classify_red is never reached"
     },
     {
       "test": "tests/integration/test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event",
       "patch": "taskgraph_happy.patch",
-      "result": "killed",
-      "mutation": "a non-empty valid task plan parses as an empty graph"
+      "result": "pending-implementation",
+      "mutation": "a non-empty valid task plan parses as an empty graph",
+      "verification": "applied patch; test still failed identically (assert []) because the test observes taskgraph.committed events that are never emitted — parse_tasks_json is never reached"
     },
     {
       "test": "tests/integration/test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli",
       "patch": "taskgraph_errors.patch",
-      "result": "killed",
-      "mutation": "cyclic task graphs are always accepted"
+      "result": "pending-implementation",
+      "mutation": "cyclic task graphs are always accepted",
+      "verification": "applied patch; test still failed identically (assert 'cycle' in 'no template mapping for tasks.json') because cmd_validate returns 'no template mapping' before routing to validate_dag"
     },
     {
       "test": "tests/integration/test_tasklog_report.py::test_tasklog_and_report_are_rebuilt_from_events",
@@ -101,8 +107,9 @@
     {
       "test": "tests/integration/test_worktree_contract.py::test_three_worktree_composition_and_cleanup",
       "patch": "worktree_isolation.patch",
-      "result": "killed",
-      "mutation": "gate worktree is exposed as a Devon candidate"
+      "result": "pending-implementation",
+      "mutation": "gate worktree is exposed as a Devon candidate",
+      "verification": "applied patch; test still failed identically (assert []) because the test observes red/green events that are never emitted — create_gate_worktree is never reached"
     },
     {
       "test": "tests/e2e/test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl",
