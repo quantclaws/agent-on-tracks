@@ -908,13 +908,44 @@ class OpencodeBackend:
         part = text_event.get("part")
         if not isinstance(part, dict) or not isinstance(part.get("text"), str):
             return None, "final type=text event must contain part.text"
-        try:
-            payload = json.loads(part["text"].strip())
-        except json.JSONDecodeError:
+        text = part["text"].strip()
+        payload = OpencodeBackend._first_json_object(text)
+        if payload is None:
             return None, "final part.text must be a raw JSON object"
-        if not isinstance(payload, dict):
-            return None, "final part.text must be a JSON object"
         return payload, None
+
+    @staticmethod
+    def _first_json_object(text: str) -> dict | None:
+        """Extract the last top-level JSON object from *text*.
+
+        Agents often wrap the manifest in Markdown prose.  We try the
+        fast path first (entire text is JSON); if that fails we scan
+        for top-level ``{`` positions and return the last dict found
+        (manifests are at the end of agent output).
+        """
+        try:
+            decoded = json.loads(text)
+            if isinstance(decoded, dict):
+                return decoded
+        except json.JSONDecodeError:
+            pass
+        decoder = json.JSONDecoder()
+        i = 0
+        n = len(text)
+        payload: dict | None = None
+        while i < n:
+            if text[i] != "{":
+                i += 1
+                continue
+            try:
+                obj, end = decoder.raw_decode(text, i)
+            except json.JSONDecodeError:
+                i += 1
+                continue
+            if isinstance(obj, dict):
+                payload = obj
+            i = end
+        return payload
 
     @staticmethod
     def _manifest_include(

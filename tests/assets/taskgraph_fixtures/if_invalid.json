@@ -1,0 +1,32 @@
+{
+  "tasks": [
+    {
+      "task_id": "T-001",
+      "issue_number": 1,
+      "description": "Implement task graph parsing (IF-IMPL-003)",
+      "ac_refs": ["AC-FR0030-01"],
+      "fr_refs": ["FR-0030"],
+      "if_ids": ["IF-IMPL-999"],
+      "test_refs": ["test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event"],
+      "scope_boundary": "tracks/executor/taskgraph.py",
+      "depends_on": [],
+      "batch": "1",
+      "parallel": false,
+      "budget": 3
+    },
+    {
+      "task_id": "T-002",
+      "issue_number": 2,
+      "description": "Implement baseline recalc (IF-IMPL-002)",
+      "ac_refs": ["AC-FR0020-01"],
+      "fr_refs": ["FR-0020"],
+      "if_ids": ["IF-IMPL-002"],
+      "test_refs": ["test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics"],
+      "scope_boundary": "tracks/executor/executor.py",
+      "depends_on": ["T-001"],
+      "batch": "1",
+      "parallel": false,
+      "budget": 3
+    }
+  ]
+}

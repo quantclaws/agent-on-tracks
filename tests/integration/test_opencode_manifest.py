@@ -81,6 +81,41 @@ def test_shield_write_manifest_extracted_from_final_text_event(
         "M-TEST: add manifest integration test")
 
 
+def test_shield_write_manifest_extracted_from_markdown_wrapped_text(
+        fake_opencode, host_repo, monkeypatch):
+    """Agent prose (Markdown) before the JSON manifest is tolerated."""
+    from tracks import paths
+    vdir = paths.version_dir(paths.tracks_home(host_repo), "v0.4")
+    vdir.mkdir(parents=True, exist_ok=True)
+    _commit_m_test_docs(host_repo, vdir)
+    docs = [vdir / n for n in _M_TEST_DOCS]
+    test_file = host_repo / "tests" / "integration" / "test_manifest_md.py"
+    _set_shield_env(monkeypatch, "shield_test", docs, test_file)
+    payload = {
+        "artifact_manifest": {"include": [{
+            "path": "tests/integration/test_manifest_md.py",
+            "kind": "integration",
+            "role": "required",
+        }]},
+        "suggested_commit_message": "M-TEST: add manifest markdown test",
+    }
+    prose = (
+        "All 14 previously-referenced test files are already committed. "
+        "My assignment's changes are:\n"
+        "- **Modified**: `test_rgr_contract.py`, `test_interfaces.py`\n\n"
+        "Here is the outcome manifest:\n\n"
+    )
+    monkeypatch.setenv("FAKE_OPENCODE_FINAL_TEXT", prose + json.dumps(payload))
+    out = OpencodeBackend(host_repo, "v0.4").act(
+        "shield", "WRITE", None, None, assignment=_m_test_assignment_v04())
+    assert out["status"] == "done"
+    assert out["artifact_manifest"]["include"] == [
+        {"path": "tests/integration/test_manifest_md.py",
+         "kind": "integration", "role": "required"}]
+    assert out["suggested_commit_message"] == (
+        "M-TEST: add manifest markdown test")
+
+
 def test_shield_write_missing_required_field_fails(
         fake_opencode, host_repo, monkeypatch):
     from tracks import paths
