@@ -16,7 +16,12 @@ from tests.unit.helpers import seq
 
 
 def _m_test_escalation_events():
-    """Events that bring M-TEST to awaiting=escalation (3 failed no_diff)."""
+    """Events that bring M-TEST to awaiting=escalation (3 failed no_diff).
+
+    v0.5: Shield WRITE is an author substate, so no_diff routes through
+    no_diff.detected peer review and surfaces as no_diff_justified
+    (post-review rejection), not direct no_diff. 3x no_diff_justified
+    consumes the shared <=3 attempt budget and escalates."""
     items = [
         ("story.requested", {"raw_chars": 1}),
         ("stage.entered", {"stage": "M-TEST"}),
@@ -49,8 +54,8 @@ def _m_test_escalation_events():
             (
                 "verdict.failed",
                 {
-                    "check": "no_diff",
-                    "reason": "result requires a diff",
+                    "check": "no_diff_justified",
+                    "reason": "reviewer rejected no-diff explanation",
                     "attempt": attempt,
                 },
             )

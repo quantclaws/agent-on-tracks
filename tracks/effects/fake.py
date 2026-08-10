@@ -134,6 +134,11 @@ class FakeBackend:
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result["criteria_pack"] = dict(assigned_pack)
+        # defect_classification injection (for testing rollback routing)
+        if role == "prism" and substate == "PRISM_REVIEW" and verdict != "pass":
+            dc = _simulate_map().get("prism:defect_classification")
+            if dc:
+                result["defect_classification"] = dc
         return result
 
     def _act_no_diff(self, role: str, substate: str) -> dict | None:

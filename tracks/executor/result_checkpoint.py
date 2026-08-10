@@ -215,7 +215,10 @@ class ResultCheckpointMixin:
             "result_id": result_id, "digests": digests,
             "domain_event": {"type": "prism.verdict",
                               "payload": {"verdict": verdict,
-                                          "criteria_pack": result.get("criteria_pack")}},
+                                          "criteria_pack": result.get(
+                                              "criteria_pack"),
+                                          "defect_classification": result.get(
+                                              "defect_classification")}},
         }
 
     def _requirement_payload(self, state, substate, role, result,
@@ -785,8 +788,9 @@ class ResultCheckpointMixin:
                    "diff_ref": commit_sha if created_commit and commit_sha else None,
                    "result_id": result_id}
         if state.stage == "M-TEST":
-            payload["criteria_pack"] = cmd.params.get("domain_event", {}).get(
-                "payload", {}).get("criteria_pack")
+            domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
+            payload["criteria_pack"] = domain_payload.get("criteria_pack")
+            payload["defect_classification"] = domain_payload.get("defect_classification")
         self._emit("prism.verdict", payload,
                    command_id=cmd.command_id, task_id=task_id)
         if verdict != "pass" and state.stage == "M-DESIGN":

@@ -32,11 +32,12 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 2. **Agent 只产出专业语义或代码**：不 commit/push、不写 PASS artifact、不改变 Issue/run 状态。
 3. **Human 不承担技术决策**：Agent 不把架构/测试/实现/CI/修复方案当选择题推给 Human；只有产品意图、需求范围、发布时机、授权与不可逆外部冲突需要 Human。
 4. **技术设计可按流程修订**：M-TEST→M-SECURITY 期间任何 Agent 可提有锚点的 design-gap advisory；Archer+Prism 双确认即回 M-DESIGN，不需 Human；涉及产品意图/需求范围才回 M-SPEC/M-ACC 并经 Human 批准。
-5. **所有结果绑定身份**：task/diff/review/test/CI/artifact/finding/gate 均绑定 baseline digest + commit + attempt + actor；上游变化使受影响结果 stale。
-6. **Agent 自报不是证据**：“tests passed”、命令输出摘要或聊天文本不能推进阶段；Runtime 必须从权威程序出口重新执行或读取证据（即 arch.md 的“永不信自述”）。
-7. **实现发生在当前 release branch**：普通 feature 不建 per-task branch/worktree，Runtime 串行授予单写者 lease；仅 hotfix 建隔离 `fix/{issue}` 分支。
-8. **失败不伪报成功**：失败/取消/超时/缺失/skip/不确定均不得标记 PASS（fail closed）。
-9. **下一步只由纯函数决定**：`decide(current_state, validated_result, program_evidence, workflow)` 选择 success edge 或合法返回；Agent/reviewer 的 recommendation 仅作诊断，永不构成跳转命令，任何一方不能直接命名目标 stage。
+5. **回退原则--什么产物出问题，就回退到该产物诞生的阶段**：test-plan 缺陷回 M-DESIGN（Archer 修）；AC 缺口回 M-ACC（需 Human）；Spec 缺口回 M-SPEC（需 Human）。Prism 的 REVISE 判定携带 `defect_classification` 字段指定路由目标，Runtime 执行回退。本阶段执行失败（test_defect 等）消费重派预算；上游产物缺陷（test_plan_defect/acceptance_defect/spec_defect）的回退不消费重派预算。
+6. **所有结果绑定身份**：task/diff/review/test/CI/artifact/finding/gate 均绑定 baseline digest + commit + attempt + actor；上游变化使受影响结果 stale。
+7. **Agent 自报不是证据**：“tests passed”、命令输出摘要或聊天文本不能推进阶段；Runtime 必须从权威程序出口重新执行或读取证据（即 arch.md 的“永不信自述”）。
+8. **实现发生在当前 release branch**：普通 feature 不建 per-task branch/worktree，Runtime 串行授予单写者 lease；仅 hotfix 建隔离 `fix/{issue}` 分支。
+9. **失败不伪报成功**：失败/取消/超时/缺失/skip/不确定均不得标记 PASS（fail closed）。
+10. **下一步只由纯函数决定**：`decide(current_state, validated_result, program_evidence, workflow)` 选择 success edge 或合法返回；Agent/reviewer 的 recommendation 仅作诊断，永不构成跳转命令，任何一方不能直接命名目标 stage。
 
 > **界面通道说明**：流程中所有 Human 动作（裁决、评审、批准、重试）都建模为事件；网页/CLI 只是事件的输入通道适配器。下文按网页交互描述，但 v1 可用 CLI + 本地编辑器跑通全流程（按钮→trac 命令，网页编辑→直接改文件，编辑权/写锁→Runtime 基于 git 工作区状态裁定）。
 
@@ -419,11 +420,12 @@ stateDiagram-v2
 
 > validate = 文档结构 + AC→Test Plan 分层覆盖（每条 AC 有 test layer 归属）+ 每条 integration/e2e 声明变绿条件（所依赖接口的 IF- 标识，供 M-IMPL task 变绿子集划分）+ contracts 清单完整性。
 > **不等待 Human 批准**：退出只要求 validate pass + prism.verdict(pass)。Human 缺席不阻塞，建议由 Archer 技术裁量。
+> **NO_DIFF peer review**（v0.5+）：当 `requires_diff` 校验对 Archer 结果触发（Archer 产出无文件 diff），不直接判 failure，而是进入 NO_DIFF_EXPLAIN->NO_DIFF_REVIEW 子状态机：Archer 解释无 diff 原因->Prism 评审解释->pass 恢复 pipeline / revise 判 `verdict.failed(no_diff_justified)`。讨论 blockquote 是物理文件变更但不是语义修改，不触发 no_diff。
 > 可休眠点：无（Human 不参与门禁）。
 
 ### 8.2. 事件清单
 
-`stage.entered` / `command.issued` / `outcome.received` / `verdict.passed|failed(schema|trace)` / `design.committed` / `prism.verdict(pass|revise)` / `review.round_started` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `verdict.passed|failed(schema|trace|no_diff)` / `design.committed` / `prism.verdict(pass|revise)` / `review.round_started` / `no_diff.detected` / `no_diff.explained` / `no_diff.reviewed` / `stage.exited` / `stage.rolled_back`
 
 ### 8.3. 硬规则
 
@@ -469,9 +471,13 @@ stateDiagram-v2
     PRISM_REVIEW : dispatch Prism 审测试合约
     PRISM_REVIEW : 忠于 AC + 断言落在公开出口
     PRISM_REVIEW : 无伪测试 + counterexample 绑定
+    PRISM_REVIEW : REVISE 携带 defect_classification 路由
 
     PRISM_REVIEW --> RED_CHECK : prism.verdict(pass)
-    PRISM_REVIEW --> WRITE : revise -> Shield
+    PRISM_REVIEW --> WRITE : revise(test_defect) -> Shield
+    PRISM_REVIEW --> [*] : revise(test_plan_defect) -> M-DESIGN
+    PRISM_REVIEW --> [*] : revise(acceptance_defect) -> M-ACC (Human)
+    PRISM_REVIEW --> [*] : revise(spec_defect) -> M-SPEC (Human)
 
     RED_CHECK : Runtime 独立执行 integration/e2e
     RED_CHECK : 失败必须全部为合法 Red
@@ -497,11 +503,13 @@ stateDiagram-v2
 > 本阶段测试意外通过是异常（桩只 raise，通过通常说明测试没有真正命中桩）-> DIAGNOSE。
 > "测试错还是接口错"的分流永不交给 Human；需语义判断时分派 Prism diagnostic review。
 > 修复后重跑受影响测试并要求 Prism 对新 revision 重新 review。
-> M-TEST 共享 <=3 重派预算：WRITE 校验失败、PRISM revise、trace 不闭合、criteria_pack_mismatch、commit 被拒、test_defect 均消费同一计数器；第 3 次仍未通过 -> escalation (awaiting_human)。
+> **defect_classification 路由**（v0.5+）：PRISM_REVIEW 的 `revise` 判定携带 `defect_classification` 字段，Runtime 据此路由回退目标：`test_defect`（默认）回 Shield WRITE 重派；`test_plan_defect` 回 M-DESIGN 让 Archer 修测试计划；`acceptance_defect` 回 M-ACC（需 Human）；`spec_defect` 回 M-SPEC（需 Human）。原则：什么产物出问题，就回退到该产物诞生的阶段。
+> **NO_DIFF peer review**（v0.5+）：当 `requires_diff` 校验对 Shield 结果触发（Shield 产出无文件 diff），进入 NO_DIFF_EXPLAIN->NO_DIFF_REVIEW 子状态机（同 M-DESIGN）。讨论 blockquote 是物理文件变更但不是语义修改，不触发 no_diff；纯 self_report（无任何文件变更）才触发。
+> M-TEST 共享 <=3 重派预算：WRITE 校验失败、PRISM revise(test_defect)、trace 不闭合、criteria_pack_mismatch、commit 被拒、test_defect 均消费同一计数器；第 3 次仍未通过 -> escalation (awaiting_human)。`test_plan_defect`/`acceptance_defect`/`spec_defect` 的回退不消费重派计数器（它们是上游产物缺陷，不是本阶段执行失败）。
 
 ### 9.2. 事件清单
 
-`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(trace|criteria_pack_mismatch|test_defect|stub_gap|ac_gap|spec_gap|commit)` / `test.committed` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(trace|criteria_pack_mismatch|test_defect|test_plan_defect|stub_gap|ac_gap|spec_gap|commit|no_diff_justified)` / `no_diff.detected` / `no_diff.explained` / `no_diff.reviewed` / `test.committed` / `stage.exited` / `stage.rolled_back`
 
 ### 9.3. 硬规则
 

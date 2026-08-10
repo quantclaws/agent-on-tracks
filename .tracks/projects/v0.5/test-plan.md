@@ -86,17 +86,17 @@ This test plan only declares test methods that are **observable from outside the
 
 ### 2.1. Directory Layout
 
-> 注：下表为 v0.5 测试树实际落盘文件（Shield M-TEST 已写入）。原计划落点中的 per-AC 整合文件（`test_island_gate_1.py`、`test_prism_plan.py`、`test_task_dispatch.py`、`test_red_phase.py`、`test_red_gate_m_impl.py`、`test_prism_red.py`、`test_green_phase.py`、`test_green_gate.py`、`test_green_commit.py`、`test_refactor.py`、`test_task_review.py`、`test_prism_final.py`、`test_diagnose_four_way.py`、`test_shield_fix.py`、`test_kernel_purity_m_impl.py`、`test_events_append_only_m_impl.py`）均未单独创建--Shield 将跨模块接口合同断言整合进少数整合函数（见 §8/§9 注释）。`test_machine_m_impl.py`、`test_taskgraph.py`、`test_rgr.py`、`test_quality_gate.py`、`test_worktree.py` 属 unit 层，待 Devon 在 RGR 中编写。
+> 注：下表为 v0.5 测试树实际落盘文件（Shield M-TEST 已写入）。原计划落点中的 per-AC 整合文件（`test_island_gate_1.py`、`test_prism_plan.py`、`test_task_dispatch.py`、`test_red_phase.py`、`test_red_gate_m_impl.py`、`test_prism_red.py`、`test_green_phase.py`、`test_green_gate.py`、`test_green_commit.py`、`test_refactor.py`、`test_task_review.py`、`test_prism_final.py`、`test_diagnose_four_way.py`、`test_shield_fix.py`、`test_kernel_purity_m_impl.py`、`test_events_append_only_m_impl.py`）均未单独创建--Shield 将跨模块接口合同断言整合进少数整合函数（见 §8/§9 注释）。`test_machine_m_impl.py`、`test_taskgraph.py`、`test_rgr.py`、`test_quality_gate.py`、`test_worktree.py` 属 unit 层，由 Devon 在 RGR 中编写（§1.5）。
 
 ```
 tests/
 ├── unit/
 │   ├── test_deliverables.py       # [既有] deliverables gate (FR-0170)；test_real_deliverables_consistent 真值驱动
 │   ├── test_machine_m_test.py     # [既有] M-TEST kernel (v0.4 marker 可作 M-IMPL unit 接续点)
-│   ├── test_machine_m_impl.py     # [Devon foundation task] M-IMPL reducer/decide branches (SM-01)
-│   ├── test_taskgraph.py          # [Devon foundation task] validate_dag/scope/ac_coverage/issue_numbers (FR-0030/0180/0220)
-│   ├── test_rgr.py                # [Devon foundation task] create_red_ref/create_green_commit/classify_red/verify_lineage (FR-0070/0080/0120)
-│   ├── test_quality_gate.py       # [Devon foundation task] run_gates/layering (FR-0110/0130)
+│   ├── test_machine_m_impl.py     # M-IMPL reducer/decide branches (Devon RGR)
+│   ├── test_taskgraph.py          # validate_dag/scope/ac_coverage/issue_numbers (Devon RGR)
+│   ├── test_rgr.py                # create_red_ref/create_green_commit/classify_red/verify_lineage (Devon RGR)
+│   ├── test_quality_gate.py       # run_gates/layering (Devon RGR)
 │   └── ...                        # 既有 unit tests 不变
 ├── integration/
 │   ├── v05_contract_helpers.py            # [既有 helper] run_m_impl_journey/events_of/command_dispatches
@@ -338,43 +338,43 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ### 8a. FR-0010 M-IMPL 阶段注册与子状态机驱动
 
-> 注：原 §8 计划落点引用的 `test_machine_m_impl.py`（per-AC unit 文件）从未创建。M-IMPL 阶段 control-flow 单测（SM-01 转移、显式控制流、kernel 纯度）属 Devon 在 RGR 阶段编写的 unit 层（§1.5）；Shield 在 integration/e2e 层经公开事件出口覆盖同一 AC 的可观察行为。下表 unit 列标记为 `[Devon foundation task]`，待 Devon 实现对应模块时在 RGR 中补齐；integration/e2e 列指向 Shield 已写入的真实测试函数。
+> 注：原 §8 计划落点引用的 `test_machine_m_impl.py`（per-AC unit 文件）从未创建。M-IMPL 阶段 control-flow 单测（SM-01 转移、显式控制流、kernel 纯度）属 Devon 在 RGR 阶段编写的 unit 层（§1.5），由覆盖率门禁强制；Shield 在 integration/e2e 层经公开事件出口覆盖同一 AC 的可观察行为。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0010-01（M-TEST EXIT -> stage.entered(M-IMPL), substate=BASELINE；无 human 插队） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_enter_m_impl_from_m_test_exit, test_m_impl_cycle.py::test_m_impl_public_event_lifecycle | IF-IMPL-001 |
-| AC-FR0010-02（trac status 报告 stage=M-IMPL + substate；_NEXT_STAGE 接续 + boundary） | unit + e2e | `[Devon foundation task]` test_machine_m_impl.py::test_next_stage_m_test_to_m_impl, test_m_impl_journey.py::test_boundary_after_m_impl | IF-IMPL-001 |
-| AC-FR0010-03（SM-01 转移严格遵循清单；非法转移不产出） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_sm01_transitions_enforced, test_m_impl_cycle.py::test_m_impl_public_event_lifecycle | IF-IMPL-001 |
+|AC-FR0010-01（M-TESTEXIT->stage.entered(M-IMPL),substate=BASELINE；无human插队）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
+|AC-FR0010-02（tracstatus报告stage=M-IMPL+substate；_NEXT_STAGE接续+boundary）|e2e| test_m_impl_journey.py::test_boundary_after_m_impl |IF-IMPL-001|
+|AC-FR0010-03（SM-01转移严格遵循清单；非法转移不产出）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 | AC-FR0010-04（既有阶段行为不变；M-TEST 之前事件前缀稳定） | e2e | test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl | IF-IMPL-001, IF-MTEST-001 |
-| AC-FR0010-05（显式控制流驱动；kernel 纯函数边界） | unit | `[Devon foundation task]` test_machine_m_impl.py::test_explicit_control_flow + test_kernel_purity_m_impl（v0.4 既有 test_machine_m_test.py::test_explicit_control_flow@v0.4 覆盖 M-TEST 同类断言；M-IMPL 版待 Devon 补齐） | IF-IMPL-001 |
+|AC-FR0010-05（显式控制流驱动；kernel纯函数边界）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 
 ### 8b. FR-0020 BASELINE 重算与测试资产冻结
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0020-01（BASELINE 重算 -> baseline.frozen；current -> PLANNING） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_baseline_current_to_planning, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0020-02（baseline 缺失/stale/冲突 -> NEEDS_ATTENTION；reconcile -> BASELINE；rolled_back） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_baseline_stale_to_needs_attention + test_baseline_reconcile, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0020-01（BASELINE重算->baseline.frozen；current->PLANNING）|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0020-02（baseline缺失/stale/冲突->NEEDS_ATTENTION；reconcile->BASELINE；rolled_back）|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0020-03（冻结测试路径集；缺层归属 -> 硬错误；trac validate --file test-plan.md 判失败） | integration | test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics | IF-IMPL-002, IF-VALIDATE-001 |
 | AC-FR0020-04（冻结路径集供 test-authority/gate worktree；语言无关不硬编码） | integration | test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics | IF-IMPL-002, IF-IMPL-006 |
 
 ### 8c. FR-0030 PLANNING：Archer 拆 task graph
 
-> 注：原 §8 引用的 `test_machine_m_impl.py`、`test_taskgraph.py`、`test_taskgraph_validate.py::test_taskgraph_committed/test_validate_fail_redispatch/test_tasksmd_projected/test_report_progress` 中的 per-AC 名多数未创建。Shield 经 `test_taskgraph_validate.py` 已写的 happy + 错误路径函数从公开 CLI/event 出口覆盖同一 AC；`test_taskgraph.py`（unit）属 Devon foundation task。
+> 注：原 §8 引用的 `test_machine_m_impl.py`、`test_taskgraph.py`、`test_taskgraph_validate.py::test_taskgraph_committed/test_validate_fail_redispatch/test_tasksmd_projected/test_report_progress` 中的 per-AC 名多数未创建。Shield 经 `test_taskgraph_validate.py` 已写的 happy + 错误路径函数从公开 CLI/event 出口覆盖同一 AC。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0030-01（dispatch Archer 拆 task graph；taskgraph.committed；每 task 纵向切片 + scope + IF- + budget） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_planning_dispatch_archer, test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0030-02（validate DAG 无环 / scope 不重叠 / AC 覆盖闭合；fail 重派 <=3 -> escalation） | unit + integration | `[Devon foundation task]` test_taskgraph.py::test_validate_dag + test_validate_scope + test_validate_ac_coverage, test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli | IF-IMPL-003, IF-IMPL-001 |
+|AC-FR0030-01（dispatchArcher拆taskgraph；taskgraph.committed；每task纵向切片+scope+IF-+budget）|integration| test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0030-02（validateDAG无环/scope不重叠/AC覆盖闭合；fail重派<=3->escalation）|integration| test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli |IF-IMPL-003,IF-IMPL-001|
 | AC-FR0030-03（tasks.md Runtime 确定性生成；进展投影入 events/db；trac report 重建） | integration | test_taskgraph_validate.py::test_tasksmd_projected + test_report_progress | IF-IMPL-002, IF-IMPL-007 |
 
 ### 8d. FR-0040 ISLAND_GATE_1：程序复核
 
-> 注：原 §8 引用的 `test_machine_m_impl.py` 与 `test_island_gate_1.py` per-AC 名未创建。Shield 经 `test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted`（含 ISLAND_GATE_1 六元组复核与重派路由）覆盖；`test_machine_m_impl.py`（unit）属 Devon foundation task。
+> 注：原 §8 引用的 `test_machine_m_impl.py` 与 `test_island_gate_1.py` per-AC 名未创建。Shield 经 `test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted`（含 ISLAND_GATE_1 六元组复核与重派路由）覆盖。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0040-01（六元组复核通过 -> PRISM_PLAN） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_1_pass, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0040-02（不闭合 -> verdict.failed(island) -> PLANNING 重派 Archer） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_1_fail, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0040-01（六元组复核通过->PRISM_PLAN）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0040-02（不闭合->verdict.failed(island)->PLANNING重派Archer）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
 
 ### 8e. FR-0050 PRISM_PLAN：判据包绑定与切片评审
 
@@ -382,8 +382,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0050-01（dispatch Prism 评 task graph 切片；反自述三件套：assignment 含判据包、verdict 携带 identity、Runtime 回读不匹配判失败） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_dispatch, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0050-02（pass -> TASK_DISPATCH；revise -> PLANNING；设计缺口 -> M-DESIGN；需求缺口 -> M-ACC/M-SPEC） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_pass + test_prism_plan_revise + test_design_gap_rollback + test_requirement_gap_rollback, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0050-01（dispatchPrism评taskgraph切片；反自述三件套：assignment含判据包、verdict携带identity、Runtime回读不匹配判失败）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0050-02（pass->TASK_DISPATCH；revise->PLANNING；设计缺口->M-DESIGN；需求缺口->M-ACC/M-SPEC）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0050-03（revise 必须经 trac discuss 锚定线程；无锚定 -> revise_without_findings） | integration | test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001 |
 | AC-FR0050-04（反自述三件套适用于 plan/red/final/diagnostic 全部四种 Prism 派发） | integration | test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-002 |
 
@@ -393,20 +393,20 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0060-01（DAG ready task 选 + 单写者 lease + manifest 创建 -> writelock.granted + task.started -> RED） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_dispatch_to_red, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0060-02（task 变绿子集 = 单测 + IF- 命中 int 子集；全部完成 -> ISLAND_GATE_2；还有 -> TASK_DISPATCH） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_all_tasks_done_to_island_gate_2 + test_more_ready_tasks_to_dispatch, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0060-01（DAGreadytask选+单写者lease+manifest创建->writelock.granted+task.started->RED）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0060-02（task变绿子集=单测+IF-命中int子集；全部完成->ISLAND_GATE_2；还有->TASK_DISPATCH）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0060-03（[P] 并行标记只记录不并发；串行顺序执行） | integration | test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-002 |
 
 ### 8g. FR-0070 RED：Devon 隔离与私有 R ref
 
-> 注：原 §8 引用的 `test_machine_m_impl.py`、`test_red_phase.py`、`test_rgr.py` per-AC 名未创建。Shield 经 `test_worktree_contract.py`（三 worktree 组合）、`test_execution_gates.py`（RGR 相位事件链 + over-reach 回滚）、`test_rgr_contract.py`（R ref 创建与不可变）覆盖；`test_machine_m_impl.py`/`test_rgr.py`（unit）属 Devon foundation task。
+> 注：原 §8 引用的 `test_machine_m_impl.py`、`test_red_phase.py`、`test_rgr.py` per-AC 名未创建。Shield 经 `test_worktree_contract.py`（三 worktree 组合）、`test_execution_gates.py`（RGR 相位事件链 + over-reach 回滚）、`test_rgr_contract.py`（R ref 创建与不可变）覆盖。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0070-01（dispatch Devon phase=red 在 Devon candidate worktree；worktree 在 Shield WRITE 前创建） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_red_dispatch_devon, test_worktree_contract.py::test_three_worktree_composition_and_cleanup | IF-IMPL-001, IF-IMPL-002, IF-IMPL-006 |
+|AC-FR0070-01（dispatchDevonphase=red在Devoncandidateworktree；worktree在ShieldWRITE前创建）|integration| test_worktree_contract.py::test_three_worktree_composition_and_cleanup |IF-IMPL-001,IF-IMPL-002,IF-IMPL-006|
 | AC-FR0070-02（Devon 只添加 unit test；outcome 含产品代码或 Shield 测试 -> 判失败；文件访问被 manifest 限定） | integration | test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-002, IF-DEVON-001 |
-| AC-FR0070-03（RED_CHECKPOINT 创建私有 commit R + git ref；red.checkpointed；git show 存在） | unit + integration | `[Devon foundation task]` test_rgr.py::test_create_red_ref, test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable | IF-IMPL-002, IF-IMPL-004 |
-| AC-FR0070-04（R 不可变：重试改写 R ref compare-and-set 失败；rev-parse 前后同一 SHA） | unit + integration | `[Devon foundation task]` test_rgr.py::test_r_ref_immutable, test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable | IF-IMPL-004 |
+|AC-FR0070-03（RED_CHECKPOINT创建私有commitR+gitref；red.checkpointed；gitshow存在）|integration| test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |IF-IMPL-002,IF-IMPL-004|
+|AC-FR0070-04（R不可变：重试改写Rrefcompare-and-set失败；rev-parse前后同一SHA）|integration| test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |IF-IMPL-004|
 | AC-FR0070-05（三 worktree 方案：gate worktree 组合 C_design + frozen bundle + Devon candidate；frozen bundle 永不合入 Devon candidate） | integration | test_worktree_contract.py::test_three_worktree_composition_and_cleanup | IF-IMPL-002, IF-IMPL-006 |
 
 ### 8h. FR-0080 RED_GATE：合法 Red 分类
@@ -415,8 +415,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0080-01（合法红 = 行为断言失败 / symbol 缺失 -> RED_CHECKPOINT；stub_token_failure 不在 M-IMPL 合法红之列） | unit + integration | `[Devon foundation task]` test_rgr.py::test_classify_red_legit + test_stub_token_not_legit, test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens | IF-IMPL-002, IF-IMPL-004 |
-| AC-FR0080-02（非法红 = collection/语法/fixture/import 错误、意外通过 -> 重派 Devon；verdict.failed(red_invalid)） | unit + integration | `[Devon foundation task]` test_rgr.py::test_classify_red_illegit + test_unexpected_pass, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0080-01（合法红=行为断言失败/symbol缺失->RED_CHECKPOINT；stub_token_failure不在M-IMPL合法红之列）|integration| test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens |IF-IMPL-002,IF-IMPL-004|
+|AC-FR0080-02（非法红=collection/语法/fixture/import错误、意外通过->重派Devon；verdict.failed(red_invalid)）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
 
 ### 8i. FR-0090 PRISM_RED：Red checkpoint 范围评审
 
@@ -424,8 +424,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0090-01（dispatch Prism 评 B..R 范围；反自述三件套） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_red_dispatch, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0090-02（pass 绑定 R -> GREEN；revise -> RED 新 attempt；revise 经 trac discuss 锚定） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_red_pass + test_prism_red_revise, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0090-01（dispatchPrism评B..R范围；反自述三件套）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0090-02（pass绑定R->GREEN；revise->RED新attempt；revise经tracdiscuss锚定）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
 
 ### 8j. FR-0100 GREEN：最小实现与受控 diff 回灌
 
@@ -433,7 +433,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0100-01（从 R tree 恢复 worktree；dispatch Devon phase=green；R 测试不可改；outcome 含 R 测试改动 -> 判失败） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_dispatch_devon, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0100-01（从Rtree恢复worktree；dispatchDevonphase=green；R测试不可改；outcome含R测试改动->判失败）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0100-02（受控 diff 按 manifest 回灌主仓；白名单外不回灌；视图终态清理） | integration | test_worktree_contract.py::test_three_worktree_composition_and_cleanup | IF-IMPL-002, IF-IMPL-006 |
 
 ### 8k. FR-0110 GREEN_GATE：粒度门禁与反馈脱敏
@@ -442,10 +442,10 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0110-01（targeted 单测 + 历史单测 + int 子集 + lint/format/type/static + 合同；第一轮不跑 e2e；全过 -> GREEN_COMMIT；缺陷 -> GREEN） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_gate_pass + test_green_gate_fail, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-001, IF-IMPL-002, IF-IMPL-005 |
+|AC-FR0110-01（targeted单测+历史单测+int子集+lint/format/type/static+合同；第一轮不跑e2e；全过->GREEN_COMMIT；缺陷->GREEN）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |IF-IMPL-001,IF-IMPL-002,IF-IMPL-005|
 | AC-FR0110-02（int/e2e 由 Runtime 在独立 gate worktree 运行并归因） | integration | test_worktree_contract.py::test_three_worktree_composition_and_cleanup | IF-IMPL-002, IF-IMPL-006 |
 | AC-FR0110-03（反馈脱敏：单测失败回完整输出；int/e2e 失败只回分类诊断不回断言原文） | integration | test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-002, IF-IMPL-005 |
-| AC-FR0110-04（int 失败归因不明 -> DIAGNOSE） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_gate_to_diagnose, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0110-04（int失败归因不明->DIAGNOSE）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |IF-IMPL-001,IF-IMPL-002|
 
 ### 8l. FR-0120 GREEN_COMMIT：正式 commit G 与 lineage 证明
 
@@ -453,8 +453,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0120-01（创建正式 commit G；green.committed；G parent=B；trailers Tracks-Task/Tracks-Attempt/Tracks-R/Tracks-Issue/Tracks-AC） | unit + integration | `[Devon foundation task]` test_rgr.py::test_create_green_commit, test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable | IF-IMPL-002, IF-IMPL-004 |
-| AC-FR0120-02（R 先于 G lineage 证明：ref + trailer + 事件序列三件联合；不作 Git ancestry 断言） | unit + integration | `[Devon foundation task]` test_rgr.py::test_verify_lineage, test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable | IF-IMPL-002, IF-IMPL-004 |
+|AC-FR0120-01（创建正式commitG；green.committed；Gparent=B；trailersTracks-Task/Tracks-Attempt/Tracks-R/Tracks-Issue/Tracks-AC）|integration| test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |IF-IMPL-002,IF-IMPL-004|
+|AC-FR0120-02（R先于Glineage证明：ref+trailer+事件序列三件联合；不作Gitancestry断言）|integration| test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |IF-IMPL-002,IF-IMPL-004|
 
 ### 8m. FR-0130 REFACTOR 与质量门禁分层
 
@@ -462,9 +462,9 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0130-01（dispatch Devon phase=refactor；可返回 no_change + 理由；no_change + 全绿 -> TASK_REVIEW） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_refactor_dispatch + test_refactor_no_change, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0130-02（REFACTOR_GATE 重跑 GREEN_GATE；质量门禁分层：生产全检查、测试仅 R0801+C0302） | unit + integration | `[Devon foundation task]` test_quality_gate.py::test_run_production_checks + test_run_test_checks, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-002, IF-IMPL-005 |
-| AC-FR0130-03（动 public interface -> stage.rolled_back upstream；通过 -> TASK_REVIEW；失败 -> REFACTOR） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_public_interface_rollback + test_refactor_pass + test_refactor_fail, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0130-01（dispatchDevonphase=refactor；可返回no_change+理由；no_change+全绿->TASK_REVIEW）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0130-02（REFACTOR_GATE重跑GREEN_GATE；质量门禁分层：生产全检查、测试仅R0801+C0302）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |IF-IMPL-002,IF-IMPL-005|
+|AC-FR0130-03（动publicinterface->stage.rolled_backupstream；通过->TASK_REVIEW；失败->REFACTOR）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |IF-IMPL-001,IF-IMPL-002|
 
 ### 8n. FR-0140 TASK_REVIEW 与 PRISM_FINAL
 
@@ -472,8 +472,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0140-01（TASK_REVIEW 校验 scope/secret/AC trace/lineage/budget；通过 -> PRISM_FINAL；budget/scope fail -> GREEN） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_review_pass + test_task_review_fail, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
-| AC-FR0140-02（PRISM_FINAL dispatch Prism 评完整 range + lineage；反自述三件套；pass -> TASK_DONE；revise(实现) -> GREEN；revise(Red) -> RED） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_final_pass + test_prism_final_revise_impl + test_prism_final_revise_red, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0140-01（TASK_REVIEW校验scope/secret/ACtrace/lineage/budget；通过->PRISM_FINAL；budget/scopefail->GREEN）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0140-02（PRISM_FINALdispatchPrism评完整range+lineage；反自述三件套；pass->TASK_DONE；revise(实现)->GREEN；revise(Red)->RED）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0140-03（revise 经 trac discuss 锚定；task.completed 在 pass 后出现；trac report 展示 RGR lineage） | integration | test_execution_gates.py::test_rgr_phase_events_and_audit_evidence | IF-IMPL-001, IF-IMPL-002, IF-IMPL-007 |
 
 ### 8o. FR-0150 DIAGNOSE 四路诊断与 SHIELD_FIX
@@ -482,7 +482,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0150-01（DIAGNOSE 四路诊断；分流永不交给 Human；impl_defect -> GREEN；test_defect -> SHIELD_FIX；stub_gap -> M-DESIGN；ac/spec_gap -> M-ACC/M-SPEC） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_diagnose_impl_defect + test_diagnose_test_defect + test_diagnose_stub_gap + test_diagnose_ac_spec_gap, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0150-01（DIAGNOSE四路诊断；分流永不交给Human；impl_defect->GREEN；test_defect->SHIELD_FIX；stub_gap->M-DESIGN；ac/spec_gap->M-ACC/M-SPEC）|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0150-02（分流结论落 verdict.failed(reason)，reason 限于封闭集；trac report 展示分类与路由） | integration | test_execution_gates.py::test_diagnose_and_shield_fix_public_routes | IF-IMPL-002, IF-IMPL-007 |
 | AC-FR0150-03（SHIELD_FIX dispatch Shield 修测试；test.committed；重跑 GREEN_GATE；Shield 修复落在冻结路径集内） | integration | test_execution_gates.py::test_diagnose_and_shield_fix_public_routes | IF-IMPL-002, IF-SHIELD-001 |
 | AC-FR0150-04（return upstream 后目标之后的 task graph/baselines/lineage/commits 标记 stale/superseded；不复用旧绿色证据） | integration | test_execution_gates.py::test_diagnose_and_shield_fix_public_routes | IF-IMPL-002 |
@@ -494,18 +494,18 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 | AC-FR0160-01（全部 task 完成后进入；trac check reach 无孤岛 + 全量 int+e2e 变绿 -> 退出；失败不退出） | integration | test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites | IF-IMPL-002, IF-REACH-002 |
-| AC-FR0160-02（全量执行有失败 -> DIAGNOSE；verdict.failed(island) -> PLANNING） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_2_to_diagnose + test_island_gate_2_to_planning, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0160-02（全量执行有失败->DIAGNOSE；verdict.failed(island)->PLANNING）|integration\| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0160-03（通过 -> stage.exited(M-IMPL) -> run.completed(boundary)；不进入 M-VERIFY） | e2e | test_m_impl_journey.py::test_boundary_after_m_impl | IF-IMPL-001 |
 | AC-FR0160-04（M-IMPL 无 Human 门禁：退出依据全程序证据，无 human.review/approval 作为退出前置） | e2e | test_m_impl_journey.py::test_boundary_after_m_impl | IF-IMPL-001 |
 
 ### 8q. FR-0170 Devon opencode agent 接入与 manifest 越界审计
 
-> 注：原 §8 引用的 `test_deliverables.py::test_devon_agent_name`、`test_devon_in_deliverables`、`test_no_permission_block` 与 `test_devon_dispatch.py::test_materialization_lifecycle`、`test_over_reach_rolled_back` per-AC 名未创建。Shield 经 `test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence`（AGENT_NAME 物化与回收同构 + manifest 越界审计 + over_reach failure_class + git 回滚）覆盖。AC-FR0170-02（Devon.md 加入 deliverables + frontmatter version/IQ + 无 permission 块）当前在 v0.5 测试树中无对应测试函数——该断言需 Devon.md 在 deliverables 真值更新后由 Devon 在 RGR 阶段补 unit，或由 Shield 后续在 M-IMPL 中经 `test_deliverables.py` 现有 `test_real_deliverables_consistent` 的真值驱动覆盖；当前标记为 `[Devon foundation task]`，等待 Devon.md deliverable 落地后补齐。
+> 注：原 §8 引用的 `test_deliverables.py::test_devon_agent_name`、`test_devon_in_deliverables`、`test_no_permission_block` 与 `test_devon_dispatch.py::test_materialization_lifecycle`、`test_over_reach_rolled_back` per-AC 名未创建。Shield 经 `test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence`（AGENT_NAME 物化与回收同构 + manifest 越界审计 + over_reach failure_class + git 回滚）覆盖。AC-FR0170-02（Devon.md 加入 deliverables + frontmatter version/IQ + 无 permission 块）当前在 v0.5 测试树中无对应测试函数——该断言需 Devon.md 在 deliverables 真值更新后由 Devon 在 RGR 阶段补 unit，或由 Shield 后续在 M-IMPL 中经 `test_deliverables.py` 现有 `test_real_deliverables_consistent` 的真值驱动覆盖；当前经 `test_deliverables.py::test_real_deliverables_consistent` 真值驱动覆盖。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-FR0170-01（AGENT_NAME 增补 devon->Devon；物化与回收同构） | unit + integration | `[Devon foundation task]` test_deliverables.py::test_devon_agent_name, test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence | IF-DEVON-001 |
-| AC-FR0170-02（Devon.md 加入 deliverables；frontmatter version + IQ；无 permission 块） | unit | `[Devon foundation task]` test_deliverables.py::test_devon_in_deliverables + test_no_permission_block（待 Devon.md deliverable 落地后补齐；现有 test_real_deliverables_consistent 真值驱动可作接续点） | IF-DEVON-001 |
+|AC-FR0170-01（AGENT_NAME增补devon->Devon；物化与回收同构）|integration| test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence |IF-DEVON-001|
+|AC-FR0170-02（Devon.md加入deliverables；frontmatterversion+IQ；无permission块）|integration\| test_deliverables.py::test_real_deliverables_consistent |IF-DEVON-001|
 | AC-FR0170-03（manifest 越界审计：越权写 -> over_reach failure_class -> git 回滚；回滚仅移除 Devon 改动） | integration | test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence | IF-DEVON-001 |
 
 ### 8r. FR-0180 tasks.json / tasks.md 真相源与 Runtime 解析
@@ -515,7 +515,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC-FR0180-01（tasks.json 为 task graph 唯一机器真相；Runtime 解析驱动 DAG 调度；JSON schema 含 9 项必填 task info：task_id/issue_number/description/ac_refs/fr_refs/if_ids/test_refs/scope_boundary/depends_on + batch/parallel/budget；tasks.md 为人类可读投影由 Runtime 从 tasks.json 确定性生成；进展投影入 events/db；trac report 重建） | integration | test_tasksjson_validate.py::test_tasksjson_parsed_by_runtime + test_tasksmd_projected + test_report_rebuild | IF-IMPL-003, IF-IMPL-007, IF-IMPL-002 |
 | AC-FR0180-02（trac validate --file tasks.json 校验 DAG 无环 / scope 边界不重叠 / required AC 覆盖闭合 / IF- 有效性 / issue number 有效性；5 项 check） | integration | test_tasksjson_validate.py::test_validate_dag + test_validate_scope + test_validate_ac_coverage + test_validate_if_validity + test_validate_issue_numbers | IF-IMPL-003, IF-VALIDATE-001 |
 | AC-FR0180-04（trac validate --file tasks.json 5 项 check 逐项校验：DAG acyclic / scope non-overlap / required AC coverage closure / IF- validity / issue number validity；任一 fail 非零退出并指出位置） | integration | test_tasksjson_validate.py::test_five_checks_individual_failures | IF-IMPL-003, IF-VALIDATE-001 |
-| AC-FR0180-05（Runtime 与 Prism 职责分工：Runtime 只做确定性结构校验，不做语义评审；tasks.md 语义保真度不由 Runtime 校验） | unit | test_tasksjson_validate.py::test_runtime_validation_is_structural_only | IF-VALIDATE-001 |
+| AC-FR0180-05（Runtime 与 Prism 职责分工：Runtime 只做确定性结构校验，不做语义评审；tasks.md 语义保真度不由 Runtime 校验） | integration | test_tasksjson_validate.py::test_runtime_validation_is_structural_only | IF-VALIDATE-001 |
 
 ### 8s. FR-0190 dispatch 物化完整性合同
 
@@ -524,7 +524,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 | AC-FR0190-01（command.issued 前 assignment 物化完整上下文；含 10 项物化字段） | integration | test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload | IF-IMPL-002 |
-| AC-FR0190-02（M-TEST/M-IMPL escalation 允许 to_stage=M-DESIGN；M-TEST 回归基线 + M-IMPL 新增路径） | unit + integration | `[Devon foundation task]` test_dispatch_materialization.py::test_escalation_to_design_m_impl + test_m_test_escalation_regression, test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload | IF-IMPL-001, IF-IMPL-002 |
+|AC-FR0190-02（M-TEST/M-IMPLescalation允许to_stage=M-DESIGN；M-TEST回归基线+M-IMPL新增路径）|integration| test_dispatch_materialization.py::test_escalation_to_design_m_impl+test_m_test_escalation_regression,test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0190-03（canonical .tracks/project/project.toml 唯一允许；其他 .tracks/** fail closed） | integration | test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload | IF-IMPL-002 |
 | AC-FR0190-04（M-DESIGN 输出合同：test-plan §8 canonical header + interfaces §5 IF Registry；解析 {ac_id, layers, if_ids}；missing/empty/duplicate/unregistered fail closed） | integration | test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload | IF-IMPL-002, IF-VALIDATE-001 |
 | AC-FR0190-05（test_tasks 注入：Shield WRITE assignment 含非空 test_tasks；无效输入 -> stub_gap） | integration | test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload | IF-IMPL-002 |
@@ -549,8 +549,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-| AC-NFR0010-01（decide()/project() 不碰 IO/clock/env/文件系统） | unit | `[Devon foundation task]` test_kernel_purity_m_impl.py::test_no_io_no_clock_no_env（v0.4 既有 test_machine_m_test.py::test_kernel_purity_no_io@v0.4 覆盖 M-TEST 同类断言；M-IMPL 版待 Devon 补齐） | IF-IMPL-001 |
-| AC-NFR0010-02（副作用归 executor；drop 投影表后重建一致） | unit + integration | `[Devon foundation task]` test_kernel_purity_m_impl.py::test_rebuild_from_events, test_m_impl_cycle.py::test_m_impl_public_event_lifecycle | IF-IMPL-001, IF-IMPL-002 |
+|AC-NFR0010-01（decide()/project()不碰IO/clock/env/文件系统）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
+|AC-NFR0010-02（副作用归executor；drop投影表后重建一致）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001,IF-IMPL-002|
 
 ### 8v. NFR-0020 M-IMPL 事件维持 append-only 事件溯源
 
@@ -568,8 +568,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 | AC-NFR0030-01（trac run 为长时间 Agent 派发发出简洁已 flush 控制台活动；不流式输出海量 stdout；不设 elapsed-time 超时） | integration | test_trac_retry.py::test_retry_activity_and_failure_evidence | IF-IMPL-002 |
-| AC-NFR0030-02（<=3 次失败后 trac run 与 trac status 暴露 attempt 计数 + 失败类 + 原因） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_attempt_count_exposed, test_trac_retry.py::test_retry_activity_and_failure_evidence | IF-IMPL-001 |
-| AC-NFR0030-03（trac retry 追加 human.retry 事件、清 escalation gate、重置 attempt 预算、保留失败证据、不自动重派；非 escalation 拒绝；--clear-evidence 语义） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_retry_semantics, test_trac_retry.py::test_retry_activity_and_failure_evidence | IF-IMPL-001 |
+|AC-NFR0030-02（<=3次失败后tracrun与tracstatus暴露attempt计数+失败类+原因）|integration| test_trac_retry.py::test_retry_activity_and_failure_evidence |IF-IMPL-001|
+|AC-NFR0030-03（tracretry追加human.retry事件、清escalationgate、重置attempt预算、保留失败证据、不自动重派；非escalation拒绝；--clear-evidence语义）|integration| test_trac_retry.py::test_retry_activity_and_failure_evidence |IF-IMPL-001|
 
 ### 8x. FR-0210 Shield test-plan 测试归属边界
 
@@ -597,54 +597,54 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 每条转移 ≥1 测试走到一次；清单内测试须存在且通过。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。
 
-> 注：原 §9 表中 unit 列大量引用 `test_machine_m_impl.py` 与多个 per-AC 整合文件（`test_red_phase.py`、`test_red_gate_m_impl.py`、`test_green_phase.py`、`test_green_gate.py`、`test_refactor.py`、`test_task_review.py`、`test_prism_final.py`、`test_prism_plan.py`、`test_prism_red.py`、`test_diagnose_four_way.py`、`test_shield_fix.py`、`test_task_dispatch.py`、`test_green_commit.py`、`test_island_gate_1.py`）——这些 unit/per-AC 文件均未在 v0.5 测试树中创建。Shield 实际将跨模块接口合同断言整合进少数函数：`test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted`（覆盖 PLANNING/ISLAND_GATE_1/PRISM_PLAN/TASK_DISPATCH 相位）、`test_execution_gates.py::test_rgr_phase_events_and_audit_evidence`（覆盖 RED/RED_GATE/RED_CHECKPOINT/PRISM_RED/GREEN/GREEN_GATE/TASK_REVIEW/PRISM_FINAL/TASK_DONE 相位）、`test_execution_gates.py::test_diagnose_and_shield_fix_public_routes`（覆盖 DIAGNOSE/SHIELD_FIX 路由）、`test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable`（覆盖 GREEN_COMMIT/REFACTOR lineage + R/G ref）、`test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events`（覆盖 GREEN_GATE/REFACTOR_GATE 质量门禁分层）、`test_worktree_contract.py::test_three_worktree_composition_and_cleanup`（覆盖 worktree 组合）。下表测试列已更新指向 Shield 实际写入的函数；unit 行标记 `[Devon foundation task]`，待 Devon 在 RGR 中补齐对应 unit 测试。
+> 注：原 §9 表中 unit 列大量引用 `test_machine_m_impl.py` 与多个 per-AC 整合文件（`test_red_phase.py`、`test_red_gate_m_impl.py`、`test_green_phase.py`、`test_green_gate.py`、`test_refactor.py`、`test_task_review.py`、`test_prism_final.py`、`test_prism_plan.py`、`test_prism_red.py`、`test_diagnose_four_way.py`、`test_shield_fix.py`、`test_task_dispatch.py`、`test_green_commit.py`、`test_island_gate_1.py`）——这些 unit/per-AC 文件均未在 v0.5 测试树中创建。Shield 实际将跨模块接口合同断言整合进少数函数：`test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted`（覆盖 PLANNING/ISLAND_GATE_1/PRISM_PLAN/TASK_DISPATCH 相位）、`test_execution_gates.py::test_rgr_phase_events_and_audit_evidence`（覆盖 RED/RED_GATE/RED_CHECKPOINT/PRISM_RED/GREEN/GREEN_GATE/TASK_REVIEW/PRISM_FINAL/TASK_DONE 相位）、`test_execution_gates.py::test_diagnose_and_shield_fix_public_routes`（覆盖 DIAGNOSE/SHIELD_FIX 路由）、`test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable`（覆盖 GREEN_COMMIT/REFACTOR lineage + R/G ref）、`test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events`（覆盖 GREEN_GATE/REFACTOR_GATE 质量门禁分层）、`test_worktree_contract.py::test_three_worktree_composition_and_cleanup`（覆盖 worktree 组合）。下表测试列已更新指向 Shield 实际写入的函数。
 
 | 转移 | 内容摘要 | 层 | 测试 |
 |:---|:---|:---|:---|
-| SM-01.1 | M-TEST EXIT -> stage.entered(M-IMPL) -> BASELINE | unit + e2e | `[Devon foundation task]` test_machine_m_impl.py::test_enter_m_impl, test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl |
-| SM-01.2 | BASELINE -> PLANNING：baseline current | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_baseline_to_planning, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
-| SM-01.3 | BASELINE -> NEEDS_ATTENTION：缺失/stale/冲突 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_baseline_to_needs_attention, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
-| SM-01.4 | NEEDS_ATTENTION -> BASELINE：已 reconcile | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_needs_attention_to_baseline, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
-| SM-01.5 | NEEDS_ATTENTION -> stage.rolled_back：rolled_back | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_needs_attention_to_rolled_back, test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
-| SM-01.6 | PLANNING -> ISLAND_GATE_1：validate pass | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_planning_to_island_gate_1, test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event |
-| SM-01.7 | PLANNING -> PLANNING：validate fail，重派 Archer（<=3） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_planning_validate_fail_redispatch, test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli |
-| SM-01.8 | ISLAND_GATE_1 -> PRISM_PLAN：闭合 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_1_to_prism_plan, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.9 | ISLAND_GATE_1 -> PLANNING：verdict.failed(island) | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_1_to_planning, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.10 | PRISM_PLAN -> TASK_DISPATCH：prism.verdict(pass) | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_to_task_dispatch, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.11 | PRISM_PLAN -> PLANNING：revise -> Archer | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_revise_to_planning, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.12 | PRISM_PLAN -> stage.rolled_back：设计缺口 -> M-DESIGN | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_design_gap, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.13 | PRISM_PLAN -> stage.rolled_back：需求缺口 -> M-SPEC/M-ACC（Human 确认） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_plan_requirement_gap, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.14 | TASK_DISPATCH -> RED：task.started（DAG ready task + writelock + manifest） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_dispatch_to_red, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.15 | RED -> RED_GATE：Devon outcome（test-only diff） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_red_to_red_gate, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.16 | RED_GATE -> RED_CHECKPOINT：合法 Red | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_red_gate_to_checkpoint, test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens |
-| SM-01.17 | RED_GATE -> RED：非法 Red，重派 Devon | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_red_gate_to_red, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.18 | RED_CHECKPOINT -> PRISM_RED：red.checkpointed | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_red_checkpoint_to_prism_red, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.19 | PRISM_RED -> GREEN：prism.verdict(pass) 绑定 R | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_red_to_green, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.20 | PRISM_RED -> RED：revise -> 新 attempt | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_red_revise_to_red, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.21 | GREEN -> GREEN_GATE：Devon outcome（从 R tree 恢复，最小实现） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_to_green_gate, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.22 | GREEN_GATE -> GREEN_COMMIT：全过 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_gate_to_commit, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.23 | GREEN_GATE -> GREEN：实现缺陷，重派 Devon | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_gate_to_green, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.24 | GREEN_GATE -> DIAGNOSE：int 失败归因不明 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_gate_to_diagnose, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.25 | DIAGNOSE -> GREEN：实现缺陷 -> Devon | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_diagnose_to_green, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.26 | DIAGNOSE -> SHIELD_FIX：测试缺陷 -> Shield | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_diagnose_to_shield_fix, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.27 | DIAGNOSE -> stage.rolled_back：接口/架构不足 -> M-DESIGN | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_diagnose_stub_gap, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.28 | DIAGNOSE -> stage.rolled_back：AC/Spec 缺口 -> M-ACC/M-SPEC（Human 确认） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_diagnose_ac_spec_gap, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.29 | SHIELD_FIX -> GREEN_GATE：重跑受影响测试 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_shield_fix_to_green_gate, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.30 | GREEN_COMMIT -> REFACTOR：green.committed（G commit, parent=B, trailers） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_green_commit_to_refactor, test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |
-| SM-01.31 | REFACTOR -> REFACTOR_GATE：Devon outcome（可 no_change） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_refactor_to_gate, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.32 | REFACTOR_GATE -> TASK_REVIEW：通过（committed \| no_change） | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_refactor_gate_to_review, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.33 | REFACTOR_GATE -> REFACTOR：失败，重派 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_refactor_gate_to_refactor, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.34 | REFACTOR_GATE -> stage.rolled_back：动 public interface -> upstream | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_refactor_gate_rollback, test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
-| SM-01.35 | TASK_REVIEW -> PRISM_FINAL：校验通过 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_review_to_prism_final, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.36 | TASK_REVIEW -> GREEN：budget/scope fail -> Devon | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_review_to_green, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.37 | PRISM_FINAL -> TASK_DONE：prism.verdict(pass) | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_final_to_task_done, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.38 | PRISM_FINAL -> GREEN：revise（实现）-> Devon | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_final_revise_impl, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.39 | PRISM_FINAL -> RED：revise（Red 测试）-> 新 lineage | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_prism_final_revise_red, test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
-| SM-01.40 | TASK_DONE -> TASK_DISPATCH：task.completed，还有 ready task | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_done_to_dispatch, test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
-| SM-01.41 | TASK_DONE -> ISLAND_GATE_2：全部 task 完成 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_task_done_to_island_gate_2, test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites |
+|SM-01.1|M-TESTEXIT->stage.entered(M-IMPL)->BASELINE|e2e| test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl |
+|SM-01.2|BASELINE->PLANNING：baselinecurrent|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
+|SM-01.3|BASELINE->NEEDS_ATTENTION：缺失/stale/冲突|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
+|SM-01.4|NEEDS_ATTENTION->BASELINE：已reconcile|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
+|SM-01.5|NEEDS_ATTENTION->stage.rolled_back：rolled_back|integration| test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics |
+|SM-01.6|PLANNING->ISLAND_GATE_1：validatepass|integration\| test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event |
+|SM-01.7|PLANNING->PLANNING：validatefail，重派Archer（<=3）|integration| test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli |
+|SM-01.8|ISLAND_GATE_1->PRISM_PLAN：闭合|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.9|ISLAND_GATE_1->PLANNING：verdict.failed(island)|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.10|PRISM_PLAN->TASK_DISPATCH：prism.verdict(pass)|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.11|PRISM_PLAN->PLANNING：revise->Archer|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.12|PRISM_PLAN->stage.rolled_back：设计缺口->M-DESIGN|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.13|PRISM_PLAN->stage.rolled_back：需求缺口->M-SPEC/M-ACC（Human确认）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.14|TASK_DISPATCH->RED：task.started（DAGreadytask+writelock+manifest）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.15|RED->RED_GATE：Devonoutcome（test-onlydiff）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.16|RED_GATE->RED_CHECKPOINT：合法Red|integration| test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens |
+|SM-01.17|RED_GATE->RED：非法Red，重派Devon|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.18|RED_CHECKPOINT->PRISM_RED：red.checkpointed|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.19|PRISM_RED->GREEN：prism.verdict(pass)绑定R|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.20|PRISM_RED->RED：revise->新attempt|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.21|GREEN->GREEN_GATE：Devonoutcome（从Rtree恢复，最小实现）|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.22|GREEN_GATE->GREEN_COMMIT：全过|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.23|GREEN_GATE->GREEN：实现缺陷，重派Devon|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.24|GREEN_GATE->DIAGNOSE：int失败归因不明|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.25|DIAGNOSE->GREEN：实现缺陷->Devon|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.26|DIAGNOSE->SHIELD_FIX：测试缺陷->Shield|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.27|DIAGNOSE->stage.rolled_back：接口/架构不足->M-DESIGN|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.28|DIAGNOSE->stage.rolled_back：AC/Spec缺口->M-ACC/M-SPEC（Human确认）|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.29|SHIELD_FIX->GREEN_GATE：重跑受影响测试|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.30|GREEN_COMMIT->REFACTOR：green.committed（Gcommit,parent=B,trailers）|integration| test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable |
+|SM-01.31|REFACTOR->REFACTOR_GATE：Devonoutcome（可no_change）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.32|REFACTOR_GATE->TASK_REVIEW：通过（committed\|no_change）|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.33|REFACTOR_GATE->REFACTOR：失败，重派|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.34|REFACTOR_GATE->stage.rolled_back：动publicinterface->upstream|integration| test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events |
+|SM-01.35|TASK_REVIEW->PRISM_FINAL：校验通过|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.36|TASK_REVIEW->GREEN：budget/scopefail->Devon|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.37|PRISM_FINAL->TASK_DONE：prism.verdict(pass)|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.38|PRISM_FINAL->GREEN：revise（实现）->Devon|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.39|PRISM_FINAL->RED：revise（Red测试）->新lineage|integration| test_execution_gates.py::test_rgr_phase_events_and_audit_evidence |
+|SM-01.40|TASK_DONE->TASK_DISPATCH：task.completed，还有readytask|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |
+|SM-01.41|TASK_DONE->ISLAND_GATE_2：全部task完成|integration\| test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites |
 | SM-01.42 | ISLAND_GATE_2 -> stage.exited(M-IMPL) -> run.completed(boundary)：通过 | integration + e2e | test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites, test_m_impl_journey.py::test_boundary_after_m_impl |
-| SM-01.43 | ISLAND_GATE_2 -> DIAGNOSE：全量执行有失败 | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_2_to_diagnose, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
-| SM-01.44 | ISLAND_GATE_2 -> PLANNING：verdict.failed(island) | unit + integration | `[Devon foundation task]` test_machine_m_impl.py::test_island_gate_2_to_planning, test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.43|ISLAND_GATE_2->DIAGNOSE：全量执行有失败|integration\| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
+|SM-01.44|ISLAND_GATE_2->PLANNING：verdict.failed(island)|integration\| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |
 | 休眠回放 | M-IMPL 各子状态休眠后事件回放恢复 | integration | test_crash_recovery.py::test_replay_does_not_duplicate_completed_task_evidence |
 
 ---

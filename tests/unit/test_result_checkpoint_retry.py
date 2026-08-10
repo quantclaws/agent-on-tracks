@@ -7,8 +7,11 @@ from tracks.kernel import decide, project
 
 
 @pytest.mark.parametrize(
-    ("stage", "substate", "role", "setup"),
+    ("stage", "substate", "role", "setup", "check"),
     [
+        # Author DRAFT substates have requires_diff=False, so no_diff can
+        # never fire; use "schema" (a check that CAN fire for DRAFT via
+        # _check_templates) instead.
         (
             "M-STORY",
             "DRAFT",
@@ -16,9 +19,10 @@ from tracks.kernel import decide, project
             [
                 ("human.triage", {"decision": "go"}),
             ],
+            "schema",
         ),
-        ("M-SPEC", "DRAFT", "sage", []),
-        ("M-ACC", "DRAFT", "sage", []),
+        ("M-SPEC", "DRAFT", "sage", [], "schema"),
+        ("M-ACC", "DRAFT", "sage", [], "schema"),
         (
             "M-STORY",
             "SAGE_REVIEW",
@@ -26,6 +30,7 @@ from tracks.kernel import decide, project
             [
                 ("story.committed", {"final": False}),
             ],
+            "no_diff",
         ),
         (
             "M-SPEC",
@@ -34,6 +39,7 @@ from tracks.kernel import decide, project
             [
                 ("spec.committed", {"final": False}),
             ],
+            "no_diff",
         ),
         (
             "M-ACC",
@@ -42,8 +48,12 @@ from tracks.kernel import decide, project
             [
                 ("acceptance.committed", {"final": False}),
             ],
+            "no_diff",
         ),
-        ("M-TEST", "WRITE", "shield", []),
+        # M-TEST/WRITE is an author substate with requires_diff=True; in v0.5
+        # no_diff routes through no_diff.detected peer review and surfaces as
+        # no_diff_justified (post-review rejection), not direct no_diff.
+        ("M-TEST", "WRITE", "shield", [], "no_diff_justified"),
         (
             "M-TEST",
             "PRISM_REVIEW",
@@ -51,11 +61,12 @@ from tracks.kernel import decide, project
             [
                 ("test.collected", {"status": "passed"}),
             ],
+            "no_diff",
         ),
         # Item 8: M-DESIGN author (DRAFT) and reviewer (PRISM_REVIEW).
         # PRISM_REVIEW requires 3 design.committed events (one per doc)
         # before the state enters PRISM_REVIEW (the review substate).
-        ("M-DESIGN", "DRAFT", "archer", []),
+        ("M-DESIGN", "DRAFT", "archer", [], "schema"),
         (
             "M-DESIGN",
             "PRISM_REVIEW",
@@ -74,10 +85,12 @@ from tracks.kernel import decide, project
                     {"doc": "test-plan.md", "commit_sha": "sha-a", "final": False},
                 ),
             ],
+            "no_diff",
         ),
     ],
 )
-def test_checkpoint_validation_failure_retries_only_current_actor(stage, substate, role, setup):
+def test_checkpoint_validation_failure_retries_only_current_actor(
+        stage, substate, role, setup, check):
     checkpoint = {
         "stage": stage,
         "substate": substate,
@@ -109,8 +122,8 @@ def test_checkpoint_validation_failure_retries_only_current_actor(stage, substat
         (
             "verdict.failed",
             {
-                "check": "no_diff",
-                "reason": "result requires a diff",
+                "check": check,
+                "reason": "validation failure",
                 "attempt": 1,
             },
         ),
@@ -121,7 +134,7 @@ def test_checkpoint_validation_failure_retries_only_current_actor(stage, substat
 
     assert state.stage == stage and state.substate == substate
     assert state.current_attempt == 1
-    assert state.last_failure["check"] == "no_diff"
+    assert state.last_failure["check"] == check
     assert command.kind == "dispatch_agent"
     assert command.params["role"] == role
     assert command.params["attempt"] == 2

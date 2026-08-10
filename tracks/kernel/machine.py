@@ -9,6 +9,12 @@ v0.1 drives the happy path M-START → M-STORY → M-SPEC to EXIT. Reject
 (no_go/park) and rollback teardown emit their leading command; RESPOND
 (review comments) is scaffolded but not exercised by the happy path.
 """
+
+# pylint: disable=too-many-lines
+# v0.5: machine.py serves as the single-file state machine with all reducers
+# and decide() logic. Splitting would add import complexity without reducing
+# cognitive load, as all reducers operate on the same State dataclass.
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -486,9 +492,26 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         if p["verdict"] == "pass":
             s.substate = "RED_CHECK"
             return
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)
+        # REVISE: route by defect_classification (default test_defect)
+        dc = p.get("defect_classification", "test_defect")
+        if dc == "test_defect":
+            s.substate = "WRITE"
+            _reset_doc(s)
+            _consume_attempt(s)
+        elif dc == "test_plan_defect":
+            # Rollback to M-DESIGN (like stub_gap in DIAGNOSE)
+            s.substate = "DIAGNOSE"
+            s.diagnose_classification = "stub_gap"
+        elif dc == "acceptance_defect":
+            # awaiting Human, then rollback M-ACC
+            s.status = "awaiting_human"
+            s.awaiting = "rollback"
+            s.return_target = "M-ACC"
+        elif dc == "spec_defect":
+            # awaiting Human, then rollback M-SPEC
+            s.status = "awaiting_human"
+            s.awaiting = "rollback"
+            s.return_target = "M-SPEC"
         return
     # M-DESIGN has no human review gate (BS-05 / flow.md §8.3): pass goes
     # straight to EXIT; revise re-dispatches Archer via RESPOND.

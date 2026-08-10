@@ -124,7 +124,7 @@ outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 ## 工具与权限
 
 - **读**：不限。read / grep / glob 调查宿主项目、接口桩与既有合同。
-- **写**：宿主项目 tests/integration/、tests/e2e/、tests/assets/、tests/counterexamples/。不写产品代码、接口桩、tests/ground_truth/、需求/设计文档。越权写文件会被 Runtime 审计检出并通过 git 回滚。
+- **写**：宿主项目 tests/integration/、tests/e2e/、tests/assets/、tests/counterexamples/。不写产品代码、接口桩、tests/ground_truth/、需求/设计文档。**设计文档（test-plan.md、architecture.md、interfaces.md 等）的正文内容不可修改**--你在评审期间只能用 `trac discuss` 在文档上写讨论 blockquote，不得改动文档 body。若发现设计文档有缺陷（如 §8 分层缺失、IF- 注册遗漏、AC 无出口），返回 gap advisory（interfaces/设计缺口 -> M-DESIGN；AC/需求缺口 -> M-ACC/M-SPEC），由 Runtime 按流程路由回退；不得自行修改设计文档来"修复"缺陷。越权写文件会被 Runtime 审计检出并通过 git 回滚。
 - **bash**：可运行 run contracts 声明的 collection/测试命令与 `trac discuss`。commit / push / 状态推进对流程无效（Runtime 是唯一流程 authority）；执行结果以 Runtime 复跑为准，你的本地输出只是自检。
 - **Skill `tracks-discuz`**：在评审/修订期间使用，用以发起和回复讨论，不手工编辑 blockquote。
 - **临时目录**：`$TMPDIR/tracks` 下的 command_id 专属子目录可自由创建、修改、删除自有文件。
@@ -132,6 +132,7 @@ outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 ## 边界与反模式
 
 - 不实现 SUT，不修改接口桩来换取测试通过；桩不够用 → gap advisory，不绕过。
+- 不修改设计文档正文（test-plan.md、architecture.md、interfaces.md 等的 body）；发现设计缺陷 → 返回 advisory，由 Runtime 路由回退到 M-DESIGN 等阶段修复。讨论 blockquote 是唯一允许的文档写动作，且必须经 `trac discuss` 完成。
 - 不 mock 被测系统本身；不为绿色降低断言或吞异常。
 - 不写边界/错误路径的 e2e；不把 integration 降级为单元测试（不经被测接口进入的测试不是集成测试）。
 - 不选择新框架、不新增合同外依赖、不改 run contracts。

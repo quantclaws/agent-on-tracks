@@ -135,9 +135,10 @@ Devon 未引用具体合同条款的泛化争议应驳回；若合同确实未�
 ### M-TEST 评审
 
 1. 加载 assignment 指定的判据包（`tracks-prism-test` skill），按其语义判据逐项检查 Shield 编写的测试合约。
-2. 逐项符合性检查：忠于 AC / 断言落公开出口 / counterexample 绑定 / 无伪测试 / 合法 Red（五条判据的详细语义在 skill 中，此处不重复）。
-3. 反证（anti-slop）：验证测试对错误实现会 FAIL（counterexample killed），确认非空洞性。
-4. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 RED_CHECK；`REVISE`（最多三个 blocker + advisory）-> 经 `trac discuss` 在 test-plan.md 内锚定线程，回 Shield 重派。
+2. **只评审 integration/e2e 层**：test-plan §8 只规划 integration/e2e 测试层，Prism 的 M-TEST 评审也只验证这两层的 AC 覆盖与测试质量。Unit test 是 Devon 在 M-IMPL R-G-R 中的普遍义务，由覆盖率门禁（test-plan §5.1）保证，不在 M-TEST 评审范围内。
+3. 逐项符合性检查：忠于 AC / 断言落公开出口 / counterexample 绑定 / 无伪测试 / 合法 Red（五条判据的详细语义在 skill 中，此处不重复）。
+4. 反证（anti-slop）：验证测试对错误实现会 FAIL（counterexample killed），确认非空洞性。
+5. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 RED_CHECK；`REVISE`（最多三个 blocker + advisory）-> 经 `trac discuss` 在 test-plan.md 内锚定线程。REVISE 时必须为每个 finding 标注 `defect_classification`（见裁决格式），Runtime 依此路由回退。
 
 REVISE 时，对每个阻塞问题用 `trac discuss start --file test-plan.md --anchor-line <N> --speaker Prism "<finding>"` 在 test-plan.md 内锚定发起（每轮最多三个 blocker）；finding 文本必须包含对应测试工件路径与行号（如 `tests/integration/test_foo.py:42`）及关联 AC（如 `AC-FR0010-01`），使 Shield 能精确定位修订点；Shield 回应后由你（发起人）`trac discuss set-status --file test-plan.md --thread-id <id> --token <t> --status resolved --operator Prism`；退出前 `trac discuss query --file test-plan.md --check-ready` 确认 `is_ready=true`。不得向 `.py` 等可执行测试文件插入 blockquote——discuss 线程只锚定在 Markdown 文档（test-plan.md）内。
 
@@ -156,6 +157,17 @@ REVISE 时，对每个阻塞问题用 `trac discuss start --file test-plan.md --
 **PASS**：仅当完整设计/实现对同一 revision 满足所有闭包要求，无需要 Devon、Shield 或 Human 临场选择的技术缺口。
 
 **REVISE**：finding 必须含稳定 ID、severity、artifact、anchor、关联 FR/AC、问题描述、预期修订。最多三个 blocker，其余 advisory。
+
+M-TEST 评审的 REVISE 还必须为每个 finding 标注 `defect_classification` 字段，Runtime 依此路由回退目标阶段：
+
+| `defect_classification` | 含义 | Runtime 路由 |
+|------------------------|------|-------------|
+| `test_defect`（默认） | Shield 测试代码本身有缺陷（断言空洞、未落公开出口、counterexample survived、非法 Red 等） | Shield WRITE 重派 |
+| `test_plan_defect` | test-plan 设计有缺陷（§8 分层缺失、IF- 注册遗漏、AC 无 integration/e2e 出口等设计产物问题） | 回退到 M-DESIGN，Archer 修复 test-plan |
+| `acceptance_defect` | AC 有缺口（可观察出口未定义、AC 语义不完整） | 回退到 M-ACC（需 Human 确认） |
+| `spec_defect` | Spec 有缺口（FR/NFR 未覆盖该行为） | 回退到 M-SPEC（需 Human 确认） |
+
+未标注时 Runtime 默认按 `test_defect` 路由（向后兼容）。
 
 ## 质量标准
 

@@ -115,7 +115,9 @@ Prism 发起的线程由 Prism 设 resolved，Archer 不代为操作。三份文
 
 以 `.opencode/templates/test-plan.md` 为起点，根据本项目特点填充，不删除模板中的必填章节。
 
-先建立当前 Acceptance 的语义覆盖清单：每个 AC 都必须记录可观察接口、必需测试层、CI gate/job 和分配理由。对面向人的 Happy Path，还至少记录 surface/context、动作、输入、可见结果、可用条件和反馈出口。
+先建立当前 Acceptance 的语义覆盖清单：每个 AC 都必须记录可观察接口、CI gate/job 和分配理由。对面向人的 Happy Path，还至少记录 surface/context、动作、输入、可见结果、可用条件和反馈出口。
+
+**§8 AC 覆盖表的分层规划**：§8 只规划 **integration 和 e2e** 两个测试层（Shield 的交付范围）。`layer` 列取值为 `integration`、`e2e` 或 `integration + e2e`。**不要在 §8 中规划 unit test**——unit test 是 Devon 对每个已实现 FR/NFR 的普遍义务，由覆盖率门禁（test-plan §5.1）保证，不需要 Archer 预设 test function 名或文件名。如果某条 AC 没有可观察的 integration/e2e 出口，说明设计有缺陷（interfaces.md 缺出口或 AC 本身需要修订），不得在 §8 中用 unit-only 行跳过。
 
 **真实外部依赖的三层验证机制（D-18）**：判据—spec 中出现宿主自身技术栈之外的外部依赖（外部服务 API、模型 provider、子进程可执行文件、真实网络/凭据握手，或任何只能在真实环境验证的行为）时，必须产出三层机制并填入 test-plan §6。交付 test-plan 时必跑 checklist：扫描 spec 外部依赖 -> 存在则三层机制必须已设计。
 
@@ -180,7 +182,7 @@ architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主�
 
 - 三者闭合：每个 AC → interfaces 出口 → test-plan 覆盖。
 - 交互闭合：每个面向人的 AC → 交互接口出口 → 交互测试覆盖。
-- 测试层分配显式合同：对每个 AC 记录可观察接口、必需测试层和理由。跨模块行为包含 integration；面向用户的主成功旅程包含 e2e。
+- 测试层分配显式合同：对每个 AC 记录可观察接口和 integration/e2e 层归属和理由。跨模块行为包含 integration；面向用户的主成功旅程包含 e2e。Unit test 不在 §8 规划（Devon 的普遍义务，由覆盖率门禁保证）。
 - 完成时必须能回答：Shield 能否据此准备环境、数据和测试用例，Devon 能否据此直接实现；任一答案为否就返回可定位 gap。
 - architecture.md 包含：模块边界、依赖关系、技术选型、关键取舍。
 - interfaces.md 使用表格或列表；禁止用散文方式混合契约。
@@ -191,7 +193,8 @@ architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主�
 outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 
 - 测试策略是否覆盖了项目的主要风险？
-- 每条 AC 是否都能追溯到测试层与 interfaces 出口？
+- 每条 AC 是否都能追溯到 integration/e2e 测试层与 interfaces 出口？
+- §8 是否只规划了 integration/e2e 层（无 unit-only 行）？
 - 反模式 CI 门禁是否已启用（或显式豁免）？
 - 测试数据来源是否可复现（若存在数据依赖）？
 - tests/ 目录布局是否已文档化（推荐布局或项目定制说明）？

@@ -647,3 +647,67 @@ def test_prism_revise_pipeline_transitions_to_write():
     assert s.active_result is None
     assert s.substate == "WRITE"
     assert s.current_attempt == 1
+
+
+# -- PRISM_REVIEW defect_classification routing ----------------------------------
+
+def _prism_revise_with_dc(dc):
+    """prism.verdict(revise) with the given defect_classification."""
+    payload = {"verdict": "revise", "criteria_pack": dict(_CRITERIA_PACK)}
+    if dc is not None:
+        payload["defect_classification"] = dc
+    return ("prism.verdict", payload)
+
+
+def test_prism_revise_test_plan_defect_to_design():
+    """prism.verdict(revise, test_plan_defect) -> DIAGNOSE with stub_gap
+    classification; decide() -> rollback_stage(M-DESIGN)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc("test_plan_defect"))
+    assert s.substate == "DIAGNOSE"
+    assert s.diagnose_classification == "stub_gap"
+    cmd = decide(s)
+    assert cmd.kind == "rollback_stage"
+    assert cmd.params["to_stage"] == "M-DESIGN"
+
+
+def test_prism_revise_acceptance_defect_to_acc():
+    """prism.verdict(revise, acceptance_defect) -> awaiting_human, rollback
+    M-ACC."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc("acceptance_defect"))
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "rollback"
+    assert s.return_target == "M-ACC"
+
+
+def test_prism_revise_spec_defect_to_spec():
+    """prism.verdict(revise, spec_defect) -> awaiting_human, rollback M-SPEC."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc("spec_defect"))
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "rollback"
+    assert s.return_target == "M-SPEC"
+
+
+def test_prism_revise_test_defect_stays_write():
+    """Backward compat: prism.verdict(revise) with no defect_classification
+    -> WRITE, current_attempt incremented (current behavior)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc(None))
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 1
+
+
+def test_prism_revise_test_defect_explicit():
+    """prism.verdict(revise, test_defect) -> WRITE (explicit test_defect works
+    same as default)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc("test_defect"))
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 1

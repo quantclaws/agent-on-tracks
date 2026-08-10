@@ -83,7 +83,7 @@ This test plan only declares test methods that are **observable from outside the
 
 ### 1.5. Test Division of Labor
 
-- **Unit tests**: Written by the **implementer** (Devon, committed alongside impl in R-G-R)
+- **Unit tests**: Written by the **implementer** (Devon, committed alongside impl in R-G-R). Unit tests are Devon's universal obligation for every implemented FR/NFR, enforced by the coverage gate (§5.1). They are **not** planned in §8 AC Coverage — Archer does not prescribe unit test functions or files.
 - **Integration tests**: Written by the **test lead** (Shield) - covers module interface contracts defined in interfaces.md
 - **E2E tests**: Written by the **test lead** (Shield) - covers user-facing happy paths only
 - **Ground Truth (§3)**: Provided by an **independent developer** not involved in the implementation under test, or a **third-party library**
@@ -329,10 +329,15 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   - Fixed header `AC id | layer | test | IF` (columns located by header cell;
     order is fixed: AC | layer | test | IF). The ZH canonical header
     `| AC | 层 | 测试 | IF- 归属 |` is also accepted (legacy v0.4).
-  - Every acceptance AC (acceptance.md) must have a row here; a unit-only row
-    is allowed and is NOT a Shield task.
-  - `layer` ∈ {unit, integration, e2e}; use `+`/`、`/`,` to list several.
-  - An integration/e2e row must carry one or more registered IF- identifiers
+  - Every acceptance AC (acceptance.md) must have a row here. Only ACs whose
+    `layer` is `integration` or `e2e` are Shield tasks; a row with no
+    integration/e2e layer is an error (if an AC has no observable outlet, the
+    design must fix interfaces.md or the AC must be revised, not silently
+    omitted).
+  - `layer` ∈ {integration, e2e}; use `+`/`、`/`,` to list both if an AC is
+    covered at both layers. Unit tests are NOT planned here — they are Devon's
+    universal obligation in R-G-R, enforced by the coverage gate (§5.1).
+  - Every row must carry one or more registered IF- identifiers
     (interfaces.md §5 registry, the FR-0140 green condition); a missing or
     unregistered IF- fails the M-DESIGN EXIT gate closed.
   - `test` is a human-readable test function/file name suggestion only; the
@@ -340,7 +345,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   Example row (replace with real coverage; do NOT keep example AC/IF ids):
   | AC id | layer | test | IF |
   |---|---|---|---|
-  | AC-FR0000-01（示例） | unit + integration | test_ac_fr0000_01 | IF-MTEST-001 |
+  | AC-FR0000-01（示例） | integration | test_ac_fr0000_01 | IF-MTEST-001 |
+  | AC-FR0000-02（示例） | integration + e2e | test_ac_fr0000_02_happy | IF-MTEST-001 |
 -->
 
 | AC id | layer | test | IF |
