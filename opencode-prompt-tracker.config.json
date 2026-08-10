@@ -1,0 +1,9 @@
+{
+  "outputPath": ".tracks/runtime/prompts",
+  "filePrefix": "opencode-prompt-",
+  "billing": {
+    "enabled": false,
+    "models": []
+  },
+  "saveAllLogs": false
+}

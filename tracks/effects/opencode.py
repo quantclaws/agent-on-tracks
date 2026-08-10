@@ -50,6 +50,9 @@ _ENV_SECRET_VALUE = re.compile(
 
 _OPENCODE_PREFIX = ".opencode/"
 _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
+# Lock files created by tracks/discuss/cli.py _atomic_write (flock-based);
+# these are transient synchronization artifacts, not scaffold writes.
+_LOCK_SUFFIX = ".lock"
 # FR-0120 Shield write scope (RP-01): the four test-asset directories. Writes
 # outside these (product code, interface stubs, design docs, ground truth) are
 # over-reach and rolled back.
@@ -86,7 +89,8 @@ class OpencodeError(Exception):
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
 
-    def __init__(self, repo: Path, version: str, model: str | None = None):
+    def __init__(self, repo: Path, version: str, model: str | None = None,
+                 debug: bool = False):
         self.repo = Path(repo)
         self.version = version
         # Model resolution is two-layer per dispatch (spec §3.1, ARCH §4a):
@@ -94,6 +98,7 @@ class OpencodeBackend:
         # (2) else no --model flag, so opencode resolves its own configured
         #     default (agent/project config, never hardcoded by tracks).
         self.model = model
+        self.debug = debug
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
 
     # -- AgentBackend -------------------------------------------------------
@@ -480,6 +485,7 @@ class OpencodeBackend:
             path for path in new_files
             if path not in docset
             and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
+            and not path.endswith(_LOCK_SUFFIX)
             and path not in declared
         )
         if not offending:
@@ -721,18 +727,35 @@ class OpencodeBackend:
         model = self._resolve_model(name)
         if model:
             cmd.extend(["--model", model])
+        if self.debug:
+            cmd.extend(["--print-logs", "--log-level", "DEBUG"])
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
+        # Debug mode: redirect stderr (opencode logs via --print-logs) to a
+        # log file under .tracks/runtime/log/. stdout (JSON events) is still
+        # captured via PIPE for _check_json; the log file captures stderr in
+        # real-time for live monitoring (tail -f). After the process exits,
+        # we read the file back so _check_json/_looks_provider_error still
+        # have the stderr string for failure classification.
+        log_path = None
+        log_fh = None
+        if self.debug:
+            log_path = self._debug_log_path(name)
+            # File handle lifetime spans Popen+communicate; cannot use a context
+            # manager here because subprocess writes to it asynchronously.
+            log_fh = open(log_path, "w", buffering=1)  # line-buffered  # noqa: SIM115
         try:
             proc = subprocess.Popen(
                 cmd,
                 cwd=self.repo,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=log_fh if log_fh else subprocess.PIPE,
                 text=True,
                 start_new_session=True,
             )
         except FileNotFoundError as err:
+            if log_fh:
+                log_fh.close()
             raise OpencodeError("opencode_missing",
                                 "opencode executable not found") from err
         # No production timeout: the Runtime Agent runs to completion and is
@@ -744,13 +767,30 @@ class OpencodeBackend:
         # the child group, reap it, then re-raise so the operator stays in
         # control. This is operator cancellation, not a Runtime kill policy.
         try:
-            stdout, stderr = proc.communicate(input=console_input)
+            if self.debug:
+                stdout, _ = proc.communicate(input=console_input)
+            else:
+                stdout, stderr = proc.communicate(input=console_input)
         except KeyboardInterrupt:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
                 proc.communicate(timeout=5)
+            if log_fh:
+                log_fh.close()
             raise
+        if log_fh:
+            log_fh.close()
+            stderr = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+    def _debug_log_path(self, name: str) -> Path:
+        """Debug log file: .tracks/runtime/log/<agent>-<timestamp>.log"""
+        from datetime import datetime, timezone
+        home = paths.tracks_home(self.repo)
+        log_dir = home / "runtime" / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        return log_dir / f"{name.lower()}-{ts}.log"
 
     @staticmethod
     def _kill_group(pid: int) -> None:

@@ -98,7 +98,7 @@ def writer_lock(home: Path):
         lock.unlink(missing_ok=True)
 
 
-RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\n"
+RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
 
 

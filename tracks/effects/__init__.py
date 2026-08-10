@@ -11,6 +11,10 @@ backend choice or any test/simulate mode.
   model; empty/unset lets opencode resolve its own configured model (spec §3.1).
   The Runtime Agent runs to completion with no production timeout; operator
   cancellation (Ctrl-C) is honored via process-group kill (ARCH §7).
+- ``TRAC_DEBUG`` (non-empty) enables debug logging for opencode subprocesses:
+  ``--print-logs --log-level DEBUG`` flags are added to the ``opencode run``
+  command, and stderr (opencode logs) is tee'd to
+  ``.tracks/runtime/log/<agent>-<timestamp>.log``. Default off (production).
 - conftest forces ``TRAC_AGENT_BACKEND=fake`` for the deterministic E2E channel;
   the live opencode channel opts in explicitly (SPEC test-plan §6).
 """
@@ -35,5 +39,6 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
     if kind == "opencode":
         from tracks.effects.opencode import OpencodeBackend
         model = os.environ.get("TRAC_AGENT_MODEL", "").strip() or None
-        return OpencodeBackend(repo, version, model=model)
+        debug = bool(os.environ.get("TRAC_DEBUG", "").strip())
+        return OpencodeBackend(repo, version, model=model, debug=debug)
     raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")

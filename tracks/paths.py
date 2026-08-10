@@ -52,3 +52,13 @@ def blobs_dir(home: Path) -> Path:
 
 def lock_path(home: Path) -> Path:
     return runtime_dir(home) / "lock"
+
+
+def log_dir(home: Path) -> Path:
+    """Debug log directory for opencode subprocess output (TRAC_DEBUG)."""
+    return runtime_dir(home) / "log"
+
+
+def prompts_dir(home: Path) -> Path:
+    """Prompt tracker output directory (relocated from .opencode/prompts)."""
+    return runtime_dir(home) / "prompts"
