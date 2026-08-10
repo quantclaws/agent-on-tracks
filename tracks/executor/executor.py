@@ -222,9 +222,11 @@ class Executor(ResultCheckpointMixin):
 
         Prefers the persisted content-identity snapshot (new commands); falls
         back to the legacy path-set for backward compat with old WALs; finally
-        falls back to a fresh snapshot. Returns ``None`` outside M-TEST/WRITE.
-        """
+        falls back to a fresh snapshot. Returns ``None`` outside M-TEST/WRITE
+        (including v0.5 no_diff peer-review substates — no file attribution)."""
         if not (state.stage == "M-TEST" and substate == "WRITE"):
+            return None
+        if substate in ("NO_DIFF_EXPLAIN", "NO_DIFF_REVIEW"):
             return None
         if "pre_dirty_snapshot" in params:
             return params["pre_dirty_snapshot"]
@@ -381,6 +383,31 @@ class Executor(ResultCheckpointMixin):
 
     # -- per-kind handlers ---------------------------------------------------
 
+    def _handle_no_diff_outcome(self, substate, result, cmd, task_id, state):
+        """v0.5 no_diff peer review: emit explain/review events without
+        entering the ResultCheckpoint pipeline. Returns True if handled."""
+        if substate not in ("NO_DIFF_EXPLAIN", "NO_DIFF_REVIEW"):
+            return False
+        result_id = (state.active_result or {}).get("result_id")
+        if substate == "NO_DIFF_EXPLAIN":
+            if result.get("status") == "done":
+                self._emit("no_diff.explained",
+                           {"explanation": result.get("self_report", ""),
+                            "result_id": result_id},
+                           command_id=cmd.command_id, task_id=task_id)
+            else:
+                # Failed explanation: treat as a rejected review (revise).
+                self._emit("no_diff.reviewed",
+                           {"verdict": "revise", "result_id": result_id},
+                           command_id=cmd.command_id, task_id=task_id)
+        else:  # NO_DIFF_REVIEW
+            verdict = (result.get("verdict", "revise")
+                       if result.get("status") == "done" else "revise")
+            self._emit("no_diff.reviewed",
+                       {"verdict": verdict, "result_id": result_id},
+                       command_id=cmd.command_id, task_id=task_id)
+        return True
+
     def _do_dispatch_agent(self, cmd, state, task_id, reconcile):
         p = cmd.params
         role, substate, doc = p["role"], p["substate"], p.get("doc")
@@ -407,6 +434,11 @@ class Executor(ResultCheckpointMixin):
             role, substate, doc, doc_path, assignment=assignment
         )
         self._dispatch_log_end(p, result, time.monotonic() - t0)
+        # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
+        # do NOT enter the ResultCheckpoint pipeline. The explanation/review
+        # events drive the state machine directly.
+        if self._handle_no_diff_outcome(substate, result, cmd, task_id, state):
+            return
         # D-29 anti-self-report triple ③: M-TEST PRISM_REVIEW criteria-pack
         # mismatch -> verdict.failed, re-dispatch Prism (no prism.verdict).
         # Must be checked before emitting outcome.received so a mismatch

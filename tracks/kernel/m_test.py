@@ -142,7 +142,9 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         # Pipeline validation failures (template, discussion_diff, no_diff,
         # forbidden_diff, digest_drift, publish_error, etc.): reset the
         # appropriate dispatch flag and consume an attempt to prevent
-        # infinite re-dispatch loops.
+        # infinite re-dispatch loops. no_diff_justified (v0.5 no_diff peer
+        # review: reviewer rejected the no-diff explanation) is also routed
+        # here — it consumes an attempt like any other author failure.
         if s.substate == "PRISM_REVIEW":
             _reset_review(s)
         else:

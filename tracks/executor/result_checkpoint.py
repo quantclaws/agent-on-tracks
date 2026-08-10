@@ -491,19 +491,38 @@ class ResultCheckpointMixin:
 
     def _validate_diff_policy(self, cmd, artifacts, base_sha, attempt):
         """Enforce requires_diff (batch-level) and per-doc diff policy.
-        Returns True if a failure was emitted (caller should abort)."""
+        Returns True if a failure was emitted (caller should abort).
+
+        v0.5 no_diff peer review: when ``requires_diff`` fires on an author
+        result (``discussion_only=False``) with no diff, emit
+        ``no_diff.detected`` (entering explain->review) instead of
+        ``verdict.failed``. Reviewer results (``discussion_only=True``)
+        still fail hard — they must produce a canonical discussion diff."""
         requires_diff = cmd.params.get("requires_diff", False)
+        discussion_only = cmd.params.get("discussion_only", False)
         if requires_diff:
             any_diff = any(
                 self._has_artifact_diff(doc, base_sha)
                 for doc in artifacts)
             if not any_diff:
-                self._emit("verdict.failed",
-                           {"check": "no_diff",
-                            "reason": "verdict requires a diff but "
-                                      "none was produced in any artifact",
-                            "evidence": str(artifacts),
-                            "attempt": attempt},
+                if discussion_only:
+                    # Reviewer no_diff is a real failure (must produce a
+                    # canonical discussion diff).
+                    self._emit("verdict.failed",
+                               {"check": "no_diff",
+                                "reason": "verdict requires a diff but "
+                                          "none was produced in any artifact",
+                                "evidence": str(artifacts),
+                                "attempt": attempt},
+                               command_id=cmd.command_id)
+                    return True
+                # v0.5 no_diff peer review: enter explain->review instead of
+                # failing. active_result is preserved (reducer keeps it) so
+                # the pipeline can resume after the review passes.
+                self._emit("no_diff.detected",
+                           {"artifacts": artifacts, "base_sha": base_sha,
+                            "attempt": attempt,
+                            "result_id": cmd.params.get("result_id")},
                            command_id=cmd.command_id)
                 return True
         for doc in artifacts:
@@ -561,7 +580,7 @@ class ResultCheckpointMixin:
                         "attempt": attempt},
                        command_id=cmd.command_id)
             return "abort"
-        if requires_diff and not changes:
+        if requires_diff and not changes and not cmd.params.get("no_diff_approved", False):
             self._emit("verdict.failed",
                        {"check": "no_diff",
                         "reason": f"{source} verdict requires a diff "

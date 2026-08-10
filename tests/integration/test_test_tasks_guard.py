@@ -84,8 +84,10 @@ def test_stub_gap_failed_outcome_does_not_consume_shield_budget(tmp_path):
 
 
 def test_shield_no_diff_fails_and_never_publishes(tmp_path):
-    """Item 5: done/no-diff Shield output fails validation, retries, and
-    never publishes test.written / reaches COLLECT."""
+    """Item 5: done/no-diff Shield output enters the v0.5 no_diff peer review
+    (explain -> review). A reviewer revise (the default for a stub backend
+    that returns no verdict) consumes an attempt and re-dispatches Shield.
+    test.written / COLLECT are never published."""
     ex, store, run_id = _setup_m_test(tmp_path)
     ex.backend = _StubBackend(
         {"status": "done", "artifact_ref": "tests", "self_report": "wrote"}
@@ -96,18 +98,16 @@ def test_shield_no_diff_fails_and_never_publishes(tmp_path):
 
     state = store.state(run_id)
     assert not [e for e in store.events(run_id) if e.type == "test.written"]
-    assert state.substate == "WRITE"  # re-dispatch pending
-    no_diff = [
-        e
-        for e in store.events(run_id)
-        if e.type == "verdict.failed" and e.payload.get("check") == "no_diff"
-    ]
-    assert no_diff
+    # v0.5: no_diff.detected enters the explain->review flow instead of
+    # emitting verdict.failed(check=no_diff) directly.
+    detected = [e for e in store.events(run_id) if e.type == "no_diff.detected"]
+    assert detected
     evaluated = [e for e in store.events(run_id) if e.type == "result.validated"]
-    assert not evaluated  # validation failed -> no publish
-    cmd = decide(state)
-    assert cmd.kind == "dispatch_agent"
-    assert cmd.params["role"] == "shield"
+    assert not evaluated  # validation did not pass -> no publish
+    # The stub backend returns no verdict -> reviewer rejects -> revise ->
+    # routes through the M-TEST verdict.failed handler (no_diff_justified),
+    # re-dispatching Shield in WRITE.
+    assert state.substate == "WRITE"  # re-dispatch pending
 
     # Second + third no-diff cycles escalate (the <=3 budget, unchanged).
     for _ in range(2):

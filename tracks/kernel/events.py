@@ -55,6 +55,11 @@ EVENT_TYPES = (
     # v0.5 ResultCheckpoint pipeline (batch 2: M-DESIGN/M-TEST):
     # test.written is published after Shield WRITE checkpoint (WRITE -> COLLECT).
     "test.written",
+    # v0.5 no_diff peer review: when requires_diff fires on an author result
+    # with no workspace diff, enter explain->review before failing.
+    "no_diff.detected",
+    "no_diff.explained",
+    "no_diff.reviewed",
 )
 
 # interfaces §4 — v0.1 closed command set.

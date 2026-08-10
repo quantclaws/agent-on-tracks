@@ -111,6 +111,9 @@ class FakeBackend:
 
     def act(self, role: str, substate: str, doc: str | None,
             doc_path: Path | None, assignment: dict | None = None) -> dict:
+        no_diff = self._act_no_diff(role, substate)
+        if no_diff is not None:
+            return no_diff
         if substate == "TRIAGE":
             return {"status": "done", "artifact_ref": None,
                     "self_report": "explored raw requirement"}
@@ -124,18 +127,38 @@ class FakeBackend:
         # v0.5 ResultCheckpoint: non-pass verdicts must produce a diff
         # (discussion annotation) so the pipeline can checkpoint it.
         if verdict in ("revise", "comment"):
-            annotate_path = doc_path
-            if annotate_path is None and assignment and assignment.get("docs"):
-                annotate_path = self._design_vdir() / assignment["docs"][0]
-            if annotate_path and annotate_path.exists():
-                self._annotate_review(annotate_path, role, verdict)
-                result["diff_ref"] = "annotation"
+            self._maybe_annotate_review(doc_path, assignment, role, verdict,
+                                        result)
         # D-29 triple ②: M-TEST Prism echoes the criteria-pack identity.
         if role == "prism" and substate == "PRISM_REVIEW":
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result["criteria_pack"] = dict(assigned_pack)
         return result
+
+    def _act_no_diff(self, role: str, substate: str) -> dict | None:
+        """v0.5 no_diff peer review: canned outcomes for explain/review."""
+        if substate == "NO_DIFF_EXPLAIN":
+            return {"status": "done", "artifact_ref": None,
+                    "self_report": "work was already committed in a prior "
+                                   "commit; no new diff produced"}
+        if substate == "NO_DIFF_REVIEW":
+            verdict = self.token(role, "NO_DIFF_REVIEW", "pass")
+            return {"status": "done", "artifact_ref": None,
+                    "verdict": verdict,
+                    "self_report": f"no_diff review: {verdict}"}
+        return None
+
+    def _maybe_annotate_review(self, doc_path, assignment, role, verdict,
+                               result):
+        """Annotate the review doc in-place so non-pass verdicts produce a
+        diff for the ResultCheckpoint pipeline."""
+        annotate_path = doc_path
+        if annotate_path is None and assignment and assignment.get("docs"):
+            annotate_path = self._design_vdir() / assignment["docs"][0]
+        if annotate_path and annotate_path.exists():
+            self._annotate_review(annotate_path, role, verdict)
+            result["diff_ref"] = "annotation"
 
     def _act_draft(self, role: str, substate: str, doc: str | None,
                    doc_path: Path | None, assignment: dict | None = None) -> dict:

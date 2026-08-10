@@ -95,6 +95,10 @@ class State:
     # normal substate logic. Cleared by the domain event reducer (or
     # verdict.failed). None on old replays (backward compatible).
     active_result: dict | None = None
+    # v0.5 no_diff peer review: when requires_diff fires on an author result
+    # with no workspace diff, enter explain->review before failing.
+    no_diff_explanation: str | None = None
+    no_diff_reviewer_dispatched: bool = False
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -266,6 +270,13 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     if cmd.get("kind") != "dispatch_agent":
         if s.stage == "M-TEST" and cmd.get("kind") == "collect_tests":
             s.substate = "COLLECT"  # SM-01.3: WRITE -> COLLECT
+        return
+    # v0.5 no_diff peer review (checked before M-TEST so the right flag is set).
+    if s.substate == "NO_DIFF_REVIEW":
+        s.no_diff_reviewer_dispatched = True
+        return
+    if s.substate == "NO_DIFF_EXPLAIN":
+        s.doc_dispatched = True
         return
     if s.stage == "M-TEST":
         # SM-01.2: DISPATCH -> WRITE on the first Shield dispatch. Subsequent
@@ -696,6 +707,70 @@ def _on_result_checkpointed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result["created_commit"] = p.get("created_commit", False)
 
 
+# -- v0.5 no_diff peer review reducers --------------------------------------
+# requires_diff on an author result with no diff emits no_diff.detected.
+# Flow: NO_DIFF_EXPLAIN -> NO_DIFF_REVIEW -> (pass: resume pipeline) |
+# (revise: verdict.failed(no_diff_justified)). active_result is preserved
+# across the review so the pipeline can resume after a pass.
+
+def _on_no_diff_detected(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.pending = None
+    if s.active_result is not None:
+        s.active_result["no_diff_origin_substate"] = s.substate
+    s.substate = "NO_DIFF_EXPLAIN"
+    s.doc_dispatched = False  # re-dispatch author for the explanation
+    s.no_diff_explanation = None
+    s.no_diff_reviewer_dispatched = False
+    # active_result is NOT cleared — pipeline resumes after review pass.
+
+
+def _on_no_diff_explained(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.pending = None
+    s.no_diff_explanation = p.get("explanation", "")
+    s.substate = "NO_DIFF_REVIEW"
+    s.no_diff_reviewer_dispatched = False  # dispatch reviewer
+
+
+def _on_no_diff_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.pending = None
+    verdict = p.get("verdict")
+    if verdict == "pass":
+        # Pipeline resumes: mark validated AND no_diff-approved so the
+        # checkpoint's requires_diff gate is skipped.
+        if s.active_result is not None:
+            s.active_result["validated"] = True
+            s.active_result["no_diff_approved"] = True
+            s.substate = s.active_result.pop("no_diff_origin_substate", "DRAFT")
+        s.no_diff_explanation = None
+        s.no_diff_reviewer_dispatched = False
+        return
+    # Reviewer rejected: route through the stage's verdict.failed handler.
+    origin = (s.active_result.pop("no_diff_origin_substate", "DRAFT")
+              if s.active_result else "DRAFT")
+    explanation = s.no_diff_explanation
+    s.active_result = None
+    s.substate = origin
+    s.no_diff_explanation = None
+    s.no_diff_reviewer_dispatched = False
+    s.last_failure = {
+        "check": "no_diff_justified",
+        "reason": "reviewer rejected no-diff explanation",
+        "evidence": explanation,
+        "attempt": p.get("attempt"),
+    }
+    if s.stage == "M-TEST":
+        _on_m_test_verdict_failed(s, {"check": "no_diff_justified", **p})
+        return
+    if s.stage == "M-DESIGN":
+        _on_design_verdict_failed(s, {"check": "no_diff_justified", **p})
+        return
+    if s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    _escalate_or_continue(s, {"attempt": p.get("attempt", s.current_attempt + 1)})
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -739,6 +814,10 @@ _APPLY = {
     "result.submitted": _on_result_submitted,
     "result.validated": _on_result_validated,
     "result.checkpointed": _on_result_checkpointed,
+    # v0.5 no_diff peer review
+    "no_diff.detected": _on_no_diff_detected,
+    "no_diff.explained": _on_no_diff_explained,
+    "no_diff.reviewed": _on_no_diff_reviewed,
 }
 
 
@@ -939,6 +1018,70 @@ def _decide_exit_gate(s: State, stage: str) -> Command | None:
     return _decide_exit(s, stage)
 
 
+def _no_diff_dispatch_params(s, substate, role, docs, doc, objective):
+    """Build dispatch_agent params for NO_DIFF_EXPLAIN / NO_DIFF_REVIEW."""
+    ar = s.active_result or {}
+    ctx = {"artifacts": ar.get("artifacts", []),
+           "base_sha": ar.get("base_sha"), "result_id": ar.get("result_id"),
+           "stage": ar.get("stage", s.stage),
+           "substate": ar.get("no_diff_origin_substate", s.substate)}
+    if substate == "NO_DIFF_REVIEW":
+        ctx["explanation"] = s.no_diff_explanation
+    params = {"role": role, "substate": substate, "objective": objective,
+              "stage": s.stage, "attempt": s.current_attempt + 1,
+              "review_round": s.review_round, "no_diff_context": ctx,
+              "assignment": {"kind": substate, "skill": "tracks-discuz",
+                             "template_kind": doc.removesuffix(".md") if doc else None}}
+    if docs:
+        params["docs"] = docs
+        params["assignment"]["docs"] = list(docs)
+    if doc:
+        params["doc"] = doc
+    if substate == "NO_DIFF_EXPLAIN" and s.last_failure:
+        params["evidence"] = dict(s.last_failure)  # FR-11
+    return params
+
+
+def _decide_no_diff_explain(s: State) -> Command | None:
+    """Re-dispatch the original author to explain why no diff was produced."""
+    if s.doc_dispatched:
+        return None  # awaiting the explanation outcome
+    if s.stage == "M-TEST":
+        role, docs, doc = "shield", list(_M_TEST_CONTEXT_DOCS), None
+        objective = "explain why no tests/ diff was produced"
+    elif s.stage == "M-DESIGN":
+        role, docs, doc = "archer", list(DESIGN_DOCS), None
+        objective = "explain why no design diff was produced"
+    else:
+        sd = _STAGES.get(s.stage)
+        if sd is None:
+            return None
+        role, docs, doc = sd.drafting_role, [], sd.doc
+        objective = f"explain why no {doc} diff was produced"
+    return Command(kind="dispatch_agent",
+                   params=_no_diff_dispatch_params(s, "NO_DIFF_EXPLAIN",
+                                                    role, docs, doc, objective))
+
+
+def _decide_no_diff_review(s: State) -> Command | None:
+    """Dispatch the stage's reviewer to judge the no-diff explanation."""
+    if s.no_diff_reviewer_dispatched:
+        return None  # awaiting the reviewer verdict
+    if s.stage == "M-TEST":
+        reviewer, docs, doc = "prism", list(_M_TEST_CONTEXT_DOCS), None
+    elif s.stage == "M-DESIGN":
+        reviewer, docs, doc = "prism", list(DESIGN_DOCS), None
+    else:
+        sd = _STAGES.get(s.stage)
+        if sd is None:
+            return None
+        reviewer, docs, doc = sd.reviewer, [], sd.doc
+    return Command(kind="dispatch_agent",
+                   params=_no_diff_dispatch_params(s, "NO_DIFF_REVIEW",
+                                                    reviewer, docs, doc,
+                                                    "review the no-diff explanation"))
+
+
 def _decide_result_pipeline(s: State) -> Command | None:
     """v0.5 ResultCheckpoint pipeline: validate -> checkpoint -> publish.
 
@@ -976,6 +1119,7 @@ def _decide_result_pipeline(s: State) -> Command | None:
             "actor_kind": ar.get("actor_kind"),
             "result_id": result_id,
             "digests": digests,
+            "no_diff_approved": ar.get("no_diff_approved", False),
         })
     return Command(kind="publish_result", params={
         "domain_event": ar.get("domain_event", {}),
@@ -994,6 +1138,12 @@ def _decide_result_pipeline(s: State) -> Command | None:
 
 def decide(s: State) -> Command | None:
     """Next command to issue, or None to halt (awaiting human / completed)."""
+    # v0.5 no_diff peer review: takes priority over the active_result pipeline
+    # so the explain->review flow drives dispatch_agent instead of validate.
+    if s.substate == "NO_DIFF_EXPLAIN":
+        return _decide_no_diff_explain(s)
+    if s.substate == "NO_DIFF_REVIEW":
+        return _decide_no_diff_review(s)
     # v0.5 ResultCheckpoint pipeline takes absolute priority: when
     # active_result is set, drive validate->checkpoint->publish regardless
     # of status or awaiting. This allows the human pipeline to run under
