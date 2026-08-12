@@ -2,7 +2,7 @@
 acc_id: ACC-005
 created: 2026-08-09
 status: draft
-sha: 5fb2f0d9e9babb7f38615d91cb10de804fddb63bc0dd4ebffe60dfdfc4ed0982
+sha: 54372dfd587f37911a83cce3c86c9969809858279a5e09740e29d9505dd42d8e
 ---
 
 # M-IMPL 阶段推进（Devon 逐 task RGR） - 验收标准
