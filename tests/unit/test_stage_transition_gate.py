@@ -15,12 +15,12 @@ from tests.unit.helpers import (
     git_repo as _repo,
 )
 from tracks import paths
-from tracks.executor.executor import Executor
-from tracks.executor.version import (
+from tracks.capabilities import (
     M_IMPL_FEATURE_VERSION,
     _version_tuple,
     version_at_least,
 )
+from tracks.executor.executor import Executor
 from tracks.kernel.events import Command
 from tracks.store import Store
 
