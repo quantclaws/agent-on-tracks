@@ -51,11 +51,11 @@ _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 # Lock files created by tracks/discuss/cli.py _atomic_write (flock-based);
 # these are transient synchronization artifacts, not scaffold writes.
 _LOCK_SUFFIX = ".lock"
-# FR-0120 Shield write scope (RP-01): the four test-asset directories. Writes
+# FR-0120 Shield write scope (RP-01): the five test-asset directories. Writes
 # outside these (product code, interface stubs, design docs, ground truth) are
 # over-reach and rolled back.
-_SHIELD_SCOPE = ("tests/integration", "tests/e2e", "tests/assets",
-                 "tests/counterexamples")
+_SHIELD_SCOPE = ("tests/integration", "tests/e2e", "tests/e2e_live",
+                 "tests/assets", "tests/counterexamples")
 
 
 def redact(text: str) -> str:
