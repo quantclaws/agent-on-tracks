@@ -1,7 +1,7 @@
 [project]
 name = "agent-on-tracks"
-version = "0.1.0"
-description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.1)"
+version = "0.5.0"
+description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.5)"
 requires-python = ">=3.10"
 dependencies = []
 
