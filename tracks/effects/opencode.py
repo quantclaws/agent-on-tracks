@@ -806,8 +806,11 @@ class OpencodeBackend:
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
         """Classify the exit; JSON is diagnostic-only (product = target diff)."""
         if proc.returncode < 0:  # killed by signal (SIGINT/kill-9)
-            raise OpencodeError("signal", f"killed by signal {-proc.returncode}",
-                                exit_code=proc.returncode, stderr=proc.stderr)
+            out = (proc.stdout or "").strip()
+            # opencode may hang after output; accept valid stdout, fall through
+            if not (out and self._parses_json(out)):
+                raise OpencodeError("signal", f"killed by signal {-proc.returncode}",
+                                    exit_code=proc.returncode, stderr=proc.stderr)
         if proc.returncode != 0:
             if self._looks_provider_error(proc.stderr):
                 raise OpencodeError("provider_unavailable",
