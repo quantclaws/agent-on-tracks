@@ -436,6 +436,69 @@ sha: 5fb2f0d9e9babb7f38615d91cb10de804fddb63bc0dd4ebffe60dfdfc4ed0982
   - 范围排除（tasks.json ↔ Issues 双向同步）：本版不做 tasks.json task 与 GitHub Issue 的双向同步--issue 创建/更新由 M-REQ-APPROVAL 阶段（v0.2 FR-0200）一次性创建，tasks.json 中 issue number 为只读引用（从 M-REQ-APPROVAL 产出继承），M-IMPL 不回写 task 状态到 issue、不创建子 issue、不关闭 issue
   - Issues 只在 BASELINE 重算时被读取一次，digest 变化触发 NEEDS_ATTENTION（SM-01.3）
 
+## FR-0230 真实 OpencodeBackend 的 opt-in live 旅程
+
+### AC-FR0230-01
+
+  - 操作者为 M-IMPL live 旅程显式 opt in 并提供真实 OpencodeBackend 所需凭据（`TRAC_AGENT_BACKEND=opencode` + 真实凭据，E-01）后，`trac run` 从 M-IMPL BASELINE（M-TEST EXIT + 测试资产冻结，SM-01.1）用真实 OpencodeBackend 派发 Devon，至少执行一个 task 的完整 RGR 旅程：事件流依次出现该 task 的 RED、GREEN、REFACTOR、review（TASK_REVIEW/PRISM_FINAL）、task 完成、ISLAND_GATE_2，并经 FR-0160 边界退出（`stage.exited(M-IMPL)` → `run.completed(terminal_state="boundary")`）
+  - 该 task 的 RED→GREEN→REFACTOR→review 阶段由真实 dispatch 产生，不得由 FakeBackend、模拟 outcome 或人工补写 stage event 代替（BS-01/BS-04）：若任一必需 Devon 阶段缺席、后端为 fake 或 outcome 被模拟/人工插入，旅程判为失败
+
+### AC-FR0230-02
+
+  - 操作者可从既有公开运行结果验证该 task 确实依次经过 RED、GREEN、REFACTOR、review、task 完成、ISLAND_GATE_2 并到达 M-IMPL boundary：事件/状态记录、Git R/G lineage（不可变 R ref + G trailer，FR-0070/FR-0120）与 `trac report` 均能反映该完整阶段序列（BS-02）
+
+### AC-FR0230-03
+
+  - 失败、取消或证据不完整时：事件流与状态只显示失败/未完成状态，`trac run` 不产出可作为发布证据的成功结果（不出现 `run.completed(terminal_state="boundary")` 成功终态）；修复后应对当前候选重新运行（BS-04/§5 约束）
+  - FakeBackend 确定性例行通道保持不变：FakeBackend 继续服务确定性例行测试，但其结果不成为 release evidence（§5 约束）
+
+## FR-0231 真实 live 旅程的审计证据绑定与真实性标记
+
+### AC-FR0231-01
+
+  - 真实 live 旅程成功到达 M-IMPL boundary 时，保存可审计的 agent I/O 与事件证据，并绑定到：该次 run（run_id）、真实 backend 身份（`backend=opencode`）、agent I/O refs/digests、事件区间、RGR lineage 与边界，以及 candidate SHA（live run 启动时被测 tracks 仓库 git HEAD，见 FR-0232/BS-05）；证据沿用既有凭据脱敏边界（BS-03/§5 约束），发布判断可回溯到实际运行而非依赖 agent 自述
+
+### AC-FR0231-02
+
+  - 真实性标记（BS-04）：仅当旅程由真实 OpencodeBackend 驱动且成功到达 M-IMPL boundary 时，其证据才标记为可用于发布的 live evidence；由 FakeBackend、simulated outcome、manual stage event 驱动，或旅程未成功到达边界，一律不得标记为可用于发布的 live evidence
+  - 失败不伪报成功：无真实性标记的证据不产生可发布成功结果；agent I/O 审计不完整时证据不满足可用发布要求
+
+## FR-0232 `trac check release-evidence`：当前 live 证据发布前置检查
+
+### AC-FR0232-01
+
+  - `trac check release-evidence`（E-03，新增子命令，挂载在既有 `trac check` 家族）对当前候选运行发布前置检查：读取最近一次成功的真实 live 旅程及其审计记录，确认记录来自 `backend=opencode`，并可追溯到该次 run 的 agent I/O、事件区间和相关 Git 结果（BS-03/BS-08）
+
+### AC-FR0232-02
+
+  - candidate SHA 判定（BS-05）：candidate SHA = live run 启动时被测 tracks 仓库的 git HEAD，检查时要求它与待发布分支当前 HEAD 一致；live run 之后任何 commit 使旧证据 stale，必须对新 HEAD 重跑后再检查
+
+### AC-FR0232-03
+
+  - 通过（BS-08）：current successful live evidence 与待发布分支 HEAD、运行身份和审计记录全部匹配时，报告 `release-evidence: satisfied`（CLI 可见结果 + exit 0）
+
+### AC-FR0232-04
+
+  - 不满足/fail closed（BS-06）：live evidence 缺失、失败、过期、candidate SHA 不匹配，或来源为 FakeBackend/simulated/manual 时，报告未满足及可恢复的下一步（在当前 HEAD 重新执行真实旅程后再次检查），exit 非零，阻止发布继续使用该证据；Human release approval 不得绕过该 fail-closed 结果（flow §13.2）
+
+### AC-FR0232-05
+
+  - 该检查只证明「当前候选有真实成功 live evidence」，不代替未来 M-VERIFY/M-RELEASE；M-IMPL boundary 仍是产品流程边界（复用 FR-0160，不实现后续阶段）
+
+## FR-0233 无凭据例行 CI 的 opt-in 例外
+
+### AC-FR0233-01
+
+  - 例行 CI 无真实 provider 凭据时：跳过 opt-in 真实 Devon 旅程并清楚报告 skipped，其他例行检查照常执行；skip 不伪装成 live success（不产出成功证据、不标记为可用于发布的 live evidence）（BS-07）
+
+### AC-FR0233-02
+
+  - 有凭据且显式启用 live 通道时：CI 执行真实旅程并报告成功、失败或取消；成功产出可供 `trac check release-evidence`（FR-0232）核验的 evidence，失败不产出成功证据（BS-07/§3.3）
+
+### AC-FR0233-03
+
+  - 发布验证始终显式执行 `trac check release-evidence`（FR-0232）；例行 CI 的 fake/simulated 结果或 credential-less skip 都不能替代它（不满足发布前置），该例外不改变发布候选必须有 current successful live evidence 的要求（§5 非常规要求）
+
 ## NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
 
 ### AC-NFR0010-01
@@ -471,3 +534,14 @@ sha: 5fb2f0d9e9babb7f38615d91cb10de804fddb63bc0dd4ebffe60dfdfc4ed0982
 
   - Human 可运行 `trac retry` 追加 `human.retry` 事件、清除升级 gate、重置一份新的 ≤3 attempt 预算、保留失败证据，且不自动重新派发（承自 flow §17.3）
   - `trac retry` 在非 escalation 状态下拒绝（退出非零）并提示原因；`trac retry --clear-evidence` 仅在 escalation 或 clean active 状态下允许
+
+## NFR-0080 release-evidence 检查的确定性与可审计性
+
+### AC-NFR0080-01
+
+  - `trac check release-evidence`（FR-0232）必须确定性 fail closed：对缺失、失败、过期、candidate SHA 不匹配或非真实来源的证据不误报成功；判定只依赖可审计证据（agent I/O、事件、Git 结果、`backend=opencode` 身份），不依赖 agent 自述或人工插入（BS-03/BS-04/BS-06）
+  - 检查是可复核的程序门禁：其输入证据与判定结果可由事件/审计记录回溯（沿用 NFR-0020 append-only 事件与凭据脱敏边界）
+
+### AC-NFR0080-02
+
+  - 例行 CI 的 credential-less skip 或 fake/simulated 结果既不产生、也不满足 release evidence（BS-07）
