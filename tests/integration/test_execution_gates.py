@@ -2,7 +2,11 @@
 
 import pytest
 
-from tests.integration.v05_contract_helpers import events_of, run_m_impl_journey
+from tests.integration.v05_contract_helpers import (
+    events_of,
+    first_m_impl_attempt_segment,
+    run_m_impl_journey,
+)
 
 
 @pytest.mark.integration
@@ -68,7 +72,11 @@ def test_diagnose_and_shield_fix_public_routes(
     ]
     assert classified
     assert all(event["payload"].get("check") in allowed for event in failures)
-    shield_commits = events_of(events, "test.committed")
+    # AC-FR0150-03: Shield `test.committed` is scoped to the first M-IMPL
+    # attempt so M-TEST's legitimate pre-stage freeze commit does not satisfy
+    # the Shield-fix verdict for non-test_defect routes.
+    segment = first_m_impl_attempt_segment(events)
+    shield_commits = events_of(segment, "test.committed")
     assert bool(shield_commits) is shield_fix
     assert all(event["payload"]["test_count"] > 0 for event in shield_commits)
     assert classified[-1]["payload"].get("target_stage") == expected_target

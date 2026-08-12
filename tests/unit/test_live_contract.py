@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tests.unit.helpers import capture_popen_cmd
+from tests.unit.helpers import assert_cleanup_cycle, capture_popen_cmd
 from tracks.effects import select_backend
 from tracks.effects.opencode import AGENT_NAME, OpencodeBackend
 
@@ -236,8 +236,9 @@ def test_prompt_serializes_retry_evidence_from_the_assignment(tmp_path):
 
 def test_role_map_covers_every_tracks_role():
     # Every Runtime role (IF-001 §5) maps to a shipped opencode agent Name -
-    # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews) and the
-    # v0.4 M-TEST Shield (integration/e2e test writer, FR-0120).
+    # including the v0.3 M-DESIGN pair (Archer drafts, Prism reviews), the
+    # v0.4 M-TEST Shield (integration/e2e test writer, FR-0120), and the
+    # v0.5 M-IMPL Devon (phase-separated RGR implementer, FR-0170).
     assert AGENT_NAME == {
         "scribe": "Scribe",
         "sage": "Sage",
@@ -245,6 +246,7 @@ def test_role_map_covers_every_tracks_role():
         "archer": "Archer",
         "prism": "Prism",
         "shield": "Shield",
+        "devon": "Devon",
     }
 
 
@@ -256,11 +258,7 @@ def test_materialize_cleanup_cycle_for_every_agent(tmp_path, role, name):
     source = backend._canonical / f"{name}.md"
     assert source.exists()  # canonical prompt ships with the package
     info = backend._materialize(name)
-    try:
-        assert info["dest"].read_bytes() == source.read_bytes()
-    finally:
-        backend._cleanup(info)
-    assert not info["dest"].exists()
+    assert_cleanup_cycle(backend, info, source)
 
 
 def test_prism_m_test_revise_anchors_in_test_plan_not_executable_files(tmp_path):

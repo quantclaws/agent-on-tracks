@@ -234,6 +234,14 @@ class Store:
         row = cur.fetchone()
         return row[0] if row else None
 
+    def latest_run(self) -> str | None:
+        """Return the most recent run_id regardless of status."""
+        cur = self.conn.execute(
+            "SELECT run_id FROM runs ORDER BY updated_ts DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def rebuild_projections(self) -> None:
         """NFR-04: projections are derivable from events alone."""
         with self.conn:

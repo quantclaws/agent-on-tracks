@@ -39,6 +39,17 @@ sha:
   - 每条 required AC 的 surface -> composition -> wiring 链路在此节可追溯（ISLAND_GATE_1 六元组闭合）。
 -->
 
+### 1.2 Required AC closure (ISLAND_GATE_1)
+
+<!-- 模板指引（填写完成后删除本注释，交付的文档只留内容）：
+  - 每条 required AC 必须有且只有一个独立的 machine-readable closure entry；不要使用表格，也不要把多个 AC 合并到一行。
+  - 每行必须严格使用以下字段顺序和键名。示例中的 FR-0010 是 requirement token，不是 AC id：
+    `- **FR-0010** owner=<...> surface=<...> composition=<...> wiring=<...> test=<...> evidence=<...> IF-MTEST-001`
+  - requirement token 必须遵循 `_requirement_ref`：`AC-FR0010-01` -> `FR-0010`，`AC-NFR0010-01` -> `NFR-0010`。
+  - owner / surface / composition / wiring / test / evidence 的值都必须非空且具体；evidence 写 M-TEST 可产生的命令和可观察输出特征，不得写 `{placeholder}` 或泛称。
+  - 行末列出该 AC 适用的全部 IF- IDs；这些 IDs 必须来自 interfaces.md 的 IF Registry。
+-->
+
 ## 2. Scaffold 宣言
 
 <!-- 模板指引（填写完成后删除本注释，交付的文档只留内容）：

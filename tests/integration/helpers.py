@@ -72,11 +72,11 @@ def write_baseline(repo: Path, ids=None, modules=None):
 
 # -- M-TEST shared helpers (de-duplicate integration/e2e test setup) -----------
 
-def walk_to_m_test(trac):
+def walk_to_m_test(trac, version="v0.1"):
     """Approve the awaiting-human run and return the run_id; the next
     ``trac run`` enters M-DESIGN -> M-TEST."""
     from tests.e2e.helpers import walk_to_await_human
-    run_id = walk_to_await_human(trac)
+    run_id = walk_to_await_human(trac, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     return run_id
 

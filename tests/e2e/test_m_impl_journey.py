@@ -10,7 +10,7 @@ from tests.e2e.helpers import walk_to_m_test_complete
 # AC-FR0160-03@v0.5 TRACKS-TRACE successful M-IMPL exits at boundary
 # AC-FR0160-04@v0.5 TRACKS-TRACE M-IMPL exit has no Human gate
 def test_boundary_after_m_impl(trac, event_log):
-    run_id = walk_to_m_test_complete(trac)
+    run_id = walk_to_m_test_complete(trac, version="v0.5")
     events = event_log(run_id)
     entered = [
         event for event in events

@@ -19,6 +19,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.executor.executor import git
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import project
+from tracks.tasklog import rebuild_task_log
 
 _GITHUB_REMOTE = re.compile(r"github\.com[/:](?P<repo>[^/]+/[^/]+?)(?:\.git)?$")
 _RESULT_PREFIXES = (
@@ -429,6 +430,78 @@ def _read_events(home: Path, run_id: str) -> list[EventEnvelope]:
     return events
 
 
+def progress_summary(events: list[EventEnvelope]) -> str | None:
+    """Return concise, deterministic task progress without agent output."""
+    summaries = [
+        summary
+        for summary in (_task_progress_summary(events), _red_checkpoint_summary(events))
+        if summary is not None
+    ]
+    return f"progress: {'; '.join(summaries)}" if summaries else None
+
+
+def _task_progress_summary(events: list[EventEnvelope]) -> str | None:
+    taskgraph_events = [event for event in events if event.type == "taskgraph.committed"]
+    task_events = [event for event in events if event.type.startswith("task.")]
+    if not taskgraph_events and not task_events:
+        return None
+    declared_ids = set().union(*(
+        _payload_task_ids(event.payload.get("task_ids")) for event in taskgraph_events
+    ))
+    task_ids = declared_ids | _event_task_ids(task_events)
+    started_ids = _event_task_ids(task_events, "task.started")
+    completed_ids = _event_task_ids(task_events, "task.completed")
+    total = max(
+        len(task_ids),
+        max((_declared_task_count(event) for event in taskgraph_events), default=0),
+    )
+    summary = f"tasks: {len(completed_ids)}/{total} completed"
+    if started_ids:
+        summary += f", {len(started_ids)} started"
+    if task_ids:
+        summary += f" ({', '.join(sorted(task_ids))})"
+    return summary
+
+
+def _red_checkpoint_summary(events: list[EventEnvelope]) -> str | None:
+    checkpoints = [event for event in events if event.type == "red.checkpointed"]
+    if not checkpoints:
+        return None
+    task_ids = _event_task_ids(checkpoints)
+    summary = f"Tracks-R: {len(checkpoints)} checkpointed"
+    if task_ids:
+        summary += f" ({', '.join(sorted(task_ids))})"
+    return summary
+
+
+def _payload_task_ids(value) -> set[str]:
+    if not isinstance(value, (list, tuple)):
+        return set()
+    return {item for item in value if isinstance(item, str) and item}
+
+
+def _event_task_ids(events: list[EventEnvelope], event_type: str | None = None) -> set[str]:
+    return {
+        task_id
+        for event in events
+        if event_type is None or event.type == event_type
+        for task_id in (_event_task_id(event),)
+        if task_id is not None
+    }
+
+
+def _declared_task_count(event: EventEnvelope) -> int:
+    value = event.payload.get("task_count")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 0)
+    return 0
+
+
+def _event_task_id(event: EventEnvelope) -> str | None:
+    value = event.payload.get("task_id") or event.task_id
+    return value if isinstance(value, str) and value else None
+
+
 def _html_page(run_id: str) -> str:
     title = html.escape(f"Workflow report: {run_id}", quote=True)
     marked_path = Path(__file__).parent / "assets" / "marked.min.js"
@@ -486,6 +559,7 @@ def generate_report(repo: Path, run_id: str, output: str | Path) -> tuple[Path, 
     events = _read_events(home, run_id)
     if not events:
         raise ValueError(f"unknown run: {run_id}")
+    rebuild_task_log(home, events)
     target = _output_dir(repo, output)
     target.mkdir(parents=True, exist_ok=True)
     markdown = _markdown(root, run_id, project(events), events)

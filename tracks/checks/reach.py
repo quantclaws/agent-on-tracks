@@ -297,6 +297,14 @@ def check_reach_file(
             errors=(),
             warnings=("no Python files found; reach check not applicable",),
         )
-    entrypoints = _discover_entrypoints(repo, py_files, extra_entries)
     import_graph, production = _build_graph(py_files, repo)
+    if not production:
+        return ReachReport(
+            status="pass",
+            islands=(),
+            entrypoints=(),
+            errors=(),
+            warnings=("no production modules found; reach check not applicable",),
+        )
+    entrypoints = _discover_entrypoints(repo, py_files, extra_entries)
     return check_reach(entrypoints, import_graph, production, baseline)

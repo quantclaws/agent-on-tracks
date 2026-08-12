@@ -2,10 +2,10 @@
 import re
 
 
-def walk_to_await_human(trac, stdin="构建一个事件溯源运行时"):
-    """init → start → triage go → three review rounds → AWAIT_HUMAN (FR-0180)."""
+def walk_to_await_human(trac, stdin="构建一个事件溯源运行时", version="v0.1"):
+    """init -> start -> triage go -> three review rounds -> AWAIT_HUMAN (FR-0180)."""
     assert trac("init").returncode == 0
-    r = trac("start", "v0.1", stdin=stdin)
+    r = trac("start", version, stdin=stdin)
     assert r.returncode == 0, r.stderr
     run_id = re.search(r"run (\S+) started", r.stdout).group(1)
     assert trac("run").returncode == 0
@@ -21,13 +21,13 @@ def walk_to_await_human(trac, stdin="构建一个事件溯源运行时"):
     return run_id
 
 
-def walk_to_m_test_complete(trac, stdin="构建一个事件溯源运行时"):
+def walk_to_m_test_complete(trac, stdin="构建一个事件溯源运行时", version="v0.1"):
     """approval -> M-DESIGN (Archer drafts the trio, Prism passes) ->
     M-TEST (Shield writes tests, Prism reviews, Runtime verifies Red + trace)
     -> run.completed(terminal_state="boundary") - no human gate in M-DESIGN
     or M-TEST (BS-05), so a single `trac run` after approval reaches the
     terminal state (v0.4: boundary moved from M-DESIGN to M-TEST->M-IMPL)."""
-    run_id = walk_to_await_human(trac, stdin=stdin)
+    run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run")
     assert r.returncode == 0, r.stderr

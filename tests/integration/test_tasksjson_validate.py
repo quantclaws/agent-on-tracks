@@ -108,7 +108,7 @@ def test_tasksjson_parsed_by_runtime(trac, host_repo):
     event fires with parsed task list."""
     from tests.integration.helpers import walk_to_m_test
 
-    walk_to_m_test(trac)
+    walk_to_m_test(trac, version="v0.5")
     assert trac("run").returncode == 0
     # After M-IMPL PLANNING, tasks.json should exist and be parsed
     tasks_json = host_repo / ".tracks" / "projects" / "v0.5" / "tasks.json"
@@ -131,7 +131,7 @@ def test_tasksmd_projected(trac, host_repo):
     """tasks.md is a human-readable projection generated from tasks.json by Runtime."""
     from tests.integration.helpers import walk_to_m_test
 
-    walk_to_m_test(trac)
+    walk_to_m_test(trac, version="v0.5")
     assert trac("run").returncode == 0
     tasks_json = host_repo / ".tracks" / "projects" / "v0.5" / "tasks.json"
     tasks_md = host_repo / ".tracks" / "projects" / "v0.5" / "tasks.md"
@@ -149,7 +149,7 @@ def test_report_rebuild(trac, host_repo):
     """trac report reconstructs per-task progress from the event stream."""
     from tests.integration.helpers import walk_to_m_test
 
-    walk_to_m_test(trac)
+    walk_to_m_test(trac, version="v0.5")
     result = trac("run")
     assert result.returncode == 0
     # Extract run_id from status

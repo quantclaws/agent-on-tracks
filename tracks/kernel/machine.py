@@ -18,9 +18,30 @@ v0.1 drives the happy path M-START → M-STORY → M-SPEC to EXIT. Reject
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .events import Command, EventEnvelope
+from .m_impl import (
+    _M_IMPL_CONTEXT_DOCS,  # noqa: F401
+    _M_IMPL_CRITERIA_PACK,  # noqa: F401
+    _M_IMPL_REVIEW_SUBSTATES,  # noqa: F401
+    _decide_m_impl,
+    _on_baseline_frozen,
+    _on_green_committed,
+    _on_m_impl_outcome_done,
+    _on_m_impl_prism_verdict,
+    _on_m_impl_verdict_failed,
+    _on_m_impl_verdict_passed,
+    _on_red_checkpointed,
+    _on_refactor_committed,
+    _on_refactor_no_change,
+    _on_task_completed,
+    _on_task_started,
+    _on_taskgraph_committed,
+    _on_writelock_granted,
+    _on_writelock_released,
+    _set_m_impl_dispatch_flags,
+)
 from .m_test import (
     _CRITERIA_PACK,  # noqa: F401
     _M_TEST_CONTEXT_DOCS,  # noqa: F401
@@ -105,6 +126,22 @@ class State:
     # with no workspace diff, enter explain->review before failing.
     no_diff_explanation: str | None = None
     no_diff_reviewer_dispatched: bool = False
+    # M-IMPL (flow.md §10): task-graph implementation with inner RGR cycle.
+    baseline_frozen: bool = False
+    taskgraph_committed: bool = False
+    tasks_total: int = 0
+    tasks_completed: int = 0
+    writelock_held: bool = False
+    current_task_id: str | None = None
+    r_tree_identity: str | None = None  # Red checkpoint sha (B..R lineage)
+    green_committed: bool = False  # formal G commit for current task
+    refactor_done: bool = False  # refactor committed or no-change
+    island_2_passed: bool = False  # ISLAND_GATE_2 exit gate
+    taskgraph_digest: str | None = None
+    taskgraph_path: str | None = None
+    task_refs: list[dict] = field(default_factory=list)
+    current_task_metadata: dict | None = None
+    current_manifest: dict | None = None
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -172,6 +209,10 @@ _STAGES = {sd.stage: sd for sd in (
     # flow (like `_decide_approval`), not by the StageDef table. initial_substate
     # is DISPATCH (SM-01.1).
     StageDef(stage="M-TEST", initial_substate="DISPATCH"),
+    # M-IMPL (flow.md §10): explicit control flow via `_decide_m_impl`, like
+    # M-TEST. No drafting_role/doc/reviewer -- Archer/Devon/Prism/Shield
+    # dispatches are driven by the explicit control flow.
+    StageDef(stage="M-IMPL", initial_substate="BASELINE"),
 )}
 
 # Derived lookups, keyed like the facts they replace.
@@ -229,6 +270,24 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.test_committed = False
         s.red_findings = s.criteria_pack_loaded = None
         s.diagnose_classification = None
+    if s.stage == "M-IMPL":
+        # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
+        s.baseline_frozen = False
+        s.taskgraph_committed = False
+        s.tasks_total = 0
+        s.tasks_completed = 0
+        s.writelock_held = False
+        s.current_task_id = None
+        s.r_tree_identity = None
+        s.green_committed = False
+        s.refactor_done = False
+        s.island_2_passed = False
+        s.diagnose_classification = None
+        s.taskgraph_digest = None
+        s.taskgraph_path = None
+        s.task_refs = []
+        s.current_task_metadata = None
+        s.current_manifest = None
 
 
 def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -250,8 +309,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     # (FR-11, AC-20a: Scribe re-scopes the story from the overflow evidence).
     # The route is read from the stage.rolled_back payload, not from the
     # already-mutated current state, so the decision is replay-stable.
-    if (p.get("from_stage") == "M-TEST"
-            and p.get("to_stage") == "M-DESIGN"
+    if (p.get("to_stage") == "M-DESIGN"
             and p.get("reason") == "stub_gap"):
         s.last_failure = None
     s.spec_committed = False
@@ -297,6 +355,9 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
         else:
             s.doc_dispatched = True
         return
+    if s.stage == "M-IMPL":
+        _set_m_impl_dispatch_flags(s, cmd)
+        return
     if s.substate in _REVIEW_SUBSTATE:
         s.reviewer_dispatched = True
     else:
@@ -321,6 +382,10 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.stage == "M-TEST":
         if checkpoint is None:
             _on_m_test_outcome_done(s)
+        return
+    if s.stage == "M-IMPL":
+        if checkpoint is None:
+            _on_m_impl_outcome_done(s)
         return
     if s.substate == "TRIAGE":
         s.awaiting = "triage"
@@ -355,6 +420,24 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
         _reset_doc(s)
         _consume_attempt(s)
         return
+    if s.stage == "M-IMPL":
+        if (p.get("role") == "devon" and p.get("status") == "failed"
+                and s.substate in ("RED", "GREEN")):
+            # A backend execution failure has unknown attribution. Preserve its
+            # evidence, spend the same bounded attempt, and let Prism diagnose
+            # it instead of blindly repeating the failed phase.
+            _reset_doc(s)
+            _reset_review(s)
+            s.diagnose_classification = None
+            s.substate = "DIAGNOSE"
+            _consume_attempt(s)
+            return
+        if s.substate in _M_IMPL_REVIEW_SUBSTATES:
+            _reset_review(s)
+        else:
+            _reset_doc(s)
+        _consume_attempt(s)
+        return
     if s.substate in _REVIEW_SUBSTATE:
         _reset_review(s)
     else:
@@ -363,6 +446,9 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
+    if s.stage == "M-IMPL":
+        _on_m_impl_verdict_passed(s, p)
+        return
     if s.stage == "M-TEST":
         # EXIT trace gate passed (SM-01.14): trace closure verified; the next
         # decide() step issues commit_tests.
@@ -393,6 +479,9 @@ def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     if s.stage == "M-TEST":
         _on_m_test_verdict_failed(s, p)
+        return
+    if s.stage == "M-IMPL":
+        _on_m_impl_verdict_failed(s, p)
         return
     if s.stage == "M-DESIGN":
         _on_design_verdict_failed(s, p)
@@ -484,6 +573,9 @@ def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result = None  # v0.5: pipeline publish complete
+    if s.stage == "M-IMPL":
+        _on_m_impl_prism_verdict(s, p)
+        return
     if s.stage == "M-TEST":
         # SM-01.7/.8: pass -> RED_CHECK; revise -> WRITE (re-dispatch Shield).
         # The shared <=3 budget is consumed on revise (NOT reset -- unlike
@@ -492,8 +584,11 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         if p["verdict"] == "pass":
             s.substate = "RED_CHECK"
             return
-        # REVISE: route by defect_classification (default test_defect)
-        dc = p.get("defect_classification", "test_defect")
+        # REVISE: route by defect_classification (default test_defect).
+        # `or` treats absent AND None/empty (e.g. old replay events carrying
+        # defect_classification=null) as test_defect; unknown non-empty tokens
+        # still fall through all branches -> fail-closed (substate unchanged).
+        dc = p.get("defect_classification") or "test_defect"
         if dc == "test_defect":
             s.substate = "WRITE"
             _reset_doc(s)
@@ -639,9 +734,10 @@ def _on_preview_generated(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_human_approval(s: State, p: dict, ev: EventEnvelope) -> None:
-    if s.stage == "M-TEST" and s.awaiting == "rollback":
-        # SM-01.13: Human approved the ac_gap/spec_gap rollback -- clear the
-        # gate and let decide() produce rollback_stage(return_target).
+    if s.awaiting == "rollback":
+        # SM-01.13 / flow.md §10.1: Human approved the ac_gap/spec_gap
+        # rollback (M-TEST or M-IMPL) -- clear the gate and let decide()
+        # produce rollback_stage(return_target).
         s.awaiting = None
         s.status = "active"
         s.substate = "RETURNED"
@@ -784,6 +880,9 @@ def _on_no_diff_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
     if s.stage == "M-TEST":
         _on_m_test_verdict_failed(s, {"check": "no_diff_justified", **p})
         return
+    if s.stage == "M-IMPL":
+        _on_m_impl_verdict_failed(s, {"check": "no_diff_justified", **p})
+        return
     if s.stage == "M-DESIGN":
         _on_design_verdict_failed(s, {"check": "no_diff_justified", **p})
         return
@@ -841,6 +940,17 @@ _APPLY = {
     "no_diff.detected": _on_no_diff_detected,
     "no_diff.explained": _on_no_diff_explained,
     "no_diff.reviewed": _on_no_diff_reviewed,
+    # v0.5 M-IMPL (flow.md §10)
+    "baseline.frozen": _on_baseline_frozen,
+    "taskgraph.committed": _on_taskgraph_committed,
+    "task.started": _on_task_started,
+    "writelock.granted": _on_writelock_granted,
+    "writelock.released": _on_writelock_released,
+    "red.checkpointed": _on_red_checkpointed,
+    "green.committed": _on_green_committed,
+    "refactor.committed": _on_refactor_committed,
+    "refactor.no_change": _on_refactor_no_change,
+    "task.completed": _on_task_completed,
 }
 
 
@@ -1072,6 +1182,9 @@ def _decide_no_diff_explain(s: State) -> Command | None:
     if s.stage == "M-TEST":
         role, docs, doc = "shield", list(_M_TEST_CONTEXT_DOCS), None
         objective = "explain why no tests/ diff was produced"
+    elif s.stage == "M-IMPL":
+        role, docs, doc = "devon", list(_M_IMPL_CONTEXT_DOCS), None
+        objective = "explain why no implementation diff was produced"
     elif s.stage == "M-DESIGN":
         role, docs, doc = "archer", list(DESIGN_DOCS), None
         objective = "explain why no design diff was produced"
@@ -1092,6 +1205,8 @@ def _decide_no_diff_review(s: State) -> Command | None:
         return None  # awaiting the reviewer verdict
     if s.stage == "M-TEST":
         reviewer, docs, doc = "prism", list(_M_TEST_CONTEXT_DOCS), None
+    elif s.stage == "M-IMPL":
+        reviewer, docs, doc = "prism", list(_M_IMPL_CONTEXT_DOCS), None
     elif s.stage == "M-DESIGN":
         reviewer, docs, doc = "prism", list(DESIGN_DOCS), None
     else:
@@ -1187,6 +1302,8 @@ def decide(s: State) -> Command | None:
         )
     if stage == "M-TEST":
         return _decide_m_test(s, sub)
+    if stage == "M-IMPL":
+        return _decide_m_impl(s, sub)
     if sub in ("DRAFT", "RESPOND"):
         return _decide_pipeline(s, stage, sub)
     if sub == "TRIAGE":

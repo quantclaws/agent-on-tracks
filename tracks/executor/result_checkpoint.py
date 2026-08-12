@@ -7,6 +7,12 @@ access shared infrastructure (``_emit``, ``_doc_path``, ``_artifact_path``,
 """
 from __future__ import annotations
 
+import subprocess
+import sys
+
+from tracks.executor.file_identity import (
+    is_regular_file_identity as _is_regular_file_identity,
+)
 from tracks.executor.helpers import _commit_if_staged, git
 from tracks.executor.validate import (
     capture_digests,
@@ -32,16 +38,14 @@ _COMMITTED_EVENT = {
 }
 
 
-def _is_regular_file_identity(identity: str) -> bool:
-    """Return True iff a content-identity snapshot value represents a
-    readable regular file (sha256 content hash), False for symlinks
-    (``symlink:*``), deleted (``missing``), or unreadable entries.
-    Used to attribute all Shield-created/modified non-ignored regular
-    files under ``tests/`` — not only ``.py`` — so support assets
-    (``*.patch``, ``*.json``, etc.) are checkpointed with the
-    test-authority commit."""
-    return (not identity.startswith("symlink:")
-            and identity not in ("missing", "unreadable"))
+def _is_test_module(artifact: str) -> bool:
+    name = artifact.rsplit("/", 1)[-1]
+    return name.startswith("test_") and name.endswith(".py") \
+        or name.endswith("_test.py")
+
+
+def _is_support_asset(artifact: str) -> bool:
+    return artifact.rsplit("/", 1)[-1].endswith((".patch", ".json"))
 
 
 class ResultCheckpointMixin:
@@ -203,6 +207,14 @@ class ResultCheckpointMixin:
         digests = capture_digests(
             {doc: self._doc_path(doc) for doc in prism_docs})
         verdict = result.get("verdict")
+        domain_payload = {"verdict": verdict,
+                          "criteria_pack": result.get("criteria_pack")}
+        defect_classification = result.get("defect_classification")
+        if defect_classification is not None:
+            # Omit None so published prism.verdict never carries a null
+            # defect_classification (the reducer defaults absent to
+            # test_defect; a present null used to leave M-TEST un-routed).
+            domain_payload["defect_classification"] = defect_classification
         return {
             "source": "prism", "stage": "M-TEST",
             "substate": "PRISM_REVIEW", "actor_kind": "agent",
@@ -214,11 +226,7 @@ class ResultCheckpointMixin:
             "commit_label": f"M-TEST: prism ({verdict}) checkpoint",
             "result_id": result_id, "digests": digests,
             "domain_event": {"type": "prism.verdict",
-                              "payload": {"verdict": verdict,
-                                          "criteria_pack": result.get(
-                                              "criteria_pack"),
-                                          "defect_classification": result.get(
-                                              "defect_classification")}},
+                              "payload": domain_payload},
         }
 
     def _requirement_payload(self, state, substate, role, result,
@@ -428,8 +436,39 @@ class ResultCheckpointMixin:
         return False
 
     def _check_collection(self, artifacts, attempt, command_id):
-        """Validate M-TEST collection through the host project contract."""
+        """Validate test modules directly and support assets by contract."""
+        modules = [artifact for artifact in artifacts
+                   if _is_test_module(artifact)]
+        if modules:
+            return self._collect_test_modules(modules, attempt, command_id)
+        if not any(_is_support_asset(artifact) for artifact in artifacts):
+            self._emit("verdict.failed",
+                       {"check": "collection",
+                        "reason": "no test module or collectible support asset",
+                        "evidence": str(artifacts), "attempt": attempt},
+                       command_id=command_id)
+            return True
         return self._collect_via_contract(artifacts, attempt, command_id)
+
+    def _collect_test_modules(self, modules, attempt, command_id):
+        for module in modules:
+            proc = subprocess.run(
+                [sys.executable, "-m", "pytest", "--collect-only", "-q",
+                 module],
+                cwd=self.repo, capture_output=True, text=True,
+            )
+            if proc.returncode == 0:
+                continue
+            detail = (proc.stderr.strip() or proc.stdout.strip()
+                      or "pytest collection failed")
+            self._emit("verdict.failed",
+                       {"check": "collection",
+                        "reason": f"test module {module} collection failed: "
+                                  f"{detail}",
+                        "evidence": detail, "attempt": attempt},
+                       command_id=command_id)
+            return True
+        return False
 
     def _collect_via_contract(self, artifacts, attempt, command_id):
         """Run host project ``collect`` contracts and fail closed on errors."""
@@ -437,7 +476,7 @@ class ResultCheckpointMixin:
         if error is not None:
             self._emit("verdict.failed",
                        {"check": "collection",
-                        "reason": f"host project contract collection error: "
+                        "reason": f"support-only collection contract error: "
                                   f"{error}",
                         "evidence": str(artifacts), "attempt": attempt},
                        command_id=command_id)
@@ -445,8 +484,8 @@ class ResultCheckpointMixin:
         if not results:
             self._emit("verdict.failed",
                        {"check": "collection",
-                        "reason": "host project contract returned no "
-                                  "collection results",
+                        "reason": "support-only collection found no "
+                                  "collectible suite",
                         "evidence": str(artifacts), "attempt": attempt},
                        command_id=command_id)
             return True
@@ -454,8 +493,8 @@ class ResultCheckpointMixin:
             if rc != 0:
                 self._emit("verdict.failed",
                            {"check": "collection",
-                            "reason": f"host project contract {name} "
-                                      "collection failed",
+                            "reason": f"host project contract support-only "
+                                      f"collection {name} failed",
                             "evidence": stderr.strip() or
                             stdout.strip(),
                             "attempt": attempt},
@@ -790,7 +829,11 @@ class ResultCheckpointMixin:
         if state.stage == "M-TEST":
             domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
             payload["criteria_pack"] = domain_payload.get("criteria_pack")
-            payload["defect_classification"] = domain_payload.get("defect_classification")
+            defect_classification = domain_payload.get("defect_classification")
+            if defect_classification is not None:
+                # Never publish defect_classification=null (the reducer would
+                # see a present null instead of a missing key).
+                payload["defect_classification"] = defect_classification
         self._emit("prism.verdict", payload,
                    command_id=cmd.command_id, task_id=task_id)
         if verdict != "pass" and state.stage == "M-DESIGN":

@@ -136,3 +136,50 @@ def test_no_python_files_warning(tmp_path):
     assert "no Python files" in r.warnings[0]
     assert r.islands == ()
     assert r.errors == ()
+
+
+def test_test_only_repository_is_not_applicable(tmp_path):
+    """Reach skips a repository whose Python files are all test modules."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_example.py").write_text(
+        "def test_example():\n    assert True\n", encoding="utf-8"
+    )
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "pass"
+    assert r.islands == ()
+    assert r.entrypoints == ()
+    assert r.errors == ()
+    assert r.warnings == ("no production modules found; reach check not applicable",)
+
+
+def test_production_without_entrypoint_still_fails(tmp_path):
+    """Reach remains fail-closed when production modules lack an entrypoint."""
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "fail"
+    assert r.islands == ("app",)
+    assert r.entrypoints == ()
+    assert r.errors == ("no entrypoints declared",)
+    assert r.warnings == ()
+
+
+def test_production_with_entrypoint_remains_reachable(tmp_path):
+    """Reach retains its normal graph traversal for production repositories."""
+    (tmp_path / "app.py").write_text("import worker\n", encoding="utf-8")
+    (tmp_path / "worker.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.scripts]\ndemo = \"app:main\"\n", encoding="utf-8"
+    )
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "pass"
+    assert r.islands == ()
+    assert r.entrypoints == ("app",)
+    assert r.errors == ()
+    assert r.warnings == ()

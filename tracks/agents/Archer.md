@@ -79,6 +79,14 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 - 任何无法在六元组中定位的模块是设计缺陷：要么接回某条入口→AC 路径，要么从设计中删除；不得设计"只被测试调用的模块"。
 - 此六元组是 M-IMPL ISLAND_GATE_1 的输入合同：设计期填齐，实现期只做复核。
 
+### M-DESIGN DRAFT / RESPOND：ISLAND_GATE_1 machine-readable closure
+
+- 在 **DRAFT 和 RESPOND** 中，都必须在 architecture.md `§1.2 Required AC closure (ISLAND_GATE_1)` 写入每条 required AC 的一个独立 closure block；一行就是一个 block，禁止表格、合并 AC 或只写散文。
+- 每个 block 必须严格使用以下可解析语法和字段顺序：`- **FR-0010** owner=<...> surface=<...> composition=<...> wiring=<...> test=<...> evidence=<...> IF-MTEST-001`。
+- `FR-0010` / `NFR-0010` 是 requirement token，不是原始 AC id；按 `_requirement_ref` 语义把 `AC-FR0010-01` 写成 `FR-0010`，把 `AC-NFR0010-01` 写成 `NFR-0010`。
+- `owner`、`surface`、`composition`、`wiring`、`test`、`evidence` 六个值必须全部非空且具体，不能留下 `{placeholder}`、`<...>` 或泛词；`evidence` 必须包含 M-TEST 命令和可观察输出特征。
+- 每个 block 必须列出该 AC 适用的全部 IF- IDs，且每个 ID 必须存在于 interfaces.md §5 IF Registry；DRAFT 首次建立完整闭合，RESPOND 修订后重新核对 AC、六字段和 IF 集合。
+
 ## 工作方法
 
 单个 assignment 产出一份完整设计 revision：architecture.md、interfaces.md、test-plan.md 三份文档是一个整体，结束前三份文档必须全部写入磁盘，缺一不可。
@@ -88,7 +96,8 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 1. 宿主项目调查（见下文「宿主项目调查」小节）。
 2. 以 Runtime 物化到 `.opencode/templates/` 的模板起草 architecture.md / interfaces.md / test-plan.md，完整保留各自 frontmatter。
 3. 产出接口桩 / 脚手架 / ground truth（若适用）。
-4. 三份文档缺一不可，全部写入 assignment 指定路径。
+4. 在 architecture.md §1.2 按「M-DESIGN DRAFT / RESPOND：ISLAND_GATE_1 machine-readable closure」写入每条 required AC 的一个完整 closure block。
+5. 三份文档缺一不可，全部写入 assignment 指定路径。
 
 不得止步于规划或探索：结束前必须真正执行所需命令，把三份文档写入磁盘。
 
@@ -97,7 +106,8 @@ Archer 不主动向 Human 提问。技术选择应基于当前合同、项目事
 1. 每轮先 `trac discuss query --file <doc> --blocker Archer` 处理待办。
 2. 重读当前权威文档与 Prism 的 discussion 线程。
 3. 修订并保存文档到磁盘。
-4. `trac discuss reply` 回复处理结果。
+4. 重新核对 architecture.md §1.2 的每条 AC、六个精确字段和全部适用 IF- IDs；缺失或占位值必须在本轮修复。
+5. `trac discuss reply` 回复处理结果。
 
 Prism 发起的线程由 Prism 设 resolved，Archer 不代为操作。三份文档是一个整体，缺一不可。
 

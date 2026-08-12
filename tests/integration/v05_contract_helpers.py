@@ -11,7 +11,7 @@ ASSETS = Path(__file__).parents[1] / "assets" / "taskgraph_fixtures"
 
 def run_m_impl_journey(trac, event_log, *, simulate=None):
     """Drive the public CLI through M-TEST and return the persisted event stream."""
-    run_id = walk_to_m_test(trac)
+    run_id = walk_to_m_test(trac, version="v0.5")
     result = trac("run", simulate=simulate) if simulate else trac("run")
     assert result.returncode == 0, result.stderr
     return run_id, result, event_log(run_id)
@@ -47,6 +47,33 @@ def first_m_impl_index(events):
     ]
     assert matches, "public event stream did not enter M-IMPL"
     return matches[0]
+
+
+def first_m_impl_attempt_segment(events):
+    """Return the first M-IMPL attempt, excluding M-TEST dispatches.
+
+    ``run_m_impl_journey`` returns the full stream, and ``test.committed`` is
+    legitimately emitted twice: once during M-TEST EXIT (freezing the test
+    asset, before M-IMPL is entered) and once during an M-IMPL SHIELD_FIX. The
+    Shield assertion must only observe the latter, so this returns the slice
+    covering the first M-IMPL attempt:
+
+    - start at the first ``stage.entered(M-IMPL)``;
+    - end, inclusive, at the first subsequent ``stage.exited(M-IMPL)`` or
+      ``stage.rolled_back(from_stage=M-IMPL)``;
+    - if neither terminator occurs, return the remaining stream from entry.
+
+    This keeps M-TEST's pre-stage ``test.committed`` out of the Shield verdict
+    without suppressing or renaming it.
+    """
+    start = first_m_impl_index(events)
+    for end in range(start + 1, len(events)):
+        event = events[end]
+        if event["type"] == "stage.exited" and event["payload"].get("stage") == "M-IMPL":
+            return events[start : end + 1]
+        if event["type"] == "stage.rolled_back" and event["payload"].get("from_stage") == "M-IMPL":
+            return events[start : end + 1]
+    return events[start:]
 
 
 def setup_synthetic_project(host_repo):

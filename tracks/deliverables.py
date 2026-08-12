@@ -21,6 +21,7 @@ AGENT_DELIVERABLES = (
     _PKG / "agents" / "Archer.md",
     _PKG / "agents" / "Prism.md",
     _PKG / "agents" / "Shield.md",  # v0.4 M-TEST (FR-0120)
+    _PKG / "agents" / "Devon.md",   # v0.5 M-IMPL phase-separated RGR (FR-0170)
 )
 
 DELIVERABLES = AGENT_DELIVERABLES + (

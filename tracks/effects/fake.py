@@ -12,13 +12,17 @@ reviews "pass". Token "hang" blocks (recovery/lock tests, AC-27a).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
 from pathlib import Path
 
 from tracks import paths, templating
-from tracks.effects.backend import SHIELD_LAYERS, valid_test_tasks
+from tracks.capabilities import supports_m_impl
+from tracks.effects.backend import SHIELD_LAYERS
+from tracks.effects.devon_patch import DevonPatchMixin, append_text, unified_patch
+from tracks.effects.fake_shield import _FAILED_TOKENS, FakeShieldMixin, _ac_slug
 from tracks.frontmatter import split_frontmatter
 
 # spec items the fake acceptance draft must cover (FR-0170 trace)
@@ -33,6 +37,9 @@ _SCAFFOLD_HEADING = re.compile(
 _COVERAGE_HEADING = re.compile(
     r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?AC Coverage\s*$", re.M
 )
+_CLOSURE_HEADING = re.compile(
+    r"^###\s+1\.2\s+Required AC closure \(ISLAND_GATE_1\)\s*$", re.M
+)
 _CLI_HEADING = re.compile(
     r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?CLI 接口合同\s*$", re.M
 )
@@ -40,9 +47,22 @@ _IF_REGISTRY = re.compile(
     r"^##\s+(?:\d+(?:\.\d+)*\.?\s+)?IF Registry\s*$", re.M
 )
 _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
+# M-IMPL v0.5 reach declarations: the Fake M-DESIGN declares and materializes
+# the reach entrypoint manifest as one canonical architecture Scaffold config
+# artifact (ResultCheckpoint stages it like the project contract; reach.py
+# reads the same path). Valid only for the Fake fixture — production designs
+# never declare it, so production reach semantics are unchanged.
+_REACH_ENTRIES_RELATIVE = ".tracks/reach-entries.txt"
+_REACH_ENTRY_SCAFFOLD_LINE = (
+    "- .tracks/reach-entries.txt — Fake M-IMPL reach entrypoints (config)"
+)
 # FR-0210 exit gate tokens: a failed agent run is not a produced document.
-_FAILED_TOKENS = ("over_reach", "timeout", "no_target_diff",
-                  "non_zero_exit", "json_truncated", "fail")
+# (shared with the Fake Shield mixin; see fake_shield.py)
+_PRISM_REVIEW_SUBSTATES = (
+    "PRISM_REVIEW", "PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE",
+)
+_DEVON_PHASES = ("red", "green", "refactor")
+_DEVON_FAILURE_TOKENS = frozenset((*_FAILED_TOKENS, "hang"))
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
@@ -92,7 +112,7 @@ def _story_title(body: str) -> str:
     return (first.lstrip("# ").strip() or "untitled")[:60]
 
 
-class FakeBackend:
+class FakeBackend(DevonPatchMixin, FakeShieldMixin):
     """Deterministic AgentBackend (v0.1 FakeAgent, relocated to effects/)."""
 
     def __init__(self, repo: Path, version: str):
@@ -110,10 +130,17 @@ class FakeBackend:
         return seq[min(n, len(seq) - 1)].strip()
 
     def act(self, role: str, substate: str, doc: str | None,
-            doc_path: Path | None, assignment: dict | None = None) -> dict:
+             doc_path: Path | None, assignment: dict | None = None) -> dict:
         no_diff = self._act_no_diff(role, substate)
         if no_diff is not None:
             return no_diff
+        if role == "devon":
+            data = assignment if isinstance(assignment, dict) else {}
+            return self._act_m_impl_devon(substate, data)
+        return self._act_legacy(role, substate, doc, doc_path, assignment)
+
+    def _act_legacy(self, role: str, substate: str, doc: str | None,
+                    doc_path: Path | None, assignment: dict | None) -> dict:
         if substate == "TRIAGE":
             return {"status": "done", "artifact_ref": None,
                     "self_report": "explored raw requirement"}
@@ -121,6 +148,8 @@ class FakeBackend:
             return self._act_shield(substate, assignment)
         if substate in ("DRAFT", "RESPOND"):
             return self._act_draft(role, substate, doc, doc_path, assignment)
+        if self._is_m_impl_planning(role, substate):
+            return self._act_m_impl_planning(assignment)
         verdict = self.token(role, substate, "pass")
         result = {"status": "done", "artifact_ref": None,
                   "self_report": f"review: {verdict}", "verdict": verdict}
@@ -129,13 +158,14 @@ class FakeBackend:
         if verdict in ("revise", "comment"):
             self._maybe_annotate_review(doc_path, assignment, role, verdict,
                                         result)
-        # D-29 triple ②: M-TEST Prism echoes the criteria-pack identity.
-        if role == "prism" and substate == "PRISM_REVIEW":
+        # D-29: Prism echoes the assigned criteria-pack identity.
+        if role == "prism" and substate in _PRISM_REVIEW_SUBSTATES:
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result["criteria_pack"] = dict(assigned_pack)
         # defect_classification injection (for testing rollback routing)
-        if role == "prism" and substate == "PRISM_REVIEW" and verdict != "pass":
+        if (role == "prism" and substate in _PRISM_REVIEW_SUBSTATES
+                and verdict != "pass"):
             dc = _simulate_map().get("prism:defect_classification")
             if dc:
                 result["defect_classification"] = dc
@@ -232,111 +262,6 @@ class FakeBackend:
             text, flags=re.M)
         if changed != text:
             doc_path.write_text(changed, encoding="utf-8")
-
-    # -- M-TEST (Shield writes tests; FR-0020/FR-0120) ------------------------
-
-    def _act_shield(self, substate: str, assignment: dict | None) -> dict:
-        """Shield writes collectable, legit-Red test files for every required
-        (integration|e2e) AC in the host project's test-plan, with long-format
-        markers. Tokens: ``fail``/``over_reach`` simulate a failed outcome;
-        ``illegit_red`` writes an ImportError-raising test (illegit Red);
-        ``short_marker`` writes a short-format marker (trace gate fails).
-
-        D-28: the assignment's ``test_tasks`` (Runtime-parsed from test-plan
-        §8) is the only input. Missing or malformed task data is a failed
-        outcome; this backend never re-derives it from the design documents."""
-        token = self.token("shield", substate, "ok")
-        if token in _FAILED_TOKENS:
-            return {"status": "failed", "artifact_ref": None,
-                    "failure_class": "agent_failed" if token == "fail" else token,
-                    "audit_evidence": f"simulated {token}",
-                    "self_report": f"shield exit gate failed: {token}"}
-        tasks = assignment.get("test_tasks") if isinstance(assignment, dict) else None
-        if not self._valid_test_tasks(tasks):
-            return {
-                "status": "failed",
-                "artifact_ref": None,
-                "failure_class": "invalid_test_tasks",
-                "audit_evidence": (
-                    "assignment.test_tasks must be a non-empty list of "
-                    "{ac_id, layers, if_ids}"
-                ),
-                "self_report": "Shield assignment.test_tasks is missing or malformed",
-            }
-        required = [(task["ac_id"], layer)
-                    for task in tasks for layer in task["layers"]]
-        tests_dir = self.repo / "tests"
-        for subdir in ("integration", "e2e", "assets", "counterexamples"):
-            (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
-        for ac_id, layer in required:
-            self._write_test_file(tests_dir, ac_id, layer, token)
-        # D-32: WRITE checkpoints require an attributable tests/**/*.py diff.
-        # A re-dispatch (e.g. after Prism revise) that rewrites identical bytes
-        # would be a done/no-diff no-op and fail the pipeline. The re-write
-        # appends a deterministic marker attributed to the review/failure
-        # evidence that drove the re-dispatch (FR-11 evidence, not an arbitrary
-        # counter) — a faithful stand-in for "Shield revises the tests".
-        self._shield_writes += 1
-        self._append_revision_marker(tests_dir, assignment)
-        return {"status": "done", "artifact_ref": str(tests_dir),
-                "self_report": f"wrote {len(required)} test files ({token})"}
-
-    def _append_revision_marker(self, tests_dir: Path,
-                                assignment: dict | None) -> None:
-        """Append a deterministic revision marker to existing test files when
-        a re-dispatch carries evidence (FR-11). No-op without evidence."""
-        evidence = (assignment or {}).get("evidence")
-        if not evidence or not tests_dir.exists():
-            return
-        existing = sorted(tests_dir.rglob("test_*.py"))
-        if not existing:
-            return
-        reason = evidence.get("reason") or evidence.get("check") or "revision"
-        marker = f"# shield revision: {reason}\n"
-        for path in existing:
-            path.write_text(path.read_text(encoding="utf-8") + marker,
-                            encoding="utf-8")
-
-    @staticmethod
-    def _valid_test_tasks(tasks: object) -> bool:
-        # D-28: single shared validator (effects boundary) so the executor's
-        # pre-dispatch gate and the fake's own guard agree exactly.
-        return valid_test_tasks(tasks)
-
-    def _write_test_file(self, tests_dir: Path, ac_id: str, layer: str,
-                         token: str) -> None:
-        subdir = tests_dir / layer
-        slug = ac_id.lower().replace("-", "_")
-        fname = f"test_{slug}.py"
-        # R-1 marker: standalone comment line directly above the test def,
-        # mandatory TRACKS-TRACE token (FR-0080/FR-0130, revision log R-1).
-        if token == "short_marker":
-            marker = f"# {ac_id} TRACKS-TRACE short format (no @version)"
-        else:
-            marker = f"# {ac_id}@{self.version} TRACKS-TRACE {layer} test"
-        if token == "illegit_red":
-            # Import inside the test body so collection passes but the test
-            # fails at runtime with ImportError (illegit Red -> DIAGNOSE).
-            body = f"{marker}\ndef test_{slug}():\n"
-            body += "    import nonexistent_module  # illegit Red\n"
-        elif token == "mixed_red":
-            # R1-01 per-section classification: integration layer fails with
-            # a legit assertion_failure; e2e layer fails with an illegit
-            # ImportError. Overall verdict must be invalid (DIAGNOSE).
-            body = f"{marker}\ndef test_{slug}():\n"
-            if layer == "integration":
-                body += "    assert False  # legit Red (assertion_failure)\n"
-            else:
-                body += "    import nonexistent_module  # illegit Red\n"
-        elif token == "pass_red":
-            # Test passes instead of failing (unexpected pass -> DIAGNOSE).
-            body = f"{marker}\ndef test_{slug}():\n"
-            body += "    pass\n"
-        else:
-            token_stmt = 'NotImplementedError("IF-MTEST-001")'
-            body = f"{marker}\ndef test_{slug}():\n"
-            body += f"    raise {token_stmt}\n"
-        (subdir / fname).write_text(body, encoding="utf-8")
 
     # -- M-DESIGN (Archer draft/revise; BS-03/BS-06) -------------------------
 
@@ -501,6 +426,8 @@ class FakeBackend:
             )
         self._materialize_fake_scaffold(scaffold)
         self._write_project_contract()
+        if self._reach_entries_supported():
+            self._write_reach_entries(vdir)
 
     def _design_vdir(self) -> Path:
         return paths.version_dir(paths.tracks_home(self.repo), self.version)
@@ -523,6 +450,37 @@ class FakeBackend:
             out.append(line)
         return "\n".join(out) + "\n"
 
+    def _island_closure_lines(self, interfaces: str) -> list[str]:
+        """Build one concrete closure line per acceptance AC."""
+        from tracks.executor.taskgraph import _requirement_ref  # noqa: PLC0415
+        from tracks.executor.test_tasks import (  # noqa: PLC0415
+            _extract_if_registry,
+            _known_ac_ids,
+        )
+
+        acceptance = self._design_vdir() / "acceptance.md"
+        if not acceptance.is_file():
+            return []
+        ac_ids = sorted(_known_ac_ids(acceptance.read_text(encoding="utf-8")))
+        if_ids = _extract_if_registry(interfaces)
+        if not ac_ids or not if_ids:
+            return []
+        registered = sorted(if_ids)
+        lines = []
+        for index, ac_id in enumerate(ac_ids):
+            slug = _ac_slug(ac_id)
+            layer = SHIELD_LAYERS[index % len(SHIELD_LAYERS)]
+            if_id = registered[index % len(registered)]
+            lines.append(
+                f"- **{_requirement_ref(ac_id)}** owner=FakeBackend "
+                "surface=CLI composition=FakeBackend._write_design "
+                f"wiring={ac_id}:acceptance.md->architecture.md->interfaces.md "
+                f"test={layer}:tests/{layer}/test_{slug}.py "
+                f"evidence=cmd:.venv/bin/python_-m_pytest_tests/{layer}/"
+                f"test_{slug}.py_-q;output:exit-0-passed {if_id}"
+            )
+        return lines
+
     def _write_design(self, token: str, scaffold: list[dict] | None = None) -> Path:
         """Write architecture.md + interfaces.md + test-plan.md (one DRAFT
         covers all three). Tokens: template_broken drops architecture.md's
@@ -530,16 +488,6 @@ class FakeBackend:
         last acceptance AC without a test-layer attribution (BS-06 fails)."""
         scaffold = scaffold or []
         vdir = self._design_vdir()
-        arch = self._design_doc("architecture")
-        if scaffold:
-            arch = self._append_section_lines(
-                arch, _SCAFFOLD_HEADING, self._scaffold_lines(scaffold)
-            )
-        if token == "template_broken":
-            idx = max(i for i, ln in enumerate(arch.splitlines())
-                      if ln.startswith("## "))
-            arch = "\n".join(arch.splitlines()[:idx]) + "\n"
-        (vdir / "architecture.md").write_text(arch, encoding="utf-8")
         interfaces = self._design_doc("interfaces")
         interface_lines = self._interface_lines(scaffold)
         if interface_lines:
@@ -550,6 +498,23 @@ class FakeBackend:
             interfaces, _IF_REGISTRY,
             ["### IF-MTEST-001 M-TEST 接口"],
         )
+        arch = self._design_doc("architecture")
+        if scaffold:
+            arch = self._append_section_lines(
+                arch, _SCAFFOLD_HEADING, self._scaffold_lines(scaffold)
+            )
+        arch = self._append_section_lines(
+            arch, _CLOSURE_HEADING, self._island_closure_lines(interfaces)
+        )
+        if self._reach_entries_supported() and self._reach_entry_lines():
+            arch = self._append_section_lines(
+                arch, _SCAFFOLD_HEADING, [_REACH_ENTRY_SCAFFOLD_LINE]
+            )
+        if token == "template_broken":
+            idx = max(i for i, ln in enumerate(arch.splitlines())
+                      if ln.startswith("## "))
+            arch = "\n".join(arch.splitlines()[:idx]) + "\n"
+        (vdir / "architecture.md").write_text(arch, encoding="utf-8")
         (vdir / "interfaces.md").write_text(interfaces, encoding="utf-8")
         plan_body = self._drop_coverage_section(self._design_doc("test-plan"))
         (vdir / "test-plan.md").write_text(
@@ -557,6 +522,8 @@ class FakeBackend:
             encoding="utf-8")
         self._materialize_fake_scaffold(scaffold)
         self._write_project_contract()
+        if self._reach_entries_supported():
+            self._write_reach_entries(vdir)
         return vdir
 
     def _drop_coverage_section(self, text: str) -> str:
@@ -587,8 +554,47 @@ class FakeBackend:
             encoding="utf-8",
         )
 
+    def _reach_entries_supported(self) -> bool:
+        """Reach entrypoint declarations are an M-IMPL (v0.5) artifact of the
+        Fake fixture; older flow versions (v0.1/v0.4) and malformed versions
+        end at the M-TEST boundary and must not declare extra config files."""
+        return supports_m_impl(self.version)
+
+    def _reach_entry_lines(self) -> list[str]:
+        """Deterministic reach entrypoint module names for every acceptance AC:
+        one dotted module per AC matching Fake Archer PLANNING's production
+        path ``tracks/impl/{ac_slug}.py`` (``ac_slug`` = lowercased hyphen-
+        free AC id). Pure function of acceptance.md content (NFR-01/02)."""
+        from tracks.executor.test_tasks import _known_ac_ids  # noqa: PLC0415
+
+        acc = self._design_vdir() / "acceptance.md"
+        if not acc.is_file():
+            return []
+        ac_ids = sorted(_known_ac_ids(acc.read_text(encoding="utf-8")))
+        return [
+            f"tracks.impl.{_ac_slug(ac_id)}"
+            for ac_id in ac_ids
+        ]
+
+    def _write_reach_entries(self, vdir: Path | None = None) -> None:
+        """Materialize ``.tracks/reach-entries.txt`` (empty-safe) so check_reach
+        can see the Fake impl modules once Green files exist on the release
+        branch. The Scaffold 宣言 bullet (_REACH_ENTRY_SCAFFOLD_LINE) declares
+        it; ResultCheckpoint stages the committed artifact with the design trio."""
+        lines = self._reach_entry_lines()
+        if not lines:
+            return
+        reach_path = self.repo / _REACH_ENTRIES_RELATIVE
+        reach_path.parent.mkdir(parents=True, exist_ok=True)
+        reach_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def _ac_coverage(self, token: str) -> str:
-        """BS-06 section: every acceptance AC with a layer attribution."""
+        """BS-06 section: every acceptance AC with a layer attribution.
+
+        The ``test`` cell carries the full repo-relative path
+        ``tests/unit/test_{slug}.py`` — the same path Fake Archer PLANNING
+        writes into each task's ``test_refs`` (FR-0210: test_refs must trace
+        back to test-plan §8)."""
         acc = self._design_vdir() / "acceptance.md"
         acs = (_ACC_ITEM.findall(acc.read_text(encoding="utf-8"))
                if acc.exists() else [])
@@ -596,7 +602,8 @@ class FakeBackend:
             acs = acs[:-1]
         rows = "\n".join(
             f"| {ac_id} | {SHIELD_LAYERS[i % len(SHIELD_LAYERS)]} | "
-            f"test_{ac_id.lower().replace('-', '_')} | IF-MTEST-001 |"
+            f"tests/unit/test_{_ac_slug(ac_id)}.py "
+            f"| IF-MTEST-001 |"
             for i, ac_id in enumerate(acs)
         )
         return (
@@ -628,6 +635,401 @@ class FakeBackend:
                             encoding="utf-8")
             self._resolve_open_threads(path)
         return vdir
+
+    # -- M-IMPL (Devon phase-separated RGR) -----------------------------------
+
+    def _act_m_impl_devon(self, substate: str, assignment: dict) -> dict:
+        """Return one deterministic Devon phase outcome without filesystem I/O."""
+        error = self._devon_assignment_error(assignment)
+        if error is not None:
+            return self._devon_contract_failure(error)
+        phase = assignment["phase"]
+        token = self.token("devon", phase.upper(), "ok")
+        if token in _DEVON_FAILURE_TOKENS or (
+                token == "stub_token_failure" and phase != "red"):
+            return self._devon_token_failure(assignment, phase, token)
+        if phase == "refactor":
+            return self._devon_refactor(assignment, token)
+        if phase == "red":
+            return self._devon_red(assignment, token)
+        return self._devon_green(assignment, token)
+
+    @staticmethod
+    def _devon_assignment_error(assignment: dict) -> str | None:
+        """Validate Devon's materialized assignment before deriving a patch."""
+        for checker in (
+            FakeBackend._devon_required_error,
+            FakeBackend._devon_value_error,
+            FakeBackend._devon_manifest_error,
+        ):
+            error = checker(assignment)
+            if error is not None:
+                return error
+        return None
+
+    @staticmethod
+    def _devon_required_error(assignment: dict) -> str | None:
+        required = (
+            "task_id", "if_ids", "ac_refs", "test_refs", "commands",
+            "manifest", "phase", "pre_dirty_snapshot", "result_identity",
+        )
+        missing = [key for key in required
+                   if key not in assignment or assignment[key] is None]
+        phase = assignment.get("phase")
+        if phase not in _DEVON_PHASES:
+            missing.append("phase")
+        if phase in ("green", "refactor") and not assignment.get(
+                "r_tree_identity"):
+            missing.append("r_tree_identity")
+        if missing:
+            return "missing or invalid: " + ", ".join(dict.fromkeys(missing))
+        return None
+
+    @staticmethod
+    def _devon_value_error(assignment: dict) -> str | None:
+        phase = assignment["phase"]
+        if not isinstance(assignment["task_id"], str) \
+                or not assignment["task_id"].strip():
+            return "task_id must be a non-empty string"
+        for key in ("if_ids", "ac_refs", "test_refs"):
+            if not FakeBackend._devon_string_list(assignment[key]):
+                return f"{key} must be a non-empty string list"
+        if not FakeBackend._devon_commands_valid(assignment["commands"]):
+            return "commands must contain at least one command"
+        snapshot = assignment["pre_dirty_snapshot"]
+        if (not isinstance(snapshot, (dict, list, tuple, str))
+                or isinstance(snapshot, str) and not snapshot.strip()
+                or isinstance(snapshot, (list, tuple)) and not snapshot):
+            return "pre_dirty_snapshot has an invalid type"
+        if (not isinstance(assignment["result_identity"], str)
+                or not assignment["result_identity"].strip()):
+            return "result_identity must be a non-empty string"
+        if phase in ("green", "refactor") and (
+                not isinstance(assignment["r_tree_identity"], str)
+                or not assignment["r_tree_identity"].strip()):
+            return "r_tree_identity must be a non-empty string"
+        return None
+
+    @staticmethod
+    def _devon_manifest_error(assignment: dict) -> str | None:
+        manifest = assignment["manifest"]
+        if not isinstance(manifest, dict):
+            return "manifest must be an object"
+        for key in ("allowed_paths", "forbidden_paths"):
+            paths_value = manifest.get(key)
+            if not FakeBackend._devon_manifest_paths_valid(paths_value):
+                return f"manifest.{key} must be a non-empty path list"
+        if not FakeBackend._devon_test_refs_valid(assignment["test_refs"]):
+            return "test_refs must target repo-relative tests/unit paths"
+        return None
+
+    @staticmethod
+    def _devon_string_list(value: object) -> bool:
+        return isinstance(value, (list, tuple)) and bool(value) and all(
+            isinstance(item, str) and item.strip()
+            and "\n" not in item and "\r" not in item
+            for item in value
+        )
+
+    @staticmethod
+    def _devon_commands_valid(value: object) -> bool:
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, dict):
+            return bool(value) and all(
+                FakeBackend._devon_commands_valid(item)
+                for item in value.values()
+            )
+        if isinstance(value, (list, tuple)):
+            return bool(value) and all(
+                FakeBackend._devon_commands_valid(item) for item in value
+            )
+        return False
+
+    @staticmethod
+    def _devon_manifest_paths_valid(value: object) -> bool:
+        return isinstance(value, (list, tuple)) and bool(value) and all(
+            FakeBackend._devon_manifest_path_valid(item) for item in value
+        )
+
+    @staticmethod
+    def _devon_manifest_path_valid(value: object) -> bool:
+        if not isinstance(value, str):
+            return False
+        path = value.strip().replace("\\", "/")
+        return not (
+            not path or path == "." or path.startswith("/")
+            or any(char.isspace() for char in path)
+            or "::" in path or ".." in path.split("/")
+            or ("*" in path and not path.endswith("/**"))
+        )
+
+    @staticmethod
+    def _devon_test_refs_valid(value: object) -> bool:
+        if not FakeBackend._devon_string_list(value):
+            return False
+        return all(
+            path.split("::", 1)[0].replace("\\", "/").startswith("tests/unit/")
+            and ".." not in path.split("::", 1)[0].split("/")
+            for path in value
+        )
+
+    @staticmethod
+    def _devon_contract_failure(reason: str) -> dict:
+        return {
+            "status": "failed", "artifact_ref": None,
+            "failure_class": "contract_error",
+            "audit_evidence": f"contract_error: {reason}",
+            "self_report": f"Devon assignment rejected: {reason}",
+        }
+
+    def _devon_token_failure(self, assignment: dict, phase: str,
+                             token: str) -> dict:
+        failure_class = "agent_failed" if token == "fail" else token
+        if token == "hang":
+            failure_class = "timeout"
+        summary = f"simulated Devon {phase} failure: {token}"
+        evidence = self._devon_evidence(
+            assignment, phase, [],
+            self._devon_commands(assignment, "", "fail", summary),
+            [{"status": "fail", "classification": token,
+              "output_summary": summary}],
+            f"failure:{token}", [],
+        )
+        return {
+            "status": "failed", "artifact_ref": None,
+            "failure_class": failure_class, "audit_evidence": summary,
+            "self_report": summary, **evidence,
+        }
+
+    def _devon_red(self, assignment: dict, token: str) -> dict:
+        red_content, error = self._devon_red_content(assignment, token)
+        if error is not None:
+            return self._devon_contract_failure(error)
+        test_path, body, verdict, summary = red_content
+        existing_test, error = self._devon_existing_text(test_path)
+        if error is not None:
+            return self._devon_contract_failure(error)
+        updated = append_text(existing_test, body)
+        patch = unified_patch(test_path, existing_test, updated)
+        evidence = self._devon_evidence(
+            assignment, "red", [test_path],
+            self._devon_commands(assignment, test_path, "fail", summary),
+            [{"status": "fail", "classification": verdict,
+              "output_summary": summary}],
+            patch, list(assignment["if_ids"]),
+        )
+        result = {
+            "status": "done", "artifact_ref": None, "diff_ref": patch,
+            "self_report": f"fake Devon red produced {verdict}",
+            "verdict": verdict, **evidence,
+        }
+        if token == "stub_token_failure":
+            result["failure_class"] = "stub_token_failure"
+        return result
+
+    def _devon_red_content(
+        self, assignment: dict, token: str,
+    ) -> tuple[tuple[str, str, str, str] | None, str | None]:
+        test_path, error = self._devon_test_path(assignment)
+        if error is not None:
+            return None, error
+        production_path = self._devon_production_reference(assignment)
+        existing, error = self._devon_existing_text(production_path)
+        if error is not None:
+            return None, error
+        implementation = self._devon_implementation_text(
+            existing, assignment["if_ids"][0],
+        )
+        if token == "stub_token_failure":
+            body = self._devon_stub_test(assignment["if_ids"][0])
+            verdict = "stub_token_failure"
+            summary = (
+                "stub_token_failure: NotImplementedError("
+                f"\"{assignment['if_ids'][0]}\")"
+            )
+        else:
+            body = self._devon_assertion_test(
+                production_path, assignment["if_ids"][0], implementation,
+            )
+            verdict = "assertion_failure"
+            summary = "assertion_failure: deterministic behavioral assertion"
+        return (test_path, body, verdict, summary), None
+
+    def _devon_green(self, assignment: dict, token: str) -> dict:
+        production_path, error = self._devon_production_path(assignment)
+        if error is not None:
+            return self._devon_contract_failure(error)
+        existing, error = self._devon_existing_text(production_path)
+        if error is not None:
+            return self._devon_contract_failure(error)
+        updated = append_text(
+            existing, self._devon_implementation_text(
+                None, assignment["if_ids"][0],
+            ),
+        )
+        patch = unified_patch(production_path, existing, updated)
+        summary = f"pass: minimal implementation for {assignment['if_ids'][0]}"
+        evidence = self._devon_evidence(
+            assignment, "green", [production_path],
+            self._devon_commands(assignment, production_path, "pass", summary),
+            [{"status": "pass", "classification": "implementation",
+              "output_summary": summary}],
+            patch, list(assignment["if_ids"]),
+        )
+        return {
+            "status": "done", "artifact_ref": None, "diff_ref": patch,
+            "self_report": "fake Devon green produced minimal implementation",
+            **evidence,
+        }
+
+    def _devon_refactor(self, assignment: dict, token: str) -> dict:
+        reason = "no authorized behavior-preserving refactor is required"
+        summary = f"pass: {reason}"
+        evidence = self._devon_evidence(
+            assignment, "refactor", [],
+            self._devon_commands(assignment, "", "pass", summary),
+            [{"status": "pass", "classification": "no_change",
+              "output_summary": summary}],
+            "no-change", list(assignment["if_ids"]), reason,
+        )
+        return {
+            "status": "done", "artifact_ref": None,
+            "self_report": f"fake Devon refactor: {reason}", **evidence,
+        }
+
+    # -- M-IMPL (Archer PLANNING; flow.md §10) --------------------------------
+
+    @staticmethod
+    def _is_m_impl_planning(role: str, substate: str) -> bool:
+        """Archer PLANNING is the only M-IMPL substate the fake simulates."""
+        return role == "archer" and substate == "PLANNING"
+
+    def _act_m_impl_planning(self, assignment: dict | None = None) -> dict:
+        """M-IMPL PLANNING: derive the implementation task graph from the
+        frozen trio + design docs and write ``.tracks/projects/{version}/
+        tasks.json`` as the Agent artifact (the Runtime never creates it).
+
+        Required AC ids come from acceptance.md, valid IF ids from
+        interfaces.md §5 IF Registry; the graph is one deterministic vertical
+        slice per AC. ``archer:PLANNING`` failure tokens (``_FAILED_TOKENS``)
+        return ``failed`` without writing a valid artifact. Output is a pure
+        function of the doc contents (no clock/random), so the same docs
+        yield byte-identical tasks.json.
+        """
+        token = self.token("archer", "PLANNING", "ok")
+        if token in _FAILED_TOKENS:
+            fclass = "agent_failed" if token == "fail" else token
+            return {"status": "failed", "artifact_ref": None,
+                    "failure_class": fclass,
+                    "audit_evidence": f"simulated {fclass}",
+                    "self_report": f"archer exit gate failed: {fclass}"}
+        vdir = self._design_vdir()
+        tasks_json, error = self._derive_task_graph(vdir)
+        if error is not None:
+            return {"status": "failed", "artifact_ref": None,
+                    "failure_class": "invalid_taskgraph",
+                    "audit_evidence": error,
+                    "self_report": f"archer planning failed: {error}"}
+        raw = json.dumps(tasks_json, indent=2) + "\n"
+        (vdir / "tasks.json").write_text(raw, encoding="utf-8")
+        return {"status": "done", "artifact_ref": str(vdir / "tasks.json"),
+                "self_report": f"wrote {len(tasks_json['tasks'])} task(s) to "
+                               "tasks.json",
+                "audit_evidence": ("task graph derived from acceptance.md ACs "
+                                   "and interfaces.md IF registry")}
+
+    def _derive_task_graph(self, vdir: Path) -> tuple[dict | None, str | None]:
+        """Build and self-validate the deterministic task graph.
+
+        The Runtime taskgraph validators are imported lazily: importing
+        ``tracks.executor`` at module scope would run ``executor/__init__.py``,
+        which imports ``tracks.effects`` back into this package during import
+        (effects <-> executor cycle). Function-level imports keep the effects
+        boundary acyclic.
+        """
+        validators = self._taskgraph_validators()
+        acc = vdir / "acceptance.md"
+        ifc = vdir / "interfaces.md"
+        if not acc.is_file():
+            return None, "acceptance.md missing; cannot derive required ACs"
+        if not ifc.is_file():
+            return None, "interfaces.md missing; cannot derive IF registry"
+        acs = sorted(validators["known_ac_ids"](acc.read_text(encoding="utf-8")))
+        if not acs:
+            return None, "acceptance.md contains no AC ids"
+        registry = validators["extract_if_registry"](
+            ifc.read_text(encoding="utf-8")
+        )
+        if registry is None:
+            return None, "interfaces.md missing '## 5. IF Registry'"
+        registry = sorted(registry)
+        if not registry:
+            return None, "interfaces.md §5 IF Registry is empty"
+        data = self._taskgraph_data(acs, registry, validators["requirement_ref"])
+        error = self._validate_taskgraph(data, acs, registry, validators)
+        return (None, error) if error else (data, None)
+
+    @staticmethod
+    def _taskgraph_validators() -> dict:
+        from tracks.executor.taskgraph import (  # noqa: PLC0415
+            _requirement_ref,
+            parse_tasks_json,
+            validate_ac_coverage,
+            validate_dag,
+            validate_issue_numbers,
+            validate_scope,
+            validate_task_structure,
+        )
+        from tracks.executor.test_tasks import (  # noqa: PLC0415
+            _extract_if_registry,
+            _known_ac_ids,
+        )
+        return {
+            "requirement_ref": _requirement_ref,
+            "parse_tasks_json": parse_tasks_json,
+            "validate_ac_coverage": validate_ac_coverage,
+            "validate_dag": validate_dag,
+            "validate_issue_numbers": validate_issue_numbers,
+            "validate_scope": validate_scope,
+            "validate_task_structure": validate_task_structure,
+            "extract_if_registry": _extract_if_registry,
+            "known_ac_ids": _known_ac_ids,
+        }
+
+    @staticmethod
+    def _taskgraph_data(acs: list[str], registry: list[str], requirement_ref) -> dict:
+        tasks = []
+        for index, ac_id in enumerate(acs):
+            if_id = registry[index % len(registry)]
+            slug = _ac_slug(ac_id)
+            tasks.append({
+                "task_id": f"T-{index + 1:03d}",
+                "issue_number": index + 1,
+                "description": f"Implement {ac_id} as a vertical slice ({if_id})",
+                "ac_refs": [ac_id], "fr_refs": [requirement_ref(ac_id)],
+                "if_ids": [if_id],
+                "test_refs": [f"tests/unit/test_{slug}.py::test_{slug}"],
+                "scope_boundary": f"tracks/impl/{slug}.py, tests/unit/test_{slug}.py",
+                "depends_on": [], "batch": "1", "parallel": False, "budget": 3,
+            })
+        return {"tasks": tasks}
+
+    @staticmethod
+    def _validate_taskgraph(data: dict, acs: list[str], registry: list[str],
+                            validators: dict) -> str | None:
+        raw = json.dumps(data, indent=2) + "\n"
+        nodes, error = validators["parse_tasks_json"](raw)
+        if error is not None:
+            return error
+        errors = validators["validate_task_structure"](nodes)
+        valid, detail = validators["validate_dag"](nodes)
+        if not valid:
+            errors.append(detail)
+        errors.extend(validators["validate_scope"](nodes)[1])
+        errors.extend(validators["validate_ac_coverage"](nodes, acs, set(registry))[1])
+        errors.extend(validators["validate_issue_numbers"](nodes)[1])
+        return "; ".join(errors) if errors else None
 
     def _write_story(self, path: Path) -> None:
         text = path.read_text(encoding="utf-8")

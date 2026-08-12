@@ -69,11 +69,11 @@ def test_enter_m_test_from_design_exit():
 
 # -- AC-FR0010-02@v0.4: _NEXT_STAGE + boundary ---------------------------------------
 
-# AC-FR0010-02@v0.4 TRACKS-TRACE next stage design to M-TEST
+# AC-FR0010-02@v0.5 TRACKS-TRACE next stage design to M-TEST to M-IMPL
 def test_next_stage_design_to_m_test():
-    """AC-FR0010-02@v0.4"""
+    """AC-FR0010-02@v0.5"""
     assert _NEXT_STAGE["M-DESIGN"] == "M-TEST"
-    assert "M-TEST" not in _NEXT_STAGE  # M-IMPL not registered -> boundary
+    assert _NEXT_STAGE["M-TEST"] == "M-IMPL"  # v0.5: M-TEST -> M-IMPL
 
 
 # -- AC-FR0010-03@v0.4: SM-01 transition enforcement ---------------------------------
@@ -711,3 +711,92 @@ def test_prism_revise_test_defect_explicit():
                  _prism_revise_with_dc("test_defect"))
     assert s.substate == "WRITE"
     assert s.current_attempt == 1
+
+
+def test_prism_revise_null_defect_classification_routes_to_write():
+    """Bugfix regression: prism.verdict(revise) whose payload carries
+    defect_classification=null (key present, value None) must default to
+    test_defect -> WRITE, resetting the author dispatch and consuming the
+    attempt. Before the fix `p.get("defect_classification", "test_defect")`
+    returned None, no routing branch ran, substate stayed PRISM_REVIEW with
+    reviewer_dispatched=True, and the run halted."""
+    payload = {"verdict": "revise",
+               "criteria_pack": dict(_CRITERIA_PACK),
+               "defect_classification": None}
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 ("prism.verdict", payload))
+    assert s.substate == "WRITE"
+    assert s.doc_dispatched is False
+    assert s.current_attempt == 1
+    cmd = decide(s)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "shield"
+
+
+def test_prism_revise_empty_defect_classification_routes_to_write():
+    """prism.verdict(revise) with an empty defect_classification defaults to
+    test_defect -> WRITE (same as absent/None)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc(""))
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 1
+
+
+def test_prism_revise_unknown_classification_fails_closed():
+    """prism.verdict(revise) with an unknown non-empty defect_classification
+    is NOT silently defaulted: no routing branch runs, the substate stays
+    PRISM_REVIEW (fail-closed halt, reviewer still dispatched)."""
+    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+                 PRISM_DISPATCH, PRISM_DONE,
+                 _prism_revise_with_dc("mystery_defect"))
+    assert s.substate == "PRISM_REVIEW"
+    assert s.reviewer_dispatched is True
+    assert decide(s) is None
+
+
+def test_prism_pass_revise_pass_completes_at_boundary():
+    """Historical v0.4 pass|revise|pass: the third Prism token is consumed
+    and the run completes at the M-TEST boundary. The revise token carries
+    defect_classification=null (the published form before the serialization
+    hardening) and must route revise -> WRITE so the Shield re-dispatch and
+    the third pass both run."""
+    def _prism_done():
+        return PRISM_DONE
+
+    # 1st token: pass -> RED_CHECK -> EXIT -> trace fails -> WRITE (attempt 1)
+    evs = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+           PRISM_DISPATCH, _prism_done(),
+           ("prism.verdict", {"verdict": "pass",
+                              "criteria_pack": dict(_CRITERIA_PACK)}),
+           RUN_CMD, RED_VALID, TRACE_CMD,
+           ("verdict.failed", {"check": "trace", "reason": "orphan",
+                               "attempt": 1})]
+    s = state_of(*evs)
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 1
+    # 2nd token: revise (defect_classification=null) -> WRITE (attempt 2)
+    evs += [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+            PRISM_DISPATCH, _prism_done(),
+            ("prism.verdict", {"verdict": "revise",
+                               "criteria_pack": dict(_CRITERIA_PACK),
+                               "defect_classification": None})]
+    s = state_of(*evs)
+    assert s.substate == "WRITE"
+    assert s.current_attempt == 2
+    # 3rd token: pass -> RED_CHECK -> EXIT -> trace pass -> commit -> boundary
+    evs += [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+            PRISM_DISPATCH, _prism_done(),
+            ("prism.verdict", {"verdict": "pass",
+                               "criteria_pack": dict(_CRITERIA_PACK)}),
+            RUN_CMD, RED_VALID, TRACE_CMD, TRACE_PASS,
+            COMMIT_CMD, TEST_COMMITTED,
+            ("stage.exited", {"stage": "M-TEST"}),
+            ("run.completed", {"terminal_state": "boundary"})]
+    s = state_of(*evs)
+    assert s.stage == "M-TEST"
+    assert s.test_committed is True
+    assert s.status == "completed"
+    assert s.terminal_state == "boundary"
+    assert decide(s) is None  # M-TEST boundary: run done

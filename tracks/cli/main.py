@@ -20,6 +20,14 @@ from tracks.checks.trace import check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
+from tracks.executor.taskgraph import (
+    parse_tasks_json,
+    validate_ac_coverage,
+    validate_dag,
+    validate_issue_numbers,
+    validate_scope,
+)
+from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
 from tracks.executor.validate import (
     check_design_trace_file,
     check_template,
@@ -27,7 +35,7 @@ from tracks.executor.validate import (
     check_trace_file,
 )
 from tracks.kernel import Command, project
-from tracks.report import generate_report
+from tracks.report import generate_report, progress_summary
 from tracks.store import Store, new_ulid
 
 
@@ -317,6 +325,12 @@ def cmd_run(repo: Path, *args: str) -> int:
     store = Store(home)
     run_id = store.active_run()
     if run_id is None:
+        latest = store.latest_run()
+        if latest is not None:
+            state = store.state(latest)
+            if state.status == "completed":
+                print(f"run {latest}: {_format_state(state)}")
+                return 0
         return _err("no active run; `trac start <version>` first")
     with writer_lock(home):
         state = Executor(
@@ -518,6 +532,7 @@ def cmd_retry(repo: Path, *args: str) -> int:
              "clear_evidence": clear_evidence},
         )
         state = store.state(run_id)
+    print("human.retry event appended; escalation gate cleared; attempt budget reset")
     print(f"run {run_id}: {_format_state(state)}")
     return 0
 
@@ -686,9 +701,9 @@ def cmd_status(repo: Path) -> int:
         return 0
     s = store.state(row[0])
     if s.status == "completed":
-        print(f"run {row[0]}: completed terminal={s.terminal_state} stage={s.stage}")
+        print(f"run={row[0]}: completed terminal={s.terminal_state} stage={s.stage}")
     else:
-        print(f"run {row[0]}: {_format_state(s)}")
+        print(f"run={row[0]}: {_format_state(s)}")
     return 0
 
 
@@ -707,19 +722,27 @@ def cmd_replay(repo: Path, run_id: str) -> int:
 
 
 _REPORT_USAGE = (
-    "usage: trac report --run-id ID --output DIR [--format md|html]"
+    "usage: trac report [--run-id ID] [--output DIR] [--format md|html]"
 )
 
 
-def _parse_report_args(args: tuple[str, ...]) -> tuple[str, str, str] | None:
+def _parse_report_args(
+    args: tuple[str, ...],
+) -> tuple[str | None, str | None, str] | None:
     run_id = None
     output = None
     report_format = "md"
+    seen = set()
     index = 0
     while index < len(args):
         flag = args[index]
-        if flag not in ("--run-id", "--output", "--format") or index + 1 >= len(args):
+        if (
+            flag not in ("--run-id", "--output", "--format")
+            or flag in seen
+            or index + 1 >= len(args)
+        ):
             return None
+        seen.add(flag)
         value = args[index + 1]
         if flag == "--run-id":
             run_id = value
@@ -728,7 +751,7 @@ def _parse_report_args(args: tuple[str, ...]) -> tuple[str, str, str] | None:
         elif flag == "--format":
             report_format = value
         index += 2
-    if not run_id or not output or report_format not in ("md", "html"):
+    if run_id == "" or output == "" or report_format not in ("md", "html"):
         return None
     return run_id, output, report_format
 
@@ -739,13 +762,32 @@ def cmd_report(repo: Path, *args: str) -> int:
     if parsed is None:
         return _err(_REPORT_USAGE)
     run_id, output, report_format = parsed
+    home = paths.tracks_home(repo)
+    if not paths.db_path(home).is_file():
+        if run_id is not None and run_id != "latest":
+            return _err(f"unknown run: {run_id}")
+        return _err("no runs available for report")
+    store = Store(home)
     try:
-        report_md, index_html = generate_report(repo, run_id, output)
+        if run_id is None or run_id == "latest":
+            run_id = store.latest_run()
+            if run_id is None:
+                return _err("no runs available for report")
+        events = list(store.events(run_id))
+    finally:
+        store.close()
+    if not events:
+        return _err(f"unknown run: {run_id}")
+    try:
+        report_md, index_html = generate_report(repo, run_id, output or home / "report")
     except (RuntimeError, ValueError) as exc:
         return _err(str(exc))
     selected = report_md if report_format == "md" else index_html
     print(f"report: {selected}")
     print(f"html: {index_html}")
+    summary = progress_summary(events)
+    if summary:
+        print(summary)
     return 0
 
 
@@ -756,18 +798,64 @@ def cmd_validate(repo: Path, *args) -> int:
     if len(args) != 2 or args[0] != "--file":
         return _err("usage: trac validate --file <path>")
     path = Path(args[1])
-    issues = check_template(path)
-    if path.name == "acceptance.md":  # FR-0170: trace auto-runs for acceptance
-        issues += check_trace_file(path)
-    if path.name == "test-plan.md":  # BS-06: design trace (AC -> test layer)
-        issues += check_design_trace_file(path)
-        issues += check_test_tasks_contract_file(path)  # FR-0140
+    if path.name == "tasks.json":  # FR-0180: five structural checks (not template)
+        issues = _validate_tasksjson(path)
+    else:
+        issues = check_template(path)
+        if path.name == "acceptance.md":  # FR-0170: trace auto-runs for acceptance
+            issues += check_trace_file(path)
+        if path.name == "test-plan.md":  # BS-06: design trace (AC -> test layer)
+            issues += check_design_trace_file(path)
+            issues += check_test_tasks_contract_file(path)  # FR-0140
     if issues:
         for issue in issues:
             print(issue, file=sys.stderr)
         return 1
     print("valid")
     return 0
+
+
+def _validate_tasksjson(path: Path) -> list[str]:
+    """FR-0180 five structural checks for tasks.json (IF-VALIDATE-001)."""
+    if not path.exists():
+        return [f"line:1 missing file: {path}"]
+    text = path.read_text(encoding="utf-8")
+    tasks, err = parse_tasks_json(text)
+    if err is not None:
+        return [err]
+    errors: list[str] = []
+    ok, cycle = validate_dag(tasks)
+    if not ok:
+        errors.append(cycle or "cycle detected")
+    ok, overlap_errors = validate_scope(tasks)
+    if not ok:
+        errors.extend(overlap_errors)
+    acc_path = path.parent / "acceptance.md"
+    if_path = path.parent / "interfaces.md"
+    if not acc_path.exists():
+        errors.append("missing acceptance.md: cannot determine required ACs")
+        required_acs: list[str] = []
+    else:
+        required_acs = sorted(_known_ac_ids(
+            acc_path.read_text(encoding="utf-8")
+        ))
+    if not if_path.exists():
+        errors.append("missing interfaces.md: cannot validate IF- registry")
+        if_registry: set[str] = set()
+    else:
+        extracted = _extract_if_registry(if_path.read_text(encoding="utf-8"))
+        if extracted is None:
+            errors.append("interfaces.md missing '## 5. IF Registry' section")
+            if_registry = set()
+        else:
+            if_registry = extracted
+    ok, coverage_errors = validate_ac_coverage(tasks, required_acs, if_registry)
+    if not ok:
+        errors.extend(coverage_errors)
+    ok, issue_errors = validate_issue_numbers(tasks)
+    if not ok:
+        errors.extend(issue_errors)
+    return errors
 
 
 def cmd_discuss(repo: Path, *args) -> int:
@@ -923,7 +1011,7 @@ USAGE = (
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
-    "|report --run-id <run-id> --output <dir> [--format md|html]"
+    "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ...|check <deliverables|trace|reach>"
 )
 

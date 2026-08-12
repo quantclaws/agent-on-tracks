@@ -4,7 +4,6 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import shlex
 import subprocess
@@ -16,9 +15,11 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
+from tracks.capabilities import supports_m_impl
 from tracks.effects import select_backend
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
+from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
     _LEGIT_RED,
@@ -30,6 +31,7 @@ from tracks.executor.helpers import (
     classify_red,
     git,
 )
+from tracks.executor.m_impl_runtime import MImplRuntimeMixin
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
@@ -41,11 +43,7 @@ from tracks.executor.validate import (
 )
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
-from tracks.kernel.machine import (
-    _REVIEW_SUBSTATE,
-    State,
-    decide,
-)
+from tracks.kernel.machine import _REVIEW_SUBSTATE, State, decide
 from tracks.project import ContractError, load_contract
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
@@ -56,7 +54,11 @@ _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
 # production backend writes the collect/run contract consumed by M-TEST). Every
 # other .tracks/** stays rejected (the tracked project documents live under
 # .tracks/projects/ and are staged via _emit_committed, never via the manifest).
+# The M-IMPL reach entrypoint manifest (`.tracks/reach-entries.txt`, declared
+# only by the Fake fixture) is the single additional canonical config artifact
+# the design ResultCheckpoint stages alongside the design trio.
 _CANONICAL_CONTRACT_PATH = (".tracks", "project", "project.toml")
+_CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 
 # Relative project-venv interpreter paths a contract may declare as argv[0].
 # Used by _resolve_contract_argv0 to decide whether to substitute the Runtime's
@@ -87,13 +89,11 @@ def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     return argv
 
 
-# Stage-transition table (design §1, single source of truth): EXIT seal -> next
-# stage.entered; stages absent here (M-TEST) end the run at the M-IMPL
-# boundary: run.completed(terminal_state="boundary") (SM-05.6 / v0.4: M-IMPL is
-# not implemented, so the run completes after M-TEST EXIT).
+# Stage-transition table (design §1, single source of truth): EXIT seal ->
+# next stage.entered. v0.5: M-TEST -> M-IMPL (previously a boundary exit).
 _NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC",
                "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN",
-               "M-DESIGN": "M-TEST"}
+               "M-DESIGN": "M-TEST", "M-TEST": "M-IMPL"}
 
 # reviewer role -> its verdict event type
 _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
@@ -104,7 +104,7 @@ _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
 _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 
-class Executor(ResultCheckpointMixin):
+class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
     def __init__(self, store: Store, repo: Path, run_id: str,
@@ -208,14 +208,7 @@ class Executor(ResultCheckpointMixin):
 
     @staticmethod
     def _path_identity(path: Path) -> str:
-        if path.is_symlink():
-            return f"symlink:{os.readlink(path)}"
-        if not path.exists():
-            return "missing"
-        try:
-            return hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            return "unreadable"
+        return path_identity(path)
 
     def _resolve_pre_dirty(self, state, substate, params):
         """Resolve the pre-dispatch dirty baseline for M-TEST Shield WRITE.
@@ -238,13 +231,15 @@ class Executor(ResultCheckpointMixin):
 
     def run_loop(self) -> State:
         pending = self.store.state(self.run_id).pending
-        recovered_dispatch = self._recover()
-        dispatches = 1 if recovered_dispatch else 0
-        # Bounded mode is one substate + retries (see _dispatch_gate): a
-        # recovered dispatch belongs to that remembered substate too.
-        bound_substate = None
-        if recovered_dispatch and self.max_dispatches is not None:
-            bound_substate = (pending or {}).get("params", {}).get("substate")
+        recovered_kind = self._recover()
+        if recovered_kind == "rollback_stage":
+            recovered = Command(kind=recovered_kind,
+                                params=pending.get("params", {}),
+                                command_id=pending.get("command_id"))
+            if self._is_phase_boundary(recovered):
+                return self.store.state(self.run_id)
+        dispatches, bound_substate = self._recovery_dispatch_state(
+            recovered_kind, pending)
         while True:
             state = self.store.state(self.run_id)
             cmd = decide(state)
@@ -258,6 +253,31 @@ class Executor(ResultCheckpointMixin):
                 dispatches += 1
             self._progress(cmd, state)
             self.issue(cmd)
+            if self._is_phase_boundary(cmd):
+                return self.store.state(self.run_id)
+
+    def _recovery_dispatch_state(self, recovered_kind, pending):
+        """Compute (dispatches, bound_substate) after recovery."""
+        dispatches = 1 if recovered_kind == "dispatch_agent" else 0
+        bound_substate = None
+        if recovered_kind == "dispatch_agent" and self.max_dispatches is not None:
+            bound_substate = (pending or {}).get("params", {}).get("substate")
+        return dispatches, bound_substate
+
+    @staticmethod
+    def _is_phase_boundary(cmd: Command) -> bool:
+        """True when issuing ``cmd`` must end the current ``run_loop``
+        invocation (a durable stop boundary).
+
+        Only ``rollback_stage`` with reason ``stub_gap`` qualifies: after an
+        M-TEST/M-IMPL -> M-DESIGN stub_gap rollback the same run would
+        immediately re-dispatch Archer against the identical invalid
+        test-task contract (auto-reenter the defective downstream cycle), so
+        we return and require a later explicit ``trac run``. Every other
+        rollback reason (scope_overflow, human_return, diagnose_rollback)
+        needs no external correction, so run_loop continues in the same
+        invocation to dispatch the upstream agent with evidence."""
+        return cmd.kind == "rollback_stage" and cmd.params.get("reason") == "stub_gap"
 
     def run_pipeline(self) -> State:
         """Drive only the ResultCheckpoint pipeline (validate->checkpoint->
@@ -328,6 +348,10 @@ class Executor(ResultCheckpointMixin):
             assignment = dict(params.get("assignment") or {})
             assignment["scenario_context"] = deepcopy(self.assignment_overlay)
             params["assignment"] = assignment
+        if (cmd.kind == "dispatch_agent" and state.stage == "M-IMPL"):
+            params["assignment"] = self._materialize_m_impl_assignment(
+                state, params, cid,
+            )
         # D-28: Runtime enriches the Shield WRITE assignment with structured
         # test_tasks parsed from test-plan §8 (AC layer + IF green conditions)
         # before write-ahead logging so the persisted command.issued evidence
@@ -335,28 +359,27 @@ class Executor(ResultCheckpointMixin):
         if (cmd.kind == "dispatch_agent"
                 and params.get("role") == "shield"
                 and params.get("substate") == "WRITE"
-                and state.stage == "M-TEST"
-                and "test_tasks" not in (params.get("assignment") or {})):
+                and state.stage in ("M-TEST", "M-IMPL")
+                and not (params.get("assignment") or {}).get("test_tasks")):
             vdir = self._vdir()
             tasks = parse_test_tasks(vdir / "acceptance.md",
                                      vdir / "test-plan.md")
             assignment = dict(params.get("assignment") or {})
-            # Preserve an empty/malformed parse result as evidence-bearing input;
-            # FakeBackend must turn it into a failed outcome instead of allowing
-            # Shield to fall back to rereading the design documents.
             assignment["test_tasks"] = tasks
             params["assignment"] = assignment
         if (cmd.kind == "dispatch_agent"
                 and params.get("role") == "shield"
                 and params.get("substate") == "WRITE"
-                and state.stage == "M-TEST"):
+                and state.stage in ("M-TEST", "M-IMPL")):
             params["pre_dirty"] = sorted(self._dirty_files())
             params["pre_dirty_snapshot"] = self._dirty_snapshot()
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
-            task_id = (f"{self.run_id}:{cmd.params.get('substate')}"
-                       f":{state.review_round}:{state.current_attempt}")
+            task_id = (state.current_task_id
+                       if state.stage == "M-IMPL" and state.current_task_id
+                       else f"{self.run_id}:{cmd.params.get('substate')}"
+                            f":{state.review_round}:{state.current_attempt}")
         self._emit(
             "command.issued",
             {"command": {"kind": issued.kind, "params": issued.params,
@@ -365,17 +388,19 @@ class Executor(ResultCheckpointMixin):
         )
         self._execute(issued, self.store.state(self.run_id), task_id)
 
-    def _recover(self) -> bool:
+    def _recover(self) -> str | None:
         """Hanging command (issued, no result): reconcile first (D-13), reissue
-        the same assignment without consuming an attempt (D-11)."""
+        the same assignment without consuming an attempt (D-11). Returns the
+        reconciled command's kind (or None when no pending command exists) so
+        callers can react to phase-boundary commands like rollback_stage."""
         state = self.store.state(self.run_id)
         if state.pending:
             cmd = Command(kind=state.pending["kind"],
                           params=state.pending.get("params", {}),
                           command_id=state.pending.get("command_id"))
             self._execute(cmd, state, None, reconcile=True)
-            return cmd.kind == "dispatch_agent"
-        return False
+            return cmd.kind
+        return None
 
     def _execute(self, cmd: Command, state: State,
                  task_id: str | None, reconcile: bool = False) -> None:
@@ -413,12 +438,13 @@ class Executor(ResultCheckpointMixin):
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
         assignment = p.get("assignment")
-        if p.get("evidence") is not None:
-            # FR-11: failed-outcome evidence rides params["evidence"]; merge it
-            # into the assignment so the backend renders it into the prompt
-            # (opencode._assignment_context serializes the whole assignment).
-            assignment = dict(assignment or {})
-            assignment["evidence"] = p["evidence"]
+        assignment = self._assignment_with_evidence(assignment, p)
+        materialization_error = self._invalid_m_impl_assignment(
+            role, substate, assignment,
+        ) if state.stage == "M-IMPL" else None
+        if materialization_error is not None:
+            self._emit_stale_assignment(cmd, task_id, role, materialization_error)
+            return
         # D-32: fail-closed M-DESIGN→M-TEST gate. After the persisted
         # assignment.test_tasks enrichment (issue()), an invalid test-task
         # contract must NOT reach the (production or fake) backend: emit a
@@ -427,6 +453,29 @@ class Executor(ResultCheckpointMixin):
         if self._reject_invalid_test_tasks(state, role, substate, assignment,
                                            cmd, task_id):
             return
+        self._dispatch_agent_backend(cmd, state, task_id, role, substate, doc,
+                                     doc_path, assignment)
+
+    @staticmethod
+    def _assignment_with_evidence(assignment: dict | None, params: dict) -> dict | None:
+        if params.get("evidence") is None:
+            return assignment
+        enriched = dict(assignment or {})
+        enriched["evidence"] = params["evidence"]
+        return enriched
+
+    def _emit_stale_assignment(
+        self, cmd: Command, task_id: str | None, role: str, reason: str,
+    ) -> None:
+        self._emit("outcome.received",
+                   {"role": role, "status": "failed",
+                    "failure_class": "stale", "self_report": reason},
+                   command_id=cmd.command_id, task_id=task_id)
+
+    def _dispatch_agent_backend(
+        self, cmd, state, task_id, role, substate, doc, doc_path, assignment,
+    ) -> None:
+        p = cmd.params
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
         pre_dirty = self._resolve_pre_dirty(state, substate, p)
@@ -446,9 +495,9 @@ class Executor(ResultCheckpointMixin):
         if self._criteria_pack_mismatch(role, substate, state,
                                         result.get("verdict"),
                                         assignment, result, cmd):
-            self._emit("outcome.received",
-                       _dispatch_payload(self.store, p, result),
-                       command_id=cmd.command_id, task_id=task_id)
+            self._emit_criteria_pack_failure(
+                cmd, task_id, p, assignment, result, state,
+            )
             return
         # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
         # embed the full pipeline capture in outcome.received so the reducer
@@ -468,22 +517,109 @@ class Executor(ResultCheckpointMixin):
                    command_id=cmd.command_id, task_id=task_id)
         if "result_checkpoint" in payload:
             return  # pipeline drives the domain event
-        if result.get("verdict"):
-            self._emit_verdict(role, result["verdict"], result, state, p, cmd, task_id)
+        self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
+        self._emit_shield_commit(result, role, state, cmd, task_id)
+
+    def _emit_criteria_pack_failure(
+        self, cmd, task_id, params, assignment, result, state,
+    ) -> None:
+        payload = _dispatch_payload(self.store, params, result)
+        self._emit("outcome.received", payload,
+                   command_id=cmd.command_id, task_id=task_id)
+        assigned = (assignment or {}).get("criteria_pack")
+        self._emit("verdict.failed",
+                   {"check": "criteria_pack_mismatch",
+                    "reason": f"expected {assigned}, got "
+                    f"{result.get('criteria_pack')}",
+                    "attempt": state.current_attempt + 1,
+                    "evidence": str(result.get("criteria_pack"))},
+                   command_id=cmd.command_id, task_id=task_id)
+
+    def _emit_dispatch_verdict(self, result, role, state, params, cmd, task_id):
+        if not result.get("verdict") or role not in _VERDICT_EVENT:
+            return
+        if state.stage == "M-IMPL" and role == "prism" \
+                and state.substate == "DIAGNOSE":
+            self._emit_diagnose_verdict(result, state, cmd, task_id)
+            return
+        self._emit_verdict(role, result["verdict"], result, state,
+                           params, cmd, task_id)
+
+    def _emit_diagnose_verdict(self, result, state, cmd, task_id):
+        classification = self._diagnose_classification()
+        target = ("M-IMPL" if classification in ("test_defect", "impl_defect")
+                  else _DIAGNOSE_TARGET.get(classification, "M-IMPL"))
+        prior = state.last_failure or {}
+        self._emit("verdict.failed",
+                   {"check": classification, "target_stage": target,
+                    "reason": prior.get("reason") or (
+                        "Prism diagnosis: " + classification),
+                    "evidence": prior.get("evidence") or (
+                        "Prism diagnosis: " + classification),
+                    "attempt": state.current_attempt + 1},
+                   command_id=cmd.command_id, task_id=task_id)
+
+    def _emit_shield_commit(self, result, role, state, cmd, task_id):
+        if not (state.stage == "M-IMPL" and role == "shield"
+                and state.substate == "SHIELD_FIX"
+                and result.get("status") == "done"):
+            return
+        # Stage only tests/ files
+        tests_dir = self.repo / "tests"
+        # Get list of changed files under tests/
+        proc = git(self.repo, "status", "--porcelain", "--", "tests/")
+        changed = ([line[3:] for line in proc.stdout.splitlines()
+                    if line.strip()] if proc.stdout.strip() else [])
+        if not changed:
+            # No tests/ changes - fail closed
+            self._emit("verdict.failed",
+                       {"check": "scope",
+                        "reason": "shield_fix_no_diff",
+                        "evidence": "Shield SHIELD_FIX produced no tests/ diff",
+                        "attempt": state.current_attempt + 1},
+                       command_id=cmd.command_id, task_id=task_id)
+            return
+        # Stage all changed tests/ files
+        git(self.repo, "add", "--", "tests/")
+        # Create commit with trailers
+        task_id_val = state.current_task_id or ""
+        attempt_val = str(state.current_attempt + 1)
+        message = (
+            f"Shield fix: {task_id_val} attempt {attempt_val}\n\n"
+            f"Tracks-Task: {task_id_val}\n"
+            f"Tracks-Attempt: {attempt_val}\n"
+            f"command_id: {cmd.command_id}"
+        )
+        proc = _commit_if_staged(self.repo, message)
+        if proc is not None and proc.returncode != 0:
+            self._emit("verdict.failed",
+                       {"check": "scope",
+                        "reason": "shield_fix_commit_failed",
+                        "evidence": proc.stderr or proc.stdout,
+                        "attempt": state.current_attempt + 1},
+                       command_id=cmd.command_id, task_id=task_id)
+            return
+        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        test_count = (sum(1 for _ in tests_dir.rglob("test_*.py"))
+                      if tests_dir.exists() else 0)
+        self._emit("test.committed",
+                   {"commit_sha": commit_sha,
+                    "test_count": test_count},
+                   command_id=cmd.command_id, task_id=task_id)
 
     def _reject_invalid_test_tasks(self, state, role, substate, assignment,
                                    cmd, task_id) -> bool:
         """D-32 fail-closed gate: return True (and emit a stub_gap failed
         outcome) when an M-TEST Shield WRITE assignment carries an invalid
         test-task contract, so the backend is never called."""
-        if not (state.stage == "M-TEST" and substate == "WRITE"
+        if not (state.stage in ("M-TEST", "M-IMPL") and substate == "WRITE"
                 and role == "shield"
                 and not valid_test_tasks((assignment or {}).get("test_tasks"))):
             return False
         self._emit("outcome.received",
                    {"role": role, "status": "failed",
                     "failure_class": "stub_gap",
-                    "self_report": "M-DESIGN test-task contract invalid",
+                     "self_report": "test-task contract invalid",
                     "audit_evidence": (
                         "assignment.test_tasks must be a non-empty list of "
                         "{ac_id, layers, if_ids} with non-empty layers "
@@ -540,26 +676,21 @@ class Executor(ResultCheckpointMixin):
                                 assignment, result, cmd) -> bool:
         """Return True when the criteria-pack identity mismatch was emitted
         (caller should skip the normal verdict emission)."""
-        if not (verdict and role == "prism" and substate == "PRISM_REVIEW"
-                and state.stage == "M-TEST"):
+        if not (role == "prism" and (
+                (verdict and substate == "PRISM_REVIEW" and state.stage == "M-TEST")
+                or (state.stage == "M-IMPL"
+                    and substate in ("PRISM_PLAN", "PRISM_RED",
+                                     "PRISM_FINAL", "DIAGNOSE")))):
             return False
         assigned_pack = (assignment or {}).get("criteria_pack")
         outcome_pack = result.get("criteria_pack")
-        if assigned_pack and outcome_pack != assigned_pack:
-            self._emit("verdict.failed",
-                       {"check": "criteria_pack_mismatch",
-                        "reason": f"expected {assigned_pack}, got {outcome_pack}",
-                        "attempt": state.current_attempt + 1,
-                        "evidence": str(outcome_pack)},
-                       command_id=cmd.command_id)
-            return True
-        return False
+        return bool(assigned_pack and outcome_pack != assigned_pack)
 
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
         ev = _VERDICT_EVENT[role]
         payload = {"verdict": verdict, "diff_ref": result.get("diff_ref")}
-        if role == "prism" and state.stage == "M-TEST":
+        if role == "prism" and state.stage in ("M-TEST", "M-IMPL"):
             payload["criteria_pack"] = result.get("criteria_pack")
         self._emit(ev, payload, command_id=cmd.command_id, task_id=task_id)
         if ev == "prism.verdict" and verdict != "pass":
@@ -653,9 +784,11 @@ class Executor(ResultCheckpointMixin):
             return None, f"scaffold path is not allowed (must be repo-relative): {raw}"
         if (not relative.parts
                 or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS
-                and tuple(relative.parts) != _CANONICAL_CONTRACT_PATH):
-            # exactly the canonical .tracks/project/project.toml is allowed;
-            # every other .tracks/** (and .git/.opencode/**) is rejected.
+                and tuple(relative.parts) not in (
+                    _CANONICAL_CONTRACT_PATH, _CANONICAL_REACH_ENTRIES_PATH)):
+            # exactly the canonical .tracks/project/project.toml and
+            # .tracks/reach-entries.txt are allowed; every other .tracks/**
+            # (and .git/.opencode/**) is rejected.
             return None, f"scaffold path is not allowed: {raw}"
         if candidate.is_symlink():
             return None, f"scaffold path is not allowed (symlink): {raw}"
@@ -710,14 +843,29 @@ class Executor(ResultCheckpointMixin):
             self._emit_committed(doc, commit_sha, cmd.command_id, final=True)
         self._emit("stage.exited", {"stage": stage}, command_id=cmd.command_id)
         nxt = _NEXT_STAGE.get(stage)
-        if nxt:
+        if nxt and not self._is_boundary_transition(stage, nxt):
             self._emit("stage.entered", {"stage": nxt},
                        command_id=cmd.command_id)
         else:
-            # SM-05.6 / IF-003 §10f: no successor -> stop at the next-stage
-            # boundary (M-DESIGN boundary pre-v0.3; M-IMPL boundary since).
+            # SM-05.6 / IF-003 §10f: no successor (or a version-gated
+            # successor) -> stop at the next-stage boundary. M-DESIGN boundary
+            # pre-v0.3; M-TEST boundary for pre-v0.5 runs; M-IMPL boundary
+            # since.
             self._emit("run.completed", {"terminal_state": "boundary"},
                        command_id=cmd.command_id)
+
+    def _is_boundary_transition(self, stage: str, nxt: str) -> bool:
+        """True when the declared stage transition must stop at a boundary at
+        execution time instead of entering ``nxt``.
+
+        ``_NEXT_STAGE`` stays declarative (single source of truth); the v0.5
+        feature gate lives here, at transition execution. ``M-TEST ->
+        M-IMPL`` applies only to runs on v0.5+ (``supports_m_impl`` from the
+        neutral ``tracks.capabilities``); historical v0.1/v0.4 runs and
+        malformed versions complete at the M-TEST boundary.
+        """
+        return (stage == "M-TEST" and nxt == "M-IMPL"
+                and not supports_m_impl(self.version))
 
     def _do_record_backlog(self, cmd, state, task_id, reconcile):
         if reconcile and state.backlog_recorded:
@@ -757,6 +905,18 @@ class Executor(ResultCheckpointMixin):
                    command_id=cmd.command_id)
 
     def _do_rollback_stage(self, cmd, state, task_id, reconcile):
+        # Reconcile idempotency: if stage.rolled_back was already persisted for
+        # this command (crash between event commit and return), do not emit a
+        # duplicate. Under normal recovery the pending command means the event
+        # has not been logged yet, so this guard only fires on the edge case.
+        if reconcile:
+            already = any(
+                e.type == "stage.rolled_back"
+                and e.command_id == cmd.command_id
+                for e in self.store.events(self.run_id)
+            )
+            if already:
+                return
         self._emit("stage.rolled_back",
                    {"from_stage": state.stage,
                     "to_stage": cmd.params["to_stage"],
@@ -924,7 +1084,7 @@ class Executor(ResultCheckpointMixin):
                         lambda *_: "test_defect")("diagnose", "classification",
                                                   "test_defect")
         return token if token in ("test_defect", "stub_gap", "ac_gap",
-                                  "spec_gap") else "test_defect"
+                                  "spec_gap", "impl_defect") else "test_defect"
 
     # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------
 

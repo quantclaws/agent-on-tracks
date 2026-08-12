@@ -21,6 +21,7 @@ from tracks.executor.result_checkpoint import (
     ResultCheckpointMixin,
     _is_regular_file_identity,
 )
+from tracks.kernel.machine import _CRITERIA_PACK
 
 
 class _FakeExecutor(ResultCheckpointMixin):
@@ -34,6 +35,7 @@ class _FakeExecutor(ResultCheckpointMixin):
     def __init__(self, repo):
         self.repo = Path(repo)
         self.failed_events = []
+        self.emitted_events = []
         self.contract_results = None
         self.contract_error = (
             "contract error: project contract not found")
@@ -41,7 +43,11 @@ class _FakeExecutor(ResultCheckpointMixin):
     def _artifact_path(self, name):
         return self.repo / name
 
+    def _doc_path(self, name):
+        return self.repo / name
+
     def _emit(self, event_type, payload, command_id=None, task_id=None):
+        self.emitted_events.append((event_type, payload, command_id, task_id))
         if event_type == "verdict.failed":
             self.failed_events.append(payload)
 
@@ -218,6 +224,29 @@ def test_collection_support_only_revision_fails_when_contract_collection_fails(
     assert "support-only" in fake.failed_events[0]["reason"]
 
 
+def test_collection_support_only_reason_identifies_host_project_contract(
+        tmp_path):
+    """The fail-closed reason for a support-only revision whose contract
+    collection returned non-zero must identify the host project contract,
+    not a generic message (test_support_asset_attribution RED 3)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    fake.contract_results = [("integration", 1, "", "no tests collected")]
+    fake.contract_error = None
+
+    result = fake._check_collection(
+        ["tests/counterexamples/fix.patch"],
+        attempt=1, command_id="cmd-1")
+
+    assert result is True
+    assert len(fake.failed_events) == 1
+    reason = fake.failed_events[0]["reason"]
+    assert "host project contract" in reason, f"reason={reason}"
+    assert "integration" in reason, f"reason={reason}"
+    assert fake.failed_events[0]["evidence"] == "no tests collected"
+
+
 # -- RED 7: support-only revision fails closed with no contract ----------
 
 
@@ -276,3 +305,102 @@ def test_is_regular_file_identity_distinguishes_regular_from_non_regular():
         "symlink:/etc/passwd") is False, "symlink is not a regular file"
     assert _is_regular_file_identity("missing") is False
     assert _is_regular_file_identity("unreadable") is False
+
+
+# -- Prism M-TEST payload serialization (null defect_classification) ---------
+
+
+def test_m_test_prism_payload_omits_none_defect_classification(tmp_path):
+    """A Prism revise result with no defect_classification must NOT serialize
+    defect_classification=None into the prism.verdict domain payload. The
+    reducer defaults a *missing* key to test_defect; a *present null* used to
+    leave M-TEST un-routed (run halt)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test-plan.md").write_text("plan", encoding="utf-8")
+    (repo / "interfaces.md").write_text("if", encoding="utf-8")
+    fake = _FakeExecutor(repo)
+
+    payload = fake._m_test_prism_payload(
+        result={"verdict": "revise", "criteria_pack": dict(_CRITERIA_PACK)},
+        base_sha="b", result_id="C3")
+
+    domain_payload = payload["domain_event"]["payload"]
+    assert domain_payload["verdict"] == "revise"
+    assert domain_payload["criteria_pack"] == dict(_CRITERIA_PACK)
+    assert "defect_classification" not in domain_payload, (
+        "None defect_classification must not be serialized")
+
+
+def test_m_test_prism_payload_keeps_valid_defect_classification(tmp_path):
+    """A Prism revise result WITH a valid defect_classification is preserved
+    verbatim in the domain payload (rollback routing must be unchanged)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "test-plan.md").write_text("plan", encoding="utf-8")
+    (repo / "interfaces.md").write_text("if", encoding="utf-8")
+    fake = _FakeExecutor(repo)
+
+    payload = fake._m_test_prism_payload(
+        result={"verdict": "revise", "criteria_pack": {},
+                "defect_classification": "test_plan_defect"},
+        base_sha="b", result_id="C3")
+
+    assert payload["domain_event"]["payload"]["defect_classification"] == \
+        "test_plan_defect"
+
+
+def test_publish_prism_verdict_omits_none_defect_classification(tmp_path):
+    """_publish_prism_verdict must not write defect_classification=None into
+    the published prism.verdict payload for M-TEST when the checkpoint did
+    not carry one."""
+    from types import SimpleNamespace
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    cmd = SimpleNamespace(
+        command_id="C3",
+        params={"domain_event": {"type": "prism.verdict",
+                                 "payload": {"verdict": "revise",
+                                             "criteria_pack": {"name": "x"}}}},
+    )
+    state = SimpleNamespace(stage="M-TEST")
+
+    fake._publish_prism_verdict(
+        "revise", commit_sha="c", created_commit=True,
+        result_id="C3", state=state, cmd=cmd, task_id=None)
+
+    published = [p for t, p, _, _ in fake.emitted_events
+                 if t == "prism.verdict"]
+    assert len(published) == 1
+    assert published[0]["verdict"] == "revise"
+    assert "defect_classification" not in published[0], (
+        "None defect_classification must not be published")
+
+
+def test_publish_prism_verdict_keeps_valid_defect_classification(tmp_path):
+    """A valid defect_classification in the checkpoint's domain payload is
+    published verbatim (rollback routing preserved)."""
+    from types import SimpleNamespace
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    fake = _FakeExecutor(repo)
+    cmd = SimpleNamespace(
+        command_id="C3",
+        params={"domain_event": {"type": "prism.verdict",
+                                 "payload": {"verdict": "revise",
+                                             "criteria_pack": {"name": "x"},
+                                             "defect_classification":
+                                                 "acceptance_defect"}}},
+    )
+    state = SimpleNamespace(stage="M-TEST")
+
+    fake._publish_prism_verdict(
+        "revise", commit_sha="c", created_commit=True,
+        result_id="C3", state=state, cmd=cmd, task_id=None)
+
+    published = [p for t, p, _, _ in fake.emitted_events
+                 if t == "prism.verdict"]
+    assert published[0]["defect_classification"] == "acceptance_defect"
