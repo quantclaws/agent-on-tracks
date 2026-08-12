@@ -36,6 +36,12 @@ sha: 5d784d12d287d6f3fc387544750a8df7fdb09b4d112a03fb1071e2450f407f6a
 - **取代**：R-3 revision log 中「不复制到 tasks.json」的隐式表述升级为 FR-0210 第 6 项显式不变量；FR-0180 schema「FR/NFR/ACC/IF/test 引用」描述补全 test 标识。
 - **影响 FR**：FR-0180（schema test 引用补全）、FR-0210（新增第 6 项内容边界不变量）。
 
+### R-5（2026-08-12）：S-001 Q-04 release-blocker repair 承接
+
+- **决定**：承接 S-001（Q-04 release-blocker repair）story，在现有 v0.5 spec 基础上**增量**补全「真实 OpencodeBackend live 旅程 + 当前 live 证据的发布前置检查」。新增 FR-0230（真实 OpencodeBackend opt-in live 旅程）、FR-0231（真实 live 旅程审计证据绑定与真实性标记）、FR-0232（`trac check release-evidence` 发布前置检查）、FR-0233（无凭据例行 CI opt-in 例外）与 NFR-0040（release-evidence 检查确定性/可审计性）；新增交付面 E-03。挂载点沿用既有 `trac run` live opt-in 入口与 `trac check` 命令家族（新增 `release-evidence` 子命令）。
+- **取代**：无——本版本不取代、不改写既有 FR/NFR 与 ID；既有 M-IMPL 阶段推进需求与 M-IMPL→M-VERIFY 边界保持不变。release-evidence 检查只证明「当前候选有真实成功 live evidence」，不实现 M-VERIFY/M-RELEASE（范围排除同步补充）。
+- **影响 FR**：FR-0230~FR-0233（新增）、NFR-0040（新增）、E-03（新增）。
+
 ## 界面与入口
 
 ### E-01 `trac run` 驱动 M-IMPL 完整循环
@@ -69,6 +75,21 @@ $ trac check reach
 reach ok
 $ trac check reach
 island module: src/legacy/orphan.py
+$ echo $?
+1
+```
+
+### E-03 `trac check release-evidence` 当前 live 证据发布前置检查
+
+```
+$ trac check release-evidence
+release-evidence: satisfied (backend=opencode, run 01KZ..., candidate HEAD abc1234, branch releases/v0.5)
+$ echo $?
+0
+
+$ trac check release-evidence
+release-evidence: NOT satisfied — live evidence missing/failed/stale/SHA mismatch/not real
+  next: rerun the opt-in live journey at current HEAD, then re-check
 $ echo $?
 1
 ```
@@ -409,6 +430,50 @@ Shield 在 M-IMPL 承担 integration/e2e 测试的**测试归属与黑盒边界*
 
 本 FR 锁定 Issues 消费语义不变量；具体 issue 读取实现（GitHub API / 本地缓存 / mock）属设计层，本 FR 不指定。范围排除条目引用本 FR（见范围排除）。
 
+### FR-0230 真实 OpencodeBackend 的 opt-in live 旅程
+
+- **来源**：`BS-01` / `BS-02` / `§3.1`
+- **交付入口**：`E-01`（既有 `trac run` live opt-in，`TRAC_AGENT_BACKEND=opencode` + 真实凭据）/ 既有 `tests/e2e_live` credential-aware live 通道
+
+当操作者为 M-IMPL live 旅程显式 opt in 并提供真实 OpencodeBackend 所需凭据时，Runtime 用**真实 OpencodeBackend** 派发 Devon，从 M-IMPL BASELINE 开始（M-TEST EXIT + 测试资产冻结，SM-01.1），至少执行一个 task 的完整 RGR 旅程——先经过 RED，再进入 GREEN、REFACTOR、review（TASK_REVIEW/PRISM_FINAL）、task 完成、ISLAND_GATE_2 并到达 M-IMPL boundary（BS-01/BS-02）。该旅程不得由 FakeBackend、模拟 outcome 或人工补写 stage event 代替（BS-01/BS-04）。
+
+操作者可从既有公开运行结果（事件/状态记录、Git R/G lineage、`trac report`）验证该 task 确实依次经过这些阶段（BS-02）。成功时复用 FR-0160 边界退出：发出 `stage.exited(M-IMPL)` / `run.completed(terminal_state="boundary")`（SM-01.42）。失败、取消或证据不完整时只显示失败/未完成状态，**不产生可用于发布的成功证据**，修复后应对当前候选重新运行（BS-04/§5 约束）。
+
+既有 FakeBackend 确定性例行通道保持不变：FakeBackend 继续服务确定性例行测试，但其结果不能成为 release evidence（§5 约束/BS-04）。
+
+### FR-0231 真实 live 旅程的审计证据绑定与真实性标记
+
+- **来源**：`BS-03` / `BS-04` / `§3.1` / `§3.2` / `§5 约束`
+- **交付入口**：审计证据存储（供 `trac check release-evidence` 消费，FR-0232）；agent I/O 沿用既有 OpencodeBackend 审计与凭据脱敏惯例
+
+真实 live 旅程成功到达 M-IMPL boundary 时，保存可审计的 **agent I/O 与事件证据**，并关联到：该次 run（run_id）、真实 backend 身份（`backend=opencode`）、事件区间、以及 candidate SHA（live run 启动时被测 tracks 仓库的 git HEAD，见 FR-0232/BS-05）。证据沿用既有凭据脱敏边界（§5 约束），保证发布判断可回溯到实际运行而非依赖 agent 自述（BS-03）。
+
+**真实性边界（BS-04）**：仅当旅程由真实 OpencodeBackend 驱动且成功到达 M-IMPL boundary 时，其证据才可标记为**可用于发布的 live evidence**；由 FakeBackend、simulated outcome、manual stage event 驱动，或旅程未成功到达边界，一律不得标记为可用于发布的 live evidence。此不变量保证失败不伪报成功（§3.1 完成结果）。
+
+### FR-0232 `trac check release-evidence`：当前 live 证据发布前置检查
+
+- **来源**：`BS-05` / `BS-06` / `BS-08` / `§3.2` / Maestro 对 TRIAGE blocker 1/2/3 的裁定
+- **交付入口**：`E-03`（`trac check release-evidence`，新增子命令，挂载在既有 `trac check` 家族）
+
+操作者在待发布分支对**当前候选**运行发布前置检查。检查读取最近一次成功的真实 live 旅程及其审计记录，确认记录来自 `backend=opencode`，并可追溯到该次 run 的 agent I/O、事件区间和相关 Git 结果（BS-03/BS-08）。
+
+**candidate SHA 判定（BS-05，Maestro 裁定 A）**：candidate SHA = live run 启动时被测 tracks 仓库的 git HEAD，检查时要求它与待发布分支当前 HEAD 一致。live run 之后任何 commit 都使旧证据 stale，必须对新 HEAD 重跑。
+
+**通过（BS-08）**：current successful live evidence 与待发布分支 HEAD、运行身份和审计记录全部匹配时，报告 `release-evidence: satisfied`（CLI 可见结果 + exit 0）。
+
+**不满足/fail closed（BS-06，Maestro 裁定 A）**：live evidence 缺失、失败、过期、candidate SHA 不匹配，或来源为 FakeBackend/simulated/manual 时，报告未满足及可恢复的下一步（在当前 HEAD 重新执行真实旅程后再次检查），exit 非零，阻止发布继续使用该证据。**Human release approval 不得绕过该 fail-closed 结果**（flow §13.2：Human 不能用发布确认绕过失败的门禁）。
+
+该检查只证明「当前候选有真实成功 live evidence」，**不代替**未来 M-VERIFY/M-RELEASE（§5 约束/FR-0160）；M-IMPL boundary 仍是产品流程边界。
+
+### FR-0233 无凭据例行 CI 的 opt-in 例外
+
+- **来源**：`BS-07` / `§3.3` / Maestro 对 TRIAGE blocker 1 的裁定
+- **交付入口**：既有 CI/live 通道（`tests/e2e_live` credential-aware live channel）/ `trac check release-evidence`（发布验证）
+
+例行 CI 没有真实 provider 凭据时，允许跳过 opt-in 真实 Devon 旅程并**清楚报告 skipped**，其他例行检查照常执行；不得把 skip 伪装成 live success（BS-07）。有凭据且显式启用 live 通道时，CI 执行真实旅程并报告成功、失败或取消；成功产出可供 `trac check release-evidence`（FR-0232）核验的 evidence，失败不产出成功证据（BS-07/§3.3）。
+
+发布验证始终显式执行 `trac check release-evidence`（FR-0232）；例行 CI 的 fake/simulated 结果或 credential-less skip 都**不能替代**它（BS-07/§5 约束）。该例外只保护日常 CI 可运行，不改变发布候选必须有 current successful live evidence 的要求（§5 非常规要求）。
+
 ## 非功能需求
 
 ### NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
@@ -429,6 +494,12 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 
 `trac run` 必须为长时间 Agent 派发发出简洁、已 flush 的控制台活动：开始输出时间戳/Agent/stage(substate)/task(attempt)，完成输出状态/失败与耗时；不得流式输出海量 Agent stdout。生产 Runtime Agent 派发不设 elapsed-time 超时（D-11 取消协议）；活动性由 Runtime/operator 观测，显式 Human Ctrl-C 取消并清理进程组。≤3 次失败后 `trac run` 与 `trac status` 必须暴露 attempt 计数 + 失败类 + 原因；Human 可运行 `trac retry` 追加 `human.retry` 事件、清除升级 gate、重置一份新的 ≤3 attempt 预算、保留失败证据，且不自动重新派发（承自 flow §17.3）。
 
+### NFR-0040 release-evidence 检查的确定性与可审计性
+
+- **来源**：`BS-03` / `BS-04` / `BS-06` / `§5 约束`
+
+`trac check release-evidence`（FR-0232）必须**确定性 fail closed**：对缺失、失败、过期、candidate SHA 不匹配或非真实来源的证据**不误报成功**，只依赖可审计证据（agent I/O、事件、Git 结果、`backend=opencode` 身份），不依赖 agent 自述或人工插入。检查本身是可复核的程序门禁：其输入证据与判定结果可由事件/审计记录回溯（沿用 NFR-0020 append-only 事件与凭据脱敏边界）。例行 CI 的 credential-less skip 或 fake/simulated 结果既不产生、也不满足 release evidence（BS-07）。
+
 ## 范围排除
 
 - 不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界（FR-0160，BS-14）。
@@ -440,3 +511,7 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 - 不做 GitHub Issue 映射（tasks.json ↔ Issues 双向同步不在本版；tasks.json 中 issue number 为只读引用，FR-0220 锁定消费语义，范围排除的是 tasks.json ↔ Issues 双向同步）。
 - 不做 M-IMPL 内的 Human 门禁（flow.md：仅有的两个 Human gate 是 M-REQ-APPROVAL 与 M-RELEASE，M-IMPL 全程程序证据）。
 - pre-commit hook 钩子拒绝按 F-1（D-30）写钩子输出为证据并在预算内重派，不静默退出死锁——此为既有约束继承，不在本版本新增。
+- 不实现 M-VERIFY/M-RELEASE/M-PUBLISH 的 candidate freeze、发布副作用或完整发布阶段；`trac check release-evidence`（FR-0232）只证明「当前候选有真实成功 live evidence」，落在 M-IMPL→M-VERIFY 边界之外、作为独立证据门禁，不提前实现后续阶段（FR-0232，§5 约束）。
+- 不把 live 旅程扩展为覆盖全部生产 task——本版只要求至少一个 task 的完整真实 RGR 旅程（FR-0230，§5 Out-of-Scope）。
+- 不强制所有例行 CI 或所有开发者提供真实 provider 凭据——credential-less routine CI 允许只跳过 opt-in live 测试（FR-0233），但 skip 不等于发布证据（FR-0232，§5 约束）。
+- 不为 live 旅程或发布前置检查新增 CLI/CI 之外的交付面（沿用 `trac run` live opt-in 与 `trac check release-evidence`，§5 Out-of-Scope）。
