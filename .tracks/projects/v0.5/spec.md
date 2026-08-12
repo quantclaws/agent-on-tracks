@@ -496,6 +496,8 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 
 ### NFR-0040 release-evidence 检查的确定性与可审计性
 
+> **Lex:** 【Blocker：NFR-0040 跨版本 ID 复用】required check #4 要求核对新 NFR ID 是否符合跨版本不可变/不复用文法。经比对，NFR-0040 已被分配过且含义不同：v0.2『NFR-0040 集成测试状态机全覆盖』、v0.4『NFR-0040 M-TEST 事件维持 append-only 事件溯源』。本次 R-5 又新增『NFR-0040 release-evidence 检查的确定性与可审计性』——同一 ID 第三次复用、含义各异。且 v0.5 内部已存在同号冲突：line 487 NFR-0020 来源仍引用『v0.4 NFR-0040』表示 append-only 事件溯源，而新 NFR-0040（line 497）却是另一语义，旧引用与新实体将歧义。按 ID 不可复用文法（docs/concepts/traceability.md：删除留 tombstone 避免旧测试悄悄指向新需求），该新增 NFR 必须改用从未用过的 ID（NFR-0010~0070 均已被 v0.2/v0.4 占用，建议 NFR-0080 及以上），并同步修订日志 R-5 line 41 的『新增 NFR-0040』表述。FR-0230~0233 本身均为从未使用的新 ID，不构成问题。请 Sage 改用全新 ID 后闭环。
+
 - **来源**：`BS-03` / `BS-04` / `BS-06` / `§5 约束`
 
 `trac check release-evidence`（FR-0232）必须**确定性 fail closed**：对缺失、失败、过期、candidate SHA 不匹配或非真实来源的证据**不误报成功**，只依赖可审计证据（agent I/O、事件、Git 结果、`backend=opencode` 身份），不依赖 agent 自述或人工插入。检查本身是可复核的程序门禁：其输入证据与判定结果可由事件/审计记录回溯（沿用 NFR-0020 append-only 事件与凭据脱敏边界）。例行 CI 的 credential-less skip 或 fake/simulated 结果既不产生、也不满足 release evidence（BS-07）。
