@@ -115,11 +115,33 @@ def _check_fr_ac_errors(
     return errors
 
 
+def _check_one_marker_error(
+    marker_str: str,
+    ac_id: str,
+    ac_ids: set[str],
+    tombstones: set[str],
+    current_version: str | None,
+) -> str | None:
+    """Return a hard-error string for one marker, or None if it binds cleanly."""
+    if "@" not in marker_str:
+        return f"test marker {marker_str} short format (missing @version)"
+    # Skip cross-version markers (historical, validated against their own version)
+    if current_version and marker_str.split("@", 1)[1] != current_version:
+        return None
+    # Skip tombstoned ACs
+    if ac_id in tombstones:
+        return None
+    if ac_id not in ac_ids:
+        return f"test marker {marker_str} references non-existent {ac_id}"
+    return None
+
+
 def _check_ac_test_errors(
     ac_items: list[tuple[str, str, int]],
     ac_ids: set[str],
     test_markers: dict[str, list[str]],
     tombstones: set[str],
+    current_version: str | None = None,
 ) -> list[str]:
     """AC<->test bidirectional hard error detection + short-format detection."""
     errors: list[str] = []
@@ -132,14 +154,11 @@ def _check_ac_test_errors(
             errors.append(f"acceptance line:{line} {ac_id} has no test marker bound")
     for ac_id, markers in test_markers.items():
         for marker_str in markers:
-            if "@" in marker_str and ac_id not in ac_ids:
-                errors.append(
-                    f"test marker {marker_str} references non-existent {ac_id}"
-                )
-            elif "@" not in marker_str:
-                errors.append(
-                    f"test marker {marker_str} short format (missing @version)"
-                )
+            err = _check_one_marker_error(
+                marker_str, ac_id, ac_ids, tombstones, current_version,
+            )
+            if err:
+                errors.append(err)
     return errors
 
 
@@ -159,6 +178,7 @@ def check_trace_full(
     spec_text: str,
     acc_text: str,
     test_markers: dict[str, list[str]],
+    current_version: str | None = None,
 ) -> TraceReport:
     """FR-0080 BS->FR->AC->test full-chain bidirectional orphan detection (pure).
 
@@ -191,7 +211,7 @@ def check_trace_full(
     )
     hard_errors += _check_ac_test_errors(
         ac_items, {ac_id for ac_id, _, _ in ac_items},
-        test_markers, tombstones,
+        test_markers, tombstones, current_version=current_version,
     )
     warnings = _check_bs_warnings(_scan_bs(story_text), tombstones)
     return TraceReport(
@@ -292,5 +312,10 @@ def check_trace_full_file(
             warnings=("no supported test files found",),
         )
         return _apply_baseline(report, baseline)
-    report = check_trace_full(story_text, spec_text, acc_text, test_markers)
+    version_match = re.match(r"^(v\d+\.\d+)$", version_dir.name)
+    current_version = version_match.group(1) if version_match else None
+    report = check_trace_full(
+        story_text, spec_text, acc_text, test_markers,
+        current_version=current_version,
+    )
     return _apply_baseline(report, baseline)

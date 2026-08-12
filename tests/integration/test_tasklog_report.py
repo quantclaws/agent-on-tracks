@@ -7,7 +7,6 @@ from tests.integration.v05_contract_helpers import run_m_impl_journey
 
 @pytest.mark.integration
 # AC-FR0030-03@v0.5 TRACKS-TRACE task progress persists and reports
-# AC-FR0180-03@v0.5 TRACKS-TRACE phase-boundary task log rebuilds
 def test_tasklog_and_report_are_rebuilt_from_events(trac, event_log, host_repo):
     _, _, events = run_m_impl_journey(trac, event_log)
     task_logs = sorted((host_repo / ".tracks" / "projects").rglob("task-log.md"))

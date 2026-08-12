@@ -4,6 +4,7 @@ from tracks.deliverables import check_deliverables
 
 
 # AC-FR0120-02@v0.4 TRACKS-TRACE real deliverables consistent
+# AC-FR0170-02@v0.5 TRACKS-TRACE Devon.md in deliverables set, checked for version+IQ
 def test_real_deliverables_consistent():
     """AC-FR0120-02@v0.4: Shield.md in deliverables set, checked for
     existence + version + IQ alongside the other five agent prompts."""
