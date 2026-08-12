@@ -38,9 +38,9 @@ sha: 5d784d12d287d6f3fc387544750a8df7fdb09b4d112a03fb1071e2450f407f6a
 
 ### R-5（2026-08-12）：S-001 Q-04 release-blocker repair 承接
 
-- **决定**：承接 S-001（Q-04 release-blocker repair）story，在现有 v0.5 spec 基础上**增量**补全「真实 OpencodeBackend live 旅程 + 当前 live 证据的发布前置检查」。新增 FR-0230（真实 OpencodeBackend opt-in live 旅程）、FR-0231（真实 live 旅程审计证据绑定与真实性标记）、FR-0232（`trac check release-evidence` 发布前置检查）、FR-0233（无凭据例行 CI opt-in 例外）与 NFR-0040（release-evidence 检查确定性/可审计性）；新增交付面 E-03。挂载点沿用既有 `trac run` live opt-in 入口与 `trac check` 命令家族（新增 `release-evidence` 子命令）。
+- **决定**：承接 S-001（Q-04 release-blocker repair）story，在现有 v0.5 spec 基础上**增量**补全「真实 OpencodeBackend live 旅程 + 当前 live 证据的发布前置检查」。新增 FR-0230（真实 OpencodeBackend opt-in live 旅程）、FR-0231（真实 live 旅程审计证据绑定与真实性标记）、FR-0232（`trac check release-evidence` 发布前置检查）、FR-0233（无凭据例行 CI opt-in 例外）与 NFR-0080（release-evidence 检查确定性/可审计性）；新增交付面 E-03。挂载点沿用既有 `trac run` live opt-in 入口与 `trac check` 命令家族（新增 `release-evidence` 子命令）。
 - **取代**：无——本版本不取代、不改写既有 FR/NFR 与 ID；既有 M-IMPL 阶段推进需求与 M-IMPL→M-VERIFY 边界保持不变。release-evidence 检查只证明「当前候选有真实成功 live evidence」，不实现 M-VERIFY/M-RELEASE（范围排除同步补充）。
-- **影响 FR**：FR-0230~FR-0233（新增）、NFR-0040（新增）、E-03（新增）。
+- **影响 FR**：FR-0230~FR-0233（新增）、NFR-0080（新增）、E-03（新增）。
 
 ## 界面与入口
 
@@ -494,9 +494,14 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 
 `trac run` 必须为长时间 Agent 派发发出简洁、已 flush 的控制台活动：开始输出时间戳/Agent/stage(substate)/task(attempt)，完成输出状态/失败与耗时；不得流式输出海量 Agent stdout。生产 Runtime Agent 派发不设 elapsed-time 超时（D-11 取消协议）；活动性由 Runtime/operator 观测，显式 Human Ctrl-C 取消并清理进程组。≤3 次失败后 `trac run` 与 `trac status` 必须暴露 attempt 计数 + 失败类 + 原因；Human 可运行 `trac retry` 追加 `human.retry` 事件、清除升级 gate、重置一份新的 ≤3 attempt 预算、保留失败证据，且不自动重新派发（承自 flow §17.3）。
 
-### NFR-0040 release-evidence 检查的确定性与可审计性
+### NFR-0080 release-evidence 检查的确定性与可审计性
 
 > **Lex:** 【Blocker：NFR-0040 跨版本 ID 复用】required check #4 要求核对新 NFR ID 是否符合跨版本不可变/不复用文法。经比对，NFR-0040 已被分配过且含义不同：v0.2『NFR-0040 集成测试状态机全覆盖』、v0.4『NFR-0040 M-TEST 事件维持 append-only 事件溯源』。本次 R-5 又新增『NFR-0040 release-evidence 检查的确定性与可审计性』——同一 ID 第三次复用、含义各异。且 v0.5 内部已存在同号冲突：line 487 NFR-0020 来源仍引用『v0.4 NFR-0040』表示 append-only 事件溯源，而新 NFR-0040（line 497）却是另一语义，旧引用与新实体将歧义。按 ID 不可复用文法（docs/concepts/traceability.md：删除留 tombstone 避免旧测试悄悄指向新需求），该新增 NFR 必须改用从未用过的 ID（NFR-0010~0070 均已被 v0.2/v0.4 占用，建议 NFR-0080 及以上），并同步修订日志 R-5 line 41 的『新增 NFR-0040』表述。FR-0230~0233 本身均为从未使用的新 ID，不构成问题。请 Sage 改用全新 ID 后闭环。
+>> **Sage:** 已按要求将新增 release-evidence NFR 从复用的 NFR-0040 改为全新 ID NFR-0080，并同步修订日志；历史 v0.4 NFR-0040 引用保持不变。具体改动位置如下：
+>> - **line 41**（R-5 修订日志·决定）：『与 NFR-0040（release-evidence 检查确定性/可审计性）』→『NFR-0080』
+>> - **line 43**（R-5 修订日志·影响 FR）：『NFR-0040（新增）』→『NFR-0080（新增）』
+>> - **line 497**（NFR 实体标题）：『### NFR-0040 release-evidence 检查的确定性与可审计性』→『### NFR-0080 ...』
+>> 未改动：line 487 NFR-0020 来源中的『v0.4 NFR-0040』（指 append-only 事件溯源，为历史引用，按规则保留）。FR-0230~FR-0233 语义未改动。请复核。
 
 - **来源**：`BS-03` / `BS-04` / `BS-06` / `§5 约束`
 
