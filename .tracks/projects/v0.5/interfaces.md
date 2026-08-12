@@ -9,7 +9,7 @@ sha:
 
 # v0.5 - 接口与类型化 Schema
 
-本文是 IF-004（v0.4）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路类型与 CLI 合同（IF-003 §6/§7a）、`trac validate` CLI 合同（IF-003 §7b）等不变，凡未提及者继承 IF-001/IF-003/IF-004。v0.5 扩范围新增 M-IMPL 事件/Command/State 字段、RGR git 操作合同、task graph 解析合同、质量门禁分层合同、三 worktree 方案合同、Devon agent 接入合同与 `trac retry` CLI 合同。
+本文是 IF-004（v0.4）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路类型与 CLI 合同（IF-003 §6/§7a）、`trac validate` CLI 合同（IF-003 §7b）等不变，凡未提及者继承 IF-001/IF-003/IF-004。v0.5 扩范围新增 M-IMPL 合同，并为 FR-0230～FR-0233/NFR-0080 增量定义 canonical live evidence schema、真实性边界与 `trac check release-evidence` text/JSON/exit 合同。
 
 ## 0. 延续性（什么不变）
 
@@ -23,7 +23,8 @@ sha:
 - `discuss/` 旁路类型与 CLI 合同（IF-003 §6/§7a）不变。
 - `trac validate` CLI 合同（IF-003 §7b）不变；`trac check` 三子命令不变；v0.5 扩展 `trac validate --file tasks.json` DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验（§2a），新增 `trac retry` 命令（§2b）。
 - 既有 `check_trace_full` / `check_trace_full_file`（IF-004 §1d）、`check_reach` / `check_reach_file`（IF-004 §1f）、`classify_red`（IF-004 §1g）行为不变；M-IMPL 的 `classify_red` 复用 v0.4 RedClass 封闭集，但 `stub_token_failure` 不在 M-IMPL 合法红之列（§1g 说明）。
-- §5 IF- 标识注册表是 v0.4 建立的合同基础；v0.4 的 8 个 IF- 标识（IF-MTEST-001/002、IF-SHIELD-001、IF-TRACE-001/002、IF-REACH-001/002、IF-VALIDATE-001）不可变、不可复用；v0.5 §5 列出 cross-reference 条目供 validator 解析（定义仍以 IF-004 §5 为准），并增补 IF-IMPL-001~007 与 IF-DEVON-001 共 8 个新标识。
+- §5 IF- 标识注册表是 v0.4 建立的合同基础；v0.4 的 8 个 IF- 标识（IF-MTEST-001/002、IF-SHIELD-001、IF-TRACE-001/002、IF-REACH-001/002、IF-VALIDATE-001）不可变、不可复用；v0.5 §5 列出 cross-reference 条目供 validator 解析（定义仍以 IF-004 §5 为准），并增补 IF-IMPL-001~007、IF-DEVON-001、IF-LIVE-001 与 IF-RELEASE-001 共 10 个新标识。
+- 既有 `agent_io` refs/digests、append-only events、R/G lineage 与 `trac report` 出口不变；新 live evidence bundle 只绑定并交叉核验这些既有事实，不改写它们。新增 IF-LIVE-001 与 IF-RELEASE-001，不复用既有 IF ID。
 
 ## 1. 跨模块合同
 
@@ -371,6 +372,131 @@ DiagnoseRoute = Literal[
 
 DIAGNOSE 分流结论落 `verdict.failed(reason)` 事件，`reason` 取值限于 `red_invalid` / `regression` / `budget` / `island` / `scope` / `test_defect` / `impl_defect`（FR-0150）。`stub_gap` / `ac_gap` / `spec_gap` 复用 v0.4 既有 `verdict.failed(check)` 的 `check` 字段（IF-004 §1e）。
 
+### 1j. canonical live evidence bundle（FR-0230/FR-0231，IF-LIVE-001）
+
+**modules**: executor/live_evidence.py（实现/写入）、executor/executor.py（boundary 消费）、effects/opencode.py（真实 backend 与 agent I/O 来源）、store/store.py（events/blobs 来源）、checks/release_evidence.py（读取/校验）--跨模块接口，须有 integration 覆盖；真实成功组合须有 e2e_live 覆盖。
+
+```python
+@dataclass(frozen=True)
+class AgentIOReceipt:
+    role: str
+    phase: str                         # Devon 固定 RED|GREEN|REFACTOR；Prism 为 PRISM_RED|PRISM_FINAL
+    task_id: str
+    attempt: int
+    command_seq: int
+    outcome_seq: int
+    input_ref: str                     # content-addressed blob relative ref
+    input_sha256: str                  # 64 lowercase hex
+    output_ref: str
+    output_sha256: str                 # 64 lowercase hex
+    audit_completeness: Literal["complete"]
+
+@dataclass(frozen=True)
+class CandidateArtifactEvidence:
+    name: str                          # wheel basename
+    sha256: str                        # actual installed wheel bytes SHA-256
+    distribution: Literal["agent-on-tracks"]
+    version: str
+    installed_import_path: str         # resolved tracks.__file__
+    source_tree_import: Literal[False]
+
+@dataclass(frozen=True)
+class ProvenanceEvidence:
+    backend_class: Literal["OpencodeBackend"]
+    fake_backend: Literal[False]
+    trac_fake_simulate: Literal[False]
+    assignment_overlay: Literal[False]
+    assignment_simulation: Literal[False]
+    event_origin: Literal["runtime"]
+
+@dataclass(frozen=True)
+class EventSequenceEvidence:
+    first_seq: int
+    last_seq: int
+    events_ref: str                    # canonical event slice blob
+    events_sha256: str                 # canonical JSON bytes SHA-256
+
+@dataclass(frozen=True)
+class RGRLineageEvidence:
+    task_id: str
+    attempt: int
+    red_ref: str                       # refs/trac/rgr/{run}/{task}/{attempt}/red
+    r_sha: str
+    g_sha: str
+    red_checkpoint_seq: int
+    green_commit_seq: int
+    trailers: dict[str, str]           # Tracks-Task/Attempt/R/Issue/AC
+
+@dataclass(frozen=True)
+class GateObservation:
+    gate: Literal["RED_GATE", "GREEN_GATE", "REFACTOR_GATE", "TASK_REVIEW",
+                  "PRISM_FINAL", "ISLAND_GATE_2"]
+    status: Literal["pass"]
+    seq: int
+    source: Literal["runtime", "prism"]
+    source_event_type: str
+    command_id: str
+
+@dataclass(frozen=True)
+class BoundaryEvidence:
+    stage: Literal["M-IMPL"]
+    stage_exited_seq: int
+    run_completed_seq: int
+    terminal_state: Literal["boundary"]
+
+@dataclass(frozen=True)
+class LiveEvidenceBundle:
+    schema_version: Literal["tracks.release-evidence/v1"]
+    status: Literal["satisfied"]
+    candidate_sha: str                 # live run 启动前 source checkout 完整 git HEAD
+    candidate_artifact: CandidateArtifactEvidence
+    run_id: str
+    backend: Literal["opencode"]
+    provenance: ProvenanceEvidence
+    required_devon_phases: tuple[str, str, str]  # 精确 ("RED","GREEN","REFACTOR")
+    agent_io: tuple[AgentIOReceipt, ...]
+    event_sequence: EventSequenceEvidence
+    rgr_lineage: RGRLineageEvidence
+    gate_observations: tuple[GateObservation, ...]
+    boundary: BoundaryEvidence
+
+def bind_live_evidence(
+    *, repo: str, run_id: str, candidate_sha: str,
+    candidate_artifact: CandidateArtifactEvidence, backend_name: str,
+    trac_fake_simulate: bool, assignment_overlay: bool,
+    assignment_simulation: bool,
+    events: list[dict],
+) -> LiveEvidenceBundle:
+    """从实际 Runtime/OpencodeBackend 事实绑定 bundle。
+    FakeBackend、TRAC_FAKE_SIMULATE、assignment overlay/simulation、缺任一真实 dispatch receipt、
+    agent I/O、gate、lineage 或 boundary 时 raise ValueError("IF-LIVE-001:<reason>")，
+    调用者不得写 success bundle。不得从 agent self_report 补字段。"""
+
+def write_live_evidence(
+    repo: str, bundle: LiveEvidenceBundle, referenced_blobs: dict[str, bytes],
+) -> str:
+    """按 §3h canonical 路径原子写入 JSON 与 blobs，返回 evidence.json 相对路径。
+    canonical JSON = UTF-8、sort_keys=True、separators=(",", ":")、末尾 LF。
+    已存在同路径且 bytes 不同则 fail closed，不覆盖。"""
+```
+
+封闭不变量：
+
+1. `agent_io` 至少含同一 `task_id`/`attempt` 对应的 Devon RED/GREEN/REFACTOR 三条 receipt，以及 Prism PRISM_RED/PRISM_FINAL receipt；每条 `command_seq < outcome_seq`，引用 blob SHA-256 必须与 bytes 相等且 `audit_completeness="complete"`。
+2. `event_sequence.first_seq <= 所有 receipt/gate/lineage/boundary seq <= last_seq`；event slice 按 seq 严格递增、无重复，且 digest 匹配。
+3. lineage 要求 `red_checkpoint_seq < green_commit_seq`、R ref 当前解析为 `r_sha`、G parent=B、五个 trailers 匹配 task/attempt/R/provenance。
+4. 六个 gate 各出现一次并按旅程顺序递增；TASK_REVIEW 来源 Runtime，PRISM_FINAL 来源真实 Prism receipt；ISLAND_GATE_2 后才允许 boundary。
+5. boundary 要求 `stage.exited(M-IMPL)` 后紧随该 run 的 `run.completed(terminal_state="boundary")`。人工只补这两个 event 仍因缺 dispatch receipt、blob、lineage/gates 失败。
+
+Live launch provenance（只供 evidence 绑定，不改变普通 `trac run` 语义）：
+
+| # | 环境变量 | 值 | 缺失/错误语义 |
+|:---|:---|:---|:---|
+| 1 | `TRAC_LIVE_CANDIDATE_SHA` | build 前 source checkout 的 40-hex full HEAD | 普通 run 可继续；不得写 release evidence |
+| 2 | `TRAC_LIVE_ARTIFACT_SHA256` | 实际安装 wheel bytes 的 64-hex SHA-256 | 普通 run 可继续；不得写 release evidence |
+
+两字段由 live harness 在 wheel hash、fresh venv install 与 import-path probe 通过后注入；Runtime 必须与安装环境 `.dist-info/direct_url.json` archive hash、distribution/version/import path 交叉核验。字段不得进入 agent assignment，Agent outcome/self-report 不得覆盖。
+
 ## 2. CLI 接口合同
 
 ### 2a. `trac validate --file tasks.json`（扩展校验范围，IF-IMPL-003 / IF-VALIDATE-001）
@@ -398,6 +524,26 @@ IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.5 扩展：
 
 - M-IMPL 期间报告 `stage=M-IMPL` + 当前子状态（21 个子状态之一）。
 - `trac status` 输出含当前 attempt 计数与最近失败类（`current_attempt` / `m_impl_attempt` + `last_failure.check`）。
+
+### 2d. `trac check release-evidence [--json]`（FR-0232/FR-0233/NFR-0080，IF-RELEASE-001）
+
+| # | 调用 | stdout | stderr | exit |
+|:---|:---|:---|:---|:---|
+| 1 | `trac check release-evidence` 满足 | 单行 `release-evidence: satisfied (backend=opencode, run <run_id>, candidate HEAD <full_sha>, branch <branch>)` | 空 | 0 |
+| 2 | `trac check release-evidence` 不满足 | 第一行 `release-evidence: NOT satisfied — <reason_code>`；第二行 `  next: rerun the opt-in live journey at current HEAD, then re-check` | 空 | 1 |
+| 3 | `trac check release-evidence --json` | 单行 canonical JSON（sort keys、紧凑 separators）：`{"backend":...,"candidate_sha":...,"evidence_path":...,"event_bounds":...,"reason_code":...,"run_id":...,"status":"satisfied|not_satisfied"}`；未知值为 `null` | 空 | 0 iff status=satisfied，否则 1 |
+| 4 | 未知参数/组合 | 空 | `usage: trac check release-evidence [--json]` | 2 |
+
+`reason_code` 封闭集：`ok | missing | stale | malformed | not_real | audit_incomplete | journey_incomplete`。判定和选择算法固定：
+
+1. 以 `git rev-parse HEAD` 得 current full SHA；枚举 canonical root 下 `*/<run_id>/evidence.json`，只按 UTF-8 路径字节序排序，不读 mtime/clock。
+2. 无任何 bundle → `missing`。无 current-SHA 目录 bundle但存在其他 SHA bundle → `stale`。
+3. current-SHA 目录中按 `run_id` 字节序选最大项；JSON/schema/canonical path/digest 错 → `malformed`；bundle `candidate_sha != current HEAD` → `stale`。
+4. backend/provenance 任一非真实（含 FakeBackend、`TRAC_FAKE_SIMULATE`、assignment overlay、assignment/scenario simulation、`event_origin != runtime`）→ `not_real`。
+5. agent I/O refs/digests/completeness 错 → `audit_incomplete`；required phases、event bounds/order、lineage、gates、review、task completion、ISLAND_GATE_2 或 boundary 任一缺失/不匹配 → `journey_incomplete`。
+6. 全部满足 → `ok`/`satisfied`。同一输入 bytes 与 Git HEAD 必须产生逐字节相同 JSON/text；检查只读，不 append event、不改 refs/commits/worktree、不构建或发布。
+
+`branch` 只用于 text 展示，由 `git branch --show-current` 获取；detached HEAD 显示 `(detached)`，不影响 SHA 判定。Human approval 不是输入，不能改变 exit。
 
 ## 3. 文件 / 存储契约
 
@@ -530,6 +676,18 @@ Runtime dispatch 必须在 `command.issued` 前向 agent assignment 物化完整
 
 agent 不得自行搜索/猜任何物化字段（FR-0190）。无效输入（如 Shield WRITE 时 `test_tasks` 为空）不调用 backend，failed outcome=`stub_gap`（AC-FR0190-05）。
 
+### 3h. release evidence 路径与 JSON 存储合同（FR-0231/FR-0232）
+
+| # | 路径 | 格式 | 写入者 | 读取者 |
+|:---|:---|:---|:---|:---|
+| 1 | `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/evidence.json` | `LiveEvidenceBundle` canonical JSON | executor/live_evidence.py；live harness 仅可逐字节传输 | checks/release_evidence.py、操作者 |
+| 2 | `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/blobs/{sha256}` | 脱敏 agent I/O 或 canonical event slice 原始 bytes，文件名=SHA-256 | executor/live_evidence.py；live harness 仅可逐字节传输 | checks/release_evidence.py |
+
+- `{candidate_sha}` 必须与 JSON 字段完全一致且为 `git rev-parse HEAD` 完整输出；`{run_id}` 必须与 JSON 一致。路径不一致判 `malformed`。
+- bundle 是运行证据，不纳入 Git，不由 Human 手工创建。只有 `write_live_evidence` 可生成；isolated demo host 向 candidate checkout 的复制必须保持每个文件 bytes/digest，不得解析后重写。
+- agent I/O 沿用 `redact` 后的 blob；API key/token 等 secret 不得进入 bundle。validator 只校验 digest/ref，不回显 blob 内容。
+- 失败、取消、skip 或不完整 journey 不写 `status=satisfied` bundle；可以保留 events/report 诊断，但不放入 canonical release-evidence root。
+
 ## 4. 可观察出口（测试断言基础）
 
 test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
@@ -592,6 +750,17 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | `tracks/skills/tracks-prism-impl/SKILL.md` | frontmatter name + version；内容为语义判据 | AC-FR0050-04 |
 | git 工作区 | 工具运行前后无文件变化（NFR-0010） | AC-NFR0010-01 |
 | `.tracks/runtime/tracks.db` events 表 | M-IMPL 事件 append-only | AC-NFR0020-01/02 |
+| `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/evidence.json` | canonical bundle：candidate artifact/SHA、run/backend/provenance、agent I/O refs/digests、event bounds、required Devon phases、RGR lineage、gate observations、boundary | AC-FR0230-01/02/03, AC-FR0231-01/02, AC-FR0232-01/02, AC-NFR0080-01/02 |
+| `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/blobs/{sha256}` | 脱敏 agent I/O/event slice content-addressed bytes | AC-FR0231-01/02, AC-FR0232-01, AC-NFR0080-01 |
+
+### 4d. release-evidence CLI / CI 出口
+
+| # | 出口 | 可观察字段/文本 | 关联 AC |
+|:---|:---|:---|:---|
+| 1 | `trac check release-evidence` | §2d 精确 text、exit 0/1/2 | AC-FR0232-01/02/03/04/05, AC-FR0233-03 |
+| 2 | `trac check release-evidence --json` | status, reason_code, candidate_sha, run_id, backend, evidence_path, event_bounds | AC-FR0232-03/04, AC-NFR0080-01/02 |
+| 3 | routine live pytest | 缺凭据 stdout/pytest reason 含 `LIVE_SKIPPED: missing <NAME>`，exit 0，无 bundle | AC-FR0233-01 |
+| 4 | tag/release CI `release-evidence` job | live test `1 passed` + check `status=satisfied`；缺凭据/skip/check 非零均 job fail | AC-FR0233-02/03 |
 
 ## 5. IF Registry
 
@@ -672,6 +841,20 @@ v0.4 已建立的 8 个 IF- 标识在 IF-004 §5 定义，合同不变、不可�
 - **实现模块**：effects/opencode.py, deliverables.py, effects/audit.py。
 - **对应 §section**：§3a。
 - **关联 FR**：FR-0070-02, FR-0100-01/02, FR-0170-01/02/03。
+
+### IF-LIVE-001 真实 OpencodeBackend 旅程与 evidence 绑定合同
+
+- **合同**：§1j `LiveEvidenceBundle`/`bind_live_evidence`/`write_live_evidence` + §3h canonical 存储；只接受 current candidate wheel 在隔离 demo host 上由真实 OpencodeBackend 产生的 Devon RED/GREEN/REFACTOR、真实 Prism review、Runtime gates、task completion、ISLAND_GATE_2 与 boundary，拒绝 fake/simulate/overlay/manual-event-only。
+- **实现模块**：executor/live_evidence.py, executor/executor.py, effects/opencode.py, store/store.py；`tests/e2e_live` 为消费者而非实现模块。
+- **对应 §section**：§1j, §3h, §4c/§4d。
+- **关联 FR**：FR-0230-01/02/03, FR-0231-01/02, FR-0233-01/02, NFR-0080-01/02。
+
+### IF-RELEASE-001 当前候选 release-evidence 检查合同
+
+- **合同**：§2d `trac check release-evidence [--json]` 的 selection/reason/text/JSON/exit/read-only 合同；§3h bundle/blob 读取；current HEAD 严格等值，任何 stale/non-real/incomplete 均 fail closed。
+- **实现模块**：checks/release_evidence.py, cli/main.py。
+- **对应 §section**：§2d, §3h, §4c/§4d。
+- **关联 FR**：FR-0230-03, FR-0231-01/02, FR-0232-01/02/03/04/05, FR-0233-02/03, NFR-0080-01/02。
 
 **有效性校验机制**（design-trace validator 扩展，FR-0140，承自 IF-004 §5）：
 

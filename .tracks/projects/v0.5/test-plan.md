@@ -16,13 +16,14 @@ sha:
 
 This test plan only declares test methods that are **observable from outside the system**. Observable objects are limited to:
 
-- CLI endpoints (`trac run`, `trac status`, `trac validate`, `trac retry`, `trac check reach`, `trac check deliverables`, `trac report`) stdout/stderr/exit code.
+- CLI endpoints (`trac run`, `trac status`, `trac validate`, `trac retry`, `trac check reach`, `trac check deliverables`, `trac check release-evidence [--json]`, `trac report`) stdout/stderr/exit code.
 - Persisted data: `.tracks/runtime/tracks.db` `events` table (assertion primary source), projection tables.
 - Document files: `.tracks/projects/v0.5/{story,spec,acceptance}.md`, `.tracks/projects/v0.5/tasks.json`（task graph 机器真相）, `.tracks/projects/v0.5/tasks.md`（人类可读投影） (inline-discussion blockquotes, task graph content, phase progress).
 - Git state: refs (`refs/trac/rgr/{run}/{task}/{attempt}/red`), commits (G commit parent=B + trailers), worktree state, working tree diff.
 - File schema: `.tracks/project/project.toml` (TOML canonical contract), `tracks/agents/Devon.md` (frontmatter + body, no permission block), `tracks/skills/tracks-prism-impl/SKILL.md`.
 - `trac check reach --json` / `trac check deliverables` structured output.
 - `command.issued` event payload (dispatch assignment materialization fields).
+- Canonical live evidence: `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/evidence.json` 与同目录 content-addressed blobs；只按 interfaces.md §1j/§3h 断言。
 
 ### 1.2. Non-observable Objects (tests do not directly depend on)
 
@@ -31,6 +32,7 @@ This test plan only declares test methods that are **observable from outside the
 - `executor/taskgraph.py` / `executor/rgr.py` / `executor/worktree.py` / `executor/quality_gate.py` internal data structures (observed via CLI output / events / git state).
 - `effects/opencode.py` internal prompt construction (observed via outcome events + audit evidence).
 - `effects/audit.py` internal manifest representation (observed via `outcome.received.audit_evidence`).
+- `executor/live_evidence.py` / `checks/release_evidence.py` 内部解析和选择步骤（经 canonical bundle 与 CLI text/JSON/exit 观察）。
 
 **Observable contract**: Any internal state that acceptance validation needs must be provided by the implementation layer via events/CLI/file/git observation points. This is the responsibility of **interfaces.md** - if an AC needs to observe internal state, interfaces.md must have a corresponding outlet (see §6.5).
 
@@ -117,13 +119,16 @@ tests/
 │   ├── test_tasklog_report.py             # tasks.md/report rebuild from events (FR-0030/0180)
 │   ├── test_testplan_ownership.py         # Shield test-plan ownership boundary (FR-0210)
 │   ├── test_issue_consumption.py          # Issues consumption semantics (FR-0220)
+│   ├── test_release_evidence.py           # [Shield 待创建] deterministic provenance/stale/schema/CLI negatives (FR-0230~0233/NFR-0080)
 │   └── ...                                # 既有 integration tests 不变
 ├── e2e/
 │   ├── test_m_impl_journey.py     # M-IMPL happy path: M-TEST exit -> M-IMPL -> boundary
 │   ├── test_full_journey_v05.py   # [既有] 全流程: M-STORY -> ... -> M-IMPL -> boundary
 │   └── ...                        # 既有 e2e tests 不变
 ├── e2e_live/                      # live opencode channel (缺凭据 skip)
-│   └── ...
+│   ├── test_m_impl_release_evidence.py # [Shield 待创建] current-wheel real Devon RGR happy path
+│   ├── conftest.py                # [既有，待修改] routine LIVE_SKIPPED 探测
+│   └── harness.py                 # [既有，待修改] isolated install + byte-preserving evidence transfer
 ├── assets/
 │   ├── trace_fixtures/            # [既有]
 │   ├── reach_fixtures/            # [既有]
@@ -139,12 +144,13 @@ tests/
 
 ### 2.3. Execution
 
-- **Offline**: Tests do not depend on network (data is pinned).
+- **Offline**: unit/integration/e2e fake 通道不依赖网络（data pinned）；只有显式 `tests/e2e_live` 通道访问真实 Opencode/provider。
 - **Execution order**: unit (fast) -> integration -> e2e (slow).
 - **CI**: Run the full suite on every push.
 - **Isolation**: Integration and e2e use pytest markers (`@pytest.mark.integration` / `@pytest.mark.e2e`); default suite runs all, marker-based selection available.
 - **M-IMPL GREEN_GATE int 子集执行**: executor 使用 project.toml 的 run 命令在 gate worktree 执行 int 子集（按 test-plan §8 IF- 归属筛选命中本 task IF- 集合的 integration 测试）；conftest 的 `_UNDER_COVERAGE` 机制继承（subprocess coverage merge）。
 - **Git 操作测试**: R ref / G commit / worktree 操作使用 temp git repo（`tmp_path` fixture），不依赖宿主项目仓库状态。
+- **Live selection**: `.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py` 是唯一 FR-0230 happy path；不得设置 `TRAC_FAKE_SIMULATE`，不得传 `--assignment-overlay`。routine 无凭据时 skip reason 必须精确含 `LIVE_SKIPPED: missing <NAME>`；tag/release job 在运行 pytest 前自行探测所有凭据，缺失直接 exit 1，故 milestone 路径不存在 skip。
 
 ### 2.3.1. Test Execution Contract (`.tracks/project/project.toml`)
 
@@ -169,11 +175,12 @@ The host project test execution contract is declared in `.tracks/project/project
 - **Reproducible**: Each CI run produces consistent results (deterministic fixtures, no network).
 - **Small data in-repo**: `tests/assets/taskgraph_fixtures/` fixtures are small JSON files with known cycle/no-cycle, overlap/no-overlap, coverage/gap, invalid-IF, invalid-issue-number structure.
 - **Sensitive data**: None (no credentials in test data).
+- **Live credentials**: `TRAC_LIVE_PROVIDER`、`TRAC_LIVE_MODEL`、`TRAC_LIVE_BASE_URL`、`TRAC_LIVE_API_KEY` 仅从 CI secret/env 注入，不写 fixture、report、event 或 evidence；evidence 仅使用既有脱敏 agent I/O blob。
 - **Version snapshot**: Fixtures are version-controlled in git; no external data versioning needed.
 
 ### 2.5. Installation & Isolation
 
-继承 v0.2 §13（可安装发行物与 live E2E 安装边界）与 v0.4 §2.5。v0.5 新增 package data（`tracks/agents/Devon.md` 已在 v0.4 创建但未加入 deliverables；`tracks/skills/tracks-prism-impl/SKILL.md` 已在 v0.4 创建）。`[tool.setuptools.package-data]` 已含 `agents/*.md` 与 `skills/*/*.md`，无需修改。安装合同不变：live E2E 使用 wheel 安装到隔离 venv，不从源码树 import；fake 通道继承 conftest 的 `trac` fixture（subprocess 调用 `python -m tracks.cli.main`）。
+继承 v0.2 §13（可安装发行物与 live E2E 安装边界）与 v0.4 §2.5。v0.5 新增 package data（`tracks/agents/Devon.md` 已在 v0.4 创建但未加入 deliverables；`tracks/skills/tracks-prism-impl/SKILL.md` 已在 v0.4 创建）。`[tool.setuptools.package-data]` 已含 `agents/*.md` 与 `skills/*/*.md`，无需修改。安装合同不变并收紧 live evidence：从 current candidate HEAD 执行 `python -m build`，记录 wheel SHA-256，`pip install <wheel>` 到隔离 demo host 的 fresh venv，从源码树外 cwd 执行 `trac init`/`trac run`；安装探针断言 import path 位于该 venv 且 `source_tree_import=false`。fake 通道继承 conftest 的 `trac` fixture。demo host 产出的 evidence bundle 只能逐字节传回 current candidate checkout canonical path，传输前后每个文件 SHA-256 相同。
 
 ---
 
@@ -183,7 +190,7 @@ v0.5 是行为正确性（状态机转移、事件序列、git 操作、dispatch
 
 task graph DAG 无环校验（Kahn's algorithm 拓扑排序）属简单规则正确性：测试 fixture 本身声明已知有环/无环结构，fixture 数据即 ground truth（§3.1 表第 3 行「简单规则 -> 测试数据本身」）。scope 不重叠与 AC 覆盖闭合同理--fixture 声明已知重叠/无重叠、覆盖/缺口结构，测试数据即真相源。RGR git 操作（R ref 创建、G commit 创建、lineage 证明）属行为正确性，通过 git 命令（`git rev-parse` / `git log --format='%B'`）直接观察，不需要独立参考实现。
 
-§3 判定不适用，不创建 `tests/ground_truth/` 目录。既有 v0.4 的 `tests/ground_truth/trace_reference.py`、`tests/ground_truth/reach_reference.py`、`tests/ground_truth/discuss_reference.py` 保持不变（服务于 v0.4 AC，非 v0.5 新增）。
+§3 判定不适用，不为 FR-0230～FR-0233/NFR-0080 创建 ground-truth 脚本。真实性不是重算业务算法：预期值由三个独立既有事实源交叉给出（SQLite append-only event slice、真实 Git refs/commit trailers、content-addressed agent I/O bytes），测试 fixture 对负例逐一破坏其中一个来源。既有 v0.4 的 `tests/ground_truth/trace_reference.py`、`tests/ground_truth/reach_reference.py`、`tests/ground_truth/discuss_reference.py` 保持不变。
 
 ---
 
@@ -231,11 +238,11 @@ This test plan covers all requirements in spec.md in the same directory where Va
 | ----- | ---- | ---- | ----- | -------- | ----------- |
 | L1 | Deterministic sim | Virtual | Seconds | M-IMPL state machine, task graph validation, RGR git ops (temp repo), quality gate layering, DIAGNOSE routing, crash recovery | ✅ CI default |
 | L2 | Contract sim | Virtual | Seconds | Devon/Prism/Shield dispatch protocol (fake opencode stand-in), manifest audit, criteria pack materialization, feedback desensitization | ✅ CI default |
-| L3 | Real env smoke | Real | Real | Real opencode Devon single dispatch smoke (write a unit test) + Prism single dispatch smoke | ❌ nightly/manual |
+| L3 | Real env journey | Real | Real | current candidate wheel 上真实 OpencodeBackend 的一个完整 Devon RED/GREEN/REFACTOR + Prism review + gates + task completion + ISLAND_GATE_2 + boundary + evidence | ❌ routine；✅ weekly/tag/manual |
 
 - **L1 Deterministic sim**: FakeBackend controls Devon/Archer/Prism/Shield outcome via `simulate`; RGR git ops tested with temp git repo (`tmp_path`); pure functions tested directly with fixtures.
 - **L2 Contract sim**: fake opencode stand-in (implements `opencode run --format json` protocol); OpencodeBackend interacts with stand-in, covering Devon dispatch materialization/JSON parsing/manifest audit/failure matrix/criteria pack identity/feedback desensitization.
-- **L3 Real env smoke**: Real opencode + provider, single Devon dispatch (RED phase: write a unit test) + single Prism dispatch (PRISM_PLAN: criteria pack review); deselected by default, only runs with real credentials.
+- **L3 Real env journey**: `tests/e2e_live/test_m_impl_release_evidence.py` 在隔离 demo host 从 current wheel 运行；不使用 FakeBackend、`TRAC_FAKE_SIMULATE`、assignment overlay 或人工 event。routine 缺凭据显式 skip；weekly/manual 有凭据运行；tag/release 缺凭据或 skip 都失败。L3 只覆盖真实成功组合，fake/stale/伪造等 negative AC 分配给 L1/L2，不重复。
 
 ### 6.4. Responsibility Contract of Test Infrastructure
 
@@ -246,6 +253,8 @@ This test plan covers all requirements in spec.md in the same directory where Va
 | temp git repo (`tmp_path`) | Real git operations on throwaway repo | Does not implement RGR logic (rgr.py does) |
 | pytest subprocess (GREEN_GATE / ISLAND_GATE_2) | Execute real pytest on host project tests/ | Does not implement quality gate layering (quality_gate.py does) |
 | taskgraph fixture data | Pinned tasks.json with known DAG/scope/AC coverage/IF- validity/issue number properties | Does not implement task graph validation algorithm |
+| canonical evidence fixture builder | 生成 schema 合法但可逐字段破坏的 bytes、临时 Git refs/commits/events | 不调用 `bind_live_evidence` 生成 expected，不伪装真实 live success |
+| live demo host + current wheel | 用户同构安装并运行真实 OpencodeBackend | 不注入 outcome、不补写 events、不修改 evidence bytes |
 
 ### 6.5. Assertion Basis - Closure with interfaces.md
 
@@ -255,6 +264,7 @@ Test assertions **may only** land on the external observable outlets defined in 
 - CLI output (`trac status`, `trac validate --file tasks.json`, `trac retry`, `trac check reach`, `trac check deliverables`, `trac report`).
 - File schema (`tasks.json`, `tasks.md`, `.tracks/project/project.toml`, `tracks/agents/Devon.md`, `tracks/skills/tracks-prism-impl/SKILL.md`).
 - Git state (refs `refs/trac/rgr/.../red`, commit G parent=B + trailers, commit R test-only diff, worktree state).
+- Canonical live evidence bundle/blob（interfaces.md §1j/§3h）与 `trac check release-evidence [--json]` 的确定性 text/JSON/exit（§2d/§4d）。
 
 If a state needed by an AC has **no** corresponding observable outlet in interfaces.md, this is an observability gap; revise interfaces/acceptance to add the outlet, rather than snooping internal state in the test.
 
@@ -269,6 +279,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   4. `deliverables`：`trac check deliverables`（含 Devon.md，存在性 + version + IQ）
   5. `trace`：`trac check trace --json`（需求追踪闭合；待 Devon 实现子命令后激活，foundation task）
   6. `reach`：`trac check reach --json`（模块可达性；待 Devon 实现子命令后激活，foundation task）
+  7. `release-evidence`：tag/release candidate milestone required job；`.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py` 必须真实 pass，随后当前候选执行 `trac check release-evidence --json` 必须 exit 0/status=satisfied。该 job 待 Devon 补全现有 CI skeleton；不实现 publish。
 - **Validation items**:
   - AC reference closure (each required AC ≥1 test with long-format marker, each test ≥1 AC)
   - Anti-pattern static scan (see §1.3)
@@ -276,7 +287,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
   - Deliverable existence + version + IQ (Devon.md + tracks-prism-impl skill)
   - trace 闭合（`trac check trace` 无硬错误）
   - reach 闭合（`trac check reach` 无孤岛）
-- **Failure semantics**: Any required check failure blocks merge. live 通道（`tests/e2e_live/`）缺凭据 skip，非 required check。
+- **Failure semantics**: routine merge required checks 任一失败阻塞 merge；routine live opt-in job 缺凭据输出 `LIVE_SKIPPED: missing <NAME>`，skip 不产生证据。tag/release candidate 的 `release-evidence` job 是 milestone hard gate：缺凭据、pytest skip/fail/cancel、check 非零或 stale 都失败，Human approval 不可绕过。weekly job 同真实命令防通道腐烂，但不发布。
 
 ---
 
@@ -284,6 +295,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 每个 AC ≥1 测试、每个测试 ≥1 AC（CI 闭合）。跨模块合同（interfaces.md `modules` 列 ≥2）至少一个 integration 测试。测试列为**计划落点**（file::case 前缀），实现时可加后缀细分但不得留空行缺口。
 
+<!-- archived resolved M-TEST review threads; retained as history and excluded from design-trace parsing
 > **Prism [RESOLVED]:** PRISM-MTEST-BLOCKER-3 [severity=blocker] [artifact=test-plan.md §8 + §9] [AC=all §8 ACs with test_refs] criterion=1 (忠于AC) + criterion=3 (counterexample 绑定 traceability)
 > 
 > §8 AC Coverage table and §9 SM-01 transition table reference 157 unique test function names (file::case), but 107 of those function names have no matching def in any test file on disk. This breaks the §8 canonical header contract (AC-FR0210-02: test_refs traceable to test-plan §8) and makes the AC->test traceability non-verifiable.
@@ -333,6 +345,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 >> **Prism:** PRISM-MTEST-ATTEMPT3-VERIFY [severity=blocker] [criterion=1] Attempt 3 re-verification: Shield did not reply to this thread (reply_count=1, only Prism ATTEMPT2-VERIFY). Re-checked: 20 test files still missing from disk (test_machine_m_impl.py, test_kernel_purity_m_impl.py, test_taskgraph.py, test_rgr.py, test_quality_gate.py, test_island_gate_1.py, test_red_phase.py, test_red_gate_m_impl.py, test_green_phase.py, test_green_gate.py, test_green_commit.py, test_refactor.py, test_task_review.py, test_prism_final.py, test_diagnose_four_way.py, test_shield_fix.py, test_events_append_only_m_impl.py, test_prism_plan.py, test_prism_red.py, test_task_dispatch.py). The 3 required ACs still have zero real coverage: AC-FR0010-05 (test_machine_m_impl.py::test_explicit_control_flow - file does not exist), AC-FR0170-02 (test_deliverables.py::test_devon_in_deliverables + test_no_permission_block - neither function exists in tests/unit/test_deliverables.py, verified: file has test_real_deliverables_consistent / test_missing_deliverable / test_missing_version etc. but NOT the two named functions), AC-NFR0010-01 (test_kernel_purity_m_impl.py::test_no_io_no_clock_no_env - file does not exist). No test files modified in attempt 3 (git status: only test-plan.md changed; git diff tests/ empty). Verdict: REVISE - blocker unresolved across 3 attempts. Shield has not engaged this thread.
 >>> **Shield:** BLOCKER-1 REPLY: Adopted Prism option (b). The 3 named ACs (AC-FR0010-05, AC-FR0170-02, AC-NFR0010-01) are all layer=unit per test-plan.md §8 layer column (which marks each AC as 'unit') + §1.5 RGR layer split (unit tests written by implementer Devon in RGR). Per Shield role charter (non-responsibilities: writing unit tests is Devon scope in RGR), these are Devon foundation tasks, not Shield integration/e2e scope. Revised test-plan.md section 8a (AC-FR0010-05 row), section 8q (AC-FR0170-02 row), and section 8u (AC-NFR0010-01 row) to explicitly mark their test_refs with [Devon foundation task] prefix and added explanatory notes clarifying: (a) the named test files (test_machine_m_impl.py, test_deliverables.py functions test_devon_in_deliverables/test_no_permission_block, test_kernel_purity_m_impl.py) are unit-layer targets for Devon in M-IMPL RGR; (b) the ACs' observable behavior is nonetheless covered at integration/e2e layer via public CLI/event outlets by other tests in the same section table. Additionally reconciled the full section 8 (8a-8w) and section 9 SM-01 tables so every non-Devon test_ref points to a real collectible pytest function (verified via pytest --collect-only: 350 integration+e2e tests, exit 0). Updated section 2.1 directory layout to match actual v0.5 test tree on disk, removing the 15 nonexistent per-AC file entries. The 20 listed missing test files are all Devon unit-layer targets (test_machine_m_impl.py, test_kernel_purity_m_impl.py, test_taskgraph.py, test_rgr.py, test_quality_gate.py) or consolidated-into-existing-file references (test_island_gate_1.py -> test_planning_dispatch.py, test_red_phase.py -> test_execution_gates.py + test_worktree_contract.py + test_rgr_contract.py, test_red_gate_m_impl.py -> test_execution_gates.py, test_prism_plan.py -> test_planning_dispatch.py, test_task_dispatch.py -> test_planning_dispatch.py, test_prism_red.py -> test_execution_gates.py + test_rgr_contract.py, test_green_phase.py -> test_execution_gates.py + test_worktree_contract.py, test_green_gate.py + test_refactor.py -> test_quality_gate_contract.py, test_green_commit.py -> test_rgr_contract.py, test_task_review.py + test_prism_final.py + test_diagnose_four_way.py + test_shield_fix.py -> test_execution_gates.py, test_events_append_only_m_impl.py -> test_m_impl_cycle.py) - these are not missing coverage, they are renamed/consolidated references now corrected in section 8/9 tables. No test code modified (git diff tests/ empty); only test-plan.md section 2.1/8/9/10/11 revised. Collection self-check passes.
 >> **Prism:** PRISM-MTEST-VERIFY-PASS [criterion=1] Independent re-verification: 3 named ACs confirmed layer=unit per §8 layer column: AC-FR0010-05 (§8a L346, explicit control flow + kernel purity), AC-FR0170-02 (§8q L505, Devon.md deliverables), AC-NFR0010-01 (§8u L549, kernel decide/project purity). All 3 marked [Devon foundation task] with explanatory notes. Per §1.5 RGR layer split, unit tests are Devon scope in M-IMPL, not Shield M-TEST scope. Companion ACs in same sections have integration/e2e coverage: AC-FR0010-01/03 covered by test_m_impl_cycle.py::test_m_impl_public_event_lifecycle; AC-NFR0010-02 covered by same test (drop/rebuild). 2 of 3 ACs have v0.4 predecessors (test_machine_m_test.py::test_explicit_control_flow@v0.4, test_machine_m_test.py::test_kernel_purity_no_io@v0.4). AC-FR0170-02 has plan: test_real_deliverables_consistent truth-driven as接续点 once Devon.md deliverable lands. 20 missing files are Devon unit-layer targets or consolidated-into-existing-file refs (now corrected in §8/§9). Blocker resolved.
+-->
 
 「IF- 归属」列的取值只能来自 interfaces.md §5 IF- 标识注册表（v0.5 新增 IF-IMPL-001~007、IF-DEVON-001 + v0.4 既有 IF-MTEST-001/002、IF-SHIELD-001、IF-TRACE-001/002、IF-REACH-001/002、IF-VALIDATE-001）。design-trace validator（`check_design_trace`，FR-0140 扩展）校验：每条 integration/e2e AC 的 IF- 归属非空、且每个 IF- 标识在 interfaces.md §5（v0.4 或 v0.5）已定义（有效性校验，非仅存在性）。粒度对齐 architecture.md §1.1 增长轴（Devon 实现 task 边界）。
 
@@ -344,9 +357,9 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 |---|---|---|---|
 |AC-FR0010-01（M-TESTEXIT->stage.entered(M-IMPL),substate=BASELINE；无human插队）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 |AC-FR0010-02（tracstatus报告stage=M-IMPL+substate；_NEXT_STAGE接续+boundary）|e2e| test_m_impl_journey.py::test_boundary_after_m_impl |IF-IMPL-001|
-|AC-FR0010-03（SM-01转移严格遵循清单；非法转移不产出）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
+|AC-FR0010-03（SM-01转移严格遵循清单；非法转移不产出）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 | AC-FR0010-04（既有阶段行为不变；M-TEST 之前事件前缀稳定） | e2e | test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl | IF-IMPL-001, IF-MTEST-001 |
-|AC-FR0010-05（显式控制流驱动；kernel纯函数边界）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
+|AC-FR0010-05（显式控制流驱动；kernel纯函数边界）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 
 ### 8b. FR-0020 BASELINE 重算与测试资产冻结
 
@@ -373,8 +386,8 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-|AC-FR0040-01（六元组复核通过->PRISM_PLAN）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
-|AC-FR0040-02（不闭合->verdict.failed(island)->PLANNING重派Archer）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0040-01（六元组复核通过->PRISM_PLAN）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0040-02（不闭合->verdict.failed(island)->PLANNING重派Archer）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
 
 ### 8e. FR-0050 PRISM_PLAN：判据包绑定与切片评审
 
@@ -394,7 +407,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 |AC-FR0060-01（DAGreadytask选+单写者lease+manifest创建->writelock.granted+task.started->RED）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
-|AC-FR0060-02（task变绿子集=单测+IF-命中int子集；全部完成->ISLAND_GATE_2；还有->TASK_DISPATCH）|integration\| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0060-02（task变绿子集=单测+IF-命中int子集；全部完成->ISLAND_GATE_2；还有->TASK_DISPATCH）|integration| test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0060-03（[P] 并行标记只记录不并发；串行顺序执行） | integration | test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted | IF-IMPL-002 |
 
 ### 8g. FR-0070 RED：Devon 隔离与私有 R ref
@@ -494,7 +507,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 | AC-FR0160-01（全部 task 完成后进入；trac check reach 无孤岛 + 全量 int+e2e 变绿 -> 退出；失败不退出） | integration | test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites | IF-IMPL-002, IF-REACH-002 |
-|AC-FR0160-02（全量执行有失败->DIAGNOSE；verdict.failed(island)->PLANNING）|integration\| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |IF-IMPL-001,IF-IMPL-002|
+|AC-FR0160-02（全量执行有失败->DIAGNOSE；verdict.failed(island)->PLANNING）|integration| test_execution_gates.py::test_diagnose_and_shield_fix_public_routes |IF-IMPL-001,IF-IMPL-002|
 | AC-FR0160-03（通过 -> stage.exited(M-IMPL) -> run.completed(boundary)；不进入 M-VERIFY） | e2e | test_m_impl_journey.py::test_boundary_after_m_impl | IF-IMPL-001 |
 | AC-FR0160-04（M-IMPL 无 Human 门禁：退出依据全程序证据，无 human.review/approval 作为退出前置） | e2e | test_m_impl_journey.py::test_boundary_after_m_impl | IF-IMPL-001 |
 
@@ -505,7 +518,7 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC id | layer | test | IF |
 |---|---|---|---|
 |AC-FR0170-01（AGENT_NAME增补devon->Devon；物化与回收同构）|integration| test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence |IF-DEVON-001|
-|AC-FR0170-02（Devon.md加入deliverables；frontmatterversion+IQ；无permission块）|integration\| test_deliverables.py::test_real_deliverables_consistent |IF-DEVON-001|
+|AC-FR0170-02（Devon.md加入deliverables；frontmatterversion+IQ；无permission块）|integration| test_deliverables.py::test_real_deliverables_consistent |IF-DEVON-001|
 | AC-FR0170-03（manifest 越界审计：越权写 -> over_reach failure_class -> git 回滚；回滚仅移除 Devon 改动） | integration | test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence | IF-DEVON-001 |
 
 ### 8r. FR-0180 tasks.json / tasks.md 真相源与 Runtime 解析
@@ -545,11 +558,11 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 
 ### 8u. NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
 
-> 注：原 §8 引用的 `test_kernel_purity_m_impl.py::test_no_io_no_clock_no_env`、`test_m_impl_cycle.py::test_drop_rebuild` per-AC 名未创建。AC-NFR0010-01（kernel decide()/project() 纯函数边界）属 unit 层，待 Devon 在 RGR 中编写；v0.4 既有 `test_machine_m_test.py::test_kernel_purity_no_io@v0.4` 已覆盖 M-TEST 阶段同类断言。AC-NFR0010-02 的 integration 部分经 `test_m_impl_cycle.py::test_m_impl_public_event_lifecycle`（drop 投影表后从事件重建一致）覆盖。
+> 注：原 §8 引用的 `test_kernel_purity_m_impl.py::test_no_io_no_clock_no_env`、`test_m_impl_cycle.py::test_drop_rebuild` per-AC 名未创建。AC-NFR0010-01（kernel decide()/project() 纯函数边界，IF-IMPL-001）由公开 lifecycle 组合观察；AC-NFR0010-02（IF-IMPL-001、IF-IMPL-002）经 `test_m_impl_cycle.py::test_m_impl_public_event_lifecycle` 的 drop/rebuild 观察覆盖。Devon 仍承担普遍 unit 义务。
 
 | AC id | layer | test | IF |
 |---|---|---|---|
-|AC-NFR0010-01（decide()/project()不碰IO/clock/env/文件系统）|integration\| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
+|AC-NFR0010-01（decide()/project()不碰IO/clock/env/文件系统）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001|
 |AC-NFR0010-02（副作用归executor；drop投影表后重建一致）|integration| test_m_impl_cycle.py::test_m_impl_public_event_lifecycle |IF-IMPL-001,IF-IMPL-002|
 
 ### 8v. NFR-0020 M-IMPL 事件维持 append-only 事件溯源
@@ -592,6 +605,28 @@ If a state needed by an AC has **no** corresponding observable outlet in interfa
 | AC-FR0220-04（issue number 缺失/非正整数 -> trac validate 判失败并指出位置；Devon 提交缺失 trailer -> TASK_REVIEW 判失败） | integration | test_issue_consumption.py::test_missing_issue_fails + test_missing_trailer_fails_review | IF-IMPL-003, IF-IMPL-002 |
 
 ---
+
+### 8x. FR-0230～FR-0233 / NFR-0080 live release evidence 增量
+
+以下 node ID 是 Shield 的精确交付合同：`tests/integration/test_release_evidence.py` 与 `tests/e2e_live/test_m_impl_release_evidence.py` 当前待 Shield 创建；Devon 不写这些测试。integration 只跑确定性 schema/provenance/CLI negatives；e2e_live 只跑真实成功 journey 或 credential probe。fake 与 live 不共享同一 AC。
+
+| AC id | layer | test | IF |
+|---|---|---|---|
+| AC-FR0230-01（真实 OpencodeBackend 至少一个 task 完整 RGR 到 boundary） | e2e | tests/e2e_live/test_m_impl_release_evidence.py::test_real_opencode_m_impl_rgr_release_evidence | IF-LIVE-001, IF-RELEASE-001 |
+| AC-FR0230-02（公开 events/Git/report 可验证完整阶段序列） | e2e | tests/e2e_live/test_m_impl_release_evidence.py::test_real_journey_exposes_events_lineage_report_and_boundary | IF-LIVE-001 |
+| AC-FR0230-03（失败/取消/不完整不产成功证据；fake 不成为 release evidence） | integration | tests/integration/test_release_evidence.py::test_incomplete_failed_cancelled_and_fake_never_write_success | IF-LIVE-001, IF-RELEASE-001 |
+| AC-FR0231-01（成功 bundle 绑定 run/backend/I-O/event range/lineage/boundary/candidate） | e2e | tests/e2e_live/test_m_impl_release_evidence.py::test_real_journey_writes_complete_auditable_bundle | IF-LIVE-001 |
+| AC-FR0231-02（真实性标记拒绝 fake/simulated/manual/incomplete audit） | integration | tests/integration/test_release_evidence.py::test_provenance_rejects_fake_simulation_overlay_manual_events_and_incomplete_io | IF-LIVE-001, IF-RELEASE-001 |
+| AC-FR0232-01（check 读取最近真实成功 journey 及审计记录） | integration | tests/integration/test_release_evidence.py::test_check_accepts_latest_current_real_auditable_bundle | IF-RELEASE-001 |
+| AC-FR0232-02（candidate SHA 必须等于 current HEAD；新 commit 使 stale） | integration | tests/integration/test_release_evidence.py::test_check_rejects_stale_and_candidate_sha_mismatch | IF-RELEASE-001 |
+| AC-FR0232-03（satisfied text/JSON 与 exit 0） | integration | tests/integration/test_release_evidence.py::test_check_success_text_json_and_exit_contract | IF-RELEASE-001 |
+| AC-FR0232-04（missing/failed/stale/not-real fail closed + next action） | integration | tests/integration/test_release_evidence.py::test_check_fail_closed_reason_precedence_text_json_and_exit | IF-RELEASE-001 |
+| AC-FR0232-05（只证明 evidence，不实现后续阶段/副作用） | integration | tests/integration/test_release_evidence.py::test_check_is_read_only_and_emits_no_verify_release_publish_effect | IF-RELEASE-001 |
+| AC-FR0233-01（routine 无凭据显式 skipped 且无 success evidence） | e2e | tests/e2e_live/test_m_impl_release_evidence.py::test_routine_missing_credentials_reports_live_skipped_without_evidence | IF-LIVE-001 |
+| AC-FR0233-02（有凭据+opt-in 执行并报告，成功可供 check） | e2e | tests/e2e_live/test_m_impl_release_evidence.py::test_real_opencode_m_impl_rgr_release_evidence | IF-LIVE-001, IF-RELEASE-001 |
+| AC-FR0233-03（发布验证显式 check；fake/skip 不可替代） | integration | tests/integration/test_release_evidence.py::test_routine_skip_and_fake_never_satisfy_release_prerequisite | IF-RELEASE-001 |
+| AC-NFR0080-01（确定性、可审计、拒绝人工插入） | integration | tests/integration/test_release_evidence.py::test_check_is_deterministic_auditable_and_rejects_event_only_evidence | IF-LIVE-001, IF-RELEASE-001 |
+| AC-NFR0080-02（credential-less skip/fake/simulated 不产生也不满足） | integration | tests/integration/test_release_evidence.py::test_non_real_sources_neither_produce_nor_satisfy_evidence | IF-LIVE-001, IF-RELEASE-001 |
 
 ## 9. SM-01 转移覆盖清单（NFR-0020，normative 依据 SPEC-005「状态与生命周期」）
 
@@ -667,6 +702,12 @@ AC-FR0010-04 要求"M-TEST 之前事件前缀逐字节稳定"：上述更新的�
 ---
 
 ## 11. e2e Happy Path 范围（test_m_impl_journey.py）
+
+### 11.0 真实 live happy path（FR-0230 增量）
+
+`tests/e2e_live/test_m_impl_release_evidence.py` 是独立于 fake `test_m_impl_journey.py` 的唯一真实路径。它从 current candidate wheel 安装后的 `trac run` 进入，顺序观察：M-IMPL BASELINE → 至少一个 task 的真实 Devon RED dispatch/outcome → RED_GATE → PRISM_RED → GREEN dispatch/outcome → GREEN_GATE → GREEN_COMMIT → REFACTOR dispatch/outcome → REFACTOR_GATE → TASK_REVIEW → PRISM_FINAL → `task.completed` → ISLAND_GATE_2 → `stage.exited(M-IMPL)` → `run.completed(boundary)` → canonical evidence → `trac check release-evidence` satisfied。测试不得注入 assignment overlay、fake token、模拟 outcome 或事件。
+
+本路径不覆盖错误矩阵；错误/边界全部在 `tests/integration/test_release_evidence.py`。routine credential probe 是同一 live 文件的环境合同，不把 skip 视为 happy path。发布 job 检测到 pytest skip count 非零即失败。
 
 e2e 仅覆盖 happy path（主成功旅程），边界/错误情形归入 integration：
 

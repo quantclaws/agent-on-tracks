@@ -8,7 +8,7 @@ sha:
 
 # v0.5 — 架构
 
-本文是 ARCH-004（v0.4）的增量延伸。v0.1 的内核机制（事件溯源、单一生产路径、四增长轴分包、单写者锁、per-kind reconcile）、v0.2 的物化合同与 audit、v0.3 的 M-DESIGN Archer/Prism、v0.4 的 M-TEST 与 checks/ 增长轴全部保持不变；v0.5 在既有包内新增 M-IMPL 控制流与 Devon agent 接入，不推翻布局。凡未提及者，一律继承 ARCH-004。
+本文是 ARCH-004（v0.4）的增量延伸。v0.1 的内核机制（事件溯源、单一生产路径、四增长轴分包、单写者锁、per-kind reconcile）、v0.2 的物化合同与 audit、v0.3 的 M-DESIGN Archer/Prism、v0.4 的 M-TEST 与 checks/ 增长轴全部保持不变；v0.5 在既有包内新增 M-IMPL 控制流与 Devon agent 接入，并为 FR-0230～FR-0233/NFR-0080 增量加入真实 live evidence 绑定和只读发布前置检查，不推翻布局。凡未提及者，一律继承 ARCH-004。
 
 ## 0. 延续性声明（什么不变）
 
@@ -43,10 +43,14 @@ sha:
 - `tracks/cli/main.py` 增补 `trac retry` 命令（human.retry 事件 + escalation gate 清除 + 新 attempt 预算）。
 - `tracks/project.py` 强化 canonical `.tracks/project/project.toml` 路径约束（唯一允许的 `.tracks/**` project contract 路径）。
 - 质量守卫配置不变（pre-commit hook 已在 v0.4 通过分别执行命令实现 BS-11 分层）；v0.5 在 `executor/quality_gate.py` 程序执行中继承同一分层政策（按 changed_paths 分类后分别执行检查集）。
+- 新增 `executor/live_evidence.py`：只在真实 OpencodeBackend、无 `TRAC_FAKE_SIMULATE`、无 assignment overlay 的 M-IMPL run 成功到达 boundary 后，绑定并原子写入 canonical evidence bundle；失败/取消路径不写 success bundle。
+- 新增 `checks/release_evidence.py` 与 `trac check release-evidence [--json]`：只读校验 evidence bundle、当前 Git HEAD、agent I/O digest、事件序列、RGR lineage、独立门禁和 boundary；不推进 M-VERIFY/M-RELEASE，不发布 artifact。
+- `tests/e2e_live` 由原单次 agent smoke 提升为一个 opt-in 的真实 M-IMPL 最小纵向旅程；例行无凭据允许显式 skip，tag/release 验证不得 skip。
+- 既有文件的精确增量：`tracks/cli/main.py` 接线新 check；`tracks/executor/executor.py` 在成功 boundary 调用 binder；`tests/e2e_live/conftest.py`/`harness.py` 增加 credential 与 current-wheel provenance；`.github/workflows/ci.yml` 由 Devon foundation task 增加 routine opt-in、weekly 与 tag/release evidence jobs。`tracks/kernel/machine.py`、M-IMPL 状态集合及 M-VERIFY/M-RELEASE 均不因本增量修改。
 
 ## 1. 模块边界
 
-### 1.1 增长轴归属
+### 1.0.1 增长轴归属
 
 v0.5 新代码落在既有增长轴上，不引入结构性返工：
 
@@ -60,10 +64,12 @@ v0.5 新代码落在既有增长轴上，不引入结构性返工：
 | 6 | `agents/` | Devon.md 移除 permission 块 + 加入 deliverables | FR-0170 | IF-DEVON-001 |
 | 7 | `skills/` | tracks-prism-impl 已存在（v0.4 创建） | D-29 M-IMPL 判据包 | — |
 | 8 | `project.py` | canonical 路径约束强化 | FR-0190 第 2 项 | IF-IMPL-002 |
+| 9 | `executor/` | live evidence provenance 捕获、bundle 绑定与原子持久化 | FR-0230/FR-0231 | IF-LIVE-001 |
+| 10 | `checks/` + `cli/` | release-evidence 纯判定、文件读取 wrapper 与 CLI 接线 | FR-0232/FR-0233/NFR-0080 | IF-RELEASE-001 |
 
 新增四个 executor 子模块（taskgraph.py / rgr.py / worktree.py / quality_gate.py）不是新增长轴——它们是 executor 增长轴内的功能模块，被 executor.py 的 M-IMPL handler 调用，不直接被 cli 或 kernel 引用。分层约束：这四个模块可执行 git/subprocess/文件系统操作（副作用），属于 executor 副作用边界，不被 kernel 的 decide()/project() 引用。
 
-### 1.2 M-IMPL 控制流（kernel/machine.py）
+### 1.0.2 M-IMPL 控制流（kernel/machine.py）
 
 M-IMPL 子状态机（SM-01，21 个子状态）与既有 DRAFT/REVIEW/EXIT 模式差异极大，`decide()` 为 M-IMPL 增加显式控制流分支 `_decide_m_impl(s, sub)`。该控制流仍维持 kernel 纯函数边界（NFR-0010）。
 
@@ -93,7 +99,7 @@ M-IMPL 子状态机（SM-01，21 个子状态）与既有 DRAFT/REVIEW/EXIT 模�
 
 M-IMPL attempt 预算：PLANNING validate 失败、PRISM_PLAN/PRISM_RED/PRISM_FINAL revise、RED_GATE 非法红、GREEN_GATE/REFACTOR_GATE 失败均消耗各自子状态的 ≤3 预算（第 3 次升级 `awaiting_human`/escalation）。DIAGNOSE 路由（impl_defect/test_defect）回 GREEN/SHIELD_FIX 消耗 GREEN 预算；stub_gap/ac_gap/spec_gap 不消耗预算（路由到其他阶段）。`trac retry` 清除 escalation gate 并重置一份新的 ≤3 预算（NFR-0030-03）。
 
-### 1.3 Composition Root
+### 1.1 Composition Root
 
 M-IMPL 的装配入口是 `trac run`（与既有阶段同构）。每条 required AC 的六元组 composition 列在此节可追溯：
 
@@ -145,6 +151,41 @@ trac retry [--clear-evidence]
     -> 不自动重新派发（Human 须再次 trac run）
 ```
 
+**真实 live evidence 入口路径**（FR-0230/FR-0231）：
+
+```
+current candidate HEAD -> python -m build -> dist/*.whl (sha256 recorded)
+  -> isolated demo host/.venv/bin/pip install <current-candidate-wheel>
+  -> demo host 中 TRAC_AGENT_BACKEND=opencode
+     TRAC_LIVE_CANDIDATE_SHA=<full-head>
+     TRAC_LIVE_ARTIFACT_SHA256=<wheel-sha256> trac run
+     （不得设置 TRAC_FAKE_SIMULATE；不得使用 --assignment-overlay）
+    -> effects.select_backend -> OpencodeBackend
+    -> Executor M-IMPL BASELINE -> RED -> RED_GATE -> PRISM_RED
+       -> GREEN -> GREEN_GATE -> GREEN_COMMIT -> REFACTOR -> REFACTOR_GATE
+       -> TASK_REVIEW -> PRISM_FINAL -> TASK_DONE -> ISLAND_GATE_2
+    -> stage.exited(M-IMPL) -> run.completed(terminal_state="boundary")
+    -> executor.live_evidence.bind_live_evidence
+       -> 复核真实 backend/provenance + Devon RED/GREEN/REFACTOR dispatch receipts
+       -> 复核 agent I/O blobs/digests + ordered events + Git R/G lineage + 独立 gate observations
+       -> 原子写 canonical evidence bundle
+```
+
+live harness 只负责从隔离 demo host 将 Runtime 已生成的 bundle **逐字节传输**到待发布 checkout 的同一 canonical 相对路径；不得合成、补写或改写 evidence。候选 wheel 的完整 SHA-256 与 source candidate HEAD 同时进入 provenance，因而“装了别的 wheel 再声称当前 HEAD”会 fail closed。
+
+**release-evidence 检查入口路径**（FR-0232/NFR-0080）：
+
+```
+trac check release-evidence [--json]
+  -> tracks.cli.main:cmd_check
+  -> tracks.checks.release_evidence:check_release_evidence_file
+  -> 读取 current Git HEAD + canonical evidence bundles + bundle 内 content-addressed blobs
+  -> check_release_evidence（纯判定）
+  -> ReleaseEvidenceReport -> 确定性 stdout/JSON + exit 0|1
+```
+
+### 1.2 Required AC closure (ISLAND_GATE_1)
+
 六元组闭合（每条 required AC 的 owner/surface/composition/wiring/test/evidence，附 IF- 标识对齐 interfaces.md §5）：
 
 - **FR-0010（M-IMPL 注册）**：owner=kernel/machine.py, surface=`trac run`/`trac status`, composition=Executor.run_loop→_decide_m_impl, wiring=cmd_run→decide→_decide_m_impl→dispatch_agent/recompute_baseline, test=integration test_m_impl_cycle + e2e test_m_impl_journey, evidence=`trac status` 报告 `stage=M-IMPL substate=BASELINE` + 事件流 `stage.entered(M-IMPL)`, IF-=IF-IMPL-001。
@@ -172,6 +213,21 @@ trac retry [--clear-evidence]
 - **NFR-0010（kernel 纯函数）**：owner=kernel/machine.py, surface=`trac run`, composition=_decide_m_impl 纯函数, wiring=decide→纯函数, test=unit test_kernel_purity_m_impl, evidence=decide()/project() 不碰 IO/clock/env/文件系统, IF-=IF-IMPL-001。
 - **NFR-0020（append-only）**：owner=kernel+executor, surface=`trac run`, composition=store.append 事件, wiring=executor→store.append, test=integration test_events_append_only_m_impl, evidence=M-IMPL 事件 append-only + 投影可重建, IF-=IF-IMPL-001, IF-IMPL-002。
 - **NFR-0030（dispatch 活动性）**：owner=cli+kernel, surface=`trac run`/`trac status`/`trac retry`, composition=cmd_run 控制台输出+cmd_retry, wiring=cli→控制台 flush+store.append(human.retry), test=integration test_dispatch_activity + test_trac_retry, evidence=控制台活动输出 + `trac status` 含 attempt 计数 + `trac retry` 产出 `human.retry` 事件, IF-=IF-IMPL-001。
+- **FR-0230** owner=executor/live_evidence.py:AC-FR0230-01 surface=`TRAC_AGENT_BACKEND=opencode trac run` composition=cmd_run→select_backend→Executor.run_loop→bind_live_evidence wiring=current-wheel→isolated-demo-host→BASELINE→Devon(RED,GREEN,REFACTOR)→gates→review→ISLAND_GATE_2→boundary test=e2e_live::test_real_opencode_m_impl_rgr_release_evidence evidence=`.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py`输出`1 passed`且bundle.required_devon_phases为`[RED,GREEN,REFACTOR]` IF-LIVE-001 IF-RELEASE-001
+- **FR-0230** owner=executor/live_evidence.py:AC-FR0230-02 surface=`trac report`+canonical-evidence composition=report/event-store+bind_live_evidence wiring=run_id→event_bounds→R-ref/G-trailers→gate_observations→boundary test=e2e_live::test_real_opencode_m_impl_rgr_release_evidence evidence=`.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py`输出`1 passed`且`trac report`含RED/GREEN/REFACTOR/review/task.completed/island_gate_2/boundary IF-LIVE-001
+- **FR-0230** owner=executor/live_evidence.py:AC-FR0230-03 surface=`trac run`+canonical-evidence composition=Executor.failure-path→no-success-bundle wiring=failed|cancelled|incomplete→provenance-reject→不写status=satisfied test=integration::test_release_evidence_rejects_incomplete_failed_and_cancelled_journeys evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且失败fixture无satisfied bundle IF-LIVE-001 IF-RELEASE-001
+- **FR-0231** owner=executor/live_evidence.py:AC-FR0231-01 surface=canonical-evidence-bundle composition=Executor.boundary→bind_live_evidence→atomic-write wiring=run_id/backend/candidate_sha/artifact_digest→agent_io_refs+digests→event_bounds→lineage+gates+boundary test=integration::test_release_evidence_requires_complete_audit_bundle evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且JSON含schema_version/candidate_sha/run_id/backend/agent_io/event_sequence/rgr_lineage/gate_observations/boundary IF-LIVE-001 IF-RELEASE-001
+- **FR-0231** owner=executor/live_evidence.py:AC-FR0231-02 surface=canonical-evidence-bundle composition=bind_live_evidence.provenance-gate wiring=backend-instance+env-snapshot+overlay-flag+dispatch-receipts→releasable判定 test=integration::test_release_evidence_rejects_fake_simulation_overlay_and_manual_events evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且四类fixture均reason_code=`not_real` IF-LIVE-001 IF-RELEASE-001
+- **FR-0232** owner=checks/release_evidence.py:AC-FR0232-01 surface=`trac check release-evidence` composition=cmd_check→check_release_evidence_file→check_release_evidence wiring=CLI→current-HEAD→bundle+blobs→audit/event/git校验→report test=integration::test_release_evidence_accepts_current_real_bundle evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且CLI exit=0/stdout前缀`release-evidence: satisfied` IF-RELEASE-001
+- **FR-0232** owner=checks/release_evidence.py:AC-FR0232-02 surface=`trac check release-evidence` composition=check_release_evidence_file(current_head) wiring=git-rev-parse-HEAD→candidate_sha等值比较→stale test=integration::test_release_evidence_rejects_stale_and_sha_mismatch evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且新commit后exit=1/reason_code=`stale` IF-RELEASE-001
+- **FR-0232** owner=checks/release_evidence.py:AC-FR0232-03 surface=`trac check release-evidence [--json]` composition=ReleaseEvidenceReport→CLI-renderer wiring=valid-current-bundle→status=satisfied→text|JSON→exit0 test=integration::test_release_evidence_text_json_and_exit_contract evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且text精确前缀/JSON.status=`satisfied`/exit=0 IF-RELEASE-001
+- **FR-0232** owner=checks/release_evidence.py:AC-FR0232-04 surface=`trac check release-evidence [--json]` composition=ReleaseEvidenceReport→CLI-renderer wiring=missing|malformed|failed|stale|not_real→ordered-reason→next-action→exit1 test=integration::test_release_evidence_fail_closed_matrix evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且每例stderr为空/stdout含`NOT satisfied`和`next:`/exit=1 IF-RELEASE-001
+- **FR-0232** owner=checks/release_evidence.py:AC-FR0232-05 surface=`trac check release-evidence` composition=read-only-check-command wiring=read-bundle+read-git→report-only test=integration::test_release_evidence_has_no_release_side_effects evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且前后events/git/refs/dist无diff且无M-VERIFY/M-RELEASE事件 IF-RELEASE-001
+- **FR-0233** owner=tests/e2e_live/conftest.py:AC-FR0233-01 surface=CI-live-opencode-routine composition=pytest-live-probe→credential-probe wiring=missing-provider-variable→pytest.skip(reason=`LIVE_SKIPPED`)→routine-jobs继续 test=e2e_live::test_real_opencode_m_impl_rgr_release_evidence evidence=`.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py`无凭据时exit=0且输出`LIVE_SKIPPED: missing <NAME>`并且无evidence bundle IF-LIVE-001
+- **FR-0233** owner=.github/workflows/ci.yml:AC-FR0233-02 surface=CI-live-opencode composition=live-opencode-job→installed-wheel→e2e_live→release-evidence-check wiring=credentials+opt-in→real-journey→bundle→check test=e2e_live::test_real_opencode_m_impl_rgr_release_evidence evidence=tag/job命令`.venv/bin/python -m pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py`输出`1 passed`后`trac check release-evidence`输出`satisfied` IF-LIVE-001 IF-RELEASE-001
+- **FR-0233** owner=.github/workflows/ci.yml:AC-FR0233-03 surface=CI-release-evidence composition=release-evidence-job→trac-check wiring=current-candidate→imported-live-bundle→fail-closed-check→release-prerequisite test=integration::test_routine_skip_and_fake_never_satisfy_release evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且skip/fake均exit=1；tag job无凭据直接failure而非skip IF-RELEASE-001
+- **NFR-0080** owner=checks/release_evidence.py:AC-NFR0080-01 surface=`trac check release-evidence --json` composition=pure-validator+read-only-wrapper wiring=canonical-bytes→digest/event/git/provenance校验→deterministic-report test=integration::test_release_evidence_is_deterministic_and_auditable evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`连续两次输出字节相同且JSON含evidence_path/run_id/event_bounds/reason_code IF-LIVE-001 IF-RELEASE-001
+- **NFR-0080** owner=checks/release_evidence.py:AC-NFR0080-02 surface=`trac check release-evidence` composition=provenance-validator wiring=credential-skip|FakeBackend|TRAC_FAKE_SIMULATE|assignment-overlay|manual-events→not_real|missing test=integration::test_routine_skip_and_fake_never_satisfy_release evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_evidence.py`输出`passed`且所有非真实来源exit=1并无`satisfied` IF-LIVE-001 IF-RELEASE-001
 
 ## 2. Scaffold 宣言
 
@@ -180,6 +236,8 @@ trac retry [--clear-evidence]
 - `tracks/executor/rgr.py` — RGR git 操作桩：`create_red_ref` / `create_green_commit` / `classify_red` / `verify_lineage` 签名，行为体 raise NotImplementedError("IF-IMPL-004")（kind: stub）
 - `tracks/executor/worktree.py` — 三 worktree 方案桩：`create_devon_worktree` / `create_gate_worktree` / `create_test_authority_worktree` / `cleanup_worktree` 签名，行为体 raise NotImplementedError("IF-IMPL-006")（kind: stub）
 - `tracks/executor/quality_gate.py` — 质量门禁分层执行桩：`run_gates` / `run_production_checks` / `run_test_checks` 签名，行为体 raise NotImplementedError("IF-IMPL-005")（kind: stub）
+- `tracks/executor/live_evidence.py` — live evidence schema 声明与 `bind_live_evidence`/`write_live_evidence` 接口桩；只含完整签名与 `NotImplementedError("IF-LIVE-001")`（kind: stub）
+- `tracks/checks/release_evidence.py` — `ReleaseEvidenceReport` 声明与 `check_release_evidence`/`check_release_evidence_file` 接口桩；只含完整签名与 `NotImplementedError("IF-RELEASE-001")`（kind: stub）
 
 ## 3. 技术选型
 
@@ -243,6 +301,16 @@ FR-0190 的 10 项物化增量大部分是对 v0.4 既有机制的扩展/强化�
 9. **dispatch materialization 完整性**：executor.py 的 `_do_dispatch_agent` 扩展 assignment payload 物化字段（绝对 target doc/doc-set、role/substate/attempt/review_round、docs/templates/skills、criteria-pack identity、test_tasks、pre_dirty_snapshot、result/checkpoint identity）。
 10. **覆盖范围**：横切覆盖所有 agent dispatch + Runtime validate/checkpoint/publish/collect/run/red/commit/seal。
 
+### 3.7 live evidence 与 release-evidence（FR-0230～FR-0233/NFR-0080）
+
+- **生产/消费分离**：`executor/live_evidence.py` 在真实 journey boundary 生产 immutable bundle；`checks/release_evidence.py` 只读消费。放弃“从 `run.completed` 单事件推断成功”，因为人工插入 event 无法证明真实 dispatch、agent I/O 和 Git lineage；代价是 bundle schema 较严格。
+- **canonical 存储**：`.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/evidence.json`；同目录 `blobs/{sha256}` 保存 evidence 引用的脱敏 agent input/output 与 canonical event slice。文件先写同目录临时文件、`fsync` 后 `os.replace`，失败不留下可被选择的 `evidence.json`。bundle 可从隔离 demo host逐字节传输到候选 checkout 的同一相对路径；传输不改变 digest。
+- **候选绑定**：`candidate_sha` 是 wheel build 前 current tracks checkout 的完整 `git rev-parse HEAD`；`candidate_artifact.sha256` 是安装到 demo host 的 wheel SHA-256；安装探针记录 distribution version 与 import path 不在源码树。二者缺失或不匹配即不可发布。放弃 short SHA（碰撞且不能等值核验）。
+- **launch provenance**：live harness 只在 wheel hash 校验与隔离安装探针通过后，向安装版 `trac run` 注入 `TRAC_LIVE_CANDIDATE_SHA`/`TRAC_LIVE_ARTIFACT_SHA256`；Runtime 将二者与安装环境的 `direct_url.json` archive hash、distribution/version/import path 交叉核验后才允许 binder。普通 real run 未提供这两个字段时照常运行，但不产生 release evidence。checker 最终再把 candidate SHA 与待发布 checkout current HEAD 比较；这些字段不是 agent assignment，Agent 不能修改。
+- **真实性**：producer 从实际 backend instance 记录 `backend="opencode"`，并冻结 `TRAC_FAKE_SIMULATE` 是否存在、`assignment_overlay` 是否启用。任一 fake/simulate/overlay 为真时 producer 不写 satisfied bundle。validator 还要求每个 RED/GREEN/REFACTOR 都存在 `command.issued` dispatch receipt、匹配的 `outcome.received`、完整 agent I/O blob/digest；仅有阶段 event 的手工记录必然缺 receipt/blob 而失败。
+- **独立门禁**：bundle 的 `gate_observations` 必须分别记录 RED_GATE、GREEN_GATE、REFACTOR_GATE、TASK_REVIEW、PRISM_FINAL、ISLAND_GATE_2 的 Runtime 观察值与 seq；不得用 Devon self-report 代替。review 还要求真实 Prism dispatch/outcome。完整 schema 与 reason precedence 见 interfaces.md §1j/§2d/§3h。
+- **技术栈**：仅 Python 标准库 `dataclasses/json/hashlib/pathlib/os` 与既有 SQLite/git wrapper；不引入签名库或远端 attestation。取舍：本版防止 fake/simulation/event-only 伪证据，但不声称抵抗拥有仓库与凭据写权限的恶意管理员；密码学供应链证明属于未来发布系统且不在本 spec。
+
 ## 4. 交付与运行合同（machine contracts）
 
 ### 4.1 测试执行合同（`.tracks/project/project.toml`）
@@ -300,14 +368,17 @@ stable required checks（名称稳定，merge 只认 CI 结论）：
 4. `deliverables`：`trac check deliverables`（存在性 + version + IQ，含 Devon.md）。
 5. `trace`：`trac check trace --json`（需求追踪闭合；待 Devon 实现子命令后激活，标注 foundation task）。
 6. `reach`：`trac check reach --json`（模块可达性；待 Devon 实现子命令后激活，标注 foundation task）。
+7. `release-evidence`：仅 tag/release candidate 的硬门禁，先运行真实 `tests/e2e_live/test_m_impl_release_evidence.py`，再对当前 HEAD 执行 `trac check release-evidence --json`；缺凭据、skip、fake 或 stale 均失败，不能以 Human approval 绕过。该 job 只验证证据，不发布。
 
-live 通道（`tests/e2e_live/`）：缺凭据 skip（独立 opt-in job），非 required check。
+live 通道（`tests/e2e_live/`）：routine pull request/push 中为独立 opt-in、非 required job；缺凭据时必须输出 `LIVE_SKIPPED: missing <NAME>` 且不生成 bundle。`workflow_dispatch` 可显式运行。tag/release candidate 的 `release-evidence` job 是 milestone hard gate，缺凭据必须 fail 而非 skip；另设每周 schedule 运行真实通道防腐烂。secrets 只注入该 job，权限 `contents: read`，不得写 release/publish。
 
 ### 4.4 integration/e2e 测试基础设施
 
 - **fake 通道**（deterministic，CI 必跑）：conftest 强制 `TRAC_AGENT_BACKEND=fake`。FakeBackend 经 `simulate` 控制 Devon/Archer/Prism/Shield 分支。继承 v0.2 conftest 的 `host_repo`/`trac`/`event_log` fixtures。
 - **L2 contract sim**（opencode stand-in）：继承 v0.2 `fake_opencode` fixture，验证 Devon dispatch 的物化/JSON 解析/manifest 越界审计/失败矩阵。
-- **live 通道**（真 opencode）：缺凭据 skip，独立 opt-in job。
+- **live 通道**（真 opencode）：唯一新 happy path 节点为 `tests/e2e_live/test_m_impl_release_evidence.py::test_real_opencode_m_impl_rgr_release_evidence`；从 current candidate wheel 安装到隔离 demo host，不从源码树 import，不使用 `--assignment-overlay`，执行至少一个 task 的真实 Devon RED/GREEN/REFACTOR 和 Prism review，断言独立 gates、TASK_DONE、ISLAND_GATE_2、boundary 与 bundle。routine 缺凭据显式 skip；tag/release 不允许 skip。
+- **确定性 negative 通道**：`tests/integration/test_release_evidence.py` 覆盖 missing/malformed/stale/SHA mismatch、FakeBackend、`TRAC_FAKE_SIMULATE`、assignment overlay、manual event-only、agent I/O 缺失、lineage/gate/boundary 缺失以及 text/JSON/exit 稳定性；这些 AC 不与真实 live happy path 重复。
+- **精确测试文件增量**：Shield 新建 `tests/integration/test_release_evidence.py` 与 `tests/e2e_live/test_m_impl_release_evidence.py`，修改 `tests/e2e_live/conftest.py`（显式 skip 文本）和 `tests/e2e_live/harness.py`（current wheel 安装证明及 bundle byte-for-byte 传输）；不新建模拟 scenario JSON，因为该 journey 禁止 assignment overlay/simulation。
 - **GREEN_GATE int 子集执行**：executor 使用 project.toml 的 run 命令在 gate worktree 执行 int 子集（按 test-plan §8 IF- 归属筛选）。
 
 ### 4.5 release version / build / artifact
@@ -338,3 +409,6 @@ live 通道（`tests/e2e_live/`）：缺凭据 skip（独立 opt-in job），非
 - **R ref compare-and-set 竞态**：多 attempt 同时写 R ref 可能竞态。缓解：compare-and-set 先 `git rev-parse` 检查 ref 是否存在，已存在则失败；R ref 不可变（BS-06）。
 - **Devon manifest 越界审计**：Devon 是第一个按 per-task manifest 白名单审计的 agent（既有 agent 用固定目录列表）。缓解：复用 v0.2 audit 机制（baseline + post-run diff），allowed 列表改为 per-task manifest 白名单。
 - **dispatch 物化合同回归覆盖**：FR-0190 的 10 项物化增量大部分是 v0.4 既有机制的扩展，需确保不回归。缓解：M-TEST 既有回归基线（run 01KZ5QCRPMBVC1A6HYEHMKKGVH）作为确定性回归基线；v0.5 新增 M-IMPL escalation 路径在同一测试中覆盖。
+- **live 成本与不稳定外部 provider**：真实完整 RGR 显著慢于 fake suite。缓解：只覆盖一个最小纵向 task；routine 独立 opt-in，weekly/tag 执行；release candidate 不接受 skip。
+- **本地 bundle 可被高权限操作者篡改**：本版通过 content digest、backend provenance、dispatch receipt、event slice、Git lineage 和独立 gate 多源交叉核验，拒绝 fake/simulation/manual-event-only；不提供远端签名 attestation。若威胁模型升级为恶意管理员，需独立供应链签名需求，不能在本版架构中猜补。
+- **stale 选择歧义**：validator 只在完整校验后从 current SHA 目录按 `run_id` 字节序选择最大成功 run；current SHA 无 bundle但存在旧 SHA bundle时固定返回 `stale`，完全无 bundle返回 `missing`，避免依赖文件 mtime/系统时钟。
