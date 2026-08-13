@@ -29,8 +29,10 @@ from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.gate import check_ready
 from tracks.discuss.model import speaker_key
 from tracks.discuss.parser import parse_threads
+from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
+from tracks.project import layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
@@ -51,11 +53,6 @@ _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 # Lock files created by tracks/discuss/cli.py _atomic_write (flock-based);
 # these are transient synchronization artifacts, not scaffold writes.
 _LOCK_SUFFIX = ".lock"
-# FR-0120 Shield write scope (RP-01): the five test-asset directories. Writes
-# outside these (product code, interface stubs, design docs, ground truth) are
-# over-reach and rolled back.
-_SHIELD_SCOPE = ("tests/integration", "tests/e2e", "tests/e2e_live",
-                 "tests/assets", "tests/counterexamples")
 
 
 def redact(text: str) -> str:
@@ -198,14 +195,15 @@ class OpencodeBackend:
                        role: str, substate: str,
                        assignment: dict | None = None
                        ) -> list[Path | str | None]:
-        """Build the role-specific audit whitelist; Shield stays test-scoped."""
+        """Build the role-specific audit whitelist from project.toml [layout]."""
         if role == "shield":
-            allowed = [self.repo / d for d in _SHIELD_SCOPE] + [agent_dest]
+            allowed = [self.repo / d for d in layout_paths(self.repo, "shield")] + [agent_dest]
             if substate == "WRITE":
                 allowed = [*doc_paths, *allowed]
             return allowed
         if role == "devon":
-            return [*doc_paths, agent_dest]
+            devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
+            return [*doc_paths, agent_dest, *devon_dirs]
         return [*doc_paths, agent_dest, self.repo]
 
     def _unknown_role_result(
@@ -329,6 +327,9 @@ class OpencodeBackend:
         over_paths = sorted(
             p for p in agent_changed if not auditor._is_allowed(p))
         if doc_offending or over_paths:
+            if over_paths and not doc_offending and adjudicate(
+                    self, "shield", over_paths):
+                return None
             auditor.rollback_agent_changes(
                 baseline, new_changes=agent_changed, force=True)
             parts: list[str] = []

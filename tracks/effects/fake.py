@@ -535,7 +535,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
 
     def _write_project_contract(self) -> None:
         """Write a demo host test execution contract at
-        ``.tracks/project/project.toml`` (v0.4: pytest framework)."""
+        ``.tracks/projects/project.toml`` (v0.4: pytest framework)."""
         toml_path = paths.project_toml_path(paths.tracks_home(self.repo))
         toml_path.parent.mkdir(parents=True, exist_ok=True)
         toml_path.write_text(

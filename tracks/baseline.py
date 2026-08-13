@@ -92,7 +92,7 @@ def m_impl_baseline_missing(
         if not (vdir / doc).is_file():
             missing.append(doc)
     if not contract_valid:
-        missing.append(".tracks/project/project.toml")
+        missing.append(".tracks/projects/project.toml")
     if not approval_digest:
         missing.append("approval.recorded")
     if not issue_evidence:

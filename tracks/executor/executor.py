@@ -57,7 +57,7 @@ _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
 # The M-IMPL reach entrypoint manifest (`.tracks/reach-entries.txt`, declared
 # only by the Fake fixture) is the single additional canonical config artifact
 # the design ResultCheckpoint stages alongside the design trio.
-_CANONICAL_CONTRACT_PATH = (".tracks", "project", "project.toml")
+_CANONICAL_CONTRACT_PATH = (".tracks", "projects", "project.toml")
 _CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 
 # Relative project-venv interpreter paths a contract may declare as argv[0].
@@ -786,7 +786,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS
                 and tuple(relative.parts) not in (
                     _CANONICAL_CONTRACT_PATH, _CANONICAL_REACH_ENTRIES_PATH)):
-            # exactly the canonical .tracks/project/project.toml and
+            # exactly the canonical .tracks/projects/project.toml and
             # .tracks/reach-entries.txt are allowed; every other .tracks/**
             # (and .git/.opencode/**) is rejected.
             return None, f"scaffold path is not allowed: {raw}"

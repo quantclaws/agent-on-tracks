@@ -1,7 +1,7 @@
-"""Host project test execution contract (``.tracks/project/project.toml``).
+"""Host project test execution contract (``.tracks/projects/project.toml``).
 
 Reads the host project's test execution contract committed at
-``.tracks/project/project.toml`` during M-TEST.  The contract declares the
+``.tracks/projects/project.toml`` during M-TEST.  The contract declares the
 framework, paths, and shell commands for collecting and running tests, plus
 the working directory to execute them from.
 
@@ -41,9 +41,23 @@ class TestSection:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentLayout:
+    """Writable directories for a single agent role (FR-0120 layout)."""
+    writable: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutConfig:
+    """Project directory layout designed by Archer in M-DESIGN."""
+    devon: AgentLayout | None = None
+    shield: AgentLayout | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectContract:
     integration: TestSection
     e2e: TestSection | None = None
+    layout: LayoutConfig | None = None
 
 
 def contract_path(repo: Path) -> Path:
@@ -77,7 +91,30 @@ def _build_contract(data: dict) -> ProjectContract:
     e2e: TestSection | None = None
     if e2e_raw is not None:
         e2e = _build_section(data, "e2e")
-    return ProjectContract(integration=integration, e2e=e2e)
+    layout = _build_layout(data)
+    return ProjectContract(integration=integration, e2e=e2e, layout=layout)
+
+
+def _build_layout(data: dict) -> LayoutConfig | None:
+    """Parse [layout] section; None if absent (backward compatible)."""
+    layout_raw = data.get("layout")
+    if not isinstance(layout_raw, dict):
+        return None
+    devon = _build_agent_layout(layout_raw, "devon")
+    shield = _build_agent_layout(layout_raw, "shield")
+    if devon is None and shield is None:
+        return None
+    return LayoutConfig(devon=devon, shield=shield)
+
+
+def _build_agent_layout(layout_data: dict, role: str) -> AgentLayout | None:
+    section = layout_data.get(role)
+    if not isinstance(section, dict):
+        return None
+    raw_writable = section.get("writable")
+    if not isinstance(raw_writable, list) or not raw_writable:
+        return None
+    return AgentLayout(writable=[str(p) for p in raw_writable])
 
 
 def _build_section(data: dict, name: str) -> TestSection:
@@ -125,3 +162,21 @@ def _build_section(data: dict, name: str) -> TestSection:
         run=run.strip(),
         cwd=cwd.strip(),
     )
+
+
+def layout_paths(repo: Path, role: str) -> list[str]:
+    """Return writable dir paths for a role from project.toml [layout].
+
+    Returns an empty list if the contract or [layout] section is absent,
+    so the auditor fails closed (all writes flagged as over-reach).
+    """
+    try:
+        contract = load_contract(repo)
+    except ContractError:
+        return []
+    if contract.layout is None:
+        return []
+    agent = getattr(contract.layout, role, None)
+    if agent is None:
+        return []
+    return agent.writable

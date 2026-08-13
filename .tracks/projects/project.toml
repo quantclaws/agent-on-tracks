@@ -16,3 +16,13 @@ paths = ["tests/e2e/"]
 collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
 run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"
 cwd = "."
+
+# Directory layout designed by Archer in M-DESIGN (FR-0120).
+# Consumed by the runtime auditor to authorize agent writes per role.
+[layout]
+
+[layout.devon]
+writable = ["tracks/", "tests/unit/"]
+
+[layout.shield]
+writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]

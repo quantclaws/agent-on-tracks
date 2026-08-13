@@ -1,7 +1,7 @@
 """Item 6: _maybe_add_scaffold must update dedup state after appending
 scaffold paths to prevent duplicate project.toml in the stage list.
 
-When the canonical ``.tracks/project/project.toml`` is both declared in the
+When the canonical ``.tracks/projects/project.toml`` is both declared in the
 Scaffold 宣言 and returned by ``_project_contract_paths()``, it must appear
 in ``stage_paths`` exactly once.
 """
@@ -46,8 +46,8 @@ def test_maybe_add_scaffold_no_duplicate_project_toml(tmp_path):
 
     fake = _FakeExecutor(
         repo=repo,
-        scaffold_paths=[Path(".tracks/project/project.toml")],
-        contract_paths=[Path(".tracks/project/project.toml")],
+        scaffold_paths=[Path(".tracks/projects/project.toml")],
+        contract_paths=[Path(".tracks/projects/project.toml")],
     )
 
     state = State(
@@ -64,7 +64,7 @@ def test_maybe_add_scaffold_no_duplicate_project_toml(tmp_path):
     )
     assert result is False, "should not abort"
 
-    toml_count = sum(1 for p in stage_paths if str(p) == ".tracks/project/project.toml")
+    toml_count = sum(1 for p in stage_paths if str(p) == ".tracks/projects/project.toml")
     assert toml_count == 1, (
         f"project.toml appeared {toml_count} times in stage_paths; stage_paths={stage_paths}"
     )
@@ -86,10 +86,10 @@ def test_maybe_add_scaffold_no_duplicate_when_scaffold_has_extra(tmp_path):
     fake = _FakeExecutor(
         repo=repo,
         scaffold_paths=[
-            Path(".tracks/project/project.toml"),
+            Path(".tracks/projects/project.toml"),
             Path("src/module.py"),
         ],
-        contract_paths=[Path(".tracks/project/project.toml")],
+        contract_paths=[Path(".tracks/projects/project.toml")],
     )
 
     state = State(stage="M-DESIGN", substate="DRAFT", current_attempt=0)
@@ -102,7 +102,7 @@ def test_maybe_add_scaffold_no_duplicate_when_scaffold_has_extra(tmp_path):
     )
     assert result is False
 
-    toml_count = sum(1 for p in stage_paths if str(p) == ".tracks/project/project.toml")
+    toml_count = sum(1 for p in stage_paths if str(p) == ".tracks/projects/project.toml")
     assert toml_count == 1, f"project.toml appeared {toml_count} times; stage_paths={stage_paths}"
 
     module_count = sum(1 for p in stage_paths if str(p) == "src/module.py")
