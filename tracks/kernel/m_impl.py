@@ -146,9 +146,6 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
     s.criteria_pack_loaded = p.get("criteria_pack")
     _reset_review(s)
     verdict = p["verdict"]
-    if s.substate == "DOC_GAP_REVIEW":
-        _route_m_impl_doc_gap_verdict(s, verdict)
-        return
     if s.substate == "PRISM_PLAN":
         if verdict == "pass":
             s.substate = "TASK_DISPATCH"
@@ -175,16 +172,6 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
             s.refactor_done = False
             _reset_doc(s)
             _consume_attempt(s)
-
-
-def _route_m_impl_doc_gap_verdict(s: State, verdict: str) -> None:
-    """Handle DOC_GAP_REVIEW Prism verdict for M-IMPL."""
-    if verdict == "pass":
-        s.substate = "RED"
-        _reset_doc(s)
-    else:
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = "stub_gap"
 
 
 def _route_prism_plan_revise(s: State, p: dict) -> None:
@@ -467,8 +454,6 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
         return _decide_m_impl_planning(s)
     if sub in ("ISLAND_GATE_1", "ISLAND_GATE_2"):
         return _decide_m_impl_island(s, sub)
-    if sub == "DOC_GAP_REVIEW":
-        return _m_impl_doc_gap_route(s)
     if sub in _M_IMPL_REVIEW_SUBSTATES:
         return _decide_m_impl_prism(s, sub)
     if sub in ("RED", "GREEN", "REFACTOR", "SHIELD_FIX"):
@@ -514,26 +499,6 @@ def _decide_m_impl_island(s: State, sub: str) -> Command | None:
     if sub == "ISLAND_GATE_1":
         return Command(kind="check_island_1", params={"stage": "M-IMPL"})
     return Command(kind="check_island_2", params={"stage": "M-IMPL"})
-
-
-def _m_impl_doc_gap_route(s: State) -> Command | None:
-    """DOC_GAP_REVIEW: dispatch Prism to adjudicate discussion threads
-    left by Devon in design docs (architecture.md / interfaces.md)."""
-    if s.reviewer_dispatched:
-        return None
-    params = {
-        "role": "prism", "substate": "DOC_GAP_REVIEW",
-        "objective": "adjudicate Devon discussion threads in design docs",
-        "stage": "M-IMPL",
-        "attempt": s.current_attempt + 1,
-        "docs": list(_M_IMPL_CONTEXT_DOCS),
-        "assignment": _m_impl_base_assignment(
-            s, "prism", "DOC_GAP_REVIEW",
-            ["tracks-discuz", "tracks-prism-impl"]),
-    }
-    if s.last_failure:
-        params["evidence"] = dict(s.last_failure)
-    return Command(kind="dispatch_agent", params=params)
 
 
 def _decide_m_impl_prism(s: State, sub: str) -> Command | None:
