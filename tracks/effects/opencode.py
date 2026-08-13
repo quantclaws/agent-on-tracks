@@ -1,18 +1,12 @@
 """OpencodeBackend — real agent via `opencode run` subprocess (ARCH-003 §4/§6/§7).
 
-Pipeline per dispatch: materialize canonical prompt (+ skills + document
-templates named by the assignment) -> baseline snapshot ->
+Pipeline: materialize prompt (+skills+templates) -> baseline ->
 `opencode run --agent <Name> --format json --dir <repo> --auto "<prompt>"`
-(process group) -> parse JSON (diagnostic/truncation only) -> capture
-the target doc-set diff (authoritative product, ARCH §4b; one doc normally, the
-whole M-DESIGN trio for a multi-doc assignment) -> post-run audit (ARCH §6:
-over-reach; for M-DESIGN author dispatches, that host-project writes stay
-within the architecture.md Scaffold 宣言 manifest (batch B); for author DRAFT
-dispatches, that the agent resolved every discussion thread it initiated in the
-target doc-set; for reviewer dispatches, that a revise verdict anchors its
-findings — at least one open discussion thread the reviewer initiated, live
-run042). Failures map to IF-003 §1a FailureClass. The agent's stdout JSON is
-NEVER the product; the controlled target diff is.
+-> parse JSON (diagnostic/truncation only) -> capture target doc-set diff
+(authoritative product, ARCH §4b) -> post-run audit (ARCH §6: over-reach;
+author DRAFT must resolve every discussion thread; reviewer revise must
+anchor findings). Failures map to IF-003 §1a FailureClass. The agent's
+stdout JSON is NEVER the product; the controlled target diff is.
 """
 from __future__ import annotations
 
@@ -53,7 +47,7 @@ _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
 
 
 def redact(text: str) -> str:
-    """Redact credential-shaped values before evidence leaves the subprocess."""
+    """Redact credential-shaped values before evidence leaves subprocess."""
     text = _SECRET_VALUE.sub(r"\1[REDACTED]", text or "")
     text = _ENV_SECRET_VALUE.sub(r"\1\2[REDACTED]", text)
     # Providers sometimes print a raw secret without its environment-variable
@@ -79,7 +73,7 @@ class OpencodeError(Exception):
 
 
 class OpencodeBackend:
-    """AgentBackend implemented by a real opencode subagent subprocess."""
+    """AgentBackend via real opencode subagent subprocess."""
 
     def __init__(self, repo: Path, version: str, model: str | None = None,
                  debug: bool = False):
@@ -131,25 +125,31 @@ class OpencodeBackend:
             scaffold_baseline = (auditor.file_level(baseline)
                                  if author and len(doc_paths) > 1 else None)
             proc = self._run(name, prompt)
+            doc_gap = self._detect_doc_gap(role)
             self._check_json(proc)
             manifest_info, manifest_error = self._manifest_for_dispatch(
                 role, substate, proc, prompt, console_input,
             )
             if manifest_error is not None:
-                return manifest_error
+                return _with_doc_gap(manifest_error, doc_gap)
             result = self._audited_result(
                 auditor, baseline, scaffold_baseline, proc, role, substate,
                 doc_paths, prompt, console_input, author, reviewer_assignment,
             )
-            return self._attach_dispatch_metadata(
-                result, role, substate, manifest_info, assignment,
-            )
+            return _with_doc_gap(
+                self._attach_dispatch_metadata(
+                    result, role, substate, manifest_info, assignment,
+                ), doc_gap)
         except OpencodeError as exc:
-            return self._opencode_error_result(
-                exc, proc, prompt, console_input, doc_paths, reviewer_assignment,
-            )
+            return _with_doc_gap(
+                self._opencode_error_result(
+                    exc, proc, prompt, console_input, doc_paths,
+                    reviewer_assignment,
+                ), doc_gap)
         except OSError as exc:
-            return self._filesystem_error_result(exc, proc, prompt, console_input)
+            return _with_doc_gap(
+                self._filesystem_error_result(
+                    exc, proc, prompt, console_input), doc_gap)
         finally:
             for info in cleanup_infos:
                 self._cleanup_materialized(info)
@@ -192,7 +192,7 @@ class OpencodeBackend:
                        role: str, substate: str,
                        assignment: dict | None = None
                        ) -> list[Path | str | None]:
-        """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest."""
+        """Audit whitelist = code dirs + commentable docs + agent_dest."""
         vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
         commentable = [vdir / d for d in COMMENTABLE_DOCS.get(role, ())]
         if role == "shield":
@@ -238,11 +238,7 @@ class OpencodeBackend:
     ) -> dict:
         diff_ref = _capture_target_diffs(
             auditor, doc_paths, substate, proc)
-        # Shield M-TEST WRITE gets one atomic audit/rollback decision
-        # (Blocker 2): the generic over-reach guard must NOT early-return and
-        # leave allowed doc edits behind.  Instead the doc-delta check and the
-        # generic over-reach check run together; if either fails, every
-        # agent-changed path is rolled back in one force pass.
+        # Shield WRITE: atomic audit/rollback (doc-delta + over-reach together).
         if role == "shield" and substate == "WRITE":
             guard = self._shield_write_audit(
                 auditor, baseline, doc_paths, diff_ref, proc, prompt,
@@ -293,7 +289,8 @@ class OpencodeBackend:
             diff_ref, proc, prompt, console_input,
         )
 
-    def _non_shield_doc_delta(self, auditor, baseline, role, diff_ref, proc, prompt, console_input):
+    def _non_shield_doc_delta(self, auditor, baseline, role, diff_ref,
+                               proc, prompt, console_input):
         cdocs = COMMENTABLE_DOCS.get(role)
         if not cdocs:
             return None
@@ -307,7 +304,21 @@ class OpencodeBackend:
             return None
         auditor.rollback_agent_changes(baseline, new_changes=changed, force=True)
         return self._overreach_result(diff_ref, proc, prompt, console_input,
-                                      evidence="non-discussion edit to " + ", ".join(sorted(off)))
+                                      evidence="non-discussion edit to "
+                                      + ", ".join(sorted(off)))
+
+    def _detect_doc_gap(self, role):
+        """Detect unresolved discussion threads in COMMENTABLE_DOCS for role."""
+        cdocs = COMMENTABLE_DOCS.get(role)
+        if not cdocs:
+            return None
+        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
+        doc_paths = [vdir / d for d in cdocs if (vdir / d).exists()]
+        if not doc_paths:
+            return None
+        off = _unresolved_role_threads(doc_paths, role)
+        return ({"threads": off, "docs": [p.name for p in doc_paths]}
+                if off else None)
 
     def _shield_write_audit(
         self, auditor: Auditor, baseline: set[str], doc_paths: list[Path],
@@ -517,9 +528,7 @@ class OpencodeBackend:
         self, diff_ref: str | None, role: str, blockers: tuple,
         proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
     ) -> dict:
-        # No `verdict` key: a bare revise is not a produced verdict, so the
-        # executor emits no verdict event and the machine's failed-outcome
-        # retry path applies (attempt consumed, evidence into re-dispatch).
+        # No verdict key: bare revise -> failed-outcome retry path.
         threads = ", ".join(blockers)
         return {"status": "failed", "artifact_ref": None,
                 "self_report": "revise verdict must anchor findings via `trac discuss "
@@ -730,12 +739,7 @@ class OpencodeBackend:
         if self.debug:
             cmd.extend(["--print-logs", "--log-level", "DEBUG"])
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
-        # Debug mode: redirect stderr (opencode logs via --print-logs) to a
-        # log file under .tracks/runtime/log/. stdout (JSON events) is still
-        # captured via PIPE for _check_json; the log file captures stderr in
-        # real-time for live monitoring (tail -f). After the process exits,
-        # we read the file back so _check_json/_looks_provider_error still
-        # have the stderr string for failure classification.
+        # Debug: stderr -> log file; stdout -> PIPE for _check_json.
         log_path = None
         log_fh = None
         if self.debug:
@@ -759,14 +763,8 @@ class OpencodeBackend:
                 log_fh.close()
             raise OpencodeError("opencode_missing",
                                 "opencode executable not found") from err
-        # No production timeout: the Runtime Agent runs to completion and is
-        # monitored via its output, never killed for elapsed time (prior
-        # commit ddd2f71 lived only on a deleted release branch). Operator
-        # cancellation (Ctrl-C) is honored: start_new_session=True gives the
-        # child its own process group, so SIGINT to the operator's foreground
-        # group does not reach it - we catch KeyboardInterrupt, terminate/kill
-        # the child group, reap it, then re-raise so the operator stays in
-        # control. This is operator cancellation, not a Runtime kill policy.
+        # No timeout: agent runs to completion. Operator Ctrl-C honored
+        # via start_new_session + KeyboardInterrupt catch.
         try:
             if self.debug:
                 stdout, _ = proc.communicate(input=console_input)
@@ -839,14 +837,7 @@ class OpencodeBackend:
             return True
         except json.JSONDecodeError:
             pass
-        # NDJSON fallback: opencode --format json emits one JSON event per
-        # line, but may also emit non-JSON log lines on stdout (e.g.
-        # "[Opencode Logger] Plugin initialized!"). A line starting with
-        # "{" that fails to parse is a truncated JSON event -> reject; a
-        # non-"{" line is diagnostic log noise -> skip. At least one valid
-        # JSON event line is required. Exit 0 already confirmed the process
-        # completed; true truncation (process killed) surfaces as a signal
-        # or non-zero exit before this check runs.
+        # NDJSON: parse JSON event lines, skip non-JSON log noise.
         lines = [ln for ln in out.splitlines() if ln.strip()]
         if not lines:
             return False
@@ -1136,6 +1127,13 @@ def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
             "exit 0 but the target doc-set has no diff"
             + (f": {', '.join(missing)}" if missing else ""),
             exit_code=0, stderr=proc.stderr)
+
+
+def _with_doc_gap(result: dict, doc_gap: dict | None) -> dict:
+    """Attach doc_gap evidence to a result dict if present."""
+    if doc_gap is not None:
+        result["doc_gap"] = doc_gap
+    return result
 
 
 def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:

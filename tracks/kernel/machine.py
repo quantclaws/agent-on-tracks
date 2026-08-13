@@ -364,7 +364,26 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
         s.doc_dispatched = True
 
 
+def _route_doc_gap(s: State, p: dict) -> bool:
+    """If the outcome carries doc_gap evidence, route to DOC_GAP_REVIEW.
+    Returns True if routed (caller returns immediately), False otherwise."""
+    if not p.get("doc_gap"):
+        return False
+    s.last_failure = {
+        "check": "doc_gap",
+        "reason": "unresolved discussion threads in design docs",
+        "evidence": str(p["doc_gap"]),
+    }
+    if s.stage in ("M-TEST", "M-IMPL"):
+        s.substate = "DOC_GAP_REVIEW"
+        _reset_doc(s)
+        s.reviewer_dispatched = False
+    return True
+
+
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
+    if _route_doc_gap(s, p):
+        return
     status = p.get("status")
     if s.substate == "ISSUES":
         if status != "done":
@@ -571,12 +590,27 @@ def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
         _reset_review(s)
 
 
+def _route_m_test_doc_gap_verdict(s: State, p: dict) -> bool:
+    """Handle DOC_GAP_REVIEW Prism verdict for M-TEST. Returns True if handled."""
+    if s.substate != "DOC_GAP_REVIEW":
+        return False
+    if p["verdict"] == "pass":
+        s.substate = "WRITE"
+        _reset_doc(s)
+    else:
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = "stub_gap"
+    return True
+
+
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result = None  # v0.5: pipeline publish complete
     if s.stage == "M-IMPL":
         _on_m_impl_prism_verdict(s, p)
         return
     if s.stage == "M-TEST":
+        if _route_m_test_doc_gap_verdict(s, p):
+            return
         # SM-01.7/.8: pass -> RED_CHECK; revise -> WRITE (re-dispatch Shield).
         # The shared <=3 budget is consumed on revise (NOT reset -- unlike
         # M-DESIGN, M-TEST shares one budget across WRITE/PRISM_REVIEW/EXIT).

@@ -216,6 +216,8 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
         return Command(kind="run_tests", params={"stage": "M-TEST"})  # SM-01.9
     if sub == "EXIT":
         return _m_test_exit_route(s)  # SM-01.14/.15
+    if sub == "DOC_GAP_REVIEW":
+        return _m_test_doc_gap_route(s)
     if sub == "DIAGNOSE":
         return _m_test_diagnose_route(s)  # SM-01.11/.12/.13
     if sub == "RETURNED":
@@ -237,6 +239,32 @@ def _m_test_exit_route(s: State) -> Command | None:
     if not s.stage_exited:
         return Command(kind="write_frontmatter", params={"stage": "M-TEST"})
     return None
+
+
+def _m_test_doc_gap_route(s: State) -> Command | None:
+    """DOC_GAP_REVIEW: dispatch Prism to adjudicate discussion threads
+    left by Shield in design docs (interfaces.md / test-plan.md).
+
+    Prism reads the threads and decides: is this an Archer doc problem
+    (revise -> rollback M-DESIGN) or a Shield misunderstanding (pass ->
+    re-dispatch Shield with Prism's reply in the doc)?"""
+    if s.reviewer_dispatched:
+        return None  # awaiting Prism verdict
+    params = {
+        "role": "prism", "substate": "DOC_GAP_REVIEW",
+        "objective": "adjudicate Shield discussion threads in design docs",
+        "stage": "M-TEST",
+        "attempt": s.current_attempt + 1,
+        "docs": list(_M_TEST_CONTEXT_DOCS),
+        "assignment": {
+            "kind": "DOC_GAP_REVIEW",
+            "skills": ["tracks-discuz"],
+            "docs": list(_M_TEST_CONTEXT_DOCS),
+        },
+    }
+    if s.last_failure:
+        params["evidence"] = dict(s.last_failure)
+    return Command(kind="dispatch_agent", params=params)
 
 
 def _m_test_diagnose_route(s: State) -> Command | None:

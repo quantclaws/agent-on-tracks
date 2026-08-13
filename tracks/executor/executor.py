@@ -505,6 +505,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # between outcome.received and a separate result.submitted event.
         # Failed outcomes (status != "done") are handled by _on_outcome_received
         # (attempt consumed, substate reset) — no pipeline payload.
+        # Doc gap: stage code changes before routing to Prism adjudication.
+        # Code stays in git index (uncommitted) so it survives Archer rounds.
+        if result.get("doc_gap") and role in ("shield", "devon"):
+            self._stage_code_for_doc_gap(role)
         payload = _dispatch_payload(self.store, p, result)
         if (state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
                 and result.get("status") == "done"
@@ -519,6 +523,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return  # pipeline drives the domain event
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
         self._emit_shield_commit(result, role, state, cmd, task_id)
+
+    def _stage_code_for_doc_gap(self, role):
+        """Stage code (not doc) changes in git index for doc_gap preservation."""
+        from tracks.project import layout_paths
+        writable = layout_paths(self.repo, role)
+        if not writable:
+            return
+        proc = git(self.repo, "status", "--porcelain", "--",
+                   *writable, check=False)
+        for line in proc.stdout.splitlines():
+            if line.strip() and (path := line[3:].strip()):
+                git(self.repo, "add", "--", path, check=False)
 
     def _emit_criteria_pack_failure(
         self, cmd, task_id, params, assignment, result, state,
