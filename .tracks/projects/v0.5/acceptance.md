@@ -2,7 +2,7 @@
 acc_id: ACC-005
 created: 2026-08-09
 status: draft
-sha: 54372dfd587f37911a83cce3c86c9969809858279a5e09740e29d9505dd42d8e
+sha:
 ---
 
 # M-IMPL 阶段推进（Devon 逐 task RGR） - 验收标准
@@ -499,6 +499,81 @@ sha: 54372dfd587f37911a83cce3c86c9969809858279a5e09740e29d9505dd42d8e
 
   - 发布验证始终显式执行 `trac check release-evidence`（FR-0232）；例行 CI 的 fake/simulated 结果或 credential-less skip 都不能替代它（不满足发布前置），该例外不改变发布候选必须有 current successful live evidence 的要求（§5 非常规要求）
 
+## FR-0234 Devon/Shield 设计评论优先检查与可见等待
+
+### AC-FR0234-01
+
+  - Devon/Shield outcome 含本次结果可归属的合法新讨论（以本次 dispatch 前的文档内容身份为基线、本次新增且符合既有 inline-discussion 协议的设计文档增量）时，Runtime 在普通 artifact/manifest/collection/gate/checkpoint/DIAGNOSE 验证之前先检查并暂停该 outcome（SM-02.1–.2），不把它或随附的未验证变化报告为成功：状态显示等待裁定，事件流不出现该 outcome 的普通验证通过/成功终态
+  - 含非 discussion 正文变化的结果优先按 FR-0237 拒绝，不借合法评论掩盖正文编辑（outcome 同时含合法讨论与正文编辑时，正文编辑仍触发整回合原子回滚，FR-0237）
+
+### AC-FR0234-02
+
+  - 获准评论范围继承当前固定合同：Devon 仅可评论 `architecture.md`、`interfaces.md`，Shield 仅可评论 `test-plan.md`、`interfaces.md`；其它设计文档不因本路径扩大写权限
+  - 检查以本次 dispatch 前的文档内容身份为基线：dispatch 前已存在的讨论或既有脏改动不因本 outcome 重新触发暂停，仅本次新增且协议合法的增量被认作合法讨论
+
+### AC-FR0234-03
+
+  - 等待裁定期间可见：`trac status` 显示 doc-gap adjudication 等待状态、origin role/task/phase 与 quarantine 状态（如 `doc-gap=awaiting-adjudication origin=Shield/T-004/SHIELD_FIX quarantine=held`）；`trac discuss query --file <获准文档>` 能看到该 outcome 新增的线程与回复
+  - `trac replay <run>` 与 `trac report` 能回溯 detected、adjudicated、quarantined、restored-or-discarded、resumed 的过程（NFR-0090）
+
+### AC-FR0234-04
+
+  - 结果无合法新讨论且无非法正文编辑时，原 phase 的普通验证路径保持不变：outcome 直接进入既有 artifact/manifest/collection/gate/checkpoint/DIAGNOSE 验证，`trac status` 不显示等待裁定状态
+
+## FR-0235 Prism 设计缺口裁定与责任路由
+
+### AC-FR0235-01
+
+  - Prism 在 FR-0234 检出的原讨论中裁定问题是否属于 Archer 负责的 architecture/interfaces/test-plan 缺口；操作者从讨论回复及状态/报告中看到裁定和责任去向（`trac status` 显示 adjudication 结果，`trac replay/report` 记录路由事件）
+  - 确认为设计缺口时，Runtime 路由给 Archer 修订相应设计合同，Prism 与原 Agent 在同一讨论复核闭环；该技术责任路由不新增 Human 技术批准事件（SM-02.3/.5）
+
+### AC-FR0235-02
+
+  - 不确认为设计缺口时，Prism 在同一讨论向原 Devon/Shield 给出可执行的纠正指引，原 Agent 在该线程回应并闭环（SM-02.4/.6）
+  - 讨论未关闭前，原 outcome 不继续普通验证：`trac status` 保持等待裁定/纠正状态，事件流不出现该 outcome 的普通验证通过/成功终态
+
+### AC-FR0235-03
+
+  - 讨论关闭后，Runtime 以相同 logical role、task、phase 发起新的 dispatch/attempt，该新结果重新接受 FR-0234 前置检查及原 phase 全部验证（SM-02.7–.10）
+  - 旧 outcome 不复用或改标为成功：讨论闭环后事件流出现新的 dispatch/attempt，旧 outcome 不出现 `task.completed` 或成功终态（FR-0236/NFR-0090）
+
+## FR-0236 合法评论期间的授权非文档结果隔离、恢复与过期处理
+
+### AC-FR0236-01
+
+  - FR-0234 检出的合法讨论 outcome 同时含本次 dispatch 可归属且符合该 Agent 写范围的非文档变化时，Runtime 将其隔离保全，并与 Human 修改及 dispatch 前既有脏改动隔离：隔离期间 Human/pre-dirty 内容不被复制为 Agent 成果、不被改动
+  - 隔离不使用工作区共享 Git index 作为载体；隔离成果内容身份可被 `trac replay/report` 追踪
+
+### AC-FR0236-02
+
+  - 无授权非文档变化时仍可进入评论裁定，`trac status` 的 quarantine 明确显示为空
+  - 隔离期间（讨论关闭且新 dispatch/attempt 完成重新验证之前），隔离成果不被提交、checkpoint、gate、计作 task 完成或对外显示为成功
+
+### AC-FR0236-03
+
+  - Runtime 中断或重启后恢复 SM-02 裁定记录与 quarantine 身份：`trac status` 和 `trac replay/report` 可见当前 held/restored/discarded 状态，不要求操作者手工重建隔离（SM-02.11）
+
+### AC-FR0236-04
+
+  - 继续路径：Runtime 将隔离成果绑定的 logical role/task/phase、来源 dispatch/attempt、基线与内容身份同当前设计和运行身份比较；仍有效 -> 恢复给新的 dispatch/attempt 重新验证（SM-02.7/.9）
+  - 设计修订或运行身份变化使其 stale 时默认安全丢弃，或先经原 phase 的完整验证证明仍有效后再恢复（SM-02.8/.10）；无论恢复还是丢弃，不触及 Human/pre-dirty 内容，公开审计结果给出结果与原因
+
+## FR-0237 非 discussion 设计正文编辑的整回合原子拒绝
+
+### AC-FR0237-01
+
+  - Devon/Shield outcome 含本次结果可归属的非 discussion 设计文档正文编辑时，Runtime 执行整回合原子 fail-closed：回滚该 dispatch 的全部 Agent 可归因变化并逐字节保留 Human 与 dispatch 前既有脏改动，不保留部分代码或其他非文档成果，不进入 Prism 评论裁定
+  - 该规则优先于同一 outcome 中可能存在的合法讨论：outcome 同时含合法讨论与正文编辑时不进入 Prism 评论裁定，仍整回合回滚
+
+### AC-FR0237-02
+
+  - 该结果不被提交、checkpoint、gate 或显示为成功：事件流/状态显示 over-reach 类失败与整回合回滚结果，`trac status`/`trac replay`/`trac report` 显示被拒绝的文档路径
+  - 按原 logical role/task/phase 的失败与 attempt 预算语义发起新的 dispatch/attempt；新结果从 FR-0234 前置检查重新开始
+
+### AC-FR0237-03
+
+  - 失败结果及回滚证据保留供 `trac replay/report` 审计，但不给 Agent 编辑设计文档正文的权限
+
 ## NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
 
 ### AC-NFR0010-01
@@ -545,3 +620,19 @@ sha: 54372dfd587f37911a83cce3c86c9969809858279a5e09740e29d9505dd42d8e
 ### AC-NFR0080-02
 
   - 例行 CI 的 credential-less skip 或 fake/simulated 结果既不产生、也不满足 release evidence（BS-07）
+
+## NFR-0090 评论裁定与隔离恢复的原子性、持久性和可审计性
+
+### AC-NFR0090-01
+
+  - FR-0234~FR-0237 的 detected、adjudicated、quarantined、restored-or-discarded、resumed 事实 append-only 写入 events 表，不改写既有行；每项可关联 run、origin role/task/phase、来源 dispatch/attempt、讨论文档/线程、quarantine 内容身份和后续 dispatch/attempt
+  - 中断重启后重放必须得到与中断前一致的等待、隔离及恢复/丢弃状态（SM-02.11）：drop 投影表后 `trac status`/`trac replay`/`trac report` 重建的 doc-gap adjudication、quarantine 与 resume 状态与原一致
+
+### AC-NFR0090-02
+
+  - 中断不得让未闭环讨论或未验证成果越过普通门禁：重启后未闭环讨论仍保持等待裁定，未验证的隔离成果不出现成功终态，不被提交/checkpoint/gate/计作 task 完成
+  - 隔离、恢复、丢弃和非法编辑整回合回滚是 fail-closed 的原子结果：不部分污染 Human/pre-dirty 内容、共享 Git index 或无关 task
+
+### AC-NFR0090-03
+
+  - 重放不把旧 outcome 重复计为成功：讨论闭环后的新 dispatch/attempt 重新接受 FR-0234 及原 phase 全部验证，事件重建不产生重复的 `task.completed`/成功终态；失败结果与回滚证据保留供 `trac replay/report` 审计
