@@ -108,6 +108,8 @@ def writer_lock(home: Path):
 
 RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
+# .tracks/-level transient artifacts (report output, discuss locks).
+TRACKS_GITIGNORE = "report/\n*.lock\n"
 
 
 def cmd_init(repo: Path) -> int:
@@ -118,6 +120,11 @@ def cmd_init(repo: Path) -> int:
     gitignore = paths.runtime_dir(home) / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(RUNTIME_GITIGNORE, encoding="utf-8")
+    # .tracks/-level transient artifacts: trac report output and discuss
+    # flock lock files.  Idempotent: write only if absent.
+    tracks_gitignore = home / ".gitignore"
+    if not tracks_gitignore.exists():
+        tracks_gitignore.write_text(TRACKS_GITIGNORE, encoding="utf-8")
     # Runtime-owned transient files under projects/ (the discuss writer's flock
     # lock files ``<doc>.md.lock`` and tmp-before-rename ``<doc>.md.tmp``) are
     # intentionally left in place - deleting would break flock serialization -

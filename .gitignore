@@ -9,5 +9,5 @@ __pycache__/
 build/
 dist/
 .opencode/
-logs/opencode/log.jsonl
+logs/
 *.lock
