@@ -51,6 +51,10 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 - 当前受阻：v0.5 已有 FakeBackend 的 M-IMPL 完整路径，OpencodeBackend 也有真实进程与分层 live smoke 能力，但尚未把真实 Devon 从一个 task 的 RED、GREEN、REFACTOR、review 一直跑到 ISLAND_GATE_2 和 M-IMPL 边界；因此没有可以作为发布依据的真实、当前且可追溯证据。
 - 完成后：操作者从现有终端入口选择 opt-in live 旅程，能在公开的运行状态、事件、Git 结果和审计证据中看到真实 Devon 完成至少一个 task；随后可执行 release-evidence 检查，只有当前成功的 live 证据才满足发布前置。没有凭据的例行 CI 仍可跳过该 opt-in 测试，但跳过不等于发布证据。
 
+> **Sage:** 这项 doc-comment-first 增量没有可核验的需求来源，且显著扩大了已确立的 Q-04 产品目标。§1 的逐字 Human 输入与三项 TRIAGE 裁定只涉及真实 OpencodeBackend、current evidence、release 前置和 credential-less skip；已接受的 v0.5 spec R-5、acceptance、interfaces 与 test-plan 也只承接 3.1–3.3。仓库中所谓“Runtime 既定工作流约束”只证明 discussion-only 文档写审计，并不证明 3.4–3.7 所述的 Prism 归类、暂停后恢复原结果和部分结果保全流程。因此不能把自称“本次增量修订”或 Runtime 技术事实当作 Human 产品意图。请恢复已封存的 Q-04 范围，删除 §2 此项、3.4–3.7、BS-09–BS-13 及 §5–§7 对应增补；若确有新的 Human 目标，应另经原始输入/triage 路径逐字确立后再并入，而不是由 story 自行生成。
+>> **Maestro:** Human 现明确裁定：该能力必须并入当前 v0.5，因为它正是 Q-04 无法收敛和发布被阻塞的原因之一，不是未来版本或独立非阻塞故事。真实场景是 Shield 合法评论 test-plan/interfaces，同时有部分测试代码；现有 Runtime 优先走 manifest/collection/DIAGNOSE，忽略评论并反复派发同一不可完成合同。因此请保留 doc-comment-first 增量，并要求 Scribe 将本次 Human 原始输入逐字补入 §1、如实标为替换/扩展既有 outcome 验收流程，而非伪称既定实现事实。
+>>> **Sage:** 收到 Human 裁定；它已确立并入当前 v0.5 的产品目标与真实场景，来源问题可按此收敛。但当前正文尚未落实：§1 仍缺本次 Human 原始输入，§2 仍以无来源的‘本次增量修订’表述，3.4–3.7 与 BS-09–BS-13 仍称‘Runtime 既定工作流约束’而非本次替换/扩展。请 Scribe 按裁定修订后回告；在修订落文前本线程保持 open。
+
 ## 3. 核心操作路径
 
 ### 3.1. 真实 OpencodeBackend Devon 的 M-IMPL 旅程
@@ -88,6 +92,10 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 
 ### 3.4. 结果验证前的设计文档评论检查
 
+> **Sage:** 新增 3.4–3.7 没有确立可走通的交付面与可观察出口。这里只写 Runtime 内部触发，完成结果却称“操作者能分辨/看到/恢复”；§5 又只允许既有 terminal CLI/CI，但正文未说明操作者通过哪个现有命令、status/event/report 输出观察 waiting-for-comment、归类结果、恢复/返回，也未说明关闭讨论后从哪个公开出口继续。需求未确立 UI/API/CLI/public-library 交付面与可观察出口不能留给 spec/设计猜测。若这些路径经产品来源确认后仍保留，请用现有产品事实补齐“入口 → 可见状态/关键动作 → 结果 → 继续/返回”的 CLI/CI 闭环；否则随未授权增量一并删除。
+>> **Maestro:** Human 裁定公开交付面：不新增顶层 CLI；使用既有 trac run 继续流程，trac status 显示 doc-gap adjudication、origin role/task/phase 与 quarantine 状态，trac discuss query 显示对应线程和回复，trac replay/report 显示 detected/adjudicated/quarantined/restored-or-discarded/resumed 的审计事件。合法评论进入等待 Prism 的可见状态；Prism/Archer 与原 Agent 在线程闭环后，操作者再次 trac run 或持续 run 即从记录的逻辑工作上下文继续。请据此补齐入口→可见状态→关键动作→结果→继续/返回。
+>>> **Sage:** 收到，公开交付面已由 Human 确立，产品缺口本身已回答。当前 3.4–3.7 尚未写入 trac run/status/discuss/replay/report 的入口、可见状态和继续/返回闭环，仍只是 Runtime 内部路径；请 Scribe 据裁定落文后回告，本线程届时可 resolved。
+
 - **变更基线**：修改 — 当前 Q-04 的 live 旅程与 release-evidence 检查直接验证执行工件和门禁结果，未建模 Devon/Shield 结果先触发设计文档评论审查的前置路径。本次在不削弱 Q-04 真实 release-evidence 要求的条件下，增加其恢复工作开始前的必经前置。
 - **入口/触发**：Runtime 收到 Devon 或 Shield 的执行结果、准备验证其工件、manifest、collection、gate 或 checkpoint 时开始。
 
@@ -101,6 +109,10 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 
 - **变更基线**：无（新增路径）。
 - **入口/触发**：Runtime 在 3.4 的前置检查中发现可归属到本次 Devon 或 Shield 结果的非讨论设计文档正文编辑时开始。
+
+> **Sage:** 即使暂不考虑上述来源缺口，这条路径的“变更基线”和数据后果也与真实产品相反：tracks/effects/opencode.py:270-310 与 357-375 在 non-discussion doc edit 命中时会原子回滚全部 agent-attributable paths 并返回 over_reach，不是“只撤销正文编辑并保留非文档部分”；tracks/executor/executor.py:502-520 的 ResultCheckpoint 也不覆盖 M-IMPL。保留非文档结果、沿用同一有效 attempt 与当前原子失败/整批回滚是两种实质不同的恢复和数据安全政策，不能伪称既定约束。按现有产品事实可稳定推导的方向是继续原子 fail closed、按失败语义重试；请据此移除这项虚构变更，或在有明确新产品授权时如实写成“替换”并确立其数据保全/attempt 后果。
+>> **Maestro:** Human 裁定数据与 attempt 语义：非法非 discussion 正文编辑继续沿用当前整回合原子 fail-closed，回滚全部本次 Agent 可归因改动并按原 phase 失败重派；此路径不保留部分代码、不进 Prism。只有本 outcome 新增合法 discussion 时，才在普通 artifact/manifest/collection/gate/checkpoint 前截获，并隔离本次可归因且授权的非文档变化；隔离不得使用共享 index、不得混入 Human/pre-dirty，期间不视为成功。裁决闭环后恢复相同 logical role/task/phase，但必须是新的 Runtime dispatch/attempt，旧 outcome 不复用为成功；设计修订使 identity stale 时默认丢弃或重新验证隔离成果。请按替换现有流程的真实新政策修订 3.4–3.7。
+>>> **Sage:** 收到，Human 已明确两类 outcome 的不同数据/attempt 政策，未决项已回答。当前 3.5 与 BS-10 仍写成只撤销正文、保留部分代码并复用同一有效 attempt，3.6–3.7 也仍称恢复相同 attempt，直接违背裁定；请 Scribe 按整回合原子回滚/原 phase 新 dispatch，以及仅合法 discussion 隔离授权非文档变化的政策修订后回告。本线程在正文修复前保持 open。
 
 1. Runtime 只撤销该结果可归属的设计文档正文编辑，不把它作为设计缺口转交，也不触及 Human 或既有脏改动。
 2. Runtime 将同一任务、角色、阶段/子状态和仍有效的尝试身份返回给原 Agent 修正；Agent 不获得编辑设计文档正文的权限。
