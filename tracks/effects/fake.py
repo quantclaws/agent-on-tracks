@@ -535,7 +535,18 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
 
     def _write_project_contract(self) -> None:
         """Write a demo host test execution contract at
-        ``.tracks/projects/project.toml`` (v0.4: pytest framework)."""
+        ``.tracks/projects/project.toml`` (v0.4: pytest framework).
+
+        Declares non-empty ``[layout.devon]``/``[layout.shield]`` writable
+        lists (FR-0120): the M-DESIGN EXIT gate (validate_layout) fails the
+        architecture.md verdict when the layout contract is missing, so the
+        fake Archer mirrors the real host Python layout the runtime
+        authorizes. Devon is writable under ``tracks/``/``tests/unit/``;
+        Shield's writable list covers the test-asset directories the fake
+        Shield writes into AND the ``[e2e]`` path this contract itself
+        declares — the complete Shield writable scope of the current tracks
+        host project contract (``tests/integration/``, ``tests/e2e/``,
+        ``tests/e2e_live/``, ``tests/assets/``, ``tests/counterexamples/``)."""
         toml_path = paths.project_toml_path(paths.tracks_home(self.repo))
         toml_path.parent.mkdir(parents=True, exist_ok=True)
         toml_path.write_text(
@@ -550,7 +561,13 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             'paths = ["tests/e2e/"]\n'
             'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
             'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
-            'cwd = "."\n',
+            'cwd = "."\n\n'
+            '[layout]\n\n'
+            '[layout.devon]\n'
+            'writable = ["tracks/", "tests/unit/"]\n\n'
+            '[layout.shield]\n'
+            'writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", '
+            '"tests/assets/", "tests/counterexamples/"]\n',
             encoding="utf-8",
         )
 
