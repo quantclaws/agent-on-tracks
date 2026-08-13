@@ -2,7 +2,7 @@
 spec_id: SPEC-005
 created: 2026-08-09
 status: draft
-sha: 7363f00b70a160b4acc6da8c1c8679ce76416ac928db435154e4e79e4d7a1484
+sha: 3ef9c68ac1c92c5b808b651ee4a22c9821877275975c924e8c27846121abd8f7
 ---
 
 # M-IMPL 阶段推进（Devon 逐 task RGR） — 需求规格
