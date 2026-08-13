@@ -251,11 +251,14 @@ class OpencodeBackend:
             if guard is not None:
                 return guard
         else:
-            guard = self._write_guard_result(
-                auditor, baseline, scaffold_baseline, doc_paths,
-                author_assignment, diff_ref, proc, prompt, console_input,
-            )
-            if guard is not None:
+            if (guard := self._write_guard_result(
+                    auditor, baseline, scaffold_baseline, doc_paths,
+                    author_assignment, diff_ref, proc, prompt,
+                    console_input)) is not None:
+                return guard
+            if (guard := self._non_shield_doc_delta(
+                    auditor, baseline, role, diff_ref, proc, prompt,
+                    console_input)):
                 return guard
         audit = self._discussion_audit_result(
             role, substate, doc_paths, diff_ref, proc, prompt, console_input,
@@ -290,35 +293,28 @@ class OpencodeBackend:
             diff_ref, proc, prompt, console_input,
         )
 
+    def _non_shield_doc_delta(self, auditor, baseline, role, diff_ref, proc, prompt, console_input):
+        cdocs = COMMENTABLE_DOCS.get(role)
+        if not cdocs:
+            return None
+        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
+        cpaths = [vdir / d for d in cdocs if (vdir / d).exists()]
+        if not cpaths:
+            return None
+        changed = auditor.agent_changed_paths(baseline)
+        off = self._check_doc_deltas(auditor, cpaths, changed)
+        if not off:
+            return None
+        auditor.rollback_agent_changes(baseline, new_changes=changed, force=True)
+        return self._overreach_result(diff_ref, proc, prompt, console_input,
+                                      evidence="non-discussion edit to " + ", ".join(sorted(off)))
+
     def _shield_write_audit(
         self, auditor: Auditor, baseline: set[str], doc_paths: list[Path],
         diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
         console_input: str | None,
     ) -> dict | None:
-        """Shield M-TEST WRITE atomic audit (FR-0120): assignment docs
-        (test-plan.md, interfaces.md, acceptance.md) may receive only canonical
-        discussion replies - any body/prose edit or type swap is over-reach and
-        rolls back the ENTIRE run (including allowed test-asset writes and
-        out-of-scope writes), so a partially-valid run never persists.
-        Test-asset writes are checkpointed separately by ResultCheckpoint.
-
-        One atomic decision (Blocker 2): the doc-delta check and the generic
-        over-reach check run together; if **either** fails, every agent-changed
-        path is rolled back in one force pass.  This avoids the early-return
-        trap where a generic over-reach rollback would leave allowed doc body
-        edits behind.
-
-        The post-agent doc delta is validated against the **pre-dispatch byte
-        snapshot**, not HEAD (Blocker 1): a canonical discussion reply appended
-        to Human-dirty body content must pass and preserve the body; removing/
-        replacing Human content plus adding a discussion must fail and restore
-        the pre-dispatch bytes.
-
-        Path/symlink handling is lexical, no-follow, and type-aware (Blocker 3):
-        a regular assignment doc replaced by a file/directory/dangling symlink
-        is detected; rollback unlinks the replacement symlink without following
-        it and restores the original from the pre-dispatch snapshot or HEAD.
-        """
+        """Shield WRITE atomic audit: doc-delta + over-reach; either fails = full rollback."""
         agent_changed = auditor.agent_changed_paths(baseline)
         doc_offending = self._check_doc_deltas(auditor, doc_paths, agent_changed)
         over_paths = sorted(
