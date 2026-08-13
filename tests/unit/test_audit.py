@@ -416,3 +416,192 @@ def test_rollback_predirty_ancestor_symlink_escape_fails_closed(tmp_path):
     assert "nested/victim" not in rolled  # skipped (fail closed)
     assert outside_victim.exists()
     assert outside_victim.read_bytes() == b"external bytes\n"
+
+
+# -- review blocker: regular file swapped for a NON-EMPTY directory -----------
+#
+# An agent that replaces a commentable regular doc with a plain non-empty
+# directory tree (payload + deep child) puts BOTH the parent and its children
+# into ``agent_changed_paths``.  Rollback must be TYPE-AWARE: remove the
+# deeper children / anomalous tree first, then restore the parent regular
+# file.  A shallowest-first remove-then-restore used to rebuild the parent as
+# a regular file and THEN walk a child path through it, raising
+# NotADirectoryError (an OSError) and aborting the whole rollback as a
+# ``filesystem`` failure instead of ``over_reach``.
+
+
+def _commit(repo, message="commit"):
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True,
+                   capture_output=True)
+
+
+def test_rollback_regular_file_replaced_by_nonempty_dir(tmp_path):
+    """A tracked commentable regular file is replaced by a plain non-empty
+    directory (payload.md + deep/child.md); the same run makes an allowed
+    write and an over-reach write.  Force rollback removes the deeper
+    children/anomalous tree first, then restores the parent regular file -
+    it never walks a child through the restored regular file (which raised
+    NotADirectoryError).  Original doc restored; child, allowed write and
+    over-reach write all disappear."""
+    repo = _repo(tmp_path)
+    doc = repo / ".tracks" / "projects" / "v0.5" / "architecture.md"
+    doc.parent.mkdir(parents=True)
+    original = b"---\nsha:\n---\n\n# design\n"
+    doc.write_bytes(original)
+    _commit(repo, "doc")
+
+    auditor = Auditor(repo, allowed=[str(doc), str(repo / "tracks")])
+    baseline = auditor.baseline()
+
+    # Agent swaps the commentable doc for a plain non-empty directory tree...
+    doc.unlink()
+    doc.mkdir(parents=True)
+    (doc / "payload.md").write_text("payload\n", encoding="utf-8")
+    deep = doc / "deep"
+    deep.mkdir()
+    (deep / "child.md").write_text("child\n", encoding="utf-8")
+    # ...and in the same run makes an allowed write and an over-reach write.
+    allowed = repo / "tracks" / "impl" / "demo.py"
+    allowed.parent.mkdir(parents=True)
+    allowed.write_text("# allowed\n", encoding="utf-8")
+    evil = repo / "evil.tmp"
+    evil.write_text("# over-reach\n", encoding="utf-8")
+
+    rel = ".tracks/projects/v0.5/architecture.md"
+    changed = auditor.agent_changed_paths(baseline)
+    assert {rel, f"{rel}/payload.md", f"{rel}/deep/child.md",
+            "tracks/impl/demo.py", "evil.tmp"} <= changed
+
+    rolled = auditor.rollback_agent_changes(baseline, changed, force=True)
+
+    assert rel in rolled
+    assert not doc.is_dir()
+    assert doc.read_bytes() == original  # original regular doc restored
+    # The child files under the swapped doc are gone.
+    assert not (repo / f"{rel}/payload.md").exists()
+    assert not (repo / f"{rel}/deep/child.md").exists()
+    assert not allowed.exists()  # allowed write rolled back
+    assert not evil.exists()     # over-reach write rolled back
+
+
+def test_rollback_predirty_file_replaced_by_nonempty_dir_restores_human_bytes(
+        tmp_path):
+    """Requirement 5: when Human pre-dirtied the commentable doc and the agent
+    then swapped it for a non-empty directory tree, force rollback restores
+    the pre-existing Human dirty bytes byte-identical - never erased to HEAD."""
+    repo = _repo(tmp_path)
+    doc = repo / ".tracks" / "projects" / "v0.5" / "architecture.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("---\nsha:\n---\n\n# design\n", encoding="utf-8")
+    _commit(repo, "doc")
+
+    auditor = Auditor(repo, allowed=[str(doc)])
+    pre_dirty = b"---\nsha:\n---\n\n# design\nhuman note\n"
+    doc.write_bytes(pre_dirty)  # Human dirties the doc BEFORE dispatch
+    baseline = auditor.baseline()  # snapshot captures Human's dirty bytes
+
+    # Agent replaces the pre-dirty regular doc with a non-empty directory tree.
+    doc.unlink()
+    doc.mkdir(parents=True)
+    (doc / "payload.md").write_text("payload\n", encoding="utf-8")
+    deep = doc / "deep"
+    deep.mkdir()
+    (deep / "child.md").write_text("child\n", encoding="utf-8")
+
+    changed = auditor.agent_changed_paths(baseline)
+    assert ".tracks/projects/v0.5/architecture.md" in changed
+    auditor.rollback_agent_changes(baseline, changed, force=True)
+
+    assert doc.is_file()
+    assert doc.read_bytes() == pre_dirty  # Human's pre-dirty bytes restored
+
+
+# -- Prism final-review blocker: internal ancestor symlink must not be followed
+#
+# The two-phase deepest-first removal used to only block ancestor symlinks
+# that RESOLVE OUTSIDE the repo (``_ancestor_escapes_repo``).  A child path
+# whose ancestor is a symlink resolving INSIDE the repo was considered safe,
+# but ``is_dir``/``exists``/``unlink`` FOLLOW the link anyway: replacing the
+# tracked ``nested/`` directory with a symlink -> ``other/`` made
+# ``nested/victim`` resolve to ``other/victim``, and rollback deleted that
+# tracked file the agent never touched.
+#
+# Fix: lexical no-follow ancestor detection (``_ancestor_blocks``) blocks ANY
+# ancestor symlink - internal, external, or dangling - so a descendant is
+# never operated on through a link.  A rollback-set symlink ancestor is
+# removed shallowest-first, so its original-path children are then restored
+# per baseline lexically.
+
+
+def test_rollback_internal_ancestor_symlink_preserves_target(tmp_path):
+    """Kill test: tracked ``nested/victim`` and ``other/victim``; agent
+    replaces the ``nested/`` directory with a symlink -> ``other``.  Rollback
+    must NOT follow the in-repo ancestor symlink: ``other/victim`` stays
+    byte-identical, ``nested/`` and ``victim`` are restored, and git reports
+    no extra dirty paths."""
+    repo = _repo(tmp_path)
+    nested = repo / "nested"
+    nested.mkdir()
+    victim = nested / "victim"
+    victim.write_text("nested original\n", encoding="utf-8")
+    other = repo / "other"
+    other.mkdir()
+    other_victim = other / "victim"
+    other_victim.write_text("other original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo,
+                   check=True, capture_output=True)
+
+    auditor = Auditor(repo, allowed=[str(repo / "target.md")])
+    baseline = auditor.baseline()  # clean host
+
+    # Agent replaces nested/ (directory) with a symlink -> other/.
+    shutil.rmtree(nested)
+    os.symlink("other", nested)
+
+    changed = auditor.agent_changed_paths(baseline)
+    assert "nested" in changed
+    assert "nested/victim" in changed
+    rolled = auditor.rollback_agent_changes(baseline, changed, force=True)
+
+    # The in-repo symlink target is untouched (never followed).
+    assert other_victim.read_text(encoding="utf-8") == "other original\n"
+    # The original-path descendant is restored lexically.
+    assert not nested.is_symlink()
+    assert nested.is_dir()
+    assert victim.read_text(encoding="utf-8") == "nested original\n"
+    assert "nested" in rolled
+    assert "nested/victim" in rolled
+    # No extra dirty state beyond the (clean) baseline.
+    assert auditor.modified_files() == set()
+
+
+def test_rollback_internal_ancestor_symlink_not_in_set_fails_closed(tmp_path):
+    """Kill-test sibling: an in-repo ancestor symlink that is NOT itself in
+    the rollback set (the agent did not touch the symlink) must still block
+    its descendant - the rollback never follows an internal link, so the
+    target stays byte-identical even though ``nested/victim`` resolves
+    through it."""
+    repo = _repo(tmp_path)
+    other = repo / "other"
+    other.mkdir()
+    other_victim = other / "victim"
+    other_victim.write_text("other original\n", encoding="utf-8")
+    nested = repo / "nested"
+    os.symlink("other", nested)  # committed in-repo ancestor symlink
+    subprocess.run(["git", "add", "."], cwd=repo, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo,
+                   check=True, capture_output=True)
+
+    auditor = Auditor(repo, allowed=[str(repo / "target.md")])
+    baseline = auditor.baseline()
+    # Agent "changes" nested/victim (behind the internal symlink); the
+    # ancestor nested is NOT in new_changes.
+    rolled = auditor.rollback_agent_changes(
+        baseline, new_changes={"nested/victim"}, force=True)
+
+    assert "nested/victim" not in rolled  # skipped (fail closed)
+    assert other_victim.read_text(encoding="utf-8") == "other original\n"

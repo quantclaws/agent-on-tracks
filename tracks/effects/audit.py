@@ -271,51 +271,31 @@ class Auditor:
             return list(new_changes)
         return [p for p in new_changes if not self._is_allowed(p)]
 
-    def _ancestor_escapes_repo(self, p: str) -> bool:
-        """True if any *ancestor* component of ``p`` (relative to repo) is a
-        symlink that resolves outside the repo, or is dangling/unreadable.
-        The final component is NOT checked here (callers handle it via
-        :meth:`_path_type`).
+    def _ancestor_blocks(self, p: str) -> bool:
+        """True if any *lexical* ancestor component of ``p`` (relative to
+        repo) is currently a symlink.  The final component is NOT checked
+        here (callers handle it via :meth:`_path_type`).
 
-        Fail-closed (BOOT-ROLLBACK-001): a dangling or unreadable ancestor
-        symlink is treated as an escape so rollback never touches a path it
-        cannot prove is inside the repo.  Both lexical and resolved
-        containment are checked: ``resolve()`` follows the entire symlink
-        chain, and ``relative_to`` fails if the fully-resolved target is
-        not under the repo root."""
+        No-follow, lexical type detection (BOOT-ROLLBACK-001): ANY symlink
+        ancestor - internal, external, or dangling - blocks a descendant
+        operation, because ``is_dir``/``exists``/``unlink``/``write_bytes``
+        all follow the link and would mutate its target (e.g. a tracked
+        ``other/victim`` the agent never touched, reachable through an
+        internal symlink).  This deliberately does NOT resolve the link for
+        repo containment: a symlink that resolves inside the repo is just as
+        unsafe to follow as an escaping one.  A symlink ancestor that is
+        itself in the rollback set is removed first by the shallowest-first
+        symlink removal, so its original-path children become safe to restore
+        afterwards."""
         parts = Path(p).parts
         if len(parts) <= 1:
             return False  # no ancestors
-        repo_resolved = self.repo.resolve()
-        current = repo_resolved
+        current = self.repo.resolve()
         for part in parts[:-1]:
             current = current / part
             if current.is_symlink():
-                resolved = self._resolve_ancestor(current, repo_resolved)
-                if resolved is None:
-                    return True  # fail closed
-                current = resolved
+                return True
         return False
-
-    @staticmethod
-    def _resolve_ancestor(link: Path, repo_resolved: Path) -> Path | None:
-        """Resolve one ancestor symlink, or return None when unsafe."""
-        try:
-            target = os.readlink(link)
-        except OSError:
-            return None  # unreadable -> fail closed
-        link_target = Path(target)
-        if not link_target.is_absolute():
-            link_target = link.parent / target
-        try:
-            resolved = link_target.resolve()
-        except OSError:
-            return None  # dangling -> fail closed
-        try:
-            resolved.relative_to(repo_resolved)
-        except ValueError:
-            return None  # escapes repo -> fail closed
-        return resolved
 
     def rollback_agent_changes(self, baseline: set[str],
                                new_changes: set[str] | None = None,
@@ -331,85 +311,154 @@ class Auditor:
         by the Shield M-TEST discussion-only guard: a non-discussion doc edit
         invalidates the entire run, including allowed test-asset writes).
 
-        Paths are sorted shallowest-first (BOOT-ROLLBACK-001) so an ancestor
-        symlink is restored/removed before any descendant is touched.  This
-        ensures that after the ancestor is restored to a real directory, the
-        descendant path is safe to process.  Paths whose ancestor still
-        escapes the repo (pre-dirty symlink to outside, or ancestor not in
-        the rollback set) are skipped via :meth:`_ancestor_escapes_repo`
-        (fail closed)."""
+        Rollback runs in TWO type-aware phases so an agent-swapped tree is
+        unwound leaves-first without ever walking a child through a restored
+        regular file:
+        - **Removal** (deepest-first, :meth:`_remove_one`): every run-produced
+          artifact is removed from the leaves up - the anomalous directory
+          tree (e.g. a commentable regular doc replaced by a non-empty
+          directory with payload/deep children) is taken apart before its
+          parent is touched, so no child path is ever visited after its
+          parent was restored to a regular file (which would raise
+          NotADirectoryError and abort the whole rollback as a filesystem
+          failure).
+        - **Restore** (shallowest-first, :meth:`_restore_one`): the original
+          content (pre-dispatch snapshot for Human-dirty paths, else HEAD)
+          is written back after every descendant is gone, and now-empty
+          parent dirs the run created are pruned.
+
+        Both phases keep the BOOT-ROLLBACK-001 fail-closed contract: any
+        path whose lexical ancestor is currently a symlink - internal,
+        external, or dangling - is skipped via :meth:`_ancestor_blocks`
+        before any FS operation, so a link target (whether in or out of the
+        repo) is never deleted, restored through, or parent-cleaned.  The
+        removal phase removes rollback-set symlinks shallowest-first so a
+        descendant behind an in-set symlink ancestor is safe to restore
+        afterwards; a symlink ancestor that is NOT in the rollback set keeps
+        its descendants skipped per-path (fail closed)."""
         if new_changes is None:
             new_changes = self.modified_files() - baseline
         over = self._overreach_paths(new_changes, force)
-        # Shallowest-first: ancestors before descendants so a symlink ancestor
-        # is restored before its children are accessed.
-        over.sort(key=lambda p: (p.count("/"), p))
         tracked_set = set(_git(self.repo, "ls-files").stdout.splitlines())
+        # Phase 1 - removal.  First remove every rollback-set path that is
+        # currently a symlink, shallowest-first: unlinking a symlink never
+        # follows its target (internal or external), so this is always safe
+        # and it clears the way for the original-path descendants of an
+        # in-set symlink ancestor to be handled lexically (restored per
+        # baseline) in phase 2.
+        removed: set[str] = set()
+        over_sorted = sorted(over, key=lambda p: (p.count("/"), p))
+        for p in over_sorted:
+            if self._path_type(self.repo / p) == "symlink" and self._remove_one(p):
+                removed.add(p)
+        # Then deepest-first for everything else: children before their
+        # ancestor, so a plain non-empty directory replacement is dismantled
+        # from the leaves up and the ancestor (which may be restored to a
+        # regular file) is only handled once nothing is left beneath it.
+        for p in sorted(over_sorted, key=lambda p: (-p.count("/"), p)):
+            if p in removed:
+                continue
+            if self._remove_one(p):
+                removed.add(p)
+        # Phase 2 - restore, shallowest-first: ancestors (BOOT-ROLLBACK-001)
+        # before descendants, so a tracked child is checked out only after
+        # its ancestor was restored to a real directory.
         rolled: list[str] = []
-        for p in over:
-            if self._rollback_one(p, tracked_set):
+        for p in sorted(over, key=lambda p: (p.count("/"), p)):
+            restored = self._restore_one(p, tracked_set)
+            if p in removed or restored:
                 rolled.append(p)
         return rolled
 
     def _rollback_one(self, p: str, tracked_set: set[str]) -> bool:
-        """Restore one over-reach path to its pre-run state, then prune any
-        now-empty parent dirs the run created.
+        """Restore one over-reach path to its pre-run state (single-path
+        equivalent of the two-phase :meth:`rollback_agent_changes`).
 
         Returns True if the path was rolled back, False if it was skipped
-        (fail-closed: an ancestor symlink escapes the repo).
+        (fail-closed: a lexical ancestor is a symlink).
 
         Path handling is **lexical, no-follow, and type-aware**: a regular
         assignment doc replaced by a file/directory/dangling symlink is
         detected via ``_path_type``; the replacement (symlink or directory
         tree) is removed WITHOUT following links, and the original is restored
         from the pre-dispatch snapshot or HEAD.  This prevents writing through
-        a replacement symlink to an external target.
+        a replacement symlink to an external or internal target."""
+        removed = self._remove_one(p)
+        restored = self._restore_one(p, tracked_set)
+        return removed or restored
 
-        Ancestor symlink safety (BOOT-ROLLBACK-001): before any FS operation,
-        :meth:`_ancestor_escapes_repo` checks whether any ancestor component
-        is a symlink resolving outside the repo.  If so, the path is skipped
-        (returns False) so the external target is never deleted, restored
-        through, or parent-cleaned.  Callers that sort shallowest-first
-        ensure that after an ancestor is restored, descendants become safe."""
-        if self._ancestor_escapes_repo(p):
-            return False  # fail closed - external target untouched
+    def _remove_one(self, p: str) -> bool:
+        """Removal phase of one rollback path: take apart whatever the agent
+        left at this lexical path WITHOUT following links - unlink a
+        replacement symlink, remove a directory tree, or unlink a regular
+        file.  Returns True if anything was removed, False if the path was
+        skipped (fail-closed: an ancestor symlink escapes the repo) or was
+        already gone.
+
+        ``is_symlink`` is checked first (never follows) so a link is unlinked
+        itself, never its target.  Type probes (``is_dir``/``exists``) return
+        False without raising for a path whose parent was already restored to
+        a regular file, so a child whose ancestor is being unwound by the
+        deepest-first caller is a safe no-op here."""
+        if self._ancestor_blocks(p):
+            return False  # fail closed - never follow an ancestor symlink
         full = self.repo / p
-        # Phase 1: remove whatever the agent left at this lexical path.
-        # is_symlink is checked first (never follows) so we unlink the link
-        # itself, not its target.  A directory (real, not a symlink-to-dir)
-        # is removed as a tree.  A regular file is unlinked.
         if full.is_symlink():
             full.unlink()
-        elif full.is_dir():
+            return True
+        if full.is_dir():
             shutil.rmtree(full, ignore_errors=True)
-        elif full.exists():
+            return True
+        if full.exists():
             full.unlink()
-        # Phase 2: restore the original (pre-dispatch / HEAD) content.
+            return True
+        return False
+
+    def _restore_one(self, p: str, tracked_set: set[str]) -> bool:
+        """Restore phase of one rollback path: write back the original
+        (pre-dispatch / HEAD) content, then prune any now-empty parent dirs
+        the run created.  Returns True unless the path was skipped
+        (fail-closed: an ancestor symlink escapes the repo).
+
+        Pre-dirty at dispatch: restore the pre-dispatch content (Human's
+        uncommitted work), NOT HEAD - ``git checkout HEAD`` would erase it.
+        Recreates the file (and parents) if the agent deleted it; a restored
+        file keeps its parent non-empty so the prune below is a no-op for it.
+        A tracked path whose parent was already restored to a regular file
+        cannot be checked out (its ancestor's restoration already removed the
+        whole replacement tree) and is skipped."""
+        if self._ancestor_blocks(p):
+            return False  # fail closed - never follow an ancestor symlink
+        full = self.repo / p
         if p in self._baseline_symlinks:
             full.parent.mkdir(parents=True, exist_ok=True)
             os.symlink(self._baseline_symlinks[p], full)
         elif p in self._baseline_content:
-            # Pre-dirty at dispatch: restore the pre-dispatch content
-            # (Human's uncommitted work), NOT HEAD - ``git checkout HEAD``
-            # would erase it. Recreate the file (and parents) if the agent
-            # deleted it; a restored file keeps its parent non-empty so the
-            # prune-empty loop below is a no-op for it.
             full.parent.mkdir(parents=True, exist_ok=True)
             full.write_bytes(self._baseline_content[p])
         elif p in tracked_set:
+            if full.parent.exists() and not full.parent.is_dir():
+                return False  # parent is a restored regular file, not a dir
             _git(self.repo, "checkout", "--", p, check=False)
-        # If neither: agent-created untracked file, already removed in phase 1.
-        # Prune now-empty parent dirs created by the run so a leaf-only
-        # rollback (file granularity, not ``dir/``) does not leave an
-        # empty ``tests/`` skeleton behind (the directory-tree-is-gone
-        # invariant of the directory-level rollback). Stop at repo root
-        # and never remove tracked dirs or non-empty dirs.
+        # If none of the above: agent-created untracked file, already removed
+        # in the removal phase - nothing to restore.
+        self._prune_empty_parents(full, tracked_set)
+        return True
+
+    def _prune_empty_parents(self, full: Path, tracked_set: set[str]) -> None:
+        """Prune now-empty parent dirs created by the run so a leaf-only
+        rollback (file granularity, not ``dir/``) does not leave an empty
+        ``tests/`` skeleton behind (the directory-tree-is-gone invariant of
+        the directory-level rollback).  Stop at repo root; never remove
+        tracked dirs or non-empty dirs.  ``parent.is_dir()`` (not
+        ``exists()``) guards the walk: a parent that was restored to a
+        regular file is not a directory, so iterating it would raise
+        NotADirectoryError - the walk simply stops there."""
         parent = full.parent
-        while parent != self.repo and parent.exists():
+        while parent != self.repo and parent.is_dir():
             if any(parent.iterdir()):
                 break
             if str(parent.relative_to(self.repo)) in tracked_set:
                 break  # don't delete a tracked (even if empty) dir
             parent.rmdir()
             parent = parent.parent
-        return True

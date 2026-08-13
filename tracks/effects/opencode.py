@@ -193,10 +193,13 @@ class OpencodeBackend:
                        assignment: dict | None = None
                        ) -> list[Path | str | None]:
         """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest."""
-        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
-        commentable = [vdir / d for d in COMMENTABLE_DOCS.get(role, ())]
+        commentable = self._commentable_doc_paths(role)
         if role == "shield":
             allowed = [self.repo / d for d in layout_paths(self.repo, "shield")]
+            if substate == "WRITE":
+                # WRITE target docs (incl. acceptance.md, not a COMMENTABLE_DOCS
+                # entry) are whitelisted; replies there are discussion-checked.
+                allowed = [*doc_paths, *allowed]
             return [*commentable, *allowed, agent_dest]
         if role == "devon":
             devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
@@ -238,11 +241,9 @@ class OpencodeBackend:
     ) -> dict:
         diff_ref = _capture_target_diffs(
             auditor, doc_paths, substate, proc)
-        # Shield M-TEST WRITE gets one atomic audit/rollback decision
-        # (Blocker 2): the generic over-reach guard must NOT early-return and
-        # leave allowed doc edits behind.  Instead the doc-delta check and the
-        # generic over-reach check run together; if either fails, every
-        # agent-changed path is rolled back in one force pass.
+        # Every dispatch gets ONE atomic audit/rollback decision (Blocker 2):
+        # doc-delta + over-reach (+ batch B scaffold) checks run together; if
+        # any fails, every agent-changed path is rolled back in one force pass.
         if role == "shield" and substate == "WRITE":
             guard = self._shield_write_audit(
                 auditor, baseline, doc_paths, diff_ref, proc, prompt,
@@ -250,16 +251,11 @@ class OpencodeBackend:
             )
             if guard is not None:
                 return guard
-        else:
-            if (guard := self._write_guard_result(
-                    auditor, baseline, scaffold_baseline, doc_paths,
-                    author_assignment, diff_ref, proc, prompt,
-                    console_input)) is not None:
-                return guard
-            if (guard := self._non_shield_doc_delta(
-                    auditor, baseline, role, diff_ref, proc, prompt,
-                    console_input)):
-                return guard
+        elif (guard := self._non_shield_write_audit(
+                auditor, baseline, scaffold_baseline, doc_paths, role,
+                author_assignment, diff_ref, proc, prompt,
+                console_input)) is not None:
+            return guard
         audit = self._discussion_audit_result(
             role, substate, doc_paths, diff_ref, proc, prompt, console_input,
             reviewer_assignment,
@@ -271,43 +267,92 @@ class OpencodeBackend:
             console_input, author_assignment, reviewer_assignment,
         )
 
-    def _write_guard_result(
+    def _non_shield_write_audit(
         self, auditor: Auditor, baseline: set[str],
-        scaffold_baseline: set[str] | None, doc_paths: list[Path],
+        scaffold_baseline: set[str] | None, doc_paths: list[Path], role: str,
         author_assignment: bool, diff_ref: str | None,
         proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
     ) -> dict | None:
-        """Post-write audits: over-reach (ARCH §6) first, then the batch B
-        scaffold subset rule when this dispatch carries a scaffold baseline;
-        None passes both."""
-        over = auditor.audit(baseline)
-        if over:
-            auditor.rollback_agent_changes(baseline)
-            return self._overreach_result(
-                diff_ref, proc, prompt, console_input, over,
-            )
-        if scaffold_baseline is None:
-            return None
-        return self._scaffold_audit_result(
-            auditor, baseline, scaffold_baseline, doc_paths, author_assignment,
-            diff_ref, proc, prompt, console_input,
-        )
+        """Atomic post-write audit for every non-Shield role (Shield WRITE
+        parity, Blocker 2): the commentable-doc discussion-only check and the
+        generic over-reach + batch B scaffold checks are judged together, so
+        the generic guard never early-returns and leaves an allowed-but-
+        illegal doc edit behind.  Any failure force-rolls-back every agent-
+        attributable path in ONE pass; pre-existing Human dirty content is
+        restored byte-identical from the pre-dispatch snapshot.
 
-    def _non_shield_doc_delta(self, auditor, baseline, role, diff_ref, proc, prompt, console_input):
+        Blocker 1: the commentable-doc set is not filtered by post-state
+        ``exists()`` - a doc the agent deleted or swapped for an exception
+        type is still audited (``_check_doc_deltas`` is type-aware/no-follow),
+        so deletions and type swaps roll back."""
+        agent_changed = auditor.agent_changed_paths(baseline)
+        doc_offending = self._check_doc_deltas(
+            auditor, self._commentable_doc_paths(role), agent_changed)
+        # ``_is_allowed`` only matches exact/prefix paths; repo-root trust
+        # (``"."`` in the allowed set) must short-circuit to no over-reach,
+        # mirroring Auditor.audit's FR-030 coarse-grain semantics.
+        if "." in auditor.allowed:
+            over_paths: list[str] = []
+        else:
+            over_paths = sorted(
+                p for p in agent_changed if not auditor._is_allowed(p))
+        scaffold_offending = self._scaffold_offending(
+            auditor, scaffold_baseline, doc_paths, author_assignment)
+        if not (doc_offending or over_paths or scaffold_offending):
+            return None
+        auditor.rollback_agent_changes(
+            baseline, new_changes=agent_changed, force=True)
+        if scaffold_offending and not (doc_offending or over_paths):
+            return self._undeclared_scaffold_result(
+                diff_ref, scaffold_offending, proc, prompt, console_input)
+        return self._overreach_result(
+            diff_ref, proc, prompt, console_input,
+            evidence=self._overreach_evidence(doc_offending, over_paths))
+
+    @staticmethod
+    def _overreach_evidence(doc_offending: list[str],
+                            over_paths: list[str]) -> str:
+        """Combined evidence string for a failed write audit."""
+        parts: list[str] = []
+        if doc_offending:
+            parts.append("non-discussion edit to "
+                         + ", ".join(sorted(doc_offending)))
+        if over_paths:
+            parts.append("over-reach: " + ", ".join(over_paths))
+        return "; ".join(parts)
+
+    def _commentable_doc_paths(self, role: str) -> list[Path]:
+        """Every COMMENTABLE_DOCS path for the role, including ones missing at
+        dispatch or gone post-run (deleted/type-swapped docs must be audited)."""
         cdocs = COMMENTABLE_DOCS.get(role)
         if not cdocs:
-            return None
+            return []
         vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
-        cpaths = [vdir / d for d in cdocs if (vdir / d).exists()]
-        if not cpaths:
-            return None
-        changed = auditor.agent_changed_paths(baseline)
-        off = self._check_doc_deltas(auditor, cpaths, changed)
-        if not off:
-            return None
-        auditor.rollback_agent_changes(baseline, new_changes=changed, force=True)
-        return self._overreach_result(diff_ref, proc, prompt, console_input,
-                                      evidence="non-discussion edit to " + ", ".join(sorted(off)))
+        return [vdir / d for d in cdocs]
+
+    def _scaffold_offending(
+        self, auditor: Auditor, scaffold_baseline: set[str] | None,
+        doc_paths: list[Path], author_assignment: bool,
+    ) -> list[str]:
+        """batch B scaffold offending paths (M-DESIGN author only): every
+        run-produced write outside the doc-set, ``.opencode/**`` and
+        ``tests/ground_truth/**`` that the freshly-written architecture.md
+        Scaffold 宣言 does not enumerate."""
+        if (scaffold_baseline is None or not author_assignment
+                or len(doc_paths) <= 1):
+            return []
+        arch = next((p for p in doc_paths if p.name == "architecture.md"), None)
+        declared = (_scaffold_declared_paths(arch.read_text(encoding="utf-8"))
+                    if arch is not None and arch.exists() else set())
+        docset = {_rel(self.repo, path) for path in doc_paths}
+        new_files = (auditor.file_level(auditor.modified_files())
+                     - scaffold_baseline)
+        return sorted(
+            path for path in new_files
+            if path not in docset
+            and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
+            and path not in declared
+        )
 
     def _shield_write_audit(
         self, auditor: Auditor, baseline: set[str], doc_paths: list[Path],
@@ -325,16 +370,9 @@ class OpencodeBackend:
                 return None
             auditor.rollback_agent_changes(
                 baseline, new_changes=agent_changed, force=True)
-            parts: list[str] = []
-            if doc_offending:
-                parts.append("non-discussion edit to "
-                             + ", ".join(sorted(doc_offending)))
-            if over_paths:
-                parts.append("over-reach: " + ", ".join(over_paths))
             return self._overreach_result(
                 diff_ref, proc, prompt, console_input,
-                evidence="; ".join(parts),
-            )
+                evidence=self._overreach_evidence(doc_offending, over_paths))
         return None
 
     def _check_doc_deltas(
@@ -453,40 +491,6 @@ class OpencodeBackend:
                 "diff_ref": diff_ref, "audit_evidence": evidence,
                 "failure_class": "over_reach",
                 "agent_io": self._capture_io(proc, prompt, console_input)}
-
-    def _scaffold_audit_result(
-        self, auditor: Auditor, baseline: set[str], scaffold_baseline: set[str],
-        doc_paths: list[Path], author_assignment: bool, diff_ref: str | None,
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
-    ) -> dict | None:
-        """batch B scaffold audit: the M-DESIGN author dispatch (DRAFT/RESPOND
-        with the multi-doc design set) is contractually bounded by the scaffold
-        manifest it just wrote — every run-produced write outside the doc-set,
-        ``.opencode/**`` and the ``tests/ground_truth/**`` exception must be an
-        enumerated ``- path —`` bullet of the freshly-written architecture.md's
-        Scaffold 宣言 section. Undeclared writes fail the dispatch as
-        ``undeclared_scaffold``. Single-doc stages and reviewer dispatches keep
-        the plain repo-root audit (returns None)."""
-        if not author_assignment or len(doc_paths) <= 1:
-            return None
-        arch = next((p for p in doc_paths if p.name == "architecture.md"), None)
-        declared = (_scaffold_declared_paths(arch.read_text(encoding="utf-8"))
-                    if arch is not None and arch.exists() else set())
-        docset = {_rel(self.repo, path) for path in doc_paths}
-        new_files = (auditor.file_level(auditor.modified_files())
-                     - scaffold_baseline)
-        offending = sorted(
-            path for path in new_files
-            if path not in docset
-            and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
-            and path not in declared
-        )
-        if not offending:
-            return None
-        auditor.rollback_agent_changes(baseline, new_changes=new_files)
-        return self._undeclared_scaffold_result(
-            diff_ref, offending, proc, prompt, console_input,
-        )
 
     def _undeclared_scaffold_result(
         self, diff_ref: str | None, offending: list[str],
