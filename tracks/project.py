@@ -182,6 +182,29 @@ def layout_paths(repo: Path, role: str) -> list[str]:
     return agent.writable
 
 
+def validate_layout(repo: Path) -> str | None:
+    """Validate that project.toml declares non-empty [layout.devon] and
+    [layout.shield] sections (Archer M-DESIGN contract, FR-0120).
+
+    Returns an English reason string on failure, None on success.  Called
+    during M-DESIGN EXIT validation when architecture.md is gated.
+    """
+    try:
+        contract = load_contract(repo)
+    except ContractError as exc:
+        return f"project contract unreadable: {exc.reason}"
+    if contract.layout is None:
+        return ("project.toml [layout] section is missing; Archer must declare "
+                "[layout.devon] and [layout.shield] with non-empty writable lists")
+    if contract.layout.devon is None:
+        return ("project.toml [layout.devon] is missing or has an empty writable "
+                "list; Devon needs at least one writable directory")
+    if contract.layout.shield is None:
+        return ("project.toml [layout.shield] is missing or has an empty writable "
+                "list; Shield needs at least one writable directory")
+    return None
+
+
 # Fixed, language-agnostic design docs each role may comment on (tracks-decided,
 # not project.toml [layout] which only governs code/data dirs).
 COMMENTABLE_DOCS: dict[str, tuple[str, ...]] = {

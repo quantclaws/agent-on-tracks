@@ -44,7 +44,7 @@ from tracks.executor.validate import (
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import _REVIEW_SUBSTATE, State, decide
-from tracks.project import ContractError, load_contract
+from tracks.project import ContractError, load_contract, validate_layout
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
@@ -711,6 +711,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         failure = validate_document(path, doc, checks)
         if failure is None and token != "ok":
             failure = ("schema", f"simulated failure: {token}")
+        # FR-0120: Archer must declare [layout.devon]/[layout.shield] in
+        # project.toml; gate at M-DESIGN EXIT when architecture.md is validated.
+        if failure is None and doc == "architecture.md" and state.stage == "M-DESIGN":
+            layout_err = validate_layout(self.repo)
+            if layout_err is not None:
+                failure = ("layout", layout_err)
         if failure:
             check, reason = failure
             payload = {"check": check, "reason": reason, "evidence": str(path)}
