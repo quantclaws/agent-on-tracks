@@ -257,7 +257,8 @@ class MImplRuntimeMixin:
                 return error
         if role == "shield" and substate == "WRITE" \
                 and not valid_test_tasks((assignment or {}).get("test_tasks")):
-            return "Shield WRITE assignment.test_tasks is invalid"
+            return ("Shield WRITE assignment.test_tasks is invalid: each entry needs "
+                    "non-empty ac_id, if_ids, and test_paths")
         return None
 
     @staticmethod
@@ -542,7 +543,7 @@ class MImplRuntimeMixin:
         errors = validate_task_structure(tasks)
         ok, cycle = validate_dag(tasks)
         if not ok:
-            errors.append(cycle or "dag invalid")
+            errors.append(cycle or "task graph DAG is invalid (validate_dag returned no reason)")
         ok, overlap = validate_scope(tasks)
         if not ok:
             errors.extend(overlap)
@@ -624,7 +625,7 @@ class MImplRuntimeMixin:
     ) -> list[str]:
         raw, error = self._read_taskgraph(tasks_path)
         if error is not None:
-            return [error.replace("; Archer must produce it", "")]
+            return [error]  # keep the full reason including remediation hint
         tasks, error = parse_tasks_json(raw)
         if error is not None:
             return [error]
@@ -747,6 +748,7 @@ class MImplRuntimeMixin:
     def _emit_no_task_failure(self, cmd, state, reason: str) -> None:
         self._emit("verdict.failed",
                    {"check": "island", "reason": reason,
+                    "evidence": "no tasks available for dispatch",
                     "attempt": state.current_attempt + 1},
                    command_id=cmd.command_id)
 
@@ -1105,7 +1107,8 @@ class MImplRuntimeMixin:
         if task is None or not state.r_tree_identity:
             self._emit("verdict.failed",
                        {"check": "impl_defect",
-                         "reason": "green commit lacks task or R identity",
+                         "reason": ("green commit lacks task_id or R lineage identity "
+                         "(check Devon pre/post identity trailers)"),
                          "task_id": task_id, "attempt": attempt},
                        command_id=cmd.command_id, task_id=task_id)
             self._rebuild_task_log_projection()

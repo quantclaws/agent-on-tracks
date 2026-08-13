@@ -680,7 +680,7 @@ class ResultCheckpointMixin:
     def _stage_and_commit(self, cmd, state, base_sha, current_head):
         """Stage allowed_paths (+ scaffold for M-DESIGN), commit, emit result."""
         allowed_paths = cmd.params.get("allowed_paths", [])
-        source = cmd.params.get("source", "?")
+        source = cmd.params.get("source", "unknown source")
         commit_label = cmd.params.get("commit_label") or f"{source} checkpoint"
         stage_paths = [self._artifact_path(doc) for doc in allowed_paths]
         if self._maybe_add_scaffold(state, allowed_paths, stage_paths,
@@ -775,6 +775,7 @@ class ResultCheckpointMixin:
             self._emit("verdict.failed",
                        {"check": "publish_error",
                         "reason": f"unknown domain_event: {ev_type}",
+                        "evidence": ev_type,
                         "attempt": state.current_attempt + 1},
                        command_id=cmd.command_id)
 
@@ -801,6 +802,7 @@ class ResultCheckpointMixin:
             self._emit("verdict.failed",
                        {"check": "publish_error",
                         "reason": f"unknown committed event: {ev_type}",
+                        "evidence": ev_type,
                         "attempt": state.current_attempt + 1},
                        command_id=cmd.command_id)
             return
