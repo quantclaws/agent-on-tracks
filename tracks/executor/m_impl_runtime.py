@@ -46,7 +46,7 @@ from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
 from tracks.executor.validate import parse_test_tasks
 from tracks.executor.worktree import WorktreeHandle, cleanup_worktree, create_gate_worktree
 from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
-from tracks.project import ContractError, load_contract
+from tracks.project import ContractError, layout_paths, load_contract
 from tracks.tasklog import rebuild_task_log
 
 _SECRET_PATTERN = re.compile(r"(sk-|ghp_|gho_|AKIA)[A-Za-z0-9]{16,}")
@@ -384,9 +384,8 @@ class MImplRuntimeMixin:
             return "Devon REFACTOR evidence needs changed paths or no_change_reason"
         return None
 
-    @staticmethod
     def _devon_evidence_scope_error(
-        phase: str, state: State, outcome: dict,
+        self, phase: str, state: State, outcome: dict,
     ) -> str | None:
         task = state.current_task_metadata or {}
         expected = set(task.get("if_ids", []))
@@ -403,10 +402,13 @@ class MImplRuntimeMixin:
                 return f"Devon evidence path is forbidden: {path}"
             if not any(_manifest_path_matches(path, item) for item in allowed):
                 return f"Devon evidence path is outside manifest: {path}"
-        if phase == "red" and any(
-                not path.startswith("tests/unit/")
-                for path in outcome["changed_paths"]):
-            return "Devon RED evidence includes a non-unit path"
+        if phase == "red":
+            devon_test_dirs = [
+                d for d in layout_paths(self.repo, "devon") if "test" in d]
+            if devon_test_dirs and any(
+                    not any(path.startswith(d) for d in devon_test_dirs)
+                    for path in outcome["changed_paths"]):
+                return "Devon RED evidence includes a non-test path"
         return None
 
     def _frozen_test_paths(self) -> list[str]:
@@ -757,9 +759,11 @@ class MImplRuntimeMixin:
                        and ".." not in p.split("/")})
 
     def _forbidden_paths(self) -> list[str]:
-        forbidden = {".tracks/projects/**", "tests/assets/**", "tests/assets/",
-                     "tests/counterexamples/**", "tests/counterexamples/",
-                     "tests/ground_truth/**", "tests/ground_truth/"}
+        forbidden = {".tracks/projects/**"}
+        # Shield's writable dirs are forbidden for Devon (from project.toml).
+        for path in layout_paths(self.repo, "shield"):
+            clean = path.rstrip("/")
+            forbidden.update({path, f"{clean}/**"})
         for path in self._frozen_test_paths():
             clean = path.rstrip("/")
             forbidden.update({path, f"{clean}/**"})
@@ -783,7 +787,11 @@ class MImplRuntimeMixin:
         ]
 
     def _unit_commands(self) -> list[str]:
-        return [".venv/bin/python -m pytest -n 4 tests/unit"]
+        test_dirs = [d.rstrip("/") for d in layout_paths(self.repo, "devon")
+                     if "test" in d]
+        if not test_dirs:
+            return []
+        return [f".venv/bin/python -m pytest -n 4 {' '.join(test_dirs)}"]
 
     def _task_manifest(self, task: TaskNode, state: State) -> dict:
         pre_dirty = self._dirty_snapshot()
