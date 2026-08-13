@@ -3,7 +3,7 @@ story_id: S-001
 title: 真实 OpencodeBackend Devon 旅程与发布证据
 created: 2026-08-12
 status: draft
-sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
+sha: dd56da3c7f432e726f53cbbf49563a5105eb74bf880f04b5ea92c43d4e97f721
 ---
 
 # S-001: 真实 OpencodeBackend Devon 旅程与发布证据
