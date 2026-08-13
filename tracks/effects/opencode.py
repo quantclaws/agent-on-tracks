@@ -725,6 +725,9 @@ class OpencodeBackend:
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
                "--dir", str(self.repo), "--auto", prompt]
+        # opencode-logger plugin defaults to <repo>/logs/opencode; redirect
+        # it under .opencode/logs so the repo root stays clean.
+        env = {**os.environ, "OPENCODE_LOGGER_DIR": ".opencode/logs"}
         model = self._resolve_model(name)
         if model:
             cmd.extend(["--model", model])
@@ -748,6 +751,7 @@ class OpencodeBackend:
             proc = subprocess.Popen(
                 cmd,
                 cwd=self.repo,
+                env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=log_fh if log_fh else subprocess.PIPE,
