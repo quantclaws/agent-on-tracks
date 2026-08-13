@@ -180,3 +180,11 @@ def layout_paths(repo: Path, role: str) -> list[str]:
     if agent is None:
         return []
     return agent.writable
+
+
+# Fixed, language-agnostic design docs each role may comment on (tracks-decided,
+# not project.toml [layout] which only governs code/data dirs).
+COMMENTABLE_DOCS: dict[str, tuple[str, ...]] = {
+    "shield": ("test-plan.md", "interfaces.md"),
+    "devon": ("architecture.md", "interfaces.md"),
+}

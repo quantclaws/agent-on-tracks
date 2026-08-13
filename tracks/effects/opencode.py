@@ -32,7 +32,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
-from tracks.project import layout_paths
+from tracks.project import COMMENTABLE_DOCS, layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 
 AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
@@ -192,15 +192,15 @@ class OpencodeBackend:
                        role: str, substate: str,
                        assignment: dict | None = None
                        ) -> list[Path | str | None]:
-        """Build the role-specific audit whitelist from project.toml [layout]."""
+        """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest."""
+        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
+        commentable = [vdir / d for d in COMMENTABLE_DOCS.get(role, ())]
         if role == "shield":
-            allowed = [self.repo / d for d in layout_paths(self.repo, "shield")] + [agent_dest]
-            if substate == "WRITE":
-                allowed = [*doc_paths, *allowed]
-            return allowed
+            allowed = [self.repo / d for d in layout_paths(self.repo, "shield")]
+            return [*commentable, *allowed, agent_dest]
         if role == "devon":
             devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
-            return [*doc_paths, agent_dest, *devon_dirs]
+            return [*commentable, agent_dest, *devon_dirs]
         return [*doc_paths, agent_dest, self.repo]
 
     def _unknown_role_result(
