@@ -506,6 +506,7 @@ stateDiagram-v2
 > **defect_classification 路由**（v0.5+）：PRISM_REVIEW 的 `revise` 判定携带 `defect_classification` 字段，Runtime 据此路由回退目标：`test_defect`（默认）回 Shield WRITE 重派；`test_plan_defect` 回 M-DESIGN 让 Archer 修测试计划；`acceptance_defect` 回 M-ACC（需 Human）；`spec_defect` 回 M-SPEC（需 Human）。原则：什么产物出问题，就回退到该产物诞生的阶段。
 > **NO_DIFF peer review**（v0.5+）：当 `requires_diff` 校验对 Shield 结果触发（Shield 产出无文件 diff），进入 NO_DIFF_EXPLAIN->NO_DIFF_REVIEW 子状态机（同 M-DESIGN）。讨论 blockquote 是物理文件变更但不是语义修改，不触发 no_diff；纯 self_report（无任何文件变更）才触发。
 > M-TEST 共享 <=3 重派预算：WRITE 校验失败、PRISM revise(test_defect)、trace 不闭合、criteria_pack_mismatch、commit 被拒、test_defect 均消费同一计数器；第 3 次仍未通过 -> escalation (awaiting_human)。`test_plan_defect`/`acceptance_defect`/`spec_defect` 的回退不消费重派计数器（它们是上游产物缺陷，不是本阶段执行失败）。
+> **doc-comment-first（v0.5+，canonical）**：Shield WRITE 的 outcome 验收第一步以本次 dispatch 前内容身份扫描全部受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化——任一非法非 discussion 正文编辑优先按 FR-0237 整回合原子 fail-closed（不含合法评论、不保留部分结果、不进 SM-02）；仅合法新 discussion 识别限于该角色固定 COMMENTABLE_DOCS（`test-plan.md`、`interfaces.md`）并截获进入 SM-02 附属裁定（协议见 §10.4），旧线程/他人回复/无本次 delta 不触发。截获期间 outcome 暂停，不进入 COLLECT 等普通验证。
 
 ### 9.2. 事件清单
 
@@ -517,6 +518,7 @@ stateDiagram-v2
 2. Shield 不修改产品代码与接口桩；桩或接口缺口走 gap advisory 回 M-DESIGN，不得在测试侧绕过。
 3. 本阶段接受并要求 Red：每条测试的失败原因必须可分类为合法 Red，且 AC 层归属与 Test Plan 一致；Runtime 复跑是唯一证据来源。
 4. 退出依据全部是程序证据：collection、合法 Red 分类与 `trac check trace` 闭合均由 Runtime 复跑取得；Shield 的覆盖自述（"每条 AC 都有测试"）不构成退出依据。
+5. **doc-comment-first（v0.5+）**：Shield WRITE 的 outcome 验收第一步扫描全部受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化（以 dispatch 前内容身份为基线）；任一非法非 discussion 正文编辑优先整回合原子 fail-closed 且不进 SM-02，合法新 discussion 识别限于其固定 COMMENTABLE_DOCS（`test-plan.md`、`interfaces.md`）才截获进入 SM-02 附属裁定（§10.4），旧线程/他人回复/无本次 delta 不触发。
 
 ## 10. M-IMPL
 
@@ -652,6 +654,7 @@ stateDiagram-v2
 > 单写者纪律：Devon 不得修改 Shield 的测试；测试缺陷经 DIAGNOSE→SHIELD_FIX 由 Shield 修复并产生受控测试 commit。
 > 可休眠：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
 > 同一 attempt 重试只能得到同一 R（compare-and-set），否则产生新 attempt；旧 attempt 不被改写。
+> **doc-comment-first（v0.5+，canonical）**：Devon/Shield 每个 outcome（RED/GREEN/REFACTOR/SHIELD_FIX）的验收第一步以本次 dispatch 前内容身份扫描全部受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化，在 RED_GATE/GREEN_GATE/REFACTOR_GATE 及 DIAGNOSE 等普通验证之前执行——任一非法非 discussion 正文编辑优先按 FR-0237 整回合原子 fail-closed（不进 SM-02）；仅合法新 discussion 识别限于该角色固定 COMMENTABLE_DOCS（Devon：`architecture.md`、`interfaces.md`；Shield：`test-plan.md`、`interfaces.md`）并截获进入 SM-02 附属裁定（§10.4），旧线程/他人回复/无本次 delta 不触发。截获期间 outcome 暂停、隔离保全，闭环后以新的 dispatch/attempt 恢复同一 logical role/task/phase；旧 outcome 永不成功。
 
 ### 10.2. 事件清单
 
@@ -664,6 +667,32 @@ stateDiagram-v2
 3. 同一 attempt 重试只能得到同一 R（compare-and-set），否则产生新 attempt；旧 attempt 不被改写。
 4. 可休眠：每个 phase 边界都是事件，重启从 lineage + 事件回放恢复到精确 phase。
 5. "测试错还是实现错"的分流永不交给 Human：测试缺陷由 Shield 修，实现缺陷由 Devon 修，各自产生独立的受控 commit 与证据。
+6. **doc-comment-first（v0.5+）**：Devon/Shield 每个 outcome 的验收第一步扫描全部受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化（以 dispatch 前内容身份为基线）；任一非法非 discussion 正文编辑优先整回合原子 fail-closed 且不进 SM-02，合法新 discussion 识别限于其固定 COMMENTABLE_DOCS（Devon：`architecture.md`、`interfaces.md`；Shield：`test-plan.md`、`interfaces.md`）才截获进入 SM-02 附属裁定（§10.4），旧线程/他人回复/无本次 delta 不触发。
+
+### 10.4. doc-comment-first outcome 验收（canonical，SM-02 附属裁定记录）
+
+**目的**：对 M-IMPL 的 Devon/Shield outcome（RED/GREEN/REFACTOR/SHIELD_FIX）以及 M-TEST 的 Shield WRITE outcome，验收第一步先处置本次结果在设计文档上新建的合法讨论，再进入普通工件/manifest/collection/gate/checkpoint/DIAGNOSE 验证。本路径不新增顶层 stage：SM-02 是附着于产生评论的 logical role/task/phase 的附属裁定记录（内部 substate），不进入顶层 stage 序列。
+
+**第一步（dispatch 前内容身份审计）**：Runtime 收到 outcome 后，先以**本次 dispatch 前的文档内容身份**为基线，扫描所有受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化——任一非法非 discussion 正文编辑按 FR-0237 在普通验证前整回合原子拒绝，不进入 SM-02。合法新 discussion 的识别限于角色固定 COMMENTABLE_DOCS：Devon 仅可评论 `architecture.md`、`interfaces.md`，Shield 仅可评论 `test-plan.md`、`interfaces.md`；其它设计文档不因本路径扩大写权限。只把本次新增且符合既有 inline-discussion 协议的增量认作合法新讨论；dispatch 前已存在的旧线程、他人回复、无本次 delta 的文档不触发截获。
+
+- **非法非 discussion 正文编辑优先整回合原子 fail-closed**：outcome 含本次可归属的受保护设计文档正文编辑时，回滚该 dispatch 全部 Agent 可归因变化并逐字节保留 Human 与 dispatch 前既有脏改动，不保留部分代码或其他非文档成果，不进 SM-02（仅按 FR-0237 整回合原子拒绝），不 commit/checkpoint/gate/success；该规则优先于同一 outcome 中可能存在的合法讨论。按原 logical role/task/phase 的失败与 attempt 预算语义发起新 dispatch/attempt，新结果重新从本步开始。
+- **合法新 discussion 才截获**：仅当结果含合法新讨论且无非法正文编辑时，暂停该 outcome 进入 SM-02 等待 Prism 裁定；随附的未验证变化不显示为成功。
+
+**SM-02 状态**（未列出的转移不允许）：
+`DETECTED → AWAITING_ADJUDICATION → (DESIGN_GAP | AGENT_CORRECTION) → READY_TO_RESUME → (RESTORED | DISCARDED) → RESUMED`；DETECTED/AWAITING_ADJUDICATION/READY_TO_RESUME 在中断/重启后回环同状态（从持久化记录恢复，不越过未满足的讨论或身份条件）。
+
+- DETECTED：outcome 含本次可归属、允许评论的设计文档新讨论，且未含非法正文编辑。
+- AWAITING_ADJUDICATION：Runtime 在普通结果验证前暂停该 outcome，记录来源（origin role/task/phase + 来源 dispatch/attempt）；有可归属且授权的非文档变化时同时进入隔离保全。
+- DESIGN_GAP：Prism 在原讨论确认 Archer 负责的 architecture/interfaces/test-plan 缺口 → 路由 Archer（M-DESIGN 所有者）修订设计合同，无 Human 技术批准门；Archer/Prism 与原 Agent 同线程复核闭环。
+- AGENT_CORRECTION：Prism 不确认设计缺口 → 在原讨论向原 Devon/Shield 给出可执行纠正指引，原 Agent 同线程回应闭环。
+- READY_TO_RESUME：讨论线程关闭。
+- RESTORED：quarantine 为空，或隔离成果身份仍有效并已恢复，供新的 dispatch/attempt 重新验证。
+- DISCARDED：设计或运行身份变化使隔离成果 stale，Runtime 安全丢弃。
+- RESUMED：Runtime 以相同 logical role/task/phase 发起新的 dispatch/attempt；旧 outcome 不复用、不改标为成功，新结果重新接受本步及原 phase 全部验证。
+
+**quarantine（仅合法新 discussion 路径）**：只隔离本次 dispatch 可归属且符合该 Agent 写范围的**非文档**变化；排除文档本身、Human 修改、dispatch 前既有脏改动与越权改动；不使用工作区共享 Git index 作载体；无授权非文档变化时 quarantine 为空。闭环且新 dispatch/attempt 完成重新验证之前，隔离成果不得被 commit、checkpoint、gate、计作 task 完成或对外显示为成功。
+
+**可观察与可审计**：合法新 discussion 路径沿用现有 quarantine 语义（隔离、恢复、丢弃同 §10.4 上文）；`trac status` 显示 doc-gap adjudication 等待/结果、origin role/task/phase 与 quarantine 状态；`trac discuss query` 显示原文档线程与回复；`trac replay`/`trac report` 回溯 detected、adjudicated、quarantined、restored-or-discarded、resumed 审计事件。非法正文路径不进 SM-02，但 `trac status`/`trac replay`/`trac report` 必须暴露失败类（over-reach）、被拒绝的文档路径、整回合回滚结果及后续新 dispatch/attempt。SM-02 事实与隔离内容身份 append-only 写入事件，不改写既有行；中断/重启后重放得到与中断前一致的等待、隔离与恢复/丢弃状态，未闭环讨论与未验证成果不越过普通门禁，重放不把旧 outcome 重复计为成功。
 
 ## 11. M-VERIFY
 
