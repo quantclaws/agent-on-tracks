@@ -46,6 +46,7 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 
 ## 2. 用户意图
 
+- **本次增量修订（doc-comment-first 前置）**：在保留 Q-04 真实 OpencodeBackend live release-evidence 的前提下，面向执行 Devon 或 Shield 工作并由 Runtime 验证结果的操作者，先处理执行结果涉及的设计文档评论；避免未建模的文档缺口工作流阻塞 Q-04 的 M-TEST/release 工作，或把非法正文编辑、设计缺口和普通工件失败混为一谈。
 - 面向使用 tracks CLI 和 CI 的开发者/发布操作者，验证 v0.5 的 M-IMPL 不只是由 FakeBackend 模拟可用，而是真实 OpencodeBackend 驱动的 Devon 旅程也能完成并留下可审计结果。
 - 当前受阻：v0.5 已有 FakeBackend 的 M-IMPL 完整路径，OpencodeBackend 也有真实进程与分层 live smoke 能力，但尚未把真实 Devon 从一个 task 的 RED、GREEN、REFACTOR、review 一直跑到 ISLAND_GATE_2 和 M-IMPL 边界；因此没有可以作为发布依据的真实、当前且可追溯证据。
 - 完成后：操作者从现有终端入口选择 opt-in live 旅程，能在公开的运行状态、事件、Git 结果和审计证据中看到真实 Devon 完成至少一个 task；随后可执行 release-evidence 检查，只有当前成功的 live 证据才满足发布前置。没有凭据的例行 CI 仍可跳过该 opt-in 测试，但跳过不等于发布证据。
@@ -84,6 +85,50 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 3. 发布验证始终显式执行 release-evidence 检查；例行 CI 的 fake/simulated 结果或 credential-less skip 都不能替代它。
 
 - **完成结果**：日常开发不会因没有凭据而被迫连接真实 provider；发布操作者仍能从检查结果区分 skipped、failed 和 current success，并知道缺少 current live evidence 时必须回到 3.1，而不是绕过门禁。
+
+### 3.4. 结果验证前的设计文档评论检查
+
+- **变更基线**：修改 — 当前 Q-04 的 live 旅程与 release-evidence 检查直接验证执行工件和门禁结果，未建模 Devon/Shield 结果先触发设计文档评论审查的前置路径。本次在不削弱 Q-04 真实 release-evidence 要求的条件下，增加其恢复工作开始前的必经前置。
+- **入口/触发**：Runtime 收到 Devon 或 Shield 的执行结果、准备验证其工件、manifest、collection、gate 或 checkpoint 时开始。
+
+1. Runtime 先检查该结果可归属的、允许评论的设计文档增量，再进行普通工件和门禁验证。
+2. 若结果合法创建了新的设计文档讨论，Runtime 将该讨论交给 Prism 进行技术归类，而不是把该讨论当作已经成功的执行结果。
+3. Prism 完成处理且讨论关闭后，Runtime 才恢复原结果的普通验证；Q-04 的 live evidence 仍须按 3.2 作为发布前置单独通过。
+
+- **完成结果**：操作者能分辨执行结果是在等待设计评论处置还是正在接受普通验证；评论处置不会把未验证的部分显示为成功，也不会把 Q-04 release-evidence 降为未来或非阻塞工作。
+
+### 3.5. 非法设计正文编辑的返回路径
+
+- **变更基线**：无（新增路径）。
+- **入口/触发**：Runtime 在 3.4 的前置检查中发现可归属到本次 Devon 或 Shield 结果的非讨论设计文档正文编辑时开始。
+
+1. Runtime 只撤销该结果可归属的设计文档正文编辑，不把它作为设计缺口转交，也不触及 Human 或既有脏改动。
+2. Runtime 将同一任务、角色、阶段/子状态和仍有效的尝试身份返回给原 Agent 修正；Agent 不获得编辑设计文档正文的权限。
+3. 原 Agent 修正后，结果重新从设计文档评论检查开始，再接受普通验证。
+
+- **完成结果**：非法正文编辑被明确拒绝且精确回退，操作者保留其他可归属的非文档部分以供后续安全处理；该结果不被提交、checkpoint、gate 或展示为成功。
+
+### 3.6. 合法评论的设计缺口裁定
+
+- **变更基线**：无（新增路径）。
+- **入口/触发**：Prism 审查 3.4 发现的合法新讨论时开始。
+
+1. 若 Prism 确认讨论指出 Archer 负责的设计、测试计划或接口缺口，Runtime 将问题路由给 Archer，无需新增 Human 技术裁定门。
+2. 若 Prism 不确认该类设计缺口，Prism 在同一讨论中向 Devon 或 Shield 提供纠正指引；原结果不能越过普通验证。
+3. 讨论关闭后，Runtime 恢复完全相同的原始角色、任务、阶段/子状态和仍有效尝试；如设计变更使部分结果过期，则安全丢弃或重新验证该部分，再继续原路径。
+
+- **完成结果**：操作者能看到问题是由 Archer 修补设计，还是由原执行 Agent 按 Prism 指引纠正；不增加 Human 技术审批，也不允许 Agent 以评论为名改写设计正文。
+
+### 3.7. 评论处置期间的部分结果保全与恢复
+
+- **变更基线**：无（新增路径）。
+- **入口/触发**：3.4 至 3.6 的文档评论处置期间，原 Devon 或 Shield 结果带有可归属的、授权的非文档部分，或 Runtime 在处置中断后重启时开始。
+
+1. Runtime 将这些非文档部分与 Human 和预先存在的脏改动隔离保全；在评论未关闭前，不提交、不 checkpoint、不 gate，也不将其对外报告为成功。
+2. Runtime 中断或重启后，操作者可观察到该处置及保全状态，并能恢复到相同的原始执行上下文，而不是丢失、误提交或混入其他人的改动。
+3. 恢复后，Runtime 按 3.6 判断部分结果是否已过期，必要时安全丢弃并重新验证，然后才回到原任务路径。
+
+- **完成结果**：设计评论处置可恢复且不污染无关改动；只有恢复后的有效结果和 Q-04 所需的 current successful live evidence 才能继续各自的验证路径。
 
 ## 4. 行为种子
 
@@ -135,18 +180,49 @@ sha: 39dfb854ff6d9fc2844ab39fc0e8c67d4df0be2eec503a1df4ab1e7b7b33a899
 - 来源: [3.2 / 用户明确要求 / 重要推导]
 - 说明: 让操作者能看到可继续发布验证的明确结果，而不必从日志自行猜测。
 
+### BS-09 文档评论优先
+
+- EARS: `WHEN Runtime 验证 Devon 或 Shield 的执行结果, THE 系统 SHALL 在工件、manifest、collection、gate 或 checkpoint 验证之前检查其可归属的允许评论的设计文档增量`
+- 来源: [3.4 / 本次增量修订 / Runtime 既定工作流约束]
+- 说明: 让未建模的设计缺口先被可见且正确地处置，不误判普通执行结果。
+
+### BS-10 非讨论正文编辑拒绝
+
+- EARS: `IF Devon 或 Shield 的结果包含可归属的非讨论设计文档正文编辑, THE 系统 SHALL 只撤销该正文编辑并将相同的有效执行身份返回原 Agent，而不将其路由为设计缺口`
+- 来源: [3.5 / Runtime 既定工作流约束]
+- 说明: 精确纠正违规，保护无关的 Human、既有脏改动及未完成的非文档工作。
+
+### BS-11 设计缺口无 Human 技术门
+
+- EARS: `WHEN Prism 确认合法讨论属于 Archer 负责的设计、测试计划或接口缺口, THE 系统 SHALL 将其路由给 Archer，且 SHALL NOT 新增 Human 技术裁定门`
+- 来源: [3.6 / Runtime 既定工作流约束]
+- 说明: 让设计所有者解决设计缺口，同时不伪造 Human 对技术设计的批准。
+
+### BS-12 非设计缺口的纠正指引
+
+- EARS: `IF Prism 不确认合法讨论属于 Archer 负责的设计缺口, THE 系统 SHALL 在该讨论中提供给 Devon 或 Shield 的纠正指引，并在讨论关闭前不继续普通工件验证`
+- 来源: [3.6 / Runtime 既定工作流约束]
+- 说明: 保持评论归类和执行结果验证的顺序及责任清晰。
+
+### BS-13 结果隔离、恢复与过期处理
+
+- EARS: `WHILE 设计文档评论处置尚未关闭, THE 系统 SHALL 隔离保全可归属的授权非文档部分、排除 Human 与预先存在的脏改动，并在中断恢复或设计变更后以相同执行上下文安全丢弃或重新验证已过期部分`
+- 来源: [3.6 / 3.7 / Runtime 既定工作流约束]
+- 说明: 保护部分工作可恢复、可观察且不会被误提交、误门禁或误报成功。
+
 ## 5. 范围、约束与例外
 
-- **必须保持的产品约束**：交付面沿用现有 terminal CLI 与 CI 入口；M-IMPL 仍从 M-TEST EXIT 进入并停在 M-IMPL→M-VERIFY boundary，不实现 M-VERIFY、M-RELEASE 或后续发布副作用；M-IMPL 的阶段退出仍以程序证据为依据，不新增 Human 门禁。FakeBackend 继续服务确定性例行测试，但其结果不能成为 release evidence。candidate SHA 按真实 live run 启动时的 tracks 仓库 HEAD 定义，并须与待发布分支当前 HEAD 相等。成功 live evidence 是发布前置；agent I/O/事件证据必须可审计且沿用现有凭据脱敏边界。
-- **非常规要求**：发布验证对 live evidence 采用 fail-closed，缺失、失败、过期、SHA 不匹配或非真实来源均硬阻塞，Human release approval 不能绕过；这是有意偏离“人工发布确认可处理问题”的宽松路径，用来守住 seed 明确要求的 fake/simulated/manual evidence 不可接受。另一方面，credential-less routine CI 有意允许只跳过 opt-in live 测试；该例外只保护日常 CI 可运行，不改变发布候选必须有 current successful live evidence 的要求。
-- **Out-of-Scope**：完整 M-VERIFY/M-RELEASE/M-PUBLISH 阶段、candidate freeze 机制和发布副作用；强制所有例行 CI 或所有开发者提供真实 provider 凭据；把 live 旅程扩展为覆盖全部生产 task（本 story 只要求至少一个 task 的完整旅程）；以 FakeBackend、simulated outcome 或手工插入事件生成替代证据；新增 UI/API 等非既有 CLI/CI 交付面。
+- **必须保持的产品约束**：交付面沿用现有 terminal CLI 与 CI 入口；M-IMPL 仍从 M-TEST EXIT 进入并停在 M-IMPL→M-VERIFY boundary，不实现 M-VERIFY、M-RELEASE 或后续发布副作用；M-IMPL 的阶段退出仍以程序证据为依据，不新增 Human 门禁。FakeBackend 继续服务确定性例行测试，但其结果不能成为 release evidence。candidate SHA 按真实 live run 启动时的 tracks 仓库 HEAD 定义，并须与待发布分支当前 HEAD 相等。成功 live evidence 是发布前置；agent I/O/事件证据必须可审计且沿用现有凭据脱敏边界。Runtime 必须在普通结果验证前检查授权的可评论设计文档增量；Agent 不得编辑设计文档正文；评论处置不增加 Human 技术门。
+- **非常规要求**：发布验证对 live evidence 采用 fail-closed，缺失、失败、过期、SHA 不匹配或非真实来源均硬阻塞，Human release approval 不能绕过；这是有意偏离“人工发布确认可处理问题”的宽松路径，用来守住 seed 明确要求的 fake/simulated/manual evidence 不可接受。另一方面，credential-less routine CI 有意允许只跳过 opt-in live 测试；该例外只保护日常 CI 可运行，不改变发布候选必须有 current successful live evidence 的要求。文档评论处置期间，授权的非文档部分必须与 Human 和既有脏改动隔离保全，且在评论关闭前不得提交、checkpoint、gate 或显示为成功；处置必须可恢复且对操作者可观察。
+- **Out-of-Scope**：完整 M-VERIFY/M-RELEASE/M-PUBLISH 阶段、candidate freeze 机制和发布副作用；强制所有例行 CI 或所有开发者提供真实 provider 凭据；把 live 旅程扩展为覆盖全部生产 task（本 story 只要求至少一个 task 的完整旅程）；以 FakeBackend、simulated outcome 或手工插入事件生成替代证据；新增 UI/API 等非既有 CLI/CI 交付面；以共享 Git index 作为评论处置期间部分结果的隔离方式；将合法讨论或非法正文编辑静默视为普通验证成功。
 
 ## 6. 开放产品决定
 
-无。交付面可由宿主项目已有的 `trac` CLI、事件/状态输出和 CI 入口可靠确定；失败策略、candidate SHA 语义、release prerequisite 的强制性及 credential-less skip 均已由用户输入、既有 flow/测试合同和 TRIAGE 裁定确定。具体检查命名和实现方式留给后续规格/设计阶段，不改变产品结果。
+无。交付面可由宿主项目已有的 `trac` CLI、事件/状态输出和 CI 入口可靠确定；失败策略、candidate SHA 语义、release prerequisite 的强制性及 credential-less skip 均已由用户输入、既有 flow/测试合同和 TRIAGE 裁定确定。doc-comment-first 的归类、路由、无 Human 技术门、隔离保全与恢复边界已由本次 Runtime 既定工作流约束确定。具体检查命名、事件名称和隔离存储格式留给后续规格/设计阶段，不改变产品结果。
 
 ## 7. 必要性与风险
 
 - **既有能力**：v0.5 spec/acceptance 已定义 M-IMPL 的 RED→GREEN→REFACTOR、review、ISLAND_GATE_2 与 boundary；FakeBackend 已用于确定性旅程；OpencodeBackend 已提供真实 subprocess、目标 diff、agent I/O 审计和凭据脱敏；现有 `trac run`、状态/事件记录、Git R/G lineage 及 `tests/e2e_live` 的 credential-aware live 通道可作为入口和观察基础。
 - **冲突**：当前 v0.5 产品流程停在 M-IMPL→M-VERIFY，flow.md 把 Human release gate 放在未来 M-RELEASE；本 story 同时要求 live evidence 成为 release prerequisite。已裁定的兼容方式是只增加独立的程序化 release-evidence 检查和证据合同，不提前实现 M-VERIFY/M-RELEASE，也不改变 M-IMPL boundary。
 - **重要风险**：真实 provider 不可用或 live 旅程不完整时，发布候选将没有可接受证据而被硬阻塞；若当前 HEAD 比对、agent I/O/事件审计或来源真实性无法从公开结果验证，则无法证明“current successful live evidence”，story 不成立。后续实现必须保留失败证据和可重跑路径，不能用 skip、旧 SHA 或人工事件填补缺口。
+- **增量风险**：若设计文档评论检查发生在普通验证之后、非法正文编辑被错误当作设计缺口、部分结果混入共享 Git index 或无关脏改动，或中断后无法恢复原执行上下文，则 Q-04 的恢复工作会被误报成功、污染或不可恢复，story 不成立。
