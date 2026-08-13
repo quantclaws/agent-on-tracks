@@ -50,9 +50,6 @@ _ENV_SECRET_VALUE = re.compile(
 
 _OPENCODE_PREFIX = ".opencode/"
 _GROUND_TRUTH_PREFIX = "tests/ground_truth/"
-# Lock files created by tracks/discuss/cli.py _atomic_write (flock-based);
-# these are transient synchronization artifacts, not scaffold writes.
-_LOCK_SUFFIX = ".lock"
 
 
 def redact(text: str) -> str:
@@ -486,7 +483,6 @@ class OpencodeBackend:
             path for path in new_files
             if path not in docset
             and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
-            and not path.endswith(_LOCK_SUFFIX)
             and path not in declared
         )
         if not offending:
