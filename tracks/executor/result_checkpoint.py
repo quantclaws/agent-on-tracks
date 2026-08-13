@@ -23,6 +23,7 @@ from tracks.executor.validate import (
     verify_digests,
 )
 from tracks.kernel.machine import _STAGES, DESIGN_DOCS
+from tracks.project import layout_paths
 from tracks.store import new_ulid
 
 # doc -> (committed event type, body-sha payload key)
@@ -137,7 +138,7 @@ class ResultCheckpointMixin:
         return self._m_test_prism_payload(result, base_sha, result_id)
 
     def _m_test_write_payload(self, result, base_sha, result_id, pre_dirty):
-        """M-TEST Shield WRITE: commit test files and support assets in tests/.
+        """M-TEST Shield WRITE: commit test files and support assets.
 
     ``pre_dirty`` is either a content-identity snapshot (``dict[str,str]``
     persisted in ``command.issued`` params) or a legacy path-set
@@ -148,37 +149,45 @@ class ResultCheckpointMixin:
     fall back to conservative set-diff semantics.
 
     Attributes all Shield-created/modified non-ignored regular files
-    under ``tests/`` (``*.py`` test modules, ``*.patch`` / ``*.json``
-    support assets, etc.) by content identity, not only ``.py``. This
-    ensures support assets are checkpointed with the test-authority
-    commit. Pre-existing untouched Human dirty files are never claimed
-    (identity unchanged)."""
+    under the role's writable directories (from ``project.toml
+    [layout.shield]``) by content identity, not only ``.py``. Document
+    discussion replies (e.g. to ``test-plan.md``) are validated
+    separately by the doc-delta check and excluded from the artifact
+    manifest comparison."""
+        shield_dirs = layout_paths(self.repo, "shield")
         if isinstance(pre_dirty, dict):
             post_snapshot = self._dirty_snapshot()
             test_files = sorted(
                 f for f in post_snapshot
-                if f.startswith("tests/")
-                and _is_regular_file_identity(post_snapshot[f])
+                if _is_regular_file_identity(post_snapshot[f])
                 and pre_dirty.get(f) != post_snapshot[f]
+                and any(f.startswith(d) for d in shield_dirs)
             )
         else:
             post_dirty = self._dirty_files()
             changed = (post_dirty - pre_dirty) if pre_dirty is not None \
                 else post_dirty
             test_files = sorted(
-                f for f in changed if f.startswith("tests/")
+                f for f in changed
+                if any(f.startswith(d) for d in shield_dirs)
                 and (self.repo / f).is_file()
                 and not (self.repo / f).is_symlink())
         include = (result.get("artifact_manifest") or {}).get("include", [])
-        include_paths = [entry.get("path") for entry in include]
+        # Only compare code/data artifacts (under shield_dirs) against
+        # observed files; document discussion replies are excluded from
+        # the manifest check (validated by the doc-delta audit instead).
+        code_include = [
+            p for p in (e.get("path") for e in include)
+            if p and any(p.startswith(d) for d in shield_dirs)
+        ]
         manifest_error = None
-        if set(include_paths) != set(test_files):
+        if set(code_include) != set(test_files):
             manifest_error = (
                 "artifact_manifest include paths do not match observed "
-                f"tests/ files: include={sorted(include_paths)}, "
+                f"test files: include={sorted(code_include)}, "
                 f"observed={test_files}"
             )
-        artifacts = list(include_paths if manifest_error is None else test_files)
+        artifacts = list(code_include if manifest_error is None else test_files)
         digests = capture_digests({f: self.repo / f for f in artifacts})
         return {
             "source": "shield", "stage": "M-TEST", "substate": "WRITE",
@@ -186,10 +195,10 @@ class ResultCheckpointMixin:
             "artifacts": artifacts, "allowed_paths": artifacts,
             "base_sha": base_sha,
             "checks": ["write_scope", "collection"],
-            # D-32: WRITE requires an attributable tests/ diff (test modules
-            # and/or support assets), so a done/no-diff Shield output fails
-            # validation and can never publish test.written / reach COLLECT
-            # (it retries/escalates).
+            # D-32: WRITE requires an attributable test-asset diff (test
+            # modules and/or support assets), so a done/no-diff Shield
+            # output fails validation and can never publish test.written
+            # / reach COLLECT (it retries/escalates).
             "requires_diff": True, "forbid_diff": False,
             "discussion_only": False,
             "commit_label": result.get("suggested_commit_message"),
@@ -424,12 +433,13 @@ class ResultCheckpointMixin:
         return False
 
     def _check_write_scope(self, artifacts, attempt, command_id):
-        """Verify all artifacts are under tests/. Returns True on failure."""
+        """Verify all artifacts are under Shield's writable dirs (project.toml)."""
+        shield_dirs = layout_paths(self.repo, "shield")
         for artifact in artifacts:
-            if not artifact.startswith("tests/"):
+            if not any(artifact.startswith(d) for d in shield_dirs):
                 self._emit("verdict.failed",
                            {"check": "write_scope",
-                            "reason": f"file outside tests/: {artifact}",
+                            "reason": f"file outside Shield writable dirs: {artifact}",
                             "evidence": artifact, "attempt": attempt},
                            command_id=command_id)
                 return True
