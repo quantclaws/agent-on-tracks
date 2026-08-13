@@ -42,6 +42,12 @@ sha: 7363f00b70a160b4acc6da8c1c8679ce76416ac928db435154e4e79e4d7a1484
 - **取代**：无——本版本不取代、不改写既有 FR/NFR 与 ID；既有 M-IMPL 阶段推进需求与 M-IMPL→M-VERIFY 边界保持不变。release-evidence 检查只证明「当前候选有真实成功 live evidence」，不实现 M-VERIFY/M-RELEASE（范围排除同步补充）。
 - **影响 FR**：FR-0230~FR-0233（新增）、NFR-0080（新增）、E-03（新增）。
 
+### R-6（2026-08-13）：S-001 doc-comment-first outcome 验收流程承接
+
+- **决定**：承接 S-001 §3.4–§3.7 及本次 Human 裁定，在 Devon/Shield outcome 的普通工件、manifest、collection、gate、checkpoint 或 DIAGNOSE 验证之前，优先识别本次结果中新建的合法设计文档讨论。合法讨论进入可见的 Prism 裁定与隔离恢复路径；非法非 discussion 正文编辑继续沿用整回合原子 fail-closed。新增 FR-0234（评论优先检查与可见等待）、FR-0235（Prism 裁定与责任路由）、FR-0236（授权非文档结果隔离恢复）、FR-0237（非法正文编辑原子拒绝）与 NFR-0090（隔离恢复可审计性）；新增交付面 E-04 与生命周期 SM-02，并扩展 RP-01。挂载点沿用既有 `trac run`、`trac status`、`trac discuss query`、`trac replay` 与 `trac report`，不新增顶层 CLI。
+- **取代**：替换现有“合法 discussion 随 outcome 直接进入普通验证”的结果验收顺序；不取代 OpencodeBackend 对非法设计正文编辑的整回合原子回滚，也不改变各 phase 原有 artifact/gate 判据。被隔离的旧 outcome 不得复用为成功。
+- **影响 FR**：FR-0234~FR-0237（新增）、NFR-0090（新增）、E-04（新增）、SM-02（新增）、RP-01（扩展）。
+
 ## 界面与入口
 
 ### E-01 `trac run` 驱动 M-IMPL 完整循环
@@ -92,6 +98,28 @@ release-evidence: NOT satisfied — live evidence missing/failed/stale/SHA misma
   next: rerun the opt-in live journey at current HEAD, then re-check
 $ echo $?
 1
+```
+
+### E-04 既有 CLI 的设计评论裁定、隔离与恢复旅程
+
+```
+$ trac run
+[run 01KZ...] outcome paused: design discussion awaiting Prism (role=Shield, task=T-004, phase=SHIELD_FIX)
+
+$ trac status
+run=01KZ... doc-gap=awaiting-adjudication origin=Shield/T-004/SHIELD_FIX quarantine=held
+
+$ trac discuss query --file .tracks/projects/v0.5/test-plan.md
+... open discussion and adjudication replies ...
+
+$ trac replay 01KZ...
+... doc-comment adjudication and quarantine events ...
+
+$ trac report --run-id 01KZ... --output .tracks/runtime/report --format md
+... discussion detected -> adjudicated -> quarantined -> restored-or-discarded -> resumed ...
+
+$ trac run
+[run 01KZ...] resumed with a new dispatch/attempt (role=Shield, task=T-004, phase=SHIELD_FIX)
 ```
 
 ## 状态与生命周期
@@ -145,6 +173,22 @@ $ echo $?
 43. ISLAND_GATE_2 → DIAGNOSE：全量执行有失败
 44. ISLAND_GATE_2 → PLANNING：`verdict.failed(island)`
 
+### SM-02 设计评论裁定记录
+
+未列出的状态转移即不允许。该记录附着于产生评论的 logical role/task/phase，不把旧 outcome 标记为成功。
+
+1. （新建）→ `DETECTED`：Devon/Shield outcome 含本次可归属、允许评论的设计文档新讨论，且未含非法正文编辑
+2. `DETECTED` → `AWAITING_ADJUDICATION`：Runtime 在普通结果验证前暂停该 outcome，记录来源；有可归属且授权的非文档变化时同时进入隔离保全
+3. `AWAITING_ADJUDICATION` → `DESIGN_GAP`：Prism 在原讨论确认 Archer 负责的设计、接口或测试计划缺口
+4. `AWAITING_ADJUDICATION` → `AGENT_CORRECTION`：Prism 在原讨论不确认设计缺口，并向原 Devon/Shield 给出纠正指引
+5. `DESIGN_GAP` → `READY_TO_RESUME`：Archer/Prism 与原 Agent 在原讨论完成修订、回复且线程关闭
+6. `AGENT_CORRECTION` → `READY_TO_RESUME`：Prism 与原 Agent 在原讨论完成纠正闭环且线程关闭
+7. `READY_TO_RESUME` → `RESTORED`：quarantine 为空，或隔离成果身份仍有效并已恢复供新的 dispatch/attempt 重新验证
+8. `READY_TO_RESUME` → `DISCARDED`：设计或运行身份变化使隔离成果 stale，Runtime 安全丢弃；后续新的 dispatch/attempt 从记录的 logical role/task/phase 重做
+9. `RESTORED` → `RESUMED`：Runtime 以相同 logical role/task/phase 发起新的 dispatch/attempt
+10. `DISCARDED` → `RESUMED`：Runtime 以相同 logical role/task/phase 发起新的 dispatch/attempt
+11. `DETECTED` / `AWAITING_ADJUDICATION` / `READY_TO_RESUME` → 同状态：Runtime 中断或重启后从持久化记录恢复，且不越过尚未满足的讨论或身份条件
+
 ## 角色与权限
 
 ### RP-01 M-IMPL 写范围与执行权
@@ -165,6 +209,11 @@ $ echo $?
 | 10  | M-IMPL 退出门禁（裁定退出）                  | ❌     | ❌      | ❌      | ❌     | ✅（程序证据） | ❌（无 Human 门禁） |
 | 11  | 回退 M-DESIGN（接口/架构缺口）               | ❌     | ❌      | ❌      | ❌     | ✅（Prism 裁定） | ❌     |
 | 12  | 回退 M-ACC/M-SPEC（AC/Spec 缺口）            | ❌     | ❌      | ❌      | ❌     | ✅（展示影响） | ✅（批准需求回退） |
+| 13  | 在获准设计文档中新建/回复讨论                | ✅（仅获准文档） | ✅（仅获准文档） | ✅（回复/修订） | ✅（裁定/回复） | ✅（校验/记录） | ✅（可回复） |
+| 14  | 裁定合法评论是否为设计缺口                  | ❌     | ❌      | ❌      | ✅     | ❌（只执行路由） | ❌（无技术门） |
+| 15  | 修订已确认的设计/接口/测试计划缺口          | ❌     | ❌      | ✅      | ❌     | ✅（按既有文档写范围审计） | ❌     |
+| 16  | 隔离、恢复或丢弃授权非文档变化              | ❌     | ❌      | ❌      | ❌     | ✅       | ❌     |
+| 17  | 编辑获准设计文档的非 discussion 正文        | ❌     | ❌      | ✅（仅经设计 assignment） | ❌ | ✅（违规结果原子拒绝） | ✅（流程外自有编辑不归 Agent outcome） |
 
 ## 功能需求
 
@@ -474,6 +523,47 @@ Shield 在 M-IMPL 承担 integration/e2e 测试的**测试归属与黑盒边界*
 
 发布验证始终显式执行 `trac check release-evidence`（FR-0232）；例行 CI 的 fake/simulated 结果或 credential-less skip 都**不能替代**它（BS-07/§5 约束）。该例外只保护日常 CI 可运行，不改变发布候选必须有 current successful live evidence 的要求（§5 非常规要求）。
 
+### FR-0234 Devon/Shield 设计评论优先检查与可见等待
+
+- **来源**：`BS-09` / `§3.4` / 本次 Human 讨论裁定 / 既有 OpencodeBackend discussion-only 审计合同
+- **交付入口**：`E-04`（`trac run` 启动/继续；`trac status`、`trac discuss query`、`trac replay`、`trac report` 观察）
+
+Runtime 收到 Devon 或 Shield 的 outcome 后，必须先检查本次结果可归属的、该角色获准评论的设计文档增量，再进行该 outcome 的普通 artifact、manifest、collection、gate、checkpoint 或 DIAGNOSE 验证。获准评论范围继承当前固定合同：Devon 仅可评论 `architecture.md`、`interfaces.md`，Shield 仅可评论 `test-plan.md`、`interfaces.md`；其它设计文档不因本路径扩大写权限。检查以本次 dispatch 前的文档内容身份为基线，只把本次新增且符合既有 inline-discussion 协议的增量认作合法讨论；含非 discussion 正文变化的结果优先按 FR-0237 拒绝，不得借合法评论掩盖正文编辑。
+
+若结果含合法新讨论，Runtime 按 SM-02.1–.2 暂停该 outcome，不把它或随附的未验证变化报告为成功，并交给 Prism 技术裁定。`trac status` 必须显示等待裁定状态、origin role/task/phase 与 quarantine 状态；`trac discuss query` 必须能看到原文档中的线程与回复；`trac replay` 和 `trac report` 必须能回溯 detected、adjudicated、quarantined、restored-or-discarded、resumed 的过程。若没有合法新讨论或非法正文变化，原 phase 的普通验证路径保持不变。
+
+### FR-0235 Prism 设计缺口裁定与责任路由
+
+- **来源**：`BS-11` / `BS-12` / `§3.6` / 本次 Human 讨论裁定
+- **交付入口**：`E-04`（原设计文档的 `trac discuss` 线程；`trac status` / `trac replay` / `trac report` 观察裁定与路由）
+
+Prism 必须在 FR-0234 检出的原讨论中裁定问题是否属于 Archer 负责的 architecture、interfaces 或 test-plan 缺口，并让操作者从讨论回复及状态/报告中看到裁定和责任去向：
+
+1. 确认为设计缺口时，Runtime 路由给 Archer 修订相应设计合同，Prism 与原 Agent 在同一讨论复核闭环；这是技术责任路由，不新增 Human 技术批准门（SM-02.3/.5）。
+2. 不确认为设计缺口时，Prism 在同一讨论向原 Devon/Shield 给出可执行的纠正指引，原 Agent 在该线程回应并闭环（SM-02.4/.6）。
+
+讨论未关闭前，原 outcome 不得继续普通验证。讨论关闭后，Runtime 必须以相同 logical role、task、phase 发起**新的** dispatch/attempt，并由该新结果重新接受 FR-0234 及原 phase 的全部验证；旧 outcome 不得复用或改标为成功（SM-02.7–.10）。操作者可持续运行或再次执行 `trac run` 继续，也可在继续前用 `trac status`、`trac discuss query` 与 `trac replay/report` 查看闭环结果。
+
+### FR-0236 合法评论期间的授权非文档结果隔离、恢复与过期处理
+
+- **来源**：`BS-13` / `§3.7` / 本次 Human 讨论裁定
+- **交付入口**：`E-04`（`trac status` 显示 quarantine；`trac replay` / `trac report` 显示隔离、恢复或丢弃；`trac run` 继续）
+
+当 FR-0234 检出的合法讨论 outcome 同时含本次 dispatch 可归属且符合该 Agent 写范围的非文档变化时，Runtime 必须把这些变化与 Human 修改及 dispatch 前既有脏改动隔离保全。隔离不得使用工作区共享 Git index，也不得把 Human/pre-dirty 内容复制为 Agent 成果；没有授权非文档变化时仍可进入评论裁定，但 quarantine 明确显示为空。
+
+在讨论关闭且新 dispatch/attempt 完成重新验证之前，隔离成果不得被提交、checkpoint、gate、计作 task 完成或对外显示为成功。Runtime 中断或重启后必须恢复 SM-02 中的裁定记录与 quarantine 身份，`trac status` 和 `trac replay/report` 可见当前 held/restored/discarded 状态，不要求操作者手工重建隔离。
+
+进入继续路径时，Runtime 必须将隔离成果绑定的 logical role/task/phase、来源 dispatch/attempt、基线与内容身份同当前设计和运行身份比较：仍有效的成果可恢复给新的 dispatch/attempt 重新验证（SM-02.7/.9）；设计修订或运行身份变化使其 stale 时，默认安全丢弃，或先经原 phase 的完整验证证明仍有效后再恢复（SM-02.8/.10）。无论恢复还是丢弃，都不得触及 Human/pre-dirty 内容，且必须在公开审计结果中给出结果与原因。
+
+### FR-0237 非 discussion 设计正文编辑的整回合原子拒绝
+
+- **来源**：`BS-10` / `§3.5` / 本次 Human 讨论裁定 / 既有 OpencodeBackend 原子 fail-closed 合同
+- **交付入口**：`E-04`（`trac run` 的失败/重试路径；`trac status`、`trac replay`、`trac report` 观察失败与回滚）
+
+当 Devon 或 Shield outcome 含本次结果可归属的非 discussion 设计文档正文编辑时，Runtime 必须继续执行整回合原子 fail-closed：回滚该 dispatch 的全部 Agent 可归因变化并逐字节保留 Human 与 dispatch 前既有脏改动，不保留部分代码或其他非文档成果，不进入 Prism 评论裁定，也不提交、checkpoint、gate 或显示为成功。该规则优先于同一 outcome 中可能存在的合法讨论。
+
+Runtime 必须在既有状态与审计输出中显示 over-reach 类失败、被拒绝的文档路径和整回合回滚结果，并按原 logical role/task/phase 的失败与 attempt 预算语义发起新的 dispatch/attempt。新结果从 FR-0234 的前置检查重新开始；失败结果及回滚证据保留以供 `trac replay/report` 审计，但不给 Agent 编辑设计文档正文的权限。
+
 ## 非功能需求
 
 ### NFR-0010 M-IMPL 控制流维持 kernel 纯函数边界
@@ -508,6 +598,12 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 
 `trac check release-evidence`（FR-0232）必须**确定性 fail closed**：对缺失、失败、过期、candidate SHA 不匹配或非真实来源的证据**不误报成功**，只依赖可审计证据（agent I/O、事件、Git 结果、`backend=opencode` 身份），不依赖 agent 自述或人工插入。检查本身是可复核的程序门禁：其输入证据与判定结果可由事件/审计记录回溯（沿用 NFR-0020 append-only 事件与凭据脱敏边界）。例行 CI 的 credential-less skip 或 fake/simulated 结果既不产生、也不满足 release evidence（BS-07）。
 
+### NFR-0090 评论裁定与隔离恢复的原子性、持久性和可审计性
+
+- **来源**：`BS-09` / `BS-10` / `BS-13` / `§3.4` / `§3.7`
+
+FR-0234~FR-0237 的 detected、adjudicated、quarantined、restored-or-discarded 与 resumed 事实必须沿用 append-only 事件溯源：每项可关联 run、origin role/task/phase、来源 dispatch/attempt、讨论文档/线程、quarantine 内容身份和后续 dispatch/attempt。重放必须得到与中断前一致的等待、隔离及恢复/丢弃状态；中断不得让未闭环讨论或未验证成果越过普通门禁。隔离、恢复、丢弃和非法编辑整回合回滚必须是 fail-closed 的原子结果：不能部分污染 Human/pre-dirty 内容、共享 Git index 或无关 task，也不能因重放而把旧 outcome 重复计为成功。
+
 ## 范围排除
 
 - 不实现 M-VERIFY 及后续阶段，只停在 M-IMPL → M-VERIFY 边界（FR-0160，BS-14）。
@@ -523,3 +619,7 @@ M-IMPL 全程事件（`stage.entered` / `baseline.frozen` / `taskgraph.committed
 - 不把 live 旅程扩展为覆盖全部生产 task——本版只要求至少一个 task 的完整真实 RGR 旅程（FR-0230，§5 Out-of-Scope）。
 - 不强制所有例行 CI 或所有开发者提供真实 provider 凭据——credential-less routine CI 允许只跳过 opt-in live 测试（FR-0233），但 skip 不等于发布证据（FR-0232，§5 约束）。
 - 不为 live 旅程或发布前置检查新增 CLI/CI 之外的交付面（沿用 `trac run` live opt-in 与 `trac check release-evidence`，§5 Out-of-Scope）。
+- 不为设计评论裁定新增顶层 CLI、UI 或 API；仅扩展既有 `trac run/status/discuss/replay/report` 的状态与审计出口（FR-0234~FR-0237）。
+- 不允许 Devon/Shield 通过 discussion 路径编辑设计文档正文，不把非法正文编辑转为 Prism 设计缺口，也不为其保留部分 Agent 结果（FR-0237）。
+- 不复用旧 outcome 作为评论闭环后的成功结果；恢复必须进入新的 dispatch/attempt 并重新接受原 phase 验证（FR-0235/FR-0236）。
+- 不规定 quarantine 的内部存储格式，但共享 Git index 明确不得作为隔离载体（FR-0236）。
