@@ -195,6 +195,14 @@ class ResultCheckpointMixin:
             if p and any(p.startswith(d) for d in shield_dirs)
         ]
         manifest_error = None
+        if not test_files and code_include:
+            # On retry, Shield may not create new files — it verifies
+            # existing files from previous attempts. Accept manifest
+            # paths if they all exist on disk and are dirty (untracked
+            # or modified), even if they weren't changed in this run.
+            dirty = self._dirty_files()
+            if all(p in dirty and (self.repo / p).is_file() for p in code_include):
+                test_files = sorted(code_include)
         if set(code_include) != set(test_files):
             manifest_error = (
                 "artifact_manifest include paths do not match observed "
