@@ -763,23 +763,23 @@ e2e 仅覆盖 happy path（主成功旅程），边界/错误情形归入 integr
 
 Shield 在 M-TEST 阶段已为每条 required integration/e2e 测试绑定一个最小合同偏离补丁（counterexample patch），存放在 `tests/counterexamples/v0.5/`，并在 `kill-manifest.json` 中登记 19 条 binding。
 
-**现状**：19 条 binding 全部为 `pending-implementation`。这不是测试缺陷，而是 M-TEST 阶段的**结构性必然**——所有生产桩在 M-TEST 阶段 `raise NotImplementedError("IF-...")`，integration/e2e 测试经公开 CLI/event 出口进入，在 CLI 路由 / 事件观察层失败（合法 Red），**永远到达不了被变异的桩**。因此应用任何 counterexample 后测试的失败栈不变，counterexample 无法被"杀死"（killed）。`kill-manifest.json` 的 `contract` 字段已固化这一说明。
+**现状**：19 条 binding 中的一部分因前一轮 M-IMPL cycle（fa19f11）已实现对应生产代码（architecture.md §1.0.3 预实现 IF- 合同），其 killability 状态从 `pending-implementation` 转为**可立即 kill 验证**——路由已存在、生产代码可达，应用 counterexample 后测试失败方式应改变。其余指向 `tests/e2e_live`/doc-comment 等新建桩的 binding 保持 `pending-implementation`（见 §12.3）。`kill-manifest.json` 的 `contract` 字段固化旧口径，本条修订后以本计划为准，Shield 按 §12.5 协议重跑未过期的 binding。
 
 **术语**：
 - **killed**：应用 patch 后测试按预期失败方式改变（失败栈/断言信息变化），证明断言有区分力。
-- **survived**：应用 patch 后测试仍以原方式失败，证明断言未命中被变异的合同条款（区分力缺失）或测试未到达被变异点（M-TEST 阶段结构性 pending）。
-- **pending-implementation**：survived 的一个子类——失败不变因为被变异桩在 M-TEST 阶段不可达；待 Devon 在 M-IMPL 实现路由后变为可 kill。
+- **survived**：应用 patch 后测试仍以原方式失败，证明断言未命中被变异的合同条款（区分力缺失）或测试未到达被变异点（结构性 pending）。
+- **pending-implementation**：survived 的一个子类——失败不变因为被变异生产代码在 M-TEST 阶段尚未实现/不可达；待对应实现路由存在后变为可 kill。对预实现 IF- 合同（architecture.md §1.0.3），该子类不再适用。
 
-### 12.2. 为何 M-TEST 阶段无法 kill
+### 12.2. 为何部分 binding 在 M-TEST 阶段无法 kill
 
-M-TEST 阶段的合法 Red 模式：
+M-TEST 阶段的合法 Red 模式（仅对尚未实现的路由适用）：
 1. 测试经 `trac` CLI 或 event log 进入被测系统；
 2. 路由层（`trac` 命令分发、event 追加）本身由既有 v0.4 实现承载，可达；
-3. 一旦路由需要进入 M-IMPL 阶段的生产桩（如 `create_red_ref`、`run_gates`、`create_gate_worktree`、`parse_tasks_json` 等），桩立即 `raise NotImplementedError("IF-...")`；
+3. 一旦路由需要进入未实现的生产代码（如 `create_red_ref`、`run_gates`、`create_gate_worktree`、`parse_tasks_json` 等），桩立即 `raise NotImplementedError("IF-...")`；
 4. 测试在断言"事件序列含某 event kind"或"CLI 输出含某 token"处失败，**断言失败发生在桩 raise 之前的事件观察层**；
 5. 应用 counterexample（修改桩的返回值/行为）不会改变事件序列或 CLI 输出，因为桩根本没被调用到。
 
-这是黑盒测试立场与 RGR 红灯阶段的直接结果：测试不窥探内部状态，只观察公开出口；公开出口在 M-TEST 阶段不产出 M-IMPL 的业务事件，因为 M-IMPL 路由尚未实现。
+这曾是 M-TEST 阶段的**结构性必然**。但 v0.5 M-DESIGN 修订（architecture.md §1.0.3/§2）确认前一轮 M-IMPL cycle 已实现 IF-IMPL-003/004/005/006 及 M-IMPL 控制流模块（kernel/m_impl.py、executor/m_impl_runtime.py 等），这些模块的公开出口可达、既有 integration 测试通过——因此针对这些模块的 binding 不再因"桩不可达"而 pending，应在 M-TEST 立即重跑 kill 验证确认区分力。仅针对确实新建的桩（`live_evidence.py`、`release_evidence.py`、`doc_comment.py`）的 binding 维持旧语义。
 
 ### 12.3. Killability 解锁条件
 
@@ -787,7 +787,8 @@ M-TEST 阶段的合法 Red 模式：
 
 | 解锁触发 | 责任方 | 时机 | kill 验证动作 |
 |:---|:---|:---|:---|
-| Devon 在 M-IMPL RGR 中实现对应 IF- 的真实路由，使被变异桩可达 | Devon | M-IMPL GREEN 阶段 | Shield 在 SHIELD_FIX（如测试被诊断为缺陷）或 ISLAND_GATE_2 全量执行时重新应用 patch，确认测试失败方式改变 -> killed |
+| 生产代码已实现（前一轮 M-IMPL cycle，architecture.md §1.0.3 预实现 IF- 合同），路由可达 | —（已存在） | M-TEST 阶段立即（本计划修订后） | Shield 重新应用 patch，确认测试失败方式改变 -> killed |
+| Devon 在 M-IMPL RGR 中实现对应新建桩（IF-LIVE-001/IF-RELEASE-001/IF-DOCGAP-001/IF-QUARANTINE-001）的真实路由，使被变异桩可达 | Devon | M-IMPL GREEN 阶段 | Shield 在 SHIELD_FIX（如测试被诊断为缺陷）或 ISLAND_GATE_2 全量执行时重新应用 patch，确认测试失败方式改变 -> killed |
 | Prism 在 M-IMPL 评审中指出某 binding 区分力可疑（survived 但非 pending-implementation 语义） | Prism | M-IMPL review | Shield 修订测试断言使其命中合同条款，重做 kill 验证 |
 
 ### 12.4. 19 条 binding 的 killability 预期
@@ -832,7 +833,7 @@ M-TEST 阶段的合法 Red 模式：
 ### 12.6. 合规声明
 
 - 19 条 binding 的 patch 文件均已在 `tests/counterexamples/v0.5/` 落盘，内容为最小合同偏离（只改一个合同条款，不夹带其它变更）。
-- M-TEST 阶段全部 binding 为 `pending-implementation` 是黑盒测试立场 + RGR 红灯阶段的结构性必然，非测试缺陷。
+- 前一轮 M-IMPL cycle（fa19f11）已实现 IF-IMPL-003/004/005/006 及 M-IMPL 控制流模块，使其对应 binding 不再因"桩不可达"而 pending；Shield 应在 M-TEST 立即重跑这些 binding 的 kill 验证确认区分力（§12.5 协议）。
+- 指向新建桩（`live_evidence.py`/`release_evidence.py`/`doc_comment.py` 及 doc-gap/quarantine）的 binding 维持 `pending-implementation` 状态，待 Devon 在 M-IMPL 实现路由后依 §12.5 协议执行 kill 验证。
 - Shield 不在 M-TEST 阶段强行 kill（不通过 mock 桩或窥探内部状态换取虚假 killed）。
-- kill 验证将在 Devon 实现 M-IMPL 路由后依 §12.5 协议执行；在此之前 `pending-implementation` 状态合法。
 - 若 Prism 在 M-IMPL review 中指出某 binding 的 patch 未真正偏离目标合同（即 patch 本身有问题），Shield 修订 patch 后重登记。

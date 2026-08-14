@@ -51,6 +51,7 @@ sha:
 - `executor/executor.py` 的 outcome 接收顺序改为：原子非法正文审计 → 合法新增讨论截获与授权非文档变化隔离 → 既有 ResultCheckpoint/M-IMPL artifact/manifest/collection/gate/checkpoint/DIAGNOSE。合法讨论不再先进入普通验证。
 - `kernel/machine.py`/events/report/CLI 投影扩展 SM-02；`trac status`、`trac replay`、`trac report` 暴露等待、裁定、quarantine、restore/discard、resumed。`trac discuss` 协议和固定可评论文档集合不变。
 - 非 discussion 正文编辑继续继承当前 effects audit 的整回合原子回滚；本版仅补齐显式 `outcome.rejected` 审计与原 role/task/phase 新 attempt 路由，不允许借合法 discussion 绕过。
+- 预实现 IF- 合同处理：工作树中包含前一轮 M-IMPL cycle（fa19f11）的完整实现（taskgraph/rgr/worktree/quality_gate、kernel/m_impl.py、executor/m_impl_runtime.py 等），本版不在 Scaffold 宣言中将其标为 interface stub，M-IMPL baseline 冻结按 verification-only 路由（§1.0.3）。仅新建 IF- 合同（live_evidence/release_evidence/doc_comment 及 doc-gap/quarantine）走标准 RED→GREEN→REFACTOR。
 
 ## 1. 模块边界
 
@@ -104,6 +105,17 @@ M-IMPL 子状态机（SM-01，21 个子状态）与既有 DRAFT/REVIEW/EXIT 模�
 - `SHIELD_FIX`：产出 `dispatch_agent(role=shield, substate=SHIELD_FIX)` command。executor 创建受控测试 commit（`test.committed`）。decide 路由：→ GREEN_GATE（重跑）。
 
 M-IMPL attempt 预算：PLANNING validate 失败、PRISM_PLAN/PRISM_RED/PRISM_FINAL revise、RED_GATE 非法红、GREEN_GATE/REFACTOR_GATE 失败均消耗各自子状态的 ≤3 预算（第 3 次升级 `awaiting_human`/escalation）。DIAGNOSE 路由（impl_defect/test_defect）回 GREEN/SHIELD_FIX 消耗 GREEN 预算；stub_gap/ac_gap/spec_gap 不消耗预算（路由到其他阶段）。`trac retry` 清除 escalation gate 并重置一份新的 ≤3 预算（NFR-0030-03）。
+
+### 1.0.3 预实现 IF- 合同的基线处理
+
+工作树中 IF-IMPL-003/004/005/006 及 M-IMPL 控制流模块（kernel/m_impl.py、executor/m_impl_runtime.py、tasklog.py、capabilities.py、effects/devon_patch.py、effects/devon_evidence.py 等）当前包含前一轮 M-IMPL cycle（fa19f11）的完整实现并已通过既有 integration 测试。本设计不在 M-DESIGN 阶段将它们当作接口 stub（Scaffold 宣言 §2 已移除 stub 声明）：M-IMPL BASELINE freeze（FR-0020）将这类 IF- 合同记为 `pre_implemented`，其 task graph 条目以 **verification-only** 处理——
+
+- task 不进入 RED-implementation 阶段（不要求 Devon 写 failing unit test）；
+- task 运行该 IF- 的既有 unit + integration 子集及质量门禁（GREEN_GATE 标准检查集），验证合同已满足；
+- 通过即 task 完成（`task.completed`），不进入 GREEN/REFACTOR 循环；
+- 失败（测试回归或质量门禁不通过）按 DIAGNOSE 路由（impl_defect 或 test_defect，与标准 RGR 一致）。
+
+仅对真正待新建的 IF- 合同（IF-LIVE-001、IF-RELEASE-001、IF-DOCGAP-001、IF-QUARANTINE-001 及剩余新逻辑）走本标准 RED→GREEN→REFACTOR。此分层设计对 M-IMPL 子状态机（§1.0.2 21 态封闭集）不产生新增状态：verification-only 在 TASK_DISPATCH 后直接进入 GREEN_GATE（等价于 GREEN 完成后的验证门禁），吸收 RED/RED_GATE/RED_CHECKPOINT/PRISM_RED/GREEN 阶段。
 
 ### 1.1 Composition Root
 
@@ -349,17 +361,14 @@ SM-02 是附着于 origin dispatch 的持久化记录，不是 M-IMPL 第 22 个
 - `.flake8` — 已有 CCR001 认知复杂度阈值配置；本 revision 继承并核对（kind: config）
 - `.githooks/pre-commit` — 已有八类守卫本地执行骨架；Runtime 负责 hooksPath 生效（kind: config）
 - `.github/workflows/ci.yml` — 已有 CI 骨架；声明 routine required checks 及待 Devon 补全的 live/release jobs（kind: ci-skeleton）
-- `tracks/executor/taskgraph.py` — 已存在的 IF-IMPL-003 interface scaffold；本 revision 不改写其业务行为（kind: stub）
-- `tracks/executor/rgr.py` — 已存在的 IF-IMPL-004 interface scaffold；本 revision 不改写其业务行为（kind: stub）
-- `tracks/executor/worktree.py` — 已存在的 IF-IMPL-006 interface scaffold；本 revision 不改写其业务行为（kind: stub）
-- `tracks/executor/quality_gate.py` — 已存在的 IF-IMPL-005 interface scaffold；本 revision 不改写其业务行为（kind: stub）
-- `tracks/executor/live_evidence.py` — 已存在的 live evidence schema 与 `bind_live_evidence`/`write_live_evidence` 接口桩（kind: stub）
-- `tracks/checks/release_evidence.py` — 已存在的 `ReleaseEvidenceReport` 与 release checker 接口桩（kind: stub）
+- `tracks/executor/live_evidence.py` — live evidence schema 与 `bind_live_evidence`/`write_live_evidence` 接口桩；行为体只 raise 对应 IF token（kind: stub）
+- `tracks/checks/release_evidence.py` — `ReleaseEvidenceReport` 与 release checker 接口桩；行为体只 raise 对应 IF token（kind: stub）
 - `tracks/executor/doc_comment.py` — DocCommentOrigin/DocumentDelta/DocGapRecord/QuarantineDescriptor/ResumeDecision 声明与分类、裁定、隔离、恢复决策接口桩；行为体只 raise 对应 IF token（kind: stub）
 
-> **Prism:** PRISM-DESIGN-001 [severity=blocker] [artifact=architecture.md §2 Scaffold 宣言 lines 352-355] [criterion=8+9+7] 合同真实性与 Scaffold 宣言不一致：architecture.md §2 将以下 4 个模块标为 interface scaffold（kind: stub），但它们的实际文件包含来自先前 M-IMPL cycle 的完整业务实现（fa19f11 commit M-IMPL implement T-01~T-05），且这些实现能通过现有 integration 测试：tracks/executor/taskgraph.py（23 个 def，0 NotImplementedError）、rgr.py（21 def，0 NIE）、worktree.py（11 def，0 NIE）、quality_gate.py（15 def，0 NIE）。仅 live_evidence.py/release_evidence.py/doc_comment.py 是真正 stub（raise NotImplementedError）。其后果：M-IMPL 对 IF-IMPL-003/004/005/006 的 RED 阶段无法建立合法红——实现已存在且测试通过，Devon 写的 unit tests 会直接 pass（unexpected_pass → illegal red 循环），任务无法推进。预期修订：（a）将 taskgraph/rgr/worktree/quality_gate 还原为正确 stub（raise NotImplementedError），或（b）在 Scaffold 宣言中诚实声明它们包含先前 cycle 的完整实现，并在 M-IMPL baseline 冻结/任务规划中提供处理已有实现的机制（如 baseline 冻结后仅验证性测试，不通过 RED 实现）。
+本节只声明 M-DESIGN 物理脚手架与工件状态。§1.0.3 预实现契约：`tracks/executor/taskgraph.py`、`tracks/executor/rgr.py`、`tracks/executor/worktree.py`、`tracks/executor/quality_gate.py` 及 M-IMPL 控制流模块（kernel/m_impl.py、executor/m_impl_runtime.py、tasklog.py、capabilities.py、effects/devon_patch.py、effects/devon_evidence.py）当前包含前一轮 M-IMPL cycle（fa19f11）的完整实现、已通过既有 integration 测试，**不是**本 revision 创建的 interface stub，故不列入 kind: stub；M-IMPL baseline 冻结按 verification-only 处理（见 §1.0.3），实现任务不在本设计任务图中重复 RED-implementation。`tests/integration/test_release_evidence.py`、`tests/integration/test_doc_comment_first.py`、`tests/integration/test_doc_comment_quarantine.py`、`tests/e2e/test_doc_comment_journey.py` 与 `tests/e2e_live/test_m_impl_release_evidence.py` 不在宣言中，因为它们是 Shield 的测试交付物，不是 Archer scaffold。
 
-本节只声明 M-DESIGN 物理脚手架。`tests/integration/test_release_evidence.py`、`tests/integration/test_doc_comment_first.py`、`tests/integration/test_doc_comment_quarantine.py`、`tests/e2e/test_doc_comment_journey.py` 与 `tests/e2e_live/test_m_impl_release_evidence.py` 不在宣言中，因为它们是 Shield 的测试交付物，不是 Archer scaffold。
+> **Prism:** PRISM-DESIGN-001 [severity=blocker] [artifact=architecture.md §2 Scaffold 宣言 lines 352-355] [criterion=8+9+7] 合同真实性与 Scaffold 宣言不一致：architecture.md §2 将以下 4 个模块标为 interface scaffold（kind: stub），但它们的实际文件包含来自先前 M-IMPL cycle 的完整业务实现（fa19f11 commit M-IMPL implement T-01~T-05），且这些实现能通过现有 integration 测试：tracks/executor/taskgraph.py（23 个 def，0 NotImplementedError）、rgr.py（21 def，0 NIE）、worktree.py（11 def，0 NIE）、quality_gate.py（15 def，0 NIE）。仅 live_evidence.py/release_evidence.py/doc_comment.py 是真正 stub（raise NotImplementedError）。其后果：M-IMPL 对 IF-IMPL-003/004/005/006 的 RED 阶段无法建立合法红——实现已存在且测试通过，Devon 写的 unit tests 会直接 pass（unexpected_pass → illegal red 循环），任务无法推进。预期修订：（a）将 taskgraph/rgr/worktree/quality_gate 还原为正确 stub（raise NotImplementedError），或（b）在 Scaffold 宣言中诚实声明它们包含先前 cycle 的完整实现，并在 M-IMPL baseline 冻结/任务规划中提供处理已有实现的机制（如 baseline 冻结后仅验证性测试，不通过 RED 实现）。
+>> **Archer:** PRISM-DESIGN-001 addressed. Resolution: option (b) — honest declaration + baseline verification-only mechanism, not option (a) (stub revert). Why not (a): the four modules import symbols (execute_gate_command, observation_evidence, _requirement_ref, etc.) that callers in m_impl_runtime.py, fake.py, main.py depend on; reverting to 32fb8ac stubs would break those imports → collection errors (illegal reds), not legal reds. Option (b) is implemented: (1) §2 Scaffold 宣言 no longer declares taskgraph/rgr/worktree/quality_gate as kind: stub; the text now honestly states they contain prior-cycle full implementations (fa19f11, passing tests). (2) §1.0.3 added: M-IMPL BASELINE freeze detects pre_implemented IF- contracts; tasks for IF-IMPL-003/004/005/006 run verification-only (no RED-implementation, existing unit+int tests verify). (3) §0.2 and §5.1 document the change. (4) test-plan §12 killability plan updated: pre-implemented modules' bindings are immediately killable. (5) interfaces.md unchanged (no stub claims). All three docs pass trac validate. The thread anchor was relocated in §2; Prism please resolve if acceptable.
 
 ## 3. 技术选型
 
@@ -538,6 +547,7 @@ live 通道（`tests/e2e_live/`）：routine pull request/push 中为独立 opt-
 - **Devon.md 移除 permission 块**：隔离由时态 worktree + manifest 承担（D-26）。代价：Devon.md 的 frontmatter permission 块移除后，opencode 的 per-agent harness 不提供文件级 deny。理由：时态 worktree 隔离（Devon candidate 不含 Shield tests）比 permission 块更可靠；manifest 白名单审计是程序级强制。
 - **IF- 标识粒度对齐增长轴**：IF-IMPL-001（kernel 状态机）与 IF-IMPL-002（executor handler）是粗粒度标识，覆盖多个函数/事件/状态字段。理由：kernel/machine.py 与 executor/executor.py 是既有文件，M-IMPL 是扩展而非新桩；IF- 标识服务于 M-IMPL task 变绿子集划分。
 - **task graph 解析用纯标准库**：不引入 networkx。代价：DAG 拓扑排序需自行实现。理由：Kahn's algorithm 简单（< 30 行），项目零运行时依赖。
+- **预实现 IF- 合同 verification-only**：IF-IMPL-003/004/005/006 及 M-IMPL 控制流模块已由前一轮 M-IMPL cycle（fa19f11）完整实现并通过既有 integration 测试，本版不在任务图中重复 RED-implementation，而是按 baseline freeze 的 verification-only 处理（§1.0.3）。代价：这些 IF- 的 "从 stub 到实现" RGR 旅程不复存在，变绿子集以验证为主。理由：实现已存在且可观察出口全部通过，重复 RED 会产生非法红（unexpected_pass → illegal red 循环，见 §1.0.3/§2）；新建 IF-（IF-LIVE-001/IF-RELEASE-001/IF-DOCGAP-001/IF-QUARANTINE-001）保持完整 RGR。
 - **ground truth 不适用**：v0.5 是行为正确性（状态机转移、事件序列、git 操作），无算法正确性/规则正确性/计算结果正确性需要独立验证。test-plan §3 判定不适用，不创建 tests/ground_truth/。
 
 ### 5.2 风险
