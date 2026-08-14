@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/doc_comment.py b/tracks/executor/doc_comment.py
+--- a/tracks/executor/doc_comment.py
++++ b/tracks/executor/doc_comment.py
+@@ -113,7 +113,7 @@ def adjudicate_doc_gap(
+     thread_ids: tuple[str, ...],
+ ) -> DocGapRecord:
+     """Record Prism's design-gap or agent-correction adjudication."""
+-    raise NotImplementedError("IF-DOCGAP-001")
++    return DocGapRecord("r-adj", None, "DESIGN_GAP", (), "design_gap", None)
+
+
+ def quarantine_authorized_changes(

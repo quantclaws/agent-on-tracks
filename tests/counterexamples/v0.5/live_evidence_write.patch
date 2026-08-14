@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/live_evidence.py b/tracks/executor/live_evidence.py
+--- a/tracks/executor/live_evidence.py
++++ b/tracks/executor/live_evidence.py
+@@ -128 +128 @@ def write_live_evidence(
+-    raise NotImplementedError("IF-LIVE-001")
++    return ""

@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/doc_comment.py b/tracks/executor/doc_comment.py
+--- a/tracks/executor/doc_comment.py
++++ b/tracks/executor/doc_comment.py
+@@ -93,7 +93,7 @@ def classify_design_document_deltas(
+     current_documents: dict[str, bytes],
+ ) -> tuple[DocumentDelta, ...]:
+     """Classify this dispatch's design-document deltas under IF-DOCGAP-001."""
+-    raise NotImplementedError("IF-DOCGAP-001")
++    return ()
+
+
+ def create_doc_gap_record(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,7 @@ LIVE_ENV = (
     "TRAC_LIVE_BASE_URL",
     "TRAC_LIVE_API_KEY",
 )
+LIVE_SKIPPED_PREFIX = "LIVE_SKIPPED: missing "
 AGENT_NAMES = tuple(sorted(AGENT_NAME.values()))
 REQUIRED_SCENARIOS = {
     "triage",
@@ -160,6 +162,21 @@ def live_env(install: LiveInstall, extra: dict[str, str] | None = None) -> dict[
                     model = f"{provider}/{model}"
             env["TRAC_AGENT_MODEL"] = model
     return env
+
+
+def _live_provenance(install: LiveInstall) -> dict[str, str]:
+    """Return launch facts required by the IF-LIVE-001 evidence contract."""
+    candidate_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return {
+        "TRAC_LIVE_CANDIDATE_SHA": candidate_sha,
+        "TRAC_LIVE_ARTIFACT_SHA256": hashlib.sha256(install.wheel.read_bytes()).hexdigest(),
+    }
 
 
 def timeout_env(name: str, default: int) -> int:
@@ -987,6 +1004,7 @@ class LiveTracDriver:
         scenario: str | None,
         console_input: str | None,
         max_dispatches: int | None = None,
+        no_overlay: bool = False,
     ) -> tuple[list[str], str]:
         command_args = list(args)
         if not command_args or command_args[0] != "run":
@@ -994,16 +1012,20 @@ class LiveTracDriver:
         selected = self.scenarios.get(scenario or "triage")
         if selected is None:
             self.fail(f"unknown live scenario {scenario!r}")
+        budget = (
+            max_dispatches
+            if max_dispatches is not None
+            else self._dispatch_budget(selected)
+        )
+        if no_overlay:
+            command_args.extend(["--max-dispatches", str(budget)])
+            return command_args, ""
         command_args.extend(
             [
                 "--assignment-overlay",
                 str(selected.path),
                 "--max-dispatches",
-                str(
-                    max_dispatches
-                    if max_dispatches is not None
-                    else self._dispatch_budget(selected)
-                ),
+                str(budget),
             ]
         )
         return command_args, selected.console_input if console_input is None else console_input
@@ -1029,6 +1051,7 @@ class LiveTracDriver:
         agent_timeout=None,
         max_dispatches=None,
         backend: str = "opencode",
+        no_overlay: bool = False,
     ):
         self.command_count += 1
         if self.command_count > self.max_commands:
@@ -1037,7 +1060,7 @@ class LiveTracDriver:
         if remaining <= 0:
             self.fail("live journey total timeout exceeded")
         command_args, selected_console = self._command_args(
-            args, scenario, console_input, max_dispatches
+            args, scenario, console_input, max_dispatches, no_overlay=no_overlay
         )
         effective_agent_timeout = agent_timeout or self.agent_timeout
         env = live_env(
@@ -1047,6 +1070,8 @@ class LiveTracDriver:
                 "TRAC_AGENT_TIMEOUT": str(effective_agent_timeout),
             },
         )
+        if no_overlay and backend.strip().lower() == "opencode":
+            env.update(_live_provenance(self.install))
         if backend.strip().lower() == "fake":
             env.pop("TRAC_AGENT_CONSOLE_INPUT", None)
         else:

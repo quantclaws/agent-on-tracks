@@ -1,0 +1,6 @@
+diff --git a/tracks/executor/doc_comment.py b/tracks/executor/doc_comment.py
+--- a/tracks/executor/doc_comment.py
++++ b/tracks/executor/doc_comment.py
+@@ -139 +139 @@ def decide_quarantine_resume(
+-    raise NotImplementedError("IF-QUARANTINE-001")
++    return ResumeDecision("restore", "identity_current", "d-next", 2)

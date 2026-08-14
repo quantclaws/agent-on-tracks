@@ -1,0 +1,34 @@
+diff --git a/tracks/executor/live_evidence.py b/tracks/executor/live_evidence.py
+--- a/tracks/executor/live_evidence.py
++++ b/tracks/executor/live_evidence.py
+@@ -119 +119 @@ def bind_live_evidence(
+-    raise NotImplementedError("IF-LIVE-001")
++    return LiveEvidenceBundle(
++        schema_version="tracks.release-evidence/v1",
++        status="satisfied",
++        candidate_sha="a" * 40,
++        candidate_artifact=CandidateArtifactEvidence(
++            name="fake.whl", sha256="b" * 64, distribution="agent-on-tracks",
++            version="0.0.0", installed_import_path="/tmp/fake/__init__.py",
++            source_tree_import=False,
++        ),
++        run_id="fake-run",
++        backend="opencode",
++        provenance=ProvenanceEvidence(
++            backend_class="OpencodeBackend", fake_backend=True,
++            trac_fake_simulate=False, assignment_overlay=False,
++            assignment_simulation=False, event_origin="runtime",
++        ),
++        required_devon_phases=("RED", "GREEN", "REFACTOR"),
++        agent_io=(),
++        event_sequence=EventSequenceEvidence(
++            first_seq=1, last_seq=10, events_ref="blobs/x", events_sha256="c" * 64,
++        ),
++        rgr_lineage=RGRLineageEvidence(
++            task_id="T-001", attempt=1, red_ref="refs/red", r_sha="d" * 40,
++            g_sha="e" * 40, red_checkpoint_seq=5, green_commit_seq=6,
++            trailers={"Tracks-Task": "T-001"},
++        ),
++        gate_observations=(),
++        boundary=BoundaryEvidence(stage="M-IMPL", stage_exited_seq=9, run_completed_seq=10, terminal_state="boundary"),
++    )

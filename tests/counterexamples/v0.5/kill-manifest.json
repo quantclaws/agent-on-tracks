@@ -122,6 +122,186 @@
       "patch": "m_impl_boundary.patch",
       "result": "pending-implementation",
       "mutation": "M-IMPL exit requires Human and enters M-VERIFY"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_incomplete_failed_cancelled_and_fake_never_write_success",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence returns a fake satisfied bundle instead of raising NotImplementedError"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_provenance_rejects_fake_simulation_overlay_manual_events",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence accepts fake backend and returns a fake bundle"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_accepts_latest_current_real_auditable_bundle",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence returns satisfied without reading any bundle"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_rejects_stale_and_candidate_sha_mismatch",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence ignores SHA mismatch and returns satisfied"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_success_text_json_and_exit_contract",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence always returns satisfied regardless of actual evidence"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_fail_closed_reason_precedence_text_json_and_exit",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence always returns satisfied regardless of actual evidence"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_is_read_only_and_emits_no_verify_release_publish_effect",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence returns satisfied without any read-only guarantee"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_routine_skip_and_fake_never_satisfy_release_prerequisite",
+      "patch": "live_evidence_write.patch",
+      "result": "pending-implementation",
+      "mutation": "write_live_evidence returns empty string instead of raising NotImplementedError"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_check_is_deterministic_auditable_and_rejects_event_only_evidence",
+      "patch": "release_evidence_checks.patch",
+      "result": "pending-implementation",
+      "mutation": "check_release_evidence accepts event-only evidence as satisfied"
+    },
+    {
+      "test": "tests/integration/test_release_evidence.py::test_non_real_sources_neither_produce_nor_satisfy_evidence",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence accepts fake backend and returns a fake bundle"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_legal_discussion_pauses_before_all_ordinary_validation",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas returns empty (no delta) instead of raising NotImplementedError"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_role_comment_scope_and_predispatch_threads_do_not_retrigger",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas returns empty (no delta) instead of raising NotImplementedError"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_outcome_without_new_discussion_uses_original_validation_path",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas returns empty (no delta) instead of raising NotImplementedError"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_design_gap_routes_archer_without_human_gate",
+      "patch": "doc_comment_adjudicate.patch",
+      "result": "pending-implementation",
+      "mutation": "adjudicate_doc_gap returns a DESIGN_GAP record without validation"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_agent_correction_stays_paused_until_original_thread_closes",
+      "patch": "doc_comment_adjudicate.patch",
+      "result": "pending-implementation",
+      "mutation": "adjudicate_doc_gap returns agent_correction without thread validation"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_closed_thread_creates_new_attempt_not_old_outcome_success",
+      "patch": "doc_comment_resume.patch",
+      "result": "pending-implementation",
+      "mutation": "decide_quarantine_resume always restores without identity check"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_illegal_body_edit_atomically_rolls_back_entire_outcome",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas ignores body edits and returns empty"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_illegal_edit_reports_paths_and_redispatches_new_attempt",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas ignores body edits and returns empty"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_illegal_edit_failure_evidence_survives_replay",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas ignores body edits and returns empty"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_quarantine_excludes_human_predirty_and_shared_index",
+      "patch": "doc_comment_quarantine.patch",
+      "result": "pending-implementation",
+      "mutation": "quarantine_authorized_changes returns empty quarantine without checking exclusions"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_empty_and_held_quarantine_never_checkpoint_before_resume",
+      "patch": "doc_comment_quarantine.patch",
+      "result": "pending-implementation",
+      "mutation": "quarantine_authorized_changes returns empty quarantine without checkpoint gate"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_restart_rebuilds_doc_gap_and_quarantine_state",
+      "patch": "doc_comment_resume.patch",
+      "result": "pending-implementation",
+      "mutation": "decide_quarantine_resume restores without identity rebuild"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_resume_restores_current_and_discards_stale",
+      "patch": "doc_comment_resume.patch",
+      "result": "pending-implementation",
+      "mutation": "decide_quarantine_resume restores stale identity without discard"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_interruption_never_leaks_quarantine_past_gates",
+      "patch": "doc_comment_quarantine.patch",
+      "result": "pending-implementation",
+      "mutation": "quarantine_authorized_changes returns empty quarantine without gate check"
+    },
+    {
+      "test": "tests/integration/test_doc_comment_quarantine.py::test_replay_never_promotes_old_outcome_or_duplicates_success",
+      "patch": "doc_comment_resume.patch",
+      "result": "pending-implementation",
+      "mutation": "decide_quarantine_resume restores old outcome without new attempt"
+    },
+    {
+      "test": "tests/e2e/test_doc_comment_journey.py::test_design_discussion_adjudication_resume_happy_path",
+      "patch": "doc_comment_classify.patch",
+      "result": "pending-implementation",
+      "mutation": "classify_design_document_deltas returns empty, skipping the doc-comment-first pause"
+    },
+    {
+      "test": "tests/e2e_live/test_m_impl_release_evidence.py::test_routine_missing_credentials_reports_live_skipped_without_evidence",
+      "patch": "live_evidence_write.patch",
+      "result": "pending-implementation",
+      "mutation": "write_live_evidence writes a success bundle despite missing credentials"
+    },
+    {
+      "test": "tests/e2e_live/test_m_impl_release_evidence.py::test_real_opencode_m_impl_rgr_release_evidence",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence accepts fake journey as real satisfied evidence"
+    },
+    {
+      "test": "tests/e2e_live/test_m_impl_release_evidence.py::test_real_journey_exposes_events_lineage_report_and_boundary",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence skips lineage/boundary checks"
+    },
+    {
+      "test": "tests/e2e_live/test_m_impl_release_evidence.py::test_real_journey_writes_complete_auditable_bundle",
+      "patch": "live_evidence_bind.patch",
+      "result": "pending-implementation",
+      "mutation": "bind_live_evidence writes incomplete bundle as complete"
     }
   ]
 }
