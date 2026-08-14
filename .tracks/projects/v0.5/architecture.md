@@ -357,6 +357,8 @@ SM-02 是附着于 origin dispatch 的持久化记录，不是 M-IMPL 第 22 个
 - `tracks/checks/release_evidence.py` — 已存在的 `ReleaseEvidenceReport` 与 release checker 接口桩（kind: stub）
 - `tracks/executor/doc_comment.py` — DocCommentOrigin/DocumentDelta/DocGapRecord/QuarantineDescriptor/ResumeDecision 声明与分类、裁定、隔离、恢复决策接口桩；行为体只 raise 对应 IF token（kind: stub）
 
+> **Prism:** PRISM-DESIGN-001 [severity=blocker] [artifact=architecture.md §2 Scaffold 宣言 lines 352-355] [criterion=8+9+7] 合同真实性与 Scaffold 宣言不一致：architecture.md §2 将以下 4 个模块标为 interface scaffold（kind: stub），但它们的实际文件包含来自先前 M-IMPL cycle 的完整业务实现（fa19f11 commit M-IMPL implement T-01~T-05），且这些实现能通过现有 integration 测试：tracks/executor/taskgraph.py（23 个 def，0 NotImplementedError）、rgr.py（21 def，0 NIE）、worktree.py（11 def，0 NIE）、quality_gate.py（15 def，0 NIE）。仅 live_evidence.py/release_evidence.py/doc_comment.py 是真正 stub（raise NotImplementedError）。其后果：M-IMPL 对 IF-IMPL-003/004/005/006 的 RED 阶段无法建立合法红——实现已存在且测试通过，Devon 写的 unit tests 会直接 pass（unexpected_pass → illegal red 循环），任务无法推进。预期修订：（a）将 taskgraph/rgr/worktree/quality_gate 还原为正确 stub（raise NotImplementedError），或（b）在 Scaffold 宣言中诚实声明它们包含先前 cycle 的完整实现，并在 M-IMPL baseline 冻结/任务规划中提供处理已有实现的机制（如 baseline 冻结后仅验证性测试，不通过 RED 实现）。
+
 本节只声明 M-DESIGN 物理脚手架。`tests/integration/test_release_evidence.py`、`tests/integration/test_doc_comment_first.py`、`tests/integration/test_doc_comment_quarantine.py`、`tests/e2e/test_doc_comment_journey.py` 与 `tests/e2e_live/test_m_impl_release_evidence.py` 不在宣言中，因为它们是 Shield 的测试交付物，不是 Archer scaffold。
 
 ## 3. 技术选型
