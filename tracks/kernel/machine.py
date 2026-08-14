@@ -420,6 +420,21 @@ def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
         s.doc_produced = True
 
 
+def _reset_m_test_dispatch_flag(s: State) -> None:
+    """Reset the flag guarding the current M-TEST substate's dispatcher.
+
+    A write-flags-only reset left reviewer_dispatched stuck True after a
+    failed PRISM_REVIEW dispatch, so decide() halted forever even after
+    human.retry cleared the escalation gate (run 01KZTHE7RMZE6110PK9C54K1E2
+    stalled post prism non_zero_exit)."""
+    if s.substate == "PRISM_REVIEW":
+        _reset_review(s)
+    elif s.substate == "NO_DIFF_REVIEW":
+        s.no_diff_reviewer_dispatched = False
+    else:
+        _reset_doc(s)
+
+
 def _handle_failed_outcome(s: State, p: dict) -> None:
     """FR-0210: a failed dispatch_agent outcome consumes an attempt from the
     same accounting as verdict.failed, carries failure evidence into the
@@ -442,7 +457,7 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
             s.diagnose_classification = "stub_gap"
             s.substate = "DIAGNOSE"
             return
-        _reset_doc(s)
+        _reset_m_test_dispatch_flag(s)
         _consume_attempt(s)
         return
     if s.stage == "M-IMPL":

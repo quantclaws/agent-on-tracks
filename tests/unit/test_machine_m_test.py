@@ -261,6 +261,31 @@ def test_prism_dispatch():
     assert cmd.params["assignment"]["criteria_pack"] == dict(_CRITERIA_PACK)
 
 
+def test_prism_dispatch_failure_re_dispatches():
+    """v0.5 regression (run 01KZTHE7RMZE6110PK9C54K1E2): a failed prism
+    dispatch (non_zero_exit) must reset reviewer_dispatched so decide()
+    re-dispatches Prism with failure evidence instead of halting forever
+    after human.retry clears the escalation gate."""
+    failed = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "failed",
+            "failure_class": "non_zero_exit",
+            "self_report": "opencode exited 1",
+        },
+    )
+    s = state_of(
+        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH, failed
+    )
+    assert s.substate == "PRISM_REVIEW"
+    assert s.reviewer_dispatched is False
+    cmd = decide(s)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    assert cmd.params["evidence"]["check"] == "non_zero_exit"
+
+
 # AC-FR0040-02@v0.4 TRACKS-TRACE criteria pack mismatch
 def test_criteria_pack_mismatch():
     """AC-FR0040-02@v0.4: verdict.failed(criteria_pack_mismatch) re-dispatches."""
