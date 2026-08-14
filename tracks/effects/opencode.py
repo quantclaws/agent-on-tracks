@@ -1094,6 +1094,10 @@ class OpencodeBackend:
                 break
             elif time.monotonic() - last_activity > inactivity_timeout:
                 break
+        # An unterminated final line (no trailing newline) is truncation
+        # evidence: keep it so _check_json can classify the stream.
+        if buf:
+            chunks.append(buf)
         return chunks, False
 
     @staticmethod

@@ -236,34 +236,38 @@ def test_operator_cancel_kills_process_group(fake_opencode, target_doc, host_rep
     re-raises KeyboardInterrupt; no production timeout is enforced.
 
     Uses a real sleeping subprocess to verify process-group cleanup and reap
-    behavior deterministically - no fake communicate that loops forever."""
+    behavior deterministically - cancellation is injected at the blocking
+    select() inside the streaming stdout reader."""
     import contextlib
 
     monkeypatch.setenv("FAKE_OPENCODE_BEHAVIOR", "sleep")
     b = backend(host_repo)
+    spawned = []
+
     real_popen = subprocess.Popen
-    captured_pid = []
 
-    class _CancelOnFirstCommunicate(real_popen):
-        def communicate(self, input=None, timeout=None):
-            if not getattr(self, "_cancel_done", False):
-                self._cancel_done = True
-                # Assert the real child is alive before simulating Ctrl-C
-                assert self.poll() is None, "child should be alive"
-                captured_pid.append(self.pid)
-                raise KeyboardInterrupt
-            # Second call: real reap of the killed child
-            return super().communicate(input=input, timeout=timeout)
+    class _CapturingPopen(real_popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
 
-    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", _CancelOnFirstCommunicate)
+    monkeypatch.setattr("tracks.effects.opencode.subprocess.Popen", _CapturingPopen)
+
+    def _cancel_on_first_select(rlist, wlist, xlist, timeout=None):
+        assert spawned, "child must be spawned before the blocking read"
+        # Assert the real child is alive before simulating Ctrl-C
+        assert spawned[-1].poll() is None, "child should be alive"
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("tracks.effects.opencode.select.select", _cancel_on_first_select)
     with pytest.raises(KeyboardInterrupt):
         b._run("scribe", "prompt")
 
     # Assert the child process group was killed and reaped
-    assert len(captured_pid) == 1
-    pid = captured_pid[0]
+    assert len(spawned) == 1
+    pid = spawned[0].pid
     # The process should be completely gone (killed by killpg + reaped by
-    # the second communicate call)
+    # the post-cancel wait)
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.kill(pid, 0)
         # If os.kill succeeds, the process is still alive - cleanup and fail
@@ -374,27 +378,69 @@ def test_materialize_backs_up_and_restores_human_agent(
 
 def test_console_input_is_forwarded_only_when_explicitly_configured(host_repo, monkeypatch):
     """A normal backend call does not invent Human input for the Agent."""
-    seen = []
+    import io
 
-    class Process:
-        pid = 123
-        returncode = 0
+    class FakeStdin:
+        def __init__(self):
+            self.written = io.StringIO()
+            self.closed = False
 
-        def communicate(self, input=None, timeout=None):
-            seen.append(input)
-            return "{}", ""
+        def write(self, data):
+            assert not self.closed
+            self.written.write(data)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    stdins = []
+
+    def _fake_popen(*args, **kwargs):
+        read_fd, write_fd = os.pipe()
+        os.close(write_fd)  # immediate EOF for the streaming reader
+        stdin = FakeStdin()
+
+        class _Stdout:
+            @staticmethod
+            def fileno():
+                return read_fd
+
+            @staticmethod
+            def read(*_):
+                return ""
+
+        class Process:
+            pid = 123
+            returncode = 0
+            stdout = _Stdout()
+            stderr = io.StringIO("")
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+        proc = Process()
+        proc.stdin = stdin
+        stdins.append(stdin)
+        return proc
 
     monkeypatch.setattr(
         "tracks.effects.opencode.subprocess.Popen",
-        lambda *args, **kwargs: Process(),
+        _fake_popen,
     )
     monkeypatch.delenv("TRAC_AGENT_CONSOLE_INPUT", raising=False)
     backend(host_repo)._run("Sage", "normal trac assignment")
-    assert seen == [None]
+    assert stdins[0].written.getvalue() == ""
+    assert stdins[0].closed is True
 
     monkeypatch.setenv("TRAC_AGENT_CONSOLE_INPUT", "actor=Test-Actor\nanswer=CLI")
     backend(host_repo)._run("Sage", "explicit console assignment")
-    assert seen[-1] == "actor=Test-Actor\nanswer=CLI"
+    assert stdins[1].written.getvalue() == "actor=Test-Actor\nanswer=CLI"
+    assert stdins[1].closed is True
 
 
 def test_unknown_role_returns_provider_unavailable(fake_opencode, target_doc, host_repo):
