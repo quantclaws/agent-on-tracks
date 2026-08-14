@@ -1168,16 +1168,20 @@ class OpencodeBackend:
 
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
         """Classify the exit; JSON is diagnostic-only (product = target diff)."""
-        if proc.returncode < 0:  # killed by signal (SIGINT/kill-9)
+        if proc.returncode < 0:  # killed by signal (SIGINT/kill-9 or manifest-kill)
             out = (proc.stdout or "").strip()
-            # opencode may hang after output; accept valid stdout, fall through
-            if not (out and self._parses_json(out)):
-                raise OpencodeError(
-                    "signal",
-                    f"killed by signal {-proc.returncode}",
-                    exit_code=proc.returncode,
-                    stderr=proc.stderr,
-                )
+            # The streaming reader kills the process group after detecting
+            # a valid manifest. The last line may be truncated by SIGKILL,
+            # so use _has_json_events (lenient) instead of _parses_json (strict).
+            # Accept if at least one valid JSON event was captured.
+            if out and self._has_json_events(out):
+                return
+            raise OpencodeError(
+                "signal",
+                f"killed by signal {-proc.returncode}",
+                exit_code=proc.returncode,
+                stderr=proc.stderr,
+            )
         if proc.returncode != 0:
             if self._looks_provider_error(proc.stderr):
                 raise OpencodeError(
@@ -1222,6 +1226,23 @@ class OpencodeBackend:
                 "4008",
             )
         )
+
+    @staticmethod
+    def _has_json_events(out: str) -> bool:
+        """Lenient check: at least one valid JSON event line in stdout.
+
+        Unlike _parses_json, this tolerates truncated lines (e.g. the last
+        line cut short by SIGKILL). Used by _check_json's signal branch.
+        """
+        for line in out.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("{"):
+                try:
+                    json.loads(stripped)
+                    return True
+                except json.JSONDecodeError:
+                    continue
+        return False
 
     @staticmethod
     def _parses_json(out: str) -> bool:
