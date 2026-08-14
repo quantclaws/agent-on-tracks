@@ -92,9 +92,22 @@ def capture_popen_cmd(monkeypatch, target="tracks.effects.opencode.subprocess.Po
     tests that assert on the opencode ``run`` command shape."""
     captured = {}
 
+    class _StubStderr:
+        def read(self, *_args, **_kwargs):
+            return ""
+
     class _StubProc:
         pid = 123
         returncode = 0
+
+        def __init__(self):
+            self.stderr = _StubStderr()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
 
         def communicate(self, input=None, timeout=None):
             return "{}", ""
