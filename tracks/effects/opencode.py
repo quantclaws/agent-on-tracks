@@ -400,11 +400,31 @@ class OpencodeBackend:
         )
         if not (doc_offending or over_paths or scaffold_offending):
             return None
-        auditor.rollback_agent_changes(baseline, new_changes=agent_changed, force=True)
         if scaffold_offending and not (doc_offending or over_paths):
-            return self._undeclared_scaffold_result(
-                diff_ref, scaffold_offending, proc, prompt, console_input
+            # Only the undeclared scaffold writes are non-compliant; the
+            # declared target docs are compliant and MUST be preserved (user
+            # contract: revert only non-compliant files, never the framework
+            # files inside the declared doc-set). Roll back ONLY the offending
+            # paths and tell the Agent exactly what was reverted and why, so
+            # the re-dispatch does not recreate them. Restoring to the
+            # pre-dispatch snapshot (not HEAD) is handled by the Auditor's
+            # baseline capture for any pre-dirty offending path.
+            rolled = auditor.rollback_agent_changes(
+                baseline, new_changes=set(scaffold_offending), force=True
             )
+            return self._undeclared_scaffold_result(
+                diff_ref,
+                scaffold_offending,
+                proc,
+                prompt,
+                console_input,
+                rolled=rolled,
+            )
+        # A non-discussion doc edit or a true over-reach invalidates the whole
+        # run (not just the offending paths): force-roll back every
+        # agent-attributable path in one pass, restoring Human's pre-dispatch
+        # dirty content byte-identical from the snapshot.
+        auditor.rollback_agent_changes(baseline, new_changes=agent_changed, force=True)
         return self._overreach_result(
             diff_ref,
             proc,
@@ -644,14 +664,25 @@ class OpencodeBackend:
         proc: subprocess.CompletedProcess,
         prompt: str,
         console_input: str | None,
+        rolled: list[str] | None = None,
     ) -> dict:
         paths = ", ".join(offending)
+        rolled_paths = ", ".join(rolled) if rolled else paths
         return {
             "status": "failed",
             "artifact_ref": None,
-            "self_report": f"undeclared scaffold writes: {paths}; agent changes rolled back",
+            "self_report": (
+                f"undeclared scaffold writes: {paths}; the non-compliant file(s) "
+                f"({rolled_paths}) were rolled back and the declared target "
+                f"docs were preserved. Do not recreate {paths} on retry - they "
+                f"are not enumerated in the architecture.md Scaffold 宣言."
+            ),
             "diff_ref": diff_ref,
-            "audit_evidence": f"undeclared_scaffold: {paths}",
+            "audit_evidence": (
+                f"undeclared_scaffold: {paths}; rolled_back: {rolled_paths} "
+                f"(not declared in architecture.md Scaffold 宣言; declared "
+                f"target docs preserved)"
+            ),
             "failure_class": "undeclared_scaffold",
             "agent_io": self._capture_io(proc, prompt, console_input),
         }

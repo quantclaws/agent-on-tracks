@@ -541,8 +541,10 @@ def test_archer_author_undeclared_scaffold_write_fails(
     """batch B tightens the M-DESIGN author audit (DRAFT and RESPOND alike): an
     in-repo write beside the trio that the freshly-written architecture.md
     Scaffold 宣言 does not enumerate is a classified failure (never silent),
-    and the write is rolled back. Single-doc stages keep repo-root trust (see
-    the Scribe test)."""
+    and ONLY the offending write is rolled back. The declared target docs are
+    compliant framework files and MUST be preserved (user contract: revert
+    non-compliant files only, never the framework files). Single-doc stages
+    keep repo-root trust (see the Scribe test)."""
     docs = [design_vdir / name for name in DESIGN_DOCS]
     (design_vdir / "architecture.md").write_text(
         ARCH_WITH_SCAFFOLD.format(bullets="- pyproject.toml — build config"), encoding="utf-8"
@@ -557,9 +559,22 @@ def test_archer_author_undeclared_scaffold_write_fails(
     assert out["status"] == "failed"
     assert out["failure_class"] == "undeclared_scaffold"
     assert "agent_scratch.tmp" in out["self_report"]
-    assert out["audit_evidence"] == "undeclared_scaffold: agent_scratch.tmp"
+    # The evidence tells the Agent exactly what was reverted and why so the
+    # re-dispatch does not recreate the file.
+    assert out["audit_evidence"].startswith("undeclared_scaffold: agent_scratch.tmp")
+    assert "rolled_back" in out["audit_evidence"]
+    assert "preserved" in out["audit_evidence"]
     assert not scratch.exists()  # the undeclared write is rolled back
     assert "architecture.md" in out["diff_ref"]  # the product was captured
+    # Bug A regression guard: the declared target docs are compliant framework
+    # files - they MUST survive the surgical rollback (the old force-rollback
+    # erased them and caused no_target_diff on retry).
+    arch = design_vdir / "architecture.md"
+    assert arch.exists() and "agent edit" in arch.read_text(encoding="utf-8")
+    for name in ("interfaces.md", "test-plan.md"):
+        doc = design_vdir / name
+        assert doc.exists(), f"{name} was erased by the rollback (Bug A regression)"
+        assert "agent edit" in doc.read_text(encoding="utf-8")
 
 
 def test_archer_draft_undeclared_write_inside_new_directory_fails(
