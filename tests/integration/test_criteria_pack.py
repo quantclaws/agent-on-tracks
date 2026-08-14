@@ -3,6 +3,7 @@
 Tests the D-29 triple: assignment carries criteria_pack, verdict echoes it,
 Runtime reads back and mismatches -> verdict.failed(criteria_pack_mismatch).
 """
+
 from tests.integration.helpers import m_test_events, walk_to_m_test
 from tracks.kernel.machine import _CRITERIA_PACK
 
@@ -13,8 +14,12 @@ def test_prism_reviews_with_criteria_pack(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = m_test_events(event_log(run_id))
-    prism_cmd = next(e for e in evs if e["type"] == "command.issued"
-                     and e["payload"]["command"]["params"].get("role") == "prism")
+    prism_cmd = next(
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "prism"
+    )
     assignment = prism_cmd["payload"]["command"]["params"]["assignment"]
     assert assignment["criteria_pack"] == dict(_CRITERIA_PACK)
     assert assignment["skills"] == ["tracks-discuz", "tracks-prism-test"]
@@ -27,21 +32,30 @@ def test_anti_self_report_triple(trac, event_log):
     trac("run")
     evs = m_test_events(event_log(run_id))
     # ① assignment carries criteria_pack
-    prism_cmd = next(e for e in evs if e["type"] == "command.issued"
-                     and e["payload"]["command"]["params"].get("role") == "prism")
+    prism_cmd = next(
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "prism"
+    )
     assigned = prism_cmd["payload"]["command"]["params"]["assignment"]["criteria_pack"]
     assert assigned == dict(_CRITERIA_PACK)
     # D-29: the criteria pack skill is declared for materialization (not just
     # identity metadata); assignment.skills names tracks-prism-test so the
     # backend materializes it for Prism to consume.
     assert prism_cmd["payload"]["command"]["params"]["assignment"]["skills"] == [
-        "tracks-discuz", "tracks-prism-test"]
+        "tracks-discuz",
+        "tracks-prism-test",
+    ]
     # ② verdict echoes it
     verdict = next(e for e in evs if e["type"] == "prism.verdict")
     assert verdict["payload"]["criteria_pack"] == dict(_CRITERIA_PACK)
     # ③ no criteria_pack_mismatch verdict.failed
-    mismatches = [e for e in evs if e["type"] == "verdict.failed"
-                  and e["payload"].get("check") == "criteria_pack_mismatch"]
+    mismatches = [
+        e
+        for e in evs
+        if e["type"] == "verdict.failed" and e["payload"].get("check") == "criteria_pack_mismatch"
+    ]
     assert not mismatches
 
 
@@ -67,8 +81,14 @@ def test_criteria_pack_no_formal_rules():
     formal validation rules. The D-14 boundary section explicitly excludes
     marker format, ID grammar, binding completeness from the pack's scope."""
     from pathlib import Path
-    skill = (Path(__file__).resolve().parent.parent.parent
-             / "tracks" / "skills" / "tracks-prism-test" / "SKILL.md")
+
+    skill = (
+        Path(__file__).resolve().parent.parent.parent
+        / "tracks"
+        / "skills"
+        / "tracks-prism-test"
+        / "SKILL.md"
+    )
     text = skill.read_text(encoding="utf-8")
     # Semantic criteria are present (the four D-29 criteria)
     assert "忠于 AC" in text
@@ -90,18 +110,27 @@ def test_criteria_pack_materialization_lifecycle(trac, event_log, host_repo):
     evs = m_test_events(event_log(run_id))
     # The Prism M-TEST dispatch declares tracks-prism-test in assignment.skills
     # so the backend materializes it (D-29: skill materialization + identity).
-    prism_cmd = next(e for e in evs if e["type"] == "command.issued"
-                     and e["payload"]["command"]["params"].get("role") == "prism"
-                     and e["payload"]["command"]["params"].get("substate")
-                     == "PRISM_REVIEW")
+    prism_cmd = next(
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "prism"
+        and e["payload"]["command"]["params"].get("substate") == "PRISM_REVIEW"
+    )
     prism_assignment = prism_cmd["payload"]["command"]["params"]["assignment"]
     assert "tracks-prism-test" in prism_assignment["skills"]
     # After the run, materialized skills are cleaned up
     skill_dest = host_repo / ".opencode" / "skills" / "tracks-prism-test" / "SKILL.md"
     # The canonical source exists (deliverable)
     from pathlib import Path
-    canonical = (Path(__file__).resolve().parent.parent.parent
-                 / "tracks" / "skills" / "tracks-prism-test" / "SKILL.md")
+
+    canonical = (
+        Path(__file__).resolve().parent.parent.parent
+        / "tracks"
+        / "skills"
+        / "tracks-prism-test"
+        / "SKILL.md"
+    )
     assert canonical.exists()
     # Materialized copy was cleaned up (absent unless it pre-existed)
     assert not skill_dest.exists() or skill_dest.read_text() != ""

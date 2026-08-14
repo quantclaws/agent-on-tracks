@@ -16,6 +16,7 @@ green.committed is emitted only after the branch/worktree contains G, and
 reconcile emits no duplicate event. Frozen Shield integration/e2e tests remain
 byte-identical in G (G is B's tree + the product impl diff only).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -58,14 +59,17 @@ def _freeze_tests(repo: Path) -> None:
     frozen = repo / "tests" / "integration" / "test_frozen.py"
     frozen.parent.mkdir(parents=True, exist_ok=True)
     frozen.write_text(
-        "# AC-FR0001-01@v0.5 TRACKS-TRACE integration test\n"
-        "def test_frozen():\n"
-        "    assert True\n",
+        "# AC-FR0001-01@v0.5 TRACKS-TRACE integration test\ndef test_frozen():\n    assert True\n",
         encoding="utf-8",
     )
     _git(repo, "add", "tests")
-    subprocess.run(["git", "commit", "-m", "freeze tests"], cwd=repo,
-                   check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "freeze tests"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _started_task(repo: Path) -> tuple[Store, dict]:
@@ -75,10 +79,15 @@ def _started_task(repo: Path) -> tuple[Store, dict]:
 
 def _outcome(phase, changed, r_identity=None, diff=None) -> dict:
     outcome = {
-        "role": "devon", "status": "done", "phase": phase,
-        "changed_paths": changed, "commands": [],
-        "manifest_compliance": True, "pre_identity": "pre",
-        "post_identity": "post", "implemented_if_ids": ["IF-IMPL-001"],
+        "role": "devon",
+        "status": "done",
+        "phase": phase,
+        "changed_paths": changed,
+        "commands": [],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-IMPL-001"],
         "diff_ref": diff,
     }
     if r_identity:
@@ -87,11 +96,17 @@ def _outcome(phase, changed, r_identity=None, diff=None) -> dict:
 
 
 def _run_red(executor: Executor, store: Store) -> str:
-    store.append("RUN", "v0.5", "outcome.received",
-                 _outcome("red", ["tests/unit/test_app.py"], diff=RGR_RED_DIFF))
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _outcome("red", ["tests/unit/test_app.py"], diff=RGR_RED_DIFF),
+    )
     executor._do_checkpoint_red(
         Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     red = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1]
     return red.payload["r_sha"]
@@ -99,23 +114,28 @@ def _run_red(executor: Executor, store: Store) -> str:
 
 def _stage_green(executor: Executor, store: Store, r_sha: str) -> None:
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _outcome("green", ["tracks/app.py"], r_sha,
-                          diff=RGR_GREEN_DIFF))
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _outcome("green", ["tracks/app.py"], r_sha, diff=RGR_GREEN_DIFF),
+    )
 
 
 def _commit_green(executor: Executor, store: Store) -> dict:
     executor._do_commit_green(
         Command("commit_green", command_id="C-G"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
-    greens = [e for e in store.events("RUN")
-              if e.type == "green.committed"]
+    greens = [e for e in store.events("RUN") if e.type == "green.committed"]
     assert greens, "green.committed must be emitted"
     return greens[-1].payload
 
 
 # -- fast-forward materialization ---------------------------------------------
+
 
 def test_commit_green_fast_forwards_branch_and_worktree_to_g(tmp_path):
     repo = _repo(tmp_path)
@@ -134,7 +154,8 @@ def test_commit_green_fast_forwards_branch_and_worktree_to_g(tmp_path):
     head = _git(repo, "rev-parse", "HEAD")
     assert head == payload["g_sha"], "branch/worktree must contain G"
     assert _git(repo, "rev-parse", f"{payload['g_sha']}^") == b_sha, (
-        "G parent must be B (derived from R's parent, not current HEAD)")
+        "G parent must be B (derived from R's parent, not current HEAD)"
+    )
     impl = repo / "tracks" / "app.py"
     assert impl.is_file(), "working tree must contain the implementation"
     assert 'IMPLEMENTED_IF = "IF-IMPL-001"' in impl.read_text(encoding="utf-8")
@@ -157,9 +178,9 @@ def test_green_materialization_leaves_frozen_tests_byte_identical(tmp_path):
     g_frozen = _git(repo, "show", f"{payload['g_sha']}:{frozen_path}")
     b_frozen = _git(repo, "show", f"{payload['base_sha']}:{frozen_path}")
     assert g_frozen == b_frozen, "frozen Shield tests must be byte-identical in G"
-    assert (repo / frozen_path).read_text(
-        encoding="utf-8").rstrip("\n") == g_frozen, (
-        "working tree frozen test must match G")
+    assert (repo / frozen_path).read_text(encoding="utf-8").rstrip("\n") == g_frozen, (
+        "working tree frozen test must match G"
+    )
 
 
 def test_commit_green_does_not_include_red_test_diff_in_g(tmp_path):
@@ -172,10 +193,12 @@ def test_commit_green_does_not_include_red_test_diff_in_g(tmp_path):
 
     tree = _git(repo, "ls-tree", "-r", "--name-only", payload["g_sha"])
     assert "tests/unit/test_app.py" not in tree, (
-        "G must be B tree + product impl diff only (no Red test diff)")
+        "G must be B tree + product impl diff only (no Red test diff)"
+    )
 
 
 # -- idempotent recovery ------------------------------------------------------
+
 
 def test_commit_green_reconcile_after_crash_is_idempotent(tmp_path):
     """Crash after the branch update to G but before green.committed: replay
@@ -196,29 +219,51 @@ def test_commit_green_reconcile_after_crash_is_idempotent(tmp_path):
     store2 = _store(repo)
     task2 = _task()
     raw = json.dumps({"tasks": [task2]}, sort_keys=True)
-    store2.append("RUN", "v0.5", "taskgraph.committed",
-                  {"task_count": 1, "task_ids": [task2["task_id"]],
-                   "tasks": [task2], "path": "tasks.json",
-                   "digest": hashlib.sha256(raw.encode()).hexdigest(),
-                   "validate_status": "pass"})
-    store2.append("RUN", "v0.5", "task.started",
-                  {"task_id": task2["task_id"], "task": task2,
-                   "manifest": {"task_id": task2["task_id"],
-                                "allowed_paths": [
-                                    "tracks/app.py", "tests/unit/test_app.py",
-                                ],
-                                "forbidden_paths": [".tracks/projects/**"]}})
-    store2.append("RUN", "v0.5", "red.checkpointed",
-                  {"r_sha": r_sha, "task_id": task2["task_id"], "attempt": 1})
+    store2.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "task_ids": [task2["task_id"]],
+            "tasks": [task2],
+            "path": "tasks.json",
+            "digest": hashlib.sha256(raw.encode()).hexdigest(),
+            "validate_status": "pass",
+        },
+    )
+    store2.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task2["task_id"],
+            "task": task2,
+            "manifest": {
+                "task_id": task2["task_id"],
+                "allowed_paths": [
+                    "tracks/app.py",
+                    "tests/unit/test_app.py",
+                ],
+                "forbidden_paths": [".tracks/projects/**"],
+            },
+        },
+    )
+    store2.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": r_sha, "task_id": task2["task_id"], "attempt": 1},
+    )
     executor2 = Executor(store2, repo, "RUN")
     _stage_green(executor2, store2, r_sha)
 
     payload2 = _commit_green(executor2, store2)
 
     assert payload2["g_sha"] == head, (
-        "reconcile must converge on the same G that is already materialized")
-    assert _git(repo, "rev-parse", "HEAD") == head, (
-        "reconcile must not move the branch")
+        "reconcile must converge on the same G that is already materialized"
+    )
+    assert _git(repo, "rev-parse", "HEAD") == head, "reconcile must not move the branch"
     assert not any(e.type == "verdict.failed" for e in store2.events("RUN"))
 
 
@@ -232,11 +277,11 @@ def test_commit_green_reconcile_replay_emits_no_duplicate_event(tmp_path):
     stale_state = store.state("RUN")
     executor._do_commit_green(command, stale_state, None, False)
     executor._do_commit_green(command, stale_state, None, True)
-    assert len([e for e in store.events("RUN")
-                if e.type == "green.committed"]) == 1
+    assert len([e for e in store.events("RUN") if e.type == "green.committed"]) == 1
 
 
 # -- unrelated HEAD fails closed ----------------------------------------------
+
 
 def test_commit_green_fails_closed_on_unrelated_head(tmp_path):
     repo = _repo(tmp_path)
@@ -247,22 +292,25 @@ def test_commit_green_fails_closed_on_unrelated_head(tmp_path):
     # unrelated work lands on the branch after the Red checkpoint.
     (repo / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
     _git(repo, "add", "unrelated.txt")
-    subprocess.run(["git", "commit", "-m", "unrelated"], cwd=repo,
-                   check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "unrelated"], cwd=repo, check=True, capture_output=True, text=True
+    )
     head_before = _git(repo, "rev-parse", "HEAD")
 
     executor._do_commit_green(
         Command("commit_green", command_id="C-G"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
 
-    failures = [e for e in store.events("RUN")
-                if e.type == "verdict.failed"]
+    failures = [e for e in store.events("RUN") if e.type == "verdict.failed"]
     assert failures, "unrelated HEAD must fail closed"
     assert failures[-1].payload["check"] == "impl_defect"
     assert "lineage" in failures[-1].payload["reason"]
     assert _git(repo, "rev-parse", "HEAD") == head_before, (
-        "unrelated work must never be reset or overwritten")
+        "unrelated work must never be reset or overwritten"
+    )
     assert not any(e.type == "green.committed" for e in store.events("RUN"))
 
 
@@ -271,16 +319,20 @@ def test_commit_green_fails_closed_when_r_base_unresolvable(tmp_path):
     store, task = _started_task(repo)
     executor = Executor(store, repo, "RUN")
     # A red.checkpointed event with a bogus r_sha: B cannot be derived.
-    store.append("RUN", "v0.5", "red.checkpointed",
-                 {"r_sha": "0" * 40, "task_id": task["task_id"],
-                  "attempt": 1})
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "0" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
     _stage_green(executor, store, "0" * 40)
     executor._do_commit_green(
         Command("commit_green", command_id="C-G"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
-    failures = [e for e in store.events("RUN")
-                if e.type == "verdict.failed"]
+    failures = [e for e in store.events("RUN") if e.type == "verdict.failed"]
     assert failures
     assert failures[-1].payload["check"] == "impl_defect"
     assert "unresolvable" in failures[-1].payload["reason"]
@@ -298,20 +350,30 @@ def test_commit_green_no_g_after_runtime_gate_failure(tmp_path):
     r_sha = _run_red(executor, store)
     _stage_green(executor, store, r_sha)
     # The Runtime-authoritative gate observed the failing unit command.
-    store.append("RUN", "v0.5", "verdict.failed",
-                 {"check": "impl_defect", "reason": "runtime gate",
-                  "evidence": '{"argv":[],"exit_code":1}', "attempt": 1})
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "reason": "runtime gate",
+            "evidence": '{"argv":[],"exit_code":1}',
+            "attempt": 1,
+        },
+    )
     head_before = _git(repo, "rev-parse", "HEAD")
 
     executor._do_commit_green(
         Command("commit_green", command_id="C-G"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
 
-    failures = [e for e in store.events("RUN")
-                if e.type == "verdict.failed"]
+    failures = [e for e in store.events("RUN") if e.type == "verdict.failed"]
     assert failures
     assert failures[-1].payload["check"] == "impl_defect"
     assert _git(repo, "rev-parse", "HEAD") == head_before, (
-        "no G may be materialized after a Runtime gate failure")
+        "no G may be materialized after a Runtime gate failure"
+    )
     assert not any(e.type == "green.committed" for e in store.events("RUN"))

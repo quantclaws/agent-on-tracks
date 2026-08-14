@@ -1,4 +1,5 @@
 """Deliverable consistency gate (FR-040/FR-130, AC-FR0130-03)."""
+
 from tracks.cli.main import cmd_check
 from tracks.deliverables import check_deliverables
 
@@ -37,6 +38,7 @@ def test_wellformed_version(tmp_path):
 
 def test_missing_iq_in_agent(tmp_path, monkeypatch):
     import tracks.deliverables as d
+
     p = tmp_path / "Lex.md"
     p.write_text("---\nversion: 0.2\n---\n\nbody\n", encoding="utf-8")
     monkeypatch.setattr(d, "AGENT_DELIVERABLES", (p,))
@@ -45,6 +47,7 @@ def test_missing_iq_in_agent(tmp_path, monkeypatch):
 
 def test_malformed_iq_in_agent(tmp_path, monkeypatch):
     import tracks.deliverables as d
+
     p = tmp_path / "Sage.md"
     p.write_text("---\nversion: 0.2\nIQ: Z\n---\n\nbody\n", encoding="utf-8")
     monkeypatch.setattr(d, "AGENT_DELIVERABLES", (p,))
@@ -53,6 +56,7 @@ def test_malformed_iq_in_agent(tmp_path, monkeypatch):
 
 def test_wellformed_iq_in_agent(tmp_path, monkeypatch):
     import tracks.deliverables as d
+
     p = tmp_path / "Scribe.md"
     p.write_text("---\nversion: 0.2\nIQ: A\n---\n\nbody\n", encoding="utf-8")
     monkeypatch.setattr(d, "AGENT_DELIVERABLES", (p,))
@@ -82,10 +86,12 @@ def test_cli_check_usage(tmp_path, capsys):
 # @Scribe), never resolve others' threads, and treat --inbox Scribe as a
 # quick personal filter only.
 
+
 def test_scribe_contract_author_uses_compact_not_inbox_as_complete_inbox():
     """DRAFT and RESPOND must instruct --compact (all speakers) as the first
     query command, not --inbox Scribe as the primary/complete inbox."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     # --compact must appear in DRAFT and RESPOND as the complete-inbox query
@@ -98,6 +104,7 @@ def test_scribe_contract_must_reply_to_all_open_reopen_threads():
     """Scribe must reply to every open/reopen thread by Human/Aaron/Sage,
     regardless of @Scribe mention."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     assert "open/reopen" in text
@@ -107,6 +114,7 @@ def test_scribe_contract_must_reply_to_all_open_reopen_threads():
 def test_scribe_contract_must_not_resolve_others_threads():
     """Scribe must not set-status resolved on threads initiated by others."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     assert "不得代发起人 set-status resolved" in text
@@ -115,6 +123,7 @@ def test_scribe_contract_must_not_resolve_others_threads():
 def test_scribe_contract_exit_via_check_ready_summary_only():
     """Exit check must use --check-ready --summary-only."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     assert "--check-ready --summary-only" in text
@@ -124,6 +133,7 @@ def test_scribe_contract_editing_discipline_one_pass_no_mechanical_renumber():
     """DRAFT and RESPOND must enforce one-pass block replace and forbid
     mechanical renumber churn across multiple LLM steps."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     # Editing discipline must appear in both DRAFT and RESPOND
@@ -138,6 +148,7 @@ def test_scribe_contract_open_reviewer_ruling_must_land():
     clear ruling/request (not only resolved threads), and must not modify body
     for still-unclarified open/reopen questions."""
     from tracks.deliverables import AGENT_DELIVERABLES
+
     scribe = next(p for p in AGENT_DELIVERABLES if p.name == "Scribe.md")
     text = scribe.read_text(encoding="utf-8")
     # Open reviewer ruling/request must be landed + replied

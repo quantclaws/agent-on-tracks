@@ -3,6 +3,7 @@
 Fake-channel end-to-end: DISPATCH -> WRITE -> COLLECT -> PRISM_REVIEW ->
 RED_CHECK -> EXIT -> test.committed -> stage.exited -> run.completed(boundary).
 """
+
 from tests.e2e.helpers import walk_to_m_test_complete
 from tests.e2e.test_happy_path import types
 from tests.integration.helpers import assert_sm01_event_sequence, m_test_events
@@ -16,8 +17,12 @@ def test_enter_dispatch(trac, event_log):
     assert evs[0]["type"] == "stage.entered"
     assert evs[0]["payload"]["stage"] == "M-TEST"
     # SM-01.2: DISPATCH -> first Shield dispatch
-    dispatch = next(e for e in evs if e["type"] == "command.issued"
-                    and e["payload"]["command"]["params"].get("role") == "shield")
+    dispatch = next(
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "shield"
+    )
     assert dispatch["payload"]["command"]["params"]["substate"] == "WRITE"
 
 
@@ -26,8 +31,11 @@ def test_collect_independent(trac, event_log):
     """AC-FR0030-01@v0.4: Runtime independently collects (collect_tests command)."""
     run_id = walk_to_m_test_complete(trac)
     evs = m_test_events(event_log(run_id))
-    collect = [e for e in evs if e["type"] == "command.issued"
-               and e["payload"]["command"]["kind"] == "collect_tests"]
+    collect = [
+        e
+        for e in evs
+        if e["type"] == "command.issued" and e["payload"]["command"]["kind"] == "collect_tests"
+    ]
     assert len(collect) == 1  # exactly one independent collection
 
 
@@ -61,11 +69,13 @@ def test_events_append_only(trac, event_log, host_repo):
     """AC-NFR0040-01@v0.4: M-TEST events are append-only (seq monotonic, no
     rewrites). Verified by checking seq continuity in the events table."""
     import sqlite3
+
     run_id = walk_to_m_test_complete(trac)
     db = host_repo / ".tracks" / "runtime" / "tracks.db"
     conn = sqlite3.connect(db)
-    seqs = [r[0] for r in conn.execute(
-        "SELECT seq FROM events WHERE run_id=? ORDER BY seq", (run_id,))]
+    seqs = [
+        r[0] for r in conn.execute("SELECT seq FROM events WHERE run_id=? ORDER BY seq", (run_id,))
+    ]
     conn.close()
     assert seqs == list(range(1, len(seqs) + 1))  # contiguous, no gaps/rewrites
 
@@ -74,6 +84,7 @@ def test_events_append_only(trac, event_log, host_repo):
 def test_rebuild_projections(trac, event_log, host_repo):
     """AC-NFR0040-02@v0.4: drop projections, rebuild from events -> same state."""
     import sqlite3
+
     walk_to_m_test_complete(trac)
     r1 = trac("status")
     assert "terminal=boundary" in r1.stdout

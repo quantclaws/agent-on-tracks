@@ -6,6 +6,7 @@ L1 Levenshtein window -> L2 root-only -> L3 not found. A write proceeds ONLY on
 a unique, confident match whose current thread_id equals the requested one
 (fail closed: ambiguous / not_found / stale never write).
 """
+
 from __future__ import annotations
 
 import re
@@ -77,9 +78,12 @@ def locate_comment(thread, token):
     matches: list = []
 
     def walk(comment, parent_text):
-        if (comment.text == token["text"] and comment.depth == token["depth"]
-                and speaker_key(comment.speaker) == speaker_key(token["speaker"])
-                and parent_text == token.get("parent", "")):
+        if (
+            comment.text == token["text"]
+            and comment.depth == token["depth"]
+            and speaker_key(comment.speaker) == speaker_key(token["speaker"])
+            and parent_text == token.get("parent", "")
+        ):
             matches.append(comment)
         for child in comment.children:
             walk(child, comment.text)
@@ -94,10 +98,13 @@ def locate_comment(thread, token):
 
 def _l0(threads, token, delta):
     target = token["root_line"] + delta
-    return [t for t in threads
-            if t.root_line == target
-            and t.root_text == token["root_text"]
-            and t.anchor_text == token["anchor_text"]]
+    return [
+        t
+        for t in threads
+        if t.root_line == target
+        and t.root_text == token["root_text"]
+        and t.anchor_text == token["anchor_text"]
+    ]
 
 
 def _l1(threads, token, delta):
@@ -109,8 +116,10 @@ def _l1(threads, token, delta):
     for t in threads:
         if abs(t.root_line - target) > window:
             continue
-        if (_levenshtein(t.root_text, root_tok) <= root_th
-                and _levenshtein(t.anchor_text, anc_tok) <= anc_th):
+        if (
+            _levenshtein(t.root_text, root_tok) <= root_th
+            and _levenshtein(t.anchor_text, anc_tok) <= anc_th
+        ):
             out.append(t)
     return out
 
@@ -120,8 +129,11 @@ def _l2(threads, token):
     if want is None:
         return []
     thresh = _threshold(token["root_text"])
-    scored = [(t, _levenshtein(t.root_text, token["root_text"]))
-              for t in threads if speaker_key(t.initiator) == want]
+    scored = [
+        (t, _levenshtein(t.root_text, token["root_text"]))
+        for t in threads
+        if speaker_key(t.initiator) == want
+    ]
     within = [(t, d) for t, d in scored if d <= thresh]
     if not within:
         return []
@@ -132,8 +144,7 @@ def _l2(threads, token):
 def _relocate(text, token):
     threads = parse_threads(text)
     delta = len(text.splitlines()) - token["total_lines"]
-    for hits in (_l0(threads, token, delta), _l1(threads, token, delta),
-                 _l2(threads, token)):
+    for hits in (_l0(threads, token, delta), _l1(threads, token, delta), _l2(threads, token)):
         if not hits:
             continue
         if len(hits) == 1:

@@ -11,6 +11,7 @@ The Fake Shield, Executor, and ResultCheckpoint all observe the same identity
 semantics, so the helpers live in one production module instead of being
 duplicated at each boundary.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -36,5 +37,4 @@ def is_regular_file_identity(identity: str) -> bool:
     False for symlinks (``symlink:*``), deleted (``missing``), or unreadable
     entries.
     """
-    return (not identity.startswith("symlink:")
-            and identity not in ("missing", "unreadable"))
+    return not identity.startswith("symlink:") and identity not in ("missing", "unreadable")

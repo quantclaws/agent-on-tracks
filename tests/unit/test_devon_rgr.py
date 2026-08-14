@@ -5,6 +5,7 @@ canonical/deployed equality (agent + skill), Devon dispatch assignment shape
 (phase, skill, public keys, r_tree_identity gating), and Devon.md contract
 checks (three isolated phases, fail-closed, no whole-cycle, no commit/push).
 """
+
 from pathlib import Path
 
 import pytest
@@ -55,30 +56,47 @@ _DEPLOYED = Path(__file__).resolve().parent.parent.parent / ".opencode"
 
 def _to_red():
     return [
-        *ENTER_M_IMPL, BASELINE_CMD, BASELINE_FROZEN,
-        ARCHER_DISPATCH, ARCHER_DONE, TASKGRAPH_CMD, TASKGRAPH_COMMITTED,
-        ISLAND1_CMD, ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
-        SELECT_TASK_CMD, TASK_STARTED,
+        *ENTER_M_IMPL,
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
     ]
 
 
 def _to_green():
     return [
         *_to_red(),
-        DEVON_RED_DISPATCH, DEVON_RED_DONE,
-        RED_GATE_CMD, RED_VALID_PASS,
-        RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
     ]
 
 
 def _to_refactor():
     return [
         *_to_green(),
-        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE,
-        GREEN_GATE_CMD, GREEN_PASS,
-        GREEN_COMMIT_CMD, GREEN_COMMITTED,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        GREEN_COMMITTED,
     ]
 
 
@@ -87,6 +105,7 @@ def _state_of(*items):
 
 
 # -- role selection ----------------------------------------------------------
+
 
 def test_devon_role_in_agent_name():
     """role=devon maps to agent Name=Devon (FR-0170)."""
@@ -110,6 +129,7 @@ def test_devon_run_cmd_uses_agent_devon(monkeypatch, tmp_path):
 
 
 # -- prompt materialization --------------------------------------------------
+
 
 def test_devon_canonical_prompt_exists():
     """Canonical Devon.md ships with the package."""
@@ -137,6 +157,7 @@ def test_devon_rgr_skill_materializes(tmp_path):
 
 # -- canonical / deployed equality -------------------------------------------
 
+
 def test_devon_canonical_equals_deployed():
     """Deployed .opencode/agents/Devon.md matches canonical tracks/agents/Devon.md."""
     canonical = (_CANONICAL_AGENTS / "Devon.md").read_bytes()
@@ -154,8 +175,8 @@ def test_devon_rgr_skill_canonical_equals_deployed():
 def test_devon_rgr_skill_frontmatter():
     """Skill has valid frontmatter: name, version, description."""
     from tracks.frontmatter import split_frontmatter
-    text = (_CANONICAL_SKILLS / "tracks-devon-rgr" / "SKILL.md"
-            ).read_text(encoding="utf-8")
+
+    text = (_CANONICAL_SKILLS / "tracks-devon-rgr" / "SKILL.md").read_text(encoding="utf-8")
     head, _ = split_frontmatter(text)
     fm = {}
     for line in head.splitlines():
@@ -168,6 +189,7 @@ def test_devon_rgr_skill_frontmatter():
 
 
 # -- Devon dispatch assignment shape -----------------------------------------
+
 
 def test_devon_red_dispatch_phase_and_skill():
     """RED dispatch: phase=red, skill=tracks-devon-rgr (not tracks-discuz)."""
@@ -246,6 +268,7 @@ def test_devon_dispatch_still_has_required_base_keys():
 
 # -- Devon.md contract checks ------------------------------------------------
 
+
 def _devon_md_text():
     return (_CANONICAL_AGENTS / "Devon.md").read_text(encoding="utf-8")
 
@@ -268,9 +291,18 @@ def test_devon_md_fail_closed_contract():
     """Devon.md lists required assignment keys for fail-closed."""
     text = _devon_md_text()
     assert "fail closed" in text.lower()
-    for key in ("task_id", "phase", "if_ids", "ac_refs", "test_refs",
-                "commands", "manifest", "pre_dirty_snapshot",
-                "result_identity", "r_tree_identity"):
+    for key in (
+        "task_id",
+        "phase",
+        "if_ids",
+        "ac_refs",
+        "test_refs",
+        "commands",
+        "manifest",
+        "pre_dirty_snapshot",
+        "result_identity",
+        "r_tree_identity",
+    ):
         assert key in text
 
 
@@ -311,22 +343,21 @@ def test_devon_md_virtualenv_and_n4():
 def test_devon_md_output_schema():
     """Devon.md defines structured output schema with required fields."""
     text = _devon_md_text()
-    for field in ("phase", "changed_paths", "manifest_compliance",
-                  "no_change_reason"):
+    for field in ("phase", "changed_paths", "manifest_compliance", "no_change_reason"):
         assert field in text
 
 
 def test_devon_md_frozen_test_isolation():
     """Devon.md preserves frozen test isolation rules."""
     text = _devon_md_text()
-    for path in ("tests/integration", "tests/e2e", "tests/counterexamples",
-                 "tests/ground_truth"):
+    for path in ("tests/integration", "tests/e2e", "tests/counterexamples", "tests/ground_truth"):
         assert path in text
 
 
 def test_devon_md_version_bumped():
     """Devon.md version bumped to reflect phase-separated contract."""
     from tracks.frontmatter import split_frontmatter
+
     head, _ = split_frontmatter(_devon_md_text())
     for line in head.splitlines():
         if line.startswith("version:"):
@@ -336,6 +367,7 @@ def test_devon_md_version_bumped():
 
 
 # -- kernel purity (Devon dispatch is pure) ----------------------------------
+
 
 def test_devon_dispatch_pure_no_io():
     """decide() at RED/GREEN/REFACTOR performs no I/O (NFR-0030)."""
@@ -352,6 +384,7 @@ def test_devon_dispatch_pure_no_io():
 
 # -- T-03 contract 6: Runtime classification is the routing authority ---------
 
+
 def test_runtime_impl_defect_routes_green_to_devon_not_agent_override():
     """Contract 6 (Human routing contract): a Runtime-observed GREEN failure
     classified `impl_defect` leads the kernel to GREEN/Devon. An Agent-provided
@@ -362,26 +395,32 @@ def test_runtime_impl_defect_routes_green_to_devon_not_agent_override():
         DEVON_GREEN_DISPATCH,
         # Devon's outcome attempts to claim an owner/route that would reroute
         # the failure away from the Runtime mapping. The kernel ignores it.
-        ("outcome.received", {"role": "devon", "status": "done",
-                              "owner": "shield",
-                              "route": "refactor_no_change"}),
+        (
+            "outcome.received",
+            {"role": "devon", "status": "done", "owner": "shield", "route": "refactor_no_change"},
+        ),
         GREEN_GATE_CMD,
         # Runtime-observed GREEN failure, classified impl_defect.
-        ("verdict.failed", {"check": "impl_defect", "reason": "runtime gate",
-                            "attempt": 1}),
+        ("verdict.failed", {"check": "impl_defect", "reason": "runtime gate", "attempt": 1}),
         # Runtime classification is authoritative -> Prism DIAGNOSE confirms,
         # then the kernel routes to GREEN/Devon.
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "prism",
-                                                   "substate": "DIAGNOSE"},
-                                        "command_id": "C14"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "prism", "substate": "DIAGNOSE"},
+                    "command_id": "C14",
+                }
+            },
+        ),
         ("outcome.received", {"role": "prism", "status": "done"}),
         ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
     ]
     s = _state_of(*items)
     assert s.substate == "GREEN", (
-        "Runtime impl_defect must route the kernel to GREEN, never to the "
-        "agent-claimed route")
+        "Runtime impl_defect must route the kernel to GREEN, never to the agent-claimed route"
+    )
     assert s.last_failure and s.last_failure["check"] == "impl_defect"
     assert s.current_attempt == 1
     cmd = decide(s)

@@ -137,6 +137,7 @@ def test_replay_after_m_test_escalation_return_is_deterministic():
 # stage. Forward targets and M-REQ-APPROVAL are never allowed; M-TEST itself
 # is not a re-author target (existing semantics).
 
+
 def test_escalation_return_targets_per_stage():
     """Closed per-stage target sets for an escalation return."""
     from tracks.cli.main import _escalation_return_targets
@@ -145,11 +146,17 @@ def test_escalation_return_targets_per_stage():
     assert _escalation_return_targets("M-SPEC") == ("M-STORY", "M-SPEC")
     assert _escalation_return_targets("M-ACC") == ("M-STORY", "M-SPEC", "M-ACC")
     assert _escalation_return_targets("M-DESIGN") == (
-        "M-STORY", "M-SPEC", "M-ACC", "M-DESIGN",
+        "M-STORY",
+        "M-SPEC",
+        "M-ACC",
+        "M-DESIGN",
     )
     # M-TEST: all four author stages; M-TEST itself is not a re-author target.
     assert _escalation_return_targets("M-TEST") == (
-        "M-STORY", "M-SPEC", "M-ACC", "M-DESIGN",
+        "M-STORY",
+        "M-SPEC",
+        "M-ACC",
+        "M-DESIGN",
     )
     # M-REQ-APPROVAL / M-START / unknown have no escalation return targets.
     assert _escalation_return_targets("M-REQ-APPROVAL") == ()

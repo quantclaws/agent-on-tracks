@@ -4,6 +4,7 @@ Red ref creation (compare-and-set), Green commit creation (parent=B +
 trailers), Red classification (reuses v0.4 RedClass closed set), and lineage
 proof (ref + trailer + event sequence triple, NOT Git ancestry per R-1).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -16,8 +17,13 @@ from dataclasses import dataclass
 from tracks.executor.helpers import classify_red
 
 __all__ = [
-    "RedRef", "GreenCommit", "LineageProof", "classify_red",
-    "create_red_ref", "create_green_commit", "verify_lineage",
+    "RedRef",
+    "GreenCommit",
+    "LineageProof",
+    "classify_red",
+    "create_red_ref",
+    "create_green_commit",
+    "verify_lineage",
     "red_base_sha",
 ]
 
@@ -100,7 +106,11 @@ def create_red_ref(
     ref = f"refs/trac/rgr/{run_id}/{task_id}/{attempt}/red"
     date = _base_commit_date(repo, base_sha)
     r_sha = _commit_diff(
-        repo, test_diff, base_sha, _red_message(task_id, attempt), date=date,
+        repo,
+        test_diff,
+        base_sha,
+        _red_message(task_id, attempt),
+        date=date,
     )
     existing = _rev_parse(repo, ref)
     if existing is None:
@@ -109,8 +119,7 @@ def create_red_ref(
     if existing == r_sha:
         return RedRef(ref=ref, sha=existing, created=False)
     raise RuntimeError(
-        f"immutable ref {ref} already points to {existing}, "
-        f"cannot overwrite with {r_sha}"
+        f"immutable ref {ref} already points to {existing}, cannot overwrite with {r_sha}"
     )
 
 
@@ -126,7 +135,10 @@ def red_base_sha(repo: str, r_sha: str) -> str | None:
         return None
     proc = subprocess.run(
         ["git", "rev-parse", "--verify", f"{r_sha}^"],
-        cwd=repo, capture_output=True, text=True, check=False,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return proc.stdout.strip() if proc.returncode == 0 else None
 
@@ -166,7 +178,10 @@ def create_green_commit(
     }
     message = _green_message(task_id, attempt, r_sha, issue_number, ac_refs)
     g_sha = _commit_diff(
-        repo, impl_diff, base_sha, message,
+        repo,
+        impl_diff,
+        base_sha,
+        message,
         date=_base_commit_date(repo, base_sha),
     )
     return GreenCommit(sha=g_sha, parent=base_sha, trailers=trailers)
@@ -198,7 +213,12 @@ def verify_lineage(
     r_ref_exists = r_sha is not None
     message = _git_text(repo, "log", "--format=%B", "-1", g_sha)
     g_trailers_valid = _trailers_match(
-        message, task_id, attempt, r_sha, issue_number, ac_refs,
+        message,
+        task_id,
+        attempt,
+        r_sha,
+        issue_number,
+        ac_refs,
     )
     event_order_valid = _check_event_order(events, task_id, attempt)
     r_before_g = r_ref_exists and g_trailers_valid and event_order_valid
@@ -215,14 +235,22 @@ def verify_lineage(
 
 def _git(repo: str, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return proc.stdout.strip()
 
 
 def _git_text(repo: str, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return proc.stdout
 
@@ -230,7 +258,10 @@ def _git_text(repo: str, *args: str) -> str:
 def _rev_parse(repo: str, ref: str) -> str | None:
     proc = subprocess.run(
         ["git", "rev-parse", "--verify", ref],
-        cwd=repo, capture_output=True, text=True, check=False,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return proc.stdout.strip() if proc.returncode == 0 else None
 
@@ -240,23 +271,33 @@ def _base_commit_date(repo: str, base_sha: str) -> str:
 
 
 def _commit_diff(
-    repo: str, diff_text: str, base_sha: str, message: str, *,
+    repo: str,
+    diff_text: str,
+    base_sha: str,
+    message: str,
+    *,
     date: str | None = None,
 ) -> str:
     tree_sha = _build_tree(repo, diff_text, base_sha)
     env = dict(os.environ)
     if date is not None:
-        env.update({
-            "GIT_AUTHOR_NAME": "Tracks",
-            "GIT_AUTHOR_EMAIL": "tracks@local",
-            "GIT_AUTHOR_DATE": date,
-            "GIT_COMMITTER_NAME": "Tracks",
-            "GIT_COMMITTER_EMAIL": "tracks@local",
-            "GIT_COMMITTER_DATE": date,
-        })
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": "Tracks",
+                "GIT_AUTHOR_EMAIL": "tracks@local",
+                "GIT_AUTHOR_DATE": date,
+                "GIT_COMMITTER_NAME": "Tracks",
+                "GIT_COMMITTER_EMAIL": "tracks@local",
+                "GIT_COMMITTER_DATE": date,
+            }
+        )
     proc = subprocess.run(
         ["git", "commit-tree", tree_sha, "-p", base_sha, "-m", message],
-        cwd=repo, env=env, capture_output=True, text=True, check=True,
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return proc.stdout.strip()
 
@@ -270,7 +311,11 @@ def _build_tree(repo: str, diff_text: str, base_sha: str) -> str:
         env = dict(os.environ, GIT_INDEX_FILE=index_path)
         subprocess.run(
             ["git", "apply", "--cached", "--whitespace=nowarn", diff_path],
-            cwd=repo, env=env, capture_output=True, text=True, check=True,
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return _git_env(repo, env, "write-tree")
     finally:
@@ -284,14 +329,23 @@ def _temp_index(repo: str, base_sha: str) -> str:
     env = dict(os.environ, GIT_INDEX_FILE=path)
     subprocess.run(
         ["git", "read-tree", base_sha],
-        cwd=repo, env=env, capture_output=True, text=True, check=True,
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return path
 
 
 def _git_env(repo: str, env: dict, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, env=env, capture_output=True, text=True, check=True,
+        ["git", *args],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return proc.stdout.strip()
 
@@ -313,8 +367,11 @@ def _red_message(task_id: str, attempt: int) -> str:
 
 
 def _green_message(
-    task_id: str, attempt: int, r_sha: str,
-    issue_number: int, ac_refs: list[str],
+    task_id: str,
+    attempt: int,
+    r_sha: str,
+    issue_number: int,
+    ac_refs: list[str],
 ) -> str:
     return (
         f"GREEN: {task_id}\n\n"

@@ -59,8 +59,7 @@ def test_reviewer_pass_no_change_checkpoint(tmp_path):
     head_before, head_after = _dispatch_sage_review(ex, store, run_id, "pass")
 
     assert head_before == head_after  # no commit for pass with no diff
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[-1].payload["created_commit"] is False
     verdicts = [e for e in store.events(run_id) if e.type == "sage.verdict"]
     assert verdicts[-1].payload["verdict"] == "pass"
@@ -80,15 +79,12 @@ def test_reviewer_comment_creates_discussion_checkpoint(tmp_path):
 
     doc_path = ex._doc_path("story.md")
     text = doc_path.read_text(encoding="utf-8")
-    doc_path.write_text(
-        text + "\n\n> **Sage:** 需要补充用户路径。\n",
-        encoding="utf-8")
+    doc_path.write_text(text + "\n\n> **Sage:** 需要补充用户路径。\n", encoding="utf-8")
 
     head_before, head_after = _dispatch_sage_review(ex, store, run_id, "comment")
 
     assert head_before != head_after  # commit created for discussion diff
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[-1].payload["created_commit"] is True
     verdicts = [e for e in store.events(run_id) if e.type == "sage.verdict"]
     assert verdicts[-1].payload["verdict"] == "comment"
@@ -136,8 +132,7 @@ def test_reviewer_pass_illegal_blockquote_rejects(tmp_path):
 
     doc_path = ex._doc_path("story.md")
     text = doc_path.read_text(encoding="utf-8")
-    doc_path.write_text(
-        text + "\n\n> note: this is a raw quote\n", encoding="utf-8")
+    doc_path.write_text(text + "\n\n> note: this is a raw quote\n", encoding="utf-8")
 
     head_before, head_after = _dispatch_sage_review(ex, store, run_id, "pass")
 
@@ -156,8 +151,7 @@ def test_reviewer_pass_canonical_discussion_accepts(tmp_path):
 
     doc_path = ex._doc_path("story.md")
     text = doc_path.read_text(encoding="utf-8")
-    doc_path.write_text(
-        text + "\n\n> **Sage:** 这是一个讨论注释。\n", encoding="utf-8")
+    doc_path.write_text(text + "\n\n> **Sage:** 这是一个讨论注释。\n", encoding="utf-8")
 
     head_before, head_after = _dispatch_sage_review(ex, store, run_id, "pass")
 

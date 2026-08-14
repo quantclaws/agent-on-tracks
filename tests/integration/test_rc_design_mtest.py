@@ -3,6 +3,7 @@ M-DESIGN Prism, and _reject_dirty_staged tests.
 
 Split from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
+
 import pytest
 
 from tests.integration.result_checkpoint_support import (
@@ -21,10 +22,13 @@ from tracks.store import new_ulid
 # -- M-SPEC / M-ACC Lex review smoke (parameterized) ----------------------
 
 
-@pytest.mark.parametrize("stage,doc,committed_event", [
-    ("M-SPEC", "spec.md", "spec.committed"),
-    ("M-ACC", "acceptance.md", "acceptance.committed"),
-])
+@pytest.mark.parametrize(
+    "stage,doc,committed_event",
+    [
+        ("M-SPEC", "spec.md", "spec.committed"),
+        ("M-ACC", "acceptance.md", "acceptance.committed"),
+    ],
+)
 @pytest.mark.parametrize("verdict", ["pass", "comment"])
 def test_lex_review_smoke(tmp_path, stage, doc, committed_event, verdict):
     """M-SPEC/M-ACC Lex reviewer pass/comment smoke: DRAFT pipeline commits
@@ -32,13 +36,23 @@ def test_lex_review_smoke(tmp_path, stage, doc, committed_event, verdict):
     transition."""
     ex, store, run_id = _setup_spec_stage(tmp_path, stage)
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": doc, "self_report": "draft",
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": doc,
+            "self_report": "draft",
+        }
+    )
     draft_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "sage", "substate": "DRAFT", "doc": doc,
-                "stage": stage, "attempt": 1, "review_round": 1},
+        params={
+            "role": "sage",
+            "substate": "DRAFT",
+            "doc": doc,
+            "stage": stage,
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(draft_cmd, store.state(run_id), None, False)
@@ -51,17 +65,26 @@ def test_lex_review_smoke(tmp_path, stage, doc, committed_event, verdict):
     if verdict == "comment":
         doc_path = ex._doc_path(doc)
         text = doc_path.read_text(encoding="utf-8")
-        doc_path.write_text(
-            text + "\n\n> **Lex:** 需要补充细节。\n", encoding="utf-8")
+        doc_path.write_text(text + "\n\n> **Lex:** 需要补充细节。\n", encoding="utf-8")
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": verdict,
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "review",
+            "verdict": verdict,
+        }
+    )
     review_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "lex", "substate": "LEX_REVIEW", "doc": doc,
-                "stage": stage, "attempt": 1, "review_round": 1},
+        params={
+            "role": "lex",
+            "substate": "LEX_REVIEW",
+            "doc": doc,
+            "stage": stage,
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(review_cmd, store.state(run_id), None, False)
@@ -83,6 +106,7 @@ def test_lex_review_smoke(tmp_path, stage, doc, committed_event, verdict):
 def test_reject_dirty_staged_outside_allowlist(tmp_path):
     """_reject_dirty_staged rejects dirty files outside the version dir."""
     from tracks.cli.main import _reject_dirty_staged
+
     repo = make_repo(tmp_path)
     (repo / "outside.txt").write_text("dirty\n", encoding="utf-8")
     rc = _reject_dirty_staged(repo, "v0.1", "triage")
@@ -92,6 +116,7 @@ def test_reject_dirty_staged_outside_allowlist(tmp_path):
 def test_reject_dirty_staged_pre_staged(tmp_path):
     """_reject_dirty_staged rejects pre-staged content."""
     from tracks.cli.main import _reject_dirty_staged
+
     repo = make_repo(tmp_path)
     vdir = repo / ".tracks" / "projects" / "v0.1"
     vdir.mkdir(parents=True)
@@ -104,6 +129,7 @@ def test_reject_dirty_staged_pre_staged(tmp_path):
 def test_reject_dirty_staged_clean(tmp_path):
     """_reject_dirty_staged returns 0 when clean."""
     from tracks.cli.main import _reject_dirty_staged
+
     repo = make_repo(tmp_path)
     rc = _reject_dirty_staged(repo, "v0.1", "triage")
     assert rc == 0
@@ -112,6 +138,7 @@ def test_reject_dirty_staged_clean(tmp_path):
 def test_reject_dirty_staged_allows_version_dir_dirty(tmp_path):
     """_reject_dirty_staged allows dirty files inside the version dir."""
     from tracks.cli.main import _reject_dirty_staged
+
     repo = make_repo(tmp_path)
     vdir = repo / ".tracks" / "projects" / "v0.1"
     vdir.mkdir(parents=True)
@@ -132,16 +159,26 @@ def test_m_test_shield_write_pipeline_publishes_test_written(tmp_path):
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
 
-    ex.backend = _ShieldBackend(repo, {
-        "tests/integration/test_a.py": "def test_a():\n    assert True\n",
-    })
+    ex.backend = _ShieldBackend(
+        repo,
+        {
+            "tests/integration/test_a.py": "def test_a():\n    assert True\n",
+        },
+    )
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
-                "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
-                               "docs": ["test-plan.md", "interfaces.md",
-                                        "acceptance.md"]}},
+        params={
+            "role": "shield",
+            "substate": "WRITE",
+            "stage": "M-TEST",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "WRITE",
+                "skills": ["tracks-discuz"],
+                "docs": ["test-plan.md", "interfaces.md", "acceptance.md"],
+            },
+        },
         command_id=new_ulid(),
     )
     ex.issue(cmd)
@@ -168,24 +205,33 @@ def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
     repo = ex.repo
     base_sha = g(repo, "rev-parse", "HEAD").strip()
 
-    ex.backend = _ShieldBackend(repo, {
-        "tests/integration/test_a.py": "def test_a():\n    pass\n",
-    })
+    ex.backend = _ShieldBackend(
+        repo,
+        {
+            "tests/integration/test_a.py": "def test_a():\n    pass\n",
+        },
+    )
     command_id = new_ulid()
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
-                "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
-                               "docs": ["test-plan.md", "interfaces.md",
-                                        "acceptance.md"]}},
+        params={
+            "role": "shield",
+            "substate": "WRITE",
+            "stage": "M-TEST",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "WRITE",
+                "skills": ["tracks-discuz"],
+                "docs": ["test-plan.md", "interfaces.md", "acceptance.md"],
+            },
+        },
         command_id=command_id,
     )
     ex.issue(cmd)
     ex.run_pipeline()
 
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[0].payload["created_commit"] is True
     assert checkpointed[0].payload["commit_sha"] != base_sha
     log = g(repo, "log", "-1", "--format=%B")
@@ -193,48 +239,62 @@ def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
     assert f"command_id: {checkpointed[0].command_id}" in log
 
 
-@pytest.mark.parametrize("include", [
-    [],
+@pytest.mark.parametrize(
+    "include",
     [
-        {"path": "tests/integration/test_a.py", "kind": "test_asset",
-         "role": "integration"},
-        {"path": "tests/integration/extra.json", "kind": "test_asset",
-         "role": "integration"},
+        [],
+        [
+            {"path": "tests/integration/test_a.py", "kind": "test_asset", "role": "integration"},
+            {"path": "tests/integration/extra.json", "kind": "test_asset", "role": "integration"},
+        ],
     ],
-])
-def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path,
-                                                              include):
+)
+def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path, include):
     """A manifest that omits or over-reports observed files fails closed."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
     base_sha = g(repo, "rev-parse", "HEAD").strip()
     outcome = {
-        "status": "done", "artifact_ref": "tests", "self_report": "wrote",
+        "status": "done",
+        "artifact_ref": "tests",
+        "self_report": "wrote",
         "artifact_manifest": {"include": include},
         "suggested_commit_message": "M-TEST: shield suggested commit",
     }
-    ex.backend = _ShieldBackend(repo, {
-        "tests/integration/test_a.py": "def test_a():\n    pass\n",
-    }, outcome=outcome)
+    ex.backend = _ShieldBackend(
+        repo,
+        {
+            "tests/integration/test_a.py": "def test_a():\n    pass\n",
+        },
+        outcome=outcome,
+    )
 
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
-                "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
-                               "docs": ["test-plan.md", "interfaces.md",
-                                        "acceptance.md"]}},
+        params={
+            "role": "shield",
+            "substate": "WRITE",
+            "stage": "M-TEST",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "WRITE",
+                "skills": ["tracks-discuz"],
+                "docs": ["test-plan.md", "interfaces.md", "acceptance.md"],
+            },
+        },
         command_id=new_ulid(),
     )
     ex.issue(cmd)
     ex.run_pipeline()
 
-    failures = [e for e in store.events(run_id)
-                if e.type == "verdict.failed"
-                and e.payload.get("check") == "manifest"]
+    failures = [
+        e
+        for e in store.events(run_id)
+        if e.type == "verdict.failed" and e.payload.get("check") == "manifest"
+    ]
     assert failures
-    assert not [e for e in store.events(run_id)
-                if e.type == "result.checkpointed"]
+    assert not [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert g(repo, "rev-parse", "HEAD").strip() == base_sha
 
 
@@ -244,16 +304,26 @@ def test_m_test_shield_write_crash_recovery(tmp_path):
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
 
-    ex.backend = _ShieldBackend(repo, {
-        "tests/integration/test_a.py": "def test_a():\n    pass\n",
-    })
+    ex.backend = _ShieldBackend(
+        repo,
+        {
+            "tests/integration/test_a.py": "def test_a():\n    pass\n",
+        },
+    )
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
-                "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
-                               "docs": ["test-plan.md", "interfaces.md",
-                                        "acceptance.md"]}},
+        params={
+            "role": "shield",
+            "substate": "WRITE",
+            "stage": "M-TEST",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "WRITE",
+                "skills": ["tracks-discuz"],
+                "docs": ["test-plan.md", "interfaces.md", "acceptance.md"],
+            },
+        },
         command_id=new_ulid(),
     )
     ex.issue(cmd)
@@ -279,17 +349,27 @@ def test_m_design_prism_pass_pipeline(tmp_path):
     checkpoint, publishes prism.verdict(pass), transitions to EXIT."""
     ex, store, run_id = _setup_design(tmp_path)
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": "pass",
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "review",
+            "verdict": "pass",
+        }
+    )
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "prism", "substate": "PRISM_REVIEW",
-                "stage": "M-DESIGN", "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "PRISM_REVIEW",
-                               "docs": ["architecture.md", "interfaces.md",
-                                        "test-plan.md"]}},
+        params={
+            "role": "prism",
+            "substate": "PRISM_REVIEW",
+            "stage": "M-DESIGN",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "PRISM_REVIEW",
+                "docs": ["architecture.md", "interfaces.md", "test-plan.md"],
+            },
+        },
         command_id=new_ulid(),
     )
     ex.issue(cmd)
@@ -304,8 +384,7 @@ def test_m_design_prism_pass_pipeline(tmp_path):
     assert state.substate == "EXIT"
     verdicts = [e for e in store.events(run_id) if e.type == "prism.verdict"]
     assert verdicts[-1].payload["verdict"] == "pass"
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[0].payload["created_commit"] is False
 
 
@@ -316,20 +395,29 @@ def test_m_design_prism_revise_pipeline(tmp_path):
 
     arch_path = ex._doc_path("architecture.md")
     text = arch_path.read_text(encoding="utf-8")
-    arch_path.write_text(
-        text + "\n\n> **Prism:** 需要补充安全设计。\n", encoding="utf-8")
+    arch_path.write_text(text + "\n\n> **Prism:** 需要补充安全设计。\n", encoding="utf-8")
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": "revise",
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "review",
+            "verdict": "revise",
+        }
+    )
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "prism", "substate": "PRISM_REVIEW",
-                "stage": "M-DESIGN", "attempt": 1, "review_round": 1,
-                "assignment": {"kind": "PRISM_REVIEW",
-                               "docs": ["architecture.md", "interfaces.md",
-                                        "test-plan.md"]}},
+        params={
+            "role": "prism",
+            "substate": "PRISM_REVIEW",
+            "stage": "M-DESIGN",
+            "attempt": 1,
+            "review_round": 1,
+            "assignment": {
+                "kind": "PRISM_REVIEW",
+                "docs": ["architecture.md", "interfaces.md", "test-plan.md"],
+            },
+        },
         command_id=new_ulid(),
     )
     ex.issue(cmd)
@@ -343,9 +431,7 @@ def test_m_design_prism_revise_pipeline(tmp_path):
     assert state.substate == "RESPOND"
     verdicts = [e for e in store.events(run_id) if e.type == "prism.verdict"]
     assert verdicts[-1].payload["verdict"] == "revise"
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[0].payload["created_commit"] is True
-    rounds = [e for e in store.events(run_id)
-              if e.type == "review.round_started"]
+    rounds = [e for e in store.events(run_id) if e.type == "review.round_started"]
     assert rounds[-1].payload["round"] == 2

@@ -1,4 +1,5 @@
 """decide() next-command selection — pure (AC-N02a)."""
+
 from tests.unit.helpers import seq
 from tracks.kernel import decide, project
 
@@ -21,10 +22,16 @@ def test_triage_dispatches_scribe_once():
     assert cmd.command_id is None  # store assigns the ULID; decide stays pure
 
     dispatched = state_of(
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "TRIAGE"},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "scribe", "substate": "TRIAGE"},
+                    "command_id": "C1",
+                }
+            },
+        ),
     )
     assert decide(dispatched) is None
 
@@ -38,10 +45,16 @@ def test_single_doc_stages_keep_the_single_skill_shape():
     assert assignment["skill_version"] == "0.2"
     assert "skills" not in assignment
     drafted = state_of(
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "TRIAGE"},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "scribe", "substate": "TRIAGE"},
+                    "command_id": "C1",
+                }
+            },
+        ),
         ("outcome.received", {"role": "scribe", "status": "done"}),
         ("human.triage", {"decision": "go"}),
     )
@@ -67,20 +80,32 @@ def test_draft_pipeline_order():
 
     produced = state_of(
         ("human.triage", {"decision": "go"}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "DRAFT"},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "scribe", "substate": "DRAFT"},
+                    "command_id": "C1",
+                }
+            },
+        ),
         ("outcome.received", {"role": "scribe", "status": "done"}),
     )
     assert decide(produced).kind == "validate_document"
 
     validated = state_of(
         ("human.triage", {"decision": "go"}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "DRAFT"},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "scribe", "substate": "DRAFT"},
+                    "command_id": "C1",
+                }
+            },
+        ),
         ("outcome.received", {"role": "scribe", "status": "done"}),
         ("verdict.passed", {"check": "schema", "detail": "d"}),
     )
@@ -90,10 +115,16 @@ def test_draft_pipeline_order():
 def test_spec_draft_uses_template_validation_only():
     produced = state_of(
         ("stage.entered", {"stage": "M-SPEC"}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "sage",
-                                                   "substate": "DRAFT"},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "sage", "substate": "DRAFT"},
+                    "command_id": "C1",
+                }
+            },
+        ),
         ("outcome.received", {"role": "sage", "status": "done"}),
     )
     cmd = decide(produced)
@@ -117,13 +148,25 @@ def test_triage_to_draft_fresh_retry_budget_after_triage_failures():
     starts at attempt 0 with no stale last_failure, so decide() emits
     attempt=1 and carries no TRIAGE evidence."""
     failed_triage_then_go = state_of(
-        ("outcome.received", {"role": "scribe", "status": "failed",
-                              "failure_class": "json_truncated",
-                              "self_report": "stdout JSON unparseable"}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "TRIAGE"},
-                                        "command_id": "C2"}}),
+        (
+            "outcome.received",
+            {
+                "role": "scribe",
+                "status": "failed",
+                "failure_class": "json_truncated",
+                "self_report": "stdout JSON unparseable",
+            },
+        ),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {"role": "scribe", "substate": "TRIAGE"},
+                    "command_id": "C2",
+                }
+            },
+        ),
         ("outcome.received", {"role": "scribe", "status": "done"}),
         ("human.triage", {"decision": "go"}),
     )
@@ -202,12 +245,21 @@ def test_human_retry_clear_evidence_recovers_active_killed_dispatch():
         ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
         ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
         ("human.retry", {}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "DRAFT",
-                                                   "attempt": 1,
-                                                   "evidence": {"check": "schema"}},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {
+                        "role": "scribe",
+                        "substate": "DRAFT",
+                        "attempt": 1,
+                        "evidence": {"check": "schema"},
+                    },
+                    "command_id": "C1",
+                }
+            },
+        ),
     )
     assert killed.status == "active"
     assert killed.doc_dispatched is True
@@ -219,12 +271,21 @@ def test_human_retry_clear_evidence_recovers_active_killed_dispatch():
         ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 2}),
         ("verdict.failed", {"check": "schema", "reason": "bad", "attempt": 3}),
         ("human.retry", {}),
-        ("command.issued", {"command": {"kind": "dispatch_agent",
-                                        "params": {"role": "scribe",
-                                                   "substate": "DRAFT",
-                                                   "attempt": 1,
-                                                   "evidence": {"check": "schema"}},
-                                        "command_id": "C1"}}),
+        (
+            "command.issued",
+            {
+                "command": {
+                    "kind": "dispatch_agent",
+                    "params": {
+                        "role": "scribe",
+                        "substate": "DRAFT",
+                        "attempt": 1,
+                        "evidence": {"check": "schema"},
+                    },
+                    "command_id": "C1",
+                }
+            },
+        ),
         ("human.retry", {"clear_evidence": True}),
     )
     assert cleared.status == "active"
@@ -268,8 +329,7 @@ def test_no_go_teardown_sequence():
     recorded = state_of(
         ("outcome.received", {"role": "scribe", "status": "done"}),
         ("human.triage", {"decision": "no_go"}),
-        ("backlog.recorded",
-         {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
+        ("backlog.recorded", {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
     )
     # FR-09: backlog -> delete_branch -> complete_run (branch ops are logged
     # commands now, not folded into complete_run).
@@ -280,8 +340,7 @@ def test_no_go_teardown_sequence():
     deleted = state_of(
         ("outcome.received", {"role": "scribe", "status": "done"}),
         ("human.triage", {"decision": "no_go"}),
-        ("backlog.recorded",
-         {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
+        ("backlog.recorded", {"version": "v0.1", "decision": "no_go", "reason": "triage"}),
         ("branch.deleted", {"branch_name": "releases/v0.1"}),
     )
     assert decide(deleted).kind == "complete_run"
@@ -347,8 +406,7 @@ def test_exit_gate_failure_blocks_exit():
 def _doc_exit_state(stage, committed_event, *extra):
     return state_of(
         ("stage.entered", {"stage": stage}),
-        (committed_event, {"commit_sha": "c", "spec_sha": "s",
-                           "acceptance_sha": "a"}),
+        (committed_event, {"commit_sha": "c", "spec_sha": "s", "acceptance_sha": "a"}),
         ("lex.verdict", {"verdict": "pass"}),
         ("human.review", {"action": "no_comment"}),
         *extra,
@@ -362,13 +420,15 @@ def test_spec_and_acceptance_exit_use_only_discussion_gate():
     ):
         first = decide(_doc_exit_state(stage, event))
         assert first.kind == "validate_document"
-        assert first.params == {"doc": doc,
-                                "checks": ["template", "discussion_ready"]}
+        assert first.params == {"doc": doc, "checks": ["template", "discussion_ready"]}
 
-        gated = decide(_doc_exit_state(
-            stage, event,
-            ("verdict.passed", {"check": "template,discussion_ready"}),
-        ))
+        gated = decide(
+            _doc_exit_state(
+                stage,
+                event,
+                ("verdict.passed", {"check": "template,discussion_ready"}),
+            )
+        )
         assert gated.kind == "write_frontmatter"
         assert gated.params["doc"] == doc
 

@@ -3,6 +3,7 @@
 classify_red is tested with the same closed-set taxonomy; create_red_ref /
 create_green_commit / verify_lineage are tested against a throwaway git repo.
 """
+
 from __future__ import annotations
 
 import time
@@ -38,8 +39,10 @@ _COMBINED_AC_REFS = ["AC-FR0030-01", "FR-0030", "NFR-0001"]
 
 
 def test_classify_red_stub_token():
-    assert classify_red("t1", 1, "",
-                        'raise NotImplementedError("IF-IMPL-004")') == "stub_token_failure"
+    assert (
+        classify_red("t1", 1, "", 'raise NotImplementedError("IF-IMPL-004")')
+        == "stub_token_failure"
+    )
 
 
 def test_classify_red_assertion():
@@ -80,8 +83,15 @@ def test_create_green_commit(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=["AC-FR0030-01"],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=["AC-FR0030-01"],
     )
     message = _git(repo, "log", "--format=%B", "-1", green.sha).stdout
     assert "Tracks-Task: T-001" in message
@@ -97,15 +107,27 @@ def test_verify_lineage_ok(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=["AC-FR0030-01"],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=["AC-FR0030-01"],
     )
     events = [
         {"seq": 1, "type": "red.checkpointed", "payload": {"task_id": "T-001", "attempt": 1}},
         {"seq": 2, "type": "green.committed", "payload": {"task_id": "T-001", "attempt": 1}},
     ]
     proof = verify_lineage(
-        str(repo), "run-1", "T-001", 1, green.sha, events,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        events,
     )
     assert proof.r_ref_exists
     assert proof.g_trailers_valid
@@ -116,11 +138,23 @@ def test_verify_lineage_ok(tmp_path):
 def test_verify_lineage_missing_ref(tmp_path):
     repo, base = _init_repo(tmp_path)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, "0" * 40,
-        issue_number=1, ac_refs=["AC-FR0030-01"],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        "0" * 40,
+        issue_number=1,
+        ac_refs=["AC-FR0030-01"],
     )
     proof = verify_lineage(
-        str(repo), "run-1", "T-001", 1, green.sha, [],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        [],
     )
     assert not proof.r_ref_exists
     assert not proof.r_before_g
@@ -164,8 +198,15 @@ def test_empty_rgr_diffs_fail_closed(tmp_path):
         create_red_ref(str(repo), "run-1", "T-001", 1, "", base)
     with pytest.raises(ValueError, match="captured implementation diff"):
         create_green_commit(
-            str(repo), "run-1", "T-001", 1, "", base, "r",
-            issue_number=1, ac_refs=["AC-FR0030-01"],
+            str(repo),
+            "run-1",
+            "T-001",
+            1,
+            "",
+            base,
+            "r",
+            issue_number=1,
+            ac_refs=["AC-FR0030-01"],
         )
 
 
@@ -176,8 +217,15 @@ def test_create_green_commit_records_combined_ac_refs_only(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     assert green.parent == base
     assert green.trailers == {
@@ -203,9 +251,15 @@ def test_create_green_commit_is_deterministic_with_combined_ac_refs(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     kwargs = {
-        "repo": str(repo), "run_id": "run-1", "task_id": "T-001", "attempt": 1,
-        "impl_diff": _GREEN_DIFF, "base_sha": base, "r_sha": ref.sha,
-        "issue_number": 1, "ac_refs": _COMBINED_AC_REFS,
+        "repo": str(repo),
+        "run_id": "run-1",
+        "task_id": "T-001",
+        "attempt": 1,
+        "impl_diff": _GREEN_DIFF,
+        "base_sha": base,
+        "r_sha": ref.sha,
+        "issue_number": 1,
+        "ac_refs": _COMBINED_AC_REFS,
     }
     first = create_green_commit(**kwargs)
     second = create_green_commit(**kwargs)
@@ -215,22 +269,25 @@ def test_create_green_commit_is_deterministic_with_combined_ac_refs(tmp_path):
 
 def _lineage_events(task_id="T-001", attempt=1):
     return [
-        {"seq": 1, "type": "red.checkpointed",
-         "payload": {"task_id": task_id, "attempt": attempt}},
-        {"seq": 2, "type": "green.committed",
-         "payload": {"task_id": task_id, "attempt": attempt}},
+        {"seq": 1, "type": "red.checkpointed", "payload": {"task_id": task_id, "attempt": attempt}},
+        {"seq": 2, "type": "green.committed", "payload": {"task_id": task_id, "attempt": attempt}},
     ]
 
 
-def _verify_lineage_exact(repo, run_id, task_id, attempt, g_sha, events,
-                         issue_number, ac_refs):
+def _verify_lineage_exact(repo, run_id, task_id, attempt, g_sha, events, issue_number, ac_refs):
     # Intended exactness contract: verify_lineage must compare exact
     # Tracks-Task / Tracks-Attempt from the positional args, exact Tracks-R
     # from the immutable red ref, and exact Tracks-Issue / Tracks-AC from the
     # expected issue_number + combined ac_refs.
     return verify_lineage(
-        repo, run_id, task_id, attempt, g_sha, events,
-        issue_number=issue_number, ac_refs=ac_refs,
+        repo,
+        run_id,
+        task_id,
+        attempt,
+        g_sha,
+        events,
+        issue_number=issue_number,
+        ac_refs=ac_refs,
     )
 
 
@@ -238,12 +295,25 @@ def test_verify_lineage_accepts_expected_issue_and_ac_refs(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     proof = _verify_lineage_exact(
-        str(repo), "run-1", "T-001", 1, green.sha, _lineage_events(),
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        _lineage_events(),
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     assert proof.r_ref_exists
     assert proof.g_trailers_valid
@@ -255,12 +325,25 @@ def test_verify_lineage_rejects_wrong_expected_task(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-999", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-999",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     proof = _verify_lineage_exact(
-        str(repo), "run-1", "T-001", 1, green.sha, _lineage_events(),
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        _lineage_events(),
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     assert proof.r_ref_exists
     assert not proof.g_trailers_valid
@@ -271,12 +354,25 @@ def test_verify_lineage_rejects_wrong_expected_r(tmp_path):
     repo, base = _init_repo(tmp_path)
     create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, "0" * 40,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        "0" * 40,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     proof = _verify_lineage_exact(
-        str(repo), "run-1", "T-001", 1, green.sha, _lineage_events(),
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        _lineage_events(),
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     assert proof.r_ref_exists
     assert not proof.g_trailers_valid
@@ -287,12 +383,25 @@ def test_verify_lineage_rejects_wrong_expected_fr(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     proof = _verify_lineage_exact(
-        str(repo), "run-1", "T-001", 1, green.sha, _lineage_events(),
-        issue_number=1, ac_refs=["AC-FR0030-01", "FR-9999", "NFR-0001"],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        _lineage_events(),
+        issue_number=1,
+        ac_refs=["AC-FR0030-01", "FR-9999", "NFR-0001"],
     )
     assert proof.r_ref_exists
     assert not proof.g_trailers_valid
@@ -303,12 +412,25 @@ def test_verify_lineage_rejects_wrong_expected_nfr(tmp_path):
     repo, base = _init_repo(tmp_path)
     ref = create_red_ref(str(repo), "run-1", "T-001", 1, _RED_DIFF, base)
     green = create_green_commit(
-        str(repo), "run-1", "T-001", 1, _GREEN_DIFF, base, ref.sha,
-        issue_number=1, ac_refs=_COMBINED_AC_REFS,
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        _GREEN_DIFF,
+        base,
+        ref.sha,
+        issue_number=1,
+        ac_refs=_COMBINED_AC_REFS,
     )
     proof = _verify_lineage_exact(
-        str(repo), "run-1", "T-001", 1, green.sha, _lineage_events(),
-        issue_number=1, ac_refs=["AC-FR0030-01", "FR-0030", "NFR-9999"],
+        str(repo),
+        "run-1",
+        "T-001",
+        1,
+        green.sha,
+        _lineage_events(),
+        issue_number=1,
+        ac_refs=["AC-FR0030-01", "FR-0030", "NFR-9999"],
     )
     assert proof.r_ref_exists
     assert not proof.g_trailers_valid

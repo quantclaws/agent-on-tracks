@@ -4,6 +4,7 @@ select_backend reads TRAC_AGENT_BACKEND / TRAC_FAKE_SIMULATE ONLY at the
 boundary; decide()/project() never see it. The conftest autouse fixture forces
 fake for the suite, so each test here sets the exact env it needs.
 """
+
 import pytest
 
 from tracks.effects import FakeBackend, select_backend

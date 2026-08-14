@@ -3,6 +3,7 @@
 Tests the RED_CHECK substate: Runtime independently re-runs tests, classifies
 failures, and routes to EXIT (valid) or DIAGNOSE (invalid).
 """
+
 from tests.integration.helpers import walk_to_m_test
 
 
@@ -12,8 +13,11 @@ def test_red_check_independent_rerun(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = event_log(run_id)
-    run_cmds = [e for e in evs if e["type"] == "command.issued"
-                and e["payload"]["command"]["kind"] == "run_tests"]
+    run_cmds = [
+        e
+        for e in evs
+        if e["type"] == "command.issued" and e["payload"]["command"]["kind"] == "run_tests"
+    ]
     assert len(run_cmds) == 1  # exactly one independent re-run
 
 
@@ -63,8 +67,7 @@ def test_all_pass_does_not_exit(trac, event_log):
     r = trac("run", simulate="shield:WRITE=pass_red,diagnose:classification=test_defect")
     evs = event_log(run_id)
     # No stage.exited(M-TEST) because DIAGNOSE -> test_defect -> escalation
-    exited = [e for e in evs if e["type"] == "stage.exited"
-              and e["payload"]["stage"] == "M-TEST"]
+    exited = [e for e in evs if e["type"] == "stage.exited" and e["payload"]["stage"] == "M-TEST"]
     assert not exited
     assert "awaiting=escalation" in r.stdout
 

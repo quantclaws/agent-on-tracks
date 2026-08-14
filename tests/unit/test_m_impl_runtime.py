@@ -6,6 +6,7 @@ derives candidate changed paths from observed git/filesystem state, and its
 observed verdicts (with argv/cwd/exit_code/classification/output hashes) are
 what route the kernel. Agent-reported commands/results remain audit-only.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -87,21 +88,24 @@ def test_baseline_payload_is_deterministic_and_stale_inputs_are_visible(tmp_path
     _contract(repo)
     vdir = _docs(repo)
     store = _store(repo)
-    store.append("RUN", "v0.5", "approval.recorded",
-                 {"digest": "approval-1", "actor": "human"})
-    store.append("RUN", "v0.5", "issues.created",
-                 {"mapping": {"FR-0001": 1}})
+    store.append("RUN", "v0.5", "approval.recorded", {"digest": "approval-1", "actor": "human"})
+    store.append("RUN", "v0.5", "issues.created", {"mapping": {"FR-0001": 1}})
     executor = _executor(repo, store)
     command = Command("freeze_baseline", command_id="C-BASE")
     executor._do_freeze_baseline(command, store.state("RUN"), None, False)
     payload = list(store.events("RUN"))[-1].payload
     assert {"status", "digest", "summary", "frozen_test_paths"} <= payload.keys()
     assert payload["status"] == "current"
-    digest = m_impl_baseline_digest(vdir, repo, approval_digest="approval-1",
-                                    issue_evidence='{"FR-0001":1}',
-                                    frozen_test_paths=payload["frozen_test_paths"],
-                                    branch=payload["branch"], tip=payload["tip"],
-                                    design_checkpoint=payload["design_checkpoint"])
+    digest = m_impl_baseline_digest(
+        vdir,
+        repo,
+        approval_digest="approval-1",
+        issue_evidence='{"FR-0001":1}',
+        frozen_test_paths=payload["frozen_test_paths"],
+        branch=payload["branch"],
+        tip=payload["tip"],
+        design_checkpoint=payload["design_checkpoint"],
+    )
     assert payload["digest"] == digest
 
     (repo / "tests" / "e2e").rmdir()
@@ -117,20 +121,24 @@ def test_m_impl_baseline_digest_is_bound_to_branch_tip_and_design_checkpoint(tmp
     _contract(repo)
     vdir = _docs(repo)
     common = {
-        "vdir": vdir, "repo": repo,
+        "vdir": vdir,
+        "repo": repo,
         "approval_digest": "approval-1",
         "issue_evidence": '{"FR-0001":1}',
         "frozen_test_paths": ["tests/integration/", "tests/e2e/"],
     }
     branch_a = m_impl_baseline_digest(
-        **common, branch="main", tip="0" * 40, design_checkpoint="1" * 40)
+        **common, branch="main", tip="0" * 40, design_checkpoint="1" * 40
+    )
     branch_b = m_impl_baseline_digest(
-        **common, branch="release/v0.5", tip="0" * 40,
-        design_checkpoint="1" * 40)
+        **common, branch="release/v0.5", tip="0" * 40, design_checkpoint="1" * 40
+    )
     tip_b = m_impl_baseline_digest(
-        **common, branch="main", tip="2" * 40, design_checkpoint="1" * 40)
+        **common, branch="main", tip="2" * 40, design_checkpoint="1" * 40
+    )
     checkpoint_b = m_impl_baseline_digest(
-        **common, branch="main", tip="0" * 40, design_checkpoint="3" * 40)
+        **common, branch="main", tip="0" * 40, design_checkpoint="3" * 40
+    )
     assert branch_a != branch_b
     assert branch_a != tip_b
     assert branch_a != checkpoint_b
@@ -143,10 +151,15 @@ def test_m_impl_baseline_missing_reports_absent_identity(tmp_path):
     _contract(repo)
     vdir = _docs(repo)
     missing = m_impl_baseline_missing(
-        vdir, repo,
-        approval_digest="approval-1", issue_evidence='{"FR-0001":1}',
-        frozen_test_paths=["tests/integration/"], contract_valid=True,
-        branch="", tip="", design_checkpoint="",
+        vdir,
+        repo,
+        approval_digest="approval-1",
+        issue_evidence='{"FR-0001":1}',
+        frozen_test_paths=["tests/integration/"],
+        contract_valid=True,
+        branch="",
+        tip="",
+        design_checkpoint="",
     )
     assert "branch.name" in missing
     assert "branch.tip" in missing
@@ -160,15 +173,15 @@ def test_freeze_baseline_payload_binds_branch_tip_and_design_checkpoint(tmp_path
     _contract(repo)
     vdir = _docs(repo)
     store = _store(repo)
-    store.append("RUN", "v0.5", "approval.recorded",
-                 {"digest": "approval-1", "actor": "human"})
-    store.append("RUN", "v0.5", "issues.created",
-                 {"mapping": {"FR-0001": 1}})
+    store.append("RUN", "v0.5", "approval.recorded", {"digest": "approval-1", "actor": "human"})
+    store.append("RUN", "v0.5", "issues.created", {"mapping": {"FR-0001": 1}})
     tip = _git(repo, "rev-parse", "HEAD")
     executor = _executor(repo, store)
     executor._do_freeze_baseline(
         Command("freeze_baseline", command_id="C-BASE-ID"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     payload = list(store.events("RUN"))[-1].payload
     assert payload["status"] == "current"
@@ -176,10 +189,13 @@ def test_freeze_baseline_payload_binds_branch_tip_and_design_checkpoint(tmp_path
     assert payload.get("tip") == tip
     assert payload.get("design_checkpoint") == tip
     digest = m_impl_baseline_digest(
-        vdir, repo, approval_digest="approval-1",
+        vdir,
+        repo,
+        approval_digest="approval-1",
         issue_evidence='{"FR-0001":1}',
         frozen_test_paths=payload["frozen_test_paths"],
-        branch=payload["branch"], tip=payload["tip"],
+        branch=payload["branch"],
+        tip=payload["tip"],
         design_checkpoint=payload["design_checkpoint"],
     )
     assert payload["digest"] == digest
@@ -191,14 +207,14 @@ def test_freeze_baseline_missing_design_checkpoint_is_stale(tmp_path):
     _contract(repo)
     _docs(repo)
     store = _store(repo, design_checkpoint=False)
-    store.append("RUN", "v0.5", "approval.recorded",
-                 {"digest": "approval-1", "actor": "human"})
-    store.append("RUN", "v0.5", "issues.created",
-                 {"mapping": {"FR-0001": 1}})
+    store.append("RUN", "v0.5", "approval.recorded", {"digest": "approval-1", "actor": "human"})
+    store.append("RUN", "v0.5", "issues.created", {"mapping": {"FR-0001": 1}})
     executor = _executor(repo, store)
     executor._do_freeze_baseline(
         Command("freeze_baseline", command_id="C-BASE-STALE"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     payload = list(store.events("RUN"))[-1].payload
     assert payload["status"] == "stale"
@@ -226,8 +242,7 @@ def test_taskgraph_missing_invalid_valid_and_no_tasks_json_overwrite(tmp_path):
     executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
     assert invalid.read_text(encoding="utf-8") == source
     assert (vdir / "tasks.md").exists()
-    committed = [ev for ev in store.events("RUN")
-                 if ev.type == "taskgraph.committed"][-1]
+    committed = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
     assert committed.payload["task_ids"] == ["T-001"]
 
 
@@ -235,7 +250,8 @@ def test_island_gate_rechecks_six_tuple_and_passes_only_when_closed(tmp_path):
     repo = _repo(tmp_path)
     vdir = _docs(repo)
     (vdir / "tasks.json").write_text(
-        json.dumps({"tasks": [_task()]}, sort_keys=True), encoding="utf-8")
+        json.dumps({"tasks": [_task()]}, sort_keys=True), encoding="utf-8"
+    )
     store = _store(repo)
     raw = (vdir / "tasks.json").read_text(encoding="utf-8")
     _graph(store, _task(), raw)
@@ -260,14 +276,26 @@ def test_manifest_persists_replays_and_ready_selection_is_serial(tmp_path):
     _docs(repo)
     store = _store(repo)
     first = _task()
-    second = {**_task("tests/unit/test_second.py::test_second"),
-              "task_id": "T-002", "batch": "2", "depends_on": ["T-001"]}
+    second = {
+        **_task("tests/unit/test_second.py::test_second"),
+        "task_id": "T-002",
+        "batch": "2",
+        "depends_on": ["T-001"],
+    }
     raw = json.dumps({"tasks": [second, first]}, sort_keys=True)
-    store.append("RUN", "v0.5", "taskgraph.committed",
-                 {"task_count": 2, "task_ids": ["T-001", "T-002"],
-                  "tasks": [second, first], "path": "tasks.json",
-                  "digest": hashlib.sha256(raw.encode()).hexdigest(),
-                  "validate_status": "pass"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {
+            "task_count": 2,
+            "task_ids": ["T-001", "T-002"],
+            "tasks": [second, first],
+            "path": "tasks.json",
+            "digest": hashlib.sha256(raw.encode()).hexdigest(),
+            "validate_status": "pass",
+        },
+    )
     executor = _executor(repo, store)
     command = Command("select_task", command_id="C-SELECT")
     executor._do_select_task(command, store.state("RUN"), None, False)
@@ -307,30 +335,64 @@ def test_every_m_impl_assignment_materializes_role_contracts(tmp_path):
     _docs(repo)
     store = _store(repo)
     task = _task()
-    store.append("RUN", "v0.5", "taskgraph.committed",
-                 {"task_count": 1, "tasks": [task], "path": "tasks.json",
-                  "digest": "graph", "validate_status": "pass"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "tasks": [task],
+            "path": "tasks.json",
+            "digest": "graph",
+            "validate_status": "pass",
+        },
+    )
     executor = _executor(repo, store)
-    backend = _RecordingBackend({"status": "failed", "artifact_ref": None,
-                                 "self_report": "bounded"})
+    backend = _RecordingBackend(
+        {"status": "failed", "artifact_ref": None, "self_report": "bounded"}
+    )
     executor.backend = backend
-    executor.issue(Command("dispatch_agent", {
-        "role": "archer", "substate": "PLANNING",
-        "assignment": {"skills": ["tracks-discuz"]},
-    }))
-    executor.issue(Command("dispatch_agent", {
-        "role": "prism", "substate": "PRISM_PLAN",
-        "assignment": {"skills": ["tracks-prism-impl"]},
-    }))
+    executor.issue(
+        Command(
+            "dispatch_agent",
+            {
+                "role": "archer",
+                "substate": "PLANNING",
+                "assignment": {"skills": ["tracks-discuz"]},
+            },
+        )
+    )
+    executor.issue(
+        Command(
+            "dispatch_agent",
+            {
+                "role": "prism",
+                "substate": "PRISM_PLAN",
+                "assignment": {"skills": ["tracks-prism-impl"]},
+            },
+        )
+    )
     executor._do_select_task(Command("select_task"), store.state("RUN"), None, False)
-    executor.issue(Command("dispatch_agent", {
-        "role": "devon", "substate": "RED",
-        "assignment": {"phase": "red", "skills": ["tracks-devon-rgr"]},
-    }))
-    executor.issue(Command("dispatch_agent", {
-        "role": "shield", "substate": "WRITE",
-        "assignment": {"skills": ["tracks-discuz"]},
-    }))
+    executor.issue(
+        Command(
+            "dispatch_agent",
+            {
+                "role": "devon",
+                "substate": "RED",
+                "assignment": {"phase": "red", "skills": ["tracks-devon-rgr"]},
+            },
+        )
+    )
+    executor.issue(
+        Command(
+            "dispatch_agent",
+            {
+                "role": "shield",
+                "substate": "WRITE",
+                "assignment": {"skills": ["tracks-discuz"]},
+            },
+        )
+    )
     assignments = {role: assignment for role, _sub, assignment in backend.assignments}
     assert assignments["devon"]["task_id"] == "T-001"
     assert assignments["devon"]["manifest"]["allowed_paths"]
@@ -338,26 +400,38 @@ def test_every_m_impl_assignment_materializes_role_contracts(tmp_path):
     assert assignments["devon"]["result_identity"]
     assert assignments["devon"]["phase"] == "red"
     assert assignments["prism"]["criteria_pack"] == {
-        "name": "tracks-prism-impl", "version": "0.1",
+        "name": "tracks-prism-impl",
+        "version": "0.1",
     }
-    assert assignments["shield"]["test_tasks"] == [{
-        "ac_id": "AC-FR0001-01", "layers": ["integration"],
-        "if_ids": ["IF-IMPL-001"],
-    }]
+    assert assignments["shield"]["test_tasks"] == [
+        {
+            "ac_id": "AC-FR0001-01",
+            "layers": ["integration"],
+            "if_ids": ["IF-IMPL-001"],
+        }
+    ]
     dispatches = [ev for ev in store.events("RUN") if ev.type == "command.issued"]
     assert all("assignment" in ev.payload["command"]["params"] for ev in dispatches)
 
 
 def _structured_outcome(
-    phase: str, changed: list[str], r_identity=None,
-    classification: str | None = None, verdict: str | None = None,
+    phase: str,
+    changed: list[str],
+    r_identity=None,
+    classification: str | None = None,
+    verdict: str | None = None,
     diff_ref: str | None = None,
 ):
     outcome = {
-        "role": "devon", "status": "done", "phase": phase,
-        "changed_paths": changed, "commands": [],
-        "manifest_compliance": True, "pre_identity": "pre",
-        "post_identity": "post", "implemented_if_ids": [],
+        "role": "devon",
+        "status": "done",
+        "phase": phase,
+        "changed_paths": changed,
+        "commands": [],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": [],
         **({"r_identity": r_identity} if r_identity else {}),
         **({"diff_ref": diff_ref} if diff_ref is not None else {}),
     }
@@ -373,28 +447,36 @@ def test_empty_red_and_green_fail_closed_without_commits(tmp_path):
     _docs(repo)
     store = _store(repo)
     task = _task()
-    manifest = {"task_id": "T-001",
-                "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
-                "forbidden_paths": [".tracks/projects/**"]}
-    store.append("RUN", "v0.5", "taskgraph.committed",
-                 {"task_count": 1, "tasks": [task], "digest": "graph"})
-    store.append("RUN", "v0.5", "task.started",
-                 {"task_id": "T-001", "task": task, "manifest": manifest})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _structured_outcome("red", ["tests/unit/test_app.py"]))
+    manifest = {
+        "task_id": "T-001",
+        "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+        "forbidden_paths": [".tracks/projects/**"],
+    }
+    store.append(
+        "RUN", "v0.5", "taskgraph.committed", {"task_count": 1, "tasks": [task], "digest": "graph"}
+    )
+    store.append(
+        "RUN", "v0.5", "task.started", {"task_id": "T-001", "task": task, "manifest": manifest}
+    )
+    store.append(
+        "RUN", "v0.5", "outcome.received", _structured_outcome("red", ["tests/unit/test_app.py"])
+    )
     executor = _executor(repo, store)
     base = _git(repo, "rev-parse", "HEAD")
-    executor._do_checkpoint_red(Command("checkpoint_red", command_id="C-R"),
-                                store.state("RUN"), None, False)
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
     assert _git(repo, "rev-parse", "HEAD") == base
     assert not any(ev.type == "red.checkpointed" for ev in store.events("RUN"))
 
     store.append("RUN", "v0.5", "red.checkpointed", {"r_sha": "R"})
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _structured_outcome("green", ["tracks/app.py"], "R"))
-    executor._do_commit_green(Command("commit_green", command_id="C-G"),
-                              store.state("RUN"), None, False)
+    store.append(
+        "RUN", "v0.5", "outcome.received", _structured_outcome("green", ["tracks/app.py"], "R")
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
+    )
     assert _git(repo, "rev-parse", "HEAD") == base
     assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
 
@@ -413,7 +495,9 @@ def _run_red_gate(executor: Executor, store: Store, outcome: dict):
     store.append("RUN", "v0.5", "outcome.received", outcome)
     executor._do_run_task_gates(
         Command("run_task_gates", {"gate": "RED_GATE"}, command_id="C-GATE"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     return list(store.events("RUN"))[-1]
 
@@ -423,42 +507,54 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        _structured_outcome("red", ["tests/unit/test_app.py"],
-                            classification="assertion_failure",
-                            verdict="assertion_failure",
-                            diff_ref=RGR_RED_DIFF),
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
     )
     executor._do_checkpoint_red(
         Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert len(red) == 1
     red_payload = red[0].payload
     assert red_payload["attempt"] == 1
     assert red_payload["task_id"] == task["task_id"]
-    assert red_payload["ref"] == (
-        "refs/trac/rgr/RUN/T-001/1/red"
-    )
+    assert red_payload["ref"] == ("refs/trac/rgr/RUN/T-001/1/red")
     assert _git(repo, "rev-parse", red_payload["ref"]) == red_payload["r_sha"]
 
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        _structured_outcome("green", ["tracks/app.py"], red_payload["r_sha"],
-                            diff_ref=_RGR_GREEN_DIFF),
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "green", ["tracks/app.py"], red_payload["r_sha"], diff_ref=_RGR_GREEN_DIFF
+        ),
     )
     executor._do_commit_green(
         Command("commit_green", command_id="C-G"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     green = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
     assert len(green) == 1
     green_payload = green[0].payload
     assert green_payload == {
-        "g_sha": green_payload["g_sha"], "task_id": task["task_id"],
-        "attempt": 1, "r_sha": red_payload["r_sha"],
+        "g_sha": green_payload["g_sha"],
+        "task_id": task["task_id"],
+        "attempt": 1,
+        "r_sha": red_payload["r_sha"],
         "base_sha": green_payload["base_sha"],
         "trailers": {
             "Tracks-Task": task["task_id"],
@@ -481,19 +577,28 @@ def test_red_checkpoint_retry_uses_next_public_attempt(tmp_path):
     store, _ = _started_task_store(repo)
     executor = _executor(repo, store)
     store.append(
-        "RUN", "v0.5", "verdict.failed",
+        "RUN",
+        "v0.5",
+        "verdict.failed",
         {"check": "red_invalid", "attempt": 1},
     )
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        _structured_outcome("red", ["tests/unit/test_app.py"],
-                            classification="symbol_missing",
-                            verdict="symbol_missing",
-                            diff_ref=RGR_RED_DIFF),
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="symbol_missing",
+            verdict="symbol_missing",
+            diff_ref=RGR_RED_DIFF,
+        ),
     )
     executor._do_checkpoint_red(
         Command("checkpoint_red", command_id="C-R2"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert red[0].payload["attempt"] == 2
@@ -505,11 +610,15 @@ def test_stub_token_red_is_invalid_but_legal_red_classes_pass(tmp_path):
     store, _ = _started_task_store(repo)
     executor = _executor(repo, store)
     failed = _run_red_gate(
-        executor, store,
-        _structured_outcome("red", ["tests/unit/test_app.py"],
-                            classification="stub_token_failure",
-                            verdict="stub_token_failure",
-                            diff_ref=RGR_RED_DIFF),
+        executor,
+        store,
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="stub_token_failure",
+            verdict="stub_token_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
     )
     assert failed.type == "verdict.failed"
     assert failed.payload["check"] == "red_invalid"
@@ -520,16 +629,23 @@ def test_stub_token_red_is_invalid_but_legal_red_classes_pass(tmp_path):
     assert decide(store.state("RUN")).params["attempt"] == 2
 
     for classification in ("assertion_failure", "symbol_missing"):
-        store.append("RUN", "v0.5", "outcome.received",
-                     _structured_outcome(
-                         "red", ["tests/unit/test_app.py"],
-                         classification=classification, verdict=classification,
-                         diff_ref=RGR_RED_DIFF,
-                     ))
+        store.append(
+            "RUN",
+            "v0.5",
+            "outcome.received",
+            _structured_outcome(
+                "red",
+                ["tests/unit/test_app.py"],
+                classification=classification,
+                verdict=classification,
+                diff_ref=RGR_RED_DIFF,
+            ),
+        )
         executor._do_run_task_gates(
-            Command("run_task_gates", {"gate": "RED_GATE"},
-                    command_id=f"C-{classification}"),
-            store.state("RUN"), None, False,
+            Command("run_task_gates", {"gate": "RED_GATE"}, command_id=f"C-{classification}"),
+            store.state("RUN"),
+            None,
+            False,
         )
         assert list(store.events("RUN"))[-1].type == "verdict.passed"
 
@@ -539,9 +655,13 @@ def test_malformed_red_classifications_fail_closed(tmp_path):
         {},
         {"results": [{"classification": None}], "verdict": "assertion_failure"},
         {"results": [{"classification": "unknown"}], "verdict": "unknown"},
-        {"results": [{"classification": "assertion_failure"},
-                      {"classification": "symbol_missing"}],
-         "verdict": "assertion_failure"},
+        {
+            "results": [
+                {"classification": "assertion_failure"},
+                {"classification": "symbol_missing"},
+            ],
+            "verdict": "assertion_failure",
+        },
     )
     for index, details in enumerate(cases):
         case_dir = tmp_path / str(index)
@@ -550,7 +670,9 @@ def test_malformed_red_classifications_fail_closed(tmp_path):
         store, _ = _started_task_store(repo)
         executor = _executor(repo, store)
         outcome = _structured_outcome(
-            "red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF,
+            "red",
+            ["tests/unit/test_app.py"],
+            diff_ref=RGR_RED_DIFF,
         )
         outcome.update(details)
         failed = _run_red_gate(executor, store, outcome)
@@ -565,46 +687,59 @@ def test_rgr_reconcile_replay_emits_no_duplicate_events(tmp_path):
     store, _ = _started_task_store(repo)
     executor = _executor(repo, store)
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        _structured_outcome("red", ["tests/unit/test_app.py"],
-                            classification="assertion_failure",
-                            verdict="assertion_failure",
-                            diff_ref=RGR_RED_DIFF),
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
     )
     command = Command("checkpoint_red", command_id="C-R-REPLAY")
     stale_state = store.state("RUN")
     executor._do_checkpoint_red(command, stale_state, None, False)
     executor._do_checkpoint_red(command, stale_state, None, True)
-    assert len([ev for ev in store.events("RUN")
-                if ev.type == "red.checkpointed"]) == 1
+    assert len([ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]) == 1
 
-    red_sha = [ev for ev in store.events("RUN")
-               if ev.type == "red.checkpointed"][0].payload["r_sha"]
+    red_sha = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][0].payload[
+        "r_sha"
+    ]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        _structured_outcome("green", ["tracks/app.py"], red_sha,
-                            diff_ref=_RGR_GREEN_DIFF),
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red_sha, diff_ref=_RGR_GREEN_DIFF),
     )
     green_command = Command("commit_green", command_id="C-G-REPLAY")
     stale_green_state = store.state("RUN")
     executor._do_commit_green(green_command, stale_green_state, None, False)
     executor._do_commit_green(green_command, stale_green_state, None, True)
-    assert len([ev for ev in store.events("RUN")
-                if ev.type == "green.committed"]) == 1
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
 
 
 def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
     repo = _repo(tmp_path)
     store, _ = _started_task_store(repo)
     store.append(
-        "RUN", "v0.5", "outcome.received",
-        {"role": "devon", "status": "failed",
-         "failure_class": "agent_failed", "self_report": "failed",
-         "audit_evidence": "execution"},
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        {
+            "role": "devon",
+            "status": "failed",
+            "failure_class": "agent_failed",
+            "self_report": "failed",
+            "audit_evidence": "execution",
+        },
     )
     store.append(
-        "RUN", "v0.5", "verdict.failed",
+        "RUN",
+        "v0.5",
+        "verdict.failed",
         {"check": "test_defect", "attempt": 2},
     )
     executor = _executor(repo, store)
@@ -620,10 +755,10 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
             tests_dir = repo / "tests" / "integration"
             tests_dir.mkdir(parents=True, exist_ok=True)
             (tests_dir / "test_shield_fix.py").write_text(
-                "def test_shield_fix():\n    assert True\n", encoding="utf-8",
+                "def test_shield_fix():\n    assert True\n",
+                encoding="utf-8",
             )
-            return {"status": "done", "artifact_ref": None,
-                    "self_report": "fixed"}
+            return {"status": "done", "artifact_ref": None, "self_report": "fixed"}
 
     backend = _ShieldWriteBackend()
     executor.backend = backend
@@ -631,8 +766,7 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
     assert command.params["role"] == "shield"
     assert command.params["substate"] == "WRITE"
     executor.issue(command)
-    committed = [ev for ev in store.events("RUN")
-                 if ev.type == "test.committed"]
+    committed = [ev for ev in store.events("RUN") if ev.type == "test.committed"]
     assert committed, "test.committed must be emitted after Shield fix"
     assert committed[0].payload["test_count"] > 0
 
@@ -667,7 +801,12 @@ _SECRET_LINE_DIFF = (
 )
 
 _RUNTIME_EVIDENCE_TOKENS = (
-    "argv", "cwd", "exit_code", "classification", "stdout_sha", "stderr_sha",
+    "argv",
+    "cwd",
+    "exit_code",
+    "classification",
+    "stdout_sha",
+    "stderr_sha",
 )
 
 
@@ -677,20 +816,24 @@ def _gate_manifest(task, *, unit_commands=None):
         "task_id": task["task_id"],
         "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
         "forbidden_paths": [".tracks/projects/**"],
-        "unit_commands": list(unit_commands or
-                              [".venv/bin/python -m pytest -n 4 tests/unit"]),
+        "unit_commands": list(unit_commands or [".venv/bin/python -m pytest -n 4 tests/unit"]),
     }
 
 
 def _green_outcome(task, r_sha, *, agent_cwd=None, diff=None):
     outcome = _structured_outcome(
-        "green", ["tracks/app.py"], r_identity=r_sha, diff_ref=diff or RGR_GREEN_DIFF,
+        "green",
+        ["tracks/app.py"],
+        r_identity=r_sha,
+        diff_ref=diff or RGR_GREEN_DIFF,
     )
-    outcome["commands"] = [{
-        "cmd": ".venv/bin/python -m pytest -n 4 tests/unit",
-        "result": "pass",
-        **({"cwd": agent_cwd} if agent_cwd is not None else {}),
-    }]
+    outcome["commands"] = [
+        {
+            "cmd": ".venv/bin/python -m pytest -n 4 tests/unit",
+            "result": "pass",
+            **({"cwd": agent_cwd} if agent_cwd is not None else {}),
+        }
+    ]
     outcome["results"] = [{"classification": "pass"}]
     return outcome
 
@@ -698,8 +841,10 @@ def _green_outcome(task, r_sha, *, agent_cwd=None, diff=None):
 def _write_failing_unit_test(repo: Path, *, passes: bool = False) -> Path:
     unit = repo / "tests" / "unit" / "test_app.py"
     unit.parent.mkdir(parents=True, exist_ok=True)
-    unit.write_text("def test_app():\n    assert True\n" if passes
-                    else "def test_app():\n    assert False\n", encoding="utf-8")
+    unit.write_text(
+        "def test_app():\n    assert True\n" if passes else "def test_app():\n    assert False\n",
+        encoding="utf-8",
+    )
     return unit
 
 
@@ -712,20 +857,33 @@ def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
     repo = _repo(tmp_path)
     _contract(repo)
     store, task = _started_task_store(repo)
-    store.append("RUN", "v0.5", "task.started",
-                 {"task_id": task["task_id"], "task": task,
-                  "manifest": _gate_manifest(task)})
-    store.append("RUN", "v0.5", "red.checkpointed",
-                 {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"))
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"),
+    )
     _write_failing_unit_test(repo)
     head_before = _git(repo, "rev-parse", "HEAD")
 
     executor = _executor(repo, store)
     executor._do_run_task_gates(
         Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
 
     fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
@@ -747,31 +905,39 @@ def test_green_gate_regression_when_r_unit_test_mutation_hidden(tmp_path):
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
-    store.append("RUN", "v0.5", "outcome.received",
-                 _structured_outcome("red", ["tests/unit/test_app.py"],
-                                     classification="assertion_failure",
-                                     verdict="assertion_failure",
-                                     diff_ref=RGR_RED_DIFF))
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
     executor._do_checkpoint_red(
         Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
-    r_sha = [e for e in store.events("RUN")
-             if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
     # Candidate state the Runtime observes: the green diff plus a hidden
     # mutation of the immutable R unit test. Devon's changed_paths reports
     # only tracks/app.py.
     (repo / "tracks").mkdir(parents=True, exist_ok=True)
-    (repo / "tracks" / "app.py").write_text(
-        'IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
+    (repo / "tracks" / "app.py").write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
     _write_failing_unit_test(repo, passes=True)
 
     executor._do_run_task_gates(
         Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
 
     fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
@@ -795,24 +961,30 @@ def test_refactor_no_change_still_reruns_authoritative_green_gate(tmp_path):
         executor = _executor(repo, store)
         before = len(list(store.events("RUN")))
         executor._do_run_refactor_gate(
-            Command("run_refactor_gate", {"stage": "M-IMPL"},
-                    command_id="C-RF"),
-            store.state("RUN"), None, False,
+            Command("run_refactor_gate", {"stage": "M-IMPL"}, command_id="C-RF"),
+            store.state("RUN"),
+            None,
+            False,
         )
         new_events = list(store.events("RUN"))[before:]
         assert not any(ev.type == "refactor.no_change" for ev in new_events), (
-            "no_change is emitted only after the authoritative Green gate "
-            "rerun passes")
+            "no_change is emitted only after the authoritative Green gate rerun passes"
+        )
         fails = [ev for ev in new_events if ev.type == "verdict.failed"]
         assert fails, "a real failing rerun must fail closed"
         assert store.state("RUN").substate == "REFACTOR", (
-            "a failing rerun must not advance to TASK_REVIEW")
+            "a failing rerun must not advance to TASK_REVIEW"
+        )
     finally:
         cleanup_worktree(gate)
 
 
 _TASK_REVIEW_FLAWS = (
-    "scope_overflow", "lineage", "secret_line", "missing_ac", "budget_overflow",
+    "scope_overflow",
+    "lineage",
+    "secret_line",
+    "missing_ac",
+    "budget_overflow",
 )
 
 
@@ -829,17 +1001,25 @@ def _task_review_scenario(repo, flaw):
     budget history only (G otherwise valid)."""
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
-    store.append("RUN", "v0.5", "outcome.received",
-                 _structured_outcome("red", ["tests/unit/test_app.py"],
-                                     classification="assertion_failure",
-                                     verdict="assertion_failure",
-                                     diff_ref=RGR_RED_DIFF))
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
     executor._do_checkpoint_red(
         Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
-    r_sha = [e for e in store.events("RUN")
-             if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
     base_sha = red_base_sha(str(repo), r_sha)
     assert base_sha is not None, "immutable R commit must resolve its base B"
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
@@ -849,27 +1029,45 @@ def _task_review_scenario(repo, flaw):
         impl_diff = _SECRET_LINE_DIFF
     else:
         impl_diff = RGR_GREEN_DIFF
-    store.append("RUN", "v0.5", "outcome.received",
-                 _green_outcome(task, r_sha, diff=impl_diff))
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha, diff=impl_diff))
     store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
     if flaw == "budget_overflow":
         # Inflate the consumed-attempt budget beyond the task budget (=3).
         for attempt in range(1, 5):
-            store.append("RUN", "v0.5", "verdict.failed",
-                         {"check": "budget", "attempt": attempt})
+            store.append("RUN", "v0.5", "verdict.failed", {"check": "budget", "attempt": attempt})
     trailer_r = "0" * 40 if flaw == "lineage" else r_sha
     ac_refs = [] if flaw == "missing_ac" else ["AC-FR0001-01", "FR-0001"]
     g = create_green_commit(
-        repo=str(repo), run_id="RUN", task_id=task["task_id"], attempt=1,
-        impl_diff=impl_diff, base_sha=base_sha, r_sha=trailer_r,
-        issue_number=task["issue_number"], ac_refs=ac_refs,
+        repo=str(repo),
+        run_id="RUN",
+        task_id=task["task_id"],
+        attempt=1,
+        impl_diff=impl_diff,
+        base_sha=base_sha,
+        r_sha=trailer_r,
+        issue_number=task["issue_number"],
+        ac_refs=ac_refs,
     )
-    store.append("RUN", "v0.5", "green.committed",
-                 {"g_sha": g.sha, "task_id": task["task_id"], "attempt": 1,
-                  "r_sha": r_sha, "base_sha": base_sha, "trailers": g.trailers})
+    store.append(
+        "RUN",
+        "v0.5",
+        "green.committed",
+        {
+            "g_sha": g.sha,
+            "task_id": task["task_id"],
+            "attempt": 1,
+            "r_sha": r_sha,
+            "base_sha": base_sha,
+            "trailers": g.trailers,
+        },
+    )
     _git(repo, "reset", "--hard", g.sha)
-    store.append("RUN", "v0.5", "refactor.no_change",
-                 {"task_id": task["task_id"], "reason": "no improvements"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "refactor.no_change",
+        {"task_id": task["task_id"], "reason": "no improvements"},
+    )
     return executor, store
 
 
@@ -884,14 +1082,16 @@ def test_task_review_is_not_unconditional(tmp_path, flaw):
     before = len(list(store.events("RUN")))
     executor._do_run_task_gates(
         Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
-        store.state("RUN"), None, False,
+        store.state("RUN"),
+        None,
+        False,
     )
     new_events = list(store.events("RUN"))[before:]
     assert new_events, f"{flaw}: TASK_REVIEW must emit a verdict"
     assert new_events[-1].type == "verdict.failed", (
-        f"{flaw}: TASK_REVIEW must fail closed, got {new_events[-1].type}")
-    assert new_events[-1].payload.get("reason"), (
-        f"{flaw}: TASK_REVIEW failure must carry a reason")
+        f"{flaw}: TASK_REVIEW must fail closed, got {new_events[-1].type}"
+    )
+    assert new_events[-1].payload.get("reason"), f"{flaw}: TASK_REVIEW failure must carry a reason"
 
 
 def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
@@ -900,31 +1100,43 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
     results stay audit-only."""
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
-    store.append("RUN", "v0.5", "task.started",
-                 {"task_id": task["task_id"], "task": task,
-                  "manifest": _gate_manifest(task)})
-    store.append("RUN", "v0.5", "red.checkpointed",
-                 {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1})
-    store.append("RUN", "v0.5", "outcome.received",
-                 _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"))
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"),
+    )
     base = _git(repo, "rev-parse", "HEAD")
     gate = create_gate_worktree(str(repo), base, "", "", "RUN", task["task_id"])
     try:
         _write_failing_unit_test(Path(gate.path))
         executor = _executor(repo, store)
         executor._do_run_task_gates(
-            Command("run_task_gates", {"gate": "GREEN_GATE"},
-                    command_id="C-GATE"),
-            store.state("RUN"), None, False,
+            Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+            store.state("RUN"),
+            None,
+            False,
         )
         fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
         assert fails, "the Runtime gate must execute and fail closed"
         assert fails[-1].payload["check"] == "impl_defect"
         evidence = fails[-1].payload.get("evidence") or ""
         gate_cwd = str(Path(gate.path).resolve())
-        assert gate_cwd in evidence, (
-            "gate commands must run in the Runtime-selected worktree cwd")
+        assert gate_cwd in evidence, "gate commands must run in the Runtime-selected worktree cwd"
         assert "/agent/claimed/cwd" not in evidence, (
-            "agent-reported cwd must never become the execution cwd")
+            "agent-reported cwd must never become the execution cwd"
+        )
     finally:
         cleanup_worktree(gate)

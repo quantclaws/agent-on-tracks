@@ -1,4 +1,5 @@
 """Event contracts (AC-28a surface) + validate_document (FR-11/FR-19/FR-20)."""
+
 import dataclasses
 
 import pytest
@@ -11,8 +12,15 @@ from tracks.kernel.events import COMMAND_KINDS, EVENT_TYPES, EventEnvelope
 def test_envelope_fields_match_interfaces_section_2():
     fields = {f.name for f in dataclasses.fields(EventEnvelope)}
     assert fields == {
-        "seq", "ts", "run_id", "version", "type",
-        "schema_version", "command_id", "task_id", "payload",
+        "seq",
+        "ts",
+        "run_id",
+        "version",
+        "type",
+        "schema_version",
+        "command_id",
+        "task_id",
+        "payload",
     }
 
 
@@ -23,14 +31,31 @@ def test_envelope_is_frozen():
 
 
 def test_closed_sets_cover_v01_usage():
-    for t in ("command.issued", "outcome.received", "verdict.passed",
-              "verdict.failed", "story.committed", "spec.committed",
-              "human.triage", "human.review", "sage.verdict", "lex.verdict",
-              "backlog.recorded", "run.completed", "stage.rolled_back"):
+    for t in (
+        "command.issued",
+        "outcome.received",
+        "verdict.passed",
+        "verdict.failed",
+        "story.committed",
+        "spec.committed",
+        "human.triage",
+        "human.review",
+        "sage.verdict",
+        "lex.verdict",
+        "backlog.recorded",
+        "run.completed",
+        "stage.rolled_back",
+    ):
         assert t in EVENT_TYPES
-    for k in ("dispatch_agent", "validate_document", "commit_document",
-              "write_frontmatter", "record_backlog", "complete_run",
-              "rollback_stage"):
+    for k in (
+        "dispatch_agent",
+        "validate_document",
+        "commit_document",
+        "write_frontmatter",
+        "record_backlog",
+        "complete_run",
+        "rollback_stage",
+    ):
         assert k in COMMAND_KINDS
 
 
@@ -60,6 +85,7 @@ def test_valid_document_passes(tmp_path):
 def test_spec_fr_count_gate(tmp_path):
     def items(n):
         return "\n".join(f"### FR-{i:04d} 需求\n\n描述\n" for i in range(1, n + 1))
+
     p = tmp_path / "spec.md"
 
     p.write_text(FM + items(30) + "\n", encoding="utf-8")

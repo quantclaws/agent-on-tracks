@@ -15,7 +15,8 @@ from tests.integration.v05_contract_helpers import events_of, run_m_impl_journey
 def test_quality_gate_layers_reach_public_commands_and_events(trac, event_log):
     _, _, events = run_m_impl_journey(trac, event_log)
     issued = [
-        event for event in events_of(events, "command.issued")
+        event
+        for event in events_of(events, "command.issued")
         if event["payload"].get("command", {}).get("kind")
         in {"run_task_gates", "run_refactor_gate", "check_island_2"}
     ]
@@ -23,8 +24,6 @@ def test_quality_gate_layers_reach_public_commands_and_events(trac, event_log):
     assert "run_task_gates" in kinds
     assert "run_refactor_gate" in kinds
     green = events_of(events, "green.committed")
-    refactor = events_of(events, "refactor.committed") + events_of(
-        events, "refactor.no_change"
-    )
+    refactor = events_of(events, "refactor.committed") + events_of(events, "refactor.no_change")
     assert green and refactor
     assert kinds.index("run_task_gates") < kinds.index("check_island_2")

@@ -6,6 +6,7 @@ AC-FR0130-03@v0.4 version-qualified reference,
 AC-FR0130-04@v0.4 doc short/long allowed, test marker must be long,
 AC-FR0130-06@v0.4 existing check_spec_items unchanged.
 """
+
 from tracks.executor.validate import (
     check_spec_items,
     check_story_items,

@@ -30,9 +30,7 @@ def test_five_checks_individual_failures(trac, host_repo):
     reports the offending position (task ID / AC ID / issue number)."""
     for fixture_name, keyword, position in _FIVE_CHECKS:
         result, output = validate_tasksjson(trac, host_repo, fixture_name)
-        assert result.returncode != 0, (
-            f"{fixture_name}: expected non-zero exit for check failure"
-        )
+        assert result.returncode != 0, f"{fixture_name}: expected non-zero exit for check failure"
         assert keyword.lower() in output, (
             f"{fixture_name}: expected '{keyword}' in validate output, got: {output}"
         )

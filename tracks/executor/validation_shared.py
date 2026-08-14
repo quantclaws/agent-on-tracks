@@ -10,6 +10,7 @@ without either depending on the other at module-init time.
 This module has no dependency on ``validate`` or ``test_tasks`` (only ``re``),
 so it can be imported first in any order.
 """
+
 from __future__ import annotations
 
 import re

@@ -1,4 +1,5 @@
 """Verify the non-editable wheel contains all runtime resources."""
+
 import json
 import os
 import subprocess
@@ -96,9 +97,7 @@ def test_wheel_is_installable_and_contains_runtime_resources(tmp_path):
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
     assert {f"tracks/{path}" for path in RUNTIME_RESOURCE_PATHS} <= names
-    assert not any(
-        name.startswith(("tests/", "e2e_live/", "scenarios/")) for name in names
-    )
+    assert not any(name.startswith(("tests/", "e2e_live/", "scenarios/")) for name in names)
 
     isolated_venv = tmp_path / "isolated-venv"
     create = _run(

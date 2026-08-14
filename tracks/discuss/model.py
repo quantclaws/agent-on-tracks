@@ -3,6 +3,7 @@
 Pure data + normalization. Threads are an immutable view of one full scan of a
 document; nothing here touches the filesystem or the event store.
 """
+
 from __future__ import annotations
 
 import re
@@ -36,12 +37,12 @@ class Comment:
     """
 
     depth: int
-    speaker: str          # display case ('@' stripped)
+    speaker: str  # display case ('@' stripped)
     body: str
-    line: int             # 1-indexed first line of the comment
-    text: str             # raw first line (rstripped)
-    mentions: tuple       # @mentions in this comment's body
-    children: tuple       # tuple[Comment] — nested replies
+    line: int  # 1-indexed first line of the comment
+    text: str  # raw first line (rstripped)
+    mentions: tuple  # @mentions in this comment's body
+    children: tuple  # tuple[Comment] — nested replies
 
 
 def iter_comments(comment: Comment):
@@ -55,14 +56,14 @@ def iter_comments(comment: Comment):
 class Thread:
     """One discussion thread as seen in a single full scan (FR-060)."""
 
-    thread_id: str            # "T-NNN", per-scan sequence (NOT persistent)
-    initiator: str            # root comment speaker (display case preserved)
-    status: str               # "open" | "resolved" | "reopen"
+    thread_id: str  # "T-NNN", per-scan sequence (NOT persistent)
+    initiator: str  # root comment speaker (display case preserved)
+    status: str  # "open" | "resolved" | "reopen"
     last_speaker: str
     reply_count: int
-    snippet: str              # root body, first SNIPPET_LEN chars
-    mentioned_agents: tuple   # deduped @mentions (display case)
-    root: Comment             # the reply tree (root comment + nested children)
+    snippet: str  # root body, first SNIPPET_LEN chars
+    mentioned_agents: tuple  # deduped @mentions (display case)
+    root: Comment  # the reply tree (root comment + nested children)
     # 5-tuple locate hints (L0/L1); content is the authority, not these numbers.
     total_lines: int
     anchor_line: int

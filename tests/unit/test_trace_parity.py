@@ -10,6 +10,7 @@ AC-FR0080-03@v0.4 AC<->test hard errors + ground truth,
 AC-FR0080-05@v0.4 no short circuit + ground truth,
 AC-FR0100-02@v0.4 baseline exemption + ground truth.
 """
+
 import sys
 from pathlib import Path
 
@@ -21,11 +22,28 @@ from trace_reference import compute_trace  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent.parent / "assets" / "trace_fixtures"
 
-_TEST_SUFFIXES = frozenset({
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
-    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
-    ".kt", ".swift",
-})
+_TEST_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".cs",
+        ".rb",
+        ".php",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".kt",
+        ".swift",
+    }
+)
 
 
 def _read_fixture(name: str) -> tuple[str, str, str, dict[str, str]]:
@@ -59,12 +77,10 @@ def _compare(name: str, baseline: dict | None = None) -> None:
         f"{name}: status mismatch impl={impl.status} oracle={oracle['status']}"
     )
     assert tuple(sorted(impl.hard_errors)) == tuple(sorted(oracle["hard_errors"])), (
-        f"{name}: hard_errors mismatch\n"
-        f"  impl={impl.hard_errors}\n  oracle={oracle['hard_errors']}"
+        f"{name}: hard_errors mismatch\n  impl={impl.hard_errors}\n  oracle={oracle['hard_errors']}"
     )
     assert tuple(sorted(impl.warnings)) == tuple(sorted(oracle["warnings"])), (
-        f"{name}: warnings mismatch\n"
-        f"  impl={impl.warnings}\n  oracle={oracle['warnings']}"
+        f"{name}: warnings mismatch\n  impl={impl.warnings}\n  oracle={oracle['warnings']}"
     )
 
 
@@ -109,9 +125,8 @@ def test_baseline_exemption_parity():
     no_baseline = check_trace_full_file(d, tests_dir, None)
     oracle_no_baseline = compute_trace(story, spec, acc, test_files)
     assert no_baseline.status == oracle_no_baseline["status"]
-    assert (
-        tuple(sorted(no_baseline.hard_errors))
-        == tuple(sorted(oracle_no_baseline["hard_errors"]))
+    assert tuple(sorted(no_baseline.hard_errors)) == tuple(
+        sorted(oracle_no_baseline["hard_errors"])
     )
 
     # With baseline: FR-0020 is exempted

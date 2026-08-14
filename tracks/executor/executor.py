@@ -2,6 +2,7 @@
 execute + reconcile (D-13), agent dispatch via the effects backend seam
 (NFR-01; ARCH-003 §4), validate pass-through (D-16).
 """
+
 from __future__ import annotations
 
 import os
@@ -91,13 +92,17 @@ def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
 
 # Stage-transition table (design §1, single source of truth): EXIT seal ->
 # next stage.entered. v0.5: M-TEST -> M-IMPL (previously a boundary exit).
-_NEXT_STAGE = {"M-STORY": "M-SPEC", "M-SPEC": "M-ACC",
-               "M-ACC": "M-REQ-APPROVAL", "M-REQ-APPROVAL": "M-DESIGN",
-               "M-DESIGN": "M-TEST", "M-TEST": "M-IMPL"}
+_NEXT_STAGE = {
+    "M-STORY": "M-SPEC",
+    "M-SPEC": "M-ACC",
+    "M-ACC": "M-REQ-APPROVAL",
+    "M-REQ-APPROVAL": "M-DESIGN",
+    "M-DESIGN": "M-TEST",
+    "M-TEST": "M-IMPL",
+}
 
 # reviewer role -> its verdict event type
-_VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict",
-                  "prism": "prism.verdict"}
+_VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict", "prism": "prism.verdict"}
 
 # D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
 # read back by the executor to enforce the anti-self-report triple.
@@ -107,15 +112,21 @@ _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
-    def __init__(self, store: Store, repo: Path, run_id: str,
-                 assignment_overlay: dict | None = None,
-                 max_dispatches: int | None = None):
+    def __init__(
+        self,
+        store: Store,
+        repo: Path,
+        run_id: str,
+        assignment_overlay: dict | None = None,
+        max_dispatches: int | None = None,
+    ):
         if assignment_overlay is not None and not isinstance(assignment_overlay, dict):
             raise TypeError("assignment_overlay must be a dict or None")
         if max_dispatches is not None and (
-                isinstance(max_dispatches, bool)
-                or not isinstance(max_dispatches, int)
-                or max_dispatches < 1):
+            isinstance(max_dispatches, bool)
+            or not isinstance(max_dispatches, int)
+            or max_dispatches < 1
+        ):
             raise ValueError("max_dispatches must be a positive integer or None")
         self.store = store
         self.repo = repo
@@ -126,30 +137,40 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self.max_dispatches = max_dispatches
         self._issue_backend = None  # lazy: created on first create_issues
 
-    def _emit(self, type: str, payload: dict,
-              command_id: str | None = None, task_id: str | None = None):
-        return self.store.append(self.run_id, self.version, type, payload,
-                                 command_id=command_id, task_id=task_id)
+    def _emit(
+        self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
+    ):
+        return self.store.append(
+            self.run_id, self.version, type, payload, command_id=command_id, task_id=task_id
+        )
 
-    def _emit_commit_failure(self, proc: subprocess.CompletedProcess,
-                             state: State, command_id: str) -> None:
+    def _emit_commit_failure(
+        self, proc: subprocess.CompletedProcess, state: State, command_id: str
+    ) -> None:
         """D-30/F-1: pre-commit hook rejected the commit -> emit the established
         failure-evidence event (verdict.failed -> s.last_failure via
         _on_verdict_failed) carrying the hook's combined output, so decide()
         re-dispatches the agent to fix the deliverable (FR-11)."""
         self._emit_commit_failure_evidence(
-            state, command_id, "pre-commit hook rejected the commit",
+            state,
+            command_id,
+            "pre-commit hook rejected the commit",
             _hook_output(proc),
         )
 
-    def _emit_commit_failure_evidence(self, state: State, command_id: str,
-                                      reason: str, evidence: str) -> None:
-        self._emit("verdict.failed",
-                   {"check": "commit",
-                     "reason": reason,
-                     "evidence": evidence,
-                     "attempt": state.current_attempt + 1},
-                   command_id=command_id)
+    def _emit_commit_failure_evidence(
+        self, state: State, command_id: str, reason: str, evidence: str
+    ) -> None:
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "commit",
+                "reason": reason,
+                "evidence": evidence,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=command_id,
+        )
 
     def _doc_path(self, doc: str) -> Path:
         return paths.version_dir(self.store.home, self.version) / doc
@@ -233,21 +254,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         pending = self.store.state(self.run_id).pending
         recovered_kind = self._recover()
         if recovered_kind == "rollback_stage":
-            recovered = Command(kind=recovered_kind,
-                                params=pending.get("params", {}),
-                                command_id=pending.get("command_id"))
+            recovered = Command(
+                kind=recovered_kind,
+                params=pending.get("params", {}),
+                command_id=pending.get("command_id"),
+            )
             if self._is_phase_boundary(recovered):
                 return self.store.state(self.run_id)
-        dispatches, bound_substate = self._recovery_dispatch_state(
-            recovered_kind, pending)
+        dispatches, bound_substate = self._recovery_dispatch_state(recovered_kind, pending)
         while True:
             state = self.store.state(self.run_id)
             cmd = decide(state)
             if cmd is None:
                 return state
             if cmd.kind == "dispatch_agent" and self.max_dispatches is not None:
-                stop, bound_substate = self._dispatch_gate(
-                    cmd, dispatches, bound_substate)
+                stop, bound_substate = self._dispatch_gate(cmd, dispatches, bound_substate)
                 if stop:
                     return state
                 dispatches += 1
@@ -299,31 +320,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         ``backend.act()`` so both normal and recovered paths share it."""
         if cmd.kind == "validate_document":
             doc = cmd.params.get("doc", "?")
-            print(f"  [{state.stage}] validate {doc}",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] validate {doc}", file=sys.stderr, flush=True)
         elif cmd.kind == "commit_document":
             doc = cmd.params.get("doc", "?")
-            print(f"  [{state.stage}] commit {doc}",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] commit {doc}", file=sys.stderr, flush=True)
         elif cmd.kind == "write_frontmatter":
             stage = cmd.params.get("stage", state.stage or "?")
-            print(f"  [{state.stage}] seal frontmatter ({stage})",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] seal frontmatter ({stage})", file=sys.stderr, flush=True)
         elif cmd.kind == "validate_result":
             source = cmd.params.get("source", "?")
-            print(f"  [{state.stage}] validate result ({source})",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] validate result ({source})", file=sys.stderr, flush=True)
         elif cmd.kind == "checkpoint_result":
             source = cmd.params.get("source", "?")
-            print(f"  [{state.stage}] checkpoint ({source})",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] checkpoint ({source})", file=sys.stderr, flush=True)
         elif cmd.kind == "publish_result":
             ev = cmd.params.get("domain_event", {}).get("type", "?")
-            print(f"  [{state.stage}] publish {ev}",
-                  file=sys.stderr, flush=True)
+            print(f"  [{state.stage}] publish {ev}", file=sys.stderr, flush=True)
 
-    def _dispatch_gate(self, cmd, dispatches: int,
-                        bound_substate: str | None) -> tuple[bool, str | None]:
+    def _dispatch_gate(
+        self, cmd, dispatches: int, bound_substate: str | None
+    ) -> tuple[bool, str | None]:
         """Bounded-mode gate: stop (True) at budget exhaustion or before a
         dispatch for a different substate; remember the first dispatch's
         substate. The assignment overlay is per-invocation, so a dispatch for
@@ -348,43 +364,50 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             assignment = dict(params.get("assignment") or {})
             assignment["scenario_context"] = deepcopy(self.assignment_overlay)
             params["assignment"] = assignment
-        if (cmd.kind == "dispatch_agent" and state.stage == "M-IMPL"):
+        if cmd.kind == "dispatch_agent" and state.stage == "M-IMPL":
             params["assignment"] = self._materialize_m_impl_assignment(
-                state, params, cid,
+                state,
+                params,
+                cid,
             )
         # D-28: Runtime enriches the Shield WRITE assignment with structured
         # test_tasks parsed from test-plan §8 (AC layer + IF green conditions)
         # before write-ahead logging so the persisted command.issued evidence
         # carries the complete input (architecture.md §1.2 DISPATCH).
-        if (cmd.kind == "dispatch_agent"
-                and params.get("role") == "shield"
-                and params.get("substate") == "WRITE"
-                and state.stage in ("M-TEST", "M-IMPL")
-                and not (params.get("assignment") or {}).get("test_tasks")):
+        if (
+            cmd.kind == "dispatch_agent"
+            and params.get("role") == "shield"
+            and params.get("substate") == "WRITE"
+            and state.stage in ("M-TEST", "M-IMPL")
+            and not (params.get("assignment") or {}).get("test_tasks")
+        ):
             vdir = self._vdir()
-            tasks = parse_test_tasks(vdir / "acceptance.md",
-                                     vdir / "test-plan.md")
+            tasks = parse_test_tasks(vdir / "acceptance.md", vdir / "test-plan.md")
             assignment = dict(params.get("assignment") or {})
             assignment["test_tasks"] = tasks
             params["assignment"] = assignment
-        if (cmd.kind == "dispatch_agent"
-                and params.get("role") == "shield"
-                and params.get("substate") == "WRITE"
-                and state.stage in ("M-TEST", "M-IMPL")):
+        if (
+            cmd.kind == "dispatch_agent"
+            and params.get("role") == "shield"
+            and params.get("substate") == "WRITE"
+            and state.stage in ("M-TEST", "M-IMPL")
+        ):
             params["pre_dirty"] = sorted(self._dirty_files())
             params["pre_dirty_snapshot"] = self._dirty_snapshot()
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
-            task_id = (state.current_task_id
-                       if state.stage == "M-IMPL" and state.current_task_id
-                       else f"{self.run_id}:{cmd.params.get('substate')}"
-                            f":{state.review_round}:{state.current_attempt}")
+            task_id = (
+                state.current_task_id
+                if state.stage == "M-IMPL" and state.current_task_id
+                else f"{self.run_id}:{cmd.params.get('substate')}"
+                f":{state.review_round}:{state.current_attempt}"
+            )
         self._emit(
             "command.issued",
-            {"command": {"kind": issued.kind, "params": issued.params,
-                         "command_id": cid}},
-            command_id=cid, task_id=task_id,
+            {"command": {"kind": issued.kind, "params": issued.params, "command_id": cid}},
+            command_id=cid,
+            task_id=task_id,
         )
         self._execute(issued, self.store.state(self.run_id), task_id)
 
@@ -395,15 +418,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         callers can react to phase-boundary commands like rollback_stage."""
         state = self.store.state(self.run_id)
         if state.pending:
-            cmd = Command(kind=state.pending["kind"],
-                          params=state.pending.get("params", {}),
-                          command_id=state.pending.get("command_id"))
+            cmd = Command(
+                kind=state.pending["kind"],
+                params=state.pending.get("params", {}),
+                command_id=state.pending.get("command_id"),
+            )
             self._execute(cmd, state, None, reconcile=True)
             return cmd.kind
         return None
 
-    def _execute(self, cmd: Command, state: State,
-                 task_id: str | None, reconcile: bool = False) -> None:
+    def _execute(
+        self, cmd: Command, state: State, task_id: str | None, reconcile: bool = False
+    ) -> None:
         getattr(self, "_do_" + cmd.kind)(cmd, state, task_id, reconcile)
 
     # -- per-kind handlers ---------------------------------------------------
@@ -416,21 +442,30 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         result_id = (state.active_result or {}).get("result_id")
         if substate == "NO_DIFF_EXPLAIN":
             if result.get("status") == "done":
-                self._emit("no_diff.explained",
-                           {"explanation": result.get("self_report", ""),
-                            "result_id": result_id},
-                           command_id=cmd.command_id, task_id=task_id)
+                self._emit(
+                    "no_diff.explained",
+                    {"explanation": result.get("self_report", ""), "result_id": result_id},
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
             else:
                 # Failed explanation: treat as a rejected review (revise).
-                self._emit("no_diff.reviewed",
-                           {"verdict": "revise", "result_id": result_id},
-                           command_id=cmd.command_id, task_id=task_id)
+                self._emit(
+                    "no_diff.reviewed",
+                    {"verdict": "revise", "result_id": result_id},
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
         else:  # NO_DIFF_REVIEW
-            verdict = (result.get("verdict", "revise")
-                       if result.get("status") == "done" else "revise")
-            self._emit("no_diff.reviewed",
-                       {"verdict": verdict, "result_id": result_id},
-                       command_id=cmd.command_id, task_id=task_id)
+            verdict = (
+                result.get("verdict", "revise") if result.get("status") == "done" else "revise"
+            )
+            self._emit(
+                "no_diff.reviewed",
+                {"verdict": verdict, "result_id": result_id},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
         return True
 
     def _do_dispatch_agent(self, cmd, state, task_id, reconcile):
@@ -439,9 +474,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         doc_path = self._doc_path(doc) if doc else None
         assignment = p.get("assignment")
         assignment = self._assignment_with_evidence(assignment, p)
-        materialization_error = self._invalid_m_impl_assignment(
-            role, substate, assignment,
-        ) if state.stage == "M-IMPL" else None
+        materialization_error = (
+            self._invalid_m_impl_assignment(
+                role,
+                substate,
+                assignment,
+            )
+            if state.stage == "M-IMPL"
+            else None
+        )
         if materialization_error is not None:
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
             return
@@ -450,11 +491,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # contract must NOT reach the (production or fake) backend: emit a
         # stub_gap failed outcome instead, which the reducer routes straight
         # to DIAGNOSE/stub_gap → rollback M-DESIGN (no attempt, no Human).
-        if self._reject_invalid_test_tasks(state, role, substate, assignment,
-                                           cmd, task_id):
+        if self._reject_invalid_test_tasks(state, role, substate, assignment, cmd, task_id):
             return
-        self._dispatch_agent_backend(cmd, state, task_id, role, substate, doc,
-                                     doc_path, assignment)
+        self._dispatch_agent_backend(cmd, state, task_id, role, substate, doc, doc_path, assignment)
 
     @staticmethod
     def _assignment_with_evidence(assignment: dict | None, params: dict) -> dict | None:
@@ -465,23 +504,35 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return enriched
 
     def _emit_stale_assignment(
-        self, cmd: Command, task_id: str | None, role: str, reason: str,
+        self,
+        cmd: Command,
+        task_id: str | None,
+        role: str,
+        reason: str,
     ) -> None:
-        self._emit("outcome.received",
-                   {"role": role, "status": "failed",
-                    "failure_class": "stale", "self_report": reason},
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit(
+            "outcome.received",
+            {"role": role, "status": "failed", "failure_class": "stale", "self_report": reason},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
     def _dispatch_agent_backend(
-        self, cmd, state, task_id, role, substate, doc, doc_path, assignment,
+        self,
+        cmd,
+        state,
+        task_id,
+        role,
+        substate,
+        doc,
+        doc_path,
+        assignment,
     ) -> None:
         p = cmd.params
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
         pre_dirty = self._resolve_pre_dirty(state, substate, p)
-        result = self.backend.act(
-            role, substate, doc, doc_path, assignment=assignment
-        )
+        result = self.backend.act(role, substate, doc, doc_path, assignment=assignment)
         self._dispatch_log_end(p, result, time.monotonic() - t0)
         # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
         # do NOT enter the ResultCheckpoint pipeline. The explanation/review
@@ -492,11 +543,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # mismatch -> verdict.failed, re-dispatch Prism (no prism.verdict).
         # Must be checked before emitting outcome.received so a mismatch
         # short-circuits without entering the pipeline.
-        if self._criteria_pack_mismatch(role, substate, state,
-                                        result.get("verdict"),
-                                        assignment, result, cmd):
+        if self._criteria_pack_mismatch(
+            role, substate, state, result.get("verdict"), assignment, result, cmd
+        ):
             self._emit_criteria_pack_failure(
-                cmd, task_id, p, assignment, result, state,
+                cmd,
+                task_id,
+                p,
+                assignment,
+                result,
+                state,
             )
             return
         # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
@@ -506,78 +562,103 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # Failed outcomes (status != "done") are handled by _on_outcome_received
         # (attempt consumed, substate reset) — no pipeline payload.
         payload = _dispatch_payload(self.store, p, result)
-        if (state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
-                and result.get("status") == "done"
-                and (substate in ("DRAFT", "RESPOND", "WRITE")
-                     or substate in _REVIEW_SUBSTATE)):
+        if (
+            state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
+            and result.get("status") == "done"
+            and (substate in ("DRAFT", "RESPOND", "WRITE") or substate in _REVIEW_SUBSTATE)
+        ):
             payload["result_checkpoint"] = self._result_checkpoint_payload(
                 cmd, state, result, p, substate, role, doc, pre_dirty
             )
-        self._emit("outcome.received", payload,
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit("outcome.received", payload, command_id=cmd.command_id, task_id=task_id)
         if "result_checkpoint" in payload:
             return  # pipeline drives the domain event
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
         self._emit_shield_commit(result, role, state, cmd, task_id)
 
     def _emit_criteria_pack_failure(
-        self, cmd, task_id, params, assignment, result, state,
+        self,
+        cmd,
+        task_id,
+        params,
+        assignment,
+        result,
+        state,
     ) -> None:
         payload = _dispatch_payload(self.store, params, result)
-        self._emit("outcome.received", payload,
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit("outcome.received", payload, command_id=cmd.command_id, task_id=task_id)
         assigned = (assignment or {}).get("criteria_pack")
-        self._emit("verdict.failed",
-                   {"check": "criteria_pack_mismatch",
-                    "reason": f"expected {assigned}, got "
-                    f"{result.get('criteria_pack')}",
-                    "attempt": state.current_attempt + 1,
-                    "evidence": str(result.get("criteria_pack"))},
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "criteria_pack_mismatch",
+                "reason": f"expected {assigned}, got {result.get('criteria_pack')}",
+                "attempt": state.current_attempt + 1,
+                "evidence": str(result.get("criteria_pack")),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
     def _emit_dispatch_verdict(self, result, role, state, params, cmd, task_id):
         if not result.get("verdict") or role not in _VERDICT_EVENT:
             return
-        if state.stage == "M-IMPL" and role == "prism" \
-                and state.substate == "DIAGNOSE":
+        if state.stage == "M-IMPL" and role == "prism" and state.substate == "DIAGNOSE":
             self._emit_diagnose_verdict(result, state, cmd, task_id)
             return
-        self._emit_verdict(role, result["verdict"], result, state,
-                           params, cmd, task_id)
+        self._emit_verdict(role, result["verdict"], result, state, params, cmd, task_id)
 
     def _emit_diagnose_verdict(self, result, state, cmd, task_id):
         classification = self._diagnose_classification()
-        target = ("M-IMPL" if classification in ("test_defect", "impl_defect")
-                  else _DIAGNOSE_TARGET.get(classification, "M-IMPL"))
+        target = (
+            "M-IMPL"
+            if classification in ("test_defect", "impl_defect")
+            else _DIAGNOSE_TARGET.get(classification, "M-IMPL")
+        )
         prior = state.last_failure or {}
-        self._emit("verdict.failed",
-                   {"check": classification, "target_stage": target,
-                    "reason": prior.get("reason") or (
-                        "Prism diagnosis: " + classification),
-                    "evidence": prior.get("evidence") or (
-                        "Prism diagnosis: " + classification),
-                    "attempt": state.current_attempt + 1},
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit(
+            "verdict.failed",
+            {
+                "check": classification,
+                "target_stage": target,
+                "reason": prior.get("reason") or ("Prism diagnosis: " + classification),
+                "evidence": prior.get("evidence") or ("Prism diagnosis: " + classification),
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
     def _emit_shield_commit(self, result, role, state, cmd, task_id):
-        if not (state.stage == "M-IMPL" and role == "shield"
-                and state.substate == "SHIELD_FIX"
-                and result.get("status") == "done"):
+        if not (
+            state.stage == "M-IMPL"
+            and role == "shield"
+            and state.substate == "SHIELD_FIX"
+            and result.get("status") == "done"
+        ):
             return
         # Stage only tests/ files
         tests_dir = self.repo / "tests"
         # Get list of changed files under tests/
         proc = git(self.repo, "status", "--porcelain", "--", "tests/")
-        changed = ([line[3:] for line in proc.stdout.splitlines()
-                    if line.strip()] if proc.stdout.strip() else [])
+        changed = (
+            [line[3:] for line in proc.stdout.splitlines() if line.strip()]
+            if proc.stdout.strip()
+            else []
+        )
         if not changed:
             # No tests/ changes - fail closed
-            self._emit("verdict.failed",
-                       {"check": "scope",
-                        "reason": "shield_fix_no_diff",
-                        "evidence": "Shield SHIELD_FIX produced no tests/ diff",
-                        "attempt": state.current_attempt + 1},
-                       command_id=cmd.command_id, task_id=task_id)
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "scope",
+                    "reason": "shield_fix_no_diff",
+                    "evidence": "Shield SHIELD_FIX produced no tests/ diff",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return
         # Stage all changed tests/ files
         git(self.repo, "add", "--", "tests/")
@@ -592,41 +673,55 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         proc = _commit_if_staged(self.repo, message)
         if proc is not None and proc.returncode != 0:
-            self._emit("verdict.failed",
-                       {"check": "scope",
-                        "reason": "shield_fix_commit_failed",
-                        "evidence": proc.stderr or proc.stdout,
-                        "attempt": state.current_attempt + 1},
-                       command_id=cmd.command_id, task_id=task_id)
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "scope",
+                    "reason": "shield_fix_commit_failed",
+                    "evidence": proc.stderr or proc.stdout,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        test_count = (sum(1 for _ in tests_dir.rglob("test_*.py"))
-                      if tests_dir.exists() else 0)
-        self._emit("test.committed",
-                   {"commit_sha": commit_sha,
-                    "test_count": test_count},
-                   command_id=cmd.command_id, task_id=task_id)
+        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
+        self._emit(
+            "test.committed",
+            {"commit_sha": commit_sha, "test_count": test_count},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
-    def _reject_invalid_test_tasks(self, state, role, substate, assignment,
-                                   cmd, task_id) -> bool:
+    def _reject_invalid_test_tasks(self, state, role, substate, assignment, cmd, task_id) -> bool:
         """D-32 fail-closed gate: return True (and emit a stub_gap failed
         outcome) when an M-TEST Shield WRITE assignment carries an invalid
         test-task contract, so the backend is never called."""
-        if not (state.stage in ("M-TEST", "M-IMPL") and substate == "WRITE"
-                and role == "shield"
-                and not valid_test_tasks((assignment or {}).get("test_tasks"))):
+        if not (
+            state.stage in ("M-TEST", "M-IMPL")
+            and substate == "WRITE"
+            and role == "shield"
+            and not valid_test_tasks((assignment or {}).get("test_tasks"))
+        ):
             return False
-        self._emit("outcome.received",
-                   {"role": role, "status": "failed",
-                    "failure_class": "stub_gap",
-                     "self_report": "test-task contract invalid",
-                    "audit_evidence": (
-                        "assignment.test_tasks must be a non-empty list of "
-                        "{ac_id, layers, if_ids} with non-empty layers "
-                        "(integration/e2e) and registered IF- ids; got "
-                        f"{assignment.get('test_tasks') if assignment else None}"
-                    )},
-                   command_id=cmd.command_id, task_id=task_id)
+        self._emit(
+            "outcome.received",
+            {
+                "role": role,
+                "status": "failed",
+                "failure_class": "stub_gap",
+                "self_report": "test-task contract invalid",
+                "audit_evidence": (
+                    "assignment.test_tasks must be a non-empty list of "
+                    "{ac_id, layers, if_ids} with non-empty layers "
+                    "(integration/e2e) and registered IF- ids; got "
+                    f"{assignment.get('test_tasks') if assignment else None}"
+                ),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
         return True
 
     @staticmethod
@@ -652,7 +747,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         print(
             f"  {ts} [{state.stage}] dispatch {role} ({substate}, attempt {attempt})"
             f" {objective}".rstrip(),
-            file=sys.stderr, flush=True,
+            file=sys.stderr,
+            flush=True,
         )
 
     @staticmethod
@@ -672,15 +768,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 line += f" {report}"
         print(line, file=sys.stderr, flush=True)
 
-    def _criteria_pack_mismatch(self, role, substate, state, verdict,
-                                assignment, result, cmd) -> bool:
+    def _criteria_pack_mismatch(
+        self, role, substate, state, verdict, assignment, result, cmd
+    ) -> bool:
         """Return True when the criteria-pack identity mismatch was emitted
         (caller should skip the normal verdict emission)."""
-        if not (role == "prism" and (
+        if not (
+            role == "prism"
+            and (
                 (verdict and substate == "PRISM_REVIEW" and state.stage == "M-TEST")
-                or (state.stage == "M-IMPL"
-                    and substate in ("PRISM_PLAN", "PRISM_RED",
-                                     "PRISM_FINAL", "DIAGNOSE")))):
+                or (
+                    state.stage == "M-IMPL"
+                    and substate in ("PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE")
+                )
+            )
+        ):
             return False
         assigned_pack = (assignment or {}).get("criteria_pack")
         outcome_pack = result.get("criteria_pack")
@@ -696,10 +798,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if ev == "prism.verdict" and verdict != "pass":
             # flow.md §8.2: a revise verdict opens the next review round
             # (reducer bumps review_round and resets the reviewer flags).
-            self._emit("review.round_started",
-                       {"stage": p.get("stage"),
-                        "round": state.review_round + 1},
-                       command_id=cmd.command_id, task_id=task_id)
+            self._emit(
+                "review.round_started",
+                {"stage": p.get("stage"), "round": state.review_round + 1},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
@@ -724,16 +828,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 payload["attempt"] = state.current_attempt + 1
             self._emit("verdict.failed", payload, command_id=cmd.command_id)
         else:
-            self._emit("verdict.passed",
-                       {"check": ",".join(checks) or "schema", "detail": "format checks"},
-                       command_id=cmd.command_id)
+            self._emit(
+                "verdict.passed",
+                {"check": ",".join(checks) or "schema", "detail": "format checks"},
+                command_id=cmd.command_id,
+            )
 
     def _do_commit_document(self, cmd, state, task_id, reconcile):
         doc, message = cmd.params["doc"], cmd.params["message"]
         marker = f"command_id: {cmd.command_id}"
         if reconcile:
-            probe = git(self.repo, "log", "--grep", marker,
-                        "--format=%H", check=False)
+            probe = git(self.repo, "log", "--grep", marker, "--format=%H", check=False)
             if probe.stdout.split():
                 self._emit_committed(doc, probe.stdout.split()[0], cmd.command_id)
                 return
@@ -743,13 +848,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             scaffold_paths, issue = self._design_scaffold_paths(doc_path)
             if issue is not None:
                 self._emit_commit_failure_evidence(
-                    state, cmd.command_id, "declared scaffold path rejected", issue,
+                    state,
+                    cmd.command_id,
+                    "declared scaffold path rejected",
+                    issue,
                 )
                 return
             # Dedup: the canonical project.toml may be both declared in the
             # manifest and returned by _project_contract_paths(); stage once.
-            stage_paths.extend(dict.fromkeys(
-                [*scaffold_paths, *self._project_contract_paths()]))
+            stage_paths.extend(dict.fromkeys([*scaffold_paths, *self._project_contract_paths()]))
         git(self.repo, "add", *(str(path) for path in stage_paths))
         proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
         if proc is not None and proc.returncode != 0:
@@ -788,10 +895,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return None, f"scaffold path escapes repository: {raw}"
         if raw_path.is_absolute():
             return None, f"scaffold path is not allowed (must be repo-relative): {raw}"
-        if (not relative.parts
-                or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS
-                and tuple(relative.parts) not in (
-                    _CANONICAL_CONTRACT_PATH, _CANONICAL_REACH_ENTRIES_PATH)):
+        if (
+            not relative.parts
+            or relative.parts[0] in _SCAFFOLD_RESERVED_ROOTS
+            and tuple(relative.parts)
+            not in (_CANONICAL_CONTRACT_PATH, _CANONICAL_REACH_ENTRIES_PATH)
+        ):
             # exactly the canonical .tracks/projects/project.toml and
             # .tracks/reach-entries.txt are allowed; every other .tracks/**
             # (and .git/.opencode/**) is rejected.
@@ -805,20 +914,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if not candidate.is_file():
             return None, f"scaffold path is not allowed: {raw}"
         relative_text = str(relative)
-        tracked = git(self.repo, "ls-files", "--error-unmatch", "--",
-                      relative_text, check=False).returncode == 0
-        ignored = git(self.repo, "check-ignore", "--quiet", "--no-index", "--",
-                      relative_text, check=False).returncode == 0
+        tracked = (
+            git(
+                self.repo, "ls-files", "--error-unmatch", "--", relative_text, check=False
+            ).returncode
+            == 0
+        )
+        ignored = (
+            git(
+                self.repo, "check-ignore", "--quiet", "--no-index", "--", relative_text, check=False
+            ).returncode
+            == 0
+        )
         if ignored and not tracked:
             return None, f"scaffold path is not allowed (ignored): {raw}"
         return self.repo / relative, None
 
-    def _emit_committed(self, doc, commit_sha, command_id, final=False,
-                        result_id=None):
+    def _emit_committed(self, doc, commit_sha, command_id, final=False, result_id=None):
         ev_type, sha_key = _COMMITTED_EVENT[doc]
-        payload = {"commit_sha": commit_sha,
-                   sha_key: doc_body_sha(self._doc_path(doc)),
-                   "final": final}
+        payload = {
+            "commit_sha": commit_sha,
+            sha_key: doc_body_sha(self._doc_path(doc)),
+            "final": final,
+        }
         if result_id is not None:
             payload["result_id"] = result_id
         if ev_type == "design.committed":
@@ -838,8 +956,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             set_frontmatter_field(path, "sha", doc_body_sha(path))
             git(self.repo, "add", str(path))
             proc = _commit_if_staged(
-                self.repo,
-                f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}")
+                self.repo, f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}"
+            )
             if proc is not None and proc.returncode != 0:
                 self._emit_commit_failure(proc, state, cmd.command_id)
                 return
@@ -850,15 +968,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit("stage.exited", {"stage": stage}, command_id=cmd.command_id)
         nxt = _NEXT_STAGE.get(stage)
         if nxt and not self._is_boundary_transition(stage, nxt):
-            self._emit("stage.entered", {"stage": nxt},
-                       command_id=cmd.command_id)
+            self._emit("stage.entered", {"stage": nxt}, command_id=cmd.command_id)
         else:
             # SM-05.6 / IF-003 §10f: no successor (or a version-gated
             # successor) -> stop at the next-stage boundary. M-DESIGN boundary
             # pre-v0.3; M-TEST boundary for pre-v0.5 runs; M-IMPL boundary
             # since.
-            self._emit("run.completed", {"terminal_state": "boundary"},
-                       command_id=cmd.command_id)
+            self._emit("run.completed", {"terminal_state": "boundary"}, command_id=cmd.command_id)
 
     def _is_boundary_transition(self, stage: str, nxt: str) -> bool:
         """True when the declared stage transition must stop at a boundary at
@@ -870,19 +986,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         neutral ``tracks.capabilities``); historical v0.1/v0.4 runs and
         malformed versions complete at the M-TEST boundary.
         """
-        return (stage == "M-TEST" and nxt == "M-IMPL"
-                and not supports_m_impl(self.version))
+        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(self.version)
 
     def _do_record_backlog(self, cmd, state, task_id, reconcile):
         if reconcile and state.backlog_recorded:
             return
-        self._emit("backlog.recorded", dict(cmd.params),
-                   command_id=cmd.command_id)
+        self._emit("backlog.recorded", dict(cmd.params), command_id=cmd.command_id)
 
     def _do_complete_run(self, cmd, state, task_id, reconcile):
         # Branch deletion is a separate delete_branch command (FR-09), not here.
-        self._emit("run.completed", {"terminal_state": cmd.params["terminal_state"]},
-                   command_id=cmd.command_id)
+        self._emit(
+            "run.completed",
+            {"terminal_state": cmd.params["terminal_state"]},
+            command_id=cmd.command_id,
+        )
 
     def _do_create_branch(self, cmd, state, task_id, reconcile):
         """Create/switch the branch, then log branch.created. Reconcile (R3-03):
@@ -890,25 +1007,25 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         branch.created is always logged so the command closes."""
         branch = cmd.params["branch_name"]
         base = cmd.params.get("base", "main")
-        exists = git(self.repo, "rev-parse", "--verify", branch,
-                     check=False).returncode == 0
+        exists = git(self.repo, "rev-parse", "--verify", branch, check=False).returncode == 0
         if not (exists and self._head() == branch):
             if exists:
                 git(self.repo, "checkout", branch)
             else:
                 git(self.repo, "checkout", "-b", branch, base)
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        self._emit("branch.created",
-                   {"branch_name": branch, "base": base, "commit_sha": commit_sha},
-                   command_id=cmd.command_id)
+        self._emit(
+            "branch.created",
+            {"branch_name": branch, "base": base, "commit_sha": commit_sha},
+            command_id=cmd.command_id,
+        )
 
     def _do_delete_branch(self, cmd, state, task_id, reconcile):
         """Tear down the branch, then log branch.deleted. Reconcile (R3-03):
         _teardown_branch is idempotent (done iff HEAD==main AND branch absent)."""
         branch = cmd.params["branch_name"]
         self._teardown_branch(branch)
-        self._emit("branch.deleted", {"branch_name": branch},
-                   command_id=cmd.command_id)
+        self._emit("branch.deleted", {"branch_name": branch}, command_id=cmd.command_id)
 
     def _do_rollback_stage(self, cmd, state, task_id, reconcile):
         # Reconcile idempotency: if stage.rolled_back was already persisted for
@@ -917,22 +1034,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # has not been logged yet, so this guard only fires on the edge case.
         if reconcile:
             already = any(
-                e.type == "stage.rolled_back"
-                and e.command_id == cmd.command_id
+                e.type == "stage.rolled_back" and e.command_id == cmd.command_id
                 for e in self.store.events(self.run_id)
             )
             if already:
                 return
-        self._emit("stage.rolled_back",
-                   {"from_stage": state.stage,
-                    "to_stage": cmd.params["to_stage"],
-                    "reason": cmd.params.get("reason", "")},
-                   command_id=cmd.command_id)
+        self._emit(
+            "stage.rolled_back",
+            {
+                "from_stage": state.stage,
+                "to_stage": cmd.params["to_stage"],
+                "reason": cmd.params.get("reason", ""),
+            },
+            command_id=cmd.command_id,
+        )
 
     # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
 
-    def _run_contract_sections(self, cmd, state, field: str
-                               ) -> tuple[list[tuple[str, int, str, str]], str | None]:
+    def _run_contract_sections(
+        self, cmd, state, field: str
+    ) -> tuple[list[tuple[str, int, str, str]], str | None]:
         """Execute the contract's ``collect`` or ``run`` command across all
         declared sections. Returns ``(results, error_msg)`` where ``results``
         is a list of ``(section_name, rc, stdout, stderr)`` per section.
@@ -953,7 +1074,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             cwd = self.repo / section.cwd if section.cwd != "." else self.repo
             argv = _resolve_contract_argv0(argv, cwd)
             proc = subprocess.run(
-                argv, cwd=cwd, capture_output=True, text=True,
+                argv,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
             )
             results.append((name, proc.returncode, proc.stdout, proc.stderr))
         return results, None
@@ -966,25 +1090,28 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         results, error = self._run_contract_sections(cmd, state, "collect")
         if error is not None:
-            self._emit("test.collected",
-                       {"status": "failed", "collected_count": 0,
-                        "errors": [error]},
-                       command_id=cmd.command_id)
+            self._emit(
+                "test.collected",
+                {"status": "failed", "collected_count": 0, "errors": [error]},
+                command_id=cmd.command_id,
+            )
             return
         all_stdout = "\n".join(r[2] for r in results)
         any_failed = any(r[1] != 0 for r in results)
         if not any_failed:
             count = _parse_collected_count(all_stdout)
-            self._emit("test.collected",
-                       {"status": "passed", "collected_count": count, "errors": []},
-                       command_id=cmd.command_id)
+            self._emit(
+                "test.collected",
+                {"status": "passed", "collected_count": count, "errors": []},
+                command_id=cmd.command_id,
+            )
         else:
-            errors = [r[3].strip() or r[2].strip()
-                      for r in results if r[1] != 0]
-            self._emit("test.collected",
-                       {"status": "failed", "collected_count": 0,
-                        "errors": errors},
-                       command_id=cmd.command_id)
+            errors = [r[3].strip() or r[2].strip() for r in results if r[1] != 0]
+            self._emit(
+                "test.collected",
+                {"status": "failed", "collected_count": 0, "errors": errors},
+                command_id=cmd.command_id,
+            )
 
     def _do_run_tests(self, cmd, state, task_id, reconcile):
         """SM-01.9: Runtime independently re-runs integration/e2e via the host
@@ -993,17 +1120,23 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
         results, error = self._run_contract_sections(cmd, state, "run")
         if error is not None:
-            findings = [{"test_id": "*", "classification": "collection_error",
-                         "detail": error}]
-            self._emit("red.validated",
-                       {"status": "invalid", "findings": findings},
-                       command_id=cmd.command_id)
-            self._emit("verdict.failed",
-                       {"check": "contract_error", "target_stage": "M-DESIGN",
-                        "artifact_disposition": "rollback",
-                        "reason": error,
-                        "attempt": state.current_attempt + 1},
-                       command_id=cmd.command_id)
+            findings = [{"test_id": "*", "classification": "collection_error", "detail": error}]
+            self._emit(
+                "red.validated",
+                {"status": "invalid", "findings": findings},
+                command_id=cmd.command_id,
+            )
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "contract_error",
+                    "target_stage": "M-DESIGN",
+                    "artifact_disposition": "rollback",
+                    "reason": error,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
             return
         findings: list[dict] = []
         all_legit = True
@@ -1011,27 +1144,45 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             red_class = classify_red(name, rc, stdout, stderr)
             if red_class not in _LEGIT_RED:
                 all_legit = False
-            findings.append({"test_id": name, "classification": red_class,
-                             "detail": _short_detail(f"{stdout}\n{stderr}")})
+            findings.append(
+                {
+                    "test_id": name,
+                    "classification": red_class,
+                    "detail": _short_detail(f"{stdout}\n{stderr}"),
+                }
+            )
         if all_legit:
-            self._emit("red.validated",
-                       {"status": "valid", "findings": findings},
-                       command_id=cmd.command_id)
+            self._emit(
+                "red.validated",
+                {"status": "valid", "findings": findings},
+                command_id=cmd.command_id,
+            )
             return
         # Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed.
-        self._emit("red.validated",
-                   {"status": "invalid", "findings": findings},
-                   command_id=cmd.command_id)
+        self._emit(
+            "red.validated", {"status": "invalid", "findings": findings}, command_id=cmd.command_id
+        )
         classification = self._diagnose_classification()
-        self._emit("verdict.failed",
-                   {"check": classification,
-                    "target_stage": _DIAGNOSE_TARGET.get(classification, "M-TEST"),
-                    "artifact_disposition": "rewrite" if classification == "test_defect"
-                    else "rollback",
-                    "reason": next((f["classification"] for f in findings
-                                   if f["classification"] not in _LEGIT_RED), "invalid"),
-                    "attempt": state.current_attempt + 1},
-                   command_id=cmd.command_id)
+        self._emit(
+            "verdict.failed",
+            {
+                "check": classification,
+                "target_stage": _DIAGNOSE_TARGET.get(classification, "M-TEST"),
+                "artifact_disposition": "rewrite"
+                if classification == "test_defect"
+                else "rollback",
+                "reason": next(
+                    (
+                        f["classification"]
+                        for f in findings
+                        if f["classification"] not in _LEGIT_RED
+                    ),
+                    "invalid",
+                ),
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
 
     def _do_check_trace(self, cmd, state, task_id, reconcile):
         """SM-01.14 EXIT gate: trac check trace closure, filtered to required
@@ -1039,24 +1190,33 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if reconcile and state.trace_passed:
             return
         from tracks.checks.trace import check_trace_full_file  # lazy: avoid circular import
+
         vdir = self._vdir()
         tests_dir = self.repo / "tests"
         report = check_trace_full_file(vdir, tests_dir)
         required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
-        blocking = [e for e in report.hard_errors
-                    if any(rid in e for rid in required)] if required else list(
-                        report.hard_errors)
+        blocking = (
+            [e for e in report.hard_errors if any(rid in e for rid in required)]
+            if required
+            else list(report.hard_errors)
+        )
         if not blocking:
-            self._emit("verdict.passed",
-                       {"check": "trace", "detail": "trace closure verified"},
-                       command_id=cmd.command_id)
+            self._emit(
+                "verdict.passed",
+                {"check": "trace", "detail": "trace closure verified"},
+                command_id=cmd.command_id,
+            )
         else:
-            self._emit("verdict.failed",
-                       {"check": "trace",
-                        "reason": "; ".join(blocking),
-                        "evidence": "trac check trace",
-                        "attempt": state.current_attempt + 1},
-                       command_id=cmd.command_id)
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "trace",
+                    "reason": "; ".join(blocking),
+                    "evidence": "trac check trace",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
 
     def _do_commit_tests(self, cmd, state, task_id, reconcile):
         """SM-01.14: freeze the test asset via a controlled git commit of tests/
@@ -1068,8 +1228,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         tests_dir = self.repo / "tests"
         if tests_dir.exists():
             git(self.repo, "add", "tests")
-        proc = _commit_if_staged(
-            self.repo, f"M-TEST: freeze test assets\n\n{marker}")
+        proc = _commit_if_staged(self.repo, f"M-TEST: freeze test assets\n\n{marker}")
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
@@ -1078,19 +1237,24 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # pointing at the current HEAD (the existing freeze commit).
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
-        self._emit("test.committed",
-                   {"commit_sha": commit_sha, "test_count": test_count},
-                   command_id=cmd.command_id)
+        self._emit(
+            "test.committed",
+            {"commit_sha": commit_sha, "test_count": test_count},
+            command_id=cmd.command_id,
+        )
 
     def _diagnose_classification(self) -> str:
         """Read the DIAGNOSE classification from the fake backend's simulate
         token (default ``test_defect``). The real channel dispatches Prism for
         diagnostic review; the fake channel keeps it deterministic."""
-        token = getattr(self.backend, "token",
-                        lambda *_: "test_defect")("diagnose", "classification",
-                                                  "test_defect")
-        return token if token in ("test_defect", "stub_gap", "ac_gap",
-                                  "spec_gap", "impl_defect") else "test_defect"
+        token = getattr(self.backend, "token", lambda *_: "test_defect")(
+            "diagnose", "classification", "test_defect"
+        )
+        return (
+            token
+            if token in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
+            else "test_defect"
+        )
 
     # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------
 
@@ -1101,10 +1265,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if reconcile and state.preview_ready:
             return
         vdir = self._vdir()
-        self._emit("preview.generated",
-                   {"digest": revision_digest(vdir),
-                    "summary": baseline_summary(vdir)},
-                   command_id=cmd.command_id)
+        self._emit(
+            "preview.generated",
+            {"digest": revision_digest(vdir), "summary": baseline_summary(vdir)},
+            command_id=cmd.command_id,
+        )
 
     def _stale_regenerate(self, cmd, approved_digest: str) -> bool:
         """FR-0190 entry gate (D-02/D-03): post-approval commands recompute the
@@ -1114,9 +1279,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         current = revision_digest(vdir)
         if current == approved_digest:
             return False
-        self._emit("preview.generated",
-                   {"digest": current, "summary": baseline_summary(vdir)},
-                   command_id=cmd.command_id)
+        self._emit(
+            "preview.generated",
+            {"digest": current, "summary": baseline_summary(vdir)},
+            command_id=cmd.command_id,
+        )
         return True
 
     def _do_record_approval(self, cmd, state, task_id, reconcile):
@@ -1124,11 +1291,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         if self._stale_regenerate(cmd, cmd.params["digest"]):
             return
-        self._emit("approval.recorded",
-                   {"actor": cmd.params["actor"], "digest": cmd.params["digest"],
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "readonly": True},
-                   command_id=cmd.command_id)
+        self._emit(
+            "approval.recorded",
+            {
+                "actor": cmd.params["actor"],
+                "digest": cmd.params["digest"],
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "readonly": True,
+            },
+            command_id=cmd.command_id,
+        )
 
     def _do_create_issues(self, cmd, state, task_id, reconcile):
         digest = cmd.params["digest"]
@@ -1140,9 +1312,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self._issue_backend = select_issue_backend(self.repo, self.version)
         backend = self._issue_backend
         # D-06 breakpoint resume: item_ids already logged are never rebuilt.
-        done = {e.payload["item_id"]: e.payload["issue_id"]
-                for e in self.store.events(self.run_id)
-                if e.type == "issue.created"}
+        done = {
+            e.payload["item_id"]: e.payload["issue_id"]
+            for e in self.store.events(self.run_id)
+            if e.type == "issue.created"
+        }
         try:
             for item_id, title, body in issue_items(self._vdir(), digest):
                 if item_id in done:
@@ -1150,34 +1324,39 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 issue_id = backend.create_issue(title, body, [self.version])
                 backend.add_to_project(issue_id, backend.project)
                 done[item_id] = issue_id
-                self._emit("issue.created",
-                           {"item_id": item_id, "issue_id": issue_id,
-                            "digest": digest},
-                           command_id=cmd.command_id)
+                self._emit(
+                    "issue.created",
+                    {"item_id": item_id, "issue_id": issue_id, "digest": digest},
+                    command_id=cmd.command_id,
+                )
         except GithubIssuesError as e:
             # NFR-0030 style: no half-written summary; the reducer counts the
             # failed outcome as an attempt (3rd escalates to Human).
-            self._emit("outcome.received",
-                       {"role": "github", "status": "failed",
-                        "failure_class": e.classification,
-                        "self_report": str(e)},
-                       command_id=cmd.command_id)
+            self._emit(
+                "outcome.received",
+                {
+                    "role": "github",
+                    "status": "failed",
+                    "failure_class": e.classification,
+                    "self_report": str(e),
+                },
+                command_id=cmd.command_id,
+            )
             return
-        self._emit("issues.created",
-                   {"digest": digest, "mapping": done,
-                    "project": backend.project},
-                   command_id=cmd.command_id)
+        self._emit(
+            "issues.created",
+            {"digest": digest, "mapping": done, "project": backend.project},
+            command_id=cmd.command_id,
+        )
 
     # -- git helpers -----------------------------------------------------------
 
     def _head(self) -> str:
-        return git(self.repo, "symbolic-ref", "--short", "HEAD",
-                   check=False).stdout.strip()
+        return git(self.repo, "symbolic-ref", "--short", "HEAD", check=False).stdout.strip()
 
     def _teardown_branch(self, branch: str) -> None:
         """FR-09 / reconcile-safe: end with HEAD==main and branch absent."""
         if self._head() != "main":
             git(self.repo, "checkout", "main")
-        if git(self.repo, "rev-parse", "--verify", branch,
-               check=False).returncode == 0:
+        if git(self.repo, "rev-parse", "--verify", branch, check=False).returncode == 0:
             git(self.repo, "branch", "-D", branch)

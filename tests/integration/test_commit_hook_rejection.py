@@ -7,6 +7,7 @@ output as evidence, and returns cleanly instead of crashing.
 Pipeline-level: a failing hook that passes on the second attempt lets the full
 M-DESIGN walk recover via the normal WRITE redispatch path.
 """
+
 from tests.integration.test_executor_reconcile import make_repo as _make_repo
 from tracks import paths
 from tracks.executor import Executor
@@ -16,8 +17,7 @@ from tracks.store import Store, new_ulid
 
 def _install_failing_hook(repo, message="ruff: lint error"):
     hook = repo / ".git" / "hooks" / "pre-commit"
-    hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n",
-                    encoding="utf-8")
+    hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n", encoding="utf-8")
     hook.chmod(0o755)
 
 
@@ -25,6 +25,7 @@ def _setup_story_draft(tmp_path):
     """Reuse _setup from test_executor_reconcile (repo+store+M-STORY DRAFT
     with doc_validated=True), returning (ex, store, run_id)."""
     from tests.integration.test_executor_reconcile import _setup
+
     return _setup(tmp_path)
 
 
@@ -33,9 +34,11 @@ def test_commit_document_hook_rejection_emits_verdict_failed(tmp_path):
     hook stderr as evidence, no crash, no committed event."""
     ex, store, run_id = _setup_story_draft(tmp_path)
     _install_failing_hook(ex.repo, "ruff: 6 errors in story.md")
-    ex.issue(Command(kind="commit_document",
-                     params={"doc": "story.md",
-                             "message": "M-STORY: draft story.md"}))
+    ex.issue(
+        Command(
+            kind="commit_document", params={"doc": "story.md", "message": "M-STORY: draft story.md"}
+        )
+    )
     fails = [e for e in store.events(run_id) if e.type == "verdict.failed"]
     assert len(fails) == 1
     p = fails[0].payload
@@ -52,22 +55,34 @@ def test_write_frontmatter_hook_rejection_emits_verdict_failed(tmp_path):
     ex, store, run_id = _setup_story_draft(tmp_path)
     repo = ex.repo
     # advance to EXIT: commit (non-final), lex pass, human no_comment, exit gate
-    store.append(run_id, "v0.1", "story.committed",
-                 {"commit_sha": "c1", "story_sha": "s1", "final": False})
-    store.append(run_id, "v0.1", "command.issued",
-                 {"command": {"kind": "dispatch_agent",
-                              "params": {"role": "sage", "substate": "SAGE_REVIEW"},
-                              "command_id": "C2"}}, command_id="C2")
-    store.append(run_id, "v0.1", "outcome.received",
-                 {"role": "sage", "status": "done"})
+    store.append(
+        run_id, "v0.1", "story.committed", {"commit_sha": "c1", "story_sha": "s1", "final": False}
+    )
+    store.append(
+        run_id,
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "sage", "substate": "SAGE_REVIEW"},
+                "command_id": "C2",
+            }
+        },
+        command_id="C2",
+    )
+    store.append(run_id, "v0.1", "outcome.received", {"role": "sage", "status": "done"})
     store.append(run_id, "v0.1", "sage.verdict", {"verdict": "pass"})
     store.append(run_id, "v0.1", "human.review", {"action": "no_comment"})
-    store.append(run_id, "v0.1", "verdict.passed",
-                 {"check": "template,discussion_ready", "detail": "ok"})
+    store.append(
+        run_id, "v0.1", "verdict.passed", {"check": "template,discussion_ready", "detail": "ok"}
+    )
     _install_failing_hook(repo, "ruff: seal commit rejected")
-    ex.issue(Command(kind="write_frontmatter",
-                     params={"doc": "story.md", "stage": "M-STORY",
-                             "field": "sha"}))
+    ex.issue(
+        Command(
+            kind="write_frontmatter", params={"doc": "story.md", "stage": "M-STORY", "field": "sha"}
+        )
+    )
     fails = [e for e in store.events(run_id) if e.type == "verdict.failed"]
     assert len(fails) == 1
     assert fails[0].payload["check"] == "commit"
@@ -86,17 +101,25 @@ def test_commit_tests_hook_rejection_emits_verdict_failed(tmp_path):
     tests_dir.mkdir()
     (tests_dir / "test_smoke.py").write_text(
         '"""AC-FR0010-01@v0.1"""\ndef test_x():\n    raise NotImplementedError("IF-X")\n',
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-TEST"})
-    store.append(run_id, "v0.1", "command.issued",
-                 {"command": {"kind": "dispatch_agent",
-                              "params": {"role": "shield", "substate": "WRITE"},
-                              "command_id": "C1"}}, command_id="C1")
-    store.append(run_id, "v0.1", "outcome.received",
-                 {"role": "shield", "status": "done"})
-    store.append(run_id, "v0.1", "verdict.passed",
-                 {"check": "trace", "detail": "closure verified"})
+    store.append(
+        run_id,
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "shield", "substate": "WRITE"},
+                "command_id": "C1",
+            }
+        },
+        command_id="C1",
+    )
+    store.append(run_id, "v0.1", "outcome.received", {"role": "shield", "status": "done"})
+    store.append(run_id, "v0.1", "verdict.passed", {"check": "trace", "detail": "closure verified"})
     _install_failing_hook(repo, "ruff: test files have lint errors")
     ex = Executor(store, repo, run_id)
     ex.issue(Command(kind="commit_tests", params={"stage": "M-TEST"}))
@@ -104,8 +127,11 @@ def test_commit_tests_hook_rejection_emits_verdict_failed(tmp_path):
     assert len(fails) == 1
     assert fails[0].payload["check"] == "commit"
     assert "ruff" in fails[0].payload["evidence"]
-    assert not [e for e in store.events(run_id)
-                if e.type in ("test.committed", "stage.exited", "run.completed")]
+    assert not [
+        e
+        for e in store.events(run_id)
+        if e.type in ("test.committed", "stage.exited", "run.completed")
+    ]
 
 
 def test_hook_rejection_recovery_full_pipeline(host_repo, trac, event_log):
@@ -113,6 +139,7 @@ def test_hook_rejection_recovery_full_pipeline(host_repo, trac, event_log):
     pre-commit hook -> verdict.failed with hook stderr -> Archer redispatched
     -> hook passes on second attempt -> commit succeeds -> run completes."""
     from tests.e2e.helpers import walk_to_await_human
+
     run_id = walk_to_await_human(trac)
     # Install a hook that rejects the first commit involving architecture.md,
     # then self-destructs so subsequent commits pass (the agent "fixed" the
@@ -135,12 +162,16 @@ def test_hook_rejection_recovery_full_pipeline(host_repo, trac, event_log):
     assert "status=completed" in r.stdout
     evs = event_log(run_id)
     # The hook rejection emitted verdict.failed(check=commit) with hook output
-    commit_fails = [e for e in evs if e["type"] == "verdict.failed"
-                    and e["payload"].get("check") == "commit"]
+    commit_fails = [
+        e for e in evs if e["type"] == "verdict.failed" and e["payload"].get("check") == "commit"
+    ]
     assert len(commit_fails) == 1
     assert "ruff" in commit_fails[0]["payload"]["evidence"]
     # The run still completed: architecture.md was committed on the second try
-    arch_commits = [e for e in evs if e["type"] == "design.committed"
-                    and e["payload"].get("doc") == "architecture.md"]
+    arch_commits = [
+        e
+        for e in evs
+        if e["type"] == "design.committed" and e["payload"].get("doc") == "architecture.md"
+    ]
     assert len(arch_commits) >= 1
     assert any(e["type"] == "run.completed" for e in evs)

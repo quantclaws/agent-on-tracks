@@ -4,6 +4,7 @@ AC-FR0090-01@v0.4 build import graph, AC-FR0090-02@v0.4 islands reported,
 AC-FR0090-03@v0.4 test modules excluded, AC-FR0090-04@v0.4 no entrypoints error,
 AC-FR0090-05@v0.4 module-level only, AC-NFR0020-02@v0.4 stable order.
 """
+
 from tracks.checks.reach import check_reach, check_reach_file
 
 
@@ -16,7 +17,8 @@ def test_build_import_graph():
         "pkg.mod_b": {"pkg.mod_a"},
     }
     r = check_reach(
-        ["pkg.main"], graph,
+        ["pkg.main"],
+        graph,
         {"pkg.main", "pkg.mod_a", "pkg.mod_b"},
     )
     assert r.status == "pass"
@@ -33,7 +35,8 @@ def test_islands_reported():
         "pkg.orphan": set(),
     }
     r = check_reach(
-        ["pkg.main"], graph,
+        ["pkg.main"],
+        graph,
         {"pkg.main", "pkg.mod_a", "pkg.orphan"},
     )
     assert r.status == "fail"
@@ -49,7 +52,8 @@ def test_test_modules_excluded():
         "tests.test_x": set(),
     }
     r = check_reach(
-        ["pkg.main"], graph,
+        ["pkg.main"],
+        graph,
         {"pkg.main", "pkg.mod_a"},
     )
     assert r.status == "pass"
@@ -87,7 +91,8 @@ def test_baseline_exemption():
     }
     baseline = {"reach_exemptions": {"modules": ["pkg.legacy"]}}
     r = check_reach(
-        ["pkg.main"], graph,
+        ["pkg.main"],
+        graph,
         {"pkg.main", "pkg.mod_a", "pkg.legacy"},
         baseline=baseline,
     )
@@ -119,7 +124,8 @@ def test_package_import_connects_children():
     # pkg.sub is NOT in the graph; pkg.sub.mod_a IS.
     # Import of pkg.sub connects to pkg.sub.mod_a (prefix match).
     r = check_reach(
-        ["pkg.main"], graph,
+        ["pkg.main"],
+        graph,
         {"pkg.main", "pkg.sub.mod_a"},
     )
     assert r.status == "pass"
@@ -173,7 +179,7 @@ def test_production_with_entrypoint_remains_reachable(tmp_path):
     (tmp_path / "app.py").write_text("import worker\n", encoding="utf-8")
     (tmp_path / "worker.py").write_text("VALUE = 1\n", encoding="utf-8")
     (tmp_path / "pyproject.toml").write_text(
-        "[project.scripts]\ndemo = \"app:main\"\n", encoding="utf-8"
+        '[project.scripts]\ndemo = "app:main"\n', encoding="utf-8"
     )
 
     r = check_reach_file(tmp_path)

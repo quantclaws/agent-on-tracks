@@ -13,6 +13,7 @@ Also hosts the shared ``_ac_slug`` AC-id slug helper (AC-FR0010-01 ->
 ac_fr0010_01), used by the Shield test files and, via FakeBackend, by the Fake
 M-IMPL task-graph derivation so both name their paths identically.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,8 +23,14 @@ from tracks.effects.backend import valid_test_tasks
 from tracks.effects.devon_patch import DevonPatchMixin
 
 # FR-0210 exit gate tokens: a failed agent run is not a produced document.
-_FAILED_TOKENS = ("over_reach", "timeout", "no_target_diff",
-                  "non_zero_exit", "json_truncated", "fail")
+_FAILED_TOKENS = (
+    "over_reach",
+    "timeout",
+    "no_target_diff",
+    "non_zero_exit",
+    "json_truncated",
+    "fail",
+)
 
 
 def _ac_slug(ac_id: str) -> str:
@@ -56,10 +63,13 @@ class FakeShieldMixin:
         this dispatch, matching ResultCheckpoint's observed identity semantics."""
         token = self.token("shield", substate, "ok")
         if token in _FAILED_TOKENS:
-            return {"status": "failed", "artifact_ref": None,
-                    "failure_class": "agent_failed" if token == "fail" else token,
-                    "audit_evidence": f"simulated {token}",
-                    "self_report": f"shield exit gate failed: {token}"}
+            return {
+                "status": "failed",
+                "artifact_ref": None,
+                "failure_class": "agent_failed" if token == "fail" else token,
+                "audit_evidence": f"simulated {token}",
+                "self_report": f"shield exit gate failed: {token}",
+            }
         tasks = assignment.get("test_tasks") if isinstance(assignment, dict) else None
         if not self._valid_test_tasks(tasks):
             return {
@@ -67,24 +77,20 @@ class FakeShieldMixin:
                 "artifact_ref": None,
                 "failure_class": "invalid_test_tasks",
                 "audit_evidence": (
-                    "assignment.test_tasks must be a non-empty list of "
-                    "{ac_id, layers, if_ids}"
+                    "assignment.test_tasks must be a non-empty list of {ac_id, layers, if_ids}"
                 ),
                 "self_report": "Shield assignment.test_tasks is missing or malformed",
             }
         pre_snapshot = self._snapshot_tests_identity()
-        required = [(task["ac_id"], layer)
-                    for task in tasks for layer in task["layers"]]
+        required = [(task["ac_id"], layer) for task in tasks for layer in task["layers"]]
         if_id_by_ac = {
-            task["ac_id"]: (task["if_ids"][0] if task["if_ids"] else None)
-            for task in tasks
+            task["ac_id"]: (task["if_ids"][0] if task["if_ids"] else None) for task in tasks
         }
         tests_dir = self.repo / "tests"
         for subdir in ("integration", "e2e", "assets", "counterexamples"):
             (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
         for ac_id, layer in required:
-            self._write_test_file(tests_dir, ac_id, layer,
-                                  if_id_by_ac.get(ac_id), token)
+            self._write_test_file(tests_dir, ac_id, layer, if_id_by_ac.get(ac_id), token)
         # D-32: WRITE checkpoints require an attributable tests/**/*.py diff.
         # A re-dispatch (e.g. after Prism revise) that rewrites identical bytes
         # would be a done/no-diff no-op and fail the pipeline. The re-write
@@ -94,9 +100,12 @@ class FakeShieldMixin:
         self._shield_writes += 1
         self._append_revision_marker(tests_dir, assignment)
         manifest = self._shield_artifact_manifest(pre_snapshot)
-        return {"status": "done", "artifact_ref": str(tests_dir),
-                "self_report": f"wrote {len(required)} test files ({token})",
-                "artifact_manifest": manifest}
+        return {
+            "status": "done",
+            "artifact_ref": str(tests_dir),
+            "self_report": f"wrote {len(required)} test files ({token})",
+            "artifact_manifest": manifest,
+        }
 
     @staticmethod
     def _path_identity(path: Path) -> str:
@@ -105,6 +114,7 @@ class FakeShieldMixin:
         ``missing`` for deleted, ``unreadable`` for non-regular/permission-
         denied files."""
         from tracks.executor.file_identity import path_identity  # noqa: PLC0415
+
         return path_identity(path)
 
     @staticmethod
@@ -114,6 +124,7 @@ class FakeShieldMixin:
         from tracks.executor.file_identity import (  # noqa: PLC0415
             is_regular_file_identity,
         )
+
         return is_regular_file_identity(identity)
 
     def _snapshot_tests_identity(self) -> dict[str, str]:
@@ -133,8 +144,7 @@ class FakeShieldMixin:
                 snapshot[rel] = self._path_identity(path)
         return snapshot
 
-    def _shield_artifact_manifest(self,
-                                  pre_snapshot: dict[str, str]) -> dict:
+    def _shield_artifact_manifest(self, pre_snapshot: dict[str, str]) -> dict:
         """Build ``artifact_manifest`` from content-identity changes.
 
         Returns include entries for every regular non-symlink ``tests/`` file
@@ -144,14 +154,13 @@ class FakeShieldMixin:
         """
         post_snapshot = self._snapshot_tests_identity()
         changed = sorted(
-            path for path, post_id in post_snapshot.items()
-            if self._is_regular_file_identity(post_id)
-            and pre_snapshot.get(path) != post_id
+            path
+            for path, post_id in post_snapshot.items()
+            if self._is_regular_file_identity(post_id) and pre_snapshot.get(path) != post_id
         )
         return {"include": [{"path": path} for path in changed]}
 
-    def _append_revision_marker(self, tests_dir: Path,
-                                assignment: dict | None) -> None:
+    def _append_revision_marker(self, tests_dir: Path, assignment: dict | None) -> None:
         """Append a deterministic revision marker to existing test files when
         a re-dispatch carries evidence (FR-11). No-op without evidence.
 
@@ -168,8 +177,7 @@ class FakeShieldMixin:
         reason = " ".join(str(reason).split()).strip() or "revision"
         marker = f"# shield revision: {reason}\n"
         for path in existing:
-            path.write_text(path.read_text(encoding="utf-8") + marker,
-                            encoding="utf-8")
+            path.write_text(path.read_text(encoding="utf-8") + marker, encoding="utf-8")
 
     @staticmethod
     def _valid_test_tasks(tasks: object) -> bool:
@@ -177,8 +185,9 @@ class FakeShieldMixin:
         # pre-dispatch gate and the fake's own guard agree exactly.
         return valid_test_tasks(tasks)
 
-    def _write_test_file(self, tests_dir: Path, ac_id: str, layer: str,
-                         if_id: str | None, token: str) -> None:
+    def _write_test_file(
+        self, tests_dir: Path, ac_id: str, layer: str, if_id: str | None, token: str
+    ) -> None:
         subdir = tests_dir / layer
         slug = _ac_slug(ac_id)
         fname = f"test_{slug}.py"
@@ -210,8 +219,7 @@ class FakeShieldMixin:
             body = self._default_test_body(slug, if_id, marker)
         (subdir / fname).write_text(body, encoding="utf-8")
 
-    def _default_test_body(self, slug: str, if_id: str | None,
-                           marker: str) -> str:
+    def _default_test_body(self, slug: str, if_id: str | None, marker: str) -> str:
         """Default Shield test body.
 
         v0.5+ (the M-IMPL flow): a deterministic behavioral contract over the
@@ -222,10 +230,7 @@ class FakeShieldMixin:
         """
         if supports_m_impl(self.version):
             return self._behavioral_test_body(slug, if_id, marker)
-        return (
-            f"{marker}\ndef test_{slug}():\n"
-            '    raise NotImplementedError("IF-MTEST-001")\n'
-        )
+        return f'{marker}\ndef test_{slug}():\n    raise NotImplementedError("IF-MTEST-001")\n'
 
     @staticmethod
     def _behavioral_test_body(slug: str, if_id: str | None, marker: str) -> str:
@@ -244,12 +249,11 @@ class FakeShieldMixin:
         contract), fall back to the legacy M-TEST legit stub token.
         """
         if not if_id:
-            return (
-                f"{marker}\ndef test_{slug}():\n"
-                '    raise NotImplementedError("IF-MTEST-001")\n'
-            )
+            return f'{marker}\ndef test_{slug}():\n    raise NotImplementedError("IF-MTEST-001")\n'
         implementation = DevonPatchMixin._devon_implementation_text(None, if_id)
         body = DevonPatchMixin._devon_assertion_test(
-            f"tracks/impl/{slug}.py", if_id, implementation,
+            f"tracks/impl/{slug}.py",
+            if_id,
+            implementation,
         )
         return marker + "\n" + body

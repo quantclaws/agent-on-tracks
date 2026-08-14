@@ -5,26 +5,38 @@ scan (no persistence); ``T-NNN`` is a per-scan label. Fenced code blocks are
 skipped (AC-1201); a root comment's anchor is the nearest non-empty,
 non-blockquote line above it (AC-1203).
 """
+
 from __future__ import annotations
 
 import re
 
 from tracks.discuss.model import SNIPPET_LEN, Comment, Thread, normalize
 
-_LABELS = frozenset({
-    "note", "warning", "tip", "important", "definition", "example",
-    "remark", "attention", "caution",
-})
+_LABELS = frozenset(
+    {
+        "note",
+        "warning",
+        "tip",
+        "important",
+        "definition",
+        "example",
+        "remark",
+        "attention",
+        "caution",
+    }
+)
 _STATUSES = frozenset({"open", "resolved", "reopen"})
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _BQ = re.compile(r"^\s*(>+)\s*(.*)$")
 # A: colon inside bold  ->  **Name [STATUS]:** body   /   **@Name:** body
 _TAG_IN = re.compile(
-    r"^\*\*(?P<name>@?[^*\[]+?)\s*(?:\[(?P<st>[A-Za-z]+)\])?\s*:\*\*\s?(?P<body>.*)$")
+    r"^\*\*(?P<name>@?[^*\[]+?)\s*(?:\[(?P<st>[A-Za-z]+)\])?\s*:\*\*\s?(?P<body>.*)$"
+)
 # B: colon outside bold ->  **Name** [STATUS]: body   /   **Name**: body
 _TAG_OUT = re.compile(
-    r"^\*\*(?P<name>@?[^*\[]+?)\*\*\s*(?:\[(?P<st>[A-Za-z]+)\])?\s*:\s?(?P<body>.*)$")
+    r"^\*\*(?P<name>@?[^*\[]+?)\*\*\s*(?:\[(?P<st>[A-Za-z]+)\])?\s*:\s?(?P<body>.*)$"
+)
 # C: no-bold ASCII id   ->  Name: body
 _TAG_PLAIN = re.compile(r"^(?P<name>@?[A-Za-z_][A-Za-z0-9_-]*)\s*:\s?(?P<body>.*)$")
 _MENTION = re.compile(r"@([A-Za-z_][A-Za-z0-9_-]*)")
@@ -71,8 +83,12 @@ class _CommentBuilder:
 
     def freeze(self) -> Comment:
         return Comment(
-            depth=self.depth, speaker=self.speaker, body=self.body,
-            line=self.line, text=self.text, mentions=tuple(self.mentions),
+            depth=self.depth,
+            speaker=self.speaker,
+            body=self.body,
+            line=self.line,
+            text=self.text,
+            mentions=tuple(self.mentions),
             children=tuple(c.freeze() for c in self.children),
         )
 
@@ -89,10 +105,10 @@ class _Accumulator:
         self.threads: list = []
         self._anchor_text = ""
         self._anchor_line = 0
-        self._root = None          # _CommentBuilder root of the current thread
+        self._root = None  # _CommentBuilder root of the current thread
         self._root_status = "open"
         self._root_anchor = (0, "")
-        self._stack: list = []     # ancestor chain root..most-recent comment
+        self._stack: list = []  # ancestor chain root..most-recent comment
         self._reply_count = 0
         self._last = ""
         self._mentioned: list = []
@@ -143,21 +159,23 @@ class _Accumulator:
             return
         seq = len(self.threads) + 1
         anchor_line, anchor_text = self._root_anchor
-        self.threads.append(Thread(
-            thread_id=f"T-{seq:03d}",
-            initiator=self._root.speaker,
-            status=self._root_status,
-            last_speaker=self._last,
-            reply_count=self._reply_count,
-            snippet=normalize(self._root.body)[:SNIPPET_LEN],
-            mentioned_agents=tuple(dict.fromkeys(self._mentioned)),
-            root=self._root.freeze(),
-            total_lines=self.total,
-            anchor_line=anchor_line,
-            anchor_text=anchor_text,
-            root_line=self._root.line,
-            root_text=self._root.text,
-        ))
+        self.threads.append(
+            Thread(
+                thread_id=f"T-{seq:03d}",
+                initiator=self._root.speaker,
+                status=self._root_status,
+                last_speaker=self._last,
+                reply_count=self._reply_count,
+                snippet=normalize(self._root.body)[:SNIPPET_LEN],
+                mentioned_agents=tuple(dict.fromkeys(self._mentioned)),
+                root=self._root.freeze(),
+                total_lines=self.total,
+                anchor_line=anchor_line,
+                anchor_text=anchor_text,
+                root_line=self._root.line,
+                root_text=self._root.text,
+            )
+        )
         self._root = None
         self._stack = []
 

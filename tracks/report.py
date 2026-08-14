@@ -3,6 +3,7 @@
 The report deliberately consumes the Runtime event store instead of test logs.
 It writes ordinary files only; no event, document, or Git mutation is performed.
 """
+
 from __future__ import annotations
 
 import html
@@ -23,8 +24,18 @@ from tracks.tasklog import rebuild_task_log
 
 _GITHUB_REMOTE = re.compile(r"github\.com[/:](?P<repo>[^/]+/[^/]+?)(?:\.git)?$")
 _RESULT_PREFIXES = (
-    "outcome.", "verdict.", "stage.", "run.", "branch.", "story.",
-    "spec.", "acceptance.", "preview.", "approval.", "issue.", "issues.",
+    "outcome.",
+    "verdict.",
+    "stage.",
+    "run.",
+    "branch.",
+    "story.",
+    "spec.",
+    "acceptance.",
+    "preview.",
+    "approval.",
+    "issue.",
+    "issues.",
 )
 
 
@@ -177,10 +188,18 @@ def _agent_output_lines(output) -> list[str]:
     lines = []
     if isinstance(output, dict) and output.get("audit_gap"):
         lines.append(f"  - audit gap: `{output['audit_gap']}`")
-    lines.extend(["  - agent stdout summary:", "```text",
-                  _text_summary(stdout), "```",
-                  "  - agent stderr summary:", "```text",
-                  _text_summary(stderr), "```"])
+    lines.extend(
+        [
+            "  - agent stdout summary:",
+            "```text",
+            _text_summary(stdout),
+            "```",
+            "  - agent stderr summary:",
+            "```text",
+            _text_summary(stderr),
+            "```",
+        ]
+    )
     return lines
 
 
@@ -213,8 +232,10 @@ def _activity_result_lines(activity: Activity, home: Path) -> list[str]:
     result = activity.result
     if result is None:
         return ["  - result: `interrupted` (no closing event)"]
-    lines = [f"  - result: `{result.type}` at `{result.ts}`",
-             f"  - payload: `{_event_json(result)}`"]
+    lines = [
+        f"  - result: `{result.type}` at `{result.ts}`",
+        f"  - payload: `{_event_json(result)}`",
+    ]
     io = result.payload.get("agent_io")
     if io:
         lines.extend(_agent_io_lines(home, io))
@@ -230,12 +251,15 @@ def _activity_commit_lines(activity: Activity, repo: Path) -> list[str]:
         for sha in _commit_shas(related):
             lines.append(f"  - commit: `{sha}` ({_commit_link(repo, sha)})")
     result = activity.result
-    if result and result.payload.get("diff_ref") and not any(
-        _commit_shas(related) for related in activity.related
+    if (
+        result
+        and result.payload.get("diff_ref")
+        and not any(_commit_shas(related) for related in activity.related)
     ):
         lines.append(
-            "  - commit fallback: target diff captured (no commit event yet): `" +
-            _text_summary(result.payload["diff_ref"], 2000) + "`"
+            "  - commit fallback: target diff captured (no commit event yet): `"
+            + _text_summary(result.payload["diff_ref"], 2000)
+            + "`"
         )
     return lines
 
@@ -257,11 +281,7 @@ def _text_summary(value: str, limit: int = 4000) -> str:
 def _commit_shas(event) -> list[str]:
     if event is None:
         return []
-    return [
-        str(value)
-        for key, value in event.payload.items()
-        if key == "commit_sha" and value
-    ]
+    return [str(value) for key, value in event.payload.items() if key == "commit_sha" and value]
 
 
 def _discussion_lines(repo: Path, version: str | None) -> list[str]:
@@ -314,8 +334,7 @@ def _failed_dispatch_attempt(event, events: list):
         (
             issued.payload.get("command", {}).get("params", {}).get("attempt")
             for issued in events
-            if issued.type == "command.issued"
-            and issued.command_id == event.command_id
+            if issued.type == "command.issued" and issued.command_id == event.command_id
         ),
         None,
     )
@@ -393,7 +412,8 @@ def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     }
     for event in events:
         if event.command_id in hidden_validates and event.type in (
-            "command.issued", "verdict.passed"
+            "command.issued",
+            "verdict.passed",
         ):
             continue
         actor = _actor(event.type, event.payload)
@@ -423,8 +443,15 @@ def _read_events(home: Path, run_id: str) -> list[EventEnvelope]:
         payload = _expand_refs(home, json.loads(row[8]))
         events.append(
             EventEnvelope(
-                seq=row[1], ts=row[2], run_id=row[0], version=row[3], type=row[4],
-                schema_version=row[5], command_id=row[6], task_id=row[7], payload=payload,
+                seq=row[1],
+                ts=row[2],
+                run_id=row[0],
+                version=row[3],
+                type=row[4],
+                schema_version=row[5],
+                command_id=row[6],
+                task_id=row[7],
+                payload=payload,
             )
         )
     return events
@@ -445,9 +472,9 @@ def _task_progress_summary(events: list[EventEnvelope]) -> str | None:
     task_events = [event for event in events if event.type.startswith("task.")]
     if not taskgraph_events and not task_events:
         return None
-    declared_ids = set().union(*(
-        _payload_task_ids(event.payload.get("task_ids")) for event in taskgraph_events
-    ))
+    declared_ids = set().union(
+        *(_payload_task_ids(event.payload.get("task_ids")) for event in taskgraph_events)
+    )
     task_ids = declared_ids | _event_task_ids(task_events)
     started_ids = _event_task_ids(task_events, "task.started")
     completed_ids = _event_task_ids(task_events, "task.completed")
@@ -544,7 +571,7 @@ def _html_page(run_id: str) -> str:
         "      })\n"
         "      .catch(error => {\n"
         '        document.getElementById("content").textContent =\n'
-        '          `Unable to load report.md: ${error.message}`;\n'
+        "          `Unable to load report.md: ${error.message}`;\n"
         "      });\n"
         "  </script>\n"
         "</body>\n"

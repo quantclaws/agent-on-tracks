@@ -67,13 +67,19 @@ def test_report_uses_current_git_host_and_escapes_agent_output(host_repo, tmp_pa
     db_before = (home / "runtime" / "tracks.db").read_bytes()
 
     before = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=host_repo, check=True,
-        capture_output=True, text=True,
+        ["git", "status", "--porcelain"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     report_md, index_html = generate_report(host_repo, run_id, tmp_path / "report")
     after = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=host_repo, check=True,
-        capture_output=True, text=True,
+        ["git", "status", "--porcelain"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
 
     markdown = report_md.read_text(encoding="utf-8")
@@ -83,8 +89,7 @@ def test_report_uses_current_git_host_and_escapes_agent_output(host_repo, tmp_pa
     assert "local: git show deadbeef" in markdown
     assert "<script>" in markdown
     payload = (
-        'payload=`{"role": "lex", "self_report": '
-        '"<script>alert(1)</script>", "status": "ok"}`'
+        'payload=`{"role": "lex", "self_report": "<script>alert(1)</script>", "status": "ok"}`'
     )
     assert payload in markdown
     assert "marked v15.0.7" in html
@@ -152,13 +157,9 @@ def test_report_expands_agent_blobs_and_discussion_participants(host_repo, tmp_p
     text = "---\nstatus: draft\n---\n\n# Story\n\nOutput location is undecided.\n"
     text = writer.start(text, 6, "Sage", "Where should the output be shown?")
     thread = parse_threads(text)[0]
-    text = writer.reply(
-        text, thread.thread_id, token_for(thread), "Scribe", "Use CLI stdout."
-    )
+    text = writer.reply(text, thread.thread_id, token_for(thread), "Scribe", "Use CLI stdout.")
     thread = parse_threads(text)[0]
-    text = writer.set_status(
-        text, thread.thread_id, token_for(thread), "resolved", "Sage"
-    )
+    text = writer.set_status(text, thread.thread_id, token_for(thread), "resolved", "Sage")
     story.write_text(text, encoding="utf-8")
 
     store = Store(home)
@@ -174,37 +175,52 @@ def test_report_expands_agent_blobs_and_discussion_participants(host_repo, tmp_p
             "command": {
                 "kind": "dispatch_agent",
                 "params": {
-                    "role": "sage", "substate": "SAGE_REVIEW", "doc": "story.md",
-                    "stage": "M-STORY", "attempt": 1, "review_round": 1,
+                    "role": "sage",
+                    "substate": "SAGE_REVIEW",
+                    "doc": "story.md",
+                    "stage": "M-STORY",
+                    "attempt": 1,
+                    "review_round": 1,
                 },
                 "command_id": command_id,
             }
         },
         command_id=command_id,
     )
-    input_ref = store.write_audit_blob({
-        "role": "sage", "substate": "SAGE_REVIEW", "prompt": "review story"
-    })
-    output_ref = store.write_audit_blob({
-        "stdout": "captured sage stdout", "stderr": "captured sage stderr",
-        "stdout_bytes": 22, "stderr_bytes": 22,
-    })
+    input_ref = store.write_audit_blob(
+        {"role": "sage", "substate": "SAGE_REVIEW", "prompt": "review story"}
+    )
+    output_ref = store.write_audit_blob(
+        {
+            "stdout": "captured sage stdout",
+            "stderr": "captured sage stderr",
+            "stdout_bytes": 22,
+            "stderr_bytes": 22,
+        }
+    )
     store.append(
         run_id,
         "v0.2",
         "outcome.received",
         {
-            "role": "sage", "status": "done", "artifact_ref": None,
-            "self_report": "reviewed", "verdict": "pass",
+            "role": "sage",
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "reviewed",
+            "verdict": "pass",
             "agent_io": {
-                "input_ref": input_ref, "output_ref": output_ref,
+                "input_ref": input_ref,
+                "output_ref": output_ref,
                 "audit_completeness": "complete",
             },
         },
         command_id=command_id,
     )
     store.append(
-        run_id, "v0.2", "story.committed", {"commit_sha": "deadbeef", "final": False},
+        run_id,
+        "v0.2",
+        "story.committed",
+        {"commit_sha": "deadbeef", "final": False},
         command_id=command_id,
     )
     store.close()

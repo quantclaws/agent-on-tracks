@@ -1,4 +1,5 @@
 """Focused unit coverage for report argument resolution and progress output."""
+
 from __future__ import annotations
 
 import pytest
@@ -122,21 +123,28 @@ def test_report_unknown_explicit_run_fails_cleanly(host_repo, capsys, tmp_path):
     [("md", "report.md"), ("html", "index.html")],
 )
 def test_explicit_report_output_stays_compatible(
-    host_repo, capsys, tmp_path, report_format, selected_name,
+    host_repo,
+    capsys,
+    tmp_path,
+    report_format,
+    selected_name,
 ):
     run_id = "explicit-run"
     _append_run(host_repo / ".tracks", run_id)
     output_dir = tmp_path / "report"
 
-    assert cmd_report(
-        host_repo,
-        "--run-id",
-        run_id,
-        "--output",
-        str(output_dir),
-        "--format",
-        report_format,
-    ) == 0
+    assert (
+        cmd_report(
+            host_repo,
+            "--run-id",
+            run_id,
+            "--output",
+            str(output_dir),
+            "--format",
+            report_format,
+        )
+        == 0
+    )
 
     assert capsys.readouterr().out.splitlines() == [
         f"report: {output_dir / selected_name}",
@@ -161,8 +169,7 @@ def test_report_prints_task_and_tracks_r_progress(host_repo, capsys, tmp_path):
     assert cmd_report(host_repo, "--run-id", run_id, "--output", str(tmp_path)) == 0
 
     assert capsys.readouterr().out.splitlines()[-1] == (
-        "progress: tasks: 1/2 completed, 2 started (T-001, T-002); "
-        "Tracks-R: 1 checkpointed (T-002)"
+        "progress: tasks: 1/2 completed, 2 started (T-001, T-002); Tracks-R: 1 checkpointed (T-002)"
     )
 
 

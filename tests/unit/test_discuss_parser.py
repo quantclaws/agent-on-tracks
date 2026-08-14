@@ -1,4 +1,5 @@
 """inline-discussion parser (FR-050/FR-060/FR-120, AC-FR0050-01..AC-FR0120-03)."""
+
 from tracks.discuss.parser import parse_tag, parse_threads
 
 
@@ -9,6 +10,7 @@ def _one(text):
 
 
 # -- FR-050 syntax ------------------------------------------------------------
+
 
 def test_parse_tag_three_layouts_equivalent():
     # AC-FR0050-01: colon-inside / colon-outside / no-bold give the same fields
@@ -46,6 +48,7 @@ def test_at_speaker_tag_equivalent():
 
 # -- FR-060 data structure ----------------------------------------------------
 
+
 def test_thread_id_autoincrement():
     # AC-FR0060-01
     ts = parse_threads("> **A:** one\n\ntext\n\n> **B:** two")
@@ -75,6 +78,7 @@ def test_snippet_truncated_to_80():
 
 # -- FR-120 parse boundary ----------------------------------------------------
 
+
 def test_fenced_code_skipped():
     # AC-FR0120-01
     assert parse_threads("```\n> **Aaron:** in code\n```") == []
@@ -94,11 +98,14 @@ def test_anchor_is_nearest_non_blockquote_line():
 
 # -- FR-050 nesting (depth = reply to whom) -----------------------------------
 
+
 def test_reply_tree_nesting():
-    text = ("> **Aaron:** I don't know\n"
-            ">> **Sage:** please revise line 5\n"
-            ">>> **Scribe:** done\n"
-            ">> **Aaron:** thanks\n")
+    text = (
+        "> **Aaron:** I don't know\n"
+        ">> **Sage:** please revise line 5\n"
+        ">>> **Scribe:** done\n"
+        ">> **Aaron:** thanks\n"
+    )
     t = _one(text)
     assert t.initiator == "Aaron" and t.reply_count == 3
     kids = t.root.children
@@ -118,5 +125,6 @@ def test_depth3_with_no_depth2_attaches_to_root():
 
 def test_iter_comments_preorder():
     from tracks.discuss.model import iter_comments
+
     t = _one("> **A:** r\n>> **B:** b\n>>> **C:** c\n>> **D:** d\n")
     assert [c.speaker for c in iter_comments(t.root)] == ["A", "B", "C", "D"]

@@ -4,6 +4,7 @@ AC-FR0140-01@v0.4 template has green condition field,
 AC-FR0140-02@v0.4 check_design_trace IF- attribution validation,
 AC-FR0140-04@v0.4 field carries IF not execution.
 """
+
 from pathlib import Path
 
 from tracks import templating

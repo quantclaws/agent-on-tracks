@@ -4,6 +4,7 @@
 iff every thread is resolved (open and reopen both block). Pure read; backs
 ``trac discuss query --check-ready`` and the ``discussion_ready`` validate check.
 """
+
 from __future__ import annotations
 
 from tracks.discuss.parser import parse_threads

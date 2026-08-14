@@ -1,4 +1,5 @@
 """Deterministic, in-memory patch construction for Fake Devon."""
+
 from __future__ import annotations
 
 import hashlib
@@ -23,10 +24,15 @@ def unified_patch(path: str, existing: str | None, updated: str) -> str:
     header = f"diff --git a/{path} b/{path}\n"
     if existing is None:
         header += "new file mode 100644\n"
-    body = "".join(unified_diff(
-        old_lines, new_lines, fromfile=source, tofile=f"b/{path}",
-        lineterm="\n",
-    ))
+    body = "".join(
+        unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=source,
+            tofile=f"b/{path}",
+            lineterm="\n",
+        )
+    )
     return header + body
 
 
@@ -59,8 +65,7 @@ class DevonPatchMixin:
             if path.startswith("tests/unit/"):
                 candidates.append(path)
         candidates.append(f"tests/unit/test_{self._devon_slug(assignment)}.py")
-        selected = self._devon_select_path(candidates, allowed, forbidden,
-                                           "tests/unit/")
+        selected = self._devon_select_path(candidates, allowed, forbidden, "tests/unit/")
         if selected is None:
             return None, "manifest has no allowed tests/unit path"
         return selected, None
@@ -77,13 +82,11 @@ class DevonPatchMixin:
                 continue
             if "*" not in path:
                 basename = path.rsplit("/", 1)[-1]
-                candidate = (f"{path}/{slug}.py" if "." not in basename
-                             else path)
+                candidate = f"{path}/{slug}.py" if "." not in basename else path
                 candidates.append(candidate)
             elif path.endswith("/**"):
                 candidates.append(f"{path[:-3].rstrip('/')}/{slug}.py")
-        selected = self._devon_select_path(candidates, allowed, forbidden,
-                                           "")
+        selected = self._devon_select_path(candidates, allowed, forbidden, "")
         if selected is None:
             return None, "manifest has no allowed production path"
         return selected, None
@@ -93,21 +96,28 @@ class DevonPatchMixin:
         return production or f"tracks/impl/{self._devon_slug(assignment)}.py"
 
     @staticmethod
-    def _devon_select_path(candidates: list[str], allowed: object,
-                           forbidden: object, prefix: str) -> str | None:
+    def _devon_select_path(
+        candidates: list[str], allowed: object, forbidden: object, prefix: str
+    ) -> str | None:
         seen: set[str] = set()
         for candidate in candidates:
             path = candidate.rstrip("/")
-            if (not path or path in seen or path.startswith("/")
-                    or ".." in path.split("/")
-                    or (prefix and not path.startswith(prefix))
-                    or path.startswith("tests/") and not prefix):
+            if (
+                not path
+                or path in seen
+                or path.startswith("/")
+                or ".." in path.split("/")
+                or (prefix and not path.startswith(prefix))
+                or path.startswith("tests/")
+                and not prefix
+            ):
                 continue
             seen.add(path)
-            if (any(DevonPatchMixin._devon_manifest_matches(path, rule)
-                    for rule in allowed)
-                    and not any(DevonPatchMixin._devon_manifest_matches(path, rule)
-                                for rule in forbidden)):
+            if any(
+                DevonPatchMixin._devon_manifest_matches(path, rule) for rule in allowed
+            ) and not any(
+                DevonPatchMixin._devon_manifest_matches(path, rule) for rule in forbidden
+            ):
                 return path
         return None
 
@@ -133,17 +143,12 @@ class DevonPatchMixin:
 
     @staticmethod
     def _devon_stub_test(if_id: str) -> str:
-        return (
-            "def test_devon_red_stub():\n"
-            f'    raise NotImplementedError("{if_id}")\n'
-        )
+        return f'def test_devon_red_stub():\n    raise NotImplementedError("{if_id}")\n'
 
     @staticmethod
-    def _devon_assertion_test(production_path: str, if_id: str,
-                              implementation: str) -> str:
+    def _devon_assertion_test(production_path: str, if_id: str, implementation: str) -> str:
         expected_lines = "".join(
-            f"        {line!r}\n"
-            for line in implementation.splitlines(keepends=True)
+            f"        {line!r}\n" for line in implementation.splitlines(keepends=True)
         )
         path_literal = json.dumps(production_path)
         return (
@@ -156,11 +161,11 @@ class DevonPatchMixin:
             "        runpy.run_path(str(implementation))\n"
             "        if implementation.is_file() else {}\n"
             "    )\n"
-            f"    assert namespace.get(\"IMPLEMENTED_IF\") == {if_id!r}\n"
+            f'    assert namespace.get("IMPLEMENTED_IF") == {if_id!r}\n'
             f"    expected = (\n{expected_lines}    )\n"
             "    actual = (\n"
-            "        implementation.read_text(encoding=\"utf-8\")\n"
-            "        if implementation.is_file() else \"\"\n"
+            '        implementation.read_text(encoding="utf-8")\n'
+            '        if implementation.is_file() else ""\n'
             "    )\n"
             "    assert actual == expected\n"
         )
@@ -172,30 +177,39 @@ class DevonPatchMixin:
         return assignment["test_refs"][0].strip()
 
     @staticmethod
-    def _devon_commands(assignment: dict, target: str, outcome: str,
-                        summary: str) -> list[dict]:
+    def _devon_commands(assignment: dict, target: str, outcome: str, summary: str) -> list[dict]:
         test_target = DevonPatchMixin._devon_test_target(assignment, target)
         command = f".venv/bin/python -m pytest -n 4 {test_target}"
-        return [{"cmd": command, "result": outcome,
-                 "output_summary": summary}]
+        return [{"cmd": command, "result": outcome, "output_summary": summary}]
 
     @staticmethod
     def _devon_digest(value: object) -> str:
-        raw = json.dumps(value, ensure_ascii=True, sort_keys=True,
-                         separators=(",", ":"), default=str)
+        raw = json.dumps(
+            value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str
+        )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _devon_evidence(
-        self, assignment: dict, phase: str, changed_paths: list[str],
-        commands: list[dict], results: list[dict], patch_marker: str,
-        implemented_if_ids: list[str], no_change_reason: str | None = None,
+        self,
+        assignment: dict,
+        phase: str,
+        changed_paths: list[str],
+        commands: list[dict],
+        results: list[dict],
+        patch_marker: str,
+        implemented_if_ids: list[str],
+        no_change_reason: str | None = None,
     ) -> dict:
         pre_identity, post_identity = self._devon_evidence_identities(
-            assignment, phase, patch_marker,
+            assignment,
+            phase,
+            patch_marker,
         )
         evidence = {
-            "phase": phase, "changed_paths": changed_paths,
-            "commands": commands, "results": results,
+            "phase": phase,
+            "changed_paths": changed_paths,
+            "commands": commands,
+            "results": results,
             "manifest_compliance": True,
             "pre_identity": pre_identity,
             "post_identity": post_identity,
@@ -221,14 +235,19 @@ class DevonPatchMixin:
         return {
             **evidence,
             "audit_evidence": audit_evidence,
-            **({"r_identity": assignment["r_tree_identity"]}
-               if phase in ("green", "refactor") else {}),
-            **({"no_change_reason": no_change_reason}
-               if no_change_reason is not None else {}),
+            **(
+                {"r_identity": assignment["r_tree_identity"]}
+                if phase in ("green", "refactor")
+                else {}
+            ),
+            **({"no_change_reason": no_change_reason} if no_change_reason is not None else {}),
         }
 
     def _devon_evidence_identities(
-        self, assignment: dict, phase: str, patch_marker: str,
+        self,
+        assignment: dict,
+        phase: str,
+        patch_marker: str,
     ) -> tuple[str, str]:
         """Pre/post content identities for the Devon evidence envelope."""
         post_material = {
@@ -243,16 +262,21 @@ class DevonPatchMixin:
     @staticmethod
     def _devon_command_summaries(commands: list[dict]) -> list[dict]:
         return [
-            {"cmd": command.get("cmd"), "result": command.get("result"),
-             "output_summary": command.get("output_summary")}
+            {
+                "cmd": command.get("cmd"),
+                "result": command.get("result"),
+                "output_summary": command.get("output_summary"),
+            }
             for command in commands
         ]
 
     @staticmethod
     def _devon_result_summaries(results: list[dict]) -> list[dict]:
         return [
-            {"status": result.get("status"),
-             "classification": result.get("classification"),
-             "output_summary": result.get("output_summary")}
+            {
+                "status": result.get("status"),
+                "classification": result.get("classification"),
+                "output_summary": result.get("output_summary"),
+            }
             for result in results
         ]

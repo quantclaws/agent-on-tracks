@@ -15,6 +15,7 @@ wrong here (``"v0.10" < "v0.5"``), so comparisons use numeric component
 tuples. Malformed versions fail closed: they never unlock a v0.5+ capability
 and keep the historical pre-v0.5 behavior.
 """
+
 from __future__ import annotations
 
 import re

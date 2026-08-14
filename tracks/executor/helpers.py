@@ -1,5 +1,6 @@
 """Module-level helpers extracted from executor.py: git utilities, agent
 dispatch evidence, and test-failure classification (IF-004 §1g)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -74,10 +75,21 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
     if captured is not None:
         payload["agent_io"] = _agent_io_evidence(store, dict(params), captured)
     for key in (
-        "diff_ref", "audit_evidence", "failure_class", "verdict",
-        "discussion_evidence", "phase", "changed_paths", "commands",
-        "results", "manifest_compliance", "pre_identity", "post_identity",
-        "r_identity", "no_change_reason", "implemented_if_ids",
+        "diff_ref",
+        "audit_evidence",
+        "failure_class",
+        "verdict",
+        "discussion_evidence",
+        "phase",
+        "changed_paths",
+        "commands",
+        "results",
+        "manifest_compliance",
+        "pre_identity",
+        "post_identity",
+        "r_identity",
+        "no_change_reason",
+        "implemented_if_ids",
         "result_identity",
     ):
         if result.get(key) is not None:
@@ -88,15 +100,23 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
 # IF-004 §1g RedClass closed set (legit = the test fails for the right reason).
 _LEGIT_RED = frozenset({"assertion_failure", "stub_token_failure", "symbol_missing"})
 # DIAGNOSE classification -> target stage for rollback/rewrite.
-_DIAGNOSE_TARGET = {"test_defect": "M-TEST", "stub_gap": "M-DESIGN",
-                    "ac_gap": "M-ACC", "spec_gap": "M-SPEC",
-                    "impl_defect": "M-IMPL"}
+_DIAGNOSE_TARGET = {
+    "test_defect": "M-TEST",
+    "stub_gap": "M-DESIGN",
+    "ac_gap": "M-ACC",
+    "spec_gap": "M-SPEC",
+    "impl_defect": "M-IMPL",
+}
 # pytest short-traceback E-prefix assertion line (``E   assert ...``).
 _ASSERT_E_LINE = re.compile(r"^E\s+assert\b", re.MULTILINE)
 # Failure keywords -> illegit Red class (collection/syntax/fixture/import).
 _ILLEGIT_KEYWORDS = (
-    "ImportError", "ModuleNotFoundError", "SyntaxError",
-    "FixtureLookupError", "collection error", "ERROR collecting",
+    "ImportError",
+    "ModuleNotFoundError",
+    "SyntaxError",
+    "FixtureLookupError",
+    "collection error",
+    "ERROR collecting",
 )
 
 

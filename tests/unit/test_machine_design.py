@@ -5,6 +5,7 @@ Pure technical stage: no human.review/human.approval anywhere (BS-05); one
 Archer dispatch covers all three docs (Decision A); validate-fail re-dispatch
 follows the DRAFT three-attempt escalation pattern.
 """
+
 from tests.unit.helpers import seq
 from tracks.kernel import decide, project
 from tracks.kernel.machine import DESIGN_DOCS
@@ -13,21 +14,35 @@ ENTER_DESIGN = [
     ("story.requested", {"raw_chars": 5}),
     ("stage.entered", {"stage": "M-DESIGN"}),
 ]
-DISPATCHED = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                              "params": {"role": "archer",
-                                                         "substate": "DRAFT"},
-                                              "command_id": "C1"}})
+DISPATCHED = (
+    "command.issued",
+    {
+        "command": {
+            "kind": "dispatch_agent",
+            "params": {"role": "archer", "substate": "DRAFT"},
+            "command_id": "C1",
+        }
+    },
+)
+
+
 def _design_author_checkpoint(substate="DRAFT", cmd_id="C1"):
     """Minimal result_checkpoint payload for M-DESIGN author (DRAFT/RESPOND)."""
     return {
-        "source": "archer", "stage": "M-DESIGN", "substate": substate,
+        "source": "archer",
+        "stage": "M-DESIGN",
+        "substate": substate,
         "actor_kind": "agent",
-        "artifacts": list(DESIGN_DOCS), "allowed_paths": list(DESIGN_DOCS),
-        "base_sha": "b", "checks": ["template"],
-        "requires_diff": False, "forbid_diff": False,
+        "artifacts": list(DESIGN_DOCS),
+        "allowed_paths": list(DESIGN_DOCS),
+        "base_sha": "b",
+        "checks": ["template"],
+        "requires_diff": False,
+        "forbid_diff": False,
         "discussion_only": False,
         "commit_label": "M-DESIGN: archer commit",
-        "result_id": cmd_id, "digests": {},
+        "result_id": cmd_id,
+        "digests": {},
         "domain_event": {"type": "design.committed", "payload": {}},
     }
 
@@ -35,22 +50,29 @@ def _design_author_checkpoint(substate="DRAFT", cmd_id="C1"):
 def _design_review_checkpoint(verdict="pass", cmd_id="C2"):
     """Minimal result_checkpoint payload for M-DESIGN Prism review."""
     return {
-        "source": "prism", "stage": "M-DESIGN",
-        "substate": "PRISM_REVIEW", "actor_kind": "agent",
+        "source": "prism",
+        "stage": "M-DESIGN",
+        "substate": "PRISM_REVIEW",
+        "actor_kind": "agent",
         "verdict": verdict,
-        "artifacts": list(DESIGN_DOCS), "allowed_paths": list(DESIGN_DOCS),
-        "base_sha": "b", "checks": ["template"],
-        "requires_diff": verdict != "pass", "forbid_diff": False,
+        "artifacts": list(DESIGN_DOCS),
+        "allowed_paths": list(DESIGN_DOCS),
+        "base_sha": "b",
+        "checks": ["template"],
+        "requires_diff": verdict != "pass",
+        "forbid_diff": False,
         "discussion_only": True,
         "commit_label": f"M-DESIGN: prism ({verdict}) checkpoint",
-        "result_id": cmd_id, "digests": {},
-        "domain_event": {"type": "prism.verdict",
-                          "payload": {"verdict": verdict}},
+        "result_id": cmd_id,
+        "digests": {},
+        "domain_event": {"type": "prism.verdict", "payload": {"verdict": verdict}},
     }
 
 
-PRODUCED = ("outcome.received", {"role": "archer", "status": "done",
-                                  "result_checkpoint": _design_author_checkpoint()})
+PRODUCED = (
+    "outcome.received",
+    {"role": "archer", "status": "done", "result_checkpoint": _design_author_checkpoint()},
+)
 PASSED = ("verdict.passed", {"check": "template,trace", "detail": "d"})
 
 
@@ -61,25 +83,32 @@ def state_of(*items):
 def draft_cycle():
     """dispatch → outcome (with pipeline) → validated → checkpointed →
     3× design.committed events (one publish_result emits all three)."""
-    evs = [DISPATCHED, PRODUCED,
-           ("result.validated", {"artifacts": list(DESIGN_DOCS),
-                                  "base_sha": "b", "result_id": "C1"}),
-           ("result.checkpointed", {"created_commit": True,
-                                    "commit_sha": "c", "base_sha": "b",
-                                    "result_id": "C1"})]
+    evs = [
+        DISPATCHED,
+        PRODUCED,
+        ("result.validated", {"artifacts": list(DESIGN_DOCS), "base_sha": "b", "result_id": "C1"}),
+        (
+            "result.checkpointed",
+            {"created_commit": True, "commit_sha": "c", "base_sha": "b", "result_id": "C1"},
+        ),
+    ]
     for doc in DESIGN_DOCS:
-        evs.append(("design.committed", {"doc": doc, "commit_sha": "c",
-                                         "final": False}))
+        evs.append(("design.committed", {"doc": doc, "commit_sha": "c", "final": False}))
     return evs
 
 
-PRISM_DISPATCH = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                  "params": {"role": "prism",
-                                                             "substate": "PRISM_REVIEW"},
-                                                  "command_id": "C2"}})
+PRISM_DISPATCH = (
+    "command.issued",
+    {
+        "command": {
+            "kind": "dispatch_agent",
+            "params": {"role": "prism", "substate": "PRISM_REVIEW"},
+            "command_id": "C2",
+        }
+    },
+)
 PRISM_PRODUCED = ("outcome.received", {"role": "prism", "status": "done"})
-EXIT_PASSED = ("verdict.passed", {"check": "template,discussion_ready",
-                                  "detail": "d"})
+EXIT_PASSED = ("verdict.passed", {"check": "template,discussion_ready", "detail": "d"})
 
 
 def test_enter_draft_dispatches_archer_for_all_three_docs():
@@ -103,7 +132,8 @@ def test_design_dispatch_assignments_carry_doc_set():
     # Archer drafts from the template trio: the assignment names every kind so
     # the backend materializes them into the host repo (live run043).
     assert draft.params["assignment"]["templates"] == [
-        doc.removesuffix(".md") for doc in DESIGN_DOCS]
+        doc.removesuffix(".md") for doc in DESIGN_DOCS
+    ]
     assert draft.params["assignment"]["template_kind"] is None
     review = decide(state_of(*draft_cycle()))
     assert review.params["substate"] == "PRISM_REVIEW"
@@ -144,16 +174,17 @@ def test_validate_fail_re_dispatch_budget_then_escalation():
     # Mirrors the existing DRAFT three-attempt escalation pattern: re-dispatch
     # Archer with failure evidence; the 3rd failure escalates to Human.
     def fail(n):
-        return ("verdict.failed", {"check": "trace", "reason": "orphan",
-                                   "attempt": n})
+        return ("verdict.failed", {"check": "trace", "reason": "orphan", "attempt": n})
+
     one = state_of(DISPATCHED, PRODUCED, fail(1))
     cmd = decide(one)
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["evidence"]["check"] == "trace"
     two = state_of(DISPATCHED, PRODUCED, fail(1), DISPATCHED, PRODUCED, fail(2))
     assert decide(two).kind == "dispatch_agent"
-    three = state_of(DISPATCHED, PRODUCED, fail(1), DISPATCHED, PRODUCED,
-                     fail(2), DISPATCHED, PRODUCED, fail(3))
+    three = state_of(
+        DISPATCHED, PRODUCED, fail(1), DISPATCHED, PRODUCED, fail(2), DISPATCHED, PRODUCED, fail(3)
+    )
     assert three.status == "awaiting_human" and three.awaiting == "escalation"
     assert decide(three) is None
 
@@ -176,16 +207,14 @@ def test_prism_pass_goes_straight_to_exit_no_human_gate():
     # write_frontmatter (nothing extra is written, Decision A). The test-plan
     # additionally runs the design trace + structured test-task contract
     # checks (D-28) so an invalid M-DESIGN→M-TEST contract never exits.
-    items = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED,
-                             ("prism.verdict", {"verdict": "pass"})]
+    items = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED, ("prism.verdict", {"verdict": "pass"})]
     s = state_of(*items)
     assert s.substate == "EXIT" and s.awaiting is None
     assert s.status == "active" and s.prism_passed_this_round
     for doc in DESIGN_DOCS:
         cmd = decide(state_of(*items))
         assert cmd.kind == "validate_document"
-        expected = {"doc": doc,
-                    "checks": ["template", "discussion_ready"]}
+        expected = {"doc": doc, "checks": ["template", "discussion_ready"]}
         if doc == "test-plan.md":
             expected["checks"] += ["trace", "test_tasks"]
         assert cmd.params == expected
@@ -200,12 +229,19 @@ def test_exit_test_tasks_gate_fail_falls_back_to_archer_respond():
     # AC row / no IF- green condition) fails the M-DESIGN EXIT validation and
     # routes back to Archer RESPOND — never a Human, never M-TEST.
     def fail(n):
-        return ("verdict.failed", {"check": "test_tasks",
-                                   "reason": "AC-FR0010-02 missing IF- ids",
-                                   "attempt": n})
-    base = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED,
-                            ("prism.verdict", {"verdict": "pass"}),
-                            EXIT_PASSED, EXIT_PASSED, fail(1)]
+        return (
+            "verdict.failed",
+            {"check": "test_tasks", "reason": "AC-FR0010-02 missing IF- ids", "attempt": n},
+        )
+
+    base = draft_cycle() + [
+        PRISM_DISPATCH,
+        PRISM_PRODUCED,
+        ("prism.verdict", {"verdict": "pass"}),
+        EXIT_PASSED,
+        EXIT_PASSED,
+        fail(1),
+    ]
     s = state_of(*base)
     assert s.substate == "RESPOND" and s.awaiting is None
     assert s.status == "active" and not s.exit_validated
@@ -218,13 +254,23 @@ def test_exit_test_tasks_gate_fail_falls_back_to_archer_respond():
 def test_prism_checkpoint_no_diff_retries_and_replay_is_deterministic():
     """An invalid Prism result retries Prism; it is not a revise verdict."""
     checkpoint = _design_review_checkpoint(verdict="revise")
-    produced = ("outcome.received", {
-        "role": "prism", "status": "done", "result_checkpoint": checkpoint,
-    })
-    failed = ("verdict.failed", {
-        "check": "no_diff", "reason": "verdict requires a diff",
-        "evidence": "architecture.md", "attempt": 1,
-    })
+    produced = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "done",
+            "result_checkpoint": checkpoint,
+        },
+    )
+    failed = (
+        "verdict.failed",
+        {
+            "check": "no_diff",
+            "reason": "verdict requires a diff",
+            "evidence": "architecture.md",
+            "attempt": 1,
+        },
+    )
     events = [*draft_cycle(), PRISM_DISPATCH, produced, failed]
 
     state = state_of(*events)
@@ -244,19 +290,30 @@ def test_prism_checkpoint_no_diff_retries_and_replay_is_deterministic():
 
 def test_prism_checkpoint_third_validation_failure_escalates():
     checkpoint = _design_review_checkpoint(verdict="revise")
-    produced = ("outcome.received", {
-        "role": "prism", "status": "done", "result_checkpoint": checkpoint,
-    })
+    produced = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "done",
+            "result_checkpoint": checkpoint,
+        },
+    )
     events = [*draft_cycle()]
     for attempt in range(1, 4):
-        events.extend([
-            PRISM_DISPATCH,
-            produced,
-            ("verdict.failed", {
-                "check": "no_diff", "reason": "verdict requires a diff",
-                "attempt": attempt,
-            }),
-        ])
+        events.extend(
+            [
+                PRISM_DISPATCH,
+                produced,
+                (
+                    "verdict.failed",
+                    {
+                        "check": "no_diff",
+                        "reason": "verdict requires a diff",
+                        "attempt": attempt,
+                    },
+                ),
+            ]
+        )
 
     state = state_of(*events)
     assert state.current_attempt == 3
@@ -270,8 +327,11 @@ def test_prism_revise_enters_respond_and_new_round():
     # flow.md §8.1: revise → RESPOND (Archer re-dispatched), counters reset;
     # review.round_started opens the next PRISM_REVIEW round.
     base = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED]
-    s = state_of(*base, ("prism.verdict", {"verdict": "revise"}),
-                 ("review.round_started", {"stage": "M-DESIGN", "round": 2}))
+    s = state_of(
+        *base,
+        ("prism.verdict", {"verdict": "revise"}),
+        ("review.round_started", {"stage": "M-DESIGN", "round": 2}),
+    )
     assert s.substate == "RESPOND" and s.review_round == 2
     assert s.design_committed == 0 and s.design_validated == 0
     assert not s.prism_passed_this_round
@@ -281,9 +341,13 @@ def test_prism_revise_enters_respond_and_new_round():
     assert cmd.params["review_round"] == 2
     assert cmd.params["docs"] == list(DESIGN_DOCS)
     # RESPOND re-runs the pipeline (validate → checkpoint → publish)
-    again = state_of(*base, ("prism.verdict", {"verdict": "revise"}),
-                     ("review.round_started", {"stage": "M-DESIGN", "round": 2}),
-                     DISPATCHED, PRODUCED)
+    again = state_of(
+        *base,
+        ("prism.verdict", {"verdict": "revise"}),
+        ("review.round_started", {"stage": "M-DESIGN", "round": 2}),
+        DISPATCHED,
+        PRODUCED,
+    )
     assert decide(again).kind == "validate_result"
 
 
@@ -291,15 +355,18 @@ def test_exit_gate_fail_falls_back_to_respond_not_human():
     # BS-05: even the EXIT gate never awaits a human in M-DESIGN - a failed
     # exit validate falls back to RESPOND; the shared attempt budget escalates.
     def fail(n):
-        return ("verdict.failed", {"check": "discussion_ready",
-                                   "reason": "threads", "attempt": n})
-    base = draft_cycle() + [PRISM_DISPATCH, PRISM_PRODUCED,
-                            ("prism.verdict", {"verdict": "pass"}), fail(1)]
+        return ("verdict.failed", {"check": "discussion_ready", "reason": "threads", "attempt": n})
+
+    base = draft_cycle() + [
+        PRISM_DISPATCH,
+        PRISM_PRODUCED,
+        ("prism.verdict", {"verdict": "pass"}),
+        fail(1),
+    ]
     s = state_of(*base)
     assert s.substate == "RESPOND" and s.awaiting is None
     assert s.status == "active" and decide(s).kind == "dispatch_agent"
-    escalated = state_of(*base, DISPATCHED, PRODUCED, fail(2),
-                         DISPATCHED, PRODUCED, fail(3))
+    escalated = state_of(*base, DISPATCHED, PRODUCED, fail(2), DISPATCHED, PRODUCED, fail(3))
     assert escalated.status == "awaiting_human"
     assert escalated.awaiting == "escalation"
 
@@ -311,41 +378,48 @@ def test_draft_failure_does_not_consume_respond_budget():
     # DRAFT one). flow.md §8.3 mandates a fresh 重派 Archer <=3 budget per
     # RESPOND round, so prism.verdict=revise resets current_attempt.
     def draft_fail(n):
-        return ("verdict.failed", {"check": "template", "reason": "bad",
-                                   "attempt": n})
+        return ("verdict.failed", {"check": "template", "reason": "bad", "attempt": n})
+
     def respond_fail():
-        return ("outcome.received", {"role": "archer", "status": "failed",
-                                     "failure_class": "no_target_diff",
-                                     "self_report": "no diff"})
+        return (
+            "outcome.received",
+            {
+                "role": "archer",
+                "status": "failed",
+                "failure_class": "no_target_diff",
+                "self_report": "no diff",
+            },
+        )
+
     # DRAFT attempt 1 fails validation, attempt 2 succeeds and reaches Prism.
-    base = [DISPATCHED, PRODUCED, draft_fail(1),
-            DISPATCHED, PRODUCED, PASSED, PASSED, PASSED]
-    base += [("design.committed", {"doc": doc, "commit_sha": "c", "final": False})
-             for doc in DESIGN_DOCS]
-    base += [PRISM_DISPATCH, PRISM_PRODUCED,
-             ("prism.verdict", {"verdict": "revise"}),
-             ("review.round_started", {"stage": "M-DESIGN", "round": 2})]
+    base = [DISPATCHED, PRODUCED, draft_fail(1), DISPATCHED, PRODUCED, PASSED, PASSED, PASSED]
+    base += [
+        ("design.committed", {"doc": doc, "commit_sha": "c", "final": False}) for doc in DESIGN_DOCS
+    ]
+    base += [
+        PRISM_DISPATCH,
+        PRISM_PRODUCED,
+        ("prism.verdict", {"verdict": "revise"}),
+        ("review.round_started", {"stage": "M-DESIGN", "round": 2}),
+    ]
     s = state_of(*base)
     assert s.substate == "RESPOND" and s.current_attempt == 0, (
         "prism.verdict=revise must reset the attempt budget for RESPOND; "
         f"got current_attempt={s.current_attempt}"
     )
     # Two RESPOND failures must NOT escalate (the 3rd is the budget).
-    after_two = state_of(*base, DISPATCHED, respond_fail(),
-                         DISPATCHED, respond_fail())
+    after_two = state_of(*base, DISPATCHED, respond_fail(), DISPATCHED, respond_fail())
     assert after_two.status == "active", (
         "two RESPOND failures after a DRAFT failure must not escalate; "
         f"got status={after_two.status}"
     )
     assert after_two.current_attempt == 2
     # The third RESPOND failure escalates (the documented <=3 budget).
-    after_three = state_of(*base, DISPATCHED, respond_fail(),
-                           DISPATCHED, respond_fail(),
-                           DISPATCHED, respond_fail())
+    after_three = state_of(
+        *base, DISPATCHED, respond_fail(), DISPATCHED, respond_fail(), DISPATCHED, respond_fail()
+    )
     assert after_three.status == "awaiting_human"
     assert after_three.awaiting == "escalation"
-
-
 
 
 def test_prism_review_failed_outcome_redispatch_carries_evidence():
@@ -355,11 +429,16 @@ def test_prism_review_failed_outcome_redispatch_carries_evidence():
     # pipelines; the attempt accounting shares the escalation budget.
     items = draft_cycle() + [
         PRISM_DISPATCH,
-        ("outcome.received", {"role": "prism", "status": "failed",
-                              "failure_class": "revise_without_findings",
-                              "self_report": "revise must anchor findings",
-                              "audit_evidence":
-                                  "revise_without_findings: verdict=revise"}),
+        (
+            "outcome.received",
+            {
+                "role": "prism",
+                "status": "failed",
+                "failure_class": "revise_without_findings",
+                "self_report": "revise must anchor findings",
+                "audit_evidence": "revise_without_findings: verdict=revise",
+            },
+        ),
     ]
     s = state_of(*items)
     assert s.substate == "PRISM_REVIEW" and not s.reviewer_dispatched
@@ -383,9 +462,12 @@ def _drive(items):
             return s, evs
         params = dict(cmd.params)
         cmd_id = f"C{len(evs)}"
-        evs.append(("command.issued",
-                    {"command": {"kind": cmd.kind, "params": params,
-                                 "command_id": cmd_id}}))
+        evs.append(
+            (
+                "command.issued",
+                {"command": {"kind": cmd.kind, "params": params, "command_id": cmd_id}},
+            )
+        )
         if cmd.kind == "dispatch_agent":
             outcome = {"role": params["role"], "status": "done"}
             stage = params.get("stage", "")
@@ -396,27 +478,39 @@ def _drive(items):
                 outcome["result_checkpoint"] = _design_review_checkpoint("pass", cmd_id)
             evs.append(("outcome.received", outcome))
         elif cmd.kind == "validate_result":
-            evs.append(("result.validated",
-                        {"artifacts": params.get("artifacts", []),
-                         "base_sha": params.get("base_sha"),
-                         "result_id": params.get("result_id")}))
+            evs.append(
+                (
+                    "result.validated",
+                    {
+                        "artifacts": params.get("artifacts", []),
+                        "base_sha": params.get("base_sha"),
+                        "result_id": params.get("result_id"),
+                    },
+                )
+            )
         elif cmd.kind == "checkpoint_result":
-            evs.append(("result.checkpointed",
-                        {"created_commit": True, "commit_sha": "c",
-                         "base_sha": params.get("base_sha"),
-                         "result_id": params.get("result_id")}))
+            evs.append(
+                (
+                    "result.checkpointed",
+                    {
+                        "created_commit": True,
+                        "commit_sha": "c",
+                        "base_sha": params.get("base_sha"),
+                        "result_id": params.get("result_id"),
+                    },
+                )
+            )
         elif cmd.kind == "publish_result":
             ev_type = params.get("domain_event", {}).get("type", "")
             if ev_type == "design.committed":
                 for doc in DESIGN_DOCS:
-                    evs.append(("design.committed",
-                                {"doc": doc, "commit_sha": "c",
-                                 "final": False}))
+                    evs.append(
+                        ("design.committed", {"doc": doc, "commit_sha": "c", "final": False})
+                    )
             elif ev_type == "prism.verdict":
                 evs.append(("prism.verdict", {"verdict": "pass"}))
         elif cmd.kind == "validate_document":
-            evs.append(("verdict.passed",
-                        {"check": ",".join(params["checks"]), "detail": "d"}))
+            evs.append(("verdict.passed", {"check": ",".join(params["checks"]), "detail": "d"}))
         elif cmd.kind == "write_frontmatter":
             evs.append(("stage.exited", {"stage": params["stage"]}))
             evs.append(("run.completed", {"terminal_state": "boundary"}))
@@ -445,8 +539,7 @@ def test_pre_v03_event_log_replays_unchanged():
         ("stage.entered", {"stage": "M-REQ-APPROVAL"}),
         ("preview.generated", {"digest": "d1", "summary": "story; spec; acc"}),
         ("human.approval", {"actor": "Aaron", "digest": "d1", "ts": "t1"}),
-        ("approval.recorded", {"actor": "Aaron", "digest": "d1", "ts": "t1",
-                               "readonly": True}),
+        ("approval.recorded", {"actor": "Aaron", "digest": "d1", "ts": "t1", "readonly": True}),
         ("issues.created", {"digest": "d1", "mapping": {}}),
         ("stage.exited", {"stage": "M-REQ-APPROVAL"}),
         ("run.completed", {"terminal_state": "boundary"}),
@@ -462,6 +555,7 @@ def test_pre_v03_event_log_replays_unchanged():
 
 def test_state_defaults_are_safe():
     from tracks.kernel.machine import State
+
     s = State()
     assert s.design_validated == 0 and s.design_committed == 0
     assert s.prism_passed_this_round is False

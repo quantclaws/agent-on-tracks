@@ -3,6 +3,7 @@
 Covers edge cases beyond the integration fixtures: empty tasks, self-cycle,
 multi-path scope, missing acceptance.md, negative issue numbers.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -120,6 +121,7 @@ def test_scope_overlap():
 
 def test_ac_coverage_all_covered():
     from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
+
     tasks, _ = parse_tasks_json(_VALID)
     acs = sorted(_known_ac_ids(_ACC))
     ifs = _extract_if_registry(_IF)
@@ -130,6 +132,7 @@ def test_ac_coverage_all_covered():
 
 def test_ac_coverage_gap():
     from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
+
     tasks, _ = parse_tasks_json(_load("ac_coverage_gap.json"))
     acs = sorted(_known_ac_ids(_ACC))
     ifs = _extract_if_registry(_IF)
@@ -140,6 +143,7 @@ def test_ac_coverage_gap():
 
 def test_ac_coverage_invalid_if():
     from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
+
     tasks, _ = parse_tasks_json(_load("if_invalid.json"))
     acs = sorted(_known_ac_ids(_ACC))
     ifs = _extract_if_registry(_IF)

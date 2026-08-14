@@ -12,6 +12,7 @@ parses in < 1 second. The discuss parser is an O(n) single-pass line scan
 this guards the linear bound at the NFR-0020 size ceiling against regressing to
 quadratic behaviour.
 """
+
 import time
 
 import pytest
@@ -60,4 +61,5 @@ def test_parse_1mb_5000_threads_under_1s():
     elapsed = min(_time_parse(text) for _ in range(3))
     assert elapsed < BUDGET_SECONDS, (
         f"parse took {elapsed:.3f}s for {size / ONE_MB:.2f}MB / {THREADS} threads "
-        f"(budget {BUDGET_SECONDS}s, NFR-0020)")
+        f"(budget {BUDGET_SECONDS}s, NFR-0020)"
+    )

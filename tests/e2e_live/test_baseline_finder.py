@@ -567,6 +567,6 @@ def test_restore_drops_baseline_manifest_marker(tmp_path):
         "restore leaked baseline manifest marker into live host"
     )
     assert (live_root / "README.md").read_text(encoding="utf-8") == "host doc\n"
-    assert (
-        live_root / "tests" / "integration" / "test_a.py"
-    ).read_text(encoding="utf-8") == "# AC-FR0001-01@v0.5 TRACKS-TRACE\n"
+    assert (live_root / "tests" / "integration" / "test_a.py").read_text(
+        encoding="utf-8"
+    ) == "# AC-FR0001-01@v0.5 TRACKS-TRACE\n"

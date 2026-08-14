@@ -3,6 +3,7 @@
 PREVIEW → AWAIT_HUMAN → APPROVED → ISSUES → boundary exit plus the RETURNED
 rollback loop; the AWAIT_HUMAN halt is the hard human gate (Agent 不可代批).
 """
+
 from tests.unit.helpers import seq
 from tracks.kernel import decide, project
 
@@ -12,10 +13,8 @@ ENTER = [
 ]
 PREVIEW = ("preview.generated", {"digest": "d1", "summary": "story; spec; acc"})
 APPROVAL = ("human.approval", {"actor": "Aaron", "digest": "d1", "ts": "t1"})
-RECORDED = ("approval.recorded",
-            {"actor": "Aaron", "digest": "d1", "ts": "t1", "readonly": True})
-GH_FAIL = ("outcome.received", {"role": "github", "status": "failed",
-                                "failure_class": "network"})
+RECORDED = ("approval.recorded", {"actor": "Aaron", "digest": "d1", "ts": "t1", "readonly": True})
+GH_FAIL = ("outcome.received", {"role": "github", "status": "failed", "failure_class": "network"})
 
 
 def state_of(*items):
@@ -65,24 +64,28 @@ def test_approval_recorded_to_issues():
 
 def test_issues_created_boundary_exit():
     # SM-05.6: after the summary event the stage exits at the M-DESIGN boundary
-    s = state_of(PREVIEW, APPROVAL, RECORDED,
-                 ("issues.created", {"digest": "d1", "mapping": {}}))
+    s = state_of(PREVIEW, APPROVAL, RECORDED, ("issues.created", {"digest": "d1", "mapping": {}}))
     assert s.issues_created
     cmd = decide(s)
     assert cmd.kind == "write_frontmatter"
     assert cmd.params == {"stage": "M-REQ-APPROVAL"}  # no doc to seal
-    exited = state_of(PREVIEW, APPROVAL, RECORDED,
-                      ("issues.created", {"digest": "d1", "mapping": {}}),
-                      ("stage.exited", {"stage": "M-REQ-APPROVAL"}),
-                      ("run.completed", {"terminal_state": "boundary"}))
+    exited = state_of(
+        PREVIEW,
+        APPROVAL,
+        RECORDED,
+        ("issues.created", {"digest": "d1", "mapping": {}}),
+        ("stage.exited", {"stage": "M-REQ-APPROVAL"}),
+        ("run.completed", {"terminal_state": "boundary"}),
+    )
     assert exited.status == "completed" and exited.terminal_state == "boundary"
     assert decide(exited) is None
 
 
 def test_stale_re_preview_reopens_gate():
     # D-03/C-02: a regenerated preview after approval reopens the human gate
-    s = state_of(PREVIEW, APPROVAL, RECORDED,
-                 ("preview.generated", {"digest": "d2", "summary": "s2"}))
+    s = state_of(
+        PREVIEW, APPROVAL, RECORDED, ("preview.generated", {"digest": "d2", "summary": "s2"})
+    )
     assert not s.approved and s.substate == "AWAIT_HUMAN"
     assert s.awaiting == "approval" and decide(s) is None
 
@@ -100,14 +103,21 @@ def test_return_rolls_back():
 def test_rolled_back_clears_return_and_reentry_resets():
     # SM-05.7: rollback lands in the target's DRAFT; re-entering the approval
     # stage later restarts the cycle fresh (no leaked approval identity).
-    s = state_of(PREVIEW, ("human.return", {"to_stage": "M-SPEC", "reason": "r"}),
-                 ("stage.rolled_back", {"to_stage": "M-SPEC"}))
+    s = state_of(
+        PREVIEW,
+        ("human.return", {"to_stage": "M-SPEC", "reason": "r"}),
+        ("stage.rolled_back", {"to_stage": "M-SPEC"}),
+    )
     assert s.stage == "M-SPEC" and s.substate == "DRAFT"
     assert not s.returned and s.return_target is None
-    again = state_of(PREVIEW, APPROVAL, RECORDED,
-                     ("human.return", {"to_stage": "M-ACC", "reason": "r"}),
-                     ("stage.rolled_back", {"to_stage": "M-ACC"}),
-                     ("stage.entered", {"stage": "M-REQ-APPROVAL"}))
+    again = state_of(
+        PREVIEW,
+        APPROVAL,
+        RECORDED,
+        ("human.return", {"to_stage": "M-ACC", "reason": "r"}),
+        ("stage.rolled_back", {"to_stage": "M-ACC"}),
+        ("stage.entered", {"stage": "M-REQ-APPROVAL"}),
+    )
     assert again.substate == "PREVIEW" and not again.preview_ready
     assert not again.approved and again.approval_digest is None
     assert not again.issues_created

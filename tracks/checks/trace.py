@@ -4,6 +4,7 @@ Pure-function core (check_trace_full) + file-reading wrapper (check_trace_full_f
 Reuses executor/validate.py scanning helpers (_spec_items/_acc_scan) per
 architecture.md §3.1 / interfaces.md §1d.
 """
+
 from __future__ import annotations
 
 import re
@@ -26,11 +27,28 @@ _MARKER_LINE = re.compile(
 )
 
 # Suffix whitelist: top-10 general-purpose languages (SQL excluded).
-_TEST_SUFFIXES = frozenset({
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
-    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
-    ".kt", ".swift",
-})
+_TEST_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".cs",
+        ".rb",
+        ".php",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".kt",
+        ".swift",
+    }
+)
 
 # tombstone: HTML comment `<!-- tombstone: ID -->` (interfaces.md §3e / FR-0130).
 _TOMBSTONE = re.compile(
@@ -77,7 +95,8 @@ def _scan_fr(spec_text: str) -> list[tuple[str, int]]:
 
 
 def _detect_duplicates(
-    items: list[tuple[str, int]], label: str,
+    items: list[tuple[str, int]],
+    label: str,
 ) -> list[str]:
     """Detect duplicate IDs in a list of (id, line) tuples."""
     errors: list[str] = []
@@ -85,8 +104,7 @@ def _detect_duplicates(
     for item_id, line in items:
         if item_id in seen:
             errors.append(
-                f"duplicate {item_id}: {label} line:{seen[item_id]} "
-                f"and {label} line:{line}"
+                f"duplicate {item_id}: {label} line:{seen[item_id]} and {label} line:{line}"
             )
         else:
             seen[item_id] = line
@@ -109,9 +127,7 @@ def _check_fr_ac_errors(
         if ac_id in tombstones or fr_id in tombstones:
             continue
         if fr_id not in fr_ids:
-            errors.append(
-                f"acceptance line:{line} {ac_id} references non-existent {fr_id}"
-            )
+            errors.append(f"acceptance line:{line} {ac_id} references non-existent {fr_id}")
     return errors
 
 
@@ -146,8 +162,7 @@ def _check_ac_test_errors(
     """AC<->test bidirectional hard error detection + short-format detection."""
     errors: list[str] = []
     marker_ac_ids_long = {
-        ac_id for ac_id, markers in test_markers.items()
-        if any("@" in m for m in markers)
+        ac_id for ac_id, markers in test_markers.items() if any("@" in m for m in markers)
     }
     for ac_id, _, line in ac_items:
         if ac_id not in tombstones and ac_id not in marker_ac_ids_long:
@@ -155,7 +170,11 @@ def _check_ac_test_errors(
     for ac_id, markers in test_markers.items():
         for marker_str in markers:
             err = _check_one_marker_error(
-                marker_str, ac_id, ac_ids, tombstones, current_version,
+                marker_str,
+                ac_id,
+                ac_ids,
+                tombstones,
+                current_version,
             )
             if err:
                 errors.append(err)
@@ -163,7 +182,8 @@ def _check_ac_test_errors(
 
 
 def _check_bs_warnings(
-    bs_items: list[tuple[str, int]], tombstones: set[str],
+    bs_items: list[tuple[str, int]],
+    tombstones: set[str],
 ) -> list[str]:
     """BS->FR weak-link warnings (do not change exit code)."""
     return [
@@ -202,16 +222,20 @@ def check_trace_full(
         fr_to_acs.setdefault(fr_id, []).append(ac_id)
 
     hard_errors = _detect_duplicates(fr_items, "spec")
-    hard_errors += _detect_duplicates(
-        [(ac_id, ln) for ac_id, _, ln in ac_items], "acceptance"
-    )
+    hard_errors += _detect_duplicates([(ac_id, ln) for ac_id, _, ln in ac_items], "acceptance")
     hard_errors += _check_fr_ac_errors(
-        fr_items, ac_items,
-        {fr_id for fr_id, _ in fr_items}, fr_to_acs, tombstones,
+        fr_items,
+        ac_items,
+        {fr_id for fr_id, _ in fr_items},
+        fr_to_acs,
+        tombstones,
     )
     hard_errors += _check_ac_test_errors(
-        ac_items, {ac_id for ac_id, _, _ in ac_items},
-        test_markers, tombstones, current_version=current_version,
+        ac_items,
+        {ac_id for ac_id, _, _ in ac_items},
+        test_markers,
+        tombstones,
+        current_version=current_version,
     )
     warnings = _check_bs_warnings(_scan_bs(story_text), tombstones)
     return TraceReport(
@@ -269,14 +293,8 @@ def _apply_baseline(report: TraceReport, baseline: dict | None) -> TraceReport:
     exempted = set(baseline.get("trace_exemptions", {}).get("ids", []))
     if not exempted:
         return report
-    hard = tuple(
-        e for e in report.hard_errors
-        if not any(eid in e for eid in exempted)
-    )
-    warns = tuple(
-        w for w in report.warnings
-        if not any(eid in w for eid in exempted)
-    )
+    hard = tuple(e for e in report.hard_errors if not any(eid in e for eid in exempted))
+    warns = tuple(w for w in report.warnings if not any(eid in w for eid in exempted))
     return TraceReport(
         status="fail" if hard else "pass",
         hard_errors=hard,
@@ -298,9 +316,9 @@ def check_trace_full_file(
     a warning and zero hard errors (AC-FR0080-12) -- does not falsely
     report all ACs as unbound.
     """
-    story = (version_dir / "story.md")
-    spec = (version_dir / "spec.md")
-    acc = (version_dir / "acceptance.md")
+    story = version_dir / "story.md"
+    spec = version_dir / "spec.md"
+    acc = version_dir / "acceptance.md"
     story_text = story.read_text(encoding="utf-8") if story.exists() else ""
     spec_text = spec.read_text(encoding="utf-8") if spec.exists() else ""
     acc_text = acc.read_text(encoding="utf-8") if acc.exists() else ""
@@ -315,7 +333,10 @@ def check_trace_full_file(
     version_match = re.match(r"^(v\d+\.\d+)$", version_dir.name)
     current_version = version_match.group(1) if version_match else None
     report = check_trace_full(
-        story_text, spec_text, acc_text, test_markers,
+        story_text,
+        spec_text,
+        acc_text,
+        test_markers,
         current_version=current_version,
     )
     return _apply_baseline(report, baseline)

@@ -10,6 +10,7 @@ contract validator: the executor checks ``assignment.test_tasks`` with it before
 dispatching Shield, and FakeBackend rejects with the same grammar — one source,
 no divergent copies.
 """
+
 from __future__ import annotations
 
 import re
@@ -37,17 +38,21 @@ def valid_test_tasks(tasks: object) -> bool:
         ac_id = task.get("ac_id")
         layers = task.get("layers")
         if_ids = task.get("if_ids")
-        if (not isinstance(ac_id, str) or not TASK_AC_ID.fullmatch(ac_id)
-                or ac_id in seen):
+        if not isinstance(ac_id, str) or not TASK_AC_ID.fullmatch(ac_id) or ac_id in seen:
             return False
-        if (not isinstance(layers, list) or not layers
-                or any(layer not in SHIELD_LAYERS for layer in layers)
-                or len(set(layers)) != len(layers)):
+        if (
+            not isinstance(layers, list)
+            or not layers
+            or any(layer not in SHIELD_LAYERS for layer in layers)
+            or len(set(layers)) != len(layers)
+        ):
             return False
-        if (not isinstance(if_ids, list) or not if_ids
-                or any(not isinstance(i, str) or not TASK_IF_ID.fullmatch(i)
-                       for i in if_ids)
-                or len(set(if_ids)) != len(if_ids)):
+        if (
+            not isinstance(if_ids, list)
+            or not if_ids
+            or any(not isinstance(i, str) or not TASK_IF_ID.fullmatch(i) for i in if_ids)
+            or len(set(if_ids)) != len(if_ids)
+        ):
             return False
         seen.add(ac_id)
     return True
@@ -64,7 +69,13 @@ class AgentBackend(Protocol):
     (IF-003 §1a/§4)。FakeBackend 仅有前三项 + verdict。
     """
 
-    def act(self, role: str, substate: str, doc: str | None,
-            doc_path: Path | None, assignment: dict | None = None) -> dict:
+    def act(
+        self,
+        role: str,
+        substate: str,
+        doc: str | None,
+        doc_path: Path | None,
+        assignment: dict | None = None,
+    ) -> dict:
         """Execute the agent's work for one dispatch; return the Outcome dict."""
         ...

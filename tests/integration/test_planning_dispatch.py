@@ -18,7 +18,8 @@ from tests.integration.v05_contract_helpers import command_dispatches, events_of
 def test_planning_and_dispatch_contracts_are_persisted(trac, event_log):
     _, _, events = run_m_impl_journey(trac, event_log)
     prism = [
-        event for event in command_dispatches(events, role="prism")
+        event
+        for event in command_dispatches(events, role="prism")
         if event["payload"]["command"]["params"].get("substate")
         in {"PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE"}
     ]
@@ -35,6 +36,5 @@ def test_planning_and_dispatch_contracts_are_persisted(trac, event_log):
     assert started and locks
     assert all(event["payload"]["manifest"]["allowed_paths"] for event in started)
     assert all(
-        left["seq"] < right["seq"]
-        for left, right in zip(started, started[1:], strict=False)
+        left["seq"] < right["seq"] for left, right in zip(started, started[1:], strict=False)
     )

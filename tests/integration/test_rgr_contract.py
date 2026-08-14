@@ -44,7 +44,8 @@ def test_m_impl_red_classification_excludes_stub_tokens(trac, event_log):
         simulate="devon:RED=stub_token_failure|ok",
     )
     invalid = [
-        event for event in events_of(events, "verdict.failed")
+        event
+        for event in events_of(events, "verdict.failed")
         if event["payload"].get("check") == "red_invalid"
     ]
     assert invalid

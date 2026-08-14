@@ -41,9 +41,9 @@ def command_dispatches(events, role=None, substate=None):
 def first_m_impl_index(events):
     """Locate the public M-IMPL entry event."""
     matches = [
-        index for index, event in enumerate(events)
-        if event["type"] == "stage.entered"
-        and event["payload"].get("stage") == "M-IMPL"
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "stage.entered" and event["payload"].get("stage") == "M-IMPL"
     ]
     assert matches, "public event stream did not enter M-IMPL"
     return matches[0]
@@ -108,9 +108,7 @@ def validate_tasksjson(trac, host_repo, fixture_name):
     """
     vdir = setup_synthetic_project(host_repo)
     tasks_json = vdir / "tasks.json"
-    tasks_json.write_text(
-        (ASSETS / fixture_name).read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    tasks_json.write_text((ASSETS / fixture_name).read_text(encoding="utf-8"), encoding="utf-8")
     result = trac("validate", "--file", str(tasks_json))
     output = f"{result.stdout}\n{result.stderr}".lower()
     return result, output

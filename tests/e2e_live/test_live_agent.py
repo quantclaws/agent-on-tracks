@@ -329,9 +329,7 @@ def test_driver_opencode_preserves_prefixed_live_model(monkeypatch, tmp_path):
 
     driver.run("run", scenario="triage")
 
-    assert captured["kwargs"]["env"]["TRAC_AGENT_MODEL"] == (
-        "other-provider/deepseek-v4-flash"
-    )
+    assert captured["kwargs"]["env"]["TRAC_AGENT_MODEL"] == ("other-provider/deepseek-v4-flash")
 
 
 def test_driver_fake_backend_clears_model_override(monkeypatch, tmp_path):
@@ -359,9 +357,7 @@ def test_driver_fake_backend_omits_console_env(monkeypatch, tmp_path):
 def test_driver_max_dispatches_overrides_scenario_budget(tmp_path):
     driver = _mechanic_driver(tmp_path)
 
-    args, _ = driver._command_args(
-        ("run",), "sage-spec-draft", None, max_dispatches=5
-    )
+    args, _ = driver._command_args(("run",), "sage-spec-draft", None, max_dispatches=5)
 
     assert args[args.index("--max-dispatches") + 1] == "5"
 
@@ -491,11 +487,21 @@ def test_dispatch_budget_is_three_for_author_and_reviewer_steps(tmp_path):
         args, _ = driver._command_args(("run",), name, None)
         return args[args.index("--max-dispatches") + 1]
 
-    for name in ("scribe-story-draft", "sage-spec-draft", "sage-acceptance-draft",
-                 "archer-design-draft", "scribe-story-respond", "sage-spec-respond",
-                 "archer-design-respond", "sage-story-finding", "sage-story-resolve",
-                 "lex-spec-review", "lex-spec-resolve", "lex-acceptance-review",
-                 "prism-design-review"):
+    for name in (
+        "scribe-story-draft",
+        "sage-spec-draft",
+        "sage-acceptance-draft",
+        "archer-design-draft",
+        "scribe-story-respond",
+        "sage-spec-respond",
+        "archer-design-respond",
+        "sage-story-finding",
+        "sage-story-resolve",
+        "lex-spec-review",
+        "lex-spec-resolve",
+        "lex-acceptance-review",
+        "prism-design-review",
+    ):
         assert budget(name) == "3", name
     for name in ("triage", "approval-final"):
         assert budget(name) == "1", name
@@ -518,8 +524,12 @@ def test_dispatch_budget_is_three_for_write_steps(tmp_path):
     # WRITE step now gets 3 (was 1):
     assert budget("shield-test-draft") == "3"
     # DRAFT/RESPOND/*_REVIEW stay 3 (regression guard):
-    for name in ("scribe-story-draft", "scribe-story-respond",
-                 "lex-spec-review", "sage-story-finding"):
+    for name in (
+        "scribe-story-draft",
+        "scribe-story-respond",
+        "lex-spec-review",
+        "sage-story-finding",
+    ):
         assert budget(name) == "3", name
     # Plain human-gate steps (no kind) keep a single dispatch:
     for name in ("triage", "approval-final"):
@@ -539,34 +549,58 @@ def test_command_timeout_covers_all_dispatch_attempts(tmp_path):
     base = driver.command_timeout  # _mechanic_driver sets 1
     # agent_timeout=1200, archer-design-draft (budget=3):
     # effective = max(1, 3 * (1200 + 300)) = 4500
-    assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=1200, max_dispatches=None,
-        scenario="archer-design-draft",
-    ) == 4500
+    assert (
+        driver._effective_command_timeout(
+            timeout=None,
+            agent_timeout=1200,
+            max_dispatches=None,
+            scenario="archer-design-draft",
+        )
+        == 4500
+    )
     # archer-design-draft now uses agent_timeout=1800 in the journey (run050):
     # effective = max(1, 3 * (1800 + 300)) = 6300
-    assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=1800, max_dispatches=None,
-        scenario="archer-design-draft",
-    ) == 6300
+    assert (
+        driver._effective_command_timeout(
+            timeout=None,
+            agent_timeout=1800,
+            max_dispatches=None,
+            scenario="archer-design-draft",
+        )
+        == 6300
+    )
     # Explicit timeout= overrides everything (even with agent_timeout set):
-    assert driver._effective_command_timeout(
-        timeout=600, agent_timeout=1200, max_dispatches=None,
-        scenario="archer-design-draft",
-    ) == 600
+    assert (
+        driver._effective_command_timeout(
+            timeout=600,
+            agent_timeout=1200,
+            max_dispatches=None,
+            scenario="archer-design-draft",
+        )
+        == 600
+    )
     # Explicit max_dispatches wins over scenario budget:
     assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=1200, max_dispatches=5,
+        timeout=None,
+        agent_timeout=1200,
+        max_dispatches=5,
         scenario="archer-design-draft",
     ) == 5 * (1200 + 300)
     # No agent_timeout: formula does not apply, returns command_timeout:
-    assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=None, max_dispatches=None,
-        scenario="archer-design-draft",
-    ) == base
+    assert (
+        driver._effective_command_timeout(
+            timeout=None,
+            agent_timeout=None,
+            max_dispatches=None,
+            scenario="archer-design-draft",
+        )
+        == base
+    )
     # Non-author/review scenario (budget=1):
     assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=300, max_dispatches=None,
+        timeout=None,
+        agent_timeout=300,
+        max_dispatches=None,
         scenario="triage",
     ) == max(base, 1 * (300 + 300))
 
@@ -580,14 +614,21 @@ def test_command_timeout_covers_all_dispatch_attempts_for_write(tmp_path):
     # agent_timeout=1200, shield-test-draft (WRITE, budget=3):
     # effective = max(1, 3 * (1200 + 300)) = 4500
     assert driver._effective_command_timeout(
-        timeout=None, agent_timeout=1200, max_dispatches=None,
+        timeout=None,
+        agent_timeout=1200,
+        max_dispatches=None,
         scenario="shield-test-draft",
     ) == 3 * (1200 + 300)
     # Explicit timeout= overrides the formula even for WRITE:
-    assert driver._effective_command_timeout(
-        timeout=600, agent_timeout=1200, max_dispatches=None,
-        scenario="shield-test-draft",
-    ) == 600
+    assert (
+        driver._effective_command_timeout(
+            timeout=600,
+            agent_timeout=1200,
+            max_dispatches=None,
+            scenario="shield-test-draft",
+        )
+        == 600
+    )
 
 
 def test_command_timeout_resolves_design_agent_timeout_env_to_formula(monkeypatch, tmp_path):
@@ -601,10 +642,16 @@ def test_command_timeout_resolves_design_agent_timeout_env_to_formula(monkeypatc
     agent_timeout = _design_agent_timeout()
     assert agent_timeout == 3600
     for scenario in ("archer-design-draft", "archer-design-respond"):
-        assert driver._effective_command_timeout(
-            timeout=None, agent_timeout=agent_timeout, max_dispatches=None,
-            scenario=scenario,
-        ) == 3 * (3600 + 300) == 11700
+        assert (
+            driver._effective_command_timeout(
+                timeout=None,
+                agent_timeout=agent_timeout,
+                max_dispatches=None,
+                scenario=scenario,
+            )
+            == 3 * (3600 + 300)
+            == 11700
+        )
 
 
 # -- 7b. TRAC_LIVE_DESIGN_AGENT_TIMEOUT helper contract ----------------------
@@ -674,8 +721,7 @@ def test_run_bounded_kills_entire_process_tree_on_timeout(tmp_path):
     except (ProcessLookupError, PermissionError):
         pass
     assert not alive, (
-        f"grandchild pid={grandchild_pid} survived timeout; "
-        "process tree was not killed"
+        f"grandchild pid={grandchild_pid} survived timeout; process tree was not killed"
     )
 
 
@@ -692,14 +738,10 @@ def test_capture_opencode_log_tail_filters_by_host_and_writes_tail(tmp_path):
     other_host = tmp_path / "other-host"
     lines = []
     for i in range(100):
-        lines.append(
-            f'{{"ts":"2026-08-04T00:00:{i:02d}Z",'
-            f'"directory={host}","msg":"event {i}"}}'
-        )
+        lines.append(f'{{"ts":"2026-08-04T00:00:{i:02d}Z","directory={host}","msg":"event {i}"}}')
     for i in range(10):
         lines.append(
-            f'{{"ts":"2026-08-04T00:00:{i:02d}Z",'
-            f'"directory={other_host}","msg":"other {i}"}}'
+            f'{{"ts":"2026-08-04T00:00:{i:02d}Z","directory={other_host}","msg":"other {i}"}}'
         )
     log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     result = capture_opencode_log_tail(host, report_dir, log_path=log_file)
@@ -744,7 +786,7 @@ def test_capture_opencode_log_tail_creates_report_dir(tmp_path):
     host.mkdir()
     report_dir = tmp_path / "report" / "nested"
     log_file = tmp_path / "opencode.log"
-    log_file.write_text(f'directory={host} event\n', encoding="utf-8")
+    log_file.write_text(f"directory={host} event\n", encoding="utf-8")
     result = capture_opencode_log_tail(host, report_dir, log_path=log_file)
     assert result is not None
     assert report_dir.is_dir()

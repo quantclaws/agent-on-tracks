@@ -20,9 +20,7 @@ def test_pure_ndjson_parses():
 def test_log_line_prefix_then_ndjson_parses():
     """Real opencode v1.18.1 emits a [Opencode Logger] line before JSON
     events on stdout. This must not be classified as json_truncated."""
-    out = ('[Opencode Logger] Plugin initialized!\n'
-           '{"type": "step_start"}\n'
-           '{"type": "step_finish"}')
+    out = '[Opencode Logger] Plugin initialized!\n{"type": "step_start"}\n{"type": "step_finish"}'
     assert _parses(out) is True
 
 

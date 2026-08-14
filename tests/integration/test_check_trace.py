@@ -6,6 +6,7 @@ AC-FR0110-03@v0.4 engine consumer, AC-NFR0010-01@v0.4 no file changes,
 AC-NFR0010-02@v0.4 no auto fix, AC-NFR0020-01@v0.4 output deterministic,
 AC-NFR0020-02@v0.4 stable order.
 """
+
 import json
 from pathlib import Path
 

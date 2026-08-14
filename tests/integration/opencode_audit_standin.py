@@ -10,12 +10,13 @@ stays under the 1200-line pylint C0302 ceiling.  The audit fixture composes
 base + Devon, so neither block is duplicated across modules (no pylint R0801
 duplicate-code).
 """
+
 from tests.integration.test_opencode_backend import STANDIN as _BASE_STANDIN
 
 # Devon fake-opencode behaviors, inserted into the base script right before its
 # ``quota_error`` block.  Lines are verbatim from the pre-refactor shared
 # STANDIN, so the composed script below is byte-identical to it.
-DEVON_BEHAVIORS = '''if behavior == "devon_reply" and docs:
+DEVON_BEHAVIORS = """if behavior == "devon_reply" and docs:
     # Canonical discussion reply on a commentable doc + a legit allowed write.
     for path in docs.split(","):
         open(path, "a").write("\\n> **Devon:** implementation note\\n")
@@ -90,7 +91,7 @@ if behavior == "devon_doc_to_nonempty_dir" and docs:
         open(target, "w").write("# allowed impl\\n")
     if extra:
         open(extra, "w").write("# over-reach\\n")
-'''
+"""
 
 # Full stand-in consumed by the audit fake_opencode fixture: base + Devon.
 AUDIT_STANDIN = _BASE_STANDIN.replace(

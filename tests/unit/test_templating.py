@@ -5,6 +5,7 @@ the M-START story skeleton (raw requirement verbatim in §1, other placeholders
 preserved). Isolated here: wiring into cmd_start / the template check is a later
 increment.
 """
+
 import pytest
 
 from tracks import templating

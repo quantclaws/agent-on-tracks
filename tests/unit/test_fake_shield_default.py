@@ -15,6 +15,7 @@ declares and materializes ``.tracks/reach-entries.txt`` as an architecture
 Scaffold config artifact and the design ResultCheckpoint stages it as a
 declared scaffold; check_reach passes once Green files exist.
 """
+
 from __future__ import annotations
 
 import os
@@ -32,7 +33,11 @@ from tracks.store import Store
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -45,8 +50,9 @@ def _git_repo(tmp_path: Path, name: str = "repo") -> Path:
     (repo / "README.md").write_text("readme\n", encoding="utf-8")
     (repo / ".gitignore").write_text("", encoding="utf-8")
     _git(repo, "add", "README.md", ".gitignore")
-    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo,
-                   check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True, text=True
+    )
     return repo
 
 
@@ -67,10 +73,8 @@ def _acceptance(tmp_path: Path) -> Path:
 
 
 _TASKS = [
-    {"ac_id": "AC-FR0010-01", "layers": ["integration"],
-     "if_ids": ["IF-MTEST-001"]},
-    {"ac_id": "AC-NFR0020-01", "layers": ["e2e"],
-     "if_ids": ["IF-MTEST-002"]},
+    {"ac_id": "AC-FR0010-01", "layers": ["integration"], "if_ids": ["IF-MTEST-001"]},
+    {"ac_id": "AC-NFR0020-01", "layers": ["e2e"], "if_ids": ["IF-MTEST-002"]},
 ]
 
 
@@ -79,12 +83,10 @@ def _act(tmp_path: Path, tasks=_TASKS, token: str | None = None) -> dict:
     if token is not None:
         os.environ["TRAC_FAKE_SIMULATE"] = f"shield:WRITE={token}"
         try:
-            return FakeBackend(tmp_path, "v0.5").act(
-                "shield", "WRITE", None, None, assignment)
+            return FakeBackend(tmp_path, "v0.5").act("shield", "WRITE", None, None, assignment)
         finally:
             del os.environ["TRAC_FAKE_SIMULATE"]
-    return FakeBackend(tmp_path, "v0.5").act(
-        "shield", "WRITE", None, None, assignment)
+    return FakeBackend(tmp_path, "v0.5").act("shield", "WRITE", None, None, assignment)
 
 
 def _test_file(tmp_path: Path, layer: str, slug: str) -> Path:
@@ -94,7 +96,9 @@ def _test_file(tmp_path: Path, layer: str, slug: str) -> Path:
 def _run_pytest(repo: Path, target: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", target],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -102,14 +106,14 @@ def _write_impl(repo: Path, slug: str, if_id: str) -> Path:
     impl = repo / "tracks" / "impl" / f"{slug}.py"
     impl.parent.mkdir(parents=True, exist_ok=True)
     impl.write_text(
-        f'"""Deterministic implementation for {if_id}."""\n'
-        f'IMPLEMENTED_IF = "{if_id}"\n',
+        f'"""Deterministic implementation for {if_id}."""\nIMPLEMENTED_IF = "{if_id}"\n',
         encoding="utf-8",
     )
     return impl
 
 
 # -- Behavior A: default Shield tests are deterministic behavioral contracts ---
+
 
 def test_default_test_fails_legitimately_before_implementation(tmp_path):
     _act(tmp_path)
@@ -118,7 +122,7 @@ def test_default_test_fails_legitimately_before_implementation(tmp_path):
     assert test_file.is_file()
     text = test_file.read_text(encoding="utf-8")
     assert "runpy" in text
-    assert 'tracks/impl/ac_fr0010_01.py' in text
+    assert "tracks/impl/ac_fr0010_01.py" in text
     assert "'IF-MTEST-001'" in text
     assert "IMPLEMENTED_IF" in text
     assert "NotImplementedError" not in text
@@ -181,20 +185,26 @@ def test_special_tokens_keep_their_semantics(tmp_path, monkeypatch):
         repo.mkdir()
         monkeypatch.setenv("TRAC_FAKE_SIMULATE", f"shield:WRITE={token}")
         FakeBackend(repo, "v0.5").act(
-            "shield", "WRITE", None, None, {"test_tasks": [_TASKS[0]]},
+            "shield",
+            "WRITE",
+            None,
+            None,
+            {"test_tasks": [_TASKS[0]]},
         )
-        body = _test_file(repo, layer, "ac_fr0010_01").read_text(
-            encoding="utf-8")
+        body = _test_file(repo, layer, "ac_fr0010_01").read_text(encoding="utf-8")
         assert needle in body, f"{token}: expected {needle!r} in {body!r}"
 
 
 def test_short_marker_token_writes_short_format_marker(tmp_path, monkeypatch):
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", "shield:WRITE=short_marker")
     FakeBackend(tmp_path, "v0.5").act(
-        "shield", "WRITE", None, None, {"test_tasks": [_TASKS[0]]},
+        "shield",
+        "WRITE",
+        None,
+        None,
+        {"test_tasks": [_TASKS[0]]},
     )
-    body = _test_file(tmp_path, "integration", "ac_fr0010_01").read_text(
-        encoding="utf-8")
+    body = _test_file(tmp_path, "integration", "ac_fr0010_01").read_text(encoding="utf-8")
     assert "TRACKS-TRACE short format (no @version)" in body
 
 
@@ -204,36 +214,38 @@ def test_older_flow_versions_keep_legacy_m_test_stub(tmp_path):
     repo = tmp_path / "legacy"
     repo.mkdir()
     FakeBackend(repo, "v0.4").act(
-        "shield", "WRITE", None, None, {"test_tasks": [_TASKS[0]]},
+        "shield",
+        "WRITE",
+        None,
+        None,
+        {"test_tasks": [_TASKS[0]]},
     )
-    body = _test_file(repo, "integration", "ac_fr0010_01").read_text(
-        encoding="utf-8")
+    body = _test_file(repo, "integration", "ac_fr0010_01").read_text(encoding="utf-8")
     assert 'raise NotImplementedError("IF-MTEST-001")' in body
     assert "IMPLEMENTED_IF" not in body
 
 
 # -- Behavior A: revision marker sanitization ---------------------------------
 
+
 def test_revision_marker_collapses_multiline_reason_to_one_comment(tmp_path):
     tests_dir = tmp_path / "tests" / "integration"
     tests_dir.mkdir(parents=True)
     test_file = tests_dir / "test_ac_fr0010_01.py"
-    test_file.write_text(
-        "def test_ac_fr0010_01():\n    assert False\n", encoding="utf-8")
+    test_file.write_text("def test_ac_fr0010_01():\n    assert False\n", encoding="utf-8")
 
-    assignment = {"test_tasks": _TASKS, "evidence": {
-        "check": "no_diff",
-        "reason": "line1\nline2\r\n<script>alert(1)</script>",
-    }}
-    _act_result = FakeBackend(tmp_path, "v0.5").act(
-        "shield", "WRITE", None, None, assignment)
+    assignment = {
+        "test_tasks": _TASKS,
+        "evidence": {
+            "check": "no_diff",
+            "reason": "line1\nline2\r\n<script>alert(1)</script>",
+        },
+    }
+    _act_result = FakeBackend(tmp_path, "v0.5").act("shield", "WRITE", None, None, assignment)
     assert _act_result["status"] == "done"
 
     text = test_file.read_text(encoding="utf-8")
-    marker_lines = [
-        line for line in text.splitlines()
-        if line.startswith("# shield revision:")
-    ]
+    marker_lines = [line for line in text.splitlines() if line.startswith("# shield revision:")]
     assert len(marker_lines) == 1
     assert "\n" not in marker_lines[0]
     assert "line1 line2 <script>alert(1)</script>" in marker_lines[0]
@@ -248,7 +260,10 @@ def test_revision_marker_defaults_when_reason_missing(tmp_path):
     test_file.write_text("def test_x():\n    assert True\n", encoding="utf-8")
 
     FakeBackend(tmp_path, "v0.5").act(
-        "shield", "WRITE", None, None,
+        "shield",
+        "WRITE",
+        None,
+        None,
         {"test_tasks": _TASKS, "evidence": {"check": "full_suite"}},
     )
     text = test_file.read_text(encoding="utf-8")
@@ -258,10 +273,15 @@ def test_revision_marker_defaults_when_reason_missing(tmp_path):
 
 # -- Behavior C: reach declarations for the Fake design -----------------------
 
+
 def test_fake_design_declares_and_materializes_reach_entries(tmp_path):
     _acceptance(tmp_path)
     result = FakeBackend(tmp_path, "v0.5").act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"},
+        "archer",
+        "DRAFT",
+        None,
+        None,
+        {"kind": "DRAFT"},
     )
     assert result["status"] == "done"
 
@@ -272,8 +292,7 @@ def test_fake_design_declares_and_materializes_reach_entries(tmp_path):
         "tracks.impl.ac_nfr0020_01",
     ]
 
-    architecture = (_vdir(tmp_path) / "architecture.md").read_text(
-        encoding="utf-8")
+    architecture = (_vdir(tmp_path) / "architecture.md").read_text(encoding="utf-8")
     assert ".tracks/reach-entries.txt" in _scaffold_declared_paths(architecture)
 
 
@@ -281,14 +300,17 @@ def test_fake_design_reach_entries_recognized_as_declared_scaffold(tmp_path):
     repo = _git_repo(tmp_path)
     _acceptance(repo)
     FakeBackend(repo, "v0.5").act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"},
+        "archer",
+        "DRAFT",
+        None,
+        None,
+        {"kind": "DRAFT"},
     )
     store = Store(paths.tracks_home(repo))
     store.append("RUN", "v0.5", "story.requested", {"raw_chars": 1})
     executor = Executor(store, repo, "RUN")
 
-    path, issue = executor._stageable_scaffold_path(
-        ".tracks/reach-entries.txt")
+    path, issue = executor._stageable_scaffold_path(".tracks/reach-entries.txt")
     assert issue is None, f"reach entries must stage as declared scaffold: {issue}"
     assert path is not None
     assert path.name == "reach-entries.txt"
@@ -300,10 +322,13 @@ def test_fake_design_reach_entries_recognized_as_declared_scaffold(tmp_path):
 def test_fake_design_older_flow_versions_declare_no_reach_entries(tmp_path):
     vdir = paths.version_dir(paths.tracks_home(tmp_path), "v0.4")
     vdir.mkdir(parents=True, exist_ok=True)
-    (vdir / "acceptance.md").write_text(
-        "# A\n\n### AC-FR0010-01\n\n- x\n", encoding="utf-8")
+    (vdir / "acceptance.md").write_text("# A\n\n### AC-FR0010-01\n\n- x\n", encoding="utf-8")
     FakeBackend(tmp_path, "v0.4").act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"},
+        "archer",
+        "DRAFT",
+        None,
+        None,
+        {"kind": "DRAFT"},
     )
     assert not (tmp_path / ".tracks" / "reach-entries.txt").exists()
     architecture = (vdir / "architecture.md").read_text(encoding="utf-8")
@@ -313,7 +338,11 @@ def test_fake_design_older_flow_versions_declare_no_reach_entries(tmp_path):
 def test_check_reach_passes_after_green_files_exist(tmp_path):
     _acceptance(tmp_path)
     FakeBackend(tmp_path, "v0.5").act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"},
+        "archer",
+        "DRAFT",
+        None,
+        None,
+        {"kind": "DRAFT"},
     )
     # Green files exist: deterministic Fake Devon implementations.
     _write_impl(tmp_path, "ac_fr0010_01", "IF-MTEST-001")
@@ -332,7 +361,11 @@ def test_check_reach_fails_for_undeclared_production_module(tmp_path):
     reach entrypoint (the reverse of the green-pass case)."""
     _acceptance(tmp_path)
     FakeBackend(tmp_path, "v0.5").act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"},
+        "archer",
+        "DRAFT",
+        None,
+        None,
+        {"kind": "DRAFT"},
     )
     _write_impl(tmp_path, "ac_fr0010_01", "IF-MTEST-001")
     _write_impl(tmp_path, "ac_nfr0020_01", "IF-MTEST-002")

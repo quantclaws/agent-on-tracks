@@ -9,6 +9,7 @@ import after those primitives were defined. A cold ``import
 tracks.executor.test_tasks`` that bypassed that ordering would fail. The
 shared module breaks the cycle so any import order is safe.
 """
+
 import subprocess
 import sys
 
@@ -26,8 +27,7 @@ def test_test_tasks_imports_in_fresh_subprocess():
         timeout=30,
     )
     assert proc.returncode == 0, (
-        f"import failed (rc={proc.returncode}):\n"
-        f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+        f"import failed (rc={proc.returncode}):\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     )
 
 

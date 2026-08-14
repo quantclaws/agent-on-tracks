@@ -12,13 +12,11 @@ def test_devon_dispatch_manifest_and_audit_evidence(trac, event_log):
     _, _, events = run_m_impl_journey(trac, event_log)
     dispatches = command_dispatches(events, role="devon")
     assert dispatches
-    assignments = [
-        event["payload"]["command"]["params"]["assignment"]
-        for event in dispatches
-    ]
+    assignments = [event["payload"]["command"]["params"]["assignment"] for event in dispatches]
     assert all(assignment["manifest"]["allowed_paths"] for assignment in assignments)
     outcomes = [
-        event for event in events_of(events, "outcome.received")
+        event
+        for event in events_of(events, "outcome.received")
         if event["payload"].get("role") == "devon"
     ]
     assert outcomes

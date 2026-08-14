@@ -25,10 +25,7 @@ from tests.integration.result_checkpoint_support import (
 from tests.m_test_support import make_m_test_dispatch_cmd
 
 _PRE_EXISTING = "tests/integration/test_pre_existing.py"
-_PRE_EXISTING_ORIG = (
-    "# pre-existing untracked\n"
-    "def test_pre_existing():\n    pass\n"
-)
+_PRE_EXISTING_ORIG = "# pre-existing untracked\ndef test_pre_existing():\n    pass\n"
 _PRE_EXISTING_MODIFIED = (
     "# AC-FR0010-01@v0.4 TRACKS-TRACE integration test\n"
     "def test_pre_existing():\n"
@@ -37,8 +34,7 @@ _PRE_EXISTING_MODIFIED = (
 
 _HUMAN_DIRTY = "tests/integration/test_human_dirty.py"
 _HUMAN_DIRTY_CONTENT = (
-    "# Human-authored dirty test (unchanged by Shield)\n"
-    "def test_human_dirty():\n    assert True\n"
+    "# Human-authored dirty test (unchanged by Shield)\ndef test_human_dirty():\n    assert True\n"
 )
 
 _NEW_TEST = "tests/integration/test_new.py"
@@ -76,8 +72,11 @@ def test_pre_existing_untracked_test_modified_by_shield_is_attributed(tmp_path):
         f"pre-existing modified test must be attributed; artifacts={artifacts}"
     )
     assert _PRE_EXISTING in allowed
-    no_diff = [e for e in store.events(run_id)
-               if e.type == "verdict.failed" and e.payload.get("check") == "no_diff"]
+    no_diff = [
+        e
+        for e in store.events(run_id)
+        if e.type == "verdict.failed" and e.payload.get("check") == "no_diff"
+    ]
     assert not no_diff, "pre-existing modified test must not trigger no_diff"
 
 
@@ -131,13 +130,15 @@ def test_recovery_uses_persisted_snapshot_for_pre_existing_modified(tmp_path):
     def _crash_after_backend_write(executor_self, cmd, state, task_id, reconcile=False):
         if cmd.kind == "dispatch_agent" and not reconcile:
             p = cmd.params
-            backend.act(p["role"], p["substate"], p.get("doc"), None,
-                        assignment=p.get("assignment"))
+            backend.act(
+                p["role"], p["substate"], p.get("doc"), None, assignment=p.get("assignment")
+            )
             return
         original_execute(cmd, state, task_id, reconcile)
 
-    ex._execute = lambda cmd, state, task_id=None, reconcile=False: \
-        _crash_after_backend_write(ex, cmd, state, task_id, reconcile)
+    ex._execute = lambda cmd, state, task_id=None, reconcile=False: _crash_after_backend_write(
+        ex, cmd, state, task_id, reconcile
+    )
 
     ex.issue(make_m_test_dispatch_cmd())
 
@@ -147,8 +148,7 @@ def test_recovery_uses_persisted_snapshot_for_pre_existing_modified(tmp_path):
 
     artifacts = _recover_and_artifacts(ex, store, run_id, original_execute)
     assert _PRE_EXISTING in artifacts, (
-        f"recovery must attribute pre-existing modified test via snapshot; "
-        f"artifacts={artifacts}"
+        f"recovery must attribute pre-existing modified test via snapshot; artifacts={artifacts}"
     )
 
 

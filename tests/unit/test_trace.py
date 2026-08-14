@@ -7,6 +7,7 @@ a missing spec item), no false positives from discussion blocks and fenced
 code, the complete non-short-circuiting orphan list with stable order, and the
 always-on wiring (validate_document / trac validate on acceptance.md).
 """
+
 from tracks.cli.main import cmd_validate
 from tracks.executor.validate import check_trace, check_trace_file, validate_document
 
@@ -43,16 +44,12 @@ def test_full_coverage_passes():
 
 def test_forward_orphan_missing_section():
     acc = "## FR-0010 功能甲\n\n### AC-FR0010-01 已覆盖\n"
-    assert check_trace(SPEC, acc) == [
-        "line:8 NFR-0020 has no '## NFR-0020' section in acceptance"
-    ]
+    assert check_trace(SPEC, acc) == ["line:8 NFR-0020 has no '## NFR-0020' section in acceptance"]
 
 
 def test_forward_orphan_section_without_ac():
     acc = ACC_FULL.replace("### AC-NFR0020-01 已覆盖\n", "待补。\n")
-    assert check_trace(SPEC, acc) == [
-        "line:8 NFR-0020 acceptance section has no AC item for it"
-    ]
+    assert check_trace(SPEC, acc) == ["line:8 NFR-0020 acceptance section has no AC item for it"]
 
 
 def test_forward_orphan_section_ac_for_other_item_does_not_cover():
@@ -64,15 +61,15 @@ def test_forward_orphan_section_ac_for_other_item_does_not_cover():
 
 def test_reverse_orphan_ac_refers_missing_item():
     acc = ACC_FULL + "\n## FR-0999 幽灵\n\n### AC-FR0999-01 幽灵\n"
-    assert check_trace(SPEC, acc) == [
-        "line:12 AC-FR0999-01 refers to missing FR-0999 in spec"
-    ]
+    assert check_trace(SPEC, acc) == ["line:12 AC-FR0999-01 refers to missing FR-0999 in spec"]
 
 
 def test_discussion_blocks_and_fenced_code_ignored():
-    acc = (ACC_FULL
-           + "\n> ## FR-0300 假章节\n> ### AC-FR0300-01 讨论块内\n"
-           + "\n```\n## FR-0400 假章节\n### AC-FR0400-01 代码块内\n```\n")
+    acc = (
+        ACC_FULL
+        + "\n> ## FR-0300 假章节\n> ### AC-FR0300-01 讨论块内\n"
+        + "\n```\n## FR-0400 假章节\n### AC-FR0400-01 代码块内\n```\n"
+    )
     spec = SPEC + "\n```\n### FR-0500 代码块内假条目\n```\n"
     assert check_trace(spec, acc) == []
 
@@ -83,7 +80,7 @@ def test_complete_orphan_list_stable_order():
     acc = "## FR-0777 无中生有\n\n### AC-FR0777-01 无中生有\n"
     assert check_trace(SPEC, acc) == [
         "line:1 FR-0010 has no '## FR-0010' section in acceptance",
-            "line:8 NFR-0020 has no '## NFR-0020' section in acceptance",
+        "line:8 NFR-0020 has no '## NFR-0020' section in acceptance",
         "line:3 AC-FR0777-01 refers to missing FR-0777 in spec",
     ]
 
@@ -102,7 +99,9 @@ def _write(tmp_path, name, text):
 def test_validate_document_requires_sibling_spec(tmp_path):
     p = _write(tmp_path, "acceptance.md", _ACC_HEAD + ACC_FULL)
     assert validate_document(p, "acceptance.md") == (
-        "trace", "line:1 acceptance validate requires spec.md in same dir")
+        "trace",
+        "line:1 acceptance validate requires spec.md in same dir",
+    )
 
 
 def test_validate_document_trace_runs_without_checks(tmp_path):
@@ -127,8 +126,11 @@ def test_check_trace_file_reads_sibling_spec(tmp_path):
 
 def test_cli_validate_acceptance_runs_trace(tmp_path, capsys):
     _write(tmp_path, "spec.md", SPEC)
-    p = _write(tmp_path, "acceptance.md",
-               _ACC_HEAD + "# 验收\n\n## FR-0010 功能甲\n\n### AC-FR0010-01 覆盖\n")
+    p = _write(
+        tmp_path,
+        "acceptance.md",
+        _ACC_HEAD + "# 验收\n\n## FR-0010 功能甲\n\n### AC-FR0010-01 覆盖\n",
+    )
     assert cmd_validate(tmp_path, "--file", str(p)) == 1
     assert "NFR-0020" in capsys.readouterr().err
 

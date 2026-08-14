@@ -28,6 +28,7 @@ Structural validation:
    body text, body whitespace, trailing spaces, or a blank line turning into
    a space/tab whitespace-only line.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -104,7 +105,8 @@ def _is_framing(line: str) -> bool:
 
 
 def _framing_blank_numbers(
-    lines: list[str], discussion_lines: set[int],
+    lines: list[str],
+    discussion_lines: set[int],
 ) -> set[int]:
     """1-indexed numbers of truly-empty framing lines in a run immediately
     adjacent to a discussion comment line.
@@ -130,7 +132,8 @@ def _framing_blank_numbers(
 
 
 def _body_lines(
-    lines: list[str], discussion_lines: set[int],
+    lines: list[str],
+    discussion_lines: set[int],
 ) -> tuple[list[str], list[int]]:
     """Non-discussion lines and their 1-indexed original line numbers.
 
@@ -147,15 +150,21 @@ def _body_lines(
 
 
 def _region_is_framing_only(
-    orig: list[int], framing: set[int], lo: int, hi: int,
+    orig: list[int],
+    framing: set[int],
+    lo: int,
+    hi: int,
 ) -> bool:
     """True when every body line in ``orig[lo:hi]`` was a framing blank."""
     return all(orig[k] in framing for k in range(lo, hi))
 
 
 def _body_diff_is_framing_only(
-    base_body: list[str], base_orig: list[int], base_framing: set[int],
-    current_body: list[str], current_orig: list[int],
+    base_body: list[str],
+    base_orig: list[int],
+    base_framing: set[int],
+    current_body: list[str],
+    current_orig: list[int],
     current_framing: set[int],
 ) -> bool:
     """True when every non-equal diff region between *base_body* and
@@ -165,17 +174,25 @@ def _body_diff_is_framing_only(
     line sequences.  ``autojunk=False`` ensures blank lines are always matched
     (never treated as junk by the heuristic)."""
     matcher = difflib.SequenceMatcher(
-        autojunk=False, a=base_body, b=current_body,
+        autojunk=False,
+        a=base_body,
+        b=current_body,
     )
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
         if tag in ("delete", "replace") and not _region_is_framing_only(
-            base_orig, base_framing, i1, i2,
+            base_orig,
+            base_framing,
+            i1,
+            i2,
         ):
             return False
         if tag in ("insert", "replace") and not _region_is_framing_only(
-            current_orig, current_framing, j1, j2,
+            current_orig,
+            current_framing,
+            j1,
+            j2,
         ):
             return False
     return True
@@ -199,10 +216,10 @@ def is_discussion_delta(base_text: str | bytes, current_text: str | bytes) -> bo
     filesystem access - callers supply both texts.
     """
     try:
-        base_bytes = (base_text if isinstance(base_text, bytes)
-                      else base_text.encode("utf-8"))
-        current_bytes = (current_text if isinstance(current_text, bytes)
-                         else current_text.encode("utf-8"))
+        base_bytes = base_text if isinstance(base_text, bytes) else base_text.encode("utf-8")
+        current_bytes = (
+            current_text if isinstance(current_text, bytes) else current_text.encode("utf-8")
+        )
         base_decoded = base_bytes.decode("utf-8")
         current_decoded = current_bytes.decode("utf-8")
     except UnicodeError:
@@ -224,6 +241,10 @@ def is_discussion_delta(base_text: str | bytes, current_text: str | bytes) -> bo
     current_body, current_orig, current_framing = _prepare(current_decoded)
 
     return _body_diff_is_framing_only(
-        base_body, base_orig, base_framing,
-        current_body, current_orig, current_framing,
+        base_body,
+        base_orig,
+        base_framing,
+        current_body,
+        current_orig,
+        current_framing,
     )

@@ -4,6 +4,7 @@ Single-writer discipline (D-07, FR-27): every mutating subcommand holds
 `runtime/lock` (O_CREAT|O_EXCL, holder PID inside). A held lock aborts with
 the holder PID on stderr and writes no events.
 """
+
 from __future__ import annotations
 
 import json
@@ -114,8 +115,7 @@ TRACKS_GITIGNORE = "report/\n*.lock\n"
 
 def cmd_init(repo: Path) -> int:
     home = paths.tracks_home(repo)
-    for d in (paths.projects_dir(home), paths.runtime_dir(home),
-              paths.wiki_dir(home)):
+    for d in (paths.projects_dir(home), paths.runtime_dir(home), paths.wiki_dir(home)):
         d.mkdir(parents=True, exist_ok=True)
     gitignore = paths.runtime_dir(home) / ".gitignore"
     if not gitignore.exists():
@@ -161,12 +161,12 @@ def cmd_start(repo: Path, *args: str) -> int:
         if active is not None:
             bid = new_ulid()
             store.append(
-                bid, version, "backlog.recorded",
+                bid,
+                version,
+                "backlog.recorded",
                 {"version": version, "decision": "queued", "reason": "active_run"},
             )
-            print(
-                f"active run {active}; requirement queued to backlog (run not started)"
-            )
+            print(f"active run {active}; requirement queued to backlog (run not started)")
             return 0
         # SM-01.6: local unmerged release branches → AWAIT_CONFIRM gate.
         unmerged = _unmerged_branches(repo)
@@ -214,9 +214,7 @@ def _parse_start_args(args: tuple[str, ...]) -> tuple[str, str | None]:
         confirm = "cancel"
         parts.remove("--cancel")
     if len(parts) != 1:
-        raise SystemExit(
-            "usage: trac start <version> [--confirm|--cancel]"
-        )
+        raise SystemExit("usage: trac start <version> [--confirm|--cancel]")
     return parts[0], confirm
 
 
@@ -243,29 +241,25 @@ def _reject_dirty_staged(repo: Path, version: str, label: str) -> int:
     allowed_prefix = f".tracks/projects/{version}/"
     dirty = [
         line[3:].strip()
-        for line in git(repo, "status", "--porcelain",
-                        check=False).stdout.splitlines()
+        for line in git(repo, "status", "--porcelain", check=False).stdout.splitlines()
         if line.strip()
     ]
     outside = [f for f in dirty if not f.startswith(allowed_prefix)]
     if outside:
-        return _err(f"{label} touches files outside {allowed_prefix}: "
-                    + ", ".join(sorted(outside)))
+        return _err(
+            f"{label} touches files outside {allowed_prefix}: " + ", ".join(sorted(outside))
+        )
     staged = [
         line[3:].strip()
-        for line in git(repo, "diff", "--cached", "--name-only",
-                        check=False).stdout.splitlines()
+        for line in git(repo, "diff", "--cached", "--name-only", check=False).stdout.splitlines()
         if line.strip()
     ]
     if staged:
-        return _err("pre-staged content found; unstage first: "
-                    + ", ".join(sorted(staged)))
+        return _err("pre-staged content found; unstage first: " + ", ".join(sorted(staged)))
     return 0
 
 
-def _parse_action_actor(
-    args: tuple[str, ...], usage: str
-) -> tuple[str, str | None] | None:
+def _parse_action_actor(args: tuple[str, ...], usage: str) -> tuple[str, str | None] | None:
     if not args or len(args) > 3 or (len(args) == 3 and args[1] != "--actor"):
         _err(usage)
         return None
@@ -274,15 +268,11 @@ def _parse_action_actor(
 
 def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None]:
     if len(args) % 2:
-        raise ValueError(
-            "usage: trac run [--assignment-overlay PATH] [--max-dispatches N]"
-        )
+        raise ValueError("usage: trac run [--assignment-overlay PATH] [--max-dispatches N]")
     values = {}
     for flag, value in zip(args[::2], args[1::2], strict=True):
         if flag not in ("--assignment-overlay", "--max-dispatches"):
-            raise ValueError(
-                "usage: trac run [--assignment-overlay PATH] [--max-dispatches N]"
-            )
+            raise ValueError("usage: trac run [--assignment-overlay PATH] [--max-dispatches N]")
         if flag in values:
             raise ValueError(f"{flag} may be specified only once")
         values[flag] = value
@@ -355,6 +345,7 @@ def _stage_doc(stage: str) -> str | None:
     """Return the doc name for the current stage (deferred import to avoid
     circular dependency)."""
     from tracks.kernel.machine import _STAGES
+
     sd = _STAGES.get(stage)
     return sd.doc if sd else None
 
@@ -371,14 +362,22 @@ def _triage_artifacts(doc: str | None) -> tuple[list[str], list[str]]:
 def _review_action_params(action: str, stage: str) -> dict:
     """Returns pipeline params for a review action."""
     if action == "revise":
-        return {"requires_diff": True, "forbid_diff": False,
-                "discussion_only": False, "checks": ["template"],
-                "commit_label": f"{stage}: human revise",
-                "verdict": "comment"}
-    return {"requires_diff": False, "forbid_diff": True,
-            "discussion_only": False, "checks": [],
-            "commit_label": f"{stage}: human no-comment",
-            "verdict": "no_comment"}
+        return {
+            "requires_diff": True,
+            "forbid_diff": False,
+            "discussion_only": False,
+            "checks": ["template"],
+            "commit_label": f"{stage}: human revise",
+            "verdict": "comment",
+        }
+    return {
+        "requires_diff": False,
+        "forbid_diff": True,
+        "discussion_only": False,
+        "checks": [],
+        "commit_label": f"{stage}: human no-comment",
+        "verdict": "no_comment",
+    }
 
 
 def _do_triage_pipeline(repo, state, store, run_id, decision, actor):
@@ -530,13 +529,12 @@ def cmd_retry(repo: Path, *args: str) -> int:
                 )
         elif state.awaiting != "escalation":
             # Ordinary retry: only at escalation, preserves evidence (FR-11).
-            return _err(
-                f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
-            )
+            return _err(f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})")
         store.append(
-            run_id, state.version, "human.retry",
-            {"actor": actor or _human_actor(repo),
-             "clear_evidence": clear_evidence},
+            run_id,
+            state.version,
+            "human.retry",
+            {"actor": actor or _human_actor(repo), "clear_evidence": clear_evidence},
         )
         state = store.state(run_id)
     print("human.retry event appended; escalation gate cleared; attempt budget reset")
@@ -553,8 +551,10 @@ def _approval_gate(store: Store, run_id: str):
     if state.awaiting == "rollback" and state.stage == "M-TEST":
         return state, None  # SM-01.13: Human approves the rollback
     if state.stage != "M-REQ-APPROVAL" or state.awaiting != "approval":
-        return None, (f"run not awaiting approval (stage={state.stage} "
-                      f"awaiting={state.awaiting or 'nothing'})")
+        return None, (
+            f"run not awaiting approval (stage={state.stage} "
+            f"awaiting={state.awaiting or 'nothing'})"
+        )
     return state, None
 
 
@@ -574,30 +574,39 @@ def cmd_approve(repo: Path, *args) -> int:
             return _err(err)
         # SM-01.13: M-TEST rollback approval needs no digest check
         if state.stage == "M-TEST" and state.awaiting == "rollback":
-            actor = actor or git(repo, "config", "user.name",
-                                 check=False).stdout.strip() or "human"
-            store.append(run_id, state.version, "human.approval",
-                         {"actor": actor, "digest": None,
-                          "ts": datetime.now(timezone.utc).isoformat()})
+            actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+            store.append(
+                run_id,
+                state.version,
+                "human.approval",
+                {"actor": actor, "digest": None, "ts": datetime.now(timezone.utc).isoformat()},
+            )
             print(f"approved rollback to {state.return_target}")
             return 0
         vdir = paths.version_dir(home, state.version)
         digest = revision_digest(vdir)
-        previews = [e for e in store.events(run_id)
-                    if e.type == "preview.generated"]
+        previews = [e for e in store.events(run_id) if e.type == "preview.generated"]
         if not previews or previews[-1].payload["digest"] != digest:
             # C-02: the trio changed under the reviewed preview — reject THIS
             # approve (not the run) and regenerate the preview for re-review.
-            store.append(run_id, state.version, "preview.generated",
-                         {"digest": digest, "summary": baseline_summary(vdir)})
-            return _err("baseline changed since preview: approve rejected, "
-                        "preview regenerated — review and approve again")
+            store.append(
+                run_id,
+                state.version,
+                "preview.generated",
+                {"digest": digest, "summary": baseline_summary(vdir)},
+            )
+            return _err(
+                "baseline changed since preview: approve rejected, "
+                "preview regenerated — review and approve again"
+            )
         if actor is None:
-            actor = git(repo, "config", "user.name",
-                        check=False).stdout.strip() or "human"
-        store.append(run_id, state.version, "human.approval",
-                     {"actor": actor, "digest": digest,
-                      "ts": datetime.now(timezone.utc).isoformat()})
+            actor = git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+        store.append(
+            run_id,
+            state.version,
+            "human.approval",
+            {"actor": actor, "digest": digest, "ts": datetime.now(timezone.utc).isoformat()},
+        )
     print(f"approved {digest}")
     return 0
 
@@ -628,7 +637,7 @@ def _escalation_return_targets(stage: str) -> tuple[str, ...]:
     M-REQ-APPROVAL are never allowed. Returns () for stages that cannot
     escalate-return (M-REQ-APPROVAL, M-START, unknown)."""
     if stage in _RETURN_AUTHOR_STAGES:
-        return _RETURN_AUTHOR_STAGES[:_RETURN_AUTHOR_STAGES.index(stage) + 1]
+        return _RETURN_AUTHOR_STAGES[: _RETURN_AUTHOR_STAGES.index(stage) + 1]
     if stage == "M-TEST":
         return _RETURN_STAGES_ESCALATION
     return ()
@@ -649,12 +658,14 @@ def _return_gate(store: Store, run_id: str):
         allowed = _escalation_return_targets(state.stage)
         if allowed:
             return state, allowed, None
-        return state, (), (
-            f"escalation at stage {state.stage} has no return targets"
-        )
-    return state, (), (
-        f"run not awaiting approval or escalation (stage={state.stage} "
-        f"awaiting={state.awaiting or 'nothing'})"
+        return state, (), (f"escalation at stage {state.stage} has no return targets")
+    return (
+        state,
+        (),
+        (
+            f"run not awaiting approval or escalation (stage={state.stage} "
+            f"awaiting={state.awaiting or 'nothing'})"
+        ),
     )
 
 
@@ -681,10 +692,13 @@ def cmd_return(repo: Path, *args) -> int:
         if opts["--to"] not in allowed:
             # SM-05.7a/C-03: closed per-gate set, explicitly validated — no
             # event on reject.
-            return _err(f"invalid --to {opts['--to']}: must be one of "
-                        + "|".join(allowed))
-        store.append(run_id, state.version, "human.return",
-                     {"reason": opts["--reason"], "to_stage": opts["--to"]})
+            return _err(f"invalid --to {opts['--to']}: must be one of " + "|".join(allowed))
+        store.append(
+            run_id,
+            state.version,
+            "human.return",
+            {"reason": opts["--reason"], "to_stage": opts["--to"]},
+        )
     print(f"returned to {opts['--to']}")
     return 0
 
@@ -728,9 +742,7 @@ def cmd_replay(repo: Path, run_id: str) -> int:
     return 0
 
 
-_REPORT_USAGE = (
-    "usage: trac report [--run-id ID] [--output DIR] [--format md|html]"
-)
+_REPORT_USAGE = "usage: trac report [--run-id ID] [--output DIR] [--format md|html]"
 
 
 def _parse_report_args(
@@ -843,9 +855,7 @@ def _validate_tasksjson(path: Path) -> list[str]:
         errors.append("missing acceptance.md: cannot determine required ACs")
         required_acs: list[str] = []
     else:
-        required_acs = sorted(_known_ac_ids(
-            acc_path.read_text(encoding="utf-8")
-        ))
+        required_acs = sorted(_known_ac_ids(acc_path.read_text(encoding="utf-8")))
     if not if_path.exists():
         errors.append("missing interfaces.md: cannot validate IF- registry")
         if_registry: set[str] = set()
@@ -877,15 +887,14 @@ def _latest_version(home: Path) -> str | None:
     projects = paths.projects_dir(home)
     if not projects.exists():
         return None
-    versions = sorted(
-        d.name for d in projects.iterdir() if d.is_dir() and d.name.startswith("v")
-    )
+    versions = sorted(d.name for d in projects.iterdir() if d.is_dir() and d.name.startswith("v"))
     return versions[-1] if versions else None
 
 
 def _load_baseline(home: Path) -> dict | None:
     """Read .tracks/legacy-baseline.json if it exists (FR-0100)."""
     import json as _json
+
     bp = home / "legacy-baseline.json"
     if bp.exists():
         return _json.loads(bp.read_text(encoding="utf-8"))
@@ -944,11 +953,16 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     baseline = _load_baseline(home)
     report = check_trace_full_file(vdir, tests_dir, baseline)
     if use_json:
-        print(json.dumps({
-            "status": report.status,
-            "hard_errors": list(report.hard_errors),
-            "warnings": list(report.warnings),
-        }, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": report.status,
+                    "hard_errors": list(report.hard_errors),
+                    "warnings": list(report.warnings),
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
         for e in report.hard_errors:
             print(e)
@@ -969,13 +983,18 @@ def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
     baseline = _load_baseline(home)
     report = check_reach_file(repo, baseline, entries)
     if use_json:
-        print(json.dumps({
-            "status": report.status,
-            "islands": list(report.islands),
-            "entrypoints": list(report.entrypoints),
-            "errors": list(report.errors),
-            "warnings": list(report.warnings),
-        }, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "status": report.status,
+                    "islands": list(report.islands),
+                    "entrypoints": list(report.entrypoints),
+                    "errors": list(report.errors),
+                    "warnings": list(report.warnings),
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
         for e in report.errors:
             print(e, file=sys.stderr)

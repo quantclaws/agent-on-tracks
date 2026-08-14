@@ -3,6 +3,7 @@
 The test data itself is the ground truth (TP-004 §3.1 row 3): each fixture's
 returncode + stdout/stderr is the single source of truth for the expected class.
 """
+
 from tracks.executor.helpers import classify_red
 
 # AC-FR0050-02@v0.4 TRACKS-TRACE legit Red classes
@@ -11,14 +12,18 @@ from tracks.executor.helpers import classify_red
 def test_legit_red_classes():
     """AC-FR0050-02@v0.4: assertion failure, stub token failure, symbol missing."""
     # stub_token_failure: NotImplementedError("IF-...")
-    assert classify_red("t1", 1, "",
-                        'raise NotImplementedError("IF-MTEST-001")') == "stub_token_failure"
+    assert (
+        classify_red("t1", 1, "", 'raise NotImplementedError("IF-MTEST-001")')
+        == "stub_token_failure"
+    )
     # assertion_failure: AssertionError / pytest E-prefix assert line
     assert classify_red("t2", 1, "", "AssertionError: 1 != 2") == "assertion_failure"
     assert classify_red("t3", 1, "E   assert False\n", "") == "assertion_failure"
     # symbol_missing: AttributeError / NameError
-    assert classify_red("t4", 1, "",
-                        "AttributeError: 'NoneType' object has no attribute") == "symbol_missing"
+    assert (
+        classify_red("t4", 1, "", "AttributeError: 'NoneType' object has no attribute")
+        == "symbol_missing"
+    )
     assert classify_red("t5", 1, "", "NameError: name 'foo' is not defined") == "symbol_missing"
 
 
@@ -28,8 +33,10 @@ def test_legit_red_classes():
 def test_illegit_red_classes():
     """AC-FR0050-03@v0.4: collection/syntax/fixture/import errors."""
     assert classify_red("t1", 1, "", "ImportError: No module named 'foo'") == "collection_error"
-    assert classify_red("t2", 1, "",
-                       "ModuleNotFoundError: No module named 'bar'") == "collection_error"
+    assert (
+        classify_red("t2", 1, "", "ModuleNotFoundError: No module named 'bar'")
+        == "collection_error"
+    )
     assert classify_red("t3", 1, "", "SyntaxError: invalid syntax") == "collection_error"
     assert classify_red("t4", 1, "", "FixtureLookupError: fixture not found") == "collection_error"
     assert classify_red("t5", 1, "ERROR collecting tests/test_x.py", "") == "collection_error"
@@ -62,12 +69,19 @@ def test_collection_error_with_assert_substring():
     assertion_failure.  Only AssertionError or a pytest E-prefix line
     (``E   assert``) triggers assertion_failure."""
     # Source frame with 'assert' in a collection error traceback
-    assert classify_red("t1", 1,
-                        "tests/test_x.py:5: in <module>\n"
-                        "    assert something  # source frame\n"
-                        "ImportError: No module named 'foo'",
-                        "") == "collection_error"
+    assert (
+        classify_red(
+            "t1",
+            1,
+            "tests/test_x.py:5: in <module>\n"
+            "    assert something  # source frame\n"
+            "ImportError: No module named 'foo'",
+            "",
+        )
+        == "collection_error"
+    )
     # 'assert ' in an error message but no AssertionError / E-line
-    assert classify_red("t2", 1, "",
-                        "ModuleNotFoundError: No module named 'assert_helper'"
-                        ) == "collection_error"
+    assert (
+        classify_red("t2", 1, "", "ModuleNotFoundError: No module named 'assert_helper'")
+        == "collection_error"
+    )

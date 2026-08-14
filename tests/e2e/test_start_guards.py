@@ -1,4 +1,5 @@
 """M-START guard rails (test-plan §3): AC-01b, AC-02b, AC-03a."""
+
 import subprocess
 
 
@@ -93,16 +94,14 @@ def test_active_run_queues_to_backlog(host_repo, trac):
 
     # backlog row recorded (query the DB)
     import sqlite3
+
     db = host_repo / ".tracks" / "runtime" / "tracks.db"
     conn = sqlite3.connect(db)
     try:
-        rows = conn.execute(
-            "SELECT version, decision, reason FROM backlog ORDER BY ts"
-        ).fetchall()
+        rows = conn.execute("SELECT version, decision, reason FROM backlog ORDER BY ts").fetchall()
     finally:
         conn.close()
-    assert any(v == "v0.2" and d == "queued" and rsn == "active_run"
-               for v, d, rsn in rows)
+    assert any(v == "v0.2" and d == "queued" and rsn == "active_run" for v, d, rsn in rows)
 
 
 def test_backlog_phantom_does_not_block_later_start(host_repo, trac):

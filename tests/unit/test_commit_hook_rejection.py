@@ -6,6 +6,7 @@ and the shared attempt budget escalates at >=3 (D-30/F-1).
 Pure machine tests: simulate the failure-evidence event in each affected
 sub-state and assert the established WRITE redispatch + budget semantics.
 """
+
 from tests.unit.helpers import seq
 from tests.unit.test_machine_design import _design_author_checkpoint
 from tests.unit.test_machine_m_test import (
@@ -33,16 +34,24 @@ ENTER_DESIGN = [
     ("story.requested", {"raw_chars": 5}),
     ("stage.entered", {"stage": "M-DESIGN"}),
 ]
-DESIGN_DISPATCHED = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                     "params": {"role": "archer",
-                                                                "substate": "DRAFT"},
-                                                     "command_id": "C1"}})
-DESIGN_PRODUCED = ("outcome.received",
-                   {"role": "archer", "status": "done",
-                    "result_checkpoint": _design_author_checkpoint()})
-RESULT_VALIDATED = ("result.validated",
-                    {"artifacts": list(DESIGN_DOCS),
-                     "base_sha": "b", "result_id": "C1"})
+DESIGN_DISPATCHED = (
+    "command.issued",
+    {
+        "command": {
+            "kind": "dispatch_agent",
+            "params": {"role": "archer", "substate": "DRAFT"},
+            "command_id": "C1",
+        }
+    },
+)
+DESIGN_PRODUCED = (
+    "outcome.received",
+    {"role": "archer", "status": "done", "result_checkpoint": _design_author_checkpoint()},
+)
+RESULT_VALIDATED = (
+    "result.validated",
+    {"artifacts": list(DESIGN_DOCS), "base_sha": "b", "result_id": "C1"},
+)
 
 
 def _design_state(*items):
@@ -50,18 +59,22 @@ def _design_state(*items):
 
 
 def _design_commit_fail(attempt):
-    return ("verdict.failed", {"check": "commit",
-                               "reason": "pre-commit hook rejected the commit",
-                               "evidence": "ruff: 6 errors in architecture.md",
-                               "attempt": attempt})
+    return (
+        "verdict.failed",
+        {
+            "check": "commit",
+            "reason": "pre-commit hook rejected the commit",
+            "evidence": "ruff: 6 errors in architecture.md",
+            "attempt": attempt,
+        },
+    )
 
 
 def test_m_design_commit_failure_resets_counters_and_redispatches():
     """Pipeline checkpoint commit rejected by hook: design_committed and
     design_validated both reset to 0 so the redispatch re-validates and
     re-commits all three docs; Archer is dispatched with hook evidence."""
-    items = [DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
-             _design_commit_fail(1)]
+    items = [DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED, _design_commit_fail(1)]
     s = _design_state(*items)
     assert s.design_validated == 0 and s.design_committed == 0
     assert s.substate == "DRAFT" and s.doc_dispatched is False
@@ -83,15 +96,27 @@ def test_m_design_commit_failure_escalation():
     base = [DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED]
     one = _design_state(*base, _design_commit_fail(1))
     assert one.current_attempt == 1 and one.status == "active"
-    two = _design_state(*base, _design_commit_fail(1),
-                        DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
-                        _design_commit_fail(2))
+    two = _design_state(
+        *base,
+        _design_commit_fail(1),
+        DESIGN_DISPATCHED,
+        DESIGN_PRODUCED,
+        RESULT_VALIDATED,
+        _design_commit_fail(2),
+    )
     assert two.current_attempt == 2 and two.status == "active"
-    three = _design_state(*base, _design_commit_fail(1),
-                          DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
-                          _design_commit_fail(2),
-                          DESIGN_DISPATCHED, DESIGN_PRODUCED, RESULT_VALIDATED,
-                          _design_commit_fail(3))
+    three = _design_state(
+        *base,
+        _design_commit_fail(1),
+        DESIGN_DISPATCHED,
+        DESIGN_PRODUCED,
+        RESULT_VALIDATED,
+        _design_commit_fail(2),
+        DESIGN_DISPATCHED,
+        DESIGN_PRODUCED,
+        RESULT_VALIDATED,
+        _design_commit_fail(3),
+    )
     assert three.status == "awaiting_human" and three.awaiting == "escalation"
     assert decide(three) is None
 
@@ -102,23 +127,33 @@ ENTER_SPEC = [
     ("story.requested", {"raw_chars": 5}),
     ("stage.entered", {"stage": "M-SPEC"}),
 ]
-SPEC_DISPATCHED = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                  "params": {"role": "sage",
-                                                             "substate": "DRAFT"},
-                                                  "command_id": "C1"}})
+SPEC_DISPATCHED = (
+    "command.issued",
+    {
+        "command": {
+            "kind": "dispatch_agent",
+            "params": {"role": "sage", "substate": "DRAFT"},
+            "command_id": "C1",
+        }
+    },
+)
 SPEC_PRODUCED = ("outcome.received", {"role": "sage", "status": "done"})
 SPEC_PASSED = ("verdict.passed", {"check": "template", "detail": "d"})
-SPEC_COMMITTED = ("spec.committed", {"commit_sha": "c", "spec_sha": "s",
-                                     "final": False})
-LEX_DISPATCHED = ("command.issued", {"command": {"kind": "dispatch_agent",
-                                                 "params": {"role": "lex",
-                                                            "substate": "LEX_REVIEW"},
-                                                 "command_id": "C2"}})
+SPEC_COMMITTED = ("spec.committed", {"commit_sha": "c", "spec_sha": "s", "final": False})
+LEX_DISPATCHED = (
+    "command.issued",
+    {
+        "command": {
+            "kind": "dispatch_agent",
+            "params": {"role": "lex", "substate": "LEX_REVIEW"},
+            "command_id": "C2",
+        }
+    },
+)
 LEX_PRODUCED = ("outcome.received", {"role": "lex", "status": "done"})
 LEX_PASS = ("lex.verdict", {"verdict": "pass"})
 HUMAN_NO_COMMENT = ("human.review", {"action": "no_comment"})
-EXIT_PASSED = ("verdict.passed", {"check": "template,discussion_ready",
-                                  "detail": "d"})
+EXIT_PASSED = ("verdict.passed", {"check": "template,discussion_ready", "detail": "d"})
 
 
 def _spec_state(*items):
@@ -126,10 +161,15 @@ def _spec_state(*items):
 
 
 def _commit_fail(attempt):
-    return ("verdict.failed", {"check": "commit",
-                               "reason": "pre-commit hook rejected the commit",
-                               "evidence": "ruff: lint error in spec.md",
-                               "attempt": attempt})
+    return (
+        "verdict.failed",
+        {
+            "check": "commit",
+            "reason": "pre-commit hook rejected the commit",
+            "evidence": "ruff: lint error in spec.md",
+            "attempt": attempt,
+        },
+    )
 
 
 def test_spec_draft_commit_failure_redispatches_with_evidence():
@@ -148,9 +188,17 @@ def test_spec_draft_commit_failure_redispatches_with_evidence():
 def test_spec_exit_seal_commit_failure_redispatches_with_evidence():
     """EXIT seal commit rejected by hook: substate -> DRAFT, spec_committed
     and exit_validated reset so the full DRAFT->review->EXIT cycle re-runs."""
-    items = [SPEC_DISPATCHED, SPEC_PRODUCED, SPEC_PASSED, SPEC_COMMITTED,
-             LEX_DISPATCHED, LEX_PRODUCED, LEX_PASS, HUMAN_NO_COMMENT,
-             EXIT_PASSED]
+    items = [
+        SPEC_DISPATCHED,
+        SPEC_PRODUCED,
+        SPEC_PASSED,
+        SPEC_COMMITTED,
+        LEX_DISPATCHED,
+        LEX_PRODUCED,
+        LEX_PASS,
+        HUMAN_NO_COMMENT,
+        EXIT_PASSED,
+    ]
     s = _spec_state(*items, _commit_fail(1))
     assert s.substate == "DRAFT"
     assert s.spec_committed is False
@@ -166,9 +214,16 @@ def test_spec_commit_failure_escalation():
     """Three consecutive commit failures exhaust the <=3 budget."""
     base = [SPEC_DISPATCHED, SPEC_PRODUCED, SPEC_PASSED]
     three = _spec_state(
-        *base, _commit_fail(1),
-        SPEC_DISPATCHED, SPEC_PRODUCED, SPEC_PASSED, _commit_fail(2),
-        SPEC_DISPATCHED, SPEC_PRODUCED, SPEC_PASSED, _commit_fail(3),
+        *base,
+        _commit_fail(1),
+        SPEC_DISPATCHED,
+        SPEC_PRODUCED,
+        SPEC_PASSED,
+        _commit_fail(2),
+        SPEC_DISPATCHED,
+        SPEC_PRODUCED,
+        SPEC_PASSED,
+        _commit_fail(3),
     )
     assert three.status == "awaiting_human" and three.awaiting == "escalation"
     assert decide(three) is None
@@ -177,9 +232,17 @@ def test_spec_commit_failure_escalation():
 def test_exit_seal_commit_failure_does_not_await_review():
     """A commit hook rejection at EXIT must not trigger AC-1502 (awaiting
     human/review) -- it is a transient hook issue, not a review-gate failure."""
-    items = [SPEC_DISPATCHED, SPEC_PRODUCED, SPEC_PASSED, SPEC_COMMITTED,
-             LEX_DISPATCHED, LEX_PRODUCED, LEX_PASS, HUMAN_NO_COMMENT,
-             EXIT_PASSED]
+    items = [
+        SPEC_DISPATCHED,
+        SPEC_PRODUCED,
+        SPEC_PASSED,
+        SPEC_COMMITTED,
+        LEX_DISPATCHED,
+        LEX_PRODUCED,
+        LEX_PASS,
+        HUMAN_NO_COMMENT,
+        EXIT_PASSED,
+    ]
     s = _spec_state(*items, _commit_fail(1))
     assert s.status == "active" and s.awaiting is None
 
@@ -187,17 +250,30 @@ def test_exit_seal_commit_failure_does_not_await_review():
 # -- M-TEST (test commit failure) ---------------------------------------------
 
 _M_TEST_PRE_COMMIT = [
-    SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
-    PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, RED_VALID,
-    TRACE_CMD, TRACE_PASS,
+    SHIELD_DISPATCH,
+    SHIELD_DONE,
+    COLLECT_CMD,
+    COLLECTED,
+    PRISM_DISPATCH,
+    PRISM_DONE,
+    PRISM_PASS,
+    RUN_CMD,
+    RED_VALID,
+    TRACE_CMD,
+    TRACE_PASS,
 ]
 
 
 def _test_commit_fail(attempt):
-    return ("verdict.failed", {"check": "commit",
-                               "reason": "pre-commit hook rejected the commit",
-                               "evidence": "ruff: lint error in test files",
-                               "attempt": attempt})
+    return (
+        "verdict.failed",
+        {
+            "check": "commit",
+            "reason": "pre-commit hook rejected the commit",
+            "evidence": "ruff: lint error in test files",
+            "attempt": attempt,
+        },
+    )
 
 
 def test_m_test_commit_failure_redispatches_shield_with_evidence():
@@ -219,17 +295,50 @@ def test_m_test_commit_failure_escalation():
     """Three consecutive commit failures exhaust the shared <=3 budget."""
     one = _m_test_state(*_M_TEST_PRE_COMMIT, _test_commit_fail(1))
     assert one.current_attempt == 1 and one.status == "active"
-    two = _m_test_state(*_M_TEST_PRE_COMMIT, _test_commit_fail(1),
-                        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
-                        PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, RED_VALID,
-                        TRACE_CMD, TRACE_PASS, _test_commit_fail(2))
+    two = _m_test_state(
+        *_M_TEST_PRE_COMMIT,
+        _test_commit_fail(1),
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        PRISM_PASS,
+        RUN_CMD,
+        RED_VALID,
+        TRACE_CMD,
+        TRACE_PASS,
+        _test_commit_fail(2),
+    )
     assert two.current_attempt == 2 and two.status == "active"
-    three = _m_test_state(*_M_TEST_PRE_COMMIT, _test_commit_fail(1),
-                          SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
-                          PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, RED_VALID,
-                          TRACE_CMD, TRACE_PASS, _test_commit_fail(2),
-                          SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
-                          PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, RED_VALID,
-                          TRACE_CMD, TRACE_PASS, _test_commit_fail(3))
+    three = _m_test_state(
+        *_M_TEST_PRE_COMMIT,
+        _test_commit_fail(1),
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        PRISM_PASS,
+        RUN_CMD,
+        RED_VALID,
+        TRACE_CMD,
+        TRACE_PASS,
+        _test_commit_fail(2),
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        PRISM_PASS,
+        RUN_CMD,
+        RED_VALID,
+        TRACE_CMD,
+        TRACE_PASS,
+        _test_commit_fail(3),
+    )
     assert three.status == "awaiting_human" and three.awaiting == "escalation"
     assert decide(three) is None

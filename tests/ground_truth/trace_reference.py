@@ -10,6 +10,7 @@ Isolation rules (test-plan §3.2):
 - Only standard library (re/pathlib/json) + test data files.
 - Read fixture files directly from tests/assets/trace_fixtures/.
 """
+
 from __future__ import annotations
 
 import re
@@ -21,8 +22,7 @@ _BS_HEADING = re.compile(r"^###\s+BS-(\d{2})\s", re.M)
 # FR-XXXX / NFR-XXXX: four-digit, spec `### FR-XXXX` / `### NFR-XXXX` heading
 _FR_HEADING = re.compile(r"^###\s+(N?FR)-(\d{4})\s", re.M)
 # AC-FRXXXX-YY: acceptance `### AC-FRXXXX-YY` heading
-_AC_HEADING = re.compile(
-    r"^###\s+AC-((?:N?FR)\d{4})-(\d{2})\s", re.M)
+_AC_HEADING = re.compile(r"^###\s+AC-((?:N?FR)\d{4})-(\d{2})\s", re.M)
 # R-1 line-level marker: standalone comment line directly above test def.
 # `( # | // ) AC-FRXXXX-YY@<version> TRACKS-TRACE [description]` -- the
 # TRACKS-TRACE token is mandatory (distinguishes binding marker from normal
@@ -31,11 +31,28 @@ _MARKER_LINE = re.compile(
     r"^\s*(#|//)\s*(AC-(?:N?FR)\d{4}-\d{2})(@\S+)?\s+TRACKS-TRACE\b(.*)$", re.M
 )
 # Suffix whitelist: top-10 general-purpose languages (SQL excluded).
-_TEST_SUFFIXES = frozenset({
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
-    ".cs", ".rb", ".php", ".c", ".cc", ".cpp", ".h", ".hpp",
-    ".kt", ".swift",
-})
+_TEST_SUFFIXES = frozenset(
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".go",
+        ".rs",
+        ".cs",
+        ".rb",
+        ".php",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".kt",
+        ".swift",
+    }
+)
 # tombstone: HTML comment or frontmatter
 _TOMBSTONE = re.compile(r"<!--\s*tombstone:\s*((?:N?FR)-\d{4}|BS-\d{2})\s*-->")
 
@@ -71,15 +88,18 @@ def _strip_discussion_and_code(text: str) -> str:
 def _scan_bs(story_text: str) -> list[tuple[str, int]]:
     """Return [(BS-XX, line)] from story."""
     clean = _strip_discussion_and_code(story_text)
-    return [(f"BS-{m.group(1)}", _line_of(story_text, m.start()))
-            for m in _BS_HEADING.finditer(clean)]
+    return [
+        (f"BS-{m.group(1)}", _line_of(story_text, m.start())) for m in _BS_HEADING.finditer(clean)
+    ]
 
 
 def _scan_fr(spec_text: str) -> list[tuple[str, int]]:
     """Return [(FR-XXXX|NFR-XXXX, line)] from spec."""
     clean = _strip_discussion_and_code(spec_text)
-    return [(f"{m.group(1)}-{m.group(2)}", _line_of(spec_text, m.start()))
-            for m in _FR_HEADING.finditer(clean)]
+    return [
+        (f"{m.group(1)}-{m.group(2)}", _line_of(spec_text, m.start()))
+        for m in _FR_HEADING.finditer(clean)
+    ]
 
 
 def _scan_ac(acc_text: str) -> list[tuple[str, str, int]]:
@@ -167,14 +187,16 @@ def compute_trace(
     for fr_id, line in fr_items:
         if fr_id in seen_fr:
             hard_errors.append(
-                f"duplicate {fr_id}: spec line:{seen_fr[fr_id]} and spec line:{line}")
+                f"duplicate {fr_id}: spec line:{seen_fr[fr_id]} and spec line:{line}"
+            )
         else:
             seen_fr[fr_id] = line
     seen_ac: dict[str, int] = {}
     for ac_id, _, line in ac_items:
         if ac_id in seen_ac:
             hard_errors.append(
-                f"duplicate {ac_id}: acceptance line:{seen_ac[ac_id]} and acceptance line:{line}")
+                f"duplicate {ac_id}: acceptance line:{seen_ac[ac_id]} and acceptance line:{line}"
+            )
         else:
             seen_ac[ac_id] = line
 
@@ -189,8 +211,7 @@ def compute_trace(
         if ac_id in tombstones or fr_id in tombstones:
             continue
         if fr_id not in fr_ids:
-            hard_errors.append(
-                f"acceptance line:{line} {ac_id} references non-existent {fr_id}")
+            hard_errors.append(f"acceptance line:{line} {ac_id} references non-existent {fr_id}")
 
     # --- AC<->test hard errors ---
     marker_ac_ids = {m[1] for m in markers if m[3]}  # long-format only
@@ -198,19 +219,16 @@ def compute_trace(
         if ac_id in tombstones:
             continue
         if ac_id not in marker_ac_ids:
-            hard_errors.append(
-                f"acceptance line:{line} {ac_id} has no test marker bound")
+            hard_errors.append(f"acceptance line:{line} {ac_id} has no test marker bound")
 
     for marker_str, ac_id, _line, is_long in markers:
         if is_long and ac_id not in ac_ids:
-            hard_errors.append(
-                f"test marker {marker_str} references non-existent {ac_id}")
+            hard_errors.append(f"test marker {marker_str} references non-existent {ac_id}")
 
     # --- short-format marker hard error ---
     for marker_str, _ac_id, _line, is_long in markers:
         if not is_long:
-            hard_errors.append(
-                f"test marker {marker_str} short format (missing @version)")
+            hard_errors.append(f"test marker {marker_str} short format (missing @version)")
 
     # --- BS->FR warning (does not change exit code) ---
     for bs_id, line in bs_items:

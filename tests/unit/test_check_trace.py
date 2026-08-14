@@ -6,6 +6,7 @@ AC-FR0080-05@v0.4 no short circuit, AC-FR0080-06@v0.4 short format rejected,
 AC-FR0080-07@v0.4 NOT_FOUND no silent fallback, AC-FR0080-08@v0.4 duplicate IDs,
 AC-FR0080-09@v0.4 tombstone not orphan, AC-FR0130-04@v0.4 test marker must be long.
 """
+
 from tracks.checks.trace import _scan_test_markers, check_trace_full
 
 STORY = """## 4. 行为种子
@@ -226,8 +227,8 @@ def test_scan_skips_data_dirs(tmp_path):
     tests_dir.mkdir()
     # Real test file with an R-1 marker comment line
     (tests_dir / "test_real.py").write_text(
-        "# AC-FR0010-01@v0.4 TRACKS-TRACE real marker\n"
-        "def test_real():\n    pass\n", encoding="utf-8"
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE real marker\ndef test_real():\n    pass\n",
+        encoding="utf-8",
     )
     # Fixture file under assets/ with short-format + orphan markers
     assets_dir = tests_dir / "assets" / "trace_fixtures" / "orphans" / "tests"
@@ -235,14 +236,15 @@ def test_scan_skips_data_dirs(tmp_path):
     (assets_dir / "test_orphans.py").write_text(
         "# AC-FR0010-01 TRACKS-TRACE\n"
         "# AC-FR0010-99@v0.4 TRACKS-TRACE\n# AC-FR0030-01\n"
-        "def test_orphans():\n    pass\n", encoding="utf-8"
+        "def test_orphans():\n    pass\n",
+        encoding="utf-8",
     )
     # Oracle file under ground_truth/ with marker-shaped strings
     gt_dir = tests_dir / "ground_truth"
     gt_dir.mkdir()
     (gt_dir / "trace_reference.py").write_text(
-        "# AC-FR0999-01@v0.4 TRACKS-TRACE ground truth\n"
-        "def test_gt():\n    pass\n", encoding="utf-8"
+        "# AC-FR0999-01@v0.4 TRACKS-TRACE ground truth\ndef test_gt():\n    pass\n",
+        encoding="utf-8",
     )
     markers, has_files = _scan_test_markers(tests_dir)
     # Real marker is picked up
@@ -269,7 +271,7 @@ def test_scan_r1_comment_vs_string_vs_docstring(tmp_path):
         "\n"
         'x = "AC-FR0020-01@v0.4 TRACKS-TRACE string literal"\n'
         "\n"
-        'def test_b():\n'
+        "def test_b():\n"
         '    """AC-FR0030-01@v0.4 TRACKS-TRACE docstring first line"""\n'
         "    pass\n",
         encoding="utf-8",
@@ -288,16 +290,14 @@ def test_scan_hash_and_slash_prefixes(tmp_path):
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_py.py").write_text(
-        "# AC-FR0010-01@v0.4 TRACKS-TRACE py marker\n"
-        "def test_py():\n    pass\n", encoding="utf-8"
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE py marker\ndef test_py():\n    pass\n", encoding="utf-8"
     )
     (tests_dir / "test_js.js").write_text(
-        "// AC-FR0020-01@v0.4 TRACKS-TRACE js marker\n"
-        "function testJs() {}\n", encoding="utf-8"
+        "// AC-FR0020-01@v0.4 TRACKS-TRACE js marker\nfunction testJs() {}\n", encoding="utf-8"
     )
     (tests_dir / "test_ts.ts").write_text(
-        "// AC-FR0030-01@v0.4 TRACKS-TRACE ts marker\n"
-        "function testTs(): void {}\n", encoding="utf-8"
+        "// AC-FR0030-01@v0.4 TRACKS-TRACE ts marker\nfunction testTs(): void {}\n",
+        encoding="utf-8",
     )
     markers, has_files = _scan_test_markers(tests_dir)
     assert "AC-FR0010-01" in markers
@@ -313,8 +313,7 @@ def test_scan_whitelist_skip_unknown_suffixes(tmp_path):
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_real.py").write_text(
-        "# AC-FR0010-01@v0.4 TRACKS-TRACE\n"
-        "def test_real():\n    pass\n", encoding="utf-8"
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE\ndef test_real():\n    pass\n", encoding="utf-8"
     )
     (tests_dir / "notes.txt").write_text(
         "# AC-FR0999-01@v0.4 TRACKS-TRACE txt file not scanned\n", encoding="utf-8"
@@ -335,14 +334,14 @@ def test_scan_empty_tests_dir_warning(tmp_path):
     with warning and zero hard errors (does not falsely report all ACs
     as unbound)."""
     from tracks.checks.trace import check_trace_full_file
+
     vdir = tmp_path / ".tracks" / "projects" / "v0.4"
     vdir.mkdir(parents=True)
-    (vdir / "story.md").write_text(
-        "### BS-01 X\n\n- 来源: [3.1]\n", encoding="utf-8")
-    (vdir / "spec.md").write_text(
-        "### FR-0010 X\n\n- **来源**：BS-01\n\nD.\n", encoding="utf-8")
+    (vdir / "story.md").write_text("### BS-01 X\n\n- 来源: [3.1]\n", encoding="utf-8")
+    (vdir / "spec.md").write_text("### FR-0010 X\n\n- **来源**：BS-01\n\nD.\n", encoding="utf-8")
     (vdir / "acceptance.md").write_text(
-        "## FR-0010 X\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8")
+        "## FR-0010 X\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8"
+    )
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
     # Only a .txt file -- not whitelisted

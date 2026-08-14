@@ -1,4 +1,5 @@
 """Markdown + YAML-frontmatter helpers shared by executor and FakeAgent."""
+
 from __future__ import annotations
 
 import hashlib

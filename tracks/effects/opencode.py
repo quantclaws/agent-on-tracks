@@ -14,6 +14,7 @@ findings — at least one open discussion thread the reviewer initiated, live
 run042). Failures map to IF-003 §1a FailureClass. The agent's stdout JSON is
 NEVER the product; the controlled target diff is.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -35,9 +36,15 @@ from tracks.effects.devon_evidence import extract_devon_evidence
 from tracks.project import COMMENTABLE_DOCS, layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 
-AGENT_NAME = {"scribe": "Scribe", "sage": "Sage", "lex": "Lex",
-              "archer": "Archer", "prism": "Prism", "shield": "Shield",
-              "devon": "Devon"}
+AGENT_NAME = {
+    "scribe": "Scribe",
+    "sage": "Sage",
+    "lex": "Lex",
+    "archer": "Archer",
+    "prism": "Prism",
+    "shield": "Shield",
+    "devon": "Devon",
+}
 
 _SECRET_VALUE = re.compile(
     r"(?i)((?:authorization|api[_ -]?key|access[_ -]?token|secret|password)"
@@ -59,8 +66,10 @@ def redact(text: str) -> str:
     # Providers sometimes print a raw secret without its environment-variable
     # name. Only replace long values from explicitly secret-shaped variables.
     for name, value in os.environ.items():
-        if value and len(value) >= 8 and re.search(
-            r"(?i)(?:API_KEY|TOKEN|SECRET|PASSWORD|AUTH)", name
+        if (
+            value
+            and len(value) >= 8
+            and re.search(r"(?i)(?:API_KEY|TOKEN|SECRET|PASSWORD|AUTH)", name)
         ):
             text = text.replace(value, "[REDACTED]")
     return text
@@ -69,8 +78,14 @@ def redact(text: str) -> str:
 class OpencodeError(Exception):
     """A classified backend failure (failure_class per IF-003 §1a)."""
 
-    def __init__(self, failure_class: str, message: str,
-                 exit_code: int | None = None, stderr: str = "", stdout: str = ""):
+    def __init__(
+        self,
+        failure_class: str,
+        message: str,
+        exit_code: int | None = None,
+        stderr: str = "",
+        stdout: str = "",
+    ):
         super().__init__(message)
         self.failure_class = failure_class
         self.exit_code = exit_code
@@ -81,8 +96,7 @@ class OpencodeError(Exception):
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
 
-    def __init__(self, repo: Path, version: str, model: str | None = None,
-                 debug: bool = False):
+    def __init__(self, repo: Path, version: str, model: str | None = None, debug: bool = False):
         self.repo = Path(repo)
         self.version = version
         # Model resolution is two-layer per dispatch (spec §3.1, ARCH §4a):
@@ -95,8 +109,14 @@ class OpencodeBackend:
 
     # -- AgentBackend -------------------------------------------------------
 
-    def act(self, role: str, substate: str, doc: str | None,  # pylint: disable=too-many-locals
-             doc_path: Path | None, assignment: dict | None = None) -> dict:
+    def act(
+        self,
+        role: str,
+        substate: str,
+        doc: str | None,  # pylint: disable=too-many-locals
+        doc_path: Path | None,
+        assignment: dict | None = None,
+    ) -> dict:
         name = AGENT_NAME.get(role)
         prompt = self._prompt(role, substate, doc, doc_path, assignment)
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
@@ -105,9 +125,10 @@ class OpencodeBackend:
 
         doc_paths = self._target_paths(doc_path, assignment)
         if role == "devon":
-            doc_paths = [self.repo / path for path in
-                         (assignment or {}).get("manifest", {}).get(
-                             "allowed_paths", [])]
+            doc_paths = [
+                self.repo / path
+                for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
+            ]
         cleanup_infos: list = []
         proc = None
         reviewer_assignment = substate.endswith("_REVIEW")
@@ -120,33 +141,55 @@ class OpencodeBackend:
             # additionally bounded by their Scaffold 宣言, see the audit
             # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
-            allowed = self._allowed_paths(doc_paths, agent_dest, role,
-                                          substate, assignment)
+            allowed = self._allowed_paths(doc_paths, agent_dest, role, substate, assignment)
             auditor = Auditor(self.repo, allowed=allowed)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
             # File-granular baseline for the batch B scaffold subset rule: a
             # directory-level status entry present here must not mask files the
             # agent creates inside it during the run.
-            scaffold_baseline = (auditor.file_level(baseline)
-                                 if author and len(doc_paths) > 1 else None)
+            scaffold_baseline = (
+                auditor.file_level(baseline) if author and len(doc_paths) > 1 else None
+            )
             proc = self._run(name, prompt)
             self._check_json(proc)
             manifest_info, manifest_error = self._manifest_for_dispatch(
-                role, substate, proc, prompt, console_input,
+                role,
+                substate,
+                proc,
+                prompt,
+                console_input,
             )
             if manifest_error is not None:
                 return manifest_error
             result = self._audited_result(
-                auditor, baseline, scaffold_baseline, proc, role, substate,
-                doc_paths, prompt, console_input, author, reviewer_assignment,
+                auditor,
+                baseline,
+                scaffold_baseline,
+                proc,
+                role,
+                substate,
+                doc_paths,
+                prompt,
+                console_input,
+                author,
+                reviewer_assignment,
             )
             return self._attach_dispatch_metadata(
-                result, role, substate, manifest_info, assignment,
+                result,
+                role,
+                substate,
+                manifest_info,
+                assignment,
             )
         except OpencodeError as exc:
             return self._opencode_error_result(
-                exc, proc, prompt, console_input, doc_paths, reviewer_assignment,
+                exc,
+                proc,
+                prompt,
+                console_input,
+                doc_paths,
+                reviewer_assignment,
             )
         except OSError as exc:
             return self._filesystem_error_result(exc, proc, prompt, console_input)
@@ -155,20 +198,25 @@ class OpencodeBackend:
                 self._cleanup_materialized(info)
 
     def _manifest_for_dispatch(
-        self, role: str, substate: str, proc: subprocess.CompletedProcess,
-        prompt: str, console_input: str | None,
+        self,
+        role: str,
+        substate: str,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> tuple[tuple[dict | None, str | None] | None, dict | None]:
         if role != "shield" or substate != "WRITE":
             return None, None
         manifest, commit_msg, error = self._extract_manifest(proc)
         if error is not None:
-            return None, self._manifest_malformed_result(
-                error, proc, prompt, console_input)
+            return None, self._manifest_malformed_result(error, proc, prompt, console_input)
         return (manifest, commit_msg), None
 
     @staticmethod
     def _attach_dispatch_metadata(
-        result: dict, role: str, substate: str,
+        result: dict,
+        role: str,
+        substate: str,
         manifest_info: tuple[dict | None, str | None] | None,
         assignment: dict | None,
     ) -> dict:
@@ -181,17 +229,25 @@ class OpencodeBackend:
         # FakeBackend lines 120-123).  Only Prism M-TEST PRISM_REVIEW
         # carries a criteria pack today.
         if role == "prism" and substate in (
-                "PRISM_REVIEW", "PRISM_PLAN", "PRISM_RED", "PRISM_FINAL",
-                "DIAGNOSE"):
+            "PRISM_REVIEW",
+            "PRISM_PLAN",
+            "PRISM_RED",
+            "PRISM_FINAL",
+            "DIAGNOSE",
+        ):
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result.setdefault("criteria_pack", dict(assigned_pack))
         return result
 
-    def _allowed_paths(self, doc_paths: list[Path], agent_dest: Path,
-                       role: str, substate: str,
-                       assignment: dict | None = None
-                       ) -> list[Path | str | None]:
+    def _allowed_paths(
+        self,
+        doc_paths: list[Path],
+        agent_dest: Path,
+        role: str,
+        substate: str,
+        assignment: dict | None = None,
+    ) -> list[Path | str | None]:
         """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest."""
         commentable = self._commentable_doc_paths(role)
         if role == "shield":
@@ -206,20 +262,22 @@ class OpencodeBackend:
             return [*commentable, agent_dest, *devon_dirs]
         return [*doc_paths, agent_dest, self.repo]
 
-    def _unknown_role_result(
-        self, role: str, prompt: str, console_input: str | None
-    ) -> dict:
+    def _unknown_role_result(self, role: str, prompt: str, console_input: str | None) -> dict:
         # Unknown role (no AGENT_NAME entry) has no opencode agent.
-        return {"status": "failed", "artifact_ref": None,
-                "self_report": f"no opencode agent for role {role!r}",
-                "failure_class": "provider_unavailable",
-                "agent_io": self._capture_io(
-                    None, prompt, console_input,
-                    stderr=f"no opencode agent for role {role!r}",
-                )}
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": f"no opencode agent for role {role!r}",
+            "failure_class": "provider_unavailable",
+            "agent_io": self._capture_io(
+                None,
+                prompt,
+                console_input,
+                stderr=f"no opencode agent for role {role!r}",
+            ),
+        }
 
-    def _target_paths(self, doc_path: Path | None,
-                      assignment: dict | None) -> list[Path]:
+    def _target_paths(self, doc_path: Path | None, assignment: dict | None) -> list[Path]:
         """Doc set of this dispatch: the explicit target doc, else the
         assignment's ``docs`` set resolved against the version dir (a multi-doc
         M-DESIGN DRAFT legitimately writes all three design docs, flow.md §8).
@@ -233,45 +291,86 @@ class OpencodeBackend:
         return [vdir / str(name) for name in docs]
 
     def _audited_result(
-        self, auditor: Auditor, baseline: set[str],
+        self,
+        auditor: Auditor,
+        baseline: set[str],
         scaffold_baseline: set[str] | None,
-        proc: subprocess.CompletedProcess, role: str, substate: str,
-        doc_paths: list[Path], prompt: str, console_input: str | None,
-        author_assignment: bool, reviewer_assignment: bool,
+        proc: subprocess.CompletedProcess,
+        role: str,
+        substate: str,
+        doc_paths: list[Path],
+        prompt: str,
+        console_input: str | None,
+        author_assignment: bool,
+        reviewer_assignment: bool,
     ) -> dict:
-        diff_ref = _capture_target_diffs(
-            auditor, doc_paths, substate, proc)
+        diff_ref = _capture_target_diffs(auditor, doc_paths, substate, proc)
         # Every dispatch gets ONE atomic audit/rollback decision (Blocker 2):
         # doc-delta + over-reach (+ batch B scaffold) checks run together; if
         # any fails, every agent-changed path is rolled back in one force pass.
         if role == "shield" and substate == "WRITE":
             guard = self._shield_write_audit(
-                auditor, baseline, doc_paths, diff_ref, proc, prompt,
+                auditor,
+                baseline,
+                doc_paths,
+                diff_ref,
+                proc,
+                prompt,
                 console_input,
             )
             if guard is not None:
                 return guard
-        elif (guard := self._non_shield_write_audit(
-                auditor, baseline, scaffold_baseline, doc_paths, role,
-                author_assignment, diff_ref, proc, prompt,
-                console_input)) is not None:
+        elif (
+            guard := self._non_shield_write_audit(
+                auditor,
+                baseline,
+                scaffold_baseline,
+                doc_paths,
+                role,
+                author_assignment,
+                diff_ref,
+                proc,
+                prompt,
+                console_input,
+            )
+        ) is not None:
             return guard
         audit = self._discussion_audit_result(
-            role, substate, doc_paths, diff_ref, proc, prompt, console_input,
+            role,
+            substate,
+            doc_paths,
+            diff_ref,
+            proc,
+            prompt,
+            console_input,
             reviewer_assignment,
         )
         if audit is not None:
             return audit
         return self._success_result(
-            AGENT_NAME[role], substate, doc_paths, diff_ref, proc, prompt,
-            console_input, author_assignment, reviewer_assignment,
+            AGENT_NAME[role],
+            substate,
+            doc_paths,
+            diff_ref,
+            proc,
+            prompt,
+            console_input,
+            author_assignment,
+            reviewer_assignment,
         )
 
     def _non_shield_write_audit(
-        self, auditor: Auditor, baseline: set[str],
-        scaffold_baseline: set[str] | None, doc_paths: list[Path], role: str,
-        author_assignment: bool, diff_ref: str | None,
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+        self,
+        auditor: Auditor,
+        baseline: set[str],
+        scaffold_baseline: set[str] | None,
+        doc_paths: list[Path],
+        role: str,
+        author_assignment: bool,
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> dict | None:
         """Atomic post-write audit for every non-Shield role (Shield WRITE
         parity, Blocker 2): the commentable-doc discussion-only check and the
@@ -287,36 +386,39 @@ class OpencodeBackend:
         so deletions and type swaps roll back."""
         agent_changed = auditor.agent_changed_paths(baseline)
         doc_offending = self._check_doc_deltas(
-            auditor, self._commentable_doc_paths(role), agent_changed)
+            auditor, self._commentable_doc_paths(role), agent_changed
+        )
         # ``_is_allowed`` only matches exact/prefix paths; repo-root trust
         # (``"."`` in the allowed set) must short-circuit to no over-reach,
         # mirroring Auditor.audit's FR-030 coarse-grain semantics.
         if "." in auditor.allowed:
             over_paths: list[str] = []
         else:
-            over_paths = sorted(
-                p for p in agent_changed if not auditor._is_allowed(p))
+            over_paths = sorted(p for p in agent_changed if not auditor._is_allowed(p))
         scaffold_offending = self._scaffold_offending(
-            auditor, scaffold_baseline, doc_paths, author_assignment)
+            auditor, scaffold_baseline, doc_paths, author_assignment
+        )
         if not (doc_offending or over_paths or scaffold_offending):
             return None
-        auditor.rollback_agent_changes(
-            baseline, new_changes=agent_changed, force=True)
+        auditor.rollback_agent_changes(baseline, new_changes=agent_changed, force=True)
         if scaffold_offending and not (doc_offending or over_paths):
             return self._undeclared_scaffold_result(
-                diff_ref, scaffold_offending, proc, prompt, console_input)
+                diff_ref, scaffold_offending, proc, prompt, console_input
+            )
         return self._overreach_result(
-            diff_ref, proc, prompt, console_input,
-            evidence=self._overreach_evidence(doc_offending, over_paths))
+            diff_ref,
+            proc,
+            prompt,
+            console_input,
+            evidence=self._overreach_evidence(doc_offending, over_paths),
+        )
 
     @staticmethod
-    def _overreach_evidence(doc_offending: list[str],
-                            over_paths: list[str]) -> str:
+    def _overreach_evidence(doc_offending: list[str], over_paths: list[str]) -> str:
         """Combined evidence string for a failed write audit."""
         parts: list[str] = []
         if doc_offending:
-            parts.append("non-discussion edit to "
-                         + ", ".join(sorted(doc_offending)))
+            parts.append("non-discussion edit to " + ", ".join(sorted(doc_offending)))
         if over_paths:
             parts.append("over-reach: " + ", ".join(over_paths))
         return "; ".join(parts)
@@ -331,52 +433,65 @@ class OpencodeBackend:
         return [vdir / d for d in cdocs]
 
     def _scaffold_offending(
-        self, auditor: Auditor, scaffold_baseline: set[str] | None,
-        doc_paths: list[Path], author_assignment: bool,
+        self,
+        auditor: Auditor,
+        scaffold_baseline: set[str] | None,
+        doc_paths: list[Path],
+        author_assignment: bool,
     ) -> list[str]:
         """batch B scaffold offending paths (M-DESIGN author only): every
         run-produced write outside the doc-set, ``.opencode/**`` and
         ``tests/ground_truth/**`` that the freshly-written architecture.md
         Scaffold 宣言 does not enumerate."""
-        if (scaffold_baseline is None or not author_assignment
-                or len(doc_paths) <= 1):
+        if scaffold_baseline is None or not author_assignment or len(doc_paths) <= 1:
             return []
         arch = next((p for p in doc_paths if p.name == "architecture.md"), None)
-        declared = (_scaffold_declared_paths(arch.read_text(encoding="utf-8"))
-                    if arch is not None and arch.exists() else set())
+        declared = (
+            _scaffold_declared_paths(arch.read_text(encoding="utf-8"))
+            if arch is not None and arch.exists()
+            else set()
+        )
         docset = {_rel(self.repo, path) for path in doc_paths}
-        new_files = (auditor.file_level(auditor.modified_files())
-                     - scaffold_baseline)
+        new_files = auditor.file_level(auditor.modified_files()) - scaffold_baseline
         return sorted(
-            path for path in new_files
+            path
+            for path in new_files
             if path not in docset
             and not path.startswith((_OPENCODE_PREFIX, _GROUND_TRUTH_PREFIX))
             and path not in declared
         )
 
     def _shield_write_audit(
-        self, auditor: Auditor, baseline: set[str], doc_paths: list[Path],
-        diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
+        self,
+        auditor: Auditor,
+        baseline: set[str],
+        doc_paths: list[Path],
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
         console_input: str | None,
     ) -> dict | None:
         """Shield WRITE atomic audit: doc-delta + over-reach; either fails = full rollback."""
         agent_changed = auditor.agent_changed_paths(baseline)
         doc_offending = self._check_doc_deltas(auditor, doc_paths, agent_changed)
-        over_paths = sorted(
-            p for p in agent_changed if not auditor._is_allowed(p))
+        over_paths = sorted(p for p in agent_changed if not auditor._is_allowed(p))
         if doc_offending or over_paths:
-            if over_paths and not doc_offending and adjudicate(
-                    self, "shield", over_paths):
+            if over_paths and not doc_offending and adjudicate(self, "shield", over_paths):
                 return None
-            auditor.rollback_agent_changes(
-                baseline, new_changes=agent_changed, force=True)
+            auditor.rollback_agent_changes(baseline, new_changes=agent_changed, force=True)
             return self._overreach_result(
-                diff_ref, proc, prompt, console_input,
-                evidence=self._overreach_evidence(doc_offending, over_paths))
+                diff_ref,
+                proc,
+                prompt,
+                console_input,
+                evidence=self._overreach_evidence(doc_offending, over_paths),
+            )
         return None
 
     def _check_doc_deltas(
-        self, auditor: Auditor, doc_paths: list[Path],
+        self,
+        auditor: Auditor,
+        doc_paths: list[Path],
         agent_changed: set[str],
     ) -> list[str]:
         """Return repo-relative paths of assignment docs whose post-agent delta
@@ -394,8 +509,10 @@ class OpencodeBackend:
           removing/replacing Human content fails.
         """
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=self.repo,
-            capture_output=True, text=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
         return [
             _rel(self.repo, doc)
@@ -404,7 +521,10 @@ class OpencodeBackend:
         ]
 
     def _doc_offending(
-        self, auditor: Auditor, doc_path: Path, agent_changed: set[str],
+        self,
+        auditor: Auditor,
+        doc_path: Path,
+        agent_changed: set[str],
         head: str,
     ) -> bool:
         """True if this assignment doc's post-agent delta is NOT a canonical
@@ -437,7 +557,10 @@ class OpencodeBackend:
         return not is_discussion_delta(snap, current)
 
     def _clean_doc_offending(
-        self, doc_path: Path, rel: str, head: str,
+        self,
+        doc_path: Path,
+        rel: str,
+        head: str,
     ) -> bool:
         """Clean at dispatch, now changed: HEAD is the correct base.  A doc
         new at HEAD (untracked) or whose delta is not discussion-only is
@@ -447,13 +570,18 @@ class OpencodeBackend:
         except OSError:
             return True
         head_bytes = _load_head_bytes(self.repo, rel, head)
-        return head_bytes is None or not is_discussion_delta(
-            head_bytes, current)
+        return head_bytes is None or not is_discussion_delta(head_bytes, current)
 
     def _discussion_audit_result(
-        self, role: str, substate: str, doc_paths: list[Path],
-        diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
-        console_input: str | None, reviewer_assignment: bool,
+        self,
+        role: str,
+        substate: str,
+        doc_paths: list[Path],
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+        reviewer_assignment: bool,
     ) -> dict | None:
         """Discussion-state audits (flow.md 不变量 6 / arch.md 永不信自述): the
         outcome is classified from the doc's discussion state, never the
@@ -466,7 +594,11 @@ class OpencodeBackend:
             offending = _unresolved_role_threads(doc_paths, role)
             if offending:
                 return self._unresolved_threads_result(
-                    diff_ref, offending, proc, prompt, console_input,
+                    diff_ref,
+                    offending,
+                    proc,
+                    prompt,
+                    console_input,
                 )
         if reviewer_assignment:
             # Reviewer contract (live run042): a REVISE verdict must anchor
@@ -478,75 +610,117 @@ class OpencodeBackend:
             ready, blockers = check_ready(_docset_text(doc_paths))
             if not ready and not _unresolved_role_threads(doc_paths, role):
                 return self._revise_without_findings_result(
-                    diff_ref, role, blockers, proc, prompt, console_input,
+                    diff_ref,
+                    role,
+                    blockers,
+                    proc,
+                    prompt,
+                    console_input,
                 )
         return None
 
     def _overreach_result(
-        self, diff_ref: str | None, proc: subprocess.CompletedProcess, prompt: str,
-        console_input: str | None, evidence: str,
+        self,
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+        evidence: str,
     ) -> dict:
-        return {"status": "failed", "artifact_ref": None,
-                "self_report": "over-reach detected; agent changes rolled back",
-                "diff_ref": diff_ref, "audit_evidence": evidence,
-                "failure_class": "over_reach",
-                "agent_io": self._capture_io(proc, prompt, console_input)}
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": "over-reach detected; agent changes rolled back",
+            "diff_ref": diff_ref,
+            "audit_evidence": evidence,
+            "failure_class": "over_reach",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _undeclared_scaffold_result(
-        self, diff_ref: str | None, offending: list[str],
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+        self,
+        diff_ref: str | None,
+        offending: list[str],
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> dict:
         paths = ", ".join(offending)
-        return {"status": "failed", "artifact_ref": None,
-                "self_report": f"undeclared scaffold writes: {paths}; "
-                               "agent changes rolled back",
-                "diff_ref": diff_ref,
-                "audit_evidence": f"undeclared_scaffold: {paths}",
-                "failure_class": "undeclared_scaffold",
-                "agent_io": self._capture_io(proc, prompt, console_input)}
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": f"undeclared scaffold writes: {paths}; agent changes rolled back",
+            "diff_ref": diff_ref,
+            "audit_evidence": f"undeclared_scaffold: {paths}",
+            "failure_class": "undeclared_scaffold",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _unresolved_threads_result(
-        self, diff_ref: str | None, offending: list[str],
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+        self,
+        diff_ref: str | None,
+        offending: list[str],
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> dict:
         threads = ", ".join(offending)
-        return {"status": "failed", "artifact_ref": None,
-                "self_report": f"author-initiated discussion thread(s) unresolved: {threads}",
-                "diff_ref": diff_ref,
-                "audit_evidence": f"unresolved_threads: {threads}",
-                "failure_class": "unresolved_threads",
-                "agent_io": self._capture_io(proc, prompt, console_input)}
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": f"author-initiated discussion thread(s) unresolved: {threads}",
+            "diff_ref": diff_ref,
+            "audit_evidence": f"unresolved_threads: {threads}",
+            "failure_class": "unresolved_threads",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _revise_without_findings_result(
-        self, diff_ref: str | None, role: str, blockers: tuple,
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
+        self,
+        diff_ref: str | None,
+        role: str,
+        blockers: tuple,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> dict:
         # No `verdict` key: a bare revise is not a produced verdict, so the
         # executor emits no verdict event and the machine's failed-outcome
         # retry path applies (attempt consumed, evidence into re-dispatch).
         threads = ", ".join(blockers)
-        return {"status": "failed", "artifact_ref": None,
-                "self_report": "revise verdict must anchor findings via `trac discuss "
-                               f"start`: open each blocking finding as a discussion "
-                               f"thread before returning revise (open: {threads})",
-                "diff_ref": diff_ref,
-                "audit_evidence": (f"revise_without_findings: verdict=revise, open "
-                                   f"thread(s) {threads}, none initiated by reviewer "
-                                   f"{AGENT_NAME[role]}"),
-                "failure_class": "revise_without_findings",
-                "agent_io": self._capture_io(proc, prompt, console_input)}
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": "revise verdict must anchor findings via `trac discuss "
+            f"start`: open each blocking finding as a discussion "
+            f"thread before returning revise (open: {threads})",
+            "diff_ref": diff_ref,
+            "audit_evidence": (
+                f"revise_without_findings: verdict=revise, open "
+                f"thread(s) {threads}, none initiated by reviewer "
+                f"{AGENT_NAME[role]}"
+            ),
+            "failure_class": "revise_without_findings",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _success_result(
-        self, name: str, substate: str, doc_paths: list[Path], diff_ref: str | None,
-        proc: subprocess.CompletedProcess, prompt: str, console_input: str | None,
-        author_assignment: bool, reviewer_assignment: bool,
+        self,
+        name: str,
+        substate: str,
+        doc_paths: list[Path],
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+        author_assignment: bool,
+        reviewer_assignment: bool,
     ) -> dict:
         artifact_ref = None
         if author_assignment and doc_paths:
             # Single target doc names the doc; a multi-doc assignment (the
             # M-DESIGN trio) names the version dir holding the whole set.
-            artifact_ref = (str(doc_paths[0].parent) if len(doc_paths) > 1
-                            else str(doc_paths[0]))
+            artifact_ref = str(doc_paths[0].parent) if len(doc_paths) > 1 else str(doc_paths[0])
         result = {
             "status": "done",
             "artifact_ref": artifact_ref,
@@ -555,16 +729,25 @@ class OpencodeBackend:
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
         if name == "Devon" and substate in ("RED", "GREEN", "REFACTOR"):
-            result.update(extract_devon_evidence(
-                proc, self._final_text_event, self._first_json_object,
-            ))
+            result.update(
+                extract_devon_evidence(
+                    proc,
+                    self._final_text_event,
+                    self._first_json_object,
+                )
+            )
         return self._enrich_discussion(
-            result, doc_paths, substate, reviewer_assignment,
+            result,
+            doc_paths,
+            substate,
+            reviewer_assignment,
         )
 
     @staticmethod
     def _enrich_discussion(
-        result: dict, doc_paths: list[Path], substate: str,
+        result: dict,
+        doc_paths: list[Path],
+        substate: str,
         reviewer_assignment: bool,
     ) -> dict:
         if reviewer_assignment or substate == "TRIAGE":
@@ -576,21 +759,38 @@ class OpencodeBackend:
         return result
 
     def _opencode_error_result(
-        self, exc: OpencodeError, proc: subprocess.CompletedProcess | None, prompt: str,
-        console_input: str | None, doc_paths: list[Path], reviewer_assignment: bool,
+        self,
+        exc: OpencodeError,
+        proc: subprocess.CompletedProcess | None,
+        prompt: str,
+        console_input: str | None,
+        doc_paths: list[Path],
+        reviewer_assignment: bool,
     ) -> dict:
-        result = {"status": "failed", "artifact_ref": None,
-                  "self_report": redact(str(exc)), "failure_class": exc.failure_class}
+        result = {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": redact(str(exc)),
+            "failure_class": exc.failure_class,
+        }
         result["agent_io"] = self._capture_io(
-            proc, prompt, console_input, stdout=exc.stdout, stderr=exc.stderr,
+            proc,
+            prompt,
+            console_input,
+            stdout=exc.stdout,
+            stderr=exc.stderr,
         )
         return self._enrich_failure_discussion(
-            result, doc_paths, reviewer_assignment,
+            result,
+            doc_paths,
+            reviewer_assignment,
         )
 
     @staticmethod
     def _enrich_failure_discussion(
-        result: dict, doc_paths: list[Path], reviewer_assignment: bool,
+        result: dict,
+        doc_paths: list[Path],
+        reviewer_assignment: bool,
     ) -> dict:
         if reviewer_assignment and doc_paths:
             text = _docset_text(doc_paths)
@@ -599,14 +799,22 @@ class OpencodeBackend:
         return result
 
     def _filesystem_error_result(
-        self, exc: OSError, proc: subprocess.CompletedProcess | None, prompt: str,
+        self,
+        exc: OSError,
+        proc: subprocess.CompletedProcess | None,
+        prompt: str,
         console_input: str | None,
     ) -> dict:
         return {
-            "status": "failed", "artifact_ref": None,
-            "self_report": redact(str(exc)), "failure_class": "filesystem",
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": redact(str(exc)),
+            "failure_class": "filesystem",
             "agent_io": self._capture_io(
-                proc, prompt, console_input, stderr=str(exc),
+                proc,
+                prompt,
+                console_input,
+                stderr=str(exc),
             ),
         }
 
@@ -617,9 +825,13 @@ class OpencodeBackend:
     # -- materialize / cleanup (ARCH §4c) -----------------------------------
 
     @staticmethod
-    def _capture_io(proc: subprocess.CompletedProcess | None, prompt: str = "",
-                    console_input: str | None = None, stdout: str = "",
-                    stderr: str = "") -> dict:
+    def _capture_io(
+        proc: subprocess.CompletedProcess | None,
+        prompt: str = "",
+        console_input: str | None = None,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> dict:
         if proc is not None:
             stdout = proc.stdout or ""
             stderr = proc.stderr or ""
@@ -641,8 +853,7 @@ class OpencodeBackend:
         file so Human's agent is never silently clobbered (restored on cleanup)."""
         src = self._canonical / f"{name}.md"
         if not src.exists():
-            raise OpencodeError("opencode_missing",
-                                f"canonical prompt not found: {src}")
+            raise OpencodeError("opencode_missing", f"canonical prompt not found: {src}")
         dest_dir = self.repo / ".opencode" / "agents"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{name}.md"
@@ -652,8 +863,7 @@ class OpencodeBackend:
         dest.write_bytes(src.read_bytes())
         return info
 
-    def _materialize_skills(self, assignment: dict | None,
-                            cleanup_infos: list) -> None:
+    def _materialize_skills(self, assignment: dict | None, cleanup_infos: list) -> None:
         """Materialize every skill of the assignment (batch B: ``skills`` list,
         backward compatible with the single ``skill`` string); each materialized
         skill registers for cleanup the moment it is written (ARCH §4c)."""
@@ -675,8 +885,7 @@ class OpencodeBackend:
         dest.write_bytes(src.read_bytes())
         return info
 
-    def _materialize_templates(self, assignment: dict | None,
-                               cleanup_infos: list) -> None:
+    def _materialize_templates(self, assignment: dict | None, cleanup_infos: list) -> None:
         """Materialize the assignment's canonical document templates into the
         host repo (live run043: a host repo has no tracks/templates/, so the
         templates travel with the dispatch exactly like the agent definition
@@ -692,8 +901,7 @@ class OpencodeBackend:
         (parity with a missing canonical prompt), never a silent skip."""
         src = templating.template_path(kind)
         if not src.exists():
-            raise OpencodeError("opencode_missing",
-                                f"canonical template not found: {src}")
+            raise OpencodeError("opencode_missing", f"canonical template not found: {src}")
         dest_dir = self.repo / ".opencode" / "templates"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{kind}.md"
@@ -723,8 +931,18 @@ class OpencodeBackend:
         return self.model
 
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
-        cmd = ["opencode", "run", "--agent", name, "--format", "json",
-               "--dir", str(self.repo), "--auto", prompt]
+        cmd = [
+            "opencode",
+            "run",
+            "--agent",
+            name,
+            "--format",
+            "json",
+            "--dir",
+            str(self.repo),
+            "--auto",
+            prompt,
+        ]
         # opencode-logger plugin defaults to <repo>/logs/opencode; redirect
         # it under .opencode/logs so the repo root stays clean.
         env = {**os.environ, "OPENCODE_LOGGER_DIR": ".opencode/logs"}
@@ -761,8 +979,7 @@ class OpencodeBackend:
         except FileNotFoundError as err:
             if log_fh:
                 log_fh.close()
-            raise OpencodeError("opencode_missing",
-                                "opencode executable not found") from err
+            raise OpencodeError("opencode_missing", "opencode executable not found") from err
         # No production timeout: the Runtime Agent runs to completion and is
         # monitored via its output, never killed for elapsed time (prior
         # commit ddd2f71 lived only on a deleted release branch). Operator
@@ -791,6 +1008,7 @@ class OpencodeBackend:
     def _debug_log_path(self, name: str) -> Path:
         """Debug log file: .tracks/runtime/log/<agent>-<timestamp>.log"""
         from datetime import datetime, timezone
+
         home = paths.tracks_home(self.repo)
         log_dir = home / "runtime" / "log"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -800,8 +1018,7 @@ class OpencodeBackend:
     @staticmethod
     def _kill_group(pid: int) -> None:
         # start_new_session=True -> the child leads its own process group.
-        with contextlib.suppress(ProcessLookupError, PermissionError, TypeError,
-                                 OSError):
+        with contextlib.suppress(ProcessLookupError, PermissionError, TypeError, OSError):
             os.killpg(pid, signal.SIGKILL)
 
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
@@ -810,31 +1027,56 @@ class OpencodeBackend:
             out = (proc.stdout or "").strip()
             # opencode may hang after output; accept valid stdout, fall through
             if not (out and self._parses_json(out)):
-                raise OpencodeError("signal", f"killed by signal {-proc.returncode}",
-                                    exit_code=proc.returncode, stderr=proc.stderr)
+                raise OpencodeError(
+                    "signal",
+                    f"killed by signal {-proc.returncode}",
+                    exit_code=proc.returncode,
+                    stderr=proc.stderr,
+                )
         if proc.returncode != 0:
             if self._looks_provider_error(proc.stderr):
-                raise OpencodeError("provider_unavailable",
-                                    "provider/model/credentials unavailable",
-                                    exit_code=proc.returncode, stderr=proc.stderr)
-            raise OpencodeError("non_zero_exit",
-                                f"opencode exited {proc.returncode}",
-                                exit_code=proc.returncode, stderr=proc.stderr)
+                raise OpencodeError(
+                    "provider_unavailable",
+                    "provider/model/credentials unavailable",
+                    exit_code=proc.returncode,
+                    stderr=proc.stderr,
+                )
+            raise OpencodeError(
+                "non_zero_exit",
+                f"opencode exited {proc.returncode}",
+                exit_code=proc.returncode,
+                stderr=proc.stderr,
+            )
         # exit 0: stdout must be parseable JSON (events); truncation => failure.
         out = (proc.stdout or "").strip()
         if out and not self._parses_json(out):
-            raise OpencodeError("json_truncated", "stdout JSON stream unparseable",
-                                exit_code=0, stderr=proc.stderr)
+            raise OpencodeError(
+                "json_truncated", "stdout JSON stream unparseable", exit_code=0, stderr=proc.stderr
+            )
 
     @staticmethod
     def _looks_provider_error(stderr: str) -> bool:
         low = (stderr or "").lower()
-        return any(k in low for k in
-                   ("provider", "model", "credential", "unauthorized", "api key",
-                    "authentication", "401", "403",
-                    # quota / rate-limit signals (e.g. litellm code 4008)
-                    "quota", "exceeded", "rate_limit", "rate limit",
-                    "429", "4008"))
+        return any(
+            k in low
+            for k in (
+                "provider",
+                "model",
+                "credential",
+                "unauthorized",
+                "api key",
+                "authentication",
+                "401",
+                "403",
+                # quota / rate-limit signals (e.g. litellm code 4008)
+                "quota",
+                "exceeded",
+                "rate_limit",
+                "rate limit",
+                "429",
+                "4008",
+            )
+        )
 
     @staticmethod
     def _parses_json(out: str) -> bool:
@@ -890,9 +1132,7 @@ class OpencodeBackend:
 
         commit_msg = payload.get("suggested_commit_message")
         if not isinstance(commit_msg, str) or not commit_msg.strip():
-            return None, None, (
-                "suggested_commit_message must be a non-empty string"
-            )
+            return None, None, ("suggested_commit_message must be a non-empty string")
         return {"include": include}, commit_msg, None
 
     @staticmethod
@@ -981,20 +1221,17 @@ class OpencodeBackend:
         for field in ("path", "kind", "role"):
             value = item.get(field)
             if not isinstance(value, str) or not value.strip():
-                return (
-                    f"artifact_manifest.include[{index}].{field} "
-                    "must be a non-empty string"
-                )
+                return f"artifact_manifest.include[{index}].{field} must be a non-empty string"
         if Path(item["path"]).is_absolute():
-            return (
-                f"artifact_manifest.include[{index}].path "
-                "must be repo-relative"
-            )
+            return f"artifact_manifest.include[{index}].path must be repo-relative"
         return None
 
     def _manifest_malformed_result(
-        self, error: str, proc: subprocess.CompletedProcess,
-        prompt: str, console_input: str | None,
+        self,
+        error: str,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
     ) -> dict:
         # When opencode exits 0 but the manifest is malformed, check whether
         # the root cause is a provider error (e.g. quota exceeded mid-stream).
@@ -1004,14 +1241,16 @@ class OpencodeBackend:
         stderr = proc.stderr or ""
         if self._looks_provider_error(stderr):
             return {
-                "status": "failed", "artifact_ref": None,
+                "status": "failed",
+                "artifact_ref": None,
                 "self_report": f"provider unavailable: {error}",
                 "failure_class": "provider_unavailable",
                 "audit_evidence": f"provider_unavailable: {error}",
                 "agent_io": self._capture_io(proc, prompt, console_input),
             }
         return {
-            "status": "failed", "artifact_ref": None,
+            "status": "failed",
+            "artifact_ref": None,
             "self_report": f"manifest malformed: {error}",
             "failure_class": "manifest_malformed",
             "audit_evidence": f"manifest_malformed: {error}",
@@ -1020,8 +1259,14 @@ class OpencodeBackend:
 
     # -- prompt construction ------------------------------------------------
 
-    def _prompt(self, role: str, substate: str, doc: str | None,
-                doc_path: Path | None, assignment: dict | None = None) -> str:
+    def _prompt(
+        self,
+        role: str,
+        substate: str,
+        doc: str | None,
+        doc_path: Path | None,
+        assignment: dict | None = None,
+    ) -> str:
         docs = (assignment or {}).get("docs")
         if doc_path:
             target = str(doc_path)
@@ -1036,8 +1281,7 @@ class OpencodeBackend:
         return (
             f"Execute the Runtime assignment for role={role}, substate={substate}, "
             f"target={target}. Follow the materialized opencode agent definition for your "
-            "role. Complete only this assignment, then stop."
-            + assignment_context
+            "role. Complete only this assignment, then stop." + assignment_context
         )
 
     def _assignment_context(self, assignment: dict | None) -> str:
@@ -1086,9 +1330,9 @@ def _text(value) -> str:
     return value or ""
 
 
-def _capture_target_diffs(auditor: Auditor, doc_paths: list[Path],
-                          substate: str,
-                          proc: subprocess.CompletedProcess) -> str | None:
+def _capture_target_diffs(
+    auditor: Auditor, doc_paths: list[Path], substate: str, proc: subprocess.CompletedProcess
+) -> str | None:
     """Capture the controlled diff of every target doc (the authoritative
     product) BEFORE any audit rollback can touch it, then enforce the
     author-must-produce contract on the captured set."""
@@ -1101,7 +1345,8 @@ def _load_head_bytes(repo: Path, rel: str, head: str) -> bytes | None:
     """Load the content of ``rel`` as of ``head`` from git, or None if the
     path is not tracked at that commit (new/untracked file)."""
     proc = subprocess.run(
-        ["git", "show", f"{head}:{rel}"], cwd=repo,
+        ["git", "show", f"{head}:{rel}"],
+        cwd=repo,
         capture_output=True,
     )
     if proc.returncode != 0:
@@ -1109,9 +1354,9 @@ def _load_head_bytes(repo: Path, rel: str, head: str) -> bytes | None:
     return proc.stdout
 
 
-def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
-                         substate: str,
-                         proc: subprocess.CompletedProcess) -> None:
+def _require_target_diff(
+    doc_paths: list[Path], diffs: list[str | None], substate: str, proc: subprocess.CompletedProcess
+) -> None:
     """An author dispatch must leave a controlled diff; exit 0 with no product
     is classified, never trusted.
 
@@ -1129,17 +1374,19 @@ def _require_target_diff(doc_paths: list[Path], diffs: list[str | None],
             raise OpencodeError(
                 "no_target_diff",
                 "exit 0 but the target doc-set has no diff",
-                exit_code=0, stderr=proc.stderr)
+                exit_code=0,
+                stderr=proc.stderr,
+            )
         return
-    missing = [str(path)
-               for path, diff in zip(doc_paths, diffs, strict=True)
-               if diff is None]
+    missing = [str(path) for path, diff in zip(doc_paths, diffs, strict=True) if diff is None]
     if not doc_paths or missing:
         raise OpencodeError(
             "no_target_diff",
             "exit 0 but the target doc-set has no diff"
             + (f": {', '.join(missing)}" if missing else ""),
-            exit_code=0, stderr=proc.stderr)
+            exit_code=0,
+            stderr=proc.stderr,
+        )
 
 
 def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
@@ -1168,8 +1415,7 @@ def _unresolved_role_threads(doc_paths: list[Path], role: str) -> list[str]:
 def _docset_text(doc_paths: list[Path]) -> str:
     """Discussion text of a target doc-set: one doc reads as itself (the
     pre-multi-doc behavior); a set concatenates every existing doc."""
-    texts = [path.read_text(encoding="utf-8")
-             for path in doc_paths if path.exists()]
+    texts = [path.read_text(encoding="utf-8") for path in doc_paths if path.exists()]
     return "\n\n".join(texts)
 
 

@@ -43,8 +43,6 @@ def test_three_worktree_composition_and_cleanup(trac, event_log, host_repo):
     assert all(
         not path.startswith(("tests/integration/", "tests/e2e/"))
         for event in outcomes
-        for path in event["payload"].get("audit_evidence", {}).get(
-            "changed_paths", []
-        )
+        for path in event["payload"].get("audit_evidence", {}).get("changed_paths", [])
     )
     assert _worktree_paths(host_repo) == original

@@ -8,6 +8,7 @@ its own `.coverage.*` data file (to the absolute COVERAGE_FILE base), later
 merged by `coverage combine`. This is a no-op unless COVERAGE_PROCESS_START is
 set, so plain `pytest` runs are unaffected.
 """
+
 import os
 
 if os.environ.get("COVERAGE_PROCESS_START"):

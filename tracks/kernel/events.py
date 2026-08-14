@@ -4,6 +4,7 @@ v0.1 keeps `payload`/`params` as plain dicts (interfaces §1 defers the per-even
 discriminated union). The event `type` and command `kind` are the closed set
 defined in interfaces §3/§4.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

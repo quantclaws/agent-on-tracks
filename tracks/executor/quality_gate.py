@@ -6,6 +6,7 @@ checks + quality gate layering (production: full checks; test: R0801+C0302
 only). Feedback desensitization: int/e2e failures return classification
 diagnosis only, not assertion originals.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -53,12 +54,20 @@ def _resolve_argv0(argv: list[str], cwd: str) -> list[str]:
 _PYTHON = ".venv/bin/python"
 
 _COLLECTION_KEYWORDS = (
-    "ImportError", "ModuleNotFoundError", "SyntaxError",
-    "FixtureLookupError", "collection error", "ERROR collecting",
+    "ImportError",
+    "ModuleNotFoundError",
+    "SyntaxError",
+    "FixtureLookupError",
+    "collection error",
+    "ERROR collecting",
 )
 _INFRA_KEYWORDS = (
-    "command not found", "No module named", "Permission denied",
-    "FileNotFoundError", "No such file", "OSError",
+    "command not found",
+    "No module named",
+    "Permission denied",
+    "FileNotFoundError",
+    "No such file",
+    "OSError",
     "not recognized as an internal or external command",
     "fatal: not a git repository",
 )
@@ -164,7 +173,10 @@ def run_test_checks(
 
 
 def classify_failure(
-    check_name: str, returncode: int, stdout: str, stderr: str,
+    check_name: str,
+    returncode: int,
+    stdout: str,
+    stderr: str,
 ) -> str:
     """Deterministic failure classification for M-IMPL gate routing.
 
@@ -191,7 +203,9 @@ def classify_failure(
 
 
 def execute_gate_command(
-    command: str, cwd: str, check_name: str = "unit-tests",
+    command: str,
+    cwd: str,
+    check_name: str = "unit-tests",
 ) -> GateObservation:
     """Execute a gate command as a real subprocess (shell=False), resolve
     .venv/bin/python if needed, and return an immutable GateObservation."""
@@ -199,7 +213,11 @@ def execute_gate_command(
     argv = _resolve_argv0(argv, cwd)
     try:
         proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True, text=True, check=False,
+            argv,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         exit_code = proc.returncode
         stdout = proc.stdout
@@ -222,10 +240,18 @@ def execute_gate_command(
 def observation_evidence(obs: GateObservation) -> str:
     """Serialize one observed execution into the Runtime evidence JSON string."""
     return json.dumps(
-        {"argv": list(obs.argv), "cwd": obs.cwd,
-         "exit_code": obs.exit_code, "classification": obs.classification,
-         "stdout_sha": obs.stdout_sha, "stderr_sha": obs.stderr_sha},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        {
+            "argv": list(obs.argv),
+            "cwd": obs.cwd,
+            "exit_code": obs.exit_code,
+            "classification": obs.classification,
+            "stdout_sha": obs.stdout_sha,
+            "stderr_sha": obs.stderr_sha,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _match_keywords(text_lower: str, keywords: tuple[str, ...]) -> bool:
@@ -259,19 +285,23 @@ def _layer_for(prod: list[str], test: list[str]) -> Literal["production", "test"
 def _production_commands(paths: list[str]) -> list[tuple[str, list[str]]]:
     return [
         ("ruff", [_PYTHON, "-m", "ruff", "check", *paths]),
-        ("flake8-CCR001", [_PYTHON, "-m", "flake8", "--select=CCR001",
-                           "--max-cognitive-complexity=15", *paths]),
-        ("pylint-R0801+C0302+R0915+R0914",
-         [_PYTHON, "-m", "pylint", "--disable=all",
-          "--enable=R0801,C0302,R0915,R0914", *paths]),
+        (
+            "flake8-CCR001",
+            [_PYTHON, "-m", "flake8", "--select=CCR001", "--max-cognitive-complexity=15", *paths],
+        ),
+        (
+            "pylint-R0801+C0302+R0915+R0914",
+            [_PYTHON, "-m", "pylint", "--disable=all", "--enable=R0801,C0302,R0915,R0914", *paths],
+        ),
     ]
 
 
 def _test_commands(paths: list[str]) -> list[tuple[str, list[str]]]:
     return [
-        ("pylint-R0801+C0302",
-         [_PYTHON, "-m", "pylint", "--disable=all",
-          "--enable=R0801,C0302", *paths]),
+        (
+            "pylint-R0801+C0302",
+            [_PYTHON, "-m", "pylint", "--disable=all", "--enable=R0801,C0302", *paths],
+        ),
     ]
 
 
@@ -295,13 +325,20 @@ def _extract_test_command(project_toml: dict, repo: str) -> tuple[list[str], str
 
 
 def _run_check(
-    repo: str, name: str, argv: list[str], cwd: str | None = None,
+    repo: str,
+    name: str,
+    argv: list[str],
+    cwd: str | None = None,
 ) -> tuple[str, int, str, str]:
     work_dir = cwd or repo
     argv = _resolve_argv0(list(argv), work_dir)
     try:
         proc = subprocess.run(
-            argv, cwd=work_dir, capture_output=True, text=True, check=False,
+            argv,
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         return (name, proc.returncode, proc.stdout, proc.stderr)
     except (OSError, FileNotFoundError) as exc:

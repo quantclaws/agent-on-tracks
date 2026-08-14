@@ -9,6 +9,7 @@ participate, so staleness is replayable from content alone (D-02/D-03).
 `m_impl_baseline_digest` extends the trio to cover design docs, project
 contract, approval/issue evidence, and frozen test paths (flow.md §10 BASELINE).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -56,6 +57,7 @@ def m_impl_baseline_digest(
     for label, doc in (*_TRIO, *_DESIGN_DOCS):
         parts.append(f"{label}:{_doc_digest(vdir / doc)}")
     from tracks import paths as _paths
+
     contract_path = _paths.project_toml_path(_paths.tracks_home(repo))
     parts.append(f"contract:{_file_digest(contract_path)}")
     parts.append(f"approval:{approval_digest or 'missing'}")
@@ -174,10 +176,15 @@ def _frozen_paths_digest(repo: Path, paths: list[str]) -> str:
         if not path.is_dir():
             entries.append(f"{raw}:missing")
             continue
-        files = [candidate for candidate in sorted(path.rglob("*"))
-                 if candidate.is_file() and not any(
-                     part in {"__pycache__", ".pytest_cache", ".mypy_cache"}
-                     for part in candidate.relative_to(path).parts)]
+        files = [
+            candidate
+            for candidate in sorted(path.rglob("*"))
+            if candidate.is_file()
+            and not any(
+                part in {"__pycache__", ".pytest_cache", ".mypy_cache"}
+                for part in candidate.relative_to(path).parts
+            )
+        ]
         if not files:
             entries.append(f"{raw}:empty")
             continue
@@ -192,5 +199,4 @@ def _canonical_evidence(value: object) -> str:
         return ""
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=False, sort_keys=True,
-                      separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

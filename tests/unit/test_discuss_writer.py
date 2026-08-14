@@ -1,4 +1,5 @@
 """inline-discussion writer (FR-090/FR-110, AC-FR0050-05, AC-FR0090-01/02, AC-FR0110-01/02/03)."""
+
 import pytest
 
 from tracks.discuss.locate import comment_token, token_for
@@ -19,6 +20,7 @@ def _tok(text, idx=0):
 
 # -- start (FR-110 position, AC-FR0050-05 canonical) -------------------------------
 
+
 def test_start_inserts_after_anchor_blank_line():
     # AC-FR0110-01
     text = "# Heading\n\nSome content.\n"
@@ -33,6 +35,7 @@ def test_start_canonical_open_unmarked():
 
 
 # -- reply (FR-110 position, AC-FR0110-02) -----------------------------------------
+
 
 def test_reply_appends_to_thread():
     text = "# H\n\n> **Aaron:** root\n"
@@ -49,6 +52,7 @@ def test_reply_blank_line_before_next_blockquote():
 
 # -- edit (FR-110, AC-FR0110-03 author-only) ---------------------------------------
 
+
 def test_edit_author_only():
     text = "# H\n\n> **Aaron:** root\n"
     with pytest.raises(WriteError):
@@ -63,6 +67,7 @@ def test_edit_replaces_body():
 
 
 # -- set-status (FR-090, AC-FR0090-01/02) ----------------------------------------
+
 
 def test_set_status_resolved_requires_initiator():
     # AC-FR0090-01 (format-consistency rule)
@@ -92,6 +97,7 @@ def test_set_status_invalid():
 
 # -- fail closed (FR-070 freshness) -------------------------------------------
 
+
 def test_reply_stale_raises_locate_failure():
     orig = "# H\n\n> **Aaron:** comment"
     reordered = "# H\n\n> **Zed:** newfirst\n\n> **Aaron:** comment"
@@ -101,6 +107,7 @@ def test_reply_stale_raises_locate_failure():
 
 
 # -- nesting: reply to a specific comment (FR-050 depth = reply to whom) ------
+
 
 def _sage_token(text):
     t = parse_threads(text)[0]
@@ -120,8 +127,7 @@ def test_reply_to_comment_nests_under_it():
 def test_reply_to_root_appends_depth2():
     text = "# H\n\n> **Aaron:** root\n"
     t = parse_threads(text)[0]
-    out = reply(text, "T-001", token_for(t), "Sage", "reply",
-                reply_to=comment_token(t.root, ""))
+    out = reply(text, "T-001", token_for(t), "Sage", "reply", reply_to=comment_token(t.root, ""))
     assert ">> **Sage:** reply" in out  # depth 2 (root.depth + 1)
 
 
@@ -156,6 +162,7 @@ def test_reply_to_comment_before_prose():
 
 # -- edit a non-root comment (FR-110 depth>1, AC-FR0110-03 author-only) -------------
 
+
 def test_edit_reply_replaces_body():
     text = "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
     out = edit(text, "T-001", _tok(text), 2, "Sage", "updated request")
@@ -180,6 +187,7 @@ def test_edit_reply_missing_scans_past_blanks_and_content():
 
 
 # -- start: blank-line separation when the anchor has no trailing blank --------
+
 
 def test_start_anchor_at_eof_inserts_blank_before():
     # anchor paragraph ends the doc with no trailing blank -> _splice inserts a

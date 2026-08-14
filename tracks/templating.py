@@ -6,6 +6,7 @@ verbatim raw requirement in §1 原始输入, other placeholders preserved); the
 skeleton is NOT validated at creation — validation happens at agent outcome and
 at the review exit gate (FR-150).
 """
+
 from __future__ import annotations
 
 import re
@@ -15,8 +16,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 KNOWN_KINDS = ("story", "spec", "acceptance", "test-plan", "prd")
 
-_RAW_PLACEHOLDER = re.compile(
-    r"(## 1\. 原始输入\n\n)> \{用户原始输入，逐字记录，不修改或转述\}")
+_RAW_PLACEHOLDER = re.compile(r"(## 1\. 原始输入\n\n)> \{用户原始输入，逐字记录，不修改或转述\}")
 
 
 def template_path(kind: str) -> Path:

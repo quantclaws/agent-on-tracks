@@ -3,6 +3,7 @@
 Ground truth locked here so the live channel's directory-level over-reach fix
 (directory rollback via shutil.rmtree) cannot silently regress.
 """
+
 import os
 import shutil
 import subprocess
@@ -21,9 +22,7 @@ def _repo(tmp_path):
         subprocess.run(["git", *cmd], cwd=repo, check=True, capture_output=True)
     (repo / "target.md").write_text("base\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
     return repo
 
 
@@ -62,9 +61,7 @@ def test_tracked_over_reach_restored_from_head(tmp_path):
     other = repo / "other.md"
     other.write_text("base2\n", encoding="utf-8")
     subprocess.run(["git", "add", "other.md"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "other"], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "other"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[str(target)])
     baseline = auditor.baseline()
@@ -82,14 +79,11 @@ def test_doc_set_allowed_accepts_trio_and_rejects_outside_writes(tmp_path):
     repo = _repo(tmp_path)
     vdir = repo / ".tracks" / "projects" / "v0.3"
     vdir.mkdir(parents=True)
-    trio = [vdir / doc for doc in
-            ("architecture.md", "interfaces.md", "test-plan.md")]
+    trio = [vdir / doc for doc in ("architecture.md", "interfaces.md", "test-plan.md")]
     for path in trio:  # the trio already belongs to the version dir (like the
         path.write_text("# skeleton\n", encoding="utf-8")  # committed docs do)
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "trio"], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "trio"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[str(path) for path in trio])
     baseline = auditor.baseline()
@@ -128,10 +122,8 @@ def test_force_rollback_restores_predirty_symlink_without_following(tmp_path):
     repo = _repo(tmp_path)
     link = repo / "linked.md"
     os.symlink("committed-target", link)
-    subprocess.run(["git", "add", "linked.md"], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "link"], cwd=repo, check=True,
-                   capture_output=True)
+    subprocess.run(["git", "add", "linked.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "link"], cwd=repo, check=True, capture_output=True)
 
     link.unlink()
     os.symlink("../human-target", link)
@@ -167,9 +159,10 @@ def test_clean_host_two_allowed_nested_files_accepted(tmp_path):
     repo = _repo(tmp_path)
     # Shield scope (FR-0120 RP-01): the four test-asset directories, no
     # repo-root trust, no ``tests/`` parent in the allowed set.
-    allowed = [repo / d for d in
-               ("tests/integration", "tests/e2e",
-                "tests/assets", "tests/counterexamples")]
+    allowed = [
+        repo / d
+        for d in ("tests/integration", "tests/e2e", "tests/assets", "tests/counterexamples")
+    ]
     auditor = Auditor(repo, allowed=allowed)
     baseline = auditor.baseline()
     assert not any(p.startswith("tests") for p in baseline)  # clean host
@@ -190,14 +183,14 @@ def test_allowed_nested_file_plus_rogue_over_reach_rolled_back(tmp_path):
     removes only the rogue file (and the now-empty dir it alone occupied), never
     the allowed sibling file or its directory."""
     repo = _repo(tmp_path)
-    allowed = [repo / d for d in
-               ("tests/integration", "tests/e2e",
-                "tests/assets", "tests/counterexamples")]
+    allowed = [
+        repo / d
+        for d in ("tests/integration", "tests/e2e", "tests/assets", "tests/counterexamples")
+    ]
     auditor = Auditor(repo, allowed=allowed)
     baseline = auditor.baseline()
 
-    allowed_file = (repo / "tests" / "integration"
-                    / "test_code_stats_contract.py")
+    allowed_file = repo / "tests" / "integration" / "test_code_stats_contract.py"
     rogue = repo / "tests" / "rogue.py"
     allowed_file.parent.mkdir(parents=True)  # creates tests/ + tests/integration/
     rogue.parent.mkdir(parents=True, exist_ok=True)  # tests/ already exists
@@ -228,11 +221,11 @@ def test_nul_parsing_handles_renames_spaces_and_untracked_leaves(tmp_path):
     for path in (old, tracked):
         path.write_text("base\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True)
     # rename: old_name.txt -> renamed.txt
-    subprocess.run(["git", "mv", "old_name.txt", "renamed.txt"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["git", "mv", "old_name.txt", "renamed.txt"], cwd=repo, check=True, capture_output=True
+    )
     # modify a tracked file
     tracked.write_text("changed\n", encoding="utf-8")
     # untracked file with spaces in the name
@@ -246,11 +239,11 @@ def test_nul_parsing_handles_renames_spaces_and_untracked_leaves(tmp_path):
     auditor = Auditor(repo, allowed=[str(repo / "target.md")])
     files = auditor.modified_files()
 
-    assert "renamed.txt" in files          # rename: new path kept
-    assert "old_name.txt" not in files     # rename: old path skipped
-    assert "tracked.md" in files           # tracked modification
-    assert "with space.txt" in files       # spaces preserved (no C-quoting)
-    assert "newdir/leaf.py" in files       # untracked dir expanded to leaf
+    assert "renamed.txt" in files  # rename: new path kept
+    assert "old_name.txt" not in files  # rename: old path skipped
+    assert "tracked.md" in files  # tracked modification
+    assert "with space.txt" in files  # spaces preserved (no C-quoting)
+    assert "newdir/leaf.py" in files  # untracked dir expanded to leaf
     assert not any(p == "newdir/" or p == "newdir" for p in files)  # not collapsed
 
 
@@ -270,8 +263,7 @@ def test_nul_parsing_handles_renames_spaces_and_untracked_leaves(tmp_path):
 
 
 def _git_lsfiles(repo):
-    out = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True,
-                         text=True).stdout
+    out = subprocess.run(["git", "ls-files"], cwd=repo, capture_output=True, text=True).stdout
     return set(out.splitlines())
 
 
@@ -289,10 +281,8 @@ def test_rollback_one_child_of_ancestor_symlink_preserves_external(tmp_path):
     nested.mkdir()
     victim = nested / "victim"
     victim.write_text("original\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo, check=True, capture_output=True)
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -324,10 +314,8 @@ def test_rollback_ancestor_symlink_full_rollback_preserves_external(tmp_path):
     nested.mkdir()
     victim = nested / "victim"
     victim.write_text("original\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "nested"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[repo / "target.md"])
     baseline = auditor.baseline()  # clean - before agent changes
@@ -343,7 +331,8 @@ def test_rollback_ancestor_symlink_full_rollback_preserves_external(tmp_path):
 
     # Explicitly include both paths to test the sort + safety check together.
     rolled = auditor.rollback_agent_changes(
-        baseline, new_changes={"nested/victim", "nested"}, force=True)
+        baseline, new_changes={"nested/victim", "nested"}, force=True
+    )
 
     assert outside_victim.exists()
     assert outside_victim.read_bytes() == b"external bytes\n"
@@ -401,17 +390,14 @@ def test_rollback_predirty_ancestor_symlink_escape_fails_closed(tmp_path):
 
     nested = repo / "nested"
     os.symlink(outside, nested)  # pre-dirty ancestor symlink to external dir
-    subprocess.run(["git", "add", "nested"], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "link"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "nested"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "link"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[repo / "target.md"])
     baseline = auditor.baseline()
     # Agent "changes" nested/victim (behind the symlink).  The ancestor
     # nested itself is NOT in new_changes (agent did not touch it).
-    rolled = auditor.rollback_agent_changes(
-        baseline, new_changes={"nested/victim"}, force=True)
+    rolled = auditor.rollback_agent_changes(baseline, new_changes={"nested/victim"}, force=True)
 
     assert "nested/victim" not in rolled  # skipped (fail closed)
     assert outside_victim.exists()
@@ -432,8 +418,7 @@ def test_rollback_predirty_ancestor_symlink_escape_fails_closed(tmp_path):
 
 def _commit(repo, message="commit"):
     subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True,
-                   capture_output=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True)
 
 
 def test_rollback_regular_file_replaced_by_nonempty_dir(tmp_path):
@@ -470,8 +455,13 @@ def test_rollback_regular_file_replaced_by_nonempty_dir(tmp_path):
 
     rel = ".tracks/projects/v0.5/architecture.md"
     changed = auditor.agent_changed_paths(baseline)
-    assert {rel, f"{rel}/payload.md", f"{rel}/deep/child.md",
-            "tracks/impl/demo.py", "evil.tmp"} <= changed
+    assert {
+        rel,
+        f"{rel}/payload.md",
+        f"{rel}/deep/child.md",
+        "tracks/impl/demo.py",
+        "evil.tmp",
+    } <= changed
 
     rolled = auditor.rollback_agent_changes(baseline, changed, force=True)
 
@@ -482,11 +472,10 @@ def test_rollback_regular_file_replaced_by_nonempty_dir(tmp_path):
     assert not (repo / f"{rel}/payload.md").exists()
     assert not (repo / f"{rel}/deep/child.md").exists()
     assert not allowed.exists()  # allowed write rolled back
-    assert not evil.exists()     # over-reach write rolled back
+    assert not evil.exists()  # over-reach write rolled back
 
 
-def test_rollback_predirty_file_replaced_by_nonempty_dir_restores_human_bytes(
-        tmp_path):
+def test_rollback_predirty_file_replaced_by_nonempty_dir_restores_human_bytes(tmp_path):
     """Requirement 5: when Human pre-dirtied the commentable doc and the agent
     then swapped it for a non-empty directory tree, force rollback restores
     the pre-existing Human dirty bytes byte-identical - never erased to HEAD."""
@@ -549,10 +538,8 @@ def test_rollback_internal_ancestor_symlink_preserves_target(tmp_path):
     other.mkdir()
     other_victim = other / "victim"
     other_victim.write_text("other original\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[str(repo / "target.md")])
     baseline = auditor.baseline()  # clean host
@@ -591,17 +578,14 @@ def test_rollback_internal_ancestor_symlink_not_in_set_fails_closed(tmp_path):
     other_victim.write_text("other original\n", encoding="utf-8")
     nested = repo / "nested"
     os.symlink("other", nested)  # committed in-repo ancestor symlink
-    subprocess.run(["git", "add", "."], cwd=repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "seeds"], cwd=repo, check=True, capture_output=True)
 
     auditor = Auditor(repo, allowed=[str(repo / "target.md")])
     baseline = auditor.baseline()
     # Agent "changes" nested/victim (behind the internal symlink); the
     # ancestor nested is NOT in new_changes.
-    rolled = auditor.rollback_agent_changes(
-        baseline, new_changes={"nested/victim"}, force=True)
+    rolled = auditor.rollback_agent_changes(baseline, new_changes={"nested/victim"}, force=True)
 
     assert "nested/victim" not in rolled  # skipped (fail closed)
     assert other_victim.read_text(encoding="utf-8") == "other original\n"

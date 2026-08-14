@@ -3,6 +3,7 @@ result_id propagation, digests, event ordering, publish recovery.
 
 Split from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
+
 from tests.integration.result_checkpoint_support import (
     _dispatch_draft,
     _setup,
@@ -24,6 +25,7 @@ def test_crash_recovery_checkpoint_commit_exists(tmp_path):
     _dispatch_draft(ex, store, run_id, run_pipeline=False)
 
     from tracks.kernel.machine import decide
+
     state = _step_validate(ex, store, run_id)
     assert state.active_result and not state.active_result.get("checkpointed")
     checkpoint_cmd = decide(state)
@@ -35,6 +37,7 @@ def test_crash_recovery_checkpoint_commit_exists(tmp_path):
     def crash_after_commit(executor_self, cmd, state, task_id, reconcile=False):
         if cmd.kind == "checkpoint_result":
             from tracks.executor.helpers import _commit_if_staged, git
+
             allowed_paths = cmd.params.get("allowed_paths", [])
             commit_label = cmd.params.get("commit_label") or "checkpoint"
             marker = f"command_id: {cmd.command_id}"
@@ -45,8 +48,9 @@ def test_crash_recovery_checkpoint_commit_exists(tmp_path):
             return  # CRASH: no event emitted
         original_execute(cmd, state, task_id, reconcile)
 
-    ex._execute = lambda cmd, state, task_id=None, reconcile=False: \
-        crash_after_commit(ex, cmd, state, task_id, reconcile)
+    ex._execute = lambda cmd, state, task_id=None, reconcile=False: crash_after_commit(
+        ex, cmd, state, task_id, reconcile
+    )
 
     state = store.state(run_id)
     checkpoint_cmd = decide(state)
@@ -61,8 +65,7 @@ def test_crash_recovery_checkpoint_commit_exists(tmp_path):
     ex._recover()
 
     assert g(repo, "rev-list", "--count", "HEAD").strip() == commits_before
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed
     assert checkpointed[-1].payload["created_commit"] is True
 

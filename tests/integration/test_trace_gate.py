@@ -2,6 +2,7 @@
 always-on trace fails the M-ACC draft, re-dispatches Sage with evidence,
 recovers on a full-coverage redraft, and escalates after three failures.
 """
+
 from tests.e2e.helpers import dispatches
 
 
@@ -41,8 +42,7 @@ def test_trace_three_failures_escalate(trac, event_log):
     assert r.returncode == 0, r.stderr
     assert "awaiting=escalation" in r.stdout
     evs = event_log()
-    fails = [e for e in evs
-             if e["type"] == "verdict.failed" and e["payload"]["check"] == "trace"]
+    fails = [e for e in evs if e["type"] == "verdict.failed" and e["payload"]["check"] == "trace"]
     assert len(fails) == 3  # AC-12a parity: three attempts, then Human
     last_fail_seq = fails[-1]["seq"]
     assert not [d for d in dispatches(evs) if d["seq"] > last_fail_seq]

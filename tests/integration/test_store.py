@@ -1,4 +1,5 @@
 """Store integration (AC-28b/c, AC-N04a): real SQLite + real filesystem."""
+
 import json
 
 from tracks import paths
@@ -18,9 +19,7 @@ def test_large_payload_externalized_to_blob(tmp_path):
     big = {"data": "x" * 10_000}
     store.append(run_id, "v0.1", "story.requested", big)
 
-    row = store.conn.execute(
-        "SELECT payload FROM events WHERE run_id = ?", (run_id,)
-    ).fetchone()
+    row = store.conn.execute("SELECT payload FROM events WHERE run_id = ?", (run_id,)).fetchone()
     stored = json.loads(row[0])
     assert set(stored) == {"$ref"}
     blob = paths.blobs_dir(home) / stored["$ref"]
@@ -44,16 +43,12 @@ def test_append_only_surface_and_byte_stability(tmp_path):
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 3})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-START"})
 
-    snapshot = store.conn.execute(
-        "SELECT * FROM events ORDER BY run_id, seq"
-    ).fetchall()
+    snapshot = store.conn.execute("SELECT * FROM events ORDER BY run_id, seq").fetchall()
 
     store.append(run_id, "v0.1", "stage.exited", {"stage": "M-START"})
     store.rebuild_projections()
 
-    after = store.conn.execute(
-        "SELECT * FROM events ORDER BY run_id, seq"
-    ).fetchall()
+    after = store.conn.execute("SELECT * FROM events ORDER BY run_id, seq").fetchall()
     assert after[: len(snapshot)] == snapshot
     assert len(after) == len(snapshot) + 1
 
@@ -76,7 +71,9 @@ def test_projections_rebuilt_from_events_alone(tmp_path):
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-STORY"})
     store.append(
-        run_id, "v0.1", "backlog.recorded",
+        run_id,
+        "v0.1",
+        "backlog.recorded",
         {"version": "v0.1", "decision": "park", "reason": "triage"},
     )
 
@@ -87,9 +84,7 @@ def test_projections_rebuilt_from_events_alone(tmp_path):
 
     runs = store.conn.execute("SELECT run_id, version FROM runs").fetchall()
     assert runs == [(run_id, "v0.1")]
-    backlog = store.conn.execute(
-        "SELECT run_id, decision FROM backlog"
-    ).fetchall()
+    backlog = store.conn.execute("SELECT run_id, decision FROM backlog").fetchall()
     assert backlog == [(run_id, "park")]
 
 
@@ -103,12 +98,12 @@ def test_backlog_only_phantom_is_not_active(tmp_path):
     store, _ = make_store(tmp_path)
     bid = new_ulid()
     store.append(
-        bid, "v0.4", "backlog.recorded",
+        bid,
+        "v0.4",
+        "backlog.recorded",
         {"version": "v0.4", "decision": "queued", "reason": "active_run"},
     )
-    row = store.conn.execute(
-        "SELECT status, stage FROM runs WHERE run_id = ?", (bid,)
-    ).fetchone()
+    row = store.conn.execute("SELECT status, stage FROM runs WHERE run_id = ?", (bid,)).fetchone()
     assert row == ("backlog", None)
     assert store.state(bid).status == "backlog"
     assert store.active_run() is None
@@ -127,7 +122,9 @@ def test_backlog_phantom_does_not_shadow_real_active_run(tmp_path):
     # Second start while active -> queue to backlog with a fresh run_id.
     bid = new_ulid()
     store.append(
-        bid, "v0.2", "backlog.recorded",
+        bid,
+        "v0.2",
+        "backlog.recorded",
         {"version": "v0.2", "decision": "queued", "reason": "active_run"},
     )
     # Phantom was appended LAST (newer updated_ts) but must not win.
@@ -148,7 +145,9 @@ def test_backlog_recorded_on_real_run_keeps_status_active(tmp_path):
     store.append(rid, "v0.1", "outcome.received", {"role": "scribe", "status": "done"})
     store.append(rid, "v0.1", "human.triage", {"decision": "no_go", "actor": "H"})
     store.append(
-        rid, "v0.1", "backlog.recorded",
+        rid,
+        "v0.1",
+        "backlog.recorded",
         {"version": "v0.1", "decision": "no_go", "reason": "triage"},
     )
     s = store.state(rid)
@@ -163,7 +162,9 @@ def test_projection_rebuild_preserves_backlog_distinction(tmp_path):
     store, _ = make_store(tmp_path)
     phantom = new_ulid()
     store.append(
-        phantom, "v0.4", "backlog.recorded",
+        phantom,
+        "v0.4",
+        "backlog.recorded",
         {"version": "v0.4", "decision": "queued", "reason": "active_run"},
     )
     real = new_ulid()
@@ -175,9 +176,7 @@ def test_projection_rebuild_preserves_backlog_distinction(tmp_path):
     store.conn.commit()
     store.rebuild_projections()
 
-    statuses = dict(store.conn.execute(
-        "SELECT run_id, status FROM runs"
-    ).fetchall())
+    statuses = dict(store.conn.execute("SELECT run_id, status FROM runs").fetchall())
     assert statuses == {phantom: "backlog", real: "active"}
     assert store.active_run() == real
 
@@ -215,8 +214,6 @@ def test_active_run_skips_stale_backlog_phantom_projection(tmp_path):
 
     # And if the real run is completed (Maestro's bootstrap append), the phantom
     # is still skipped - active_run() returns None, unblocking future starts.
-    store.conn.execute(
-        "UPDATE runs SET status='completed' WHERE run_id=?", (real,)
-    )
+    store.conn.execute("UPDATE runs SET status='completed' WHERE run_id=?", (real,))
     store.conn.commit()
     assert store.active_run() is None

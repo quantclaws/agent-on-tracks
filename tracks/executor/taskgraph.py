@@ -4,6 +4,7 @@ Pure functions: parse tasks.json (task graph machine truth source), validate DAG
 acyclicity (Kahn's algorithm), scope boundary non-overlap, required AC coverage
 closure, IF- id validity, and issue number validity.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,9 +38,18 @@ class TaskGraphReport:
 
 
 _REQUIRED_FIELDS = (
-    "task_id", "issue_number", "description", "ac_refs",
-    "fr_refs", "if_ids", "test_refs", "scope_boundary",
-    "depends_on", "batch", "parallel", "budget",
+    "task_id",
+    "issue_number",
+    "description",
+    "ac_refs",
+    "fr_refs",
+    "if_ids",
+    "test_refs",
+    "scope_boundary",
+    "depends_on",
+    "batch",
+    "parallel",
+    "budget",
 )
 
 
@@ -97,13 +107,23 @@ def _parse_task(raw: object, index: int) -> tuple[TaskNode | None, str | None]:
     if isinstance(lists, str):
         return (None, lists)
     ac_refs, fr_refs, if_ids, test_refs, depends = lists
-    return (TaskNode(
-        task_id=tid, issue_number=raw["issue_number"], description=raw["description"],
-        ac_refs=tuple(ac_refs), fr_refs=tuple(fr_refs), if_ids=tuple(if_ids),
-        test_refs=tuple(test_refs), scope_boundary=raw["scope_boundary"],
-        depends_on=tuple(depends), batch=raw["batch"],
-        parallel=raw["parallel"], budget=raw["budget"],
-    ), None)
+    return (
+        TaskNode(
+            task_id=tid,
+            issue_number=raw["issue_number"],
+            description=raw["description"],
+            ac_refs=tuple(ac_refs),
+            fr_refs=tuple(fr_refs),
+            if_ids=tuple(if_ids),
+            test_refs=tuple(test_refs),
+            scope_boundary=raw["scope_boundary"],
+            depends_on=tuple(depends),
+            batch=raw["batch"],
+            parallel=raw["parallel"],
+            budget=raw["budget"],
+        ),
+        None,
+    )
 
 
 def _validate_scalar_fields(raw: dict, tid: str) -> str | None:
@@ -155,8 +175,7 @@ def validate_dag(
     ids = {t.task_id for t in tasks}
     if len(ids) != len(tasks):
         duplicates = sorted(
-            task_id for task_id in ids
-            if sum(t.task_id == task_id for t in tasks) > 1
+            task_id for task_id in ids if sum(t.task_id == task_id for t in tasks) > 1
         )
         return (False, f"duplicate task_id: {', '.join(duplicates)}")
     for t in sorted(tasks, key=lambda x: x.task_id):
@@ -188,8 +207,10 @@ def _find_cycle(adj: dict[str, list[str]]) -> str | None:
 
 
 def _dfs_cycle(
-    start: str, adj: dict[str, list[str]],
-    color: dict[str, int], parent: dict[str, str],
+    start: str,
+    adj: dict[str, list[str]],
+    color: dict[str, int],
+    parent: dict[str, str],
 ) -> str | None:
     stack: list[tuple[str, int]] = [(start, 0)]
     color[start] = 1
@@ -240,13 +261,10 @@ def validate_scope(
             errors.append(f"{task.task_id}: scope_boundary must not be empty")
     for i, t1 in enumerate(tasks):
         s1 = _parse_scope_paths(t1.scope_boundary)
-        for t2 in tasks[i + 1:]:
+        for t2 in tasks[i + 1 :]:
             overlap = s1 & _parse_scope_paths(t2.scope_boundary)
             for path in sorted(overlap):
-                errors.append(
-                    f"scope overlap: {t1.task_id} and {t2.task_id} "
-                    f"both target {path}"
-                )
+                errors.append(f"scope overlap: {t1.task_id} and {t2.task_id} both target {path}")
     return (len(errors) == 0, errors)
 
 
@@ -259,11 +277,7 @@ def validate_task_structure(tasks: list[TaskNode]) -> list[str]:
     """Validate task fields that are structural but not graph relations."""
     if not tasks:
         return ["tasks.json: task graph must contain at least one task"]
-    return [
-        error
-        for task in tasks
-        for error in _task_structure_errors(task)
-    ]
+    return [error for task in tasks for error in _task_structure_errors(task)]
 
 
 def _task_structure_errors(task: TaskNode) -> list[str]:
@@ -297,8 +311,7 @@ def validate_island_closure(
     the frozen document text, not on task self-reporting.
     """
     errors: list[str] = []
-    required = ("owner=", "surface=", "composition=", "wiring=",
-                "test=", "evidence=")
+    required = ("owner=", "surface=", "composition=", "wiring=", "test=", "evidence=")
     lines = architecture_text.splitlines()
     for task in tasks:
         errors.extend(_task_closure_errors(task, lines, required))
@@ -306,7 +319,9 @@ def validate_island_closure(
 
 
 def _task_closure_errors(
-    task: TaskNode, lines: list[str], required: tuple[str, ...],
+    task: TaskNode,
+    lines: list[str],
+    required: tuple[str, ...],
 ) -> list[str]:
     errors: list[str] = []
     for ac_id in task.ac_refs:
@@ -323,18 +338,20 @@ def _task_closure_errors(
 
 
 def _closure_field_errors(
-    task_id: str, ac_id: str, missing: list[str],
+    task_id: str,
+    ac_id: str,
+    missing: list[str],
 ) -> list[str]:
     if not missing:
         return []
-    return [
-        f"{task_id}/{ac_id}: missing closure fields "
-        + ", ".join(missing)
-    ]
+    return [f"{task_id}/{ac_id}: missing closure fields " + ", ".join(missing)]
 
 
 def _missing_if_errors(
-    task_id: str, ac_id: str, closure: str, if_ids: tuple[str, ...],
+    task_id: str,
+    ac_id: str,
+    closure: str,
+    if_ids: tuple[str, ...],
 ) -> list[str]:
     return [
         f"{task_id}/{ac_id}: {if_id} missing from closure"
@@ -344,24 +361,30 @@ def _missing_if_errors(
 
 
 def _scope_paths(
-    scope_boundary: str, task_id: str = "task",
+    scope_boundary: str,
+    task_id: str = "task",
 ) -> tuple[list[str], list[str]]:
-    raw_paths = [part.strip() for part in
-                 scope_boundary.replace("\n", ",").split(",")]
+    raw_paths = [part.strip() for part in scope_boundary.replace("\n", ",").split(",")]
     paths: list[str] = []
     errors: list[str] = []
     for raw in raw_paths:
         if not raw:
             continue
         path = raw.replace("\\", "/")
-        if (path.startswith("/") or path.startswith("~/")
-                or ".." in path.split("/")
-                or any(char.isspace() for char in path)):
+        if (
+            path.startswith("/")
+            or path.startswith("~/")
+            or ".." in path.split("/")
+            or any(char.isspace() for char in path)
+        ):
             errors.append(f"{task_id}: invalid scope path '{raw}'")
             continue
         normalized = path.rstrip("/")
-        if (not normalized or normalized == ".tracks/projects"
-                or normalized.startswith(".tracks/projects/")):
+        if (
+            not normalized
+            or normalized == ".tracks/projects"
+            or normalized.startswith(".tracks/projects/")
+        ):
             errors.append(f"{task_id}: forbidden scope path '{raw}'")
             continue
         if normalized not in paths:
@@ -384,7 +407,7 @@ def _closure_matches(lines: list[str], requirement: str) -> list[str]:
         if requirement not in line and compact not in line:
             continue
         block = [line]
-        for following in lines[index + 1:]:
+        for following in lines[index + 1 :]:
             if following.startswith("- **") or following.startswith("## "):
                 break
             if following.strip():
@@ -432,8 +455,5 @@ def validate_issue_numbers(
     errors: list[str] = []
     for t in tasks:
         if not isinstance(t.issue_number, int) or t.issue_number < 1:
-            errors.append(
-                f"{t.task_id} issue_number={t.issue_number} "
-                f"is not a positive integer"
-            )
+            errors.append(f"{t.task_id} issue_number={t.issue_number} is not a positive integer")
     return (len(errors) == 0, errors)

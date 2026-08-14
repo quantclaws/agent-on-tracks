@@ -17,7 +17,5 @@ def test_baseline_events_expose_digest_paths_and_error_semantics(trac, event_log
     payload = frozen[0]["payload"]
     assert payload["status"] == "current"
     assert payload["digest"]
-    assert {"integration", "e2e"} <= {
-        path.split("/")[1] for path in payload["frozen_test_paths"]
-    }
+    assert {"integration", "e2e"} <= {path.split("/")[1] for path in payload["frozen_test_paths"]}
     assert not events_of(events, "stage.rolled_back")

@@ -171,59 +171,84 @@ class StageDef:
 # M-DESIGN deliverables (flow.md §8): architecture, interfaces, test-plan.
 DESIGN_DOCS = ("architecture.md", "interfaces.md", "test-plan.md")
 
-_STAGES = {sd.stage: sd for sd in (
-    StageDef(stage="M-STORY", initial_substate="TRIAGE",
-             drafting_role="scribe", doc="story.md",
-             committed_event="story.committed", committed_flag="story_committed",
-             review_substate="SAGE_REVIEW", reviewer="sage",
-             verdict_event="sage.verdict",
-             reviewer_passed_flag="sage_passed_this_round"),
-    # M-ACC mirrors M-SPEC's review loop (Sage drafts, Lex reviews),
-    # on acceptance.md.
-    StageDef(stage="M-SPEC", initial_substate="DRAFT",
-             drafting_role="sage", doc="spec.md",
-             committed_event="spec.committed", committed_flag="spec_committed",
-             review_substate="LEX_REVIEW", reviewer="lex",
-             verdict_event="lex.verdict",
-             reviewer_passed_flag="lex_passed_this_round"),
-    StageDef(stage="M-ACC", initial_substate="DRAFT",
-             drafting_role="sage", doc="acceptance.md",
-             committed_event="acceptance.committed",
-             committed_flag="acceptance_committed",
-             review_substate="LEX_REVIEW", reviewer="lex",
-             verdict_event="lex.verdict",
-             reviewer_passed_flag="lex_passed_this_round"),
-    StageDef(stage="M-REQ-APPROVAL", initial_substate="PREVIEW"),
-    # M-DESIGN (flow.md §8): pure technical stage — no human.review/approval
-    # gates (BS-05). Multi-doc: one Archer dispatch drafts all DESIGN_DOCS;
-    # the per-doc control flow is explicit (_decide_design_draft/_exit), like
-    # _decide_approval. doc is None: no single target doc.
-    StageDef(stage="M-DESIGN", initial_substate="DRAFT",
-             drafting_role="archer", doc=None, docs=DESIGN_DOCS,
-             committed_event="design.committed",
-             review_substate="PRISM_REVIEW", reviewer="prism",
-             verdict_event="prism.verdict",
-             reviewer_passed_flag="prism_passed_this_round"),
-    # M-TEST (flow.md §9 / SM-01): no drafting_role/doc/reviewer -- the Shield
-    # and Prism dispatches are driven by the explicit `_decide_m_test` control
-    # flow (like `_decide_approval`), not by the StageDef table. initial_substate
-    # is DISPATCH (SM-01.1).
-    StageDef(stage="M-TEST", initial_substate="DISPATCH"),
-    # M-IMPL (flow.md §10): explicit control flow via `_decide_m_impl`, like
-    # M-TEST. No drafting_role/doc/reviewer -- Archer/Devon/Prism/Shield
-    # dispatches are driven by the explicit control flow.
-    StageDef(stage="M-IMPL", initial_substate="BASELINE"),
-)}
+_STAGES = {
+    sd.stage: sd
+    for sd in (
+        StageDef(
+            stage="M-STORY",
+            initial_substate="TRIAGE",
+            drafting_role="scribe",
+            doc="story.md",
+            committed_event="story.committed",
+            committed_flag="story_committed",
+            review_substate="SAGE_REVIEW",
+            reviewer="sage",
+            verdict_event="sage.verdict",
+            reviewer_passed_flag="sage_passed_this_round",
+        ),
+        # M-ACC mirrors M-SPEC's review loop (Sage drafts, Lex reviews),
+        # on acceptance.md.
+        StageDef(
+            stage="M-SPEC",
+            initial_substate="DRAFT",
+            drafting_role="sage",
+            doc="spec.md",
+            committed_event="spec.committed",
+            committed_flag="spec_committed",
+            review_substate="LEX_REVIEW",
+            reviewer="lex",
+            verdict_event="lex.verdict",
+            reviewer_passed_flag="lex_passed_this_round",
+        ),
+        StageDef(
+            stage="M-ACC",
+            initial_substate="DRAFT",
+            drafting_role="sage",
+            doc="acceptance.md",
+            committed_event="acceptance.committed",
+            committed_flag="acceptance_committed",
+            review_substate="LEX_REVIEW",
+            reviewer="lex",
+            verdict_event="lex.verdict",
+            reviewer_passed_flag="lex_passed_this_round",
+        ),
+        StageDef(stage="M-REQ-APPROVAL", initial_substate="PREVIEW"),
+        # M-DESIGN (flow.md §8): pure technical stage — no human.review/approval
+        # gates (BS-05). Multi-doc: one Archer dispatch drafts all DESIGN_DOCS;
+        # the per-doc control flow is explicit (_decide_design_draft/_exit), like
+        # _decide_approval. doc is None: no single target doc.
+        StageDef(
+            stage="M-DESIGN",
+            initial_substate="DRAFT",
+            drafting_role="archer",
+            doc=None,
+            docs=DESIGN_DOCS,
+            committed_event="design.committed",
+            review_substate="PRISM_REVIEW",
+            reviewer="prism",
+            verdict_event="prism.verdict",
+            reviewer_passed_flag="prism_passed_this_round",
+        ),
+        # M-TEST (flow.md §9 / SM-01): no drafting_role/doc/reviewer -- the Shield
+        # and Prism dispatches are driven by the explicit `_decide_m_test` control
+        # flow (like `_decide_approval`), not by the StageDef table. initial_substate
+        # is DISPATCH (SM-01.1).
+        StageDef(stage="M-TEST", initial_substate="DISPATCH"),
+        # M-IMPL (flow.md §10): explicit control flow via `_decide_m_impl`, like
+        # M-TEST. No drafting_role/doc/reviewer -- Archer/Devon/Prism/Shield
+        # dispatches are driven by the explicit control flow.
+        StageDef(stage="M-IMPL", initial_substate="BASELINE"),
+    )
+}
 
 # Derived lookups, keyed like the facts they replace.
 # committed_flag None (M-DESIGN's multi-doc design.committed) is routed through
 # its own reducer (_on_design_committed), not _on_doc_committed.
-_COMMITTED_EVENT = {sd.committed_event: sd
-                    for sd in _STAGES.values()
-                    if sd.committed_event and sd.committed_flag}
+_COMMITTED_EVENT = {
+    sd.committed_event: sd for sd in _STAGES.values() if sd.committed_event and sd.committed_flag
+}
 # review substate -> an owning StageDef (read for its reviewer role).
-_REVIEW_SUBSTATE = {sd.review_substate: sd
-                    for sd in _STAGES.values() if sd.review_substate}
+_REVIEW_SUBSTATE = {sd.review_substate: sd for sd in _STAGES.values() if sd.review_substate}
 # verdict event -> owning stages; a verdict event may be shared by several
 # stages (lex.verdict: M-SPEC/M-ACC). See _on_reviewer_verdict.
 _VERDICT_OWNERS: dict[str, list[StageDef]] = {}
@@ -240,6 +265,7 @@ def _uncommit(s: State) -> None:
 
 # -- event reducers: one small handler per event type, looked up by `apply`.
 # Each is `(state, payload, envelope) -> None` and mutates state in place.
+
 
 def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
     s.run_id, s.version = ev.run_id, ev.version
@@ -309,8 +335,7 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     # (FR-11, AC-20a: Scribe re-scopes the story from the overflow evidence).
     # The route is read from the stage.rolled_back payload, not from the
     # already-mutated current state, so the decision is replay-stable.
-    if (p.get("to_stage") == "M-DESIGN"
-            and p.get("reason") == "stub_gap"):
+    if p.get("to_stage") == "M-DESIGN" and p.get("reason") == "stub_gap":
         s.last_failure = None
     s.spec_committed = False
     s.story_committed = False  # the redone story must be re-committed
@@ -421,8 +446,11 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
         _consume_attempt(s)
         return
     if s.stage == "M-IMPL":
-        if (p.get("role") == "devon" and p.get("status") == "failed"
-                and s.substate in ("RED", "GREEN")):
+        if (
+            p.get("role") == "devon"
+            and p.get("status") == "failed"
+            and s.substate in ("RED", "GREEN")
+        ):
             # A backend execution failure has unknown attribution. Preserve its
             # evidence, spend the same bounded attempt, and let Prism diagnose
             # it instead of blindly repeating the failed phase.
@@ -470,8 +498,7 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
-    is_human = bool(s.active_result
-                    and s.active_result.get("actor_kind") == "human")
+    is_human = bool(s.active_result and s.active_result.get("actor_kind") == "human")
     s.active_result = None  # v0.5: pipeline failure clears the checkpoint
     if is_human:
         # Human pipeline failure: keep the awaiting gate, no agent retry,
@@ -791,6 +818,7 @@ def _on_branch_deleted(s: State, p: dict, ev: EventEnvelope) -> None:
 
 # -- v0.5 ResultCheckpoint pipeline reducers (batch 1: M-STORY/M-SPEC/M-ACC) ---
 
+
 def _on_result_submitted(s: State, p: dict, ev: EventEnvelope) -> None:
     """Capture a result into the pipeline. The payload carries everything the
     pipeline needs: source actor, stage/substate, artifacts to validate,
@@ -832,6 +860,7 @@ def _on_result_checkpointed(s: State, p: dict, ev: EventEnvelope) -> None:
 # (revise: verdict.failed(no_diff_justified)). active_result is preserved
 # across the review so the pipeline can resume after a pass.
 
+
 def _on_no_diff_detected(s: State, p: dict, ev: EventEnvelope) -> None:
     s.pending = None
     if s.active_result is not None:
@@ -864,8 +893,7 @@ def _on_no_diff_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
         s.no_diff_reviewer_dispatched = False
         return
     # Reviewer rejected: route through the stage's verdict.failed handler.
-    origin = (s.active_result.pop("no_diff_origin_substate", "DRAFT")
-              if s.active_result else "DRAFT")
+    origin = s.active_result.pop("no_diff_origin_substate", "DRAFT") if s.active_result else "DRAFT"
     explanation = s.no_diff_explanation
     s.active_result = None
     s.substate = origin
@@ -970,9 +998,15 @@ def project(events: Iterable[EventEnvelope]) -> State:
     return s
 
 
-def _dispatch(role: str, substate: str, objective: str, doc: str | None = None,
-              stage: str | None = None, attempt: int | None = None,
-              review_round: int | None = None) -> Command:
+def _dispatch(
+    role: str,
+    substate: str,
+    objective: str,
+    doc: str | None = None,
+    stage: str | None = None,
+    attempt: int | None = None,
+    review_round: int | None = None,
+) -> Command:
     params = {"role": role, "substate": substate, "objective": objective}
     if doc:
         params["doc"] = doc
@@ -1010,8 +1044,12 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     sd = _STAGES[stage]
     if not s.doc_dispatched:
         cmd = _dispatch(
-            sd.drafting_role, sub, f"write {sd.doc}", sd.doc,
-            stage=stage, attempt=s.current_attempt + 1,
+            sd.drafting_role,
+            sub,
+            f"write {sd.doc}",
+            sd.doc,
+            stage=stage,
+            attempt=s.current_attempt + 1,
             review_round=s.review_round,
         )
         if s.last_failure:
@@ -1024,8 +1062,7 @@ def _decide_draft(s: State, stage: str, sub: str) -> Command | None:
     if not s.doc_validated:
         # FR-150/AC-1503: outcome-time format gate — Scribe/Sage must produce a
         # template-conforming doc before it is committed / enters review.
-        return Command(kind="validate_document",
-                       params={"doc": sd.doc, "checks": ["template"]})
+        return Command(kind="validate_document", params={"doc": sd.doc, "checks": ["template"]})
     if not getattr(s, sd.committed_flag):
         return Command(
             kind="commit_document",
@@ -1040,22 +1077,28 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
     handles validate+checkpoint+publish; decide() only fires the dispatch."""
     sd = _STAGES["M-DESIGN"]
     if not s.doc_dispatched:
-        cmd = Command(kind="dispatch_agent", params={
-            "role": sd.drafting_role, "substate": sub,
-            "objective": f"write {', '.join(DESIGN_DOCS)}",
-            "stage": "M-DESIGN",
-            "attempt": s.current_attempt + 1,
-            "review_round": s.review_round,
-            "docs": list(DESIGN_DOCS),
-            "assignment": {"kind": sub, "template_kind": None,
-                           "templates": [doc.removesuffix(".md")
-                                         for doc in DESIGN_DOCS],
-                           # batch B: multi-skill — the design doc-set plus the
-                           # host guard-stack catalog (single-skill shape stays
-                           # for every other stage, see _dispatch).
-                           "skills": ["tracks-discuz", "tracks-quality-guards"],
-                           "docs": list(DESIGN_DOCS)},
-        })
+        cmd = Command(
+            kind="dispatch_agent",
+            params={
+                "role": sd.drafting_role,
+                "substate": sub,
+                "objective": f"write {', '.join(DESIGN_DOCS)}",
+                "stage": "M-DESIGN",
+                "attempt": s.current_attempt + 1,
+                "review_round": s.review_round,
+                "docs": list(DESIGN_DOCS),
+                "assignment": {
+                    "kind": sub,
+                    "template_kind": None,
+                    "templates": [doc.removesuffix(".md") for doc in DESIGN_DOCS],
+                    # batch B: multi-skill — the design doc-set plus the
+                    # host guard-stack catalog (single-skill shape stays
+                    # for every other stage, see _dispatch).
+                    "skills": ["tracks-discuz", "tracks-quality-guards"],
+                    "docs": list(DESIGN_DOCS),
+                },
+            },
+        )
         if s.last_failure:
             cmd.params["evidence"] = dict(s.last_failure)  # FR-11
         return cmd
@@ -1077,9 +1120,7 @@ def _decide_design_exit(s: State) -> Command | None:
         checks = ["template", "discussion_ready"]
         if doc == "test-plan.md":
             checks += ["trace", "test_tasks"]
-        return Command(
-            kind="validate_document",
-            params={"doc": doc, "checks": checks})
+        return Command(kind="validate_document", params={"doc": doc, "checks": checks})
     return Command(kind="write_frontmatter", params={"stage": "M-DESIGN"})
 
 
@@ -1093,12 +1134,11 @@ def _decide_exit(s: State, stage: str) -> Command | None:
         # ordinary document/template validity.
         return Command(
             kind="validate_document",
-            params={"doc": doc, "checks": ["template", "discussion_ready"]})
+            params={"doc": doc, "checks": ["template", "discussion_ready"]},
+        )
     # Executor seals frontmatter sha, commits, emits stage.exited
     # (+ story/spec.committed final sha, + next stage.entered / run.completed).
-    return Command(
-        kind="write_frontmatter", params={"doc": doc, "stage": stage, "field": "sha"}
-    )
+    return Command(kind="write_frontmatter", params={"doc": doc, "stage": stage, "field": "sha"})
 
 
 def _decide_pipeline(s: State, stage: str, sub: str) -> Command | None:
@@ -1113,8 +1153,12 @@ def _decide_triage(s: State, stage: str) -> Command | None:
         return None  # awaiting triage (set on outcome.received)
     sd = _STAGES[stage]
     return _dispatch(
-        sd.drafting_role, "TRIAGE", "explore raw requirement", sd.doc,
-        stage=stage, attempt=s.current_attempt + 1,
+        sd.drafting_role,
+        "TRIAGE",
+        "explore raw requirement",
+        sd.doc,
+        stage=stage,
+        attempt=s.current_attempt + 1,
         review_round=s.review_round,
     )
 
@@ -1125,8 +1169,12 @@ def _decide_review(s: State, stage: str, sub: str) -> Command | None:
     if s.reviewer_dispatched:
         return None
     cmd = _dispatch(
-        reviewer, sub, f"{reviewer} review", sd.doc,
-        stage=stage, attempt=s.current_attempt + 1,
+        reviewer,
+        sub,
+        f"{reviewer} review",
+        sd.doc,
+        stage=stage,
+        attempt=s.current_attempt + 1,
         review_round=s.review_round,
     )
     if s.last_failure:
@@ -1154,17 +1202,29 @@ def _decide_exit_gate(s: State, stage: str) -> Command | None:
 def _no_diff_dispatch_params(s, substate, role, docs, doc, objective):
     """Build dispatch_agent params for NO_DIFF_EXPLAIN / NO_DIFF_REVIEW."""
     ar = s.active_result or {}
-    ctx = {"artifacts": ar.get("artifacts", []),
-           "base_sha": ar.get("base_sha"), "result_id": ar.get("result_id"),
-           "stage": ar.get("stage", s.stage),
-           "substate": ar.get("no_diff_origin_substate", s.substate)}
+    ctx = {
+        "artifacts": ar.get("artifacts", []),
+        "base_sha": ar.get("base_sha"),
+        "result_id": ar.get("result_id"),
+        "stage": ar.get("stage", s.stage),
+        "substate": ar.get("no_diff_origin_substate", s.substate),
+    }
     if substate == "NO_DIFF_REVIEW":
         ctx["explanation"] = s.no_diff_explanation
-    params = {"role": role, "substate": substate, "objective": objective,
-              "stage": s.stage, "attempt": s.current_attempt + 1,
-              "review_round": s.review_round, "no_diff_context": ctx,
-              "assignment": {"kind": substate, "skill": "tracks-discuz",
-                             "template_kind": doc.removesuffix(".md") if doc else None}}
+    params = {
+        "role": role,
+        "substate": substate,
+        "objective": objective,
+        "stage": s.stage,
+        "attempt": s.current_attempt + 1,
+        "review_round": s.review_round,
+        "no_diff_context": ctx,
+        "assignment": {
+            "kind": substate,
+            "skill": "tracks-discuz",
+            "template_kind": doc.removesuffix(".md") if doc else None,
+        },
+    }
     if docs:
         params["docs"] = docs
         params["assignment"]["docs"] = list(docs)
@@ -1194,9 +1254,10 @@ def _decide_no_diff_explain(s: State) -> Command | None:
             return None
         role, docs, doc = sd.drafting_role, [], sd.doc
         objective = f"explain why no {doc} diff was produced"
-    return Command(kind="dispatch_agent",
-                   params=_no_diff_dispatch_params(s, "NO_DIFF_EXPLAIN",
-                                                    role, docs, doc, objective))
+    return Command(
+        kind="dispatch_agent",
+        params=_no_diff_dispatch_params(s, "NO_DIFF_EXPLAIN", role, docs, doc, objective),
+    )
 
 
 def _decide_no_diff_review(s: State) -> Command | None:
@@ -1214,10 +1275,12 @@ def _decide_no_diff_review(s: State) -> Command | None:
         if sd is None:
             return None
         reviewer, docs, doc = sd.reviewer, [], sd.doc
-    return Command(kind="dispatch_agent",
-                   params=_no_diff_dispatch_params(s, "NO_DIFF_REVIEW",
-                                                    reviewer, docs, doc,
-                                                    "review the no-diff explanation"))
+    return Command(
+        kind="dispatch_agent",
+        params=_no_diff_dispatch_params(
+            s, "NO_DIFF_REVIEW", reviewer, docs, doc, "review the no-diff explanation"
+        ),
+    )
 
 
 def _decide_result_pipeline(s: State) -> Command | None:
@@ -1231,47 +1294,56 @@ def _decide_result_pipeline(s: State) -> Command | None:
     result_id = ar.get("result_id")
     digests = ar.get("digests")
     if not ar.get("validated"):
-        return Command(kind="validate_result", params={
-            "artifacts": ar.get("artifacts", []),
-            "checks": ar.get("checks", []),
-            "base_sha": ar.get("base_sha"),
-            "requires_diff": ar.get("requires_diff", False),
-            "forbid_diff": ar.get("forbid_diff", False),
-            "discussion_only": ar.get("discussion_only", False),
-            "verdict": ar.get("verdict"),
-            "actor_kind": ar.get("actor_kind"),
-            "result_id": result_id,
-            "digests": digests,
-            "manifest_error": ar.get("manifest_error"),
-        })
+        return Command(
+            kind="validate_result",
+            params={
+                "artifacts": ar.get("artifacts", []),
+                "checks": ar.get("checks", []),
+                "base_sha": ar.get("base_sha"),
+                "requires_diff": ar.get("requires_diff", False),
+                "forbid_diff": ar.get("forbid_diff", False),
+                "discussion_only": ar.get("discussion_only", False),
+                "verdict": ar.get("verdict"),
+                "actor_kind": ar.get("actor_kind"),
+                "result_id": result_id,
+                "digests": digests,
+                "manifest_error": ar.get("manifest_error"),
+            },
+        )
     if not ar.get("checkpointed"):
-        return Command(kind="checkpoint_result", params={
-            "allowed_paths": ar.get("allowed_paths", []),
-            "base_sha": ar.get("base_sha"),
+        return Command(
+            kind="checkpoint_result",
+            params={
+                "allowed_paths": ar.get("allowed_paths", []),
+                "base_sha": ar.get("base_sha"),
+                "source": ar.get("source"),
+                "stage": ar.get("stage"),
+                "requires_diff": ar.get("requires_diff", False),
+                "forbid_diff": ar.get("forbid_diff", False),
+                "verdict": ar.get("verdict"),
+                "commit_label": ar.get("commit_label"),
+                "actor_kind": ar.get("actor_kind"),
+                "result_id": result_id,
+                "digests": digests,
+                "no_diff_approved": ar.get("no_diff_approved", False),
+            },
+        )
+    return Command(
+        kind="publish_result",
+        params={
+            "domain_event": ar.get("domain_event", {}),
+            "commit_sha": ar.get("commit_sha"),
+            "created_commit": ar.get("created_commit", False),
             "source": ar.get("source"),
             "stage": ar.get("stage"),
-            "requires_diff": ar.get("requires_diff", False),
-            "forbid_diff": ar.get("forbid_diff", False),
+            "substate": ar.get("substate"),
+            "artifacts": ar.get("artifacts", []),
             "verdict": ar.get("verdict"),
-            "commit_label": ar.get("commit_label"),
             "actor_kind": ar.get("actor_kind"),
+            "base_sha": ar.get("base_sha"),
             "result_id": result_id,
-            "digests": digests,
-            "no_diff_approved": ar.get("no_diff_approved", False),
-        })
-    return Command(kind="publish_result", params={
-        "domain_event": ar.get("domain_event", {}),
-        "commit_sha": ar.get("commit_sha"),
-        "created_commit": ar.get("created_commit", False),
-        "source": ar.get("source"),
-        "stage": ar.get("stage"),
-        "substate": ar.get("substate"),
-        "artifacts": ar.get("artifacts", []),
-        "verdict": ar.get("verdict"),
-        "actor_kind": ar.get("actor_kind"),
-        "base_sha": ar.get("base_sha"),
-        "result_id": result_id,
-    })
+        },
+    )
 
 
 def decide(s: State) -> Command | None:
@@ -1324,8 +1396,9 @@ def _decide_approval(s: State, stage: str, sub: str) -> Command | None:
     if sub == "APPROVED":
         # SM-05.5: record the approval identity; its approval.recorded event
         # moves the substate to ISSUES (C-01).
-        return Command(kind="record_approval",
-                       params={"actor": s.approval_actor, "digest": s.approval_digest})
+        return Command(
+            kind="record_approval", params={"actor": s.approval_actor, "digest": s.approval_digest}
+        )
     if sub == "ISSUES":
         if not s.issues_created:
             return Command(kind="create_issues", params={"digest": s.approval_digest})
@@ -1335,6 +1408,7 @@ def _decide_approval(s: State, stage: str, sub: str) -> Command | None:
         # stage.exited + run.completed(terminal_state="boundary").
         return Command(kind="write_frontmatter", params={"stage": stage})
     if sub == "RETURNED":
-        return Command(kind="rollback_stage",
-                       params={"to_stage": s.return_target, "reason": "human_return"})
+        return Command(
+            kind="rollback_stage", params={"to_stage": s.return_target, "reason": "human_return"}
+        )
     return None  # HUMAN_REVIEW or unknown: halt

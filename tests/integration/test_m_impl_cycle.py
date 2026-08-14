@@ -16,9 +16,7 @@ def test_m_impl_public_event_lifecycle(trac, event_log):
     start = first_m_impl_index(events)
     impl_events = events[start:]
     assert impl_events[0]["payload"] == {"stage": "M-IMPL"}
-    assert [event["seq"] for event in events] == sorted(
-        {event["seq"] for event in events}
-    )
+    assert [event["seq"] for event in events] == sorted({event["seq"] for event in events})
     status = trac("status")
     assert status.returncode == 0
     assert f"run={run_id}" in status.stdout

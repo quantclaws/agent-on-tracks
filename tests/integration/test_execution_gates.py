@@ -22,9 +22,7 @@ def test_rgr_phase_events_and_audit_evidence(trac, event_log):
     _, _, events = run_m_impl_journey(trac, event_log)
     outcomes = events_of(events, "outcome.received")
     devon = [event for event in outcomes if event["payload"].get("role") == "devon"]
-    assert {event["payload"].get("phase") for event in devon} >= {
-        "red", "green", "refactor"
-    }
+    assert {event["payload"].get("phase") for event in devon} >= {"red", "green", "refactor"}
     assert all(event["payload"].get("audit_evidence") for event in devon)
     red = events_of(events, "red.checkpointed")
     green = events_of(events, "green.committed")
@@ -56,20 +54,23 @@ def test_diagnose_and_shield_fix_public_routes(
         trac,
         event_log,
         simulate=(
-            "devon:RED=fail|ok;"
-            f"diagnose:classification={classification};"
-            "shield:SHIELD_FIX=ok"
+            f"devon:RED=fail|ok;diagnose:classification={classification};shield:SHIELD_FIX=ok"
         ),
     )
     failures = events_of(events, "verdict.failed")
     allowed = {
-        "red_invalid", "regression", "budget", "island", "scope",
-        "test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap",
+        "red_invalid",
+        "regression",
+        "budget",
+        "island",
+        "scope",
+        "test_defect",
+        "impl_defect",
+        "stub_gap",
+        "ac_gap",
+        "spec_gap",
     }
-    classified = [
-        event for event in failures
-        if event["payload"].get("check") == classification
-    ]
+    classified = [event for event in failures if event["payload"].get("check") == classification]
     assert classified
     assert all(event["payload"].get("check") in allowed for event in failures)
     # AC-FR0150-03: Shield `test.committed` is scoped to the first M-IMPL

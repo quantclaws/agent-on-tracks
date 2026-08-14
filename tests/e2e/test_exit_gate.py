@@ -7,6 +7,7 @@ the decision-loop re-dispatch in `decide()` — a failed `dispatch_agent` outcom
 is NOT a produced document, carries failure evidence into the next prompt, and
 shares the same attempt accounting as `verdict.failed`.
 """
+
 from tests.e2e.helpers import assert_escalation_after_three_failures, dispatches
 
 
@@ -19,9 +20,7 @@ def start_to_draft(trac):
 
 def failed_outcomes(evs):
     return [
-        e for e in evs
-        if e["type"] == "outcome.received"
-        and e["payload"]["status"] == "failed"
+        e for e in evs if e["type"] == "outcome.received" and e["payload"]["status"] == "failed"
     ]
 
 

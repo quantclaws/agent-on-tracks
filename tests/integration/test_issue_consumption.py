@@ -26,9 +26,7 @@ def test_issue_number_in_tasksjson(trac, event_log, host_repo):
     _, _, events = run_m_impl_journey(trac, event_log)
     tasks_json = read_tasksjson(host_repo)
     for task in tasks_json.get("tasks", []):
-        assert "issue_number" in task, (
-            f"task {task.get('task_id')}: missing issue_number field"
-        )
+        assert "issue_number" in task, f"task {task.get('task_id')}: missing issue_number field"
         assert isinstance(task["issue_number"], int), (
             f"task {task.get('task_id')}: issue_number must be int,"
             f" got {type(task['issue_number'])}"
@@ -68,15 +66,11 @@ def test_dispatch_payload_carries_provenance(trac, event_log, host_repo):
         assert assignment["issue_number"] >= 1, (
             f"Devon dispatch issue_number must be positive: {assignment['issue_number']}"
         )
-        assert "ac_refs" in assignment, (
-            f"Devon dispatch missing ac_refs: {assignment.keys()}"
-        )
+        assert "ac_refs" in assignment, f"Devon dispatch missing ac_refs: {assignment.keys()}"
         assert isinstance(assignment["ac_refs"], list), (
             f"Devon dispatch ac_refs must be list: {assignment['ac_refs']}"
         )
-        assert assignment["ac_refs"], (
-            "Devon dispatch ac_refs must be non-empty"
-        )
+        assert assignment["ac_refs"], "Devon dispatch ac_refs must be non-empty"
 
 
 @pytest.mark.integration
@@ -132,6 +126,4 @@ def test_missing_trailer_fails_review(trac, event_log, host_repo):
     missing = [k for k, v in trailers_present.items() if not v]
     if missing:
         verdicts = events_of(events, "verdict.failed")
-        assert verdicts, (
-            f"missing trailers {missing} should trigger verdict.failed at TASK_REVIEW"
-        )
+        assert verdicts, f"missing trailers {missing} should trigger verdict.failed at TASK_REVIEW"

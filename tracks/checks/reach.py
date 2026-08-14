@@ -4,6 +4,7 @@ Pure-function core (check_reach) + file-reading wrapper (check_reach_file).
 Uses ast for static import analysis; targeted regex for pyproject [project.scripts]
 (no tomli/tomllib dependency, architecture.md §3.1).
 """
+
 from __future__ import annotations
 
 import ast
@@ -13,17 +14,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-_SCRIPTS_SECTION = re.compile(
-    r"^\[project\.scripts\]\s*\n(.*?)(?=^\[|\Z)", re.M | re.S
-)
+_SCRIPTS_SECTION = re.compile(r"^\[project\.scripts\]\s*\n(.*?)(?=^\[|\Z)", re.M | re.S)
 _SCRIPT_ENTRY = re.compile(r'^[\w-]+\s*=\s*["\']([^"\']+):')
 _SCRIPT_ENTRY_NO_COLON = re.compile(r'^[\w-]+\s*=\s*["\']([^"\']+)["\']')
 
-_EXCLUDE_DIRS = frozenset({
-    "__pycache__", ".git", ".venv", "venv", "node_modules",
-    ".eggs", "build", "dist", ".mypy_cache", ".pytest_cache",
-    ".ruff_cache", "_subprocess_coverage",
-})
+_EXCLUDE_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".eggs",
+        "build",
+        "dist",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "_subprocess_coverage",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -51,8 +61,7 @@ def _build_adjacency(
             else:
                 prefix = imp + "."
                 targets.update(
-                    other for other in all_modules
-                    if other.startswith(prefix) and other != mod
+                    other for other in all_modules if other.startswith(prefix) and other != mod
                 )
         adj[mod] = targets
     return adj
@@ -67,12 +76,17 @@ def _ancestors_in_graph(mod: str, all_modules: set[str]) -> list[str]:
     submodule is imported would be false-positive islands.
     """
     parts = mod.split(".")
-    return [".".join(parts[:i]) for i in range(len(parts) - 1, 0, -1)
-            if ".".join(parts[:i]) in all_modules]
+    return [
+        ".".join(parts[:i])
+        for i in range(len(parts) - 1, 0, -1)
+        if ".".join(parts[:i]) in all_modules
+    ]
 
 
 def _bfs_reachable(
-    entrypoints: list[str], adj: dict[str, set[str]], all_modules: set[str],
+    entrypoints: list[str],
+    adj: dict[str, set[str]],
+    all_modules: set[str],
 ) -> set[str]:
     """BFS from entrypoints through the adjacency graph.
 
@@ -93,9 +107,7 @@ def _bfs_reachable(
         for anc in _ancestors_in_graph(mod, all_modules):
             if anc not in reachable:
                 queue.append(anc)
-        queue.extend(
-            n for n in adj.get(mod, set()) if n not in reachable
-        )
+        queue.extend(n for n in adj.get(mod, set()) if n not in reachable)
     return reachable
 
 
@@ -124,8 +136,7 @@ def check_reach(
     reachable = _bfs_reachable(entrypoints, adj, all_modules)
 
     islands = sorted(
-        mod for mod in production_modules
-        if mod not in reachable and mod not in baseline_mods
+        mod for mod in production_modules if mod not in reachable and mod not in baseline_mods
     )
 
     status = "fail" if (islands or errors) else "pass"
@@ -222,7 +233,8 @@ def _parse_scripts_toml(toml_text: str) -> list[str]:
 def _find_py_files(repo: Path) -> list[Path]:
     """Find all .py files in repo, excluding non-production directories."""
     return [
-        path for path in sorted(repo.rglob("*.py"))
+        path
+        for path in sorted(repo.rglob("*.py"))
         if not any(part in _EXCLUDE_DIRS for part in path.relative_to(repo).parts)
     ]
 
@@ -253,7 +265,8 @@ def _discover_entrypoints(repo: Path, py_files: list[Path], extra: list[str]) ->
 
 
 def _build_graph(
-    py_files: list[Path], repo: Path,
+    py_files: list[Path],
+    repo: Path,
 ) -> tuple[dict[str, set[str]], set[str]]:
     """Build import graph and production module set.
 
@@ -265,8 +278,7 @@ def _build_graph(
     for py_file in py_files:
         mod_name = _module_name(py_file, repo)
         is_init = py_file.name == "__init__.py"
-        package = (mod_name if is_init
-                   else mod_name.rsplit(".", 1)[0] if "." in mod_name else "")
+        package = mod_name if is_init else mod_name.rsplit(".", 1)[0] if "." in mod_name else ""
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
             imports = _extract_imports(tree, package)

@@ -69,9 +69,7 @@ def live_root(live_enabled):
         subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
     (repo / "README.md").write_text("live e2e host\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
     print(f"LIVE_E2E_HOST={repo}", flush=True)
     return repo
 
@@ -92,9 +90,7 @@ def live_github_repo(live_root, live_enabled, live_install, monkeypatch):
     try:
         slug = resolve_github_repo(monkeypatch, live_root)
     except AssertionError as exc:
-        raise AssertionError(
-            f"{exc}; install_log={live_install.install_log}"
-        ) from exc
+        raise AssertionError(f"{exc}; install_log={live_install.install_log}") from exc
     print(f"LIVE_E2E_REMOTE=git@github.com:{slug}.git", flush=True)
     return slug
 

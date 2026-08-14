@@ -3,6 +3,7 @@
 Covers missing-file error, missing acceptance.md / interfaces.md context
 errors, and unparseable interfaces.md.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

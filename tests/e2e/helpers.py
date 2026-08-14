@@ -1,4 +1,5 @@
 """Shared E2E helpers (kept out of individual test modules to avoid R0801 duplication)."""
+
 import re
 
 

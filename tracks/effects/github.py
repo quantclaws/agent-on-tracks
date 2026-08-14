@@ -9,6 +9,7 @@ Split granularity (D-04): one Issue per FR and per NFR — title
 `[FR-XXXX] 标题`, body = item text + its AC list + the baseline digest.
 Issues are requirement-tracking identities, not execution units (D-07).
 """
+
 from __future__ import annotations
 
 import json
@@ -75,8 +76,7 @@ def issue_items(vdir: Path, digest: str) -> list:
     out = []
     for iid, title, block in _item_blocks(spec_body):
         ac_list = "\n".join(f"- {ac}" for ac in acs.get(iid, []))
-        body = (f"{block}\n\n## Acceptance criteria\n{ac_list}\n\n"
-                f"baseline digest: {digest}\n")
+        body = f"{block}\n\n## Acceptance criteria\n{ac_list}\n\nbaseline digest: {digest}\n"
         out.append((iid, f"[{iid}] {title}".strip(), body))
     return out
 
@@ -116,8 +116,7 @@ class FakeIssueBackend:
         issue_id = f"FAKE-{len(issues) + 1}"
         issues[issue_id] = {"title": title, "body": body, "labels": labels}
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(issues, ensure_ascii=False, indent=1),
-                              encoding="utf-8")
+        self._path.write_text(json.dumps(issues, ensure_ascii=False, indent=1), encoding="utf-8")
         return issue_id
 
     def add_to_project(self, issue_id: str, project: str) -> None:
@@ -137,16 +136,22 @@ class GithubBackend:
 
     def _request(self, url: str, payload: dict) -> dict:
         req = urllib.request.Request(
-            url, data=json.dumps(payload).encode("utf-8"), method="POST",
-            headers={"Authorization": f"Bearer {self.token}",
-                     "Accept": "application/vnd.github+json",
-                     "Content-Type": "application/json"})
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+            },
+        )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            cls = {401: "auth", 403: "rate_limit", 404: "not_found",
-                   429: "rate_limit"}.get(e.code, "network")
+            cls = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}.get(
+                e.code, "network"
+            )
             raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
         except urllib.error.URLError as e:
             raise GithubIssuesError("network", str(e.reason)) from e
@@ -154,7 +159,8 @@ class GithubBackend:
     def create_issue(self, title: str, body: str, labels: list) -> str:
         data = self._request(
             f"https://api.github.com/repos/{self.gh_repo}/issues",
-            {"title": title, "body": body, "labels": labels})
+            {"title": title, "body": body, "labels": labels},
+        )
         return str(data["number"])
 
     def add_to_project(self, issue_id: str, project: str) -> None:
@@ -162,13 +168,16 @@ class GithubBackend:
             return
         self._request(
             f"https://api.github.com/projects/columns/{project}/cards",
-            {"content_id": int(issue_id), "content_type": "Issue"})
+            {"content_id": int(issue_id), "content_type": "Issue"},
+        )
 
 
 def select_issue_backend(repo: Path, version: str):
     """Boundary selection (D-05): fake channel / missing token -> stand-in."""
-    if (os.environ.get("TRAC_FAKE_SIMULATE")
-            or os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
-            or not os.environ.get("GITHUB_TOKEN")):
+    if (
+        os.environ.get("TRAC_FAKE_SIMULATE")
+        or os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
+        or not os.environ.get("GITHUB_TOKEN")
+    ):
         return FakeIssueBackend(repo, version)
     return GithubBackend(repo, version)

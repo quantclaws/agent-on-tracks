@@ -8,6 +8,7 @@ AC-FR0090-01@v0.4 build import graph + ground truth,
 AC-FR0090-02@v0.4 islands reported + ground truth,
 AC-FR0090-04@v0.4 no entrypoints error + ground truth.
 """
+
 import sys
 from pathlib import Path
 
@@ -70,12 +71,10 @@ def _compare(name: str) -> None:
         f"{name}: status mismatch impl={impl.status} oracle={oracle['status']}"
     )
     assert tuple(sorted(impl.islands)) == tuple(sorted(oracle["islands"])), (
-        f"{name}: islands mismatch\n"
-        f"  impl={impl.islands}\n  oracle={oracle['islands']}"
+        f"{name}: islands mismatch\n  impl={impl.islands}\n  oracle={oracle['islands']}"
     )
     assert tuple(sorted(impl.entrypoints)) == tuple(sorted(oracle["entrypoints"])), (
-        f"{name}: entrypoints mismatch\n"
-        f"  impl={impl.entrypoints}\n  oracle={oracle['entrypoints']}"
+        f"{name}: entrypoints mismatch\n  impl={impl.entrypoints}\n  oracle={oracle['entrypoints']}"
     )
 
 

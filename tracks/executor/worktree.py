@@ -5,6 +5,7 @@ test-authority worktree (Shield freezes tests as frozen bundle), and gate
 worktree (combines C_design + frozen bundle + Devon candidate diff). Frozen
 bundle is never merged into Devon candidate (BS-04 temporal isolation).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -98,7 +99,9 @@ def cleanup_worktree(
     if main is not None:
         subprocess.run(
             ["git", "-C", main, "worktree", "prune"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     _cleanup_empty_parents(path)
     return removed or not os.path.exists(path)
@@ -124,15 +127,21 @@ def _apply_and_commit(wt_path: str, diff_text: str, message: str) -> None:
     try:
         subprocess.run(
             ["git", "-C", wt_path, "apply", "--whitespace=nowarn", diff_path],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         subprocess.run(
             ["git", "-C", wt_path, "add", "-A"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         subprocess.run(
             ["git", "-C", wt_path, "commit", "-m", message, "--allow-empty"],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
     finally:
         with contextlib.suppress(OSError):
@@ -142,7 +151,9 @@ def _apply_and_commit(wt_path: str, diff_text: str, message: str) -> None:
 def _main_repo(path: str) -> str | None:
     proc = subprocess.run(
         ["git", "-C", path, "rev-parse", "--git-common-dir"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if proc.returncode != 0:
         return None
@@ -157,7 +168,9 @@ def _remove_worktree(main: str | None, path: str) -> bool:
         return False
     proc = subprocess.run(
         ["git", "-C", main, "worktree", "remove", "--force", path],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     return proc.returncode == 0
 
@@ -180,6 +193,10 @@ def _cleanup_empty_parents(path: str) -> None:
 
 def _git(repo: str, *args: str) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return proc.stdout.strip()

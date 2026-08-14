@@ -11,6 +11,7 @@ back stage/substate.  Crash recovery of a pending ``rollback_stage``
 reconciles without emitting a duplicate event and applies the same boundary
 rule to the pending command's params (not its kind alone).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,13 +42,25 @@ _STORE_EVENTS_SCOPE_OVERFLOW = [
 _STORE_EVENTS_STUB_GAP = [
     ("story.requested", {"raw_chars": 5}),
     ("stage.entered", {"stage": "M-TEST"}),
-    ("command.issued", {"command": {
-        "kind": "dispatch_agent",
-        "params": {"role": "shield", "substate": "WRITE"},
-        "command_id": "C1"}}),
-    ("outcome.received", {"role": "shield", "status": "failed",
-                          "failure_class": "stub_gap",
-                          "self_report": "test-task contract invalid"}),
+    (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "shield", "substate": "WRITE"},
+                "command_id": "C1",
+            }
+        },
+    ),
+    (
+        "outcome.received",
+        {
+            "role": "shield",
+            "status": "failed",
+            "failure_class": "stub_gap",
+            "self_report": "test-task contract invalid",
+        },
+    ),
 ]
 
 
@@ -68,9 +81,11 @@ class _StubBackend:
 
 def _dispatches(events):
     """command.issued dispatch_agent events."""
-    return [e for e in events
-            if e.type == "command.issued"
-            and e.payload["command"]["kind"] == "dispatch_agent"]
+    return [
+        e
+        for e in events
+        if e.type == "command.issued" and e.payload["command"]["kind"] == "dispatch_agent"
+    ]
 
 
 def _dispatches_after(events, marker):
@@ -81,11 +96,13 @@ def _dispatches_after(events, marker):
 def _stub_failed_backend():
     """A failed-outcome backend so the run parks at the dispatch gate instead
     of entering the result pipeline."""
-    return _StubBackend({"status": "failed", "failure_class": "agent_failed",
-                         "self_report": "nope"})
+    return _StubBackend(
+        {"status": "failed", "failure_class": "agent_failed", "self_report": "nope"}
+    )
 
 
 # -- Non-stub_gap rollbacks continue in the same invocation --------------------
+
 
 def test_rollback_continues_after_human_return(tmp_path):
     """human_return is NOT a durable boundary: run_loop rolls back to
@@ -141,6 +158,7 @@ def test_rollback_continues_after_scope_overflow_with_evidence(tmp_path):
 
 # -- stub_gap is the durable stop boundary ------------------------------------
 
+
 def test_stub_gap_rollback_returns_at_boundary(tmp_path):
     """rollback_stage(stub_gap) is the only durable stop boundary: run_loop
     returns after stage.rolled_back with no auto-dispatched upstream work."""
@@ -163,6 +181,7 @@ def test_stub_gap_rollback_returns_at_boundary(tmp_path):
 
 
 # -- Later explicit run continuation after stub_gap ----------------------------
+
 
 def test_later_run_continues_from_stub_gap_rollback(tmp_path):
     """After the stub_gap boundary return, a new run_loop invocation
@@ -196,6 +215,7 @@ def test_later_run_continues_from_stub_gap_rollback(tmp_path):
 
 # -- Pending rollback recovery -------------------------------------------------
 
+
 def _store_with_pending_rollback(repo: Path) -> Store:
     """Store with a command.issued for rollback_stage(human_return) but NO
     stage.rolled_back event — simulates a crash between issue and result."""
@@ -204,12 +224,16 @@ def _store_with_pending_rollback(repo: Path) -> Store:
     for t, p in _STORE_EVENTS_HUMAN_RETURN:
         store.append("RUN", "v0.1", t, p)
     store.append(
-        "RUN", "v0.1", "command.issued",
-        {"command": {
-            "kind": "rollback_stage",
-            "params": {"to_stage": "M-STORY", "reason": "human_return"},
-            "command_id": cid,
-        }},
+        "RUN",
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "rollback_stage",
+                "params": {"to_stage": "M-STORY", "reason": "human_return"},
+                "command_id": cid,
+            }
+        },
         command_id=cid,
     )
     return store
@@ -223,12 +247,16 @@ def _store_with_pending_stub_gap_rollback(repo: Path) -> Store:
     for t, p in _STORE_EVENTS_STUB_GAP:
         store.append("RUN", "v0.1", t, p)
     store.append(
-        "RUN", "v0.1", "command.issued",
-        {"command": {
-            "kind": "rollback_stage",
-            "params": {"to_stage": "M-DESIGN", "reason": "stub_gap"},
-            "command_id": cid,
-        }},
+        "RUN",
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "rollback_stage",
+                "params": {"to_stage": "M-DESIGN", "reason": "stub_gap"},
+                "command_id": cid,
+            }
+        },
         command_id=cid,
     )
     return store
@@ -298,26 +326,33 @@ def test_rollback_stage_idempotent_on_reconcile(tmp_path):
     cid = "already-rolled-back-cid"
 
     store.append(
-        "RUN", "v0.1", "command.issued",
-        {"command": {
-            "kind": "rollback_stage",
-            "params": {"to_stage": "M-STORY", "reason": "human_return"},
-            "command_id": cid,
-        }},
+        "RUN",
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "rollback_stage",
+                "params": {"to_stage": "M-STORY", "reason": "human_return"},
+                "command_id": cid,
+            }
+        },
         command_id=cid,
     )
     store.append(
-        "RUN", "v0.1", "stage.rolled_back",
-        {"from_stage": "M-STORY", "to_stage": "M-STORY",
-         "reason": "human_return"},
+        "RUN",
+        "v0.1",
+        "stage.rolled_back",
+        {"from_stage": "M-STORY", "to_stage": "M-STORY", "reason": "human_return"},
         command_id=cid,
     )
 
     ex = Executor(store, repo, "RUN")
     state = store.state("RUN")
-    cmd = Command(kind="rollback_stage",
-                  params={"to_stage": "M-STORY", "reason": "human_return"},
-                  command_id=cid)
+    cmd = Command(
+        kind="rollback_stage",
+        params={"to_stage": "M-STORY", "reason": "human_return"},
+        command_id=cid,
+    )
     ex._do_rollback_stage(cmd, state, None, reconcile=True)
 
     events = list(store.events("RUN"))
@@ -326,6 +361,7 @@ def test_rollback_stage_idempotent_on_reconcile(tmp_path):
 
 
 # -- Replay/idempotency --------------------------------------------------------
+
 
 def test_replay_after_rollback_is_deterministic(tmp_path):
     """Replaying the event log after a human_return rollback yields a stable

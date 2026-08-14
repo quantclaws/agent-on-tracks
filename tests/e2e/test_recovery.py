@@ -4,6 +4,7 @@ AC-27a/b, AC-29a/b, AC-29d (reconcile is also covered at integration level).
 The blocking agent (`simulate=...=hang`) holds the lock mid-dispatch; a second
 process must fail fast with the holder PID and write nothing (D-07).
 """
+
 import os
 import signal
 import sqlite3
@@ -23,12 +24,14 @@ def start_to_draft(trac):
 
 
 def spawn_hanging_run(host_repo):
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
     env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
     proc = subprocess.Popen(
-        [str(TRAC), "run"], cwd=host_repo, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [str(TRAC), "run"],
+        cwd=host_repo,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     lock = host_repo / ".tracks" / "runtime" / "lock"
     for _ in range(100):  # wait until the run actually holds the lock
@@ -69,9 +72,7 @@ def test_lock_rejects_second_writer(host_repo, trac, event_log):
         proc.wait(timeout=10)
 
 
-def test_crash_recovery_reissues_without_consuming_attempt(
-    host_repo, trac, event_log
-):
+def test_crash_recovery_reissues_without_consuming_attempt(host_repo, trac, event_log):
     """AC-29b: kill while command.issued is on disk and the result is not;
     the next run re-executes the dangling dispatch, attempt count unchanged."""
     start_to_draft(trac)
@@ -84,8 +85,7 @@ def test_crash_recovery_reissues_without_consuming_attempt(
     dangling = [e for e in evs if e["type"] == "command.issued"][-1]
     assert dangling["payload"]["command"]["params"]["substate"] == "DRAFT"
     assert not any(
-        e["type"] == "outcome.received" and e["command_id"] == dangling["command_id"]
-        for e in evs
+        e["type"] == "outcome.received" and e["command_id"] == dangling["command_id"] for e in evs
     )
 
     # recovery run: stale lock reclaimed, dangling dispatch re-executed
@@ -93,9 +93,9 @@ def test_crash_recovery_reissues_without_consuming_attempt(
     assert r.returncode == 0, r.stderr
     evs = event_log()
     outcomes = [
-        e for e in evs
-        if e["type"] == "outcome.received"
-        and e["command_id"] == dangling["command_id"]
+        e
+        for e in evs
+        if e["type"] == "outcome.received" and e["command_id"] == dangling["command_id"]
     ]
     assert outcomes, "dangling dispatch was not re-executed on recovery"
     assert not any(e["type"] == "verdict.failed" for e in evs)  # no attempt burned

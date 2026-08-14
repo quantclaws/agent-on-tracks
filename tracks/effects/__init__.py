@@ -18,6 +18,7 @@ backend choice or any test/simulate mode.
 - conftest forces ``TRAC_AGENT_BACKEND=fake`` for the deterministic E2E channel;
   the live opencode channel opts in explicitly (SPEC test-plan §6).
 """
+
 from __future__ import annotations
 
 import os
@@ -38,6 +39,7 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
         return FakeBackend(repo, version)
     if kind == "opencode":
         from tracks.effects.opencode import OpencodeBackend
+
         model = os.environ.get("TRAC_AGENT_MODEL", "").strip() or None
         debug = bool(os.environ.get("TRAC_DEBUG", "").strip())
         return OpencodeBackend(repo, version, model=model, debug=debug)

@@ -107,9 +107,7 @@ def require_current_virtualenv() -> None:
     if not CURRENT_PYTHON.is_file():
         raise AssertionError(f"current Python is not executable: {CURRENT_PYTHON}")
     if sys.prefix == sys.base_prefix:
-        raise AssertionError(
-            f"live E2E must run inside a virtualenv: prefix={sys.prefix!r}"
-        )
+        raise AssertionError(f"live E2E must run inside a virtualenv: prefix={sys.prefix!r}")
 
 
 def clean_env(source: dict[str, str] | None = None) -> dict[str, str]:
@@ -182,10 +180,7 @@ def resolve_github_repo(monkeypatch, live_root: Path) -> str:
     GitHub setup so the R0801 duplicate-code gate stays green."""
     value = os.environ.get("TRACKS_E2E_GITHUB_REPO", "").strip()
     if not value:
-        raise AssertionError(
-            "full live journey requires TRACKS_E2E_GITHUB_REPO; "
-            f"host={live_root}"
-        )
+        raise AssertionError(f"full live journey requires TRACKS_E2E_GITHUB_REPO; host={live_root}")
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not token:
         try:
@@ -232,7 +227,10 @@ def _kill_descendants(pid: int) -> None:
     try:
         result = subprocess.run(
             ["pgrep", "-P", str(pid)],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
             start_new_session=True,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -508,8 +506,7 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         print(f"LIVE_E2E_HOST={live_root}", flush=True)
         print(f"LIVE_E2E_INSTALL_LOG={install_log}", flush=True)
         raise AssertionError(
-            f"{message}; host={live_root}; install_log={install_log}; "
-            f"isolated_venv={isolated_venv}"
+            f"{message}; host={live_root}; install_log={install_log}; isolated_venv={isolated_venv}"
         )
 
     try:
@@ -518,9 +515,21 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
         append_log(install_log, f"external_opencode={opencode_source}\nshim={opencode}\n")
         clean = clean_env()
         build = run_logged(
-            [str(CURRENT_PYTHON), "-m", "pip", "wheel", str(PROJECT_ROOT),
-             "--no-deps", "--no-build-isolation", "--wheel-dir", str(wheelhouse)],
-            PROJECT_ROOT, clean, install_log, timeout=install_timeout,
+            [
+                str(CURRENT_PYTHON),
+                "-m",
+                "pip",
+                "wheel",
+                str(PROJECT_ROOT),
+                "--no-deps",
+                "--no-build-isolation",
+                "--wheel-dir",
+                str(wheelhouse),
+            ],
+            PROJECT_ROOT,
+            clean,
+            install_log,
+            timeout=install_timeout,
         )
         if build.returncode != 0:
             failed(f"wheel build failed: {build.stderr.strip()}")
@@ -586,10 +595,17 @@ def prepare_live_install(live_root: Path) -> LiveInstall:
     print(f"LIVE_E2E_ISOLATED_VENV={isolated_venv}", flush=True)
     print(f"LIVE_E2E_WHEEL={wheel}", flush=True)
     print(f"LIVE_E2E_INSTALL_LOG={install_log}", flush=True)
-    wheel_command = shlex.join([
-        str(CURRENT_PYTHON), "-m", "pip", "wheel", str(PROJECT_ROOT),
-        "--no-deps", "--no-build-isolation",
-    ])
+    wheel_command = shlex.join(
+        [
+            str(CURRENT_PYTHON),
+            "-m",
+            "pip",
+            "wheel",
+            str(PROJECT_ROOT),
+            "--no-deps",
+            "--no-build-isolation",
+        ]
+    )
     print(f"LIVE_E2E_WHEEL_COMMAND={wheel_command}", flush=True)
     return info
 
@@ -770,8 +786,7 @@ class LiveTracDriver:
             try:
                 with sqlite3.connect(database, timeout=1.0) as connection:
                     rows = connection.execute(
-                        "SELECT seq, type, command_id, payload "
-                        "FROM events ORDER BY seq"
+                        "SELECT seq, type, command_id, payload FROM events ORDER BY seq"
                     ).fetchall()
                 return [
                     {
@@ -816,20 +831,26 @@ class LiveTracDriver:
         return report_dir.resolve()
 
     def metadata(self) -> tuple[str, str]:
-        remote = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=self.live_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip() or "-"
-        branch = subprocess.run(
-            ["git", "symbolic-ref", "--short", "HEAD"],
-            cwd=self.live_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.strip() or "-"
+        remote = (
+            subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=self.live_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            or "-"
+        )
+        branch = (
+            subprocess.run(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=self.live_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            or "-"
+        )
         return remote, branch
 
     def fail(self, message: str):
@@ -912,9 +933,7 @@ class LiveTracDriver:
         print(f"LIVE_E2E_ISOLATED_VENV={self.install.isolated_venv}", flush=True)
         print(f"LIVE_E2E_WHEEL={self.install.wheel}", flush=True)
         print(f"LIVE_E2E_INSTALL_LOG={self.install.install_log}", flush=True)
-        print(
-            f"LIVE_E2E_REPORT_DIR={report_dir if report_dir else 'not-generated'}", flush=True
-        )
+        print(f"LIVE_E2E_REPORT_DIR={report_dir if report_dir else 'not-generated'}", flush=True)
         print(f"LIVE_E2E_REMOTE={remote}", flush=True)
         print(f"LIVE_E2E_BRANCH={branch}", flush=True)
 
@@ -937,8 +956,12 @@ class LiveTracDriver:
         return self._dispatch_budget(selected) if selected is not None else 1
 
     def _effective_command_timeout(
-        self, *, timeout: int | None, agent_timeout: int | None,
-        max_dispatches: int | None, scenario: str | None,
+        self,
+        *,
+        timeout: int | None,
+        agent_timeout: int | None,
+        max_dispatches: int | None,
+        scenario: str | None,
     ) -> int:
         """Compute the outer command timeout for a ``trac run`` invocation.
 
@@ -952,13 +975,17 @@ class LiveTracDriver:
         """
         effective = timeout or self.command_timeout
         if agent_timeout and not timeout:
-            budget = (max_dispatches if max_dispatches is not None
-                      else self._scenario_budget(scenario))
+            budget = (
+                max_dispatches if max_dispatches is not None else self._scenario_budget(scenario)
+            )
             effective = max(effective, budget * (agent_timeout + 300))
         return effective
 
     def _command_args(
-        self, args: tuple[str, ...], scenario: str | None, console_input: str | None,
+        self,
+        args: tuple[str, ...],
+        scenario: str | None,
+        console_input: str | None,
         max_dispatches: int | None = None,
     ) -> tuple[list[str], str]:
         command_args = list(args)
@@ -992,9 +1019,17 @@ class LiveTracDriver:
                 f"stdout={stdout or exc.stdout or ''}; stderr={stderr or exc.stderr or ''}"
             )
 
-    def run(self, *args, stdin=None, console_input=None, scenario=None,
-            timeout=None, agent_timeout=None, max_dispatches=None,
-            backend: str = "opencode"):
+    def run(
+        self,
+        *args,
+        stdin=None,
+        console_input=None,
+        scenario=None,
+        timeout=None,
+        agent_timeout=None,
+        max_dispatches=None,
+        backend: str = "opencode",
+    ):
         self.command_count += 1
         if self.command_count > self.max_commands:
             self.fail(f"live command bound exceeded ({self.max_commands})")
@@ -1029,11 +1064,15 @@ class LiveTracDriver:
             start_new_session=True,
         )
         effective_command_timeout = self._effective_command_timeout(
-            timeout=timeout, agent_timeout=agent_timeout,
-            max_dispatches=max_dispatches, scenario=scenario,
+            timeout=timeout,
+            agent_timeout=agent_timeout,
+            max_dispatches=max_dispatches,
+            scenario=scenario,
         )
         stdout, stderr = self._communicate(
-            process, command_args, stdin,
+            process,
+            command_args,
+            stdin,
             min(effective_command_timeout, remaining),
         )
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)

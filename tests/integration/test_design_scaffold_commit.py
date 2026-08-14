@@ -1,4 +1,5 @@
 """M-DESIGN architecture commits own the declared host scaffold."""
+
 import stat
 import subprocess
 
@@ -34,15 +35,8 @@ def _setup_design(tmp_path):
 
 
 def _architecture(*declared):
-    bullets = "\n".join(
-        f"- {path} \u2014 declared scaffold" for path in declared
-    )
-    return (
-        "---\nsha:\n---\n\n"
-        "## 2. Scaffold \u5ba3\u8a00\n\n"
-        f"{bullets}\n\n"
-        "## 3. Next section\n"
-    )
+    bullets = "\n".join(f"- {path} \u2014 declared scaffold" for path in declared)
+    return f"---\nsha:\n---\n\n## 2. Scaffold \u5ba3\u8a00\n\n{bullets}\n\n## 3. Next section\n"
 
 
 def _commit_command(command_id):
@@ -84,9 +78,7 @@ def test_architecture_commit_stages_declared_scaffold(tmp_path):
         ),
     ],
 )
-def test_invalid_declared_scaffold_fails_closed(
-    tmp_path, declared, setup, evidence
-):
+def test_invalid_declared_scaffold_fails_closed(tmp_path, declared, setup, evidence):
     ex, store, run_id, vdir = _setup_design(tmp_path)
     architecture = vdir / "architecture.md"
     architecture.write_text(_architecture(declared), encoding="utf-8")
@@ -141,8 +133,7 @@ def test_reconcile_design_commit_only_backfills_event(tmp_path):
         run_id,
         "v0.4",
         "command.issued",
-        {"command": {"kind": command.kind, "params": command.params,
-                     "command_id": command_id}},
+        {"command": {"kind": command.kind, "params": command.params, "command_id": command_id}},
         command_id=command_id,
     )
 
@@ -207,20 +198,15 @@ def test_fake_design_tail_materializes_declared_cli_before_m_test_dispatch(
     for name in ("architecture.md", "interfaces.md", "test-plan.md"):
         assert (version_dir / name).is_file(), name
     assert stub.read_text(encoding="utf-8") == (
-        "#!/usr/bin/env python3\n"
-        "raise NotImplementedError(\"IF-MTEST-001 code-stats CLI\")\n"
+        '#!/usr/bin/env python3\nraise NotImplementedError("IF-MTEST-001 code-stats CLI")\n'
     )
     assert stub.stat().st_mode & stat.S_IXUSR
-    assert _git(host_repo, "ls-files", "--error-unmatch", "code-stats").strip() == (
-        "code-stats"
-    )
+    assert _git(host_repo, "ls-files", "--error-unmatch", "code-stats").strip() == ("code-stats")
     assert _git(host_repo, "status", "--porcelain", "--", "code-stats") == ""
 
     events = event_log(run_id)
     _assert_design_exit_adjacency(events)
-    scaffold_commit = _git(
-        host_repo, "log", "-1", "--format=%H", "--", "code-stats"
-    ).strip()
+    scaffold_commit = _git(host_repo, "log", "-1", "--format=%H", "--", "code-stats").strip()
     committed_paths = _git(
         host_repo, "show", "--format=", "--name-only", scaffold_commit
     ).splitlines()

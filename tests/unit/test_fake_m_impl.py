@@ -6,6 +6,7 @@ the scope whitelist shape (production + tests/unit), ``archer:PLANNING``
 failure tokens failing closed without writing a valid artifact, missing-doc
 fail-closed inputs, and byte-identical deterministic replay (NFR-01/NFR-02).
 """
+
 from __future__ import annotations
 
 import json
@@ -59,10 +60,12 @@ def _docs(tmp_path: Path, version: str = "v0.5") -> Path:
     return vdir
 
 
-def _plan(tmp_path: Path, version: str = "v0.5",
-          assignment: dict | None = None) -> dict:
+def _plan(tmp_path: Path, version: str = "v0.5", assignment: dict | None = None) -> dict:
     return FakeBackend(tmp_path, version).act(
-        "archer", "PLANNING", None, None,
+        "archer",
+        "PLANNING",
+        None,
+        None,
         assignment if assignment is not None else {"kind": "PLANNING"},
     )
 
@@ -73,6 +76,7 @@ def _tasks(tmp_path: Path) -> dict:
 
 
 # -- success path ------------------------------------------------------------
+
 
 def test_planning_writes_tasks_json_artifact(tmp_path):
     _docs(tmp_path)
@@ -106,8 +110,7 @@ def test_planning_tasks_are_deterministic_vertical_slices(tmp_path):
         # scope whitelist carries an allowed production path and a tests/unit path
         scope = task["scope_boundary"].replace("\n", ",").split(",")
         assert any(p.strip().startswith("tests/unit/") for p in scope)
-        assert any(p.strip() and not p.strip().startswith("tests/")
-                   for p in scope)
+        assert any(p.strip() and not p.strip().startswith("tests/") for p in scope)
 
 
 def test_planning_covers_required_acs_with_registered_if_ids(tmp_path):
@@ -145,7 +148,8 @@ def test_planning_taskgraph_passes_runtime_validators(tmp_path):
     ok, _ = validate_scope(nodes)
     assert ok
     ok, _ = validate_ac_coverage(
-        nodes, ["AC-FR0020-01", "AC-FR0030-01"], {"IF-IMPL-002", "IF-IMPL-003"})
+        nodes, ["AC-FR0020-01", "AC-FR0030-01"], {"IF-IMPL-002", "IF-IMPL-003"}
+    )
     assert ok
     ok, _ = validate_issue_numbers(nodes)
     assert ok
@@ -153,9 +157,12 @@ def test_planning_taskgraph_passes_runtime_validators(tmp_path):
 
 # -- failure tokens fail closed without a valid artifact ---------------------
 
+
 @pytest.mark.parametrize("token", ["fail", "timeout", "over_reach", "no_target_diff"])
 def test_planning_failure_tokens_do_not_write_tasks_json(
-    tmp_path, monkeypatch, token,
+    tmp_path,
+    monkeypatch,
+    token,
 ):
     _docs(tmp_path)
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", f"archer:PLANNING={token}")
@@ -169,6 +176,7 @@ def test_planning_failure_tokens_do_not_write_tasks_json(
 
 
 # -- missing/empty doc inputs fail closed ------------------------------------
+
 
 def test_planning_missing_acceptance_fails_closed(tmp_path):
     vdir = _vdir(tmp_path)
@@ -199,8 +207,7 @@ def test_planning_empty_if_registry_fails_closed(tmp_path):
     vdir = _vdir(tmp_path)
     vdir.mkdir(parents=True, exist_ok=True)
     (vdir / "acceptance.md").write_text(_ACC, encoding="utf-8")
-    (vdir / "interfaces.md").write_text(
-        "# Interfaces\n\n## 5. IF Registry\n\n", encoding="utf-8")
+    (vdir / "interfaces.md").write_text("# Interfaces\n\n## 5. IF Registry\n\n", encoding="utf-8")
 
     result = _plan(tmp_path)
 
@@ -211,13 +218,15 @@ def test_planning_empty_if_registry_fails_closed(tmp_path):
 
 # -- deterministic replay ----------------------------------------------------
 
+
 def test_planning_replay_is_byte_identical(tmp_path):
     _docs(tmp_path)
     first = _plan(tmp_path)
     first_raw = (_vdir(tmp_path) / "tasks.json").read_bytes()
 
     second = FakeBackend(tmp_path, "v0.5").act(
-        "archer", "PLANNING", None, None, {"kind": "PLANNING"})
+        "archer", "PLANNING", None, None, {"kind": "PLANNING"}
+    )
     second_raw = (_vdir(tmp_path) / "tasks.json").read_bytes()
 
     assert first_raw == second_raw
@@ -225,18 +234,13 @@ def test_planning_replay_is_byte_identical(tmp_path):
     assert first["audit_evidence"] == second["audit_evidence"]
 
 
-@pytest.mark.parametrize(
-    "substate", ["PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE"]
-)
+@pytest.mark.parametrize("substate", ["PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE"])
 @pytest.mark.parametrize("verdict", ["pass", "revise", "fail"])
-def test_m_impl_prism_result_metadata_matches_simulation(
-    tmp_path, monkeypatch, substate, verdict
-):
+def test_m_impl_prism_result_metadata_matches_simulation(tmp_path, monkeypatch, substate, verdict):
     criteria_pack = {"name": "tracks-prism-impl", "version": "0.1"}
     monkeypatch.setenv(
         "TRAC_FAKE_SIMULATE",
-        f"prism:{substate}={verdict};"
-        "prism:defect_classification=impl_defect",
+        f"prism:{substate}={verdict};prism:defect_classification=impl_defect",
     )
 
     result = FakeBackend(tmp_path, "v0.5").act(
@@ -262,17 +266,14 @@ def test_m_impl_prism_result_metadata_matches_simulation(
 # legacy stub and no reach entries.
 _M_IMPL_CAPABILITY_VERSIONS = ("v0.5", "v0.6", "v0.10")
 _LEGACY_FAIL_CLOSED_VERSIONS = ("v0.4", "v0.5.1", "0.5", "v0", "bogus")
-_SHIELD_TASKS = [{"ac_id": "AC-FR0010-01", "layers": ["integration"],
-                  "if_ids": ["IF-MTEST-001"]}]
+_SHIELD_TASKS = [{"ac_id": "AC-FR0010-01", "layers": ["integration"], "if_ids": ["IF-MTEST-001"]}]
 
 
 def _shield_body(tmp_path: Path, version: str) -> str:
     """Public capability behavior: the generated default Fake Shield test body
     for ``version`` (deterministic FakeBackend setup, no env injection)."""
-    FakeBackend(tmp_path, version).act(
-        "shield", "WRITE", None, None, {"test_tasks": _SHIELD_TASKS})
-    return (tmp_path / "tests" / "integration"
-            / "test_ac_fr0010_01.py").read_text(encoding="utf-8")
+    FakeBackend(tmp_path, version).act("shield", "WRITE", None, None, {"test_tasks": _SHIELD_TASKS})
+    return (tmp_path / "tests" / "integration" / "test_ac_fr0010_01.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("version", _M_IMPL_CAPABILITY_VERSIONS)
@@ -295,13 +296,11 @@ def test_m_impl_versions_materialize_reach_entries(tmp_path, version):
     artifact (``.tracks/reach-entries.txt``) the M-IMPL Green/check_reach path
     needs."""
     vdir = _docs(tmp_path, version)
-    result = FakeBackend(tmp_path, version).act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"})
+    result = FakeBackend(tmp_path, version).act("archer", "DRAFT", None, None, {"kind": "DRAFT"})
     assert result["status"] == "done"
 
     reach_path = tmp_path / ".tracks" / "reach-entries.txt"
-    assert reach_path.is_file(), (
-        f"{version} Fake M-DESIGN must materialize reach entrypoints")
+    assert reach_path.is_file(), f"{version} Fake M-DESIGN must materialize reach entrypoints"
     assert reach_path.read_text(encoding="utf-8").splitlines() == [
         "tracks.impl.ac_fr0020_01",
         "tracks.impl.ac_fr0030_01",
@@ -322,8 +321,7 @@ def test_pre_v05_and_malformed_versions_fail_closed(tmp_path, version):
     assert "runpy" not in body
 
     vdir = _docs(tmp_path, version)
-    result = FakeBackend(tmp_path, version).act(
-        "archer", "DRAFT", None, None, {"kind": "DRAFT"})
+    result = FakeBackend(tmp_path, version).act("archer", "DRAFT", None, None, {"kind": "DRAFT"})
     assert result["status"] == "done"
     assert not (tmp_path / ".tracks" / "reach-entries.txt").exists()
     architecture = (vdir / "architecture.md").read_text(encoding="utf-8")

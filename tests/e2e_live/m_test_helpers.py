@@ -53,9 +53,7 @@ def _events(repo: Path, run_id: str) -> list[dict]:
             ref_path = blob_dir / data["$ref"]
             if ref_path.exists():
                 data = json.loads(ref_path.read_text(encoding="utf-8"))
-        events.append(
-            {"seq": seq, "type": event_type, "command_id": command_id, "payload": data}
-        )
+        events.append({"seq": seq, "type": event_type, "command_id": command_id, "payload": data})
     return events
 
 
@@ -174,9 +172,7 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
         f"have {docs}, expected >= {expected_docs}"
     )
     skills = assignment.get("skills", [])
-    assert "tracks-discuz" in skills, (
-        f"Shield assignment.skills missing tracks-discuz: {skills}"
-    )
+    assert "tracks-discuz" in skills, f"Shield assignment.skills missing tracks-discuz: {skills}"
     test_tasks = assignment.get("test_tasks")
     assert isinstance(test_tasks, list) and test_tasks, (
         f"Shield assignment.test_tasks missing or empty: {test_tasks}"
@@ -191,18 +187,19 @@ def assert_shield_assignment_contract(events: list[dict], version: str) -> None:
         assert ac_id not in seen_acs, f"test_tasks duplicate ac_id: {ac_id}"
         seen_acs.add(ac_id)
         layers = task.get("layers", [])
-        assert isinstance(layers, list) and layers and all(
-            lay in ("integration", "e2e") for lay in layers
-        ) and len(set(layers)) == len(layers), (
-            f"test_tasks {ac_id} invalid layers: {layers}"
-        )
+        assert (
+            isinstance(layers, list)
+            and layers
+            and all(lay in ("integration", "e2e") for lay in layers)
+            and len(set(layers)) == len(layers)
+        ), f"test_tasks {ac_id} invalid layers: {layers}"
         if_ids = task.get("if_ids", [])
-        assert isinstance(if_ids, list) and if_ids and all(
-            isinstance(if_id, str) and _TASK_IF_ID.fullmatch(if_id)
-            for if_id in if_ids
-        ) and len(set(if_ids)) == len(if_ids), (
-            f"test_tasks {ac_id} invalid if_ids: {if_ids}"
-        )
+        assert (
+            isinstance(if_ids, list)
+            and if_ids
+            and all(isinstance(if_id, str) and _TASK_IF_ID.fullmatch(if_id) for if_id in if_ids)
+            and len(set(if_ids)) == len(if_ids)
+        ), f"test_tasks {ac_id} invalid if_ids: {if_ids}"
 
 
 # -- P0: Shield scope + no commit ------------------------------------------
@@ -222,9 +219,7 @@ def snapshot_git_state(repo: Path) -> dict:
     return {
         "head": _git(repo, "rev-parse", "HEAD"),
         "status_porcelain": _git(repo, "status", "--porcelain"),
-        "tracked_files": set(
-            _git(repo, "ls-files").splitlines()
-        ),
+        "tracked_files": set(_git(repo, "ls-files").splitlines()),
     }
 
 
@@ -236,9 +231,7 @@ def _untracked_leaves(repo: Path, prefix: str) -> list[str]:
     return [line.strip().strip('"') for line in out.splitlines() if line.strip()]
 
 
-def assert_shield_no_commit_scope(
-    before: dict, repo: Path, remote_refs_before: str
-) -> None:
+def assert_shield_no_commit_scope(before: dict, repo: Path, remote_refs_before: str) -> None:
     """P0: after Shield/collection (before Prism/Runtime commit):
       * HEAD unchanged (Shield no commit)
       * remote refs unchanged (Shield no push)
@@ -255,9 +248,7 @@ def assert_shield_no_commit_scope(
         f"Shield committed: HEAD changed {before['head'][:8]} -> {after_head[:8]}"
     )
     remote_refs_after = _git(repo, "ls-remote", "origin")
-    assert remote_refs_after == remote_refs_before, (
-        "Shield pushed: remote refs changed"
-    )
+    assert remote_refs_after == remote_refs_before, "Shield pushed: remote refs changed"
     # Every new/modified path must be within tests/<allowed>/; runtime-owned
     # prefixes (.tracks/, .opencode/) are not Shield writes and are skipped.
     status = _git(repo, "status", "--porcelain")
@@ -282,26 +273,19 @@ def assert_shield_no_commit_scope(
                 top = p.split("/")[0] if "/" in p else p
                 if top in _RUNTIME_OWNED_TOP_DIRS:
                     continue
-                assert top == "tests", (
-                    f"Shield wrote outside tests/: {p}"
-                )
+                assert top == "tests", f"Shield wrote outside tests/: {p}"
                 if "/" in p:
                     second = p.split("/")[1]
                     assert second in _ALLOWED_TEST_DIRS, (
-                        f"Shield wrote to tests/{second}/ (not in "
-                        f"{_ALLOWED_TEST_DIRS}): {p}"
+                        f"Shield wrote to tests/{second}/ (not in {_ALLOWED_TEST_DIRS}): {p}"
                     )
 
 
-def assert_single_test_commit(
-    pre_shield_head: str, repo: Path, test_committed_event: dict
-) -> None:
+def assert_single_test_commit(pre_shield_head: str, repo: Path, test_committed_event: dict) -> None:
     """P0: after final Runtime exit, exactly one new git commit relative to
     pre-Shield HEAD, and it corresponds to ``test.committed`` commit_sha."""
     post_head = _git(repo, "rev-parse", "HEAD")
-    assert post_head != pre_shield_head, (
-        "no new commit after M-TEST exit (expected exactly one)"
-    )
+    assert post_head != pre_shield_head, "no new commit after M-TEST exit (expected exactly one)"
     commit_sha = test_committed_event["payload"]["commit_sha"]
     assert commit_sha == post_head, (
         f"test.committed commit_sha {commit_sha[:8]} != HEAD {post_head[:8]}"
@@ -327,15 +311,19 @@ def assert_criteria_pack_triple(events: list[dict]) -> None:
       3. No Runtime criteria_pack_mismatch verdict.failed; pass verdict present
     All three assertions are visible and independent."""
     m_test_entered_seq = next(
-        (e["seq"] for e in events
-         if e["type"] == "stage.entered" and e["payload"]["stage"] == "M-TEST"),
+        (
+            e["seq"]
+            for e in events
+            if e["type"] == "stage.entered" and e["payload"]["stage"] == "M-TEST"
+        ),
         None,
     )
     assert m_test_entered_seq is not None, "missing stage.entered(M-TEST)"
 
     # 1. Prism M-TEST dispatch assignment names the criteria pack.
     prism_dispatches = [
-        e for e in events
+        e
+        for e in events
         if e["type"] == "command.issued"
         and e["payload"].get("command", {}).get("kind") == "dispatch_agent"
         and e["payload"]["command"]["params"].get("role") == "prism"
@@ -346,22 +334,19 @@ def assert_criteria_pack_triple(events: list[dict]) -> None:
     prism_assignment = prism_dispatches[-1]["payload"]["command"]["params"].get("assignment", {})
     assigned_pack = prism_assignment.get("criteria_pack")
     assert assigned_pack == _CRITERIA_PACK, (
-        f"Prism M-TEST dispatch assignment criteria_pack != {_CRITERIA_PACK}: "
-        f"got {assigned_pack}"
+        f"Prism M-TEST dispatch assignment criteria_pack != {_CRITERIA_PACK}: got {assigned_pack}"
     )
     # D-29: the criteria pack skill is declared for materialization (not just
     # identity metadata); assignment.skills names tracks-prism-test so the
     # backend materializes it for Prism to consume.
     assigned_skills = prism_assignment.get("skills", [])
     assert "tracks-prism-test" in assigned_skills, (
-        f"Prism M-TEST dispatch assignment.skills missing tracks-prism-test: "
-        f"got {assigned_skills}"
+        f"Prism M-TEST dispatch assignment.skills missing tracks-prism-test: got {assigned_skills}"
     )
 
     # 2. Prism outcome/verdict echoes the same identity.
     m_test_prism_verdicts = [
-        e for e in events
-        if e["type"] == "prism.verdict" and e["seq"] > m_test_entered_seq
+        e for e in events if e["type"] == "prism.verdict" and e["seq"] > m_test_entered_seq
     ]
     assert m_test_prism_verdicts, "missing M-TEST prism.verdict"
     last_verdict = m_test_prism_verdicts[-1]
@@ -375,14 +360,13 @@ def assert_criteria_pack_triple(events: list[dict]) -> None:
 
     # 3. No criteria_pack_mismatch verdict.failed; pass verdict present.
     mismatch = [
-        e for e in events
+        e
+        for e in events
         if e["type"] == "verdict.failed"
         and e["payload"].get("check") == "criteria_pack_mismatch"
         and e["seq"] > m_test_entered_seq
     ]
-    assert not mismatch, (
-        f"criteria_pack_mismatch should not happen: {mismatch}"
-    )
+    assert not mismatch, f"criteria_pack_mismatch should not happen: {mismatch}"
 
 
 # -- P0: test markers ------------------------------------------------------
@@ -406,9 +390,7 @@ def assert_test_markers(tracks_tests_dir: Path, version: str) -> None:
             matches = marker_re.findall(content)
             assert matches, f"test file {test_file} has no R-1 TRACKS-TRACE marker"
             for _line, ver in matches:
-                assert ver == version, (
-                    f"marker version {ver} != expected {version} in {test_file}"
-                )
+                assert ver == version, f"marker version {ver} != expected {version} in {test_file}"
             found = True
     assert found, "no test files with markers found under tests/integration|e2e/"
 
@@ -454,13 +436,9 @@ def assert_m_test_boundary(final_events: list[dict]) -> None:
         if e["type"] == "stage.entered" and e["payload"]["stage"] == "M-TEST"
     )
     human_in_m_test = [
-        e
-        for e in final_events
-        if e["type"].startswith("human.") and e["seq"] > m_test_entered
+        e for e in final_events if e["type"].startswith("human.") and e["seq"] > m_test_entered
     ]
-    assert not human_in_m_test, (
-        f"M-TEST must carry no human gate (BS-05): {human_in_m_test}"
-    )
+    assert not human_in_m_test, f"M-TEST must carry no human gate (BS-05): {human_in_m_test}"
 
 
 # -- baseline snapshot ------------------------------------------------------
@@ -527,9 +505,7 @@ def _snapshot_ignore(directory: str, names: list[str]) -> set[str]:
     return set()
 
 
-def _copy_tree(
-    src: Path, dst: Path, *, ignore_names: set[str] | None = None
-) -> None:
+def _copy_tree(src: Path, dst: Path, *, ignore_names: set[str] | None = None) -> None:
     """Copy src into dst, excluding opencode's node_modules (recreated on
     demand), the baseline manifest itself, and the runtime SQLite DB trio
     (``tracks.db`` + ``-wal`` + ``-shm``). The runtime DB is rebuilt in the
@@ -619,9 +595,7 @@ def _restore_baseline(baseline_dir: Path, live_root: Path) -> None:
     # The baseline manifest is snapshot metadata, not host state; restore
     # must not drop it into the live host or Shield's scope assertion trips
     # on the untracked top-level marker.
-    _copy_tree(
-        baseline_dir, live_root, ignore_names={_BASELINE_MANIFEST_NAME}
-    )
+    _copy_tree(baseline_dir, live_root, ignore_names={_BASELINE_MANIFEST_NAME})
 
 
 def _setup_baseline_remote(live_root: Path) -> tuple[str, str]:
@@ -701,9 +675,7 @@ def _capture_baseline(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     substate = (
-        f" checkpoint_substate={checkpoint_substate}"
-        if checkpoint_substate is not None
-        else ""
+        f" checkpoint_substate={checkpoint_substate}" if checkpoint_substate is not None else ""
     )
     print(
         f"LIVE_E2E_BASELINE=captured {target} checkpoint={checkpoint}{substate}",
@@ -712,9 +684,7 @@ def _capture_baseline(
     return target
 
 
-def _find_baseline_for_sha(
-    version: str, checkpoint: str = "M-REQ-APPROVAL"
-) -> Path | None:
+def _find_baseline_for_sha(version: str, checkpoint: str = "M-REQ-APPROVAL") -> Path | None:
     """Locate a baseline for the current HEAD at the named checkpoint.
 
     Lookup order: ``TRAC_LIVE_BASELINE_DIR`` (explicit path) else the newest
@@ -821,9 +791,7 @@ def _sanity_check_resumed_host(live_trac, live_root: Path, baseline: Path) -> st
     assert "status=active" in status.stdout, (
         f"baseline is not active (escalation?): {status.stdout}"
     )
-    assert "awaiting=-" in status.stdout, (
-        f"baseline is awaiting (escalation?): {status.stdout}"
-    )
+    assert "awaiting=-" in status.stdout, f"baseline is awaiting (escalation?): {status.stdout}"
 
     events = _events(live_root, run_id)
     failed = [
@@ -838,9 +806,7 @@ def _sanity_check_resumed_host(live_trac, live_root: Path, baseline: Path) -> st
     return run_id
 
 
-def _sanity_check_design_exit_host(
-    live_trac, live_root: Path, baseline: Path
-) -> str:
+def _sanity_check_design_exit_host(live_trac, live_root: Path, baseline: Path) -> str:
     """Assert a restored design-exit host is active at its manifest substate.
 
     New manifests declare ``DISPATCH`` or ``WRITE``. A missing declaration is

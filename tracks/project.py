@@ -9,6 +9,7 @@ v0.4 supports only ``framework = "pytest"``.  An unsupported framework or a
 missing/malformed contract fails closed as an infrastructure finding — the
 runtime never falls back to ``sys.executable -m pytest``.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,12 +44,14 @@ class TestSection:
 @dataclass(frozen=True, slots=True)
 class AgentLayout:
     """Writable directories for a single agent role (FR-0120 layout)."""
+
     writable: list[str]
 
 
 @dataclass(frozen=True, slots=True)
 class LayoutConfig:
     """Project directory layout designed by Archer in M-DESIGN."""
+
     devon: AgentLayout | None = None
     shield: AgentLayout | None = None
 
@@ -73,14 +76,16 @@ def load_contract(repo: Path) -> ProjectContract:
     toml_path = contract_path(repo)
     if not toml_path.exists():
         raise ContractError(
-            f"project contract not found: {toml_path}", kind="contract",
+            f"project contract not found: {toml_path}",
+            kind="contract",
         )
     try:
         raw = toml_path.read_bytes()
         data = tomllib.loads(raw.decode("utf-8"))
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ContractError(
-            f"project contract unreadable: {exc}", kind="contract",
+            f"project contract unreadable: {exc}",
+            kind="contract",
         ) from exc
     return _build_contract(data)
 
@@ -121,12 +126,14 @@ def _build_section(data: dict, name: str) -> TestSection:
     section = data.get(name)
     if not isinstance(section, dict):
         raise ContractError(
-            f"[{name}] section missing in project contract", kind="contract",
+            f"[{name}] section missing in project contract",
+            kind="contract",
         )
     framework = section.get("framework")
     if not isinstance(framework, str) or not framework.strip():
         raise ContractError(
-            f"[{name}].framework must be a non-empty string", kind="contract",
+            f"[{name}].framework must be a non-empty string",
+            kind="contract",
         )
     if framework not in _SUPPORTED_FRAMEWORKS:
         raise ContractError(
@@ -137,23 +144,27 @@ def _build_section(data: dict, name: str) -> TestSection:
     raw_paths = section.get("paths")
     if not isinstance(raw_paths, list) or not raw_paths:
         raise ContractError(
-            f"[{name}].paths must be a non-empty list", kind="contract",
+            f"[{name}].paths must be a non-empty list",
+            kind="contract",
         )
     section_paths = [str(p) for p in raw_paths]
     collect = section.get("collect")
     if not isinstance(collect, str) or not collect.strip():
         raise ContractError(
-            f"[{name}].collect must be a non-empty string", kind="contract",
+            f"[{name}].collect must be a non-empty string",
+            kind="contract",
         )
     run = section.get("run")
     if not isinstance(run, str) or not run.strip():
         raise ContractError(
-            f"[{name}].run must be a non-empty string", kind="contract",
+            f"[{name}].run must be a non-empty string",
+            kind="contract",
         )
     cwd = section.get("cwd", ".")
     if not isinstance(cwd, str) or not cwd.strip():
         raise ContractError(
-            f"[{name}].cwd must be a non-empty string", kind="contract",
+            f"[{name}].cwd must be a non-empty string",
+            kind="contract",
         )
     return TestSection(
         framework=framework,
@@ -194,14 +205,20 @@ def validate_layout(repo: Path) -> str | None:
     except ContractError as exc:
         return f"project contract unreadable: {exc.reason}"
     if contract.layout is None:
-        return ("project.toml [layout] section is missing; Archer must declare "
-                "[layout.devon] and [layout.shield] with non-empty writable lists")
+        return (
+            "project.toml [layout] section is missing; Archer must declare "
+            "[layout.devon] and [layout.shield] with non-empty writable lists"
+        )
     if contract.layout.devon is None:
-        return ("project.toml [layout.devon] is missing or has an empty writable "
-                "list; Devon needs at least one writable directory")
+        return (
+            "project.toml [layout.devon] is missing or has an empty writable "
+            "list; Devon needs at least one writable directory"
+        )
     if contract.layout.shield is None:
-        return ("project.toml [layout.shield] is missing or has an empty writable "
-                "list; Shield needs at least one writable directory")
+        return (
+            "project.toml [layout.shield] is missing or has an empty writable "
+            "list; Shield needs at least one writable directory"
+        )
     return None
 
 

@@ -1,4 +1,5 @@
 """Discussion gate (FR-100, AC-FR0100-01..03)."""
+
 from tracks.discuss.gate import check_ready
 
 

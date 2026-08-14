@@ -90,7 +90,8 @@ from tracks.kernel import decide, project
     ],
 )
 def test_checkpoint_validation_failure_retries_only_current_actor(
-        stage, substate, role, setup, check):
+    stage, substate, role, setup, check
+):
     checkpoint = {
         "stage": stage,
         "substate": substate,

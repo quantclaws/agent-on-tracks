@@ -8,6 +8,7 @@ No circular import: this module imports only from ``events`` at runtime;
 ``State`` is imported under ``TYPE_CHECKING`` only (duck-typed at runtime).
 ``machine.py`` imports the helpers, reducers, and decide functions from here.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 
 
 # -- shared helpers (used by reducers across all stages) --------------------
+
 
 def _reset_doc(s: State) -> None:
     s.doc_dispatched = s.doc_produced = s.doc_validated = False
@@ -46,6 +48,7 @@ _M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
 
 
 # -- M-TEST reducers (flow.md §9 / SM-01, FR-0010~0070) -----------------------
+
 
 def _on_m_test_outcome_done(s: State) -> None:
     """SM-01.3: Shield outcome done -> COLLECT; Prism outcome -> produced."""
@@ -155,10 +158,12 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
 
 # -- M-TEST decide() control flow (flow.md §9 / SM-01) -----------------------
 
+
 def _m_test_shield_dispatch(s: State) -> Command:
     """DISPATCH/WRITE: dispatch Shield to write integration/e2e tests."""
     params = {
-        "role": "shield", "substate": "WRITE",
+        "role": "shield",
+        "substate": "WRITE",
         "objective": "write integration/e2e tests against interface stubs",
         "stage": "M-TEST",
         "attempt": s.current_attempt + 1,
@@ -177,7 +182,8 @@ def _m_test_shield_dispatch(s: State) -> Command:
 def _m_test_prism_dispatch(s: State) -> Command:
     """PRISM_REVIEW: dispatch Prism with the criteria pack (D-29 triple ①)."""
     params = {
-        "role": "prism", "substate": "PRISM_REVIEW",
+        "role": "prism",
+        "substate": "PRISM_REVIEW",
         "objective": "review test contract against the criteria pack",
         "stage": "M-TEST",
         "attempt": s.current_attempt + 1,
@@ -222,8 +228,9 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
         # SM-01.13: Human approved ac_gap/spec_gap rollback (diagnose_rollback)
         # or SM-05.7: Human return from escalation (human_return).
         reason = "human_return" if s.returned else "diagnose_rollback"
-        return Command(kind="rollback_stage",
-                       params={"to_stage": s.return_target, "reason": reason})
+        return Command(
+            kind="rollback_stage", params={"to_stage": s.return_target, "reason": reason}
+        )
     return None
 
 
@@ -244,6 +251,5 @@ def _m_test_diagnose_route(s: State) -> Command | None:
     are routed by the reducer (WRITE / awaiting_human); stub_gap produces the
     rollback command here (no Human gate, SM-01.12)."""
     if s.diagnose_classification == "stub_gap":
-        return Command(kind="rollback_stage",
-                       params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
+        return Command(kind="rollback_stage", params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
     return None  # test_defect -> WRITE (reducer); ac_gap/spec_gap -> awaiting

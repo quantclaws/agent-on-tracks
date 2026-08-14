@@ -4,6 +4,7 @@ Tests the M-TEST exit gate: trace closure (filtered to required ACs),
 test.committed, stage.exited, run.completed(boundary), and the SM-01.15
 recovery path (trace fail -> WRITE re-dispatch).
 """
+
 from tests.integration.helpers import m_test_events, walk_to_m_test
 
 
@@ -28,8 +29,9 @@ def test_trace_closure_required_acs(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = m_test_events(event_log(run_id))
-    trace_pass = [e for e in evs if e["type"] == "verdict.passed"
-                  and e["payload"]["check"] == "trace"]
+    trace_pass = [
+        e for e in evs if e["type"] == "verdict.passed" and e["payload"]["check"] == "trace"
+    ]
     assert trace_pass  # trace gate passed
 
 
@@ -54,8 +56,9 @@ def test_trace_fail_no_exit(trac, event_log):
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
     # First trace check failed
-    trace_fails = [e for e in evs if e["type"] == "verdict.failed"
-                   and e["payload"].get("check") == "trace"]
+    trace_fails = [
+        e for e in evs if e["type"] == "verdict.failed" and e["payload"].get("check") == "trace"
+    ]
     assert trace_fails
     # But eventually completed (re-dispatch fixed the markers)
     assert any(e["type"] == "run.completed" for e in evs)
@@ -69,15 +72,20 @@ def test_trace_fail_redispatch(trac, event_log):
     trac("run", simulate="shield:WRITE=short_marker|ok")
     evs = event_log(run_id)
     # trace failure -> verdict.failed(trace)
-    trace_fail = [e for e in evs if e["type"] == "verdict.failed"
-                  and e["payload"].get("check") == "trace"]
+    trace_fail = [
+        e for e in evs if e["type"] == "verdict.failed" and e["payload"].get("check") == "trace"
+    ]
     assert trace_fail
     # Shield re-dispatched after trace failure
     m_test_evs = m_test_events(evs)
     trace_fail_seq = trace_fail[0]["seq"]
-    shield_redispatch = [e for e in m_test_evs if e["type"] == "command.issued"
-                         and e["payload"]["command"]["params"].get("role") == "shield"
-                         and e["seq"] > trace_fail_seq]
+    shield_redispatch = [
+        e
+        for e in m_test_evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "shield"
+        and e["seq"] > trace_fail_seq
+    ]
     assert shield_redispatch  # Shield was re-dispatched to fix markers
 
 
@@ -88,8 +96,12 @@ def test_trace_as_verdict_source(trac, event_log):
     trac("run")
     evs = m_test_events(event_log(run_id))
     # The trace gate emits verdict.passed or verdict.failed
-    trace_verdicts = [e for e in evs if e["type"] in ("verdict.passed", "verdict.failed")
-                      and e["payload"].get("check") == "trace"]
+    trace_verdicts = [
+        e
+        for e in evs
+        if e["type"] in ("verdict.passed", "verdict.failed")
+        and e["payload"].get("check") == "trace"
+    ]
     assert trace_verdicts
     assert trace_verdicts[0]["type"] == "verdict.passed"  # happy path
 
@@ -98,6 +110,7 @@ def test_trace_as_verdict_source(trac, event_log):
 def test_test_committed(trac, event_log, host_repo):
     """AC-FR0070-07@v0.4: controlled test commit -> test.committed + stage.exited."""
     import subprocess
+
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = event_log(run_id)
@@ -117,8 +130,7 @@ def test_boundary_after_m_test(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = event_log(run_id)
-    exited = [e for e in evs if e["type"] == "stage.exited"
-              and e["payload"]["stage"] == "M-TEST"]
+    exited = [e for e in evs if e["type"] == "stage.exited" and e["payload"]["stage"] == "M-TEST"]
     completed = [e for e in evs if e["type"] == "run.completed"]
     assert exited and completed
     assert exited[0]["seq"] < completed[0]["seq"]

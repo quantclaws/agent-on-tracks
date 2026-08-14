@@ -6,6 +6,7 @@ T-03: run_gates performs real subprocess execution; the Python invocation must
 go through the project `.venv` interpreter via shell=False, and every executed
 command must be surfaced as an immutable observed execution (GateObservation).
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -59,12 +60,24 @@ def test_classify_test_defect():
 
 
 def test_classify_implementation_default():
-    assert classify_failure(
-        "ruff", 1, "tracks/foo.py:1:1 F401 unused import", "",
-    ) == "implementation"
-    assert classify_failure(
-        "flake8-CCR001", 1, "tracks/foo.py:10:1 CCR001 too complex", "",
-    ) == "implementation"
+    assert (
+        classify_failure(
+            "ruff",
+            1,
+            "tracks/foo.py:1:1 F401 unused import",
+            "",
+        )
+        == "implementation"
+    )
+    assert (
+        classify_failure(
+            "flake8-CCR001",
+            1,
+            "tracks/foo.py:10:1 CCR001 too complex",
+            "",
+        )
+        == "implementation"
+    )
 
 
 def test_production_checks_empty_paths():
@@ -141,21 +154,22 @@ def test_run_gates_executes_real_command_through_project_venv(tmp_path):
 
     assert result.status == "fail"
     assert any("unit-tests" in failure for failure in result.failures)
-    observed = json.loads(
-        (repo / "observed.json").read_text(encoding="utf-8"))
+    observed = json.loads((repo / "observed.json").read_text(encoding="utf-8"))
     assert observed["exe"] == os.path.abspath(str(venv_python)), (
-        "Python invocation must use the project .venv interpreter")
+        "Python invocation must use the project .venv interpreter"
+    )
     assert Path(observed["exe"]).resolve() == Path(sys.executable).resolve()
     assert observed["cwd"] == os.path.realpath(str(repo))
     assert observed["exit"] == 2
 
     observations = getattr(result, "observations", None)
     assert observations, (
-        "gate result must expose observed executions as immutable "
-        "GateObservation objects")
+        "gate result must expose observed executions as immutable GateObservation objects"
+    )
     obs = observations[0]
     assert not isinstance(obs, dict) and not isinstance(obs, tuple), (
-        "observed execution must be a GateObservation object")
+        "observed execution must be a GateObservation object"
+    )
     assert isinstance(obs.argv, tuple), "argv must be a tuple"
     assert obs.argv[0] in (
         ".venv/bin/python",
@@ -165,11 +179,13 @@ def test_run_gates_executes_real_command_through_project_venv(tmp_path):
     ), "argv tuple must begin with the project .venv interpreter"
     assert "probe.py" in obs.argv, "argv must preserve the configured command"
     assert obs.cwd == os.path.realpath(str(repo)), (
-        "GateObservation cwd must be the Runtime process cwd")
+        "GateObservation cwd must be the Runtime process cwd"
+    )
     assert obs.exit_code == 2, "GateObservation exit_code must match the probe"
     for attr in ("classification", "stdout_sha", "stderr_sha"):
         assert isinstance(getattr(obs, attr), str) and getattr(obs, attr), (
-            f"GateObservation.{attr} must be a non-empty string")
+            f"GateObservation.{attr} must be a non-empty string"
+        )
     with pytest.raises(dataclasses.FrozenInstanceError):
         obs.exit_code = 0
     with pytest.raises(dataclasses.FrozenInstanceError):

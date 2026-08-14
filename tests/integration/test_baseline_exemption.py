@@ -3,6 +3,7 @@
 AC-FR0100-01@v0.4 baseline file schema, AC-FR0100-02@v0.4 exemption works,
 AC-FR0100-04@v0.4 new content still reported, AC-FR0100-05@v0.4 no auto fix.
 """
+
 import json
 import shutil
 from pathlib import Path
@@ -59,10 +60,7 @@ def test_no_auto_fix(tmp_path):
 # AC-FR0100-02@v0.4 TRACKS-TRACE reach baseline exemption
 def test_reach_baseline_exemption(tmp_path, capsys):
     """AC-FR0100-02@v0.4 baseline-exempted modules not in reach output."""
-    fixtures = (
-        Path(__file__).resolve().parent.parent
-        / "assets" / "reach_fixtures" / "island"
-    )
+    fixtures = Path(__file__).resolve().parent.parent / "assets" / "reach_fixtures" / "island"
     for item in fixtures.iterdir():
         if item.is_dir():
             shutil.copytree(item, tmp_path / item.name, dirs_exist_ok=True)

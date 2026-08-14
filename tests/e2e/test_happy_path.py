@@ -5,6 +5,7 @@ boundary completion) lives in test_full_journey.py.
 Asserts external observables only: exit codes, stdout, event rows, git state,
 file contents. Ends with the NFR-04 drop-and-rebuild check (AC-N04a).
 """
+
 import hashlib
 import re
 import sqlite3
@@ -76,8 +77,7 @@ def test_happy_path(host_repo, trac, event_log):
     r = trac("triage", "go")
     assert r.returncode == 0, r.stderr
     assert any(
-        e["type"] == "human.triage" and e["payload"]["decision"] == "go"
-        for e in event_log(run_id)
+        e["type"] == "human.triage" and e["payload"]["decision"] == "go" for e in event_log(run_id)
     )
     # not awaiting triage anymore (AC-08b)
     assert trac("triage", "go").returncode == 1
@@ -97,24 +97,17 @@ def test_happy_path(host_repo, trac, event_log):
     r = trac("run")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    assert any(
-        e["type"] == "stage.exited" and e["payload"]["stage"] == "M-STORY" for e in evs
-    )
+    assert any(e["type"] == "stage.exited" and e["payload"]["stage"] == "M-STORY" for e in evs)
     # AC-17a: three-way equality on the final story commit
     fm, body = parse_frontmatter(story)
     body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    finals = [
-        e for e in evs
-        if e["type"] == "story.committed" and e["payload"].get("final")
-    ]
+    finals = [e for e in evs if e["type"] == "story.committed" and e["payload"].get("final")]
     assert len(finals) == 1
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["story_sha"] == body_sha
     spec = host_repo / ".tracks" / "projects" / "v0.1" / "spec.md"
     assert spec.exists()  # AC-18a
-    assert any(
-        e["type"] == "stage.entered" and e["payload"]["stage"] == "M-SPEC" for e in evs
-    )
+    assert any(e["type"] == "stage.entered" and e["payload"]["stage"] == "M-SPEC" for e in evs)
     assert any(
         e["type"] == "lex.verdict" and e["payload"]["verdict"] == "pass" for e in evs
     )  # AC-21a
@@ -124,24 +117,17 @@ def test_happy_path(host_repo, trac, event_log):
     r = trac("run")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    assert any(
-        e["type"] == "stage.exited" and e["payload"]["stage"] == "M-SPEC" for e in evs
-    )
+    assert any(e["type"] == "stage.exited" and e["payload"]["stage"] == "M-SPEC" for e in evs)
     fm, body = parse_frontmatter(spec)
     body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    finals = [
-        e for e in evs
-        if e["type"] == "spec.committed" and e["payload"].get("final")
-    ]
+    finals = [e for e in evs if e["type"] == "spec.committed" and e["payload"].get("final")]
     assert len(finals) == 1  # never matches the DRAFT commit (R4-02)
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["spec_sha"] == body_sha
     assert "seal spec.md sha" in git_out(host_repo, "log", "-5", "--format=%s")
     acceptance = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
     assert acceptance.exists()  # Sage drafted acceptance in M-ACC
-    assert any(
-        e["type"] == "stage.entered" and e["payload"]["stage"] == "M-ACC" for e in evs
-    )
+    assert any(e["type"] == "stage.entered" and e["payload"]["stage"] == "M-ACC" for e in evs)
     assert "awaiting=review" in r.stdout
 
     # 9b. TP-003 §4a: the happy path stops here — M-SPEC exit semantics changed
@@ -154,7 +140,8 @@ def test_happy_path(host_repo, trac, event_log):
             continue
         if e["command_id"]:
             issue_seqs = [
-                x["seq"] for x in evs
+                x["seq"]
+                for x in evs
                 if x["type"] == "command.issued" and x["command_id"] == e["command_id"]
             ]
             assert issue_seqs and min(issue_seqs) < e["seq"]

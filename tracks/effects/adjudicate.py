@@ -6,6 +6,7 @@ directory that project.toml should have declared) or genuine over-reach
 (e.g., modifying product code). This replaces the old mechanical rollback
 that caused infinite retry loops when the authorization config was stale.
 """
+
 from __future__ import annotations
 
 import re

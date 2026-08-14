@@ -3,6 +3,7 @@
 Tests path determinism, cleanup idempotency, and that the main worktree
 is never removed.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,8 +20,9 @@ from tracks.executor.worktree import (
 
 def _worktree_list(repo: Path) -> set[str]:
     out = _git(repo, "worktree", "list", "--porcelain").stdout
-    return {line.removeprefix("worktree ") for line in out.splitlines()
-            if line.startswith("worktree ")}
+    return {
+        line.removeprefix("worktree ") for line in out.splitlines() if line.startswith("worktree ")
+    }
 
 
 def test_devon_worktree_path(tmp_path):
@@ -54,7 +56,12 @@ def test_gate_worktree(tmp_path):
     devon = create_devon_worktree(str(repo), base, "run-1", "T-001")
     authority = create_test_authority_worktree(str(repo), base, "run-1")
     gate = create_gate_worktree(
-        str(repo), base, "", "", "run-1", "T-001",
+        str(repo),
+        base,
+        "",
+        "",
+        "run-1",
+        "T-001",
     )
     assert Path(gate.path).exists()
     cleanup_worktree(gate)

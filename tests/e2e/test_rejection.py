@@ -1,4 +1,5 @@
 """NO-GO / PARK teardown (FR-09): AC-09a, AC-09b."""
+
 import sqlite3
 import subprocess
 
@@ -28,9 +29,7 @@ def test_rejection_tears_down_branch(host_repo, trac, event_log, decision):
     evs = event_log()
     terminal = decision.replace("-", "_")
     assert any(
-        e["type"] == "run.completed"
-        and e["payload"]["terminal_state"] == terminal
-        for e in evs
+        e["type"] == "run.completed" and e["payload"]["terminal_state"] == terminal for e in evs
     )
     assert any(e["type"] == "backlog.recorded" for e in evs)
     assert any(e["type"] == "branch.deleted" for e in evs)  # FR-09: logged delete

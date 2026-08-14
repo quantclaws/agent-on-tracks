@@ -10,9 +10,7 @@ from tests.m_test_support import make_dispatch_agent_payload
 from tracks.cli.main import cmd_retry
 from tracks.store import Store
 
-_ACTIVITY_LINE = (
-    "human.retry event appended; escalation gate cleared; "
-    "attempt budget reset")
+_ACTIVITY_LINE = "human.retry event appended; escalation gate cleared; attempt budget reset"
 
 
 def _seed_escalation(store, run_id, version="v0.1"):
@@ -21,21 +19,30 @@ def _seed_escalation(store, run_id, version="v0.1"):
     store.append(run_id, version, "stage.entered", {"stage": "M-TEST"})
     for attempt in range(1, 4):
         store.append(
-            run_id, version, "command.issued",
-            {"command": make_dispatch_agent_payload(
-                attempt=attempt, review_round=1,
-                command_id=f"shield-{attempt}")},
+            run_id,
+            version,
+            "command.issued",
+            {
+                "command": make_dispatch_agent_payload(
+                    attempt=attempt, review_round=1, command_id=f"shield-{attempt}"
+                )
+            },
         )
         store.append(
-            run_id, version, "outcome.received",
-            {"role": "shield", "status": "done",
-             "artifact_ref": "tests", "self_report": "wrote"},
+            run_id,
+            version,
+            "outcome.received",
+            {"role": "shield", "status": "done", "artifact_ref": "tests", "self_report": "wrote"},
         )
         store.append(
-            run_id, version, "verdict.failed",
-            {"check": "no_diff_justified",
-             "reason": "reviewer rejected no-diff explanation",
-             "attempt": attempt},
+            run_id,
+            version,
+            "verdict.failed",
+            {
+                "check": "no_diff_justified",
+                "reason": "reviewer rejected no-diff explanation",
+                "attempt": attempt,
+            },
         )
 
 
@@ -63,7 +70,8 @@ def test_retry_success_prints_activity_line_then_state(tmp_path, capsys):
     assert _ACTIVITY_LINE in out, f"stdout={out!r}"
     assert f"run {run_id}:" in out, f"stdout={out!r}"
     assert out.index(_ACTIVITY_LINE) < out.index(f"run {run_id}:"), (
-        "activity line must precede the state output")
+        "activity line must precede the state output"
+    )
 
 
 def test_retry_not_escalation_prints_no_activity_line(tmp_path, capsys):

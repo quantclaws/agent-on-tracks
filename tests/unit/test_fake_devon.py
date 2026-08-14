@@ -1,4 +1,5 @@
 """Focused deterministic Fake Devon phase tests."""
+
 from __future__ import annotations
 
 import subprocess
@@ -48,7 +49,11 @@ def test_missing_devon_contract_fails_closed(tmp_path, phase):
     assignment = _assignment(phase)
     del assignment["task_id"]
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", phase.upper(), None, None, assignment,
+        "devon",
+        phase.upper(),
+        None,
+        None,
+        assignment,
     )
     assert result["status"] == "failed"
     assert result["failure_class"] == "contract_error"
@@ -56,13 +61,15 @@ def test_missing_devon_contract_fails_closed(tmp_path, phase):
 
 
 def test_red_patch_is_behavioral_and_non_mutating(tmp_path):
-    before = sorted(path.relative_to(tmp_path).as_posix()
-                    for path in tmp_path.rglob("*"))
+    before = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "RED", None, None, _assignment("red"),
+        "devon",
+        "RED",
+        None,
+        None,
+        _assignment("red"),
     )
-    after = sorted(path.relative_to(tmp_path).as_posix()
-                   for path in tmp_path.rglob("*"))
+    after = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
     assert before == after
     assert result["status"] == "done"
     assert result["changed_paths"] == ["tests/unit/test_demo.py"]
@@ -73,7 +80,11 @@ def test_red_patch_is_behavioral_and_non_mutating(tmp_path):
 
 def test_green_patch_is_production_only_and_keeps_r_identity(tmp_path):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, _assignment("green"),
+        "devon",
+        "GREEN",
+        None,
+        None,
+        _assignment("green"),
     )
     assert result["status"] == "done"
     assert result["changed_paths"] == ["tracks/impl/demo.py"]
@@ -84,29 +95,46 @@ def test_green_patch_is_production_only_and_keeps_r_identity(tmp_path):
 
 def test_red_then_green_patches_make_the_behavioral_test_pass(tmp_path):
     red = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "RED", None, None, _assignment("red"),
+        "devon",
+        "RED",
+        None,
+        None,
+        _assignment("red"),
     )
     green = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, _assignment("green"),
+        "devon",
+        "GREEN",
+        None,
+        None,
+        _assignment("green"),
     )
     repo = tmp_path / "combined-repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     for patch in (red["diff_ref"], green["diff_ref"]):
         subprocess.run(
-            ["git", "apply", "-"], input=patch, text=True, cwd=repo,
+            ["git", "apply", "-"],
+            input=patch,
+            text=True,
+            cwd=repo,
             check=True,
         )
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "tests/unit/test_demo.py"],
-        cwd=repo, capture_output=True, text=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_refactor_returns_stable_no_change_evidence(tmp_path):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "REFACTOR", None, None, _assignment("refactor"),
+        "devon",
+        "REFACTOR",
+        None,
+        None,
+        _assignment("refactor"),
     )
     assert result["status"] == "done"
     assert result["changed_paths"] == []
@@ -118,10 +146,18 @@ def test_refactor_returns_stable_no_change_evidence(tmp_path):
 def test_evidence_and_patch_are_byte_deterministic(tmp_path):
     assignment = _assignment("green")
     first = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, assignment,
+        "devon",
+        "GREEN",
+        None,
+        None,
+        assignment,
     )
     second = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, assignment,
+        "devon",
+        "GREEN",
+        None,
+        None,
+        assignment,
     )
     assert first == second
     assert first["commands"][0]["cmd"].startswith(".venv/bin/python")
@@ -129,7 +165,8 @@ def test_evidence_and_patch_are_byte_deterministic(tmp_path):
 
 
 def test_stub_token_is_a_classifiable_red_patch_and_retry_is_legal(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", "devon:RED=stub_token_failure|ok")
     backend = FakeBackend(tmp_path, "v0.5")
@@ -146,15 +183,26 @@ def test_stub_token_is_a_classifiable_red_patch_and_retry_is_legal(
 # -- audit_evidence structured-object contract (worktree/dispatch consumers) --
 
 _REQUIRED_AUDIT_KEYS = (
-    "phase", "changed_paths", "commands", "results", "manifest_compliance",
-    "pre_identity", "post_identity", "implemented_if_ids", "result_identity",
+    "phase",
+    "changed_paths",
+    "commands",
+    "results",
+    "manifest_compliance",
+    "pre_identity",
+    "post_identity",
+    "implemented_if_ids",
+    "result_identity",
 )
 
 
 @pytest.mark.parametrize("phase", ["red", "green", "refactor"])
 def test_audit_evidence_is_a_structured_dict_for_done_outcomes(tmp_path, phase):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", phase.upper(), None, None, _assignment(phase),
+        "devon",
+        phase.upper(),
+        None,
+        None,
+        _assignment(phase),
     )
     assert result["status"] == "done"
     audit = result["audit_evidence"]
@@ -178,7 +226,11 @@ def test_audit_evidence_is_a_structured_dict_for_done_outcomes(tmp_path, phase):
 @pytest.mark.parametrize("phase", ["green", "refactor"])
 def test_audit_evidence_carries_r_identity_for_green_and_refactor(tmp_path, phase):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", phase.upper(), None, None, _assignment(phase),
+        "devon",
+        phase.upper(),
+        None,
+        None,
+        _assignment(phase),
     )
     audit = result["audit_evidence"]
     assert audit["r_identity"] == "r-tree-1"
@@ -187,7 +239,11 @@ def test_audit_evidence_carries_r_identity_for_green_and_refactor(tmp_path, phas
 
 def test_audit_evidence_red_omits_r_identity(tmp_path):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "RED", None, None, _assignment("red"),
+        "devon",
+        "RED",
+        None,
+        None,
+        _assignment("red"),
     )
     assert "r_identity" not in result["audit_evidence"]
     assert "no_change_reason" not in result["audit_evidence"]
@@ -195,7 +251,11 @@ def test_audit_evidence_red_omits_r_identity(tmp_path):
 
 def test_audit_evidence_refactor_carries_no_change_reason(tmp_path):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "REFACTOR", None, None, _assignment("refactor"),
+        "devon",
+        "REFACTOR",
+        None,
+        None,
+        _assignment("refactor"),
     )
     audit = result["audit_evidence"]
     assert audit["no_change_reason"] == result["no_change_reason"]
@@ -205,7 +265,11 @@ def test_audit_evidence_refactor_carries_no_change_reason(tmp_path):
 def test_audit_evidence_changed_paths_excludes_integration_and_e2e(tmp_path):
     for phase in ("red", "green", "refactor"):
         result = FakeBackend(tmp_path, "v0.5").act(
-            "devon", phase.upper(), None, None, _assignment(phase),
+            "devon",
+            phase.upper(),
+            None,
+            None,
+            _assignment(phase),
         )
         for path in result["audit_evidence"]["changed_paths"]:
             assert not path.startswith(("tests/integration/", "tests/e2e/"))
@@ -213,11 +277,24 @@ def test_audit_evidence_changed_paths_excludes_integration_and_e2e(tmp_path):
 
 def test_audit_evidence_keeps_top_level_runtime_fields_unchanged(tmp_path):
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, _assignment("green"),
+        "devon",
+        "GREEN",
+        None,
+        None,
+        _assignment("green"),
     )
-    for key in ("phase", "changed_paths", "commands", "results",
-                "manifest_compliance", "pre_identity", "post_identity",
-                "implemented_if_ids", "result_identity", "r_identity"):
+    for key in (
+        "phase",
+        "changed_paths",
+        "commands",
+        "results",
+        "manifest_compliance",
+        "pre_identity",
+        "post_identity",
+        "implemented_if_ids",
+        "result_identity",
+        "r_identity",
+    ):
         assert key in result
     audit = result["audit_evidence"]
     assert audit["changed_paths"] == result["changed_paths"]
@@ -229,21 +306,35 @@ def test_audit_evidence_keeps_top_level_runtime_fields_unchanged(tmp_path):
 def test_audit_evidence_is_byte_deterministic(tmp_path):
     assignment = _assignment("green")
     first = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, assignment,
+        "devon",
+        "GREEN",
+        None,
+        None,
+        assignment,
     )
     second = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, assignment,
+        "devon",
+        "GREEN",
+        None,
+        None,
+        assignment,
     )
     assert first["audit_evidence"] == second["audit_evidence"]
 
 
 @pytest.mark.parametrize("token", ["fail", "over_reach"])
 def test_token_failure_outcome_carries_structured_audit_evidence(
-    tmp_path, monkeypatch, token,
+    tmp_path,
+    monkeypatch,
+    token,
 ):
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", f"devon:GREEN={token}")
     result = FakeBackend(tmp_path, "v0.5").act(
-        "devon", "GREEN", None, None, _assignment("green"),
+        "devon",
+        "GREEN",
+        None,
+        None,
+        _assignment("green"),
     )
     assert result["status"] == "failed"
     assert result["failure_class"]

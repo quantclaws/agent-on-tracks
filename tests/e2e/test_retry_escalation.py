@@ -1,6 +1,7 @@
 """Validation failure -> evidence-carrying re-dispatch -> escalation
 (FR-11, FR-12, NFR-03): AC-11a, AC-12a, AC-N03a.
 """
+
 import os
 import select
 import signal
@@ -34,17 +35,14 @@ def test_failed_validation_redispatches_with_evidence(trac, event_log):
     assert all(c["seq"] > fail_seq for c in commits)
 
     # the re-dispatch (after the failure) carries the failure evidence
-    redispatch = [
-        d for d in dispatches(evs, "DRAFT") if d["seq"] > fail_seq
-    ]
+    redispatch = [d for d in dispatches(evs, "DRAFT") if d["seq"] > fail_seq]
     assert redispatch, "no re-dispatch after verdict.failed"
     evidence = redispatch[0]["payload"]["command"]["params"]["evidence"]
     assert evidence["check"] == "schema" and evidence["reason"]
 
     # NFR-03: the agent self-reported "done" yet the runtime still failed it
     outcome_before_fail = [
-        e for e in evs
-        if e["type"] == "outcome.received" and e["seq"] < fail_seq
+        e for e in evs if e["type"] == "outcome.received" and e["seq"] < fail_seq
     ]
     assert outcome_before_fail[-1]["payload"]["status"] == "done"
 
@@ -92,9 +90,7 @@ def test_retry_appends_event_and_clears_escalation(trac, event_log):
     retry_events = [e for e in evs if e["type"] == "human.retry"]
     assert len(retry_events) == 1
     # No new dispatch after retry (run_loop was NOT called)
-    dispatches_after = [
-        d for d in dispatches(evs) if d["seq"] > retry_events[0]["seq"]
-    ]
+    dispatches_after = [d for d in dispatches(evs) if d["seq"] > retry_events[0]["seq"]]
     assert not dispatches_after, "retry must not dispatch"
 
 
@@ -119,8 +115,7 @@ def test_retry_then_run_uses_fresh_budget(trac, event_log):
     retry_events = [e for e in evs if e["type"] == "human.retry"]
     assert len(retry_events) == 1
     fails_after = [
-        e for e in evs
-        if e["type"] == "verdict.failed" and e["seq"] > retry_events[0]["seq"]
+        e for e in evs if e["type"] == "verdict.failed" and e["seq"] > retry_events[0]["seq"]
     ]
     assert len(fails_after) == 3
 
@@ -179,22 +174,25 @@ def test_retry_clear_evidence_in_active_state_recovers(trac, host_repo, event_lo
 
     # a run issues a DRAFT dispatch carrying the stale evidence; kill it before
     # it produces a result, simulating Maestro killing the dispatch.
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
     env["TRAC_AGENT_BACKEND"] = "fake"
     env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
     proc = subprocess.Popen(
         [sys.executable, "-m", "tracks.cli.main", "run"],
-        cwd=host_repo, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=host_repo,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         # wait for the DRAFT dispatch command.issued to land
         for _ in range(100):
             evs = event_log()
             last_issued = [e for e in evs if e["type"] == "command.issued"]
-            if last_issued and last_issued[-1]["payload"]["command"]["params"].get(
-                    "substate") == "DRAFT":
+            if (
+                last_issued
+                and last_issued[-1]["payload"]["command"]["params"].get("substate") == "DRAFT"
+            ):
                 break
             time.sleep(0.05)
         else:
@@ -222,8 +220,7 @@ def test_retry_clear_evidence_in_active_state_recovers(trac, host_repo, event_lo
     # next run dispatches DRAFT attempt=1 with no evidence
     r = trac("run")
     assert r.returncode == 0, r.stderr
-    after = [d for d in dispatches(event_log(), "DRAFT")
-             if d["seq"] > retry_ev["seq"]]
+    after = [d for d in dispatches(event_log(), "DRAFT") if d["seq"] > retry_ev["seq"]]
     assert after
     params = after[0]["payload"]["command"]["params"]
     assert params["attempt"] == 1
@@ -241,14 +238,15 @@ def test_retry_clear_evidence_respects_writer_lock(trac, host_repo, event_log):
     assert trac("retry").returncode == 0
     assert "status=active" in trac("status").stdout
     # spawn a hanging run that holds the lock
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
     env["TRAC_AGENT_BACKEND"] = "fake"
     env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
     proc = subprocess.Popen(
         [sys.executable, "-m", "tracks.cli.main", "run"],
-        cwd=host_repo, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=host_repo,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     try:
         lock = host_repo / ".tracks" / "runtime" / "lock"
@@ -277,14 +275,15 @@ def test_progress_start_line_flushed_before_blocking_backend(trac, host_repo):
     stderr while the backend is still blocked."""
     assert trac("init").returncode == 0
     assert trac("start", "v0.1", stdin="progress test").returncode == 0
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
     env["TRAC_AGENT_BACKEND"] = "fake"
     env["TRAC_FAKE_SIMULATE"] = "scribe:TRIAGE=hang"
     proc = subprocess.Popen(
         [sys.executable, "-m", "tracks.cli.main", "run"],
-        cwd=host_repo, env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=host_repo,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     try:
         # Wait up to 5s for stderr to become readable (start line flushed
@@ -320,14 +319,15 @@ def test_progress_covers_recovered_dispatch(trac, host_repo, event_log):
     assert trac("run").returncode == 0
     assert trac("triage", "go").returncode == 0
     # Start a hanging DRAFT dispatch, kill it
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
+    env = {k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")}
     env["TRAC_AGENT_BACKEND"] = "fake"
     env["TRAC_FAKE_SIMULATE"] = "scribe:DRAFT=hang"
     proc = subprocess.Popen(
         [sys.executable, "-m", "tracks.cli.main", "run"],
-        cwd=host_repo, env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cwd=host_repo,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     lock = host_repo / ".tracks" / "runtime" / "lock"
     for _ in range(100):

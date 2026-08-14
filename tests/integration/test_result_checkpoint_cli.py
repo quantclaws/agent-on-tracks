@@ -10,6 +10,7 @@ subprocess entry (conftest ``trac`` fixture), covering:
 - Review no-comment dirty: rc!=0, no commit, no human.review, still awaiting review.
 - Review revise valid body edit: rc=0, commit, human.review(comment).
 """
+
 import re
 import subprocess
 
@@ -122,7 +123,9 @@ def test_triage_pre_staged_rejects(host_repo, trac, event_log):
     story.write_text(text + "\n\nstaged content\n", encoding="utf-8")
     subprocess.run(
         ["git", "add", ".tracks/projects/v0.1/story.md"],
-        cwd=host_repo, capture_output=True, check=True,
+        cwd=host_repo,
+        capture_output=True,
+        check=True,
     )
 
     r = trac("triage", "go")

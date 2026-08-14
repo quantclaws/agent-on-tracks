@@ -6,6 +6,7 @@ doc is architecture.md during M-DESIGN: a missing/empty [layout.devon]/
 interfaces.md / test-plan.md (or architecture.md in any other stage) never
 trigger the layout check.
 """
+
 import pytest
 
 from tests.integration.result_checkpoint_support import _init_workspace
@@ -16,20 +17,25 @@ from tracks.store import new_ulid
 
 
 def _contract(layout_ok):
-    body = "\n".join([
-        "[integration]",
-        'framework = "pytest"',
-        'paths = ["tests/integration/"]',
-        'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"',
-        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"',
-        'cwd = "."',
-    ]) + "\n"
+    body = (
+        "\n".join(
+            [
+                "[integration]",
+                'framework = "pytest"',
+                'paths = ["tests/integration/"]',
+                'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"',
+                'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"',
+                'cwd = "."',
+            ]
+        )
+        + "\n"
+    )
     if layout_ok:
         body += (
-            '\n[layout]\n\n'
-            '[layout.devon]\n'
+            "\n[layout]\n\n"
+            "[layout.devon]\n"
             'writable = ["tracks/", "tests/unit/"]\n\n'
-            '[layout.shield]\n'
+            "[layout.shield]\n"
             'writable = ["tests/integration/"]\n'
         )
     return body
@@ -44,14 +50,11 @@ def _run_validate(tmp_path, stage, doc, layout_ok=True):
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": stage})
     ex = Executor(store, repo, run_id)
-    cmd = Command(kind="validate_document",
-                  params={"doc": doc, "checks": []},
-                  command_id=new_ulid())
+    cmd = Command(
+        kind="validate_document", params={"doc": doc, "checks": []}, command_id=new_ulid()
+    )
     ex._do_validate_document(cmd, store.state(run_id), None, False)
-    return [
-        e for e in store.events(run_id)
-        if e.type in ("verdict.passed", "verdict.failed")
-    ]
+    return [e for e in store.events(run_id) if e.type in ("verdict.passed", "verdict.failed")]
 
 
 def test_m_design_architecture_valid_layout_passes(tmp_path):
@@ -81,9 +84,17 @@ def test_m_design_test_plan_does_not_trigger_layout(tmp_path):
     assert verdicts[0].type == "verdict.passed"
 
 
-@pytest.mark.parametrize("stage", [
-    "M-STORY", "M-SPEC", "M-ACC", "M-REQ-APPROVAL", "M-TEST", "M-IMPL",
-])
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "M-STORY",
+        "M-SPEC",
+        "M-ACC",
+        "M-REQ-APPROVAL",
+        "M-TEST",
+        "M-IMPL",
+    ],
+)
 def test_architecture_in_other_stages_does_not_trigger_layout(tmp_path, stage):
     verdicts = _run_validate(tmp_path, stage, "architecture.md", layout_ok=False)
     assert len(verdicts) == 1

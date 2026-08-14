@@ -2,6 +2,7 @@
 
 Split from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
+
 from tests.integration.result_checkpoint_support import (
     _setup,
     _submit_triage,
@@ -40,8 +41,7 @@ def test_human_triage_with_doc_diff_validates_template(tmp_path):
     events = [e.type for e in store.events(run_id)]
     assert "story.committed" not in events  # triage publishes human.triage, not committed
     assert "human.triage" in events
-    checkpointed = [e for e in store.events(run_id)
-                    if e.type == "result.checkpointed"]
+    checkpointed = [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert checkpointed[-1].payload["created_commit"] is True
     state = store.state(run_id)
     assert state.triage_decision == "go"

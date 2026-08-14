@@ -5,6 +5,7 @@ Direct tests for ``validate_layout`` (the M-DESIGN EXIT layout gate added in
 layout-valid contract — the regression that previously stalled every Fake
 M-DESIGN journey at a ``check=layout`` escalation.
 """
+
 from tracks import paths
 from tracks.effects.fake import FakeBackend
 from tracks.project import load_contract, validate_layout
@@ -23,7 +24,7 @@ def _write_contract(repo, text):
 
 
 _BASE = (
-    '[integration]\n'
+    "[integration]\n"
     'framework = "pytest"\n'
     'paths = ["tests/integration/"]\n'
     'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
@@ -35,11 +36,10 @@ _BASE = (
 def test_validate_layout_valid(tmp_path):
     _write_contract(
         tmp_path,
-        _BASE
-        + '\n[layout]\n\n'
-        '[layout.devon]\n'
+        _BASE + "\n[layout]\n\n"
+        "[layout.devon]\n"
         'writable = ["tracks/", "tests/unit/"]\n\n'
-        '[layout.shield]\n'
+        "[layout.shield]\n"
         'writable = ["tests/integration/"]\n',
     )
     assert validate_layout(tmp_path) is None
@@ -69,10 +69,7 @@ def test_validate_layout_missing_layout_section(tmp_path):
 def test_validate_layout_missing_devon(tmp_path):
     _write_contract(
         tmp_path,
-        _BASE
-        + '\n[layout]\n\n'
-        '[layout.shield]\n'
-        'writable = ["tests/integration/"]\n',
+        _BASE + '\n[layout]\n\n[layout.shield]\nwritable = ["tests/integration/"]\n',
     )
     reason = validate_layout(tmp_path)
     assert reason is not None
@@ -82,11 +79,10 @@ def test_validate_layout_missing_devon(tmp_path):
 def test_validate_layout_empty_devon(tmp_path):
     _write_contract(
         tmp_path,
-        _BASE
-        + '\n[layout]\n\n'
-        '[layout.devon]\n'
-        'writable = []\n\n'
-        '[layout.shield]\n'
+        _BASE + "\n[layout]\n\n"
+        "[layout.devon]\n"
+        "writable = []\n\n"
+        "[layout.shield]\n"
         'writable = ["tests/integration/"]\n',
     )
     reason = validate_layout(tmp_path)
@@ -97,10 +93,7 @@ def test_validate_layout_empty_devon(tmp_path):
 def test_validate_layout_missing_shield(tmp_path):
     _write_contract(
         tmp_path,
-        _BASE
-        + '\n[layout]\n\n'
-        '[layout.devon]\n'
-        'writable = ["tracks/", "tests/unit/"]\n',
+        _BASE + '\n[layout]\n\n[layout.devon]\nwritable = ["tracks/", "tests/unit/"]\n',
     )
     reason = validate_layout(tmp_path)
     assert reason is not None
@@ -110,12 +103,11 @@ def test_validate_layout_missing_shield(tmp_path):
 def test_validate_layout_empty_shield(tmp_path):
     _write_contract(
         tmp_path,
-        _BASE
-        + '\n[layout]\n\n'
-        '[layout.devon]\n'
+        _BASE + "\n[layout]\n\n"
+        "[layout.devon]\n"
         'writable = ["tracks/", "tests/unit/"]\n\n'
-        '[layout.shield]\n'
-        'writable = []\n',
+        "[layout.shield]\n"
+        "writable = []\n",
     )
     reason = validate_layout(tmp_path)
     assert reason is not None
@@ -138,6 +130,9 @@ def test_fake_archer_contract_is_layout_valid(tmp_path):
     assert contract.layout is not None
     assert contract.layout.devon.writable == ["tracks/", "tests/unit/"]
     assert contract.layout.shield.writable == [
-        "tests/integration/", "tests/e2e/", "tests/e2e_live/",
-        "tests/assets/", "tests/counterexamples/",
+        "tests/integration/",
+        "tests/e2e/",
+        "tests/e2e_live/",
+        "tests/assets/",
+        "tests/counterexamples/",
     ]

@@ -1,4 +1,5 @@
 """_format_state: shared one-line state format (Fix 3: escalation visibility)."""
+
 from tracks.cli.main import _format_state
 from tracks.kernel.machine import State
 
@@ -24,7 +25,9 @@ def test_basic_format_no_escalation():
 
 def test_escalation_appends_attempts_and_reason():
     s = _state(
-        status="awaiting_human", awaiting="escalation", current_attempt=3,
+        status="awaiting_human",
+        awaiting="escalation",
+        current_attempt=3,
         last_failure={"check": "template", "reason": "missing section"},
     )
     line = _format_state(s)
@@ -35,7 +38,9 @@ def test_escalation_appends_attempts_and_reason():
 
 def test_escalation_without_reason_shows_check_only():
     s = _state(
-        status="awaiting_human", awaiting="escalation", current_attempt=3,
+        status="awaiting_human",
+        awaiting="escalation",
+        current_attempt=3,
         last_failure={"check": "over_reach", "reason": None},
     )
     line = _format_state(s)
@@ -45,7 +50,9 @@ def test_escalation_without_reason_shows_check_only():
 
 def test_escalation_multiline_reason_truncated_to_first_line():
     s = _state(
-        status="awaiting_human", awaiting="escalation", current_attempt=3,
+        status="awaiting_human",
+        awaiting="escalation",
+        current_attempt=3,
         last_failure={"check": "agent_error", "reason": "line one\nline two"},
     )
     line = _format_state(s)
@@ -56,7 +63,9 @@ def test_escalation_multiline_reason_truncated_to_first_line():
 
 def test_escalation_no_last_failure_still_shows_attempts():
     s = _state(
-        status="awaiting_human", awaiting="escalation", current_attempt=3,
+        status="awaiting_human",
+        awaiting="escalation",
+        current_attempt=3,
         last_failure=None,
     )
     line = _format_state(s)
@@ -66,8 +75,12 @@ def test_escalation_no_last_failure_still_shows_attempts():
 
 
 def test_non_escalation_awaiting_has_no_reason():
-    s = _state(status="awaiting_human", awaiting="review", current_attempt=1,
-               last_failure={"check": "x", "reason": "y"})
+    s = _state(
+        status="awaiting_human",
+        awaiting="review",
+        current_attempt=1,
+        last_failure={"check": "x", "reason": "y"},
+    )
     line = _format_state(s)
     assert "reason=" not in line
     assert "attempts=" not in line

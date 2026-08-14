@@ -5,6 +5,7 @@ gate lives at transition execution in ``_do_write_frontmatter``. Historical
 v0.1/v0.4 runs complete at the M-TEST boundary; v0.5+ runs enter M-IMPL.
 Version capability comparisons are numeric, never lexicographic (v0.10).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,10 +33,8 @@ def _store_at_m_test_exit(repo: Path, version: str) -> Store:
     store = Store(paths.tracks_home(repo))
     store.append("RUN", version, "story.requested", {"raw_chars": 5})
     store.append("RUN", version, "stage.entered", {"stage": "M-TEST"})
-    store.append("RUN", version, "verdict.passed",
-                 {"check": "trace", "detail": "closure verified"})
-    store.append("RUN", version, "test.committed",
-                 {"commit_sha": "abc", "test_count": 1})
+    store.append("RUN", version, "verdict.passed", {"check": "trace", "detail": "closure verified"})
+    store.append("RUN", version, "test.committed", {"commit_sha": "abc", "test_count": 1})
     return store
 
 
@@ -51,21 +50,24 @@ def _of(events, event_type):
 
 
 def _of_stage(events, event_type, stage):
-    return [e for e in events if e.type == event_type
-            and e.payload.get("stage") == stage]
+    return [e for e in events if e.type == event_type and e.payload.get("stage") == stage]
 
 
 # -- version capability helper (numeric, deterministic) ----------------------
 
-@pytest.mark.parametrize("version,minimum,expected", [
-    ("v0.1", "v0.5", False),
-    ("v0.4", "v0.5", False),
-    ("v0.5", "v0.5", True),
-    ("v0.10", "v0.5", True),
-    ("v0.6", "v0.5", True),
-    ("v1.0", "v0.5", True),
-    ("v0.10", "v0.9", True),
-])
+
+@pytest.mark.parametrize(
+    "version,minimum,expected",
+    [
+        ("v0.1", "v0.5", False),
+        ("v0.4", "v0.5", False),
+        ("v0.5", "v0.5", True),
+        ("v0.10", "v0.5", True),
+        ("v0.6", "v0.5", True),
+        ("v1.0", "v0.5", True),
+        ("v0.10", "v0.9", True),
+    ],
+)
 def test_version_at_least(version, minimum, expected):
     assert version_at_least(version, minimum) is expected
 
@@ -84,16 +86,35 @@ def test_version_tuple_parses_validated_convention():
     assert _version_tuple("v0.10") == (0, 10)
 
 
-@pytest.mark.parametrize("malformed", [
-    "0.5", "v0", "v0.5.1", "v0.5-beta", "0.5.0", "", "  ", "v0,5",
-])
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "0.5",
+        "v0",
+        "v0.5.1",
+        "v0.5-beta",
+        "0.5.0",
+        "",
+        "  ",
+        "v0,5",
+    ],
+)
 def test_malformed_version_tuples_to_none(malformed):
     assert _version_tuple(malformed) is None
 
 
-@pytest.mark.parametrize("malformed", [
-    "0.5", "v0", "v0.5.1", "v0.5-beta", "", None, 5,
-])
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "0.5",
+        "v0",
+        "v0.5.1",
+        "v0.5-beta",
+        "",
+        None,
+        5,
+    ],
+)
 def test_malformed_version_fails_closed(malformed):
     """A malformed version never unlocks the v0.5 capability: it compares
     below every minimum, matching the historical pre-v0.5 behavior."""
@@ -101,6 +122,7 @@ def test_malformed_version_fails_closed(malformed):
 
 
 # -- M-TEST EXIT: historical runs complete at the boundary -------------------
+
 
 @pytest.mark.parametrize("version", ["v0.1", "v0.4"])
 def test_pre_v05_m_test_exit_ends_at_boundary(tmp_path, version):
@@ -133,6 +155,7 @@ def test_malformed_version_ends_at_boundary(tmp_path):
 
 # -- M-TEST EXIT: v0.5+ runs enter M-IMPL ------------------------------------
 
+
 @pytest.mark.parametrize("version", ["v0.5", "v0.10"])
 def test_v05_plus_m_test_exit_enters_m_impl(tmp_path, version):
     """v0.5/v0.10: stage.exited(M-TEST) then stage.entered(M-IMPL); no
@@ -149,6 +172,7 @@ def test_v05_plus_m_test_exit_enters_m_impl(tmp_path, version):
 
 # -- event ordering: M-DESIGN -> M-TEST unaffected ---------------------------
 
+
 @pytest.mark.parametrize("version", ["v0.1", "v0.5"])
 def test_m_design_exit_still_enters_m_test(tmp_path, version):
     """M-DESIGN EXIT always enters M-TEST (no gate on pre-M-TEST edges)."""
@@ -156,8 +180,7 @@ def test_m_design_exit_still_enters_m_test(tmp_path, version):
     store = Store(paths.tracks_home(repo))
     store.append("RUN", version, "story.requested", {"raw_chars": 5})
     store.append("RUN", version, "stage.entered", {"stage": "M-DESIGN"})
-    store.append("RUN", version, "design.committed",
-                 {"doc": "architecture.md", "commit_sha": "c"})
+    store.append("RUN", version, "design.committed", {"doc": "architecture.md", "commit_sha": "c"})
     ex = Executor(store, repo, "RUN")
     ex.issue(Command(kind="write_frontmatter", params={"stage": "M-DESIGN"}))
     events = list(store.events("RUN"))
@@ -190,28 +213,37 @@ def test_m_impl_exit_still_ends_at_boundary(tmp_path):
 
 # -- crash/replay cannot emit both run.completed and stage.entered(M-IMPL) ---
 
+
 def _store_with_pending_write_frontmatter(repo: Path, version: str) -> Store:
     """Store with command.issued(write_frontmatter M-TEST) but no result —
     simulates a crash between issue and the transition events."""
     store = _store_at_m_test_exit(repo, version)
     store.append(
-        "RUN", version, "command.issued",
-        {"command": {"kind": "write_frontmatter",
-                     "params": {"stage": "M-TEST"},
-                     "command_id": "CID"}},
+        "RUN",
+        version,
+        "command.issued",
+        {
+            "command": {
+                "kind": "write_frontmatter",
+                "params": {"stage": "M-TEST"},
+                "command_id": "CID",
+            }
+        },
         command_id="CID",
     )
     return store
 
 
-@pytest.mark.parametrize("version,transition", [
-    ("v0.1", "run.completed"),
-    ("v0.4", "run.completed"),
-    ("v0.5", "stage.entered"),
-    ("v0.10", "stage.entered"),
-])
-def test_crash_replay_reconciles_write_frontmatter_once(tmp_path, version,
-                                                        transition):
+@pytest.mark.parametrize(
+    "version,transition",
+    [
+        ("v0.1", "run.completed"),
+        ("v0.4", "run.completed"),
+        ("v0.5", "stage.entered"),
+        ("v0.10", "stage.entered"),
+    ],
+)
+def test_crash_replay_reconciles_write_frontmatter_once(tmp_path, version, transition):
     """A pending write_frontmatter (crash before any transition event) is
     reconciled exactly once: stage.exited(M-TEST) plus ONE transition event.
     Replay can never emit both run.completed and stage.entered(M-IMPL), and
@@ -242,13 +274,11 @@ def test_reconcile_after_stage_exited_emits_no_transition(tmp_path, version):
     event (run.completed / stage.entered(M-IMPL) stay absent)."""
     repo = _repo(tmp_path)
     store = _store_with_pending_write_frontmatter(repo, version)
-    store.append("RUN", version, "stage.exited", {"stage": "M-TEST"},
-                 command_id="CID")
+    store.append("RUN", version, "stage.exited", {"stage": "M-TEST"}, command_id="CID")
 
     ex = Executor(store, repo, "RUN")
     state = store.state("RUN")
-    cmd = Command(kind="write_frontmatter", params={"stage": "M-TEST"},
-                  command_id="CID")
+    cmd = Command(kind="write_frontmatter", params={"stage": "M-TEST"}, command_id="CID")
     ex._do_write_frontmatter(cmd, state, None, reconcile=True)
 
     events = list(store.events("RUN"))

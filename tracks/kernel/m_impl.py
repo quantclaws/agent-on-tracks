@@ -8,6 +8,7 @@ No circular import: this module imports only from ``events`` at runtime;
 ``State`` is imported under ``TYPE_CHECKING`` only (duck-typed at runtime).
 ``machine.py`` imports the helpers, reducers, and decide functions from here.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -26,14 +27,19 @@ if TYPE_CHECKING:
 _M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.1"}
 # M-IMPL context docs: trio + design trio (flow.md §10 BASELINE).
 _M_IMPL_CONTEXT_DOCS = (
-    "story.md", "spec.md", "acceptance.md",
-    "architecture.md", "interfaces.md", "test-plan.md",
+    "story.md",
+    "spec.md",
+    "acceptance.md",
+    "architecture.md",
+    "interfaces.md",
+    "test-plan.md",
 )
 # Prism review substates in M-IMPL (flow.md §10.1).
 _M_IMPL_REVIEW_SUBSTATES = ("PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE")
 
 
 # -- M-IMPL event reducers (flow.md §10.2) ----------------------------------
+
 
 def _on_baseline_frozen(s: State, p: dict, ev: EventEnvelope) -> None:
     """BASELINE: status=current -> PLANNING; stale/missing -> NEEDS_ATTENTION."""
@@ -124,6 +130,7 @@ def _on_task_completed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 # -- M-IMPL outcome / verdict routing ---------------------------------------
+
 
 def _on_m_impl_outcome_done(s: State) -> None:
     """Route a successful (status=done) M-IMPL outcome by substate."""
@@ -271,8 +278,7 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
-    elif check in ("test_defect", "impl_defect", "stub_gap",
-                    "ac_gap", "spec_gap"):
+    elif check in ("test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"):
         s.substate = "DIAGNOSE"
         s.diagnose_classification = check
     else:
@@ -281,6 +287,7 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
 
 
 # -- M-IMPL dispatch builders (flow.md §10 / D-29) --------------------------
+
 
 def _set_m_impl_dispatch_flags(s: State, cmd: dict) -> None:
     """Set dispatch flags for an M-IMPL dispatch_agent command."""
@@ -291,8 +298,7 @@ def _set_m_impl_dispatch_flags(s: State, cmd: dict) -> None:
         s.doc_dispatched = True
 
 
-def _m_impl_base_assignment(s: State, role: str, sub: str,
-                            skills: list) -> dict:
+def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict:
     """Build the M-IMPL dispatch assignment with all required keys.
 
     test_dispatch_materialization.py requires every dispatch_agent assignment
@@ -335,10 +341,12 @@ def _m_impl_base_assignment(s: State, role: str, sub: str,
 def _m_impl_archer_dispatch(s: State) -> Command:
     """PLANNING: dispatch Archer to decompose the task graph."""
     assignment = _m_impl_base_assignment(
-        s, "archer", "PLANNING", ["tracks-discuz", "tracks-quality-guards"])
+        s, "archer", "PLANNING", ["tracks-discuz", "tracks-quality-guards"]
+    )
     assignment["target_doc"] = "tasks.json"
     params = {
-        "role": "archer", "substate": "PLANNING",
+        "role": "archer",
+        "substate": "PLANNING",
         "objective": "decompose requirements into implementation task graph",
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -369,14 +377,15 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     assignment = _m_impl_base_assignment(s, "devon", sub, ["tracks-devon-rgr"])
     assignment["phase"] = phase
     assignment["task_id"] = s.current_task_id
-    assignment["if_ids"] = None       # executor materializes from task graph
-    assignment["ac_refs"] = None      # executor materializes from task graph
-    assignment["test_refs"] = None    # executor materializes from task graph
-    assignment["commands"] = None     # executor materializes (test/guard cmds)
+    assignment["if_ids"] = None  # executor materializes from task graph
+    assignment["ac_refs"] = None  # executor materializes from task graph
+    assignment["test_refs"] = None  # executor materializes from task graph
+    assignment["commands"] = None  # executor materializes (test/guard cmds)
     if s.r_tree_identity and sub in ("GREEN", "REFACTOR"):
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {
-        "role": "devon", "substate": sub,
+        "role": "devon",
+        "substate": sub,
         "objective": f"implement task {s.current_task_id} ({phase})",
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -397,13 +406,13 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
         "PRISM_FINAL": "review complete task range and lineage",
         "DIAGNOSE": "diagnose failure attribution",
     }.get(sub, "review")
-    assignment = _m_impl_base_assignment(
-        s, "prism", sub, ["tracks-discuz", "tracks-prism-impl"])
+    assignment = _m_impl_base_assignment(s, "prism", sub, ["tracks-discuz", "tracks-prism-impl"])
     assignment["criteria_pack"] = dict(_M_IMPL_CRITERIA_PACK)
     if s.r_tree_identity and sub == "PRISM_RED":
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {
-        "role": "prism", "substate": sub,
+        "role": "prism",
+        "substate": sub,
         "objective": objective,
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -422,10 +431,10 @@ def _m_impl_shield_dispatch(s: State) -> Command:
     The machine substate stays SHIELD_FIX (flow.md §10), but the dispatched
     agent substate is WRITE per test_dispatch_materialization.py lines 35-43.
     """
-    assignment = _m_impl_base_assignment(
-        s, "shield", "WRITE", ["tracks-discuz"])
+    assignment = _m_impl_base_assignment(s, "shield", "WRITE", ["tracks-discuz"])
     params = {
-        "role": "shield", "substate": "WRITE",
+        "role": "shield",
+        "substate": "WRITE",
         "objective": "SHIELD_FIX: fix diagnosed test defects",
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -439,6 +448,7 @@ def _m_impl_shield_dispatch(s: State) -> Command:
 
 
 # -- M-IMPL decide() control flow (flow.md §10.1) ---------------------------
+
 
 def _decide_m_impl(s: State, sub: str) -> Command | None:
     """M-IMPL explicit control flow (architecture.md §1.2, flow.md §10.1).
@@ -459,27 +469,30 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
     if sub in ("RED", "GREEN", "REFACTOR", "SHIELD_FIX"):
         return _decide_m_impl_agent(s, sub)
     if sub in ("RED_GATE", "GREEN_GATE", "TASK_REVIEW"):
-        return Command(kind="run_task_gates",
-                       params={"stage": "M-IMPL", "gate": sub})
+        return Command(kind="run_task_gates", params={"stage": "M-IMPL", "gate": sub})
     if sub == "RED_CHECKPOINT":
-        return Command(kind="checkpoint_red",
-                       params={"stage": "M-IMPL", "task_id": s.current_task_id})
+        return Command(
+            kind="checkpoint_red", params={"stage": "M-IMPL", "task_id": s.current_task_id}
+        )
     if sub == "GREEN_COMMIT":
-        return Command(kind="commit_green",
-                       params={"stage": "M-IMPL", "task_id": s.current_task_id})
+        return Command(
+            kind="commit_green", params={"stage": "M-IMPL", "task_id": s.current_task_id}
+        )
     if sub == "REFACTOR_GATE":
         return Command(kind="run_refactor_gate", params={"stage": "M-IMPL"})
     if sub == "TASK_DISPATCH":
         return Command(kind="select_task", params={"stage": "M-IMPL"})
     if sub == "TASK_DONE":
-        return Command(kind="complete_task",
-                       params={"stage": "M-IMPL", "task_id": s.current_task_id})
+        return Command(
+            kind="complete_task", params={"stage": "M-IMPL", "task_id": s.current_task_id}
+        )
     if sub == "EXIT":
         return _decide_m_impl_exit(s)
     if sub == "RETURNED":
-        return Command(kind="rollback_stage",
-                       params={"to_stage": s.return_target,
-                               "reason": "diagnose_rollback"})
+        return Command(
+            kind="rollback_stage",
+            params={"to_stage": s.return_target, "reason": "diagnose_rollback"},
+        )
     return None
 
 
@@ -504,8 +517,7 @@ def _decide_m_impl_island(s: State, sub: str) -> Command | None:
 def _decide_m_impl_prism(s: State, sub: str) -> Command | None:
     """Prism dispatch substates: PRISM_PLAN/RED/FINAL, DIAGNOSE."""
     if sub == "DIAGNOSE" and s.diagnose_classification == "stub_gap":
-        return Command(kind="rollback_stage",
-                       params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
+        return Command(kind="rollback_stage", params={"to_stage": "M-DESIGN", "reason": "stub_gap"})
     if s.reviewer_dispatched:
         return None  # awaiting Prism verdict
     return _m_impl_prism_dispatch(s, sub)

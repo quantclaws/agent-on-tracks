@@ -24,8 +24,7 @@ def test_no_model_means_no_model_flag(tmp_path, monkeypatch):
 def test_explicit_model_passes_model_flag(tmp_path, monkeypatch):
     """Layer 1 wins: explicit self.model (TRAC_AGENT_MODEL via select_backend)
     is passed as --model <value> to opencode run."""
-    backend = OpencodeBackend(tmp_path, "v0.1",
-                              model="litellm/deepseek-v4-flash")
+    backend = OpencodeBackend(tmp_path, "v0.1", model="litellm/deepseek-v4-flash")
     cmd = _capture_cmd(monkeypatch, backend, "Scribe")
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "litellm/deepseek-v4-flash"

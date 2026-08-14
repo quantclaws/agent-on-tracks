@@ -2,6 +2,7 @@
 urllib.request.urlopen (NOT tracks' own code) to exercise the HTTP classification
 and payload logic of the live GitHub Issues path.
 """
+
 import json
 import urllib.error
 from pathlib import Path
@@ -40,6 +41,7 @@ def _make_urlopen(resp=None, raise_http=None, network_error=False):
         if network_error:
             raise urllib.error.URLError("boom")
         return _FakeResp(resp if resp is not None else {})
+
     return urlopen
 
 
@@ -52,6 +54,7 @@ def _backend(monkeypatch, repo="o/r", project=""):
 
 
 # --- constructor ------------------------------------------------------------
+
 
 def test_init_requires_repo_env(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
@@ -68,14 +71,20 @@ def test_init_reads_repo_and_project(monkeypatch):
 
 # --- _request + HTTP classification ----------------------------------------
 
-@pytest.mark.parametrize("code,expected", [
-    (401, "auth"), (403, "rate_limit"), (404, "not_found"),
-    (429, "rate_limit"), (500, "network"),
-])
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        (401, "auth"),
+        (403, "rate_limit"),
+        (404, "not_found"),
+        (429, "rate_limit"),
+        (500, "network"),
+    ],
+)
 def test_http_errors_classified(monkeypatch, code, expected):
     b = _backend(monkeypatch)
-    monkeypatch.setattr("urllib.request.urlopen",
-                        _make_urlopen(raise_http=(code, "reason")))
+    monkeypatch.setattr("urllib.request.urlopen", _make_urlopen(raise_http=(code, "reason")))
     with pytest.raises(GithubIssuesError) as ei:
         b._request("https://api.github.com/x", {})
     assert ei.value.classification == expected
@@ -83,8 +92,7 @@ def test_http_errors_classified(monkeypatch, code, expected):
 
 def test_urlerror_classified_network(monkeypatch):
     b = _backend(monkeypatch)
-    monkeypatch.setattr("urllib.request.urlopen",
-                        _make_urlopen(network_error=True))
+    monkeypatch.setattr("urllib.request.urlopen", _make_urlopen(network_error=True))
     with pytest.raises(GithubIssuesError) as ei:
         b._request("https://api.github.com/x", {})
     assert ei.value.classification == "network"
@@ -98,6 +106,7 @@ def test_request_returns_json(monkeypatch):
 
 # --- create_issue / add_to_project -----------------------------------------
 
+
 def test_create_issue_returns_number(monkeypatch):
     b = _backend(monkeypatch)
     monkeypatch.setattr("urllib.request.urlopen", _make_urlopen(resp={"number": 7}))
@@ -108,8 +117,8 @@ def test_add_to_project_posts_card(monkeypatch):
     b = _backend(monkeypatch)
     calls = []
     monkeypatch.setattr(
-        "urllib.request.urlopen",
-        lambda req, timeout: calls.append(req.full_url) or _FakeResp({}))
+        "urllib.request.urlopen", lambda req, timeout: calls.append(req.full_url) or _FakeResp({})
+    )
     b.add_to_project("7", "col123")
     assert calls and "cards" in calls[0]
 
@@ -118,13 +127,14 @@ def test_add_to_project_noop_without_project(monkeypatch):
     b = _backend(monkeypatch, project="")  # empty project
     calls = []
     monkeypatch.setattr(
-        "urllib.request.urlopen",
-        lambda req, timeout: calls.append(req.full_url) or _FakeResp({}))
+        "urllib.request.urlopen", lambda req, timeout: calls.append(req.full_url) or _FakeResp({})
+    )
     b.add_to_project("7", "")
     assert calls == []  # no request issued
 
 
 # --- select backend ---------------------------------------------------------
+
 
 def test_select_live_when_token_and_opencode(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "x")

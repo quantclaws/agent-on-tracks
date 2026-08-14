@@ -10,6 +10,7 @@ v0.3 change (BS-02): the run no longer completes right after M-REQ-APPROVAL —
 it continues into M-DESIGN and completes there at the M-IMPL boundary
 (Decision A). The pre-M-DESIGN event prefix is asserted byte-stable below.
 """
+
 import hashlib
 import re
 import sqlite3
@@ -29,10 +30,7 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     acceptance = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
     fm, body = parse_frontmatter(acceptance)
     body_sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    finals = [
-        e for e in evs
-        if e["type"] == "acceptance.committed" and e["payload"].get("final")
-    ]
+    finals = [e for e in evs if e["type"] == "acceptance.committed" and e["payload"].get("final")]
     assert len(finals) == 1
     assert re.fullmatch(r"[0-9a-f]{64}", fm["sha"])
     assert fm["sha"] == finals[0]["payload"]["acceptance_sha"] == body_sha
@@ -74,11 +72,13 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     entered = [e for e in evs if e["type"] == "stage.entered"]
     assert entered[-1]["payload"]["stage"] == "M-TEST"
     assert entered[-1]["seq"] > approval_seq
-    assert [e["payload"]["stage"] for e in evs
-            if e["type"] == "stage.exited"][-1] == "M-TEST"
+    assert [e["payload"]["stage"] for e in evs if e["type"] == "stage.exited"][-1] == "M-TEST"
     committed = [e for e in evs if e["type"] == "design.committed"]
     assert sorted(e["payload"]["doc"] for e in committed) == [
-        "architecture.md", "interfaces.md", "test-plan.md"]
+        "architecture.md",
+        "interfaces.md",
+        "test-plan.md",
+    ]
     vdir = host_repo / ".tracks" / "projects" / "v0.1"
     for doc in ("architecture.md", "interfaces.md", "test-plan.md"):
         assert (vdir / doc).exists()  # BS-03: the trio on disk, validate-clean
@@ -86,13 +86,12 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     # v0.4: two prism.verdict(pass) -- M-DESIGN review + M-TEST PRISM_REVIEW
     assert [e["payload"]["verdict"] for e in verdicts] == ["pass", "pass"]
     # M-TEST events: test.collected, red.validated, test.committed
-    assert [e["payload"]["status"] for e in evs
-            if e["type"] == "test.collected"] == ["passed"]
-    assert [e["payload"]["status"] for e in evs
-            if e["type"] == "red.validated"] == ["valid"]
+    assert [e["payload"]["status"] for e in evs if e["type"] == "test.collected"] == ["passed"]
+    assert [e["payload"]["status"] for e in evs if e["type"] == "red.validated"] == ["valid"]
     assert any(e["type"] == "test.committed" for e in evs)
-    assert not [e for e in evs if e["type"].startswith("human.")
-                and e["seq"] > approval_seq]  # BS-05: no gate in M-DESIGN/M-TEST
+    assert not [
+        e for e in evs if e["type"].startswith("human.") and e["seq"] > approval_seq
+    ]  # BS-05: no gate in M-DESIGN/M-TEST
 
     recorded = [e for e in evs if e["type"] == "approval.recorded"]
     assert len(recorded) == 1
@@ -101,8 +100,7 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     assert recorded[0]["payload"]["readonly"] is True
 
     # D-04/D-06: one Issue per FR/NFR item; summary mapping matches the items
-    spec_body = parse_frontmatter(
-        host_repo / ".tracks" / "projects" / "v0.1" / "spec.md")[1]
+    spec_body = parse_frontmatter(host_repo / ".tracks" / "projects" / "v0.1" / "spec.md")[1]
     items = re.findall(r"^### (N?FR-\d{4})", spec_body, re.M)
     created = [e for e in evs if e["type"] == "issue.created"]
     assert sorted(e["payload"]["item_id"] for e in created) == sorted(items)
@@ -115,7 +113,8 @@ def test_full_journey_to_boundary(host_repo, trac, event_log):
     for e in evs:
         if e["type"] != "command.issued" and e["command_id"]:
             issue_seqs = [
-                x["seq"] for x in evs
+                x["seq"]
+                for x in evs
                 if x["type"] == "command.issued" and x["command_id"] == e["command_id"]
             ]
             assert issue_seqs and min(issue_seqs) < e["seq"]
@@ -151,15 +150,17 @@ def test_prism_revise_drives_a_second_review_round(trac, event_log):
     # v0.4: three prism.verdict events - M-DESIGN revise, M-DESIGN re-review
     # pass, M-TEST PRISM_REVIEW pass (simulate `revise|pass` applies to both
     # stages' PRISM_REVIEW; the last token sticks for the M-TEST call).
-    assert [e["payload"]["verdict"] for e in evs
-            if e["type"] == "prism.verdict"] == ["revise", "pass", "pass"]
+    assert [e["payload"]["verdict"] for e in evs if e["type"] == "prism.verdict"] == [
+        "revise",
+        "pass",
+        "pass",
+    ]
     assert ts.count("review.round_started") == 1
     assert ts.count("design.committed") == 6  # 3 draft + 3 respond re-commits
     assert ts[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
     # v0.4: the final stage.exited is M-TEST (not M-DESIGN)
-    assert [e["payload"]["stage"] for e in evs
-            if e["type"] == "stage.exited"][-1] == "M-TEST"
+    assert [e["payload"]["stage"] for e in evs if e["type"] == "stage.exited"][-1] == "M-TEST"
 
 
 def test_walk_to_design_complete(trac, event_log):
@@ -170,8 +171,7 @@ def test_walk_to_design_complete(trac, event_log):
     evs = event_log(run_id)
     assert types(evs)[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
-    assert [e["payload"]["stage"] for e in evs
-            if e["type"] == "stage.exited"][-1] == "M-TEST"
+    assert [e["payload"]["stage"] for e in evs if e["type"] == "stage.exited"][-1] == "M-TEST"
 
 
 def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
@@ -197,8 +197,9 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
         r = trac("run", *budget[kind], simulate=simulate)
         assert r.returncode == 0, r.stderr
         new = dispatches(event_log(run_id))[before:]
-        assert [d["payload"]["command"]["params"]["substate"] for d in new
-                ] == expect_substates, f"step {steps} over-ran"
+        assert [d["payload"]["command"]["params"]["substate"] for d in new] == expect_substates, (
+            f"step {steps} over-ran"
+        )
         assert expect_stdout in r.stdout
         steps += 1
         return r
@@ -207,15 +208,17 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     assert trac("triage", "go").returncode == 0
 
     step(["DRAFT"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-draft
-    step(["SAGE_REVIEW"], "substate=RESPOND", kind="reviewer",
-         simulate="sage:SAGE_REVIEW=revise")               # sage-story-finding
+    step(
+        ["SAGE_REVIEW"], "substate=RESPOND", kind="reviewer", simulate="sage:SAGE_REVIEW=revise"
+    )  # sage-story-finding
     step(["RESPOND"], "substate=SAGE_REVIEW", kind="author")  # scribe-story-respond
     step(["SAGE_REVIEW"], "awaiting=review", kind="reviewer")  # sage-story-resolve
     assert trac("review", "no-comment").returncode == 0
 
     step(["DRAFT"], "substate=LEX_REVIEW", kind="author")  # sage-spec-draft
-    step(["LEX_REVIEW"], "substate=RESPOND", kind="reviewer",
-         simulate="lex:LEX_REVIEW=revise")                 # lex-spec-finding
+    step(
+        ["LEX_REVIEW"], "substate=RESPOND", kind="reviewer", simulate="lex:LEX_REVIEW=revise"
+    )  # lex-spec-finding
     step(["RESPOND"], "substate=LEX_REVIEW", kind="author")  # sage-spec-respond
     step(["LEX_REVIEW"], "awaiting=review", kind="reviewer")  # lex-spec-resolve
     assert trac("review", "no-comment").returncode == 0
@@ -224,7 +227,7 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     step(["LEX_REVIEW"], "awaiting=review", kind="reviewer")  # lex-acceptance-review
     assert trac("review", "no-comment").returncode == 0
 
-    step([], "awaiting=approval")                          # approval-final: preview
+    step([], "awaiting=approval")  # approval-final: preview
     assert trac("approve", "--actor", "LiveE2E-Human").returncode == 0
 
     step(["DRAFT"], "substate=PRISM_REVIEW", kind="author")  # archer-design-draft
@@ -242,6 +245,5 @@ def test_bounded_walk_matches_harness_step_boundaries(trac, event_log):
     evs = event_log(run_id)
     assert types(evs)[-2:] == ["stage.exited", "run.completed"]
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
-    assert [e["payload"]["stage"] for e in evs
-            if e["type"] == "stage.exited"][-1] == "M-TEST"
+    assert [e["payload"]["stage"] for e in evs if e["type"] == "stage.exited"][-1] == "M-TEST"
     assert steps == 16

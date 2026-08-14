@@ -10,6 +10,7 @@ for each thread and comment; ``--compact`` omits the legacy ``token`` dict and
 location fields. Write commands accept inline JSON, z1 tokens, and legacy
 base64 tokens via ``_decode_token`` (backward compatible).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,8 +46,13 @@ def _encode_token_str(token: dict) -> str:
 
 
 _TOKEN_SHAPES = {
-    "thread": {"total_lines": int, "anchor_line": int, "anchor_text": str,
-               "root_line": int, "root_text": str},
+    "thread": {
+        "total_lines": int,
+        "anchor_line": int,
+        "anchor_text": str,
+        "root_line": int,
+        "root_text": str,
+    },
     "comment": {"text": str, "depth": int, "speaker": str},
 }
 
@@ -63,8 +69,7 @@ def _validate_token_shape(tok: dict, kind: str) -> None:
             raise writer.WriteError(f"malformed {kind} token: missing {field!r}")
         val = tok[field]
         if isinstance(val, bool) or not isinstance(val, typ):
-            raise writer.WriteError(
-                f"malformed {kind} token: {field!r} must be {typ.__name__}")
+            raise writer.WriteError(f"malformed {kind} token: {field!r} must be {typ.__name__}")
     if kind == "comment" and "parent" in tok and not isinstance(tok["parent"], str):
         raise writer.WriteError("malformed comment token: 'parent' must be str")
 
@@ -89,8 +94,7 @@ def _decode_token(raw: str, kind: str) -> dict:
             tok = json.loads(zlib.decompress(compressed).decode("utf-8"))
         else:
             padded = raw + "=" * (-len(raw) % 4)
-            tok = json.loads(
-                base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+            tok = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
     except (ValueError, zlib.error) as e:
         raise writer.WriteError(f"malformed token: {e}") from None
     if not isinstance(tok, dict):
@@ -131,8 +135,12 @@ def _atomic_write(path: Path, transform) -> None:
 def _comment_json(c, parent_text: str = "", *, compact: bool = False) -> dict:
     tok = comment_token(c, parent_text)
     d = {
-        "depth": c.depth, "speaker": c.speaker, "body": c.body, "line": c.line,
-        "mentions": list(c.mentions), "token_str": _encode_token_str(tok),
+        "depth": c.depth,
+        "speaker": c.speaker,
+        "body": c.body,
+        "line": c.line,
+        "mentions": list(c.mentions),
+        "token_str": _encode_token_str(tok),
         "children": [_comment_json(ch, c.text, compact=compact) for ch in c.children],
     }
     if not compact:
@@ -143,17 +151,25 @@ def _comment_json(c, parent_text: str = "", *, compact: bool = False) -> dict:
 def _thread_json(t, *, compact: bool = False) -> dict:
     tok = token_for(t)
     d = {
-        "thread_id": t.thread_id, "initiator": t.initiator, "status": t.status,
-        "last_speaker": t.last_speaker, "reply_count": t.reply_count,
-        "snippet": t.snippet, "mentioned_agents": list(t.mentioned_agents),
+        "thread_id": t.thread_id,
+        "initiator": t.initiator,
+        "status": t.status,
+        "last_speaker": t.last_speaker,
+        "reply_count": t.reply_count,
+        "snippet": t.snippet,
+        "mentioned_agents": list(t.mentioned_agents),
         "root": _comment_json(t.root, compact=compact),
         "token_str": _encode_token_str(tok),
     }
     if not compact:
         d.update(
-            total_lines=t.total_lines, anchor_line=t.anchor_line,
-            anchor_text=t.anchor_text, root_line=t.root_line,
-            root_text=t.root_text, token=tok)
+            total_lines=t.total_lines,
+            anchor_line=t.anchor_line,
+            anchor_text=t.anchor_text,
+            root_line=t.root_line,
+            root_text=t.root_text,
+            token=tok,
+        )
     return d
 
 
@@ -183,8 +199,7 @@ def _validate_query_flags(ns) -> None:
         raise writer.WriteError("--summary-only requires --check-ready")
     active = sum(1 for a in (ns.thread_id, ns.inbox, ns.summary_only) if a)
     if active > 1:
-        raise writer.WriteError(
-            "--thread-id/--inbox/--summary-only are mutually exclusive")
+        raise writer.WriteError("--thread-id/--inbox/--summary-only are mutually exclusive")
 
 
 def _ready_fields(text: str) -> dict:
@@ -217,8 +232,7 @@ def _inbox_output(threads, ns, text) -> dict:
 
 def _full_output(threads, ns, text) -> dict:
     if ns.initiator:
-        threads = [t for t in threads
-                   if speaker_key(t.initiator) == speaker_key(ns.initiator)]
+        threads = [t for t in threads if speaker_key(t.initiator) == speaker_key(ns.initiator)]
     if ns.status:
         threads = [t for t in threads if t.status == ns.status]
     out = {"threads": [_thread_json(t, compact=ns.compact) for t in threads]}
@@ -260,8 +274,9 @@ def _reply(repo: Path, ns) -> int:
     target = _scope_check(repo, ns.file)
     token = _decode_token(ns.token, "thread")
     reply_to = _decode_token(ns.reply_to_token, "comment") if ns.reply_to_token else None
-    _atomic_write(target, lambda t: writer.reply(
-        t, ns.thread_id, token, ns.speaker, ns.message, reply_to))
+    _atomic_write(
+        target, lambda t: writer.reply(t, ns.thread_id, token, ns.speaker, ns.message, reply_to)
+    )
     print("ok")
     return 0
 
@@ -270,7 +285,8 @@ def _edit(repo: Path, ns) -> int:
     target = _scope_check(repo, ns.file)
     token = _decode_token(ns.token, "thread")
     _atomic_write(
-        target, lambda t: writer.edit(t, ns.thread_id, token, ns.depth, ns.speaker, ns.new_body))
+        target, lambda t: writer.edit(t, ns.thread_id, token, ns.depth, ns.speaker, ns.new_body)
+    )
     print("ok")
     return 0
 
@@ -279,7 +295,8 @@ def _set_status(repo: Path, ns) -> int:
     target = _scope_check(repo, ns.file)
     token = _decode_token(ns.token, "thread")
     _atomic_write(
-        target, lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator))
+        target, lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator)
+    )
     print("ok")
     return 0
 
@@ -294,14 +311,22 @@ def _build_parser() -> _Parser:
     q.add_argument("--blocker")
     q.add_argument("--status")
     q.add_argument("--check-ready", action="store_true")
-    q.add_argument("--compact", action="store_true",
-                   help="omit legacy token dict and location fields (for automation)")
-    q.add_argument("--inbox", metavar="Speaker",
-                   help="union of unanswered/unresolved/awaiting_my_reply (compact, auto)")
-    q.add_argument("--thread-id", metavar="T-NNN",
-                   help="return only this thread (compact, auto)")
-    q.add_argument("--summary-only", action="store_true",
-                   help="with --check-ready: output only gate summary (no threads)")
+    q.add_argument(
+        "--compact",
+        action="store_true",
+        help="omit legacy token dict and location fields (for automation)",
+    )
+    q.add_argument(
+        "--inbox",
+        metavar="Speaker",
+        help="union of unanswered/unresolved/awaiting_my_reply (compact, auto)",
+    )
+    q.add_argument("--thread-id", metavar="T-NNN", help="return only this thread (compact, auto)")
+    q.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="with --check-ready: output only gate summary (no threads)",
+    )
 
     s = sub.add_parser("start")
     s.add_argument("--file", required=True)
@@ -317,13 +342,17 @@ def _build_parser() -> _Parser:
         sp = sub.add_parser(name)
         sp.add_argument("--file", required=True)
         sp.add_argument("--thread-id", required=True)
-        sp.add_argument("--token", required=True,
-                        help="thread locate token: query's token_str (opaque) or inline JSON")
+        sp.add_argument(
+            "--token",
+            required=True,
+            help="thread locate token: query's token_str (opaque) or inline JSON",
+        )
         if name == "reply":
             sp.add_argument("--speaker", required=True)
-            sp.add_argument("--reply-to-token",
-                            help="comment token_str (opaque) or inline JSON to reply to "
-                                 "(omit = reply to root)")
+            sp.add_argument(
+                "--reply-to-token",
+                help="comment token_str (opaque) or inline JSON to reply to (omit = reply to root)",
+            )
         if name == "edit":
             sp.add_argument("--depth", type=int, required=True)
             sp.add_argument("--speaker", required=True)
@@ -336,8 +365,11 @@ def _build_parser() -> _Parser:
 
 
 _HANDLERS = {
-    "query": _query, "start": _start, "reply": _reply,
-    "edit": _edit, "set-status": _set_status,
+    "query": _query,
+    "start": _start,
+    "reply": _reply,
+    "edit": _edit,
+    "set-status": _set_status,
 }
 
 

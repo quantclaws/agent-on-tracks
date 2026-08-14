@@ -7,6 +7,7 @@ first relocate the thread by content token and proceed ONLY on a unique match
 body`` (status marker shown only for resolved/reopen; open is the unmarked
 default, matching the corpus convention).
 """
+
 from __future__ import annotations
 
 import re
@@ -94,7 +95,7 @@ def _subtree_end_index(lines: list, comment) -> int:
     body-continuation lines; it ends before a sibling/uncle comment (a speaker-
     tagged blockquote at depth <= comment.depth) or non-blockquote content.
     """
-    i = comment.line              # 0-indexed line after the 1-indexed comment
+    i = comment.line  # 0-indexed line after the 1-indexed comment
     n = len(lines)
     last = comment.line - 1
     while i < n:
@@ -106,13 +107,14 @@ def _subtree_end_index(lines: list, comment) -> int:
             continue
         if parse_tag(m.group(2)) is not None and len(m.group(1)) <= comment.depth:
             break  # a sibling / uncle comment ends this subtree
-        last = i                  # descendant comment or body-continuation line
+        last = i  # descendant comment or body-continuation line
         i += 1
     return last + 1
 
 
-def reply(text: str, thread_id: str, token: dict, speaker: str, message: str,
-          reply_to: dict | None = None) -> str:
+def reply(
+    text: str, thread_id: str, token: dict, speaker: str, message: str, reply_to: dict | None = None
+) -> str:
     """Append a reply (FR-050 nesting, FR-110).
 
     ``reply_to=None`` replies to the root (depth 2, at the thread end);
@@ -128,7 +130,8 @@ def reply(text: str, thread_id: str, token: dict, speaker: str, message: str,
         status, payload = locate_comment(thread, reply_to)
         if status != "unique":
             raise LocateFailure(
-                LocateResult(status, candidates=payload if status == "ambiguous" else None))
+                LocateResult(status, candidates=payload if status == "ambiguous" else None)
+            )
         target = payload
     at = _subtree_end_index(lines, target)
     block = _format_reply(speaker, message, target.depth + 1)
@@ -163,8 +166,7 @@ def _find_comment(lines: list, thread, depth: int, speaker: str):
     return None
 
 
-def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str,
-         new_body: str) -> str:
+def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str, new_body: str) -> str:
     """Replace the depth/speaker comment's body (FR-110); author only (AC-1103).
 
     The ``--speaker`` must be the comment's original author (format-consistency
@@ -176,14 +178,13 @@ def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str,
     if idx is None:
         raise WriteError(f"no comment at depth {depth} by {speaker!r} (or not author)")
     if depth == 1:
-        lines[idx:idx + 1] = format_root(thread.initiator, thread.status, new_body)
+        lines[idx : idx + 1] = format_root(thread.initiator, thread.status, new_body)
     else:
-        lines[idx:idx + 1] = _format_reply(speaker, new_body, depth)
+        lines[idx : idx + 1] = _format_reply(speaker, new_body, depth)
     return "\n".join(lines) + _nl(text)
 
 
-def set_status(text: str, thread_id: str, token: dict, status: str,
-               operator: str) -> str:
+def set_status(text: str, thread_id: str, token: dict, status: str, operator: str) -> str:
     """Change a root thread's status (FR-090 format-consistency rules).
 
     resolved -> operator must equal the initiator; reopen -> anyone.

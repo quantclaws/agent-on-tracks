@@ -542,6 +542,7 @@ def _phase_design_to_m_test(
         if event["type"].startswith("human.") and event["seq"] > approval_seq
     ], "M-DESIGN must carry no human gate (BS-05)"
 
+
 def _phase_m_test_to_boundary(
     live_trac,
     live_root: Path,
@@ -589,9 +590,7 @@ def _phase_m_test_to_boundary(
     assert_test_markers(tracks_tests_dir=tests_dir, version=version)
 
     prism = _run_m_test_review_loop(live_trac)
-    assert "status=completed" in prism.stdout, (
-        f"M-TEST should complete at boundary: {prism.stdout}"
-    )
+    assert "status=completed" in prism.stdout, f"M-TEST should complete at boundary: {prism.stdout}"
     assert "awaiting=-" in prism.stdout, prism.stdout
 
     final_events = _events(live_root, run_id)
@@ -607,17 +606,28 @@ def _phase_m_test_to_boundary(
     report_dir = live_root / "report"
     assert (
         live_trac(
-            "report", "--run-id", run_id,
-            "--output", str(report_dir),
-            "--format", "html",
+            "report",
+            "--run-id",
+            run_id,
+            "--output",
+            str(report_dir),
+            "--format",
+            "html",
         ).returncode
         == 0
     )
     report = (report_dir / "report.md").read_text(encoding="utf-8")
     for required in (
-        "scenario_id", "assignment expanded", "agent input ref=",
-        "## Discussions", "attempt=", "commit:", "## Audit", "audit gaps:",
-        "status: `completed`", "stage: `M-TEST`",
+        "scenario_id",
+        "assignment expanded",
+        "agent input ref=",
+        "## Discussions",
+        "attempt=",
+        "commit:",
+        "## Audit",
+        "audit gaps:",
+        "status: `completed`",
+        "stage: `M-TEST`",
     ):
         assert required in report
     assert (report_dir / "index.html").is_file()
@@ -632,6 +642,8 @@ def _phase_m_test_to_boundary(
     print(f"LIVE_E2E_BRANCH=releases/{version}", flush=True)
     print(f"LIVE_E2E_REMOTE_REFS_BEFORE={remote_refs_before!r}", flush=True)
     print(f"LIVE_E2E_REMOTE_REFS_AFTER={remote_refs_after!r}", flush=True)
+
+
 # -- baseline snapshot (deliverable #2) ------------------------------------
 
 
@@ -688,9 +700,7 @@ def test_bounded_scripted_real_agent_journey(
     # Design-exit baseline (v0.4 M-TEST milestone): snapshot at the declared
     # live checkpoint, M-TEST/WRITE, so the resume test skips the expensive
     # prefix + Archer DRAFT + Prism review loop.
-    _capture_design_exit_baseline(
-        live_root, version, run_id, checkpoint_substate="WRITE"
-    )
+    _capture_design_exit_baseline(live_root, version, run_id, checkpoint_substate="WRITE")
 
     _phase_m_test_to_boundary(
         live_trac,
@@ -766,9 +776,7 @@ def test_journey_from_req_approved_baseline(
                 )
             run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
             _phase_design_to_m_test(live_trac, live_root, run_id, version)
-            _capture_design_exit_baseline(
-                live_root, version, run_id, checkpoint_substate="WRITE"
-            )
+            _capture_design_exit_baseline(live_root, version, run_id, checkpoint_substate="WRITE")
             _phase_m_test_to_boundary(
                 live_trac,
                 live_root,
@@ -795,9 +803,7 @@ def test_journey_from_req_approved_baseline(
 
     run_id = _sanity_check_resumed_host(live_trac, live_root, baseline)
     _phase_design_to_m_test(live_trac, live_root, run_id, version)
-    _capture_design_exit_baseline(
-        live_root, version, run_id, checkpoint_substate="WRITE"
-    )
+    _capture_design_exit_baseline(live_root, version, run_id, checkpoint_substate="WRITE")
     _phase_m_test_to_boundary(
         live_trac,
         live_root,

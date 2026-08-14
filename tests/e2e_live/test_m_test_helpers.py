@@ -106,7 +106,9 @@ _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 
 def _criteria_events(
-    *, assigned_pack: dict | None = None, echoed_pack: dict | None = None,
+    *,
+    assigned_pack: dict | None = None,
+    echoed_pack: dict | None = None,
     runtime_mismatch: bool = False,
 ) -> list[dict]:
     assigned = _CRITERIA_PACK if assigned_pack is None else assigned_pack
@@ -171,26 +173,20 @@ def test_test_marker_helper_checks_version_and_trace_token(tmp_path):
 
     test_file.parent.mkdir(parents=True)
     test_file.write_text(
-        "# AC-FR0010-01@v0.4 TRACKS-TRACE integration\n"
-        "def test_marker():\n"
-        "    pass\n",
+        "# AC-FR0010-01@v0.4 TRACKS-TRACE integration\ndef test_marker():\n    pass\n",
         encoding="utf-8",
     )
     assert_test_markers(tests_dir, "v0.4")
 
     test_file.write_text(
-        "# AC-FR0010-01@v0.3 TRACKS-TRACE integration\n"
-        "def test_marker():\n"
-        "    pass\n",
+        "# AC-FR0010-01@v0.3 TRACKS-TRACE integration\ndef test_marker():\n    pass\n",
         encoding="utf-8",
     )
     with pytest.raises(AssertionError):
         assert_test_markers(tests_dir, "v0.4")
 
     test_file.write_text(
-        "# AC-FR0010-01@v0.4 integration\n"
-        "def test_marker():\n"
-        "    pass\n",
+        "# AC-FR0010-01@v0.4 integration\ndef test_marker():\n    pass\n",
         encoding="utf-8",
     )
     with pytest.raises(AssertionError):
@@ -260,10 +256,7 @@ class _DesignTailDriver:
     def __call__(self, *args, **kwargs):
         self.calls.append((args, kwargs))
         return SimpleNamespace(
-            stdout=(
-                f"run RUN: stage=M-TEST substate={self.substate} "
-                "status=active awaiting=-"
-            )
+            stdout=(f"run RUN: stage=M-TEST substate={self.substate} status=active awaiting=-")
         )
 
 
@@ -335,18 +328,14 @@ def _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline):
     return calls
 
 
-def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
-    monkeypatch, tmp_path
-):
+def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAC_LIVE_FAKE_DESIGN_BASELINE", "1")
     monkeypatch.delenv("TRAC_LIVE_BUILD_BASELINE", raising=False)
     req_baseline = tmp_path / "req-baseline"
     calls = _patch_design_exit_resume(monkeypatch, tmp_path, req_baseline)
     driver = _DesignTailDriver()
 
-    _journey.test_m_test_from_design_exit_baseline(
-        tmp_path, None, None, driver, monkeypatch, None
-    )
+    _journey.test_m_test_from_design_exit_baseline(tmp_path, None, None, driver, monkeypatch, None)
 
     assert calls["find_req"] == ["live-e2e-code-stats"]
     assert calls["restore"] == [(req_baseline, tmp_path)]
@@ -363,12 +352,8 @@ def test_fake_design_baseline_restores_req_and_uses_two_dispatch_budget(
             },
         )
     ]
-    assert calls["capture"] == [
-        (tmp_path, "live-e2e-code-stats", "REQ-RUN", "DISPATCH")
-    ]
-    assert calls["sanity_design"] == [
-        (driver, tmp_path, tmp_path / "design-exit")
-    ]
+    assert calls["capture"] == [(tmp_path, "live-e2e-code-stats", "REQ-RUN", "DISPATCH")]
+    assert calls["sanity_design"] == [(driver, tmp_path, tmp_path / "design-exit")]
     assert calls["m_test"][0][0][0] is driver
 
 
@@ -398,9 +383,7 @@ def _design_exit_baseline(tmp_path, checkpoint_substate="DISPATCH"):
     }
     if checkpoint_substate is not None:
         manifest["checkpoint_substate"] = checkpoint_substate
-    (baseline / ".tracks-baseline-manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (baseline / ".tracks-baseline-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return baseline
 
 
@@ -532,9 +515,7 @@ def test_scope_and_single_test_commit_contracts(tmp_path):
     _git(repo, "add", "tests")
     _git(repo, "commit", "-m", "freeze tests")
     commit_sha = _git(repo, "rev-parse", "HEAD")
-    assert_single_test_commit(
-        before["head"], repo, {"payload": {"commit_sha": commit_sha}}
-    )
+    assert_single_test_commit(before["head"], repo, {"payload": {"commit_sha": commit_sha}})
 
 
 def test_scope_contract_rejects_outside_path(tmp_path):
@@ -707,12 +688,8 @@ def test_wal_backed_source_capture_restores_all_committed_events(tmp_path):
 
     target_files = _runtime_files(target)
     assert "tracks.db" in target_files
-    assert "tracks.db-wal" not in target_files, (
-        "snapshot leaked WAL sidecar into target"
-    )
-    assert "tracks.db-shm" not in target_files, (
-        "snapshot leaked SHM sidecar into target"
-    )
+    assert "tracks.db-wal" not in target_files, "snapshot leaked WAL sidecar into target"
+    assert "tracks.db-shm" not in target_files, "snapshot leaked SHM sidecar into target"
     # All committed events survive - including the WAL-resident one (seq=9999).
     conn = sqlite3.connect(target / ".tracks" / "runtime" / "tracks.db")
     seqs = [r[0] for r in conn.execute("SELECT seq FROM events ORDER BY seq")]
@@ -854,9 +831,7 @@ def _seed_simple_events(host: Path) -> None:
     runtime = host / ".tracks" / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(runtime / "tracks.db")
-    conn.execute(
-        "CREATE TABLE events (seq INTEGER, type TEXT, command_id TEXT, payload TEXT)"
-    )
+    conn.execute("CREATE TABLE events (seq INTEGER, type TEXT, command_id TEXT, payload TEXT)")
     conn.execute(
         "INSERT INTO events VALUES (?, ?, ?, ?)",
         (1, "run.started", None, json.dumps({"v": "live"})),
@@ -1025,9 +1000,7 @@ def test_prepare_host_venv_uses_no_network(tmp_path, monkeypatch):
     install.install_log.write_text("", encoding="utf-8")
 
     def fail_subprocess(*args, **kwargs):
-        raise AssertionError(
-            f"prepare_host_venv must not spawn subprocesses; got {args!r}"
-        )
+        raise AssertionError(f"prepare_host_venv must not spawn subprocesses; got {args!r}")
 
     monkeypatch.setattr("tests.e2e_live.harness.subprocess.run", fail_subprocess)
     monkeypatch.setattr("tests.e2e_live.harness.subprocess.Popen", fail_subprocess)

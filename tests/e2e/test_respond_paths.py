@@ -1,6 +1,7 @@
 """RESPOND loops + human revise + wrong-state command rejection
 (FR-08, FR-14, FR-16): AC-08b, AC-14b, AC-16a, AC-16b.
 """
+
 import subprocess
 
 from tests.e2e.helpers import dispatches
@@ -35,13 +36,10 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     assert r.returncode == 0, r.stderr
     evs = event_log()
     comments = [
-        e for e in evs
-        if e["type"] == "sage.verdict" and e["payload"]["verdict"] == "comment"
+        e for e in evs if e["type"] == "sage.verdict" and e["payload"]["verdict"] == "comment"
     ]
     assert len(comments) == 1
-    responds = [
-        d for d in dispatches(evs, "RESPOND") if d["seq"] > comments[0]["seq"]
-    ]
+    responds = [d for d in dispatches(evs, "RESPOND") if d["seq"] > comments[0]["seq"]]
     assert responds and responds[0]["payload"]["command"]["params"]["role"] == "scribe"
     assert "awaiting=review" in r.stdout  # forward progress to the human gate
 
@@ -58,8 +56,7 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     # AC-16a: human edits story.md with a discussion annotation, revise commits
     # it and carries diff_ref
     story.write_text(
-        story.read_text(encoding="utf-8")
-        + "\n\n> **Human:** 人类补充意见。\n",
+        story.read_text(encoding="utf-8") + "\n\n> **Human:** 人类补充意见。\n",
         encoding="utf-8",
     )
     r = trac("review", "revise")
@@ -70,18 +67,13 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     review_payload = reviews[-1]["payload"]
     assert review_payload["action"] == "comment"
     assert review_payload["diff_ref"] == revise_sha
-    assert review_payload["actor"] == git_out(
-        host_repo, "config", "user.name"
-    ).strip()
+    assert review_payload["actor"] == git_out(host_repo, "config", "user.name").strip()
 
     # next run dispatches Scribe into RESPOND with the diff_ref in the assignment
     r = trac("run")
     assert r.returncode == 0, r.stderr
     evs = event_log()
-    responds = [
-        d for d in dispatches(evs, "RESPOND")
-        if d["seq"] > reviews[-1]["seq"]
-    ]
+    responds = [d for d in dispatches(evs, "RESPOND") if d["seq"] > reviews[-1]["seq"]]
     assert responds
     params = responds[0]["payload"]["command"]["params"]
     assert params["role"] == "scribe" and params["diff_ref"] == revise_sha

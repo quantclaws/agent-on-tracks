@@ -1,6 +1,7 @@
 """Executor reconcile (D-13, AC-29d): commit succeeded, result event lost —
 recovery probes git by command_id, skips the commit, only backfills the event.
 """
+
 from tests.integration.helpers import g, make_repo
 from tests.integration.result_checkpoint_support import _init_workspace, _StubBackend
 from tracks import templating
@@ -25,11 +26,16 @@ def test_reconcile_commit_document_skips_existing_commit(tmp_path):
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-STORY"})
     store.append(
-        run_id, "v0.1", "command.issued",
-        {"command": {"kind": "commit_document",
-                     "params": {"doc": "story.md",
-                                "message": "M-STORY: draft story.md"},
-                     "command_id": cid}},
+        run_id,
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "commit_document",
+                "params": {"doc": "story.md", "message": "M-STORY: draft story.md"},
+                "command_id": cid,
+            }
+        },
         command_id=cid,
     )
 
@@ -54,10 +60,16 @@ def test_reconcile_create_branch_skips_existing(tmp_path):
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-START"})
     store.append(
-        run_id, "v0.1", "command.issued",
-        {"command": {"kind": "create_branch",
-                     "params": {"branch_name": "releases/v0.1", "base": "main"},
-                     "command_id": cid}},
+        run_id,
+        "v0.1",
+        "command.issued",
+        {
+            "command": {
+                "kind": "create_branch",
+                "params": {"branch_name": "releases/v0.1", "base": "main"},
+                "command_id": cid,
+            }
+        },
         command_id=cid,
     )
 
@@ -89,12 +101,13 @@ def test_delete_branch_tears_down_and_logs(tmp_path):
 
 def _dispatch(ex, store, run_id, outcome):
     ex.backend = _StubBackend(outcome)
-    cmd = Command(kind="dispatch_agent",
-                  params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
-                  command_id=new_ulid())
+    cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
+        command_id=new_ulid(),
+    )
     ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
-    outcomes = [e.payload for e in store.events(run_id)
-                if e.type == "outcome.received"]
+    outcomes = [e.payload for e in store.events(run_id) if e.type == "outcome.received"]
     assert len(outcomes) == 1
     return outcomes[0]
 
@@ -102,8 +115,8 @@ def _dispatch(ex, store, run_id, outcome):
 def _setup(tmp_path):
     repo, home, store, run_id, vdir = _init_workspace(tmp_path)
     (vdir / "story.md").write_text(
-        templating.render_story_skeleton("做一个X", "2026-07-31"),
-        encoding="utf-8")
+        templating.render_story_skeleton("做一个X", "2026-07-31"), encoding="utf-8"
+    )
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": "M-STORY"})
     return Executor(store, repo, run_id), store, run_id
@@ -113,11 +126,19 @@ def test_dispatch_agent_carries_opencode_outcome_fields(tmp_path):
     """IF-003 §1: diff_ref / audit_evidence / failure_class flow into the
     outcome.received event so over-reach & failures are observable."""
     ex, store, run_id = _setup(tmp_path)
-    payload = _dispatch(ex, store, run_id, {
-        "status": "failed", "artifact_ref": None, "self_report": "over-reach",
-        "diff_ref": "diff --git a/story.md", "audit_evidence": "over-reach: EXTRA.md",
-        "failure_class": "over_reach",
-    })
+    payload = _dispatch(
+        ex,
+        store,
+        run_id,
+        {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": "over-reach",
+            "diff_ref": "diff --git a/story.md",
+            "audit_evidence": "over-reach: EXTRA.md",
+            "failure_class": "over_reach",
+        },
+    )
     assert payload["failure_class"] == "over_reach"
     assert payload["audit_evidence"] == "over-reach: EXTRA.md"
     assert payload["diff_ref"] == "diff --git a/story.md"
@@ -136,18 +157,25 @@ def test_dispatch_agent_merges_failure_evidence_into_assignment(tmp_path):
 
         def act(self, role, substate, doc, doc_path, assignment=None):
             self.assignment = assignment
-            return {"status": "done", "artifact_ref": "story.md",
-                    "self_report": "wrote story.md"}
+            return {"status": "done", "artifact_ref": "story.md", "self_report": "wrote story.md"}
 
     backend = _RecordingBackend()
     ex.backend = backend
-    evidence = {"check": "schema", "reason": "no frontmatter",
-                "evidence": ".tracks/projects/v0.1/architecture.md", "attempt": 2}
+    evidence = {
+        "check": "schema",
+        "reason": "no frontmatter",
+        "evidence": ".tracks/projects/v0.1/architecture.md",
+        "attempt": 2,
+    }
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md",
-                "assignment": {"kind": "DRAFT", "template_kind": "story"},
-                "evidence": evidence},
+        params={
+            "role": "scribe",
+            "substate": "DRAFT",
+            "doc": "story.md",
+            "assignment": {"kind": "DRAFT", "template_kind": "story"},
+            "evidence": evidence,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
@@ -165,14 +193,15 @@ def test_dispatch_agent_keeps_assignment_untouched_without_evidence(tmp_path):
 
         def act(self, role, substate, doc, doc_path, assignment=None):
             self.assignment = assignment
-            return {"status": "done", "artifact_ref": "story.md",
-                    "self_report": "wrote story.md"}
+            return {"status": "done", "artifact_ref": "story.md", "self_report": "wrote story.md"}
 
     backend = _RecordingBackend()
     ex.backend = backend
-    cmd = Command(kind="dispatch_agent",
-                  params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
-                  command_id=new_ulid())
+    cmd = Command(
+        kind="dispatch_agent",
+        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md"},
+        command_id=new_ulid(),
+    )
     ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
     assert backend.assignment is None
 
@@ -180,9 +209,16 @@ def test_dispatch_agent_keeps_assignment_untouched_without_evidence(tmp_path):
 def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
     """FakeBackend outcomes carry no diff/audit/failure fields (absent, not null)."""
     ex, store, run_id = _setup(tmp_path)
-    payload = _dispatch(ex, store, run_id, {
-        "status": "done", "artifact_ref": "story.md", "self_report": "wrote story",
-    })
+    payload = _dispatch(
+        ex,
+        store,
+        run_id,
+        {
+            "status": "done",
+            "artifact_ref": "story.md",
+            "self_report": "wrote story",
+        },
+    )
     assert "failure_class" not in payload
     assert "audit_evidence" not in payload
     assert "diff_ref" not in payload
@@ -191,16 +227,25 @@ def test_dispatch_agent_fake_outcome_omits_additive_fields(tmp_path):
 def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(tmp_path):
     """Stage-specific outcomes remain machine-observable in the event log."""
     ex, store, run_id = _setup(tmp_path)
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None,
-        "self_report": "triage complete", "discussion_evidence": {"ready": False},
-        "agent_io": {"stdout": "triage", "stderr": "", "stdout_bytes": 6,
-                     "stderr_bytes": 0},
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "triage complete",
+            "discussion_evidence": {"ready": False},
+            "agent_io": {"stdout": "triage", "stderr": "", "stdout_bytes": 6, "stderr_bytes": 0},
+        }
+    )
     triage_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "scribe", "substate": "TRIAGE", "doc": "story.md",
-                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        params={
+            "role": "scribe",
+            "substate": "TRIAGE",
+            "doc": "story.md",
+            "stage": "M-STORY",
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(triage_cmd, store.state(run_id), None, False)
@@ -209,16 +254,30 @@ def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(t
     assert triage.payload["discussion_evidence"]["ready"] is False
     assert triage.payload["agent_io"]["input_ref"]
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": "story.md", "self_report": "draft",
-        "diff_ref": "diff --git a/story.md", "agent_io": {
-            "stdout": "author", "stderr": "", "stdout_bytes": 6, "stderr_bytes": 0,
-        },
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": "story.md",
+            "self_report": "draft",
+            "diff_ref": "diff --git a/story.md",
+            "agent_io": {
+                "stdout": "author",
+                "stderr": "",
+                "stdout_bytes": 6,
+                "stderr_bytes": 0,
+            },
+        }
+    )
     author_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md",
-                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        params={
+            "role": "scribe",
+            "substate": "DRAFT",
+            "doc": "story.md",
+            "stage": "M-STORY",
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(author_cmd, store.state(run_id), None, False)
@@ -231,14 +290,25 @@ def test_dispatch_outcome_contract_carries_triage_author_and_reviewer_evidence(t
     ex.run_pipeline()
     assert [e for e in store.events(run_id) if e.type == "story.committed"]
 
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": "pass", "discussion_evidence": {"ready": False},
-    })
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "review",
+            "verdict": "pass",
+            "discussion_evidence": {"ready": False},
+        }
+    )
     reviewer_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "sage", "substate": "SAGE_REVIEW", "doc": "story.md",
-                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        params={
+            "role": "sage",
+            "substate": "SAGE_REVIEW",
+            "doc": "story.md",
+            "stage": "M-STORY",
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(reviewer_cmd, store.state(run_id), None, False)
@@ -257,12 +327,11 @@ def test_validate_document_with_tokenless_backend_does_not_crash(tmp_path):
     the production default (TRAC_AGENT_BACKEND=opencode) raises AttributeError."""
     ex, store, run_id = _setup(tmp_path)
     ex.backend = _StubBackend({"status": "done"})  # act-only, like OpencodeBackend
-    cmd = Command(kind="validate_document",
-                  params={"doc": "story.md", "checks": []},
-                  command_id=new_ulid())
+    cmd = Command(
+        kind="validate_document", params={"doc": "story.md", "checks": []}, command_id=new_ulid()
+    )
     ex._do_validate_document(cmd, store.state(run_id), None, False)
-    verdicts = [e for e in store.events(run_id)
-                if e.type in ("verdict.passed", "verdict.failed")]
+    verdicts = [e for e in store.events(run_id) if e.type in ("verdict.passed", "verdict.failed")]
     assert len(verdicts) == 1
     assert verdicts[0].type == "verdict.passed"  # token defaulted to "ok", no crash
 
@@ -271,12 +340,14 @@ def _setup_m_test(tmp_path):
     """Like _setup but seeds M-TEST stage + acceptance/test-plan docs."""
     repo, home, store, run_id, vdir = _init_workspace(tmp_path, "v0.4")
     (vdir / "acceptance.md").write_text(
-        "## FR-0010 F\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8")
+        "## FR-0010 F\n\n### AC-FR0010-01\n\n  - c\n", encoding="utf-8"
+    )
     (vdir / "test-plan.md").write_text(
         "## 8. AC Coverage\n\n"
         "| AC id | layer | test | IF |\n|---|---|---|---|\n"
         "| AC-FR0010-01（d） | integration | test_a | IF-MTEST-001 |\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     store.append(run_id, "v0.4", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.4", "stage.entered", {"stage": "M-TEST"})
     return Executor(store, repo, run_id), store, run_id
@@ -287,15 +358,21 @@ def test_issue_shield_write_enriches_assignment_with_test_tasks(tmp_path):
     test_tasks parsed from test-plan §8, and the persisted command.issued
     event carries the expanded assignment."""
     ex, store, run_id = _setup_m_test(tmp_path)
-    ex.backend = _StubBackend(
-        {"status": "done", "artifact_ref": "tests", "self_report": "wrote"})
+    ex.backend = _StubBackend({"status": "done", "artifact_ref": "tests", "self_report": "wrote"})
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "shield", "substate": "WRITE", "stage": "M-TEST",
-                "assignment": {"kind": "WRITE", "skills": ["tracks-discuz"],
-                               "docs": ["test-plan.md", "interfaces.md",
-                                        "acceptance.md"]}},
-        command_id=new_ulid())
+        params={
+            "role": "shield",
+            "substate": "WRITE",
+            "stage": "M-TEST",
+            "assignment": {
+                "kind": "WRITE",
+                "skills": ["tracks-discuz"],
+                "docs": ["test-plan.md", "interfaces.md", "acceptance.md"],
+            },
+        },
+        command_id=new_ulid(),
+    )
     ex.issue(cmd)
     issued = [e for e in store.events(run_id) if e.type == "command.issued"]
     assert len(issued) == 1
@@ -314,10 +391,8 @@ def test_fake_shield_rejects_missing_or_malformed_test_tasks(tmp_path):
         None,
         {},
         {"test_tasks": []},
-        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": [],
-                          "if_ids": ["IF-MTEST-001"]}]},
-        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": ["integration"],
-                          "if_ids": []}]},
+        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": [], "if_ids": ["IF-MTEST-001"]}]},
+        {"test_tasks": [{"ac_id": "AC-FR0010-01", "layers": ["integration"], "if_ids": []}]},
     )
     for assignment in assignments:
         result = backend.act("shield", "WRITE", None, None, assignment)

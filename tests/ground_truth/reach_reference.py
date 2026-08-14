@@ -10,6 +10,7 @@ Isolation rules (test-plan §3.2):
 - Only standard library (ast/pathlib/re) + test data files.
 - Read fixture files directly from tests/assets/reach_fixtures/.
 """
+
 from __future__ import annotations
 
 import ast
@@ -94,8 +95,13 @@ def build_import_graph(
     all_modules: set[str] = set()
     for mod_name, content in py_files.items():
         all_modules.add(mod_name)
-        package = (mod_name if mod_name in packages
-                   else mod_name.rsplit(".", 1)[0] if "." in mod_name else "")
+        package = (
+            mod_name
+            if mod_name in packages
+            else mod_name.rsplit(".", 1)[0]
+            if "." in mod_name
+            else ""
+        )
         try:
             tree = ast.parse(content)
             imports = _extract_imports(tree, package)
@@ -112,9 +118,7 @@ def parse_scripts_toml(toml_text: str) -> list[str]:
     Uses a targeted regex parser (no tomli dependency).
     """
     # Find the [project.scripts] section
-    m = re.search(
-        r"^\[project\.scripts\]\s*\n(.*?)(?=^\[|\Z)",
-        toml_text, re.M | re.S)
+    m = re.search(r"^\[project\.scripts\]\s*\n(.*?)(?=^\[|\Z)", toml_text, re.M | re.S)
     if not m:
         return []
     entries: list[str] = []
@@ -148,8 +152,11 @@ def _ancestors_in_graph(mod: str, all_modules: set[str]) -> list[str]:
     packages reachable too.
     """
     parts = mod.split(".")
-    return [".".join(parts[:i]) for i in range(len(parts) - 1, 0, -1)
-            if ".".join(parts[:i]) in all_modules]
+    return [
+        ".".join(parts[:i])
+        for i in range(len(parts) - 1, 0, -1)
+        if ".".join(parts[:i]) in all_modules
+    ]
 
 
 def compute_reach(
@@ -217,9 +224,7 @@ def compute_reach(
 
     # Islands: production modules not reachable, not in baseline
     islands = sorted(
-        mod for mod in production_modules
-        if mod not in reachable
-        and mod not in baseline
+        mod for mod in production_modules if mod not in reachable and mod not in baseline
     )
 
     status = "fail" if (islands or errors) else "pass"

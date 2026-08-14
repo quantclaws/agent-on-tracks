@@ -2,6 +2,7 @@
 
 Extracted from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
+
 import sys
 
 from tests.integration.helpers import g, make_repo
@@ -37,11 +38,15 @@ class _ShieldBackend:
         if self._outcome is not None:
             return self._outcome
         return {
-            "status": "done", "artifact_ref": "tests", "self_report": "wrote",
-            "artifact_manifest": {"include": [
-                {"path": rel, "kind": "test_asset", "role": "integration"}
-                for rel in self._files
-            ]},
+            "status": "done",
+            "artifact_ref": "tests",
+            "self_report": "wrote",
+            "artifact_manifest": {
+                "include": [
+                    {"path": rel, "kind": "test_asset", "role": "integration"}
+                    for rel in self._files
+                ]
+            },
             "suggested_commit_message": "M-TEST: shield suggested commit",
         }
 
@@ -60,8 +65,8 @@ def _init_workspace(tmp_path, version="v0.1"):
 def _setup(tmp_path, version="v0.1"):
     repo, home, store, run_id, vdir = _init_workspace(tmp_path, version)
     (vdir / "story.md").write_text(
-        templating.render_story_skeleton("做一个X", "2026-07-31"),
-        encoding="utf-8")
+        templating.render_story_skeleton("做一个X", "2026-07-31"), encoding="utf-8"
+    )
     store.append(run_id, version, "story.requested", {"raw_chars": 1})
     store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     return Executor(store, repo, run_id), store, run_id
@@ -111,8 +116,7 @@ def _setup_spec_stage(tmp_path, stage):
     repo, home, store, run_id, vdir = _init_workspace(tmp_path)
     (vdir / "spec.md").write_text(_valid_spec_text(), encoding="utf-8")
     if stage == "M-ACC":
-        (vdir / "acceptance.md").write_text(
-            _valid_acceptance_text(), encoding="utf-8")
+        (vdir / "acceptance.md").write_text(_valid_acceptance_text(), encoding="utf-8")
     store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.1", "stage.entered", {"stage": stage})
     return Executor(store, repo, run_id), store, run_id
@@ -124,7 +128,7 @@ def _setup_m_test(tmp_path):
     contract_path = paths.project_toml_path(home)
     contract_path.parent.mkdir(parents=True, exist_ok=True)
     contract_path.write_text(
-        '[integration]\n'
+        "[integration]\n"
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
         f'collect = "{sys.executable} -m pytest --collect-only -q '
@@ -177,8 +181,12 @@ def _setup_design(tmp_path):
     g(repo, "commit", "-m", "M-DESIGN: draft trio")
     commit_sha = g(repo, "rev-parse", "HEAD").strip()
     for doc in ("architecture.md", "interfaces.md", "test-plan.md"):
-        store.append(run_id, "v0.4", "design.committed",
-                     {"doc": doc, "commit_sha": commit_sha, "final": False})
+        store.append(
+            run_id,
+            "v0.4",
+            "design.committed",
+            {"doc": doc, "commit_sha": commit_sha, "final": False},
+        )
     return Executor(store, repo, run_id), store, run_id
 
 
@@ -193,14 +201,25 @@ def _setup_draft_committed(tmp_path):
 def _dispatch_sage_review(ex, store, run_id, verdict):
     """Dispatch a sage review with the given verdict and run the pipeline."""
     from tracks.kernel.events import Command
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": None, "self_report": "review",
-        "verdict": verdict,
-    })
+
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": None,
+            "self_report": "review",
+            "verdict": verdict,
+        }
+    )
     review_cmd = Command(
         kind="dispatch_agent",
-        params={"role": "sage", "substate": "SAGE_REVIEW", "doc": "story.md",
-                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        params={
+            "role": "sage",
+            "substate": "SAGE_REVIEW",
+            "doc": "story.md",
+            "stage": "M-STORY",
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     repo = ex.repo
@@ -214,13 +233,24 @@ def _dispatch_sage_review(ex, store, run_id, verdict):
 def _dispatch_draft(ex, store, run_id, run_pipeline=True):
     """Dispatch a scribe DRAFT for M-STORY and optionally run the pipeline."""
     from tracks.kernel.events import Command
-    ex.backend = _StubBackend({
-        "status": "done", "artifact_ref": "story.md", "self_report": "draft",
-    })
+
+    ex.backend = _StubBackend(
+        {
+            "status": "done",
+            "artifact_ref": "story.md",
+            "self_report": "draft",
+        }
+    )
     cmd = Command(
         kind="dispatch_agent",
-        params={"role": "scribe", "substate": "DRAFT", "doc": "story.md",
-                "stage": "M-STORY", "attempt": 1, "review_round": 1},
+        params={
+            "role": "scribe",
+            "substate": "DRAFT",
+            "doc": "story.md",
+            "stage": "M-STORY",
+            "attempt": 1,
+            "review_round": 1,
+        },
         command_id=new_ulid(),
     )
     ex._do_dispatch_agent(cmd, store.state(run_id), None, False)
@@ -255,6 +285,7 @@ def _step_validate(ex, store, run_id):
     """Step the validate_result command: decide, progress, issue. Returns
     the refreshed state."""
     from tracks.kernel.machine import decide
+
     state = store.state(run_id)
     validate_cmd = decide(state)
     assert validate_cmd.kind == "validate_result"
@@ -268,6 +299,7 @@ def _step_to_publish_and_crash(ex, store, run_id, crash_event="publish_result"):
     given command kind (default publish_result). Returns the original _execute
     so the caller can restore it for _recover()."""
     from tracks.kernel.machine import decide
+
     state = _step_validate(ex, store, run_id)
     checkpoint_cmd = decide(state)
     assert checkpoint_cmd.kind == "checkpoint_result"
@@ -281,8 +313,9 @@ def _step_to_publish_and_crash(ex, store, run_id, crash_event="publish_result"):
             return
         original_execute(cmd, state, task_id, reconcile)
 
-    ex._execute = lambda cmd, state, task_id=None, reconcile=False: \
-        _crash(ex, cmd, state, task_id, reconcile)
+    ex._execute = lambda cmd, state, task_id=None, reconcile=False: _crash(
+        ex, cmd, state, task_id, reconcile
+    )
 
     state = store.state(run_id)
     crash_cmd = decide(state)

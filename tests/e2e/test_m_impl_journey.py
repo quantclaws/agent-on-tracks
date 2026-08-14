@@ -13,11 +13,13 @@ def test_boundary_after_m_impl(trac, event_log):
     run_id = walk_to_m_test_complete(trac, version="v0.5")
     events = event_log(run_id)
     entered = [
-        event for event in events
+        event
+        for event in events
         if event["type"] == "stage.entered" and event["payload"].get("stage") == "M-IMPL"
     ]
     exited = [
-        event for event in events
+        event
+        for event in events
         if event["type"] == "stage.exited" and event["payload"].get("stage") == "M-IMPL"
     ]
     completed = [event for event in events if event["type"] == "run.completed"]
@@ -25,8 +27,7 @@ def test_boundary_after_m_impl(trac, event_log):
     assert entered[0]["seq"] < exited[0]["seq"] < completed[-1]["seq"]
     assert completed[-1]["payload"]["terminal_state"] == "boundary"
     assert not any(
-        event["type"] == "stage.entered"
-        and event["payload"].get("stage") == "M-VERIFY"
+        event["type"] == "stage.entered" and event["payload"].get("stage") == "M-VERIFY"
         for event in events
     )
     impl_events = [

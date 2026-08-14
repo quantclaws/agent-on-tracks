@@ -1,4 +1,5 @@
 """trac discuss CLI (FR-080, AC-FR0080-01..04, AC-FR0060-09, AC-FR0090-03, AC-FR0110-04)."""
+
 import base64
 import json
 import zlib
@@ -16,8 +17,9 @@ def _doc(tmp_path, body="# S-001: 标题\n\n说明文字。\n"):
 
 
 def _start(tmp_path, speaker="Aaron", msg="问题"):
-    return run_discuss(tmp_path, ["start", "--file", "story.md", "--anchor-line", "1",
-                                  "--speaker", speaker, msg])
+    return run_discuss(
+        tmp_path, ["start", "--file", "story.md", "--anchor-line", "1", "--speaker", speaker, msg]
+    )
 
 
 def _query(tmp_path, capsys, *extra):
@@ -49,29 +51,80 @@ def _decode(token_str):
 
 # -- AC-FR0080-01: five subcommands callable ---------------------------------------
 
+
 def test_five_subcommands_callable(tmp_path, capsys):
     _doc(tmp_path)
     assert _start(tmp_path) == 0
     tid = capsys.readouterr().out.strip()
     q = _query(tmp_path, capsys)
     tok = json.dumps(q["threads"][0]["token"])
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tok, "--speaker", "Sage", "回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tok,
+                "--speaker",
+                "Sage",
+                "回复",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     q = _query(tmp_path, capsys)
     tok = json.dumps(q["threads"][0]["token"])
-    assert run_discuss(tmp_path, ["edit", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tok, "--depth", "1", "--speaker", "Aaron",
-                                  "改后"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "edit",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tok,
+                "--depth",
+                "1",
+                "--speaker",
+                "Aaron",
+                "改后",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     q = _query(tmp_path, capsys)
     tok = json.dumps(q["threads"][0]["token"])
-    assert run_discuss(tmp_path, ["set-status", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tok, "--status", "resolved",
-                                  "--operator", "Aaron"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "set-status",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tok,
+                "--status",
+                "resolved",
+                "--operator",
+                "Aaron",
+            ],
+        )
+        == 0
+    )
 
 
 # -- AC-FR0080-02/03/04: query output ------------------------------------------
+
 
 def test_query_json_has_five_tuple_and_token(tmp_path, capsys):
     # AC-FR0080-02
@@ -79,8 +132,7 @@ def test_query_json_has_five_tuple_and_token(tmp_path, capsys):
     _start(tmp_path)
     capsys.readouterr()
     t = _query(tmp_path, capsys)["threads"][0]
-    for field in ("total_lines", "anchor_line", "anchor_text", "root_line",
-                  "root_text", "token"):
+    for field in ("total_lines", "anchor_line", "anchor_text", "root_line", "root_text", "token"):
         assert field in t
 
 
@@ -106,6 +158,7 @@ def test_query_check_ready(tmp_path, capsys):
 
 # -- AC-FR0090-03: scope gate ------------------------------------------------------
 
+
 def test_scope_gate_rejects_traversal(tmp_path, capsys):
     _doc(tmp_path)
     assert run_discuss(tmp_path, ["query", "--file", "../outside.md"]) == 1
@@ -119,16 +172,19 @@ def test_scope_gate_rejects_external_absolute(tmp_path, capsys):
 
 # -- AC-FR0060-09: missing token refused (fail closed) -----------------------------
 
+
 def test_write_without_token_refused(tmp_path, capsys):
     _doc(tmp_path)
     _start(tmp_path)
     capsys.readouterr()
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--speaker", "Sage", "x"])  # no --token
+    rc = run_discuss(
+        tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001", "--speaker", "Sage", "x"]
+    )  # no --token
     assert rc == 1
 
 
 # -- AC-FR0060-08: stale token does not write --------------------------------------
+
 
 def test_stale_token_leaves_file_unchanged(tmp_path, capsys):
     _doc(tmp_path)
@@ -139,23 +195,48 @@ def test_stale_token_leaves_file_unchanged(tmp_path, capsys):
     _start(tmp_path, speaker="Zed", msg="插队")
     capsys.readouterr()
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--token", tok, "--speaker", "Sage", "x"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            tok,
+            "--speaker",
+            "Sage",
+            "x",
+        ],
+    )
     assert rc == 1
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
 
 
 def test_reply_to_comment_via_cli(tmp_path, capsys):
     # FR-050 nesting via CLI: reply to Sage -> depth-3 child under Sage
-    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
-                   ">> **Aaron:** thanks\n")
+    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n>> **Aaron:** thanks\n")
     t = _query(tmp_path, capsys)["threads"][0]
     thread_tok = json.dumps(t["token"])
     sage = next(c for c in t["root"]["children"] if c["speaker"] == "Sage")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id",
-                                t["thread_id"], "--token", thread_tok,
-                                "--reply-to-token", json.dumps(sage["token"]),
-                                "--speaker", "Scribe", "done"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            t["thread_id"],
+            "--token",
+            thread_tok,
+            "--reply-to-token",
+            json.dumps(sage["token"]),
+            "--speaker",
+            "Scribe",
+            "done",
+        ],
+    )
     assert rc == 0
     out = (tmp_path / "story.md").read_text(encoding="utf-8")
     assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
@@ -169,20 +250,25 @@ def test_blocker_awaiting_mention_without_child(tmp_path, capsys):
 
 
 def test_blocker_awaiting_cleared_by_child_reply(tmp_path, capsys):
-    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** @Scribe please revise\n"
-                   ">>> **Scribe:** done\n")
+    _doc(
+        tmp_path,
+        "# H\n\n> **Aaron:** root\n>> **Sage:** @Scribe please revise\n>>> **Scribe:** done\n",
+    )
     q = _query(tmp_path, capsys, "--blocker", "Scribe")
     assert q["awaiting_my_reply"] == []  # Scribe replied (child) -> no longer awaiting
 
 
 # -- AC-FR0110-04: flock serializes concurrent writes ------------------------------
 
+
 def test_concurrent_starts_no_lost_writes(tmp_path):
     _doc(tmp_path)
 
     def do_start(i):
-        return run_discuss(tmp_path, ["start", "--file", "story.md", "--anchor-line", "1",
-                                      "--speaker", f"U{i}", f"q{i}"])
+        return run_discuss(
+            tmp_path,
+            ["start", "--file", "story.md", "--anchor-line", "1", "--speaker", f"U{i}", f"q{i}"],
+        )
 
     with ThreadPoolExecutor(max_workers=5) as ex:
         assert list(ex.map(do_start, range(5))) == [0] * 5
@@ -191,6 +277,7 @@ def test_concurrent_starts_no_lost_writes(tmp_path):
 
 
 # -- opaque token_str (backward-compatible transport) ------------------------------
+
 
 def test_query_emits_token_str_for_thread_and_comments(tmp_path, capsys):
     # Contract 1: query returns both token dict and opaque token_str (thread + comment)
@@ -209,30 +296,91 @@ def test_opaque_thread_token_works_for_reply_edit_set_status(tmp_path, capsys):
     _start(tmp_path)
     tid = capsys.readouterr().out.strip()
     tstr = _query(tmp_path, capsys)["threads"][0]["token_str"]
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tstr, "--speaker", "Sage", "回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tstr,
+                "--speaker",
+                "Sage",
+                "回复",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     tstr = _query(tmp_path, capsys)["threads"][0]["token_str"]
-    assert run_discuss(tmp_path, ["edit", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tstr, "--depth", "1", "--speaker", "Aaron",
-                                  "改后"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "edit",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tstr,
+                "--depth",
+                "1",
+                "--speaker",
+                "Aaron",
+                "改后",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     tstr = _query(tmp_path, capsys)["threads"][0]["token_str"]
-    assert run_discuss(tmp_path, ["set-status", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tstr, "--status", "resolved",
-                                  "--operator", "Aaron"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "set-status",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tstr,
+                "--status",
+                "resolved",
+                "--operator",
+                "Aaron",
+            ],
+        )
+        == 0
+    )
 
 
 def test_opaque_comment_token_replies_at_depth_3(tmp_path, capsys):
     # Contract 3: opaque comment token_str makes reply write at depth=3
-    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n"
-                    ">> **Aaron:** thanks\n")
+    _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** please revise\n>> **Aaron:** thanks\n")
     t = _query(tmp_path, capsys)["threads"][0]
     sage = next(c for c in t["root"]["children"] if c["speaker"] == "Sage")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id",
-                                t["thread_id"], "--token", t["token_str"],
-                                "--reply-to-token", sage["token_str"],
-                                "--speaker", "Scribe", "done"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            t["thread_id"],
+            "--token",
+            t["token_str"],
+            "--reply-to-token",
+            sage["token_str"],
+            "--speaker",
+            "Scribe",
+            "done",
+        ],
+    )
     assert rc == 0
     out = (tmp_path / "story.md").read_text(encoding="utf-8")
     assert ">> **Sage:** please revise\n>>> **Scribe:** done" in out
@@ -244,8 +392,24 @@ def test_inline_json_token_still_accepted(tmp_path, capsys):
     _start(tmp_path)
     tid = capsys.readouterr().out.strip()
     tok = json.dumps(_query(tmp_path, capsys)["threads"][0]["token"])
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", tok, "--speaker", "Sage", "回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                tok,
+                "--speaker",
+                "Sage",
+                "回复",
+            ],
+        )
+        == 0
+    )
 
 
 def test_stale_opaque_token_rejected_file_unchanged(tmp_path, capsys):
@@ -257,8 +421,21 @@ def test_stale_opaque_token_rejected_file_unchanged(tmp_path, capsys):
     _start(tmp_path, speaker="Zed", msg="插队")  # drift Aaron T-001 -> T-002
     capsys.readouterr()
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--token", tstr, "--speaker", "Sage", "x"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            tstr,
+            "--speaker",
+            "Sage",
+            "x",
+        ],
+    )
     assert rc == 1
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
 
@@ -270,10 +447,23 @@ def test_opaque_comment_token_ambiguous_rejected(tmp_path, capsys):
     t = _query(tmp_path, capsys)["threads"][0]
     sage = next(c for c in t["root"]["children"] if c["speaker"] == "Sage")
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id",
-                                t["thread_id"], "--token", t["token_str"],
-                                "--reply-to-token", sage["token_str"],
-                                "--speaker", "Scribe", "done"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            t["thread_id"],
+            "--token",
+            t["token_str"],
+            "--reply-to-token",
+            sage["token_str"],
+            "--speaker",
+            "Scribe",
+            "done",
+        ],
+    )
     assert rc == 1  # ambiguous -> fail closed
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
 
@@ -284,14 +474,28 @@ def test_malformed_opaque_token_no_traceback_no_write(tmp_path, capsys):
     _start(tmp_path)
     capsys.readouterr()
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--token", "garbage", "--speaker", "Sage", "x"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            "garbage",
+            "--speaker",
+            "Sage",
+            "x",
+        ],
+    )
     assert rc == 1  # existing usage-error semantics (no traceback, no file write)
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
     assert "malformed" in capsys.readouterr().err
 
 
 # -- token shape validation: wrong-shape / cross-kind / type-error -----------------
+
 
 def _render(token_dict, form):
     if form == "opaque":
@@ -302,57 +506,98 @@ def _render(token_dict, form):
 
 
 @pytest.mark.parametrize("form", ["opaque", "json", "legacy"])
-@pytest.mark.parametrize("cmd,extra,bad_token", [
-    # wrong-shape (no required fields) on all three write commands
-    ("reply", ["--speaker", "Sage", "x"], {"x": 1}),
-    ("edit", ["--depth", "1", "--speaker", "Aaron", "new"], {"x": 1}),
-    ("set-status", ["--status", "resolved", "--operator", "Aaron"], {"x": 1}),
-    # cross-kind: comment token used as --token (thread)
-    ("reply", ["--speaker", "Sage", "x"],
-     {"text": "r", "depth": 1, "speaker": "A", "parent": ""}),
-    # type-error: total_lines is str instead of int
-    ("reply", ["--speaker", "Sage", "x"],
-     {"total_lines": "x", "anchor_line": 1, "anchor_text": "a",
-      "root_line": 1, "root_text": "r"}),
-])
+@pytest.mark.parametrize(
+    "cmd,extra,bad_token",
+    [
+        # wrong-shape (no required fields) on all three write commands
+        ("reply", ["--speaker", "Sage", "x"], {"x": 1}),
+        ("edit", ["--depth", "1", "--speaker", "Aaron", "new"], {"x": 1}),
+        ("set-status", ["--status", "resolved", "--operator", "Aaron"], {"x": 1}),
+        # cross-kind: comment token used as --token (thread)
+        (
+            "reply",
+            ["--speaker", "Sage", "x"],
+            {"text": "r", "depth": 1, "speaker": "A", "parent": ""},
+        ),
+        # type-error: total_lines is str instead of int
+        (
+            "reply",
+            ["--speaker", "Sage", "x"],
+            {
+                "total_lines": "x",
+                "anchor_line": 1,
+                "anchor_text": "a",
+                "root_line": 1,
+                "root_text": "r",
+            },
+        ),
+    ],
+)
 def test_bad_thread_token_rejected(tmp_path, capsys, form, cmd, extra, bad_token):
     """Wrong-shape / cross-kind / type-error --token -> rc=1, no traceback, no write."""
     _doc(tmp_path)
     _start(tmp_path)
     capsys.readouterr()
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, [cmd, "--file", "story.md", "--thread-id", "T-001",
-                                "--token", _render(bad_token, form), *extra])
+    rc = run_discuss(
+        tmp_path,
+        [
+            cmd,
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            _render(bad_token, form),
+            *extra,
+        ],
+    )
     assert rc == 1
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
     assert "malformed" in capsys.readouterr().err.lower()
 
 
 @pytest.mark.parametrize("form", ["opaque", "json", "legacy"])
-@pytest.mark.parametrize("bad_token", [
-    {"x": 1},  # wrong-shape
-    # cross-kind: thread token used as --reply-to-token (comment)
-    {"total_lines": 5, "anchor_line": 1, "anchor_text": "a",
-     "root_line": 3, "root_text": "r"},
-    # type-error: depth is str instead of int
-    {"text": "r", "depth": "x", "speaker": "A"},
-])
+@pytest.mark.parametrize(
+    "bad_token",
+    [
+        {"x": 1},  # wrong-shape
+        # cross-kind: thread token used as --reply-to-token (comment)
+        {"total_lines": 5, "anchor_line": 1, "anchor_text": "a", "root_line": 3, "root_text": "r"},
+        # type-error: depth is str instead of int
+        {"text": "r", "depth": "x", "speaker": "A"},
+    ],
+)
 def test_bad_reply_to_token_rejected(tmp_path, capsys, form, bad_token):
     """Wrong-shape / cross-kind / type-error --reply-to-token -> rc=1, no write."""
     _doc(tmp_path, "# H\n\n> **Aaron:** root\n>> **Sage:** reply\n")
     capsys.readouterr()
     t = _query(tmp_path, capsys)["threads"][0]
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--token", t["token_str"],
-                                "--reply-to-token", _render(bad_token, form),
-                                "--speaker", "Scribe", "x"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            t["token_str"],
+            "--reply-to-token",
+            _render(bad_token, form),
+            "--speaker",
+            "Scribe",
+            "x",
+        ],
+    )
     assert rc == 1
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
     assert "malformed" in capsys.readouterr().err.lower()
 
 
 # -- compact query + z1 compression ------------------------------------------------
+
 
 def test_query_compact_omits_token_and_location(tmp_path, capsys):
     """--compact omits legacy token dict and thread location fields."""
@@ -395,20 +640,66 @@ def test_three_token_transports_all_accepted(tmp_path, capsys):
     tid = capsys.readouterr().out.strip()
     t = _query(tmp_path, capsys)["threads"][0]
     # z1 (current format from query)
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", t["token_str"], "--speaker", "Sage", "z1回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                t["token_str"],
+                "--speaker",
+                "Sage",
+                "z1回复",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     # legacy uncompressed base64
     t = _query(tmp_path, capsys)["threads"][0]
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", _encode_legacy(t["token"]),
-                                  "--speaker", "Sage", "legacy回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                _encode_legacy(t["token"]),
+                "--speaker",
+                "Sage",
+                "legacy回复",
+            ],
+        )
+        == 0
+    )
     capsys.readouterr()
     # inline JSON
     t = _query(tmp_path, capsys)["threads"][0]
-    assert run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", tid,
-                                  "--token", json.dumps(t["token"]),
-                                  "--speaker", "Sage", "json回复"]) == 0
+    assert (
+        run_discuss(
+            tmp_path,
+            [
+                "reply",
+                "--file",
+                "story.md",
+                "--thread-id",
+                tid,
+                "--token",
+                json.dumps(t["token"]),
+                "--speaker",
+                "Sage",
+                "json回复",
+            ],
+        )
+        == 0
+    )
 
 
 def test_malformed_z1_token_fail_closed(tmp_path, capsys):
@@ -417,8 +708,21 @@ def test_malformed_z1_token_fail_closed(tmp_path, capsys):
     _start(tmp_path)
     capsys.readouterr()
     before = (tmp_path / "story.md").read_text(encoding="utf-8")
-    rc = run_discuss(tmp_path, ["reply", "--file", "story.md", "--thread-id", "T-001",
-                                "--token", "z1.!!!garbage!!!", "--speaker", "Sage", "x"])
+    rc = run_discuss(
+        tmp_path,
+        [
+            "reply",
+            "--file",
+            "story.md",
+            "--thread-id",
+            "T-001",
+            "--token",
+            "z1.!!!garbage!!!",
+            "--speaker",
+            "Sage",
+            "x",
+        ],
+    )
     assert rc == 1
     assert (tmp_path / "story.md").read_text(encoding="utf-8") == before
     assert "malformed" in capsys.readouterr().err.lower()
@@ -426,13 +730,16 @@ def test_malformed_z1_token_fail_closed(tmp_path, capsys):
 
 # -- inbox: union / dedup / doc order / compact / irrelevant exclusion -------------
 
+
 def test_inbox_union_unanswered_and_awaiting(tmp_path, capsys):
     """--inbox returns union of unanswered + awaiting_my_reply, compact, doc order."""
-    body = ("# H\n\n"
-            "> **Aaron:** root-a\n"                           # T-001 unanswered (Aaron)
-            "> **Bob:** root-b\n"                             # T-002 unanswered (Bob)
-            ">> **Sage:** @Aaron please check\n"             # awaiting Aaron
-            "> **Cara:** root-c (resolved by self)\n")       # T-003 resolved
+    body = (
+        "# H\n\n"
+        "> **Aaron:** root-a\n"  # T-001 unanswered (Aaron)
+        "> **Bob:** root-b\n"  # T-002 unanswered (Bob)
+        ">> **Sage:** @Aaron please check\n"  # awaiting Aaron
+        "> **Cara:** root-c (resolved by self)\n"
+    )  # T-003 resolved
     _doc(tmp_path, body)
     q = _query(tmp_path, capsys, "--inbox", "Aaron")
     ids = [t["thread_id"] for t in q["threads"]]
@@ -446,9 +753,11 @@ def test_inbox_union_unanswered_and_awaiting(tmp_path, capsys):
 
 def test_inbox_includes_unresolved(tmp_path, capsys):
     """--inbox includes unresolved (open/reopen) threads initiated by the speaker."""
-    body = ("# H\n\n"
-            "> **Aaron:** root-a\n"                           # T-001 open
-            "> **Bob:** root-b (resolved)\n")                # T-002 resolved
+    body = (
+        "# H\n\n"
+        "> **Aaron:** root-a\n"  # T-001 open
+        "> **Bob:** root-b (resolved)\n"
+    )  # T-002 resolved
     _doc(tmp_path, body)
     q = _query(tmp_path, capsys, "--inbox", "Aaron")
     ids = [t["thread_id"] for t in q["threads"]]
@@ -458,9 +767,11 @@ def test_inbox_includes_unresolved(tmp_path, capsys):
 
 def test_inbox_no_duplicates(tmp_path, capsys):
     """A thread matching multiple categories appears only once in threads list."""
-    body = ("# H\n\n"
-            "> **Aaron:** root\n"                             # unanswered + unresolved
-            ">> **Sage:** @Aaron please\n")                  # awaiting (matches same thread)
+    body = (
+        "# H\n\n"
+        "> **Aaron:** root\n"  # unanswered + unresolved
+        ">> **Sage:** @Aaron please\n"
+    )  # awaiting (matches same thread)
     _doc(tmp_path, body)
     q = _query(tmp_path, capsys, "--inbox", "Aaron")
     ids = [t["thread_id"] for t in q["threads"]]
@@ -469,10 +780,7 @@ def test_inbox_no_duplicates(tmp_path, capsys):
 
 def test_inbox_excludes_irrelevant_threads(tmp_path, capsys):
     """Threads not involving the speaker are excluded."""
-    body = ("# H\n\n"
-            "> **Aaron:** root-a\n"
-            "> **Bob:** root-b\n"
-            ">> **Cara:** @Bob check\n")
+    body = "# H\n\n> **Aaron:** root-a\n> **Bob:** root-b\n>> **Cara:** @Bob check\n"
     _doc(tmp_path, body)
     q = _query(tmp_path, capsys, "--inbox", "Aaron")
     ids = [t["thread_id"] for t in q["threads"]]
@@ -494,13 +802,15 @@ def test_inbox_compact_shape_no_token_dict(tmp_path, capsys):
 
 def test_inbox_and_blocker_mutually_exclusive(tmp_path, capsys):
     _doc(tmp_path)
-    rc = run_discuss(tmp_path, ["query", "--file", "story.md",
-                                "--inbox", "Aaron", "--blocker", "Aaron"])
+    rc = run_discuss(
+        tmp_path, ["query", "--file", "story.md", "--inbox", "Aaron", "--blocker", "Aaron"]
+    )
     assert rc == 1
     assert "mutually exclusive" in capsys.readouterr().err.lower()
 
 
 # -- thread-id: single / unknown / compact -----------------------------------------
+
 
 def test_thread_id_returns_single_thread_compact(tmp_path, capsys):
     body = "# H\n\n> **Aaron:** root-a\n> **Bob:** root-b\n"
@@ -528,6 +838,7 @@ def test_thread_id_with_check_ready(tmp_path, capsys):
 
 # -- summary-only: no threads/body/token -------------------------------------------
 
+
 def test_summary_only_no_threads(tmp_path, capsys):
     _doc(tmp_path, "# H\n\n> **Aaron:** root\n")
     q = _query(tmp_path, capsys, "--check-ready", "--summary-only")
@@ -545,31 +856,38 @@ def test_summary_only_without_check_ready_fails(tmp_path, capsys):
 
 # -- mutual exclusivity ------------------------------------------------------------
 
+
 def test_thread_id_and_inbox_mutually_exclusive(tmp_path, capsys):
     _doc(tmp_path)
-    rc = run_discuss(tmp_path, ["query", "--file", "story.md",
-                                "--thread-id", "T-001", "--inbox", "Aaron"])
+    rc = run_discuss(
+        tmp_path, ["query", "--file", "story.md", "--thread-id", "T-001", "--inbox", "Aaron"]
+    )
     assert rc == 1
     assert "mutually exclusive" in capsys.readouterr().err.lower()
 
 
 def test_summary_only_and_thread_id_mutually_exclusive(tmp_path, capsys):
     _doc(tmp_path)
-    rc = run_discuss(tmp_path, ["query", "--file", "story.md",
-                                "--summary-only", "--check-ready", "--thread-id", "T-001"])
+    rc = run_discuss(
+        tmp_path,
+        ["query", "--file", "story.md", "--summary-only", "--check-ready", "--thread-id", "T-001"],
+    )
     assert rc == 1
     assert "mutually exclusive" in capsys.readouterr().err.lower()
 
 
 def test_summary_only_and_inbox_mutually_exclusive(tmp_path, capsys):
     _doc(tmp_path)
-    rc = run_discuss(tmp_path, ["query", "--file", "story.md",
-                                "--summary-only", "--check-ready", "--inbox", "Aaron"])
+    rc = run_discuss(
+        tmp_path,
+        ["query", "--file", "story.md", "--summary-only", "--check-ready", "--inbox", "Aaron"],
+    )
     assert rc == 1
     assert "mutually exclusive" in capsys.readouterr().err.lower()
 
 
 # -- default full compatibility ----------------------------------------------------
+
 
 def test_default_full_query_unchanged(tmp_path, capsys):
     """Default query still returns full output with token dict and location fields."""

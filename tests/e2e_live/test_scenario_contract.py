@@ -5,6 +5,7 @@ required fast-path instructions and exact file paths, and that forbidden
 instructions (RESPOND-style discussion loops in DRAFT, collectable-by-pytest)
 are absent. Reads only the scenario JSON files; no live provider required.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,25 +66,19 @@ def test_shield_draft_scenario_resides_in_scenarios_dir():
 def test_shield_draft_carries_required_fast_path_fragments():
     action = _load_required_action(_SHIELD_DRAFT)
     for fragment in _SHIELD_REQUIRED_FRAGMENTS:
-        assert fragment in action, (
-            f"shield-test-draft missing required fragment: {fragment!r}"
-        )
+        assert fragment in action, f"shield-test-draft missing required fragment: {fragment!r}"
 
 
 def test_shield_draft_omits_forbidden_fragments():
     action = _load_required_action(_SHIELD_DRAFT)
     for fragment in _SHIELD_FORBIDDEN_FRAGMENTS:
-        assert fragment not in action, (
-            f"shield-test-draft carries forbidden fragment: {fragment!r}"
-        )
+        assert fragment not in action, f"shield-test-draft carries forbidden fragment: {fragment!r}"
 
 
 def test_shield_draft_explicitly_forbids_runtime_and_history_inspection():
     action = _load_required_action(_SHIELD_DRAFT)
     for topic in _SHIELD_MUST_FORBID_TOPICS:
-        assert topic in action, (
-            f"shield-test-draft must explicitly forbid: {topic!r}"
-        )
+        assert topic in action, f"shield-test-draft must explicitly forbid: {topic!r}"
 
 
 def test_shield_draft_explicitly_forbids_running_pytest():
@@ -104,17 +99,13 @@ def test_prism_review_scenario_resides_in_scenarios_dir():
 def test_prism_review_carries_required_fast_path_fragments():
     action = _load_required_action(_PRISM_REVIEW)
     for fragment in _PRISM_REQUIRED_FRAGMENTS:
-        assert fragment in action, (
-            f"prism-test-review missing required fragment: {fragment!r}"
-        )
+        assert fragment in action, f"prism-test-review missing required fragment: {fragment!r}"
 
 
 def test_prism_review_explicitly_forbids_runtime_and_history_inspection():
     action = _load_required_action(_PRISM_REVIEW)
     for topic in _PRISM_MUST_FORBID_TOPICS:
-        assert topic in action, (
-            f"prism-test-review must explicitly forbid: {topic!r}"
-        )
+        assert topic in action, f"prism-test-review must explicitly forbid: {topic!r}"
 
 
 def test_prism_review_explicitly_forbids_running_pytest():

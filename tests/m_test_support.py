@@ -17,6 +17,7 @@ and fake-revision-marker suites (pylint R0801).
   its own field set (escalation: ``attempt``/``review_round``/``command_id``;
   shield-assignment: ``stage``/``assignment``) without seeing foreign keys.
 """
+
 from tracks.kernel.events import Command
 from tracks.store import new_ulid
 

@@ -1,6 +1,7 @@
 """E2E approval journeys (SM-05, FR-0180/0190): trac approve / trac return +
 AWAIT_HUMAN sleep-replay + post-approval staleness blocking downstream.
 """
+
 from tests.e2e.helpers import walk_to_await_human
 from tests.e2e.test_happy_path import types
 
@@ -72,8 +73,7 @@ def test_stale_blocks_downstream(host_repo, trac, event_log):
     run_id = walk_to_await_human(trac)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     acc = host_repo / ".tracks" / "projects" / "v0.1" / "acceptance.md"
-    acc.write_text(acc.read_text(encoding="utf-8") + "\n批准后偷改\n",
-                   encoding="utf-8")
+    acc.write_text(acc.read_text(encoding="utf-8") + "\n批准后偷改\n", encoding="utf-8")
     r = trac("run")
     assert r.returncode == 0, r.stderr
     assert "awaiting=approval" in r.stdout  # back at the gate, not downstream
@@ -93,5 +93,7 @@ def test_stale_blocks_downstream(host_repo, trac, event_log):
     assert evs[-1]["payload"]["terminal_state"] == "boundary"
     recorded = [e for e in evs if e["type"] == "approval.recorded"]
     assert len(recorded) == 1
-    assert recorded[0]["payload"]["digest"] == [
-        e for e in evs if e["type"] == "preview.generated"][-1]["payload"]["digest"]
+    assert (
+        recorded[0]["payload"]["digest"]
+        == [e for e in evs if e["type"] == "preview.generated"][-1]["payload"]["digest"]
+    )

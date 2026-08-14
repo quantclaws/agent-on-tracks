@@ -1,4 +1,5 @@
 """Deterministic, event-backed M-IMPL task-log projection."""
+
 from __future__ import annotations
 
 import os
@@ -9,28 +10,32 @@ from pathlib import Path
 from tracks import paths
 from tracks.kernel.events import EventEnvelope
 
-_PHASE_EVENTS = frozenset({
-    "red.checkpointed",
-    "green.committed",
-    "refactor.committed",
-    "refactor.no_change",
-})
-_TASK_GATE_CHECKS = frozenset({
-    "red_valid",
-    "red_invalid",
-    "green",
-    "impl_defect",
-    "unknown_attribution",
-    "regression",
-    "task_review",
-    "budget",
-    "scope",
-    "public_interface",
-    "test_defect",
-    "criteria_pack_mismatch",
-    "full_suite",
-    "commit",
-})
+_PHASE_EVENTS = frozenset(
+    {
+        "red.checkpointed",
+        "green.committed",
+        "refactor.committed",
+        "refactor.no_change",
+    }
+)
+_TASK_GATE_CHECKS = frozenset(
+    {
+        "red_valid",
+        "red_invalid",
+        "green",
+        "impl_defect",
+        "unknown_attribution",
+        "regression",
+        "task_review",
+        "budget",
+        "scope",
+        "public_interface",
+        "test_defect",
+        "criteria_pack_mismatch",
+        "full_suite",
+        "commit",
+    }
+)
 _GATE_LABELS = {
     "red_valid": "Red Gate",
     "red_invalid": "Red Gate",
@@ -52,7 +57,10 @@ def task_log_path(home: Path, version: str) -> Path:
 
 
 def build_task_log(
-    events: Iterable[EventEnvelope], *, run_id: str, version: str,
+    events: Iterable[EventEnvelope],
+    *,
+    run_id: str,
+    version: str,
 ) -> str:
     """Render one run/version task log from persisted Runtime events only."""
     scoped = _scoped_events(events, run_id, version)
@@ -93,11 +101,12 @@ def _event_scope(events: tuple[EventEnvelope, ...]) -> tuple[str, str] | None:
 
 
 def _scoped_events(
-    events: Iterable[EventEnvelope], run_id: str, version: str,
+    events: Iterable[EventEnvelope],
+    run_id: str,
+    version: str,
 ) -> list[EventEnvelope]:
     return sorted(
-        (event for event in events
-         if event.run_id == run_id and event.version == version),
+        (event for event in events if event.run_id == run_id and event.version == version),
         key=lambda event: event.seq,
     )
 
@@ -140,8 +149,7 @@ def _command_contexts(events: list[EventEnvelope]) -> dict[str, tuple[str | None
             continue
         command_id = _clean(event.command_id) or _clean(command.get("command_id"))
         if command_id:
-            contexts[command_id] = (_clean(params.get("role")),
-                                    _clean(params.get("substate")))
+            contexts[command_id] = (_clean(params.get("role")), _clean(params.get("substate")))
     return contexts
 
 
@@ -154,8 +162,11 @@ def _declared_task_ids(events: list[EventEnvelope]) -> set[str]:
     tasks = payload.get("tasks")
     if isinstance(tasks, list):
         task_ids.update(
-            task_id for task in tasks if isinstance(task, dict)
-            for task_id in (_clean(task.get("task_id")),) if task_id
+            task_id
+            for task in tasks
+            if isinstance(task, dict)
+            for task_id in (_clean(task.get("task_id")),)
+            if task_id
         )
     return task_ids
 
@@ -183,7 +194,9 @@ def _associated_task_id(
 
 
 def _append_task_event(
-    streams: dict[str, list[EventEnvelope]], task_id: str | None, event: EventEnvelope,
+    streams: dict[str, list[EventEnvelope]],
+    task_id: str | None,
+    event: EventEnvelope,
 ) -> None:
     if task_id:
         streams.setdefault(task_id, []).append(event)
@@ -221,9 +234,12 @@ def _red_lines(events: list[EventEnvelope]) -> list[str]:
         payload = _payload(event)
         _append_once(
             lines,
-            "- Public attempt: " + _code(_attempt(payload))
-            + "; Tracks-R: ref=" + _code(_clean(payload.get("ref")))
-            + " sha=" + _code(_clean(payload.get("r_sha"))),
+            "- Public attempt: "
+            + _code(_attempt(payload))
+            + "; Tracks-R: ref="
+            + _code(_clean(payload.get("ref")))
+            + " sha="
+            + _code(_clean(payload.get("r_sha"))),
         )
     return lines or ["- No Runtime Red checkpoint recorded."]
 
@@ -236,11 +252,14 @@ def _green_lines(events: list[EventEnvelope]) -> list[str]:
         payload = _payload(event)
         _append_once(
             lines,
-            "- Public attempt: " + _code(_attempt(payload))
+            "- Public attempt: "
+            + _code(_attempt(payload))
             + "; Green identity: g_sha="
             + _code(_clean(payload.get("g_sha")) or _clean(payload.get("commit_sha")))
-            + "; base_sha=" + _code(_clean(payload.get("base_sha")))
-            + "; Tracks-R=" + _code(_clean(payload.get("r_sha"))),
+            + "; base_sha="
+            + _code(_clean(payload.get("base_sha")))
+            + "; Tracks-R="
+            + _code(_clean(payload.get("r_sha"))),
         )
     return lines or ["- No Runtime Green commit recorded."]
 
@@ -290,7 +309,8 @@ def _gate_verdict_line(event: EventEnvelope) -> str | None:
 
 
 def _prism_verdict_line(
-    event: EventEnvelope, contexts: dict[str, tuple[str | None, str | None]],
+    event: EventEnvelope,
+    contexts: dict[str, tuple[str | None, str | None]],
 ) -> str:
     _role, substate = contexts.get(event.command_id or "", (None, None))
     label = {
@@ -307,9 +327,11 @@ def _test_commit_line(event: EventEnvelope) -> str:
 
 
 def _completion_lines(events: list[EventEnvelope]) -> list[str]:
-    return (["- task.completed: `recorded`"]
-            if any(event.type == "task.completed" for event in events)
-            else ["- No task.completed event recorded."])
+    return (
+        ["- task.completed: `recorded`"]
+        if any(event.type == "task.completed" for event in events)
+        else ["- No task.completed event recorded."]
+    )
 
 
 def _event_task_id(event: EventEnvelope) -> str | None:

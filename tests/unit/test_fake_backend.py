@@ -7,22 +7,22 @@ import pytest
 from tracks.effects.fake import FakeBackend
 from tracks.scaffold import _scaffold_declared_paths
 
-_STUB_CONTENT = (
-    "#!/usr/bin/env python3\n"
-    "raise NotImplementedError(\"IF-MTEST-001 code-stats CLI\")\n"
-)
+_STUB_CONTENT = '#!/usr/bin/env python3\nraise NotImplementedError("IF-MTEST-001 code-stats CLI")\n'
 _STUB_DESCRIPTION = "public CLI stub for IF-MTEST-001 (kind: stub)"
 
 
 def _assignment(entry: dict | None = None) -> dict:
     return {
         "scenario_context": {
-            "fake_scaffold": [entry or {
-                "path": "code-stats",
-                "description": _STUB_DESCRIPTION,
-                "content": _STUB_CONTENT,
-                "mode": "executable",
-            }],
+            "fake_scaffold": [
+                entry
+                or {
+                    "path": "code-stats",
+                    "description": _STUB_DESCRIPTION,
+                    "content": _STUB_CONTENT,
+                    "mode": "executable",
+                }
+            ],
         },
     }
 
@@ -91,9 +91,7 @@ def test_valid_fake_scaffold_is_declared_materialized_and_rebuilt(tmp_path):
 )
 def test_invalid_fake_scaffold_fails_before_writing(tmp_path, entry):
     vdir = _design_repo(tmp_path)
-    result = FakeBackend(tmp_path, "v0.4").act(
-        "archer", "DRAFT", None, None, _assignment(entry)
-    )
+    result = FakeBackend(tmp_path, "v0.4").act("archer", "DRAFT", None, None, _assignment(entry))
 
     assert result["status"] == "failed"
     assert result["failure_class"] == "invalid_fake_scaffold"

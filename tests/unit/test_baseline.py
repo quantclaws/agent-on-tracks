@@ -3,6 +3,7 @@
 AC-FR0100-03@v0.4 baseline freezes adoption only,
 AC-FR0100-06@v0.4 schema fields.
 """
+
 from tracks.checks.reach import check_reach
 from tracks.checks.trace import check_trace_full
 
@@ -34,6 +35,7 @@ def test_trace_baseline_exempts_ids():
 
     # With baseline, FR-0990 is exempted
     from tracks.checks.trace import _apply_baseline
+
     baseline = {"trace_exemptions": {"ids": ["FR-0990"]}}
     exempted = _apply_baseline(r, baseline)
     assert not any("FR-0990" in e for e in exempted.hard_errors)

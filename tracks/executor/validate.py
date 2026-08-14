@@ -33,6 +33,7 @@ recorded in inline discussions; only unresolved discussions block review exit.
 All present FR items count toward FR_LIMIT. Template HTML comments are ignored;
 acceptance level-2 sections vary per FR/NFR so are not name-checked.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -95,10 +96,24 @@ _VERSION_QUALIFIED = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@(v\d+\.\d+)")
 # the parity). A design doc invoking `trac <token>` with any other token
 # fabricates tooling (run045 finding: `trac agent archer ci-scan` never
 # existed); to-be-created tooling must be marked as a foundation task instead.
-TRAC_SUBCOMMANDS = frozenset({
-    "approve", "check", "discuss", "init", "replay", "report", "retry",
-    "return", "review", "run", "start", "status", "triage", "validate",
-})
+TRAC_SUBCOMMANDS = frozenset(
+    {
+        "approve",
+        "check",
+        "discuss",
+        "init",
+        "replay",
+        "report",
+        "retry",
+        "return",
+        "review",
+        "run",
+        "start",
+        "status",
+        "triage",
+        "validate",
+    }
+)
 _TRAC_CALL = re.compile(r"\btrac\s+([A-Za-z][A-Za-z0-9_-]*)")
 
 
@@ -201,7 +216,8 @@ def _valid_fr_count(text: str) -> int:
     """FR-20 scope count: all FR items (obsolete ones are deleted, not marked;
     NFRs never count)."""
     return sum(
-        1 for _, heading, _ in _spec_items(text)
+        1
+        for _, heading, _ in _spec_items(text)
         if _ITEM_HEAD.match(heading).group(1).upper().startswith("FR-")
     )
 
@@ -222,14 +238,15 @@ def check_trace(spec_text: str, acc_text: str) -> list:
     covered = {section for _, ref, _, section in acs if section == ref}
     issues = [
         f"line:{line_no} {item_id} has no '## {item_id}' section in acceptance"
-        if item_id not in sections else
-        f"line:{line_no} {item_id} acceptance section has no AC item for it"
+        if item_id not in sections
+        else f"line:{line_no} {item_id} acceptance section has no AC item for it"
         for item_id, line_no in spec_ids.items()
         if item_id not in sections or item_id not in covered
     ]
     issues += [
         f"line:{line_no} {ac_id} refers to missing {ref} in spec"
-        for ac_id, ref, line_no, _ in acs if ref not in spec_ids
+        for ac_id, ref, line_no, _ in acs
+        if ref not in spec_ids
     ]
     return issues
 
@@ -240,8 +257,7 @@ def check_trace_file(path: Path) -> list:
     spec_path = path.parent / "spec.md"
     if not spec_path.exists():
         return ["line:1 acceptance validate requires spec.md in same dir"]
-    return check_trace(spec_path.read_text(encoding="utf-8"),
-                       path.read_text(encoding="utf-8"))
+    return check_trace(spec_path.read_text(encoding="utf-8"), path.read_text(encoding="utf-8"))
 
 
 from tracks.executor.test_tasks import (  # noqa: E402,F401
@@ -267,16 +283,16 @@ def check_spec_items(text: str) -> list:
     for line_no, heading, block in _spec_items(text):
         item_id = _ITEM_HEAD.match(heading).group(1).upper()
         if not _ITEM_OK.match(heading):
-            issues.append(f"line:{line_no} bad item heading {heading!r}"
-                          " (expect '### FR-XXXX 标题', uppercase, 4-digit)")
+            issues.append(
+                f"line:{line_no} bad item heading {heading!r}"
+                " (expect '### FR-XXXX 标题', uppercase, 4-digit)"
+            )
         if item_id in seen:
-            issues.append(f"line:{line_no} duplicate id {item_id}"
-                          f" (first at line:{seen[item_id]})")
+            issues.append(f"line:{line_no} duplicate id {item_id} (first at line:{seen[item_id]})")
         seen.setdefault(item_id, line_no)
         if not any(ln.startswith("- **来源**：") for ln in block):
             issues.append(f"line:{line_no} {item_id} missing '- **来源**：' field")
-        if (item_id.startswith("FR-")
-                and not any(ln.startswith("- **交付入口**：") for ln in block)):
+        if item_id.startswith("FR-") and not any(ln.startswith("- **交付入口**：") for ln in block):
             issues.append(f"line:{line_no} {item_id} missing '- **交付入口**：' field")
     return issues
 
@@ -322,10 +338,7 @@ def check_story_items(text: str) -> list:
                 " (expect '### BS-XX 标题', uppercase, 2-digit)"
             )
         if item_id in seen:
-            issues.append(
-                f"line:{line_no} duplicate id {item_id}"
-                f" (first at line:{seen[item_id]})"
-            )
+            issues.append(f"line:{line_no} duplicate id {item_id} (first at line:{seen[item_id]})")
         seen.setdefault(item_id, line_no)
     return issues
 
@@ -384,8 +397,9 @@ def _guidance_blockquote_issues(text: str) -> list:
         if fence:
             continue
         if (m := _BQ_GUIDANCE.match(line)) and m.group(1) in markers:
-            issues.append(f"line:{line_no} template guidance blockquote left "
-                          f"in doc ('{m.group(1)}')")
+            issues.append(
+                f"line:{line_no} template guidance blockquote left in doc ('{m.group(1)}')"
+            )
     return issues
 
 
@@ -407,7 +421,8 @@ def _trac_command_issues(text: str) -> list:
                 issues.append(
                     f"line:{line_no} unknown trac subcommand {token!r} "
                     "(no such command; mark to-be-created tooling as a "
-                    "foundation task)")
+                    "foundation task)"
+                )
     return issues
 
 
@@ -421,8 +436,12 @@ def _trac_command_issues(text: str) -> list:
 # 分流建议 / 需求描述…); then the full legacy required-set is enforced.
 _LEGACY_ONLY_EXACT = ("工作项", "分流建议")
 _LEGACY_REQUIRED_EXACT = (
-    "原始输入", "用户意图", "工作项",
-    "开放产品决定", "范围、约束与例外", "分流建议",
+    "原始输入",
+    "用户意图",
+    "工作项",
+    "开放产品决定",
+    "范围、约束与例外",
+    "分流建议",
 )
 _LEGACY_REQUIRED_PREFIX = "需求描述"
 
@@ -434,8 +453,7 @@ def _legacy_signal_count(doc_secs: set) -> int:
 
 
 def _legacy_section_issues(doc_secs: set) -> list:
-    issues = [f"line:1 missing section '{s}'"
-              for s in _LEGACY_REQUIRED_EXACT if s not in doc_secs]
+    issues = [f"line:1 missing section '{s}'" for s in _LEGACY_REQUIRED_EXACT if s not in doc_secs]
     if not any(s.startswith(_LEGACY_REQUIRED_PREFIX) for s in doc_secs):
         issues.append(f"line:1 missing section '{_LEGACY_REQUIRED_PREFIX}'")
     return sorted(issues)
@@ -492,9 +510,9 @@ def check_template(path: Path) -> list:
 
 # -- v0.5 pipeline helpers (diff policy, digests, staged changes) -----------
 
+
 def _git(repo, *args, check=True):
-    return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=check)
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=check)
 
 
 def has_diff(repo, doc_path, base_sha):
@@ -507,7 +525,8 @@ def _load_base_text(repo, doc_path, base_sha):
     """Load base version of doc from git, or None if not found."""
     rel_path = str(doc_path.relative_to(repo.resolve()))
     base_proc = subprocess.run(
-        ["git", "show", f"{base_sha}:{rel_path}"], cwd=repo,
+        ["git", "show", f"{base_sha}:{rel_path}"],
+        cwd=repo,
         capture_output=True,
     )
     if base_proc.returncode != 0:
@@ -560,8 +579,7 @@ def verify_digests(doc_paths, submitted_digests):
 def has_staged_changes(repo, doc_paths):
     """Check if any doc path has uncommitted changes."""
     for path in doc_paths.values():
-        proc = _git(repo, "status", "--porcelain", "--", str(path),
-                    check=False)
+        proc = _git(repo, "status", "--porcelain", "--", str(path), check=False)
         if proc.stdout.strip():
             return True
     return False

@@ -18,7 +18,8 @@ def _start(trac):
 
 def _dispatches(event_log, run_id):
     return [
-        event for event in event_log(run_id)
+        event
+        for event in event_log(run_id)
         if event["type"] == "command.issued"
         and event["payload"]["command"]["kind"] == "dispatch_agent"
     ]
@@ -32,9 +33,9 @@ def test_normal_run_has_no_scenario_context_or_dispatch_limit(trac, event_log):
     assert first.returncode == 0
     first_dispatches = _dispatches(event_log, run_id)
     assert len(first_dispatches) == 1
-    assert "scenario_context" not in first_dispatches[0]["payload"]["command"]["params"][
-        "assignment"
-    ]
+    assert (
+        "scenario_context" not in first_dispatches[0]["payload"]["command"]["params"]["assignment"]
+    )
 
     assert trac("triage", "go").returncode == 0
     second = trac("run")
@@ -42,9 +43,7 @@ def test_normal_run_has_no_scenario_context_or_dispatch_limit(trac, event_log):
     assert len(_dispatches(event_log, run_id)) > len(first_dispatches) + 1
 
 
-def test_overlay_is_nested_without_overriding_base_assignment(
-    host_repo, trac, event_log
-):
+def test_overlay_is_nested_without_overriding_base_assignment(host_repo, trac, event_log):
     started = _start(trac)
     run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
     scenario = {
@@ -64,11 +63,13 @@ def test_overlay_is_nested_without_overriding_base_assignment(
         "1",
     )
     assert result.returncode == 0
-    assignment = _dispatches(event_log, run_id)[0]["payload"]["command"]["params"][
-        "assignment"
-    ]
+    assignment = _dispatches(event_log, run_id)[0]["payload"]["command"]["params"]["assignment"]
     assert set(assignment) == {
-        "kind", "template_kind", "skill", "skill_version", "scenario_context"
+        "kind",
+        "template_kind",
+        "skill",
+        "skill_version",
+        "scenario_context",
     }
     assert assignment["kind"] == "TRIAGE"
     assert assignment["template_kind"] == "story"
@@ -77,9 +78,7 @@ def test_overlay_is_nested_without_overriding_base_assignment(
     assert assignment["scenario_context"] == scenario
 
 
-def test_max_dispatches_stops_after_closed_dispatch_and_next_run_continues(
-    trac, event_log
-):
+def test_max_dispatches_stops_after_closed_dispatch_and_next_run_continues(trac, event_log):
     started = _start(trac)
     run_id = started.stdout.split("run ", 1)[1].split(" started", 1)[0]
 
@@ -105,9 +104,7 @@ def _substates(event_log, run_id):
     ]
 
 
-def test_bounded_run_stops_at_substate_transition_with_budget_remaining(
-    trac, event_log
-):
+def test_bounded_run_stops_at_substate_transition_with_budget_remaining(trac, event_log):
     """Bounded mode is one substate + retries: after the first attempt of a
     DRAFT succeeds the loop must return at the review substate instead of
     dispatching its reviewer under the stale per-invocation overlay."""
@@ -131,9 +128,7 @@ def test_bounded_run_retries_within_substate_up_to_budget(trac, event_log):
     assert trac("run", "--max-dispatches", "1").returncode == 0  # TRIAGE
     assert trac("triage", "go").returncode == 0
 
-    result = trac(
-        "run", "--max-dispatches", "3", simulate="scribe:DRAFT=fail|fail|ok"
-    )
+    result = trac("run", "--max-dispatches", "3", simulate="scribe:DRAFT=fail|fail|ok")
 
     assert result.returncode == 0
     assert "substate=SAGE_REVIEW" in result.stdout
@@ -222,15 +217,22 @@ def test_prompt_serializes_retry_evidence_from_the_assignment(tmp_path):
         "kind": "RESPOND",
         "template_kind": None,
         "docs": ["architecture.md", "interfaces.md", "test-plan.md"],
-        "evidence": {"check": "template", "reason": "no frontmatter",
-                     "evidence": ".tracks/projects/v0.1/architecture.md",
-                     "attempt": 2},
+        "evidence": {
+            "check": "template",
+            "reason": "no frontmatter",
+            "evidence": ".tracks/projects/v0.1/architecture.md",
+            "attempt": 2,
+        },
     }
 
     prompt = backend._prompt("archer", "RESPOND", None, None, assignment)
 
-    for needle in ("no frontmatter", '"check": "template"', '"attempt": 2',
-                   ".tracks/projects/v0.1/architecture.md"):
+    for needle in (
+        "no frontmatter",
+        '"check": "template"',
+        '"attempt": 2',
+        ".tracks/projects/v0.1/architecture.md",
+    ):
         assert needle in prompt
 
 
@@ -272,12 +274,15 @@ def test_prism_m_test_revise_anchors_in_test_plan_not_executable_files(tmp_path)
     text = source.read_text(encoding="utf-8")
     assert "trac discuss start --file <test_file>" not in text, (
         "Prism.md must not reference <test_file> as discuss target; "
-        "M-TEST REVISE findings anchor in test-plan.md")
+        "M-TEST REVISE findings anchor in test-plan.md"
+    )
     assert "trac discuss start --file test-plan.md" in text, (
-        "Prism.md must anchor M-TEST REVISE findings in test-plan.md")
+        "Prism.md must anchor M-TEST REVISE findings in test-plan.md"
+    )
     assert ".py" in text, (
         "Prism.md should still reference test artifact paths (.py) "
-        "within finding text for Shield to locate")
+        "within finding text for Shield to locate"
+    )
 
 
 def test_target_paths_single_doc_passthrough(tmp_path):
@@ -293,8 +298,7 @@ def test_target_paths_doc_set_derived_from_assignment(tmp_path, monkeypatch):
     .tracks/projects/{version}/ — derived from the assignment, not the role."""
     monkeypatch.delenv("TRACKS_HOME", raising=False)
     backend = OpencodeBackend(tmp_path, "v0.1")
-    assignment = {"kind": "DRAFT",
-                  "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
+    assignment = {"kind": "DRAFT", "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
     vdir = tmp_path / ".tracks" / "projects" / "v0.1"
     assert backend._target_paths(None, assignment) == [
         vdir / "architecture.md",
@@ -306,12 +310,12 @@ def test_target_paths_doc_set_derived_from_assignment(tmp_path, monkeypatch):
 def test_prompt_names_the_doc_set_of_a_multi_doc_assignment(tmp_path, monkeypatch):
     monkeypatch.delenv("TRACKS_HOME", raising=False)
     backend = OpencodeBackend(tmp_path, "v0.1")
-    assignment = {"kind": "DRAFT",
-                  "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
+    assignment = {"kind": "DRAFT", "docs": ["architecture.md", "interfaces.md", "test-plan.md"]}
     prompt = backend._prompt("archer", "DRAFT", None, None, assignment)
     vdir = tmp_path / ".tracks" / "projects" / "v0.1"
-    expected = ", ".join(str(vdir / name) for name in
-                         ["architecture.md", "interfaces.md", "test-plan.md"])
+    expected = ", ".join(
+        str(vdir / name) for name in ["architecture.md", "interfaces.md", "test-plan.md"]
+    )
     assert expected in prompt
 
 
@@ -338,8 +342,7 @@ def test_run_cmd_omits_model_flag_when_model_none(monkeypatch, tmp_path):
 def test_run_cmd_includes_model_flag_when_model_set(monkeypatch, tmp_path):
     """A configured model is passed as --model <value> to opencode run."""
     captured = capture_popen_cmd(monkeypatch)
-    OpencodeBackend(tmp_path, "v0.1",
-                    model="litellm/deepseek-v4-flash")._run("Scribe", "prompt")
+    OpencodeBackend(tmp_path, "v0.1", model="litellm/deepseek-v4-flash")._run("Scribe", "prompt")
     cmd = captured["cmd"]
     assert "--model" in cmd
     assert cmd[cmd.index("--model") + 1] == "litellm/deepseek-v4-flash"

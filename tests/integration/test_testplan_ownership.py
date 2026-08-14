@@ -23,7 +23,8 @@ def _read_design_trio(host_repo):
     return (
         (vdir / "test-plan.md").read_text(encoding="utf-8"),
         (vdir / "tasks.json").read_text(encoding="utf-8")
-        if (vdir / "tasks.json").exists() else None,
+        if (vdir / "tasks.json").exists()
+        else None,
         (vdir / "interfaces.md").read_text(encoding="utf-8"),
     )
 
@@ -75,7 +76,7 @@ def test_test_refs_traceable_to_section8(trac, event_log, host_repo):
     # Extract §8 section
     m = re.search(r"## 8\. AC Coverage", plan_text)
     assert m
-    section8 = plan_text[m.start():]
+    section8 = plan_text[m.start() :]
     for task in tasks_json.get("tasks", []):
         for test_ref in task.get("test_refs", []):
             # test_ref is like "test_taskgraph_validate.py::test_taskgraph_happy_path..."
@@ -99,8 +100,7 @@ def test_ac_coverage_cross_consistent(trac, event_log, host_repo):
     # Collect AC IDs from §8
     section8 = _extract_section8(plan_text)
     if section8:
-        plan_acs = set(re.findall(
-            r"AC-FR\d{4}-\d{2}|AC-NFR\d{4}-\d{2}", section8))
+        plan_acs = set(re.findall(r"AC-FR\d{4}-\d{2}|AC-NFR\d{4}-\d{2}", section8))
     else:
         plan_acs = set()
     # Collect AC IDs from tasks.json
@@ -127,7 +127,7 @@ def test_if_attribution_cross_consistent(trac, event_log, host_repo):
     # Extract IF Registry from interfaces.md §5
     m = re.search(r"## 5\. IF Registry", interfaces_text)
     assert m
-    registry_section = interfaces_text[m.start():]
+    registry_section = interfaces_text[m.start() :]
     registered = set(re.findall(r"IF-[A-Z]+-\d{3}", registry_section))
     # Every IF- in tasks.json must be registered
     for task in tasks_json.get("tasks", []):

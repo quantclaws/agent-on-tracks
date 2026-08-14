@@ -4,6 +4,7 @@ digest = sha256("story:<body-sha>\nspec:<body-sha>\nacc:<body-sha>") over
 frontmatter-stripped bodies — sealing a sha never self-invalidates, fixed
 labels+order kill concatenation-boundary collisions, no timestamps.
 """
+
 import hashlib
 
 import pytest
@@ -18,18 +19,19 @@ _HEAD = "---\nstatus: draft\nsha:\n---\n"
 def vdir(tmp_path):
     (tmp_path / "story.md").write_text(_HEAD + "# 故事\n\nS", encoding="utf-8")
     (tmp_path / "spec.md").write_text(
-        _HEAD + "# 规格\n\n### FR-0010 甲\n\n### NFR-0020 乙\n", encoding="utf-8")
+        _HEAD + "# 规格\n\n### FR-0010 甲\n\n### NFR-0020 乙\n", encoding="utf-8"
+    )
     (tmp_path / "acceptance.md").write_text(
-        _HEAD + "# 验收\n\n## FR-0010 甲\n\n### AC-FR0010-01 可观察\n",
-        encoding="utf-8")
+        _HEAD + "# 验收\n\n## FR-0010 甲\n\n### AC-FR0010-01 可观察\n", encoding="utf-8"
+    )
     return tmp_path
 
 
 def test_digest_ground_truth(vdir):
     joined = "\n".join(
         f"{label}:{doc_body_sha(vdir / doc)}"
-        for label, doc in (("story", "story.md"), ("spec", "spec.md"),
-                           ("acc", "acceptance.md")))
+        for label, doc in (("story", "story.md"), ("spec", "spec.md"), ("acc", "acceptance.md"))
+    )
     assert revision_digest(vdir) == hashlib.sha256(joined.encode()).hexdigest()
 
 

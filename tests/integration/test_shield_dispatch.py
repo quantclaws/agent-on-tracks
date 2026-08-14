@@ -3,6 +3,7 @@
 L2 contract sim: Shield writes tests, write-scope audit enforces the four
 test-asset directories, over-reach is rolled back.
 """
+
 from tests.e2e.helpers import dispatches
 from tests.integration.helpers import walk_to_m_test
 
@@ -13,8 +14,11 @@ def test_dispatch_uses_test_plan_layers(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run", simulate="shield:WRITE=fail")
     evs = event_log(run_id)
-    shield_dispatches = [d for d in dispatches(evs, "WRITE")
-                         if d["payload"]["command"]["params"].get("role") == "shield"]
+    shield_dispatches = [
+        d
+        for d in dispatches(evs, "WRITE")
+        if d["payload"]["command"]["params"].get("role") == "shield"
+    ]
     assert shield_dispatches  # Shield was dispatched
     assert shield_dispatches[0]["payload"]["command"]["params"]["stage"] == "M-TEST"
 
@@ -51,9 +55,13 @@ def test_validate_fail_redispatch(trac, event_log):
     r = trac("run", simulate="shield:WRITE=fail")
     assert "awaiting=escalation" in r.stdout
     evs = event_log(run_id)
-    fails = [e for e in evs if e["type"] == "outcome.received"
-             and e["payload"].get("role") == "shield"
-             and e["payload"]["status"] != "done"]
+    fails = [
+        e
+        for e in evs
+        if e["type"] == "outcome.received"
+        and e["payload"].get("role") == "shield"
+        and e["payload"]["status"] != "done"
+    ]
     assert len(fails) == 3
     assert not [d for d in dispatches(evs) if d["seq"] > fails[-1]["seq"]]
 
@@ -62,6 +70,7 @@ def test_validate_fail_redispatch(trac, event_log):
 def test_shield_no_commit(trac, event_log, host_repo):
     """AC-FR0020-05@v0.4: Shield does not commit; Runtime creates the test commit."""
     import subprocess
+
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = event_log(run_id)
@@ -82,8 +91,11 @@ def test_over_reach_rolled_back(trac, event_log):
     r = trac("run", simulate="shield:WRITE=over_reach|ok")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    over = [e for e in evs if e["type"] == "outcome.received"
-            and e["payload"].get("failure_class") == "over_reach"]
+    over = [
+        e
+        for e in evs
+        if e["type"] == "outcome.received" and e["payload"].get("failure_class") == "over_reach"
+    ]
     assert over  # over-reach was detected
     # After rollback, Shield re-dispatched and succeeded
     completed = [e for e in evs if e["type"] == "run.completed"]
@@ -108,8 +120,11 @@ def test_no_product_code_writes(trac, event_log, host_repo):
     trac("run")
     evs = event_log(run_id)
     # No over_reach failures -> Shield stayed within scope
-    over = [e for e in evs if e["type"] == "outcome.received"
-            and e["payload"].get("failure_class") == "over_reach"]
+    over = [
+        e
+        for e in evs
+        if e["type"] == "outcome.received" and e["payload"].get("failure_class") == "over_reach"
+    ]
     assert not over
 
 
@@ -130,8 +145,12 @@ def test_shield_workflow(trac, event_log):
     run_id = walk_to_m_test(trac)
     trac("run")
     evs = event_log(run_id)
-    shield_dispatch = next(e for e in evs if e["type"] == "command.issued"
-                           and e["payload"]["command"]["params"].get("role") == "shield")
+    shield_dispatch = next(
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["params"].get("role") == "shield"
+    )
     assignment = shield_dispatch["payload"]["command"]["params"]["assignment"]
     # Shield assignment carries read-only context docs
     assert "test-plan.md" in assignment["docs"]

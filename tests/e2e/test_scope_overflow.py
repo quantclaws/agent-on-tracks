@@ -1,4 +1,5 @@
 """Scope overflow rollback (FR-20): AC-20a."""
+
 import subprocess
 
 
@@ -10,9 +11,9 @@ def git_out(repo, *args):
 
 def dispatches(evs):
     return [
-        e for e in evs
-        if e["type"] == "command.issued"
-        and e["payload"]["command"]["kind"] == "dispatch_agent"
+        e
+        for e in evs
+        if e["type"] == "command.issued" and e["payload"]["command"]["kind"] == "dispatch_agent"
     ]
 
 
@@ -21,7 +22,7 @@ def test_overflow_spec_rolls_back_to_story(host_repo, trac, event_log):
     assert trac("start", "v0.1", stdin="一个范围过大的需求").returncode == 0
     assert trac("run").returncode == 0
     assert trac("triage", "go").returncode == 0
-    assert trac("run").returncode == 0            # M-STORY → HUMAN_REVIEW
+    assert trac("run").returncode == 0  # M-STORY → HUMAN_REVIEW
     assert trac("review", "no-comment").returncode == 0
 
     # EXIT M-STORY → M-SPEC DRAFT writes a 31-FR spec → overflow → rollback
@@ -30,9 +31,9 @@ def test_overflow_spec_rolls_back_to_story(host_repo, trac, event_log):
     evs = event_log()
 
     fails = [
-        e for e in evs
-        if e["type"] == "verdict.failed"
-        and e["payload"]["check"] == "scope_overflow"
+        e
+        for e in evs
+        if e["type"] == "verdict.failed" and e["payload"]["check"] == "scope_overflow"
     ]
     assert len(fails) == 1
     assert "31" in fails[0]["payload"]["reason"]
@@ -50,9 +51,7 @@ def test_overflow_spec_rolls_back_to_story(host_repo, trac, event_log):
     first = after[0]["payload"]["command"]["params"]
     assert first["role"] == "scribe" and first["substate"] == "DRAFT"
     assert first["evidence"]["check"] == "scope_overflow"
-    assert all(
-        d["payload"]["command"]["params"]["substate"] != "TRIAGE" for d in after
-    )
+    assert all(d["payload"]["command"]["params"]["substate"] != "TRIAGE" for d in after)
 
     # branch survives the rollback; run parked cleanly at the human gate
     assert "releases/v0.1" in git_out(host_repo, "branch", "--list", "releases/v0.1")

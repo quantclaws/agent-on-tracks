@@ -14,6 +14,7 @@ The base ``opencode`` stand-in script (generic + Shield behaviors:
 behaviors from ``opencode_audit_standin.AUDIT_STANDIN`` so the audit fixture
 drives both Shield and Devon write scenarios.
 """
+
 import os
 import shutil
 import stat
@@ -29,8 +30,7 @@ M_TEST_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
 
 
 def m_test_assignment(substate="WRITE"):
-    return {"kind": substate, "skills": ["tracks-discuz"],
-            "docs": list(M_TEST_DOCS)}
+    return {"kind": substate, "skills": ["tracks-discuz"], "docs": list(M_TEST_DOCS)}
 
 
 def m_test_backend(host_repo):
@@ -47,10 +47,10 @@ def m_test_vdir(host_repo):
 def commit_m_test_docs(host_repo, docs):
     for path in docs:
         path.write_text("---\nsha:\n---\n\n# doc\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=host_repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "m-test docs"], cwd=host_repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=host_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "m-test docs"], cwd=host_repo, check=True, capture_output=True
+    )
 
 
 @pytest.fixture
@@ -61,6 +61,7 @@ def fake_opencode(tmp_path, monkeypatch):
     constant (base Shield + Devon behaviors) is imported from
     ``opencode_audit_standin`` to avoid drift."""
     from tests.integration.opencode_audit_standin import AUDIT_STANDIN
+
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     exe = bin_dir / "opencode"
@@ -77,8 +78,9 @@ def _set_env(monkeypatch, behavior, docs, extra=None):
         monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(extra))
 
 
-def write_project_layout(host_repo, devon=("tracks/", "tests/unit/"),
-                         shield=("tests/integration/",)):
+def write_project_layout(
+    host_repo, devon=("tracks/", "tests/unit/"), shield=("tests/integration/",)
+):
     """Write the Archer-produced ``.tracks/projects/project.toml`` so the
     dynamic layout authorization (FR-0120) allows Shield/Devon writes."""
     path = host_repo / ".tracks" / "projects" / "project.toml"
@@ -112,19 +114,23 @@ DEVON_DOCS = ("architecture.md", "interfaces.md")
 
 
 def devon_assignment(substate="GREEN", allowed=None):
-    return {"kind": substate, "phase": substate.lower(),
-            "manifest": {"allowed_paths": allowed or [
-                "tracks/impl/demo.py", "tests/unit/test_demo.py"]},
-            "skills": ["tracks-devon-rgr"]}
+    return {
+        "kind": substate,
+        "phase": substate.lower(),
+        "manifest": {
+            "allowed_paths": allowed or ["tracks/impl/demo.py", "tests/unit/test_demo.py"]
+        },
+        "skills": ["tracks-devon-rgr"],
+    }
 
 
 def commit_devon_docs(host_repo, docs):
     for path in docs:
         path.write_text("---\nsha:\n---\n\n# design\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=host_repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "devon docs"], cwd=host_repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=host_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "devon docs"], cwd=host_repo, check=True, capture_output=True
+    )
 
 
 def devon_backend(host_repo):
@@ -135,24 +141,26 @@ def devon_backend(host_repo):
 
 
 def test_shield_write_canonical_discussion_reply_accepted(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Shield M-TEST WRITE: a canonical discussion reply appended to
     test-plan.md passes the audit (not over-reach; discussion-only diff)."""
     docs = [m_test_vdir / name for name in M_TEST_DOCS]
     commit_m_test_docs(host_repo, docs)
     test_file = host_repo / "tests" / "integration" / "test_foo.py"
     _set_env(monkeypatch, "shield_reply", docs, test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     assert test_file.exists()
-    assert "Shield" in (m_test_vdir / "test-plan.md").read_text(
-        encoding="utf-8")
+    assert "Shield" in (m_test_vdir / "test-plan.md").read_text(encoding="utf-8")
 
 
 def test_shield_write_non_discussion_doc_edit_rolls_back_entire_run(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """A body/prose edit to test-plan.md (not a canonical discussion reply)
     fails as over_reach and rolls back the ENTIRE run, including the allowed
     test-asset write (partially-valid runs never persist)."""
@@ -160,34 +168,35 @@ def test_shield_write_non_discussion_doc_edit_rolls_back_entire_run(
     commit_m_test_docs(host_repo, docs)
     test_file = host_repo / "tests" / "integration" / "test_foo.py"
     _set_env(monkeypatch, "edit_docs", docs, test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "test-plan.md" in out["audit_evidence"]
     assert not test_file.exists()
     original = "---\nsha:\n---\n\n# doc\n"
-    assert (m_test_vdir / "test-plan.md").read_text(
-        encoding="utf-8") == original
+    assert (m_test_vdir / "test-plan.md").read_text(encoding="utf-8") == original
 
 
-def test_shield_write_test_only_passes(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+def test_shield_write_test_only_passes(fake_opencode, m_test_vdir, host_repo, monkeypatch):
     """Shield M-TEST WRITE that only writes test assets (no doc edits) passes
     — the discussion-only guard only fires when an assignment doc is touched."""
     docs = [m_test_vdir / name for name in M_TEST_DOCS]
     commit_m_test_docs(host_repo, docs)
     test_file = host_repo / "tests" / "integration" / "test_bar.py"
     _set_env(monkeypatch, "shield_test", docs, test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     assert test_file.exists()
 
 
 def test_shield_write_declared_e2e_writable_not_over_reach(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Regression: the Fake's generated project contract declares
     ``tests/e2e/`` (and the rest of the host Shield scope) in
     ``[layout.shield].writable``, so a Shield M-TEST WRITE that creates a
@@ -203,8 +212,9 @@ def test_shield_write_declared_e2e_writable_not_over_reach(
     commit_m_test_docs(host_repo, docs)
     e2e_file = host_repo / "tests" / "e2e" / "test_e2e_scope.py"
     _set_env(monkeypatch, "shield_test", docs, e2e_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     assert "over_reach" not in out.get("audit_evidence", "")
@@ -212,7 +222,8 @@ def test_shield_write_declared_e2e_writable_not_over_reach(
 
 
 def test_shield_write_pre_dirty_doc_preserved_on_force_rollback(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Regression: a pre-dirty test-plan.md (Human's uncommitted edit) is
     preserved byte-identical when a Shield WRITE body edit triggers a force
     rollback. ``git checkout HEAD`` would erase Human's pre-dirty back to the
@@ -225,8 +236,9 @@ def test_shield_write_pre_dirty_doc_preserved_on_force_rollback(
     plan.write_bytes(pre_dirty)
     test_file = host_repo / "tests" / "integration" / "test_predirty.py"
     _set_env(monkeypatch, "shield_body_edit", [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "test-plan.md" in out["audit_evidence"]
@@ -238,7 +250,8 @@ def test_shield_write_pre_dirty_doc_preserved_on_force_rollback(
 
 
 def test_shield_write_pre_dirty_reply_appended_passes(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 1: a canonical discussion reply appended to pre-dirty body
     content passes. The pre-dispatch snapshot (Human's uncommitted body) is
     the base, NOT HEAD: removing/replacing body content would be flagged, but
@@ -254,8 +267,9 @@ def test_shield_write_pre_dirty_reply_appended_passes(
     plan.write_bytes(pre_dirty)
     test_file = host_repo / "tests" / "integration" / "test_reply.py"
     _set_env(monkeypatch, "shield_pre_dirty_reply", [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     assert test_file.exists()
@@ -266,7 +280,8 @@ def test_shield_write_pre_dirty_reply_appended_passes(
 
 
 def test_shield_write_pre_dirty_replace_body_plus_reply_rolls_back(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 1: agent removes/replaces Human's pre-dirty body content then
     adds a discussion reply. The delta against the pre-dispatch snapshot is
     NOT discussion-only (body content was removed/replaced), so the run fails
@@ -283,8 +298,9 @@ def test_shield_write_pre_dirty_replace_body_plus_reply_rolls_back(
     plan.write_bytes(pre_dirty)
     test_file = host_repo / "tests" / "integration" / "test_replace.py"
     _set_env(monkeypatch, "shield_replace_body_plus_reply", [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "test-plan.md" in out["audit_evidence"]
@@ -297,7 +313,8 @@ def test_shield_write_pre_dirty_replace_body_plus_reply_rolls_back(
 
 
 def test_shield_write_asset_edit_plus_doc_edit_atomic_rollback(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 2: agent edits a pre-dirty test asset (allowed write) AND
     makes an invalid doc body edit. The atomic audit must roll back BOTH the
     doc edit and the allowed test-asset edit in one force pass - no early
@@ -316,8 +333,9 @@ def test_shield_write_asset_edit_plus_doc_edit_atomic_rollback(
     test_file.write_bytes(pre_dirty_asset)
     plan = m_test_vdir / "test-plan.md"
     _set_env(monkeypatch, "shield_asset_edit_plus_doc_edit", [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "test-plan.md" in out["audit_evidence"]
@@ -330,13 +348,17 @@ def test_shield_write_asset_edit_plus_doc_edit_atomic_rollback(
 # -- Blocker 3: lexical no-follow type-aware path/symlink handling -----------
 
 
-@pytest.mark.parametrize("behavior", [
-    "shield_doc_to_symlink",
-    "shield_doc_to_dir_symlink",
-    "shield_doc_to_dangling_symlink",
-])
+@pytest.mark.parametrize(
+    "behavior",
+    [
+        "shield_doc_to_symlink",
+        "shield_doc_to_dir_symlink",
+        "shield_doc_to_dangling_symlink",
+    ],
+)
 def test_shield_write_doc_replaced_by_symlink_rolls_back(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch, behavior):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch, behavior
+):
     """Blocker 3: agent replaces a regular assignment doc with a symlink
     (file, directory, or dangling target). The type-aware touch detection
     flags it as offending; rollback unlinks the symlink WITHOUT following it
@@ -352,8 +374,9 @@ def test_shield_write_doc_replaced_by_symlink_rolls_back(
     original = plan.read_bytes()
     test_file = host_repo / "tests" / "integration" / "test_symlink.py"
     _set_env(monkeypatch, behavior, [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "test-plan.md" in out["audit_evidence"]
@@ -364,7 +387,8 @@ def test_shield_write_doc_replaced_by_symlink_rolls_back(
 
 
 def test_shield_write_doc_replaced_by_symlink_does_not_follow(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch, tmp_path):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch, tmp_path
+):
     """Blocker 3 (explicit no-follow): agent replaces a doc with a symlink
     pointing to a writable external file. Rollback must unlink the symlink
     (not write through it) and restore the original. The external target must
@@ -378,8 +402,9 @@ def test_shield_write_doc_replaced_by_symlink_does_not_follow(
     monkeypatch.setenv("FAKE_OPENCODE_SYMLINK_TARGET", str(external))
     test_file = host_repo / "tests" / "integration" / "test_no_follow.py"
     _set_env(monkeypatch, "shield_doc_to_symlink", [plan], test_file)
-    out = m_test_backend(host_repo).act("shield", "WRITE", None, None,
-                                        assignment=m_test_assignment())
+    out = m_test_backend(host_repo).act(
+        "shield", "WRITE", None, None, assignment=m_test_assignment()
+    )
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     # External target NOT written through (still its original content).
@@ -393,7 +418,8 @@ def test_shield_write_doc_replaced_by_symlink_does_not_follow(
 
 
 def test_shield_force_rollback_ancestor_symlink_preserves_external(
-        host_repo, m_test_vdir, tmp_path):
+    host_repo, m_test_vdir, tmp_path
+):
     """BOOT-ROLLBACK-001: Shield WRITE force rollback with an ancestor
     symlink to an external directory must not follow the symlink.  External
     targets remain byte-identical; the ancestor is restored (shallowest-first
@@ -409,10 +435,8 @@ def test_shield_force_rollback_ancestor_symlink_preserves_external(
     test_dir.mkdir(parents=True)
     victim = test_dir / "test_victim.py"
     victim.write_text("# original\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=host_repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "tests"], cwd=host_repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=host_repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "tests"], cwd=host_repo, check=True, capture_output=True)
 
     auditor = Auditor(host_repo, allowed=[str(d) for d in docs])
     baseline = auditor.baseline()
@@ -447,7 +471,8 @@ def test_shield_force_rollback_ancestor_symlink_preserves_external(
 
 
 def test_devon_canonical_discussion_reply_and_allowed_write_pass(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Requirement 3+4: Devon appends a canonical discussion reply to a
     commentable doc AND writes a legit file in its allowed layout dir; both
     pass the audit unchanged (no doc edit violation, no over-reach)."""
@@ -455,8 +480,7 @@ def test_devon_canonical_discussion_reply_and_allowed_write_pass(
     commit_devon_docs(host_repo, docs)
     impl = host_repo / "tracks" / "impl" / "demo.py"
     _set_env(monkeypatch, "devon_reply", [docs[0]], impl)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     assert impl.exists()
@@ -464,7 +488,8 @@ def test_devon_canonical_discussion_reply_and_allowed_write_pass(
 
 
 def test_devon_deletes_commentable_doc_rolls_back(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 1: Devon DELETES a commentable doc. The post-state
     ``exists()`` filter must not hide the deletion - the doc is still audited,
     the run fails as over_reach, and the doc is restored from HEAD."""
@@ -472,20 +497,23 @@ def test_devon_deletes_commentable_doc_rolls_back(
     commit_devon_docs(host_repo, docs)
     original = docs[0].read_bytes()
     _set_env(monkeypatch, "devon_delete_doc", [docs[0]])
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]
     assert docs[0].read_bytes() == original
 
 
-@pytest.mark.parametrize("behavior", [
-    "devon_doc_to_dangling_symlink",
-    "devon_doc_to_dir_symlink",
-])
+@pytest.mark.parametrize(
+    "behavior",
+    [
+        "devon_doc_to_dangling_symlink",
+        "devon_doc_to_dir_symlink",
+    ],
+)
 def test_devon_commentable_doc_replaced_by_exception_type_rolls_back(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch, behavior):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch, behavior
+):
     """Blocker 1: Devon swaps a commentable doc for an exception type
     (dangling/directory symlink). The type-aware no-follow check flags it and
     rollback restores the original regular file."""
@@ -493,8 +521,7 @@ def test_devon_commentable_doc_replaced_by_exception_type_rolls_back(
     commit_devon_docs(host_repo, docs)
     original = docs[0].read_bytes()
     _set_env(monkeypatch, behavior, [docs[0]])
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]
@@ -503,7 +530,8 @@ def test_devon_commentable_doc_replaced_by_exception_type_rolls_back(
 
 
 def test_devon_body_edit_plus_allowed_write_atomic_rollback(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 2 (Shield parity): Devon body-edits a commentable doc AND
     writes a legit allowed file. The whole run is rolled back in one force
     pass - the allowed write must NOT survive the invalid doc edit."""
@@ -512,8 +540,7 @@ def test_devon_body_edit_plus_allowed_write_atomic_rollback(
     original = docs[0].read_bytes()
     impl = host_repo / "tracks" / "impl" / "demo.py"
     _set_env(monkeypatch, "devon_body_edit", [docs[0]], impl)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]
@@ -522,7 +549,8 @@ def test_devon_body_edit_plus_allowed_write_atomic_rollback(
 
 
 def test_devon_overreach_plus_doc_edit_atomic_rollback(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Blocker 2: Devon over-reaches (out-of-scope write) AND body-edits a
     commentable doc. The audit is ONE atomic decision: the doc edit, the
     over-reach write, and any allowed write are all rolled back together - no
@@ -534,8 +562,7 @@ def test_devon_overreach_plus_doc_edit_atomic_rollback(
     evil = host_repo / "evil.tmp"
     monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(impl))
     _set_env(monkeypatch, "devon_overreach_plus_doc_edit", [docs[0]], evil)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]
@@ -547,7 +574,8 @@ def test_devon_overreach_plus_doc_edit_atomic_rollback(
 
 
 def test_devon_pre_dirty_doc_reply_appended_passes_and_preserves_body(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Pre-dirty preservation (pass path): a canonical discussion reply
     appended to Human's pre-dirty commentable content passes and the pre-dirty
     body is preserved byte-identical (delta validated against the snapshot,
@@ -559,8 +587,7 @@ def test_devon_pre_dirty_doc_reply_appended_passes_and_preserves_body(
     arch.write_bytes(pre_dirty)
     impl = host_repo / "tracks" / "impl" / "demo.py"
     _set_env(monkeypatch, "devon_pre_dirty_reply", [arch], impl)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "done"
     assert out.get("failure_class") is None
     new_content = arch.read_bytes()
@@ -570,7 +597,8 @@ def test_devon_pre_dirty_doc_reply_appended_passes_and_preserves_body(
 
 
 def test_devon_violation_preserves_predirty_human_work(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Pre-dirty preservation (fail path): on a force rollback, Human's
     pre-dirty tracked file is restored byte-identical from the pre-dispatch
     snapshot - never erased to HEAD - while the invalid doc edit is reverted."""
@@ -581,15 +609,14 @@ def test_devon_violation_preserves_predirty_human_work(
     predirty = host_repo / "tests" / "unit" / "test_predirty.py"
     predirty.parent.mkdir(parents=True, exist_ok=True)
     predirty.write_text("# original\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=host_repo, check=True,
-                   capture_output=True)
-    subprocess.run(["git", "commit", "-m", "predirty file"], cwd=host_repo,
-                   check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=host_repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "predirty file"], cwd=host_repo, check=True, capture_output=True
+    )
     human_dirty = b"# original\nhuman note\n"
     predirty.write_bytes(human_dirty)
     _set_env(monkeypatch, "devon_edit_predirty_plus_doc_edit", [arch], predirty)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]
@@ -599,7 +626,8 @@ def test_devon_violation_preserves_predirty_human_work(
 
 
 def test_devon_doc_replaced_by_nonempty_dir_atomic_rollback(
-        fake_opencode, m_test_vdir, host_repo, monkeypatch):
+    fake_opencode, m_test_vdir, host_repo, monkeypatch
+):
     """Review blocker: Devon replaces a commentable doc with a plain
     NON-EMPTY directory (payload + deep child) and in the same run makes an
     allowed write and an over-reach write.  ``agent_changed`` carries both the
@@ -617,8 +645,7 @@ def test_devon_doc_replaced_by_nonempty_dir_atomic_rollback(
     evil = host_repo / "evil.tmp"
     monkeypatch.setenv("FAKE_OPENCODE_TARGET", str(impl))
     _set_env(monkeypatch, "devon_doc_to_nonempty_dir", [arch], evil)
-    out = devon_backend(host_repo).act(
-        "devon", "GREEN", None, None, assignment=devon_assignment())
+    out = devon_backend(host_repo).act("devon", "GREEN", None, None, assignment=devon_assignment())
     assert out["status"] == "failed"
     assert out["failure_class"] == "over_reach"
     assert "architecture.md" in out["audit_evidence"]

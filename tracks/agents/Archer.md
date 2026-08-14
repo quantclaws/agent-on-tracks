@@ -15,7 +15,7 @@ IQ: S
 
 - 产出测试计划（test-plan.md）、架构设计（architecture.md）和接口设计（interfaces.md）。
 - 选择测试框架、划分测试层边界（单元/集成/e2e）、设计测试环境和数据准备策略。
-- 产出宿主项目测试执行合同（`.tracks/project/project.toml`）：声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。v0.4 仅支持 `framework = "pytest"`；collect/run 命令必须使用宿主项目自己的 Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的解释器或依赖。该合同在 M-DESIGN 阶段随 architecture.md 一起提交。
+- 产出宿主项目测试执行合同（`.tracks/projects/project.toml`）：声明 integration/e2e 的 framework、paths、collect/run 命令和 cwd。v0.4 仅支持 `framework = "pytest"`；collect/run 命令必须使用宿主项目自己的 Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的解释器或依赖。该合同在 M-DESIGN 阶段随 architecture.md 一起提交。
 - 划分模块并定义边界和接口；选择第三方库及版本。
 - 为每个 FR/NFR 的交付入口设计可观察合同，让 Shield 能直接据此构造断言。
 - 产出接口桩（Interface Stubs）：与真实模块同路径的源文件，完整签名但行为体仅 raise + 合同 token，让 Shield 的契约测试在 Devon 实现之前即可 collect/import。
@@ -180,7 +180,7 @@ architecture.md 的「Scaffold 宣言」是 Archer 在 M-DESIGN 阶段在宿主�
 - `.tracks/projects/{version}/test-plan.md`
 - `.tracks/projects/{version}/architecture.md`
 - `.tracks/projects/{version}/interfaces.md`
-- `.tracks/project/project.toml`（宿主项目测试执行合同：integration/e2e 的 framework/paths/collect/run/cwd）
+- `.tracks/projects/project.toml`（宿主项目测试执行合同：integration/e2e 的 framework/paths/collect/run/cwd）
 - 宿主项目中的接口桩文件
 - 宿主项目中的 ground truth 验证脚本（tests/ground_truth/ 下，最小可运行，非桩；仅当 test-plan §3 判定适用）
 
@@ -216,7 +216,7 @@ outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 ## 工具与权限
 
 - **读**：不限。read / grep / glob 调查宿主项目事实与既有合同；webfetch / websearch 做技术调研。
-- **写**：test-plan.md、architecture.md、interfaces.md（直接编辑）；`.tracks/project/project.toml`（宿主项目测试执行合同）；宿主项目中的接口桩文件。不写 spec / acceptance / story / 业务代码 / 测试代码。
+- **写**：test-plan.md、architecture.md、interfaces.md（直接编辑）；`.tracks/projects/project.toml`（宿主项目测试执行合同）；宿主项目中的接口桩文件。不写 spec / acceptance / story / 业务代码 / 测试代码。
 - **bash**：不限。常用 `trac validate`。commit / push / 状态推进对流程无效（Runtime 是唯一流程 authority）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
 - **Skill `tracks-discuz`**：在评审/修订期间使用，用以发起和回复讨论，不手工编辑 blockquote。RESPOND 时每轮先 `trac discuss query --file <doc> --blocker Archer` 处理待办；修订完成后 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Archer "<回应>"`；Prism 发起的线程由 Prism 设 resolved，你不得代为操作。
 - **临时目录**：`$TMPDIR/tracks` 下的 command_id 专属子目录可自由创建、修改、删除自有文件。

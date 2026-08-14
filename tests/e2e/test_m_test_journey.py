@@ -4,6 +4,7 @@ Fake-channel end-to-end journey: the full M-TEST cycle from M-DESIGN exit
 through Shield write, collection, Prism review, Red check, trace closure,
 test commit, to run.completed(terminal_state="boundary").
 """
+
 from tests.e2e.helpers import walk_to_m_test_complete
 from tests.e2e.test_happy_path import types
 from tests.integration.helpers import (
@@ -45,8 +46,11 @@ def test_m_test_substate_sequence(trac, event_log):
     run_id = walk_to_m_test_complete(trac)
     evs = event_log(run_id)
     # The M-TEST events include all SM-01 milestones
-    m_test_start = next(i for i, e in enumerate(evs) if e["type"] == "stage.entered"
-                        and e["payload"]["stage"] == "M-TEST")
+    m_test_start = next(
+        i
+        for i, e in enumerate(evs)
+        if e["type"] == "stage.entered" and e["payload"]["stage"] == "M-TEST"
+    )
     m_test_evs = evs[m_test_start:]
     ts = types(m_test_evs)
     # SM-01 sequence: all milestone events present

@@ -4,6 +4,7 @@ The `.tracks/` root is resolved from the runtime cwd and may be overridden by
 the TRACKS_HOME environment variable. It is NEVER hardcoded to the tracks
 project root, so tests running in a tmp git repo stay isolated.
 """
+
 from __future__ import annotations
 
 import os

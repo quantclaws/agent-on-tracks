@@ -5,6 +5,7 @@ Blob discipline (R3-07): payload JSON >8KB is externalized to content-addressed
 `runtime/blobs/{sha256}` via temp file -> fsync -> atomic rename, and only then
 is the event committed, so a committed event never references a missing blob.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -236,9 +237,7 @@ class Store:
 
     def latest_run(self) -> str | None:
         """Return the most recent run_id regardless of status."""
-        cur = self.conn.execute(
-            "SELECT run_id FROM runs ORDER BY updated_ts DESC LIMIT 1"
-        )
+        cur = self.conn.execute("SELECT run_id FROM runs ORDER BY updated_ts DESC LIMIT 1")
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -247,9 +246,7 @@ class Store:
         with self.conn:
             self.conn.execute("DELETE FROM runs")
             self.conn.execute("DELETE FROM backlog")
-            run_ids = [
-                r[0] for r in self.conn.execute("SELECT DISTINCT run_id FROM events")
-            ]
+            run_ids = [r[0] for r in self.conn.execute("SELECT DISTINCT run_id FROM events")]
             for rid in run_ids:
                 self._project_run(rid)
                 for ev in self.events(rid):

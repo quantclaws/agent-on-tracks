@@ -43,6 +43,7 @@ def test_non_shield_role_at_m_test_write_not_rejected(tmp_path):
 
 # -- contract argv resolver (live replay fix) --------------------------------
 
+
 def test_resolve_contract_argv0_venv_absent_uses_runtime_executable(tmp_path):
     """Live replay fix: a worktree's project.toml contract declares
     ``.venv/bin/python -m pytest ...`` but the worktree has no ``.venv``.

@@ -36,11 +36,7 @@ def test_shield_fix_dispatch_assignments_have_valid_test_tasks(trac, event_log):
     _, _, events = run_m_impl_journey(
         trac,
         event_log,
-        simulate=(
-            "devon:RED=fail|ok;"
-            "diagnose:classification=test_defect;"
-            "shield:SHIELD_FIX=ok"
-        ),
+        simulate=("devon:RED=fail|ok;diagnose:classification=test_defect;shield:SHIELD_FIX=ok"),
     )
     shield_writes = command_dispatches(
         first_m_impl_attempt_segment(events), role="shield", substate="WRITE"

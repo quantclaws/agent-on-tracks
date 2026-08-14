@@ -1,6 +1,7 @@
 """CLI approval-gate guards (FR-0180, C-02/C-03): trac approve / trac return
 reject illegal input WITHOUT writing events — SM-05.3a / SM-05.7a.
 """
+
 from tests.e2e.helpers import walk_to_await_human
 from tracks.baseline import revision_digest
 
@@ -42,8 +43,7 @@ def test_approve_digest_mismatch_rejected(host_repo, trac, event_log):
     walk_to_await_human(trac)
     vdir = host_repo / ".tracks" / "projects" / "v0.1"
     spec = vdir / "spec.md"
-    spec.write_text(spec.read_text(encoding="utf-8") + "\n偷改一行\n",
-                    encoding="utf-8")
+    spec.write_text(spec.read_text(encoding="utf-8") + "\n偷改一行\n", encoding="utf-8")
     r = trac("approve", "--actor", "Aaron")
     assert r.returncode != 0
     assert "preview regenerated" in r.stderr
