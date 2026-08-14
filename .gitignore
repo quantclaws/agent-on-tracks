@@ -10,3 +10,6 @@ build/
 dist/
 .opencode/
 *.lock
+
+# runtime opencode session logs
+logs/
