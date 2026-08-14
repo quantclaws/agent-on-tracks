@@ -249,6 +249,13 @@ class ResultCheckpointMixin:
             # defect_classification (the reducer defaults absent to
             # test_defect; a present null used to leave M-TEST un-routed).
             domain_payload["defect_classification"] = defect_classification
+        if verdict != "pass":
+            # FR-11: thread reviewer findings into the published event so the
+            # kernel can put them into the revise re-dispatch evidence.
+            for key in ("review_summary", "findings", "discussion_refs"):
+                val = result.get(key)
+                if val:
+                    domain_payload[key] = val
         return {
             "source": "prism",
             "stage": "M-TEST",
