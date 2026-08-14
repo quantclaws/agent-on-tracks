@@ -1301,14 +1301,17 @@ class OpencodeBackend:
                 last_error = error
                 continue
             include, error = OpencodeBackend._manifest_include(payload)
-            if error is not None:
-                last_error = error
-                continue
-            commit_msg = payload.get("suggested_commit_message")
-            if not isinstance(commit_msg, str) or not commit_msg.strip():
-                last_error = "suggested_commit_message must be a non-empty string"
-                continue
-            return {"include": include}, commit_msg, None
+            if error is None:
+                commit_msg = payload.get("suggested_commit_message")
+                if isinstance(commit_msg, str) and commit_msg.strip():
+                    return {"include": include}, commit_msg, None
+                error = "suggested_commit_message must be a non-empty string"
+            if "artifact_manifest" in payload or "include" in payload:
+                # Manifest-shaped but invalid: this is the real diagnosis
+                # and must not be masked by earlier prose events that fail
+                # to parse as JSON.
+                return None, None, error
+            last_error = error
         return None, None, last_error
 
     @staticmethod
@@ -1390,7 +1393,13 @@ class OpencodeBackend:
     ) -> tuple[list | None, str | None]:
         raw_manifest = payload.get("artifact_manifest")
         if not isinstance(raw_manifest, dict):
-            return None, "artifact_manifest must be an object"
+            # A dropped closing brace relocates ``include`` to the top
+            # level; accept that shape so one brace slip does not waste a
+            # dispatch attempt.
+            if isinstance(payload.get("include"), list):
+                raw_manifest = payload
+            else:
+                return None, "artifact_manifest must be an object"
         include = raw_manifest.get("include")
         if not isinstance(include, list) or not include:
             return None, "artifact_manifest.include must be a non-empty list"
