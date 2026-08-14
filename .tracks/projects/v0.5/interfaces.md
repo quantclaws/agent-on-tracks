@@ -9,7 +9,7 @@ sha:
 
 # v0.5 - 接口与类型化 Schema
 
-本文是 IF-004（v0.4）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路类型与 CLI 合同（IF-003 §6/§7a）、`trac validate` CLI 合同（IF-003 §7b）等不变，凡未提及者继承 IF-001/IF-003/IF-004。v0.5 扩范围新增 M-IMPL 合同，并为 FR-0230～FR-0233/NFR-0080 增量定义 canonical live evidence schema、真实性边界与 `trac check release-evidence` text/JSON/exit 合同。
+本文是 IF-004（v0.4）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路类型与 CLI 合同（IF-003 §6/§7a）、`trac validate` CLI 合同（IF-003 §7b）等不变，凡未提及者继承 IF-001/IF-003/IF-004。v0.5 扩范围新增 M-IMPL 合同；为 FR-0230～FR-0233/NFR-0080 定义 canonical live evidence 与 `trac check release-evidence` 合同；为 FR-0234～FR-0237/NFR-0090 定义 outcome 的 doc-comment-first、裁定、隔离恢复和审计出口。
 
 ## 0. 延续性（什么不变）
 
@@ -23,7 +23,7 @@ sha:
 - `discuss/` 旁路类型与 CLI 合同（IF-003 §6/§7a）不变。
 - `trac validate` CLI 合同（IF-003 §7b）不变；`trac check` 三子命令不变；v0.5 扩展 `trac validate --file tasks.json` DAG/scope/AC 覆盖/IF- 有效性/issue number 有效性校验（§2a），新增 `trac retry` 命令（§2b）。
 - 既有 `check_trace_full` / `check_trace_full_file`（IF-004 §1d）、`check_reach` / `check_reach_file`（IF-004 §1f）、`classify_red`（IF-004 §1g）行为不变；M-IMPL 的 `classify_red` 复用 v0.4 RedClass 封闭集，但 `stub_token_failure` 不在 M-IMPL 合法红之列（§1g 说明）。
-- §5 IF- 标识注册表是 v0.4 建立的合同基础；v0.4 的 8 个 IF- 标识（IF-MTEST-001/002、IF-SHIELD-001、IF-TRACE-001/002、IF-REACH-001/002、IF-VALIDATE-001）不可变、不可复用；v0.5 §5 列出 cross-reference 条目供 validator 解析（定义仍以 IF-004 §5 为准），并增补 IF-IMPL-001~007、IF-DEVON-001、IF-LIVE-001 与 IF-RELEASE-001 共 10 个新标识。
+- §5 IF- 标识注册表是 v0.4 建立的合同基础；v0.4 的 8 个 IF- 标识不可变、不可复用；v0.5 增补 IF-IMPL-001~007、IF-DEVON-001、IF-LIVE-001、IF-RELEASE-001、IF-DOCGAP-001 与 IF-QUARANTINE-001 共 12 个标识。
 - 既有 `agent_io` refs/digests、append-only events、R/G lineage 与 `trac report` 出口不变；新 live evidence bundle 只绑定并交叉核验这些既有事实，不改写它们。新增 IF-LIVE-001 与 IF-RELEASE-001，不复用既有 IF ID。
 
 ## 1. 跨模块合同
@@ -497,6 +497,133 @@ Live launch provenance（只供 evidence 绑定，不改变普通 `trac run` 语
 
 两字段由 live harness 在 wheel hash、fresh venv install 与 import-path probe 通过后注入；Runtime 必须与安装环境 `.dist-info/direct_url.json` archive hash、distribution/version/import path 交叉核验。字段不得进入 agent assignment，Agent outcome/self-report 不得覆盖。
 
+### 1k. doc-comment-first outcome 合同（FR-0234/FR-0235/FR-0237，IF-DOCGAP-001）
+
+**modules**: effects/opencode.py（产生 outcome、保留 pre-dispatch 文档身份与审计快照）、executor/doc_comment.py（实现分类纯函数）、executor/executor.py（消费分类并在普通验证前路由）、kernel/machine.py（投影等待/恢复状态）、discuss/parser.py 与 discuss/gate.py（解析 canonical discussion）--跨模块接口，须有 integration 覆盖。
+
+```python
+DocCommentRole = Literal["devon", "shield"]
+DocGapRoute = Literal["design_gap", "agent_correction"]
+DocDeltaClass = Literal["none", "legal_discussion", "illegal_body_edit"]
+
+@dataclass(frozen=True)
+class DocCommentOrigin:
+    run_id: str
+    role: DocCommentRole
+    task_id: str | None
+    phase: str
+    dispatch_id: str
+    attempt: int
+
+@dataclass(frozen=True)
+class DocumentDelta:
+    path: str
+    baseline_identity: str
+    current_identity: str
+    classification: DocDeltaClass
+    new_thread_ids: tuple[str, ...]
+
+@dataclass(frozen=True)
+class DocGapRecord:
+    record_id: str
+    origin: DocCommentOrigin
+    state: Literal[
+        "DETECTED", "AWAITING_ADJUDICATION", "DESIGN_GAP", "AGENT_CORRECTION",
+        "READY_TO_RESUME", "RESTORED", "DISCARDED", "RESUMED",
+    ]
+    document_deltas: tuple[DocumentDelta, ...]
+    route: DocGapRoute | None
+    quarantine_id: str | None
+
+def classify_design_document_deltas(
+    *, role: DocCommentRole, baseline_documents: dict[str, bytes],
+    current_documents: dict[str, bytes],
+) -> tuple[DocumentDelta, ...]:
+    """比较本 dispatch 前后的获准文档。
+
+    Devon 的封闭允许集是 architecture.md/interfaces.md；Shield 的封闭允许集是
+    test-plan.md/interfaces.md。只有保留 baseline 全部非 discussion bytes 且新增内容能由
+    canonical inline-discussion parser 完整解析时为 legal_discussion。删除、替换、类型交换、
+    discussion 外正文改动以及未获准文档改动均为 illegal_body_edit。dispatch 前已存在的讨论
+    不进入 new_thread_ids，也不触发暂停。
+    """
+
+def create_doc_gap_record(
+    *, origin: DocCommentOrigin, deltas: tuple[DocumentDelta, ...],
+    quarantine_id: str | None,
+) -> DocGapRecord:
+    """仅 legal_discussion 创建 DETECTED 记录；illegal_body_edit 必须走原子拒绝。"""
+
+def adjudicate_doc_gap(
+    record: DocGapRecord, *, route: DocGapRoute, thread_ids: tuple[str, ...],
+) -> DocGapRecord:
+    """Prism 只能在原线程裁定 design_gap 或 agent_correction；Human approval 不是输入。"""
+```
+
+结果处理优先级是封闭合同：`illegal_body_edit` > `legal_discussion` > ordinary outcome。非法正文编辑即使同时含合法讨论，也整回合回滚全部 Agent 可归因变化；合法讨论在 artifact/manifest/collection/gate/checkpoint/DIAGNOSE 之前暂停；`none` 才进入既有验证。旧 outcome 永不转换为 done/success。
+
+### 1l. quarantine 与恢复合同（FR-0236/NFR-0090，IF-QUARANTINE-001）
+
+**modules**: executor/doc_comment.py（描述符与身份判断）、executor/executor.py（隔离/恢复副作用）、effects/audit.py（Agent 可归因路径与 pre-dirty 快照）、store/store.py（append-only 事件与 content-addressed blob）、kernel/machine.py（重放投影）--跨模块接口，须有 integration 覆盖。
+
+```python
+@dataclass(frozen=True)
+class QuarantinedChange:
+    path: str
+    operation: Literal["add", "modify", "delete"]
+    baseline_identity: str | None
+    content_identity: str | None
+
+@dataclass(frozen=True)
+class QuarantineDescriptor:
+    quarantine_id: str
+    origin: DocCommentOrigin
+    design_identity: str
+    run_identity: str
+    changes: tuple[QuarantinedChange, ...]
+    manifest_ref: str
+    manifest_sha256: str
+    status: Literal["empty", "held", "restored", "discarded"]
+
+@dataclass(frozen=True)
+class ResumeDecision:
+    action: Literal["restore", "discard"]
+    reason: Literal["empty", "identity_current", "design_stale", "run_stale", "content_conflict"]
+    next_dispatch_id: str
+    next_attempt: int
+
+def quarantine_authorized_changes(
+    *, origin: DocCommentOrigin, allowed_paths: tuple[str, ...],
+    pre_dirty_identities: dict[str, str], agent_changes: tuple[QuarantinedChange, ...],
+    design_identity: str, run_identity: str,
+) -> QuarantineDescriptor:
+    """只隔离本 outcome 可归因且在 manifest 内的非文档变化；排除 Human/pre-dirty。
+    返回 empty 或 held；不得使用共享 Git index，不得 commit/checkpoint/gate。"""
+
+def decide_quarantine_resume(
+    descriptor: QuarantineDescriptor, *, current_design_identity: str,
+    current_run_identity: str, current_path_identities: dict[str, str],
+    next_dispatch_id: str, next_attempt: int,
+) -> ResumeDecision:
+    """身份仍 current 才 restore；stale/conflict 默认 discard。两者都进入新的 dispatch/attempt。"""
+```
+
+quarantine manifest 与内容使用既有 Runtime content-addressed blob 能力持久化；共享 Git index 不是输入也不是存储。重启后仅从 append-only 事件与 blobs 重建。恢复只是给新 dispatch/attempt 的输入，新 outcome 仍须重新通过 IF-DOCGAP-001 和原 phase 全部验证。
+
+### 1m. doc-gap 事件封闭集（IF-DOCGAP-001 / IF-QUARANTINE-001）
+
+| # | 事件 | payload 必填字段 | modules |
+|:---|:---|:---|:---|
+| 1 | `doc_comment.detected` | record_id, origin, document_paths, thread_ids | executor, kernel, report |
+| 2 | `outcome.quarantined` | record_id, quarantine_id, status=`empty\|held`, manifest_ref, manifest_sha256 | executor, store, kernel, report |
+| 3 | `doc_comment.adjudicated` | record_id, route=`design_gap\|agent_correction`, thread_ids, responsible_role | executor, kernel, report |
+| 4 | `outcome.restored` | record_id, quarantine_id, reason, next_dispatch_id, next_attempt | executor, store, kernel, report |
+| 5 | `outcome.discarded` | record_id, quarantine_id, reason, next_dispatch_id, next_attempt | executor, store, kernel, report |
+| 6 | `outcome.resumed` | record_id, origin_dispatch_id, next_dispatch_id, next_attempt | executor, kernel, report |
+| 7 | `outcome.rejected` | origin, failure_class=`over_reach`, rejected_paths, rollback=`atomic` | effects, executor, kernel, report |
+
+每项事件附着同一 `run_id`，且 `origin` 完整包含 role/task/phase/dispatch/attempt。`outcome.restored|discarded` 后必须有不同 `next_dispatch_id` 与递增 attempt；旧 dispatch 不得出现普通 checkpoint、gate、`task.completed` 或阶段成功事件。
+
 ## 2. CLI 接口合同
 
 ### 2a. `trac validate --file tasks.json`（扩展校验范围，IF-IMPL-003 / IF-VALIDATE-001）
@@ -544,6 +671,19 @@ IF-003 §7b 既有 `trac validate --file <path>` 不变。v0.5 扩展：
 6. 全部满足 → `ok`/`satisfied`。同一输入 bytes 与 Git HEAD 必须产生逐字节相同 JSON/text；检查只读，不 append event、不改 refs/commits/worktree、不构建或发布。
 
 `branch` 只用于 text 展示，由 `git branch --show-current` 获取；detached HEAD 显示 `(detached)`，不影响 SHA 判定。Human approval 不是输入，不能改变 exit。
+
+### 2e. E-04 设计评论裁定、隔离与恢复交互合同（IF-DOCGAP-001 / IF-QUARANTINE-001）
+
+| # | surface/context | 可观察状态 | 用户动作与可用条件 | 结果与继续/返回 |
+|:---|:---|:---|:---|:---|
+| 1 | `trac run` 收到 Devon/Shield outcome | 合法新讨论时 stdout 含 `outcome paused: design discussion awaiting Prism (role=<role>, task=<task>, phase=<phase>)` | outcome 含角色获准文档的合法新增讨论 | 暂停普通验证；无讨论则原路径继续；非法正文则走第 5 行 |
+| 2 | `trac status` 活跃 run | `doc-gap=awaiting-adjudication origin=<Role>/<task>/<phase> quarantine=empty\|held`；裁定后显示 `design-gap\|agent-correction\|ready-to-resume` | 任何时候只读可用 | 操作者据 origin/quarantine 判断等待对象，不把 held 当成功 |
+| 3 | `trac discuss query --file <获准文档>` | 原线程、Prism/Archer/原 Agent 回复与 open/resolved 状态 | 仅允许各角色既有 discussion 操作；不授权正文编辑 | 线程关闭后状态可进入 READY_TO_RESUME；未关闭保持等待 |
+| 4 | `trac replay <run>` / `trac report --run-id <run> ...` | §1m 事件按 seq 展示 record_id、origin、route、quarantine identity、restore/discard reason、新 dispatch/attempt | 只读可用 | 可审计 detected→adjudicated→quarantined→restored/discarded→resumed |
+| 5 | `trac status/replay/report` 非 discussion 正文编辑 | `failure_class=over_reach rollback=atomic rejected_paths=<...>` | 自动；即使同 outcome 有合法讨论仍优先 | 全部 Agent 可归因变化回滚；Human/pre-dirty 逐字节保持；按原 phase 新 attempt |
+| 6 | 持续或再次 `trac run` | 仅线程 closed 且记录 READY_TO_RESUME 时启用恢复 | 操作者继续运行 | identity current 则 restore，否则 discard；随后同 role/task/phase 新 dispatch/attempt，重新走全部验证 |
+
+本合同不新增顶层 CLI、Human 技术批准或「接受旧 outcome」动作。
 
 ## 3. 文件 / 存储契约
 
@@ -599,7 +739,9 @@ no_change: bool | None = None     # REFACTOR Devon outcome 可含 no_change=True
 | `tracks/executor/quality_gate.py` | Python 模块 | Devon（实现） | executor/executor.py、tests |
 | `tracks/agents/Devon.md` | opencode agent（frontmatter + body，无 permission 块） | 维护者（spec 交付物，v0.4 已创建） | OpencodeBackend（物化源）、check_deliverables |
 | `tracks/skills/tracks-prism-impl/SKILL.md` | opencode skill（frontmatter + body） | 维护者（v0.4 已创建） | OpencodeBackend（M-IMPL Prism 派发物化到上下文） |
-| `.tracks/project/project.toml` | TOML（canonical 宿主项目测试执行合同） | Archer（M-DESIGN 创建） | project.py（load_contract）、executor（collect/run 命令） |
+| `tracks/executor/doc_comment.py` | Python 接口模块；doc delta 分类、doc-gap record、quarantine descriptor 与 resume decision | Devon（实现桩） | effects/opencode.py、executor/executor.py、kernel/machine.py |
+| `.tracks/projects/project.toml` | TOML（当前 DRAFT Runtime bootstrap 测试执行合同） | Archer（M-DESIGN 维护） | 当前 project.py（load_contract）、executor（collect/run 命令） |
+| `.tracks/project/project.toml` | TOML（FR-0190 产品终态 canonical 测试执行合同） | Devon（foundation 迁移；待实现） | 迁移后的 project.py、executor |
 | `.tracks/projects/{ver}/tasks.json` | JSON（task graph 唯一机器真相） | Archer（M-IMPL PLANNING） | executor（解析驱动 DAG 调度）、trac validate |
 | `.tracks/projects/{ver}/tasks.md` | Markdown（人类可读投影，Runtime 确定性生成） | Runtime（从 tasks.json 生成） | trac report（per-task 进展重建）、Human 阅读 |
 | `refs/trac/rgr/{run}/{task}/{attempt}/red` | git ref（指向私有 commit R） | executor（`_do_create_red_checkpoint`） | executor（lineage 证明）、tests（git rev-parse） |
@@ -641,6 +783,9 @@ Tracks-AC: {ac_refs}
 ### 3f. `.tracks/project/project.toml` canonical 路径约束（FR-0190 第 2 项）
 
 canonical `.tracks/project/project.toml` 是唯一允许的 `.tracks/**` project contract 路径（AC-FR0190-03）。`project.py` 的 `load_contract` 强化路径校验：
+
+- **当前 DRAFT bootstrap 事实**：执行本 assignment 的 Runtime 仍只允许并读取已 tracked 的 `.tracks/projects/project.toml`，且拒绝 singular 路径作为 scaffold；因此 Archer 本轮只在旧路径物理交付同 schema 合同，不把它计作 AC 通过。
+- **待实现迁移**：Devon foundation task 同步迁移 `paths.project_toml_path`、设计 checkpoint 白名单、loader 和文件到下述 singular 路径，随后删除旧路径；不得在产品终态同时接受两条路径。
 
 - 只接受 `.tracks/project/project.toml`，其他 `.tracks/**` 路径 fail closed。
 - 随设计 checkpoint 去重提交（同一 run 内不重复加载）。
@@ -687,6 +832,17 @@ agent 不得自行搜索/猜任何物化字段（FR-0190）。无效输入（如
 - bundle 是运行证据，不纳入 Git，不由 Human 手工创建。只有 `write_live_evidence` 可生成；isolated demo host 向 candidate checkout 的复制必须保持每个文件 bytes/digest，不得解析后重写。
 - agent I/O 沿用 `redact` 后的 blob；API key/token 等 secret 不得进入 bundle。validator 只校验 digest/ref，不回显 blob 内容。
 - 失败、取消、skip 或不完整 journey 不写 `status=satisfied` bundle；可以保留 events/report 诊断，但不放入 canonical release-evidence root。
+
+### 3i. doc-gap quarantine blob 存储合同（FR-0236/NFR-0090）
+
+| # | 路径/标识 | 格式 | 写入者 | 读取者 |
+|:---|:---|:---|:---|:---|
+| 1 | `.tracks/runtime/blobs/{sha256}`（沿用既有 Runtime blob root） | `QuarantineDescriptor.manifest_ref` 指向的 canonical JSON 与每个授权非文档 change 的 content bytes；文件名/digest 为 SHA-256 | executor/store（blob-first） | executor 恢复/丢弃、`trac replay`、`trac report` |
+| 2 | events 表中的 `outcome.quarantined` | `record_id`, `quarantine_id`, `status`, `manifest_ref`, `manifest_sha256` | executor（event-second） | kernel projector、status/replay/report |
+
+- canonical manifest JSON 使用 UTF-8、`sort_keys=True`、紧凑 separators 与末尾 LF；manifest 列出的路径只能来自当前 dispatch manifest，且设计文档、Human/pre-dirty 路径均不得出现。
+- 写入顺序固定为内容 blobs → manifest blob → append-only event。事件存在时所有引用 blob 必须存在且 digest 相符；仅存在的孤立 blob 不构成 held 状态，可由既有清理机制回收。
+- blob root 与 shared Git index 无关；隔离前后 `git write-tree` identity 必须保持不变。restore 仅把 current identity 的 bytes 供给新的 dispatch/attempt，discard 不写工作树；两者均以事件记录原因。
 
 ## 4. 可观察出口（测试断言基础）
 
@@ -745,13 +901,24 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）：
 | `refs/trac/rgr/{run}/{task}/{attempt}/red` | git ref 存在 + 指向 test-only diff commit | AC-FR0070-03/04 |
 | git commit G | parent=B + trailers（Tracks-Task/Tracks-Attempt/Tracks-R/Tracks-Issue/Tracks-AC） | AC-FR0120-01/02, AC-FR0220-03 |
 | git commit R | test-only diff on B | AC-FR0070-03 |
-| `.tracks/project/project.toml` | TOML schema 合规（integration/e2e framework/paths/collect/run/cwd） | AC-FR0190-03 |
+| `.tracks/projects/project.toml`（DRAFT bootstrap）与迁移后的 `.tracks/project/project.toml`（产品终态） | TOML schema 合规；产品终态只接受 singular 路径 | AC-FR0190-03 |
 | `tracks/agents/Devon.md` | frontmatter version + IQ，无 permission 块 | AC-FR0170-02 |
 | `tracks/skills/tracks-prism-impl/SKILL.md` | frontmatter name + version；内容为语义判据 | AC-FR0050-04 |
 | git 工作区 | 工具运行前后无文件变化（NFR-0010） | AC-NFR0010-01 |
 | `.tracks/runtime/tracks.db` events 表 | M-IMPL 事件 append-only | AC-NFR0020-01/02 |
 | `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/evidence.json` | canonical bundle：candidate artifact/SHA、run/backend/provenance、agent I/O refs/digests、event bounds、required Devon phases、RGR lineage、gate observations、boundary | AC-FR0230-01/02/03, AC-FR0231-01/02, AC-FR0232-01/02, AC-NFR0080-01/02 |
 | `.tracks/runtime/release-evidence/v1/{candidate_sha}/{run_id}/blobs/{sha256}` | 脱敏 agent I/O/event slice content-addressed bytes | AC-FR0231-01/02, AC-FR0232-01, AC-NFR0080-01 |
+
+### 4e. doc-comment-first 可观察出口
+
+| # | 出口 | 可观察字段/文本 | 关联 AC |
+|:---|:---|:---|:---|
+| 1 | events 表 §1m 事件 | record_id, origin role/task/phase/dispatch/attempt, thread_ids, route, quarantine identity/status, reason, next dispatch/attempt, rejected_paths | AC-FR0234-01/02/04, AC-FR0235-01/02/03, AC-FR0236-01/02/03/04, AC-FR0237-01/02/03, AC-NFR0090-01/02/03 |
+| 2 | `trac status` | §2e 精确 doc-gap/origin/quarantine/adjudication 状态；普通 outcome 不显示 doc-gap | AC-FR0234-03/04, AC-FR0235-01/02, AC-FR0236-02/03, AC-FR0237-02 |
+| 3 | `trac discuss query` | 本 outcome 新增线程、回复、open/resolved | AC-FR0234-02/03, AC-FR0235-01/02/03 |
+| 4 | `trac replay` / `trac report` | detected→adjudicated→quarantined→restored/discarded→resumed 及 atomic rejection | AC-FR0234-03, AC-FR0235-01, AC-FR0236-01/03/04, AC-FR0237-02/03, AC-NFR0090-01/02/03 |
+| 5 | Git/worktree 与 Runtime blob identities | shared index 未变；Human/pre-dirty bytes 未变；manifest/blob digest 可重放；旧 outcome 无 commit/checkpoint/gate/success | AC-FR0236-01/02/04, AC-FR0237-01, AC-NFR0090-02/03 |
+| 6 | `command.issued` 新 dispatch | role/task/phase 与 origin 相同，dispatch_id 不同，attempt 递增，恢复内容 identity（如有） | AC-FR0235-03, AC-FR0236-04, AC-FR0237-02, AC-NFR0090-03 |
 
 ### 4d. release-evidence CLI / CI 出口
 
@@ -855,6 +1022,20 @@ v0.4 已建立的 8 个 IF- 标识在 IF-004 §5 定义，合同不变、不可�
 - **实现模块**：checks/release_evidence.py, cli/main.py。
 - **对应 §section**：§2d, §3h, §4c/§4d。
 - **关联 FR**：FR-0230-03, FR-0231-01/02, FR-0232-01/02/03/04/05, FR-0233-02/03, NFR-0080-01/02。
+
+### IF-DOCGAP-001 outcome 文档评论优先检查与裁定合同
+
+- **合同**：§1k/§1m 的文档增量分类、优先级、DocGapRecord 与事件；§2e/§4e 的 `trac run/status/discuss/replay/report` 交互出口。合法讨论暂停普通验证并由 Prism 在原线程二选一裁定；非法正文整回合原子拒绝；无变化走原路径。
+- **实现模块**：executor/doc_comment.py、executor/executor.py、effects/opencode.py、kernel/machine.py、discuss/parser.py、report.py、cli/main.py。
+- **对应 §section**：§1k、§1m、§2e、§4e。
+- **关联 FR**：FR-0234、FR-0235、FR-0237、NFR-0090。
+
+### IF-QUARANTINE-001 outcome 授权变化隔离与新 attempt 恢复合同
+
+- **合同**：§1l 的 QuarantineDescriptor/ResumeDecision 与 content-addressed 持久化；只保存 Agent 可归因且授权的非文档变化，不用共享 index，不触及 Human/pre-dirty；current 才恢复、stale 默认丢弃，且一律进入新 dispatch/attempt 后重验。
+- **实现模块**：executor/doc_comment.py、executor/executor.py、effects/audit.py、store/store.py、kernel/machine.py、report.py。
+- **对应 §section**：§1l、§1m、§2e、§4e。
+- **关联 FR**：FR-0234-01/03、FR-0235-03、FR-0236、FR-0237-01/02、NFR-0090。
 
 **有效性校验机制**（design-trace validator 扩展，FR-0140，承自 IF-004 §5）：
 
