@@ -516,9 +516,17 @@ def _git(repo, *args, check=True):
 
 
 def has_diff(repo, doc_path, base_sha):
-    """Check if doc has any diff vs base_sha."""
+    """Check if doc has any diff vs base_sha, including untracked files.
+
+    ``git diff <base_sha>`` is blind to new files that haven't been
+    ``git add``-ed yet (Shield WRITE / Devon M-IMPL create fresh files).
+    Fall back to ``git status --porcelain`` to catch untracked paths.
+    """
     proc = _git(repo, "diff", base_sha, "--", str(doc_path), check=False)
-    return bool(proc.stdout.strip())
+    if proc.stdout.strip():
+        return True
+    status_proc = _git(repo, "status", "--porcelain", "--", str(doc_path), check=False)
+    return bool(status_proc.stdout.strip())
 
 
 def _load_base_text(repo, doc_path, base_sha):

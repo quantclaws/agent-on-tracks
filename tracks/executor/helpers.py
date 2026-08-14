@@ -148,9 +148,17 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
 
 def _parse_collected_count(stdout: str) -> int:
-    """Parse the test count from pytest --collect-only -q output (lines
-    like ``N tests collected`` or ``N errors``). Sums across sections."""
+    """Parse the test count from pytest --collect-only -q output.
+
+    Handles two formats:
+    - Older pytest: trailing ``N tests collected`` line.
+    - pytest 9.1+: per-file ``path/to/test.py: N`` lines with no trailer.
+    Also catches ``N errors`` in either format.
+    """
     m = re.findall(r"(\d+) tests? collected", stdout)
+    if m:
+        return sum(int(n) for n in m)
+    m = re.findall(r"^.*\.py:\s*(\d+)\s*$", stdout, re.MULTILINE)
     if m:
         return sum(int(n) for n in m)
     m = re.findall(r"(\d+) errors?", stdout)

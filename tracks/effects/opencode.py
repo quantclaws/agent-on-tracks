@@ -21,8 +21,11 @@ import contextlib
 import json
 import os
 import re
+import select
 import signal
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from tracks import paths, templating
@@ -962,79 +965,190 @@ class OpencodeBackend:
         return self.model
 
     def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
-        cmd = [
-            "opencode",
-            "run",
-            "--agent",
-            name,
-            "--format",
-            "json",
-            "--dir",
-            str(self.repo),
-            "--auto",
-            prompt,
-        ]
-        # opencode-logger plugin defaults to <repo>/logs/opencode; redirect
-        # it under .opencode/logs so the repo root stays clean.
+        """Run opencode agent with streaming stdout and manifest detection."""
+        cmd = self._build_cmd(name, prompt)
         env = {**os.environ, "OPENCODE_LOGGER_DIR": ".opencode/logs"}
-        model = self._resolve_model(name)
-        if model:
-            cmd.extend(["--model", model])
-        if self.debug:
-            cmd.extend(["--print-logs", "--log-level", "DEBUG"])
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
-        # Debug mode: redirect stderr (opencode logs via --print-logs) to a
-        # log file under .tracks/runtime/log/. stdout (JSON events) is still
-        # captured via PIPE for _check_json; the log file captures stderr in
-        # real-time for live monitoring (tail -f). After the process exits,
-        # we read the file back so _check_json/_looks_provider_error still
-        # have the stderr string for failure classification.
-        log_path = None
-        log_fh = None
-        if self.debug:
-            log_path = self._debug_log_path(name)
-            # File handle lifetime spans Popen+communicate; cannot use a context
-            # manager here because subprocess writes to it asynchronously.
-            log_fh = open(log_path, "w", buffering=1)  # line-buffered  # noqa: SIM115
+        log_path = self._debug_log_path(name) if self.debug else None
+        log_fh = open(log_path, "w", buffering=1) if log_path else None  # noqa: SIM115
         try:
             proc = subprocess.Popen(
-                cmd,
-                cwd=self.repo,
-                env=env,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                cmd, cwd=self.repo, env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=log_fh if log_fh else subprocess.PIPE,
-                text=True,
-                start_new_session=True,
+                text=True, start_new_session=True,
             )
         except FileNotFoundError as err:
             if log_fh:
                 log_fh.close()
             raise OpencodeError("opencode_missing", "opencode executable not found") from err
-        # No production timeout: the Runtime Agent runs to completion and is
-        # monitored via its output, never killed for elapsed time (prior
-        # commit ddd2f71 lived only on a deleted release branch). Operator
-        # cancellation (Ctrl-C) is honored: start_new_session=True gives the
-        # child its own process group, so SIGINT to the operator's foreground
-        # group does not reach it - we catch KeyboardInterrupt, terminate/kill
-        # the child group, reap it, then re-raise so the operator stays in
-        # control. This is operator cancellation, not a Runtime kill policy.
+
+        stdin_writer = self._start_stdin_pump(proc, console_input)
+        stderr_reader, stderr_lines = self._start_stderr_pump(proc, log_fh)
+
+        timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "1800"))
+        stdout_chunks: list[str] = []
+        manifest_found = False
         try:
-            if self.debug:
-                stdout, _ = proc.communicate(input=console_input)
-            else:
-                stdout, stderr = proc.communicate(input=console_input)
+            stdout_chunks, manifest_found = self._stream_stdout(proc, timeout)
         except KeyboardInterrupt:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
-                proc.communicate(timeout=5)
+                proc.wait(timeout=5)
             if log_fh:
                 log_fh.close()
             raise
+
+        if manifest_found or proc.poll() is None:
+            self._kill_group(proc.pid)
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=10)
+
+        self._join_pump_threads(stdin_writer, stderr_reader, log_fh)
+
         if log_fh:
             log_fh.close()
             stderr = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        else:
+            stderr = "".join(stderr_lines)
+        return subprocess.CompletedProcess(cmd, proc.returncode, "".join(stdout_chunks), stderr)
+
+    def _build_cmd(self, name: str, prompt: str) -> list[str]:
+        cmd = ["opencode", "run", "--agent", name, "--format", "json",
+               "--dir", str(self.repo), "--auto", prompt]
+        model = self._resolve_model(name)
+        if model:
+            cmd.extend(["--model", model])
+        if self.debug:
+            cmd.extend(["--print-logs", "--log-level", "DEBUG"])
+        return cmd
+
+    @staticmethod
+    def _start_stdin_pump(proc, console_input):
+        """Write console_input to stdin in a background thread."""
+        if console_input is None:
+            with contextlib.suppress(OSError, ValueError):
+                proc.stdin.close()
+            return None
+
+        def _write():
+            try:
+                proc.stdin.write(console_input)
+                proc.stdin.flush()
+            except (OSError, ValueError):
+                pass
+            finally:
+                with contextlib.suppress(OSError, ValueError):
+                    proc.stdin.close()
+
+        t = threading.Thread(target=_write, daemon=True)
+        t.start()
+        return t
+
+    @staticmethod
+    def _start_stderr_pump(proc, log_fh):
+        """Capture stderr in a background thread (non-debug mode only)."""
+        if log_fh:
+            return None, []
+        stderr_lines: list[str] = []
+
+        def _read():
+            try:
+                while True:
+                    chunk = proc.stderr.read(4096)
+                    if not chunk:
+                        break
+                    stderr_lines.append(chunk)
+            except (OSError, ValueError):
+                pass
+
+        t = threading.Thread(target=_read, daemon=True)
+        t.start()
+        return t, stderr_lines
+
+    def _stream_stdout(self, proc, inactivity_timeout):
+        """Stream stdout via os.read, detecting manifest in real-time.
+
+        Returns (chunks, manifest_found). Timeout is inactivity-based:
+        fires only when no stdout output is received for the given seconds.
+        """
+        chunks: list[str] = []
+        buf = ""
+        fd = proc.stdout.fileno()
+        last_activity = time.monotonic()
+        while True:
+            ready, _, _ = select.select([proc.stdout], [], [], 5.0)
+            if ready:
+                last_activity = time.monotonic()
+                try:
+                    raw = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not raw:
+                    break
+                buf, found = self._process_stdout_chunk(raw, buf, chunks)
+                if found:
+                    return chunks, True
+            elif proc.poll() is not None:
+                self._drain_stdout(proc, chunks)
+                break
+            elif time.monotonic() - last_activity > inactivity_timeout:
+                break
+        return chunks, False
+
+    @staticmethod
+    def _process_stdout_chunk(raw, buf, chunks):
+        """Decode chunk, extract complete lines, check for manifest.
+        Returns (updated_buf, manifest_found)."""
+        buf += raw.decode("utf-8", errors="replace")
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            line += "\n"
+            chunks.append(line)
+            if OpencodeBackend._line_has_manifest(line):
+                return buf, True
+        return buf, False
+
+    @staticmethod
+    def _line_has_manifest(line):
+        """Check if a stdout line is a text event with a valid manifest."""
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            return False
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(event, dict) or event.get("type") != "text":
+            return False
+        payload, perr = OpencodeBackend._manifest_payload(event)
+        if perr is not None:
+            return False
+        include, ierr = OpencodeBackend._manifest_include(payload)
+        if ierr is not None:
+            return False
+        msg = payload.get("suggested_commit_message")
+        return isinstance(msg, str) and msg.strip()
+
+    @staticmethod
+    def _drain_stdout(proc, chunks):
+        """Read remaining stdout after process exit."""
+        try:
+            remaining = proc.stdout.read()
+            if remaining:
+                chunks.append(remaining)
+        except (OSError, ValueError):
+            pass
+
+    @staticmethod
+    def _join_pump_threads(stdin_writer, stderr_reader, log_fh):
+        """Reap background pump threads."""
+        if stdin_writer is not None:
+            with contextlib.suppress(Exception):
+                stdin_writer.join(timeout=5)
+        if stderr_reader is not None and not log_fh:
+            with contextlib.suppress(Exception):
+                stderr_reader.join(timeout=5)
 
     def _debug_log_path(self, name: str) -> Path:
         """Debug log file: .tracks/runtime/log/<agent>-<timestamp>.log"""
@@ -1150,28 +1264,40 @@ class OpencodeBackend:
     def _extract_manifest(
         proc: subprocess.CompletedProcess,
     ) -> tuple[dict | None, str | None, str | None]:
-        """Parse Shield WRITE's raw JSON object from the final text event."""
-        text_event = OpencodeBackend._final_text_event(proc)
-        if text_event is None:
-            return None, None, "final type=text event is missing"
-        payload, error = OpencodeBackend._manifest_payload(text_event)
-        if error is not None:
-            return None, None, error
-        include, error = OpencodeBackend._manifest_include(payload)
-        if error is not None:
-            return None, None, error
+        """Parse Shield WRITE manifest from text events.
 
-        commit_msg = payload.get("suggested_commit_message")
-        if not isinstance(commit_msg, str) or not commit_msg.strip():
-            return None, None, ("suggested_commit_message must be a non-empty string")
-        return {"include": include}, commit_msg, None
+        Scans ALL type=text events in reverse order, not just the last.
+        When opencode --auto enters a post-completion loop, the last text
+        event may be "already completed" prose, not the manifest.
+        """
+        text_events = OpencodeBackend._all_text_events(proc)
+        if not text_events:
+            return None, None, "no type=text events found in stdout"
+        last_error = "no text event contained a valid manifest"
+        for text_event in reversed(text_events):
+            payload, error = OpencodeBackend._manifest_payload(text_event)
+            if error is not None:
+                last_error = error
+                continue
+            include, error = OpencodeBackend._manifest_include(payload)
+            if error is not None:
+                last_error = error
+                continue
+            commit_msg = payload.get("suggested_commit_message")
+            if not isinstance(commit_msg, str) or not commit_msg.strip():
+                last_error = "suggested_commit_message must be a non-empty string"
+                continue
+            return {"include": include}, commit_msg, None
+        return None, None, last_error
 
     @staticmethod
-    def _final_text_event(
+    def _all_text_events(
         proc: subprocess.CompletedProcess,
-    ) -> dict | None:
+    ) -> list[dict]:
+        """Return all type=text events from stdout, in chronological order."""
         out = (proc.stdout or "").strip()
-        for line in reversed(out.splitlines()):
+        events: list[dict] = []
+        for line in out.splitlines():
             stripped = line.strip()
             if not stripped.startswith("{"):
                 continue
@@ -1180,8 +1306,16 @@ class OpencodeBackend:
             except json.JSONDecodeError:
                 continue
             if isinstance(event, dict) and event.get("type") == "text":
-                return event
-        return None
+                events.append(event)
+        return events
+
+    @staticmethod
+    def _final_text_event(
+        proc: subprocess.CompletedProcess,
+    ) -> dict | None:
+        """Return the last type=text event (kept for backward compat)."""
+        events = OpencodeBackend._all_text_events(proc)
+        return events[-1] if events else None
 
     @staticmethod
     def _manifest_payload(
