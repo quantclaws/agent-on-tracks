@@ -1195,3 +1195,92 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
         )
     finally:
         cleanup_worktree(gate)
+
+
+def test_m_impl_event_recorded_respects_retry_cutoff(tmp_path):
+    """Regression (run 01KZTHE7 T-013, 2026-08-16): `trac retry` (FR-11)
+    resets the attempt budget, so a post-retry attempt number N is a fresh
+    attempt, not the pre-retry attempt N. Idempotency scans must only
+    consider events strictly after the last human.retry."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "green.committed",
+        {
+            "g_sha": "a" * 40,
+            "task_id": task["task_id"],
+            "attempt": 1,
+            "r_sha": "b" * 40,
+            "base_sha": "c" * 40,
+            "trailers": [],
+        },
+    )
+    executor = _executor(repo, store)
+    assert executor._m_impl_event_recorded("green.committed", task["task_id"], 1), (
+        "without a retry the recorded event must be visible"
+    )
+    store.append("RUN", "v0.5", "human.retry", {"task_id": task["task_id"]})
+    assert not executor._m_impl_event_recorded("green.committed", task["task_id"], 1), (
+        "after human.retry the pre-retry event is superseded"
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "green.committed",
+        {
+            "g_sha": "d" * 40,
+            "task_id": task["task_id"],
+            "attempt": 1,
+            "r_sha": "e" * 40,
+            "base_sha": "f" * 40,
+            "trailers": [],
+        },
+    )
+    assert executor._m_impl_event_recorded("green.committed", task["task_id"], 1), (
+        "a fresh post-retry event must be visible again"
+    )
+
+
+def test_commit_green_stale_prefailure_does_not_block_after_retry(tmp_path):
+    """Regression (run 01KZTHE7 T-013, 2026-08-16): a verdict.failed(
+    impl_defect, attempt=1) recorded BEFORE human.retry must not false-
+    positive the post-retry fresh attempt=1 with "Runtime gate already
+    failed for this attempt"."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "reason": "stale pre-retry failure",
+            "evidence": "legacy",
+            "task_id": task["task_id"],
+            "attempt": 1,
+        },
+    )
+    store.append("RUN", "v0.5", "human.retry", {"task_id": task["task_id"]})
+    state = store.state("RUN")
+    assert state.current_attempt == 0, "retry must reset the attempt budget"
+
+    executor = _executor(repo, store)
+    before = len(list(store.events("RUN")))
+    executor._do_commit_green(
+        Command("commit_green", {"task_id": task["task_id"]}, command_id="C-CG"),
+        state,
+        task["task_id"],
+        None,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    stale_blocks = [
+        ev
+        for ev in new_events
+        if ev.type == "verdict.failed"
+        and ev.payload.get("reason") == "Runtime gate already failed for this attempt"
+    ]
+    assert not stale_blocks, (
+        "pre-retry verdict.failed must not block the post-retry fresh attempt"
+    )

@@ -1297,14 +1297,30 @@ class MImplRuntimeMixin:
             return
         self._emit("verdict.passed", {"check": pass_check}, command_id=cmd.command_id)
 
+    def _retry_cutoff_seq(self) -> int:
+        # FR-11: `trac retry` resets the attempt budget, so a fresh attempt
+        # number N after a retry is a *different* attempt from an attempt N
+        # recorded before it. Guards that scan prior verdict.failed /
+        # committed events must only consider events strictly after the last
+        # human.retry, otherwise the stale pre-retry verdict (same task,
+        # same attempt number) false-positives the fresh attempt forever
+        # (run 01KZTHE7 T-013: seq 937/942 blocked post-retry attempt 1).
+        cutoff = 0
+        for ev in self.store.events(self.run_id):
+            if ev.type == "human.retry":
+                cutoff = ev.seq
+        return cutoff
+
     def _m_impl_event_recorded(
         self,
         event_type: str,
         task_id: str,
         attempt: int,
     ) -> bool:
+        cutoff = self._retry_cutoff_seq()
         return any(
             ev.type == event_type
+            and ev.seq > cutoff
             and ev.payload.get("task_id") == task_id
             and ev.payload.get("attempt") == attempt
             for ev in self.store.events(self.run_id)
@@ -1362,6 +1378,7 @@ class MImplRuntimeMixin:
     def _do_commit_green(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
+        cutoff = self._retry_cutoff_seq()
         if any(
             ev.type == "verdict.failed"
             and ev.payload.get("check") == "impl_defect"
@@ -1372,6 +1389,10 @@ class MImplRuntimeMixin:
             # stale diagnosis verdict (seq 890) hours later.
             and ev.payload.get("task_id") == task_id
             and ev.payload.get("attempt") == attempt
+            # Retry cutoff: pre-retry verdicts for the same attempt number
+            # describe a superseded attempt (FR-11 budget reset) and must
+            # not block the post-retry fresh attempt.
+            and ev.seq > cutoff
             for ev in self.store.events(self.run_id)
         ):
             self._emit_gate_failure(
