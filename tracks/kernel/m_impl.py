@@ -247,7 +247,10 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
     """DIAGNOSE four-way routing (flow.md §10.1, FR-0150)."""
     s.diagnose_classification = check
     if check == "impl_defect":
-        s.substate = "GREEN"
+        if s.r_tree_identity is None:
+            s.substate = "RED"
+        else:
+            s.substate = "GREEN"
         _reset_doc(s)
         _consume_attempt(s)
     elif check == "test_defect":

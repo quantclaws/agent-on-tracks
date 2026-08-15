@@ -1211,6 +1211,47 @@ def test_diagnose_impl_defect_to_green():
     assert s.current_attempt == 1
 
 
+def test_diagnose_impl_defect_without_r_checkpoint_routes_to_red():
+    """Regression: when RED crashed (no r_tree_identity) and DIAGNOSE returns
+    impl_defect, the kernel must route back to RED, not GREEN.
+
+    Routing to GREEN with r_tree_identity=None trips the runtime stale-check
+    at m_impl_runtime.py:384 (phase=green but no R checkpoint), causing a
+    stale failure loop. With a checkpoint present, impl_defect still routes
+    to GREEN as before."""
+    # RED crashes (failed outcome) -> DIAGNOSE, no R checkpoint created.
+    red_crash_to_diagnose = [
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        _devon_failed_outcome(),
+    ]
+    verdict = ("verdict.failed", {"check": "impl_defect", "attempt": 1})
+
+    # No R checkpoint: impl_defect must route to RED, not GREEN.
+    s = state_of(*red_crash_to_diagnose, verdict)
+    assert s.r_tree_identity is None
+    assert s.substate == "RED"
+    assert s.current_attempt == 2  # RED crash consumed attempt 1, impl_defect retry consumes another
+
+    # With an R checkpoint present (via _diagnose_state), impl_defect routes
+    # to GREEN as before.
+    s2 = _diagnose_state("impl_defect")
+    assert s2.r_tree_identity == "abc123"
+    assert s2.substate == "GREEN"
+
+
 def test_diagnose_test_defect_to_shield_fix():
     """DIAGNOSE + test_defect -> SHIELD_FIX (Shield)."""
     s = _diagnose_state("test_defect")
