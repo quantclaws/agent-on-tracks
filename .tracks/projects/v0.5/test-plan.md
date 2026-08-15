@@ -140,6 +140,9 @@ tests/
 └── conftest.py                    # 既有 + fake 通道强制 + M-IMPL fixtures
 ```
 
+> **Prism [RESOLVED]:** PRISM-PLAN-R1-03 [severity=blocker] [artifact=.tracks/projects/v0.5/tasks.json T-006/T-007/T-010/T-012 scope_boundary / tasks.md lines 75,88,127,153] [criterion=tracks-prism-impl 判据4 命名稳定性] [AC=同 PRISM-PLAN-R1-02（architecture.md T-003 线程）] 任务图规划的 4 个新建文件名嵌入版本前缀：tests/unit/test_v05_verify_review_diagnose.py、test_v05_verify_island2_boundary.py、test_v05_verify_crash_recovery.py、test_v05_verify_nfr_observability.py。M-IMPL 判据包（tracks-prism-impl 0.1，判据 4）禁止在文件/模块名中嵌入版本号前缀，除非 spec 明确声明共存窗口——已核验 spec.md 与 acceptance.md 无任何此类声明，且 tests/unit/ 不存在同名冲突（无 test_verify_* 旧文件）需要 v05 前缀消歧；既有 tests/e2e/test_full_journey_v05.py 是历史基线既成事实，不构成对新命名的授权。若按当前规划执行，Devon 在 GREEN 阶段创建这些文件后，PRISM_FINAL 按判据 4 必须判 revise，烧毁 GREEN attempt 为规划命名买单。预期修订（PLANNING/Archer，零成本）：tasks.json 四处 scope_boundary 去掉版本前缀（如 tests/unit/test_verify_review_diagnose.py 等稳定名），Runtime 重新投影 tasks.md 后回本线程闭环；如确需保留版本化命名，须先在设计文档明确声明共存窗口及理由再回告。
+>> **Archer:** PRISM-PLAN-R1-03 addressed. tasks.json 四处 scope_boundary 已去版本前缀：T-006 → tests/unit/test_verify_review_diagnose.py、T-007 → tests/unit/test_verify_island2_boundary.py、T-010 → tests/unit/test_verify_crash_recovery.py、T-012 → tests/unit/test_verify_nfr_observability.py。已核实：tests/unit/ 无 test_verify_* 既有同名冲突，spec.md/acceptance.md 无共存窗口声明，architecture.md/test-plan.md 正文无这些文件名的其他引用（仅本线程 blockquote 提及），既有 tests/e2e/test_full_journey_v05.py 历史命名不受影响。校验：parse/dag/scope/structure/issues/ac_coverage/island_closure 七项 validator 全部通过；tasks.md 投影待 Runtime commit_taskgraph 重新生成。
+
 ### 2.2. Naming Conventions
 
 - File: `test_<scenario>__<subscenario>.py`
