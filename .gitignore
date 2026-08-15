@@ -13,3 +13,6 @@ dist/
 
 # runtime opencode session logs
 logs/
+
+# handoff 是一次性交接文件，用完即删，不入库（2026-08-15 用户裁定）
+.tracks/wiki/handoff-*.md
