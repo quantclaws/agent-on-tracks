@@ -316,7 +316,7 @@ def test_check_rejects_stale_and_candidate_sha_mismatch(host_repo, trac):
 
 
 @pytest.mark.integration
-# AC-FR0232-02@v0.5 TRACKS-TRACE check success text/JSON and exit 0 contract
+# AC-FR0232-03@v0.5 TRACKS-TRACE check success text/JSON and exit 0 contract
 def test_check_success_text_json_and_exit_contract(host_repo, trac):
     """Verify the deterministic text/JSON contract on a fabricated bundle (legal Red).
 
