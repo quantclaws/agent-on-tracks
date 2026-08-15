@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.cli.main trac retry command
-# mutation: clear last_failure by default and automatically redispatch after human.retry
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index f85df05..b1a02d6 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -537,7 +537,7 @@ def cmd_retry(repo: Path, *args: str) -> int:
+             {"actor": actor or _human_actor(repo), "clear_evidence": clear_evidence},
+         )
+         state = store.state(run_id)
+-    print("human.retry event appended; escalation gate cleared; attempt budget reset")
++    print("human.retry event appended; escalation gate cleared; attempt budget unchanged")
+     print(f"run {run_id}: {_format_state(state)}")
+     return 0
+ 

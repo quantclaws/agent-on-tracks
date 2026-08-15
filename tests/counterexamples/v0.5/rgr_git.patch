@@ -1,6 +1,12 @@
 diff --git a/tracks/executor/rgr.py b/tracks/executor/rgr.py
+index 6399246..ead64c7 100644
 --- a/tracks/executor/rgr.py
 +++ b/tracks/executor/rgr.py
-@@ -56 +56 @@ def create_red_ref(
--    raise NotImplementedError("IF-IMPL-004")
-+    return RedRef("refs/trac/rgr/wrong", base_sha, False)
+@@ -377,7 +377,6 @@ def _green_message(
+         f"GREEN: {task_id}\n\n"
+         f"Tracks-Task: {task_id}\n"
+         f"Tracks-Attempt: {attempt}\n"
+-        f"Tracks-R: {r_sha}\n"
+         f"Tracks-Issue: {issue_number}\n"
+         f"Tracks-AC: {','.join(ac_refs)}\n"
+     )

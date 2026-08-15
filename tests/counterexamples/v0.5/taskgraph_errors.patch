@@ -1,6 +1,13 @@
 diff --git a/tracks/executor/taskgraph.py b/tracks/executor/taskgraph.py
+index 6a05a70..e9ecc30 100644
 --- a/tracks/executor/taskgraph.py
 +++ b/tracks/executor/taskgraph.py
-@@ -56 +56 @@ def validate_dag(
--    raise NotImplementedError("IF-IMPL-003")
-+    return (True, None)
+@@ -187,7 +187,7 @@ def validate_dag(
+     adj: dict[str, list[str]] = {}
+     for t in tasks:
+         adj[t.task_id] = [d for d in t.depends_on if d != "-" and d in ids]
+-    cycle = _find_cycle(adj)
++    cycle = None  # counterexample: cycle detection disabled
+     if cycle is not None:
+         return (False, f"cycle: {cycle}")
+     return (True, None)

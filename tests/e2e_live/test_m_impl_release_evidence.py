@@ -315,6 +315,7 @@ def test_real_opencode_m_impl_rgr_release_evidence():
 
 @pytest.mark.e2e_live
 # AC-FR0230-02@v0.5 TRACKS-TRACE public events/Git/report verify complete stage sequence
+# AC-FR0232-03@v0.5 TRACKS-TRACE satisfied text + exit 0 on the real host journey
 def test_real_journey_exposes_events_lineage_report_and_boundary():
     """Verify the HOST journey's public events, git refs, and report (legal Red).
 

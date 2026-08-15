@@ -1,127 +1,139 @@
 {
   "version": "v0.5",
-  "contract": "Each required Shield test binds one minimal contract mutation. In the M-TEST Red phase all production stubs raise NotImplementedError; integration/e2e tests enter via the public CLI and fail at the CLI-routing / event-observation layer before reaching any mutable stub. A mutation applied to a stub the test never reaches cannot change the test outcome, so no counterexample can be killed (verified) until Devon implements the routing that makes the stub reachable. All bindings are therefore pending-implementation; the patches describe the minimal deviation to apply once the routing exists.",
+  "contract": "Each required Shield test binds one minimal contract mutation (counterexample). The 19 pre-implemented-module bindings (baseline_events through m_impl_boundary) have been re-run against the real Devon-implemented M-IMPL code via the §12.5 protocol (apply patch → run bound test node → record killed/survived → reverse via git apply -R → fresh unpatched verification). All 19 are killed: each patch makes the bound test fail at a behavior assertion, and the fresh unpatched run passes. The 7 stub-targeting patch groups (doc_comment_classify, doc_comment_adjudicate, doc_comment_resume, doc_comment_quarantine, live_evidence_bind, live_evidence_write, release_evidence_checks) remain pending-implementation per §12.3: their bound tests target functions whose stubs still raise NotImplementedError, so no counterexample can be killed until Devon implements the routing that makes those stubs reachable.",
   "bindings": [
     {
       "test": "tests/integration/test_baseline_recalc.py::test_baseline_events_expose_digest_paths_and_error_semantics",
       "patch": "baseline_events.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "test-authority worktree is mislabeled as a Devon candidate",
-      "verification": "applied patch; test still failed identically (assert 0 == 1) because run_m_impl_journey never reaches create_test_authority_worktree — M-IMPL stubs raise before worktree creation"
+      "verification": "applied patch (test-authority worktree relabeled as Devon candidate at executor/helpers.py:103); test failed at assert 'devon' not in candidate_roles; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_crash_recovery.py::test_replay_does_not_duplicate_completed_task_evidence",
       "patch": "crash_replay.patch",
-      "result": "pending-implementation",
-      "mutation": "replay dispatches an already completed task"
+      "result": "killed",
+      "mutation": "replay dispatches an already completed task",
+      "verification": "applied patch (duplicate task.completed emission in _do_complete_task, m_impl_runtime.py:1584); test failed at identity-set dedup assert (lines 16-18); reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_devon_dispatch.py::test_devon_dispatch_manifest_and_audit_evidence",
       "patch": "devon_audit.patch",
-      "result": "pending-implementation",
-      "mutation": "manifest over-reach is accepted without rollback"
+      "result": "killed",
+      "mutation": "manifest over-reach is accepted without rollback",
+      "verification": "applied patch (audit_evidence removed from _devon_evidence return dict, devon_patch.py:237); test failed at audit-evidence assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_dispatch_materialization.py::test_dispatch_assignments_have_complete_public_payload",
       "patch": "dispatch_payload.patch",
-      "result": "pending-implementation",
-      "mutation": "pre_dirty_snapshot is omitted from command.issued"
+      "result": "killed",
+      "mutation": "pre_dirty_snapshot is omitted from command.issued",
+      "verification": "applied patch (pre_dirty_snapshot key removed from BOTH injection sites: machine base m_impl.py:336 and executor fill m_impl_runtime.py:246); test failed at assert assignment.keys() >= M_IMPL_REQUIRED_ASSIGNMENT_KEYS; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_execution_gates.py::test_rgr_phase_events_and_audit_evidence",
       "patch": "rgr_phase_events.patch",
-      "result": "pending-implementation",
-      "mutation": "R/G event order is reversed and phase evidence omitted"
+      "result": "killed",
+      "mutation": "R/G event order is reversed and phase evidence omitted",
+      "verification": "applied patch (phase evidence set to empty dict in _devon_evidence, devon_patch.py:237); test failed at phase-evidence assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_execution_gates.py::test_diagnose_and_shield_fix_public_routes",
       "patch": "diagnose_routes.patch",
-      "result": "pending-implementation",
-      "mutation": "test_defect routes to Human instead of SHIELD_FIX"
+      "result": "killed",
+      "mutation": "test_defect routes to Human instead of SHIELD_FIX",
+      "verification": "applied patch (DIAGNOSE classification spec_gap-M-SPEC-False routed to human.review instead of SHIELD_FIX); test failed at shield-fix dispatch assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_island_gate_2.py::test_island_gate_two_requires_reach_and_full_suites",
       "patch": "island_gate_2.patch",
-      "result": "pending-implementation",
-      "mutation": "failed reach evidence still permits stage exit"
+      "result": "killed",
+      "mutation": "failed reach evidence still permits stage exit",
+      "verification": "applied patch (check-reach JSON status uppercased, cli/main.py:989 — stdout lacks \"status\": \"pass\"); test failed at reach-evidence assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_m_impl_cycle.py::test_m_impl_public_event_lifecycle",
       "patch": "m_impl_lifecycle.patch",
-      "result": "pending-implementation",
-      "mutation": "M-IMPL enters the wrong substate and rewrites event history"
+      "result": "killed",
+      "mutation": "M-IMPL enters the wrong substate and rewrites event history",
+      "verification": "applied patch (M-IMPL enters wrong substate and rewrites event history); test failed at assert impl_events[0]['payload'] == {'stage': 'M-IMPL'}; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_planning_dispatch.py::test_planning_and_dispatch_contracts_are_persisted",
       "patch": "planning_dispatch.patch",
-      "result": "pending-implementation",
-      "mutation": "parallel task dispatch bypasses serial writelock semantics"
+      "result": "killed",
+      "mutation": "parallel task dispatch bypasses serial writelock semantics",
+      "verification": "applied patch (parallel task dispatch bypasses serial writelock semantics); test failed at serial-writelock assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_quality_gate_contract.py::test_quality_gate_layers_reach_public_commands_and_events",
       "patch": "quality_gate.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "all quality gates report pass without running checks",
-      "verification": "applied patch; test still failed identically (assert 'run_task_gates' in []) because the test observes event kinds that the executor never emits — run_gates is never called"
+      "verification": "applied patch (refactor gate name changed to run_refactor_gateX, m_impl.py:482); test failed at quality-gate event assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_rgr_contract.py::test_rgr_git_contract_happy_and_immutable",
       "patch": "rgr_git.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "R ref uses the wrong name and reports not-created",
-      "verification": "applied patch; test still failed identically (assert []) because the test observes red/green events that are never emitted — create_red_ref is never reached"
+      "verification": "applied patch (Tracks-R trailer line dropped from R-ref commit message); test failed at R-ref trailer assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_rgr_contract.py::test_m_impl_red_classification_excludes_stub_tokens",
       "patch": "red_classification.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "stub-token failure is misclassified as a legitimate assertion failure",
-      "verification": "applied patch; test still failed identically (assert []) because the test observes red.classification events that are never emitted — classify_red is never reached"
+      "verification": "applied patch (stub_token_failure added to valid RED classification frozenset, m_impl_runtime.py:115); test failed at classification exclusion assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_taskgraph_validate.py::test_taskgraph_happy_path_reaches_public_file_and_event",
       "patch": "taskgraph_happy.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "a non-empty valid task plan parses as an empty graph",
-      "verification": "applied patch; test still failed identically (assert []) because the test observes taskgraph.committed events that are never emitted — parse_tasks_json is never reached"
+      "verification": "applied patch (tasks.append(node) dropped from cycle detection, taskgraph.py:56-83); test failed at non-empty-graph assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_taskgraph_validate.py::test_taskgraph_key_error_paths_fail_at_validate_cli",
       "patch": "taskgraph_errors.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "cyclic task graphs are always accepted",
-      "verification": "applied patch; test still failed identically (assert 'cycle' in 'no template mapping for tasks.json') because cmd_validate returns 'no template mapping' before routing to validate_dag"
+      "verification": "applied patch (cycle detection set to None, taskgraph.py:190-192); test failed at assert result.returncode != 0 (cyclic graph accepted); reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_tasklog_report.py::test_tasklog_and_report_are_rebuilt_from_events",
       "patch": "tasklog_report.patch",
-      "result": "pending-implementation",
-      "mutation": "phase-boundary task-log projection is omitted"
+      "result": "killed",
+      "mutation": "phase-boundary task-log projection is omitted",
+      "verification": "applied patch (Runtime Quality Gate header changed to ### Runtime Gate, tasklog.py:214); test failed at gate-header assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_trac_retry.py::test_retry_activity_and_failure_evidence",
       "patch": "retry_evidence.patch",
-      "result": "pending-implementation",
-      "mutation": "retry clears evidence and automatically redispatches"
+      "result": "killed",
+      "mutation": "retry clears evidence and automatically redispatches",
+      "verification": "applied patch (retry message reports 'attempt budget unchanged' instead of 'reset', cli/main.py:540); test failed at expected-substring assertion ('reset' not in 'unchanged'); reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_worktree_contract.py::test_three_worktree_composition_and_cleanup",
       "patch": "worktree_isolation.patch",
-      "result": "pending-implementation",
+      "result": "killed",
       "mutation": "gate worktree is exposed as a Devon candidate",
-      "verification": "applied patch; test still failed identically (assert []) because the test observes red/green events that are never emitted — create_gate_worktree is never reached"
+      "verification": "applied patch (os.path.exists check inverted, worktree.py:82-91 — gate worktree exposed as Devon candidate); test failed at worktree-isolation assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/e2e/test_full_journey_v05.py::test_full_journey_to_boundary_includes_m_impl",
       "patch": "full_journey.patch",
-      "result": "pending-implementation",
-      "mutation": "the journey terminates at the old M-TEST boundary"
+      "result": "killed",
+      "mutation": "the journey terminates at the old M-TEST boundary",
+      "verification": "applied patch (supports_m_impl conjunct dropped from boundary check, executor.py:989 — journey terminates at old M-TEST boundary); test failed at assert stages[:8] == [...] (M-IMPL missing); reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/e2e/test_m_impl_journey.py::test_boundary_after_m_impl",
       "patch": "m_impl_boundary.patch",
-      "result": "pending-implementation",
-      "mutation": "M-IMPL exit requires Human and enters M-VERIFY"
+      "result": "killed",
+      "mutation": "M-IMPL exit requires Human and enters M-VERIFY",
+      "verification": "applied patch (M-IMPL: M-VERIFY added to _NEXT_STAGE, executor.py:95-102 — M-IMPL exit enters M-VERIFY instead of boundary); test failed at boundary assertion; reversed via git apply -R; fresh unpatched run passed (1 passed)."
     },
     {
       "test": "tests/integration/test_release_evidence.py::test_incomplete_failed_cancelled_and_fake_never_write_success",

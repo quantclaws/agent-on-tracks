@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.executor.executor RED/GREEN/REFACTOR handlers
-# mutation: emit green.committed before red.checkpointed and omit outcome phase audit evidence
+diff --git a/tracks/effects/devon_patch.py b/tracks/effects/devon_patch.py
+index d382460..da70165 100644
+--- a/tracks/effects/devon_patch.py
++++ b/tracks/effects/devon_patch.py
+@@ -234,7 +234,7 @@ class DevonPatchMixin:
+             audit_evidence["no_change_reason"] = no_change_reason
+         return {
+             **evidence,
+-            "audit_evidence": audit_evidence,
++            "audit_evidence": {},
+             **(
+                 {"r_identity": assignment["r_tree_identity"]}
+                 if phase in ("green", "refactor")

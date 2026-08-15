@@ -1,3 +1,12 @@
-# pending-implementation
-# target: tracks.effects.audit Devon manifest enforcement
-# mutation: accept a changed path outside manifest.allowed_paths without rollback or over_reach evidence
+diff --git a/tracks/effects/devon_patch.py b/tracks/effects/devon_patch.py
+index d382460..f098984 100644
+--- a/tracks/effects/devon_patch.py
++++ b/tracks/effects/devon_patch.py
+@@ -234,7 +234,6 @@ class DevonPatchMixin:
+             audit_evidence["no_change_reason"] = no_change_reason
+         return {
+             **evidence,
+-            "audit_evidence": audit_evidence,
+             **(
+                 {"r_identity": assignment["r_tree_identity"]}
+                 if phase in ("green", "refactor")

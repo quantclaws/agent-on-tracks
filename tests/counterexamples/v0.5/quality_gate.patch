@@ -1,6 +1,13 @@
-diff --git a/tracks/executor/quality_gate.py b/tracks/executor/quality_gate.py
---- a/tracks/executor/quality_gate.py
-+++ b/tracks/executor/quality_gate.py
-@@ -42 +42 @@ def run_gates(
--    raise NotImplementedError("IF-IMPL-005")
-+    return GateResult("pass", (), (), "both")
+diff --git a/tracks/kernel/m_impl.py b/tracks/kernel/m_impl.py
+index fa74121..b63d36e 100644
+--- a/tracks/kernel/m_impl.py
++++ b/tracks/kernel/m_impl.py
+@@ -479,7 +479,7 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
+             kind="commit_green", params={"stage": "M-IMPL", "task_id": s.current_task_id}
+         )
+     if sub == "REFACTOR_GATE":
+-        return Command(kind="run_refactor_gate", params={"stage": "M-IMPL"})
++        return Command(kind="run_refactor_gateX", params={"stage": "M-IMPL"})
+     if sub == "TASK_DISPATCH":
+         return Command(kind="select_task", params={"stage": "M-IMPL"})
+     if sub == "TASK_DONE":

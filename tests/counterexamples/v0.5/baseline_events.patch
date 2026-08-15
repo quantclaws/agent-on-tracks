@@ -1,6 +1,13 @@
-diff --git a/tracks/executor/worktree.py b/tracks/executor/worktree.py
---- a/tracks/executor/worktree.py
-+++ b/tracks/executor/worktree.py
-@@ -49 +49 @@ def create_test_authority_worktree(
--    raise NotImplementedError("IF-IMPL-006")
-+    return WorktreeHandle(repo, c_design_sha, "devon_candidate")
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 6f11a83..5272870 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -556,7 +556,7 @@ class MImplRuntimeMixin:
+         self._emit(
+             "baseline.frozen",
+             {
+-                "status": "current" if not missing else "stale",
++                "status": "stale" if not missing else "current",
+                 "digest": digest,
+                 "summary": m_impl_baseline_summary(vdir),
+                 "frozen_test_paths": frozen,

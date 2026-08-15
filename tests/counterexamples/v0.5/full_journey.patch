@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.kernel.machine stage progression
-# mutation: terminate at the former M-TEST boundary instead of entering M-IMPL
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+index 03b31c3..798a2f8 100644
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -986,7 +986,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
+         neutral ``tracks.capabilities``); historical v0.1/v0.4 runs and
+         malformed versions complete at the M-TEST boundary.
+         """
+-        return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(self.version)
++        return stage == "M-TEST" and nxt == "M-IMPL"
+ 
+     def _do_record_backlog(self, cmd, state, task_id, reconcile):
+         if reconcile and state.backlog_recorded:

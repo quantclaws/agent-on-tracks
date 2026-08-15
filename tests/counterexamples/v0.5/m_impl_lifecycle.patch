@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.kernel.machine M-IMPL StageDef and event projection
-# mutation: enter M-IMPL at PLANNING and rewrite an existing event row
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+index 03b31c3..f28cf0b 100644
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -968,7 +968,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
+         self._emit("stage.exited", {"stage": stage}, command_id=cmd.command_id)
+         nxt = _NEXT_STAGE.get(stage)
+         if nxt and not self._is_boundary_transition(stage, nxt):
+-            self._emit("stage.entered", {"stage": nxt}, command_id=cmd.command_id)
++            self._emit("stage.entered", {"stage": nxt, "sub": "X"}, command_id=cmd.command_id)
+         else:
+             # SM-05.6 / IF-003 §10f: no successor (or a version-gated
+             # successor) -> stop at the next-stage boundary. M-DESIGN boundary

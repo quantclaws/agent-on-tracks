@@ -1,3 +1,12 @@
-# pending-implementation
-# target: tracks.kernel.machine M-IMPL exit progression
-# mutation: require human approval and enter M-VERIFY instead of emitting boundary completion
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+index 03b31c3..6523526 100644
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -99,6 +99,7 @@ _NEXT_STAGE = {
+     "M-REQ-APPROVAL": "M-DESIGN",
+     "M-DESIGN": "M-TEST",
+     "M-TEST": "M-IMPL",
++    "M-IMPL": "M-VERIFY",
+ }
+ 
+ # reviewer role -> its verdict event type

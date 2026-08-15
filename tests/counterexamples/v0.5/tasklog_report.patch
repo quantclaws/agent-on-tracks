@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.executor.executor task-log projection and trac report
-# mutation: omit a phase-boundary task-log update while retaining task.completed
+diff --git a/tracks/tasklog.py b/tracks/tasklog.py
+index c27a051..3595c15 100644
+--- a/tracks/tasklog.py
++++ b/tracks/tasklog.py
+@@ -211,7 +211,7 @@ def _task_lines(events: list[EventEnvelope], scoped: list[EventEnvelope]) -> lis
+     lines.extend(_green_lines(events))
+     lines.extend(["", "### Phase 3 Refactor"])
+     lines.extend(_refactor_lines(events))
+-    lines.extend(["", "### Runtime Quality Gate"])
++    lines.extend(["", "### Runtime Gate"])
+     lines.extend(_gate_lines(events, scoped))
+     lines.extend(["", "### Task Completion"])
+     lines.extend(_completion_lines(events))

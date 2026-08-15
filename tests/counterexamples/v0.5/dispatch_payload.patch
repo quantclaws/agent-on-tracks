@@ -1,3 +1,24 @@
-# pending-implementation
-# target: tracks.executor.executor M-IMPL dispatch assignment materialization
-# mutation: omit pre_dirty_snapshot from the public command.issued assignment payload
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 6f11a83..e40ed50 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -243,7 +243,6 @@ class MImplRuntimeMixin:
+                 "task_id": task.get("task_id") if task else None,
+                 "task": dict(task) if task else None,
+                 "manifest": manifest,
+-                "pre_dirty_snapshot": pre_dirty,
+                 "result_identity": result_identity,
+                 "commands": {
+                     "unit": self._unit_commands(),
+diff --git a/tracks/kernel/m_impl.py b/tracks/kernel/m_impl.py
+index fa74121..38913e1 100644
+--- a/tracks/kernel/m_impl.py
++++ b/tracks/kernel/m_impl.py
+@@ -333,7 +333,6 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
+         "test_refs": None,
+         "commands": None,
+         "r_tree_identity": None,
+-        "pre_dirty_snapshot": None,
+         "result_identity": None,
+     }
+ 

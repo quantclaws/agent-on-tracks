@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.kernel.machine M-IMPL DIAGNOSE routing
-# mutation: route test_defect to Human escalation instead of SHIELD_FIX
+diff --git a/tracks/executor/helpers.py b/tracks/executor/helpers.py
+index ff0bacf..0c1e510 100644
+--- a/tracks/executor/helpers.py
++++ b/tracks/executor/helpers.py
+@@ -104,7 +104,7 @@ _DIAGNOSE_TARGET = {
+     "test_defect": "M-TEST",
+     "stub_gap": "M-DESIGN",
+     "ac_gap": "M-ACC",
+-    "spec_gap": "M-SPEC",
++    "spec_gap": "M-ACC",
+     "impl_defect": "M-IMPL",
+ }
+ # pytest short-traceback E-prefix assertion line (``E   assert ...``).

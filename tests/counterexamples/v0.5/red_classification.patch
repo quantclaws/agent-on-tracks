@@ -1,6 +1,15 @@
-diff --git a/tracks/executor/rgr.py b/tracks/executor/rgr.py
---- a/tracks/executor/rgr.py
-+++ b/tracks/executor/rgr.py
-@@ -91 +91 @@ def classify_red(
--    raise NotImplementedError("IF-IMPL-004")
-+    return "assertion_failure"
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 6f11a83..cb0d426 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -112,7 +112,9 @@ def _manifest_path_matches(path: str, rule: str) -> bool:
+     return path == rule or path.startswith(rule.rstrip("/") + "/")
+ 
+ 
+-_M_IMPL_RED_CLASSIFICATIONS = frozenset({"assertion_failure", "symbol_missing"})
++_M_IMPL_RED_CLASSIFICATIONS = frozenset(
++    {"assertion_failure", "symbol_missing", "stub_token_failure"}
++)
+ 
+ 
+ def _red_classification_label(value: object) -> str:

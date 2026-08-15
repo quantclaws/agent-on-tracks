@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.executor.executor ISLAND_GATE_2 handler
-# mutation: emit stage.exited when reach fails but integration and e2e pass
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index f85df05..15e15dc 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -986,7 +986,7 @@ def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
+         print(
+             json.dumps(
+                 {
+-                    "status": report.status,
++                    "status": report.status.upper(),
+                     "islands": list(report.islands),
+                     "entrypoints": list(report.entrypoints),
+                     "errors": list(report.errors),

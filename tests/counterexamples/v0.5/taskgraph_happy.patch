@@ -1,6 +1,12 @@
 diff --git a/tracks/executor/taskgraph.py b/tracks/executor/taskgraph.py
+index 6a05a70..133cc3c 100644
 --- a/tracks/executor/taskgraph.py
 +++ b/tracks/executor/taskgraph.py
-@@ -45 +45 @@ def parse_taskgraph(
--    raise NotImplementedError("IF-IMPL-003")
-+    return ([], None)
+@@ -79,7 +79,6 @@ def parse_tasks_json(
+         node, err = _parse_task(raw, index)
+         if err is not None:
+             return ([], err)
+-        tasks.append(node)
+     return (tasks, None)
+ 
+ 

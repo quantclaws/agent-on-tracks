@@ -1,3 +1,11 @@
-# pending-implementation
-# target: tracks.executor.executor M-IMPL reconcile/replay handler
-# mutation: replay a completed task by dispatching it again instead of preserving task.completed evidence
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 6f11a83..6eb53ef 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -1582,5 +1582,6 @@ class MImplRuntimeMixin:
+             self._rebuild_task_log_projection()
+             return
+         self._emit("task.completed", {"task_id": tid}, command_id=cmd.command_id)
++        self._emit("task.completed", {"task_id": tid}, command_id=cmd.command_id)
+         self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
+         self._rebuild_task_log_projection()

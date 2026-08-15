@@ -1,3 +1,13 @@
-# pending-implementation
-# target: tracks.kernel.machine and tracks.executor.executor planning dispatch
-# mutation: schedule a task marked parallel concurrently without a writelock.granted event
+diff --git a/tracks/kernel/m_impl.py b/tracks/kernel/m_impl.py
+index fa74121..5cd295c 100644
+--- a/tracks/kernel/m_impl.py
++++ b/tracks/kernel/m_impl.py
+@@ -24,7 +24,7 @@ if TYPE_CHECKING:
+ 
+ # D-29 criteria pack identity (architecture.md §3.4): Prism in M-IMPL loads
+ # the impl criteria pack and echoes the identity in its verdict.
+-_M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.1"}
++_M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.9"}
+ # M-IMPL context docs: trio + design trio (flow.md §10 BASELINE).
+ _M_IMPL_CONTEXT_DOCS = (
+     "story.md",

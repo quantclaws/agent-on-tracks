@@ -1,6 +1,13 @@
 diff --git a/tracks/executor/worktree.py b/tracks/executor/worktree.py
+index 0307534..ec9287b 100644
 --- a/tracks/executor/worktree.py
 +++ b/tracks/executor/worktree.py
-@@ -67 +67 @@ def create_gate_worktree(
--    raise NotImplementedError("IF-IMPL-006")
-+    return WorktreeHandle(repo, c_design_sha, "devon_candidate")
+@@ -88,7 +88,7 @@ def cleanup_worktree(
+     does not corrupt existing worktree).
+     """
+     path = handle.path
+-    if not os.path.exists(path):
++    if os.path.exists(path):
+         return True
+     main = _main_repo(path)
+     if main is not None and _same_path(path, main):
