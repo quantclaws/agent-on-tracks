@@ -610,27 +610,35 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _emit_diagnose_verdict(self, result, state, cmd, task_id):
         # Real channel (opencode): the Prism DIAGNOSE reply ends with a
-        # {"classification": ...} JSON (skill contract) extracted into
-        # result["verdict"]. Fall back to the simulate token (fake channel).
+        # {"classification", "reason", "evidence"} JSON (skill contract)
+        # extracted into result["verdict"] / result["diagnosis"]. The fixer
+        # dispatch receives the diagnostic's actual reason/evidence via FR-11
+        # last_failure - without them it only sees the classification label
+        # and has to re-derive the whole analysis (run 01KZTHE7 T-008: Shield
+        # burned 52 minutes re-archaeologying what Prism had already found).
         verdict = result.get("verdict")
         classification = (
             verdict
             if verdict in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
             else self._diagnose_classification()
         )
+        diagnosis = result.get("diagnosis") if isinstance(result.get("diagnosis"), dict) else {}
+        prior = state.last_failure or {}
+        fallback = "Prism diagnosis: " + classification
+        reason = diagnosis.get("reason") or prior.get("reason") or fallback
+        evidence = diagnosis.get("evidence") or prior.get("evidence") or fallback
         target = (
             "M-IMPL"
             if classification in ("test_defect", "impl_defect")
             else _DIAGNOSE_TARGET.get(classification, "M-IMPL")
         )
-        prior = state.last_failure or {}
         self._emit(
             "verdict.failed",
             {
                 "check": classification,
                 "target_stage": target,
-                "reason": prior.get("reason") or ("Prism diagnosis: " + classification),
-                "evidence": prior.get("evidence") or ("Prism diagnosis: " + classification),
+                "reason": reason,
+                "evidence": evidence,
                 "attempt": state.current_attempt + 1,
             },
             command_id=cmd.command_id,

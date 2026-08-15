@@ -1627,12 +1627,22 @@ class MImplRuntimeMixin:
             )
             self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
         else:
+            # Failure evidence for the DIAGNOSE loop: the FAILED summary
+            # lines first (the whole picture - run 01KZTHE7 T-008's diagnoser
+            # had to re-count failures because a tail-only excerpt swallowed
+            # them), then a short tail for context.
+            failed_lines = [
+                line
+                for line in out.splitlines()
+                if line.startswith("FAILED") or line.startswith("ERROR")
+            ]
+            evidence = "\n".join(failed_lines[:30]) + "\n--- tail ---\n" + out[-800:]
             self._emit(
                 "verdict.failed",
                 {
                     "check": "verification_failed",
                     "reason": f"verification test_refs failed rc={rc}: {summary}",
-                    "evidence": out[-2000:],
+                    "evidence": evidence,
                     "task_id": tid,
                     "attempt": state.current_attempt + 1,
                 },

@@ -812,10 +812,17 @@ class OpencodeBackend:
                 )
             )
         if name == "Prism" and substate == "DIAGNOSE":
-            # Real-channel DIAGNOSE classification (the fake channel uses the
-            # simulate token): routed via _emit_diagnose_verdict; without a
-            # verdict the outcome deadlocks (run 01KZTHE7 T-008).
-            result["verdict"] = self._diagnose_classification_from(proc)
+            # Real-channel DIAGNOSE (the fake channel uses the simulate
+            # token): without a verdict the outcome deadlocks (run 01KZTHE7
+            # T-008). The full diagnosis payload rides along so the fixer
+            # dispatch gets the actual analysis, not just the label.
+            diagnosis = self._diagnose_classification_from(proc)
+            if diagnosis is not None:
+                result["verdict"] = diagnosis["classification"]
+                result["diagnosis"] = {
+                    "reason": diagnosis.get("reason") or "",
+                    "evidence": diagnosis.get("evidence") or "",
+                }
         return self._enrich_discussion(
             result,
             doc_paths,
@@ -831,15 +838,20 @@ class OpencodeBackend:
         "spec_gap",
     )
 
-    def _diagnose_classification_from(self, proc) -> str | None:
-        """Extract the skill-contract {"classification": ...} JSON from the
-        Prism DIAGNOSE final reply (five-way set or None)."""
+    def _diagnose_classification_from(self, proc) -> dict | None:
+        """Extract the skill-contract DIAGNOSE JSON ({"classification",
+        "reason", "evidence"}) from the Prism final reply. The full payload
+        flows onward so the fixer dispatch receives the diagnostic's actual
+        analysis, not just the classification label."""
         event = self._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
         payload = self._first_json_object(text.strip()) if isinstance(text, str) else None
-        classification = payload.get("classification") if isinstance(payload, dict) else None
-        return classification if classification in self._DIAGNOSE_CLASSIFICATIONS else None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("classification") not in self._DIAGNOSE_CLASSIFICATIONS:
+            return None
+        return payload
 
     @staticmethod
     def _enrich_discussion(
