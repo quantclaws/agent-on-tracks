@@ -17,6 +17,7 @@ from pathlib import Path
 from tracks import paths, templating
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.checks.reach import check_reach_file
+from tracks.checks.release_evidence import check_release_evidence_file
 from tracks.checks.trace import check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
@@ -1007,6 +1008,44 @@ def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
     return 1 if report.status == "fail" else 0
 
 
+def _cmd_check_release_evidence(repo: Path, rest: list[str]) -> int:
+    """Handle `trac check release-evidence [--json]` (IF-RELEASE-001, §2d)."""
+    if rest not in ([], ["--json"]):
+        print("usage: trac check release-evidence [--json]", file=sys.stderr)
+        return 2
+    use_json = bool(rest)
+    report = check_release_evidence_file(str(repo))
+    if use_json:
+        print(
+            json.dumps(
+                {
+                    "backend": report.backend,
+                    "candidate_sha": report.candidate_sha,
+                    "evidence_path": report.evidence_path,
+                    "event_bounds": (
+                        list(report.event_bounds) if report.event_bounds is not None else None
+                    ),
+                    "reason_code": report.reason_code,
+                    "run_id": report.run_id,
+                    "status": report.status,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0 if report.status == "satisfied" else 1
+    if report.status == "satisfied":
+        print(
+            f"release-evidence: satisfied (backend={report.backend}, run {report.run_id}, "
+            f"candidate HEAD {report.candidate_sha}, branch {report.branch})"
+        )
+        return 0
+    print(f"release-evidence: NOT satisfied — {report.reason_code}")
+    print("  next: rerun the opt-in live journey at current HEAD, then re-check")
+    return 1
+
+
 def cmd_check(repo: Path, *args) -> int:
     # FR-040/FR-130 / AC-1303: `trac check deliverables` - pre-commit/CI gate
     # FR-0080: `trac check trace [--json] [--version <ver>]`
@@ -1029,6 +1068,8 @@ def cmd_check(repo: Path, *args) -> int:
         return _cmd_check_trace(repo, rest)
     if sub == "reach":
         return _cmd_check_reach(repo, rest)
+    if sub == "release-evidence":
+        return _cmd_check_release_evidence(repo, rest)
     return _err("usage: trac check <deliverables|trace|reach>")
 
 
