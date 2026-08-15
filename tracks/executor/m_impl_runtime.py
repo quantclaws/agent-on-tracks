@@ -100,7 +100,18 @@ def _task_review_failure(
             return {"check": "secret", "reason": "G adds a secret-shaped added line"}
     if not (trailers.get("Tracks-AC") or "").strip():
         return {"check": "provenance", "reason": "G has no Tracks-AC provenance trailer"}
-    if sum(ev["type"] == "verdict.failed" for ev in events) > task.budget:
+    # Fix F (run 01KZTHE7 T-013, 2026-08-16): FR-11 `trac retry` resets the
+    # attempt budget, so only verdict.failed events recorded after the last
+    # human.retry count against the task budget. Pre-retry failures are
+    # superseded - this run's history (56 retries, 31 verdict.failed) would
+    # otherwise permanently fail-closed every TASK_REVIEW.
+    cutoff = max(
+        (ev["seq"] for ev in events if ev["type"] == "human.retry"),
+        default=0,
+    )
+    if sum(
+        ev["type"] == "verdict.failed" and ev["seq"] > cutoff for ev in events
+    ) > task.budget:
         return {
             "check": "budget",
             "reason": f"verdict.failed count exceeds task budget {task.budget}",

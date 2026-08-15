@@ -1197,6 +1197,34 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
         cleanup_worktree(gate)
 
 
+def test_task_review_budget_respects_retry_cutoff(tmp_path):
+    """Regression (run 01KZTHE7 T-013, 2026-08-16): verdict.failed events
+    recorded BEFORE a human.retry are superseded (FR-11 budget reset) and
+    must not fail TASK_REVIEW's budget check. The budget_overflow flaw still
+    fails when no retry intervenes."""
+    repo = _repo(tmp_path)
+    executor, store = _task_review_scenario(repo, "budget_overflow")
+    store.append("RUN", "v0.5", "human.retry", {})
+    state = store.state("RUN")
+    assert state.substate == "TASK_REVIEW", "retry must not leave the review substate"
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state,
+        None,
+        False,
+    )
+    budget_fails = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "verdict.failed"
+        and ev.payload.get("check") == "budget"
+        and ev.seq > max(e.seq for e in store.events("RUN") if e.type == "human.retry")
+    ]
+    assert not budget_fails, (
+        "pre-retry verdict.failed must not fail the post-retry budget check"
+    )
+
+
 def test_m_impl_event_recorded_respects_retry_cutoff(tmp_path):
     """Regression (run 01KZTHE7 T-013, 2026-08-16): `trac retry` (FR-11)
     resets the attempt budget, so a post-retry attempt number N is a fresh
