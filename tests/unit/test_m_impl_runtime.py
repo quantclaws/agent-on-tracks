@@ -1402,3 +1402,118 @@ def test_commit_green_stale_prefailure_does_not_block_after_retry(tmp_path):
     assert not stale_blocks, (
         "pre-retry verdict.failed must not block the post-retry fresh attempt"
     )
+
+
+def test_red_classification_inferred_from_commands_when_results_missing(tmp_path):
+    """Devon RED outcomes that omit `results` should still pass RED_GATE when
+    `commands[*].output_summary` carries a legal `classify_red -> <token>`."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task_store(repo)
+    executor = _executor(repo, store)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        diff_ref=RGR_RED_DIFF,
+    )
+    outcome.pop("results", None)
+    outcome["commands"] = [
+        {
+            "cmd": "pytest",
+            "output_summary": (
+                "37 failed / 0 passed, exit 1; runtime classify_red -> "
+                "assertion_failure (legal M-IMPL red)"
+            ),
+        }
+    ]
+    outcome["verdict"] = "assertion_failure"
+    event = _run_red_gate(executor, store, outcome)
+    assert event.type == "verdict.passed"
+    assert event.payload["check"] == "red_valid"
+
+
+def test_red_classification_inference_fails_when_no_pattern_in_commands(tmp_path):
+    """An empty/legal `commands` list with no `classify_red` token must NOT
+    be inferred - the gate stays fail-closed with `classifications missing`."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task_store(repo)
+    executor = _executor(repo, store)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        diff_ref=RGR_RED_DIFF,
+    )
+    outcome.pop("results", None)
+    outcome["commands"] = [{"cmd": "pytest", "output_summary": "all good"}]
+    outcome["verdict"] = "assertion_failure"
+    failed = _run_red_gate(executor, store, outcome)
+    assert failed.type == "verdict.failed"
+    assert failed.payload["check"] == "red_invalid"
+    assert "missing" in failed.payload["reason"]
+
+
+def test_red_classification_inference_rejects_stub_token(tmp_path):
+    """`classify_red -> stub_token_failure` must NOT be inferred; only
+    assertion_failure/symbol_missing match. Ensures the counterexample patch
+    (`red_classification.patch`) keeps failing."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task_store(repo)
+    executor = _executor(repo, store)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        diff_ref=RGR_RED_DIFF,
+    )
+    outcome.pop("results", None)
+    outcome["commands"] = [
+        {"cmd": "pytest", "output_summary": "classify_red -> stub_token_failure"}
+    ]
+    outcome["verdict"] = "stub_token_failure"
+    failed = _run_red_gate(executor, store, outcome)
+    assert failed.type == "verdict.failed"
+    assert failed.payload["check"] == "red_invalid"
+    assert "missing" in failed.payload["reason"]
+
+
+def test_red_classification_inference_mixed_fails(tmp_path):
+    """When commands disagree (assertion_failure vs symbol_missing) the
+    existing `mixed classifications` check must still fire."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task_store(repo)
+    executor = _executor(repo, store)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        diff_ref=RGR_RED_DIFF,
+    )
+    outcome.pop("results", None)
+    outcome["commands"] = [
+        {"cmd": "pytest", "output_summary": "classify_red -> assertion_failure"},
+        {"cmd": "pytest", "output_summary": "classify_red -> symbol_missing"},
+    ]
+    outcome["verdict"] = "assertion_failure"
+    failed = _run_red_gate(executor, store, outcome)
+    assert failed.type == "verdict.failed"
+    assert failed.payload["check"] == "red_invalid"
+    assert "mixed" in failed.payload["reason"]
+
+
+def test_validated_diff_generates_from_changed_paths_when_diff_ref_missing(tmp_path):
+    """When `diff_ref` is absent but `changed_paths` references a file that
+    exists on disk, the gate must reconstruct the diff via `git add -N` +
+    `git diff` instead of failing `no captured diff_ref`."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task_store(repo)
+    executor = _executor(repo, store)
+    test_file = repo / "tests" / "unit" / "test_app.py"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("def test_app():\n    assert False\n", encoding="utf-8")
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        classification="assertion_failure",
+        verdict="assertion_failure",
+    )
+    outcome.pop("diff_ref", None)
+    event = _run_red_gate(executor, store, outcome)
+    assert event.type == "verdict.passed"
+    assert event.payload["check"] == "red_valid"

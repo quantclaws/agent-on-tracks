@@ -169,17 +169,39 @@ def _red_classification_label(value: object) -> str:
     return value or "missing"
 
 
+_RED_CLASSIFY_PATTERN = re.compile(
+    r"classify_red\s*->\s*(assertion_failure|symbol_missing)"
+)
+
+
 def _m_impl_red_classifications(outcome: dict) -> tuple[list[str], bool]:
     results = outcome.get("results")
-    if not isinstance(results, list) or not results:
+    if isinstance(results, list) and results:
+        classifications = [
+            _red_classification_label(
+                result.get("classification") if isinstance(result, dict) else None
+            )
+            for result in results
+        ]
+        return classifications, True
+    # Fail-closed fallback: Devon RED outcomes sometimes omit `results`.
+    # Infer classifications from `commands[*].output_summary`, which always
+    # carries a `classify_red -> <legal|illegal>` token. Only the two legal
+    # classifications are matched - stub/illegal tokens never infer.
+    commands = outcome.get("commands")
+    if not isinstance(commands, list):
         return ["missing"], False
-    classifications = [
-        _red_classification_label(
-            result.get("classification") if isinstance(result, dict) else None
-        )
-        for result in results
-    ]
-    return classifications, True
+    inferred: list[str] = []
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+        summary = command.get("output_summary")
+        if not isinstance(summary, str):
+            continue
+        inferred.extend(_RED_CLASSIFY_PATTERN.findall(summary))
+    if not inferred:
+        return ["missing"], False
+    return inferred, True
 
 
 def _m_impl_red_classification_error(outcome: dict) -> tuple[str, str] | None:
@@ -1411,10 +1433,36 @@ class MImplRuntimeMixin:
         outcome = self._last_devon_outcome()
         diff = outcome.get("diff_ref") if outcome else None
         if reason is None and not isinstance(diff, str):
-            return f"Devon {phase.upper()} outcome has no captured diff_ref", diff
+            # Fail-closed fallback: Devon outcomes sometimes omit `diff_ref`.
+            # Reconstruct it from the working tree using `changed_paths`.
+            generated = self._generate_diff_from_changed_paths(outcome)
+            if generated is None:
+                return f"Devon {phase.upper()} outcome has no captured diff_ref", diff
+            diff = generated
         if reason is None and not diff.strip():
             return f"Devon {phase.upper()} captured diff is empty", diff
         return reason, diff
+
+    def _generate_diff_from_changed_paths(self, outcome: dict | None) -> str | None:
+        if not outcome:
+            return None
+        changed = outcome.get("changed_paths")
+        if not isinstance(changed, list) or not changed:
+            return None
+        existing = [
+            str(self.repo / path)
+            for path in changed
+            if isinstance(path, str) and path and (self.repo / path).exists()
+        ]
+        if not existing:
+            return None
+        # `git add -N` registers intent-to-add without staging content, so
+        # untracked new files surface in `git diff` as new-file diffs (which
+        # is exactly what `diff_ref` should be). Partial failure is fine: the
+        # command still succeeds for tracked modified files.
+        git(self.repo, "add", "-N", "--", *existing, check=False)
+        diff = git(self.repo, "diff", "--", *existing).stdout
+        return diff or None
 
     def _do_commit_green(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
