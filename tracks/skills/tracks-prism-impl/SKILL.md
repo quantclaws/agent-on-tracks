@@ -42,6 +42,10 @@ Prism 在 M-IMPL 评审按 assignment 指定的名称+版本加载本判据包�
 
 命名不稳定的判 revise，指出哪个文件/模块名违反了命名稳定性。
 
+## 判据 6：advisories 消费（PRISM_FINAL 必查，2026-08-15）
+
+Devon 每个 outcome 的 evidence JSON 可携带 `advisories`（`isolation`/`scope_gap` 等风险自报，事件库 `outcome.received` payload 内）。PRISM_FINAL 必须逐任务读取这些 advisories 并独立核验——自报是线索不是结论：`isolation` 需查 dispatch 隔离证据、`scope_gap` 需对照 tasks.json scope_boundary。未核验的 advisory 不得默认无害。
+
 ## 判据 5：浅层安全扫描
 
 只报告明显安全问题：

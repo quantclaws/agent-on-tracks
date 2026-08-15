@@ -27,6 +27,13 @@ class GateObservation:
     classification: str
     stdout_sha: str
     stderr_sha: str
+    # Full captured output (information relay, 2026-08-15): downstream
+    # fixers are forbidden from re-running integration/e2e suites, so a
+    # failed gate's evidence must carry the actual output, not just the
+    # content hashes - previously the hashes were the only trace and the
+    # full text was discarded (run 01KZTHE7 starved three fixer dispatches).
+    stdout: str = ""
+    stderr: str = ""
 
 
 @dataclass(frozen=True)
@@ -234,24 +241,44 @@ def execute_gate_command(
         classification=classification,
         stdout_sha=hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
         stderr_sha=hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
-def observation_evidence(obs: GateObservation) -> str:
-    """Serialize one observed execution into the Runtime evidence JSON string."""
+def observation_evidence(obs: GateObservation, extra: dict | None = None) -> str:
+    """Serialize one observed execution into the Runtime evidence JSON string.
+
+    ``extra`` (information relay, 2026-08-15) merges caller-provided relay
+    fields - e.g. the blob path of the full captured output and the FAILED
+    summary lines - so a failed gate's evidence is actionable for fixers
+    that are forbidden from re-running the suite."""
+    payload = {
+        "argv": list(obs.argv),
+        "cwd": obs.cwd,
+        "exit_code": obs.exit_code,
+        "classification": obs.classification,
+        "stdout_sha": obs.stdout_sha,
+        "stderr_sha": obs.stderr_sha,
+    }
+    if extra:
+        payload.update(extra)
     return json.dumps(
-        {
-            "argv": list(obs.argv),
-            "cwd": obs.cwd,
-            "exit_code": obs.exit_code,
-            "classification": obs.classification,
-            "stdout_sha": obs.stdout_sha,
-            "stderr_sha": obs.stderr_sha,
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def failed_summary_lines(text: str, limit: int = 30) -> list[str]:
+    """FAILED/ERROR summary lines from a pytest run (the whole-failure
+    picture for evidence; the full text rides in the blob)."""
+    return [
+        line
+        for line in text.splitlines()
+        if line.startswith("FAILED") or line.startswith("ERROR")
+    ][:limit]
 
 
 def _match_keywords(text_lower: str, keywords: tuple[str, ...]) -> bool:

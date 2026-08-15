@@ -26,7 +26,11 @@ from tracks.baseline import (
 )
 from tracks.effects.backend import valid_test_tasks
 from tracks.executor.helpers import _commit_if_staged, _short_detail, git
-from tracks.executor.quality_gate import execute_gate_command, observation_evidence
+from tracks.executor.quality_gate import (
+    execute_gate_command,
+    failed_summary_lines,
+    observation_evidence,
+)
 from tracks.executor.rgr import (
     create_green_commit,
     create_red_ref,
@@ -1109,6 +1113,25 @@ class MImplRuntimeMixin:
         ]
         return bool(rels) and all(os.path.isfile(os.path.join(str(self.repo), rel)) for rel in rels)
 
+    def _gate_evidence(self, obs) -> str:
+        """Failed-gate evidence for the fixer relay: FAILED summary lines
+        plus the blob path of the full captured output. Fixers are forbidden
+        from re-running integration/e2e suites, so the evidence itself must
+        carry everything they cannot obtain (user directive 2026-08-15)."""
+        ref = self.store.write_audit_blob(
+            {
+                "argv": list(obs.argv),
+                "cwd": obs.cwd,
+                "exit_code": obs.exit_code,
+                "stdout": obs.stdout,
+                "stderr": obs.stderr,
+            }
+        )
+        extra = {"failed": failed_summary_lines(obs.stdout)}
+        if ref:
+            extra["log_ref"] = f".tracks/runtime/blobs/{ref}"
+        return observation_evidence(obs, extra)
+
     def _emit_gate_failure(self, cmd, *, check, reason, task_id, attempt, evidence=""):
         self._emit(
             "verdict.failed",
@@ -1146,7 +1169,7 @@ class MImplRuntimeMixin:
                         cmd,
                         check="impl_defect",
                         reason=f"Runtime unit command exited {obs.exit_code}",
-                        evidence=observation_evidence(obs),
+                        evidence=self._gate_evidence(obs),
                         task_id=task_id,
                         attempt=attempt,
                     )
@@ -1494,7 +1517,7 @@ class MImplRuntimeMixin:
                         cmd,
                         check="regression",
                         reason=f"Runtime unit command exited {obs.exit_code}",
-                        evidence=observation_evidence(obs),
+                        evidence=self._gate_evidence(obs),
                         task_id=state.current_task_id,
                         attempt=state.current_attempt + 1,
                     )
@@ -1595,7 +1618,8 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", *test_refs]
+        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        err = ""
         try:
             proc = subprocess.run(
                 cmd_argv,
@@ -1604,9 +1628,9 @@ class MImplRuntimeMixin:
                 text=True,
                 timeout=1800,
             )
-            rc, out = proc.returncode, proc.stdout or ""
+            rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
-            rc, out = 124, str(exc)
+            rc, out, err = 124, str(exc), "verification timed out after 1800s"
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             self._emit(
@@ -1627,22 +1651,25 @@ class MImplRuntimeMixin:
             )
             self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
         else:
-            # Failure evidence for the DIAGNOSE loop: the FAILED summary
-            # lines first (the whole picture - run 01KZTHE7 T-008's diagnoser
-            # had to re-count failures because a tail-only excerpt swallowed
-            # them), then a short tail for context.
-            failed_lines = [
-                line
-                for line in out.splitlines()
-                if line.startswith("FAILED") or line.startswith("ERROR")
-            ]
-            evidence = "\n".join(failed_lines[:30]) + "\n--- tail ---\n" + out[-800:]
+            # Failure evidence for the fixer relay (user directive
+            # 2026-08-15): fixers cannot re-run these suites, so hand them
+            # the whole picture - FAILED summary lines, the full-output blob
+            # path (--tb=long stacks included), and a short tail inline.
+            ref = self.store.write_audit_blob(
+                {"cmd": cmd_argv, "rc": rc, "stdout": out, "stderr": err}
+            )
+            evidence_payload = {
+                "failed": failed_summary_lines(out),
+                "tail": out[-400:],
+            }
+            if ref:
+                evidence_payload["log_ref"] = f".tracks/runtime/blobs/{ref}"
             self._emit(
                 "verdict.failed",
                 {
                     "check": "verification_failed",
                     "reason": f"verification test_refs failed rc={rc}: {summary}",
-                    "evidence": evidence,
+                    "evidence": json.dumps(evidence_payload, ensure_ascii=False),
                     "task_id": tid,
                     "attempt": state.current_attempt + 1,
                 },
