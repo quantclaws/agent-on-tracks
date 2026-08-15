@@ -319,7 +319,15 @@ def _bind_agent_io(journey: list[dict], candidate_sha: str, run_id: str) -> tupl
             "IF-LIVE-001:journey incomplete: missing Devon dispatch receipts for "
             + ",".join(missing)
         )
-    outcomes = devon + _outcome_events(journey, "prism", _PRISM_PHASES)
+    prism = _outcome_events(journey, "prism", _PRISM_PHASES)
+    seen_prism_phases = {_payload_of(item).get("phase") for item in prism}
+    missing_prism = [phase for phase in _PRISM_PHASES if phase not in seen_prism_phases]
+    if missing_prism:
+        raise ValueError(
+            "IF-LIVE-001:journey incomplete: missing Prism dispatch receipts for "
+            + ",".join(missing_prism)
+        )
+    outcomes = devon + prism
     receipts = []
     for outcome_item in sorted(outcomes, key=lambda item: item["seq"]):
         _validate_outcome(outcome_item)
