@@ -4,29 +4,50 @@ All assertions land on the public CLI contract (interfaces.md §2d/§4d):
 `trac check release-evidence [--json]` stdout/stderr/exit, and the canonical
 evidence path.  The CLI subcommand is not yet wired (IF-RELEASE-001/public CLI
 wiring), producing a legal Red at the CLI-routing layer.
+
+PRISM-V05-R2-01 revision: a hand-written evidence bundle is a FABRICATED
+artifact — it is schema-valid but has no backing blobs/, git R ref, or events
+in the store, so a wired check must reject it as ``not_real`` (§2d
+reason_code closed set).  The integration layer therefore only asserts the
+anti-fabrication negative; the satisfied text/JSON/exit-0 form is asserted in
+``tests/e2e_live/`` where the real live journey produces the bundle.
 """
 
 import json
+import os
 import subprocess
-import sys
 
 import pytest
 
 
 def _run_release_check(repo, *args):
-    """Invoke the installed public CLI for ``trac check release-evidence``
-    via ``sys.executable -m tracks.cli.main``, matching the PRISM-Q04-002
-    contract (the subcommand is not yet wired, so this returns the CLI-routing
-    error ``usage: trac check <deliverables|trace|reach>``).
+    """Invoke the INSTALLED public CLI for ``trac check release-evidence``.
+
+    PRISM-V05-R2-01: run the installed console script (the user-facing
+    entry point, ``host/.venv/bin/trac`` — the conftest symlink to the test
+    venv where ``tracks`` is installed), not ``sys.executable -m`` (which
+    resolves the module through the source tree).  The subcommand is not yet
+    wired, so this currently returns the CLI-routing error
+    ``usage: trac check <deliverables|trace|reach>`` (stderr, exit 1).
     """
-    cmd = [sys.executable, "-m", "tracks.cli.main", "check", "release-evidence", *args]
-    proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True)
+    cmd = [str(repo / ".venv" / "bin" / "trac"), "check", "release-evidence", *args]
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("TRAC_TEST_DOC_DELTA", "TRAC_FAKE_SIMULATE")
+    }
+    proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, env=env)
     return proc
 
 
 def _write_canonical_evidence(repo, candidate_sha, run_id, status="satisfied",
                               complete=True):
-    """Write a canonical evidence bundle to the release-evidence root.
+    """Fabricate a schema-valid evidence bundle at the release-evidence root.
+
+    PRISM-V05-R2-01: this is an ANTI-FABRICATION fixture.  The bundle matches
+    the §1j schema but has NO backing reality — no ``blobs/`` files, no git R
+    ref, and no events in the store — so a wired check must classify it as
+    ``not_real`` (§2d reason_code closed set), never ``satisfied``.
 
     When *complete* is True, the bundle satisfies the §1j closed invariants
     (non-empty agent_io with proper seq ordering, non-empty gate_observations
@@ -251,11 +272,15 @@ def test_provenance_rejects_fake_simulation_overlay_manual_events(
 @pytest.mark.integration
 # AC-FR0232-01@v0.5 TRACKS-TRACE check accepts latest current real auditable bundle
 def test_check_accepts_latest_current_real_auditable_bundle(host_repo, trac):
-    """Verify that the CLI check accepts a current real bundle (legal Red).
+    """Verify the check rejects a fabricated bundle at the current HEAD (legal Red).
 
-    The subcommand is not yet wired; the test asserts exit 0 + satisfied but
-    gets the CLI-routing error.  Once wired, this test asserts that the latest
-    current SHA real auditable bundle is accepted.
+    PRISM-V05-R2-01: a hand-written bundle — even schema-valid, even at the
+    CURRENT candidate SHA — has no backing blobs/, git R ref, or events in
+    the store, so it is not a "real auditable bundle" and must be rejected
+    as ``not_real``.  The satisfied form requires a REAL journey and is
+    asserted in tests/e2e_live/.  The subcommand is not yet wired; the test
+    asserts exit 1 + the exact NOT-satisfied line but currently gets the
+    CLI-routing error — legal Red.
     """
     candidate_sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=host_repo, capture_output=True, text=True, check=True
@@ -263,10 +288,13 @@ def test_check_accepts_latest_current_real_auditable_bundle(host_repo, trac):
     _write_canonical_evidence(host_repo, candidate_sha, "run-001")
 
     proc = _run_release_check(host_repo)
-    assert proc.returncode == 0, (
-        f"expected exit 0, got {proc.returncode}: {proc.stderr}"
+    assert proc.returncode == 1, (
+        f"fabricated bundle must NOT satisfy the check; got exit {proc.returncode}: "
+        f"{proc.stdout}{proc.stderr}"
     )
-    assert "release-evidence: satisfied" in proc.stdout
+    assert "release-evidence: NOT satisfied — not_real" in proc.stdout, (
+        "schema-valid but unbacked evidence must be rejected with reason not_real"
+    )
 
 
 @pytest.mark.integration
@@ -288,35 +316,59 @@ def test_check_rejects_stale_and_candidate_sha_mismatch(host_repo, trac):
 
 
 @pytest.mark.integration
-# AC-FR0232-03@v0.5 TRACKS-TRACE check success text/JSON and exit 0 contract
+# AC-FR0232-02@v0.5 TRACKS-TRACE check success text/JSON and exit 0 contract
 def test_check_success_text_json_and_exit_contract(host_repo, trac):
-    """Verify that the CLI check produces exact text/JSON/exit 0 (legal Red).
+    """Verify the deterministic text/JSON contract on a fabricated bundle (legal Red).
 
-    The subcommand is not yet wired; the test asserts exit 0 + satisfied text
-    and JSON but gets the CLI-routing error.  Once wired, this test asserts
-    exact deterministic stdout, empty stderr, exit 0 for satisfied, and
-    canonical --json output per interfaces.md §2d.
+    PRISM-V05-R2-01: the satisfied text/JSON/exit-0 form moved to
+    tests/e2e_live/ (only a REAL journey can produce it).  This test keeps
+    the deterministic-output contract at the integration layer using the
+    fabricated bundle: §2d's exact two-line NOT-satisfied text (exit 1) and
+    the canonical single-line 7-field ``--json`` object with
+    reason_code=not_real (exit 1 — "exit 0 iff satisfied").  The subcommand
+    is not yet wired; both variants currently get the CLI-routing error —
+    legal Red.
     """
     candidate_sha = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=host_repo, capture_output=True, text=True, check=True
     ).stdout.strip()
     _write_canonical_evidence(host_repo, candidate_sha, "run-003")
 
-    # Text variant: assert exit 0 + satisfied text
+    # Text variant: exact two-line NOT-satisfied form + exit 1 (§2d).
     proc_text = _run_release_check(host_repo)
-    assert proc_text.returncode == 0, (
-        f"text: expected exit 0, got {proc_text.returncode}: {proc_text.stderr}"
+    assert proc_text.returncode == 1, (
+        f"text: fabricated bundle must exit 1, got {proc_text.returncode}: "
+        f"{proc_text.stdout}{proc_text.stderr}"
     )
-    assert "release-evidence: satisfied" in proc_text.stdout
-    assert proc_text.stderr == ""
+    text_lines = proc_text.stdout.splitlines()
+    assert text_lines[:2] == [
+        "release-evidence: NOT satisfied — not_real",
+        "  next: rerun the opt-in live journey at current HEAD, then re-check",
+    ], f"text: §2d NOT-satisfied lines are locked, got {text_lines!r}"
 
-    # JSON variant: assert exit 0 + canonical JSON
+    # JSON variant: canonical single-line 7-field object + exit 1 (§2d).
     proc_json = _run_release_check(host_repo, "--json")
-    assert proc_json.returncode == 0, (
-        f"json: expected exit 0, got {proc_json.returncode}: {proc_json.stderr}"
+    assert proc_json.returncode == 1, (
+        f"json: exit 0 iff satisfied — fabricated bundle must exit 1, got "
+        f"{proc_json.returncode}: {proc_json.stdout}{proc_json.stderr}"
+    )
+    assert "\n" not in proc_json.stdout.rstrip("\n"), (
+        "json: §2d output is a single line"
     )
     result = json.loads(proc_json.stdout)
-    assert result["status"] == "satisfied"
+    assert set(result) == {
+        "backend", "candidate_sha", "evidence_path", "event_bounds",
+        "reason_code", "run_id", "status",
+    }, f"json: §2d field set is closed, got {sorted(result)}"
+    assert result["reason_code"] == "not_real", (
+        "json: fabricated-but-schema-valid bundle must report not_real"
+    )
+    assert result["status"] != "satisfied", (
+        "json: fabricated bundle must never report satisfied"
+    )
+    assert json.dumps(result, sort_keys=True, separators=(",", ":")) == proc_json.stdout.rstrip("\n"), (
+        "json: §2d canonical form is sort_keys + compact separators"
+    )
 
 
 @pytest.mark.integration
