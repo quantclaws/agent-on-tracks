@@ -62,6 +62,8 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 
 ## 4. 输出 schema（结构化 outcome/audit evidence）
 
+**交付纪律（2026-08-15，run 01KZTHE7 T-001 三连 red_invalid 教训）**：你的**最终回复必须以一个裸 JSON object 结束**——这是 Runtime 唯一的证据提取源（取你最后一条 text 消息中的 JSON）。散文总结、Markdown 报告、清单勾选（"✅ All Tasks Complete"）都**不构成交付**，无论工作做得多好，缺 JSON 即 red_invalid、attempt 作废。JSON 放在回复最末尾、独立成块、不加代码围栏以外的装饰。
+
 输出必须包含以下字段：
 
 ```json

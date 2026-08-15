@@ -392,7 +392,18 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     params = {
         "role": "devon",
         "substate": sub,
-        "objective": f"implement task {s.current_task_id} ({phase})",
+        # The JSON clause is load-bearing: the opencode backend extracts the
+        # evidence object from Devon's LAST text message only. Without this
+        # reminder Devon ends with prose/Markdown summaries and the outcome
+        # is red_invalid three attempts in a row (run 01KZTHE7 T-001,
+        # 2026-08-15) despite the skill schema and the failure evidence
+        # flowing back.
+        "objective": (
+            f"implement task {s.current_task_id} ({phase}); your FINAL reply "
+            "must end with the bare evidence JSON object per skill "
+            "tracks-devon-rgr §4 - prose or Markdown reports are not a "
+            "deliverable"
+        ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
         "review_round": s.review_round,
