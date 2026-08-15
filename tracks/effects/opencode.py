@@ -135,7 +135,20 @@ class OpencodeBackend:
             ]
         cleanup_infos: list = []
         proc = None
-        reviewer_assignment = substate.endswith("_REVIEW")
+        # Reviewer verdict derivation: M-TEST review substates end in
+        # "_REVIEW"; v0.5 M-IMPL Prism review substates do not (PRISM_PLAN/
+        # PRISM_RED/PRISM_FINAL). Without the derivation the opencode backend
+        # produces no result["verdict"], the executor's _emit_dispatch_verdict
+        # silently returns, no prism.verdict event is emitted, and the loop
+        # deadlocks (reviewer_dispatched=True awaiting a verdict nothing will
+        # produce - run 01KZTHE7 PRISM_PLAN, 2026-08-15, twice). DIAGNOSE is
+        # excluded: its verdict is a classification routed via
+        # _emit_diagnose_verdict, not a pass/revise document verdict.
+        reviewer_assignment = substate.endswith("_REVIEW") or substate in (
+            "PRISM_PLAN",
+            "PRISM_RED",
+            "PRISM_FINAL",
+        )
         try:
             cleanup_infos.append(self._materialize(name))
             self._materialize_skills(assignment, cleanup_infos)
