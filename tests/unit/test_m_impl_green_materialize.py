@@ -358,6 +358,7 @@ def test_commit_green_no_g_after_runtime_gate_failure(tmp_path):
             "check": "impl_defect",
             "reason": "runtime gate",
             "evidence": '{"argv":[],"exit_code":1}',
+            "task_id": task["task_id"],
             "attempt": 1,
         },
     )
