@@ -747,9 +747,15 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     # (doc_dispatched stays True, no result), and the stale evidence must not
     # leak into the next dispatch. apply() already cleared s.pending (any non-
     # command.issued event does); _reset_doc lets decide() issue a fresh one.
+    # Review-substate parity (run 01KZTHE7 2026-08-15): a PRISM_PLAN dispatch
+    # killed together with the loop left reviewer_dispatched=True with no
+    # reviewer_produced ever arriving; decide() then had nothing to issue and
+    # the loop exited on every restart. --clear-evidence must reset the review
+    # flags too, not just the doc flag.
     if p.get("clear_evidence"):
         s.last_failure = None
         _reset_doc(s)
+        _reset_review(s)
     s.awaiting = None
     s.status = "active"
     s.current_attempt = 0
