@@ -540,12 +540,27 @@ def _decide_m_impl_prism(s: State, sub: str) -> Command | None:
     return _m_impl_prism_dispatch(s, sub)
 
 
+def _is_verification_task(s: State) -> bool:
+    """§1.0.3 two-tier model: a task whose description carries the
+    verification-only marker has no RED-implementation - acceptance is
+    Runtime-executed (user ruling 2026-08-15), not a Devon RGR cycle."""
+    meta = s.current_task_metadata or {}
+    return "verification-only" in (meta.get("description") or "")
+
+
 def _decide_m_impl_agent(s: State, sub: str) -> Command | None:
     """RED/GREEN/REFACTOR/SHIELD_FIX: dispatch the agent if not already."""
     if s.doc_dispatched:
         return None  # awaiting outcome
     if sub == "SHIELD_FIX":
         return _m_impl_shield_dispatch(s)
+    if sub == "RED" and _is_verification_task(s):
+        # RGR structurally cannot apply (frozen tests, no implementation to
+        # write): route to Runtime-executed acceptance instead of Devon.
+        return Command(
+            kind="verify_task",
+            params={"stage": "M-IMPL", "task_id": s.current_task_id},
+        )
     return _m_impl_devon_dispatch(s, sub)
 
 

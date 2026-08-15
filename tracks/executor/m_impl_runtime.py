@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 
@@ -1565,6 +1566,81 @@ class MImplRuntimeMixin:
             if gate_handle is not None:
                 cleanup_worktree(gate_handle)
             self._rebuild_task_log_projection()
+
+    def _do_verify_task(self, cmd, state, task_id, reconcile):
+        """Runtime-executed acceptance for verification-only tasks (§1.0.3).
+
+        User ruling 2026-08-15: acceptance is Runtime work, not agent work. A
+        verification-only task has frozen test assets and no
+        RED-implementation, so the RGR chain (evidence diff -> red ref ->
+        green) structurally cannot apply - run 01KZTHE7 T-001 burned three
+        Devon attempts at "RED evidence has no changed paths" before this
+        path. The Runtime runs the task's declared test_refs directly; a full
+        pass completes the task, a failure re-enters the gate-failure budget
+        (3 attempts -> escalation for a human, matching flaky-retry then
+        stop semantics).
+        """
+        tid = state.current_task_id or cmd.params.get("task_id") or task_id or ""
+        meta = state.current_task_metadata or {}
+        test_refs = meta.get("test_refs") or []
+        if not isinstance(test_refs, list) or not test_refs:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "verification_failed",
+                    "reason": "verification-only task declares no test_refs",
+                    "task_id": tid,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
+        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", *test_refs]
+        try:
+            proc = subprocess.run(
+                cmd_argv,
+                cwd=self.repo,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+            rc, out = proc.returncode, proc.stdout or ""
+        except subprocess.TimeoutExpired as exc:
+            rc, out = 124, str(exc)
+        summary = out.strip().splitlines()[-1] if out.strip() else ""
+        if rc == 0:
+            self._emit(
+                "task.completed",
+                {
+                    "task_id": tid,
+                    "verification": True,
+                    "commands": [
+                        {
+                            "cmd": " ".join(cmd_argv),
+                            "result": "pass",
+                            "output_summary": summary,
+                        }
+                    ],
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
+        else:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "verification_failed",
+                    "reason": f"verification test_refs failed rc={rc}: {summary}",
+                    "evidence": out[-2000:],
+                    "task_id": tid,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+        self._rebuild_task_log_projection()
 
     def _do_complete_task(self, cmd, state, task_id, reconcile):
         tid = cmd.params.get("task_id") or state.current_task_id
