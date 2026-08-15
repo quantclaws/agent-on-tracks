@@ -573,6 +573,15 @@ def _decide_m_impl_prism(s: State, sub: str) -> Command | None:
     return _m_impl_prism_dispatch(s, sub)
 
 
+def _is_preset_anchor_task(s: State) -> bool:
+    """Standard-RGR tasks whose RED anchor is the frozen failing tests
+    themselves (Archer's "RED 锚点为既有失败测试" pattern): there is no new
+    unit test to write, so the RED phase is a Runtime-executed anchor
+    confirmation (run the anchors, expect red), never a Devon dispatch."""
+    meta = s.current_task_metadata or {}
+    return "RED 锚点" in (meta.get("description") or "")
+
+
 def _is_verification_task(s: State) -> bool:
     """§1.0.3 two-tier model: a task whose description carries the
     verification-only marker has no RED-implementation - acceptance is
@@ -596,6 +605,15 @@ def _decide_m_impl_agent(s: State, sub: str) -> Command | None:
         # the Runtime acceptance, never a Devon RGR phase.
         return Command(
             kind="verify_task",
+            params={"stage": "M-IMPL", "task_id": s.current_task_id},
+        )
+    if sub == "RED" and _is_preset_anchor_task(s):
+        # Standard RGR with a preset anchor (frozen failing tests): the RED
+        # phase is a Runtime anchor confirmation - Devon has no new unit
+        # test to write, so dispatching it only produces an empty
+        # changed_paths evidence the gate must reject (run 01KZTHE7 T-013).
+        return Command(
+            kind="anchor_red",
             params={"stage": "M-IMPL", "task_id": s.current_task_id},
         )
     return _m_impl_devon_dispatch(s, sub)

@@ -1589,6 +1589,91 @@ class MImplRuntimeMixin:
                 cleanup_worktree(gate_handle)
             self._rebuild_task_log_projection()
 
+    def _do_anchor_red(self, cmd, state, task_id, reconcile):
+        """Runtime-executed RED anchor confirmation for preset-anchor tasks.
+
+        The frozen failing tests ARE the red anchor (no new unit test to
+        write): run them expecting red, then pin the R ref straight to the
+        base sha - the base tree already contains the anchors - and emit
+        red.checkpointed so the normal PRISM_RED -> GREEN flow continues
+        (run 01KZTHE7 T-013, 2026-08-15: a Devon RED dispatch here can only
+        produce an empty changed_paths evidence the gate rejects).
+        """
+        tid = state.current_task_id or cmd.params.get("task_id") or task_id or ""
+        meta = state.current_task_metadata or {}
+        test_refs = meta.get("test_refs") or []
+        attempt = state.current_attempt + 1
+        if not isinstance(test_refs, list) or not test_refs:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "red_invalid",
+                    "reason": "preset-anchor task declares no test_refs",
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
+        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        err = ""
+        try:
+            proc = subprocess.run(
+                cmd_argv, cwd=self.repo, capture_output=True, text=True, timeout=1800
+            )
+            rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
+        except subprocess.TimeoutExpired as exc:
+            rc, out, err = 124, str(exc), "anchor run timed out after 1800s"
+        summary = out.strip().splitlines()[-1] if out.strip() else ""
+        if rc == 0:
+            # Anchors already green: either the implementation already
+            # exists (task-graph drift) or an anchor broke - a human must
+            # decide which.
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "red_invalid",
+                    "reason": (
+                        "preset RED anchors unexpectedly pass - anchors must "
+                        f"be red before GREEN. {summary}"
+                    ),
+                    "evidence": out[-2000:],
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            self._rebuild_task_log_projection()
+            return
+        base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        ref = f"refs/trac/rgr/{self.run_id}/{tid}/{attempt}/red"
+        git(self.repo, "update-ref", ref, base_sha)
+        ref_payload = {
+            "failed": failed_summary_lines(out),
+            "tail": out[-400:],
+        }
+        blob = self.store.write_audit_blob(
+            {"cmd": cmd_argv, "rc": rc, "stdout": out, "stderr": err}
+        )
+        if blob:
+            ref_payload["log_ref"] = f".tracks/runtime/blobs/{blob}"
+        self._emit(
+            "red.checkpointed",
+            {
+                "ref": ref,
+                "r_sha": base_sha,
+                "task_id": tid,
+                "attempt": attempt,
+                "anchor": True,
+                "evidence": json.dumps(ref_payload, ensure_ascii=False),
+            },
+            command_id=cmd.command_id,
+            task_id=tid,
+        )
+        self._rebuild_task_log_projection()
+
     def _do_verify_task(self, cmd, state, task_id, reconcile):
         """Runtime-executed acceptance for verification-only tasks (§1.0.3).
 
