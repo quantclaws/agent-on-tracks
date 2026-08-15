@@ -49,7 +49,6 @@ _REQUIRED_FIELDS = (
     "depends_on",
     "batch",
     "parallel",
-    "budget",
 )
 
 
@@ -120,7 +119,7 @@ def _parse_task(raw: object, index: int) -> tuple[TaskNode | None, str | None]:
             depends_on=tuple(depends),
             batch=raw["batch"],
             parallel=raw["parallel"],
-            budget=raw["budget"],
+            budget=raw.get("budget", 2),
         ),
         None,
     )
@@ -138,9 +137,15 @@ def _validate_scalar_fields(raw: dict, tid: str) -> str | None:
         return f"tasks.json: {tid}: batch must be a string"
     if not isinstance(raw["parallel"], bool):
         return f"tasks.json: {tid}: parallel must be a boolean"
-    budget = raw["budget"]
-    if not isinstance(budget, int) or isinstance(budget, bool):
-        return f"tasks.json: {tid}: budget must be an integer"
+    # Budget is optional (user ruling 2026-08-15): Archer should not spend
+    # effort estimating it - agent speed/rework characteristics diverge from
+    # the human-paced training prior the estimate was designed for. The
+    # runtime uses it only as a verdict.failed count ceiling (anti
+    # spin-loop); a missing budget defaults to 2 in TaskNode construction.
+    if "budget" in raw:
+        budget = raw["budget"]
+        if not isinstance(budget, int) or isinstance(budget, bool):
+            return f"tasks.json: {tid}: budget must be an integer"
     return None
 
 

@@ -706,7 +706,6 @@ class MImplRuntimeMixin:
                     f"- Depends on: {', '.join(task.depends_on) if task.depends_on else '-'}",
                     f"- Batch: {task.batch}",
                     f"- Parallel: {task.parallel}",
-                    f"- Budget: {task.budget}h",
                     "",
                 ]
             )
