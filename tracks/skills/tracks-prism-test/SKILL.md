@@ -62,6 +62,16 @@ M-TEST 交付的是测试资产而非绿色结果。每条测试必须失败且�
 
 Prism 在 PRISM_REVIEW 阶段判断测试合约的语义合法性；Runtime 在 RED_CHECK 阶段独立复跑做程序化分类（不信 Prism 自述）。Prism 的语义判断与 Runtime 的程序分类互不替代。
 
+## 评审纪律：全量清单制（2026-08-15，run 01KZTHE7 R1→R4 教训）
+
+每次 PRISM_REVIEW 必须对上述 5 条判据**逐项实际执行验证**，verdict 报告必须逐判据给出结论与当轮证据（命令 / 文件 / 行号）。未实际执行验证的判据不得默认 pass。
+
+- assignment 的 evidence 字段是上一轮失败的上下文，**不是本次评审范围**。对 evidence 主题的复核只是清单项之一；只评审 evidence 指向的主题而放行其余判据，视为未完成评审（先例：R2 只查语义、R4 才首次验证 patch 可应用性，欠账一次性爆发拉长循环）。
+- 判据 1 执行时包含**绑定语义核查**：marker 所在测试函数的实际断言必须覆盖该 AC 的核心可观察效果（含正向路径，不只负向）。形式上 marker 已绑定但断言语义属于其他 AC 的判 revise（先例：PRISM-V05-R4-01）。
+- 判据 3 执行时包含**可应用性核查**：逐个 counterexample patch 在当前 HEAD 实际执行 `git apply --check`；kill-manifest 各条 result/verification 口径必须与当前树一致，stale 口径（如对已实现模块仍标 pending-implementation）视同缺失（先例：PRISM-V05-R4-02）。
+- 判据 4 执行时包含**触发可达性核查**：测试触发条件（fixture、路径守卫、前置状态）在合规 runtime 下可达，守卫恒为 False 的死代码测试判 revise（先例：PRISM-V05-R2-02）。
+- 判据 1/2 执行时包含**永续性核查**：断言所依赖的 fixture / 仓库 / 路径必须与合规 runtime 的真实产物位置一致——不会因 runtime 合规而永久 Red，也不要求 runtime 接受伪造产物才能绿（先例：PRISM-V05-R2-01/R2-03）。
+
 ## 边界（D-14）
 
 本判据包不含形式校验规则：

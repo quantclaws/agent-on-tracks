@@ -651,10 +651,19 @@ class OpencodeBackend:
         console_input: str | None,
         evidence: str,
     ) -> dict:
+        # D-37 lesson (run 01KZTHE7, 2026-08-15): the generic message hides the
+        # offending path from the escalation reason and the loop log; humans
+        # had to dig the outcome blob to learn which file tripped the audit.
+        # Keep audit_evidence verbatim in self_report so FR-0210 last_failure,
+        # the escalation reason and the log line all carry the concrete path.
         return {
             "status": "failed",
             "artifact_ref": None,
-            "self_report": "over-reach detected; agent changes rolled back",
+            "self_report": (
+                f"{evidence}; agent changes rolled back"
+                if evidence
+                else "over-reach detected; agent changes rolled back"
+            ),
             "diff_ref": diff_ref,
             "audit_evidence": evidence,
             "failure_class": "over_reach",
