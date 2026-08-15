@@ -957,15 +957,22 @@ def _on_no_diff_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
     _escalate_or_continue(s, {"attempt": p.get("attempt", s.current_attempt + 1)})
 
 
-def _on_doc_comment_detected(s: State, p: dict, ev: EventEnvelope) -> None:
-    """``doc_comment.detected``: open a per-record waiting projection
-    (AC-FR0234-03).  The origin role/task/phase/dispatch/attempt and the
-    discussion threads stay visible while the outcome is paused."""
-    s.doc_gaps[p["record_id"]] = {
+def _new_doc_gap_record(
+    origin: dict | None = None,
+    document_paths: list | None = None,
+    thread_ids: list | None = None,
+) -> dict:
+    """Fresh waiting record shape for the doc-gap projection (SM-02).
+
+    Shared by the ``doc_comment.detected`` and ``outcome.quarantined``
+    reducers; every doc-gap record starts in the waiting DETECTED state with
+    empty route/quarantine/resume fields.
+    """
+    return {
         "state": "DETECTED",
-        "origin": dict(p.get("origin") or {}),
-        "document_paths": list(p.get("document_paths") or []),
-        "thread_ids": list(p.get("thread_ids") or []),
+        "origin": dict(origin or {}),
+        "document_paths": list(document_paths or []),
+        "thread_ids": list(thread_ids or []),
         "quarantine_id": None,
         "quarantine_status": None,
         "route": None,
@@ -975,6 +982,17 @@ def _on_doc_comment_detected(s: State, p: dict, ev: EventEnvelope) -> None:
     }
 
 
+def _on_doc_comment_detected(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_comment.detected``: open a per-record waiting projection
+    (AC-FR0234-03).  The origin role/task/phase/dispatch/attempt and the
+    discussion threads stay visible while the outcome is paused."""
+    s.doc_gaps[p["record_id"]] = _new_doc_gap_record(
+        origin=p.get("origin"),
+        document_paths=p.get("document_paths"),
+        thread_ids=p.get("thread_ids"),
+    )
+
+
 def _on_outcome_quarantined(s: State, p: dict, ev: EventEnvelope) -> None:
     """``outcome.quarantined``: surface the quarantine identity and status so a
     held outcome is never mistaken for a success (AC-FR0236-01/02).  The record
@@ -982,18 +1000,7 @@ def _on_outcome_quarantined(s: State, p: dict, ev: EventEnvelope) -> None:
     (blob-manifest round trip), always in the waiting DETECTED state."""
     record = s.doc_gaps.get(p.get("record_id"))
     if record is None:
-        record = {
-            "state": "DETECTED",
-            "origin": {},
-            "document_paths": [],
-            "thread_ids": [],
-            "quarantine_id": None,
-            "quarantine_status": None,
-            "route": None,
-            "reason": None,
-            "next_dispatch_id": None,
-            "next_attempt": None,
-        }
+        record = _new_doc_gap_record()
         s.doc_gaps[p["record_id"]] = record
     record["quarantine_id"] = p.get("quarantine_id")
     record["quarantine_status"] = p.get("status")

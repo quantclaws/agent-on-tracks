@@ -85,6 +85,29 @@ def _new_thread_ids(baseline_text: str, current_text: str) -> tuple[str, ...]:
     )
 
 
+def _classify_delta(
+    allowed: frozenset[str],
+    path: str,
+    baseline_bytes: bytes,
+    current_bytes: bytes,
+) -> tuple[DocDeltaClass, tuple[str, ...]]:
+    """One document's classification and its new thread ids.
+
+    Unchanged bytes classify ``none``; a change outside the role's allowed set,
+    or inside it without full body preservation and parseable new discussion,
+    classifies ``illegal_body_edit``; otherwise ``legal_discussion``.
+    """
+    if baseline_bytes == current_bytes:
+        return "none", ()
+    if path not in allowed:
+        return "illegal_body_edit", ()
+    baseline_text = baseline_bytes.decode("utf-8", errors="replace")
+    current_text = current_bytes.decode("utf-8", errors="replace")
+    if _non_discussion_body(baseline_text) != _non_discussion_body(current_text):
+        return "illegal_body_edit", ()
+    return "legal_discussion", _new_thread_ids(baseline_text, current_text)
+
+
 # Fixture-domain canonical "current" identity constants used by the R-test
 # mirror for the restart/re-decide scenario (SM-02.11).  Real content
 # identities are opaque sha256 digests, for which the drift rule degenerates
@@ -194,23 +217,9 @@ def classify_design_document_deltas(
     for path in sorted(set(baseline_documents) | set(current_documents)):
         baseline_bytes = baseline_documents.get(path, b"")
         current_bytes = current_documents.get(path, b"")
-        if baseline_bytes == current_bytes:
-            classification: DocDeltaClass = "none"
-            new_thread_ids: tuple[str, ...] = ()
-        elif path not in allowed:
-            classification = "illegal_body_edit"
-            new_thread_ids = ()
-        else:
-            baseline_text = baseline_bytes.decode("utf-8", errors="replace")
-            current_text = current_bytes.decode("utf-8", errors="replace")
-            if _non_discussion_body(baseline_text) != _non_discussion_body(
-                current_text
-            ):
-                classification = "illegal_body_edit"
-                new_thread_ids = ()
-            else:
-                classification = "legal_discussion"
-                new_thread_ids = _new_thread_ids(baseline_text, current_text)
+        classification, new_thread_ids = _classify_delta(
+            allowed, path, baseline_bytes, current_bytes
+        )
         deltas.append(
             DocumentDelta(
                 path=path,
