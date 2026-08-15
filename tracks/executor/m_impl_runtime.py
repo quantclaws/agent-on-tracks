@@ -133,6 +133,30 @@ def _manifest_path_matches(path: str, rule: str) -> bool:
     return path == rule or path.startswith(rule.rstrip("/") + "/")
 
 
+def _devon_path_scope_error(
+    changed_paths: list[str],
+    allowed: set[str],
+    forbidden: set[str],
+    devon_test_dirs: list[str],
+) -> str | None:
+    """Validate one changed path against the manifest scope rules.
+
+    Devon test-dir paths (RED failing tests) are exempt from the
+    allowed_paths gate: impl-only manifests grant no test path, frozen
+    suites stay blocked by forbidden_paths.
+    """
+    for path in changed_paths:
+        if path.startswith("/") or ".." in path.split("/"):
+            return f"Devon evidence path is not repo-relative: {path}"
+        if any(_manifest_path_matches(path, item) for item in forbidden):
+            return f"Devon evidence path is forbidden: {path}"
+        if not any(_manifest_path_matches(path, item) for item in allowed) and not (
+            devon_test_dirs and any(path.startswith(d) for d in devon_test_dirs)
+        ):
+            return f"Devon evidence path is outside manifest: {path}"
+    return None
+
+
 _M_IMPL_RED_CLASSIFICATIONS = frozenset({"assertion_failure", "symbol_missing"})
 
 
@@ -483,20 +507,26 @@ class MImplRuntimeMixin:
         manifest = state.current_manifest or {}
         allowed = set(manifest.get("allowed_paths", []))
         forbidden = set(manifest.get("forbidden_paths", []))
-        for path in outcome["changed_paths"]:
-            if path.startswith("/") or ".." in path.split("/"):
-                return f"Devon evidence path is not repo-relative: {path}"
-            if any(_manifest_path_matches(path, item) for item in forbidden):
-                return f"Devon evidence path is forbidden: {path}"
-            if not any(_manifest_path_matches(path, item) for item in allowed):
-                return f"Devon evidence path is outside manifest: {path}"
-        if phase == "red":
-            devon_test_dirs = [d for d in layout_paths(self.repo, "devon") if "test" in d]
-            if devon_test_dirs and any(
-                not any(path.startswith(d) for d in devon_test_dirs)
-                for path in outcome["changed_paths"]
-            ):
-                return "Devon RED evidence includes a non-test path"
+        # RED evidence is a failing test that must live in a Devon test dir
+        # (tests/unit/). Such paths are exempt from the allowed_paths gate
+        # because impl-only manifests (no unit test_refs) grant no test path;
+        # frozen Shield suites remain blocked by forbidden_paths, and the
+        # post-loop RED check below still requires a test-dir location.
+        devon_test_dirs = (
+            [d for d in layout_paths(self.repo, "devon") if "test" in d]
+            if phase == "red"
+            else []
+        )
+        path_error = _devon_path_scope_error(
+            outcome["changed_paths"], allowed, forbidden, devon_test_dirs
+        )
+        if path_error is not None:
+            return path_error
+        if phase == "red" and devon_test_dirs and any(
+            not any(path.startswith(d) for d in devon_test_dirs)
+            for path in outcome["changed_paths"]
+        ):
+            return "Devon RED evidence includes a non-test path"
         return None
 
     def _frozen_test_paths(self) -> list[str]:

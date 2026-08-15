@@ -502,6 +502,96 @@ def _run_red_gate(executor: Executor, store: Store, outcome: dict):
     return list(store.events("RUN"))[-1]
 
 
+def _impl_only_started_store(repo: Path, task: dict) -> Store:
+    """task.started manifest whose allowed_paths grants impl files only.
+
+    Mirrors T-014 of run 01KZTHE7: test_refs are frozen integration/e2e
+    suites, so no test path enters allowed_paths - yet Devon's RED evidence
+    is a failing test that must live in tests/unit/ (run 01KZTHE7 seq 993
+    rejected it as "outside manifest").
+    """
+    _docs(repo)
+    # project.toml [layout.devon] is the writable set the RED evidence check
+    # consults to recognise Devon test dirs (tests/unit/).
+    paths.project_toml_path(paths.tracks_home(repo)).parent.mkdir(
+        parents=True, exist_ok=True
+    )
+    paths.project_toml_path(paths.tracks_home(repo)).write_text(
+        "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
+        "collect='pytest --collect-only tests/integration'\n"
+        "run='pytest tests/integration'\ncwd='.'\n\n"
+        "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
+        "collect='pytest --collect-only tests/e2e'\n"
+        "run='pytest tests/e2e'\ncwd='.'\n\n"
+        "[layout]\n\n"
+        "[layout.devon]\nwritable=['tracks/', 'tests/unit/']\n",
+        encoding="utf-8",
+    )
+    store = _store(repo)
+    _graph(store, task)
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task["task_id"],
+            "task": task,
+            "manifest": {
+                "task_id": task["task_id"],
+                "allowed_paths": ["tracks/app.py"],
+                "forbidden_paths": ["tests/integration/**", "tests/e2e/**"],
+            },
+        },
+    )
+    return store
+
+
+def test_red_gate_accepts_devon_test_dir_evidence_for_impl_only_manifest(tmp_path):
+    """Fix G: RED evidence in a Devon test dir (tests/unit/) must not be
+    rejected by the allowed_paths gate when the manifest grants only impl
+    paths - frozen suites stay blocked by forbidden_paths."""
+    repo = _repo(tmp_path)
+    task = _task()
+    store = _impl_only_started_store(repo, task)
+    executor = _executor(repo, store)
+    last = _run_red_gate(
+        executor,
+        store,
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    assert last.type == "verdict.passed"
+    assert last.payload["check"] == "red_valid"
+
+
+def test_red_gate_still_rejects_frozen_suite_evidence(tmp_path):
+    """The devon-test-dir exemption must not open frozen suites: an evidence
+    path under tests/integration/ is forbidden for Devon writes."""
+    repo = _repo(tmp_path)
+    task = _task()
+    store = _impl_only_started_store(repo, task)
+    executor = _executor(repo, store)
+    last = _run_red_gate(
+        executor,
+        store,
+        _structured_outcome(
+            "red",
+            ["tests/integration/test_frozen.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    assert last.type == "verdict.failed"
+    assert last.payload["check"] == "red_invalid"
+    assert "forbidden" in last.payload["reason"]
+
+
 def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
