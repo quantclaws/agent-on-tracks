@@ -6,9 +6,10 @@ __pycache__/
 .coverage.*
 .env
 /.tracks/runtime/
+/.tracks/worktrees/
 build/
 dist/
-.opencode/
+.opencode
 *.lock
 
 # runtime opencode session logs

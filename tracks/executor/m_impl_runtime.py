@@ -49,7 +49,12 @@ from tracks.executor.taskgraph import (
 )
 from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
 from tracks.executor.validate import parse_test_tasks
-from tracks.executor.worktree import WorktreeHandle, cleanup_worktree, create_gate_worktree
+from tracks.executor.worktree import (
+    WorktreeHandle,
+    cleanup_worktree,
+    create_gate_worktree,
+    ensure_runtime_assets,
+)
 from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
 from tracks.project import ContractError, layout_paths, load_contract
 from tracks.tasklog import rebuild_task_log
@@ -1069,7 +1074,11 @@ class MImplRuntimeMixin:
             str(self.repo), ".tracks", "worktrees", self.run_id, task_id, "gate"
         )
         if task_id and os.path.isdir(gate_path):
-            return gate_path, None  # Pre-existing worktree (e.g., test-created)
+            # Pre-existing worktree (e.g., test-created, or a leftover from a
+            # cleanup failure): re-link runtime assets (.opencode) so gate unit
+            # commands see the deployment meta-tests compare against (T-013).
+            ensure_runtime_assets(str(self.repo), gate_path)
+            return gate_path, None  # Pre-existing worktree, no cleanup needed
 
         # Try to create a gate worktree from base B + Green impl + R tests
         r_sha = state.r_tree_identity

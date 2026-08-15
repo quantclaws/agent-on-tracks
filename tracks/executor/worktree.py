@@ -55,6 +55,31 @@ def create_test_authority_worktree(
     return WorktreeHandle(path=path, base_sha=c_design_sha, kind="test_authority")
 
 
+_RUNTIME_ASSETS = (".opencode",)
+
+
+def ensure_runtime_assets(repo: str, wt_path: str) -> None:
+    """Link gitignored runtime assets from the main repo into a worktree.
+
+    Worktrees are clean ``git worktree add`` checkouts: gitignored deployment
+    targets (notably ``.opencode/`` — the agents/skills the meta-tests
+    ``test_devon_canonical_equals_deployed`` compare against) are structurally
+    absent, so any gate unit command that touches them fails with
+    FileNotFoundError (run 01KZTHE7 T-013). Symlink each asset back to the main
+    repo's deployment so the worktree sees the same environment. Best-effort and
+    idempotent: never raises, never clobbers an existing entry.
+    """
+    for name in _RUNTIME_ASSETS:
+        src = os.path.join(repo, name)
+        dst = os.path.join(wt_path, name)
+        if os.path.lexists(dst):
+            continue
+        if not (os.path.exists(src) or os.path.islink(src)):
+            continue
+        with contextlib.suppress(OSError):
+            os.symlink(os.path.abspath(src), dst)
+
+
 def create_gate_worktree(
     repo: str,
     c_design_sha: str,
@@ -76,6 +101,10 @@ def create_gate_worktree(
         _apply_and_commit(path, devon_diff, "Devon candidate diff")
     if frozen_bundle_sha.strip():
         _git(path, "cherry-pick", "--allow-empty", frozen_bundle_sha)
+    # Runtime assets are linked AFTER all git commits so _apply_and_commit's
+    # `git add -A` cannot swallow the symlink into a commit; the entry stays
+    # untracked (and ignored under the canonical .gitignore).
+    ensure_runtime_assets(repo, path)
     return WorktreeHandle(path=path, base_sha=c_design_sha, kind="gate")
 
 
