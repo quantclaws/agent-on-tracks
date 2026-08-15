@@ -142,6 +142,10 @@ class State:
     task_refs: list[dict] = field(default_factory=list)
     current_task_metadata: dict | None = None
     current_manifest: dict | None = None
+    # SM-02 doc-gap adjudication projection (IF-DOCGAP-001 / IF-QUARANTINE-001):
+    # per-record waiting/route/quarantine/resume state rebuilt from the §1m
+    # doc-gap event closed set. Never an ordinary success terminal.
+    doc_gaps: dict = field(default_factory=dict)
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -953,6 +957,85 @@ def _on_no_diff_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
     _escalate_or_continue(s, {"attempt": p.get("attempt", s.current_attempt + 1)})
 
 
+def _on_doc_comment_detected(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_comment.detected``: open a per-record waiting projection
+    (AC-FR0234-03).  The origin role/task/phase/dispatch/attempt and the
+    discussion threads stay visible while the outcome is paused."""
+    s.doc_gaps[p["record_id"]] = {
+        "state": "DETECTED",
+        "origin": dict(p.get("origin") or {}),
+        "document_paths": list(p.get("document_paths") or []),
+        "thread_ids": list(p.get("thread_ids") or []),
+        "quarantine_id": None,
+        "quarantine_status": None,
+        "route": None,
+        "reason": None,
+        "next_dispatch_id": None,
+        "next_attempt": None,
+    }
+
+
+def _on_outcome_quarantined(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``outcome.quarantined``: surface the quarantine identity and status so a
+    held outcome is never mistaken for a success (AC-FR0236-01/02).  The record
+    is created when the quarantined event is the first trace of the lifecycle
+    (blob-manifest round trip), always in the waiting DETECTED state."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        record = {
+            "state": "DETECTED",
+            "origin": {},
+            "document_paths": [],
+            "thread_ids": [],
+            "quarantine_id": None,
+            "quarantine_status": None,
+            "route": None,
+            "reason": None,
+            "next_dispatch_id": None,
+            "next_attempt": None,
+        }
+        s.doc_gaps[p["record_id"]] = record
+    record["quarantine_id"] = p.get("quarantine_id")
+    record["quarantine_status"] = p.get("status")
+
+
+def _on_doc_comment_adjudicated(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_comment.adjudicated``: Prism's route moves the record to
+    DESIGN_GAP or AGENT_CORRECTION (AC-FR0235-01/02)."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    route = p.get("route")
+    record["route"] = route
+    if route == "design_gap":
+        record["state"] = "DESIGN_GAP"
+    elif route == "agent_correction":
+        record["state"] = "AGENT_CORRECTION"
+
+
+def _on_outcome_resolve(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``outcome.restored|discarded``: project the resume decision with its
+    reason and the new dispatch/attempt (AC-FR0236-04)."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    record["state"] = "RESTORED" if ev.type == "outcome.restored" else "DISCARDED"
+    record["reason"] = p.get("reason")
+    record["next_dispatch_id"] = p.get("next_dispatch_id")
+    record["next_attempt"] = p.get("next_attempt")
+
+
+def _on_outcome_resumed(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``outcome.resumed``: the old outcome is superseded by a NEW dispatch/
+    attempt, never re-marked as a success (AC-FR0235-03, NFR-0090-03)."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    record["state"] = "RESUMED"
+    record["next_dispatch_id"] = p.get("next_dispatch_id")
+    record["next_attempt"] = p.get("next_attempt")
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -1011,6 +1094,13 @@ _APPLY = {
     "refactor.committed": _on_refactor_committed,
     "refactor.no_change": _on_refactor_no_change,
     "task.completed": _on_task_completed,
+    # v0.5 SM-02 doc-gap adjudication (IF-DOCGAP-001 / IF-QUARANTINE-001)
+    "doc_comment.detected": _on_doc_comment_detected,
+    "outcome.quarantined": _on_outcome_quarantined,
+    "doc_comment.adjudicated": _on_doc_comment_adjudicated,
+    "outcome.restored": _on_outcome_resolve,
+    "outcome.discarded": _on_outcome_resolve,
+    "outcome.resumed": _on_outcome_resumed,
 }
 
 
