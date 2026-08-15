@@ -99,6 +99,15 @@ def _select_current(
     return current, has_other
 
 
+def _newest_bundle(
+    current: list[tuple[str, str, str, bytes]],
+) -> tuple[str, str, str, bytes] | None:
+    """Pick the current-SHA bundle with the highest (run_id, path) byte order."""
+    if not current:
+        return None
+    return max(current, key=lambda item: (item[1], item[0]))
+
+
 def _load_bundle(raw: bytes) -> dict | None:
     try:
         value = json.loads(raw.decode("utf-8"))
@@ -325,41 +334,47 @@ def check_release_evidence(
     git_facts: dict,
 ) -> ReleaseEvidenceReport:
     """Deterministically evaluate IF-RELEASE-001 from supplied observable facts."""
-    current, has_other = _select_current(current_head, evidence_candidates)
-    if not current:
+
+    def _fail(
+        reason: ReleaseEvidenceReason,
+        *,
+        path: str | None = None,
+        run_id: str | None = None,
+        backend: str | None = None,
+        event_bounds: tuple[int, int] | None = None,
+    ) -> ReleaseEvidenceReport:
         return _not_satisfied(
             branch=branch,
             current_head=current_head,
-            reason="stale" if has_other else "missing",
+            reason=reason,
+            path=path,
+            run_id=run_id,
+            backend=backend,
+            event_bounds=event_bounds,
         )
-    path, run_id, _sha, raw = max(current, key=lambda item: (item[1], item[0]))
+
+    current, has_other = _select_current(current_head, evidence_candidates)
+    if not current:
+        return _fail("stale" if has_other else "missing")
+    path, run_id, _sha, raw = _newest_bundle(current)
     bundle = _load_bundle(raw)
     if bundle is None or bundle.get("schema_version") != SCHEMA_VERSION:
-        return _not_satisfied(
-            branch=branch, current_head=current_head, reason="malformed",
-            path=path, run_id=run_id,
-        )
+        return _fail("malformed", path=path, run_id=run_id)
     if bundle.get("candidate_sha") != current_head or bundle.get("run_id") != run_id:
-        return _not_satisfied(
-            branch=branch, current_head=current_head, reason="malformed",
-            path=path, run_id=run_id,
-        )
+        return _fail("malformed", path=path, run_id=run_id)
     backend = _backend_of(bundle)
     if not _provenance_ok(bundle):
-        return _not_satisfied(
-            branch=branch, current_head=current_head, reason="not_real",
-            path=path, run_id=run_id, backend=backend,
-        )
+        return _fail("not_real", path=path, run_id=run_id, backend=backend)
     if not _audit_ok(bundle, blobs):
-        return _not_satisfied(
-            branch=branch, current_head=current_head, reason="audit_incomplete",
-            path=path, run_id=run_id, backend=backend,
-        )
+        return _fail("audit_incomplete", path=path, run_id=run_id, backend=backend)
     event_bounds = _event_bounds(bundle)
     if event_bounds is None or not _journey_ok(bundle, git_facts, event_bounds):
-        return _not_satisfied(
-            branch=branch, current_head=current_head, reason="journey_incomplete",
-            path=path, run_id=run_id, backend=backend, event_bounds=event_bounds,
+        return _fail(
+            "journey_incomplete",
+            path=path,
+            run_id=run_id,
+            backend=backend,
+            event_bounds=event_bounds,
         )
     return ReleaseEvidenceReport(
         status="satisfied",
@@ -375,9 +390,7 @@ def check_release_evidence(
 
 def _git(repo: Path, *args: str) -> str | None:
     try:
-        proc = subprocess.run(
-            ["git", *args], cwd=repo, capture_output=True, text=True, check=False
-        )
+        proc = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
     except OSError:
         return None
     if proc.returncode != 0:
@@ -452,20 +465,15 @@ def _bundle_lineage(bundle: object) -> dict | None:
     return lineage if isinstance(lineage, dict) else None
 
 
-def _git_facts(
-    repo: Path, current_head: str | None, candidates: list[tuple[str, bytes]]
-) -> dict:
+def _git_facts(repo: Path, current_head: str | None, candidates: list[tuple[str, bytes]]) -> dict:
     facts = {"r_ref_sha": None, "g_parent": None, "g_trailers": {}}
     if current_head is None:
         return facts
-    current = []
-    for path, data in candidates:
-        parsed = _parse_evidence_path(path)
-        if parsed is not None and parsed[0] == current_head:
-            current.append((path, parsed[1], data))
-    if not current:
+    current, _ = _select_current(current_head, candidates)
+    picked = _newest_bundle(current)
+    if picked is None:
         return facts
-    _path, _run_id, raw = max(current, key=lambda item: (item[1], item[0]))
+    _path, _run_id, _sha, raw = picked
     lineage = _bundle_lineage(_load_bundle(raw))
     if lineage is None:
         return facts

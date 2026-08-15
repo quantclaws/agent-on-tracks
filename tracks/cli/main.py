@@ -1050,9 +1050,10 @@ def cmd_check(repo: Path, *args) -> int:
     # FR-040/FR-130 / AC-1303: `trac check deliverables` - pre-commit/CI gate
     # FR-0080: `trac check trace [--json] [--version <ver>]`
     # FR-0090: `trac check reach [--json] [--entry <module>]...`
+    # FR-0232: `trac check release-evidence [--json]`
     args = list(args)
     if not args:
-        return _err("usage: trac check <deliverables|trace|reach>")
+        return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
     sub, rest = args[0], args[1:]
     if sub == "deliverables":
         if rest:
@@ -1070,7 +1071,7 @@ def cmd_check(repo: Path, *args) -> int:
         return _cmd_check_reach(repo, rest)
     if sub == "release-evidence":
         return _cmd_check_release_evidence(repo, rest)
-    return _err("usage: trac check <deliverables|trace|reach>")
+    return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
 
 
 USAGE = (
@@ -1079,7 +1080,8 @@ USAGE = (
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
     "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
-    "|discuss <query|start|reply|edit|set-status> ...|check <deliverables|trace|reach>"
+    "|discuss <query|start|reply|edit|set-status> ..."
+    "|check <deliverables|trace|reach|release-evidence>"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
