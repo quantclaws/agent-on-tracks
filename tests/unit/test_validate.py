@@ -414,6 +414,21 @@ def test_unknown_trac_subcommand_scoped_to_design_kinds(tmp_path):
     assert check_template(p) == []
 
 
+def test_design_doc_prose_trac_word_not_flagged(tmp_path):
+    # run 01KZTHE7RMZE6110PK9C54K1E2: Shield discussion replies mentioning
+    # "the INSTALLED console script ... with cwd=HOST" right after the word
+    # "trac" were false-flagged as fabricated subcommands. Prose is not a
+    # command context; only fences, backtick spans, and line-start commands.
+    p = _design_doc(tmp_path, "test-plan", "test-plan.md")
+    p.write_text(
+        p.read_text(encoding="utf-8")
+        + "\nruns the installed trac with cwd=HOST and reads the trac subcommand invocation semantics.\n",
+        encoding="utf-8",
+    )
+    issues = check_template(p)
+    assert not any("unknown trac subcommand" in i for i in issues)
+
+
 def test_validate_document_fails_on_unknown_trac_subcommand(tmp_path):
     p = _design_doc(tmp_path, "interfaces", "interfaces.md")
     p.write_text(p.read_text(encoding="utf-8") + "\ntrac archive push\n", encoding="utf-8")

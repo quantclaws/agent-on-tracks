@@ -25,4 +25,4 @@ cwd = "."
 writable = ["tracks/", "tests/unit/"]
 
 [layout.shield]
-writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/", "tests/_doc_gap_hook/", "tests/doc_gap_injection.py"]
+writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]

@@ -114,6 +114,12 @@ TRAC_SUBCOMMANDS = frozenset(
         "validate",
     }
 )
+# A `trac` invocation is only actionable (and only fabricatable) where the
+# author wrote actual command text: inside code fences or backtick spans.
+# Prose uses like "the INSTALLED console script with cwd=HOST" after the word
+# "trac" are ordinary English, not commands (run 01KZTHE7RMZE6110PK9C54K1E2
+# PRISM_REVIEW escalation: Shield discussion replies mentioning "trac with
+# cwd" / "trac subcommand invocation" were flagged as fabricated tooling).
 _TRAC_CALL = re.compile(r"\btrac\s+([A-Za-z][A-Za-z0-9_-]*)")
 
 
@@ -413,10 +419,14 @@ def _trac_command_issues(text: str) -> list:
         first = text.count("\n", 0, m.start()) + 1
         hidden.update(range(first, first + m.group(0).count("\n") + 1))
     issues: list = []
+    in_fence = False
     for line_no, line in enumerate(text.splitlines(), start=1):
         if line_no in hidden:
             continue
-        for token in _TRAC_CALL.findall(line):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        for token in _line_trac_tokens(line, in_fence):
             if token not in TRAC_SUBCOMMANDS:
                 issues.append(
                     f"line:{line_no} unknown trac subcommand {token!r} "
@@ -424,6 +434,42 @@ def _trac_command_issues(text: str) -> list:
                     "foundation task)"
                 )
     return issues
+
+
+def _line_trac_tokens(line: str, in_fence: bool) -> list:
+    """Tokens after `trac` in this line's command contexts.
+
+    Command contexts: fenced code blocks (full-line scan — fabricated
+    commands hide there, run045), backtick code spans, and a bare
+    line-start ``trac`` command. Prose uses of the word "trac" followed by
+    an ordinary English word are not invocations (run 01KZTHE7RMZE6110PK9C54K1E2
+    escalation: "console script with cwd=HOST" / "trac subcommand
+    invocation" in Shield discussion replies were false-flagged)."""
+    if in_fence:
+        return [m.group(1) for m in _TRAC_CALL.finditer(line)]
+    tokens = _trac_tokens_in_command_context(line)
+    stripped = line.lstrip()
+    if stripped.startswith("trac "):
+        m = _TRAC_CALL.match(stripped)
+        if m:
+            tokens.append(m.group(1))
+    return tokens
+
+
+def _trac_tokens_in_command_context(line: str) -> list:
+    """Tokens following `trac` ONLY inside backtick code spans (prose lines).
+
+    A backtick span like `` `trac validate --file <path>` `` yields
+    ``validate``. Bare-prose ``trac with cwd`` yields nothing: the guard
+    targets fabricated tooling, and fabrication requires command syntax,
+    not the word "trac" followed by English. Fenced blocks are handled by
+    the caller (fence-state tracking), not here.
+    """
+    tokens: list = []
+    for span in re.findall(r"`([^`]+)`", line):
+        for m in _TRAC_CALL.finditer(span):
+            tokens.append(m.group(1))
+    return tokens
 
 
 # Legacy story profile (pre-latest-template structure). The latest template

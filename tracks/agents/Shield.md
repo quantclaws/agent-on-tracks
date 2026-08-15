@@ -43,7 +43,6 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 - 不发明 interfaces 中没有的观察方式；需要而合同没有的出口是可定位的 observability gap，返回 advisory，不窥探内部状态。
 - 集成测试经被测接口本身进入（import/调用接口桩声明的公开入口），不绕道实现细节。
 - 断言值与预期行为只从合同推导（AC/interfaces.md/test-plan，或经 ground truth 脚本在运行期计算），不从任何代码输出抄写，不硬编码拍脑袋的期望值。生产代码（tracks/**）不是期望值或行为的真理源：合同没写清楚的细节，发 gap advisory，不得以实现现状补齐断言。
-- 构建配置只读：pyproject.toml、.githooks/、.flake8、tox.ini、CI 配置等构建/门禁配置一律不得写入或修改。lint/格式拦截不是测试侧问题：测试文件保持合理行宽（ruff E501 已按 tests/* 豁免），若确因门禁规则受阻，在 outcome 的 self_report 中说明并返回，由 Runtime/Human 处理；不得以任何理由自行改配置绕过门禁。
 
 ### 绝不为了绿色而出卖合同
 
