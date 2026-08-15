@@ -52,12 +52,44 @@ def _set_shield_env(monkeypatch, behavior, docs, extra=None):
         monkeypatch.setenv("FAKE_OPENCODE_EXTRA", str(extra))
 
 
+def _write_project_layout(host_repo):
+    """Write the Archer-produced ``.tracks/projects/project.toml`` layout
+    contract (FR-0120/IF-DEVON-001): the FR-0170 over-reach audit authorizes
+    a Shield WRITE's test-asset writes only when ``[layout.shield].writable``
+    declares them.  The real M-DESIGN flow produces this file before any
+    dispatch; the manifest tests mirror that host state so the fake agent's
+    write under ``tests/integration/`` is in scope, not over-reach."""
+    toml = host_repo / ".tracks" / "projects" / "project.toml"
+    toml.parent.mkdir(parents=True, exist_ok=True)
+    toml.write_text(
+        "[integration]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/integration/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
+        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
+        'cwd = "."\n\n'
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+        'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
+        'cwd = "."\n\n'
+        "[layout]\n\n"
+        "[layout.devon]\n"
+        'writable = ["tracks/", "tests/unit/"]\n\n'
+        "[layout.shield]\n"
+        'writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]\n',
+        encoding="utf-8",
+    )
+
+
 def test_shield_write_manifest_extracted_from_final_text_event(
     fake_opencode, host_repo, monkeypatch
 ):
     """Real opencode JSON output carries the final Agent text in part.text."""
     from tracks import paths
 
+    _write_project_layout(host_repo)
     vdir = paths.version_dir(paths.tracks_home(host_repo), "v0.4")
     vdir.mkdir(parents=True, exist_ok=True)
     _commit_m_test_docs(host_repo, vdir)
@@ -93,6 +125,7 @@ def test_shield_write_manifest_extracted_from_markdown_wrapped_text(
     """Agent prose (Markdown) before the JSON manifest is tolerated."""
     from tracks import paths
 
+    _write_project_layout(host_repo)
     vdir = paths.version_dir(paths.tracks_home(host_repo), "v0.4")
     vdir.mkdir(parents=True, exist_ok=True)
     _commit_m_test_docs(host_repo, vdir)
