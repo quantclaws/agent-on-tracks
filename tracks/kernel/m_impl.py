@@ -284,6 +284,16 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
+    elif check == "verification_failed":
+        # Runtime acceptance of a verification-only task failed (user ruling
+        # 2026-08-15): the pre-implemented contract did not hold. No blind
+        # retry - route into the existing four-way DIAGNOSE so Prism
+        # attributes the failure (impl_defect -> Devon GREEN fix,
+        # test_defect -> Shield SHIELD_FIX, spec/ac_gap -> upstream stage,
+        # stub_gap -> M-DESIGN rollback).
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = None
+        _reset_review(s)
     elif check in ("test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"):
         s.substate = "DIAGNOSE"
         s.diagnose_classification = check
