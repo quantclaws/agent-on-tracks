@@ -198,6 +198,12 @@ def _route_prism_plan_revise(s: State, p: dict) -> None:
     else:
         s.substate = "PLANNING"
         _reset_doc(s)
+        # The revised task graph must be re-committed and re-reviewed: with
+        # the round-1 flag left set, _decide_m_impl_planning returns None
+        # forever once the revision outcome lands (doc_produced=True,
+        # taskgraph_committed=True) - the loop exits and no restart
+        # re-commits (run 01KZTHE7 PLANNING round 2, 2026-08-15).
+        s.taskgraph_committed = False
         _consume_attempt(s)
 
 
