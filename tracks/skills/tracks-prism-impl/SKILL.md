@@ -61,3 +61,13 @@ Prism 在 M-IMPL 评审按 assignment 指定的名称+版本加载本判据包�
 - 测试集合/执行/Red 分类：Runtime RED_CHECK 程序分类（FR-0050）。
 
 Prism 的语义判据与 Runtime 的形式校验互补：Prism 可放行语义合格的实现，但 trace/binding 不合规的情况仍由 Runtime 程序校验捕获。
+
+## DIAGNOSE 输出合同（2026-08-15，run 01KZTHE7 T-008 教训）
+
+DIAGNOSE dispatch 的诊断结论**必须机器可读**：最终回复以一个裸 JSON object 结束（Runtime 从你最后一条 text 消息提取，散文结论不构成交付）：
+
+```json
+{"classification": "test_defect|impl_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
+```
+
+`classification` 是五选一的唯一判定；reason 一句话；evidence 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。

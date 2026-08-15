@@ -811,12 +811,35 @@ class OpencodeBackend:
                     self._first_json_object,
                 )
             )
+        if name == "Prism" and substate == "DIAGNOSE":
+            # Real-channel DIAGNOSE classification (the fake channel uses the
+            # simulate token): routed via _emit_diagnose_verdict; without a
+            # verdict the outcome deadlocks (run 01KZTHE7 T-008).
+            result["verdict"] = self._diagnose_classification_from(proc)
         return self._enrich_discussion(
             result,
             doc_paths,
             substate,
             reviewer_assignment,
         )
+
+    _DIAGNOSE_CLASSIFICATIONS = (
+        "test_defect",
+        "impl_defect",
+        "stub_gap",
+        "ac_gap",
+        "spec_gap",
+    )
+
+    def _diagnose_classification_from(self, proc) -> str | None:
+        """Extract the skill-contract {"classification": ...} JSON from the
+        Prism DIAGNOSE final reply (five-way set or None)."""
+        event = self._final_text_event(proc)
+        part = event.get("part") if isinstance(event, dict) else None
+        text = part.get("text") if isinstance(part, dict) else None
+        payload = self._first_json_object(text.strip()) if isinstance(text, str) else None
+        classification = payload.get("classification") if isinstance(payload, dict) else None
+        return classification if classification in self._DIAGNOSE_CLASSIFICATIONS else None
 
     @staticmethod
     def _enrich_discussion(

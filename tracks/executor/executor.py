@@ -609,7 +609,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit_verdict(role, result["verdict"], result, state, params, cmd, task_id)
 
     def _emit_diagnose_verdict(self, result, state, cmd, task_id):
-        classification = self._diagnose_classification()
+        # Real channel (opencode): the Prism DIAGNOSE reply ends with a
+        # {"classification": ...} JSON (skill contract) extracted into
+        # result["verdict"]. Fall back to the simulate token (fake channel).
+        verdict = result.get("verdict")
+        classification = (
+            verdict
+            if verdict in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
+            else self._diagnose_classification()
+        )
         target = (
             "M-IMPL"
             if classification in ("test_defect", "impl_defect")
