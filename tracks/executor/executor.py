@@ -637,6 +637,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             {
                 "check": classification,
                 "target_stage": target,
+                "task_id": task_id or state.current_task_id or "",
                 "reason": reason,
                 "evidence": evidence,
                 "attempt": state.current_attempt + 1,

@@ -1346,7 +1346,12 @@ class MImplRuntimeMixin:
         if any(
             ev.type == "verdict.failed"
             and ev.payload.get("check") == "impl_defect"
-            and ev.payload.get("task_id") in (None, task_id)
+            # Exact task match only: the old `in (None, task_id)` amnesty
+            # let task-less legacy events (DIAGNOSE verdicts before 2026-08-15
+            # carried no task_id) poison every task's commit after an attempt
+            # reset - run 01KZTHE7 T-013's green commit was blocked by T-008's
+            # stale diagnosis verdict (seq 890) hours later.
+            and ev.payload.get("task_id") == task_id
             and ev.payload.get("attempt") == attempt
             for ev in self.store.events(self.run_id)
         ):
