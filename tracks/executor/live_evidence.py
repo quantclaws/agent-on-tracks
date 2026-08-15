@@ -147,6 +147,11 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _canonical_sha256(value: object) -> str:
+    """Content-addressed identity of a canonical-JSON value (§3h)."""
+    return _sha256_hex(_canonical_bytes(value))
+
+
 def _blob_ref(candidate_sha: str, run_id: str, sha256_hex: str) -> str:
     return f"{EVIDENCE_ROOT}/{candidate_sha}/{run_id}/blobs/{sha256_hex}"
 
@@ -292,8 +297,8 @@ def _agent_receipt(
     command_item: dict, outcome_item: dict, candidate_sha: str, run_id: str
 ) -> AgentIOReceipt:
     payload = _payload_of(outcome_item)
-    input_sha = _sha256_hex(_canonical_bytes(command_item))
-    output_sha = _sha256_hex(_canonical_bytes(outcome_item))
+    input_sha = _canonical_sha256(command_item)
+    output_sha = _canonical_sha256(outcome_item)
     task_id = outcome_item.get("task_id") or payload.get("task_id") or ""
     return AgentIOReceipt(
         role=str(payload.get("role", "")),
@@ -310,23 +315,24 @@ def _agent_receipt(
     )
 
 
-def _bind_agent_io(journey: list[dict], candidate_sha: str, run_id: str) -> tuple:
-    devon = _outcome_events(journey, "devon", REQUIRED_DEVON_PHASES)
-    seen_phases = {_payload_of(item).get("phase") for item in devon}
-    missing = [phase for phase in REQUIRED_DEVON_PHASES if phase not in seen_phases]
+def _outcome_items_for_role(
+    journey: list[dict], role: str, phases: tuple[str, ...], label: str
+) -> list[dict]:
+    """Outcome events for one role, failing closed on missing required phases."""
+    items = _outcome_events(journey, role, phases)
+    seen_phases = {_payload_of(item).get("phase") for item in items}
+    missing = [phase for phase in phases if phase not in seen_phases]
     if missing:
         raise ValueError(
-            "IF-LIVE-001:journey incomplete: missing Devon dispatch receipts for "
+            f"IF-LIVE-001:journey incomplete: missing {label} dispatch receipts for "
             + ",".join(missing)
         )
-    prism = _outcome_events(journey, "prism", _PRISM_PHASES)
-    seen_prism_phases = {_payload_of(item).get("phase") for item in prism}
-    missing_prism = [phase for phase in _PRISM_PHASES if phase not in seen_prism_phases]
-    if missing_prism:
-        raise ValueError(
-            "IF-LIVE-001:journey incomplete: missing Prism dispatch receipts for "
-            + ",".join(missing_prism)
-        )
+    return items
+
+
+def _bind_agent_io(journey: list[dict], candidate_sha: str, run_id: str) -> tuple:
+    devon = _outcome_items_for_role(journey, "devon", REQUIRED_DEVON_PHASES, "Devon")
+    prism = _outcome_items_for_role(journey, "prism", _PRISM_PHASES, "Prism")
     outcomes = devon + prism
     receipts = []
     for outcome_item in sorted(outcomes, key=lambda item: item["seq"]):
@@ -467,7 +473,7 @@ def bind_live_evidence(
     agent_io = _bind_agent_io(journey, candidate_sha, run_id)
     gates = _validate_gate_journey(journey)
     boundary = _validated_boundary(journey, gates["ISLAND_GATE_2"]["seq"])
-    events_sha = _sha256_hex(_canonical_bytes(journey))
+    events_sha = _canonical_sha256(journey)
     return LiveEvidenceBundle(
         schema_version=SCHEMA_VERSION,
         status="satisfied",
