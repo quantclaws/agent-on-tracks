@@ -459,6 +459,21 @@ def _m_impl_shield_dispatch(s: State) -> Command:
     agent substate is WRITE per test_dispatch_materialization.py lines 35-43.
     """
     assignment = _m_impl_base_assignment(s, "shield", "WRITE", ["tracks-discuz"])
+    # SHIELD_FIX writes tests for the diagnosed defect: derive the Shield
+    # WRITE test_tasks contract from the current task metadata. The base
+    # assignment leaves test_tasks=None, which the executor rejects as
+    # stale - the whole SHIELD_FIX path had never been driven by a real
+    # dispatch before run 01KZTHE7 T-008 (2026-08-15).
+    meta = s.current_task_metadata or {}
+    assignment["test_tasks"] = [
+        {
+            "ac_id": ac,
+            "layers": ["integration"],
+            "if_ids": list(meta.get("if_ids") or []),
+        }
+        for ac in (meta.get("ac_refs") or [])
+        if isinstance(ac, str) and ac
+    ]
     params = {
         "role": "shield",
         "substate": "WRITE",
