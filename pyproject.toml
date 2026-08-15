@@ -73,6 +73,9 @@ show_missing = true
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
 ignore = ["SIM108"]  # allow explicit if/else where clearer than a ternary
