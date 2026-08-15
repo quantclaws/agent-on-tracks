@@ -495,14 +495,32 @@ class OpencodeBackend:
         prompt: str,
         console_input: str | None,
     ) -> dict | None:
-        """Shield WRITE atomic audit: doc-delta + over-reach; either fails = full rollback."""
+        """Shield WRITE atomic audit: doc-delta + over-reach.
+
+        Rollback granularity (D-37 disposition, v0.5 minimal landing):
+        - Pure over-reach (over_paths only, adjudicated DENY or not adjudicated):
+          revert ONLY the offending paths - the same partial pattern as the
+          scaffold branch - so compliant test-asset writes survive in the
+          working tree for the re-dispatch to build on (D-37: "回滚保留合规,
+          拒绝理由必回流"; the 74-minute compliant rewrite of run 01KZTHE7
+          attempt 3 was force-discarded over one wiki-file edit on 2026-08-15).
+        - Doc-delta failure (bypassing the discussion protocol on a commentable
+          doc) still invalidates the whole run: the write protocol itself was
+          violated, so the tree is not trustworthy (fail-closed, unchanged)."""
         agent_changed = auditor.agent_changed_paths(baseline)
         doc_offending = self._check_doc_deltas(auditor, doc_paths, agent_changed)
         over_paths = sorted(p for p in agent_changed if not auditor._is_allowed(p))
         if doc_offending or over_paths:
             if over_paths and not doc_offending and adjudicate(self, "shield", over_paths):
                 return None
-            auditor.rollback_agent_changes(baseline, new_changes=agent_changed, force=True)
+            if over_paths and not doc_offending:
+                auditor.rollback_agent_changes(
+                    baseline, new_changes=set(over_paths), force=True
+                )
+            else:
+                auditor.rollback_agent_changes(
+                    baseline, new_changes=agent_changed, force=True
+                )
             return self._overreach_result(
                 diff_ref,
                 proc,
