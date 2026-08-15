@@ -143,7 +143,15 @@ def _on_m_impl_outcome_done(s: State) -> None:
     elif s.substate == "REFACTOR":
         s.substate = "REFACTOR_GATE"
     elif s.substate == "SHIELD_FIX":
-        s.substate = "GREEN_GATE"
+        if _is_verification_task(s):
+            # test_defect on a verification-only task is fixed: re-run the
+            # Runtime acceptance via the RED->verify_task path. GREEN_GATE
+            # would instead check for a Devon GREEN evidence and trip over
+            # the stale pre-fix RED outcome (run 01KZTHE7 T-008).
+            s.substate = "RED"
+            _reset_doc(s)
+        else:
+            s.substate = "GREEN_GATE"
     elif s.substate in _M_IMPL_REVIEW_SUBSTATES:
         s.reviewer_produced = True
 
@@ -579,9 +587,13 @@ def _decide_m_impl_agent(s: State, sub: str) -> Command | None:
         return None  # awaiting outcome
     if sub == "SHIELD_FIX":
         return _m_impl_shield_dispatch(s)
-    if sub == "RED" and _is_verification_task(s):
-        # RGR structurally cannot apply (frozen tests, no implementation to
-        # write): route to Runtime-executed acceptance instead of Devon.
+    if sub in ("RED", "GREEN") and _is_verification_task(s):
+        # RGR structurally cannot apply to a verification-only task (frozen
+        # tests, nothing to implement). RED routes here initially; GREEN is
+        # reached when a DIAGNOSE mis-routes a stale-outcome artifact (e.g.
+        # the SHIELD_FIX gate tripping over a pre-fix RED outcome, run
+        # 01KZTHE7 T-008 2026-08-15) - either way the resolution is to run
+        # the Runtime acceptance, never a Devon RGR phase.
         return Command(
             kind="verify_task",
             params={"stage": "M-IMPL", "task_id": s.current_task_id},
