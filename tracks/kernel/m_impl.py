@@ -292,6 +292,7 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
+        _reset_review(s)
     elif check == "verification_failed":
         # Runtime acceptance of a verification-only task failed (user ruling
         # 2026-08-15): the pre-implemented contract did not hold. No blind
@@ -303,8 +304,16 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.diagnose_classification = None
         _reset_review(s)
     elif check in ("test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"):
+        # Gate-level attribution routing directly into DIAGNOSE with a preset
+        # classification: reset the reviewer flag so decide() can dispatch the
+        # Prism DIAGNOSE review. Without this, a stale reviewer_dispatched
+        # (e.g. left over from the previous DIAGNOSE round whose verdict
+        # routed back to GREEN via _route_m_impl_diagnose, which deliberately
+        # does not reset - task_review pass resets it later) makes
+        # _decide_m_impl_prism return None forever and the run loop exits.
         s.substate = "DIAGNOSE"
         s.diagnose_classification = check
+        _reset_review(s)
     else:
         _reset_doc(s)
         _consume_attempt(s)

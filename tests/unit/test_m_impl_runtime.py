@@ -897,6 +897,61 @@ def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
     assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
 
 
+def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
+    """Regression (run 01KZTHE7 T-013 attempt 2, 2026-08-15): a GREEN resubmit
+    may legitimately carry no new changed_paths when the implementation is
+    already on disk. The evidence check must not short-circuit with the
+    stale "Devon GREEN evidence has no changed paths" false-kill; the gate
+    must proceed to re-execute the Runtime unit commands, where a genuine
+    defect still fails closed with an observed unit-command reason."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
+    no_change_outcome = _structured_outcome(
+        "green", [], r_identity="1" * 40, diff_ref=RGR_GREEN_DIFF
+    )
+    no_change_outcome["no_change_reason"] = (
+        "attempt 1 implementation already on disk; resubmit unchanged"
+    )
+    no_change_outcome["commands"] = [
+        {"cmd": ".venv/bin/python -m pytest -n 4 tests/unit", "result": "pass"}
+    ]
+    no_change_outcome["results"] = [{"classification": "pass"}]
+    store.append("RUN", "v0.5", "outcome.received", no_change_outcome)
+    _write_failing_unit_test(repo)
+
+    executor = _executor(repo, store)
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert fails, "failing unit test on disk must still fail GREEN closed"
+    last = fails[-1].payload
+    assert last["check"] == "impl_defect"
+    assert "no changed paths" not in last.get("reason", ""), (
+        "no-change GREEN with reason must not hit the stale false-kill"
+    )
+    assert "exited" in last.get("reason", ""), (
+        "gate must proceed to Runtime unit re-execution and fail there"
+    )
+
+
 def test_green_gate_regression_when_r_unit_test_mutation_hidden(tmp_path):
     """Contract 2: the Runtime derives candidate changed paths from the
     observed git/filesystem state — never from Devon's changed_paths. A hidden

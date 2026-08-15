@@ -1566,6 +1566,74 @@ def test_failed_devon_green_routes_to_diagnose_with_r_lineage():
     assert cmd.params["substate"] == "DIAGNOSE"
 
 
+def test_green_gate_impl_defect_after_diagnose_redispatches_prism():
+    """Regression (run 01KZTHE7 T-013, 2026-08-15): a GREEN_GATE impl_defect
+    failure re-entering DIAGNOSE must reset reviewer_dispatched.
+
+    The stale flag path: Prism DIAGNOSE's verdict routes back to GREEN via
+    _route_m_impl_diagnose (which does not reset review - task_review pass
+    resets it in the happy path). If the retried GREEN gate fails again with
+    impl_defect, the preset-classification branch used to leave
+    reviewer_dispatched=True, so _decide_m_impl_prism returned None forever
+    and the run loop silently exited instead of re-dispatching Prism."""
+    prism_diagnose_dispatch = (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "prism", "substate": "DIAGNOSE"},
+                "command_id": "CD1",
+            }
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        # GREEN attempt 1 -> GREEN_GATE impl_defect -> DIAGNOSE (preset class)
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
+        # loop dispatches Prism DIAGNOSE -> sets reviewer_dispatched=True
+        prism_diagnose_dispatch,
+        # Prism diagnose verdict: impl_defect -> GREEN (does NOT reset review)
+        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
+        # GREEN attempt 2 -> GREEN_GATE impl_defect again -> must reset review
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "impl_defect", "attempt": 2}),
+    )
+    assert s.substate == "DIAGNOSE"
+    assert s.diagnose_classification == "impl_defect"
+    assert s.reviewer_dispatched is False
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    assert cmd.params["substate"] == "DIAGNOSE"
+
+
 def test_failed_devon_refactor_stays_in_refactor_retry():
     s = state_of(
         BASELINE_CMD,

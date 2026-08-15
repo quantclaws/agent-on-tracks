@@ -433,8 +433,18 @@ class MImplRuntimeMixin:
     def _devon_evidence_change_error(phase: str, outcome: dict) -> str | None:
         if phase == "red" and not outcome.get("changed_paths"):
             return "Devon RED evidence has no changed paths"
-        if phase == "green" and not outcome.get("changed_paths"):
-            return "Devon GREEN evidence has no changed paths"
+        if (
+            phase == "green"
+            and not outcome.get("changed_paths")
+            and not outcome.get("no_change_reason")
+        ):
+            # Symmetric with refactor: a GREEN resubmit may legitimately carry
+            # no new paths when the implementation is already on disk from a
+            # prior attempt that passed GREEN_GATE but was killed by a later
+            # guard (run 01KZTHE7 T-013 attempt 2, 2026-08-15). Require an
+            # explicit no_change_reason so the gate does not short-circuit a
+            # genuinely missing implementation; the unit commands still run.
+            return "Devon GREEN evidence needs changed paths or no_change_reason"
         if (
             phase == "refactor"
             and not outcome.get("changed_paths")
