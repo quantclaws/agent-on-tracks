@@ -944,6 +944,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # Failed outcomes (status != "done") are handled by _on_outcome_received
         # (attempt consumed, substate reset) — no pipeline payload.
         payload = _dispatch_payload(self.store, p, result)
+        # Expose the agent I/O blob ref on the result so downstream verdict
+        # emissions can point the next agent at the full transcript (critic
+        # reviews and diagnoses live in blobs - long-form content must be
+        # passed by reference, never re-derived or inlined).
+        agent_io = payload.get("agent_io") or {}
+        if agent_io.get("output_ref"):
+            result.setdefault("output_ref", agent_io["output_ref"])
         if (
             state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
             and result.get("status") == "done"
@@ -1033,6 +1040,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         fallback = "Prism diagnosis: " + classification
         reason = diagnosis.get("reason") or prior.get("reason") or fallback
         evidence = diagnosis.get("evidence") or prior.get("evidence") or fallback
+        # Point the fixer at the full transcript blob: the verdict's
+        # reason/evidence are a summary; Prism's complete step-by-step
+        # analysis lives in the session blob (user stance: long-form critic
+        # output is passed by blob reference, not re-derived downstream).
+        ref = result.get("output_ref")
+        if ref:
+            evidence += f"; full diagnosis transcript: .tracks/runtime/blobs/{ref}"
         target = (
             "M-IMPL"
             if classification in ("test_defect", "impl_defect")
