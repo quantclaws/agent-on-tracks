@@ -103,8 +103,26 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 - 宿主项目 `tests/integration/`、`tests/e2e/`（按 test-plan §2.1 布局与命名）。
 - `tests/assets/` 下的测试数据（若需新增）。
 - `tests/counterexamples/` 下的 counterexample patch 与 kill manifest。
-- WRITE 的最终文本只返回一个原始 JSON object，不加 Markdown fence、解释或其它文字：`{"artifact_manifest":{"include":[{"path":"tests/...","kind":"...","role":"..."}]},"suggested_commit_message":"..."}`。`include` 必须非空，每项给出非空的 repo-relative `path`、`kind` 与 `role`。
 - 该 manifest 与 commit message 只是 Shield 的提议；Runtime authority 负责验证 manifest，并在验证通过后执行 commit。Shield 不自行 commit。
+
+### 输出合同（强制 JSON）
+
+**你的最终回复必须以裸 JSON object 结尾**——前面不得有任何散文、Markdown 章节、解释或 ` ``` ` fence。Runtime 只从最后一条 text 消息中提取 JSON；任何非 JSON 文本都会导致 `manifest_malformed` verdict，assignment 失败。
+
+合法的最终回复只有一个 JSON object，形如：
+
+```json
+{"artifact_manifest":{"include":[{"path":"tests/integration/test_foo.py","kind":"python","role":"integration"}]},"suggested_commit_message":"Shield: fix test_foo assertions (AC-FR0233-03)"}
+```
+
+不合格的最终回复示例（均会导致 verdict 失败）：
+
+- `## 完成报告\n{...json...}` — JSON 前有 Markdown 标题
+- `{...json...}\n\n以上是本次修订总结` — JSON 后有散文
+- ` ```json\n{...}\n``` ` — Markdown fence 包裹
+- 只有散文、没有任何 JSON object
+
+`artifact_manifest.include` 必须非空，每项给出非空的 repo-relative `path`、`kind` 与 `role`。
 
 ## 质量标准
 

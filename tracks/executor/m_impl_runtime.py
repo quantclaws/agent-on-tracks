@@ -391,6 +391,22 @@ class MImplRuntimeMixin:
                 assignment["r_tree_identity"] = state.r_tree_identity
         elif role == "shield" and substate == "WRITE":
             assignment["phase"] = "shield_fix"
+            self._strip_test_forbidden_paths(assignment)
+
+    @staticmethod
+    def _strip_test_forbidden_paths(assignment: dict) -> None:
+        """Shield needs to write to test paths (tests/integration/, etc.) to
+        fix diagnosed test defects. The manifest from the task graph carries
+        Devon's RGR forbidden_paths which include these test dirs. Strip
+        test-path entries so Shield agent doesn't self-restrict (the audit
+        already uses layout_paths("shield") as the whitelist)."""
+        manifest = assignment.get("manifest")
+        if isinstance(manifest, dict):
+            forbidden = manifest.get("forbidden_paths")
+            if isinstance(forbidden, list):
+                manifest["forbidden_paths"] = [
+                    p for p in forbidden if not p.startswith("tests/")
+                ]
 
     def _invalid_m_impl_assignment(
         self,

@@ -497,7 +497,16 @@ def _m_impl_shield_dispatch(s: State) -> Command:
     params = {
         "role": "shield",
         "substate": "WRITE",
-        "objective": "SHIELD_FIX: fix diagnosed test defects",
+        # The JSON clause is load-bearing: the opencode backend extracts the
+        # artifact manifest from Shield's LAST text message only. Without
+        # this reminder Shield ends with prose/Markdown and the outcome is
+        # manifest_malformed (run 01KZTHE7 T-017, 2026-08-16).
+        "objective": (
+            "SHIELD_FIX: fix diagnosed test defects; your FINAL reply "
+            "must end with the bare artifact manifest JSON object per "
+            "Shield §输出合同 - prose or Markdown reports are not a "
+            "deliverable"
+        ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
         "review_round": s.review_round,
