@@ -547,9 +547,12 @@ def _approval_gate(store: Store, run_id: str):
     """FR-0180: approve/return are only legal at a Human gate.
 
     Two gates accept ``approve``: M-REQ-APPROVAL (awaiting=approval) and
-    M-TEST DIAGNOSE ac_gap/spec_gap rollback (awaiting=rollback, SM-01.13)."""
+    DIAGNOSE ac_gap/spec_gap rollback at awaiting=rollback: SM-01.13 for
+    M-TEST and FR-0150 four-way routing for M-IMPL. The kernel reducer
+    (_on_human_approval) already accepts both stages; the CLI gate lagged,
+    stranding run 01KZTHE7 at M-IMPL awaiting=rollback (2026-08-17)."""
     state = store.state(run_id)
-    if state.awaiting == "rollback" and state.stage == "M-TEST":
+    if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
         return state, None  # SM-01.13: Human approves the rollback
     if state.stage != "M-REQ-APPROVAL" or state.awaiting != "approval":
         return None, (
@@ -573,8 +576,8 @@ def cmd_approve(repo: Path, *args) -> int:
         state, err = _approval_gate(store, run_id)
         if err:
             return _err(err)
-        # SM-01.13: M-TEST rollback approval needs no digest check
-        if state.stage == "M-TEST" and state.awaiting == "rollback":
+        # SM-01.13: M-TEST / M-IMPL rollback approval needs no digest check
+        if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
             actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
             store.append(
                 run_id,

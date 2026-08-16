@@ -959,7 +959,27 @@ class MImplRuntimeMixin:
             return
         events = list(self.store.events(self.run_id))
         completed, started = self._task_event_ids(events)
-        if started - completed:
+        # FR-0150 rollback re-entry: a task started in a PREVIOUS M-IMPL cycle
+        # but never completed is stale work, not an in-flight lease -- the old
+        # blanket guard deadlocked the fresh cycle on it (T-017 stranded,
+        # run 01KZTHE7, 2026-08-17). Completions count across cycles (the work
+        # is committed in git); only task.started events after the latest
+        # M-IMPL stage.entered gate the single-in-flight rule, and stale
+        # starts remain selectable so the task re-runs on a clean budget.
+        impl_entry_seq = max(
+            (
+                e.seq
+                for e in events
+                if e.type == "stage.entered" and e.payload.get("stage") == "M-IMPL"
+            ),
+            default=0,
+        )
+        started_this_cycle = {
+            e.payload.get("task_id")
+            for e in events
+            if e.type == "task.started" and e.seq > impl_entry_seq and e.payload.get("task_id")
+        }
+        if started_this_cycle - completed:
             return
         if state.writelock_held:
             self._recover_task_lease(cmd, events, completed)
@@ -968,7 +988,6 @@ class MImplRuntimeMixin:
             task
             for task in tasks
             if task.task_id not in completed
-            and task.task_id not in started
             and all(dep == "-" or dep in completed for dep in task.depends_on)
         ]
         if not ready:
