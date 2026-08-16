@@ -1078,7 +1078,7 @@ class OpencodeBackend:
         stdout_chunks: list[str] = []
         manifest_found = False
         try:
-            stdout_chunks, manifest_found = self._stream_stdout(proc, timeout, master_fd)
+            stdout_chunks, manifest_found, stalled = self._stream_stdout(proc, timeout, master_fd)
         except KeyboardInterrupt:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
@@ -1088,6 +1088,31 @@ class OpencodeBackend:
                 log_fh.close()
             raise
 
+        return self._finalize_run(
+            cmd, proc, master_fd, log_fh, log_path, stderr_lines,
+            stdin_writer, stderr_reader, stdout_chunks, manifest_found,
+            stalled, timeout,
+        )
+
+    def _finalize_run(
+        self,
+        cmd,
+        proc,
+        master_fd,
+        log_fh,
+        log_path,
+        stderr_lines,
+        stdin_writer,
+        stderr_reader,
+        stdout_chunks,
+        manifest_found,
+        stalled,
+        timeout,
+    ):
+        """Kill/join/close, then classify. A stalled stream is infrastructure,
+        not an agent outcome: the lenient _check_json signal branch would
+        otherwise accept the partial JSON events as a complete outcome and
+        burn agent attempts on impl_defect loops (run 01KZTHE7 T-017)."""
         if manifest_found or proc.poll() is None:
             self._kill_group(proc.pid)
             with contextlib.suppress(Exception):
@@ -1101,7 +1126,16 @@ class OpencodeBackend:
             stderr = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         else:
             stderr = "".join(stderr_lines)
-        return subprocess.CompletedProcess(cmd, proc.returncode, "".join(stdout_chunks), stderr)
+        stdout = "".join(stdout_chunks)
+        if stalled and not manifest_found:
+            raise OpencodeError(
+                "timeout",
+                f"agent stream inactive for {timeout}s; killed",
+                exit_code=proc.returncode,
+                stderr=stderr,
+                stdout=stdout,
+            )
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
     def _spawn(self, cmd, env, log_fh):
         """Spawn the opencode child. Returns (proc, master_fd_or_None).
@@ -1214,12 +1248,15 @@ class OpencodeBackend:
 
         Reads from master_fd in PTY mode (proc.stdout is None there) or from
         proc.stdout in legacy pipe mode. Timeout is inactivity-based: fires
-        only when no output is received for the given seconds.
+        only when no output is received for the given seconds. Returns
+        (chunks, manifest_found, stalled); a stall must surface as an infra
+        timeout, never as a truncated-but-accepted outcome.
         """
         chunks: list[str] = []
         buf = ""
         read_fd = master_fd if master_fd is not None else proc.stdout.fileno()
         last_activity = time.monotonic()
+        stalled = False
         while True:
             ready, _, _ = select.select([read_fd], [], [], 5.0)
             if ready:
@@ -1232,17 +1269,18 @@ class OpencodeBackend:
                     break
                 buf, found = self._process_stdout_chunk(raw, buf, chunks)
                 if found:
-                    return chunks, True
+                    return chunks, True, False
             elif proc.poll() is not None:
                 self._drain_stdout(proc, chunks, read_fd)
                 break
             elif time.monotonic() - last_activity > inactivity_timeout:
+                stalled = True
                 break
         # An unterminated final line (no trailing newline) is truncation
         # evidence: keep it so _check_json can classify the stream.
         if buf:
             chunks.append(buf)
-        return chunks, False
+        return chunks, False, stalled
 
     @staticmethod
     def _process_stdout_chunk(raw, buf, chunks):
