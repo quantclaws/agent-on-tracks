@@ -173,6 +173,46 @@ _RED_CLASSIFY_PATTERN = re.compile(
     r"classify_red\s*->\s*(assertion_failure|symbol_missing)"
 )
 
+# Natural-language RED summaries (T-016 attempt 2, 2026-08-16): Devon
+# describes failing assertions without the classify_red token. Infer the
+# two legal classifications from failure keywords; only `result: "fail"`
+# commands are considered (passing guards are not RED evidence). Keep it
+# conservative: assembly errors (collection/import/fixture) never infer.
+_RED_ASSERTION_PATTERN = re.compile(
+    r"\bassert\b|AssertionError|assertion failure|assertion_failure", re.IGNORECASE
+)
+_RED_SYMBOL_PATTERN = re.compile(
+    r"ModuleNotFoundError|ImportError|NameError|AttributeError|"
+    r"symbol_missing|cannot import|has no attribute",
+)
+_RED_ASSEMBLY_ERROR_PATTERN = re.compile(
+    r"collection error|ERROR collecting|FixtureLookupError|"
+    r"SyntaxError|ModuleNotFoundError|ImportError",
+    re.IGNORECASE,
+)
+
+
+def _red_inference_from_command(command: object) -> list[str]:
+    """Classifications inferable from one command entry (token first,
+    then keyword inference on fail-only natural-language summaries)."""
+    if not isinstance(command, dict):
+        return []
+    summary = command.get("output_summary")
+    if not isinstance(summary, str):
+        return []
+    tokens = _RED_CLASSIFY_PATTERN.findall(summary)
+    if tokens:
+        return tokens
+    if command.get("result") != "fail":
+        return []
+    if _RED_ASSEMBLY_ERROR_PATTERN.search(summary):
+        return []
+    if _RED_SYMBOL_PATTERN.search(summary):
+        return ["symbol_missing"]
+    if _RED_ASSERTION_PATTERN.search(summary):
+        return ["assertion_failure"]
+    return []
+
 
 def _m_impl_red_classifications(outcome: dict) -> tuple[list[str], bool]:
     results = outcome.get("results")
@@ -193,12 +233,7 @@ def _m_impl_red_classifications(outcome: dict) -> tuple[list[str], bool]:
         return ["missing"], False
     inferred: list[str] = []
     for command in commands:
-        if not isinstance(command, dict):
-            continue
-        summary = command.get("output_summary")
-        if not isinstance(summary, str):
-            continue
-        inferred.extend(_RED_CLASSIFY_PATTERN.findall(summary))
+        inferred.extend(_red_inference_from_command(command))
     if not inferred:
         return ["missing"], False
     return inferred, True

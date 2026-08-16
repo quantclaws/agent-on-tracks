@@ -44,6 +44,10 @@ from tracks.baseline import (
     m_impl_baseline_missing,
 )
 from tracks.executor.executor import Executor
+from tracks.executor.m_impl_runtime import (
+    _m_impl_red_classification_error,
+    _m_impl_red_classifications,
+)
 from tracks.executor.rgr import (
     create_green_commit,
     red_base_sha,
@@ -1574,3 +1578,135 @@ def test_assignment_red_injects_red_test_paths_for_stale_manifest(tmp_path):
     assert assignment["red_test_paths"] == ["tests/unit"]
     assert assignment["manifest"]["red_test_paths"] == ["tests/unit"]
     assert "red_test_paths" in assignment["manifest"]["phase_rules"]["red"]
+
+
+def test_red_classification_infers_assertion_failure_from_natural_language():
+    """Fix L regression (T-016 attempt 2, 2026-08-16): Devon RED outcome
+    omits `results` and uses natural-language failure descriptions instead
+    of the `classify_red ->` token. Keyword inference must still recognize
+    the legal `assertion_failure` classification so RED_GATE does not waste
+    an attempt budget on a bogus `red_invalid` verdict.
+
+    Logic-chain check (spec item (c)):
+    - cmd1 (fail, full real summary): no assembly-error substring; no symbol
+      pattern; `assert` keyword present -> assertion_failure.
+    - cmd2 (fail, "no collection/import errors"): the `collection error`
+      pattern needs a literal "collection error" substring; the summary
+      writes "collection/import errors" (slash, not space) so it does NOT
+      match; `ImportError` is case-sensitive and the summary has lowercase
+      "import" only, so it does NOT match -> not assembly, not symbol, and
+      no `assert` keyword -> infers nothing.
+    - cmd3 (pass guard): result != "fail" -> skipped even though its
+      summary contains `assert`.
+    """
+    outcome = {
+        "role": "devon",
+        "status": "done",
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_executor_doc_gap.py"],
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m pytest -n 4 tests/unit/test_executor_doc_gap.py --tb=short -q",
+                "result": "fail",
+                "output_summary": (
+                    "6 collected: 2 passed (AC-FR0234-04 no-delta control, "
+                    "AC-NFR0090-02 open-thread guard), 4 failed on §1m contract "
+                    "tokens: test_legal_discussion_pauses_outcome_before_ordinary_validation "
+                    "(assert len(doc_comment.detected)==0==1), "
+                    "test_illegal_body_edit_is_rejected_atomically_as_over_reach "
+                    "(assert len(outcome.rejected)==0==1), "
+                    "test_illegal_body_edit_takes_precedence_over_legal_discussion "
+                    "(assert len(outcome.rejected)==0==1), "
+                    "test_closed_thread_resumes_with_new_dispatch_and_attempt "
+                    "(assert (0+0)==1 on outcome.restored|discarded). Failures are "
+                    "missing-event contract gaps in executor doc-gap wiring, not "
+                    "assembly errors (control test passes, fixtures sound)."
+                ),
+            },
+            {
+                "cmd": ".venv/bin/python -m pytest -n 4 tests/unit --tb=short -q",
+                "result": "fail",
+                "output_summary": (
+                    "Full unit suite: only the 4 doc-gap tests above fail; all "
+                    "other unit tests pass. New RED test file introduces no "
+                    "collection/import errors or regressions elsewhere."
+                ),
+            },
+            {
+                "cmd": ".venv/bin/python -m ruff check .",
+                "result": "pass",
+                "output_summary": "All checks passed.",
+            },
+        ],
+        "manifest_compliance": True,
+    }
+    classifications, has_results = _m_impl_red_classifications(outcome)
+    assert classifications == ["assertion_failure"]
+    assert has_results is True
+    assert _m_impl_red_classification_error(outcome) is None
+
+
+def test_red_classification_keyword_inference_skips_assembly_errors():
+    """Assembly errors (collection/import/fixture) are never inferred as a
+    legal RED classification - the failure is illegit and should route to
+    collection_error, not assertion_failure/symbol_missing."""
+    outcome = {
+        "phase": "red",
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m pytest tests/unit/test_x.py -q",
+                "result": "fail",
+                "output_summary": (
+                    "ERROR collecting tests/unit/test_x.py collection error: "
+                    'cannot import name "_fixture"'
+                ),
+            }
+        ],
+    }
+    classifications, has_results = _m_impl_red_classifications(outcome)
+    assert classifications == ["missing"]
+    assert has_results is False
+
+
+def test_red_classification_keyword_inference_symbol_missing():
+    """AttributeError on a missing product-code symbol is the canonical
+    `symbol_missing` RED failure: the test runs, but the product object
+    lacks the expected attribute/method. Must infer `symbol_missing`, not
+    `assertion_failure` and not assembly error."""
+    outcome = {
+        "phase": "red",
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m pytest tests/unit/test_doc_gap.py -q",
+                "result": "fail",
+                "output_summary": (
+                    "AttributeError: 'Executor' object has no attribute "
+                    "'_route_doc_comment_first' - the doc-gap branch is "
+                    "not yet wired in the executor dispatch."
+                ),
+            }
+        ],
+    }
+    classifications, has_results = _m_impl_red_classifications(outcome)
+    assert classifications == ["symbol_missing"]
+    assert has_results is True
+    assert _m_impl_red_classification_error(outcome) is None
+
+
+def test_red_classification_keyword_inference_ignores_passing_guards():
+    """Passing guard commands (ruff, git status) are not RED evidence even
+    if their output_summary mentions `assert`. Only `result: "fail"`
+    commands are inspected by the keyword-inference fallback."""
+    outcome = {
+        "phase": "red",
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m ruff check .",
+                "result": "pass",
+                "output_summary": "All checks passed. assert count is fine.",
+            }
+        ],
+    }
+    classifications, has_results = _m_impl_red_classifications(outcome)
+    assert classifications == ["missing"]
+    assert has_results is False
