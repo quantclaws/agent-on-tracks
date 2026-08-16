@@ -152,6 +152,16 @@ REVISE 时，对每个阻塞问题用 `trac discuss start --file test-plan.md --
 4. 对 integration/e2e 检查每个 required AC 有真实收集/evidence，跨模块未被 mock。
 5. 裁决：`PASS` 或 `REVISE`。
 
+### DIAGNOSE 输出合同（强制 JSON）
+
+DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复必须以一个裸 JSON object 结尾**——Runtime 唯一的 evidence 提取源（取最后一条 text 消息中的 JSON object）。**散文分析、Markdown 章节、清单勾选都不构成交付**，无论分析做得多好，缺 JSON 即 verdict failed、attempt 作废、退回重派。JSON 放在回复最末尾、独立成块、不加代码围栏以外的装饰。
+
+```json
+{"classification": "test_defect|impl_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
+```
+
+`classification` 是五选一的唯一判定（缺/非五选一即违约）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX 或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。
+
 ### 裁决格式
 
 **PASS**：仅当完整设计/实现对同一 revision 满足所有闭包要求，无需要 Devon、Shield 或 Human 临场选择的技术缺口。

@@ -970,10 +970,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
 
     def _emit_dispatch_verdict(self, result, role, state, params, cmd, task_id):
-        if not result.get("verdict") or role not in _VERDICT_EVENT:
+        if role not in _VERDICT_EVENT:
             return
         if state.stage == "M-IMPL" and role == "prism" and state.substate == "DIAGNOSE":
             self._emit_diagnose_verdict(result, state, cmd, task_id)
+            return
+        if not result.get("verdict"):
             return
         self._emit_verdict(role, result["verdict"], result, state, params, cmd, task_id)
 
@@ -986,11 +988,33 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # and has to re-derive the whole analysis (run 01KZTHE7 T-008: Shield
         # burned 52 minutes re-archaeologying what Prism had already found).
         verdict = result.get("verdict")
-        classification = (
-            verdict
-            if verdict in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
-            else self._diagnose_classification()
-        )
+        if verdict not in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect"):
+            # Prism DIAGNOSE contract violation: no valid classification JSON
+            # in final reply. Fail-closed (consume attempt, redispatch Prism;
+            # budget exhaustion escalates) — do NOT fallback-derive a
+            # classification from prose (user stance: agents honor contracts).
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "diagnose_contract_violation",
+                    "target_stage": "M-IMPL",
+                    "task_id": task_id or state.current_task_id or "",
+                    "reason": (
+                        "Prism DIAGNOSE returned no "
+                        "{classification,reason,evidence} JSON; "
+                        "contract violation"
+                    ),
+                    "evidence": (
+                        "final reply missing bare JSON object per "
+                        "Prism.md DIAGNOSE contract"
+                    ),
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
+        classification = verdict
         diagnosis = result.get("diagnosis") if isinstance(result.get("diagnosis"), dict) else {}
         prior = state.last_failure or {}
         fallback = "Prism diagnosis: " + classification
