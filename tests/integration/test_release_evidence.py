@@ -7,7 +7,7 @@ wiring), producing a legal Red at the CLI-routing layer.
 
 PRISM-V05-R2-01 revision: a hand-written evidence bundle is a FABRICATED
 artifact — it is schema-valid but has no backing blobs/, git R ref, or events
-in the store, so a wired check must reject it as ``not_real`` (§2d
+in the store, so a wired check must reject it as ``audit_incomplete`` (§2d
 reason_code closed set).  The integration layer therefore only asserts the
 anti-fabrication negative; the satisfied text/JSON/exit-0 form is asserted in
 ``tests/e2e_live/`` where the real live journey produces the bundle.
@@ -47,7 +47,7 @@ def _write_canonical_evidence(repo, candidate_sha, run_id, status="satisfied",
     PRISM-V05-R2-01: this is an ANTI-FABRICATION fixture.  The bundle matches
     the §1j schema but has NO backing reality — no ``blobs/`` files, no git R
     ref, and no events in the store — so a wired check must classify it as
-    ``not_real`` (§2d reason_code closed set), never ``satisfied``.
+    ``audit_incomplete`` (§2d reason_code closed set), never ``satisfied``.
 
     When *complete* is True, the bundle satisfies the §1j closed invariants
     (non-empty agent_io with proper seq ordering, non-empty gate_observations
@@ -277,7 +277,7 @@ def test_check_accepts_latest_current_real_auditable_bundle(host_repo, trac):
     PRISM-V05-R2-01: a hand-written bundle — even schema-valid, even at the
     CURRENT candidate SHA — has no backing blobs/, git R ref, or events in
     the store, so it is not a "real auditable bundle" and must be rejected
-    as ``not_real``.  The satisfied form requires a REAL journey and is
+    as ``audit_incomplete``.  The satisfied form requires a REAL journey and is
     asserted in tests/e2e_live/.  The subcommand is not yet wired; the test
     asserts exit 1 + the exact NOT-satisfied line but currently gets the
     CLI-routing error — legal Red.
@@ -292,8 +292,8 @@ def test_check_accepts_latest_current_real_auditable_bundle(host_repo, trac):
         f"fabricated bundle must NOT satisfy the check; got exit {proc.returncode}: "
         f"{proc.stdout}{proc.stderr}"
     )
-    assert "release-evidence: NOT satisfied — not_real" in proc.stdout, (
-        "schema-valid but unbacked evidence must be rejected with reason not_real"
+    assert "release-evidence: NOT satisfied — audit_incomplete" in proc.stdout, (
+        "schema-valid but unbacked evidence must be rejected with reason audit_incomplete"
     )
 
 
@@ -325,7 +325,7 @@ def test_check_success_text_json_and_exit_contract(host_repo, trac):
     the deterministic-output contract at the integration layer using the
     fabricated bundle: §2d's exact two-line NOT-satisfied text (exit 1) and
     the canonical single-line 7-field ``--json`` object with
-    reason_code=not_real (exit 1 — "exit 0 iff satisfied").  The subcommand
+    reason_code=audit_incomplete (exit 1 — "exit 0 iff satisfied").  The subcommand
     is not yet wired; both variants currently get the CLI-routing error —
     legal Red.
     """
@@ -342,7 +342,7 @@ def test_check_success_text_json_and_exit_contract(host_repo, trac):
     )
     text_lines = proc_text.stdout.splitlines()
     assert text_lines[:2] == [
-        "release-evidence: NOT satisfied — not_real",
+        "release-evidence: NOT satisfied — audit_incomplete",
         "  next: rerun the opt-in live journey at current HEAD, then re-check",
     ], f"text: §2d NOT-satisfied lines are locked, got {text_lines!r}"
 
@@ -360,8 +360,8 @@ def test_check_success_text_json_and_exit_contract(host_repo, trac):
         "backend", "candidate_sha", "evidence_path", "event_bounds",
         "reason_code", "run_id", "status",
     }, f"json: §2d field set is closed, got {sorted(result)}"
-    assert result["reason_code"] == "not_real", (
-        "json: fabricated-but-schema-valid bundle must report not_real"
+    assert result["reason_code"] == "audit_incomplete", (
+        "json: fabricated-but-schema-valid bundle must report audit_incomplete"
     )
     assert result["status"] != "satisfied", (
         "json: fabricated bundle must never report satisfied"
