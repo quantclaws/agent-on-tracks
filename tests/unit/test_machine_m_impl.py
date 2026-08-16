@@ -2006,3 +2006,19 @@ def test_kernel_purity_no_io():
     s = state_of(*_full_single_task_cycle())
     cmd = decide(s)
     assert cmd is None  # stage_exited -> halt
+
+
+def test_test_committed_refreshes_r_tree_identity():
+    """M-IMPL: a runtime-committed Shield test fix re-freezes the R tree so
+    the GREEN regression gate diffs against the fix commit, not the original
+    RED checkpoint (run 01KZTHE7 T-017: fix 7d8234b read as drift)."""
+    s = state_of(
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        ("test.committed", {"commit_sha": "fix789abc", "test_count": 151}),
+    )
+    assert s.r_tree_identity == "fix789abc"

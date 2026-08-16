@@ -87,6 +87,13 @@ def _on_test_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     # run.completed (M-IMPL not registered -> boundary).
     s.active_result = None  # v0.5: pipeline publish complete
     s.test_committed = True
+    # M-IMPL RGR: a runtime-committed Shield test fix re-freezes the R tree --
+    # the GREEN regression gate must diff against the fix commit, not the
+    # original RED checkpoint, or every sanctioned fix reads as drift (run
+    # 01KZTHE7 T-017: Shield fix 7d8234b flagged "R unit tests changed").
+    commit_sha = p.get("commit_sha")
+    if commit_sha:
+        s.r_tree_identity = commit_sha
 
 
 def _on_test_written(s: State, p: dict, ev: EventEnvelope) -> None:
