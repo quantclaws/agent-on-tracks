@@ -129,6 +129,10 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         return
     classification = check  # test_defect | stub_gap | ac_gap | spec_gap
     s.diagnose_classification = classification
+    # Same State-carried snapshot as M-IMPL: the WRITE re-dispatch reads the
+    # verdict details from diagnose_report so provider-failure retries and
+    # `trac retry --clear-evidence` never strip the diagnosis (FR-11).
+    s.diagnose_report = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
     if classification == "test_defect":
         s.substate = "WRITE"
         _reset_doc(s)
@@ -161,10 +165,24 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
 
 def _m_test_shield_dispatch(s: State) -> Command:
     """DISPATCH/WRITE: dispatch Shield to write integration/e2e tests."""
+    objective = "write integration/e2e tests against interface stubs"
+    report = s.diagnose_report or {}
+    reason = report.get("reason")
+    evidence = report.get("evidence")
+    if reason or evidence:
+        # test_defect re-dispatch: carry the DIAGNOSE verdict details so
+        # Shield fixes the pinpointed defects instead of re-deriving them.
+        parts = [f"reason: {reason}"] if reason else []
+        if evidence:
+            parts.append(f"evidence: {evidence}")
+        objective += (
+            f". Fix the diagnosed test defects (Prism verdict "
+            f"{report.get('check') or 'test_defect'}): " + "; ".join(parts)
+        )
     params = {
         "role": "shield",
         "substate": "WRITE",
-        "objective": "write integration/e2e tests against interface stubs",
+        "objective": objective,
         "stage": "M-TEST",
         "attempt": s.current_attempt + 1,
         "docs": list(_M_TEST_CONTEXT_DOCS),

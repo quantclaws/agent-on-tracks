@@ -75,6 +75,7 @@ def _on_task_started(s: State, p: dict, ev: EventEnvelope) -> None:
     s.refactor_done = False
     s.r_tree_identity = None
     s.diagnose_classification = None
+    s.diagnose_report = None
 
 
 def _on_writelock_granted(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -238,6 +239,10 @@ def _on_m_impl_verdict_failed(s: State, p: dict) -> None:
     """verdict.failed routing for M-IMPL (flow.md §10.1)."""
     check = p.get("check")
     if s.substate == "DIAGNOSE":
+        # Snapshot the full verdict details: SHIELD_FIX re-dispatches (any
+        # attempt, even after `trac retry --clear-evidence`) read them from
+        # State so the fixer never re-derives Prism's analysis.
+        s.diagnose_report = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
         _route_m_impl_diagnose(s, check)
         return
     _route_m_impl_gate_failure(s, check)
@@ -472,6 +477,29 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
     return Command(kind="dispatch_agent", params=params)
 
 
+def _shield_diagnosis_clause(s: State) -> str:
+    """Prism DIAGNOSE details for the Shield objective ('' when none).
+
+    Read from State.diagnose_report, not last_failure: last_failure is
+    dropped by `trac retry --clear-evidence` and overwritten by every failed
+    Shield attempt (FR-0210), which left Shield re-deriving Prism's whole
+    analysis from scratch (run 01KZTHE7 T-008/T-017: 52 minutes burned
+    re-archaeologying defects Prism had already pinpointed).
+    """
+    report = s.diagnose_report or {}
+    reason = report.get("reason")
+    evidence = report.get("evidence")
+    if not reason and not evidence:
+        return ""
+    parts = []
+    if reason:
+        parts.append(f"reason: {reason}")
+    if evidence:
+        parts.append(f"evidence: {evidence}")
+    label = report.get("check") or "test_defect"
+    return f" Prism DIAGNOSE verdict ({label}) - " + "; ".join(parts)
+
+
 def _m_impl_shield_dispatch(s: State) -> Command:
     """SHIELD_FIX: dispatch Shield to fix diagnosed test defects.
 
@@ -505,7 +533,7 @@ def _m_impl_shield_dispatch(s: State) -> Command:
             "SHIELD_FIX: fix diagnosed test defects; your FINAL reply "
             "must end with the bare artifact manifest JSON object per "
             "Shield §输出合同 - prose or Markdown reports are not a "
-            "deliverable"
+            "deliverable" + _shield_diagnosis_clause(s)
         ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,

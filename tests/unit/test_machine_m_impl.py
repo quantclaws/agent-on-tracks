@@ -1259,6 +1259,162 @@ def test_diagnose_test_defect_to_shield_fix():
     assert s.current_attempt == 1
 
 
+def _diagnose_events_with_report():
+    """DIAGNOSE verdict.failed carrying the full reason/evidence payload."""
+    return [
+        ("verdict.failed", {
+            "check": "unknown_attribution", "reason": "unclear", "attempt": 1,
+        }),
+        ("verdict.failed", {
+            "check": "test_defect",
+            "reason": "tests assert not_real but provenance is fully real",
+            "evidence": "tests/integration/test_release_evidence.py:295-297,344-347,363-365",
+            "attempt": 2,
+        }),
+    ]
+
+
+def test_shield_dispatch_carries_diagnose_report():
+    """SHIELD_FIX objective carries the DIAGNOSE reason/evidence from State.
+
+    Regression (run 01KZTHE7 T-008/T-017): Shield used to receive only the
+    'fix diagnosed test defects' label and burned 50+ minutes re-deriving
+    Prism's analysis.
+    """
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    s = state_of(*pre_diagnose, *_diagnose_events_with_report())
+    assert s.substate == "SHIELD_FIX"
+    assert s.diagnose_report["check"] == "test_defect"
+    cmd = decide(s)
+    assert cmd.params["role"] == "shield"
+    assert "not_real but provenance is fully real" in cmd.params["objective"]
+    assert "test_release_evidence.py:295-297" in cmd.params["objective"]
+
+
+def test_shield_diagnose_report_survives_retry_clear_evidence():
+    """`trac retry --clear-evidence` must not strip the DIAGNOSE details.
+
+    Regression (run 01KZTHE7 T-017, 2026-08-16): provider-failure escalation
+    forced a clear-evidence retry, which dropped last_failure (and with it
+    the only copy of Prism's diagnosis) - every later Shield attempt got a
+    bare objective and had to re-diagnose from scratch.
+    """
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    s = state_of(
+        *pre_diagnose,
+        *_diagnose_events_with_report(),
+        ("human.retry", {"actor": "openclaw", "clear_evidence": True}),
+    )
+    assert s.substate == "SHIELD_FIX"
+    assert s.last_failure is None  # clear-evidence dropped it
+    assert s.diagnose_report is not None  # diagnosis survived on State
+    cmd = decide(s)
+    assert "not_real but provenance is fully real" in cmd.params["objective"]
+
+
+def test_shield_diagnose_report_survives_infra_failure():
+    """Infra failures (signal/provider_unavailable/...) are digested by the
+    runtime: no attempt consumed, no last_failure pollution, substate kept,
+    diagnosis intact (user stance: infra errors are not agent failures)."""
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    infra_failed = ("outcome.received", {
+        "role": "shield",
+        "status": "failed",
+        "failure_class": "signal",
+        "self_report": "killed by signal 9",
+    })
+    s = state_of(*pre_diagnose, *_diagnose_events_with_report(), infra_failed)
+    assert s.substate == "SHIELD_FIX"
+    assert s.current_attempt == 1  # infra failure did not consume a budget
+    # infra failure did not pollute evidence: last_failure still holds the
+    # DIAGNOSE verdict, not "killed by signal 9"
+    assert s.last_failure["check"] == "test_defect"
+    assert s.infra_failure_streak == 1
+    assert s.diagnose_report["check"] == "test_defect"
+    cmd = decide(s)
+    assert "not_real but provenance is fully real" in cmd.params["objective"]
+
+
+def test_infra_failure_streak_escalates_without_consuming_attempts():
+    """3 consecutive infra failures escalate to awaiting_human without ever
+    touching the agent attempt budget; human.retry clears the streak."""
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    infra_failed = ("outcome.received", {
+        "role": "shield",
+        "status": "failed",
+        "failure_class": "provider_unavailable",
+        "self_report": "provider/model/credentials unavailable",
+    })
+    events = [*pre_diagnose, *_diagnose_events_with_report()]
+    for _ in range(3):
+        events = [*events, infra_failed]
+    s = state_of(*events)
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"
+    assert s.current_attempt == 1  # still untouched by infra failures
+    assert s.infra_failure_streak == 3
+    s2 = state_of(*events, ("human.retry", {"actor": "openclaw"}))
+    assert s2.status == "active"
+    assert s2.infra_failure_streak == 0
+
+
+def test_shield_diagnose_report_survives_semantic_failure():
+    """A semantic Shield failure (FR-0210) overwrites last_failure with the
+    attempt's own failure signal but must not touch diagnose_report."""
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    semantic_failed = ("outcome.received", {
+        "role": "shield",
+        "status": "failed",
+        "failure_class": "manifest_malformed",
+        "self_report": "manifest malformed: final part.text must be raw JSON",
+    })
+    s = state_of(*pre_diagnose, *_diagnose_events_with_report(), semantic_failed)
+    assert s.last_failure["check"] == "manifest_malformed"  # overwritten
+    assert s.diagnose_report["check"] == "test_defect"  # diagnosis intact
+    cmd = decide(s)
+    assert "not_real but provenance is fully real" in cmd.params["objective"]
+
+
 def test_shield_fix_dispatch_contract_is_write():
     """SHIELD_FIX dispatches Shield with substate=WRITE (D-29 integration contract).
 

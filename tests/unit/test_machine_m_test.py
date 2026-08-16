@@ -408,6 +408,41 @@ def test_diagnose_entered():
     assert s2.diagnose_classification == "stub_gap"
 
 
+# AC-FR0060-02@v0.5 test_defect re-dispatch carries the DIAGNOSE report
+def test_test_defect_write_dispatch_carries_diagnose_report():
+    """The WRITE re-dispatch objective carries the DIAGNOSE reason/evidence
+    from State.diagnose_report (not last_failure), so provider-failure
+    retries and `trac retry --clear-evidence` never strip the diagnosis
+    (mirrors the M-IMPL SHIELD_FIX fix, run 01KZTHE7 T-008/T-017)."""
+    invalid = ("red.validated", {"status": "invalid", "findings": []})
+    verdict = (
+        "verdict.failed",
+        {
+            "check": "test_defect",
+            "target_stage": "M-TEST",
+            "reason": "RED asserts stale contract",
+            "evidence": "tests/e2e/test_trace.py:40-44",
+            "attempt": 1,
+        },
+    )
+    base = [
+        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
+        PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, invalid, verdict,
+    ]
+    s = state_of(*base)
+    assert s.diagnose_report["check"] == "test_defect"
+    cmd = decide(s)
+    assert cmd.params["role"] == "shield"
+    assert "RED asserts stale contract" in cmd.params["objective"]
+    assert "tests/e2e/test_trace.py:40-44" in cmd.params["objective"]
+
+    # clear-evidence retry must not strip the diagnosis from the re-dispatch
+    s2 = state_of(*base, ("human.retry", {"actor": "openclaw", "clear_evidence": True}))
+    assert s2.last_failure is None
+    cmd2 = decide(s2)
+    assert "RED asserts stale contract" in cmd2.params["objective"]
+
+
 # AC-FR0060-02@v0.4 TRACKS-TRACE diagnose test defect to write
 def test_diagnose_test_defect_to_write():
     """AC-FR0060-02@v0.4"""

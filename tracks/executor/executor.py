@@ -398,6 +398,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (doc-gap resume, SM-02.9) pre-binds the recorded identity. Used by
         run_loop and by one-shot setup commands (create_branch in `trac start`)."""
         state = self.store.state(self.run_id)
+        if cmd.kind == "dispatch_agent" and state.infra_failure_streak > 0:
+            # Infra-failure backoff (kernel never sleeps): consecutive
+            # infra failures are re-dispatched with exponential backoff so a
+            # degraded gateway is not stormed with full prompts (run 01KZTHE7
+            # T-017, 2026-08-16: SIGKILL -> immediate retry -> SIGKILL).
+            delay = min(30 * 2 ** (state.infra_failure_streak - 1), 300)
+            print(
+                f"  [{state.stage}] infra failure streak "
+                f"{state.infra_failure_streak}: backoff {delay}s before re-dispatch",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay)
         cid = command_id or new_ulid()
         params = dict(cmd.params)
         if cmd.kind == "dispatch_agent" and self.assignment_overlay is not None:

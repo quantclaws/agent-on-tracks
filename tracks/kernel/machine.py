@@ -117,6 +117,19 @@ class State:
     test_committed: bool = False  # test asset frozen (commit_tests done)
     criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
     diagnose_classification: str | None = None  # DIAGNOSE routing verdict
+    # Full DIAGNOSE verdict details for the fixer dispatch. Carried on State,
+    # NOT last_failure: last_failure is dropped by `trac retry
+    # --clear-evidence` and overwritten by every failed fixer attempt
+    # (FR-0210), which previously left the fixer re-deriving Prism's whole
+    # analysis from scratch (run 01KZTHE7 T-008/T-017, 2026-08-15/16).
+    diagnose_report: dict | None = None
+    # Consecutive infrastructure failures (opencode process killed, provider
+    # unreachable, missing binary, timeout) digested by the runtime itself -
+    # they never consume the agent attempt budget and never pollute
+    # last_failure (user stance: infra errors are not agent failures and must
+    # not be passed to the next agent). Bounded: >=_INFRA_RETRY_LIMIT in a
+    # row escalates to awaiting_human instead of storming a degraded gateway.
+    infra_failure_streak: int = 0
     # v0.5 ResultCheckpoint pipeline (batch 1): when set, decide() drives
     # validate_result -> checkpoint_result -> publish_result instead of the
     # normal substate logic. Cleared by the domain event reducer (or
@@ -300,6 +313,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.test_committed = False
         s.red_findings = s.criteria_pack_loaded = None
         s.diagnose_classification = None
+        s.diagnose_report = None
     if s.stage == "M-IMPL":
         # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
         s.baseline_frozen = False
@@ -313,6 +327,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.refactor_done = False
         s.island_2_passed = False
         s.diagnose_classification = None
+        s.diagnose_report = None
         s.taskgraph_digest = None
         s.taskgraph_path = None
         s.task_refs = []
@@ -439,12 +454,48 @@ def _reset_m_test_dispatch_flag(s: State) -> None:
         _reset_doc(s)
 
 
+# Infra failure classes the runtime digests itself (bounded re-dispatch with
+# executor backoff): the opencode process was killed / timed out, the binary
+# or provider is unavailable. These describe the machine, not the agent, so
+# they never consume the attempt budget or overwrite last_failure (run
+# 01KZTHE7 T-017: "killed by signal 9" evidence kept overwriting Prism's
+# diagnosis and 3 infra failures exhausted the agent budget).
+_INFRA_FAILURE_CLASSES = frozenset(
+    {"signal", "opencode_missing", "provider_unavailable", "timeout"}
+)
+_INFRA_RETRY_LIMIT = 3
+
+
+def _is_infra_failure(p: dict) -> bool:
+    return (p.get("failure_class") or "agent_error") in _INFRA_FAILURE_CLASSES
+
+
+def _handle_infra_failure(s: State) -> None:
+    """Digest an infrastructure failure without touching agent semantics:
+    no attempt consumed, last_failure untouched, substate kept. Reset the
+    dispatch flag so decide() re-issues the same assignment; cap consecutive
+    infra failures to avoid retry-storming a degraded gateway (backlog:
+    provider-failure retry storm, 2026-08-16)."""
+    s.infra_failure_streak += 1
+    if s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    if s.infra_failure_streak >= _INFRA_RETRY_LIMIT:
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+
+
 def _handle_failed_outcome(s: State, p: dict) -> None:
     """FR-0210: a failed dispatch_agent outcome consumes an attempt from the
     same accounting as verdict.failed, carries failure evidence into the
     re-dispatch prompt (FR-11), and escalates to awaiting_human at the 3rd
     attempt. run048: None/absent/unknown status is treated as ``failed`` with
     ``agent_error`` so the 3-attempt escalation evidence stays meaningful."""
+    if _is_infra_failure(p):
+        _handle_infra_failure(s)
+        return
+    s.infra_failure_streak = 0
     s.last_failure = {
         "check": p.get("failure_class") or "agent_error",
         "reason": p.get("self_report"),
@@ -493,6 +544,7 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
+    s.infra_failure_streak = 0  # the pipeline moved: infra is healthy again
     if s.stage == "M-IMPL":
         _on_m_impl_verdict_passed(s, p)
         return
@@ -763,6 +815,7 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     s.awaiting = None
     s.status = "active"
     s.current_attempt = 0
+    s.infra_failure_streak = 0
 
 
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
