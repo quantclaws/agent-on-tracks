@@ -276,8 +276,18 @@ class OpencodeBackend:
             return [*commentable, *allowed, agent_dest]
         if role == "devon":
             devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
-            return [*commentable, agent_dest, *devon_dirs]
+            manifest_paths = self._manifest_allowed_paths(assignment)
+            return [*commentable, agent_dest, *devon_dirs, *manifest_paths]
         return [*doc_paths, agent_dest, self.repo]
+
+    @staticmethod
+    def _manifest_allowed_paths(assignment: dict | None) -> list[Path]:
+        """Explicit write whitelist from the assignment manifest (Archer-authored
+        per-task allowed_paths); audit must honor it in addition to the coarse
+        [layout] dirs, else a compliant out-of-layout write (e.g. a CI workflow
+        path) is mis-flagged as over-reach and force-rolled-back."""
+        manifest = (assignment or {}).get("manifest") or {}
+        return [Path(p) for p in (manifest.get("allowed_paths") or [])]
 
     def _unknown_role_result(self, role: str, prompt: str, console_input: str | None) -> dict:
         # Unknown role (no AGENT_NAME entry) has no opencode agent.
