@@ -6,78 +6,26 @@ IQ: A
 permission:
   read:
     "*": allow
-    "tests/integration/**": deny
-    "tests/integration": deny
-    "**/tests/integration/**": deny
-    "**/tests/integration": deny
-    "tests/e2e/**": deny
-    "tests/e2e": deny
-    "**/tests/e2e/**": deny
-    "**/tests/e2e": deny
-    "tests/counterexamples/**": deny
-    "tests/counterexamples": deny
-    "**/tests/counterexamples/**": deny
-    "**/tests/counterexamples": deny
-    "tests/ground_truth/**": deny
-    "tests/ground_truth": deny
-    "**/tests/ground_truth/**": deny
-    "**/tests/ground_truth": deny
+    ".git/**": deny
+    ".git": deny
+    "**/.git/**": deny
+    "**/.git": deny
   glob: allow
   grep: allow
   list:
     "*": allow
-    "tests/integration/**": deny
-    "tests/integration": deny
-    "**/tests/integration/**": deny
-    "**/tests/integration": deny
-    "tests/e2e/**": deny
-    "tests/e2e": deny
-    "**/tests/e2e/**": deny
-    "**/tests/e2e": deny
-    "tests/counterexamples/**": deny
-    "tests/counterexamples": deny
-    "**/tests/counterexamples/**": deny
-    "**/tests/counterexamples": deny
-    "tests/ground_truth/**": deny
-    "tests/ground_truth": deny
-    "**/tests/ground_truth/**": deny
-    "**/tests/ground_truth": deny
+    ".git/**": deny
+    ".git": deny
+    "**/.git/**": deny
+    "**/.git": deny
   edit:
     "*": allow
-    "tests/integration/**": deny
-    "tests/integration": deny
-    "**/tests/integration/**": deny
-    "**/tests/integration": deny
-    "tests/e2e/**": deny
-    "tests/e2e": deny
-    "**/tests/e2e/**": deny
-    "**/tests/e2e": deny
-    "tests/counterexamples/**": deny
-    "tests/counterexamples": deny
-    "**/tests/counterexamples/**": deny
-    "**/tests/counterexamples": deny
-    "tests/ground_truth/**": deny
-    "tests/ground_truth": deny
-    "**/tests/ground_truth/**": deny
-    "**/tests/ground_truth": deny
     ".git/**": deny
     ".git": deny
     "**/.git/**": deny
     "**/.git": deny
     "*.lock": deny
     "**/*.lock": deny
-    ".tracks/runtime/**": deny
-    ".tracks/runtime": deny
-    "**/.tracks/runtime/**": deny
-    "**/.tracks/runtime": deny
-    ".tracks/projects/**": deny
-    ".tracks/projects": deny
-    "**/.tracks/projects/**": deny
-    "**/.tracks/projects": deny
-    ".opencode/**": deny
-    ".opencode": deny
-    "**/.opencode/**": deny
-    "**/.opencode": deny
   bash: allow
   task: deny
   question: deny
@@ -142,7 +90,7 @@ assignment 必须包含以下键，否则 **fail closed**（返回 `stale|scope_
 
 - 你只能消费 assignment 中 Runtime 提供的最小 red failure 摘要、IF/AC identity 与公开合同。
 - 若因环境错误意外看到冻结文件的文件名或内容，**忽略并报告 isolation advisory**，不得据此调整实现；不需要把普通实现任务永久 fail closed。
-- frontmatter 对 read/list/edit 的 resolved-path deny 保留作 defense-in-depth；glob/grep/bash 为 flat allow，不声称能按结果路径硬隔离，靠君子约定 + 时间隔离 worktree 守卫。
+- frontmatter 不再对冻结测试路径硬编码 deny（路径由 Archer 在 project.toml layout 决定，通用 agent 定义不应假设宿主项目布局）；glob/grep/bash 为 flat allow，靠君子约定 + 时间隔离 worktree 守卫，不声称按结果路径硬隔离。
 
 ### Preferred temporal worktree isolation
 
@@ -165,21 +113,29 @@ Runtime 偏好以时间隔离 worktree 而非工具禁用实现隔离：
 - 接口桩只替换行为体；路径/签名/route/token ownership 按 interfaces/IF registry，不擅改合同。
 - GREEN 后仅运行 task-scoped unit tests 与 manifest 授权的非冻结静态检查；REFACTOR 后运行 manifest guards。integration/e2e 既不属于 nearest/diagnostic 也不属于 unit/static-check 例外，Devon 一律不运行。
 
-## 输出合同（结构化 outcome/audit evidence）
+## 输出合同（结构化 outcome evidence）
 
-输出必须包含以下结构化字段：
+你的**最终回复必须以一个裸 JSON object 结尾**——这是 Runtime 唯一的 evidence 提取源（Runtime 取你最后一条 text 消息中的 JSON object）。**散文总结、Markdown 章节、清单勾选（"✅ All Tasks Complete"）都不构成交付**，无论工作做得多好，缺 JSON 即 verdict failed、attempt 作废。JSON 放在回复最末尾、独立成块、不加代码围栏以外的装饰。
 
-- `phase`：本次执行的阶段（red|green|refactor）。
-- `changed_paths`：本 task 修改的文件列表。
-- `commands`/`results`：执行的命令与结果（Red 失败、Green 通过、Refactor/guards）。
-- `manifest_compliance`：声明是否遵守 manifest.allowed_paths/forbidden_paths。
-- `pre_identity`/`post_identity`：dispatch 前后的 identity。
-- `r_identity`：R baseline identity（GREEN/REFACTOR 适用）。
-- `no_change_reason`：REFACTOR 返回 no_change 时的理由（如适用）。
-- `implemented_if_ids`：本 task 实现的 IF ids。
-- 未解决的 gap/isolation advisory。
+JSON object 必须包含以下字段（缺失即 fail-closed）：
 
-不得伪造 PASS/stage/commit。
+```json
+{
+  "phase": "red|green|refactor",
+  "changed_paths": ["<本 task 修改的文件路径>"],
+  "commands": [{"cmd": "<执行命令>", "result": "pass|fail", "output_summary": "<关键输出摘要>"}],
+  "results": ["<按 classify_red token 的分类，仅 RED>"],
+  "manifest_compliance": true,
+  "pre_identity": {"<path>": "<sha256>"},
+  "post_identity": {"<path>": "<sha256>"},
+  "r_identity": "<R baseline identity, GREEN/REFACTOR 适用, RED 填 null>",
+  "no_change_reason": "<REFACTOR 返回 no_change 时的理由, 如适用, 否则 null>",
+  "implemented_if_ids": ["<本 task 实现的 IF ids>"],
+  "advisories": ["<未解决的 gap/isolation advisory>"]
+}
+```
+
+不得伪造 PASS/stage/commit。`pre_identity`/`post_identity` 如实填 dispatch 前后的 worktree identity（Runtime 会复算校验，伪造必被检出）。
 
 ## 质量标准
 
@@ -188,8 +144,8 @@ Runtime 偏好以时间隔离 worktree 而非工具禁用实现隔离：
 
 ## 工具与权限
 
-- **读/list**：项目内普通读取允许；`tests/integration/**`、`tests/e2e/**`、`tests/counterexamples/**`、`tests/ground_truth/**` 由 resolved-path deny 作 defense-in-depth（相对/exact/`**/`变体均 deny）。绝对路径与规范化路径同样 deny。
-- **写**：仅 `manifest.allowed_paths` 范围；frozen tests、ground_truth、`.git`、`.lock`、`.tracks/runtime`、`.tracks/projects`、`.opencode` 由 resolved-path deny 守卫（相对/exact/`**/`变体均 deny）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
+- **读/list**：项目内普通读取允许；冻结测试目录（`tests/integration`、`tests/e2e` 等）的路径由 Archer 在 project.toml layout 配置中决定，不在通用 agent 定义里硬编码；frontmatter 只对 `.git`/`*.lock` 做 resolved-path deny。冻结测试隔离靠 temporal worktree（见上文）+ 君子约定。
+- **写**：仅 `manifest.allowed_paths` 范围；`.git`、`*.lock` 由 resolved-path deny 守卫（相对/exact/`**/`变体均 deny）。越权写文件会被 Runtime 审计检出并通过 git 回滚。
 - **glob/grep**：allow。用于探索 production、定位实现点；不得主动搜索 frozen directories（君子约定）。
 - **bash**：allow。仅运行 manifest 允许的读取/build/unit/guards 命令；不运行 integration/e2e，不 commit/push，不运行流程命令。
 - **task/question/doom_loop**：deny。不委托 subagent，不向 Human 提问。
