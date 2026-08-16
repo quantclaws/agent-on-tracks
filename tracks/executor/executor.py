@@ -11,15 +11,24 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.capabilities import supports_m_impl
+from tracks.discuss.parser import parse_threads
 from tracks.effects import select_backend
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
+from tracks.executor.doc_comment import (
+    ROLE_ALLOWED_DOCS,
+    DocCommentOrigin,
+    classify_design_document_deltas,
+    create_doc_gap_record,
+    quarantine_authorized_changes,
+)
 from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
@@ -251,19 +260,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
     def run_loop(self) -> State:
-        pending = self.store.state(self.run_id).pending
-        recovered_kind = self._recover()
-        if recovered_kind == "rollback_stage":
-            recovered = Command(
-                kind=recovered_kind,
-                params=pending.get("params", {}),
-                command_id=pending.get("command_id"),
-            )
-            if self._is_phase_boundary(recovered):
-                return self.store.state(self.run_id)
+        stop, recovered_kind, pending = self._recover_for_run()
+        if stop:
+            return self.store.state(self.run_id)
         dispatches, bound_substate = self._recovery_dispatch_state(recovered_kind, pending)
         while True:
             state = self.store.state(self.run_id)
+            # SM-02.9 (AC-FR0235-03): a paused doc-gap whose threads are all
+            # resolved resumes with a NEW dispatch/attempt before decide() —
+            # doc_dispatched stays True at the pause so decide() would halt.
+            if self._resume_doc_gap_if_ready(state):
+                continue
             cmd = decide(state)
             if cmd is None:
                 return state
@@ -276,6 +283,38 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self.issue(cmd)
             if self._is_phase_boundary(cmd):
                 return self.store.state(self.run_id)
+
+    def _recover_for_run(self) -> tuple[bool, str | None, dict | None]:
+        """(phase_boundary_stop, recovered_kind, pending) after D-13 recovery."""
+        pending = self.store.state(self.run_id).pending
+        recovered_kind = self._recover()
+        if recovered_kind == "rollback_stage":
+            recovered = Command(
+                kind=recovered_kind,
+                params=pending.get("params", {}),
+                command_id=pending.get("command_id"),
+            )
+            return self._is_phase_boundary(recovered), recovered_kind, pending
+        return False, recovered_kind, pending
+
+    def _enrich_shield_write_params(self, params: dict, state: State) -> None:
+        """D-28: enrich Shield WRITE assignments with structured test_tasks
+        parsed from test-plan §8 and the pre-dirty content snapshot."""
+        if not (
+            params.get("role") == "shield"
+            and params.get("substate") == "WRITE"
+            and state.stage in ("M-TEST", "M-IMPL")
+        ):
+            return
+        assignment = dict(params.get("assignment") or {})
+        if not assignment.get("test_tasks"):
+            vdir = self._vdir()
+            assignment["test_tasks"] = parse_test_tasks(
+                vdir / "acceptance.md", vdir / "test-plan.md"
+            )
+        params["assignment"] = assignment
+        params["pre_dirty"] = sorted(self._dirty_files())
+        params["pre_dirty_snapshot"] = self._dirty_snapshot()
 
     def _recovery_dispatch_state(self, recovered_kind, pending):
         """Compute (dispatches, bound_substate) after recovery."""
@@ -352,13 +391,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return False, substate
         return substate != bound_substate, bound_substate
 
-    def issue(self, cmd: Command) -> None:
+    def issue(self, cmd: Command, command_id: str | None = None) -> None:
         """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler
         logs the result event that closes it. command_id is assigned here so the
-        result pairs with the issued record. Used by run_loop and by one-shot
-        setup commands (create_branch in `trac start`)."""
+        result pairs with the issued record; an explicit ``command_id``
+        (doc-gap resume, SM-02.9) pre-binds the recorded identity. Used by
+        run_loop and by one-shot setup commands (create_branch in `trac start`)."""
         state = self.store.state(self.run_id)
-        cid = new_ulid()
+        cid = command_id or new_ulid()
         params = dict(cmd.params)
         if cmd.kind == "dispatch_agent" and self.assignment_overlay is not None:
             assignment = dict(params.get("assignment") or {})
@@ -370,30 +410,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 params,
                 cid,
             )
-        # D-28: Runtime enriches the Shield WRITE assignment with structured
-        # test_tasks parsed from test-plan §8 (AC layer + IF green conditions)
-        # before write-ahead logging so the persisted command.issued evidence
-        # carries the complete input (architecture.md §1.2 DISPATCH).
-        if (
-            cmd.kind == "dispatch_agent"
-            and params.get("role") == "shield"
-            and params.get("substate") == "WRITE"
-            and state.stage in ("M-TEST", "M-IMPL")
-            and not (params.get("assignment") or {}).get("test_tasks")
-        ):
-            vdir = self._vdir()
-            tasks = parse_test_tasks(vdir / "acceptance.md", vdir / "test-plan.md")
-            assignment = dict(params.get("assignment") or {})
-            assignment["test_tasks"] = tasks
-            params["assignment"] = assignment
-        if (
-            cmd.kind == "dispatch_agent"
-            and params.get("role") == "shield"
-            and params.get("substate") == "WRITE"
-            and state.stage in ("M-TEST", "M-IMPL")
-        ):
-            params["pre_dirty"] = sorted(self._dirty_files())
-            params["pre_dirty_snapshot"] = self._dirty_snapshot()
+        # D-28: enrich Shield WRITE assignments with structured test_tasks and
+        # the pre-dirty snapshot before write-ahead logging (architecture.md
+        # §1.2 DISPATCH). The persisted command.issued carries the full input.
+        if cmd.kind == "dispatch_agent":
+            self._enrich_shield_write_params(params, state)
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
@@ -517,6 +538,345 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             task_id=task_id,
         )
 
+    # -- SM-02 doc-comment-first (IF-DOCGAP-001 / IF-QUARANTINE-001) ---------
+
+    def _snapshot_design_docs(self, role: str) -> dict[str, bytes]:
+        """Read the role's allowed design docs before/after a dispatch."""
+        allowed = ROLE_ALLOWED_DOCS.get(role, frozenset())
+        snapshot: dict[str, bytes] = {}
+        for name in allowed:
+            path = self._doc_path(name)
+            snapshot[name] = path.read_bytes() if path.exists() else b""
+        return snapshot
+
+    def _capture_doc_gap_context(
+        self, state: State, role: str
+    ) -> tuple[dict[str, bytes], dict[str, str]] | None:
+        """Capture baseline design docs + dirty snapshot before act().
+
+        Returns None when the role is not doc-gap-checked (IF-DOCGAP-001).
+        The §1k contract (and architecture.md §3.8 entry path) covers every
+        Devon or Shield outcome with NO stage qualifier: Shield WRITE fires
+        in M-TEST, Devon RGR in M-IMPL. A `state.stage != "M-IMPL"` guard here
+        would silently skip Shield WRITE deltas, leaving hook-injected legal
+        discussions / illegal body edits unclassified before ordinary
+        validation (AC-FR0234-01/04, AC-FR0237-02). Only the role allow-list
+        gates which outcomes are doc-comment-checked.
+        """
+        if role not in ("devon", "shield"):
+            return None
+        return self._snapshot_design_docs(role), self._dirty_snapshot()
+
+    def _doc_gap_origin(
+        self, state: State, role: str, substate: str, cmd: Command
+    ) -> DocCommentOrigin:
+        """Build the origin identity bound to the dispatch (§1m)."""
+        return DocCommentOrigin(
+            run_id=self.run_id,
+            role=role,
+            task_id=state.current_task_id,
+            phase=substate,
+            dispatch_id=cmd.command_id,
+            attempt=cmd.params.get("attempt", state.current_attempt + 1),
+        )
+
+    def _handle_doc_gap_outcome(
+        self,
+        cmd: Command,
+        state: State,
+        task_id: str | None,
+        role: str,
+        substate: str,
+        result: dict,
+        doc_gap: tuple[dict[str, bytes], dict[str, str]] | None,
+    ) -> bool:
+        """Classify design-doc deltas BEFORE ordinary validation (§1k).
+
+        Returns True when the outcome is routed to doc-gap adjudication
+        (rejected or paused) instead of the ordinary validate/checkpoint path.
+        Precedence: illegal_body_edit > legal_discussion > ordinary.
+        """
+        if doc_gap is None:
+            return False
+        baseline_documents, pre_dirty = doc_gap
+        current_documents = self._snapshot_design_docs(role)
+        deltas = classify_design_document_deltas(
+            role=role,
+            baseline_documents=baseline_documents,
+            current_documents=current_documents,
+        )
+        if any(d.classification == "illegal_body_edit" for d in deltas):
+            self._reject_over_reach(
+                cmd, state, task_id, role, deltas, baseline_documents, pre_dirty
+            )
+            return True
+        legal = [d for d in deltas if d.classification == "legal_discussion"]
+        if legal:
+            self._pause_for_legal_discussion(
+                cmd, state, task_id, role, substate, deltas, legal, pre_dirty
+            )
+            return True
+        return False
+
+    def _rollback_doc_gap_round(
+        self,
+        baseline_documents: dict[str, bytes],
+        pre_dirty: dict[str, str] | None,
+    ) -> list[str]:
+        """Atomic rollback of all agent-attributable changes (§1k).
+
+        Restores design docs to pre-dispatch bytes and reverts non-doc repo
+        changes attributable to this outcome. Human/pre-dirty content survives.
+        """
+        rejected: list[str] = []
+        for name, data in baseline_documents.items():
+            path = self._doc_path(name)
+            path.write_bytes(data)
+            rejected.append(name)
+        pre = pre_dirty or {}
+        for rel in sorted(self._dirty_snapshot()):
+            if rel in pre:
+                continue  # Human/pre-dirty content survives (AC-FR0237-02).
+            git(self.repo, "checkout", "--", rel, check=False)
+            if (self.repo / rel).exists():
+                (self.repo / rel).unlink()
+            rejected.append(rel)
+        return rejected
+
+    def _reject_over_reach(
+        self,
+        cmd: Command,
+        state: State,
+        task_id: str | None,
+        role: str,
+        deltas: tuple,
+        baseline_documents: dict[str, bytes],
+        pre_dirty: dict[str, str] | None,
+    ) -> None:
+        """illegal_body_edit: atomic rollback + outcome.rejected (AC-FR0237-02).
+
+        Emits outcome.received(status='rejected') so the machine's
+        failed-outcome path drives the retry re-dispatch (reset_doc +
+        consume_attempt). status != 'failed' avoids the DIAGNOSE mis-route
+        for devon RED/GREEN (machine.py _handle_failed_outcome).
+        """
+        rejected_paths = self._rollback_doc_gap_round(baseline_documents, pre_dirty)
+        origin = self._doc_gap_origin(state, role, state.substate, cmd)
+        self._emit(
+            "outcome.received",
+            {
+                "role": role,
+                "status": "rejected",
+                "failure_class": "over_reach",
+                "self_report": "illegal body edit: non-discussion design-doc content changed",
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "outcome.rejected",
+            {
+                "failure_class": "over_reach",
+                "rollback": "atomic",
+                "rejected_paths": sorted(set(rejected_paths)),
+                "origin": asdict(origin),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _pause_for_legal_discussion(
+        self,
+        cmd: Command,
+        state: State,
+        task_id: str | None,
+        role: str,
+        substate: str,
+        deltas: tuple,
+        legal_deltas: list,
+        pre_dirty: dict[str, str] | None,
+    ) -> None:
+        """legal_discussion: visible pause before validation (FR-0234-01/02).
+
+        Emits doc_comment.detected + outcome.quarantined and does NOT emit
+        outcome.received: the ordinary validate/checkpoint path never runs
+        (§1k). doc_dispatched stays True so decide() halts at the pause.
+        """
+        origin = self._doc_gap_origin(state, role, substate, cmd)
+        record = create_doc_gap_record(
+            origin=origin,
+            deltas=deltas,
+            quarantine_id=None,
+        )
+        descriptor, manifest_ref = self._quarantine_legal_changes(
+            state, origin, record, pre_dirty
+        )
+        self._emit_doc_gap_pause(
+            cmd, task_id, origin, legal_deltas, record, descriptor, manifest_ref
+        )
+
+    def _quarantine_legal_changes(
+        self,
+        state: State,
+        origin: DocCommentOrigin,
+        record,
+        pre_dirty: dict[str, str] | None,
+    ) -> tuple:
+        """Quarantine authorized changes and persist the manifest blob."""
+        allowed_paths: tuple = ()
+        manifest_meta = (state.current_task_metadata or {}).get(
+            "manifest",
+        )
+        if isinstance(manifest_meta, dict):
+            allowed_paths = tuple(manifest_meta.get("allowed_paths", []))
+        descriptor = quarantine_authorized_changes(
+            origin=origin,
+            allowed_paths=allowed_paths,
+            pre_dirty_identities=pre_dirty or {},
+            agent_changes=(),
+            design_identity=record.document_deltas[0].baseline_identity
+            if record.document_deltas
+            else "",
+            run_identity=self.run_id,
+        )
+        manifest_ref = self.store.write_audit_blob(
+            {
+                "quarantine_id": descriptor.quarantine_id,
+                "origin": asdict(origin),
+                "changes": [asdict(c) for c in descriptor.changes],
+                "status": descriptor.status,
+            }
+        )
+        return descriptor, manifest_ref
+
+    def _legal_delta_targets(self, legal_deltas: list) -> tuple[list[str], list[str]]:
+        """Collect (document_paths, thread_ids) touched by legal deltas."""
+        document_paths: list[str] = []
+        thread_ids: list[str] = []
+        for d in legal_deltas:
+            document_paths.append(d.path)
+            thread_ids.extend(d.new_thread_ids)
+        return document_paths, thread_ids
+
+    def _emit_doc_gap_pause(
+        self,
+        cmd: Command,
+        task_id: str | None,
+        origin: DocCommentOrigin,
+        legal_deltas: list,
+        record,
+        descriptor,
+        manifest_ref: str | None,
+    ) -> None:
+        """Emit doc_comment.detected + outcome.quarantined (§1m closed set)."""
+        document_paths, thread_ids = self._legal_delta_targets(legal_deltas)
+        self._emit(
+            "doc_comment.detected",
+            {
+                "record_id": record.record_id,
+                "origin": asdict(origin),
+                "document_paths": document_paths,
+                "thread_ids": thread_ids,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "outcome.quarantined",
+            {
+                "record_id": record.record_id,
+                "quarantine_id": descriptor.quarantine_id,
+                "status": descriptor.status,
+                "manifest_ref": manifest_ref or descriptor.manifest_ref,
+                "manifest_sha256": descriptor.manifest_sha256,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _resume_doc_gap_if_ready(self, state: State) -> bool:
+        """SM-02.9: resume a paused doc-gap whose threads are all resolved.
+
+        Scans waiting doc-gap records (state AGENT_CORRECTION). If every
+        thread_id in the record is resolved in the current doc text, emits
+        outcome.restored|discarded + outcome.resumed and issues a NEW
+        dispatch for the same logical role/task/phase. Open threads stay
+        paused (NFR-0090-02 fail-closed).
+        """
+        if state.stage != "M-IMPL" or state.status != "active":
+            return False
+        for record_id, rec in state.doc_gaps.items():
+            if rec.get("state") != "AGENT_CORRECTION":
+                continue
+            if not self._threads_resolved_in_docs(
+                rec.get("document_paths") or [], rec.get("thread_ids") or []
+            ):
+                continue  # open thread — fail-closed: stay paused (NFR-0090-02).
+            self._resume_doc_gap_record(record_id, rec)
+            return True
+        return False
+
+    def _resume_doc_gap_record(self, record_id: str, rec: dict) -> None:
+        """Emit the resume decision pair and issue the NEW dispatch."""
+        origin = rec.get("origin") or {}
+        next_dispatch_id = new_ulid()
+        next_attempt = int(origin.get("attempt", 1)) + 1
+        restore = rec.get("quarantine_status") == "held"
+        self._emit(
+            "outcome.restored" if restore else "outcome.discarded",
+            {
+                "record_id": record_id,
+                "quarantine_id": rec.get("quarantine_id") or "",
+                "reason": "identity_current" if restore else "empty",
+                "next_dispatch_id": next_dispatch_id,
+                "next_attempt": next_attempt,
+            },
+        )
+        self._emit(
+            "outcome.resumed",
+            {
+                "record_id": record_id,
+                "origin_dispatch_id": origin.get("dispatch_id", ""),
+                "next_dispatch_id": next_dispatch_id,
+                "next_attempt": next_attempt,
+            },
+        )
+        self._issue_resume_dispatch(origin, next_dispatch_id, next_attempt)
+
+    def _threads_resolved_in_docs(
+        self, document_paths: list, thread_ids: list
+    ) -> bool:
+        """Instance helper: parse docs and check all thread_ids resolved."""
+        if not thread_ids:
+            return False
+        found: dict[str, str] = {}
+        for name in document_paths:
+            path = self._doc_path(name)
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for t in parse_threads(text):
+                found[t.thread_id] = t.status
+        return all(found.get(tid) == "resolved" for tid in thread_ids)
+
+    def _issue_resume_dispatch(
+        self, origin: dict, command_id: str, attempt: int
+    ) -> None:
+        """Issue the resume dispatch for the same logical role/task/phase."""
+        role = origin.get("role", "devon")
+        substate = origin.get("phase", "RED")
+        cmd = Command(
+            kind="dispatch_agent",
+            params={
+                "role": role,
+                "substate": substate,
+                "stage": "M-IMPL",
+                "attempt": attempt,
+                "assignment": {"phase": substate.lower()},
+            },
+        )
+        self.issue(cmd, command_id=command_id)
+
     def _dispatch_agent_backend(
         self,
         cmd,
@@ -532,6 +892,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
         pre_dirty = self._resolve_pre_dirty(state, substate, p)
+        # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
+        # and dirty snapshot BEFORE act() so deltas can be classified after.
+        doc_gap = self._capture_doc_gap_context(state, role)
         result = self.backend.act(role, substate, doc, doc_path, assignment=assignment)
         self._dispatch_log_end(p, result, time.monotonic() - t0)
         # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
@@ -554,6 +917,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 result,
                 state,
             )
+            return
+        # SM-02 doc-comment-first pre-check (§1k): classify design-doc deltas
+        # BEFORE ordinary validation. illegal_body_edit > legal_discussion.
+        if self._handle_doc_gap_outcome(
+            cmd, state, task_id, role, substate, result, doc_gap,
+        ):
             return
         # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
         # embed the full pipeline capture in outcome.received so the reducer
