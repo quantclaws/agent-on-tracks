@@ -324,8 +324,8 @@ class MImplRuntimeMixin:
                 value = task.get(key)
                 assignment[key] = list(value) if isinstance(value, tuple) else value
 
-    @staticmethod
     def _add_assignment_role_fields(
+        self,
         assignment: dict,
         state: State,
         params: dict,
@@ -337,6 +337,19 @@ class MImplRuntimeMixin:
             assignment["phase"] = phase if phase in ("red", "green", "refactor") else None
             if assignment["phase"] in ("green", "refactor"):
                 assignment["r_tree_identity"] = state.r_tree_identity
+            if assignment["phase"] == "red":
+                assignment["red_test_paths"] = self._devon_red_test_dirs()
+                # 同时刷新 manifest 里的 phase_rules.red 文本，让存量任务 retry 也看到新合同
+                if isinstance(assignment.get("manifest"), dict):
+                    manifest = assignment["manifest"]
+                    manifest["red_test_paths"] = self._devon_red_test_dirs()
+                    pr = manifest.get("phase_rules")
+                    if isinstance(pr, dict):
+                        pr["red"] = (
+                            "write failing unit tests only under red_test_paths; "
+                            "allowed_paths lists the green-phase impl scope "
+                            "and is not writable in RED"
+                        )
         elif role == "prism":
             assignment["criteria_pack"] = dict(_M_IMPL_CRITERIA_PACK)
             if substate in ("PRISM_RED", "PRISM_FINAL", "DIAGNOSE"):
@@ -534,18 +547,14 @@ class MImplRuntimeMixin:
         # because impl-only manifests (no unit test_refs) grant no test path;
         # frozen Shield suites remain blocked by forbidden_paths, and the
         # post-loop RED check below still requires a test-dir location.
-        devon_test_dirs = (
-            [d for d in layout_paths(self.repo, "devon") if "test" in d]
-            if phase == "red"
-            else []
-        )
+        devon_test_dirs = self._devon_red_test_dirs() if phase == "red" else []
         path_error = _devon_path_scope_error(
             outcome["changed_paths"], allowed, forbidden, devon_test_dirs
         )
         if path_error is not None:
             return path_error
         if phase == "red" and devon_test_dirs and any(
-            not any(path.startswith(d) for d in devon_test_dirs)
+            not any(path.startswith(d + "/") or path == d for d in devon_test_dirs)
             for path in outcome["changed_paths"]
         ):
             return "Devon RED evidence includes a non-test path"
@@ -1025,10 +1034,19 @@ class MImplRuntimeMixin:
         ]
 
     def _unit_commands(self) -> list[str]:
-        test_dirs = [d.rstrip("/") for d in layout_paths(self.repo, "devon") if "test" in d]
+        test_dirs = self._devon_red_test_dirs()
         if not test_dirs:
             return []
         return [f".venv/bin/python -m pytest -n 4 {' '.join(test_dirs)}"]
+
+    def _devon_red_test_dirs(self) -> list[str]:
+        """RED-phase test write grant dirs: devon layout dirs containing 'test'.
+
+        与 _devon_evidence_error 和 _unit_commands 同源派生，避免漂移。
+        RED phase 允许 Devon 在这些目录写 failing unit tests，即使
+        manifest.allowed_paths (impl scope) 不含测试路径。
+        """
+        return [d.rstrip("/") for d in layout_paths(self.repo, "devon") if "test" in d]
 
     def _task_manifest(self, task: TaskNode, state: State) -> dict:
         pre_dirty = self._dirty_snapshot()
@@ -1049,9 +1067,11 @@ class MImplRuntimeMixin:
             "scope_boundary": task.scope_boundary,
             "allowed_paths": self._task_allowed_paths(task),
             "forbidden_paths": self._forbidden_paths(),
+            "red_test_paths": self._devon_red_test_dirs(),
             "frozen_test_paths": self._frozen_test_paths(),
             "phase_rules": {
-                "red": "write failing unit tests only",
+                "red": "write failing unit tests only under red_test_paths; "
+                       "allowed_paths lists the green-phase impl scope and is not writable in RED",
                 "green": "write implementation only; keep R tests immutable",
                 "refactor": "quality-only changes; preserve green behavior",
             },

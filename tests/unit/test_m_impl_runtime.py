@@ -1517,3 +1517,60 @@ def test_validated_diff_generates_from_changed_paths_when_diff_ref_missing(tmp_p
     event = _run_red_gate(executor, store, outcome)
     assert event.type == "verdict.passed"
     assert event.payload["check"] == "red_valid"
+
+
+def test_devon_red_test_dirs_helper(tmp_path):
+    """The RED write-grant helper derives Devon test dirs from
+    project.toml [layout.devon] (rstripped, same source as _unit_commands)."""
+    repo = _repo(tmp_path)
+    task = _task()
+    store = _impl_only_started_store(repo, task)
+    executor = _executor(repo, store)
+    assert executor._devon_red_test_dirs() == ["tests/unit"]
+
+
+def test_manifest_includes_red_test_paths_for_impl_only_task(tmp_path):
+    """Regression (T-016 manifest deadlock): an impl-only task (test_refs all
+    integration/e2e) must still publish red_test_paths and a phase_rules.red
+    that names it, so Devon knows RED unit tests live in tests/unit/ even
+    though allowed_paths (green impl scope) grants no test path."""
+    repo = _repo(tmp_path)
+    task = _task("tests/integration/test_impl.py::test_impl")
+    store = _impl_only_started_store(repo, task)
+    executor = _executor(repo, store)
+    state = store.state("RUN")
+    task_node = executor._task_node(task)
+    manifest = executor._task_manifest(task_node, state)
+    assert manifest["allowed_paths"] == ["tracks/app.py"]
+    assert manifest["red_test_paths"] == ["tests/unit"]
+    assert "red_test_paths" in manifest["phase_rules"]["red"]
+
+
+def test_assignment_red_injects_red_test_paths_for_stale_manifest(tmp_path):
+    """Regression (T-016 retry): the manifest persists at task.started, so a
+    retry reuses a stale manifest without red_test_paths. Devon RED dispatch
+    must inject red_test_paths at the assignment level and refresh the stale
+    manifest's phase_rules.red so the retry sees the new contract."""
+    repo = _repo(tmp_path)
+    task = _task()
+    store = _impl_only_started_store(repo, task)
+    executor = _executor(repo, store)
+    assignment = {
+        "phase": "red",
+        "manifest": {
+            "task_id": task["task_id"],
+            "allowed_paths": ["tracks/app.py"],
+            "forbidden_paths": [],
+            "phase_rules": {
+                "red": "write failing unit tests only",
+                "green": "write implementation only; keep R tests immutable",
+                "refactor": "quality-only changes; preserve green behavior",
+            },
+        },
+    }
+    executor._add_assignment_role_fields(
+        assignment, store.state("RUN"), {"role": "devon", "substate": "RED"}
+    )
+    assert assignment["red_test_paths"] == ["tests/unit"]
+    assert assignment["manifest"]["red_test_paths"] == ["tests/unit"]
+    assert "red_test_paths" in assignment["manifest"]["phase_rules"]["red"]
