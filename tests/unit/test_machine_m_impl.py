@@ -1440,7 +1440,10 @@ def test_impl_defect_green_dispatch_carries_diagnose_report():
             "attempt": 1,
         },
     )
-    s = state_of(*pre_diagnose, impl_verdict)
+    enter_diagnose = (
+        "verdict.failed", {"check": "unknown_attribution", "reason": "unclear", "attempt": 1},
+    )
+    s = state_of(*pre_diagnose, enter_diagnose, impl_verdict)
     assert s.substate == "GREEN"  # impl_defect routes back to GREEN
     assert s.diagnose_report["check"] == "impl_defect"
     cmd = decide(s)
