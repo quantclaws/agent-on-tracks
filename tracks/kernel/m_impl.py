@@ -437,7 +437,7 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
             f"implement task {s.current_task_id} ({phase}); your FINAL reply "
             "must end with the bare evidence JSON object per skill "
             "tracks-devon-rgr §4 - prose or Markdown reports are not a "
-            "deliverable"
+            "deliverable" + _shield_diagnosis_clause(s)
         ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -478,13 +478,14 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
 
 
 def _shield_diagnosis_clause(s: State) -> str:
-    """Prism DIAGNOSE details for the Shield objective ('' when none).
+    """Prism DIAGNOSE details for the fixer objective ('' when none).
 
     Read from State.diagnose_report, not last_failure: last_failure is
     dropped by `trac retry --clear-evidence` and overwritten by every failed
-    Shield attempt (FR-0210), which left Shield re-deriving Prism's whole
-    analysis from scratch (run 01KZTHE7 T-008/T-017: 52 minutes burned
-    re-archaeologying defects Prism had already pinpointed).
+    attempt (FR-0210), which left fixers re-deriving Prism's whole analysis
+    from scratch (run 01KZTHE7 T-008/T-017: 52 minutes burned
+    re-archaeologying defects Prism had already pinpointed). Shared by the
+    SHIELD_FIX (test_defect) and Devon GREEN (impl_defect) re-dispatches.
     """
     report = s.diagnose_report or {}
     reason = report.get("reason")

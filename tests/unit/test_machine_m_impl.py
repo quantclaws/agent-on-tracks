@@ -1415,6 +1415,40 @@ def test_shield_diagnose_report_survives_semantic_failure():
     assert "not_real but provenance is fully real" in cmd.params["objective"]
 
 
+def test_impl_defect_green_dispatch_carries_diagnose_report():
+    """impl_defect -> GREEN re-dispatch objective carries the DIAGNOSE
+    reason/evidence (Devon evidence schema failures spell out exactly which
+    fields are missing - re-deriving them via DIAGNOSE or archaeology is
+    pure waste, run 01KZTHE7 T-017 attempts 1-3, 2026-08-16)."""
+    pre_diagnose = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    impl_verdict = (
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "target_stage": "M-IMPL",
+            "reason": "Devon evidence missing: phase, changed_paths, commands",
+            "evidence": "backend Devon outcome; full transcript: "
+                        ".tracks/runtime/blobs/ab12cd34",
+            "attempt": 1,
+        },
+    )
+    s = state_of(*pre_diagnose, impl_verdict)
+    assert s.substate == "GREEN"  # impl_defect routes back to GREEN
+    assert s.diagnose_report["check"] == "impl_defect"
+    cmd = decide(s)
+    assert cmd.params["role"] == "devon"
+    assert "Devon evidence missing: phase, changed_paths, commands" in cmd.params["objective"]
+    assert ".tracks/runtime/blobs/ab12cd34" in cmd.params["objective"]
+
+
 def test_shield_fix_dispatch_contract_is_write():
     """SHIELD_FIX dispatches Shield with substate=WRITE (D-29 integration contract).
 
