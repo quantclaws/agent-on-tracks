@@ -109,6 +109,7 @@ def test_devon_dispatch_runs_in_worktree_and_replays_to_main(tmp_path):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "impl base")
     store, task = _started_task_store(repo)
+    head_before = _git(repo, "rev-parse", "HEAD")
     fake = _InstrumentedFake(repo, "v0.5")
     fake.write_files = {
         "tests/unit/test_app.py": "def test_app():\n    assert False\n",
@@ -136,7 +137,7 @@ def test_devon_dispatch_runs_in_worktree_and_replays_to_main(tmp_path):
     closed = _events(store, "worktree.closed")
     assert len(opened) == 1 and opened[0].payload["kind"] == "devon_candidate"
     assert opened[0].payload["task_id"] == task["task_id"]
-    assert opened[0].payload["base_sha"] == _git(repo, "rev-parse", "HEAD") or True
+    assert opened[0].payload["base_sha"] == head_before
     assert len(closed) == 1 and closed[0].payload["replayed"] is True
     assert closed[0].payload["kind"] == "devon_candidate"
 
@@ -215,6 +216,55 @@ def test_shield_write_opens_test_authority_worktree(tmp_path):
     from tracks.executor.worktree import cleanup_worktree
 
     cleanup_worktree(handle)
+
+
+def test_allowed_paths_resolve_against_worktree_root_no_overreach(tmp_path):
+    """Prism blocker regression: with a writer worktree, the audit whitelist
+    must resolve under the Auditor's root (the worktree) — otherwise every
+    legal write is over-reach and force-rolled-back in production while the
+    Fake-based tests stay green (issue #2, B1 review)."""
+    from tracks.effects.audit import Auditor
+    from tracks.effects.opencode import OpencodeBackend
+    from tracks.executor.worktree import create_devon_worktree, ensure_runtime_assets
+
+    repo = git_repo(tmp_path)  # no .tracks ignore: the contract must commit
+    contract = repo / ".tracks" / "projects" / "project.toml"
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    contract.write_text(
+        "[integration]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/integration/"]\n'
+        'collect = "pytest --collect-only tests/integration"\n'
+        'run = "pytest tests/integration"\n'
+        'cwd = "."\n'
+        "\n"
+        "[layout.devon]\n"
+        'writable = ["tracks/", "tests/unit/"]\n',
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "contract")
+    head = _git(repo, "rev-parse", "HEAD")
+    handle = create_devon_worktree(str(repo), head, "RUN", "T-001")
+    ensure_runtime_assets(str(repo), handle.path)
+    try:
+        backend = OpencodeBackend(repo, "v0.5")
+        assignment = _devon_assignment("T-001")
+        agent_dest = repo / ".opencode" / "agents"
+        allowed = backend._allowed_paths(
+            [], agent_dest, "devon", "RED", assignment, root=Path(handle.path)
+        )
+        auditor = Auditor(Path(handle.path), allowed=allowed)
+        baseline = auditor.baseline()
+        legal = Path(handle.path) / "tests" / "unit" / "test_new.py"
+        legal.parent.mkdir(parents=True, exist_ok=True)
+        legal.write_text("def test_new():\n    assert False\n", encoding="utf-8")
+        overreach = auditor.audit(baseline)
+        assert overreach is None, f"legal worktree write flagged: {overreach}"
+    finally:
+        from tracks.executor.worktree import cleanup_worktree
+
+        cleanup_worktree(handle)
 
 
 def test_replay_blocked_by_dirty_file_falls_back_to_mirror(tmp_path):

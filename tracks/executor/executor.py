@@ -1049,12 +1049,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         if kind == "devon":
             self._clear_stale_worktree_path(
-                _writer_worktree_path(str(self.repo), self.run_id, task_id, "devon")
+                _writer_worktree_path(str(self.repo), self.run_id, task_id, "devon"),
+                "devon_candidate",
             )
             handle = create_devon_worktree(str(self.repo), head, self.run_id, task_id)
         else:
             self._clear_stale_worktree_path(
-                _writer_worktree_path(str(self.repo), self.run_id, None, "test_authority")
+                _writer_worktree_path(str(self.repo), self.run_id, None, "test_authority"),
+                "test_authority",
             )
             handle = create_test_authority_worktree(str(self.repo), head, self.run_id)
         ensure_runtime_assets(str(self.repo), handle.path)
@@ -1072,7 +1074,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         return handle, task_id
 
-    def _clear_stale_worktree_path(self, path: str) -> None:
+    def _clear_stale_worktree_path(self, path: str, kind: str) -> None:
         """Reclaim this exact path if a crashed dispatch left it behind.
 
         Deliberately NOT the B2 sweep (user ruling: full sweeps run only at
@@ -1082,7 +1084,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """
         if not os.path.exists(path):
             return
-        cleanup_worktree(WorktreeHandle(path=path, base_sha="", kind="gate"))
+        cleanup_worktree(WorktreeHandle(path=path, base_sha="", kind=kind))
 
     def _replay_worktree_to_main(self, handle: WorktreeHandle) -> tuple[str | None, bool]:
         """Apply the worktree's working-tree delta onto the main tree.

@@ -139,6 +139,17 @@ class OpencodeBackend:
                 root / path
                 for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
             ]
+        elif worktree is not None:
+            # Non-Devon writer dispatches (Shield WRITE): doc paths arrive
+            # as main-tree absolutes from the executor; shift them into the
+            # worktree view so the Auditor matches them against what it
+            # observes there (B1 Prism blocker fix).
+            doc_paths = [
+                root / p.relative_to(self.repo)
+                if p.is_absolute() and p.is_relative_to(self.repo)
+                else p
+                for p in doc_paths
+            ]
         cleanup_infos: list = []
         proc = None
         # Reviewer verdict derivation: M-TEST review substates end in
@@ -164,7 +175,9 @@ class OpencodeBackend:
             # additionally bounded by their Scaffold 宣言, see the audit
             # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
-            allowed = self._allowed_paths(doc_paths, agent_dest, role, substate, assignment)
+            allowed = self._allowed_paths(
+                doc_paths, agent_dest, role, substate, assignment, root=root
+            )
             auditor = Auditor(root, allowed=allowed)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
@@ -270,11 +283,21 @@ class OpencodeBackend:
         role: str,
         substate: str,
         assignment: dict | None = None,
+        root: Path | None = None,
     ) -> list[Path | str | None]:
-        """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest."""
-        commentable = self._commentable_doc_paths(role)
+        """Audit whitelist = code dirs (project.toml [layout]) + commentable docs + agent_dest.
+
+        ``root`` is the Auditor's repo (the isolated worktree for writer
+        dispatches, else the main tree) — every path MUST resolve under
+        it or the audit mis-flags every legal write as over-reach (B1
+        Prism blocker fix). agent_dest stays a main-repo deployment
+        path on purpose: it is gitignored, so the worktree's git status
+        never reports writes there.
+        """
+        base = root if root is not None else self.repo
+        commentable = self._commentable_doc_paths(role, base)
         if role == "shield":
-            allowed = [self.repo / d for d in layout_paths(self.repo, "shield")]
+            allowed = [base / d for d in layout_paths(base, "shield")]
             if substate == "WRITE":
                 # WRITE target docs (incl. acceptance.md, not a COMMENTABLE_DOCS
                 # entry) are whitelisted; replies there are discussion-checked.
@@ -283,22 +306,23 @@ class OpencodeBackend:
             # [layout] dirs (e.g. a unit-level RED contract test); the
             # dispatch grants exactly those via manifest.allowed_paths and
             # the audit must honor the grant (Fix-M pattern, shield side).
-            manifest_paths = self._manifest_allowed_paths(assignment)
+            manifest_paths = self._manifest_allowed_paths(assignment, base)
             return [*commentable, *allowed, agent_dest, *manifest_paths]
         if role == "devon":
-            devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
-            manifest_paths = self._manifest_allowed_paths(assignment)
+            devon_dirs = [base / d for d in layout_paths(base, "devon")]
+            manifest_paths = self._manifest_allowed_paths(assignment, base)
             return [*commentable, agent_dest, *devon_dirs, *manifest_paths]
-        return [*doc_paths, agent_dest, self.repo]
+        return [*doc_paths, agent_dest, base]
 
     @staticmethod
-    def _manifest_allowed_paths(assignment: dict | None) -> list[Path]:
+    def _manifest_allowed_paths(assignment: dict | None, root: Path | None = None) -> list[Path]:
         """Explicit write whitelist from the assignment manifest (Archer-authored
         per-task allowed_paths); audit must honor it in addition to the coarse
         [layout] dirs, else a compliant out-of-layout write (e.g. a CI workflow
         path) is mis-flagged as over-reach and force-rolled-back."""
         manifest = (assignment or {}).get("manifest") or {}
-        return [Path(p) for p in (manifest.get("allowed_paths") or [])]
+        base = root if root is not None else Path(".")
+        return [base / p for p in (manifest.get("allowed_paths") or [])]
 
     def _unknown_role_result(self, role: str, prompt: str, console_input: str | None) -> dict:
         # Unknown role (no AGENT_NAME entry) has no opencode agent.
@@ -481,13 +505,13 @@ class OpencodeBackend:
             parts.append("over-reach: " + ", ".join(over_paths))
         return "; ".join(parts)
 
-    def _commentable_doc_paths(self, role: str) -> list[Path]:
+    def _commentable_doc_paths(self, role: str, root: Path | None = None) -> list[Path]:
         """Every COMMENTABLE_DOCS path for the role, including ones missing at
         dispatch or gone post-run (deleted/type-swapped docs must be audited)."""
         cdocs = COMMENTABLE_DOCS.get(role)
         if not cdocs:
             return []
-        vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
+        vdir = paths.version_dir(paths.tracks_home(root or self.repo), self.version)
         return [vdir / d for d in cdocs]
 
     def _scaffold_offending(
