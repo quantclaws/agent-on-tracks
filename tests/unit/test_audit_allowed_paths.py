@@ -15,7 +15,6 @@ Once T-017 lands, this file should be ``git add``-ed into the tree.
 """
 
 import subprocess
-from pathlib import Path
 
 from tracks.effects.audit import Auditor
 from tracks.effects.opencode import OpencodeBackend
@@ -50,7 +49,9 @@ def test_devon_audit_allowed_includes_manifest_paths(tmp_path, monkeypatch):
 
     allowed = backend._allowed_paths([], agent_dest, "devon", "GREEN", assignment)
 
-    assert Path(".github/workflows/ci.yml") in allowed
+    # B1 blocker fix: allowed paths resolve against the audit root
+    # (main repo when no worktree) as absolutes; Auditor._rel normalizes.
+    assert backend.repo / ".github/workflows/ci.yml" in allowed
     assert tmp_path / "tracks" in allowed
     assert tmp_path / "tests/unit" in allowed
     assert agent_dest in allowed
@@ -116,7 +117,7 @@ def test_shield_audit_allowed_includes_manifest_paths(tmp_path, monkeypatch):
 
     allowed = backend._allowed_paths([], agent_dest, "shield", "WRITE", assignment)
 
-    assert Path("tests/unit/test_ci_live_release_jobs.py") in allowed
+    assert backend.repo / "tests/unit/test_ci_live_release_jobs.py" in allowed
     assert tmp_path / "tests/integration" in allowed
     assert agent_dest in allowed
 
