@@ -702,6 +702,12 @@ class OpencodeBackend:
         # had to dig the outcome blob to learn which file tripped the audit.
         # Keep audit_evidence verbatim in self_report so FR-0210 last_failure,
         # the escalation reason and the log line all carry the concrete path.
+        # AC-FR0237-01/02 (T-018): declare rollback='atomic' (whole-round
+        # rollback, no partial writes survive) and a structured rejected_paths
+        # list so the report/audit trail can render WHICH paths were rejected
+        # and THAT the rollback was atomic.  The paths are recovered from the
+        # evidence string (the single source produced by _overreach_evidence),
+        # so callers thread no parallel structure.
         return {
             "status": "failed",
             "artifact_ref": None,
@@ -713,8 +719,36 @@ class OpencodeBackend:
             "diff_ref": diff_ref,
             "audit_evidence": evidence,
             "failure_class": "over_reach",
+            "rollback": "atomic",
+            "rejected_paths": self._paths_from_evidence(evidence),
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
+
+    @staticmethod
+    def _paths_from_evidence(evidence: str) -> list[str]:
+        """Recover the offending paths from an over-reach evidence string.
+
+        The evidence format is the closed contract produced by
+        ``_overreach_evidence``: up to two clauses joined by ``"; "`` -- a
+        ``non-discussion edit to <p1>, <p2>`` clause (doc-offending paths) and
+        an ``over-reach: <p3>, <p4>`` clause (out-of-scope paths).  Recovering
+        the structured list here lets ``_overreach_result`` carry
+        ``rejected_paths`` without every caller threading a parallel list,
+        while keeping the evidence string the single human-readable source.
+        Returns an empty list for evidence that carries no parseable paths
+        (e.g. a bare ``"over-reach evidence"`` message from a guard test).
+        """
+        if not evidence:
+            return []
+        paths: list[str] = []
+        for clause in evidence.split("; "):
+            if clause.startswith("non-discussion edit to "):
+                rest = clause[len("non-discussion edit to "):]
+                paths.extend(p for p in rest.split(", ") if p)
+            elif clause.startswith("over-reach: "):
+                rest = clause[len("over-reach: "):]
+                paths.extend(p for p in rest.split(", ") if p)
+        return paths
 
     def _undeclared_scaffold_result(
         self,
