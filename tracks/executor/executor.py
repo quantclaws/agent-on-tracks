@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -50,6 +51,14 @@ from tracks.executor.validate import (
     parse_test_tasks,
     required_ac_ids,
     validate_document,
+)
+from tracks.executor.worktree import (
+    WorktreeHandle,
+    _writer_worktree_path,
+    cleanup_worktree,
+    create_devon_worktree,
+    create_test_authority_worktree,
+    ensure_runtime_assets,
 )
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
@@ -908,7 +917,57 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
         # and dirty snapshot BEFORE act() so deltas can be classified after.
         doc_gap = self._capture_doc_gap_context(state, role)
-        result = self.backend.act(role, substate, doc, doc_path, assignment=assignment)
+        # B1 (issue #2, user ruling 2026-08-18): writer agents (Devon RGR in
+        # M-IMPL, Shield WRITE in M-TEST) run in a spatially isolated
+        # worktree created from the current main HEAD; the work is replayed
+        # onto the main tree afterwards, so every existing pipeline
+        # (pre_dirty, manifest audit, R/G refs, atomic rollback) keeps
+        # operating on the main tree unchanged. Per-dispatch lifecycle:
+        # each phase re-creates from HEAD, so REFACTOR and PRISM-revise
+        # re-dispatches naturally see committed work; a crash leaks only a
+        # worktree that the B2 start-time sweep reclaims. Audited events.
+        handle, wt_task_id = self._open_writer_worktree(state, role, substate, cmd)
+        replay_error: str | None = None
+        replayed = False
+        try:
+            result = self.backend.act(
+                role,
+                substate,
+                doc,
+                doc_path,
+                assignment=assignment,
+                worktree=Path(handle.path) if handle is not None else None,
+            )
+            if handle is not None:
+                replay_error, replayed = self._replay_worktree_to_main(handle)
+        finally:
+            if handle is not None:
+                cleanup_worktree(handle)
+                self._emit(
+                    "worktree.closed",
+                    {
+                        "kind": handle.kind,
+                        "path": handle.path,
+                        "task_id": wt_task_id,
+                        "replayed": replayed,
+                    },
+                    command_id=cmd.command_id,
+                    task_id=wt_task_id,
+                )
+        if replay_error is not None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "worktree",
+                    "reason": f"worktree replay failed: {replay_error}",
+                    "evidence": replay_error,
+                    "task_id": task_id,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
         self._dispatch_log_end(p, result, time.monotonic() - t0)
         # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
         # do NOT enter the ResultCheckpoint pipeline. The explanation/review
@@ -964,6 +1023,129 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return  # pipeline drives the domain event
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
         self._emit_shield_commit(result, role, state, cmd, task_id)
+
+    def _open_writer_worktree(self, state, role: str, substate: str, cmd):
+        """B1 (issue #2): open the per-dispatch worktree for writer agents.
+
+        Devon RED/GREEN/REFACTOR (M-IMPL) get a devon_candidate worktree
+        keyed by the task lease; Shield WRITE (M-TEST) gets a
+        test_authority worktree. Both are created from the main HEAD —
+        NOT a stale C_design — so re-dispatches after G/R commits see
+        the committed work. Returns (handle, task_id) or (None, None)
+        for every other dispatch.
+        """
+        kind: str | None = None
+        task_id: str | None = None
+        if (
+            state.stage == "M-IMPL"
+            and role == "devon"
+            and substate in ("RED", "GREEN", "REFACTOR")
+        ):
+            kind, task_id = "devon", state.current_task_id or ""
+        elif state.stage == "M-TEST" and role == "shield" and substate == "WRITE":
+            kind = "test_authority"
+        if kind is None or (kind == "devon" and not task_id):
+            return None, None
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        if kind == "devon":
+            self._clear_stale_worktree_path(
+                _writer_worktree_path(str(self.repo), self.run_id, task_id, "devon")
+            )
+            handle = create_devon_worktree(str(self.repo), head, self.run_id, task_id)
+        else:
+            self._clear_stale_worktree_path(
+                _writer_worktree_path(str(self.repo), self.run_id, None, "test_authority")
+            )
+            handle = create_test_authority_worktree(str(self.repo), head, self.run_id)
+        ensure_runtime_assets(str(self.repo), handle.path)
+        self._emit(
+            "worktree.opened",
+            {
+                "kind": handle.kind,
+                "path": handle.path,
+                "task_id": task_id,
+                "base_sha": head,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return handle, task_id
+
+    def _clear_stale_worktree_path(self, path: str) -> None:
+        """Reclaim this exact path if a crashed dispatch left it behind.
+
+        Deliberately NOT the B2 sweep (user ruling: full sweeps run only at
+        ``trac start``) — this reclaims only the one path this dispatch is
+        about to occupy, so a crash between two runs cannot brick the
+        loop's next writer dispatch.
+        """
+        if not os.path.exists(path):
+            return
+        cleanup_worktree(WorktreeHandle(path=path, base_sha="", kind="gate"))
+
+    def _replay_worktree_to_main(self, handle: WorktreeHandle) -> tuple[str | None, bool]:
+        """Apply the worktree's working-tree delta onto the main tree.
+
+        ``git add -A`` + ``git diff --cached --binary`` captures tracked
+        edits plus new files; ``git apply`` (bytes mode — binary patches
+        must never be decoded as text) writes them into the main tree
+        WITHOUT staging, so downstream pipelines see exactly the state the
+        agent would have left had it worked in the main tree.
+        Returns (error, had_delta); error None means clean or applied ok.
+        """
+        wt = handle.path
+        subprocess.run(
+            ["git", "-C", wt, "add", "-A"],
+            capture_output=True,
+            check=False,
+        )
+        diff = subprocess.run(
+            ["git", "-C", wt, "diff", "--cached", "--binary"],
+            capture_output=True,
+            check=False,
+        )
+        if not diff.stdout.strip():
+            return None, False
+        applied = subprocess.run(
+            ["git", "-C", str(self.repo), "apply", "--whitespace=nowarn", "-"],
+            input=diff.stdout,
+            capture_output=True,
+            check=False,
+        )
+        if applied.returncode != 0:
+            # Fast path refused (e.g. the main tree holds an uncommitted
+            # file the diff creates). Mirror the changed files instead:
+            # per-file copy/delete from the worktree's final state, which
+            # is exactly the state the agent would have left had it
+            # worked directly in the main tree (a direct agent edit also
+            # overwrites a pre-existing dirty file).
+            return self._mirror_worktree_changes(handle), True
+        return None, True
+
+    def _mirror_worktree_changes(self, handle: WorktreeHandle) -> str | None:
+        """Per-file sync of the worktree's staged changes onto the main
+        tree (replay fallback). Returns an error string or None."""
+        names = subprocess.run(
+            ["git", "-C", handle.path, "diff", "--cached", "--name-only", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for name in names.stdout.split("\0"):
+            if not name:
+                continue
+            src = Path(handle.path) / name
+            dst = self.repo / name
+            try:
+                if src.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                else:
+                    dst.unlink(missing_ok=True)
+            except OSError as exc:
+                return f"mirror {name}: {exc}"
+        return None
 
     def _emit_criteria_pack_failure(
         self,

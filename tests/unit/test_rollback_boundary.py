@@ -75,7 +75,7 @@ class _StubBackend:
     def __init__(self, result):
         self.result = result
 
-    def act(self, role, substate, doc, doc_path, assignment=None):
+    def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
         return dict(self.result)
 
 

@@ -328,7 +328,7 @@ class _RecordingBackend:
         self.result = result
         self.assignments = []
 
-    def act(self, role, substate, doc, doc_path, assignment=None):
+    def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
         self.assignments.append((role, substate, assignment))
         return dict(self.result)
 
@@ -844,7 +844,7 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
         def __init__(self):
             self.assignments = []
 
-        def act(self, role, substate, doc, doc_path, assignment=None):
+        def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             self.assignments.append((role, substate, assignment))
             tests_dir = repo / "tests" / "integration"
             tests_dir.mkdir(parents=True, exist_ok=True)

@@ -63,6 +63,9 @@ EVENT_TYPES = (
     "no_diff.reviewed",
     # B2 (run 01KZTHE7): trac start sweeps leaked worktrees; audited event.
     "worktree.swept",
+    # B1 (issue #2): per-dispatch writer worktrees; audited lifecycle events.
+    "worktree.opened",
+    "worktree.closed",
 )
 
 # interfaces §4 — v0.1 closed command set.

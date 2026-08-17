@@ -114,6 +114,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         self._calls: dict = {}
         self._design_revisions = 0
         self._shield_writes = 0
+        # B1 (issue #2): set per act() call; writer fakes write here so the
+        # executor's replay-to-main path is exercised like production.
+        self._worktree_root: Path | None = None
 
     def token(self, key_left: str, key_right: str, default: str) -> str:
         key = f"{key_left}:{key_right}"
@@ -129,7 +132,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         doc: str | None,
         doc_path: Path | None,
         assignment: dict | None = None,
+        worktree: Path | None = None,
     ) -> dict:
+        self._worktree_root = Path(worktree) if worktree is not None else None
         no_diff = self._act_no_diff(role, substate)
         if no_diff is not None:
             return no_diff
@@ -137,6 +142,11 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             data = assignment if isinstance(assignment, dict) else {}
             return self._act_m_impl_devon(substate, data)
         return self._act_legacy(role, substate, doc, doc_path, assignment)
+
+    def _repo_root(self) -> Path:
+        """B1 (issue #2): the root writer fakes write to — the isolated
+        worktree when the dispatch carries one, else the main tree."""
+        return self._worktree_root or self.repo
 
     def _act_legacy(
         self,

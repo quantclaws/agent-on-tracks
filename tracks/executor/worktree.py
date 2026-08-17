@@ -24,6 +24,12 @@ class WorktreeHandle:
     kind: Literal["devon_candidate", "gate", "test_authority"]
 
 
+def _writer_worktree_path(repo: str, run_id: str, task_id: str | None, kind: str) -> str:
+    """B1 (issue #2): the deterministic path a writer worktree occupies
+    (mirrors ``_worktree_path`` for pre-creation stale-path reclamation)."""
+    return _worktree_path(repo, run_id, task_id, kind)
+
+
 def create_devon_worktree(
     repo: str,
     c_design_sha: str,

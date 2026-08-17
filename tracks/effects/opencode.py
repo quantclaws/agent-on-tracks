@@ -120,7 +120,13 @@ class OpencodeBackend:
         doc: str | None,  # pylint: disable=too-many-locals
         doc_path: Path | None,
         assignment: dict | None = None,
+        worktree: Path | None = None,
     ) -> dict:
+        # B1 (issue #2): a writer dispatch's whole repo view (spawn cwd,
+        # Auditor baseline, Devon's manifest paths) shifts to the isolated
+        # worktree so the agent literally works there; every other role
+        # keeps observing the main tree.
+        root = Path(worktree) if worktree is not None else self.repo
         name = AGENT_NAME.get(role)
         prompt = self._prompt(role, substate, doc, doc_path, assignment)
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
@@ -130,7 +136,7 @@ class OpencodeBackend:
         doc_paths = self._target_paths(doc_path, assignment)
         if role == "devon":
             doc_paths = [
-                self.repo / path
+                root / path
                 for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
             ]
         cleanup_infos: list = []
@@ -159,7 +165,7 @@ class OpencodeBackend:
             # below). The target diff remains authoritative.
             agent_dest = cleanup_infos[0]["dest"]
             allowed = self._allowed_paths(doc_paths, agent_dest, role, substate, assignment)
-            auditor = Auditor(self.repo, allowed=allowed)
+            auditor = Auditor(root, allowed=allowed)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
             # File-granular baseline for the batch B scaffold subset rule: a
@@ -168,7 +174,7 @@ class OpencodeBackend:
             scaffold_baseline = (
                 auditor.file_level(baseline) if author and len(doc_paths) > 1 else None
             )
-            proc = self._run(name, prompt)
+            proc = self._run(name, prompt, cwd=root)
             self._check_json(proc)
             manifest_info, manifest_error = self._manifest_for_dispatch(
                 role,
@@ -1089,7 +1095,7 @@ class OpencodeBackend:
         selection is an opencode-config concern, never hardcoded by tracks."""
         return self.model
 
-    def _run(self, name: str, prompt: str) -> subprocess.CompletedProcess:
+    def _run(self, name: str, prompt: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
         """Run opencode agent with streaming stdout and manifest detection.
 
         opencode 1.18 ``run --format json`` deadlocks on a pipe stdout (it
@@ -1104,7 +1110,7 @@ class OpencodeBackend:
         log_fh = open(log_path, "w", buffering=1) if log_path else None  # noqa: SIM115
         master_fd = None
         try:
-            proc, master_fd = self._spawn(cmd, env, log_fh)
+            proc, master_fd = self._spawn(cmd, env, log_fh, cwd)
         except OpencodeError:
             if log_fh:
                 log_fh.close()
@@ -1176,7 +1182,7 @@ class OpencodeBackend:
             )
         return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
-    def _spawn(self, cmd, env, log_fh):
+    def _spawn(self, cmd, env, log_fh, cwd=None):
         """Spawn the opencode child. Returns (proc, master_fd_or_None).
 
         opencode 1.18 ``run --format json`` deadlocks on a pipe stdout (it
@@ -1188,7 +1194,7 @@ class OpencodeBackend:
         master_fd, slave_fd = pty.openpty()
         try:
             proc = subprocess.Popen(
-                cmd, cwd=self.repo, env=env,
+                cmd, cwd=cwd or self.repo, env=env,
                 stdin=slave_fd, stdout=slave_fd,
                 stderr=log_fh if log_fh else subprocess.PIPE,
                 text=True, start_new_session=True,
@@ -1201,11 +1207,11 @@ class OpencodeBackend:
         os.close(slave_fd)
         return proc, master_fd
 
-    def _spawn_pipe(self, cmd, env, log_fh):
+    def _spawn_pipe(self, cmd, env, log_fh, cwd=None):
         """Legacy pipe-mode spawn (no pty)."""
         try:
             return subprocess.Popen(
-                cmd, cwd=self.repo, env=env,
+                cmd, cwd=cwd or self.repo, env=env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=log_fh if log_fh else subprocess.PIPE,
                 text=True, start_new_session=True,

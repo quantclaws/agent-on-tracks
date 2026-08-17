@@ -27,7 +27,7 @@ def test_non_shield_role_at_m_test_write_not_rejected(tmp_path):
     backend_called = []
 
     class _SpyBackend:
-        def act(self, role, substate, doc, doc_path, assignment=None):
+        def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             backend_called.append((role, substate))
             return {"status": "done", "artifact_ref": None, "self_report": "non-shield dispatched"}
 

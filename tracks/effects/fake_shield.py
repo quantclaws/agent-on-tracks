@@ -86,7 +86,7 @@ class FakeShieldMixin:
         if_id_by_ac = {
             task["ac_id"]: (task["if_ids"][0] if task["if_ids"] else None) for task in tasks
         }
-        tests_dir = self.repo / "tests"
+        tests_dir = self._repo_root() / "tests"
         for subdir in ("integration", "e2e", "assets", "counterexamples"):
             (tests_dir / subdir).mkdir(parents=True, exist_ok=True)
         for ac_id, layer in required:
@@ -134,13 +134,13 @@ class FakeShieldMixin:
         Mirrors ResultCheckpoint's identity semantics so the artifact_manifest
         exactly matches the files ResultCheckpoint observes as changed.
         """
-        tests_dir = self.repo / "tests"
+        tests_dir = self._repo_root() / "tests"
         snapshot: dict[str, str] = {}
         if not tests_dir.exists():
             return snapshot
         for path in sorted(tests_dir.rglob("*")):
             if path.is_symlink() or path.is_file():
-                rel = str(path.relative_to(self.repo))
+                rel = str(path.relative_to(self._repo_root()))
                 snapshot[rel] = self._path_identity(path)
         return snapshot
 

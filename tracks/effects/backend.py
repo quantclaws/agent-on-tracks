@@ -76,6 +76,13 @@ class AgentBackend(Protocol):
         doc: str | None,
         doc_path: Path | None,
         assignment: dict | None = None,
+        worktree: Path | None = None,
     ) -> dict:
-        """Execute the agent's work for one dispatch; return the Outcome dict."""
+        """Execute the agent's work for one dispatch; return the Outcome dict.
+
+        ``worktree`` (B1, issue #2): writer dispatches (Devon RGR in M-IMPL,
+        Shield WRITE in M-TEST) receive a spatially isolated worktree
+        created from the main HEAD; the agent observes it as its repo root.
+        ``None`` means the main tree (every other dispatch).
+        """
         ...
