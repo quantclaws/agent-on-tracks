@@ -26,3 +26,11 @@ writable = ["tracks/", "tests/unit/"]
 
 [layout.shield]
 writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]
+
+# Lint validation contract (B4, issue #5): command the runtime runs over
+# Devon's changed deliverables at RED_GATE / GREEN_GATE. Tooling is
+# Archer's choice — the runtime is language-neutral and never hardcodes
+# a linter. Non-zero exit => verdict.failed check=lint (no attempt
+# consumed; mechanical findings never burn the semantic budget).
+[lint]
+check = ".venv/bin/ruff check"

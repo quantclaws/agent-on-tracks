@@ -1710,3 +1710,168 @@ def test_red_classification_keyword_inference_ignores_passing_guards():
     classifications, has_results = _m_impl_red_classifications(outcome)
     assert classifications == ["missing"]
     assert has_results is False
+
+
+# ---------------------------------------------------------------------------
+# B4 (issue #5): Archer-declared lint validation at RED_GATE / GREEN_GATE
+# ---------------------------------------------------------------------------
+
+
+def _add_lint_section(repo: Path, check: str) -> None:
+    """(Re)write the [lint] section -- replace, never append: a duplicate
+    TOML table would make the whole contract unloadable."""
+    contract = paths.project_toml_path(paths.tracks_home(repo))
+    text = contract.read_text(encoding="utf-8")
+    marker = text.find("\n[lint]\n")
+    if marker != -1:
+        text = text[:marker]
+    contract.write_text(text + f"\n[lint]\ncheck = '{check}'\n", encoding="utf-8")
+
+
+def _fake_linter(repo: Path, *, exit_code: int, output: str) -> str:
+    script = repo / "fake_lint.sh"
+    script.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' {output!r}\nexit {exit_code}\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return "./fake_lint.sh"
+
+
+def _red_gate_lint_store(repo: Path):
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
+    )
+    return store, task
+
+
+def test_red_gate_lint_findings_fail_with_check_lint(tmp_path):
+    """B4 (issue #5): RED deliverables with declared-lint findings fail the
+    gate as check=lint — mechanical errors surface in the phase that made
+    them instead of detonating at commit time (T-018 burned 3 attempts)."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    linter = _fake_linter(
+        repo,
+        exit_code=1,
+        output="tests/unit/test_app.py:28:1: F401 'textwrap' imported but unused",
+    )
+    _add_lint_section(repo, linter)
+    store, _task = _red_gate_lint_store(repo)
+    _write_failing_unit_test(repo)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        classification="assertion_failure",
+        verdict="assertion_failure",
+        diff_ref=RGR_RED_DIFF,
+    )
+    executor = _executor(repo, store)
+
+    last = _run_red_gate(executor, store, outcome)
+
+    assert last.type == "verdict.failed"
+    assert last.payload["check"] == "lint"
+    assert "F401" in last.payload["evidence"]
+
+
+def test_red_gate_clean_lint_and_missing_tool_fail_open(tmp_path):
+    """B4 (issue #5): a clean declared linter leaves the gate untouched; a
+    missing/unrunnable linter is skipped fail-open with an audit note on the
+    passed verdict (hygiene tooling must not block the pipeline)."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    clean = _fake_linter(repo, exit_code=0, output="")
+    _add_lint_section(repo, clean)
+    store, _task = _red_gate_lint_store(repo)
+    _write_failing_unit_test(repo)
+    executor = _executor(repo, store)
+
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        classification="assertion_failure",
+        verdict="assertion_failure",
+        diff_ref=RGR_RED_DIFF,
+    )
+    last = _run_red_gate(executor, store, outcome)
+    assert last.type == "verdict.passed"
+    assert last.payload["check"] == "red_valid"
+    assert "lint" not in last.payload
+
+    _add_lint_section(repo, "./no_such_linter")
+    last = _run_red_gate(executor, store, outcome)
+    assert last.type == "verdict.passed"
+    assert last.payload["check"] == "red_valid"
+    assert last.payload["lint"].startswith("lint skipped")
+
+
+def test_red_gate_without_lint_contract_skips_lint(tmp_path):
+    """No [lint] section -> no lint at all (language-neutral default; existing
+    projects keep their gate behavior byte-compatibly)."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    store, _task = _red_gate_lint_store(repo)
+    _write_failing_unit_test(repo)
+    executor = _executor(repo, store)
+    outcome = _structured_outcome(
+        "red",
+        ["tests/unit/test_app.py"],
+        classification="assertion_failure",
+        verdict="assertion_failure",
+        diff_ref=RGR_RED_DIFF,
+    )
+    last = _run_red_gate(executor, store, outcome)
+    assert last.type == "verdict.passed"
+    assert last.payload["check"] == "red_valid"
+    assert "lint" not in last.payload
+
+
+def test_green_gate_lint_findings_fail_with_check_lint(tmp_path):
+    """B4 (issue #5): GREEN lints the delivered non-test sources with the
+    declared command; findings fail the gate as check=lint."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    linter = _fake_linter(repo, exit_code=1, output="tracks/app.py:1:1: E501 line too long")
+    _add_lint_section(repo, linter)
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _green_outcome(task, "1" * 40),
+    )
+    _write_failing_unit_test(repo, passes=True)
+    (repo / "tracks").mkdir(parents=True, exist_ok=True)
+    (repo / "tracks" / "app.py").write_text(
+        'IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8"
+    )
+    executor = _executor(repo, store)
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert fails, "lint findings must fail the GREEN gate closed"
+    assert fails[-1].payload["check"] == "lint"
+    assert "E501" in fails[-1].payload["evidence"]

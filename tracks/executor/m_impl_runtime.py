@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 from copy import deepcopy
 from pathlib import Path
@@ -1348,6 +1349,59 @@ class MImplRuntimeMixin:
             task_id=task_id,
         )
 
+    _LINT_TIMEOUT_SECONDS = 120
+
+    def _lint_targets(self, phase: str) -> list[str]:
+        """B4 (issue #5): Devon's delivered files this phase, lint-scoped.
+
+        RED lints delivered test files (under tests/); GREEN lints
+        delivered non-test sources. Only .py files existing on disk are
+        handed over — the runtime stays language-neutral.
+        """
+        outcome = self._last_devon_outcome() or {}
+        changed = outcome.get("changed_paths") or []
+
+        def _under_tests(path: str) -> bool:
+            return path.startswith("tests/")
+
+        want_tests = phase == "red"
+        return [
+            path
+            for path in changed
+            if path.endswith(".py")
+            and _under_tests(path) == want_tests
+            and (self.repo / path).is_file()
+        ]
+
+    def _run_declared_lint(self, paths: list[str]) -> tuple[str | None, str]:
+        """Run the Archer-declared lint command ([lint].check) over paths.
+
+        Returns (findings, note): findings is None when clean or skipped,
+        otherwise the linter output that fails the gate as check=lint.
+        Fail-open on tool-environment problems (missing binary, timeout):
+        hygiene tooling must not block the pipeline; actual findings
+        fail closed (B4, issue #5).
+        """
+        from tracks.project import lint_check_command
+
+        command = lint_check_command(self.repo)
+        if command is None or not paths:
+            return None, ""
+        argv = shlex.split(command) + list(paths)
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=str(self.repo),
+                capture_output=True,
+                text=True,
+                timeout=self._LINT_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return None, f"lint skipped: {exc}"
+        if proc.returncode != 0:
+            return (proc.stdout + "\n" + proc.stderr).strip() or "lint failed", ""
+        return None, ""
+
     def _run_green_gate(self, cmd, state: State) -> None:
         task_id = state.current_task_id
         attempt = state.current_attempt + 1
@@ -1391,7 +1445,23 @@ class MImplRuntimeMixin:
                         attempt=attempt,
                     )
                     return
-            self._emit("verdict.passed", {"check": "green"}, command_id=cmd.command_id)
+            lint_findings, lint_note = self._run_declared_lint(
+                self._lint_targets("green")
+            )
+            if lint_findings is not None:
+                self._emit_gate_failure(
+                    cmd,
+                    check="lint",
+                    reason="lint findings in GREEN deliverables ([lint].check)",
+                    evidence=lint_findings,
+                    task_id=task_id,
+                    attempt=attempt,
+                )
+                return
+            payload = {"check": "green"}
+            if lint_note:
+                payload["lint"] = lint_note
+            self._emit("verdict.passed", payload, command_id=cmd.command_id)
         finally:
             if gate_handle is not None:
                 cleanup_worktree(gate_handle)
@@ -1478,7 +1548,31 @@ class MImplRuntimeMixin:
                 task_id=state.current_task_id,
             )
             return
-        self._emit("verdict.passed", {"check": pass_check}, command_id=cmd.command_id)
+        lint_findings, lint_note = None, ""
+        if phase == "red":
+            # B4 (issue #5): post-agent validation runs before the verdict —
+            # Archer-declared lint over the delivered RED test files
+            # (mechanical errors surface in the phase that introduced
+            # them, not at commit time; T-018 burned 3 attempts on this).
+            lint_findings, lint_note = self._run_declared_lint(self._lint_targets("red"))
+        if lint_findings is not None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "lint",
+                    "reason": "lint findings in RED deliverables ([lint].check)",
+                    "evidence": lint_findings,
+                    "task_id": state.current_task_id,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=state.current_task_id,
+            )
+            return
+        payload = {"check": pass_check}
+        if lint_note:
+            payload["lint"] = lint_note
+        self._emit("verdict.passed", payload, command_id=cmd.command_id)
 
     def _retry_cutoff_seq(self) -> int:
         # FR-11: `trac retry` resets the attempt budget, so a fresh attempt

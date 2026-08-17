@@ -289,6 +289,13 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "RED"
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "lint":
+        # B4 (issue #5, user ruling 2026-08-18): mechanical lint findings
+        # route back to the producing phase for rework but do NOT consume
+        # the attempt budget — attempts are reserved for semantic
+        # (agent-caused) failures; a lint round-trip never burns it.
+        s.substate = "RED" if s.substate == "RED_GATE" else "GREEN"
+        _reset_doc(s)
     elif check == "regression":
         s.substate = "REFACTOR" if s.substate == "REFACTOR_GATE" else "GREEN"
         _reset_doc(s)

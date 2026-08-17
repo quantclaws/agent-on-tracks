@@ -57,10 +57,23 @@ class LayoutConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LintSection:
+    """Archer-declared lint command (B4, issue #5): ``[lint] check``.
+
+    The runtime is language-neutral and never hardcodes a linter; the
+    project (Archer, M-DESIGN) decides which tool it uses. The declared
+    command receives the changed deliverable paths as trailing args.
+    """
+
+    check: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectContract:
     integration: TestSection
     e2e: TestSection | None = None
     layout: LayoutConfig | None = None
+    lint: LintSection | None = None
 
 
 def contract_path(repo: Path) -> Path:
@@ -97,7 +110,10 @@ def _build_contract(data: dict) -> ProjectContract:
     if e2e_raw is not None:
         e2e = _build_section(data, "e2e")
     layout = _build_layout(data)
-    return ProjectContract(integration=integration, e2e=e2e, layout=layout)
+    lint = _build_lint(data)
+    return ProjectContract(
+        integration=integration, e2e=e2e, layout=layout, lint=lint
+    )
 
 
 def _build_layout(data: dict) -> LayoutConfig | None:
@@ -173,6 +189,35 @@ def _build_section(data: dict, name: str) -> TestSection:
         run=run.strip(),
         cwd=cwd.strip(),
     )
+
+
+def _build_lint(data: dict) -> LintSection | None:
+    """Parse the optional [lint] section; None if absent or malformed.
+
+    Degrades to None instead of raising: a broken [lint] must never make
+    the whole test-execution contract unloadable (lint is hygiene; the
+    test contract is load-bearing).
+    """
+    raw = data.get("lint")
+    if not isinstance(raw, dict):
+        return None
+    check = raw.get("check")
+    if not isinstance(check, str) or not check.strip():
+        return None
+    return LintSection(check=check.strip())
+
+
+def lint_check_command(repo: Path) -> str | None:
+    """The declared lint command for this project, or None (skip lint).
+
+    Same contract/loader as the write auditor (single truth). None on a
+    missing/malformed contract too: gates fail-open (skip), never crash.
+    """
+    try:
+        contract = load_contract(repo)
+    except ContractError:
+        return None
+    return contract.lint.check if contract.lint is not None else None
 
 
 def layout_paths(repo: Path, role: str) -> list[str]:

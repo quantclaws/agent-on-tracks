@@ -34,7 +34,8 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 3. 禁止触碰：integration/e2e、tests/assets、frozen Shield tests、`.tracks/projects/**`、task state、Issues、git history。
 4. 在 `manifest.red_test_paths`（RED 专用 write grant，通常为 `tests/unit/`）内写 failing unit test。`manifest.allowed_paths` 是 GREEN 阶段的 impl scope，RED 阶段不要写它（也不要写 allowed_paths 列出的文件）。
 5. 运行授权 unit test，看到目标失败（失败落在被测行为/桩的合同 token 上，非装配错误）。
-6. 完成后立即停止。不继续 Green。
+6. 交付前自检 lint：对本次改动的文件运行 project contract `[lint].check` 声明的命令（本仓库：`.venv/bin/ruff check <changed>`）；非零退出必须修复后再交付——RED_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
+7. 完成后立即停止。不继续 Green。
 
 ### GREEN（phase=green）
 
@@ -43,7 +44,8 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 3. R tests 和所有 frozen tests **不可变**：不修改、skip、xfail、降低断言。
 4. 只在 `manifest.allowed_paths` 范围内写。
 5. 不 commit/push。
-6. 完成后立即停止。不继续 Refactor。
+6. 交付前自检 lint：对本次改动的产品文件运行 `[lint].check` 声明的命令；非零退出必须修复——GREEN_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
+7. 完成后立即停止。不继续 Refactor。
 
 ### REFACTOR（phase=refactor）
 

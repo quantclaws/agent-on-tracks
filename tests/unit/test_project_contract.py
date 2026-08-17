@@ -136,3 +136,27 @@ def test_fake_archer_contract_is_layout_valid(tmp_path):
         "tests/assets/",
         "tests/counterexamples/",
     ]
+
+
+# ---------------------------------------------------------------------------
+# B4 (issue #5): optional [lint] contract section
+# ---------------------------------------------------------------------------
+
+
+def test_lint_section_optional_parsed_and_degrades(tmp_path):
+    """B4 (issue #5): [lint].check parsed when present, None when absent or
+    malformed — a broken [lint] must never make the contract unloadable."""
+    from tracks.project import lint_check_command
+
+    _write_contract(tmp_path, _BASE)
+    assert load_contract(tmp_path).lint is None
+    assert lint_check_command(tmp_path) is None
+
+    _write_contract(tmp_path, _BASE + '\n[lint]\ncheck = ".venv/bin/ruff check"\n')
+    contract = load_contract(tmp_path)
+    assert contract.lint is not None
+    assert contract.lint.check == ".venv/bin/ruff check"
+    assert lint_check_command(tmp_path) == ".venv/bin/ruff check"
+
+    _write_contract(tmp_path, _BASE + "\n[lint]\ncheck = 123\n")
+    assert load_contract(tmp_path).lint is None

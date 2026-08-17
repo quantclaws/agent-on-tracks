@@ -1969,3 +1969,71 @@ def test_kernel_purity_no_io():
     s = state_of(*_full_single_task_cycle())
     cmd = decide(s)
     assert cmd is None  # stage_exited -> halt
+
+
+# ---------------------------------------------------------------------------
+# B4 (issue #5): lint gate-failure routing (no attempt consumption)
+# ---------------------------------------------------------------------------
+
+
+def test_red_gate_lint_fail_returns_to_red_without_consuming_attempt():
+    """B4 (issue #5, user ruling): mechanical lint findings at RED_GATE route
+    back to RED but never consume the attempt budget (attempts are reserved
+    for semantic, agent-caused failures)."""
+    fail = ("verdict.failed", {"check": "lint", "reason": "F401", "attempt": 1})
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        fail,
+    )
+    assert s.substate == "RED"
+    assert s.current_attempt == 0
+
+
+def test_green_gate_lint_fail_returns_to_green_without_consuming_attempt():
+    """B4 (issue #5): GREEN lint findings route back to GREEN, no attempt."""
+    fail = ("verdict.failed", {"check": "lint", "reason": "E501", "attempt": 1})
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        fail,
+    )
+    assert s.substate == "GREEN"
+    assert s.current_attempt == 0
