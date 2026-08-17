@@ -25,7 +25,6 @@ LIVE_JOB = "live-opencode"
 RELEASE_JOB = "release-evidence"
 LIVE_SUITE = "tests/e2e_live/test_m_impl_release_evidence.py"
 RELEASE_CHECK = "trac check release-evidence --json"
-SKIP_TOKEN = "LIVE_SKIPPED: missing"
 
 
 def _text() -> str:
@@ -115,11 +114,28 @@ def test_weekly_schedule_trigger_present():
 
 # AC-FR0233-01@v0.5 TRACKS-TRACE credential-less skip is explicit
 def test_live_skip_reported_on_missing_credentials():
-    """Missing credentials must report LIVE_SKIPPED, never disguise as success."""
+    """Missing credentials must report LIVE_SKIPPED, never disguise as success.
+
+    The routine live job runs ``pytest -q -rs`` so the
+    ``test_routine_missing_credentials_reports_live_skipped_without_evidence``
+    test's skip reason (precise ``LIVE_SKIPPED: missing <NAME>``) is surfaced
+    in the CI output; the credential-less outcome is never disguised as a
+    live success.  The observable outlet per interfaces.md §4d row 3 is the
+    pytest exit-0-plus-reason output, not a literal YAML token.
+    """
     block = _live_block()
-    assert SKIP_TOKEN in block, (
-        f"the live job must emit `{SKIP_TOKEN}` on missing credentials and must "
-        "not produce success evidence (AC-FR0233-01, architecture.md §4.3)"
+    assert "pytest" in block, (
+        "the live job must run pytest so the credential-less skip reason "
+        "`LIVE_SKIPPED: missing <NAME>` is reported without producing "
+        "success evidence (AC-FR0233-01, architecture.md §4.3)"
+    )
+    assert "-rs" in block, (
+        "the live job pytest invocation must include `-rs` so the skip "
+        "reason (LIVE_SKIPPED: missing <NAME>) is surfaced in the output"
+    )
+    assert LIVE_SUITE in block, (
+        "the live job must run the e2e_live probe test that emits the "
+        "precise LIVE_SKIPPED: missing <NAME> skip reason"
     )
 
 
