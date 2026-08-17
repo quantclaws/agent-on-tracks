@@ -1,20 +1,18 @@
-# CI workflow skeleton (kind: ci-skeleton).
+# CI workflow — stable required checks for v0.5 M-IMPL.
 #
-# Foundation task (Devon M-IMPL): complete this skeleton into a real GitHub
-# Actions workflow. The stable required check names are defined in
-# architecture.md §4.2; Devon fills in runner setup, cache, and activation
-# steps marked `# TODO(devon):` below. Archer defines the contract (job names,
-# commands, required checks); Devon implements the workflow mechanics.
+# The stable required check names are defined in architecture.md §4.2/§4.3.
+# routine required DAG: lint + coverage + test + deliverables + trace + reach
+# milestone (tag/release): release-evidence (after all routine jobs)
+# live channel (weekly/manual): live-opencode (opt-in, non-required)
 #
 # Stable required checks (merge only recognizes CI conclusion):
-#   1. lint        - ruff + flake8 + pylint (pre-commit equivalent)
-#   2. coverage    - coverage report --fail-under=95
-#   3. test        - pytest (unit + integration + e2e fake channel)
-#   4. deliverables - trac check deliverables
-#   5. trace       - trac check trace --json (foundation task: activate after
-#                    Devon implements the subcommand)
-#   6. reach       - trac check reach --json (foundation task: activate after
-#                    Devon implements the subcommand)
+#   1. lint        — ruff + flake8 + pylint (pre-commit equivalent)
+#   2. coverage    — coverage report --fail-under=95
+#   3. test        — pytest (unit + integration + e2e fake channel)
+#   4. deliverables — trac check deliverables
+#   5. trace       — trac check trace --json
+#   6. reach       — trac check reach --json
+#   7. release-evidence — tag/release milestone hard gate (live journey + check)
 #
 # Live channel (tests/e2e_live/): skip on missing credentials (independent
 # opt-in job), NOT a required check.
@@ -24,8 +22,15 @@ name: ci
 on:
   push:
     branches: [main, 'releases/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
+  # FR-0233 opt-in live channel (architecture.md §4.3): an operator may
+  # explicitly trigger the real e2e_live journey via workflow_dispatch.
+  workflow_dispatch:
+  # Weekly anti-rot run of the real live channel (architecture.md §4.3).
+  schedule:
+    - cron: '0 7 * * 1'
 
 permissions:
   contents: read
@@ -36,18 +41,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install dev deps, run pre-commit equivalent
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: ruff
-        run: |
-          pip install ruff==0.16.0
-          ruff check tracks tests
+        run: ruff check tracks tests
       - name: cognitive complexity
-        run: |
-          pip install flake8==7.3.0 flake8-cognitive-complexity==0.1.0
-          flake8 tracks
+        run: flake8 tracks
       - name: pylint (dup + length + method + locals)
         run: |
-          pip install pylint==4.0.6
           pylint --disable=all --enable=R0801,C0302 tracks tests
           pylint --disable=all --enable=R0915,R0914 tracks
 
@@ -56,11 +60,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install -e '.[dev]'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: coverage
         run: |
-          pip install -e '.[dev]'
-          coverage run -m pytest -q -m 'not performance'
+          coverage run -m pytest tests/unit tests/integration tests/e2e -q -m 'not performance'
           coverage combine
           coverage report --fail-under=95
 
@@ -69,47 +76,110 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install -e '.[dev]'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: pytest
-        run: |
-          pip install -e '.[dev]'
-          pytest -q -m 'not performance'
+        run: pytest tests/unit tests/integration tests/e2e -q -m 'not performance'
 
   deliverables:
     name: deliverables
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install -e '.[dev]'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: trac check deliverables
-        run: |
-          pip install -e '.[dev]'
-          trac check deliverables
+        run: trac check deliverables
 
-  # Foundation task: activate after Devon implements `trac check trace`.
-  # Until then this job is allowed to fail without blocking merge.
+  # Foundation task: activated after Devon implements `trac check trace`.
   trace:
     name: trace
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install -e '.[dev]'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: trac check trace
-        run: |
-          pip install -e '.[dev]'
-          trac check trace --json || true
+        run: trac check trace --json
 
-  # Foundation task: activate after Devon implements `trac check reach`.
-  # Until then this job is allowed to fail without blocking merge.
+  # Foundation task: activated after Devon implements `trac check reach`.
   reach:
     name: reach
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      # TODO(devon): setup-python, install -e '.[dev]'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
       - name: trac check reach
+        run: trac check reach --json
+
+  # Live channel: weekly/manual opt-in real OpencodeBackend journey.
+  # Non-required; skip on missing credentials with LIVE_SKIPPED.
+  # Architecture.md §4.3: weekly schedule keeps the real channel from rotting.
+  live-opencode:
+    name: live-opencode
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
+      - name: run live journey (skip on missing credentials)
+        env:
+          TRAC_LIVE_PROVIDER: ${{ secrets.TRAC_LIVE_PROVIDER }}
+          TRAC_LIVE_MODEL: ${{ secrets.TRAC_LIVE_MODEL }}
+          TRAC_LIVE_BASE_URL: ${{ secrets.TRAC_LIVE_BASE_URL }}
+          TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py
+
+  # Milestone hard gate: tag/release candidate only. Runs the real e2e_live
+  # journey (never skip) and verifies current candidate's live evidence.
+  # Architecture.md §4.3: fail closed on missing credentials, skip, fake or stale.
+  release-evidence:
+    name: release-evidence
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [lint, coverage, test, deliverables, trace, reach]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
+      - name: probe credentials (fail closed, never skip)
+        env:
+          TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
         run: |
-          pip install -e '.[dev]'
-          trac check reach --json || true
+          if [ -z "${TRAC_LIVE_API_KEY:-}" ]; then
+            echo "LIVE_SKIPPED: missing TRAC_LIVE_API_KEY"
+            exit 1
+          fi
+      - name: run live journey (milestone hard gate)
+        env:
+          TRAC_LIVE_PROVIDER: ${{ secrets.TRAC_LIVE_PROVIDER }}
+          TRAC_LIVE_MODEL: ${{ secrets.TRAC_LIVE_MODEL }}
+          TRAC_LIVE_BASE_URL: ${{ secrets.TRAC_LIVE_BASE_URL }}
+          TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py
+      - name: trac check release-evidence
+        run: trac check release-evidence --json
