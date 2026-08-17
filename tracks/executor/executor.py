@@ -1108,7 +1108,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             check=False,
         )
         if not diff.stdout.strip():
-            return None, False
+            # No file delta, but the agent may still have created empty
+            # directories (git diffs cannot carry them; e.g. Shield's
+            # tests/assets scaffold). Sync those so the replayed state
+            # matches what working directly in the main tree would leave.
+            return self._sync_worktree_dirs(handle), False
         applied = subprocess.run(
             ["git", "-C", str(self.repo), "apply", "--whitespace=nowarn", "-"],
             input=diff.stdout,
@@ -1123,7 +1127,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # worked directly in the main tree (a direct agent edit also
             # overwrites a pre-existing dirty file).
             return self._mirror_worktree_changes(handle), True
-        return None, True
+        return self._sync_worktree_dirs(handle), True
+
+    def _sync_worktree_dirs(self, handle: WorktreeHandle) -> str | None:
+        """mkdir -p every directory present in the worktree but missing in
+        the main tree (agent-created scaffolding; empty dirs are invisible
+        to git diffs). Never deletes anything; .git and symlinks are not
+        traversed. Returns an error string or None."""
+        wt = Path(handle.path)
+        for dirpath, dirnames, _filenames in os.walk(wt, followlinks=False):
+            dirnames[:] = [d for d in dirnames if d != ".git"]
+            for name in dirnames:
+                src = Path(dirpath) / name
+                rel = src.relative_to(wt)
+                dst = self.repo / rel
+                if not dst.exists():
+                    try:
+                        dst.mkdir(parents=True, exist_ok=True)
+                    except OSError as exc:
+                        return f"mkdir {rel}: {exc}"
+        return None
 
     def _mirror_worktree_changes(self, handle: WorktreeHandle) -> str | None:
         """Per-file sync of the worktree's staged changes onto the main

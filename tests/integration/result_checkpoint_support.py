@@ -18,7 +18,7 @@ class _StubBackend:
     def __init__(self, outcome):
         self._outcome = outcome
 
-    def act(self, role, substate, doc, doc_path, assignment=None):
+    def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
         return self._outcome
 
 
@@ -30,7 +30,7 @@ class _ShieldBackend:
         self._files = files
         self._outcome = outcome
 
-    def act(self, role, substate, doc, doc_path, assignment=None):
+    def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
         for rel, content in self._files.items():
             path = self._repo / rel
             path.parent.mkdir(parents=True, exist_ok=True)

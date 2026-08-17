@@ -155,7 +155,7 @@ def test_dispatch_agent_merges_failure_evidence_into_assignment(tmp_path):
         def __init__(self):
             self.assignment = None
 
-        def act(self, role, substate, doc, doc_path, assignment=None):
+        def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             self.assignment = assignment
             return {"status": "done", "artifact_ref": "story.md", "self_report": "wrote story.md"}
 
@@ -191,7 +191,7 @@ def test_dispatch_agent_keeps_assignment_untouched_without_evidence(tmp_path):
         def __init__(self):
             self.assignment = "unset"
 
-        def act(self, role, substate, doc, doc_path, assignment=None):
+        def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             self.assignment = assignment
             return {"status": "done", "artifact_ref": "story.md", "self_report": "wrote story.md"}
 

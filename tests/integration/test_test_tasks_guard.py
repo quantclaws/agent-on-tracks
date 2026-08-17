@@ -44,7 +44,7 @@ def test_production_backend_not_called_on_invalid_test_tasks(tmp_path):
     ex, store, run_id = _invalid_contract_workspace(tmp_path)
 
     class BombBackend:
-        def act(self, role, substate, doc, doc_path, assignment=None):
+        def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             raise AssertionError("backend must not be called on invalid test_tasks")
 
     ex.backend = BombBackend()
