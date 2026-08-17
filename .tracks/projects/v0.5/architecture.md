@@ -53,6 +53,47 @@ sha:
 - 非 discussion 正文编辑继续继承当前 effects audit 的整回合原子回滚；本版仅补齐显式 `outcome.rejected` 审计与原 role/task/phase 新 attempt 路由，不允许借合法 discussion 绕过。
 - 预实现 IF- 合同处理：工作树中包含前一轮 M-IMPL cycle（fa19f11）的完整实现（taskgraph/rgr/worktree/quality_gate、kernel/m_impl.py、executor/m_impl_runtime.py 等），本版不在 Scaffold 宣言中将其标为 interface stub，M-IMPL baseline 冻结按 verification-only 路由（§1.0.3）。仅新建 IF- 合同（live_evidence/release_evidence/doc_comment 及 doc-gap/quarantine）走标准 RED→GREEN→REFACTOR。
 
+> **human:** [运营端事件 2026-08-17 18:45] ISLAND_GATE_2 reach 检查 fail：1208 个 island 全部来自 5 个泄漏的 gate worktree（T-013/014/015/016/018，位于 .tracks/worktrees/{run}/*/gate），真实产品 island 为 0——接线完整，无入口缺失。
+> 
+> 根因（产品缺陷 ×3）：
+> 1. _ensure_gate_worktree 的 pre-existing 分支返回 (gate_path, None)，调用方 finally 以 handle is not None 为清理条件 → pre-existing worktree 永不清理，泄漏一次即永久存活（T-013 即此路径）。
+> 2. trac run 启动/崩溃恢复（FR-0200 语义）无本 run 的 stale gate worktree 清扫，loop 中途死亡泄漏的 worktree 无人回收。
+> 3. check_reach 的 _EXCLUDE_DIRS 不含 .tracks，runtime 数据目录（含 worktree 完整拷贝）被当作产品模块扫描，泄漏立即放大为千级噪声 island。
+> 
+> 运营端处置（不进产品，已完成）：移除 5 个泄漏 worktree + git worktree prune；reach 现已 status=pass, islands=(none)。本次不改变任何产品代码。
+> 
+> 提议（产品端，请 Archer 纳入下一版任务图评估、Prism 复核）：
+> - 任务A【gate worktree 生命周期完整性】：(a) pre-existing 分支清理逃逸修复——门禁跑完必清理，无论 worktree 是否本进程创建；(b) trac run 启动时清扫本 run 名下 stale gate worktrees（对齐 FR-0200）。涉及 executor/worktree.py、executor/m_impl_runtime.py。
+> - 任务B【reach 扫描排除 runtime 数据目录】：_EXCLUDE_DIRS 增加 .tracks；RED 用包含 .tracks/worktrees 垃圾树的仓库断言零 island。涉及 checks/reach.py（FR-0090 修订）。
+> 
+> 裁决问题：v0.5 是否扩批承载 A/B，还是先收官、A/B 进 v0.5.1。倾向扩批（bug 已实际咬过一次 island_2）。等待 Archer/Prism 意见。
+>> **human:** [补充事实 18:55 — Devon worktree 设计/实现分歧 + reach 修正] 运营端复核发现两处需纳入评估的事实：
+>> 
+>> (1) 三 worktree 方案（architecture.md §3.3）仅 gate worktree 接入生产路径：create_devon_worktree / create_test_authority_worktree 在产品代码零调用（仅 unit 测试引用）；opencode dispatch cwd 恒为主库，Devon 自始在主树工作。设计的空间隔离（candidate 不含 Shield 测试）未发生，实际防作弊=R ref 冻结+regression 门禁+manifest 审计（时态不可变）。FR-0020-04 验收只覆盖合同测试（test_worktree_contract passed），未覆盖 dispatch 装配——verification-only 验收盲区实例。裁决问题2：v0.5 承认现状（文档对齐实现，candidate/test-authority 函数标注 deprecated 或补接线任务进 v0.5.1）？该分歧影响 BS-04 时间隔离语义，请 Prism 从 criteria pack 角度评估现状是否构成 stub_gap/设计缺口。
+>> 
+>> (2) 任务B升级两档：B1 最小修=黑名单加 .tracks（一行）；B2 根治=reach 白名单化——只扫 project contract 声明的产品/测试根（对齐 .tracks/project/project.toml），黑名单退化为辅助。B2 使 runtime 数据目录/worktree 拷贝/任意未来垃圾天然免疫，符合 manifest 驱动哲学。倾向 B2，请 Archer 评估 project.toml 现有字段是否足够支撑（缺则补字段=spec 变更）。
+>>> **Archer:** 18:55 补充事实两点均予确认并回复：
+>>> 
+>>> (1) 三 worktree 分歧——裁定问题2，规划立场：v0.5 承认现状。已独立复核：create_devon_worktree / create_test_authority_worktree 在产品代码零调用（grep 全仓仅 unit 测试引用），实际隔离机制=R ref 冻结+regression 门+manifest 审计（时态不可变）。承认现状的核心理由是证据模型一致性：本 run T-013..T-018 的全部 RGR lineage 证据都是对着主树执行/校验的，现在把 dispatch 改道 worktree 等于宣布既有绿色证据的采集环境不合法，冲击面远超补接线本身。AC-FR0070-01 字面（「在 Devon candidate worktree 运行」）与实际行为的差距是真实的验收保真度缺口，应记录在案（建议随 v0.5 收官材料如实标注「合同函数级验证、dispatch 装配未接线」）；接线或函数废弃的取舍进 v0.5.1/v0.6 设计。是否构成 stub_gap/设计缺口请 Prism 从判据包角度裁定——规划侧不越权预判。
+>>> 
+>>> (2) 任务B 两档——应询评估：B1 现在做（已入图 T-020），B2 进 v0.6。project.toml 现有字段不足以支撑 B2：[layout].writable 是 per-role 写授权语义，不是「产品/测试代码在哪」的声明——并集只是今天恰好近似正确；对其他宿主形态（只读生产树、非 agent 可写代码根、Shield 不可写但属产品的目录）会欠扫或过扫，reach 关心的扫描根与写授权是两个正交概念。正确做法需要显式 scan-roots 声明（新字段）+ FR-0090(v0.4)/IF-REACH-002 合同修订（issue #4 亦已标注「FR-0090 需要修订」）＝spec 变更，在本次 run 等于 M-SPEC 回退重流，与「v0.5 的目标是结束」裁定冲突。B1 合同兼容：排除清单是 v0.4 实现细节（IF-004 §1f 未枚举），.tracks 是 runtime 状态目录而非宿主生产模块，对任何已声明模块零可观察变化；且已实证修复。B1 + T-019 清扫构成双层防御（清扫防泄漏，排除使泄漏不致命）。契约路径分裂问题（.tracks/project vs .tracks/projects）随 B2 一并进 v0.6 统一。
+
+>> **Archer:** 裁定问题1回复：扩批（最小范围）。修订图已落盘（.tracks/projects/v0.5/tasks.json，T-001..T-018 逐字不变 + 新增三个任务；parse/structure/dag/scope/ac_coverage/issues/island_closure 七项 validator 与 trac validate --file 全过）：
+>> 
+>> - T-019【verification-only §1.0.3】吸收 7c68947（issue #3）：运行既有 tests/unit/test_worktree_unit.py（13 项）+ worktree 合同 integration 验证。理由：ISLAND_GATE_2 的 contract sections 只跑 int+e2e 不跑 unit——没有任务携带它，补丁的 unit 测试在任何剩余 gate 里都不会执行；verification-only 是 §1.0.3 对带外预实现工作的既定吸收机制。
+>> - T-020【标准 RGR】reach B1（issue #4）：_EXCLUDE_DIRS 增加 .tracks；RED=含 .tracks/worktrees/<run>/T-x/gate 垃圾拷贝树的仓库报零 island（已在活仓库上模拟实证：加排除后 status=pass、islands=()）。
+>> - T-021【标准 RGR】fake 通道 M-IMPL DIAGNOSE simulate 合同（GitHub issue #6，已建档）：fake act() 对 prism/DIAGNOSE 恒回 verdict=pass，15878ca 起 _emit_diagnose_verdict fail-closed 判违约 → deterministic 通道四路路由全灭。
+>> 
+>> 新事实——ISLAND_GATE_2 第二半（全量 int+e2e）首跑普查：31 个失败（30 int + 1 e2e），归因五类（除 T-021 的 6 个外均无法入图，如实上报）：
+>> - C 类 impl×6（含 1 e2e）：doc-comment 裁定/恢复接线未闭合。全仓无任何代码路径发出 doc_comment.adjudicated（machine.py:1062 仅投影该事件），executor.py:810 _resume_doc_gap_if_ready 只恢复已处 AGENT_CORRECTION 的记录，而该状态只能由缺失的 adjudicated 事件设置；暂停正确停留后 journey 永久停车（事件流终于 outcome.quarantined）。修复点在 executor.py/kernel 接线——全部位于已完成任务冻结 scope（executor.py∈T-016、machine.py∈T-014、m_impl.py∈T-001），FR-0180-05 两两不交使任务不可承载；不修则 island_2 全量门不可能变绿。运营端带外修复有先例（15878ca/b760997 同类 executor 改动）或进 v0.5.1。
+>> - A 类 test×15：M-TEST 管线 fixtures 的 project.toml 缺 [layout.shield]（d9a9ef1 起 attribution fail-closed；已实证：同一 fixture 补上 [layout.shield] 后 attribution 立即恢复）。涉及 test_dirty_snapshot_attribution(4)/test_rc_design_mtest(5)/test_support_asset_attribution(4)/test_shield_crash_attribution(1)/test_test_tasks_guard(1)。Shield 侧修复（island_2 full_suite → DIAGNOSE → test_defect → SHIELD_FIX，或运营端批量）。
+>> - D 类 test×3：test_doc_comment_first 非法编辑三用例的 assert_doc_delta_landed 事后断言与 AC-FR0237-01「no partial writes survive」矛盾：运行时正确发出 outcome.rejected(over_reach, rollback=atomic) 并回滚后，delta 必然不在工作树文件上；用例后续的 rejected_paths 断言已足以证明场景构造。Shield 侧修订。
+>> - E 类×1：test_opencode_backend::test_console_input_is_forwarded_only_when_explicitly_configured（stdin closed 断言，PTY 重构后生命周期变化）；opencode.py∈T-018 冻结 scope，impl/test 归因留给 DIAGNOSE。
+>> 
+>> 阻塞发现（kernel，需运营端处置）：_route_m_impl_gate_failure 的 island 分支（kernel/m_impl.py ~:284-287）只复位 doc 标志，未复位 taskgraph_committed——本次 PLANNING outcome 落地后 _decide_m_impl_planning 因 committed=True 恒返回 None（已在 01KZTHE7 活状态上实证 decide()=None），修订图永远无法重新 commit、流程停车。与 _route_prism_plan_revise :210-216 已修复的 2026-08-15 PLANNING round-2 死锁完全同类。修复=该分支补 s.taskgraph_committed = False（+回归用例）；kernel/m_impl.py∈T-001 冻结 scope，按 a6a0a28/83e33ce/60347ef 先例运营端带外修复；事件溯源重放自然吸收（verdict.failed(island) 事件按新 reducer 重投影后 committed=False，修订图随即正常走 commit→ISLAND_GATE_1→PRISM_PLAN）。
+>> 
+>> 附带弱点：全任务完成后若 island_2 full_suite 失败 → DIAGNOSE → impl_defect → GREEN 派发将携带 task_id=None（executor 按 task graph 物化 assignment 会碎）——收尾阶段剩余失败建议运营端直接修复而非依赖该路径。
+
 ## 1. 模块边界
 
 ### 1.0.1 增长轴归属

@@ -251,6 +251,48 @@
       "batch": "3",
       "parallel": true,
       "budget": 3
+    },
+    {
+      "task_id": "T-019",
+      "issue_number": 3,
+      "description": "【verification-only §1.0.3】吸收运营端已落盘的 B2 补丁（7c68947，GitHub issue #3）：gate worktree pre-existing 分支清理逃逸修复（_ensure_gate_worktree 返回真实 handle，finally 清理生效，泄漏不再永久存活）+ trac start 开新 run 初始化时的 stale worktree 清扫（sweep_worktrees 唯一调用点，worktree.swept 审计事件，空清扫静默）。运行既有 tests/unit/test_worktree_unit.py（13 项，含 pre-existing-handle/sweep 四用例）与 worktree 合同 integration 既有测试验证；无 RED-implementation。issue_number 指向 GitHub issue #3（本行 issue 身份与 FAKE 镜像序列无关）。",
+      "ac_refs": ["AC-FR0070-05", "AC-FR0110-02"],
+      "fr_refs": ["FR-0070", "FR-0110"],
+      "if_ids": ["IF-IMPL-002", "IF-IMPL-006"],
+      "test_refs": ["tests/unit/test_worktree_unit.py", "tests/integration/test_worktree_contract.py"],
+      "scope_boundary": "tests/unit/test_worktree_unit.py",
+      "depends_on": [],
+      "batch": "4",
+      "parallel": true,
+      "budget": 2
+    },
+    {
+      "task_id": "T-020",
+      "issue_number": 4,
+      "description": "【标准 RGR】reach 扫描排除 runtime 数据目录（GitHub issue #4，B1 最小修档）：tracks/checks/reach.py 的 _EXCLUDE_DIRS 增加 .tracks——runtime 状态目录（gate worktree 完整拷贝、blobs、db）不是宿主生产模块，泄漏 worktree 不得放大为假 island（run 01KZTHE7 实证 1208 个 phantom island，真实 island 为 0）。RED 锚点：tests/unit/test_check_reach.py 新增用例——仓库含 .tracks/worktrees/<run>/T-x/gate/ 垃圾拷贝树时 reach 报零 island、status=pass（现行代码该用例失败）。B2 白名单化（只扫 project contract 声明根）冻结进 v0.6：需 FR-0090(v0.4)/IF-REACH-002 合同修订与显式 scan-roots 声明（spec 变更），本版不做；B1 与 T-019 清扫形成双层防御。issue_number 指向 GitHub issue #4。",
+      "ac_refs": ["AC-FR0160-01"],
+      "fr_refs": ["FR-0160"],
+      "if_ids": ["IF-REACH-002"],
+      "test_refs": ["tests/unit/test_check_reach.py", "tests/integration/test_check_reach.py"],
+      "scope_boundary": "tracks/checks/reach.py",
+      "depends_on": [],
+      "batch": "4",
+      "parallel": true,
+      "budget": 2
+    },
+    {
+      "task_id": "T-021",
+      "issue_number": 6,
+      "description": "【标准 RGR】fake 通道 M-IMPL DIAGNOSE simulate 合同对齐（GitHub issue #6）：tracks/effects/fake.py 的 act() 对 (role=prism, substate=DIAGNOSE) 返回 verdict=diagnose:classification simulate token 的五分类值（impl_defect/test_defect/stub_gap/ac_gap/spec_gap，缺省 test_defect）+ diagnosis{reason,evidence}，对齐 15878ca 起 executor._emit_diagnose_verdict 的 fail-closed 合同（现 fake 走通用 review 路径恒回 verdict=\"pass\" → diagnose_contract_violation，四路路由在 deterministic 通道全灭）。RED 锚点：tests/unit/test_fake_backend.py 新增 M-IMPL DIAGNOSE 派发用例；GREEN 后 test_execution_gates.py::test_diagnose_and_shield_fix_public_routes（5 参数）与 test_dispatch_materialization.py::test_shield_fix_dispatch_assignments_have_valid_test_tasks 共 6 个 integration 锚点转绿。executor 不为 fake 特判（生产代码不泄漏 test-only 行为）。issue_number 指向 GitHub issue #6。",
+      "ac_refs": ["AC-FR0150-01"],
+      "fr_refs": ["FR-0150"],
+      "if_ids": ["IF-IMPL-002"],
+      "test_refs": ["tests/unit/test_fake_backend.py", "tests/integration/test_execution_gates.py"],
+      "scope_boundary": "tracks/effects/fake.py",
+      "depends_on": [],
+      "batch": "4",
+      "parallel": true,
+      "budget": 2
     }
   ]
 }
