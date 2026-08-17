@@ -273,7 +273,12 @@ class OpencodeBackend:
                 # WRITE target docs (incl. acceptance.md, not a COMMENTABLE_DOCS
                 # entry) are whitelisted; replies there are discussion-checked.
                 allowed = [*doc_paths, *allowed]
-            return [*commentable, *allowed, agent_dest]
+            # SHIELD_FIX may name diagnosed test files outside the Shield
+            # [layout] dirs (e.g. a unit-level RED contract test); the
+            # dispatch grants exactly those via manifest.allowed_paths and
+            # the audit must honor the grant (Fix-M pattern, shield side).
+            manifest_paths = self._manifest_allowed_paths(assignment)
+            return [*commentable, *allowed, agent_dest, *manifest_paths]
         if role == "devon":
             devon_dirs = [self.repo / d for d in layout_paths(self.repo, "devon")]
             manifest_paths = self._manifest_allowed_paths(assignment)

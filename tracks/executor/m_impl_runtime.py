@@ -392,6 +392,7 @@ class MImplRuntimeMixin:
         elif role == "shield" and substate == "WRITE":
             assignment["phase"] = "shield_fix"
             self._strip_test_forbidden_paths(assignment)
+            self._grant_diagnosed_test_paths(assignment, state)
 
     @staticmethod
     def _strip_test_forbidden_paths(assignment: dict) -> None:
@@ -407,6 +408,30 @@ class MImplRuntimeMixin:
                 manifest["forbidden_paths"] = [
                     p for p in forbidden if not p.startswith("tests/")
                 ]
+
+    _DIAGNOSED_TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+")
+
+    @staticmethod
+    def _grant_diagnosed_test_paths(assignment: dict, state) -> None:
+        """SHIELD_FIX audit unlock (run 01KZTHE7 T-017): the over-reach audit
+        whitelists Shield by [layout] dirs (tests/integration|e2e|...), but a
+        diagnosed defect may live anywhere under tests/ (e.g. a unit-level
+        RED contract test). Grant exactly the test files the Prism DIAGNOSE
+        verdict names in its evidence by adding them to
+        manifest.allowed_paths. Fail-closed: only paths the diagnosis
+        literally mentions are granted — no blanket tests/ grant."""
+        report = getattr(state, "diagnose_report", None) or {}
+        evidence = report.get("evidence") or ""
+        if not isinstance(evidence, str):
+            evidence = str(evidence)
+        named = sorted(set(MImplRuntimeMixin._DIAGNOSED_TEST_PATH_RE.findall(evidence)))
+        if not named:
+            return
+        manifest = assignment.get("manifest")
+        if not isinstance(manifest, dict):
+            return
+        allowed = list(manifest.get("allowed_paths") or [])
+        manifest["allowed_paths"] = allowed + [p for p in named if p not in allowed]
 
     def _invalid_m_impl_assignment(
         self,
