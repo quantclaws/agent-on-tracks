@@ -16,6 +16,7 @@ from tracks.executor.worktree import (
     create_gate_worktree,
     create_test_authority_worktree,
     ensure_runtime_assets,
+    sweep_worktrees,
 )
 
 
@@ -140,3 +141,50 @@ def test_create_gate_worktree_links_opencode_and_ignored(tmp_path):
         assert ".opencode" not in status
     finally:
         cleanup_worktree(gate)
+
+
+def test_preexisting_gate_worktree_returns_cleanup_handle(tmp_path):
+    """B2a (run 01KZTHE7): a pre-existing gate worktree must come back with a
+    real handle so the gate runner's finally-cleanup removes it. The old
+    ``return gate_path, None`` made every pre-existing worktree a permanent
+    leak (five accumulated across T-013..T-018)."""
+    from types import SimpleNamespace
+
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+
+    repo, _base = _init_repo(tmp_path)
+    gate = repo / ".tracks" / "worktrees" / "run-1" / "T-001" / "gate"
+    gate.mkdir(parents=True)
+    runtime = SimpleNamespace(repo=repo, run_id="run-1")
+    state = SimpleNamespace(current_task_id="T-001")
+    cwd, handle = MImplRuntimeMixin._ensure_gate_worktree(runtime, state)
+    assert cwd == str(gate)
+    assert handle is not None
+    assert handle.kind == "gate"
+    cleanup_worktree(handle)
+    assert not gate.exists()
+
+
+def test_sweep_worktrees_removes_all_runs_registered_and_shells(tmp_path):
+    """B2b: the sweep (trac start only) reclaims registered worktrees of every
+    run plus unregistered directory shells, and prunes git's registry."""
+    repo, base = _init_repo(tmp_path)
+    mine = create_devon_worktree(str(repo), base, "run-1", "T-001")
+    other = create_gate_worktree(str(repo), base, "", "", "run-2", "T-002")
+    shell = repo / ".tracks" / "worktrees" / "run-3" / "T-003" / "gate"
+    shell.mkdir(parents=True)
+    (shell / "junk.py").write_text("x = 1\n", encoding="utf-8")
+    removed = sweep_worktrees(str(repo))
+    assert mine.path in removed and other.path in removed
+    assert not Path(mine.path).exists()
+    assert not Path(other.path).exists()
+    assert not shell.exists()
+    assert not (repo / ".tracks" / "worktrees").exists()
+    survivors = {w.removeprefix("worktree ") for w in _worktree_list(repo)}
+    assert str(repo) in survivors
+    assert len(survivors) == 1
+
+
+def test_sweep_worktrees_noop_when_absent(tmp_path):
+    repo, _base = _init_repo(tmp_path)
+    assert sweep_worktrees(str(repo)) == []

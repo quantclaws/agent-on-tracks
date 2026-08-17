@@ -184,6 +184,20 @@ def cmd_start(repo: Path, *args: str) -> int:
         run_id = new_ulid()
         branch = f"releases/{version}"
         store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
+        # B2 (run 01KZTHE7, user ruling): reclaim leaked worktrees exactly once,
+        # at new-run initialization — never at trac run or mid-run. Audited as
+        # an event; empty sweep emits nothing (no noise runs).
+        from tracks.executor.worktree import sweep_worktrees
+
+        swept = sweep_worktrees(str(repo))
+        if swept:
+            store.append(
+                run_id,
+                version,
+                "worktree.swept",
+                {"removed": swept, "count": len(swept)},
+            )
+            print(f"start: swept {len(swept)} stale worktree(s)", flush=True)
         store.append(run_id, version, "stage.entered", {"stage": "M-START"})
         # FR-04: create the release branch as a logged, reconcilable command.
         Executor(store, repo, run_id).issue(

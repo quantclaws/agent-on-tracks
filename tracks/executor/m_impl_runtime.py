@@ -1244,8 +1244,8 @@ class MImplRuntimeMixin:
         """Find or create a gate worktree with R tests + Green impl applied.
 
         Returns (cwd, handle). If handle is not None, the caller must clean it up
-        via cleanup_worktree(handle). If handle is None, the cwd is either a
-        pre-existing worktree or the repo itself (no cleanup needed).
+        via cleanup_worktree(handle). If handle is None, the cwd is the repo
+        itself (no cleanup needed).
         """
         task_id = state.current_task_id or ""
         gate_path = os.path.join(
@@ -1256,7 +1256,12 @@ class MImplRuntimeMixin:
             # cleanup failure): re-link runtime assets (.opencode) so gate unit
             # commands see the deployment meta-tests compare against (T-013).
             ensure_runtime_assets(str(self.repo), gate_path)
-            return gate_path, None  # Pre-existing worktree, no cleanup needed
+            # B2 (run 01KZTHE7, user ruling: no cross-gate sharing): return a
+            # real handle so the caller's finally-cleanup removes the worktree.
+            # The old ``return gate_path, None`` made every pre-existing gate
+            # worktree a permanent leak (five accumulated across T-013..T-018;
+            # ISLAND_GATE_2 reach then reported 1208 phantom islands).
+            return gate_path, WorktreeHandle(path=gate_path, base_sha="", kind="gate")
 
         # Try to create a gate worktree from base B + Green impl + R tests
         r_sha = state.r_tree_identity

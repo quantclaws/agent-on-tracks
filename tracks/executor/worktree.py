@@ -139,6 +139,63 @@ def cleanup_worktree(
 # -- helpers -----------------------------------------------------------------
 
 
+def sweep_worktrees(repo: str) -> list[str]:
+    """B2 (run 01KZTHE7): remove every worktree/directory under .tracks/worktrees/.
+
+    Wired into ``trac start`` ONLY (user ruling: no other call site) — opening a
+    new run is the single sanctioned moment to reclaim worktrees leaked by a
+    crashed loop or by the historical pre-existing-handle cleanup escape. The
+    sweep is audited by the caller via a ``worktree.swept`` event; this function
+    stays pure reclamation. Fail-open hygiene: never raises, never touches the
+    main repo, returns the removed paths.
+    """
+    base = os.path.join(repo, ".tracks", "worktrees")
+    if not os.path.isdir(base):
+        return []
+    main = _main_repo(base)
+    removed = _remove_registered_worktrees(repo, base, main)
+    shutil.rmtree(base, ignore_errors=True)
+    if main is not None:
+        subprocess.run(
+            ["git", "-C", main, "worktree", "prune"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if not os.path.isdir(base):
+        removed.append(base)
+    return removed
+
+
+def _remove_registered_worktrees(repo: str, base: str, main: str | None) -> list[str]:
+    """Force-remove every git-registered worktree under ``base`` (never the
+    main repo); leftover directory shells are handled by the caller's rmtree."""
+    listing = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listing.returncode != 0:
+        return []
+    prefix = os.path.abspath(base) + os.sep
+    removed: list[str] = []
+    for line in listing.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        wt = line.removeprefix("worktree ")
+        if not os.path.abspath(wt).startswith(prefix):
+            continue
+        if _same_path(wt, repo):
+            continue  # never the main repo
+        _remove_worktree(main, wt)
+        if os.path.exists(wt):
+            shutil.rmtree(wt, ignore_errors=True)
+        removed.append(wt)
+    return removed
+
+
 def _worktree_path(repo: str, run_id: str, task_id: str | None, kind: str) -> str:
     parts = [repo, ".tracks", "worktrees", run_id]
     if task_id is not None:
