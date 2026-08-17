@@ -362,31 +362,45 @@ def _audit_event_lines(event, events: list) -> list[str]:
             f"attempt=`{attempt or '-'}`{rollback_part} "
             f"report=`{_text_summary(payload.get('self_report', ''), 1200)}`"
         )
-    # AC-FR0237-02/03: render the executor-side atomic rejection event so
-    # the rejected document paths, failure class and rollback='atomic' are
-    # visible in status/replay/report.  This is a failure-only branch: it
-    # never suggests the agent gained body-edit authority (no 'success'
-    # wording).  The payload shape is the closed contract from
-    # executor._reject_over_reach: {origin, failure_class, rollback,
-    # rejected_paths}; a bare {role, reason, ...} shape is tolerated for
-    # unit-level audit-render assertions.
+    # AC-FR0237-02/03: delegate the executor-side atomic rejection event
+    # to a dedicated renderer so the rejected document paths, failure class
+    # and rollback='atomic' are visible in status/replay/report.  This is a
+    # failure-only branch: it never suggests the agent gained body-edit
+    # authority (no 'success' wording).  The payload shape is the closed
+    # contract from executor._reject_over_reach: {origin, failure_class,
+    # rollback, rejected_paths}; a bare {role, reason, ...} shape is
+    # tolerated for unit-level audit-render assertions.
     if event.type == "outcome.rejected":
-        origin = payload.get("origin") or {}
-        role = origin.get("role") or payload.get("role") or "-"
-        rejected_paths = payload.get("rejected_paths") or []
-        rollback = payload.get("rollback", "-")
-        lines.append(
-            f"- outcome.rejected: role=`{role}` "
-            f"failure=`{payload.get('failure_class', '-')}` "
-            f"rollback=`{rollback}` "
-            f"rejected_paths=`{', '.join(rejected_paths) or '-'}` "
-            f"task=`{origin.get('task_id', '-')}` "
-            f"phase=`{origin.get('phase', '-')}` "
-            f"attempt=`{origin.get('attempt', '-')}`"
-        )
-        reason = payload.get("reason") or payload.get("self_report")
-        if reason:
-            lines.append(f"  - reason: `{_text_summary(reason, 1200)}`")
+        lines.extend(_rejected_outcome_lines(payload))
+    return lines
+
+
+def _rejected_outcome_lines(payload) -> list[str]:
+    """Render an ``outcome.rejected`` payload (AC-FR0237-02/03).
+
+    The executor emits this when an over-reach write is atomically rejected:
+    the rejected document paths, failure class and ``rollback='atomic'`` are
+    surfaced so the audit trail records *which* paths were rejected and *that*
+    the rollback was whole-round.  The payload shape is the closed contract
+    from ``executor._reject_over_reach`` (``{origin, failure_class, rollback,
+    rejected_paths}``); a bare ``{role, reason, ...}`` shape is tolerated for
+    unit-level audit-render assertions."""
+    origin = payload.get("origin") or {}
+    role = origin.get("role") or payload.get("role") or "-"
+    rejected_paths = payload.get("rejected_paths") or []
+    rollback = payload.get("rollback", "-")
+    lines = [
+        f"- outcome.rejected: role=`{role}` "
+        f"failure=`{payload.get('failure_class', '-')}` "
+        f"rollback=`{rollback}` "
+        f"rejected_paths=`{', '.join(rejected_paths) or '-'}` "
+        f"task=`{origin.get('task_id', '-')}` "
+        f"phase=`{origin.get('phase', '-')}` "
+        f"attempt=`{origin.get('attempt', '-')}`"
+    ]
+    reason = payload.get("reason") or payload.get("self_report")
+    if reason:
+        lines.append(f"  - reason: `{_text_summary(reason, 1200)}`")
     return lines
 
 
