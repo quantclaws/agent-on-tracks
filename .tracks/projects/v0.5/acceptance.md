@@ -292,6 +292,8 @@ sha: 0eda1301006059f48cc4b6577bf1347aa129be299d41bd9437f2a2a5f5cb97f5
 
   - manifest 越界审计（BS-09）：Devon 修改 manifest 白名单之外的文件时 outcome failed、记录路径级证据、不提交；越权写文件被审计检出并通过 git 回滚（`over_reach` failure_class，承自 v0.3 写范围审计机制）
   - 回滚仅移除可证明由 Devon 产生的改动，Human 既有修改不被覆盖
+  - 越界审计归因遵循 FR-0170 运营者通道豁免：非 dispatch 窗口部署且被快照吸收的变更、`Tracks-OOB` trailer 提交引入的变更、运营者文档路径（`.tracks/wiki/`、`.tracks/projects/*/v0.*/`、`.tracks/runtime/handoff-*`）下 manifest/outcome 均未声明产出的新增文件，不判 `over_reach`、不触发回滚；豁免在 audit_evidence 记录 `operator_channel_excluded` 与路径清单（run 01KZTHE7 实证：运营者 v0.6 规划文件被误归因 Devon，烧 attempt 并触发 spec_gap 回退 M-SPEC）
+  - 运营者提交触及 `tests/` 时由下一次 M-IMPL baseline 冻结吸收 r_tree_identity，regression 门不得以冻结前旧 R 提交判假阳性（run 01KZTHE7 seq1261 实证：旧 R 提交与运营者基线恢复提交间五文件差异被误判 regression）
 
 ## FR-0180 tasks.json / tasks.md 真相源、schema 与校验语义
 

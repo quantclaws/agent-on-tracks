@@ -386,6 +386,8 @@ Devon 作为真实 opencode agent 接入（承自 v0.3 Archer/Prism 与 v0.4 Shi
 
 **manifest 越界审计（BS-09）**：Devon 修改 manifest 白名单之外的文件时 outcome failed、记录路径级证据、不提交。越权写文件被审计检出并通过 git 回滚（`over_reach` failure_class，承自 v0.3 写范围审计机制）。单写者纪律的强制边界，越界即失败并留路径级证据。
 
+**运营者通道豁免（run 01KZTHE7 spec_gap 修订，2026-08-17）**：越界审计的归因对象是「该 dispatch 可归因的变化」，判定基线为 dispatch 前快照（baseline 与 Human pre-dirty 逐字节保留集）与 outcome 时工作区差量。差量中属运营者通道的变化不归因 Agent、不判 `over_reach`、不触发回滚：① 运营者在非 dispatch 窗口（loop 停车或阶段间隙）部署、已被下一 dispatch 前快照吸收的变更；② 提交信息带 `Tracks-OOB` trailer 的运营者提交所引入的变更；③ 位于运营者文档路径（`.tracks/wiki/`、`.tracks/projects/*/v0.*/`、`.tracks/runtime/handoff-*`）且 Agent manifest 与 outcome 均未声明产出的新增文件。豁免必须留痕：audit_evidence 记录 `operator_channel_excluded` 与路径清单，保持事件可重放。运营者提交触及 `tests/`（冻结 R 树）时，由下一次 M-IMPL baseline 冻结吸收（r_tree_identity 以冻结时 tests/ 实际状态为准，regression 门不得以冻结前旧 R 提交判假阳性）。dispatch 窗口内落盘（快照后、outcome 前）且不属上述豁免的运营者写入，无法事后区分 provenance，仍按 `over_reach` fail-closed；经 DIAGNOSE 排除 Agent 责任后按 spec_gap/ac_gap 路由修订（本条款即该路由的语义落地；实证 seq 1261/1264/1267）。
+
 ### FR-0180 tasks.json / tasks.md 真相源、schema 与校验语义
 
 - **来源**：`§3.1 步骤 2` / `§5 约束` / Human 裁定（tasks.json 为唯一机器真相） / flow §10.1 PLANNING / 修订日志 R-3
@@ -561,6 +563,8 @@ Prism 必须在 FR-0234 检出的原讨论中裁定问题是否属于 Archer 负
 - **交付入口**：`E-04`（`trac run` 的失败/重试路径；`trac status`、`trac replay`、`trac report` 观察失败与回滚）
 
 当 Devon 或 Shield outcome 含本次结果可归属的非 discussion 设计文档正文编辑时，Runtime 必须继续执行整回合原子 fail-closed：回滚该 dispatch 的全部 Agent 可归因变化并逐字节保留 Human 与 dispatch 前既有脏改动，不保留部分代码或其他非文档成果，不进入 Prism 评论裁定，也不提交、checkpoint、gate 或显示为成功。该规则优先于同一 outcome 中可能存在的合法讨论。
+
+「Agent 可归因变化」的判定遵循 FR-0170 运营者通道豁免：运营者通道变化不属于 Agent 可归因变化，不触发本条整回合原子拒绝。
 
 Runtime 必须在既有状态与审计输出中显示 over-reach 类失败、被拒绝的文档路径和整回合回滚结果，并按原 logical role/task/phase 的失败与 attempt 预算语义发起新的 dispatch/attempt。新结果从 FR-0234 的前置检查重新开始；失败结果及回滚证据保留以供 `trac replay/report` 审计，但不给 Agent 编辑设计文档正文的权限。
 
