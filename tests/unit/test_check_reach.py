@@ -189,3 +189,127 @@ def test_production_with_entrypoint_remains_reachable(tmp_path):
     assert r.entrypoints == ("app",)
     assert r.errors == ()
     assert r.warnings == ()
+
+
+# --- B3 (issue #4): FR-0120 [layout] whitelist scan scope -------------------
+
+
+def _write_layout_contract(tmp_path, roles):
+    """Write a minimal FR-0120 project.toml with the given [layout.*] roles.
+
+    [integration] satisfies load_contract's required test-execution section,
+    so the [layout] part is actually parsed."""
+    lines = [
+        "[integration]",
+        'framework = "pytest"',
+        'paths = ["tests/"]',
+        'collect = "pytest --collect-only"',
+        'run = "pytest"',
+        'cwd = "."',
+        "",
+    ]
+    for role, dirs in roles.items():
+        body = ", ".join(f'"{d}"' for d in dirs)
+        lines.append(f"[layout.{role}]")
+        lines.append(f"writable = [{body}]")
+        lines.append("")
+    toml = tmp_path / ".tracks" / "projects" / "project.toml"
+    toml.parent.mkdir(parents=True, exist_ok=True)
+    toml.write_text("\n".join(lines), encoding="utf-8")
+
+
+def test_layout_contract_whitelist_hides_tracks_and_undeclared_dirs(tmp_path):
+    """B3 (issue #4): with a [layout] contract, reach scans only declared
+    writable roots — .tracks/ runtime data and undeclared stray code are
+    invisible by construction instead of being masked by a blacklist."""
+    _write_layout_contract(tmp_path, {"devon": ["src/"], "shield": ["tests/"]})
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("import src.worker\n", encoding="utf-8")
+    (src / "worker.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project.scripts]\ndemo = "src.app:main"\n', encoding="utf-8"
+    )
+    junk = tmp_path / ".tracks" / "worktrees" / "run-1" / "gate" / "orphan.py"
+    junk.parent.mkdir(parents=True)
+    junk.write_text("VALUE = 1\n", encoding="utf-8")
+    stray = tmp_path / "scripts" / "stray.py"
+    stray.parent.mkdir()
+    stray.write_text("VALUE = 1\n", encoding="utf-8")
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "pass"
+    assert r.islands == ()
+    assert r.warnings == ()
+    assert r.entrypoints == ("src.app",)
+
+
+def test_layout_contract_undeclared_island_not_reported(tmp_path):
+    """B3 behavior change (issue #4): code outside the declared roots is out
+    of reach's remit — an orphan module there is not scanned, hence not
+    reported as an island."""
+    _write_layout_contract(tmp_path, {"devon": ["src/"]})
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project.scripts]\ndemo = "src.app:main"\n', encoding="utf-8"
+    )
+    orphan = tmp_path / "legacy" / "orphan.py"
+    orphan.parent.mkdir()
+    orphan.write_text("VALUE = 1\n", encoding="utf-8")
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "pass"
+    assert r.islands == ()
+
+
+def test_layout_contract_missing_root_warns_and_skips(tmp_path):
+    """A declared root missing on disk is skipped with a warning; the check
+    never crashes and never silently re-opens the whole-repo scan."""
+    _write_layout_contract(tmp_path, {"devon": ["src/", "not_created_yet/"]})
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project.scripts]\ndemo = "src.app:main"\n', encoding="utf-8"
+    )
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "pass"
+    assert r.islands == ()
+    assert any("not_created_yet" in w for w in r.warnings)
+
+
+def test_no_contract_keeps_legacy_blacklist_scan(tmp_path):
+    """Without a [layout] contract reach keeps the legacy whole-repo blacklist
+    walk — junk under .tracks/ is still scanned and reported (regression
+    guard for the fallback mode)."""
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    junk = tmp_path / ".tracks" / "blobs" / "junk.py"
+    junk.parent.mkdir(parents=True)
+    junk.write_text("VALUE = 1\n", encoding="utf-8")
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "fail"
+    assert "app" in r.islands
+    assert any(i.endswith("blobs.junk") for i in r.islands)
+
+
+def test_malformed_contract_falls_back_to_legacy_scan(tmp_path):
+    """A malformed project.toml degrades to the legacy scan instead of
+    crashing reach (contract problems surface in their own gates)."""
+    toml = tmp_path / ".tracks" / "projects" / "project.toml"
+    toml.parent.mkdir(parents=True)
+    toml.write_text("not [ valid toml {{{\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    r = check_reach_file(tmp_path)
+
+    assert r.status == "fail"
+    assert r.islands == ("app",)
