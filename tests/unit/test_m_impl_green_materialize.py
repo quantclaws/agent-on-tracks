@@ -166,6 +166,87 @@ def test_commit_green_fast_forwards_branch_and_worktree_to_g(tmp_path):
     assert "Tracks-Attempt: 1" in message
 
 
+def test_commit_green_rebases_on_descendant_head_after_shield_fix(tmp_path):
+    """run 01KZTHE7 T-017 regression: the runtime's own SHIELD_FIX
+    result_checkpoint commit lands on the branch between B and
+    commit_green. HEAD is then a legitimate descendant of B; G must be
+    re-based onto HEAD (impl diff replays on top) instead of failing the
+    "HEAD is neither B nor G" lineage check."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task(repo)
+    executor = Executor(store, repo, "RUN")
+    r_sha = _run_red(executor, store)
+    _stage_green(executor, store, r_sha)
+
+    # Simulate the SHIELD_FIX result_checkpoint commit on top of B.
+    fix = repo / "tests" / "unit" / "test_fix.py"
+    fix.parent.mkdir(parents=True, exist_ok=True)
+    fix.write_text("def test_fixed():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", "tests")
+    subprocess.run(
+        ["git", "commit", "-m", "Shield fix: T-017 attempt 1"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head != red_base_sha(str(repo), r_sha)
+
+    payload = _commit_green(executor, store)
+
+    assert payload["base_sha"] == head, "G must be re-based onto the descendant HEAD"
+    assert _git(repo, "rev-parse", f"{payload['g_sha']}^") == head
+    impl = repo / "tracks" / "app.py"
+    assert impl.is_file(), "impl diff must replay on the descendant base"
+    assert fix.is_file(), "the shield fix commit's content must survive"
+
+
+def test_commit_green_fails_closed_on_diverged_head(tmp_path):
+    """HEAD with unrelated work (not a descendant of B) must still fail
+    closed - the descendant re-base never launders diverged history."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task(repo)
+    executor = Executor(store, repo, "RUN")
+    r_sha = _run_red(executor, store)
+    _stage_green(executor, store, r_sha)
+    b_sha = red_base_sha(str(repo), r_sha)
+
+    # Diverged branch: a sibling of B (child of B^) is NOT a descendant of B.
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "divergent", f"{b_sha}^"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rogue = repo / "rogue.txt"
+    rogue.write_text("unrelated\n", encoding="utf-8")
+    _git(repo, "add", "rogue.txt")
+    subprocess.run(
+        ["git", "commit", "-m", "divergent work"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    verdicts = [
+        e
+        for e in store.events("RUN")
+        if e.type == "verdict.failed" and "lineage" in str(e.payload.get("reason", ""))
+    ]
+    assert verdicts, "diverged HEAD must fail closed with a lineage reason"
+    greens = [e for e in store.events("RUN") if e.type == "green.committed"]
+    assert not greens, "no green.committed on diverged history"
+
+
 def test_green_materialization_leaves_frozen_tests_byte_identical(tmp_path):
     repo = _repo(tmp_path)
     store, _ = _started_task(repo)
@@ -284,12 +365,19 @@ def test_commit_green_reconcile_replay_emits_no_duplicate_event(tmp_path):
 
 
 def test_commit_green_fails_closed_on_unrelated_head(tmp_path):
+    """Post-B commits on the branch are LEGITIMATE descendants (run 01KZTHE7
+    T-017: the runtime's own SHIELD_FIX checkpoint lands between B and
+    commit_green). G re-bases onto HEAD and the post-B work must survive in
+    G's tree and the working tree - never reset or overwritten. (Pre-T-017
+    this asserted a fail-closed verdict; the descendant re-base design
+    supersedes it - truly diverged history is still fail-closed, see
+    test_commit_green_fails_closed_on_diverged_head.)"""
     repo = _repo(tmp_path)
     store, _ = _started_task(repo)
     executor = Executor(store, repo, "RUN")
     r_sha = _run_red(executor, store)
     _stage_green(executor, store, r_sha)
-    # unrelated work lands on the branch after the Red checkpoint.
+    # post-B work lands on the branch after the Red checkpoint.
     (repo / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
     _git(repo, "add", "unrelated.txt")
     subprocess.run(
@@ -304,14 +392,21 @@ def test_commit_green_fails_closed_on_unrelated_head(tmp_path):
         False,
     )
 
-    failures = [e for e in store.events("RUN") if e.type == "verdict.failed"]
-    assert failures, "unrelated HEAD must fail closed"
-    assert failures[-1].payload["check"] == "impl_defect"
-    assert "lineage" in failures[-1].payload["reason"]
-    assert _git(repo, "rev-parse", "HEAD") == head_before, (
-        "unrelated work must never be reset or overwritten"
+    greens = [e for e in store.events("RUN") if e.type == "green.committed"]
+    assert greens, "descendant HEAD must re-base and commit green"
+    head = _git(repo, "rev-parse", "HEAD")
+    assert head == greens[-1].payload["g_sha"]
+    assert _git(repo, "rev-parse", f"{head}^") == head_before, (
+        "G must sit on top of the post-B HEAD"
     )
-    assert not any(e.type == "green.committed" for e in store.events("RUN"))
+    assert (repo / "unrelated.txt").read_text(encoding="utf-8") == "unrelated\n", (
+        "post-B work must survive in the working tree"
+    )
+    assert "unrelated.txt" in _git(repo, "ls-tree", "-r", "--name-only", head), (
+        "post-B work must survive in G's tree"
+    )
+    impl = repo / "tracks" / "app.py"
+    assert impl.is_file(), "impl diff must still replay"
 
 
 def test_commit_green_fails_closed_when_r_base_unresolvable(tmp_path):

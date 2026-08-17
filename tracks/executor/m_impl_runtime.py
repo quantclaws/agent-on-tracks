@@ -1666,20 +1666,41 @@ class MImplRuntimeMixin:
             )
             self._rebuild_task_log_projection()
             return
+        green_base = self._green_commit_base(b_sha)
+        if green_base is None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "impl_defect",
+                    "reason": (
+                        "green lineage violation: branch HEAD diverged from "
+                        "base B (not a descendant; unknown work on HEAD)"
+                    ),
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "evidence": (
+                        f"b_sha={b_sha} head={git(self.repo, 'rev-parse', 'HEAD').stdout.strip()}"
+                    ),
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            self._rebuild_task_log_projection()
+            return
         g = create_green_commit(
             repo=str(self.repo),
             run_id=self.run_id,
             task_id=task_id,
             attempt=attempt,
             impl_diff=diff,
-            base_sha=b_sha,
+            base_sha=green_base,
             r_sha=r_sha,
             issue_number=task.issue_number,
             ac_refs=_combined_provenance(task),
         )
         materialized, materialize_reason = self._materialize_green_commit(
             g.sha,
-            b_sha,
+            green_base,
         )
         if not materialized:
             self._emit(
@@ -1705,13 +1726,38 @@ class MImplRuntimeMixin:
                 "task_id": task_id,
                 "attempt": attempt,
                 "r_sha": r_sha,
-                "base_sha": b_sha,
+                "base_sha": g.parent,
                 "trailers": g.trailers,
             },
             command_id=cmd.command_id,
             task_id=task_id,
         )
         self._rebuild_task_log_projection()
+
+    def _green_commit_base(self, b_sha: str) -> str | None:
+        """Resolve the base for the formal G commit (run 01KZTHE7 T-017).
+
+        Returns the sha G should be parented on:
+        - HEAD == B: the fast-forward case, G.parent = B.
+        - HEAD is a DESCENDANT of B: legitimate post-B commits landed on the
+          branch (the runtime's own SHIELD_FIX result_checkpoint commit, or
+          operator runtime-fix commits). G is then re-based onto HEAD — the
+          impl diff replays on top; RGR semantics stay intact (R is recorded
+          as a trailer, B lineage is preserved through HEAD).
+        - otherwise (diverged / unrelated work): None -> fail closed.
+        """
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        if head == b_sha:
+            return b_sha
+        # --is-ancestor signals its verdict via exit code (0=yes, 1=no), so
+        # check must be off; any other failure also lands on the fail-closed
+        # path below.
+        anc = git(
+            self.repo, "merge-base", "--is-ancestor", b_sha, "HEAD", check=False
+        )
+        if anc.returncode == 0:
+            return head
+        return None
 
     def _materialize_green_commit(
         self,
