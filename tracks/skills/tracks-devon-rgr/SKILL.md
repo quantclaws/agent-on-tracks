@@ -71,6 +71,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
   "phase": "red|green|refactor",
   "changed_paths": ["path/to/file", "..."],
   "commands": [{"cmd": "...", "result": "pass|fail", "output_summary": "..."}],
+  "results": [{"classification": "assertion_failure"}, ...],
   "manifest_compliance": true,
   "pre_identity": "...",
   "post_identity": "...",
@@ -80,5 +81,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
   "advisories": ["isolation|scope_gap|..."]
 }
 ```
+
+RED 必填纪律（2026-08-17，run 01KZTHE7 T-018 三连 red_invalid 教训）：`results` 必须是**对象数组**，每项形如 `{"classification": "assertion_failure"}` 或 `{"classification": "symbol_missing"}`——不是字符串数组，也不可省略。所有条目 classification 必须一致，且只能取这两个 legal 标签（门禁 `_m_impl_red_classifications` 只认这两个；缺失时虽可从 `commands[*].output_summary` 的 `classify_red -> <label>` token 兜底推断，但不要依赖兜底）。
 
 不得伪造 PASS/stage/commit。不得 commit/push、管理 Issues 或触碰 task state。
