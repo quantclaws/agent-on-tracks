@@ -2,7 +2,8 @@
 doc: spec/acceptance 运营者通道豁免修订说明（review 用）
 run: 01KZTHE7RMZE6110PK9C54K1E2
 author: operator (aaron) — Human 2026-08-17 晨间指令：「你自己把 spec/acc/design 一路改了……改完 spec/acc 之后，停下来，我找人进行一次 review——你要写出说明」
-status: awaiting review
+status: resolved-by-discipline
+resolution: 用户裁定 2026-08-17：1261/1264 均可零代码绕过（1261 由 rollback 后 M-IMPL 重入的每任务 r_tree_identity 自动重冻结消解——瞬态、无持久基线；1264 由运营者窗口纪律消除触发器），1267 随之条件性不存在。修订文本（71ac6f4）保留留档作 v0.6 D-36 输入；豁免③代码补丁（audit.py 路径排除）**不部署**，与 D-36 深版一并待宿主场景论证（D-40）。
 ---
 
 # spec.md / acceptance.md 运营者通道豁免修订（r1）
