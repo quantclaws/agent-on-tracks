@@ -72,6 +72,43 @@ def test_tracked_over_reach_restored_from_head(tmp_path):
     assert other.read_text(encoding="utf-8") == "base2\n"
 
 
+def test_tracked_over_reach_restored_from_head_despite_staged_deletion(tmp_path):
+    """run 01KZTHE7 T-017 data-loss regression: an agent that STAGES a
+    deletion (``git rm``) of a tracked out-of-bounds file leaves no index
+    entry. The rollback restore phase used ``git checkout -- p`` (restores
+    from the INDEX), which no-ops on such a path — the file was destroyed
+    while rollback reported it as rolled back. Restore must come from HEAD
+    and the file must survive with its committed content."""
+    repo = _repo(tmp_path)
+    target = repo / "target.md"
+    other = repo / "other.md"
+    other.write_text("base2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "other.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "other"], cwd=repo, check=True, capture_output=True)
+
+    auditor = Auditor(repo, allowed=[str(target)])
+    baseline = auditor.baseline()
+
+    # Agent over-reach with index manipulation: stage a deletion.
+    subprocess.run(
+        ["git", "rm", "-q", "other.md"], cwd=repo, check=True, capture_output=True
+    )
+    assert not other.exists()  # git rm removed worktree + index entry
+
+    rolled = auditor.rollback_agent_changes(baseline)
+    assert "other.md" in rolled
+    assert other.exists()  # THE regression: file must be restored, not lost
+    assert other.read_text(encoding="utf-8") == "base2\n"
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", "other.md"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert status.strip() == ""  # index entry restored too
+
+
 def test_doc_set_allowed_accepts_trio_and_rejects_outside_writes(tmp_path):
     """Multi-doc contract (M-DESIGN DRAFT): allowed = the design trio. Writes to
     every doc of the set are legitimate; a write outside the set is over-reach,

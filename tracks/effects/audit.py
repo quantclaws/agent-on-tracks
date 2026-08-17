@@ -58,8 +58,24 @@ class Auditor:
         # Exact lexical target text for pre-dirty symlinks. Reading and later
         # recreating the link never touches its target, including if dangling.
         self._baseline_symlinks: dict[str, str] = {}
+        # Paths tracked in HEAD (lazy, from ``git ls-tree``). The rollback
+        # restore phase identifies "tracked" against HEAD, not the index:
+        # an agent that staged a deletion (``git rm``) has no index entry
+        # left, and an index-based lookup would misclassify the path as an
+        # agent-created untracked file and destroy it (run 01KZTHE7 T-017).
+        self._head_tracked_cache: set[str] | None = None
 
     # -- snapshot -----------------------------------------------------------
+
+    def _head_tracked(self) -> set[str]:
+        """Lazily-cached set of paths tracked in HEAD (``git ls-tree``).
+        Empty when HEAD does not exist yet (fresh repo)."""
+        if self._head_tracked_cache is None:
+            proc = _git(self.repo, "ls-tree", "-r", "--name-only", "HEAD")
+            self._head_tracked_cache = {
+                line for line in proc.stdout.splitlines() if line
+            }
+        return self._head_tracked_cache
 
     @staticmethod
     def _path_type(full: Path) -> str:
@@ -339,6 +355,7 @@ class Auditor:
             new_changes = self.modified_files() - baseline
         over = self._overreach_paths(new_changes, force)
         tracked_set = set(_git(self.repo, "ls-files").stdout.splitlines())
+        tracked_set |= self._head_tracked()
         # Phase 1 - removal.  First remove every rollback-set path that is
         # currently a symlink, shallowest-first: unlinking a symlink never
         # follows its target (internal or external), so this is always safe
@@ -438,7 +455,18 @@ class Auditor:
         elif p in tracked_set:
             if full.parent.exists() and not full.parent.is_dir():
                 return False  # parent is a restored regular file, not a dir
-            _git(self.repo, "checkout", "--", p, check=False)
+            # Restore from HEAD for HEAD-tracked paths, NOT the index: an
+            # agent that staged a deletion (e.g. ``git rm``) leaves no index
+            # entry, so ``git checkout -- p`` no-ops and the tracked file is
+            # destroyed while the rollback reports success (run 01KZTHE7
+            # T-017, 2026-08-17). ``checkout HEAD -- p`` overwrites both the
+            # index entry and the worktree file. Index-only entries (staged
+            # adds with no commit yet) still restore from the index.
+            if p in self._head_tracked():
+                _git(self.repo, "checkout", "HEAD", "--", p, check=False)
+            else:
+                _git(self.repo, "checkout", "--", p, check=False)
+            return full.exists()
         # If none of the above: agent-created untracked file, already removed
         # in the removal phase - nothing to restore.
         self._prune_empty_parents(full, tracked_set)
