@@ -310,3 +310,76 @@ def test_merge_derived_revise_without_json_fails(tmp_path):
     )
     assert merged["status"] == "failed"
     assert merged["failure_class"] == "manifest_malformed"
+
+
+# -- PRISM-D35-R2 fixes: dc threading, M-DESIGN passthrough coverage -----
+
+
+def test_emit_verdict_threads_defect_classification(monkeypatch, tmp_path):
+    """PRISM-D35-R2-01: the M-IMPL emit path must carry defect_classification
+    or every PRISM_PLAN/FINAL revise falls to the default route."""
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(tmp_path)
+    emitted = []
+    monkeypatch.setattr(
+        Executor,
+        "_emit",
+        lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
+    )
+    ex = object.__new__(Executor)
+    ex.store = store
+
+    class _State:
+        stage = "M-IMPL"
+        review_round = 1
+
+    class _Cmd:
+        command_id = "c1"
+
+    ex._emit_verdict(
+        role="prism",
+        verdict="revise",
+        result={
+            "diff_ref": None,
+            "criteria_pack": None,
+            "defect_classification": "red_defect",
+            "review_summary": "范围断言不足",
+            "findings": [_finding()],
+            "review_body": "正文",
+        },
+        state=_State(),
+        p={},
+        cmd=_Cmd(),
+        task_id=None,
+    )
+    prism_events = [e for e in emitted if e["type"] == "prism.verdict"]
+    payload = prism_events[0]["payload"]
+    assert payload["defect_classification"] == "red_defect"
+
+
+def test_design_payload_passthrough_threads_fields(monkeypatch, tmp_path):
+    """PRISM-D35-R2-02: M-DESIGN passthrough (AC-FR0240-04) end to end —
+    payload builder threads optional fields + blob ref; requires_diff and
+    the doc-anchored channel stay unchanged."""
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(tmp_path)
+    monkeypatch.setattr(Executor, "_doc_path", lambda self, doc: tmp_path / doc)
+    ex = object.__new__(Executor)
+    ex.store = store
+    result = {
+        "verdict": "revise",
+        "review_summary": "设计缺口",
+        "findings": [_finding()],
+        "review_body": "正文",
+    }
+    payload = ex._design_payload("PRISM_REVIEW", "prism", result, "x", "r1")
+    domain = payload["domain_event"]["payload"]
+    assert domain["review_summary"] == "设计缺口"
+    assert domain["findings"] == [_finding()]
+    assert domain["review_ref"]
+    assert "review_body" not in domain
+    assert payload["requires_diff"] is True  # doc-anchored channel unchanged

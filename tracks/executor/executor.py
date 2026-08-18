@@ -1440,12 +1440,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return bool(assigned_pack and outcome_pack != assigned_pack)
 
     def _apply_prism_review_fields(self, payload: dict, verdict: str, result: dict) -> None:
-        """D-35 (SC-D35 §2.3): prism verdict events carry the criteria pack
-        plus, on revise, the structured review fields and the blobs ref for
-        the full body. M-IMPL reviews (PRISM_PLAN/RED/FINAL) emit through
-        this legacy path rather than the ResultCheckpoint pipeline — without
-        the threading here, Devon/Archer revise re-dispatches carry no
-        findings (the M-TEST half of B23, mirrored)."""
+        """D-35 (SC-D35 §2.2/§2.3): prism verdict events carry the criteria
+        pack plus, on revise, the structured review fields — including the
+        routing key defect_classification (PRISM-D35-R2-01: without it the
+        M-IMPL routers see None and every revise falls to the default route,
+        red_defect/design_gap/ac_gap/spec_gap unreachable — fail-wrong) —
+        and the blobs ref for the full body. M-IMPL reviews
+        (PRISM_PLAN/RED/FINAL) emit through this legacy path rather than the
+        ResultCheckpoint pipeline."""
         payload["criteria_pack"] = result.get("criteria_pack")
         if verdict == "pass":
             return
@@ -1453,6 +1455,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             val = result.get(key)
             if val:
                 payload[key] = val
+        # Non-None guard mirrors _m_test_prism_payload: a present null would
+        # defeat the reducers' absent-key defaults.
+        if result.get("defect_classification") is not None:
+            payload["defect_classification"] = result["defect_classification"]
         review_body = result.get("review_body")
         if isinstance(review_body, str) and review_body.strip():
             review_ref = self.store.write_audit_blob(review_body)

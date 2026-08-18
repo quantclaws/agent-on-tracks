@@ -119,8 +119,15 @@ SC-D35 升级为阻塞项（用户标准：无自然通道可绕 / 事后大返�
 
 | 位置 | 变更 | 状态 |
 |------|------|------|
-| `.opencode/agents/Prism.md` + `tracks/agents/Prism.md` | manifest 字段约定 + 140 字符约束 | 待做 |
-| `tracks/executor/result_checkpoint.py` | review_body → write_audit_blob → review_ref | 部分（透传已就位） |
-| `tracks/kernel/machine.py` | last_failure 增补 review_ref | 部分（summary/findings 已就位） |
-| `tests/unit/test_machine_m_test.py` | review_ref 透传断言 | 待做（AC-03/05） |
+| `.opencode/agents/Prism.md` + `tracks/agents/Prism.md` | manifest 字段约定 + 140 字符约束 | 完成（2026-08-19，D-35 实现轮；部署镜像随 materialization 同步） |
+| `tracks/effects/opencode.py` | 结构化 payload 提取/校验/合并 + 门禁豁免 + ADV4 pass 防御 | 完成（含 PRISM-D35-R1/R2 复核修正） |
+| `tracks/executor/result_checkpoint.py` | review_body → write_audit_blob → review_ref；M-DESIGN 透传；requires_diff 豁免 | 完成 |
+| `tracks/executor/executor.py` | M-IMPL `_emit_verdict` 透传（含 defect_classification）+ blob 写 | 完成（PRISM-D35-R2-01） |
+| `tracks/kernel/machine.py` | last_failure 增补 review_ref | 完成 |
+| `tests/unit/test_prism_review_payload.py` | 提取/校验/reducer/emit/豁免/merge/M-DESIGN 透传 18 项 | 完成（原计划 test_machine_m_test.py 的断言落于此文件） |
 | 数据库 / blobs 机制 | 无改动（阈值溢出 + audit blob 均为现行机制） | 完成 |
+
+> 2026-08-19 实现备注（PRISM-D35-R2-03 更正）：008071a 的 commit message 曾声称修复
+> `_m_test_prism_payload` 的一处 NameError；经 git 核对（`git show 2228a36:...` line 266），
+> 该块自 2228a36 起即为 `domain_payload`（正确），所谓修复无对应 hunk，属提交叙述失实，
+> 特此更正记录。
