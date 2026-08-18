@@ -169,7 +169,7 @@ M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**
 ```json
 {
   "verdict": "pass|revise",
-  "defect_classification": "test_defect|impl_defect|test_plan_defect|acceptance_defect|spec_defect",
+  "defect_classification": "<按下方 substate 表取值>",
   "review_summary": "≤140 字符，一句话总结",
   "findings": [
     {"id": "PRISM-<VER>-R<round>-<nn>", "severity": "blocker|advisory",
@@ -181,8 +181,12 @@ M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**
 ```
 
 - REVISE 时 `review_summary`、`findings[]`（非空，每条含七字段：id/severity/defect_classification/criterion/artifact/ac_refs/summary）、`review_body` 均必填；`review_summary` 与 `findings[].summary` 硬上限 140 字符，超限即 manifest malformed、attempt 作废。
-- JSON 的 `verdict` 是你的正式判定，优先于讨论线程状态推导；PASS 时 JSON 可省略。
-- 该通道与 `trac discuss` 文档锚定**并行不互斥**：你仍可（M-TEST 也鼓励）把 finding 锚定进 test-plan/interfaces 线程便于作者就地回应，但结构化字段不可省略。
+- **`defect_classification` 按 substate 取值**（Runtime 路由词表各不相同，取错值会落入默认路由）：
+  - M-TEST PRISM_REVIEW / M-IMPL SHIELD_FIX 语境：`test_defect`（默认）| `test_plan_defect` | `acceptance_defect` | `spec_defect`
+  - M-IMPL PRISM_PLAN：`design_gap` | `stub_gap` | `ac_gap` | `spec_gap`（缺省→回 PLANNING 重拆）
+  - M-IMPL PRISM_FINAL：`impl_defect`（默认，回 Devon GREEN）| `red_defect`（回 RED 新 lineage）
+- JSON 的 `verdict` 是你的正式判定；**pass 仅在文档讨论就绪（你自己锚定的线程均已收束）时生效**——存在未决线程时以讨论状态为准（revise），请先收束自己的线程再判 pass。
+- 该通道与 `trac discuss` 文档锚定**并行**：结构化 findings 可独立承载 REVISE（无文档 diff 也合法）；你仍可把 finding 锚定进 test-plan/interfaces/architecture 线程供作者就地回应（M-TEST 鼓励，非必须）。
 - **M-DESIGN 评审不适用本节**：继续只用文档锚定线程通道，REVISE 不要求 JSON（出现时字段会被透传，不拒绝）。
 
 ### 裁决格式

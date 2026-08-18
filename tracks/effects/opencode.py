@@ -1060,8 +1060,15 @@ class OpencodeBackend:
         for key in self._REVIEW_KEYS:
             if key in payload:
                 result[key] = payload[key]
-        if self._structured_channel(role, substate, assignment):
-            result["verdict"] = payload["verdict"]
+        if not self._structured_channel(role, substate, assignment):
+            return result
+        # PRISM-D35-R1-ADV4: a JSON "pass" must not override a derived revise
+        # while the reviewer's own doc threads are still open — that would
+        # strand the anchored findings forever. "pass" only takes effect when
+        # the docset discussion is ready (no derived revise).
+        if payload["verdict"] == "pass" and result.get("verdict") == "revise":
+            return result
+        result["verdict"] = payload["verdict"]
         return result
 
     @classmethod

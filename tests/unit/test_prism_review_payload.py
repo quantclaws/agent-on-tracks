@@ -229,3 +229,84 @@ def test_emit_verdict_threads_structured_fields_and_blob(monkeypatch, tmp_path):
     blob_path = paths.blobs_dir(store.home) / payload["review_ref"]
     assert blob_path.exists()
     assert body in blob_path.read_text(encoding="utf-8")
+
+
+# -- PRISM-D35-R1 fixes: requires_diff exemption, merge guard, publish ----
+
+
+def test_m_test_prism_payload_requires_diff_off_for_structured_revise(
+    monkeypatch, tmp_path
+):
+    """PRISM-D35-R1-02: a JSON-carried revise must not be hard-failed by the
+    reviewer no-diff policy — requires_diff yields to structured findings."""
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(tmp_path)
+    monkeypatch.setattr(
+        Executor, "_doc_path", lambda self, doc: tmp_path / doc, raising=True
+    )
+    ex = object.__new__(Executor)
+    ex.store = store
+    result = {
+        "verdict": "revise",
+        "review_summary": "缺陷",
+        "findings": [_finding()],
+        "review_body": "正文",
+    }
+    payload = ex._m_test_prism_payload(result, base_sha="x", result_id="r1")
+    assert payload["requires_diff"] is False
+    assert payload["domain_event"]["payload"]["review_ref"]
+
+    result_threaded_only = {"verdict": "revise"}  # doc-anchored, no JSON
+    payload2 = ex._m_test_prism_payload(result_threaded_only, "x", "r2")
+    assert payload2["requires_diff"] is True
+
+
+def test_merge_pass_does_not_override_open_thread_revise(tmp_path):
+    """PRISM-D35-R1-ADV4: JSON pass while the reviewer's own threads are open
+    keeps the derived revise (threads must be closed first)."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    backend = OpencodeBackend(repo=tmp_path, version="v0.6")
+    payload = json.dumps({"verdict": "pass"})
+    result = {"status": "done", "verdict": "revise"}
+    merged = backend._merge_review_payload(
+        result,
+        role="prism",
+        substate="PRISM_REVIEW",
+        assignment={"stage": "M-TEST"},
+        proc=_proc(payload),
+        prompt="p",
+        console_input=None,
+    )
+    assert merged["verdict"] == "revise"
+
+    result_ready = {"status": "done", "verdict": "pass"}
+    merged2 = backend._merge_review_payload(
+        result_ready,
+        role="prism",
+        substate="PRISM_REVIEW",
+        assignment={"stage": "M-TEST"},
+        proc=_proc(payload),
+        prompt="p",
+        console_input=None,
+    )
+    assert merged2["verdict"] == "pass"
+
+
+def test_merge_derived_revise_without_json_fails(tmp_path):
+    from tracks.effects.opencode import OpencodeBackend
+
+    backend = OpencodeBackend(repo=tmp_path, version="v0.6")
+    merged = backend._merge_review_payload(
+        {"status": "done", "verdict": "revise"},
+        role="prism",
+        substate="PRISM_REVIEW",
+        assignment={"stage": "M-TEST"},
+        proc=_proc("纯散文"),
+        prompt="p",
+        console_input=None,
+    )
+    assert merged["status"] == "failed"
+    assert merged["failure_class"] == "manifest_malformed"

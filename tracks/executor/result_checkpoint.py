@@ -84,6 +84,12 @@ class ResultCheckpointMixin:
                 substate, role, docs, doc_paths, digests, base_sha, result_id
             )
         verdict = result.get("verdict")
+        # D-35 / PRISM-D35-R1-ADV1: M-DESIGN never REQUIRES the structured
+        # fields (AC-FR0240-04) but promises passthrough when present —
+        # thread them into the domain payload and persist the body to blobs.
+        domain_payload = {"verdict": verdict}
+        if verdict != "pass":
+            self._apply_prism_review_fields(domain_payload, verdict, result)
         return {
             "source": "prism",
             "stage": "M-DESIGN",
@@ -100,7 +106,7 @@ class ResultCheckpointMixin:
             "commit_label": f"M-DESIGN: prism ({verdict}) checkpoint",
             "result_id": result_id,
             "digests": digests,
-            "domain_event": {"type": "prism.verdict", "payload": {"verdict": verdict}},
+            "domain_event": {"type": "prism.verdict", "payload": domain_payload},
         }
 
     def _design_draft_payload(self, substate, role, docs, doc_paths, digests, base_sha, result_id):
@@ -264,6 +270,16 @@ class ResultCheckpointMixin:
                 review_ref = self.store.write_audit_blob(review_body)
                 if review_ref:
                     domain_payload["review_ref"] = review_ref
+        # D-35 / PRISM-D35-R1-02: a revise carried entirely by the structured
+        # channel (validated findings in the result) is complete without a
+        # doc diff — requires_diff must not hard-fail it at pipeline
+        # validation ("Reviewer no_diff is a real failure"), or the JSON-only
+        # path is dead on arrival at M-TEST.
+        structured_revise = bool(
+            verdict != "pass"
+            and result.get("findings")
+            and result.get("review_summary")
+        )
         return {
             "source": "prism",
             "stage": "M-TEST",
@@ -274,7 +290,7 @@ class ResultCheckpointMixin:
             "allowed_paths": prism_docs,
             "base_sha": base_sha,
             "checks": ["template"],
-            "requires_diff": verdict != "pass",
+            "requires_diff": verdict != "pass" and not structured_revise,
             "forbid_diff": False,
             "discussion_only": True,
             "commit_label": f"M-TEST: prism ({verdict}) checkpoint",
@@ -988,6 +1004,14 @@ class ResultCheckpointMixin:
             # event — without this the verdict event carries no findings and
             # the revise re-dispatch evidence stays empty (live run 01M0AMKV
             # PRISM rounds 1-3, 2026-08-18).
+            for key in ("review_summary", "findings", "review_ref", "discussion_refs"):
+                val = domain_payload.get(key)
+                if val:
+                    payload[key] = val
+        elif state.stage == "M-DESIGN":
+            # D-35 / PRISM-D35-R1-ADV1: M-DESIGN passthrough (AC-FR0240-04) —
+            # optional fields ride along when the reviewer supplied them.
+            domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
             for key in ("review_summary", "findings", "review_ref", "discussion_refs"):
                 val = domain_payload.get(key)
                 if val:
