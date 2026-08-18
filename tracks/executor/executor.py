@@ -1294,6 +1294,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             task_id=task_id,
         )
 
+    def _shield_fix_manifest_mismatch(self, result: dict, changed: list) -> str | None:
+        """PRISM-B28-R2-02: SHIELD_FIX include vs observed tests/ files,
+        with the result_checkpoint dirty-retry tolerance (a retry may verify
+        pre-existing files instead of creating new ones). Returns the
+        evidence string on mismatch, None to pass."""
+        manifest = result.get("artifact_manifest") or {}
+        include = [e.get("path") for e in (manifest.get("include") or []) if e.get("path")]
+        if not include:
+            return None
+        code_include = [p for p in include if p.startswith("tests/")]
+        if set(code_include) == set(changed):
+            return None
+        dirty = self._dirty_files()
+        if all(p in dirty and (self.repo / p).is_file() for p in code_include):
+            return None
+        return (
+            "artifact_manifest include paths do not match observed tests/ "
+            f"files: include={sorted(code_include)}, observed={changed}"
+        )
+
     def _emit_shield_commit(self, result, role, state, cmd, task_id):
         if not (
             state.stage == "M-IMPL"
@@ -1319,6 +1339,22 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "check": "scope",
                     "reason": "shield_fix_no_diff",
                     "evidence": "Shield SHIELD_FIX produced no tests/ diff",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
+        # PRISM-B28-R2-02: the SHIELD_FIX manifest contract promises an
+        # include==observed comparison — enforce it here (M-IMPL shield
+        # WRITE bypasses the ResultCheckpoint pipeline).
+        if self._shield_fix_manifest_mismatch(result, changed):
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "manifest",
+                    "reason": "include_mismatch",
+                    "evidence": self._shield_fix_manifest_mismatch(result, changed),
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,

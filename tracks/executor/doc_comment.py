@@ -73,16 +73,21 @@ def _non_discussion_body(text: str) -> str:
 def _new_thread_ids(baseline_text: str, current_text: str) -> tuple[str, ...]:
     """Threads present after the dispatch but absent before it.
 
-    Thread identity is the root comment's line with the status tag stripped
-    (a legal [OPEN]->[RESOLVED] flip is the same thread); pre-dispatch
-    threads never retrigger (AC-FR0234-02) and replies to an existing thread
-    are not new threads.
+    Thread identity is the root's (speaker, body) with the status dropped
+    (a legal resolve is the same thread); pre-dispatch threads never
+    retrigger (AC-FR0234-02) and replies to an existing thread are not new
+    threads.
     """
-    baseline_roots = {_root_identity(t.root_text) for t in parse_threads(baseline_text)}
+    baseline_roots = {
+        ident
+        for ident in (_line_identity(t.root_text) for t in parse_threads(baseline_text))
+        if ident is not None
+    }
     return tuple(
         t.thread_id
         for t in parse_threads(current_text)
-        if _root_identity(t.root_text) not in baseline_roots
+        if (ident := _line_identity(t.root_text)) is not None
+        and ident not in baseline_roots
     )
 
 
@@ -103,15 +108,21 @@ def _discussion_lines(text: str) -> list[str]:
     return lines
 
 
-_STATUS_TAG = re.compile(r"\[(OPEN|RESOLVED|REOPEN)\]", re.IGNORECASE)
-
-
-def _root_identity(root_text: str) -> str:
-    """Thread root identity with the status tag stripped: a legal status
-    flip ([OPEN] -> [RESOLVED]) is the SAME thread, not a new one (B26a
-    PRISM-B26A-R1-02 — otherwise resolving an old thread in-window pauses
-    the outcome in SM-02 with the adjudication unwired)."""
-    return _STATUS_TAG.sub("", root_text).strip()
+def _line_identity(raw_line: str) -> str | None:
+    """Discussion-line identity that is INVARIANT under legal status flips:
+    the canonical writer emits open roots WITHOUT a tag (``> **Prism:** x``)
+    and resolved ones with `` [RESOLVED]`` — so text-level tag stripping
+    leaves whitespace drift and misjudges a legal resolve as a rewrite
+    (PRISM-B26A-R2-01). Identity is parse_tag's (speaker, body); status is
+    deliberately dropped. Returns None for non-canonical lines."""
+    m = _BLOCKQUOTE.match(raw_line)
+    if m is None:
+        return None
+    parsed = parse_tag(m.group(2))
+    if parsed is None:
+        return None
+    speaker, _status, body = parsed
+    return f"{speaker}|{body}"
 
 
 def _classify_delta(
@@ -158,10 +169,14 @@ def _discussion_append_only(baseline_text: str, current_text: str) -> bool:
     (PRISM-B26A-R1-01/R1-02)."""
     current_counts: dict[str, int] = {}
     for line in _discussion_lines(current_text):
-        key = _root_identity(line)
+        key = _line_identity(line)
+        if key is None:
+            continue
         current_counts[key] = current_counts.get(key, 0) + 1
     for line in _discussion_lines(baseline_text):
-        key = _root_identity(line)
+        key = _line_identity(line)
+        if key is None:
+            continue
         if current_counts.get(key, 0) <= 0:
             return False
         current_counts[key] -= 1

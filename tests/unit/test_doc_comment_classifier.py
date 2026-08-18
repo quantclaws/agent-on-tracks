@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from tracks.executor.doc_comment import classify_design_document_deltas
 
-# A discussion thread as the canonical writer materializes it: a root
-# blockquote line plus the trac discuss blockquote body.
+# Canonical writer shapes (discuss/writer.py format_root): an OPEN root
+# carries NO status tag; resolving adds " [RESOLVED]" to the same root.
 _BASELINE = (
     "# Test Plan\n\n## 1\n\n"
-    "> **Prism [RESOLVED]:** finding one\n"
+    "> **Prism:** finding one\n"
     ">> **Shield:** reply to finding one\n"
 )
 
@@ -23,6 +23,11 @@ _REPLY_ONLY = _BASELINE + ">> **Shield:** second reply, same thread\n"
 
 _NEW_THREAD = _BASELINE + (
     "\n> **Shield:** brand new root thread\n"
+)
+
+# The same thread, legally resolved by its initiator (FR-090 path).
+_RESOLVED = _BASELINE.replace(
+    "> **Prism:** finding one", "> **Prism [RESOLVED]:** finding one"
 )
 
 
@@ -69,17 +74,23 @@ def test_deleting_a_baseline_thread_is_illegal():
 
 
 def test_rewriting_an_existing_comment_line_is_illegal():
-    baseline = _BASELINE.replace("reply to finding one", "reply to finding one")
-    current = _BASELINE.replace("reply to finding one", "TAMPERED TEXT")
-    deltas = _deltas(baseline, current)
+    current = _RESOLVED.replace("finding one", "TAMPERED TEXT")
+    deltas = _deltas(_BASELINE, current)  # status flip + body rewrite
     assert deltas[0].classification == "illegal_body_edit"
 
 
-def test_status_flip_on_old_thread_is_discussion_reply():
-    """[OPEN]->[RESOLVED] flip is the SAME thread (identity is
-    status-normalized) — resolves in-window must not pause (R1-02)."""
-    baseline = _BASELINE.replace("[RESOLVED]", "[OPEN]")
-    current = _BASELINE  # same content, status now RESOLVED
-    deltas = _deltas(baseline, current)
+def test_status_flip_cannot_smuggle_body_rewrite():
+    """PRISM-B26A-R2-01 probe E: a flip that ALSO rewrites the body is
+    illegal even though the flip alone is legal."""
+    deltas = _deltas(_BASELINE, _RESOLVED.replace("finding one", "other text"))
+    assert deltas[0].classification == "illegal_body_edit"
+
+
+def test_canonical_resolve_is_discussion_reply():
+    """PRISM-B26A-R2-01: the canonical writer's legal resolve (open root
+    gains " [RESOLVED]") is the SAME thread — must classify
+    discussion_reply, never illegal_body_edit (text-level tag stripping
+    leaves whitespace drift and used to misjudge this)."""
+    deltas = _deltas(_BASELINE, _RESOLVED)
     assert deltas[0].classification == "discussion_reply"
     assert deltas[0].new_thread_ids == ()
