@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
+index 7b07fac..130b862 100644
+--- a/tracks/executor/hotfix.py
++++ b/tracks/executor/hotfix.py
+@@ -150,4 +150,6 @@ def complete_hotfix_entry(
+     a half-built run. Idempotency markers = branch.created(fix/N) +
+     baseline.inherited events (per-kind reconcile, D-13).
+     """
+-    raise NotImplementedError("IF-HOTFIX-005: complete_hotfix_entry")
++    # COUNTEREXAMPLE: returns "fix/wrong" instead of "fix/{issue}"
++    # (contract: branch name must be fix/{issue}).
++    return {"branch": "fix/wrong", "target_version": target_version}

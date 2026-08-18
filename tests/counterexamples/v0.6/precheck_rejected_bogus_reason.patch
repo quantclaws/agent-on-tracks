@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
+index 7b07fac..1a1e05a 100644
+--- a/tracks/executor/hotfix.py
++++ b/tracks/executor/hotfix.py
+@@ -77,7 +77,10 @@ def precheck_hotfix(
+     carries a human-readable ``next`` (retry after completing the issue, or
+     use ``trac start``).
+     """
+-    raise NotImplementedError("IF-HOTFIX-003: precheck_hotfix")
++    from tracks.executor.hotfix import PrecheckReport  # noqa: F401
++    # COUNTEREXAMPLE: rejected with a reason NOT in the closed set.
++    return PrecheckReport(status="rejected", reason="bogus_reason",
++                          next="retry", target_version=None, active_branch=None)
+ 
+ 
+ def locate_target_version(

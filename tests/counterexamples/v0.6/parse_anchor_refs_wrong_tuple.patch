@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
+index 7b07fac..a0e4210 100644
+--- a/tracks/executor/hotfix.py
++++ b/tracks/executor/hotfix.py
+@@ -114,7 +114,9 @@ def parse_anchor_refs(acs: list[str]) -> list[tuple[str, str]]:
+     interfaces.md §1e). Malformed references (missing @version, bad id
+     shape) raise ``ValueError("IF-HOTFIX-004:<detail>")``.
+     """
+-    raise NotImplementedError("IF-HOTFIX-004: parse_anchor_refs")
++    # COUNTEREXAMPLE: drops the @version, returns ("AC-FR0030-01", "")
++    # instead of ("AC-FR0030-01", "v0.5") (contract: @version is required).
++    return [(ac.split("@")[0], "") for ac in acs]
+ 
+ 
+ def validate_anchor_refs(

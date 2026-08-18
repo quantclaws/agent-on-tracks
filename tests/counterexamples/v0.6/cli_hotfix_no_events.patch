@@ -1,0 +1,28 @@
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index 4cc5487..d8263d6 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -1091,6 +1091,15 @@ def cmd_check(repo: Path, *args) -> int:
+     return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
+ 
+ 
++def cmd_hotfix(repo: Path, *args: str) -> int:
++    """COUNTEREXAMPLE for IF-HOTFIX-001: returns exit 0 with a wrong
++    success message and writes NO events - deviates from the contract
++    which requires hotfix.requested + triage drive + stage=M-DESIGN line.
++    """
++    print("hotfix: ok (no events)")
++    return 0
++
++
+ USAGE = (
+     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
+     "|triage <decision> [--actor NAME]"
+@@ -1117,6 +1126,7 @@ _COMMANDS = {
+     "validate": (cmd_validate, 2),
+     "discuss": (cmd_discuss, None),
+     "check": (cmd_check, None),
++    "hotfix": (cmd_hotfix, None),
+ }
+ 
+ 
