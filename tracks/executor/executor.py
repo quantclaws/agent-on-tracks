@@ -1307,7 +1307,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if set(code_include) == set(changed):
             return None
         dirty = self._dirty_files()
-        if all(p in dirty and (self.repo / p).is_file() for p in code_include):
+        # PRISM-B28-R3-01: an include that declares no tests/ path at all is
+        # the extreme under-report — the grace branch must not pass vacuously
+        # on all([]).
+        if code_include and all(
+            p in dirty and (self.repo / p).is_file() for p in code_include
+        ):
             return None
         return (
             "artifact_manifest include paths do not match observed tests/ "
