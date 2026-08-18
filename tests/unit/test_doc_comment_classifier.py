@@ -56,3 +56,30 @@ def test_unchanged_and_body_edit_classifications_unchanged():
         current_documents={"test-plan.md": b"# changed body\n"},
     )
     assert deltas[0].classification == "illegal_body_edit"
+
+
+# -- PRISM-B26A-R1 boundary counterexamples ------------------------------
+
+
+def test_deleting_a_baseline_thread_is_illegal():
+    """Whole-thread deletion must not pass as discussion_reply (fail-open
+    regression PRISM-B26A-R1-01)."""
+    deltas = _deltas(_REPLY_ONLY, _BASELINE)  # current drops the second reply
+    assert deltas[0].classification == "illegal_body_edit"
+
+
+def test_rewriting_an_existing_comment_line_is_illegal():
+    baseline = _BASELINE.replace("reply to finding one", "reply to finding one")
+    current = _BASELINE.replace("reply to finding one", "TAMPERED TEXT")
+    deltas = _deltas(baseline, current)
+    assert deltas[0].classification == "illegal_body_edit"
+
+
+def test_status_flip_on_old_thread_is_discussion_reply():
+    """[OPEN]->[RESOLVED] flip is the SAME thread (identity is
+    status-normalized) — resolves in-window must not pause (R1-02)."""
+    baseline = _BASELINE.replace("[RESOLVED]", "[OPEN]")
+    current = _BASELINE  # same content, status now RESOLVED
+    deltas = _deltas(baseline, current)
+    assert deltas[0].classification == "discussion_reply"
+    assert deltas[0].new_thread_ids == ()

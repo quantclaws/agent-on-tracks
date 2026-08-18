@@ -140,7 +140,10 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
     # Same State-carried snapshot as M-IMPL: the WRITE re-dispatch reads the
     # verdict details from diagnose_report so provider-failure retries and
     # `trac retry --clear-evidence` never strip the diagnosis (FR-11).
-    s.diagnose_report = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    s.diagnose_report = {
+        k: p.get(k)
+        for k in ("check", "reason", "evidence", "log_ref", "attempt")
+    }
     if classification == "test_defect":
         s.substate = "WRITE"
         _reset_doc(s)

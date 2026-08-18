@@ -73,16 +73,45 @@ def _non_discussion_body(text: str) -> str:
 def _new_thread_ids(baseline_text: str, current_text: str) -> tuple[str, ...]:
     """Threads present after the dispatch but absent before it.
 
-    Thread identity is the root comment's raw line; pre-dispatch threads never
-    retrigger (AC-FR0234-02) and replies to an existing thread are not new
-    threads.
+    Thread identity is the root comment's line with the status tag stripped
+    (a legal [OPEN]->[RESOLVED] flip is the same thread); pre-dispatch
+    threads never retrigger (AC-FR0234-02) and replies to an existing thread
+    are not new threads.
     """
-    baseline_roots = {t.root_text for t in parse_threads(baseline_text)}
+    baseline_roots = {_root_identity(t.root_text) for t in parse_threads(baseline_text)}
     return tuple(
         t.thread_id
         for t in parse_threads(current_text)
-        if t.root_text not in baseline_roots
+        if _root_identity(t.root_text) not in baseline_roots
     )
+
+
+def _discussion_lines(text: str) -> list[str]:
+    """Every canonical discussion line (the exact lines _non_discussion_body
+    strips). Used for the append-only check on preserved-body deltas."""
+    lines: list[str] = []
+    in_fence = False
+    for raw in text.splitlines():
+        if _FENCE.match(raw):
+            in_fence = not in_fence
+            continue
+        if in_fence or not raw.strip():
+            continue
+        m = _BLOCKQUOTE.match(raw)
+        if m is not None and parse_tag(m.group(2)) is not None:
+            lines.append(raw)
+    return lines
+
+
+_STATUS_TAG = re.compile(r"\[(OPEN|RESOLVED|REOPEN)\]", re.IGNORECASE)
+
+
+def _root_identity(root_text: str) -> str:
+    """Thread root identity with the status tag stripped: a legal status
+    flip ([OPEN] -> [RESOLVED]) is the SAME thread, not a new one (B26a
+    PRISM-B26A-R1-02 — otherwise resolving an old thread in-window pauses
+    the outcome in SM-02 with the adjudication unwired)."""
+    return _STATUS_TAG.sub("", root_text).strip()
 
 
 def _classify_delta(
@@ -95,12 +124,15 @@ def _classify_delta(
 
     Unchanged bytes classify ``none``; a change outside the role's allowed set,
     or inside it without full body preservation, classifies
-    ``illegal_body_edit``. A preserved-body change WITH new root threads is
-    ``legal_discussion`` (SM-02 interception); a preserved-body change with
-    NO new threads — replies to pre-existing threads, status edits on old
-    threads — is ``discussion_reply`` and never triggers the pause (flow.md
-    §10.4: 旧线程、他人回复不触发截获; B26a/#28: reply-only deltas were
-    deadlocking live runs in DETECTED with empty thread_ids).
+    ``illegal_body_edit``. A preserved-body delta is then held to the
+    discussion append-only rule (PRISM-B26A-R1-01): every baseline discussion
+    line must survive verbatim — deleting a thread or rewriting an existing
+    comment line is ``illegal_body_edit`` (fail-closed, review records are
+    append-only). A surviving delta WITH new root threads (identity
+    status-normalized) is ``legal_discussion`` (SM-02 interception); with NO
+    new threads — replies to pre-existing threads, legal status flips — it is
+    ``discussion_reply`` and never triggers the pause (flow.md §10.4: 旧线
+    程、他人回复不触发截获; B26a/#28).
     """
     if baseline_bytes == current_bytes:
         return "none", ()
@@ -110,10 +142,30 @@ def _classify_delta(
     current_text = current_bytes.decode("utf-8", errors="replace")
     if _non_discussion_body(baseline_text) != _non_discussion_body(current_text):
         return "illegal_body_edit", ()
+    if not _discussion_append_only(baseline_text, current_text):
+        return "illegal_body_edit", ()
     new_threads = _new_thread_ids(baseline_text, current_text)
     if not new_threads:
         return "discussion_reply", ()
     return "legal_discussion", new_threads
+
+
+def _discussion_append_only(baseline_text: str, current_text: str) -> bool:
+    """Baseline discussion lines must survive into current ones, compared
+    with status tags stripped: replies may be appended, threads added, and a
+    thread's status tag legally flipped ([OPEN]->[RESOLVED]) — but no
+    baseline comment content may be deleted or rewritten
+    (PRISM-B26A-R1-01/R1-02)."""
+    current_counts: dict[str, int] = {}
+    for line in _discussion_lines(current_text):
+        key = _root_identity(line)
+        current_counts[key] = current_counts.get(key, 0) + 1
+    for line in _discussion_lines(baseline_text):
+        key = _root_identity(line)
+        if current_counts.get(key, 0) <= 0:
+            return False
+        current_counts[key] -= 1
+    return True
 
 
 # Fixture-domain canonical "current" identity constants used by the R-test

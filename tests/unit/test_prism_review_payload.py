@@ -433,7 +433,10 @@ def test_run_tests_verdict_carries_findings_and_log_ref(monkeypatch, tmp_path):
     payload = verdicts[0]["payload"]
     assert payload["evidence"] and payload["evidence"][0]["test_id"].startswith("tests/")
     assert payload["log_ref"]
-    blob = paths_blobs(store) / payload["log_ref"]
+    import os
+
+    blob = paths_blobs(store) / os.path.basename(payload["log_ref"])
+    assert payload["log_ref"].startswith(".tracks/runtime/blobs/")
     assert blob.exists()
     assert "assert 1 == 2" in blob.read_text(encoding="utf-8")
     reds = [e for e in emitted if e["type"] == "red.validated"]

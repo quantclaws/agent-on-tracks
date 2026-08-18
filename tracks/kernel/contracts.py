@@ -17,8 +17,10 @@ WRITE_MANIFEST_CONTRACT: dict = {
     "fields": {
         "artifact_manifest.include": (
             "本次 dispatch 你创建或修改的每一个文件的仓库相对路径，逐项 "
-            "{'path': ..., 'kind': ..., 'role': ...}；include 集合必须与实际落盘"
-            "文件集完全一致——运行时逐文件比对，多报或漏报均判 manifest_malformed"
+            "{'path': ..., 'kind': ..., 'role': ...}；include 必须覆盖 [layout.shield] "
+            "声明目录（如 tests/integration、tests/e2e、tests/counterexamples）下你"
+            "实际落盘的全部文件——运行时逐文件比对，失配发 verdict.failed(check=manifest)"
+            "（仅当重试时文件全部已存在且为 dirty 才有幂等宽限）"
         ),
         "suggested_commit_message": "非空一行提交信息；空串或缺失判 manifest_malformed",
     },

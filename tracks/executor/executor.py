@@ -63,7 +63,7 @@ from tracks.executor.worktree import (
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
 from tracks.kernel.machine import _REVIEW_SUBSTATE, State, decide
-from tracks.project import ContractError, load_contract, validate_layout
+from tracks.project import ContractError, lint_check_command, load_contract, validate_layout
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
@@ -308,7 +308,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _enrich_shield_write_params(self, params: dict, state: State) -> None:
         """D-28: enrich Shield WRITE assignments with structured test_tasks
-        parsed from test-plan §8 and the pre-dirty content snapshot."""
+        parsed from test-plan §8 and the pre-dirty content snapshot.
+
+        B28/#30 slim (PRISM-B28-R1-01): also materialize ``commands.guard``
+        (ruff + the project contract's [lint] check) so the writer-manifest
+        contract's self-check references a real command for M-TEST WRITE and
+        M-IMPL SHIELD_FIX alike — commands were previously only materialized
+        on the M-IMPL Devon path."""
         if not (
             params.get("role") == "shield"
             and params.get("substate") == "WRITE"
@@ -321,6 +327,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             assignment["test_tasks"] = parse_test_tasks(
                 vdir / "acceptance.md", vdir / "test-plan.md"
             )
+        if not assignment.get("commands"):
+            guard = [".venv/bin/ruff check"]
+            lint_cmd = lint_check_command(self.repo)
+            if lint_cmd and lint_cmd not in guard:
+                guard.append(lint_cmd)
+            assignment["commands"] = {"guard": guard}
         params["assignment"] = assignment
         params["pre_dirty"] = sorted(self._dirty_files())
         params["pre_dirty_snapshot"] = self._dirty_snapshot()
@@ -1792,26 +1804,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
             )
 
+    def _red_log_blob_ref(self, payload: dict) -> str | None:
+        """B21/#23 (PRISM-B21-R1-01/R1-03): persist the full RED logs and
+        return a fixer-usable blobs PATH (the m_impl_runtime convention), or
+        None when the best-effort write fails — callers pass it through."""
+        ref = self.store.write_audit_blob(payload)
+        if not ref:
+            return None
+        return f".tracks/runtime/blobs/{ref}"
+
     def _do_run_tests(self, cmd, state, task_id, reconcile):
         """SM-01.9: Runtime independently re-runs integration/e2e via the host
         project contract's ``run`` command and classifies each failure
         (FR-0050). All-legit -> red.validated(valid) -> EXIT; any illegit or
         unexpected pass -> red.validated(invalid) -> DIAGNOSE.
 
-        B21/#23: the full per-section logs are persisted to a blob and the
-        verdict carries findings + log_ref — the DIAGNOSE fixer gets the
-        actual output, not just classification labels."""
+        B21/#23: on failure the full per-section logs are persisted to a
+        blob and the verdict carries findings + a blobs PATH (the
+        m_impl_runtime fixer-facing convention) — the DIAGNOSE fixer gets
+        the actual output, not just classification labels. The all-legit
+        path emits without a blob (no orphan writes; DIAGNOSE never runs)."""
         results, error = self._run_contract_sections(cmd, state, "run")
-        log_ref = self.store.write_audit_blob(
-            {"error": error} if error is not None
-            else {
-                "sections": [
-                    {"name": n, "returncode": rc, "stdout": out, "stderr": err}
-                    for n, rc, out, err in results
-                ]
-            }
-        )
         if error is not None:
+            log_ref = self._red_log_blob_ref({"error": error})
             findings = [{"test_id": "*", "classification": "collection_error", "detail": error}]
             self._emit(
                 "red.validated",
@@ -1853,6 +1868,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             return
         # Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed.
+        log_ref = self._red_log_blob_ref(
+            {
+                "sections": [
+                    {"name": n, "returncode": rc, "stdout": out, "stderr": err}
+                    for n, rc, out, err in results
+                ]
+            }
+        )
         self._emit(
             "red.validated",
             {"status": "invalid", "findings": findings, "log_ref": log_ref},

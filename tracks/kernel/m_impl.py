@@ -243,7 +243,10 @@ def _on_m_impl_verdict_failed(s: State, p: dict) -> None:
         # Snapshot the full verdict details: SHIELD_FIX re-dispatches (any
         # attempt, even after `trac retry --clear-evidence`) read them from
         # State so the fixer never re-derives Prism's analysis.
-        s.diagnose_report = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+        s.diagnose_report = {
+            k: p.get(k)
+            for k in ("check", "reason", "evidence", "log_ref", "attempt")
+        }
         _route_m_impl_diagnose(s, check)
         return
     _route_m_impl_gate_failure(s, check)
@@ -425,8 +428,6 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     phase = sub.lower()  # "red", "green", "refactor"
     assignment = _m_impl_base_assignment(s, "devon", sub, ["tracks-devon-rgr"])
     assignment["phase"] = phase
-    # B28/#30 slim: front-load the manifest contract alongside the phase.
-    assignment["manifest_contract"] = dict(WRITE_MANIFEST_CONTRACT)
     assignment["task_id"] = s.current_task_id
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph
@@ -518,6 +519,9 @@ def _m_impl_shield_dispatch(s: State) -> Command:
     agent substate is WRITE per test_dispatch_materialization.py lines 35-43.
     """
     assignment = _m_impl_base_assignment(s, "shield", "WRITE", ["tracks-discuz"])
+    # B28/#30 slim (PRISM-B28-R1-04): same writer manifest contract as the
+    # M-TEST Shield WRITE dispatch — SHIELD_FIX returns a manifest too.
+    assignment["manifest_contract"] = dict(WRITE_MANIFEST_CONTRACT)
     # SHIELD_FIX writes tests for the diagnosed defect: derive the Shield
     # WRITE test_tasks contract from the current task metadata. The base
     # assignment leaves test_tasks=None, which the executor rejects as
