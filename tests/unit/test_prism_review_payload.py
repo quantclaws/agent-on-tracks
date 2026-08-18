@@ -383,3 +383,64 @@ def test_design_payload_passthrough_threads_fields(monkeypatch, tmp_path):
     assert domain["review_ref"]
     assert "review_body" not in domain
     assert payload["requires_diff"] is True  # doc-anchored channel unchanged
+
+
+# -- B21/#23: RED_CHECK evidence relay ------------------------------------
+
+
+def test_run_tests_verdict_carries_findings_and_log_ref(monkeypatch, tmp_path):
+    """B21: invalid Red verdicts must carry per-test findings + a blobs ref
+    to the full logs, or the DIAGNOSE fixer re-derives everything."""
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(tmp_path)
+    emitted = []
+    monkeypatch.setattr(
+        Executor,
+        "_emit",
+        lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
+    )
+
+    def fake_sections(self, cmd, state, section):
+        return [
+            (
+                "tests/integration/test_a.py::test_x",
+                1,
+                "E   assert 1 == 2",
+                "",
+            ),
+            ("tests/integration/test_a.py::test_collection_broken", 2, "ImportError", ""),
+        ], None
+
+    monkeypatch.setattr(Executor, "_run_contract_sections", fake_sections)
+    monkeypatch.setattr(
+        Executor, "_diagnose_classification", lambda self: "test_defect", raising=True
+    )
+    ex = object.__new__(Executor)
+    ex.store = store
+
+    class _State:
+        stage = "M-TEST"
+        current_attempt = 0
+
+    class _Cmd:
+        command_id = "c1"
+
+    ex._do_run_tests(_Cmd(), _State(), None, False)
+    verdicts = [e for e in emitted if e["type"] == "verdict.failed"]
+    assert verdicts, emitted
+    payload = verdicts[0]["payload"]
+    assert payload["evidence"] and payload["evidence"][0]["test_id"].startswith("tests/")
+    assert payload["log_ref"]
+    blob = paths_blobs(store) / payload["log_ref"]
+    assert blob.exists()
+    assert "assert 1 == 2" in blob.read_text(encoding="utf-8")
+    reds = [e for e in emitted if e["type"] == "red.validated"]
+    assert reds[0]["payload"]["log_ref"] == payload["log_ref"]
+
+
+def paths_blobs(store):
+    from tracks import paths
+
+    return paths.blobs_dir(store.home)

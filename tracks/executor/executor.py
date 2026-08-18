@@ -1796,13 +1796,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """SM-01.9: Runtime independently re-runs integration/e2e via the host
         project contract's ``run`` command and classifies each failure
         (FR-0050). All-legit -> red.validated(valid) -> EXIT; any illegit or
-        unexpected pass -> red.validated(invalid) -> DIAGNOSE."""
+        unexpected pass -> red.validated(invalid) -> DIAGNOSE.
+
+        B21/#23: the full per-section logs are persisted to a blob and the
+        verdict carries findings + log_ref — the DIAGNOSE fixer gets the
+        actual output, not just classification labels."""
         results, error = self._run_contract_sections(cmd, state, "run")
+        log_ref = self.store.write_audit_blob(
+            {"error": error} if error is not None
+            else {
+                "sections": [
+                    {"name": n, "returncode": rc, "stdout": out, "stderr": err}
+                    for n, rc, out, err in results
+                ]
+            }
+        )
         if error is not None:
             findings = [{"test_id": "*", "classification": "collection_error", "detail": error}]
             self._emit(
                 "red.validated",
-                {"status": "invalid", "findings": findings},
+                {"status": "invalid", "findings": findings, "log_ref": log_ref},
                 command_id=cmd.command_id,
             )
             self._emit(
@@ -1812,6 +1825,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "target_stage": "M-DESIGN",
                     "artifact_disposition": "rollback",
                     "reason": error,
+                    "evidence": findings,
+                    "log_ref": log_ref,
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,
@@ -1839,7 +1854,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         # Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed.
         self._emit(
-            "red.validated", {"status": "invalid", "findings": findings}, command_id=cmd.command_id
+            "red.validated",
+            {"status": "invalid", "findings": findings, "log_ref": log_ref},
+            command_id=cmd.command_id,
         )
         classification = self._diagnose_classification()
         self._emit(
@@ -1858,6 +1875,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     ),
                     "invalid",
                 ),
+                "evidence": findings,
+                "log_ref": log_ref,
                 "attempt": state.current_attempt + 1,
             },
             command_id=cmd.command_id,

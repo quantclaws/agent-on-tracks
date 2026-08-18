@@ -568,7 +568,7 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "attempt")}
+    s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "log_ref", "attempt")}
     is_human = bool(s.active_result and s.active_result.get("actor_kind") == "human")
     s.active_result = None  # v0.5: pipeline failure clears the checkpoint
     if is_human:
