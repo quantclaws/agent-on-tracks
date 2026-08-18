@@ -25,7 +25,7 @@ from tracks.discuss.parser import parse_tag, parse_threads
 
 DocCommentRole = Literal["devon", "shield"]
 DocGapRoute = Literal["design_gap", "agent_correction"]
-DocDeltaClass = Literal["none", "legal_discussion", "illegal_body_edit"]
+DocDeltaClass = Literal["none", "legal_discussion", "discussion_reply", "illegal_body_edit"]
 
 # IF-DOCGAP-001 §1k (AC-FR0234-02): role comment scope is a closed contract.
 ROLE_ALLOWED_DOCS: dict[DocCommentRole, frozenset[str]] = {
@@ -94,8 +94,13 @@ def _classify_delta(
     """One document's classification and its new thread ids.
 
     Unchanged bytes classify ``none``; a change outside the role's allowed set,
-    or inside it without full body preservation and parseable new discussion,
-    classifies ``illegal_body_edit``; otherwise ``legal_discussion``.
+    or inside it without full body preservation, classifies
+    ``illegal_body_edit``. A preserved-body change WITH new root threads is
+    ``legal_discussion`` (SM-02 interception); a preserved-body change with
+    NO new threads — replies to pre-existing threads, status edits on old
+    threads — is ``discussion_reply`` and never triggers the pause (flow.md
+    §10.4: 旧线程、他人回复不触发截获; B26a/#28: reply-only deltas were
+    deadlocking live runs in DETECTED with empty thread_ids).
     """
     if baseline_bytes == current_bytes:
         return "none", ()
@@ -105,7 +110,10 @@ def _classify_delta(
     current_text = current_bytes.decode("utf-8", errors="replace")
     if _non_discussion_body(baseline_text) != _non_discussion_body(current_text):
         return "illegal_body_edit", ()
-    return "legal_discussion", _new_thread_ids(baseline_text, current_text)
+    new_threads = _new_thread_ids(baseline_text, current_text)
+    if not new_threads:
+        return "discussion_reply", ()
+    return "legal_discussion", new_threads
 
 
 # Fixture-domain canonical "current" identity constants used by the R-test

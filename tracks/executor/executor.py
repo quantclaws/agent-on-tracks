@@ -624,6 +624,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         Returns True when the outcome is routed to doc-gap adjudication
         (rejected or paused) instead of the ordinary validate/checkpoint path.
         Precedence: illegal_body_edit > legal_discussion > ordinary.
+        ``discussion_reply`` deltas (replies to pre-existing threads, no new
+        roots) pass through to the ordinary path — no SM-02 pause (B26a/#28).
         """
         if doc_gap is None:
             return False
