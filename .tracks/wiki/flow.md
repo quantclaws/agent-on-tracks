@@ -962,14 +962,15 @@ stateDiagram-v2
 
 ### 16.1. 适用性与入口（v0.6）
 
-1. `bug_fix` 只适用于目标版本（已发布或开发中）相对既有 approved Spec/AC 的**实现偏差**；Runtime 先验证 GitHub Issue、source contract、目标版本、可复现失败；实际是新行为 → 退出 hotfix，进 backlog/new feature。
-2. 入口命令 `trac hotfix <issue> --scenario post-release|dev`（v0.6 用户裁定）：`<issue>` 是宿主 repo 的 GitHub issue 号，作为该 hotfix 的需求追踪身份（对应 feature release 中 M-REQ-APPROVAL 产生的 Issues）；`--scenario` 显式声明场景（`post-release` = 场景 A，`dev` = 场景 B），必填——缺省时 Runtime 询问 Human，不从 issue 推断。Runtime 验证通过后创建隔离 `fix/{issue}` 分支、建立 hotfix run，直接 `stage.entered(M-DESIGN)`；不走 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL——需求基线继承目标版本已批准的三件套与设计基线（source approval，不重新批准）。
+1. `bug_fix` 只适用于目标版本（已发布或开发中）相对既有 approved Spec/AC 的**实现偏差**。入口先过 HOTFIX-TRIAGE 子状态机（§16.4）：程序预检（issue 必须为 bug 类型；宿主 bug template 提供版本与对应 FR/NFR 字段，均可选——终端用户无法知道编号，字段仅作辅助、不完全采信）+ Sage 语义锚定（依据 issue 场景/症状与可选字段，在目标版本及历史版本的 spec/acc 中锚定对应 AC）。锚定不成立 → 按 feature 处理以补齐程序行为规范（§16.4 FEATURE_ROUTE）。
+2. 入口命令 `trac hotfix <issue> --scenario post-release|dev`（v0.6 用户裁定）：`<issue>` 是宿主 repo 的 GitHub issue 号，作为该 hotfix 的需求追踪身份（对应 feature release 中 M-REQ-APPROVAL 产生的 Issues）；`--scenario` 显式声明场景（`post-release` = 场景 A，`dev` = 场景 B），必填——缺省时 Runtime 询问 Human，不从 issue 推断。Runtime 建立 hotfix run 并运行 §16.4 入口 triage；锚定确认后创建隔离 `fix/{issue}` 分支、直接 `stage.entered(M-DESIGN)`；不走 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL——需求基线继承目标版本已批准的三件套与设计基线（source approval，不重新批准）。
 3. 两个场景，按修复的受众划分（`--scenario` 的取值即场景声明；场景是产品决定，由 Human 在入口指定）：
    - **场景 A · `post-release` · 已发布版本 hotfix**：目标是为全体用户发布 hotfix。`fix/{issue}` 始终从 main checkout；修复后 merge 回 main；存在活跃 release 分支时，同一修复还须 merge 进活跃 release 分支（防止下个版本重新携带缺陷）；冲突 → `needs_attention`。
    - **场景 B · `dev` · 开发中版本 hotfix**：目标是供开发者自己与 alpha/beta 用户使用。`fix/{issue}` 从当前活跃 release 分支 checkout；修复后 merge 回活跃分支；不直接 merge main——修复随活跃分支的正式发布一并进入 main（该合并不属于 hotfix 流程）；不建新发布机制，修复经在开发版本的既有 pre-release/开发渠道到达 alpha/beta。
 
 > **Aaron:** 如何判断是新行为？如果能在过往版本中找到 spec/acc，则是 bug，否则是新 feature. 但难度也在于此，如何找到对应的 spec/acc? 谁来完成此任务？
 >> **Maestro:** 判定是程序验证 + 语义锚定的组合，不需要 Human 做技术判断：入口处 Runtime 程序化验证 issue 能定位到目标版本（issue 元数据/指认的版本与 AC 引用，缺失则要求补全后重试）；进入 M-DESIGN 后由 Archer 在 delta 设计中锚定所偏离的 FR/AC（引用目标版本 spec/acceptance 的既有条目），Prism 复核该锚定。锚定不成立 = 不是实现偏差 → 退出 hotfix 转 backlog/new feature（§16.1.1）。
+>> **Maestro（2026-08-19 更新，用户裁定）:** 上述“Archer 在 M-DESIGN 锚定”已前移：锚定在入口 triage 由 **Sage** 完成（HOTFIX-TRIAGE，§16.4）——语义关联属需求语义，归 Sage；issue 的可选 FR/NFR 字段仅辅助、不完全采信；M-DESIGN 的 Archer 承接锚定 AC 集合，Prism 复核。锚定不成立（含“功能早于规范文档存在”）经 Human 确认后转 feature 补齐行为规范。
 
 ### 16.2. 自 M-DESIGN 起复用 feature release
 
@@ -989,6 +990,67 @@ hotfix 一律从 M-DESIGN 进入（v0.6 起废除 quick_rgr 免设计分流：�
 
 > **Aaron:** hotfix 期间，允许有两个并发分支，但不允许有两个并发开发活动，即**不允许**同时运行两个 trac 命令，一个在 feature, 一个在 hotfix 中。
 >> **Maestro:** 已并入 §16.3.7 正文（并发分支允许、并发开发活动禁止；同一时刻单个 trac 开发命令）。
+
+### 16.4. 入口 triage 子状态机（HOTFIX-TRIAGE，v0.6）
+
+**目的**：解决“如何找到对应既有 AC”（Aaron 问题；用户裁定 2026-08-19）：`trac hotfix` 入口先做一次 triage——程序预检 + Sage 语义锚定——把 issue 关联到目标版本（或历史版本）spec/acc 的既有 AC，锚定确认后才进入 M-DESIGN。HOTFIX-TRIAGE 是 hotfix 入口的附属子状态机（类比 M-START 的子状态集），**不是** canonical 顶层阶段、不进入 §1 序列；其事件落在 hotfix run 自己的事件流（run 于入口即建立）。
+
+**分工**（确定性归 Runtime，语义归 Sage）：
+
+- Runtime 程序预检（无 LLM）：issue 存在且 **type=bug**（宿主 bug issue template 提供“版本 / 对应 FR/NFR”字段，**均可选**——终端用户不可能知道编号，字段仅作辅助、不完全采信）；`--scenario` 合法；`dev` 场景需存在活跃 release 分支。
+- Sage 语义锚定：依据 issue 的场景/症状与可选 FR/NFR 字段（辅助），在**目标版本及历史版本**的 spec.md/acceptance.md 中自行决定对应的 AC 集合；输出逐条锚定理由与出处（版本+条目），或 NO_ANCHOR 报告（含已检索的版本与语料清单）。
+- Runtime 程序校验锚定输出：所引每条 AC 必须真实存在于所指版本的 acceptance.md；引用不实 = validate fail 重派。
+
+```mermaid
+stateDiagram-v2
+    direction TB
+
+    [*] --> PRECHECK : trac hotfix <issue> --scenario post-release|dev
+
+    PRECHECK : 程序预检（确定性，无 LLM）
+    PRECHECK : issue 存在且 type=bug（宿主 bug template）
+    PRECHECK : 读取可选字段：版本 / 对应 FR/NFR（辅助，不完全采信）
+    PRECHECK : --scenario 合法；dev 需存在活跃 release 分支
+    PRECHECK --> SAGE_TRIAGE : 预检通过
+    PRECHECK --> REJECTED : 非 bug / issue 不可定位 / scenario 不合法
+
+    REJECTED : 不建 fix 分支
+    REJECTED : 报告原因与下一步（改走 feature 流程或补全 issue）
+    REJECTED --> [*]
+
+    SAGE_TRIAGE : dispatch Sage（语义 triage）
+    SAGE_TRIAGE : 输入 = issue 场景/症状 + 可选 FR/NFR 字段
+    SAGE_TRIAGE : 语料 = 目标版本及历史版本 spec.md / acceptance.md
+    SAGE_TRIAGE : 输出 = 锚定 AC 集合 + 逐条理由与出处（版本+条目）
+    SAGE_TRIAGE : 或 NO_ANCHOR 报告（含已检索版本与语料清单）
+
+    SAGE_TRIAGE --> ANCHORED : 锚定 outcome 且程序校验通过
+    SAGE_TRIAGE --> SAGE_TRIAGE : 校验失败, 重派 Sage (<=3)
+    SAGE_TRIAGE --> AWAIT_HUMAN : NO_ANCHOR 或 3 次未产出合法锚定
+
+    AWAIT_HUMAN : awaiting_human
+    AWAIT_HUMAN : Human 指认 AC（人工锚定）或确认转 feature
+    AWAIT_HUMAN --> ANCHORED : Human 指认 AC
+    AWAIT_HUMAN --> FEATURE_ROUTE : 确认无对应 AC
+
+    ANCHORED : Runtime 记录 issue→AC 锚定（M-DESIGN baseline 输入）
+    ANCHORED : 创建隔离 fix/{issue} 分支 + 继承基线
+    ANCHORED --> [*] : stage.entered(M-DESIGN)
+
+    FEATURE_ROUTE : 不是实现偏差，两种成因同路
+    FEATURE_ROUTE : 一 spec/acc 存在但 Sage 无法关联
+    FEATURE_ROUTE : 二 功能早于规范文档存在（无 spec/acc 可引）
+    FEATURE_ROUTE --> [*] : 退出 hotfix -> backlog/new feature
+    FEATURE_ROUTE : 行为规范补齐走 feature release（含补写 spec/AC）
+```
+
+**规则**：
+
+1. **锚定是 M-DESIGN 的输入，不是终点**：Archer 的 delta 设计必须承接锚定 AC 集合（逐条引用），Prism 在 M-DESIGN 评审时复核锚定；Prism 推翻锚定 → 回 SAGE_TRIAGE 重新锚定（上游产物缺陷，不消费 M-DESIGN 重派预算）。
+2. **两种 NO_ANCHOR 成因同路转 feature**（用户裁定）：spec/acc 存在但 Sage 无法关联；或功能存在于历史版本、当时尚无规范 spec/acc 文档——都按 feature 处理，以便经 feature release 补齐程序行为规范；转出是产品决定，需 Human 确认（AWAIT_HUMAN），不自动转。
+3. **预算**：SAGE_TRIAGE 校验失败重派 ≤3；第 3 次仍未产出合法锚定 → AWAIT_HUMAN（Human 可人工锚定或确认转 feature），不自动转 feature。
+4. **无分支副作用**：REJECTED 与 FEATURE_ROUTE 不创建 `fix/{issue}` 分支；分支只在 ANCHORED 创建（Runtime 是唯一 branch authority）。
+5. **事件**：`hotfix.requested` / `triage.prechecked` / `command.issued` / `outcome.received` / `anchor.validated` / `human.anchor(manual|feature_route)` / `stage.entered(M-DESIGN)` / `backlog.recorded`。
 
 ## 17. 通用返回、修改与恢复规则
 
