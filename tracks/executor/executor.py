@@ -540,10 +540,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     @staticmethod
     def _assignment_with_evidence(assignment: dict | None, params: dict) -> dict | None:
-        if params.get("evidence") is None:
+        # D-35: carry the dispatch's stage into the assignment context so the
+        # backend can apply stage-scoped review contracts (M-TEST/M-IMPL
+        # structured findings vs M-DESIGN doc-anchored threads, SC-D35 §2.1).
+        enriched_stage = params.get("stage")
+        if params.get("evidence") is None and enriched_stage is None:
             return assignment
         enriched = dict(assignment or {})
-        enriched["evidence"] = params["evidence"]
+        if params.get("evidence") is not None:
+            enriched["evidence"] = params["evidence"]
+        if enriched_stage is not None:
+            enriched["stage"] = enriched_stage
         return enriched
 
     def _emit_stale_assignment(

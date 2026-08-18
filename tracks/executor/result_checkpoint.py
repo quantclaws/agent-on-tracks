@@ -256,6 +256,14 @@ class ResultCheckpointMixin:
                 val = result.get(key)
                 if val:
                     domain_payload[key] = val
+            # D-35 (SC-D35 §2.3): the full review body is content-addressed
+            # into blobs/ and referenced by sha; it never rides inline in the
+            # event payload (AC-FR0240-02).
+            review_body = result.get("review_body")
+            if isinstance(review_body, str) and review_body.strip():
+                review_ref = self.store.write_audit_blob(review_body)
+                if review_ref:
+                    domain_payload["review_ref"] = review_ref
         return {
             "source": "prism",
             "stage": "M-TEST",
@@ -975,6 +983,15 @@ class ResultCheckpointMixin:
                 # Never publish defect_classification=null (the reducer would
                 # see a present null instead of a missing key).
                 payload["defect_classification"] = defect_classification
+            # D-35 (SC-D35 §2.3, B23): thread the structured review fields
+            # from the result pipeline's domain payload into the published
+            # event — without this the verdict event carries no findings and
+            # the revise re-dispatch evidence stays empty (live run 01M0AMKV
+            # PRISM rounds 1-3, 2026-08-18).
+            for key in ("review_summary", "findings", "review_ref", "discussion_refs"):
+                val = domain_payload.get(key)
+                if val:
+                    payload[key] = val
         self._emit("prism.verdict", payload, command_id=cmd.command_id, task_id=task_id)
         if verdict != "pass" and state.stage == "M-DESIGN":
             self._emit(

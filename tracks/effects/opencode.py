@@ -111,6 +111,35 @@ class OpencodeBackend:
         self.debug = debug
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
 
+    def _dispatch_doc_paths(
+        self,
+        role: str,
+        doc_path: Path | None,
+        assignment: dict | None,
+        worktree: Path | None,
+        root: Path,
+    ) -> list[Path]:
+        """Target doc paths for a dispatch, shifted into the writer's view.
+
+        Devon always works on its manifest paths; other writer dispatches
+        (Shield WRITE) get the executor's main-tree absolutes shifted into
+        the isolated worktree so the Auditor matches what it observes there
+        (B1 Prism blocker fix)."""
+        doc_paths = self._target_paths(doc_path, assignment)
+        if role == "devon":
+            return [
+                root / path
+                for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
+            ]
+        if worktree is not None:
+            return [
+                root / p.relative_to(self.repo)
+                if p.is_absolute() and p.is_relative_to(self.repo)
+                else p
+                for p in doc_paths
+            ]
+        return doc_paths
+
     # -- AgentBackend -------------------------------------------------------
 
     def act(
@@ -133,23 +162,7 @@ class OpencodeBackend:
         if name is None:
             return self._unknown_role_result(role, prompt, console_input)
 
-        doc_paths = self._target_paths(doc_path, assignment)
-        if role == "devon":
-            doc_paths = [
-                root / path
-                for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
-            ]
-        elif worktree is not None:
-            # Non-Devon writer dispatches (Shield WRITE): doc paths arrive
-            # as main-tree absolutes from the executor; shift them into the
-            # worktree view so the Auditor matches them against what it
-            # observes there (B1 Prism blocker fix).
-            doc_paths = [
-                root / p.relative_to(self.repo)
-                if p.is_absolute() and p.is_relative_to(self.repo)
-                else p
-                for p in doc_paths
-            ]
+        doc_paths = self._dispatch_doc_paths(role, doc_path, assignment, worktree, root)
         cleanup_infos: list = []
         proc = None
         # Reviewer verdict derivation: M-TEST review substates end in
@@ -189,6 +202,14 @@ class OpencodeBackend:
             )
             proc = self._run(name, prompt, cwd=root)
             self._check_json(proc)
+            # D-35 (SC-D35 §2.2): M-TEST/M-IMPL reviewers deliver findings via
+            # a structured final JSON payload. Parse before the audits so the
+            # discussion gate can exempt a structured revise.
+            review_failure = self._review_channel_failure(
+                role, substate, assignment, proc, prompt, console_input
+            )
+            if review_failure is not None:
+                return review_failure
             manifest_info, manifest_error = self._manifest_for_dispatch(
                 role,
                 substate,
@@ -210,9 +231,14 @@ class OpencodeBackend:
                 console_input,
                 author,
                 reviewer_assignment,
+                structured_findings=self._has_structured_findings(
+                    role, substate, assignment, proc
+                ),
             )
             return self._attach_dispatch_metadata(
-                result,
+                self._merge_review_payload(
+                    result, role, substate, assignment, proc, prompt, console_input
+                ),
                 role,
                 substate,
                 manifest_info,
@@ -365,6 +391,7 @@ class OpencodeBackend:
         console_input: str | None,
         author_assignment: bool,
         reviewer_assignment: bool,
+        structured_findings: bool = False,
     ) -> dict:
         diff_ref = _capture_target_diffs(auditor, doc_paths, substate, proc)
         # Every dispatch gets ONE atomic audit/rollback decision (Blocker 2):
@@ -406,6 +433,7 @@ class OpencodeBackend:
             prompt,
             console_input,
             reviewer_assignment,
+            structured_findings=structured_findings,
         )
         if audit is not None:
             return audit
@@ -682,10 +710,17 @@ class OpencodeBackend:
         prompt: str,
         console_input: str | None,
         reviewer_assignment: bool,
+        structured_findings: bool = False,
     ) -> dict | None:
         """Discussion-state audits (flow.md 不变量 6 / arch.md 永不信自述): the
         outcome is classified from the doc's discussion state, never the
-        agent's report. Returns the failed-outcome result, or None to pass."""
+        agent's report. Returns the failed-outcome result, or None to pass.
+
+        D-35 (SC-D35 §2.1): M-TEST/M-IMPL reviewers may deliver findings via
+        the structured manifest channel instead of doc-anchored threads;
+        ``structured_findings`` marks a validated payload, which exempts the
+        revise from the doc-thread requirement. M-DESIGN never sets it
+        (doc-anchored channel unchanged, AC-FR0240-04)."""
         if substate == "DRAFT":
             # Author DRAFT (live run041): every thread the author initiated
             # must be resolved before the dispatch may finish. RESPOND and
@@ -708,7 +743,11 @@ class OpencodeBackend:
             # with no open reviewer-initiated thread in the doc-set ->
             # classified failure; verdict pass stays legal without threads.
             ready, blockers = check_ready(_docset_text(doc_paths))
-            if not ready and not _unresolved_role_threads(doc_paths, role):
+            if (
+                not ready
+                and not _unresolved_role_threads(doc_paths, role)
+                and not structured_findings
+            ):
                 return self._revise_without_findings_result(
                     diff_ref,
                     role,
@@ -916,6 +955,193 @@ class OpencodeBackend:
         "ac_gap",
         "spec_gap",
     )
+
+    # D-35 (SC-D35 §2.2) structured review payload contract.
+    _REVIEW_FINDING_FIELDS = (
+        "id",
+        "severity",
+        "defect_classification",
+        "criterion",
+        "artifact",
+        "ac_refs",
+        "summary",
+    )
+    _REVIEW_SUMMARY_MAX = 140
+    _REVIEW_SUBSTATES = ("PRISM_REVIEW", "PRISM_PLAN", "PRISM_RED", "PRISM_FINAL")
+    _REVIEW_KEYS = ("review_summary", "findings", "review_body", "defect_classification")
+
+    @classmethod
+    def _review_dispatch(cls, role: str, substate: str, assignment: dict | None) -> bool:
+        """A Prism review dispatch whose stage is known (D-35: the executor
+        threads ``stage`` into the assignment context)."""
+        return (
+            role == "prism"
+            and substate in cls._REVIEW_SUBSTATES
+            and (assignment or {}).get("stage") is not None
+        )
+
+    @classmethod
+    def _structured_channel(cls, role: str, substate: str, assignment: dict | None) -> bool:
+        """M-TEST/M-IMPL review: the structured payload is REQUIRED on revise.
+        M-DESIGN keeps the doc-anchored channel (AC-FR0240-04)."""
+        return (
+            cls._review_dispatch(role, substate, assignment)
+            and (assignment or {}).get("stage") in ("M-TEST", "M-IMPL")
+        )
+
+    def _review_channel_failure(
+        self,
+        role: str,
+        substate: str,
+        assignment: dict | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+    ) -> dict | None:
+        """Early D-35 gate: a malformed structured payload fails the dispatch
+        before the audits run (strict channel only; M-DESIGN never rejects)."""
+        if not self._structured_channel(role, substate, assignment):
+            return None
+        _, error = self._prism_review_payload_from(proc)
+        if error is None:
+            return None
+        return self._review_payload_malformed_result(error, proc, prompt, console_input)
+
+    def _has_structured_findings(
+        self,
+        role: str,
+        substate: str,
+        assignment: dict | None,
+        proc: subprocess.CompletedProcess,
+    ) -> bool:
+        """Whether the structured payload carries validated findings — the
+        discussion gate exempts such a revise from the doc-thread rule."""
+        if not self._structured_channel(role, substate, assignment):
+            return False
+        payload, error = self._prism_review_payload_from(proc)
+        return error is None and bool(payload and payload.get("findings"))
+
+    def _merge_review_payload(
+        self,
+        result: dict,
+        role: str,
+        substate: str,
+        assignment: dict | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+    ) -> dict:
+        """Merge the structured review payload into a done result.
+
+        Strict channel (M-TEST/M-IMPL): the payload's verdict is Prism's own
+        judgment and overrides the discussion-derived one; a revise with no
+        payload is a contract violation (AC-FR0240-01). M-DESIGN: payload
+        fields are threaded through when present but never required and never
+        rejected (AC-FR0240-04)."""
+        if not self._review_dispatch(role, substate, assignment):
+            return result
+        if result.get("status") != "done":
+            return result
+        payload, _ = self._prism_review_payload_from(proc)
+        if payload is None:
+            if (
+                self._structured_channel(role, substate, assignment)
+                and result.get("verdict") == "revise"
+            ):
+                return self._review_payload_malformed_result(
+                    "revise verdict on the structured channel must end with the "
+                    "review JSON payload (verdict/review_summary/findings/"
+                    "review_body; SC-D35 §2.2)",
+                    proc,
+                    prompt,
+                    console_input,
+                )
+            return result
+        for key in self._REVIEW_KEYS:
+            if key in payload:
+                result[key] = payload[key]
+        if self._structured_channel(role, substate, assignment):
+            result["verdict"] = payload["verdict"]
+        return result
+
+    @classmethod
+    def _validate_review_finding(cls, finding: object, idx: int) -> str | None:
+        if not isinstance(finding, dict):
+            return f"findings[{idx}] must be an object"
+        missing = [field for field in cls._REVIEW_FINDING_FIELDS if field not in finding]
+        if missing:
+            return f"findings[{idx}] missing fields: {', '.join(missing)}"
+        summary = finding.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return f"findings[{idx}].summary must be a non-empty string"
+        if len(summary) > cls._REVIEW_SUMMARY_MAX:
+            return f"findings[{idx}].summary exceeds {cls._REVIEW_SUMMARY_MAX} chars"
+        if not isinstance(finding.get("ac_refs"), list):
+            return f"findings[{idx}].ac_refs must be a list"
+        return None
+
+    @classmethod
+    def _validate_review_payload(cls, payload: dict) -> str | None:
+        if payload["verdict"] == "pass":
+            return None
+        summary = payload.get("review_summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return "review payload revise requires non-empty review_summary"
+        if len(summary) > cls._REVIEW_SUMMARY_MAX:
+            return f"review_summary exceeds {cls._REVIEW_SUMMARY_MAX} chars"
+        body = payload.get("review_body")
+        if not isinstance(body, str) or not body.strip():
+            return "review payload revise requires non-empty review_body"
+        findings = payload.get("findings")
+        if not isinstance(findings, list) or not findings:
+            return "review payload revise requires non-empty findings[]"
+        for idx, finding in enumerate(findings, start=1):
+            error = cls._validate_review_finding(finding, idx)
+            if error is not None:
+                return error
+        return None
+
+    @classmethod
+    def _prism_review_payload_from(
+        cls,
+        proc: subprocess.CompletedProcess,
+    ) -> tuple[dict | None, str | None]:
+        """Extract + validate the structured review JSON from the reviewer's
+        final reply (SC-D35 §2.2, same final-text bare-JSON convention as
+        DIAGNOSE). Returns ``(payload, None)`` when valid, ``(None, error)``
+        on a contract violation, and ``(None, None)`` when no payload was
+        attempted (legal absence — callers decide whether that is allowed)."""
+        event = cls._final_text_event(proc)
+        part = event.get("part") if isinstance(event, dict) else None
+        text = part.get("text") if isinstance(part, dict) else None
+        payload = cls._first_json_object(text.strip()) if isinstance(text, str) else None
+        if not isinstance(payload, dict) or "verdict" not in payload:
+            return None, None
+        if payload.get("verdict") not in ("pass", "revise"):
+            return None, (
+                f"review payload verdict must be 'pass'|'revise', "
+                f"got {payload.get('verdict')!r}"
+            )
+        error = cls._validate_review_payload(payload)
+        if error is not None:
+            return None, error
+        return payload, None
+
+    def _review_payload_malformed_result(
+        self,
+        error: str,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+    ) -> dict:
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": f"review payload malformed: {error}",
+            "audit_evidence": f"review_payload_malformed: {error}",
+            "failure_class": "manifest_malformed",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _diagnose_classification_from(self, proc) -> dict | None:
         """Extract the skill-contract DIAGNOSE JSON ({"classification",

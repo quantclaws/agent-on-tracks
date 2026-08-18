@@ -669,19 +669,28 @@ def _on_design_committed(s: State, p: dict, ev: EventEnvelope) -> None:
         _reset_review(s)
 
 
+def _review_last_failure(p: dict) -> dict:
+    """FR-11 + D-35: the revise re-dispatch evidence carries the reviewer's
+    structured summary/findings and the blobs ref for the full body (SC-D35
+    §2.3, AC-03). Stale infra-failure evidence must never replay instead
+    (run 01KZTHE7: revise retry carried "opencode exited 1" from Prism's own
+    crash)."""
+    failure = {
+        "check": "prism.verdict",
+        "reason": p.get("review_summary")
+        or f"reviewer verdict=revise ({p.get('defect_classification') or 'test_defect'}); "
+        "address anchored discussion threads before re-submitting",
+        "evidence": p.get("findings") or p.get("discussion_refs"),
+    }
+    if p.get("review_ref"):
+        failure["review_ref"] = p["review_ref"]
+    return failure
+
+
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result = None  # v0.5: pipeline publish complete
     if p.get("verdict") != "pass":
-        # FR-11: a revise re-dispatch must explain WHY, not replay stale
-        # infra-failure evidence (run 01KZTHE7: revise retry carried
-        # "opencode exited 1" from Prism's own crash instead of findings).
-        s.last_failure = {
-            "check": "prism.verdict",
-            "reason": p.get("review_summary")
-            or f"reviewer verdict=revise ({p.get('defect_classification') or 'test_defect'}); "
-            "address anchored discussion threads before re-submitting",
-            "evidence": p.get("findings") or p.get("discussion_refs"),
-        }
+        s.last_failure = _review_last_failure(p)
     if s.stage == "M-IMPL":
         _on_m_impl_prism_verdict(s, p)
         return

@@ -162,6 +162,29 @@ DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复�
 
 `classification` 是五选一的唯一判定（缺/非五选一即违约）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX 或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。
 
+### 评审意见结构化通道（D-35；M-TEST / M-IMPL 评审 dispatch 强制）
+
+M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**REVISE 的最终回复同样必须以一个裸 JSON object 结尾**（与 DIAGNOSE 同一约定），字段：
+
+```json
+{
+  "verdict": "pass|revise",
+  "defect_classification": "test_defect|impl_defect|test_plan_defect|acceptance_defect|spec_defect",
+  "review_summary": "≤140 字符，一句话总结",
+  "findings": [
+    {"id": "PRISM-<VER>-R<round>-<nn>", "severity": "blocker|advisory",
+     "defect_classification": "...", "criterion": "...", "artifact": "文件:行",
+     "ac_refs": ["AC-FRXXXX-YY"], "summary": "≤140 字符"}
+  ],
+  "review_body": "完整评审正文（markdown），仅用于 blobs 持久化，Runtime 不解析"
+}
+```
+
+- REVISE 时 `review_summary`、`findings[]`（非空，每条含七字段：id/severity/defect_classification/criterion/artifact/ac_refs/summary）、`review_body` 均必填；`review_summary` 与 `findings[].summary` 硬上限 140 字符，超限即 manifest malformed、attempt 作废。
+- JSON 的 `verdict` 是你的正式判定，优先于讨论线程状态推导；PASS 时 JSON 可省略。
+- 该通道与 `trac discuss` 文档锚定**并行不互斥**：你仍可（M-TEST 也鼓励）把 finding 锚定进 test-plan/interfaces 线程便于作者就地回应，但结构化字段不可省略。
+- **M-DESIGN 评审不适用本节**：继续只用文档锚定线程通道，REVISE 不要求 JSON（出现时字段会被透传，不拒绝）。
+
 ### 裁决格式
 
 **PASS**：仅当完整设计/实现对同一 revision 满足所有闭包要求，无需要 Devon、Shield 或 Human 临场选择的技术缺口。
