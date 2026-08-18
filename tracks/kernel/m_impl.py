@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .contracts import WRITE_MANIFEST_CONTRACT
 from .events import Command, EventEnvelope
 from .m_test import _consume_attempt, _reset_doc, _reset_review
 
@@ -424,6 +425,8 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     phase = sub.lower()  # "red", "green", "refactor"
     assignment = _m_impl_base_assignment(s, "devon", sub, ["tracks-devon-rgr"])
     assignment["phase"] = phase
+    # B28/#30 slim: front-load the manifest contract alongside the phase.
+    assignment["manifest_contract"] = dict(WRITE_MANIFEST_CONTRACT)
     assignment["task_id"] = s.current_task_id
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph

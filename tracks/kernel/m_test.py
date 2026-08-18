@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .contracts import WRITE_MANIFEST_CONTRACT
 from .events import Command, EventEnvelope
 
 if TYPE_CHECKING:
@@ -197,6 +198,10 @@ def _m_test_shield_dispatch(s: State) -> Command:
             "kind": "WRITE",
             "skills": ["tracks-discuz"],
             "docs": list(_M_TEST_CONTEXT_DOCS),
+            # B28/#30 slim: front-load the manifest contract (schema +
+            # example + pre-return self-checks) so the writer validates its
+            # own output instead of burning dispatches on shape errors.
+            "manifest_contract": dict(WRITE_MANIFEST_CONTRACT),
         },
     }
     if s.last_failure:
