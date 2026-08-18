@@ -2,7 +2,7 @@
 spec_id: SPEC-006
 created: 2026-08-19
 status: draft
-sha:
+sha: 21014f9945c675f4598da9efe0afadea2945fa71d5424598374c8e3b6ff3161d
 ---
 
 # hotfix 工作流：trac hotfix 入口与继承基线的 M-DESIGN->M-IMPL 旅程 - 需求规格
