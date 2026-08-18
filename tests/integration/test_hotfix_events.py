@@ -68,7 +68,10 @@ def test_hotfix_events_append_only_and_projection_rebuild(trac, host_repo, event
 
     # Snapshot the projected state before the rebuild.
     before = trac("status")
-    assert "hotfix" in before.stdout.lower() or "M-HOTFIX-TRIAGE" in before.stdout
+    # §2b: hotfix run row carries branch/scenario/issue contract fields.
+    assert "branch=fix/42" in before.stdout
+    assert "scenario=post-release" in before.stdout
+    before_run_line = _run_line(before.stdout, "fix/42")
 
     # Drop the runs projection table and force a rebuild from events only.
     home = paths.tracks_home(host_repo)
@@ -82,7 +85,18 @@ def test_hotfix_events_append_only_and_projection_rebuild(trac, host_repo, event
 
     after = trac("status")
     # NFR-04: projection rebuild must produce identical observable state.
-    assert "M-HOTFIX-TRIAGE" in after.stdout or "hotfix" in after.stdout.lower()
+    assert "branch=fix/42" in after.stdout
+    assert "scenario=post-release" in after.stdout
+    after_run_line = _run_line(after.stdout, "fix/42")
+    assert after_run_line == before_run_line
+
+
+def _run_line(stdout: str, branch: str) -> str:
+    """Extract the status line containing the named fix branch."""
+    for line in stdout.splitlines():
+        if branch in line:
+            return line
+    raise AssertionError(f"no status line contains {branch!r}")
 
 
 # AC-FR0246-03@v0.6 TRACKS-TRACE replay and report show full hotfix journey

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate hotfix counterexample patches for test 2 (stale), 3 (no redispatch), 4 (auto feature)."""
 from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 

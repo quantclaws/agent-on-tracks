@@ -17,8 +17,8 @@ import sys
 import time
 
 from tests.hotfix_support import (
-    seed_completed_feature_run,
     seed_host_issues,
+    seed_inprogress_feature_run,
     seed_v05_approved_baseline,
 )
 
@@ -35,7 +35,7 @@ def test_active_run_selection_and_status_discriminates_runs(trac, host_repo, eve
     ``suspended:`` row.
     """
     seed_v05_approved_baseline(host_repo)
-    seed_completed_feature_run(host_repo)
+    seed_inprogress_feature_run(host_repo)
     seed_host_issues(host_repo)
 
     r = trac("hotfix", "42", "--scenario", "post-release")
@@ -62,7 +62,7 @@ def test_boundary_restores_suspended_feature_run_as_active(trac, host_repo, even
     cannot be observed, and the boundary terminal line never appears.
     """
     seed_v05_approved_baseline(host_repo)
-    seed_completed_feature_run(host_repo)
+    seed_inprogress_feature_run(host_repo)
     seed_host_issues(host_repo)
 
     r = trac("hotfix", "42", "--scenario", "post-release")
@@ -93,7 +93,7 @@ def test_suspended_run_observable_and_gates_recoverable(trac, host_repo, event_l
     boundary to restore from.
     """
     seed_v05_approved_baseline(host_repo)
-    feature_run_id = seed_completed_feature_run(host_repo)
+    feature_run_id = seed_inprogress_feature_run(host_repo)
     seed_host_issues(host_repo)
 
     r = trac("hotfix", "42", "--scenario", "post-release")

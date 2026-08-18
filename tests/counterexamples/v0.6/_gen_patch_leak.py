@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate hotfix_fix_commit_leaks_to_main.patch for AC-FR0245-01."""
 from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 

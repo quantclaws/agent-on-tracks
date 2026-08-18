@@ -12,6 +12,14 @@ from __future__ import annotations
 from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 
 
+def _run_line(stdout: str, branch: str) -> str:
+    """Extract the status line containing the named fix branch."""
+    for line in stdout.splitlines():
+        if branch in line:
+            return line
+    raise AssertionError(f"no status line contains {branch!r}")
+
+
 # AC-NFR0110-03@v0.6 TRACKS-TRACE crash recovery resumes precise hotfix state
 def test_crash_recovery_resumes_precise_hotfix_state(trac, host_repo, event_log):
     """AC-NFR0110-03@v0.6: after Runtime interruption/restart, ``trac status``
@@ -31,7 +39,10 @@ def test_crash_recovery_resumes_precise_hotfix_state(trac, host_repo, event_log)
     assert r.returncode == 0, r.stderr
 
     before = trac("status")
-    assert "M-HOTFIX-TRIAGE" in before.stdout or "hotfix" in before.stdout.lower()
+    # §2b: hotfix run row carries branch/scenario/issue contract fields.
+    assert "branch=fix/42" in before.stdout
+    assert "scenario=post-release" in before.stdout
+    before_run_line = _run_line(before.stdout, "fix/42")
 
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
     evs_before = event_log(run_id)
@@ -56,7 +67,11 @@ def test_crash_recovery_resumes_precise_hotfix_state(trac, host_repo, event_log)
         conn.close()
 
     after = trac("status")
-    assert "M-HOTFIX-TRIAGE" in after.stdout or "hotfix" in after.stdout.lower()
+    # NFR-0110-03: recovery reports the same hotfix run identity.
+    assert "branch=fix/42" in after.stdout
+    assert "scenario=post-release" in after.stdout
+    after_run_line = _run_line(after.stdout, "fix/42")
+    assert after_run_line == before_run_line
 
     # No completed sub-state / dispatch was re-run (the event log is
     # append-only; the count of stage.entered events stays the same).

@@ -3,6 +3,7 @@
 A correct IF-HOTFIX-004 validate_anchor_refs is scaffolding (non-deviant);
 the deviation is the cmd_hotfix handler's bad_anchor->redispatch behavior."""
 from __future__ import annotations
+
 import subprocess
 from pathlib import Path
 

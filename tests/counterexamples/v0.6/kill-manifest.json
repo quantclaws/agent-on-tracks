@@ -77,7 +77,7 @@
       "patch": "cli_hotfix_no_events.patch",
       "result": "killed",
       "mutation": "cmd_hotfix no-op handler writes no events - projection rebuild has nothing to rebuild (contract: append-only + rebuild-invariant)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no events -> projection empty after rebuild -> 'M-HOTFIX-TRIAGE' not in status."
+      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: run row never projected since no hotfix run exists); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
     },
     {
       "test": "tests/integration/test_hotfix_events.py::test_replay_and_report_show_full_hotfix_journey",
@@ -126,7 +126,7 @@
       "patch": "cli_hotfix_no_events.patch",
       "result": "killed",
       "mutation": "cmd_hotfix no-op handler creates no hotfix run -> trac status cannot show branch=fix/42 scenario=post-release (contract: active run discrimination)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'run=feature-run-1: completed terminal=boundary...'; reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
+      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'run=feature-run-1: stage=M-DESIGN substate=DRAFT...' (PRISM-V06-04-revised: fixture now in-progress feature run, no hotfix run created so contract fields absent); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
     },
     {
       "test": "tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active",
@@ -231,7 +231,7 @@
       "patch": "cli_hotfix_no_events.patch",
       "result": "killed",
       "mutation": "cmd_hotfix no-op handler creates no hotfix run -> nothing to recover (contract: precise hotfix state resumption)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no hotfix state before/after -> status assertion fails."
+      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: no hotfix run exists to resume); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
     },
     {
       "test": "tests/integration/test_hotfix_routes.py::test_design_gap_returns_to_hotfix_mdesign_without_human_gate",

@@ -39,16 +39,19 @@ def test_human_anchor_manual_and_feature_route(trac, host_repo):
     assert r.returncode == 0, r.stderr
     assert "awaiting=awaiting_human" in r.stdout
 
-    # Sub-action 1: manual anchor.
-    r_anchor = trac("hotfix", "anchor", "AC-FR0030-01@v0.5")
-    assert r_anchor.returncode == 0, r_anchor.stderr
-    assert "anchor recorded: AC-FR0030-01@v0.5" in r_anchor.stdout
-
-    # Sub-action 2: feature-route (re-run from a fresh AWAIT_HUMAN).
-    r2 = trac("hotfix", "77", "--scenario", "post-release", simulate="sage:SAGE_TRIAGE=no_anchor")
-    assert r2.returncode == 0, r2.stderr
-    assert "awaiting=awaiting_human" in r2.stdout
+    # Sub-action 1: feature-route first (never creates fix/77; the run
+    # terminates feature_route with no dangling branch, §2a #5).
     r_fr = trac("hotfix", "feature-route")
     assert r_fr.returncode == 0, r_fr.stderr
     assert "feature route recorded" in r_fr.stdout
     assert "backlog" in r_fr.stdout
+
+    # Sub-action 2: manual anchor on a fresh run with the same issue.
+    # fix/77 was never created by sub-action 1, so PRECHECK P-5
+    # (fix_branch_exists) does not reject this second entry (§1c).
+    r2 = trac("hotfix", "77", "--scenario", "post-release", simulate="sage:SAGE_TRIAGE=no_anchor")
+    assert r2.returncode == 0, r2.stderr
+    assert "awaiting=awaiting_human" in r2.stdout
+    r_anchor = trac("hotfix", "anchor", "AC-FR0030-01@v0.5")
+    assert r_anchor.returncode == 0, r_anchor.stderr
+    assert "anchor recorded: AC-FR0030-01@v0.5" in r_anchor.stdout
