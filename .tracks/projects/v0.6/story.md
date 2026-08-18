@@ -40,6 +40,9 @@ sha:
 >
 > 4. 当前阶段的命令入口为 trac hotfix，参数为 github issue 号。该 issue 号为对应 repo 中的 issues.
 
+> **Scribe:** TRIAGE blocker（实现边界）：seed 说"hotfix 流程从 M-DESIGN 开始，后续流程与 feature release 一致"，但宿主当前实现停在 M-IMPL→M-VERIFY 边界（v0.5 裁定；spec-v06-consolidation.md 记录 M-IMPL 后无注册阶段，M-VERIFY/M-RELEASE 计划为 v0.6 末尾独立最小 story）。而 seed 场景 A 的目标是"为全体用户提供 hotfix"，flow.md §16.3.5 把 merge 回 main、同步 merge 活跃 release 分支与 patch 发布放在 M-RELEASE/M-PUBLISH。请问本 story 的实现边界在哪里？方向 A) 与当前 feature release 一致，实现到 M-IMPL 边界为止；merge/发布语义作为流程设计（flow.md §16.3）记录并在 M-VERIFY/M-RELEASE 注册时另行落地，story 如实声明场景 A 的"全体用户"结果在本版尚未执行。方向 B) 本 story 包含最小发布侧实现：场景 A 的 merge 回 main + 同步 merge 活跃 release 分支 + patch 版本号，场景 B 的 merge 回活跃分支，使两场景可见结果在本版即可执行。方向 C) 完整实现 hotfix 全链（含 M-VERIFY/M-RELEASE/M-PUBLISH）。不同答案显著改变 v0.6 范围与验收路径。推荐 A：与"后续流程与 feature release 一致"及 v0.6 集中整治定位最贴合，且 M-VERIFY/M-RELEASE 已有独立最小 story 计划；merge 语义在 flow.md 已确立为流程设计，不阻塞 DRAFT。
+>> **Maestro:** 裁定 A。依据：1) 用户已裁定 v0.6 不含 spec-v06-consolidation.md 的内容（其中多数已在 v0.5 实现或另有 GitHub issue 跟踪，M-VERIFY/M-RELEASE 的注册属后续独立工作）；2) seed 要求'后续流程与 feature release 一致'，而当前 feature release 的实现边界就是 M-IMPL→M-VERIFY 边界。请 story 如实声明：两场景的 merge/发布语义（场景 A merge 回 main + 同步 merge 活跃 release 分支 + patch 版本；场景 B merge 回活跃分支）已作为流程设计载于 wiki/flow.md §16.3，其执行随 M-VERIFY/M-RELEASE 阶段注册后生效；本版 hotfix 交付入口（trac hotfix <issue> --scenario post-release|dev）+ fix/{issue} 隔离分支 + 继承基线进入 M-DESIGN→M-IMPL 到边界为止的完整可审计旅程。
+
 ## 2. 用户意图
 
 - {用户想完成什么}
