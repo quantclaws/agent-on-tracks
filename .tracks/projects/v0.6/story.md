@@ -41,6 +41,16 @@ sha:
 2. Runtime 按场景创建隔离 `fix/{issue}` 分支并建立 hotfix run：场景 A 从 main checkout，场景 B 从当前活跃 release 分支 checkout；需求基线继承目标版本已批准的 spec/acceptance/接口与设计基线（source approval，不重新批准）；不创建 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL。
 3. 直接 `stage.entered(M-DESIGN)`；操作者通过 `trac status`/`trac replay` 看到 hotfix run、`fix/{issue}` 分支与 M-DESIGN 入口。hotfix run 与既有 feature run 的并存按 flow.md §16.3.7 处理：允许两个并发分支，但开发派发保持串行（同一 writer lock），不允许同时运行 feature 与 hotfix 两个 trac 命令（Aaron 裁定）。
 
+> **Maestro:** Human 裁定（2026-08-19，逐字记录）——关于如何找到对应既有 AC：
+> 
+> 「我的想法是，trac hotfix <issue> xxx 时，内部先做一个 triage，来找到对应的 acc.
+> 
+> 1. github issue 必须为 bug 类型，并且在 template 中要求填入版本、对应的 FR/NFR，从而 acc 可推导（根据描述）。但是，最终用户不可能知道 FR/NFR 的编号，所以，这些字段是可选项。这也意味着我们无法仅靠这些字段 来推断 acc，所以，必须引入 llm 的语义分析能力。
+> 2. 由Sage（或者 Archer）根据issue中填写的 FR/NFR版本号（辅助，不完全采信），以及历史的 spec/acc ，根据 issue 中提出的场景、症状，自行决定对应的 acc
+> 3. 有可能 Archer 无法推断出对应的 acc；原因是，一、spec/acc 确实存在，但 Archer 无法关联起来；二、该功能存在于历史版本中，当时还没有规范的 spec/acc 等文档。这种情况下，需要当成 feature 来做，以便补齐程序行为规范。」
+> 
+> 已据此落定流程设计 wiki/flow.md §16.4（HOTFIX-TRIAGE 入口子状态机，编程实现的技术参考）：语义锚定角色定为 Sage（需求语义归 Sage；Archer 在 M-DESIGN 承接锚定集合、Prism 复核）；锚定输出经程序校验（所引 AC 必须真实存在于所指版本 acceptance.md）；重派 ≤3；NO_ANCHOR 或超限 → awaiting_human，Human 可人工锚定或确认转 feature。请 Scribe 据此修订 story：§3.1 入口验证改述为 HOTFIX-TRIAGE（bug 类型预检 + 可选字段辅助 + Sage 语义锚定 + AWAIT_HUMAN 人工锚定/转 feature）；BS-01、BS-05 对应更新（BS-05 补「功能早于规范文档存在」成因）；§5 补充宿主 bug issue template 约束（版本/FR/NFR 字段可选）；§7 补锚定失败风险；流程引用更新为 §16.4。
+
 - **完成结果**：验证通过则 hotfix run 建立并可继续（走 3.2）；验证失败（issue 不可定位、非实现偏差/新行为、场景不合法）时不建立 run，操作者看到明确原因与下一步——补全 issue 信息后重试，或退出 hotfix 转 backlog/new feature（产品决定，需 Human）。
 
 ### 3.2. 继承基线的 M-DESIGN→M-IMPL 完整可审计旅程
