@@ -61,7 +61,7 @@ sha:
 - **入口/触发**：hotfix run 建立后（3.1），操作者通过既有 `trac run` 继续派发；Runtime 复用 canonical 阶段序列与全部子状态机、角色、评审协议、重派预算与门禁语义推进。
 
 1. **M-DESIGN**：Archer 产出相对继承基线的 delta 设计（architecture/interfaces/test-plan 三文档的修订增量，产出物归 hotfix run 自己的项目目录），锚定所偏离的 FR/AC（引用目标版本 spec/acceptance 的既有条目，跨版本引用 `AC-FRXXXX-YY@<version>`）；Prism 复核锚定与 delta 设计；contracts 沿用目标版本的 machine contracts（除非修复本身改变合同）。
-2. **M-TEST**：Shield 以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC，hotfix 不产生新 AC；合法 Red = 回归测试在带缺陷基线上的行为断言失败。操作者通过 `trac status`/`trac replay` 看到测试资产与回归证据。
+2. **M-TEST**：回归用例必须先复现 RED 再变绿（修复前既有用例必然全绿——形式缺失或未触发 RED 条件）；合法 Red = 回归测试在带缺陷基线上的行为断言失败。回归用例归属由 Archer 在 delta test-plan 决定：integration/e2e 层归 Shield（M-TEST 补写），unit 层归 Devon（M-IMPL RED 阶段补写）。若 Archer 将回归用例全部划归 unit 层，M-TEST 的 Shield 增量为空，Runtime 凭"空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合"放行 M-TEST。AC trace 绑定目标版本既有 AC（跨版本引用 AC-FRXXXX-YY@<version>），hotfix 不产生新 AC。操作者通过 `trac status`/`trac replay` 看到测试资产与回归证据（含空 Shield 增量声明时的 unit 层 trace 闭合证据）。
 3. **M-IMPL**：task graph 按影响切片（通常远小于 feature release），scope 白名单沿用目标版本 layout；实现只发生在隔离 `fix/{issue}` 分支（Runtime 是唯一 branch/worktree authority）；场景 B 的基线随活跃分支推进会 stale：merge 前须对活跃分支当前 HEAD reconcile，冲突 → `needs_attention`。Devon 在 `fix/{issue}` 分支上完成 RGR 与 review，修复提交落在该分支。
 4. 到达 M-IMPL 边界后以 boundary 终止（`run.completed` terminal_state=boundary）；操作者通过 `trac status`/`trac replay` 看到边界结果与 `fix/{issue}` 分支上的修复提交。
 
@@ -73,6 +73,7 @@ sha:
 > 
 > 已据此落定 wiki/flow.md §16.3.2：回归用例必须先复现 RED 再变绿（修复前既有用例必然全绿——形式缺失或未触发 RED 条件）；归属由 Archer 在 delta test-plan 决定——integration/e2e 层归 Shield（M-TEST 补写），unit 层归 Devon（M-IMPL RED 阶段补写）；若全部划归 unit 层，M-TEST 的 Shield 增量为空，Runtime 凭空增量声明 + trac check trace 由 unit 层回归用例闭合放行。请 Scribe 修订：§3.2 第 2 点（M-TEST）改述归属规则与 RED-first 纪律；BS-07 对应更新（不再固定 Shield/M-TEST 为唯一回归载体）；§5 约束补充。
 >> **Sage:** Sage review 发现：本裁定（ownership split + 空 M-TEST 分支）未完整落入 story 正文，Scribe 的 RESPOND 仍缺。核对：(1) §3.2 第 2 点（line 64）有 RED-first（'合法 Red = 回归测试在带缺陷基线上的行为断言失败'）但缺 ownership split——仍写'Shield 以复现 issue 的回归测试为主'，未述 Archer 在 delta test-plan 决定归属、integration/e2e→Shield(M-TEST 补写)/unit→Devon(M-IMPL RED 阶段补写)、以及 M-TEST Shield 增量可空 + Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS（line 129）仍以'WHEN hotfix 进入 M-TEST'触发并固定 Shield/M-TEST 为唯一回归载体，未覆盖空 M-TEST 分支。(3) §5 约束未补 ownership split。flow.md §16.3.2（line 982）已含完整 ownership split，但 story 的行为种子 BS-07 是下游 spec 作者继承的锁定不变量——若 BS-07 固定 Shield/M-TEST 为唯一载体，下游 FR 会与 Human 裁定及 flow.md 冲突。请 Scribe 完成 T-003 RESPOND：§3.2 第 2 点与 BS-07 改述以反映 Archer-decided ownership + 空 M-TEST 分支，§5 补约束。这是主路径 M-TEST 步骤的非常规分支（空测试阶段 + 跨层 trace 闭合），属产品不变量，不应仅靠 flow.md 引用兜底。
+>> **Scribe:** 已按 T-003 finding 完成 RESPOND（三处落文）：(1) §3.2 第 2 点（M-TEST）改述为 RED-first + Archer 在 delta test-plan 决定归属（integration/e2e→Shield 在 M-TEST 补写、unit→Devon 在 M-IMPL RED 阶段补写）+ 空 Shield 增量时 Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行，AC trace 绑定既有 AC 不产生新 AC。(2) BS-07 EARS 改述以覆盖 Archer-decided ownership + 空 M-TEST 分支放行语义（不再固定 Shield/M-TEST 为唯一回归载体），标题与来源同步更新为 Human 裁定 T-003 + flow.md §16.3.2。(3) §5 必须保持的产品约束补 ownership split + 空 M-TEST 分支放行语义。请 Sage 复核。
 
 - **完成结果**：hotfix run 在 M-IMPL 边界结束，`fix/{issue}` 分支保留修复结果，全程可审计；场景 A 的 merge 回 main + 同步 merge 活跃 release 分支 + patch 版本号、场景 B 的 merge 回活跃分支作为发布语义载于 flow.md §16.3，本版不执行，随 M-VERIFY/M-RELEASE 注册后生效；操作者在本版看到的是"修复完成、待发布"的边界状态，并可继续观察既有 run 状态与审计输出。
 
@@ -125,13 +126,14 @@ sha:
 - 来源: [3.1 / 3.2 / flow.md §16.3.7 / 重要推导]
 - 说明: 保护共享分支不被并发写破坏，是单活跃 run 原则的唯一受控例外。
 
-### BS-07 回归测试绑定既有 AC
+### BS-07 回归测试绑定既有 AC（Archer-decided ownership + 空 M-TEST 分支）
 
-- EARS: `WHEN hotfix 进入 M-TEST, THE 系统 SHALL 以复现 issue 的回归测试为主并将 AC trace 绑定目标版本既有 AC（跨版本引用 AC-FRXXXX-YY@<version>），且 SHALL NOT 为 hotfix 产生新 AC；合法 Red = 回归测试在带缺陷基线上的行为断言失败`
-- 来源: [3.2 / flow.md §16.3.2 / 重要推导]
-- 说明: 回归测试是对既有 AC 的检验补强，不扩展验收面。
+- EARS: `WHEN hotfix 进入 M-TEST, THE 系统 SHALL 以先复现 RED 再变绿的回归用例验证修复（合法 Red = 回归测试在带缺陷基线上的行为断言失败），归属由 Archer 在 delta test-plan 决定--integration/e2e 层归 Shield 在 M-TEST 补写、unit 层归 Devon 在 M-IMPL RED 阶段补写，且 SHALL 将 AC trace 绑定目标版本既有 AC（跨版本引用 AC-FRXXXX-YY@<version>）并 SHALL NOT 为 hotfix 产生新 AC；若 Archer 将回归用例全部划归 unit 层，THE 系统 SHALL 凭空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合放行 M-TEST`
+- 来源: [3.2 / Human 裁定（2026-08-19，T-003）/ flow.md §16.3.2 / 重要推导]
+- 说明: 回归测试是对既有 AC 的检验补强，不扩展验收面；M-TEST 的 Shield 增量可空、由 unit 层回归用例跨层 trace 闭合，是主路径 M-TEST 步骤的非常规分支（产品不变量），不应仅靠 flow.md 引用兜底。
 
 > **Sage:** Reviewer finding（blocker）：BS-07 与 §3.2 第 2 点、§5 未完整反映 Human 裁定（2026-08-19，见 T-003）的 ownership split + 空 M-TEST 分支——这是主路径 M-TEST 步骤的非常规分支（空测试阶段 + 跨层 trace 闭合），属产品不变量，不应仅靠 flow.md §16.3.2 引用兜底。三处核对：(1) §3.2 第 2 点（line 64）仍写'Shield 以复现 issue 的回归测试为主'，固定 Shield/M-TEST 为唯一回归载体，缺 Archer 在 delta test-plan 决定归属、integration/e2e→Shield(M-TEST 补写)/unit→Devon(M-IMPL RED 阶段补写)、以及 M-TEST Shield 增量可空 + Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS（line 130）以'WHEN hotfix 进入 M-TEST'触发并固定 Shield/M-TEST 为唯一回归载体，未覆盖空 M-TEST 分支——BS-07 是下游 spec 作者继承的锁定不变量，若固定 Shield/M-TEST 为唯一载体，下游 FR 会与 Human 裁定及 flow.md §16.3.2（line 982）冲突。(3) §5 约束（line 154）未补 ownership split。请 Scribe RESPOND：§3.2 第 2 点、BS-07 改述以反映 Archer-decided ownership + 空 M-TEST 分支放行语义，§5 补约束。依据：Human 裁定 T-003（line 68-74）+ flow.md §16.3.2（line 982，已含完整 ownership split）。
+>> **Scribe:** 已按 T-004 finding 完成 RESPOND（与 T-003 同一 finding，三处落文）：(1) §3.2 第 2 点（M-TEST）改述 RED-first + Archer 在 delta test-plan 决定归属（integration/e2e→Shield M-TEST 补写、unit→Devon M-IMPL RED 阶段补写）+ 空 Shield 增量时 Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS 改述覆盖 Archer-decided ownership + 空 M-TEST 分支放行语义，不再固定 Shield/M-TEST 为唯一回归载体，来源更新为 Human 裁定 T-003 + flow.md §16.3.2。(3) §5 必须保持的产品约束补 ownership split + 空 M-TEST 分支放行语义。请 Sage 复核并 resolved。
 
 ### BS-08 隔离分支实现
 
@@ -153,7 +155,7 @@ sha:
 
 ## 5. 范围、约束与例外
 
-- **必须保持的产品约束**：入口命令固定为 `trac hotfix <issue> --scenario post-release|dev`，`--scenario` 必填、缺省时询问 Human 而非从 issue 推断。入口先过 HOTFIX-TRIAGE（flow.md §16.4）：宿主 bug issue template 提供「版本 / 对应 FR/NFR」字段，均可选——终端用户不可能知道编号，字段仅作辅助、不完全采信；语义锚定角色为 Sage（需求语义归 Sage，Archer 在 M-DESIGN 承接锚定集合、Prism 复核），锚定输出必须经程序校验（所引 AC 真实存在于所指版本 acceptance.md，引用不实重派 ≤3）；NO_ANCHOR 或重派超限 → awaiting_human，Human 可人工锚定或确认转 feature。hotfix 一律从 M-DESIGN 进入（跳过 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL），后续流程与 feature release 一致——复用 canonical 阶段序列、全部子状态机、角色、评审协议、重派预算与门禁语义；改动再小也要有 delta 设计与独立评审（v0.6 起废除 quick_rgr 免设计分流）。需求基线继承目标版本已批准的 spec/acceptance/接口与设计基线（source approval，不重新批准）；hotfix 不产生新 AC，AC trace 绑定目标版本既有 AC。实现只发生在隔离 `fix/{issue}` 分支，Runtime 是唯一 branch/worktree authority。不允许同时运行 feature 与 hotfix 两个 trac 命令（开发派发串行）；场景 B 是单活跃 run 原则的唯一受控例外。M-IMPL 仍是本版流程边界。
+- **必须保持的产品约束**：入口命令固定为 `trac hotfix <issue> --scenario post-release|dev`，`--scenario` 必填、缺省时询问 Human 而非从 issue 推断。入口先过 HOTFIX-TRIAGE（flow.md §16.4）：宿主 bug issue template 提供「版本 / 对应 FR/NFR」字段，均可选——终端用户不可能知道编号，字段仅作辅助、不完全采信；语义锚定角色为 Sage（需求语义归 Sage，Archer 在 M-DESIGN 承接锚定集合、Prism 复核），锚定输出必须经程序校验（所引 AC 真实存在于所指版本 acceptance.md，引用不实重派 ≤3）；NO_ANCHOR 或重派超限 → awaiting_human，Human 可人工锚定或确认转 feature。hotfix 一律从 M-DESIGN 进入（跳过 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL），后续流程与 feature release 一致——复用 canonical 阶段序列、全部子状态机、角色、评审协议、重派预算与门禁语义；改动再小也要有 delta 设计与独立评审（v0.6 起废除 quick_rgr 免设计分流）。需求基线继承目标版本已批准的 spec/acceptance/接口与设计基线（source approval，不重新批准）；hotfix 不产生新 AC，AC trace 绑定目标版本既有 AC（跨版本引用 AC-FRXXXX-YY@<version>）。M-TEST 回归用例必须先复现 RED 再变绿（修复前既有用例必然全绿--形式缺失或未触发 RED 条件），归属由 Archer 在 delta test-plan 决定：integration/e2e 层归 Shield 在 M-TEST 补写、unit 层归 Devon 在 M-IMPL RED 阶段补写；若全部划归 unit 层，M-TEST 的 Shield 增量为空，Runtime 凭"空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合"放行 M-TEST。实现只发生在隔离 `fix/{issue}` 分支，Runtime 是唯一 branch/worktree authority。不允许同时运行 feature 与 hotfix 两个 trac 命令（开发派发串行）；场景 B 是单活跃 run 原则的唯一受控例外。M-IMPL 仍是本版流程边界。
 - **非常规要求**：hotfix 直接进入 M-DESIGN、跳过需求阶段并继承已批准基线（source approval）——这是对 feature release 从 M-STORY 进入的常规起点的有意偏离，用户明确要求（seed 第 3 点）。场景 B 允许与活跃 feature run 并存并共享活跃分支（单活跃 run 原则的唯一受控例外），但开发派发必须串行——用户裁定（flow.md §16.3.7 / Aaron）。场景 A 的"为全体用户提供 hotfix"在本版以"修复完成、待发布"的边界状态呈现，不伪称发布已执行——Maestro 裁定。
 - **Out-of-Scope**：M-VERIFY/M-RELEASE/M-PUBLISH 的注册与执行，包括场景 A 的 merge 回 main + 同步 merge 活跃 release 分支 + patch 版本号/tag/artifact 发布，以及场景 B 的 merge 回活跃分支与 pre-release/开发渠道发布；Human release gate。新行为/新功能需求的完整开发流程（hotfix 只负责识别并转 backlog/new feature，该需求如何走 feature release 不在本 story）。为 hotfix 创建新的 M-SPEC/M-ACC 或新增非既有 trac CLI/CI 交付面（沿用 trac run/status/replay/report/check 观察与继续）。快速修复免设计分流（quick_rgr）分流。
 
