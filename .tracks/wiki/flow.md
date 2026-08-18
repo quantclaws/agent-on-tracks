@@ -978,15 +978,17 @@ hotfix 一律从 M-DESIGN 进入（v0.6 起废除 quick_rgr 免设计分流：�
 ### 16.3. 与 feature release 的差异清单
 
 1. **M-DESIGN**：Archer 产出的是相对继承基线的 delta 设计（三文档与机器合同的修订增量，产出物归 hotfix run 自己的项目目录），不是全量产品设计；contracts 沿用目标版本的 machine contracts，除非修复本身改变合同。
-2. **M-TEST**：测试以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC（跨版本引用 `AC-FRXXXX-YY@<version>`），hotfix 不产生新 AC（没有自己的 M-ACC）。合法 Red = 回归测试在带缺陷基线上的行为断言失败。
+2. **M-TEST**：测试以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC（跨版本引用 `AC-FRXXXX-YY@<version>`），hotfix 不产生新 AC（没有自己的 M-ACC）。回归测试挂在对应的既有 AC 之下——bug 即“有 AC 而此前没有检验”；找不到可对应的 AC 即说明是新 feature（退出 hotfix，见 16.1.1）。合法 Red = 回归测试在带缺陷基线上的行为断言失败。
 > **Aaron:** 同意。不扩展 AC，但是要在对就应的 AC 下，增加回归测试（bug 就是有 AC 但之前没有检验）。如果找不到合适的、对应的 AC，则说明这是一个新的 feature。
+>> **Maestro:** 已并入本条正文（回归测试挂对应既有 AC；无对应 AC = 新 feature → 退出 hotfix）。
 3. **M-IMPL**：task graph 按影响切片（通常远小于 feature release），scope 白名单沿用目标版本 layout。场景 B 的基线随活跃分支推进会 stale：merge 前须对活跃分支当前 HEAD reconcile，冲突 → `needs_attention`。
 4. **M-VERIFY**：门禁不可收窄；candidate = fix 分支（含其 base）。版本验证按场景：场景 A 必须升 patch 版本（x.y.z+1）；场景 B 不产生公开版本号，修复经在开发版本的既有 pre-release 通道到达 alpha/beta。
 5. **M-RELEASE / M-PUBLISH**：Human release gate 两场景都保留，发布副作用按场景不同——场景 A：merge 回 main + patch tag/artifact/发布 + 同步 merge 活跃 release 分支；场景 B：仅 merge 回活跃分支，不打 tag、不发布公开 artifact。幂等/write-ahead/reconcile 规则与 §14 相同。
 6. **回退**：hotfix 没有自己的 M-SPEC/M-AC 可回。修复过程中发现需要新行为/新验收（ac_gap/spec_gap）→ 说明该 issue 不是实现偏差 → 退出 hotfix 转 backlog/new feature（产品决定，需 Human）；设计缺口仍回自己的 M-DESIGN（Archer+Prism 裁定）。
-7. **并发**：feature release 的 M-START 在有活跃 run 时把新需求 backlog；hotfix 不受此限——场景 A 与活跃 run 完全独立（base = main，不被 CHECK_ACTIVE 阻塞）；场景 B 与活跃 feature run 共享活跃分支，是“单活跃 run”原则的唯一受控例外：两 run 在共享分支上的写必须串行（同一 writer lock），场景 B 的 merge 仅在活跃 run 无在飞 dispatch 时进行；merge 后活跃 run 的 baseline 即 stale，由其下一个门禁（M-IMPL BASELINE / M-VERIFY FREEZE）按既有 stale 检测重新校验。
+7. **并发**：feature release 的 M-START 在有活跃 run 时把新需求 backlog；hotfix 不受此限——场景 A 与活跃 run 完全独立（base = main，不被 CHECK_ACTIVE 阻塞）；场景 B 与活跃 feature run 共享活跃分支，是“单活跃 run”原则的唯一受控例外：两 run 在共享分支上的写必须串行（同一 writer lock），场景 B 的 merge 仅在活跃 run 无在飞 dispatch 时进行；merge 后活跃 run 的 baseline 即 stale，由其下一个门禁（M-IMPL BASELINE / M-VERIFY FREEZE）按既有 stale 检测重新校验。hotfix 期间允许两个并发**分支**存在，但不允许两个并发**开发活动**：同一时刻只允许一个 trac 开发命令在运行——feature 与 hotfix 的 `trac run` 不得同时执行（Aaron 裁定，2026-08-18）。
 
 > **Aaron:** hotfix 期间，允许有两个并发分支，但不允许有两个并发开发活动，即**不允许**同时运行两个 trac 命令，一个在 feature, 一个在 hotfix 中。
+>> **Maestro:** 已并入 §16.3.7 正文（并发分支允许、并发开发活动禁止；同一时刻单个 trac 开发命令）。
 
 ## 17. 通用返回、修改与恢复规则
 
