@@ -960,11 +960,27 @@ stateDiagram-v2
 
 ## 16. Bug Fix / Hotfix 变体
 
-1. `bug_fix` 只适用于已发布产品相对既有 approved Spec/AC 的**实现偏差**；Runtime 先验证 Issue、source contract、目标版本、可复现失败；实际是新行为 → 退出 hotfix，进 backlog/new feature。
-2. `quick_rgr` 继承 source requirement approval；`design_required` 还需形成当前 M-DESIGN revision。涉及 public interface/数据迁移/安全边界/跨模块设计 → 先走 M-DESIGN；拿不准时由 Archer/Prism 技术判断，不让 Human 选架构路径。
-3. 两条路径都复用 `M-TEST → M-IMPL → M-VERIFY → M-SECURITY/policy → M-RELEASE → M-PUBLISH → M-MILESTONE`；开发反馈可按影响收窄，但 M-VERIFY 的历史回归与 required CI 不能省。
-4. Hotfix 不因“改动小”自动跳过 Prism；review 深度可按风险调整，但必须有独立语义 review 和权威回归证据。
-5. Runtime 是唯一 branch/worktree authority：创建隔离 `fix/{issue}`，防止与 active release 串写；发布后同步修复到 main 与受影响的 active release，冲突 → `needs_attention`。
+### 16.1. 适用性与入口（v0.6）
+
+1. `bug_fix` 只适用于目标版本（已发布或开发中）相对既有 approved Spec/AC 的**实现偏差**；Runtime 先验证 GitHub Issue、source contract、目标版本、可复现失败；实际是新行为 → 退出 hotfix，进 backlog/new feature。
+2. 入口命令 `trac hotfix <issue>`：`<issue>` 是宿主 repo 的 GitHub issue 号，作为该 hotfix 的需求追踪身份（对应 feature release 中 M-REQ-APPROVAL 产生的 Issues）。Runtime 验证通过后创建隔离 `fix/{issue}` 分支、建立 hotfix run，直接 `stage.entered(M-DESIGN)`；不走 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL——需求基线继承目标版本已批准的三件套与设计基线（source approval，不重新批准）。
+3. 两个场景，按修复的受众划分；场景是产品决定，由 Human 在入口指定或裁定，不确定时 Runtime 询问，不让 Agent 代选：
+   - **场景 A · 已发布版本 hotfix**：目标是为全体用户发布 hotfix。`fix/{issue}` 始终从 main checkout；修复后 merge 回 main；存在活跃 release 分支时，同一修复还须 merge 进活跃 release 分支（防止下个版本重新携带缺陷）；冲突 → `needs_attention`。
+   - **场景 B · 开发中版本 hotfix**：目标是供开发者自己与 alpha/beta 用户使用。`fix/{issue}` 从当前活跃 release 分支 checkout；修复后 merge 回活跃分支；不直接 merge main——修复随活跃分支的正式发布一并进入 main（该合并不属于 hotfix 流程）。
+
+### 16.2. 自 M-DESIGN 起复用 feature release
+
+hotfix 一律从 M-DESIGN 进入（v0.6 起废除 quick_rgr 免设计分流：改动再小也要有 delta 设计与独立评审），之后复用 canonical 阶段序列与全部子状态机、角色、评审协议、重派预算与门禁语义：`M-DESIGN → M-TEST → M-IMPL → M-VERIFY → M-SECURITY/policy → M-RELEASE → M-PUBLISH → M-MILESTONE`。开发反馈可按影响收窄，但 M-VERIFY 的历史回归与 required CI 不能省；Hotfix 不因“改动小”自动跳过 Prism，review 深度可按风险调整，但必须有独立语义 review 和权威回归证据。Runtime 是唯一 branch/worktree authority：实现只发生在隔离 `fix/{issue}` 分支，防止与 active release 串写。
+
+### 16.3. 与 feature release 的差异清单
+
+1. **M-DESIGN**：Archer 产出的是相对继承基线的 delta 设计（三文档与机器合同的修订增量，产出物归 hotfix run 自己的项目目录），不是全量产品设计；contracts 沿用目标版本的 machine contracts，除非修复本身改变合同。
+2. **M-TEST**：测试以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC（跨版本引用 `AC-FRXXXX-YY@<version>`），hotfix 不产生新 AC（没有自己的 M-ACC）。合法 Red = 回归测试在带缺陷基线上的行为断言失败。
+3. **M-IMPL**：task graph 按影响切片（通常远小于 feature release），scope 白名单沿用目标版本 layout。场景 B 的基线随活跃分支推进会 stale：merge 前须对活跃分支当前 HEAD reconcile，冲突 → `needs_attention`。
+4. **M-VERIFY**：门禁不可收窄；candidate = fix 分支（含其 base）。版本验证按场景：场景 A 必须升 patch 版本（x.y.z+1）；场景 B 不产生公开版本号，修复经在开发版本的既有 pre-release 通道到达 alpha/beta。
+5. **M-RELEASE / M-PUBLISH**：Human release gate 两场景都保留，发布副作用按场景不同——场景 A：merge 回 main + patch tag/artifact/发布 + 同步 merge 活跃 release 分支；场景 B：仅 merge 回活跃分支，不打 tag、不发布公开 artifact。幂等/write-ahead/reconcile 规则与 §14 相同。
+6. **回退**：hotfix 没有自己的 M-SPEC/M-AC 可回。修复过程中发现需要新行为/新验收（ac_gap/spec_gap）→ 说明该 issue 不是实现偏差 → 退出 hotfix 转 backlog/new feature（产品决定，需 Human）；设计缺口仍回自己的 M-DESIGN（Archer+Prism 裁定）。
+7. **并发**：feature release 的 M-START 在有活跃 run 时把新需求 backlog；hotfix 不受此限——场景 A 与活跃 run 完全独立（base = main，不被 CHECK_ACTIVE 阻塞）；场景 B 与活跃 feature run 共享活跃分支，是“单活跃 run”原则的唯一受控例外：两 run 在共享分支上的写必须串行（同一 writer lock），场景 B 的 merge 仅在活跃 run 无在飞 dispatch 时进行；merge 后活跃 run 的 baseline 即 stale，由其下一个门禁（M-IMPL BASELINE / M-VERIFY FREEZE）按既有 stale 检测重新校验。
 
 ## 17. 通用返回、修改与恢复规则
 
