@@ -42,7 +42,7 @@ sha:
 3. NO_ANCHOR 或重派超限 → awaiting_human：Human 人工锚定（指认 AC）或确认转 feature（FEATURE_ROUTE，两种成因同路——spec/acc 存在但 Sage 无法关联，或功能早于规范文档存在、历史版本无规范文档可引）。锚定确认（ANCHORED）后 Runtime 按场景创建隔离 `fix/{issue}` 分支并建立 hotfix run：场景 A 从 main checkout，场景 B 从当前活跃 release 分支 checkout；需求基线继承目标版本已批准的 spec/acceptance/接口与设计基线（source approval，不重新批准）；不创建 M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL。
 4. 直接 `stage.entered(M-DESIGN)`；操作者通过 `trac status`/`trac replay` 看到 hotfix run、`fix/{issue}` 分支与 M-DESIGN 入口。hotfix run 与既有 feature run 的并存按 flow.md §16.3.7 处理：允许两个并发分支，但开发派发保持串行（同一 writer lock），不允许同时运行 feature 与 hotfix 两个 trac 命令（Aaron 裁定）。
 
-> **Maestro:** Human 裁定（2026-08-19，逐字记录）——关于如何找到对应既有 AC：
+> **Maestro [RESOLVED]:** Human 裁定（2026-08-19，逐字记录）——关于如何找到对应既有 AC：
 > 
 > 「我的想法是，trac hotfix <issue> xxx 时，内部先做一个 triage，来找到对应的 acc.
 > 
@@ -65,7 +65,7 @@ sha:
 3. **M-IMPL**：task graph 按影响切片（通常远小于 feature release），scope 白名单沿用目标版本 layout；实现只发生在隔离 `fix/{issue}` 分支（Runtime 是唯一 branch/worktree authority）；场景 B 的基线随活跃分支推进会 stale：merge 前须对活跃分支当前 HEAD reconcile，冲突 → `needs_attention`。Devon 在 `fix/{issue}` 分支上完成 RGR 与 review，修复提交落在该分支。
 4. 到达 M-IMPL 边界后以 boundary 终止（`run.completed` terminal_state=boundary）；操作者通过 `trac status`/`trac replay` 看到边界结果与 `fix/{issue}` 分支上的修复提交。
 
-> **Maestro:** Human 裁定（2026-08-19，逐字记录）——hotfix 的 M-TEST 阶段回归用例归属：
+> **Maestro [RESOLVED]:** Human 裁定（2026-08-19，逐字记录）——hotfix 的 M-TEST 阶段回归用例归属：
 > 
 > 「另外，在 M-TEST 阶段，Shield是需要补 RED 用例的。因为之前的测试用例都肯定是通过的（无论是形式上缺；还是形式上具备，但没有触发 RED 的条件），要能验证代码修复了，就必然要先复现（即找到 RED 条件），然后再让它变绿。
 > 
@@ -132,8 +132,9 @@ sha:
 - 来源: [3.2 / Human 裁定（2026-08-19，T-003）/ flow.md §16.3.2 / 重要推导]
 - 说明: 回归测试是对既有 AC 的检验补强，不扩展验收面；M-TEST 的 Shield 增量可空、由 unit 层回归用例跨层 trace 闭合，是主路径 M-TEST 步骤的非常规分支（产品不变量），不应仅靠 flow.md 引用兜底。
 
-> **Sage:** Reviewer finding（blocker）：BS-07 与 §3.2 第 2 点、§5 未完整反映 Human 裁定（2026-08-19，见 T-003）的 ownership split + 空 M-TEST 分支——这是主路径 M-TEST 步骤的非常规分支（空测试阶段 + 跨层 trace 闭合），属产品不变量，不应仅靠 flow.md §16.3.2 引用兜底。三处核对：(1) §3.2 第 2 点（line 64）仍写'Shield 以复现 issue 的回归测试为主'，固定 Shield/M-TEST 为唯一回归载体，缺 Archer 在 delta test-plan 决定归属、integration/e2e→Shield(M-TEST 补写)/unit→Devon(M-IMPL RED 阶段补写)、以及 M-TEST Shield 增量可空 + Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS（line 130）以'WHEN hotfix 进入 M-TEST'触发并固定 Shield/M-TEST 为唯一回归载体，未覆盖空 M-TEST 分支——BS-07 是下游 spec 作者继承的锁定不变量，若固定 Shield/M-TEST 为唯一载体，下游 FR 会与 Human 裁定及 flow.md §16.3.2（line 982）冲突。(3) §5 约束（line 154）未补 ownership split。请 Scribe RESPOND：§3.2 第 2 点、BS-07 改述以反映 Archer-decided ownership + 空 M-TEST 分支放行语义，§5 补约束。依据：Human 裁定 T-003（line 68-74）+ flow.md §16.3.2（line 982，已含完整 ownership split）。
+> **Sage [RESOLVED]:** Reviewer finding（blocker）：BS-07 与 §3.2 第 2 点、§5 未完整反映 Human 裁定（2026-08-19，见 T-003）的 ownership split + 空 M-TEST 分支——这是主路径 M-TEST 步骤的非常规分支（空测试阶段 + 跨层 trace 闭合），属产品不变量，不应仅靠 flow.md §16.3.2 引用兜底。三处核对：(1) §3.2 第 2 点（line 64）仍写'Shield 以复现 issue 的回归测试为主'，固定 Shield/M-TEST 为唯一回归载体，缺 Archer 在 delta test-plan 决定归属、integration/e2e→Shield(M-TEST 补写)/unit→Devon(M-IMPL RED 阶段补写)、以及 M-TEST Shield 增量可空 + Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS（line 130）以'WHEN hotfix 进入 M-TEST'触发并固定 Shield/M-TEST 为唯一回归载体，未覆盖空 M-TEST 分支——BS-07 是下游 spec 作者继承的锁定不变量，若固定 Shield/M-TEST 为唯一载体，下游 FR 会与 Human 裁定及 flow.md §16.3.2（line 982）冲突。(3) §5 约束（line 154）未补 ownership split。请 Scribe RESPOND：§3.2 第 2 点、BS-07 改述以反映 Archer-decided ownership + 空 M-TEST 分支放行语义，§5 补约束。依据：Human 裁定 T-003（line 68-74）+ flow.md §16.3.2（line 982，已含完整 ownership split）。
 >> **Scribe:** 已按 T-004 finding 完成 RESPOND（与 T-003 同一 finding，三处落文）：(1) §3.2 第 2 点（M-TEST）改述 RED-first + Archer 在 delta test-plan 决定归属（integration/e2e→Shield M-TEST 补写、unit→Devon M-IMPL RED 阶段补写）+ 空 Shield 增量时 Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS 改述覆盖 Archer-decided ownership + 空 M-TEST 分支放行语义，不再固定 Shield/M-TEST 为唯一回归载体，来源更新为 Human 裁定 T-003 + flow.md §16.3.2。(3) §5 必须保持的产品约束补 ownership split + 空 M-TEST 分支放行语义。请 Sage 复核并 resolved。
+>> **Sage:** 复核通过：三处落文均已正确反映 Human 裁定 T-003 的 ownership split + 空 M-TEST 分支。(1) §3.2 第 2 点（line 64）含 RED-first + Archer 在 delta test-plan 决定归属（integration/e2e→Shield M-TEST 补写、unit→Devon M-IMPL RED 阶段补写）+ 空 Shield 增量时 Runtime 凭'空 Shield 增量声明 + trac check trace 由 unit 层回归用例闭合'放行。(2) BS-07 EARS（line 131）覆盖 Archer-decided ownership + 空 M-TEST 分支放行，不再固定 Shield/M-TEST 为唯一载体。(3) §5（line 158）补 ownership split + 空 M-TEST 分支放行约束。finding 已闭合，resolved。
 
 ### BS-08 隔离分支实现
 
