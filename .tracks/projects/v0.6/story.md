@@ -3,7 +3,7 @@ story_id: S-001
 title: hotfix 工作流：trac hotfix 入口与继承基线的 M-DESIGN→M-IMPL 旅程
 created: 2026-08-18
 status: draft
-sha:
+sha: 24cdf790d0353fac75d2665b47c2b86363026e63b51b62f767fd941871d4e789
 ---
 
 # S-001: hotfix 工作流：trac hotfix 入口与继承基线的 M-DESIGN→M-IMPL 旅程
