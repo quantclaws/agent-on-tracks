@@ -1,0 +1,60 @@
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index 4cc5487..b31daa6 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -1091,6 +1091,38 @@ def cmd_check(repo: Path, *args) -> int:
+     return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
+ 
+ 
++def _cmd_run_noop(repo: Path, *args: str) -> int:
++    """COUNTEREXAMPLE scaffolding: no-op `trac run` (returns 0)."""
++    print("run: (noop)")
++    return 0
++
++
++def _cmd_hotfix_leak(repo: Path, *args: str) -> int:
++    """COUNTEREXAMPLE AC-FR0245-01: creates fix/{issue} with RGR commits
++    (trailers Tracks-Issue=42) BUT leaks the identical patch onto main
++    (different parent -> different SHA, same patch-id) - violating
++    topological isolation (fix commits must be absent from the active
++    branch)."""
++    import subprocess as _sp
++    def g(*a):
++        _sp.run(["git", *a], cwd=repo, check=True, capture_output=True)
++    issue = args[0] if args else "42"
++    g("checkout", "-b", f"fix/{issue}")
++    (repo / "fix.txt").write_text("the fix\n", encoding="utf-8")
++    g("add", "fix.txt")
++    g("commit", "-m", f"fix hotfix #{issue}\n\nTracks-Issue={issue}")
++    g("checkout", "main")
++    (repo / "PLACEHOLDER").write_text("x\n", encoding="utf-8")
++    g("add", "PLACEHOLDER")
++    g("commit", "-m", "placeholder")
++    (repo / "fix.txt").write_text("the fix\n", encoding="utf-8")
++    g("add", "fix.txt")
++    g("commit", "-m", f"fix hotfix #{issue}\n\nTracks-Issue={issue}")
++    g("checkout", f"fix/{issue}")
++    print(f"run hotfix-{issue} hotfix.requested issue={issue} scenario=post-release")
++    return 0
++
++
+ USAGE = (
+     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
+     "|triage <decision> [--actor NAME]"
+@@ -1105,7 +1137,7 @@ USAGE = (
+ _COMMANDS = {
+     "init": (cmd_init, 0),
+     "start": (cmd_start, None),
+-    "run": (cmd_run, None),
++    "run": (_cmd_run_noop, None),
+     "triage": (cmd_triage, None),
+     "review": (cmd_review, None),
+     "approve": (cmd_approve, None),
+@@ -1117,6 +1149,7 @@ _COMMANDS = {
+     "validate": (cmd_validate, 2),
+     "discuss": (cmd_discuss, None),
+     "check": (cmd_check, None),
++    "hotfix": (_cmd_hotfix_leak, None),
+ }
+ 
+ 

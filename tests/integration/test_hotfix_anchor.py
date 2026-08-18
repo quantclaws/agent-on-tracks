@@ -1,9 +1,10 @@
 """Sage anchor validation + redispatch (IF-HOTFIX-004, FR-0240-04/05).
 
 Direct call into the frozen ``tracks.executor.hotfix`` pure functions
-(``parse_anchor_refs`` / ``validate_anchor_refs``) plus the kernel
-control-flow stub (``_decide_hotfix_triage``) and the ``anchor.validated``
-/ ``verdict.failed(anchor_invalid)`` event outlets.
+(``parse_anchor_refs`` / ``validate_anchor_refs``) plus the CLI-driven
+hotfix entry with fake ``sage:SAGE_TRIAGE=bad_anchor`` to exercise the
+``verdict.failed(anchor_invalid)`` event outlet and the ``AWAIT_HUMAN``
+parking (IF-HOTFIX-002).
 
 Stubs raise ``NotImplementedError("IF-HOTFIX-004: ...")`` /
 ``IF-HOTFIX-002`` — the cross-module contract token is the legal Red
@@ -14,7 +15,6 @@ from __future__ import annotations
 
 from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 from tracks.executor.hotfix import parse_anchor_refs, validate_anchor_refs
-from tracks.kernel.hotfix import _decide_hotfix_triage  # noqa: F401
 
 
 # AC-FR0240-04@v0.6 TRACKS-TRACE Sage anchor validated reports anchored AC set
@@ -42,36 +42,63 @@ def test_sage_anchor_validated_reports_anchored_set(host_repo):
 
 
 # AC-FR0240-05@v0.6 TRACKS-TRACE anchor invalid redispatch <=3 then AWAIT_HUMAN, no auto feature
-def test_anchor_invalid_redispatch_and_await_human_no_auto_feature(host_repo):
+def test_anchor_invalid_redispatch_and_await_human_no_auto_feature(trac, host_repo, event_log):
     """AC-FR0240-05@v0.6: an invalid anchor reference (AC not present in the
     target-version acceptance.md) drives ``verdict.failed(check=
     anchor_invalid)`` and Sage redispatch up to 3 times; on exhaustion or
     NO_ANCHOR the sub-state parks at ``AWAIT_HUMAN`` and **never** auto-
     routes to FEATURE_ROUTE (NFR-0100-03).
 
+    Two observation layers, both on interfaces §4 outlets:
+
+    * pure-function contract (IF-HOTFIX-004): ``validate_anchor_refs``
+      reports the bad cross-version ref as missing;
+    * runtime behavior (IF-HOTFIX-002): with fake ``sage:SAGE_TRIAGE=
+      bad_anchor`` the entry drives three consecutive anchor-validation
+      failures (``verdict.failed(check=anchor_invalid, attempt=1..3)``
+      append-only on the run event stream), then parks at
+      ``awaiting=awaiting_human`` (SM-01.7) — and no ``backlog.recorded``
+      ever appears (no auto feature-routing on anchor exhaustion).
+
     Failure mode (legal Red): ``validate_anchor_refs`` raises
     ``NotImplementedError("IF-HOTFIX-004: validate_anchor_refs")`` before
-    the redispatch-budget assertion can fire. The kernel control-flow
-    stub ``_decide_hotfix_triage`` (IF-HOTFIX-002) would route
-    SAGE_TRIAGE -> AWAIT_HUMAN on exhaustion — also still a stub.
+    the redispatch-budget assertion can fire; the ``trac hotfix`` CLI
+    surface (IF-HOTFIX-001) is a Devon foundation task not yet registered,
+    so the behavior-driven drive returns USAGE / exit 1 and writes no
+    events.
     """
     vdir = seed_v05_approved_baseline(host_repo)
     projects_dir = vdir.parent
     bad_refs = [("AC-FR9999-99", "v0.5")]  # not present in fixture acceptance
 
+    # IF-HOTFIX-004: the program validator must report the miss.
     all_exist, missing = validate_anchor_refs(bad_refs, projects_dir)
     assert not all_exist
     assert missing  # human-locatable miss string
 
-    # Kernel control flow: exhaustion parks at AWAIT_HUMAN, never auto-feature.
-    # The kernel reducer + _decide_hotfix_triage stub are not yet wired;
-    # we assert the contract token directly to bind the IF-HOTFIX-002
-    # boundary (the control-flow branch that must NOT auto-route to feature).
-    from tracks.kernel.hotfix import HOTFIX_TRIAGE_SUBSTATES
-    from tracks.kernel.machine import State  # noqa: F401
+    # IF-HOTFIX-002 runtime behavior: three failing attempts then AWAIT_HUMAN.
+    seed_host_issues(host_repo)
+    r = trac("hotfix", "42", "--scenario", "post-release",
+             simulate="sage:SAGE_TRIAGE=bad_anchor")
+    assert r.returncode == 0, r.stderr
+    assert "awaiting=awaiting_human" in r.stdout
 
-    assert "AWAIT_HUMAN" in HOTFIX_TRIAGE_SUBSTATES
-    assert "FEATURE_ROUTE" not in HOTFIX_TRIAGE_SUBSTATES  # terminal, not parkable
+    run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+    evs = event_log(run_id)
+    failed = [
+        e for e in evs
+        if e["type"] == "verdict.failed"
+        and e["payload"].get("check") == "anchor_invalid"
+    ]
+    assert len(failed) == 3, f"expected 3 verdict.failed(anchor_invalid), got {len(failed)}"
+    for expected in (1, 2, 3):
+        assert failed[expected - 1]["payload"].get("attempt") == expected, (
+            f"attempt={expected} redispatch must be traceable, got "
+            f"{failed[expected - 1]['payload'].get('attempt')}"
+        )
+    # No automatic feature routing on anchor exhaustion.
+    backlogs = [e for e in evs if e["type"] == "backlog.recorded"]
+    assert not backlogs, "anchor exhaustion must NOT auto-route to feature"
 
 
 # AC-NFR0100-02@v0.6 TRACKS-TRACE anchor validation traceable with retry count

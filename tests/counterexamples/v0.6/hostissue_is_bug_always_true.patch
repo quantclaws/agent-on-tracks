@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
+index 7b07fac..a289a15 100644
+--- a/tracks/executor/hotfix.py
++++ b/tracks/executor/hotfix.py
+@@ -43,7 +43,9 @@ class HostIssue:
+     @property
+     def is_bug(self) -> bool:
+         """True iff labels contain ``bug`` (host repo convention, §3.1)."""
+-        raise NotImplementedError("IF-HOTFIX-003: HostIssue.is_bug")
++        # COUNTEREXAMPLE: always True - non-bug issues pass PRECHECK P-1
++        # (contract: is_bug iff "bug" in labels).
++        return True
+ 
+ 
+ @dataclass(frozen=True)

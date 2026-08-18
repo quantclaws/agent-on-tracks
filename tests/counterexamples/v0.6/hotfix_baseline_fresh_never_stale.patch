@@ -1,0 +1,57 @@
+diff --git a/tracks/cli/main.py b/tracks/cli/main.py
+index 4cc5487..00bd8e7 100644
+--- a/tracks/cli/main.py
++++ b/tracks/cli/main.py
+@@ -1091,6 +1091,35 @@ def cmd_check(repo: Path, *args) -> int:
+     return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
+ 
+ 
++def _cmd_run_noop(repo: Path, *args: str) -> int:
++    """COUNTEREXAMPLE scaffolding: no-op `trac run` (returns 0)."""
++    print("run: (noop)")
++    return 0
++
++
++def _cmd_hotfix_never_stale(repo: Path, *args: str) -> int:
++    """COUNTEREXAMPLE AC-FR0245-02: hotfix dev run whose BASELINE always
++    reports baseline.frozen(status="fresh") - never stale, even when the
++    active release branch advances."""
++    from tracks import paths
++    from tracks.store.store import Store
++    store = Store(paths.tracks_home(repo))
++    issue = args[0] if args else "50"
++    run_id = f"hotfix-{issue}"
++    store.append(run_id=run_id, version="v0.6", type="hotfix.requested",
++                 payload={"issue": int(issue), "scenario": "dev"})
++    store.append(run_id=run_id, version="v0.6", type="triage.prechecked",
++                 payload={"issue": int(issue), "scenario": "dev", "status": "pass",
++                          "target_version": "v0.6"})
++    store.append(run_id=run_id, version="v0.6", type="stage.entered",
++                 payload={"stage": "M-IMPL"})
++    store.append(run_id=run_id, version="v0.6", type="baseline.frozen",
++                 payload={"status": "fresh", "scenario_branch_head": "x"})
++    store.close()
++    print(f"run {run_id} hotfix.requested issue={issue} scenario=dev")
++    return 0
++
++
+ USAGE = (
+     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
+     "|triage <decision> [--actor NAME]"
+@@ -1105,7 +1134,7 @@ USAGE = (
+ _COMMANDS = {
+     "init": (cmd_init, 0),
+     "start": (cmd_start, None),
+-    "run": (cmd_run, None),
++    "run": (_cmd_run_noop, None),
+     "triage": (cmd_triage, None),
+     "review": (cmd_review, None),
+     "approve": (cmd_approve, None),
+@@ -1117,6 +1146,7 @@ _COMMANDS = {
+     "validate": (cmd_validate, 2),
+     "discuss": (cmd_discuss, None),
+     "check": (cmd_check, None),
++    "hotfix": (_cmd_hotfix_never_stale, None),
+ }
+ 
+ 

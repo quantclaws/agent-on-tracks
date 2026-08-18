@@ -33,14 +33,25 @@ def test_mimpl_commits_isolated_on_fix_branch(trac, host_repo, event_log):
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
 
+    # Isolation is topological (interfaces §4c): ``git log fix/{N}`` lists the
+    # fix commits AND the active branch (main) does not carry them. We assert
+    # on SHA reachability, not commit-message text — a deviant runtime that
+    # lands the fix commit on main with any message must be killed.
     fix_log = git(host_repo, "log", "--oneline", "fix/42")
     assert fix_log.strip(), "fix/42 must carry RGR commits"
-    # Trailers carry the hotfix issue identity (Tracks-Issue=42).
+    # Trailers bind the hotfix issue identity exactly (interfaces §4a:
+    # Tracks-Issue=<hotfix issue>).
     body = git(host_repo, "log", "--format=%B", "fix/42")
-    assert "Tracks-Issue=42" in body or "Tracks-Issue" in body
-    # Active branch (main) does not carry the fix commits.
-    main_log = git(host_repo, "log", "--oneline", "main")
-    assert "fix" not in main_log.lower() or "fix/42" not in main_log
+    assert "Tracks-Issue=42" in body
+    # Every fix/42 commit must be absent from main: ``git cherry main fix/42``
+    # prefixes each commit not in main with ``+`` (in main -> ``-``).
+    cherry = git(host_repo, "cherry", "main", "fix/42")
+    rows = [ln for ln in cherry.splitlines() if ln.strip()]
+    assert rows, "fix/42 must carry commits not present on main (isolation)"
+    non_plus = [ln for ln in rows if not ln.startswith("+")]
+    assert not non_plus, (
+        f"fix commits leaked onto main (git cherry shows in-main commits): {non_plus[:3]}"
+    )
 
 
 # AC-FR0245-02@v0.6 TRACKS-TRACE scenario B baseline stale reconcile NEEDS_ATTENTION
@@ -70,10 +81,24 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
 
-    # Advance the active release branch HEAD to force a stale digest.
+    # Advance the ACTIVE RELEASE BRANCH (releases/v0.6) HEAD to force a
+    # stale digest.  The current checkout is frozen onto fix/50 by
+    # IF-HOTFIX-005 (complete_hotfix_entry = create_branch + checkout), so
+    # ``git commit`` would land on fix/50, NOT releases/v0.6 — the stale
+    # detection input (``git rev-parse {active_branch}``, IF-HOTFIX-008)
+    # would never change.  We use git plumbing to advance releases/v0.6
+    # without disturbing the current checkout.
+    base = git(host_repo, "rev-parse", "releases/v0.6").strip()
     (host_repo / "marker.txt").write_text("stale trigger\n", encoding="utf-8")
     git(host_repo, "add", "marker.txt")
-    git(host_repo, "commit", "-m", "advance releases/v0.6")
+    tree = git(host_repo, "write-tree").strip()
+    head = git(host_repo, "commit-tree", tree, "-p", base, "-m", "advance releases/v0.6").strip()
+    git(host_repo, "update-ref", "refs/heads/releases/v0.6", head)
+    # Restore the index to a clean state (undo the staging of marker.txt).
+    git(host_repo, "reset", "-q")
+    (host_repo / "marker.txt").unlink(missing_ok=True)
+    # Sanity: releases/v0.6 HEAD really advanced.
+    assert git(host_repo, "rev-parse", "releases/v0.6").strip() != base
 
     cont = trac("run")
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
