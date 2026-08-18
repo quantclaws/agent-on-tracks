@@ -979,7 +979,7 @@ hotfix 一律从 M-DESIGN 进入（v0.6 起废除 quick_rgr 免设计分流：�
 ### 16.3. 与 feature release 的差异清单
 
 1. **M-DESIGN**：Archer 产出的是相对继承基线的 delta 设计（三文档与机器合同的修订增量，产出物归 hotfix run 自己的项目目录），不是全量产品设计；contracts 沿用目标版本的 machine contracts，除非修复本身改变合同。
-2. **M-TEST**：测试以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC（跨版本引用 `AC-FRXXXX-YY@<version>`），hotfix 不产生新 AC（没有自己的 M-ACC）。回归测试挂在对应的既有 AC 之下——bug 即“有 AC 而此前没有检验”；找不到可对应的 AC 即说明是新 feature（退出 hotfix，见 16.1.1）。合法 Red = 回归测试在带缺陷基线上的行为断言失败。
+2. **M-TEST**：测试以复现 issue 的回归测试为主、按影响面收窄；AC trace 绑定目标版本的既有 AC（跨版本引用 `AC-FRXXXX-YY@<version>`），hotfix 不产生新 AC（没有自己的 M-ACC）。回归测试挂在对应的既有 AC 之下——bug 即“有 AC 而此前没有检验”；找不到可对应的 AC 即说明是新 feature（退出 hotfix，见 16.1.1）。**回归用例必须先复现 RED 再变绿**（用户裁定 2026-08-19）：修复前既有用例必然全绿（用例形式上缺失，或具备但未触发 RED 条件），验证修复就必须先找到使缺陷可观察的 RED 条件；回归用例归属哪一层由 **Archer 在 delta test-plan 决定**——integration/e2e 层归 Shield（M-TEST 补写），unit 层归 Devon（M-IMPL RED 阶段补写），两种归属都保持“先复现（RED）后修复（GREEN）”的 RGR 纪律；若 Archer 将回归用例全部划归 unit 层，M-TEST 的 Shield 增量为空，Runtime 凭“delta test-plan 声明空 Shield 增量 + `trac check trace` 闭合由 unit 层回归用例承接”放行。合法 Red = 回归测试在带缺陷基线上的行为断言失败。
 > **Aaron:** 同意。不扩展 AC，但是要在对就应的 AC 下，增加回归测试（bug 就是有 AC 但之前没有检验）。如果找不到合适的、对应的 AC，则说明这是一个新的 feature。
 >> **Maestro:** 已并入本条正文（回归测试挂对应既有 AC；无对应 AC = 新 feature → 退出 hotfix）。
 3. **M-IMPL**：task graph 按影响切片（通常远小于 feature release），scope 白名单沿用目标版本 layout。场景 B 的基线随活跃分支推进会 stale：merge 前须对活跃分支当前 HEAD reconcile，冲突 → `needs_attention`。
