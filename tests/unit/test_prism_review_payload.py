@@ -173,3 +173,59 @@ def test_machine_old_event_without_ref_replays_clean() -> None:
     apply(s, _prism_event({"verdict": "revise", "defect_classification": None}))
     assert s.last_failure is not None
     assert "review_ref" not in s.last_failure
+
+
+# -- executor _emit_verdict threading (M-IMPL path, B23 mirror) ---------
+
+
+def test_emit_verdict_threads_structured_fields_and_blob(monkeypatch, tmp_path):
+    """The M-IMPL legacy emit path must thread review fields + blob ref,
+    or Devon/Archer revise re-dispatches carry no findings (D-35 §2.3)."""
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(tmp_path)
+    emitted = []
+    monkeypatch.setattr(
+        Executor,
+        "_emit",
+        lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
+    )
+    ex = object.__new__(Executor)
+    ex.store = store
+
+    class _State:
+        stage = "M-IMPL"
+        review_round = 1
+
+    class _Cmd:
+        command_id = "c1"
+
+    body = "## review body\nfull text"
+    ex._emit_verdict(
+        role="prism",
+        verdict="revise",
+        result={
+            "diff_ref": None,
+            "criteria_pack": {"name": "tracks-prism-impl", "version": "0.1"},
+            "review_summary": "范围断言不足",
+            "findings": [_finding()],
+            "review_body": body,
+        },
+        state=_State(),
+        p={},
+        cmd=_Cmd(),
+        task_id=None,
+    )
+    prism_events = [e for e in emitted if e["type"] == "prism.verdict"]
+    assert prism_events, emitted
+    payload = prism_events[0]["payload"]
+    assert payload["review_summary"] == "范围断言不足"
+    assert payload["findings"] == [_finding()]
+    assert payload["review_ref"]
+    assert "review_body" not in payload
+    from tracks import paths
+
+    blob_path = paths.blobs_dir(store.home) / payload["review_ref"]
+    assert blob_path.exists()
+    assert body in blob_path.read_text(encoding="utf-8")

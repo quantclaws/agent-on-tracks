@@ -1439,12 +1439,32 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         outcome_pack = result.get("criteria_pack")
         return bool(assigned_pack and outcome_pack != assigned_pack)
 
+    def _apply_prism_review_fields(self, payload: dict, verdict: str, result: dict) -> None:
+        """D-35 (SC-D35 §2.3): prism verdict events carry the criteria pack
+        plus, on revise, the structured review fields and the blobs ref for
+        the full body. M-IMPL reviews (PRISM_PLAN/RED/FINAL) emit through
+        this legacy path rather than the ResultCheckpoint pipeline — without
+        the threading here, Devon/Archer revise re-dispatches carry no
+        findings (the M-TEST half of B23, mirrored)."""
+        payload["criteria_pack"] = result.get("criteria_pack")
+        if verdict == "pass":
+            return
+        for key in ("review_summary", "findings", "discussion_refs"):
+            val = result.get(key)
+            if val:
+                payload[key] = val
+        review_body = result.get("review_body")
+        if isinstance(review_body, str) and review_body.strip():
+            review_ref = self.store.write_audit_blob(review_body)
+            if review_ref:
+                payload["review_ref"] = review_ref
+
     def _emit_verdict(self, role, verdict, result, state, p, cmd, task_id):
         """Emit the verdict event (+ review.round_started for Prism revise)."""
         ev = _VERDICT_EVENT[role]
         payload = {"verdict": verdict, "diff_ref": result.get("diff_ref")}
         if role == "prism" and state.stage in ("M-TEST", "M-IMPL"):
-            payload["criteria_pack"] = result.get("criteria_pack")
+            self._apply_prism_review_fields(payload, verdict, result)
         self._emit(ev, payload, command_id=cmd.command_id, task_id=task_id)
         if ev == "prism.verdict" and verdict != "pass":
             # flow.md §8.2: a revise verdict opens the next review round
