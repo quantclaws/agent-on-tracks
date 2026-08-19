@@ -16,8 +16,11 @@ M-IMPL task-graph derivation so both name their paths identically.
 
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 
+from tracks import paths
 from tracks.capabilities import supports_m_impl
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.devon_patch import DevonPatchMixin
@@ -42,6 +45,19 @@ def _ac_slug(ac_id: str) -> str:
     Shield contract and the Devon RGR contract always agree on the path.
     """
     return ac_id.lower().replace("-", "_")
+
+
+def _shield_marker_base_version(version: str) -> str:
+    """Cross-version AC marker version for a Shield WRITE (FR-0244-03).
+
+    A hotfix run's version identity is ``{target}-hotfix-{issue}`` (e.g.
+    ``v0.5-hotfix-42``); its regression tests bind to the *target* baseline
+    version (``v0.5``), never the hotfix run identity. Feature versions return
+    themselves unchanged.
+    """
+    if "-hotfix-" in version:
+        return version.split("-hotfix-", 1)[0]
+    return version
 
 
 class FakeShieldMixin:
@@ -196,7 +212,8 @@ class FakeShieldMixin:
         if token == "short_marker":
             marker = f"# {ac_id} TRACKS-TRACE short format (no @version)"
         else:
-            marker = f"# {ac_id}@{self.version} TRACKS-TRACE {layer} test"
+            base = _shield_marker_base_version(self.version)
+            marker = f"# {ac_id}@{base} TRACKS-TRACE {layer} test"
         if token == "illegit_red":
             # Import inside the test body so collection passes but the test
             # fails at runtime with ImportError (illegit Red -> DIAGNOSE).
@@ -257,3 +274,175 @@ class FakeShieldMixin:
             implementation,
         )
         return marker + "\n" + body
+
+    # -- hotfix fake behavior (IF-HOTFIX-009) -------------------------------
+
+    def _act_sage_triage(self, assignment: dict | None) -> dict:
+        """Deterministic SAGE_TRIAGE outcome (FR-0240-04).
+
+        ``sage:SAGE_TRIAGE`` tokens (``|``-sequence semantics unchanged):
+        the default ``anchor`` resolves the target-version acceptance's first
+        AC heading as the cross-version anchor set (``acs`` + per-entry
+        ``rationale_refs``); ``no_anchor`` reports the searched versions and
+        the deterministic corpus digests; ``bad_anchor`` cites an AC that does
+        not exist in the target acceptance so programmatic validation fails and
+        Sage is red-dispatched (AC-FR0240-05).
+        """
+        data = assignment if isinstance(assignment, dict) else {}
+        target_version = str(data.get("target_version") or self._hotfix_target_version())
+        token = self.token("sage", "SAGE_TRIAGE", "anchor")
+        if token == "no_anchor":
+            return {
+                "status": "done",
+                "outcome": "no_anchor",
+                "searched_versions": self._sage_searched_versions(target_version),
+                "corpus_digests": self._sage_corpus_digests(target_version),
+            }
+        if token == "bad_anchor":
+            return {
+                "status": "done",
+                "acs": [f"AC-FR9999-99@{target_version}"],
+            }
+        return self._sage_anchor_outcome(target_version)
+
+    def _hotfix_target_version(self) -> str:
+        """The target baseline version of this run: a hotfix run inherits its
+        target release's version (``v0.5-hotfix-42`` -> ``v0.5``); any other
+        version is its own identity."""
+        if "-hotfix-" in self.version:
+            return self.version.split("-hotfix-", 1)[0]
+        return self.version
+
+    def _target_acceptance(self, target_version: str) -> Path:
+        return paths.version_dir(paths.tracks_home(self.repo), target_version) / "acceptance.md"
+
+    @staticmethod
+    def _first_anchor_ac(acc_text: str) -> str:
+        """First ``### AC-…`` heading in the acceptance, in document order."""
+        match = re.search(r"^### (AC-(?:N?FR)\d{4}-\d+)\b", acc_text, re.M)
+        return match.group(1) if match else ""
+
+    def _sage_searched_versions(self, target_version: str) -> list[str]:
+        """Deterministic corpus search trace: the target version plus the run's
+        own identity when it is a hotfix (target + hotfix run both searched)."""
+        versions = [target_version]
+        own = str(self.version)
+        if own != target_version and own not in versions:
+            versions.append(own)
+        return versions
+
+    def _sage_corpus_digests(self, target_version: str) -> list[dict]:
+        """Deterministic corpus manifest: sha256 digest per searched version
+        acceptance (missing corpus is recorded as absent, never guessed)."""
+        digests = []
+        for version in self._sage_searched_versions(target_version):
+            acceptance = self._target_acceptance(version)
+            if acceptance.is_file():
+                digest = hashlib.sha256(acceptance.read_bytes()).hexdigest()
+            else:
+                digest = "absent"
+            digests.append({"version": version, "digest": digest})
+        return digests
+
+    def _sage_anchor_outcome(self, target_version: str) -> dict:
+        """Anchored outcome: first target acceptance AC as the deterministic
+        anchor set, with one grounding ref per entry (AC-FR0240-04)."""
+        acceptance = self._target_acceptance(target_version)
+        first = self._first_anchor_ac(
+            acceptance.read_text(encoding="utf-8") if acceptance.is_file() else ""
+        )
+        anchored = [f"{first}@{target_version}"]
+        rationale_refs = [
+            {
+                "ac": ref,
+                "version": target_version,
+                "ref": f"acceptance.md:{first}",
+            }
+            for ref in anchored
+        ]
+        return {"status": "done", "acs": anchored, "rationale_refs": rationale_refs}
+
+    def _act_hotfix_design(self, assignment: dict | None) -> dict | None:
+        """Archer M-DESIGN hotfix dispatch (FR-0243): produce the delta trio
+        (architecture/interfaces/test-plan) inside the hotfix run's own project
+        directory, carrying the anchored cross-version AC set. Returns ``None``
+        for ordinary (non-hotfix) design dispatches.
+
+        Requirement-stage artifacts (story/spec/acceptance) are always
+        inherited from the target baseline, never created (FR-0241-02).
+        """
+        if not isinstance(assignment, dict):
+            return None
+        anchor_acs = assignment.get("anchor_acs")
+        target_version = assignment.get("target_version")
+        if not isinstance(anchor_acs, (list, tuple)) or not anchor_acs:
+            return None
+        if not isinstance(target_version, str) or not target_version.strip():
+            return None
+        anchored = [
+            f"{ac}@{target_version}" if "@" not in ac else ac for ac in anchor_acs
+        ]
+        vdir = self._design_vdir()
+        vdir.mkdir(parents=True, exist_ok=True)
+        self._write_hotfix_delta(vdir, anchored, target_version)
+        return {
+            "status": "done",
+            "artifact_ref": str(vdir.relative_to(self.repo)),
+            "self_report": f"wrote hotfix delta trio to {vdir.relative_to(self.repo)}",
+            "anchored_acs": anchored,
+        }
+
+    def _write_hotfix_delta(self, vdir: Path, anchored: list[str], target_version: str) -> None:
+        """Write the delta trio with complete frontmatter and one anchored-AC
+        section each; test-plan carries the §8 regression rows."""
+        arch = self._append_hotfix_anchor_section(
+            self._design_doc("architecture"), anchored, "架构增量"
+        )
+        (vdir / "architecture.md").write_text(arch, encoding="utf-8")
+        interfaces = self._append_hotfix_anchor_section(
+            self._design_doc("interfaces"), anchored, "接口增量"
+        )
+        (vdir / "interfaces.md").write_text(interfaces, encoding="utf-8")
+        plan = self._drop_coverage_section(self._design_doc("test-plan"))
+        plan = self._append_hotfix_anchor_section(plan, anchored, "回归增量")
+        plan = plan.rstrip("\n") + "\n" + self._hotfix_delta_coverage(anchored)
+        (vdir / "test-plan.md").write_text(plan, encoding="utf-8")
+
+    @staticmethod
+    def _append_hotfix_anchor_section(text: str, anchored: list[str], title: str) -> str:
+        """Append one delta section listing the anchored cross-version AC refs."""
+        lines = ["", "## Anchor 承接（hotfix delta）", ""]
+        for ac in anchored:
+            lines.append(f"- **{ac}** — {title}，目标版本既有验收条目")
+        lines.append("")
+        return text.rstrip("\n") + "\n" + "\n".join(lines) + "\n"
+
+    def _hotfix_delta_coverage(self, anchored: list[str]) -> str:
+        """§8 regression rows (hotfix delta test-plan): each anchored AC with a
+        unit-layer regression test declaration (FR-0244-02/03)."""
+        rows = "\n".join(
+            f"| {ac} | unit | tests/unit/test_{_ac_slug(ac.split('@', 1)[0])}.py | "
+            "IF-HOTFIX-009 |"
+            for ac in anchored
+        )
+        return (
+            "\n## 8. AC Coverage\n\n"
+            "| AC id | layer | test | IF |\n|---|---|---|---|\n" + rows + "\n"
+        )
+
+    def _devon_attach_hotfix_trailers(self, result: dict, assignment: dict) -> None:
+        """Attach the Tracks-Issue trailer evidence to a Devon hotfix outcome
+        (FR-0246-03 audit chain): the hotfix run's issue number is the demand-
+        tracking identity and must survive into the auditor's evidence."""
+        if not isinstance(assignment, dict):
+            return
+        issue = assignment.get("hotfix_issue")
+        if issue is None:
+            return
+        audit = result.get("audit_evidence")
+        if not isinstance(audit, dict):
+            audit = {}
+            result["audit_evidence"] = audit
+        trailers = {"Tracks-Issue": str(issue)}
+        audit["trailers"] = trailers
+        audit["Tracks-Issue"] = str(issue)

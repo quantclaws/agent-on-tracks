@@ -56,6 +56,8 @@ _PRISM_REVIEW_SUBSTATES = (
 )
 _DEVON_PHASES = ("red", "green", "refactor")
 _DEVON_FAILURE_TOKENS = frozenset((*_FAILED_TOKENS, "hang"))
+# FR-0243: anchor verdict projection for prism review payloads (default upheld).
+_ANCHOR_VERDICT = {"anchor_overturned": "overturned"}
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
@@ -138,6 +140,8 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         no_diff = self._act_no_diff(role, substate)
         if no_diff is not None:
             return no_diff
+        if role == "sage" and substate == "SAGE_TRIAGE":
+            return self._act_sage_triage(assignment)
         if role == "devon":
             data = assignment if isinstance(assignment, dict) else {}
             return self._act_m_impl_devon(substate, data)
@@ -184,6 +188,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result["criteria_pack"] = dict(assigned_pack)
+# FR-0243: the review payload carries the anchor verdict with a
+            # default of upheld; only the anchor_overturned token flips it.
+            result["anchor_verdict"] = _ANCHOR_VERDICT.get(verdict, "upheld")
         # defect_classification injection (for testing rollback routing)
         if role == "prism" and substate in _PRISM_REVIEW_SUBSTATES and verdict != "pass":
             dc = _simulate_map().get("prism:defect_classification")
@@ -240,6 +247,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if token == "hang":
             time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
         if role == "archer":
+            delta = self._act_hotfix_design(assignment)
+            if delta is not None:
+                return delta
             scaffold, failure = self._validated_fake_scaffold(assignment)
             if failure is not None:
                 return failure
@@ -681,12 +691,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         phase = assignment["phase"]
         token = self.token("devon", phase.upper(), "ok")
         if token in _DEVON_FAILURE_TOKENS or (token == "stub_token_failure" and phase != "red"):
-            return self._devon_token_failure(assignment, phase, token)
-        if phase == "refactor":
-            return self._devon_refactor(assignment, token)
-        if phase == "red":
-            return self._devon_red(assignment, token)
-        return self._devon_green(assignment, token)
+            result = self._devon_token_failure(assignment, phase, token)
+        elif phase == "refactor":
+            result = self._devon_refactor(assignment, token)
+        elif phase == "red":
+            result = self._devon_red(assignment, token)
+        else:
+            result = self._devon_green(assignment, token)
+        self._devon_attach_hotfix_trailers(result, assignment)
+        return result
 
     @staticmethod
     def _devon_assignment_error(assignment: dict) -> str | None:
