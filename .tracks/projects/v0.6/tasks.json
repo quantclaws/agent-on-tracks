@@ -341,7 +341,7 @@
   {
    "task_id": "T-012",
    "issue_number": 33,
-   "description": "【标准 RGR】正式归档 §2f design-trace blockquote 排除（FR-0244，IF-VALIDATE-001 v0.6 扩展，architecture §2f/§3.9 路径 (b)，issue #33）：tracks/executor/test_tasks.py——_visible_plan_lines 在 HTML 注释/fenced code 剔除之外同步剔除 `>` 开头的 inline-discussion blockquote 行（layer/IF- 归属判定面随之收窄为非 blockquote 可见行）；fail-closed 保持（把归属声明藏进 blockquote 不产生任何计数，§8 表格行仍是唯一机器可读覆盖来源）；feature 版本 trace 语义逐字节不变。RED 锚点为 tests/unit/test_test_tasks_contract.py 新增断言blockquote 排除行为的单测（当前该文件无此断言、基线代码无此行为 → 锚为真红）。GREEN 落盘后主树 R3 期带外副本由运营端丢弃。",
+   "description": "【标准 RGR】正式归档 §2f design-trace blockquote 排除（FR-0244，IF-VALIDATE-001 v0.6 扩展，architecture §2f/§3.9 路径 (b)，issue #33）：tracks/executor/test_tasks.py——_visible_plan_lines 在 HTML 注释/fenced code 剔除之外同步剔除 `>` 开头的 inline-discussion blockquote 行（layer/IF- 归属判定面随之收窄为非 blockquote 可见行）；fail-closed 保持（把归属声明藏进 blockquote 不产生任何计数，§8 表格行仍是唯一机器可读覆盖来源）；feature 版本 trace 语义逐字节不变。Devon 于 RED 阶段在 tests/unit/test_test_tasks_contract.py 新增断言 blockquote 排除行为的单测（当前该文件无此断言、基线代码无此行为 → 新测试为真红，标准 RGR，非 preset-anchor）。GREEN 落盘后主树 R3 期带外副本由运营端丢弃。",
    "ac_refs": [
     "AC-FR0244-02"
    ],
