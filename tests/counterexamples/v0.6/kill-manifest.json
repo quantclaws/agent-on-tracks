@@ -1,6 +1,6 @@
 {
  "version": "v0.6",
- "contract": "Each required Shield test binds one minimal contract-deviation counterexample (mutation) and a kill verification. The 6 pre-implemented-module bindings (precheck_pass through cli_hotfix_no_events) have been re-run against the Archer scaffold stubs via the §12.5 protocol (apply patch -> run bound test -> record killed/survived -> reverse via git apply -R -> fresh unpatched verification). All 6 are killed: each patch makes the bound test fail at a behavior assertion (not at the NotImplementedError stub token), proving the assertion has discriminating power. The 30 stub-targeting CLI-test bindings share the cli_hotfix_no_events.patch mutation class (register cmd_hotfix with a no-op deviant handler that writes no events and prints a wrong success line); this pattern is verified killed on a representative subset (test_hotfix_cli_entry, test_hotfix_events::test_hotfix_events_append_only_replay_and_report, test_hotfix_design_delta::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts, test_hotfix_journey::test_hotfix_journey_happy_post_release, test_hotfix_coexist::test_active_run_selection_and_status_discriminates_runs) - the remaining 25 share the same mutation class because every CLI-driven test asserts on contract-required events / stdout / branches that the deviant no-op handler does not produce. Three targeted patches replace the shared-mutation-class bindings for the PRISM-V06-01/02/03-revised tests: hotfix_fix_commit_leaks_to_main.patch kills the topological isolation assertion (git cherry), hotfix_baseline_fresh_never_stale.patch kills the stale-detection assertion (baseline.frozen status=stale), and hotfix_anchor_no_redispatch.patch / hotfix_anchor_auto_feature_backlog.patch kill the redispatch-budget and no-auto-feature assertions (verdict.failed count, backlog.recorded absence). Patches and the generator script live alongside this manifest in tests/counterexamples/v0.6/. Counterexample application never touches product behavior: patches are applied to a temporary working-tree state, verified, then reversed via `git apply -R`; the working tree is clean after every verification.",
+ "contract": "Each required Shield test binds one minimal contract-deviation counterexample (mutation) and a kill verification, verified via the §12.5 protocol (apply patch -> run bound test -> record killed/survived -> reverse via git apply -R -> fresh unpatched verification). After M-IMPL implemented tracks/executor/hotfix.py (GREEN), the pure-function direct-call bindings were retired: the 4 tests that directly called the pure functions (precheck_pass / precheck_rejection / sage_anchor / anchored_creates) were rewritten to be CLI-driven through trac hotfix (legal Red = USAGE / exit 1 while IF-HOTFIX-001 is a foundation task), and their counterexamples rebind to the shared cli_hotfix_no_events.patch mutation class (register cmd_hotfix with a no-op deviant handler that writes no events and prints a wrong success line). All CLI-driven tests bind the shared mutation class: the no-op handler returns exit 0 with 'hotfix: ok (no events)', so every contract-required stdout line / event / git branch asserted by the tests is absent (killed) — representative subset re-verified after the rewrites (test_hotfix_cli_entry, test_hotfix_events, test_hotfix_precheck::test_precheck_pass + ::test_precheck_rejection, test_hotfix_anchor::test_sage_anchor, test_hotfix_branch_baseline::test_anchored_creates, test_hotfix_journey, test_hotfix_coexist). Targeted patches replace the shared-mutation-class bindings where the assertion needs a specific deviation: hotfix_fix_commit_leaks_to_main.patch kills the topological isolation assertion (git cherry), hotfix_baseline_fresh_never_stale.patch kills the stale-detection assertion (baseline.frozen status=stale), and hotfix_anchor_no_redispatch.patch / hotfix_anchor_auto_feature_backlog.patch kill the redispatch-budget and no-auto-feature assertions (verdict.failed count, backlog.recorded absence). Each patch in this directory applies cleanly against the current HEAD (verified via git apply --check). Patches and the generator script live alongside this manifest in tests/counterexamples/v0.6/. Counterexample application never touches product behavior: patches are applied to a temporary working-tree state, verified, then reversed via `git apply -R`; the working tree is clean after every verification.",
  "bindings": [
   {
    "test": "tests/integration/test_hotfix_cli_entry.py::test_hotfix_entry_happy_requested_and_status_substates",
@@ -9,20 +9,20 @@
    "mutation": "cmd_hotfix registered with a no-op deviant handler that prints 'hotfix: ok (no events)' and returns exit 0 without writing hotfix.requested or driving triage",
    "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (PRISM-V06-A1 §2b contract fields) fails at assert 'hotfix.requested' in stdout (got 'hotfix: ok (no events)'); reversed via git apply -R; fresh unpatched run failed at assert 1 == 0 (USAGE / exit 1 - command missing, legal Red)."
   },
-  {
-   "test": "tests/integration/test_hotfix_precheck.py::test_precheck_pass_reaches_sage_triage_without_agent_dispatch",
-   "patch": "precheck_pass_status_no_target.patch",
-   "result": "killed",
-   "mutation": "precheck_hotfix returns PrecheckReport(status='pass', target_version=None) - pass without target_version (contract: pass requires target_version)",
-   "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert None == 'v0.5' (target_version missing); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
-  },
-  {
-   "test": "tests/integration/test_hotfix_precheck.py::test_precheck_rejection_matrix_no_branch_nonzero_exit",
-   "patch": "precheck_rejected_bogus_reason.patch",
-   "result": "killed",
-   "mutation": "precheck_hotfix returns PrecheckReport(status='rejected', reason='bogus_reason') - reason outside the closed HotfixRejectionReason set",
-   "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert 'bogus_reason' in _REASON_CLOSED_SET (closed-set membership violated); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
-  },
+   {
+    "test": "tests/integration/test_hotfix_precheck.py::test_precheck_pass_reaches_sage_triage_without_agent_dispatch",
+    "patch": "cli_hotfix_no_events.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix no-op deviant handler returns exit 0 and prints 'hotfix: ok (no events)' without writing triage.prechecked(pass) — deviates from AC-FR0240-02 which requires the pass line + target_version on stdout",
+    "verification": "PRISM-V06-11 revised test is now CLI-driven (was a direct precheck_hotfix call with an unusable projects_dir fixture). Applied cli_hotfix_no_events.patch; test failed at assert 'triage.prechecked' in 'hotfix: ok (no events)'; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (CLI unregistered, legal Red)."
+   },
+   {
+    "test": "tests/integration/test_hotfix_precheck.py::test_precheck_rejection_matrix_no_branch_nonzero_exit",
+    "patch": "cli_hotfix_no_events.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix no-op deviant handler returns exit 0 for every REJECTED case — never exits non-zero nor prints REJECTED / reason (deviates from AC-FR0240-03)",
+    "verification": "PRISM-V06-10 revised test is now CLI-driven (was: vacuous returncode!=0 + direct precheck_hotfix closed-set matrix). Applied cli_hotfix_no_events.patch; test failed at assert 0 != 0 (issue 99/post-release REJECTED must exit non-zero); reversed via git apply -R; fresh unpatched run failed at assert ('REJECTED' in '' or 'rejected' in '') — USAGE stdout, legal Red."
+   },
   {
    "test": "tests/integration/test_hotfix_precheck.py::test_precheck_deterministic_no_llm_dispatch_records",
    "patch": "cli_hotfix_no_events.patch",
@@ -30,27 +30,27 @@
    "mutation": "cmd_hotfix no-op handler writes no events (contract: PRECHECK must record triage.prechecked with no agent dispatch)",
    "verification": "same mutation class as cli_hotfix_no_events.patch (verified on test_hotfix_cli_entry); the no-op handler produces no triage.prechecked event, so the no-LLM-dispatch audit assertion cannot bind."
   },
-  {
-   "test": "tests/integration/test_hotfix_anchor.py::test_sage_anchor_validated_reports_anchored_set",
-   "patch": "parse_anchor_refs_wrong_tuple.patch",
-   "result": "killed",
-   "mutation": "parse_anchor_refs drops the @version - returns ('AC-FR0030-01', '') instead of ('AC-FR0030-01', 'v0.5')",
-   "verification": "applied patch (parse_anchor_refs stub body replaced, tracks/executor/hotfix.py:117); test failed at assert [('AC-FR0030-01', '')] == [('AC-FR0030-01', 'v0.5')]; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: parse_anchor_refs (legal Red)."
-  },
-  {
-   "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
-   "patch": "hotfix_anchor_no_redispatch.patch",
-   "result": "killed",
-   "mutation": "cmd_hotfix with sage:SAGE_TRIAGE=bad_anchor emits only ONE verdict.failed(anchor_invalid, attempt=1) and parks — no 3-attempt redispatch sequence (IF-HOTFIX-002 violation)",
-   "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding in tracks/executor/hotfix.py + cmd_hotfix no-redispatch handler + no-op cmd_run in tracks/cli/main.py); test failed at assert len(failed) == 3 (got 1 verdict.failed); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: validate_anchor_refs (legal Red)."
-  },
-  {
-   "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
-   "patch": "hotfix_anchor_auto_feature_backlog.patch",
-   "result": "killed",
-   "mutation": "cmd_hotfix with bad_anchor emits 3x verdict.failed AND backlog.recorded(decision=feature_route) — auto-routes to feature on exhaustion (NFR-0100-03 violation)",
-   "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding + cmd_hotfix auto-feature handler + no-op cmd_run); test failed at assert not backlogs (backlog.recorded present); reversed via git apply -R; fresh unpatched run failed at NotImplementedError (legal Red)."
-  },
+{
+    "test": "tests/integration/test_hotfix_anchor.py::test_sage_anchor_validated_reports_anchored_set",
+    "patch": "cli_hotfix_no_events.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix no-op deviant handler returns exit 0 but never surfaces the anchored AC set (AC-FR0030-01) on stdout — deviates from AC-FR0240-04's anchored-set report",
+    "verification": "PRISM-V06-10 revised test is now CLI-driven (was a direct parse_anchor_refs+validate_anchor_refs call that passed once the pure functions were implemented). Applied cli_hotfix_no_events.patch; test failed at assert 'AC-FR0030-01' in 'hotfix: ok (no events)'; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (CLI unregistered, legal Red)."
+   },
+   {
+    "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
+    "patch": "hotfix_anchor_no_redispatch.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix with sage:SAGE_TRIAGE=bad_anchor emits only ONE verdict.failed(anchor_invalid, attempt=1) and parks — no 3-attempt redispatch sequence (IF-HOTFIX-002 violation)",
+    "verification": "applied CLI-only regenerated patch (cmd_hotfix no-redispatch handler + no-op cmd_run, tracks/cli/main.py — the stale validate_anchor_refs stub hunk was dropped after M-IMPL implemented it); test failed at assert len(failed) == 3 (got 1 verdict.failed); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+   },
+   {
+    "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
+    "patch": "hotfix_anchor_auto_feature_backlog.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix with bad_anchor emits 3x verdict.failed AND backlog.recorded(decision=feature_route) — auto-routes to feature on exhaustion (NFR-0100-03 violation)",
+    "verification": "applied CLI-only regenerated patch (cmd_hotfix auto-feature handler + no-op cmd_run, tracks/cli/main.py — the stale validate_anchor_refs stub hunk was dropped after M-IMPL implemented it); test failed at assert not backlogs (backlog.recorded present); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+   },
   {
    "test": "tests/integration/test_hotfix_anchor.py::test_anchor_validation_traceable_with_retry_count",
    "patch": "cli_hotfix_no_events.patch",
@@ -86,13 +86,13 @@
    "mutation": "cmd_hotfix no-op handler produces no journey events for replay/report (contract: full hotfix journey sequence)",
    "verification": "same mutation class as cli_hotfix_no_events.patch; replay cannot surface the journey tokens."
   },
-  {
-   "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_creates_isolated_fix_branch_per_scenario",
-   "patch": "complete_hotfix_entry_wrong_branch.patch",
-   "result": "killed",
-   "mutation": "complete_hotfix_entry returns {'branch': 'fix/wrong'} instead of {'branch': 'fix/{issue}'} (contract: branch name must be fix/{issue})",
-   "verification": "applied patch (complete_hotfix_entry stub body replaced, tracks/executor/hotfix.py:153); test failed at assert 'fix/wrong' == 'fix/42'; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-005: complete_hotfix_entry (legal Red)."
-  },
+{
+    "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_creates_isolated_fix_branch_per_scenario",
+    "patch": "cli_hotfix_no_events.patch",
+    "result": "killed",
+    "mutation": "cmd_hotfix no-op deviant handler returns exit 0 but never creates fix/{issue} — deviates from AC-FR0241-01 which requires the git outlet (git branch --list fix/N) to show the branch",
+    "verification": "PRISM-V06-11 revised test is now CLI-driven via git outlets (was a direct complete_hotfix_entry call with KeyError on 'branch' vs 'branch_name'). Applied cli_hotfix_no_events.patch; test failed at assert 'fix/42' in '<empty branch list>'; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (CLI unregistered, legal Red)."
+   },
   {
    "test": "tests/integration/test_hotfix_branch_baseline.py::test_baseline_inheritance_no_requirement_stage_artifacts",
    "patch": "cli_hotfix_no_events.patch",

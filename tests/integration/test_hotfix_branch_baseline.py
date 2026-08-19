@@ -1,10 +1,11 @@
 """ANCHORED: fix branch + baseline inheritance + M-DESIGN entry
 (IF-HOTFIX-005, FR-0241-01/02/03).
 
-Direct call into the frozen ``tracks.executor.hotfix.complete_hotfix_entry``
-stub plus the git/file outlets asserted via the host subprocess.
-
-Stubs raise ``NotImplementedError("IF-HOTFIX-005: ...")`` - legal Red.
+CLI-driven ``trac hotfix`` with asserts on the git/file public outlets
+(interfaces §4c: ``git branch --list fix/{N}`` / ``git log --oneline`` /
+hotfix project dir existence). ``trac hotfix`` (IF-HOTFIX-001) is a Devon
+foundation task not yet registered — the CLI returns USAGE / exit 1, which
+is the legal Red signal until Devon implements it.
 """
 
 from __future__ import annotations
@@ -15,45 +16,38 @@ from tests.hotfix_support import (
     seed_release_branch,
     seed_v05_approved_baseline,
 )
-from tracks.executor.hotfix import complete_hotfix_entry, locate_target_version  # noqa: F401
 
 
 # AC-FR0241-01@v0.6 TRACKS-TRACE ANCHORED creates isolated fix branch per scenario
-def test_anchored_creates_isolated_fix_branch_per_scenario(host_repo):
+def test_anchored_creates_isolated_fix_branch_per_scenario(trac, host_repo):
     """AC-FR0241-01@v0.6: ANCHORED creates ``fix/{issue}`` from ``main`` HEAD
-    (post-release) or from the active release branch HEAD (dev). Runtime
-    is the sole branch authority.
+    (post-release) or from the active release branch HEAD (dev). Runtime is
+    the sole branch authority. Asserts on the git public outlet (interfaces
+    §4c ``git branch --list fix/{N}`` / ``git log --oneline fix/{N} ^main``),
+    not on unenumerated dict keys.
 
-    Failure mode (legal Red): ``complete_hotfix_entry`` is a frozen stub
-    (IF-HOTFIX-005); the call raises ``NotImplementedError`` before the
-    git assertions can fire.
+    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
+    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1 and
+    never creates the ``fix/{issue}`` branch, so the git branch/ baseline
+    assertions cannot bind.
     """
     seed_v05_approved_baseline(host_repo)
+    seed_host_issues(host_repo)
 
-    # Scenario A: post-release -> base = main HEAD.
-    out_a = complete_hotfix_entry(
-        repo=host_repo,
-        run_id="hotfix-42",
-        issue=42,
-        scenario="post-release",
-        target_version="v0.5",
-        anchor_acs=["AC-FR0030-01@v0.5"],
-    )
-    assert out_a["branch"] == "fix/42"
+    # Scenario A: post-release -> fix/42 from main HEAD.
+    r_a = trac("hotfix", "42", "--scenario", "post-release")
+    assert r_a.returncode == 0, r_a.stderr
+    branch_a = git(host_repo, "branch", "--list", "fix/42")
+    assert "fix/42" in branch_a, "ANCHORED must create fix/42 (git outlet)"
     log_a = git(host_repo, "log", "--oneline", "fix/42", "^main")
     assert log_a.strip() == ""  # base = main HEAD, no new commits yet
 
-    # Scenario B: dev -> base = active release branch HEAD.
+    # Scenario B: dev -> fix/50 from active release branch HEAD.
     seed_release_branch(host_repo, "releases/v0.6")
-    out_b = complete_hotfix_entry(
-        repo=host_repo,
-        run_id="hotfix-50",
-        issue=50,
-        scenario="dev",
-        target_version="v0.6",
-        anchor_acs=["AC-FR0030-01@v0.6"],
-    )
-    assert out_b["branch"] == "fix/50"
+    r_b = trac("hotfix", "50", "--scenario", "dev")
+    assert r_b.returncode == 0, r_b.stderr
+    branch_b = git(host_repo, "branch", "--list", "fix/50")
+    assert "fix/50" in branch_b, "ANCHORED must create fix/50 (git outlet)"
     log_b = git(host_repo, "log", "--oneline", "fix/50", "^releases/v0.6")
     assert log_b.strip() == ""  # base = active release HEAD
 

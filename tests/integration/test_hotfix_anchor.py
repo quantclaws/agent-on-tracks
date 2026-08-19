@@ -1,44 +1,42 @@
 """Sage anchor validation + redispatch (IF-HOTFIX-004, FR-0240-04/05).
 
-Direct call into the frozen ``tracks.executor.hotfix`` pure functions
-(``parse_anchor_refs`` / ``validate_anchor_refs``) plus the CLI-driven
-hotfix entry with fake ``sage:SAGE_TRIAGE=bad_anchor`` to exercise the
-``verdict.failed(anchor_invalid)`` event outlet and the ``AWAIT_HUMAN``
-parking (IF-HOTFIX-002).
+CLI-driven hotfix entry with fake ``sage:SAGE_TRIAGE=bad_anchor`` to exercise
+the ``verdict.failed(anchor_invalid)`` event outlet, the anchored-set report
+and the ``AWAIT_HUMAN`` parking (IF-HOTFIX-002). Asserts land on the
+interfaces §4 outlets (CLI stdout / events table) only.
 
-Stubs raise ``NotImplementedError("IF-HOTFIX-004: ...")`` /
-``IF-HOTFIX-002`` — the cross-module contract token is the legal Red
-signal until Devon implements.
+``trac hotfix`` (IF-HOTFIX-001) is a Devon foundation task not yet
+registered — the CLI returns USAGE / exit 1, which is the legal Red signal
+until Devon implements it.
 """
 
 from __future__ import annotations
 
 from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
-from tracks.executor.hotfix import parse_anchor_refs, validate_anchor_refs
+from tracks.executor.hotfix import validate_anchor_refs
 
 
 # AC-FR0240-04@v0.6 TRACKS-TRACE Sage anchor validated reports anchored AC set
-def test_sage_anchor_validated_reports_anchored_set(host_repo):
-    """AC-FR0240-04@v0.6: Sage's SAGE_TRIAGE outcome is a cross-version AC
-    reference set (e.g. ``AC-FR0030-01@v0.5``); the program validator
-    (``validate_anchor_refs``) confirms each ref resolves to a real
+def test_sage_anchor_validated_reports_anchored_set(trac, host_repo):
+    """AC-FR0240-04@v0.6: the SAGE_TRIAGE outcome is a cross-version AC
+    reference set (e.g. ``AC-FR0030-01@v0.5``). After Sage anchors on the
+    fixture AC, the program validator confirms each ref resolves to a real
     ``### <ac_id>`` heading in ``.tracks/projects/<version>/acceptance.md``
-    before ``anchor.validated`` is emitted.
+    and the ``anchor.validated`` event is emitted with that anchored set
+    (interfaces §2a / §4b CLI outlet).
 
-    Failure mode (legal Red): ``parse_anchor_refs`` /
-    ``validate_anchor_refs`` are frozen stubs (IF-HOTFIX-004); the call
-    raises ``NotImplementedError`` before the assertion can fire.
+    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
+    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1
+    before the anchored-set line / ``anchor.validated`` event can appear.
     """
-    vdir = seed_v05_approved_baseline(host_repo)
-    projects_dir = vdir.parent
-    acs = ["AC-FR0030-01@v0.5"]
+    seed_v05_approved_baseline(host_repo)
+    seed_host_issues(host_repo)
 
-    refs = parse_anchor_refs(acs)
-    assert refs == [("AC-FR0030-01", "v0.5")]
-
-    all_exist, missing = validate_anchor_refs(refs, projects_dir)
-    assert all_exist, f"anchor must resolve to existing AC headings: {missing}"
-    assert not missing
+    # CLI drive: on ANCHORED the run surfaces the anchored cross-version AC
+    # set so the operator can audit the anchor evidence chain (§2a #1 / §4b).
+    r = trac("hotfix", "42", "--scenario", "post-release")
+    assert r.returncode == 0, r.stderr
+    assert "AC-FR0030-01" in r.stdout
 
 
 # AC-FR0240-05@v0.6 TRACKS-TRACE anchor invalid redispatch <=3 then AWAIT_HUMAN, no auto feature

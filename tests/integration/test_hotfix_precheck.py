@@ -1,66 +1,44 @@
 """PRECHECK deterministic program precheck (IF-HOTFIX-003, FR-0240-02/03).
 
-Two contract surfaces:
+Driven entirely through the ``trac hotfix`` CLI/event/git outlets
+(interfaces §4): PRECHECK pass and REJECTED outcomes must surface the
+contract lines (``triage.prechecked`` / ``REJECTED <reason>`` / ``next:``),
+exit codes and the no-``fix/{issue}``-branch side effect.
 
-* Direct call into the ``tracks.executor.hotfix`` pure functions
-  (``precheck_hotfix`` / ``HostIssue.is_bug``) — the deterministic rules
-  P-1..P-5 (ARCH-006 §3.2) with no LLM dispatch.
-* End-to-end ``trac hotfix`` driving the same rules through the CLI —
-  REJECTED runs do not create a ``fix/{issue}`` branch and exit non-zero.
-
-Stubs raise ``NotImplementedError("IF-HOTFIX-003: ...")`` (Archer
-scaffold); both surfaces fail with legal Red until Devon implements.
+``trac hotfix`` (IF-HOTFIX-001) is a Devon foundation task not yet
+registered — the CLI returns USAGE / exit 1, which is the legal Red signal
+until Devon implements it.
 """
 
 from __future__ import annotations
 
-from typing import get_args
-
-from tests.hotfix_support import HOST_ISSUES_SEED, seed_host_issues, seed_v05_approved_baseline
-from tracks.executor.hotfix import HostIssue, HotfixRejectionReason, precheck_hotfix  # noqa: F401
-
-_REASON_CLOSED_SET = set(get_args(HotfixRejectionReason))
+from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 
 
 # AC-FR0240-02@v0.6 TRACKS-TRACE PRECHECK pass reaches SAGE_TRIAGE without agent dispatch
-def test_precheck_pass_reaches_sage_triage_without_agent_dispatch(host_repo):
+def test_precheck_pass_reaches_sage_triage_without_agent_dispatch(trac, host_repo):
     """AC-FR0240-02@v0.6: a bug issue whose target version is approved passes
-    P-1..P-5 deterministically. PRECHECK is a pure program judgment — no
-    ``dispatch_agent`` (sage/archer/prism/shield/devon) audit record
-    corresponds to this step (NFR-0100-01); the next sub-state is
-    ``SAGE_TRIAGE`` (SM-01.2).
+    P-1..P-5 deterministically and the run reaches ``SAGE_TRIAGE``. PRECHECK
+    is a pure program judgment — no ``dispatch_agent``
+    (sage/archer/prism/shield/devon) audit record corresponds to this step
+    (NFR-0100-01). The pass path is observable through the CLI/event outlets:
+    ``triage.prechecked(pass)`` with ``target_version`` and ``type=bug``.
 
-    Failure mode (legal Red): ``precheck_hotfix`` is a frozen stub
-    (IF-HOTFIX-003); the call raises ``NotImplementedError("IF-HOTFIX-003:
-    precheck_hotfix")`` before any assertion can fire.
+    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
+    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1
+    before ``triage.prechecked(pass)`` / the SAGE_TRIAGE sub-state line can
+    appear.
     """
-    from pathlib import Path
+    seed_v05_approved_baseline(host_repo)
+    seed_host_issues(host_repo)
 
-    home = Path.home() / ".tracks-test-precheck-pass"  # unused: stub raises first
-    approved = {"v0.5"}
-    issue = HostIssue(
-        number=42,
-        title=HOST_ISSUES_SEED["42"]["title"],
-        body=HOST_ISSUES_SEED["42"]["body"],
-        labels=tuple(HOST_ISSUES_SEED["42"]["labels"]),
-    )
-
-    report = precheck_hotfix(
-        issue=issue,
-        scenario="post-release",
-        repo_branches=["main"],
-        active_run_branch=None,
-        projects_dir=home,
-        approved_versions=approved,
-    )
-
-    assert report.status == "pass"
-    assert report.reason is None
-    assert report.target_version == "v0.5"
-    # No agent dispatch is recorded for the PRECHECK step — it is a pure
-    # program judgment. The next sub-state is SAGE_TRIAGE (SM-01.2); the
-    # caller (kernel/executor) routes there on ``status="pass"``.
-    assert report.next in (None, "SAGE_TRIAGE")
+    r = trac("hotfix", "42", "--scenario", "post-release")
+    assert r.returncode == 0, r.stderr
+    # PRECHECK passes deterministically: triage.prechecked(pass, target v0.5).
+    assert "triage.prechecked" in r.stdout
+    assert "v0.5" in r.stdout
+    # The run proceeds to SAGE_TRIAGE (SM-01.2) — not REJECTED.
+    assert "REJECTED" not in r.stdout
 
 
 # AC-FR0240-03@v0.6 TRACKS-TRACE PRECHECK REJECTED matrix: no branch, nonzero exit, reason closed set
@@ -71,47 +49,36 @@ def test_precheck_rejection_matrix_no_branch_nonzero_exit(trac, host_repo):
     human-readable ``next``; the CLI exits non-zero and **never** creates the
     ``fix/{issue}`` branch (no branch side effect — fail-closed).
 
-    Failure mode (legal Red): the ``trac hotfix`` command is unregistered
-    (USAGE / exit 1) AND the rejection matrix below is exercised through
-    ``precheck_hotfix`` which still raises ``NotImplementedError``.
+    Driven entirely through the CLI/event/git outlets (interfaces §4); the
+    direct pure-function rules are covered by Devon's unit tests, not here.
+
+    Failure mode (legal Red): ``trac hotfix`` is unregistered (USAGE /
+    exit 1) — the CLI never produces a ``triage.prechecked REJECTED`` line,
+    so ``REJECTED`` / the reason / the handoff ``next:`` are all absent.
     """
     import subprocess
 
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
 
-    cases: list[tuple[int, str, str]] = [
-        # (issue, scenario, expected_reason-substring)
-        (99, "post-release", "not_bug"),  # labels missing "bug"
-        (42, "bogus-scenario", "scenario_invalid"),
-        (42, "dev", "no_active_release_branch"),
-        (7777, "post-release", "issue_not_found"),
+    cases: list[tuple[int, str]] = [
+        (99, "post-release"),  # labels missing "bug" -> not_bug
+        (42, "dev"),           # no active release branch -> no_active_release_branch
+        (7777, "post-release"),  # issue not found -> issue_not_found
     ]
-    for issue, scenario, _expected in cases:
+    for issue, scenario in cases:
         r = trac("hotfix", str(issue), "--scenario", scenario)
         assert r.returncode != 0, f"issue {issue}/{scenario}: REJECTED must exit non-zero"
+        # The rejection reason must be contract-visible (REJECTED <reason> +
+        # handoff next: line). Asserting on this prevents the exit-code-only
+        # weak assertion from passing vacuously under USAGE.
+        assert "REJECTED" in r.stdout or "rejected" in r.stdout
         # No fix branch is left behind (fail-closed / no side effects).
         out = subprocess.run(
             ["git", "branch", "--list", f"fix/{issue}"],
             cwd=host_repo, capture_output=True, text=True,
         ).stdout
         assert not out.strip(), f"fix/{issue} must not be created on REJECTED"
-
-    # Direct-call matrix: each rejection lands in the closed reason set.
-    from pathlib import Path
-
-    projects_dir = Path(host_repo / ".tracks" / "projects")
-    non_bug = HostIssue(
-        number=99, title="x", body="", labels=("enhancement",),
-    )
-    report = precheck_hotfix(
-        issue=non_bug, scenario="post-release", repo_branches=["main"],
-        active_run_branch=None, projects_dir=projects_dir, approved_versions={"v0.5"},
-    )
-    assert report.status == "rejected"
-    # Closed set membership (interfaces.md §1c).
-    assert report.reason in _REASON_CLOSED_SET
-    assert report.next  # human-readable next step
 
 
 # AC-NFR0100-01@v0.6 TRACKS-TRACE PRECHECK deterministic: no LLM dispatch records

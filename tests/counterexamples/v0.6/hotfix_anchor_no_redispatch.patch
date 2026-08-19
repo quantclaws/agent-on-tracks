@@ -1,35 +1,13 @@
-diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
-index 7b07fac..13e052f 100644
---- a/tracks/executor/hotfix.py
-+++ b/tracks/executor/hotfix.py
-@@ -129,7 +129,17 @@ def validate_anchor_refs(
-     entries are human-locatable strings. Any miss -> verdict.failed
-     (check=anchor_invalid) -> Sage redispatch (<=3, SM-01.6).
-     """
--    raise NotImplementedError("IF-HOTFIX-004: validate_anchor_refs")
-+    # Scaffolding (contract-conforming): every (ac_id, version) must
-+    # resolve to an existing projects_dir/<version>/acceptance.md
-+    # containing a "### <ac_id>" heading.
-+    import re as _re
-+    missing = []
-+    for ac_id, version in refs:
-+        acc = projects_dir / version / "acceptance.md"
-+        if not acc.exists() or not _re.search(r"^### " + _re.escape(ac_id) + r"\s*$",
-+                                              acc.read_text(encoding="utf-8"), _re.M):
-+            missing.append(f"{ac_id}@{version} not in .tracks/projects/{version}/acceptance.md")
-+    return (not missing, missing)
- 
- 
- def complete_hotfix_entry(
-
 diff --git a/tracks/cli/main.py b/tracks/cli/main.py
-index 4cc5487..7574646 100644
+index 4cc5487..c917833 100644
 --- a/tracks/cli/main.py
 +++ b/tracks/cli/main.py
-@@ -1091,6 +1091,31 @@ def cmd_check(repo: Path, *args) -> int:
-     return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
- 
- 
+@@ -1071,6 +1071,31 @@ def cmd_check(repo: Path, *args) -> int:
+     args = list(args)
+     if not args:
+         return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
++
++
 +def _cmd_run_noop(repo: Path, *args: str) -> int:
 +    """COUNTEREXAMPLE scaffolding: no-op `trac run` (returns 0)."""
 +    print("run: (noop)")
@@ -37,9 +15,9 @@ index 4cc5487..7574646 100644
 +
 +
 +def _cmd_hotfix_no_redispatch(repo: Path, *args: str) -> int:
-+    """COUNTEREXAMPLE AC-FR0240-05: with sage:SAGE_TRIAGE=bad_anchor the
-+    entry emits only ONE verdict.failed(anchor_invalid, attempt=1) and
-+    parks - never drives the 3-attempt redispatch sequence."""
++    """COUNTEREXAMPLE AC-FR0240-05: with bad_anchor the entry emits only
++    ONE verdict.failed(anchor_invalid, attempt=1) and parks — never drives
++    the 3-attempt redispatch sequence required by IF-HOTFIX-002."""
 +    from tracks import paths
 +    from tracks.store.store import Store
 +    store = Store(paths.tracks_home(repo))
@@ -53,11 +31,9 @@ index 4cc5487..7574646 100644
 +    print(f"run {run_id} hotfix.requested issue={issue} scenario=post-release")
 +    print(f"run {run_id}: awaiting=awaiting_human origin=hotfix-triage issue={issue}")
 +    return 0
-+
-+
- USAGE = (
-     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
-     "|triage <decision> [--actor NAME]"
+     sub, rest = args[0], args[1:]
+     if sub == "deliverables":
+         if rest:
 @@ -1105,7 +1130,7 @@ USAGE = (
  _COMMANDS = {
      "init": (cmd_init, 0),
