@@ -81,19 +81,61 @@ def seed_host_issues(host_repo: Path, seed: dict[str, dict] | None = None) -> Pa
     return path
 
 
+def seed_project_contract(host_repo: Path) -> Path:
+    """Write the host ``.tracks/projects/project.toml`` execution contract.
+
+    Mirrors the Archer-produced contract (test-plan §2.3.1, FR-0190/FR-0120).
+    The hotfix run's M-DESIGN EXIT layout gate (``validate_layout``,
+    tracks/project.py) requires the contract to already exist with non-empty
+    ``[layout.devon]`` / ``[layout.shield]`` writable lists; the M-TEST
+    collect/RED_CHECK commands consume the ``[integration]`` / ``[e2e]``
+    run contracts the same way the real host repo does.  The fixture data
+    (not any implementation output) is the truth source (test-plan §2.3.1
+    '合同文件已存在且内容不变'; §3.1 row 3).
+    """
+    home = paths.tracks_home(host_repo)
+    toml = paths.project_toml_path(home)
+    toml.parent.mkdir(parents=True, exist_ok=True)
+    toml.write_text(
+        "[integration]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/integration/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
+        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
+        'cwd = "."\n\n'
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+        'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
+        'cwd = "."\n\n'
+        "[layout]\n\n"
+        "[layout.devon]\n"
+        'writable = ["tracks/", "tests/unit/"]\n\n'
+        "[layout.shield]\n"
+        'writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]\n',
+        encoding="utf-8",
+    )
+    return toml
+
+
 def seed_v05_approved_baseline(host_repo: Path, version: str = "v0.5") -> Path:
     """Construct an approved target-version baseline in the host repo.
 
-    Writes the minimal trio (story/spec/acceptance) under
-    ``.tracks/projects/<version>/`` plus an ``approval.recorded`` event in
-    the runtime events table, so ``approved_versions`` (derived from
-    ``approval.recorded`` payloads, IF-HOTFIX-005) contains ``version``.
+    Uses the minimal ``r/trio`` toolkit: writes the project execution
+    contract (``.tracks/projects/project.toml``, via
+    :func:`seed_project_contract`) plus the minimal trio
+    (story/spec/acceptance) under ``.tracks/projects/<version>/`` plus an
+    ``approval.recorded`` event in the runtime events table, so
+    ``approved_versions`` (derived from ``approval.recorded`` payloads,
+    IF-HOTFIX-005) contains ``version``.
 
     The acceptance.md body carries a known AC heading so cross-version
     anchor validation (IF-HOTFIX-004) can resolve ``AC-FR0030-01@v0.5``.
     The fixture data (not any implementation output) is the truth source
     (test-plan §3.1 row 3: simple rule -> test data itself).
     """
+    seed_project_contract(host_repo)
     home = paths.tracks_home(host_repo)
     vdir = paths.version_dir(home, version)
     vdir.mkdir(parents=True, exist_ok=True)
@@ -203,6 +245,7 @@ __all__ = [
     "HOST_ISSUES_SEED",
     "seed_host_issues",
     "seed_v05_approved_baseline",
+    "seed_project_contract",
     "seed_release_branch",
     "seed_inprogress_feature_run",
     "read_events",
