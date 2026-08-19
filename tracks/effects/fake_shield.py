@@ -309,9 +309,7 @@ class FakeShieldMixin:
         """The target baseline version of this run: a hotfix run inherits its
         target release's version (``v0.5-hotfix-42`` -> ``v0.5``); any other
         version is its own identity."""
-        if "-hotfix-" in self.version:
-            return self.version.split("-hotfix-", 1)[0]
-        return self.version
+        return _shield_marker_base_version(str(self.version))
 
     def _target_acceptance(self, target_version: str) -> Path:
         return paths.version_dir(paths.tracks_home(self.repo), target_version) / "acceptance.md"

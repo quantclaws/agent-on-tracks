@@ -188,7 +188,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             assigned_pack = (assignment or {}).get("criteria_pack")
             if assigned_pack:
                 result["criteria_pack"] = dict(assigned_pack)
-# FR-0243: the review payload carries the anchor verdict with a
+            # FR-0243: the review payload carries the anchor verdict with a
             # default of upheld; only the anchor_overturned token flips it.
             result["anchor_verdict"] = _ANCHOR_VERDICT.get(verdict, "upheld")
         # defect_classification injection (for testing rollback routing)
