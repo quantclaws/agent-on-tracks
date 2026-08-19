@@ -80,7 +80,10 @@ DEVON_EVIDENCE_CONTRACT: dict = {
         "manifest_compliance 必须是字面 true（不是字符串）",
         "changed_paths / implemented_if_ids 必须是非空字符串列表",
         "phase 必须等于本次派发相位（red|green|refactor）",
-        "r_identity：green/refactor 必填；no_change_reason：仅 refactor 无变更时",
+        "r_identity：green/refactor 必填；no_change_reason：green/refactor 无变更时",
         "RED 相位 changed_paths 非空（新增的是测试文件）",
+        "no_change（green/refactor 无变更时）：changed_paths 必须为 [] 且 "
+        "no_change_reason 非空；禁止声称 changed_paths 而 pre/post identity "
+        "相同（runtime 比对并按 B38 fail-closed）",
     ],
 }

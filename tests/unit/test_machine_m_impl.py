@@ -700,6 +700,45 @@ def test_green_committed_to_refactor():
     assert s.green_committed is True
 
 
+def test_green_no_change_to_task_review():
+    """B38 (#39): green.no_change (no worktree diff + explicit reason) skips the
+    commit entirely and passes straight to TASK_REVIEW — symmetric with
+    refactor.no_change convergence."""
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        ("green.no_change", {"reason": "implementation already in baseline"}),
+    )
+    assert s.substate == "TASK_REVIEW"
+    assert s.green_committed is True
+    assert s.refactor_done is True
+
+
 # -- REFACTOR -> REFACTOR_GATE -> TASK_REVIEW --------------------------------
 
 

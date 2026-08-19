@@ -45,7 +45,8 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 4. 只在 `manifest.allowed_paths` 范围内写。
 5. 不 commit/push。
 6. 交付前自检 lint：对本次改动的产品文件运行 `[lint].check` 声明的命令；非零退出必须修复——GREEN_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
-7. 完成后立即停止。不继续 Refactor。
+7. 若评审 findings 无需代码改动（实现已在基线），可返回显式 `no_change` + reason。此时 `changed_paths` **必须**为 `[]`，`no_change_reason` 非空，pre/post identity 如实填写。**禁止**声明 `changed_paths` 而 pre/post identity 相同——runtime 会比对 identity 并按 B38 fail-closed。
+8. 完成后立即停止。不继续 Refactor。
 
 ### REFACTOR（phase=refactor）
 
@@ -78,7 +79,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
   "pre_identity": "...",
   "post_identity": "...",
   "r_identity": "... (GREEN/REFACTOR only)",
-  "no_change_reason": "... (REFACTOR only, if applicable)",
+  "no_change_reason": "... (GREEN/REFACTOR only, when no code change needed)",
   "implemented_if_ids": ["IF-001", "..."],
   "advisories": ["isolation|scope_gap|..."]
 }

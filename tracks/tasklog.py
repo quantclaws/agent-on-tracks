@@ -14,6 +14,7 @@ _PHASE_EVENTS = frozenset(
     {
         "red.checkpointed",
         "green.committed",
+        "green.no_change",
         "refactor.committed",
         "refactor.no_change",
     }
@@ -247,20 +248,30 @@ def _red_lines(events: list[EventEnvelope]) -> list[str]:
 def _green_lines(events: list[EventEnvelope]) -> list[str]:
     lines = []
     for event in events:
-        if event.type != "green.committed":
+        if event.type not in ("green.committed", "green.no_change"):
             continue
         payload = _payload(event)
-        _append_once(
-            lines,
-            "- Public attempt: "
-            + _code(_attempt(payload))
-            + "; Green identity: g_sha="
-            + _code(_clean(payload.get("g_sha")) or _clean(payload.get("commit_sha")))
-            + "; base_sha="
-            + _code(_clean(payload.get("base_sha")))
-            + "; Tracks-R="
-            + _code(_clean(payload.get("r_sha"))),
-        )
+        if event.type == "green.committed":
+            _append_once(
+                lines,
+                "- Public attempt: "
+                + _code(_attempt(payload))
+                + "; Green identity: g_sha="
+                + _code(_clean(payload.get("g_sha")) or _clean(payload.get("commit_sha")))
+                + "; base_sha="
+                + _code(_clean(payload.get("base_sha")))
+                + "; Tracks-R="
+                + _code(_clean(payload.get("r_sha"))),
+            )
+        else:
+            _append_once(
+                lines,
+                "- Public attempt: "
+                + _code(_attempt(payload) or "")
+                + "; Green result: no-change ("
+                + _code(_clean(payload.get("reason")))
+                + ")",
+            )
     return lines or ["- No Runtime Green commit recorded."]
 
 

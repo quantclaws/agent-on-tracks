@@ -485,6 +485,119 @@ def test_empty_red_and_green_fail_closed_without_commits(tmp_path):
     assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
 
 
+def test_commit_green_empty_diff_with_no_change_reason_emits_green_no_change(tmp_path):
+    """B38 (#39): a GREEN resubmit with no worktree diff and an explicit
+    no_change_reason (implementation already in the baseline) must emit
+    green.no_change instead of cycling through impl_defect -> DIAGNOSE ->
+    GREEN. No commit is performed."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    manifest = {
+        "task_id": "T-001",
+        "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+        "forbidden_paths": [".tracks/projects/**"],
+    }
+    store.append(
+        "RUN", "v0.5", "taskgraph.committed", {"task_count": 1, "tasks": [task], "digest": "graph"}
+    )
+    store.append(
+        "RUN", "v0.5", "task.started", {"task_id": "T-001", "task": task, "manifest": manifest}
+    )
+    store.append("RUN", "v0.5", "red.checkpointed", {"r_sha": "R"})
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    outcome = _structured_outcome("green", [], "R")
+    outcome["no_change_reason"] = "implementation already on disk from baseline"
+    store.append("RUN", "v0.5", "outcome.received", outcome)
+    executor = _executor(repo, store)
+    base = _git(repo, "rev-parse", "HEAD")
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
+    )
+
+    assert _git(repo, "rev-parse", "HEAD") == base
+    emitted = [ev for ev in store.events("RUN") if ev.type == "green.no_change"]
+    assert len(emitted) == 1
+    assert emitted[0].payload["task_id"] == "T-001"
+    assert emitted[0].payload["reason"] == "implementation already on disk from baseline"
+    assert not any(ev.type == "verdict.failed" for ev in store.events("RUN"))
+    assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
+
+
+def test_commit_green_empty_diff_without_no_change_reason_stays_fail_closed(tmp_path):
+    """B38 (#39): without an explicit no_change_reason, an empty captured diff
+    must keep the fail-closed verdict.failed(impl_defect) — the reason is a
+    programming contract, not an accident to paper over."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    manifest = {
+        "task_id": "T-001",
+        "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+        "forbidden_paths": [".tracks/projects/**"],
+    }
+    store.append(
+        "RUN", "v0.5", "taskgraph.committed", {"task_count": 1, "tasks": [task], "digest": "graph"}
+    )
+    store.append(
+        "RUN", "v0.5", "task.started", {"task_id": "T-001", "task": task, "manifest": manifest}
+    )
+    store.append("RUN", "v0.5", "red.checkpointed", {"r_sha": "R"})
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _structured_outcome("green", [], "R"))
+    executor = _executor(repo, store)
+    base = _git(repo, "rev-parse", "HEAD")
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
+    )
+
+    assert _git(repo, "rev-parse", "HEAD") == base
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert len(fails) == 1
+    assert fails[0].payload["check"] == "impl_defect"
+    assert not any(ev.type == "green.no_change" for ev in store.events("RUN"))
+    assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
+
+
+def test_commit_green_no_change_reconcile_idempotent(tmp_path):
+    """B38 (#39): green.no_change already persisted for the command_id must
+    NOT be re-emitted when reconcile=True (crash between event commit and
+    return). Mirrors _do_recover_stage idempotency."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    manifest = {
+        "task_id": "T-001",
+        "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+        "forbidden_paths": [".tracks/projects/**"],
+    }
+    store.append(
+        "RUN", "v0.5", "taskgraph.committed", {"task_count": 1, "tasks": [task], "digest": "graph"}
+    )
+    store.append(
+        "RUN", "v0.5", "task.started", {"task_id": "T-001", "task": task, "manifest": manifest}
+    )
+    store.append("RUN", "v0.5", "red.checkpointed", {"r_sha": "R"})
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    outcome = _structured_outcome("green", [], "R")
+    outcome["no_change_reason"] = "already in baseline"
+    store.append("RUN", "v0.5", "outcome.received", outcome)
+    executor = _executor(repo, store)
+    command = Command("commit_green", command_id="C-G-REPLAY")
+    stale_state = store.state("RUN")
+
+    executor._do_commit_green(command, stale_state, None, False)
+    executor._do_commit_green(command, stale_state, None, True)
+
+    emitted = [ev for ev in store.events("RUN") if ev.type == "green.no_change"]
+    assert len(emitted) == 1
+
+
 _RGR_GREEN_DIFF = (
     "diff --git a/tracks/app.py b/tracks/app.py\n"
     "new file mode 100644\n"

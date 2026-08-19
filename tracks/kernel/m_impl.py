@@ -101,6 +101,13 @@ def _on_green_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     _reset_doc(s)
 
 
+def _on_green_no_change(s: State, p: dict, ev: EventEnvelope) -> None:
+    """GREEN_COMMIT: no worktree diff + explicit no_change_reason -> TASK_REVIEW."""
+    s.green_committed = True
+    s.refactor_done = True
+    s.substate = "TASK_REVIEW"
+
+
 def _on_refactor_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     """REFACTOR_GATE: refactor commit -> TASK_REVIEW."""
     s.refactor_done = True

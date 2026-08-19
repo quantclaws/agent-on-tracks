@@ -79,6 +79,9 @@ EVENT_TYPES = (
     "human.anchor",
     "increment.declared",
     "baseline.inherited",
+    # B38 (#39): GREEN resubmit with no worktree diff and explicit
+    # no_change_reason — implementation already in baseline.
+    "green.no_change",
 )
 
 # interfaces §4 — v0.1 closed command set.

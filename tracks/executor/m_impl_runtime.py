@@ -1678,6 +1678,33 @@ class MImplRuntimeMixin:
         diff = git(self.repo, "diff", "--", *existing).stdout
         return diff or None
 
+    def _emit_green_no_change(self, cmd, state, task_id, diff, reconcile) -> bool:
+        """B38 (#39): if the GREEN evidence is structurally valid but the captured
+        worktree diff is empty and Devon declared an explicit no_change_reason,
+        emit green.no_change (idempotent on reconcile). Returns True when the
+        no-change path was taken (skipping the commit)."""
+        outcome = self._last_devon_outcome() or {}
+        if (
+            diff
+            or not outcome.get("no_change_reason")
+            or self._devon_evidence_error("green", state) is not None
+        ):
+            return False
+        if reconcile and any(
+            e.type == "green.no_change" and e.command_id == cmd.command_id
+            for e in self.store.events(self.run_id)
+        ):
+            self._rebuild_task_log_projection()
+            return True
+        self._emit(
+            "green.no_change",
+            {"task_id": task_id, "reason": outcome["no_change_reason"]},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._rebuild_task_log_projection()
+        return True
+
     def _do_commit_green(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
@@ -1713,6 +1740,8 @@ class MImplRuntimeMixin:
             return
         reason, diff = self._validated_diff("green", state)
         if reason is not None:
+            if self._emit_green_no_change(cmd, state, task_id, diff, reconcile):
+                return
             self._emit(
                 "verdict.failed",
                 {
