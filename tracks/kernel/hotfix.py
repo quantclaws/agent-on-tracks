@@ -92,21 +92,7 @@ def _decide_sage_triage(s: State) -> Command | None:
       ANCHORED terminal (``complete_hotfix_entry``, SM-01.10).
     """
     if not s.doc_dispatched:
-        params = {
-            "role": "sage",
-            "substate": "SAGE_TRIAGE",
-            "objective": "anchor existing ACs for the hotfix issue",
-            "stage": "M-HOTFIX-TRIAGE",
-            "attempt": s.current_attempt + 1,
-            "assignment": {
-                "kind": "SAGE_TRIAGE",
-                "skill": "tracks-sage",
-                "template_kind": None,
-            },
-        }
-        if s.last_failure:
-            params["evidence"] = dict(s.last_failure)
-        return Command(kind="dispatch_agent", params=params)
+        return _command_dispatch_sage(s)
     if not s.doc_produced:
         return None  # awaiting Sage outcome
     # Sage outcome received; issue validate_anchor if not yet passed
@@ -118,6 +104,27 @@ def _decide_sage_triage(s: State) -> Command | None:
     if not s.baseline_inherited:
         return Command(kind="complete_hotfix_entry")
     return None  # already completed
+
+
+def _command_dispatch_sage(s: State) -> Command:
+    """SAGE_TRIAGE (SM-01.5): dispatch Sage with the anchor-search assignment
+    (IF-HOTFIX-004). Carries the current failure evidence (FR-11) so the
+    re-dispatch prompt still shows why the previous attempt failed."""
+    params = {
+        "role": "sage",
+        "substate": "SAGE_TRIAGE",
+        "objective": "anchor existing ACs for the hotfix issue",
+        "stage": "M-HOTFIX-TRIAGE",
+        "attempt": s.current_attempt + 1,
+        "assignment": {
+            "kind": "SAGE_TRIAGE",
+            "skill": "tracks-sage",
+            "template_kind": None,
+        },
+    }
+    if s.last_failure:
+        params["evidence"] = dict(s.last_failure)
+    return Command(kind="dispatch_agent", params=params)
 
 
 def _on_hotfix_requested(s: State, p: dict) -> None:
