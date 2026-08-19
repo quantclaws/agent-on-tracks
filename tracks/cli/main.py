@@ -530,11 +530,18 @@ def cmd_triage(repo: Path, *args: str) -> int:
         )
         if rc:
             return rc
+    return _pipeline_outcome(result, "triage", f"triage recorded: {decision}")
+
+
+def _pipeline_outcome(result, label: str, success_line: str) -> int:
+    """Share the triage/review ResultCheckpoint pipeline tail (cmd_triage /
+    cmd_review): when the awaiting gate did NOT move the pipeline failed and
+    its reason goes to stderr (exit 1); otherwise print the success line."""
     final_state, awaiting_before = result
     if final_state.awaiting == awaiting_before:
         reason = (final_state.last_failure or {}).get("reason", "unknown")
-        return _err(f"triage pipeline failed: {reason}")
-    print(f"triage recorded: {decision}")
+        return _err(f"{label} pipeline failed: {reason}")
+    print(success_line)
     return 0
 
 
@@ -567,12 +574,7 @@ def cmd_review(repo: Path, *args: str) -> int:
         )
         if rc:
             return rc
-    final_state, awaiting_before = result
-    if final_state.awaiting == awaiting_before:
-        reason = (final_state.last_failure or {}).get("reason", "unknown")
-        return _err(f"review pipeline failed: {reason}")
-    print(f"review recorded: {action}")
-    return 0
+    return _pipeline_outcome(result, "review", f"review recorded: {action}")
 
 
 def cmd_retry(repo: Path, *args: str) -> int:
