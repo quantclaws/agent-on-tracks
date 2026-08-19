@@ -700,7 +700,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 params,
                 cid,
             )
-        if cmd.kind == "dispatch_agent" and state.stage == "M-HOTFIX-TRIAGE":
+        if cmd.kind == "dispatch_agent" and state.hotfix_issue is not None:
             params = self._materialize_hotfix_assignment(state, params)
         # D-28: enrich Shield WRITE assignments with structured test_tasks and
         # the pre-dirty snapshot before write-ahead logging (architecture.md
@@ -2015,11 +2015,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _materialize_hotfix_assignment(
         self, state, params: dict
     ) -> dict:
-        """v0.6 hotfix SAGE_TRIAGE dispatch materialization (interfaces §1h /
-        ARCH-006 §3.3): enrich the Sage assignment with the anchor-search
-        corpus — issue corpus, scenario, target_version, anchor_hints
-        (parse_issue_hints) and the corpus path list (target + historical
-        spec/acceptance paths)."""
+        """v0.6 hotfix dispatch materialization (interfaces §1h / ARCH-006
+        §3.3), routed by stage:
+
+        - M-HOTFIX-TRIAGE (SAGE_TRIAGE): enrich the Sage assignment with the
+          anchor-search corpus — issue corpus, scenario, target_version,
+          anchor_hints (parse_issue_hints) and the corpus path list.
+        - M-DESIGN: the Archer delta-design assignment carries the inherited
+          baseline contract — anchor_acs, target_version, hotfix_issue and
+          the read-only baseline doc paths (target trio + design trio).
+        Other dispatches pass through unchanged."""
+        if state.stage == "M-DESIGN":
+            return self._materialize_hotfix_mdesign_assignment(state, params)
         if not (
             params.get("substate") == "SAGE_TRIAGE" and params.get("role") == "sage"
         ):
@@ -2039,6 +2046,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         assignment["scenario"] = state.hotfix_scenario or "post-release"
         assignment["target_version"] = state.hotfix_target_version or ""
         assignment["corpus"] = _hotfix_corpus_paths(self.store.home)
+        p["assignment"] = assignment
+        return p
+
+    def _materialize_hotfix_mdesign_assignment(self, state, params: dict) -> dict:
+        """v0.6 hotfix M-DESIGN dispatch materialization (interfaces §1h /
+        ARCH-006 §3.3): the Archer delta-design assignment carries the
+        inherited baseline contract — anchor_acs, target_version and the
+        read-only baseline doc paths (target trio + design trio) — so the
+        delta three docs can be produced against the inherited baseline
+        (FR-0243-01, IF-HOTFIX-005). No-op for non-hotfix M-DESIGN runs."""
+        p = dict(params)
+        assignment = dict(p.get("assignment") or {})
+        assignment["anchor_acs"] = list(state.hotfix_anchor_acs or [])
+        assignment["target_version"] = state.hotfix_target_version or ""
+        assignment["hotfix_issue"] = state.hotfix_issue
+        target_version = state.hotfix_target_version
+        if target_version:
+            vdir = paths.projects_dir(self.store.home) / target_version
+            assignment["baseline_doc_paths"] = [
+                str(vdir / name)
+                for name in ("story.md", "spec.md", "acceptance.md",
+                             "architecture.md", "interfaces.md", "test-plan.md")
+            ]
         p["assignment"] = assignment
         return p
 

@@ -399,7 +399,10 @@ def cmd_hotfix(repo: Path, *args: str) -> int:
     if parsed is None:
         return 2  # missing/illegal --scenario: non-blocking prompt, no run (#3)
     issue, scenario = parsed
-    if git(repo, "status", "--porcelain", check=False).stdout.strip():
+    # R3-01 (PRISM-FINAL-R3-01): the runtime seed (.tracks/ host-issues.json,
+    # generated store state) is legitimately untracked; only tracked-file
+    # modifications make the worktree dirty for a hotfix entry.
+    if git(repo, "status", "--porcelain", "--untracked-files=no", check=False).stdout.strip():
         return _err("working tree dirty (uncommitted changes); commit or stash first")
     with writer_lock(home):
         run_id = hotfix_entry_run(repo, store, issue, scenario)
