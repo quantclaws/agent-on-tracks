@@ -22,6 +22,12 @@ import re
 
 _VERSION_RE = re.compile(r"^v(\d+)\.(\d+)$")
 
+# v0.6 hotfix run identity (ARCH-006 §1.0.3, IF-HOTFIX-005): the run's
+# version is ``{target_version}-hotfix-{issue}`` (e.g. ``v0.5-hotfix-42``);
+# capability inheritance parses it as its base version, so ``supports_m_impl``
+# and friends treat a hotfix run exactly like its target release.
+_HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-\d+$")
+
 # v0.5 M-TEST -> M-IMPL: historical runs on versions strictly before this one
 # complete at the M-TEST boundary instead of entering M-IMPL.
 M_IMPL_FEATURE_VERSION = "v0.5"
@@ -37,7 +43,12 @@ def _version_tuple(version: str) -> tuple[int, int] | None:
         return None
     match = _VERSION_RE.match(version.strip())
     if match is None:
-        return None
+        # v0.6 hotfix identity: ``v0.5-hotfix-42`` inherits ``v0.5``'s numeric
+        # capability tuple (ARCH-006 §1.0.3). A malformed suffix (missing the
+        # ``-hotfix-<int>`` shape) still fails closed below.
+        match = _HOTFIX_VERSION_RE.match(version.strip())
+        if match is None:
+            return None
     return int(match.group(1)), int(match.group(2))
 
 

@@ -18,8 +18,12 @@ import re
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tracks.frontmatter import split_frontmatter
+
+if TYPE_CHECKING:
+    from tracks.executor.hotfix import HostIssue
 
 _ITEM_HEAD = re.compile(r"^### ((?:N?FR)-\d{4})[ \t]*(.*)$")
 _ACC_SECTION = re.compile(r"^## ((?:N?FR)-\d{4})\b")
@@ -91,6 +95,7 @@ class FakeIssueBackend:
         self.version = version
         self.project = os.environ.get("TRAC_GITHUB_PROJECT", "fake-project")
         self._path = repo / ".tracks" / "runtime" / "issues.json"
+        self._host_path = repo / ".tracks" / "runtime" / "host-issues.json"
         self._calls = 0
 
     def _token(self) -> str:
@@ -121,6 +126,36 @@ class FakeIssueBackend:
 
     def add_to_project(self, issue_id: str, project: str) -> None:
         pass  # deterministic no-op: association is implied by self.project
+
+    def fetch_issue(self, issue_number: int) -> HostIssue | None:
+        """Read channel (IF-HOTFIX-003): the host issue seed at
+        ``.tracks/runtime/host-issues.json`` (interfaces.md §3b schema).
+
+        Top-level keys are decimal issue numbers; a missing file or key
+        yields None (PRECHECK P-1 maps that to issue_not_found). No
+        ``TRAC_FAKE_SIMULATE`` injection here — fetch failures are
+        constructed via a missing seed file (ARCH-006 §3.1).
+        """
+        from tracks.executor.hotfix import HostIssue
+
+        if not self._host_path.exists():
+            return None
+        try:
+            data = json.loads(self._host_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        entry = data.get(str(issue_number))
+        if not isinstance(entry, dict):
+            return None
+        labels = entry.get("labels") or []
+        if not isinstance(labels, list):
+            labels = []
+        return HostIssue(
+            number=issue_number,
+            title=entry.get("title", ""),
+            body=entry.get("body", ""),
+            labels=tuple(str(label) for label in labels),
+        )
 
 
 class GithubBackend:
@@ -156,6 +191,28 @@ class GithubBackend:
         except urllib.error.URLError as e:
             raise GithubIssuesError("network", str(e.reason)) from e
 
+    def _get(self, url: str) -> dict:
+        """GET helper (IF-HOTFIX-003): read-only request, same auth/error
+        pattern as ``_request`` but with ``method=GET`` and no body."""
+        req = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            cls = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}.get(
+                e.code, "network"
+            )
+            raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise GithubIssuesError("network", str(e.reason)) from e
+
     def create_issue(self, title: str, body: str, labels: list) -> str:
         data = self._request(
             f"https://api.github.com/repos/{self.gh_repo}/issues",
@@ -169,6 +226,32 @@ class GithubBackend:
         self._request(
             f"https://api.github.com/projects/columns/{project}/cards",
             {"content_id": int(issue_id), "content_type": "Issue"},
+        )
+
+    def fetch_issue(self, issue_number: int) -> HostIssue | None:
+        """Read channel (IF-HOTFIX-003): ``GET /repos/{repo}/issues/{n}``
+        (ARCH-006 §3.1). 404 maps to None (PRECHECK issue_not_found);
+        auth/rate-limit/network failures raise :class:`GithubIssuesError`
+        (fail-closed; issue_fetch_failed keeps the retry path open)."""
+        from tracks.executor.hotfix import HostIssue
+
+        try:
+            data = self._get(
+                f"https://api.github.com/repos/{self.gh_repo}/issues/{issue_number}"
+            )
+        except GithubIssuesError as exc:
+            if exc.classification == "not_found":
+                return None
+            raise
+        labels = []
+        for label in data.get("labels") or []:
+            if isinstance(label, dict) and label.get("name"):
+                labels.append(str(label["name"]))
+        return HostIssue(
+            number=issue_number,
+            title=data.get("title", ""),
+            body=data.get("body", ""),
+            labels=tuple(labels),
         )
 
 
