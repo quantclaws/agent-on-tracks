@@ -651,6 +651,12 @@ def _approval_gate(store: Store, run_id: str):
     return state, None
 
 
+def _resolve_actor(repo: Path, actor: str | None) -> str:
+    """The approving/anchoring actor name: the CLI --actor value when given,
+    else the git user.name when configured, else the generic 'human'."""
+    return actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+
+
 def _hotfix_gap_exit(state) -> bool:
     """True when the active run is a hotfix run awaiting the Human ac_gap /
     spec_gap exit decision (FR-0248, IF-HOTFIX-009): the run carries a hotfix
@@ -667,7 +673,7 @@ def _approve_hotfix_gap(repo: Path, store: Store, run_id: str, state, actor: str
     {decision, issue} -> run.completed(ac_gap|spec_gap), no further
     M-TEST/M-IMPL dispatch (FR-0248)."""
     check = (state.last_failure or {}).get("check") or "ac_gap"
-    actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+    actor = _resolve_actor(repo, actor)
     version = _resolve_run_version(state)
     store.append(
         run_id, version, "human.approval",
@@ -702,7 +708,7 @@ def cmd_approve(repo: Path, *args) -> int:
             return _approve_hotfix_gap(repo, store, run_id, state, actor)
         # SM-01.13: M-TEST / M-IMPL rollback approval needs no digest check
         if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
-            actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+            actor = _resolve_actor(repo, actor)
             store.append(
                 run_id,
                 state.version,
@@ -727,8 +733,7 @@ def cmd_approve(repo: Path, *args) -> int:
                 "baseline changed since preview: approve rejected, "
                 "preview regenerated — review and approve again"
             )
-        if actor is None:
-            actor = git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+        actor = _resolve_actor(repo, actor)
         store.append(
             run_id,
             state.version,
