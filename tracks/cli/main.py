@@ -728,8 +728,7 @@ def _recover_gate(store: Store, run_id: str):
     if state.stage != "M-DESIGN" or state.substate != "DRAFT":
         return state, (
             f"recover requires M-DESIGN/DRAFT after an M-IMPL rollback "
-            f"(stage={state.stage} substate={state.substate or 'nothing'})"
-        )
+            f"(stage={state.stage} substate={state.substate or 'nothing'})")
     recents = list(store.events(run_id))
     rolled_back = [e for e in recents if e.type == "stage.rolled_back"]
     if not rolled_back:
@@ -739,14 +738,12 @@ def _recover_gate(store: Store, run_id: str):
         return state, (
             "recover only after a stage.rolled_back from M-IMPL to M-DESIGN "
             f"(last rollback was {last.payload.get('from_stage')} -> "
-            f"{last.payload.get('to_stage')})"
-        )
+            f"{last.payload.get('to_stage')})")
     for e in recents[recents.index(last) + 1 :]:
-        if e.type == "stage.entered" or e.type == "stage.exited":
+        if e.type in ("stage.entered", "stage.exited"):
             return state, "recover rejected: another stage entered/exited after the rollback"
-        if e.type == "command.issued" and (
-            e.payload.get("command", {}).get("kind") == "dispatch_agent"
-        ):
+        cmd = e.payload.get("command", {}) if e.type == "command.issued" else {}
+        if cmd.get("kind") == "dispatch_agent":
             return state, "recover rejected: new dispatch_agent work issued after the rollback"
     return state, None
 
