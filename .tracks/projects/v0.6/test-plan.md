@@ -370,7 +370,7 @@ v0.6 对既有测试的预期影响面（Shield 在 M-TEST 修订，走 test cha
 | `tests/integration/test_full_journey*.py`（v0.5 系列） | 无必需变更；回归确认 feature 旅程事件前缀不受 trac hotfix 入口影响 | 新命令新 run，不改既有事件序列 |
 | `tests/integration/test_trac_retry.py` 等 CLI 测试 | 若 USAGE 字符串更新（新增 hotfix 命令）则同步断言 | USAGE 文本增量 |
 | `tests/conftest.py` | Shield 新增共享 helper `tests/hotfix_support.py`（host-issues 种子 + 已批准基线构造），不改既有 fixture 语义 | §2.4 语料准备 |
-| `tests/unit/test_test_tasks_contract.py` | 【R3】新增 blockquote 排除用例（Devon unit 义务，随 M-IMPL 重规划任务交付）：含 AC id + 层词 + 无 IF- 的 blockquote 行不再触发 missing IF- attribution；归属声明仅存在于 blockquote 的 AC 仍报 has no layer attribution（fail-closed 保持）；`tests/integration/` 既有 validate 合同用例补一条「含已 resolved 讨论线程的 plan 文件 `trac validate --file test-plan.md` exit 0」回归 | interfaces §2f / ARCH-006 §3.9（R3）：design-trace 扫描范围排除 inline-discussion 行；既有用例不依赖 blockquote 被扫描（已核对），新增行为需正反两侧覆盖 |
+| `tests/unit/test_test_tasks_contract.py` | 【R3】新增 blockquote 排除用例（Devon unit 义务，随 M-IMPL 重规划任务交付）：含 AC id + 层词 + 无 IF- 的 blockquote 行不再触发 missing IF- attribution；归属声明仅存在于 blockquote 的 AC 仍报 has no layer attribution（fail-closed 保持）；`tests/integration/` 既有 validate 合同用例补一条「含已 resolved 讨论线程的 plan 文件 `trac validate --file test-plan.md` exit 0」回归 | interfaces §2f / ARCH-006 §3.9（R3）：design-trace 扫描范围排除 inline-discussion 行；既有用例不依赖 blockquote 被扫描（已核对），新增行为需正反两侧覆盖。【R3 实测更新】§2f 扫描器变更已由运营端带外应用（`executor/test_tasks.py` 的 `_visible_plan_lines` 工作树已剔除 `>` 行），三文档 `trac validate` 均恢复 valid；unit 用例仍为 Devon 义务（带外应用是状态对齐，正式归档由 M-IMPL verification-only 任务吸收，用例覆盖不豁免） |
 
 ---
 

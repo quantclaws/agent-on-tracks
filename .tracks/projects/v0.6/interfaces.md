@@ -269,7 +269,7 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 - **合同**：`trac validate --file test-plan.md` 与 M-DESIGN EXIT 的 design-trace 检查（`check_design_trace`，BS-06/FR-0140）在提取「可见行」时，除既有 HTML 注释与 fenced code 剔除外，**同时剔除 inline-discussion blockquote 行**（以 `>` 开头的行）：讨论线程是评审期旁路（模板指引与 tracks-discuz 协议的既定语义），不是计划内容；其正文中的 AC id + tests 路径字样既不构成 layer 归属声明，也不构成 IF- 归属声明，不触发「integration/e2e AC missing IF- attribution」与「has no layer attribution」的判定。
 - **fail-closed 保持**：layer 与 IF- 归属的判定面收窄为非 blockquote 可见行（§8 表格行为权威来源）；AC 的归属声明写进 blockquote 不产生任何计数效果（「has no layer attribution」照常失败）。`required_ac_ids` 的 layer 判定共享同一可见行提取，同步收窄（blockquote 内的 layer 词不再把 AC 判为 required）——§8 表格行仍是 D-28 唯一机器可读 AC 覆盖来源，D-28 语义不变。
 - **`trac check trace` 不受影响**：其 AC↔测试标记闭合按 §8 表格行解析（row-based），不含逐行归属扫描；IF-TRACE-001/002 合同不变。
-- **生效时点**：合同随本 revision 冻结；实现为 M-IMPL 重规划任务（ARCH-006 §1.0.5 batch B/C 既有 scope 文件 executor/test_tasks.py）。实现落地前，当前扫描器仍把 blockquote 行计入——已声明的中间态，本 run EXIT 的过渡路径见 ARCH-006 §3.9。
+- **生效时点**：合同随本 revision 冻结；实现状态——§3.9 过渡路径 (b) 已由运营端带外应用（`tracks/executor/test_tasks.py` 的 `_visible_plan_lines` 工作树已剔除 `>` 开头行），三文档 `trac validate` 均恢复 valid，BS-06 假失败类已消除。M-IMPL 重规划仍按 ARCH-006 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档（带外应用已生效，归档仅做正式化；合同语义不变）。
 
 ## 3. 文件 / 存储契约
 
