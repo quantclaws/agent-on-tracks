@@ -114,6 +114,8 @@ R2 重规划基线事实（PLANNING 输入）：kernel 侧（原 T-001：kernel/
 
 任务型裁定（回滚后重规划特有）：对实现已随回滚前提交落盘的 scope（如 070eac6 之于 M-TEST 变体），PLANNING 必须按规划时点的实测锚状态分类——实测已绿 → verification-only 任务（Runtime 直跑 test_refs）；实测红且红因属该 scope 自身 → 标准 RGR（preset-anchor）；实测红但红因在 scope 外 → 依赖缺失，任务后移或补依赖（TG-3）。禁止把「锚已绿」的 scope 排成 preset-anchor 任务（anchor_red 对已绿锚判 red_invalid，事件流停车）。
 
+> **Prism:** PRISM-PLAN-R1-01 [blocker][defect_classification=stub_gap] T-003 任务型裁定违反本节「禁止把「锚已绿」的 scope 排成 preset-anchor 任务」。实测：T-003 scope（m_test.py/test_tasks.py/trace.py）的 M-TEST hotfix 变体实现已随 070eac6（T-003 上一轮 GREEN 提交，通过 Green Gate）落盘基线——m_test.py 含 _is_hotfix_empty_shield/_m_test_exit_route 热路径、trace.py 含 hotfix_scope+跨版本解析、test_tasks.py 含 parse_hotfix_unit_rows。T-003 的 test_refs（tests/integration/test_hotfix_mtest.py 四用例）当前红的唯一原因是 trac hotfix CLI 未注册（USAGE 错误，非行为断言失败）——这正是本节 TG-2 定义的排序缺陷信号。T-003 depends_on T-007，T-007 落盘后 CLI+executor increment.declared+validate.py 就位，而 070eac6 已提供全部 kernel/trace/test_tasks 侧行为 → 四用例将转绿，T-003 作为 preset-anchor 进入 RED 会触发 anchor_red→red_invalid（事件流停车，即本节明禁的 stub_gap 重演）。T-003 仅剩的自身 scope 工作是 §2f blockquote 排除（test_tasks.py _visible_plan_lines，工作树已带外应用未正式归档），但该改动不被 test_hotfix_mtest.py 任一用例断言（fixture 的 delta plan 无 blockquote 行），不能作为 preset-anchor 的合法 RED 锚。修订预期：T-003 重分类为 verification-only（与 T-001/T-002 同型，T-007 落盘后 Runtime 直跑 test_refs）；§2f 正式归档另立任务并以 tests/unit/test_test_tasks_contract.py 为 RED 锚（该用例才真正断言 blockquote 排除行为）。
+
 ### 1.1 Composition Root
 
 hotfix 的装配入口有二：trac hotfix（入口旅程，同步驱动 triage）与 `trac run`（M-DESIGN 之后续跑）。每条 required AC 的六元组 composition 列在此节可追溯：
