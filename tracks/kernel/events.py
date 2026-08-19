@@ -66,6 +66,14 @@ EVENT_TYPES = (
     # B1 (issue #2): per-dispatch writer worktrees; audited lifecycle events.
     "worktree.opened",
     "worktree.closed",
+    # v0.6 hotfix (interfaces.md §1a, IF-HOTFIX-002): HOTFIX-TRIAGE entry
+    # substate machine events (SM-01) + the anonymous M-TEST release basis.
+    "hotfix.requested",
+    "triage.prechecked",
+    "anchor.validated",
+    "human.anchor",
+    "increment.declared",
+    "baseline.inherited",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -92,6 +100,11 @@ COMMAND_KINDS = (
     "validate_result",
     "checkpoint_result",
     "publish_result",
+    # v0.6 hotfix (interfaces.md §1b, IF-HOTFIX-002): commands produced by
+    # kernel/_decide_hotfix_triage and executed by executor handlers.
+    "precheck_hotfix",
+    "validate_anchor",
+    "complete_hotfix_entry",
 )
 
 

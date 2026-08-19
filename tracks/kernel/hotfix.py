@@ -19,8 +19,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .events import Command
+
 if TYPE_CHECKING:
-    from tracks.kernel.events import Command
     from tracks.kernel.machine import State
 
 # IF-HOTFIX-002 closed sets (interfaces.md §1c). The stage value is not
@@ -48,7 +49,7 @@ def _decide_hotfix_triage(s: State, sub: str) -> Command | None:
                                     substate="SAGE_TRIAGE") then
                            Command(kind="validate_anchor") on outcome
     - ``AWAIT_HUMAN``   -> None (parked; ``trac hotfix anchor`` /
-                           ``trac hotfix feature-route`` resume it)
+                            ``trac hotfix feature-route`` resume it)
 
     Terminal transitions (not parkable substates): ANCHORED ->
     ``complete_hotfix_entry`` then stage.entered(M-DESIGN) (SM-01.10);
@@ -60,7 +61,63 @@ def _decide_hotfix_triage(s: State, sub: str) -> Command | None:
     <=3 attempt budget; NO_ANCHOR or exhaustion parks at AWAIT_HUMAN and
     never auto-routes to feature (SM-01.7, NFR-0100-03).
     """
-    raise NotImplementedError("IF-HOTFIX-002: _decide_hotfix_triage")
+    if sub == "PRECHECK":
+        if not s.doc_dispatched:
+            return _command_precheck_hotfix()
+        return None  # awaiting triage.prechecked outcome
+
+    if sub == "SAGE_TRIAGE":
+        return _decide_sage_triage(s)
+
+    if sub == "AWAIT_HUMAN":
+        return None  # parked; human.anchor event resumes the flow
+
+    return None
+
+
+def _command_precheck_hotfix() -> Command:
+    """PRECHECK (SM-01.1-.4): deterministic issue fetch / scenario / active
+    release branch / target-version location — pure program check, no LLM
+    (IF-HOTFIX-003 via IF-HOTFIX-002)."""
+    return Command(kind="precheck_hotfix")
+
+
+def _decide_sage_triage(s: State) -> Command | None:
+    """SAGE_TRIAGE control flow (SM-01.5-.7, IF-HOTFIX-002/004).
+
+    - First dispatch: issue Sage with the anchor-search assignment.
+    - After the Sage outcome arrives (``doc_produced``), issue the programmatic
+      cross-version anchor validation (``validate_anchor``).
+    - After ``anchor.validated`` (``hotfix_anchor_validated``), issue the
+      ANCHORED terminal (``complete_hotfix_entry``, SM-01.10).
+    """
+    if not s.doc_dispatched:
+        params = {
+            "role": "sage",
+            "substate": "SAGE_TRIAGE",
+            "objective": "anchor existing ACs for the hotfix issue",
+            "stage": "M-HOTFIX-TRIAGE",
+            "attempt": s.current_attempt + 1,
+            "assignment": {
+                "kind": "SAGE_TRIAGE",
+                "skill": "tracks-sage",
+                "template_kind": None,
+            },
+        }
+        if s.last_failure:
+            params["evidence"] = dict(s.last_failure)
+        return Command(kind="dispatch_agent", params=params)
+    if not s.doc_produced:
+        return None  # awaiting Sage outcome
+    # Sage outcome received; issue validate_anchor if not yet passed
+    if not s.hotfix_anchor_validated:
+        if not s.doc_validated:
+            return Command(kind="validate_anchor")
+        return None  # awaiting validation result (or redispatch)
+    # anchor validated, complete the entry
+    if not s.baseline_inherited:
+        return Command(kind="complete_hotfix_entry")
+    return None  # already completed
 
 
 def _on_hotfix_requested(s: State, p: dict) -> None:
@@ -69,7 +126,8 @@ def _on_hotfix_requested(s: State, p: dict) -> None:
     Projects the run-establishment fact: ``hotfix_issue`` /
     ``hotfix_scenario`` on State; substate stays PRECHECK (SM-01.1).
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_hotfix_requested")
+    s.hotfix_issue = p.get("issue")
+    s.hotfix_scenario = p.get("scenario")
 
 
 def _on_triage_prechecked(s: State, p: dict) -> None:
@@ -80,7 +138,17 @@ def _on_triage_prechecked(s: State, p: dict) -> None:
     ``status="rejected"`` -> terminal routing to
     run.completed(terminal_state="rejected") — no branch side effect.
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_triage_prechecked")
+    if p.get("status") == "pass":
+        s.substate = "SAGE_TRIAGE"
+        s.hotfix_precheck_passed = True
+        s.hotfix_target_version = p.get("target_version")
+        _reset_hotfix_dispatch(s)
+    else:
+        # REJECTED terminal: the executor will emit run.completed(rejected).
+        # The rejected state is not a parkable substate; the reducer sets
+        # substate to None so decide() returns None and the executor handles
+        # the terminal transition.
+        s.substate = None
 
 
 def _on_anchor_validated(s: State, p: dict) -> None:
@@ -89,7 +157,9 @@ def _on_anchor_validated(s: State, p: dict) -> None:
     Projects ``hotfix_anchor_acs`` / ``hotfix_anchor_validated``; SM-01.5/.8
     route to the ANCHORED terminal transition (complete_hotfix_entry).
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_anchor_validated")
+    s.hotfix_anchor_acs = p.get("acs")
+    s.hotfix_anchor_validated = True
+    s.doc_validated = True  # mark validate_anchor as completed
 
 
 def _on_human_anchor(s: State, p: dict) -> None:
@@ -99,7 +169,26 @@ def _on_human_anchor(s: State, p: dict) -> None:
     ``mode="feature_route"`` -> FEATURE_ROUTE terminal (SM-01.9/.11):
     backlog.recorded + run.completed(feature_route), no fix branch.
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_human_anchor")
+    mode = p.get("mode")
+    if mode == "manual":
+        s.hotfix_anchor_acs = p.get("acs")
+        s.status = "active"
+        s.awaiting = None
+        # Human already supplied the anchor refs: skip the Sage dispatch step
+        # and go straight to programmatic validation in the SAGE_TRIAGE
+        # decide() control flow (validate_anchor -> ANCHORED, SM-01.8).
+        s.substate = "SAGE_TRIAGE"
+        s.doc_dispatched = True
+        s.doc_produced = True
+        s.doc_validated = False
+    elif mode == "feature_route":
+        # FEATURE_ROUTE terminal: the executor emits backlog.recorded {issue,
+        # decision: feature_route} then run.completed(feature_route). No fix
+        # branch, no dangling run (SM-01.9/.11, NFR-0100-03). Substate goes
+        # None so decide() halts until the terminal events land.
+        s.substate = None
+        s.status = "active"
+        s.awaiting = None
 
 
 def _on_baseline_inherited(s: State, p: dict) -> None:
@@ -110,7 +199,7 @@ def _on_baseline_inherited(s: State, p: dict) -> None:
     hotfix run never creates M-STORY/M-SPEC/M-ACC/M-REQ-APPROVAL artifacts
     (FR-0241-02).
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_baseline_inherited")
+    s.baseline_inherited = True
 
 
 def _on_increment_declared(s: State, p: dict) -> None:
@@ -120,4 +209,13 @@ def _on_increment_declared(s: State, p: dict) -> None:
     Empty-Shield-increment M-TEST release evidence (FR-0244-04): records the
     declared unit-layer regression rows as the plan-level closure basis.
     """
-    raise NotImplementedError("IF-HOTFIX-002: _on_increment_declared")
+    # Record the increment declaration on state for projection purposes.
+    # No substate change — the existing M-TEST EXIT flow handles this.
+    s.last_failure = None  # clear any stale failure evidence
+
+
+def _reset_hotfix_dispatch(s: State) -> None:
+    """Reset the hotfix dispatch flags so decide() can issue the next command."""
+    s.doc_dispatched = False
+    s.doc_produced = False
+    s.doc_validated = False

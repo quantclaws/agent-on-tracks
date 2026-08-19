@@ -21,6 +21,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .events import Command, EventEnvelope
+from .hotfix import (
+    _decide_hotfix_triage,  # noqa: F401
+    _on_anchor_validated,  # noqa: F401
+    _on_baseline_inherited,  # noqa: F401
+    _on_hotfix_requested,  # noqa: F401
+    _on_human_anchor,  # noqa: F401
+    _on_increment_declared,  # noqa: F401
+    _on_triage_prechecked,  # noqa: F401
+)
 from .m_impl import (
     _M_IMPL_CONTEXT_DOCS,  # noqa: F401
     _M_IMPL_CRITERIA_PACK,  # noqa: F401
@@ -159,6 +168,19 @@ class State:
     # per-record waiting/route/quarantine/resume state rebuilt from the §1m
     # doc-gap event closed set. Never an ordinary success terminal.
     doc_gaps: dict = field(default_factory=dict)
+    # v0.6 hotfix (interfaces.md §1c, IF-HOTFIX-002): HOTFIX-TRIAGE entry
+    # automaton projection fields. Safe defaults keep pre-v0.6 replays
+    # unchanged. Run identity (issue/scenario) is set by hotfix.requested;
+    # the rest track per-substage progress through PRECHECK/SAGE_TRIAGE/
+    # AWAIT_HUMAN toward the ANCHORED terminal.
+    hotfix_issue: int | None = None
+    hotfix_scenario: str | None = None
+    hotfix_target_version: str | None = None
+    hotfix_anchor_acs: list | None = None
+    hotfix_precheck_passed: bool = False
+    hotfix_anchor_validated: bool = False
+    hotfix_branch: str | None = None
+    baseline_inherited: bool = False
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -333,6 +355,14 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.task_refs = []
         s.current_task_metadata = None
         s.current_manifest = None
+    if s.stage == "M-HOTFIX-TRIAGE":
+        s.substate = "PRECHECK"
+        s.hotfix_target_version = None
+        s.hotfix_anchor_acs = None
+        s.hotfix_precheck_passed = False
+        s.hotfix_anchor_validated = False
+        s.hotfix_branch = None
+        s.baseline_inherited = False
 
 
 def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -370,14 +400,29 @@ def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
         s.prism_passed_this_round = False
         s.exit_validated = False
         s.review_round = 1
+    if s.stage == "M-HOTFIX-TRIAGE":
+        # SM-01.6 second entry source (FR-0243-03): M-DESIGN Prism overturned
+        # the anchor -> roll back to SAGE_TRIAGE and redispatch Sage with the
+        # SAGE_TRIAGE <=3 budget (the M-DESIGN redispatch budget is NOT
+        # consumed).  The run identity fields are preserved; progress/reset
+        # like a fresh entry. The SAGE_TRIAGE budget is kept (current_attempt
+        # was already zeroed above) so a previous exhaustion still parks
+        # immediately at the 3rd failure.
+        s.substate = "SAGE_TRIAGE"
+        s.hotfix_anchor_acs = None
+        s.hotfix_precheck_passed = True
+        s.hotfix_anchor_validated = False
+        s.hotfix_branch = None
+        s.baseline_inherited = False
+        s.awaiting = None
+        s.status = "active"
 
 
 def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     cmd = p.get("command", {})
     s.pending = cmd
     if cmd.get("kind") != "dispatch_agent":
-        if s.stage == "M-TEST" and cmd.get("kind") == "collect_tests":
-            s.substate = "COLLECT"  # SM-01.3: WRITE -> COLLECT
+        _track_non_dispatch_milestone(s, cmd.get("kind"))
         return
     # v0.5 no_diff peer review (checked before M-TEST so the right flag is set).
     if s.substate == "NO_DIFF_REVIEW":
@@ -406,6 +451,29 @@ def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
         s.reviewer_dispatched = True
     else:
         s.doc_dispatched = True
+
+
+def _track_non_dispatch_milestone(s: State, kind: str) -> None:
+    """Track non-dispatch command progress without added nesting/dispatch
+    branching: M-TEST COLLECT substate on ``collect_tests`` and v0.6 hotfix
+    (IF-HOTFIX-002) precheck/validate progress markers."""
+    if s.stage == "M-TEST" and kind == "collect_tests":
+        s.substate = "COLLECT"  # SM-01.3: WRITE -> COLLECT
+    elif s.stage == "M-HOTFIX-TRIAGE":
+        _track_hotfix_command_progress(s, kind)
+
+
+def _track_hotfix_command_progress(s: State, kind: str) -> None:
+    """v0.6 hotfix (IF-HOTFIX-002): track non-dispatch command progress so
+    decide() correctly sequences the sequential flow through PRECHECK,
+    SAGE_TRIAGE, and ANCHORED terminal transitions."""
+    if kind == "precheck_hotfix":
+        s.doc_dispatched = True
+    elif kind == "validate_anchor":
+        s.doc_validated = True
+    # complete_hotfix_entry's result events (baseline.inherited +
+    # stage.entered M-DESIGN) land synchronously within the same issue() call,
+    # so no tracking flag is needed here.
 
 
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -501,6 +569,20 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
         "reason": p.get("self_report"),
         "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
     }
+    if _route_failed_outcome_by_stage(s, p):
+        return
+    if s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    _consume_attempt(s)
+
+
+def _route_failed_outcome_by_stage(s: State, p: dict) -> bool:
+    """Route a failed outcome by stage. Returns True if handled."""
+    if s.stage == "M-HOTFIX-TRIAGE":
+        _handle_hotfix_failed_outcome(s, p)
+        return True
     if s.stage == "M-TEST":
         # D-32/SM-01.12: an invalid M-DESIGN test-task contract surfaces as a
         # stub_gap failed outcome (emitted by the executor instead of calling
@@ -511,10 +593,10 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
             _reset_doc(s)
             s.diagnose_classification = "stub_gap"
             s.substate = "DIAGNOSE"
-            return
+            return True
         _reset_m_test_dispatch_flag(s)
         _consume_attempt(s)
-        return
+        return True
     if s.stage == "M-IMPL":
         if (
             p.get("role") == "devon"
@@ -529,18 +611,31 @@ def _handle_failed_outcome(s: State, p: dict) -> None:
             s.diagnose_classification = None
             s.substate = "DIAGNOSE"
             _consume_attempt(s)
-            return
+            return True
         if s.substate in _M_IMPL_REVIEW_SUBSTATES:
             _reset_review(s)
         else:
             _reset_doc(s)
         _consume_attempt(s)
-        return
-    if s.substate in _REVIEW_SUBSTATE:
-        _reset_review(s)
+        return True
+    return False
+
+
+def _handle_hotfix_failed_outcome(s: State, p: dict) -> None:
+    """SM-01.5-.7: a failed Sage dispatch outcome or anchor_invalid verdict in
+    SAGE_TRIAGE consumes the shared <=3 attempt budget, resets the dispatcher
+    flag so decide() re-dispatches Sage, and parks at AWAIT_HUMAN on the 3rd
+    failure (never auto-feature-routes, NFR-0100-03)."""
+    _reset_doc(s)
+    s.current_attempt = int(p.get("attempt", s.current_attempt + 1))
+    if s.current_attempt >= 3:
+        s.substate = "AWAIT_HUMAN"
+        s.status = "awaiting_human"
+        s.awaiting = "hotfix_triage"
     else:
-        _reset_doc(s)
-    _consume_attempt(s)
+        # Redispatch Sage with fresh doc flags — _reset_doc already cleared the
+        # dispatcher flags so decide() issues a fresh dispatch (SM-01.6).
+        s.substate = "SAGE_TRIAGE"
 
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -574,6 +669,9 @@ def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
     if is_human:
         # Human pipeline failure: keep the awaiting gate, no agent retry,
         # no escalation, no substate change.
+        return
+    if s.stage == "M-HOTFIX-TRIAGE":
+        _handle_hotfix_failed_outcome(s, p)
         return
     if s.stage == "M-TEST":
         _on_m_test_verdict_failed(s, p)
@@ -728,6 +826,13 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         return
     # M-DESIGN has no human review gate (BS-05 / flow.md §8.3): pass goes
     # straight to EXIT; revise re-dispatches Archer via RESPOND.
+    if s.stage == "M-DESIGN" and p.get("anchor_verdict") == "overturned":
+        # FR-0243-03: M-DESIGN Prism overturned the hotfix anchor -> roll back
+        # to M-HOTFIX-TRIAGE/SAGE_TRIAGE for Sage re-anchoring. The M-DESIGN
+        # redispatch budget is NOT consumed (upstream product defect).
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = "anchor_overturned"
+        return
     s.prism_passed_this_round = p["verdict"] == "pass"
     if p["verdict"] == "pass":
         s.substate = "EXIT"
@@ -1170,6 +1275,16 @@ _APPLY = {
     "outcome.restored": _on_outcome_resolve,
     "outcome.discarded": _on_outcome_resolve,
     "outcome.resumed": _on_outcome_resumed,
+    # v0.6 hotfix (interfaces.md §1a, IF-HOTFIX-002): HOTFIX-TRIAGE entry
+    # automaton events (SPEC-006 SM-01). Reducer signatures are frozen as
+    # (State, payload) by the scaffold; wrap to the (State, payload, envelope)
+    # dispatch shape used by apply().
+    "hotfix.requested": lambda s, p, ev: _on_hotfix_requested(s, p),
+    "triage.prechecked": lambda s, p, ev: _on_triage_prechecked(s, p),
+    "anchor.validated": lambda s, p, ev: _on_anchor_validated(s, p),
+    "human.anchor": lambda s, p, ev: _on_human_anchor(s, p),
+    "increment.declared": lambda s, p, ev: _on_increment_declared(s, p),
+    "baseline.inherited": lambda s, p, ev: _on_baseline_inherited(s, p),
 }
 
 
@@ -1563,10 +1678,32 @@ def decide(s: State) -> Command | None:
         return Command(
             kind="rollback_stage", params={"to_stage": "M-STORY", "reason": "scope_overflow"}
         )
+    return _decide_stage_route(stage, sub, s)
+
+
+def _decide_m_design_diagnose(s: State) -> Command | None:
+    """M-DESIGN DIAGNOSE routing (FR-0243-03): Prism overturned the hotfix
+    anchor -> roll back to M-HOTFIX-TRIAGE/SAGE_TRIAGE without consuming the
+    M-DESIGN redispatch budget (upstream product defect)."""
+    if s.diagnose_classification == "anchor_overturned":
+        return Command(
+            kind="rollback_stage",
+            params={"to_stage": "M-HOTFIX-TRIAGE", "reason": "anchor_overturned"},
+        )
+    return None
+
+
+def _decide_stage_route(stage: str, sub: str, s: State) -> Command | None:
+    """Stage dispatch routing after the common preamble checks in ``decide()``.
+    Extracted to keep ``decide()`` cognitive complexity ≤15."""
+    if stage == "M-HOTFIX-TRIAGE":
+        return _decide_hotfix_triage(s, sub)
     if stage == "M-TEST":
         return _decide_m_test(s, sub)
     if stage == "M-IMPL":
         return _decide_m_impl(s, sub)
+    if stage == "M-DESIGN" and sub == "DIAGNOSE":
+        return _decide_m_design_diagnose(s)
     if sub in ("DRAFT", "RESPOND"):
         return _decide_pipeline(s, stage, sub)
     if sub == "TRIAGE":
