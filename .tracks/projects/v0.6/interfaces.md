@@ -15,9 +15,10 @@ sha:
 
 - `EventEnvelope` / `Command` / `Assignment` / `Outcome` / `StageDef` 结构与既有封闭集成员不变；v0.6 只做追加式扩展（§1a/§1b/§3a）。
 - 既有 EVENT_TYPES / COMMAND_KINDS 成员、M-IMPL 21 子状态封闭集、`_NEXT_STAGE` 链、RedClass 封闭集、`trac validate`/`trac check` CLI 合同全部不变；v0.6 的 stage 值 `M-HOTFIX-TRIAGE` 不进 `_NEXT_STAGE` 链（非 canonical 顶层阶段）。
-- v0.4 的 8 个、v0.5 的 12 个 IF- 标识不可变、不可复用；v0.6 增补 IF-HOTFIX-001～009 共 9 个标识（§5）。
+- v0.4 的 8 个、v0.5 的 12 个 IF- 标识不可变、不可复用；v0.6 增补 IF-HOTFIX-001～010 共 10 个标识（§5；R4 增 IF-HOTFIX-010）。
 - `trac check trace` 对 feature 版本的文件级闭合语义逐字节不变；hotfix 计划级闭合只在「run 为 hotfix 且 `increment.declared` 在事件流」时启用（§1f）。
 - BS-06 design-trace 的扫描范围合同（R3 增补，§2f）：inline-discussion blockquote 行是评审线程而非计划内容，不参与 test-plan 的 layer/IF- 归属扫描；§8 表格行作为唯一机器可读覆盖来源的地位不变（fail-closed）。
+- hotfix 版本目录继承基线文档只读解析合同（R4 增补，§1i / IF-HOTFIX-010）：hotfix 项目目录只含 delta 三文档、无 acceptance.md/interfaces.md（FR-0241-02 source approval 不复制），canonical validator 经共享纯函数只读引用目标版本目录的对应文档；feature 版本目录的 validator 校验语义逐字节不变（dir-name 身份门控）。
 - `.tracks/projects/project.toml` 测试执行合同（路径/schema/命令）不变；质量守卫栈合同不变（ARCH-006 §4.2）。
 - 单写者锁（`runtime/lock`，O_CREAT|O_EXCL + holder PID）合同不变：被持有时 stderr `runtime lock held by pid <N>` + exit 1、零事件（FR-0242-04 直接复用）。
 
@@ -46,7 +47,7 @@ sha:
 | `backlog.recorded` | payload 追加可选 `issue: int`, `decision: "feature_route"\|"ac_gap"\|"spec_gap"`（既有 `"queued"` 不变） | cli, executor, kernel, report | FEATURE_ROUTE 与中段退出的去向记录 |
 | `stage.rolled_back`（hotfix） | `to_stage` 可为 `"M-HOTFIX-TRIAGE"`，`reason` 追加 `"anchor_overturned"` | kernel, executor, report | anchor 推翻回滚路由 |
 | `baseline.frozen`（hotfix M-IMPL） | payload 追加 `scenario_branch_head: str\|None`（场景 B 活跃分支 HEAD） | executor, kernel | stale 检测输入审计（IF-HOTFIX-008） |
-| `baseline.inherited`（新事件，归本表） | `target_version: str`, `baseline_digest: str`, `anchor_acs: list[str]`, `baseline_doc_paths: list[str]` | executor（`_do_complete_hotfix_entry`） | executor, kernel, report | source approval 记录；不复制文件、不重新批准（FR-0241-02） |
+| `baseline.inherited`（新事件，归本表） | `target_version: str`, `baseline_digest: str`, `anchor_acs: list[str]`, `baseline_doc_paths: list[str]` | executor（`_do_complete_hotfix_entry`） | executor, kernel, report | source approval 记录；不复制文件、不重新批准（FR-0241-02）。`target_version`+`baseline_doc_paths` 是 IF-HOTFIX-010 只读基线解析的权威记录（目录名编码为其持久投影） |
 
 （`baseline.inherited` 为第 6 个新事件类型，与表首 5 个共同构成 v0.6 新事件封闭集。）
 
@@ -217,6 +218,18 @@ class GithubBackend:
 
 agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输入（如 hotfix M-DESIGN 派发缺 anchor_acs）不调用 backend，failed outcome=`stub_gap`。
 
+### 1i. hotfix 版本目录继承基线文档只读解析（IF-HOTFIX-010，R4）
+
+**modules**: `executor/test_tasks.py`（共享纯函数 `resolve_inherited_baseline_docs` + `check_design_trace_file` / `check_test_tasks_contract_file` 消费）、`executor/validate.py`（`trac validate --file` 消费侧）、`checks/trace.py`（hotfix 计划级闭合的 `projects_dir / version` 查找锚定同一目标版本目录）——跨模块接口，须有 integration 覆盖。
+
+- **合同**：`resolve_inherited_baseline_docs(doc_path: Path) -> tuple[Path, Path]` 为纯函数（无 I/O 副作用，仅路径构造）：
+  - `doc_path.parent.name` 匹配 `v\d+\.\d+-hotfix-\d+`（hotfix 版本目录，身份同 capabilities `_HOTFIX_VERSION_RE`）→ 解析 `target_version = "v{M}.{m}"`，返回 `(doc_path.parent.parent / target_version / "acceptance.md", doc_path.parent.parent / target_version / "interfaces.md")`（只读引用，不复制文件，符合 FR-0241-02 source approval）。
+  - 其余（feature 版本目录 `v{M}.{m}` 或非版本目录）→ 返回 `(doc_path.parent / "acceptance.md", doc_path.parent / "interfaces.md")`（与既有 `path.parent / ...` 行为逐字节一致，不变量由 dir-name 身份门控保证）。
+- **消费**：`check_design_trace_file` 与 `check_test_tasks_contract_file`（test_tasks.py）将其硬编码的 `path.parent / "acceptance.md"` / `path.parent / "interfaces.md"` 替换为经 `resolve_inherited_baseline_docs(path)` 返回的路径；后续存在性检查与读取不变。目标版本目录或其 acceptance.md/interfaces.md 缺失 → fail-closed（既有存在性检查触发，错误信息指明「继承基线不可定位」+ target_version）。
+- **同一解析钉住**：`checks/trace.py` 的 hotfix 计划级闭合 `_anchor_ref_errors` 经 `projects_dir / version / acceptance.md` 查找（既有，IF-HOTFIX-007），其中 `projects_dir = doc_path.parent.parent`——与本 resolver 锚定同一目标版本目录，一致由构造保证。M-DESIGN EXIT（`trac validate --file` + design-trace）与 M-IMPL TASK_REVIEW/ISLAND_GATE_2（`trac check trace` 文件级）消费同一解析。
+- **权威性**：`baseline.inherited` 事件（§4a 行）的 `target_version` + `baseline_doc_paths` 是该只读引用的权威记录；目录名编码是 `complete_hotfix_entry` 按该事件构造的持久投影，二者一致由构造保证——文件级 validator 无需读事件流（保持 validate 的文件级纯度）。
+- **不变量**：feature 版本目录的 validator 校验语义逐字节不变（dir-name 身份门控；非 hotfix 目录永不进入跨版本解析路径）。
+
 ## 2. CLI 接口合同
 
 ### 2a. trac hotfix（新命令：入口形态 + AWAIT_HUMAN 子动作，IF-HOTFIX-001；待实现 Devon foundation task——下表「调用」列为合同语法）
@@ -269,7 +282,7 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 - **合同**：`trac validate --file test-plan.md` 与 M-DESIGN EXIT 的 design-trace 检查（`check_design_trace`，BS-06/FR-0140）在提取「可见行」时，除既有 HTML 注释与 fenced code 剔除外，**同时剔除 inline-discussion blockquote 行**（以 `>` 开头的行）：讨论线程是评审期旁路（模板指引与 tracks-discuz 协议的既定语义），不是计划内容；其正文中的 AC id + tests 路径字样既不构成 layer 归属声明，也不构成 IF- 归属声明，不触发「integration/e2e AC missing IF- attribution」与「has no layer attribution」的判定。
 - **fail-closed 保持**：layer 与 IF- 归属的判定面收窄为非 blockquote 可见行（§8 表格行为权威来源）；AC 的归属声明写进 blockquote 不产生任何计数效果（「has no layer attribution」照常失败）。`required_ac_ids` 的 layer 判定共享同一可见行提取，同步收窄（blockquote 内的 layer 词不再把 AC 判为 required）——§8 表格行仍是 D-28 唯一机器可读 AC 覆盖来源，D-28 语义不变。
 - **`trac check trace` 不受影响**：其 AC↔测试标记闭合按 §8 表格行解析（row-based），不含逐行归属扫描；IF-TRACE-001/002 合同不变。
-- **生效时点**：合同随本 revision 冻结；实现状态——§3.9 过渡路径 (b) 已由运营端带外应用（`tracks/executor/test_tasks.py` 的 `_visible_plan_lines` 工作树已剔除 `>` 开头行），三文档 `trac validate` 均恢复 valid，BS-06 假失败类已消除。M-IMPL 重规划仍按 ARCH-006 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档（带外应用已生效，归档仅做正式化；合同语义不变）。
+- **生效时点**：合同随本 revision 冻结。实现状态——§3.9 过渡路径 (b) 的带外应用在 R3 后由 commit ae5b7af 回退（为 T-012 标准 RGR 正式归档让路），T-012 至今未启动；当前工作树 `_visible_plan_lines` **未**剔除 `>` 开头行（Archer 不写实现代码，§2f 代码实现属 Devon T-012），`trac validate --file test-plan.md` 因而在历史 Prism 讨论块引用行上报 11 项 missing IF- attribution 假失败（§2f 合同已冻结但代码实现未归档的过渡态，非设计缺陷；详见 ARCH-006 §3.9 R4 实测更新）。M-DESIGN EXIT 的 validate 通过依赖 §2f 合同的带外重应用（运营端，R3 先例）或 T-012 落地——二者任一恢复 `_visible_plan_lines` 的 `>` 排除即消除该假失败类，合同语义不变。M-IMPL 重规划仍按 ARCH-006 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档。
 
 ## 3. 文件 / 存储契约
 
@@ -317,8 +330,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 | `human.anchor` | mode, acs, issue, actor | AC-FR0240-06 |
 | `backlog.recorded` | issue, decision | AC-FR0241-04, AC-FR0248-01 |
 | `branch.created`（fix/{issue}） | branch_name, base, commit_sha | AC-FR0241-01 |
-| `baseline.inherited` | target_version, baseline_digest, anchor_acs, baseline_doc_paths | AC-FR0241-02 |
-| `stage.entered`（M-DESIGN / M-HOTFIX-TRIAGE） | stage | AC-FR0241-03, AC-FR0240-01 |
+| `baseline.inherited` | target_version, baseline_digest, anchor_acs, baseline_doc_paths | AC-FR0241-02 || `stage.entered`（M-DESIGN / M-HOTFIX-TRIAGE） | stage | AC-FR0241-03, AC-FR0240-01 |
 | `stage.rolled_back`（anchor_overturned） | from_stage, to_stage, reason | AC-FR0243-03 |
 | `prism.verdict`（anchor_verdict） | verdict, anchor_verdict | AC-FR0243-02/03 |
 | `increment.declared` | shield, unit_rows, trace_status | AC-FR0244-04 |
@@ -356,7 +368,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 
 ## 5. IF Registry
 
-每个 IF- 标识代表一个可独立实现的接口合同，是 test-plan §8「IF- 归属」列的唯一合法取值来源。v0.4/v0.5 已建立的 20 个标识不可变、不可复用；此处列出 cross-reference 条目使 validator 可解析（定义仍以 IF-004/IF-005 §5 为准），并增补 9 个新标识。
+每个 IF- 标识代表一个可独立实现的接口合同，是 test-plan §8「IF- 归属」列的唯一合法取值来源。v0.4/v0.5 已建立的 20 个标识不可变、不可复用；此处列出 cross-reference 条目使 validator 可解析（定义仍以 IF-004/IF-005 §5 为准），并增补 10 个新标识。
 
 ### IF-MTEST-001 M-TEST 测试收集合同（承自 IF-004 §5，定义不变）
 
@@ -372,7 +384,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 
 ### IF-REACH-002 reach 孤岛检查合同（承自 IF-004 §5，定义不变）
 
-### IF-VALIDATE-001 trac validate 文档校验合同（承自 IF-004 §5；v0.6 扩展 hotfix delta plan 层归属校验 + §2f design-trace 扫描范围排除 inline-discussion blockquote 行）
+### IF-VALIDATE-001 trac validate 文档校验合同（承自 IF-004 §5；v0.6 扩展 hotfix delta plan 层归属校验 + §2f design-trace 扫描范围排除 inline-discussion blockquote 行 + §1i hotfix 版本目录继承基线文档只读解析）
 
 ### IF-IMPL-001 M-IMPL kernel 状态机合同（承自 IF-005 §5，定义不变；hotfix run 复用）
 
@@ -461,4 +473,11 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 - **对应 §section**：§1a（扩展 payload）, §2c。
 - **关联 FR**：FR-0243-02/03, FR-0247-01/02, FR-0248-01, FR-0241-04。
 
-**有效性校验机制**（design-trace validator 扩展，承自 IF-004/IF-005 §5）：validator 解析本注册表与 IF-004/IF-005 §5 注册表构建已定义 IF- 集合；test-plan §8 每条 integration/e2e 行的 IF- 归属必须非空且已注册；v0.6 的 9 个新标识生效后不可复用/重定义。
+### IF-HOTFIX-010 hotfix 版本目录继承基线文档只读解析合同
+
+- **合同**：§1i 共享纯函数 `resolve_inherited_baseline_docs(doc_path) -> tuple[Path, Path]`——hotfix 版本目录（`parent.name` 匹配 `v\d+\.\d+-hotfix-\d+`）从目录名解析 target_version、只读返回目标版本目录的 acceptance.md/interfaces.md（不复制，FR-0241-02）；feature/非版本目录返回同目录路径（逐字节不变，dir-name 身份门控）。`check_design_trace_file` / `check_test_tasks_contract_file` 经该 resolver 定位基线文档；目标缺失 fail-closed。`checks/trace.py` hotfix 计划级闭合的 `projects_dir / version` 查找锚定同一目标版本目录（M-DESIGN EXIT 与 M-IMPL TASK_REVIEW/ISLAND 同一解析）。
+- **实现模块**：executor/test_tasks.py, executor/validate.py（消费侧）, checks/trace.py（一致锚定）。
+- **对应 §section**：§1i, §4a（baseline.inherited 权威记录）。
+- **关联 FR**：FR-0243-01, FR-0244-02, FR-0241-02。
+
+**有效性校验机制**（design-trace validator 扩展，承自 IF-004/IF-005 §5）：validator 解析本注册表与 IF-004/IF-005 §5 注册表构建已定义 IF- 集合；test-plan §8 每条 integration/e2e 行的 IF- 归属必须非空且已注册；v0.6 的 10 个新标识生效后不可复用/重定义。

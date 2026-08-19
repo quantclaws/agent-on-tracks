@@ -52,7 +52,7 @@ This test plan only declares test methods that are **observable from outside the
    - Each test function must have an R-1 marker comment line directly above its `def`: `# AC-FRXXXX-YY@v0.6 TRACKS-TRACE <optional description>`（长格式 + `TRACKS-TRACE` 特征词强制，FR-0080/FR-0130）。hotfix 场景中被测 run 的锚定对象是既有版本 AC，但**测试标记引用本版 acceptance 的 AC id**（`@v0.6`）；跨版本引用（`@v0.5` 等）只出现在被测系统的 payload/文档断言里，不作为本版测试标记。Multiple ACs bound to the same function get one marker line per AC.
    - CI scans `tests/`, verifying: each test references at least one AC; each AC is referenced by at least one test.
    - Any check failure blocks merge.
-   - 变绿条件（FR-0140）：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识），供 M-IMPL task 变绿子集划分。IF- 标识取值来自 interfaces.md §5 注册表（v0.6 新增 IF-HOTFIX-001～009，并继承 v0.4/v0.5 注册表）。
+   - 变绿条件（FR-0140）：每条 integration/e2e 归属的 AC 声明变绿条件（所依赖接口的 IF- 标识），供 M-IMPL task 变绿子集划分。IF- 标识取值来自 interfaces.md §5 注册表（v0.6 新增 IF-HOTFIX-001～010，并继承 v0.4/v0.5 注册表）。
 
 2. **Assertion taboos** (CI static checks, violations block merge)
    - No `assert True` / `assert 1` / `assert <obj> is not None` as the sole assertion.
@@ -286,11 +286,11 @@ Stable required checks 继承 v0.5（ARCH-006 §4.2/§4.3；merge 只认 CI 结�
 | AC-FR0242-02 | integration | tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active | IF-HOTFIX-006, IF-HOTFIX-008 |
 | AC-FR0242-03 | integration | tests/integration/test_hotfix_coexist.py::test_suspended_run_observable_and_gates_recoverable | IF-HOTFIX-006 |
 | AC-FR0242-04 | integration | tests/integration/test_hotfix_coexist.py::test_second_concurrent_trac_command_rejected_with_holder_pid | IF-HOTFIX-006 |
-| AC-FR0243-01 | integration | tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts | IF-HOTFIX-005, IF-HOTFIX-006 |
+| AC-FR0243-01 | integration | tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts | IF-HOTFIX-005, IF-HOTFIX-006, IF-HOTFIX-010 |
 | AC-FR0243-02 | integration | tests/integration/test_hotfix_design_delta.py::test_delta_design_carries_anchor_set_and_prism_review | IF-HOTFIX-002, IF-HOTFIX-009 |
 | AC-FR0243-03 | integration | tests/integration/test_hotfix_design_delta.py::test_prism_anchor_overturn_routes_back_to_sage_triage | IF-HOTFIX-002, IF-HOTFIX-009 |
 | AC-FR0244-01 | integration | tests/integration/test_hotfix_mtest.py::test_mtest_regression_red_first_then_green | IF-HOTFIX-007, IF-MTEST-002 |
-| AC-FR0244-02 | integration | tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated | IF-HOTFIX-007, IF-VALIDATE-001 |
+| AC-FR0244-02 | integration | tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated | IF-HOTFIX-007, IF-VALIDATE-001, IF-HOTFIX-010 |
 | AC-FR0244-03 | integration | tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac | IF-HOTFIX-007, IF-TRACE-002 |
 | AC-FR0244-04 | integration | tests/integration/test_hotfix_mtest.py::test_empty_shield_increment_release_with_unit_closure | IF-HOTFIX-007, IF-TRACE-002 |
 | AC-FR0245-01 | integration | tests/integration/test_hotfix_mimpl.py::test_mimpl_commits_isolated_on_fix_branch | IF-HOTFIX-008, IF-IMPL-002 |
@@ -380,6 +380,7 @@ v0.6 对既有测试的预期影响面（Shield 在 M-TEST 修订，走 test cha
 | `tests/integration/test_trac_retry.py` 等 CLI 测试 | 若 USAGE 字符串更新（新增 hotfix 命令）则同步断言 | USAGE 文本增量 |
 | `tests/conftest.py` | Shield 新增共享 helper `tests/hotfix_support.py`（host-issues 种子 + 已批准基线构造），不改既有 fixture 语义 | §2.4 语料准备 |
 | `tests/unit/test_test_tasks_contract.py` | 【R3】新增 blockquote 排除用例（Devon unit 义务，随 M-IMPL 重规划任务交付）：含 AC id + 层词 + 无 IF- 的 blockquote 行不再触发 missing IF- attribution；归属声明仅存在于 blockquote 的 AC 仍报 has no layer attribution（fail-closed 保持）；`tests/integration/` 既有 validate 合同用例补一条「含已 resolved 讨论线程的 plan 文件 `trac validate --file test-plan.md` exit 0」回归 | interfaces §2f / ARCH-006 §3.9（R3）：design-trace 扫描范围排除 inline-discussion 行；既有用例不依赖 blockquote 被扫描（已核对），新增行为需正反两侧覆盖。【R3 实测更新】§2f 扫描器变更已由运营端带外应用（`executor/test_tasks.py` 的 `_visible_plan_lines` 工作树已剔除 `>` 行），三文档 `trac validate` 均恢复 valid；unit 用例仍为 Devon 义务（带外应用是状态对齐，正式归档由 M-IMPL verification-only 任务吸收，用例覆盖不豁免） |
+| `tests/unit/test_test_tasks_contract.py` / `tests/integration/test_hotfix_design_delta.py` / `tests/integration/test_hotfix_mtest.py` | 【R4】Devon unit 义务：`resolve_inherited_baseline_docs` 纯函数用例——hotfix 版本目录解析到目标版本目录的 acceptance.md/interfaces.md（只读不复制）、feature 版本目录与非版本目录返回同目录路径（逐字节不变）、目标版本目录/文档缺失 fail-closed。Shield integration 回归：hotfix 版本目录（只含 delta 三文档）下 `trac validate --file test-plan.md` exit 0（继承基线经 resolver 解析）；既有 AC-FR0243-01/AC-FR0244-02 行扩展断言该出口。feature 版本目录的 validate 行为回归不变 | interfaces §1i / IF-HOTFIX-010 / ARCH-006 §3.4（R4）：hotfix 版本目录继承基线文档只读解析；既有 feature 目录用例不依赖跨版本解析（已核对），新增行为需正反两侧覆盖 |
 
 ---
 
