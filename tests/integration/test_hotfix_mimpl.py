@@ -76,10 +76,24 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
 
     r = trac("hotfix", "50", "--scenario", "dev")
     assert r.returncode == 0, r.stderr
-    # Drive into M-IMPL where BASELINE digest is computed.
-    for _ in range(4):
-        cont = trac("run")
+    run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+
+    # Park the run INSIDE M-IMPL (active, non-terminal) before advancing
+    # the branch (PRISM-V06-07): the IF-HOTFIX-008 stale reconcile requires
+    # the release branch to advance WHILE the run is still resident in
+    # M-IMPL — driving unbounded runs first would already reach the
+    # boundary, leaving no active M-IMPL checkpoint to reconcile. Step one
+    # dispatch at a time and stop at the first M-IMPL sighting.
+    for _ in range(20):
+        cont = trac("run", "--max-dispatches", "1")
         assert cont.returncode == 0, cont.stderr
+        probe = trac("status")
+        if "stage=M-IMPL" in probe.stdout and "terminal=" not in probe.stdout:
+            break
+    assert "stage=M-IMPL" in probe.stdout, (
+        "run must be parked inside M-IMPL before the branch advance"
+    )
+    assert "terminal=" not in probe.stdout, "run must not be terminal yet"
 
     # Advance the ACTIVE RELEASE BRANCH (releases/v0.6) HEAD to force a
     # stale digest.  The current checkout is frozen onto fix/50 by
@@ -101,7 +115,6 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
     assert git(host_repo, "rev-parse", "releases/v0.6").strip() != base
 
     cont = trac("run")
-    run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
     evs = event_log(run_id)
     stale = [
         e for e in evs
@@ -111,7 +124,7 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
     assert stale[-1]["payload"].get("scenario_branch_head")
 
     status = trac("status")
-    assert "needs_attention" in status.stdout
+    assert "needs_attention" in status.stdout.lower()
 
 
 # AC-FR0246-01@v0.6 TRACKS-TRACE boundary terminal state keeps fix branch

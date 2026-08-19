@@ -1,272 +1,272 @@
 {
-  "version": "v0.6",
-  "contract": "Each required Shield test binds one minimal contract-deviation counterexample (mutation) and a kill verification. The 6 pre-implemented-module bindings (precheck_pass through cli_hotfix_no_events) have been re-run against the Archer scaffold stubs via the §12.5 protocol (apply patch -> run bound test -> record killed/survived -> reverse via git apply -R -> fresh unpatched verification). All 6 are killed: each patch makes the bound test fail at a behavior assertion (not at the NotImplementedError stub token), proving the assertion has discriminating power. The 30 stub-targeting CLI-test bindings share the cli_hotfix_no_events.patch mutation class (register cmd_hotfix with a no-op deviant handler that writes no events and prints a wrong success line); this pattern is verified killed on a representative subset (test_hotfix_cli_entry, test_hotfix_events::test_hotfix_events_append_only_replay_and_report, test_hotfix_design_delta::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts, test_hotfix_journey::test_hotfix_journey_happy_post_release, test_hotfix_coexist::test_active_run_selection_and_status_discriminates_runs) - the remaining 25 share the same mutation class because every CLI-driven test asserts on contract-required events / stdout / branches that the deviant no-op handler does not produce. Three targeted patches replace the shared-mutation-class bindings for the PRISM-V06-01/02/03-revised tests: hotfix_fix_commit_leaks_to_main.patch kills the topological isolation assertion (git cherry), hotfix_baseline_fresh_never_stale.patch kills the stale-detection assertion (baseline.frozen status=stale), and hotfix_anchor_no_redispatch.patch / hotfix_anchor_auto_feature_backlog.patch kill the redispatch-budget and no-auto-feature assertions (verdict.failed count, backlog.recorded absence). Patches and the generator script live alongside this manifest in tests/counterexamples/v0.6/. Counterexample application never touches product behavior: patches are applied to a temporary working-tree state, verified, then reversed via `git apply -R`; the working tree is clean after every verification.",
-  "bindings": [
-    {
-      "test": "tests/integration/test_hotfix_cli_entry.py::test_hotfix_entry_happy_requested_and_status_substates",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix registered with a no-op deviant handler that prints 'hotfix: ok (no events)' and returns exit 0 without writing hotfix.requested or driving triage",
-      "verification": "applied patch (cmd_hotfix no-op handler registered in _COMMANDS, tracks/cli/main.py); test failed at assert 'hotfix.requested' in stdout (got 'hotfix: ok (no events)'); reversed via git apply -R; fresh unpatched run failed at assert 1 == 0 (USAGE / exit 1 - command missing, legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_precheck.py::test_precheck_pass_reaches_sage_triage_without_agent_dispatch",
-      "patch": "precheck_pass_status_no_target.patch",
-      "result": "killed",
-      "mutation": "precheck_hotfix returns PrecheckReport(status='pass', target_version=None) - pass without target_version (contract: pass requires target_version)",
-      "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert None == 'v0.5' (target_version missing); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_precheck.py::test_precheck_rejection_matrix_no_branch_nonzero_exit",
-      "patch": "precheck_rejected_bogus_reason.patch",
-      "result": "killed",
-      "mutation": "precheck_hotfix returns PrecheckReport(status='rejected', reason='bogus_reason') - reason outside the closed HotfixRejectionReason set",
-      "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert 'bogus_reason' in _REASON_CLOSED_SET (closed-set membership violated); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_precheck.py::test_precheck_deterministic_no_llm_dispatch_records",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler writes no events (contract: PRECHECK must record triage.prechecked with no agent dispatch)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch (verified on test_hotfix_cli_entry); the no-op handler produces no triage.prechecked event, so the no-LLM-dispatch audit assertion cannot bind."
-    },
-    {
-      "test": "tests/integration/test_hotfix_anchor.py::test_sage_anchor_validated_reports_anchored_set",
-      "patch": "parse_anchor_refs_wrong_tuple.patch",
-      "result": "killed",
-      "mutation": "parse_anchor_refs drops the @version - returns ('AC-FR0030-01', '') instead of ('AC-FR0030-01', 'v0.5')",
-      "verification": "applied patch (parse_anchor_refs stub body replaced, tracks/executor/hotfix.py:117); test failed at assert [('AC-FR0030-01', '')] == [('AC-FR0030-01', 'v0.5')]; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: parse_anchor_refs (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
-      "patch": "hotfix_anchor_no_redispatch.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix with sage:SAGE_TRIAGE=bad_anchor emits only ONE verdict.failed(anchor_invalid, attempt=1) and parks — no 3-attempt redispatch sequence (IF-HOTFIX-002 violation)",
-      "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding in tracks/executor/hotfix.py + cmd_hotfix no-redispatch handler + no-op cmd_run in tracks/cli/main.py); test failed at assert len(failed) == 3 (got 1 verdict.failed); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: validate_anchor_refs (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
-      "patch": "hotfix_anchor_auto_feature_backlog.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix with bad_anchor emits 3x verdict.failed AND backlog.recorded(decision=feature_route) — auto-routes to feature on exhaustion (NFR-0100-03 violation)",
-      "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding + cmd_hotfix auto-feature handler + no-op cmd_run); test failed at assert not backlogs (backlog.recorded present); reversed via git apply -R; fresh unpatched run failed at NotImplementedError (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_anchor.py::test_anchor_validation_traceable_with_retry_count",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no anchor.validated / verdict.failed events (contract: trace must show attempt counter)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; the no-op handler writes no events so the replay probe finds no anchor evidence."
-    },
-    {
-      "test": "tests/integration/test_hotfix_await_human.py::test_human_anchor_manual_and_feature_route",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler ignores the AWAIT_HUMAN sub-actions (anchor / feature-route) - prints 'hotfix: ok' without human.anchor / backlog.recorded",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; the no-op handler does not emit human.anchor or backlog.recorded."
-    },
-    {
-      "test": "tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_replay_and_report",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler writes no events (contract: hotfix.requested + triage.prechecked + anchor.validated must be append-only)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'hotfix.requested' in [] (empty event stream); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_and_projection_rebuild",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler writes no events - projection rebuild has nothing to rebuild (contract: append-only + rebuild-invariant)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: run row never projected since no hotfix run exists); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_events.py::test_replay_and_report_show_full_hotfix_journey",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no journey events for replay/report (contract: full hotfix journey sequence)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; replay cannot surface the journey tokens."
-    },
-    {
-      "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_creates_isolated_fix_branch_per_scenario",
-      "patch": "complete_hotfix_entry_wrong_branch.patch",
-      "result": "killed",
-      "mutation": "complete_hotfix_entry returns {'branch': 'fix/wrong'} instead of {'branch': 'fix/{issue}'} (contract: branch name must be fix/{issue})",
-      "verification": "applied patch (complete_hotfix_entry stub body replaced, tracks/executor/hotfix.py:153); test failed at assert 'fix/wrong' == 'fix/42'; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-005: complete_hotfix_entry (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_branch_baseline.py::test_baseline_inheritance_no_requirement_stage_artifacts",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not create the hotfix project directory or write baseline.inherited (contract: source-approval record, no M-STORY/M-SPEC/M-ACC)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; hotfix project dir not created -> existence assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_enters_mdesign_and_run_continues",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not emit stage.entered(M-DESIGN) (contract: ANCHORED -> M-DESIGN entry)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; 'stage=M-DESIGN' not in stdout."
-    },
-    {
-      "test": "tests/integration/test_hotfix_feature_route.py::test_feature_route_exits_without_branch_or_dangling_run",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not emit backlog.recorded or run.completed(terminal_state=feature_route) (contract: FEATURE_ROUTE terminal)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no terminal events -> run.completed assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_feature_route.py::test_fail_closed_no_branch_and_no_auto_feature_route",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler writes no triage.prechecked REJECTED event and does not park at AWAIT_HUMAN (contract: REJECTED reason=not_bug + NO_ANCHOR -> AWAIT_HUMAN, no auto-feature)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no triage.prechecked REJECTED event and no awaiting=awaiting_human in stdout."
-    },
-    {
-      "test": "tests/integration/test_hotfix_coexist.py::test_active_run_selection_and_status_discriminates_runs",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler creates no hotfix run -> trac status cannot show branch=fix/42 scenario=post-release (contract: active run discrimination)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'run=feature-run-1: stage=M-DESIGN substate=DRAFT...' (PRISM-V06-04-revised: fixture now in-progress feature run, no hotfix run created so contract fields absent); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no boundary terminal -> no restored_active_run switch (contract: boundary restores suspended feature run)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; 'terminal=boundary' not in status."
-    },
-    {
-      "test": "tests/integration/test_hotfix_coexist.py::test_suspended_run_observable_and_gates_recoverable",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler creates no hotfix run -> no suspended: row (contract: suspended run observable)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; 'suspended:' not in status."
-    },
-    {
-      "test": "tests/integration/test_hotfix_coexist.py::test_second_concurrent_trac_command_rejected_with_holder_pid",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not consult the writer_lock -> no 'runtime lock held by pid' rejection (contract: single-writer lock)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; the no-op handler returns 0 without acquiring the lock -> 'runtime lock held by pid' not in stderr."
-    },
-    {
-      "test": "tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not enter M-DESIGN -> no delta docs in hotfix project dir (contract: delta design in hotfix dir)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at 'no active run; trac start <version> first' (downstream trac run cannot proceed); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_design_delta.py::test_delta_design_carries_anchor_set_and_prism_review",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no prism.verdict event (contract: anchor_verdict=upheld on delta carry-through)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no prism.verdict events -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_design_delta.py::test_prism_anchor_overturn_routes_back_to_sage_triage",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no stage.rolled_back(anchor_overturned) event (contract: Prism overturn -> SAGE_TRIAGE)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no rollback events -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mtest.py::test_mtest_regression_red_first_then_green",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler never reaches M-TEST -> no red.validated event (contract: RED-first then GREEN)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no red.validated event -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not create the hotfix project dir -> trac validate --file <hotfix>/test-plan.md reads a non-existent file (contract: layer ownership validation in hotfix dir)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; hotfix dir absent -> validate fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no hotfix_scope in trac check trace --json (contract: cross-version AC trace closure)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no hotfix_scope field -> JSON assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mtest.py::test_empty_shield_increment_release_with_unit_closure",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler never reaches M-TEST EXIT -> no increment.declared event (contract: empty-Shield release)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no increment.declared -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mimpl.py::test_mimpl_commits_isolated_on_fix_branch",
-      "patch": "hotfix_fix_commit_leaks_to_main.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix creates fix/42 with RGR commits (Tracks-Issue=42) AND leaks the identical patch onto main (different parent → different SHA but same patch-id) — violating AC-FR0245-01 topological isolation: fix commits must be absent from the active branch",
-      "verification": "applied patch (cmd_hotfix leak handler + no-op cmd_run, tracks/cli/main.py); test failed at assert not non_plus (git cherry main fix/42 shows '- <sha>' — the fix patch-id exists on main); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (CLI unregistered, legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mimpl.py::test_scenario_b_baseline_stale_reconcile_needs_attention",
-      "patch": "hotfix_baseline_fresh_never_stale.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix creates a dev hotfix run whose BASELINE always reports baseline.frozen(status='fresh') — never stale, even when releases/v0.6 advances (violation of AC-FR0245-02 stale detection)",
-      "verification": "applied patch (cmd_hotfix never-stale handler + no-op cmd_run, tracks/cli/main.py); test failed at assert stale (filter for baseline.frozen status=stale returned []); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mimpl.py::test_boundary_terminal_state_keeps_fix_branch",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no run.completed(terminal_state=boundary) event (contract: boundary terminal + fix branch kept)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no boundary terminal -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_mimpl.py::test_no_release_events_after_boundary",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler never reaches boundary -> 'terminal=boundary' not in status (contract: no release events after boundary)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; 'terminal=boundary' absent -> status assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_recovery.py::test_crash_recovery_resumes_precise_hotfix_state",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler creates no hotfix run -> nothing to recover (contract: precise hotfix state resumption)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: no hotfix run exists to resume); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
-    },
-    {
-      "test": "tests/integration/test_hotfix_routes.py::test_design_gap_returns_to_hotfix_mdesign_without_human_gate",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no stage.rolled_back(to_stage=M-DESIGN) event (contract: design gap -> hotfix M-DESIGN without Human gate)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no rollback event -> assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_routes.py::test_design_gap_loop_closes_and_reenters_journey",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no stage.entered / stage.rolled_back sequence (contract: design gap loop closure + re-entry)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no stage events -> replay assertion fails."
-    },
-    {
-      "test": "tests/integration/test_hotfix_routes.py::test_ac_gap_spec_gap_exit_with_human_approval_prerequisite",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler produces no human.approval / backlog.recorded(ac_gap) / run.completed(ac_gap) (contract: ac_gap/spec_gap exit with Human approval prerequisite)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; no exit-route events -> assertion fails."
-    },
-    {
-      "test": "tests/e2e/test_hotfix_journey.py::test_hotfix_journey_happy_post_release",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler drives no journey - prints 'hotfix: ok (no events)' instead of the run-event lines (contract: scenario A full happy path)",
-      "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'hotfix.requested' in 'hotfix: ok (no events)'; reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
-    },
-    {
-      "test": "tests/e2e/test_hotfix_await_journey.py::test_hotfix_await_journey_manual_anchor",
-      "patch": "cli_hotfix_no_events.patch",
-      "result": "killed",
-      "mutation": "cmd_hotfix no-op handler does not park at AWAIT_HUMAN or accept the anchor sub-action (contract: awaiting -> manual anchor -> continue)",
-      "verification": "same mutation class as cli_hotfix_no_events.patch; 'awaiting=awaiting_human' not in stdout."
-    }
-  ]
+ "version": "v0.6",
+ "contract": "Each required Shield test binds one minimal contract-deviation counterexample (mutation) and a kill verification. The 6 pre-implemented-module bindings (precheck_pass through cli_hotfix_no_events) have been re-run against the Archer scaffold stubs via the §12.5 protocol (apply patch -> run bound test -> record killed/survived -> reverse via git apply -R -> fresh unpatched verification). All 6 are killed: each patch makes the bound test fail at a behavior assertion (not at the NotImplementedError stub token), proving the assertion has discriminating power. The 30 stub-targeting CLI-test bindings share the cli_hotfix_no_events.patch mutation class (register cmd_hotfix with a no-op deviant handler that writes no events and prints a wrong success line); this pattern is verified killed on a representative subset (test_hotfix_cli_entry, test_hotfix_events::test_hotfix_events_append_only_replay_and_report, test_hotfix_design_delta::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts, test_hotfix_journey::test_hotfix_journey_happy_post_release, test_hotfix_coexist::test_active_run_selection_and_status_discriminates_runs) - the remaining 25 share the same mutation class because every CLI-driven test asserts on contract-required events / stdout / branches that the deviant no-op handler does not produce. Three targeted patches replace the shared-mutation-class bindings for the PRISM-V06-01/02/03-revised tests: hotfix_fix_commit_leaks_to_main.patch kills the topological isolation assertion (git cherry), hotfix_baseline_fresh_never_stale.patch kills the stale-detection assertion (baseline.frozen status=stale), and hotfix_anchor_no_redispatch.patch / hotfix_anchor_auto_feature_backlog.patch kill the redispatch-budget and no-auto-feature assertions (verdict.failed count, backlog.recorded absence). Patches and the generator script live alongside this manifest in tests/counterexamples/v0.6/. Counterexample application never touches product behavior: patches are applied to a temporary working-tree state, verified, then reversed via `git apply -R`; the working tree is clean after every verification.",
+ "bindings": [
+  {
+   "test": "tests/integration/test_hotfix_cli_entry.py::test_hotfix_entry_happy_requested_and_status_substates",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix registered with a no-op deviant handler that prints 'hotfix: ok (no events)' and returns exit 0 without writing hotfix.requested or driving triage",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (PRISM-V06-A1 §2b contract fields) fails at assert 'hotfix.requested' in stdout (got 'hotfix: ok (no events)'); reversed via git apply -R; fresh unpatched run failed at assert 1 == 0 (USAGE / exit 1 - command missing, legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_precheck.py::test_precheck_pass_reaches_sage_triage_without_agent_dispatch",
+   "patch": "precheck_pass_status_no_target.patch",
+   "result": "killed",
+   "mutation": "precheck_hotfix returns PrecheckReport(status='pass', target_version=None) - pass without target_version (contract: pass requires target_version)",
+   "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert None == 'v0.5' (target_version missing); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_precheck.py::test_precheck_rejection_matrix_no_branch_nonzero_exit",
+   "patch": "precheck_rejected_bogus_reason.patch",
+   "result": "killed",
+   "mutation": "precheck_hotfix returns PrecheckReport(status='rejected', reason='bogus_reason') - reason outside the closed HotfixRejectionReason set",
+   "verification": "applied patch (precheck_hotfix stub body replaced, tracks/executor/hotfix.py:80); test failed at assert 'bogus_reason' in _REASON_CLOSED_SET (closed-set membership violated); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-003: precheck_hotfix (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_precheck.py::test_precheck_deterministic_no_llm_dispatch_records",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler writes no events (contract: PRECHECK must record triage.prechecked with no agent dispatch)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch (verified on test_hotfix_cli_entry); the no-op handler produces no triage.prechecked event, so the no-LLM-dispatch audit assertion cannot bind."
+  },
+  {
+   "test": "tests/integration/test_hotfix_anchor.py::test_sage_anchor_validated_reports_anchored_set",
+   "patch": "parse_anchor_refs_wrong_tuple.patch",
+   "result": "killed",
+   "mutation": "parse_anchor_refs drops the @version - returns ('AC-FR0030-01', '') instead of ('AC-FR0030-01', 'v0.5')",
+   "verification": "applied patch (parse_anchor_refs stub body replaced, tracks/executor/hotfix.py:117); test failed at assert [('AC-FR0030-01', '')] == [('AC-FR0030-01', 'v0.5')]; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: parse_anchor_refs (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
+   "patch": "hotfix_anchor_no_redispatch.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix with sage:SAGE_TRIAGE=bad_anchor emits only ONE verdict.failed(anchor_invalid, attempt=1) and parks — no 3-attempt redispatch sequence (IF-HOTFIX-002 violation)",
+   "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding in tracks/executor/hotfix.py + cmd_hotfix no-redispatch handler + no-op cmd_run in tracks/cli/main.py); test failed at assert len(failed) == 3 (got 1 verdict.failed); reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-004: validate_anchor_refs (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature",
+   "patch": "hotfix_anchor_auto_feature_backlog.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix with bad_anchor emits 3x verdict.failed AND backlog.recorded(decision=feature_route) — auto-routes to feature on exhaustion (NFR-0100-03 violation)",
+   "verification": "applied combined patch (contract-conforming validate_anchor_refs scaffolding + cmd_hotfix auto-feature handler + no-op cmd_run); test failed at assert not backlogs (backlog.recorded present); reversed via git apply -R; fresh unpatched run failed at NotImplementedError (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_anchor.py::test_anchor_validation_traceable_with_retry_count",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no anchor.validated / verdict.failed events (contract: trace must show attempt counter)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (PRISM-V06-A3, tight anchor.validated + attempt=1 replay assertions) fails at assert 'anchor.validated' in '' (no-op handler writes no events); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_await_human.py::test_human_anchor_manual_and_feature_route",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler ignores the AWAIT_HUMAN sub-actions (anchor / feature-route) - prints 'hotfix: ok' without human.anchor / backlog.recorded",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; the no-op handler does not emit human.anchor or backlog.recorded."
+  },
+  {
+   "test": "tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_replay_and_report",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler writes no events (contract: hotfix.requested + triage.prechecked + anchor.validated must be append-only)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'hotfix.requested' in [] (empty event stream); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_and_projection_rebuild",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler writes no events - projection rebuild has nothing to rebuild (contract: append-only + rebuild-invariant)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: run row never projected since no hotfix run exists); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_events.py::test_replay_and_report_show_full_hotfix_journey",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no journey events for replay/report (contract: full hotfix journey sequence)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; replay cannot surface the journey tokens."
+  },
+  {
+   "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_creates_isolated_fix_branch_per_scenario",
+   "patch": "complete_hotfix_entry_wrong_branch.patch",
+   "result": "killed",
+   "mutation": "complete_hotfix_entry returns {'branch': 'fix/wrong'} instead of {'branch': 'fix/{issue}'} (contract: branch name must be fix/{issue})",
+   "verification": "applied patch (complete_hotfix_entry stub body replaced, tracks/executor/hotfix.py:153); test failed at assert 'fix/wrong' == 'fix/42'; reversed via git apply -R; fresh unpatched run failed at NotImplementedError IF-HOTFIX-005: complete_hotfix_entry (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_branch_baseline.py::test_baseline_inheritance_no_requirement_stage_artifacts",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not create the hotfix project directory or write baseline.inherited (contract: source-approval record, no M-STORY/M-SPEC/M-ACC)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; hotfix project dir not created -> existence assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_branch_baseline.py::test_anchored_enters_mdesign_and_run_continues",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not emit stage.entered(M-DESIGN) (contract: ANCHORED -> M-DESIGN entry)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; 'stage=M-DESIGN' not in stdout."
+  },
+  {
+   "test": "tests/integration/test_hotfix_feature_route.py::test_feature_route_exits_without_branch_or_dangling_run",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not emit backlog.recorded or run.completed(terminal_state=feature_route) (contract: FEATURE_ROUTE terminal)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no terminal events -> run.completed assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_feature_route.py::test_fail_closed_no_branch_and_no_auto_feature_route",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler writes no triage.prechecked REJECTED event and does not park at AWAIT_HUMAN (contract: REJECTED reason=not_bug + NO_ANCHOR -> AWAIT_HUMAN, no auto-feature)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no triage.prechecked REJECTED event and no awaiting=awaiting_human in stdout."
+  },
+  {
+   "test": "tests/integration/test_hotfix_coexist.py::test_active_run_selection_and_status_discriminates_runs",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler creates no hotfix run -> trac status cannot show branch=fix/42 scenario=post-release (contract: active run discrimination)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'run=feature-run-1: stage=M-DESIGN substate=DRAFT...' (PRISM-V06-04-revised: fixture now in-progress feature run, no hotfix run created so contract fields absent); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no boundary terminal -> no restored_active_run switch (contract: boundary restores suspended feature run)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; 'terminal=boundary' not in status."
+  },
+  {
+   "test": "tests/integration/test_hotfix_coexist.py::test_suspended_run_observable_and_gates_recoverable",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler creates no hotfix run -> no suspended: row (contract: suspended run observable)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; 'suspended:' not in status."
+  },
+  {
+   "test": "tests/integration/test_hotfix_coexist.py::test_second_concurrent_trac_command_rejected_with_holder_pid",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not consult the writer_lock -> no 'runtime lock held by pid' rejection (contract: single-writer lock)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; the no-op handler returns 0 without acquiring the lock -> 'runtime lock held by pid' not in stderr."
+  },
+  {
+   "test": "tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not enter M-DESIGN -> no delta docs in hotfix project dir (contract: delta design in hotfix dir)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at 'no active run; trac start <version> first' (downstream trac run cannot proceed); reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_design_delta.py::test_delta_design_carries_anchor_set_and_prism_review",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no prism.verdict event (contract: anchor_verdict=upheld on delta carry-through)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no prism.verdict events -> assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_design_delta.py::test_prism_anchor_overturn_routes_back_to_sage_triage",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no stage.rolled_back(anchor_overturned) event (contract: Prism overturn -> SAGE_TRIAGE)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no rollback events -> assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mtest.py::test_mtest_regression_red_first_then_green",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler never reaches M-TEST -> no red.validated event (contract: RED-first then GREEN)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no red.validated event -> assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not create the hotfix project dir -> trac validate --file <hotfix>/test-plan.md reads a non-existent file (contract: layer ownership validation in hotfix dir)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; hotfix dir absent -> validate fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no hotfix_scope in trac check trace --json (contract: cross-version AC trace closure)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no hotfix_scope field -> JSON assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mtest.py::test_empty_shield_increment_release_with_unit_closure",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler never reaches M-TEST EXIT -> no increment.declared event (contract: empty-Shield release)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no increment.declared -> assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mimpl.py::test_mimpl_commits_isolated_on_fix_branch",
+   "patch": "hotfix_fix_commit_leaks_to_main.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix creates fix/42 with RGR commits (Tracks-Issue=42) AND leaks the identical patch onto main (different parent → different SHA but same patch-id) — violating AC-FR0245-01 topological isolation: fix commits must be absent from the active branch",
+   "verification": "applied patch (cmd_hotfix leak handler + no-op cmd_run, tracks/cli/main.py); test failed at assert not non_plus (git cherry main fix/42 shows '- <sha>' — the fix patch-id exists on main); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (CLI unregistered, legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mimpl.py::test_scenario_b_baseline_stale_reconcile_needs_attention",
+   "patch": "hotfix_baseline_fresh_never_stale.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix creates a dev hotfix run whose BASELINE always reports baseline.frozen(status='fresh') — never stale, even when releases/v0.6 advances (violation of AC-FR0245-02 stale detection)",
+   "verification": "applied patch (cmd_hotfix never-stale handler + no-op cmd_run, tracks/cli/main.py); revised test parks the run inside M-IMPL (--max-dispatches) before advancing the branch, then fails at assert stale (line 123: filter for baseline.frozen status=stale returned [] — the never-stale deviation survives the new park-then-advance driving); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mimpl.py::test_boundary_terminal_state_keeps_fix_branch",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no run.completed(terminal_state=boundary) event (contract: boundary terminal + fix branch kept)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; no boundary terminal -> assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_mimpl.py::test_no_release_events_after_boundary",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler never reaches boundary -> 'terminal=boundary' not in status (contract: no release events after boundary)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; 'terminal=boundary' absent -> status assertion fails."
+  },
+  {
+   "test": "tests/integration/test_hotfix_recovery.py::test_crash_recovery_resumes_precise_hotfix_state",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler creates no hotfix run -> nothing to recover (contract: precise hotfix state resumption)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'branch=fix/42' in 'no runs yet' (PRISM-V06-06-revised §2b contract-field assertions: no hotfix run exists to resume); reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_routes.py::test_design_gap_returns_to_hotfix_mdesign_without_human_gate",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no stage.rolled_back(to_stage=M-DESIGN) event (contract: design gap -> hotfix M-DESIGN without Human gate)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (downstream stub_gap DIAGNOSE trigger at M-TEST) fails because the no-op handler writes no events, so no stage.rolled_back(to_stage=M-DESIGN) exists; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_routes.py::test_design_gap_loop_closes_and_reenters_journey",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler produces no stage.entered / stage.rolled_back sequence (contract: design gap loop closure + re-entry)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (downstream stub_gap DIAGNOSE trigger) fails because the no-op handler writes no events, so stage.entered count and stage.rolled_back(M-DESIGN) are absent; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/integration/test_hotfix_routes.py::test_ac_gap_spec_gap_exit_with_human_approval_prerequisite",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler writes no events (contract: ac_gap exit must be reachable via M-TEST failure trigger + diagnose:classification=ac_gap)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); revised test (shield:WRITE=illegit_red,diagnose:classification=ac_gap at M-TEST, PRISM-V06-08) fails because the no-op handler produces no run/diagnose, so trac run has no active run to drive and human.approval/backlog.recorded/run.completed(ac_gap) never appear; reversed via git apply -R; fresh unpatched run failed at USAGE / exit 1 (legal Red)."
+  },
+  {
+   "test": "tests/e2e/test_hotfix_journey.py::test_hotfix_journey_happy_post_release",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler drives no journey - prints 'hotfix: ok (no events)' instead of the run-event lines (contract: scenario A full happy path)",
+   "verification": "applied patch (cmd_hotfix no-op handler, tracks/cli/main.py); test failed at assert 'hotfix.requested' in 'hotfix: ok (no events)'; reversed via git apply -R; fresh unpatched run failed at USAGE (legal Red)."
+  },
+  {
+   "test": "tests/e2e/test_hotfix_await_journey.py::test_hotfix_await_journey_manual_anchor",
+   "patch": "cli_hotfix_no_events.patch",
+   "result": "killed",
+   "mutation": "cmd_hotfix no-op handler does not park at AWAIT_HUMAN or accept the anchor sub-action (contract: awaiting -> manual anchor -> continue)",
+   "verification": "same mutation class as cli_hotfix_no_events.patch; 'awaiting=awaiting_human' not in stdout."
+  }
+ ]
 }

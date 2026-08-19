@@ -119,11 +119,14 @@ def test_anchor_validation_traceable_with_retry_count(host_repo, trac):
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
 
-    # A replay / report must surface the anchor validation evidence chain
-    # (verdict.failed with attempt counter on the failure path, or
-    # anchor.validated on the pass path).
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+    # A replay / report must surface the anchor validation evidence chain.
+    # The default fixture drives the SAGE pass path (issue 42 anchored on
+    # attempt 1), so replay deterministically shows ``anchor.validated``
+    # with the attempt counter (interfaces §4a payload field). The
+    # or-disjunction fallback is a hole: it would also pass when NO anchor
+    # evidence exists (PRISM-V06-A3).
     replay = trac("replay", run_id)
-    assert "anchor.validated" in replay.stdout or "verdict.failed" in replay.stdout
-    # Attempt counter must be traceable.
-    assert "attempt=" in replay.stdout or "attempt" in replay.stdout
+    assert "anchor.validated" in replay.stdout
+    # Attempt counter must be traceable (anchor.validated.attempt == 1).
+    assert '"attempt": 1' in replay.stdout

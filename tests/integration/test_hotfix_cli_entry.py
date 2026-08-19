@@ -49,5 +49,14 @@ def test_hotfix_entry_happy_requested_and_status_substates(trac, event_log, host
     assert requested[0]["payload"]["scenario"] == "post-release"
 
     status = trac("status")
-    assert "stage=M-HOTFIX-TRIAGE" in status.stdout or "substate=" in status.stdout
+    # §2b contract fields: an active hotfix run's status line appends
+    # branch=fix/{N} scenario={post-release|dev} issue={N}. The sub-state
+    # fields (stage=M-HOTFIX-TRIAGE / substate=PRECHECK|SAGE_TRIAGE) are
+    # only observable WHILE the entry sub-state machine is active; the
+    # entry command (form #1) drives the triage synchronously to ANCHORED,
+    # so by the time this status probe runs the run has already entered
+    # M-DESIGN and the sub-state-machine transient fields are no longer
+    # observable (PRISM-V06-A1).
+    assert "branch=fix/42" in status.stdout
+    assert "scenario=post-release" in status.stdout
     assert "issue=42" in status.stdout

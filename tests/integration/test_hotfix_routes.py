@@ -29,8 +29,14 @@ def test_design_gap_returns_to_hotfix_mdesign_without_human_gate(trac, host_repo
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    # Enter M-DESIGN; Prism flags a design gap (defect_classification).
-    cont = trac("run", simulate="prism:PRISM_REVIEW=revise;prism:defect_classification=design_gap")
+    # A delta design / test-plan / interface gap (Archer-owned, IF-HOTFIX-009)
+    # surfaces DOWNSTREAM at M-TEST: the Shield WRITE fails and DIAGNOSE
+    # classifies ``stub_gap`` -> ``stage.rolled_back(to_stage=M-DESIGN)``
+    # with NO Human technical gate (FR-0247). The downstream M-TEST DIAGNOSE
+    # routing matches FR-0247 more faithfully than a same-stage M-DESIGN
+    # revisit (PRISM-V06-A2). ``|ok`` lets the re-entered journey's second
+    # Shield WRITE pass once the design gap closes.
+    cont = trac("run", simulate="shield:WRITE=illegit_red|ok,diagnose:classification=stub_gap")
     assert cont.returncode == 0, cont.stderr
 
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
@@ -64,10 +70,13 @@ def test_design_gap_loop_closes_and_reenters_journey(trac, host_repo, event_log)
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    # First M-DESIGN: Prism flags design gap -> rollback to M-DESIGN.
-    cont1 = trac("run", simulate="prism:PRISM_REVIEW=revise;prism:defect_classification=design_gap")
+    # First trip into M-TEST: the downstream Shield WRITE fails and
+    # DIAGNOSE classifies stub_gap -> rollback to the hotfix M-DESIGN
+    # (downstream trigger, IF-HOTFIX-009; PRISM-V06-A2).
+    cont1 = trac("run", simulate="shield:WRITE=illegit_red|ok,diagnose:classification=stub_gap")
     assert cont1.returncode == 0, cont1.stderr
-    # Second M-DESIGN: Prism passes (gap closed) -> M-TEST continues.
+    # Second trip: the design gap closes inside M-DESIGN (default ok) and
+    # the journey re-enters M-TEST / M-IMPL dispatch sequence.
     cont2 = trac("run")
     assert cont2.returncode == 0, cont2.stderr
 
@@ -106,14 +115,20 @@ def test_ac_gap_spec_gap_exit_with_human_approval_prerequisite(trac, host_repo, 
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    # Drive M-IMPL until Devon surfaces an ac_gap diagnosis.
-    for _ in range(4):
-        cont = trac("run", simulate="devon:DIAGNOSE=ac_gap")
+    # Trigger the ac_gap exit from a M-TEST failure (v0.4 legal injection
+    # per PRISM-V06-08: a failing Shield WRITE + diagnose:classification=
+    # ac_gap). DIAGNOSE at M-TEST classifies ac_gap; the hotfix variant
+    # parks awaiting Human approval (IF-HOTFIX-009 §2c). Because the exit
+    # fires before any test commit or M-IMPL green, the absence of
+    # test.committed / green.committed holds naturally. The token is carried
+    # on both drive runs so whichever invocation dispatches the M-TEST
+    # Shield WRITE consumes it.
+    for _ in range(2):
+        cont = trac("run", simulate="shield:WRITE=illegit_red,diagnose:classification=ac_gap")
         assert cont.returncode == 0, cont.stderr
 
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
-    # The run is now in awaiting=escalation with check=ac_gap; trac approve
-    # is the Human gate.
+    # The run is now awaiting Human approval for the ac_gap exit.
     approve = trac("approve", "--actor", "Aaron")
     assert approve.returncode == 0, approve.stderr
 
@@ -124,6 +139,8 @@ def test_ac_gap_spec_gap_exit_with_human_approval_prerequisite(trac, host_repo, 
     completed = [e for e in evs if e["type"] == "run.completed"]
     assert completed
     assert completed[-1]["payload"]["terminal_state"] in ("ac_gap", "spec_gap")
-    # The hotfix run did NOT continue to M-TEST / M-IMPL after the gap exit.
+    # The ac_gap exit fired during M-TEST, before any test commit or M-IMPL
+    # green: the run did NOT continue to further M-TEST/M-IMPL activity
+    # after the gap exit.
     assert "test.committed" not in types_seq
     assert "green.committed" not in types_seq
