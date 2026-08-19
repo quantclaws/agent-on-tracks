@@ -721,6 +721,67 @@ def cmd_return(repo: Path, *args) -> int:
     return 0
 
 
+def _recover_gate(store: Store, run_id: str):
+    # B32 (#32): accept ONLY the post-rollback quiescent state (M-DESIGN/DRAFT,
+    # last rollback from M-IMPL, no new work since); fail-closed otherwise.
+    state = store.state(run_id)
+    if state.stage != "M-DESIGN" or state.substate != "DRAFT":
+        return state, (
+            f"recover requires M-DESIGN/DRAFT after an M-IMPL rollback "
+            f"(stage={state.stage} substate={state.substate or 'nothing'})"
+        )
+    recents = list(store.events(run_id))
+    rolled_back = [e for e in recents if e.type == "stage.rolled_back"]
+    if not rolled_back:
+        return state, "recover requires a prior stage.rolled_back event"
+    last = rolled_back[-1]
+    if last.payload.get("from_stage") != "M-IMPL" or last.payload.get("to_stage") != "M-DESIGN":
+        return state, (
+            "recover only after a stage.rolled_back from M-IMPL to M-DESIGN "
+            f"(last rollback was {last.payload.get('from_stage')} -> "
+            f"{last.payload.get('to_stage')})"
+        )
+    for e in recents[recents.index(last) + 1 :]:
+        if e.type == "stage.entered" or e.type == "stage.exited":
+            return state, "recover rejected: another stage entered/exited after the rollback"
+        if e.type == "command.issued" and (
+            e.payload.get("command", {}).get("kind") == "dispatch_agent"
+        ):
+            return state, "recover rejected: new dispatch_agent work issued after the rollback"
+    return state, None
+
+
+def cmd_recover(repo: Path, *args) -> int:
+    # B32 (#32): human.recover gate -> append or fail-closed.
+    opts = {}
+    args = list(args)
+    usage = "usage: trac recover --reason TEXT"
+    while args:
+        flag = args.pop(0)
+        if flag not in ("--reason",) or not args or flag in opts:
+            return _err(usage)
+        opts[flag] = args.pop(0)
+    if set(opts) != {"--reason"}:
+        return _err(usage)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err("no active run")
+    with writer_lock(home):  # AC-27b: lock before the state gate
+        state, err = _recover_gate(store, run_id)
+        if err:
+            return _err(err)
+        store.append(
+            run_id,
+            state.version,
+            "human.recover",
+            {"reason": opts["--reason"], "to_stage": "M-IMPL"},
+        )
+    print("recover requested: -> M-IMPL")
+    return 0
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -1095,6 +1156,7 @@ USAGE = (
     "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
+    "|recover --reason TEXT"
     "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
     "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ..."
@@ -1110,6 +1172,7 @@ _COMMANDS = {
     "review": (cmd_review, None),
     "approve": (cmd_approve, None),
     "return": (cmd_return, None),
+    "recover": (cmd_recover, None),
     "retry": (cmd_retry, None),
     "status": (cmd_status, 0),
     "replay": (cmd_replay, 1),

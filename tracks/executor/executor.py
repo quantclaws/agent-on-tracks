@@ -360,6 +360,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         invocation to dispatch the upstream agent with evidence."""
         return cmd.kind == "rollback_stage" and cmd.params.get("reason") == "stub_gap"
 
+    # NOTE (B32/#32): recover_stage deliberately gets NO similar boundary
+    # special case. Unlike the stub_gap rollback -- which would auto-reenter a
+    # defective downstream cycle -- recover_stage is the HUMAN-CHOSEN forward
+    # path back into M-IMPL (stage.recovered resets to BASELINE and Archer
+    # re-decomposes the task graph). run_loop may continue in the same
+    # invocation; nothing requires an external correction first.
+
     def run_pipeline(self) -> State:
         """Drive only the ResultCheckpoint pipeline (validate->checkpoint->
         publish). No agent dispatch, no recovery, no cross-substate flow.
@@ -1784,6 +1791,58 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             {
                 "from_stage": state.stage,
                 "to_stage": cmd.params["to_stage"],
+                "reason": cmd.params.get("reason", ""),
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _do_recover_stage(self, cmd, state, task_id, reconcile):
+        # B32 (#32): forward recovery. Reconcile idempotency mirrors
+        # _do_rollback_stage: if stage.recovered was already persisted for this
+        # command (crash between event commit and return), do not re-enter.
+        if reconcile:
+            already = any(
+                e.type == "stage.recovered" and e.command_id == cmd.command_id
+                for e in self.store.events(self.run_id)
+            )
+            if already:
+                return
+        # Fail-closed gate (defense in depth; the CLI/decide path already
+        # constrains these, so a violation means a malformed command or an
+        # out-of-band event log). v0.6 whitelists ONLY M-IMPL as a forward
+        # recovery target -- every other target must go through the normal
+        # human.return/rollback path instead.
+        if state.substate != "RECOVER_PENDING":
+            self.store.write_audit_blob(
+                {
+                    "event": "stage.recovered",
+                    "command_id": cmd.command_id,
+                    "rejected": True,
+                    "reason": (
+                        f"recover_stage issued in substate {state.substate} "
+                        "(expected RECOVER_PENDING)"
+                    ),
+                }
+            )
+            return
+        if cmd.params.get("to_stage") != "M-IMPL":
+            self.store.write_audit_blob(
+                {
+                    "event": "stage.recovered",
+                    "command_id": cmd.command_id,
+                    "rejected": True,
+                    "reason": (
+                        f"recover_stage target {cmd.params.get('to_stage')} "
+                        "not in v0.6 whitelist (M-IMPL)"
+                    ),
+                }
+            )
+            return
+        self._emit(
+            "stage.recovered",
+            {
+                "stage": "M-IMPL",
+                "from_stage": state.stage,
                 "reason": cmd.params.get("reason", ""),
             },
             command_id=cmd.command_id,

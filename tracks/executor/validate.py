@@ -102,6 +102,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "check",
         "discuss",
         "init",
+        "recover",
         "replay",
         "report",
         "retry",

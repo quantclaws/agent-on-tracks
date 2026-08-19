@@ -185,6 +185,7 @@ M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**
 - **`defect_classification` 按 substate 取值**（Runtime 路由词表各不相同，取错值会落入默认路由）：
   - M-TEST PRISM_REVIEW / M-IMPL SHIELD_FIX 语境：`test_defect`（默认）| `test_plan_defect` | `acceptance_defect` | `spec_defect`
   - M-IMPL PRISM_PLAN：`design_gap` | `stub_gap` | `ac_gap` | `spec_gap`（缺省→回 PLANNING 重拆）
+  - **PRISM_PLAN defect_classification 纪律（B32/#32，防复发）**：任务图缺陷——TG-1/2/3 排序错（依赖序错误）、任务型误分类、依赖/预算/批次错误，以及任何 `artifact` 指向 `tasks.json`/`tasks.md` 的 finding——**一律缺省**（不带 `defect_classification`）→ 回 PLANNING 重拆（Archer 就地重分解任务图，run 前向修复）。`stub_gap` 仅限 `interfaces.md` 承诺的桩/接口在代码中不存在且任务图调整无法补救；`design_gap` 仅限设计文档自身的缺口/互斥。把任务图缺陷误标 `stub_gap` 会触发 `rollback_stage(M-DESIGN)` 的硬回滚，run 将被卡死且无受支持通道能从 M-DESIGN 前向回到 M-IMPL。
   - M-IMPL PRISM_FINAL：`impl_defect`（默认，回 Devon GREEN）| `red_defect`（回 RED 新 lineage）
 - JSON 的 `verdict` 是你的正式判定；**pass 仅在文档讨论就绪（你自己锚定的线程均已收束）时生效**——存在未决线程时以讨论状态为准（revise），请先收束自己的线程再判 pass。
 - 该通道与 `trac discuss` 文档锚定**并行**：结构化 findings 可独立承载 REVISE（无文档 diff 也合法）；你仍可把 finding 锚定进 test-plan/interfaces/architecture 线程供作者就地回应（M-TEST 鼓励，非必须）。

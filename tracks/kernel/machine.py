@@ -94,6 +94,10 @@ class State:
     approved: bool = False
     returned: bool = False
     return_target: str | None = None  # human.return target stage
+    # B32 (#32): forward-recovery target/why past a mis-typed stub_gap rollback.
+    # human.recover records these; decide(RECOVER_PENDING) issues recover_stage.
+    recover_target: str | None = None
+    recover_reason: str | None = None
     approval_digest: str | None = None  # revision digest (D-01)
     approval_actor: str | None = None
     issues_created: bool = False  # idempotency key semantics = D-06
@@ -996,6 +1000,18 @@ def _on_human_return(s: State, p: dict, ev: EventEnvelope) -> None:
     s.return_target = p["to_stage"]
 
 
+def _on_human_recover(s: State, p: dict, ev: EventEnvelope) -> None:
+    # B32 (#32): forward-recovery intent. Unlike human.return this never rolls
+    # back -- it records a forward target and halts decide() until recover_stage
+    # re-enters the target stage. last_failure is deliberately preserved (the
+    # original failure evidence survives recovery for the fresh M-IMPL cycle).
+    s.awaiting = None
+    s.status = "active"
+    s.substate = "RECOVER_PENDING"
+    s.recover_target = p["to_stage"]
+    s.recover_reason = p["reason"]
+
+
 def _on_approval_recorded(s: State, p: dict, ev: EventEnvelope) -> None:
     # SM-05.5 (C-01): recording the approval identity IS the APPROVED->ISSUES
     # transition, materializing ISSUES as an observable substate.
@@ -1247,6 +1263,8 @@ _APPLY = {
     "preview.generated": _on_preview_generated,
     "human.approval": _on_human_approval,
     "human.return": _on_human_return,
+    "human.recover": _on_human_recover,
+    "stage.recovered": _on_stage_entered,  # re-entry reuses the fresh-cycle reset
     "approval.recorded": _on_approval_recorded,
     "issues.created": _on_issues_created,
     # v0.4 M-TEST (flow.md §9 / SM-01)
@@ -1744,5 +1762,13 @@ def _decide_approval(s: State, stage: str, sub: str) -> Command | None:
     if sub == "RETURNED":
         return Command(
             kind="rollback_stage", params={"to_stage": s.return_target, "reason": "human_return"}
+        )
+    if sub == "RECOVER_PENDING":
+        # B32 (#32): forward recovery -- re-enter the recorded target stage
+        # (v0.6: M-IMPL) instead of rolling back. Params mirror the
+        # human.recover payload so the executor never re-derives intent.
+        return Command(
+            kind="recover_stage",
+            params={"to_stage": s.recover_target, "reason": s.recover_reason},
         )
     return None  # HUMAN_REVIEW or unknown: halt

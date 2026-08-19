@@ -37,6 +37,11 @@ EVENT_TYPES = (
     "preview.generated",
     "human.approval",
     "human.return",
+    # B32 (#32): forward-recovery channel past a mis-typed stub_gap rollback.
+    # human.recover is the CLI-side intent; stage.recovered (payload carries
+    # the target stage) re-enters that stage via _on_stage_entered.
+    "human.recover",
+    "stage.recovered",
     "approval.recorded",
     "issue.created",
     "issues.created",
