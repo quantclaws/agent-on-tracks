@@ -10,6 +10,10 @@ sha:
 
 本文是 ARCH-005（v0.5）的增量延伸。v0.1 的内核机制（事件溯源、单一生产路径、四增长轴分包、单写者锁、per-kind reconcile）、v0.2 的物化合同与 audit、v0.3 的 M-DESIGN Archer/Prism、v0.4 的 M-TEST 与 checks/ 增长轴、v0.5 的 M-IMPL 控制流与 Devon 接入、live evidence 与 doc-comment-first 全部保持不变。v0.6 在既有包内新增 hotfix 工作流：trac hotfix 入口命令（**待实现：Devon foundation task 交付 cmd_hotfix 并同步 USAGE/TRAC_SUBCOMMANDS**）、HOTFIX-TRIAGE 入口子状态机、`fix/{issue}` 隔离分支、基线继承、M-DESIGN delta → M-TEST RED-first → M-IMPL 隔离实现 → boundary 的 hotfix 旅程、run 并存与串行接续、缺口路由。唯一新增顶层 CLI 命令是 trac hotfix（SPEC-006 范围排除）。凡未提及者，一律继承 ARCH-005。本文以散文形式引用该待实现命令的语法（不加反引号、不入代码 fence），正是 fabricated-command guard 要求的「to-be-created tooling 以 foundation task 标注」形态。
 
+本修订（R2，2026-08-19）响应 M-IMPL 的 stub_gap 回滚（run 01M0AMKV，事件 seq 496–498：T-003 的冻结 RED 锚驱动 hotfix 入口旅程，而 CLI 入口接线排在未派发的后批任务 T-007）：不改变模块边界、事件封闭集与任何接口合同，唯一架构增量是 §1.0.5「任务图排序不变量」，作为下一轮 M-IMPL PLANNING（flow.md §10）的任务图推导输入与 PRISM_PLAN 复核判据。
+
+本修订（R3，2026-08-19）完成 R2 未竟的 revision 完整性并固化事故的耐久修复合同。R2 的「interfaces.md 合同零变更」判定使两次 DRAFT 派发以 no_target_diff 失败（事件 seq 500/502：三文档是 DRAFT 的整体产物，每份都必须有 diff，缺一不可）。R3 在不改变任何既有接口合同语义的前提下增补 interfaces §2f——design-trace 扫描范围排除 inline-discussion blockquote 行（IF-VALIDATE-001 v0.6 扩展）：消除 stub_gap 回滚重入 M-DESIGN 后由历史评审线程造成的 EXIT 假失败类（本 run 实测 7 项「missing IF- attribution」，全部来自 M-TEST PRISM_REVIEW 期间加入的已 resolved 根评论，见 §3.9）；该修复直接支撑 FR-0247 的「设计缺口在 hotfix run 内部闭环后重新进入」循环——重入后的 M-DESIGN 必须可 EXIT，闭环才成立。test-plan §10 增补对应实现/测试更新行。模块边界、事件封闭集、IF 集合、§1.2 六元组全部不变；R2 的 §1.0.5 排序不变量原样保留。
+
 ## 0. 延续性声明（什么不变）
 
 ### 0.1 继承 ARCH-005 不变项
@@ -37,6 +41,9 @@ sha:
 - `tracks/effects/fake.py` + `tracks/effects/fake_shield.py`：fake 通道 hotfix 行为（Sage 锚定 outcome、Prism anchor 推翻 token、delta 三文档、跨版本回归 test 任务）。
 - `.github/workflows/ci.yml`：live 通道增补 hotfix GitHub 读取探针（weekly `live-opencode` job 扩展 + milestone `release-evidence` job 扩展）——**待 Devon foundation task 补全**（§4.3）。
 - `.tracks/projects/project.toml` 测试执行合同：路径与内容不变（v0.6 无测试目录变更），继续作为当前 Runtime 消费的 canonical 合同。
+- 【R2 修订（stub_gap 回滚），2026-08-19】新增 §1.0.5「任务图排序不变量」（TG-1 composition-root-first / TG-2 锚定归属 / TG-3 greenability 闭包）：不新增模块、事件、命令或接口，仅约束 M-IMPL PLANNING 的任务图推导与 PRISM_PLAN 复核；Scaffold 宣言零新增（§2 附注两个已实现桩的基线归属）。
+- 【R2 修订】test-plan.md 的 BS-06 trace 校验恢复依赖 @Prism 对三条历史根评论（PRISM-V06-01/03/04）的作者补注（行内追加 IF- 归属标签，内容零改动；FR-110 author-only edit，Archer 无权代编辑）——详见 test-plan.md §8 的 Archer 线程 ARCH-R2-IF-ATTR；该线程 resolved 前本设计文档集不满足 M-DESIGN EXIT 的 validate 门禁（预期中间态）。
+- 【R3 修订，2026-08-19】interfaces §2f：design-trace（BS-06）扫描范围排除 inline-discussion blockquote 行——`executor/test_tasks.py` 的可见行提取（`_visible_plan_lines`）在 HTML 注释/fenced code 剔除之外同步剔除 `>` 开头行，layer/IF- 归属判定面随之收窄为非 blockquote 可见行；fail-closed 保持（把归属声明藏进 blockquote 不产生任何计数，§8 表格行仍是 D-28 唯一机器可读覆盖来源）。实现为 M-IMPL 重规划任务（落在 §1.0.5 batch B/C 的既有 scope 文件 test_tasks.py 内），实现落地前为已声明中间态（§3.9 过渡路径、§5.2 风险）。ARCH-R2-IF-ATTR 线程随 R3 收敛（作者补注请求降级为 §3.9 过渡路径 (a)，不再以未 resolved 线程承载——作者 DRAFT 纪律要求本人发起线程 resolved 后派发方可结束）。
 
 ## 1. 模块边界
 
@@ -87,6 +94,25 @@ HOTFIX-TRIAGE attempt 预算：SAGE_TRIAGE 锚定校验失败重派 ≤3（复�
 - **挂起 run 可观察**：`cmd_status` 在显示 active run（含 branch/scenario/issue 字段）之后追加 `suspended:` 行，逐个列出其余非 completed run 的 `run_id + stage + substate + branch`（数据来自 runs 表投影，可重建）。`trac replay <run_id>` / `trac report --run-id` 既有能力不变。
 - **boundary 分支恢复**：hotfix run `run.completed` 处理器（executor）在完成事件后执行分支恢复 checkout——切换工作树到恢复为 active 的 run 的分支（Runtime 是唯一 branch/worktree authority），payload 记录 `restored_active_run` / `restored_branch`。事件库与 blob 在 runtime 目录（gitignored），分支切换不破坏任何 run 状态。
 - **崩溃恢复**：`_recover()` 复用 per-kind reconcile（D-13）；`precheck_hotfix` / `validate_anchor` / `complete_hotfix_entry` 各有幂等 reconcile 语义（已成功则跳过；`triage.prechecked(pass)` / `anchor.validated` / `branch.created(fix/N)` 事件即幂等标记）。重启后 `trac status` 报告的 HOTFIX-TRIAGE 子状态与中断前一致。
+
+### 1.0.5 任务图排序不变量（R2 新增；M-IMPL PLANNING 输入合同）
+
+事故记录（stub_gap 回滚，run 01M0AMKV 事件 seq 496–498，2026-08-19）：第一轮任务图把 CLI 入口接线（cmd_hotfix 注册 + USAGE/TRAC_SUBCOMMANDS parity + triage 三个 executor handler）排在 T-007（batch 3，depends_on T-001/T-002/T-006，未派发），而 batch 2 的 T-003（scope=kernel/m_test.py、executor/test_tasks.py、checks/trace.py）的冻结 RED 锚（tests/integration/test_hotfix_mtest.py 三个用例）全部驱动 hotfix 入口旅程：锚定以 USAGE 错误变红（红因错置——非任务自身行为缺失），且在 T-003 的 depends_on 闭包内不可达绿；TASK_REVIEW 预算耗尽后 DIAGNOSE 判 stub_gap 回滚 M-DESIGN。全部 hotfix 冻结集成/e2e 用例按 interfaces §2a/§4b 经 CLI 交付面驱动（AC closure 的既定设计，正确且不可改测试侧），因此排序约束必须落在任务图推导侧。
+
+三条不变量（下一轮 PLANNING 生成与 PRISM_PLAN 复核的强制判据；违反任一条即规划缺陷）：
+
+- **TG-1 composition-root-first**：CLI 入口接线任务（cmd_hotfix 三形态注册、USAGE 与 validate.py 的 TRAC_SUBCOMMANDS parity、_do_precheck_hotfix / _do_validate_anchor / _do_complete_hotfix_entry handlers、fake 通道 sage:SAGE_TRIAGE 行为）必须排在任何 test_refs 驱动 hotfix 旅程的任务之前；等价表述——§1.1 第一条 wiring 链（入口链）全部落盘后，锚定/验证任务才允许进入 RED。
+- **TG-2 锚定归属**：preset-anchor 任务的 RED 必须由任务自身 scope_boundary 内缺失的行为引起：锚运行时 scope 外接线必须已绿。锚定失败证据呈 usage/collect 错误特征（非行为断言失败）即排序缺陷信号：PRISM_PLAN 复核据此在规划期拦截，DIAGNOSE 据此归类为规划缺陷（stub_gap 路由，回 M-DESIGN），不作为 Devon 实现缺陷处理。
+- **TG-3 greenability 闭包**：每个任务的 test_refs 变绿条件必须在其 depends_on 传递闭包 ∪ 自身 scope_boundary 内可达；depends_on 从 §1.1 的 wiring 链（交付面→模块逐跳）推导，不得只按模块 import 邻接推导。
+
+R2 重规划基线事实（PLANNING 输入）：kernel 侧（原 T-001：kernel/hotfix.py、events.py、machine.py）与 executor 纯函数（原 T-002：executor/hotfix.py、github.py fetch_issue、capabilities.py）已完成并在基线（green 提交 a864e25、a1dccda）；原 T-003 的 GREEN 提交 070eac6（m_test.py / test_tasks.py / trace.py 增量）在基线但任务未完成。满足不变量的参考拓扑（PLANNING 可等价重组任务边界，不变量不可放宽）：
+
+1. batch A（fake 行为）：fake.py 的 sage:SAGE_TRIAGE / prism anchor_verdict token、fake Archer delta 三文档、fake_shield 跨版本回归行——仅依赖已落盘的 kernel 与纯函数。
+2. batch B（入口链接线）：cmd_hotfix 三形态 + triage 三个 executor handler + sage SAGE_TRIAGE 派发物化 + USAGE/TRAC_SUBCOMMANDS parity + cmd_status 扩展——depends_on batch A；落盘后 triage 入口层锚（cli_entry / precheck / anchor / await_human / feature_route / events）可达绿。
+3. batch C（阶段变体与路由）：M-TEST hotfix 变体验证补齐（070eac6 已落盘增量，任务型见下条）、m_impl_runtime 场景 B baseline、m_impl.py 缺口路由 + cmd_approve 扩展 + increment.declared 接线 + boundary 分支恢复——depends_on batch B；其锚仅因自身缺失行为而红。
+4. batch D+（verification-only）：原 T-008..T-011 语义不变；ISLAND_GATE_2 全量兜底。
+
+任务型裁定（回滚后重规划特有）：对实现已随回滚前提交落盘的 scope（如 070eac6 之于 M-TEST 变体），PLANNING 必须按规划时点的实测锚状态分类——实测已绿 → verification-only 任务（Runtime 直跑 test_refs）；实测红且红因属该 scope 自身 → 标准 RGR（preset-anchor）；实测红但红因在 scope 外 → 依赖缺失，任务后移或补依赖（TG-3）。禁止把「锚已绿」的 scope 排成 preset-anchor 任务（anchor_red 对已绿锚判 red_invalid，事件流停车）。
 
 ### 1.1 Composition Root
 
@@ -207,6 +233,8 @@ trac run
 
 本节只声明 M-DESIGN 物理脚手架。既有配置（`pyproject.toml`、`.flake8`、`.githooks/pre-commit`、`.github/workflows/ci.yml`、`.tracks/projects/project.toml`）为 v0.4/v0.5 已交付的真实合同，v0.6 不修改不重建，故不列入。`machine.py` / `executor.py` / `events.py` / `capabilities.py` / `trace.py` / `github.py` / `fake.py` 等既有文件由 Devon 在实现 task 中按合同增量扩展，不是 scaffold。Shield 的测试交付物（`tests/integration/test_hotfix_*.py`、`tests/e2e/test_hotfix_*.py`、`tests/e2e_live/test_hotfix_live.py`）不在宣言中。`tests/ground_truth/` 不创建（test-plan §3 判定不适用）。两个接口桩在被 M-IMPL 接线任务 import 之前是 reach 孤岛——预期中间态，语义与闭合保证见 §5.2「M-DESIGN 接口桩的 reach 孤岛窗口」。
 
+R2 附注（2026-08-19，stub_gap 回滚修订）：本修订不新增 scaffold、不改动上述任何条目。两个接口桩已在第一轮 M-IMPL 基线实现（`kernel/hotfix.py` ← 原 T-001，green 提交 a864e25；`executor/hotfix.py` ← 原 T-002，green 提交 a1dccda）；条目保留作 scaffold 审计连续性记录（ResultCheckpoint 的 scaffold 允写清单解析仍读本节），其签名合同仍以 interfaces §1a–§1d 冻结为准，后续 Devon 任务不得改变声明合同。
+
 ## 3. 技术选型
 
 ### 3.1 issue 读取通道（effects/github.py，IF-HOTFIX-003）
@@ -276,6 +304,14 @@ Human 裁定 T-003 允许 Archer 把回归用例全部划归 unit 层（Devon �
 - **ac_gap/spec_gap**（FR-0248）：DIAGNOSE 路由 → awaiting_human；`cmd_approve` 扩展接受该 awaiting 形态（`trac approve --actor NAME`），落 `human.approval`（AC 要求的决定证据）→ `backlog.recorded {decision: ac_gap|spec_gap, issue}` + `run.completed(terminal_state=ac_gap|spec_gap)`，不建后续提交。
 - 取舍：复用 `trac approve` 而非新增 trac hotfix exit 子命令——SPEC 范围排除限定「新增顶层命令仅 trac hotfix」，approve 是既有命令的 awaiting 形态扩展，且 AC 指名 human.approval 为合法证据。
 
+### 3.9 design-trace 扫描范围与讨论旁路（R3；IF-VALIDATE-001 扩展）
+
+- **事故链（本 run 实测）**：M-TEST PRISM_REVIEW 的三条根评论（PRISM-V06-01/03/04，均已 resolved）在正文中引用 AC id 与 tests/integration/ 路径字样；M-IMPL stub_gap 回滚重入 M-DESIGN 后，EXIT 的 BS-06 design-trace 检查把这些 blockquote 行当作计划内容逐行扫描，7 项「integration/e2e AC missing IF- attribution」假失败（AC-FR0240-05、AC-FR0242-01/02/03、AC-FR0245-01、AC-NFR0110-01/02）阻塞 EXIT。这与模板指引与 tracks-discuz 协议的既定语义冲突：blockquote = inline-discussion 评审线程，不是文档内容；resolved 线程更不应阻塞任何门禁。
+- **合同修复（interfaces §2f）**：`check_design_trace` 的可见行提取剔除 blockquote 行（单点修改 `_visible_plan_lines`；`required_ac_ids` 的 layer 判定共享同一提取，同步收窄）。fail-closed 保持：AC 的 layer/IF- 归属声明只认非 blockquote 可见行（§8 表格行为主）——把 §8 行或归属声明写进 blockquote 不产生计数，AC 照常报「has no layer attribution」。既有单测（tests/unit/test_test_tasks_contract.py 等）无任何依赖 blockquote 行被扫描的用例（已核对），新增排除行为由 Devon 以 unit 用例覆盖（test-plan §10）。
+- **取舍**：不做「讨论行 IF-attr 标签白名单」约定（R2 曾拟议的 [IF-attr] 注释）——那会把评审旁路文本合法化为归属面，与「讨论不是设计内容」的协议语义矛盾；直接排除更简单且与模板指引同构。代价：评审线程正文中的 AC 提及从此不被任何扫描器看见——正确，因为评审结论的落点是文档正文或 revise 线程驱动的作者修订，不是线程文本自身。
+- **`trac check trace` 不受影响**：其 AC↔测试标记闭合按 §8 表格行解析（row-based），本修复只作用于 validate 侧的逐行归属扫描（`trac validate --file test-plan.md` 与 M-DESIGN EXIT 的 checks=["trace"]）。
+- **本 run EXIT 过渡路径**（§2f 实现落地前，二选一；均为 Runtime/评审侧动作，不在 Archer 写权内，且都不改本设计合同）：(a) Prism 在 PRISM_REVIEW 轮对三条历史根评论做作者补注——行内追加 IF- 归属标签（满足 IF-[A-Z]+-\d{3} 词法即可），内容零改动，属评审期作者编辑；(b) Runtime 提前应用 §2f 的扫描器变更（运营端带外修复先例：v0.5 的 15878ca/b760997 内核修复），M-IMPL 重规划以 §1.0.5 任务型裁定的 verification-only 吸收。路径 (a) 全程在既有机制内（discuss edit 是 canonical discussion 变更），为推荐主路径。
+
 ## 4. 交付与运行合同（machine contracts）
 
 ### 4.1 测试执行合同（`.tracks/projects/project.toml`）
@@ -330,6 +366,8 @@ v0.6 增量（**待实现**，Devon foundation task 修改 `.github/workflows/ci
 - **目标版本定位规则确定性优先**：post-release = 最高已批准版本；dev = 活跃 release 分支版本；issue 可选字段仅作 Sage 辅助。多活跃发布线的显式声明推迟到真实需要时（spec 变更），不在本版猜补。
 - **空 Shield 增量的计划级闭合**（§3.6，关键决策）：M-TEST EXIT 的 trace 闭合在 hotfix 空 Shield 分支下以 delta §8 声明为单位，文件级闭环由 M-IMPL TASK_REVIEW + ISLAND_GATE_2 补偿。这是 Human 裁定「unit 层归 Devon 在 M-IMPL RED 阶段补写」与 AC-FR0244-04「M-TEST 凭 trace 闭合放行」两个时序事实的唯一定序方式。
 - **场景 B stale 用分支 HEAD 等值**：不做 merge-base/补丁级冲突计算（merge 本版不执行）；stale → NEEDS_ATTENTION 即保留的冲突路径。
+- **anchor_red 不做失败分类硬化（R2）**：保持「任意非零退出 = 合法锚」的既有语义，不为 usage/collect 特征分类增加 runtime 行为变更。代价：任务图排序违规（TG-1/2/3 被违反）的最早显形点后移到预算耗尽后的 DIAGNOSE；由 PLANNING 期不变量 + PRISM_PLAN 复核作主防线补偿（§1.0.5、§5.2）。
+- **R3 扫描范围修复只动 validate 侧（§3.9）**：`trac check trace` 的 §8 解析本来就不含逐行扫描，不为其增加对称变更；修复单点落在 `_visible_plan_lines`。代价：validate 与 check trace 的实现路径继续保持不对称（既有事实，非本版引入）。
 - **ground truth 不适用**：v0.6 是状态机/路由/事件行为，无算法正确性需独立重算（目标版本定位/锚定存在性是简单规则，测试数据即真值来源，test-plan §3.1 第 3 行）。不创建 `tests/ground_truth/`。
 
 ### 5.2 风险
@@ -341,3 +379,5 @@ v0.6 增量（**待实现**，Devon foundation task 修改 `.github/workflows/ci
 - **hotfix run 与既有 e2e 前缀稳定性**：`trac start`/`trac run` 既有事件前缀不受 hotfix 影响（新命令新 run）；既有测试更新面小（test-plan §10）。
 - **M-DESIGN 接口桩的 reach 孤岛窗口**：Scaffold 宣言的两个接口桩（`kernel/hotfix.py`、`executor/hotfix.py`）在被 `machine.py`/`executor.py` 接线（Devon M-IMPL task）之前是 import 图孤岛——`trac check reach` 在 M-DESIGN scaffold checkpoint 到 M-IMPL 接线完成之间对这两个模块报 island（exit 1）。这是接口桩模式的预期中间态而非设计缺陷（v0.5 先例：`live_evidence.py`/`release_evidence.py`/`doc_comment.py` 桩在 e5ed0da 入库时同样零引用，经历了同一窗口）。缓解与闭合：(a) Runtime 不执行 git push，pre-commit hook 只跑 ruff/flake8/pylint 不跑 reach——scaffold checkpoint 提交与阶段推进不被阻塞；(b) M-IMPL task graph 把接线任务排在首批 scope，ISLAND_GATE_2 全量 reach fail-closed 兜底（接线不完整则 M-IMPL 不退出）；(c) 窗口期内操作者手动 push `releases/v0.6` 会看到 CI `reach` 红——发布候选以 milestone `release-evidence`（needs routine 全部含 reach）为硬门禁，中间红不构成发布证据（test-plan §7「中间态不是通过证据」同型惯例）。显式不用 FR-0100 legacy baseline 豁免：该合同只冻结采纳时刻存量，豁免新桩会永久掩盖真实孤岛腐烂。
 - **live GitHub 读取的 rate limit/网络抖动**：fake 通道为主验证面；live 仅 smoke（≤1 读）且独立通道隔离（§4.4）。
+- **任务图排序缺陷的检测滞后（R2 已闭合的事故路径）**：anchor_red 接受任意非零退出为合法锚、不分类 usage/collect 特征——TG-1/2/3 被违反时最早在任务预算耗尽后的 DIAGNOSE 显形（本事故路径：T-003 连续 impl_defect 烧尽预算后 DIAGNOSE 才判 stub_gap）。缓解：§1.0.5 不变量在 PLANNING 生成时约束 + PRISM_PLAN 复核（规划期拦截，主防线）；DIAGNOSE stub_gap 路由为运行期兜底。不为 anchor_red 增加失败分类硬化而单独扩展本版范围（runtime 行为变更需独立任务与验收，本版显式不做，记录为 §5.1 有意识简化）。
+- **M-DESIGN EXIT 的讨论线程假失败（R3 已定合同、实现待落地）**：interfaces §2f 的扫描范围修复在 M-IMPL 实现前，当前扫描器仍把 blockquote 行计入归属扫描；本 run 的 EXIT 依赖 §3.9 过渡路径（(a) Prism 作者补注或 (b) Runtime 提前应用扫描器变更）。缓解：合同已随本 revision 冻结、过渡路径在文档中显式声明（不伪称当前已通过）；该假失败类在实现落地后对一切后续回滚/重入（含 hotfix FR-0247 循环）永久消除；若两条过渡路径都未发生，EXIT 将以 trace 失败显形并按既有重派预算路由（不静默放行——fail-closed 方向）。

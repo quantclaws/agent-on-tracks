@@ -17,6 +17,7 @@ sha:
 - 既有 EVENT_TYPES / COMMAND_KINDS 成员、M-IMPL 21 子状态封闭集、`_NEXT_STAGE` 链、RedClass 封闭集、`trac validate`/`trac check` CLI 合同全部不变；v0.6 的 stage 值 `M-HOTFIX-TRIAGE` 不进 `_NEXT_STAGE` 链（非 canonical 顶层阶段）。
 - v0.4 的 8 个、v0.5 的 12 个 IF- 标识不可变、不可复用；v0.6 增补 IF-HOTFIX-001～009 共 9 个标识（§5）。
 - `trac check trace` 对 feature 版本的文件级闭合语义逐字节不变；hotfix 计划级闭合只在「run 为 hotfix 且 `increment.declared` 在事件流」时启用（§1f）。
+- BS-06 design-trace 的扫描范围合同（R3 增补，§2f）：inline-discussion blockquote 行是评审线程而非计划内容，不参与 test-plan 的 layer/IF- 归属扫描；§8 表格行作为唯一机器可读覆盖来源的地位不变（fail-closed）。
 - `.tracks/projects/project.toml` 测试执行合同（路径/schema/命令）不变；质量守卫栈合同不变（ARCH-006 §4.2）。
 - 单写者锁（`runtime/lock`，O_CREAT|O_EXCL + holder PID）合同不变：被持有时 stderr `runtime lock held by pid <N>` + exit 1、零事件（FR-0242-04 直接复用）。
 
@@ -261,6 +262,15 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 | 5 | boundary 后 | `terminal=boundary branch=fix/N scenario=<s>`；工作树已切回恢复 active 的 run 分支 | `trac run` 续跑 feature run | fix 分支保留修复结果，「修复完成、待发布」 |
 | 6 | 并发第二个 trac 命令 | stderr `runtime lock held by pid <N>` | 任何时刻 | exit 1，不推进派发；持锁命令结束后可重试 |
 
+### 2f. design-trace 扫描范围：inline-discussion 排除（R3 增补；IF-VALIDATE-001 v0.6 扩展）
+
+**modules**: executor/test_tasks.py（可见行提取与归属判定）、executor/validate.py（`trac validate --file test-plan.md` 消费侧）——跨模块接口，须有 integration 覆盖（经 validate CLI 出口，AC-FR0244-02 既有行的 IF-VALIDATE-001 归属已覆盖该出口；新排除行为的细粒度用例为 Devon unit 义务，test-plan §10）。
+
+- **合同**：`trac validate --file test-plan.md` 与 M-DESIGN EXIT 的 design-trace 检查（`check_design_trace`，BS-06/FR-0140）在提取「可见行」时，除既有 HTML 注释与 fenced code 剔除外，**同时剔除 inline-discussion blockquote 行**（以 `>` 开头的行）：讨论线程是评审期旁路（模板指引与 tracks-discuz 协议的既定语义），不是计划内容；其正文中的 AC id + tests 路径字样既不构成 layer 归属声明，也不构成 IF- 归属声明，不触发「integration/e2e AC missing IF- attribution」与「has no layer attribution」的判定。
+- **fail-closed 保持**：layer 与 IF- 归属的判定面收窄为非 blockquote 可见行（§8 表格行为权威来源）；AC 的归属声明写进 blockquote 不产生任何计数效果（「has no layer attribution」照常失败）。`required_ac_ids` 的 layer 判定共享同一可见行提取，同步收窄（blockquote 内的 layer 词不再把 AC 判为 required）——§8 表格行仍是 D-28 唯一机器可读 AC 覆盖来源，D-28 语义不变。
+- **`trac check trace` 不受影响**：其 AC↔测试标记闭合按 §8 表格行解析（row-based），不含逐行归属扫描；IF-TRACE-001/002 合同不变。
+- **生效时点**：合同随本 revision 冻结；实现为 M-IMPL 重规划任务（ARCH-006 §1.0.5 batch B/C 既有 scope 文件 executor/test_tasks.py）。实现落地前，当前扫描器仍把 blockquote 行计入——已声明的中间态，本 run EXIT 的过渡路径见 ARCH-006 §3.9。
+
 ## 3. 文件 / 存储契约
 
 ### 3a. 路径契约
@@ -362,7 +372,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 
 ### IF-REACH-002 reach 孤岛检查合同（承自 IF-004 §5，定义不变）
 
-### IF-VALIDATE-001 trac validate 文档校验合同（承自 IF-004 §5；v0.6 扩展 hotfix delta plan 层归属校验）
+### IF-VALIDATE-001 trac validate 文档校验合同（承自 IF-004 §5；v0.6 扩展 hotfix delta plan 层归属校验 + §2f design-trace 扫描范围排除 inline-discussion blockquote 行）
 
 ### IF-IMPL-001 M-IMPL kernel 状态机合同（承自 IF-005 §5，定义不变；hotfix run 复用）
 
