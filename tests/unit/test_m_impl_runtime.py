@@ -1159,11 +1159,13 @@ def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
     )
 
 
-def test_green_gate_regression_when_r_unit_test_mutation_hidden(tmp_path):
-    """Contract 2: the Runtime derives candidate changed paths from the
-    observed git/filesystem state — never from Devon's changed_paths. A hidden
-    mutation of the frozen R unit test must fail GREEN closed with
-    `regression`."""
+def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_path):
+    """B39 (run 01M0AMKV T-006 seq 728): regression is judged ONLY on this
+    task's GREEN evidence (Devon changed_paths) touching an R-frozen tests/
+    file — never on the whole worktree-vs-R tests/ diff. A hidden mutation of
+    the frozen R unit test that Devon did NOT report (changed_paths only
+    tracks/app.py) is no longer misjudged as task cheating: the gate proceeds
+    to the Runtime unit re-execution instead of emitting `regression`."""
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
@@ -1188,9 +1190,8 @@ def test_green_gate_regression_when_r_unit_test_mutation_hidden(tmp_path):
     r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
     store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
-    # Candidate state the Runtime observes: the green diff plus a hidden
-    # mutation of the immutable R unit test. Devon's changed_paths reports
-    # only tracks/app.py.
+    # Candidate state the Runtime observes: a tests/ file differing from R,
+    # but Devon's changed_paths reports only tracks/app.py.
     (repo / "tracks").mkdir(parents=True, exist_ok=True)
     (repo / "tracks" / "app.py").write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
     _write_failing_unit_test(repo, passes=True)
@@ -1203,8 +1204,242 @@ def test_green_gate_regression_when_r_unit_test_mutation_hidden(tmp_path):
     )
 
     fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
-    assert fails, "hidden R unit-test mutation must fail GREEN closed"
+    assert not fails, "unclaimed tree-vs-R tests diff must NOT fail GREEN as regression"
+    passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
+    assert passed and passed[-1].payload["check"] == "green"
+
+
+def _green_gate_with_r_checkpoint(
+    repo, store, executor, *, changed_paths=None, r_sha=None, diff_ref=None
+):
+    """Checkpoint R from a genuine RED outcome, then stage a GREEN outcome
+    (with the R-frozen test materialized as a passing test so the Runtime unit
+    re-execution succeeds and the gate reaches the regression decision). The
+    caller runs the gate and drives additional working-tree setup first."""
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
+    resolved = r_sha or (red[-1].payload["r_sha"] if red else None)
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    outcome = _structured_outcome(
+        "green",
+        changed_paths or ["tracks/app.py"],
+        r_identity=resolved,
+        diff_ref=diff_ref if diff_ref is not None else RGR_GREEN_DIFF,
+    )
+    outcome["commands"] = [
+        {"cmd": ".venv/bin/python -m pytest -n 4 tests/unit", "result": "pass"}
+    ]
+    outcome["results"] = [{"classification": "pass"}]
+    store.append("RUN", "v0.5", "outcome.received", outcome)
+    (repo / "tracks").mkdir(parents=True, exist_ok=True)
+    (repo / "tracks" / "app.py").write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
+    _write_failing_unit_test(repo, passes=True)
+    return resolved
+
+
+def test_green_gate_regression_when_devon_reports_changed_r_frozen_test(tmp_path):
+    """B39: the narrowed regression must still catch task cheating — a GREEN
+    outcome whose changed_paths claims an R-frozen tests/ file that exists in
+    the R tree fails GREEN closed with `regression` and names the file."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    _green_gate_with_r_checkpoint(
+        repo,
+        store,
+        executor,
+        changed_paths=["tests/unit/test_app.py", "tracks/app.py"],
+    )
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert fails, "GREEN evidence touching an R-frozen tests/ file must fail GREEN closed"
     assert fails[-1].payload["check"] == "regression"
+    evidence = fails[-1].payload.get("evidence") or ""
+    assert "tests/unit/test_app.py" in evidence, "evidence must name the R-frozen test"
+    assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
+
+
+def test_green_gate_regression_when_captured_diff_touches_r_test_unclaimed(tmp_path):
+    """B39 supplement: the Runtime's authoritative captured diff (outcome
+    diff_ref, parsed from `diff --git` headers — not Devon's changed_paths)
+    must catch a hidden mutation of an R-frozen tests/ file that Devon did
+    NOT claim. The union (captured_paths ∪ claimed paths) closes the
+    self-report gap instead of re-opening the seq 728 false-positive."""
+    _HIDDEN_R_TEST_MUTATION_DIFF = (
+        "diff --git a/tracks/app.py b/tracks/app.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/tracks/app.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+IMPLEMENTED = True\n"
+        "diff --git a/tests/unit/test_app.py b/tests/unit/test_app.py\n"
+        "--- a/tests/unit/test_app.py\n"
+        "+++ b/tests/unit/test_app.py\n"
+        "@@ -1 +1 @@\n"
+        "-def test_app(): assert False\n"
+        "+def test_app(): assert True\n"
+    )
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    _green_gate_with_r_checkpoint(
+        repo,
+        store,
+        executor,
+        changed_paths=["tracks/app.py"],
+        diff_ref=_HIDDEN_R_TEST_MUTATION_DIFF,
+    )
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert fails, (
+        "captured-diff mutation of an R-frozen test (unclaimed by Devon) "
+        "must fail GREEN closed"
+    )
+    assert fails[-1].payload["check"] == "regression"
+    evidence = fails[-1].payload.get("evidence") or ""
+    assert "tests/unit/test_app.py" in evidence, "evidence must name the hidden-mutated test"
+    assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
+
+
+def test_green_gate_not_regression_on_tests_added_after_r(tmp_path):
+    """B39 (run 01M0AMKV T-006 seq 728 repro): tests/ files added to the
+    baseline AFTER R (ops fixes, earlier batch siblings) must not fail GREEN —
+    the tree differs from r_sha in tests/, but Devon's changed_paths contains
+    no R-frozen tests/ path."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    _green_gate_with_r_checkpoint(repo, store, executor, changed_paths=["tracks/app.py"])
+    (repo / "tests" / "unit" / "test_ops_fix.py").write_text(
+        "def test_ops_fix():\n    assert True\n", encoding="utf-8"
+    )
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    assert not any(ev.type == "verdict.failed" for ev in store.events("RUN"))
+    passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
+    assert passed and passed[-1].payload["check"] == "green"
+
+
+def test_green_gate_not_regression_when_reported_test_not_in_r(tmp_path):
+    """B39: a new tests/ file that does not exist in the R tree (RED-added test
+    later adjusted) is outside the frozen R set; GREEN_GATE only protects the
+    R-frozen tests, later adjustments are governed by test_defect/SHIELD_FIX."""
+    repo = _repo(tmp_path)
+    task = _task()
+    manifest = {
+        "task_id": task["task_id"],
+        "allowed_paths": [
+            "tracks/app.py",
+            "tests/unit/test_app.py",
+            "tests/unit/test_extra.py",
+        ],
+        "forbidden_paths": [".tracks/projects/**"],
+    }
+    store = _store(repo)
+    from tests.unit.helpers import m_impl_graph
+    raw = json.dumps({"tasks": [task]}, sort_keys=True)
+    m_impl_graph(store, task, raw=raw)
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": task["task_id"], "task": task, "manifest": manifest},
+    )
+    executor = _executor(repo, store)
+    _green_gate_with_r_checkpoint(
+        repo,
+        store,
+        executor,
+        changed_paths=["tracks/app.py", "tests/unit/test_extra.py"],
+    )
+    (repo / "tests" / "unit" / "test_extra.py").write_text(
+        "def test_extra():\n    assert True\n", encoding="utf-8"
+    )
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert not fails, "reported test file not in R tree must NOT trigger regression"
+    passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
+    assert passed and passed[-1].payload["check"] == "green"
+
+
+def test_green_gate_regression_skipped_when_r_missing(tmp_path):
+    """B39: the regression check keeps skipping when r_sha is absent or all
+    zeroes (no frozen R set to protect); the gate proceeds to lint/pass."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"r_sha": "0" * 40, "task_id": task["task_id"], "attempt": 1},
+    )
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    outcome = _structured_outcome(
+        "green", ["tests/unit/test_app.py", "tracks/app.py"], r_identity="0" * 40
+    )
+    outcome["commands"] = [{"cmd": ".venv/bin/python -m pytest -n 4 tests/unit", "result": "pass"}]
+    outcome["results"] = [{"classification": "pass"}]
+    store.append("RUN", "v0.5", "outcome.received", outcome)
+    executor = _executor(repo, store)
+    (repo / "tracks").mkdir(parents=True, exist_ok=True)
+    (repo / "tracks" / "app.py").write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
+    _write_failing_unit_test(repo, passes=True)
+
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
+    fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
+    assert not fails, "missing r_sha must keep skipping the regression check"
+    passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
+    assert passed and passed[-1].payload["check"] == "green"
 
 
 def test_refactor_no_change_still_reruns_authoritative_green_gate(tmp_path):

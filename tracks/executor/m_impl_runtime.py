@@ -1316,6 +1316,43 @@ class MImplRuntimeMixin:
         ]
         return bool(rels) and all(os.path.isfile(os.path.join(str(self.repo), rel)) for rel in rels)
 
+    def _path_in_tree(self, sha: str, path: str) -> bool:
+        """Whether ``path`` exists in the ``sha`` commit tree. Fail-open on git
+        errors (missing/bogus sha) so a resolution failure skips the path
+        instead of false-killing the GREEN gate."""
+        proc = git(self.repo, "cat-file", "-e", f"{sha}:{path}", check=False)
+        return proc.returncode == 0
+
+    @staticmethod
+    def _parse_diff_paths(diff_text: str) -> set[str]:
+        """Extract the changed paths from a captured git diff (``diff --git
+        a/<path> b/<path>`` headers). Parsing is deliberately naive and
+        fail-open: an unparseable path is skipped rather than false-killing
+        the gate (quoted/space-y paths are outside the repo's plain style)."""
+        paths = set()
+        for line in diff_text.splitlines():
+            if not line.startswith("diff --git a/"):
+                continue
+            rest = line[len("diff --git a/") :]
+            sep = rest.rfind(" b/")
+            if sep != -1:
+                paths.add(rest[:sep])
+        return paths
+
+    def _green_regression_tests(self, r_sha: str, state: State) -> list[str]:
+        """R-frozen tests/ files this task's GREEN actually touched: the union
+        of the Runtime's authoritative captured diff paths (parsed from the
+        outcome diff_ref) and Devon's claimed changed_paths. Empty list means
+        no regression — no R-frozen test was modified (B39, see seq 728)."""
+        outcome = self._last_devon_outcome() or {}
+        claimed = set(outcome.get("changed_paths") or [])
+        captured_diff = self._validated_diff("green", state)[1]
+        captured = self._parse_diff_paths(captured_diff) if captured_diff else set()
+        candidates = claimed | captured
+        return sorted(
+            p for p in candidates if p.startswith("tests/") and self._path_in_tree(r_sha, p)
+        )
+
     def _gate_evidence(self, obs) -> str:
         """Failed-gate evidence for the fixer relay: FAILED summary lines
         plus the blob path of the full captured output. Fixers are forbidden
@@ -1430,16 +1467,25 @@ class MImplRuntimeMixin:
                         attempt=attempt,
                     )
                     return
+            # B39 (run 01M0AMKV T-006 seq 728): regression is judged ONLY on
+            # this task's Runtime-captured diff plus its claimed changed_paths
+            # touching an R-frozen tests/ file — not on the whole worktree-vs-R
+            # tests/ diff. The old full diff misjudged unrelated baseline test
+            # additions (ops fixes, earlier batch siblings) as task cheating,
+            # false-failing every later task in a batch that lands tests after
+            # R. The captured diff still surfaces hidden R-test mutations that
+            # Devon omits from changed_paths; the union closes the self-report.
             r_sha = state.r_tree_identity
             if r_sha and r_sha.strip() and r_sha != "0" * 40:
-                proc = git(Path(cwd), "diff", "--name-only", r_sha, "--", "tests/", check=False)
-                if proc.returncode == 0 and proc.stdout.strip():
+                bad = self._green_regression_tests(r_sha, state)
+                if bad:
                     self._emit_gate_failure(
                         cmd,
                         check="regression",
                         reason="Runtime observed R unit tests changed",
                         evidence=json.dumps(
-                            {"r_sha": r_sha, "changed_tests": sorted(set(proc.stdout.splitlines()))}
+                            {"r_sha": r_sha, "changed_tests": bad},
+                            sort_keys=True,
                         ),
                         task_id=task_id,
                         attempt=attempt,
