@@ -54,23 +54,33 @@ DEVON_EVIDENCE_CONTRACT: dict = {
     "_doc": (
         "输出合同（返回前自检）：Devon 的最终回复必须以裸 evidence JSON object 结尾"
         "（Runtime 取最后一条 text 消息中的 JSON object；tracks-devon-rgr §4）。"
-        "缺任一必填字段即 impl_defect 判失败、attempt 作废。"
+        "缺任一必填字段或类型不符即 impl_defect 判失败、attempt 作废。"
+        "本示例由 runtime 消费方校验代码反推生成并与 tracks-devon-rgr §4 对账"
+        "（live 教训 T-004：手写示例把 commands 画成 dict，误导 attempt 作废）。"
     ),
-    "required_fields": {
-        "phase": "'red' | 'green' | 'refactor'（本次派发的相位）",
-        "changed_paths": ["本次修改的文件（仓库相对路径）"],
-        "commands": {"unit": ["..."], "integration": "...", "guard": ["..."]},
-        "results": {"unit": "通过/失败摘要", "integration": "...", "guard": "..."},
-        "manifest_compliance": "只动 manifest.allowed_paths 内文件的声明",
-        "pre_identity": "开工前工作区身份（assignment 提供）",
-        "post_identity": "完工后工作区身份（自行计算）",
-        "r_identity": "RED 相位：R checkpoint 的身份；GREEN/REFACTOR：assignment 提供",
-        "no_change_reason": "refactor 无变更时的理由（有变更则省略）",
-        "implemented_if_ids": ["本相位实现的 IF-xxx 清单"],
-        "result_identity": "结果身份（assignment 提供则回显）",
+    "example": {
+        "phase": "green",
+        "changed_paths": ["tracks/kernel/hotfix.py"],
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m pytest -n 4 tests/unit",
+                "result": "pass",
+                "output_summary": "361 passed",
+            }
+        ],
+        "results": [{"classification": "assertion_failure"}],
+        "manifest_compliance": True,
+        "pre_identity": "<assignment.pre_dirty_snapshot 提供则回显>",
+        "post_identity": "<完工后自行计算>",
+        "r_identity": "<GREEN/REFACTOR 必填：assignment.r_tree_identity 或 RED 的 R>",
+        "implemented_if_ids": ["IF-HOTFIX-002"],
     },
-    "example_note": (
-        "完整 schema 与正例见 skill tracks-devon-rgr §4——返回前逐字段对照，"
-        "宁多勿缺（多余字段被忽略，缺失字段判失败）。"
-    ),
+    "shape_rules": [
+        "commands 必须是 LIST（每项 {cmd, result: pass|fail, output_summary}）——不是 dict",
+        "manifest_compliance 必须是字面 true（不是字符串）",
+        "changed_paths / implemented_if_ids 必须是非空字符串列表",
+        "phase 必须等于本次派发相位（red|green|refactor）",
+        "r_identity：green/refactor 必填；no_change_reason：仅 refactor 无变更时",
+        "RED 相位 changed_paths 非空（新增的是测试文件）",
+    ],
 }
