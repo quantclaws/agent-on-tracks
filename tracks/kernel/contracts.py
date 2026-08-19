@@ -48,3 +48,29 @@ WRITE_MANIFEST_CONTRACT: dict = {
         "宿主 repo 的 pre-commit 钩子（若安装）会在提交时重跑 lint——返回前不绿即有作废风险",
     ],
 }
+
+
+DEVON_EVIDENCE_CONTRACT: dict = {
+    "_doc": (
+        "输出合同（返回前自检）：Devon 的最终回复必须以裸 evidence JSON object 结尾"
+        "（Runtime 取最后一条 text 消息中的 JSON object；tracks-devon-rgr §4）。"
+        "缺任一必填字段即 impl_defect 判失败、attempt 作废。"
+    ),
+    "required_fields": {
+        "phase": "'red' | 'green' | 'refactor'（本次派发的相位）",
+        "changed_paths": ["本次修改的文件（仓库相对路径）"],
+        "commands": {"unit": ["..."], "integration": "...", "guard": ["..."]},
+        "results": {"unit": "通过/失败摘要", "integration": "...", "guard": "..."},
+        "manifest_compliance": "只动 manifest.allowed_paths 内文件的声明",
+        "pre_identity": "开工前工作区身份（assignment 提供）",
+        "post_identity": "完工后工作区身份（自行计算）",
+        "r_identity": "RED 相位：R checkpoint 的身份；GREEN/REFACTOR：assignment 提供",
+        "no_change_reason": "refactor 无变更时的理由（有变更则省略）",
+        "implemented_if_ids": ["本相位实现的 IF-xxx 清单"],
+        "result_identity": "结果身份（assignment 提供则回显）",
+    },
+    "example_note": (
+        "完整 schema 与正例见 skill tracks-devon-rgr §4——返回前逐字段对照，"
+        "宁多勿缺（多余字段被忽略，缺失字段判失败）。"
+    ),
+}

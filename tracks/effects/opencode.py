@@ -202,6 +202,11 @@ class OpencodeBackend:
             )
             proc = self._run(name, prompt, cwd=root)
             self._check_json(proc)
+            if self._abnormal_step_finish(proc):
+                # B17/#20 narrow (live T-003 GREEN): an interrupted session
+                # is infrastructure, not an agent semantic failure — do not
+                # let it reach DIAGNOSE as impl_defect and burn the budget.
+                return self._abnormal_step_result(proc, prompt, console_input)
             # D-35 (SC-D35 §2.2): M-TEST/M-IMPL reviewers deliver findings via
             # a structured final JSON payload. Parse before the audits so the
             # discussion gate can exempt a structured revise.
@@ -1665,6 +1670,50 @@ class OpencodeBackend:
         # start_new_session=True -> the child leads its own process group.
         with contextlib.suppress(ProcessLookupError, PermissionError, TypeError, OSError):
             os.killpg(pid, signal.SIGKILL)
+
+    @staticmethod
+    def _abnormal_step_finish(proc: subprocess.CompletedProcess) -> bool:
+        """True when opencode's final step ended abnormally (B17/#20 narrow:
+        live T-003 GREEN — step_finish reason=unknown, exit 0, no evidence
+        JSON; the session was provider-interrupted mid-implementation)."""
+        last = None
+        for line in (proc.stdout or "").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "step_finish":
+                last = event
+        if not isinstance(last, dict):
+            return False
+        part = last.get("part")
+        reason = part.get("reason") if isinstance(part, dict) else None
+        return reason not in ("stop", "tool-calls", None)
+
+    def _abnormal_step_result(
+        self,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+    ) -> dict:
+        """Infra-classified failure for an abnormal step finish — never burns
+        the agent attempt budget (machine _INFRA_FAILURE_CLASSES digests it
+        with bounded re-dispatch)."""
+        return {
+            "status": "failed",
+            "artifact_ref": None,
+            "self_report": (
+                "opencode session ended abnormally before delivering the "
+                "final JSON (step_finish reason=unknown; provider "
+                "interruption suspected)"
+            ),
+            "audit_evidence": "abnormal_step_finish: reason=unknown",
+            "failure_class": "provider_unavailable",
+            "agent_io": self._capture_io(proc, prompt, console_input),
+        }
 
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
         """Classify the exit; JSON is diagnostic-only (product = target diff)."""

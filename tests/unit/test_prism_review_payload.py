@@ -469,3 +469,51 @@ def test_criteria_pack_mismatch_skips_failed_outcomes():
     assert ex._criteria_pack_mismatch(
         "prism", "PRISM_FINAL", _State(), "revise", assignment, done, None
     )
+
+
+# -- B17/B20 narrow + Devon evidence contract (live T-003 GREEN) ---------
+
+
+def test_abnormal_step_finish_detected_and_infra_classified(tmp_path):
+    """step_finish reason=unknown (provider interruption, exit 0) must
+    classify as infra — never reach DIAGNOSE as impl_defect."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    lines = "".join(
+        json.dumps(ev) + "\n"
+        for ev in (
+            {"type": "step_start", "part": {"id": "a"}},
+            {"type": "text", "part": {"text": "工作中..."}},
+            {"type": "step_finish", "part": {"id": "a", "reason": "unknown"}},
+        )
+    )
+    proc = subprocess.CompletedProcess(["opencode"], 0, stdout=lines, stderr="")
+    assert OpencodeBackend._abnormal_step_finish(proc)
+
+    backend = OpencodeBackend(repo=tmp_path, version="v0.6")
+    result = backend._abnormal_step_result(proc, "p", None)
+    assert result["status"] == "failed"
+    assert result["failure_class"] == "provider_unavailable"
+
+    normal = "".join(
+        json.dumps(ev) + "\n"
+        for ev in (
+            {"type": "step_finish", "part": {"reason": "stop"}},
+        )
+    )
+    ok_proc = subprocess.CompletedProcess(["opencode"], 0, stdout=normal, stderr="")
+    assert not OpencodeBackend._abnormal_step_finish(ok_proc)
+
+
+def test_devon_dispatch_carries_evidence_contract():
+    from tracks.kernel.m_impl import _m_impl_devon_dispatch
+    from tracks.kernel.machine import State
+
+    s = State()
+    s.stage = "M-IMPL"
+    s.substate = "GREEN"
+    s.current_task_id = "T-009"
+    cmd = _m_impl_devon_dispatch(s, "GREEN")
+    contract = cmd.params["assignment"].get("evidence_contract")
+    assert contract and "phase" in contract["required_fields"]
+    assert "changed_paths" in contract["required_fields"]

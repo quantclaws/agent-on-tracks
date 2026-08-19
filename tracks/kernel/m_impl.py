@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .contracts import WRITE_MANIFEST_CONTRACT
+from .contracts import DEVON_EVIDENCE_CONTRACT, WRITE_MANIFEST_CONTRACT
 from .events import Command, EventEnvelope
 from .m_test import _consume_attempt, _reset_doc, _reset_review
 
@@ -428,6 +428,10 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     phase = sub.lower()  # "red", "green", "refactor"
     assignment = _m_impl_base_assignment(s, "devon", sub, ["tracks-devon-rgr"])
     assignment["phase"] = phase
+    # B30/#30 family (live T-003 GREEN: evidence JSON missing 7 fields):
+    # front-load the evidence contract so Devon self-validates before
+    # returning instead of burning a full dispatch per missing field.
+    assignment["evidence_contract"] = dict(DEVON_EVIDENCE_CONTRACT)
     assignment["task_id"] = s.current_task_id
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph
