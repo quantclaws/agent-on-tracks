@@ -29,6 +29,9 @@ _ITEM_HEAD = re.compile(r"^### ((?:N?FR)-\d{4})[ \t]*(.*)$")
 _ACC_SECTION = re.compile(r"^## ((?:N?FR)-\d{4})\b")
 _AC_HEAD = re.compile(r"^### (AC-N?FR\d{4}-\d+)[ \t]*(.*)$")
 
+# HTTP status -> GithubIssuesError classification (shared by _request/_get).
+_HTTP_ERROR_CLASSES = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}
+
 
 class GithubIssuesError(RuntimeError):
     """Classified GitHub failure: auth | network | rate_limit | not_found."""
@@ -169,6 +172,22 @@ class GithubBackend:
         if not self.gh_repo:
             raise GithubIssuesError("not_found", "TRAC_GITHUB_REPO not set (owner/name)")
 
+    def _urlopen(self, req: urllib.request.Request) -> dict:
+        """Perform a JSON request and classify HTTP/URL errors.
+
+        Shared by ``_request`` (POST) and ``_get`` (GET) to avoid duplicating
+        the error-mapping logic.  Returns the parsed JSON body on success;
+        raises ``GithubIssuesError`` with the appropriate classification.
+        """
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
+            raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise GithubIssuesError("network", str(e.reason)) from e
+
     def _request(self, url: str, payload: dict) -> dict:
         req = urllib.request.Request(
             url,
@@ -180,16 +199,7 @@ class GithubBackend:
                 "Content-Type": "application/json",
             },
         )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            cls = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}.get(
-                e.code, "network"
-            )
-            raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
-        except urllib.error.URLError as e:
-            raise GithubIssuesError("network", str(e.reason)) from e
+        return self._urlopen(req)
 
     def _get(self, url: str) -> dict:
         """GET helper (IF-HOTFIX-003): read-only request, same auth/error
@@ -202,16 +212,7 @@ class GithubBackend:
                 "Accept": "application/vnd.github+json",
             },
         )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            cls = {401: "auth", 403: "rate_limit", 404: "not_found", 429: "rate_limit"}.get(
-                e.code, "network"
-            )
-            raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
-        except urllib.error.URLError as e:
-            raise GithubIssuesError("network", str(e.reason)) from e
+        return self._urlopen(req)
 
     def create_issue(self, title: str, body: str, labels: list) -> str:
         data = self._request(

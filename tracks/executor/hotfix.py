@@ -15,6 +15,7 @@ tests can bind the RED to a specific interface.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from dataclasses import dataclass
@@ -43,6 +44,18 @@ _RELEASE_BRANCH_PREFIX = "releases/"
 _VERSION_HINT_RE = re.compile(r"^###\s*版本\s*$", re.MULTILINE)
 _FR_NFR_HINT_RE = re.compile(r"^###\s*对应\s+FR/NFR\s*$", re.MULTILINE)
 _VERSION_TUPLE_RE = re.compile(r"^v(\d+)\.(\d+)$")
+
+# Baseline document filenames inherited by the hotfix project directory
+# (ARCH-006 §3.4, IF-HOTFIX-005): source-approval record stores read-only
+# paths to these six docs, never a copy.
+_BASELINE_DOC_NAMES = (
+    "story.md",
+    "spec.md",
+    "acceptance.md",
+    "architecture.md",
+    "interfaces.md",
+    "test-plan.md",
+)
 
 
 @dataclass(frozen=True)
@@ -347,60 +360,19 @@ def complete_hotfix_entry(
     baseline.inherited events (per-kind reconcile, D-13).
     """
     # Determine the base branch per scenario (ARCH-006 §3.4).
-    if scenario == "dev":
-        # Find the active release branch from the repo's current branches.
-        proc = subprocess.run(
-            ["git", "branch", "--list"], cwd=repo, capture_output=True, text=True, check=False
-        )
-        branches = proc.stdout.splitlines() if proc.returncode == 0 else []
-        base = _active_release_branch(branches, None)
-        if base is None:
-            raise RuntimeError(
-                f"IF-HOTFIX-005: no active release branch for dev scenario "
-                f"(run_id={run_id})"
-            )
-    else:
-        base = "main"
-
+    base = _resolve_base_branch(repo, scenario, run_id)
     branch_name = f"fix/{issue}"
 
     # Create the branch (fails closed: RuntimeError propagates to the
     # executor handler which emits run.completed(rejected)).
-    proc = subprocess.run(
-        ["git", "checkout", "-b", branch_name, base],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"IF-HOTFIX-005: branch creation failed: {proc.stderr.strip()}"
-        )
-
-    # Get the commit SHA for the branch.created event.
-    sha_proc = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    commit_sha = sha_proc.stdout.strip() if sha_proc.returncode == 0 else ""
+    commit_sha = _create_fix_branch(repo, branch_name, base)
 
     # Compute baseline digest (simple sha256 of the target version's trio).
     baseline_digest = _compute_baseline_digest(repo, target_version)
 
     # Baseline doc paths: target version's approved trio + design docs.
     vdir = repo / ".tracks" / "projects" / target_version
-    baseline_doc_paths = [
-        str(vdir / "story.md"),
-        str(vdir / "spec.md"),
-        str(vdir / "acceptance.md"),
-        str(vdir / "architecture.md"),
-        str(vdir / "interfaces.md"),
-        str(vdir / "test-plan.md"),
-    ]
+    baseline_doc_paths = [str(vdir / name) for name in _BASELINE_DOC_NAMES]
 
     return {
         "branch_name": branch_name,
@@ -413,6 +385,55 @@ def complete_hotfix_entry(
     }
 
 
+def _resolve_base_branch(repo: Path, scenario: str, run_id: str) -> str:
+    """Resolve the base branch for a hotfix entry (ARCH-006 §3.4).
+
+    dev: active ``releases/*`` branch from the repo's current branches;
+    otherwise ``main``. Raises RuntimeError(IF-HOTFIX-005) when a dev
+    scenario has no active release branch.
+    """
+    if scenario != "dev":
+        return "main"
+    proc = subprocess.run(
+        ["git", "branch", "--list"], cwd=repo, capture_output=True, text=True, check=False
+    )
+    branches = proc.stdout.splitlines() if proc.returncode == 0 else []
+    base = _active_release_branch(branches, None)
+    if base is None:
+        raise RuntimeError(
+            f"IF-HOTFIX-005: no active release branch for dev scenario "
+            f"(run_id={run_id})"
+        )
+    return base
+
+
+def _create_fix_branch(repo: Path, branch_name: str, base: str) -> str:
+    """Create ``branch_name`` from ``base`` and return the new HEAD sha.
+
+    Fails closed: a nonzero ``git checkout -b`` exit raises RuntimeError
+    (IF-HOTFIX-005), leaving no half-built run; ``git rev-parse`` failure
+    yields an empty sha rather than a partial event.
+    """
+    proc = subprocess.run(
+        ["git", "checkout", "-b", branch_name, base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"IF-HOTFIX-005: branch creation failed: {proc.stderr.strip()}")
+
+    sha_proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return sha_proc.stdout.strip() if sha_proc.returncode == 0 else ""
+
+
 def _compute_baseline_digest(repo: Path, target_version: str) -> str:
     """Compute a deterministic content digest for the target version baseline.
 
@@ -420,8 +441,6 @@ def _compute_baseline_digest(repo: Path, target_version: str) -> str:
     content (if they exist). This is a simple fingerprint, not a full
     git-style tree hash — sufficient for source-approval tracking.
     """
-    import hashlib
-
     hasher = hashlib.sha256()
     vdir = repo / ".tracks" / "projects" / target_version
     for doc in ("story.md", "spec.md", "acceptance.md"):
