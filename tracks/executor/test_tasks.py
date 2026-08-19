@@ -37,6 +37,11 @@ _LAYER = re.compile(r"\b(unit|integration|e2e)\b", re.I)
 # AC id pattern scoped to a single test-plan §8 coverage-table row.
 _AC_ID_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
 
+# Cross-version AC reference in a §8 coverage row (interfaces §1e): keeps the
+# ``@<version>`` suffix so ``unit_rows`` carries the full anchor reference
+# ``AC-FRXXXX-YY@<version>`` for ``increment.declared`` (FR-0244-04).
+_AC_REF_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}(?:@v\d+\.\d+)?")
+
 # Canonical: `## 8. AC Coverage` (level-2 only).
 _AC_COVERAGE_HEADING = re.compile(r"^##\s+8\.\s+AC Coverage\b", re.I | re.M)
 
@@ -367,6 +372,142 @@ def parse_test_tasks(acc_path, plan_path) -> list[dict]:
     known = _known_ac_ids(acc_path.read_text(encoding="utf-8"))
     rows = _coverage_rows(plan_path.read_text(encoding="utf-8"))
     return _test_tasks(known, rows)
+
+
+# -- hotfix delta-plan unit-row extraction (FR-0244-04, IF-HOTFIX-007) -------
+
+
+def _coverage_row_items_with_test(
+    line: str,
+    cells: list[str],
+    columns: tuple[int, int],
+) -> list[tuple[str, str | None, str | None, str | None]]:
+    """Like ``_coverage_row_items`` but also captures the test-cell value
+    (canonical header: ``AC id | layer | test | IF``, test at index 2).
+
+    Returns ``(ac_id, layer_cell, test_cell, if_cell)`` tuples.
+    The caller (``parse_hotfix_unit_rows``) uses the test name for the
+    ``increment.declared`` event's ``unit_rows``.
+    """
+    layer_idx, if_idx = columns
+    # The canonical header is AC id | layer | test | IF; test is at index 2.
+    # If the columns are found at positions other than 1 and 3, derive test
+    # index as the mid column between layer and IF.
+    if layer_idx >= 0 and if_idx >= 0 and if_idx - layer_idx == 2:
+        test_idx = layer_idx + 1
+    else:
+        test_idx = -1
+    return [
+        (
+            ac_id,
+            _cell_at(cells, layer_idx),
+            _cell_at(cells, test_idx) if test_idx >= 0 else None,
+            _cell_at(cells, if_idx),
+        )
+        for ac_id in _AC_REF_IN_ROW.findall(line)
+    ]
+
+
+def _coverage_rows_with_test(
+    plan_text: str,
+) -> list[tuple[str, str | None, str | None, str | None]]:
+    """Parse §8 AC Coverage rows including the test name.
+
+    Returns ``(ac_id, layer_cell, test_cell, if_cell)`` tuples.  Used by
+    ``parse_hotfix_unit_rows`` to extract the declared unit-layer rows for
+    the ``increment.declared`` event (FR-0244-04).
+    """
+    rows: list[tuple[str, str | None, str | None, str | None]] = []
+    in_coverage = False
+    columns: tuple[int, int] | None = None
+    for line in _visible_plan_lines(plan_text):
+        was_heading, in_coverage, columns = _coverage_heading_or_continuation(
+            line, in_coverage, columns
+        )
+        if was_heading:
+            continue
+        if not in_coverage or "|" not in line:
+            continue
+        cells = _table_cells(line)
+        if _table_separator(cells):
+            continue
+        if columns is None:
+            columns = _coverage_columns(cells)
+            if columns != (-1, -1):
+                continue
+        rows.extend(_coverage_row_items_with_test(line, cells, columns))
+    return rows
+
+
+def _coverage_heading_or_continuation(
+    line: str,
+    in_coverage: bool,
+    columns: tuple[int, int] | None,
+) -> tuple[bool, bool, tuple[int, int] | None]:
+    """Process a line for heading/continuation in §8 scanning.
+
+    Returns ``(was_heading, in_coverage, columns)``.  ``was_heading`` is True
+    when the line was a heading (caller should skip the rest of the loop body).
+    Extracted to reduce cognitive complexity of ``_coverage_rows_with_test``.
+    """
+    stripped = line.strip()
+    if stripped.startswith(">"):
+        return True, in_coverage, columns
+    m = _HEADING.match(stripped)
+    if m:
+        level = len(m.group(1))
+        if level == 2:
+            return True, bool(_AC_COVERAGE_HEADING.match(stripped)), None
+        # Level-3 subsection inside an already-open §8 stays inside §8 but
+        # resets the table state (same semantics as ``_coverage_line``).
+        if in_coverage:
+            return True, True, None
+        return True, in_coverage, columns
+    return False, in_coverage, columns
+
+
+def parse_hotfix_unit_rows(plan_text: str) -> list[dict]:
+    """FR-0244-04 / IF-HOTFIX-007: parse §8 unit-layer rows from a hotfix
+    delta test-plan into the ``unit_rows`` structure for the
+    ``increment.declared`` event.
+
+    Only rows whose layer is ``unit`` (and not ``integration`` or ``e2e``)
+    are included.  The caller (executor/T-007) gates on the hotfix version
+    dir (``{version}-hotfix-{issue}``); feature-version validation of unit
+    rows is handled by ``validate.py`` (T-007).
+
+    Returns a list of dicts, each::
+
+        {"ac": "<AC-FRXXXX-YY@<version>>",
+         "if_ids": ["IF-...", ...],
+         "test": "<suggested test name>"}
+
+    Empty list when the test-plan has no unit rows (or the §8 section is
+    missing).
+    """
+    rows = _coverage_rows_with_test(plan_text)
+    unit_rows: list[dict] = []
+    for ac_id, layer_cell, test_cell, if_cell in rows:
+        if not layer_cell or not layer_cell.strip():
+            continue
+        layer_parts = {
+            p.strip().lower()
+            for p in _LAYER_CELL_SEPARATOR.split(layer_cell)
+            if p.strip()
+        }
+        # Only unit, no integration/e2e
+        if "unit" not in layer_parts:
+            continue
+        if any(part in ("integration", "e2e") for part in layer_parts):
+            continue
+        if_ids = sorted(_IF_ID.findall(if_cell or "")) if if_cell else []
+        test_name = (test_cell or "").strip()
+        unit_rows.append({
+            "ac": ac_id.strip(),
+            "if_ids": if_ids,
+            "test": test_name,
+        })
+    return unit_rows
 
 
 # -- visible-line / IF-line checks (BS-06 design trace) ----------------------

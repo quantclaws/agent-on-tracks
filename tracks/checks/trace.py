@@ -58,11 +58,18 @@ _TOMBSTONE = re.compile(
 
 @dataclass(frozen=True)
 class TraceReport:
-    """FR-0080 trace report (interfaces.md §1d)."""
+    """FR-0080 trace report (interfaces.md §1d).
+
+    v0.6 hotfix (IF-HOTFIX-007 / interfaces §2d): ``hotfix_scope`` carries the
+    plan-level closure basis ``{run_id, anchor_acs, declared_unit_rows}`` for
+    ``trac check trace --json`` output. None on feature-version invocations
+    (the field is absent from the JSON — non-hotfix runs have no such field).
+    """
 
     status: Literal["pass", "fail"]
     hard_errors: tuple[str, ...]
     warnings: tuple[str, ...]
+    hotfix_scope: dict | None = None
 
 
 def _scan_bs(story_text: str) -> list[tuple[str, int]]:
@@ -299,6 +306,7 @@ def _apply_baseline(report: TraceReport, baseline: dict | None) -> TraceReport:
         status="fail" if hard else "pass",
         hard_errors=hard,
         warnings=warns,
+        hotfix_scope=report.hotfix_scope,
     )
 
 
@@ -306,16 +314,36 @@ def check_trace_full_file(
     version_dir: Path,
     tests_dir: Path,
     baseline: dict | None = None,
+    hotfix_ctx: dict | None = None,
 ) -> TraceReport:
     """FR-0080 file-reading wrapper: reads story/spec/acceptance from
     version_dir, scans whitelisted test files in tests_dir for R-1 marker
     comment lines, calls check_trace_full. baseline is the legacy exemption
     (FR-0100).
 
+    v0.6 hotfix (IF-HOTFIX-007 / interfaces §1f/§2d): when ``hotfix_ctx`` is
+    provided the run is a hotfix run AND ``increment.declared`` is in the event
+    stream (the caller — executor/CLI — only passes it under those two
+    conditions, keeping feature-version trace semantics byte-identical). The
+    check then runs the hotfix plan-level closure: the anchor AC set is closed
+    by the delta §8 declared unit rows plus existing file markers, and every
+    ``@<version>`` anchor reference resolves to the referenced version's
+    acceptance.md. ``hotfix_ctx`` shape:
+    ``{"projects_dir", "run_id", "anchor_acs", "declared_unit_rows"}``.
+
     If tests_dir yields zero whitelisted test files, returns a report with
     a warning and zero hard errors (AC-FR0080-12) -- does not falsely
     report all ACs as unbound.
     """
+    if hotfix_ctx is not None:
+        return check_hotfix_plan_closure(
+            projects_dir=Path(hotfix_ctx.get("projects_dir") or version_dir.parent),
+            tests_dir=tests_dir,
+            run_id=hotfix_ctx.get("run_id", ""),
+            anchor_acs=list(hotfix_ctx.get("anchor_acs") or []),
+            declared_unit_rows=list(hotfix_ctx.get("declared_unit_rows") or []),
+            baseline=baseline,
+        )
     story = version_dir / "story.md"
     spec = version_dir / "spec.md"
     acc = version_dir / "acceptance.md"
@@ -340,3 +368,121 @@ def check_trace_full_file(
         current_version=current_version,
     )
     return _apply_baseline(report, baseline)
+
+
+# -- v0.6 hotfix plan-level closure (IF-HOTFIX-007, interfaces §1e/§1f/§2d) -----
+
+
+# Cross-version anchor reference: `AC-FRXXXX-YY@<version>` (interfaces §1e).
+_ANCHOR_REF = re.compile(r"^(AC-(?:N?FR)\d{4}-\d{2})@(v\d+\.\d+)$")
+
+
+def _resolve_anchor_ref(ref: str) -> tuple[str, str] | None:
+    """Split ``AC-FRXXXX-YY@<version>`` into (ac_id, version), or None."""
+    m = _ANCHOR_REF.match(ref.strip())
+    if m is None:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _referenced_acs(projects_dir: Path, version: str) -> set[str]:
+    """AC ids present in ``<projects_dir>/<version>/acceptance.md`` (empty when
+    the version dir or acceptance.md is absent — an unresolvable reference)."""
+    acc = projects_dir / version / "acceptance.md"
+    if not acc.exists():
+        return set()
+    _, acs = _acc_scan(acc.read_text(encoding="utf-8"))
+    return {ac_id for ac_id, _ref, _ln, _sec in acs}
+
+
+def _anchor_not_closed(
+    ac_id: str,
+    declared_ids: set[str],
+    file_marker_ids: set[str],
+) -> bool:
+    """Plan-level closure basis (interfaces §1f): an anchor AC is closed when
+    a delta §8 declared unit row covers it OR an existing test file marker
+    binds it. Only called when the run is hotfix and increment.declared is in
+    the event stream (the caller gates the enablement)."""
+    return ac_id not in declared_ids and ac_id not in file_marker_ids
+
+
+def check_hotfix_plan_closure(
+    projects_dir: Path,
+    tests_dir: Path,
+    run_id: str,
+    anchor_acs: list[str],
+    declared_unit_rows: list[dict],
+    baseline: dict | None = None,
+) -> TraceReport:
+    """v0.6 hotfix plan-level trace closure (IF-HOTFIX-007, interfaces §1e/§1f).
+
+    Enabled ONLY by the caller when the run is a hotfix run AND
+    ``increment.declared`` is in the event stream (interfaces §1f/§2d
+    anti-regression condition); feature-version invocations never call this
+    function and keep the file-level closure byte-identical.
+
+    Closure basis for the anchor AC set:
+      - every ``AC-FRXXXX-YY@<version>`` anchor reference must resolve to the
+        referenced version's acceptance.md (missing version dir or missing AC
+        heading = hard error, 引用不实);
+      - every anchor AC must be covered by a delta §8 declared unit row
+        (``declared_unit_rows``, ac ids match) or an existing test file marker.
+
+    The returned report carries ``hotfix_scope = {"run_id", "anchor_acs",
+    "declared_unit_rows"}`` for ``trac check trace --json`` (interfaces §2d).
+    """
+    file_markers, _ = _scan_test_markers(tests_dir)
+    file_marker_ids = set(file_markers)
+    declared_ids = {
+        _ac_ref_id(row.get("ac", ""))
+        for row in declared_unit_rows
+        if row.get("ac")
+    }
+    hard_errors = [
+        err
+        for ref in anchor_acs
+        for err in _anchor_ref_errors(
+            ref, projects_dir, declared_ids, file_marker_ids
+        )
+    ]
+    scope = {
+        "run_id": run_id,
+        "anchor_acs": list(anchor_acs),
+        "declared_unit_rows": list(declared_unit_rows),
+    }
+    report = TraceReport(
+        status="fail" if hard_errors else "pass",
+        hard_errors=tuple(sorted(hard_errors)),
+        warnings=(),
+        hotfix_scope=scope,
+    )
+    return _apply_baseline(report, baseline)
+
+
+def _anchor_ref_errors(
+    ref: str,
+    projects_dir: Path,
+    declared_ids: set[str],
+    file_marker_ids: set[str],
+) -> list[str]:
+    """Hard errors for one ``AC-FRXXXX-YY@<version>`` anchor reference:
+    malformed syntax, unresolvable in the referenced version's acceptance.md,
+    or not closed by a declared unit row / existing test marker."""
+    parsed = _resolve_anchor_ref(ref)
+    if parsed is None:
+        return [f"test marker {ref} malformed (expected AC-FRXXXX-YY@<version>)"]
+    ac_id, version = parsed
+    errors: list[str] = []
+    if ac_id not in _referenced_acs(projects_dir, version):
+        errors.append(
+            f"test marker {ref} references non-existent AC in {version}/acceptance.md"
+        )
+    if _anchor_not_closed(ac_id, declared_ids, file_marker_ids):
+        errors.append(f"test marker {ref} not closed by declared unit row or test marker")
+    return errors
+
+
+def _ac_ref_id(ac_ref: str) -> str:
+    """Strip an optional ``@<version>`` suffix from an AC reference."""
+    return ac_ref.split("@", 1)[0].strip()

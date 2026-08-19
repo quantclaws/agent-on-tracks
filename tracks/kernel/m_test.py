@@ -269,14 +269,54 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
 
 def _m_test_exit_route(s: State) -> Command | None:
     """EXIT: trace gate -> commit tests (pipeline) -> seal. trace_passed and
-    test_committed are set by reducers; decide() only fires the next step."""
+    test_committed are set by reducers; decide() only fires the next step.
+
+    v0.6 hotfix empty-Shield increment (FR-0244-04, IF-HOTFIX-007): when the
+    delta test-plan §8 has no integration/e2e rows and >=1 unit row, the
+    M-TEST EXIT path skips the Shield WRITE dispatch entirely (no
+    test.written/test.committed). The executor (T-007 wiring) emits
+    ``increment.declared`` and the kernel's EXIT route produces the hotfix
+    plan-level trace closure check instead of the normal Shield dispatch.
+    After trace_passed, the route goes straight to write_frontmatter (no
+    commit_tests — no Shield tests were written).
+    """
     if not s.trace_passed:
+        # SM-01.14: trace gate — hotfix empty-shield runs carry the hotfix
+        # scope flag so the executor (T-007) passes hotfix_ctx to the trace
+        # closure check (check_hotfix_plan_closure, plan-level).
+        if _is_hotfix_empty_shield(s):
+            return Command(
+                kind="check_trace",
+                params={"stage": "M-TEST", "hotfix": True},
+            )
         return Command(kind="check_trace", params={"stage": "M-TEST"})  # SM-01.14
     if not s.test_committed:
+        # SM-01.14: freeze test assets — hotfix empty-shield has no Shield
+        # tests to commit (no test.written). Skip to write_frontmatter/EXIT.
+        if _is_hotfix_empty_shield(s):
+            if not s.stage_exited:
+                return Command(kind="write_frontmatter", params={"stage": "M-TEST"})
+            return None
         return Command(kind="commit_tests", params={"stage": "M-TEST"})  # SM-01.14
     if not s.stage_exited:
         return Command(kind="write_frontmatter", params={"stage": "M-TEST"})
     return None
+
+
+def _is_hotfix_empty_shield(s: State) -> bool:
+    """True when the M-TEST run is a hotfix with empty Shield increment
+    (FR-0244-04): the delta test-plan §8 has no integration/e2e rows and
+    >=1 unit row, so no Shield WRITE dispatch occurred (no test.written/
+    test.committed). The executor (T-007) emits ``increment.declared`` and
+    the kernel's EXIT route skips the commit_tests gate.
+
+    Detection: the state carries ``hotfix_anchor_acs`` (set by
+    anchor.validated during HOTFIX-TRIAGE) and no Shield tests were collected
+    (``test_collected`` stays False). A hotfix run WITH integration/e2e
+    Shield tests reaches EXIT via the normal WRITE->COLLECT->PRISM_REVIEW->
+    RED_CHECK->EXIT flow (``test_collected`` True).
+    """
+    return s.hotfix_anchor_acs is not None and not s.test_collected
 
 
 def _m_test_diagnose_route(s: State) -> Command | None:
