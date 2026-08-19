@@ -22,6 +22,13 @@ from tracks.checks.trace import check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
+from tracks.executor.executor import (
+    _resolve_run_version,
+    hotfix_entry_output,
+    hotfix_entry_run,
+    hotfix_feature_route,
+    hotfix_human_anchor,
+)
 from tracks.executor.taskgraph import (
     parse_tasks_json,
     validate_ac_coverage,
@@ -356,6 +363,77 @@ def cmd_run(repo: Path, *args: str) -> int:
     return 0
 
 
+_HOTFIX_USAGE = (
+    "usage: trac hotfix <issue> --scenario post-release|dev"
+    "|anchor AC-FRXXXX-YY@<version> [...]|feature-route"
+)
+
+
+def cmd_hotfix(repo: Path, *args: str) -> int:
+    """v0.6 trac hotfix (IF-HOTFIX-001, interfaces §2a): the entry form
+    (`trac hotfix <issue> --scenario post-release|dev`), which synchronously
+    drives the HOTFIX-TRIAGE run_loop, plus the two AWAIT_HUMAN sub-actions
+    (`anchor AC-FRXXXX-YY@<ver> [...]` and `feature-route`)."""
+    if not args:
+        return _err(_HOTFIX_USAGE)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    action = args[0]
+    if action in ("anchor", "feature-route"):
+        run_id = store.active_run()
+        if run_id is None:
+            return _err("no active run")
+        with writer_lock(home):
+            state = store.state(run_id)
+            if state.awaiting != "hotfix_triage":
+                return _err(
+                    f"run not awaiting hotfix triage (awaiting={state.awaiting or 'nothing'})"
+                )
+            if action == "anchor":
+                refs = list(args[1:])
+                if not refs:
+                    return _err(_HOTFIX_USAGE)
+                return hotfix_human_anchor(repo, store, run_id, refs)
+            return hotfix_feature_route(repo, store, run_id)
+    parsed = _parse_hotfix_entry(args)
+    if parsed is None:
+        return 2  # missing/illegal --scenario: non-blocking prompt, no run (#3)
+    issue, scenario = parsed
+    if git(repo, "status", "--porcelain", check=False).stdout.strip():
+        return _err("working tree dirty (uncommitted changes); commit or stash first")
+    with writer_lock(home):
+        run_id = hotfix_entry_run(repo, store, issue, scenario)
+    return hotfix_entry_output(store, run_id)
+
+
+def _parse_hotfix_entry(args: tuple[str, ...]) -> tuple[int, str] | None:
+    """Parse `trac hotfix <issue> --scenario post-release|dev`. A missing or
+    illegal --scenario prints the non-blocking prompt (interfaces §2a #3) and
+    returns None (caller exits 2 without creating a run or writing events)."""
+    if len(args) == 1:
+        issue_raw, scenario = args[0], None
+    elif len(args) == 3 and args[1] == "--scenario":
+        issue_raw, scenario = args[0], args[2]
+    else:
+        _err(_HOTFIX_USAGE)
+        return None
+    if scenario not in ("post-release", "dev"):
+        _err(
+            "--scenario is required: post-release (released) or dev "
+            "(in-development); rerun with explicit --scenario"
+        )
+        return None
+    try:
+        issue = int(issue_raw)
+    except ValueError:
+        _err(_HOTFIX_USAGE)
+        return None
+    if issue < 1:
+        _err(_HOTFIX_USAGE)
+        return None
+    return issue, scenario
+
+
 def _stage_doc(stage: str) -> str | None:
     """Return the doc name for the current stage (deferred import to avoid
     circular dependency)."""
@@ -395,56 +473,32 @@ def _review_action_params(action: str, stage: str) -> dict:
     }
 
 
-def _do_triage_pipeline(repo, state, store, run_id, decision, actor):
-    """Execute the triage pipeline inside the writer lock.
-    Returns (rc, (final_state, awaiting_before)) or (rc, None) on early exit."""
-    rc = _reject_dirty_staged(repo, state.version, "triage")
+def _do_human_pipeline(
+    repo, state, store, run_id, label, event_type, payload, verdict,
+    artifacts, checks, requires_diff, commit_label,
+    forbid_diff=False, discussion_only=False,
+):
+    """Run one Human ResultCheckpoint pipeline under the writer lock (triage /
+    review). Returns (rc, (final_state, awaiting_before)) or (rc, None) on an
+    early dirty-tree rejection."""
+    rc = _reject_dirty_staged(repo, state.version, label)
     if rc:
         return rc, None
-    doc = _stage_doc(state.stage)
-    allowed_paths = [doc] if doc else []
-    artifacts, checks = _triage_artifacts(doc)
-    actor_name = actor or _human_actor(repo)
     awaiting_before = state.awaiting
     ex = Executor(store, repo, run_id)
+    doc = _stage_doc(state.stage)
     ex.submit_human_result(
         state=state,
-        domain_event_type="human.triage",
-        payload={"actor": actor_name},
-        verdict=decision,
+        domain_event_type=event_type,
+        payload=payload,
+        verdict=verdict,
         artifacts=artifacts,
-        allowed_paths=allowed_paths,
+        allowed_paths=[doc] if doc else [],
         checks=checks,
-        requires_diff=False,
-        commit_label=f"{state.stage}: human triage ({decision})",
-    )
-    return 0, (ex.run_pipeline(), awaiting_before)
-
-
-def _do_review_pipeline(repo, state, store, run_id, action, actor):
-    """Execute the review pipeline inside the writer lock.
-    Returns (rc, (final_state, awaiting_before)) or (rc, None) on early exit."""
-    rc = _reject_dirty_staged(repo, state.version, "review")
-    if rc:
-        return rc, None
-    actor_name = actor or _human_actor(repo)
-    doc = _stage_doc(state.stage)
-    allowed_paths = [doc] if doc else []
-    params = _review_action_params(action, state.stage)
-    awaiting_before = state.awaiting
-    ex = Executor(store, repo, run_id)
-    ex.submit_human_result(
-        state=state,
-        domain_event_type="human.review",
-        payload={"actor": actor_name},
-        verdict=params["verdict"],
-        artifacts=[doc] if doc else [],
-        allowed_paths=allowed_paths,
-        checks=params["checks"],
-        requires_diff=params["requires_diff"],
-        commit_label=params["commit_label"],
-        forbid_diff=params["forbid_diff"],
-        discussion_only=params["discussion_only"],
+        requires_diff=requires_diff,
+        commit_label=commit_label,
+        forbid_diff=forbid_diff,
+        discussion_only=discussion_only,
     )
     return 0, (ex.run_pipeline(), awaiting_before)
 
@@ -466,7 +520,14 @@ def cmd_triage(repo: Path, *args: str) -> int:
         state = store.state(run_id)
         if state.awaiting != "triage":
             return _err(f"run not awaiting triage (awaiting={state.awaiting or 'nothing'})")
-        rc, result = _do_triage_pipeline(repo, state, store, run_id, decision, actor)
+        doc = _stage_doc(state.stage)
+        artifacts, checks = _triage_artifacts(doc)
+        actor_name = actor or _human_actor(repo)
+        rc, result = _do_human_pipeline(
+            repo, state, store, run_id, "triage", "human.triage",
+            {"actor": actor_name}, decision, artifacts, checks, False,
+            f"{state.stage}: human triage ({decision})",
+        )
         if rc:
             return rc
     final_state, awaiting_before = result
@@ -494,7 +555,16 @@ def cmd_review(repo: Path, *args: str) -> int:
         state = store.state(run_id)
         if state.awaiting != "review":
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
-        rc, result = _do_review_pipeline(repo, state, store, run_id, action, actor)
+        actor_name = actor or _human_actor(repo)
+        doc = _stage_doc(state.stage)
+        params = _review_action_params(action, state.stage)
+        rc, result = _do_human_pipeline(
+            repo, state, store, run_id, "review", "human.review",
+            {"actor": actor_name}, params["verdict"], [doc] if doc else [],
+            params["checks"], params["requires_diff"], params["commit_label"],
+            forbid_diff=params["forbid_diff"],
+            discussion_only=params["discussion_only"],
+        )
         if rc:
             return rc
     final_state, awaiting_before = result
@@ -576,6 +646,37 @@ def _approval_gate(store: Store, run_id: str):
     return state, None
 
 
+def _hotfix_gap_exit(state) -> bool:
+    """True when the active run is a hotfix run awaiting the Human ac_gap /
+    spec_gap exit decision (FR-0248, IF-HOTFIX-009): the run carries a hotfix
+    issue and the pending failure check is ac_gap or spec_gap."""
+    return (
+        state.hotfix_issue is not None
+        and (state.last_failure or {}).get("check") in ("ac_gap", "spec_gap")
+    )
+
+
+def _approve_hotfix_gap(repo: Path, store: Store, run_id: str, state, actor: str | None) -> int:
+    """trac approve for a hotfix ac_gap/spec_gap awaiting (interfaces §2c):
+    human.approval (AC-required decision evidence) -> backlog.recorded
+    {decision, issue} -> run.completed(ac_gap|spec_gap), no further
+    M-TEST/M-IMPL dispatch (FR-0248)."""
+    check = (state.last_failure or {}).get("check") or "ac_gap"
+    actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
+    version = _resolve_run_version(state)
+    store.append(
+        run_id, version, "human.approval",
+        {"actor": actor, "digest": None, "ts": datetime.now(timezone.utc).isoformat()},
+    )
+    store.append(
+        run_id, version, "backlog.recorded",
+        {"issue": state.hotfix_issue, "decision": check, "version": version},
+    )
+    store.append(run_id, version, "run.completed", {"terminal_state": check})
+    print(f"approved {check} -> backlog/new feature for issue {state.hotfix_issue}")
+    return 0
+
+
 def cmd_approve(repo: Path, *args) -> int:
     args = list(args)
     if args and (args[0] != "--actor" or len(args) != 2):
@@ -590,6 +691,10 @@ def cmd_approve(repo: Path, *args) -> int:
         state, err = _approval_gate(store, run_id)
         if err:
             return _err(err)
+        # FR-0248 (IF-HOTFIX-009): hotfix ac_gap/spec_gap Human decision ->
+        # human.approval evidence -> backlog.recorded -> run.completed terminal.
+        if _hotfix_gap_exit(state):
+            return _approve_hotfix_gap(repo, store, run_id, state, actor)
         # SM-01.13: M-TEST / M-IMPL rollback approval needs no digest check
         if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
             actor = actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
@@ -779,28 +884,59 @@ def cmd_recover(repo: Path, *args) -> int:
     return 0
 
 
+def _status_line(run_id, s) -> str:
+    """One status line per run (interfaces §2b): completed terminal lines
+    (with hotfix branch/scenario), AWAIT_HUMAN hotfix awaiting line, or the
+    shared state format plus hotfix branch/scenario/issue fields."""
+    if s.status == "completed":
+        line = f"run={run_id}: completed terminal={s.terminal_state} stage={s.stage}"
+        if s.hotfix_issue is not None:
+            line += f" branch=fix/{s.hotfix_issue} scenario={s.hotfix_scenario}"
+        return line
+    if s.awaiting == "hotfix_triage":
+        return f"run={run_id}: awaiting=awaiting_human origin=hotfix-triage issue={s.hotfix_issue}"
+    line = f"run={run_id}: {_format_state(s)}"
+    if s.hotfix_issue is not None:
+        line += (
+            f" branch=fix/{s.hotfix_issue} "
+            f"scenario={s.hotfix_scenario} issue={s.hotfix_issue}"
+        )
+    return line
+
+
+def _status_branch(s) -> str:
+    if s.hotfix_issue is not None:
+        return f"fix/{s.hotfix_issue}"
+    if s.version and s.version.startswith("v"):
+        return f"releases/{s.version}"
+    return "-"
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
     store.rebuild_projections()  # NFR-04: survives dropped projection tables
     # Skip backlog-only phantom rows (SM-01.2): a `backlog.recorded` event on a
-    # run with no `stage.entered` is a queue placeholder, not a real run. The
-    # `stage IS NULL` filter is robust to stale projection rows (it derives from
-    # the absence of stage.entered events, not from status); `status != 'backlog'`
-    # catches the post-rebuild case where the reducer has marked the phantom.
-    row = store.conn.execute(
+    # run with no `stage.entered` is a queue placeholder, not a real run.
+    rows = store.conn.execute(
         "SELECT run_id FROM runs "
         "WHERE status != 'backlog' AND stage IS NOT NULL "
-        "ORDER BY updated_ts DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+        "ORDER BY updated_ts DESC"
+    ).fetchall()
+    if not rows:
         print("no runs yet")
         return 0
-    s = store.state(row[0])
-    if s.status == "completed":
-        print(f"run={row[0]}: completed terminal={s.terminal_state} stage={s.stage}")
-    else:
-        print(f"run={row[0]}: {_format_state(s)}")
+    print(_status_line(rows[0][0], store.state(rows[0][0])))
+    # interfaces §2b (IF-HOTFIX-006): one `suspended:` line per remaining
+    # non-completed run (projection-rebuildable; `trac replay` reads it back).
+    for (run_id,) in rows[1:]:
+        sub = store.state(run_id)
+        if sub.status == "completed":
+            continue
+        print(
+            f"suspended: run={run_id} stage={sub.stage} substate={sub.substate} "
+            f"branch={_status_branch(sub)}"
+        )
     return 0
 
 
@@ -1155,6 +1291,7 @@ USAGE = (
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|recover --reason TEXT"
     "|retry [--actor NAME] [--clear-evidence]|status|replay <run-id>|validate --file <path>"
+    "|hotfix <issue> --scenario post-release or dev or anchor or feature-route"
     "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ..."
     "|check <deliverables|trace|reach|release-evidence>"
@@ -1165,6 +1302,7 @@ _COMMANDS = {
     "init": (cmd_init, 0),
     "start": (cmd_start, None),
     "run": (cmd_run, None),
+    "hotfix": (cmd_hotfix, None),
     "triage": (cmd_triage, None),
     "review": (cmd_review, None),
     "approve": (cmd_approve, None),

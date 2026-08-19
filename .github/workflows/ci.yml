@@ -147,7 +147,10 @@ jobs:
           TRAC_LIVE_MODEL: ${{ secrets.TRAC_LIVE_MODEL }}
           TRAC_LIVE_BASE_URL: ${{ secrets.TRAC_LIVE_BASE_URL }}
           TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
-        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          TRAC_GITHUB_REPO: ${{ vars.TRAC_GITHUB_REPO }}
+          TRAC_LIVE_ISSUE: ${{ vars.TRAC_LIVE_ISSUE }}
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py
 
   # Milestone hard gate: tag/release candidate only. Runs the real e2e_live
   # journey (never skip) and verifies current candidate's live evidence.
@@ -169,9 +172,14 @@ jobs:
       - name: probe credentials (fail closed, never skip)
         env:
           TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           if [ -z "${TRAC_LIVE_API_KEY:-}" ]; then
             echo "LIVE_SKIPPED: missing TRAC_LIVE_API_KEY"
+            exit 1
+          fi
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo "LIVE_SKIPPED: missing GITHUB_TOKEN"
             exit 1
           fi
       - name: run live journey (milestone hard gate)
@@ -180,6 +188,9 @@ jobs:
           TRAC_LIVE_MODEL: ${{ secrets.TRAC_LIVE_MODEL }}
           TRAC_LIVE_BASE_URL: ${{ secrets.TRAC_LIVE_BASE_URL }}
           TRAC_LIVE_API_KEY: ${{ secrets.TRAC_LIVE_API_KEY }}
-        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          TRAC_GITHUB_REPO: ${{ vars.TRAC_GITHUB_REPO }}
+          TRAC_LIVE_ISSUE: ${{ vars.TRAC_LIVE_ISSUE }}
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py
       - name: trac check release-evidence
         run: trac check release-evidence --json

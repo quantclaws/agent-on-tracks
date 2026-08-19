@@ -101,6 +101,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "approve",
         "check",
         "discuss",
+        "hotfix",
         "init",
         "recover",
         "replay",
@@ -178,6 +179,7 @@ def _test_tasks_failure(path: Path, doc: str, checks: list):
     if doc != "test-plan.md" or "test_tasks" not in checks:
         return None
     issues = check_test_tasks_contract_file(path)
+    issues += check_hotfix_delta_plan(path)
     return ("test_tasks", "; ".join(issues)) if issues else None
 
 
@@ -276,6 +278,95 @@ from tracks.executor.test_tasks import (  # noqa: E402,F401
     parse_test_tasks,
     required_ac_ids,
 )
+
+# -- v0.6 hotfix delta test-plan validation (IF-HOTFIX-007, interfaces §1e/§1f) ---
+
+# A feature version directory is ``v<major>.<minor>``; a hotfix delta plan
+# directory is ``v<major>.<minor>-hotfix-<issue>`` (ARCH-006 §1.0.3).
+_FEATURE_VER_DIR = re.compile(r"^v\d+\.\d+$")
+_HOTFIX_VER_DIR = re.compile(r"^v\d+\.\d+-hotfix-\d+$")
+# A cross-version reference in a §8 AC Coverage row: ``AC-FR0030-01@v0.5``.
+_ROW_AC_REF = re.compile(r"(AC-(?:N?FR)\d{4}-\d{2})@(v\d+\.\d+)")
+# A §8 table row: ``| <ac> | <layer> | <test> | <if> |``.
+_ROW = re.compile(r"^\|\s*([^|]*)\|([^|]*)\|")
+
+
+def check_hotfix_delta_plan(path: Path) -> list:
+    """v0.6 hotfix delta test-plan validation (IF-HOTFIX-007).
+
+    Applies only to ``test-plan.md`` documents under
+    ``.tracks/projects/<dir>/``. Rules (interfaces §1f / §1e):
+
+    - ``unit`` layer rows are legal ONLY inside a hotfix delta directory
+      (``{version}-hotfix-{issue}``); a feature version directory with any
+      ``unit`` row is a hard error (不变量). The current repo (§8) only
+      declares integration/e2e rows, so this never fires here.
+    - every cross-version ``AC-FRXXXX-YY@vX.Y`` reference in a §8 row must
+      resolve to an existing ``### <ac_id>`` heading in the referenced
+      version's ``acceptance.md`` (引用不实 = hard error).
+
+    Returns ``line:N ...`` messages; [] = valid.
+    """
+    parent = path.parent
+    if not parent.name.startswith("v"):
+        return []  # not a version-bound test-plan (e.g. a template)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    is_hotfix = bool(_HOTFIX_VER_DIR.match(parent.name))
+    is_feature = bool(_FEATURE_VER_DIR.match(parent.name))
+    issues: list = []
+    _scan_hotfix_delta_rows(text, parent, is_hotfix, is_feature, issues)
+    return issues
+
+
+def _scan_hotfix_delta_rows(
+    text: str, parent: Path, is_hotfix: bool, is_feature: bool, issues: list
+) -> None:
+    """Scan §8 AC Coverage rows: unit-layer ownership + cross-version refs."""
+    fence = False
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        row = _ROW.match(line.strip())
+        if row is None:
+            continue
+        if is_feature and not is_hotfix:
+            issues.extend(_feature_unit_row_issues(line_no, row.group(2)))
+        for ac_id, version in _ROW_AC_REF.findall(line):
+            message = _cross_version_issue(parent, ac_id, version, line_no)
+            if message is not None:
+                issues.append(message)
+
+
+def _feature_unit_row_issues(line_no: int, layer_cell: str) -> list:
+    """Zero or one finding for a feature-version §8 row: ``unit`` layer rows
+    are hard errors outside hotfix delta plans (interfaces §1f)."""
+    if "unit" not in layer_cell.lower():
+        return []
+    return [
+        f"line:{line_no} unit-layer row not allowed in feature version "
+        "test-plan (only {version}-hotfix-{issue} delta plans may "
+        "declare unit rows)"
+    ]
+
+
+def _cross_version_issue(
+    plan_parent: Path, ac_id: str, version: str, line_no: int
+) -> str | None:
+    """Validate one ``AC-FRXXXX-YY@vX.Y`` §8 reference against the referenced
+    version's acceptance.md. Returns a ``line:N`` message or None."""
+    acc = plan_parent.parent / version / "acceptance.md"
+    if not acc.exists():
+        return (
+            f"line:{line_no} {ac_id}@{version} references missing "
+            f"acceptance.md at {acc}"
+        )
+    body = acc.read_text(encoding="utf-8", errors="replace")
+    if re.search(r"^###\s+" + re.escape(ac_id) + r"\b", body, re.MULTILINE) is None:
+        return f"line:{line_no} {ac_id}@{version} not in {acc}"
+    return None
 
 
 def check_spec_items(text: str) -> list:

@@ -42,6 +42,12 @@ from tracks.executor.helpers import (
     classify_red,
     git,
 )
+from tracks.executor.hotfix import (
+    complete_hotfix_entry,
+    parse_anchor_refs,
+    precheck_hotfix,
+    validate_anchor_refs,
+)
 from tracks.executor.m_impl_runtime import MImplRuntimeMixin
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
@@ -127,6 +133,243 @@ _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict", "prism": "prism.
 _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
 
+def _hotfix_approved_versions(store) -> set[str]:
+    """The set of versions with an ``approval.recorded`` event across all runs
+    (IF-HOTFIX-003 P-4 baseline-approval input)."""
+    rows = store.conn.execute(
+        "SELECT DISTINCT version FROM events WHERE type='approval.recorded'"
+    ).fetchall()
+    return {row[0] for row in rows if row[0]}
+
+
+def _hotfix_run_branch(store, run_id: str) -> str | None:
+    """The git branch a run lives on (IF-HOTFIX-006): ``fix/{issue}`` for a
+    hotfix run, ``releases/{version}`` for a feature run, else the recorded
+    ``branch.created`` target."""
+    st = store.state(run_id)
+    if st.hotfix_issue is not None:
+        return f"fix/{st.hotfix_issue}"
+    if st.version and st.version.startswith("v"):
+        return f"releases/{st.version}"
+    for ev in store.events(run_id):
+        if ev.type == "branch.created":
+            return ev.payload.get("branch_name") or None
+    return None
+
+
+def _resolve_run_version(state) -> str:
+    """The run's version identity (ARCH-006 §1.0.3).
+
+    The kernel projects ``State.version`` only from ``story.requested``
+    (machine.py _on_story_requested); a hotfix run never emits that event, so
+    its identity ``{target_version}-hotfix-{issue}`` is re-derived from the
+    projected hotfix fields. Pre-PRECHECK (target unknown yet) falls back to
+    the stable ``hotfix-{issue}`` identity; a non-hotfix run keeps its
+    projected version.
+    """
+    if state.version:
+        return state.version
+    if state.hotfix_issue is not None:
+        if state.hotfix_target_version:
+            return f"{state.hotfix_target_version}-hotfix-{state.hotfix_issue}"
+        return f"hotfix-{state.hotfix_issue}"
+    return ""
+
+
+_SAGE_OUTCOME_FIELDS = (
+    "acs",
+    "outcome",
+    "searched_versions",
+    "corpus_digests",
+    "rationale_refs",
+)
+
+
+def _sage_anchor_outcome_fields(result: dict) -> dict:
+    """The anchor-search fields a SAGE_TRIAGE outcome carries into the
+    persisted outcome.received (IF-HOTFIX-004)."""
+    return {key: result[key] for key in _SAGE_OUTCOME_FIELDS if result.get(key) is not None}
+
+
+def _hotfix_corpus_paths(home: Path) -> list[str]:
+    """The absolute spec.md / acceptance.md path list across all version dirs
+    (sage anchor-search corpus, ARCH-006 §3.3)."""
+    projects = paths.projects_dir(home)
+    corpus: list[str] = []
+    for d in sorted(projects.iterdir()):
+        if not (d.is_dir() and d.name.startswith("v")):
+            continue
+        for doc in ("spec.md", "acceptance.md"):
+            pth = d / doc
+            if pth.exists():
+                corpus.append(str(pth))
+    return corpus
+
+
+def precheck_hotfix_report(repo, store, issue_number: int, scenario: str):
+    """Run the deterministic PRECHECK (IF-HOTFIX-003) with inputs collected
+    from the repo + event store (issue fetch, branch probe, active-run branch,
+    approved baselines). Returns ``(report, issue)``. Shared by ``cmd_hotfix``
+    (run-version resolution) and ``_do_precheck_hotfix`` (event emission)."""
+    try:
+        issue = select_issue_backend(repo, "").fetch_issue(issue_number)
+    except GithubIssuesError:
+        issue = None  # fetch failure: pure rules map it to issue_fetch_failed
+    branches = git(repo, "branch", "--list", check=False).stdout.splitlines()
+    active = store.active_run()
+    active_branch = _hotfix_run_branch(store, active) if active else None
+    projects = paths.projects_dir(paths.tracks_home(repo))
+    approved = _hotfix_approved_versions(store)
+    report = precheck_hotfix(issue, scenario, branches, active_branch, projects, approved)
+    return report, issue
+
+
+def hotfix_entry_run(repo, store, issue_number: int, scenario: str) -> str:
+    """v0.6 hotfix entry (IF-HOTFIX-001, interfaces §2a #1/#2): establish the
+    hotfix run with its resolved identity version (``{target}-hotfix-{issue}``,
+    ARCH-006 §1.0.3) and drive the synchronous triage run_loop. A REJECTED
+    precheck still establishes the run for audit (SM-01.1/.4) — the loop
+    completes it immediately. Returns the run_id."""
+    report, _issue = precheck_hotfix_report(repo, store, issue_number, scenario)
+    run_id = new_ulid()
+    version = (
+        f"{report.target_version}-hotfix-{issue_number}"
+        if report.status == "pass"
+        else f"hotfix-{issue_number}"
+    )
+    store.append(run_id, version, "hotfix.requested", {"issue": issue_number, "scenario": scenario})
+    store.append(run_id, version, "stage.entered", {"stage": "M-HOTFIX-TRIAGE"})
+    ex = Executor(store, repo, run_id)
+    ex.version = version  # pre-PRECHECK state cannot re-derive the target
+    ex.run_loop()
+    return run_id
+
+
+def hotfix_entry_output(store, run_id: str) -> int:
+    """Print the hotfix entry journey line-by-line + the terminal state line
+    (interfaces §2a #1/#2). Returns the CLI exit code: 1 on REJECTED (the
+    reason goes to stderr), otherwise 0."""
+    for ev in store.events(run_id):
+        detail = _hotfix_event_detail(ev)
+        if detail:
+            print(detail)
+    state = store.state(run_id)
+    if state.status == "completed" and state.terminal_state == "rejected":
+        reason = _last_triage_reason(store, run_id)
+        print(f"run {run_id}: REJECTED ({reason})", file=sys.stderr)
+        return 1
+    if state.awaiting == "hotfix_triage":
+        print(
+            f"run {run_id}: awaiting=awaiting_human origin=hotfix-triage "
+            f"issue={state.hotfix_issue}"
+        )
+        return 0
+    print(f"run {run_id}: {_hotfix_state_line(state)}")
+    return 0
+
+
+def _last_triage_reason(store, run_id: str) -> str:
+    for ev in reversed(list(store.events(run_id))):
+        if ev.type == "triage.prechecked" and ev.payload.get("status") == "rejected":
+            return str(ev.payload.get("reason") or "")
+    return ""
+
+
+def _hotfix_event_detail(ev) -> str | None:
+    """One readable line per hotfix triage event (spec E-01 style)."""
+    tag = f"run {ev.run_id}"
+    p = ev.payload
+    if ev.type == "hotfix.requested":
+        return (
+            f"{tag} hotfix.requested "
+            f"(issue={p.get('issue')}, scenario={p.get('scenario')})"
+        )
+    if ev.type == "triage.prechecked":
+        if p.get("status") == "rejected":
+            line = f"{tag} triage.prechecked REJECTED ({p.get('reason')})"
+            nxt = p.get("next")
+            return f"{line}\n  next: {nxt}" if nxt else line
+        return f"{tag} triage.prechecked (issue={p.get('issue')} type={p.get('issue_type')})"
+    if ev.type == "anchor.validated":
+        return f"{tag} anchor.validated ({', '.join(p.get('acs') or [])})"
+    if ev.type == "stage.entered":
+        return f"{tag} stage.entered({p.get('stage')})"
+    if ev.type == "backlog.recorded":
+        return (
+            f"{tag} backlog.recorded "
+            f"(issue={p.get('issue')} decision={p.get('decision')})"
+        )
+    return None
+
+
+def _hotfix_state_line(state) -> str:
+    """One-line hotfix state (interfaces §2b): the shared state format plus the
+    branch/scenario/issue fields for hotfix runs."""
+    line = (
+        f"stage={state.stage} substate={state.substate or '-'} "
+        f"status={state.status} awaiting={state.awaiting or '-'}"
+    )
+    if state.hotfix_issue is not None:
+        line += (
+            f" branch=fix/{state.hotfix_issue} "
+            f"scenario={state.hotfix_scenario or '-'} issue={state.hotfix_issue}"
+        )
+    return line
+
+
+def hotfix_human_anchor(repo, store, run_id: str, refs: list[str]) -> int:
+    """Form #4 (interfaces §2a): human manual anchor of cross-version AC refs
+    on the active hotfix run at awaiting=hotfix_triage. human.anchor(manual) ->
+    validate_anchor -> ANCHORED completion (SM-01.8). Untruthful refs keep the
+    run at AWAIT_HUMAN (retryable) and exit 1."""
+    state = store.state(run_id)
+    version = _resolve_run_version(state)
+    actor = git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
+    store.append(
+        run_id, version, "human.anchor",
+        {
+            "mode": "manual",
+            "acs": list(refs),
+            "issue": state.hotfix_issue,
+            "actor": actor,
+        },
+    )
+    state = Executor(store, repo, run_id).run_loop()
+    if state.awaiting == "hotfix_triage":
+        print(
+            "anchor invalid: refs do not resolve to existing ACs in the "
+            "referenced versions; retry with valid refs",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"anchor recorded: {', '.join(refs)}")
+    print(f"run {run_id}: {_hotfix_state_line(state)}")
+    return 0
+
+
+def hotfix_feature_route(repo, store, run_id: str) -> int:
+    """Form #5 (interfaces §2a): human confirms the feature route on the active
+    hotfix run at awaiting=hotfix_triage. human.anchor(feature_route) ->
+    backlog.recorded -> run.completed(feature_route) (SM-01.9/.11), with no
+    fix branch and no dangling run."""
+    state = store.state(run_id)
+    version = _resolve_run_version(state)
+    actor = git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
+    store.append(
+        run_id, version, "human.anchor",
+        {"mode": "feature_route", "acs": None, "issue": state.hotfix_issue, "actor": actor},
+    )
+    store.append(
+        run_id, version, "backlog.recorded",
+        {"issue": state.hotfix_issue, "decision": "feature_route", "version": version},
+    )
+    store.append(
+        run_id, version, "run.completed", {"terminal_state": "feature_route"}
+    )
+    print(f"feature route recorded; issue {state.hotfix_issue} -> backlog")
+    return 0
+
+
 class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
@@ -149,7 +392,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self.store = store
         self.repo = repo
         self.run_id = run_id
-        self.version = store.state(run_id).version or ""
+        self.version = _resolve_run_version(store.state(run_id))
         self.backend = select_backend(repo, self.version)
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
@@ -350,15 +593,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """True when issuing ``cmd`` must end the current ``run_loop``
         invocation (a durable stop boundary).
 
-        Only ``rollback_stage`` with reason ``stub_gap`` qualifies: after an
-        M-TEST/M-IMPL -> M-DESIGN stub_gap rollback the same run would
-        immediately re-dispatch Archer against the identical invalid
-        test-task contract (auto-reenter the defective downstream cycle), so
-        we return and require a later explicit ``trac run``. Every other
-        rollback reason (scope_overflow, human_return, diagnose_rollback)
-        needs no external correction, so run_loop continues in the same
-        invocation to dispatch the upstream agent with evidence."""
-        return cmd.kind == "rollback_stage" and cmd.params.get("reason") == "stub_gap"
+        - ``rollback_stage`` with reason ``stub_gap``: after an M-TEST/M-IMPL
+          -> M-DESIGN stub_gap rollback the same run would immediately
+          re-dispatch Archer against the identical invalid test-task contract
+          (auto-reenter the defective downstream cycle), so we return and
+          require a later explicit ``trac run``.
+        - ``complete_hotfix_entry`` (v0.6 ANCHORED terminal, SM-01.10): the
+          entry drive stops once stage.entered(M-DESIGN) lands — the canonical
+          M-DESIGN delta work continues on a later ``trac run`` (FR-0242).
+
+        Every other rollback reason (scope_overflow, human_return,
+        diagnose_rollback) needs no external correction, so run_loop continues
+        in the same invocation to dispatch the upstream agent with evidence."""
+        return cmd.kind == "rollback_stage" and cmd.params.get("reason") == "stub_gap" or (
+            cmd.kind == "complete_hotfix_entry"
+        )
 
     # NOTE (B32/#32): recover_stage deliberately gets NO similar boundary
     # special case. Unlike the stub_gap rollback -- which would auto-reenter a
@@ -451,6 +700,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 params,
                 cid,
             )
+        if cmd.kind == "dispatch_agent" and state.stage == "M-HOTFIX-TRIAGE":
+            params = self._materialize_hotfix_assignment(state, params)
         # D-28: enrich Shield WRITE assignments with structured test_tasks and
         # the pre-dirty snapshot before write-ahead logging (architecture.md
         # §1.2 DISPATCH). The persisted command.issued carries the full input.
@@ -1030,7 +1281,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # between outcome.received and a separate result.submitted event.
         # Failed outcomes (status != "done") are handled by _on_outcome_received
         # (attempt consumed, substate reset) — no pipeline payload.
+        result.setdefault("self_report", "")
         payload = _dispatch_payload(self.store, p, result)
+        # v0.6 hotfix SAGE_TRIAGE (IF-HOTFIX-004): carry the Sage anchor-search
+        # outcome fields (acs / no_anchor / searched_versions / corpus_digests /
+        # rationale_refs) into the persisted outcome so _do_validate_anchor can
+        # programmatically validate them.
+        if role == "sage" and substate == "SAGE_TRIAGE":
+            payload.update(_sage_anchor_outcome_fields(result))
         # Expose the agent I/O blob ref on the result so downstream verdict
         # emissions can point the next agent at the full transcript (critic
         # reviews and diagnoses live in blobs - long-form content must be
@@ -1720,8 +1978,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # SM-05.6 / IF-003 §10f: no successor (or a version-gated
             # successor) -> stop at the next-stage boundary. M-DESIGN boundary
             # pre-v0.3; M-TEST boundary for pre-v0.5 runs; M-IMPL boundary
-            # since.
-            self._emit("run.completed", {"terminal_state": "boundary"}, command_id=cmd.command_id)
+            # since. v0.6 hotfix boundary restores the suspended run's branch.
+            self._emit(
+                "run.completed",
+                self._hotfix_boundary_completion(state),
+                command_id=cmd.command_id,
+            )
 
     def _is_boundary_transition(self, stage: str, nxt: str) -> bool:
         """True when the declared stage transition must stop at a boundary at
@@ -1747,6 +2009,253 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             {"terminal_state": cmd.params["terminal_state"]},
             command_id=cmd.command_id,
         )
+
+    # -- v0.6 hotfix handlers (IF-HOTFIX-002/003/004/005/007) -----------------
+
+    def _materialize_hotfix_assignment(
+        self, state, params: dict
+    ) -> dict:
+        """v0.6 hotfix SAGE_TRIAGE dispatch materialization (interfaces §1h /
+        ARCH-006 §3.3): enrich the Sage assignment with the anchor-search
+        corpus — issue corpus, scenario, target_version, anchor_hints
+        (parse_issue_hints) and the corpus path list (target + historical
+        spec/acceptance paths)."""
+        if not (
+            params.get("substate") == "SAGE_TRIAGE" and params.get("role") == "sage"
+        ):
+            return params
+        p = dict(params)
+        assignment = dict(p.get("assignment") or {})
+        issue = self._hotfix_issue_corpus(state.hotfix_issue)
+        if issue is not None:
+            assignment["issue"] = {
+                "title": issue.title, "body": issue.body, "labels": list(issue.labels)
+            }
+            from tracks.executor.hotfix import parse_issue_hints
+            assignment["anchor_hints"] = parse_issue_hints(issue.body)
+        else:
+            assignment["issue"] = None
+            assignment["anchor_hints"] = {}
+        assignment["scenario"] = state.hotfix_scenario or "post-release"
+        assignment["target_version"] = state.hotfix_target_version or ""
+        assignment["corpus"] = _hotfix_corpus_paths(self.store.home)
+        p["assignment"] = assignment
+        return p
+
+    def _hotfix_issue_corpus(self, issue_number):
+        """The host issue corpus for the Sage assignment (deterministic read
+        channel). A fetch failure yields None (PRECHECK already reported it)."""
+        try:
+            return select_issue_backend(self.repo, self.version).fetch_issue(issue_number)
+        except GithubIssuesError:
+            return None
+
+    def _do_precheck_hotfix(self, cmd, state, task_id, reconcile):
+        """precheck_hotfix (SM-01.1-.4, IF-HOTFIX-003): deterministic issue
+        fetch + scenario / active-branch / target-version location. Emits
+        triage.prechecked(pass) -> SAGE_TRIAGE or
+        triage.prechecked(rejected) + run.completed(rejected) (SM-01.4)."""
+        if reconcile and any(
+            e.type == "triage.prechecked" for e in self.store.events(self.run_id)
+        ):
+            return
+        issue_number = state.hotfix_issue
+        scenario = state.hotfix_scenario or "post-release"
+        report, issue = precheck_hotfix_report(
+            self.repo, self.store, issue_number, scenario
+        )
+        issue_type = None
+        if issue is not None:
+            issue_type = "bug" if issue.is_bug else (
+                issue.labels[0] if issue.labels else None
+            )
+        payload = {
+            "issue": issue_number,
+            "issue_type": issue_type,
+            "scenario": scenario,
+            "status": report.status,
+            "reason": report.reason,
+            "next": report.next,
+            "target_version": report.target_version,
+            "active_branch": report.active_branch,
+        }
+        self._emit("triage.prechecked", payload, command_id=cmd.command_id, task_id=task_id)
+        if report.status == "rejected":
+            self._emit(
+                "run.completed",
+                {"terminal_state": "rejected", "reason": report.reason},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _do_validate_anchor(self, cmd, state, task_id, reconcile):
+        """validate_anchor (SM-01.5/.6/.8, IF-HOTFIX-004): programmatically
+        validate the anchor AC set (from Sage outcome or human manual anchor)
+        against the referenced versions' acceptance.md. Valid ->
+        anchor.validated (ANCHORED, SM-01.5/.8); invalid / NO_ANCHOR ->
+        verdict.failed(check="anchor_invalid") (Sage redispatch <=3, SM-01.6;
+        NO_ANCHOR parks directly at AWAIT_HUMAN, SM-01.7)."""
+        if reconcile and state.hotfix_anchor_validated:
+            return
+        acs, source, rationale = self._anchor_inputs(state)
+        if not acs or source == "no_anchor":
+            # NO_ANCHOR: park directly at AWAIT_HUMAN (SM-01.7) — never
+            # auto-feature-route (NFR-0100-03). Emit with the budget ceiling
+            # so kernel's hotfix failure routing parks immediately.
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "anchor_invalid",
+                    "reason": "NO_ANCHOR: Sage found no correlatable AC",
+                    "evidence": "no_anchor outcome",
+                    "attempt": 3,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return
+        try:
+            refs = parse_anchor_refs(acs)
+            ok, missing = validate_anchor_refs(
+                refs, paths.projects_dir(self.store.home)
+            )
+        except ValueError as exc:
+            ok, missing = False, [str(exc)]
+        if ok:
+            self._emit(
+                "anchor.validated",
+                {
+                    "acs": list(acs),
+                    "source": source,
+                    "attempt": state.current_attempt,
+                    "rationale_refs": list(rationale) if rationale else [],
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+        else:
+            # Invalid refs: for manual anchor, park at AWAIT_HUMAN (retryable);
+            # for Sage, consume attempt budget (<=3 redispatches).
+            attempt = 3 if source == "human" else state.current_attempt + 1
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "anchor_invalid",
+                    "reason": "; ".join(missing),
+                    "evidence": "; ".join(missing),
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _anchor_inputs(self, state):
+        """The anchor set under validation + its provenance: (acs, source,
+        rationale_refs). Human manual anchors come from the last
+        ``human.anchor`` event; Sage anchors from the last SAGE_TRIAGE
+        ``outcome.received``."""
+        for ev in reversed(list(self.store.events(self.run_id))):
+            inputs = self._anchor_input_from_event(ev)
+            if inputs is not None:
+                return inputs
+        return list(state.hotfix_anchor_acs or []), "sage", []
+
+    def _anchor_input_from_event(self, ev):
+        """(acs, source, rationale_refs) for one candidate anchor event, or
+        None when the event is not the anchor provenance we seek."""
+        if ev.type == "human.anchor":
+            if ev.payload.get("mode") == "feature_route":
+                return None
+            return list(ev.payload.get("acs") or []), "human", []
+        if ev.type == "outcome.received" and ev.payload.get("role") == "sage":
+            p = ev.payload
+            if p.get("outcome") == "no_anchor":
+                return [], "no_anchor", []
+            return list(p.get("acs") or []), "sage", list(p.get("rationale_refs") or [])
+        return None
+
+    def _do_complete_hotfix_entry(self, cmd, state, task_id, reconcile):
+        """complete_hotfix_entry (SM-01.10, IF-HOTFIX-005): ANCHORED atomic
+        entry completion. Creates fix/{issue} from main (post-release) or the
+        active release branch (dev), records baseline.inherited (source
+        approval), then stage.entered(M-DESIGN). Fails closed: branch creation
+        failure completes the run as rejected (no half-built run)."""
+        done = any(
+            e.type == "baseline.inherited" for e in self.store.events(self.run_id)
+        )
+        if reconcile and done:
+            return
+        issue = state.hotfix_issue
+        scenario = state.hotfix_scenario or "post-release"
+        target_version = state.hotfix_target_version or ""
+        acs = state.hotfix_anchor_acs or []
+        try:
+            result = complete_hotfix_entry(
+                self.repo, self.run_id, issue, scenario,
+                target_version, acs,
+            )
+        except (RuntimeError, ValueError):
+            self._emit(
+                "run.completed", {"terminal_state": "rejected", "reason": "hotfix entry failed"},
+                command_id=cmd.command_id, task_id=task_id,
+            )
+            return
+        self._emit(
+            "branch.created",
+            {
+                "branch_name": result["branch_name"],
+                "base": result["base"],
+                "commit_sha": result["commit_sha"],
+            },
+            command_id=cmd.command_id, task_id=task_id,
+        )
+        self._emit(
+            "baseline.inherited",
+            {
+                "target_version": result["target_version"],
+                "baseline_digest": result["baseline_digest"],
+                "anchor_acs": result["anchor_acs"],
+                "baseline_doc_paths": result["baseline_doc_paths"],
+            },
+            command_id=cmd.command_id, task_id=task_id,
+        )
+        self._emit(
+            "stage.entered", {"stage": "M-DESIGN"},
+            command_id=cmd.command_id, task_id=task_id,
+        )
+
+    def _hotfix_boundary_completion(self, state):
+        """v0.6 hotfix boundary (FR-0246 / IF-HOTFIX-006): when a hotfix run
+        completes at the boundary, restore the suspended run as active by
+        checking out its branch (Runtime is the only branch/worktree
+        authority). Payload carries restored_active_run / restored_branch."""
+        if state.hotfix_issue is None:
+            return {"terminal_state": "boundary"}
+        payload = {"terminal_state": "boundary"}
+        suspended = self._next_suspended_run()
+        if suspended is None:
+            return payload
+        run_id, branch = suspended
+        if branch and branch != self._head():
+            git(self.repo, "checkout", branch, check=False)
+        payload["restored_active_run"] = run_id
+        payload["restored_branch"] = branch
+        return payload
+
+    def _next_suspended_run(self):
+        """The latest non-completed run after this hotfix run (the suspended
+        run that resumes active under the single-active-run semantics).
+        Returns (run_id, branch) or None."""
+        rows = self.store.conn.execute(
+            "SELECT run_id FROM runs WHERE status NOT IN ('completed','backlog') "
+            "AND stage IS NOT NULL AND run_id != ? ORDER BY updated_ts DESC LIMIT 1",
+            (self.run_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        rid = rows[0][0]
+        branch = _hotfix_run_branch(self.store, rid)
+        return rid, branch
 
     def _do_create_branch(self, cmd, state, task_id, reconcile):
         """Create/switch the branch, then log branch.created. Reconcile (R3-03):
@@ -2015,20 +2524,55 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _do_check_trace(self, cmd, state, task_id, reconcile):
         """SM-01.14 EXIT gate: trac check trace closure, filtered to required
-        ACs (integration|e2e layer, FR-0070 decision A / architecture.md §5.1)."""
+        ACs (integration|e2e layer, FR-0070 decision A / architecture.md §5.1).
+
+        v0.6 hotfix empty-Shield increment (FR-0244-04, IF-HOTFIX-007): when
+        the EXIT route carries ``hotfix=True``, emit the increment.declared
+        release evidence (shield=empty + delta §8 unit rows) and run the
+        plan-level closure (check_hotfix_plan_closure) on the anchor AC set."""
         if reconcile and state.trace_passed:
             return
         from tracks.checks.trace import check_trace_full_file  # lazy: avoid circular import
+        from tracks.executor.test_tasks import parse_hotfix_unit_rows
 
         vdir = self._vdir()
         tests_dir = self.repo / "tests"
-        report = check_trace_full_file(vdir, tests_dir)
-        required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
-        blocking = (
-            [e for e in report.hard_errors if any(rid in e for rid in required)]
-            if required
-            else list(report.hard_errors)
-        )
+        if cmd.params.get("hotfix"):
+            plan_path = vdir / "test-plan.md"
+            plan_text = (
+                plan_path.read_text(encoding="utf-8", errors="replace")
+                if plan_path.exists()
+                else ""
+            )
+            unit_rows = parse_hotfix_unit_rows(plan_text)
+            report = check_trace_full_file(
+                vdir,
+                tests_dir,
+                hotfix_ctx={
+                    "projects_dir": str(paths.projects_dir(self.store.home)),
+                    "run_id": self.run_id,
+                    "anchor_acs": list(state.hotfix_anchor_acs or []),
+                    "declared_unit_rows": unit_rows,
+                },
+            )
+            blocking = list(report.hard_errors)
+            self._emit(
+                "increment.declared",
+                {
+                    "shield": "empty",
+                    "unit_rows": unit_rows,
+                    "trace_status": "fail" if report.status == "fail" else "pass",
+                },
+                command_id=cmd.command_id,
+            )
+        else:
+            report = check_trace_full_file(vdir, tests_dir)
+            required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
+            blocking = (
+                [e for e in report.hard_errors if any(rid in e for rid in required)]
+                if required
+                else list(report.hard_errors)
+            )
         if not blocking:
             self._emit(
                 "verdict.passed",
