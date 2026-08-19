@@ -181,6 +181,7 @@ M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**
 ```
 
 - REVISE 时 `review_summary`、`findings[]`（非空，每条含七字段：id/severity/defect_classification/criterion/artifact/ac_refs/summary）、`review_body` 均必填；`review_summary` 与 `findings[].summary` 硬上限 140 字符，超限即 manifest malformed、attempt 作废。
+- **返回前逐条自检长度**（live 教训 T-002：连续三次 attempt 因超限作废）：`len(review_summary) <= 140` 且每条 `len(findings[i]["summary"]) <= 140`（Python len() 语义，中文一字算一）；summary 放不下就压缩措辞，细节移入 review_body（无长度限制）。
 - **`defect_classification` 按 substate 取值**（Runtime 路由词表各不相同，取错值会落入默认路由）：
   - M-TEST PRISM_REVIEW / M-IMPL SHIELD_FIX 语境：`test_defect`（默认）| `test_plan_defect` | `acceptance_defect` | `spec_defect`
   - M-IMPL PRISM_PLAN：`design_gap` | `stub_gap` | `ac_gap` | `spec_gap`（缺省→回 PLANNING 重拆）

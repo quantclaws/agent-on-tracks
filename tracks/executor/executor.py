@@ -1478,7 +1478,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self, role, substate, state, verdict, assignment, result, cmd
     ) -> bool:
         """Return True when the criteria-pack identity mismatch was emitted
-        (caller should skip the normal verdict emission)."""
+        (caller should skip the normal verdict emission).
+
+        Only DONE outcomes carry the echo — a failed result (manifest
+        malformed, provider error) legitimately lacks criteria_pack, and
+        re-classifying it as a pack mismatch double-punishes the same
+        attempt (live T-002 PRISM_FINAL: three 140-cap rejects each also
+        burned as criteria_pack_mismatch, 2026-08-19)."""
+        if result.get("status") != "done":
+            return False
         if not (
             role == "prism"
             and (

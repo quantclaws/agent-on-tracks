@@ -447,3 +447,25 @@ def paths_blobs(store):
     from tracks import paths
 
     return paths.blobs_dir(store.home)
+
+
+def test_criteria_pack_mismatch_skips_failed_outcomes():
+    """Live T-002: a failed (manifest_malformed) prism result legitimately
+    lacks the criteria_pack echo — the mismatch check must not re-classify
+    it and double-burn the attempt."""
+    from tracks.executor.executor import Executor
+
+    ex = object.__new__(Executor)
+
+    class _State:
+        stage = "M-IMPL"
+
+    result = {"status": "failed", "failure_class": "manifest_malformed"}
+    assignment = {"criteria_pack": {"name": "tracks-prism-impl", "version": "0.1"}}
+    assert not ex._criteria_pack_mismatch(
+        "prism", "PRISM_FINAL", _State(), None, assignment, result, None
+    )
+    done = {"status": "done", "verdict": "revise", "criteria_pack": None}
+    assert ex._criteria_pack_mismatch(
+        "prism", "PRISM_FINAL", _State(), "revise", assignment, done, None
+    )
