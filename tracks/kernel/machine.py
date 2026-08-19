@@ -529,7 +529,13 @@ def _reset_m_test_dispatch_flag(s: State) -> None:
 # 01KZTHE7 T-017: "killed by signal 9" evidence kept overwriting Prism's
 # diagnosis and 3 infra failures exhausted the agent budget).
 _INFRA_FAILURE_CLASSES = frozenset(
-    {"signal", "opencode_missing", "provider_unavailable", "timeout"}
+    {
+        "signal",
+        "opencode_missing",
+        "provider_unavailable",
+        "timeout",
+        "abnormal_step_finish",
+    }
 )
 _INFRA_RETRY_LIMIT = 3
 

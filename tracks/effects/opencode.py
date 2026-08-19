@@ -1711,7 +1711,12 @@ class OpencodeBackend:
                 "interruption suspected)"
             ),
             "audit_evidence": "abnormal_step_finish: reason=unknown",
-            "failure_class": "provider_unavailable",
+            # Dedicated class (NOT provider_unavailable): the turn ended
+            # abnormally for an unspecified reason — provider cut, SDK
+            # error, or context-edge mishandling all land here. The effect
+            # (infra, no attempt burn) is right; the label must not claim a
+            # diagnosis we do not have (B18/#20 bucket hygiene).
+            "failure_class": "abnormal_step_finish",
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
 
