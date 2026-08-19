@@ -121,15 +121,10 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         _reset_review(s)
         _consume_attempt(s)
         return
-    if check == "trace":
-        s.trace_passed = False
-        s.substate = "WRITE"
-        _reset_doc(s)
-        _consume_attempt(s)
-        return
-    if check == "commit":
-        # D-30/F-1: hook rejected test commit -> re-dispatch Shield (mirrors
-        # check=="trace": reset trace_passed, WRITE, consume budget).
+    if check in ("trace", "commit"):
+        # trace: SM-01.15 — re-dispatch Shield (WRITE), consume budget.
+        # commit: D-30/F-1 — hook rejected test commit -> re-dispatch Shield
+        # (mirrors check=="trace": reset trace_passed, WRITE, consume budget).
         s.trace_passed = False
         s.substate = "WRITE"
         _reset_doc(s)

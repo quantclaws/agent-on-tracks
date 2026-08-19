@@ -102,16 +102,12 @@ def _coverage_line(
     stripped = line.strip()
     if stripped.startswith(">"):
         return in_coverage, columns, []
-    m = _HEADING.match(stripped)
-    if m:
-        level = len(m.group(1))
-        if level == 2:
-            # A level-2 heading opens/closes the §8 coverage section.
-            return bool(_AC_COVERAGE_HEADING.match(stripped)), None, []
-        # Level-3 subsections stay inside §8; they never open it.
-        if in_coverage:
-            return True, None, []
-        return in_coverage, columns, []
+    state = _coverage_heading_state(stripped, in_coverage)
+    if state is not None:
+        # Level-2 headings open/close §8; level-3 subsections stay inside it.
+        # ``reset`` clears the table state (columns) in either case.
+        in_coverage, reset = state
+        return in_coverage, (None if reset else columns), []
     if not in_coverage or "|" not in line:
         return in_coverage, columns, []
     cells = _table_cells(line)
@@ -453,17 +449,11 @@ def _coverage_heading_or_continuation(
     stripped = line.strip()
     if stripped.startswith(">"):
         return True, in_coverage, columns
-    m = _HEADING.match(stripped)
-    if m:
-        level = len(m.group(1))
-        if level == 2:
-            return True, bool(_AC_COVERAGE_HEADING.match(stripped)), None
-        # Level-3 subsection inside an already-open §8 stays inside §8 but
-        # resets the table state (same semantics as ``_coverage_line``).
-        if in_coverage:
-            return True, True, None
-        return True, in_coverage, columns
-    return False, in_coverage, columns
+    state = _coverage_heading_state(stripped, in_coverage)
+    if state is None:
+        return False, in_coverage, columns
+    in_coverage, reset = state
+    return True, in_coverage, (None if reset else columns)
 
 
 def parse_hotfix_unit_rows(plan_text: str) -> list[dict]:
