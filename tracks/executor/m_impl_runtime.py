@@ -1238,12 +1238,10 @@ class MImplRuntimeMixin:
 
     def _task_manifest(self, task: TaskNode, state: State) -> dict:
         pre_dirty = self._dirty_snapshot()
-        baseline_digest = state.taskgraph_digest or ""
-        if not baseline_digest:
-            for ev in reversed(list(self.store.events(self.run_id))):
-                if ev.type == "baseline.frozen":
-                    baseline_digest = ev.payload.get("digest", "")
-                    break
+        # The task's baseline identity is the committed taskgraph digest; a
+        # graph-less replay falls back to the last frozen BASELINE digest
+        # (single resolution site, shared with the scenario B reconcile).
+        baseline_digest = state.taskgraph_digest or self._last_baseline_digest()
         manifest = {
             "task_id": task.task_id,
             "task_ref": self._task_payload(task),
