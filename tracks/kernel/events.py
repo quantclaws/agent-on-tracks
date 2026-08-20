@@ -82,6 +82,11 @@ EVENT_TYPES = (
     # B38 (#39): GREEN resubmit with no worktree diff and explicit
     # no_change_reason — implementation already in baseline.
     "green.no_change",
+    # D-36 浅版 (#43): operator out-of-band commits declared via the
+    # `Tracks-OOB:` git trailer are accepted (not agent output, no
+    # over-reach, worktree replay never clobbers them). Emitted by the
+    # executor's run-loop observation; machine replay is a no-op.
+    "oob.accepted",
 )
 
 # interfaces §4 — v0.1 closed command set.

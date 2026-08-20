@@ -20,7 +20,7 @@ from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.capabilities import supports_m_impl
 from tracks.discuss.parser import parse_threads
-from tracks.effects import select_backend
+from tracks.effects import oob, select_backend
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
 from tracks.executor.doc_comment import (
@@ -397,6 +397,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
         self._issue_backend = None  # lazy: created on first create_issues
+        # D-36 浅版（#43）：OOB 观察点。初始化为当前 HEAD——run 停止期间
+        # （静默期）的操作者提交按既有语义由下一次 baseline 冻结吸收，
+        # 不发 oob.accepted；只有本进程存活期间（派发窗口内/外）观察到
+        # 的前移才入账。
+        self._oob_head = oob.head_sha(Path(self.repo))
 
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
@@ -404,6 +409,40 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return self.store.append(
             self.run_id, self.version, type, payload, command_id=command_id, task_id=task_id
         )
+
+    def _observe_oob(self) -> None:
+        """D-36 浅版（#43）：观察派发窗口外的操作者提交并入账。
+
+        HEAD 相对上次观察点前移时，``since..HEAD`` 中携带 ``Tracks-OOB``
+        trailer 的提交逐个发出 ``oob.accepted``（sha/reason/files）；未
+        声明的提交仅 stderr 提示后随静默期语义吸收（观察点前移，不发
+        事件）。观察点单调前移保证幂等。只允许在 issue() 的 WAL 窗口
+        之外调用（见 run_loop 注释）。
+        """
+        current = oob.head_sha(Path(self.repo))
+        if current is None or current == self._oob_head:
+            return
+        commits = oob.commits_since(Path(self.repo), self._oob_head)
+        for c in commits:
+            if c["oob"]:
+                self._emit(
+                    "oob.accepted",
+                    {
+                        "sha": c["sha"],
+                        "reason": c["reason"],
+                        "files": sorted(oob.changed_paths(Path(self.repo), c["sha"])),
+                    },
+                )
+            else:
+                print(
+                    f"  [oob] undeclared operator commit {c['sha'][:12]} "
+                    f"'{c['subject']}' — declare with a 'Tracks-OOB: <reason>' "
+                    f"trailer to have it accepted/audited",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        # 历史改写（range 不可解析 → commits 为空）时同样前移观察点。
+        self._oob_head = current
 
     def _emit_commit_failure(
         self, proc: subprocess.CompletedProcess, state: State, command_id: str
@@ -516,7 +555,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if stop:
             return self.store.state(self.run_id)
         dispatches, bound_substate = self._recovery_dispatch_state(recovered_kind, pending)
+        try:
+            return self._run_loop_body(dispatches, bound_substate)
+        finally:
+            # D-36 浅版（#43）：末次派发窗口内的 OOB 提交也要入账——
+            # run_loop 可能在一次派发后就返回（phase boundary / gate
+            # stop），进程重启后的观察点会重置为新 HEAD，事件就丢了。
+            self._observe_oob()
+
+    def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
         while True:
+            # D-36 浅版（#43）：WAL 窗口之外观察操作者 OOB 提交。任何
+            # command.issued 与其 outcome 之间的事件都会清 machine 的
+            # pending（B40 语境：pending=None + doc_dispatched=True 会
+            # 挂死 run），因此观察点必须在 issue() 之外。
+            self._observe_oob()
             state = self.store.state(self.run_id)
             # SM-02.9 (AC-FR0235-03): a paused doc-gap whose threads are all
             # resolved resumes with a NEW dispatch/attempt before decide() —
@@ -1381,6 +1434,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         WITHOUT staging, so downstream pipelines see exactly the state the
         agent would have left had it worked in the main tree.
         Returns (error, had_delta); error None means clean or applied ok.
+
+        D-36 浅版（#43/B36 反碾压守卫）：主树在派发窗口内被操作者提交
+        改动过的文件，mirror 回退不再覆盖——同名冲突 fail-closed 报错
+        （主树侧内容保留，人工裁决后重试），杜绝 concurrent-collision
+        replay 静默吞掉操作者已提交的工作。
         """
         wt = handle.path
         subprocess.run(
@@ -1411,9 +1469,36 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # per-file copy/delete from the worktree's final state, which
             # is exactly the state the agent would have left had it
             # worked directly in the main tree (a direct agent edit also
-            # overwrites a pre-existing dirty file).
+            # overwrites a pre-existing dirty file) — EXCEPT paths the
+            # operator committed on main during the dispatch window
+            # (#43 anti-clobber guard: those conflict fail-closed).
             return self._mirror_worktree_changes(handle), True
         return self._sync_worktree_dirs(handle), True
+
+    def _main_committed_since(self, base_sha: str) -> set[str]:
+        """派发窗口内主树侧被提交改动过的路径（base_sha..HEAD，B36 守卫用）。
+
+        Runtime 是单写者且在派发期间阻塞，窗口内主树 HEAD 前移只能是
+        操作者提交（声明与否在守卫处不区分——碾压数据是更重的伤害）。
+        base_sha 不可解析（历史改写）时返回空集（守卫退化为旧行为）。
+        """
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "diff",
+                "--name-only",
+                "-z",
+                f"{base_sha}..HEAD",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return set()
+        return {p for p in proc.stdout.split("\0") if p}
 
     def _sync_worktree_dirs(self, handle: WorktreeHandle) -> str | None:
         """mkdir -p every directory present in the worktree but missing in
@@ -1436,16 +1521,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _mirror_worktree_changes(self, handle: WorktreeHandle) -> str | None:
         """Per-file sync of the worktree's staged changes onto the main
-        tree (replay fallback). Returns an error string or None."""
+        tree (replay fallback). Returns an error string or None.
+
+        D-36 浅版（#43）反碾压守卫：与派发窗口内主树侧提交重叠的路径
+        fail-closed——不镜像、保留主树内容、报冲突清单（all-or-nothing：
+        发现任一冲突即整个 mirror 不执行，避免留下半镜像的混合状态）。
+        """
         names = subprocess.run(
             ["git", "-C", handle.path, "diff", "--cached", "--name-only", "-z"],
             capture_output=True,
             text=True,
             check=False,
         )
-        for name in names.stdout.split("\0"):
-            if not name:
-                continue
+        changed = [n for n in names.stdout.split("\0") if n]
+        guarded = self._main_committed_since(handle.base_sha)
+        conflicts = sorted(set(changed) & guarded)
+        if conflicts:
+            return (
+                "main tree moved during dispatch (operator commits) conflict "
+                f"with agent worktree delta: {', '.join(conflicts)} — "
+                "operator content preserved on main; resolve manually "
+                "(re-dispatch will re-run the agent on the new HEAD)"
+            )
+        for name in changed:
             src = Path(handle.path) / name
             dst = self.repo / name
             try:
