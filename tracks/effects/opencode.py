@@ -207,13 +207,24 @@ class OpencodeBackend:
            派发全新开始）；错误本身仍走 ``_check_json`` →
            provider_unavailable → executor infra 重派（B18：不烧 agent
            attempt）。
+
+        Prism review B1（r1 教训复刻：启发式不得对"内容"开火）：agent 散
+        文永远在 stdout 的 JSON 事件里——携带有效 JSON 事件的流是真实派
+        发输出，正文含 "session not found"/"context window" 等短语属内容
+        而非信号，绝不触发。信号判定只对非 JSON 流（真实 miss = exit 0 +
+        非 JSON 错误行；真实 overflow = provider 侧错误）进行；session 复
+        用关闭（run_id=None / 逃生开关）时跳过全部检查——旧版单次派发
+        不变量逐字节保持。
         """
         proc = self._run(name, prompt, cwd=root)
+        if not self._session_reuse_enabled():
+            return proc
         stdout, stderr = proc.stdout or "", proc.stderr or ""
-        if self._session_miss(stdout, stderr):
+        json_stream = self._has_json_events(stdout)
+        if self._miss_line(stdout) or self._miss_line(stderr):
             self._clear_session(name)
             proc = self._run(name, prompt, cwd=root)
-        elif self._context_overflow(stdout, stderr):
+        elif self._overflow_text(stdout, stderr, json_stream):
             self._clear_session(name)
         return proc
 
@@ -239,22 +250,31 @@ class OpencodeBackend:
         return None
 
     @staticmethod
-    def _session_miss(stdout: str, stderr: str) -> bool:
+    def _miss_line(text: str) -> bool:
         """`--session <id>` 指向的 session 已不存在（存储被清理/跨机器）。
-        opencode 对此打印 `Error: Session not found`（实测 exit 0，非 JSON
-        流）。检测放在 _check_json 之前，降级为全新派发。"""
-        return "session not found" in (stdout or "").lower() or "session not found" in (
-            stderr or ""
-        ).lower()
+        真实签名（实测）：独立一行 `Error: Session not found`（exit 0，
+        非 JSON 流）。行级精确匹配——agent 正文里的 "session not found"
+        字样（评审/文档讨论）是内容不是信号（Prism review B1）。"""
+        for line in (text or "").splitlines():
+            if line.strip().lower() == "error: session not found":
+                return True
+        return False
 
     @staticmethod
-    def _context_overflow(stdout: str, stderr: str) -> bool:
-        """session 累积上下文超限的启发式信号（provider 侧文案）。命中则
-        弃用该 session——下一次 infra 重派自然全新开始（B18 语境：这类
-        失败属 infra，不烧 agent attempt）。"""
-        text = f"{stdout or ''}\n{stderr or ''}".lower()
+    def _overflow_text(stdout: str, stderr: str, json_stream: bool) -> bool:
+        """session 累积上下文超限的 provider 侧信号。命中则弃用该
+        session——下一次 infra 重派自然全新开始（B18 语境：这类失败属
+        infra，不烧 agent attempt）。
+
+        agent 散文只在 stdout 的 JSON 事件里；stderr 是 opencode/provider
+        错误输出，永不含 agent 正文。stdout 仅在**非 JSON 流**（已是错误
+        输出形态）时参与扫描（Prism review B1：内容不开火）。"""
+        texts = [(stderr or "").lower()]
+        if not json_stream:
+            texts.append((stdout or "").lower())
         return any(
             k in text
+            for text in texts
             for k in (
                 "context length",
                 "context window",
@@ -1559,9 +1579,16 @@ class OpencodeBackend:
         except OpencodeError as exc:
             # D-39 轻版（#44）：infra 失败（timeout/provider）也记录 session
             # ——下一次 infra 重派以 --session 续传（断点续跑而非冷启动）。
-            self._record_session(
-                name, self._extract_session_id(getattr(exc, "stdout", "") or "")
-            )
+            exc_out = getattr(exc, "stdout", "") or ""
+            exc_err = getattr(exc, "stderr", "") or ""
+            self._record_session(name, self._extract_session_id(exc_out))
+            # Prism review A1：异常流携带 overflow 信号（provider 侧错误，
+            # stderr/非 JSON）→ 弃用 session，否则 infra 重派会反复续传同
+            # 一个将溢出的会话直至派发上限。
+            if self._session_reuse_enabled() and self._overflow_text(
+                exc_out, exc_err, self._has_json_events(exc_out)
+            ):
+                self._clear_session(name)
             raise
         # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写）。
         self._record_session(name, self._extract_session_id(proc.stdout or ""))

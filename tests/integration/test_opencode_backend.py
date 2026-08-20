@@ -83,6 +83,27 @@ if behavior == "session_stateful":
     sys.stdout.write(json.dumps({"type": "step_start", "sessionID": sid}) + "\\n")
     sys.stdout.write(json.dumps({"type": "step_finish", "sessionID": sid}) + "\\n")
     sys.exit(0)
+if behavior == "session_prose":
+    # Prism review B1 counter-example: a SUCCESSFUL JSON event stream whose
+    # agent text mentions the trigger phrases ("session not found", "context
+    # window") — content, never a signal. Health checks must not fire.
+    marker = os.environ.get("FAKE_OPENCODE_SESSION_MARKER")
+    if marker:
+        with open(marker, "a") as fh:
+            fh.write(json.dumps(sys.argv[1:]) + "\\n")
+    sid = os.environ.get("FAKE_OPENCODE_SESSION_ID", "ses_fake_prose_0001")
+    sys.stdout.write(json.dumps({"type": "step_start", "sessionID": sid}) + "\\n")
+    sys.stdout.write(json.dumps({
+        "type": "text",
+        "part": {
+            "type": "text",
+            "sessionID": sid,
+            "text": "Reviewing the session-reuse feature: the 'session not found' "
+                    "fallback and the context window overflow heuristic are both "
+                    "discussed in this very sentence.",
+        },
+    }) + "\\n")
+    sys.exit(0)
 if behavior in ("edit_target", "edit_extra") and target:
     open(target, "a").write("\\nagent edit\\n")
 if behavior == "edit_extra" and extra:

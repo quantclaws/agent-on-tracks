@@ -45,8 +45,8 @@ def _session_args(argv):
     return argv[argv.index("--session") + 1] if "--session" in argv else None
 
 
-def _dispatch(backend, marker):
-    os.environ["FAKE_OPENCODE_BEHAVIOR"] = "session_stateful"
+def _dispatch(backend, marker, behavior="session_stateful"):
+    os.environ["FAKE_OPENCODE_BEHAVIOR"] = behavior
     os.environ["FAKE_OPENCODE_SESSION_MARKER"] = str(marker)
     try:
         return backend.act("scribe", "TRIAGE", "story.md", None)
@@ -119,3 +119,33 @@ def test_run_id_none_keeps_legacy_dispatch(
     invocations = _invocations(marker)
     assert all(_session_args(argv) is None for argv in invocations)
     assert not (host_repo / ".tracks" / "runtime" / "sessions").exists()
+
+
+def test_prose_with_trigger_phrases_is_content_not_signal(
+    fake_opencode, host_repo, monkeypatch, marker
+):
+    """Prism review B1 反例：成功 JSON 流的 agent 正文含 "session not
+    found"/"context window"——不触发清 session、不触发重派。"""
+    monkeypatch.delenv("FAKE_OPENCODE_SESSION_DROP", raising=False)
+    b = _backend(host_repo)
+    _dispatch(b, marker, behavior="session_prose")
+    _dispatch(b, marker, behavior="session_prose")
+    invocations = _invocations(marker)
+    # 两次派发各一次调用：无健康检查重派
+    assert len(invocations) == 2
+    # session 正常记录并续传（未被误清）
+    assert _session_args(invocations[0]) is None
+    assert _session_args(invocations[1]) == "ses_fake_prose_0001"
+
+
+def test_run_id_none_with_trigger_prose_dispatches_exactly_once(
+    fake_opencode, host_repo, monkeypatch, marker
+):
+    """B1 不变量反例：run_id=None + 正文含触发短语 → 恰好一次派发
+    （旧版单次派发不变量，健康检查完全跳过）。"""
+    monkeypatch.delenv("FAKE_OPENCODE_SESSION_DROP", raising=False)
+    b = OpencodeBackend(host_repo, "v0.2")  # 无 run_id
+    _dispatch(b, marker, behavior="session_prose")
+    invocations = _invocations(marker)
+    assert len(invocations) == 1
+    assert _session_args(invocations[0]) is None

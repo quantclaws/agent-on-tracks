@@ -44,24 +44,38 @@ def test_extract_session_id_absent_returns_none():
     assert OpencodeBackend._extract_session_id("not json at all") is None
 
 
-# -- _session_miss / _context_overflow ------------------------------------------
+# -- _miss_line / _overflow_text（Prism review B1：内容不开火） -------------------
 
 
-def test_session_miss_detection():
-    assert OpencodeBackend._session_miss("Error: Session not found", "") is True
-    assert OpencodeBackend._session_miss("", "error: session NOT FOUND\n") is True
-    assert OpencodeBackend._session_miss('{"type": "step_start"}', "") is False
+def test_miss_line_exact_signature():
+    assert OpencodeBackend._miss_line("Error: Session not found") is True
+    assert OpencodeBackend._miss_line("error: session NOT FOUND\r\n") is True
+    # 行级精确：agent 正文提及（评审/文档讨论）不触发
+    assert OpencodeBackend._miss_line("we discussed 'session not found' cases") is False
+    assert OpencodeBackend._miss_line("Error: Session not found: extra") is False
+    assert OpencodeBackend._miss_line("") is False
 
 
-def test_context_overflow_detection():
+def test_overflow_text_stderr_always_scanned():
     for text in (
         "maximum context length exceeded",
         "prompt is too long",
         "context window full",
         "input too long for model",
     ):
-        assert OpencodeBackend._context_overflow("", text) is True, text
-    assert OpencodeBackend._context_overflow("", "provider 429 rate limit") is False
+        assert OpencodeBackend._overflow_text("", text, json_stream=True) is True, text
+    assert OpencodeBackend._overflow_text("", "provider 429 rate limit", True) is False
+
+
+def test_overflow_text_ignores_agent_prose_in_json_stream():
+    """B1 反例：成功 JSON 流的正文（含 "context window"）不是信号。"""
+    prose = '{"type":"text","part":{"text":"the context window is 128k"}}'
+    assert OpencodeBackend._overflow_text(prose, "", json_stream=True) is False
+
+
+def test_overflow_text_scans_stdout_when_not_json():
+    """非 JSON stdout（错误输出形态）参与扫描。"""
+    assert OpencodeBackend._overflow_text("Error: prompt is too long", "", False) is True
 
 
 # -- 持久化 roundtrip -------------------------------------------------------------
