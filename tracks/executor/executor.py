@@ -62,6 +62,7 @@ from tracks.executor.result_checkpoint import (
 from tracks.executor.validate import (
     parse_test_tasks,
     required_ac_ids,
+    resolve_inherited_baseline_docs,
     validate_document,
 )
 from tracks.executor.worktree import (
@@ -687,8 +688,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         assignment = dict(params.get("assignment") or {})
         if not assignment.get("test_tasks"):
             vdir = self._vdir()
+            # IF-HOTFIX-010: hotfix version dirs carry no acceptance.md
+            # (FR-0241-02); resolve the inherited baseline doc read-only.
+            acc_path, _ = resolve_inherited_baseline_docs(vdir / "test-plan.md")
             assignment["test_tasks"] = parse_test_tasks(
-                vdir / "acceptance.md", vdir / "test-plan.md"
+                acc_path, vdir / "test-plan.md"
             )
         if not assignment.get("commands"):
             guard = [".venv/bin/ruff check"]
