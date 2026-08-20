@@ -2635,7 +2635,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 capture_output=True,
                 text=True,
             )
-            results.append((name, proc.returncode, proc.stdout, proc.stderr))
+            rc = proc.returncode
+            # M-TEST collection: pytest exit_code=5 ("no tests collected")
+            # on the e2e section is not a collection failure — a hotfix run
+            # with an integration-only delta has no e2e tests. Normalize to
+            # 0 so _do_collect_tests does not hard-fail an empty e2e suite
+            # (PRISM-V06-R7-01, T-004). Only the collect field is relaxed;
+            # the run field still surfaces real e2e failures.
+            if (
+                field == "collect"
+                and name == "e2e"
+                and rc == 5
+            ):
+                rc = 0
+            results.append((name, rc, proc.stdout, proc.stderr))
         return results, None
 
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
