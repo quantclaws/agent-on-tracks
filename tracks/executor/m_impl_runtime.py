@@ -272,6 +272,24 @@ def _combined_provenance(task) -> list[str]:
     return list(dict.fromkeys((*task.ac_refs, *task.fr_refs)))
 
 
+# ARCH-006 §3.2 P-3: dev-scenario hotfix runs reconcile against the active
+# release branch (executor/hotfix.py resolves entry bases from the same
+# prefix; the BASELINE digest input reuses it, interfaces §1g).
+_RELEASE_BRANCH_PREFIX = "releases/"
+
+
+def _scenario_bound_digest(digest: str, scenario_branch_head: str | None) -> str:
+    """Fold the scenario B active release branch HEAD into the M-IMPL baseline
+    digest (interfaces §1g, IF-HOTFIX-008). Runs without a scenario input keep
+    the canonical digest byte-identical: post-release hotfixes sit on base=main
+    (independent of the active run) and canonical feature runs have no
+    active-branch coupling, so pre-v0.6 replays never change identity."""
+    if not scenario_branch_head:
+        return digest
+    joined = f"digest:{digest}\nscenario_branch_head:{scenario_branch_head}"
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+
 class MImplRuntimeMixin:
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
@@ -686,9 +704,47 @@ class MImplRuntimeMixin:
                     checkpoint = sha.strip()
         return checkpoint
 
+    def _freeze_scenario_head(self, state) -> str | None:
+        """Scenario B audit input (interfaces §1a/§1g, AC-FR0245-02): the
+        current HEAD of the active release branch a dev-scenario hotfix run
+        must reconcile against before merge. The branch identity comes from
+        the run's own entry ``branch.created`` base — Runtime is the only
+        branch authority (IF-HOTFIX-005), so no naming is re-derived here.
+        post-release hotfixes and canonical runs return None (no input)."""
+        if state.hotfix_issue is None or state.hotfix_scenario != "dev":
+            return None
+        base = ""
+        for ev in self.store.events(self.run_id):
+            if ev.type == "branch.created":
+                base = str(ev.payload.get("base") or "")
+                break
+        if not base.startswith(_RELEASE_BRANCH_PREFIX):
+            return None
+        head = git(self.repo, "rev-parse", base, check=False).stdout.strip()
+        return head or None
+
+    def _last_baseline_digest(self) -> str:
+        """Digest carried by the latest ``baseline.frozen`` event of this run
+        (scenario B reconcile reference; '' before the first freeze)."""
+        for ev in reversed(list(self.store.events(self.run_id))):
+            if ev.type == "baseline.frozen":
+                return str(ev.payload.get("digest") or "")
+        return ""
+
     def _do_freeze_baseline(self, cmd, state, task_id, reconcile):
         if reconcile and state.baseline_frozen:
             return
+        self._emit(
+            "baseline.frozen",
+            self._baseline_frozen_payload(state),
+            command_id=cmd.command_id,
+        )
+
+    def _baseline_frozen_payload(self, state) -> dict:
+        """Assemble the ``baseline.frozen`` payload (flow.md §10 BASELINE):
+        the canonical identity inputs plus the scenario B reconcile inputs
+        (interfaces §1a/§1g, AC-FR0245-02). Digest binding order is stable:
+        canonical inputs first, then the active release branch head fold."""
         vdir = self._vdir()
         frozen = self._frozen_test_paths()
         approval_digest = self._approval_digest()
@@ -724,20 +780,29 @@ class MImplRuntimeMixin:
                 design_checkpoint=design_checkpoint,
             )
         )
-        self._emit(
-            "baseline.frozen",
-            {
-                "status": "current" if not missing else "stale",
-                "digest": digest,
-                "summary": m_impl_baseline_summary(vdir),
-                "frozen_test_paths": frozen,
-                "missing": missing,
-                "branch": branch,
-                "tip": tip,
-                "design_checkpoint": design_checkpoint,
-            },
-            command_id=cmd.command_id,
-        )
+        # Scenario B (interfaces §1g): bind the dev-scenario active release
+        # branch HEAD into the digest. An advanced active branch re-freezes to
+        # a mismatched digest -> stale -> existing NEEDS_ATTENTION route
+        # (flow.md §16.3.3 reconcile path; merge itself is FR-0246).
+        scenario_head = self._freeze_scenario_head(state)
+        if scenario_head is None and state.hotfix_scenario == "dev":
+            # Declared dev scenario with an unresolvable active branch: fail
+            # closed on the reconcile input rather than freeze unauditable.
+            missing.append("scenario_branch_head")
+        digest = _scenario_bound_digest(digest, scenario_head)
+        prior_digest = self._last_baseline_digest()
+        advanced = bool(prior_digest) and digest != prior_digest
+        return {
+            "status": "current" if not missing and not advanced else "stale",
+            "digest": digest,
+            "summary": m_impl_baseline_summary(vdir),
+            "frozen_test_paths": frozen,
+            "missing": missing,
+            "scenario_branch_head": scenario_head,
+            "branch": branch,
+            "tip": tip,
+            "design_checkpoint": design_checkpoint,
+        }
 
     def _do_commit_taskgraph(self, cmd, state, task_id, reconcile):
         if reconcile and state.taskgraph_committed:
@@ -1709,11 +1774,30 @@ class MImplRuntimeMixin:
         )
         self._emit(
             "red.checkpointed",
-            {"ref": r.ref, "r_sha": r.sha, "task_id": task_id, "attempt": attempt},
+            self._red_checkpoint_payload(task_id, attempt, r),
             command_id=cmd.command_id,
             task_id=task_id,
         )
         self._rebuild_task_log_projection()
+
+    def _red_checkpoint_payload(self, task_id: str, attempt: int, r) -> dict:
+        """``red.checkpointed`` payload (interfaces §4a, AC-FR0245-01): the
+        RGR trailer block rides the R checkpoint alongside the green commit
+        trailers, so the hotfix issue provenance is auditable on fix/{issue}.
+        The checkpoint itself stays valid when the task identity cannot be
+        resolved; only the trailer block is then omitted (audit enrichment,
+        never a new fail path for R creation)."""
+        payload = {"ref": r.ref, "r_sha": r.sha, "task_id": task_id, "attempt": attempt}
+        task = self._lookup_task(task_id)
+        if task is not None and task.issue_number:
+            payload["trailers"] = {
+                "Tracks-Task": task_id,
+                "Tracks-Attempt": str(attempt),
+                "Tracks-R": r.sha,
+                "Tracks-Issue": str(task.issue_number),
+                "Tracks-AC": ",".join(_combined_provenance(task)),
+            }
+        return payload
 
     def _validated_diff(self, phase: str, state: State) -> tuple[str | None, str | None]:
         reason = self._devon_evidence_error(phase, state)
