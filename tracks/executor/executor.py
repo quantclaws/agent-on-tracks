@@ -23,6 +23,11 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
+from tracks.executor.code_stamp import (
+    DRIFT_MESSAGE,
+    RuntimeCodeDriftError,
+    code_stamp,
+)
 from tracks.executor.doc_comment import (
     ROLE_ALLOWED_DOCS,
     DocCommentOrigin,
@@ -404,6 +409,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # 不发 oob.accepted；只有本进程存活期间（派发窗口内/外）观察到
         # 的前移才入账。
         self._oob_head = oob.head_sha(Path(self.repo))
+        # B43（#45）：进程代码版本戳。宿主项目（无 tracks/ 包）为 None，
+        # 漂移检查跳过。
+        self._code_stamp = code_stamp(Path(self.repo))
+
+    def _fail_fast_on_code_drift(self) -> None:
+        """B43（#45）：派发前复核 tracks/** 指纹；漂移即 fail-fast。
+
+        r1 实证：运行中进程外的代码修改不热加载，旧逻辑继续派发导致
+        误判/escalation。这里宁可停车提示重启，绝不带旧逻辑继续。
+        """
+        if self._code_stamp is None:
+            return
+        if code_stamp(Path(self.repo)) != self._code_stamp:
+            print(DRIFT_MESSAGE, file=sys.stderr, flush=True)
+            raise RuntimeCodeDriftError(DRIFT_MESSAGE)
 
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
@@ -567,6 +587,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
         while True:
+            # B43（#45）：派发前 fail-fast——进程存活期间 tracks/** 漂移
+            # （含 OOB 修复提交）即停车提示重启，绝不带旧逻辑继续。
+            self._fail_fast_on_code_drift()
             # D-36 浅版（#43）：WAL 窗口之外观察操作者 OOB 提交。任何
             # command.issued 与其 outcome 之间的事件都会清 machine 的
             # pending（B40 语境：pending=None + doc_dispatched=True 会
