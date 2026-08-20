@@ -138,6 +138,12 @@ _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict", "prism": "prism.
 # read back by the executor to enforce the anti-self-report triple.
 _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 
+# D-35 / PRISM-D35-R1-ADV1 review fields threaded into the M-DESIGN
+# prism.verdict publish (kept in parity with the ResultCheckpointMixin
+# publish branches; the hotfix override below prepends anchor_verdict,
+# FR-0243 / IF-HOTFIX-009, interfaces §1a).
+_DESIGN_PRISM_THREAD_KEYS = ("review_summary", "findings", "review_ref", "discussion_refs")
+
 
 def _hotfix_approved_versions(store) -> set[str]:
     """The set of versions with an ``approval.recorded`` event across all runs
@@ -1973,6 +1979,47 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self._emit(
                 "review.round_started",
                 {"stage": p.get("stage"), "round": state.review_round + 1},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _publish_prism_verdict(
+        self, verdict, commit_sha, created_commit, result_id, state, cmd, task_id
+    ):
+        """Hotfix extension of the ResultCheckpoint publish (FR-0243 /
+        IF-HOTFIX-009, interfaces §1a): every M-DESIGN prism.verdict event
+        carries the anchor verdict — 缺省 "upheld", preserved "overturned" —
+        so Prism's hotfix-anchor review is observable (AC-FR0243-02) and the
+        kernel routes an overturned anchor back to M-HOTFIX-TRIAGE/SAGE_TRIAGE
+        without consuming the M-DESIGN redispatch budget (AC-FR0243-03). The
+        mixin branch threads only the D-35 review fields, and its checkpoint
+        domain payload skips _apply_prism_review_fields on pass
+        (PRISM-V06-R1-T003-01), so a pass checkpoint has no explicit
+        anchor_verdict key and defaults to upheld here. Non-M-DESIGN publish
+        keeps the mixin semantics via delegation."""
+        if state.stage != "M-DESIGN":
+            ResultCheckpointMixin._publish_prism_verdict(
+                self, verdict, commit_sha, created_commit, result_id, state, cmd, task_id
+            )
+            return
+        domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
+        payload = {
+            "verdict": verdict,
+            "diff_ref": commit_sha if created_commit and commit_sha else None,
+            "result_id": result_id,
+            "anchor_verdict": domain_payload.get("anchor_verdict") or "upheld",
+        }
+        for key in _DESIGN_PRISM_THREAD_KEYS:
+            val = domain_payload.get(key)
+            if val:
+                payload[key] = val
+        self._emit("prism.verdict", payload, command_id=cmd.command_id, task_id=task_id)
+        if verdict != "pass":
+            # flow.md §8.2: a revise verdict opens the next review round.
+            round_payload = {"stage": "M-DESIGN", "round": state.review_round + 1}
+            self._emit(
+                "review.round_started",
+                round_payload,
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
