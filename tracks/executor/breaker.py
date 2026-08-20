@@ -60,11 +60,20 @@ class RunBreaker:
 
     # -- 增量：executor._emit 的统一漏斗 ------------------------------------
 
+    def _reset(self) -> None:
+        """人工重置点后的窗口清零（Prism batch2 advisory 2：显式重置，
+        不重调 __init__——后者日后加必填参/副作用会静默破裂）。"""
+        self.rollbacks = 0
+        self.dispatches = 0
+        self.task_failures = {}
+        self.verdict_failed = 0
+        self.failure_classes = Counter()
+
     def note(self, type: str, payload: dict) -> None:
         if type in _RESET_EVENTS:
             # 人工重置点：计数窗口清零（进程内在途不会出现——retry 时
             # run 已停；这是防御性处理，保证语义完整）。
-            self.__init__()
+            self._reset()
             return
         if type == "stage.rolled_back":
             self.rollbacks += 1

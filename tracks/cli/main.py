@@ -22,7 +22,7 @@ from tracks.checks.trace import check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
 from tracks.executor import Executor, git
-from tracks.executor.code_stamp import DRIFT_MESSAGE, RuntimeCodeDriftError
+from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import (
     _resolve_run_version,
     hotfix_entry_output,
@@ -362,8 +362,10 @@ def cmd_run(repo: Path, *args: str) -> int:
                 max_dispatches=max_dispatches,
             ).run_loop()
         except RuntimeCodeDriftError:
-            # B43（#45）：stderr 已由 executor 打印完整提示。
-            return _err(DRIFT_MESSAGE)
+            # B43（#45）：executor 已把完整提示打到 stderr（Prism batch2
+            # advisory 1：不重复打印），这里只以非零退出码终止。
+            print("run aborted: tracks/** code drift (see message above)", file=sys.stderr)
+            return 1
     print(f"run {run_id}: {_format_state(state)}")
     return 0
 
