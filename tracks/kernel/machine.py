@@ -1031,6 +1031,19 @@ def _on_run_completed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.terminal_state = p.get("terminal_state")
 
 
+def _on_run_breaker_tripped(s: State, p: dict, ev: EventEnvelope) -> None:
+    """B44（#46）：run 级熔断——停车等待人工，损耗报告走 last_failure
+    （FR-11 通道：`trac status` 显示 reason；`trac retry` 清 gate 且
+    executor 计数窗口随之重置）。不消耗 attempt、不改 substate。"""
+    s.status = "awaiting_human"
+    s.awaiting = "escalation"
+    s.last_failure = {
+        "check": "run_breaker",
+        "reason": p.get("condition"),
+        "evidence": p.get("report"),
+    }
+
+
 def _on_branch_created(s: State, p: dict, ev: EventEnvelope) -> None:
     s.branch_created = True
 
@@ -1257,6 +1270,7 @@ _APPLY = {
     "review.round_started": _on_review_round_started,
     "backlog.recorded": _on_backlog_recorded,
     "run.completed": _on_run_completed,
+    "run.breaker_tripped": _on_run_breaker_tripped,
     "branch.created": _on_branch_created,
     "branch.deleted": _on_branch_deleted,
     # M-REQ-APPROVAL (SM-05). issue.created has no reducer: per-item progress

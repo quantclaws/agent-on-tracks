@@ -23,6 +23,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
+from tracks.executor.breaker import RunBreaker
 from tracks.executor.code_stamp import (
     DRIFT_MESSAGE,
     RuntimeCodeDriftError,
@@ -412,6 +413,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # B43（#45）：进程代码版本戳。宿主项目（无 tracks/ 包）为 None，
         # 漂移检查跳过。
         self._code_stamp = code_stamp(Path(self.repo))
+        # B44（#46）：run 级熔断器计数（窗口：上次 human.retry/recover 之后；
+        # 进程重启后从事件流重播种子，计数不丢）。
+        self._breaker = RunBreaker.from_events(store.events(run_id))
 
     def _fail_fast_on_code_drift(self) -> None:
         """B43（#45）：派发前复核 tracks/** 指纹；漂移即 fail-fast。
@@ -428,9 +432,25 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None
     ):
-        return self.store.append(
+        ev = self.store.append(
             self.run_id, self.version, type, payload, command_id=command_id, task_id=task_id
         )
+        # B44（#46）：统一漏斗——熔断计数与本进程内发出的事件保持同步。
+        self._breaker.note(type, payload)
+        return ev
+
+    def _check_breaker(self, state: State) -> State | None:
+        """B44（#46）：run 级熔断。仅在 active 且 WAL 窗口之外判定；越限
+        即发 run.breaker_tripped（machine 置 awaiting_human/escalation，
+        损耗报告走 last_failure），本次 run_loop 停车返回。"""
+        if state.status != "active":
+            return None
+        trip = self._breaker.evaluate()
+        if trip is None:
+            return None
+        self._emit("run.breaker_tripped", trip)
+        print(f"  [{state.stage}] {trip['report']}", file=sys.stderr, flush=True)
+        return self.store.state(self.run_id)
 
     def _observe_oob(self) -> None:
         """D-36 浅版（#43）：观察派发窗口外的操作者提交并入账。
@@ -596,6 +616,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # 挂死 run），因此观察点必须在 issue() 之外。
             self._observe_oob()
             state = self.store.state(self.run_id)
+            # B44（#46）：派发前熔断判定（active 状态；WAL 窗口之外）。
+            tripped = self._check_breaker(state)
+            if tripped is not None:
+                return tripped
             # SM-02.9 (AC-FR0235-03): a paused doc-gap whose threads are all
             # resolved resumes with a NEW dispatch/attempt before decide() —
             # doc_dispatched stays True at the pause so decide() would halt.

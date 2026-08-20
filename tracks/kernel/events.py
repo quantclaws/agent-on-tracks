@@ -87,6 +87,11 @@ EVENT_TYPES = (
     # over-reach, worktree replay never clobbers them). Emitted by the
     # executor's run-loop observation; machine replay is a no-op.
     "oob.accepted",
+    # B44 (#46): run-level circuit breaker — rollbacks / per-task failures /
+    # cumulative dispatches past their thresholds park the run at
+    # awaiting_human/escalation with a loss report instead of grinding all
+    # night. human.retry resets the counting window.
+    "run.breaker_tripped",
 )
 
 # interfaces §4 — v0.1 closed command set.
