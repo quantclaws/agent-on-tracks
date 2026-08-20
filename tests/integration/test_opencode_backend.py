@@ -66,6 +66,23 @@ if behavior == "jsonl_with_log":
     sys.stdout.write(json.dumps({"type": "step_start"}) + "\\n")
     sys.stdout.write(json.dumps({"type": "step_finish"}) + "\\n")
     sys.exit(0)
+if behavior == "session_stateful":
+    # D-39 (#44) session-reuse harness: appends this invocation's argv to the
+    # marker file (assert whether --session was passed); a --session request
+    # under FAKE_OPENCODE_SESSION_DROP mimics a stale session id ("Error:
+    # Session not found", exit 0 — exactly what real opencode prints);
+    # otherwise emits a JSON event stream carrying a stable sessionID.
+    marker = os.environ.get("FAKE_OPENCODE_SESSION_MARKER")
+    if marker:
+        with open(marker, "a") as fh:
+            fh.write(json.dumps(sys.argv[1:]) + "\\n")
+    if "--session" in sys.argv and os.environ.get("FAKE_OPENCODE_SESSION_DROP"):
+        sys.stdout.write("Error: Session not found\\n")
+        sys.exit(0)
+    sid = os.environ.get("FAKE_OPENCODE_SESSION_ID", "ses_fake_stable_0001")
+    sys.stdout.write(json.dumps({"type": "step_start", "sessionID": sid}) + "\\n")
+    sys.stdout.write(json.dumps({"type": "step_finish", "sessionID": sid}) + "\\n")
+    sys.exit(0)
 if behavior in ("edit_target", "edit_extra") and target:
     open(target, "a").write("\\nagent edit\\n")
 if behavior == "edit_extra" and extra:

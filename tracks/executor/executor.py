@@ -393,7 +393,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self.repo = repo
         self.run_id = run_id
         self.version = _resolve_run_version(store.state(run_id))
-        self.backend = select_backend(repo, self.version)
+        # run_id 传入 opencode backend 启用 D-39 用户简化版（#44）session
+        # 复用（fake backend 忽略该参数）。
+        self.backend = select_backend(repo, self.version, run_id=run_id)
         self.assignment_overlay = deepcopy(assignment_overlay)
         self.max_dispatches = max_dispatches
         self._issue_backend = None  # lazy: created on first create_issues

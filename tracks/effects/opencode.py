@@ -100,7 +100,14 @@ class OpencodeError(Exception):
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
 
-    def __init__(self, repo: Path, version: str, model: str | None = None, debug: bool = False):
+    def __init__(
+        self,
+        repo: Path,
+        version: str,
+        model: str | None = None,
+        debug: bool = False,
+        run_id: str | None = None,
+    ):
         self.repo = Path(repo)
         self.version = version
         # Model resolution is two-layer per dispatch (spec §3.1, ARCH §4a):
@@ -109,7 +116,153 @@ class OpencodeBackend:
         #     default (agent/project config, never hardcoded by tracks).
         self.model = model
         self.debug = debug
+        # D-39 用户简化版（#44）：session 复用。run_id 非空时，每个 agent
+        # 在该 run 内有且只有一个 opencode session——所有派发（含 infra
+        # 重派与 attempt 重试）一律 `--session <id>` 续传，id 持久化在
+        # .tracks/runtime/sessions/<run_id>.json（跨 trac run 进程重启存
+        # 活）。run_id 为 None（测试/一次性调用）时行为与旧版逐次全新
+        # 派发完全一致。
+        self.run_id = run_id
+        self._sessions: dict[str, str] | None = None  # agent name -> session id（惰性加载）
         self._canonical = Path(__file__).resolve().parent.parent / "agents"
+
+    # -- D-39 用户简化版（#44）：session 复用 --------------------------------
+
+    def _session_reuse_enabled(self) -> bool:
+        """run_id 已提供且未显式关闭（TRAC_AGENT_SESSION_REUSE=0 为操作者
+        逃生开关——session 复用若在 live 通道表现异常，可零代码回退）。"""
+        return self.run_id is not None and (
+            os.environ.get("TRAC_AGENT_SESSION_REUSE", "1").strip() != "0"
+        )
+
+    def _sessions_path(self) -> Path:
+        """每个 run 一个 session 注册表：<tracks_home>/runtime/sessions/
+        <run_id>.json。跨 trac run 进程重启存活（文件是共享载体）。"""
+        from tracks import paths as tracks_paths
+
+        home = tracks_paths.tracks_home(self.repo)
+        d = home / "runtime" / "sessions"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / f"{self.run_id}.json"
+
+    def _load_sessions(self) -> dict[str, str]:
+        if self._sessions is not None:
+            return self._sessions
+        data: dict[str, str] = {}
+        if self.run_id is not None:
+            path = self._sessions_path()
+            if path.exists():
+                try:
+                    loaded = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        data = {
+                            str(k): str(v) for k, v in loaded.items() if v
+                        }
+                except (OSError, json.JSONDecodeError):
+                    data = {}  # 损坏文件：弃用旧 session，逐次全新（fail-open）
+        self._sessions = data
+        return data
+
+    def _save_sessions(self) -> None:
+        if self.run_id is None or self._sessions is None:
+            return
+        path = self._sessions_path()
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(self._sessions, ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        tmp.replace(path)  # 原子替换：崩溃不产生半写文件
+
+    def _session_for(self, name: str) -> str | None:
+        if not self._session_reuse_enabled():
+            return None
+        return self._load_sessions().get(name)
+
+    def _record_session(self, name: str, session_id: str | None) -> None:
+        if not self._session_reuse_enabled() or not session_id:
+            return
+        sessions = self._load_sessions()
+        if sessions.get(name) != session_id:
+            sessions[name] = session_id
+            self._save_sessions()
+
+    def _clear_session(self, name: str) -> None:
+        """session 失效（not found / context overflow）时弃用：下一次派发
+        全新开始，不携带旧上下文。"""
+        if not self._session_reuse_enabled():
+            return
+        sessions = self._load_sessions()
+        if name in sessions:
+            del sessions[name]
+            self._save_sessions()
+
+    def _dispatch_with_session_health(self, name: str, prompt: str, root: Path):
+        """``_run`` + D-39 用户简化版（#44）session 健康检查（act() 的
+        派发入口，在 ``_check_json`` 之前）：
+
+        ① session miss——``--session`` 指向的会话不存在（存储被清理/跨
+           机器）。降级：弃用旧 id，同一 prompt 全新派发一次。
+        ② context overflow——session 累积上下文超限。弃用 session（下次
+           派发全新开始）；错误本身仍走 ``_check_json`` →
+           provider_unavailable → executor infra 重派（B18：不烧 agent
+           attempt）。
+        """
+        proc = self._run(name, prompt, cwd=root)
+        stdout, stderr = proc.stdout or "", proc.stderr or ""
+        if self._session_miss(stdout, stderr):
+            self._clear_session(name)
+            proc = self._run(name, prompt, cwd=root)
+        elif self._context_overflow(stdout, stderr):
+            self._clear_session(name)
+        return proc
+
+    @staticmethod
+    def _extract_session_id(stdout: str) -> str | None:
+        """从 opencode --format json 事件流提取 sessionID（事件顶层或
+        part 内；同一派发的全部事件共享一个 id，取首个非空值）。"""
+        for line in (stdout or "").splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            sid = event.get("sessionID")
+            if not sid and isinstance(event.get("part"), dict):
+                sid = event["part"].get("sessionID")
+            if sid:
+                return str(sid)
+        return None
+
+    @staticmethod
+    def _session_miss(stdout: str, stderr: str) -> bool:
+        """`--session <id>` 指向的 session 已不存在（存储被清理/跨机器）。
+        opencode 对此打印 `Error: Session not found`（实测 exit 0，非 JSON
+        流）。检测放在 _check_json 之前，降级为全新派发。"""
+        return "session not found" in (stdout or "").lower() or "session not found" in (
+            stderr or ""
+        ).lower()
+
+    @staticmethod
+    def _context_overflow(stdout: str, stderr: str) -> bool:
+        """session 累积上下文超限的启发式信号（provider 侧文案）。命中则
+        弃用该 session——下一次 infra 重派自然全新开始（B18 语境：这类
+        失败属 infra，不烧 agent attempt）。"""
+        text = f"{stdout or ''}\n{stderr or ''}".lower()
+        return any(
+            k in text
+            for k in (
+                "context length",
+                "context window",
+                "prompt is too long",
+                "maximum context",
+                "input too long",
+            )
+        )
 
     def _dispatch_doc_paths(
         self,
@@ -200,7 +353,7 @@ class OpencodeBackend:
             scaffold_baseline = (
                 auditor.file_level(baseline) if author and len(doc_paths) > 1 else None
             )
-            proc = self._run(name, prompt, cwd=root)
+            proc = self._dispatch_with_session_health(name, prompt, root)
             self._check_json(proc)
             if self._abnormal_step_finish(proc):
                 # B17/#20 narrow (live T-003 GREEN): an interrupted session
@@ -1397,11 +1550,22 @@ class OpencodeBackend:
                 log_fh.close()
             raise
 
-        return self._finalize_run(
-            cmd, proc, master_fd, log_fh, log_path, stderr_lines,
-            stdin_writer, stderr_reader, stdout_chunks, manifest_found,
-            stalled, timeout,
-        )
+        try:
+            proc = self._finalize_run(
+                cmd, proc, master_fd, log_fh, log_path, stderr_lines,
+                stdin_writer, stderr_reader, stdout_chunks, manifest_found,
+                stalled, timeout,
+            )
+        except OpencodeError as exc:
+            # D-39 轻版（#44）：infra 失败（timeout/provider）也记录 session
+            # ——下一次 infra 重派以 --session 续传（断点续跑而非冷启动）。
+            self._record_session(
+                name, self._extract_session_id(getattr(exc, "stdout", "") or "")
+            )
+            raise
+        # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写）。
+        self._record_session(name, self._extract_session_id(proc.stdout or ""))
+        return proc
 
     def _finalize_run(
         self,
@@ -1493,6 +1657,11 @@ class OpencodeBackend:
     def _build_cmd(self, name: str, prompt: str) -> list[str]:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
                "--dir", str(self.repo), "--auto", prompt]
+        # D-39 用户简化版（#44）：该 agent 在本 run 内已有 session 则续传
+        # （上下文跨派发/重试接续，失败重派从"全量重建"坍缩为"增量指令"）。
+        session = self._session_for(name)
+        if session:
+            cmd.extend(["--session", session])
         model = self._resolve_model(name)
         if model:
             cmd.extend(["--model", model])

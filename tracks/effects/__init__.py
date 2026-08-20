@@ -30,8 +30,13 @@ from tracks.effects.fake import FakeBackend
 __all__ = ["AgentBackend", "FakeBackend", "select_backend"]
 
 
-def select_backend(repo: Path, version: str) -> AgentBackend:
-    """Pick the agent backend at the boundary (default opencode)."""
+def select_backend(repo: Path, version: str, run_id: str | None = None) -> AgentBackend:
+    """Pick the agent backend at the boundary (default opencode).
+
+    ``run_id``（opencode 路径）启用 D-39 用户简化版（#44）session 复用：
+    每个 agent 在该 run 内一个 opencode session，跨 trac run 进程重启
+    续存（.tracks/runtime/sessions/<run_id>.json）。None = 旧行为。
+    """
     if os.environ.get("TRAC_FAKE_SIMULATE"):
         return FakeBackend(repo, version)  # simulate forces fake (FR-020)
     kind = os.environ.get("TRAC_AGENT_BACKEND", "opencode").strip().lower()
@@ -42,5 +47,5 @@ def select_backend(repo: Path, version: str) -> AgentBackend:
 
         model = os.environ.get("TRAC_AGENT_MODEL", "").strip() or None
         debug = bool(os.environ.get("TRAC_DEBUG", "").strip())
-        return OpencodeBackend(repo, version, model=model, debug=debug)
+        return OpencodeBackend(repo, version, model=model, debug=debug, run_id=run_id)
     raise ValueError(f"unknown TRAC_AGENT_BACKEND: {kind!r} (want fake|opencode)")
