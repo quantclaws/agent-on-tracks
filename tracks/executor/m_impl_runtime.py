@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from tracks.baseline import (
     m_impl_baseline_summary,
 )
 from tracks.effects.backend import valid_test_tasks
+from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
 from tracks.executor.helpers import _commit_if_staged, _short_detail, git
 from tracks.executor.quality_gate import (
     execute_gate_command,
@@ -755,6 +757,19 @@ class MImplRuntimeMixin:
         if errors:
             self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(errors))
             return
+        # B33（#34）：规划期锚点实测——任务型裁定机械化（r1 回滚 #2 的
+        # 拦截：锚已绿的任务不得排成标准 RGR/preset-anchor）。
+        probe_report = self._probe_anchor_types(tasks)
+        if probe_report.errors:
+            self._emit_taskgraph_failure(
+                cmd,
+                state,
+                "; ".join(probe_report.errors),
+                "\n".join(probe_report.errors + probe_report.advisory()),
+            )
+            return
+        for line in probe_report.advisory():
+            print(f"  [taskgraph] {line}", file=sys.stderr, flush=True)
         (vdir / "tasks.md").write_text(self._tasks_md(tasks), encoding="utf-8")
         self._emit(
             "taskgraph.committed",
@@ -766,10 +781,22 @@ class MImplRuntimeMixin:
                 "validate_status": "pass",
                 "digest": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
                 "tasks_md": "tasks.md",
+                # 机器证据：PRISM_PLAN 复核消费（§1.0.5 判据）。
+                "anchor_probe": probe_summary(probe_report),
             },
             command_id=cmd.command_id,
         )
         self._rebuild_task_log_projection()
+
+    def _probe_anchor_types(self, tasks):
+        """B33（#34）：load_contract 失败（宿主无合同）时跳过实测。"""
+        try:
+            contract = load_contract(self.repo)
+        except ContractError:
+            return ProbeReport(
+                skipped_reason="anchor probe skipped: no project contract"
+            )
+        return probe_task_anchors(Path(self.repo), tasks, contract)
 
     @staticmethod
     def _read_taskgraph(path: Path) -> tuple[str, str | None]:
