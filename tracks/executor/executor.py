@@ -2636,13 +2636,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 text=True,
             )
             rc = proc.returncode
-            # M-TEST: pytest exit_code=5 ("no tests collected/rained") on the
-            # e2e section is not a failure — a hotfix run with an
-            # integration-only delta has no e2e tests. Normalize to 0 for
-            # both collect and run so an empty e2e suite does not hard-fail
-            # M-TEST (PRISM-V06-R7-01/R8-01, T-004). Real e2e test failures
-            # return exit_code=1 and are still surfaced.
-            if name == "e2e" and rc == 5:
+            # M-TEST collection: pytest exit_code=5 ("no tests collected")
+            # on the e2e section is not a collection failure — a hotfix run
+            # with an integration-only delta has no e2e tests. Normalize to
+            # 0 for collect only so _do_collect_tests does not hard-fail.
+            # The run field keeps exit_code=5; _do_run_tests skips it so RED
+            # classification does not see unexpected_pass/unclassified
+            # (PRISM-V06-R7-01/R8-01/R9-01, T-004).
+            if field == "collect" and name == "e2e" and rc == 5:
                 rc = 0
             results.append((name, rc, proc.stdout, proc.stderr))
         return results, None
@@ -2724,6 +2725,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         findings: list[dict] = []
         all_legit = True
         for name, rc, stdout, stderr in results:
+            # Skip empty e2e sections (pytest exit_code=5 "no tests ran"):
+            # a hotfix run with an integration-only delta has no e2e tests;
+            # the section must not participate in RED classification (it is
+            # neither a legit failure nor an unexpected pass). Collect-only
+            # already normalized this to 0; run keeps 5 and is skipped here.
+            if name == "e2e" and rc == 5:
+                continue
             red_class = classify_red(name, rc, stdout, stderr)
             if red_class not in _LEGIT_RED:
                 all_legit = False
