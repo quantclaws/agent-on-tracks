@@ -165,7 +165,71 @@ def test_shared_validator_agrees_with_fake():
         assert valid_test_tasks(bad) is False
 
 
-# -- item 1: interfaces.md §5 IF Registry (template, extraction, hard-fail) ----
+# -- §2f (issue #33): inline-discussion blockquote lines are not plan content --
+
+
+def test_visible_plan_lines_excludes_discussion_blockquotes():
+    """§2f：blockquote（内联讨论线程）不是 plan 内容，不参与任何扫描。"""
+    from tracks.executor.test_tasks import _visible_plan_lines
+
+    text = (
+        "## 8. AC Coverage\n"
+        "\n"
+        "| AC id | layer | test | IF |\n"
+        "|---|---|---|---|\n"
+        "| AC-FR0010-01（一） | unit + integration | test_a | IF-MTEST-001 |\n"
+        "\n"
+        "> **Prism:** [PRISM-V06-R14-02][blocker] 讨论线程正文\n"
+        ">> **Shield:** 回复行，含 IF-FAKE-999 与 layer 词 integration\n"
+        "   > 缩进变体的 blockquote 行\n"
+        "\n"
+        "plain prose line\n"
+    )
+    joined = "\n".join(_visible_plan_lines(text))
+    # blockquote 行（含嵌套/缩进变体）不得进入可见行
+    assert "PRISM-V06-R14-02" not in joined
+    assert "IF-FAKE-999" not in joined
+    assert "缩进变体" not in joined
+    # §8 表格行与普通正文行保留
+    assert (
+        "| AC-FR0010-01（一） | unit + integration | test_a | IF-MTEST-001 |"
+        in joined
+    )
+    assert "plain prose line" in joined
+
+
+def test_visible_plan_lines_still_strips_fences_and_comments():
+    """既有行为不回归：HTML 注释与围栏代码块仍然剥离。"""
+    from tracks.executor.test_tasks import _visible_plan_lines
+
+    text = (
+        "<!-- hidden comment IF-FAKE-001 -->\n"
+        "```\n"
+        "fenced code with | fake | table |\n"
+        "```\n"
+        "kept line\n"
+    )
+    joined = "\n".join(_visible_plan_lines(text))
+    assert "IF-FAKE-001" not in joined
+    assert "fake" not in joined
+    assert "kept line" in joined
+
+
+def test_contract_ignores_blockquote_rows_in_coverage_scan():
+    """回归（r2 M-DESIGN EXIT 假失败）：§8 表格之后的讨论 blockquote 表格行
+    不得被当作 coverage 行——unknown AC / unregistered IF 只由真实表格行触发。"""
+    plan = PLAN_VALID + (
+        "\n"
+        "> **Prism:** [X][blocker] 讨论线程\n"
+        "> | AC-FR9999-01（幽灵） | integration | ghost | IF-FAKE-999 |\n"
+    )
+    issues = check_test_tasks(ACC_OK, plan, REGISTRY)
+    assert not any("AC-FR9999-01" in i for i in issues), issues
+    assert not any("IF-FAKE-999" in i for i in issues), issues
+    assert issues == []
+
+
+# -- template: interfaces.md §5 IF Registry (template, extraction, hard-fail) ----
 
 
 def test_template_interfaces_has_if_registry_section():

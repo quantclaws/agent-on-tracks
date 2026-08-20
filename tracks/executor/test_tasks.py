@@ -504,15 +504,25 @@ def parse_hotfix_unit_rows(plan_text: str) -> list[dict]:
 
 
 def _visible_plan_lines(plan_text: str) -> list[str]:
-    """Strip HTML comments and fenced code from plan text."""
+    """Strip HTML comments, fenced code, and inline-discussion blockquote lines from plan text.
+
+    R3 §2f (IF-VALIDATE-001 v0.6 extension): blockquote lines (starting with ``>``)
+    are inline-discussion threads, not plan content — they do not participate in
+    layer/IF- attribution scanning.  §8 table rows remain the sole machine-readable
+    coverage source (fail-closed preserved). Ops-side transitional application per
+    §3.9 path (b); formal archival is T-012 (#33) via standard RGR.
+    """
     visible: list[str] = []
     fence = False
     for line in _strip_comments(plan_text).splitlines():
         if line.lstrip().startswith("```"):
             fence = not fence
             continue
-        if not fence:
-            visible.append(line)
+        if fence:
+            continue
+        if line.lstrip().startswith(">"):
+            continue
+        visible.append(line)
     return visible
 
 
