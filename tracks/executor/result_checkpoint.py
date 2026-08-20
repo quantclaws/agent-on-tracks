@@ -90,6 +90,17 @@ class ResultCheckpointMixin:
         domain_payload = {"verdict": verdict}
         if verdict != "pass":
             self._apply_prism_review_fields(domain_payload, verdict, result)
+        # B48 (issue #60 / PRISM-V06-R2-01): an anchor-overturned revise is
+        # carried entirely by the structured channel — the anchor_verdict
+        # routing field (interfaces §1a / IF-HOTFIX-009) routes M-DESIGN back
+        # to M-HOTFIX-TRIAGE/SAGE_TRIAGE in the kernel without any document
+        # diff. requires_diff must not hard-fail it at pipeline validation
+        # ("Reviewer no_diff is a real failure") or the verdict never
+        # publishes and the rollback never fires — mirror of the M-TEST
+        # structured_revise exemption (D-35 SC-D35 §2.3).
+        anchor_overturned = (
+            verdict != "pass" and result.get("anchor_verdict") == "overturned"
+        )
         return {
             "source": "prism",
             "stage": "M-DESIGN",
@@ -100,7 +111,7 @@ class ResultCheckpointMixin:
             "allowed_paths": docs,
             "base_sha": base_sha,
             "checks": ["template"],
-            "requires_diff": verdict != "pass",
+            "requires_diff": verdict != "pass" and not anchor_overturned,
             "forbid_diff": False,
             "discussion_only": True,
             "commit_label": f"M-DESIGN: prism ({verdict}) checkpoint",

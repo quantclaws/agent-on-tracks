@@ -206,6 +206,51 @@ def test_design_payload_threads_anchor_verdict_into_domain_payload(
     assert domain.get("anchor_verdict") == "overturned"
 
 
+# AC-FR0243-03@v0.6 TRACKS-TRACE B48 anchor_overturned structured verdict needs no doc diff
+def test_design_payload_requires_diff_off_for_anchor_overturned(monkeypatch, tmp_path):
+    """B48 (issue #60 / PRISM-V06-R2-01): an anchor-overturned revise is
+    carried entirely by the structured channel (anchor_verdict routing
+    field, interfaces §1a / IF-HOTFIX-009) — it routes M-DESIGN back to
+    M-HOTFIX-TRIAGE/SAGE_TRIAGE in the kernel without any document diff,
+    so ``requires_diff`` must yield or the pipeline rejects the verdict
+    with ``no_diff`` before ``prism.verdict`` ever publishes (mirror of
+    the M-TEST structured_revise exemption, D-35 SC-D35 §2.3). A plain
+    revise (doc-anchored channel) still requires a diff."""
+    monkeypatch.setattr(Executor, "_doc_path", lambda self, doc: tmp_path / doc)
+    ex = _executor(tmp_path)
+    overturned = {
+        "verdict": "revise",
+        "anchor_verdict": "overturned",
+        "review_summary": "anchor set overturned",
+        "findings": [_finding()],
+        "review_body": "body",
+    }
+    payload = ex._design_payload("PRISM_REVIEW", "prism", overturned, "x", "r1")
+    assert payload["requires_diff"] is False
+
+    # Fake token path (simulate="prism:PRISM_REVIEW=anchor_overturned"):
+    # the token verdict itself is "anchor_overturned" and the fake maps it
+    # to anchor_verdict="overturned" — same structured-channel exemption.
+    token_result = {
+        "verdict": "anchor_overturned",
+        "anchor_verdict": "overturned",
+        "review_summary": "anchor set overturned",
+        "findings": [_finding()],
+        "review_body": "body",
+    }
+    payload_token = ex._design_payload("PRISM_REVIEW", "prism", token_result, "x", "r1")
+    assert payload_token["requires_diff"] is False
+
+    plain = {
+        "verdict": "revise",
+        "review_summary": "design gap",
+        "findings": [_finding()],
+        "review_body": "body",
+    }
+    payload2 = ex._design_payload("PRISM_REVIEW", "prism", plain, "x", "r1")
+    assert payload2["requires_diff"] is True  # doc-anchored channel unchanged
+
+
 # -- consequence: anchor_overturned routes to M-HOTFIX-TRIAGE ----------
 
 
