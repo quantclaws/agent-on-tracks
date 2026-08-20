@@ -26,11 +26,13 @@ def test_hotfix_await_journey_manual_anchor(trac, host_repo, event_log):
     manually anchor, then proceed to boundary. Asserts cover the AC
     markers above.
 
-    Failure mode (legal Red): ``trac hotfix`` and its ``anchor`` sub-
-    action are Devon foundation tasks not yet registered in ``_COMMANDS``
-    (IF-HOTFIX-001 §2a #1 / #4); the entry subprocess returns USAGE /
-    exit 1 and writes no events. The AWAIT_HUMAN status row and the
-    manual-anchor acceptance cannot be observed.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The downstream journey parks at M-DESIGN
+    awaiting=escalation reason=[trace] test-plan validate requires
+    acceptance.md in same dir, so the boundary terminal and manual-
+    anchor acceptance assertions cannot bind until the inherited-baseline
+    resolver is wired.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

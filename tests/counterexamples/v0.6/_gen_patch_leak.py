@@ -47,7 +47,7 @@ leak = '''def _cmd_hotfix_leak(repo: Path, *args: str) -> int:
 
 '''
 
-new_body = body.replace('USAGE = (', run_noop + leak + 'USAGE = (', 1)
+new_body = body.replace('\nUSAGE = (\n', '\n' + run_noop + leak + '\nUSAGE = (\n', 1)
 new_body = new_body.replace('"run": (cmd_run, None),', '"run": (_cmd_run_noop, None),', 1)
 new_body = new_body.replace(
     '"check": (cmd_check, None),\n}',

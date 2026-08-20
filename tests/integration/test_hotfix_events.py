@@ -21,9 +21,11 @@ def test_hotfix_events_append_only_replay_and_report(trac, host_repo, event_log)
     ``trac replay`` and ``trac report --run-id --format md``.
 
     Failure mode (legal Red): the hotfix event types (IF-HOTFIX-002 §1a)
-    and the ``trac hotfix`` surface are not yet wired; the subprocess
-    returns USAGE / exit 1 and writes no events, so the replay/report
-    probes find no hotfix journey evidence.
+    and the ``trac hotfix`` surface are implemented (IF-HOTFIX-001
+    landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver
+    seam. The downstream journey parks at M-DESIGN awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same dir,
+    so the replay/report probes find no full journey evidence.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -55,8 +57,8 @@ def test_hotfix_events_append_only_and_projection_rebuild(trac, host_repo, event
     projection table can be dropped and rebuilt from events alone
     (``trac status`` after rebuild reports the same entry state).
 
-    Failure mode (legal Red): the hotfix run never starts (USAGE / exit 1
-    from the unregistered ``trac hotfix`` command), so dropping and
+    Failure mode (legal Red): the hotfix run never starts (IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation)
+    from the the entry CLI (registered IF-HOTFIX-001) but the downstream IF-HOTFIX-010 seam command), so dropping and
     rebuilding the projection yields an empty projection rather than the
     hotfix run's state.
     """
@@ -104,10 +106,10 @@ def test_replay_and_report_show_full_hotfix_journey(trac, host_repo, event_log):
     """AC-FR0246-03@v0.6: ``trac replay`` and ``trac report --format md``
     surface the full hotfix journey: ``hotfix.requested`` ->
     ``triage.prechecked`` -> ``anchor.validated`` -> ``stage.entered(M-
-    DESIGN)`` -> ... -> ``run.completed(terminal_state=boundary)``.
+    DESIGN)`` -> . -> ``run.completed(terminal_state=boundary)``.
 
-    Failure mode (legal Red): the journey cannot start (unregistered
-    ``trac hotfix`` -> USAGE / exit 1, no events), so neither ``replay``
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
+    ``trac hotfix`` -> IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation), no events), so neither ``replay``
     nor ``report`` can show the full sequence.
     """
     seed_v05_approved_baseline(host_repo)

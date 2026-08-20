@@ -19,9 +19,14 @@ def test_mimpl_commits_isolated_on_fix_branch(trac, host_repo, event_log):
     branch / feature worktree does not). Runtime is the sole branch /
     worktree authority.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no fix
-    branch ever created, so neither the fix-branch log nor the active-
-    branch log can carry the isolation assertion.
+    Failure mode (legal Red): the hotfix run cannot progress past
+    M-DESIGN because IF-HOTFIX-010 (resolve_inherited_baseline_docs) is
+    not wired into the run-loop validate step: the delta test-plan
+    validate requires acceptance.md in the same dir, so the run parks at
+    ``awaiting=escalation reason=[trace]``. The M-IMPL park assertion
+    therefore fails first (legal Red bound to IF-HOTFIX-010); the
+    topological isolation + trailer asserts are the downstream contract
+    once the seam is implemented.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -32,6 +37,19 @@ def test_mimpl_commits_isolated_on_fix_branch(trac, host_repo, event_log):
     for _ in range(4):
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
+
+    # IF-HOTFIX-010 seam (legal Red): the hotfix delta run must progress
+    # through M-DESIGN into M-IMPL for RGR commits to exist. The
+    # unimplemented inherited-baseline resolver parks the run at M-DESIGN
+    # awaiting=escalation (reason=[trace] test-plan validate requires
+    # acceptance.md), so the M-IMPL park assertion fails first — that is
+    # the legal-Red signal, not the downstream commit-content asserts.
+    status = trac("status")
+    assert "stage=M-IMPL" in status.stdout, (
+        "run must reach M-IMPL; blocked by IF-HOTFIX-010 seam: "
+        f"{status.stdout.strip()}"
+    )
+    assert "terminal=" not in status.stdout or "terminal=boundary" in status.stdout
 
     # Isolation is topological (interfaces §4c): ``git log fix/{N}`` lists the
     # fix commits AND the active branch (main) does not carry them. We assert
@@ -64,9 +82,14 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
     executed this version (FR-0246), but the reconcile + conflict path
     must remain reachable.
 
-    Failure mode (legal Red): ``trac hotfix ... --scenario dev`` is
-    unregistered; the dev-scenario baseline stale path is never entered,
-    so no ``baseline.frozen(status=stale)`` event can fire.
+    Failure mode (legal Red): the dev-scenario run cannot progress past
+    M-DESIGN — IF-HOTFIX-010 (resolve_inherited_baseline_docs) is not
+    wired into the run-loop validate step, so the run parks at
+    ``awaiting=escalation reason=[trace] test-plan validate requires
+    acceptance.md in same dir``. The M-IMPL park precondition therefore
+    fails on the legal-Red seam before the stale reconcile asserts can
+    bind; the ``baseline.frozen(status=stale)`` path is the downstream
+    contract once the seam is implemented.
     """
     from tests.hotfix_support import seed_release_branch
 
@@ -134,10 +157,13 @@ def test_boundary_terminal_state_keeps_fix_branch(trac, host_repo, event_log):
     branch is preserved (not deleted), and ``trac status`` reports
     ``terminal=boundary branch=fix/{N} scenario=...``.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no
-    boundary terminal state, no fix branch to preserve; the
-    ``stage.exited(M-IMPL)`` / ``run.completed(boundary)`` events are
-    absent.
+    Failure mode (legal Red): the hotfix run cannot progress past
+    M-DESIGN because IF-HOTFIX-010 is not wired into the run-loop
+    validate step (delta test-plan validate requires acceptance.md in the
+    same dir); the run parks at ``awaiting=escalation`` and never reaches
+    the boundary terminal. The ``stage.exited(M-IMPL)`` /
+    ``run.completed(boundary)`` events are therefore absent until the
+    seam is implemented — that absence is the legal Red.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -168,10 +194,10 @@ def test_no_release_events_after_boundary(trac, host_repo, event_log):
     ``trac status`` reports ``boundary`` + ``scenario=post-release`` but
     never claims "released".
 
-    Failure mode (legal Red): the hotfix run cannot reach boundary
-    (unregistered ``trac hotfix`` -> USAGE / exit 1, no events), so the
+    Failure mode (legal Red): the hotfix run cannot reach boundary (the
+    IF-HOTFIX-010 seam parks it at M-DESIGN awaiting=escalation), so the
     release-event absence assertion has nothing to compare against; the
-    boundary-line status check fails.
+    boundary-line status check fails at the seam (legal Red).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

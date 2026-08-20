@@ -58,7 +58,7 @@ def test_mtest_regression_red_first_then_green(trac, host_repo, event_log):
     the "RED-first, then GREEN" RGR order. No "already-green" regression
     case is accepted as a legal Red.
 
-    Failure mode (legal Red): ``trac hotfix`` is unregistered; the
+    Failure mode (legal Red): ``trac hotfix`` is registered (IF-HOTFIX-001 landed) but the downstream sear is IF-HOTFIX-010; the
     hotfix run never reaches M-TEST, so no ``red.validated`` event can
     fire on the cross-version anchored AC.
     """
@@ -86,10 +86,7 @@ def test_delta_testplan_layer_ownership_validated(trac, host_repo):
     in the hotfix project dir. Unit rows are legal ONLY in hotfix delta
     plans (the unit layer word is gated to hotfix dirs).
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> the hotfix
-    delta dir never exists; ``trac validate --file <hotfix>/test-plan.md``
-    reads a non-existent file and returns non-zero. The fixture delta
-    plan written here cannot be reached.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -112,9 +109,7 @@ def test_trace_binds_cross_version_ac_without_new_ac(trac, host_repo, event_log)
     in the hotfix run's own acceptance. ``trac check trace --json`` closes
     the plan by mapping regression rows to the target-version AC.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no anchored
-    AC set, no regression rows, no hotfix_scope; ``trac check trace --json``
-    cannot produce the hotfix_scope closure field.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -140,9 +135,7 @@ def test_empty_shield_increment_release_with_unit_closure(trac, host_repo, event
     ``increment.declared(shield=empty, trace_status=pass)`` plus the unit-
     layer plan-level closure (``trac check trace`` exit 0).
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> the hotfix
-    M-TEST EXIT never fires, so no ``increment.declared`` event lands;
-    the empty-Shield release contract cannot be observed.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

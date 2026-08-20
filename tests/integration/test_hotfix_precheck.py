@@ -5,9 +5,11 @@ Driven entirely through the ``trac hotfix`` CLI/event/git outlets
 contract lines (``triage.prechecked`` / ``REJECTED <reason>`` / ``next:``),
 exit codes and the no-``fix/{issue}``-branch side effect.
 
-``trac hotfix`` (IF-HOTFIX-001) is a Devon foundation task not yet
-registered — the CLI returns USAGE / exit 1, which is the legal Red signal
-until Devon implements it.
+``trac hotfix`` (IF-HOTFIX-001) is registered (Devon foundation landed);
+the legal Red signal for this round is the IF-HOTFIX-010 baseline-resolver
+seam: the hotfix delta run parks at ``awaiting=escalation reason=[trace]
+test-plan validate requires acceptance.md in same dir`` until the
+inherited baseline resolver is wired into the run-loop validate step.
 """
 
 from __future__ import annotations
@@ -18,16 +20,18 @@ from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 # AC-FR0240-02@v0.6 TRACKS-TRACE PRECHECK pass reaches SAGE_TRIAGE without agent dispatch
 def test_precheck_pass_reaches_sage_triage_without_agent_dispatch(trac, host_repo):
     """AC-FR0240-02@v0.6: a bug issue whose target version is approved passes
-    P-1..P-5 deterministically and the run reaches ``SAGE_TRIAGE``. PRECHECK
+    P-1.P-5 deterministically and the run reaches ``SAGE_TRIAGE``. PRECHECK
     is a pure program judgment — no ``dispatch_agent``
     (sage/archer/prism/shield/devon) audit record corresponds to this step
     (NFR-0100-01). The pass path is observable through the CLI/event outlets:
     ``triage.prechecked(pass)`` with ``target_version`` and ``type=bug``.
 
-    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
-    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1
-    before ``triage.prechecked(pass)`` / the SAGE_TRIAGE sub-state line can
-    appear.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001
+    landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver
+    seam (run parks at M-DESIGN awaiting=escalation reason=[trace]
+    test-plan validate requires acceptance.md in same dir). The
+    ``triage.prechecked(pass)`` line appears at entry; the downstream
+    journey continues only once the inherited-baseline resolver is wired.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -52,7 +56,7 @@ def test_precheck_rejection_matrix_no_branch_nonzero_exit(trac, host_repo):
     Driven entirely through the CLI/event/git outlets (interfaces §4); the
     direct pure-function rules are covered by Devon's unit tests, not here.
 
-    Failure mode (legal Red): ``trac hotfix`` is unregistered (USAGE /
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     exit 1) — the CLI never produces a ``triage.prechecked REJECTED`` line,
     so ``REJECTED`` / the reason / the handoff ``next:`` are all absent.
     """
@@ -86,12 +90,12 @@ def test_precheck_deterministic_no_llm_dispatch_records(trac, host_repo, event_l
     """AC-NFR0100-01@v0.6: PRECHECK is a pure program judgment - no agent
     dispatch (sage / archer / prism / shield / devon) audit record
     corresponds to this step. The result is determined by the program
-    rules P-1..P-5 alone; the same input reproduces the same output
+    rules P-1.P-5 alone; the same input reproduces the same output
     (deterministic, no LLM).
 
     Failure mode (legal Red): the ``trac hotfix`` command is a Devon
-    foundation task not yet registered in ``_COMMANDS`` (IF-HOTFIX-001);
-    the subprocess returns USAGE / exit 1 and writes no events, so the
+    foundation task registered in ``_COMMANDS`` (IF-HOTFIX-001 landed) (IF-HOTFIX-001);
+    the subprocess exits 0 (entry registered) but the downstream journey parks at the IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir), so the
     no-LLM-dispatch audit assertion cannot bind the triage.prechecked
     step. The precheck_hotfix pure function (the actual contract target
     of IF-HOTFIX-003) is also a frozen stub raising NotImplementedError.

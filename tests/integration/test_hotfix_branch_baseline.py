@@ -3,9 +3,12 @@
 
 CLI-driven ``trac hotfix`` with asserts on the git/file public outlets
 (interfaces §4c: ``git branch --list fix/{N}`` / ``git log --oneline`` /
-hotfix project dir existence). ``trac hotfix`` (IF-HOTFIX-001) is a Devon
-foundation task not yet registered — the CLI returns USAGE / exit 1, which
-is the legal Red signal until Devon implements it.
+hotfix project dir existence). ``trac hotfix`` (IF-HOTFIX-001) is
+registered (Devon foundation landed); the legal Red for this round is the
+IF-HOTFIX-010 baseline-resolver seam: the hotfix delta run parks at
+``awaiting=escalation reason=[trace] test-plan validate requires
+acceptance.md in same dir`` until the inherited baseline resolver is
+wired into the run-loop validate step.
 """
 
 from __future__ import annotations
@@ -26,10 +29,12 @@ def test_anchored_creates_isolated_fix_branch_per_scenario(trac, host_repo):
     §4c ``git branch --list fix/{N}`` / ``git log --oneline fix/{N} ^main``),
     not on unenumerated dict keys.
 
-    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
-    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1 and
-    never creates the ``fix/{issue}`` branch, so the git branch/ baseline
-    assertions cannot bind.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir``, so the downstream fix-branch / baseline assertions cannot
+    bind until the seam is wired.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -59,10 +64,12 @@ def test_baseline_inheritance_no_requirement_stage_artifacts(host_repo, trac):
     target-version trio. The hotfix project directory carries no M-STORY
     / M-SPEC / M-ACC / M-REQ-APPROVAL artifacts of its own.
 
-    Failure mode (legal Red): the ``trac hotfix`` surface is unregistered
-    (USAGE / exit 1) and ``complete_hotfix_entry`` raises
-    ``NotImplementedError`` (IF-HOTFIX-005), so no hotfix project
-    directory is ever created.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir``, so the baseline-inheritance event / hotfix project directory
+    delta assertions cannot bind until the seam is wired.
     """
     from pathlib import Path
 
@@ -85,9 +92,13 @@ def test_anchored_enters_mdesign_and_run_continues(trac, host_repo, event_log):
     """AC-FR0241-03@v0.6: ANCHORED directly enters ``stage.entered(M-DESIGN)``;
     the run is continuable via ``trac run`` (FR-0242接续).
 
-    Failure mode (legal Red): unregistered ``trac hotfix`` -> USAGE /
-    exit 1, no events, so ``stage.entered(M-DESIGN)`` cannot appear and
-    ``trac run`` cannot continue a non-existent hotfix run.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir``, so ``stage.entered(M-DESIGN)`` cannot appear downstream
+    and ``trac run`` cannot continue the run past the M-DESIGN trace
+    validation gate.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

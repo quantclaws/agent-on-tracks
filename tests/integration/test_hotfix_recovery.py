@@ -27,10 +27,12 @@ def test_crash_recovery_resumes_precise_hotfix_state(trac, host_repo, event_log)
     sub-states / stage dispatches are not re-run. Recovery is from the
     append-only event stream alone (no ad-hoc persisted state).
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no hotfix
-    run is ever created; there is no pre-interruption state to compare
-    against, and the post-restart status does not carry the hotfix
-    sub-state machine.
+    Failure mode (legal Red): the hotfix entry CLI is registered and the
+    entry-phase state IS created; the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir``; the recovery comparison asserts the run's identity fields,
+    which are not projected past the seam until the resolver is wired.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

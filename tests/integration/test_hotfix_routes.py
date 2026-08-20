@@ -19,10 +19,12 @@ def test_design_gap_returns_to_hotfix_mdesign_without_human_gate(trac, host_repo
     NO Human technical gate - no ``human.review`` / ``human.approval``
     event appears as a prerequisite.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no
-    M-DESIGN delta ever exists, so the design-gap route cannot be
-    exercised; the ``stage.rolled_back(to_stage=M-DESIGN)`` event is
-    absent from the stream.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir`` before any design-gap rollback can fire, so the
+    ``stage.rolled_back(to_stage=M-DESIGN)`` event is absent.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -62,8 +64,11 @@ def test_design_gap_loop_closes_and_reenters_journey(trac, host_repo, event_log)
     M-DESIGN, the run re-enters the M-TEST / M-IMPL dispatch sequence
     (FR-0243 re-承接 anchored set). Replay shows the closure + re-entry.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no design
-    gap, no closure, no re-entry; the replay cannot show the loop.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at M-DESIGN awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md before the
+    design-gap loop can open and close; the replay cannot show the loop.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -105,10 +110,12 @@ def test_ac_gap_spec_gap_exit_with_human_approval_prerequisite(trac, host_repo, 
     ``run.completed(terminal_state=ac_gap|spec_gap)``. The hotfix run does
     not continue to M-TEST / M-IMPL.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> the run
-    never reaches DIAGNOSE, so the ac_gap/spec_gap exit cannot be
-    observed; ``trac approve`` (extended awaiting form) is not reachable
-    because there is no awaiting=escalation run with the right check.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at M-DESIGN awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md (not the
+    ac_gap check), so ``trac approve`` for the ac_gap exit is rejected:
+    the run is not awaiting approval with check=ac_gap.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

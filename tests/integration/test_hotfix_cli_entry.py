@@ -6,11 +6,12 @@ code, the events table (``hotfix.requested`` + ``triage.prechecked`` +
 ``anchor.validated`` + ``stage.entered``), and ``trac status`` rows.
 
 The CLI surface, its event types, and its command kinds are declared in
-interfaces.md §2a / §1a / §1b but not yet wired (Devon foundation task
-per ARCH-006 §4.3). Tests therefore land in legal Red: ``trac hotfix``
-is not registered in ``_COMMANDS`` (returns USAGE / exit 1, no events
-written) and the cross-module stubs raise ``NotImplementedError`` with
-the owning IF- token.
+interfaces.md §2a / §1a / §1b and now registered (IF-HOTFIX-001 landed).
+The legal Red source for the downstream journey is the IF-HOTFIX-010
+baseline-resolver seam: the hotfix delta run parks at ``awaiting=
+escalation reason=[trace] test-plan validate requires acceptance.md in
+same dir`` until the inherited-baseline resolver is wired into the
+run-loop validate step.
 """
 
 from __future__ import annotations
@@ -28,11 +29,13 @@ def test_hotfix_entry_happy_requested_and_status_substates(trac, event_log, host
     scenario, and ``trac status`` reports the HOTFIX-TRIAGE sub-state machine
     (PRECHECK / SAGE_TRIAGE / AWAIT_HUMAN) with the issue identity.
 
-    Failure mode (legal Red): the ``trac hotfix`` command is a Devon
-    foundation task not yet registered in ``_COMMANDS`` (IF-HOTFIX-001
-    §2a); the subprocess returns exit 1 + USAGE on stderr and writes no
-    events. The assertion on ``hotfix.requested`` in the events table
-    cannot be satisfied by an empty event stream.
+    Failure mode (legal Red): the ``trac hotfix`` command is registered
+    (IF-HOTFIX-001 landed); the entry phase asserts bind the implemented
+    behavior. The legal Red for the journey is the IF-HOTFIX-010 seam:
+    the run parks at M-DESIGN awaiting=escalation reason=[trace]
+    test-plan validate requires acceptance.md in same dir until the
+    inherited-baseline resolver is wired. This entry test itself induces
+    the entry; the downstream continuation is gated on the seam.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

@@ -20,8 +20,8 @@ def test_feature_route_exits_without_branch_or_dangling_run(trac, host_repo, eve
     branch is created; no dangling worktree / active run is left behind.
 
     Failure mode (legal Red): ``trac hotfix`` (incl. its ``feature-route``
-    sub-action) is not yet registered in ``_COMMANDS`` (IF-HOTFIX-001);
-    the subprocess returns USAGE / exit 1 and writes no events.
+    sub-action) is registered in ``_COMMANDS`` (IF-HOTFIX-001 landed) (IF-HOTFIX-001);
+    the subprocess exits 0 (entry registered) but the downstream journey parks at the IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -56,7 +56,7 @@ def test_fail_closed_no_branch_and_no_auto_feature_route(trac, host_repo, event_
     auto-routes to FEATURE_ROUTE (FR-0240-05) - the operator must
     explicitly confirm the feature-route sub-action.
 
-    Failure mode (legal Red): ``trac hotfix`` is not yet registered in
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     ``_COMMANDS`` (IF-HOTFIX-001); the non-bug REJECTED case writes no
     ``triage.prechecked`` event (the contract requires it with
     ``reason=not_bug``) and the NO_ANCHOR case never reaches

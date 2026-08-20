@@ -33,9 +33,9 @@ def test_hotfix_journey_happy_post_release(trac, host_repo, event_log):
     boundary. Asserts cover every AC marker above via the observable
     outlets declared in interfaces.md §4.
 
-    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
-    not yet registered in ``_COMMANDS`` (IF-HOTFIX-001 §2a); the very
-    first subprocess returns USAGE / exit 1 and writes no events. Every
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
+    registered in ``_COMMANDS`` (IF-HOTFIX-001 landed) (IF-HOTFIX-001 §2a); the very
+    first subprocess exits 0 (entry registered) but the downstream journey parks at the IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir). Every
     downstream assertion (run-event lines, terminal status, replay
     sequence, git fix-branch preservation) fails because the journey
     never starts.

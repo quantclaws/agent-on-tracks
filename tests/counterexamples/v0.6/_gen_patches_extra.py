@@ -19,7 +19,7 @@ def make_patch(name: str, extra: str, handler: str) -> None:
 
 
 '''
-    new_body = body.replace('USAGE = (', run_noop + extra + 'USAGE = (', 1)
+    new_body = body.replace('\nUSAGE = (\n', '\n' + run_noop + extra + '\nUSAGE = (\n', 1)
     new_body = new_body.replace('"run": (cmd_run, None),', '"run": (_cmd_run_noop, None),', 1)
     new_body = new_body.replace(
         '"check": (cmd_check, None),\n}',

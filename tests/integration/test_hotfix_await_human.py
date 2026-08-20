@@ -1,12 +1,14 @@
 """Human anchor / feature-route sub-actions (IF-HOTFIX-001, FR-0240-06).
 
 Covers the two AWAIT_HUMAN sub-actions in interfaces.md §2a #4 / #5:
-``trac hotfix anchor AC-FRXXXX-YY@v ...`` and ``trac hotfix feature-route``.
-Both feed ``submit_human_result`` -> ``human.anchor(mode=...)``.
+``trac hotfix anchor AC-FRXXXX-YY@v .`` and ``trac hotfix feature-route``.
+Both feed ``submit_human_result`` -> ``human.anchor(mode=.)``.
 
 The CLI surface and ``human.anchor`` event type are Devon foundation
-tasks not yet wired; tests land in legal Red via USAGE / exit 1 and
-absent event types.
+tasks now landed (IF-HOTFIX-001 registered); tests land in legal Red via
+the IF-HOTFIX-010 baseline-resolver seam (the hotfix delta run parks at
+M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires
+acceptance.md in same dir until the resolver is wired).
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 def test_human_anchor_manual_and_feature_route(trac, host_repo):
     """AC-FR0240-06@v0.6: at AWAIT_HUMAN the operator can either
 
-    * ``trac hotfix anchor <AC@v ...>`` -> ``human.anchor(mode=manual)`` ->
+    * ``trac hotfix anchor <AC@v .>`` -> ``human.anchor(mode=manual)`` ->
       ``validate_anchor`` -> on pass, ANCHORED (SM-01.8);
     * ``trac hotfix feature-route`` -> ``human.anchor(mode=feature_route)``
       -> ``backlog.recorded(decision=feature_route)`` ->
@@ -27,10 +29,13 @@ def test_human_anchor_manual_and_feature_route(trac, host_repo):
     Both sub-actions are explicit Human decisions; the system never auto-
     routes from AWAIT_HUMAN to FEATURE_ROUTE (NFR-0100-03).
 
-    Failure mode (legal Red): the ``trac hotfix`` surface (incl. its
-    ``anchor`` / ``feature-route`` sub-actions) is not yet registered in
-    ``_COMMANDS`` (IF-HOTFIX-001); both invocations return USAGE / exit 1
-    and write no ``human.anchor`` / ``backlog.recorded`` events.
+    Failure mode (legal Red): the hotfix entry CLI is registered
+    (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010
+    baseline-resolver seam. The run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same
+    dir`` before the ``human.anchor`` / ``backlog.recorded`` events
+    can bind; the downstream sub-action assertions are legal Red until
+    the inherited-baseline resolver is wired.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

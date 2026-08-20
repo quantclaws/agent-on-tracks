@@ -5,9 +5,11 @@ the ``verdict.failed(anchor_invalid)`` event outlet, the anchored-set report
 and the ``AWAIT_HUMAN`` parking (IF-HOTFIX-002). Asserts land on the
 interfaces §4 outlets (CLI stdout / events table) only.
 
-``trac hotfix`` (IF-HOTFIX-001) is a Devon foundation task not yet
-registered — the CLI returns USAGE / exit 1, which is the legal Red signal
-until Devon implements it.
+``trac hotfix`` (IF-HOTFIX-001) is registered (Devon foundation landed);
+the legal Red signal for this round is the IF-HOTFIX-010 baseline-resolver
+seam: the run parks at ``awaiting=escalation reason=[trace] line:1
+test-plan validate requires acceptance.md in same dir`` until the
+inherited baseline resolver is wired into the run-loop validate step.
 """
 
 from __future__ import annotations
@@ -25,9 +27,12 @@ def test_sage_anchor_validated_reports_anchored_set(trac, host_repo):
     and the ``anchor.validated`` event is emitted with that anchored set
     (interfaces §2a / §4b CLI outlet).
 
-    Failure mode (legal Red): ``trac hotfix`` is a Devon foundation task
-    (IF-HOTFIX-001) not yet registered — the CLI returns USAGE / exit 1
-    before the anchored-set line / ``anchor.validated`` event can appear.
+    Failure mode (legal Red): the anchored-set report is emitted by the
+    CLI entry phase, which is now implemented (IF-HOTFIX-001 foundation
+    landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver
+    seam: the hotfix run parks at ``awaiting=escalation reason=[trace]
+    test-plan validate requires acceptance.md in same dir`` until the
+    inherited-baseline resolver is wired into the run-loop validate step.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -58,12 +63,16 @@ def test_anchor_invalid_redispatch_and_await_human_no_auto_feature(trac, host_re
       ``awaiting=awaiting_human`` (SM-01.7) — and no ``backlog.recorded``
       ever appears (no auto feature-routing on anchor exhaustion).
 
-    Failure mode (legal Red): ``validate_anchor_refs`` raises
-    ``NotImplementedError("IF-HOTFIX-004: validate_anchor_refs")`` before
-    the redispatch-budget assertion can fire; the ``trac hotfix`` CLI
-    surface (IF-HOTFIX-001) is a Devon foundation task not yet registered,
-    so the behavior-driven drive returns USAGE / exit 1 and writes no
-    events.
+    Failure mode (legal Red): the entry phase (IF-HOTFIX-001) and the
+    anchor validator (IF-HOTFIX-004) are implemented; the legal Red signal
+    is the IF-HOTFIX-010 seam. The bad-anchor redispatch assertions bound
+    the entry behavior directly. Then the test drives the manual anchor
+    (AWAIT_HUMAN -> ANCHORED) and continues the run: it must progress from
+    M-DESIGN into the M-TEST / M-IMPL journey, which the unimplemented
+    inherited-baseline resolver blocks (run parks at ``awaiting=escalation
+    reason=[trace] test-plan validate requires acceptance.md in same dir``).
+    Asserting ``stage=M-TEST`` in status is the legal-Red assertion — it
+    fails until IF-HOTFIX-010 lands.
     """
     vdir = seed_v05_approved_baseline(host_repo)
     projects_dir = vdir.parent
@@ -98,6 +107,21 @@ def test_anchor_invalid_redispatch_and_await_human_no_auto_feature(trac, host_re
     backlogs = [e for e in evs if e["type"] == "backlog.recorded"]
     assert not backlogs, "anchor exhaustion must NOT auto-route to feature"
 
+    # IF-HOTFIX-010 seam: resolve AWAIT_HUMAN via manual anchor, then the
+    # run must progress from M-DESIGN into the M-TEST journey. The
+    # unimplemented inherited-baseline resolver (IF-HOTFIX-010) parks the
+    # run at M-DESIGN awaiting=escalation, so asserting stage=M-TEST is the
+    # legal-Red signal.
+    r_anchor = trac("hotfix", "anchor", "AC-FR0030-01@v0.5")
+    assert r_anchor.returncode == 0, r_anchor.stderr
+    for _ in range(2):
+        cont = trac("run")
+        assert cont.returncode == 0, cont.stderr
+    status = trac("status")
+    assert "stage=M-TEST" in status.stdout, (
+        f"run must progress to M-TEST; blocked by IF-HOTFIX-010 seam: {status.stdout.strip()}"
+    )
+
 
 # AC-NFR0100-02@v0.6 TRACKS-TRACE anchor validation traceable with retry count
 def test_anchor_validation_traceable_with_retry_count(host_repo, trac):
@@ -105,11 +129,13 @@ def test_anchor_validation_traceable_with_retry_count(host_repo, trac):
     count) are append-only and replay-traceable via ``trac replay`` /
     ``trac report``.
 
-    Failure mode (legal Red): the ``trac hotfix`` command and the
-    anchor-related event types (``anchor.validated`` /
-    ``verdict.failed(anchor_invalid)``) are Devon foundation tasks; the
-    subprocess returns USAGE / exit 1, no events are written, and the
-    replay probe cannot find the anchor evidence.
+    Failure mode (legal Red): the entry phase (IF-HOTFIX-001) is
+    registered; the legal Red anchor is IF-HOTFIX-010 (inherited baseline
+    resolver not wired into the run-loop validate step). The run parks at
+    ``awaiting=escalation reason=[trace] ... test-plan validate requires
+    acceptance.md in same dir`` before the anchor-validated event can
+    appear in the replay; the replay probe fails to find the anchor
+    evidence.
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

@@ -29,7 +29,7 @@ def test_active_run_selection_and_status_discriminates_runs(trac, host_repo, eve
     scenario, enough for the operator to tell which run ``trac run``
     continues. Both runs are visible during the hotfix run's lifetime.
 
-    Failure mode (legal Red): ``trac hotfix`` is unregistered; the hotfix
+    Failure mode (legal Red): ``trac hotfix`` is registered (IF-HOTFIX-001 landed) but the downstream sear is IF-HOTFIX-010; the hotfix
     run never starts. The status output carries only the pre-existing
     feature run, with no ``scenario=`` discriminator and no
     ``suspended:`` row.
@@ -57,7 +57,7 @@ def test_boundary_restores_suspended_feature_run_as_active(trac, host_repo, even
     state is recoverable via ``trac status`` / ``trac check``.
 
     Failure mode (legal Red): the hotfix journey never reaches boundary
-    (unregistered ``trac hotfix`` -> USAGE / exit 1, no events); the
+    (the entry CLI (registered IF-HOTFIX-001) but the downstream IF-HOTFIX-010 seam -> IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation), no events); the
     feature run stays the only visible run, the active-run switch-back
     cannot be observed, and the boundary terminal line never appears.
     """
@@ -87,8 +87,8 @@ def test_suspended_run_observable_and_gates_recoverable(trac, host_repo, event_l
     ``trac replay`` / ``trac report``; the gate is recoverable after the
     boundary restores the feature run as active.
 
-    Failure mode (legal Red): the hotfix run cannot start (unregistered
-    ``trac hotfix`` -> USAGE / exit 1); only the feature run is visible
+    Failure mode (legal Red): the hotfix entry CLI is registered (IF-HOTFIX-001 landed); the downstream IF-HOTFIX-010 seam (resolve_inherited_baseline_docs not wired
+    ``trac hotfix`` -> IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation)); only the feature run is visible
     in ``trac status``, no ``suspended:`` row appears, and there is no
     boundary to restore from.
     """
@@ -118,9 +118,9 @@ def test_second_concurrent_trac_command_rejected_with_holder_pid(trac, host_repo
     canonical writer-lock path is already implemented) and then issuing
     ``trac hotfix`` against the held lock.
 
-    Failure mode (legal Red): ``trac hotfix`` is not yet registered in
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     ``_COMMANDS`` (IF-HOTFIX-001), so ``main()`` short-circuits at
-    command lookup with USAGE / exit 1 before the writer lock is even
+    command lookup with IF-HOTFIX-010 seam (M-DESIGN awaiting=escalation) before the writer lock is even
     consulted. The "runtime lock held by pid" assertion therefore fails
     - the symbol-missing form is the legal Red signal.
     """

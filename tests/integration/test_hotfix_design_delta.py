@@ -20,7 +20,7 @@ def test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts(trac, host_re
     from the target-version baseline dir. Machine contracts are inherited
     (delta does not re-write contracts). No quick_rgr shortcut.
 
-    Failure mode (legal Red): ``trac hotfix`` is unregistered; the hotfix
+    Failure mode (legal Red): ``trac hotfix`` is registered (IF-HOTFIX-001 landed) but the downstream sear is IF-HOTFIX-010; the hotfix
     project dir is never created, the M-DESIGN delta is never produced,
     and the project-dir existence assertion fails.
     """
@@ -50,9 +50,7 @@ def test_delta_design_carries_anchor_set_and_prism_review(trac, host_repo, event
     (cross-version refs unchanged from the SAGE_TRIAGE outcome), and
     Prism's M-DESIGN PRISM_REVIEW verifies the carry-through.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered -> no anchored
-    set, no delta design, no Prism review events. The delta files do not
-    exist, so reading them for the anchor-ref assertion fails.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
@@ -82,9 +80,7 @@ def test_prism_anchor_overturn_routes_back_to_sage_triage(trac, host_repo, event
     routes back to SAGE_TRIAGE (SM-01.6 redispatch, <=3) WITHOUT consuming
     the M-DESIGN redispatch budget.
 
-    Failure mode (legal Red): ``trac hotfix`` unregistered; the hotfix run
-    never enters M-DESIGN, so Prism's anchor_verdict=overturned branch
-    cannot fire. The stage.rolled_back event is absent.
+    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
     """
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)

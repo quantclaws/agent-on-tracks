@@ -1,8 +1,8 @@
 diff --git a/tracks/cli/main.py b/tracks/cli/main.py
-index 4cc5487..b31daa6 100644
+index 7f5d138..dd57ce0 100644
 --- a/tracks/cli/main.py
 +++ b/tracks/cli/main.py
-@@ -1091,6 +1091,38 @@ def cmd_check(repo: Path, *args) -> int:
+@@ -1302,6 +1302,39 @@ def cmd_check(repo: Path, *args) -> int:
      return _err("usage: trac check <deliverables|trace|reach|release-evidence>")
  
  
@@ -38,19 +38,20 @@ index 4cc5487..b31daa6 100644
 +    return 0
 +
 +
++
  USAGE = (
      "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
      "|triage <decision> [--actor NAME]"
-@@ -1105,7 +1137,7 @@ USAGE = (
+@@ -1318,7 +1351,7 @@ USAGE = (
  _COMMANDS = {
      "init": (cmd_init, 0),
      "start": (cmd_start, None),
 -    "run": (cmd_run, None),
 +    "run": (_cmd_run_noop, None),
+     "hotfix": (cmd_hotfix, None),
      "triage": (cmd_triage, None),
      "review": (cmd_review, None),
-     "approve": (cmd_approve, None),
-@@ -1117,6 +1149,7 @@ _COMMANDS = {
+@@ -1332,6 +1365,7 @@ _COMMANDS = {
      "validate": (cmd_validate, 2),
      "discuss": (cmd_discuss, None),
      "check": (cmd_check, None),
