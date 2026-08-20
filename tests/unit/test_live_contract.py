@@ -264,20 +264,32 @@ def test_materialize_cleanup_cycle_for_every_agent(tmp_path, role, name):
 
 
 def test_prism_m_test_revise_anchors_in_test_plan_not_executable_files(tmp_path):
-    """Bug 2: Prism's M-TEST REVISE findings must be anchored in test-plan.md
-    (a Markdown document), never in executable test files (.py) via
-    ``trac discuss start --file <test_file>``. Discuss blockquotes are
-    only valid in Markdown documents; inserting them into .py files
-    corrupts executable test code."""
+    """Bug 2: Prism's M-TEST REVISE findings for ``test_defect`` code-class
+    defects route via the D-35 structured findings channel (findings JSON +
+    review_body → blobs, persisted via the structured channel, delivered to
+    Shield via retry evidence), **not** via ``trac discuss`` anchoring in
+    test-plan.md or in executable test files (.py). Discuss blockquotes in
+    .py files corrupts executable test code; test-plan.md is not a code-review
+    carrier per the d5d5b27 contract — only document-class defects
+    (``test_plan_defect`` / ``acceptance_defect`` / ``spec_defect``)
+    anchor in their corresponding doc threads."""
     backend = OpencodeBackend(tmp_path, "v0.1")
     source = backend._canonical / "Prism.md"
     text = source.read_text(encoding="utf-8")
     assert "trac discuss start --file <test_file>" not in text, (
-        "Prism.md must not reference <test_file> as discuss target; "
-        "M-TEST REVISE findings anchor in test-plan.md"
+        "Prism.md must not reference <test_file> as a discuss target; "
+        "M-TEST test_defect findings route via the D-35 structured channel"
     )
-    assert "trac discuss start --file test-plan.md" in text, (
-        "Prism.md must anchor M-TEST REVISE findings in test-plan.md"
+    # The d5d5b27 contract: code-class findings route through the D-35
+    # structured channel, NOT via trac discuss anchoring in test-plan.md.
+    # The string "trac discuss start --file test-plan.md" was intentionally
+    # removed; it must not reappear for test_defect routing.
+    assert "trac discuss start --file test-plan.md" not in text, (
+        "Prism.md must NOT anchor test_defect findings in test-plan.md; "
+        "the D-35 structured findings channel replaces doc-thread anchoring"
+    )
+    assert "D-35" in text, (
+        "Prism.md must declare the D-35 structured findings channel"
     )
     assert ".py" in text, (
         "Prism.md should still reference test artifact paths (.py) "
