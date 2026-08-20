@@ -150,6 +150,17 @@ def seed_v05_approved_baseline(host_repo: Path, version: str = "v0.5") -> Path:
         f"# {version} acceptance\n\n### AC-FR0030-01\n\nbaseline AC.\n\n### AC-FR0160-03\n\nbaseline boundary AC.\n",
         encoding="utf-8",
     )
+    # IF-HOTFIX-010: the canonical validator's sibling-lookup now resolves
+    # the target version dir's interfaces.md read-only from a hotfix dir;
+    # the baseline fixture must carry a §5 IF Registry so the resolver
+    # path validates (non-empty registry). One baseline IF- identifier is
+    # enough for the design-trace / test-tasks file-level validators.
+    (vdir / "interfaces.md").write_text(
+        f"# {version} interfaces\n\n## 5. IF Registry\n\n"
+        "- IF-BASELINE-001: baseline interface contract\n"
+        "- IF-HOTFIX-009: hotfix anchor verdict threading (inherited by delta)\n",
+        encoding="utf-8",
+    )
 
     # Record an approval.recorded event so approved_versions sees this version.
     # The reducer (kernel/machine.py _on_approval_recorded) projects ``digest``

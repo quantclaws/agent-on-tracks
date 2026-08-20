@@ -277,6 +277,7 @@ from tracks.executor.test_tasks import (  # noqa: E402,F401
     check_test_tasks_contract_file,
     parse_test_tasks,
     required_ac_ids,
+    resolve_inherited_baseline_docs,
 )
 
 # -- v0.6 hotfix delta test-plan validation (IF-HOTFIX-007, interfaces §1e/§1f) ---

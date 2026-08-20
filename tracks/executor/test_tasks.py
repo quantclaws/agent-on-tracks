@@ -22,7 +22,9 @@ functions back).
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
+from tracks.capabilities import _HOTFIX_VERSION_RE
 from tracks.executor.validation_shared import _HEADING, _acc_scan, _strip_comments
 
 # -- regexes ----------------------------------------------------------------
@@ -645,14 +647,45 @@ def _extract_if_registry(interfaces_text: str) -> set[str] | None:
     return set(_IF_ID.findall(_strip_comments(section)))
 
 
+def resolve_inherited_baseline_docs(doc_path: Path) -> tuple[Path, Path]:
+    """IF-HOTFIX-010 (interfaces §1i): resolve the acceptance.md and
+    interfaces.md paths a file-level validator reads for a test-plan doc.
+
+    Hotfix version directories (``v{M}.{m}-hotfix-{issue}``) carry only the
+    delta design trio (FR-0241-02 source approval does not copy the
+    baseline docs); the canonical validator reads the *target version*
+    directory's acceptance.md / interfaces.md read-only via this resolver
+    (no I/O side effects - path construction only).
+
+    Feature version directories (``v{M}.{m}``) and non-version directories
+    return the sibling paths (``doc_path.parent / ...``) - byte-identical
+    to the legacy ``path.parent / "acceptance.md"`` behavior; the dir-name
+    identity gate guarantees feature-version validator semantics never
+    enter the cross-version resolution path.
+    """
+    parent_name = doc_path.parent.name
+    m = _HOTFIX_VERSION_RE.match(parent_name)
+    if m is None:
+        return doc_path.parent / "acceptance.md", doc_path.parent / "interfaces.md"
+    target_version = f"v{m.group(1)}.{m.group(2)}"
+    target_dir = doc_path.parent.parent / target_version
+    return target_dir / "acceptance.md", target_dir / "interfaces.md"
+
+
 def check_design_trace_file(path) -> list:
     """BS-06 trace for an on-disk test-plan doc (reads the sibling
     acceptance.md). Used by validate_document (checks=["trace"]) and
-    trac validate. FR-0140: also reads sibling interfaces.md for IF- registry."""
-    acc_path = path.parent / "acceptance.md"
+    trac validate. FR-0140: also reads sibling interfaces.md for IF- registry.
+
+    IF-HOTFIX-010 (interfaces §1i): the sibling paths are resolved via
+    ``resolve_inherited_baseline_docs`` - a hotfix version directory
+    (``v{M}.{m}-hotfix-{issue}``) reads the target version directory's
+    acceptance.md / interfaces.md read-only (no file copy, FR-0241-02);
+    feature version directories keep the legacy sibling behavior
+    byte-identical (dir-name identity gate)."""
+    acc_path, if_path = resolve_inherited_baseline_docs(path)
     if not acc_path.exists():
         return ["line:1 test-plan validate requires acceptance.md in same dir"]
-    if_path = path.parent / "interfaces.md"
     if not if_path.exists():
         return ["line:1 test-plan validate requires interfaces.md in same dir"]
     registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))
@@ -773,11 +806,15 @@ def check_test_tasks(acc_text: str, plan_text: str, if_registry: set[str] | None
 def check_test_tasks_contract_file(plan_path) -> list:
     """D-28 file-level contract check for an on-disk test-plan doc (reads the
     sibling acceptance.md + interfaces.md IF- registry). Used by
-    validate_document (checks=["test_tasks"]) and trac validate."""
-    acc_path = plan_path.parent / "acceptance.md"
+    validate_document (checks=["test_tasks"]) and trac validate.
+
+    IF-HOTFIX-010 (interfaces §1i): sibling paths resolved via
+    ``resolve_inherited_baseline_docs`` - hotfix version directories read
+    the target version directory's docs read-only; feature version
+    directories keep the legacy sibling behavior byte-identical."""
+    acc_path, if_path = resolve_inherited_baseline_docs(plan_path)
     if not acc_path.exists():
         return ["line:1 test-plan test_tasks validate requires acceptance.md"]
-    if_path = plan_path.parent / "interfaces.md"
     if not if_path.exists():
         return ["line:1 test-plan test_tasks validate requires interfaces.md"]
     registry = _extract_if_registry(if_path.read_text(encoding="utf-8"))

@@ -403,8 +403,22 @@ class FakeShieldMixin:
         (vdir / "interfaces.md").write_text(interfaces, encoding="utf-8")
         plan = self._drop_coverage_section(self._design_doc("test-plan"))
         plan = self._append_hotfix_anchor_section(plan, anchored, "回归增量")
-        plan = plan.rstrip("\n") + "\n" + self._hotfix_delta_coverage(anchored)
+        baseline_acs = self._baseline_ac_ids(target_version)
+        plan = plan.rstrip("\n") + "\n" + self._hotfix_delta_coverage(anchored, baseline_acs)
         (vdir / "test-plan.md").write_text(plan, encoding="utf-8")
+
+    def _baseline_ac_ids(self, target_version: str) -> list[str]:
+        """IF-HOTFIX-010: read all AC ids from the target baseline
+        acceptance.md so the delta test-plan's §8 coverage can attribute a
+        unit layer to inherited (non-anchored) ACs too — the file-level
+        design-trace validator reads the baseline acceptance (via the
+        resolver) and checks every AC has a layer token in the delta plan."""
+        from tracks.executor.test_tasks import _known_ac_ids  # noqa: PLC0415
+
+        acc = self._design_vdir().parent / target_version / "acceptance.md"
+        if not acc.is_file():
+            return []
+        return sorted(_known_ac_ids(acc.read_text(encoding="utf-8")))
 
     @staticmethod
     def _append_hotfix_anchor_section(text: str, anchored: list[str], title: str) -> str:
@@ -415,17 +429,33 @@ class FakeShieldMixin:
         lines.append("")
         return text.rstrip("\n") + "\n" + "\n".join(lines) + "\n"
 
-    def _hotfix_delta_coverage(self, anchored: list[str]) -> str:
-        """§8 regression rows (hotfix delta test-plan): each anchored AC with a
-        unit-layer regression test declaration (FR-0244-02/03)."""
-        rows = "\n".join(
-            f"| {ac} | unit | tests/unit/test_{_ac_slug(ac.split('@', 1)[0])}.py | "
+    def _hotfix_delta_coverage(
+        self, anchored: list[str], baseline_acs: list[str] | None = None
+    ) -> str:
+        """§8 regression rows (hotfix delta test-plan): each anchored AC with
+        an integration-layer test declaration (cross-version hotfix ACs need
+        integration coverage — FR-0244-02/03 — and the file-level test-tasks
+        validator requires at least one integration/e2e Shield task).
+        Inherited (non-anchored) baseline ACs get a unit-layer row so the
+        file-level design-trace validator (which reads the baseline
+        acceptance via the IF-HOTFIX-010 resolver) sees a layer attribution
+        for every baseline AC."""
+        anchored_set = {ac.split("@", 1)[0] if "@" in ac else ac for ac in anchored}
+        rows = [
+            f"| {ac} | integration | tests/integration/test_{_ac_slug(ac.split('@', 1)[0])}.py | "
             "IF-HOTFIX-009 |"
             for ac in anchored
-        )
+        ]
+        for ac in baseline_acs or []:
+            bare = ac.split("@", 1)[0] if "@" in ac else ac
+            if bare in anchored_set:
+                continue
+            rows.append(
+                f"| {ac} | unit | tests/unit/test_{_ac_slug(bare)}.py | — |"
+            )
         return (
             "\n## 8. AC Coverage\n\n"
-            "| AC id | layer | test | IF |\n|---|---|---|---|\n" + rows + "\n"
+            "| AC id | layer | test | IF |\n|---|---|---|---|\n" + "\n".join(rows) + "\n"
         )
 
     def _devon_attach_hotfix_trailers(self, result: dict, assignment: dict) -> None:
