@@ -59,6 +59,11 @@ HOST_ISSUES_SEED: dict[str, dict] = {
         "body": "### 版本\nv0.6\n### 对应 FR/NFR\nFR-0030",
         "labels": ["bug"],
     },
+    "58": {
+        "title": "seam probe: hotfix must reach M-TEST",
+        "body": "### 版本\nv0.5\n### 对应 FR/NFR\nFR-0030",
+        "labels": ["bug"],
+    },
 }
 
 
@@ -241,6 +246,39 @@ def git(host_repo: Path, *args: str) -> str:
     ).stdout
 
 
+def assert_hotfix_drives_to_mtest(
+    trac, host_repo: Path, *, fresh_issue: str | None = None
+) -> None:
+    """Drive the hotfix run past the M-DESIGN delta into the M-TEST journey.
+
+    IF-HOTFIX-010 (resolve_inherited_baseline_docs) is not yet wired into
+    the run-loop validate step, so the hotfix delta run parks at
+    ``stage=M-DESIGN awaiting=escalation reason=[trace] test-plan validate
+    requires acceptance.md in same dir`` instead of progressing to M-TEST.
+    Asserting ``stage=M-TEST`` in ``trac status`` is therefore a legal-Red
+    assertion: it fails (at the unimplemented baseline-resolver seam) until
+    IF-HOTFIX-010 lands, and passes once the hotfix journey can reach the
+    M-TEST stage.
+
+    ``fresh_issue``: for tests whose own entry terminated before leaving an
+    active M-DESIGN run (REJECTED / FEATURE_ROUTE / lock-reject), enter a
+    fresh post-release hotfix run on the given issue so the seam drive has a
+    run to continue.
+    """
+    status = trac("status")
+    if fresh_issue is not None and "stage=M-DESIGN" not in status.stdout:
+        r = trac("hotfix", str(fresh_issue), "--scenario", "post-release")
+        assert r.returncode == 0, r.stderr
+    for _ in range(6):
+        cont = trac("run")
+        assert cont.returncode == 0, cont.stderr
+    status = trac("status")
+    assert "stage=M-TEST" in status.stdout, (
+        "hotfix run must reach M-TEST; "
+        f"blocked by IF-HOTFIX-010 baseline-resolver seam: {status.stdout.strip()}"
+    )
+
+
 __all__ = [
     "HOST_ISSUES_SEED",
     "seed_host_issues",
@@ -250,6 +288,7 @@ __all__ = [
     "seed_inprogress_feature_run",
     "read_events",
     "git",
+    "assert_hotfix_drives_to_mtest",
     "EventEnvelope",
     "SCHEMA_VERSION",
     "Store",
