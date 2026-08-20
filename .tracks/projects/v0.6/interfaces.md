@@ -282,7 +282,7 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 - **合同**：`trac validate --file test-plan.md` 与 M-DESIGN EXIT 的 design-trace 检查（`check_design_trace`，BS-06/FR-0140）在提取「可见行」时，除既有 HTML 注释与 fenced code 剔除外，**同时剔除 inline-discussion blockquote 行**（以 `>` 开头的行）：讨论线程是评审期旁路（模板指引与 tracks-discuz 协议的既定语义），不是计划内容；其正文中的 AC id + tests 路径字样既不构成 layer 归属声明，也不构成 IF- 归属声明，不触发「integration/e2e AC missing IF- attribution」与「has no layer attribution」的判定。
 - **fail-closed 保持**：layer 与 IF- 归属的判定面收窄为非 blockquote 可见行（§8 表格行为权威来源）；AC 的归属声明写进 blockquote 不产生任何计数效果（「has no layer attribution」照常失败）。`required_ac_ids` 的 layer 判定共享同一可见行提取，同步收窄（blockquote 内的 layer 词不再把 AC 判为 required）——§8 表格行仍是 D-28 唯一机器可读 AC 覆盖来源，D-28 语义不变。
 - **`trac check trace` 不受影响**：其 AC↔测试标记闭合按 §8 表格行解析（row-based），不含逐行归属扫描；IF-TRACE-001/002 合同不变。
-- **生效时点**：合同随本 revision 冻结。实现状态——§3.9 过渡路径 (b) 的带外应用在 R3 后由 commit ae5b7af 回退（为 T-012 标准 RGR 正式归档让路），T-012 至今未启动；当前工作树 `_visible_plan_lines` **未**剔除 `>` 开头行（Archer 不写实现代码，§2f 代码实现属 Devon T-012），`trac validate --file test-plan.md` 因而在历史 Prism 讨论块引用行上报 11 项 missing IF- attribution 假失败（§2f 合同已冻结但代码实现未归档的过渡态，非设计缺陷；详见 ARCH-006 §3.9 R4 实测更新）。M-DESIGN EXIT 的 validate 通过依赖 §2f 合同的带外重应用（运营端，R3 先例）或 T-012 落地——二者任一恢复 `_visible_plan_lines` 的 `>` 排除即消除该假失败类，合同语义不变。M-IMPL 重规划仍按 ARCH-006 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档。
+- **生效时点**：合同随本 revision 冻结。代码实现状态（工作树 vs HEAD、T-012 标准 RGR 归档、运营端带外应用）是 Devon/Runtime 的归档职责，非设计合同事项；设计文档不承载代码级工作树快照跟踪（R3/R4 的实测记录已随工作树变化多次失真，R5 撤销该跟踪）。当前事实（截至本 revision）：工作树 `_visible_plan_lines` 已反映本合同（剔除 `>` 开头行），`trac validate --file test-plan.md` 为 valid；若工作树代码偏离 §2f，门禁以 validate 失败自暴露（实现回归，非设计缺口），按合同由 Devon/Runtime 修复。M-IMPL 重规划按 ARCH-006 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档。
 
 ## 3. 文件 / 存储契约
 
