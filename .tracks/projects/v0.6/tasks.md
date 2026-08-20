@@ -1,145 +1,121 @@
 # Task Graph
 
 ## T-001
-- Issue: #79
-- Description: 【verification-only §1.0.3】验证 HOTFIX-TRIAGE kernel 子状态机与事件封闭集（FR-0240 SM-01，IF-HOTFIX-002）已随基线 green 提交 a864e25 落盘（architecture §1.0.5 R2 重规划基线事实：kernel 侧已完成并在基线）经 T-007 CLI 入口接线后满足：运行冻结测试资产——anchor 重派/AWAIT_HUMAN 不自动转 feature（AC-FR0240-05）、feature_route 无分支（AC-FR0241-04）、anchor 推翻回滚回 SAGE_TRIAGE（AC-FR0243-03）、入口事件 append-only/投影重建（AC-FR0240-07/AC-NFR0100-04）、fail-closed 无分支副作用（AC-NFR0100-03）。本任务 measured anchor 状态：红因 out-of-scope CLI 未接线（TG-2 信号——锚定失败证据呈 usage/collect 错误特征），故 depends_on T-007（TG-3：test_refs 变绿条件在 T-007 闭包 ∪ 基线 kernel scope 内可达）；T-007 落盘后 anchors 因基线已实现 kernel 行为而转绿。无 RED-implementation，Runtime 直接执行 test_refs 验收。
-- AC refs: AC-FR0240-05, AC-FR0240-07, AC-FR0241-04, AC-FR0243-03, AC-NFR0100-03, AC-NFR0100-04
-- FR refs: FR-0240, FR-0241, FR-0243, NFR-0100
-- IF ids: IF-HOTFIX-002
-- Test refs: tests/integration/test_hotfix_anchor.py::test_anchor_invalid_redispatch_and_await_human_no_auto_feature, tests/integration/test_hotfix_feature_route.py::test_feature_route_exits_without_branch_or_dangling_run, tests/integration/test_hotfix_feature_route.py::test_fail_closed_no_branch_and_no_auto_feature_route, tests/integration/test_hotfix_design_delta.py::test_prism_anchor_overturn_routes_back_to_sage_triage, tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_replay_and_report, tests/integration/test_hotfix_events.py::test_hotfix_events_append_only_and_projection_rebuild
-- Scope: tracks/kernel/events.py, tracks/kernel/hotfix.py, tracks/kernel/machine.py
-- Depends on: T-007
-- Batch: 3
+- Issue: #42
+- Description: 【标准 RGR】补全 IF-HOTFIX-010 继承基线文档解析，并接通 hotfix 的 trac check trace JSON 出口：executor/test_tasks.py 提供 resolve_inherited_baseline_docs(doc_path) 的 hotfix 目录身份门控，check_design_trace_file/check_test_tasks_contract_file 对 hotfix 目录只读解析目标版本 acceptance.md/interfaces.md、对 feature 目录保持既有语义且缺失时 fail-closed；cli/main.py 的 trac check trace 传递 hotfix run 的 anchor_acs 与 increment.declared unit_rows，输出 hotfix_scope。工程行为使用冻结 integration 锚验证，Devon 仍须按 RGR 普遍义务补充必要 unit 覆盖；不得复制 inherited acceptance/interfaces。
+- AC refs: AC-FR0243-01
+- FR refs: FR-0243
+- IF ids: IF-HOTFIX-005, IF-HOTFIX-006, IF-HOTFIX-010
+- Test refs: tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts
+- Scope: tracks/executor/test_tasks.py
+- Depends on: -
+- Batch: 1
 - Parallel: True
 
 ## T-002
-- Issue: #88
-- Description: 【verification-only §1.0.3】验证 hotfix 入口确定性逻辑层（IF-HOTFIX-003/004/005）已随基线 green 提交 a1dccda 落盘（architecture §1.0.5 R2 重规划基线事实：executor 纯函数已完成并在基线）经 T-007 CLI 入口接线后满足：运行冻结测试资产——precheck 确定性无 LLM 派发（AC-NFR0100-01）、锚定校验可追溯含重派计数（AC-NFR0100-02）。本任务 measured anchor 状态：红因 out-of-scope CLI 未接线（TG-2 信号），故 depends_on T-007（TG-3：test_refs 变绿条件在 T-007 闭包 ∪ 基线 executor scope 内可达）；T-007 落盘后 anchors 因基线已实现 executor 纯函数而转绿。无 RED-implementation，Runtime 直接执行 test_refs 验收。
-- AC refs: AC-NFR0100-01, AC-NFR0100-02
-- FR refs: FR-0240, FR-0241, NFR-0100
-- IF ids: IF-HOTFIX-003, IF-HOTFIX-004, IF-HOTFIX-005
-- Test refs: tests/integration/test_hotfix_precheck.py::test_precheck_deterministic_no_llm_dispatch_records, tests/integration/test_hotfix_anchor.py::test_sage_anchor_validated_reports_anchored_set, tests/integration/test_hotfix_anchor.py::test_anchor_validation_traceable_with_retry_count
-- Scope: tracks/executor/hotfix.py, tracks/effects/github.py, tracks/capabilities.py
-- Depends on: T-007
-- Batch: 3
+- Issue: #81
+- Description: 【标准 RGR】修复 hotfix 与 feature run 并存时的 active/suspended 投影排序：store/store.py 的 projection rebuild 必须依据事件时间保持 hotfix 最新 active run，trac status 继续输出 run_id/stage/branch/scenario 与 suspended 行；不改变事件 schema、单写者锁或既有 feature-run 选择语义。
+- AC refs: AC-FR0242-01
+- FR refs: FR-0242
+- IF ids: IF-HOTFIX-006
+- Test refs: tests/integration/test_hotfix_coexist.py::test_active_run_selection_and_status_discriminates_runs
+- Scope: tracks/store/store.py
+- Depends on: -
+- Batch: 1
 - Parallel: True
 
 ## T-003
-- Issue: #83
-- Description: 【verification-only §1.0.3】验证 M-TEST hotfix 变体的阶段路由与闭合工具（FR-0244，IF-HOTFIX-007/IF-MTEST-002/IF-TRACE-002）已随基线 green 提交 070eac6 落盘（architecture §1.0.5 R2 重规划基线事实与任务型裁定：m_test.py M-TEST EXIT hotfix 分支/trace 闭合检查、trace.py @version 跨版本解析与 hotfix_scope、test_tasks.py hotfix unit 行解析均已完成并在基线）经 T-007 CLI 入口接线后满足：运行冻结测试资产——回归用例 RED-first 复用既有 RED_CHECK（AC-FR0244-01）、跨版本 trace 闭合不新增 AC（AC-FR0244-03）、空 Shield 增量放行含 unit 闭合（AC-FR0244-04）。本任务 measured anchor 状态：红因 out-of-scope CLI 未接线（TG-2 信号——锚定失败证据呈 USAGE 错误特征，非行为断言失败），故 depends_on T-007（TG-3：test_refs 变绿条件在 T-007 闭包 ∪ 基线 070eac6 scope 内可达）；T-007 落盘后 anchors 因基线已实现行为而转绿。无 RED-implementation，Runtime 直接执行 test_refs 验收。§2f blockquote 排除（_visible_plan_lines）不在本任务 scope，由 T-012（issue #33，PRISM-PLAN-R1-01 blockquote 建议）单独正式归档。
-- AC refs: AC-FR0244-01, AC-FR0244-03, AC-FR0244-04
-- FR refs: FR-0244
-- IF ids: IF-HOTFIX-007, IF-MTEST-002, IF-TRACE-002
-- Test refs: tests/integration/test_hotfix_mtest.py::test_mtest_regression_red_first_then_green, tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac, tests/integration/test_hotfix_mtest.py::test_empty_shield_increment_release_with_unit_closure
-- Scope: tracks/kernel/m_test.py, tracks/checks/trace.py
-- Depends on: T-007
-- Batch: 3
+- Issue: #82
+- Description: 【标准 RGR】闭合 M-DESIGN Prism hotfix verdict 传递：executor/executor.py 将 fake/真实 Prism 的 anchor_verdict（默认 upheld，overturned 保留）及相关路由字段写入 prism.verdict，使 AC-FR0243-02 的复核可观察，并使 anchor_overturned 走 M-DESIGN→M-HOTFIX-TRIAGE/SAGE_TRIAGE 而不消费 M-DESIGN 重派预算。
+- AC refs: AC-FR0243-02, AC-FR0243-03
+- FR refs: FR-0243
+- IF ids: IF-HOTFIX-002, IF-HOTFIX-009
+- Test refs: tests/integration/test_hotfix_design_delta.py::test_delta_design_carries_anchor_set_and_prism_review, tests/integration/test_hotfix_design_delta.py::test_prism_anchor_overturn_routes_back_to_sage_triage
+- Scope: tracks/executor/executor.py
+- Depends on: T-001
+- Batch: 2
 - Parallel: True
 
 ## T-004
-- Issue: #84
-- Description: 【标准 RGR】实现 M-IMPL hotfix 变体 runtime（FR-0245，IF-HOTFIX-008/IF-IMPL-001/IF-IMPL-002）：tracks/executor/m_impl_runtime.py——hotfix run 的 BASELINE digest 输入在既有集合上追加场景 B 活跃 release 分支 HEAD SHA（state.hotfix_scenario==dev 时 git rev-parse 活跃分支）；活跃分支推进 → 重算 digest 不匹配 → baseline.frozen(status=stale, scenario_branch_head=...) → 既有 NEEDS_ATTENTION 路由（保留 reconcile 冲突路径，merge 本版不执行）；hotfix run 版本身份 {ver}-hotfix-{issue} 的 vdir/task graph/测试合同解析（version_dir 自然解析，task graph 归 hotfix 项目目录）；Devon 派发 manifest 携带 hotfix issue（G commit trailers Tracks-Issue 来源，interfaces §1h）；RGR R/G 提交天然落 fix/{issue} 分支（Runtime 唯一 branch/worktree authority 既有语义）。post-release 场景无追加输入（base=main 与活跃 run 独立）。boundary 分支恢复 checkout 的 run.completed 处理器在 executor.py（T-007 接线）。RED 锚点为既有失败测试（fix 分支提交隔离拓扑断言、场景 B stale→needs_attention 驻留 M-IMPL 中段时序）。architecture §1.0.5 任务型裁定：depends_on T-007 后锚仅因自身缺失行为而红（batch C，TG-2/TG-3 满足）。
+- Issue: #83
+- Description: 【标准 RGR】实现 hotfix M-IMPL 的隔离提交与 dev 场景 stale reconcile：executor/m_impl_runtime.py 将 hotfix dev 的活跃 release branch HEAD 纳入 baseline digest，推进后产出 baseline.frozen stale 并沿既有 NEEDS_ATTENTION 路由；RGR 产生的修复提交与 Tracks-Issue trailer 留在 fix/{issue}，不泄漏到活跃分支。
 - AC refs: AC-FR0245-01, AC-FR0245-02
 - FR refs: FR-0245, FR-0246
 - IF ids: IF-HOTFIX-008, IF-IMPL-001, IF-IMPL-002
 - Test refs: tests/integration/test_hotfix_mimpl.py::test_mimpl_commits_isolated_on_fix_branch, tests/integration/test_hotfix_mimpl.py::test_scenario_b_baseline_stale_reconcile_needs_attention
 - Scope: tracks/executor/m_impl_runtime.py
-- Depends on: T-007
-- Batch: 3
+- Depends on: T-001, T-002
+- Batch: 2
 - Parallel: True
 
 ## T-005
-- Issue: #86
-- Description: 【标准 RGR】实现 hotfix 缺口与退出路由的 kernel 侧（FR-0247/FR-0248，IF-HOTFIX-009）：tracks/kernel/m_impl.py——DIAGNOSE stub_gap → rollback_stage(to_stage=M-DESIGN)（既有路由在 hotfix run 下回 hotfix 自己的 delta 设计闭环：全程无 human.review/human.approval 前置门，闭环后重新进入 M-TEST/M-IMPL 派发序列）；DIAGNOSE classification=ac_gap|spec_gap → awaiting escalation 驻留（产品决定待 Human，区别于设计缺口的内部闭环）；human.approval 后路由 backlog.recorded{decision, issue} + run.completed(terminal_state=ac_gap|spec_gap) 的决定消费（退出后不再派发 M-TEST/M-IMPL）。anchor 推翻回滚（M-DESIGN→M-HOTFIX-TRIAGE）的 decide 分支在 machine.py（T-001 基线已交付）。approve CLI 形态（trac approve --actor）与 executor 完成事件接线在 T-007。RED 锚点为既有失败测试（design_gap 回退无 Human 门、闭环重入旅程、ac_gap 退出 human.approval 前置）。architecture §1.0.5 任务型裁定：depends_on T-007 后锚仅因自身缺失行为而红（batch C，TG-2/TG-3 满足）。
-- AC refs: AC-FR0247-01, AC-FR0247-02, AC-FR0248-01
-- FR refs: FR-0247, FR-0248
-- IF ids: IF-HOTFIX-009
-- Test refs: tests/integration/test_hotfix_routes.py
-- Scope: tracks/kernel/m_impl.py
-- Depends on: T-007
+- Issue: #79
+- Description: 【verification-only】验证已落盘的 HOTFIX-TRIAGE、ANCHORED、FEATURE_ROUTE 与 fail-closed 入口合同：运行冻结 integration 锚，确认 trac hotfix 五形态、PRECHECK 确定性/拒绝矩阵、Sage 锚定与重派、Human anchor/feature-route、场景 A/B 分支基线、source approval 与 M-DESIGN 进入均在 T-001 后可达；Runtime 直接执行 test_refs，不进行 Devon implementation。
+- AC refs: AC-FR0240-01, AC-FR0240-02, AC-FR0240-03, AC-FR0240-04, AC-FR0240-05, AC-FR0240-06, AC-FR0241-01, AC-FR0241-02, AC-FR0241-03, AC-FR0241-04, AC-NFR0100-01, AC-NFR0100-02, AC-NFR0100-03
+- FR refs: FR-0240, FR-0241, NFR-0100
+- IF ids: IF-HOTFIX-002, IF-HOTFIX-003, IF-HOTFIX-004, IF-HOTFIX-005, IF-HOTFIX-006
+- Test refs: tests/integration/test_hotfix_cli_entry.py::test_hotfix_entry_happy_requested_and_status_substates, tests/integration/test_hotfix_precheck.py, tests/integration/test_hotfix_anchor.py, tests/integration/test_hotfix_await_human.py, tests/integration/test_hotfix_branch_baseline.py, tests/integration/test_hotfix_feature_route.py
+- Scope: tests/integration/test_hotfix_cli_entry.py, tests/integration/test_hotfix_precheck.py, tests/integration/test_hotfix_anchor.py, tests/integration/test_hotfix_await_human.py, tests/integration/test_hotfix_branch_baseline.py, tests/integration/test_hotfix_feature_route.py
+- Depends on: T-001, T-002
 - Batch: 3
 - Parallel: True
 
 ## T-006
-- Issue: #82
-- Description: 【标准 RGR】实现 fake 通道 hotfix 行为（FR-0240 SAGE_TRIAGE outcome / FR-0243 delta 三文档 / FR-0244 跨版本回归行，IF-HOTFIX-009 声明 + IF-HOTFIX-004 协同）：tracks/effects/fake.py——sage:SAGE_TRIAGE token（anchor=默认，取目标版本 acceptance 首个 AC 标题作确定性锚定输出 acs+rationale_refs；no_anchor 含 searched_versions+corpus_digests；bad_anchor 引用不实，| 序列语义不变）；prism:PRISM_REVIEW=anchor_overturned token 与 verdict payload 缺省 anchor_verdict=upheld；Archer M-DESIGN hotfix 派发（assignment 携带 anchor_acs/target_version/baseline_doc_paths）产出 delta 三文档增量（落 .tracks/projects/{ver}-hotfix-{issue}/，frontmatter 完整、逐条跨版本引用锚定 AC、§8 回归行声明层归属——供 T-003 的层词表与 trace 闭合消费）；Devon hotfix 派发 outcome 携带 Tracks-Issue trailers 证据。tracks/effects/fake_shield.py——hotfix WRITE 回归用例生成（跨版本 AC 标记 AC-FRXXXX-YY@<version> TRACKS-TRACE，integration 行为不变）。对接 executor 派发管线在 T-007 接线。architecture §1.0.5 任务型裁定（TG-1 composition-root-first）：本任务属入口链 batch A（fake sage:SAGE_TRIAGE 行为），仅依赖已落盘基线 kernel 与纯函数——变绿条件命中本 task IF 集合的 int 子集在 depends_on 闭包（空）∪ 自身 scope_boundary 内不可经 CLI 旅程达（CLI 在 T-007，未在本任务闭包），故本任务以直接 act() 单测验证（tests/unit/test_fake_backend.py 既有模式，Devon RED 阶段补写 hotfix fake 行为单测），Devon RED 阶段在 tests/unit/test_fake_backend.py 补写 hotfix fake 行为的 failing 单测（直接 act() 调用，不经 CLI 旅程），GREEN 阶段实现 fake.py/fake_shield.py 使单测变绿；CLI 驱动 integration（test_delta_design_carries_anchor_set_and_prism_review，AC-FR0243-02）与 e2e（test_hotfix_await_journey，AC-FR0240-06）后移至 T-010/T-011（depends_on 含 T-007）作为出口门禁下游覆盖（TG-3 满足，不在本任务 RED 阶段断言）。
-- AC refs: AC-FR0243-02
-- FR refs: FR-0240, FR-0243, FR-0244
-- IF ids: IF-HOTFIX-009
-- Test refs: tests/unit/test_fake_backend.py
-- Scope: tracks/effects/fake.py, tracks/effects/fake_shield.py
-- Depends on: -
-- Batch: 1
+- Issue: #84
+- Description: 【verification-only】验证已落盘的 M-TEST hotfix 变体：冻结 integration 锚确认 RED-first、delta 层归属、跨版本 AC trace、空 Shield increment.declared 与 unit 计划级闭合在 T-001 后完整放行；Runtime 直接执行 test_refs，不进行 Devon implementation。
+- AC refs: AC-FR0244-01, AC-FR0244-02, AC-FR0244-04
+- FR refs: FR-0244
+- IF ids: IF-HOTFIX-007, IF-MTEST-002, IF-VALIDATE-001, IF-HOTFIX-010, IF-TRACE-002
+- Test refs: tests/integration/test_hotfix_mtest.py::test_mtest_regression_red_first_then_green, tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated, tests/integration/test_hotfix_mtest.py::test_empty_shield_increment_release_with_unit_closure
+- Scope: tests/integration/test_hotfix_mtest.py
+- Depends on: T-001
+- Batch: 3
 - Parallel: True
 
 ## T-007
-- Issue: #79
-- Description: 【标准 RGR】实现 hotfix 全链接线（FR-0240 入口五形态 + FR-0242 观察 + FR-0244 increment 事件 + CI foundation，IF-HOTFIX-001/002/004/006）：tracks/cli/main.py——cmd_hotfix 三形态（入口 trac hotfix <issue> --scenario post-release|dev 同步驱动 triage：writer_lock→hotfix.requested→run_loop，终态打印 REJECTED stderr+exit 1 / AWAIT_HUMAN 状态行 exit 0 / ANCHORED 状态行 exit 0；anchor <AC@ver ...> 子动作经 submit_human_result→human.anchor(manual)→validate_anchor→complete_hotfix_entry；feature-route 子动作→human.anchor(feature_route)→backlog.recorded→run.completed(feature_route)）；--scenario 缺省 stderr 询问提示 + exit 2 不建 run 不写事件；USAGE 与 TRAC_SUBCOMMANDS 同步追加 hotfix（cli/main.py 与 validate.py 必须同任务，tests/unit/test_validate.py parity 钉住）；cmd_status 扩展（hotfix run 行追加 branch=fix/N scenario issue、入口子状态/awaiting 行、suspended: 挂起 run 清单、completed terminal 行）；cmd_approve 扩展（hotfix ac_gap/spec_gap awaiting 形态→human.approval→backlog.recorded→run.completed 终态）。tracks/executor/executor.py——_do_precheck_hotfix/_do_validate_anchor/_do_complete_hotfix_entry handlers（消费基线已落盘的 T-002 纯函数，per-kind 幂等 reconcile：triage.prechecked(pass)/anchor.validated/branch.created 事件即标记）；sage SAGE_TRIAGE 派发 assignment 物化（§1h anchor 语料字段：issue 语料/scenario/target_version/anchor_hints/corpus 清单）；Archer M-DESIGN hotfix 派发物化（anchor_acs/target_version/baseline_doc_paths）；M-TEST 空 Shield 增量 increment.declared 事件产出（消费 T-003 路由）；run.completed(boundary) 分支恢复 checkout（restored_active_run/restored_branch 入 payload，挂起 feature run 恢复 active）；ac_gap/spec_gap awaiting 的 approve 完成路由（消费 T-005 kernel 路由）。tracks/executor/validate.py——delta test-plan 层归属校验（unit 行仅 {ver}-hotfix-{issue} 目录合法，feature 目录硬错误）+ @version 跨版本引用校验 + TRAC_SUBCOMMANDS 追加 hotfix。.github/workflows/ci.yml——live-opencode（weekly/manual）与 release-evidence（milestone）job 增补 tests/e2e_live/test_hotfix_live.py 探针步骤（ARCH-006 §4.3 待实现 foundation task；milestone 缺凭据 fail-closed）。RED 锚点为既有失败测试（入口合同、precheck 通过/拒绝矩阵、人工锚定与转 feature 子动作）。architecture §1.0.5 任务型裁定（TG-1）：本任务属入口链 batch B（CLI 入口接线），depends_on T-006（fake sage:SAGE_TRIAGE 行为，入口链前置），落盘后 triage 入口层锚（cli_entry / precheck / anchor / await_human / feature_route / events）可达绿——batch C 锚定/验证任务（T-001/T-002/T-003/T-004/T-005）方可进入 RED。
-- AC refs: AC-FR0240-01, AC-FR0240-02, AC-FR0240-03, AC-FR0240-04, AC-FR0240-06, AC-FR0240-07
-- FR refs: FR-0240, FR-0242, FR-0244
-- IF ids: IF-HOTFIX-001, IF-HOTFIX-002, IF-HOTFIX-004, IF-HOTFIX-006
-- Test refs: tests/integration/test_hotfix_cli_entry.py, tests/integration/test_hotfix_precheck.py::test_precheck_pass_reaches_sage_triage_without_agent_dispatch, tests/integration/test_hotfix_precheck.py::test_precheck_rejection_matrix_no_branch_nonzero_exit, tests/integration/test_hotfix_await_human.py
-- Scope: tracks/cli/main.py, tracks/executor/executor.py, tracks/executor/validate.py, .github/workflows/ci.yml
-- Depends on: T-006
-- Batch: 2
+- Issue: #86
+- Description: 【verification-only】验证事件审计：冻结 integration 锚确认 hotfix 入口事件 append-only/投影重建/replay/report，以及 boundary 前后的完整审计序列；缺口路由由独立 T-010 覆盖。Runtime 直接执行 test_refs，不进行 Devon implementation。
+- AC refs: AC-FR0240-07, AC-FR0246-03, AC-NFR0100-04
+- FR refs: FR-0240, FR-0246, NFR-0100
+- IF ids: IF-HOTFIX-006
+- Test refs: tests/integration/test_hotfix_events.py, tests/integration/test_hotfix_events.py::test_replay_and_report_show_full_hotfix_journey
+- Scope: tests/integration/test_hotfix_events.py
+- Depends on: T-001, T-003, T-004
+- Batch: 4
 - Parallel: True
 
 ## T-008
-- Issue: #80
-- Description: 【verification-only §1.0.3】验证 ANCHORED 入口完成与基线继承（FR-0241，IF-HOTFIX-005）经 T-001/T-002（基线已落盘）+ T-007 CLI 入口接线实现后满足：运行冻结测试资产 tests/integration/test_hotfix_branch_baseline.py（场景 A fix/N base=main HEAD（git log --oneline fix/N ^main 为空）/场景 B base=活跃分支 HEAD；hotfix 目录无 story/spec/acceptance、无本 run 自有 approval.recorded（source approval）；stage.entered(M-DESIGN) + trac run 续跑接续）。无 RED-implementation，Runtime 直接执行 test_refs 验收。
-- AC refs: AC-FR0241-01, AC-FR0241-02, AC-FR0241-03
-- FR refs: FR-0241
-- IF ids: IF-HOTFIX-005
-- Test refs: tests/integration/test_hotfix_branch_baseline.py
-- Scope: tests/integration/test_hotfix_branch_baseline.py
-- Depends on: T-007
+- Issue: #88
+- Description: 【verification-only】验证 hotfix run 并存/恢复、M-IMPL boundary 与 happy-path 审计：冻结 integration/e2e 锚确认 active/suspended 选择、writer lock、崩溃恢复、fix 分支隔离后的 boundary、无发布副作用、replay/report 完整序列及两个 e2e happy journeys；Runtime 直接执行 test_refs，不进行 Devon implementation。
+- AC refs: AC-FR0242-02, AC-FR0242-03, AC-FR0242-04, AC-FR0246-01, AC-FR0246-02, AC-FR0246-03, AC-NFR0110-01, AC-NFR0110-02, AC-NFR0110-03
+- FR refs: FR-0242, FR-0246, NFR-0110
+- IF ids: IF-HOTFIX-006
+- Test refs: tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active, tests/integration/test_hotfix_coexist.py::test_suspended_run_observable_and_gates_recoverable, tests/integration/test_hotfix_coexist.py::test_second_concurrent_trac_command_rejected_with_holder_pid, tests/integration/test_hotfix_recovery.py::test_crash_recovery_resumes_precise_hotfix_state, tests/integration/test_hotfix_mimpl.py::test_boundary_terminal_state_keeps_fix_branch, tests/integration/test_hotfix_mimpl.py::test_no_release_events_after_boundary, tests/e2e/test_hotfix_journey.py::test_hotfix_journey_happy_post_release, tests/e2e/test_hotfix_await_journey.py::test_hotfix_await_journey_manual_anchor
+- Scope: tests/integration/test_hotfix_coexist.py, tests/integration/test_hotfix_recovery.py, tests/integration/test_hotfix_mimpl.py, tests/e2e/test_hotfix_journey.py, tests/e2e/test_hotfix_await_journey.py
+- Depends on: T-001, T-002, T-003, T-004
+- Batch: 5
+- Parallel: True
+
+## T-010
+- Issue: #90
+- Description: 【verification-only】验证 hotfix 缺口路由：冻结 integration 锚确认设计缺口回本 hotfix M-DESIGN 不经过 Human 技术门，ac_gap/spec_gap 经过 Human approval 前置后记录 backlog/new feature 并以对应终态结束；Runtime 直接执行 test_refs，不进行 Devon implementation。
+- AC refs: AC-FR0247-01, AC-FR0247-02, AC-FR0248-01
+- FR refs: FR-0247, FR-0248
+- IF ids: IF-HOTFIX-009
+- Test refs: tests/integration/test_hotfix_routes.py
+- Scope: tests/integration/test_hotfix_routes.py
+- Depends on: T-001, T-003, T-004
 - Batch: 4
 - Parallel: True
 
 ## T-009
-- Issue: #83
-- Description: 【verification-only §1.0.3】验证 delta test-plan 层归属校验（FR-0244-02，IF-VALIDATE-001 扩展）经 T-003（层词表）+ T-007（validate.py 校验与 USAGE/TRAC_SUBCOMMANDS parity）实现后满足：运行冻结测试资产 test_delta_testplan_layer_ownership_validated（hotfix 目录下 unit 行合法、trac validate --file 对层归属错误 exit 非零；归属声明可校验）。无 RED-implementation，Runtime 直接执行 test_refs 验收。
-- AC refs: AC-FR0244-02
+- Issue: #89
+- Description: 【标准 RGR】接通 hotfix 计划级 trac check trace 出口：cli/main.py 在 hotfix run 且存在 increment.declared 时传递 anchor_acs、目标 projects_dir、declared unit_rows 给 check_trace_full_file，并保留 feature 版本 byte-identical 语义；JSON 成功输出必须含 hotfix_scope，闭合失败仍 fail-closed。
+- AC refs: AC-FR0244-03
 - FR refs: FR-0244
-- IF ids: IF-VALIDATE-001
-- Test refs: tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated
-- Scope: tests/integration/test_hotfix_mtest.py
-- Depends on: T-003, T-007
-- Batch: 4
-- Parallel: True
-
-## T-010
-- Issue: #82
-- Description: 【verification-only §1.0.3】验证 M-DESIGN delta 产出与机器合同继承（FR-0243-01/02，IF-HOTFIX-005 + IF-HOTFIX-009 下游覆盖）经 T-006（fake delta 三文档 + sage:SAGE_TRIAGE/anchor_verdict token）+ T-007（M-DESIGN hotfix 派发物化）+ T-003（delta plan 校验）实现后满足：运行冻结测试资产 test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts（delta 三文档落 .tracks/projects/v0.5-hotfix-42/ 与目标版本基线目录区分；story/spec/acceptance 不创建；contracts 沿用不重写）与 test_delta_design_carries_anchor_set_and_prism_review（delta 文档承接锚定 AC 集合 + Prism anchor_verdict 复核；AC-FR0243-02 CLI 驱动 integration，自 T-006 batch A 后移至此——T-006 闭包不含 T-007 故不可在本任务 GREEN_GATE 达绿，TG-3）。无 RED-implementation，Runtime 直接执行 test_refs 验收。
-- AC refs: AC-FR0243-01
-- FR refs: FR-0243
-- IF ids: IF-HOTFIX-005
-- Test refs: tests/integration/test_hotfix_design_delta.py::test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts, tests/integration/test_hotfix_design_delta.py::test_delta_design_carries_anchor_set_and_prism_review
-- Scope: tests/integration/test_hotfix_design_delta.py
-- Depends on: T-003, T-006, T-007
-- Batch: 4
-- Parallel: True
-
-## T-011
-- Issue: #81
-- Description: 【verification-only §1.0.3】验证 run 并存、boundary 终态与全旅程可审计性（FR-0242/FR-0246/NFR-0110/AC-FR0240-06 e2e 下游覆盖，IF-HOTFIX-006）经全部实现任务（T-003/T-004/T-005/T-006/T-007 及其依赖）后满足：运行冻结测试资产——coexist（单一 active run 接续与 status 分辨 run_id+stage+branch+scenario、boundary 后挂起 feature run 恢复 active、挂起 run 可观察/门禁可恢复、第二并发 trac 命令 writer lock 拒绝报持有者 PID）、recovery（中断后事件回放恢复精确状态）、boundary（terminal=boundary 且 fix/N 分支保留、事件流无 merge/tag/publish 发布事件）、events::full_journey（replay/report 完整旅程序列）、e2e 场景 A 全旅程（triage→delta→M-TEST RED-first→M-IMPL 隔离→boundary，工作树切回恢复分支）、e2e await→manual anchor 旅程（AC-FR0240-06 manual anchor 进入 M-DESIGN；自 T-006 batch A 后移至此，T-006 闭包不含 T-007 故不可达绿，TG-3）。无 RED-implementation，Runtime 直接执行 test_refs 验收；全量 integration+e2e 变绿仍由 ISLAND_GATE_2 出口门禁复核。
-- AC refs: AC-FR0242-01, AC-FR0242-02, AC-FR0242-03, AC-FR0242-04, AC-FR0246-01, AC-FR0246-02, AC-FR0246-03, AC-NFR0110-01, AC-NFR0110-02, AC-NFR0110-03
-- FR refs: FR-0242, FR-0246, NFR-0110
-- IF ids: IF-HOTFIX-006
-- Test refs: tests/integration/test_hotfix_coexist.py, tests/integration/test_hotfix_recovery.py, tests/integration/test_hotfix_mimpl.py::test_boundary_terminal_state_keeps_fix_branch, tests/integration/test_hotfix_mimpl.py::test_no_release_events_after_boundary, tests/integration/test_hotfix_events.py::test_replay_and_report_show_full_hotfix_journey, tests/e2e/test_hotfix_journey.py, tests/e2e/test_hotfix_await_journey.py
-- Scope: tests/integration/test_hotfix_coexist.py, tests/integration/test_hotfix_recovery.py, tests/integration/test_hotfix_mimpl.py, tests/integration/test_hotfix_events.py, tests/e2e/test_hotfix_journey.py, tests/e2e/test_hotfix_await_journey.py
-- Depends on: T-003, T-004, T-005, T-006, T-007
-- Batch: 5
-- Parallel: True
-
-## T-012
-- Issue: #33
-- Description: 【标准 RGR】正式归档 §2f design-trace blockquote 排除（FR-0244，IF-VALIDATE-001 v0.6 扩展，architecture §2f/§3.9 路径 (b)，issue #33）：tracks/executor/test_tasks.py——_visible_plan_lines 在 HTML 注释/fenced code 剔除之外同步剔除 `>` 开头的 inline-discussion blockquote 行（layer/IF- 归属判定面随之收窄为非 blockquote 可见行）；fail-closed 保持（把归属声明藏进 blockquote 不产生任何计数，§8 表格行仍是唯一机器可读覆盖来源）；feature 版本 trace 语义逐字节不变。Devon 于 RED 阶段在 tests/unit/test_test_tasks_contract.py 新增断言 blockquote 排除行为的单测（当前该文件无此断言、基线代码无此行为 → 新测试为真红，标准 RGR，非 preset-anchor）。GREEN 落盘后主树 R3 期带外副本由运营端丢弃。
-- AC refs: AC-FR0244-02
-- FR refs: FR-0244
-- IF ids: IF-VALIDATE-001
-- Test refs: tests/unit/test_test_tasks_contract.py
-- Scope: tracks/executor/test_tasks.py
-- Depends on: (none)
-- Batch: 3
+- IF ids: IF-HOTFIX-007, IF-TRACE-002
+- Test refs: tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac
+- Scope: tracks/cli/main.py
+- Depends on: T-001
+- Batch: 2
 - Parallel: True

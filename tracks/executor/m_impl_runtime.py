@@ -1973,7 +1973,8 @@ class MImplRuntimeMixin:
         - ``HEAD == G``: already materialized -> idempotent success (replay
           after a crash between branch update and green.committed).
         - ``HEAD == B``: fast-forward the branch and working tree to G (G's
-          parent is exactly B).
+          parent is exactly B). Uncommitted dirty paths outside G's diff
+          survive the fast-forward byte-for-byte (B47).
         - any other ``HEAD``: fail closed with a lineage reason.
 
         Returns ``(ok, reason)``; ``ok=False`` carries the fail-closed reason.
@@ -1986,7 +1987,32 @@ class MImplRuntimeMixin:
                 "green lineage violation: branch HEAD is neither B nor G "
                 f"(HEAD={head[:12]}, B={b_sha[:12]}, G={g_sha[:12]})"
             )
+        # B47 (run 01M0AMKV r2): the fast-forward reset must not destroy
+        # uncommitted runtime-owned artifacts. tasks.json/tasks.md are
+        # written by PLANNING and are never part of G, so a bare
+        # ``reset --hard`` reverted them to the stale version committed by
+        # a previous cycle (the r1 taskgraph resurrected over the in-flight
+        # r2 graph). Preserve every dirty path G does not touch.
+        changed_by_g = set(
+            git(self.repo, "diff", "--name-only", b_sha, g_sha).stdout.splitlines()
+        )
+        dirty: set[str] = set()
+        for line in git(self.repo, "status", "--porcelain").stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:]
+            if " -> " in path:  # rename entry: keep both ends
+                dirty.update(p for p in path.split(" -> ") if p)
+            else:
+                dirty.add(path)
+        preserved: dict[str, bytes] = {}
+        for rel in sorted(dirty - changed_by_g):
+            p = self.repo / rel
+            if p.is_file():
+                preserved[rel] = p.read_bytes()
         git(self.repo, "reset", "--hard", g_sha)
+        for rel, data in preserved.items():
+            (self.repo / rel).write_bytes(data)
         return True, None
 
     def _do_run_refactor_gate(self, cmd, state, task_id, reconcile):

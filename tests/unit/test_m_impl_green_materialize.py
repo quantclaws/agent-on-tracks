@@ -166,6 +166,31 @@ def test_commit_green_fast_forwards_branch_and_worktree_to_g(tmp_path):
     assert "Tracks-Attempt: 1" in message
 
 
+def test_commit_green_preserves_uncommitted_artifacts_outside_g(tmp_path):
+    """B47 regression (run 01M0AMKV r2): commit_green's fast-forward
+    ``reset --hard`` reverted uncommitted runtime-owned files (the r2
+    tasks.json written by PLANNING is never committed by the runtime) to
+    the stale version an earlier cycle had committed. Dirty paths outside
+    G's diff must survive the fast-forward byte-for-byte."""
+    repo = _repo(tmp_path)
+    store, _ = _started_task(repo)
+    executor = Executor(store, repo, "RUN")
+    r_sha = _run_red(executor, store)
+    _stage_green(executor, store, r_sha)
+
+    # Uncommitted runtime-owned artifact, dirty against HEAD, not in G's diff.
+    artifact = repo / "tests" / "integration" / "test_frozen.py"
+    dirty_content = "# r2 rewrite\ndef test_frozen():\n    assert True\n"
+    artifact.write_text(dirty_content, encoding="utf-8")
+
+    payload = _commit_green(executor, store)
+
+    assert _git(repo, "rev-parse", "HEAD") == payload["g_sha"]
+    assert artifact.read_text(encoding="utf-8") == dirty_content, (
+        "dirty paths outside G's diff must survive the fast-forward reset"
+    )
+
+
 def test_commit_green_rebases_on_descendant_head_after_shield_fix(tmp_path):
     """run 01KZTHE7 T-017 regression: the runtime's own SHIELD_FIX
     result_checkpoint commit lands on the branch between B and
