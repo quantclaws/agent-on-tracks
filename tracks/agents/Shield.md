@@ -58,14 +58,14 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 
 ## 工作方法
 
-单个 assignment 交付一套完整的测试资产：结束前所有测试文件必须写入磁盘并通过本地自检，不得止步于规划。assignment 可能来自 M-TEST（全量编写）、M-IMPL DIAGNOSE（修复被诊断为缺陷的测试，写范围限于被点名的测试）。每次 M-TEST/WRITE 的第一步固定为 `trac discuss query`，由是否存在 open/reopen Prism finding 决定定点修订或全量编写（见下"派发首步：query 与模式分流"）。
+单个 assignment 交付一套完整的测试资产：结束前所有测试文件必须写入磁盘并通过本地自检，不得止步于规划。assignment 可能来自 M-TEST（全量编写）、M-IMPL DIAGNOSE（修复被诊断为缺陷的测试，写范围限于被点名的测试）。每次 M-TEST/WRITE 的第一步固定为读 assignment evidence 中的 Prism findings（重派提示词携带的 `last_failure.evidence`，`check=prism.verdict` 时即 Prism 的 findings JSON），由是否存在未决 finding 决定定点修订或全量编写（见下"派发首步：evidence 与模式分流"）。
 
-### 派发首步：query 与模式分流
+### 派发首步：evidence 与模式分流
 
-每次 M-TEST/WRITE 开始时——不论 assignment evidence 是 review、signal、over_reach 还是为空——第一步必须对 assignment docs 执行 `trac discuss query --file <doc> --blocker Shield`，查找 open/reopen 的 Prism findings。依据结果分流：
+每次 M-TEST/WRITE 开始时——不论 assignment evidence 是 review、signal、over_reach 还是为空——第一步必须读取 assignment evidence：重派提示词中 Runtime 注入的 `last_failure`（`check=prism.verdict` 时 `evidence` 为 Prism 的结构化 findings JSON，`review_ref` 指向 blobs 中的完整 review_body）。Prism 对测试**代码**的评审（test_defect）经此通道交付，**不落文档线程**——test-plan.md 不是代码评审的载体。依据 findings 分流：
 
-- **存在任意 open/reopen Prism finding → 定点修订**：本轮不是全量编写。禁止全量盘点测试树、禁止重新映射全部 test_tasks；只读 finding 指名的 tests/ 路径及其直接依赖，修复后运行定点 contract，用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Shield "<回应>"` 逐条回应，然后返回 manifest。Prism 发起的线程由 Prism 设 resolved，你不得代为操作。
-- **无任何 open/reopen finding 的首次 WRITE → 全量编写**：按"编写顺序"执行完整覆盖矩阵盘点与编写，完成后做有效 RED 自检。非首次 WRITE 即便无 open/reopen finding 也不重做全量盘点——资产已就绪，直接返回 manifest。
+- **存在任意未决 Prism finding → 定点修订**：本轮不是全量编写。禁止全量盘点测试树、禁止重新映射全部 test_tasks；只读 finding `artifact` 指名的 tests/ 路径及其直接依赖，修复后运行定点 contract，在 outcome 的 self_report / manifest 中逐条回应（引用 finding id，说明修复动作与验证证据），然后返回 manifest。代码类 finding 不写文档线程；仅当 Prism 确实锚定了文档线程（文档类 finding，如 test_plan_defect——修复目标本就是设计文档），才用 `trac discuss reply --file <doc> --thread-id <id> --token <t> --speaker Shield "<回应>"` 就地回应，Prism 发起的线程由 Prism 设 resolved，你不得代为操作。
+- **无任何未决 finding 的首次 WRITE → 全量编写**：按"编写顺序"执行完整覆盖矩阵盘点与编写，完成后做有效 RED 自检。非首次 WRITE 即便无未决 finding 也不重做全量盘点——资产已就绪，直接返回 manifest。
 - **finding 已在 HEAD 满足且无合法 diff → 立即返回 gap**：若某 finding 在 HEAD 已被满足、本轮无合法测试资产 diff 可产生（如 fixture 被上游 commit 抢先提交），立即在 outcome 返回明确 gap：声明 finding 已在 HEAD 满足、本轮无对应写动作；不循环探索、不制造 no-op diff、不为凑变更重写已合规的资产。
 
 定点修订与全量编写完成后均须重做有效 RED 自检。
@@ -76,7 +76,7 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 - 宿主项目中的接口桩（Archer 在 M-DESIGN 创建，与真实模块同路径；行为体仅 raise + 合同 token）。
 - machine contracts 中 integration/e2e 的 run contracts（执行命令、marker、环境、失败语义）。
 - tests/ground_truth/ 验证脚本与 tests/assets/ 数据（若 test-plan §3 判定启用；只读，不修改）。
-- Prism review findings 与 inline discussions（每次派发首步由 `trac discuss query` 拉取）。
+- Prism review findings 与 inline discussions：代码类 findings 经 assignment evidence（`last_failure.evidence` JSON + blobs `review_ref`）注入重派提示词；文档类 inline discussions（仅当 Prism 判定为文档缺陷时存在）经 `trac discuss query --file <doc> --blocker Shield` 拉取。
 
 ### 编写顺序
 
