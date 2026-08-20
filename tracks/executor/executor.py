@@ -1936,6 +1936,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (PRISM_PLAN/RED/FINAL) emit through this legacy path rather than the
         ResultCheckpoint pipeline."""
         payload["criteria_pack"] = result.get("criteria_pack")
+        # FR-0243 / IF-HOTFIX-009 (interfaces §1a): the M-DESIGN Prism hotfix
+        # review carries the anchor_verdict routing field — 缺省 "upheld",
+        # preserved "overturned" when Prism overturns the hotfix anchor so the
+        # kernel routes M-DESIGN -> M-HOTFIX-TRIAGE/SAGE_TRIAGE without
+        # consuming the M-DESIGN redispatch budget (kernel/machine.py L840).
+        # Set before the pass early-return so a pass verdict still exposes the
+        # default "upheld" for AC-FR0243-02 review observability.
+        payload["anchor_verdict"] = result.get("anchor_verdict") or "upheld"
         if verdict == "pass":
             return
         for key in ("review_summary", "findings", "discussion_refs"):
