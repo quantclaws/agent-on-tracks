@@ -64,7 +64,9 @@ def commits_since(repo: Path, since_sha: str | None) -> list[dict]:
     """``since_sha..HEAD`` 的全部提交，拓扑序旧→新。
 
     返回 ``[{"sha", "subject", "oob": bool, "reason": str | None}]``。
-    ``since_sha`` 为空或不可解析（历史被改写后的旧观察点）时返回 []。
+    ``since_sha`` 为空、不可解析、或不再是 HEAD 祖先（历史被改写/
+    rebase/amend 后的旧观察点——Prism review A1：非祖先 sha 的
+    ``A..B`` 语义等价于 B 的全部可达历史，会吐全量伪事件）时返回 []。
     """
     if not since_sha:
         return []
@@ -75,6 +77,14 @@ def commits_since(repo: Path, since_sha: str | None) -> list[dict]:
         text=True,
     )
     if verify.returncode != 0:
+        return []
+    ancestor = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", since_sha, "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode != 0:
         return []
     out = _git(
         repo,

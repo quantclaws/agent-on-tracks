@@ -458,12 +458,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         HEAD 相对上次观察点前移时，``since..HEAD`` 中携带 ``Tracks-OOB``
         trailer 的提交逐个发出 ``oob.accepted``（sha/reason/files）；未
         声明的提交仅 stderr 提示后随静默期语义吸收（观察点前移，不发
-        事件）。观察点单调前移保证幂等。只允许在 issue() 的 WAL 窗口
-        之外调用（见 run_loop 注释）。
+        事件）。观察点单调前移保证幂等。
+
+        Prism review #43 B1：``pending`` 未关闭（WAL 窗口内——典型为
+        异常路径的 finally 调用）时绝不发射事件（B40 挂死条件：非
+        command.issued 事件清 pending → pending=None + doc_dispatched=
+        True → run 挂死）。此时观察整体推迟（不前移指针），待 pending
+        关闭后的下一次观察补账。
         """
         current = oob.head_sha(Path(self.repo))
         if current is None or current == self._oob_head:
             return
+        if self.store.state(self.run_id).pending is not None:
+            return  # WAL 窗口内：推迟到 pending 关闭后再观察
         commits = oob.commits_since(Path(self.repo), self._oob_head)
         for c in commits:
             if c["oob"]:
@@ -603,7 +610,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # D-36 浅版（#43）：末次派发窗口内的 OOB 提交也要入账——
             # run_loop 可能在一次派发后就返回（phase boundary / gate
             # stop），进程重启后的观察点会重置为新 HEAD，事件就丢了。
-            self._observe_oob()
+            # Prism review #43 B1：异常路径（pending 未关闭的 WAL 窗口，
+            # 典型为 backend 抛错）绝不观察——非 command.issued 事件会清
+            # pending（B40 挂死条件）；指针不前移，待恢复关闭窗口后的
+            # 下一次 loop-top 观察补账。
+            if sys.exc_info()[0] is None:
+                self._observe_oob()
 
     def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
         while True:

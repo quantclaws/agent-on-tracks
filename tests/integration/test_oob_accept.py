@@ -162,3 +162,72 @@ def test_replay_disjoint_operator_commit_coexists(tmp_path):
     assert not any(e.payload.get("check") == "worktree" for e in fails), [
         e.payload for e in fails
     ]
+
+
+# -- Prism review #43 B1：异常路径的 WAL 窗口安全 ----------------------------
+
+
+class _CrashAfterOobBackend:
+    """派发期间做 OOB 提交然后抛异常——复现 finally 观察点落在 WAL
+    窗口内的事故场景（B40 挂死条件）。"""
+
+    def __init__(self, repo, files: dict[str, str]):
+        self._repo = repo
+        self._files = files
+
+    def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
+        _commit_main(self._repo, self._files, trailer="mid-dispatch OOB fix")
+        raise RuntimeError("backend exploded mid-dispatch")
+
+
+def test_exception_path_never_emits_oob_inside_wal_window(tmp_path):
+    """B1 回归：run_loop 中 backend 抛异常（WAL 窗口未关闭）→ finally
+    的观察被跳过（exc_info 守卫）——零 oob.accepted 事件；恢复落地
+    outcome 关闭窗口后，同一实例的下一次观察补账。
+
+    注意 pending 检查不足以守卫该路径：异常 unwind 时 _dispatch_agent_
+    backend 的 finally 已发 worktree.closed 清掉 pending（既有行为，
+    B40/#41 语境）——这正是用 sys.exc_info() 判定的原因。"""
+    import pytest
+
+    ex, store, run_id = _setup_m_test(tmp_path)
+    ex.backend = _CrashAfterOobBackend(ex.repo, {"docs/hotfix.md": "fix\n"})
+
+    with pytest.raises(RuntimeError, match="backend exploded"):
+        ex.run_loop()
+
+    # ① WAL 窗口内零 oob.accepted（异常路径 finally 已跳过观察）
+    assert [e for e in store.events(run_id) if e.type == "oob.accepted"] == []
+
+    # ② 恢复：按 B40 先例由 store 落地失败 outcome 关闭 WAL 窗口
+    issued = [
+        e
+        for e in store.events(run_id)
+        if e.type == "command.issued" and e.payload["command"]["kind"] == "dispatch_agent"
+    ]
+    assert issued, "the crashed dispatch must have its command.issued in the log"
+    cmd = issued[-1].payload["command"]
+    store.append(
+        run_id,
+        ex.version,
+        "outcome.received",
+        {
+            "role": cmd["params"].get("role", "shield"),
+            "status": "failed",
+            "failure_class": "provider_unavailable",
+            "self_report": "backend exploded mid-dispatch",
+        },
+        command_id=cmd.get("command_id"),
+    )
+
+    # ③ pending 关闭后，同一实例的下一次观察补账（指针未前移，提交仍
+    # 可见）；oob.accepted 出现在 outcome 之后。跨进程重启则按静默期语
+    # 义吸收（新实例观察点重置为新 HEAD）——设计内行为。
+    ex._observe_oob()
+    oob_events = [e for e in store.events(run_id) if e.type == "oob.accepted"]
+    assert len(oob_events) == 1
+    assert oob_events[0].payload["reason"] == "mid-dispatch OOB fix"
+    outcome_seq = max(
+        e.seq for e in store.events(run_id) if e.type == "outcome.received"
+    )
+    assert oob_events[0].seq > outcome_seq

@@ -94,6 +94,21 @@ def test_commits_since_empty_or_invalid_range(tmp_path):
     assert oob.commits_since(repo, head) == []
 
 
+def test_commits_since_non_ancestor_base_returns_empty(tmp_path):
+    """Prism review A1：历史改写（rebase/amend）后，旧观察点仍是合法
+    commit 对象但不再是 HEAD 祖先——``A..HEAD`` 语义会吐 HEAD 全部
+    可达历史。必须静默吸收（返回 []）。"""
+    repo = _repo(tmp_path)
+    stale = oob.head_sha(repo)
+    # 历史改写：amend 掉初始提交 → stale 变为非祖先
+    (repo / "README.md").write_text("rewritten\n", encoding="utf-8")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "--amend", "-m", "rewritten initial")
+    assert oob.head_sha(repo) != stale
+    # 非祖先：吸收（既不报错也不吐全量历史）
+    assert oob.commits_since(repo, stale) == []
+
+
 # -- changed_paths -------------------------------------------------------------
 
 
