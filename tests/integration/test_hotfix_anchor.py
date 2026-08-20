@@ -14,7 +14,11 @@ inherited baseline resolver is wired into the run-loop validate step.
 
 from __future__ import annotations
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 from tracks.executor.hotfix import validate_anchor_refs
 
 
@@ -42,6 +46,12 @@ def test_sage_anchor_validated_reports_anchored_set(trac, host_repo):
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
     assert "AC-FR0030-01" in r.stdout
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-FR0240-05@v0.6 TRACKS-TRACE anchor invalid redispatch <=3 then AWAIT_HUMAN, no auto feature
@@ -154,3 +164,9 @@ def test_anchor_validation_traceable_with_retry_count(host_repo, trac):
     assert "anchor.validated" in replay.stdout
     # Attempt counter must be traceable (anchor.validated.attempt == 1).
     assert '"attempt": 1' in replay.stdout
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)

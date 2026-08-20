@@ -13,7 +13,11 @@ acceptance.md in same dir until the resolver is wired).
 
 from __future__ import annotations
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 
 
 # AC-FR0240-06@v0.6 TRACKS-TRACE human anchor manual + feature route sub-actions
@@ -60,3 +64,9 @@ def test_human_anchor_manual_and_feature_route(trac, host_repo):
     r_anchor = trac("hotfix", "anchor", "AC-FR0030-01@v0.5")
     assert r_anchor.returncode == 0, r_anchor.stderr
     assert "anchor recorded: AC-FR0030-01@v0.5" in r_anchor.stdout
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)

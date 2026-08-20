@@ -14,7 +14,11 @@ inherited baseline resolver is wired into the run-loop validate step.
 
 from __future__ import annotations
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 
 
 # AC-FR0240-02@v0.6 TRACKS-TRACE PRECHECK pass reaches SAGE_TRIAGE without agent dispatch
@@ -43,6 +47,12 @@ def test_precheck_pass_reaches_sage_triage_without_agent_dispatch(trac, host_rep
     assert "v0.5" in r.stdout
     # The run proceeds to SAGE_TRIAGE (SM-01.2) — not REJECTED.
     assert "REJECTED" not in r.stdout
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-FR0240-03@v0.6 TRACKS-TRACE PRECHECK REJECTED matrix: no branch, nonzero exit, reason closed set
@@ -84,6 +94,12 @@ def test_precheck_rejection_matrix_no_branch_nonzero_exit(trac, host_repo):
         ).stdout
         assert not out.strip(), f"fix/{issue} must not be created on REJECTED"
 
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo, fresh_issue="58")
+
 
 # AC-NFR0100-01@v0.6 TRACKS-TRACE PRECHECK deterministic: no LLM dispatch records
 def test_precheck_deterministic_no_llm_dispatch_records(trac, host_repo, event_log):
@@ -121,3 +137,9 @@ def test_precheck_deterministic_no_llm_dispatch_records(trac, host_repo, event_l
         and e["payload"]["command"]["kind"] == "dispatch_agent"
     ]
     assert not pre_dispatches, "PRECHECK must not record any agent dispatch"
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)

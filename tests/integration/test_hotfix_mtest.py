@@ -37,11 +37,26 @@ def _write_delta_test_plan(hotfix_dir: Path, *, unit_only: bool = False) -> Path
     )
     body = f"""---
 spec_id: SPEC-006-hotfix-42
+created: 2026-08-20
 status: draft
 sha:
 ---
 
 # hotfix delta test plan (42)
+
+## 1. Stance and Boundaries
+
+## 2. Test Environment
+
+## 3. Ground Truth Method
+
+## 4. Test Scope
+
+## 5. Acceptance Criteria
+
+## 6. External Dependency Layered Testing (project optional)
+
+## 7. CI Gate
 
 ## 8. AC Coverage
 

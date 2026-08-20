@@ -17,6 +17,7 @@ run-loop validate step.
 from __future__ import annotations
 
 from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
     seed_host_issues,
     seed_v05_approved_baseline,
 )
@@ -63,3 +64,10 @@ def test_hotfix_entry_happy_requested_and_status_substates(trac, event_log, host
     assert "branch=fix/42" in status.stdout
     assert "scenario=post-release" in status.stdout
     assert "issue=42" in status.stdout
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the entry phase is
+    # implemented, but the run must continue from M-DESIGN into the M-TEST
+    # journey; the unimplemented inherited-baseline resolver parks the run
+    # at awaiting=escalation, so the drive-to-M-TEST assertion fails until
+    # IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)

@@ -14,6 +14,7 @@ wired into the run-loop validate step.
 from __future__ import annotations
 
 from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
     git,
     seed_host_issues,
     seed_release_branch,
@@ -47,7 +48,10 @@ def test_anchored_creates_isolated_fix_branch_per_scenario(trac, host_repo):
     log_a = git(host_repo, "log", "--oneline", "fix/42", "^main")
     assert log_a.strip() == ""  # base = main HEAD, no new commits yet
 
-    # Scenario B: dev -> fix/50 from active release branch HEAD.
+    # Scenario B: dev -> fix/50 from active release branch HEAD. The dev
+    # precheck needs v0.6 approved (the release branch is releases/v0.6)
+    # plus the release branch itself; seed both so PRECHECK passes.
+    seed_v05_approved_baseline(host_repo, version="v0.6")
     seed_release_branch(host_repo, "releases/v0.6")
     r_b = trac("hotfix", "50", "--scenario", "dev")
     assert r_b.returncode == 0, r_b.stderr
@@ -55,6 +59,12 @@ def test_anchored_creates_isolated_fix_branch_per_scenario(trac, host_repo):
     assert "fix/50" in branch_b, "ANCHORED must create fix/50 (git outlet)"
     log_b = git(host_repo, "log", "--oneline", "fix/50", "^releases/v0.6")
     assert log_b.strip() == ""  # base = active release HEAD
+
+    # IF-HOTFIX-010 seam (legal Red): both ANCHORED runs must continue
+    # from M-DESIGN into M-TEST; the unimplemented baseline-resolver parks
+    # them at awaiting=escalation, so the drive-to-M-TEST assertion fails
+    # until the seam is wired.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-FR0241-02@v0.6 TRACKS-TRACE baseline inheritance: no requirement-stage artifacts
@@ -78,6 +88,10 @@ def test_baseline_inheritance_no_requirement_stage_artifacts(host_repo, trac):
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
+    # The hotfix project dir + delta docs are materialized by the M-DESIGN
+    # delta dispatch (IF-HOTFIX-005 stage.entered(M-DESIGN) -> delta docs).
+    cont = trac("run")
+    assert cont.returncode == 0, cont.stderr
 
     # The hotfix project directory exists and carries delta docs only.
     hotfix_dir = Path(host_repo / ".tracks" / "projects" / "v0.5-hotfix-42")
@@ -85,6 +99,10 @@ def test_baseline_inheritance_no_requirement_stage_artifacts(host_repo, trac):
     assert not (hotfix_dir / "story.md").exists()
     assert not (hotfix_dir / "spec.md").exists()
     assert not (hotfix_dir / "acceptance.md").exists()
+
+    # IF-HOTFIX-010 seam (legal Red): the run must continue from M-DESIGN
+    # into M-TEST; the baseline-resolver seam parks it at awaiting=escalation.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-FR0241-03@v0.6 TRACKS-TRACE ANCHORED enters M-DESIGN and run continues

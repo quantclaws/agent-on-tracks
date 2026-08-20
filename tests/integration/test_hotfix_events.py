@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 from tracks import paths
 
 
@@ -49,6 +53,12 @@ def test_hotfix_events_append_only_replay_and_report(trac, host_repo, event_log)
         "report", "--run-id", run_id, "--output", ".tracks/runtime/report", "--format", "md"
     )
     assert report.returncode == 0, report.stderr
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-NFR0100-04@v0.6 TRACKS-TRACE hotfix events append-only + projection rebuild
@@ -91,6 +101,12 @@ def test_hotfix_events_append_only_and_projection_rebuild(trac, host_repo, event
     assert "scenario=post-release" in after.stdout
     after_run_line = _run_line(after.stdout, "fix/42")
     assert after_run_line == before_run_line
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 def _run_line(stdout: str, branch: str) -> str:

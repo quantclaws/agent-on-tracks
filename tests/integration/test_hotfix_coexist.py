@@ -17,6 +17,7 @@ import sys
 import time
 
 from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
     seed_host_issues,
     seed_inprogress_feature_run,
     seed_v05_approved_baseline,
@@ -107,6 +108,12 @@ def test_suspended_run_observable_and_gates_recoverable(trac, host_repo, event_l
     assert replay.returncode == 0, replay.stderr
     assert "stage.entered" in replay.stdout
 
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
+
 
 # AC-FR0242-04@v0.6 TRACKS-TRACE second concurrent trac command rejected with holder PID
 def test_second_concurrent_trac_command_rejected_with_holder_pid(trac, host_repo):
@@ -167,3 +174,10 @@ def test_second_concurrent_trac_command_rejected_with_holder_pid(trac, host_repo
     finally:
         proc.send_signal(signal.SIGKILL)
         proc.wait(timeout=10)
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): after the lock is
+    # released, a fresh hotfix run must continue from M-DESIGN into M-TEST;
+    # the unimplemented inherited-baseline resolver parks it at
+    # awaiting=escalation, so the drive-to-M-TEST assertion fails until
+    # IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo, fresh_issue="58")

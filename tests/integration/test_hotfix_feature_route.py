@@ -10,7 +10,11 @@ from __future__ import annotations
 
 import subprocess
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 
 
 # AC-FR0241-04@v0.6 TRACKS-TRACE FEATURE_ROUTE exits without branch or dangling run
@@ -46,6 +50,12 @@ def test_feature_route_exits_without_branch_or_dangling_run(trac, host_repo, eve
     assert "backlog.recorded" in types_seq
     completed = [e for e in evs if e["type"] == "run.completed"]
     assert completed and completed[-1]["payload"]["terminal_state"] == "feature_route"
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo, fresh_issue="58")
 
 
 # AC-NFR0100-03@v0.6 TRACKS-TRACE fail closed: no branch and no auto feature route
@@ -103,3 +113,9 @@ def test_fail_closed_no_branch_and_no_auto_feature_route(trac, host_repo, event_
         cwd=host_repo, capture_output=True, text=True,
     ).stdout
     assert not out77.strip()
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo, fresh_issue="58")

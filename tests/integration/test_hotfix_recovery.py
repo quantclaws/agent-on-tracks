@@ -9,7 +9,11 @@ dispatches are not re-run.
 
 from __future__ import annotations
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 
 
 def _run_line(stdout: str, branch: str) -> str:
@@ -80,3 +84,9 @@ def test_crash_recovery_resumes_precise_hotfix_state(trac, host_repo, event_log)
     evs_after = event_log(run_id)
     types_after = [e["type"] for e in evs_after]
     assert types_after == types_before
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)

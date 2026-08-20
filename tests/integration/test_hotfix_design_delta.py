@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests.hotfix_support import (
+    assert_hotfix_drives_to_mtest,
+    seed_host_issues,
+    seed_v05_approved_baseline,
+)
 
 
 # AC-FR0243-01@v0.6 TRACKS-TRACE M-DESIGN delta docs in hotfix dir with inherited contracts
@@ -42,6 +46,12 @@ def test_mdesign_delta_docs_in_hotfix_dir_with_inherited_contracts(trac, host_re
     # repeated here as part of the delta design boundary).
     assert not (hotfix_dir / "story.md").exists()
     assert not (hotfix_dir / "spec.md").exists()
+
+    # IF-HOTFIX-010 baseline-resolver seam (legal Red): the run must
+    # continue from M-DESIGN into the M-TEST journey; the unimplemented
+    # inherited-baseline resolver parks it at awaiting=escalation, so
+    # the drive-to-M-TEST assertion fails until IF-HOTFIX-010 lands.
+    assert_hotfix_drives_to_mtest(trac, host_repo)
 
 
 # AC-FR0243-02@v0.6 TRACKS-TRACE delta design carries anchor set and Prism review
