@@ -92,6 +92,17 @@ EVENT_TYPES = (
     # awaiting_human/escalation with a loss report instead of grinding all
     # night. human.retry resets the counting window.
     "run.breaker_tripped",
+    # v0.5 SM-02 doc-comment-first (IF-DOCGAP-001 / IF-QUARANTINE-001):
+    # outcome-level design-document adjudication lifecycle. Emitted by the
+    # executor before ordinary validation; machine.py projects the per-record
+    # doc-gap state from these (state.doc_gaps).
+    "doc_comment.detected",
+    "doc_comment.adjudicated",
+    "outcome.quarantined",
+    "outcome.rejected",
+    "outcome.restored",
+    "outcome.discarded",
+    "outcome.resumed",
 )
 
 # interfaces §4 — v0.1 closed command set.

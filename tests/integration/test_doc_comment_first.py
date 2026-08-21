@@ -2,28 +2,37 @@
 
 All assertions land on public observable outlets (interfaces.md §4e):
 events table doc_comment.detected, doc_comment.adjudicated,
-outcome.quarantined, outcome.rejected, and the CLI (replay) text surface.
-The doc-comment-first flow is not yet wired into the runtime
-(IF-DOCGAP-001/IF-QUARANTINE-001 stubs), producing a legal Red at the
-event-observation layer.
+outcome.quarantined, outcome.rejected, outcome.restored/discarded/resumed,
+and the CLI (replay) text surface.
 
 Scenario construction (PRISM-V05-R2-02 revision): every positive test arms
 ``tests/doc_gap_injection.arm_doc_delta`` so the delta (legal discussion
 blockquote, illegal body edit, or resolved thread) is applied by the
 dispatched Shield agent INSIDE the dispatch window — after the pre-dispatch
 document-identity snapshot, before outcome validation.  A pre-dispatch write
-would only move the baseline and could never trigger detection.  After the
-journey each test asserts the document exists AND carries the delta
-(``assert_doc_delta_landed``), replacing the earlier silent ``exists()``
-guards with a real scenario-faithfulness check.
+would only move the baseline and could never trigger detection.
+
+Adjudication closure (#62): after the SM-02 pause, Prism adjudicates
+out-of-band on the public document surface (nested ``SM-02-ADJUDICATION``
+marker reply, flow.md §10.4); ``pause_then_adjudicate`` drives that public
+journey and a second ``trac run`` ingests it.  Illegal-body-edit scenarios
+assert the FR-0237 atomic rollback instead of delta persistence: the
+injected edit is legitimately ABSENT after the journey because the runtime
+restores the document byte-for-byte.
 """
 
 import pytest
 
-from tests.doc_gap_injection import TRACKS_DOC_PLAN, arm_doc_delta, assert_doc_delta_landed
+from tests.doc_gap_injection import (
+    TRACKS_DOC_PLAN,
+    arm_doc_delta,
+    assert_doc_delta_landed,
+)
+from tests.integration.helpers import walk_to_m_test
 from tests.integration.v05_contract_helpers import (
     command_dispatches,
     events_of,
+    pause_then_adjudicate,
     run_m_impl_journey,
 )
 
@@ -121,72 +130,85 @@ def test_outcome_without_new_discussion_uses_original_validation_path(trac, even
 @pytest.mark.integration
 # AC-FR0235-01@v0.5 TRACKS-TRACE design gap routes Archer without human gate
 def test_design_gap_routes_archer_without_human_gate(trac, event_log, host_repo, monkeypatch):
-    """Verify that a design-gap adjudication emits doc_comment.adjudicated (legal Red).
+    """Verify that a design-gap adjudication emits doc_comment.adjudicated.
 
     Constructs the scenario: the dispatched Shield agent appends a legal
-    design-gap discussion to test-plan.md inside the dispatch window.  The
-    doc-comment flow is not yet wired; the test asserts that
-    doc_comment.adjudicated(design_gap) appears in the event stream and that
-    no human gate event occurs after detection (FR-0235-01: no Human
-    technical gate), but the runtime never emits it — legal Red.
+    design-gap discussion to test-plan.md inside the dispatch window; the
+    first ``trac run`` pauses on detection.  Prism then adjudicates on the
+    public document surface (nested SM-02-ADJUDICATION marker, flow.md
+    §10.4) and a second run ingests it.  The test asserts that
+    doc_comment.adjudicated(design_gap, responsible_role=archer) appears in
+    the event stream and that no human gate event occurs after detection
+    (FR-0235-01: no Human technical gate).
     """
     discussion = "\n\n> **Shield:** Design gap discussion requiring Archer routing.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
 
-    _, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, discussion)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
 
-    adjudicated = events_of(events, "doc_comment.adjudicated")
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="design_gap"
+    )
+
+    detected = events_of(events, "doc_comment.detected")
+    assert len(detected) == 1, (
+        "expected exactly one doc_comment.detected for the injected discussion"
+    )
     design_gaps = [
-        e for e in adjudicated
+        e for e in events_of(events, "doc_comment.adjudicated")
         if e["payload"].get("route") == "design_gap"
     ]
-    assert len(design_gaps) > 0, (
-        "expected doc_comment.adjudicated(design_gap) event"
+    assert len(design_gaps) == 1, (
+        "expected exactly one doc_comment.adjudicated(design_gap) event"
     )
-    for e in design_gaps:
-        assert e["payload"].get("responsible_role"), (
-            "§1m: doc_comment.adjudicated(design_gap) must carry responsible_role"
-        )
+    assert design_gaps[0]["payload"].get("responsible_role") == "archer", (
+        "§1m: doc_comment.adjudicated(design_gap) must route archer"
+    )
     # FR-0235-01: routing to Archer happens WITHOUT a Human technical gate —
     # no human.* event may follow the first detection.
-    detected = events_of(events, "doc_comment.detected")
-    if detected:
-        first_seq = detected[0]["seq"]
-        human_after = [
-            e for e in events
-            if e["type"].startswith("human.") and e["seq"] > first_seq
-        ]
-        assert not human_after, (
-            f"design-gap routing must not require a human gate: {human_after}"
-        )
+    first_seq = detected[0]["seq"]
+    human_after = [
+        e for e in events
+        if e["type"].startswith("human.") and e["seq"] > first_seq
+    ]
+    assert not human_after, (
+        f"design-gap routing must not require a human gate: {human_after}"
+    )
 
 
 @pytest.mark.integration
 # AC-FR0235-02@v0.5 TRACKS-TRACE agent correction stays paused until original thread closes
 def test_agent_correction_stays_paused_until_original_thread_closes(trac, event_log, host_repo, monkeypatch):
-    """Verify agent-correction adjudication keeps the outcome paused (legal Red).
+    """Verify agent-correction adjudication keeps the outcome paused.
 
     Constructs the scenario: the dispatched Shield agent appends a legal
-    discussion that belongs to the agent-correction route.  The discussion
-    thread is never closed in this test, so the outcome must stay paused:
-    no outcome.restored/discarded/resumed may appear.  The flow is not wired;
-    the test asserts doc_comment.adjudicated(agent_correction) appears, but
-    the runtime never emits it — legal Red.
+    discussion that Prism adjudicates to the agent-correction route.  The
+    discussion thread is never closed in this test, so the outcome must stay
+    paused: no outcome.restored/discarded/resumed may appear even after the
+    adjudication is ingested (FR-0235-02).
     """
     discussion = "\n\n> **Shield:** Agent-correction guidance for the original agent.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
 
-    _, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, discussion)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
 
-    adjudicated = events_of(events, "doc_comment.adjudicated")
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="agent_correction"
+    )
+
     agent_corrections = [
-        e for e in adjudicated
+        e for e in events_of(events, "doc_comment.adjudicated")
         if e["payload"].get("route") == "agent_correction"
     ]
-    assert len(agent_corrections) > 0, (
-        "expected doc_comment.adjudicated(agent_correction) event"
+    assert len(agent_corrections) == 1, (
+        "expected exactly one doc_comment.adjudicated(agent_correction) event"
+    )
+    assert agent_corrections[0]["payload"].get("responsible_role") == "shield", (
+        "agent_correction must route the originating shield role"
     )
     # The thread is never closed: the outcome must stay paused (no
     # restore/discard/resume may fire before thread close).
@@ -202,20 +224,31 @@ def test_agent_correction_stays_paused_until_original_thread_closes(trac, event_
 @pytest.mark.integration
 # AC-FR0235-03@v0.5 TRACKS-TRACE closed thread creates new attempt not old outcome success
 def test_closed_thread_creates_new_attempt_not_old_outcome_success(trac, event_log, host_repo, monkeypatch):
-    """Verify that a closed thread yields a new dispatch/attempt (legal Red).
+    """Verify that a closed thread yields a new dispatch/attempt.
 
     Constructs the scenario: the dispatched Shield agent appends a discussion
-    thread that is born resolved (status on the root line, §1k).  The
-    doc-comment flow is not yet wired; the test asserts that the runtime
-    emits outcome.restored/discarded/resumed carrying the new dispatch
-    identity (next_dispatch_id, next_attempt — §1m), but the runtime never
-    emits these — legal Red.
+    thread that is born resolved (status on the root line, §1k).  After
+    Prism's adjudication is ingested, the closed thread reaches the resume
+    decision: the runtime emits outcome.restored/discarded/resumed carrying
+    the new dispatch identity (next_dispatch_id, next_attempt — §1m) and the
+    resumed journey completes — never by promoting the old outcome.
     """
-    discussion = "\n\n> **Shield [RESOLVED]:** Resolved thread injected inside the dispatch window.\n"
-    arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
+    resolved_root = (
+        "> **Shield [RESOLVED]:** Resolved thread injected inside the dispatch window."
+    )
+    arm_doc_delta(
+        monkeypatch,
+        path=TRACKS_DOC_PLAN,
+        text=f"\n\n{resolved_root}\n",
+    )
 
-    _, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, discussion)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
+
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="agent_correction"
+    )
 
     restored = events_of(events, "outcome.restored")
     discarded = events_of(events, "outcome.discarded")
@@ -233,25 +266,44 @@ def test_closed_thread_creates_new_attempt_not_old_outcome_success(trac, event_l
             "§1m: restored/discarded/resumed must carry next_attempt >= 1 — "
             "a closed thread creates a NEW attempt, not old-outcome success"
         )
+    completed = [
+        e for e in events if e["type"] == "run.completed"
+    ]
+    assert completed, (
+        "the resumed journey must reach its terminal boundary — the old "
+        "paused outcome is never promoted to success in place"
+    )
 
 
 @pytest.mark.integration
 # AC-FR0237-01@v0.5 TRACKS-TRACE illegal body edit atomically rolls back entire outcome
 def test_illegal_body_edit_atomically_rolls_back_entire_outcome(trac, event_log, host_repo, monkeypatch):
-    """Verify that an illegal body edit produces outcome.rejected (legal Red).
+    """Verify that an illegal body edit produces outcome.rejected + rollback.
 
     Constructs the scenario: the dispatched Shield agent appends
     NON-discussion body text to test-plan.md as part of its work — an
-    illegal body edit (§1k DocDeltaClass=illegal_body_edit).  The flow is not
-    wired; the test asserts that outcome.rejected(over_reach, atomic) with
-    the rejected path appears, but the runtime never emits it — legal Red.
+    illegal body edit (§1k DocDeltaClass=illegal_body_edit).  The runtime
+    rejects the outcome atomically BEFORE ordinary validation: the test
+    asserts outcome.rejected(over_reach, atomic) appears AND the injected
+    edit is gone — the document is restored to its pre-dispatch bytes, so
+    asserting delta persistence here would contradict the FR-0237 contract.
     """
     body_edit = "\n\nThis is an illegal body edit injected inside the dispatch window — not a discussion.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=body_edit)
 
-    _, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, body_edit)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    result = trac("run")
+    assert result.returncode == 0, result.stderr
 
+    doc = host_repo / TRACKS_DOC_PLAN
+    assert doc.is_file(), "the edited document must exist after the journey"
+    content = doc.read_text(encoding="utf-8")
+    assert body_edit not in content, (
+        "FR-0237 atomic rollback must restore the document — the illegal "
+        "edit must NOT survive the rejected outcome"
+    )
+
+    events = event_log(run_id)
     rejected = events_of(events, "outcome.rejected")
     assert len(rejected) > 0, (
         "expected outcome.rejected for illegal body edit"
@@ -269,19 +321,27 @@ def test_illegal_body_edit_atomically_rolls_back_entire_outcome(trac, event_log,
 @pytest.mark.integration
 # AC-FR0237-02@v0.5 TRACKS-TRACE illegal edit reports paths and redispatches new attempt
 def test_illegal_edit_reports_paths_and_redispatches_new_attempt(trac, event_log, host_repo, monkeypatch):
-    """Verify that illegal edit events contain rejected_paths (legal Red).
+    """Verify that illegal edit events contain rejected_paths and redispatch.
 
     Constructs the scenario: in-window illegal body edit (as above).  The
-    flow is not wired; the test asserts that outcome.rejected carries the
-    rejected document path and that a NEW shield dispatch follows the
-    rejection, but the runtime never emits these — legal Red.
+    test asserts that outcome.rejected carries the rejected document path
+    and that a NEW shield dispatch follows the atomic rollback — observable
+    as a later shield WRITE dispatch in the public event stream.
     """
     body_edit = "\n\nIllegal body edit for path reporting and redispatch, injected in-window.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=body_edit)
 
-    _, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, body_edit)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    result = trac("run")
+    assert result.returncode == 0, result.stderr
 
+    doc = host_repo / TRACKS_DOC_PLAN
+    assert doc.is_file(), "the edited document must exist after the journey"
+    assert body_edit not in doc.read_text(encoding="utf-8"), (
+        "FR-0237 atomic rollback must restore the document"
+    )
+
+    events = event_log(run_id)
     rejected = events_of(events, "outcome.rejected")
     over_reach = [
         e for e in rejected
@@ -310,23 +370,34 @@ def test_illegal_edit_reports_paths_and_redispatches_new_attempt(trac, event_log
 @pytest.mark.integration
 # AC-FR0237-03@v0.5 TRACKS-TRACE illegal edit failure evidence survives replay
 def test_illegal_edit_failure_evidence_survives_replay(trac, event_log, host_repo, monkeypatch):
-    """Verify that illegal edit failure evidence survives replay (legal Red).
+    """Verify that illegal edit failure evidence survives replay.
 
     Constructs the scenario: in-window illegal body edit (as above).  The
-    flow is not wired; the test asserts that the rejection evidence is
-    present in the append-only event store AND visible in the public
-    ``trac replay`` text surface, but the runtime never produces it —
-    legal Red.
+    test asserts that the rejection evidence is present in the append-only
+    event store AND visible in the public ``trac replay`` text surface.
     """
     body_edit = "\n\nIllegal body edit for replay evidence, injected in-window.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=body_edit)
 
-    run_id, _, events = run_m_impl_journey(trac, event_log)
-    assert_doc_delta_landed(host_repo, TRACKS_DOC_PLAN, body_edit)
+    run_id = walk_to_m_test(trac, version="v0.5")
+    result = trac("run")
+    assert result.returncode == 0, result.stderr
 
+    doc = host_repo / TRACKS_DOC_PLAN
+    assert doc.is_file(), "the edited document must exist after the journey"
+    assert body_edit not in doc.read_text(encoding="utf-8"), (
+        "FR-0237 atomic rollback must restore the document"
+    )
+
+    events = event_log(run_id)
     rejected = events_of(events, "outcome.rejected")
     assert len(rejected) > 0, (
         "expected outcome.rejected events that survive replay"
+    )
+    replay = trac("replay", run_id)
+    assert replay.returncode == 0, replay.stderr
+    assert "outcome.rejected" in replay.stdout, (
+        "rejection evidence must survive replay on the public text surface"
     )
     replay = trac("replay", run_id)
     assert replay.returncode == 0, replay.stderr

@@ -31,10 +31,19 @@ from tracks.executor.code_stamp import (
 )
 from tracks.executor.doc_comment import (
     ROLE_ALLOWED_DOCS,
+    AdjudicationMarker,
     DocCommentOrigin,
+    QuarantinedChange,
+    QuarantineDescriptor,
+    ResumeDecision,
     classify_design_document_deltas,
+    combined_design_identity,
     create_doc_gap_record,
+    decide_quarantine_resume,
+    legal_anchor_pairs,
+    match_adjudication_marker,
     quarantine_authorized_changes,
+    scan_adjudication_markers,
 )
 from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
@@ -639,23 +648,44 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             tripped = self._check_breaker(state)
             if tripped is not None:
                 return tripped
+            # SM-02 adjudication ingestion (#28 phase 2): before the resume
+            # check, scan waiting doc-gap records for Prism's structured
+            # SM-02-ADJUDICATION marker reply in the original thread.
+            if self._ingest_doc_gap_adjudications(state):
+                continue
             # SM-02.9 (AC-FR0235-03): a paused doc-gap whose threads are all
             # resolved resumes with a NEW dispatch/attempt before decide() —
             # doc_dispatched stays True at the pause so decide() would halt.
             if self._resume_doc_gap_if_ready(state):
                 continue
+            # Crash window recovery: a resume decision whose dispatch never
+            # got issued (crash between the decision events and issue())
+            # re-issues idempotently from the persisted decision identity.
+            if self._resume_interrupted_dispatch(state):
+                continue
             cmd = decide(state)
             if cmd is None:
                 return state
-            if cmd.kind == "dispatch_agent" and self.max_dispatches is not None:
-                stop, bound_substate = self._dispatch_gate(cmd, dispatches, bound_substate)
-                if stop:
-                    return state
-                dispatches += 1
+            stop, dispatches, bound_substate = self._gate_loop_dispatch(
+                cmd, dispatches, bound_substate
+            )
+            if stop:
+                return state
             self._progress(cmd, state)
             self.issue(cmd)
             if self._is_phase_boundary(cmd):
                 return self.store.state(self.run_id)
+
+    def _gate_loop_dispatch(
+        self, cmd: Command, dispatches: int, bound_substate: str | None
+    ) -> tuple[bool, int, str | None]:
+        """Bounded-dispatch gate for the run loop (max_dispatches budget)."""
+        if cmd.kind != "dispatch_agent" or self.max_dispatches is None:
+            return False, dispatches, bound_substate
+        stop, bound_substate = self._dispatch_gate(cmd, dispatches, bound_substate)
+        if stop:
+            return True, dispatches, bound_substate
+        return False, dispatches + 1, bound_substate
 
     def _recover_for_run(self) -> tuple[bool, str | None, dict | None]:
         """(phase_boundary_stop, recovered_kind, pending) after D-13 recovery."""
@@ -1207,15 +1237,25 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             allowed_paths=allowed_paths,
             pre_dirty_identities=pre_dirty or {},
             agent_changes=(),
-            design_identity=record.document_deltas[0].baseline_identity
-            if record.document_deltas
-            else "",
+            # Design anchor: combined AT-PAUSE identity of the LEGAL
+            # discussion documents — the same set the resume decision
+            # re-identifies from live bytes (never document_deltas[0],
+            # the alphabetically-first protected doc, and never the
+            # pre-dispatch baseline, which would count the discussion
+            # itself as permanent drift).
+            design_identity=combined_design_identity(
+                list(legal_anchor_pairs(record.document_deltas))
+            ),
             run_identity=self.run_id,
         )
         manifest_ref = self.store.write_audit_blob(
             {
                 "quarantine_id": descriptor.quarantine_id,
                 "origin": asdict(origin),
+                # Identity anchors persisted for the resume decision
+                # (decide_quarantine_resume rebuilds from this blob).
+                "design_identity": descriptor.design_identity,
+                "run_identity": descriptor.run_identity,
                 "changes": [asdict(c) for c in descriptor.changes],
                 "status": descriptor.status,
             }
@@ -1267,19 +1307,84 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             task_id=task_id,
         )
 
-    def _resume_doc_gap_if_ready(self, state: State) -> bool:
-        """SM-02.9: resume a paused doc-gap whose threads are all resolved.
+    def _ingest_doc_gap_adjudications(self, state: State) -> bool:
+        """SM-02 adjudication ingestion (IF-DOCGAP-001, AC-FR0235-01/02).
 
-        Scans waiting doc-gap records (state AGENT_CORRECTION). If every
-        thread_id in the record is resolved in the current doc text, emits
-        outcome.restored|discarded + outcome.resumed and issues a NEW
-        dispatch for the same logical role/task/phase. Open threads stay
-        paused (NFR-0090-02 fail-closed).
+        Scans every DETECTED doc-gap record's touched documents for Prism's
+        structured SM-02-ADJUDICATION marker reply.  Exactly one valid,
+        record-bound marker emits ``doc_comment.adjudicated`` and moves the
+        record to DESIGN_GAP/AGENT_CORRECTION.  Anything malformed, ambiguous
+        or mismatched stays fail-closed waiting (no event, no state change).
+        Only waiting records are consulted, so replays and re-reads of the
+        same comment can never re-emit the adjudication.
         """
-        if state.stage != "M-IMPL" or state.status != "active":
+        if state.status != "active" or not state.doc_gaps:
+            return False
+        return any(
+            self._ingest_record_adjudication(record_id)
+            for record_id in sorted(state.doc_gaps)
+        )
+
+    def _ingest_record_adjudication(self, record_id: str) -> bool:
+        """Ingest one waiting doc-gap record's marker; True when adjudicated."""
+        state = self.store.state(self.run_id)
+        rec = state.doc_gaps.get(record_id)
+        if rec is None or rec.get("state") != "DETECTED":
+            return False
+        candidates: list[AdjudicationMarker] = []
+        errors: list[tuple[str, str]] = []
+        for name in rec.get("document_paths") or []:
+            path = self._doc_path(name)
+            if not path.exists():
+                continue
+            markers, doc_errors = scan_adjudication_markers(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+            candidates.extend(markers)
+            errors.extend(doc_errors)
+        # Relevance filtering (history vs this record) happens inside the
+        # matcher, BEFORE any ambiguity decision.
+        marker, error = match_adjudication_marker(
+            candidates,
+            errors,
+            quarantine_id=rec.get("quarantine_id"),
+            thread_ids=rec.get("thread_ids"),
+            origin_role=(rec.get("origin") or {}).get("role"),
+        )
+        # Fail-closed: a malformed/mismatched marker never drives SM-02; the
+        # outcome keeps waiting for a legal adjudication.
+        if error is not None or marker is None:
+            return False
+        origin = rec.get("origin") or {}
+        self._emit(
+            "doc_comment.adjudicated",
+            {
+                "record_id": record_id,
+                "quarantine_id": rec.get("quarantine_id"),
+                "origin_dispatch_id": origin.get("dispatch_id", ""),
+                "route": marker.route,
+                "responsible_role": marker.responsible_role,
+                "thread_ids": list(marker.thread_ids),
+                "decision_ref": marker.decision_ref,
+            },
+        )
+        return True
+
+    def _resume_doc_gap_if_ready(self, state: State) -> bool:
+        """SM-02.9: resume an adjudicated doc-gap whose threads are resolved.
+
+        Scans adjudicated doc-gap records (DESIGN_GAP / AGENT_CORRECTION —
+        both routes converge on thread closure). If every thread_id in the
+        record is resolved in the current doc text, emits the
+        decide_quarantine_resume decision pair and issues a NEW dispatch for
+        the same logical role/task/phase. Open threads stay paused
+        (NFR-0090-02 fail-closed). Shield pauses fire in M-TEST WRITE, Devon
+        RGR pauses in M-IMPL — both stages resume here.
+        """
+        if state.stage not in ("M-IMPL", "M-TEST") or state.status != "active":
             return False
         for record_id, rec in state.doc_gaps.items():
-            if rec.get("state") != "AGENT_CORRECTION":
+            if rec.get("state") not in ("DESIGN_GAP", "AGENT_CORRECTION"):
                 continue
             if not self._threads_resolved_in_docs(
                 rec.get("document_paths") or [], rec.get("thread_ids") or []
@@ -1289,20 +1394,144 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return True
         return False
 
+    def _resume_interrupted_dispatch(self, state: State) -> bool:
+        """Re-issue a resume decision whose dispatch never got issued.
+
+        The resume sequence (restored/discarded -> resumed -> issue()) spans
+        three store writes; a crash in between leaves the record terminal
+        (RESTORED/DISCARDED/RESUMED) with the decision identity persisted but
+        NO command.issued — decide() would park forever.  When no open WAL
+        pending exists and the recorded next_dispatch_id was never issued,
+        emit the missing outcome.resumed (audit closure) and issue the
+        dispatch with the SAME id (idempotent: an already-issued id is
+        skipped, so a completed resume is never duplicated).
+        """
+        if state.pending is not None or state.status != "active":
+            return False
+        if state.stage not in ("M-IMPL", "M-TEST"):
+            return False
+        for record_id, rec in state.doc_gaps.items():
+            if rec.get("state") not in ("RESTORED", "DISCARDED", "RESUMED"):
+                continue
+            next_dispatch_id = rec.get("next_dispatch_id")
+            next_attempt = int(rec.get("next_attempt") or 1)
+            if not next_dispatch_id or self._dispatch_issued(next_dispatch_id):
+                continue
+            origin = rec.get("origin") or {}
+            if rec.get("state") != "RESUMED":
+                self._emit(
+                    "outcome.resumed",
+                    {
+                        "record_id": record_id,
+                        "origin_dispatch_id": origin.get("dispatch_id", ""),
+                        "next_dispatch_id": next_dispatch_id,
+                        "next_attempt": next_attempt,
+                    },
+                )
+            self._issue_resume_dispatch(origin, next_dispatch_id, next_attempt)
+            return True
+        return False
+
+    def _dispatch_issued(self, command_id: str) -> bool:
+        """True when a command with this id was already issued (WAL)."""
+        return any(
+            event.command_id == command_id
+            for event in self.store.events(self.run_id)
+        )
+
+    def _rebuild_quarantine_descriptor(
+        self, rec: dict
+    ) -> QuarantineDescriptor | None:
+        """Rebuild the persisted quarantine manifest blob for the resume call.
+
+        Returns None when no reference is recorded or the blob is unreadable
+        (legacy records, evidence filesystem loss) — the caller then decides
+        fail-closed from the projected quarantine status alone.
+        """
+        ref = rec.get("manifest_ref")
+        if not ref:
+            return None
+        try:
+            manifest = self.store.load_payload({"$ref": ref})
+        except (OSError, ValueError):
+            return None
+        if not isinstance(manifest, dict):
+            return None
+        changes = tuple(
+            QuarantinedChange(
+                path=change.get("path", ""),
+                operation=change.get("operation", "modify"),
+                baseline_identity=change.get("baseline_identity"),
+                content_identity=change.get("content_identity"),
+            )
+            for change in manifest.get("changes") or []
+        )
+        status = manifest.get("status")
+        if status not in ("empty", "held"):
+            status = "held"
+        return QuarantineDescriptor(
+            quarantine_id=manifest.get("quarantine_id", ""),
+            origin=rec.get("origin") or {},
+            design_identity=manifest.get("design_identity", ""),
+            run_identity=manifest.get("run_identity", ""),
+            changes=changes,
+            manifest_ref=ref,
+            manifest_sha256=ref,
+            status=status,
+        )
+
+    def _quarantine_resume_decision(
+        self, rec: dict, next_dispatch_id: str, next_attempt: int
+    ) -> ResumeDecision:
+        """decide_quarantine_resume over rebuilt evidence, fail-closed.
+
+        An empty quarantine restores trivially even without readable blob
+        evidence; a held quarantine whose manifest cannot be rebuilt discards
+        as content_conflict (AC-FR0236-04 fail-closed default).
+        """
+        descriptor = self._rebuild_quarantine_descriptor(rec)
+        if descriptor is None:
+            if rec.get("quarantine_status") == "empty":
+                return ResumeDecision(
+                    "restore", "empty", next_dispatch_id, next_attempt
+                )
+            return ResumeDecision(
+                "discard", "content_conflict", next_dispatch_id, next_attempt
+            )
+        document_paths = rec.get("document_paths") or []
+        current_pairs = [
+            (name, self._path_identity(self._doc_path(name)))
+            for name in document_paths
+        ]
+        current_paths = {
+            change.path: self._path_identity(self.repo / change.path)
+            for change in descriptor.changes
+        }
+        return decide_quarantine_resume(
+            descriptor,
+            current_design_identity=combined_design_identity(current_pairs),
+            current_run_identity=self.run_id,
+            current_path_identities=current_paths,
+            next_dispatch_id=next_dispatch_id,
+            next_attempt=next_attempt,
+        )
+
     def _resume_doc_gap_record(self, record_id: str, rec: dict) -> None:
         """Emit the resume decision pair and issue the NEW dispatch."""
         origin = rec.get("origin") or {}
         next_dispatch_id = new_ulid()
         next_attempt = int(origin.get("attempt", 1)) + 1
-        restore = rec.get("quarantine_status") == "held"
+        decision = self._quarantine_resume_decision(
+            rec, next_dispatch_id, next_attempt
+        )
         self._emit(
-            "outcome.restored" if restore else "outcome.discarded",
+            "outcome.restored" if decision.action == "restore" else "outcome.discarded",
             {
                 "record_id": record_id,
                 "quarantine_id": rec.get("quarantine_id") or "",
-                "reason": "identity_current" if restore else "empty",
-                "next_dispatch_id": next_dispatch_id,
-                "next_attempt": next_attempt,
+                "reason": decision.reason,
+                "next_dispatch_id": decision.next_dispatch_id,
+                "next_attempt": decision.next_attempt,
             },
         )
         self._emit(
@@ -1310,11 +1539,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             {
                 "record_id": record_id,
                 "origin_dispatch_id": origin.get("dispatch_id", ""),
-                "next_dispatch_id": next_dispatch_id,
-                "next_attempt": next_attempt,
+                "next_dispatch_id": decision.next_dispatch_id,
+                "next_attempt": decision.next_attempt,
             },
         )
-        self._issue_resume_dispatch(origin, next_dispatch_id, next_attempt)
+        self._issue_resume_dispatch(
+            origin, decision.next_dispatch_id, decision.next_attempt
+        )
 
     def _threads_resolved_in_docs(
         self, document_paths: list, thread_ids: list
@@ -1338,14 +1569,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """Issue the resume dispatch for the same logical role/task/phase."""
         role = origin.get("role", "devon")
         substate = origin.get("phase", "RED")
+        # Shield WRITE pauses fire inside M-TEST; Devon RGR phases in M-IMPL.
+        # Resuming into the wrong stage would misroute the outcome pipeline.
+        stage = "M-TEST" if role == "shield" else "M-IMPL"
         cmd = Command(
             kind="dispatch_agent",
             params={
                 "role": role,
                 "substate": substate,
-                "stage": "M-IMPL",
+                "stage": stage,
                 "attempt": attempt,
-                "assignment": {"phase": substate.lower()},
+                "assignment": {"kind": substate, "phase": substate.lower()},
             },
         )
         self.issue(cmd, command_id=command_id)

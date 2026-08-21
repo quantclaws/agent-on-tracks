@@ -1178,7 +1178,10 @@ def _new_doc_gap_record(
         "thread_ids": list(thread_ids or []),
         "quarantine_id": None,
         "quarantine_status": None,
+        "manifest_ref": None,
         "route": None,
+        "responsible_role": None,
+        "decision_ref": None,
         "reason": None,
         "next_dispatch_id": None,
         "next_attempt": None,
@@ -1207,16 +1210,29 @@ def _on_outcome_quarantined(s: State, p: dict, ev: EventEnvelope) -> None:
         s.doc_gaps[p["record_id"]] = record
     record["quarantine_id"] = p.get("quarantine_id")
     record["quarantine_status"] = p.get("status")
+    # Persisted manifest reference: the resume decision rebuilds the
+    # quarantine descriptor from this blob (decide_quarantine_resume).
+    record["manifest_ref"] = p.get("manifest_ref")
 
 
 def _on_doc_comment_adjudicated(s: State, p: dict, ev: EventEnvelope) -> None:
     """``doc_comment.adjudicated``: Prism's route moves the record to
-    DESIGN_GAP or AGENT_CORRECTION (AC-FR0235-01/02)."""
+    DESIGN_GAP or AGENT_CORRECTION (AC-FR0235-01/02).
+
+    The accepted decision identity (decision_ref, responsible_role) is
+    projected for replay audit.  The FIRST decision stands: an identical
+    replay is an idempotent no-op and a conflicting re-adjudication (same
+    record, different decision_ref) is rejected fail-closed — the record
+    never flips routes after adjudication."""
     record = s.doc_gaps.get(p.get("record_id"))
     if record is None:
         return
+    if record.get("decision_ref") is not None:
+        return
     route = p.get("route")
     record["route"] = route
+    record["responsible_role"] = p.get("responsible_role")
+    record["decision_ref"] = p.get("decision_ref")
     if route == "design_gap":
         record["state"] = "DESIGN_GAP"
     elif route == "agent_correction":

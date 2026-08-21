@@ -671,23 +671,64 @@ stateDiagram-v2
 
 ### 10.4. doc-comment-first outcome 验收（canonical，SM-02 附属裁定记录）
 
-**目的**：对 M-IMPL 的 Devon/Shield outcome（RED/GREEN/REFACTOR/SHIELD_FIX）以及 M-TEST 的 Shield WRITE outcome，验收第一步先处置本次结果在设计文档上新建的合法讨论，再进入普通工件/manifest/collection/gate/checkpoint/DIAGNOSE 验证。本路径不新增顶层 stage：SM-02 是附着于产生评论的 logical role/task/phase 的附属裁定记录（内部 substate），不进入顶层 stage 序列。
+**边界与目的**：Prism 对 Archer 设计文档的常规评审评论属于 `M-DESIGN / PRISM_REVIEW`，是 Prism 的正常产出，**不进入 SM-02**。SM-02 只处理 M-IMPL 的 Devon/Shield outcome（RED/GREEN/REFACTOR/SHIELD_FIX）以及 M-TEST 的 Shield WRITE outcome 中，由实现/测试 Agent 新建的合法设计讨论：它表示 Agent 发现设计与实现或测试冲突，必须先暂停本次交付，再进入普通工件/manifest/collection/gate/checkpoint/DIAGNOSE 验证。本路径不新增顶层 stage：SM-02 是附着于产生评论的 logical role/task/phase 的附属裁定记录（内部 substate），不进入顶层 stage 序列。
+
+Prism 在 SM-02 中是技术裁定者：其**外部业务产出仍是原讨论线程中的评论**；Runtime 同时持久化结构化裁定事件，供状态机审计和路由消费。该事件不是另一份设计工件，也不改变 Prism 常规设计评审的产出边界。SM-02 与 D-37 的 `over_reach` 申诉/回滚轮次无关：非法正文编辑走 FR-0237 原子拒绝，合法讨论才走本节。
 
 **第一步（dispatch 前内容身份审计）**：Runtime 收到 outcome 后，先以**本次 dispatch 前的文档内容身份**为基线，扫描所有受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化——任一非法非 discussion 正文编辑按 FR-0237 在普通验证前整回合原子拒绝，不进入 SM-02。合法新 discussion 的识别限于角色固定 COMMENTABLE_DOCS：Devon 仅可评论 `architecture.md`、`interfaces.md`，Shield 仅可评论 `test-plan.md`、`interfaces.md`；其它设计文档不因本路径扩大写权限。只把本次新增且符合既有 inline-discussion 协议的增量认作合法新讨论；dispatch 前已存在的旧线程、他人回复、无本次 delta 的文档不触发截获。
 
 - **非法非 discussion 正文编辑优先整回合原子 fail-closed**：outcome 含本次可归属的受保护设计文档正文编辑时，回滚该 dispatch 全部 Agent 可归因变化并逐字节保留 Human 与 dispatch 前既有脏改动，不保留部分代码或其他非文档成果，不进 SM-02（仅按 FR-0237 整回合原子拒绝），不 commit/checkpoint/gate/success；该规则优先于同一 outcome 中可能存在的合法讨论。按原 logical role/task/phase 的失败与 attempt 预算语义发起新 dispatch/attempt，新结果重新从本步开始。
 - **合法新 discussion 才截获**：仅当结果含合法新讨论且无非法正文编辑时，暂停该 outcome 进入 SM-02 等待 Prism 裁定；随附的未验证变化不显示为成功。
 
+**安全流程**：
+
+```mermaid
+flowchart TD
+    A[Devon/Shield 发现设计与实现或测试冲突] --> B[仅在允许的设计文档创建 inline discussion]
+    B --> C[Runtime 审计 dispatch 前内容身份]
+    C -->|非法正文编辑| D[FR-0237 原子回滚并按失败语义新 attempt]
+    C -->|合法新 discussion| E[暂停 outcome 并 quarantine 可归属非文档成果]
+    E --> F[Prism 在同一线程评论并作技术裁定]
+    F -->|design_gap| G[Runtime 发出结构化 adjudication 并路由 Archer]
+    G --> H[Archer 在正常 M-DESIGN 路径修订设计正文]
+    H --> I[Prism 常规 M-DESIGN 复核]
+    I --> J[讨论关闭]
+    F -->|agent_correction| K[Prism 在同一线程给 Devon/Shield 可执行纠正指引]
+    K --> L[原 Agent 在线程回应并关闭讨论]
+    L --> J
+    J --> M{隔离成果 identity 是否仍有效?}
+    M -->|设计或运行 identity stale| N[丢弃 quarantine 成果]
+    M -->|identity current 或 quarantine 为空| O[恢复 quarantine 成果]
+    N --> P[以相同 logical role/task/phase 新 dispatch/attempt]
+    O --> P
+    P --> Q[重新执行 doc-comment-first 与原 phase 全部验证]
+    Q --> R[旧 outcome 永不改标为成功]
+```
+
+**路由规则**：`design_gap` 由 Archer 在正常 M-DESIGN 路径修改设计正文，并由 Prism 走其常规设计评审复核；这是同一 AC/接口边界内的技术责任路由，不新增 Human 技术批准。若实际发现需求边界不足（新 AC、acceptance 或 spec 变更），才按既有 `ac_gap` / `spec_gap` Human 路径处理。`agent_correction` 表示设计足够，Prism 只给原 Devon/Shield 可执行指引；原 Agent 不能直接改设计正文。
+
+**裁定摄入协议（SM-02-ADJUDICATION marker，canonical）**：Prism 的技术裁定通过**原讨论线程内的嵌套回复**（`>>`，深度 ≥ 2）进入 Runtime，不新增公开子命令——Prism 的外部业务产出只有文档评论。marker 为单行、字段以 `|` 分隔、键值以 `=` 连接，语法固定：
+
+```
+>> **Prism:** SM-02-ADJUDICATION | route=<design_gap|agent_correction> | responsible_role=<archer|原 Agent 角色> | quarantine_id=<q-...> | threads=<T-NNN[,T-NNN...]>
+```
+
+Runtime 在每次 run loop 顶部、resume 判定之前扫描等待中（DETECTED）记录的受触及文档，仅接受**完整、语法合法、由 Prism 身份发出、嵌套于原线程、quarantine_id 与 thread 集合精确匹配当前记录、且 responsible_role 符合路由规则**（design_gap→archer；agent_correction→原 origin role）的 marker；缺字段、未知字段/route、错误角色、错误关联或多个并存 marker 一律 fail-closed 保持等待（不发事件、不改状态、不猜测语义）。**相关性先于歧义**：文档会留存历史裁定 marker，候选必须先按当前记录的 quarantine_id 过滤、malformed 错误仅在写入本记录原线程时才 fail-closed——无关历史线程永不阻塞新记录。合法 marker 发出 `doc_comment.adjudicated`（payload：record_id、quarantine_id、origin_dispatch_id、route、responsible_role、thread_ids、decision_ref），记录离开 DETECTED；`decision_ref` 与 `responsible_role` 同时投影进 doc-gap record，重放审计可验证"已接受哪个裁定"，且**首裁定为准**——同一 record 的冲突重裁定（不同 decision_ref）在重放中被拒绝，同一裁定重放为幂等空操作。同一评论重放因此天然幂等，不得重复发出裁定或创建第二个 attempt。`decision_ref` 是归一化裁定内容的 sha256 摘要，作为审计幂等键。
+
+**resume 决策（canonical）**：线程关闭（全部记录 thread 状态 resolved）后，resume 决策必须经由 `decide_quarantine_resume()`：quarantine 为空 → restore(`empty`)；隔离成果 design/run/path 身份全部仍 current → restore(`identity_current`)；任一身份漂移或冲突 → discard(`design_stale` / `run_stale` / `content_conflict`)，fail-closed 默认丢弃。隔离 manifest blob 同时持久化 design/run 身份锚点，供跨进程重建决策。Shield WRITE 暂停发生在 M-TEST、Devon RGR 暂停发生在 M-IMPL，两处 pause 均在同一机制下恢复；恢复派发回到 origin 的同一 logical role/task/phase（含正确 stage）。
+
+> **User ruling (Aaron, 2026-08-21):** SM-02 裁定入口按上述 marker 协议落地（不新增 public subcommand，显式 marker 而非自然语言推断）；事件至少含 route、responsible_role、thread_ids、quarantine_id、origin_dispatch_id 与 decision_ref；幂等键为 quarantine_id + decision_ref，重放同一评论不得重复发出 `doc_comment.adjudicated` 或重复创建 attempt；resume 必须走 `decide_quarantine_resume()` 的五原因封闭集。授权记录见 GitHub issue #62（quantclaws/agent-on-tracks）。
+
 **SM-02 状态**（未列出的转移不允许）：
 `DETECTED → AWAITING_ADJUDICATION → (DESIGN_GAP | AGENT_CORRECTION) → READY_TO_RESUME → (RESTORED | DISCARDED) → RESUMED`；DETECTED/AWAITING_ADJUDICATION/READY_TO_RESUME 在中断/重启后回环同状态（从持久化记录恢复，不越过未满足的讨论或身份条件）。
 
 - DETECTED：outcome 含本次可归属、允许评论的设计文档新讨论，且未含非法正文编辑。
 - AWAITING_ADJUDICATION：Runtime 在普通结果验证前暂停该 outcome，记录来源（origin role/task/phase + 来源 dispatch/attempt）；有可归属且授权的非文档变化时同时进入隔离保全。
-- DESIGN_GAP：Prism 在原讨论确认 Archer 负责的 architecture/interfaces/test-plan 缺口 → 路由 Archer（M-DESIGN 所有者）修订设计合同，无 Human 技术批准门；Archer/Prism 与原 Agent 同线程复核闭环。
-- AGENT_CORRECTION：Prism 不确认设计缺口 → 在原讨论向原 Devon/Shield 给出可执行纠正指引，原 Agent 同线程回应闭环。
+- DESIGN_GAP：Prism 在原讨论确认 Archer 负责的 architecture/interfaces/test-plan 缺口；Runtime 持久化裁定并路由 Archer 在正常 M-DESIGN 路径修订设计正文，随后 Prism 以常规 M-DESIGN 评审复核，无 Human 技术批准门。
+- AGENT_CORRECTION：Prism 不确认设计缺口，在原讨论向原 Devon/Shield 给出可执行纠正指引；原 Agent 仅在线程回应并闭环，不能直接改设计正文。
 - READY_TO_RESUME：讨论线程关闭。
-- RESTORED：quarantine 为空，或隔离成果身份仍有效并已恢复，供新的 dispatch/attempt 重新验证。
-- DISCARDED：设计或运行身份变化使隔离成果 stale，Runtime 安全丢弃。
+- RESTORED：quarantine 为空，或 `decide_quarantine_resume()` 判定隔离成果身份仍有效并已恢复，供新的 dispatch/attempt 重新验证。
+- DISCARDED：`decide_quarantine_resume()` 判定设计或运行身份变化使隔离成果 stale（`design_stale` / `run_stale` / `content_conflict`），Runtime 安全丢弃。
 - RESUMED：Runtime 以相同 logical role/task/phase 发起新的 dispatch/attempt；旧 outcome 不复用、不改标为成功，新结果重新接受本步及原 phase 全部验证。
 
 **quarantine（仅合法新 discussion 路径）**：只隔离本次 dispatch 可归属且符合该 Agent 写范围的**非文档**变化；排除文档本身、Human 修改、dispatch 前既有脏改动与越权改动；不使用工作区共享 Git index 作载体；无授权非文档变化时 quarantine 为空。闭环且新 dispatch/attempt 完成重新验证之前，隔离成果不得被 commit、checkpoint、gate、计作 task 完成或对外显示为成功。

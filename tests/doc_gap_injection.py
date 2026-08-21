@@ -102,6 +102,11 @@ def assert_doc_delta_landed(host_repo: Path, path: str, text: str) -> Path:
     Replaces the vacuous ``if tp_path.exists():`` guards PRISM-V05-R2-02
     flagged: a doc-comment scenario that was never constructed must fail the
     test, not silently skip the delta.
+
+    NOTE (SM-02 adjudication wiring, #62): illegal-body-edit scenarios must
+    NOT use this helper — the runtime's FR-0237 atomic rollback restores the
+    document, so the delta is legitimately absent after the journey. Assert
+    the rollback instead (see test_doc_comment_first.py).
     """
     doc = host_repo / path
     assert doc.is_file(), (
@@ -114,3 +119,67 @@ def assert_doc_delta_landed(host_repo: Path, path: str, text: str) -> Path:
         "did not fire (check tests/_doc_gap_hook PYTHONPATH wiring)"
     )
     return doc
+
+
+def disarm_doc_delta(monkeypatch) -> None:
+    """Unarm the in-subprocess doc-delta hook for subsequent ``trac`` calls.
+
+    The hook state is per-process: a resumed dispatch in a SECOND ``trac``
+    subprocess would otherwise re-apply the armed delta (a second detection
+    instead of the resume under test).
+    """
+    monkeypatch.delenv("TRAC_TEST_DOC_DELTA", raising=False)
+
+
+def prism_adjudication_line(
+    *,
+    route: str,
+    quarantine_id: str,
+    threads: list[str],
+    responsible_role: str | None = None,
+) -> str:
+    """The canonical single-line SM-02 adjudication marker (flow.md §10.4).
+
+    Rendered as a nested (``>>``) reply so it lives INSIDE the original
+    thread; the runtime's marker scanner accepts only nested Prism replies.
+    """
+    role = responsible_role or ("archer" if route == "design_gap" else "shield")
+    return (
+        f">> **Prism:** SM-02-ADJUDICATION | route={route}"
+        f" | responsible_role={role}"
+        f" | quarantine_id={quarantine_id}"
+        f" | threads={','.join(threads)}\n"
+    )
+
+
+def prism_adjudicates(
+    host_repo: Path,
+    *,
+    path: str = TRACKS_DOC_PLAN,
+    route: str,
+    quarantine_id: str,
+    threads: list[str],
+    responsible_role: str | None = None,
+    resolve_root: str | None = None,
+) -> None:
+    """Prism's out-of-band adjudication on the public document surface.
+
+    Appends the marker as a nested reply directly after the last discussion
+    line (no blank line in between, so it nests into that thread) and, when
+    *resolve_root* is given, legally flips that root line to ``[RESOLVED]``
+    (status tags are stripped by thread identity — FR-090 resolve path).
+    """
+    doc = host_repo / path
+    assert doc.is_file(), f"cannot adjudicate: {path} missing"
+    text = doc.read_text(encoding="utf-8")
+    if resolve_root is not None:
+        resolved = resolve_root.replace(":**", " [RESOLVED]:**", 1)
+        assert resolve_root in text, f"root line to resolve not found: {resolve_root!r}"
+        text = text.replace(resolve_root, resolved, 1)
+    text += prism_adjudication_line(
+        route=route,
+        quarantine_id=quarantine_id,
+        threads=threads,
+        responsible_role=responsible_role,
+    )
+    doc.write_text(text, encoding="utf-8")

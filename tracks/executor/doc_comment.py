@@ -273,6 +273,191 @@ class ResumeDecision:
     next_attempt: int
 
 
+# SM-02 adjudication ingestion (IF-DOCGAP-001, #28 phase 2 / #62): Prism's
+# technical adjudication is a REPLY inside the original discussion thread
+# carrying a single machine-readable marker line.  The explicit marker (never
+# natural-language inference) is the only channel that may move a waiting
+# doc-gap record out of DETECTED.  Grammar (one line, fields separated by
+# ``|``; the discuss parser reads the tag, field text is opaque to it):
+#
+#   >> **Prism:** SM-02-ADJUDICATION | route=design_gap \
+#   | responsible_role=archer | quarantine_id=q-... | threads=T-001,T-002
+#
+ADJUDICATION_TAG = "SM-02-ADJUDICATION"
+_MARKER_FIELD_KEYS = frozenset(
+    {"route", "responsible_role", "quarantine_id", "threads"}
+)
+_THREAD_LABEL = re.compile(r"^T-\d+$")
+
+
+@dataclass(frozen=True)
+class AdjudicationMarker:
+    """One well-formed SM-02 adjudication marker found in a document."""
+
+    route: DocGapRoute
+    responsible_role: str
+    quarantine_id: str
+    thread_ids: tuple[str, ...]
+    host_thread_id: str
+    decision_ref: str
+
+
+def _decision_ref(
+    route: str, responsible_role: str, quarantine_id: str, thread_ids: tuple[str, ...]
+) -> str:
+    """Deterministic digest of the normalized decision content (audit key)."""
+    raw = "|".join(
+        (route, responsible_role, quarantine_id, ",".join(sorted(thread_ids)))
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _parse_marker_body(body: str) -> tuple[dict[str, str], str | None]:
+    """Parse the field section of an adjudication marker body.
+
+    Returns (fields, error). Fail-closed: missing/unknown/duplicate fields,
+    unknown routes and malformed thread labels are errors, never guesses.
+    """
+    segments = [s.strip() for s in body.split("|")]
+    if segments[0] != ADJUDICATION_TAG:
+        return {}, f"marker body must start with {ADJUDICATION_TAG!r}"
+    fields: dict[str, str] = {}
+    for segment in segments[1:]:
+        key, sep, value = segment.partition("=")
+        key = key.strip()
+        if not sep or not value.strip():
+            return {}, f"malformed marker field {segment!r}"
+        if key not in _MARKER_FIELD_KEYS:
+            return {}, f"unknown marker field {key!r}"
+        if key in fields:
+            return {}, f"duplicate marker field {key!r}"
+        fields[key] = value.strip()
+    missing = _MARKER_FIELD_KEYS - set(fields)
+    if missing:
+        return {}, f"missing marker fields: {sorted(missing)}"
+    if fields["route"] not in ("design_gap", "agent_correction"):
+        return {}, f"unknown route {fields['route']!r}"
+    labels = tuple(t.strip() for t in fields["threads"].split(",") if t.strip())
+    if not labels or any(not _THREAD_LABEL.match(t) for t in labels):
+        return {}, f"malformed thread labels {fields['threads']!r}"
+    if len(set(labels)) != len(labels):
+        return {}, "duplicate thread labels"
+    fields["threads"] = ",".join(labels)
+    return fields, None
+
+
+def scan_adjudication_markers(
+    text: str,
+) -> tuple[list[AdjudicationMarker], list[tuple[str, str]]]:
+    """Collect well-formed SM-02 markers and fail-closed errors from one doc.
+
+    Only NESTED Prism replies (depth >= 2) inside an existing thread count:
+    a depth-1 marker line would open its own thread and is not "inside the
+    original thread" (IF-DOCGAP-001).  A Prism line carrying the tag with an
+    unparseable body is an error, not a near-miss to ignore.  Errors carry
+    their host thread id so the matcher can tell markers written into THIS
+    record's threads apart from historical/unrelated ones.
+    """
+    markers: list[AdjudicationMarker] = []
+    errors: list[tuple[str, str]] = []
+    for thread in parse_threads(text):
+        stack: list[tuple[str, object]] = [
+            (thread.thread_id, child) for child in thread.root.children
+        ]
+        while stack:
+            host_thread_id, comment = stack.pop()
+            stack.extend((host_thread_id, c) for c in comment.children)
+            if comment.speaker.strip().lower() != "prism":
+                continue
+            body = comment.body.strip()
+            if not body.startswith(ADJUDICATION_TAG):
+                continue
+            fields, error = _parse_marker_body(body)
+            if error is not None:
+                errors.append((host_thread_id, error))
+                continue
+            labels = tuple(t for t in fields["threads"].split(","))
+            markers.append(
+                AdjudicationMarker(
+                    route=fields["route"],
+                    responsible_role=fields["responsible_role"],
+                    quarantine_id=fields["quarantine_id"],
+                    thread_ids=labels,
+                    host_thread_id=host_thread_id,
+                    decision_ref=_decision_ref(
+                        fields["route"],
+                        fields["responsible_role"],
+                        fields["quarantine_id"],
+                        labels,
+                    ),
+                )
+            )
+    return markers, errors
+
+
+def match_adjudication_marker(
+    candidates: list[AdjudicationMarker],
+    errors: list[tuple[str, str]] = (),
+    *,
+    quarantine_id: str | None,
+    thread_ids: list[str] | None,
+    origin_role: str | None,
+) -> tuple[AdjudicationMarker | None, str | None]:
+    """Bind ONE scanned marker to its waiting record; fail-closed otherwise.
+
+    Relevance filtering happens BEFORE any ambiguity decision: documents
+    keep every historical adjudication marker ever written, so candidates
+    are first narrowed to THIS record's quarantine and malformed-marker
+    errors only matter when written inside one of THIS record's original
+    threads (#62 review round 2: unrelated history must never block a new
+    record).  Within the relevant set: exactly one well-formed marker that
+    references this quarantine, lists exactly the detected thread set,
+    lives inside one of those threads and names the route's responsible
+    role (design_gap -> archer; agent_correction -> the originating
+    Devon/Shield role).  Zero relevant candidates is the ordinary
+    still-waiting state (None, None).
+    """
+    expected = set(thread_ids or [])
+    for host_thread_id, message in errors:
+        if host_thread_id in expected:
+            return None, f"{host_thread_id}: {message}"
+    relevant = [
+        marker
+        for marker in candidates
+        if marker.quarantine_id == (quarantine_id or "")
+    ]
+    if len(relevant) > 1:
+        return None, (
+            "ambiguous: multiple SM-02 adjudication markers reference "
+            f"quarantine {quarantine_id!r}"
+        )
+    if not relevant:
+        return None, None
+    marker = relevant[0]
+    if expected and marker.host_thread_id not in expected:
+        return None, (
+            f"marker must live inside the original thread {sorted(expected)}, "
+            f"found {marker.host_thread_id!r}"
+        )
+    if set(marker.thread_ids) != expected:
+        return None, (
+            f"marker threads {sorted(marker.thread_ids)} do not match record "
+            f"threads {sorted(expected)}"
+        )
+    if marker.route == "design_gap":
+        if marker.responsible_role != "archer":
+            return None, (
+                "design_gap adjudication must route archer, got "
+                f"{marker.responsible_role!r}"
+            )
+    elif marker.responsible_role != (origin_role or ""):
+        return None, (
+            f"agent_correction adjudication must route {origin_role!r}, got "
+            f"{marker.responsible_role!r}"
+        )
+    return marker, None
+
+
 def classify_design_document_deltas(
     *,
     role: DocCommentRole,
@@ -358,6 +543,34 @@ def adjudicate_doc_gap(
         state="DESIGN_GAP" if route == "design_gap" else "AGENT_CORRECTION",
         route=route,
     )
+
+
+def legal_anchor_pairs(
+    deltas: tuple[DocumentDelta, ...],
+) -> tuple[tuple[str, str], ...]:
+    """(path, at-pause identity) pairs of the record's legal discussion docs.
+
+    The design anchor answers "did the design move SINCE THE PAUSE": it must
+    be the legal documents' CURRENT (post-delta) identities — the state the
+    quarantined outcome was paused on — never the pre-dispatch baseline
+    (the discussion itself would otherwise count as permanent drift), and
+    never ``document_deltas[0]`` (the alphabetically-first protected doc,
+    usually an unrelated ``none`` delta).  The resume decision recomputes
+    the same combination over the live bytes of ``document_paths`` (which
+    `_legal_delta_targets` fills from exactly these legal deltas)
+    (PRISM review MAJOR-2, #62).
+    """
+    return tuple(
+        (d.path, d.current_identity)
+        for d in deltas
+        if d.classification == "legal_discussion"
+    )
+
+
+def combined_design_identity(pairs: list[tuple[str, str]]) -> str:
+    """Canonical combined identity over sorted (path, identity) pairs."""
+    canonical = "|".join(f"{path}:{identity}" for path, identity in sorted(pairs))
+    return _content_identity(canonical.encode("utf-8"))
 
 
 def quarantine_authorized_changes(

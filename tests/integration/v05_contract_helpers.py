@@ -17,6 +17,52 @@ def run_m_impl_journey(trac, event_log, *, simulate=None):
     return run_id, result, event_log(run_id)
 
 
+def first_event(events, event_type):
+    """The single expected event of one type (fails when absent)."""
+    found = [event for event in events if event["type"] == event_type]
+    assert found, f"expected at least one {event_type} event"
+    return found[0]
+
+
+def pause_then_adjudicate(
+    trac,
+    event_log,
+    host_repo,
+    monkeypatch,
+    run_id,
+    *,
+    route,
+    resolve_root=None,
+):
+    """Drive the SM-02 pause -> Prism adjudication -> resume public journey.
+
+    The first ``trac run`` parked on doc_comment.detected/outcome.quarantined.
+    This helper reads the record identity from those PUBLIC events, applies
+    Prism's out-of-band adjudication marker on the document surface (plus an
+    optional legal root resolve), disarms the injection hook and continues
+    the run.  Returns the post-resume event stream.
+    """
+    from tests.doc_gap_injection import (
+        disarm_doc_delta,
+        prism_adjudicates,
+    )
+
+    events = event_log(run_id)
+    detected = first_event(events, "doc_comment.detected")["payload"]
+    quarantined = first_event(events, "outcome.quarantined")["payload"]
+    prism_adjudicates(
+        host_repo,
+        route=route,
+        quarantine_id=quarantined["quarantine_id"],
+        threads=list(detected["thread_ids"]),
+        resolve_root=resolve_root,
+    )
+    disarm_doc_delta(monkeypatch)
+    result = trac("run")
+    assert result.returncode == 0, result.stderr
+    return event_log(run_id)
+
+
 def events_of(events, event_type):
     """Return public event rows of one type."""
     return [event for event in events if event["type"] == event_type]
