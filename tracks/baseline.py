@@ -44,6 +44,7 @@ def m_impl_baseline_digest(
     branch: str = "",
     tip: str = "",
     design_checkpoint: str = "",
+    requirements_dir: Path | None = None,
 ) -> str:
     """M-IMPL baseline digest (flow.md §10 BASELINE): sha256 over trio + design
     docs + project contract + approval/issue evidence + frozen test paths,
@@ -54,7 +55,10 @@ def m_impl_baseline_digest(
     alone. Missing design docs are labelled ``missing`` so their absence is
     detectable (a valid M-IMPL entry requires all six docs to exist)."""
     parts: list[str] = []
-    for label, doc in (*_TRIO, *_DESIGN_DOCS):
+    requirements_dir = requirements_dir or vdir
+    for label, doc in _TRIO:
+        parts.append(f"{label}:{_doc_digest(requirements_dir / doc)}")
+    for label, doc in _DESIGN_DOCS:
         parts.append(f"{label}:{_doc_digest(vdir / doc)}")
     from tracks import paths as _paths
 
@@ -82,6 +86,7 @@ def m_impl_baseline_missing(
     branch: str = "",
     tip: str = "",
     design_checkpoint: str = "",
+    requirements_dir: Path | None = None,
 ) -> tuple[str, ...]:
     """Return deterministic M-IMPL baseline freshness failures.
 
@@ -89,31 +94,42 @@ def m_impl_baseline_missing(
     stays independent from the project-contract loader.  Missingness is part
     of the result, rather than being inferred from an omitted digest field.
     """
-    missing: list[str] = []
-    for _, doc in (*_TRIO, *_DESIGN_DOCS):
-        if not (vdir / doc).is_file():
-            missing.append(doc)
-    if not contract_valid:
-        missing.append(".tracks/projects/project.toml")
-    if not approval_digest:
-        missing.append("approval.recorded")
-    if not issue_evidence:
-        missing.append("issues.created")
-    if not branch:
-        missing.append("branch.name")
-    if not tip:
-        missing.append("branch.tip")
-    if not design_checkpoint:
-        missing.append("design.checkpointed")
-    for path in sorted(frozen_test_paths or []):
-        if not (repo / path).exists():
-            missing.append(path)
+    requirements_dir = requirements_dir or vdir
+    missing = _missing_docs(requirements_dir, _TRIO)
+    missing += _missing_docs(vdir, _DESIGN_DOCS)
+    missing += _missing_inputs(
+        contract_valid, approval_digest, issue_evidence, branch, tip, design_checkpoint
+    )
+    missing += [path for path in sorted(frozen_test_paths or []) if not (repo / path).exists()]
     return tuple(missing)
 
 
-def m_impl_baseline_summary(vdir: Path) -> str:
+def _missing_docs(directory: Path, docs: tuple[tuple[str, str], ...]) -> list[str]:
+    return [doc for _, doc in docs if not (directory / doc).is_file()]
+
+
+def _missing_inputs(
+    contract_valid: bool,
+    approval_digest: str,
+    issue_evidence: str,
+    branch: str,
+    tip: str,
+    design_checkpoint: str,
+) -> list[str]:
+    pairs = (
+        (contract_valid, ".tracks/projects/project.toml"),
+        (bool(approval_digest), "approval.recorded"),
+        (bool(issue_evidence), "issues.created"),
+        (bool(branch), "branch.name"),
+        (bool(tip), "branch.tip"),
+        (bool(design_checkpoint), "design.checkpointed"),
+    )
+    return [label for present, label in pairs if not present]
+
+
+def m_impl_baseline_summary(vdir: Path, requirements_dir: Path | None = None) -> str:
     """Human-readable summary of the M-IMPL baseline inputs."""
-    parts: list[str] = [baseline_summary(vdir)]
+    parts: list[str] = [baseline_summary(requirements_dir or vdir)]
     for _, doc in _DESIGN_DOCS:
         path = vdir / doc
         if path.exists():

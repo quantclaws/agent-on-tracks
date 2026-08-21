@@ -383,6 +383,7 @@ class FakeShieldMixin:
         vdir = self._design_vdir()
         vdir.mkdir(parents=True, exist_ok=True)
         self._write_hotfix_delta(vdir, anchored, target_version)
+        self._write_reach_entries(vdir)
         return {
             "status": "done",
             "artifact_ref": str(vdir.relative_to(self.repo)),
@@ -396,6 +397,13 @@ class FakeShieldMixin:
         arch = self._append_hotfix_anchor_section(
             self._design_doc("architecture"), anchored, "架构增量"
         )
+        closure = "\n".join(
+            f"- {ac}: owner=Devon; surface=hotfix implementation; "
+            f"composition=delta; wiring=Runtime; test=unit; evidence={ac}; "
+            "if_ids=IF-HOTFIX-009"
+            for ac in anchored
+        )
+        arch = arch.rstrip("\n") + "\n\n" + closure + "\n"
         (vdir / "architecture.md").write_text(arch, encoding="utf-8")
         interfaces = self._append_hotfix_anchor_section(
             self._design_doc("interfaces"), anchored, "接口增量"

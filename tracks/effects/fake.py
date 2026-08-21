@@ -615,12 +615,27 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         one dotted module per AC matching Fake Archer PLANNING's production
         path ``tracks/impl/{ac_slug}.py`` (``ac_slug`` = lowercased hyphen-
         free AC id). Pure function of acceptance.md content (NFR-01/02)."""
-        from tracks.executor.test_tasks import _known_ac_ids  # noqa: PLC0415
+        from tracks.executor.test_tasks import (  # noqa: PLC0415
+            _known_ac_ids,
+            parse_test_tasks,
+            resolve_inherited_baseline_docs,
+        )
 
-        acc = self._design_vdir() / "acceptance.md"
+        acc, _ = resolve_inherited_baseline_docs(self._design_vdir() / "test-plan.md")
         if not acc.is_file():
             return []
         ac_ids = sorted(_known_ac_ids(acc.read_text(encoding="utf-8")))
+        hotfix_dir = self._design_vdir()
+        if "-hotfix-" in hotfix_dir.name:
+            plan = hotfix_dir / "test-plan.md"
+            if plan.is_file():
+                ac_ids = sorted(
+                    {
+                        task["ac_id"]
+                        for task in parse_test_tasks(acc, plan)
+                        if task.get("ac_id")
+                    }
+                )
         return [f"tracks.impl.{_ac_slug(ac_id)}" for ac_id in ac_ids]
 
     def _write_reach_entries(self, vdir: Path | None = None) -> None:
@@ -1014,7 +1029,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
                 "self_report": f"archer exit gate failed: {fclass}",
             }
         vdir = self._design_vdir()
-        tasks_json, error = self._derive_task_graph(vdir)
+        tasks_json, error = self._derive_task_graph(vdir, assignment)
         if error is not None:
             return {
                 "status": "failed",
@@ -1034,7 +1049,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             ),
         }
 
-    def _derive_task_graph(self, vdir: Path) -> tuple[dict | None, str | None]:
+    def _derive_task_graph(
+        self, vdir: Path, assignment: dict | None = None
+    ) -> tuple[dict | None, str | None]:
         """Build and self-validate the deterministic task graph.
 
         The Runtime taskgraph validators are imported lazily: importing
@@ -1044,24 +1061,78 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         boundary acyclic.
         """
         validators = self._taskgraph_validators()
-        acc = vdir / "acceptance.md"
-        ifc = vdir / "interfaces.md"
-        if not acc.is_file():
-            return None, "acceptance.md missing; cannot derive required ACs"
-        if not ifc.is_file():
-            return None, "interfaces.md missing; cannot derive IF registry"
-        acs = sorted(validators["known_ac_ids"](acc.read_text(encoding="utf-8")))
+        acs, registry, error = self._taskgraph_sources(vdir, assignment, validators)
+        if error:
+            return None, error
         if not acs:
             return None, "acceptance.md contains no AC ids"
-        registry = validators["extract_if_registry"](ifc.read_text(encoding="utf-8"))
-        if registry is None:
-            return None, "interfaces.md missing '## 5. IF Registry'"
-        registry = sorted(registry)
         if not registry:
             return None, "interfaces.md §5 IF Registry is empty"
         data = self._taskgraph_data(acs, registry, validators["requirement_ref"])
+        if assignment and assignment.get("hotfix_issue") is not None:
+            for task in data.get("tasks", []):
+                task["issue_number"] = int(assignment["hotfix_issue"])
         error = self._validate_taskgraph(data, acs, registry, validators)
         return (None, error) if error else (data, None)
+
+    @staticmethod
+    def _taskgraph_sources(
+        vdir: Path, assignment: dict | None, validators: dict
+    ) -> tuple[list[str], list[str], str | None]:
+        from tracks.executor.test_tasks import resolve_inherited_baseline_docs
+
+        acc, ifc = resolve_inherited_baseline_docs(vdir / "test-plan.md")
+        anchors = {
+            str(ref).split("@", 1)[0]
+            for ref in (assignment or {}).get("hotfix_anchor_acs", [])
+            if ref
+        }
+        if not anchors and not acc.is_file():
+            return [], [], "acceptance.md missing; cannot derive required ACs"
+        if not anchors and not ifc.is_file():
+            return [], [], "interfaces.md missing; cannot derive IF registry"
+        acs, registry = FakeBackend._taskgraph_doc_sources(acc, ifc, assignment, validators)
+        if not anchors:
+            return acs, registry, None
+        hotfix_acs, hotfix_registry = FakeBackend._hotfix_taskgraph_sources(
+            acs, assignment, anchors
+        )
+        return hotfix_acs, hotfix_registry, None
+
+    @staticmethod
+    def _taskgraph_doc_sources(
+        acc: Path, ifc: Path, assignment: dict | None, validators: dict
+    ) -> tuple[list[str], list[str]]:
+        if acc.is_file() and ifc.is_file():
+            acs = sorted(validators["known_ac_ids"](acc.read_text(encoding="utf-8")))
+            registry = sorted(
+                validators["extract_if_registry"](ifc.read_text(encoding="utf-8")) or []
+            )
+            return acs, registry
+        rows = (assignment or {}).get("test_tasks") or []
+        acs = sorted({str(row.get("ac_id") or "") for row in rows if row.get("ac_id")})
+        registry = sorted(
+            {
+                str(if_id)
+                for row in rows
+                for if_id in (row.get("if_ids") or [])
+                if if_id
+            }
+        )
+        return acs, registry
+
+    @staticmethod
+    def _hotfix_taskgraph_sources(
+        acs: list[str], assignment: dict | None, anchors: set[str]
+    ) -> tuple[list[str], list[str]]:
+        rows = (assignment or {}).get("test_tasks") or []
+        assigned_ifs = {
+            str(if_id)
+            for row in rows
+            for if_id in (row.get("if_ids") or [])
+            if if_id
+        }
+        return sorted(set(acs) & anchors), sorted(assigned_ifs)
 
     @staticmethod
     def _taskgraph_validators() -> dict:

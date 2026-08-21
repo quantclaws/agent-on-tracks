@@ -295,6 +295,10 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
     elif check == "island":
         s.substate = "PLANNING"
         _reset_doc(s)
+        # A failed island gate invalidates the current task graph. The
+        # re-dispatched planning result must pass through commit_taskgraph
+        # again; retaining this flag strands PLANNING after Archer returns.
+        s.taskgraph_committed = False
         _consume_attempt(s)
     elif check == "red_invalid":
         s.substate = "RED"

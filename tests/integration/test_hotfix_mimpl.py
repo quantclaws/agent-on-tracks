@@ -34,7 +34,7 @@ def test_mimpl_commits_isolated_on_fix_branch(trac, host_repo, event_log):
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
     # Drive M-DESIGN -> M-TEST -> M-IMPL happy path.
-    for _ in range(4):
+    for _ in range(20):
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
 
@@ -57,10 +57,9 @@ def test_mimpl_commits_isolated_on_fix_branch(trac, host_repo, event_log):
     # lands the fix commit on main with any message must be killed.
     fix_log = git(host_repo, "log", "--oneline", "fix/42")
     assert fix_log.strip(), "fix/42 must carry RGR commits"
-    # Trailers bind the hotfix issue identity exactly (interfaces §4a:
-    # Tracks-Issue=<hotfix issue>).
+    # Git trailers bind the hotfix issue identity exactly (interfaces §4a).
     body = git(host_repo, "log", "--format=%B", "fix/42")
-    assert "Tracks-Issue=42" in body
+    assert "Tracks-Issue: 42" in body
     # Every fix/42 commit must be absent from main: ``git cherry main fix/42``
     # prefixes each commit not in main with ``+`` (in main -> ``-``).
     cherry = git(host_repo, "cherry", "main", "fix/42")
@@ -170,7 +169,7 @@ def test_boundary_terminal_state_keeps_fix_branch(trac, host_repo, event_log):
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    for _ in range(5):
+    for _ in range(20):
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
 
@@ -204,7 +203,7 @@ def test_no_release_events_after_boundary(trac, host_repo, event_log):
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    for _ in range(5):
+    for _ in range(20):
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
 

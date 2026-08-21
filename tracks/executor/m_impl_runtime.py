@@ -21,6 +21,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from tracks import paths
 from tracks.baseline import (
     m_impl_baseline_digest,
     m_impl_baseline_missing,
@@ -50,7 +51,11 @@ from tracks.executor.taskgraph import (
     validate_scope,
     validate_task_structure,
 )
-from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
+from tracks.executor.test_tasks import (
+    _extract_if_registry,
+    _known_ac_ids,
+    resolve_inherited_baseline_docs,
+)
 from tracks.executor.validate import parse_test_tasks
 from tracks.executor.worktree import (
     WorktreeHandle,
@@ -290,6 +295,30 @@ def _scenario_bound_digest(digest: str, scenario_branch_head: str | None) -> str
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
+def _taskgraph_structure_errors(tasks: list[TaskNode]) -> list[str]:
+    errors = validate_task_structure(tasks)
+    valid, cycle = validate_dag(tasks)
+    if not valid:
+        errors.append(cycle or "task graph DAG is invalid (validate_dag returned no reason)")
+    valid, overlap = validate_scope(tasks)
+    if not valid:
+        errors.extend(overlap)
+    return errors
+
+
+def _taskgraph_coverage_errors(
+    tasks: list[TaskNode], ac_ids: list[str], if_registry: set[str]
+) -> list[str]:
+    errors: list[str] = []
+    valid, coverage = validate_ac_coverage(tasks, ac_ids, if_registry)
+    if not valid:
+        errors.extend(coverage)
+    valid, issue_errors = validate_issue_numbers(tasks)
+    if not valid:
+        errors.extend(issue_errors)
+    return errors
+
+
 class MImplRuntimeMixin:
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
@@ -305,6 +334,10 @@ class MImplRuntimeMixin:
     ) -> dict:
         self._rebuild_task_log_projection()
         assignment = deepcopy(params.get("assignment") or {})
+        if state.hotfix_issue is not None:
+            assignment["hotfix_anchor_acs"] = list(state.hotfix_anchor_acs or [])
+            assignment["hotfix_issue"] = state.hotfix_issue
+            assignment["issue_number"] = state.hotfix_issue
         task = state.current_task_metadata
         if task is None:
             task = self._materialized_task(state)
@@ -316,11 +349,12 @@ class MImplRuntimeMixin:
             task,
             pre_dirty,
         )
-        assignment["test_tasks"] = parse_test_tasks(
-            self._vdir() / "acceptance.md",
-            self._vdir() / "test-plan.md",
-        )
+        vdir = self._vdir()
+        acc_path, _ = resolve_inherited_baseline_docs(vdir / "test-plan.md")
+        assignment["test_tasks"] = parse_test_tasks(acc_path, vdir / "test-plan.md")
         self._add_assignment_role_fields(assignment, state, params)
+        if state.hotfix_issue is not None:
+            assignment["issue_number"] = state.hotfix_issue
         return assignment
 
     def _materialized_task(self, state: State) -> dict | None:
@@ -673,6 +707,10 @@ class MImplRuntimeMixin:
         for ev in reversed(list(self.store.events(self.run_id))):
             if ev.type == "approval.recorded":
                 return ev.payload.get("digest", "")
+            if ev.type == "baseline.inherited":
+                # Hotfixes consume the approved target-version baseline rather
+                # than recreating an approval in their delta directory.
+                return str(ev.payload.get("baseline_digest") or "")
         return ""
 
     def _issue_evidence(self) -> str:
@@ -682,7 +720,17 @@ class MImplRuntimeMixin:
                 return json.dumps(
                     mapping, ensure_ascii=False, sort_keys=True, separators=(",", ":")
                 )
+            if ev.type == "hotfix.requested":
+                issue = ev.payload.get("issue")
+                if issue is not None:
+                    return json.dumps({"hotfix_issue": issue}, separators=(",", ":"))
         return ""
+
+    def _requirements_baseline_dir(self, state: State, vdir: Path) -> Path:
+        """Return the read-only requirement baseline for a hotfix delta."""
+        if state.hotfix_issue is None or not state.hotfix_target_version:
+            return vdir
+        return paths.projects_dir(self.store.home) / state.hotfix_target_version
 
     def _design_checkpoint_sha(self) -> str:
         """C_design: latest ``result.checkpointed.payload.commit_sha`` inside the
@@ -746,6 +794,7 @@ class MImplRuntimeMixin:
         (interfaces §1a/§1g, AC-FR0245-02). Digest binding order is stable:
         canonical inputs first, then the active release branch head fold."""
         vdir = self._vdir()
+        requirements_dir = self._requirements_baseline_dir(state, vdir)
         frozen = self._frozen_test_paths()
         approval_digest = self._approval_digest()
         issue_evidence = self._issue_evidence()
@@ -761,6 +810,7 @@ class MImplRuntimeMixin:
             branch=branch,
             tip=tip,
             design_checkpoint=design_checkpoint,
+            requirements_dir=requirements_dir,
         )
         try:
             load_contract(self.repo)
@@ -776,8 +826,9 @@ class MImplRuntimeMixin:
                 frozen_test_paths=frozen,
                 contract_valid=contract_valid,
                 branch=branch,
-                tip=tip,
-                design_checkpoint=design_checkpoint,
+            tip=tip,
+            design_checkpoint=design_checkpoint,
+            requirements_dir=requirements_dir,
             )
         )
         # Scenario B (interfaces §1g): bind the dev-scenario active release
@@ -795,7 +846,7 @@ class MImplRuntimeMixin:
         return {
             "status": "current" if not missing and not advanced else "stale",
             "digest": digest,
-            "summary": m_impl_baseline_summary(vdir),
+            "summary": m_impl_baseline_summary(vdir, requirements_dir),
             "frozen_test_paths": frozen,
             "missing": missing,
             "scenario_branch_head": scenario_head,
@@ -818,7 +869,12 @@ class MImplRuntimeMixin:
         if error is not None:
             self._emit_taskgraph_failure(cmd, state, error, raw[:500])
             return
-        errors = self._taskgraph_errors(vdir, tasks)
+        errors = self._taskgraph_errors(
+            vdir,
+            tasks,
+            self._requirements_baseline_dir(state, vdir),
+            state.hotfix_anchor_acs if state.hotfix_issue is not None else None,
+        )
         if errors:
             self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(errors))
             return
@@ -891,25 +947,26 @@ class MImplRuntimeMixin:
         )
 
     @staticmethod
-    def _taskgraph_errors(vdir: Path, tasks: list[TaskNode]) -> list[str]:
-        errors = validate_task_structure(tasks)
-        ok, cycle = validate_dag(tasks)
-        if not ok:
-            errors.append(cycle or "task graph DAG is invalid (validate_dag returned no reason)")
-        ok, overlap = validate_scope(tasks)
-        if not ok:
-            errors.extend(overlap)
+    def _taskgraph_errors(
+        vdir: Path,
+        tasks: list[TaskNode],
+        requirements_dir: Path | None = None,
+        anchor_acs: list[str] | None = None,
+    ) -> list[str]:
+        errors = _taskgraph_structure_errors(tasks)
         ac_ids, if_registry, doc_errors = MImplRuntimeMixin._taskgraph_docs(
-            vdir / "acceptance.md",
-            vdir / "interfaces.md",
+            (requirements_dir or vdir) / "acceptance.md",
+            (requirements_dir or vdir) / "interfaces.md",
         )
         errors.extend(doc_errors)
-        ok, coverage = validate_ac_coverage(tasks, ac_ids, if_registry)
-        if not ok:
-            errors.extend(coverage)
-        ok, issue_errors = validate_issue_numbers(tasks)
-        if not ok:
-            errors.extend(issue_errors)
+        if anchor_acs:
+            anchored_ids = {ac.split("@", 1)[0] for ac in anchor_acs}
+            for task in tasks:
+                for ac_id in task.ac_refs:
+                    if ac_id not in anchored_ids:
+                        errors.append(f"{task.task_id} declares unanchored AC {ac_id}")
+            ac_ids = sorted(anchored_ids)
+        errors.extend(_taskgraph_coverage_errors(tasks, ac_ids, if_registry))
         return errors
 
     @staticmethod
@@ -973,7 +1030,12 @@ class MImplRuntimeMixin:
 
     def _do_check_island_1(self, cmd, state, task_id, reconcile):
         vdir = self._vdir()
-        errors = self._island_taskgraph_errors(vdir, vdir / "tasks.json", state)
+        errors = self._island_taskgraph_errors(
+            vdir,
+            vdir / "tasks.json",
+            state,
+            self._requirements_baseline_dir(state, vdir),
+        )
         if errors:
             self._emit(
                 "verdict.failed",
@@ -993,6 +1055,7 @@ class MImplRuntimeMixin:
         vdir: Path,
         tasks_path: Path,
         state: State,
+        requirements_dir: Path | None = None,
     ) -> list[str]:
         raw, error = self._read_taskgraph(tasks_path)
         if error is not None:
@@ -1005,7 +1068,12 @@ class MImplRuntimeMixin:
             and hashlib.sha256(raw.encode("utf-8")).hexdigest() != state.taskgraph_digest
         ):
             return ["tasks.json changed after taskgraph.committed"]
-        errors = self._taskgraph_errors(vdir, tasks)
+        errors = self._taskgraph_errors(
+            vdir,
+            tasks,
+            requirements_dir,
+            state.hotfix_anchor_acs if state.hotfix_issue is not None else None,
+        )
         arch_path = vdir / "architecture.md"
         if not arch_path.is_file():
             errors.append("architecture.md missing")
@@ -1053,6 +1121,20 @@ class MImplRuntimeMixin:
             f"{name}: " + _short_detail(stdout + "\n" + stderr)
             for name, code, stdout, stderr in results
             if code != 0
+            # A hotfix delta with no e2e-owned regression task has no e2e
+            # suite to run. Pytest's exit 5 is then an empty assignment, not
+            # a failed verification; assigned suites and every other failure
+            # remain fail-closed.
+            and not (
+                state.hotfix_issue is not None
+                and name == "e2e"
+                and code == 5
+                and not any(
+                    "tests/e2e/" in ref
+                    for task in state.task_refs
+                    for ref in task.get("test_refs", [])
+                )
+            )
         ]
         if failures:
             self._emit(
@@ -1071,6 +1153,25 @@ class MImplRuntimeMixin:
     def _do_select_task(self, cmd, state, task_id, reconcile):
         if state.current_task_id:
             return
+        if state.hotfix_issue is not None and state.hotfix_scenario == "dev":
+            prior = next(
+                (
+                    ev.payload
+                    for ev in reversed(list(self.store.events(self.run_id)))
+                    if ev.type == "baseline.frozen"
+                ),
+                None,
+            )
+            current_head = self._freeze_scenario_head(state)
+            if (
+                prior
+                and prior.get("scenario_branch_head")
+                and current_head
+                and prior.get("scenario_branch_head") != current_head
+            ):
+                payload = self._baseline_frozen_payload(state)
+                self._emit("baseline.frozen", payload, command_id=cmd.command_id)
+                return
         tasks = [self._task_node(raw) for raw in state.task_refs]
         if not tasks:
             self._emit_no_task_failure(cmd, state, "no tasks available")
@@ -1787,12 +1888,14 @@ class MImplRuntimeMixin:
         never a new fail path for R creation)."""
         payload = {"ref": r.ref, "r_sha": r.sha, "task_id": task_id, "attempt": attempt}
         task = self._lookup_task(task_id)
-        if task is not None and task.issue_number:
+        issue_number = self.store.state(self.run_id).hotfix_issue if task is not None else None
+        issue_number = issue_number or (task.issue_number if task is not None else None)
+        if task is not None and issue_number:
             payload["trailers"] = {
                 "Tracks-Task": task_id,
                 "Tracks-Attempt": str(attempt),
                 "Tracks-R": r.sha,
-                "Tracks-Issue": str(task.issue_number),
+                "Tracks-Issue": str(issue_number),
                 "Tracks-AC": ",".join(_combined_provenance(task)),
             }
         return payload
@@ -1978,7 +2081,7 @@ class MImplRuntimeMixin:
             impl_diff=diff,
             base_sha=green_base,
             r_sha=r_sha,
-            issue_number=task.issue_number,
+            issue_number=state.hotfix_issue or task.issue_number,
             ac_refs=_combined_provenance(task),
         )
         materialized, materialize_reason = self._materialize_green_commit(
