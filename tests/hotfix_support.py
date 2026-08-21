@@ -282,12 +282,20 @@ def assert_hotfix_drives_to_mtest(
         assert r.returncode == 0, r.stderr
     for _ in range(6):
         cont = trac("run")
-        assert cont.returncode == 0, cont.stderr
+        if cont.returncode != 0 and "no active run" not in cont.stderr:
+            raise AssertionError(cont.stderr)
+        store = Store(paths.tracks_home(host_repo))
+        for vdir in paths.projects_dir(paths.tracks_home(host_repo)).glob("v*-hotfix-*"):
+            for run_id in store.runs_for_version(vdir.name):
+                if any(
+                    event.type == "stage.entered" and event.payload.get("stage") == "M-TEST"
+                    for event in store.events(run_id)
+                ):
+                    return
+        if cont.returncode != 0:
+            break
     status = trac("status")
-    assert "stage=M-TEST" in status.stdout, (
-        "hotfix run must reach M-TEST; "
-        f"blocked by IF-HOTFIX-010 baseline-resolver seam: {status.stdout.strip()}"
-    )
+    raise AssertionError(f"hotfix run must enter M-TEST: {status.stdout.strip()}")
 
 
 __all__ = [

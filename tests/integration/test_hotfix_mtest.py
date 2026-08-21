@@ -60,6 +60,8 @@ sha:
 
 ## 8. AC Coverage
 
+| AC id | layer | test | IF |
+|---|---|---|---|
 {rows}
 """
     tp.write_text(body, encoding="utf-8")
@@ -108,6 +110,7 @@ def test_delta_testplan_layer_ownership_validated(trac, host_repo):
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
+    assert trac("run", "--max-dispatches", "1").returncode == 0
     hotfix_dir = _hotfix_project_dir(host_repo)
     _write_delta_test_plan(hotfix_dir, unit_only=True)
 
@@ -131,10 +134,9 @@ def test_trace_binds_cross_version_ac_without_new_ac(trac, host_repo, event_log)
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    hotfix_dir = _hotfix_project_dir(host_repo)
-    _write_delta_test_plan(hotfix_dir, unit_only=True)
+    assert trac("run", simulate="archer:DRAFT=unit_only").returncode == 0
 
-    check = trac("check", "trace", "--json")
+    check = trac("check", "trace", "--json", "--version", "v0.5-hotfix-42")
     assert check.returncode == 0, check.stderr
     data = json.loads(check.stdout)
     # Hotfix scope carries the anchored AC set and declared unit rows.
@@ -157,13 +159,8 @@ def test_empty_shield_increment_release_with_unit_closure(trac, host_repo, event
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    hotfix_dir = _hotfix_project_dir(host_repo)
-    _write_delta_test_plan(hotfix_dir, unit_only=True)
-
-    # Drive M-TEST to EXIT (single dispatch per the happy path).
-    for _ in range(3):
-        cont = trac("run")
-        assert cont.returncode == 0, cont.stderr
+    # Drive M-DESIGN -> unit-only M-TEST exit.
+    assert trac("run", simulate="archer:DRAFT=unit_only").returncode == 0
 
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
     evs = event_log(run_id)

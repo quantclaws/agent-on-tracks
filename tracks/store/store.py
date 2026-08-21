@@ -241,6 +241,15 @@ class Store:
         row = cur.fetchone()
         return row[0] if row else None
 
+    def runs_for_version(self, version: str) -> list[str]:
+        """Return all runs for a version, newest first."""
+        cur = self.conn.execute(
+            "SELECT run_id FROM events WHERE version = ? "
+            "GROUP BY run_id ORDER BY MAX(ts) DESC",
+            (version,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
     def rebuild_projections(self) -> None:
         """NFR-04: projections are derivable from events alone."""
         with self.conn:

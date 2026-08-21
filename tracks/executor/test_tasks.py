@@ -42,7 +42,8 @@ _AC_ID_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
 # Cross-version AC reference in a §8 coverage row (interfaces §1e): keeps the
 # ``@<version>`` suffix so ``unit_rows`` carries the full anchor reference
 # ``AC-FRXXXX-YY@<version>`` for ``increment.declared`` (FR-0244-04).
-_AC_REF_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}(?:@v\d+\.\d+)?")
+_AC_REF_IN_ROW = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}(?:@v\d+\.\d+)?(?![@A-Za-z0-9_.-])")
+_FULL_AC_REF = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@v\d+\.\d+")
 
 # Canonical: `## 8. AC Coverage` (level-2 only).
 _AC_COVERAGE_HEADING = re.compile(r"^##\s+8\.\s+AC Coverage\b", re.I | re.M)
@@ -368,6 +369,9 @@ def parse_test_tasks(acc_path, plan_path) -> list[dict]:
     if not acc_path.exists() or not plan_path.exists():
         return []
     known = _known_ac_ids(acc_path.read_text(encoding="utf-8"))
+    hotfix_acs = _hotfix_plan_ac_ids(plan_path, plan_path.read_text(encoding="utf-8"))
+    if hotfix_acs is not None:
+        known &= hotfix_acs
     rows = _coverage_rows(plan_path.read_text(encoding="utf-8"))
     return _test_tasks(known, rows)
 
@@ -614,6 +618,7 @@ def check_design_trace(
     acc_text: str,
     plan_text: str,
     if_registry: set[str] | None = None,
+    required_acs: set[str] | None = None,
 ) -> list:
     """BS-06 design trace: every AC id in acceptance.md must appear in
     test-plan.md with a test-layer attribution (unit/integration/e2e) on the
@@ -628,6 +633,8 @@ def check_design_trace(
     visible = _visible_plan_lines(plan_text)
     issues: list = []
     for ac_id, _ref, line_no, _section in acs:
+        if required_acs is not None and ac_id not in required_acs:
+            continue
         issues += _check_ac_layer_and_if(ac_id, line_no, visible, if_registry)
     return issues
 
@@ -693,10 +700,13 @@ def check_design_trace_file(path) -> list:
         return ["interfaces.md missing '## 5. IF Registry' section"]
     if not registry:
         return ["interfaces.md §5 IF Registry is empty (no IF- identifiers)"]
-    return check_design_trace(
+    plan_text = path.read_text(encoding="utf-8")
+    required_acs = _hotfix_plan_ac_ids(path, plan_text)
+    return _hotfix_coverage_ref_issues(path, plan_text) + check_design_trace(
         acc_path.read_text(encoding="utf-8"),
-        path.read_text(encoding="utf-8"),
+        plan_text,
         registry,
+        required_acs,
     )
 
 
@@ -768,7 +778,13 @@ def _coverage_section_issues(plan_text: str, issues: list) -> None:
     _check_empty_test_cells(plan_text, issues)
 
 
-def check_test_tasks(acc_text: str, plan_text: str, if_registry: set[str] | None = None) -> list:
+def check_test_tasks(
+    acc_text: str,
+    plan_text: str,
+    if_registry: set[str] | None = None,
+    required_acs: set[str] | None = None,
+    allow_unit_only: bool = False,
+) -> list:
     """D-28 M-DESIGN EXIT structured test-task contract check (fail-closed
     M-DESIGN->M-TEST). Validates test-plan §8 AC Coverage against acceptance.md:
 
@@ -790,10 +806,11 @@ def check_test_tasks(acc_text: str, plan_text: str, if_registry: set[str] | None
     for ac_id in sorted(row_ac_ids - known):
         issues.append(f"unknown AC {ac_id}")
     valid_shield = False
-    for ac_id in sorted(known):
+    required = known if required_acs is None else known & required_acs
+    for ac_id in sorted(required):
         if _check_ac_task(ac_id, rows, if_registry, issues):
             valid_shield = True
-    if not valid_shield:
+    if not valid_shield and not allow_unit_only:
         if any(_row_declares_shield(layer) for _ac, layer, _if in rows):
             issues.append(
                 "no valid Shield test task (integration/e2e declared but none is attributable)"
@@ -822,8 +839,52 @@ def check_test_tasks_contract_file(plan_path) -> list:
         return ["interfaces.md missing '## 5. IF Registry' section"]
     if not registry:
         return ["interfaces.md §5 IF Registry is empty (no IF- identifiers)"]
-    return check_test_tasks(
+    plan_text = plan_path.read_text(encoding="utf-8")
+    required_acs = _hotfix_plan_ac_ids(plan_path, plan_text)
+    return _hotfix_coverage_ref_issues(plan_path, plan_text) + check_test_tasks(
         acc_path.read_text(encoding="utf-8"),
-        plan_path.read_text(encoding="utf-8"),
+        plan_text,
         registry,
+        required_acs,
+        required_acs is not None,
     )
+
+
+def _hotfix_plan_ac_ids(plan_path: Path, plan_text: str) -> set[str] | None:
+    """Return anchored AC ids for a hotfix delta plan, else ``None``.
+
+    Delta plans own regression coverage for the anchored set only; inherited
+    baseline ACs are not required to be repeated in the delta document.
+    """
+    if _HOTFIX_VERSION_RE.match(plan_path.parent.name) is None:
+        return None
+    return {
+        ref.split("@", 1)[0]
+        for ref in _AC_REF_IN_ROW.findall(plan_text)
+        if "@" in ref
+    }
+
+
+def _hotfix_coverage_ref_issues(plan_path: Path, plan_text: str) -> list[str]:
+    """Hotfix §8 rows must bind an AC to an explicit source version."""
+    if _HOTFIX_VERSION_RE.match(plan_path.parent.name) is None:
+        return []
+    malformed: set[str] = set()
+    in_coverage = False
+    columns: tuple[int, int] | None = None
+    for line in _visible_plan_lines(plan_text):
+        was_heading, in_coverage, columns = _coverage_heading_or_continuation(
+            line, in_coverage, columns
+        )
+        if was_heading or not in_coverage or "|" not in line:
+            continue
+        cells = _table_cells(line)
+        if _table_separator(cells):
+            continue
+        if columns is None:
+            columns = _coverage_columns(cells)
+            continue
+        ac_ref = cells[0].strip() if cells else ""
+        if _AC_ID_IN_ROW.search(ac_ref) and not _FULL_AC_REF.fullmatch(ac_ref):
+            malformed.add(ac_ref)
+    return [f"hotfix AC row must be versioned exactly: {ac_id}" for ac_id in sorted(malformed)]

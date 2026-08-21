@@ -247,7 +247,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if token == "hang":
             time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
         if role == "archer":
-            delta = self._act_hotfix_design(assignment)
+            delta = self._act_hotfix_design(assignment, token)
             if delta is not None:
                 return delta
             scaffold, failure = self._validated_fake_scaffold(assignment)

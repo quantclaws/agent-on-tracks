@@ -923,6 +923,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if materialization_error is not None:
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
             return
+        if self._release_empty_hotfix_shield(cmd, state, task_id, role, substate, assignment):
+            return
         # D-32: fail-closed M-DESIGN→M-TEST gate. After the persisted
         # assignment.test_tasks enrichment (issue()), an invalid test-task
         # contract must NOT reach the (production or fake) backend: emit a
@@ -931,6 +933,52 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if self._reject_invalid_test_tasks(state, role, substate, assignment, cmd, task_id):
             return
         self._dispatch_agent_backend(cmd, state, task_id, role, substate, doc, doc_path, assignment)
+
+    def _release_empty_hotfix_shield(
+        self, cmd, state, task_id, role, substate, assignment
+    ) -> bool:
+        """Declare a unit-only hotfix M-TEST increment without Shield I/O."""
+        if not (
+            state.stage == "M-TEST"
+            and state.hotfix_issue is not None
+            and role == "shield"
+            and substate == "WRITE"
+            and isinstance(assignment, dict)
+            and not assignment.get("test_tasks")
+        ):
+            return False
+        from tracks.executor.test_tasks import parse_hotfix_unit_rows
+
+        plan = self._vdir() / "test-plan.md"
+        unit_rows = parse_hotfix_unit_rows(
+            plan.read_text(encoding="utf-8", errors="replace") if plan.exists() else ""
+        )
+        anchors = set(state.hotfix_anchor_acs or [])
+        if (
+            not unit_rows
+            or {row.get("ac") for row in unit_rows} != anchors
+            or not self._valid_hotfix_unit_rows(unit_rows)
+        ):
+            return False
+        self._emit(
+            "red.validated",
+            {"status": "valid", "findings": [], "basis": "unit-only hotfix increment"},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return True
+
+    def _valid_hotfix_unit_rows(self, unit_rows: list[dict]) -> bool:
+        """Require each empty-Shield row to carry a registered interface."""
+        from tracks.executor.test_tasks import _extract_if_registry, resolve_inherited_baseline_docs
+
+        _acc, interfaces = resolve_inherited_baseline_docs(self._vdir() / "test-plan.md")
+        if not interfaces.is_file():
+            return False
+        registry = _extract_if_registry(interfaces.read_text(encoding="utf-8"))
+        return bool(registry) and all(
+            row.get("if_ids") and set(row["if_ids"]).issubset(registry) for row in unit_rows
+        )
 
     @staticmethod
     def _assignment_with_evidence(assignment: dict | None, params: dict) -> dict | None:
@@ -1838,12 +1886,23 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """D-32 fail-closed gate: return True (and emit a stub_gap failed
         outcome) when an M-TEST Shield WRITE assignment carries an invalid
         test-task contract, so the backend is never called."""
-        if not (
+        applies = (
             state.stage in ("M-TEST", "M-IMPL")
             and substate == "WRITE"
             and role == "shield"
-            and not valid_test_tasks((assignment or {}).get("test_tasks"))
-        ):
+        )
+        if not applies:
+            return False
+        valid = valid_test_tasks((assignment or {}).get("test_tasks"))
+        if state.hotfix_issue is not None:
+            from tracks.executor.test_tasks import _coverage_rows_with_test
+
+            plan = self._vdir() / "test-plan.md"
+            rows = _coverage_rows_with_test(
+                plan.read_text(encoding="utf-8", errors="replace") if plan.exists() else ""
+            )
+            valid = valid and {row[0] for row in rows} == set(state.hotfix_anchor_acs or [])
+        if valid:
             return False
         self._emit(
             "outcome.received",
@@ -2821,23 +2880,48 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 },
             )
             blocking = list(report.hard_errors)
-            self._emit(
-                "increment.declared",
-                {
-                    "shield": "empty",
-                    "unit_rows": unit_rows,
-                    "trace_status": "fail" if report.status == "fail" else "pass",
-                },
-                command_id=cmd.command_id,
-            )
+            if report.status == "pass":
+                self._emit(
+                    "increment.declared",
+                    {"shield": "empty", "unit_rows": unit_rows, "trace_status": "pass"},
+                    command_id=cmd.command_id,
+                )
         else:
-            report = check_trace_full_file(vdir, tests_dir)
-            required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
-            blocking = (
-                [e for e in report.hard_errors if any(rid in e for rid in required)]
-                if required
-                else list(report.hard_errors)
-            )
+            # IF-HOTFIX-007: a hotfix run WITH Shield integration tests still
+            # needs the plan-level hotfix trace closure (cross-version AC
+            # markers resolve via the target version dir, not the delta dir).
+            # Without hotfix_ctx the delta-dir check sees anchored ACs as
+            # unbound (PRISM-V06-R16-01, T-004). No increment.declared (that
+            # is empty-shield only; this path has Shield tests committed).
+            if getattr(state, "hotfix_anchor_acs", None):
+                increment = next(
+                    (
+                        ev.payload
+                        for ev in reversed(list(self.store.events(self.run_id)))
+                        if ev.type == "increment.declared"
+                    ),
+                    None,
+                )
+                unit_rows = increment.get("unit_rows", []) if increment else []
+                report = check_trace_full_file(
+                    vdir,
+                    tests_dir,
+                    hotfix_ctx={
+                        "projects_dir": str(paths.projects_dir(self.store.home)),
+                        "run_id": self.run_id,
+                        "anchor_acs": list(state.hotfix_anchor_acs or []),
+                        "declared_unit_rows": unit_rows,
+                    },
+                )
+                blocking = list(report.hard_errors)
+            else:
+                report = check_trace_full_file(vdir, tests_dir)
+                required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
+                blocking = (
+                    [e for e in report.hard_errors if any(rid in e for rid in required)]
+                    if required
+                    else list(report.hard_errors)
+                )
         if not blocking:
             self._emit(
                 "verdict.passed",

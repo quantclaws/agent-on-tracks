@@ -360,7 +360,7 @@ class FakeShieldMixin:
         ]
         return {"status": "done", "acs": anchored, "rationale_refs": rationale_refs}
 
-    def _act_hotfix_design(self, assignment: dict | None) -> dict | None:
+    def _act_hotfix_design(self, assignment: dict | None, token: str = "ok") -> dict | None:
         """Archer M-DESIGN hotfix dispatch (FR-0243): produce the delta trio
         (architecture/interfaces/test-plan) inside the hotfix run's own project
         directory, carrying the anchored cross-version AC set. Returns ``None``
@@ -382,7 +382,7 @@ class FakeShieldMixin:
         ]
         vdir = self._design_vdir()
         vdir.mkdir(parents=True, exist_ok=True)
-        self._write_hotfix_delta(vdir, anchored, target_version)
+        self._write_hotfix_delta(vdir, anchored, target_version, unit_only=token == "unit_only")
         self._write_reach_entries(vdir)
         return {
             "status": "done",
@@ -391,7 +391,9 @@ class FakeShieldMixin:
             "anchored_acs": anchored,
         }
 
-    def _write_hotfix_delta(self, vdir: Path, anchored: list[str], target_version: str) -> None:
+    def _write_hotfix_delta(
+        self, vdir: Path, anchored: list[str], target_version: str, *, unit_only: bool = False
+    ) -> None:
         """Write the delta trio with complete frontmatter and one anchored-AC
         section each; test-plan carries the §8 regression rows."""
         arch = self._append_hotfix_anchor_section(
@@ -411,8 +413,9 @@ class FakeShieldMixin:
         (vdir / "interfaces.md").write_text(interfaces, encoding="utf-8")
         plan = self._drop_coverage_section(self._design_doc("test-plan"))
         plan = self._append_hotfix_anchor_section(plan, anchored, "回归增量")
-        baseline_acs = self._baseline_ac_ids(target_version)
-        plan = plan.rstrip("\n") + "\n" + self._hotfix_delta_coverage(anchored, baseline_acs)
+        plan = plan.rstrip("\n") + "\n" + self._hotfix_delta_coverage(
+            anchored, unit_only=unit_only
+        )
         (vdir / "test-plan.md").write_text(plan, encoding="utf-8")
 
     def _baseline_ac_ids(self, target_version: str) -> list[str]:
@@ -437,30 +440,18 @@ class FakeShieldMixin:
         lines.append("")
         return text.rstrip("\n") + "\n" + "\n".join(lines) + "\n"
 
-    def _hotfix_delta_coverage(
-        self, anchored: list[str], baseline_acs: list[str] | None = None
-    ) -> str:
+    def _hotfix_delta_coverage(self, anchored: list[str], *, unit_only: bool = False) -> str:
         """§8 regression rows (hotfix delta test-plan): each anchored AC with
         an integration-layer test declaration (cross-version hotfix ACs need
         integration coverage — FR-0244-02/03 — and the file-level test-tasks
         validator requires at least one integration/e2e Shield task).
-        Inherited (non-anchored) baseline ACs get a unit-layer row so the
-        file-level design-trace validator (which reads the baseline
-        acceptance via the IF-HOTFIX-010 resolver) sees a layer attribution
-        for every baseline AC."""
-        anchored_set = {ac.split("@", 1)[0] if "@" in ac else ac for ac in anchored}
+        Inherited baseline coverage remains in the source release artifacts."""
+        layer = "unit" if unit_only else "integration"
         rows = [
-            f"| {ac} | integration | tests/integration/test_{_ac_slug(ac.split('@', 1)[0])}.py | "
+            f"| {ac} | {layer} | tests/{layer}/test_{_ac_slug(ac.split('@', 1)[0])}.py | "
             "IF-HOTFIX-009 |"
             for ac in anchored
         ]
-        for ac in baseline_acs or []:
-            bare = ac.split("@", 1)[0] if "@" in ac else ac
-            if bare in anchored_set:
-                continue
-            rows.append(
-                f"| {ac} | unit | tests/unit/test_{_ac_slug(bare)}.py | — |"
-            )
         return (
             "\n## 8. AC Coverage\n\n"
             "| AC id | layer | test | IF |\n|---|---|---|---|\n" + "\n".join(rows) + "\n"

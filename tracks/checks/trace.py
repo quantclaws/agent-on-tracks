@@ -396,15 +396,15 @@ def _referenced_acs(projects_dir: Path, version: str) -> set[str]:
 
 
 def _anchor_not_closed(
-    ac_id: str,
-    declared_ids: set[str],
-    file_marker_ids: set[str],
+    ref: str,
+    declared_refs: set[str],
+    file_marker_refs: set[str],
 ) -> bool:
     """Plan-level closure basis (interfaces §1f): an anchor AC is closed when
     a delta §8 declared unit row covers it OR an existing test file marker
     binds it. Only called when the run is hotfix and increment.declared is in
     the event stream (the caller gates the enablement)."""
-    return ac_id not in declared_ids and ac_id not in file_marker_ids
+    return ref not in declared_refs and ref not in file_marker_refs
 
 
 def check_hotfix_plan_closure(
@@ -433,9 +433,9 @@ def check_hotfix_plan_closure(
     "declared_unit_rows"}`` for ``trac check trace --json`` (interfaces §2d).
     """
     file_markers, _ = _scan_test_markers(tests_dir)
-    file_marker_ids = set(file_markers)
-    declared_ids = {
-        _ac_ref_id(row.get("ac", ""))
+    file_marker_refs = {marker for markers in file_markers.values() for marker in markers}
+    declared_refs = {
+        row.get("ac", "")
         for row in declared_unit_rows
         if row.get("ac")
     }
@@ -443,7 +443,7 @@ def check_hotfix_plan_closure(
         err
         for ref in anchor_acs
         for err in _anchor_ref_errors(
-            ref, projects_dir, declared_ids, file_marker_ids
+            ref, projects_dir, declared_refs, file_marker_refs
         )
     ]
     scope = {
@@ -463,8 +463,8 @@ def check_hotfix_plan_closure(
 def _anchor_ref_errors(
     ref: str,
     projects_dir: Path,
-    declared_ids: set[str],
-    file_marker_ids: set[str],
+    declared_refs: set[str],
+    file_marker_refs: set[str],
 ) -> list[str]:
     """Hard errors for one ``AC-FRXXXX-YY@<version>`` anchor reference:
     malformed syntax, unresolvable in the referenced version's acceptance.md,
@@ -478,7 +478,7 @@ def _anchor_ref_errors(
         errors.append(
             f"test marker {ref} references non-existent AC in {version}/acceptance.md"
         )
-    if _anchor_not_closed(ac_id, declared_ids, file_marker_ids):
+    if _anchor_not_closed(ref, declared_refs, file_marker_refs):
         errors.append(f"test marker {ref} not closed by declared unit row or test marker")
     return errors
 

@@ -37,7 +37,7 @@ from tracks.executor.taskgraph import (
     validate_issue_numbers,
     validate_scope,
 )
-from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
+from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids, parse_hotfix_unit_rows
 from tracks.executor.validate import (
     check_design_trace_file,
     check_template,
@@ -1180,18 +1180,10 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
         return _err(f"version directory not found: {vdir}")
     tests_dir = repo / "tests"
     baseline = _load_baseline(home)
-    report = check_trace_full_file(vdir, tests_dir, baseline)
+    hotfix_ctx = _active_hotfix_trace_context(home, vdir)
+    report = check_trace_full_file(vdir, tests_dir, baseline, hotfix_ctx)
     if use_json:
-        print(
-            json.dumps(
-                {
-                    "status": report.status,
-                    "hard_errors": list(report.hard_errors),
-                    "warnings": list(report.warnings),
-                },
-                ensure_ascii=False,
-            )
-        )
+        _print_trace_json(report)
     else:
         for e in report.hard_errors:
             print(e)
@@ -1200,6 +1192,55 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
         if not report.hard_errors:
             print("trace ok")
     return 1 if report.status == "fail" else 0
+
+
+def _print_trace_json(report) -> None:
+    payload = {
+        "status": report.status,
+        "hard_errors": list(report.hard_errors),
+        "warnings": list(report.warnings),
+    }
+    if report.status == "pass" and report.hotfix_scope is not None:
+        payload["hotfix_scope"] = report.hotfix_scope
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def _active_hotfix_trace_context(home: Path, vdir: Path) -> dict | None:
+    """Return release-evidence trace context for the active hotfix, if any."""
+    store = Store(home)
+    candidates = (store.active_run(), *store.runs_for_version(vdir.name))
+    for run_id in candidates:
+        if run_id is None or _run_version(store, run_id) != vdir.name:
+            continue
+        state = store.state(run_id)
+        increment = next(
+            (
+                ev.payload
+                for ev in reversed(list(store.events(run_id)))
+                if ev.type == "increment.declared" and ev.payload.get("trace_status") == "pass"
+            ),
+            None,
+        )
+        if state.hotfix_issue is not None and increment is not None:
+            break
+    else:
+        return None
+    unit_rows = increment.get("unit_rows")
+    if not isinstance(unit_rows, list):
+        plan_path = vdir / "test-plan.md"
+        unit_rows = parse_hotfix_unit_rows(
+            plan_path.read_text(encoding="utf-8", errors="replace") if plan_path.exists() else ""
+        )
+    return {
+        "projects_dir": str(paths.projects_dir(home)),
+        "run_id": run_id,
+        "anchor_acs": list(state.hotfix_anchor_acs or []),
+        "declared_unit_rows": unit_rows,
+    }
+
+
+def _run_version(store: Store, run_id: str) -> str | None:
+    return next((event.version for event in store.events(run_id)), None)
 
 
 def _cmd_check_reach(repo: Path, rest: list[str]) -> int:
