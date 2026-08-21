@@ -1704,14 +1704,15 @@ class OpencodeBackend:
         not close it: _stream_stdout keeps reading from it afterwards.
         """
         if console_input is None:
-            if master_fd is None:
-                with contextlib.suppress(OSError, ValueError):
-                    proc.stdin.close()
+            # PTY mode owns stdin through master_fd, but closing an exposed
+            # proc.stdin handle still signals EOF for pipe-mode/test doubles.
+            with contextlib.suppress(AttributeError, OSError, ValueError):
+                proc.stdin.close()
             return None
 
         def _write():
             try:
-                if master_fd is not None:
+                if master_fd is not None and getattr(proc, "stdin", None) is None:
                     os.write(master_fd, console_input.encode("utf-8", "replace"))
                 else:
                     proc.stdin.write(console_input)
@@ -1719,9 +1720,8 @@ class OpencodeBackend:
             except (OSError, ValueError):
                 pass
             finally:
-                if master_fd is None:
-                    with contextlib.suppress(OSError, ValueError):
-                        proc.stdin.close()
+                with contextlib.suppress(AttributeError, OSError, ValueError):
+                    proc.stdin.close()
 
         t = threading.Thread(target=_write, daemon=True)
         t.start()
