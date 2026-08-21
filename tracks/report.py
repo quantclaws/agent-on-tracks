@@ -20,7 +20,6 @@ from tracks.discuss.parser import parse_threads
 from tracks.executor.executor import git
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import project
-from tracks.tasklog import rebuild_task_log
 
 _GITHUB_REMOTE = re.compile(r"github\.com[/:](?P<repo>[^/]+/[^/]+?)(?:\.git)?$")
 _RESULT_PREFIXES = (
@@ -631,7 +630,6 @@ def generate_report(repo: Path, run_id: str, output: str | Path) -> tuple[Path, 
     events = _read_events(home, run_id)
     if not events:
         raise ValueError(f"unknown run: {run_id}")
-    rebuild_task_log(home, events)
     target = _output_dir(repo, output)
     target.mkdir(parents=True, exist_ok=True)
     markdown = _markdown(root, run_id, project(events), events)

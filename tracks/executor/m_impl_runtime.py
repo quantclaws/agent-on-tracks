@@ -65,7 +65,6 @@ from tracks.executor.worktree import (
 )
 from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
 from tracks.project import ContractError, layout_paths, load_contract
-from tracks.tasklog import rebuild_task_log
 
 _SECRET_PATTERN = re.compile(r"(sk-|ghp_|gho_|AKIA)[A-Za-z0-9]{16,}")
 
@@ -323,8 +322,7 @@ class MImplRuntimeMixin:
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
     def _rebuild_task_log_projection(self) -> None:
-        """Refresh the derived task log after a durable M-IMPL boundary."""
-        rebuild_task_log(self.store.home, self.store.events(self.run_id))
+        """Compatibility seam; tasks.md is generated with tasks.json."""
 
     def _materialize_m_impl_assignment(
         self,
