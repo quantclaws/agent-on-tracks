@@ -77,6 +77,17 @@ def test_crash_recovery_reissues_without_consuming_attempt(host_repo, trac, even
     the next run re-executes the dangling dispatch, attempt count unchanged."""
     start_to_draft(trac)
     proc, lock = spawn_hanging_run(host_repo)
+    # The lock is acquired before decide()/issue(); wait for the crash point
+    # stated by this test rather than killing in the pre-dispatch window.
+    for _ in range(100):
+        issued = [e for e in event_log() if e["type"] == "command.issued"]
+        if issued and issued[-1]["payload"]["command"]["params"].get("substate") == "DRAFT":
+            break
+        time.sleep(0.05)
+    else:
+        proc.send_signal(signal.SIGKILL)
+        proc.wait(timeout=10)
+        raise AssertionError("hanging run never issued the scribe:DRAFT dispatch")
     proc.send_signal(signal.SIGKILL)
     proc.wait(timeout=10)
     assert lock.exists()  # stale lock left behind by the killed process
