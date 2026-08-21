@@ -179,6 +179,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             "self_report": f"review: {verdict}",
             "verdict": verdict,
         }
+        self._apply_diagnose_simulation(role, substate, result)
         # v0.5 ResultCheckpoint: non-pass verdicts must produce a diff
         # (discussion annotation) so the pipeline can checkpoint it.
         if verdict in ("revise", "comment"):
@@ -197,6 +198,16 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             if dc:
                 result["defect_classification"] = dc
         return result
+
+    @staticmethod
+    def _apply_diagnose_simulation(role: str, substate: str, result: dict) -> None:
+        """Mirror the real DIAGNOSE classification payload in fake mode."""
+        if role != "prism" or substate != "DIAGNOSE":
+            return
+        classification = _simulate_map().get("diagnose:classification")
+        if classification in {"test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"}:
+            result["verdict"] = classification
+            result["self_report"] = f"diagnose: {classification}"
 
     def _act_no_diff(self, role: str, substate: str) -> dict | None:
         """v0.5 no_diff peer review: canned outcomes for explain/review."""

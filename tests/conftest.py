@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.steps import StepLog
+from tracks import paths
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SUBCOV_DIR = str(Path(__file__).resolve().parent / "_subprocess_coverage")
@@ -117,12 +118,13 @@ def event_log(host_repo):
             ).fetchall()
         finally:
             conn.close()
+        home = paths.tracks_home(host_repo)
         events = [
             {
                 "run_id": r[0],
                 "seq": r[1],
                 "type": r[2],
-                "payload": json.loads(r[3]),
+                "payload": _load_event_payload(home, json.loads(r[3])),
                 "command_id": r[4],
             }
             for r in rows
@@ -132,3 +134,10 @@ def event_log(host_repo):
         return events
 
     return query
+
+
+def _load_event_payload(home: Path, payload: dict) -> dict:
+    """Mirror Store.events(): resolve spilled audit payloads for assertions."""
+    if set(payload) == {"$ref"}:
+        return json.loads((paths.blobs_dir(home) / payload["$ref"]).read_bytes())
+    return payload
