@@ -343,7 +343,7 @@ def cmd_run(repo: Path, *args: str) -> int:
         return _err(str(exc))
     home = paths.tracks_home(repo)
     store = Store(home)
-    run_id = store.active_run()
+    run_id = store.active_hotfix_run() or store.active_run()
     if run_id is None:
         latest = store.latest_run()
         if latest is not None:
@@ -387,7 +387,7 @@ def cmd_hotfix(repo: Path, *args: str) -> int:
     store = Store(home)
     action = args[0]
     if action in ("anchor", "feature-route"):
-        run_id = store.active_run()
+        run_id = store.active_hotfix_run()
         if run_id is None:
             return _err("no active run")
         with writer_lock(home):
@@ -929,6 +929,26 @@ def _status_branch(s) -> str:
     return "-"
 
 
+def _prioritize_status_rows(store: Store, rows: list[tuple[str]]) -> list[tuple[str]]:
+    hotfix_id = store.active_hotfix_run()
+    if hotfix_id is None:
+        return rows
+    return [(hotfix_id,), *((run_id,) for run_id, in rows if run_id != hotfix_id)]
+
+
+def _print_suspended_statuses(store: Store, rows: list[tuple[str]], primary_id: str) -> None:
+    """Print active non-primary runs as suspended status lines."""
+    for run_id, in rows:
+        if run_id == primary_id:
+            continue
+        sub = store.state(run_id)
+        if sub.status != "completed":
+            print(
+                f"suspended: run={run_id} stage={sub.stage} substate={sub.substate} "
+                f"branch={_status_branch(sub)}"
+            )
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -943,17 +963,18 @@ def cmd_status(repo: Path) -> int:
     if not rows:
         print("no runs yet")
         return 0
-    print(_status_line(rows[0][0], store.state(rows[0][0])))
+    rows = _prioritize_status_rows(store, rows)
+    primary_id = rows[0][0]
+    primary = store.state(primary_id)
+    print(_status_line(primary_id, primary))
+    if primary.status == "completed":
+        active_id = store.active_run()
+        if active_id is not None and active_id != primary_id:
+            print(_status_line(active_id, store.state(active_id)))
+            rows = [(run_id,) for run_id, in rows if run_id != active_id]
     # interfaces §2b (IF-HOTFIX-006): one `suspended:` line per remaining
     # non-completed run (projection-rebuildable; `trac replay` reads it back).
-    for (run_id,) in rows[1:]:
-        sub = store.state(run_id)
-        if sub.status == "completed":
-            continue
-        print(
-            f"suspended: run={run_id} stage={sub.stage} substate={sub.substate} "
-            f"branch={_status_branch(sub)}"
-        )
+    _print_suspended_statuses(store, rows, primary_id)
     return 0
 
 

@@ -2541,6 +2541,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         payload = {"terminal_state": "boundary"}
         suspended = self._next_suspended_run()
         if suspended is None:
+            branch = self._hotfix_entry_base()
+            if self._restore_hotfix_entry_branch(branch):
+                payload["restored_branch"] = branch
             return payload
         run_id, branch = suspended
         if branch and branch != self._head():
@@ -2548,6 +2551,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         payload["restored_active_run"] = run_id
         payload["restored_branch"] = branch
         return payload
+
+    def _restore_hotfix_entry_branch(self, branch: str | None) -> bool:
+        """Restore the entry branch without losing committed delta artifacts."""
+        if not branch or branch == self._head():
+            return True
+        artifacts = {
+            path: path.read_bytes()
+            for path in self._vdir().rglob("*")
+            if path.is_file()
+        }
+        if git(self.repo, "checkout", branch, check=False).returncode != 0:
+            return False
+        for path, content in artifacts.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        return True
+
+    def _hotfix_entry_base(self) -> str | None:
+        """Recover the branch active before this hotfix created fix/<issue>."""
+        for event in self.store.events(self.run_id):
+            if event.type == "branch.created" and event.payload.get("base"):
+                return event.payload["base"]
+        return None
 
     def _next_suspended_run(self):
         """The latest non-completed run after this hotfix run (the suspended

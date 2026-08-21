@@ -74,10 +74,16 @@ def test_boundary_restores_suspended_feature_run_as_active(trac, host_repo, even
     cont = trac("run")
     assert cont.returncode == 0, cont.stderr
 
-    # Boundary terminal line + restored active run.
+    # The restored feature is the active status line; boundary evidence stays
+    # on the hotfix event stream rather than obscuring the continuation target.
     status = trac("status")
-    assert "terminal=boundary" in status.stdout
     assert "feature-run-1" in status.stdout  # restored_active_run
+    run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+    assert any(
+        event["type"] == "run.completed"
+        and event["payload"].get("terminal_state") == "boundary"
+        for event in event_log(run_id)
+    )
 
 
 # AC-FR0242-03@v0.6 TRACKS-TRACE suspended run observable and gates recoverable

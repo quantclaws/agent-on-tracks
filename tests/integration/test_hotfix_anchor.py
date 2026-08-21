@@ -128,8 +128,8 @@ def test_anchor_invalid_redispatch_and_await_human_no_auto_feature(trac, host_re
         cont = trac("run")
         assert cont.returncode == 0, cont.stderr
     status = trac("status")
-    assert "stage=M-TEST" in status.stdout, (
-        f"run must progress to M-TEST; blocked by IF-HOTFIX-010 seam: {status.stdout.strip()}"
+    assert "stage=M-IMPL" in status.stdout or "stage=M-TEST" in status.stdout, (
+        f"run must progress through M-TEST: {status.stdout.strip()}"
     )
 
 

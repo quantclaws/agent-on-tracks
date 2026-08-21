@@ -134,6 +134,9 @@ def test_replay_and_report_show_full_hotfix_journey(trac, host_repo, event_log):
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+    for _ in range(3):
+        cont = trac("run")
+        assert cont.returncode == 0, cont.stderr
 
     replay = trac("replay", run_id)
     expected = (
@@ -145,6 +148,12 @@ def test_replay_and_report_show_full_hotfix_journey(trac, host_repo, event_log):
     )
     for token in expected:
         assert token in replay.stdout, f"replay must surface {token}"
+    assert replay.stdout.index('stage.entered\t{"stage": "M-DESIGN"}') < replay.stdout.index(
+        'stage.entered\t{"stage": "M-TEST"}'
+    ) < replay.stdout.index('stage.entered\t{"stage": "M-IMPL"}') < replay.stdout.index(
+        'run.completed'
+    )
+    assert '"terminal_state": "boundary"' in replay.stdout
 
     r_report = trac(
         "report", "--run-id", run_id, "--output", ".tracks/runtime/report", "--format", "md"

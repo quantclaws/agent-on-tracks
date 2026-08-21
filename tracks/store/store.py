@@ -235,6 +235,19 @@ class Store:
         row = cur.fetchone()
         return row[0] if row else None
 
+    def active_hotfix_run(self) -> str | None:
+        """Return the newest active hotfix, which takes run-loop priority."""
+        cur = self.conn.execute(
+            "SELECT runs.run_id FROM runs "
+            "WHERE runs.status NOT IN ('completed', 'backlog') AND runs.stage IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM events AS requested "
+            "WHERE requested.run_id = runs.run_id AND requested.type = 'hotfix.requested') "
+            "ORDER BY (SELECT MAX(last_event.ts) FROM events AS last_event "
+            "WHERE last_event.run_id = runs.run_id) DESC LIMIT 1"
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
     def latest_run(self) -> str | None:
         """Return the most recent run_id regardless of status."""
         cur = self.conn.execute("SELECT run_id FROM runs ORDER BY updated_ts DESC LIMIT 1")
