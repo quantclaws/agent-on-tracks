@@ -134,7 +134,9 @@ def _setup_m_test(tmp_path):
         f'collect = "{sys.executable} -m pytest --collect-only -q '
         'tests/integration/"\n'
         f'run = "{sys.executable} -m pytest -q tests/integration/"\n'
-        'cwd = "."\n',
+        'cwd = "."\n\n'
+        '[layout.shield]\n'
+        'writable = ["tests/"]\n',
         encoding="utf-8",
     )
     (vdir / "test-plan.md").write_text(

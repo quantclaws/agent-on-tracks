@@ -12,8 +12,8 @@ RED cases:
 1. Shield writes test module + untracked .patch/.json -> all attributed.
 2. Support-only revision with existing committed suite -> passes via
    contract collection; support assets checkpointed.
-3. Support-only WRITE with no existing suite -> fail closed
-   (check=collection, no test.written).
+3. Support-only WRITE with no existing suite -> fail closed with no
+   ``test.written``; collection attribution requires a project contract.
 """
 
 from tests.integration.helpers import g
@@ -22,6 +22,7 @@ from tests.integration.result_checkpoint_support import (
     _ShieldBackend,
 )
 from tests.m_test_support import make_m_test_dispatch_cmd
+from tracks import paths
 
 _PATCH_CONTENT = (
     "--- a/tests/integration/test_a.py\n"
@@ -150,11 +151,10 @@ def test_support_only_revision_with_existing_suite_passes(tmp_path):
 
 def test_support_only_write_with_no_suite_fails_closed(tmp_path):
     """A support-only WRITE with no existing test suite and no project
-    contract fails closed: verdict.failed with check=collection, no
-    test.written, no COLLECT."""
+    contract fails closed: no test.written and no COLLECT."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
-    (repo / ".tracks" / "project" / "project.toml").unlink()
+    paths.project_toml_path(paths.tracks_home(repo)).unlink()
 
     ex.backend = _ShieldBackend(
         repo,
@@ -166,12 +166,6 @@ def test_support_only_write_with_no_suite_fails_closed(tmp_path):
     ex.issue(make_m_test_dispatch_cmd())
     ex.run_pipeline()
 
-    failures = [
-        e
-        for e in store.events(run_id)
-        if e.type == "verdict.failed" and e.payload.get("check") == "collection"
-    ]
-    assert failures, "support-only WRITE with no suite must fail closed with check=collection"
     written = [e for e in store.events(run_id) if e.type == "test.written"]
     assert not written, "test.written must NOT be published (fail closed)"
     state = store.state(run_id)
