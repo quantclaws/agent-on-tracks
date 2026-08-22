@@ -103,6 +103,17 @@ EVENT_TYPES = (
     "outcome.restored",
     "outcome.discarded",
     "outcome.resumed",
+    # SM-02 design_gap nested workflow (#62 finding 1): a design_gap
+    # adjudication drives an actual nested Archer design-revision dispatch
+    # and Prism design review before the origin threads may close and the
+    # paused M-TEST/M-IMPL outcome resumes.  These are SM-02-scoped events
+    # that project into the doc-gap record - they are NOT design.committed /
+    # prism.verdict (those reducers clobber the origin stage state) and
+    # carry no Human gate.  WAL issue() dispatches the nested agents.
+    "doc_gap.design_dispatched",
+    "doc_gap.design_revised",
+    "doc_gap.design_failed",
+    "doc_gap.design_reviewed",
 )
 
 # interfaces §4 — v0.1 closed command set.

@@ -220,6 +220,27 @@
       "mutation": "adjudicate_doc_gap returns a DESIGN_GAP record without validation"
     },
     {
+      "test": "tests/integration/test_doc_comment_first.py::test_design_gap_drives_nested_archer_revision_and_prism_review",
+      "patch": "doc_gap_nested_dispatch.patch",
+      "result": "killed",
+      "mutation": "nested Archer/Prism dispatch audit event is not emitted",
+      "verification": "applied patch; test failed because no doc_gap.design_dispatched(design_revision) event was present; reversed via git apply -R; fresh unpatched test passed."
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_design_gap_nested_workflow_does_not_clobber_origin_stage",
+      "patch": "doc_gap_origin_clobber.patch",
+      "result": "killed",
+      "mutation": "nested workflow emits design.committed instead of its SM-02-scoped dispatch event",
+      "verification": "applied patch; test failed because design.committed appeared between adjudication and origin resume; reversed via git apply -R; fresh unpatched test passed."
+    },
+    {
+      "test": "tests/integration/test_doc_comment_first.py::test_design_gap_held_artifact_discarded_design_stale_not_committed",
+      "patch": "doc_gap_design_stale.patch",
+      "result": "killed",
+      "mutation": "nested Archer revision is ignored when deciding the held artifact design identity",
+      "verification": "applied patch; test failed because the held artifact was not discarded as design_stale; reversed via git apply -R; fresh unpatched test passed."
+    },
+    {
       "test": "tests/integration/test_doc_comment_first.py::test_agent_correction_stays_paused_until_original_thread_closes",
       "patch": "doc_comment_adjudicate.patch",
       "result": "pending-implementation",

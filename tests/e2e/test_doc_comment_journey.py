@@ -83,11 +83,12 @@ def test_design_discussion_adjudication_resume_happy_path(trac, event_log, host_
         and e["payload"].get("route") == "design_gap"
     ]
     restored = [e for e in events if e["type"] == "outcome.restored"]
+    discarded = [e for e in events if e["type"] == "outcome.discarded"]
     resumed = [e for e in events if e["type"] == "outcome.resumed"]
     assert len(adjudicated) == 1, "expected doc_comment.adjudicated(design_gap)"
     assert adjudicated[0]["payload"].get("responsible_role") == "archer"
-    assert restored and resumed, (
-        "expected outcome.restored/resumed after thread close"
+    assert (restored or discarded) and resumed, (
+        "expected outcome.restored or outcome.discarded plus outcome.resumed after thread close"
     )
     assert resumed[0]["payload"].get("next_attempt", 0) >= 1, (
         "the resume must be a NEW attempt, never the old outcome"
@@ -97,11 +98,14 @@ def test_design_discussion_adjudication_resume_happy_path(trac, event_log, host_
     # -> adjudicated -> restored -> resumed.
     replay = trac("replay", run_id)
     assert replay.returncode == 0, replay.stderr
+    terminal_marker = (
+        "outcome.restored" if restored else "outcome.discarded"
+    )
     order = [replay.stdout.find(marker) for marker in (
         "doc_comment.detected",
         "outcome.quarantined",
         "doc_comment.adjudicated",
-        "outcome.restored",
+        terminal_marker,
         "outcome.resumed",
     )]
     assert all(pos >= 0 for pos in order), (

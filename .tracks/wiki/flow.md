@@ -689,23 +689,28 @@ flowchart TD
     C -->|非法正文编辑| D[FR-0237 原子回滚并按失败语义新 attempt]
     C -->|合法新 discussion| E[暂停 outcome 并 quarantine 可归属非文档成果]
     E --> F[Prism 在同一线程评论并作技术裁定]
-    F -->|design_gap| G[Runtime 发出结构化 adjudication 并路由 Archer]
-    G --> H[Archer 在正常 M-DESIGN 路径修订设计正文]
-    H --> I[Prism 常规 M-DESIGN 复核]
-    I --> J[讨论关闭]
-    F -->|agent_correction| K[Prism 在同一线程给 Devon/Shield 可执行纠正指引]
-    K --> L[原 Agent 在线程回应并关闭讨论]
-    L --> J
-    J --> M{隔离成果 identity 是否仍有效?}
-    M -->|设计或运行 identity stale| N[丢弃 quarantine 成果]
-    M -->|identity current 或 quarantine 为空| O[恢复 quarantine 成果]
-    N --> P[以相同 logical role/task/phase 新 dispatch/attempt]
-    O --> P
-    P --> Q[重新执行 doc-comment-first 与原 phase 全部验证]
-    Q --> R[旧 outcome 永不改标为成功]
+    F -->|design_gap| G[Runtime 发出结构化 adjudication]
+    G --> H[origin stage 内启动 nested Archer design revision]
+    H --> I[提交 doc_gap.design_revised]
+    I --> J[nested Prism review]
+    J -->|pass| K[讨论关闭]
+    J -->|revise，且 Archer 派发少于 3 次| H
+    F -->|agent_correction| L[Prism 在同一线程给 Devon/Shield 可执行纠正指引]
+    L --> M[原 Agent 在线程回应并关闭讨论]
+    M --> K
+    K --> N{隔离成果 identity 是否仍有效?}
+    N -->|设计或运行 identity stale| O[丢弃 quarantine 成果]
+    N -->|identity current 或 quarantine 为空| P[恢复 quarantine 成果]
+    O --> Q[相同 logical role/task/phase 新 dispatch/attempt]
+    P --> Q
+    Q --> R[重新执行 doc-comment-first 与原 phase 全部验证]
+    R --> S[旧 outcome 永不改标为成功]
+    H -->|失败/no-op/commit failure| T[doc_gap.design_failed；Archer 至多 3 次派发，耗尽 fail-closed 停车]
+    J -->|失败/非法 verdict| U[doc_gap.design_failed；Prism review 至多 3 次失败派发，耗尽停车]
+    J -->|revise，且 Archer 已派发 3 次| T
 ```
 
-**路由规则**：`design_gap` 由 Archer 在正常 M-DESIGN 路径修改设计正文，并由 Prism 走其常规设计评审复核；这是同一 AC/接口边界内的技术责任路由，不新增 Human 技术批准。若实际发现需求边界不足（新 AC、acceptance 或 spec 变更），才按既有 `ac_gap` / `spec_gap` Human 路径处理。`agent_correction` 表示设计足够，Prism 只给原 Devon/Shield 可执行指引；原 Agent 不能直接改设计正文。
+**路由规则**：`design_gap` 由 Runtime 在 origin stage 内启动 nested Archer design-revision child workflow；它不是顶层 `stage.rolled_back(M-DESIGN)`，也不发普通 `design.committed`/`prism.verdict`，而使用 `doc_gap.design_dispatched`、`doc_gap.design_revised`、`doc_gap.design_reviewed` 与 `doc_gap.design_failed`。设计修订成功后由 nested Prism 复核。Archer 的 `design_attempts` 至多为 3（含首次，Prism `revise` 返回 Archer 也消耗此预算）；Archer failure/no-op/checkpoint failure 或 `revise` 耗尽该预算后 `design_failed`。Prism outcome failure 或非法 verdict 的 `review_attempts` 至多为 3（含首次失败派发），耗尽后同样 fail-closed；任何 `design_failed` 都不恢复 origin outcome。无 Human 技术批准。若实际发现需求边界不足（新 AC、acceptance 或 spec 变更），才按既有 `ac_gap` / `spec_gap` Human 路径处理。`agent_correction` 表示设计足够，Prism 只给原 Devon/Shield 可执行指引；原 Agent 不能直接改设计正文。
 
 **裁定摄入协议（SM-02-ADJUDICATION marker，canonical）**：Prism 的技术裁定通过**原讨论线程内的嵌套回复**（`>>`，深度 ≥ 2）进入 Runtime，不新增公开子命令——Prism 的外部业务产出只有文档评论。marker 为单行、字段以 `|` 分隔、键值以 `=` 连接，语法固定：
 
@@ -715,16 +720,20 @@ flowchart TD
 
 Runtime 在每次 run loop 顶部、resume 判定之前扫描等待中（DETECTED）记录的受触及文档，仅接受**完整、语法合法、由 Prism 身份发出、嵌套于原线程、quarantine_id 与 thread 集合精确匹配当前记录、且 responsible_role 符合路由规则**（design_gap→archer；agent_correction→原 origin role）的 marker；缺字段、未知字段/route、错误角色、错误关联或多个并存 marker 一律 fail-closed 保持等待（不发事件、不改状态、不猜测语义）。**相关性先于歧义**：文档会留存历史裁定 marker，候选必须先按当前记录的 quarantine_id 过滤、malformed 错误仅在写入本记录原线程时才 fail-closed——无关历史线程永不阻塞新记录。合法 marker 发出 `doc_comment.adjudicated`（payload：record_id、quarantine_id、origin_dispatch_id、route、responsible_role、thread_ids、decision_ref），记录离开 DETECTED；`decision_ref` 与 `responsible_role` 同时投影进 doc-gap record，重放审计可验证"已接受哪个裁定"，且**首裁定为准**——同一 record 的冲突重裁定（不同 decision_ref）在重放中被拒绝，同一裁定重放为幂等空操作。同一评论重放因此天然幂等，不得重复发出裁定或创建第二个 attempt。`decision_ref` 是归一化裁定内容的 sha256 摘要，作为审计幂等键。
 
-**resume 决策（canonical）**：线程关闭（全部记录 thread 状态 resolved）后，resume 决策必须经由 `decide_quarantine_resume()`：quarantine 为空 → restore(`empty`)；隔离成果 design/run/path 身份全部仍 current → restore(`identity_current`)；任一身份漂移或冲突 → discard(`design_stale` / `run_stale` / `content_conflict`)，fail-closed 默认丢弃。隔离 manifest blob 同时持久化 design/run 身份锚点，供跨进程重建决策。Shield WRITE 暂停发生在 M-TEST、Devon RGR 暂停发生在 M-IMPL，两处 pause 均在同一机制下恢复；恢复派发回到 origin 的同一 logical role/task/phase（含正确 stage）。
+**resume 决策（canonical）**：线程关闭（全部记录 thread 状态 resolved）后，resume 决策必须经由 `decide_quarantine_resume()`：quarantine 为空 → restore(`empty`)；隔离成果 design/run/path 身份全部仍 current → restore(`identity_current`)；任一身份漂移或冲突 → discard(`design_stale` / `run_stale` / `content_conflict`)，fail-closed 默认丢弃。`design_stale` 的比较基线有唯一例外：没有 nested Archer revision 的 `agent_correction` 记录使用 pause-time design identity，因此 pause 后 marker 写入及其它 design drift 不导致 `design_stale`；仅 `revised_design_identity` 存在的 `design_gap` 记录以 live design identity 比较。隔离 manifest blob 同时持久化 design/run 身份锚点，供跨进程重建决策。Shield WRITE 暂停发生在 M-TEST、Devon RGR 暂停发生在 M-IMPL，两处 pause 均在同一机制下恢复；恢复派发回到 origin 的同一 logical role/task/phase（含正确 stage）。
 
 > **User ruling (Aaron, 2026-08-21):** SM-02 裁定入口按上述 marker 协议落地（不新增 public subcommand，显式 marker 而非自然语言推断）；事件至少含 route、responsible_role、thread_ids、quarantine_id、origin_dispatch_id 与 decision_ref；幂等键为 quarantine_id + decision_ref，重放同一评论不得重复发出 `doc_comment.adjudicated` 或重复创建 attempt；resume 必须走 `decide_quarantine_resume()` 的五原因封闭集。授权记录见 GitHub issue #62（quantclaws/agent-on-tracks）。
 
-**SM-02 状态**（未列出的转移不允许）：
-`DETECTED → AWAITING_ADJUDICATION → (DESIGN_GAP | AGENT_CORRECTION) → READY_TO_RESUME → (RESTORED | DISCARDED) → RESUMED`；DETECTED/AWAITING_ADJUDICATION/READY_TO_RESUME 在中断/重启后回环同状态（从持久化记录恢复，不越过未满足的讨论或身份条件）。
+**SM-02 状态投影**（未列出的转移不允许）：持久化 `record.state` 为 `DETECTED → DESIGN_GAP|AGENT_CORRECTION → RESTORED|DISCARDED → RESUMED`；`AWAITING_ADJUDICATION` 与 `READY_TO_RESUME` 是 lifecycle gates，非独立 `record.state`。`DESIGN_GAP` 内部的持久化 `record.revision` 为 `archer_dispatched → design_revised → prism_dispatched → prism_reviewed`，并可进入 `design_failed`。`PRISM_REVIEWED(revise)` 仅在 `design_attempts < 3` 时回到 `ARCHER_DISPATCHED`，否则进入 `DESIGN_FAILED`；Archer failure/no-op/commit failure 在 `design_attempts < 3` 时重派，Prism failure/invalid verdict 在 `review_attempts < 3` 时重派，各自耗尽后进入 `DESIGN_FAILED`。`AGENT_CORRECTION` 从裁定后等待原线程关闭，再通过 `READY_TO_RESUME` lifecycle gate。所有 nested dispatch sub-progress 在中断/重启后按 `doc_gap.*` 事件和 `command.issued` WAL 回环恢复，不越过未满足的设计修订、复核、讨论或身份条件。
 
 - DETECTED：outcome 含本次可归属、允许评论的设计文档新讨论，且未含非法正文编辑。
 - AWAITING_ADJUDICATION：Runtime 在普通结果验证前暂停该 outcome，记录来源（origin role/task/phase + 来源 dispatch/attempt）；有可归属且授权的非文档变化时同时进入隔离保全。
-- DESIGN_GAP：Prism 在原讨论确认 Archer 负责的 architecture/interfaces/test-plan 缺口；Runtime 持久化裁定并路由 Archer 在正常 M-DESIGN 路径修订设计正文，随后 Prism 以常规 M-DESIGN 评审复核，无 Human 技术批准门。
+- DESIGN_GAP：Prism 在原讨论确认 Archer 负责的 architecture/interfaces/test-plan 缺口；Runtime 持久化裁定并在 origin stage 内启动 nested Archer design revision，随后 nested Prism 复核，无 Human 技术批准门。
+- ARCHER_DISPATCHED：`doc_gap.design_dispatched(phase=design_revision)` 已写入并绑定同一 `command.issued`；pre-dispatch design identities 已持久化，checkpoint 只允许提交本次 identity 变化且属于设计范围的文件。
+- DESIGN_REVISED：Archer outcome 成功、至少一个 adjudicated design document 发生变化且 checkpoint commit 成功，Runtime 发出 `doc_gap.design_revised`；普通 `design.committed` 不得发出。
+- PRISM_DISPATCHED：`doc_gap.design_dispatched(phase=design_review)` 已写入并绑定 WAL；nested Prism 的失败或非法 verdict 不得默认 pass。
+- PRISM_REVIEWED：nested Prism 明确给出 `pass` 或 `revise`；`revise` 仅在 Archer 的三次总派发预算（含首次）未耗尽时回到 Archer nested dispatch，`pass` 才允许进入线程关闭与 resume 判定。
+- DESIGN_FAILED：nested Archer/Prism 失败、no-op、非法 verdict 或 commit failure 耗尽相应预算，或 Prism `revise` 耗尽 Archer 三次总派发预算；记录 reason，保持 `record.state=DESIGN_GAP`、`record.revision=design_failed`，origin outcome 未验证/未成功，不伪造 `RESUMED`。
 - AGENT_CORRECTION：Prism 不确认设计缺口，在原讨论向原 Devon/Shield 给出可执行纠正指引；原 Agent 仅在线程回应并闭环，不能直接改设计正文。
 - READY_TO_RESUME：讨论线程关闭。
 - RESTORED：quarantine 为空，或 `decide_quarantine_resume()` 判定隔离成果身份仍有效并已恢复，供新的 dispatch/attempt 重新验证。

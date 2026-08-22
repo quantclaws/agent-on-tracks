@@ -573,6 +573,25 @@ def combined_design_identity(pairs: list[tuple[str, str]]) -> str:
     return _content_identity(canonical.encode("utf-8"))
 
 
+def _path_in_allowed(path: str, allowed: set[str]) -> bool:
+    """True when *path* is authorized by ``allowed``.
+
+    Matches exact file paths (the M-IMPL manifest's per-task ``allowed_paths``)
+    AND directory prefixes (the project contract's ``[layout.<role>]``
+    writable entries, with or without a trailing ``/``), so a Shield WRITE that
+    falls back to layout paths still quarantines its test-file changes -
+    otherwise the held origin artifact is silently dropped and the
+    design-stale discard path is never exercised (#62 finding 4).
+    """
+    if path in allowed:
+        return True
+    return any(
+        path.startswith(entry.rstrip("/") + "/")
+        for entry in allowed
+        if entry.rstrip("/")
+    )
+
+
 def quarantine_authorized_changes(
     *,
     origin: DocCommentOrigin,
@@ -589,12 +608,16 @@ def quarantine_authorized_changes(
     excluded, never copied in as agent output (AC-FR0236-01).  The descriptor
     carries the canonical manifest's content-addressed identity so the executor
     can persist it through the existing blob capability.
+
+    ``allowed_paths`` matches both exact file paths (M-IMPL manifest) and
+    directory prefixes (``[layout.<role>]`` writable dirs) so the M-TEST
+    Shield WRITE fall-back still holds its test-file changes.
     """
     allowed = set(allowed_paths)
     held = tuple(
         c
         for c in agent_changes
-        if c.path in allowed and c.path not in pre_dirty_identities
+        if _path_in_allowed(c.path, allowed) and c.path not in pre_dirty_identities
     )
     status: Literal["empty", "held"] = "held" if held else "empty"
     quarantine_id = f"q-{uuid.uuid4().hex[:12]}"

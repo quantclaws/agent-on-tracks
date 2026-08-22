@@ -1185,6 +1185,25 @@ def _new_doc_gap_record(
         "reason": None,
         "next_dispatch_id": None,
         "next_attempt": None,
+        # SM-02 design_gap nested workflow (#62 finding 1): sub-progress of
+        # the DESIGN_GAP state toward READY_TO_RESUME.  None = not started
+        # (or agent_correction, which has no nested workflow).  The resume
+        # gate requires "prism_reviewed" before thread resolution may drive
+        # a new attempt, so an Archer revision that resolves threads early
+        # never short-circuits past Prism's review.
+        "revision": None,
+        "design_attempts": 0,
+        "review_attempts": 0,
+        "design_dispatch_id": None,
+        "revised_design_identity": None,
+        "prism_verdict": None,
+        # SM-02 (#62 finding 2): pre-dispatch content-identity snapshot of the
+        # record's adjudicated design docs, captured in ``_dispatch_doc_gap_agent``
+        # right before the nested Archer acts.  The checkpoint stages ONLY the
+        # document_paths whose identity drifted from this snapshot, so Human /
+        # pre-dirty / unattributed design changes are never committed as Archer
+        # output (AC-FR0236-01 attribution).
+        "pre_dispatch_identities": None,
     }
 
 
@@ -1262,6 +1281,78 @@ def _on_outcome_resumed(s: State, p: dict, ev: EventEnvelope) -> None:
     record["next_attempt"] = p.get("next_attempt")
 
 
+def _on_doc_gap_design_dispatched(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_gap.design_dispatched``: the nested Archer revision or Prism
+    review dispatch was issued for a DESIGN_GAP record (#62 finding 1).
+
+    The dispatch_id binds the WAL command.issued to the record's revision
+    sub-progress so replay can verify the nested workflow actually ran."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    phase = p.get("phase")
+    record["design_dispatch_id"] = p.get("dispatch_id")
+    # SM-02 (#62 finding 2): persist the nested Archer pre-dispatch identity
+    # snapshot so the checkpoint can stage only identity-changed document_paths
+    # (design_revision phase only; design_review carries no design write).
+    if phase == "design_revision":
+        record["revision"] = "archer_dispatched"
+        record["design_attempts"] = int(record.get("design_attempts") or 0) + 1
+        if p.get("pre_dispatch_identities") is not None:
+            record["pre_dispatch_identities"] = p.get("pre_dispatch_identities")
+    elif phase == "design_review":
+        record["revision"] = "prism_dispatched"
+
+
+def _on_doc_gap_design_revised(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_gap.design_revised``: Archer's revision was checkpointed (#62
+    finding 1).  The revised combined design identity is projected for the
+    resume decision's design-stale check: the live identity will differ from
+    the quarantine's pause-time anchor, so held成果 is discarded."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    record["revision"] = "design_revised"
+    record["revised_design_identity"] = p.get("revised_design_identity")
+
+
+def _on_doc_gap_design_failed(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Retry the failed nested phase at most three times, then park."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is not None:
+        record["reason"] = p.get("reason")
+        if p.get("phase") == "design_review":
+            record["review_attempts"] = int(record.get("review_attempts") or 0) + 1
+            record["revision"] = (
+                "design_revised" if record["review_attempts"] < 3 else "design_failed"
+            )
+        else:
+            record["revision"] = (
+                None if int(record.get("design_attempts") or 0) < 3 else "design_failed"
+            )
+
+
+def _on_doc_gap_design_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
+    """``doc_gap.design_reviewed``: Prism reviewed the revised design (#62
+    finding 1).  On pass the record reaches prism_reviewed and the resume
+    gate may proceed once threads close.  On revise the revision resets to
+    None so the run loop re-dispatches Archer for another revision round —
+    both are deterministic under replay."""
+    record = s.doc_gaps.get(p.get("record_id"))
+    if record is None:
+        return
+    verdict = p.get("verdict")
+    record["prism_verdict"] = verdict
+    if verdict == "pass":
+        record["revision"] = "prism_reviewed"
+    else:
+        record["revision"] = (
+            None if int(record.get("design_attempts") or 0) < 3 else "design_failed"
+        )
+        if record["revision"] == "design_failed":
+            record["reason"] = "Prism design review budget exhausted"
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -1331,6 +1422,11 @@ _APPLY = {
     "outcome.restored": _on_outcome_resolve,
     "outcome.discarded": _on_outcome_resolve,
     "outcome.resumed": _on_outcome_resumed,
+    # SM-02 design_gap nested workflow (#62 finding 1)
+    "doc_gap.design_dispatched": _on_doc_gap_design_dispatched,
+    "doc_gap.design_revised": _on_doc_gap_design_revised,
+    "doc_gap.design_failed": _on_doc_gap_design_failed,
+    "doc_gap.design_reviewed": _on_doc_gap_design_reviewed,
     # v0.6 hotfix (interfaces.md §1a, IF-HOTFIX-002): HOTFIX-TRIAGE entry
     # automaton events (SPEC-006 SM-01). Reducer signatures are frozen as
     # (State, payload) by the scaffold; wrap to the (State, payload, envelope)

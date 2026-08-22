@@ -424,3 +424,666 @@ def test_design_anchor_covers_the_discussed_doc_not_the_first_alphabetical():
         ]
     )
     assert stored != drifted, "a changed design doc must not restore"
+
+
+# -- SM-02 design_gap nested workflow reducers (#62 finding 1) --------------
+
+
+def _project(events):
+    """Project a list of (type, payload) tuples into a State's doc_gaps."""
+    from tracks.kernel.events import EventEnvelope
+    from tracks.kernel.machine import State, apply
+
+    s = State()
+    for i, (etype, payload) in enumerate(events):
+        ev = EventEnvelope(
+            seq=i, ts="", run_id="r", version="v", type=etype,
+            schema_version=1, command_id=None, task_id=None, payload=payload,
+        )
+        apply(s, ev)
+    return s
+
+
+def test_design_dispatched_sets_revision_substate():
+    """doc_gap.design_dispatched projects the revision sub-progress."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": "d-1",
+            "phase": "design_revision", "role": "archer",
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["state"] == "DESIGN_GAP"
+    assert rec["revision"] == "archer_dispatched"
+    assert rec["design_dispatch_id"] == "d-1"
+
+
+def test_design_revised_projects_revised_identity():
+    """doc_gap.design_revised records the checkpointed design identity."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": "d-1",
+            "phase": "design_revision", "role": "archer",
+        }),
+        ("doc_gap.design_revised", {
+            "record_id": "dg-1",
+            "revised_design_identity": "sha-revised",
+            "changed_paths": ["test-plan.md"],
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["revision"] == "design_revised"
+    assert rec["revised_design_identity"] == "sha-revised"
+
+
+def test_design_reviewed_pass_reaches_prism_reviewed():
+    """doc_gap.design_reviewed(pass) reaches the resume-gating substate."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_reviewed", {
+            "record_id": "dg-1", "verdict": "pass",
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["revision"] == "prism_reviewed"
+    assert rec["prism_verdict"] == "pass"
+
+
+def test_design_reviewed_revise_resets_for_redispatch():
+    """doc_gap.design_reviewed(revise) resets revision to re-dispatch Archer."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_reviewed", {
+            "record_id": "dg-1", "verdict": "revise",
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["revision"] is None
+    assert rec["prism_verdict"] == "revise"
+
+
+def test_design_failure_retries_then_parks_after_three_attempts():
+    """Failed nested revisions close WAL and consume a bounded retry budget."""
+    events = [
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+    ]
+    for attempt in range(1, 4):
+        events.extend([
+            ("doc_gap.design_dispatched", {
+                "record_id": "dg-1", "dispatch_id": f"D-{attempt}",
+                "phase": "design_revision", "role": "archer",
+            }),
+            ("doc_gap.design_failed", {
+                "record_id": "dg-1", "reason": "no adjudicated design document changed",
+            }),
+        ])
+    rec = _project(events).doc_gaps["dg-1"]
+    assert rec["design_attempts"] == 3
+    assert rec["revision"] == "design_failed"
+    assert rec["reason"] == "no adjudicated design document changed"
+
+
+def test_agent_correction_has_no_nested_workflow():
+    """AGENT_CORRECTION records never enter the design_gap nested workflow."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "agent_correction",
+            "responsible_role": "shield", "decision_ref": "abc",
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["state"] == "AGENT_CORRECTION"
+    assert rec["revision"] is None
+
+
+# -- SM-02 design_gap crash-window WAL recovery (#62 finding 1) -------------
+
+
+def _doc_gap_crash_window_events(*, dispatch_id, phase="design_revision",
+                                 with_command_issued=False):
+    """Event log up to the crash window: detected + adjudicated(design_gap) +
+    design_dispatched audit event persisted, with or without the matching
+    command.issued (the crash point).
+
+    Returns a list of ``(type, payload, command_id)`` tuples so the
+    ``command.issued`` envelope carries the dispatch id (matching the real
+    WAL write); audit events carry their dispatch id too (bound by the
+    executor's ``_emit(command_id=...)``).
+    """
+    events = [
+        ("doc_comment.detected", {
+            "record_id": "dg-1",
+            "origin": {"role": "shield", "dispatch_id": "ORIG-1"},
+            "document_paths": ["test-plan.md"],
+            "thread_ids": ["T-001"],
+        }, None),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }, None),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": dispatch_id,
+            "phase": phase, "role": "archer" if phase == "design_revision" else "prism",
+            "document_paths": ["test-plan.md"],
+        }, dispatch_id),
+    ]
+    if with_command_issued:
+        events.append((
+            "command.issued",
+            {"command": {"kind": "dispatch_agent", "params": {}, "command_id": dispatch_id}},
+            dispatch_id,
+        ))
+    return events
+
+
+def _doc_gap_executor(repo, events, monkeypatch):
+    """Build an Executor seeded with ``events`` (3-tuples of type, payload,
+    command_id) and a stub ``issue`` that records calls without executing the
+    backend / git pipeline."""
+    from tracks import paths
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(paths.tracks_home(repo))
+    for t, p, cid in events:
+        store.append("RUN", "v0.5", t, p, command_id=cid)
+    ex = Executor(store, repo, "RUN")
+    issued_calls = []
+
+    def _recording_issue(cmd, command_id=None):
+        issued_calls.append({"command_id": command_id, "params": dict(cmd.params)})
+        # Persist a command.issued so _dispatch_issued can observe it on
+        # subsequent iterations (mirrors the real WAL write).
+        store.append(
+            "RUN", "v0.5", "command.issued",
+            {"command": {"kind": cmd.kind, "params": dict(cmd.params), "command_id": command_id}},
+            command_id=command_id,
+        )
+
+    ex.issue = _recording_issue
+    return ex, store, issued_calls
+
+
+def test_crash_window_recovery_reissues_with_same_dispatch_id(tmp_path, monkeypatch):
+    """A crash between doc_gap.design_dispatched and command.issued must not
+    park the record permanently: the next iteration re-issues the nested
+    dispatch with the SAME design_dispatch_id (idempotent) and emits NO
+    duplicate audit event."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    ex, store, issued = _doc_gap_executor(
+        repo,
+        _doc_gap_crash_window_events(dispatch_id="D-ARCHER"),
+        monkeypatch,
+    )
+    state = store.state("RUN")
+    rec = state.doc_gaps["dg-1"]
+    assert rec["revision"] == "archer_dispatched"
+    assert rec["design_dispatch_id"] == "D-ARCHER"
+
+    handled = ex._advance_doc_gap_design_revision(state)
+    assert handled, "crash-window record must be re-issued (handled=True)"
+
+    assert len(issued) == 1, "expected exactly one re-issue"
+    assert issued[0]["command_id"] == "D-ARCHER", (
+        "re-issue must use the SAME persisted design_dispatch_id"
+    )
+    assert issued[0]["params"].get("doc_gap", {}).get("phase") == "design_revision"
+
+    audit = [e for e in store.events("RUN") if e.type == "doc_gap.design_dispatched"]
+    assert len(audit) == 1, (
+        "crash-window recovery must NOT emit a duplicate audit event"
+    )
+    store.close()
+
+
+def test_crash_window_recovery_skips_when_already_issued(tmp_path, monkeypatch):
+    """When command.issued IS present for the design_dispatch_id, the record
+    is genuinely waiting for its outcome - no re-issue."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    ex, store, issued = _doc_gap_executor(
+        repo,
+        _doc_gap_crash_window_events(
+            dispatch_id="D-ARCHER", with_command_issued=True,
+        ),
+        monkeypatch,
+    )
+    state = store.state("RUN")
+    rec = state.doc_gaps["dg-1"]
+    assert rec["revision"] == "archer_dispatched"
+
+    handled = ex._advance_doc_gap_design_revision(state)
+    assert not handled, "an already-issued dispatch must fall through (no re-issue)"
+    assert issued == [], "no re-issue when command.issued is present"
+    store.close()
+
+
+def test_crash_window_recovery_reissues_prism_review_phase(tmp_path, monkeypatch):
+    """The crash-window recovery also covers the Prism review dispatch
+    (revision=prism_dispatched): re-issue with phase=design_review."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    ex, store, issued = _doc_gap_executor(
+        repo,
+        _doc_gap_crash_window_events(
+            dispatch_id="D-PRISM", phase="design_review",
+        ),
+        monkeypatch,
+    )
+    state = store.state("RUN")
+    rec = state.doc_gaps["dg-1"]
+    assert rec["revision"] == "prism_dispatched"
+    assert rec["design_dispatch_id"] == "D-PRISM"
+
+    handled = ex._advance_doc_gap_design_revision(state)
+    assert handled
+    assert len(issued) == 1
+    assert issued[0]["command_id"] == "D-PRISM"
+    assert issued[0]["params"].get("doc_gap", {}).get("phase") == "design_review"
+    store.close()
+
+
+def test_dispatch_issued_checks_command_issued_type_only(tmp_path, monkeypatch):
+    """_dispatch_issued must match command.issued events specifically, not any
+    event carrying the command_id (doc_gap.design_dispatched is now bound to
+    the dispatch id via its envelope command_id)."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    # Audit event persisted with command_id=D-ARCHER but NO command.issued.
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _doc_gap_crash_window_events(dispatch_id="D-ARCHER"),
+        monkeypatch,
+    )
+    assert not ex._dispatch_issued("D-ARCHER"), (
+        "an audit event alone must not count as an issued command"
+    )
+
+    # After a command.issued is written, _dispatch_issued returns True.
+    store.append(
+        "RUN", "v0.5", "command.issued",
+        {"command": {"kind": "dispatch_agent", "params": {}, "command_id": "D-ARCHER"}},
+        command_id="D-ARCHER",
+    )
+    assert ex._dispatch_issued("D-ARCHER"), (
+        "a command.issued event must count as an issued command"
+    )
+    store.close()
+
+
+def test_design_dispatched_audit_event_binds_command_id(tmp_path, monkeypatch):
+    """The doc_gap.design_dispatched audit event's envelope command_id must be
+    bound to the dispatch_id so the WAL trail explicitly links the audit
+    record to the command.issued it announces."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _doc_gap_crash_window_events(dispatch_id="D-ARCHER"),
+        monkeypatch,
+    )
+    audit = [e for e in store.events("RUN") if e.type == "doc_gap.design_dispatched"]
+    assert len(audit) == 1
+    assert audit[0].command_id == "D-ARCHER", (
+        "doc_gap.design_dispatched envelope command_id must equal dispatch_id"
+    )
+    store.close()
+
+
+# -- SM-02 design_gap fail-closed checkpoint (#62 findings 1/2/3) -----------
+
+
+def _design_dispatched_with_pre_identity(*, dispatch_id, pre_identities):
+    """Event log: story.requested + detected + adjudicated(design_gap) +
+    design_dispatched carrying the nested Archer pre-dispatch identity
+    snapshot (over the full design trio).  ``story.requested`` seeds
+    ``state.version`` so ``_doc_path`` resolves to the v0.5 version dir the
+    checkpoint writes/reads."""
+    return [
+        ("story.requested", {}, None),
+        ("doc_comment.detected", {
+            "record_id": "dg-1",
+            "origin": {"role": "shield", "dispatch_id": "ORIG-1"},
+            "document_paths": ["test-plan.md"],
+            "thread_ids": ["T-001"],
+        }, None),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }, None),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": dispatch_id,
+            "phase": "design_revision", "role": "archer",
+            "document_paths": ["test-plan.md"],
+            "pre_dispatch_identities": pre_identities,
+        }, dispatch_id),
+    ]
+
+
+def test_design_dispatched_persists_pre_dispatch_identities():
+    """#62 finding 2: the reducer persists the nested Archer pre-dispatch
+    identity snapshot (over the full design trio) so the checkpoint can stage
+    only identity-changed design docs (Human/pre-dirty/unattributed changes
+    stay out)."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": "d-1",
+            "phase": "design_revision", "role": "archer",
+            "pre_dispatch_identities": {
+                "architecture.md": "sha-arch",
+                "interfaces.md": "sha-if",
+                "test-plan.md": "sha-pre",
+            },
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["pre_dispatch_identities"] == {
+        "architecture.md": "sha-arch",
+        "interfaces.md": "sha-if",
+        "test-plan.md": "sha-pre",
+    }
+    assert rec["revision"] == "archer_dispatched"
+
+
+def test_design_dispatched_design_review_carries_no_pre_identity():
+    """The Prism review dispatch (design_review) carries no design write, so
+    pre_dispatch_identities stays None (the snapshot is Archer-scoped)."""
+    s = _project([
+        ("doc_comment.detected", {"record_id": "dg-1", "thread_ids": ["T-001"]}),
+        ("doc_comment.adjudicated", {
+            "record_id": "dg-1", "route": "design_gap",
+            "responsible_role": "archer", "decision_ref": "abc",
+        }),
+        ("doc_gap.design_dispatched", {
+            "record_id": "dg-1", "dispatch_id": "d-prism",
+            "phase": "design_review", "role": "prism",
+        }),
+    ])
+    rec = s.doc_gaps["dg-1"]
+    assert rec["revision"] == "prism_dispatched"
+    assert rec["pre_dispatch_identities"] is None
+
+
+def _checkpoint_executor(tmp_path, *, pre_identities, docs=None):
+    """Build an Executor seeded with a DESIGN_GAP record whose
+    pre_dispatch_identities snapshot is *pre_identities* (over the design
+    trio), with the given *docs* ({name: text}) written to the v0.5 version
+    dir.  Returns (ex, store, repo)."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _design_dispatched_with_pre_identity(
+            dispatch_id="D-ARCHER", pre_identities=pre_identities,
+        ),
+        None,
+    )
+    # Write the design docs the checkpoint reads (_doc_path -> v0.5 dir).
+    from tracks import paths
+
+    vdir = paths.version_dir(paths.tracks_home(repo), "v0.5")
+    vdir.mkdir(parents=True, exist_ok=True)
+    for name, text in (docs or {"test-plan.md": "plan v1\n"}).items():
+        (vdir / name).write_text(text, encoding="utf-8")
+    return ex, store, repo
+
+
+def _cmd(cid="D-ARCHER"):
+    from tracks.kernel.events import Command
+
+    return Command(
+        kind="dispatch_agent",
+        params={"doc_gap": {"record_id": "dg-1", "phase": "design_revision"}},
+        command_id=cid,
+    )
+
+
+def test_checkpoint_fail_closed_when_archer_outcome_not_successful(tmp_path):
+    """#62 finding 1: a failed nested Archer outcome never emits
+    doc_gap.design_revised (fail-closed - the held origin is never resumed on
+    a failed revision)."""
+    ex, store, _ = _checkpoint_executor(
+        tmp_path,
+        pre_identities={"architecture.md": "pre", "interfaces.md": "pre", "test-plan.md": "pre"},
+        docs={"test-plan.md": "plan v2\n"},
+    )
+    rec = store.state("RUN").doc_gaps["dg-1"]
+    ex._checkpoint_doc_gap_revision(
+        _cmd(), None, "dg-1", rec, ["test-plan.md"],
+        {"status": "failed", "failure_class": "agent_failed"},
+    )
+    revised = [e for e in store.events("RUN") if e.type == "doc_gap.design_revised"]
+    assert not revised, "failed Archer outcome must NOT emit doc_gap.design_revised"
+    store.close()
+
+
+def test_checkpoint_fail_closed_when_no_design_doc_changed(tmp_path):
+    """#62 finding 1: when no adjudicated design doc (a record document_path)
+    changed identity during the dispatch, no doc_gap.design_revised is emitted
+    - an un-attributable no-op revision never advances the record (and never
+    commits Human / pre-dirty content as Archer output)."""
+    from tracks import paths
+    from tracks.executor.file_identity import path_identity
+
+    repo = __import__("tests.unit.helpers", fromlist=["git_repo"]).git_repo(tmp_path)
+    vdir = paths.version_dir(paths.tracks_home(repo), "v0.5")
+    vdir.mkdir(parents=True, exist_ok=True)
+    doc = vdir / "test-plan.md"
+    doc.write_text("unchanged\n", encoding="utf-8")
+    live_identity = path_identity(doc)
+    # Pre-snapshot equals the live identity for test-plan.md -> no change.
+    pre = {
+        "architecture.md": "pre", "interfaces.md": "pre",
+        "test-plan.md": live_identity,
+    }
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _design_dispatched_with_pre_identity(dispatch_id="D-ARCHER", pre_identities=pre),
+        None,
+    )
+    rec = store.state("RUN").doc_gaps["dg-1"]
+    ex._checkpoint_doc_gap_revision(
+        _cmd(), None, "dg-1", rec, ["test-plan.md"], {"status": "done"},
+    )
+    revised = [e for e in store.events("RUN") if e.type == "doc_gap.design_revised"]
+    assert not revised, (
+        "no adjudicated design-doc identity change must NOT emit "
+        "doc_gap.design_revised (would commit un-attributable / Human / "
+        "pre-dirty content)"
+    )
+    store.close()
+
+
+def test_checkpoint_emits_revised_when_changed_and_commit_succeeds(tmp_path):
+    """#62 finding 1: the happy path - successful outcome, a changed
+    adjudicated design doc, and a successful git checkpoint commit - emits
+    doc_gap.design_revised carrying the revised identity and changed paths."""
+    ex, store, repo = _checkpoint_executor(
+        tmp_path,
+        pre_identities={"architecture.md": "pre", "interfaces.md": "pre", "test-plan.md": "pre"},
+        docs={"test-plan.md": "plan v2\n"},
+    )
+    rec = store.state("RUN").doc_gaps["dg-1"]
+    ex._checkpoint_doc_gap_revision(
+        _cmd(), None, "dg-1", rec, ["test-plan.md"], {"status": "done"},
+    )
+    revised = [e for e in store.events("RUN") if e.type == "doc_gap.design_revised"]
+    assert len(revised) == 1, "successful revision must emit doc_gap.design_revised"
+    payload = revised[0].payload
+    assert "test-plan.md" in payload["changed_paths"]
+    assert payload["revised_design_identity"]
+    assert payload.get("commit_sha"), "design_revised must carry the commit sha"
+    # The revised design doc IS committed (HEAD advanced).
+    import subprocess
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
+    ).stdout.strip()
+    show = subprocess.run(
+        ["git", "show", "-s", "--format=%s", head], cwd=repo, capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert "doc-gap design revision" in show
+    store.close()
+
+
+def test_commit_doc_gap_revision_raises_when_nothing_staged(tmp_path):
+    """#62 finding 3: a git checkpoint commit failure is NOT swallowed
+    (raises) and the caller never emits success.  Nothing-on-disk-to-stage
+    and an empty changed-paths list are the deterministic failure cases for
+    the unit-level contract (the live git-commit failure surfaces the same
+    raise via ``check=True``)."""
+    from tests.unit.helpers import git_repo as _repo
+
+    repo = _repo(tmp_path)
+    pre = {"architecture.md": "pre", "interfaces.md": "pre", "test-plan.md": "pre"}
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _design_dispatched_with_pre_identity(
+            dispatch_id="D-ARCHER", pre_identities=pre,
+        ),
+        None,
+    )
+    import pytest
+
+    # No design doc written to disk -> nothing to stage -> raises (not None,
+    # not a stale HEAD sha sold as success).
+    with pytest.raises(RuntimeError):
+        ex._commit_doc_gap_revision(["test-plan.md"])
+    # Empty changed_paths must also raise (never silently return success).
+    with pytest.raises(RuntimeError):
+        ex._commit_doc_gap_revision([])
+    store.close()
+
+
+def test_commit_doc_gap_revision_excludes_unchanged_predirty_design_doc(tmp_path):
+    """#62 finding 2: only identity-changed design docs are staged.  A sibling
+    design doc carrying Human / pre-dirty content (UNCHANGED from the
+    pre-dispatch snapshot) is NOT swept into the Archer commit, while the
+    Archer-revised docs ARE committed (attribution via identity drift)."""
+    from tracks import paths
+    from tracks.executor.file_identity import path_identity
+
+    repo = __import__("tests.unit.helpers", fromlist=["git_repo"]).git_repo(tmp_path)
+    vdir = paths.version_dir(paths.tracks_home(repo), "v0.5")
+    vdir.mkdir(parents=True, exist_ok=True)
+    plan = vdir / "test-plan.md"
+    plan.write_text("plan revised by Archer\n", encoding="utf-8")
+    arch = vdir / "architecture.md"
+    arch.write_text("human pre-dirty content\n", encoding="utf-8")
+    iface = vdir / "interfaces.md"
+    iface.write_text("if revised by Archer\n", encoding="utf-8")
+    # Pre-snapshot: architecture.md matches its live (Human pre-dirty,
+    # unchanged by Archer) -> NOT staged.  test-plan.md / interfaces.md have
+    # sentinel pre-identities -> changed -> staged.
+    pre = {
+        "architecture.md": path_identity(arch),
+        "interfaces.md": "pre-iface",
+        "test-plan.md": "pre-plan",
+    }
+    ex, store, _ = _doc_gap_executor(
+        repo,
+        _design_dispatched_with_pre_identity(dispatch_id="D-ARCHER", pre_identities=pre),
+        None,
+    )
+    rec = store.state("RUN").doc_gaps["dg-1"]
+    ex._checkpoint_doc_gap_revision(
+        _cmd(), None, "dg-1", rec, ["test-plan.md"], {"status": "done"},
+    )
+    import subprocess
+
+    staged = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"], cwd=repo,
+        capture_output=True, text=True,
+    ).stdout
+    assert "test-plan.md" in staged, "Archer-revised doc must be committed"
+    assert "interfaces.md" in staged, "Archer-revised sibling doc must be committed"
+    assert "architecture.md" not in staged, (
+        "a Human / pre-dirty design doc UNCHANGED from the pre-dispatch "
+        "snapshot must NOT be committed as Archer output (AC-FR0236-01)"
+    )
+    store.close()
+
+
+# -- SM-02 quarantine allowed-path prefix match (#62 finding 4) -------------
+
+
+def test_path_in_allowed_matches_exact_and_directory_prefix():
+    """#62 finding 4: the M-TEST Shield WRITE allowed_paths fall back to
+    [layout.shield] directory prefixes; the quarantine must hold test-file
+    changes under those dirs (exact match still serves the M-IMPL manifest)."""
+    from tracks.executor.doc_comment import _path_in_allowed
+
+    allowed = {"tests/integration", ".github/workflows/ci.yml"}
+    assert _path_in_allowed("tests/integration/foo.py", allowed)
+    assert _path_in_allowed("tests/integration/sub/bar.py", allowed)
+    assert _path_in_allowed(".github/workflows/ci.yml", allowed)
+    assert not _path_in_allowed("tracks/something.py", allowed)
+    assert not _path_in_allowed("tests.txt", allowed)
+
+
+def test_quarantine_holds_test_files_under_layout_dir_prefix(tmp_path):
+    """A Shield WRITE whose allowed_paths are [layout.shield] directory
+    prefixes holds its test-file changes (non-design origin artifact) so the
+    design-stale discard path is reachable after a nested Archer revision."""
+    from tracks.executor.doc_comment import (
+        DocCommentOrigin,
+        QuarantinedChange,
+        quarantine_authorized_changes,
+    )
+
+    origin = DocCommentOrigin(
+        run_id="RUN", role="shield", task_id=None, phase="WRITE",
+        dispatch_id="ORIG-1", attempt=1,
+    )
+    descriptor = quarantine_authorized_changes(
+        origin=origin,
+        allowed_paths=("tests/integration/", "tests/e2e/"),
+        pre_dirty_identities={},
+        agent_changes=(
+            QuarantinedChange(
+                path="tests/integration/test_foo.py", operation="modify",
+                baseline_identity=None, content_identity="sha-foo",
+            ),
+        ),
+        design_identity="sha-design",
+        run_identity="RUN",
+    )
+    assert descriptor.status == "held"
+    assert len(descriptor.changes) == 1
+    assert descriptor.changes[0].path == "tests/integration/test_foo.py"

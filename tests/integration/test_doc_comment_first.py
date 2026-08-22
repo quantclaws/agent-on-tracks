@@ -399,8 +399,260 @@ def test_illegal_edit_failure_evidence_survives_replay(trac, event_log, host_rep
     assert "outcome.rejected" in replay.stdout, (
         "rejection evidence must survive replay on the public text surface"
     )
-    replay = trac("replay", run_id)
-    assert replay.returncode == 0, replay.stderr
-    assert "outcome.rejected" in replay.stdout, (
-        "rejection evidence must survive replay on the public text surface"
+
+
+@pytest.mark.integration
+# SM-02 design_gap nested workflow (#62 finding 1)
+# AC-FR0235-01@v0.5 TRACKS-TRACE design gap drives nested Archer + Prism review
+def test_design_gap_drives_nested_archer_revision_and_prism_review(
+    trac, event_log, host_repo, monkeypatch
+):
+    """Verify a design_gap adjudication drives the actual nested workflow.
+
+    After Prism adjudicates design_gap on the document surface, the next
+    ``trac run`` must:
+    1. Dispatch Archer to revise the design (doc_gap.design_dispatched +
+       command.issued role=archer).
+    2. Checkpoint the revised design (doc_gap.design_revised with a changed
+       design identity).
+    3. Dispatch Prism to review the revised design
+       (doc_gap.design_dispatched phase=design_review).
+    4. Emit Prism's review verdict (doc_gap.design_reviewed pass).
+    5. Resume the paused origin with a NEW attempt (outcome.resumed) - the
+       design revision makes the quarantine stale, so held成果 is discarded
+       (outcome.discarded reason=design_stale) or restored (empty quarantine).
+    6. Emit NO human.* events (no Human technical gate).
+    """
+    discussion = "\n\n> **Shield:** Design gap requiring nested Archer revision.\n"
+    arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
+
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
+
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="design_gap"
+    )
+
+    # 1. Archer design-revision dispatch was issued (WAL + SM-02 audit).
+    archer_dispatched = [
+        e for e in events
+        if e["type"] == "doc_gap.design_dispatched"
+        and e["payload"].get("phase") == "design_revision"
+    ]
+    assert len(archer_dispatched) == 1, (
+        "expected exactly one doc_gap.design_dispatched(design_revision)"
+    )
+    archer_cmd = [
+        e for e in command_dispatches(events, role="archer")
+        if e["seq"] > archer_dispatched[0]["seq"]
+    ]
+    assert archer_cmd, "expected a command.issued for role=archer after dispatch"
+
+    # 2. Design revision checkpointed with a changed identity.
+    revised = events_of(events, "doc_gap.design_revised")
+    assert len(revised) == 1, "expected doc_gap.design_revised checkpoint"
+    assert revised[0]["payload"].get("revised_design_identity"), (
+        "doc_gap.design_revised must carry the revised design identity"
+    )
+    assert set(revised[0]["payload"].get("changed_paths", [])) <= {
+        "architecture.md", "interfaces.md", "test-plan.md"
+    }, "nested Archer checkpoint must not include the held Shield test artifact"
+
+    # 3. Prism design-review dispatch was issued.
+    prism_dispatched = [
+        e for e in events
+        if e["type"] == "doc_gap.design_dispatched"
+        and e["payload"].get("phase") == "design_review"
+    ]
+    assert len(prism_dispatched) == 1, (
+        "expected exactly one doc_gap.design_dispatched(design_review)"
+    )
+
+    # 4. Prism reviewed the revised design (pass).
+    reviewed = events_of(events, "doc_gap.design_reviewed")
+    assert len(reviewed) == 1, "expected doc_gap.design_reviewed"
+    assert reviewed[0]["payload"].get("verdict") == "pass", (
+        "expected Prism design review verdict=pass"
+    )
+
+    # 5. Resume with a NEW attempt; held成果 discarded as design_stale (or
+    # restored when the quarantine is empty - either is a legal resume).
+    resumed = events_of(events, "outcome.resumed")
+    assert len(resumed) >= 1, (
+        "expected outcome.resumed with a new dispatch/attempt after the "
+        "nested workflow"
+    )
+    assert resumed[0]["payload"].get("next_attempt", 0) >= 1, (
+        "the resume must be a NEW attempt"
+    )
+    discarded = events_of(events, "outcome.discarded")
+    restored = events_of(events, "outcome.restored")
+    terminal = discarded + restored
+    assert len(terminal) >= 1, (
+        "expected outcome.restored or outcome.discarded before resumed"
+    )
+    if discarded:
+        assert discarded[0]["payload"].get("reason") == "design_stale", (
+            "after a design revision, held quarantine成果 must be discarded "
+            "as design_stale"
+        )
+
+    # 6. No Human technical gate after the detection.
+    detected = events_of(events, "doc_comment.detected")
+    first_seq = detected[0]["seq"] if detected else 0
+    human_after = [
+        e for e in events
+        if e["type"].startswith("human.") and e["seq"] > first_seq
+    ]
+    assert not human_after, (
+        f"design_gap nested workflow must not require a human gate: {human_after}"
+    )
+
+
+@pytest.mark.integration
+# SM-02 design_gap nested workflow (#62 finding 1)
+# AC-FR0235-02@v0.5 TRACKS-TRACE no design.committed/prism.verdict clobber origin
+def test_design_gap_nested_workflow_does_not_clobber_origin_stage(
+    trac, event_log, host_repo, monkeypatch
+):
+    """Verify the nested workflow emits no design.committed/prism.verdict.
+
+    The SM-02-scoped events (doc_gap.*) project into the doc-gap record
+    without touching the origin stage's M-DESIGN reducers.  No
+    design.committed or prism.verdict event may appear during the nested
+    workflow - those would clobber the paused M-TEST/M-IMPL origin state.
+    """
+    discussion = "\n\n> **Shield:** Design gap for origin-stage preservation.\n"
+    arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
+
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
+
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="design_gap"
+    )
+
+    adjudicated = [
+        e for e in events
+        if e["type"] == "doc_comment.adjudicated"
+        and e["payload"].get("route") == "design_gap"
+    ]
+    resumed = events_of(events, "outcome.resumed")
+    assert adjudicated and resumed, "expected adjudication + resume"
+    # Only check the nested-workflow window: between the adjudication and
+    # the resume.  After resume, the normal M-TEST pipeline legitimately
+    # emits prism.verdict (the M-TEST review, not M-DESIGN).
+    adj_seq = adjudicated[0]["seq"]
+    resume_seq = resumed[0]["seq"]
+    design_committed = [
+        e for e in events
+        if e["type"] == "design.committed" and adj_seq < e["seq"] < resume_seq
+    ]
+    prism_verdict = [
+        e for e in events
+        if e["type"] == "prism.verdict" and adj_seq < e["seq"] < resume_seq
+    ]
+    assert not design_committed, (
+        "doc_gap nested workflow must NOT emit design.committed (clobbers "
+        f"origin stage): {design_committed}"
+    )
+    assert not prism_verdict, (
+        "doc_gap nested workflow must NOT emit prism.verdict (clobbers "
+        f"origin stage): {prism_verdict}"
+    )
+
+
+@pytest.mark.integration
+# SM-02 design_gap nested workflow (#62 finding 4)
+# AC-FR0236-04@v0.5 TRACKS-TRACE held non-design origin artifact discarded as design_stale
+def test_design_gap_held_artifact_discarded_design_stale_not_committed(
+    trac, event_log, host_repo, monkeypatch
+):
+    """A held non-design origin artifact is discarded (not committed) after a
+    nested Archer design revision, and the origin gets a NEW attempt.
+
+    Constructs a Shield WRITE that pauses on a legal discussion
+    (``outcome.quarantined`` status=``held`` - the Shield's test files are
+    agent-attributable non-design changes inside the project's
+    ``[layout.shield]`` writable dirs).  Prism adjudicates ``design_gap``;
+    the nested Archer revises the design docs (advancing the combined design
+    identity) and Prism reviews them.  Because the held quarantine's pause-time
+    design anchor now differs from the live revised identity, the resume
+    decision discards the held artifact as ``design_stale`` (never committed -
+    no ``test.committed`` checkpoint fires for the paused outcome) and issues
+    a NEW Shield WRITE attempt.
+    """
+    discussion = "\n\n> **Shield:** Design gap requiring nested Archer revision.\n"
+    arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
+
+    run_id = walk_to_m_test(trac, version="v0.5")
+    parked = trac("run")
+    assert parked.returncode == 0, parked.stderr
+
+    events = pause_then_adjudicate(
+        trac, event_log, host_repo, monkeypatch, run_id, route="design_gap"
+    )
+
+    # Held non-design origin artifact: the Shield WRITE paused with a HELD
+    # quarantine (its test-file changes, attributable and inside the layout
+    # writable dirs, not pre-dirty).
+    quarantined = events_of(events, "outcome.quarantined")
+    assert quarantined, "expected outcome.quarantined at the SM-02 pause"
+    assert quarantined[0]["payload"].get("status") == "held", (
+        "origin artifact must be HELD (non-design agent change quarantined); "
+        f"got {quarantined[0]['payload'].get('status')!r}"
+    )
+
+    # Nested Archer design revision advanced the combined design identity.
+    revised = events_of(events, "doc_gap.design_revised")
+    assert revised, "expected doc_gap.design_revised (Archer revision checkpoint)"
+    assert revised[0]["payload"].get("revised_design_identity"), (
+        "doc_gap.design_revised must carry the revised design identity"
+    )
+
+    # The held artifact is discarded as design_stale (the revised design
+    # identity drifted from the quarantine's pause-time anchor).
+    discarded = events_of(events, "outcome.discarded")
+    assert discarded, (
+        "expected outcome.discarded after a design revision of a HELD quarantine"
+    )
+    assert discarded[0]["payload"].get("reason") == "design_stale", (
+        "held artifact must be discarded as design_stale; "
+        f"got {discarded[0]['payload'].get('reason')!r}"
+    )
+
+    # The held artifact was NEVER committed: no test.committed checkpoint
+    # fires for the paused outcome (the SM-02 pause precedes ordinary
+    # validation/checkpoint).  Only a NEW attempt's test.committed may appear
+    # AFTER the resume.
+    q_seq = quarantined[0]["seq"]
+    discard_seq = discarded[0]["seq"]
+    test_committed_before_discard = [
+        e for e in events
+        if e["type"] == "test.committed" and q_seq < e["seq"] < discard_seq
+    ]
+    assert not test_committed_before_discard, (
+        "held non-design origin artifact must NOT be committed before the "
+        f"design_stale discard: {test_committed_before_discard}"
+    )
+
+    # Origin gets a NEW attempt (resume issues a fresh Shield WRITE dispatch).
+    resumed = events_of(events, "outcome.resumed")
+    assert resumed, "expected outcome.resumed with a NEW origin attempt"
+    assert resumed[0]["payload"].get("next_attempt", 0) >= 1, (
+        "the resume must be a NEW attempt (next_attempt >= 1)"
+    )
+    # The resume follows the discard (held artifact dropped before re-dispatch).
+    assert discard_seq < resumed[0]["seq"], (
+        "outcome.resumed must follow outcome.discarded"
+    )
+    shield_resume_dispatches = [
+        event
+        for event in command_dispatches(events, role="shield")
+        if event["seq"] > resumed[0]["seq"]
+    ]
+    assert shield_resume_dispatches, (
+        "expected a NEW Shield dispatch (origin new attempt) after the resume"
     )

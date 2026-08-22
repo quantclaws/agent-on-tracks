@@ -84,8 +84,14 @@ from tracks.executor.worktree import (
 )
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.events import Command
-from tracks.kernel.machine import _REVIEW_SUBSTATE, State, decide
-from tracks.project import ContractError, lint_check_command, load_contract, validate_layout
+from tracks.kernel.machine import _REVIEW_SUBSTATE, DESIGN_DOCS, State, decide
+from tracks.project import (
+    ContractError,
+    lint_check_command,
+    load_contract,
+    validate_layout,
+)
+from tracks.project import layout_paths as _layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 from tracks.store import Store, new_ulid
 
@@ -648,20 +654,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             tripped = self._check_breaker(state)
             if tripped is not None:
                 return tripped
-            # SM-02 adjudication ingestion (#28 phase 2): before the resume
-            # check, scan waiting doc-gap records for Prism's structured
-            # SM-02-ADJUDICATION marker reply in the original thread.
-            if self._ingest_doc_gap_adjudications(state):
-                continue
-            # SM-02.9 (AC-FR0235-03): a paused doc-gap whose threads are all
-            # resolved resumes with a NEW dispatch/attempt before decide() —
-            # doc_dispatched stays True at the pause so decide() would halt.
-            if self._resume_doc_gap_if_ready(state):
-                continue
-            # Crash window recovery: a resume decision whose dispatch never
-            # got issued (crash between the decision events and issue())
-            # re-issues idempotently from the persisted decision identity.
-            if self._resume_interrupted_dispatch(state):
+            # SM-02 doc-gap lifecycle: adjudication ingestion, nested
+            # design-revision workflow, thread-resolution resume, and
+            # crash-window recovery all run before decide().
+            if self._sm02_pre_decide(state):
                 continue
             cmd = decide(state)
             if cmd is None:
@@ -822,6 +818,31 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return False, substate
         return substate != bound_substate, bound_substate
 
+    def _enrich_dispatch_params(
+        self, params: dict, state: State, cid: str
+    ) -> None:
+        """Apply assignment overlay, M-IMPL materialization, hotfix, and
+        Shield WRITE enrichment to dispatch params (issue() pre-WAL).
+
+        Doc-gap nested dispatches (doc_gap marker) skip all enrichment so
+        the nested Archer/Prism agents don't get M-IMPL/hotfix/Shield
+        assignment injection."""
+        if self.assignment_overlay is not None:
+            assignment = dict(params.get("assignment") or {})
+            assignment["scenario_context"] = deepcopy(self.assignment_overlay)
+            params["assignment"] = assignment
+        if state.stage == "M-IMPL":
+            params["assignment"] = self._materialize_m_impl_assignment(
+                state, params, cid,
+            )
+        if state.hotfix_issue is not None:
+            # The no-op hotfix path returns ``params`` itself. Copy before
+            # replacing in place or clear() would erase the source mapping.
+            materialized = dict(self._materialize_hotfix_assignment(state, params))
+            params.clear()
+            params.update(materialized)
+        self._enrich_shield_write_params(params, state)
+
     def issue(self, cmd: Command, command_id: str | None = None) -> None:
         """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler
         logs the result event that closes it. command_id is assigned here so the
@@ -844,23 +865,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             time.sleep(delay)
         cid = command_id or new_ulid()
         params = dict(cmd.params)
-        if cmd.kind == "dispatch_agent" and self.assignment_overlay is not None:
-            assignment = dict(params.get("assignment") or {})
-            assignment["scenario_context"] = deepcopy(self.assignment_overlay)
-            params["assignment"] = assignment
-        if cmd.kind == "dispatch_agent" and state.stage == "M-IMPL":
-            params["assignment"] = self._materialize_m_impl_assignment(
-                state,
-                params,
-                cid,
-            )
-        if cmd.kind == "dispatch_agent" and state.hotfix_issue is not None:
-            params = self._materialize_hotfix_assignment(state, params)
-        # D-28: enrich Shield WRITE assignments with structured test_tasks and
-        # the pre-dirty snapshot before write-ahead logging (architecture.md
-        # §1.2 DISPATCH). The persisted command.issued carries the full input.
-        if cmd.kind == "dispatch_agent":
-            self._enrich_shield_write_params(params, state)
+        _is_doc_gap = bool(params.get("doc_gap"))
+        if cmd.kind == "dispatch_agent" and not _is_doc_gap:
+            self._enrich_dispatch_params(params, state, cid)
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":
@@ -937,6 +944,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _do_dispatch_agent(self, cmd, state, task_id, reconcile):
         p = cmd.params
+        # SM-02 design_gap nested workflow (#62 finding 1): doc_gap dispatches
+        # (Archer revision, Prism review) route to a dedicated handler that
+        # checkpoints the outcome without emitting design.committed/prism.verdict
+        # (those clobber origin stage state) and without a Human gate.
+        if p.get("doc_gap"):
+            self._do_doc_gap_dispatch(cmd, state, task_id, p)
+            return
         role, substate, doc = p["role"], p["substate"], p.get("doc")
         doc_path = self._doc_path(doc) if doc else None
         assignment = p.get("assignment")
@@ -1232,11 +1246,35 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         if isinstance(manifest_meta, dict):
             allowed_paths = tuple(manifest_meta.get("allowed_paths", []))
+        # SM-02 (#62 finding 1): when the manifest is absent (M-TEST Shield
+        # WRITE has no task-level manifest), fall back to the project
+        # contract's [layout.<role>] writable paths so authorized non-doc
+        # changes are quarantined and the resume decision can detect
+        # design-stale discard after a design revision.
+        if not allowed_paths:
+            allowed_paths = tuple(_layout_paths(self.repo, origin.role))
+        # Collect agent-attributable non-document changes from the dirty
+        # snapshot: every file dirty after the dispatch that is not a
+        # protected design doc. quarantine_authorized_changes filters by
+        # allowed_paths and pre_dirty internally.
+        design_docs = set(ROLE_ALLOWED_DOCS.get(origin.role, frozenset()))
+        agent_changes: list[QuarantinedChange] = []
+        for rel, identity in self._dirty_snapshot().items():
+            if rel in design_docs:
+                continue
+            agent_changes.append(
+                QuarantinedChange(
+                    path=rel,
+                    operation="modify",
+                    baseline_identity=None,
+                    content_identity=identity,
+                )
+            )
         descriptor = quarantine_authorized_changes(
             origin=origin,
             allowed_paths=allowed_paths,
             pre_dirty_identities=pre_dirty or {},
-            agent_changes=(),
+            agent_changes=tuple(agent_changes),
             # Design anchor: combined AT-PAUSE identity of the LEGAL
             # discussion documents — the same set the resume decision
             # re-identifies from live bytes (never document_deltas[0],
@@ -1306,6 +1344,360 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+
+    # -- SM-02 design_gap nested workflow (#62 finding 1) --------------------
+
+    def _sm02_pre_decide(self, state: State) -> bool:
+        """Run the SM-02 doc-gap lifecycle checks before decide().
+
+        Returns True when any check handled the iteration (continue the run
+        loop).  Order: adjudication ingestion -> nested design-revision ->
+        thread-resolution resume -> crash-window recovery.
+        """
+        if self._ingest_doc_gap_adjudications(state):
+            return True
+        if self._advance_doc_gap_design_revision(state):
+            return True
+        if self._resume_doc_gap_if_ready(state):
+            return True
+        return bool(self._resume_interrupted_dispatch(state))
+
+    def _advance_doc_gap_design_revision(self, state: State) -> bool:
+        """Drive the nested Archer design-revision + Prism review workflow.
+
+        A DESIGN_GAP record whose revision sub-progress is None (just
+        adjudicated) or ``design_revised`` (Archer done, Prism pending) gets
+        its nested dispatch issued here via WAL ``issue()``.  The dispatch's
+        outcome is routed to ``_do_doc_gap_dispatch`` (not the ordinary
+        M-DESIGN pipeline) so no ``design.committed`` / ``prism.verdict``
+        event clobbers the paused origin stage.  Returns True (continue the
+        run loop) when a dispatch was issued.
+
+        WAL-safe recovery (#62 finding 1) is delegated to
+        ``_recover_doc_gap_dispatch`` — see its docstring for the crash
+        window and the idempotent re-issue contract.
+        """
+        if state.status != "active" or not state.doc_gaps:
+            return False
+        for record_id, rec in state.doc_gaps.items():
+            if rec.get("state") != "DESIGN_GAP":
+                continue
+            revision = rec.get("revision")
+            if revision is None:
+                self._dispatch_doc_gap_agent(
+                    record_id, rec, state, phase="design_revision"
+                )
+                return True
+            if revision == "design_revised":
+                self._dispatch_doc_gap_agent(
+                    record_id, rec, state, phase="design_review"
+                )
+                return True
+            if revision in ("archer_dispatched", "prism_dispatched"):
+                if self._recover_doc_gap_dispatch(record_id, rec, state, revision):
+                    return True
+                break  # genuinely waiting for the nested outcome
+            # prism_reviewed: fall through to the resume check.
+            break
+        return False
+
+    def _recover_doc_gap_dispatch(
+        self, record_id: str, rec: dict, state: State, revision: str
+    ) -> bool:
+        """WAL-safe recovery for a crash between ``doc_gap.design_dispatched``
+        and ``command.issued`` (#62 finding 1).
+
+        ``_dispatch_doc_gap_agent`` persists the audit event BEFORE
+        ``issue()`` writes ``command.issued``.  A crash in between leaves
+        the record at ``archer_dispatched``/``prism_dispatched`` with a
+        persisted ``design_dispatch_id`` but NO WAL command - decide()
+        cannot advance (revision != prism_reviewed) and no outcome ever
+        arrives, so the record parks permanently.  When the recorded
+        ``design_dispatch_id`` was never issued, re-issue the nested
+        dispatch with the SAME id (idempotent: an already-issued id is
+        skipped by the ``_dispatch_issued`` guard).  No duplicate audit
+        event is emitted (the original is already in the WAL).  When the
+        persisted id is missing (corrupted WAL), emit a fresh audit event
+        with a new id instead.  Returns True when a re-issue was issued;
+        False when the dispatch was already issued (wait for the outcome).
+        """
+        dispatch_id = rec.get("design_dispatch_id")
+        if dispatch_id and self._dispatch_issued(dispatch_id):
+            return False
+        phase = (
+            "design_revision"
+            if revision == "archer_dispatched"
+            else "design_review"
+        )
+        self._dispatch_doc_gap_agent(
+            record_id, rec, state, phase=phase,
+            dispatch_id=dispatch_id,
+            emit_audit=not bool(dispatch_id),
+        )
+        return True
+
+    def _dispatch_doc_gap_agent(
+        self, record_id: str, rec: dict, state: State, *, phase: str,
+        dispatch_id: str | None = None, emit_audit: bool = True,
+    ) -> None:
+        """Emit the SM-02 dispatch audit event (when ``emit_audit``) and
+        issue the nested agent.
+
+        The audit event ``doc_gap.design_dispatched`` is bound to the
+        dispatch id via its envelope ``command_id`` so the WAL trail
+        explicitly links the audit record to the ``command.issued`` it
+        announces (the reducer also stores ``design_dispatch_id`` on the
+        record for replay-side verification).
+
+        Crash-window recovery (``emit_audit=False``): re-issue the nested
+        dispatch with the SAME persisted ``design_dispatch_id`` after a
+        crash between ``doc_gap.design_dispatched`` and ``command.issued``
+        left the record parked at ``archer_dispatched``/
+        ``prism_dispatched`` with no WAL command.  No duplicate audit
+        event is emitted (the original is already in the WAL).
+        """
+        origin = rec.get("origin") or {}
+        document_paths = rec.get("document_paths") or []
+        role = "archer" if phase == "design_revision" else "prism"
+        substate = "RESPOND" if phase == "design_revision" else "PRISM_REVIEW"
+        cid = dispatch_id or new_ulid()
+        audit_payload = {
+            "record_id": record_id,
+            "origin_dispatch_id": origin.get("dispatch_id", ""),
+            "dispatch_id": cid,
+            "phase": phase,
+            "role": role,
+            "document_paths": list(document_paths),
+        }
+        if emit_audit:
+            # SM-02 (#62 finding 2): persist a nested Archer pre-dispatch
+            # identity snapshot of the design trio so the checkpoint can
+            # stage ONLY the design docs whose identity drifted during this
+            # dispatch.  The snapshot covers the full DESIGN_DOCS trio (the
+            # Archer revises the whole set, not just the adjudicated
+            # document_paths); identity comparison attributes changes to the
+            # Archer while Human / pre-dirty / unattributed content (unchanged
+            # from the snapshot) stays out of the commit (AC-FR0236-01).
+            if phase == "design_revision":
+                audit_payload["pre_dispatch_identities"] = {
+                    name: self._path_identity(self._doc_path(name))
+                    for name in DESIGN_DOCS
+                }
+            self._emit(
+                "doc_gap.design_dispatched",
+                audit_payload,
+                command_id=cid,
+            )
+        cmd = Command(
+            kind="dispatch_agent",
+            params={
+                "role": role,
+                "substate": substate,
+                "stage": state.stage,
+                "doc_gap": {"record_id": record_id, "phase": phase},
+                "assignment": {"kind": substate, "doc_gap_revision": True},
+            },
+        )
+        self.issue(cmd, command_id=cid)
+
+    def _do_doc_gap_dispatch(
+        self, cmd: Command, state: State, task_id: str | None, p: dict
+    ) -> None:
+        """Execute a doc-gap nested dispatch and checkpoint its outcome.
+
+        Archer (design_revision): the backend revises the design docs; the
+        executor commits the revised trio to git (advancing HEAD so the
+        subsequent origin-stage Prism review sees a clean baseline) and
+        checkpoints the revised combined design identity
+        (``doc_gap.design_revised``) so the resume decision can detect
+        design-stale discard.  No ``design.committed`` event is emitted
+        (that clobbers origin stage state).  Prism (design_review): the
+        backend reviews and the executor emits ``doc_gap.design_reviewed``
+        (pass/revise).  Neither path emits ``design.committed`` /
+        ``prism.verdict``.
+
+        Fail-closed (#62 finding 1): ``doc_gap.design_revised`` is emitted
+        ONLY when (a) the nested Archer outcome succeeded, (b) at least one
+        authorized adjudicated design doc in ``document_paths`` changed
+        identity during this dispatch, and (c) the git checkpoint commit
+        succeeded.  Otherwise no event is emitted and the record stays at
+        ``archer_dispatched`` so the resume gate never proceeds (the held
+        origin outcome is never resumed on a failed/stale revision).
+        """
+        gap = p["doc_gap"]
+        record_id = gap["record_id"]
+        phase = gap["phase"]
+        role = p["role"]
+        substate = p["substate"]
+        assignment = p.get("assignment") or {}
+        print(
+            f"  [{state.stage}] doc-gap {phase} dispatch {role}/{substate}",
+            file=sys.stderr,
+            flush=True,
+        )
+        result = self.backend.act(
+            role, substate, None, None, assignment=assignment
+        )
+        rec = state.doc_gaps.get(record_id) or {}
+        document_paths = rec.get("document_paths") or []
+        if phase == "design_revision":
+            self._checkpoint_doc_gap_revision(
+                cmd, task_id, record_id, rec, document_paths, result
+            )
+        elif phase == "design_review":
+            if result.get("status") != "done":
+                self._fail_doc_gap_revision(
+                    cmd, task_id, record_id, phase,
+                    f"nested design review outcome status={result.get('status')!r}",
+                )
+                return
+            verdict = result.get("verdict")
+            if verdict not in ("pass", "revise"):
+                self._fail_doc_gap_revision(
+                    cmd, task_id, record_id, phase,
+                    f"invalid nested design review verdict={verdict!r}",
+                )
+                return
+            self._emit(
+                "doc_gap.design_reviewed",
+                {
+                    "record_id": record_id,
+                    "verdict": verdict,
+                    "review_summary": result.get("review_summary", ""),
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _checkpoint_doc_gap_revision(
+        self,
+        cmd: Command,
+        task_id: str | None,
+        record_id: str,
+        rec: dict,
+        document_paths: list[str],
+        result: dict,
+    ) -> None:
+        """Fail-closed checkpoint of Archer's design revision (#62 finding 1).
+
+        Emits ``doc_gap.design_revised`` ONLY when the nested Archer outcome
+        succeeded, at least one adjudicated design doc in ``document_paths``
+        changed identity during the dispatch, and the git checkpoint commit
+        succeeded.  Otherwise no event is emitted (fail-closed): the record
+        parks at ``archer_dispatched`` and the resume gate never proceeds,
+        so a failed / no-op / un-attributable revision never resumes the
+        held origin outcome.
+        """
+        phase = (cmd.params.get("doc_gap") or {}).get("phase", "design_revision")
+        # (a) nested Archer outcome must be successful.
+        if result.get("status") != "done":
+            self._fail_doc_gap_revision(
+                cmd, task_id, record_id, phase,
+                f"nested {phase} outcome status={result.get('status')!r}",
+            )
+            return
+        pre_identities = rec.get("pre_dispatch_identities") or {}
+        # (b) at least one authorized adjudicated design doc (a record
+        # document_path) changed identity during the dispatch.
+        changed_document_paths = [
+            name for name in document_paths
+            if self._path_identity(self._doc_path(name))
+            != pre_identities.get(name)
+        ]
+        if not changed_document_paths:
+            self._fail_doc_gap_revision(
+                cmd, task_id, record_id, phase,
+                "no adjudicated design document changed",
+            )
+            return
+        # Stage EVERY design doc whose identity drifted from the pre-dispatch
+        # snapshot (the Archer revises the design trio; only identity-changed
+        # docs are staged so Human / pre-dirty / unattributed content is
+        # never committed as Archer output — #62 finding 2, AC-FR0236-01).
+        changed_design_docs = [
+            name for name in DESIGN_DOCS
+            if self._path_identity(self._doc_path(name))
+            != pre_identities.get(name)
+        ]
+        # (c) git checkpoint commit must succeed (raises on failure — never
+        # swallowed, never emits success).
+        try:
+            head = self._commit_doc_gap_revision(changed_design_docs)
+        except RuntimeError as exc:
+            self._fail_doc_gap_revision(cmd, task_id, record_id, phase, str(exc))
+            return
+        pairs = [
+            (name, self._path_identity(self._doc_path(name)))
+            for name in document_paths
+        ]
+        revised_identity = combined_design_identity(pairs)
+        self._emit(
+            "doc_gap.design_revised",
+            {
+                "record_id": record_id,
+                "revised_design_identity": revised_identity,
+                "changed_paths": changed_design_docs,
+                "commit_sha": head,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _fail_doc_gap_revision(
+        self, cmd, task_id, record_id: str, phase: str, reason: str
+    ) -> None:
+        """Close the nested WAL command without fabricating a revision."""
+        self._emit(
+            "doc_gap.design_failed",
+            {"record_id": record_id, "phase": phase, "reason": reason},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _commit_doc_gap_revision(self, changed_paths: list[str]) -> str:
+        """Commit ONLY the identity-changed design docs to git.
+
+        SM-02 (#62 finding 2): stages only the ``changed_paths`` (design docs
+        whose identity drifted from the nested Archer pre-dispatch snapshot)
+        so Human / pre-dirty / unattributed design changes are never swept
+        into the Archer commit (AC-FR0236-01 attribution).  Untouched docs
+        and non-document dirty content stay uncommitted.
+
+        #62 finding 3: a git commit failure is NOT swallowed (``check=True``
+        raises) and the caller never emits ``doc_gap.design_revised`` on
+        failure — no success is fabricated from a stale HEAD.
+        """
+        staged_any = False
+        for name in changed_paths:
+            path = self._doc_path(name)
+            if path.exists():
+                git(self.repo, "add", "--", str(path))
+                staged_any = True
+        if not staged_any:
+            raise RuntimeError(
+                "doc-gap design revision commit attempted with no staged "
+                "design docs (changed_paths resolved to nothing on disk)"
+            )
+        proc = git(self.repo, "diff", "--cached", "--name-only", check=False)
+        if not proc.stdout.strip():
+            raise RuntimeError(
+                "doc-gap design revision commit attempted with an empty index"
+            )
+        commit_paths = [
+            str(self._doc_path(name).relative_to(self.repo))
+            for name in changed_paths
+            if self._doc_path(name).exists()
+        ]
+        git(
+            self.repo,
+            "commit",
+            "--only",
+            "-m",
+            "doc-gap design revision (SM-02 design_gap nested workflow)",
+            "--",
+            *commit_paths,
+        )
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
 
     def _ingest_doc_gap_adjudications(self, state: State) -> bool:
         """SM-02 adjudication ingestion (IF-DOCGAP-001, AC-FR0235-01/02).
@@ -1386,6 +1778,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         for record_id, rec in state.doc_gaps.items():
             if rec.get("state") not in ("DESIGN_GAP", "AGENT_CORRECTION"):
                 continue
+            # SM-02 design_gap nested workflow (#62 finding 1): a DESIGN_GAP
+            # record must complete the nested Archer revision + Prism review
+            # (revision == "prism_reviewed") before thread resolution may
+            # drive the resume - otherwise an Archer revision that resolves
+            # threads early would short-circuit past Prism's review.
+            if (
+                rec.get("state") == "DESIGN_GAP"
+                and rec.get("revision") != "prism_reviewed"
+            ):
+                continue
             if not self._threads_resolved_in_docs(
                 rec.get("document_paths") or [], rec.get("thread_ids") or []
             ):
@@ -1433,9 +1835,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return False
 
     def _dispatch_issued(self, command_id: str) -> bool:
-        """True when a command with this id was already issued (WAL)."""
+        """True when a ``command.issued`` with this id was already written
+        (WAL).
+
+        Checks the ``command.issued`` event type specifically so audit
+        events that carry the same command_id (e.g.
+        ``doc_gap.design_dispatched`` bound to the dispatch id) do not
+        falsely report an issued command — the crash-window recovery
+        relies on this to detect a missing WAL command after the audit
+        event was persisted.
+        """
         return any(
-            event.command_id == command_id
+            event.type == "command.issued" and event.command_id == command_id
             for event in self.store.events(self.run_id)
         )
 
@@ -1488,6 +1899,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         An empty quarantine restores trivially even without readable blob
         evidence; a held quarantine whose manifest cannot be rebuilt discards
         as content_conflict (AC-FR0236-04 fail-closed default).
+
+        #62 finding 4: the ``design_stale`` discard fires ONLY after an actual
+        nested Archer design revision (``revised_design_identity`` set on the
+        record).  For an AGENT_CORRECTION pause (no Archer revision) the
+        adjudication marker Prism appends to the design doc post-pause is
+        not a substantive revision - the held agent output is still current
+        relative to its task, so the design-drift check is short-circuited
+        (the marker's drift must not falsely discard a held quarantine).
         """
         descriptor = self._rebuild_quarantine_descriptor(rec)
         if descriptor is None:
@@ -1507,9 +1926,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             change.path: self._path_identity(self.repo / change.path)
             for change in descriptor.changes
         }
+        # Only an actual nested Archer design revision (revised_design_identity)
+        # may discard a held quarantine as design_stale; otherwise the pause-time
+        # anchor is the comparison baseline (marker-only drift is ignored).
+        if rec.get("revised_design_identity"):
+            current_design_identity = combined_design_identity(current_pairs)
+        else:
+            current_design_identity = descriptor.design_identity
         return decide_quarantine_resume(
             descriptor,
-            current_design_identity=combined_design_identity(current_pairs),
+            current_design_identity=current_design_identity,
             current_run_identity=self.run_id,
             current_path_identities=current_paths,
             next_dispatch_id=next_dispatch_id,

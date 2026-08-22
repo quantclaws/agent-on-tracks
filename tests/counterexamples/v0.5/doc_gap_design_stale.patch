@@ -1,0 +1,11 @@
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -1932,5 +1932,5 @@ def _decide_doc_gap_resume(
+         # may discard a held quarantine as design_stale; otherwise the pause-time
+         # anchor is the comparison baseline (marker-only drift is ignored).
+         if rec.get("revised_design_identity"):
+-            current_design_identity = combined_design_identity(current_pairs)
++            current_design_identity = descriptor.design_identity
+         else:
+             current_design_identity = descriptor.design_identity

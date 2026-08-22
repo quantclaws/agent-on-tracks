@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -1484,7 +1484,7 @@ def _dispatch_doc_gap_agent(
+                     name: self._path_identity(self._doc_path(name))
+                     for name in DESIGN_DOCS
+                 }
+             self._emit(
+-                "doc_gap.design_dispatched",
++                "doc_gap.design_dispatch_omitted",
+                 audit_payload,
+                 command_id=cid,
+             )

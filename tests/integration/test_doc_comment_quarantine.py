@@ -168,10 +168,15 @@ def test_resume_restores_current_and_discards_stale(trac, event_log, host_repo, 
 
     Constructs the scenario: in-window RESOLVED discussion delta — the
     thread is born closed.  After Prism's adjudication is ingested, the
-    resume decision fires through ``decide_quarantine_resume()``: this
-    scenario holds NO agent changes (empty quarantine), so the record
-    restores trivially with reason ``empty`` (stale/conflict discards are
-    covered by the decide_quarantine_resume unit matrix).
+    resume decision fires through ``decide_quarantine_resume()``: the
+    Shield WRITE's test-file changes ARE agent-attributable non-design
+    changes inside the project's ``[layout.shield]`` writable dirs, so the
+    quarantine is HELD; under ``agent_correction`` no design revision
+    drifts the anchor, so the held content is still current and the record
+    restores with reason ``identity_current`` (stale/conflict discards are
+    covered by the decide_quarantine_resume unit matrix; the design_stale
+    discard of a HELD quarantine after a nested Archer revision is covered
+    by test_design_gap_held_artifact_discarded_design_stale_not_committed).
     """
     discussion = "\n\n> **Shield [RESOLVED]:** Resolved discussion for restore test.\n"
     arm_doc_delta(monkeypatch, path=TRACKS_DOC_PLAN, text=discussion)
@@ -197,11 +202,15 @@ def test_resume_restores_current_and_discards_stale(trac, event_log, host_repo, 
             "run_stale",
             "content_conflict",
         ), f"resume reason must come from the closed set, got {e['payload']}"
-    # Deterministic for this scenario: nothing agent-attributable was held,
-    # so the empty quarantine restores trivially (never a stale discard).
+    # Deterministic for this scenario: the held test-file content is still
+    # current under agent_correction (no design revision), so the held
+    # quarantine restores — never a stale discard (AC-FR0236-04).
     assert any(
-        e["payload"].get("reason") == "empty" for e in restored
-    ), "an empty quarantine must restore with reason=empty (AC-FR0236-04)"
+        e["payload"].get("reason") in ("empty", "identity_current") for e in restored
+    ), (
+        "a current held (or empty) quarantine must restore, never a stale "
+        "discard (AC-FR0236-04)"
+    )
 
 
 @pytest.mark.integration
