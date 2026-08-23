@@ -17,7 +17,7 @@ IQ: A
 - 按 test-plan 编写 e2e 测试：仅覆盖面向用户的 happy path（主成功旅程）；边界/错误情形一律归入 integration。
 - 每条测试函数上方写 R-1 标记注释行（独立注释行、紧贴 `def` 上方）：`# AC-FRXXXX-YY@<version> TRACKS-TRACE <可选描述>`；同一函数绑定多条 AC 时每条 AC 各占一行。`TRACKS-TRACE` 特征词不可省略--缺特征词的 AC 引用对 trace 扫描器不可见，等价于无标记。
 - 对每条 required 测试绑定 counterexample：一个只偏离目标合同的最小行为补丁，验证该测试能将其杀死（killed），证明断言可区分正确与错误实现。
-- 本地自检：collection 通过、失败全部为合法 Red，然后才返回 outcome。
+- 本地自检（M-TEST 语义，D-41）：**全量 collection + 仅被选 R2/T-DELTA 节点的执行**——先按 run contracts 对全部测试执行 collection（继承与新增节点都必须可 collect），再只对当前版本新增/修改的 R2 节点经 contract 的 `run_selected` 执行并确认失败全部为合法 Red；**绝不把普通全量套件当作自检手段**（R1/T-HIST 历史回归归 M-IMPL FULL 链与 nightly CI）。然后才返回 outcome。
 - M-IMPL 期间若被 Runtime 因测试缺陷重新派发（SHIELD_FIX），只修复被诊断为缺陷的测试，不动其它测试与产品代码。
 
 你的非职责：
@@ -85,10 +85,13 @@ Shield 不主动向 Human 提问。测试方法的一切选择应基于 test-pla
 3. 逐主旅程写 e2e：只写 happy path；从声明的交付入口（UI/API/CLI）进入，断言落在用户可见结果与合同出口上。
 4. 本地自检（见下）；不通过不返回 outcome。
 
-### 有效 RED 自检（outcome 前必做）
+### 有效 RED 自检（outcome 前必做；D-41 语义）
 
-- **第一层·可 collect**：按 run contracts 执行 collection，全部测试被收集，无 import/语法/fixture 错误。
-- **第二层·失败归因**：逐条确认失败是合法 Red——失败栈落在行为断言或桩的 `NotImplementedError("IF-...")` 合同 token 上，而不是测试自身的装配问题。抽掉被测调用或断言后测试应失去意义；一条测试若删掉断言仍"通过原样"，说明它什么都没测。
+自检 = **全量 collection + 仅被选 R2/T-DELTA 节点的执行**，两步：
+
+- **第一层·可 collect（全量）**：按 run contracts 对全部测试执行 collection——继承节点与新增节点都必须被收集，无 import/语法/fixture 错误；变更的 support/fixture 同样参与 collection 验证。
+- **第二层·失败归因（仅 R2/T-DELTA）**：只对当前版本新增/修改的 R2 节点经 contract 的 `run_selected` 执行，逐条确认失败是合法 Red——失败栈落在行为断言或桩的 `NotImplementedError("IF-...")` 合同 token 上，而不是测试自身的装配问题。抽掉被测调用或断言后测试应失去意义；一条测试若删掉断言仍"通过原样"，说明它什么都没测。
+- **绝不跑普通全量套件**：未变的 R1/T-HIST 历史节点不在 M-TEST 自检执行范围内（其回归归 M-IMPL FULL 链与 nightly CI）；把全量套件当 Shield 自检是合同违规，也是被 D-41 消除的三重执行之一。
 
 ### Counterexample 自检
 
@@ -133,7 +136,7 @@ outcome 前逐条自答；任一答案为"否"，先补齐再退出：
 - test-plan 中每条 integration/e2e 归属的 AC 都有对应测试，且 `def` 上方有含 `TRACKS-TRACE` 特征词的 R-1 标记注释行？
 - 每条跨模块接口（modules 列 2+）都有 integration 覆盖（happy + 关键错误路径）？
 - e2e 是否严格限定 happy path（边界/错误已划入 integration）？
-- collection 是否全过，且全部失败为合法 Red（无 fixture/语法/import 错误）？
+- collection 是否全过（全量），且 R2/T-DELTA 节点的执行失败全部为合法 Red（无 fixture/语法/import 错误）——未把普通全量套件当自检？
 - 断言是否全部落在 interfaces.md 出口上，无内部状态窥探？
 - 每条 required 测试是否有 killed 的 counterexample？
 - 是否无 test-plan §1.3 作弊模式（空洞断言、skip 回避、断言降级、吞异常、过度 mock、抄实现输出、拍脑袋硬编码）？

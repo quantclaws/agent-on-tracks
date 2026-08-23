@@ -581,6 +581,16 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         """Write a demo host test execution contract at
         ``.tracks/projects/project.toml`` (v0.4: pytest framework).
 
+        D-41 atomic schema slice (interfaces §1m/§1n): flat ``[unit]`` /
+        ``[integration]`` / ``[e2e]`` sections each declare collect/run/
+        run_selected, every run/run_selected template embeds ``{result}``
+        exactly once (run_selected also ``{nodes}``), and the optional-layer
+        ``[nightly]`` contract declares the scheduled FULL regression. The
+        worker/dist concurrency flags and the ``--junitxml={result}`` result
+        flag are embedded in the command strings (Archer/machine-contract
+        owned); Runtime only substitutes the declared placeholders and never
+        injects flags itself.
+
         Declares non-empty ``[layout.devon]``/``[layout.shield]`` writable
         lists (FR-0120): the M-DESIGN EXIT gate (validate_layout) fails the
         architecture.md verdict when the layout contract is missing, so the
@@ -593,19 +603,31 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         ``tests/e2e_live/``, ``tests/assets/``, ``tests/counterexamples/``)."""
         toml_path = paths.project_toml_path(paths.tracks_home(self.repo))
         toml_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def section(name: str) -> str:
+            return (
+                f"[{name}]\n"
+                'framework = "pytest"\n'
+                f'paths = ["tests/{name}/"]\n'
+                f"collect = \".venv/bin/python -m pytest --collect-only -q tests/{name}/\"\n"
+                f"run = \".venv/bin/python -m pytest tests/{name}/ --tb=short -q "
+                '--junitxml={result}"\n'
+                "run_selected = \".venv/bin/python -m pytest {nodes} --tb=short -q "
+                '--junitxml={result}"\n'
+                'cwd = "."\n\n'
+            )
+
         toml_path.write_text(
-            "[integration]\n"
-            'framework = "pytest"\n'
-            'paths = ["tests/integration/"]\n'
-            'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-            'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
-            'cwd = "."\n\n'
-            "[e2e]\n"
-            'framework = "pytest"\n'
-            'paths = ["tests/e2e/"]\n'
-            'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
-            'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
-            'cwd = "."\n\n'
+            section("unit")
+            + section("integration")
+            + section("e2e")
+            + "[nightly]\n"
+            + 'schedule = "0 3 * * *"\n'
+            + 'workflow = ".github/workflows/nightly.yml"\n'
+            + 'job = "nightly-regression"\n'
+            + 'layers = ["unit", "integration", "e2e"]\n'
+            + "purpose = \"current FULL suite (R1+R2) regression; result fetch future; "
+            'not a local gate"\n\n'
             "[layout]\n\n"
             "[layout.devon]\n"
             'writable = ["tracks/", "tests/unit/"]\n\n'
@@ -614,6 +636,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             '"tests/assets/", "tests/counterexamples/"]\n',
             encoding="utf-8",
         )
+        # Review-1 pairing: a declared layer's collect command must see a
+        # COLLECTABLE path. A fresh fixture host repo has no tests/ tree, so
+        # pytest would exit rc=4 (file or directory not found) -- a broken
+        # declaration that fails M-TEST entry closed -- instead of the legal
+        # rc=5 empty layer. Materialize each declared layer directory with
+        # the contract itself (git does not track empty dirs, but the
+        # working-tree presence is what collect consumes).
+        for name in ("unit", "integration", "e2e"):
+            (self.repo / "tests" / name).mkdir(parents=True, exist_ok=True)
 
     def _reach_entries_supported(self) -> bool:
         """Reach entrypoint declarations are an M-IMPL (v0.5) artifact of the
@@ -664,23 +695,25 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
     def _ac_coverage(self, token: str) -> str:
         """BS-06 section: every acceptance AC with a layer attribution.
 
-        The ``test`` cell carries the full repo-relative path
-        ``tests/unit/test_{slug}.py`` — the same path Fake Archer PLANNING
-        writes into each task's ``test_refs`` (FR-0210: test_refs must trace
-        back to test-plan §8)."""
+        The ``test`` cell carries the full repo-relative path in its declared
+        integration/e2e layer. D-41 keeps task unit RED refs under Runtime R
+        ownership; they are not inferred from §8."""
         acc = self._design_vdir() / "acceptance.md"
         acs = _ACC_ITEM.findall(acc.read_text(encoding="utf-8")) if acc.exists() else []
         if token == "trace_orphan":
             acs = acs[:-1]
-        rows = "\n".join(
-            f"| {ac_id} | {SHIELD_LAYERS[i % len(SHIELD_LAYERS)]} | "
-            f"tests/unit/test_{_ac_slug(ac_id)}.py "
-            f"| IF-MTEST-001 |"
-            for i, ac_id in enumerate(acs)
-        )
+        rows = []
+        for i, ac_id in enumerate(acs):
+            layer = SHIELD_LAYERS[i % len(SHIELD_LAYERS)]
+            rows.append(
+                f"| {ac_id} | {layer} | tests/{layer}/test_{_ac_slug(ac_id)}.py "
+                "| IF-MTEST-001 |"
+            )
         return (
             "\n## 8. AC Coverage\n\n"
-            "| AC id | layer | test | IF |\n|---|---|---|---|\n" + rows + "\n"
+            "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+            + "\n".join(rows)
+            + "\n"
         )
 
     def _revise_design(self, token: str, scaffold: list[dict] | None = None) -> Path:
@@ -991,6 +1024,66 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         }
 
     def _devon_refactor(self, assignment: dict, token: str) -> dict:
+        if token == "lie_no_change":
+            production_path, error = self._devon_production_path(assignment)
+            if error is not None:
+                return self._devon_contract_failure(error)
+            existing, error = self._devon_existing_text(production_path)
+            if error is not None:
+                return self._devon_contract_failure(error)
+            target = self._repo_root() / production_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                append_text(existing, "# undeclared refactor drift\n"),
+                encoding="utf-8",
+            )
+            reason = "no authorized behavior-preserving refactor is required"
+            summary = f"pass: {reason}"
+            evidence = self._devon_evidence(
+                assignment,
+                "refactor",
+                [],
+                self._devon_commands(assignment, "", "pass", summary),
+                [{"status": "pass", "classification": "no_change", "output_summary": summary}],
+                "no-change",
+                list(assignment["if_ids"]),
+                reason,
+            )
+            return {
+                "status": "done",
+                "artifact_ref": None,
+                "self_report": "fake Devon lied about an undeclared refactor change",
+                **evidence,
+            }
+        if token == "change":
+            production_path, error = self._devon_production_path(assignment)
+            if error is not None:
+                return self._devon_contract_failure(error)
+            existing, error = self._devon_existing_text(production_path)
+            if error is not None:
+                return self._devon_contract_failure(error)
+            updated = append_text(existing, "# behavior-preserving refactor\n")
+            patch = unified_patch(production_path, existing, updated)
+            target = self._repo_root() / production_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(updated, encoding="utf-8")
+            summary = "pass: behavior-preserving refactor"
+            evidence = self._devon_evidence(
+                assignment,
+                "refactor",
+                [production_path],
+                self._devon_commands(assignment, production_path, "pass", summary),
+                [{"status": "pass", "classification": "refactor", "output_summary": summary}],
+                patch,
+                list(assignment["if_ids"]),
+            )
+            return {
+                "status": "done",
+                "artifact_ref": None,
+                "diff_ref": patch,
+                "self_report": "fake Devon refactor changed implementation shape",
+                **evidence,
+            }
         reason = "no authorized behavior-preserving refactor is required"
         summary = f"pass: {reason}"
         evidence = self._devon_evidence(
@@ -1187,7 +1280,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
                     "ac_refs": [ac_id],
                     "fr_refs": [requirement_ref(ac_id)],
                     "if_ids": [if_id],
-                    "test_refs": [f"tests/unit/test_{slug}.py::test_{slug}"],
+                    "test_refs": [
+                        f"tests/unit/test_{slug}.py::test_devon_behavioral_contract"
+                    ],
                     "scope_boundary": f"tracks/impl/{slug}.py, tests/unit/test_{slug}.py",
                     "depends_on": [],
                     "batch": "1",

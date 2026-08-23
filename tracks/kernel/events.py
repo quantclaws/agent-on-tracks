@@ -53,6 +53,15 @@ EVENT_TYPES = (
     "test.collected",
     "red.validated",
     "test.committed",
+    # v0.6 R6/D-41 selection semantics (interfaces §1a/§1j): M-TEST entry
+    # captures the pre-WRITE R1 snapshot; gate handlers record selections.
+    "test.baseline_captured",
+    "test.selected",
+    "evidence.reused",
+    "evidence.staled",
+    "full.executed",
+    "ledger.opened",
+    "ledger.transitioned",
     # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
     # capture -> validate -> independent checkpoint -> publish result/verdict.
     "result.submitted",
@@ -136,6 +145,8 @@ COMMAND_KINDS = (
     "run_tests",
     "check_trace",
     "commit_tests",
+    # v0.6 R6/D-41 (interfaces §1j): M-TEST entry pre-WRITE R1 snapshot capture.
+    "capture_baseline",
     # v0.5 ResultCheckpoint pipeline (batch 1): validate -> checkpoint -> publish.
     "validate_result",
     "checkpoint_result",

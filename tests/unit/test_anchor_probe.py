@@ -57,7 +57,8 @@ def _stub_repo(tmp_path: Path, script: str) -> Path:
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
         'collect = "python3 probe_stub.py --collect"\n'
-        'run = "python3 probe_stub.py"\n'
+        'run = "python3 probe_stub.py --junitxml={result}"\n'
+        'run_selected = "python3 probe_stub.py {nodes} --junitxml={result}"\n'
         'cwd = "."\n',
         encoding="utf-8",
     )

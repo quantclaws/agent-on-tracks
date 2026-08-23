@@ -86,12 +86,33 @@ def write_project_layout(
     path = host_repo / ".tracks" / "projects" / "project.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
+        "[unit]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/unit/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"\n'
+        'run = ".venv/bin/python -m pytest tests/unit/ --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --junitxml={result}"\n'
+        'cwd = "."\n\n'
         "[integration]\n"
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
         'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
+        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
         'cwd = "."\n\n'
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+        'run = ".venv/bin/python -m pytest tests/e2e/ --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[nightly]\n"
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "current FULL suite; not a local gate"\n\n'
         "[layout]\n\n"
         "[layout.devon]\n"
         f"writable = {list(devon)!r}\n\n"

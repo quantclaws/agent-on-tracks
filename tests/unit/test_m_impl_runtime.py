@@ -50,6 +50,7 @@ from tracks.executor.m_impl_runtime import (
 )
 from tracks.executor.rgr import (
     create_green_commit,
+    create_red_ref,
     red_base_sha,
 )
 from tracks.executor.worktree import (
@@ -67,15 +68,33 @@ def _repo(tmp_path: Path) -> Path:
 
 
 def _contract(repo: Path) -> None:
+    """Current atomic project contract (D-41): ``-q`` collect output is the
+    nodeid-per-line inventory SELECT_TASK parses, and run_selected expands
+    {nodes}/{result} for the per-task selected executions."""
     contract = paths.project_toml_path(paths.tracks_home(repo))
     contract.parent.mkdir(parents=True, exist_ok=True)
     contract.write_text(
         "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
-        "collect='pytest --collect-only tests/integration'\n"
-        "run='pytest tests/integration'\ncwd='.'\n\n"
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/integration/'\n"
+        "run='.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
         "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
-        "collect='pytest --collect-only tests/e2e'\n"
-        "run='pytest tests/e2e'\ncwd='.'\n",
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/e2e/'\n"
+        "run='.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
+        "[unit]\nframework='pytest'\npaths=['tests/unit/']\n"
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/unit/'\n"
+        "run='.venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
+        "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
+        "job='nightly-regression'\nlayers=['unit', 'integration', 'e2e']\n"
+        "purpose='scheduled FULL-suite regression'\n",
         encoding="utf-8",
     )
     (repo / "tests" / "integration").mkdir(parents=True)
@@ -634,12 +653,21 @@ def _impl_only_started_store(repo: Path, task: dict) -> Store:
         parents=True, exist_ok=True
     )
     paths.project_toml_path(paths.tracks_home(repo)).write_text(
+        "[unit]\nframework='pytest'\npaths=['tests/unit/']\n"
+        "collect='pytest --collect-only tests/unit'\n"
+        "run='pytest tests/unit --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
         "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
         "collect='pytest --collect-only tests/integration'\n"
-        "run='pytest tests/integration'\ncwd='.'\n\n"
+        "run='pytest tests/integration --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
         "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
         "collect='pytest --collect-only tests/e2e'\n"
-        "run='pytest tests/e2e'\ncwd='.'\n\n"
+        "run='pytest tests/e2e --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
+        "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
+        "job='nightly-regression'\nlayers=['unit', 'integration', 'e2e']\n"
+        "purpose='scheduled FULL-suite regression'\n\n"
         "[layout]\n\n"
         "[layout.devon]\nwritable=['tracks/', 'tests/unit/']\n",
         encoding="utf-8",
@@ -757,6 +785,8 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     green = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
     assert len(green) == 1
     green_payload = green[0].payload
+    # D-41: green.committed carries the GREEN_GATE selection evidence binding.
+    # This flow never ran a passing GREEN_GATE, so both bind empty.
     assert green_payload == {
         "g_sha": green_payload["g_sha"],
         "task_id": task["task_id"],
@@ -770,6 +800,8 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
             "Tracks-Issue": "1",
             "Tracks-AC": "AC-FR0001-01,FR-0001",
         },
+        "evidence_ids": [],
+        "identity_basis": {},
     }
     message = _git(repo, "log", "--format=%B", "-1", green_payload["g_sha"])
     assert "Tracks-Attempt: 1" in message
@@ -984,9 +1016,10 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
 # The Runtime — not the Agent — executes assigned commands in a Runtime-selected
 # worktree, derives candidate changed paths from observed git/filesystem state,
 # and its observed verdict is what routes the kernel. Agent-reported
-# commands/results/changed_paths remain audit-only. Each test below is RED:
-# the production Runtime gate does not yet execute/observe anything, so the
-# assertions land on the missing runtime-authority contract token.
+# commands/results/changed_paths remain audit-only. Under D-41 Slice B the
+# Runtime verdict binds a per-task SELECT_TASK execution: failed selections
+# fail closed with actionable JSON evidence (selection_id/outcomes_ref/
+# failed_nodes), never legacy full-unit argv/hash tokens.
 # ---------------------------------------------------------------------------
 
 _OUTSIDE_MANIFEST_DIFF = (
@@ -1007,14 +1040,49 @@ _SECRET_LINE_DIFF = (
     '+SECRET = "sk-0123456789abcdef0123456789abcdef01234567"\n'
 )
 
-_RUNTIME_EVIDENCE_TOKENS = (
-    "argv",
-    "cwd",
-    "exit_code",
-    "classification",
-    "stdout_sha",
-    "stderr_sha",
-)
+
+def _immutable_r_checkpoint(repo: Path, task: dict, *, attempt: int = 1) -> dict:
+    """Create a real immutable R commit containing the task's exact unit node
+    (``tests/unit/test_app.py::test_app``, via the canonical RGR_RED_DIFF) and
+    return its ``red.checkpointed`` payload. D-41: SELECT_TASK expands
+    test_refs against R, so a fake sha would fail closed before any gate."""
+    ref = create_red_ref(
+        repo=str(repo),
+        run_id="RUN",
+        task_id=task["task_id"],
+        attempt=attempt,
+        test_diff=RGR_RED_DIFF,
+        base_sha=_git(repo, "rev-parse", "HEAD"),
+    )
+    return {
+        "ref": ref.ref,
+        "r_sha": ref.sha,
+        "task_id": task["task_id"],
+        "attempt": attempt,
+    }
+
+
+def _write_if_mapped_integration_test(root) -> Path:
+    """Materialize the integration node the shared test-plan §8 row maps to
+    IF-IMPL-001 (target ``tests/integration/test_app.py``); SELECT_TASK unions
+    it into the selected set and executes it through contract run_selected."""
+    target = Path(root) / "tests" / "integration" / "test_app.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_app():\n    assert True\n", encoding="utf-8")
+    return target
+
+
+def _selection_failure_evidence(payload: dict) -> dict:
+    """Parse the actionable TaskSelectionFailure evidence JSON: the failed
+    GREEN verdict must carry selection_id/outcomes_ref/failed_nodes."""
+    evidence = json.loads(payload.get("evidence") or "{}")
+    assert {"selection_id", "outcomes_ref", "failed_nodes"} <= set(evidence), (
+        f"selected-test failure evidence lacks actionable identity fields: {evidence}"
+    )
+    assert evidence["selection_id"]
+    assert evidence["outcomes_ref"].startswith(".tracks/runtime/blobs/")
+    assert evidence["failed_nodes"], "a failed selection must name its failed nodes"
+    return evidence
 
 
 def _gate_manifest(task, *, unit_commands=None):
@@ -1057,10 +1125,10 @@ def _write_failing_unit_test(repo: Path, *, passes: bool = False) -> Path:
 
 def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
     """Contract 1: a well-formed Devon GREEN outcome self-reporting passing
-    commands/results/manifest cannot cause a GREEN pass when the Runtime
-    re-execution of the assigned unit command exits 1. The Runtime verdict
-    must carry observed argv/cwd/exit_code/classification/output hashes and
-    no G is created."""
+    commands/results/manifest cannot cause a GREEN pass when the Runtime's
+    SELECT_TASK re-execution of the task-selected unit node exits 1 (D-41).
+    The verdict must be impl_defect carrying the actionable JSON evidence
+    (selection_id/outcomes_ref/failed_nodes) and no G is created."""
     repo = _repo(tmp_path)
     _contract(repo)
     store, task = _started_task_store(repo)
@@ -1070,19 +1138,16 @@ def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
         "task.started",
         {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
     )
-    store.append(
-        "RUN",
-        "v0.5",
-        "red.checkpointed",
-        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
-    )
+    red = _immutable_r_checkpoint(repo, task)
+    store.append("RUN", "v0.5", "red.checkpointed", red)
     store.append(
         "RUN",
         "v0.5",
         "outcome.received",
-        _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"),
+        _green_outcome(task, red["r_sha"], agent_cwd="/agent/claimed/cwd"),
     )
     _write_failing_unit_test(repo)
+    _write_if_mapped_integration_test(repo)
     head_before = _git(repo, "rev-parse", "HEAD")
 
     executor = _executor(repo, store)
@@ -1094,12 +1159,13 @@ def test_green_gate_fails_closed_on_runtime_unit_command_failure(tmp_path):
     )
 
     fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
-    assert fails, "Runtime unit command exits 1 -> GREEN must fail closed"
-    assert fails[-1].payload["check"] == "impl_defect"
-    evidence = fails[-1].payload.get("evidence") or ""
-    assert isinstance(evidence, str) and evidence
-    for token in _RUNTIME_EVIDENCE_TOKENS:
-        assert token in evidence, f"runtime evidence missing observed {token}"
+    assert fails, "Runtime selected unit node exits 1 -> GREEN must fail closed"
+    last = fails[-1].payload
+    assert last["check"] == "impl_defect"
+    evidence = _selection_failure_evidence(last)
+    assert [node["node"] for node in evidence["failed_nodes"]] == [
+        "tests/unit/test_app.py::test_app"
+    ]
     assert _git(repo, "rev-parse", "HEAD") == head_before, "no G may be created"
     assert not any(ev.type == "green.committed" for ev in store.events("RUN"))
 
@@ -1120,14 +1186,10 @@ def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
         "task.started",
         {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
     )
-    store.append(
-        "RUN",
-        "v0.5",
-        "red.checkpointed",
-        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
-    )
+    red = _immutable_r_checkpoint(repo, task)
+    store.append("RUN", "v0.5", "red.checkpointed", red)
     no_change_outcome = _structured_outcome(
-        "green", [], r_identity="1" * 40, diff_ref=RGR_GREEN_DIFF
+        "green", [], r_identity=red["r_sha"], diff_ref=RGR_GREEN_DIFF
     )
     no_change_outcome["no_change_reason"] = (
         "attempt 1 implementation already on disk; resubmit unchanged"
@@ -1138,6 +1200,7 @@ def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
     no_change_outcome["results"] = [{"classification": "pass"}]
     store.append("RUN", "v0.5", "outcome.received", no_change_outcome)
     _write_failing_unit_test(repo)
+    _write_if_mapped_integration_test(repo)
 
     executor = _executor(repo, store)
     executor._do_run_task_gates(
@@ -1154,9 +1217,10 @@ def test_green_gate_no_change_with_reason_does_not_short_circuit(tmp_path):
     assert "no changed paths" not in last.get("reason", ""), (
         "no-change GREEN with reason must not hit the stale false-kill"
     )
-    assert "exited" in last.get("reason", ""), (
-        "gate must proceed to Runtime unit re-execution and fail there"
-    )
+    evidence = _selection_failure_evidence(last)
+    assert [node["node"] for node in evidence["failed_nodes"]] == [
+        "tests/unit/test_app.py::test_app"
+    ], "the gate must proceed to the SELECT_TASK re-execution and fail there"
 
 
 def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_path):
@@ -1167,6 +1231,7 @@ def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_pat
     tracks/app.py) is no longer misjudged as task cheating: the gate proceeds
     to the Runtime unit re-execution instead of emitting `regression`."""
     repo = _repo(tmp_path)
+    _contract(repo)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
     store.append(
@@ -1195,6 +1260,7 @@ def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_pat
     (repo / "tracks").mkdir(parents=True, exist_ok=True)
     (repo / "tracks" / "app.py").write_text('IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8")
     _write_failing_unit_test(repo, passes=True)
+    _write_if_mapped_integration_test(repo)
 
     executor._do_run_task_gates(
         Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
@@ -1338,9 +1404,11 @@ def test_green_gate_not_regression_on_tests_added_after_r(tmp_path):
     the tree differs from r_sha in tests/, but Devon's changed_paths contains
     no R-frozen tests/ path."""
     repo = _repo(tmp_path)
+    _contract(repo)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
     _green_gate_with_r_checkpoint(repo, store, executor, changed_paths=["tracks/app.py"])
+    _write_if_mapped_integration_test(repo)
     (repo / "tests" / "unit" / "test_ops_fix.py").write_text(
         "def test_ops_fix():\n    assert True\n", encoding="utf-8"
     )
@@ -1362,6 +1430,7 @@ def test_green_gate_not_regression_when_reported_test_not_in_r(tmp_path):
     later adjusted) is outside the frozen R set; GREEN_GATE only protects the
     R-frozen tests, later adjustments are governed by test_defect/SHIELD_FIX."""
     repo = _repo(tmp_path)
+    _contract(repo)
     task = _task()
     manifest = {
         "task_id": task["task_id"],
@@ -1406,10 +1475,13 @@ def test_green_gate_not_regression_when_reported_test_not_in_r(tmp_path):
     assert passed and passed[-1].payload["check"] == "green"
 
 
-def test_green_gate_regression_skipped_when_r_missing(tmp_path):
-    """B39: the regression check keeps skipping when r_sha is absent or all
-    zeroes (no frozen R set to protect); the gate proceeds to lint/pass."""
+def test_green_gate_ambiguous_r_identity_fails_closed_as_contract_error(tmp_path):
+    """D-41: an absent/all-zero R identity is ambiguity, not a skip — the
+    SELECT_TASK baseline cannot be trusted, so the gate fails closed with
+    contract_error (routed to DIAGNOSE) instead of skipping the regression
+    check and passing."""
     repo = _repo(tmp_path)
+    _contract(repo)
     store, task = _started_task_store(repo)
     store.append(
         "RUN",
@@ -1437,43 +1509,46 @@ def test_green_gate_regression_skipped_when_r_missing(tmp_path):
     )
 
     fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
-    assert not fails, "missing r_sha must keep skipping the regression check"
+    assert fails, "ambiguous all-zero R identity must fail closed"
+    last = fails[-1].payload
+    assert last["check"] == "contract_error"
+    assert "SELECT_TASK failed closed" in last["reason"]
     passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
-    assert passed and passed[-1].payload["check"] == "green"
+    assert not passed, "an ambiguous R identity must never pass GREEN"
+    assert store.state("RUN").substate == "DIAGNOSE"
 
 
-def test_refactor_no_change_still_reruns_authoritative_green_gate(tmp_path):
-    """Contract 3: a REFACTOR `no_change` outcome must still rerun the same
-    authoritative Green gate plan; a real failing rerun can never emit
-    refactor.no_change / pass or advance."""
+def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_path):
+    """D-41 supersession of Contract 3: REFACTOR `no_change` no longer blind-
+    reruns the Green gate — it reuses the persisted green.committed
+    evidence/identity. Without that persisted evidence the reuse state is
+    unresolvable, so the gate fails closed with contract_error and routes to
+    DIAGNOSE instead of emitting refactor.no_change or re-executing anything."""
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
-    base = _git(repo, "rev-parse", "HEAD")
-    gate = create_gate_worktree(str(repo), base, "", "", "RUN", task["task_id"])
-    try:
-        _write_failing_unit_test(Path(gate.path))
-        outcome = _structured_outcome("refactor", [], r_identity="1" * 40)
-        outcome["no_change_reason"] = "no improvements found"
-        store.append("RUN", "v0.5", "outcome.received", outcome)
-        executor = _executor(repo, store)
-        before = len(list(store.events("RUN")))
-        executor._do_run_refactor_gate(
-            Command("run_refactor_gate", {"stage": "M-IMPL"}, command_id="C-RF"),
-            store.state("RUN"),
-            None,
-            False,
-        )
-        new_events = list(store.events("RUN"))[before:]
-        assert not any(ev.type == "refactor.no_change" for ev in new_events), (
-            "no_change is emitted only after the authoritative Green gate rerun passes"
-        )
-        fails = [ev for ev in new_events if ev.type == "verdict.failed"]
-        assert fails, "a real failing rerun must fail closed"
-        assert store.state("RUN").substate == "REFACTOR", (
-            "a failing rerun must not advance to TASK_REVIEW"
-        )
-    finally:
-        cleanup_worktree(gate)
+    outcome = _structured_outcome("refactor", [], r_identity="1" * 40)
+    outcome["no_change_reason"] = "no improvements found"
+    store.append("RUN", "v0.5", "outcome.received", outcome)
+    executor = _executor(repo, store)
+    executor._do_run_refactor_gate(
+        Command("run_refactor_gate", {"stage": "M-IMPL"}, command_id="C-RF"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    events = list(store.events("RUN"))
+    assert not any(ev.type == "refactor.no_change" for ev in events), (
+        "without persisted green.committed evidence/identity no refactor.no_change "
+        "may be emitted"
+    )
+    fails = [ev for ev in events if ev.type == "verdict.failed"]
+    assert fails, "unresolvable green reuse state must fail closed"
+    assert fails[-1].payload["check"] == "contract_error"
+    assert "REFACTOR SELECT_TASK failed closed" in fails[-1].payload["reason"]
+    assert not any(ev.type == "test.selected" for ev in events), (
+        "the gate must not re-execute any selection without persisted evidence"
+    )
+    assert store.state("RUN").substate == "DIAGNOSE"
 
 
 _TASK_REVIEW_FLAWS = (
@@ -1594,8 +1669,13 @@ def test_task_review_is_not_unconditional(tmp_path, flaw):
 def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
     """Contract 5: gate commands run in the Runtime-selected gate/candidate
     worktree cwd — never the cwd an Agent reports. Agent-reported commands and
-    results stay audit-only."""
+    results stay audit-only. Under D-41 the proof is behavioral: the selected
+    unit node exists ONLY in the prepared Runtime worktree, so an impl_defect
+    verdict whose failed_nodes name that node proves the SELECT_TASK execution
+    ran there (a main-repo fallback would fail closed as contract_error with
+    an empty inventory)."""
     repo = _repo(tmp_path)
+    _contract(repo)
     store, task = _started_task_store(repo)
     store.append(
         "RUN",
@@ -1603,22 +1683,19 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
         "task.started",
         {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
     )
-    store.append(
-        "RUN",
-        "v0.5",
-        "red.checkpointed",
-        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
-    )
+    red = _immutable_r_checkpoint(repo, task)
+    store.append("RUN", "v0.5", "red.checkpointed", red)
     store.append(
         "RUN",
         "v0.5",
         "outcome.received",
-        _green_outcome(task, "1" * 40, agent_cwd="/agent/claimed/cwd"),
+        _green_outcome(task, red["r_sha"], agent_cwd="/agent/claimed/cwd"),
     )
     base = _git(repo, "rev-parse", "HEAD")
     gate = create_gate_worktree(str(repo), base, "", "", "RUN", task["task_id"])
     try:
         _write_failing_unit_test(Path(gate.path))
+        _write_if_mapped_integration_test(Path(gate.path))
         executor = _executor(repo, store)
         executor._do_run_task_gates(
             Command("run_task_gates", {"gate": "GREEN_GATE"}, command_id="C-GATE"),
@@ -1628,12 +1705,28 @@ def test_gate_commands_run_in_runtime_selected_worktree_cwd(tmp_path):
         )
         fails = [ev for ev in store.events("RUN") if ev.type == "verdict.failed"]
         assert fails, "the Runtime gate must execute and fail closed"
-        assert fails[-1].payload["check"] == "impl_defect"
-        evidence = fails[-1].payload.get("evidence") or ""
-        gate_cwd = str(Path(gate.path).resolve())
-        assert gate_cwd in evidence, "gate commands must run in the Runtime-selected worktree cwd"
-        assert "/agent/claimed/cwd" not in evidence, (
-            "agent-reported cwd must never become the execution cwd"
+        last = fails[-1].payload
+        assert last["check"] == "impl_defect"
+        evidence = _selection_failure_evidence(last)
+        assert [node["node"] for node in evidence["failed_nodes"]] == [
+            "tests/unit/test_app.py::test_app"
+        ], (
+            "the selected node failed where only the prepared Runtime worktree "
+            "has it - the gate ran in that worktree"
+        )
+        audit_outcomes = [
+            ev.payload for ev in store.events("RUN") if ev.type == "outcome.received"
+        ]
+        assert "/agent/claimed/cwd" in json.dumps(audit_outcomes), (
+            "agent-reported cwd should remain preserved as audit-only evidence"
+        )
+        runtime_evidence = [
+            ev.payload
+            for ev in store.events("RUN")
+            if ev.type in ("test.selected", "verdict.failed", "verdict.passed")
+        ]
+        assert "/agent/claimed/cwd" not in json.dumps(runtime_evidence), (
+            "agent-reported cwd must never become Runtime execution evidence"
         )
     finally:
         cleanup_worktree(gate)
@@ -2193,19 +2286,16 @@ def test_green_gate_lint_findings_fail_with_check_lint(tmp_path):
         "task.started",
         {"task_id": task["task_id"], "task": task, "manifest": _gate_manifest(task)},
     )
-    store.append(
-        "RUN",
-        "v0.5",
-        "red.checkpointed",
-        {"r_sha": "1" * 40, "task_id": task["task_id"], "attempt": 1},
-    )
+    red = _immutable_r_checkpoint(repo, task)
+    store.append("RUN", "v0.5", "red.checkpointed", red)
     store.append(
         "RUN",
         "v0.5",
         "outcome.received",
-        _green_outcome(task, "1" * 40),
+        _green_outcome(task, red["r_sha"]),
     )
     _write_failing_unit_test(repo, passes=True)
+    _write_if_mapped_integration_test(repo)
     (repo / "tracks").mkdir(parents=True, exist_ok=True)
     (repo / "tracks" / "app.py").write_text(
         'IMPLEMENTED_IF = "IF-IMPL-001"\n', encoding="utf-8"

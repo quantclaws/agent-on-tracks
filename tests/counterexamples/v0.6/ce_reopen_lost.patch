@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -1423,7 +1423,7 @@ class MImplRuntimeMixin:
+             signature = failure.get("failure_signature") or self._full_failure_signature(failure)
+             identity = (failure["node"], signature)
+             prior = identities.get(identity)
+-            if prior == "PROVEN":
++            if False and prior == "PROVEN":  # Counterexample: lose deterministic reopen.
+                 self._emit(
+                     "ledger.transitioned",
+                     {

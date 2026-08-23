@@ -389,40 +389,145 @@ def test_design_payload_passthrough_threads_fields(monkeypatch, tmp_path):
 
 
 def test_run_tests_verdict_carries_findings_and_log_ref(monkeypatch, tmp_path):
-    """B21: invalid Red verdicts must carry per-test findings + a blobs ref
-    to the full logs, or the DIAGNOSE fixer re-derives everything."""
+    """B21: invalid Red verdicts must carry per-node findings + a blobs ref
+    to the full logs, or the DIAGNOSE fixer re-derives everything. D-41 (v6):
+    RED_CHECK selects R2 from the persisted COLLECT classification and reads
+    per-node outcomes from the {result} JUnit records."""
+    import subprocess
+    from pathlib import Path
+    from types import SimpleNamespace
+
     from tracks.executor.executor import Executor
     from tracks.store import Store
 
-    store = Store(tmp_path)
+    # The Runtime home is the host's .tracks dir; runtime blob refs are
+    # repo-relative (".tracks/runtime/blobs/<sha>").
+    ex_repo = tmp_path / "host"
+    ex_repo.mkdir()
+    store = Store(ex_repo / ".tracks")
     emitted = []
     monkeypatch.setattr(
         Executor,
         "_emit",
         lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
     )
+    run_id = "RUN"
+    # Persisted pre-WRITE snapshot + COLLECT classification (two R2 nodes).
+    baseline_ref = store.write_audit_blob(
+        [
+            {
+                "node": "tests/integration/test_a.py::test_x",
+                "layer": "integration",
+                "digest": "d0",
+                "node_digest": "d0",
+            }
+        ]
+    )
+    store.append(
+        run_id,
+        "v0.4",
+        "test.baseline_captured",
+        {
+            "status": "passed",
+            "baseline_id": "b0",
+            "baseline_tree": "t0",
+            "layers": ["unit", "integration", "e2e"],
+            "nodes_count": 1,
+            "empty_baseline": False,
+            "node_digest_blob": f".tracks/runtime/blobs/{baseline_ref}",
+            "errors": [],
+        },
+    )
+    per_node_ref = store.write_audit_blob(
+        [
+            {
+                "node": "tests/integration/test_a.py::test_x",
+                "layer": "integration",
+                "class": "r2",
+            },
+            {
+                "node": "tests/integration/test_a.py::test_collection_broken",
+                "layer": "integration",
+                "class": "r2",
+            },
+        ]
+    )
+    store.append(
+        run_id,
+        "v0.4",
+        "test.collected",
+        {
+            "status": "passed",
+            "collected_count": 2,
+            "inherited_r1": 0,
+            "delta_r2": 2,
+            "removed": 0,
+            "failures": [],
+            "per_node_blob": f".tracks/runtime/blobs/{per_node_ref}",
+            "errors": [],
+        },
+    )
+    # A {result} JUnit record whose identities exactly cover the selection:
+    # one legit assertion failure + one illegit ImportError.
+    junit = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<testsuites><testsuite name="sel" tests="2">\n'
+        '<testcase classname="tests.integration.test_a" name="test_x">'
+        "<failure message=\"AssertionError: assert 1 == 2\">E   assert 1 == 2</failure>"
+        "</testcase>\n"
+        '<testcase classname="tests.integration.test_a" name="test_collection_broken">'
+        "<error message=\"ImportError\">ImportError: No module named 'x'</error>"
+        "</testcase>\n"
+        "</testsuite></testsuites>\n"
+    )
+    # D-41 v6: the Runtime stages a unique writable {result} path per
+    # command/layer and unlinks any stale record before dispatch. The mocked
+    # pytest process therefore writes its JUnit XML to the Runtime-provided
+    # path carried in argv -- never pre-seeds it.
+    junit_path = tmp_path / "selection-result.xml"
+    monkeypatch.setattr(
+        Executor,
+        "_result_staging_path",
+        lambda self, command_id, section: junit_path,
+    )
+    from tracks.executor import executor as executor_module
 
-    def fake_sections(self, cmd, state, section):
-        return [
-            (
-                "tests/integration/test_a.py::test_x",
-                1,
-                "E   assert 1 == 2",
-                "",
+    def _fake_pytest_run(argv, **kwargs):
+        if argv and argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        result_arg = next(arg for arg in argv if arg.endswith(".xml"))
+        Path(result_arg.split("=", 1)[-1]).write_text(junit, encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 1, "", "")
+
+    monkeypatch.setattr(executor_module.subprocess, "run", _fake_pytest_run)
+
+    def _load_contract(repo):
+        return SimpleNamespace(
+            unit=None,
+            e2e=None,
+            integration=SimpleNamespace(
+                run_selected=".venv/bin/python -m pytest {nodes} --junitxml={result}",
+                cwd=".",
             ),
-            ("tests/integration/test_a.py::test_collection_broken", 2, "ImportError", ""),
-        ], None
+            layout=None,
+            lint=None,
+            nightly=None,
+        )
 
-    monkeypatch.setattr(Executor, "_run_contract_sections", fake_sections)
+    monkeypatch.setattr(executor_module, "load_contract", _load_contract)
     monkeypatch.setattr(
         Executor, "_diagnose_classification", lambda self: "test_defect", raising=True
     )
     ex = object.__new__(Executor)
     ex.store = store
+    ex.repo = ex_repo
+    ex.run_id = run_id
 
     class _State:
         stage = "M-TEST"
         current_attempt = 0
+        red_validated = False
+        hotfix_issue = None
 
     class _Cmd:
         command_id = "c1"
@@ -441,6 +546,10 @@ def test_run_tests_verdict_carries_findings_and_log_ref(monkeypatch, tmp_path):
     assert "assert 1 == 2" in blob.read_text(encoding="utf-8")
     reds = [e for e in emitted if e["type"] == "red.validated"]
     assert reds[0]["payload"]["log_ref"] == payload["log_ref"]
+    # D-41: the invalid verdict is bound to the stamped selection identity.
+    selections = [e for e in emitted if e["type"] == "test.selected"]
+    assert selections and selections[0]["payload"]["scope"] == "r2_delta"
+    assert reds[0]["payload"]["selection_id"] == selections[0]["payload"]["selection_id"]
 
 
 def paths_blobs(store):

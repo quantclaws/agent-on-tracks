@@ -138,6 +138,50 @@ def _on_task_completed(s: State, p: dict, ev: EventEnvelope) -> None:
         s.substate = "TASK_DISPATCH"
 
 
+def _on_full_executed(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Project the latest FULL round for replay and exit gating."""
+    s.full_chain_round = p.get("round")
+
+
+def _on_ledger_opened(s: State, p: dict, ev: EventEnvelope) -> None:
+    """A newly opened ledger identity is non-terminal until PROVEN."""
+    s.ledger_rebuilt = True
+    s.ledger_open += 1
+    key = f"{p.get('node', '')}\0{p.get('failure_signature', '')}"
+    s.ledger_entries[key] = {**p, "state": "OPEN"}
+    if p.get("task_id"):
+        s.current_task_id = p.get("task_id")
+        task = p.get("task")
+        s.current_task_metadata = dict(task) if isinstance(task, dict) else None
+        manifest = p.get("manifest")
+        s.current_manifest = dict(manifest) if isinstance(manifest, dict) else None
+        s.r_tree_identity = p.get("r_sha") or None
+
+
+def _on_ledger_transitioned(s: State, p: dict, ev: EventEnvelope) -> None:
+    """Project non-terminal ledger count across the closed transition set."""
+    s.ledger_rebuilt = True
+    before = p.get("from")
+    after = p.get("to")
+    key = f"{p.get('node', '')}\0{p.get('failure_signature', '')}"
+    if key in s.ledger_entries:
+        s.ledger_entries[key] = {**s.ledger_entries[key], **p, "state": after}
+    if before == "PROVEN" and after == "OPEN":
+        s.ledger_open += 1
+    elif before in ("OPEN", "CLASSIFIED", "FIXED", "STALE") and after == "PROVEN":
+        s.ledger_open = max(0, s.ledger_open - 1)
+    if after == "CLASSIFIED" and p.get("task_id"):
+        s.current_task_id = p.get("task_id")
+        task = p.get("task")
+        s.current_task_metadata = dict(task) if isinstance(task, dict) else None
+        manifest = p.get("manifest")
+        s.current_manifest = dict(manifest) if isinstance(manifest, dict) else None
+        s.r_tree_identity = p.get("r_sha") or None
+    if after == "FIXED":
+        s.substate = "ISLAND_GATE_2"
+        _reset_doc(s)
+
+
 # -- M-IMPL outcome / verdict routing ---------------------------------------
 
 
@@ -290,6 +334,8 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         _reset_review(s)
         _consume_attempt(s)
     elif check in ("unknown_attribution", "full_suite"):
+        if check == "full_suite":
+            _focus_open_ledger(s)
         s.substate = "DIAGNOSE"
         _reset_review(s)
     elif check == "island":
@@ -323,6 +369,13 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
         _reset_review(s)
+    elif check == "contract_error":
+        # D-41: an unusable Archer-owned test contract cannot be repaired by
+        # Devon. Route to the existing M-DESIGN rollback without consuming a
+        # semantic implementation attempt.
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = "stub_gap"
+        _reset_review(s)
     elif check == "verification_failed":
         # Runtime acceptance of a verification-only task failed (user ruling
         # 2026-08-15): the pre-implemented contract did not hold. No blind
@@ -347,6 +400,25 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
     else:
         _reset_doc(s)
         _consume_attempt(s)
+
+
+def _focus_open_ledger(s: State) -> None:
+    """Bind DIAGNOSE/fixer dispatches to the next deterministic OPEN identity."""
+    candidates = [
+        entry
+        for _key, entry in sorted(s.ledger_entries.items())
+        if entry.get("state") == "OPEN"
+    ]
+    if not candidates:
+        return
+    entry = candidates[0]
+    if entry.get("task_id"):
+        s.current_task_id = entry.get("task_id")
+        task = entry.get("task")
+        s.current_task_metadata = dict(task) if isinstance(task, dict) else None
+        manifest = entry.get("manifest")
+        s.current_manifest = dict(manifest) if isinstance(manifest, dict) else None
+        s.r_tree_identity = entry.get("r_sha") or None
 
 
 # -- M-IMPL dispatch builders (flow.md §10 / D-29) --------------------------
@@ -700,6 +772,8 @@ def _decide_m_impl_agent(s: State, sub: str) -> Command | None:
 
 def _decide_m_impl_exit(s: State) -> Command | None:
     """EXIT: seal stage (no doc) -> stage.exited -> boundary."""
+    if not s.island_2_passed or s.full_chain_round is None or s.ledger_open:
+        return None
     if not s.stage_exited:
         return Command(kind="write_frontmatter", params={"stage": "M-IMPL"})
     return None

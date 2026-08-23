@@ -213,10 +213,19 @@ def _on_increment_declared(s: State, p: dict) -> None:
     """Reducer: ``increment.declared`` {shield, unit_rows, trace_status}
     (IF-HOTFIX-007 via IF-HOTFIX-002).
 
-    Empty-Shield-increment M-TEST release evidence (FR-0244-04): records the
-    declared unit-layer regression rows as the plan-level closure basis.
+    Empty-Shield-increment M-TEST release evidence (FR-0244-04): projects the
+    explicit unit-only increment fact onto State. Only a shield=empty
+    declaration carrying NONEMPTY unit rows is a real increment (review pin:
+    ``shield=empty`` with zero declared rows carries no increment to release,
+    and the M-TEST empty-R2 bypass consumes exactly this persisted fact --
+    never a bare hotfix issue).
     """
-    # Record the increment declaration on state for projection purposes.
+    if p.get("shield") == "empty" and p.get("unit_rows"):
+        s.increment_declared = {
+            "shield": "empty",
+            "unit_rows": list(p["unit_rows"]),
+            "trace_status": p.get("trace_status", ""),
+        }
     # No substate change — the existing M-TEST EXIT flow handles this.
     s.last_failure = None  # clear any stale failure evidence
 

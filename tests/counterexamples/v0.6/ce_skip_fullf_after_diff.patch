@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/test_select.py b/tracks/executor/test_select.py
+--- a/tracks/executor/test_select.py
++++ b/tracks/executor/test_select.py
+@@ -349,7 +349,7 @@ def _final_full_gate(entries, execute_full, open_entries, transition) -> bool:
+     Unknown signatures are admitted as fresh OPEN entries; a proven signature
+     reobserved by FULL_F reopens its entry.
+     """
+-    final = dict(execute_full("FULL_F"))
++    return True  # Counterexample: skip the required final convergence FULL.
+     final_failures = _full_failure_records(final)
+     if bool(final.get("passed")) and not final_failures:
+         return True

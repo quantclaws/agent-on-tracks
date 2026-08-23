@@ -197,15 +197,40 @@ def test_production_with_entrypoint_remains_reachable(tmp_path):
 def _write_layout_contract(tmp_path, roles):
     """Write a minimal FR-0120 project.toml with the given [layout.*] roles.
 
-    [integration] satisfies load_contract's required test-execution section,
-    so the [layout] part is actually parsed."""
+    The flat [unit]/[integration]/[e2e] sections plus [nightly] satisfy
+    load_contract's required atomic schema, so the [layout] part is actually
+    parsed."""
     lines = [
+        "[unit]",
+        'framework = "pytest"',
+        'paths = ["tests/unit/"]',
+        'collect = "pytest --collect-only tests/unit"',
+        'run = "pytest tests/unit --junitxml={result}"',
+        'run_selected = "pytest {nodes} --junitxml={result}"',
+        'cwd = "."',
+        "",
         "[integration]",
         'framework = "pytest"',
         'paths = ["tests/"]',
         'collect = "pytest --collect-only"',
-        'run = "pytest"',
+        'run = "pytest --junitxml={result}"',
+        'run_selected = "pytest {nodes} --junitxml={result}"',
         'cwd = "."',
+        "",
+        "[e2e]",
+        'framework = "pytest"',
+        'paths = ["tests/e2e/"]',
+        'collect = "pytest --collect-only tests/e2e"',
+        'run = "pytest tests/e2e --junitxml={result}"',
+        'run_selected = "pytest {nodes} --junitxml={result}"',
+        'cwd = "."',
+        "",
+        "[nightly]",
+        'schedule = "0 3 * * *"',
+        'workflow = ".github/workflows/nightly.yml"',
+        'job = "nightly-regression"',
+        'layers = ["unit", "integration", "e2e"]',
+        'purpose = "scheduled FULL-suite regression"',
         "",
     ]
     for role, dirs in roles.items():

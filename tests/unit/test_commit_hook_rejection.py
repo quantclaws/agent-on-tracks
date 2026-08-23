@@ -10,6 +10,8 @@ sub-state and assert the established WRITE redispatch + budget semantics.
 from tests.unit.helpers import seq
 from tests.unit.test_machine_design import _design_author_checkpoint
 from tests.unit.test_machine_m_test import (
+    BASELINE_CAPTURED,
+    CAPTURE_CMD,
     COLLECT_CMD,
     COLLECTED,
     PRISM_DISPATCH,
@@ -250,15 +252,17 @@ def test_exit_seal_commit_failure_does_not_await_review():
 # -- M-TEST (test commit failure) ---------------------------------------------
 
 _M_TEST_PRE_COMMIT = [
+    CAPTURE_CMD,
+    BASELINE_CAPTURED,
     SHIELD_DISPATCH,
     SHIELD_DONE,
     COLLECT_CMD,
     COLLECTED,
+    RUN_CMD,
+    RED_VALID,
     PRISM_DISPATCH,
     PRISM_DONE,
     PRISM_PASS,
-    RUN_CMD,
-    RED_VALID,
     TRACE_CMD,
     TRACE_PASS,
 ]

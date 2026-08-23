@@ -1,0 +1,10 @@
+diff --git a/tracks/kernel/m_impl.py b/tracks/kernel/m_impl.py
+--- a/tracks/kernel/m_impl.py
++++ b/tracks/kernel/m_impl.py
+@@ -772,5 +772,5 @@ def _decide_m_impl_exit(s: State) -> Command | None:
+     """EXIT: seal stage (no doc) -> stage.exited -> boundary."""
+-    if not s.island_2_passed or s.full_chain_round is None or s.ledger_open:
++    if not s.island_2_passed or s.full_chain_round is None:
+         return None
+     if not s.stage_exited:
+         return Command(kind="write_frontmatter", params={"stage": "M-IMPL"})

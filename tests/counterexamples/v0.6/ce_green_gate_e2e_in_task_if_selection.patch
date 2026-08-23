@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -1763,7 +1763,9 @@ class MImplRuntimeMixin:
+             inventories["integration"],
+             task.if_ids,
+         )
+         nodes = select_task(red_nodes, touched, inventories["unit"], task.if_ids, int_index)
++        # Counterexample: SELECT_TASK must never leak e2e into a task gate.
++        nodes = [*nodes, "tests/e2e/test_counterexample.py::test_e2e_leak"]
+         if not nodes:
+             raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
+         return contract, nodes

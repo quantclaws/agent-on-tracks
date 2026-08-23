@@ -36,8 +36,29 @@ def test_devon_audit_allowed_includes_manifest_paths(tmp_path, monkeypatch):
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
         'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
-        'cwd = "."\n'
+        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[unit]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/unit/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"\n'
+        'run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+        'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[nightly]\n"
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "scheduled FULL-suite regression"\n'
         "\n[layout]\n\n"
         "[layout.devon]\n"
         'writable = ["tracks/", "tests/unit/"]\n',
@@ -101,8 +122,29 @@ def test_shield_audit_allowed_includes_manifest_paths(tmp_path, monkeypatch):
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
         'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
-        'cwd = "."\n'
+        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[unit]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/unit/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"\n'
+        'run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
+        'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q --junitxml={result}"\n'
+        'run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"\n'
+        'cwd = "."\n\n'
+        "[nightly]\n"
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "scheduled FULL-suite regression"\n'
         "\n[layout]\n\n"
         "[layout.shield]\n"
         'writable = ["tests/integration/", "tests/e2e/", "tests/assets/", '

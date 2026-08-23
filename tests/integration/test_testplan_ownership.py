@@ -66,23 +66,37 @@ def test_canonical_header_present(trac, event_log, host_repo):
 @pytest.mark.integration
 # AC-FR0210-02@v0.5 TRACKS-TRACE test_refs traceable to test-plan §8
 def test_test_refs_traceable_to_section8(trac, event_log, host_repo):
-    """Every task's test_refs in tasks.json can be traced to a row in test-plan §8."""
+    """Task AC/IF ownership traces to §8 while unit refs stay R-owned.
+
+    D-41 separates the identities: §8 owns integration/e2e IF rows, while a
+    task's tests/unit node refs come from the immutable Runtime R manifest.
+    The task must still trace to a §8 row by AC + IF, with no orphan unit ref.
+    """
     _, _, events = run_m_impl_journey(trac, event_log)
     vdir = host_repo / ".tracks" / "projects" / "v0.5"
     tasks_json_path = vdir / "tasks.json"
     assert tasks_json_path.exists(), "tasks.json must be produced during M-IMPL"
     tasks_json = json.loads(tasks_json_path.read_text(encoding="utf-8"))
     plan_text = (vdir / "test-plan.md").read_text(encoding="utf-8")
-    # Extract §8 section
+    # Extract §8 section.
     m = re.search(r"## 8\. AC Coverage", plan_text)
     assert m
     section8 = plan_text[m.start() :]
     for task in tasks_json.get("tasks", []):
         for test_ref in task.get("test_refs", []):
-            # test_ref is like "test_taskgraph_validate.py::test_taskgraph_happy_path..."
             file_part = test_ref.split("::")[0]
-            assert file_part in section8, (
-                f"task {task['task_id']}: test_ref {test_ref} not found in §8"
+            assert file_part.startswith("tests/unit/") and "::" in test_ref, (
+                f"task {task['task_id']}: unit RED ref is not a node identity: {test_ref}"
+            )
+        matching_rows = [
+            line
+            for line in section8.splitlines()
+            if any(ac in line for ac in task.get("ac_refs", []))
+        ]
+        assert matching_rows, f"task {task['task_id']}: no §8 AC ownership row"
+        for if_id in task.get("if_ids", []):
+            assert any(if_id in row for row in matching_rows), (
+                f"task {task['task_id']}: IF {if_id} not traceable to its §8 AC row"
             )
 
 

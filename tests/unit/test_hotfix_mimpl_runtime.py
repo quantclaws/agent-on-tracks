@@ -54,10 +54,19 @@ def _contract(repo: Path) -> None:
     contract.write_text(
         "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
         "collect='pytest --collect-only tests/integration'\n"
-        "run='pytest tests/integration'\ncwd='.'\n\n"
+        "run='pytest tests/integration --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
         "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
         "collect='pytest --collect-only tests/e2e'\n"
-        "run='pytest tests/e2e'\ncwd='.'\n",
+        "run='pytest tests/e2e --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
+        "[unit]\nframework='pytest'\npaths=['tests/unit/']\n"
+        "collect='pytest --collect-only tests/unit'\n"
+        "run='pytest tests/unit --junitxml={result}'\n"
+        "run_selected='pytest {nodes} --junitxml={result}'\ncwd='.'\n\n"
+        "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
+        "job='nightly-regression'\nlayers=['unit', 'integration', 'e2e']\n"
+        "purpose='scheduled FULL-suite regression'\n",
         encoding="utf-8",
     )
     (repo / "tests" / "integration").mkdir(parents=True)

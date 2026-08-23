@@ -15,6 +15,26 @@ ENTER_M_TEST = [
     ("stage.entered", {"stage": "M-TEST"}),
 ]
 
+# D-41 v3 timing (flow.md §9.1): the pre-WRITE R1 snapshot capture is the first
+# M-TEST command and its passed event gates the first Shield WRITE dispatch.
+CAPTURE_CMD = (
+    "command.issued",
+    {"command": {"kind": "capture_baseline", "params": {"stage": "M-TEST"}, "command_id": "C0"}},
+)
+BASELINE_CAPTURED = (
+    "test.baseline_captured",
+    {
+        "status": "passed",
+        "baseline_id": "b0",
+        "baseline_tree": "t0",
+        "layers": ["unit", "integration", "e2e"],
+        "nodes_count": 0,
+        "empty_baseline": True,
+        "node_digest_blob": None,
+        "errors": [],
+    },
+)
+
 SHIELD_DISPATCH = (
     "command.issued",
     {
@@ -65,17 +85,20 @@ def state_of(*items):
 
 
 def _full_cycle():
-    """DISPATCH -> WRITE -> COLLECT -> PRISM_REVIEW -> RED_CHECK -> EXIT."""
+    """CAPTURE -> DISPATCH -> WRITE -> COLLECT -> RED_CHECK -> PRISM_REVIEW ->
+    EXIT (D-41 v3 timing)."""
     return [
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         PRISM_PASS,
-        RUN_CMD,
-        RED_VALID,
         TRACE_CMD,
         TRACE_PASS,
         COMMIT_CMD,
@@ -112,17 +135,30 @@ def test_next_stage_design_to_m_test():
 
 # AC-FR0010-03@v0.4 TRACKS-TRACE SM-01 transitions enforced
 def test_sm01_transitions_enforced():
-    """AC-FR0010-03@v0.4: DISPATCH -> WRITE -> COLLECT -> PRISM_REVIEW ->
-    RED_CHECK -> EXIT follows SM-01 exactly."""
+    """AC-FR0010-03@v0.4: CAPTURE -> DISPATCH -> WRITE -> COLLECT ->
+    RED_CHECK -> PRISM_REVIEW -> EXIT follows SM-01 (D-41 v3 timing)."""
     s = state_of()
     assert s.substate == "DISPATCH"
-    s2 = project(seq(*ENTER_M_TEST, SHIELD_DISPATCH))
+    s1 = project(seq(*ENTER_M_TEST, CAPTURE_CMD, BASELINE_CAPTURED))
+    assert s1.substate == "DISPATCH"
+    assert s1.baseline_captured is True
+    s2 = project(seq(*ENTER_M_TEST, CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH))
     assert s2.substate == "WRITE"
-    s3 = project(seq(*ENTER_M_TEST, SHIELD_DISPATCH, SHIELD_DONE))
+    s3 = project(seq(*ENTER_M_TEST, CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE))
     assert s3.substate == "COLLECT"
-    s4 = project(seq(*ENTER_M_TEST, SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED))
-    assert s4.substate == "PRISM_REVIEW"
-    s5 = project(seq(*ENTER_M_TEST, *_full_cycle()[:9]))
+    s4 = project(
+        seq(
+            *ENTER_M_TEST,
+            CAPTURE_CMD,
+            BASELINE_CAPTURED,
+            SHIELD_DISPATCH,
+            SHIELD_DONE,
+            COLLECT_CMD,
+            COLLECTED,
+        )
+    )
+    assert s4.substate == "RED_CHECK"
+    s5 = project(seq(*ENTER_M_TEST, *_full_cycle()[:12]))
     assert s5.substate == "EXIT"
 
 
@@ -135,23 +171,26 @@ def test_explicit_control_flow():
     DRAFT/REVIEW/EXIT pattern cannot yield."""
     s = state_of()
     cmd = decide(s)
-    assert cmd.kind == "dispatch_agent"
-    assert cmd.params["role"] == "shield"
-    assert cmd.params["substate"] == "WRITE"
+    # D-41: the FIRST M-TEST command captures the pre-WRITE R1 snapshot.
+    assert cmd.kind == "capture_baseline"
+    s0 = state_of(CAPTURE_CMD, BASELINE_CAPTURED)
+    cmd0 = decide(s0)
+    assert cmd0.kind == "dispatch_agent"
+    assert cmd0.params["role"] == "shield"
+    assert cmd0.params["substate"] == "WRITE"
     # COLLECT: decide produces collect_tests (not dispatch_agent)
-    s2 = project(seq(*ENTER_M_TEST, SHIELD_DISPATCH, SHIELD_DONE))
+    s2 = project(seq(*ENTER_M_TEST, CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE))
     assert decide(s2).kind == "collect_tests"
-    # RED_CHECK: decide produces run_tests
+    # RED_CHECK: decide produces run_tests (D-41 v3: before PRISM_REVIEW)
     s3 = project(
         seq(
             *ENTER_M_TEST,
+            CAPTURE_CMD,
+            BASELINE_CAPTURED,
             SHIELD_DISPATCH,
             SHIELD_DONE,
             COLLECT_CMD,
             COLLECTED,
-            PRISM_DISPATCH,
-            PRISM_DONE,
-            PRISM_PASS,
         )
     )
     assert decide(s3).kind == "run_tests"
@@ -173,12 +212,14 @@ def test_kernel_purity_no_io():
 # AC-FR0010-05@v0.4 TRACKS-TRACE enter M-TEST resets fields
 def test_enter_m_test_resets_fields():
     """AC-FR0010-05@v0.4: entering M-TEST resets all per-cycle fields."""
-    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
+    s = state_of(CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
     assert s.test_collected is True
     # Re-enter M-TEST (e.g. after stub_gap rollback -> M-DESIGN -> M-TEST again)
     s2 = project(
         seq(
             *ENTER_M_TEST,
+            CAPTURE_CMD,
+            BASELINE_CAPTURED,
             SHIELD_DISPATCH,
             SHIELD_DONE,
             COLLECT_CMD,
@@ -189,6 +230,7 @@ def test_enter_m_test_resets_fields():
     assert s2.test_collected is False
     assert s2.current_attempt == 0
     assert s2.substate == "DISPATCH"
+    assert s2.baseline_captured is False  # fresh cycle re-captures the snapshot
 
 
 # -- AC-FR0020-01@v0.4: DISPATCH creates Shield tasks -> WRITE -----------------------
@@ -197,7 +239,7 @@ def test_enter_m_test_resets_fields():
 # AC-FR0020-01@v0.4 TRACKS-TRACE dispatch creates Shield tasks
 def test_dispatch_creates_shield_tasks():
     """AC-FR0020-01@v0.4"""
-    s = state_of()
+    s = state_of(CAPTURE_CMD, BASELINE_CAPTURED)
     cmd = decide(s)
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "shield"
@@ -226,11 +268,11 @@ def test_write_retry_escalation():
 # -- AC-FR0030-02@v0.4: collection pass/fail routing --------------------------------
 
 
-# AC-FR0030-02@v0.4 TRACKS-TRACE collect passed to prism
-def test_collect_passed_to_prism():
-    """AC-FR0030-02@v0.4"""
-    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
-    assert s.substate == "PRISM_REVIEW"
+# AC-FR0030-02@v0.4 TRACKS-TRACE collect passed to red check
+def test_collect_passed_to_red_check():
+    """AC-FR0030-02@v0.4 (D-41 v3): collection success -> RED_CHECK."""
+    s = state_of(CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
+    assert s.substate == "RED_CHECK"
     assert s.test_collected is True
 
 
@@ -241,7 +283,9 @@ def test_collect_failed_to_write():
         "test.collected",
         {"status": "failed", "collected_count": 0, "errors": ["import error"]},
     )
-    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, failed)
+    s = state_of(
+        CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, failed
+    )
     assert s.substate == "WRITE"
     assert s.test_collected is False
     assert s.current_attempt == 1
@@ -252,8 +296,18 @@ def test_collect_failed_to_write():
 
 # AC-FR0040-01@v0.4 TRACKS-TRACE prism dispatch
 def test_prism_dispatch():
-    """AC-FR0040-01@v0.4: PRISM_REVIEW dispatches Prism with criteria pack."""
-    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
+    """AC-FR0040-01@v0.4: PRISM_REVIEW dispatches Prism with criteria pack
+    (D-41 v3: entered from a valid RED_CHECK)."""
+    s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+    )
     cmd = decide(s)
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "prism"
@@ -276,7 +330,16 @@ def test_prism_dispatch_failure_re_dispatches():
         },
     )
     s = state_of(
-        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH, failed
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+        failed,
     )
     assert s.substate == "PRISM_REVIEW"
     assert s.reviewer_dispatched is False
@@ -294,7 +357,17 @@ def test_criteria_pack_mismatch():
         {"check": "criteria_pack_mismatch", "reason": "pack mismatch", "attempt": 1},
     )
     s = state_of(
-        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH, PRISM_DONE, mismatch
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        mismatch,
     )
     assert s.current_attempt == 1
     assert s.substate == "PRISM_REVIEW"
@@ -303,13 +376,23 @@ def test_criteria_pack_mismatch():
     assert cmd.params["role"] == "prism"
 
 
-# AC-FR0040-03@v0.4 TRACKS-TRACE prism pass to red
-def test_prism_pass_to_red():
-    """AC-FR0040-03@v0.4"""
+# AC-FR0040-03@v0.4 TRACKS-TRACE prism pass to exit
+def test_prism_pass_to_exit():
+    """AC-FR0040-03@v0.4 (D-41 v3): RED_CHECK already ran, pass -> EXIT."""
     s = state_of(
-        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH, PRISM_DONE, PRISM_PASS
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        PRISM_PASS,
     )
-    assert s.substate == "RED_CHECK"
+    assert s.substate == "EXIT"
 
 
 # AC-FR0040-03@v0.4 TRACKS-TRACE prism revise to write
@@ -317,7 +400,17 @@ def test_prism_revise_to_write():
     """AC-FR0040-03@v0.4"""
     revise = ("prism.verdict", {"verdict": "revise", "criteria_pack": dict(_CRITERIA_PACK)})
     s = state_of(
-        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH, PRISM_DONE, revise
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        revise,
     )
     assert s.substate == "WRITE"
     assert s.current_attempt == 1
@@ -326,21 +419,21 @@ def test_prism_revise_to_write():
 # -- AC-FR0050-05@v0.4: RED_CHECK routing -------------------------------------------
 
 
-# AC-FR0050-05@v0.4 TRACKS-TRACE red valid to exit
-def test_red_valid_to_exit():
-    """AC-FR0050-05@v0.4"""
+# AC-FR0050-05@v0.4 TRACKS-TRACE red valid to prism review
+def test_red_valid_to_prism_review():
+    """AC-FR0050-05@v0.4 (D-41 v3): valid red -> PRISM_REVIEW (Prism consumes
+    the current-tree red evidence before EXIT)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
-        PRISM_DISPATCH,
-        PRISM_DONE,
-        PRISM_PASS,
         RUN_CMD,
         RED_VALID,
     )
-    assert s.substate == "EXIT"
+    assert s.substate == "PRISM_REVIEW"
     assert s.red_validated is True
 
 
@@ -352,13 +445,12 @@ def test_red_invalid_to_diagnose():
         {"status": "invalid", "findings": [{"test_id": "*", "classification": "unexpected_pass"}]},
     )
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
-        PRISM_DISPATCH,
-        PRISM_DONE,
-        PRISM_PASS,
         RUN_CMD,
         invalid,
     )
@@ -386,13 +478,12 @@ def _diagnose_state(classification):
         },
     )
     return state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
-        PRISM_DISPATCH,
-        PRISM_DONE,
-        PRISM_PASS,
         RUN_CMD,
         invalid,
         verdict,
@@ -426,8 +517,8 @@ def test_test_defect_write_dispatch_carries_diagnose_report():
         },
     )
     base = [
-        SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED,
-        PRISM_DISPATCH, PRISM_DONE, PRISM_PASS, RUN_CMD, invalid, verdict,
+        CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE,
+        COLLECT_CMD, COLLECTED, RUN_CMD, invalid, verdict,
     ]
     s = state_of(*base)
     assert s.diagnose_report["check"] == "test_defect"
@@ -476,13 +567,12 @@ def test_diagnose_ac_gap_to_acc():
     s2 = project(
         seq(
             *ENTER_M_TEST,
+            CAPTURE_CMD,
+            BASELINE_CAPTURED,
             SHIELD_DISPATCH,
             SHIELD_DONE,
             COLLECT_CMD,
             COLLECTED,
-            PRISM_DISPATCH,
-            PRISM_DONE,
-            PRISM_PASS,
             RUN_CMD,
             ("red.validated", {"status": "invalid", "findings": []}),
             (
@@ -535,15 +625,17 @@ def test_trace_fail_to_write():
         {"check": "trace", "reason": "orphan", "attempt": 1, "evidence": "trac check trace"},
     )
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         PRISM_PASS,
-        RUN_CMD,
-        RED_VALID,
         TRACE_CMD,
         trace_fail,
     )
@@ -710,10 +802,10 @@ def test_write_retry():
     assert s.current_attempt == 1
 
 
-def test_collect_to_prism():
-    """SM-01.5@v0.4"""
-    s = state_of(SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
-    assert s.substate == "PRISM_REVIEW"
+def test_collect_to_red_check():
+    """SM-01.5@v0.4 (D-41 v3): collection success enters RED_CHECK."""
+    s = state_of(CAPTURE_CMD, BASELINE_CAPTURED, SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED)
+    assert s.substate == "RED_CHECK"
 
 
 def test_collect_fail_to_write():
@@ -832,7 +924,17 @@ def test_test_written_transitions_write_to_collect():
 def test_prism_verdict_outcome_sets_active_result():
     """M-TEST Prism outcome with result_checkpoint sets active_result;
     decide() drives validate_result for the context docs."""
-    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH]
+    base = [
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+    ]
     prism_done = (
         "outcome.received",
         {
@@ -850,9 +952,19 @@ def test_prism_verdict_outcome_sets_active_result():
 
 
 def test_prism_pass_pipeline_publishes_verdict():
-    """Full pipeline for M-TEST Prism pass: validate -> checkpoint ->
-    publish -> prism.verdict(pass) -> RED_CHECK, active_result cleared."""
-    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH]
+    """Full pipeline for M-TEST Prism pass (D-41 v3): validate -> checkpoint ->
+    publish -> prism.verdict(pass) -> EXIT, active_result cleared."""
+    base = [
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+    ]
     prism_done = (
         "outcome.received",
         {
@@ -879,13 +991,23 @@ def test_prism_pass_pipeline_publishes_verdict():
         ),
     )
     assert s.active_result is None
-    assert s.substate == "RED_CHECK"
+    assert s.substate == "EXIT"
 
 
 def test_prism_revise_pipeline_transitions_to_write():
     """Full pipeline for M-TEST Prism revise: publish -> prism.verdict(revise)
     -> WRITE, active_result cleared, attempt consumed."""
-    base = [SHIELD_DISPATCH, SHIELD_DONE, COLLECT_CMD, COLLECTED, PRISM_DISPATCH]
+    base = [
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+    ]
     prism_done = (
         "outcome.received",
         {
@@ -931,10 +1053,14 @@ def test_prism_revise_test_plan_defect_to_design():
     """prism.verdict(revise, test_plan_defect) -> DIAGNOSE with stub_gap
     classification; decide() -> rollback_stage(M-DESIGN)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc("test_plan_defect"),
@@ -950,10 +1076,14 @@ def test_prism_revise_acceptance_defect_to_acc():
     """prism.verdict(revise, acceptance_defect) -> awaiting_human, rollback
     M-ACC."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc("acceptance_defect"),
@@ -966,10 +1096,14 @@ def test_prism_revise_acceptance_defect_to_acc():
 def test_prism_revise_spec_defect_to_spec():
     """prism.verdict(revise, spec_defect) -> awaiting_human, rollback M-SPEC."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc("spec_defect"),
@@ -983,10 +1117,14 @@ def test_prism_revise_test_defect_stays_write():
     """Backward compat: prism.verdict(revise) with no defect_classification
     -> WRITE, current_attempt incremented (current behavior)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc(None),
@@ -999,10 +1137,14 @@ def test_prism_revise_test_defect_explicit():
     """prism.verdict(revise, test_defect) -> WRITE (explicit test_defect works
     same as default)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc("test_defect"),
@@ -1024,10 +1166,14 @@ def test_prism_revise_null_defect_classification_routes_to_write():
         "defect_classification": None,
     }
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         ("prism.verdict", payload),
@@ -1044,10 +1190,14 @@ def test_prism_revise_empty_defect_classification_routes_to_write():
     """prism.verdict(revise) with an empty defect_classification defaults to
     test_defect -> WRITE (same as absent/None)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc(""),
@@ -1061,10 +1211,14 @@ def test_prism_revise_unknown_classification_fails_closed():
     is NOT silently defaulted: no routing branch runs, the substate stays
     PRISM_REVIEW (fail-closed halt, reviewer still dispatched)."""
     s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
         SHIELD_DISPATCH,
         SHIELD_DONE,
         COLLECT_CMD,
         COLLECTED,
+        RUN_CMD,
+        RED_VALID,
         PRISM_DISPATCH,
         PRISM_DONE,
         _prism_revise_with_dc("mystery_defect"),

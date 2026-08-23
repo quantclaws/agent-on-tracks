@@ -16,9 +16,9 @@ M-START → M-STORY → M-SPEC → M-ACC → M-REQ-APPROVAL → M-DESIGN
 | M-ACC          | Sage                                          | Lex 独立评审；Human 评审             | 覆盖+程序校验通过                         |
 | M-REQ-APPROVAL | Runtime 生成 baseline preview                 | **Human Approve/Return**             | approval 绑定三件套 digest                |
 | M-DESIGN       | Archer（三文档 + 接口桩 + machine contracts） | Prism 独立评审；Human 可选、允许缺席 | Prism + 程序校验通过，不等 Human          |
-| M-TEST         | Shield（integration/e2e，对着接口桩写）       | Prism 审测试合约                     | 可 collect + 合法 Red + AC trace 闭合     |
-| M-IMPL         | Archer 拆 task graph；Devon 逐 task RGR       | Prism 评 Red checkpoint 与最终 range | 全部 task 完成且全量 int+e2e 绿，孤岛闭合 |
-| M-VERIFY       | Runtime 冻结 candidate                        | Prism 整体一致性复审                 | 全量回归+CI+build/artifact gate 通过      |
+| M-TEST         | Shield（integration/e2e，对着接口桩写）       | Prism 审测试合约                     | 全量 collect + R2 合法 Red + trace 闭合   |
+| M-IMPL         | Archer 拆 task graph；Devon 逐 task RGR       | Prism 评 Red checkpoint 与最终 range | 全部 task 完成且 FULL_F 绿，孤岛闭合      |
+| M-VERIFY       | Runtime 冻结 candidate                        | Prism 整体一致性复审                 | FULL_F 复用/重跑 + CI + build/artifact 通过 |
 | M-SECURITY     | Runtime 程序扫描；Judge 语义审计              | Judge                                | security gate 通过或合法 policy skip      |
 | M-RELEASE      | Runtime 生成发布预览                          | **Human Release/Delay/Return**       | release approval 绑定 candidate           |
 | M-PUBLISH      | Runtime 执行发布副作用                        | —                                    | 幂等外部操作+发布后验证完成               |
@@ -385,7 +385,7 @@ stateDiagram-v2
 
 ## 8. M-DESIGN
 
-**目的**：Archer 产出 Test Plan、Architecture、Interfaces 三文档、接口桩（interfaces.md 的可执行形态：与真实模块同路径、完整签名、行为体仅 raise + 合同 token）及宿主项目 machine contracts（至少覆盖 integration/e2e、GitHub CI、pre-commit、release version、build/artifact、发布恢复）；Prism 独立评审。这是纯技术阶段：Human 是可选 reviewer，允许缺席，意见不是批准门禁。接口桩是 ATDD 次序的基础设施：M-TEST 的 Shield 对着它们写 integration/e2e，保证实现之前即可 collect/import。
+**目的**：Archer 产出 Test Plan、Architecture、Interfaces 三文档、接口桩（interfaces.md 的可执行形态：与真实模块同路径、完整签名、行为体仅 raise + 合同 token）及宿主项目 machine contracts（至少覆盖 integration/e2e、GitHub CI、pre-commit、release version、build/artifact、发布恢复）；Prism 独立评审。这是纯技术阶段：Human 是可选 reviewer，允许缺席，意见不是批准门禁。接口桩是 ATDD 次序的基础设施：M-TEST 的 Shield 对着它们写 integration/e2e，保证实现之前即可 collect/import。machine contracts 同时独家定义测试命令（扁平 [unit]/[integration]/[e2e] 段的 run 与 run_selected，worker/dist 并发 flag 内嵌于命令字符串；D-41，见 §8.3-4）。
 
 **进入条件**：`human.approval` 对当前三件套 digest 有效（M-REQ-APPROVAL 通过且未 stale）。
 
@@ -432,14 +432,31 @@ stateDiagram-v2
 1. Human 无技术否决权也无到场义务；退出只要求 `verdict.passed`（程序）+ `prism.verdict(pass)`。
 2. contracts 由 Archer 设计，**安装/更新/回读副作用只归 Runtime**；Devon 不得安装或修改 hook 绕过门禁。
 3. 设计文档与 contracts 均有 revision/digest，修订使依赖旧 revision 的下游证据 stale。
+4. **执行并发所有权与结果通道所有权（D-41，v6）**：machine contract 以扁平 [unit]/[integration]/[e2e] 段独家定义各层 run 与 run_selected 命令字符串（worker/dist 并发 flag 与 `--junitxml={result}` 结果写入 flag 均内嵌于命令字符串）；每条 run 与 run_selected 模板各含 `{result}` 占位符**恰好一次**（run_selected 另含 `{nodes}` 恰好一次）——`{result}` 指 Runtime 提供的唯一可写 JUnit XML 路径；Runtime 替换仅限声明的 `{nodes}`/`{result}` 加 cwd/argv0 解析，永不注入并发、永不注入 `--junitxml` 等 junit flag（flag 只能由 Archer 内嵌）；占位符缺失或重复 = contract_error fail-closed；run_selected 缺失 = contract_error fail-closed（不向 run 追加 nodeid、不合成调用）。
 
 ## 9. M-TEST
 
-**目的**：Shield 按 Test Plan 对着接口桩编写 integration/e2e 测试；Prism 独立评审测试合约；Runtime 独立验证"可 collect 且合法地失败（合法 Red）"。本阶段交付的是测试资产（Red 状态），不是绿色结果——变绿是 M-IMPL 的职责。
+**目的**：Shield 按 Test Plan 对着接口桩编写 integration/e2e 测试；Runtime 独立验证"可 collect 且合法地失败（合法 Red）"；Prism 在 Runtime RED_CHECK 之后独立评审测试合约。本阶段交付的是测试资产（Red 状态），不是绿色结果——变绿是 M-IMPL 的职责。执行选择语义见 §9.0（D-41）：全量 collect、只本地执行 R2/T-DELTA、当前完整 FULL 套件（R1+R2）夜间回归归 nightly CI。
 
 **定位（外圈合同循环）**：本阶段写下"大小两个测试循环"的**外圈**——integration/e2e 测试是实现存在之前写好的合同：先行变红、冻结为基线，M-IMPL 阶段的目标就是把这一圈全部变绿。内圈 RGR 循环见 §10（D-32）。
 
 **进入条件**：M-DESIGN 通过（`prism.verdict(pass)` + 程序校验通过）。
+
+**入口动作（R1 快照，v5）**：进入 M-TEST 的第一件事是 Runtime 的 baseline capture——在本 run 首个 Shield WRITE 派发之前对继承测试树做 unit+integration+e2e 全量 collect，逐节点记源/体 digest，持久化 `test.baseline_captured`（stamped baseline/tree identity + digest blob，§9.0）。capture 失败 fail-closed 路由上游/设计（不重派 Shield、不静默空置 R1）。
+
+### 9.0. 测试节点分类与执行选择语义（canonical，D-41）
+
+- **R1/T-HIST（历史回归节点）**：继承自既往版本的既有测试节点（unit/integration/e2e）。nightly CI 运行**当前完整 FULL 套件**（R1+R2，unit+integration+e2e——历史回归责任强调 R1/T-HIST，但 nightly 套件不是仅 R1 子集），结果在未来被取回（result fetch future），**不是当前本地门禁**；**M-TEST** 本地永不执行 R1 全量套件（M-IMPL 的 SELECT_TASK/FULL 链合法执行 R1 节点，§10.5）。
+- **R2/T-DELTA（当前版本增量节点）**：新增节点、或同一 nodeid 节点源/体 digest 变化——分类恰好且仅为这两类（逐节点 digest，非整文件 digest——同文件未变兄弟节点保持 R1/T-HIST）。**M-TEST** 本地执行只限 R2/T-DELTA；合法 Red 逐节点判定。变更的 support/fixture 仍参与全量 collect/import（保证可 import），当前 R2 测试在其上执行；未变历史行为不被本地重验——其回归等待 M-IMPL FULL 链与 nightly CI。feature M-TEST 的 R2 选择集为空 = fail-closed（hotfix unit-only 显式增量声明旁路保留，§16.3.2）。
+- **R1 快照（baseline capture，v5 增补）**：Runtime 在进入 M-TEST 时、本 run 首个 Shield WRITE 派发之前，对**继承测试树**（prior-to-Shield 当前工作树）执行 unit+integration+e2e 全量 collect 并逐节点记源/体 digest，持久化 `test.baseline_captured`（stamped baseline/tree identity + 逐节点 digest blob）。WRITE 之后的既有全量 COLLECT 捕获当前三层 inventory，并以该已持久化快照为唯一分类 baseline——分类 baseline 的来源是 prior-to-Shield 当前 run 的 stamped capture，不是既往事件猜测、也不是 WRITE 后可变树的事后重算。首次项目可合法捕获空集（`empty_baseline=true` 仅由成功 capture 产生；缺失 capture ≠ 空 baseline，COLLECT 时无 passed 快照 = fail-closed）。capture 中任一层 collect/import 失败 = 继承树在 Shield 写入前即不可 import，属上游/设计/合同缺陷：fail-closed 路由（verdict.failed → 上游），不静默空置 R1、不重派 Shield。WAL/replay 复用同一 stamped capture（恢复路径不得从可变工作树重新捕获）；`test.selected.baseline == test.baseline_captured.baseline_id` 可复核。
+- **REMOVED（fail-closed 测试资产删除）**：baseline 历史节点缺失于本次全量 collect——不静默注销：路由 test contract defect（→Shield）并阻断 M-TEST 退出；本版无授权删除路径（未来如引入须经显式上游 contract 授权）。
+- **selection identity**：一次选择的身份 = 选择依据（task IF 集合/变更影响集/delta 声明）+ 被选节点集合 + baseline/commit；上游变化使依赖它的选择与证据 stale。
+- **evidence identity**：每条执行证据绑定节点身份 + selection identity + baseline/commit + attempt + actor（不变量 6/7 的具体化）；复用判定只认 identity 一致的证据。
+- **FULL 链**（M-IMPL 出口门禁，详见 §10.5）：FULL = unit + integration + e2e；FULL_1（首轮）→ 失败台账 → 逐条目修复+证明 → FULL_F；新失败循环重复直至干净。
+- **失败台账（event ledger）**：append-only 事件写入（WAL），重启由回放重建；条目身份 = `(node, failure_signature)`（同节点新签名新建身份），状态 `OPEN → CLASSIFIED → FIXED → PROVEN`，上游变化置 `STALE`，FULL_F 重现已 PROVEN 的同一 `(node, failure_signature)` 时确定性 `PROVEN → OPEN`（reopen，重启先前身份）；闭合转移集另含 `FIXED → OPEN`（证明失败：同签名重开重分类/重修）；未知/缺失/非法状态一律 fail-closed（不得视为干净）。
+- **并发所有权与结果占位符（v6）**：测试命令由 Archer machine contract 独家定义（扁平 [unit]/[integration]/[e2e] 段的 run/run_selected，worker/dist flag 与 `--junitxml={result}` 内嵌于命令字符串，§8.3-4）；Runtime 只替换 `{nodes}`/`{result}`、解析 cwd/argv0，永不注入并发、永不注入 junit flag；run_selected 缺失 = contract_error fail-closed（不向 run 追加 nodeid、不合成调用）。
+- **逐节点结果机器可读（v6）**：每次测试执行的结果权威是 `{result}` 所指 JUnit XML——testcase 节点身份必须**恰好覆盖**本次被选集合（全量 run 时 = 本次 collect 的 FULL 全集）；文件缺失/畸形、testcase 身份重复、被选节点缺席、多余节点，一律 contract_error fail-closed。stdout/stderr 仅为日志，永不作为逐节点分类依据。逐节点合法 Red 从 testcase 的 failure/error 详情推导；pass/skipped/xfailed 的处理遵循既有合法 Red 规则（被选 R2 节点 pass/skip = 非法意外通过）。FULL 链失败台账后续消费同一份归一化逐节点记录。
+- **结果生命周期（v6）**：`{result}` 路径位于 Runtime temp/blob staging、按 run/command 唯一；不入树身份（不参与 tree identity/digest 与越权归属）；执行后、temp 清理前归一化持久化为 outcomes blob（事件以 `outcomes_ref` 引用）；WAL replay 发现无已持久化结果时重跑该命令——绝不把缺失结果当作通过。
 
 ### 9.1. 子状态机
 
@@ -463,34 +480,45 @@ stateDiagram-v2
     WRITE --> WRITE : validate fail, 重派 Shield (<=3)
 
     COLLECT : Runtime 独立执行 collection/import
-    COLLECT : 全部测试必须可 collect (桩保证可 import)
+    COLLECT : 全部节点必须可 collect (unit + integration + e2e 三层:
+    COLLECT : 继承 R1/T-HIST + 当前 R2/T-DELTA, 桩保证可 import)
+    COLLECT : 变更 support/fixture 同样参与 collect/import
+    COLLECT : 分类 baseline = 本 run pre-WRITE 持久化的
+    COLLECT : test.baseline_captured stamped 快照 (缺失 = fail-closed)
 
-    COLLECT --> PRISM_REVIEW : collection 成功
+    COLLECT --> RED_CHECK : collection 成功
     COLLECT --> WRITE : collection 失败 -> Shield
 
+    RED_CHECK : Runtime 只执行 R2/T-DELTA (当前版本新增/修改, SELECT_R2)
+    RED_CHECK : 永不本地全量套件 (R1/T-HIST 归 nightly CI)
+    RED_CHECK : R1 节点 (含历史 unit) 永不进入 M-TEST 执行记录
+    RED_CHECK : 失败必须逐节点为合法 Red
+    RED_CHECK : 行为断言失败 / 桩合同 token 失败 / symbol 缺失
+    RED_CHECK : collection/语法/fixture/import 错误 = 非法
+    RED_CHECK : feature M-TEST 空 R2 选择集 = fail-closed
+    RED_CHECK : (hotfix unit-only 显式增量声明旁路, §16.3.2)
+
+    RED_CHECK --> PRISM_REVIEW : 合法 Red 成立 (red.validated 绑定当前树)
+    RED_CHECK --> DIAGNOSE : 非法失败或意外通过
+
+    DIAGNOSE : Prism 四路诊断 (Prism 评审之前完成机器回打)
+    DIAGNOSE --> WRITE : 测试缺陷 -> Shield
+    DIAGNOSE --> [*] : 桩/接口/架构不足 -> M-DESIGN
+    DIAGNOSE --> [*] : AC/Spec 缺口 -> M-ACC/M-SPEC
+
     PRISM_REVIEW : dispatch Prism 审测试合约
+    PRISM_REVIEW : 消费 Runtime 当前树 red.validated 证据身份
     PRISM_REVIEW : 忠于 AC + 断言落在公开出口
+    PRISM_REVIEW : 只执行隔离 counterexample kill
+    PRISM_REVIEW : 不把重跑普通套件当评审手段
     PRISM_REVIEW : 无伪测试 + counterexample 绑定
     PRISM_REVIEW : REVISE 携带 defect_classification 路由
 
-    PRISM_REVIEW --> RED_CHECK : prism.verdict(pass)
+    PRISM_REVIEW --> EXIT : prism.verdict(pass)
     PRISM_REVIEW --> WRITE : revise(test_defect) -> Shield
     PRISM_REVIEW --> [*] : revise(test_plan_defect) -> M-DESIGN
     PRISM_REVIEW --> [*] : revise(acceptance_defect) -> M-ACC (Human)
     PRISM_REVIEW --> [*] : revise(spec_defect) -> M-SPEC (Human)
-
-    RED_CHECK : Runtime 独立执行 integration/e2e
-    RED_CHECK : 失败必须全部为合法 Red
-    RED_CHECK : 行为断言失败 / 桩合同 token 失败 / symbol 缺失
-    RED_CHECK : collection/语法/fixture/import 错误 = 非法
-
-    RED_CHECK --> EXIT : 合法 Red 成立
-    RED_CHECK --> DIAGNOSE : 非法失败或意外通过
-
-    DIAGNOSE : Prism 四路诊断
-    DIAGNOSE --> WRITE : 测试缺陷 -> Shield
-    DIAGNOSE --> [*] : 桩/接口/架构不足 -> M-DESIGN
-    DIAGNOSE --> [*] : AC/Spec 缺口 -> M-ACC/M-SPEC
 
     EXIT : Runtime 创建受控测试 commit
     EXIT : 冻结测试资产 + AC trace 闭合 (trac check trace)
@@ -499,6 +527,8 @@ stateDiagram-v2
 ```
 
 > 退出是"测试资产齐备且 Red 合法"，不是"执行全部通过"；通过的要求推迟到 M-IMPL 出口门禁。
+> **时序（D-41 v3，v5 增补入口）**：`M-TEST 入口 baseline capture(test.baseline_captured, pre-WRITE) → WRITE → 全量 COLLECT → Runtime RED_CHECK(SELECT_R2) → PRISM_REVIEW → EXIT`。非法 RED 在 Prism 之前由 Runtime 路 DIAGNOSE/WRITE 处理完毕，因此 Prism 评审消费的是**当前树**的 `red.validated` 身份证据（selection binding + 逐节点合法 Red 分类），再独立运行 counterexample kill——消除"Shield 自检、Prism 重验、Runtime RED_CHECK"三重执行同树全量的动机。
+> **执行选择语义（D-41，§9.0）**：collect 是全量的（继承 R1/T-HIST + 当前 R2/T-DELTA 节点全部可 collect，变更 support/fixture 同样参与），执行是差分的——只本地执行 R2/T-DELTA 节点并逐节点判定合法 Red，**M-TEST 永不本地跑全量套件**（M-IMPL 的 SELECT_TASK/FULL 链合法执行 R1 节点，§10.5）；feature M-TEST 的 R2 选择集为空 = fail-closed（hotfix unit-only 显式增量声明旁路保留）；当前完整 FULL 套件（R1+R2）的夜间回归由 nightly CI 承担（历史回归责任强调 R1/T-HIST），结果在未来被取回（result fetch future），不构成当前本地门禁；baseline 历史节点缺失于 collect = fail-closed 测试资产删除（路由 Shield、阻断退出）。
 > AC trace 闭合的依据是 `trac check trace` 程序证据：每条 required AC 至少一条测试绑定（R-1 长格式 marker `#|// AC-FRXXXX-YY@<version> TRACKS-TRACE ...`，特征词强制），无测试的 AC 与无主 marker 均为硬错误；trace 不闭合不得退出--需求追踪（trace/reach）因此必须与 M-TEST 同一 release 交付。
 > 本阶段测试意外通过是异常（桩只 raise，通过通常说明测试没有真正命中桩）-> DIAGNOSE。
 > "测试错还是接口错"的分流永不交给 Human；需语义判断时分派 Prism diagnostic review。
@@ -510,7 +540,9 @@ stateDiagram-v2
 
 ### 9.2. 事件清单
 
-`stage.entered` / `command.issued` / `outcome.received` / `test.collected(passed|failed)` / `prism.verdict(pass|revise)` / `red.validated(valid|invalid)` / `verdict.failed(trace|criteria_pack_mismatch|test_defect|test_plan_defect|stub_gap|ac_gap|spec_gap|commit|no_diff_justified)` / `no_diff.detected` / `no_diff.explained` / `no_diff.reviewed` / `test.committed` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `command.issued` / `outcome.received` / `test.baseline_captured(passed|failed)`（入口 pre-WRITE R1 快照，v5） / `test.collected(passed|failed)` / `test.selected(scope=r2_delta)` / `red.validated(valid|invalid)` / `prism.verdict(pass|revise)` / `verdict.failed(baseline_defect|trace|criteria_pack_mismatch|test_defect|test_plan_defect|stub_gap|ac_gap|spec_gap|commit|no_diff_justified)` / `no_diff.detected` / `no_diff.explained` / `no_diff.reviewed` / `test.committed` / `stage.exited` / `stage.rolled_back`
+
+（D-41 v3 时序：`red.validated` 先于 `prism.verdict`——Prism 消费当前树 RED 证据后评审。v5：`test.baseline_captured` 先于本 run 首个 Shield WRITE 派发；COLLECT 分类以该 stamped 快照为 baseline 来源。）
 
 ### 9.3. 硬规则
 
@@ -519,6 +551,7 @@ stateDiagram-v2
 3. 本阶段接受并要求 Red：每条测试的失败原因必须可分类为合法 Red，且 AC 层归属与 Test Plan 一致；Runtime 复跑是唯一证据来源。
 4. 退出依据全部是程序证据：collection、合法 Red 分类与 `trac check trace` 闭合均由 Runtime 复跑取得；Shield 的覆盖自述（"每条 AC 都有测试"）不构成退出依据。
 5. **doc-comment-first（v0.5+）**：Shield WRITE 的 outcome 验收第一步扫描全部受保护设计文档（`architecture.md`、`interfaces.md`、`test-plan.md`）的本次可归因正文变化（以 dispatch 前内容身份为基线）；任一非法非 discussion 正文编辑优先整回合原子 fail-closed 且不进 SM-02，合法新 discussion 识别限于其固定 COMMENTABLE_DOCS（`test-plan.md`、`interfaces.md`）才截获进入 SM-02 附属裁定（§10.4），旧线程/他人回复/无本次 delta 不触发。
+6. **执行选择（D-41，§9.0，v5 增补；v6 结果通道）**：全量 collect（unit+integration+e2e 三层）、差分执行——M-TEST 本地只执行 R2/T-DELTA（逐节点 digest 分类：新增/同一 nodeid 节点源/体 digest 变化；未变兄弟节点保持 R1；历史 unit 节点永不进入 M-TEST 执行记录）；分类 baseline = 本 run pre-WRITE 持久化的 `test.baseline_captured` stamped 快照（缺失 = fail-closed，capture 失败 = 上游/设计 fail-closed，replay 复用同一 stamped capture）；时序上 RED_CHECK 先于 PRISM_REVIEW，非法 RED 在 Prism 前经 DIAGNOSE/WRITE 处理，Prism 消费当前树 `red.validated` 证据并只执行隔离 counterexample kill，不以重跑普通套件作为评审手段；feature M-TEST 空 R2 选择集 = fail-closed（hotfix unit-only 显式增量声明旁路保留）；当前完整 FULL 套件（R1+R2）夜间回归归 nightly CI，结果未来取回，不是当前门禁；baseline 历史节点缺失于 collect = fail-closed 测试资产删除（路由 Shield，阻断退出）。逐节点合法 Red 判定的输入是 `{result}` JUnit XML 的逐 testcase 记录（v6，§9.0）：结果文件缺失/畸形/身份重复/覆盖不精确一律 contract_error fail-closed；stdout/stderr 仅为日志。
 
 ## 10. M-IMPL
 
@@ -594,8 +627,9 @@ stateDiagram-v2
     GREEN : 最小实现, R 测试不可改
 
     GREEN --> GREEN_GATE : outcome
-    GREEN_GATE : targeted 单测 + 全部历史单测
-    GREEN_GATE : + 本 task 的 int 子集 (第一轮不跑 e2e)
+    GREEN_GATE : targeted unit (task R commit RED manifest + GREEN-touched unit files)
+    GREEN_GATE : + integration 子集 (task IF 归属, D-41)
+    GREEN_GATE : 不含 e2e 与 R1/T-HIST 全量 (e2e 只在 FULL 链)
     GREEN_GATE : lint/format/type/static + 合同
     GREEN_GATE --> GREEN_COMMIT : 全过
     GREEN_GATE --> GREEN : 实现缺陷, 重派 Devon
@@ -620,7 +654,8 @@ stateDiagram-v2
     REFACTOR : 可返回 no-change + 理由
     REFACTOR --> REFACTOR_GATE : outcome
 
-    REFACTOR_GATE : 重跑 Green 全部检查
+    REFACTOR_GATE : identity 未变复用 Green 证据
+    REFACTOR_GATE : 有变化重跑同 scope (targeted unit+int)
     REFACTOR_GATE --> TASK_REVIEW : 通过 (committed | no_change)
     REFACTOR_GATE --> REFACTOR : 失败, 重派
     REFACTOR_GATE --> [*] : 动 public interface -> upstream
@@ -642,13 +677,14 @@ stateDiagram-v2
     TASK_DONE --> ISLAND_GATE_2 : 全部 task 完成
 
     ISLAND_GATE_2 : 最终孤岛闭合复查 (trac check reach)
-    ISLAND_GATE_2 : 全量 integration + e2e 变绿 (出口门禁)
-    ISLAND_GATE_2 --> [*] : 通过 -> stage.exited -> M-VERIFY
-    ISLAND_GATE_2 --> DIAGNOSE : 全量执行有失败
+    ISLAND_GATE_2 : FULL 链出口门禁 (unit+integration+e2e, §10.5)
+    ISLAND_GATE_2 : FULL_1 -> 台账分类/修复 -> SELECT_DIFF -> FULL_F
+    ISLAND_GATE_2 --> [*] : FULL_F 干净 -> stage.exited -> M-VERIFY
+    ISLAND_GATE_2 --> DIAGNOSE : 失败 -> 记台账 (循环至干净, 无全链预算)
     ISLAND_GATE_2 --> PLANNING : verdict.failed(island)
 ```
 
-> 绿的粒度：task 级 GREEN_GATE 只跑该 task 单测与 test-plan 变绿条件归属的 int 子集，第一轮实现不跑 e2e；全量 integration+e2e 变绿是 M-IMPL 出口门禁（ISLAND_GATE_2）。
+> 绿的粒度：task 级 GREEN_GATE 只跑 targeted unit（task 不可变 R commit 的 RED artifact manifest 与 GREEN-touched unit 文件）+ task IF 归属的 integration（D-41，§9.0），不跑 e2e；FULL（unit+integration+e2e）链是 M-IMPL 出口门禁（ISLAND_GATE_2，§10.5）：FULL_1 → 失败台账 → SELECT_DIFF → FULL_F，循环至干净。
 > 孤岛闭合以 `trac check reach` 为依据：从声明入口点做模块级 import 可达分析，报告不可达的生产模块；与 trace 同属需求追踪工具，消费点还有 M-VERIFY 的反 slop 门禁。
 > Red 测试先于实现是程序可验证的 lineage 事实（B/R/G commit 拓扑），不是 Agent 自报。
 > 单写者纪律：Devon 不得修改 Shield 的测试；测试缺陷经 DIAGNOSE→SHIELD_FIX 由 Shield 修复并产生受控测试 commit。
@@ -659,6 +695,8 @@ stateDiagram-v2
 ### 10.2. 事件清单
 
 `stage.entered` / `baseline.frozen` / `taskgraph.committed` / `task.started` / `writelock.granted|released` / `red.checkpointed` / `prism.verdict(pass|revise)` / `green.committed` / `refactor.committed|no_change` / `verdict.failed(red_invalid|regression|budget|island|scope|test_defect|impl_defect)` / `test.committed` / `task.completed` / `stage.exited` / `stage.rolled_back`
+
+D-41 附加事件（ISLAND_GATE_2 FULL 链与各门禁选择，§10.5）：`test.selected` / `full.executed` / `ledger.opened` / `ledger.transitioned` / `evidence.reused` / `evidence.staled`（REFACTOR_GATE 复用落 `evidence.reused`，GREEN_GATE/REFACTOR_GATE/RED_CHECK 选择落 `test.selected`）。
 
 ### 10.3. 硬规则
 
@@ -744,6 +782,19 @@ Runtime 在每次 run loop 顶部、resume 判定之前扫描等待中（DETECTE
 
 **可观察与可审计**：合法新 discussion 路径沿用现有 quarantine 语义（隔离、恢复、丢弃同 §10.4 上文）；`trac status` 显示 doc-gap adjudication 等待/结果、origin role/task/phase 与 quarantine 状态；`trac discuss query` 显示原文档线程与回复；`trac replay`/`trac report` 回溯 detected、adjudicated、quarantined、restored-or-discarded、resumed 审计事件。非法正文路径不进 SM-02，但 `trac status`/`trac replay`/`trac report` 必须暴露失败类（over-reach）、被拒绝的文档路径、整回合回滚结果及后续新 dispatch/attempt。SM-02 事实与隔离内容身份 append-only 写入事件，不改写既有行；中断/重启后重放得到与中断前一致的等待、隔离与恢复/丢弃状态，未闭环讨论与未验证成果不越过普通门禁，重放不把旧 outcome 重复计为成功。
 
+### 10.5. FULL 链与失败台账（canonical，D-41）
+
+**FULL = unit + integration + e2e**，全部 task 完成后执行，是 M-IMPL 出口门禁（ISLAND_GATE_2）。术语与身份语义见 §9.0。执行序列：
+
+1. **FULL_1（首轮全量）**：结果逐节点写入失败台账。FULL_1 干净且台账为空（零失败条目）时，同一 stamp 的执行事件直接标注 `serves_as_full_f=true` 充当 FULL_F，M-IMPL 照常出口——**绝不紧邻重复执行一次等价的 FULL_F**（干净首轮充当，与第 3 步 fallback 充当同一充当语义的退化情形）。
+2. **失败台账（event ledger）**：每个失败节点一条 append-only 事件记录，条目身份 = `(node, failure_signature)`（同节点新签名新建身份、同签名重启先前身份）；状态机 `OPEN → CLASSIFIED → FIXED → PROVEN`，上游变化置 `STALE`；闭合转移集另含 `FIXED → OPEN`（证明失败）与 `PROVEN → OPEN`（reopen：FULL_F 重现已 PROVEN 的同一 `(node, failure_signature)`，重启先前身份）。分类/修复走既有 DIAGNOSE/重派路径（测试缺陷→Shield、实现缺陷→Devon、上游缺口→对应阶段）；per-agent attempt 预算照旧消费。
+3. **逐条目修复-证明循环（v3）**：修复是 per bug/fix 的——每条目 `OPEN→CLASSIFIED→FIXED` 后**立即**对其运行确定性 SELECT_DIFF（按 selection identity 差分选择受影响节点）重跑证明：通过 → `FIXED→PROVEN`；同签名失败 → `FIXED→OPEN` 重分类/重修。某条目推导不出可靠选择集时回退 FULL（round=fallback_full）：该次 fallback 的结果同样逐条目落转移——通过条目 `FIXED→PROVEN`、同签名失败条目 `FIXED→OPEN`；fallback 干净可直接充当 FULL_F（事件标注充当关系）。多条目 union/batching 只在每条目的选择与证据仍可单独归因时作为可选优化，不构成规范语义。
+4. **FULL_F（终局全量）**：全部条目 `PROVEN` 且无 `STALE` 后执行；出现失败则回到第 2 步——重现已 PROVEN 的同一 `(node, failure_signature)` 按 reopen 转移重启先前身份，全新 signature 才是新增条目——循环无限重复直至干净，**全链循环不设预算**（只有 per-agent 派发 attempt 预算）。FULL_F 干净 = M-IMPL 出口证据；充当情形（干净首轮 FULL_1 或 fallback FULL 已标注 `serves_as_full_f=true`）下不再另行执行 FULL_F，出口证据即该标注充当关系的同一执行事件。
+
+**台账纪律（WAL/replay/fail-closed）**：台账条目以 append-only 事件写入（write-ahead），重启由事件回放重建台账状态；未知状态、缺失条目、非法转移一律 fail-closed（不得视为干净、不得跳过 FULL_F）。selection identity 与 evidence identity 绑定每条记录；上游变化使相关 selection/evidence `STALE`。台账的失败签名与逐节点状态消费同一份归一化逐节点结果记录（`outcomes_ref` blob，v6 §9.0——FULL/SELECT_DIFF 执行经 `{result}` JUnit 通道产出，stdout/stderr 不作分类权威）。
+
+**M-VERIFY 复用**：candidate 相对干净 FULL_F 未漂移（identity 一致）时复用之，随后进入既有候选 CI 门禁等待 `ci.run_observed(passed)` API 回读，不重复本地全量（§11）——该回读是 ordinary candidate CI 证据，与推迟实现的 nightly 结果取回（result fetch future）无关。
+
 ## 11. M-VERIFY
 
 **目的**：冻结 release candidate，跑完整本地权威质量链 + GitHub CI + 版本/构建物验证，Prism 做整体一致性复审。
@@ -768,7 +819,7 @@ stateDiagram-v2
 
     LOCAL_GATES : format/lint/static/type
     LOCAL_GATES : pre-commit all-files
-    LOCAL_GATES : 全部单测 + integration + e2e
+    LOCAL_GATES : FULL 复用 (candidate 未漂移) 或重跑 (D-41)
     LOCAL_GATES : AC trace + 反 slop (reach/ratio/dup)
     LOCAL_GATES : 真实 build + 全部 artifact
 
@@ -798,16 +849,18 @@ stateDiagram-v2
 
 > 所有 gate 必须对**同一** candidate PASS；不存在"部分基于旧 commit 的绿色"。
 > CI 结果以 API 回读为准，永不采信 Agent 转述。
-> 局部 test selector 只供开发反馈，不替代全量 gate；"与本次需求无关"不是排除历史测试的理由。
+> **FULL 复用（D-41，§10.5）**：candidate 相对 M-IMPL 干净 FULL_F 未漂移（identity 一致）时复用之，**不重复本地全量**；漂移/stale 才按 LOCAL_GATES 重跑。CI 证据是既有候选门禁的 `ci.run_observed` API 回读（ordinary candidate CI readback）——nightly 结果取回通道本版不实现（result fetch future），两者不得混同；nightly CI 运行当前完整 FULL 套件（R1+R2）不构成当前本地门禁；测试命令由 Archer machine contract 独家定义（并发 flag 与 `--junitxml={result}` 内嵌于命令字符串），Runtime 永不注入并发与 junit flag、run_selected 缺失即 contract_error fail-closed（不合成调用）。
+> 局部 test selector 只供开发反馈；全量语义以 §9.0/§10.5 为准——"与本次需求无关"既不是排除历史测试的理由，也不是本地重复全量的理由（历史测试仍受 nightly CI 全量覆盖与未来取回约束）。
 
 ### 11.2. 事件清单
 
-`stage.entered` / `candidate.frozen` / `check.executed(各 gate)` / `ci.run_observed(passed|failed)` / `artifact.verified` / `prism.verdict(pass|revise)` / `verdict.failed(...)` / `stage.exited` / `stage.rolled_back`
+`stage.entered` / `candidate.frozen` / `check.executed(各 gate)` / `evidence.reused(kind=full_f)` / `ci.run_observed(passed|failed)` / `artifact.verified` / `prism.verdict(pass|revise)` / `verdict.failed(...)` / `stage.exited` / `stage.rolled_back`
 
 ### 11.3. 硬规则
 
 1. 所有 gate 必须对**同一** candidate PASS；不存在"部分基于旧 commit 的绿色"。
 2. CI 结果以 API 回读为准，永不采信 Agent 转述。
+3. **FULL 复用与并发所有权（D-41，v6）**：candidate 相对 M-IMPL 干净 FULL_F 未漂移时复用之，不重复本地全量；CI 证据以既有候选 CI 门禁的 `ci.run_observed` API 回读为准，回读通过才退出——nightly 结果取回是明确推迟的独立事项（result fetch future），不是本门禁输入；漂移/stale 才重跑 LOCAL_GATES。测试命令由 Archer machine contract 独家定义（扁平 [unit]/[integration]/[e2e] 段的 run/run_selected，并发 flag 与 `--junitxml={result}` 内嵌于命令字符串），Runtime 只替换 {nodes}/{result}、永不注入并发与 junit flag；run_selected 缺失 = contract_error fail-closed（不向 run 追加 nodeid、不合成调用）；FULL 链逐节点结果消费 `{result}` JUnit 归一化记录（§9.0 v6），覆盖不精确/缺失/畸形 = contract_error fail-closed。
 
 ## 12. M-SECURITY
 

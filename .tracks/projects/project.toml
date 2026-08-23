@@ -1,21 +1,38 @@
 # Host project test execution contract (FR-0190).
 # Produced by Archer in M-DESIGN. Consumed by project.py load_contract() and
 # the executor (collect / run commands for M-TEST and M-IMPL GREEN_GATE /
-# ISLAND_GATE_2).
+# ISLAND_GATE_2). Test concurrency and JUnit flags are contract-owned.
+
+[unit]
+framework = "pytest"
+paths = ["tests/unit/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"
+run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+cwd = "."
 
 [integration]
 framework = "pytest"
 paths = ["tests/integration/"]
 collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"
-run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"
+run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 cwd = "."
 
 [e2e]
 framework = "pytest"
 paths = ["tests/e2e/"]
 collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
-run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"
+run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 cwd = "."
+
+[nightly]
+schedule = "0 3 * * *"
+workflow = ".github/workflows/nightly.yml"
+job = "nightly-regression"
+layers = ["unit", "integration", "e2e"]
+purpose = "current FULL suite (R1+R2) regression; result fetch future; not a local gate"
 
 # Directory layout designed by Archer in M-DESIGN (FR-0120).
 # Consumed by the runtime auditor to authorize agent writes per role.

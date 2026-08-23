@@ -36,8 +36,11 @@ from .m_impl import (
     _M_IMPL_REVIEW_SUBSTATES,  # noqa: F401
     _decide_m_impl,
     _on_baseline_frozen,
+    _on_full_executed,
     _on_green_committed,
     _on_green_no_change,
+    _on_ledger_opened,
+    _on_ledger_transitioned,
     _on_m_impl_outcome_done,
     _on_m_impl_prism_verdict,
     _on_m_impl_verdict_failed,
@@ -64,8 +67,10 @@ from .m_test import (
     _on_m_test_outcome_done,
     _on_m_test_verdict_failed,
     _on_red_validated,
+    _on_test_baseline_captured,
     _on_test_collected,
     _on_test_committed,
+    _on_test_selected,
     _on_test_written,
     _reset_doc,
     _reset_review,
@@ -131,6 +136,19 @@ class State:
     test_committed: bool = False  # test asset frozen (commit_tests done)
     criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
     diagnose_classification: str | None = None  # DIAGNOSE routing verdict
+    # v0.6 R6/D-41 selection semantics (interfaces §1c/§1j): the pre-WRITE R1
+    # snapshot gate and the latest stamped selection identity.
+    baseline_captured: bool = False  # test.baseline_captured(passed) persisted
+    active_selection_id: str | None = None  # latest test.selected identity
+    full_chain_round: str | None = None  # FULL_1 | FULL_F | fallback_full
+    ledger_open: int = 0  # OPEN|CLASSIFIED|FIXED|STALE entries
+    ledger_rebuilt: bool = False  # ledger WAL has been projected during replay
+    ledger_entries: dict = field(default_factory=dict)  # identity -> replay metadata/state
+    # Review pin (FR-0244-04): the explicit persisted unit-only hotfix
+    # increment fact -- the ONLY key that releases an empty-R2 M-TEST
+    # selection. Projected by the increment.declared reducer from a
+    # shield=empty event with nonempty unit rows.
+    increment_declared: dict | None = None
     # Full DIAGNOSE verdict details for the fixer dispatch. Carried on State,
     # NOT last_failure: last_failure is dropped by `trac retry
     # --clear-evidence` and overwritten by every failed fixer attempt
@@ -341,6 +359,11 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.red_findings = s.criteria_pack_loaded = None
         s.diagnose_classification = None
         s.diagnose_report = None
+        # D-41: a fresh M-TEST cycle re-captures the R1 snapshot (the prior
+        # capture belongs to the previous cycle's event prefix) and starts
+        # with no selection identity.
+        s.baseline_captured = False
+        s.active_selection_id = None
     if s.stage == "M-IMPL":
         # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
         s.baseline_frozen = False
@@ -804,12 +827,14 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
         _on_m_impl_prism_verdict(s, p)
         return
     if s.stage == "M-TEST":
-        # SM-01.7/.8: pass -> RED_CHECK; revise -> WRITE (re-dispatch Shield).
-        # The shared <=3 budget is consumed on revise (NOT reset -- unlike
-        # M-DESIGN, M-TEST shares one budget across WRITE/PRISM_REVIEW/EXIT).
+        # D-41 v3 timing (flow.md §9.1): RED_CHECK already ran before
+        # PRISM_REVIEW, so a pass verdict goes straight to EXIT; revise routes
+        # by defect_classification back to WRITE/upstream. The shared <=3
+        # budget is consumed on revise (NOT reset -- unlike M-DESIGN, M-TEST
+        # shares one budget across WRITE/COLLECT/RED_CHECK/PRISM_REVIEW/EXIT).
         s.criteria_pack_loaded = p.get("criteria_pack")
         if p["verdict"] == "pass":
-            s.substate = "RED_CHECK"
+            s.substate = "EXIT"
             return
         # REVISE: route by defect_classification (default test_defect).
         # `or` treats absent AND None/empty (e.g. old replay events carrying
@@ -1393,6 +1418,12 @@ _APPLY = {
     "test.collected": _on_test_collected,
     "red.validated": _on_red_validated,
     "test.committed": _on_test_committed,
+    # v0.6 R6/D-41 selection semantics (interfaces §1a/§1j)
+    "test.baseline_captured": _on_test_baseline_captured,
+    "test.selected": _on_test_selected,
+    "full.executed": _on_full_executed,
+    "ledger.opened": _on_ledger_opened,
+    "ledger.transitioned": _on_ledger_transitioned,
     # v0.5 batch 2: M-TEST Shield WRITE pipeline publish
     "test.written": _on_test_written,
     # v0.5 ResultCheckpoint pipeline (batch 1)

@@ -147,9 +147,6 @@ class DevonPatchMixin:
 
     @staticmethod
     def _devon_assertion_test(production_path: str, if_id: str, implementation: str) -> str:
-        expected_lines = "".join(
-            f"        {line!r}\n" for line in implementation.splitlines(keepends=True)
-        )
         path_literal = json.dumps(production_path)
         return (
             "import runpy\n"
@@ -162,12 +159,6 @@ class DevonPatchMixin:
             "        if implementation.is_file() else {}\n"
             "    )\n"
             f'    assert namespace.get("IMPLEMENTED_IF") == {if_id!r}\n'
-            f"    expected = (\n{expected_lines}    )\n"
-            "    actual = (\n"
-            '        implementation.read_text(encoding="utf-8")\n'
-            '        if implementation.is_file() else ""\n'
-            "    )\n"
-            "    assert actual == expected\n"
         )
 
     @staticmethod

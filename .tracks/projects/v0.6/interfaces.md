@@ -9,7 +9,7 @@ sha:
 
 # v0.6 - 接口与类型化 Schema
 
-本文是 IF-005（v0.5）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路（IF-003 §6/§7a）、M-IMPL 合同（IF-005 §1a–§1m）、live evidence 与 release-evidence（IF-005 §1j/§2d/§3h）、doc-comment-first 与 quarantine（IF-005 §1k–§1m）等不变；凡未提及者继承 IF-001/IF-003/IF-004/IF-005。v0.6 新增 hotfix 工作流合同：HOTFIX-TRIAGE 入口子状态机、issue 读取通道、fix/{issue} 分支与基线继承、run 并存与恢复、M-TEST 空 Shield 增量放行、M-IMPL 场景 B stale reconcile、缺口与退出路由。
+本文是 IF-005（v0.5）的增量延伸。事件信封（IF-001 §2）、Command 基础结构（IF-001 §4）、State 投影（IF-001 §8）、Workflow 类型（IF-001 §9）、discuss 旁路（IF-003 §6/§7a）、M-IMPL 合同（IF-005 §1a–§1m）、live evidence 与 release-evidence（IF-005 §1j/§2d/§3h）、doc-comment-first 与 quarantine（IF-005 §1k–§1m）等不变；凡未提及者继承 IF-001/IF-003/IF-004/IF-005。v0.6 新增 hotfix 工作流合同：HOTFIX-TRIAGE 入口子状态机、issue 读取通道、fix/{issue} 分支与基线继承、run 并存与恢复、M-TEST 空 Shield 增量放行、M-IMPL 场景 B stale reconcile、缺口与退出路由。【R6 增补，D-41】测试执行选择语义合同：节点分类与四种选择（§1j）、证据四元组与复用/stale（§1k）、失败台账事件溯源与 FULL 链收敛（§1l）、测试命令独家所有权 schema（§1m；v6 增补 `{result}` 逐节点结果机器可读通道与 JUnit 解析/覆盖纯函数）、nightly CI 契约（§1n）。
 
 ## 0. 延续性（什么不变）
 
@@ -19,8 +19,11 @@ sha:
 - `trac check trace` 对 feature 版本的文件级闭合语义逐字节不变；hotfix 计划级闭合只在「run 为 hotfix 且 `increment.declared` 在事件流」时启用（§1f）。
 - BS-06 design-trace 的扫描范围合同（R3 增补，§2f）：inline-discussion blockquote 行是评审线程而非计划内容，不参与 test-plan 的 layer/IF- 归属扫描；§8 表格行作为唯一机器可读覆盖来源的地位不变（fail-closed）。
 - hotfix 版本目录继承基线文档只读解析合同（R4 增补，§1i / IF-HOTFIX-010）：hotfix 项目目录只含 delta 三文档、无 acceptance.md/interfaces.md（FR-0241-02 source approval 不复制），canonical validator 经共享纯函数只读引用目标版本目录的对应文档；feature 版本目录的 validator 校验语义逐字节不变（dir-name 身份门控）。
-- `.tracks/projects/project.toml` 测试执行合同（路径/schema/命令）不变；质量守卫栈合同不变（ARCH-006 §4.2）。
+- `.tracks/projects/project.toml` 测试执行合同：宿主合同继续由 Runtime 消费；其 D-41 扩展（run_selected 键、`{result}` 占位符、[nightly] 段）经原子实现切片交付（§1m/§1n，v3/v6），本文档不对该文件工作树内容作不变性断言；质量守卫栈合同不变（ARCH-006 §4.2）。
 - 单写者锁（`runtime/lock`，O_CREAT|O_EXCL + holder PID）合同不变：被持有时 stderr `runtime lock held by pid <N>` + exit 1、零事件（FR-0242-04 直接复用）。
+- 【R6】COMMAND_KINDS 零新增：选择与执行由既有门禁 handler（RED_CHECK/GREEN_GATE/REFACTOR_GATE/ISLAND_GATE_2）内部产出，kernel decide 控制流不变；EVENT_TYPES 追加 6 个选择/证据/台账/FULL 链事件（§1j–§1l），全部 append-only。
+- 【R6】`trac check trace` / `trac validate --file` 对 feature 版本的语义不受 R6 影响；分类/选择是 Runtime 执行期行为，不改变文档校验器（contract 完整性校验追加 [nightly]/run_selected 必填项除外，见 §1n）。
+- 【R6，v3 修订；v6 再修订】`.tracks/projects/project.toml` 的 run_selected 键（并发 flag 与 `--junitxml={result}` 内嵌于命令字符串，无独立 workers/dist 键）与 [nightly] 段的 schema 冻结于 §1m/§1n；每条 run/run_selected 各含 `{result}` 占位符恰好一次（run_selected 另含 `{nodes}` 恰好一次，§1m v6）；validator schema 激活、合同键扩展（[unit]、全部三层 run_selected、[nightly]）与 prompt/runtime 变更是**一个原子实现切片**——本文档轮不拥有该文件的并发工作树编辑（由另一授权 agent 持有）；schema 切片激活后 run_selected 缺失或占位符计数不合法 = contract_error fail-closed（§1m，无合成调用回退）。
 
 ## 1. 跨模块合同
 
@@ -35,6 +38,13 @@ sha:
 | `anchor.validated` | `acs: list[str]`, `source: "sage"\|"human"`, `attempt: int`, `rationale_refs: list[str]` | executor（`_do_validate_anchor` / `complete via cmd_hotfix anchor`） | executor, kernel, cli, report | SM-01.5/.8；`acs` 元素为跨版本引用（§1e）；rationale_refs 为 Sage outcome 的逐条出处 blob 引用 |
 | `human.anchor` | `mode: "manual"\|"feature_route"`, `acs: list[str]\|None`, `issue: int`, `actor: str` | cli（cmd_hotfix 子动作，submit_human_result） | cli, kernel, executor, report | SM-01.8/.9；manual 携带 acs（随后程序校验），feature_route 无 acs |
 | `increment.declared` | `shield: "empty"`, `unit_rows: list[dict]`, `trace_status: "pass"`, `basis: "delta-test-plan"` | executor（hotfix M-TEST EXIT 门禁） | executor, kernel, report | FR-0244-04 空 Shield 增量放行依据；`unit_rows` = delta §8 全部 unit 行（AC@version + IF + 建议 test 名） |
+| `test.baseline_captured` | `status: "passed"\|"failed"`, `baseline_id: str`, `baseline_tree: str`, `layers: ["unit","integration","e2e"]`, `nodes_count: int`, `empty_baseline: bool`, `node_digest_blob: str\|None`, `errors: list[str]` | executor（M-TEST 入口，首个 Shield WRITE 派发之前，R1 快照机制） | executor, kernel, report | IF-SELECT-001 R1 快照；本 run 进入 M-TEST 时对**继承测试树**（prior-to-Shield 当前工作树）做 unit+integration+e2e 全量 collect 并逐节点记源/体 digest；`baseline_id = sha256(canonical_json({tree, node_digests}))`（stamped identity）；`node_digest_blob` 指向 §3a 逐节点 digest 表；首次项目可合法捕获空集（`empty_baseline=true` 仅由成功 capture 产生——**缺失 capture ≠ 空 baseline**）；capture 失败 = fail-closed 路由上游/设计/合同缺陷（不静默空置 R1）；WAL/replay 复用同一 stamped capture（§1j） |
+| `test.selected` | `scope: "r2_delta"\|"task_if"\|"select_diff"\|"full"`, `basis: str`, `nodes_count: int`, `nodes_blob: str`, `baseline: str`, `commit: str`, `tree_stamp: str`, `selection_id: str`, `task_id: str\|None`, `task_ifs: list[str]\|None` | executor（门禁 handler：RED_CHECK/GREEN_GATE/REFACTOR_GATE/ISLAND_GATE_2） | executor, kernel, report | IF-SELECT-002；`selection_id = sha256(canonical_json({scope,basis,nodes,baseline,commit,tree_stamp}))`（NFR-0130）；`tree_stamp` = 确定性 dirty-aware 工作树内容 stamp（§1j），与 `commit` 分离——同节点集合同 HEAD 不同未提交内容不得共享 selection identity；`nodes_blob` 指向逐节点表（§3a）；FULL scope 的选择事件与 `full.executed` 相邻成对 |
+| `full.executed` | `round: "FULL_1"\|"FULL_F"\|"fallback_full"`, `suite: ["unit","integration","e2e"]`, `passed: bool`, `failed_nodes: list[str]`, `command_echo: dict[layer→argv]`, `evidence_ids: list[str]`, `serves_as_full_f: bool`, `outcomes_ref: str\|None`（v6：归一化逐节点结果 blob）, `gate: "ISLAND_GATE_2"` | executor（m_impl_runtime.py ISLAND_GATE_2） | executor, kernel, report | IF-FULLCHAIN-001；`serves_as_full_f=true` 标注 fallback 充当（FR-0253-04）与干净首轮充当（§1.0.6.5 退化情形）；`command_echo` 是 IF-RUNCONTRACT-001 审计比对对象；逐节点结果权威 = `{result}` JUnit XML（§1m v6），台账消费 `outcomes_ref` 归一化记录 |
+| `ledger.opened` | `node: str`, `failure_signature: str`, `state: "OPEN"`, `selection_id: str`, `evidence_id: str`, `reason: str` | executor（ISLAND_GATE_2 台账记账） | executor, kernel, report | IF-LEDGER-001；每个失败节点一条 append-only 条目（FR-0253-01）；台账身份 = `(node, failure_signature)`——同节点新签名新建身份、同签名重启先前身份 |
+| `ledger.transitioned` | `node: str`, `from: "OPEN"\|"CLASSIFIED"\|"FIXED"\|"PROVEN"\|"STALE"`, `to: 同左`, `attempt: int\|None`, `actor: str\|None`, `reason: str` | executor（DIAGNOSE/重派路径接线） | executor, kernel, report | IF-LEDGER-001；封闭转移集：OPEN→CLASSIFIED→FIXED→PROVEN、OPEN\|CLASSIFIED\|FIXED→STALE（上游变化）、STALE→OPEN（reconcile 后重驱）、FIXED→OPEN（证明失败：该条目 SELECT_DIFF/fallback 重跑同签名失败，重开重分类/重修）、PROVEN→OPEN（reopen：FULL_F 重现已 PROVEN 的同一 `(node, failure_signature)`）；未列出转移非法 fail-closed |
+| `evidence.reused` | `kind: "green"\|"full_f"`, `reused_evidence_ids: list[str]`, `identity_basis: {tree, command, env, selection_id}`, `consumer_gate: str` | executor（REFACTOR_GATE / M-VERIFY 注册后） | executor, kernel, report | IF-EVIDENCE-001；复用判定唯一判据 = 四元组全一致 ∧ 无 STALE（NFR-0130-02）；引用被复用证据的身份（FR-0252/FR-0254） |
+| `evidence.staled` | `targets: list[{kind: "selection"\|"evidence"\|"ledger", ref: str}]`, `reason: str` | executor（上游变化检测） | executor, kernel, report | IF-EVIDENCE-001；上游变化（设计 revision / task IF 集合 / baseline 重算）触发；STALE 传播共用同一实现函数（NFR-0130-02 不由各阶段自定变体） |
 
 既有事件的 payload 扩展（成员追加，向后兼容）：
 
@@ -48,8 +58,11 @@ sha:
 | `stage.rolled_back`（hotfix） | `to_stage` 可为 `"M-HOTFIX-TRIAGE"`，`reason` 追加 `"anchor_overturned"` | kernel, executor, report | anchor 推翻回滚路由 |
 | `baseline.frozen`（hotfix M-IMPL） | payload 追加 `scenario_branch_head: str\|None`（场景 B 活跃分支 HEAD） | executor, kernel | stale 检测输入审计（IF-HOTFIX-008） |
 | `baseline.inherited`（新事件，归本表） | `target_version: str`, `baseline_digest: str`, `anchor_acs: list[str]`, `baseline_doc_paths: list[str]` | executor（`_do_complete_hotfix_entry`） | executor, kernel, report | source approval 记录；不复制文件、不重新批准（FR-0241-02）。`target_version`+`baseline_doc_paths` 是 IF-HOTFIX-010 只读基线解析的权威记录（目录名编码为其持久投影） |
+| `test.collected`（R6 payload 扩展） | 追加 `inherited_r1: int`, `delta_r2: int`, `removed: int`, `failures: list[{node, error_class}]`, `per_node_blob: str`；`passed=false` 时 failures 非空 | executor（M-TEST COLLECT） | executor, kernel, report | FR-0250-01 全量 collect + 逐节点结果 + R1/R2 分类计数（IF-SELECT-001）；`per_node_blob` 指向 §3a 逐节点表 |
+| `red.validated`（R6 payload 扩展） | 追加 `selection_id: str`, `nodes_blob: str`（被选节点逐条判定表引用）, `outcomes_ref: str`（v6：归一化逐节点结果 blob——`{result}` JUnit 解析+精确覆盖校验后的持久形态） | executor（RED_CHECK） | executor, kernel, report | FR-0250-02：证据绑定 selection identity；被选集 ⊆ R2/T-DELTA 由 replay 可复核；合法 Red 判定输入 = JUnit testcase failure/error 详情（§1m v6），stdout/stderr 不作权威 |
+| `green.committed`（R6 payload 扩展） | 追加 `evidence_ids: list[str]`（GREEN_GATE 证据引用） | executor（GREEN_COMMIT） | executor, kernel, report | FR-0252-01 REFACTOR 复用的定位锚 |
 
-（`baseline.inherited` 为第 6 个新事件类型，与表首 5 个共同构成 v0.6 新事件封闭集。）
+（R6 新增第 7–13 个 v0.6 事件类型：`test.baseline_captured` / `test.selected` / `full.executed` / `ledger.opened` / `ledger.transitioned` / `evidence.reused` / `evidence.staled`，与表首 6 个共同构成 v0.6 新事件封闭集。）
 
 ### 1b. Command kind 增量（COMMAND_KINDS 追加，IF-HOTFIX-002 / IF-HOTFIX-003~005）
 
@@ -76,6 +89,11 @@ hotfix_precheck_passed: bool = False     # PRECHECK 通过（triage.prechecked p
 hotfix_anchor_validated: bool = False    # 锚定校验通过（anchor.validated）
 hotfix_branch: str | None = None         # "fix/{issue}"
 baseline_inherited: bool = False         # baseline.inherited 已产出
+# v0.6 R6 (D-41 selection semantics, FR-0250~0255)
+active_selection_id: str | None = None   # 最近一次 test.selected 的 selection identity
+full_chain_round: str | None = None      # FULL_1 | FULL_F | fallback_full | None（FULL 链进行中）
+ledger_open: int = 0                     # 台账非终态条目计数（OPEN|CLASSIFIED|FIXED|STALE）
+ledger_rebuilt: bool = False             # 重启后 rebuild_ledger 已重建（幂等标记）
 ```
 
 - `stage` 取值追加 `"M-HOTFIX-TRIAGE"`（非 canonical 顶层阶段，不进 `_NEXT_STAGE`；由 cmd_hotfix 写入 `stage.entered`，出口为 `M-DESIGN` 或终态）。
@@ -230,6 +248,304 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 - **权威性**：`baseline.inherited` 事件（§4a 行）的 `target_version` + `baseline_doc_paths` 是该只读引用的权威记录；目录名编码是 `complete_hotfix_entry` 按该事件构造的持久投影，二者一致由构造保证——文件级 validator 无需读事件流（保持 validate 的文件级纯度）。
 - **不变量**：feature 版本目录的 validator 校验语义逐字节不变（dir-name 身份门控；非 hotfix 目录永不进入跨版本解析路径）。
 
+### 1j. 节点分类与选择语义（IF-SELECT-001/002，R6；ARCH-006 §1.0.6.1/.2）
+
+**modules**: executor/test_select.py（实现）、kernel/m_test.py（COLLECT/RED_CHECK 消费）、executor/m_impl_runtime.py（GREEN_GATE/REFACTOR_GATE/ISLAND_GATE_2 消费）——跨模块接口，须有 integration 覆盖。
+
+```python
+Layer = Literal["unit", "integration", "e2e"]
+NodeClass = Literal["r1", "r2", "removed"]   # R1/T-HIST | R2/T-DELTA | REMOVED（fail-closed 测试资产删除，非良性分类）
+
+@dataclass(frozen=True)
+class BaselineAssets:
+    nodes: frozenset[str]                            # baseline 冻结测试资产的节点集（node id）
+    node_digests: Mapping[str, str]                  # 逐节点源/体 digest（node id -> sha256；非整文件 digest）
+
+@dataclass(frozen=True)
+class TestBaselineSnapshot:
+    """R1 快照（test.baseline_captured 的可执行形态，§1a）：M-TEST 入口、首个
+    Shield WRITE 派发之前，对继承测试树（prior-to-Shield 当前工作树）做
+    unit+integration+e2e 全量 collect 后冻结的逐节点 digest 投影。"""
+    baseline_id: str                       # sha256(canonical_json({tree, node_digests}))——stamped identity
+    baseline_tree: str                     # 捕获时树身份（commit SHA 或未提交工作树内容 digest）
+    node_digests: Mapping[str, str]        # node id -> 逐节点源/体 digest（三层全集；非整文件 digest）
+    layers: tuple[Layer, ...]              # 恒为 ("unit", "integration", "e2e")
+    empty_baseline: bool                   # True 仅当成功 capture 且零节点（首次项目合法空集）
+
+def capture_test_baseline(
+    collect_layer_nodes: Callable[[Layer], list[str]],  # layer -> 该层可 collect 节点 id（contract 三层 paths 全量 collect）
+    node_digest: Callable[[str], str],                  # node id -> 节点源/体 digest
+    tree_identity: str,                                 # 捕获时树身份
+) -> TestBaselineSnapshot:
+    """R1 快照捕获（纯编排，I/O 经注入的 callable）：三层全量 collect + 逐节点
+    digest + stamped identity。任一层 collect/import 失败由调用方路由 fail-closed
+    （test.baseline_captured(status=failed) → verdict.failed 契约/设计缺陷 → 上游），
+    绝不以「collect 失败 ⇒ 空快照」继续——静默空置 R1 是缺陷行为。
+    首次项目零节点 = 合法 empty_baseline=True 快照。同输入复跑一致（确定性）。"""
+
+def collect_node_source_digests(
+    repo: Path,                                        # 宿主仓库根（node id 相对路径的锚点）
+    nodeids: Iterable[str],                            # node id（``file.py::func[param]`` 形态）
+) -> dict[str, str]:
+    """逐节点源 digest 的真实实现（capture_test_baseline 之 node_digest 注入位的
+    可执行形态，v6 增补）：按 nodeid 定位物理文件中该函数 def 的源代码段做 sha256
+    ——同文件不同函数 digest 各异（编辑单个函数体只改变该节点 digest，未变兄弟
+    节点 digest 逐字节不变；整文件 digest 是缺陷行为）；同一函数的参数化节点共享
+    同一源 digest；同输入复跑一致。文件缺失或无法定位函数定义 => fail-closed，
+    绝不整文件兜底。"""
+
+class MissingBaselineCaptureError(Exception):
+    """COLLECT 分类时刻本 run 无已持久化的 test.baseline_captured(passed)：
+    fail-closed——禁止以既往事件或 post-WRITE 可变树「猜测」baseline（§4a
+    分类输入唯一来源 = 本 run pre-WRITE stamped 快照）。"""
+
+def classify_nodes(
+    baseline: BaselineAssets,                        # 冻结测试资产 = 本 run persisted TestBaselineSnapshot（首轮 run 为合法空集）
+    current_nodes: Iterable[str],                    # 当前工作树逐层 collect 全集（unit+integration+e2e）
+    current_node_digests: Mapping[str, str],         # node id -> 节点源/体 digest
+) -> dict[str, NodeClass]:
+    """IF-SELECT-001 确定性分类（纯函数，逐节点 digest，禁止整文件 digest）：
+    "r1": node∈baseline ∧ 节点 digest 一致（同文件未变兄弟节点保持 r1）；
+    "r2": node∉baseline（新增）∨ 节点 digest 变化——恰好且仅为这两类；
+          变更 support/fixture 不参与分类（仍参与全量 collect/import，当前 r2 测试在其上执行；
+          未变历史行为的回归等待 M-IMPL FULL 链与 nightly CI）；
+    "removed": node∈baseline ∧ ∉current——fail-closed 测试资产删除（调用方必须路由
+          test contract defect 并阻断 M-TEST 退出，不得静默注销）。同输入复跑一致。"""
+
+class EmptyR2SelectionError(Exception):
+    """feature M-TEST 的 SELECT_R2 结果为空：fail-closed，不 vacuous 通过。"""
+
+def require_nonempty_r2_selection(
+    scope: str,                                      # 仅接受 "r2_delta"（其他 scope 非法 fail-closed）
+    selected: Sequence[str],
+    *, allow_explicit_unit_increment: bool,          # hotfix FR-0244 显式 unit-only 增量声明旁路位
+) -> list[str]:
+    """M-TEST SELECT_R2 放行判定（kernel m_test RED_CHECK 消费）：
+    allow_explicit_unit_increment=False（feature）∧ selected 为空 =>
+    EmptyR2SelectionError；=True（hotfix increment.declared）空集放行返回原样。
+    非空选择集一律原样返回。"""
+
+def make_selection_id(
+    scope: str, basis: str, nodes: Iterable[str], baseline: str, commit: str,
+    tree_stamp: str = "",
+) -> str:
+    """IF-SELECT-002 selection identity（纯函数）：
+    sha256(canonical_json({scope,basis,nodes,baseline,commit,tree_stamp}))，
+    NFR-0130 唯一判据输入。``tree_stamp`` = 确定性 dirty-aware 工作树内容
+    stamp（executor seam：相关源/测试/配置路径；干净 → HEAD commit 身份；
+    脏 → 对变更路径当前内容 sha256——.tracks/、缓存、venv、构建产物等
+    Runtime 状态永不入 stamp，WAL/replay 复算一致），与 ``commit`` 分离：
+    同节点集合同 HEAD 不同脏内容 => 不同 selection identity（证据复用洞）。"""
+
+def select_r2(classification: Mapping[str, NodeClass]) -> list[str]:
+    """SELECT_R2（scope=r2_delta）：全部 r2 节点，稳定排序。M-TEST RED_CHECK 消费。
+    调用方纪律：结果经 require_nonempty_r2_selection 判定放行——feature 空选择集
+    = fail-closed（不 vacuous 通过）；hotfix unit-only 显式增量声明旁路保留（FR-0244）。
+    执行仍仅限实际 R2 节点：R1 节点（含历史 unit）永不进入 M-TEST 执行记录。"""
+
+def select_task(
+    red_unit_manifest: Iterable[str],             # task 不可变 R commit 的 Runtime 捕获 RED artifact manifest（unit 节点）
+    green_touched_unit_files: Iterable[str],      # 本 task GREEN 触达的 unit 文件
+    current_unit_nodes: Iterable[str],            # 当前 unit collect 全集（GREEN-touched 文件 -> 节点展开）
+    task_ifs: Iterable[str],                      # task 声明实现的 IF 集合
+    int_green_index: Mapping[str, Iterable[str]], # IF -> integration 变绿条件命中节点（test-plan §8 IF 行；§8 只含 integration/e2e）
+) -> list[str]:
+    """SELECT_TASK（scope=task_if）：targeted unit = RED artifact manifest unit 节点 ∪ GREEN-touched
+    unit 文件内节点（均 Runtime 捕获，确定性；unit 归属不经 test-plan §8——§8 IF 行只含 integration/e2e）；
+    integration = task IF 归属命中；不含 e2e、不含 R1 全量。GREEN_GATE / REFACTOR_GATE 同 scope 重跑消费。"""
+
+@dataclass(frozen=True)
+class DiffSelection:
+    nodes: list[str]
+    reliable: bool                      # False => 回退 FULL（fallback_full）
+    basis: str
+
+def select_diff(
+    fixed_entry: Mapping,               # 单条台账 FIXED 条目（含 node/selection_id/evidence_id）
+    repair_touched_files: Iterable[str],# 该条目修复 commit 触达文件
+    import_graph: Callable[[str], set[str]],  # 模块级 import 可达分析（复用 trac check reach 分析器）
+) -> DiffSelection:
+    """SELECT_DIFF（scope=select_diff）：该条目失败节点本身 ∪ 触达文件 import 可达命中的节点；
+    每条目 FIXED 后立即执行其 SELECT_DIFF（per bug/fix）——通过 FIXED→PROVEN，
+    同签名失败 FIXED→OPEN 重分类/重修；推导不可靠（空集歧义/图不可得）=> reliable=False，
+    调用方回退 FULL（fallback 结果逐条目落转移）。多条目 union/batching 仅在每条目的
+    选择与证据仍可单独归因时为可选优化，非规范语义。"""
+```
+
+**R1 快照机制纪律（test.baseline_captured，§1a；v5 增补）**：
+
+- **捕获时点与时序**：Runtime 在进入 M-TEST 时、本 run 首个 Shield WRITE 派发之前执行 `capture_test_baseline` 并持久化 `test.baseline_captured(passed)`（含 `node_digest_blob`）；WRITE 之后的既有全量 COLLECT 捕获当前三层 inventory，并以**该已持久化快照**为唯一分类 baseline。分类 baseline 的来源是 prior-to-Shield 当前 run 的 stamped capture——既不是既往 run 的事件猜测，也不是 WRITE 后可变树的事后重算（二者均为缺陷行为）。
+- **空层归一化**：capture 时点 Shield 尚未写入，fresh feature 项目的声明测试路径可能全部尚不存在——Runtime 在 section cwd 有效时于执行 collect 前将该层记为空集；路径存在但 pytest 返回 rc4 属合同/usage 缺陷并 fail-closed，只有 rc5 是执行后的合法零节点结果。逐节点 digest 经 `collect_node_source_digests`（v6）从物理源码函数段计算（同文件兄弟隔离、参数化共享、确定性）。
+- **缺失 = fail-closed**：COLLECT 分类时刻找不到本 run 已持久化的 passed 快照 ⇒ `MissingBaselineCaptureError`（contract error 路由），绝不以「空集」继续。
+- **capture 失败 = fail-closed 上游/设计路由**：任一层 collect/import 失败时 `test.baseline_captured(failed)` → `verdict.failed(check=baseline_defect, target_stage=M-DESIGN, artifact_disposition=rollback)`——继承树在 Shield 未写入前就不可 import 属上游/设计/合同缺陷，不是 Shield 重派事项；静默空置 R1 继续门禁是缺陷行为。
+- **WAL/replay 复用同一 stamped capture**：中断/重启/replay 后的分类与选择必须复用本 run 已持久化的同一 `baseline_id`（`test.selected.baseline == test.baseline_captured.baseline_id` 可复核）；恢复路径不得从可变工作树重新 capture。
+
+### 1k. 证据四元组与复用/stale 判定（IF-EVIDENCE-001，R6；ARCH-006 §1.0.6.3）
+
+**modules**: executor/test_select.py（实现）、executor/m_impl_runtime.py 与 kernel/m_test.py/m_impl.py（各门禁消费同一函数）——跨模块接口，须有 integration 覆盖。
+
+```python
+@dataclass(frozen=True)
+class EvidenceIdentity:
+    tree: str             # commit SHA 或未提交门禁的工作区内容 digest
+    command: tuple[str, ...]  # 实际执行 argv（contract 替换后逐字展开）
+    env: str              # 环境指纹：解释器版本+pytest 版本+TRAC_* 影响位图摘要
+    selection_id: str     # 本次选择的 identity（§1j）
+
+def evidence_identity(ident: EvidenceIdentity, node: str, result: str,
+                      attempt: int, actor: str) -> str:
+    """IF-EVIDENCE-001 证据 id（纯函数）：sha256(canonical_json(四元组+node/result/attempt/actor))。"""
+
+def reuse_allowed(
+    evidence: EvidenceIdentity, current: EvidenceIdentity,
+    stale_refs: AbstractSet[str],
+) -> bool:
+    """复用判定唯一实现（全门禁共用，NFR-0130-02 不由各阶段自定变体）：
+    四元组逐项相等 ∧ 相关引用不在 stale_refs ⇒ True；任一不一致（stale）⇒ False。"""
+
+def emit_stale_propagation(upstream_change: Mapping) -> list[dict]:
+    """上游变化（设计 revision / task IF 集合 / baseline 重算）-> evidence.staled targets
+    [{kind: selection|evidence|ledger, ref}]；STALE 传播唯一入口。"""
+```
+
+### 1l. 失败台账事件溯源与 FULL 链收敛（IF-LEDGER-001 / IF-FULLCHAIN-001，R6；ARCH-006 §1.0.6.4/.5）
+
+**modules**: executor/test_select.py（重建/判定纯函数）、executor/m_impl_runtime.py（FULL 链循环 + ledger.* 记账接线）、kernel/m_impl.py（出口门禁消费台账状态）——跨模块接口，须有 integration 覆盖。
+
+- **台账状态机（封闭转移集，未列出即非法 fail-closed）**：
+
+```
+OPEN → CLASSIFIED → FIXED → PROVEN      # 正向收敛（ledger.transitioned 逐转移落事件）
+OPEN | CLASSIFIED | FIXED → STALE       # 上游变化（evidence.staled 同源触发）
+STALE → OPEN                            # reconcile 后重驱（回到收敛轨道）
+FIXED → OPEN                            # 证明失败：该条目 SELECT_DIFF/fallback 重跑同签名失败——重开重分类/重修
+PROVEN → OPEN                           # reopen：FULL_F 重现已 PROVEN 的同一 (node, failure_signature)——重启先前身份并重证
+```
+
+- **台账身份**：条目身份 = `(node, failure_signature)`（`ledger.opened` 携带 failure_signature）；同一节点的新 failure signature 新建身份（新 `ledger.opened` 条目），同一 signature 重启先前身份（`PROVEN→OPEN` reopen）。clean 谓词与回放对 reopen 语义一致。
+
+- **WAL/replay**：`ledger.opened` / `ledger.transitioned` 先落事件再据以判定推进；重启后由 `rebuild_ledger(events)` 回放重建，重建结果与中断前一致，FULL 链从重建状态精确续跑（重建含 reopen 转移；续跑不重复与重建状态一致的历史执行）。
+
+```python
+LedgerStateValue = Literal["OPEN", "CLASSIFIED", "FIXED", "PROVEN", "STALE"]
+
+def rebuild_ledger(events: Iterable[Mapping]) -> dict[str, LedgerStateValue]:
+    """IF-LEDGER-001 WAL 回放重建（纯函数）：按 seq 应用 opened/transitioned；
+    非法转移/未知状态 -> LedgerCorruptionError（fail-closed，不猜测语义）。"""
+
+def ledger_is_clean(state: Mapping[str, LedgerStateValue]) -> bool:
+    """干净 ⇔ 非空 ∧ 全部条目 == "PROVEN"；空台账仅在 FULL_1 干净路径视为收敛。
+    未知/缺失/STALE 条目一律 False（脏台账不跳过 FULL_F、不产出 stage.exited(M-IMPL)）。"""
+
+def run_full_chain(
+    execute_full: Callable[[str], Mapping],              # round -> full.executed payload
+    open_entries: Callable[[list[str]], None],           # 失败节点 ledger.opened
+    drive_diagnose_fix: Callable[[str], bool],           # 单条目：既有 DIAGNOSE/重派路径至 FIXED
+    entry_diff_selection: Callable[[Mapping], DiffSelection],  # 单条 FIXED 条目 -> 其确定性 SELECT_DIFF
+    prove_entry: Callable[[Mapping, DiffSelection], bool],     # 重跑该条目选择集；False = 同签名失败
+) -> Literal["exited"]:
+    """IF-FULLCHAIN-001 无界收敛循环（ARCH-006 §1.0.6.5 伪代码的唯一权威实现位）：
+    FULL_1 -> 失败逐条 ledger.opened -> 逐条目修复-证明（每条 FIXED 后立即 SELECT_DIFF：
+    通过 FIXED→PROVEN；同签名失败 FIXED→OPEN 重修）或 fallback_full 逐条目落转移
+    （通过 FIXED→PROVEN、同签名失败 FIXED→OPEN，clean 充当 FULL_F）->
+    全部 PROVEN 且无 STALE 后 FULL_F 干净出口；新失败循环，无 loop-count cap、
+    无超限放弃；仅 per-agent attempt 预算照旧消费。
+    serves_as_full_f 标注 fallback 充当与干净首轮充当（退化情形）。多条目 union/batching
+    仅在每条目的选择/证据可单独归因时为可选优化，非规范语义。"""
+```
+
+### 1m. 测试命令独家所有权 schema 与 Runtime 解析边界（IF-RUNCONTRACT-001，R6；ARCH-006 §1.0.6.7）
+
+**modules**: executor/test_select.py（resolve_command/audit/JUnit 解析与覆盖校验实现）、executor/validate.py（contract 完整性校验，v6 含占位符计数）、`.tracks/projects/project.toml`（contract 载体；其键扩展由原子实现切片交付——validator schema 激活、合同扩展与 prompt/runtime 变更一个切片，本文档不拥有该文件的并发工作树编辑）——跨模块接口，须有 integration 覆盖。
+
+project.toml 扩展 schema（原子实现切片激活形态；扁平段与现行 project.toml `[integration]`/`[e2e]` 同风格——既有段追加 `run_selected` 成员并新增 `[unit]` 段与 `[nightly]` 段；integration/e2e 同构）：
+
+```toml
+[unit]
+run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
+# worker/dist 并发 flag 与结果写入 flag（--junitxml={result}）作为 Archer 选定 argv
+# 内嵌于命令字符串；不设独立 workers/dist 键（避免与命令字符串双权威）。
+# v6：每条 run/run_selected 各含 {result} 恰好一次——Runtime 提供的唯一可写
+# JUnit XML 路径；run_selected 另含 {nodes} 恰好一次。Runtime 只替换这两个
+# 占位符 + cwd/argv0 解析，永不注入 junit flag 或并发参数。
+```
+
+- **Archer 独家所有权**：扁平 `[unit]`/`[integration]`/`[e2e]` 段各自的 `run`、`run_selected` 命令字符串全部由 machine contract 定义，worker/dist 并发 flag 内嵌于命令字符串；任何角色不得在 contract 之外指定并发参数。
+- **结果占位符计数校验（v6）**：每条 `run` 与 `run_selected` 模板各含 `{result}` **恰好一次**（`run_selected` 另含 `{nodes}` **恰好一次**）——缺失或出现多次 = contract_error fail-closed（loader 加载即拒绝，`trac validate` 非零退出）；Runtime 替换封闭集 = 声明的 `{nodes}`/`{result}` 加 cwd/argv0 解析，**永不注入 `--junitxml` 等 junit flag**（结果写入 flag 只能由 Archer 内嵌），永不注入并发。
+- **逐节点结果权威（v6）**：每次测试执行的结果权威是 `{result}` 所指 JUnit XML——testcase 节点身份必须恰好覆盖本次被选集合（全量 run 时 = 本次 collect 的 FULL 全集）；文件缺失/畸形、身份重复、被选节点缺席、多余节点一律 contract_error fail-closed；stdout/stderr 仅为日志，永不作为逐节点分类依据。逐节点合法 Red 从 testcase 的 failure/error 详情推导（pass/skipped/xfailed 遵循既有合法 Red 规则：被选 R2 节点 pass/skip = 非法意外通过）；FULL 链失败台账消费同一份归一化逐节点记录（§3a outcomes blob）。
+- **结果生命周期（v6）**：`{result}` 路径位于 Runtime temp/blob staging、按 run/command 唯一；不入树身份（不参与 tree identity/digest 与越权归属）；执行后、temp 清理前归一化持久化为 outcomes blob（事件携 `outcomes_ref` 引用）；WAL replay 发现无已持久化结果时重跑该命令——绝不把缺失结果当作通过。
+- **run_selected 缺失 = contract_error fail-closed（schema 切片激活后）**：切片激活后任一层缺 `run_selected` 键时 Runtime 拒绝该层选择执行——**永不向 `run` 追加 nodeid、永不合成任何调用**（无回退参数化路径）；`trac validate` 非零退出。
+- **Runtime 解析边界（可执行 API，v5 修订；v6 签名增补）**：Runtime 侧命令构造与审计只经由以下纯函数（executor/test_select.py），全部显式接收被选节点与结果路径并对期望/实际两侧应用**同一 argv0 解析规则**：
+
+```python
+def resolve_selected_command(
+    template: str,                # contract 层的 run_selected 命令字符串（含 {nodes} 与 {result} 占位符）
+    nodes: Sequence[str],         # 本次选择的被选节点（稳定排序后替换；逐节点 shell-quote、空格连接）
+    result_path: str | Path,      # Runtime 提供的唯一可写 JUnit XML 路径（temp/blob staging）
+    cwd: str | Path,              # 执行目录（相对 repo root 在此解析）
+) -> tuple[str, ...]:
+    """IF-RUNCONTRACT-001 选择命令解析（v6）：{nodes}/{result} 替换 -> shlex 分词 ->
+    argv0 相对 cwd 解析为可执行路径；返回可直接 subprocess 执行的 argv。不注入任何
+    contract 之外参数（-n/--dist/-p xdist/worker 数/--junitxml 等）。模板占位符计数
+    不合法（{nodes}/{result} 缺失或多次）由 contract loader 前置拒绝。"""
+
+def audit_no_concurrency_injection(
+    expected_argv: Sequence[str],  # 期望侧 argv（通常 = resolve_selected_command 的产物）
+    actual_argv: Sequence[str],    # 实际执行 argv（command_echo / 执行审计回显）
+    cwd: str | Path,
+) -> bool:
+    """并发/junit 注入审计：对 expected 与 actual 两侧应用同一 argv0 解析规则后逐字比对；
+    不等（含任何追加 flag/参数，含 Runtime 注入的 --junitxml/-n/--dist）=> False
+    （fail-closed）。两侧必须经同一解析才可比，禁止对期望侧与实际侧使用不同解析路径。"""
+
+def audit(
+    template: str, nodes: Sequence[str], result_path: str | Path,
+    actual_argv: Sequence[str], cwd: str | Path,
+) -> bool:
+    """组合便利形态（v6）：audit_no_concurrency_injection(
+        resolve_selected_command(template, nodes, result_path, cwd), actual_argv, cwd)。"""
+
+@dataclass(frozen=True)
+class JUnitCase:
+    nodeid: str                                        # testcase 身份（classname+name 归一化为 node id）
+    status: Literal["passed", "failed", "error", "skipped"]   # xfailed/skipped 归一化 skipped
+    detail: str | None                                 # failure/error 的 message/text（合法 Red 判定输入）
+
+class JUnitResultError(Exception):
+    """{result} 结果文件不可用作逐节点权威：文件缺失/XML 畸形/testcase 身份缺失或重复/
+    覆盖不精确（被选缺席∨多余节点）/空 records 对非空选择 => contract_error fail-closed。"""
+
+def parse_junit_result(path: str | Path) -> list[JUnitCase]:
+    """IF-RUNCONTRACT-001 逐节点结果解析（纯函数，I/O 仅限读该文件，v6）：JUnit XML ->
+    逐 testcase 记录；文件缺失或 XML 畸形或 testcase 无身份 => JUnitResultError。"""
+
+def require_exact_node_coverage(
+    cases: Iterable[JUnitCase], selected: Sequence[str],
+) -> dict[str, JUnitCase]:
+    """覆盖判定（纯函数，v6）：testcase 身份多重集 == selected 多重集（全量 run 时
+    selected = collect FULL 全集）=> 通过并返回 node -> record 映射；重复身份、被选缺席、
+    多余节点、空 records 对非空选择 => JUnitResultError fail-closed。"""
+```
+
+- **审计比对（两侧同一 argv0 解析）**：实际 argv 经 `full.executed.command_echo` 与门禁执行审计事件回显，`audit(template, nodes, result_path, actual_argv, cwd)` 程序化复核——被选节点与结果路径显式参与期望侧展开，期望/实际两侧经同一 argv0 解析后逐字比对，不等 fail-closed（FR-0255-01）；执行后的 `{result}` 文件经 `parse_junit_result` + `require_exact_node_coverage` 校验后才可作为逐节点分类输入（v6）。
+
+### 1n. nightly CI 契约合同（IF-NIGHTLY-001，R6；ARCH-006 §1.0.6.8）
+
+**modules**: executor/validate.py（[nightly] 必填校验）、`.github/workflows/nightly.yml`（随原子实现切片交付）、`.tracks/projects/project.toml` [nightly] 段——契约存在性可审计面（本版 = contract 文件 + validate 校验）。
+
+```toml
+[nightly]
+schedule = "0 3 * * *"              # cron（UTC），Archer 裁量值
+workflow = ".github/workflows/nightly.yml"
+job = "nightly-regression"
+layers = ["unit", "integration", "e2e"]   # 当前完整 FULL 套件 R1+R2（D-18 周期回归层）
+purpose = "current FULL suite (R1+R2) regression; result fetch future; not a local gate"
+```
+
+- **存在性审计（本版 = contract 文件 + validate 校验）**：`trac validate` contract 完整性校验追加 `[nightly]` 四键必填（缺失非零退出）；本版不承诺 nightly 派发/回读事件——其可审计面就是 contract 文件与 validate 校验，dispatch/readback 事件随 result fetch future 一并考虑（FR-0255-02）。
+- **取回推迟**：nightly 结果取回通道本版明确不实现（spec 范围排除 result fetch future）；nightly 结果不是当前本地门禁——red.validated/GREEN_GATE/FULL 链/M-VERIFY 复用对其零依赖（负断言 AC-FR0255-02）。workflow 文件随原子实现切片交付；CI 侧 job 与本地门禁解耦。
+
 ## 2. CLI 接口合同
 
 ### 2a. trac hotfix（新命令：入口形态 + AWAIT_HUMAN 子动作，IF-HOTFIX-001；待实现 Devon foundation task——下表「调用」列为合同语法）
@@ -296,6 +612,11 @@ agent 不得自行搜索/猜这些字段（FR-0190 纪律不变）；无效输�
 | `.tracks/runtime/host-issues.json` | JSON（fake 通道宿主 issue 种子，§3b） | 测试/操作者（fake 语料准备） | FakeIssueBackend.fetch_issue |
 | `fix/{issue}` | git 分支（base=main 或活跃 release 分支） | Runtime（complete_hotfix_entry，唯一 branch authority） | 测试（git branch/log 断言）、M-IMPL RGR |
 | `refs/trac/rgr/{run}/{task}/{attempt}/red` | git ref（不变，落在 fix/{issue} 旅程） | executor（不变） | 不变 |
+| `tracks/executor/test_select.py` | Python 模块（R6：分类/选择/身份/台账/命令审计纯函数，接口桩 → Devon 实现） | Devon（实现） | kernel/m_test.py、kernel/m_impl.py、executor/m_impl_runtime.py、tests |
+| `.tracks/runtime/blobs/selection/{run}/{seq}-nodes.json` | JSON（逐节点 `{node, layer, class: r1\|r2\|removed}` 表 / 选择节点表；test.collected.per_node_blob 与 test.selected.nodes_blob 引用） | executor（COLLECT/门禁 handler） | report、replay 审计、tests |
+| `.tracks/runtime/blobs/baseline/{run}/{seq}-node-digests.json` | JSON（R1 快照逐节点 digest 表 `[{node, layer, digest}]`，三层全集；test.baseline_captured.node_digest_blob 引用，§1j/§1a v5） | executor（M-TEST 入口 capture） | COLLECT 分类、replay 审计、tests |
+| `.tracks/runtime/blobs/results/{run}/{seq}-outcomes.json` | JSON（v6：归一化逐节点结果表 `[{node, status: passed\|failed\|error\|skipped, detail_ref?}]`——`{result}` JUnit XML 经 parse_junit_result+require_exact_node_coverage 校验后的持久形态；red.validated/green/full.executed 的 outcomes_ref 引用；FULL 链台账消费同一记录） | executor（门禁 handler，temp 清理前落盘） | report、replay 审计、FULL 链台账、tests |
+| Runtime temp staging `{result}` 路径 | JUnit XML（按 run/command 唯一的可写路径；执行后归一化至上一行 blob 即清理；不入树身份、不入 git） | Runtime（subprocess 执行时替换 {result}） | 门禁 handler（执行后立即解析校验） |
 
 ### 3b. host-issues.json schema（fake 通道，IF-HOTFIX-003）
 
@@ -342,6 +663,15 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 | `run.completed(rejected|feature_route|ac_gap|spec_gap)` | terminal_state | AC-FR0240-03, AC-FR0241-04, AC-FR0248-01 |
 | `human.approval`（ac_gap/spec_gap 前置） | actor | AC-FR0248-01 |
 | `command.issued`（sage:SAGE_TRIAGE / hotfix M-DESIGN） | params.assignment 的 anchor 语料字段（§1h） | AC-FR0240-04, AC-FR0243-01 |
+| `test.baseline_captured`（R6 v5） | status, baseline_id, baseline_tree, layers(unit+int+e2e), nodes_count, empty_baseline, node_digest_blob（seq 先于本 run 首个 Shield WRITE 派发；test.selected.baseline == baseline_id 可复核） | AC-FR0250-01 |
+| `test.selected` | scope, basis, nodes_count, nodes_blob, baseline, commit, selection_id, task_id/task_ifs | AC-FR0250-02, AC-FR0251-01/02, AC-FR0253-03, AC-NFR0130-01 |
+| `test.collected`（R6 扩展） | inherited_r1, delta_r2, removed, failures, per_node_blob | AC-FR0250-01 |
+| `red.validated`（R6 扩展） | selection_id, nodes_blob（⊆R2/T-DELTA 可复核）, outcomes_ref（v6：JUnit 解析+精确覆盖后的归一化逐节点结果 blob） | AC-FR0250-02, AC-FR0255-01 |
+| `full.executed` | round, suite, passed, failed_nodes, command_echo, evidence_ids, serves_as_full_f, outcomes_ref（v6） | AC-FR0253-01/04/05, AC-FR0254-02, AC-FR0255-01 |
+| `ledger.opened` / `ledger.transitioned` | node, state/from/to, selection_id, evidence_id, attempt, actor, reason | AC-FR0253-01/02, AC-NFR0120-01/02 |
+| `evidence.reused` | kind(green\|full_f), reused_evidence_ids, identity_basis, consumer_gate | AC-FR0252-01, AC-FR0254-01, AC-NFR0130-02 |
+| `evidence.staled` | targets(kind, ref), reason | AC-FR0251-02, AC-NFR0130-02 |
+| `green.committed`（R6 扩展） | evidence_ids（REFACTOR 复用定位锚） | AC-FR0252-01 |
 
 ### 4b. CLI 出口
 
@@ -353,6 +683,9 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 | `trac validate --file test-plan.md`（hotfix 目录） | 层归属/跨版本引用校验结果 + exit | AC-FR0244-02 |
 | `trac check trace [--json]` | 跨版本闭合 + hotfix_scope 字段 | AC-FR0244-03/04 |
 | `trac replay <run>` / `trac report --run-id <run> --format md` | hotfix 全旅程序列 + 锚定/分支/boundary 证据 | AC-FR0240-07, AC-FR0246-03 |
+| `trac replay` / `trac report`（R6 扩展） | selection/evidence/ledger/FULL 链身份链（test.selected/full.executed/ledger.*/evidence.* 全 payload） | AC-FR0253-02, AC-NFR0120-01, AC-NFR0130-01 |
+| `trac validate`（R6 contract 完整性扩展） | 缺 [nightly] 必填键、任一层 run_selected 键或占位符计数不合法（{result}/{nodes} 缺失或多次，v6）时非零退出（contract_error fail-closed；无合成调用回退） | AC-FR0255-02 |
+| `trac status`（R6 FULL 链行） | FULL 链进行中追加 `full_chain: round=<r> ledger=open:N proven:M`；boundary 后无该行 | AC-FR0253-05, AC-FR0254-01 |
 
 ### 4c. 文件 / Git 出口
 
@@ -368,7 +701,7 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 
 ## 5. IF Registry
 
-每个 IF- 标识代表一个可独立实现的接口合同，是 test-plan §8「IF- 归属」列的唯一合法取值来源。v0.4/v0.5 已建立的 20 个标识不可变、不可复用；此处列出 cross-reference 条目使 validator 可解析（定义仍以 IF-004/IF-005 §5 为准），并增补 10 个新标识。
+每个 IF- 标识代表一个可独立实现的接口合同，是 test-plan §8「IF- 归属」列的唯一合法取值来源。v0.4/v0.5 已建立的 20 个标识不可变、不可复用；此处列出 cross-reference 条目使 validator 可解析（定义仍以 IF-004/IF-005 §5 为准），并增补 10 个 hotfix 标识与 R6 的 7 个 D-41 选择语义标识。
 
 ### IF-MTEST-001 M-TEST 测试收集合同（承自 IF-004 §5，定义不变）
 
@@ -480,4 +813,53 @@ test-plan 的断言只能落在以下外部可观察出口（§6.5 闭环）。
 - **对应 §section**：§1i, §4a（baseline.inherited 权威记录）。
 - **关联 FR**：FR-0243-01, FR-0244-02, FR-0241-02。
 
-**有效性校验机制**（design-trace validator 扩展，承自 IF-004/IF-005 §5）：validator 解析本注册表与 IF-004/IF-005 §5 注册表构建已定义 IF- 集合；test-plan §8 每条 integration/e2e 行的 IF- 归属必须非空且已注册；v0.6 的 10 个新标识生效后不可复用/重定义。
+### IF-SELECT-001 测试节点分类合同（R6；v5 增补 R1 快照机制）
+
+- **合同**：§1j `classify_nodes` 确定性分类（逐节点 digest，禁止整文件 digest）——R2/T-DELTA（新增 ∨ 同一 nodeid 节点源/体 digest 变化，恰好且仅为这两类）/ R1/T-HIST（baseline 节点 ∧ 节点 digest 一致；同文件未变兄弟节点保持 R1；变更 support/fixture 不参与分类但仍参与全量 collect/import，未变历史行为的回归等待 M-IMPL FULL 链与 nightly CI）/ REMOVED（baseline 有当前无 = fail-closed 测试资产删除：路由 test contract defect、阻断 M-TEST 退出，不静默注销）；分类输入 = **本 run pre-WRITE 持久化的 `test.baseline_captured` stamped 快照**（`TestBaselineSnapshot`/`capture_test_baseline`：M-TEST 入口、首个 Shield WRITE 派发前对继承树做 unit+integration+e2e 全量 collect + 逐节点 digest + baseline/tree identity；首次项目可合法空集；缺失 capture = `MissingBaselineCaptureError` fail-closed，capture 失败 = 上游/设计/合同 fail-closed 路由，WAL/replay 复用同一 stamped capture）+ 当前三层 inventory，同输入复跑一致；结果经 test.collected payload（r1/r2/removed 计数 + per_node_blob）落事件可审计。
+- **实现模块**：executor/test_select.py, kernel/m_test.py（COLLECT 消费）。
+- **对应 §section**：§1j, §1a（test.baseline_captured）, §3a（per_node_blob / node-digests blob）, §4a。
+- **关联 FR**：FR-0250-01。
+
+### IF-SELECT-002 选择语义与 selection identity 合同（R6）
+
+- **合同**：§1j 四种选择封闭清单——SELECT_R2（scope=r2_delta，全部 delta 节点；feature M-TEST 空选择集 fail-closed，hotfix unit-only 显式增量旁路保留）、SELECT_TASK（scope=task_if，targeted unit 来自 task 不可变 R commit 的 Runtime 捕获 RED artifact manifest 与 GREEN-touched unit 文件 ∪ task IF 归属命中的 integration，不含 e2e/R1 全量）、SELECT_DIFF（scope=select_diff，单条 FIXED 条目的确定性差分受影响集，每条目 FIXED 后立即执行；不可靠回退 FULL）、FULL（scope=full，三层全量）；每次选择以 test.selected 落事件携带 selection_id = sha256(canonical_json({scope,basis,nodes,baseline,commit,tree_stamp}))（tree_stamp = 确定性 dirty-aware 工作树内容 stamp，与 commit 分离——同节点集合同 HEAD 不同未提交内容不得共享 selection identity）；上游变化经 evidence.staled 置 stale 且不复用为通过依据。
+- **实现模块**：executor/test_select.py, kernel/m_test.py, executor/m_impl_runtime.py。
+- **对应 §section**：§1j, §1k, §4a。
+- **关联 FR**：FR-0250-02, FR-0251-01/02, FR-0253-03, NFR-0130-01。
+
+### IF-EVIDENCE-001 证据四元组与复用/stale 判定合同（R6）
+
+- **合同**：§1k evidence_identity 四元组（tree/command/env/selection_id）+ node/result/attempt/actor；`reuse_allowed` 为全门禁共用唯一实现（四元组全一致 ∧ 无 STALE 才可复用）；evidence.reused（kind=green|full_f）与 evidence.staled 落事件 append-only；REFACTOR 复用 Green（FR-0252）与 M-VERIFY 复用 FULL_F（FR-0254，注册后生效）消费同一判据。
+- **实现模块**：executor/test_select.py, executor/m_impl_runtime.py, kernel/m_test.py, kernel/m_impl.py。
+- **对应 §section**：§1k, §4a。
+- **关联 FR**：FR-0250-03, FR-0252-01/02/03, FR-0254-01, NFR-0130-01/02。
+
+### IF-LEDGER-001 失败台账事件溯源合同（R6）
+
+- **合同**：§1l 台账身份 = `(node, failure_signature)`（同签名重启先前身份、新签名新建身份）；状态机封闭转移集 OPEN→CLASSIFIED→FIXED→PROVEN、OPEN|CLASSIFIED|FIXED→STALE、STALE→OPEN、FIXED→OPEN（证明失败：SELECT_DIFF/fallback 重跑同签名失败，重开重分类/重修）、PROVEN→OPEN（reopen：FULL_F 重现已 PROVEN 同一签名；未列出非法 fail-closed）；ledger.opened/transitioned 先落事件再判定（WAL）；rebuild_ledger 回放重建（含全部闭合转移）与中断前一致、FULL 链精确续跑；未知/缺失/STALE 一律不视为干净（不跳过 FULL_F、不产出 stage.exited(M-IMPL)，触发原因落事件）。
+- **实现模块**：executor/test_select.py, executor/m_impl_runtime.py, kernel/m_impl.py。
+- **对应 §section**：§1l, §4a。
+- **关联 FR**：FR-0253-01/02, NFR-0120-01/02。
+
+### IF-FULLCHAIN-001 FULL 链收敛合同（R6）
+
+- **合同**：§1l run_full_chain 无界收敛循环——FULL_1 → 失败逐条 ledger.opened → **逐条目**修复-证明（每条 FIXED 后立即其确定性 SELECT_DIFF：通过 FIXED→PROVEN、同签名失败 FIXED→OPEN 重分类/重修）或 fallback_full 逐条目落转移（通过 FIXED→PROVEN、同签名失败 FIXED→OPEN，clean 充当 FULL_F）→ 全部 PROVEN 且无 STALE 后 FULL_F 干净出口；新失败追加台账任意多轮循环，无 loop-count cap、无超限放弃，仅 per-agent attempt 预算照旧；serves_as_full_f 标注 fallback 充当与干净首轮充当；多条目 union/batching 仅在每条目选择/证据可单独归因时为可选优化（非规范语义）；FULL 本地执行仅发生在 ISLAND_GATE_2（AC-FR0254-02 负断言）。
+- **实现模块**：executor/m_impl_runtime.py, executor/test_select.py, kernel/m_impl.py（出口门禁）。
+- **对应 §section**：§1l, §4a。
+- **关联 FR**：FR-0253-01/04/05, FR-0254-02。
+
+### IF-RUNCONTRACT-001 测试命令独家所有权与 Runtime 解析合同（R6；v6 增补结果通道）
+
+- **合同**：§1m project.toml 扩展 schema——扁平 `[unit]`/`[integration]`/`[e2e]` 段（与现行 project.toml 同风格）各自声明 run/run_selected 命令字符串，worker/dist 并发 flag 与结果写入 flag（`--junitxml={result}`）作为 Archer 选定 argv 内嵌于命令字符串（无独立 workers/dist 键）；每条 run/run_selected 各含 `{result}` 恰好一次（run_selected 另含 `{nodes}` 恰好一次），缺失或重复 = contract_error fail-closed（v6）；schema 切片激活后 run_selected 缺失 = contract_error fail-closed（Runtime 永不向 run 追加 nodeid、永不合成调用，无回退参数化路径）；Runtime 命令构造与审计仅经可执行纯函数（v5 API、v6 签名）——`resolve_selected_command(template, nodes, result_path, cwd) -> argv`（显式接收被选节点与结果路径，{nodes}/{result} 替换 + argv0 相对 cwd 解析）、`audit_no_concurrency_injection(expected_argv, actual_argv, cwd) -> bool`（期望/实际两侧应用**同一 argv0 解析规则**后逐字比对，不等 fail-closed）与组合形态 `audit(template, nodes, result_path, actual_argv, cwd)`；永不注入 -n/--dist/worker 并发、永不注入 --junitxml 等 junit flag；实际 argv 经 command_echo 审计事件回显供程序化复核；执行结果的权威是 `{result}` JUnit XML——testcase 身份恰好覆盖被选集（全量 run = collect FULL 全集），缺失/畸形/重复/覆盖不精确 = contract_error fail-closed（parse_junit_result + require_exact_node_coverage 纯函数），stdout/stderr 仅为日志；结果路径 temp/blob staging 按 run/command 唯一、不入树身份，temp 清理前归一化为 outcomes blob（事件携 outcomes_ref），WAL replay 无持久化结果即重跑。
+- **实现模块**：executor/test_select.py, executor/validate.py, executor/m_impl_runtime.py（执行接线）。
+- **对应 §section**：§1m, §3a, §4a（full.executed.command_echo / outcomes_ref）。
+- **关联 FR**：FR-0255-01, FR-0250-03。
+
+### IF-NIGHTLY-001 nightly CI 契约合同（R6）
+
+- **合同**：§1n project.toml [nightly] 段（schedule/workflow/job/layers/purpose）声明当前完整 FULL 套件（R1+R2 全部节点，unit+integration+e2e）的周期回归 job——历史回归责任强调 R1/T-HIST，但 nightly 运行的是当前 FULL 而非仅 R1 子集；trac validate contract 完整性校验追加必填键（缺失非零，schema 切片激活后生效）；本版可审计面 = contract 文件 + validate 校验（不承诺 nightly 派发/回读事件）；nightly 结果取回通道本版不实现（result fetch future），本地门禁对其零依赖（负断言）。
+- **实现模块**：executor/validate.py（校验侧），.github/workflows/nightly.yml（随原子实现切片交付）。
+- **对应 §section**：§1n, §7（CI Gate 注记）。
+- **关联 FR**：FR-0255-02, FR-0250-02。
+
+**有效性校验机制**（design-trace validator 扩展，承自 IF-004/IF-005 §5）：validator 解析本注册表与 IF-004/IF-005 §5 注册表构建已定义 IF- 集合；test-plan §8 每条 integration/e2e 行的 IF- 归属必须非空且已注册；v0.6 的 10 个 hotfix 标识与 R6 的 7 个选择语义标识生效后不可复用/重定义。

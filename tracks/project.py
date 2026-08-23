@@ -21,6 +21,14 @@ from tracks import paths
 
 _SUPPORTED_FRAMEWORKS = frozenset({"pytest"})
 
+# D-41 atomic schema slice (interfaces §1m/§1n): ALL THREE flat layer
+# sections plus [nightly] are required once the schema slice is active --
+# the FULL chain and nightly CI run all three layers; an undeclared layer
+# is a contract defect, not an optional convenience.
+_TEST_LAYERS = ("unit", "integration", "e2e")
+_NIGHTLY_REQUIRED_KEYS = ("schedule", "workflow", "job", "layers", "purpose")
+_NIGHTLY_STRING_KEYS = ("schedule", "workflow", "job", "purpose")
+
 
 class ContractError(Exception):
     """Raised when the host project contract is missing, malformed, or
@@ -38,7 +46,19 @@ class TestSection:
     paths: list[str]
     collect: str
     run: str
+    run_selected: str
     cwd: str
+
+
+@dataclass(frozen=True, slots=True)
+class NightlySection:
+    """Required [nightly] section: scheduled FULL-suite regression (interfaces §1n)."""
+
+    schedule: str
+    workflow: str
+    job: str
+    layers: tuple[str, ...]
+    purpose: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +91,9 @@ class LintSection:
 @dataclass(frozen=True, slots=True)
 class ProjectContract:
     integration: TestSection
-    e2e: TestSection | None = None
+    unit: TestSection
+    e2e: TestSection
+    nightly: NightlySection
     layout: LayoutConfig | None = None
     lint: LintSection | None = None
 
@@ -84,7 +106,9 @@ def load_contract(repo: Path) -> ProjectContract:
     """Load and validate the host project contract.
 
     Raises ``ContractError`` if the file is missing, unreadable, malformed,
-    or declares an unsupported framework.
+    declares an unsupported framework, lacks any required layer section
+    ([unit]/[integration]/[e2e]) or the required [nightly] section, or
+    carries malformed run/run_selected placeholders.
     """
     toml_path = contract_path(repo)
     if not toml_path.exists():
@@ -105,14 +129,85 @@ def load_contract(repo: Path) -> ProjectContract:
 
 def _build_contract(data: dict) -> ProjectContract:
     integration = _build_section(data, "integration")
-    e2e_raw = data.get("e2e")
-    e2e: TestSection | None = None
-    if e2e_raw is not None:
-        e2e = _build_section(data, "e2e")
+    unit = _build_section(data, "unit")
+    e2e = _build_section(data, "e2e")
+    nightly = _build_nightly(data)
     layout = _build_layout(data)
     lint = _build_lint(data)
     return ProjectContract(
-        integration=integration, e2e=e2e, layout=layout, lint=lint
+        integration=integration,
+        unit=unit,
+        e2e=e2e,
+        nightly=nightly,
+        layout=layout,
+        lint=lint,
+    )
+
+
+def _build_nightly(data: dict) -> NightlySection:
+    """Parse the REQUIRED [nightly] section (interfaces §1n).
+
+    Missing section/keys, a non-string or empty schedule/workflow/job/purpose
+    value, or an invalid ``layers`` value is contract_error fail-closed at
+    load time: nightly CI runs the declared FULL regression, and a malformed
+    schedule contract must never degrade into a silently skipped job."""
+    raw = data.get("nightly")
+    if not isinstance(raw, dict):
+        raise ContractError(
+            "[nightly] section missing in project contract; the atomic schema "
+            "requires the scheduled FULL-suite regression contract "
+            f"({', '.join(_NIGHTLY_REQUIRED_KEYS)})",
+            kind="contract",
+        )
+    missing = [key for key in _NIGHTLY_REQUIRED_KEYS if key not in raw]
+    if missing:
+        raise ContractError(
+            f"[nightly].{missing[0]} is required in project contract "
+            f"(required keys: {', '.join(_NIGHTLY_REQUIRED_KEYS)})",
+            kind="contract",
+        )
+    for key in _NIGHTLY_STRING_KEYS:
+        value = raw[key]
+        if not isinstance(value, str) or not value.strip():
+            raise ContractError(
+                f"[nightly].{key} must be a non-empty string",
+                kind="contract",
+            )
+    raw_layers = raw["layers"]
+    if not isinstance(raw_layers, list) or not all(
+        isinstance(layer, str) for layer in raw_layers
+    ):
+        raise ContractError(
+            "[nightly].layers must be a list of strings drawn from the declared "
+            f"test layers {list(_TEST_LAYERS)}",
+            kind="contract",
+        )
+    unknown = [layer for layer in raw_layers if layer not in _TEST_LAYERS]
+    if unknown:
+        raise ContractError(
+            f"[nightly].layers declares test layers outside the declared set: "
+            f"{unknown} (declared test layers: {list(_TEST_LAYERS)})",
+            kind="contract",
+        )
+    if len(set(raw_layers)) != len(raw_layers):
+        raise ContractError(
+            "[nightly].layers declares duplicate test layers "
+            f"(each of {list(_TEST_LAYERS)} must appear exactly once)",
+            kind="contract",
+        )
+    if set(raw_layers) != set(_TEST_LAYERS):
+        raise ContractError(
+            "[nightly].layers must declare exactly the three declared test "
+            f"layers {list(_TEST_LAYERS)} once each "
+            f"(missing: {sorted(set(_TEST_LAYERS) - set(raw_layers))})",
+            kind="contract",
+        )
+    return NightlySection(
+        schedule=raw["schedule"],
+        workflow=raw["workflow"],
+        job=raw["job"],
+        layers=tuple(layer for layer in _TEST_LAYERS if layer in raw_layers),
+        purpose=raw["purpose"],
     )
 
 
@@ -176,6 +271,15 @@ def _build_section(data: dict, name: str) -> TestSection:
             f"[{name}].run must be a non-empty string",
             kind="contract",
         )
+    _validate_placeholders(name, "run", run.strip(), with_nodes=False)
+    raw_selected = section.get("run_selected")
+    if not isinstance(raw_selected, str) or not raw_selected.strip():
+        raise ContractError(
+            f"[{name}].run_selected must be a non-empty string; a declared layer "
+            "never falls back to appending nodeids to run",
+            kind="contract",
+        )
+    _validate_placeholders(name, "run_selected", raw_selected.strip(), with_nodes=True)
     cwd = section.get("cwd", ".")
     if not isinstance(cwd, str) or not cwd.strip():
         raise ContractError(
@@ -187,8 +291,26 @@ def _build_section(data: dict, name: str) -> TestSection:
         paths=section_paths,
         collect=collect.strip(),
         run=run.strip(),
+        run_selected=raw_selected.strip(),
         cwd=cwd.strip(),
     )
+
+
+def _validate_placeholders(name: str, key: str, template: str, *, with_nodes: bool) -> None:
+    """Every run/run_selected template embeds {result} (and {nodes} when
+    selected) exactly once; missing or duplicated placeholders are
+    contract_error fail-closed at load time."""
+    placeholders = {"{result}": template.count("{result}")}
+    if with_nodes:
+        placeholders["{nodes}"] = template.count("{nodes}")
+    for placeholder, count in placeholders.items():
+        if count != 1:
+            raise ContractError(
+                f"[{name}].{key} must embed {placeholder} exactly once (found {count}); "
+                "Runtime substitutes only declared placeholders and never injects "
+                "--junitxml or concurrency flags itself",
+                kind="contract",
+            )
 
 
 def _build_lint(data: dict) -> LintSection | None:

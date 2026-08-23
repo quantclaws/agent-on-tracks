@@ -18,6 +18,8 @@ sha:
 
 本修订（R5，2026-08-20）为 documentation-convergence：§3.9 与 interfaces §2f 的「实现落地状态/生效时点」子陈述在 R3/R4 间随工作树代码变化多次失真（R3 称已落地、R4 称已回退失败，二者对当前工作树均失真且互不一致——architecture 称 3 项假失败、interfaces 称 11 项，实测 0 项、`trac validate` 为 valid）。R5 撤销该代码级工作树快照跟踪，改为指向 §2f 冻结合同 + 当前事实（工作树已反映 §2f、validate valid）+ 实现归档职责归 Devon/Runtime。不改变模块边界、事件封闭集、命令封闭集、IF 集合、§1.2 六元组、任何接口合同语义；Scaffold 宣言零新增。
 
+本修订（R6，2026-08-23；v3 同日修订，v5 同日增补 R1 快照机制与命令解析 API，v6 同日增补逐节点结果机器可读通道 `{result}`/JUnit XML）响应 D-41（测试执行选择语义）与 spec FR-0250～FR-0255 / NFR-0120 / NFR-0130 的机器设计缺口：spec 已固化 canonical 语义（M-TEST 时序 入口 baseline capture(pre-WRITE)→WRITE→全量 COLLECT→RED_CHECK(SELECT_R2)→PRISM_REVIEW→EXIT、全量 collect、R2/T-DELTA 差分执行、selection/evidence identity、FULL 链台账逐条目收敛、M-VERIFY 复用、Archer 命令独家所有权与 nightly CI contract），本修订补齐其机器设计——新增 §1.0.6「测试节点分类与执行选择语义」：分类/选择的封闭清单与精确定义（R1/T-HIST、R2/T-DELTA、REMOVED、SELECT_R2、SELECT_TASK、SELECT_DIFF、FULL；逐节点 digest 分类——R2 恰好且仅为新增∨节点 digest 变化，REMOVED=fail-closed 测试资产删除，feature M-TEST 空 R2 fail-closed）、全量 collect 与逐节点结果、证据四元组（tree/command/env/selection identity）与失效/复用判定、事件 WAL/replay 与 event-sourced 失败台账转移（台账身份=(node,failure_signature)；闭合转移含 FIXED→OPEN 证明失败与 PROVEN→OPEN reopen）、FULL_1→逐条目修复+立即差分证明→FULL_F 无界收敛与 fallback FULL 逐条目落转移、M-VERIFY 同树复用、Archer contract 独家定义 unit/integration/e2e 的扁平段 run/run_selected 命令（worker/dist flag 内嵌于命令字符串）而 Runtime 只替换 {nodes}/解析 cwd-argv0 且 run_selected 缺失即 contract_error fail-closed、nightly CI schedule contract（当前完整 FULL 套件 R1+R2；结果取回明确推迟且非当前本地门禁）、角色所有权矩阵。模块增量仅一个 executor 轴新模块 `executor/test_select.py`（分类/选择/身份/台账重建纯函数，被既有 kernel m_test/m_impl 门禁消费）；EVENT_TYPES 追加 7 个选择/证据/台账/FULL 链/入口快照事件（v5：含 `test.baseline_captured`）；COMMAND_KINDS 仅追加 `capture_baseline`（M-TEST 入口 pre-WRITE R1 快照捕获命令，kernel decide 在 DISPATCH/WRITE 产出；选择与执行仍由既有门禁 handler 内部产出，kernel decide 控制流不变）。validator schema 激活、`.tracks/projects/project.toml` 合同扩展（[unit]、全部 run_selected、[nightly]）与 prompt/runtime 变更是**一个原子实现切片**；本修订不拥有该文件的并发工作树编辑（由另一授权 agent 持有），缺键 fail-closed 自 schema 切片激活起生效。IF 集合增补 IF-SELECT-001/002、IF-EVIDENCE-001、IF-LEDGER-001、IF-FULLCHAIN-001、IF-RUNCONTRACT-001、IF-NIGHTLY-001 共 7 个新标识（interfaces §5）。§1.2 增补 FR-0250～FR-0255/NFR-0120/NFR-0130 全部 23 条 AC 六元组；test-plan §8 增补对应覆盖行（37→60 行闭合）。hotfix 旅程语义（§1.0.2–§1.0.5）零变更。
+
 ## 0. 延续性声明（什么不变）
 
 ### 0.1 继承 ARCH-005 不变项
@@ -29,7 +31,7 @@ sha:
 - 纯核心 `project`/`decide` 零 I/O：不变。PRECHECK 的 I/O（issue fetch、分支探测、文件扫描）全在 executor 侧；kernel 只消费事件。
 - FakeBackend 确定性函数 + OpencodeBackend：不变。fake 通道以 `.tracks/runtime/host-issues.json` 种子文件承载确定性 issue 语料，`TRAC_FAKE_SIMULATE` 注入 Sage 锚定与 Prism 裁定分支。
 - inline-discussion 旁路、模板 + 校验（templating.py + executor/validate.py）、质量守卫栈 + pre-commit + CI required checks、IF- 标识注册表不可复用规则：全部不变（§4.2/§4.3）。
-- v0.4/v0.5 已建立的 20 个 IF- 标识不可变、不可复用；v0.6 增补 IF-HOTFIX-001～010 共 10 个新标识（interfaces.md §5；R4 增 IF-HOTFIX-010）。
+- v0.4/v0.5 已建立的 20 个 IF- 标识不可变、不可复用；v0.6 增补 IF-HOTFIX-001～010 共 10 个新标识（interfaces.md §5；R4 增 IF-HOTFIX-010）；R6 再增补 IF-SELECT-001/002、IF-EVIDENCE-001、IF-LEDGER-001、IF-FULLCHAIN-001、IF-RUNCONTRACT-001、IF-NIGHTLY-001 共 7 个 D-41 选择语义标识（同节）。
 
 ### 0.2 v0.6 变更项
 
@@ -44,11 +46,12 @@ sha:
 - `tracks/executor/m_impl_runtime.py`：hotfix M-IMPL BASELINE digest 增补场景 B 活跃分支 HEAD 输入（stale → NEEDS_ATTENTION 即 reconcile 冲突路径）；`executor.py` 的 hotfix run 完成处理附带分支恢复 checkout。
 - `tracks/effects/fake.py` + `tracks/effects/fake_shield.py`：fake 通道 hotfix 行为（Sage 锚定 outcome、Prism anchor 推翻 token、delta 三文档、跨版本回归 test 任务）。
 - `.github/workflows/ci.yml`：live 通道增补 hotfix GitHub 读取探针（weekly `live-opencode` job 扩展 + milestone `release-evidence` job 扩展）——**待 Devon foundation task 补全**（§4.3）。
-- `.tracks/projects/project.toml` 测试执行合同：路径与内容不变（v0.6 无测试目录变更），继续作为当前 Runtime 消费的 canonical 合同。
+- `.tracks/projects/project.toml` 测试执行合同：继续作为当前 Runtime 消费的 canonical 合同。【R6 修订，v3】D-41 要求的 run_selected 键（并发 flag 内嵌于命令字符串，无独立 workers/dist 键）与 [nightly] 段的 schema 合同冻结于 interfaces §1m/§1n；validator schema 激活、键扩展与 prompt/runtime 变更构成**一个原子实现切片**——本修订不拥有该文件当前的并发工作树编辑（由另一授权 agent 持有），不对其内容作不变性断言。run_selected 缺失 = contract_error fail-closed（Runtime 拒绝向 run 追加 nodeid、拒绝合成任何调用——无回退参数化路径，见 §1.0.6.7），自 schema 切片激活起生效。
 - 【R2 修订（stub_gap 回滚），2026-08-19】新增 §1.0.5「任务图排序不变量」（TG-1 composition-root-first / TG-2 锚定归属 / TG-3 greenability 闭包）：不新增模块、事件、命令或接口，仅约束 M-IMPL PLANNING 的任务图推导与 PRISM_PLAN 复核；Scaffold 宣言零新增（§2 附注两个已实现桩的基线归属）。
 - 【R2 修订】test-plan.md 的 BS-06 trace 校验恢复依赖 @Prism 对三条历史根评论（PRISM-V06-01/03/04）的作者补注（行内追加 IF- 归属标签，内容零改动；FR-110 author-only edit，Archer 无权代编辑）——详见 test-plan.md §8 的 Archer 线程 ARCH-R2-IF-ATTR；该线程 resolved 前本设计文档集不满足 M-DESIGN EXIT 的 validate 门禁（R2 预期中间态）。【R3 实测更新】该中间态已由 §3.9 过渡路径 (b) 带外应用 `_visible_plan_lines` 剔除 blockquote 行而解除——三文档 `trac validate` 均恢复 valid；ARCH-R2-IF-ATTR 线程已 resolved，作者补注降为 §3.9 过渡路径 (a) 非必需良性编辑。
 - 【R3 修订，2026-08-19】interfaces §2f：design-trace（BS-06）扫描范围排除 inline-discussion blockquote 行——`executor/test_tasks.py` 的可见行提取（`_visible_plan_lines`）在 HTML 注释/fenced code 剔除之外同步剔除 `>` 开头行，layer/IF- 归属判定面随之收窄为非 blockquote 可见行；fail-closed 保持（把归属声明藏进 blockquote 不产生任何计数，§8 表格行仍是 D-28 唯一机器可读覆盖来源）。实现落地状态：路径 (b) 已由运营端带外应用（§3.9 实测落地），`_visible_plan_lines` 工作树已剔除 `>` 行，三文档 `trac validate` 均恢复 valid；M-IMPL 重规划仍按 §1.0.5 batch B/C 的 verification-only 吸收该 scope 文件的正式归档（带外应用与正式归档双轨：合同已冻结，实现状态已对齐）。ARCH-R2-IF-ATTR 线程随 R3 收敛（作者补注请求降级为 §3.9 过渡路径 (a) 非必需良性编辑，不再以未 resolved 线程承载——作者 DRAFT 纪律要求本人发起线程 resolved 后派发方可结束）。
 - 【R4 修订，2026-08-20】新增 IF-HOTFIX-010（hotfix 版本目录继承基线文档只读解析，见 §3.4 裁定正文 + interfaces §1i/§5）：`executor/test_tasks.py` 增补共享纯函数 `resolve_inherited_baseline_docs(doc_path) -> tuple[Path, Path]`——对 hotfix 版本目录（`parent.name` 匹配 `v\d+\.\d+-hotfix-\d+`）从目录名解析 target_version（`v{M}.{m}`），只读引用 `parent.parent / target_version / {acceptance,interfaces}.md`（不复制文件，符合 FR-0241-02 source approval）；feature 版本目录与非版本目录返回同目录路径，校验语义逐字节不变（dir-name 身份门控保证不变量）。`check_design_trace_file` / `check_test_tasks_contract_file` 的 `path.parent / {acceptance,interfaces}.md` 改为经该 resolver 定位；目标版本目录或其文档缺失时 fail-closed（既有存在性检查触发，错误信息指明继承基线不可定位）。`checks/trace.py` 的 hotfix 计划级闭合 `_anchor_ref_errors` 经 `projects_dir / version / acceptance.md` 查找，与本 resolver 锚定同一目标版本目录（`projects_dir = parent.parent`，一致由构造保证）——满足 Maestro 钉住要求「M-DESIGN EXIT 与 M-IMPL TASK_REVIEW/ISLAND 消费同一解析」。权威性：`baseline.inherited` 事件的 `target_version` + `baseline_doc_paths` 是该只读引用的权威记录，目录名编码是其持久投影（`complete_hotfix_entry` 按该事件构造目录名，一致由构造保证）。不新增模块/事件/命令/AC；Scaffold 宣言零新增（`test_tasks.py` 是 Devon 实现增量，非 scaffold）。
+- 【R6 修订，2026-08-23，D-41 机器设计】新增 §1.0.6（测试节点分类与执行选择语义）与 executor 轴新模块 `tracks/executor/test_select.py`：分类/四种选择/selection id/证据身份/台账重建/命令解析审计的纯函数集（签名冻结于 interfaces §1j–§1n），被既有 kernel/m_test.py RED_CHECK、kernel/m_impl.py GREEN_GATE/REFACTOR_GATE 与 executor/m_impl_runtime.py ISLAND_GATE_2 消费。`kernel/events.py` EVENT_TYPES 追加 7 个事件（v5 增补入口快照）：`test.baseline_captured` / `test.selected` / `full.executed` / `ledger.opened` / `ledger.transitioned` / `evidence.reused` / `evidence.staled`；既有 `test.collected` payload 追加逐节点结果与 R1/R2 计数、`red.validated` payload 追加 selection 绑定、`green.committed` payload 追加 evidence 引用（成员追加向后兼容）。COMMAND_KINDS 仅追加 `capture_baseline`（v5 入口快照命令，interfaces §1j；R6 正文的「零新增」表述据此更正）。Scaffold 宣言零新增（`test_select.py` 是 Devon 实现增量，同 R4 先例）；§1.0.1 表增 row 9；§1.2 增 23 条 AC 行。
 
 ## 1. 模块边界
 
@@ -66,6 +69,7 @@ v0.6 新代码落在既有增长轴上：
 | 6 | `kernel/m_test.py` + `executor/executor.py` | 空 Shield 增量放行（increment.declared） | FR-0244-04 | IF-HOTFIX-007 |
 | 7 | `capabilities.py` + `paths.py`（无新增，复用 version_dir） | hotfix 版本身份解析 | FR-0241 | IF-HOTFIX-005 |
 | 8 | `kernel/m_impl.py` + `cli/main.py`（approve 扩展） | ac_gap/spec_gap 退出路由 + Human 决定证据 | FR-0247/FR-0248 | IF-HOTFIX-009 |
+| 9 | `executor/`（新模块 test_select.py）+ `kernel/m_test.py`/`kernel/m_impl.py` 消费接线 + `executor/validate.py`/`executor/m_impl_runtime.py` 增量 + `kernel/events.py` | 节点分类、四种选择、selection/evidence identity、失败台账 WAL/replay、FULL 链收敛、命令解析与并发注入审计 | FR-0250～FR-0255 / NFR-0120 / NFR-0130 | IF-SELECT-001, IF-SELECT-002, IF-EVIDENCE-001, IF-LEDGER-001, IF-FULLCHAIN-001, IF-RUNCONTRACT-001, IF-NIGHTLY-001 |
 
 新增 `kernel/hotfix.py` 与 `executor/hotfix.py` 不是新增长轴：前者是 kernel 轴内 M-HOTFIX-TRIAGE 控制流模块（被 machine.py 分发，保持 decide()/project() 纯函数边界）；后者是 executor 轴内副作用模块（被 executor.py handler 调用，可执行 git/文件/网络副作用，不被 kernel 引用）。分层约束与 v0.5 的 kernel/m_impl.py + executor/m_impl_runtime.py 同构。
 
@@ -121,6 +125,117 @@ R2 重规划基线事实（PLANNING 输入）：kernel 侧（原 T-001：kernel/
 
 > **Prism [RESOLVED]:** PRISM-PLAN-R1-01 [blocker][defect_classification=stub_gap] T-003 任务型裁定违反本节「禁止把「锚已绿」的 scope 排成 preset-anchor 任务」。实测：T-003 scope（m_test.py/test_tasks.py/trace.py）的 M-TEST hotfix 变体实现已随 070eac6（T-003 上一轮 GREEN 提交，通过 Green Gate）落盘基线——m_test.py 含 _is_hotfix_empty_shield/_m_test_exit_route 热路径、trace.py 含 hotfix_scope+跨版本解析、test_tasks.py 含 parse_hotfix_unit_rows。T-003 的 test_refs（tests/integration/test_hotfix_mtest.py 四用例）当前红的唯一原因是 trac hotfix CLI 未注册（USAGE 错误，非行为断言失败）——这正是本节 TG-2 定义的排序缺陷信号。T-003 depends_on T-007，T-007 落盘后 CLI+executor increment.declared+validate.py 就位，而 070eac6 已提供全部 kernel/trace/test_tasks 侧行为 → 四用例将转绿，T-003 作为 preset-anchor 进入 RED 会触发 anchor_red→red_invalid（事件流停车，即本节明禁的 stub_gap 重演）。T-003 仅剩的自身 scope 工作是 §2f blockquote 排除（test_tasks.py _visible_plan_lines，工作树已带外应用未正式归档），但该改动不被 test_hotfix_mtest.py 任一用例断言（fixture 的 delta plan 无 blockquote 行），不能作为 preset-anchor 的合法 RED 锚。修订预期：T-003 重分类为 verification-only（与 T-001/T-002 同型，T-007 落盘后 Runtime 直跑 test_refs）；§2f 正式归档另立任务并以 tests/unit/test_test_tasks_contract.py 为 RED 锚（该用例才真正断言 blockquote 排除行为）。
 >> **Prism:** M-DESIGN PRISM_REVIEW 收束：本线程为 M-IMPL PRISM_PLAN finding，其 M-IMPL 周期已因 stub_gap 回滚终止。设计层根因修复已由 R2 §1.0.5 固化为任务图排序不变量（TG-1/TG-2/TG-3 + 任务型裁定条款明禁「把锚已绿的 scope 排成 preset-anchor」），即本 finding 的 durable 设计回应。原 task graph 随回滚失效，将在下一轮 M-IMPL PLANNING 按 §1.0.5 重新推导；finding 的任务图层具体建议由不变量与实测锚状态裁定，不再由本线程承载。M-DESIGN 语义评审结论：§1.0.5 设计闭合，无技术缺口。
+
+### 1.0.6 测试节点分类与执行选择语义（R6 新增；D-41 机器设计，canonical 见 flow.md §9.0/§10.5/§11）
+
+本节把 spec FR-0250～FR-0255 / NFR-0120 / NFR-0130 落为最小完备机器设计。全部判定是 Runtime 程序行为（无 LLM）；Agent 只产出测试资产与修复，永不自报选择/证据/台账结论。
+
+#### 1.0.6.1 清单与精确定义（selection inventory）
+
+| 术语 | 精确定义 |
+|:---|:---|
+| **节点（node）** | collect 单元 = pytest node id `tests/<layer>/test_x.py::test_y`，layer ∈ {`unit`, `integration`, `e2e`}；collect 全集来自对 contract 三层 paths 的 `--collect-only` |
+| **baseline 冻结测试资产** | **本 run 进入 M-TEST 时、首个 Shield WRITE 派发之前对继承测试树（prior-to-Shield 当前工作树）做 unit+integration+e2e 全量 collect 并持久化的 `test.baseline_captured` stamped 快照**（v5：baseline/tree identity + 逐节点源/体 digest blob；首次项目可合法空集；缺失 capture = fail-closed，capture 失败 = 上游/设计 fail-closed，WAL/replay 复用同一 stamped capture——分类 baseline 既非既往事件猜测、亦非 WRITE 后可变树重算）。M-TEST EXIT 的受控测试 commit 冻结本轮新增资产，供下一 run 的 capture 继承 |
+| **变更声明（delta 声明）** | 当前工作树逐层 collect 全集 + 逐节点源/体 digest；与 baseline 冻结资产对比即分类依据（可审计输入） |
+| **R1/T-HIST** | node ∈ baseline 节点集 ∧ node ∈ 当前全集 ∧ 节点源/体 digest 与 baseline 一致——继承既往版本的既有测试节点；同一文件内 digest 未变的兄弟节点保持 R1（整文件 digest 不参与分类）。夜间回归归 nightly CI（IF-NIGHTLY-001：nightly 运行当前完整 FULL 套件 R1+R2）；**M-TEST** 本地永不执行 R1 全量套件（M-IMPL 的 SELECT_TASK/FULL 链合法执行 R1 节点） |
+| **R2/T-DELTA** | node ∈ 当前全集 ∧（node ∉ baseline 节点集 ∨ 节点源/体 digest ≠ baseline digest）——分类恰好且仅为这两类。变更的 support/fixture 不参与分类，但仍参与全量 collect/import，当前 R2 测试在其上执行；未变历史行为不被本地重验——其回归等待 M-IMPL FULL 链与 nightly CI。feature M-TEST 的 R2 选择集为空 = fail-closed（hotfix unit-only 显式增量声明旁路保留） |
+| **REMOVED** | node ∈ baseline 节点集 ∧ node ∉ 当前全集——**fail-closed 测试资产删除**（本版无授权删除路径）：不静默注销、不计入良性计数，`test.collected(failed)`（error_class=asset_deleted）路由 test contract defect → Shield，阻断 M-TEST 退出（未来如引入删除须经显式上游 contract 授权——当前不存在） |
+| **SELECT_R2** | scope=`r2_delta`：被选集 = 全部 R2/T-DELTA 节点；basis=「v0.6 变更声明」；消费点 M-TEST RED_CHECK（时序上先于 PRISM_REVIEW：非法 RED 在 Prism 前路 DIAGNOSE/WRITE，Prism 消费当前树 `red.validated` 证据身份后只做隔离 counterexample kill）。逐节点合法 Red 判定（判据不变：行为断言失败/桩合同 token 失败/symbol 缺失；collection/语法/fixture/import 错误非法）；feature M-TEST 空 R2 选择集 = fail-closed |
+| **SELECT_TASK** | scope=`task_if`：被选集 = 该 task 不可变 R commit 的 Runtime 捕获 RED artifact manifest 与 GREEN-touched unit 文件导出的 targeted unit 节点 ∪ 变绿条件命中该 task IF 集合的 integration 节点（test-plan §8 IF 行只含 integration/e2e，unit 归属不经 §8）；不含 e2e、不含 R1/T-HIST 全量；消费点 GREEN_GATE 与 REFACTOR_GATE 同 scope 重跑 |
+| **SELECT_DIFF** | scope=`select_diff`：被选集 = **单条**台账 FIXED 条目按 selection identity 差分推导的受影响节点集合（失败节点本身 ∪ 修复 commit 触达文件经模块级 import 可达分析命中的节点，复用 `trac check reach` 的可达分析），每条目 FIXED 后立即执行其 SELECT_DIFF；单条目推导不可靠 → 回退 FULL；消费点 FULL 链第 3 步 |
+| **FULL** | scope=`full`：unit+integration+e2e 全部节点（R1+R2 无差别全量）；消费点 ISLAND_GATE_2 的 FULL_1/FULL_F/fallback_full |
+| **selection identity** | `selection_id = sha256(canonical_json({scope, basis, nodes, baseline, commit, tree_stamp}))`；`tree_stamp` = 确定性 dirty-aware 工作树内容 stamp（干净相关树 → HEAD 身份；脏 → 对相关变更路径内容 sha256，Runtime 状态不入 stamp），与 `commit` 分离——同节点集合同 HEAD 不同未提交 R2 内容不得共享 selection identity（证据复用洞）；每次选择以 `test.selected` 落事件并携带全字段（NFR-0130） |
+
+#### 1.0.6.2 全量 collect 与逐节点结果（FR-0250-01；v5 增补 R1 快照接线）
+
+M-TEST 入口（首个 Shield WRITE 派发之前）：Runtime 经 `executor/test_select.py::capture_test_baseline` 对继承测试树做 **unit+integration+e2e 全量 collect**，逐节点记源/体 digest（digest 经 `collect_node_source_digests` 从各 nodeid 的物理函数源段计算——同文件未变兄弟逐字节隔离，参数化节点共享同一函数 digest；capture 时点 Shield 未写入，integration/e2e 层路径缺失/零节点归一化为空层，非 capture 失败），持久化 `test.baseline_captured(passed)`（`baseline_id = sha256(canonical_json({tree, node_digests}))` stamped identity + `node_digest_blob` 指向 `.tracks/runtime/blobs/baseline/<run>/<seq>-node-digests.json`）；任一层 collect/import 失败 → `test.baseline_captured(failed)` → `verdict.failed(check=baseline_defect, target_stage=M-DESIGN, artifact_disposition=rollback)`（继承树在 Shield 写入前不可 import 属上游/设计/合同缺陷——不重派 Shield、不静默空置 R1）。首次项目可合法捕获空集。
+
+COLLECT 子状态单步完成「collect→classify→落事件」：Runtime 对 contract 三层 paths 执行全量 collection/import（**含 `[unit]` 层**：继承 R1/T-HIST + 当前 R2/T-DELTA 全部节点必须可 collect，历史 unit 节点同样进入分类计数 inherited_r1；变更 support/fixture 同样参与 collect/import），随后按 §1.0.6.1 分类并以单一 `test.collected` 事件承载结果——分类 baseline 唯一来源 = 本 run pre-WRITE 持久化的 stamped 快照（缺失 passed 快照 = fail-closed contract error，禁止以既往事件或 post-WRITE 可变树猜测）；payload 含 `{passed, total, inherited_r1, delta_r2, removed, failures[], per_node_blob}`：`failures[]` 为逐节点失败条目（node + error_class），`per_node_blob` 指向 `.tracks/runtime/blobs/selection/<run>/<seq>-nodes.json`（逐节点 `{node, layer, class: r1|r2|removed}` 表）。任一节点 collect 失败 → `test.collected(failed)` 回 Shield（既有子状态机语义不变），不放行带不可 collect 节点的基线。分类出现 removed（baseline 历史节点缺失于全量 collect）同样 fail-closed：`test.collected(failed)`（error_class=asset_deleted）路由 test contract defect → Shield，阻断 M-TEST 退出（§1.0.6.1 REMOVED 行）。分类确定性：同输入（stamped baseline 快照 + 工作树状态）复跑分类一致，由 `executor/test_select.py::classify_nodes` 纯函数保证。RED_CHECK（SELECT_R2）在 COLLECT 之后、PRISM_REVIEW 之前执行（kernel m_test 时序 v3），执行仍仅限实际 R2 节点（通常为 Shield int/e2e 增量；历史 unit 永不执行）；feature M-TEST 空 R2 选择集经 `require_nonempty_r2_selection` fail-closed（hotfix FR-0244 显式增量旁路位放行空集）。中断/重启/replay 复用同一 stamped capture（恢复路径不从可变工作树重新捕获）。
+
+#### 1.0.6.3 证据四元组与失效/复用（IF-EVIDENCE-001，NFR-0120/NFR-0130）
+
+每条执行证据（一次门禁内逐节点运行结果的记录单元）绑定四元组 + 节点身份：
+
+```
+evidence_id = sha256(canonical_json({
+    tree:            commit SHA 或工作区内容 digest（未提交门禁时）,
+    command:         实际执行的完整 argv（与 contract 模板替换后逐字一致）,
+    env:             解释器版本 + pytest 版本 + TRAC_* 影响位图的环境指纹,
+    selection_id:    本次选择的 identity（§1.0.6.1）,
+    node, result, attempt, actor
+}))
+```
+
+复用判定唯一判据（NFR-0130-02）：`tree ∧ command ∧ env ∧ selection_id` 四项全部与当前一致 ∧ 相关记录无 STALE 传播 ⇒ 可复用；任一不一致（stale）一律不得作为通过依据。上游变化（设计文档 revision 变化 / task IF 集合变化 / baseline 重算变化）触发 Runtime 发出 `evidence.staled {targets:[{kind: selection|evidence|ledger, ref}], reason}`，STALE 传播在各消费点（SELECT_TASK stale 判定、REFACTOR 复用 Green、SELECT_DIFF、M-VERIFY 复用 FULL_F）共用同一实现函数，不由各阶段自定变体。复用发生时落 `evidence.reused {kind: green|full_f, reused_evidence_ids, identity_basis{tree,command,env,selection_id}, consumer_gate}`，引用被复用证据的身份（FR-0252/FR-0254）。
+
+#### 1.0.6.4 事件 WAL/replay 与 event-sourced 失败台账（IF-LEDGER-001，NFR-0120）
+
+失败台账完全事件溯源：每条目以 append-only 事件写入（write-ahead：先落事件再据以判定/推进），不改写既有行。
+
+- `ledger.opened {node, failure_signature, state:"OPEN", selection_id, evidence_id, reason}`——FULL_1/fallback_full/FULL_F 每个失败节点一条；台账身份 = `(node, failure_signature)`：同一节点的新 failure signature 新建身份，同一 signature 重启先前身份。
+- `ledger.transitioned {node, from, to, attempt, actor, reason}`——封闭转移集：`OPEN→CLASSIFIED→FIXED→PROVEN`（正向收敛）、`OPEN|CLASSIFIED|FIXED→STALE`（上游变化）、`STALE→OPEN`（reconcile 后重驱）、`FIXED→OPEN`（证明失败：该条目的 SELECT_DIFF/fallback 重跑同签名失败，条目重开重分类/重修，§1.0.6.5）、`PROVEN→OPEN`（reopen：FULL_F 重现已 PROVEN 的同一 `(node, failure_signature)`，重启先前身份并重证）。未列出的转移非法。
+- 重建：`executor/test_select.py::rebuild_ledger(events) -> LedgerState` 由事件回放重建台账，重启后重建结果与中断前一致，FULL 链从重建状态精确续跑（重建含 reopen 转移；续跑不重复与重建状态一致的历史执行）。
+- fail-closed：未知状态、缺失条目、非法转移一律不视为干净——脏台账上不跳过 FULL_F、不产出 `stage.exited(M-IMPL)`，fail-closed 触发原因落事件可审计。
+
+#### 1.0.6.5 FULL 链无界收敛（IF-FULLCHAIN-001，FR-0253）
+
+ISLAND_GATE_2 在全部 task 完成后执行（伪代码；循环无次数上限、无「超限放弃」路径，仅 per-agent 派发 attempt 预算 ≤3/escalation 照旧消费）：
+
+```
+round = FULL_1
+loop:
+  execute FULL（unit+integration+e2e，命令经 IF-RUNCONTRACT-001 解析）
+  emit full.executed {round, suite, passed, failed_nodes, command_echo, evidence_ids}
+  if clean:
+      if round==FULL_1 ∧ 台账空:
+          serves_as_full_f=true（干净首轮充当 FULL_F，事件标注，不重复执行）
+          break -> stage.exited(M-IMPL)
+      if 台账全 PROVEN ∧ 无 STALE: break -> stage.exited(M-IMPL)
+      else: fail-closed 停车（NFR-0120）
+  else:
+      【失败处理块：FULL_1 与 FULL_F 的失败共用此路径——FULL_F 失败回本块分类/修复，
+        绝不直接回 loop 顶盲目再执行一次 FULL（禁止无修复的相邻两次全量）】
+      对每个失败节点：新 `(node, failure_signature)` ledger.opened(OPEN) 新建身份；重现已 PROVEN 的同一签名则确定性 `PROVEN→OPEN` reopen（§1.0.6.4，不新建身份）
+      走既有 DIAGNOSE/重派路径分类修复（测试缺陷→Shield、实现缺陷→Devon、上游缺口→对应阶段）
+      逐条目修复-证明（v3，per bug/fix）：每条目到达 FIXED 后立即执行其确定性 SELECT_DIFF 并重跑：
+        ├ 可靠且通过: ledger.transitioned FIXED→PROVEN
+        ├ 同签名失败: ledger.transitioned FIXED→OPEN（重分类/重修，回到本失败处理块）
+        └ 推导不可靠: execute FULL(round=fallback_full)；结果逐条目落转移——
+             通过条目 FIXED→PROVEN、同签名失败条目 FIXED→OPEN；
+             fallback clean ⇒ serves_as_full_f=true 直接充当 FULL_F 出口（break）
+  当台账全 PROVEN ∧ 无 STALE 且未经 fallback 充当:
+    round = FULL_F; continue（回 loop 顶执行 FULL_F；FULL_F 再失败 ⇒ 回上方失败处理块分类/修复——任意多轮收敛）
+```
+
+`serves_as_full_f=true` 的事件标注 fallback 充当关系（FR-0253-04）与首轮干净充当关系（同一充当语义的退化情形，避免相邻两次等价全量）。FULL 执行只发生在 loop 顶一处：FULL_F 失败后必须先经失败处理块的台账分类/修复（含逐条目 SELECT_DIFF 证明），全部条目重回 `PROVEN ∧ 无 STALE` 才再次到达 loop 顶执行 FULL_F——不存在绕过失败处理块、在 loop 顶连续执行的两次 FULL。多条目 union/batching 仅在每条目的选择与证据仍可单独归因时作为可选优化（减少重复执行），不构成规范语义——规范路径是逐条目选择/证明/转移，每条 `test.selected(select_diff)` 与 `ledger.transitioned` 均携带单条目身份。
+
+#### 1.0.6.6 M-VERIFY 同树复用（FR-0254，注册后生效）
+
+candidate 相对 M-IMPL 干净 FULL_F 未漂移 ⇔ candidate commit == FULL_F 执行时 tree ∧ 相关台账条目无 STALE ∧ evidence identity 四元组一致 ⇒ 复用（`evidence.reused kind=full_f`），不重复本地全量，随后等待 CI `ci.run_observed(passed)` API 回读；漂移/stale ⇒ LOCAL_GATES 重跑（既有语义）。本版 M-VERIFY 不注册（同 FR-0246 处理方式）：语义固化为 canonical 合同随注册生效；负断言现在即可测——已注册阶段事件流中 FULL 本地执行仅出现在 ISLAND_GATE_2 的 FULL 链（AC-FR0254-02）。
+
+#### 1.0.6.7 测试命令独家所有权与 Runtime 解析边界（IF-RUNCONTRACT-001，FR-0255-01）
+
+- **Archer 独家定义（扁平段，flag 内嵌）**：machine contract（`.tracks/projects/project.toml` 扩展 schema，interfaces §1m）以与现行 project.toml 一致的扁平 `[unit]`/`[integration]`/`[e2e]` 段逐层声明 `run`（全量）与 `run_selected`（带 `{nodes}` 占位符）命令字符串；worker/dist 并发 flag 与结果写入 flag（pytest 即 `--junitxml={result}`）作为 Archer 选定 argv **内嵌于命令字符串**（如 `-n 8 --dist loadscope --junitxml={result}`）——不设独立 `workers`/`dist` 键（与命令字符串双权威、冗余且易漂移）。【v6】每条 run/run_selected 模板各含 `{result}` 恰好一次（run_selected 另含 `{nodes}` 恰好一次）：contract loader/validate 校验占位符计数，缺失或重复 = contract_error fail-closed。
+- **run_selected 缺失 = contract_error fail-closed（schema 切片激活后）**：validator schema 激活、contract 键扩展与 prompt/runtime 变更是一个原子实现切片；切片激活后任一层缺 `run_selected` 键时 Runtime 拒绝该层选择执行——**永不向 `run` 追加 nodeid、永不合成任何调用**（无回退参数化路径）；`trac validate` 对缺失 run_selected 键非零退出。
+- **Runtime 只解析**：cwd 解析（相对 repo root）、argv 分词（argv0 解析）、`{nodes}` 替换（空格连接、逐节点 shell-quote 的 node id 列表）、`{result}` 替换（Runtime temp/blob staging 下按 run/command 唯一的可写 JUnit XML 绝对路径；不入树身份）；**永不注入并发与 junit flag**——不追加/改写 `-n`、`--dist`、`-p xdist`、worker 数、`--junitxml` 或任何 contract 之外的参数。【v6】执行结果的权威是 `{result}` JUnit XML：testcase 身份恰好覆盖被选集（全量 run = collect FULL 全集），缺失/畸形/重复身份/被选缺席/多余节点 = contract_error fail-closed；stdout/stderr 仅为日志。temp 清理前归一化持久化为 outcomes blob（事件携 `outcomes_ref`），WAL replay 无已持久化结果即重跑该命令。
+- **审计比对程序化（两侧同 argv0 解析；v5 API 修订，v6 签名增补）**：每次测试执行的实际 argv 记入事件（`full.executed.command_echo` / 门禁执行审计），经 `executor/test_select.py` 的三个可执行纯函数复核——`resolve_selected_command(template, nodes, result_path, cwd) -> argv`（显式接收被选节点与结果路径：{nodes}/{result} 替换 + shlex 分词 + argv0 相对 cwd 解析）、`audit_no_concurrency_injection(expected_argv, actual_argv, cwd) -> bool`（对期望与实际两侧应用**同一 argv0 解析规则**后逐字比对，不等即 fail-closed）与组合形态 `audit(template, nodes, result_path, actual_argv, cwd)`——禁止对期望侧与实际侧使用不同解析路径；JUnit 结果的解析与覆盖校验同为纯函数（`parse_junit_result` / `require_exact_node_coverage`，畸形/缺失/重复/覆盖不精确 fail-closed）；AC-FR0255-01 由审计比对复核，非自述。
+
+#### 1.0.6.8 nightly CI schedule contract（IF-NIGHTLY-001，FR-0255-02）
+
+machine contract `[nightly]` 段声明**当前完整 FULL 套件**（R1+R2 全部节点，unit+integration+e2e）的 nightly CI job（D-18 三层机制的周期回归层；历史回归责任强调 R1/T-HIST，但 nightly 套件不是仅 R1 子集）：`schedule`（cron 表达式）、`workflow`（`.github/workflows/nightly.yml`）、`job` 名、覆盖 layers=[unit,integration,e2e]、purpose=current FULL suite (R1+R2) regression。**本版 nightly 的可审计面 = contract 文件 + `trac validate` 合同完整性校验（追加 [nightly] 必填检查，缺失 fail-closed）**；nightly 派发/回读事件不在本版承诺范围（随 result fetch future 一并考虑）。**结果取回通道本版明确不实现**（spec 范围排除 result fetch future）：nightly 结果不是当前本地门禁——red.validated/GREEN_GATE/FULL 链/M-VERIFY 复用均不依赖 nightly 结果；本地门禁对其零依赖由 AC-FR0255-02 负断言覆盖。
+
+#### 1.0.6.9 角色所有权矩阵（D-41 职责封闭）
+
+| # | 职责 | Archer | Shield | Devon | Prism | Runtime |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | machine contract：run/run_selected 命令（并发 flag 与 `--junitxml={result}` 内嵌，v6）、[nightly] 段 | ✅ 独家 | ❌ | ❌ | ❌ | ❌（只解析执行） |
+| 2 | R2/T-DELTA 测试资产编写（integration/e2e 层） | ❌ | ✅ | ❌ | ❌ | ❌ |
+| 3 | R2/T-DELTA 测试资产编写（unit 层，RED 阶段） | ❌ | ❌ | ✅ | ❌ | ❌ |
+| 4 | 节点分类 / 四种选择 / selection_id 计算 | ❌ | ❌ | ❌ | ❌ | ✅ 独家（程序化） |
+| 5 | 测试执行与证据四元组记账 / 台账事件 / STALE 传播 | ❌ | ❌ | ❌ | ❌ | ✅ 独家 |
+| 6 | 并发/junit flag 注入（-n/--dist/worker/--junitxml 覆盖，v6） | ❌ | ❌ | ❌ | ❌ | ❌ 永不 |
+| 7 | counterexample kill 与 Runtime 证据消费（PRISM_REVIEW） | ❌ | ❌ | ❌ | ✅ | ❌（提供证据） |
+| 8 | 重跑普通套件作为评审手段 | ❌ | ❌ | ❌ | ❌ 禁止 | — |
 
 ### 1.1 Composition Root
 
@@ -222,6 +337,25 @@ trac run
 - **FR-0247** owner=kernel/machine.py:AC-FR0247-01 surface=`trac run`+`trac status`+`trac replay` composition=stub_gap→rollback_stage wiring=设计缺口→stage.rolled_back(M-DESIGN)→无human前置门 test=integration:test_design_gap_returns_to_hotfix_mdesign_without_human_gate evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_routes.py`输出`passed`且回退前无`human.review`/`human.approval`事件 IF-HOTFIX-009
 - **FR-0247** owner=kernel/machine.py:AC-FR0247-02 surface=`trac replay` composition=M-DESIGN闭环→重新进入 wiring=delta闭环→stage.entered(M-TEST)重新承接→replay可复核 test=integration:test_design_gap_loop_closes_and_reenters_journey evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_routes.py`输出`passed`且闭环后events重现M-TEST派发序列 IF-HOTFIX-009
 - **FR-0248** owner=cli/main.py:AC-FR0248-01 surface=`trac approve`+`trac status`+`trac replay` composition=ac_gap/spec_gap→awaiting_human→approve wiring=verdict.failed(ac_gap|spec_gap)→human.approval前置→backlog.recorded→run.completed test=integration:test_ac_gap_spec_gap_exit_with_human_approval_prerequisite evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_routes.py`输出`passed`且退出路由前有`human.approval`且terminal=ac_gap|spec_gap IF-HOTFIX-009
+- **FR-0250** owner=executor/test_select.py:AC-FR0250-01 surface=`trac run`（M-TEST COLLECT）+events composition=COLLECT→classify_nodes→test.collected wiring=baseline冻结资产+变更声明→全量collect逐节点结果→r1/r2/removed计数+per_node_blob test=integration:test_selection_semantics.py::test_classification_deterministic_full_collect_counts evidence=`.venv/bin/python -m pytest -q tests/integration/test_selection_semantics.py`输出`passed`且payload含inherited_r1/delta_r2计数且同输入复跑分类一致 IF-SELECT-001
+- **FR-0250** owner=kernel/m_test.py:AC-FR0250-02 surface=`trac run`（RED_CHECK）+events composition=SELECT_R2→test.selected(r2_delta)→逐节点合法Red wiring=test.selected先于执行→被选集⊆R2/T-DELTA→事件流无任何R1节点本地执行记录 test=integration:test_selection_semantics.py::test_select_r2_only_executes_delta_never_history evidence=`.venv/bin/python -m pytest -q tests/integration/test_selection_semantics.py`输出`passed`且red.validated证据节点⊆delta且无R1执行记录 IF-SELECT-002 IF-MTEST-002
+- **FR-0250** owner=kernel/m_test.py:AC-FR0250-03 surface=`trac run`（PRISM_REVIEW）+`trac replay` composition=PRISM消费Runtime证据→counterexample kill wiring=评审引用evidence identity→反例构造可追溯→评审期无套件重跑记录 test=integration:test_evidence_reuse.py::test_prism_consumes_runtime_evidence_without_suite_rerun evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且PRISM_REVIEW窗口内无套件重跑执行事件 IF-EVIDENCE-001
+- **FR-0250** owner=executor/test_select.py:AC-FR0250-04 surface=`trac run`（M-TEST COLLECT）+events composition=REMOVED→fail-closed wiring=baseline历史节点缺失于全量collect→test.collected(failed error_class=asset_deleted)→DIAGNOSE→Shield（test contract defect）→无red.validated、M-TEST不退出 test=integration:test_selection_semantics.py::test_removed_baseline_node_fail_closed_blocks_mtest_exit evidence=`.venv/bin/python -m pytest -q tests/integration/test_selection_semantics.py`输出`passed`且removed触发fail-closed事件且无静默注销路径 IF-SELECT-001
+- **FR-0251** owner=executor/m_impl_runtime.py:AC-FR0251-01 surface=`trac run`（GREEN_GATE）+events composition=SELECT_TASK→targeted unit+int执行 wiring=test.selected(scope=task_if)含task IF集合→被选集=IF归属unit∪命中int→不含e2e/R1全量 test=integration:test_selection_semantics.py::test_select_task_composition_per_task_ifs evidence=`.venv/bin/python -m pytest -q tests/integration/test_selection_semantics.py`输出`passed`且GREEN_GATE通过判定只依据该selection identity绑定证据 IF-SELECT-002 IF-EVIDENCE-001
+- **FR-0251** owner=executor/m_impl_runtime.py:AC-FR0251-02 surface=`trac run`（GREEN_GATE stale）composition=上游变化→stale→重选重跑 wiring=task IF/baseline变化→evidence.staled→新test.selected+新证据可见→stale证据不复用为通过依据 test=integration:test_selection_semantics.py::test_select_task_stale_reselects_on_upstream_change evidence=`.venv/bin/python -m pytest -q tests/integration/test_selection_semantics.py`输出`passed`且新selection_id≠旧且新执行证据在位 IF-SELECT-002 IF-EVIDENCE-001
+- **FR-0252** owner=executor/m_impl_runtime.py:AC-FR0252-01 surface=`trac run`（REFACTOR_GATE）+events composition=no_change/identity未变→evidence.reused(green) wiring=内容digest与Green commit一致→复用Green证据引用其identity→GATE无新测试执行事件 test=integration:test_evidence_reuse.py::test_refactor_identity_unchanged_reuses_green evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且evidence.reused kind=green引用Green evidence id IF-EVIDENCE-001
+- **FR-0252** owner=executor/m_impl_runtime.py:AC-FR0252-02 surface=`trac run`（REFACTOR_GATE 漂移）composition=identity有变化→同scope重跑 wiring=新test.selected(同task IF scope)→新证据绑定新attempt/actor→无跨scope复用放行 test=integration:test_evidence_reuse.py::test_refactor_identity_changed_reruns_same_scope evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且新selection_id≠旧且无跨scope复用事件 IF-SELECT-002 IF-EVIDENCE-001
+- **FR-0252** owner=executor/test_select.py:AC-FR0252-03 surface=events+既有upstream路由 composition=复用/重跑判定程序化落事件 wiring=判定依据=内容identity比对非Agent自述→动public interface仍走upstream test=integration:test_evidence_reuse.py::test_reuse_decision_programmatic_public_interface_route_unchanged evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且判定落事件含identity_basis且upstream路由不变 IF-EVIDENCE-001
+- **FR-0253** owner=executor/m_impl_runtime.py:AC-FR0253-01 surface=`trac run`（ISLAND_GATE_2）+events composition=全部task完成→full.executed(FULL_1)→失败逐条ledger.opened；FULL_1干净∧台账空→同一stamp标注serves_as_full_f=true充当FULL_F→stage.exited(M-IMPL)无紧邻等价FULL_F wiring=suite=unit+integration+e2e→失败节点OPEN绑定selection/evidence identity→clean首轮serves_as_full_f充当出口 test=integration:test_full_chain_ledger.py::test_full1_opens_ledger_entries_per_failed_node+e2e:test_hotfix_journey_happy_post_release evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py tests/e2e/test_hotfix_journey.py`输出`passed`且FULL链首个执行事件round=FULL_1且干净首轮serves_as_full_f=true充当在位 IF-FULLCHAIN-001 IF-LEDGER-001
+- **FR-0253** owner=executor/m_impl_runtime.py:AC-FR0253-02 surface=events+DIAGNOSE composition=ledger.transitioned逐转移 wiring=OPEN→CLASSIFIED→FIXED→PROVEN正向收敛+FIXED→OPEN证明失败+PROVEN→OPEN reopen经既有DIAGNOSE/重派路径→per-agent attempt预算照旧消费 test=integration:test_full_chain_ledger.py::test_ledger_transitions_via_existing_diagnose_paths evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且转移序列封闭且escalation可见 IF-LEDGER-001
+- **FR-0253** owner=executor/test_select.py:AC-FR0253-03 surface=events composition=逐条目FIXED→立即SELECT_DIFF→通过PROVEN/同签名失败FIXED→OPEN wiring=每条select_diff按selection identity差分受影响集并携带单条目身份→重跑证明变绿转移PROVEN或同签名失败重回OPEN test=integration:test_full_chain_ledger.py::test_select_diff_proves_fixed_entries_green evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且test.selected(scope=select_diff)逐条目在位且差分证明落事件 IF-SELECT-002 IF-LEDGER-001
+- **FR-0253** owner=executor/m_impl_runtime.py:AC-FR0253-04 surface=events composition=不可靠选择集→fallback FULL逐条目落转移充当FULL_F wiring=select_diff不可靠→full.executed(round=fallback_full)→通过条目FIXED→PROVEN同签名失败条目FIXED→OPEN→clean即serves_as_full_f=true不再另跑FULL_F test=integration:test_full_chain_ledger.py::test_unprovable_diff_falls_back_to_full_serving_fullf evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且fallback事件标注serves_as_full_f且M-IMPL照常出口 IF-FULLCHAIN-001
+- **FR-0253** owner=executor/m_impl_runtime.py:AC-FR0253-05 surface=`trac run`+`trac status` composition=FULL_F新失败→台账循环至干净→出口 wiring=多轮收敛无loop-count cap无超限放弃→干净后stage.exited(M-IMPL)→脏台账不出口 test=integration:test_full_chain_ledger.py::test_fullf_new_failures_loop_until_clean_no_cap evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且多轮循环序列在位且脏台账无stage.exited(M-IMPL) IF-FULLCHAIN-001 IF-LEDGER-001
+- **FR-0253** owner=executor/test_select.py:AC-FR0253-06 surface=events composition=FULL_F重现已PROVEN同一签名→确定性reopen wiring=台账身份=(node,failure_signature)：同签名PROVEN→OPEN重启先前身份并重证、新签名新建身份；clean判据与rebuild_ledger回放对reopen一致 test=integration:test_full_chain_ledger.py::test_fullf_reobserved_signature_reopens_proven_entry evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且reopen转移序列在位且重建状态含reopen IF-LEDGER-001 IF-FULLCHAIN-001
+- **FR-0254** owner=executor/m_impl_runtime.py:AC-FR0254-01 surface=`trac status`+events（canonical 合同，注册后生效）composition=未漂移→evidence.reused(full_f)→等CI回读；漂移/stale→LOCAL_GATES重跑 wiring=candidate commit==FULL_F tree∧相关条目无STALE∧identity一致⇒复用；本版负断言=M-VERIFY不注册且无绕过执行 test=integration:test_full_chain_ledger.py::test_mverify_reuse_dormant_no_bypass_rerun evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且boundary后无候选本地全量重跑记录 IF-EVIDENCE-001 IF-FULLCHAIN-001
+- **FR-0254** owner=executor/m_impl_runtime.py:AC-FR0254-02 surface=events（已注册阶段负断言）composition=扫描注册阶段事件流 wiring=FULL本地执行仅出现在ISLAND_GATE_2 FULL链→无其它名义的候选全量重跑 test=integration:test_full_chain_ledger.py::test_no_candidate_full_rerun_outside_island_gate evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且全量执行round字段∈{FULL_1,FULL_F,fallback_full}且均在ISLAND_GATE_2 IF-FULLCHAIN-001
+- **FR-0255** owner=executor/test_select.py:AC-FR0255-01 surface=执行审计 events composition=contract模板→resolve_command(result_path)→argv回显→audit比对→{result} JUnit解析+精确覆盖校验 wiring=command_echo≡contract替换展开逐字一致→无-n/--dist/worker/--junitxml注入→不等fail-closed→testcase身份≡被选集（缺失/畸形/重复/多余fail-closed）→outcomes_ref归一化blob test=integration:test_run_contract_audit.py::test_command_echo_matches_contract_verbatim_no_injection evidence=`.venv/bin/python -m pytest -q tests/integration/test_run_contract_audit.py`输出`passed`且并发/junit注入counterexample使审计校验失败 IF-RUNCONTRACT-001
+- **FR-0255** owner=executor/validate.py:AC-FR0255-02 surface=`trac validate`+contract文件 composition=[nightly]段完整性+{result}/{nodes}占位符计数校验→存在性可审计 wiring=缺失[nightly]/run_selected键或占位符缺失重复validate非零→本地门禁零依赖nightly结果 test=integration:test_run_contract_audit.py::test_nightly_contract_present_and_not_local_gate evidence=`.venv/bin/python -m pytest -q tests/integration/test_run_contract_audit.py`输出`passed`且red.validated/GREEN/FULL链事件不含nightly依赖 IF-NIGHTLY-001 IF-VALIDATE-001
 - **NFR-0100** owner=executor/hotfix.py:AC-NFR0100-01 surface=events+dispatch审计 composition=PRECHECK→纯程序判断 wiring=同输入复跑结果一致→无agent派发对应此步 test=integration:test_precheck_deterministic_no_llm_dispatch_records evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_precheck.py`输出`passed`且两次复跑事件同构且无Sage派发 IF-HOTFIX-003
 - **NFR-0100** owner=executor/hotfix.py:AC-NFR0100-02 surface=`trac validate`+`trac replay` composition=validate_anchor→校验审计 wiring=不实引用→validate fail非零→重派计数可回溯 test=integration:test_anchor_validation_traceable_with_retry_count evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_anchor.py`输出`passed`且`trac validate`对不实引用exit非零且replay可见计数 IF-HOTFIX-004 IF-VALIDATE-001
 - **NFR-0100** owner=kernel/hotfix.py:AC-NFR0100-03 surface=git+`trac status` composition=REJECTED/FEATURE_ROUTE→fail-closed wiring=无分支副作用→锚定不成立交Human→无自动feature路由 test=integration:test_fail_closed_no_branch_and_no_auto_feature_route evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_feature_route.py`输出`passed`且两路径后`git branch --list fix/N`均空 IF-HOTFIX-002 IF-HOTFIX-005
@@ -229,6 +363,10 @@ trac run
 - **NFR-0110** owner=cli/main.py:AC-NFR0110-01 surface=`trac status`+`trac replay`+`trac report` composition=runs投影→active+suspended wiring=run_id+stage+branch+scenario→挂起run持久化可观察 test=integration:test_suspended_run_observable_and_gates_recoverable+e2e:test_hotfix_await_journey_manual_anchor evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_coexist.py tests/e2e/test_hotfix_await_journey.py`输出`passed`且status含scenario字段且挂起run可replay IF-HOTFIX-006
 - **NFR-0110** owner=executor/executor.py:AC-NFR0110-02 surface=`trac status`+`trac check` composition=boundary→恢复active→门禁可读 wiring=hotfix完成→feature run恢复→check/status读出门禁状态 test=integration:test_boundary_restores_suspended_feature_run_as_active evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_coexist.py`输出`passed`且恢复后feature run门禁状态可由status读出 IF-HOTFIX-006
 - **NFR-0110** owner=executor/executor.py:AC-NFR0110-03 surface=`trac status` composition=_recover→事件重放 wiring=重启→pending子状态恢复→不重跑已完成步骤 test=integration:test_crash_recovery_resumes_precise_hotfix_state evidence=`.venv/bin/python -m pytest -q tests/integration/test_hotfix_recovery.py`输出`passed`且重启前后status一致且已完成事件计数不变 IF-HOTFIX-002 IF-HOTFIX-006
+- **NFR-0120** owner=executor/test_select.py:AC-NFR0120-01 surface=events+`trac status` composition=ledger.*先落事件再判定→中断重启→rebuild_ledger回放重建 wiring=WAL顺序保持→重建状态与中断前一致→FULL链精确续跑不重复PROVEN轮次 test=integration:test_full_chain_ledger.py::test_ledger_wal_rebuild_after_crash_identical evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且重启前后status/report台账一致 IF-LEDGER-001
+- **NFR-0120** owner=executor/test_select.py:AC-NFR0120-02 surface=events composition=未知/缺失/STALE条目→fail-closed wiring=脏台账不跳过FULL_F不产出stage.exited(M-IMPL)→触发原因落事件可审计 test=integration:test_full_chain_ledger.py::test_dirty_ledger_fail_closed_no_exit evidence=`.venv/bin/python -m pytest -q tests/integration/test_full_chain_ledger.py`输出`passed`且脏台账下M-IMPL无出口事件 IF-LEDGER-001 IF-FULLCHAIN-001
+- **NFR-0130** owner=executor/test_select.py:AC-NFR0130-01 surface=`trac replay`+`trac report` composition=每条test.selected/证据身份append-only落事件 wiring=selection_id四要素+evidence_id四元组完整在payload→replay/report可审计 test=integration:test_evidence_reuse.py::test_identity_fields_append_only_auditable evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且replay可见完整identity链 IF-EVIDENCE-001 IF-SELECT-002
+- **NFR-0130** owner=executor/test_select.py:AC-NFR0130-02 surface=events（跨门禁一致性）composition=同一identity判据贯穿SELECT_TASK/REFACTOR复用/SELECT_DIFF/M-VERIFY复用 wiring=共用同一实现函数→STALE传播各处一致→不一致证据一律不作通过依据 test=integration:test_evidence_reuse.py::test_stale_propagation_uniform_across_gates evidence=`.venv/bin/python -m pytest -q tests/integration/test_evidence_reuse.py`输出`passed`且四处消费点对同一漂移输入判定一致 IF-EVIDENCE-001
 
 ## 2. Scaffold 宣言
 
@@ -239,9 +377,11 @@ trac run
 >> **Archer:** PRISM-ARCH006-B01 已修订，采纳预期修订的方向一（architecture 单侧更正，冻结合同不动）：interfaces §1d 与两份物理桩逐字节未改（Prism 已核验其余 Scaffold 维度一致，冻结合同是基线）。(a) §2 kernel/hotfix.py 条目：parse_anchor_refs 已移除，成员清单改为逐项枚举物理桩实际成员——_decide_hotfix_triage + 6 个事件 reducer（_on_hotfix_requested/_on_triage_prechecked/_on_anchor_validated/_on_human_anchor/_on_baseline_inherited/_on_increment_declared）+ 4 个封闭集常量；§0.2 line 29 的「锚定引用解析纯函数」归述已更正为显式否定（本模块无锚定解析函数，kernel 只消费 anchor.validated/verdict.failed 事件）。(b) §2 executor/hotfix.py 条目：active_release_branch 已删除，成员清单改为逐项枚举 §1d 全部成员——HostIssue/PrecheckReport/precheck_hotfix/locate_target_version/parse_issue_hints/parse_anchor_refs/validate_anchor_refs/complete_hotfix_entry（另注明封闭集类型 HotfixRejectionReason；P-3 活跃分支定位 = precheck_hotfix 入参/报告字段语义）；§0.2 line 30 同步点名 parse_anchor_refs+validate_anchor_refs 冻结于 executor 侧（IF-HOTFIX-004 校验管线单模块归属，被 _do_validate_anchor handler 消费）。归属方向的理由：§1.0.1 增长轴表 row 3 本已把 IF-HOTFIX-003/004/005 全部划归 executor/hotfix.py，row 2 kernel 仅 IF-HOTFIX-002——本次更正使 §0.2/§2 与 §1.0.1、interfaces §1d、物理桩四方一致；锚定解析+存在性校验是一条 IF-HOTFIX-004 管线，拆到 kernel 会把 validate_anchor_refs 的 acceptance.md 文件读取（I/O）带进纯 kernel，破坏 §0.2 line 21 的零 I/O 边界。§1.2 closure 复核：AC-FR0240-04 owner=executor/hotfix.py（IF-HOTFIX-004）与 AC-FR0240-05 owner=kernel/hotfix.py（IF-HOTFIX-002+IF-HOTFIX-004）在本方向下无需变更；三文档 trac validate 全部 valid，§1.2 引用的全部 IF- ID 均存在于 interfaces §5 Registry。请 Prism 复核后 resolve。
 >>> **Prism:** 复核通过：(a) §2 kernel/hotfix.py 条目成员（_decide_hotfix_triage + 6 reducer + 4 常量，无 parse_anchor_refs）与物理桩 tracks/kernel/hotfix.py 逐项一致，§0.2 line 29 显式否定归述在位；(b) §2 executor/hotfix.py 条目成员（HostIssue/PrecheckReport/precheck_hotfix/locate_target_version/parse_issue_hints/parse_anchor_refs/validate_anchor_refs/complete_hotfix_entry + HotfixRejectionReason，无 active_release_branch）与 interfaces §1d 及物理桩逐项一致，签名参数一致；§0.2 line 30 点名 IF-HOTFIX-004 管线冻结于 executor 侧。方向一（architecture 单侧更正）使 §0.2/§2/§1.0.1/interfaces §1d/物理桩五方一致且保持 kernel 零 I/O 边界，采纳。f0d5299 diff 仅含本修订与讨论，无其他正文变更。resolve。
 
-本节只声明 M-DESIGN 物理脚手架。既有配置（`pyproject.toml`、`.flake8`、`.githooks/pre-commit`、`.github/workflows/ci.yml`、`.tracks/projects/project.toml`）为 v0.4/v0.5 已交付的真实合同，v0.6 不修改不重建，故不列入。`machine.py` / `executor.py` / `events.py` / `capabilities.py` / `trace.py` / `github.py` / `fake.py` 等既有文件由 Devon 在实现 task 中按合同增量扩展，不是 scaffold。Shield 的测试交付物（`tests/integration/test_hotfix_*.py`、`tests/e2e/test_hotfix_*.py`、`tests/e2e_live/test_hotfix_live.py`）不在宣言中。`tests/ground_truth/` 不创建（test-plan §3 判定不适用）。两个接口桩在被 M-IMPL 接线任务 import 之前是 reach 孤岛——预期中间态，语义与闭合保证见 §5.2「M-DESIGN 接口桩的 reach 孤岛窗口」。
+本节只声明 M-DESIGN 物理脚手架。既有配置（`pyproject.toml`、`.flake8`、`.githooks/pre-commit`、`.github/workflows/ci.yml`）为 v0.4/v0.5 已交付的真实合同，v0.6 不重建，故不列入；`.tracks/projects/project.toml` 是宿主合同，其 D-41 扩展由原子实现切片交付（§1.0.6.7），本文档不对其工作树状态作断言。`machine.py` / `executor.py` / `events.py` / `capabilities.py` / `trace.py` / `github.py` / `fake.py` 等既有文件由 Devon 在实现 task 中按合同增量扩展，不是 scaffold。Shield 的测试交付物（`tests/integration/test_hotfix_*.py`、`tests/e2e/test_hotfix_*.py`、`tests/e2e_live/test_hotfix_live.py`）不在宣言中。`tests/ground_truth/` 不创建（test-plan §3 判定不适用）。两个接口桩在被 M-IMPL 接线任务 import 之前是 reach 孤岛——预期中间态，语义与闭合保证见 §5.2「M-DESIGN 接口桩的 reach 孤岛窗口」。
 
 R2 附注（2026-08-19，stub_gap 回滚修订）：本修订不新增 scaffold、不改动上述任何条目。两个接口桩已在第一轮 M-IMPL 基线实现（`kernel/hotfix.py` ← 原 T-001，green 提交 a864e25；`executor/hotfix.py` ← 原 T-002，green 提交 a1dccda）；条目保留作 scaffold 审计连续性记录（ResultCheckpoint 的 scaffold 允写清单解析仍读本节），其签名合同仍以 interfaces §1a–§1d 冻结为准，后续 Devon 任务不得改变声明合同。
+
+R6 附注（2026-08-23，D-41 机器设计修订）：本修订不新增 scaffold 条目——`executor/test_select.py` 是 Devon 实现增量（接口合同冻结于 interfaces §1j–§1n，物理模块由 Devon 按 RGR 交付），同 R4 对 `test_tasks.py` 增量的处理先例；既有两个桩条目不变。
 
 ## 3. 技术选型
 
@@ -328,7 +468,7 @@ Human 裁定 T-003 允许 Archer 把回归用例全部划归 unit 层（Devon �
 
 ### 4.1 测试执行合同（`.tracks/projects/project.toml`）
 
-路径与内容继承 v0.5（v0.6 无测试目录变更）：integration/e2e 均为 pytest，paths 分别为 `tests/integration/` 与 `tests/e2e/`，collect/run 命令使用宿主 `.venv/bin/python -m pytest`，cwd 为仓库根。文件已在库中且被当前 Runtime 消费，本轮不修改（内容与 ARCH-005 §4.1 逐字一致）。`tests/e2e_live/` 继续为独立 opt-in live 通道，不入默认套件。
+路径继承 v0.5（integration/e2e 均为 pytest，paths 分别为 `tests/integration/` 与 `tests/e2e/`，collect/run 命令使用宿主 `.venv/bin/python -m pytest`，cwd 为仓库根）。文件在库中且被当前 Runtime 消费；其 D-41 扩展（[unit]/run_selected/[nightly]）由原子实现切片交付（§1.0.6.7），本文档不对其工作树内容作不变性断言。`tests/e2e_live/` 继续为独立 opt-in live 通道，不入默认套件。
 
 ### 4.2 质量守卫栈（八类，全部继承既有实现）
 
@@ -381,6 +521,13 @@ v0.6 增量（**待实现**，Devon foundation task 修改 `.github/workflows/ci
 - **anchor_red 不做失败分类硬化（R2）**：保持「任意非零退出 = 合法锚」的既有语义，不为 usage/collect 特征分类增加 runtime 行为变更。代价：任务图排序违规（TG-1/2/3 被违反）的最早显形点后移到预算耗尽后的 DIAGNOSE；由 PLANNING 期不变量 + PRISM_PLAN 复核作主防线补偿（§1.0.5、§5.2）。
 - **R3 扫描范围修复只动 validate 侧（§3.9）**：`trac check trace` 的 §8 解析本来就不含逐行扫描，不为其增加对称变更；修复单点落在 `_visible_plan_lines`。代价：validate 与 check trace 的实现路径继续保持不对称（既有事实，非本版引入）。
 - **ground truth 不适用**：v0.6 是状态机/路由/事件行为，无算法正确性需独立重算（目标版本定位/锚定存在性是简单规则，测试数据即真值来源，test-plan §3.1 第 3 行）。不创建 `tests/ground_truth/`。
+- **【R6】干净首轮与 fallback 充当 FULL_F 同一充当语义**（§1.0.6.5）：FULL_1 无任何失败时台账为空，「全部条目 PROVEN 且无 STALE」空真成立，再跑一次等价全量是纯浪费——事件标注 serves_as_full_f=true 直接出口。代价：AC-FR0253-05 的「执行 FULL_F」在退化情形由充当关系满足；充当标注落事件保证可审计。
+- **【R6】STALE→OPEN 重驱转移**（§1.0.6.4）：上游变化置 STALE 的条目必须可回到收敛轨道，否则一次漂移即永久停车；封闭集补 `STALE→OPEN`（reconcile 后重驱），fail-closed 语义不变（STALE 未消除前仍不视为干净）。
+- **【R6/v3】逐条目修复-证明与 FIXED→OPEN**（§1.0.6.5/§1.0.6.4）：修复循环是 per bug/fix 的——每条目 FIXED 后立即跑其确定性 SELECT_DIFF，通过 FIXED→PROVEN、同签名失败 FIXED→OPEN 重修；fallback_full 结果同样逐条目落转移。union/batching 仅可单独归因时为可选优化，非规范语义。代价：事件数略增（每条目一次选择），换取每条失败-修复-证明链单独可归因、可审计。
+- **【R6/v3】原子实现切片与 run_selected fail-closed 时点**（§1.0.6.7）：validator schema 激活、project.toml 扩展与 prompt/runtime 变更是一个原子实现切片；缺键 fail-closed 自 schema 激活生效，Runtime 不向 run 追加 nodeid、不合成任何调用——宁 fail-closed 停车也不猜测调用形态。并发 flag 与结果写入 flag（`--junitxml={result}`）内嵌于命令字符串（v6 占位符计数校验：每条模板 `{result}` 恰好一次），不设独立 workers/dist 键（消除双权威）。
+- **【R6】逐节点 digest 分类而非整文件 digest**（§1.0.6.1）：历史文件追加一个新测试不得把未变兄弟节点翻成 R2 再以"意外通过"失败它们。【v3 简化】R2 = 新节点 ∨ 同一 nodeid 节点源/体 digest 变化（恰好且仅为这两类）；变更 support/fixture 不参与分类但仍参与全量 collect/import，未变历史行为的回归等待 M-IMPL FULL 链与 nightly CI。代价：baseline 须存逐节点 digest（存储略增），换取分类不误伤兄弟节点且不引入未指定的依赖声明语义。
+- **【R6】REMOVED 历史节点 fail-closed**（§1.0.6.1）：baseline 节点缺失于全量 collect = 测试资产删除缺陷（`test.collected(failed)` error_class=asset_deleted → Shield，阻断 M-TEST 退出），不静默注销；本版无授权删除路径，未来如引入须经显式上游 contract 授权。
+- **【R6】台账身份=(node, failure_signature) 与 PROVEN→OPEN reopen**（§1.0.6.4）：FULL_F 可再次揭示先前已 PROVEN 的同一签名——无确定性 reopen 转移则收敛谓词把复现失败误判为新身份或漏判干净；同签名重启先前身份、新签名新建身份，clean 判据与回放对 reopen 一致。
 
 ### 5.2 风险
 

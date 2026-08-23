@@ -45,6 +45,7 @@ from tracks.executor.validate import (
     check_trace_file,
 )
 from tracks.kernel import Command, project
+from tracks.project import ContractError, load_contract
 from tracks.report import generate_report, progress_summary
 from tracks.store import Store, new_ulid
 
@@ -1067,6 +1068,22 @@ def cmd_validate(repo: Path, *args) -> int:
     if len(args) != 2 or args[0] != "--file":
         return _err("usage: trac validate --file <path>")
     path = Path(args[1])
+    # FRB-F: the canonical host execution contract validates through the
+    # real loader (full ContractError fail-closed surface), not a template.
+    try:
+        canonical = path.resolve() == (
+            repo / ".tracks" / "projects" / "project.toml"
+        ).resolve()
+    except OSError:
+        canonical = False
+    if canonical:
+        try:
+            load_contract(repo)
+        except ContractError as exc:
+            print(f"contract error: {exc.reason}", file=sys.stderr)
+            return 1
+        print("valid")
+        return 0
     if path.name == "tasks.json":  # FR-0180: five structural checks (not template)
         issues = _validate_tasksjson(path)
     else:

@@ -5,11 +5,15 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from copy import deepcopy
 from dataclasses import asdict
@@ -52,10 +56,10 @@ from tracks.executor.helpers import (
     _commit_if_staged,
     _dispatch_payload,
     _hook_output,
-    _parse_collected_count,
     _short_detail,
-    classify_red,
+    classify_red_detail,
     git,
+    parse_collected_nodes,
 )
 from tracks.executor.hotfix import (
     complete_hotfix_entry,
@@ -67,6 +71,23 @@ from tracks.executor.m_impl_runtime import MImplRuntimeMixin
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
+)
+from tracks.executor.test_select import (
+    BaselineAssets,
+    EmptyR2SelectionError,
+    JUnitResultError,
+    TestSelectError,
+    capture_test_baseline,
+    classify_nodes,
+    collect_node_source_digests,
+    make_selection_id,
+    parse_junit_result,
+    require_exact_node_coverage,
+    require_nonempty_r2_selection,
+    resolve_selected_command,
+)
+from tracks.executor.test_select import (
+    audit as audit_selection_argv,
 )
 from tracks.executor.validate import (
     parse_test_tasks,
@@ -111,6 +132,43 @@ _CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 # Used by _resolve_contract_argv0 to decide whether to substitute the Runtime's
 # own interpreter when the project worktree lacks a .venv (live replay fix).
 _VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
+
+# D-41 (v6 review pin): pytest exit code that means an EMPTY layer at collect
+# time is ONLY 5 ("no tests collected"). rc=4 is a usage/path error -- a
+# broken declaration that must fail closed naming the layer, never silently
+# contribute zero nodes (a fresh feature project legitimately has zero unit/
+# e2e nodes via rc=5; an un-collectable layer never does).
+_EMPTY_LAYER_COLLECT_RC = frozenset({5})
+
+# D-41 selection scope/basis for M-TEST RED_CHECK (interfaces §1a/§1j).
+_R2_SCOPE = "r2_delta"
+_R2_BASIS = "delta-declaration"
+
+# Paths excluded from the dirty-aware tree stamp: runtime state and build
+# artifacts are not source/test/config content and must never destabilize a
+# selection identity across WAL/replay of the same command.
+_TREE_STAMP_SKIP_PREFIXES = (
+    ".git/",
+    ".opencode/",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".tracks/",
+    ".venv/",
+    "build/",
+    "dist/",
+    "logs/",
+)
+
+
+def _contract_sections(contract):
+    """The required flat test layers in canonical order (unit, integration,
+    e2e); the activated atomic schema declares all three -- the loader fails
+    closed on any missing layer section."""
+    return [
+        ("unit", contract.unit),
+        ("integration", contract.integration),
+        ("e2e", contract.e2e),
+    ]
 
 
 def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
@@ -842,6 +900,34 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             params.clear()
             params.update(materialized)
         self._enrich_shield_write_params(params, state)
+        self._enrich_m_test_prism_assignment(params, state)
+
+    def _enrich_m_test_prism_assignment(self, params: dict, state: State) -> None:
+        """D-41 AC-FR0250-03 (v3 timing): PRISM_REVIEW consumes the Runtime's
+        CURRENT-TREE red evidence. The assignment exposes the latest
+        ``red.validated`` identity (selection binding + per-node legal-Red
+        outcomes) as the approved factual basis for the review; Prism runs
+        only its isolated counterexample kill on top -- never a suite rerun."""
+        if not (state.stage == "M-TEST" and params.get("substate") == "PRISM_REVIEW"):
+            return
+        selection = self._latest_event("test.selected")
+        red = self._latest_event("red.validated")
+        if red is None:
+            return
+        assignment = dict(params.get("assignment") or {})
+        assignment["red_evidence"] = {
+            "status": red.payload.get("status"),
+            "selection_id": red.payload.get("selection_id")
+            or (selection.payload if selection else {}).get("selection_id"),
+            "scope": (selection.payload if selection else {}).get("scope"),
+            "baseline": (selection.payload if selection else {}).get("baseline"),
+            "commit": (selection.payload if selection else {}).get("commit"),
+            "nodes_count": (selection.payload if selection else {}).get("nodes_count"),
+            "nodes_blob": red.payload.get("nodes_blob"),
+            "outcomes_ref": red.payload.get("outcomes_ref"),
+            "findings": red.payload.get("findings") or [],
+        }
+        params["assignment"] = assignment
 
     def issue(self, cmd: Command, command_id: str | None = None) -> None:
         """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler
@@ -2038,33 +2124,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # re-dispatches naturally see committed work; a crash leaks only a
         # worktree that the B2 start-time sweep reclaims. Audited events.
         handle, wt_task_id = self._open_writer_worktree(state, role, substate, cmd)
-        replay_error: str | None = None
-        replayed = False
-        try:
-            result = self.backend.act(
-                role,
-                substate,
-                doc,
-                doc_path,
-                assignment=assignment,
-                worktree=Path(handle.path) if handle is not None else None,
-            )
-            if handle is not None:
-                replay_error, replayed = self._replay_worktree_to_main(handle)
-        finally:
-            if handle is not None:
-                cleanup_worktree(handle)
-                self._emit(
-                    "worktree.closed",
-                    {
-                        "kind": handle.kind,
-                        "path": handle.path,
-                        "task_id": wt_task_id,
-                        "replayed": replayed,
-                    },
-                    command_id=cmd.command_id,
-                    task_id=wt_task_id,
-                )
+        result, replay_error = self._act_in_worktree(
+            cmd, role, substate, doc, doc_path, assignment, handle, wt_task_id
+        )
         if replay_error is not None:
             self._emit(
                 "verdict.failed",
@@ -2128,11 +2190,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         agent_io = payload.get("agent_io") or {}
         if agent_io.get("output_ref"):
             result.setdefault("output_ref", agent_io["output_ref"])
-        if (
-            state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
-            and result.get("status") == "done"
-            and (substate in ("DRAFT", "RESPOND", "WRITE") or substate in _REVIEW_SUBSTATE)
-        ):
+        if self._checkpoint_eligible(state, result, substate):
             payload["result_checkpoint"] = self._result_checkpoint_payload(
                 cmd, state, result, p, substate, role, doc, pre_dirty
             )
@@ -2140,7 +2198,83 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if "result_checkpoint" in payload:
             return  # pipeline drives the domain event
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
-        self._emit_shield_commit(result, role, state, cmd, task_id)
+        shield_committed = self._emit_shield_commit(result, role, state, cmd, task_id)
+        self._maybe_transition_full_ledger(cmd, state, role, result, shield_committed)
+
+    def _act_in_worktree(
+        self,
+        cmd,
+        role,
+        substate,
+        doc,
+        doc_path,
+        assignment,
+        handle,
+        wt_task_id,
+    ):
+        """Run backend.act() (inside the writer worktree when one is open),
+        replay the worktree delta onto the main tree, and always close the
+        worktree (audited via ``worktree.closed``). Returns
+        ``(result, replay_error)``; replay_error None means clean/applied."""
+        replay_error: str | None = None
+        replayed = False
+        try:
+            result = self.backend.act(
+                role,
+                substate,
+                doc,
+                doc_path,
+                assignment=assignment,
+                worktree=Path(handle.path) if handle is not None else None,
+            )
+            if handle is not None:
+                replay_error, replayed = self._replay_worktree_to_main(handle)
+        finally:
+            if handle is not None:
+                cleanup_worktree(handle)
+                self._emit(
+                    "worktree.closed",
+                    {
+                        "kind": handle.kind,
+                        "path": handle.path,
+                        "task_id": wt_task_id,
+                        "replayed": replayed,
+                    },
+                    command_id=cmd.command_id,
+                    task_id=wt_task_id,
+                )
+        return result, replay_error
+
+    @staticmethod
+    def _checkpoint_eligible(state, result, substate) -> bool:
+        """v0.5 ResultCheckpoint pipeline eligibility: batch-1 stages on a
+        done outcome for writer/review substates (payload embeds the capture)."""
+        return (
+            state.stage in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST")
+            and result.get("status") == "done"
+            and (substate in ("DRAFT", "RESPOND", "WRITE") or substate in _REVIEW_SUBSTATE)
+        )
+
+    def _maybe_transition_full_ledger(
+        self, cmd, state, role, result, shield_committed
+    ) -> None:
+        """Full-chain ledger: a done Shield repair under an active full-chain
+        round advances CLASSIFIED -> FIXED."""
+        if (
+            state.stage == "M-IMPL"
+            and state.full_chain_round is not None
+            and state.substate == "SHIELD_FIX"
+            and role == "shield"
+            and result.get("status") == "done"
+            and shield_committed
+        ):
+            self._transition_full_ledger(
+                cmd,
+                "CLASSIFIED",
+                "FIXED",
+                "Shield repair outcome completed",
+                "shield",
+            )
 
     def _open_writer_worktree(self, state, role: str, substate: str, cmd):
         """B1 (issue #2): open the per-dispatch worktree for writer agents.
@@ -2422,6 +2556,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if classification in ("test_defect", "impl_defect")
             else _DIAGNOSE_TARGET.get(classification, "M-IMPL")
         )
+        if state.full_chain_round is not None:
+            self._transition_full_ledger(
+                cmd,
+                "OPEN",
+                "CLASSIFIED",
+                f"Prism attributed FULL failure as {classification}",
+                "prism",
+            )
         self._emit(
             "verdict.failed",
             {
@@ -2468,7 +2610,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             and state.substate == "SHIELD_FIX"
             and result.get("status") == "done"
         ):
-            return
+            return False
         # Stage only tests/ files
         tests_dir = self.repo / "tests"
         # Get list of changed files under tests/
@@ -2491,7 +2633,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return
+            return False
         # PRISM-B28-R2-02: the SHIELD_FIX manifest contract promises an
         # include==observed comparison — enforce it here (M-IMPL shield
         # WRITE bypasses the ResultCheckpoint pipeline).
@@ -2507,7 +2649,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return
+            return False
         # Stage all changed tests/ files
         git(self.repo, "add", "--", "tests/")
         # Create commit with trailers
@@ -2532,7 +2674,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return
+            return False
         commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
         self._emit(
@@ -2541,6 +2683,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        return True
 
     def _reject_invalid_test_tasks(self, state, role, substate, assignment, cmd, task_id) -> bool:
         """D-32 fail-closed gate: return True (and emit a stub_gap failed
@@ -3355,10 +3498,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _run_contract_sections(
         self, cmd, state, field: str
     ) -> tuple[list[tuple[str, int, str, str]], str | None]:
-        """Execute the contract's ``collect`` or ``run`` command across all
-        declared sections. Returns ``(results, error_msg)`` where ``results``
-        is a list of ``(section_name, rc, stdout, stderr)`` per section.
-        On contract/shlex error ``error_msg`` is set and ``results`` is empty."""
+        """Execute the contract's ``collect``/``run`` command across the
+        declared Shield layers ([integration] + optional [e2e]) -- the legacy
+        M-TEST/M-IMPL section set. Returns ``(results, error_msg)`` where
+        ``results`` is a list of ``(section_name, rc, stdout, stderr)`` per
+        section. On contract/shlex error ``error_msg`` is set and ``results``
+        is empty."""
         try:
             contract = load_contract(self.repo)
         except ContractError as exc:
@@ -3385,44 +3530,397 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # on the e2e section is not a collection failure — a hotfix run
             # with an integration-only delta has no e2e tests. Normalize to
             # 0 for collect only so _do_collect_tests does not hard-fail.
-            # The run field keeps exit_code=5; _do_run_tests skips it so RED
-            # classification does not see unexpected_pass/unclassified
-            # (PRISM-V06-R7-01/R8-01/R9-01, T-004).
+            # (D-41 full-inventory paths use _collect_all_declared_layers,
+            # where ONLY rc=5 is a legal empty layer and rc=4 fails closed.)
             if field == "collect" and name == "e2e" and rc == 5:
                 rc = 0
             results.append((name, rc, proc.stdout, proc.stderr))
         return results, None
 
+    def _collect_all_declared_layers(
+        self, *, capture_absent_ok: bool = False
+    ) -> tuple[dict[str, str] | None, str | None]:
+        """D-41 FR-0250-01: run EVERY declared layer's ``collect`` command
+        ([unit]/[integration]/[e2e]) and map each collected node id to its
+        declaring layer. Only rc=5 ("no tests collected") is a legal empty
+        declared layer; any other failure (incl. rc=4 usage/path errors) is
+        returned as an error string naming the layer (fail-closed). A nodeid
+        collected by MULTIPLE layers is a contract defect and fails the scan
+        closed -- first-layer-wins masking would silently hide it.
+
+        ``capture_absent_ok=True`` (pre-WRITE capture only, FRB-D): when ALL
+        of a section's declared ``paths`` (resolved under the section cwd)
+        are absent from disk, the declared layer normalizes to EMPTY without
+        executing its collect command -- a valid contract may legitimately
+        declare paths a fresh tree does not have yet. The cwd itself must
+        exist and be a directory for that normalization: a missing/non-
+        directory section cwd is malformed infrastructure and routes a layer
+        collection error (baseline_defect at capture) WITHOUT subprocess. If
+        ANY declared path exists the command executes and rc=4 stays a
+        failure. Post-WRITE COLLECT never normalizes (default False)."""
+        try:
+            contract = load_contract(self.repo)
+            sections = _contract_sections(contract)
+        except ContractError as exc:
+            return None, f"contract error: {exc.reason}"
+        node_layer: dict[str, str] = {}
+        errors: list[str] = []
+        for name, section in sections:
+            fatal_error = self._collect_declared_layer(
+                name, section, capture_absent_ok, node_layer, errors
+            )
+            if fatal_error is not None:
+                return None, fatal_error
+        if errors:
+            return None, "; ".join(errors)
+        return node_layer, None
+
+    def _collect_declared_layer(
+        self,
+        name: str,
+        section,
+        capture_absent_ok: bool,
+        node_layer: dict[str, str],
+        errors: list[str],
+    ) -> str | None:
+        """Collect ONE declared layer into ``node_layer`` (D-41 FR-0250-01).
+
+        Per-layer collection failures accumulate into ``errors`` (fail-closed
+        at the caller); a returned string is a FATAL scan error (the layer's
+        ``collect`` command itself is unparseable) that aborts immediately."""
+        try:
+            argv = shlex.split(section.collect)
+        except ValueError as exc:
+            return f"[{name}].collect command invalid: {exc}"
+        cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+        if capture_absent_ok and self._capture_layer_absent(name, section, cwd, errors):
+            return None
+        argv = _resolve_contract_argv0(argv, cwd)
+        try:
+            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+        except (OSError, UnicodeError) as exc:
+            # FRB-G: a missing executable / undecodable stream is a layer
+            # collection failure routed through the event channel, never
+            # a raw crash out of the handler.
+            errors.append(
+                f"{name} layer collection failed ({type(exc).__name__}): {exc}"
+            )
+            return None
+        self._absorb_layer_nodes(name, proc, node_layer, errors)
+        return None
+
+    def _capture_layer_absent(self, name, section, cwd: Path, errors: list[str]) -> bool:
+        """FRB-D pre-WRITE normalization: True when the declared layer must be
+        treated as EMPTY without executing its collect command. A missing/non-
+        directory section cwd is malformed infrastructure (every declared path
+        reads absent as a side effect) -- routes a layer collection error
+        WITHOUT any subprocess. If ANY declared path exists the command must
+        execute (rc=4 stays a failure)."""
+        if not cwd.is_dir():
+            errors.append(
+                f"{name} layer collection failed: section cwd is "
+                f"missing or not a directory: {section.cwd}"
+            )
+            return True
+        return bool(section.paths) and not any((cwd / rel).exists() for rel in section.paths)
+
+    @staticmethod
+    def _absorb_layer_nodes(
+        name: str, proc: subprocess.CompletedProcess, node_layer: dict[str, str],
+        errors: list[str],
+    ) -> None:
+        """Fold one collect result into ``node_layer``: rc=0 maps each
+        collected node to this layer (a nodeid claimed by MULTIPLE layers is a
+        contract defect recorded in ``errors``), rc in _EMPTY_LAYER_COLLECT_RC
+        is a legal empty declared layer, anything else fails the layer closed."""
+        if proc.returncode == 0:
+            for node in parse_collected_nodes(proc.stdout):
+                previous = node_layer.get(node)
+                if previous is not None and previous != name:
+                    errors.append(
+                        f"{node} collected by multiple layers ({previous}, {name}): "
+                        "layer ownership must be unique"
+                    )
+                    continue
+                node_layer[node] = name
+        elif proc.returncode not in _EMPTY_LAYER_COLLECT_RC:
+            detail = (proc.stderr or proc.stdout).strip()
+            errors.append(
+                f"{name} layer collection failed (rc={proc.returncode}): {detail[:400]}"
+            )
+
+    def _read_runtime_blob(self, ref: str | None):
+        """Read a repo-relative ``.tracks/runtime/blobs/...`` reference."""
+        if not ref:
+            raise TestSelectError("event payload lacks its runtime blob reference")
+        try:
+            return json.loads((Path(self.repo) / ref).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise TestSelectError(f"runtime blob unreadable: {ref}: {exc}") from exc
+
+    def _latest_event(self, ev_type: str, *, status: str | None = None):
+        """Latest event of ``ev_type`` (optionally with payload.status), or None."""
+        found = None
+        for ev in self.store.events(self.run_id):
+            if ev.type != ev_type:
+                continue
+            if status is not None and ev.payload.get("status") != status:
+                continue
+            found = ev
+        return found
+
+    def _emit_baseline_failed(self, cmd, state, errors: list[str]) -> None:
+        """test.baseline_captured(failed) + fail-closed upstream routing
+        (interfaces §1j v5: never vacate R1, never re-dispatch Shield)."""
+        self._emit(
+            "test.baseline_captured",
+            {
+                "status": "failed",
+                "baseline_id": "",
+                "baseline_tree": "",
+                "layers": ["unit", "integration", "e2e"],
+                "nodes_count": 0,
+                "empty_baseline": False,
+                "node_digest_blob": None,
+                "errors": errors,
+            },
+            command_id=cmd.command_id,
+        )
+        log_ref = self._red_log_blob_ref({"errors": errors})
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "baseline_defect",
+                "target_stage": "M-DESIGN",
+                "artifact_disposition": "rollback",
+                "reason": (
+                    "pre-WRITE R1 baseline capture failed: the inherited tree "
+                    "is un-collectable/un-importable before Shield writes"
+                ),
+                "evidence": errors,
+                "log_ref": log_ref,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _do_capture_baseline(self, cmd, state, task_id, reconcile):
+        """D-41/IF-SELECT-001 (v5): M-TEST entry pre-WRITE R1 snapshot.
+
+        Runs BEFORE this run's first Shield WRITE dispatch: full collect of
+        every DECLARED layer ([unit]/[integration]/[e2e]), per-node source
+        digests over physical function segments (never whole files), stamped
+        baseline/tree identity persisted as ``test.baseline_captured`` plus a
+        node-digest blob. Any collection/infrastructure failure fails closed
+        before WRITE (baseline_defect -> upstream/design route). WAL/replay
+        reuse the same stamped capture: a crashed capture re-runs only while
+        no passed capture is persisted, and recomputes the identical identity.
+        """
+        if reconcile and state.baseline_captured:
+            return
+        node_layer, collect_error = self._collect_all_declared_layers(
+            capture_absent_ok=True
+        )
+        if collect_error is not None:
+            self._emit_baseline_failed(cmd, state, [collect_error])
+            return
+        all_nodes = sorted(node_layer)
+        try:
+            digests = collect_node_source_digests(Path(self.repo), all_nodes)
+        except TestSelectError as exc:
+            self._emit_baseline_failed(cmd, state, [str(exc)])
+            return
+        # FRB-E: the baseline tree identity is dirty-aware -- a clean relevant
+        # tree stamps HEAD, an uncommitted source/test tree stamps head+dirty
+        # content so two distinct uncommitted trees never share one snapshot.
+        tree_identity = self._dirty_tree_stamp()
+        snapshot = capture_test_baseline(
+            lambda layer: sorted(n for n in all_nodes if node_layer[n] == layer),
+            lambda node: digests[node],
+            tree_identity,
+        )
+        # Blob entries carry BOTH identities: `digest` stamps the node's
+        # physical file content (externally verifiable), `node_digest` is the
+        # per-node AST segment digest classification consumes.
+        file_digests: dict[str, str] = {}
+        entries = []
+        for node in all_nodes:
+            physical = node.partition("::")[0]
+            if physical not in file_digests:
+                try:
+                    file_digests[physical] = hashlib.sha256(
+                        (Path(self.repo) / physical).read_bytes()
+                    ).hexdigest()
+                except OSError:
+                    file_digests[physical] = "unreadable"
+            entries.append(
+                {
+                    "node": node,
+                    "layer": node_layer[node],
+                    "digest": file_digests[physical],
+                    "node_digest": digests[node],
+                }
+            )
+        blob_ref = self.store.write_audit_blob(entries)
+        if blob_ref is None:
+            self._emit_baseline_failed(cmd, state, ["node digest blob write failed"])
+            return
+        self._emit(
+            "test.baseline_captured",
+            {
+                "status": "passed",
+                "baseline_id": snapshot.baseline_id,
+                "baseline_tree": snapshot.baseline_tree,
+                "layers": list(snapshot.layers),
+                "nodes_count": len(snapshot.node_digests),
+                "empty_baseline": snapshot.empty_baseline,
+                "node_digest_blob": f".tracks/runtime/blobs/{blob_ref}",
+                "errors": [],
+            },
+            command_id=cmd.command_id,
+        )
+
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
-        """SM-01.5: Runtime independently collects integration + e2e tests via
-        the host project contract's ``collect`` command (architecture.md §3.2).
-        Never trusts the Shield self-report."""
+        """SM-01.5 / D-41 FR-0250-01: Runtime independently collects ALL
+        declared layers via the host project contract's ``collect`` command
+        (architecture.md §3.2; never trusts the Shield self-report), then
+        classifies the current three-layer inventory against THIS run's
+        persisted pre-WRITE ``test.baseline_captured`` snapshot.
+
+        REMOVED (a baseline node absent from full collect) is fail-closed test-
+        asset deletion: test.collected(failed, error_class=asset_deleted);
+        it never silently de-registers nor continues gating. The per-node
+        {node, layer, class} table persists to a blob referenced by
+        ``per_node_blob`` for RED_CHECK's SELECT_R2 binding."""
         if reconcile and state.test_collected:
             return
-        results, error = self._run_contract_sections(cmd, state, "collect")
-        if error is not None:
+        node_layer, collect_error = self._collect_all_declared_layers()
+        if collect_error is not None:
             self._emit(
                 "test.collected",
-                {"status": "failed", "collected_count": 0, "errors": [error]},
+                {"status": "failed", "collected_count": 0, "errors": [collect_error]},
                 command_id=cmd.command_id,
             )
             return
-        all_stdout = "\n".join(r[2] for r in results)
-        any_failed = any(r[1] != 0 for r in results)
-        if not any_failed:
-            count = _parse_collected_count(all_stdout)
+        all_nodes = sorted(node_layer)
+        baseline_ev = self._latest_event("test.baseline_captured", status="passed")
+        if baseline_ev is None:
             self._emit(
                 "test.collected",
-                {"status": "passed", "collected_count": count, "errors": []},
+                {
+                    "status": "failed",
+                    "collected_count": len(all_nodes),
+                    "failures": [],
+                    "errors": [
+                        "missing test.baseline_captured(passed): classification has "
+                        "no pre-WRITE R1 snapshot (MissingBaselineCaptureError)"
+                    ],
+                },
                 command_id=cmd.command_id,
             )
-        else:
-            errors = [r[3].strip() or r[2].strip() for r in results if r[1] != 0]
+            return
+        try:
+            baseline_entries = self._read_runtime_blob(
+                baseline_ev.payload.get("node_digest_blob")
+            )
+            baseline_assets = BaselineAssets(
+                nodes=frozenset(entry["node"] for entry in baseline_entries),
+                node_digests={entry["node"]: entry["node_digest"] for entry in baseline_entries},
+            )
+            digests = collect_node_source_digests(Path(self.repo), all_nodes)
+        except (TestSelectError, OSError, ValueError, KeyError, TypeError) as exc:
             self._emit(
                 "test.collected",
-                {"status": "failed", "collected_count": 0, "errors": errors},
+                {
+                    "status": "failed",
+                    "collected_count": len(all_nodes),
+                    "failures": [],
+                    "errors": [str(exc)],
+                },
                 command_id=cmd.command_id,
             )
+            return
+        classes = classify_nodes(baseline_assets, all_nodes, digests)
+        removed = sorted(node for node, klass in classes.items() if klass == "removed")
+        if removed:
+            failures = [{"node": node, "error_class": "asset_deleted"} for node in removed]
+            errors = [
+                f"test asset deleted since baseline snapshot: {node}" for node in removed
+            ]
+            self._emit(
+                "test.collected",
+                {
+                    "status": "failed",
+                    "collected_count": len(all_nodes),
+                    "removed": len(removed),
+                    "failures": failures,
+                    "errors": errors,
+                    # FRB-K2 pairing marker: the companion verdict.failed
+                    # (test_defect) emitted below by THIS command is the
+                    # pair's single attempt charge; the kernel skips the
+                    # collect-side consume for marked payloads only.
+                    "companion": "test_defect",
+                },
+                command_id=cmd.command_id,
+            )
+            # FA-3 (final review pin): the failed collect alone leaves the
+            # router without actionable evidence (blind re-dispatch); emit
+            # the test_defect verdict naming every deleted asset BEFORE any
+            # Shield rewrite so upstream routes a pinpointed rewrite.
+            log_ref = self._red_log_blob_ref({"errors": errors, "failures": failures})
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "test_defect",
+                    "target_stage": "M-TEST",
+                    "artifact_disposition": "rewrite",
+                    "reason": (
+                        "REMOVED test assets deleted since the pre-WRITE baseline "
+                        f"snapshot: {', '.join(removed)}"
+                    ),
+                    "evidence": failures,
+                    "log_ref": log_ref,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        inherited_r1 = sum(1 for klass in classes.values() if klass == "r1")
+        delta_r2 = sum(1 for klass in classes.values() if klass == "r2")
+        per_node = [
+            {"node": node, "layer": node_layer.get(node, ""), "class": classes[node]}
+            for node in all_nodes
+        ]
+        per_ref = self.store.write_audit_blob(per_node)
+        if per_ref is None:
+            # Fail closed: a passed classification whose per_node_blob is null
+            # has no replayable evidence and RED_CHECK would have no
+            # authoritative input (review pin: never passed + null ref).
+            self._emit(
+                "test.collected",
+                {
+                    "status": "failed",
+                    "collected_count": len(all_nodes),
+                    "failures": [],
+                    "errors": ["per-node classification blob write failed"],
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        self._emit(
+            "test.collected",
+            {
+                "status": "passed",
+                "collected_count": len(all_nodes),
+                "inherited_r1": inherited_r1,
+                "delta_r2": delta_r2,
+                "removed": 0,
+                "failures": [],
+                "per_node_blob": f".tracks/runtime/blobs/{per_ref}",
+                "errors": [],
+            },
+            command_id=cmd.command_id,
+        )
 
     def _red_log_blob_ref(self, payload: dict) -> str | None:
         """B21/#23 (PRISM-B21-R1-01/R1-03): persist the full RED logs and
@@ -3433,79 +3931,537 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return None
         return f".tracks/runtime/blobs/{ref}"
 
-    def _do_run_tests(self, cmd, state, task_id, reconcile):
-        """SM-01.9: Runtime independently re-runs integration/e2e via the host
-        project contract's ``run`` command and classifies each failure
-        (FR-0050). All-legit -> red.validated(valid) -> EXIT; any illegit or
-        unexpected pass -> red.validated(invalid) -> DIAGNOSE.
+    def _selection_context(self):
+        """Load RED_CHECK's selection inputs from persisted events (D-41).
 
-        B21/#23: on failure the full per-section logs are persisted to a
-        blob and the verdict carries findings + a blobs PATH (the
-        m_impl_runtime fixer-facing convention) — the DIAGNOSE fixer gets
-        the actual output, not just classification labels. The all-legit
-        path emits without a blob (no orphan writes; DIAGNOSE never runs)."""
-        results, error = self._run_contract_sections(cmd, state, "run")
+        Returns ``(baseline_id, selected_by_layer, selected_all)`` where the
+        R2 nodes come from COLLECT's persisted per-node classification blob
+        keyed by their declared layer. Raises TestSelectError when this run
+        has no persisted passed baseline capture / classification (fail-closed;
+        never re-guesses from the mutable tree)."""
+        collected_ev = self._latest_event("test.collected", status="passed")
+        baseline_ev = self._latest_event("test.baseline_captured", status="passed")
+        if collected_ev is None or baseline_ev is None:
+            raise TestSelectError(
+                "RED_CHECK lacks a persisted COLLECT classification / pre-WRITE "
+                "test.baseline_captured snapshot"
+            )
+        per_node = self._read_runtime_blob(collected_ev.payload.get("per_node_blob"))
+        selected_by_layer: dict[str, list[str]] = {}
+        for entry in per_node:
+            if entry.get("class") == "r2":
+                selected_by_layer.setdefault(entry.get("layer", ""), []).append(entry["node"])
+        for nodes in selected_by_layer.values():
+            nodes.sort()
+        selected_all = sorted(
+            node for nodes in selected_by_layer.values() for node in nodes
+        )
+        return baseline_ev.payload.get("baseline_id"), selected_by_layer, selected_all
+
+    def _result_staging_path(self, command_id: str, section: str) -> Path:
+        """Runtime-provided unique writable ``{result}`` JUnit XML path.
+
+        Lives in system temp staging (per run/command/layer), never inside the
+        repo tree, so it enters no tree identity and no write attribution."""
+        base = Path(tempfile.gettempdir()) / "tracks-results" / self.run_id
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"{command_id}-{section}.xml"
+
+    def _has_persisted_unit_only_increment(self) -> bool:
+        """Review-6: the empty-R2 hotfix bypass requires an explicit PERSISTED
+        ``increment.declared(shield=empty, unit_rows nonempty)`` fact in this
+        run's event stream -- never merely ``hotfix_issue is not None`` (a
+        bare hotfix issue carries no increment to release)."""
+        for ev in self.store.events(self.run_id):
+            if ev.type != "increment.declared":
+                continue
+            payload = ev.payload or {}
+            if payload.get("shield") == "empty" and payload.get("unit_rows"):
+                return True
+        return False
+
+    def _dirty_tree_stamp(self, root: Path | None = None) -> str:
+        """Dirty-aware worktree content stamp over relevant source/test/config
+        files (review pin: selection identity must move when dirty R2 content
+        changes under an identical node set and HEAD).
+
+        Clean relevant tree -> the HEAD commit identity; dirty -> a sha256
+        over HEAD plus the changed paths' current content. Porcelain rename
+        pairs (``R  old -> new``, FRB-E) are keyed by their DESTINATION and
+        hash the destination file's live content, so mutating a renamed file
+        moves the stamp. Runtime state (.tracks/, caches, venvs, build
+        output) never enters the stamp: it must stay deterministic across
+        WAL/replay of the same command."""
+        repo = Path(root) if root is not None else Path(self.repo)
+        head = git(repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        status = git(repo, "status", "--porcelain", "-uall", check=False).stdout
+        dirty: dict[str, str] = {}
+        for line in status.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1]  # FRB-E: hash the rename dest
+            path = path.strip().strip('"')
+            if (
+                not path
+                or path.startswith(_TREE_STAMP_SKIP_PREFIXES)
+                or "__pycache__/" in path
+                or Path(path).name.startswith(".coverage")
+            ):
+                continue
+            try:
+                digest = hashlib.sha256(
+                    (repo / path).read_bytes()
+                ).hexdigest()
+            except OSError:
+                digest = "unreadable"
+            dirty[path] = digest
+        if not dirty:
+            return head  # clean relevant tree -> plain HEAD identity
+        canonical = json.dumps(
+            {"head": head, "dirty": dirty},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _emit_contract_error_red(self, cmd, state, reason: str) -> None:
+        """Fail-closed contract_error channel for unusable results/inputs."""
+        findings = [{"test_id": "*", "classification": "collection_error", "detail": reason}]
+        log_ref = self._red_log_blob_ref({"error": reason})
+        self._emit(
+            "red.validated",
+            {"status": "invalid", "findings": findings, "log_ref": log_ref},
+            command_id=cmd.command_id,
+        )
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "contract_error",
+                "target_stage": "M-DESIGN",
+                "artifact_disposition": "rollback",
+                "reason": reason,
+                "evidence": findings,
+                "log_ref": log_ref,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _do_run_tests(self, cmd, state, task_id, reconcile):
+        """SM-01.9 / D-41 FR-0250-02 RED_CHECK (v3 timing + v6 result channel).
+
+        SELECT_R2 against THIS run's persisted pre-WRITE snapshot -> emit
+        ``test.selected(scope=r2_delta)`` BEFORE executing -> execute ONLY the
+        selected nodes through each layer's contract ``run_selected`` template
+        ({nodes}/{result} substituted; concurrency/junit flags are
+        contract-owned, Runtime injects nothing) -> parse the strict JUnit XML
+        result and require exact node coverage -> classify legal Red per node.
+        Never executes a full ``run`` nor any historical/R1 node. Feature
+        empty-R2 fails closed (check=empty_r2); the hotfix explicit unit-only
+        increment bypass is preserved (FR-0244). All-legit -> red.validated(valid)
+        -> PRISM_REVIEW; illegit/unexpected pass -> red.validated(invalid) ->
+        DIAGNOSE. stdout/stderr are logs only -- the {result} JUnit record is
+        the sole per-node authority."""
+        if reconcile and state.red_validated:
+            return
+        try:
+            contract = load_contract(self.repo)
+            sections = _contract_sections(contract)
+            baseline_id, selected_by_layer, selected_all = self._selection_context()
+            require_nonempty_r2_selection(
+                _R2_SCOPE,
+                selected_all,
+                allow_explicit_unit_increment=self._has_persisted_unit_only_increment(),
+            )
+        except EmptyR2SelectionError:
+            self._emit_empty_r2_failure(cmd, state)
+            return
+        except (ContractError, TestSelectError) as exc:
+            reason = f"contract error: {exc.reason}" if isinstance(exc, ContractError) else str(exc)
+            self._emit_contract_error_red(cmd, state, reason)
+            return
+
+        commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        # Review-5: dirty worktree content is stamped separately from commit
+        # so two selections over the same node set + HEAD with different
+        # uncommitted R2 content never share a selection identity.
+        tree_stamp = self._dirty_tree_stamp()
+        selection_id = make_selection_id(
+            nodes=selected_all,
+            scope=_R2_SCOPE,
+            basis=_R2_BASIS,
+            baseline=str(baseline_id or ""),
+            commit=commit,
+            tree_stamp=tree_stamp,
+        )
+        # FA-5 (final review pin): a crash/reconcile replay of a command whose
+        # test.selected is already persisted must compare the CURRENT recomputed
+        # identity against the persisted record. A mismatch means the worktree/
+        # baseline moved under the old selection identity -- fail closed WITHOUT
+        # executing (evidence-integrity hole); an exact match resumes normally.
+        persisted_selection = next(
+            (
+                ev.payload
+                for ev in self.store.events(self.run_id)
+                if ev.type == "test.selected" and ev.command_id == cmd.command_id
+            ),
+            None,
+        )
+        stale_keys = self._stale_selection_fields(
+            persisted_selection, selection_id, tree_stamp, baseline_id, selected_all
+        )
+        if stale_keys:
+            self._emit_stale_selection_failure(
+                cmd,
+                state,
+                persisted_selection,
+                stale_keys,
+                selection_id,
+                tree_stamp,
+                baseline_id,
+                selected_all,
+            )
+            return
+        nodes_blob = self._persist_selection_nodes(
+            cmd, state, selected_by_layer, selected_all
+        )
+        if nodes_blob is None:
+            return
+        # WAL/reconcile reuse the SAME stamped selection: re-issue only when
+        # this command has not already emitted it (deterministic identity).
+        if persisted_selection is None:
+            self._emit_test_selected(
+                cmd, baseline_id, selected_all, nodes_blob, commit, tree_stamp, selection_id
+            )
+
+        if not selected_all:
+            self._emit_unit_only_increment_valid(cmd, selection_id, nodes_blob)
+            return
+
+        self._execute_red_check(
+            cmd, state, sections, selected_by_layer, selection_id, nodes_blob
+        )
+
+    def _emit_empty_r2_failure(self, cmd, state) -> None:
+        """Feature M-TEST empty R2 -> fail closed (check=empty_r2): a vacuous
+        pass is refused; hotfix must declare its unit-only increment."""
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "empty_r2",
+                "reason": (
+                    "feature M-TEST produced an empty R2 selection against "
+                    "the pre-WRITE snapshot: a vacuous pass is refused "
+                    "(hotfix must declare its unit-only increment explicitly)"
+                ),
+                "evidence": [],
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    @staticmethod
+    def _stale_selection_fields(
+        persisted_selection,
+        selection_id: str,
+        tree_stamp: str,
+        baseline_id,
+        selected_all,
+    ) -> list[str]:
+        """FA-5: the persisted test.selected identity fields that diverge from
+        the CURRENT recomputed identity (empty when no record or exact match)."""
+        if persisted_selection is None:
+            return []
+        stale_keys = [
+            key
+            for key in ("selection_id", "tree_stamp")
+            if persisted_selection.get(key) != {
+                "selection_id": selection_id,
+                "tree_stamp": tree_stamp,
+            }[key]
+        ]
+        if persisted_selection.get("baseline") != str(baseline_id or ""):
+            stale_keys.append("baseline")
+        if list(persisted_selection.get("nodes") or []) != list(selected_all):
+            stale_keys.append("nodes")
+        return stale_keys
+
+    def _emit_stale_selection_failure(
+        self,
+        cmd,
+        state,
+        persisted_selection,
+        stale_keys: list[str],
+        selection_id: str,
+        tree_stamp: str,
+        baseline_id,
+        selected_all,
+    ) -> None:
+        """Refuse to execute against a moved tree under a stale selection
+        identity (FA-5 evidence-integrity pin)."""
+        log_ref = self._red_log_blob_ref({"stale_fields": stale_keys})
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "stale",
+                "target_stage": "M-TEST",
+                "artifact_disposition": "rollback",
+                "reason": (
+                    "replayed command's persisted test.selected identity "
+                    f"diverged on {', '.join(stale_keys)}: refusing to "
+                    "execute against a moved tree under the stale "
+                    "selection identity"
+                ),
+                "evidence": {
+                    "stale_fields": stale_keys,
+                    "persisted": {
+                        key: persisted_selection.get(key)
+                        for key in (
+                            "selection_id",
+                            "tree_stamp",
+                            "baseline",
+                            "nodes",
+                        )
+                    },
+                    "recomputed": {
+                        "selection_id": selection_id,
+                        "tree_stamp": tree_stamp,
+                        "baseline": str(baseline_id or ""),
+                        "nodes": list(selected_all),
+                    },
+                },
+                "log_ref": log_ref,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _persist_selection_nodes(
+        self, cmd, state, selected_by_layer, selected_all
+    ) -> str | None:
+        """Write the per-node layer map blob for this selection; None (after
+        emitting contract_error) when the blob write fails (fail closed)."""
+        sel_blob = self.store.write_audit_blob(
+            [
+                {
+                    "node": node,
+                    "layer": next(
+                        (lyr for lyr, ns in selected_by_layer.items() if node in ns), ""
+                    ),
+                }
+                for node in selected_all
+            ]
+        )
+        if sel_blob is None:
+            self._emit_contract_error_red(
+                cmd, state, "RED_CHECK selection nodes blob write failed"
+            )
+            return None
+        return f".tracks/runtime/blobs/{sel_blob}"
+
+    def _emit_test_selected(
+        self, cmd, baseline_id, selected_all, nodes_blob, commit, tree_stamp, selection_id
+    ) -> None:
+        self._emit(
+            "test.selected",
+            {
+                "scope": _R2_SCOPE,
+                "basis": _R2_BASIS,
+                "nodes_count": len(selected_all),
+                "nodes": list(selected_all),
+                "nodes_blob": nodes_blob,
+                "baseline": str(baseline_id or ""),
+                "commit": commit,
+                "tree_stamp": tree_stamp,
+                "selection_id": selection_id,
+                "task_id": None,
+                "task_ifs": None,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _emit_unit_only_increment_valid(self, cmd, selection_id, nodes_blob) -> None:
+        """Hotfix explicit unit-only increment bypass: empty selection with
+        a declared increment releases without any execution (FR-0244)."""
+        self._emit(
+            "red.validated",
+            {
+                "status": "valid",
+                "findings": [],
+                "basis": "unit-only hotfix increment",
+                "selection_id": selection_id,
+                "nodes_blob": nodes_blob,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _execute_red_check(
+        self, cmd, state, sections, selected_by_layer, selection_id, nodes_blob
+    ) -> None:
+        """Execute the selection, then classify legal Red per node: all-legit
+        -> red.validated(valid) -> PRISM_REVIEW; illegit/unexpected pass ->
+        red.validated(invalid) -> DIAGNOSE."""
+        logs: dict[str, dict] = {}
+        outcomes, findings, all_legit, error = self._execute_selected_layers(
+            cmd, sections, selected_by_layer, logs
+        )
         if error is not None:
-            log_ref = self._red_log_blob_ref({"error": error})
-            findings = [{"test_id": "*", "classification": "collection_error", "detail": error}]
+            self._emit_contract_error_red(cmd, state, error)
+            return
+        outcomes_ref = self.store.write_audit_blob(outcomes)
+        if outcomes_ref is None:
+            # Review-8: the normalized per-node outcomes table is the evidence
+            # red.validated binds to -- never emit a valid verdict carrying a
+            # null outcomes reference (fail closed via contract_error).
+            self._emit_contract_error_red(
+                cmd, state, "RED_CHECK outcomes evidence blob write failed"
+            )
+            return
+        outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
+        if all_legit:
             self._emit(
                 "red.validated",
-                {"status": "invalid", "findings": findings, "log_ref": log_ref},
-                command_id=cmd.command_id,
-            )
-            self._emit(
-                "verdict.failed",
                 {
-                    "check": "contract_error",
-                    "target_stage": "M-DESIGN",
-                    "artifact_disposition": "rollback",
-                    "reason": error,
-                    "evidence": findings,
-                    "log_ref": log_ref,
-                    "attempt": state.current_attempt + 1,
+                    "status": "valid",
+                    "findings": findings,
+                    "selection_id": selection_id,
+                    "nodes_blob": nodes_blob,
+                    "outcomes_ref": outcomes_ref_path,
                 },
                 command_id=cmd.command_id,
             )
             return
+        self._emit_red_check_invalid(
+            cmd, state, findings, logs, outcomes, selection_id, nodes_blob, outcomes_ref_path
+        )
+
+    def _execute_selected_layers(
+        self, cmd, sections, selected_by_layer, logs: dict[str, dict]
+    ) -> tuple[list[dict], list[dict], bool, str | None]:
+        """Run ONLY the selected nodes through each layer's contract
+        ``run_selected`` template ({nodes}/{result} substituted; concurrency/
+        junit flags are contract-owned, Runtime injects nothing).
+
+        Returns ``(outcomes, findings, all_legit, error_reason)``; on a
+        JUnit/contract/OS failure ``error_reason`` is set (FRB-G) while the
+        staged per-command result files are still cleaned up (FA-4)."""
+        outcomes: list[dict] = []
         findings: list[dict] = []
         all_legit = True
-        for name, rc, stdout, stderr in results:
-            # Skip empty e2e sections (pytest exit_code=5 "no tests ran"):
-            # a hotfix run with an integration-only delta has no e2e tests;
-            # the section must not participate in RED classification (it is
-            # neither a legit failure nor an unexpected pass). Collect-only
-            # already normalized this to 0; run keeps 5 and is skipped here.
-            if name == "e2e" and rc == 5:
-                continue
-            red_class = classify_red(name, rc, stdout, stderr)
-            if red_class not in _LEGIT_RED:
-                all_legit = False
-            findings.append(
+        staged_results: list[Path] = []
+        try:
+            for name, section in sections:
+                nodes = selected_by_layer.get(name) or []
+                if not nodes:
+                    # A declared layer without R2 delta never executes here:
+                    # M-TEST runs neither the full run command nor R1 history.
+                    continue
+                cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+                result_path = self._result_staging_path(cmd.command_id, name)
+                staged_results.append(result_path)
+                # Review-4: pre-existing XML at this command/layer path is a
+                # previous attempt's record -- poison, not evidence. Unlink it
+                # so a command writing no fresh result fails closed on the
+                # missing file instead of reusing stale records.
+                result_path.unlink(missing_ok=True)
+                argv = resolve_selected_command(
+                    section.run_selected, nodes, str(result_path), cwd
+                )
+                if not audit_selection_argv(
+                    section.run_selected, nodes, str(result_path), list(argv), cwd
+                ):
+                    raise TestSelectError(
+                        f"[{name}] executed argv diverges from the contract's "
+                        "run_selected expansion (injected argument)"
+                    )
+                proc = subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True)
+                logs[name] = {
+                    "returncode": proc.returncode,
+                    "command_echo": list(argv),
+                    "stdout": proc.stdout[-8000:],
+                    "stderr": proc.stderr[-8000:],
+                }
+                cases = parse_junit_result(result_path)
+                mapping = require_exact_node_coverage(cases, nodes)
+                if not self._record_layer_outcomes(nodes, mapping, outcomes, findings):
+                    all_legit = False
+        except (JUnitResultError, TestSelectError, OSError, UnicodeError) as exc:
+            # FRB-G: a missing run_selected executable (OSError) or an
+            # undecodable output stream routes the contract_error channel
+            # (red.validated invalid + verdict.failed), never a raw crash.
+            return [], [], False, f"{type(exc).__name__}: {exc}"
+        finally:
+            # FA-4 (final review pin): the per-command staging XML is consumed
+            # evidence, not residue -- unlink it after a normal parse success
+            # AND after every handled failure so one attempt's record never
+            # leaks into the next; then remove the per-run staging directory
+            # when it is empty ("when possible": a non-empty dir keeps other
+            # commands' live results and stays).
+            for staged in staged_results:
+                staged.unlink(missing_ok=True)
+            if staged_results:
+                with contextlib.suppress(OSError):
+                    staged_results[0].parent.rmdir()
+        return outcomes, findings, all_legit, None
+
+    @staticmethod
+    def _record_layer_outcomes(nodes, mapping, outcomes: list[dict], findings: list[dict]) -> bool:
+        """Append one normalized outcome + finding per selected node (the
+        {result} JUnit record is the sole per-node authority; stdout/stderr
+        are logs only). Returns True when every node classified as legal Red;
+        an unexpected pass/skip classifies unexpected_pass."""
+        layer_legit = True
+        for node in nodes:
+            case = mapping[node]
+            klass = (
+                "unexpected_pass"
+                if case.status in ("passed", "skipped")
+                else classify_red_detail(case.detail or "", case.status)
+            )
+            if klass not in _LEGIT_RED:
+                layer_legit = False
+            outcomes.append(
                 {
-                    "test_id": name,
-                    "classification": red_class,
-                    "detail": _short_detail(f"{stdout}\n{stderr}"),
+                    "node": node,
+                    "status": case.status,
+                    "classification": klass,
+                    "detail": case.detail or "",
                 }
             )
-        if all_legit:
-            self._emit(
-                "red.validated",
-                {"status": "valid", "findings": findings},
-                command_id=cmd.command_id,
+            findings.append(
+                {
+                    "test_id": node,
+                    "classification": klass,
+                    "detail": _short_detail(case.detail or ""),
+                }
             )
-            return
-        # Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed.
-        log_ref = self._red_log_blob_ref(
-            {
-                "sections": [
-                    {"name": n, "returncode": rc, "stdout": out, "stderr": err}
-                    for n, rc, out, err in results
-                ]
-            }
-        )
+        return layer_legit
+
+    def _emit_red_check_invalid(
+        self,
+        cmd,
+        state,
+        findings: list[dict],
+        logs: dict[str, dict],
+        outcomes: list[dict],
+        selection_id: str,
+        nodes_blob: str,
+        outcomes_ref_path: str,
+    ) -> None:
+        """Invalid Red -> DIAGNOSE: classify the gap and emit verdict.failed."""
+        log_ref = self._red_log_blob_ref({"sections": logs, "outcomes": outcomes})
         self._emit(
             "red.validated",
-            {"status": "invalid", "findings": findings, "log_ref": log_ref},
+            {
+                "status": "invalid",
+                "findings": findings,
+                "log_ref": log_ref,
+                "selection_id": selection_id,
+                "nodes_blob": nodes_blob,
+                "outcomes_ref": outcomes_ref_path,
+            },
             command_id=cmd.command_id,
         )
         classification = self._diagnose_classification()
@@ -3655,13 +4611,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """Read the DIAGNOSE classification from the fake backend's simulate
         token (default ``test_defect``). The real channel dispatches Prism for
         diagnostic review; the fake channel keeps it deterministic."""
-        token = getattr(self.backend, "token", lambda *_: "test_defect")(
-            "diagnose", "classification", "test_defect"
-        )
+        default = "test_defect"
+        backend = getattr(self, "backend", None)
+        token_fn = getattr(backend, "token", None)
+        token = token_fn("diagnose", "classification", default) if token_fn else default
         return (
             token
             if token in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
-            else "test_defect"
+            else default
         )
 
     # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------

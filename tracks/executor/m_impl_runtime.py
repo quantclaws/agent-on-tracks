@@ -11,7 +11,9 @@ All filesystem and event-store access still goes through the host executor.
 # across modules without reducing cognitive load.
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -29,7 +31,7 @@ from tracks.baseline import (
 )
 from tracks.effects.backend import valid_test_tasks
 from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
-from tracks.executor.helpers import _commit_if_staged, _short_detail, git
+from tracks.executor.helpers import _commit_if_staged, git, parse_collected_nodes
 from tracks.executor.quality_gate import (
     execute_gate_command,
     failed_summary_lines,
@@ -51,7 +53,28 @@ from tracks.executor.taskgraph import (
     validate_scope,
     validate_task_structure,
 )
+from tracks.executor.test_select import (
+    EvidenceIdentity,
+    JUnitResultError,
+    LedgerCorruptionError,
+    TestSelectError,
+    emit_stale_propagation,
+    evidence_identity,
+    ledger_is_clean,
+    make_selection_id,
+    parse_junit_result,
+    rebuild_ledger,
+    require_exact_node_coverage,
+    resolve_selected_command,
+    reuse_allowed,
+    select_diff,
+    select_task,
+)
+from tracks.executor.test_select import (
+    audit as audit_selection_argv,
+)
 from tracks.executor.test_tasks import (
+    _coverage_rows_with_test,
     _extract_if_registry,
     _known_ac_ids,
     resolve_inherited_baseline_docs,
@@ -67,6 +90,14 @@ from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
 from tracks.project import ContractError, layout_paths, load_contract
 
 _SECRET_PATTERN = re.compile(r"(sk-|ghp_|gho_|AKIA)[A-Za-z0-9]{16,}")
+
+
+class TaskSelectionFailure(Exception):
+    """Selected task tests executed correctly but did not all pass."""
+
+    def __init__(self, message: str, evidence: str):
+        super().__init__(message)
+        self.evidence = evidence
 
 
 def _task_review_failure(
@@ -1102,51 +1133,695 @@ class MImplRuntimeMixin:
                 command_id=cmd.command_id,
             )
             return
-        results, error = self._run_contract_sections(cmd, state, "run")
-        if error is not None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "full_suite",
-                    "reason": error,
-                    "evidence": error,
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
+        try:
+            ledger = rebuild_ledger(
+                [
+                    {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
+                    for ev in self.store.events(self.run_id)
+                ]
             )
-            return
-        failures = [
-            f"{name}: " + _short_detail(stdout + "\n" + stderr)
-            for name, code, stdout, stderr in results
-            if code != 0
-            # A hotfix delta with no e2e-owned regression task has no e2e
-            # suite to run. Pytest's exit 5 is then an empty assignment, not
-            # a failed verification; assigned suites and every other failure
-            # remain fail-closed.
-            and not (
-                state.hotfix_issue is not None
-                and name == "e2e"
-                and code == 5
-                and not any(
-                    "tests/e2e/" in ref
-                    for task in state.task_refs
-                    for ref in task.get("test_refs", [])
+            full_rows = [
+                ev for ev in self.store.events(self.run_id) if ev.type == "full.executed"
+            ]
+            if full_rows and not full_rows[-1].payload.get("passed"):
+                self._reconcile_full_failure_wal(cmd, state, full_rows[-1], ledger)
+                ledger = rebuild_ledger(self.store.events(self.run_id))
+            if not full_rows:
+                round_name = "FULL_1"
+            elif ledger_is_clean(ledger):
+                round_name = "FULL_F"
+            elif any(value == "FIXED" for value in ledger.values()):
+                self._prove_fixed_ledger_entries(cmd, state, ledger)
+                return
+            elif any(value == "OPEN" for value in ledger.values()):
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "full_suite",
+                        "reason": "FULL ledger has OPEN entries requiring diagnosis",
+                        "evidence": "ledger WAL",
+                        "attempt": state.current_attempt + 1,
+                    },
+                    command_id=cmd.command_id,
                 )
+                return
+            else:
+                raise LedgerCorruptionError(
+                    "FULL chain cannot execute while ledger is awaiting an external repair"
+                )
+            full = self._execute_full_round(cmd, state, round_name, ledger)
+            self._record_full_failures(cmd, state, full, ledger)
+            if full["failed_nodes"]:
+                detail = "; ".join(full["failed_nodes"])
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "full_suite",
+                        "reason": "FULL chain failures: " + detail,
+                        "evidence": full["outcomes_ref"],
+                        "attempt": state.current_attempt + 1,
+                    },
+                    command_id=cmd.command_id,
+                )
+                return
+            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+            self._emit_gate_failure(
+                cmd,
+                check="contract_error",
+                reason=f"FULL chain failed closed: {type(exc).__name__}: {exc}",
+                evidence="FULL selection/JUnit/ledger",
+                task_id=None,
+                attempt=state.current_attempt + 1,
             )
+
+    def _current_baseline_digest(self) -> str:
+        return next(
+            (
+                str(ev.payload.get("digest") or "")
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "baseline.frozen" and ev.payload.get("status") == "current"
+            ),
+            "",
+        )
+
+    def _run_full_layers(self, cmd, round_name: str, sections, inventory):
+        """Run every declared FULL layer, staging one JUnit result per layer."""
+        outcomes: list[dict] = []
+        command_echo: dict[str, list[str]] = {}
+        staged: list[Path] = []
+        try:
+            for layer, section in sections.items():
+                assert section is not None
+                selected = sorted(node for node, owner in inventory.items() if owner == layer)
+                section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+                result_path = self._result_staging_path(
+                    cmd.command_id, f"full-{round_name.lower()}-{layer}"
+                )
+                staged.append(result_path)
+                result_path.unlink(missing_ok=True)
+                argv = resolve_selected_command(
+                    section.run,
+                    [],
+                    str(result_path),
+                    Path(section_cwd),
+                )
+                if not audit_selection_argv(
+                    section.run,
+                    [],
+                    str(result_path),
+                    list(argv),
+                    Path(section_cwd),
+                ):
+                    raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
+                obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
+                command_echo[layer] = list(obs.argv)
+                cases = parse_junit_result(result_path)
+                mapping = require_exact_node_coverage(cases, selected)
+                outcomes.extend(
+                    {
+                        "node": node,
+                        "status": mapping[node].status,
+                        "detail": mapping[node].detail or "",
+                    }
+                    for node in selected
+                )
+        finally:
+            for path in staged:
+                path.unlink(missing_ok=True)
+            if staged:
+                with contextlib.suppress(OSError):
+                    staged[0].parent.rmdir()
+        return outcomes, command_echo
+
+    def _execute_full_round(self, cmd, state, round_name: str, ledger) -> dict:
+        contract = load_contract(self.repo)
+        sections = {
+            "unit": contract.unit,
+            "integration": contract.integration,
+            "e2e": contract.e2e,
+        }
+        if any(section is None for section in sections.values()):
+            raise TestSelectError("FULL requires unit, integration, and e2e sections")
+        inventory, collect_error = self._collect_all_declared_layers()
+        if inventory is None:
+            raise TestSelectError(collect_error or "FULL collect failed")
+        nodes = sorted(inventory)
+        baseline = self._current_baseline_digest()
+        if not baseline:
+            raise TestSelectError("FULL lacks a frozen M-IMPL baseline identity")
+        commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        tree_stamp = self._dirty_tree_stamp()
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope="full",
+            basis=f"full:{round_name}",
+            baseline=baseline,
+            commit=commit,
+            tree_stamp=tree_stamp,
+        )
+        node_ref = self.store.write_audit_blob(
+            [{"node": node, "layer": inventory[node]} for node in nodes]
+        )
+        if node_ref is None:
+            raise TestSelectError("FULL nodes blob write failed")
+        self._emit(
+            "test.selected",
+            {
+                "scope": "full",
+                "basis": f"full:{round_name}",
+                "nodes_count": len(nodes),
+                "nodes": nodes,
+                "nodes_blob": f".tracks/runtime/blobs/{node_ref}",
+                "baseline": baseline,
+                "commit": commit,
+                "tree_stamp": tree_stamp,
+                "selection_id": selection_id,
+                "task_id": None,
+                "task_ifs": None,
+            },
+            command_id=cmd.command_id,
+        )
+        outcomes, command_echo = self._run_full_layers(cmd, round_name, sections, inventory)
+        command_identity = self._selection_command_identity(command_echo)
+        identity = EvidenceIdentity(
+            tree=tree_stamp,
+            command=command_identity,
+            env=self._gate_environment_identity(),
+            selection_id=selection_id,
+        )
+        evidence_by_node = {
+            outcome["node"]: evidence_identity(
+                identity,
+                outcome["node"],
+                outcome["status"],
+                state.current_attempt + 1,
+                "runtime",
+            )
+            for outcome in outcomes
+        }
+        persisted_outcomes = [
+            {**outcome, "evidence_id": evidence_by_node[outcome["node"]]}
+            for outcome in outcomes
         ]
-        if failures:
+        outcomes_ref = self.store.write_audit_blob(persisted_outcomes)
+        if outcomes_ref is None:
+            raise TestSelectError("FULL outcomes blob write failed")
+        failed = self._signed_failures(outcomes)
+        serves_as_full_f = not failed and (
+            (round_name == "FULL_1" and not ledger) or round_name == "fallback_full"
+        )
+        payload = {
+            "round": round_name,
+            "suite": ["unit", "integration", "e2e"],
+            "passed": not failed,
+            "failed_nodes": [outcome["node"] for outcome in failed],
+            "command_echo": command_echo,
+            "evidence_ids": sorted(evidence_by_node.values()),
+            "serves_as_full_f": serves_as_full_f,
+            "outcomes_ref": f".tracks/runtime/blobs/{outcomes_ref}",
+            "gate": "ISLAND_GATE_2",
+            "selection_id": selection_id,
+            "failures": failed,
+            "evidence_by_node": evidence_by_node,
+        }
+        event_payload = {
+            key: value
+            for key, value in payload.items()
+            if key not in ("selection_id", "failures", "evidence_by_node")
+        }
+        self._emit("full.executed", event_payload, command_id=cmd.command_id)
+        return payload
+
+    def _reconcile_full_failure_wal(self, cmd, state, full_event, ledger) -> None:
+        outcomes = self._read_runtime_blob(full_event.payload.get("outcomes_ref"))
+        if not isinstance(outcomes, list):
+            raise LedgerCorruptionError(
+                "failed full.executed lacks replayable outcomes WAL"
+            )
+        failures = []
+        evidence_by_node = {}
+        for outcome in outcomes:
+            if not isinstance(outcome, dict) or not outcome.get("node"):
+                raise LedgerCorruptionError("FULL outcomes WAL is malformed")
+            if outcome.get("status") not in ("failed", "error"):
+                continue
+            if not outcome.get("evidence_id"):
+                raise LedgerCorruptionError("FULL failure WAL lacks evidence identity")
+            failures.append(
+                {
+                    **outcome,
+                    "failure_signature": self._full_failure_signature(outcome),
+                }
+            )
+            evidence_by_node[str(outcome["node"])] = str(outcome["evidence_id"])
+        if sorted(item["node"] for item in failures) != sorted(
+            full_event.payload.get("failed_nodes") or []
+        ):
+            raise LedgerCorruptionError("FULL outcomes WAL disagrees with failed_nodes")
+        selection = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "test.selected"
+                and ev.seq < full_event.seq
+                and ev.payload.get("scope") == "full"
+            ),
+            None,
+        )
+        if selection is None:
+            raise LedgerCorruptionError("failed FULL lacks its preceding selection WAL")
+        self._record_full_failures(
+            cmd,
+            state,
+            {
+                "selection_id": selection.payload.get("selection_id"),
+                "failures": failures,
+                "evidence_by_node": evidence_by_node,
+            },
+            ledger,
+        )
+
+    @staticmethod
+    def _full_failure_signature(failure: dict) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "node": failure["node"],
+                    "status": failure["status"],
+                    "detail": failure["detail"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def _record_full_failures(self, cmd, state, full: dict, ledger) -> None:
+        identities = {
+            tuple(json.loads(key)): value for key, value in ledger.items()
+        }
+        for failure in full["failures"]:
+            signature = failure.get("failure_signature") or self._full_failure_signature(failure)
+            identity = (failure["node"], signature)
+            prior = identities.get(identity)
+            if prior == "PROVEN":
+                self._emit(
+                    "ledger.transitioned",
+                    {
+                        "node": failure["node"],
+                        "failure_signature": signature,
+                        "from": "PROVEN",
+                        "to": "OPEN",
+                        "attempt": state.current_attempt + 1,
+                        "actor": "runtime",
+                        "reason": "FULL reobserved a proven failure signature",
+                    },
+                    command_id=cmd.command_id,
+                )
+            elif prior is None:
+                owner = self._full_failure_owner(failure["node"], state)
+                self._emit(
+                    "ledger.opened",
+                    {
+                        "node": failure["node"],
+                        "failure_signature": signature,
+                        "state": "OPEN",
+                        "selection_id": full["selection_id"],
+                        "evidence_id": full["evidence_by_node"][failure["node"]],
+                        "reason": failure["detail"] or failure["status"],
+                        **owner,
+                    },
+                    command_id=cmd.command_id,
+                )
+
+    def _full_failure_owner(self, node: str, state) -> dict:
+        path = node.partition("::")[0]
+        owners = [
+            task
+            for task in state.task_refs
+            if any(str(ref).partition("::")[0] == path for ref in task.get("test_refs", []))
+        ]
+        if not owners and len(state.task_refs) == 1:
+            owners = [state.task_refs[0]]
+        if len(owners) != 1:
+            return {}
+        task = owners[0]
+        task_id = str(task.get("task_id") or "")
+        manifest = next(
+            (
+                dict(ev.payload.get("manifest") or {})
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "task.started" and ev.payload.get("task_id") == task_id
+            ),
+            {},
+        )
+        r_sha = next(
+            (
+                str(ev.payload.get("r_sha") or "")
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "red.checkpointed" and ev.payload.get("task_id") == task_id
+            ),
+            "",
+        )
+        return {
+            "task_id": task_id,
+            "task": dict(task),
+            "manifest": manifest,
+            "r_sha": r_sha,
+        }
+
+    def _transition_full_ledger(
+        self,
+        cmd,
+        before: str,
+        after: str,
+        reason: str,
+        actor: str,
+    ) -> bool:
+        ledger = rebuild_ledger(self.store.events(self.run_id))
+        candidates = [key for key, value in ledger.items() if value == before]
+        if not candidates:
+            return False
+        key = sorted(candidates)[0]
+        node, signature = json.loads(key)
+        owner = next(
+            (
+                {
+                    field: ev.payload.get(field)
+                    for field in ("task_id", "task", "manifest", "r_sha")
+                    if ev.payload.get(field)
+                }
+                for ev in self.store.events(self.run_id)
+                if ev.type == "ledger.opened"
+                and ev.payload.get("node") == node
+                and ev.payload.get("failure_signature") == signature
+            ),
+            {},
+        )
+        self._emit(
+            "ledger.transitioned",
+            {
+                "node": node,
+                "failure_signature": signature,
+                "from": before,
+                "to": after,
+                "attempt": self.store.state(self.run_id).current_attempt + 1,
+                "actor": actor,
+                "reason": reason,
+                **owner,
+            },
+            command_id=cmd.command_id,
+        )
+        return True
+
+    @staticmethod
+    def _fixed_ledger_key(ledger) -> str:
+        fixed = next((key for key, value in sorted(ledger.items()) if value == "FIXED"), None)
+        if fixed is None:
+            raise LedgerCorruptionError("ledger proof requested without a FIXED entry")
+        return fixed
+
+    def _last_done_outcome_paths(self) -> list:
+        return next(
+            (
+                list(ev.payload.get("changed_paths") or [])
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "outcome.received"
+                and ev.payload.get("status") == "done"
+                and ev.payload.get("role") in ("devon", "shield")
+            ),
+            [],
+        )
+
+    @staticmethod
+    def _diff_test_reach(inventory, path) -> set:
+        if not str(path).startswith("tests/"):
+            return set()
+        return {
+            candidate
+            for candidate in inventory
+            if candidate.partition("::")[0] == str(path)
+        }
+
+    def _prove_fixed_ledger_entries(self, cmd, state, ledger) -> None:
+        node, signature = json.loads(self._fixed_ledger_key(ledger))
+        touched = self._last_done_outcome_paths()
+        inventory, collect_error = self._collect_all_declared_layers()
+        if inventory is None:
+            raise TestSelectError(collect_error or "SELECT_DIFF collect failed")
+        selection = select_diff(
+            {"node": node, "failure_signature": signature, "state": "FIXED"},
+            touched,
+            lambda path: self._diff_test_reach(inventory, path),
+        )
+        if selection.reliable:
+            self._prove_fixed_via_diff(
+                cmd, state, node, signature, selection, inventory, ledger
+            )
+            return
+        self._prove_fixed_via_fallback(cmd, state, ledger)
+
+    def _prove_fixed_via_diff(
+        self, cmd, state, node, signature, selection, inventory, ledger
+    ) -> None:
+        proof = self._execute_diff_selection(
+            cmd,
+            state,
+            node,
+            signature,
+            selection,
+            inventory,
+        )
+        target_failed = any(
+            failure["node"] == node
+            and failure["failure_signature"] == signature
+            for failure in proof["failures"]
+        )
+        self._emit(
+            "ledger.transitioned",
+            {
+                "node": node,
+                "failure_signature": signature,
+                "from": "FIXED",
+                "to": "OPEN" if target_failed else "PROVEN",
+                "attempt": state.current_attempt + 1,
+                "actor": "runtime",
+                "reason": "SELECT_DIFF proof result",
+            },
+            command_id=cmd.command_id,
+        )
+        self._record_full_failures(cmd, state, proof, ledger)
+        rebuilt = rebuild_ledger(self.store.events(self.run_id))
+        if target_failed or not ledger_is_clean(rebuilt):
             self._emit(
                 "verdict.failed",
                 {
                     "check": "full_suite",
-                    "reason": "; ".join(failures),
-                    "evidence": "; ".join(failures),
+                    "reason": "SELECT_DIFF did not prove every ledger entry",
+                    "evidence": proof["outcomes_ref"],
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,
             )
             return
-        self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+        final = self._execute_full_round(cmd, state, "FULL_F", rebuilt)
+        self._record_full_failures(cmd, state, final, rebuilt)
+        if not final["failed_nodes"]:
+            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            return
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "full_suite",
+                "reason": "FULL_F revealed failures after SELECT_DIFF proof",
+                "evidence": final["outcomes_ref"],
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _prove_fixed_via_fallback(self, cmd, state, ledger) -> None:
+        full = self._execute_full_round(cmd, state, "fallback_full", ledger)
+        failed_identities = {
+            (failure["node"], failure["failure_signature"])
+            for failure in full["failures"]
+        }
+        for key, value in sorted(ledger.items()):
+            if value != "FIXED":
+                continue
+            node, signature = json.loads(key)
+            self._emit(
+                "ledger.transitioned",
+                {
+                    "node": node,
+                    "failure_signature": signature,
+                    "from": "FIXED",
+                    "to": "OPEN" if (node, signature) in failed_identities else "PROVEN",
+                    "attempt": state.current_attempt + 1,
+                    "actor": "runtime",
+                    "reason": "fallback FULL proof result",
+                },
+                command_id=cmd.command_id,
+            )
+        self._record_full_failures(cmd, state, full, ledger)
+        rebuilt = rebuild_ledger(self.store.events(self.run_id))
+        if full["passed"] and ledger_is_clean(rebuilt):
+            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            return
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "full_suite",
+                "reason": "fallback FULL did not prove every ledger entry",
+                "evidence": full["outcomes_ref"],
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _run_diff_layers(self, cmd, nodes, sections, inventory):
+        """Run the SELECT_DIFF layers that own selected nodes."""
+        outcomes: list[dict] = []
+        commands: dict[str, list[str]] = {}
+        staged: list[Path] = []
+        try:
+            for layer, section in sections.items():
+                selected = [node for node in nodes if inventory[node] == layer]
+                if not selected:
+                    continue
+                if section is None:
+                    raise TestSelectError(f"SELECT_DIFF lacks [{layer}] contract")
+                section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+                result_path = self._result_staging_path(
+                    cmd.command_id, f"select-diff-{layer}"
+                )
+                staged.append(result_path)
+                result_path.unlink(missing_ok=True)
+                argv = resolve_selected_command(
+                    section.run_selected,
+                    selected,
+                    str(result_path),
+                    Path(section_cwd),
+                )
+                if not audit_selection_argv(
+                    section.run_selected,
+                    selected,
+                    str(result_path),
+                    list(argv),
+                    Path(section_cwd),
+                ):
+                    raise TestSelectError(f"[{layer}] SELECT_DIFF argv diverges from contract")
+                obs = execute_gate_command(
+                    shlex.join(argv), str(section_cwd), f"select-diff-{layer}"
+                )
+                commands[layer] = list(obs.argv)
+                mapping = require_exact_node_coverage(
+                    parse_junit_result(result_path), selected
+                )
+                outcomes.extend(
+                    {
+                        "node": node,
+                        "status": mapping[node].status,
+                        "detail": mapping[node].detail or "",
+                    }
+                    for node in selected
+                )
+        finally:
+            for path in staged:
+                path.unlink(missing_ok=True)
+        return outcomes, commands
+
+    def _signed_failures(self, outcomes) -> list[dict]:
+        return [
+            {**outcome, "failure_signature": self._full_failure_signature(outcome)}
+            for outcome in outcomes
+            if outcome["status"] in ("failed", "error")
+        ]
+
+    def _execute_diff_selection(
+        self,
+        cmd,
+        state,
+        ledger_node: str,
+        failure_signature: str,
+        selection,
+        inventory,
+    ) -> dict:
+        contract = load_contract(self.repo)
+        sections = {
+            "unit": contract.unit,
+            "integration": contract.integration,
+            "e2e": contract.e2e,
+        }
+        baseline = self._current_baseline_digest()
+        if not baseline:
+            raise TestSelectError("SELECT_DIFF lacks frozen baseline identity")
+        nodes = sorted(selection.nodes)
+        if any(node not in inventory for node in nodes):
+            raise TestSelectError("SELECT_DIFF contains a node absent from full collect")
+        commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        tree_stamp = self._dirty_tree_stamp()
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope="select_diff",
+            basis=selection.basis,
+            baseline=baseline,
+            commit=commit,
+            tree_stamp=tree_stamp,
+        )
+        node_ref = self.store.write_audit_blob(
+            [{"node": node, "layer": inventory[node]} for node in nodes]
+        )
+        if node_ref is None:
+            raise TestSelectError("SELECT_DIFF nodes blob write failed")
+        self._emit(
+            "test.selected",
+            {
+                "scope": "select_diff",
+                "basis": selection.basis,
+                "nodes_count": len(nodes),
+                "nodes": nodes,
+                "nodes_blob": f".tracks/runtime/blobs/{node_ref}",
+                "baseline": baseline,
+                "commit": commit,
+                "tree_stamp": tree_stamp,
+                "selection_id": selection_id,
+                "task_id": state.current_task_id,
+                "task_ifs": list((state.current_task_metadata or {}).get("if_ids") or []),
+                "ledger_node": ledger_node,
+                "failure_signature": failure_signature,
+            },
+            command_id=cmd.command_id,
+            task_id=state.current_task_id,
+        )
+        outcomes, commands = self._run_diff_layers(cmd, nodes, sections, inventory)
+        failures = self._signed_failures(outcomes)
+        outcomes_ref = self.store.write_audit_blob(outcomes)
+        if outcomes_ref is None:
+            raise TestSelectError("SELECT_DIFF outcomes blob write failed")
+        identity = EvidenceIdentity(
+            tree=tree_stamp,
+            command=self._selection_command_identity(commands),
+            env=self._gate_environment_identity(),
+            selection_id=selection_id,
+        )
+        evidence_by_node = {
+            outcome["node"]: evidence_identity(
+                identity,
+                outcome["node"],
+                outcome["status"],
+                state.current_attempt + 1,
+                "runtime",
+            )
+            for outcome in outcomes
+        }
+        return {
+            "selection_id": selection_id,
+            "failed_nodes": [failure["node"] for failure in failures],
+            "failures": failures,
+            "evidence_by_node": evidence_by_node,
+            "outcomes_ref": f".tracks/runtime/blobs/{outcomes_ref}",
+        }
 
     def _do_select_task(self, cmd, state, task_id, reconcile):
         if state.current_task_id:
@@ -1430,14 +2105,8 @@ class MImplRuntimeMixin:
             return list(commands)
         return [".venv/bin/python -m pytest -n 4 tests/unit"]
 
-    def _ensure_gate_worktree(self, state: State) -> tuple[str, WorktreeHandle | None]:
-        """Find or create a gate worktree with R tests + Green impl applied.
-
-        Returns (cwd, handle). If handle is not None, the caller must clean it up
-        via cleanup_worktree(handle). If handle is None, the cwd is the repo
-        itself (no cleanup needed).
-        """
-        task_id = state.current_task_id or ""
+    def _existing_gate_handle(self, task_id: str) -> WorktreeHandle | None:
+        """Reuse a pre-existing gate worktree for this task, if one exists."""
         gate_path = os.path.join(
             str(self.repo), ".tracks", "worktrees", self.run_id, task_id, "gate"
         )
@@ -1451,16 +2120,50 @@ class MImplRuntimeMixin:
             # The old ``return gate_path, None`` made every pre-existing gate
             # worktree a permanent leak (five accumulated across T-013..T-018;
             # ISLAND_GATE_2 reach then reported 1208 phantom islands).
-            return gate_path, WorktreeHandle(path=gate_path, base_sha="", kind="gate")
+            return WorktreeHandle(path=gate_path, base_sha="", kind="gate")
+        return None
 
+    @staticmethod
+    def _usable_tree_identity(r_sha) -> bool:
+        return bool(r_sha and r_sha.strip() and r_sha != "0" * 40)
+
+    def _refactor_gate_base(self, task_id: str):
+        green = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "green.committed"
+                and ev.payload.get("task_id") == task_id
+            ),
+            None,
+        )
+        if green is None or not green.payload.get("g_sha"):
+            return None
+        return green.payload["g_sha"]
+
+    def _latest_phase_diff_ref(self, phase: str):
+        return next(
+            (
+                ev.payload.get("diff_ref")
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "outcome.received" and ev.payload.get("phase") == phase
+            ),
+            None,
+        )
+
+    def _gate_candidate_inputs(self, state: State, task_id: str, phase: str):
+        """Resolve ``(r_sha, base, diff)`` for creating a gate worktree.
+
+        Returns None when the gate must fall back to the repo cwd instead.
+        """
         # Try to create a gate worktree from base B + Green impl + R tests
         r_sha = state.r_tree_identity
-        if not r_sha or not r_sha.strip() or r_sha == "0" * 40:
-            return str(self.repo), None  # Bogus R, can't create worktree
+        if not self._usable_tree_identity(r_sha):
+            return None  # Bogus R, can't create worktree
 
         base_sha = red_base_sha(str(self.repo), r_sha)
         if base_sha is None:
-            return str(self.repo), None  # Can't derive base B from R
+            return None  # Can't derive base B from R
 
         # When the immutable R tests are already present in the observed
         # working tree, run the gate against that state so a hidden R test
@@ -1468,23 +2171,50 @@ class MImplRuntimeMixin:
         # from the tree (they live solely inside the R commit) is a gate
         # worktree needed to restore them next to the Green impl.
         if self._r_tests_in_working_tree(r_sha):
-            return str(self.repo), None
+            return None
 
-        # Get the Green impl diff from the latest green outcome
-        g_diff = None
-        for ev in reversed(list(self.store.events(self.run_id))):
-            if ev.type == "outcome.received" and ev.payload.get("phase") == "green":
-                g_diff = ev.payload.get("diff_ref")
-                break
-        if not g_diff or not g_diff.strip():
-            return str(self.repo), None  # No Green diff available
+        candidate_base = base_sha
+        target_phase = "refactor" if phase == "refactor" else "green"
+        if target_phase == "refactor":
+            candidate_base = self._refactor_gate_base(task_id)
+            if candidate_base is None:
+                return None
+        candidate_diff = self._latest_phase_diff_ref(target_phase)
+        if not candidate_diff or not candidate_diff.strip():
+            if target_phase == "green":
+                return None
+            candidate_diff = ""
+        return r_sha, candidate_base, candidate_diff
+
+    def _ensure_gate_worktree(
+        self,
+        state: State,
+        phase: str = "green",
+    ) -> tuple[str, WorktreeHandle | None]:
+        """Find or create a gate worktree with R tests + Green impl applied.
+
+        Returns (cwd, handle). If handle is not None, the caller must clean it up
+        via cleanup_worktree(handle). If handle is None, the cwd is the repo
+        itself (no cleanup needed).
+        """
+        task_id = state.current_task_id or ""
+        # Keep the method callable against the lightweight Runtime-shaped test
+        # doubles used by the worktree contract tests.
+        existing = MImplRuntimeMixin._existing_gate_handle(self, task_id)
+        if existing is not None:
+            return existing.path, existing
+
+        candidate = self._gate_candidate_inputs(state, task_id, phase)
+        if candidate is None:
+            return str(self.repo), None
+        r_sha, candidate_base, candidate_diff = candidate
 
         try:
             handle = create_gate_worktree(
                 str(self.repo),
-                base_sha,
+                candidate_base,
                 r_sha,
-                g_diff,
+                candidate_diff,
                 self.run_id,
                 task_id,
             )
@@ -1628,6 +2358,419 @@ class MImplRuntimeMixin:
             return (proc.stdout + "\n" + proc.stderr).strip() or "lint failed", ""
         return None, ""
 
+    @staticmethod
+    def _expand_declared_unit_refs(refs, current_nodes: list[str]) -> list[str]:
+        """Expand task RED refs (node or file) against the current unit inventory."""
+        selected: set[str] = set()
+        inventory = set(current_nodes)
+        for raw in refs:
+            ref = str(raw).strip()
+            path = ref.partition("::")[0]
+            matches = [node for node in current_nodes if node.partition("::")[0] == path]
+            if "::" in ref:
+                if ref not in inventory:
+                    raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
+                selected.add(ref)
+            elif matches:
+                selected.update(matches)
+            else:
+                raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
+        return sorted(selected)
+
+    @staticmethod
+    def _task_integration_index(
+        plan_text: str,
+        current_nodes: list[str],
+        task_ifs,
+    ) -> dict[str, list[str]]:
+        """Map §8 integration rows' IFs to currently collected integration nodes."""
+        index: dict[str, set[str]] = {}
+        required = {str(if_id) for if_id in task_ifs}
+        for _ac_id, layer_cell, test_cell, if_cell in _coverage_rows_with_test(plan_text):
+            layers = {
+                part.strip().lower()
+                for part in re.split(r"[,/+;\s]+", layer_cell or "")
+                if part.strip()
+            }
+            if "integration" not in layers or not test_cell:
+                continue
+            declared = str(test_cell).strip().strip("`").partition("::")[0]
+            target = (
+                declared
+                if declared.startswith("tests/integration/")
+                else f"tests/integration/{Path(declared).name}"
+            )
+            matches = [node for node in current_nodes if node.partition("::")[0] == target]
+            row_ifs = set(re.findall(r"IF-[A-Z0-9][A-Z0-9-]*", if_cell or ""))
+            if row_ifs & required and not matches:
+                raise TestSelectError(
+                    f"task IF integration test is absent from collect: {target}"
+                )
+            for if_id in row_ifs:
+                index.setdefault(if_id, set()).update(matches)
+        return {if_id: sorted(nodes) for if_id, nodes in sorted(index.items())}
+
+    def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
+        """Run unit/integration collect commands against the gate cwd."""
+        inventories: dict[str, list[str]] = {}
+        for layer, section in (("unit", contract.unit), ("integration", contract.integration)):
+            section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
+            obs = execute_gate_command(section.collect, section_cwd, f"{layer}-collect")
+            if obs.exit_code == 5:
+                inventories[layer] = []
+                continue
+            if obs.exit_code != 0:
+                raise TestSelectError(
+                    f"[{layer}] collect failed (rc={obs.exit_code}): "
+                    f"{(obs.stderr or obs.stdout).strip()[:400]}"
+                )
+            inventories[layer] = sorted(parse_collected_nodes(obs.stdout))
+        return inventories
+
+    def _require_r_artifacts(self, red_nodes: list[str], r_sha: str) -> None:
+        for node in red_nodes:
+            path = node.partition("::")[0]
+            if not r_sha or not self._path_in_tree(r_sha, path):
+                raise TestSelectError(
+                    f"task RED unit artifact is absent from immutable R commit: {node}"
+                )
+
+    def _collect_task_gate_nodes(self, cwd: str, task: TaskNode):
+        """Collect unit/integration inventories and compute SELECT_TASK."""
+        contract = load_contract(self.repo)
+        inventories = self._collect_layer_inventories(contract, cwd)
+        red_nodes = self._expand_declared_unit_refs(task.test_refs, inventories["unit"])
+        r_sha = self.store.state(self.run_id).r_tree_identity or ""
+        self._require_r_artifacts(red_nodes, r_sha)
+        touched = [
+            path
+            for path in (self._last_devon_outcome() or {}).get("changed_paths", [])
+            if str(path).startswith("tests/unit/")
+        ]
+        plan_path = self._vdir() / "test-plan.md"
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        int_index = self._task_integration_index(
+            plan_text,
+            inventories["integration"],
+            task.if_ids,
+        )
+        nodes = select_task(red_nodes, touched, inventories["unit"], task.if_ids, int_index)
+        if not nodes:
+            raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
+        return contract, nodes
+
+    @staticmethod
+    def _gate_environment_identity() -> str:
+        trac_env = {key: value for key, value in os.environ.items() if key.startswith("TRAC_")}
+        material = json.dumps(
+            {
+                "python": sys.version,
+                "pytest": importlib.metadata.version("pytest"),
+                "trac_env": trac_env,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _task_content_snapshot(self, root: Path, rules) -> dict[str, str]:
+        """Content identities for every file covered by task scope rules."""
+        entries: dict[str, str] = {}
+        for raw in sorted({str(rule) for rule in rules if str(rule).strip()}):
+            rule = raw[:-3].rstrip("/") if raw.endswith("/**") else raw.rstrip("/")
+            path = root / rule
+            if path.is_dir():
+                files = sorted(
+                    item
+                    for item in path.rglob("*")
+                    if item.is_file() or item.is_symlink()
+                )
+                if not files:
+                    entries[rule] = "empty-dir"
+                for item in files:
+                    entries[str(item.relative_to(root))] = self._path_identity(item)
+            else:
+                entries[rule] = self._path_identity(path)
+        return entries
+
+    @staticmethod
+    def _snapshot_digest(entries: dict[str, str]) -> str:
+        canonical = json.dumps(entries, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _selection_command_identity(commands) -> tuple[str, ...]:
+        """Encode each selected layer's actual argv without losing boundaries."""
+        return tuple(
+            json.dumps(
+                {"layer": layer, "argv": list(commands[layer])},
+                separators=(",", ":"),
+            )
+            for layer in sorted(commands)
+        )
+
+    def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):
+        """Execute the SELECT_TASK layers owning selected nodes.
+
+        Returns (outcomes, failed_nodes, commands, templates); staging paths
+        are always cleaned up, even when a layer raises.
+        """
+        outcomes: list[dict] = []
+        failed_nodes: list[dict] = []
+        staged: list[Path] = []
+        commands: dict[str, tuple[str, ...]] = {}
+        templates: dict[str, dict[str, str]] = {}
+        try:
+            for layer, section in (("unit", contract.unit), ("integration", contract.integration)):
+                selected = by_layer[layer]
+                if not selected:
+                    continue
+                section_cwd = (
+                    str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
+                )
+                result_path = self._result_staging_path(cmd.command_id, f"green-{layer}")
+                staged.append(result_path)
+                result_path.unlink(missing_ok=True)
+                argv = resolve_selected_command(
+                    section.run_selected,
+                    selected,
+                    str(result_path),
+                    Path(section_cwd),
+                )
+                if not audit_selection_argv(
+                    section.run_selected,
+                    selected,
+                    str(result_path),
+                    list(argv),
+                    Path(section_cwd),
+                ):
+                    raise TestSelectError(f"[{layer}] selected argv diverges from contract")
+                obs = execute_gate_command(
+                    shlex.join(argv), section_cwd, f"{layer}-selected"
+                )
+                commands[layer] = tuple(obs.argv)
+                templates[layer] = {
+                    "run_selected": section.run_selected,
+                    "cwd": section.cwd,
+                }
+                cases = parse_junit_result(result_path)
+                mapping = require_exact_node_coverage(cases, selected)
+                self._record_task_node_outcomes(outcomes, failed_nodes, selected, mapping)
+        finally:
+            for path in staged:
+                path.unlink(missing_ok=True)
+            if staged:
+                with contextlib.suppress(OSError):
+                    staged[0].parent.rmdir()
+        return outcomes, failed_nodes, commands, templates
+
+    @staticmethod
+    def _record_task_node_outcomes(outcomes, failed_nodes, selected, mapping) -> None:
+        for node in selected:
+            case = mapping[node]
+            detail = case.detail or ""
+            outcomes.append({"node": node, "status": case.status, "detail": detail})
+            if case.status != "passed":
+                failed_nodes.append({"node": node, "status": case.status, "detail": detail})
+
+    def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:
+        """Emit and execute one task_if selection through contract run_selected."""
+        contract, nodes = self._collect_task_gate_nodes(cwd, task)
+        by_layer = {
+            "unit": [node for node in nodes if node.startswith("tests/unit/")],
+            "integration": [node for node in nodes if node.startswith("tests/integration/")],
+        }
+        baseline = str(state.r_tree_identity or "")
+        if not baseline:
+            raise TestSelectError("SELECT_TASK lacks immutable R baseline identity")
+        commit = git(Path(cwd), "rev-parse", "HEAD", check=False).stdout.strip()
+        tree_stamp = self._dirty_tree_stamp(Path(cwd))
+        basis = f"task:{task.task_id}:ifs:{','.join(sorted(task.if_ids))}"
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope="task_if",
+            basis=basis,
+            baseline=baseline,
+            commit=commit,
+            tree_stamp=tree_stamp,
+        )
+        self._stale_prior_task_selection(cmd, task, nodes, baseline, selection_id)
+        node_ref = self.store.write_audit_blob(
+            [
+                {
+                    "node": node,
+                    "layer": "unit" if node.startswith("tests/unit/") else "integration",
+                }
+                for node in nodes
+            ]
+        )
+        if node_ref is None:
+            raise TestSelectError("SELECT_TASK nodes blob write failed")
+        nodes_blob = f".tracks/runtime/blobs/{node_ref}"
+        self._emit(
+            "test.selected",
+            {
+                "scope": "task_if",
+                "basis": basis,
+                "nodes_count": len(nodes),
+                "nodes": nodes,
+                "nodes_blob": nodes_blob,
+                "baseline": baseline,
+                "commit": commit,
+                "tree_stamp": tree_stamp,
+                "selection_id": selection_id,
+                "task_id": task.task_id,
+                "task_ifs": list(task.if_ids),
+            },
+            command_id=cmd.command_id,
+            task_id=task.task_id,
+        )
+        scope_rules = list((state.current_manifest or {}).get("allowed_paths", []))
+        scope_rules.extend(node.partition("::")[0] for node in nodes)
+        scope_rules = sorted(set(scope_rules))
+        snapshot = self._task_content_snapshot(Path(cwd), scope_rules)
+        content_digest = self._snapshot_digest(snapshot)
+        env_identity = self._gate_environment_identity()
+        outcomes, failed_nodes, commands, templates = self._run_task_selected_layers(
+            cmd, contract, cwd, by_layer
+        )
+        command_identity = self._selection_command_identity(commands)
+        identity = EvidenceIdentity(
+            tree=content_digest,
+            command=command_identity,
+            env=env_identity,
+            selection_id=selection_id,
+        )
+        evidence_ids = [
+            evidence_identity(
+                identity,
+                outcome["node"],
+                outcome["status"],
+                state.current_attempt + 1,
+                "runtime",
+            )
+            for outcome in outcomes
+        ]
+        outcomes_ref = self.store.write_audit_blob(outcomes)
+        if outcomes_ref is None:
+            raise TestSelectError("GREEN outcomes blob write failed")
+        outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
+        if failed_nodes:
+            raise TaskSelectionFailure(
+                "selected task tests did not all pass",
+                json.dumps(
+                    {
+                        "selection_id": selection_id,
+                        "outcomes_ref": outcomes_ref_path,
+                        "failed_nodes": failed_nodes,
+                    },
+                    sort_keys=True,
+                ),
+            )
+        snapshot_ref = self.store.write_audit_blob(
+            {
+                "rules": scope_rules,
+                "entries": snapshot,
+                "commands": {layer: list(argv) for layer, argv in commands.items()},
+                "templates": templates,
+            }
+        )
+        if snapshot_ref is None:
+            raise TestSelectError("GREEN content identity blob write failed")
+        return {
+            "selection_id": selection_id,
+            "nodes_blob": nodes_blob,
+            "outcomes_ref": outcomes_ref_path,
+            "evidence_ids": sorted(evidence_ids),
+            "snapshot_ref": f".tracks/runtime/blobs/{snapshot_ref}",
+            "identity_basis": {
+                "tree": content_digest,
+                "command": list(command_identity),
+                "env": env_identity,
+                "selection_id": selection_id,
+            },
+        }
+
+    def _emit_stale_refs(
+        self,
+        cmd,
+        task_id: str,
+        selection_refs,
+        evidence_refs,
+        reason: str,
+    ) -> None:
+        targets = emit_stale_propagation(
+            {
+                "selection_refs": selection_refs,
+                "evidence_refs": evidence_refs,
+            }
+        )
+        already_stale = {
+            (str(target.get("kind")), str(target.get("ref")))
+            for ev in self.store.events(self.run_id)
+            if ev.type == "evidence.staled"
+            for target in (ev.payload.get("targets") or [])
+            if isinstance(target, dict)
+        }
+        fresh_targets = [
+            target
+            for target in targets
+            if (target["kind"], target["ref"]) not in already_stale
+        ]
+        if fresh_targets:
+            self._emit(
+                "evidence.staled",
+                {"targets": fresh_targets, "reason": reason},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _stale_prior_task_selection(
+        self,
+        cmd,
+        task: TaskNode,
+        nodes: list[str],
+        baseline: str,
+        selection_id: str,
+    ) -> None:
+        previous = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "test.selected"
+                and ev.payload.get("scope") == "task_if"
+                and ev.payload.get("task_id") == task.task_id
+            ),
+            None,
+        )
+        if previous is None or previous.payload.get("selection_id") == selection_id:
+            return
+        changes = []
+        if sorted(previous.payload.get("task_ifs") or []) != sorted(task.if_ids):
+            changes.append("task_if_changed")
+        if previous.payload.get("baseline") != baseline:
+            changes.append("baseline_changed")
+        if sorted(previous.payload.get("nodes") or []) != sorted(nodes):
+            changes.append("selected_nodes_changed")
+        if not changes:
+            changes.append("selection_identity_changed")
+        previous_id = str(previous.payload.get("selection_id") or "")
+        evidence_refs = {
+            str(ref)
+            for ev in self.store.events(self.run_id)
+            if ev.payload.get("selection_id") == previous_id
+            or (ev.payload.get("identity_basis") or {}).get("selection_id") == previous_id
+            for ref in (ev.payload.get("evidence_ids") or [])
+            if ref
+        }
+        self._emit_stale_refs(
+            cmd,
+            task.task_id,
+            [previous_id],
+            evidence_refs,
+            ",".join(changes),
+        )
+
     def _run_green_gate(self, cmd, state: State) -> None:
         task_id = state.current_task_id
         attempt = state.current_attempt + 1
@@ -1644,18 +2787,6 @@ class MImplRuntimeMixin:
             return
         cwd, gate_handle = self._ensure_gate_worktree(state)
         try:
-            for command in self._unit_commands_from_manifest():
-                obs = execute_gate_command(command, cwd)
-                if obs.exit_code != 0:
-                    self._emit_gate_failure(
-                        cmd,
-                        check="impl_defect",
-                        reason=f"Runtime unit command exited {obs.exit_code}",
-                        evidence=self._gate_evidence(obs),
-                        task_id=task_id,
-                        attempt=attempt,
-                    )
-                    return
             # B39 (run 01M0AMKV T-006 seq 728): regression is judged ONLY on
             # this task's Runtime-captured diff plus its claimed changed_paths
             # touching an R-frozen tests/ file — not on the whole worktree-vs-R
@@ -1680,6 +2811,10 @@ class MImplRuntimeMixin:
                         attempt=attempt,
                     )
                     return
+            task = self._lookup_task(task_id or "")
+            if task is None:
+                raise TestSelectError(f"GREEN_GATE task not found: {task_id}")
+            selection_evidence = self._execute_task_selection(cmd, state, cwd, task)
             lint_findings, lint_note = self._run_declared_lint(
                 self._lint_targets("green")
             )
@@ -1693,10 +2828,28 @@ class MImplRuntimeMixin:
                     attempt=attempt,
                 )
                 return
-            payload = {"check": "green"}
+            payload = {"check": "green", "task_id": task_id, **selection_evidence}
             if lint_note:
                 payload["lint"] = lint_note
             self._emit("verdict.passed", payload, command_id=cmd.command_id)
+        except TaskSelectionFailure as exc:
+            self._emit_gate_failure(
+                cmd,
+                check="impl_defect",
+                reason=str(exc),
+                evidence=exc.evidence,
+                task_id=task_id,
+                attempt=attempt,
+            )
+        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+            self._emit_gate_failure(
+                cmd,
+                check="contract_error",
+                reason=f"SELECT_TASK failed closed: {type(exc).__name__}: {exc}",
+                evidence="task_if selection/contract result",
+                task_id=task_id,
+                attempt=attempt,
+            )
         finally:
             if gate_handle is not None:
                 cleanup_worktree(gate_handle)
@@ -1961,11 +3114,8 @@ class MImplRuntimeMixin:
         self._rebuild_task_log_projection()
         return True
 
-    def _do_commit_green(self, cmd, state, task_id, reconcile):
-        task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
-        attempt = state.current_attempt + 1
-        cutoff = self._retry_cutoff_seq()
-        if any(
+    def _attempt_impl_defect_recorded(self, task_id: str, attempt: int, cutoff: int) -> bool:
+        return any(
             ev.type == "verdict.failed"
             and ev.payload.get("check") == "impl_defect"
             # Exact task match only: the old `in (None, task_id)` amnesty
@@ -1980,7 +3130,90 @@ class MImplRuntimeMixin:
             # not block the post-retry fresh attempt.
             and ev.seq > cutoff
             for ev in self.store.events(self.run_id)
-        ):
+        )
+
+    def _green_commit_lineage(self, state, task_id: str, attempt: int) -> tuple:
+        """Resolve the G-commit lineage inputs for this attempt.
+
+        Returns ``(failure_payload, task, r_sha, b_sha, green_base)``; when
+        ``failure_payload`` is not None the commit is blocked and only the
+        payload fields up to the failure are meaningful.
+        """
+        task = self._lookup_task(task_id)
+        if task is None or not state.r_tree_identity:
+            return (
+                {
+                    "check": "impl_defect",
+                    "reason": (
+                        "green commit lacks task_id or R lineage identity "
+                        "(check Devon pre/post identity trailers)"
+                    ),
+                    "task_id": task_id,
+                    "attempt": attempt,
+                },
+                None,
+                "",
+                None,
+                None,
+            )
+        r_sha = state.r_tree_identity
+        # FR-0120 replay-safe base: B is derived from the immutable R commit's
+        # parent (never blindly the current HEAD), so a crash after the branch
+        # update but before green.committed reconciles to the same G.
+        b_sha = red_base_sha(str(self.repo), r_sha)
+        if b_sha is None:
+            return (
+                {
+                    "check": "impl_defect",
+                    "reason": "green lineage base B unresolvable from R",
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "evidence": f"r_sha={r_sha}",
+                },
+                task,
+                r_sha,
+                None,
+                None,
+            )
+        green_base = self._green_commit_base(b_sha)
+        if green_base is None:
+            return (
+                {
+                    "check": "impl_defect",
+                    "reason": (
+                        "green lineage violation: branch HEAD diverged from "
+                        "base B (not a descendant; unknown work on HEAD)"
+                    ),
+                    "task_id": task_id,
+                    "attempt": attempt,
+                    "evidence": (
+                        f"b_sha={b_sha} head={git(self.repo, 'rev-parse', 'HEAD').stdout.strip()}"
+                    ),
+                },
+                task,
+                r_sha,
+                b_sha,
+                None,
+            )
+        return None, task, r_sha, b_sha, green_base
+
+    def _green_gate_evidence(self, task_id: str) -> dict:
+        return next(
+            (
+                ev.payload
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "verdict.passed"
+                and ev.payload.get("check") == "green"
+                and ev.payload.get("task_id") == task_id
+            ),
+            {},
+        )
+
+    def _do_commit_green(self, cmd, state, task_id, reconcile):
+        task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
+        attempt = state.current_attempt + 1
+        cutoff = self._retry_cutoff_seq()
+        if self._attempt_impl_defect_recorded(task_id, attempt, cutoff):
             self._emit_gate_failure(
                 cmd,
                 check="impl_defect",
@@ -2012,60 +3245,13 @@ class MImplRuntimeMixin:
             )
             self._rebuild_task_log_projection()
             return
-        task = self._lookup_task(task_id)
-        if task is None or not state.r_tree_identity:
+        blocker, task, r_sha, b_sha, green_base = self._green_commit_lineage(
+            state, task_id, attempt
+        )
+        if blocker is not None:
             self._emit(
                 "verdict.failed",
-                {
-                    "check": "impl_defect",
-                    "reason": (
-                        "green commit lacks task_id or R lineage identity "
-                        "(check Devon pre/post identity trailers)"
-                    ),
-                    "task_id": task_id,
-                    "attempt": attempt,
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
-            self._rebuild_task_log_projection()
-            return
-        r_sha = state.r_tree_identity
-        # FR-0120 replay-safe base: B is derived from the immutable R commit's
-        # parent (never blindly the current HEAD), so a crash after the branch
-        # update but before green.committed reconciles to the same G.
-        b_sha = red_base_sha(str(self.repo), r_sha)
-        if b_sha is None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "impl_defect",
-                    "reason": "green lineage base B unresolvable from R",
-                    "task_id": task_id,
-                    "attempt": attempt,
-                    "evidence": f"r_sha={r_sha}",
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
-            self._rebuild_task_log_projection()
-            return
-        green_base = self._green_commit_base(b_sha)
-        if green_base is None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "impl_defect",
-                    "reason": (
-                        "green lineage violation: branch HEAD diverged from "
-                        "base B (not a descendant; unknown work on HEAD)"
-                    ),
-                    "task_id": task_id,
-                    "attempt": attempt,
-                    "evidence": (
-                        f"b_sha={b_sha} head={git(self.repo, 'rev-parse', 'HEAD').stdout.strip()}"
-                    ),
-                },
+                blocker,
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
@@ -2103,16 +3289,22 @@ class MImplRuntimeMixin:
             return
         # green.committed is emitted only after the checked-out release branch
         # and worktree actually contain G (idempotent replay emits no duplicate).
+        green_evidence = self._green_gate_evidence(task_id)
+        green_payload = {
+            "g_sha": g.sha,
+            "task_id": task_id,
+            "attempt": attempt,
+            "r_sha": r_sha,
+            "base_sha": g.parent,
+            "trailers": g.trailers,
+            "evidence_ids": list(green_evidence.get("evidence_ids") or []),
+            "identity_basis": dict(green_evidence.get("identity_basis") or {}),
+        }
+        if green_evidence.get("snapshot_ref"):
+            green_payload["snapshot_ref"] = str(green_evidence["snapshot_ref"])
         self._emit(
             "green.committed",
-            {
-                "g_sha": g.sha,
-                "task_id": task_id,
-                "attempt": attempt,
-                "r_sha": r_sha,
-                "base_sha": g.parent,
-                "trailers": g.trailers,
-            },
+            green_payload,
             command_id=cmd.command_id,
             task_id=task_id,
         )
@@ -2198,6 +3390,200 @@ class MImplRuntimeMixin:
             (self.repo / rel).write_bytes(data)
         return True, None
 
+    def _validated_green_snapshot(self, green):
+        """Load and shape-check the GREEN content identity snapshot blob."""
+        snapshot = self._read_runtime_blob(green.payload.get("snapshot_ref"))
+        if not isinstance(snapshot, dict):
+            raise TestSelectError("GREEN content identity snapshot is malformed")
+        rules = snapshot.get("rules")
+        previous = snapshot.get("entries")
+        templates = snapshot.get("templates")
+        if (
+            not isinstance(rules, list)
+            or not isinstance(previous, dict)
+            or not isinstance(templates, dict)
+        ):
+            raise TestSelectError("GREEN content identity snapshot lacks rules/entries/templates")
+        return rules, previous, templates
+
+    def _restore_r_owned_unit_tests(self, current, previous, r_sha: str) -> None:
+        for path, identity in previous.items():
+            if (
+                path.startswith("tests/unit/")
+                and current.get(path) == "missing"
+                and r_sha
+                and self._path_in_tree(r_sha, path)
+            ):
+                # Formal G intentionally excludes the frozen R commit. The
+                # REFACTOR gate injects R separately, so an R-owned unit node
+                # absent from main is unchanged, not candidate drift.
+                current[path] = identity
+
+    def _green_command_identities(self, basis: dict, templates) -> tuple:
+        """Validate the recorded command identity and rebuild it for now.
+
+        Returns (green_command, current_command): the former as recorded on
+        the green evidence, the latter extended when contract templates
+        drifted since GREEN.
+        """
+        command = basis.get("command")
+        if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+            raise TestSelectError("GREEN evidence command identity is malformed")
+        contract = load_contract(self.repo)
+        sections = {"unit": contract.unit, "integration": contract.integration}
+        current_templates = {
+            layer: {
+                "run_selected": sections[layer].run_selected,
+                "cwd": sections[layer].cwd,
+            }
+            for layer in templates
+            if layer in sections
+        }
+        current_command = tuple(command)
+        if current_templates != templates:
+            current_command += (
+                json.dumps(current_templates, sort_keys=True, separators=(",", ":")),
+            )
+        return tuple(command), current_command
+
+    def _stale_target_refs(self) -> set[str]:
+        return {
+            str(target.get("ref"))
+            for ev in self.store.events(self.run_id)
+            if ev.type == "evidence.staled"
+            for target in (ev.payload.get("targets") or [])
+            if isinstance(target, dict) and target.get("ref")
+        }
+
+    def _green_reuse_state(self, task_id: str, cwd: str):
+        """Return (allowed, changed_paths, green_event) from Runtime snapshots."""
+        green = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "green.committed"
+                and ev.payload.get("task_id") == task_id
+            ),
+            None,
+        )
+        if green is None:
+            raise TestSelectError("REFACTOR_GATE lacks green.committed evidence")
+        basis = dict(green.payload.get("identity_basis") or {})
+        rules, previous, templates = self._validated_green_snapshot(green)
+        current = self._task_content_snapshot(Path(cwd), rules)
+        r_sha = self.store.state(self.run_id).r_tree_identity or ""
+        self._restore_r_owned_unit_tests(current, previous, r_sha)
+        current_digest = self._snapshot_digest(current)
+        green_command, current_command = self._green_command_identities(basis, templates)
+        green_identity = EvidenceIdentity(
+            tree=str(basis.get("tree") or ""),
+            command=green_command,
+            env=str(basis.get("env") or ""),
+            selection_id=str(basis.get("selection_id") or ""),
+        )
+        current_identity = EvidenceIdentity(
+            tree=current_digest,
+            command=current_command,
+            env=self._gate_environment_identity(),
+            selection_id=green_identity.selection_id,
+        )
+        stale_refs = self._stale_target_refs()
+        related_refs = {
+            green_identity.selection_id,
+            *(str(ref) for ref in (green.payload.get("evidence_ids") or []) if ref),
+        }
+        changed = sorted(
+            path
+            for path in set(previous) | set(current)
+            if previous.get(path) != current.get(path)
+        )
+        return (
+            reuse_allowed(green_identity, current_identity, stale_refs & related_refs),
+            changed,
+            green,
+        )
+
+    def _reuse_green_evidence(self, cmd, task_id: str, outcome: dict, green) -> None:
+        self._emit(
+            "evidence.reused",
+            {
+                "kind": "green",
+                "task_id": task_id,
+                "reused_evidence_ids": list(
+                    green.payload.get("evidence_ids") or []
+                ),
+                "identity_basis": dict(
+                    green.payload.get("identity_basis") or {}
+                ),
+                "consumer_gate": "REFACTOR_GATE",
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "refactor.no_change",
+            {"task_id": task_id, "reason": outcome.get("no_change_reason")},
+            command_id=cmd.command_id,
+        )
+
+    def _flag_stale_green_evidence(self, cmd, task_id: str, green, observed_changed) -> None:
+        green_basis = dict(green.payload.get("identity_basis") or {})
+        self._emit_stale_refs(
+            cmd,
+            task_id,
+            [str(green_basis.get("selection_id") or "")],
+            list(green.payload.get("evidence_ids") or []),
+            "green_content_identity_changed"
+            if observed_changed
+            else "green_evidence_stale",
+        )
+
+    @staticmethod
+    def _refactor_diff_missing(outcome: dict, observed_changed) -> bool:
+        diff_ref = outcome.get("diff_ref")
+        return bool(observed_changed) and (
+            not isinstance(diff_ref, str)
+            or not diff_ref.strip()
+            or diff_ref.strip() == "no-change"
+        )
+
+    @staticmethod
+    def _refactor_outside_paths(changed, allowed) -> list[str]:
+        return sorted(
+            path
+            for path in changed
+            if not any(_manifest_path_matches(path, rule) for rule in allowed)
+        )
+
+    def _commit_refactor_changes(
+        self, cmd, state, task_id: str, changed, selection_evidence
+    ) -> bool:
+        git(self.repo, "add", "--", *changed)
+        proc = _commit_if_staged(
+            self.repo,
+            f"M-IMPL: refactor\n\ncommand_id: {cmd.command_id}",
+        )
+        if proc is None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "regression",
+                    "reason": "refactor evidence has no captured diff",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+            return False
+        if proc.returncode != 0:
+            self._emit_commit_failure(proc, state, cmd.command_id)
+            return False
+        self._emit(
+            "refactor.committed",
+            {"task_id": task_id, **selection_evidence},
+            command_id=cmd.command_id,
+        )
+        return True
+
     def _do_run_refactor_gate(self, cmd, state, task_id, reconcile):
         gate_handle = None
         try:
@@ -2214,47 +3600,29 @@ class MImplRuntimeMixin:
                     command_id=cmd.command_id,
                 )
                 return
-            cwd, gate_handle = self._ensure_gate_worktree(state)
-            for command in self._unit_commands_from_manifest():
-                obs = execute_gate_command(command, cwd)
-                if obs.exit_code != 0:
-                    self._emit_gate_failure(
-                        cmd,
-                        check="regression",
-                        reason=f"Runtime unit command exited {obs.exit_code}",
-                        evidence=self._gate_evidence(obs),
-                        task_id=state.current_task_id,
-                        attempt=state.current_attempt + 1,
-                    )
-                    if state.substate != "REFACTOR_GATE":
-                        # flow.md §10.1: a REFACTOR_GATE failure routes back to
-                        # REFACTOR, never forward to TASK_REVIEW; reconcile a
-                        # gate driven outside the formal window to that domain.
-                        self._emit(
-                            "green.committed",
-                            {
-                                "g_sha": state.r_tree_identity or "",
-                                "r_sha": state.r_tree_identity,
-                                "base_sha": "",
-                                "trailers": {},
-                                "task_id": state.current_task_id,
-                                "attempt": state.current_attempt + 1,
-                            },
-                            command_id=cmd.command_id,
-                            task_id=state.current_task_id,
-                        )
-                    return
+            cwd, gate_handle = self._ensure_gate_worktree(state, phase="refactor")
             outcome = self._last_devon_outcome() or {}
-            changed = sorted(set(outcome.get("changed_paths", [])))
-            if not changed:
-                self._emit(
-                    "refactor.no_change",
-                    {"task_id": state.current_task_id, "reason": outcome.get("no_change_reason")},
-                    command_id=cmd.command_id,
-                )
+            task_id = state.current_task_id or task_id or ""
+            reusable, observed_changed, green = self._green_reuse_state(
+                task_id, str(self.repo)
+            )
+            if reusable:
+                self._reuse_green_evidence(cmd, task_id, outcome, green)
                 return
+            self._flag_stale_green_evidence(cmd, task_id, green, observed_changed)
+            task = self._lookup_task(task_id)
+            if task is None:
+                raise TestSelectError(f"REFACTOR_GATE task not found: {task_id}")
+            if self._refactor_diff_missing(outcome, observed_changed):
+                raise TestSelectError(
+                    "refactor content identity changed without a captured diff"
+                )
+            selection_evidence = self._execute_task_selection(cmd, state, cwd, task)
+            changed = sorted(
+                set(outcome.get("changed_paths", [])) | set(observed_changed)
+            )
             allowed = set((state.current_manifest or {}).get("allowed_paths", []))
-            outside = sorted(path for path in changed if path not in allowed)
+            outside = self._refactor_outside_paths(changed, allowed)
             if outside:
                 self._emit(
                     "verdict.failed",
@@ -2267,27 +3635,39 @@ class MImplRuntimeMixin:
                     command_id=cmd.command_id,
                 )
                 return
-            git(self.repo, "add", "--", *changed)
-            proc = _commit_if_staged(
-                self.repo,
-                f"M-IMPL: refactor\n\ncommand_id: {cmd.command_id}",
-            )
-            if proc is None:
+            if not changed:
                 self._emit(
-                    "verdict.failed",
+                    "refactor.no_change",
                     {
-                        "check": "regression",
-                        "reason": "refactor evidence has no captured diff",
-                        "attempt": state.current_attempt + 1,
+                        "task_id": task_id,
+                        "reason": outcome.get("no_change_reason"),
+                        **selection_evidence,
                     },
                     command_id=cmd.command_id,
                 )
                 return
-            if proc.returncode != 0:
-                self._emit_commit_failure(proc, state, cmd.command_id)
+            committed = self._commit_refactor_changes(
+                cmd, state, task_id, changed, selection_evidence
+            )
+            if not committed:
                 return
-            self._emit(
-                "refactor.committed", {"task_id": state.current_task_id}, command_id=cmd.command_id
+        except TaskSelectionFailure as exc:
+            self._emit_gate_failure(
+                cmd,
+                check="regression",
+                reason=str(exc),
+                evidence=exc.evidence,
+                task_id=state.current_task_id,
+                attempt=state.current_attempt + 1,
+            )
+        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+            self._emit_gate_failure(
+                cmd,
+                check="contract_error",
+                reason=f"REFACTOR SELECT_TASK failed closed: {type(exc).__name__}: {exc}",
+                evidence="task_if refactor selection/identity",
+                task_id=state.current_task_id,
+                attempt=state.current_attempt + 1,
             )
         finally:
             if gate_handle is not None:
@@ -2470,6 +3850,17 @@ class MImplRuntimeMixin:
 
     def _do_complete_task(self, cmd, state, task_id, reconcile):
         tid = cmd.params.get("task_id") or state.current_task_id
+        if state.full_chain_round is not None and self._transition_full_ledger(
+            cmd,
+            "CLASSIFIED",
+            "FIXED",
+            "Devon repair task completed",
+            "devon",
+        ):
+            if state.writelock_held:
+                self._emit("writelock.released", {"task_id": tid}, command_id=cmd.command_id)
+            self._rebuild_task_log_projection()
+            return
         events = list(self.store.events(self.run_id))
         already_completed = any(
             ev.type == "task.completed" and ev.payload.get("task_id") == tid for ev in events

@@ -267,6 +267,34 @@
    "result": "killed",
    "mutation": "cmd_hotfix no-op handler does not park at AWAIT_HUMAN or accept the anchor sub-action (contract: awaiting -> manual anchor -> continue)",
    "verification": "applied patch; killed; reversed; fresh unpatched run fails at the IF-HOTFIX-010 seam (run parks at stage=M-DESIGN waiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir) — legal Red per R14-02 path 1."
+  },
+  {
+   "test": "tests/integration/test_evidence_selection.py::test_green_gate_emits_task_if_selection_before_execution",
+   "patch": "ce_green_gate_e2e_in_task_if_selection.patch",
+   "result": "killed",
+   "mutation": "_collect_task_gate_nodes appends an e2e node (tests/e2e/test_counterexample.py::test_e2e_leak) to the otherwise valid SELECT_TASK result - deviates from AC-FR0251-01: task_if selection must never contain e2e (e2e local execution lives only in the FULL chain, FR-0253)",
+   "verification": "current Slice B tree passes the bound test; patch applies cleanly via git apply --check; with the patch applied, the task_if composition assertion kills the mutation at 'SELECT_TASK must never select e2e nodes' because test.selected exposes the leaked e2e node."
+  },
+  {
+   "test": "tests/integration/test_full_chain_ledger.py::test_dirty_ledger_fail_closed_no_exit",
+   "patch": "ce_dirty_ledger_exits.patch",
+   "result": "killed",
+   "mutation": "M-IMPL EXIT ignores ledger_open and writes stage frontmatter with an OPEN ledger",
+   "verification": "patch applies cleanly; bound test kills the mutation because decide(state) returns write_frontmatter instead of None"
+  },
+  {
+   "test": "tests/integration/test_full_chain_ledger.py::test_fullf_new_failures_loop_until_clean_no_cap",
+   "patch": "ce_skip_fullf_after_diff.patch",
+   "result": "killed",
+   "mutation": "run_full_chain exits once entries are PROVEN without executing FULL_F",
+   "verification": "patch applies cleanly; bound test kills the mutation because the observed rounds omit all required FULL_F executions"
+  },
+  {
+   "test": "tests/integration/test_full_chain_ledger.py::test_fullf_reobserved_signature_reopens_proven_entry",
+   "patch": "ce_reopen_lost.patch",
+   "result": "killed",
+   "mutation": "FULL_F ignores a reobserved PROVEN (node,failure_signature) identity instead of emitting PROVEN->OPEN",
+   "verification": "patch applies cleanly; bound test kills the mutation because the final event is not ledger.transitioned(PROVEN->OPEN)"
   }
  ]
 }

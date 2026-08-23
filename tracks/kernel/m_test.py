@@ -59,25 +59,52 @@ def _on_m_test_outcome_done(s: State) -> None:
         s.reviewer_produced = True
 
 
+def _on_test_baseline_captured(s: State, p: dict, ev: EventEnvelope) -> None:
+    """D-41/IF-SELECT-001 (v5): the pre-WRITE R1 snapshot is durable. Only a
+    passed capture unblocks the first Shield WRITE dispatch; a failed capture
+    is routed fail-closed by its verdict.failed(baseline_defect) companion."""
+    if p.get("status") == "passed":
+        s.baseline_captured = True
+
+
+def _on_test_selected(s: State, p: dict, ev: EventEnvelope) -> None:
+    """D-41/IF-SELECT-002: project the latest selection identity so gate
+    handlers and replay share one stamped selection per run."""
+    s.active_selection_id = p.get("selection_id")
+
+
 def _on_test_collected(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-01.5/.6: passed -> PRISM_REVIEW; failed -> WRITE (re-dispatch Shield).
+    # D-41 v3 timing (flow.md §9.1): passed -> RED_CHECK (Runtime selects and
+    # executes R2 before Prism sees the run); failed -> WRITE (re-dispatch
+    # Shield).
     if p["status"] == "passed":
         s.test_collected = True
-        s.substate = "PRISM_REVIEW"
-        _reset_review(s)
+        s.substate = "RED_CHECK"
     else:
         s.test_collected = False
         s.substate = "WRITE"
         _reset_doc(s)
-        _consume_attempt(s)  # shared <=3 budget
+        # FRB-K2: a REMOVED collect failure carrying the executor's forward
+        # companion marker (companion == "test_defect") defers this round's
+        # single attempt charge to its companion verdict.failed(test_defect);
+        # any other failed collect consumes here.
+        if p.get("companion") != "test_defect":
+            _consume_attempt(s)  # shared <=3 budget
 
 
 def _on_red_validated(s: State, p: dict, ev: EventEnvelope) -> None:
-    # SM-01.9/.10: valid -> EXIT; invalid -> DIAGNOSE.
+    # D-41 v3 timing: valid -> PRISM_REVIEW (Prism consumes the current-tree
+    # red evidence); invalid -> DIAGNOSE. The FR-0244 empty-Shield hotfix
+    # increment bypass (emitted at the WRITE dispatch, basis=unit-only) keeps
+    # its direct release route to EXIT -- no Prism round on an empty increment.
     s.red_findings = p.get("findings")
     if p["status"] == "valid":
         s.red_validated = True
-        s.substate = "EXIT"
+        if p.get("basis") == "unit-only hotfix increment":
+            s.substate = "EXIT"
+        else:
+            s.substate = "PRISM_REVIEW"
+            _reset_review(s)
     else:
         s.red_validated = False
         s.substate = "DIAGNOSE"
@@ -111,7 +138,16 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
     - ``criteria_pack_mismatch`` (PRISM_REVIEW): re-dispatch Prism, consume
       the shared <=3 budget (anti-self-report triple, D-29).
     - ``trace`` (EXIT, SM-01.15): re-dispatch Shield (WRITE), consume budget.
-    - ``test_defect`` (DIAGNOSE, SM-01.11): re-dispatch Shield (WRITE), consume.
+    - ``baseline_defect``: rollback M-DESIGN, no Human, no attempt charge.
+    - ``contract_error`` with ``target_stage=M-DESIGN`` (FRB-K1): the
+      executor's fail-closed companion to red.validated(invalid) over an
+      unusable tree -- same upstream/design route as baseline_defect:
+      rollback M-DESIGN, never a Shield re-dispatch, no attempt charge.
+    - ``test_defect`` (DIAGNOSE, SM-01.11): re-dispatch Shield (WRITE),
+      consume exactly once as an ordinary rewrite round. For the REMOVED
+      collect/verdict pair (FRB-K2) the collect half defers via its forward
+      ``companion="test_defect"`` marker and THIS verdict is the pair's one
+      charge; an unmarked test_defect verdict is its own round's only charge.
     - ``stub_gap`` (DIAGNOSE, SM-01.12): rollback M-DESIGN, no Human.
     - ``ac_gap``/``spec_gap`` (DIAGNOSE, SM-01.13): await Human approval, then
       rollback M-ACC / M-SPEC.
@@ -120,6 +156,21 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
     if check == "criteria_pack_mismatch":
         _reset_review(s)
         _consume_attempt(s)
+        return
+    if check == "baseline_defect":
+        # D-41 (v5): the inherited tree was already un-importable BEFORE the
+        # first Shield WRITE -- an upstream/design/contract defect. Route
+        # fail-closed to M-DESIGN rollback; never re-dispatch Shield and never
+        # silently continue with a vacated R1 snapshot.
+        s.diagnose_classification = "stub_gap"
+        s.substate = "DIAGNOSE"
+        return
+    if check == "contract_error" and p.get("target_stage") == "M-DESIGN":
+        # FRB-K1: contract_error(rollback -> M-DESIGN) mirrors baseline_defect:
+        # an unusable tree is an upstream defect discovered before any agent
+        # wrote -- rollback without burning the shared attempt budget.
+        s.diagnose_classification = "stub_gap"
+        s.substate = "DIAGNOSE"
         return
     if check in ("trace", "commit"):
         # trace: SM-01.15 — re-dispatch Shield (WRITE), consume budget.
@@ -142,6 +193,10 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
     if classification == "test_defect":
         s.substate = "WRITE"
         _reset_doc(s)
+        # FRB-K2: always consume exactly once, as an ordinary rewrite round.
+        # A paired collect half (companion marker) deferred its consume to
+        # THIS verdict; an unmarked test_defect verdict is its round's only
+        # charge. No latent pairing state is consulted or left behind.
         _consume_attempt(s)
     elif classification == "stub_gap":
         # rollback M-DESIGN -- decide() produces rollback_stage(M-DESIGN)
@@ -228,6 +283,47 @@ def _m_test_prism_dispatch(s: State) -> Command:
     return Command(kind="dispatch_agent", params=params)
 
 
+def _m_test_dispatch_route(s: State) -> Command:
+    """DISPATCH route (SM-01.2): first Shield dispatch.
+
+    D-41 (v5): the pre-WRITE R1 snapshot is captured BEFORE the first
+    Shield WRITE dispatch (stage.entered < test.baseline_captured < first
+    Shield WRITE, event-order guarantee).
+    """
+    if not s.baseline_captured:
+        return Command(kind="capture_baseline", params={"stage": "M-TEST"})
+    return _m_test_shield_dispatch(s)
+
+
+def _m_test_write_route(s: State) -> Command | None:
+    """WRITE re-dispatch routes (SM-01.4/.6/.8/.11/.15).
+
+    Re-dispatch cycles must never run ahead of the stamped capture; an
+    in-flight Shield outcome halts decide().
+    """
+    if not s.baseline_captured:
+        return Command(kind="capture_baseline", params={"stage": "M-TEST"})
+    if s.doc_dispatched:
+        return None  # awaiting Shield outcome
+    return _m_test_shield_dispatch(s)
+
+
+def _m_test_review_route(s: State) -> Command | None:
+    """PRISM_REVIEW route (SM-01.7): await an in-flight verdict or dispatch."""
+    if s.reviewer_dispatched:
+        return None  # awaiting Prism verdict
+    return _m_test_prism_dispatch(s)
+
+
+def _m_test_returned_route(s: State) -> Command:
+    """RETURNED route: SM-01.13 Human-approved rollback or SM-05.7 escalation
+    return (human_return)."""
+    reason = "human_return" if s.returned else "diagnose_rollback"
+    return Command(
+        kind="rollback_stage", params={"to_stage": s.return_target, "reason": reason}
+    )
+
+
 def _decide_m_test(s: State, sub: str) -> Command | None:
     """M-TEST explicit control flow (architecture.md §1.2, SM-01).
 
@@ -235,17 +331,13 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
     Command; substates not listed produce None (halt / awaiting result).
     """
     if sub == "DISPATCH":
-        return _m_test_shield_dispatch(s)  # SM-01.2: first Shield dispatch
+        return _m_test_dispatch_route(s)
     if sub == "WRITE":
-        if s.doc_dispatched:
-            return None  # awaiting Shield outcome
-        return _m_test_shield_dispatch(s)  # SM-01.4/.6/.8/.11/.15 re-dispatch
+        return _m_test_write_route(s)
     if sub == "COLLECT":
         return Command(kind="collect_tests", params={"stage": "M-TEST"})  # SM-01.5
     if sub == "PRISM_REVIEW":
-        if s.reviewer_dispatched:
-            return None  # awaiting Prism verdict
-        return _m_test_prism_dispatch(s)  # SM-01.7
+        return _m_test_review_route(s)
     if sub == "RED_CHECK":
         return Command(kind="run_tests", params={"stage": "M-TEST"})  # SM-01.9
     if sub == "EXIT":
@@ -255,10 +347,7 @@ def _decide_m_test(s: State, sub: str) -> Command | None:
     if sub == "RETURNED":
         # SM-01.13: Human approved ac_gap/spec_gap rollback (diagnose_rollback)
         # or SM-05.7: Human return from escalation (human_return).
-        reason = "human_return" if s.returned else "diagnose_rollback"
-        return Command(
-            kind="rollback_stage", params={"to_stage": s.return_target, "reason": reason}
-        )
+        return _m_test_returned_route(s)
     return None
 
 

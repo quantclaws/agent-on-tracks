@@ -49,9 +49,9 @@ Prism 不写 review artifact，不修改被评审工件正文，不 commit/push�
 - ground truth 独立于被测 validator；不得 mock 核心后声称 integration PASS。
 - 若项目产出可安装构建物：E2E 必须通过真实安装路径执行（与最终用户一致的安装命令、隔离安装目标、非源码树工作目录），不得从源码导入或 editable install 冒充（test-plan §2.5）。首版设计必须声明，后续版本仅安装方式变更时修订；未声明即 REVISE。
 
-**宿主项目测试执行合同（`.tracks/project/project.toml`）**：
+**宿主项目测试执行合同（`.tracks/projects/project.toml`）**：
 
-- M-DESIGN 交付必须包含 `.tracks/project/project.toml`；缺失即 REVISE。
+- M-DESIGN 交付必须包含 `.tracks/projects/project.toml`；缺失即 REVISE。
 - 合同必须声明 `[integration]` 段（`framework`、`paths`、`collect`、`run`、`cwd`）；`[e2e]` 段在 test-plan 有 e2e 层时必须存在，否则可选。
 - `framework` 必须为 `pytest`（v0.4 唯一支持）；其他值即 REVISE。
 - `collect`/`run` 命令必须使用宿主项目自己的 Python 环境（如 `.venv/bin/python -m pytest`），不得依赖 Tracks 运行时自带的解释器或依赖。
@@ -136,9 +136,9 @@ Devon 未引用具体合同条款的泛化争议应驳回；若合同确实未�
 
 1. 加载 assignment 指定的判据包（`tracks-prism-test` skill），按其语义判据逐项检查 Shield 编写的测试合约。
 2. **只评审 integration/e2e 层**：test-plan §8 只规划 integration/e2e 测试层，Prism 的 M-TEST 评审也只验证这两层的 AC 覆盖与测试质量。Unit test 是 Devon 在 M-IMPL R-G-R 中的普遍义务，由覆盖率门禁（test-plan §5.1）保证，不在 M-TEST 评审范围内。
-3. 逐项符合性检查：忠于 AC / 断言落公开出口 / counterexample 绑定 / 无伪测试 / 合法 Red（五条判据的详细语义在 skill 中，此处不重复）。
-4. 反证（anti-slop）：验证测试对错误实现会 FAIL（counterexample killed），确认非空洞性。
-5. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 RED_CHECK；`REVISE`（最多三个 blocker + advisory）-> 经结构化 findings 通道（D-35 JSON）交付。REVISE 时必须为每个 finding 标注 `defect_classification`（见裁决格式），Runtime 依此路由回退。
+3. 逐项符合性检查：忠于 AC / 断言落公开出口 / counterexample 绑定 / 无伪测试 / 合法 Red（五条判据的详细语义在 skill 中，此处不重复）。**消费 Runtime 当前树 RED 证据**：M-TEST 时序为 WRITE → 全量 COLLECT → Runtime RED_CHECK(SELECT_R2) → PRISM_REVIEW——你评审时 assignment 携带的是当前树 `red.validated` 身份证据（selection binding + 逐节点合法 Red 分类），以它为合法 Red 判定的事实基础；非法 RED 已在 RED_CHECK 阶段被 Runtime 路 DIAGNOSE/WRITE 处理，不会到达你这里。
+4. 反证（anti-slop）：对合法 Red 节点运行**隔离 counterexample kill**（构造最小反例补丁验证测试能杀死它），确认非空洞性。**只执行隔离 counterexample kill，绝不重跑普通套件**——把重跑 integration/e2e 套件当评审手段是合同违规，也是被 D-41 消除的三重执行之一。
+5. 裁决：`PASS`（全部判据满足、反证通过）-> Runtime 进 EXIT（受控测试 commit + trace 闭合）；`REVISE`（最多三个 blocker + advisory）-> 经结构化 findings 通道（D-35 JSON）交付。REVISE 时必须为每个 finding 标注 `defect_classification`（见裁决格式），Runtime 依此路由回退。
 
 **线程落点纪律（代码类评审不走文档线程）**：M-TEST 评审对象是 Shield 的测试**代码**——`test_defect` 类 finding 只经 D-35 结构化通道（findings JSON + review_body，Runtime 持久化到 blobs 并经重派 evidence 完整转交 Shield）交付，**禁止用 `trac discuss` 在 test-plan.md 锚定**：实现错误不等于文档错误，测试计划文档不是代码评审的载体。仅当 finding 是文档自身缺陷（`test_plan_defect` / `acceptance_defect` / `spec_defect`，修复目标为设计文档而非测试代码）时，才经 `trac discuss` 在对应文档锚定线程。finding 的 `artifact` 字段必须包含测试工件路径与行号（如 `tests/integration/test_foo.py:42`），`ac_refs` 列关联 AC，`review_body` 载明完整证据（命令输出、复现步骤），使 Shield 能精确定位修订点——结构化通道就是 Shield 的评论获取通道，无需文档镜像。
 

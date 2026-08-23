@@ -147,6 +147,65 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
     return "unclassified"
 
 
+def classify_red_detail(detail: str, status: str | None = None) -> str:
+    """D-41 (v6) per-node legal-Red classification over the ``{result}`` JUnit
+    failure/error detail (IF-RUNCONTRACT-001; stdout/stderr are never the
+    authority). Same closed taxonomy as :func:`classify_red`, plus the final
+    review status-awareness pin (FA-1):
+
+    - stub token / symbol-missing keywords -> legit Red (explicit contract
+      tokens stay legit even on ``<error>`` records);
+    - infrastructure/collection keywords are checked BEFORE AssertionError:
+      an infra failure that merely mentions an assertion never reads as
+      behavioral Red;
+    - an ``<error>``-status record (``status="error"``) is ALWAYS illegit
+      (``collection_error``) unless an explicit contract stub-token or
+      symbol-missing keyword applies -- a setup/fixture/import error is
+      never the behavioral-Red default;
+    - passed/skipped records are classified by the caller (``unexpected_pass``);
+    - a FAILED record with no explicit assertion/stub-token/symbol keyword is
+      NOT a behavioral Red by default (FRB-A): an ordinary failure message
+      such as ``ValueError: body blew up`` carries no contract signal, so it
+      defaults to the illegit ``unclassified`` and enters DIAGNOSE;
+    - callers without a JUnit record status (``status=None``) keep the legacy
+      behavioral-Red default (``assertion_failure``).
+    """
+    combined = detail or ""
+    if 'NotImplementedError("IF-' in combined or "NotImplementedError('IF-" in combined:
+        return "stub_token_failure"
+    for kw in _ILLEGIT_KEYWORDS:
+        if kw in combined:
+            return "collection_error"
+    if "AssertionError" in combined or _ASSERT_E_LINE.search(combined):
+        return "assertion_failure"
+    if "AttributeError" in combined or "NameError" in combined:
+        return "symbol_missing"
+    if status == "error":
+        # An error-status record is a collection/setup/import failure, never
+        # a validated behavioral Red (final review pin FA-1).
+        return "collection_error"
+    if status == "failed":
+        # FRB-A: an ordinary failed record (no assertion/E-line, no stub
+        # token, no symbol keyword) is not a legit behavioral Red.
+        return "unclassified"
+    return "assertion_failure"
+
+
+def parse_collected_nodes(stdout: str) -> list[str]:
+    """Parse pytest ``--collect-only -q`` stdout into node ids (D-41).
+
+    One node id per line (``path.py::func[param]``); trailer/summary lines
+    without a ``::`` separator are ignored. Order follows the collector's
+    output; callers sort before canonical use.
+    """
+    nodes = []
+    for line in (stdout or "").splitlines():
+        node = line.strip()
+        if "::" in node and not node.startswith("=") and not node.startswith("_"):
+            nodes.append(node)
+    return nodes
+
+
 def _parse_collected_count(stdout: str) -> int:
     """Parse the test count from pytest --collect-only -q output.
 

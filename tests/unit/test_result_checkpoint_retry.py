@@ -53,13 +53,23 @@ from tracks.kernel import decide, project
         # M-TEST/WRITE is an author substate with requires_diff=True; in v0.5
         # no_diff routes through no_diff.detected peer review and surfaces as
         # no_diff_justified (post-review rejection), not direct no_diff.
-        ("M-TEST", "WRITE", "shield", [], "no_diff_justified"),
+        # D-41 v3: the pre-WRITE R1 snapshot gates any Shield re-dispatch.
+        (
+            "M-TEST",
+            "WRITE",
+            "shield",
+            [("test.baseline_captured", {"status": "passed"})],
+            "no_diff_justified",
+        ),
         (
             "M-TEST",
             "PRISM_REVIEW",
             "prism",
             [
+                ("test.baseline_captured", {"status": "passed"}),
+                # D-41 v3 timing: PRISM_REVIEW is entered from a valid RED_CHECK.
                 ("test.collected", {"status": "passed"}),
+                ("red.validated", {"status": "valid"}),
             ],
             "no_diff",
         ),

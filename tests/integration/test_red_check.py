@@ -72,10 +72,11 @@ def test_all_pass_does_not_exit(trac, event_log):
     assert "awaiting=escalation" in r.stdout
 
 
-# AC-FR0050-07@v0.4 TRACKS-TRACE mixed section per-section classification
+# AC-FR0050-07@v0.4 TRACKS-TRACE mixed red per-section classification
 def test_mixed_red_per_section(trac, event_log):
     """R1-01: integration section legit (assertion_failure) + e2e section
-    illegit (collection_error) -> overall invalid -> DIAGNOSE."""
+    illegit (collection_error) -> overall invalid -> DIAGNOSE. D-41 (v6):
+    findings are per-node from the {result} JUnit records, keyed by nodeid."""
     run_id = walk_to_m_test(trac)
     r = trac("run", simulate="shield:WRITE=mixed_red|ok,diagnose:classification=test_defect")
     assert r.returncode == 0, r.stderr
@@ -83,10 +84,13 @@ def test_mixed_red_per_section(trac, event_log):
     red = [e for e in evs if e["type"] == "red.validated"]
     assert red[0]["payload"]["status"] == "invalid"
     findings = red[0]["payload"]["findings"]
-    # Per-section classification: integration=assertion_failure, e2e=collection_error
+    # Per-node classification: the integration node fails as a legit
+    # assertion_failure; the e2e node fails as an illegit collection_error.
     classes = {f["test_id"]: f["classification"] for f in findings}
-    assert classes.get("integration") == "assertion_failure"
-    assert classes.get("e2e") == "collection_error"
+    integration = {n: c for n, c in classes.items() if n.startswith("tests/integration/")}
+    e2e = {n: c for n, c in classes.items() if n.startswith("tests/e2e/")}
+    assert integration and set(integration.values()) == {"assertion_failure"}
+    assert e2e and set(e2e.values()) == {"collection_error"}
     # DIAGNOSE -> test_defect -> re-dispatch -> eventually completes
     completed = [e for e in evs if e["type"] == "run.completed"]
     assert completed

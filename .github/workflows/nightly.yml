@@ -1,0 +1,37 @@
+# Nightly FULL-suite regression workflow (root-contract [nightly] concept).
+#
+# The concurrently-owned root .tracks/projects/project.toml declares the
+# authoritative [nightly] contract (schedule 0 3 * * *, job
+# nightly-regression, layers unit/integration/e2e). This workflow file is the
+# executable deliverable and uses the same Archer-owned concurrency policy.
+#
+# Scope: current FULL pytest regression (unit + integration + e2e fake
+# channel). Deliberately EXCLUDED (comments only, per contract):
+# - required-check gating: nightly is NOT a merge gate (ci.yml owns those).
+# - result-fetch / e2e_live channel: future work; needs credentials and a
+#   results publication surface.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly-regression:
+    name: nightly-regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: install dev deps
+        run: pip install -e '.[dev]'
+      # FULL regression over all three declared layers.
+      - name: pytest full regression
+        run: pytest tests/unit tests/integration tests/e2e -q -m 'not performance' -n 8 --dist loadscope

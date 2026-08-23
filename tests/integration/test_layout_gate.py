@@ -17,18 +17,29 @@ from tracks.store import new_ulid
 
 
 def _contract(layout_ok):
-    body = (
-        "\n".join(
+    def section(name):
+        return "\n".join(
             [
-                "[integration]",
+                f"[{name}]",
                 'framework = "pytest"',
-                'paths = ["tests/integration/"]',
-                'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"',
-                'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"',
+                f'paths = ["tests/{name}/"]',
+                f"collect = \".venv/bin/python -m pytest --collect-only -q tests/{name}/\"",
+                f"run = \".venv/bin/python -m pytest tests/{name}/ --tb=short -q "
+                '--junitxml={result}"',
+                "run_selected = \".venv/bin/python -m pytest {nodes} --tb=short -q "
+                '--junitxml={result}"',
                 'cwd = "."',
             ]
         )
-        + "\n"
+
+    body = (
+        "\n".join([section("unit"), "", section("integration"), "", section("e2e")])
+        + "\n\n[nightly]\n"
+        + 'schedule = "0 3 * * *"\n'
+        + 'workflow = ".github/workflows/nightly.yml"\n'
+        + 'job = "nightly-regression"\n'
+        + 'layers = ["unit", "integration", "e2e"]\n'
+        + 'purpose = "scheduled FULL-suite regression"\n'
     )
     if layout_ok:
         body += (

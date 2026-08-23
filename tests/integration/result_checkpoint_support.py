@@ -127,18 +127,37 @@ def _setup_m_test(tmp_path):
     repo, home, store, run_id, vdir = _init_workspace(tmp_path, "v0.4")
     contract_path = paths.project_toml_path(home)
     contract_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def section(name):
+        return (
+            f"[{name}]\n"
+            'framework = "pytest"\n'
+            f'paths = ["tests/{name}/"]\n'
+            f'collect = "{sys.executable} -m pytest --collect-only -q tests/{name}/"\n'
+            f'run = "{sys.executable} -m pytest -q tests/{name}/ --junitxml={{result}}"\n'
+            f'run_selected = "{sys.executable} -m pytest {{nodes}} -q '
+            '--junitxml={result}"\n'
+            'cwd = "."\n\n'
+        )
+
     contract_path.write_text(
-        "[integration]\n"
-        'framework = "pytest"\n'
-        'paths = ["tests/integration/"]\n'
-        f'collect = "{sys.executable} -m pytest --collect-only -q '
-        'tests/integration/"\n'
-        f'run = "{sys.executable} -m pytest -q tests/integration/"\n'
-        'cwd = "."\n\n'
+        section("unit")
+        + section("integration")
+        + section("e2e")
+        + '[nightly]\n'
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "current FULL suite; not a local gate"\n\n'
         '[layout.shield]\n'
         'writable = ["tests/"]\n',
         encoding="utf-8",
     )
+    # The legacy support-only collection gate executes integration + e2e.
+    # Keep e2e a legal empty declared layer (pytest rc=5), while leaving the
+    # integration path absent so tests can still exercise its fail-closed case.
+    (repo / "tests" / "e2e").mkdir(parents=True, exist_ok=True)
     (vdir / "test-plan.md").write_text(
         "# Test Plan\n\n## 8. AC Coverage\n\n"
         "| AC id | layer | test | IF |\n|---|---|---|---|\n"
@@ -151,6 +170,29 @@ def _setup_m_test(tmp_path):
     )
     store.append(run_id, "v0.4", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.4", "stage.entered", {"stage": "M-TEST"})
+    # D-41 v3 entry order: the pre-WRITE R1 snapshot capture precedes the
+    # first Shield WRITE dispatch.
+    store.append(
+        run_id,
+        "v0.4",
+        "command.issued",
+        {"command": {"kind": "capture_baseline", "params": {"stage": "M-TEST"}}},
+    )
+    store.append(
+        run_id,
+        "v0.4",
+        "test.baseline_captured",
+        {
+            "status": "passed",
+            "baseline_id": "b0",
+            "baseline_tree": "t0",
+            "layers": ["unit", "integration", "e2e"],
+            "nodes_count": 0,
+            "empty_baseline": True,
+            "node_digest_blob": None,
+            "errors": [],
+        },
+    )
     return Executor(store, repo, run_id), store, run_id
 
 

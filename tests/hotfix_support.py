@@ -89,11 +89,15 @@ def seed_host_issues(host_repo: Path, seed: dict[str, dict] | None = None) -> Pa
 def seed_project_contract(host_repo: Path) -> Path:
     """Write the host ``.tracks/projects/project.toml`` execution contract.
 
-    Mirrors the Archer-produced contract (test-plan §2.3.1, FR-0190/FR-0120).
-    The hotfix run's M-DESIGN EXIT layout gate (``validate_layout``,
-    tracks/project.py) requires the contract to already exist with non-empty
-    ``[layout.devon]`` / ``[layout.shield]`` writable lists; the M-TEST
-    collect/RED_CHECK commands consume the ``[integration]`` / ``[e2e]``
+    Mirrors the Archer-produced contract (test-plan §2.3.1, FR-0190/FR-0120)
+    in the D-41 atomic schema shape (interfaces §1m/§1n): flat
+    unit/integration/e2e sections each declaring collect/run/run_selected with
+    the ``{result}`` placeholder (run_selected also ``{nodes}``), plus the
+    ``[nightly]`` contract; concurrency/junit flags are embedded in the
+    command strings. The hotfix run's M-DESIGN EXIT layout gate
+    (``validate_layout``, tracks/project.py) requires the contract to already
+    exist with non-empty ``[layout.devon]`` / ``[layout.shield]`` writable
+    lists; the M-TEST baseline-capture/COLLECT/RED_CHECK commands consume the
     run contracts the same way the real host repo does.  The fixture data
     (not any implementation output) is the truth source (test-plan §2.3.1
     '合同文件已存在且内容不变'; §3.1 row 3).
@@ -101,19 +105,31 @@ def seed_project_contract(host_repo: Path) -> Path:
     home = paths.tracks_home(host_repo)
     toml = paths.project_toml_path(home)
     toml.parent.mkdir(parents=True, exist_ok=True)
+
+    def section(name: str) -> str:
+        return (
+            f"[{name}]\n"
+            'framework = "pytest"\n'
+            f'paths = ["tests/{name}/"]\n'
+            f"collect = \".venv/bin/python -m pytest --collect-only -q tests/{name}/\"\n"
+            f"run = \".venv/bin/python -m pytest tests/{name}/ --tb=short -q "
+            '--junitxml={result}"\n'
+            "run_selected = \".venv/bin/python -m pytest {nodes} --tb=short -q "
+            '--junitxml={result}"\n'
+            'cwd = "."\n\n'
+        )
+
     toml.write_text(
-        "[integration]\n"
-        'framework = "pytest"\n'
-        'paths = ["tests/integration/"]\n'
-        'collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"\n'
-        'run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q"\n'
-        'cwd = "."\n\n'
-        "[e2e]\n"
-        'framework = "pytest"\n'
-        'paths = ["tests/e2e/"]\n'
-        'collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"\n'
-        'run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q"\n'
-        'cwd = "."\n\n'
+        section("unit")
+        + section("integration")
+        + section("e2e")
+        + "[nightly]\n"
+        + 'schedule = "0 3 * * *"\n'
+        + 'workflow = ".github/workflows/nightly.yml"\n'
+        + 'job = "nightly-regression"\n'
+        + 'layers = ["unit", "integration", "e2e"]\n'
+        + "purpose = \"current FULL suite (R1+R2) regression; result fetch future; "
+        'not a local gate"\n\n'
         "[layout]\n\n"
         "[layout.devon]\n"
         'writable = ["tracks/", "tests/unit/"]\n\n'
@@ -121,6 +137,15 @@ def seed_project_contract(host_repo: Path) -> Path:
         'writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]\n',
         encoding="utf-8",
     )
+    # Review-1 pairing (mirror of fake Archer's contract writer): a declared
+    # layer's collect command must see a COLLECTABLE path. Without the
+    # working-tree directory pytest exits rc=4 (file or directory not found)
+    # -- a broken declaration that fails M-TEST collect closed -- instead of
+    # the legal rc=5 empty declared layer. Materialize each declared layer
+    # directory with the contract itself (git does not track empty dirs, but
+    # the working-tree presence is what collect consumes).
+    for name in ("unit", "integration", "e2e"):
+        (host_repo / "tests" / name).mkdir(parents=True, exist_ok=True)
     return toml
 
 

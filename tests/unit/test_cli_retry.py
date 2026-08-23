@@ -17,6 +17,8 @@ def _seed_escalation(store, run_id, version="v0.1"):
     """M-TEST awaiting=escalation: 3x no_diff_justified Shield cycles."""
     store.append(run_id, version, "story.requested", {"raw_chars": 1})
     store.append(run_id, version, "stage.entered", {"stage": "M-TEST"})
+    # D-41 v3: the pre-WRITE R1 snapshot precedes the Shield WRITE dispatches.
+    store.append(run_id, version, "test.baseline_captured", {"status": "passed"})
     for attempt in range(1, 4):
         store.append(
             run_id,

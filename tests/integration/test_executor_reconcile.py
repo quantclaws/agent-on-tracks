@@ -350,6 +350,29 @@ def _setup_m_test(tmp_path):
     )
     store.append(run_id, "v0.4", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.4", "stage.entered", {"stage": "M-TEST"})
+    # D-41 v3 entry order: the pre-WRITE R1 snapshot capture precedes the
+    # first Shield WRITE dispatch.
+    store.append(
+        run_id,
+        "v0.4",
+        "command.issued",
+        {"command": {"kind": "capture_baseline", "params": {"stage": "M-TEST"}}},
+    )
+    store.append(
+        run_id,
+        "v0.4",
+        "test.baseline_captured",
+        {
+            "status": "passed",
+            "baseline_id": "b0",
+            "baseline_tree": "t0",
+            "layers": ["unit", "integration", "e2e"],
+            "nodes_count": 0,
+            "empty_baseline": True,
+            "node_digest_blob": None,
+            "errors": [],
+        },
+    )
     return Executor(store, repo, run_id), store, run_id
 
 
@@ -374,7 +397,14 @@ def test_issue_shield_write_enriches_assignment_with_test_tasks(tmp_path):
         command_id=new_ulid(),
     )
     ex.issue(cmd)
-    issued = [e for e in store.events(run_id) if e.type == "command.issued"]
+    issued = [
+        e
+        for e in store.events(run_id)
+        if e.type == "command.issued"
+        and e.payload["command"]["kind"] == "dispatch_agent"
+        and e.payload["command"]["params"].get("role") == "shield"
+        and e.payload["command"]["params"].get("substate") == "WRITE"
+    ]
     assert len(issued) == 1
     params = issued[0].payload["command"]["params"]
     tasks = params["assignment"].get("test_tasks")

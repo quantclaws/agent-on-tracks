@@ -181,6 +181,104 @@ sha: c8ab04cc07dfe4b485f119e1027ef3abb169d5bef5f46848379e23b45ef6e258
   - 作为产品决定请求 Human：退出路由前出现 Human 决定证据（`human.review` / `human.approval` 之一作为前置，区别于设计缺口的内部闭环 FR-0247）
   - 被判定为新行为的 issue 不再以 hotfix 身份继续：hotfix run 不继续派发 M-TEST/M-IMPL；该 issue 后续走 feature release 补齐程序行为规范（具体 feature 流程不在本 spec，但 hotfix run 不残留半建 run、不创建 `fix/{issue}` 之后的新提交作为发布证据）
 
+## FR-0250 测试执行选择语义：全量 collect 与 R2/T-DELTA 差分执行
+
+### AC-FR0250-01
+
+  - 节点分类程序化且可审计（逐节点 digest，非整文件）：R2/T-DELTA 恰好且仅为新增节点或同一 nodeid 节点源/体 digest 变化（无依赖声明归因项）；R1/T-HIST = baseline 节点且 digest 未变化；分类由 Runtime 判定并落事件，分类依据（baseline 冻结测试资产的逐节点 digest + 本次变更声明）经 `trac replay` / `trac report` 可追溯；同输入复跑分类一致；同一文件内未变化兄弟节点保持 R1/T-HIST（整文件 digest 分类 = 缺陷，不得把未变兄弟节点翻成 R2 再以意外通过失败）
+  - R1 快照机制可执行且来源唯一（v5）：进入 M-TEST 时、本 run 首个 Shield WRITE 派发之前，Runtime 持久化 `test.baseline_captured(passed)`——对继承测试树做 unit+integration+e2e 全量 collect，payload 含 stamped baseline/tree identity（`baseline_id`）、三层 layers、节点计数与逐节点 digest blob；事件 seq 先于本 run 首个 Shield WRITE 派发；WRITE 后 COLLECT 的分类以该快照为唯一 baseline 来源（`test.selected.baseline == test.baseline_captured.baseline_id` 可复核）——既非既往 run 事件猜测、也非 WRITE 后可变树重算；首次项目可合法捕获空集（`empty_baseline=true` 仅由成功 capture 产生），COLLECT 分类时刻缺失 passed 快照 = fail-closed；capture 中任一层 collect/import 失败 = 上游/设计/合同缺陷 fail-closed 路由（不静默空置 R1、不重派 Shield）；中断/重启/replay 复用同一 stamped capture
+  - COLLECT 为全量（unit+integration+e2e 三层）：`test.collected(passed)` payload 含全部可 collect 节点计数并区分 inherited(R1)/delta(R2) 两类——历史 unit 节点计入 inherited_r1 并出现在逐节点分类表（class=r1, layer=unit）；变更 support/fixture 同样参与 collect/import；任一节点 collect 失败 -> `test.collected(failed)` 回 Shield（既有子状态机），不放行带不可 collect 节点的基线
+
+### AC-FR0250-02
+
+  - M-TEST 时序（v3，v5 增补入口）：`入口 baseline capture(pre-WRITE) -> WRITE -> 全量 COLLECT -> RED_CHECK(SELECT_R2) -> PRISM_REVIEW -> EXIT`——事件流中 `test.baseline_captured` 先于本 run 首个 Shield WRITE 派发、`red.validated` 先于 `prism.verdict`；RED_CHECK 非法失败/意外通过在 Prism 之前路由 DIAGNOSE/WRITE
+  - RED_CHECK 本地执行仅限实际 R2/T-DELTA：执行前出现 `test.selected`（scope=r2_delta，payload 含选择依据 + 被选节点集合 + baseline/commit = selection identity）；每条执行/`red.validated` 证据的被选节点集合 ⊆ R2/T-DELTA 且逐节点判定合法 Red（判据不变：行为断言失败/桩合同 token 失败/symbol 缺失）
+  - feature M-TEST 的 R2 选择集为空 = fail-closed（不产出合法 Red 判定、不 vacuous 通过；hotfix unit-only 显式增量声明的放行旁路保留，AC-FR0244-04）
+  - M-TEST 永不全量：M-TEST 阶段事件流与执行审计无任何 R1/T-HIST 节点的本地执行记录（含历史 unit 节点——unit 仅参与 collect 分类，不被 M-TEST 执行；当前完整 FULL 套件 R1+R2 的夜间回归归 nightly CI contract，FR-0255）；`trac status` / `trac replay` 可复核"M-TEST 无本地全量执行"
+
+### AC-FR0250-03
+
+  - PRISM_REVIEW 在 RED_CHECK 之后消费 Runtime **当前树**证据：Prism 评审引用 `red.validated` 证据 identity（selection binding）并运行隔离 counterexample kill（反例构造与结论可追溯）；PRISM_REVIEW 期间事件流无普通套件重跑的执行记录（评审不以重跑套件为手段）
+
+### AC-FR0250-04
+
+  - baseline 历史节点缺失于本次全量 collect = fail-closed 测试资产删除（本版无授权删除路径）：`test.collected(failed)`（error_class=asset_deleted）路由为 test contract defect（DIAGNOSE → Shield），M-TEST 不产出合法 Red 判定、不退出；静默注销/排除该历史节点（不计失败、继续门禁）为缺陷行为
+
+## FR-0251 task 级 GREEN 选择（per-task SELECT_TASK）
+
+### AC-FR0251-01
+
+   - 每 task GREEN_GATE 前出现 `test.selected`（scope=task_if，payload 含 task id、task IF 集合、被选节点集合、baseline/commit）；被选集 = 该 task 不可变 R commit 的 Runtime 捕获 RED artifact manifest 与 GREEN-touched unit 文件导出的 targeted unit 节点 + 命中本 task IF 集合的 integration 节点（test-plan §8 IF 行只含 integration/e2e，unit 归属不经 §8）
+  - 被选集不含 e2e、不含 R1/T-HIST 全量（e2e 的本地执行仅出现在 FULL 链事件中，FR-0253）；GREEN_GATE 通过判定只依据该被选集的执行证据，且证据绑定该 selection identity
+
+### AC-FR0251-02
+
+  - 上游变化（task IF 集合或 baseline 变化）使既有 SELECT_TASK 选择及其证据 stale：stale 证据不被复用为通过依据，GATE 按新 identity 重新选择并重跑同 scope（新 `test.selected` 与新执行证据可见）
+
+## FR-0252 REFACTOR 阶段的 identity 绑定证据复用
+
+### AC-FR0252-01
+
+  - identity 未变（`refactor.no_change` outcome 或工作区内容 digest 与 Green commit 一致）-> 事件流出现 `evidence.reused`（kind=green，payload 引用被复用 Green 证据的 evidence identity）；REFACTOR_GATE 无新的测试执行事件即通过（committed | no_change 语义不变）
+
+### AC-FR0252-02
+
+  - identity 有变化 -> 按同一 selection scope 重跑（同 task IF 的 targeted unit + integration）：新 `test.selected`（selection identity 更新）与新执行证据（绑定新 attempt/actor）可见；不出现跨 scope 复用旧证据的放行
+
+### AC-FR0252-03
+
+  - 复用与重跑判定程序化且落事件（判定依据 = 内容 identity 比对，非 Agent 自述）；REFACTOR 动 public interface -> upstream 路由不变（既有子状态机语义）
+
+## FR-0253 FULL 链收敛与失败台账（FULL_1 → 台账 → SELECT_DIFF → FULL_F）
+
+### AC-FR0253-01
+
+   - 全部 task 完成后 ISLAND_GATE_2 进入 FULL 链：首个事件 `full.executed`（round=FULL_1，suite=unit+integration+e2e）；FULL_1 每个失败节点生成一条台账事件 `ledger.opened`（state=OPEN，绑定节点身份 + failure_signature + selection identity + evidence identity）；台账身份 = `(node, failure_signature)`——同一节点新 signature 新建身份，同一 signature 重启先前身份
+   - FULL_1 干净且台账为空 -> 同一 stamp 的 `full.executed`（round=FULL_1）标注 `serves_as_full_f=true` 直接充当 FULL_F，M-IMPL 照常出口（`stage.exited(M-IMPL)`）；事件流中不出现紧邻的等价 `full.executed`（round=FULL_F）重复执行；fallback 充当语义（AC-FR0253-04）不变
+
+### AC-FR0253-02
+
+   - 台账状态机逐转移落事件 `ledger.transitioned`（OPEN->CLASSIFIED->FIXED->PROVEN；上游变化置 STALE；闭合转移集另含 FIXED->OPEN 证明失败与 FULL_F 重现已 PROVEN 的同一 `(node, failure_signature)` -> 确定性 reopen `PROVEN->OPEN`）；分类/修复走既有 DIAGNOSE/重派路径（测试缺陷→Shield、实现缺陷→Devon、上游缺口→对应阶段），per-agent attempt 预算照旧消费（≤3/escalation 事件可见）
+
+### AC-FR0253-03
+
+   - 修复-证明循环是逐条目的：每条目到达 FIXED 后立即出现其确定性 `test.selected`（scope=select_diff，payload 含该条目身份 + 受影响节点集合 + 选择依据 = selection identity）并重跑证明——通过则该条目转移 `FIXED→PROVEN`；同签名失败则该条目转移 `FIXED→OPEN` 并重新分类/修复；多条目 union/batching 仅在每条目选择/证据可单独归因时作为可选优化出现，不构成通过前提
+   - 差分证明结果落事件可审计
+
+### AC-FR0253-04
+
+   - SELECT_DIFF 不可证明（无法给出可靠选择集）-> 回退 FULL：事件流出现 `full.executed`（round=fallback_full）；fallback 结果逐条目落转移——通过条目 `FIXED→PROVEN`、同签名失败条目 `FIXED→OPEN`；该 FULL 干净时直接充当 FULL_F（事件标注 fallback 充当关系），不再另行执行 FULL_F，M-IMPL 照常出口
+
+### AC-FR0253-05
+
+  - 全部条目 PROVEN 且无 STALE 后执行 `full.executed`（round=FULL_F）；FULL_F 出现新失败 -> 追加台账回到分类/修复循环直至干净——事件序列可含任意多轮收敛循环（无 loop-count cap、无"超限放弃"路径），仅 per-agent attempt 预算消费
+   - FULL_F 干净 -> `stage.exited(M-IMPL)`；台账存在 OPEN|CLASSIFIED|FIXED|STALE 或未知状态条目时不出现 `stage.exited(M-IMPL)`（fail-closed，NFR-0120）
+
+### AC-FR0253-06
+
+  - FULL_F 再次揭示先前已 PROVEN 的同一 `(node, failure_signature)` -> 确定性 reopen 转移 `PROVEN->OPEN`（重启先前台账身份并重证，不新建身份）；同一节点的新 failure signature -> 新台账身份（`ledger.opened` 新条目）；clean 判据与崩溃回放（NFR-0120）对 reopen 语义一致
+
+## FR-0254 M-VERIFY 对干净 FULL_F 的复用
+
+### AC-FR0254-01
+
+  - 复用规则绑定：candidate 相对 M-IMPL 干净 FULL_F 未漂移（identity 一致且相关条目无 STALE）时复用 FULL_F 证据（`evidence.reused` kind=full_f）、等待 CI 证据 `ci.run_observed(passed)` API 回读通过才退出、漂移/stale 才按 LOCAL_GATES 重跑——该 canonical 语义载于本 spec 与 flow.md §11 且 trace 一致；本版 M-VERIFY 不注册，语义随其注册后生效（同 FR-0246 发布语义处理）
+
+### AC-FR0254-02
+
+  - 本版负断言：v0.6 已注册阶段的事件流中，FULL（unit+integration+e2e 全量）的本地执行仅发生在 ISLAND_GATE_2 的 FULL 链（FR-0253）；不存在绕过复用规则、以其它名义触发的候选本地全量重跑执行记录
+
+## FR-0255 测试命令与并发的 Archer 独家所有权及 nightly CI contract
+
+### AC-FR0255-01
+
+  - 执行审计记录每次测试执行的实际命令行，与 Archer machine contract 定义的测试命令（worker/dist flag 与 `--junitxml={result}` 内嵌于命令字符串）逐字一致；审计比对程序对 contract 模板替换展开（期望 argv）与实际执行 argv 在**同一 argv0 解析规则**下解析后逐字比对——两侧解析一致才可比，不等即 fail-closed；选择执行使用 contract 声明的 `run_selected`（含 `{nodes}` 占位符）——schema 切片激活后 `run_selected` 缺失 = contract_error fail-closed，事件与执行审计无 Runtime 向 `run` 追加 nodeid 或合成调用的记录；无 Runtime 注入的 contract 之外并发参数（无 `-n`/`--dist`/worker 覆盖）——"Runtime 永不注入并发"由审计比对复核，非自述
+  - 【v6】逐节点结果机器可读通道：contract loader/validate 对每条 run/run_selected 强制 `{result}` 占位符恰好一次（run_selected 另含 `{nodes}` 恰好一次），缺失或重复 = contract_error fail-closed；事件与执行审计无 Runtime 注入的 `--junitxml` 等 junit flag（结果写入 flag 只能由 Archer 内嵌）；每次门禁执行的测试结果经 `{result}` JUnit XML 机器读取——testcase 身份恰好覆盖被选集（全量 run = collect FULL 全集），文件缺失/畸形、身份重复、被选缺席、多余节点一律 contract_error fail-closed，stdout/stderr 不作逐节点分类权威；归一化逐节点结果以 `outcomes_ref` blob 在 temp 清理前持久化并可由 `trac replay` 审计，replay 无已持久化结果时重跑该命令（不把缺失结果当通过）
+
+### AC-FR0255-02
+
+  - machine contract 含 nightly CI job contract（当前完整 FULL 套件 R1+R2 夜间回归的周期回归层，历史回归责任强调 R1/T-HIST，D-18 三层机制）：本版其存在性经 contract 文件 + `trac validate` 校验可审计（无 nightly 派发/回读事件承诺）；本版不实现 nightly 结果取回通道（spec 范围排除），本地门禁（red.validated/GREEN/FULL 链/M-VERIFY 复用）均不依赖 nightly 结果
+
 ## NFR-0100 HOTFIX-TRIAGE 确定性与 fail-closed 可审计性
 
 ### AC-NFR0100-01
@@ -215,3 +313,23 @@ sha: c8ab04cc07dfe4b485f119e1027ef3abb169d5bef5f46848379e23b45ef6e258
 ### AC-NFR0110-03
 
   - Runtime 中断或重启后必须能从 append-only 事件流恢复 hotfix run 与挂起 run 的精确状态（沿用 v0.5 AC-FR0200-01/02 可休眠与崩溃恢复语义）：重启后 `trac status` 报告的状态与中断前一致，不重跑已完成的入口子状态 / 已完成的阶段派发，从打断处继续
+
+## NFR-0120 失败台账持久性、可重建性与 fail-closed
+
+### AC-NFR0120-01
+
+  - 台账 append-only + WAL：`ledger.*` 事件先落事件流再据以判定/推进，不改写既有行；Runtime 中断/重启后由事件回放重建台账，重建状态（含 `PROVEN->OPEN` reopen 转移）与中断前一致（`trac status` / `trac report` 显示相同台账），FULL 链从重建状态精确续跑，不重复与重建状态一致的历史执行轮次
+
+### AC-NFR0120-02
+
+  - fail-closed：未知状态、缺失条目、非法转移一律不视为干净——脏台账（含未知/缺失/STALE 条目）上不跳过 FULL_F、不产出 `stage.exited(M-IMPL)`，M-VERIFY 复用不成立（FR-0254 以干净 FULL_F 为前提）；fail-closed 触发原因落事件可审计
+
+## NFR-0130 selection/evidence identity 可审计性与复用判定一致性
+
+### AC-NFR0130-01
+
+  - 每条 `test.selected` 携带完整 selection identity（选择依据 + 被选节点集合 + baseline/commit + tree_stamp 脏工作树内容 stamp）；每条执行/复用证据绑定节点身份 + selection identity + baseline/commit + attempt + actor；全部身份信息 append-only 落事件，经 `trac replay` / `trac report` 可审计
+
+### AC-NFR0130-02
+
+  - 复用判定只认 identity 一致的证据：SELECT_TASK stale 判定（FR-0251）、REFACTOR 复用 Green（FR-0252）、SELECT_DIFF 差分选择（FR-0253）与 M-VERIFY 复用 FULL_F（FR-0254）共用同一 identity 判据，identity 不一致（stale）的证据一律不作通过依据；上游变化置 STALE 的传播在各处一致可见，不由各阶段自定变体

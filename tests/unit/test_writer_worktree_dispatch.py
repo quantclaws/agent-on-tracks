@@ -231,12 +231,36 @@ def test_allowed_paths_resolve_against_worktree_root_no_overreach(tmp_path):
     contract = repo / ".tracks" / "projects" / "project.toml"
     contract.parent.mkdir(parents=True, exist_ok=True)
     contract.write_text(
+        "[unit]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/unit/"]\n'
+        'collect = "pytest --collect-only -q tests/unit/"\n'
+        'run = "pytest tests/unit/ --junitxml={result}"\n'
+        'run_selected = "pytest {nodes} --junitxml={result}"\n'
+        'cwd = "."\n'
+        "\n"
         "[integration]\n"
         'framework = "pytest"\n'
         'paths = ["tests/integration/"]\n'
-        'collect = "pytest --collect-only tests/integration"\n'
-        'run = "pytest tests/integration"\n'
+        'collect = "pytest --collect-only -q tests/integration/"\n'
+        'run = "pytest tests/integration/ --junitxml={result}"\n'
+        'run_selected = "pytest {nodes} --junitxml={result}"\n'
         'cwd = "."\n'
+        "\n"
+        "[e2e]\n"
+        'framework = "pytest"\n'
+        'paths = ["tests/e2e/"]\n'
+        'collect = "pytest --collect-only -q tests/e2e/"\n'
+        'run = "pytest tests/e2e/ --junitxml={result}"\n'
+        'run_selected = "pytest {nodes} --junitxml={result}"\n'
+        'cwd = "."\n'
+        "\n"
+        "[nightly]\n"
+        'schedule = "0 3 * * *"\n'
+        'workflow = ".github/workflows/nightly.yml"\n'
+        'job = "nightly-regression"\n'
+        'layers = ["unit", "integration", "e2e"]\n'
+        'purpose = "scheduled FULL-suite regression"\n'
         "\n"
         "[layout.devon]\n"
         'writable = ["tracks/", "tests/unit/"]\n',

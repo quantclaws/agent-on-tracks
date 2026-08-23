@@ -105,6 +105,10 @@ ISLAND2_CMD = (
     "command.issued",
     {"command": {"kind": "check_island_2", "params": {"stage": "M-IMPL"}, "command_id": "C19"}},
 )
+FULL1_CLEAN = (
+    "full.executed",
+    {"round": "FULL_1", "passed": True, "serves_as_full_f": True},
+)
 ISLAND2_PASS = ("verdict.passed", {"check": "island_2"})
 
 EXIT_CMD = (
@@ -164,6 +168,7 @@ def _full_single_task_cycle():
         COMPLETE_TASK_CMD,
         TASK_COMPLETED,
         ISLAND2_CMD,
+        FULL1_CLEAN,
         ISLAND2_PASS,
         EXIT_CMD,
         STAGE_EXITED,
@@ -1076,14 +1081,14 @@ def test_task_done_single_task_to_island_gate_2():
 
 def test_island_gate_2_pass_to_exit():
     """verdict.passed(island_2) -> EXIT, island_2_passed=True."""
-    s = state_of(*_full_single_task_cycle()[:41])  # up to ISLAND2_PASS
+    s = state_of(*_full_single_task_cycle()[:42])  # up to ISLAND2_PASS
     assert s.substate == "EXIT"
     assert s.island_2_passed is True
 
 
 def test_exit_decide_write_frontmatter():
     """decide() at EXIT produces write_frontmatter."""
-    s = state_of(*_full_single_task_cycle()[:41])  # up to ISLAND2_PASS
+    s = state_of(*_full_single_task_cycle()[:42])  # up to ISLAND2_PASS
     cmd = decide(s)
     assert cmd.kind == "write_frontmatter"
     assert cmd.params["stage"] == "M-IMPL"

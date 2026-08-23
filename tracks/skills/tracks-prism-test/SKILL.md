@@ -62,6 +62,8 @@ M-TEST 交付的是测试资产而非绿色结果。每条测试必须失败且�
 
 Prism 在 PRISM_REVIEW 阶段判断测试合约的语义合法性；Runtime 在 RED_CHECK 阶段独立复跑做程序化分类（不信 Prism 自述）。Prism 的语义判断与 Runtime 的程序分类互不替代。
 
+**D-41 时序与证据消费（canonical）**：M-TEST 子状态时序为 `WRITE → 全量 COLLECT → Runtime RED_CHECK(SELECT_R2) → PRISM_REVIEW → EXIT`——RED_CHECK 先于 Prism 评审，非法 RED（collection/语法/fixture/import 错误、意外通过）在 Prism 之前已由 Runtime 路 DIAGNOSE/WRITE 处理完毕。因此 PRISM_REVIEW 消费的是**当前树**的 `red.validated` 身份证据（selection binding + 逐节点合法 Red 分类），以它为判据 5 的事实基础；Prism 对合法 Red 节点只执行**隔离 counterexample kill**（最小反例补丁 + 单点实跑），**绝不重跑普通套件**——把套件重跑当评审手段是合同违规。
+
 ## 评审纪律：全量清单制（2026-08-15，run 01KZTHE7 R1→R4 教训）
 
 每次 PRISM_REVIEW 必须对上述 5 条判据**逐项实际执行验证**，verdict 报告必须逐判据给出结论与当轮证据（命令 / 文件 / 行号）。未实际执行验证的判据不得默认 pass。

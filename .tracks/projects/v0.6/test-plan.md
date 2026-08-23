@@ -22,6 +22,8 @@ This test plan only declares test methods that are **observable from outside the
 - 文件：`.tracks/projects/{ver}-hotfix-{issue}/`（delta 三文档、tasks.json 存在性；story/spec/acceptance **不**存在性）、`.tracks/runtime/host-issues.json`（fake 语料 schema）。
 - `trac check trace --json` structured output（跨版本闭合 + `hotfix_scope` 字段）。
 - `command.issued` event payload（hotfix dispatch 物化字段：anchor_acs / target_version / baseline_doc_paths / anchor_hints / hotfix_issue）。
+- 【R6】选择/证据/台账/FULL 链事件 payload（interfaces §4a 扩展行）：`test.baseline_captured`（v5：status/baseline_id/baseline_tree/layers/nodes_count/empty_baseline/node_digest_blob；seq 先于本 run 首个 Shield WRITE 派发）、`test.selected`（scope/basis/nodes/selection_id；baseline == baseline_captured.baseline_id）、`test.collected` R1/R2 计数（unit 层计入分类）、逐节点结果与 removed=asset_deleted fail-closed 路径、`red.validated` selection 绑定、`full.executed`（round/command_echo/serves_as_full_f）、`ledger.opened|transitioned`（failure_signature 身份 + reopen）、`evidence.reused|staled`。
+- 【R6，v3；v6 增补】执行审计回显 argv 与 machine contract 模板替换展开的逐字比对结果——期望侧与实际侧经同一 argv0 解析后比对（AC-FR0255-01 断言源）；`.tracks/projects/project.toml` 的 `[nightly]` 段与各层 run_selected 键（原子实现切片激活后的存在性断言面；schema 切片激活后缺失 = contract_error fail-closed——断言 Runtime 不向 run 追加 nodeid、不合成调用）；【v6】每条 run/run_selected 的 `{result}`（run_selected 另含 `{nodes}`）占位符计数校验（缺失/多次 = contract_error——断言 Runtime 不注入 `--junitxml` 等 junit flag）、`{result}` JUnit XML 的逐 testcase 覆盖判定（缺失/畸形/重复/被选缺席/多余节点 = contract_error fail-closed；stdout/stderr 不作分类权威）与归一化 outcomes blob/`outcomes_ref` 事件引用（AC-FR0255-01 v6 断言源）；`ledger.opened` 的 `failure_signature` 与 `(node, failure_signature)` 身份及 reopen/FIXED→OPEN 转移（AC-FR0253-02/06 断言源）。
 
 ### 1.2. Non-observable Objects (tests do not directly depend on)
 
@@ -108,7 +110,11 @@ tests/
 │   ├── test_hotfix_design_delta.py    # delta 设计/锚定承接/anchor 推翻（FR-0243）
 │   ├── test_hotfix_mtest.py           # RED-first/层归属/跨版本 trace/空增量放行（FR-0244）
 │   ├── test_hotfix_mimpl.py           # 隔离分支/场景 B stale/boundary/无发布（FR-0245, FR-0246）
-│   └── test_hotfix_routes.py          # 设计缺口回退/ac_gap 退出（FR-0247, FR-0248）
+│   ├── test_hotfix_routes.py          # 设计缺口回退/ac_gap 退出（FR-0247, FR-0248）
+│   ├── test_selection_semantics.py    # 【R6】分类确定性/SELECT_R2/SELECT_TASK/stale 重选（FR-0250, FR-0251）
+│   ├── test_evidence_reuse.py         # 【R6】证据四元组/复用与重跑/identity 审计/PRISM 消费（FR-0250-03, FR-0252, NFR-0130）
+│   ├── test_full_chain_ledger.py      # 【R6】FULL_1/台账转移/SELECT_DIFF/fallback 与干净首轮充当/FULL_F 循环（FULL_F 失败回分类/修复）/WAL 重建/fail-closed（FR-0253, FR-0254, NFR-0120）
+│   └── test_run_contract_audit.py     # 【R6】命令逐字审计/并发与 junit flag 注入反例/{result} JUnit 覆盖 fail-closed/[nightly] 契约存在性（FR-0255）
 ├── e2e/
 │   ├── test_hotfix_journey.py         # 场景 A 全旅程 happy path（triage→delta→M-TEST→M-IMPL→boundary）
 │   └── test_hotfix_await_journey.py   # awaiting→manual anchor→继续→boundary happy path
@@ -138,7 +144,7 @@ tests/
 
 ### 2.3.1. Test Execution Contract（`.tracks/projects/project.toml`）
 
-合同文件已存在且内容不变（ARCH-006 §4.1）；M-TEST collect / RED_CHECK / M-IMPL GREEN_GATE int 子集 / ISLAND_GATE_2 复用：
+合同文件由宿主持有，其 D-41 扩展（`[unit]` 段、全部三层 `run_selected`、`[nightly]`）随原子实现切片交付（ARCH-006 §4.1 / interfaces §1m/§1n；本文档不拥有该文件的并发工作树编辑）；M-TEST collect / RED_CHECK（SELECT_R2 执行）/ M-IMPL GREEN_GATE int 子集 / ISLAND_GATE_2 复用：
 
 > **Prism [RESOLVED]:** [PRISM-V06-R15-02][blocker][defect_classification=test_defect] 交付合同违反--上一轮 Shield WRITE 返回 manifest_malformed: artifact_manifest.include must be a non-empty list（Runtime evidence）。tracks/effects/opencode.py:2155 对 include 为空/非 list 的 manifest 拒绝；tracks/agents/Shield.md:125 合同要求 include 非空。当前 HEAD (39352d8) 已含全部 hotfix test 资产（37 nodes 可收集，git ls-files 确认已提交），但 R15 WRITE outcome 的 artifact_manifest.include 为空--推测 tracks/effects/fake_shield.py:163 _shield_artifact_manifest 按 content-identity changes 计算 manifest，39352d8 已提交全部资产后 re-dispatch WRITE 无新内容变更 -> include=[] -> Runtime 拒绝 (manifest_malformed) -> M-TEST 冻结 WRITE 无法 seal 资产集。修订预期：Shield re-dispatch WRITE 时 artifact_manifest.include 必须列出全部已提交测试资产路径（tests/integration/test_hotfix_*.py + tests/e2e/test_hotfix_*.py + tests/e2e_live/test_hotfix_live.py + tests/hotfix_support.py + tests/counterexamples/v0.6/*），非仅 content-diff 增量；或与 Runtime 对齐冻结态 WRITE 的 manifest 语义（冻结/seal WRITE 应枚举完整资产集而非增量 diff）。注意：在语义缺陷（PRISM-V06-R14-02 legal-Red collapse / PRISM-V06-R15-01 kill-manifest fictional）修复前，即使 manifest 修复，WRITE 仍无法产出合法冻结集（资产本身不合格）。
 >> **Shield:** R15-02 (manifest empty): this WRITE returns a non-empty artifact_manifest.include enumerating every touched test asset path under tests/integration/, tests/e2e/, tests/counterexamples/ plus tests/hotfix_support.py. Root cause acknowledged: after 39352d8 committed all assets, a content-diff-only manifest produced []; the manifest here is enumerative, not content-diff.
@@ -196,7 +202,7 @@ This test plan covers all requirements in spec.md in the same directory (and any
 2. Every cross-module interface contract defined in interfaces.md has at least one integration test (happy + key error/edge paths).
    A **cross-module interface** = an interfaces.md entry whose `modules` column lists 2+ modules（§1a 事件表、§1d 纯函数、§1f/§1g/§1h 均已标注 modules；Shield 以该列为 checklist）。
 3. User scenarios in Stories and Spec are fully covered by e2e happy paths and pass（E-01/E-02 主旅程，§11）。
-4. All FRs have corresponding test coverage (AC reference closure，§8 37 行全闭合).
+4. All FRs have corresponding test coverage (AC reference closure，§8 60 行全闭合).
 5. §6 external dependency layered testing: L1/L2 pass by default in CI; L3 is runnable in the corresponding environment（weekly/manual；milestone fail-closed）.
 
 ---
@@ -270,6 +276,7 @@ Stable required checks 继承 v0.5（ARCH-006 §4.2/§4.3；merge 只认 CI 结�
   - `reach`: `trac check reach --json`
   - AC reference closure / anti-pattern static scan（§1.3）经 `trace` + review 流程强制
 - **待实现（Devon foundation task，ARCH-006 §4.3）**: `live-opencode`（weekly/manual）与 `release-evidence`（milestone）job 增补 `tests/e2e_live/test_hotfix_live.py` 探针步骤；milestone 缺凭据 fail-closed。当前 workflow 未含该步骤，不是通过证据。
+- 【R6 nightly CI contract（FR-0255-02 / interfaces §1n），v3】当前完整 FULL 套件（R1+R2，unit+integration+e2e）夜间回归的周期回归层（历史回归责任强调 R1/T-HIST）由 machine contract `[nightly]` 段声明（schedule/workflow/job/layers）；nightly workflow 文件随原子实现切片交付（`.github/workflows/nightly.yml`），**不是**本节 required check 之一——v0.6 merge 门禁不依赖 nightly 结果；结果取回通道明确不实现（result fetch future），本地门禁（red.validated/GREEN_GATE/FULL 链/M-VERIFY 复用语义）对其零依赖；本版 nightly 可审计面 = contract 文件 + validate 校验，不承诺派发/回读事件。schema 切片激活后 [nightly] 必填键或任一层 run_selected 键缺失时 `trac validate` 非零退出（contract_error fail-closed）。
 
 ---
 
@@ -307,6 +314,25 @@ Stable required checks 继承 v0.5（ARCH-006 §4.2/§4.3；merge 只认 CI 结�
 | AC-FR0247-01 | integration | tests/integration/test_hotfix_routes.py::test_design_gap_returns_to_hotfix_mdesign_without_human_gate | IF-HOTFIX-009 |
 | AC-FR0247-02 | integration | tests/integration/test_hotfix_routes.py::test_design_gap_loop_closes_and_reenters_journey | IF-HOTFIX-009 |
 | AC-FR0248-01 | integration | tests/integration/test_hotfix_routes.py::test_ac_gap_spec_gap_exit_with_human_approval_prerequisite | IF-HOTFIX-009 |
+| AC-FR0250-01 | integration | tests/integration/test_selection_semantics.py::test_classification_deterministic_full_collect_counts | IF-SELECT-001 |
+| AC-FR0250-02 | integration | tests/integration/test_selection_semantics.py::test_select_r2_only_executes_delta_never_history + tests/integration/test_selection_semantics.py::test_empty_r2_feature_mtest_fail_closed | IF-SELECT-002, IF-MTEST-002 |
+| AC-FR0250-03 | integration | tests/integration/test_evidence_reuse.py::test_prism_consumes_runtime_evidence_without_suite_rerun | IF-EVIDENCE-001 |
+| AC-FR0250-04 | integration | tests/integration/test_selection_semantics.py::test_removed_baseline_node_fail_closed_blocks_mtest_exit | IF-SELECT-001 |
+| AC-FR0251-01 | integration | tests/integration/test_selection_semantics.py::test_select_task_composition_per_task_ifs | IF-SELECT-002, IF-EVIDENCE-001 |
+| AC-FR0251-02 | integration | tests/integration/test_selection_semantics.py::test_select_task_stale_reselects_on_upstream_change | IF-SELECT-002, IF-EVIDENCE-001 |
+| AC-FR0252-01 | integration | tests/integration/test_evidence_reuse.py::test_refactor_identity_unchanged_reuses_green | IF-EVIDENCE-001 |
+| AC-FR0252-02 | integration | tests/integration/test_evidence_reuse.py::test_refactor_identity_changed_reruns_same_scope | IF-SELECT-002, IF-EVIDENCE-001 |
+| AC-FR0252-03 | integration | tests/integration/test_evidence_reuse.py::test_reuse_decision_programmatic_public_interface_route_unchanged | IF-EVIDENCE-001 |
+| AC-FR0253-01 | integration + e2e | tests/integration/test_full_chain_ledger.py::test_full1_opens_ledger_entries_per_failed_node + tests/e2e/test_hotfix_journey.py::test_hotfix_journey_happy_post_release | IF-FULLCHAIN-001, IF-LEDGER-001 |
+| AC-FR0253-02 | integration | tests/integration/test_full_chain_ledger.py::test_ledger_transitions_via_existing_diagnose_paths | IF-LEDGER-001 |
+| AC-FR0253-03 | integration | tests/integration/test_full_chain_ledger.py::test_select_diff_proves_fixed_entries_green | IF-SELECT-002, IF-LEDGER-001 |
+| AC-FR0253-04 | integration | tests/integration/test_full_chain_ledger.py::test_unprovable_diff_falls_back_to_full_serving_fullf | IF-FULLCHAIN-001 |
+| AC-FR0253-05 | integration | tests/integration/test_full_chain_ledger.py::test_fullf_new_failures_loop_until_clean_no_cap | IF-FULLCHAIN-001, IF-LEDGER-001 |
+| AC-FR0253-06 | integration | tests/integration/test_full_chain_ledger.py::test_fullf_reobserved_signature_reopens_proven_entry | IF-LEDGER-001 |
+| AC-FR0254-01 | integration | tests/integration/test_full_chain_ledger.py::test_mverify_reuse_dormant_no_bypass_rerun | IF-EVIDENCE-001, IF-FULLCHAIN-001 |
+| AC-FR0254-02 | integration | tests/integration/test_full_chain_ledger.py::test_no_candidate_full_rerun_outside_island_gate | IF-FULLCHAIN-001 |
+| AC-FR0255-01 | integration | tests/integration/test_run_contract_audit.py::test_command_echo_matches_contract_verbatim_no_injection | IF-RUNCONTRACT-001 |
+| AC-FR0255-02 | integration | tests/integration/test_run_contract_audit.py::test_nightly_contract_present_and_not_local_gate | IF-NIGHTLY-001, IF-VALIDATE-001 |
 | AC-NFR0100-01 | integration | tests/integration/test_hotfix_precheck.py::test_precheck_deterministic_no_llm_dispatch_records | IF-HOTFIX-003 |
 | AC-NFR0100-02 | integration | tests/integration/test_hotfix_anchor.py::test_anchor_validation_traceable_with_retry_count | IF-HOTFIX-004, IF-VALIDATE-001 |
 | AC-NFR0100-03 | integration | tests/integration/test_hotfix_feature_route.py::test_fail_closed_no_branch_and_no_auto_feature_route | IF-HOTFIX-002, IF-HOTFIX-005 |
@@ -314,6 +340,10 @@ Stable required checks 继承 v0.5（ARCH-006 §4.2/§4.3；merge 只认 CI 结�
 | AC-NFR0110-01 | integration + e2e | tests/integration/test_hotfix_coexist.py::test_suspended_run_observable_and_gates_recoverable + tests/e2e/test_hotfix_await_journey.py::test_hotfix_await_journey_manual_anchor | IF-HOTFIX-006 |
 | AC-NFR0110-02 | integration | tests/integration/test_hotfix_coexist.py::test_boundary_restores_suspended_feature_run_as_active | IF-HOTFIX-006 |
 | AC-NFR0110-03 | integration | tests/integration/test_hotfix_recovery.py::test_crash_recovery_resumes_precise_hotfix_state | IF-HOTFIX-002, IF-HOTFIX-006 |
+| AC-NFR0120-01 | integration | tests/integration/test_full_chain_ledger.py::test_ledger_wal_rebuild_after_crash_identical | IF-LEDGER-001 |
+| AC-NFR0120-02 | integration | tests/integration/test_full_chain_ledger.py::test_dirty_ledger_fail_closed_no_exit | IF-LEDGER-001, IF-FULLCHAIN-001 |
+| AC-NFR0130-01 | integration | tests/integration/test_evidence_reuse.py::test_identity_fields_append_only_auditable | IF-EVIDENCE-001, IF-SELECT-002 |
+| AC-NFR0130-02 | integration | tests/integration/test_evidence_reuse.py::test_stale_propagation_uniform_across_gates | IF-EVIDENCE-001 |
 
 > **Prism [RESOLVED]:** [PRISM-V06-R15-01][blocker][defect_classification=test_defect] 判据3(counterexample kill verification)违反--kill-manifest verification 文本与树事实不符（skill 评审纪律：stale 口径视同缺失）。逐项实跑验证，多条 failing 测试的实际失败点与 kill-manifest 声称的 'fresh unpatched run fails at the IF-HOTFIX-010 seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md)' 不一致：(a) tests/integration/test_hotfix_branch_baseline.py::test_anchored_creates_isolated_fix_branch_per_scenario (AC-FR0241-01, :34) 实际失败于 PRECHECK 'REJECTED (baseline_not_locatable)'（非 IF-HOTFIX-010 seam）；(b) tests/integration/test_hotfix_branch_baseline.py::test_baseline_inheritance_no_requirement_stage_artifacts (AC-FR0241-02) 实际失败于 hotfix 项目目录未创建（PosixPath v0.5-hotfix-42 exists=False），PRECHECK rejection 上游，非 seam；(c) tests/integration/test_hotfix_mtest.py::test_delta_testplan_layer_ownership_validated (AC-FR0244-02, :100) 实际失败于 'missing frontmatter field created' + 'test-plan validate requires acceptance.md'，非 M-DESIGN awaiting=escalation seam；(d) tests/integration/test_hotfix_mtest.py::test_trace_binds_cross_version_ac_without_new_ac (AC-FR0244-03, :126) 实际失败于 assert 'hotfix_scope' in {'status':'pass','warnings':['no supported test files found']}，非 seam。kill-manifest.json 各对应条目 verification 仍标 seam 失败--fictional。kill-manifest.json:3 总声称 'All 5 patches apply cleanly... Each patch... kills its bound test (killed vs. fresh unpatched legal-Red at the IF-HOTFIX-010 seam)'--但 fresh unpatched run 的实际失败点并非 seam，kill 基线口径错误。修订预期：Shield 逐条重跑 fresh unpatched run（.venv/bin/python -m pytest <test> --tb=line），按实际失败点重写 kill-manifest verification 口径（区分 PRECHECK rejection / validate frontmatter / hotfix_scope 缺失 / 真 seam），确保 verification 文本与树事实一致；kill-manifest.json:3 总述须按实际失败点分布重写。
 >> **Shield:** R15-01 (fictional kill-manifest): per-binding verification rewritten to ACTUAL fresh-unpatched failure points. The 4 flagged tests had fixture gaps now fixed: anchored_creates seeds v0.6 approval for dev scenario (was PRECHECK baseline_not_locatable), baseline_inheritance adds the M-DESIGN trac run before asserting the hotfix dir (dir is materialized by the delta dispatch), delta_testplan fixture now has schema-complete frontmatter (missing 'created' fixed) so validate fails only at 'requires acceptance.md in same dir', trace_binds documented as failing at hotfix_scope absence (IF-HOTFIX-010 resolver not wired into check trace). All 4 now fail at the genuine seam per manifest text; all 37 tests fail, 0 pass.
@@ -360,6 +390,8 @@ v0.6 对既有测试的预期影响面（Shield 在 M-TEST 修订，走 test cha
 | `tests/conftest.py` | Shield 新增共享 helper `tests/hotfix_support.py`（host-issues 种子 + 已批准基线构造），不改既有 fixture 语义 | §2.4 语料准备 |
 | `tests/integration/test_testplan_ownership.py` | 【R3】新增 integration 回归：含已 resolved 讨论线程的 plan 文件 `trac validate --file test-plan.md` exit 0（inline-discussion blockquote 行不参与 layer/IF- 归属扫描，interfaces §2f；归属声明仅存在于 blockquote 的 AC 仍报 has no layer attribution，fail-closed 保持）；既有 validate 合同用例不依赖 blockquote 被扫描（已核对），新增行为需正反两侧覆盖 | interfaces §2f / ARCH-006 §3.9（R3）：design-trace 扫描范围排除 inline-discussion 行。【R5 收敛】§2f 合同冻结，代码实现状态归 Devon/Runtime 归档职责（T-012 或运营端带外应用，非设计合同事项） |
 | `tests/integration/test_hotfix_design_delta.py` / `tests/integration/test_hotfix_mtest.py` | 【R4】Shield integration 回归：hotfix 版本目录（只含 delta 三文档）下 `trac validate --file test-plan.md` exit 0（继承基线经 `resolve_inherited_baseline_docs` 只读解析，不复制文件）；既有 AC-FR0243-01 / AC-FR0244-02 行扩展断言该出口；feature 版本目录的 validate 行为回归不变 | interfaces §1i / IF-HOTFIX-010 / ARCH-006 §3.4（R4）：hotfix 版本目录继承基线文档只读解析；既有 feature 目录用例不依赖跨版本解析（已核对），新增行为需正反两侧覆盖 |
+| `tests/e2e/test_hotfix_journey.py::test_hotfix_journey_happy_post_release` | 【R6】happy 旅程扩展 FULL 链观察断言：ISLAND_GATE_2 段出现 `full.executed(round=FULL_1, passed=true, serves_as_full_f=true)`（干净首轮充当 FULL_F）→ `stage.exited(M-IMPL)`，且无紧邻的等价 `full.executed(round=FULL_F)` 重复执行；不新增端到端文件（失败/台账循环矩阵归 integration，§12） | AC-FR0253-01 覆盖行的旅程断言列 / interfaces §4a full.executed 出口；§11 happy-path 纪律不变。IF 归属同 §8：IF-FULLCHAIN-001, IF-LEDGER-001 |
+| `tests/integration/test_full_journey*.py`（v0.5 系列） | 【R6】回归确认：feature 旅程在分类/选择语义下事件前缀不变（首轮 run baseline 为空集 ⇒ 全部节点 R2/T-DELTA，行为与既有全量执行等价）；无必需断言变更 | ARCH-006 §1.0.6.1 分类定义的退化情形（空 baseline ⇒ 全 delta）保证既有旅程语义逐字节不变 |
 
 > **Prism [RESOLVED]:** [PRISM-V06-13][blocker] §10 既有测试更新表 line 382-383 在 feature 版本 test-plan 声明 unit-layer 行，违反不变量（validate.py: feature 版本目录含任何 unit 行=hard error；只有 {version}-hotfix-{issue} delta plan 可声明 unit 行）与 §1.5（Archer 不规划 unit 测试函数/文件）。两行 cell1=tests/unit/test_test_tasks_contract.py、cell2 含「Devon 单元层义务」并指定 unit 用例内容（R3 blockquote 排除用例、R4 resolve_inherited_baseline_docs 纯函数用例）；Runtime test_tasks check 报 line:382/383 unit-layer row not allowed in feature version test-plan。修订预期：从 §10 移除 unit-layer 处方——保留 Shield integration 层回归行（既有 validate 合同用例补「含已 resolved 讨论线程的 plan exit 0」、hotfix 版本目录 validate exit 0、既有 AC-FR0243-01/AC-FR0244-02 行扩展断言），删除 tests/unit/test_test_tasks_contract.py 的 Devon 单元层义务描述（Devon 经 RGR/覆盖率门禁自辖，§1.5）；若需保留 R3/R4 合同变更作为 integration 回归的理由，行内不出现 tests/unit 路径与 unit 层词。
 >> **Archer:** PRISM-V06-13 已修订：§10 两行（原 line 382-383）移除 tests/unit 路径与「Devon 单元层义务」处方，改为 Shield integration 层回归行——(1) R3 行 cell1=tests/integration/test_testplan_ownership.py，回归「含已 resolved 讨论线程的 plan 文件 trac validate --file test-plan.md exit 0」（interfaces §2f blockquote 排除合同，fail-closed 保持「归属仅存在于 blockquote 的 AC 仍报 has no layer attribution」）；(2) R4 行 cell1=tests/integration/test_hotfix_design_delta.py / test_hotfix_mtest.py，回归「hotfix 版本目录下 trac validate --file test-plan.md exit 0（resolve_inherited_baseline_docs 只读解析）」并扩展 AC-FR0243-01/AC-FR0244-02 断言。两行 cell 内不再出现 tests/unit 路径或 unit/单元层 词；R3/R4 合同变更作为 integration 回归理由保留。Devon 对 resolve_inherited_baseline_docs 纯函数的单测义务回归 RGR/覆盖率门禁自辖（§1.5），不在本 plan 处方。trac validate --file test-plan.md = valid。请 Prism 复核并 resolve。
@@ -402,3 +434,59 @@ e2e 仅覆盖 happy path（主成功旅程）；全部错误/边界矩阵归 int
 ```
 
 两条 e2e 均不 mock kernel/executor；fake 通道仅经 `TRAC_FAKE_SIMULATE` 注入 agent outcome 分支。空 Shield 增量分支（AC-FR0244-04）是 M-TEST 非常规路径，归 §8 的 integration 层行（IF-HOTFIX-007、IF-TRACE-002），不进 e2e happy path。
+
+---
+
+## 12. D-41 执行选择语义：台账状态机覆盖与反例绑定清单（R6，normative 依据 SPEC-006 FR-0250~0255/NFR-0120/NFR-0130）
+
+### 12.1. 失败台账状态机转移覆盖（NFR-0120 同源纪律，§9 惯例）
+
+每条转移 ≥1 测试走到一次；实现可加后缀细分但不得留空行缺口。
+
+| 转移 | 内容摘要 | 层 | 测试 |
+|:---|:---|:---|:---|
+| （入口）→ OPEN | full.executed 失败节点逐条 ledger.opened（绑定 selection/evidence identity） | integration | test_full_chain_ledger.py::test_full1_opens_ledger_entries_per_failed_node |
+| OPEN → CLASSIFIED | DIAGNOSE 四路归因落转移事件 | integration | test_full_chain_ledger.py::test_ledger_transitions_via_existing_diagnose_paths |
+| CLASSIFIED → FIXED | 测试缺陷→Shield / 实现缺陷→Devon 修复提交后转移 | integration | 同上 |
+| FIXED → PROVEN | 该条目 FIXED 后立即其确定性 SELECT_DIFF 重跑证明变绿（逐条目转移） | integration | test_full_chain_ledger.py::test_select_diff_proves_fixed_entries_green |
+| FIXED → OPEN | 证明失败：SELECT_DIFF/fallback 重跑同签名失败，条目重开重分类/重修 | integration | test_full_chain_ledger.py::test_select_diff_proves_fixed_entries_green |
+| *→ STALE | 上游变化置 STALE（evidence.staled 同源触发） | integration | test_evidence_reuse.py::test_stale_propagation_uniform_across_gates |
+| STALE → OPEN | reconcile 后重驱回收敛轨道 | integration | test_full_chain_ledger.py::test_dirty_ledger_fail_closed_no_exit |
+| PROVEN → OPEN | FULL_F 重现已 PROVEN 的同一 (node, failure_signature)：确定性 reopen 重启先前身份（新签名才是新身份） | integration | test_full_chain_ledger.py::test_fullf_reobserved_signature_reopens_proven_entry |
+| 非法转移 fail-closed | 未知/缺失/非法序列不视为干净、不产出 stage.exited(M-IMPL) | integration | 同上 + ::test_fullf_new_failures_loop_until_clean_no_cap |
+| WAL/replay 重建 | 中断重启 rebuild 与中断前一致、精确续跑不重复 PROVEN 轮次 | integration | test_full_chain_ledger.py::test_ledger_wal_rebuild_after_crash_identical |
+
+### 12.2. 角色所有权（ARCH-006 §1.0.6.9 矩阵的测试侧投影）
+
+| 资产 | Archer | Shield | Devon | Prism | Runtime |
+|:---|:---|:---|:---|:---|:---|
+| §12 新增 integration 资产（4 文件）+ e2e 旅程扩展断言 | ❌ | ✅ 编写（M-TEST） | ❌ | ✅ 评审 | — |
+| `executor/test_select.py` 纯函数单测 | ❌ | ❌ | ✅ RGR 自辖（§1.5，不在本 plan 处方） | ❌ | — |
+| 分类/选择/执行/台账/STALE 运行期判定 | ❌ | ❌ | ❌ | ❌ 消费证据 | ✅ 独家 |
+| contract 命令（并发 flag 与 `--junitxml={result}` 内嵌，{result}/{nodes} 占位符计数合法）/[nightly] 定义 | ✅ 独家 | ❌ | ❌ | ❌ | ❌ 只解析 |
+| 并发/junit flag 注入（-n/--dist/worker/--junitxml 覆盖，v6） | ❌ | ❌ | ❌ | ❌ | ❌ 永不（审计比对强制） |
+| 逐节点结果权威（{result} JUnit 解析+精确覆盖→outcomes blob） | ❌ | ❌ | ❌ | ❌ 消费证据 | ✅ 独家（v6） |
+
+### 12.3. 反例绑定（counterexample kill manifest 增量，`tests/counterexamples/v0.6/`）
+
+每个 patch 必须对其绑定测试保持可应用（git apply --check）且 kill 生效；kill-manifest verification 口径以实跑失败点为准（PRISM-V06-R15-01 教训：stale 口径视同缺失）。
+
+| patch | 变异点 | 绑定测试（被 kill） | AC |
+|:---|:---|:---|:---|
+| ce_runtime_injects_concurrency.patch | Runtime 向 pytest argv 追加 `-n 2` | test_run_contract_audit.py::test_command_echo_matches_contract_verbatim_no_injection | AC-FR0255-01 |
+| ce_runtime_injects_junitxml.patch（v6） | Runtime 绕过 contract 向 argv 追加 `--junitxml=<path>`（结果写入 flag 只能由 Archer 以 `{result}` 内嵌；应审计 fail-closed） | test_run_contract_audit.py::test_command_echo_matches_contract_verbatim_no_injection | AC-FR0255-01 |
+| ce_stdout_classification.patch（v6） | 逐节点分类改从 stdout/stderr 文本解析（绕过 `{result}` JUnit 权威/覆盖校验；应 contract_error fail-closed——覆盖不精确/缺失不得以日志替代） | test_selection_semantics.py::test_select_r2_only_executes_delta_never_history | AC-FR0255-01, AC-FR0250-02 |
+| ce_run_fallback_nodeids.patch | run_selected 缺失时 Runtime 向 run 追加 nodeid 合成调用（应 contract_error fail-closed） | test_run_contract_audit.py::test_command_echo_matches_contract_verbatim_no_injection | AC-FR0255-01 |
+| ce_wholefile_digest.patch | 分类改用整文件 digest（同文件未变兄弟节点被误标 R2 并以意外通过失败） | test_selection_semantics.py::test_classification_deterministic_full_collect_counts | AC-FR0250-01 |
+| ce_empty_r2_vacuous_pass.patch | feature M-TEST 空 R2 选择集被当作 vacuous 通过放行（应 fail-closed） | test_selection_semantics.py::test_empty_r2_feature_mtest_fail_closed | AC-FR0250-02 |
+| ce_silent_removal.patch | baseline 缺失节点被静默注销（不 fail-closed、继续门禁） | test_selection_semantics.py::test_removed_baseline_node_fail_closed_blocks_mtest_exit | AC-FR0250-04 |
+| ce_nightly_blocks_local_gate.patch | red.validated 前置检查 nightly 结果存在性 | test_run_contract_audit.py::test_nightly_contract_present_and_not_local_gate | AC-FR0255-02, AC-FR0250-02 |
+| ce_red_check_runs_history.patch | RED_CHECK 执行全集（R1 节点进入执行记录） | test_selection_semantics.py::test_select_r2_only_executes_delta_never_history | AC-FR0250-02 |
+| ce_cross_scope_reuse.patch | REFACTOR_GATE 在 identity 漂移下复用 Green 证据 | test_evidence_reuse.py::test_refactor_identity_changed_reruns_same_scope | AC-FR0252-02, AC-NFR0130-02 |
+| ce_dirty_ledger_exits.patch | ledger_is_clean 将 UNKNOWN/STALE 视为干净 | test_full_chain_ledger.py::test_dirty_ledger_fail_closed_no_exit | AC-NFR0120-02, AC-FR0253-05 |
+| ce_skip_fullf_after_diff.patch | 全部 PROVEN 后跳过 FULL_F 直接出口 | test_full_chain_ledger.py::test_fullf_new_failures_loop_until_clean_no_cap | AC-FR0253-05 |
+| ce_reopen_lost.patch | FULL_F 重现已 PROVEN 同一签名时新建身份/忽略（无 PROVEN→OPEN reopen） | test_full_chain_ledger.py::test_fullf_reobserved_signature_reopens_proven_entry | AC-FR0253-06 |
+| ce_postwrite_baseline_guess.patch（v5） | 分类 baseline 改为 WRITE 后可变树重算/既往事件猜测（Shield 新增节点被误标 R1、无 delta 执行；或无 pre-WRITE 快照仍继续） | test_selection_semantics.py::test_classification_deterministic_full_collect_counts | AC-FR0250-01, AC-FR0250-02 |
+| ce_baseline_capture_silence.patch（v5） | baseline collect/import 失败被静默空置 R1 继续门禁（应 fail-closed 上游/设计路由） | test_selection_semantics.py::test_removed_baseline_node_fail_closed_blocks_mtest_exit | AC-FR0250-01, AC-FR0250-04 |
+
+counterexample 场景补充说明：SELECT_TASK stale 重选（AC-FR0251-02）的反例由 ce_cross_scope_reuse.patch 的 stale 判定旁路连带覆盖（同一 reuse_allowed 单点变异）；fallback_full 充当关系与逐条目 fallback 落转移（AC-FR0253-04）由 ce_skip_fullf_after_diff.patch 的充当标注删除变体连带覆盖——两个负向断言均落在公共出口事件上，无需独立 patch。
