@@ -25,11 +25,21 @@ pytestmark = pytest.mark.integration
 def _v07_closure_json(host_repo, capsys):
     """Run `trac check trace --version v0.7 --json` and parse the JSON payload.
 
-    Returns the parsed dict; raises if stdout is not valid JSON (the v0.7
-    closure outlet is absent — a legal-Red signal, not a silent pass)."""
+    Legal Red anchor (IF-CLOSURE-001 not yet wired): stdout carries no v0.7
+    closure JSON record. The helper converts that absence into an assertion
+    failure (never a JSONDecodeError crash), so the failure classifies as legal
+    Red (assertion_failure), not an unclassified test-side parse error."""
     cmd_check(host_repo, "trace", "--version", "v0.7", "--json")
     out = capsys.readouterr().out
-    return json.loads(out), out
+    try:
+        payload = json.loads(out)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise AssertionError(
+            "v0.7 candidate-bound closure outlet absent: `trac check trace "
+            f"--version v0.7 --json` did not emit a JSON closure record "
+            f"(stdout={out!r})"
+        ) from exc
+    return payload, out
 
 
 # AC-FR0265-01@v0.7 TRACKS-TRACE closure candidate-bound pass
