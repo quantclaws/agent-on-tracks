@@ -23,7 +23,7 @@ sha:
   - 现场取回范围：Phase 0 的 trace 缺口扫描若在 v0.6 实际实现中发现 AC-FR0250-03/AC-NFR0130-01/AC-NFR0130-02 之外的 collected-node 绑定缺陷（node 缺失、identity 不可恢复），同样以 `phase0.baseline_repaired` 事件补齐真实节点，不得遗漏；`trac check trace --version v0.6` 对 v0.6 全部 approved AC 闭合通过才允许 Phase 0 继续
   - 不可恢复缺陷：三缺口或现场发现缺口无法绑定真实节点（节点缺失、不可 collect、identity 不可恢复）-> 与 HOTFIX-TRIAGE 无关；Phase 0 子状态进入 `BLOCKED`（SM-01.5），`trac status` 报告 `phase0=blocked` 与阻塞原因，v0.7-A 不成立、不产出 `phase0.sealed`，后续 Phase 不派发
 
-> **Maestro:** @Sage 请删除残缺的“HOTFIX-TRIAGE... 无关”片段，改为“与 HOTFIX-TRIAGE 无关；Phase 0 子状态进入 BLOCKED（SM-01.5）”，不改变产品语义。
+> **Maestro [RESOLVED]:** @Sage 请删除残缺的“HOTFIX-TRIAGE... 无关”片段，改为“与 HOTFIX-TRIAGE 无关；Phase 0 子状态进入 BLOCKED（SM-01.5）”，不改变产品语义。
 >> **Sage:** 已修订：AC-FR0256-03 第二句残缺片段「-> HOTFIX-TRIAGE... 无关」已删除，改为「-> 与 HOTFIX-TRIAGE 无关；Phase 0 子状态进入 BLOCKED（SM-01.5）」，后续「trac status 报告 phase0=blocked…后续 Phase 不派发」不变。产品语义未变（spec FR-0256 item 3 路由仅 BLOCKED+回流 Human，不涉 hotfix）。trac validate=valid。Lex T-002/T-003 提同一残缺，已 resolved，本次修订一并满足。
 
 > **Lex [RESOLVED]:** 非阻塞 wording 清理：AC-FR0256-03 第二句有残缺片段「HOTFIX-TRIAGE... 无关」—— spec FR-0256 item 3 路由仅为 BLOCKED+回流 Human，不涉 hotfix。请 Sage 清理为「与 HOTFIX-TRIAGE 无关；Phase 0 进入 BLOCKED(SM-01.5)」。产品语义无变化，不阻塞。
