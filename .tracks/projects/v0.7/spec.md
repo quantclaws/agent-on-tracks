@@ -2,7 +2,7 @@
 spec_id: SPEC-007
 created: 2026-08-24
 status: draft
-sha:
+sha: 815b34492a1792ba36e6cf88a92b40b5a9e4a0df7081f8ddec8405bd7723a626
 ---
 
 # 可信测试证据与一致质量基线（v0.7-A） — 需求规格
