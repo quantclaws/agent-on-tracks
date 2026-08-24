@@ -144,3 +144,31 @@ def test_project_loader_exposes_only_tracks_test_result_v1(tmp_path):
     assert adapter.id == "reference-pytest"
     assert adapter.protocol == TEST_RESULT_PROTOCOL
     assert adapter.version == TEST_RESULT_PROTOCOL_VERSION
+
+
+# A malformed [adapter] declaration (missing/non-matching keys) must be
+# contract_error fail-closed at load time: an undeclared host contract must
+# never degrade into a silently unsupported surface the Runtime could guess at
+# (AC-FR0264-03: Runtime only consumes the declared versioned protocol).
+def test_project_loader_malformed_adapter_declaration_fails_closed(tmp_path):
+    _write_contract(
+        tmp_path,
+        _body_with_adapter().replace('version = 1\n\n', 'version = "1"\n\n'),
+    )
+    contract = load_contract(tmp_path)
+    # RED: the loader surfaces no [adapter] attribute today, so the malformed
+    # declaration is not rejected — `contract.adapter` raises AttributeError
+    # (contract token gap: the loader must either parse+expose or fail closed).
+    assert contract.adapter is None
+
+
+# AC-FR0264-01@v0.7 TRACKS-TRACE no [adapter]: prevented from guess-branching.
+# A pre-v0.7 contract without [adapter] stays loadable but exposes no adapter
+# surface (backward compatible; known-ness still enforced by resolve_adapter).
+def test_project_loader_absent_adapter_remains_none(tmp_path):
+    _write_contract(
+        tmp_path,
+        _body_with_adapter().replace(_ADAPTER_SECTION, ""),
+    )
+    contract = load_contract(tmp_path)
+    assert contract.adapter is None
