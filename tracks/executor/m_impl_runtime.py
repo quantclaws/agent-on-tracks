@@ -802,11 +802,24 @@ class MImplRuntimeMixin:
 
     def _last_baseline_digest(self) -> str:
         """Digest carried by the latest ``baseline.frozen`` event of this run
-        (scenario B reconcile reference; '' before the first freeze)."""
+        within the CURRENT M-IMPL residency (scenario B reconcile reference;
+        '' before the first freeze of this residency).
+
+        Operator finding (2026-08-24, run 01M0S0FQ): freezes belonging to an
+        abandoned M-IMPL cycle (rolled back through M-DESIGN re-approval) must
+        not poison the reference -- the stale guard exists for a branch
+        advancing WHILE the run is resident in M-IMPL, not across a
+        framework-driven rollback + re-entry. Scope the scan to events after
+        the latest ``stage.entered(M-IMPL)``."""
+        digest = ""
         for ev in reversed(list(self.store.events(self.run_id))):
             if ev.type == "baseline.frozen":
-                return str(ev.payload.get("digest") or "")
-        return ""
+                digest = str(ev.payload.get("digest") or "")
+            elif ev.type == "stage.entered" and ev.payload.get("stage") == "M-IMPL":
+                # Hit the residency boundary: the digest now held is the
+                # latest freeze of THIS residency (or '' for a fresh entry).
+                return digest
+        return digest
 
     def _do_freeze_baseline(self, cmd, state, task_id, reconcile):
         if reconcile and state.baseline_frozen:

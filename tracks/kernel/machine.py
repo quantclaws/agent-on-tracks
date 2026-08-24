@@ -1023,6 +1023,14 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     s.current_attempt = 0
     s.infra_failure_streak = 0
     s.format_failure_streak = 0
+    # M-IMPL NEEDS_ATTENTION reconcile exit (operator finding 2026-08-24,
+    # run 01M0S0FQ): a baseline.frozen(status=stale) parks the stage with
+    # decide() halted (flow.md §10.2 "awaiting reconcile"). The operator's
+    # retry IS the reconcile confirmation: re-enter BASELINE so decide()
+    # re-freezes against the reconciled reality (the residency-scoped
+    # reference makes an unchanged-since-park tree freeze back to current).
+    if s.stage == "M-IMPL" and s.substate == "NEEDS_ATTENTION":
+        s.substate = "BASELINE"
 
 
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
