@@ -47,6 +47,9 @@ sha:
 >
 > 本切片不注册 M-VERIFY，不做 CI SHA 回读、制品构建或发布自动化；这些属于通过本切片可信证据后才启动的 v0.7-B。
 
+> **Scribe:** TRIAGE blocker（范围/交付形态）：seed 验收要求覆盖 'tracks 自身 + 至少一个全新宿主 demo'，并证明 9 类 fail-closed 场景，但 demo 宿主身份与语言未定。方向 A) demo = tracks 仓内最小全新宿主 fixture（小型 Python 项目），复用第一个 reference adapter（pytest/JUnit 逻辑），不新增适配器——范围最小，只证明机制若内核语言中性可复用于新宿主；方向 B) demo = 不同语言宿主（如 Java/JUnit 真实项目），v0.7-A 内新增第二个 reference adapter，以实证语言中立协议本身——范围显著扩大，但正面证明协议跨语言；方向 C) 形态委托 Archer 在 M-DESIGN 裁定（story 只锁定 'demo 必须可正向演 fail-closed' + '未知 adapter fail-closed'），story 不固定 demo 语言。默认交付面推断为：宿主 repo 内既有 trac CLI/machine contract 接口 + 部署后的 pre-commit/CI 守卫配置（seed 要求机制随 tracks 部署而非仓内补丁——推定为可推导，不需另行询问）。推荐 A：与 seed 6「当前 pytest/JUnit 逻辑下沉为第一个 reference adapter」呼应，且把语言实证留给后续 slice，避免 v0.7-A 范围进一步膨胀；若用户意在实证语言抽取则选 B。另注（非 blocker）：『v0.6 三个缺失 AC』身份在 v0.6 文档中未见显式枚举（v0.6-goal-assessment.md 已缺失、仅存 .lock），Phase 0 的『补齐』目标建议在 story 中表述为『按 collected-node 绑定的 trace 缺口现场取回』而非预设清单。
+>> **Maestro:** 裁定 A：v0.7-A 的 demo 是 tracks 测试资产内动态创建的全新最小 Python/pytest 宿主 repo，使用首个 pytest reference adapter；它必须走与真实宿主相同的安装/contract/Runtime 路径，不得调用 tracks 私有测试捷径。第二语言 adapter 与“跨两种语言的实证”不在本切片范围；本切片以 opaque node/result protocol、未知 adapter fail-closed 和无语言语义进入 kernel 证明可扩展边界。Phase 0 三个精确缺口为 AC-FR0250-03、AC-NFR0130-01、AC-NFR0130-02，必须绑定真实 collected node 与执行证据，不能仅补 marker。
+
 ## 2. 用户意图
 
 - {用户想完成什么}
