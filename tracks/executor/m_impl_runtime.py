@@ -3033,6 +3033,7 @@ class MImplRuntimeMixin:
             self._rebuild_task_log_projection()
             return
         base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        attempt = self._red_ref_free_attempt(task_id, attempt)
         r = create_red_ref(
             repo=str(self.repo),
             run_id=self.run_id,
@@ -3048,6 +3049,38 @@ class MImplRuntimeMixin:
             task_id=task_id,
         )
         self._rebuild_task_log_projection()
+
+    def _red_ref_free_attempt(self, task_id: str, attempt: int) -> int:
+        """Allocate a free immutable-ref attempt slot for this task's R.
+
+        Operator finding (2026-08-24, run 01M0S0FQ): a rollback through
+        M-DESIGN re-approval abandons an M-IMPL cycle whose RGR refs
+        (refs/trac/rgr/{run}/{task}/{N}/red) outlive the cycle -- the fresh
+        residency restarts task attempts at 1 and would collide with the
+        orphaned ref (create_red_ref raises; the checkpoint crashed). R
+        immutability is preserved by never overwriting: when the slot is
+        taken by an orphan (no red.checkpointed event for this (task,
+        attempt) in the CURRENT residency -- the reconcile early-return
+        above already handled same-residency retries), advance to the next
+        free slot. The event records the allocated attempt, keeping history
+        and refs consistent."""
+        slot = attempt
+        for _ in range(50):
+            ref = f"refs/trac/rgr/{self.run_id}/{task_id}/{slot}/red"
+            if git(self.repo, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
+                return slot
+            if self._m_impl_event_recorded("red.checkpointed", task_id, slot):
+                # Same-residency retry of an already checkpointed attempt:
+                # the early-return above should have caught it; fail closed
+                # rather than silently renumbering a live attempt.
+                raise TestSelectError(
+                    f"R ref {ref} already checkpointed this residency; refusing "
+                    "to renumber a live attempt"
+                )
+            slot += 1
+        raise TestSelectError(
+            f"no free R ref attempt slot for task {task_id} within 50 of {attempt}"
+        )
 
     def _red_checkpoint_payload(self, task_id: str, attempt: int, r) -> dict:
         """``red.checkpointed`` payload (interfaces §4a, AC-FR0245-01): the
