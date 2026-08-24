@@ -345,6 +345,8 @@ def resolve_adapter(adapter_id: str, protocol: str, version: int) -> Adapter: ..
 
 `UnknownAdapterError` 对未知 id/protocol/version；`AdapterResultError` 对缺文件、畸形、重复 node、selected 覆盖不精确、状态未知。reference adapter 迁移 v0.6 `parse_junit_result`/exact coverage；这些符号不再存在于 executor。禁止区为 `tracks/kernel/**/*.py`、`tracks/executor/**/*.py`、`tracks/cli/**/*.py` 的运行时代码，token 词边界 case-insensitive：`pytest|junit|java`；comments/docstrings 同样禁止，避免隐藏语义。
 
+版本 capability seam 是 architecture.md §1.0.9 的内部 composition 机制，不是新增公共接口：调用者仍只使用本节 `resolve_adapter`、既有 CLI 与事件出口。其可观察兼容合同是 capability 隔离——只有目标 version `v0.7` 选择 Phase 0/candidate-bound/dual-host callbacks；v0.6 及更早版本不产生 v0.7 事件、不改变 classic trace schema。未知 version extension 或已声明 callback 缺失必须在既有 CLI/event failure channel fail-closed，不得 fallback 到伪成功。
+
 project contract 追加：
 
 ```toml
@@ -480,7 +482,9 @@ acceptance host=demo-pytest all_fail_closed=true|false equivalent=true|false cra
 
 ### 2c. `trac check trace --version v0.7`
 
-成功 stdout：`status=pass closure=candidate-bound`，exit 0。失败 stdout/json：`status=fail closure=candidate-bound hard_errors=[...]`，exit 1。`--json` 追加 §1i 每 AC 记录。v0.6 及早期版本输出语义不变。
+成功 stdout：`status=pass closure=candidate-bound`，exit 0。失败 stdout/json：`status=fail closure=candidate-bound hard_errors=[...]`，exit 1。`--json` 追加 §1i 每 AC 记录。该 schema 只适用于 `--version v0.7`。
+
+v0.6 及早期版本保持 classic JSON 字段集 `{status, hard_errors, warnings}`（hotfix 调用仅按既有 IF-HOTFIX-007 条件追加 `hotfix_scope`），不得出现 `closure`、candidate record 或 v0.7 hard-error 字段。早期版本 `trac run` 同样不得产生 `phase0.*`、`demo.equivalence` 或 `failclosed.*`；这是一项可执行的 capability backward-compatibility 合同，不是实现注释。
 
 ### 2d. `trac validate`
 

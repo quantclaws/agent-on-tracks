@@ -60,5 +60,24 @@ class Adapter(Protocol):
 
 
 def resolve_adapter(adapter_id: str, protocol: str, version: int) -> Adapter:
-    """Resolve the declared adapter; unknown declarations fail closed."""
-    raise NotImplementedError("IF-ADAPTER-001")
+    """Resolve the declared adapter; unknown declarations fail closed.
+
+    The kernel never enumerates host languages (AC-FR0264-03
+    IF-ADAPTER-001): the reference ``tracks-test-result`` v1 adapter is the
+    only registered implementation.  Any other id/protocol/version
+    combination raises ``UnknownAdapterError`` so the Runtime rejects an
+    undeclared host contract instead of guessing.
+    """
+    from tracks.adapters.reference_pytest import ReferencePytestAdapter
+
+    for candidate in (ReferencePytestAdapter,):
+        if (
+            candidate.adapter_id == adapter_id
+            and candidate.protocol == protocol
+            and candidate.protocol_version == version
+        ):
+            return candidate()
+    raise UnknownAdapterError(
+        f"unknown adapter declaration id={adapter_id!r} protocol={protocol!r} "
+        f"version={version!r} (only tracks-test-result v1 is supported)"
+    )

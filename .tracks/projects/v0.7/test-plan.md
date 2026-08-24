@@ -61,7 +61,7 @@ sha:
 
 - **Unit**：Devon 对每个已实现 FR/NFR 的普遍 RGR 义务，由 coverage ≥95% 保证；§8 不规划 unit。
 - **Integration**：Shield 验证 interfaces.md 跨模块合同及边界/错误矩阵。
-- **E2E**：Shield 只写两条 happy path：v0.7-A 主旅程与双宿主演证成功旅程。
+- **E2E**：Shield 为 v0.7-A 新能力只写两条 happy path（主旅程与双宿主演证）；另保留一条既有 v0.5 journey capability-isolation 回归，证明早期版本不进入 v0.7 extension。
 - **Counterexamples**：Shield 编写，Prism 独立审语义/最小性，Runtime 真跑，Devon 不改冻结资产。
 - **Machine evidence**：Runtime 独家产生；Agent 不能自报结论。
 
@@ -88,17 +88,20 @@ tests/
 │   ├── test_trace_closure.py
 │   ├── test_v07_events.py
 │   ├── test_failclosed_scenarios.py
-│   └── test_demo_host.py
+│   ├── test_demo_host.py
+│   ├── test_check_trace.py                    # 既有文件追加版本隔离回归
+│   └── test_commit_hook_hard_gate.py          # 既有 hook 合同的硬门反例
 ├── e2e/
 │   ├── test_v07_journey.py
-│   └── test_dualhost_acceptance.py
+│   ├── test_dualhost_acceptance.py
+│   └── test_full_journey_v05.py               # 既有 journey 追加 capability 隔离回归
 ├── counterexamples/v0.7/                 # 单 AC/IF non-test patches
 ├── assets/                               # 小型离线事件/配置反例
 ├── e2e_live/                             # 继承外部通道；v0.7 无新增 live AC
 └── ground_truth/                         # 既有资产不改；v0.7 §3 不适用
 ```
 
-本节列出的 v0.7 integration/e2e 与 counterexample 文件均为 **Shield 在 M-TEST 待编写资产**，不是当前既有命令或测试。demo repo 不作为提交的 fixture repo；Runtime 从 wheel 内 `tracks/assets/demo_host/` 动态创建到隔离目录。
+本节列出的 dedicated v0.7 integration/e2e 与 counterexample 均为 **Shield-owned 测试资产**；现有 regression 文件只追加对应 v0.7 marker/node。测试资产落盘不代表产品能力已实现，合法 Red 仍由冻结 baseline 与公开 outlet 判定。demo repo 不作为提交的 fixture repo；Runtime 从 wheel 内 `tracks/assets/demo_host/` 动态创建到隔离目录。
 
 ### 2.2. Naming Conventions
 
@@ -235,6 +238,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 - **trace**：AC marker + collected node + v0.7 candidate closure；`trac check trace --version v0.7` 在对应 version gate 运行。
 - **deliverables/reach**：stubs 接线后无 orphan；wheel 包含 demo template。
 - **anti-pattern**：trace/manifest static scan、registry validate、language-neutral scan、mutation tests path ban；违规硬失败。
+- **validate 合同**：`trac validate` 对 architecture registry schema/config digest、静态 parity、`integration/e2e/performance` marks 与 demo package-data allowlist（正式 assets 必须在、legacy `guards.toml` 必须不在）逐项程序校验；任一项 stderr 定位 path/guard/token 且 exit 1。
 - **failure semantics**：任何 required check、parity、authenticity、experiment、closure、demo 演证失败都不产生 stage exit；Agent 自述无效。
 
 ---
@@ -247,11 +251,11 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | AC-FR0256-02 | integration | tests/integration/test_phase0_binding.py::test_marker_only_closure_stays_fail | IF-PHASE-001, IF-TRACE-002 |
 | AC-FR0256-03 | integration | tests/integration/test_phase0_binding.py::test_field_gap_recovery_and_blocked_routing | IF-PHASE-001 |
 | AC-FR0257-01 | integration | tests/integration/test_phase0_quality_seal.py::test_coverage_ratio_by_collected_exclude_none | IF-PHASE-002, IF-GUARD-001 |
-| AC-FR0257-02 | integration | tests/integration/test_phase0_quality_seal.py::test_guard_hardened_violations_zero_revisions_audited | IF-GUARD-001, IF-GUARD-002 |
+| AC-FR0257-02 | integration | tests/integration/test_phase0_quality_seal.py::test_guard_hardened_violations_zero_revisions_audited + tests/integration/test_commit_hook_hard_gate.py::test_phase0_hard_gate_rejects_violation_no_exit_zero | IF-GUARD-001, IF-GUARD-002 |
 | AC-FR0257-03 | integration | tests/integration/test_phase0_quality_seal.py::test_marks_registered_and_env_contract_valid | IF-PHASE-002, IF-ADAPTER-001 |
 | AC-FR0257-04 | integration + e2e | tests/integration/test_phase0_quality_seal.py::test_seal_readonly_blocks_rewrite + tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure | IF-PHASE-003 |
 | AC-FR0257-05 | integration | tests/integration/test_phase0_quality_seal.py::test_unrecoverable_coverage_guard_blocked | IF-PHASE-003 |
-| AC-FR0258-01 | integration | tests/integration/test_guard_registry.py::test_registry_single_source_eight_categories | IF-GUARD-001 |
+| AC-FR0258-01 | integration | tests/integration/test_guard_registry.py::test_registry_single_source_eight_categories + tests/integration/test_commit_hook_hard_gate.py::test_phase0_hard_gate_rejects_violation_no_exit_zero | IF-GUARD-001 |
 | AC-FR0258-02 | integration | tests/integration/test_guard_parity.py::test_parity_mismatch_blocks_fail_closed | IF-GUARD-002 |
 | AC-FR0258-03 | integration | tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs | IF-GUARD-002 |
 | AC-FR0258-04 | integration | tests/integration/test_guard_registry.py::test_registry_migration_no_silent_gap | IF-GUARD-001 |
@@ -273,7 +277,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | AC-FR0263-03 | integration | tests/integration/test_mutation_experiment.py::test_crash_recovery_reruns_no_phantom_pass | IF-MUTATION-002 |
 | AC-FR0263-04 | integration | tests/integration/test_mutation_experiment.py::test_failure_matrix_fail_closed | IF-MUTATION-002 |
 | AC-FR0264-01 | integration | tests/integration/test_adapter_contract.py::test_three_interface_seam_protocol_version | IF-ADAPTER-001 |
-| AC-FR0264-02 | integration | tests/integration/test_adapter_contract.py::test_reference_adapter_equivalent_to_v06 | IF-ADAPTER-002 |
+| AC-FR0264-02 | integration + e2e | tests/integration/test_adapter_contract.py::test_reference_adapter_equivalent_to_v06 + tests/integration/test_check_trace.py::test_v06_trace_output_version_isolated_no_closure_leak + tests/e2e/test_full_journey_v05.py::test_v05_journey_does_not_trigger_v07_phase0_or_dualhost | IF-ADAPTER-002 |
 | AC-FR0264-03 | integration | tests/integration/test_adapter_contract.py::test_unknown_adapter_malformed_result_blocked | IF-ADAPTER-001 |
 | AC-FR0264-04 | integration | tests/integration/test_kernel_language_neutrality.py::test_no_language_tokens_kernel_executor_cli | IF-ADAPTER-003 |
 | AC-FR0265-01 | integration + e2e | tests/integration/test_trace_closure.py::test_closure_candidate_bound_pass + tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure | IF-CLOSURE-001 |
@@ -283,7 +287,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | AC-FR0266-02 | integration | tests/integration/test_demo_host.py::test_demo_created_via_real_install_path | IF-DEMO-001 |
 | AC-FR0266-03 | integration + e2e | tests/integration/test_failclosed_scenarios.py::test_crash_recovery_replay_ok + tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed | IF-FAILCLOSED-001 |
 | AC-FR0266-04 | integration | tests/integration/test_failclosed_scenarios.py::test_any_leak_or_inequivalence_blocks | IF-FAILCLOSED-001, IF-DEMO-001 |
-| AC-NFR0140-01 | integration | tests/integration/test_v07_events.py::test_append_only_and_projection_rebuild | IF-AUTH-001, IF-MUTATION-002 |
+| AC-NFR0140-01 | integration | tests/integration/test_v07_events.py::test_append_only_and_projection_replay | IF-AUTH-001, IF-MUTATION-002 |
 | AC-NFR0140-02 | integration | tests/integration/test_v07_events.py::test_identity_five_part_binding | IF-MUTATION-001 |
 | AC-NFR0140-03 | integration | tests/integration/test_v07_events.py::test_wal_replay_reruns_missing_never_pass | IF-MUTATION-002 |
 | AC-NFR0140-04 | integration | tests/integration/test_v07_events.py::test_unknown_missing_drift_control_fail_closed | IF-AUTH-001, IF-MUTATION-002 |
@@ -313,8 +317,8 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 |:--|:--|:--|:--|
 | 1 | `tests/integration/test_run_contract_audit.py` | 回归现有 command/result 行为在 reference adapter 后同输入同输出；不改原断言语义 | FR-0264 重构而非行为变更 |
 | 2 | `tests/integration/test_check_trace.py` | 回归 v0.6 及早期 trace 输出不变；v0.7 另走 candidate closure | 版本能力隔离 |
-| 3 | `tests/integration/test_commit_hook_rejection.py` | 增硬门反例：pylint 违规被 hook 拒绝、无 `--exit-zero` | Phase 0 hardening |
-| 4 | v0.5/v0.6 journey e2e | 回归早期版本不触发 Phase 0/双宿主演证 | capability backward compatibility |
+| 3 | `tests/integration/test_commit_hook_hard_gate.py` | 增硬门反例：守卫违规被 hook 拒绝、无 `--exit-zero` | Phase 0 hardening |
+| 4 | `tests/e2e/test_full_journey_v05.py` | 回归早期版本不触发 Phase 0/双宿主演证 | capability backward compatibility |
 | 5 | wheel/package-data integration | 安装 wheel 后定位 demo architecture/flake8/project/source/test assets，并证明 allowlist/wheel/fresh repo 无 legacy `guards.toml` 或预制 hook/CI（不修改仓库 inherited file） | demo 必须走真实安装路径与同一 registry mechanism |
 
 Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
@@ -330,6 +334,10 @@ Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方
 ### 11.2 双宿主演证旅程
 
 `test_dualhost_nine_scenarios_all_fail_closed`：从 candidate wheel 安装 Runtime → tracks host 9 场景全部 blocked → 动态创建 demo host、从固定 architecture 落点经同 loader/deployer 产生 equivalence=true 与四向 registry-digest 关联 → demo 9 场景全部 blocked → controlled interruption/restart → 两个 summary 均 `all_fail_closed=true, crash_recovery=replay_ok` → boundary。不得用 test-private shortcut。
+
+### 11.3 早期版本 capability-isolation 回归
+
+`test_v05_journey_does_not_trigger_v07_phase0_or_dualhost`：沿既有 v0.5 full journey 到 boundary，事件流不得出现 `phase0.*`、`demo.equivalence` 或 `failclosed.*`；随后显式调用 v0.7 trace 才能观察 candidate-bound outlet。该用例是版本隔离回归，不为 v0.7 新行为增加第三条 happy path。
 
 ---
 
