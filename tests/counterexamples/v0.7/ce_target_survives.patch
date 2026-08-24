@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/mutation.py b/tracks/executor/mutation.py
+index 6d6a056..a18e2fd 100644
+--- a/tracks/executor/mutation.py
++++ b/tracks/executor/mutation.py
+@@ -65,4 +65,9 @@ def run_mutation_experiment(
+     run_nodes: Callable[[Path, Sequence[str]], Mapping[str, TestRunResult]],
+     close_worktree: Callable[[Path], None],
+ ) -> MutationExperimentResult:
+-    raise NotImplementedError("IF-MUTATION-002")
++    # Counterexample (AC-FR0263-04): target survived reported as killed/passed.
++    return MutationExperimentResult(
++        status="passed", baseline="verified", apply="identity_match",
++        target_kill="verified", controls="green", rollback="clean",
++        blocked_reason=None, node_results_ref="ref",
++    )

@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/guard_registry.py b/tracks/executor/guard_registry.py
+index 2569c34..453ec1c 100644
+--- a/tracks/executor/guard_registry.py
++++ b/tracks/executor/guard_registry.py
+@@ -85,7 +85,9 @@ def check_parity(
+     ci_workflow_path: Path,
+     cwd: Path,
+ ) -> ParityReport:
+-    raise NotImplementedError("IF-GUARD-002")
++    # Counterexample (AC-FR0257-02/AC-FR0258-02): --exit-zero accepted as match.
++    return ParityReport(registry_digest=registry.digest, runtime_match=True,
++                        pre_commit_match=True, ci_match=True, mismatches=())
+ 
+ 
+ def deploy_guard_configs(

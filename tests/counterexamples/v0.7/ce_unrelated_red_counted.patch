@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/authenticity.py b/tracks/executor/authenticity.py
+index 9f217e5..73d970c 100644
+--- a/tracks/executor/authenticity.py
++++ b/tracks/executor/authenticity.py
+@@ -39,4 +39,8 @@ def judge_authenticity(
+     legal_failure_kinds: Set[str],
+     counterexample_experiment: Mapping | None,
+ ) -> AuthenticityJudgement:
+-    raise NotImplementedError("IF-AUTH-001/IF-AUTH-002")
++    # Counterexample (AC-FR0260-02/05): unrelated failure counted as legal Red.
++    return AuthenticityJudgement(
++        ac=ac_ref, category=category, red="legal", green_allowed=False,
++        counterexample_kill="none", unrelated_nodes=(), blocked_reason=None,
++    )

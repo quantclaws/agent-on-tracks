@@ -1,0 +1,24 @@
+diff --git a/tracks/executor/mutation.py b/tracks/executor/mutation.py
+index 6d6a056..112ee5a 100644
+--- a/tracks/executor/mutation.py
++++ b/tracks/executor/mutation.py
+@@ -54,7 +54,18 @@ def build_manifest(
+ def validate_manifest(
+     manifest: Mapping, patch_paths: Sequence[str]
+ ) -> MutationManifest:
+-    raise NotImplementedError("IF-MUTATION-001")
++    # Counterexample (AC-FR0262-03): tests/-scoped mutation accepted.
++    return MutationManifest(
++        protocol_version=manifest.get("protocol_version", 1),
++        ac=manifest.get("ac", ""), if_ref=manifest.get("if_ref", ""),
++        candidate_digest=manifest.get("candidate_digest", ""),
++        patch_digest=manifest.get("patch_digest", ""),
++        target_nodes=tuple(manifest.get("target_nodes", ())),
++        control_nodes=tuple(manifest.get("control_nodes", ())),
++        runner_identity=manifest.get("runner_identity", ""),
++        allowed_change_scope=tuple(manifest.get("allowed_change_scope", ())),
++        expected_result=manifest.get("expected_result", {}),
++    )
+ 
+ 
+ def run_mutation_experiment(

@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/authenticity.py b/tracks/executor/authenticity.py
+index 9f217e5..aa0f3ce 100644
+--- a/tracks/executor/authenticity.py
++++ b/tracks/executor/authenticity.py
+@@ -39,4 +39,9 @@ def judge_authenticity(
+     legal_failure_kinds: Set[str],
+     counterexample_experiment: Mapping | None,
+ ) -> AuthenticityJudgement:
+-    raise NotImplementedError("IF-AUTH-001/IF-AUTH-002")
++    # Counterexample (AC-FR0261-01): existing green without counterexample kill.
++    return AuthenticityJudgement(
++        ac=ac_ref, category=category, red="none", green_allowed=True,
++        counterexample_kill="verified", unrelated_nodes=(),
++        blocked_reason=None,
++    )

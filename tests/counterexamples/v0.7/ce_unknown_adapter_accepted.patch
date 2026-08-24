@@ -1,0 +1,11 @@
+diff --git a/tracks/adapters/base.py b/tracks/adapters/base.py
+index d1a52f4..7c05c88 100644
+--- a/tracks/adapters/base.py
++++ b/tracks/adapters/base.py
+@@ -61,4 +61,5 @@ class Adapter(Protocol):
+ 
+ def resolve_adapter(adapter_id: str, protocol: str, version: int) -> Adapter:
+     """Resolve the declared adapter; unknown declarations fail closed."""
+-    raise NotImplementedError("IF-ADAPTER-001")
++    # Counterexample (AC-FR0264-03): unknown adapter silently accepted.
++    return None  # type: ignore[return-value]

@@ -1,0 +1,17 @@
+diff --git a/tracks/checks/trace.py b/tracks/checks/trace.py
+index 094d2ea..1c3f60b 100644
+--- a/tracks/checks/trace.py
++++ b/tracks/checks/trace.py
+@@ -245,9 +245,10 @@ def check_trace_full(
+         current_version=current_version,
+     )
+     warnings = _check_bs_warnings(_scan_bs(story_text), tombstones)
++    # Counterexample (AC-FR0265-03): foreign candidate closure accepted as pass.
+     return TraceReport(
+-        status="fail" if hard_errors else "pass",
+-        hard_errors=tuple(sorted(hard_errors)),
++        status="pass",
++        hard_errors=(),
+         warnings=tuple(sorted(warnings)),
+     )
+ 

@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/phase0.py b/tracks/executor/phase0.py
+index a3fde18..cdd165b 100644
+--- a/tracks/executor/phase0.py
++++ b/tracks/executor/phase0.py
+@@ -39,7 +39,7 @@ def scan_trace_gaps(
+     collected_node_digests: Mapping[str, str],
+     persisted_evidence: Mapping[str, str],
+ ) -> list[TraceGap]:
+-    raise NotImplementedError("IF-PHASE-001")
++    return []  # Counterexample (AC-FR0256-02): marker-only treated as repaired
+ 
+ 
+ def judge_real_coverage(

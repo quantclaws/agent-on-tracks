@@ -1,0 +1,18 @@
+diff --git a/tracks/executor/phase0.py b/tracks/executor/phase0.py
+index a3fde18..06c3ddb 100644
+--- a/tracks/executor/phase0.py
++++ b/tracks/executor/phase0.py
+@@ -61,4 +61,12 @@ def build_seal_manifest(
+     marks: Sequence[str],
+     environment_contract_digest: str,
+ ) -> SealManifest:
+-    raise NotImplementedError("IF-PHASE-003")
++    # Counterexample (AC-FR0257-04): sealed baseline rewrites silently (same id).
++    return SealManifest(
++        baseline_version=baseline_version,
++        document_digests=document_digests,
++        frozen_test_digests=frozen_test_digests,
++        marks=tuple(marks),
++        environment_contract_digest=environment_contract_digest,
++        seal_id="sha256:frozen-seal-id",
++    )

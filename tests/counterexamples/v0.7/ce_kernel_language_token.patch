@@ -1,0 +1,11 @@
+diff --git a/tracks/kernel/__init__.py b/tracks/kernel/__init__.py
+index 90103f0..8d47bf2 100644
+--- a/tracks/kernel/__init__.py
++++ b/tracks/kernel/__init__.py
+@@ -11,3 +11,6 @@ __all__ = [
+     "decide",
+     "project",
+ ]
++
++# Counterexample (AC-FR0264-04/AC-NFR0141-02): forbidden language token `pytest`.
++PYTEST_TOKEN = "pytest"
