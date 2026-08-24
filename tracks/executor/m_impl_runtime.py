@@ -2397,6 +2397,60 @@ class MImplRuntimeMixin:
         return sorted(selected)
 
     @staticmethod
+    def _expand_task_refs_by_layer(
+        refs, inventories: dict[str, list[str]]
+    ) -> list[str]:
+        """Validate task test_refs against their OWN layer's inventory and
+        return only the unit-layer anchors as RED nodes.
+
+        Operator finding (2026-08-24, run 01M0S0FQ): the planning convention
+        (v0.5 proven, v0.6/v0.7 taskgraphs, Archer's stable behavior across
+        three PLANNING rounds) declares task test_refs as the task's
+        ACCEPTANCE anchors -- usually Shield-owned integration nodes that are
+        RED against the stubs and green only after this task lands. The
+        unit-only tightening of the GREEN gate rejected that convention and
+        rolled the whole stage back to M-DESIGN twice. Layer-routed contract:
+
+        - every ref must resolve (node or file) in the inventory of the layer
+          its path declares (unit or integration) -- absent refs still fail
+          closed;
+        - only ``tests/unit/`` refs become RED nodes (they are Devon's own
+          RED artifacts, verified against the immutable R commit);
+        - integration refs are validated for existence, then ride the
+          test-plan §8 IF index selection (``select_task`` already consumes
+          it) -- they are not RED artifacts and never enter R.
+        """
+        selected: set[str] = set()
+        for raw in refs or []:
+            ref = str(raw).strip()
+            path = ref.partition("::")[0]
+            layer_inventory: list[str] | None = None
+            for layer in ("unit", "integration"):
+                if any(
+                    node.partition("::")[0] == path for node in inventories.get(layer, ())
+                ):
+                    layer_inventory = inventories[layer]
+                    break
+            if layer_inventory is None:
+                raise TestSelectError(
+                    f"task test ref is absent from collect (unit/integration): {ref}"
+                )
+            if "::" in ref:
+                if ref not in layer_inventory:
+                    raise TestSelectError(
+                        f"task test ref is absent from its layer collect: {ref}"
+                    )
+                resolved = [ref]
+            else:
+                resolved = [
+                    node
+                    for node in layer_inventory
+                    if node.partition("::")[0] == path
+                ]
+            selected.update(node for node in resolved if node.startswith("tests/unit/"))
+        return sorted(selected)
+
+    @staticmethod
     def _task_integration_index(
         plan_text: str,
         current_nodes: list[str],
@@ -2458,7 +2512,7 @@ class MImplRuntimeMixin:
         """Collect unit/integration inventories and compute SELECT_TASK."""
         contract = load_contract(self.repo)
         inventories = self._collect_layer_inventories(contract, cwd)
-        red_nodes = self._expand_declared_unit_refs(task.test_refs, inventories["unit"])
+        red_nodes = self._expand_task_refs_by_layer(task.test_refs, inventories)
         r_sha = self.store.state(self.run_id).r_tree_identity or ""
         self._require_r_artifacts(red_nodes, r_sha)
         touched = [
