@@ -204,7 +204,7 @@ def check_parity(
 def deploy_guard_configs(registry: GuardRegistry, target_repo: Path) -> GuardDeployment: ...
 ```
 
-完整性错误、重复 category、unpinned tool、缺 config、非 fail_closed、`--exit-zero`、required check 缺失都返回 hard error。`deploy_guard_configs` 只能消费已 validate 的 registry，固定写入 target repo `.githooks/pre-commit` 与 `.github/workflows/ci.yml`；hook 中 `TRACKS_GUARD_REGISTRY=<registry.digest>`、CI 顶层 `env.TRACKS_GUARD_REGISTRY=<registry.digest>`、返回对象三者必须一致。parity 对 argv0 使用同一解析规则，但不忽略其余 argv。
+完整性错误、重复 category、unpinned tool、缺 config、非 fail_closed、`--exit-zero`、required check 缺失都返回 hard error。`deploy_guard_configs` 只能消费已 validate 的 registry，固定写入 target repo `.githooks/pre-commit` 与 `.github/workflows/ci.yml`；hook 中 `TRACKS_GUARD_REGISTRY=<registry.digest>`、CI 顶层 `env.TRACKS_GUARD_REGISTRY=<registry.digest>`、返回对象三者必须一致。`artifact_digests` 是部署后两份输出 raw bytes 的审计值，不是 registry 中 `config_digest` 的 expected value，不得回填 registry。parity 对 argv0 使用同一解析规则，但不忽略其余 argv。
 
 ### 1f. Authenticity Gate（IF-AUTH-001/002）
 
@@ -438,6 +438,8 @@ required_check = "lint"
 
 八个 category 每个恰好一次。单个 `config_paths` 项时，`config_digest = "sha256:" + sha256(raw file bytes).hexdigest()`；多个项时，对每个 repo-relative POSIX path 计算 raw bytes 的 lowercase hex，按 path 排序并用 UTF-8 `json.dumps(mapping, sort_keys=True, separators=(",", ":"))` 序列化，再 sha256 该 JSON bytes并加前缀。`config_sections` 只验证声明 section 存在并参与 parity 语义，不进入 config digest。registry digest 是 TOML 解析后 `[quality_registry]` 与八个 `quality_guard` 的 canonical JSON sha256（排除 Markdown/frontmatter，object key 排序、array 顺序保持、无空白）；registry 不自含其自身 digest，避免循环。
 
+`hooks_runner_ci_required_checks` 的 `config_paths` 在 tracks 与 demo 都必须绑定部署前已存在且可现场验证的 `.tracks/projects/project.toml`，sections 至少为 `unit/integration/e2e/adapter`。该项的 command/scope/threshold/required_check 仍是 hook/CI 输出的唯一语义真相；`deploy_guard_configs` 据此生成输出，`check_parity` 比对 registry digest header、规范化命令、scope、threshold、required checks 与禁 `--exit-zero`。生成输出 raw bytes 不进入 `config_digest`，否则输出内嵌 registry digest 会形成自引用；格式不同但上述语义完全相等可以 parity pass，任何语义或 digest-header 漂移均返回 `GuardMismatch`。
+
 demo-pytest 的正式 source 是 wheel asset `tracks/assets/demo_host/architecture.md`，在 fresh repo 的唯一落点是 `.tracks/projects/v0.1/architecture.md`；它使用同一 schema/loader/validator，且 host 必须为 `demo-pytest`。其八项 config digest 分别绑定部署后 root `pyproject.toml`、`flake8.ini` 或 `.tracks/projects/project.toml` 的真实 bytes。仓库 inherited legacy `tracks/assets/demo_host/guards.toml` 不得修改，且不在 package-data allowlist、wheel/fresh repo、loader 输入或 deploy 输入中；其中旧表名/伪 section 永不被消费。`create_demo_host` 必须先 load+validate，再把同一 `GuardRegistry` 对象传给 `deploy_guard_configs`。AC-FR0258-03 的 “same registry-digest” 是**单宿主内** deployment record、Runtime、pre-commit、CI 四者相等；tracks 与 demo 因 scope、file-length=1200/500、required checks 六/三不同而预期 digest 不同，二者相等反而是错误 fixture。
 
 > **Prism [RESOLVED]:** PRISM-ARCH007-R2-01 [blocker|判据7 可实现性 + 判据8 合同真实性]：§1k 规定 config_digest 公式为 `sha256(path bytes + section names)`，但 ARCH-007 §4.2 中六个引用 pyproject.toml 的条目（lint-format/static-semantic/file-length/method-length-locals/duplication/coverage-threshold）config_sections 两两不同却声明同一 digest sha256:a39b3d62…；实测该值恰为 sha256(pyproject.toml 文件字节)（.flake8 条目 f899995c… 同理为整文件字节摘要）。architecture §4.2 前言自述'目标配置 bytes 的预期 digest（多文件为 path→sha256 canonical JSON）'，与声明值一致；即本节公式与 ARCH §4.2 前言及声明值互斥——按 §1k 字面公式六者必须两两不同。Devon 实现 validate_guard_registry/check_parity 的 digest 校验时被迫在两种语义间选择，同一仓库状态将产生不同 pass/fail（digest 是 GuardMismatch 的法定 kind 之一）。请二选一修订：(a) 把 §1k 公式改为'config 文件字节 sha256（多文件 path→sha256 canonical JSON）'，与 §4.2 前言及现有声明值对齐；(b) 按 §1k 现行公式重算并改声明全部 per-(file,sections) 真实 digest。两者取一后须保证三处（§1k 公式、§4.2 前言、八条 config_digest 值）一致。
@@ -662,7 +664,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-GUARD-002 Runtime/pre-commit/CI parity 与部署合同
 
-- **合同**：三处归一化比对、`--exit-zero` 拒绝、`guard.parity`、`GuardDeployment`、单宿主 deployment/Runtime/hook/CI 同 registry digest、registry 驱动宿主配置生成/验证。
+- **合同**：三处归一化比对、`--exit-zero` 拒绝、`guard.parity`、`GuardDeployment`、第8类 project-contract input digest 与 generated artifact audit 分离、单宿主 deployment/Runtime/hook/CI 同 registry digest、registry 驱动宿主配置生成/验证。
 - **modules**：executor/guard_registry.py, phase0.py, `.githooks/pre-commit`, CI workflow, demo_host.py。
 - **关联**：FR-0257-02, FR-0258-02/03, FR-0259-02, NFR-0141-01。
 

@@ -161,7 +161,7 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 - **FR-0257** owner=kernel/phase0.py:AC-FR0257-05 surface=trac-status composition=unrecoverable-check→BLOCKED wiring=coverage-or-guard-unrecoverable→phase0.blocked→repair-revalidate-loop-or-park→no-sealed test=integration:tests/integration/test_phase0_quality_seal.py::test_unrecoverable_coverage_guard_blocked evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且status含`phase0=blocked reason=coverage|guards` IF-PHASE-003
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-01 surface=trac-validate composition=architecture-§4.2-TOML-block→load+verify-eight-categories wiring=category+pinned-tool+config-digest+scope+threshold+timeout/failure+execution-points+required-check→missing-category-nonzero test=integration:tests/integration/test_guard_registry.py::test_registry_single_source_eight_categories evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且缺类registry副本使validate非零 IF-GUARD-001
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-02 surface=trac-status+trac-report composition=check_guard_parity→guard.parity wiring=registry-vs-runtime-vs-precommit-vs-ci-normalized-comparison→missing/exit-zero/scope-threshold-command-mismatch→blocked test=integration:tests/integration/test_guard_parity.py::test_parity_mismatch_blocks_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且`guard.parity(status=blocked)`含不一致项 IF-GUARD-002
-- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-03 surface=host-.githooks+CI-files+trac-report composition=load_guard_registry→deploy_guard_configs wiring=host-canonical-architecture-path→one-GuardRegistry.digest→runtime/precommit/ci-generation→deployment-record；demo-copy-asset-to-.tracks/projects/v0.1/architecture.md-then-same-loader/deployer test=integration:tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且demo的deployment record/pre-commit/CI三者均引用demo registry digest并与tracks digest明确不同 IF-GUARD-002
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-03 surface=host-.githooks+CI-files+trac-report composition=load_guard_registry→deploy_guard_configs wiring=host-canonical-architecture-path→validated-project-contract-config-digest→one-GuardRegistry.digest→runtime/precommit/ci-generation→deployment-record；generated-artifact-bytes-audited-not-fed-back；demo-copy-asset-to-.tracks/projects/v0.1/architecture.md-then-same-loader/deployer test=integration:tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且tracks/demo第8项分别匹配真实project.toml bytes、各宿主deployment/runtime/pre-commit/CI四者引用本宿主registry digest IF-GUARD-002
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-04 surface=trac-validate composition=v0.6-guard-migration-check wiring=ARCH-006-§4.2-eight-rows→registry-category-entries→no-silent-gap test=integration:tests/integration/test_guard_registry.py::test_registry_migration_no_silent_gap evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且v0.6八项均有registry对应项 IF-GUARD-001
 - **FR-0259** owner=kernel/machine.py:AC-FR0259-01 surface=trac-run-PRISM_REVIEW+trac-status composition=Prism-registry-review→prism.verdict(revise) wiring=missing-guard-or-exit-zero-or-parity-mismatch→REVISE→Archer→no-stage-exit-evidence test=integration:tests/integration/test_guard_registry.py::test_prism_revise_routes_back_to_archer evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且status回流`Archer`并无阶段出口 IF-GUARD-001
 - **FR-0259** owner=executor/guard_registry.py:AC-FR0259-02 surface=trac-report composition=registry-required-check→real-CI-evidence wiring=each-guard-required-check-name→CI-pass/fail-output；declaration-only→missing→REVISE test=integration:tests/integration/test_guard_parity.py::test_registry_real_execution_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且report引用`lint/coverage`等真实check名 IF-GUARD-001 IF-GUARD-002
@@ -270,7 +270,7 @@ version = 1
 
 ### 4.2 Canonical quality guard registry
 
-以下 TOML block 是 tracks 宿主的机器真相；字段名/顺序语义冻结，`trac validate` 与 Runtime 只读此 block。单文件 `config_digest` 是 `sha256(raw file bytes)`；多文件先按 repo-relative POSIX path 排序构造无空白 UTF-8 JSON object `{path: sha256(raw file bytes) lowercase hex}`，再对 JSON bytes 做 sha256。字段统一加 `sha256:` 前缀；`config_sections` 只用于 section 存在性/语义校验，不进入 digest。当前软 hook 与第 8 项目标 digest 不同，故 Phase 0 初始 parity 必须 blocked。
+以下 TOML block 是 tracks 宿主的机器真相；字段名/顺序语义冻结，`trac validate` 与 Runtime 只读此 block。单文件 `config_digest` 是 `sha256(raw file bytes)`；多文件先按 repo-relative POSIX path 排序构造无空白 UTF-8 JSON object `{path: sha256(raw file bytes) lowercase hex}`，再对 JSON bytes 做 sha256。字段统一加 `sha256:` 前缀；`config_sections` 只用于 section 存在性/语义校验，不进入 digest。第 8 项与 demo 一样把 digest 绑定到已存在的宿主 test/deployment input `.tracks/projects/project.toml`；生成的 hook/CI 输出不作为自己的 digest 输入，避免 registry-digest→生成文件→config-digest 的循环。当前软 hook 仍因 `--exit-zero`、scope/command 不一致被语义 parity 阻断，而不是因未来输出 bytes 的占位 digest 阻断。
 
 ```toml
 [quality_registry]
@@ -395,9 +395,9 @@ category = "hooks_runner_ci_required_checks"
 tool = "git-hooks+github-actions"
 tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
-config_paths = [".githooks/pre-commit", ".github/workflows/ci.yml"]
-config_sections = ["jobs"]
-config_digest = "sha256:e25583b8890eefe66da0c15d90b4548ebdda9fefa43b983705cc16236f33a2ca"
+config_paths = [".tracks/projects/project.toml"]
+config_sections = ["unit", "integration", "e2e", "adapter"]
+config_digest = "sha256:3ec206b42c0e8fb4695d0ec34f484591f7ca1c7d25b95e3120988c71c99f5c24"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600
@@ -407,6 +407,7 @@ required_check = "lint,coverage,test,deliverables,trace,reach"
 ```
 
 > **Prism:** PRISM-ARCH007-R3-01 [blocker|判据7 可实现性 + 判据8 合同真实性]：§4.2 第 8 条 hooks-runner-ci-required 的 config_digest=e25583b8… 无可推导来源且按本设计流程不可实现。证据：(1) 按冻结公式对现行 config_paths（.githooks/pre-commit + .github/workflows/ci.yml）计算=1b61a873…≠声明值；(2) 穷举全部 git tracked 文件代入 hook 分量及各公式变体（array序/prefix/默认分隔符/字节拼接/单文件）均不匹配；(3) 该值自称'目标 digest'（前言：当前软 hook 与第 8 项目标 digest 不同），而目标 hook 由 deploy_guard_configs 生成——该生成器是待实现 Devon foundation task，其输出字节在设计三件套中零规定，sha256 下 Devon 无法实现出生成物恰好命中冻结值。后果：§4.3 要求 hook 更新/激活/readback 后 guard.parity 通过才可 phase0.sealed，digest 漂移是法定 GuardMismatch 阻断项——按现值 Phase 0 永久 BLOCKED，v0.7-A 无法成立；除非无据改写已冻结 registry（设计未提供该机制）。修复（任选，须保持 §1k 公式、§4.2 前言与八条值一致）：(a) 参照 demo 第 8 条做法，把 config_paths 改绑已存在的可验证配置（如 .github/workflows/ci.yml 单文件或 .tracks/projects/project.toml），hook 硬化 parity 交由 check_parity 既有的命令/scope/threshold/--exit-zero 语义比对承载；(b) 在设计中字节级规定生成 hook 的模板并据此重算声明值；(c) 显式定义'部署时由 Runtime 重算并经已审计 design-revision 更新第 8 条 digest'的机制，并把现值标注为 pre-deployment 占位而非冻结真源。
+>> **Archer:** 采用 (a) 修复。tracks 第 8 项现与 demo 同构：config_paths=[.tracks/projects/project.toml]、sections=unit/integration/e2e/adapter、config_digest=sha256:3ec206b42c0e8fb4695d0ec34f484591f7ca1c7d25b95e3120988c71c99f5c24；已现场按 raw bytes 重算一致。ARCH §4.2 前言/镜像/§4.2 后置规则、IF §1e/§1k/IF-GUARD-002 与 test-plan §6.5 已冻结 input/output 边界：config_digest 只验证部署前 project contract；生成 hook/CI raw bytes 只进入 GuardDeployment.artifact_digests 审计且不回填 registry，避免内嵌 registry digest 的自引用；check_parity 继续对 registry-digest header、command、scope、threshold、required checks、--exit-zero 做语义 fail-closed。现有软 hook 因语义 mismatch blocked，不再依赖不可推导占位值。程序核对 tracks 八项 config_digest 全部匹配真实文件，三文档 validate valid。
 
 下表是审查镜像，不是第二数据源。
 
@@ -419,7 +420,7 @@ required_check = "lint,coverage,test,deliverables,trace,reach"
 | 5 | 方法长度/局部变量 | pylint==4.0.6 | `[tool.pylint.design]`; `tracks` | R0915≤50；R0914≤15；tests 豁免 | Runtime + pre-commit + CI `lint` |
 | 6 | 重复度 | pylint==4.0.6 | `[tool.pylint.similarities]`; `tracks tests` | R0801 min-similarity-lines=5 | Runtime + pre-commit + CI `lint` |
 | 7 | 覆盖率 | coverage==7.15.2 + pytest==9.1.1 | `[tool.coverage.*]`; source_pkgs=`tracks` | report ≥95%；by=collected；source omit=none | Runtime Phase0 + CI `coverage` |
-| 8 | hooks runner + CI required checks | git hooks + GitHub Actions | `.githooks/pre-commit`、`.github/workflows/ci.yml` | guards 1–7 hard；禁止 `--exit-zero`；required=`lint/coverage/test/deliverables/trace/reach` | local commit + merge；milestone `release-evidence` |
+| 8 | hooks runner + CI required checks | git hooks + GitHub Actions | digest input=`.tracks/projects/project.toml [unit/integration/e2e/adapter]`；generated/parity outputs=`.githooks/pre-commit`、`.github/workflows/ci.yml` | guards 1–7 hard；禁止 `--exit-zero`；required=`lint/coverage/test/deliverables/trace/reach` | local commit + merge；milestone `release-evidence` |
 
 安装命令（只由 Runtime 执行副作用）：
 
@@ -429,7 +430,7 @@ python -m venv .venv
 git config core.hooksPath .githooks
 ```
 
-每项 timeout/failure policy 在 registry 中具体声明；timeout、missing config、digest 漂移均为失败。阈值/scope 改动必须修订 design+registry，经 Prism 评审；`phase0.guard_hardened.revised` 只统计该类已审变更。
+每项 timeout/failure policy 在 registry 中具体声明；timeout、missing config、digest 漂移均为失败。第 8 项的 digest 漂移只指其声明的 project contract input；生成 hook/CI 的任何 bytes 或语义漂移由 `GuardDeployment.artifact_digests` 审计并由 `check_parity` 的 registry-digest、command、scope、threshold、required-check、`--exit-zero` 比对阻断，不拿生成物 bytes 回填 registry。阈值/scope 改动必须修订 design+registry，经 Prism 评审；`phase0.guard_hardened.revised` 只统计该类已审变更。
 
 #### 4.2.1 Demo registry 与部署闭合
 
