@@ -3104,6 +3104,20 @@ class MImplRuntimeMixin:
         )
         self._rebuild_task_log_projection()
 
+    def _m_impl_residency_cutoff_seq(self) -> int:
+        """Seq of the latest ``stage.entered(M-IMPL)`` (0 when never).
+
+        RGR per-task artifacts (refs, checkpoints) are idempotent within ONE
+        M-IMPL residency; a rollback abandons the cycle and its artifacts
+        become orphans (operator finding 2026-08-24, run 01M0S0FQ: the
+        retry-cutoff scope misclassified a prior residency's checkpointed
+        attempt as live and refused the slot renumber)."""
+        cutoff = 0
+        for ev in self.store.events(self.run_id):
+            if ev.type == "stage.entered" and ev.payload.get("stage") == "M-IMPL":
+                cutoff = ev.seq
+        return cutoff
+
     def _red_ref_free_attempt(self, task_id: str, attempt: int) -> int:
         """Allocate a free immutable-ref attempt slot for this task's R.
 
@@ -3114,19 +3128,25 @@ class MImplRuntimeMixin:
         orphaned ref (create_red_ref raises; the checkpoint crashed). R
         immutability is preserved by never overwriting: when the slot is
         taken by an orphan (no red.checkpointed event for this (task,
-        attempt) in the CURRENT residency -- the reconcile early-return
-        above already handled same-residency retries), advance to the next
-        free slot. The event records the allocated attempt, keeping history
-        and refs consistent."""
+        attempt) in the CURRENT M-IMPL residency), advance to the next free
+        slot. The event records the allocated attempt, keeping history and
+        refs consistent."""
+        cutoff = self._m_impl_residency_cutoff_seq()
         slot = attempt
         for _ in range(50):
             ref = f"refs/trac/rgr/{self.run_id}/{task_id}/{slot}/red"
             if git(self.repo, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
                 return slot
-            if self._m_impl_event_recorded("red.checkpointed", task_id, slot):
+            recorded_this_residency = any(
+                ev.type == "red.checkpointed"
+                and ev.seq > cutoff
+                and ev.payload.get("task_id") == task_id
+                and ev.payload.get("attempt") == slot
+                for ev in self.store.events(self.run_id)
+            )
+            if recorded_this_residency:
                 # Same-residency retry of an already checkpointed attempt:
-                # the early-return above should have caught it; fail closed
-                # rather than silently renumbering a live attempt.
+                # fail closed rather than silently renumbering a live attempt.
                 raise TestSelectError(
                     f"R ref {ref} already checkpointed this residency; refusing "
                     "to renumber a live attempt"
