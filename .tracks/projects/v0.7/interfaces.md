@@ -429,6 +429,8 @@ required_check = "lint"
 
 八个 category 每个恰好一次。config digest 由 `sha256(path bytes + section names)` 现场计算，纳入 registry digest/parity event；registry 不自含其自身 digest，避免循环。
 
+> **Prism:** PRISM-ARCH007-R2-01 [blocker|判据7 可实现性 + 判据8 合同真实性]：§1k 规定 config_digest 公式为 `sha256(path bytes + section names)`，但 ARCH-007 §4.2 中六个引用 pyproject.toml 的条目（lint-format/static-semantic/file-length/method-length-locals/duplication/coverage-threshold）config_sections 两两不同却声明同一 digest sha256:a39b3d62…；实测该值恰为 sha256(pyproject.toml 文件字节)（.flake8 条目 f899995c… 同理为整文件字节摘要）。architecture §4.2 前言自述'目标配置 bytes 的预期 digest（多文件为 path→sha256 canonical JSON）'，与声明值一致；即本节公式与 ARCH §4.2 前言及声明值互斥——按 §1k 字面公式六者必须两两不同。Devon 实现 validate_guard_registry/check_parity 的 digest 校验时被迫在两种语义间选择，同一仓库状态将产生不同 pass/fail（digest 是 GuardMismatch 的法定 kind 之一）。请二选一修订：(a) 把 §1k 公式改为'config 文件字节 sha256（多文件 path→sha256 canonical JSON）'，与 §4.2 前言及现有声明值对齐；(b) 按 §1k 现行公式重算并改声明全部 per-(file,sections) 真实 digest。两者取一后须保证三处（§1k 公式、§4.2 前言、八条 config_digest 值）一致。
+
 ## 2. CLI 接口合同
 
 ### 2a. `trac run`
