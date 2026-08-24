@@ -2459,29 +2459,81 @@ class MImplRuntimeMixin:
         """Map §8 integration rows' IFs to currently collected integration nodes."""
         index: dict[str, set[str]] = {}
         required = {str(if_id) for if_id in task_ifs}
+        inventory = set(current_nodes)
         for _ac_id, layer_cell, test_cell, if_cell in _coverage_rows_with_test(plan_text):
-            layers = {
-                part.strip().lower()
-                for part in re.split(r"[,/+;\s]+", layer_cell or "")
-                if part.strip()
-            }
-            if "integration" not in layers or not test_cell:
+            if not self._row_has_integration_layer(layer_cell, test_cell):
                 continue
-            declared = str(test_cell).strip().strip("`").partition("::")[0]
-            target = (
-                declared
-                if declared.startswith("tests/integration/")
-                else f"tests/integration/{Path(declared).name}"
-            )
-            matches = [node for node in current_nodes if node.partition("::")[0] == target]
+            targets = self._integration_row_targets(test_cell)
+            matches = self._resolve_row_targets(targets, current_nodes, inventory)
             row_ifs = set(re.findall(r"IF-[A-Z0-9][A-Z0-9-]*", if_cell or ""))
-            if self._row_binds_to_task(row_ifs, required, matches, target):
+            if self._row_binds_to_task(row_ifs, required, matches, targets):
                 for if_id in row_ifs:
                     index.setdefault(if_id, set()).update(matches)
         return {if_id: sorted(nodes) for if_id, nodes in sorted(index.items())}
 
     @staticmethod
-    def _row_binds_to_task(row_ifs: set, required: set, matches: list, target: str) -> bool:
+    def _row_has_integration_layer(layer_cell: str | None, test_cell: str | None) -> bool:
+        """Whether a §8 row names the integration layer and carries tests."""
+        if not test_cell:
+            return False
+        layers = {
+            part.strip().lower()
+            for part in re.split(r"[,/+;\s]+", layer_cell or "")
+            if part.strip()
+        }
+        return "integration" in layers
+
+    @staticmethod
+    def _resolve_row_targets(
+        targets: list[tuple[str, str | None]], current_nodes: list[str], inventory: set
+    ) -> list[str]:
+        """Collected nodes a row's (file, node|None) targets resolve to."""
+        matches: list[str] = []
+        for path, node in targets:
+            if node is not None:
+                if node in inventory:
+                    matches.append(node)
+            else:
+                matches.extend(
+                    n for n in current_nodes if n.partition("::")[0] == path
+                )
+        return matches
+
+    @staticmethod
+    def _integration_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
+        """(file, node|None) pairs a §8 test_cell names, item by item.
+
+        Operator finding (2026-08-24, run 01M0S0FQ T-001): the old
+        file-level expansion took only the FIRST item of a multi-test row
+        (``A + B + C``) and then matched the WHOLE file -- dragging sibling
+        tests of other tasks/IFs into this task's green requirement. Parse
+        every ``+``-separated item: a NODE item (``file::test``) binds that
+        node exactly; a FILE item binds the whole file."""
+        items = [
+            item.strip().strip("`")
+            for item in re.split(r"\+", str(test_cell))
+            if item.strip()
+        ]
+        targets: list[tuple[str, str | None]] = []
+        for item in items:
+            file_part, sep, node_part = item.partition("::")
+            if not file_part:
+                continue
+            path = (
+                file_part
+                if file_part.startswith("tests/integration/")
+                else f"tests/integration/{Path(file_part).name}"
+            )
+            if sep and node_part:
+                pair = (path, f"{path}::{node_part}")
+            else:
+                pair = (path, None)
+            if pair not in targets:
+                targets.append(pair)
+        return targets
+
+    @staticmethod
+    def _row_binds_to_task(row_ifs: set, required: set, matches: list, targets) -> bool:
         """Whether a plan §8 integration row binds to this task.
 
         Operator finding (2026-08-24, run 01M0S0FQ T-001): a multi-IF row
@@ -2496,7 +2548,8 @@ class MImplRuntimeMixin:
             return False  # partially-owned row: legally red, later tasks own it
         if not matches:
             raise TestSelectError(
-                f"task IF integration test is absent from collect: {target}"
+                "task IF integration test is absent from collect: "
+                + ", ".join(targets)
             )
         return True
 
