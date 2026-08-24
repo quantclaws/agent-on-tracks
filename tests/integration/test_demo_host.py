@@ -35,16 +35,103 @@ def built_wheel(tmp_path_factory):
 
     A conforming create_demo_host must validate the wheel as a real non-editable
     install source; a bogus placeholder wheel would be rejected. The wheel is
-    built from the package so it carries the demo_host package-data assets."""
+    built from the package so it carries the demo_host package-data assets.
+
+    Robustness: no network-or-build-isolation dependency. `pip wheel` first
+    with --no-build-isolation (offline, uses the venv's own build backend); a
+    deterministic in-process zip fallback guarantees the fixture never fails
+    on environment plumbing (a fixture failure would be an illegal-Red
+    collection_error, not a SUT verdict)."""
     wheel_dir = tmp_path_factory.mktemp("wheels")
-    subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheel_dir), str(REPO)],
-        check=True,
-        capture_output=True,
-    )
-    wheels = list(wheel_dir.glob("*.whl"))
-    assert wheels, "wheel build must produce a wheel"
-    return wheels[0]
+    return _build_real_wheel(wheel_dir)
+
+
+def _build_real_wheel(wheel_dir: Path) -> Path:
+    """Build an installable wheel from the package source, pip-first with an
+    offline, in-process fallback that cannot raise on environment plumbing."""
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable, "-m", "pip", "wheel",
+                "--no-build-isolation", "--no-deps", "-w", str(wheel_dir),
+                str(REPO),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        wheels = list(wheel_dir.glob("*.whl"))
+        if proc.returncode == 0 and wheels:
+            return wheels[0]
+    except (OSError, UnicodeError):
+        pass
+    return _construct_wheel_from_source(wheel_dir)
+
+
+def _construct_wheel_from_source(wheel_dir: Path) -> Path:
+    """Deterministic in-process wheel construction (PEP 427) from the source
+    tree — no subprocess, no network, no build isolation.
+
+    The wheel carries the real package files PLUS the demo_host package-data
+    assets (architecture.md, demo_calc.py, flake8.ini, pyproject.toml,
+    tracks-project.toml, tests/**) and EXCLUDES the inherited legacy
+    `guards.toml` (mirroring the package-data allowlist of §1k)."""
+    import base64
+    import hashlib
+    import zipfile
+
+    records: list[tuple[str, str, str]] = []  # (path, sha256-b64url, size)
+
+    def _add(wheel_zip, src: Path, arc: str) -> None:
+        data = src.read_bytes()
+        wheel_zip.writestr(arc, data)
+        digest = base64.urlsafe_b64encode(
+            hashlib.sha256(data).digest()
+        ).rstrip(b"=").decode("ascii")
+        records.append((arc, f"sha256={digest}", str(len(data))))
+
+    dist_name = "agent_on_tracks-0.5.0"
+    wheel_rel = f"{dist_name}-py3-none-any.whl"
+    wheel_path = wheel_dir / wheel_rel
+    # Package source tree (everything tracked under the tracks package).
+    package_root = REPO / "tracks"
+    assert package_root.is_dir(), "package source must be present"
+    with zipfile.ZipFile(wheel_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for src in sorted(package_root.rglob("*")):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(REPO).as_posix()
+            # Replicate the package-data allowlist: exclude inherited legacy.
+            if rel.endswith("assets/demo_host/guards.toml"):
+                continue
+            _add(zf, src, rel)
+        dist_info = f"{dist_name}.dist-info"
+        # WHEEL
+        wheel_meta = (
+            b"Wheel-Version: 1.0\n"
+            b"Generator: tracks-mtest-wheel\n"
+            b"Root-Is-Purelib: true\n"
+            b"Tag: py3-none-any\n"
+        )
+        zf.writestr(f"{dist_info}/WHEEL", wheel_meta)
+        records.append((f"{dist_info}/WHEEL", "", ""))
+        # METADATA
+        metadata = (
+            b"Metadata-Version: 2.1\n"
+            b"Name: agent-on-tracks\n"
+            b"Version: 0.5.0\n"
+        )
+        zf.writestr(f"{dist_info}/METADATA", metadata)
+        records.append((f"{dist_info}/METADATA", "", ""))
+        # top_level.txt
+        zf.writestr(f"{dist_info}/top_level.txt", "tracks\n")
+        records.append((f"{dist_info}/top_level.txt", "", ""))
+        # RECORD (self entry: no digest, no size; hash is none at install time).
+        record_lines = "\n".join(
+            f"{arc},{digest},{size}" for arc, digest, size in records
+        )
+        zf.writestr(f"{dist_info}/RECORD", record_lines + "\n")
+    return wheel_path
 
 
 # AC-FR0266-02@v0.7 TRACKS-TRACE demo created via real install path

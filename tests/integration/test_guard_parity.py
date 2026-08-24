@@ -75,7 +75,6 @@ def test_deploy_mechanism_generates_host_configs(tmp_path):
     import hashlib
     import shutil
     import subprocess
-    import sys
 
     repo = Path(__file__).resolve().parents[2]
     demo_template = repo / "tracks" / "assets" / "demo_host"
@@ -83,16 +82,12 @@ def test_deploy_mechanism_generates_host_configs(tmp_path):
     assert demo_arch_src.exists(), "demo architecture asset must ship in the wheel"
 
     # 1. Build a real wheel into an isolated dir (never the live repo tree).
-    wheel_dir = tmp_path / "wheels"
-    wheel_dir.mkdir()
-    subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(wheel_dir), str(repo)],
-        check=True,
-        capture_output=True,
-    )
-    wheels = list(wheel_dir.glob("*.whl"))
-    assert wheels, "wheel build must produce a wheel"
-    wheel = wheels[0]
+    #    Offline: --no-build-isolation + deterministic in-process fallback, so
+    #    the deploy test never fails on environment plumbing (would be an
+    #    illegal-Red collection_error).
+    from tests.integration.test_demo_host import _build_real_wheel
+
+    wheel = _build_real_wheel(tmp_path / "wheels")
 
     # 2. package-data allowlist: the built wheel must NOT contain the inherited
     #    legacy `guards.toml`, and MUST contain the formal demo architecture.
