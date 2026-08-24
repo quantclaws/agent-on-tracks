@@ -2,7 +2,7 @@
 acc_id: ACC-007
 created: 2026-08-24
 status: draft
-sha:
+sha: 124be7d75a728b89c73f0254fb8815098789b961cf0d1276d0a5a060bbb72834
 ---
 
 # 可信测试证据与一致质量基线（v0.7-A） — 验收标准
