@@ -12,6 +12,8 @@ Assertions land on `judge_real_coverage`/`validate_registered_marks`/
 
 from __future__ import annotations
 
+import pytest
+
 from tracks.executor.phase0 import (
     CoverageJudgement,
     SealManifest,
@@ -19,6 +21,9 @@ from tracks.executor.phase0 import (
     judge_real_coverage,
     validate_registered_marks,
 )
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0257-01@v0.7 TRACKS-TRACE coverage ratio by collected, exclude none

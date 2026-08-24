@@ -12,12 +12,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.executor.mutation import (
     MUTATION_PROTOCOL_VERSION,
     MutationManifest,
     build_manifest,
     validate_manifest,
 )
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0262-01@v0.7 TRACKS-TRACE manifest minimal field set, language neutral

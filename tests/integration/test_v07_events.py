@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.adapters.base import TestRunResult
 from tracks.executor.authenticity import judge_authenticity
 from tracks.executor.mutation import (
@@ -20,6 +22,9 @@ from tracks.executor.mutation import (
     MutationManifest,
     run_mutation_experiment,
 )
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-NFR0140-01@v0.7 TRACKS-TRACE append-only and projection rebuild

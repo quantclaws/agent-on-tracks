@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.executor.demo_host import (
     DemoHostReport,
     create_demo_host,
@@ -18,6 +20,9 @@ from tracks.executor.demo_host import (
 )
 
 DEMO_TEMPLATE = Path(__file__).resolve().parents[2] / "tracks" / "assets" / "demo_host"
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0266-02@v0.7 TRACKS-TRACE demo created via real install path

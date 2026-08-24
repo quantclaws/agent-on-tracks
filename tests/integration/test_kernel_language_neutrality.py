@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 
 # Forbidden zone (interfaces §1h): runtime code in kernel/executor/cli.
@@ -24,6 +26,9 @@ FORBIDDEN_GLOBS = (
 
 # Token word boundary, case-insensitive (interfaces §1h).
 TOKEN_RE = re.compile(r"\b(pytest|junit|java)\b", re.IGNORECASE)
+
+pytestmark = pytest.mark.integration
+
 
 
 def _forbidden_files() -> list[Path]:

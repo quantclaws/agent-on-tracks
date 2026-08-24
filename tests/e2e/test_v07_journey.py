@@ -12,7 +12,12 @@ Happy path only; error matrix lives in integration (test-plan §1.5/§11.1).
 
 from __future__ import annotations
 
+import pytest
+
 from tests.hotfix_support import seed_v05_approved_baseline
+
+pytestmark = pytest.mark.e2e
+
 
 
 # AC-FR0256-01@v0.7 TRACKS-TRACE v0.7-A journey Phase 0 to closure

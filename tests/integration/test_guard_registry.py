@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.executor.guard_registry import (
     GUARD_CATEGORIES,
     GuardRegistry,
@@ -21,6 +23,9 @@ from tracks.executor.guard_registry import (
 
 # The architecture.md machine registry block is the canonical source (§1k).
 ARCH = Path(__file__).resolve().parents[2] / ".tracks" / "projects" / "v0.7" / "architecture.md"
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0258-01@v0.7 TRACKS-TRACE registry single source, eight categories

@@ -12,12 +12,17 @@ interfaces §1f) public outlets.
 
 from __future__ import annotations
 
+import pytest
+
 from tracks.adapters.base import TestRunResult
 from tracks.executor.authenticity import (
     AuthenticityJudgement,
     classify_behaviour,
     judge_authenticity,
 )
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0260-01@v0.7 TRACKS-TRACE new behaviour legal Red on frozen baseline

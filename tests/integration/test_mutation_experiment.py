@@ -12,12 +12,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.adapters.base import TestRunResult
 from tracks.executor.mutation import (
     MutationExperimentResult,
     MutationManifest,
     run_mutation_experiment,
 )
+
+pytestmark = pytest.mark.integration
+
 
 
 def _manifest(ac="AC-FR0263-01@v0.7", scope=("tracks/...",)) -> MutationManifest:

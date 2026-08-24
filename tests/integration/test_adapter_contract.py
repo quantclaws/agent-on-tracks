@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.adapters.base import (
     TEST_RESULT_PROTOCOL,
     TEST_RESULT_PROTOCOL_VERSION,
@@ -20,6 +22,9 @@ from tracks.adapters.base import (
     resolve_adapter,
 )
 from tracks.adapters.reference_pytest import ReferencePytestAdapter
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0264-01@v0.7 TRACKS-TRACE three-interface seam, protocol version

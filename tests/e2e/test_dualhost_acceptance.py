@@ -10,7 +10,12 @@ all_fail_closed=true, crash_recovery=replay_ok.
 
 from __future__ import annotations
 
+import pytest
+
 from tests.hotfix_support import seed_v05_approved_baseline
+
+pytestmark = pytest.mark.e2e
+
 
 
 # AC-FR0266-01@v0.7 TRACKS-TRACE dual-host nine scenarios all fail-closed

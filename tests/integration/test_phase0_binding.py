@@ -13,10 +13,15 @@ distinguishes marker-only from real collected-node binding, and the
 
 from __future__ import annotations
 
+import pytest
+
 from tracks.executor.phase0 import TraceGap, scan_trace_gaps
 
 # Three v0.6 gap ACs fixed by Phase 0 (interfaces §1a row 1; acceptance §FR-0256).
 GAP_ACS = ("AC-FR0250-03@v0.6", "AC-NFR0130-01@v0.6", "AC-NFR0130-02@v0.6")
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0256-01@v0.7 TRACKS-TRACE real collected-node binding for the three v0.6 gap ACs

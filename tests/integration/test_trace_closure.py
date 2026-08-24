@@ -10,7 +10,12 @@ interfaces §1i) CLI outlet.
 
 from __future__ import annotations
 
+import pytest
+
 from tracks.cli.main import cmd_check
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0265-01@v0.7 TRACKS-TRACE closure candidate-bound pass

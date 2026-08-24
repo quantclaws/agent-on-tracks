@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.executor.demo_host import (
     FAIL_CLOSED_SCENARIOS,
     ScenarioFixture,
@@ -22,6 +24,9 @@ from tracks.executor.demo_host import (
 )
 
 DEMO_TEMPLATE = Path(__file__).resolve().parents[2] / "tracks" / "assets" / "demo_host"
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0266-01@v0.7 TRACKS-TRACE tracks host nine scenarios blocked

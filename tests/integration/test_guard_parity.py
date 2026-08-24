@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tracks.executor.guard_registry import (
     GuardDeployment,
     ParityReport,
@@ -24,6 +26,9 @@ from tracks.executor.guard_registry import (
 
 ARCH = Path(__file__).resolve().parents[2] / ".tracks" / "projects" / "v0.7" / "architecture.md"
 REPO = Path(__file__).resolve().parents[2]
+
+pytestmark = pytest.mark.integration
+
 
 
 # AC-FR0258-02@v0.7 TRACKS-TRACE parity mismatch blocks fail-closed
