@@ -4152,7 +4152,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (operator finding 2026-08-24, run 01M0S0FQ): committed test artifacts
         that the collector never saw indicate a runtime/contract defect
         (check=collect_defect) -- no attempt charge, operator escalation,
-        preserved checkpointed work."""
+        preserved checkpointed work. A third screen covers the design
+        re-approval re-validation cycle: when this cycle's no-diff review was
+        ACCEPTED and the run already committed its test increment, the empty
+        selection is discharged (check=r2_discharged) to EXIT -- the
+        increment exists and was validated earlier in this run; the cycle
+        structurally cannot produce a new R2 delta (operator finding
+        2026-08-24, third M-TEST cycle)."""
         defect = self._collect_defect_evidence()
         if defect is not None:
             self._emit(
@@ -4162,6 +4168,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "reason": defect,
                     "evidence": [],
                     "target_stage": "M-TEST",
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        discharge = self._r2_discharge_evidence()
+        if discharge is not None:
+            self._emit(
+                "verdict.passed",
+                {
+                    "check": "r2_discharged",
+                    "detail": discharge,
                 },
                 command_id=cmd.command_id,
             )
@@ -4179,6 +4196,41 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "attempt": state.current_attempt + 1,
             },
             command_id=cmd.command_id,
+        )
+
+    def _r2_discharge_evidence(self) -> str | None:
+        """Design re-approval discharge for an empty-R2 gate hit.
+
+        Conditions (all required, machine evidence only):
+        - this cycle's no-diff explanation was REVIEWED and ACCEPTED
+          (no_diff.reviewed verdict=pass after the retry cutoff);
+        - the run already committed its test increment (test.committed);
+        - the current full collect sees the committed assets
+          (collected_count > 0).
+
+        Under those, the vacuous-pass guard's purpose (refuse validation of a
+        nonexistent increment) is already satisfied by the committed and
+        earlier-validated increment; the re-validation cycle structurally
+        cannot add a new R2 delta. Returns the discharge detail, else None."""
+        cutoff = self._retry_cutoff_seq()
+        no_diff_accepted = any(
+            ev.type == "no_diff.reviewed"
+            and ev.seq > cutoff
+            and ev.payload.get("verdict") == "pass"
+            for ev in self.store.events(self.run_id)
+        )
+        if not no_diff_accepted:
+            return None
+        committed = self._latest_event("test.committed")
+        if committed is None:
+            return None
+        collected = self._latest_event("test.collected", status="passed")
+        if collected is None or collected.payload.get("collected_count", 0) <= 0:
+            return None
+        return (
+            "design re-approval re-validation: no-diff review accepted this "
+            f"cycle; increment already committed ({committed.payload.get('commit_sha', '')[:12]}) "
+            f"and collected ({collected.payload.get('collected_count')} nodes)"
         )
 
     def _collect_defect_evidence(self) -> str | None:

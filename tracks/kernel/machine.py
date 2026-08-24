@@ -726,6 +726,16 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
         _on_m_impl_verdict_passed(s, p)
         return
     if s.stage == "M-TEST":
+        if p.get("check") == "r2_discharged":
+            # Design re-approval re-validation discharge (operator finding
+            # 2026-08-24, run 01M0S0FQ third M-TEST cycle): the increment is
+            # committed and was validated earlier in this run; this cycle's
+            # no-diff review was accepted, so the empty selection is not a
+            # vacuous pass. Route to EXIT (trace gate + commit_tests over the
+            # committed assets); trace_passed stays False so EXIT still runs
+            # check_trace.
+            s.substate = "EXIT"
+            return
         # EXIT trace gate passed (SM-01.14): trace closure verified; the next
         # decide() step issues commit_tests.
         s.trace_passed = True
