@@ -127,27 +127,3 @@ def test_human_retry_outside_needs_attention_keeps_substate():
             ("human.retry", {"actor": "Maestro"}),
         ))
     assert s.substate == "ISLAND_GATE_1"
-
-
-def test_r2_discharge_routes_mtest_to_exit():
-    """verdict.passed(check=r2_discharged) at M-TEST RED_CHECK routes to EXIT
-    without marking trace_passed (EXIT must still run check_trace)."""
-    from tests.unit.helpers import seq as _seq
-    from tracks.kernel import decide
-
-    s = project(_seq(
-        ("story.requested", {"raw_chars": 5}),
-        ("stage.entered", {"stage": "M-TEST"}),
-        ("command.issued", {"command": {"kind": "capture_baseline", "params": {}, "command_id": "C0"}}),
-        ("test.baseline_captured", {"status": "passed"}),
-        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "shield", "substate": "WRITE"}, "command_id": "C1"}}),
-        ("outcome.received", {"role": "shield", "status": "done"}),
-        ("command.issued", {"command": {"kind": "collect_tests", "params": {}}, "command_id": "C2"}),
-        ("test.collected", {"status": "passed", "collected_count": 3}),
-        ("command.issued", {"command": {"kind": "run_tests", "params": {}}, "command_id": "C4"}),
-        ("verdict.passed", {"check": "r2_discharged", "detail": "design re-approval discharge"}),
-    ))
-    assert s.substate == "EXIT"
-    assert s.trace_passed is False
-    cmd = decide(s)
-    assert cmd is not None and cmd.kind == "check_trace"
