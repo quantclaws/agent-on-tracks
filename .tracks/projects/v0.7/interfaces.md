@@ -12,7 +12,7 @@ sha:
 ## 0. 延续性（什么不变）
 
 - IF-001/003/004/005/006 的 `EventEnvelope`、`Command`、Assignment/Outcome、State 投影、D-41 selection/evidence/ledger/FULL、hotfix、doc-gap 与 CLI 合同全部继承；本版只追加成员。
-- 既有 `test.baseline_captured`、`test.selected`、`red.validated`、`full.executed`、`evidence.*` 与 `.tracks/projects/project.toml` 三层命令合同不变。
+- 既有 `test.baseline_captured`、`test.selected`、`red.validated`、`full.executed`、`evidence.*` 的选择/结果语义与 `.tracks/projects/project.toml` 三层命令合同不变；v0.7 仅按 §1h 向既有 selection/execution payload 追加 adapter audit 字段。
 - 既有 IF 标识不可重定义；§5 重列 inherited headings 供 validator 解析，正文定义仍以 IF-006 及其上游文档为准。
 - feature/hotfix 的 test-plan trace 与版本解析不变；v0.7 candidate-bound 是 `--version v0.7` 的追加闭环。
 - 外部 CLI 顶层命令集合不变；本版只扩展现有命令输出/校验。
@@ -356,6 +356,18 @@ protocol = "tracks-test-result"
 version = 1
 ```
 
+v0.7 运行路径对既有 `test.selected` event payload 作向后兼容扩展（既有 selection/tree identity 字段不变）：
+
+```json
+{
+  "adapter": "reference-pytest",
+  "protocol": "tracks-test-result",
+  "protocol_version": 1
+}
+```
+
+`test.selected` 在 adapter collect 完成、run_selected 之前写入上述三个字段；它们必须来自本次 `resolve_adapter` 返回对象。对应的 `red.validated`（RED_CHECK）或 `full.executed`（FULL）结果 payload 复写这三个字段，并追加 `outcomes_ref: "sha256:..."` 指向同一次 normalized result；两端以既有 `selection_id` 关联。只读取 project.toml 并回显声明、未实际经 adapter collect/run/normalize，不构成 audit。未知 adapter 或 normalized result 畸形时不得产生带这些字段的通过事件。v0.6 及更早版本可保持既有 payload shape，不要求回填 v0.7 字段。
+
 ### 1i. Candidate-bound closure（IF-CLOSURE-001）
 
 **modules**: `checks/trace.py` 实现，`cli/main.py` 与 `executor/m_impl_runtime.py` 消费。
@@ -542,7 +554,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 | 3 | `guard.parity` | registry digest、runtime/pre_commit/ci、mismatches | FR0258/0259, NFR0141-01 |
 | 4 | `authenticity.judged` | category/red/green/kill/baseline/unrelated/status | FR0260/0261, NFR0140 |
 | 5 | `mutation.manifest/experiment` | exact manifest ref、五步结果、identity/digests | FR0261～0263, NFR0140 |
-| 6 | adapter execution audit（既有 test/full events 扩展） | adapter id、protocol/version、outcomes_ref | FR0264, NFR0141-02 |
+| 6 | adapter execution audit（v0.7 既有事件扩展） | `test.selected` 增 `adapter/protocol/protocol_version`；配对的 `red.validated` 或 `full.executed` 复写三字段并增 `outcomes_ref`；由 `selection_id` 关联 | FR0264, NFR0141-02 |
 | 7 | `demo.equivalence` | wheel/venv/import/hooks/CI/adapter/equivalent | FR0266-02/04, NFR0142-01 |
 | 8 | `failclosed.demonstrated/summary` | host/scenario/outcome/all_fail_closed/crash recovery | FR0266, NFR0142-02 |
 
@@ -704,7 +716,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-ADAPTER-002 Reference adapter 等价合同
 
-- **合同**：现行 collect/run_selected/result-normalize 与 exact coverage 迁入 reference adapter，同输入同输出。
+- **合同**：现行 collect/run_selected/result-normalize 与 exact coverage 迁入 reference adapter，同输入同输出；v0.7 `test.selected` audit 按 §1h 记录本次 resolved reference adapter 与 normalized result 身份。
 - **modules**：adapters/reference_pytest.py, project contract。
 - **关联**：FR-0264-02。
 
