@@ -60,9 +60,9 @@ Phase 0 不是 canonical stage。版本能力 `version >= v0.7` 且 `phase0_stat
 
 ### 1.0.3 Canonical quality guard registry
 
-architecture.md §4.2 中唯一 `[quality_registry]` TOML block 是 canonical registry。每项包含 category、pinned tool、canonical command、config path/section、config digest、scope、threshold、timeout、failure policy、execution points、required check。`check_guard_parity` 对 Runtime gate、`.githooks/pre-commit`、`.github/workflows/ci.yml` 做语义归一化比较：argv0 用 IF-RUNCONTRACT-001 同一解析，允许 CI 的 PATH argv0 与 `.venv/bin/*` 等价；tool/rule/scope/threshold/命令不一致、missing、config digest 漂移、`--exit-zero` 均阻断。
+每个被验宿主的 architecture.md §4.2 中唯一 `[quality_registry]` TOML block 是该宿主的 canonical registry：tracks 使用本文 §4.2，demo-pytest 使用 wheel asset `tracks/assets/demo_host/architecture.md`，部署到 demo repo `.tracks/projects/v0.1/architecture.md`。两者使用 IF-GUARD-001 同一 schema、`load_guard_registry`、八类校验与 digest 算法；一个 repo 不得同时选择两个 registry source。每项包含 category、pinned tool、canonical command、config path/section、config digest、scope、threshold、timeout、failure policy、execution points、required check。`check_guard_parity` 对 Runtime gate、`.githooks/pre-commit`、`.github/workflows/ci.yml` 做语义归一化比较：argv0 用 IF-RUNCONTRACT-001 同一解析，允许 CI 的 PATH argv0 与 `.venv/bin/*` 等价；tool/rule/scope/threshold/命令不一致、missing、config digest 漂移、`--exit-zero` 均阻断。
 
-`deploy_guard_configs` 是宿主部署入口：从 registry 生成/验证 pre-commit 与 CI guard steps。tracks 自身现有文件须与生成语义等价；demo 宿主经同一入口生成，禁止专用补丁。Prism 对 registry 缺类、软放行、parity 不一致或无 CI 真实执行证据判 REVISE。
+`deploy_guard_configs` 是两个宿主共用的部署入口：从传入 registry 生成/验证 pre-commit 与 CI guard steps。tracks 自身现有文件须与 tracks registry 生成语义等价；demo provisioner 先把 asset architecture 放到上述 canonical 落点，再调用同一 loader/deployer，禁止专用 parser、专用 guard patch 或预制 hook/CI。`same registry-digest` 指一个宿主内 Runtime/pre-commit/CI 与 deployment record 都引用该次 `GuardRegistry.digest`；它不要求 tracks 与 demo-pytest 的 digest 相等。两宿主因产品 scope、file-length 1200/500、required checks 六项/三项而有意使用不同 digest，差异冻结于各自 registry。Prism 对 registry 缺类、软放行、parity 不一致或无 CI 真实执行证据判 REVISE。
 
 ### 1.0.4 Test Authenticity Gate
 
@@ -93,7 +93,7 @@ reference adapter 承接 v0.6 的 collect、`{nodes}`/`{result}` 展开、JUnit 
 
 ISLAND_GATE_2 后、boundary 前执行 `demonstrate_failclosed`，不是新阶段。tracks 与动态 `demo-pytest` 分别演证闭合集：`broad_mutation | stale_patch | wrong_candidate | uncollected_node | unrelated_red | target_survived | control_hit | malformed_adapter_result | guard_parity_mismatch`。每场景在隔离副本中注入且必须被对应真实 gate 阻断，落 `failclosed.demonstrated`；每宿主 9 条齐全才落 `failclosed.summary(all_fail_closed=true)`。
 
-demo 模板随 wheel 位于 `tracks/assets/demo_host/`；Runtime 从安装 wheel 复制模板到 fresh venv 外的临时 repo，执行真实 `trac init`、contract/registry 部署、`git config core.hooksPath .githooks` 与相同 adapter/Runtime 路径。`demo.equivalence` 记录 wheel SHA、import path、venv、hooks、CI binding、adapter；不得 import tracks 私有测试 helper。中断演练按事件回放续跑缺失场景。
+demo 模板随 wheel 位于 `tracks/assets/demo_host/`；Runtime 从安装 wheel 复制模板到 fresh venv 外的临时 repo，执行真实 `trac init`、contract/registry 部署、`git config core.hooksPath .githooks` 与相同 adapter/Runtime 路径。`demo.equivalence` 记录 wheel SHA、import path、venv、canonical architecture path、registry digest、hooks、CI binding、adapter；不得 import tracks 私有测试 helper。中断演练按事件回放续跑缺失场景。
 
 ### 1.0.9 角色所有权
 
@@ -122,7 +122,7 @@ trac run -> cli.main.cmd_run -> Executor.run_loop -> kernel.machine.decide
   -> kernel.phase0 reducers -> SEALED resumes M-TEST; BLOCKED parks run
 ```
 
-**Parity 路径**：`stage gate -> Command(check_guard_parity) -> guard_registry.check_parity(architecture.md §4.2 registry, pre-commit, ci.yml) -> guard.parity -> pass|fail-closed`。
+**Parity 路径**：`stage gate -> Command(check_guard_parity(宿主 canonical architecture_path)) -> load_guard_registry -> guard_registry.check_parity(registry, pre-commit, ci.yml) -> guard.parity -> pass|fail-closed`。
 
 **Authenticity/mutation 路径**：
 
@@ -143,7 +143,7 @@ M-TEST RED_CHECK -> adapter.run_selected(R2 nodes) -> normalized TestRunResult
 trac check trace --version v0.7 OR ISLAND_GATE_2
   -> checks.trace candidate-bound join -> closure=pass|hard_errors
   -> demonstrate_failclosed
-  -> demo_host.create_demo_host + verify_path_equivalence
+  -> demo_host.create_demo_host（copy demo architecture→load_guard_registry→deploy_guard_configs）+ verify_path_equivalence
   -> real authenticity/mutation/parity gates x 9 x 2 hosts
   -> demo.equivalence + failclosed.demonstrated/summary
   -> run.completed(boundary) only when all pass
@@ -161,7 +161,7 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 - **FR-0257** owner=kernel/phase0.py:AC-FR0257-05 surface=trac-status composition=unrecoverable-check→BLOCKED wiring=coverage-or-guard-unrecoverable→phase0.blocked→repair-revalidate-loop-or-park→no-sealed test=integration:tests/integration/test_phase0_quality_seal.py::test_unrecoverable_coverage_guard_blocked evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且status含`phase0=blocked reason=coverage|guards` IF-PHASE-003
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-01 surface=trac-validate composition=architecture-§4.2-TOML-block→load+verify-eight-categories wiring=category+pinned-tool+config-digest+scope+threshold+timeout/failure+execution-points+required-check→missing-category-nonzero test=integration:tests/integration/test_guard_registry.py::test_registry_single_source_eight_categories evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且缺类registry副本使validate非零 IF-GUARD-001
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-02 surface=trac-status+trac-report composition=check_guard_parity→guard.parity wiring=registry-vs-runtime-vs-precommit-vs-ci-normalized-comparison→missing/exit-zero/scope-threshold-command-mismatch→blocked test=integration:tests/integration/test_guard_parity.py::test_parity_mismatch_blocks_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且`guard.parity(status=blocked)`含不一致项 IF-GUARD-002
-- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-03 surface=host-.githooks+CI-files+trac-report composition=deploy_guard_configs wiring=registry→host-precommit-and-ci-generation→deployment-record-linked-to-registry-digest；demo-uses-same-path test=integration:tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且demo生成的pre-commit/CI关联同一registry-digest IF-GUARD-002
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-03 surface=host-.githooks+CI-files+trac-report composition=load_guard_registry→deploy_guard_configs wiring=host-canonical-architecture-path→one-GuardRegistry.digest→runtime/precommit/ci-generation→deployment-record；demo-copy-asset-to-.tracks/projects/v0.1/architecture.md-then-same-loader/deployer test=integration:tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且demo的deployment record/pre-commit/CI三者均引用demo registry digest并与tracks digest明确不同 IF-GUARD-002
 - **FR-0258** owner=executor/guard_registry.py:AC-FR0258-04 surface=trac-validate composition=v0.6-guard-migration-check wiring=ARCH-006-§4.2-eight-rows→registry-category-entries→no-silent-gap test=integration:tests/integration/test_guard_registry.py::test_registry_migration_no_silent_gap evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且v0.6八项均有registry对应项 IF-GUARD-001
 - **FR-0259** owner=kernel/machine.py:AC-FR0259-01 surface=trac-run-PRISM_REVIEW+trac-status composition=Prism-registry-review→prism.verdict(revise) wiring=missing-guard-or-exit-zero-or-parity-mismatch→REVISE→Archer→no-stage-exit-evidence test=integration:tests/integration/test_guard_registry.py::test_prism_revise_routes_back_to_archer evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且status回流`Archer`并无阶段出口 IF-GUARD-001
 - **FR-0259** owner=executor/guard_registry.py:AC-FR0259-02 surface=trac-report composition=registry-required-check→real-CI-evidence wiring=each-guard-required-check-name→CI-pass/fail-output；declaration-only→missing→REVISE test=integration:tests/integration/test_guard_parity.py::test_registry_real_execution_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且report引用`lint/coverage`等真实check名 IF-GUARD-001 IF-GUARD-002
@@ -188,7 +188,7 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 - **FR-0265** owner=checks/trace.py:AC-FR0265-02 surface=trac-check-trace-v0.7+trac-status composition=closure-hard-errors wiring=node-missing|skip-xfail|identity-drift|control-failure→status=fail→no-stage.exited(M-IMPL) test=integration:tests/integration/test_trace_closure.py::test_blocking_conditions_hard_errors evidence=`.venv/bin/python -m pytest -q tests/integration/test_trace_closure.py`输出`passed`且四类hard_errors逐一出现 IF-CLOSURE-001
 - **FR-0265** owner=checks/trace.py:AC-FR0265-03 surface=trac-replay composition=candidate-digest-consistency wiring=baseline/mutation/FULL-candidate-digests-equal；foreign-candidate-evidence→fail-closed test=integration:tests/integration/test_trace_closure.py::test_candidate_digest_consistency evidence=`.venv/bin/python -m pytest -q tests/integration/test_trace_closure.py`输出`passed`且他candidate证据被拒 IF-CLOSURE-001 IF-MUTATION-001
 - **FR-0266** owner=executor/demo_host.py:AC-FR0266-01 surface=trac-run-acceptance+trac-replay composition=demonstrate_failclosed wiring=nine-scenarios×tracks/demo→real-gates-block→18-detail-events→two-summaries-all_fail_closed test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_tracks_host_nine_scenarios_blocked+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且两宿主summary含`all_fail_closed=true` IF-FAILCLOSED-001
-- **FR-0266** owner=executor/demo_host.py:AC-FR0266-02 surface=trac-run+trac-replay composition=create_demo_host→verify_path_equivalence wiring=wheel→fresh-venv→trac-init→contract/registry-deploy→hooksPath+CI-binding+adapter→demo.equivalence test=integration:tests/integration/test_demo_host.py::test_demo_created_via_real_install_path evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且事件含wheel-sha/hooks/adapter且import-path不在源码树 IF-DEMO-001
+- **FR-0266** owner=executor/demo_host.py:AC-FR0266-02 surface=trac-run+trac-replay composition=create_demo_host→load_guard_registry→deploy_guard_configs→verify_path_equivalence wiring=wheel→fresh-venv→trac-init→demo-architecture-fixed-landing→contract/registry-deploy→hooksPath+CI-binding+adapter→demo.equivalence test=integration:tests/integration/test_demo_host.py::test_demo_created_via_real_install_path evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且事件含wheel-sha/architecture-path/registry-digest/hooks/adapter且import-path不在源码树 IF-DEMO-001
 - **FR-0266** owner=executor/demo_host.py:AC-FR0266-03 surface=trac-replay composition=acceptance-crash-drill wiring=interrupt-valid-experiment→restart→event-replay→crash_recovery=replay_ok test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_crash_recovery_replay_ok+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且summary含`crash_recovery=replay_ok` IF-FAILCLOSED-001
 - **FR-0266** owner=executor/demo_host.py:AC-FR0266-04 surface=trac-status composition=acceptance-boundary wiring=any-leaked-scenario-or-demo-inequivalence→blocked→no-v0.7-B→status-host+scenario-reason test=integration:tests/integration/test_failclosed_scenarios.py::test_any_leak_or_inequivalence_blocks evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py`输出`passed`且leak反例阻断验收 IF-FAILCLOSED-001 IF-DEMO-001
 - **NFR-0140** owner=store/store.py:AC-NFR0140-01 surface=trac-replay/report+trac-status composition=append-only-events→projection-rebuild wiring=all-v0.7-evidence-events-append→drop-projection→rebuild-identical test=integration:tests/integration/test_v07_events.py::test_append_only_and_projection_rebuild evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且重建前后status/report一致 IF-AUTH-001 IF-MUTATION-002
@@ -197,7 +197,7 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 - **NFR-0140** owner=kernel/machine.py:AC-NFR0140-04 surface=trac-status composition=fail-closed-aggregation wiring=unknown-state|missing-entry|identity-drift|control-failure→blocked→reason-event→no-closure-bypass test=integration:tests/integration/test_v07_events.py::test_unknown_missing_drift_control_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且四类原因可审计 IF-AUTH-001 IF-MUTATION-002
 - **NFR-0141** owner=executor/guard_registry.py:AC-NFR0141-01 surface=trac-replay/report composition=programmatic-parity wiring=guard.parity-carries-registry-digest+three-results→Runtime-only→agent-attestation-ignored test=integration:tests/integration/test_guard_parity.py::test_parity_event_programmatic_no_agent_selfreport evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且自述不能产生`guard.parity(passed)` IF-GUARD-002
 - **NFR-0141** owner=executor/validate.py:AC-NFR0141-02 surface=trac-validate composition=language-neutrality-double-check wiring=static-token-scan+runtime-adapter-only-path→unknown/malformed-blocked test=integration:tests/integration/test_kernel_language_neutrality.py::test_language_invariant_dual_check evidence=`.venv/bin/python -m pytest -q tests/integration/test_kernel_language_neutrality.py`输出`passed`且静态与执行双检查均通过 IF-ADAPTER-003
-- **NFR-0142** owner=executor/demo_host.py:AC-NFR0142-01 surface=trac-replay/report composition=path-equivalence-evidence wiring=wheel/venv/pins/hooks/CI/adapter-same-path→demo.equivalence(equivalent=true) test=integration:tests/integration/test_demo_host.py::test_path_equivalence_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且五项等价证据可replay IF-DEMO-001
+- **NFR-0142** owner=executor/demo_host.py:AC-NFR0142-01 surface=trac-replay/report composition=path-equivalence-evidence wiring=wheel/venv/pins/canonical-architecture+registry-digest/hooks/CI/adapter-same-path→demo.equivalence(equivalent=true) test=integration:tests/integration/test_demo_host.py::test_path_equivalence_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且registry/deployment/hook/CI digest一致及其余路径等价证据可replay IF-DEMO-001
 - **NFR-0142** owner=executor/demo_host.py:AC-NFR0142-02 surface=trac-replay composition=demo-crash-recovery wiring=demo-interrupt→event-replay→same-summary-without-loss test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_demo_host_crash_recovery_rebuild+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且重建结果与中断前一致 IF-FAILCLOSED-001
 
 ## 2. Scaffold 宣言
@@ -212,16 +212,19 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 - `tracks/executor/mutation.py` — manifest 与 isolated experiment 签名，行为体仅 raise `IF-MUTATION-001/002`（kind: stub）
 - `tracks/executor/demo_host.py` — demo provisioning、路径等价与场景生成签名，行为体仅 raise `IF-DEMO-001/IF-FAILCLOSED-001`（kind: stub）
 - `.tracks/projects/project.toml` — 追加 `[adapter]` 声明；既有测试命令/layout/lint 不改（kind: config）
-- `pyproject.toml` — 注册 integration/e2e marks，并把 `assets/demo_host/**` 纳入 wheel package data（kind: config）
+- `pyproject.toml` — 注册 integration/e2e marks，并以显式 allowlist 打包 demo architecture/config/source/tests、排除 inherited legacy `guards.toml`（kind: config）
 - `tracks/assets/demo_host/pyproject.toml` — 最小宿主 pinned Python 工具与配置模板（kind: data）
 - `tracks/assets/demo_host/demo_calc.py` — demo candidate 的最小确定性源码语料（kind: data）
 - `tracks/assets/demo_host/tests/unit/test_demo_calc.py` — demo target/control unit node 语料（kind: data）
 - `tracks/assets/demo_host/tests/integration/test_demo_contract.py` — demo integration node 语料（kind: data）
 - `tracks/assets/demo_host/tests/e2e/test_demo_journey.py` — demo e2e happy node 语料（kind: data）
 - `tracks/assets/demo_host/tracks-project.toml` — demo 三层 test contract、nightly 与 adapter 模板（kind: data）
-- `tracks/assets/demo_host/guards.toml` — demo eight-category registry 模板（kind: data）
+- `tracks/assets/demo_host/flake8.ini` — demo cognitive-complexity 配置（kind: config）
+- `tracks/assets/demo_host/architecture.md` — 部署到 demo `.tracks/projects/v0.1/architecture.md` 的正式 eight-category canonical registry（kind: data）
 
 > **Prism:** PRISM-ARCH007-R2-02 [blocker|判据2 六元组闭合 + 判据7 可实现性]：scaffold 已交付 tracks/assets/demo_host/guards.toml，但该文件 schema 在设计三件套中无任何合同：interfaces §1k 只承认 architecture.md §4.2 下 [quality_registry]/[[quality_guard]] 一种格式，且明文'其它 table 名、缺 config_digest 均 fail-closed'；唯一 loader 签名是 load_guard_registry(architecture_path)，而 demo host 没有 architecture.md。实测该模板使用 [registry]/[[guard]] 表名、八条目全部无 config_digest、cognitive-complexity 条目引用不存在于 guards.toml 的伪 section 'guard:cognitive-complexity'。后果：demo 宿主上 scenario 9（guard_parity_mismatch）没有已定义的 registry 真相源，check_guard_parity(architecture_path, repo) 无法在 demo 落地；§1.0.3 要求'demo 宿主经同一入口生成，禁止专用补丁'、AC-FR0258-03 evidence 要求'demo 生成的 pre-commit/CI 关联同一 registry-digest'——手写模板与这两条的关系（deploy 输入？独立真相源？由谁按什么规则校验？）无定义，Devon/Shield 必须临场选择实现路径。请修复（任选其一并补齐合同）：(a) 在 interfaces.md 为 demo registry 定义正式合同：schema、校验规则、部署落点、消费 loader、与 deploy_guard_configs 及 AC-FR0258-03'同一 registry-digest'语义的精确关系，并修正伪 section 与缺 digest 字段；(b) 改为 demo 侧 guard 配置全部由 canonical registry 经 deploy_guard_configs 生成，从本宣言删除该手写模板文件，demo 与 tracks 的阈值/required-check 差异（如 file-length 500 vs 1200、required 三项 vs 六项）在设计中显式文档化。
+>> **Archer:** 按方案 (a) 修复：删除无合同的 guards.toml，新增 wheel asset tracks/assets/demo_host/architecture.md（正式 [quality_registry]/[[quality_guard]] 八类 schema、全量真实 config_digest）与 flake8.ini，并冻结部署落点 .tracks/projects/v0.1/architecture.md。ARCH §1.0.3/§3.1/§4.2.1 与 IF §1e/§1j/§1k 现明确同一 load_guard_registry→validate→deploy_guard_configs→check_parity 链、GuardDeployment、hook/CI digest 引用和 demo scenario 9。same registry-digest 被精确定义为单宿主内 deployment/Runtime/hook/CI 四向一致；tracks/demo 因 scope、file-length 1200/500、required checks 六/三而预期 digest 不同。scaffold 已替换，demo 八项/配置 bytes 摘要已程序核对，三份 trac validate 均 valid。
+>> **Archer:** Runtime 对上一轮删除 tracks/assets/demo_host/guards.toml 判 undeclared_scaffold 并已回滚；本轮遵循事实，不重建、不删除、不修改、也不在 Scaffold 宣言列该 inherited legacy 文件。为保持单一真相，pyproject package-data 已从 broad glob 改成正式 demo assets 的显式 allowlist，因此 legacy guards.toml 不进入 wheel/fresh repo，Runtime loader/deployer 永不读取；ARCH §4.2.1/§4.5、IF §1k/validate 与 test-plan 均改为验证 allowlist、wheel、fresh repo 无该文件。正式 demo architecture/flake8 scaffold 与同 loader→validate→deploy→parity 链保持。所有当前写盘路径均在 Scaffold 宣言或 assignment target 中；三文档 validate valid。
 
 本节以外不创建 scaffold。上述 stub 的行为体/接线，以及 `project.py` adapter loader、EVENT/COMMAND 封闭集、validate/trace 扩展、registry deploy generator，均是**待实现 Devon foundation tasks**；本文不得把它们当作既有可执行能力。现有 `.githooks/pre-commit` 是 Phase 0 输入而非本次 scaffold：registry 已冻结硬化目标，Runtime 在违规清零后执行生成、更新、激活与 readback。`tests/ground_truth/` 不新增文件：test-plan §3 判定不适用。既有 `tests/ground_truth` 资产继承且不修改。新 stub 在 Devon 接入 composition root 前会短暂是 reach island；ISLAND_GATE_2 的 reach hard gate 保证出口前全部接线，不使用永久豁免。
 
@@ -229,7 +232,7 @@ trac check trace --version v0.7 OR ISLAND_GATE_2
 
 ### 3.1 Registry 使用 TOML
 
-选择 architecture.md §4.2 中一个语法冻结的 TOML fenced block：Acceptance 明确要求 registry 位于 architecture machine contracts，且 Runtime scaffold allowlist 不允许额外 `.tracks/projects/guards.toml`。loader 只解析 §4.2 heading 下、下一个 heading 前、以 `[quality_registry]` 开头的唯一 `toml` block；零个或多个都 fail-closed。这样既用 Python 3.11 `tomllib`，又避免任意 Markdown 文本解析和第二真相。
+选择每个宿主 architecture.md §4.2 中一个语法冻结的 TOML fenced block：Acceptance 明确要求 registry 位于 architecture machine contracts，且 Runtime scaffold allowlist 不允许额外 `.tracks/projects/guards.toml`。loader 只解析调用方给定 architecture_path 的 §4.2 heading 下、下一个 heading 前、以 `[quality_registry]` 开头的唯一 `toml` block；零个或多个都 fail-closed。tracks 调用本文，动态 demo 调用部署后的 `.tracks/projects/v0.1/architecture.md`，因此每个 repo 都只有一个真相且共用 parser，不把 Tracks 自身 scope 强套到不同产品目录。
 
 ### 3.2 Python 静态检查映射
 
@@ -266,7 +269,7 @@ version = 1
 
 ### 4.2 Canonical quality guard registry
 
-以下 TOML block 是机器真相；字段名/顺序语义冻结，`trac validate` 与 Runtime 只读此 block。`config_digest` 是目标配置 bytes（多文件时为 path→sha256 canonical JSON）的预期 digest；当前软 hook 与第 8 项目标 digest 不同，故 Phase 0 初始 parity 必须 blocked。
+以下 TOML block 是 tracks 宿主的机器真相；字段名/顺序语义冻结，`trac validate` 与 Runtime 只读此 block。单文件 `config_digest` 是 `sha256(raw file bytes)`；多文件先按 repo-relative POSIX path 排序构造无空白 UTF-8 JSON object `{path: sha256(raw file bytes) lowercase hex}`，再对 JSON bytes 做 sha256。字段统一加 `sha256:` 前缀；`config_sections` 只用于 section 存在性/语义校验，不进入 digest。当前软 hook 与第 8 项目标 digest 不同，故 Phase 0 初始 parity 必须 blocked。
 
 ```toml
 [quality_registry]
@@ -281,7 +284,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -297,7 +300,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -329,7 +332,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -345,7 +348,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -361,7 +364,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=5; comments/docstrings/signatures ignored"
 timeout_seconds = 600
@@ -377,7 +380,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=95"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
 scope = ["tracks"]
 threshold = "line coverage >=95; by=collected; source omit=none"
 timeout_seconds = 1800
@@ -425,6 +428,13 @@ git config core.hooksPath .githooks
 
 每项 timeout/failure policy 在 registry 中具体声明；timeout、missing config、digest 漂移均为失败。阈值/scope 改动必须修订 design+registry，经 Prism 评审；`phase0.guard_hardened.revised` 只统计该类已审变更。
 
+#### 4.2.1 Demo registry 与部署闭合
+
+- **正式 source/落点**：wheel 只携带 `tracks/assets/demo_host/architecture.md` 这一份 demo registry source；`create_demo_host` 在 `trac init` 后把它逐字节写到 fresh repo `.tracks/projects/v0.1/architecture.md`，把 `tracks-project.toml` 写到 `.tracks/projects/project.toml`，其余 `pyproject.toml`、`flake8.ini`、源码/测试写到 repo 根。仓库 inherited legacy `tracks/assets/demo_host/guards.toml` 不属于本次 Scaffold、不得修改，且被 `pyproject.toml [tool.setuptools.package-data]` 显式 allowlist 排除，因此 wheel/fresh repo 中不存在该文件；Runtime 不读取它。无第二 parser 或 pre-generated hook/CI。
+- **消费链**：`load_guard_registry(repo/.tracks/projects/v0.1/architecture.md)` → `validate_guard_registry(registry, repo)` → `deploy_guard_configs(registry, repo)` → `.githooks/pre-commit` + `.github/workflows/ci.yml` → `check_parity`。任一步缺文件、digest/section 不符或 host≠`demo-pytest` 均使 equivalence=false；scenario `guard_parity_mismatch` 必须在已成功部署的副本上只改变一处后由同一 `check_parity` 阻断。
+- **digest 关联**：deployer 产生的 `GuardDeployment.registry_digest`、hook 声明 `TRACKS_GUARD_REGISTRY=<digest>`、CI 顶层 `env.TRACKS_GUARD_REGISTRY=<digest>` 与随后 `guard.parity.registry` 必须四者相等；digest 是 canonical TOML data（排除 Markdown/frontmatter、保持 array 顺序、JSON sort_keys/separators）之 sha256。tracks 与 demo 的 digest 不比较相等。
+- **有意差异**：demo scope 是 `demo_calc.py/tests` 而非 `tracks/tests`；file-length=500 而非 1200；timeout=120/600/900 而非 300/600/1800/3600；CI required checks 仅 `lint,coverage,test`，不声称 demo 具有 Tracks 产品专属 `deliverables,trace,reach`。其余 pinned versions、line-length=100、CCR001=15、method=50/locals=15、similarity=5、coverage=95、fail_closed 与禁 `--exit-zero` 相同。所有差异都位于 demo architecture registry，不由 deployer 硬编码。
+
 ### 4.3 CI / pre-commit / release
 
 - Stable required checks 继承：`lint`、`coverage`、`test`、`deliverables`、`trace`、`reach`；job 名不得变。`release-evidence` 仍是 tag milestone hard gate，needs routine 全部。
@@ -442,7 +452,7 @@ git config core.hooksPath .githooks
 
 ### 4.5 Build / artifact
 
-build backend 与 wheel 名不变。`pyproject.toml [tool.setuptools.package-data]` 追加 `assets/demo_host/**`；CI build/package-data 回归必须证明 wheel 安装后可定位模板、source import path 不在仓库。v0.7-A 不执行正式制品发布。
+build backend 与 wheel 名不变。`pyproject.toml [tool.setuptools.package-data]` 显式列出 `architecture.md`、`demo_calc.py`、`flake8.ini`、`pyproject.toml`、`tracks-project.toml` 与三层 tests；不使用 `assets/demo_host/*` broad glob，故 inherited legacy `guards.toml` 不进入 wheel。CI build/package-data 回归必须证明 wheel 安装后可定位声明资产、无 `guards.toml`、source import path 不在仓库。v0.7-A 不执行正式制品发布。
 
 ### 4.6 发布恢复
 

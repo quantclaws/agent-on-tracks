@@ -62,6 +62,14 @@ class ParityReport:
     mismatches: tuple[GuardMismatch, ...]
 
 
+@dataclass(frozen=True)
+class GuardDeployment:
+    registry_digest: str
+    pre_commit_path: Path
+    ci_workflow_path: Path
+    artifact_digests: Mapping[str, str]
+
+
 def load_guard_registry(architecture_path: Path) -> GuardRegistry:
     raise NotImplementedError("IF-GUARD-001")
 
@@ -82,5 +90,5 @@ def check_parity(
 
 def deploy_guard_configs(
     registry: GuardRegistry, target_repo: Path
-) -> Mapping[str, str]:
+) -> GuardDeployment:
     raise NotImplementedError("IF-GUARD-002")

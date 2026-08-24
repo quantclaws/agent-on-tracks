@@ -212,12 +212,14 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | 1 | temp git/worktree | 真实 apply/diff/rollback | 不决定 target/control 语义 |
 | 2 | reference adapter | collect/run/normalize host result | 不判断 AC authenticity |
 | 3 | scenario synthesizer | 生成一类最小 fault | 不绕过真实 gate、不合并场景 |
-| 4 | demo provisioner | wheel/venv/init/contracts/hooks/CI | 不 import private test shortcut |
+| 4 | demo provisioner | wheel/venv/init、asset architecture 固定落点、同 registry loader/deployer、hooks/CI | 不 import private test shortcut、不读旧 `guards.toml`、不走专用 parser |
 | 5 | event/blob reader | 断言公开 evidence | 不读私有 state |
 
 ### 6.5. Assertion Basis — Closure with interfaces.md
 
 断言只落 interfaces.md §4：`phase0.*`、`guard.parity`、`authenticity.judged`、`mutation.*`、adapter audit、`demo.equivalence`、`failclosed.*`，以及 §2 CLI 与 §3 files/git。无出口时修 interfaces，不 snoop internals。
+
+`test_deploy_mechanism_generates_host_configs` 必须从 wheel asset 逐字节物化 demo `.tracks/projects/v0.1/architecture.md`、用公开 `load_guard_registry`/`validate_guard_registry`/`deploy_guard_configs`，并断言：八类与三个真实 config digest 通过；package-data allowlist、built wheel 与 fresh repo 均不含仓库 inherited legacy `guards.toml`；deployment record、hook `TRACKS_GUARD_REGISTRY`、CI env 与 `guard.parity.registry` 四者同 digest；tracks/demo digest 因已声明 host profile 差异而不相等。篡改 `flake8.ini` 或任一生成点只产生 hard error/blocked，不允许 fallback。
 
 ---
 
@@ -311,7 +313,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | 2 | `tests/integration/test_check_trace.py` | 回归 v0.6 及早期 trace 输出不变；v0.7 另走 candidate closure | 版本能力隔离 |
 | 3 | `tests/integration/test_commit_hook_rejection.py` | 增硬门反例：pylint 违规被 hook 拒绝、无 `--exit-zero` | Phase 0 hardening |
 | 4 | v0.5/v0.6 journey e2e | 回归早期版本不触发 Phase 0/双宿主演证 | capability backward compatibility |
-| 5 | wheel/package-data integration | 安装 wheel 后定位 demo template | demo 必须走真实安装路径 |
+| 5 | wheel/package-data integration | 安装 wheel 后定位 demo architecture/flake8/project/source/test assets，并证明 allowlist/wheel/fresh repo 无 legacy `guards.toml` 或预制 hook/CI（不修改仓库 inherited file） | demo 必须走真实安装路径与同一 registry mechanism |
 
 Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
 
@@ -325,7 +327,7 @@ Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方
 
 ### 11.2 双宿主演证旅程
 
-`test_dualhost_nine_scenarios_all_fail_closed`：从 candidate wheel 安装 Runtime → tracks host 9 场景全部 blocked → 动态创建 demo host 并产生 equivalence=true → demo 9 场景全部 blocked → controlled interruption/restart → 两个 summary 均 `all_fail_closed=true, crash_recovery=replay_ok` → boundary。不得用 test-private shortcut。
+`test_dualhost_nine_scenarios_all_fail_closed`：从 candidate wheel 安装 Runtime → tracks host 9 场景全部 blocked → 动态创建 demo host、从固定 architecture 落点经同 loader/deployer 产生 equivalence=true 与四向 registry-digest 关联 → demo 9 场景全部 blocked → controlled interruption/restart → 两个 summary 均 `all_fail_closed=true, crash_recovery=replay_ok` → boundary。不得用 test-private shortcut。
 
 ---
 
@@ -343,7 +345,7 @@ Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方
 | 6 | target_survived | patch apply 但 target 仍绿 | blocked `target_survived` |
 | 7 | control_hit | control node 失败 | blocked `control_hit` |
 | 8 | malformed_adapter_result | unknown adapter 或缺/重/多 node result | blocked unknown/malformed |
-| 9 | guard_parity_mismatch | isolated pre-commit/CI 命令漂移或 exit-zero | guard.parity blocked |
+| 9 | guard_parity_mismatch | 在已由各宿主 canonical registry 成功部署的 isolated 副本中，只漂移 pre-commit/CI 命令、digest 引用或注入 exit-zero | guard.parity blocked；demo 不换 parser/registry source |
 
 每场景分别在 `host=tracks`、`host=demo-pytest` 落 detail event；scenario 名不得复用。任一 outcome=leaked 则 summary blocked。
 

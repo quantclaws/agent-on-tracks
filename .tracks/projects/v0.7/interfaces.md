@@ -34,7 +34,7 @@ sha:
 | 7 | `authenticity.judged` | `ac: str`, `if_refs: list[str]`, `category: "new"\|"existing"`, `baseline: str`, `nodes: list[str]`, `selection_id: str`, `evidence_id: str`, `red: "legal"\|"illegal"\|"none"`, `green: "allowed"\|null`, `counterexample_kill: "verified"\|"missing"\|"none"`, `counterexample_ref: str\|null`, `unrelated: list[UnrelatedFailure]`, `status: "passed"\|"blocked"`, `attempt: int`, `actor: str` | RED_CHECK executor | executor/authenticity, adapters, kernel/m_test, report |
 | 8 | `mutation.manifest` | `manifest_digest: str`, `manifest_blob: str`, `status: "declared"\|"blocked"`, `reason: MutationBlockReason\|null` | mutation executor | executor/mutation, kernel/m_test, report |
 | 9 | `mutation.experiment` | `manifest_digest: str`, `status: "passed"\|"blocked"`, `baseline: str`, `apply: str`, `target_kill: str`, `controls: str`, `rollback: str`, `command_echo: list[list[str]]`, `env_fingerprint: str`, `node_results_ref: str\|null`, `failure_signatures: list[str]`, `digests: dict` | mutation executor | executor/mutation, adapters, worktree, kernel/m_test, report |
-| 10 | `demo.equivalence` | `host: "demo-pytest"`, `equivalent: bool`, `install_method: "wheel"`, `wheel_sha256: str`, `import_path: str`, `venv: "fresh"`, `hooks_path: ".githooks"`, `ci_binding: "declared"`, `adapter: "reference-pytest"`, `checks: list[str]` | demo executor | executor/demo_host, guard_registry, adapters, cli, report |
+| 10 | `demo.equivalence` | `host: "demo-pytest"`, `equivalent: bool`, `install_method: "wheel"`, `wheel_sha256: str`, `import_path: str`, `venv: "fresh"`, `architecture_path: ".tracks/projects/v0.1/architecture.md"`, `registry_digest: str`, `hooks_path: ".githooks"`, `ci_binding: "declared"`, `adapter: "reference-pytest"`, `checks: list[str]` | demo executor | executor/demo_host, guard_registry, adapters, cli, report |
 | 11 | `failclosed.demonstrated` | `host: "tracks"\|"demo-pytest"`, `scenario: FailClosedScenario`, `outcome: "blocked"\|"leaked"`, `evidence_ref: str` | demo executor | executor/demo_host, authenticity, mutation, guard_registry, report |
 | 12 | `failclosed.summary` | `host: "tracks"\|"demo-pytest"`, `scenarios_count: 9`, `all_fail_closed: bool`, `crash_recovery: "replay_ok"\|"failed"`, `status: "passed"\|"blocked"` | demo executor | executor/demo_host, kernel/machine, cli, report |
 
@@ -188,16 +188,23 @@ class ParityReport:
     ci_match: bool
     mismatches: tuple[GuardMismatch, ...]
 
+@dataclass(frozen=True)
+class GuardDeployment:
+    registry_digest: str
+    pre_commit_path: Path
+    ci_workflow_path: Path
+    artifact_digests: Mapping[str, str]
+
 def load_guard_registry(architecture_path: Path) -> GuardRegistry: ...
 def validate_guard_registry(registry: GuardRegistry, repo: Path) -> tuple[str, ...]: ...
 def check_parity(
     registry: GuardRegistry, runtime_commands: Mapping[str, Sequence[str]],
     pre_commit_path: Path, ci_workflow_path: Path, cwd: Path,
 ) -> ParityReport: ...
-def deploy_guard_configs(registry: GuardRegistry, target_repo: Path) -> Mapping[str, str]: ...
+def deploy_guard_configs(registry: GuardRegistry, target_repo: Path) -> GuardDeployment: ...
 ```
 
-完整性错误、重复 category、unpinned tool、缺 config、非 fail_closed、`--exit-zero`、required check 缺失都返回 hard error。parity 对 argv0 使用同一解析规则，但不忽略其余 argv。
+完整性错误、重复 category、unpinned tool、缺 config、非 fail_closed、`--exit-zero`、required check 缺失都返回 hard error。`deploy_guard_configs` 只能消费已 validate 的 registry，固定写入 target repo `.githooks/pre-commit` 与 `.github/workflows/ci.yml`；hook 中 `TRACKS_GUARD_REGISTRY=<registry.digest>`、CI 顶层 `env.TRACKS_GUARD_REGISTRY=<registry.digest>`、返回对象三者必须一致。parity 对 argv0 使用同一解析规则，但不忽略其余 argv。
 
 ### 1f. Authenticity Gate（IF-AUTH-001/002）
 
@@ -381,6 +388,8 @@ class DemoHostReport:
     venv: Path
     wheel_sha256: str
     import_path: str
+    architecture_path: Path
+    registry_digest: str
     hooks_path: str
     ci_binding: str
     adapter_id: str
@@ -399,11 +408,11 @@ def synthesize_scenario_fixture(
 ) -> ScenarioFixture: ...
 ```
 
-真实路径必须：fresh venv、non-editable wheel、import path 不在 source tree、`trac init`、三层 project contract、registry deployment、hooksPath readback、CI binding file、adapter declaration。演证必须有九个不同 scenario detail event；一条 broad fixture 不能代替多个场景。
+真实路径必须：fresh venv、non-editable wheel、import path 不在 source tree、`trac init`；然后逐字节部署 asset `architecture.md`→`.tracks/projects/v0.1/architecture.md`、`tracks-project.toml`→`.tracks/projects/project.toml`、`flake8.ini`→repo 根，再经 §1k 同一 `load_guard_registry`/validate/deploy 路径生成 hook/CI，最后读取 hooksPath、CI binding 与 adapter。`DemoHostReport.registry_digest` 必须等于 deployment、hook、CI 与 `guard.parity` 的 digest。演证必须有九个不同 scenario detail event；一条 broad fixture 不能代替多个场景。
 
 ### 1k. Architecture machine registry block schema
 
-canonical source 是 architecture.md §4.2 下、下一个 heading 前唯一的 `toml` fence；其第一个 table 必须是 `[quality_registry]`，随后恰好八个 `[[quality_guard]]`。零个/多个 block、其它 table 名、缺 `config_digest` 均 fail-closed：
+canonical source 是调用方给定 architecture_path 的 §4.2 下、下一个 heading 前唯一的 `toml` fence；其第一个 table 必须是 `[quality_registry]`，随后恰好八个 `[[quality_guard]]`。零个/多个 block、其它 table 名、缺 `config_digest` 均 fail-closed：
 
 ```toml
 [quality_registry]
@@ -427,9 +436,13 @@ execution_points = ["runtime", "pre_commit", "ci"]
 required_check = "lint"
 ```
 
-八个 category 每个恰好一次。config digest 由 `sha256(path bytes + section names)` 现场计算，纳入 registry digest/parity event；registry 不自含其自身 digest，避免循环。
+八个 category 每个恰好一次。单个 `config_paths` 项时，`config_digest = "sha256:" + sha256(raw file bytes).hexdigest()`；多个项时，对每个 repo-relative POSIX path 计算 raw bytes 的 lowercase hex，按 path 排序并用 UTF-8 `json.dumps(mapping, sort_keys=True, separators=(",", ":"))` 序列化，再 sha256 该 JSON bytes并加前缀。`config_sections` 只验证声明 section 存在并参与 parity 语义，不进入 config digest。registry digest 是 TOML 解析后 `[quality_registry]` 与八个 `quality_guard` 的 canonical JSON sha256（排除 Markdown/frontmatter，object key 排序、array 顺序保持、无空白）；registry 不自含其自身 digest，避免循环。
+
+demo-pytest 的正式 source 是 wheel asset `tracks/assets/demo_host/architecture.md`，在 fresh repo 的唯一落点是 `.tracks/projects/v0.1/architecture.md`；它使用同一 schema/loader/validator，且 host 必须为 `demo-pytest`。其八项 config digest 分别绑定部署后 root `pyproject.toml`、`flake8.ini` 或 `.tracks/projects/project.toml` 的真实 bytes。仓库 inherited legacy `tracks/assets/demo_host/guards.toml` 不得修改，且不在 package-data allowlist、wheel/fresh repo、loader 输入或 deploy 输入中；其中旧表名/伪 section 永不被消费。`create_demo_host` 必须先 load+validate，再把同一 `GuardRegistry` 对象传给 `deploy_guard_configs`。AC-FR0258-03 的 “same registry-digest” 是**单宿主内** deployment record、Runtime、pre-commit、CI 四者相等；tracks 与 demo 因 scope、file-length=1200/500、required checks 六/三不同而预期 digest 不同，二者相等反而是错误 fixture。
 
 > **Prism:** PRISM-ARCH007-R2-01 [blocker|判据7 可实现性 + 判据8 合同真实性]：§1k 规定 config_digest 公式为 `sha256(path bytes + section names)`，但 ARCH-007 §4.2 中六个引用 pyproject.toml 的条目（lint-format/static-semantic/file-length/method-length-locals/duplication/coverage-threshold）config_sections 两两不同却声明同一 digest sha256:a39b3d62…；实测该值恰为 sha256(pyproject.toml 文件字节)（.flake8 条目 f899995c… 同理为整文件字节摘要）。architecture §4.2 前言自述'目标配置 bytes 的预期 digest（多文件为 path→sha256 canonical JSON）'，与声明值一致；即本节公式与 ARCH §4.2 前言及声明值互斥——按 §1k 字面公式六者必须两两不同。Devon 实现 validate_guard_registry/check_parity 的 digest 校验时被迫在两种语义间选择，同一仓库状态将产生不同 pass/fail（digest 是 GuardMismatch 的法定 kind 之一）。请二选一修订：(a) 把 §1k 公式改为'config 文件字节 sha256（多文件 path→sha256 canonical JSON）'，与 §4.2 前言及现有声明值对齐；(b) 按 §1k 现行公式重算并改声明全部 per-(file,sections) 真实 digest。两者取一后须保证三处（§1k 公式、§4.2 前言、八条 config_digest 值）一致。
+>> **Archer:** 采用 (a) 并已统一：IF §1k 与 ARCH §4.2 现在都规定单文件 config_digest=sha256(raw file bytes)；多文件为按 repo-relative POSIX path 排序的 path→raw-file-sha256-hex 无空白 canonical JSON 再 sha256。config_sections 只做 section/语义校验，不进入摘要。已用 shasum 核对 tracks pyproject=a39b3d62…、.flake8=f899995c…，并核对 demo pyproject/flake8/project contract 的八条声明；现有 registry 值与公式一致。三份 trac validate 均 valid。
+>> **Archer:** 补充 Runtime rollback 后的一致性核对：为从 wheel 排除 inherited legacy guards.toml，pyproject package-data 改为显式 allowlist，故其 raw bytes digest 合法变化为 sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627；ARCH §4.2 六条 pyproject-backed config_digest 已同步。程序核对确认 allowlist 含 architecture/flake8、不匹配 guards.toml，tracks/demo 均恰好八项；digest 公式仍为 IF §1k 的 raw-file bytes / multi-file canonical JSON，三文档 validate valid。
 
 ## 2. CLI 接口合同
 
@@ -475,7 +488,7 @@ acceptance host=demo-pytest all_fail_closed=true|false equivalent=true|false cra
 3. project `[adapter]` id/protocol/version 已知；
 4. kernel/executor/cli 语言 token scan；
 5. pytest marks `integration/e2e/performance` 注册；
-6. demo package-data 路径声明存在。
+6. demo package-data 显式 allowlist 含正式 `architecture.md` registry 与 `flake8.ini`、不含 inherited legacy `guards.toml`；wheel/临时 repo 中 `guards.toml` 必须不存在，物化后的正式 asset 必须通过同一 schema/config-digest validator。
 
 任一失败 stderr 精确指出 check/path/guard/token，exit 1；不得 warning-only。
 
@@ -503,10 +516,11 @@ acceptance host=demo-pytest all_fail_closed=true|false equivalent=true|false cra
 | 4 | `.tracks/runtime/blobs/mutation/{run}/{seq}-manifest.json` | §1g exact JSON；Runtime | experiment/replay/report |
 | 5 | `.tracks/runtime/blobs/mutation/{run}/{seq}-results.json` | normalized node outcomes/digests；Runtime | authenticity/closure/report |
 | 6 | `.tracks/runtime/demo/{run}/` | fresh git repo+venv；Runtime | demo experiment；after summary 可清理，events/blobs 保留 |
-| 7 | `tracks/assets/demo_host/**` | wheel package data；Archer | installed Runtime copies; never imports as product module |
-| 8 | `tests/counterexamples/v0.7/*.patch` | Shield；git tracked | Runtime mutation_verify；Devon read-only |
-| 9 | `.githooks/pre-commit` | existing soft Phase 0 input；Runtime 由 registry 生成/更新 | Runtime activates/readbacks via hooksPath |
-| 10 | `.github/workflows/ci.yml` | existing workflow | parity validator/CI；no v0.7 new job |
+| 7 | `tracks/assets/demo_host/architecture.md` | 正式 demo architecture §4.2 registry；Archer；wheel package data | Runtime 逐字节部署到 `.tracks/projects/v0.1/architecture.md` 后由 `load_guard_registry` 消费 |
+| 8 | `tracks/assets/demo_host/{pyproject.toml,flake8.ini,tracks-project.toml,demo_calc.py,tests/**}` | demo config/data；Archer；wheel package data | installed Runtime copies；config bytes 供 registry digest 校验；never imports as product module |
+| 9 | `tests/counterexamples/v0.7/*.patch` | Shield；git tracked | Runtime mutation_verify；Devon read-only |
+| 10 | `.githooks/pre-commit` | tracks: existing soft Phase 0 input；demo: absent before deploy；Runtime 由所选 host registry 生成/更新 | Runtime activates/readbacks via hooksPath；嵌入 registry digest |
+| 11 | `.github/workflows/ci.yml` | tracks: existing workflow；demo: absent before deploy | parity validator/CI；由所选 host registry 生成/验证并嵌入 registry digest |
 
 seal blob schema：`{baseline_version, document_digests, frozen_test_digests, marks, environment_contract_digest, seal_id}`。manifest/result blobs 使用 content-address digest；event ref 缺失 fail-closed。Runtime temp worktree/result file 不进 git/tree identity，清理前必须归一化持久化。
 
@@ -641,13 +655,13 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-GUARD-001 Canonical quality guard registry 合同
 
-- **合同**：§1e/§1k 八类完整 schema、pinned tools、五要素、config digest、fail_closed、v0.6 迁移与 real required-check evidence。
-- **modules**：executor/guard_registry.py, validate.py, architecture.md §4.2 machine block。
+- **合同**：§1e/§1k 八类完整 schema、pinned tools、五要素、raw-file config digest、per-host canonical architecture source、fail_closed、v0.6 迁移与 real required-check evidence。
+- **modules**：executor/guard_registry.py, validate.py, tracks/demo architecture.md §4.2 machine blocks。
 - **关联**：FR-0257-01/02, FR-0258-01/04, FR-0259。
 
 ### IF-GUARD-002 Runtime/pre-commit/CI parity 与部署合同
 
-- **合同**：三处归一化比对、`--exit-zero` 拒绝、`guard.parity`、registry 驱动宿主配置生成/验证。
+- **合同**：三处归一化比对、`--exit-zero` 拒绝、`guard.parity`、`GuardDeployment`、单宿主 deployment/Runtime/hook/CI 同 registry digest、registry 驱动宿主配置生成/验证。
 - **modules**：executor/guard_registry.py, phase0.py, `.githooks/pre-commit`, CI workflow, demo_host.py。
 - **关联**：FR-0257-02, FR-0258-02/03, FR-0259-02, NFR-0141-01。
 
@@ -701,7 +715,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-DEMO-001 Demo host real-path equivalence 合同
 
-- **合同**：§1j wheel/fresh venv/trac init/registry+contract/hooks+CI+adapter、无私有测试捷径、`demo.equivalence`。
+- **合同**：§1j wheel/fresh venv/trac init、demo architecture 固定落点、同 loader/validator/deployer、registry digest 四向关联、contract/hooks/CI+adapter、无私有测试捷径、`demo.equivalence`。
 - **modules**：executor/demo_host.py, guard_registry.py, adapters, package assets。
 - **关联**：FR-0266-02/04, NFR-0142-01。
 

@@ -24,6 +24,8 @@ class DemoHostReport:
     venv: Path
     wheel_sha256: str
     import_path: str
+    architecture_path: Path
+    registry_digest: str
     hooks_path: str
     ci_binding: str
     adapter_id: str
