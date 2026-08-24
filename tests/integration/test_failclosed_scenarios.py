@@ -5,100 +5,116 @@ AC-FR0266-03@v0.7 crash recovery replay ok,
 AC-FR0266-04@v0.7 any leak or inequivalence blocks,
 AC-NFR0142-02@v0.7 demo host crash recovery rebuild.
 
-Assertions land on `synthesize_scenario_fixture`/`create_demo_host`/
-`verify_path_equivalence` (IF-FAILCLOSED-001/IF-DEMO-001, §1j) public outlets
-and the `failclosed.demonstrated/summary` event outlet (§1a).
+Assertions land on the `failclosed.demonstrated`/`failclosed.summary` event
+outlets (interfaces §1a rows 11–12) observed via `trac run` + `event_log`,
+NOT on fixture shapes. The crash-recovery ACs assert the
+`failclosed.summary.crash_recovery` field (`replay_ok`) and that an
+interruption/restart replays without phantom passes.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from tracks.executor.demo_host import (
-    FAIL_CLOSED_SCENARIOS,
-    ScenarioFixture,
-    synthesize_scenario_fixture,
-    verify_path_equivalence,
-)
-
-DEMO_TEMPLATE = Path(__file__).resolve().parents[2] / "tracks" / "assets" / "demo_host"
+from tests.hotfix_support import seed_v05_approved_baseline
+from tracks.executor.demo_host import FAIL_CLOSED_SCENARIOS
 
 pytestmark = pytest.mark.integration
 
 
-
 # AC-FR0266-01@v0.7 TRACKS-TRACE tracks host nine scenarios blocked
-def test_tracks_host_nine_scenarios_blocked():
-    """AC-FR0266-01: the nine fail-closed scenarios form a closed set, all blocked."""
-    # Closed set: exactly nine members (interfaces §1j).
-    assert len(FAIL_CLOSED_SCENARIOS) == 9
-    assert len(set(FAIL_CLOSED_SCENARIOS)) == 9, "scenario names must not repeat"
-    # Each scenario must synthesize a fixture with the expected block reason.
-    for scenario in FAIL_CLOSED_SCENARIOS:
-        fixture = synthesize_scenario_fixture(
-            scenario=scenario,
-            host_repo=Path("/tmp/tracks-host"),
-            candidate_digest="sha256:candidate",
+def test_tracks_host_nine_scenarios_blocked(trac, host_repo, event_log):
+    """AC-FR0266-01: each of the 9 scenarios produces a blocked demonstrated
+    event on host=tracks; the summary reports all_fail_closed=true.
+
+    Legal Red anchor: IF-FAILCLOSED-001 is not wired into the run loop, so no
+    `failclosed.demonstrated`/`failclosed.summary` events are emitted; the
+    per-scenario and summary assertions fail on absence of the contract outlet.
+    """
+    seed_v05_approved_baseline(host_repo, version="v0.7")
+    trac("run")
+    events = event_log("latest")
+    demonstrated = [e for e in events if e["type"] == "failclosed.demonstrated"
+                     and e["payload"].get("host") == "tracks"]
+    # Exactly one blocked demonstrated event per scenario, all outcome=blocked.
+    assert len(demonstrated) == len(FAIL_CLOSED_SCENARIOS) == 9, (
+        f"expected 9 tracks demonstrated events; got {len(demonstrated)}"
+    )
+    seen_scenarios = {e["payload"]["scenario"] for e in demonstrated}
+    assert seen_scenarios == set(FAIL_CLOSED_SCENARIOS), (
+        f"tracks demonstrated scenarios mismatch: {seen_scenarios}"
+    )
+    for ev in demonstrated:
+        assert ev["payload"]["outcome"] == "blocked", (
+            f"tracks scenario {ev['payload']['scenario']} leaked "
+            f"(outcome={ev['payload']['outcome']})"
         )
-        assert isinstance(fixture, ScenarioFixture)
-        assert fixture.scenario == scenario
-        assert fixture.host == "tracks"
-        assert fixture.expected_block_reason, (
-            f"scenario {scenario} must declare an expected block reason"
-        )
+    summary = [e for e in events if e["type"] == "failclosed.summary"
+               and e["payload"].get("host") == "tracks"]
+    assert summary, "tracks failclosed.summary event missing"
+    assert summary[-1]["payload"]["all_fail_closed"] is True
 
 
 # AC-FR0266-03@v0.7 TRACKS-TRACE crash recovery replay ok
-def test_crash_recovery_replay_ok():
-    """AC-FR0266-03: a controlled interruption/restart yields crash_recovery=replay_ok."""
-    # The scenario fixture for an interruption must be replayable.
-    fixture = synthesize_scenario_fixture(
-        scenario="stale_patch",
-        host_repo=Path("/tmp/tracks-host"),
-        candidate_digest="sha256:candidate",
-    )
-    assert fixture.expected_block_reason in (
-        "stale_patch", "apply_mismatch", "wrong_candidate",
-    )
+def test_crash_recovery_replay_ok(trac, host_repo, event_log):
+    """AC-FR0266-03: a controlled interruption/restart replays events without
+    loss; the summary carries crash_recovery=replay_ok (not `failed`).
+
+    The crash-recovery outlet is the `failclosed.summary.crash_recovery` field
+    (§1a row 12), observed via the event stream after an interruption/restart.
+    A phantom pass (status=passed with missing results) is forbidden."""
+    seed_v05_approved_baseline(host_repo, version="v0.7")
+    trac("run")
+    events = event_log("latest")
+    summaries = [e for e in events if e["type"] == "failclosed.summary"]
+    assert summaries, "failclosed.summary event missing (crash recovery outlet)"
+    for summary in summaries:
+        assert summary["payload"]["crash_recovery"] == "replay_ok", (
+            f"host {summary['payload'].get('host')} crash_recovery must be "
+            f"replay_ok; got {summary['payload'].get('crash_recovery')}"
+        )
+    # No phantom pass: a summary with status=passed must carry replay_ok (not
+    # a missing/failed recovery field masked as passed).
+    for summary in summaries:
+        if summary["payload"]["status"] == "passed":
+            assert summary["payload"]["crash_recovery"] == "replay_ok"
 
 
 # AC-FR0266-04@v0.7 TRACKS-TRACE any leak or inequivalence blocks
-def test_any_leak_or_inequivalence_blocks():
-    """AC-FR0266-04: any leaked scenario or demo inequivalence blocks acceptance."""
-    # A demo host whose path equivalence fails must report inequivalence.
-    # We invoke verify_path_equivalence on an unprovisioned report shape to
-    # assert it surfaces inequivalence (not a silent pass).
-    from tracks.executor.demo_host import DemoHostReport
-    report = DemoHostReport(
-        repo=Path("/tmp/demo"),
-        venv=Path("/tmp/venv"),
-        wheel_sha256="sha256:wheel",
-        import_path="/tmp/demo/site",
-        architecture_path=Path(".tracks/projects/v0.1/architecture.md"),
-        registry_digest="sha256:reg",
-        hooks_path=".githooks",
-        ci_binding="declared",
-        adapter_id="reference-pytest",
-    )
-    equivalent, gaps = verify_path_equivalence(report)
-    # An unprovisioned host cannot be equivalent; any leak blocks.
-    assert equivalent is False or len(gaps) == 0, (
-        "inequivalence must be surfaced (no silent pass)"
+def test_any_leak_or_inequivalence_blocks(trac, host_repo, event_log):
+    """AC-FR0266-04: any leaked scenario (outcome != blocked) or demo
+    inequivalence routes the host summary to status=blocked (not passed)."""
+    seed_v05_approved_baseline(host_repo, version="v0.7")
+    trac("run")
+    events = event_log("latest")
+    demonstrated = [e for e in events if e["type"] == "failclosed.demonstrated"]
+    # If any scenario leaked, its host summary must be status=blocked.
+    leaked_hosts = {e["payload"]["host"] for e in demonstrated
+                    if e["payload"]["outcome"] != "blocked"}
+    for summary in (e for e in events if e["type"] == "failclosed.summary"):
+        if summary["payload"]["host"] in leaked_hosts:
+            assert summary["payload"]["status"] == "blocked", (
+                f"host {summary['payload']['host']} leaked a scenario but "
+                f"summary status={summary['payload']['status']} (must block)"
+            )
+    # At least one summary must exist and report all_fail_closed consistently.
+    assert [e for e in events if e["type"] == "failclosed.summary"], (
+        "failclosed.summary events missing (no acceptance outlet)"
     )
 
 
 # AC-NFR0142-02@v0.7 TRACKS-TRACE demo host crash recovery rebuild
-def test_demo_host_crash_recovery_rebuild():
-    """AC-NFR0142-02: demo host events rebuild after interruption, no loss."""
-    # The demo host crash-recovery outlet is the failclosed.summary crash field.
-    # We assert the scenario fixture set covers crash recovery scenarios.
-    crash_scenarios = ("stale_patch", "malformed_adapter_result")
-    for scenario in crash_scenarios:
-        fixture = synthesize_scenario_fixture(
-            scenario=scenario,
-            host_repo=Path("/tmp/demo-host"),
-            candidate_digest="sha256:candidate",
-        )
-        assert fixture.host in ("tracks", "demo-pytest")
+def test_demo_host_crash_recovery_rebuild(trac, host_repo, event_log):
+    """AC-NFR0142-02: the demo-pytest host summary also carries
+    crash_recovery=replay_ok after interruption/restart (dual-host)."""
+    seed_v05_approved_baseline(host_repo, version="v0.7")
+    trac("run")
+    events = event_log("latest")
+    demo_summaries = [e for e in events if e["type"] == "failclosed.summary"
+                      and e["payload"].get("host") == "demo-pytest"]
+    assert demo_summaries, (
+        "demo-pytest failclosed.summary missing (dual-host crash recovery outlet)"
+    )
+    assert demo_summaries[-1]["payload"]["crash_recovery"] == "replay_ok", (
+        "demo-pytest crash recovery must be replay_ok after rebuild"
+    )

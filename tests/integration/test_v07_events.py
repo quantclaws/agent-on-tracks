@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.hotfix_support import seed_v05_approved_baseline
 from tracks.adapters.base import TestRunResult
 from tracks.executor.authenticity import judge_authenticity
 from tracks.executor.mutation import (
@@ -28,20 +29,47 @@ pytestmark = pytest.mark.integration
 
 
 # AC-NFR0140-01@v0.7 TRACKS-TRACE append-only and projection rebuild
-def test_append_only_and_projection_replay(trac, event_log):
-    """AC-NFR0140-01: v0.7 events append-only; projection rebuild invariant."""
-    trac("run", simulate="v07_phase0_seal")
-    run_id = "latest"
-    events_before = event_log(run_id)
-    types_before = [e["type"] for e in events_before]
+def test_append_only_and_projection_replay(trac, host_repo, event_log):
+    """AC-NFR0140-01: events are append-only; dropping the projection and
+    rebuilding yields an invariant state (not a re-read echo of the log).
+
+    The outlet (§1a/NFR-04): ``drop`` the derived ``runs``/``backlog``
+    projection tables, then ``trac status`` re-derives state from the
+    append-only events; the rebuilt status must match the pre-drop status.
+    """
+    import sqlite3
+
+    from tracks import paths
+
+    seed_v05_approved_baseline(host_repo, version="v0.7")
+    trac("run")
+    pre_status = trac("status").stdout
     # v0.7 phase0 events must be present in the append-only stream.
-    assert any(t.startswith("phase0.") for t in types_before), (
+    events_before = [e["type"] for e in event_log("latest")]
+    assert any(t.startswith("phase0.") for t in events_before), (
         "phase0.* events missing from append-only stream"
     )
-    # Re-running the projection must reproduce the same event sequence.
-    events_after = event_log(run_id)
-    assert [e["type"] for e in events_after] == types_before, (
-        "projection rebuild must be invariant (append-only)"
+    # Drop the derived projection tables (NOT the events); trac status must
+    # rebuild from events alone (NFR-04 / AC-NFR0140-01).
+    db = paths.tracks_home(host_repo) / "runtime" / "tracks.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("DELETE FROM runs")
+        conn.execute("DELETE FROM backlog")
+        conn.commit()
+        pre_event_count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    finally:
+        conn.close()
+    assert pre_event_count > 0, "events must persist (append-only, not dropped)"
+    # Rebuild: trac status re-derives state from the append-only events.
+    post_status = trac("status").stdout
+    assert post_status == pre_status, (
+        "projection rebuild must be invariant: status changed after drop+rebuild"
+    )
+    # The events table is append-only: no rows were mutated/deleted.
+    events_after = [e["type"] for e in event_log("latest")]
+    assert events_after == events_before, (
+        "event stream must be append-only (no mutation across rebuild)"
     )
 
 

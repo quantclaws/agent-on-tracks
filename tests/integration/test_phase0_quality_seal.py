@@ -12,8 +12,16 @@ Assertions land on `judge_real_coverage`/`validate_registered_marks`/
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from tracks.executor.guard_registry import (
+    GuardRegistry,
+    check_parity,
+    load_guard_registry,
+    validate_guard_registry,
+)
 from tracks.executor.phase0 import (
     CoverageJudgement,
     SealManifest,
@@ -21,6 +29,9 @@ from tracks.executor.phase0 import (
     judge_real_coverage,
     validate_registered_marks,
 )
+
+ARCH = Path(__file__).resolve().parents[2] / ".tracks" / "projects" / "v0.7" / "architecture.md"
+REPO = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.integration
 
@@ -50,30 +61,73 @@ def test_coverage_ratio_by_collected_exclude_none():
 
 
 # AC-FR0257-02@v0.7 TRACKS-TRACE guard hardened, violations=0, revisions audited
+# AC-FR0259-01@v0.7 TRACKS-TRACE Prism REVISE routes back to Archer
+# AC-FR0259-02@v0.7 TRACKS-TRACE registry real execution evidence
+# AC-NFR0141-01@v0.7 TRACKS-TRACE parity event programmatic, no agent self-report
 def test_guard_hardened_violations_zero_revisions_audited():
-    """AC-FR0257-02: guard_hardened payload carries violations=0 and revised count.
+    """AC-FR0257-02 / FR-0259 / NFR-0141-01: guard hardening + parity outlets.
 
-    The guard hardening outlet is the `phase0.guard_hardened` event (interfaces
-    §1a row 3). The Phase 0 executor must surface violations=0 (hardened) with a
-    non-negative `revised` count that is auditable. A non-zero violations count
-    must route to BLOCKED, not to sealed. We assert the judgement shape against
-    the coverage seal manifest builder (the seal is only produced when guards
-    hardened): build_seal_manifest is the frozen seal outlet (IF-PHASE-003) and
-    must embed the environment-contract digest that proves guards hardened.
+    The `phase0.guard_hardened` event (§1a row 3) is produced by the Phase 0
+    executor consuming the guard registry; its observable outlets are
+    `validate_guard_registry` (violations) and `check_parity` (guard.parity
+    payload). We assert: (1) the canonical registry hardens with zero
+    violations; (2) the parity payload carries three-place match + registry
+    digest (programmatic, no agent self-report); (3) a guard violation (missing
+    category / --exit-zero) routes to BLOCKED — the REVISE trigger that routes
+    back to Archer, not to a later stage (FR-0259-01); (4) every guard carries
+    real execution evidence (required_check + ci execution point, FR-0259-02).
     """
-    seal = build_seal_manifest(
-        baseline_version="v0.6",
-        document_digests={"spec.md": "sha256:spec", "acceptance.md": "sha256:acc"},
-        frozen_test_digests={"tests/integration/test_x.py": "sha256:tests"},
-        marks=("integration", "e2e"),
-        environment_contract_digest="sha256:env-contract-pass",
+    registry = load_guard_registry(ARCH)
+    # (1) Guards hardened: zero validation violations.
+    violations = validate_guard_registry(registry, REPO)
+    assert violations == (), f"canonical registry must harden with 0 violations: {violations}"
+    # (4) Real execution evidence per guard (FR-0259-02): required_check + ci.
+    for entry in registry.entries:
+        assert entry.required_check, (
+            f"guard {entry.guard_id} lacks required_check (declaration-only, REVISE)"
+        )
+        assert "ci" in entry.execution_points, (
+            f"guard {entry.guard_id} lacks ci execution point (no real evidence)"
+        )
+        assert entry.failure_policy == "fail_closed"
+    # (2) guard.parity payload: three-place match + registry digest (NFR-0141-01).
+    runtime_commands = {e.required_check: e.command for e in registry.entries}
+    parity = check_parity(
+        registry=registry,
+        runtime_commands=runtime_commands,
+        pre_commit_path=REPO / ".githooks" / "pre-commit",
+        ci_workflow_path=REPO / ".github" / "workflows" / "ci.yml",
+        cwd=REPO,
     )
-    assert isinstance(seal, SealManifest)
-    assert seal.baseline_version == "v0.6"
-    # seal_id is sha256(canonical_json(remaining fields)) per §1d: stable, hex.
-    assert seal.seal_id.startswith("sha256:")
-    # environment_contract_digest must be non-empty (guards hardened proof).
-    assert seal.environment_contract_digest == "sha256:env-contract-pass"
+    assert parity.registry_digest == registry.digest
+    assert isinstance(parity.runtime_match, bool)
+    assert isinstance(parity.pre_commit_match, bool)
+    assert isinstance(parity.ci_match, bool)
+    # (3) REVISE trigger (FR-0259-01): a missing-category registry must surface
+    # violations (routes back to Archer, not a later stage). --exit-zero injection
+    # must block parity (no soft guard).
+    short = GuardRegistry(
+        version=registry.version,
+        host=registry.host,
+        entries=registry.entries[:7],
+        digest=registry.digest,
+    )
+    revise_errors = validate_guard_registry(short, REPO)
+    assert revise_errors, "missing category must trigger REVISE (route to Archer)"
+    exit_zero_commands = {
+        e.required_check: (*e.command, "--exit-zero") for e in registry.entries
+    }
+    exit_zero_parity = check_parity(
+        registry=registry,
+        runtime_commands=exit_zero_commands,
+        pre_commit_path=REPO / ".githooks" / "pre-commit",
+        ci_workflow_path=REPO / ".github" / "workflows" / "ci.yml",
+        cwd=REPO,
+    )
+    assert exit_zero_parity.mismatches, "--exit-zero must block parity (no soft guard)"
+    assert {m.kind for m in exit_zero_parity.mismatches} == {"exit_zero"} or (
+        "exit_zero" in {m.kind for m in exit_zero_parity.mismatches}
+    )
 
 
 # AC-FR0257-03@v0.7 TRACKS-TRACE marks registered and environment contract valid
