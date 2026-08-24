@@ -38,6 +38,10 @@ tracks = [
     "templates/pre-commit/*.yaml",
     "templates/pre-commit/*.yml",
     "assets/*.js",
+    "assets/demo_host/*",
+    "assets/demo_host/tests/unit/*",
+    "assets/demo_host/tests/integration/*",
+    "assets/demo_host/tests/e2e/*",
 ]
 
 [tool.pytest.ini_options]
@@ -53,6 +57,8 @@ testpaths = ["tests"]
 addopts = "-q -m 'not performance'"
 markers = [
     "performance: opt-in NFR-0020 perf benchmark; excluded from default runs (run: pytest -m performance)",
+    "integration: deterministic integration layer under tests/integration",
+    "e2e: end-to-end happy-path layer under tests/e2e",
 ]
 
 [tool.coverage.run]

@@ -1,0 +1,46 @@
+[unit]
+framework = "pytest"
+paths = ["tests/unit/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"
+run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[integration]
+framework = "pytest"
+paths = ["tests/integration/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"
+run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[e2e]
+framework = "pytest"
+paths = ["tests/e2e/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
+run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[nightly]
+schedule = "0 3 * * *"
+workflow = ".github/workflows/nightly.yml"
+job = "nightly-regression"
+layers = ["unit", "integration", "e2e"]
+purpose = "demo current FULL suite regression; not a local gate"
+
+[adapter]
+id = "reference-pytest"
+protocol = "tracks-test-result"
+version = 1
+
+[layout]
+
+[layout.devon]
+writable = ["demo_calc.py", "tests/unit/"]
+
+[layout.shield]
+writable = ["tests/integration/", "tests/e2e/", "tests/counterexamples/"]
+
+[lint]
+check = ".venv/bin/ruff check"

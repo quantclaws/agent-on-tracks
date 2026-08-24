@@ -34,6 +34,11 @@ job = "nightly-regression"
 layers = ["unit", "integration", "e2e"]
 purpose = "current FULL suite (R1+R2) regression; result fetch future; not a local gate"
 
+[adapter]
+id = "reference-pytest"
+protocol = "tracks-test-result"
+version = 1
+
 # Directory layout designed by Archer in M-DESIGN (FR-0120).
 # Consumed by the runtime auditor to authorize agent writes per role.
 [layout]

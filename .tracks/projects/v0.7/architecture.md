@@ -1,0 +1,466 @@
+---
+architecture_id: ARCH-007
+spec_ref: SPEC-007
+created: 2026-08-24
+status: draft
+sha:
+---
+
+# v0.7-A — 架构
+
+本文是 ARCH-006 的增量延伸。v0.1～v0.6 的事件溯源、单写者、canonical 阶段、M-TEST D-41 选择语义、M-IMPL RGR/FULL 链、hotfix 与既有 CLI 均保持不变；v0.7-A 在其上增加 Phase 0 可信基线、canonical quality guard registry、Test Authenticity Gate、语言中立 mutation evidence、host adapter seam、candidate-bound trace 与双宿主演证。本版不注册 M-VERIFY，不做 CI SHA 回读、制品构建或发布自动化。
+
+## 0. 延续性声明（什么不变）
+
+### 0.1 继承 ARCH-006
+
+- 唯一生产路径 `cli -> kernel.machine.decide -> executor.execute -> store.append`、SQLite append-only events、投影可重建、单写者锁与 per-kind reconcile 不变。
+- `kernel/` 纯控制、`executor/` 副作用、`checks/` 静态闭合、`effects/` 外部通道与 `cli/` 交付面的分层不变；v0.7-A 新增 `adapters/` 作为唯一宿主测试框架语义边界。
+- v0.6 的 R1/R2/REMOVED 分类、SELECT_R2/SELECT_TASK/SELECT_DIFF/FULL、selection/evidence identity、失败台账与 FULL 链不变。FR-0260 只替换“Red 是否真实”的资格判定，不改变选择集合。
+- `.tracks/projects/project.toml` 的三层 `collect`/`run`/`run_selected`、`{nodes}`/`{result}` 所有权、`[nightly]` 与 layout 继续有效；本版只追加 `[adapter]`。
+- 既有 `trac run/status/replay/report/check/validate` 是全部交付面；无新增顶层 CLI 命令或 canonical 阶段。
+- v0.6 的 37 个 IF 标识不可重定义或复用；IF-007 只追加新标识。
+- wheel 安装、隔离 venv、源码树外 cwd、GitHub Actions stable required checks 与 live channel 三层机制不变。
+
+### 0.2 v0.7-A 变更
+
+- 新增 `kernel/phase0.py` 与 `executor/phase0.py`：M-DESIGN EXIT 后、首次 M-TEST 派发前运行 SM-01；扫描并真实绑定 v0.6 trace 缺口，执行覆盖率/守卫/环境校验，封存 v0.6。
+- 在 architecture.md §4.2 内嵌唯一 machine-readable TOML registry，并新增 `executor/guard_registry.py`：Runtime、pre-commit、CI 三处语义 parity 由程序 fail-closed 校验；不创建额外 `.tracks/projects/guards.toml` 真相源。
+- 新增 `executor/authenticity.py`：按冻结 baseline 判定 `new|existing`；新行为要求 AC/IF-specific legal Red，既有行为允许绿但必须有 AC-specific counterexample kill。
+- 新增 `executor/mutation.py`：最小 manifest、隔离 worktree 实验、target/control、rollback 与 crash recovery。
+- 新增 `adapters/base.py` 与 `adapters/reference_pytest.py`：kernel/executor/cli 仅消费 `tracks-test-result` v1；pytest/JUnit 语义全部下沉到 reference adapter。
+- `checks/trace.py` 与 ISLAND_GATE_2 增强为 candidate-bound closure；`executor/demo_host.py` 在真实安装路径创建最小宿主并完成双宿主 9 类 fail-closed 演证。
+- EVENT_TYPES 追加 `phase0.*`、`guard.parity`、`authenticity.judged`、`mutation.*`、`demo.equivalence`、`failclosed.*`；COMMAND_KINDS 追加 `phase0_validate`、`check_guard_parity`、`mutation_verify`、`demonstrate_failclosed`。
+- registry 冻结 `.githooks/pre-commit` 去除 `--exit-zero` 并与 CI scope 对齐的目标形态；当前软 hook 是 Phase 0 的已知 mismatch 输入，违规清零后由 Runtime `deploy_guard_configs` 更新/激活。`pyproject.toml` 注册 `integration`/`e2e` marks。
+
+## 1. 模块边界
+
+### 1.0.1 增长轴归属
+
+| # | 包/文件 | v0.7-A 增长 | 触发 | IF |
+|:--|:--|:--|:--|:--|
+| 1 | `cli/main.py` | `status`、`replay/report` 展示 Phase 0、parity、authenticity、演证；既有 `check trace`/`validate` 参数不变 | FR-0256～0266 | IF-PHASE-001, IF-CLOSURE-001 |
+| 2 | `kernel/phase0.py`、`kernel/m_test.py`、`kernel/machine.py`、`kernel/events.py` | Phase 0 reducer/路由、Authenticity Gate 接线、新事件/命令封闭集、演证出口门禁 | FR-0256/0257/0260/0266 | IF-PHASE-001, IF-AUTH-001 |
+| 3 | `executor/phase0.py` | gap scan、coverage 判定、seal manifest | FR-0256/0257 | IF-PHASE-001/002/003 |
+| 4 | `executor/guard_registry.py` | registry 读取、八类校验、三处 parity、宿主配置部署 | FR-0258/0259 | IF-GUARD-001/002 |
+| 5 | `executor/authenticity.py` | `new|existing` 分类、legal Red 与 unrelated failure 判定、existing-green kill 前置 | FR-0260/0261 | IF-AUTH-001/002 |
+| 6 | `executor/mutation.py` | manifest 校验、isolated worktree target/control 实验、WAL/replay | FR-0262/0263 | IF-MUTATION-001/002 |
+| 7 | `adapters/base.py`、`adapters/reference_pytest.py` | language-neutral protocol 与首个 reference adapter；新增长轴只承载宿主语言/框架差异 | FR-0264 | IF-ADAPTER-001/002/003 |
+| 8 | `checks/trace.py`、`executor/m_impl_runtime.py` | candidate-bound closure 与 ISLAND_GATE_2 双闭合 | FR-0265 | IF-CLOSURE-001 |
+| 9 | `executor/demo_host.py`、`tracks/assets/demo_host/` | wheel 安装的动态最小宿主、路径等价与 9 场景演证 | FR-0266/NFR-0142 | IF-DEMO-001, IF-FAILCLOSED-001 |
+
+### 1.0.2 Phase 0 与封存
+
+Phase 0 不是 canonical stage。版本能力 `version >= v0.7` 且 `phase0_status != SEALED` 时，M-DESIGN EXIT 到 M-TEST 入口的 Runtime 前置门先执行 `phase0_validate`。SM-01 投影封闭集为 `UNSEALED | PHASE0_VALIDATING | SEALED | BLOCKED`；未列出的转移非法。
+
+1. 扫描 v0.6 全部 approved AC 的 test-plan outlet、实际 collect inventory 与执行证据；已知缺口 AC-FR0250-03、AC-NFR0130-01、AC-NFR0130-02@v0.6 必须经 adapter `run_selected` 取得真实 node id、node digest、selection/evidence identity。
+2. marker-only 不产生 binding；不可 collect、节点缺失或 identity 不可恢复发出 `phase0.blocked`，后续 M-TEST 不派发。
+3. Runtime 真跑 registry 的 coverage/guard 命令，要求 coverage ≥95%、source omit 为空、守卫零违规且 parity 通过；D-18 live 目录隔离不是 source coverage omit。
+4. `phase0.sealed` 引用 seal blob：v0.6 六文档 digest、全部冻结 test node digest、marks/env/adapter 验证结果。后续角色 scope 排除 v0.6 文档与冻结 integration/e2e；任何漂移 fail-closed。
+
+### 1.0.3 Canonical quality guard registry
+
+architecture.md §4.2 中唯一 `[quality_registry]` TOML block 是 canonical registry。每项包含 category、pinned tool、canonical command、config path/section、config digest、scope、threshold、timeout、failure policy、execution points、required check。`check_guard_parity` 对 Runtime gate、`.githooks/pre-commit`、`.github/workflows/ci.yml` 做语义归一化比较：argv0 用 IF-RUNCONTRACT-001 同一解析，允许 CI 的 PATH argv0 与 `.venv/bin/*` 等价；tool/rule/scope/threshold/命令不一致、missing、config digest 漂移、`--exit-zero` 均阻断。
+
+`deploy_guard_configs` 是宿主部署入口：从 registry 生成/验证 pre-commit 与 CI guard steps。tracks 自身现有文件须与生成语义等价；demo 宿主经同一入口生成，禁止专用补丁。Prism 对 registry 缺类、软放行、parity 不一致或无 CI 真实执行证据判 REVISE。
+
+### 1.0.4 Test Authenticity Gate
+
+M-TEST 的 SELECT_R2 与节点合法失败明细继续由 D-41 产生；资格判定新增 `authenticity.judged`，以 AC 为单位覆盖其全部绑定节点：
+
+- `new`：AC/IF 不在 `phase0.sealed` baseline；绑定节点必须在 pre-implementation tree 上产生行为断言失败、桩 token 失败或 symbol 缺失。collection/import/fixture/语法失败非法。
+- `existing`：AC/IF 在冻结 baseline；未变异 candidate 可绿，但必须引用同 AC 的 `mutation.experiment(passed)` counterexample kill，且 Prism 已审查反例语义与最小性。
+- 与 AC 无绑定的失败记入 `unrelated[]`，不作 Red；target 未 collect、adapter result 畸形、control 失败、kill 缺失均阻断且不产 `prism.verdict`。
+- R2 空集 fail-closed、hotfix unit-only 旁路、`test.baseline_captured`/`test.selected`/`red.validated` 与 selection identity 不变。
+
+### 1.0.5 Mutation evidence protocol
+
+每个 manifest 只绑定一个 AC/IF 与一个 candidate/patch；字段封闭于 IF-MUTATION-001。node ID 对 kernel 是 opaque string，框架解释只归 adapter。Runtime 在隔离 worktree 按序执行 baseline identity、`git apply`、实际 diff digest、target kill、controls green、rollback clean；每步先落 WAL 或持久化结果 blob，再推进。测试路径不在 allowed scope；空/no-op/broad patch 无 selectable diff identity，不能批量背书。
+
+实验身份为 manifest digest + baseline/candidate/patch digest + runner/env；重启发现已持久化完整结果则复用，缺结果即重跑，绝不补造 passed。`executor/worktree.py` 继续是唯一 worktree 副作用入口。
+
+### 1.0.6 Adapter seam 与语言中立
+
+宿主通过 `.tracks/projects/project.toml [adapter]` 声明 `id="reference-pytest"`、`protocol="tracks-test-result"`、`version=1`。所有 collect/run 路径先 `resolve_adapter`；kernel/executor 只见 `TestNode`/`TestRunResult`，不解析 exit code、JUnit XML 或框架节点语法。
+
+reference adapter 承接 v0.6 的 collect、`{nodes}`/`{result}` 展开、JUnit normalize 与 exact selected-node coverage。`trac validate` 扫描 `tracks/kernel/`、`tracks/executor/`、`tracks/cli/` 的运行时代码，禁止 `pytest|junit|java` 语言 token；`tracks/adapters/` 与声明性 contract/data 是唯一允许区。未知 adapter、协议版本错或结果畸形 fail-closed。
+
+### 1.0.7 Candidate-bound trace
+
+`trac check trace --version v0.7` 对每条 approved AC 连接：acceptance → test-plan/public outlet → collected node → frozen-baseline authenticity evidence → manifest/experiment → 同 candidate FULL pass。candidate/patch digest、selection/evidence identity、node result 必须一致；missing node、skip/xfail、identity drift、control failure 形成 hard_errors。ISLAND_GATE_2 调用同一检查，二者都通过才可 `stage.exited(M-IMPL)`。
+
+### 1.0.8 双宿主演证
+
+ISLAND_GATE_2 后、boundary 前执行 `demonstrate_failclosed`，不是新阶段。tracks 与动态 `demo-pytest` 分别演证闭合集：`broad_mutation | stale_patch | wrong_candidate | uncollected_node | unrelated_red | target_survived | control_hit | malformed_adapter_result | guard_parity_mismatch`。每场景在隔离副本中注入且必须被对应真实 gate 阻断，落 `failclosed.demonstrated`；每宿主 9 条齐全才落 `failclosed.summary(all_fail_closed=true)`。
+
+demo 模板随 wheel 位于 `tracks/assets/demo_host/`；Runtime 从安装 wheel 复制模板到 fresh venv 外的临时 repo，执行真实 `trac init`、contract/registry 部署、`git config core.hooksPath .githooks` 与相同 adapter/Runtime 路径。`demo.equivalence` 记录 wheel SHA、import path、venv、hooks、CI binding、adapter；不得 import tracks 私有测试 helper。中断演练按事件回放续跑缺失场景。
+
+### 1.0.9 角色所有权
+
+| # | 职责 | Archer | Shield | Devon | Prism | Runtime |
+|:--|:--|:--|:--|:--|:--|:--|
+| 1 | registry、adapter/test commands、接口桩与 demo 数据 | ✅ 独家设计/脚手架 | ❌ | ❌ | 评审 | 激活/执行 |
+| 2 | integration/e2e 与 counterexample patch | ❌ | ✅ | ❌ | 独立审查 | 冻结/执行 |
+| 3 | candidate/业务实现 | ❌ | ❌ | ✅ | 评审 | 门禁/提交 |
+| 4 | new/existing、Red、parity、mutation、closure 判定 | ❌ | ❌ | ❌ | 消费证据 | ✅ 程序独家 |
+| 5 | 修改 Phase 0 冻结测试 | ❌ | ❌ | ❌ | ❌ | ❌（只验证 digest） |
+| 6 | 安装 venv/hooks、绑定 CI required checks | 只声明 | ❌ | ❌ | ❌ | ✅ 副作用独家 |
+
+### 1.1 Composition Root
+
+**Phase 0 路径**：
+
+```text
+trac run -> cli.main.cmd_run -> Executor.run_loop -> kernel.machine.decide
+  -> M-TEST entry guard sees phase0_status != SEALED
+  -> Command(phase0_validate)
+  -> Executor._do_phase0_validate
+  -> executor.phase0.scan_trace_gaps
+  -> adapters.base.resolve_adapter(project.adapter).run_selected
+  -> executor.guard_registry.check_parity + real guard/coverage commands
+  -> phase0.baseline_repaired/coverage/guard_hardened/sealed|blocked
+  -> kernel.phase0 reducers -> SEALED resumes M-TEST; BLOCKED parks run
+```
+
+**Parity 路径**：`stage gate -> Command(check_guard_parity) -> guard_registry.check_parity(architecture.md §4.2 registry, pre-commit, ci.yml) -> guard.parity -> pass|fail-closed`。
+
+**Authenticity/mutation 路径**：
+
+```text
+M-TEST RED_CHECK -> adapter.run_selected(R2 nodes) -> normalized TestRunResult
+  -> authenticity.classify_behaviour + judge_authenticity
+  -> new: authenticity.judged(legal|illegal)
+  -> existing: Command(mutation_verify)
+      -> mutation.validate_manifest -> worktree isolated experiment
+      -> adapter.run_selected(target/control)
+      -> mutation.manifest + mutation.experiment
+      -> authenticity.judged(counterexample_kill=verified|missing)
+```
+
+**Trace/演证路径**：
+
+```text
+trac check trace --version v0.7 OR ISLAND_GATE_2
+  -> checks.trace candidate-bound join -> closure=pass|hard_errors
+  -> demonstrate_failclosed
+  -> demo_host.create_demo_host + verify_path_equivalence
+  -> real authenticity/mutation/parity gates x 9 x 2 hosts
+  -> demo.equivalence + failclosed.demonstrated/summary
+  -> run.completed(boundary) only when all pass
+```
+
+### 1.2 Required AC closure (ISLAND_GATE_1)
+
+- **FR-0256** owner=executor/phase0.py:AC-FR0256-01 surface=trac-run-Phase0+trac-replay/report composition=phase0_validate→scan_trace_gaps→adapter-run_selected-binding wiring=M-DESIGN-EXIT→M-TEST-entry-sees-unsealed→gap-scan→three-v0.6-ACs-run_selected→phase0.baseline_repaired test=integration:tests/integration/test_phase0_binding.py::test_gap_acs_bound_to_real_collected_nodes evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_binding.py`输出`passed`且events含`phase0.baseline_repaired(ac=AC-FR0250-03@v0.6,bound_node.node_id=tests/integration/test_evidence_reuse.py::test_prism_consumes_runtime_evidence_without_suite_rerun)` IF-PHASE-001
+- **FR-0256** owner=executor/phase0.py:AC-FR0256-02 surface=trac-check-trace-v0.6+trac-status composition=marker-only-counterexample→trace-fail wiring=TRACKS-TRACE-marker-without-binding-event→hard_errors→no-phase0.sealed→PHASE0_VALIDATING-or-BLOCKED test=integration:tests/integration/test_phase0_binding.py::test_marker_only_closure_stays_fail evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_binding.py`输出`passed`且`trac check trace --version v0.6`非零并且无`phase0.sealed` IF-PHASE-001 IF-TRACE-002
+- **FR-0256** owner=executor/phase0.py:AC-FR0256-03 surface=trac-status composition=gap-scan→repair-or-block wiring=extra-gap-same-binding-path；missing-or-uncollectable-or-identity-unrecoverable→phase0.blocked→no-later-dispatch test=integration:tests/integration/test_phase0_binding.py::test_field_gap_recovery_and_blocked_routing evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_binding.py`输出`passed`且status含`phase0=blocked`及阻塞原因 IF-PHASE-001
+- **FR-0257** owner=executor/phase0.py:AC-FR0257-01 surface=trac-status+trac-report composition=phase0_validate→coverage-guard-command→phase0.coverage wiring=coverage-run+report-fail-under-95→ratio≥0.95/by=collected/exclude=none；source-omit→blocked test=integration:tests/integration/test_phase0_quality_seal.py::test_coverage_ratio_by_collected_exclude_none evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且`phase0.coverage`含`ratio>=0.95,by=collected,exclude=none` IF-PHASE-002 IF-GUARD-001
+- **FR-0257** owner=executor/guard_registry.py:AC-FR0257-02 surface=trac-status+trac-replay composition=hard-guard-execution→phase0.guard_hardened wiring=eight-fail-closed-guards+no-exit-zero+parity-pass→violations=0/revised=n；violation→blocked test=integration:tests/integration/test_phase0_quality_seal.py::test_guard_hardened_violations_zero_revisions_audited evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且`phase0.guard_hardened(violations=0)`在流 IF-GUARD-001 IF-GUARD-002
+- **FR-0257** owner=executor/validate.py:AC-FR0257-03 surface=trac-validate+trac-status composition=marks-and-environment-contract-validation wiring=pyproject-integration/e2e/performance-marks+[adapter]+command-contract→validate-pass→status-marks=registered test=integration:tests/integration/test_phase0_quality_seal.py::test_marks_registered_and_env_contract_valid evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且`trac validate --file .tracks/projects/v0.7/test-plan.md`退出0 IF-PHASE-002 IF-ADAPTER-001
+- **FR-0257** owner=executor/phase0.py:AC-FR0257-04 surface=trac-status+git-audit composition=all-phase0-checks→seal-manifest→phase0.sealed wiring=v0.6-doc+frozen-test-digests→SEALED-nonreturn→layout-blocks-rewrite test=integration+e2e:tests/integration/test_phase0_quality_seal.py::test_seal_readonly_blocks_rewrite+tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py tests/e2e/test_v07_journey.py`输出`passed`且status含`phase0=sealed baseline=v0.6-readonly` IF-PHASE-003
+- **FR-0257** owner=kernel/phase0.py:AC-FR0257-05 surface=trac-status composition=unrecoverable-check→BLOCKED wiring=coverage-or-guard-unrecoverable→phase0.blocked→repair-revalidate-loop-or-park→no-sealed test=integration:tests/integration/test_phase0_quality_seal.py::test_unrecoverable_coverage_guard_blocked evidence=`.venv/bin/python -m pytest -q tests/integration/test_phase0_quality_seal.py`输出`passed`且status含`phase0=blocked reason=coverage|guards` IF-PHASE-003
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-01 surface=trac-validate composition=architecture-§4.2-TOML-block→load+verify-eight-categories wiring=category+pinned-tool+config-digest+scope+threshold+timeout/failure+execution-points+required-check→missing-category-nonzero test=integration:tests/integration/test_guard_registry.py::test_registry_single_source_eight_categories evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且缺类registry副本使validate非零 IF-GUARD-001
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-02 surface=trac-status+trac-report composition=check_guard_parity→guard.parity wiring=registry-vs-runtime-vs-precommit-vs-ci-normalized-comparison→missing/exit-zero/scope-threshold-command-mismatch→blocked test=integration:tests/integration/test_guard_parity.py::test_parity_mismatch_blocks_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且`guard.parity(status=blocked)`含不一致项 IF-GUARD-002
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-03 surface=host-.githooks+CI-files+trac-report composition=deploy_guard_configs wiring=registry→host-precommit-and-ci-generation→deployment-record-linked-to-registry-digest；demo-uses-same-path test=integration:tests/integration/test_guard_parity.py::test_deploy_mechanism_generates_host_configs evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且demo生成的pre-commit/CI关联同一registry-digest IF-GUARD-002
+- **FR-0258** owner=executor/guard_registry.py:AC-FR0258-04 surface=trac-validate composition=v0.6-guard-migration-check wiring=ARCH-006-§4.2-eight-rows→registry-category-entries→no-silent-gap test=integration:tests/integration/test_guard_registry.py::test_registry_migration_no_silent_gap evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且v0.6八项均有registry对应项 IF-GUARD-001
+- **FR-0259** owner=kernel/machine.py:AC-FR0259-01 surface=trac-run-PRISM_REVIEW+trac-status composition=Prism-registry-review→prism.verdict(revise) wiring=missing-guard-or-exit-zero-or-parity-mismatch→REVISE→Archer→no-stage-exit-evidence test=integration:tests/integration/test_guard_registry.py::test_prism_revise_routes_back_to_archer evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_registry.py`输出`passed`且status回流`Archer`并无阶段出口 IF-GUARD-001
+- **FR-0259** owner=executor/guard_registry.py:AC-FR0259-02 surface=trac-report composition=registry-required-check→real-CI-evidence wiring=each-guard-required-check-name→CI-pass/fail-output；declaration-only→missing→REVISE test=integration:tests/integration/test_guard_parity.py::test_registry_real_execution_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且report引用`lint/coverage`等真实check名 IF-GUARD-001 IF-GUARD-002
+- **FR-0260** owner=executor/authenticity.py:AC-FR0260-01 surface=trac-run-MTEST-RED_CHECK+trac-replay composition=classify_behaviour→judge-authenticity wiring=R2∩AC-nodes→adapter-run_selected→new-behaviour-specific-assertion-failure→authenticity.judged(new,legal,frozen-baseline) test=integration+e2e:tests/integration/test_authenticity_gate.py::test_new_behaviour_legal_red_on_frozen_baseline+tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure evidence=`.venv/bin/python -m pytest -q tests/integration/test_authenticity_gate.py tests/e2e/test_v07_journey.py`输出`passed`且`authenticity.judged(category=new,red=legal)`引用冻结baseline IF-AUTH-001
+- **FR-0260** owner=executor/authenticity.py:AC-FR0260-02 surface=trac-replay composition=unrelated-failure-isolation wiring=unbound-failure→unrelated=true/excluded；uncollected-or-malformed-or-control-hit→blocked→no-prism-verdict test=integration:tests/integration/test_authenticity_gate.py::test_unrelated_downstream_failure_isolated evidence=`.venv/bin/python -m pytest -q tests/integration/test_authenticity_gate.py`输出`passed`且payload含`unrelated=true`并且blocked路径无`prism.verdict` IF-AUTH-001
+- **FR-0260** owner=kernel/m_test.py:AC-FR0260-03 surface=trac-run+trac-status composition=phase0-seal-precondition wiring=no-phase0.sealed→no-authenticity-dispatch→status-phase0-incomplete test=integration:tests/integration/test_authenticity_gate.py::test_phase0_gate_blocks_mtest_before_seal evidence=`.venv/bin/python -m pytest -q tests/integration/test_authenticity_gate.py`输出`passed`且未封存时无`authenticity.judged` IF-PHASE-003 IF-AUTH-001
+- **FR-0260** owner=kernel/m_test.py:AC-FR0260-04 surface=trac-replay composition=D41-selection-plus-authenticity wiring=baseline-captured/test.selected/red.validated-unchanged+authenticity.judged-coexists+empty-R2-fail-closed test=integration:tests/integration/test_authenticity_gate.py::test_d41_selection_semantics_coexist evidence=`.venv/bin/python -m pytest -q tests/integration/test_authenticity_gate.py`输出`passed`且两类事件依据可独立追溯 IF-AUTH-001
+- **FR-0260** owner=executor/authenticity.py:AC-FR0260-05 surface=trac-status composition=illegal-red-rejection wiring=unrelated-red-or-broad-mutation-without-AC-diff→red=illegal→blocked→no-prism-verdict test=integration:tests/integration/test_authenticity_gate.py::test_broad_mutation_irrelevant_red_rejected evidence=`.venv/bin/python -m pytest -q tests/integration/test_authenticity_gate.py`输出`passed`且status阻断原因=`illegal_red` IF-AUTH-001 IF-MUTATION-001
+- **FR-0261** owner=executor/authenticity.py:AC-FR0261-01 surface=trac-run-MTEST-PRISM_REVIEW+trac-replay composition=existing-green→mutation-kill-proof wiring=category=existing+green-allowed+same-AC-mutation.experiment-passed→counterexample_kill=verified；missing→blocked test=integration+e2e:tests/integration/test_counterexample_kill.py::test_existing_green_requires_kill_verified+tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure evidence=`.venv/bin/python -m pytest -q tests/integration/test_counterexample_kill.py tests/e2e/test_v07_journey.py`输出`passed`且`category=existing,green=allowed,counterexample_kill=verified` IF-AUTH-002 IF-MUTATION-002
+- **FR-0261** owner=executor/mutation.py:AC-FR0261-02 surface=trac-replay/report composition=AC-specific-counterexample-binding wiring=kill-evidence-binds-single-AC/IF+counterexample-node→Prism-semantic/minimality-review；cross-AC-or-broad→blocked test=integration:tests/integration/test_counterexample_kill.py::test_ac_specific_binding_and_minimality_reviewed evidence=`.venv/bin/python -m pytest -q tests/integration/test_counterexample_kill.py`输出`passed`且反例身份及Prism审查记录可replay IF-AUTH-002 IF-MUTATION-002
+- **FR-0261** owner=executor/phase0.py:AC-FR0261-03 surface=git-audit+trac-status composition=seal-manifest+layout-freeze wiring=frozen-test-digests+Devon-scope-excludes-integration/e2e→edit-invalid-and-blocked test=integration:tests/integration/test_counterexample_kill.py::test_frozen_tests_untouchable_role_separation evidence=`.venv/bin/python -m pytest -q tests/integration/test_counterexample_kill.py`输出`passed`且无Devon冻结测试修改记录 IF-AUTH-002 IF-PHASE-003
+- **FR-0262** owner=executor/mutation.py:AC-FR0262-01 surface=trac-replay/report composition=build_manifest→validate_manifest wiring=closed-minimal-fields-only+opaque-node-ids+no-language/framework/test-body test=integration:tests/integration/test_mutation_manifest.py::test_manifest_minimal_field_set_language_neutral evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_manifest.py`输出`passed`且manifest字段集恰为IF-MUTATION-001封闭集 IF-MUTATION-001
+- **FR-0262** owner=executor/mutation.py:AC-FR0262-02 surface=trac-replay composition=single-AC-endorsement-check wiring=noop-or-no-selectable-diff-or-multi-AC→mutation.manifest(blocked,no_selectable_diff_identity) test=integration:tests/integration/test_mutation_manifest.py::test_no_batch_endorsement_noop_patch evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_manifest.py`输出`passed`且blocked原因=`no_selectable_diff_identity` IF-MUTATION-001
+- **FR-0262** owner=executor/mutation.py:AC-FR0262-03 surface=mutation.manifest-event composition=allowed-scope-validation wiring=tests-path-in-allowed-change-scope→blocked-tests_in_scope test=integration:tests/integration/test_mutation_manifest.py::test_tests_scope_mutation_blocked evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_manifest.py`输出`passed`且测试路径mutation被阻断 IF-MUTATION-001
+- **FR-0263** owner=executor/mutation.py:AC-FR0263-01 surface=trac-replay/report composition=run_mutation_experiment wiring=isolated-worktree→baseline-verified→git-apply→diff-identity→target-kill→controls-green→rollback-clean test=integration+e2e:tests/integration/test_mutation_experiment.py::test_experiment_chain_target_kill_controls_green+tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_experiment.py tests/e2e/test_v07_journey.py`输出`passed`且五步payload均为成功值 IF-MUTATION-002
+- **FR-0263** owner=executor/mutation.py:AC-FR0263-02 surface=trac-replay/report composition=append-only-experiment-events wiring=command/env/node/result/failure-signature/digests→events-without-update test=integration:tests/integration/test_mutation_experiment.py::test_events_append_only_replayable evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_experiment.py`输出`passed`且events表无既有行改写 IF-MUTATION-002
+- **FR-0263** owner=executor/mutation.py:AC-FR0263-03 surface=trac-replay composition=WAL-crash-recovery wiring=interrupt→rebuild→missing-result-rerun→never-phantom-pass test=integration:tests/integration/test_mutation_experiment.py::test_crash_recovery_reruns_no_phantom_pass evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_experiment.py`输出`passed`且不存在`passed`但result缺失 IF-MUTATION-002
+- **FR-0263** owner=executor/mutation.py:AC-FR0263-04 surface=trac-status composition=failure-matrix wiring=target-survived|control-hit|malformed-result|stale-patch→mutation.experiment(blocked) test=integration:tests/integration/test_mutation_experiment.py::test_failure_matrix_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_mutation_experiment.py`输出`passed`且四类注入全部blocked IF-MUTATION-002
+- **FR-0264** owner=adapters/base.py:AC-FR0264-01 surface=trac-run/check-execution-audit composition=resolve_adapter→collect/run_selected/normalize_result wiring=project.adapter-id→tracks-test-result-v1→kernel/executor-consume-TestNode/TestRunResult test=integration:tests/integration/test_adapter_contract.py::test_three_interface_seam_protocol_version evidence=`.venv/bin/python -m pytest -q tests/integration/test_adapter_contract.py`输出`passed`且审计含`adapter=reference-pytest,protocol=tracks-test-result,version=1` IF-ADAPTER-001
+- **FR-0264** owner=adapters/reference_pytest.py:AC-FR0264-02 surface=trac-replay composition=reference-adapter-migration wiring=v0.6-collect/run_selected/result-normalize-semantics→same-input-same-output test=integration:tests/integration/test_adapter_contract.py::test_reference_adapter_equivalent_to_v06 evidence=`.venv/bin/python -m pytest -q tests/integration/test_adapter_contract.py`输出`passed`且reference-adapter与v0.6结果逐节点一致 IF-ADAPTER-002
+- **FR-0264** owner=adapters/base.py:AC-FR0264-03 surface=trac-status/report composition=resolve-or-normalize-fail-closed wiring=unknown-id-or-protocol-or-malformed/coverage-mismatch→blocked(unknown_adapter|malformed_result)→no-gate-pass test=integration:tests/integration/test_adapter_contract.py::test_unknown_adapter_malformed_result_blocked evidence=`.venv/bin/python -m pytest -q tests/integration/test_adapter_contract.py`输出`passed`且拒绝原因可审计 IF-ADAPTER-001
+- **FR-0264** owner=executor/validate.py:AC-FR0264-04 surface=trac-validate composition=kernel-language-token-scan wiring=scan-kernel/executor/cli-runtime-source-for-pytest|junit|java→match-nonzero；runtime-path-adapter-only test=integration:tests/integration/test_kernel_language_neutrality.py::test_no_language_tokens_kernel_executor_cli evidence=`.venv/bin/python -m pytest -q tests/integration/test_kernel_language_neutrality.py`输出`passed`且注入token副本使validate非零 IF-ADAPTER-003
+- **FR-0265** owner=checks/trace.py:AC-FR0265-01 surface=trac-check-trace-v0.7 composition=candidate-bound-closure-join wiring=approved-AC→plan/outlet→collected-node→baseline-authenticity→mutation→same-candidate-FULL-pass→ISLAND_GATE_2 test=integration+e2e:tests/integration/test_trace_closure.py::test_closure_candidate_bound_pass+tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure evidence=`.venv/bin/python -m pytest -q tests/integration/test_trace_closure.py tests/e2e/test_v07_journey.py`输出`passed`且trace输出`status=pass closure=candidate-bound` IF-CLOSURE-001
+- **FR-0265** owner=checks/trace.py:AC-FR0265-02 surface=trac-check-trace-v0.7+trac-status composition=closure-hard-errors wiring=node-missing|skip-xfail|identity-drift|control-failure→status=fail→no-stage.exited(M-IMPL) test=integration:tests/integration/test_trace_closure.py::test_blocking_conditions_hard_errors evidence=`.venv/bin/python -m pytest -q tests/integration/test_trace_closure.py`输出`passed`且四类hard_errors逐一出现 IF-CLOSURE-001
+- **FR-0265** owner=checks/trace.py:AC-FR0265-03 surface=trac-replay composition=candidate-digest-consistency wiring=baseline/mutation/FULL-candidate-digests-equal；foreign-candidate-evidence→fail-closed test=integration:tests/integration/test_trace_closure.py::test_candidate_digest_consistency evidence=`.venv/bin/python -m pytest -q tests/integration/test_trace_closure.py`输出`passed`且他candidate证据被拒 IF-CLOSURE-001 IF-MUTATION-001
+- **FR-0266** owner=executor/demo_host.py:AC-FR0266-01 surface=trac-run-acceptance+trac-replay composition=demonstrate_failclosed wiring=nine-scenarios×tracks/demo→real-gates-block→18-detail-events→two-summaries-all_fail_closed test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_tracks_host_nine_scenarios_blocked+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且两宿主summary含`all_fail_closed=true` IF-FAILCLOSED-001
+- **FR-0266** owner=executor/demo_host.py:AC-FR0266-02 surface=trac-run+trac-replay composition=create_demo_host→verify_path_equivalence wiring=wheel→fresh-venv→trac-init→contract/registry-deploy→hooksPath+CI-binding+adapter→demo.equivalence test=integration:tests/integration/test_demo_host.py::test_demo_created_via_real_install_path evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且事件含wheel-sha/hooks/adapter且import-path不在源码树 IF-DEMO-001
+- **FR-0266** owner=executor/demo_host.py:AC-FR0266-03 surface=trac-replay composition=acceptance-crash-drill wiring=interrupt-valid-experiment→restart→event-replay→crash_recovery=replay_ok test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_crash_recovery_replay_ok+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且summary含`crash_recovery=replay_ok` IF-FAILCLOSED-001
+- **FR-0266** owner=executor/demo_host.py:AC-FR0266-04 surface=trac-status composition=acceptance-boundary wiring=any-leaked-scenario-or-demo-inequivalence→blocked→no-v0.7-B→status-host+scenario-reason test=integration:tests/integration/test_failclosed_scenarios.py::test_any_leak_or_inequivalence_blocks evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py`输出`passed`且leak反例阻断验收 IF-FAILCLOSED-001 IF-DEMO-001
+- **NFR-0140** owner=store/store.py:AC-NFR0140-01 surface=trac-replay/report+trac-status composition=append-only-events→projection-rebuild wiring=all-v0.7-evidence-events-append→drop-projection→rebuild-identical test=integration:tests/integration/test_v07_events.py::test_append_only_and_projection_rebuild evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且重建前后status/report一致 IF-AUTH-001 IF-MUTATION-002
+- **NFR-0140** owner=executor/mutation.py:AC-NFR0140-02 surface=trac-replay composition=evidence-identity-binding wiring=AC/IF+candidate/patch-digest+selection/evidence-identity+attempt+actor→drift-not-pass test=integration:tests/integration/test_v07_events.py::test_identity_five_part_binding evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且replay身份字段完整 IF-MUTATION-001
+- **NFR-0140** owner=executor/mutation.py:AC-NFR0140-03 surface=trac-replay composition=WAL-authenticity/mutation-rebuild wiring=interrupt/restart→state-identical→missing-result-rerun test=integration:tests/integration/test_v07_events.py::test_wal_replay_reruns_missing_never_pass evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且无phantom-pass IF-MUTATION-002
+- **NFR-0140** owner=kernel/machine.py:AC-NFR0140-04 surface=trac-status composition=fail-closed-aggregation wiring=unknown-state|missing-entry|identity-drift|control-failure→blocked→reason-event→no-closure-bypass test=integration:tests/integration/test_v07_events.py::test_unknown_missing_drift_control_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_v07_events.py`输出`passed`且四类原因可审计 IF-AUTH-001 IF-MUTATION-002
+- **NFR-0141** owner=executor/guard_registry.py:AC-NFR0141-01 surface=trac-replay/report composition=programmatic-parity wiring=guard.parity-carries-registry-digest+three-results→Runtime-only→agent-attestation-ignored test=integration:tests/integration/test_guard_parity.py::test_parity_event_programmatic_no_agent_selfreport evidence=`.venv/bin/python -m pytest -q tests/integration/test_guard_parity.py`输出`passed`且自述不能产生`guard.parity(passed)` IF-GUARD-002
+- **NFR-0141** owner=executor/validate.py:AC-NFR0141-02 surface=trac-validate composition=language-neutrality-double-check wiring=static-token-scan+runtime-adapter-only-path→unknown/malformed-blocked test=integration:tests/integration/test_kernel_language_neutrality.py::test_language_invariant_dual_check evidence=`.venv/bin/python -m pytest -q tests/integration/test_kernel_language_neutrality.py`输出`passed`且静态与执行双检查均通过 IF-ADAPTER-003
+- **NFR-0142** owner=executor/demo_host.py:AC-NFR0142-01 surface=trac-replay/report composition=path-equivalence-evidence wiring=wheel/venv/pins/hooks/CI/adapter-same-path→demo.equivalence(equivalent=true) test=integration:tests/integration/test_demo_host.py::test_path_equivalence_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_demo_host.py`输出`passed`且五项等价证据可replay IF-DEMO-001
+- **NFR-0142** owner=executor/demo_host.py:AC-NFR0142-02 surface=trac-replay composition=demo-crash-recovery wiring=demo-interrupt→event-replay→same-summary-without-loss test=integration+e2e:tests/integration/test_failclosed_scenarios.py::test_demo_host_crash_recovery_rebuild+tests/e2e/test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed evidence=`.venv/bin/python -m pytest -q tests/integration/test_failclosed_scenarios.py tests/e2e/test_dualhost_acceptance.py`输出`passed`且重建结果与中断前一致 IF-FAILCLOSED-001
+
+## 2. Scaffold 宣言
+
+- `tracks/adapters/__init__.py` — adapter 增长轴 package marker（kind: stub）
+- `tracks/adapters/base.py` — `tracks-test-result` v1 类型、Adapter protocol、resolver/error 完整签名，行为体仅 raise `IF-ADAPTER-001`（kind: stub）
+- `tracks/adapters/reference_pytest.py` — reference adapter 的 collect/run_selected/normalize 完整签名，行为体仅 raise `IF-ADAPTER-002`（kind: stub）
+- `tracks/kernel/phase0.py` — Phase 0 封闭状态、路由与 reducer 完整签名，行为体仅 raise `IF-PHASE-001`（kind: stub）
+- `tracks/executor/phase0.py` — gap/coverage/seal 类型与纯函数签名，行为体仅 raise `IF-PHASE-001/002/003`（kind: stub）
+- `tracks/executor/guard_registry.py` — registry/parity/deploy 类型与函数签名，行为体仅 raise `IF-GUARD-001/002`（kind: stub）
+- `tracks/executor/authenticity.py` — new/existing 与 authenticity 判定签名，行为体仅 raise `IF-AUTH-001/002`（kind: stub）
+- `tracks/executor/mutation.py` — manifest 与 isolated experiment 签名，行为体仅 raise `IF-MUTATION-001/002`（kind: stub）
+- `tracks/executor/demo_host.py` — demo provisioning、路径等价与场景生成签名，行为体仅 raise `IF-DEMO-001/IF-FAILCLOSED-001`（kind: stub）
+- `.tracks/projects/project.toml` — 追加 `[adapter]` 声明；既有测试命令/layout/lint 不改（kind: config）
+- `pyproject.toml` — 注册 integration/e2e marks，并把 `assets/demo_host/**` 纳入 wheel package data（kind: config）
+- `tracks/assets/demo_host/pyproject.toml` — 最小宿主 pinned Python 工具与配置模板（kind: data）
+- `tracks/assets/demo_host/demo_calc.py` — demo candidate 的最小确定性源码语料（kind: data）
+- `tracks/assets/demo_host/tests/unit/test_demo_calc.py` — demo target/control unit node 语料（kind: data）
+- `tracks/assets/demo_host/tests/integration/test_demo_contract.py` — demo integration node 语料（kind: data）
+- `tracks/assets/demo_host/tests/e2e/test_demo_journey.py` — demo e2e happy node 语料（kind: data）
+- `tracks/assets/demo_host/tracks-project.toml` — demo 三层 test contract、nightly 与 adapter 模板（kind: data）
+- `tracks/assets/demo_host/guards.toml` — demo eight-category registry 模板（kind: data）
+
+本节以外不创建 scaffold。上述 stub 的行为体/接线，以及 `project.py` adapter loader、EVENT/COMMAND 封闭集、validate/trace 扩展、registry deploy generator，均是**待实现 Devon foundation tasks**；本文不得把它们当作既有可执行能力。现有 `.githooks/pre-commit` 是 Phase 0 输入而非本次 scaffold：registry 已冻结硬化目标，Runtime 在违规清零后执行生成、更新、激活与 readback。`tests/ground_truth/` 不新增文件：test-plan §3 判定不适用。既有 `tests/ground_truth` 资产继承且不修改。新 stub 在 Devon 接入 composition root 前会短暂是 reach island；ISLAND_GATE_2 的 reach hard gate 保证出口前全部接线，不使用永久豁免。
+
+## 3. 技术选型
+
+### 3.1 Registry 使用 TOML
+
+选择 architecture.md §4.2 中一个语法冻结的 TOML fenced block：Acceptance 明确要求 registry 位于 architecture machine contracts，且 Runtime scaffold allowlist 不允许额外 `.tracks/projects/guards.toml`。loader 只解析 §4.2 heading 下、下一个 heading 前、以 `[quality_registry]` 开头的唯一 `toml` block；零个或多个都 fail-closed。这样既用 Python 3.11 `tomllib`，又避免任意 Markdown 文本解析和第二真相。
+
+### 3.2 Python 静态检查映射
+
+不新增 mypy。本宿主现有 annotations 尚非全量 strict typing，Phase 0 同时引入 mypy 会把产品切片变成类型迁移。静态检查类由同一 `ruff==0.16.0` 执行 F/B 语义规则，lint/format 类记录其余 rule families；同一命令、不同类别视图避免双重风格裁决。认知复杂度仍由 flake8 plugin 单点负责，pylint 只启用 R0801/C0302/R0915/R0914。未来引入 type checker 必须经 registry/design revision，不能静默追加。
+
+### 3.3 Adapter 为显式新增长轴
+
+选择 `tracks/adapters/` 而非继续放在 executor，是为了让 NFR-0141 的禁止区可机器扫描：kernel/executor/cli 完全无宿主语言语义，差异只进入 adapter。首版 adapter 复用现有 pytest/JUnit 行为，不新增第二语言。风险是迁移面较大；用同输入同输出 integration 回归与 unknown-adapter 反例收口。
+
+### 3.4 Mutation 复用 git worktree
+
+选择现有 `executor/worktree.py`，不引入容器依赖。每次实验独立 detached worktree、显式 diff digest、finally rollback；优点是离线、与宿主 git 事实一致，代价是文件系统成本。任一步不确定均 fail-closed，不用 mock git apply。
+
+### 3.5 Demo 模板随 wheel
+
+模板位于 package data 而非 `tests/` 私有 helper，使安装后的 `trac` 可从 wheel 自给语料并证明源码树外运行；repo 在 Runtime temp 中动态创建而非提交成“已配置宿主”。代价是 wheel 增少量文本资产，build contract 增 package-data 回归。
+
+## 4. 交付与运行合同（machine contracts）
+
+### 4.1 测试执行合同（`.tracks/projects/project.toml`）
+
+既有三层合同不变：framework=`pytest`；paths=`tests/unit/`、`tests/integration/`、`tests/e2e/`；collect/run/run_selected 使用宿主 `.venv/bin/python -m pytest`；cwd=`.`；run/run_selected 的 `{result}` 与 run_selected 的 `{nodes}` 恰好一次；worker/JUnit flags 由命令内嵌，Runtime 不注入。
+
+新增：
+
+```toml
+[adapter]
+id = "reference-pytest"
+protocol = "tracks-test-result"
+version = 1
+```
+
+`project.py` loader 与 `trac validate` 必须验证该段；未知 id/version fail-closed。`framework="pytest"` 仅是 adapter-owned contract data，kernel/executor 不解释。integration/e2e collect/run/cwd 仍由 `.tracks/projects/project.toml` 唯一拥有。
+
+### 4.2 Canonical quality guard registry
+
+以下 TOML block 是机器真相；字段名/顺序语义冻结，`trac validate` 与 Runtime 只读此 block。`config_digest` 是目标配置 bytes（多文件时为 path→sha256 canonical JSON）的预期 digest；当前软 hook 与第 8 项目标 digest 不同，故 Phase 0 初始 parity 必须 blocked。
+
+```toml
+[quality_registry]
+version = 1
+host = "tracks"
+
+[[quality_guard]]
+id = "lint-format"
+category = "lint_format"
+tool = "ruff"
+tool_version = "0.16.0"
+command = ".venv/bin/ruff check tracks tests"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.ruff", "tool.ruff.lint"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks", "tests"]
+threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
+timeout_seconds = 300
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "static-semantic"
+category = "static_analysis"
+tool = "ruff"
+tool_version = "0.16.0"
+command = ".venv/bin/ruff check tracks tests"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.ruff.lint"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks", "tests"]
+threshold = "F and B semantic rule families; violations=0"
+timeout_seconds = 300
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "cognitive-complexity"
+category = "cognitive_complexity"
+tool = "flake8+flake8-cognitive-complexity"
+tool_version = "7.3.0+0.1.0"
+command = ".venv/bin/flake8 tracks"
+config_paths = [".flake8"]
+config_sections = ["flake8"]
+config_digest = "sha256:f899995c15557184f3a2d082469fcd7f15ae8f22928823249e6479a611c46382"
+scope = ["tracks"]
+threshold = "CCR001 max-cognitive-complexity=15; tests exempt"
+timeout_seconds = 300
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "file-length"
+category = "file_length"
+tool = "pylint"
+tool_version = "4.0.6"
+command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.pylint.format"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks", "tests"]
+threshold = "C0302 max-module-lines=1200"
+timeout_seconds = 600
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "method-length-locals"
+category = "method_length_locals"
+tool = "pylint"
+tool_version = "4.0.6"
+command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.pylint.design"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks"]
+threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
+timeout_seconds = 600
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "duplication"
+category = "duplication"
+tool = "pylint"
+tool_version = "4.0.6"
+command = ".venv/bin/pylint --disable=all --enable=R0801 tracks tests"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.pylint.similarities"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks", "tests"]
+threshold = "R0801 min-similarity-lines=5; comments/docstrings/signatures ignored"
+timeout_seconds = 600
+failure_policy = "fail_closed"
+execution_points = ["runtime", "pre_commit", "ci"]
+required_check = "lint"
+
+[[quality_guard]]
+id = "coverage-threshold"
+category = "coverage_threshold"
+tool = "coverage+pytest"
+tool_version = "7.15.2+9.1.1"
+command = ".venv/bin/coverage report --fail-under=95"
+config_paths = ["pyproject.toml"]
+config_sections = ["tool.coverage.run", "tool.coverage.report"]
+config_digest = "sha256:a39b3d629bc7203b8282618fa34e1d76058b0842c64486807fce46657a91ad71"
+scope = ["tracks"]
+threshold = "line coverage >=95; by=collected; source omit=none"
+timeout_seconds = 1800
+failure_policy = "fail_closed"
+execution_points = ["runtime", "ci"]
+required_check = "coverage"
+
+[[quality_guard]]
+id = "hooks-runner-ci-required"
+category = "hooks_runner_ci_required_checks"
+tool = "git-hooks+github-actions"
+tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
+command = "sh .githooks/pre-commit"
+config_paths = [".githooks/pre-commit", ".github/workflows/ci.yml"]
+config_sections = ["jobs"]
+config_digest = "sha256:e25583b8890eefe66da0c15d90b4548ebdda9fefa43b983705cc16236f33a2ca"
+scope = ["local-commit", "pull-request", "main", "releases"]
+threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
+timeout_seconds = 3600
+failure_policy = "fail_closed"
+execution_points = ["pre_commit", "ci"]
+required_check = "lint,coverage,test,deliverables,trace,reach"
+```
+
+下表是审查镜像，不是第二数据源。
+
+| # | 类别 | 工具（pinned） | 配置/范围 | 阈值 | 执行点与 required check |
+|:--|:--|:--|:--|:--|:--|
+| 1 | lint + format | ruff==0.16.0 | `pyproject.toml [tool.ruff*]`; `tracks tests` | line-length=100；E/F/W/I/B/UP/SIM/C4；0 violations | Runtime + pre-commit + CI `lint` |
+| 2 | 静态检查 | ruff==0.16.0 | 同配置；F/B semantic subset；`tracks tests` | undefined/unused/likely-bug=0 | Runtime + pre-commit + CI `lint` |
+| 3 | 认知复杂度 | flake8==7.3.0 + flake8-cognitive-complexity==0.1.0 | `.flake8`; `tracks` | CCR001 ≤15；tests 豁免 | Runtime + pre-commit + CI `lint` |
+| 4 | 文件长度 | pylint==4.0.6 | `pyproject.toml [tool.pylint.format]`; `tracks tests` | C0302 max-module-lines=1200 | Runtime + pre-commit + CI `lint` |
+| 5 | 方法长度/局部变量 | pylint==4.0.6 | `[tool.pylint.design]`; `tracks` | R0915≤50；R0914≤15；tests 豁免 | Runtime + pre-commit + CI `lint` |
+| 6 | 重复度 | pylint==4.0.6 | `[tool.pylint.similarities]`; `tracks tests` | R0801 min-similarity-lines=5 | Runtime + pre-commit + CI `lint` |
+| 7 | 覆盖率 | coverage==7.15.2 + pytest==9.1.1 | `[tool.coverage.*]`; source_pkgs=`tracks` | report ≥95%；by=collected；source omit=none | Runtime Phase0 + CI `coverage` |
+| 8 | hooks runner + CI required checks | git hooks + GitHub Actions | `.githooks/pre-commit`、`.github/workflows/ci.yml` | guards 1–7 hard；禁止 `--exit-zero`；required=`lint/coverage/test/deliverables/trace/reach` | local commit + merge；milestone `release-evidence` |
+
+安装命令（只由 Runtime 执行副作用）：
+
+```text
+python -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+git config core.hooksPath .githooks
+```
+
+每项 timeout/failure policy 在 registry 中具体声明；timeout、missing config、digest 漂移均为失败。阈值/scope 改动必须修订 design+registry，经 Prism 评审；`phase0.guard_hardened.revised` 只统计该类已审变更。
+
+### 4.3 CI / pre-commit / release
+
+- Stable required checks 继承：`lint`、`coverage`、`test`、`deliverables`、`trace`、`reach`；job 名不得变。`release-evidence` 仍是 tag milestone hard gate，needs routine 全部。
+- Phase 0 先以现有软 hook 作为 mismatch 证据，消除真实违规后 Runtime 用 registry 生成并更新目标 hook：ruff `tracks tests`、flake8 `tracks`、pylint R0801/C0302 `tracks tests`、R0915/R0914 `tracks`；全部 hard。更新前 `guard.parity` 必须 blocked，更新/激活/readback 后才可 sealed。
+- `guard.parity` 是 Runtime gate，不新增 CI job；CI 的真实执行结论由 registry 的 required check 名引用。仅有文件声明无成功/失败输出不构成证据。
+- live-opencode 与 release-evidence 的凭据探针、`LIVE_SKIPPED`、weekly/milestone 语义不变；v0.7-A 无新外部依赖或 live AC。
+- release version/build/publish 语义不改；v0.7-B 的 CI SHA 回读与发布自动化明确不实现。
+
+### 4.4 Integration/e2e 基础设施
+
+- Shield integration 资产落 `tests/integration/test_{phase0,guard,authenticity,mutation,adapter,trace,demo}_*.py`；e2e 仅 `test_v07_journey.py` 与 `test_dualhost_acceptance.py` 两条 happy path。
+- fault 场景通过 public Runtime gates 与隔离 worktree 注入，不 mock kernel/executor；demo 通过 wheel/CLI，不 import tests helper。
+- counterexample patch 归 `tests/counterexamples/v0.7/`，每 patch 单 AC/IF、不得改 tests、必须 `git apply --check` 且由 Runtime 真跑 target/control。
+- deterministic suite 默认离线。没有新增生产网络依赖；现有 live channel 继续独立。
+
+### 4.5 Build / artifact
+
+build backend 与 wheel 名不变。`pyproject.toml [tool.setuptools.package-data]` 追加 `assets/demo_host/**`；CI build/package-data 回归必须证明 wheel 安装后可定位模板、source import path 不在仓库。v0.7-A 不执行正式制品发布。
+
+### 4.6 发布恢复
+
+所有新事件 append-only。Phase 0 seal、mutation experiment、demo scenario 以 event+blob 为 WAL；reconcile 以 seal/manifest/experiment/scenario digest 去重。中断后无完整持久化结果即重跑，完整且 identity 相同才复用；dirty worktree/rollback 未 clean 一律停车。M-VERIFY、发布回滚不在本版。
+
+## 5. 有意识简化与风险
+
+### 5.1 有意识简化
+
+- 只交付一个 reference adapter；语言中立由 opaque protocol、禁止区静态检查与 unknown-adapter fail-closed 证明，不用第二语言扩大范围。
+- Python 静态检查复用 ruff F/B，不在 Phase 0 引入 mypy 全仓迁移；这是显式设计决定，不等于空缺守卫。
+- 9 场景由 Runtime 在隔离副本合成，不提交九套宿主 repo；每场景仍经过真实 gate 并记录实际结果。
+- Ground Truth 不适用：需求是状态/证据/身份/路由正确性，预期来自事件 schema、git diff、fixture node 集本身；不独立重写被测协议算法。
+- Phase 0 触发位于 M-DESIGN EXIT→M-TEST entry，因为本 run 的需求阶段已完成，而冻结 baseline 的首个消费者是 M-TEST；此前阶段不消费真实性证据。
+
+### 5.2 风险
+
+- **Phase 0 真实绿基线不可恢复**：三缺口节点不存在、coverage 无法达到或硬守卫无法修复时按 spec 进入 BLOCKED，不能由设计放宽。
+- **adapter 迁移遗漏语言 token**：strict scanner 可能先使现有树红；这是预期 legal Red，Devon 必须把解析/exit-code 语义移入 adapter，不可 allowlist executor。
+- **registry parser 对 CI shell 归一化过宽**：只允许 argv0 路径等价与组合命令拆项；不能忽略 scope、rule code、threshold 或 `--exit-zero`。
+- **counterexample Goodhart**：Prism 审语义/最小性，Runtime 审可应用性与 kill/control；两者缺一阻断。
+- **demo 假等价**：若使用源码 editable install、tests helper、预建 repo 或跳过 hooks/CI/adapter 任一项，`demo.equivalence` 必须 false，验收失败。
+- **scaffold reach 窗口**：九个新模块在 M-IMPL 接线前可能是 island；不得永久豁免，task graph 必须 composition-root-first，ISLAND_GATE_2 reach 兜底。
