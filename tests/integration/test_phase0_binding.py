@@ -70,10 +70,14 @@ def test_marker_only_closure_stays_fail():
     assert repaired, "marker-only gaps must surface as open TraceGap records"
     for gap in repaired:
         assert gap.reason in ("marker_only", "node_missing", "identity_unrecoverable")
-        # A marker-only gap must not carry a real bound node digest.
-        assert gap.planned_node_id is None or gap.reason != "marker_only" or (
-            gap.planned_node_id is not None
-        ), "marker-only gap must not pretend a real bound node"
+        # A marker-only gap must not carry a real bound node: with no collected
+        # node the planned_node_id must be None (a marker-only gap that reports
+        # a real bound node would pretend a binding that does not exist).
+        if gap.reason == "marker_only":
+            assert gap.planned_node_id is None, (
+                f"marker-only gap {gap.ac} must not pretend a real bound node "
+                f"(planned_node_id={gap.planned_node_id!r})"
+            )
 
 
 # AC-FR0256-03@v0.7 TRACKS-TRACE field gap recovery and blocked routing

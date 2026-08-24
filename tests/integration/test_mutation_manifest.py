@@ -51,8 +51,14 @@ def test_manifest_minimal_field_set_language_neutral():
         "target_nodes", "control_nodes", "runner_identity",
         "allowed_change_scope", "expected_result",
     }
+    # Exact closed field set (§1g): equality, not subset — any extra field
+    # (candidate semantics, language/framework, test-body content) is a defect.
     actual_fields = set(manifest.__dict__) | {"expected_result"}
-    assert expected_fields <= actual_fields
+    assert expected_fields == actual_fields, (
+        f"manifest field set must be EXACTLY the §1g closed set; "
+        f"extra={sorted(actual_fields - expected_fields)}, "
+        f"missing={sorted(expected_fields - actual_fields)}"
+    )
 
 
 # AC-FR0262-02@v0.7 TRACKS-TRACE no batch endorsement, no-op patch blocked

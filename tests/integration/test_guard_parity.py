@@ -131,6 +131,25 @@ def test_deploy_mechanism_generates_host_configs(tmp_path):
         == hashlib.sha256(demo_arch_src.read_bytes()).hexdigest()
     ), "materialized architecture must be byte-for-byte identical to the asset"
 
+    # 4b. Materialize the demo config assets byte-for-byte at their §1j landing
+    #     points (pyproject.toml + flake8.ini -> repo root, tracks-project.toml
+    #     -> .tracks/projects/project.toml). A conforming validate_guard_registry
+    #     recomputes each declared config_digest against these REAL bytes, so the
+    #     fresh target must carry them BEFORE validate (perpetual Red otherwise).
+    for src, rel in (
+        (demo_template / "pyproject.toml", "pyproject.toml"),
+        (demo_template / "flake8.ini", "flake8.ini"),
+        (demo_template / "tracks-project.toml", ".tracks/projects/project.toml"),
+    ):
+        assert src.exists(), f"demo asset {src.name} must ship in the wheel"
+        dst = target / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        assert (
+            hashlib.sha256(dst.read_bytes()).hexdigest()
+            == hashlib.sha256(src.read_bytes()).hexdigest()
+        ), f"provisioned {rel} must be byte-for-byte identical to the wheel asset"
+
     # 5. load→validate→deploy on the isolated target (demo-pytest host).
     registry = load_guard_registry(arch_landing)
     assert {e.category for e in registry.entries} == set(GUARD_CATEGORIES), (
@@ -193,15 +212,20 @@ def test_deploy_mechanism_generates_host_configs(tmp_path):
             "(artifact_digests are audit-only, not the config value)"
         )
 
-    # 9. Tamper flake8.ini -> hard error / blocked, no fallback.
+    # 9. Tamper flake8.ini -> hard error / blocked, no fallback. The tampered
+    #    bytes change the flake8-backed config_digest, so a conforming validator
+    #    must report a digest/kind error (never silently accept the fallback).
     flake8 = target / "flake8.ini"
-    if flake8.exists():
-        flake8.write_text("[flake8]\nmax-line-length = 1\n", encoding="utf-8")
-        tampered_registry = load_guard_registry(arch_landing)
-        tampered_errors = validate_guard_registry(tampered_registry, target)
-        assert tampered_errors, (
-            "tampering flake8.ini must produce hard errors / blocked, no fallback"
-        )
+    assert flake8.exists(), "flake8.ini must be provisioned before the tamper branch"
+    flake8.write_text("[flake8]\nmax-line-length = 1\n", encoding="utf-8")
+    tampered_registry = load_guard_registry(arch_landing)
+    tampered_errors = validate_guard_registry(tampered_registry, target)
+    assert tampered_errors, (
+        "tampering flake8.ini must produce hard errors / blocked, no fallback"
+    )
+    assert any("flake8" in err or "digest" in err.lower() for err in tampered_errors), (
+        f"tamper must surface the flake8 config_digest mismatch; got {tampered_errors}"
+    )
 
 
 # AC-FR0259-02@v0.7 TRACKS-TRACE registry real execution evidence
