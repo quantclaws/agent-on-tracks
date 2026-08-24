@@ -845,6 +845,14 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
             s.substate = "WRITE"
             _reset_doc(s)
             _consume_attempt(s)
+            # Stale-diagnosis hygiene (operator finding, 2026-08-24 run
+            # 01M0S0FQ): a Prism REVISE routing back to WRITE must not leave
+            # an older DIAGNOSE verdict (e.g. empty_r2) in diagnose_report —
+            # _m_test_shield_dispatch would prefix the re-dispatch objective
+            # with the outdated "Fix the diagnosed test defects" text while
+            # the real findings travel via last_failure/params.evidence.
+            # Clear it so the prompt text matches the evidence it carries.
+            s.diagnose_report = None
         elif dc == "test_plan_defect":
             # Rollback to M-DESIGN (like stub_gap in DIAGNOSE)
             s.substate = "DIAGNOSE"
