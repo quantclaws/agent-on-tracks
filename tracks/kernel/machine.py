@@ -1022,6 +1022,7 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     s.status = "active"
     s.current_attempt = 0
     s.infra_failure_streak = 0
+    s.format_failure_streak = 0
 
 
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
