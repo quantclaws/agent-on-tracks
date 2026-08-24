@@ -3,7 +3,7 @@ story_id: S-001
 title: 可信测试证据与一致质量基线（v0.7-A）
 created: 2026-08-24
 status: draft
-sha:
+sha: 9bff3116525bf80f3b9e6f13757232ff31840e334bd6d2ea40ea4e842ed3a315
 ---
 
 # S-001: 可信测试证据与一致质量基线（v0.7-A）
