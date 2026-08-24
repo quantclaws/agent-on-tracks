@@ -801,23 +801,29 @@ class MImplRuntimeMixin:
         return head or None
 
     def _last_baseline_digest(self) -> str:
-        """Digest carried by the latest ``baseline.frozen`` event of this run
-        within the CURRENT M-IMPL residency (scenario B reconcile reference;
-        '' before the first freeze of this residency).
+        """Digest carried by the latest CURRENT ``baseline.frozen`` event of
+        this run within the CURRENT M-IMPL residency (scenario B reconcile
+        reference; '' before the first freeze of this residency).
 
         Operator finding (2026-08-24, run 01M0S0FQ): freezes belonging to an
         abandoned M-IMPL cycle (rolled back through M-DESIGN re-approval) must
         not poison the reference -- the stale guard exists for a branch
         advancing WHILE the run is resident in M-IMPL, not across a
-        framework-driven rollback + re-entry. Scope the scan to events after
-        the latest ``stage.entered(M-IMPL)``."""
+        framework-driven rollback + re-entry. A status=stale freeze is a
+        conflict OBSERVATION (the parked evidence), never a baseline: after
+        the operator reconciles (human.retry -> BASELINE) the re-freeze must
+        anchor to reality, and reconcile itself legitimately moves the tree
+        (operator fix commits). Scope the scan to events after the latest
+        ``stage.entered(M-IMPL)`` and skip stale freezes."""
         digest = ""
         for ev in reversed(list(self.store.events(self.run_id))):
             if ev.type == "baseline.frozen":
-                digest = str(ev.payload.get("digest") or "")
+                if ev.payload.get("status") == "current":
+                    digest = str(ev.payload.get("digest") or "")
+                # stale freezes: conflict observations, not references
             elif ev.type == "stage.entered" and ev.payload.get("stage") == "M-IMPL":
                 # Hit the residency boundary: the digest now held is the
-                # latest freeze of THIS residency (or '' for a fresh entry).
+                # latest current freeze of THIS residency ('' for fresh).
                 return digest
         return digest
 

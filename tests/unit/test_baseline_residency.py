@@ -47,8 +47,10 @@ def _gate(store):
 
 def test_baseline_digest_scoped_to_current_residency(tmp_path):
     """A freeze from an abandoned M-IMPL cycle (before the latest
-    stage.entered M-IMPL) is NOT the reconcile reference; the stale park
-    freeze inside this residency is."""
+    stage.entered M-IMPL) is NOT the reconcile reference; a stale park
+    freeze inside this residency is a conflict observation, also not a
+    reference -- after the operator reconcile the re-freeze anchors to
+    reality with no prior reference in the residency."""
     store = _store_with(
         [
             ("baseline.frozen", {"status": "current", "digest": "D-abandoned"}),
@@ -59,10 +61,24 @@ def test_baseline_digest_scoped_to_current_residency(tmp_path):
             ("stage.exited", {"stage": "M-TEST"}),
             ("stage.entered", {"stage": "M-IMPL"}),
             ("baseline.frozen", {"status": "stale", "digest": "D-park"}),
+            ("human.retry", {"actor": "Maestro", "clear_evidence": True}),
         ],
         tmp_path,
     )
-    assert _gate(store)._last_baseline_digest() == "D-park"
+    assert _gate(store)._last_baseline_digest() == ""
+
+
+def test_baseline_digest_current_freeze_in_residency_is_reference(tmp_path):
+    """A CURRENT freeze within this residency stays the reference (the
+    scenario-B mid-residency branch-advance guard keeps its teeth)."""
+    store = _store_with(
+        [
+            ("baseline.frozen", {"status": "current", "digest": "D-live"}),
+            ("baseline.frozen", {"status": "stale", "digest": "D-park"}),
+        ],
+        tmp_path,
+    )
+    assert _gate(store)._last_baseline_digest() == "D-live"
 
 
 def test_baseline_digest_fresh_residency_has_no_reference(tmp_path):
