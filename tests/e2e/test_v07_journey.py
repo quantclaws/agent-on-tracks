@@ -15,10 +15,20 @@ from __future__ import annotations
 
 import pytest
 
-from tests.hotfix_support import seed_v05_approved_baseline
+from tests.e2e.helpers import walk_to_await_human
 
 pytestmark = pytest.mark.e2e
 
+
+def _start_v07_run(trac, host_repo):
+    """Drive the REAL journey start for v0.7 (init -> start -> triage ->
+    reviews -> approve), so the run is ACTIVE and M-TEST RED_CHECK is
+    reachable. A run that is never started is a perpetual-Red fixture
+    (PRISM-V07-R4-01): `trac run` exits rc=1 'no active run' and no M-TEST
+    outlet can ever appear even with a conforming implementation."""
+    run_id = walk_to_await_human(trac, version="v0.7")
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    return run_id
 
 
 # AC-FR0256-01@v0.7 TRACKS-TRACE v0.7-A journey Phase 0 to closure
@@ -28,15 +38,17 @@ pytestmark = pytest.mark.e2e
 # AC-FR0263-01@v0.7 TRACKS-TRACE v0.7-A journey Phase 0 to closure
 # AC-FR0265-01@v0.7 TRACKS-TRACE v0.7-A journey Phase 0 to closure
 def test_v07a_journey_phase0_to_closure(trac, host_repo, event_log):
-    """v0.7-A main journey: Phase 0 seal → M-TEST legal Red → M-IMPL mutation → closure.
+    """v0.7-A main journey: Phase 0 seal -> M-TEST legal Red -> M-IMPL
+    mutation -> candidate-bound closure.
 
-    Legal Red anchor: the v0.7 Phase 0 path (IF-PHASE-001/002/003) is not yet
-    wired into the run loop, so `trac run` does not emit `phase0.sealed` and the
-    candidate-bound closure (IF-CLOSURE-001) is not produced; every assertion
-    below fails on the absence of the contract outlet.
+    The run is started through the real journey (init -> start -> triage ->
+    reviews -> approval) so the Phase 0 / M-TEST / closure outlets are
+    REACHABLE. Legal Red anchor: the v0.7 Phase 0 path (IF-PHASE-001/002/003)
+    is not wired, so the run does not emit `phase0.sealed` and the candidate-
+    bound closure (IF-CLOSURE-001) is not produced; every assertion fails on
+    the absent contract outlet.
     """
-    seed_v05_approved_baseline(host_repo, version="v0.7")
-
+    _start_v07_run(trac, host_repo)
     trac("run")
     run_id = "latest"
     events = [e["type"] for e in event_log(run_id)]
@@ -69,26 +81,29 @@ def test_v07a_journey_uses_reference_adapter(trac, host_repo, event_log):
     """AC-FR0264-02 (e2e): the v0.7-A RED_CHECK execution path runs collected
     and selected nodes through the reference pytest adapter (same-in/out as
     the v0.6 pytest path, FR-0264 refactor not a behaviour change). The
-    observable outlet is the run's test execution audit: `test.selected`
-    events carry the adapter identity (reference-pytest) per interfaces §4a
-    row 6 / §1h project contract.
+    observable outlet is the run's adapter execution audit (IF-ADAPTER-002,
+    interfaces §4a row 6): selection events carry the adapter identity.
 
-    Legal Red anchor (IF-ADAPTER-002): the v0.7 run does not yet issue
-    test.selected records (or records without the adapter identity), so the
-    discriminating assertions fail on the absent adapter-audit outlet.
+    The run is started through the real journey (R4-01 fixture fix): the
+    outlet is REACHABLE. Legal Red anchor: the v0.7 adapter audit is not
+    wired, so the selection/adapter outlet is absent — the assertions fail
+    legally on the absent contract outlet, never on a fixture defect.
     """
-    seed_v05_approved_baseline(host_repo, version="v0.7")
+    _start_v07_run(trac, host_repo)
     trac("run")
     events = event_log("latest")
     selected = [e for e in events if e["type"] == "test.selected"]
-    # Non-empty + adapter identity: a conforming v0.7 RED_CHECK records the
-    # reference adapter on the selection (never a vacuous pass on emptiness).
+    # Adapter execution audit: a conforming v0.7 run leaves test.selected
+    # records carrying the reference-pytest adapter identity. The assertion
+    # is discriminating: it rejects an empty stream AND a record without the
+    # adapter identity (PRISM-V07-R4-02 counterexample shape).
     assert selected, (
         "v0.7 RED_CHECK must record test.selected events via the host adapter "
         "(adapter execution audit outlet)"
     )
     for ev in selected:
-        adapter_id = (ev.get("payload") or {}).get("adapter")
+        payload = ev.get("payload") or {}
+        adapter_id = payload.get("adapter")
         assert adapter_id == "reference-pytest", (
             f"v0.7 test execution must record the reference-pytest adapter; "
             f"got {adapter_id!r}"

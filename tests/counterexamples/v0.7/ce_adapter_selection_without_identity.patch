@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/executor.py b/tracks/executor/executor.py
+index 9689fc2..495da78 100644
+--- a/tracks/executor/executor.py
++++ b/tracks/executor/executor.py
+@@ -4429,6 +4429,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
+                 "selection_id": selection_id,
+                 "task_id": None,
+                 "task_ifs": None,
++                "adapter": None,  # Counterexample (AC-FR0264-02): adapter identity dropped
+             },
+             command_id=cmd.command_id,
+         )
