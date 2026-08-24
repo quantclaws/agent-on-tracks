@@ -162,6 +162,16 @@ class State:
     # not be passed to the next agent). Bounded: >=_INFRA_RETRY_LIMIT in a
     # row escalates to awaiting_human instead of storming a degraded gateway.
     infra_failure_streak: int = 0
+    # Consecutive output-contract format failures (final reply JSON failed a
+    # mechanical manifest check, e.g. review_summary over the 140-char cap).
+    # Digested like infra: never consumes the semantic attempt budget (the
+    # assignment's semantics were never evaluated -- only the reply shape
+    # was wrong). Bounded: >=_FORMAT_RETRY_LIMIT in a row escalates to
+    # awaiting_human instead of looping (operator finding 2026-08-24: Prism
+    # burned the whole shared M-TEST budget on review_summary>140 chars
+    # while the discipline was already in its prompt -- mechanical
+    # constraints must be enforced programmatically, not by prompts).
+    format_failure_streak: int = 0
     # v0.5 ResultCheckpoint pipeline (batch 1): when set, decide() drives
     # validate_result -> checkpoint_result -> publish_result instead of the
     # normal substate logic. Cleared by the domain event reducer (or
@@ -567,6 +577,16 @@ _INFRA_FAILURE_CLASSES = frozenset(
 )
 _INFRA_RETRY_LIMIT = 3
 
+# Output-contract format failures (operator 2026-08-24): the agent ran and
+# produced artifacts, but its final reply failed a mechanical manifest check
+# (shape/length/required fields). Distinct from infra (machine) and from
+# semantic failures (assignment quality): re-dispatch immediately without
+# burning the attempt budget -- the same agent session can fix its own
+# reply shape -- but escalate after _FORMAT_RETRY_LIMIT consecutive ones so
+# a loop of malformed replies parks for a human instead of spinning.
+_FORMAT_FAILURE_CLASSES = frozenset({"manifest_malformed"})
+_FORMAT_RETRY_LIMIT = 3
+
 
 def _is_infra_failure(p: dict) -> bool:
     return (p.get("failure_class") or "agent_error") in _INFRA_FAILURE_CLASSES
@@ -588,16 +608,43 @@ def _handle_infra_failure(s: State) -> None:
         s.awaiting = "escalation"
 
 
+def _handle_format_failure(s: State, p: dict) -> None:
+    """Digest an output-contract format failure (manifest_malformed) without
+    burning the semantic attempt budget: the reply failed a mechanical shape
+    check, so the assignment's semantics were never evaluated. Unlike infra,
+    the evidence IS carried to the re-dispatch (last_failure: the agent must
+    fix exactly this shape defect, FR-11) and infra_failure_streak is left
+    alone (backoff is for degraded gateways; the session-reused agent
+    retries immediately). Bounded: >=_FORMAT_RETRY_LIMIT in a row escalates."""
+    s.format_failure_streak += 1
+    s.last_failure = {
+        "check": p.get("failure_class") or "manifest_malformed",
+        "reason": p.get("self_report"),
+        "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
+    }
+    if s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    if s.format_failure_streak >= _FORMAT_RETRY_LIMIT:
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+
+
 def _handle_failed_outcome(s: State, p: dict) -> None:
     """FR-0210: a failed dispatch_agent outcome consumes an attempt from the
     same accounting as verdict.failed, carries failure evidence into the
     re-dispatch prompt (FR-11), and escalates to awaiting_human at the 3rd
     attempt. run048: None/absent/unknown status is treated as ``failed`` with
     ``agent_error`` so the 3-attempt escalation evidence stays meaningful."""
+    if (p.get("failure_class") or "agent_error") in _FORMAT_FAILURE_CLASSES:
+        _handle_format_failure(s, p)
+        return
     if _is_infra_failure(p):
         _handle_infra_failure(s)
         return
     s.infra_failure_streak = 0
+    s.format_failure_streak = 0
     s.last_failure = {
         "check": p.get("failure_class") or "agent_error",
         "reason": p.get("self_report"),
@@ -674,6 +721,7 @@ def _handle_hotfix_failed_outcome(s: State, p: dict) -> None:
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.infra_failure_streak = 0  # the pipeline moved: infra is healthy again
+    s.format_failure_streak = 0  # and the last reply was well-formed
     if s.stage == "M-IMPL":
         _on_m_impl_verdict_passed(s, p)
         return

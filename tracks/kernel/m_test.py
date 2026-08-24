@@ -172,6 +172,19 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         s.diagnose_classification = "stub_gap"
         s.substate = "DIAGNOSE"
         return
+    if check == "collect_defect":
+        # Operator finding (2026-08-24, run 01M0S0FQ pytest-9 incident): the
+        # collect/classification pipeline was blind to the agent's committed
+        # test artifacts (empty baseline + zero collected nodes while test
+        # modules exist, or new test files with zero collected nodes). That
+        # is a runtime/contract defect, never Shield's: no attempt charge and
+        # NO auto re-dispatch (re-running Shield cannot fix the collector).
+        # Park for the operator; `trac retry` re-enters RED_CHECK directly
+        # once the contract/runtime is repaired -- the checkpointed test
+        # work is preserved and is not rewritten.
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+        return
     if check in ("trace", "commit"):
         # trace: SM-01.15 — re-dispatch Shield (WRITE), consume budget.
         # commit: D-30/F-1 — hook rejected test commit -> re-dispatch Shield

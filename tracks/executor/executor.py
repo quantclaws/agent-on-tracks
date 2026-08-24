@@ -4146,7 +4146,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _emit_empty_r2_failure(self, cmd, state) -> None:
         """Feature M-TEST empty R2 -> fail closed (check=empty_r2): a vacuous
-        pass is refused; hotfix must declare its unit-only increment."""
+        pass is refused; hotfix must declare its unit-only increment.
+
+        Before blaming the author, screen for collect-pipeline blindness
+        (operator finding 2026-08-24, run 01M0S0FQ): committed test artifacts
+        that the collector never saw indicate a runtime/contract defect
+        (check=collect_defect) -- no attempt charge, operator escalation,
+        preserved checkpointed work."""
+        defect = self._collect_defect_evidence()
+        if defect is not None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "collect_defect",
+                    "reason": defect,
+                    "evidence": [],
+                    "target_stage": "M-TEST",
+                },
+                command_id=cmd.command_id,
+            )
+            return
         self._emit(
             "verdict.failed",
             {
@@ -4161,6 +4180,138 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             },
             command_id=cmd.command_id,
         )
+
+    def _collect_defect_evidence(self) -> str | None:
+        """Infra-side collect blindness signatures for an empty-R2 gate hit.
+
+        Signature A (total blindness): the latest persisted baseline AND the
+        latest full collect both saw ZERO nodes while the contract's declared
+        layer paths contain python test modules -- the collector parsed
+        nothing (incident: pytest 9.1 quiet collect emits per-file counts
+        without ``::`` node ids; the runtime parser keyed on ``::`` lines).
+
+        Signature B (new-file blindness): test modules added/changed by this
+        run's checkpointed Shield commit (test.written -> result.checkpointed
+        base..commit diff) have NO collected node carrying that file prefix
+        -- the collector never saw the new file at all.
+
+        Returns a human-readable reason when either signature holds (the
+        gate is a collect/contract defect, not the author's), else None.
+        """
+        layer_paths = self._declared_layer_paths()
+        collected = self._latest_event("test.collected")
+        baseline = self._latest_event("test.baseline_captured", status="passed")
+        reason = self._total_blindness_reason(collected, baseline, layer_paths)
+        if reason is not None:
+            return reason
+        return self._new_file_blindness_reason(collected, layer_paths)
+
+    def _declared_layer_paths(self) -> list[str]:
+        """Repo-relative layer path prefixes declared by the host contract."""
+        try:
+            sections = _contract_sections(load_contract(self.repo))
+        except ContractError:
+            sections = []
+        layer_paths: list[str] = []
+        for _name, sec in sections:
+            if sec is None:
+                continue
+            declared = getattr(sec, "paths", None)
+            if declared is None and hasattr(sec, "get"):
+                declared = sec.get("paths")
+            layer_paths.extend(
+                rel for rel in declared or [] if isinstance(rel, str) and rel
+            )
+        return layer_paths
+
+    def _total_blindness_reason(self, collected, baseline, layer_paths) -> str | None:
+        """Signature A: zero-node baseline + zero-node collect while the
+        declared layer dirs demonstrably contain test modules."""
+        if collected is None or baseline is None:
+            return None
+        if collected.payload.get("collected_count") != 0:
+            return None
+        if baseline.payload.get("nodes_count") != 0:
+            return None
+        has_modules = any(
+            (Path(self.repo) / rel).is_dir()
+            and any((Path(self.repo) / rel).rglob("test_*.py"))
+            for rel in layer_paths
+        )
+        if not has_modules:
+            return None
+        return (
+            "collect pipeline blindness: baseline and full collect both "
+            "parsed 0 nodes while declared layer paths contain test "
+            "modules (suspect collector output format / parser mismatch, "
+            "e.g. pytest 9.1 quiet collect per-file counts without "
+            "node ids); Shield's committed artifacts were never seen"
+        )
+
+    def _new_file_blindness_reason(self, collected, layer_paths) -> str | None:
+        """Signature B: checkpointed new/changed test modules absent from the
+        collected node inventory entirely (file prefix never collected)."""
+        written = self._latest_event("test.written")
+        if collected is None or written is None:
+            return None
+        result_id = written.payload.get("result_id")
+        commit = written.payload.get("commit_sha")
+        base = self._checkpoint_base_sha(result_id)
+        if not (base and commit and base != commit):
+            return None
+        test_modules = self._changed_test_modules(base, commit, layer_paths)
+        if not test_modules:
+            return None
+        prefixes = self._collected_prefixes(collected)
+        if prefixes is None:
+            return None
+        missing = [m for m in test_modules if m not in prefixes]
+        if not missing:
+            return None
+        return (
+            "collect pipeline blindness: checkpointed test modules have "
+            f"zero collected nodes: {', '.join(missing[:5])} "
+            "(collector never saw files the author committed)"
+        )
+
+    def _checkpoint_base_sha(self, result_id) -> str | None:
+        """base_sha of the result.checkpointed event for ``result_id``."""
+        for ev in self.store.events(self.run_id):
+            if (
+                ev.type == "result.checkpointed"
+                and ev.payload.get("result_id") == result_id
+                and ev.payload.get("base_sha")
+            ):
+                return ev.payload.get("base_sha")
+        return None
+
+    def _changed_test_modules(self, base, commit, layer_paths) -> list[str]:
+        """Test modules changed in base..commit under declared layer paths."""
+        try:
+            proc = git(
+                self.repo, "diff", "--name-only", f"{base}..{commit}", check=False
+            )
+            changed = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+        except Exception:
+            return []
+        return sorted(
+            ln
+            for ln in changed
+            if ln.endswith(".py")
+            and any(
+                ln == rel or ln.startswith(rel.rstrip("/") + "/")
+                for rel in layer_paths
+            )
+        )
+
+    def _collected_prefixes(self, collected) -> set[str] | None:
+        """File-prefix set of the latest collect's per-node blob (None when
+        the blob is unreadable -- the caller treats that as no signal)."""
+        try:
+            per_node = self._read_runtime_blob(collected.payload.get("per_node_blob"))
+        except TestSelectError:
+            return None
+        return {(entry.get("node") or "").partition("::")[0] for entry in per_node}
 
     @staticmethod
     def _stale_selection_fields(

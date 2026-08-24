@@ -1299,3 +1299,145 @@ def test_prism_pass_revise_pass_completes_at_boundary():
     assert s.status == "completed"
     assert s.terminal_state == "boundary"
     assert decide(s) is None  # M-TEST boundary: run done
+
+
+# -- Operator 2026-08-24: format failures & collect defects never burn budget --
+
+_PRISM_TO_RED_CHECK = [
+    CAPTURE_CMD,
+    BASELINE_CAPTURED,
+    SHIELD_DISPATCH,
+    SHIELD_DONE,
+    COLLECT_CMD,
+    COLLECTED,
+    RUN_CMD,
+    RED_VALID,
+    PRISM_DISPATCH,
+]
+
+
+def test_prism_manifest_malformed_does_not_burn_attempt():
+    """A malformed final reply (mechanical manifest check, e.g.
+    review_summary over the 140-char cap) is a format failure, not a
+    semantic one: no attempt consumed, reviewer reset for immediate
+    re-dispatch, evidence carried to the retry (FR-11)."""
+    malformed = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "failed",
+            "failure_class": "manifest_malformed",
+            "self_report": "review payload malformed: review_summary exceeds 140 chars",
+        },
+    )
+    s = state_of(*_PRISM_TO_RED_CHECK, malformed)
+    assert s.substate == "PRISM_REVIEW"
+    assert s.current_attempt == 0, "format failure must not burn the semantic budget"
+    assert s.reviewer_dispatched is False, "reviewer must re-dispatch immediately"
+    assert s.format_failure_streak == 1
+    assert s.last_failure["check"] == "manifest_malformed"
+    assert s.status == "active"
+
+
+def test_prism_manifest_malformed_escalates_at_third_consecutive():
+    """>=3 consecutive format failures escalate to awaiting_human (no
+    infinite malformed-reply loop) -- still without consuming attempts."""
+    malformed = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "failed",
+            "failure_class": "manifest_malformed",
+            "self_report": "review payload malformed",
+        },
+    )
+    events = [*_PRISM_TO_RED_CHECK, malformed]
+    events = [*events, malformed, malformed]
+    s = state_of(*events)
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"
+    assert s.current_attempt == 0
+    assert s.format_failure_streak == 3
+    s2 = state_of(*events, ("human.retry", {"actor": "openclaw"}))
+    assert s2.status == "active"
+
+
+def test_format_streak_resets_on_semantic_failure_and_pass():
+    """A semantic failure or a passed verdict resets the format streak: only
+    CONSECUTIVE malformed replies escalate."""
+    malformed = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "failed",
+            "failure_class": "manifest_malformed",
+            "self_report": "review payload malformed",
+        },
+    )
+    semantic = (
+        "outcome.received",
+        {
+            "role": "prism",
+            "status": "failed",
+            "failure_class": "agent_error",
+            "self_report": "weak assertions",
+        },
+    )
+    s = state_of(*_PRISM_TO_RED_CHECK, malformed, semantic)
+    assert s.format_failure_streak == 0
+    assert s.current_attempt == 1  # the semantic failure DID burn one
+    s2 = state_of(
+        *_PRISM_TO_RED_CHECK,
+        malformed,
+        ("verdict.passed", {"check": "trace", "detail": "closure verified"}),
+    )
+    assert s2.format_failure_streak == 0
+
+
+def test_collect_defect_verdict_escalates_without_attempt_charge():
+    """verdict.failed(collect_defect) -- the collector was blind to the
+    author's committed artifacts (pytest-9 quiet-collect incident) -- parks
+    the run for the operator: no attempt charge, no Shield re-dispatch;
+    `trac retry` re-enters RED_CHECK with the checkpointed work intact."""
+    s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        (
+            "verdict.failed",
+            {
+                "check": "collect_defect",
+                "reason": "collect pipeline blindness: baseline and full collect both parsed 0 nodes",
+                "evidence": [],
+            },
+        ),
+    )
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"
+    assert s.current_attempt == 0, "a collector defect is never Shield's attempt"
+    assert s.substate == "RED_CHECK"  # retry re-enters run_tests directly
+    s2 = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        (
+            "verdict.failed",
+            {
+                "check": "collect_defect",
+                "reason": "collect pipeline blindness",
+                "evidence": [],
+            },
+        ),
+        ("human.retry", {"actor": "openclaw"}),
+    )
+    assert s2.status == "active"
+    cmd = decide(s2)
+    assert cmd is not None and cmd.kind == "run_tests"

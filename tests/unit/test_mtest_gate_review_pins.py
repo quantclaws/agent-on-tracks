@@ -727,3 +727,155 @@ def test_baseline_digest_blob_write_failure_still_routes_baseline_defect(monkeyp
         if e["payload"].get("check") == "baseline_defect"
     ]
     assert defects, "digest-table write failure routes via baseline_defect"
+
+
+# -- Operator 2026-08-24: collect-pipeline blindness screens before author blame
+
+
+def _seed_empty_baseline(store):
+    ref = store.write_audit_blob([])
+    store.append(
+        _RUN_ID,
+        "v0.4",
+        "test.baseline_captured",
+        {
+            "status": "passed",
+            "baseline_id": "b0",
+            "baseline_tree": "t0",
+            "layers": ["unit", "integration", "e2e"],
+            "nodes_count": 0,
+            "empty_baseline": True,
+            "node_digest_blob": f".tracks/runtime/blobs/{ref}",
+            "errors": [],
+        },
+    )
+
+
+def _seed_zero_collected(store):
+    ref = store.write_audit_blob([])
+    store.append(
+        _RUN_ID,
+        "v0.4",
+        "test.collected",
+        {
+            "status": "passed",
+            "collected_count": 0,
+            "inherited_r1": 0,
+            "delta_r2": 0,
+            "removed": 0,
+            "failures": [],
+            "errors": [],
+            "per_node_blob": f".tracks/runtime/blobs/{ref}",
+        },
+    )
+
+
+def test_empty_r2_total_collect_blindness_routes_collect_defect(monkeypatch, tmp_path):
+    """Signature A: baseline and full collect both parsed 0 nodes while the
+    declared layer paths contain test modules (pytest 9.1 quiet collect
+    emits per-file counts without :: node ids). The gate must escalate as a
+    collector defect, NOT charge the author with an empty_r2 round."""
+    ex, store, emitted, ex_repo = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        executor_module,
+        "load_contract",
+        lambda repo_: _contract(integration=_section()),
+    )
+    (ex_repo / "tests" / "integration" / "test_hist.py").write_text(
+        "def test_hist():\n    assert True\n", encoding="utf-8"
+    )
+    _seed_empty_baseline(store)
+    _seed_zero_collected(store)
+    ex._do_run_tests(_cmd("c-blind"), _State(), None, False)
+
+    defects = [
+        e
+        for e in _of_type(emitted, "verdict.failed")
+        if e["payload"].get("check") == "collect_defect"
+    ]
+    assert defects, (
+        "zero-node baseline + zero-node collect with on-disk test modules is "
+        "collector blindness; expected check=collect_defect"
+    )
+    assert "attempt" not in defects[0]["payload"], (
+        "collect_defect must not carry an attempt charge"
+    )
+    empty_r2 = [
+        e
+        for e in _of_type(emitted, "verdict.failed")
+        if e["payload"].get("check") == "empty_r2"
+    ]
+    assert not empty_r2, "author must not be blamed for a collector defect"
+
+
+def test_empty_r2_new_file_blindness_routes_collect_defect(monkeypatch, tmp_path):
+    """Signature B: test modules added by the checkpointed Shield commit have
+    zero collected nodes (file prefix never collected) -> collect_defect."""
+    ex, store, emitted, ex_repo = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        executor_module,
+        "load_contract",
+        lambda repo_: _contract(integration=_section()),
+    )
+    node = "tests/integration/test_hist.py::test_hist"
+    _seed_baseline(store, node)
+    _seed_collected(store, [{"node": node, "layer": "integration", "class": "r1"}])
+    store.append(
+        _RUN_ID,
+        "v0.4",
+        "result.checkpointed",
+        {
+            "result_id": "R9",
+            "base_sha": "aaa",
+            "commit_sha": "ccc",
+            "created_commit": True,
+        },
+    )
+    store.append(
+        _RUN_ID,
+        "v0.4",
+        "test.written",
+        {"commit_sha": "ccc", "result_id": "R9"},
+    )
+
+    def _fake_git(repo, *args, check=True):
+        if args[:2] == ("diff", "--name-only"):
+            return _proc(
+                args, 0, stdout="tests/integration/test_new.py\n"
+            )
+        return _proc(args, 0)
+
+    monkeypatch.setattr(executor_module, "git", _fake_git)
+    ex._do_run_tests(_cmd("c-blind2"), _State(), None, False)
+
+    defects = [
+        e
+        for e in _of_type(emitted, "verdict.failed")
+        if e["payload"].get("check") == "collect_defect"
+    ]
+    assert defects, (
+        "a checkpointed test module absent from the collected inventory is "
+        "collector blindness; expected check=collect_defect"
+    )
+    assert "test_new.py" in defects[0]["payload"]["reason"]
+
+
+def test_empty_r2_healthy_collect_still_blames_author(monkeypatch, tmp_path):
+    """Control: a healthy collect (nonzero baseline, the changed module IS in
+    the inventory) with an empty R2 remains the author's empty_r2 refusal."""
+    ex, store, emitted, _repo = _harness(monkeypatch, tmp_path)
+    _seed_empty_r2_context(monkeypatch, store)
+    ex._do_run_tests(_cmd("c-healthy"), _State(), None, False)
+
+    refusals = [
+        e
+        for e in _of_type(emitted, "verdict.failed")
+        if e["payload"].get("check") == "empty_r2"
+    ]
+    assert refusals, "healthy collect + empty R2 must keep the empty_r2 refusal"
+    defects = [
+        e
+        for e in _of_type(emitted, "verdict.failed")
+        if e["payload"].get("check") == "collect_defect"
+    ]
+    assert not defects
