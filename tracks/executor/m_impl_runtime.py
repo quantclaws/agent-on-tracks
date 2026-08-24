@@ -2450,8 +2450,8 @@ class MImplRuntimeMixin:
             selected.update(node for node in resolved if node.startswith("tests/unit/"))
         return sorted(selected)
 
-    @staticmethod
     def _task_integration_index(
+        self,
         plan_text: str,
         current_nodes: list[str],
         task_ifs,
@@ -2475,13 +2475,30 @@ class MImplRuntimeMixin:
             )
             matches = [node for node in current_nodes if node.partition("::")[0] == target]
             row_ifs = set(re.findall(r"IF-[A-Z0-9][A-Z0-9-]*", if_cell or ""))
-            if row_ifs & required and not matches:
-                raise TestSelectError(
-                    f"task IF integration test is absent from collect: {target}"
-                )
-            for if_id in row_ifs:
-                index.setdefault(if_id, set()).update(matches)
+            if self._row_binds_to_task(row_ifs, required, matches, target):
+                for if_id in row_ifs:
+                    index.setdefault(if_id, set()).update(matches)
         return {if_id: sorted(nodes) for if_id, nodes in sorted(index.items())}
+
+    @staticmethod
+    def _row_binds_to_task(row_ifs: set, required: set, matches: list, target: str) -> bool:
+        """Whether a plan §8 integration row binds to this task.
+
+        Operator finding (2026-08-24, run 01M0S0FQ T-001): a multi-IF row
+        only PARTIALLY owned by the task (row_ifs ∩ required ≠ ∅ but ⊄)
+        exercises IFs the task does not implement -- it stays legally red
+        until a later task lands the remaining IFs, so requiring it green is
+        structurally unsatisfiable for vertical-slice tasks. Bind only rows
+        the task fully owns; absent-but-bound rows still fail closed."""
+        if not (row_ifs & required):
+            return False
+        if not (row_ifs <= required):
+            return False  # partially-owned row: legally red, later tasks own it
+        if not matches:
+            raise TestSelectError(
+                f"task IF integration test is absent from collect: {target}"
+            )
+        return True
 
     def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
         """Run unit/integration collect commands against the gate cwd."""
