@@ -345,6 +345,33 @@ def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
     s.run_id, s.version = ev.run_id, ev.version
 
 
+def _reset_m_impl_cycle(s: State) -> None:
+    """flow.md §10: fresh M-IMPL cycle — reset every per-stage field.
+
+    B83: includes the generation bookkeeping (taskgraph_generation,
+    retained_completed_task_ids) so a re-entered residency starts from a
+    clean projection."""
+    s.baseline_frozen = False
+    s.taskgraph_committed = False
+    s.tasks_total = 0
+    s.tasks_completed = 0
+    s.writelock_held = False
+    s.current_task_id = None
+    s.r_tree_identity = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.island_2_passed = False
+    s.diagnose_classification = None
+    s.diagnose_report = None
+    s.taskgraph_digest = None
+    s.taskgraph_path = None
+    s.task_refs = []
+    s.taskgraph_generation = 0
+    s.retained_completed_task_ids = []
+    s.current_task_metadata = None
+    s.current_manifest = None
+
+
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["stage"]
     sd = _STAGES.get(s.stage)
@@ -378,25 +405,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.active_selection_id = None
     if s.stage == "M-IMPL":
         # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
-        s.baseline_frozen = False
-        s.taskgraph_committed = False
-        s.tasks_total = 0
-        s.tasks_completed = 0
-        s.writelock_held = False
-        s.current_task_id = None
-        s.r_tree_identity = None
-        s.green_committed = False
-        s.refactor_done = False
-        s.island_2_passed = False
-        s.diagnose_classification = None
-        s.diagnose_report = None
-        s.taskgraph_digest = None
-        s.taskgraph_path = None
-        s.task_refs = []
-        s.taskgraph_generation = 0
-        s.retained_completed_task_ids = []
-        s.current_task_metadata = None
-        s.current_manifest = None
+        _reset_m_impl_cycle(s)
     if s.stage == "M-HOTFIX-TRIAGE":
         s.substate = "PRECHECK"
         s.hotfix_target_version = None

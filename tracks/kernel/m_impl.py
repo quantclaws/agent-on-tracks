@@ -368,6 +368,29 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         _consume_attempt(s)
 
 
+def _route_scope_replan(s: State) -> None:
+    """B83 (#83): a TASK_REVIEW scope verdict is an Archer task-plan defect.
+
+    The plan's file ownership is unimplementable (the delivered interfaces
+    require touching a path no task owns), so Devon re-dispatch against the
+    same immutable manifest is a deterministic budget-burn loop (run
+    01M0S0FQ T-007: guard_registry.py facade). Route to PLANNING for Archer
+    to replan (merge/re-scope tasks); the replacement commit re-derives
+    retained completions from event history. No Devon/Shield dispatch, no
+    attempt consumed; task residency state is cleared so the replaced
+    graph's task cannot be resurrected (the stale writelock lease is
+    released at the next select_task)."""
+    s.substate = "PLANNING"
+    _reset_doc(s)
+    s.taskgraph_committed = False
+    s.current_task_id = None
+    s.current_task_metadata = None
+    s.current_manifest = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.r_tree_identity = None
+
+
 def _route_parked_failure(s: State, check: str) -> None:
     """Failures that park the run for the Human instead of auto-routing.
 
@@ -460,15 +483,7 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         _reset_doc(s)
         _consume_attempt(s)
     elif check == "scope":
-        s.substate = "PLANNING"
-        _reset_doc(s)
-        s.taskgraph_committed = False
-        s.current_task_id = None
-        s.current_task_metadata = None
-        s.current_manifest = None
-        s.green_committed = False
-        s.refactor_done = False
-        s.r_tree_identity = None
+        _route_scope_replan(s)
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
