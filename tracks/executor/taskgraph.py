@@ -614,6 +614,11 @@ def plan_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
     layers must anchor identical pairs. A NODE item (``file::test``) binds
     that node exactly; a FILE item binds the whole file; a bare file name
     normalizes under tests/integration/.
+
+    B52 (#68): an item that already carries an explicit tests/ root keeps
+    its layer (``tests/e2e/...`` stays e2e) -- only bare file names
+    normalize to tests/integration/. E2e targets are terminal-coverage
+    anchors (ISLAND_GATE_2/FULL), never per-task acceptance obligations.
     """
     items = [
         item.strip().strip("`")
@@ -627,7 +632,7 @@ def plan_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
             continue
         path = (
             file_part
-            if file_part.startswith("tests/integration/")
+            if file_part.startswith("tests/")
             else f"tests/integration/{Path(file_part).name}"
         )
         pair = (path, f"{path}::{node_part}") if sep and node_part else (path, None)
@@ -646,9 +651,15 @@ def _row_undeclared_targets(
 
     A NODE target is covered by an exact node declaration OR by a FILE-level
     declaration of its file (a whole-file declaration covers every node in
-    it -- the same expansion the runtime gate applies)."""
+    it -- the same expansion the runtime gate applies).
+
+    B52 (#68): e2e-layer targets (``tests/e2e/...``) are terminal-coverage
+    anchors (ISLAND_GATE_2/FULL) -- they are NOT per-task acceptance
+    obligations and are skipped here."""
     errors: list[str] = []
     for path, node in plan_row_targets(test_cell):
+        if not path.startswith(_INTEGRATION_PREFIX):
+            continue
         named = node if node is not None else path
         if named not in declared and path not in declared_paths:
             errors.append(

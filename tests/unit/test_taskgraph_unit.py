@@ -335,6 +335,61 @@ def test_plan_row_targets_matches_runtime_gate_parser():
     )
 
 
+def test_plan_row_targets_preserves_e2e_layer():
+    """B52 (#68): an item carrying an explicit tests/ root keeps its layer --
+    ``tests/e2e/...`` is NOT rewritten under tests/integration/ (the rewrite
+    made the commit-time closure demand undeclarable anchors)."""
+    cell = (
+        "`tests/integration/test_phase0_binding.py::test_gap_bound` + "
+        "`tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure`"
+    )
+    assert plan_row_targets(cell) == [
+        ("tests/integration/test_phase0_binding.py", "tests/integration/test_phase0_binding.py::test_gap_bound"),
+        ("tests/e2e/test_v07_journey.py", "tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure"),
+    ]
+
+
+def test_acceptance_coverage_skips_e2e_targets():
+    """B52 (#68): e2e targets in a mixed §8 row are terminal-coverage anchors
+    (ISLAND_GATE_2/FULL) -- they must not be demanded as per-task
+    acceptance_refs; the integration item in the same row still is."""
+    plan = (
+        "# Test plan\n\n## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0001-01 | integration + e2e | "
+        "`tests/integration/test_app.py::test_flow_a` + "
+        "`tests/e2e/test_journey.py::test_journey_closure` | IF-IMPL-001 |\n"
+    )
+    tasks, _ = parse_tasks_json(
+        _schema2_graph({"acceptance_refs": ["tests/integration/test_app.py::test_flow_a"]})
+    )
+    ok, errors = validate_acceptance_coverage(tasks, plan)
+    assert ok
+    assert errors == []
+
+
+def test_acceptance_coverage_integration_item_in_mixed_row_still_required():
+    """B52 (#68) adversarial: skipping e2e items must not exempt the
+    integration sibling -- an undeclared integration target stays a gap."""
+    plan = (
+        "# Test plan\n\n## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0001-01 | integration + e2e | "
+        "`tests/integration/test_app.py::test_flow_a` + "
+        "`tests/e2e/test_journey.py::test_journey_closure` | IF-IMPL-001 |\n"
+    )
+    # declares only the e2e file (illegal in real graphs via the layer
+    # validator; simulate a stray integration miss by declaring nothing)
+    tasks, _ = parse_tasks_json(_schema2_graph({"acceptance_refs": []}))
+    ok, errors = validate_acceptance_coverage(tasks, plan)
+    assert not ok
+    assert any(
+        "tests/integration/test_app.py::test_flow_a" in e and "not declared" in e
+        for e in errors
+    )
+    assert not any("tests/e2e/" in e for e in errors)
+
+
 def test_legacy_schema1_layers_route_by_prefix():
     """Legacy graphs keep test_refs but are mapped: tests/unit/ -> RED
     obligation, everything else -> acceptance anchor (replay compatibility)."""
