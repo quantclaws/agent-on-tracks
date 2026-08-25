@@ -97,6 +97,7 @@ from tracks.executor.validate import (
     validate_document,
 )
 from tracks.executor.worktree import (
+    _RUNTIME_ASSETS,
     WorktreeHandle,
     _writer_worktree_path,
     cleanup_worktree,
@@ -2353,6 +2354,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         改动过的文件，mirror 回退不再覆盖——同名冲突 fail-closed 报错
         （主树侧内容保留，人工裁决后重试），杜绝 concurrent-collision
         replay 静默吞掉操作者已提交的工作。
+
+        B60 (#76)：``ensure_runtime_assets`` 在 agent 运行**前**把
+        ``_RUNTIME_ASSETS`` 链接进 worktree（.venv 是符号链接），而
+        canonical ``.gitignore`` 的 ``.venv/`` 尾斜杠模式只匹配目录、
+        不匹配符号链接——``git add -A`` 会把它 stage 进 replay diff，
+        ``git apply`` 拒绝后 mirror 兜底 copy2 目录直接 Errno 21。故
+        add 后对每个 runtime asset 显式 ``git reset -q``（只动 index，
+        不碰 working tree）：replay diff 只携带 agent 工作增量，环境
+        管线永不入镜。reset 对未 staged 的 asset 是无害 no-op 错误。
         """
         wt = handle.path
         subprocess.run(
@@ -2360,6 +2370,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             capture_output=True,
             check=False,
         )
+        for asset in _RUNTIME_ASSETS:
+            subprocess.run(
+                ["git", "-C", wt, "reset", "-q", "--", asset],
+                capture_output=True,
+                check=False,
+            )
         diff = subprocess.run(
             ["git", "-C", wt, "diff", "--cached", "--binary"],
             capture_output=True,
