@@ -252,6 +252,8 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
                 s.green_committed = False
             else:
                 s.substate = "GREEN"
+                # #86: legal same-R re-commit vs crash-replay must be observable
+                s.green_committed = False
             s.refactor_done = False
             _reset_doc(s)
             _consume_attempt(s)
@@ -325,7 +327,13 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         if s.r_tree_identity is None:
             s.substate = "RED"
         else:
+            # #86: legal same-R re-commit vs crash-replay -- with an R
+            # checkpoint held, impl_defect re-enters GREEN but must drop the
+            # green_committed flag so the runtime idempotency guard lets the
+            # revise issue a NEW green.committed for the same R slot instead
+            # of no-op'ing forever (decide() then re-emits commit_green).
             s.substate = "GREEN"
+            s.green_committed = False
         _reset_doc(s)
         _consume_attempt(s)
     elif check == "red_defect":

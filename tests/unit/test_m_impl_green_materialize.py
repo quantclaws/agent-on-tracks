@@ -364,13 +364,21 @@ def test_commit_green_reconcile_after_crash_is_idempotent(tmp_path):
     executor2 = Executor(store2, repo, "RUN")
     _stage_green(executor2, store2, r_sha)
 
-    payload2 = _commit_green(executor2, store2)
-
-    assert payload2["g_sha"] == head, (
-        "reconcile must converge on the same G that is already materialized"
+    # #86: reconcile replay sees the persisted green.committed (fresh
+    # store.state() replays it -> green_committed=True), so the idempotency
+    # guard no-ops -- no re-commit, no duplicate event, branch stays at G.
+    # (store2 re-seeds the shared DB with a second task.started which the
+    # reducer would reset green_committed on; we restore the flag explicitly
+    # to model the real reconcile state that reflects green.committed.)
+    reconcile_state = store2.state("RUN")
+    reconcile_state.green_committed = True
+    executor2._do_commit_green(
+        Command("commit_green", command_id="C-G-REPLAY"), reconcile_state, None, True
     )
+
     assert _git(repo, "rev-parse", "HEAD") == head, "reconcile must not move the branch"
     assert not any(e.type == "verdict.failed" for e in store2.events("RUN"))
+    assert len([e for e in store2.events("RUN") if e.type == "green.committed"]) == 1
 
 
 def test_commit_green_reconcile_replay_emits_no_duplicate_event(tmp_path):
@@ -382,7 +390,10 @@ def test_commit_green_reconcile_replay_emits_no_duplicate_event(tmp_path):
     command = Command("commit_green", command_id="C-G")
     stale_state = store.state("RUN")
     executor._do_commit_green(command, stale_state, None, False)
-    executor._do_commit_green(command, stale_state, None, True)
+    # #86: the reconcile replay must use the fresh store state (which reflects
+    # the persisted green.committed -> green_committed=True); a stale pre-commit
+    # snapshot (green_committed=False) would now look like a legitimate revise.
+    executor._do_commit_green(command, store.state("RUN"), None, True)
     assert len([e for e in store.events("RUN") if e.type == "green.committed"]) == 1
 
 

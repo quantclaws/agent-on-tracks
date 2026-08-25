@@ -932,6 +932,128 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     assert "Tracks-NFR:" not in message
 
 
+# -- #86: commit_green idempotency guard distinguish reconcile vs revise -------
+
+
+def test_commit_green_reconcile_guard_noop_when_recorded_and_committed(tmp_path):
+    """B56/#86 reconcile form: green.committed recorded + state.green_committed=True
+    → guard no-ops (no duplicate git commit, no new event)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    # First commit: emits green.committed, state in store now has green_committed=True
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+    # Reconcile replay: fresh state from store (green_committed=True), event recorded
+    fresh_state = store.state("RUN")
+    assert fresh_state.green_committed is True
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G-REPLAY"), fresh_state, None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+
+def test_commit_green_revise_lets_through_when_recorded_but_not_committed(tmp_path):
+    """#86 revise form: green.committed recorded + state.green_committed=False
+    (PRISM_FINAL revise or DIAGNOSE routed back to GREEN) → guard lets through,
+    emits a NEW green.committed for the same lineage slot."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    # First commit: emits green.committed
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+    # Simulate the revise re-dispatch: PRISM_FINAL revise(impl_defect) routes
+    # back to GREEN (reducer clears green_committed) and Devon re-runs GREEN,
+    # producing a fresh outcome with a modify diff (the impl revision).
+    revise_diff = (
+        "diff --git a/tracks/app.py b/tracks/app.py\n"
+        "--- a/tracks/app.py\n"
+        "+++ b/tracks/app.py\n"
+        "@@ -1 +1,2 @@\n"
+        " IMPLEMENTED = True\n"
+        "+# revised\n"
+    )
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=revise_diff
+        ),
+    )
+    revised_state = store.state("RUN")
+    revised_state.green_committed = False
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), revised_state, None, False,
+    )
+    green_events = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
+    assert len(green_events) == 2, "revise must emit a second green.committed"
+    assert green_events[0].payload["g_sha"] != green_events[1].payload["g_sha"], (
+        "second commit must produce a different G (revised content)"
+    )
+    assert green_events[0].payload["attempt"] == green_events[1].payload["attempt"], (
+        "same R slot must be reused"
+    )
+
+
+def test_commit_green_guard_first_commit_unaffected(tmp_path):
+    """#86 regression: a first-time green commit (no prior green.committed event)
+    must still pass through the guard normally."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
+    assert len(green) == 1
+    assert green[0].payload["task_id"] == task["task_id"]
+
+
 def test_green_commit_binds_r_ref_slot_not_logical_attempt(tmp_path):
     """B56 (#72): B54's first-free-slot R allocation can place the immutable
     R ref at a slot above the logical attempt counter; G's Tracks-Attempt and
@@ -1365,7 +1487,9 @@ def test_rgr_reconcile_replay_emits_no_duplicate_events(tmp_path):
     green_command = Command("commit_green", command_id="C-G-REPLAY")
     stale_green_state = store.state("RUN")
     executor._do_commit_green(green_command, stale_green_state, None, False)
-    executor._do_commit_green(green_command, stale_green_state, None, True)
+    # Reconcile replay: fresh state from store (reflects green.committed → green_committed=True)
+    fresh_state = store.state("RUN")
+    executor._do_commit_green(green_command, fresh_state, None, True)
     assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
 
 

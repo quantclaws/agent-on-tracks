@@ -1064,8 +1064,10 @@ def test_prism_final_pass_to_task_done():
 def test_prism_final_revise_impl_to_green():
     """prism.verdict(revise, impl_defect) at PRISM_FINAL -> GREEN.
 
-    Refactor_done is cleared (GREEN retry); green_committed stays True
-    (the green commit is not invalidated by a task-review revise).
+    Refactor_done is cleared (GREEN retry).  green_committed is also cleared
+    (#86): the revise must be observable as a legal same-R re-commit so the
+    runtime idempotency guard lets commit_green issue a NEW green.committed
+    instead of no-op'ing forever.
     """
     revise = (
         "prism.verdict",
@@ -1117,7 +1119,7 @@ def test_prism_final_revise_impl_to_green():
     assert s.substate == "GREEN"
     assert s.current_attempt == 1
     assert s.refactor_done is False
-    assert s.green_committed is True
+    assert s.green_committed is False
 
 
 def test_prism_final_revise_red_to_red():
@@ -1362,6 +1364,7 @@ def test_diagnose_impl_defect_to_green():
     s = _diagnose_state("impl_defect")
     assert s.substate == "GREEN"
     assert s.current_attempt == 1
+    assert s.green_committed is False  # #86: same-R re-commit must be observable
 
 
 def test_diagnose_impl_defect_without_r_checkpoint_routes_to_red():

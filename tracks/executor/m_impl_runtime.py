@@ -3675,10 +3675,19 @@ class MImplRuntimeMixin:
         # B56 (#72): the green.committed idempotency guard keys on the
         # lineage attempt (the R ref slot) -- the same identity the payload
         # and G trailers record -- so a crash-replay reconciles.
+        # #86: legal same-R re-commit (PRISM_FINAL revise or DIAGNOSE routed
+        # back to GREEN) clears state.green_committed so the guard below
+        # distinguishes "already done, reconcile" (recorded + True) from
+        # "revised, re-issue" (recorded + False).  A recorded event with
+        # green_committed=False lets the same-R-slot green.committed be
+        # re-emitted; TASK_REVIEW reads by task_id (most recent seq) per #84.
         lineage_attempt = self._r_lineage_attempt(
             task_id, state.r_tree_identity, attempt
         )
-        if self._m_impl_event_recorded("green.committed", task_id, lineage_attempt):
+        if (
+            self._m_impl_event_recorded("green.committed", task_id, lineage_attempt)
+            and state.green_committed
+        ):
             self._rebuild_task_log_projection()
             return
         reason, diff = self._validated_diff("green", state)
