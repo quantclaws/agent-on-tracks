@@ -409,8 +409,22 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "RED" if s.substate == "RED_GATE" else "GREEN"
         _reset_doc(s)
     elif check == "regression":
-        s.substate = "REFACTOR" if s.substate == "REFACTOR_GATE" else "GREEN"
-        _reset_doc(s)
+        # B63 (#81): R-test regression must be ATTRIBUTED, not blindly
+        # retried. A GREEN-phase agent cannot legally modify RED-approved
+        # tests, so when the R tests themselves are defective (wrong
+        # fixture) there is no legal path to green: the agent either
+        # re-violates (convicted again by the digest check) or freezes
+        # while earlier residue keeps convicting it — either way a blind
+        # GREEN re-dispatch reproduces the same failure forever (run
+        # 01M0S0FQ T-002 2026-08-25: three regression rounds -> escalation
+        # -> operator archaeology). Mirror verification_failed: route into
+        # the four-way DIAGNOSE so Prism attributes — impl_defect -> Devon
+        # GREEN fix, red_defect -> RED re-pin of the defective tests
+        # (T-006 round-3 precedent), test_defect -> Shield. Applies to the
+        # REFACTOR-gate variant identically (impl_defect re-enters GREEN,
+        # the gate chain re-verifies forward).
+        s.substate = "DIAGNOSE"
+        _reset_review(s)
         _consume_attempt(s)
     elif check in ("budget", "scope"):
         s.substate = "GREEN"

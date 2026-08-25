@@ -2395,3 +2395,89 @@ def test_diagnose_contract_violation_budget_exhaustion_escalates():
     assert s.substate == "DIAGNOSE"
     assert s.status == "awaiting_human"
     assert s.awaiting == "escalation"
+
+
+def test_green_gate_regression_routes_to_diagnose():
+    """B63 (#81): an R-test regression verdict must be attributed by DIAGNOSE,
+    not blindly retried in GREEN. The stale-loop path (run 01M0S0FQ T-002,
+    2026-08-25): defective R tests leave the GREEN agent no legal path (it
+    may not modify RED-approved files), so a GREEN re-dispatch reproduces
+    the same regression forever and burns the whole budget."""
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "regression", "attempt": 1}),
+    )
+    assert s.substate == "DIAGNOSE"
+    assert s.status == "active"
+    assert s.reviewer_dispatched is False
+    cmd = decide(s)
+    assert cmd is not None, "must dispatch Prism DIAGNOSE, not loop GREEN"
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    assert cmd.params["substate"] == "DIAGNOSE"
+
+
+def test_refactor_gate_regression_also_routes_to_diagnose():
+    """B63 (#81): the REFACTOR-gate regression variant routes to DIAGNOSE as
+    well (impl_defect re-enters GREEN; the gate chain re-verifies forward)."""
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        GREEN_COMMITTED,
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "REFACTOR"}, "command_id": "C14"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"gate": "REFACTOR_GATE", "stage": "M-IMPL"}, "command_id": "C15"}}),
+        ("verdict.failed", {"check": "regression", "attempt": 1}),
+    )
+    assert s.substate == "DIAGNOSE"
+    cmd = decide(s)
+    assert cmd is not None and cmd.params.get("substate") == "DIAGNOSE"
