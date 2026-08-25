@@ -200,6 +200,24 @@ def test_project_loader_unknown_adapter_declaration_fails_closed(tmp_path, decla
     # Faithful fail-closed surface: an unknown declaration must NOT be coerced
     # into, or faithfully surfaced as, a tracks-test-result v1 adapter the
     # Runtime could consume; it must fail closed at the loader seam (None).
-    # RED: the loader surface is absent today, so ``contract.adapter`` raises
+    # RED: the loader surface is absent, so ``contract.adapter`` raises
     # AttributeError before known-ness can be enforced (contract token gap).
     assert contract.adapter is None
+
+
+# AC-FR0264-01@v0.7 TRACKS-TRACE end-to-end seam: the loader's declared adapter
+# is the SAME id/protocol/version the Runtime forwards to ``resolve_adapter``.
+# This is the versioned tracks-test-result v1 contract closing the loop:
+# loader exposes the declaration -> Runtime resolves the reference adapter
+# from it.  RED: the loader seam is absent, so ``contract.adapter`` raises
+# AttributeError before the declaration can reach ``resolve_adapter``.
+def test_loader_declaration_resolves_through_the_runtime_seam(tmp_path):
+    _write_contract(tmp_path, _body_with_adapter())
+    contract = load_contract(tmp_path)
+    declared = contract.adapter
+    adapter = resolve_adapter(
+        declared.id, declared.protocol, declared.version
+    )
+    assert adapter.adapter_id == "reference-pytest"
+    assert adapter.protocol == TEST_RESULT_PROTOCOL
+    assert adapter.protocol_version == TEST_RESULT_PROTOCOL_VERSION
