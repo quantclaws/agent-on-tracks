@@ -229,6 +229,16 @@ class OpencodeBackend:
         return proc
 
     @staticmethod
+    def _assignment_forbidden_paths(assignment: dict | None) -> list[str]:
+        """B64 (#82): repo-relative forbidden patterns from the assignment
+        (executor-injected; see Executor._red_test_scope). Returns [] when
+        the dispatch carries no ownership veto."""
+        value = (assignment or {}).get("forbidden_paths")
+        if not isinstance(value, list):
+            return []
+        return [p for p in value if isinstance(p, str) and p.strip()]
+
+    @staticmethod
     def _extract_session_id(stdout: str) -> str | None:
         """从 opencode --format json 事件流提取 sessionID（事件顶层或
         part 内；同一派发的全部事件共享一个 id，取首个非空值）。"""
@@ -364,7 +374,12 @@ class OpencodeBackend:
             allowed = self._allowed_paths(
                 doc_paths, agent_dest, role, substate, assignment, root=root
             )
-            auditor = Auditor(root, allowed=allowed)
+            # B64 (#82): assignment-injected ownership veto (repo-relative
+            # patterns; e.g. Shield's SHIELD_FIX domain excludes the run's
+            # red_test_paths). Data-driven — the backend applies what the
+            # executor derived from Archer-authored manifests.
+            forbidden = self._assignment_forbidden_paths(assignment)
+            auditor = Auditor(root, allowed=allowed, forbidden=forbidden)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
             # File-granular baseline for the batch B scaffold subset rule: a

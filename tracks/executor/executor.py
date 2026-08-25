@@ -786,6 +786,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if lint_cmd and lint_cmd not in guard:
                 guard.append(lint_cmd)
             assignment["commands"] = {"guard": guard}
+        if state.stage == "M-IMPL":
+            # B64 (#82): deterministic ownership wall — Shield's audit domain
+            # excludes every dispatched task's red_test_paths (Archer manifest
+            # data, no hardcoding). A Shield write inside Devon's RED unit
+            # tests is over-reach and rolls back regardless of what the
+            # diagnosis text names; attribution must route red_defect ->
+            # Devon RED re-pin instead.
+            red_scope = self._red_test_scope()
+            if red_scope:
+                assignment["forbidden_paths"] = red_scope
         params["assignment"] = assignment
         params["pre_dirty"] = sorted(self._dirty_files())
         params["pre_dirty_snapshot"] = self._dirty_snapshot()
@@ -3462,6 +3472,28 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     patterns.update(
                         p for p in value if isinstance(p, str) and p.strip()
                     )
+        return sorted(patterns)
+
+    def _red_test_scope(self) -> list[str]:
+        """B64 (#82): red_test_paths of every dispatched task in this run —
+        Archer-authored manifest data (language-neutral; nothing hardcoded).
+        These are Devon's RED unit artifacts: only Devon may rewrite them
+        (red_defect -> RED re-pin). Shield's SHIELD_FIX write domain excludes
+        them deterministically — the ownership wall is data, not prompt
+        discipline (user ruling 2026-08-25; run 01M0S0FQ T-002: a test_defect
+        misroute sent Shield into Devon's RED unit test)."""
+        patterns: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "task.started":
+                continue
+            manifest = ev.payload.get("manifest")
+            if not isinstance(manifest, dict):
+                continue
+            value = manifest.get("red_test_paths")
+            if isinstance(value, list):
+                patterns.update(
+                    p for p in value if isinstance(p, str) and p.strip()
+                )
         return sorted(patterns)
 
     @staticmethod
