@@ -123,6 +123,10 @@ EVENT_TYPES = (
     "doc_gap.design_revised",
     "doc_gap.design_failed",
     "doc_gap.design_reviewed",
+    # #85: loop 终止的持久记录——B43 drift abort 等 fail-fast 退出只 print
+    # 到 stdout，screen 无重定向时证据全丢。executor 在 abort 前落此审计
+    # 事件；reducer 无需行为（projection 忽略），replay 是 no-op。
+    "loop.aborted",
 )
 
 # interfaces §4 — v0.1 closed command set.

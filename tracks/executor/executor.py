@@ -504,10 +504,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
         r1 实证：运行中进程外的代码修改不热加载，旧逻辑继续派发导致
         误判/escalation。这里宁可停车提示重启，绝不带旧逻辑继续。
+        #85：fail-fast 退出前先落 loop.aborted 审计事件——screen 无重定向
+        时 stdout 证据会丢，事件流是 append-only 审计流，事后可区分
+        abort/crash/kill。store.append 在 CLI 的 writer_lock 内执行，与
+        既有 append 点一致；_emit 走统一熔断漏斗，loop.aborted 在 breaker
+        是 no-op。
         """
         if self._code_stamp is None:
             return
         if code_stamp(Path(self.repo)) != self._code_stamp:
+            self._emit("loop.aborted", {"reason": "code_drift", "detail": DRIFT_MESSAGE})
             print(DRIFT_MESSAGE, file=sys.stderr, flush=True)
             raise RuntimeCodeDriftError(DRIFT_MESSAGE)
 
