@@ -71,13 +71,12 @@ def resolve_adapter(adapter_id: str, protocol: str, version: int) -> Adapter:
     """
     from tracks.adapters.reference_pytest import ReferencePytestAdapter
 
-    for candidate in (ReferencePytestAdapter,):
-        if (
-            candidate.adapter_id == adapter_id
-            and candidate.protocol == protocol
-            and candidate.protocol_version == version
-        ):
-            return candidate()
+    if (
+        ReferencePytestAdapter.adapter_id == adapter_id
+        and ReferencePytestAdapter.protocol == protocol
+        and ReferencePytestAdapter.protocol_version == version
+    ):
+        return ReferencePytestAdapter()
     raise UnknownAdapterError(
         f"unknown adapter declaration id={adapter_id!r} protocol={protocol!r} "
         f"version={version!r} (only tracks-test-result v1 is supported)"
