@@ -588,6 +588,25 @@ def cmd_review(repo: Path, *args: str) -> int:
     return _pipeline_outcome(result, "review", f"review recorded: {action}")
 
 
+def _retry_gate_error(state, clear_evidence: bool) -> str | None:
+    if clear_evidence:
+        if state.awaiting != "escalation" and not (
+            state.status == "active" and state.awaiting is None
+        ):
+            return (
+                "retry --clear-evidence requires escalation or a clean "
+                f"active state (status={state.status} "
+                f"awaiting={state.awaiting or 'nothing'})"
+            )
+    elif state.awaiting != "escalation" and not (
+        state.stage == "M-IMPL"
+        and state.awaiting == "rollback"
+        and (state.last_failure or {}).get("check") == "lineage"
+    ):
+        return f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
+    return None
+
+
 def cmd_retry(repo: Path, *args: str) -> int:
     usage = "usage: trac retry [--actor NAME] [--clear-evidence]"
     actor = None
@@ -610,24 +629,9 @@ def cmd_retry(repo: Path, *args: str) -> int:
         return _err("no active run")
     with writer_lock(home):
         state = store.state(run_id)
-        if clear_evidence:
-            # Operator signals the underlying program/config/validator was
-            # fixed and the old failure evidence is stale. Allowed at escalation
-            # (same as ordinary retry) OR at a clean active state (the recovery
-            # path: ordinary retry already happened, a dispatch was killed, and
-            # stale evidence must not leak into the next dispatch). Other
-            # awaiting gates (review/approval/triage/rollback) are NOT relaxed.
-            if state.awaiting != "escalation" and not (
-                state.status == "active" and state.awaiting is None
-            ):
-                return _err(
-                    "retry --clear-evidence requires escalation or a clean "
-                    f"active state (status={state.status} "
-                    f"awaiting={state.awaiting or 'nothing'})"
-                )
-        elif state.awaiting != "escalation":
-            # Ordinary retry: only at escalation, preserves evidence (FR-11).
-            return _err(f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})")
+        gate_err = _retry_gate_error(state, clear_evidence)
+        if gate_err is not None:
+            return _err(gate_err)
         store.append(
             run_id,
             state.version,

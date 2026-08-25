@@ -3202,3 +3202,244 @@ def test_redefined_same_id_task_is_not_retained(tmp_path):
     )
     state = store.state("RUN")
     assert state.current_task_id == "T-001"  # re-selected for a clean re-run
+
+
+# -- B84 (#84): TASK_REVIEW task-identity gate ----------------------------------
+
+
+def test_task_review_no_change_passes_when_no_green_committed(tmp_path):
+    """B84 (#84): a green.no_change for the current task makes TASK_REVIEW
+    emit verdict.passed(task_review) — no new G exists, scope/lineage/secret/
+    provenance checks are vacuous (GREEN_GATE already programmatically verified
+    the behavior). Budget check still runs."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"],
+                            classification="assertion_failure",
+                            verdict="assertion_failure", diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # green.no_change for the current task — no green.committed
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": task["task_id"], "reason": "implementation already on disk"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": task["task_id"], "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.passed", (
+        f"green.no_change should pass, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "task_review"
+
+
+def test_task_review_fails_on_old_task_green_committed(tmp_path):
+    """B84 (#84): a green.committed for a DIFFERENT task (old generation) with
+    no green event for the current task must fail-closed with check=lineage
+    and reason "green.committed lacks task identity" — never re-use the old
+    task's G for trailer verification."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    store.append(
+        "RUN", "v0.5", "task.started",
+        {"task_id": task["task_id"], "task": task,
+         "manifest": {"task_id": task["task_id"],
+                      "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                      "forbidden_paths": [".tracks/projects/**"]}},
+    )
+    executor = _executor(repo, store)
+    # RED checkpoint → GREEN
+    store.append("RUN", "v0.5", "outcome.received",
+                 _structured_outcome("red", ["tests/unit/test_app.py"],
+                                     classification="assertion_failure",
+                                     verdict="assertion_failure", diff_ref=RGR_RED_DIFF))
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    # Build a green.committed for the current task (T-001) — this is the
+    # legitimate path. But we then simulate a B83-style replan: the current
+    # task changes to T-014 (merged from T-006+T-007), with no green event
+    # of its own.
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    g = create_green_commit(
+        repo=str(repo), run_id="RUN", task_id=task["task_id"], attempt=1,
+        impl_diff=RGR_GREEN_DIFF, base_sha=base_sha, r_sha=r_sha,
+        issue_number=task["issue_number"], ac_refs=["AC-FR0001-01", "FR-0001"],
+    )
+    store.append("RUN", "v0.5", "green.committed",
+                 {"g_sha": g.sha, "task_id": task["task_id"], "attempt": 1,
+                  "r_sha": r_sha, "base_sha": base_sha, "trailers": g.trailers})
+    _git(repo, "reset", "--hard", g.sha)
+    # Now simulate a B83 replan: T-001 is done, T-014 is the new task with
+    # no green event. The state's current_task_id is T-014.
+    t14 = {**task, "task_id": "T-014", "scope_boundary": "tracks/merged.py"}
+    store.append("RUN", "v0.5", "taskgraph.committed",
+                 {"task_count": 1, "task_ids": ["T-014"], "tasks": [t14],
+                  "digest": "graph2", "validate_status": "pass"})
+    store.append("RUN", "v0.5", "task.completed", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-014", "manifest": {}})
+    store.append("RUN", "v0.5", "task.started",
+                 {"task_id": "T-014", "task": t14,
+                  "manifest": {"task_id": "T-014",
+                               "allowed_paths": ["tracks/merged.py"],
+                               "forbidden_paths": [".tracks/projects/**"]}})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": "T-014", "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == "T-014", state.current_task_id
+    assert state.substate == "TASK_REVIEW", state.substate
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"wrong task green.committed must fail closed, got {new_events[-1].type}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "lacks task identity" in new_events[-1].payload.get("reason", ""), (
+        f"reason must mention 'lacks task identity', got {new_events[-1].payload.get('reason')}"
+    )
+
+
+def test_task_review_no_change_fails_on_missing_task(tmp_path):
+    """B84 (#84): no-change path where task lookup fails must fail-closed
+    with check=lineage — never silently pass when task identity is missing."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"],
+                            classification="assertion_failure",
+                            verdict="assertion_failure", diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # Re-start with a task_id that has no backing task metadata — _lookup_task
+    # will return None because neither task_refs nor current_task_metadata
+    # carries this task_id.
+    store.append("RUN", "v0.5", "task.started",
+                 {"task_id": "T-GHOST", "manifest": {"task_id": "T-GHOST",
+                  "allowed_paths": [], "forbidden_paths": []}})
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": "T-GHOST", "reason": "implementation already on disk"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": "T-GHOST", "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == "T-GHOST"
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"missing task should fail closed, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "task lookup failed" in new_events[-1].payload.get("reason", "").lower(), (
+        f"reason must mention task lookup failure, got {new_events[-1].payload.get('reason')}"
+    )
+
+
+def test_task_review_fails_on_no_green_committed_event(tmp_path):
+    """B84 (#84): when no green.committed event exists and no green.no_change
+    matches the current task, TASK_REVIEW must fail-closed with check=lineage
+    and reason 'no green.committed event found'."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    store.append(
+        "RUN", "v0.5", "task.started",
+        {"task_id": task["task_id"], "task": task,
+         "manifest": {"task_id": task["task_id"],
+                      "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                      "forbidden_paths": [".tracks/projects/**"]}},
+    )
+    executor = _executor(repo, store)
+    store.append("RUN", "v0.5", "outcome.received",
+                 _structured_outcome("red", ["tests/unit/test_app.py"],
+                                     classification="assertion_failure",
+                                     verdict="assertion_failure", diff_ref=RGR_RED_DIFF))
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # green.no_change for a DIFFERENT task — state transitions to TASK_REVIEW,
+    # but the current task has no matching green event at all.
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": "T-OTHER", "reason": "other task changed"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": task["task_id"], "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == task["task_id"]
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"no green event should fail closed, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "no green.committed event found" in new_events[-1].payload.get("reason", ""), (
+        f"reason must mention 'no green.committed event found', got {new_events[-1].payload.get('reason')}"
+    )

@@ -102,9 +102,11 @@ class TaskSelectionFailure(Exception):
         self.evidence = evidence
 
 
-def _task_review_failure(
-    repo, run_id, events, task, g_sha, base_sha, trailers, allowed, task_id, attempt
+def _green_diff_checks(
+    repo, run_id, task_id, attempt, g_sha, base_sha, events, allowed, trailers, task
 ) -> dict | None:
+    if g_sha is None or base_sha is None:
+        return None
     diff_proc = git(Path(repo), "diff", "--name-only", base_sha, g_sha, check=False)
     if diff_proc.returncode == 0:
         outside = sorted(
@@ -140,6 +142,20 @@ def _task_review_failure(
             return {"check": "secret", "reason": "G adds a secret-shaped added line"}
     if not (trailers.get("Tracks-AC") or "").strip():
         return {"check": "provenance", "reason": "G has no Tracks-AC provenance trailer"}
+    return None
+
+
+def _task_review_failure(
+    repo, run_id, events, task, g_sha, base_sha, trailers, allowed, task_id, attempt
+) -> dict | None:
+    # B84 (#84): g_sha=None means no-change review (green.no_change) — no new G
+    # exists, so scope/lineage/secret/provenance checks are vacuous. Only the
+    # budget check below runs.
+    failure = _green_diff_checks(
+        repo, run_id, task_id, attempt, g_sha, base_sha, events, allowed, trailers, task
+    )
+    if failure is not None:
+        return failure
     # Fix F (run 01KZTHE7 T-013, 2026-08-16): FR-11 `trac retry` resets the
     # attempt budget, so only verdict.failed events recorded after the last
     # human.retry count against the task budget. Pre-retry failures are
@@ -3120,18 +3136,95 @@ class MImplRuntimeMixin:
             {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
             for ev in self.store.events(self.run_id)
         ]
-        green = next((ev for ev in reversed(events) if ev["type"] == "green.committed"), None)
-        payload = green["payload"] if green is not None else {}
-        task = self._lookup_task(task_id)
-        g_sha = payload.get("g_sha")
-        base_sha = payload.get("base_sha")
-        if green is None or task is None or not g_sha or not base_sha:
+        # B84 (#84): scan reversed events for the most recent green event
+        # (green.committed or green.no_change) whose task_id matches the
+        # current task — never use a stale green.committed from another task.
+        green_for_task = next(
+            (
+                ev
+                for ev in reversed(events)
+                if ev["type"] in ("green.committed", "green.no_change")
+                and ev["payload"].get("task_id") == task_id
+            ),
+            None,
+        )
+        if green_for_task is not None and green_for_task["type"] == "green.no_change":
+            self._run_task_review_no_change(cmd, task_id, attempt, events)
+            return
+        if green_for_task is not None:
+            self._run_task_review_committed(cmd, task_id, attempt, events, green_for_task)
+            return
+        any_green_committed = any(
+            ev["type"] == "green.committed" for ev in events
+        )
+        if any_green_committed:
             self._emit_gate_failure(
                 cmd,
                 check="lineage",
-                reason="no green.committed event found"
-                if green is None
-                else "green.committed lacks task or base identity",
+                reason="green.committed lacks task identity",
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        self._emit_gate_failure(
+            cmd,
+            check="lineage",
+            reason="no green.committed event found",
+            task_id=task_id,
+            attempt=attempt,
+        )
+
+    def _run_task_review_no_change(self, cmd, task_id, attempt, events):
+        """No-change review: no new G exists, scope/lineage/secret/provenance
+        checks are vacuous — GREEN_GATE already programmatically verified
+        the behavior. Budget check still runs. Source: #84 event 9074-9078."""
+        task = self._lookup_task(task_id)
+        if task is None:
+            self._emit_gate_failure(
+                cmd,
+                check="lineage",
+                reason="task lookup failed for no-change review",
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        manifest = self._current_manifest() or {}
+        failure = _task_review_failure(
+            str(self.repo),
+            self.run_id,
+            events,
+            task,
+            None,
+            None,
+            {},
+            manifest.get("allowed_paths") or [],
+            task_id,
+            attempt,
+        )
+        if failure is not None:
+            self._emit_gate_failure(
+                cmd,
+                check=failure["check"],
+                reason=failure["reason"],
+                evidence=failure.get("evidence", ""),
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        self._emit("verdict.passed", {"check": "task_review"}, command_id=cmd.command_id)
+
+    def _run_task_review_committed(self, cmd, task_id, attempt, events, green_ev):
+        """Normal green.committed review: verify scope, lineage, secrets,
+        provenance, and budget. Source: #84 event 9074-9078."""
+        payload = green_ev["payload"]
+        task = self._lookup_task(task_id)
+        g_sha = payload.get("g_sha")
+        base_sha = payload.get("base_sha")
+        if task is None or not g_sha or not base_sha:
+            self._emit_gate_failure(
+                cmd,
+                check="lineage",
+                reason="green.committed lacks task or base identity",
                 task_id=task_id,
                 attempt=attempt,
             )
