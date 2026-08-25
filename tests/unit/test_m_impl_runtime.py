@@ -400,6 +400,33 @@ def test_select_task_after_recovered_reentry_ignores_abandoned_started(tmp_path)
     assert store.state("RUN").current_task_id == "T-001"
 
 
+def test_red_ref_free_attempt_skips_live_slot_of_same_residency(tmp_path):
+    """B54 (#70): a same-residency re-checkpoint (Prism red_defect retry,
+    human.retry round) must allocate the NEXT free R slot, not crash. The
+    old walk raised on a slot live this residency -- run 01M0S0FQ T-001:
+    slots 1-3 orphaned by the rollback, slot 4 checkpointed in this
+    residency, the red_defect retry's checkpoint (attempt 2) walked into
+    live slot 4 and killed the trac run process."""
+    repo = _repo(tmp_path)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    # physical refs: slots 1-4 all taken (1-3 orphaned, 4 live this residency)
+    sha = _git(repo, "rev-parse", "HEAD")
+    for slot in (1, 2, 3, 4):
+        _git(repo, "update-ref", f"refs/trac/rgr/RUN/T-001/{slot}/red", sha)
+    # a live checkpoint event for slot 4 in THIS residency
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": "T-001", "attempt": 4, "r_sha": sha, "ref": "refs/trac/rgr/RUN/T-001/4/red"},
+    )
+    # retry's checkpoint requests attempt 2 -> walks orphans 2, 3 AND live 4 -> 5
+    assert executor._red_ref_free_attempt("T-001", 2) == 5
+    # fresh task with no refs at all keeps its requested slot
+    assert executor._red_ref_free_attempt("T-002", 1) == 1
+
+
 class _RecordingBackend:
     def __init__(self, result):
         self.result = result

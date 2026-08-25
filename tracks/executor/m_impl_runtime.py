@@ -3198,61 +3198,32 @@ class MImplRuntimeMixin:
         )
         self._rebuild_task_log_projection()
 
-    def _m_impl_residency_cutoff_seq(self) -> int:
-        """Seq of the latest M-IMPL residency boundary (0 when never).
-
-        RGR per-task artifacts (refs, checkpoints) are idempotent within ONE
-        M-IMPL residency; a rollback abandons the cycle and its artifacts
-        become orphans (operator finding 2026-08-24, run 01M0S0FQ: the
-        retry-cutoff scope misclassified a prior residency's checkpointed
-        attempt as live and refused the slot renumber).
-
-        B53 (#69): the boundary is ``stage.entered`` OR -- B32 -- the
-        ``stage.recovered`` forward-recovery re-entry (same seam as B51's
-        _last_baseline_digest): a recovered residency must not see the
-        abandoned cycle's checkpointed attempts as live."""
-        cutoff = 0
-        for ev in self.store.events(self.run_id):
-            if (
-                ev.type in ("stage.entered", "stage.recovered")
-                and ev.payload.get("stage") == "M-IMPL"
-            ):
-                cutoff = ev.seq
-        return cutoff
-
     def _red_ref_free_attempt(self, task_id: str, attempt: int) -> int:
-        """Allocate a free immutable-ref attempt slot for this task's R.
+        """Allocate the first free immutable-ref attempt slot >= attempt.
 
         Operator finding (2026-08-24, run 01M0S0FQ): a rollback through
         M-DESIGN re-approval abandons an M-IMPL cycle whose RGR refs
         (refs/trac/rgr/{run}/{task}/{N}/red) outlive the cycle -- the fresh
         residency restarts task attempts at 1 and would collide with the
-        orphaned ref (create_red_ref raises; the checkpoint crashed). R
-        immutability is preserved by never overwriting: when the slot is
-        taken by an orphan (no red.checkpointed event for this (task,
-        attempt) in the CURRENT M-IMPL residency), advance to the next free
-        slot. The event records the allocated attempt, keeping history and
-        refs consistent."""
-        cutoff = self._m_impl_residency_cutoff_seq()
+        orphaned ref (create_red_ref raises; the checkpoint crashed).
+
+        B54 (#70): ANY taken slot is skipped -- orphan (abandoned residency)
+        or live (checkpointed earlier in THIS residency). The old walk raised
+        on a live slot, crashing the framework's own same-residency
+        re-checkpoint flows: a Prism red_defect retry re-runs Devon and
+        re-checkpoints the same task (run 01M0S0FQ T-001: slot 4 live ->
+        second checkpoint crashed trac run), and a human.retry round moves
+        the idempotency guard's cutoff past the prior checkpoint the same
+        way. R immutability demands a fresh slot for a fresh checkpoint;
+        the exact-duplicate double-fire (no retry in between) is already
+        caught by the guard in _do_checkpoint_red, so the raise protected
+        no real scenario. The event records the allocated attempt, keeping
+        history and refs consistent."""
         slot = attempt
         for _ in range(50):
             ref = f"refs/trac/rgr/{self.run_id}/{task_id}/{slot}/red"
             if git(self.repo, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
                 return slot
-            recorded_this_residency = any(
-                ev.type == "red.checkpointed"
-                and ev.seq > cutoff
-                and ev.payload.get("task_id") == task_id
-                and ev.payload.get("attempt") == slot
-                for ev in self.store.events(self.run_id)
-            )
-            if recorded_this_residency:
-                # Same-residency retry of an already checkpointed attempt:
-                # fail closed rather than silently renumbering a live attempt.
-                raise TestSelectError(
-                    f"R ref {ref} already checkpointed this residency; refusing "
-                    "to renumber a live attempt"
-                )
             slot += 1
         raise TestSelectError(
             f"no free R ref attempt slot for task {task_id} within 50 of {attempt}"
