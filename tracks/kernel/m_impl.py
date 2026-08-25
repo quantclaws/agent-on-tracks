@@ -52,13 +52,22 @@ def _on_baseline_frozen(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """PLANNING: task graph validated and committed -> ISLAND_GATE_1."""
+    """PLANNING: task graph validated and committed -> ISLAND_GATE_1.
+
+    On replacement (re-plan), carries retained_completed_task_ids so that
+    only payload-equivalent completed tasks carry over (B83)."""
+    is_replacement = bool(s.task_refs)
     s.taskgraph_committed = True
     s.tasks_total = p.get("task_count", 0)
     s.taskgraph_digest = p.get("digest")
     s.taskgraph_path = p.get("path") or p.get("tasks_json")
     refs = p.get("tasks", [])
     s.task_refs = [dict(ref) for ref in refs if isinstance(ref, dict)]
+    retained = p.get("retained_completed_task_ids", [])
+    s.retained_completed_task_ids = list(retained) if isinstance(retained, list) else []
+    s.tasks_completed = len(s.retained_completed_task_ids)
+    if is_replacement:
+        s.taskgraph_generation += 1
     s.substate = "ISLAND_GATE_1"
 
 
@@ -123,7 +132,13 @@ def _on_refactor_no_change(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_task_completed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """TASK_DONE: task.completed -> TASK_DISPATCH (more tasks) or ISLAND_GATE_2."""
+    """TASK_DONE: task.completed -> TASK_DISPATCH (more tasks) or ISLAND_GATE_2.
+
+    Skips increment for tasks already counted in retained_completed_task_ids
+    (B83 generation-aware projection)."""
+    task_id = p.get("task_id")
+    if task_id is not None and task_id in s.retained_completed_task_ids:
+        return
     s.tasks_completed += 1
     s.green_committed = False
     s.refactor_done = False
@@ -440,10 +455,20 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "DIAGNOSE"
         _reset_review(s)
         _consume_attempt(s)
-    elif check in ("budget", "scope"):
+    elif check == "budget":
         s.substate = "GREEN"
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "scope":
+        s.substate = "PLANNING"
+        _reset_doc(s)
+        s.taskgraph_committed = False
+        s.current_task_id = None
+        s.current_task_metadata = None
+        s.current_manifest = None
+        s.green_committed = False
+        s.refactor_done = False
+        s.r_tree_identity = None
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"

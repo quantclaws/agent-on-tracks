@@ -195,6 +195,8 @@ class State:
     taskgraph_digest: str | None = None
     taskgraph_path: str | None = None
     task_refs: list[dict] = field(default_factory=list)
+    taskgraph_generation: int = 0
+    retained_completed_task_ids: list = field(default_factory=list)
     current_task_metadata: dict | None = None
     current_manifest: dict | None = None
     # SM-02 doc-gap adjudication projection (IF-DOCGAP-001 / IF-QUARANTINE-001):
@@ -391,6 +393,8 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.taskgraph_digest = None
         s.taskgraph_path = None
         s.task_refs = []
+        s.taskgraph_generation = 0
+        s.retained_completed_task_ids = []
         s.current_task_metadata = None
         s.current_manifest = None
     if s.stage == "M-HOTFIX-TRIAGE":

@@ -2991,3 +2991,214 @@ def test_task_node_schema2_payload_keeps_explicit_split():
     assert node.schema == 2
     assert node.unit_refs == ("tests/unit/test_app.py::test_app",)
     assert node.acceptance_refs == ("tests/integration/test_app.py",)
+
+
+# -- B83 (#83): scope-failure replan — generation-aware completion/lease -----
+
+
+def _b83_task(tid: str, scope: str, ref: str) -> dict:
+    return {
+        **_task(ref),
+        "task_id": tid,
+        "scope_boundary": scope,
+    }
+
+
+def test_scope_replan_retains_only_payload_equivalent_completions(tmp_path):
+    """B83 (#83): after a scope-failure replan, retained completions are
+    derived from EVENT history (last taskgraph.committed payload), not from
+    live state -- the scope route clears taskgraph_committed/task_refs before
+    the replacement commit, so a state-only guard would retain nothing and
+    re-run every task. Only payload-equivalent completed tasks carry over;
+    the merged-away T-006 and the never-completed T-007 must not."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t6 = _b83_task("T-006", "tracks/registry.py", "tests/unit/test_r.py::test_r")
+    t7 = _b83_task("T-007", "tracks/parity.py", "tests/unit/test_p.py::test_p")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t6, t7]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    first = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert first.payload["retained_completed_task_ids"] == []
+
+    # T-001 and T-006 complete; T-007 starts, holds the lease, then its
+    # TASK_REVIEW fails the scope gate (kernel routes to PLANNING).
+    for tid in ("T-001", "T-006"):
+        store.append("RUN", "v0.5", "writelock.granted", {"task_id": tid, "manifest": {}})
+        store.append(
+            "RUN",
+            "v0.5",
+            "task.started",
+            {"task_id": tid, "task": {"task_id": tid}, "manifest": {"task_id": tid}},
+        )
+        store.append("RUN", "v0.5", "task.completed", {"task_id": tid})
+        store.append("RUN", "v0.5", "writelock.released", {"task_id": tid})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-007", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-007", "task": {"task_id": "T-007"}, "manifest": {"task_id": "T-007"}},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/registry.py"]'},
+    )
+    state = store.state("RUN")
+    assert state.substate == "PLANNING"  # scope routes to Archer, not Devon
+    assert state.taskgraph_committed is False
+    assert state.current_task_id is None
+    assert state.writelock_held is True  # stale lease — released at selection
+
+    # Archer replan: T-001 kept verbatim; T-006+T-007 merged into T-014.
+    t14 = _b83_task("T-014", "tracks/merged.py", "tests/unit/test_m.py::test_m")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t14]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    second = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert second.payload["retained_completed_task_ids"] == ["T-001"]
+    state = store.state("RUN")
+    assert state.tasks_completed == 1
+    assert state.retained_completed_task_ids == ["T-001"]
+    assert state.tasks_total == 2
+
+
+def test_scope_replan_releases_stale_lease_and_selects_merged_task(tmp_path):
+    """B83 (#83): after the replacement commit, the old generation's started
+    tasks (merged-away T-006, scope-failed T-007) must not block selection,
+    and the stale writelock must be RELEASED -- not resurrected with the old
+    manifest. The merged task is selected under the NEW graph."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t6 = _b83_task("T-006", "tracks/registry.py", "tests/unit/test_r.py::test_r")
+    t7 = _b83_task("T-007", "tracks/parity.py", "tests/unit/test_p.py::test_p")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t6, t7]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    for tid in ("T-001", "T-006"):
+        store.append("RUN", "v0.5", "writelock.granted", {"task_id": tid, "manifest": {}})
+        store.append(
+            "RUN",
+            "v0.5",
+            "task.started",
+            {"task_id": tid, "task": {"task_id": tid}, "manifest": {"task_id": tid}},
+        )
+        store.append("RUN", "v0.5", "task.completed", {"task_id": tid})
+        store.append("RUN", "v0.5", "writelock.released", {"task_id": tid})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-007", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-007", "task": {"task_id": "T-007"}, "manifest": {"task_id": "T-007"}},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/registry.py"]'},
+    )
+
+    t14 = _b83_task("T-014", "tracks/merged.py", "tests/unit/test_m.py::test_m")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t14]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    commit_seq = max(
+        ev.seq for ev in store.events("RUN") if ev.type == "taskgraph.committed"
+    )
+
+    select = Command("select_task", command_id="C-SELECT")
+    # First pass: stale T-007 lease predates the replacement commit — release
+    # it (taskgraph_replaced), do NOT resurrect task.started for T-007.
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    started_after = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "task.started" and ev.seq > commit_seq
+    ]
+    assert started_after == []
+    released = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "writelock.released" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in released] == ["T-007"]
+    assert store.state("RUN").writelock_held is False
+
+    # Second pass: old-generation starts no longer gate selection; T-001 is
+    # retained-complete, so the merged T-014 is selected under the new graph.
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    started_after = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "task.started" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in started_after] == ["T-014"]
+    state = store.state("RUN")
+    assert state.current_task_id == "T-014"
+    assert state.current_manifest["task_id"] == "T-014"
+    assert state.tasks_completed == 1  # T-001 retained; T-014 still running
+
+
+def test_redefined_same_id_task_is_not_retained(tmp_path):
+    """B83 (#83): a completed task whose payload is REDEFINED in the new
+    graph (same id, changed scope) must re-run — its old completion must not
+    satisfy the new task nor block a fresh completion."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-001", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-001", "task": t1, "manifest": {"task_id": "T-001"}},
+    )
+    store.append("RUN", "v0.5", "task.completed", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-001"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/x.py"]'},
+    )
+
+    t1_redefined = {**t1, "scope_boundary": "tracks/app2.py"}
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1_redefined]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    second = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert second.payload["retained_completed_task_ids"] == []
+    state = store.state("RUN")
+    assert state.tasks_completed == 0
+
+    executor._do_select_task(
+        Command("select_task", command_id="C-SELECT"), state, None, False
+    )
+    state = store.state("RUN")
+    assert state.current_task_id == "T-001"  # re-selected for a clean re-run

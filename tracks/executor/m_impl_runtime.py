@@ -981,6 +981,38 @@ class MImplRuntimeMixin:
         for line in probe_report.advisory():
             print(f"  [taskgraph] {line}", file=sys.stderr, flush=True)
         (vdir / "tasks.md").write_text(self._tasks_md(tasks), encoding="utf-8")
+        # B83: retained completions are derived from EVENT history, not live
+        # state -- the scope route (and any M-IMPL re-entry) clears
+        # taskgraph_committed/task_refs before this commit, so state-only
+        # guards would silently retain nothing. The previous committed graph
+        # (last taskgraph.committed event) is the sole old-payload source;
+        # completed tasks whose payload is fully equivalent in the new graph
+        # carry over, redefined/merged ones re-run. This also preserves the
+        # FR-0150 cross-cycle semantics (completions count across cycles).
+        retained_ids = []
+        prev_graph_ev = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "taskgraph.committed"
+            ),
+            None,
+        )
+        if prev_graph_ev is not None:
+            events = list(self.store.events(self.run_id))
+            completed_ids = {
+                ev.payload.get("task_id")
+                for ev in events
+                if ev.type == "task.completed" and ev.payload.get("task_id")
+            }
+            old_payloads = [
+                t
+                for t in prev_graph_ev.payload.get("tasks") or []
+                if isinstance(t, dict)
+            ]
+            retained_ids = self._compute_retained_completions(
+                old_payloads, [self._task_payload(t) for t in tasks], completed_ids
+            )
         self._emit(
             "taskgraph.committed",
             {
@@ -991,8 +1023,8 @@ class MImplRuntimeMixin:
                 "validate_status": "pass",
                 "digest": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
                 "tasks_md": "tasks.md",
-                # 机器证据：PRISM_PLAN 复核消费（§1.0.5 判据）。
                 "anchor_probe": probe_summary(probe_report),
+                "retained_completed_task_ids": retained_ids,
             },
             command_id=cmd.command_id,
         )
@@ -1099,6 +1131,28 @@ class MImplRuntimeMixin:
             "parallel": task.parallel,
             "budget": task.budget,
         }
+
+    @staticmethod
+    def _task_payloads_equivalent(old: dict, new: dict) -> bool:
+        keys = (
+            "task_id", "issue_number", "description", "ac_refs", "fr_refs",
+            "if_ids", "test_refs", "unit_refs", "acceptance_refs", "schema",
+            "scope_boundary", "depends_on", "batch", "parallel", "budget",
+        )
+        return all(old.get(key) == new.get(key) for key in keys)
+
+    def _compute_retained_completions(
+        self, old_tasks: list[dict], new_tasks: list[dict], completed_ids: set
+    ) -> list[str]:
+        old_by_id = {t.get("task_id"): t for t in old_tasks if t.get("task_id")}
+        new_by_id = {t.get("task_id"): t for t in new_tasks if t.get("task_id")}
+        retained = []
+        for tid in sorted(completed_ids):
+            if tid in old_by_id and tid in new_by_id and self._task_payloads_equivalent(
+                old_by_id[tid], new_by_id[tid]
+            ):
+                retained.append(tid)
+        return retained
 
     @staticmethod
     def _tasks_md(tasks) -> str:
@@ -1925,7 +1979,7 @@ class MImplRuntimeMixin:
             self._emit_no_task_failure(cmd, state, "no tasks available")
             return
         events = list(self.store.events(self.run_id))
-        completed, started = self._task_event_ids(events)
+        completed = self._effective_completed_task_ids(events, state)
         # FR-0150 rollback re-entry: a task started in a PREVIOUS M-IMPL cycle
         # but never completed is stale work, not an in-flight lease -- the old
         # blanket guard deadlocked the fresh cycle on it (T-017 stranded,
@@ -1942,10 +1996,19 @@ class MImplRuntimeMixin:
             ),
             default=0,
         )
+        # B83: also gate on the latest taskgraph commit -- a scope-failure
+        # replan replaces the graph WITHIN one M-IMPL residency (no new
+        # stage.entered), so old-generation starts of merged/redefined tasks
+        # (e.g. T-006/T-007) would otherwise block selection forever.
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        started_cutoff = max(impl_entry_seq, latest_taskgraph_seq)
         started_this_cycle = {
             e.payload.get("task_id")
             for e in events
-            if e.type == "task.started" and e.seq > impl_entry_seq and e.payload.get("task_id")
+            if e.type == "task.started" and e.seq > started_cutoff and e.payload.get("task_id")
         }
         if started_this_cycle - completed:
             return
@@ -1965,18 +2028,24 @@ class MImplRuntimeMixin:
         self._start_task(cmd, chosen, self._task_manifest(chosen, state))
 
     @staticmethod
-    def _task_event_ids(events) -> tuple[set[str], set[str]]:
-        completed = {
+    def _effective_completed_task_ids(events, state) -> set[str]:
+        """B83: generation-aware completion projection.
+
+        Returns the set of completed task IDs combining retained IDs from
+        prior generations (state.retained_completed_task_ids) with
+        task.completed events after the latest taskgraph.committed."""
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        current_gen = {
             ev.payload.get("task_id")
             for ev in events
-            if ev.type == "task.completed" and ev.payload.get("task_id")
+            if ev.type == "task.completed"
+            and ev.payload.get("task_id")
+            and ev.seq > latest_taskgraph_seq
         }
-        started = {
-            ev.payload.get("task_id")
-            for ev in events
-            if ev.type == "task.started" and ev.payload.get("task_id")
-        }
-        return completed, started
+        return set(state.retained_completed_task_ids or []) | current_gen
 
     def _recover_task_lease(self, cmd, events, completed: set[str]) -> None:
         lease = next((ev for ev in reversed(events) if ev.type == "writelock.granted"), None)
@@ -1984,6 +2053,29 @@ class MImplRuntimeMixin:
             return
         payload = lease.payload
         lease_task = payload.get("task_id")
+        # B83: a lease granted before the latest taskgraph.committed belongs
+        # to a REPLACED graph (scope-failure replan / M-IMPL re-entry). Its
+        # task may be merged away or redefined, so resurrecting it with the
+        # old manifest would dispatch work that no longer exists. Release
+        # the stale lease and let normal selection restart the task (if it
+        # still exists) under the new graph's manifest.
+        latest_taskgraph_seq = max(
+            (ev.seq for ev in events if ev.type == "taskgraph.committed"),
+            default=0,
+        )
+        if lease.seq < latest_taskgraph_seq:
+            released = any(
+                ev.type == "writelock.released" and ev.payload.get("task_id") == lease_task
+                for ev in events
+            )
+            if not released:
+                self._emit(
+                    "writelock.released",
+                    {"task_id": lease_task, "reason": "taskgraph_replaced"},
+                    command_id=cmd.command_id,
+                )
+                self._rebuild_task_log_projection()
+            return
         if lease_task in completed:
             released = any(
                 ev.type == "writelock.released" and ev.payload.get("task_id") == lease_task
@@ -4149,9 +4241,22 @@ class MImplRuntimeMixin:
             self._rebuild_task_log_projection()
             return
         events = list(self.store.events(self.run_id))
-        already_completed = any(
-            ev.type == "task.completed" and ev.payload.get("task_id") == tid for ev in events
-        )
+        # B83: generation-aware completion check. A task.completed event
+        # from a prior generation (before the latest taskgraph.committed)
+        # must not block re-completion of a redefined task.
+        if tid not in (state.retained_completed_task_ids or []):
+            latest_taskgraph_seq = max(
+                (e.seq for e in events if e.type == "taskgraph.committed"),
+                default=0,
+            )
+            already_completed = any(
+                ev.type == "task.completed"
+                and ev.payload.get("task_id") == tid
+                and ev.seq > latest_taskgraph_seq
+                for ev in events
+            )
+        else:
+            already_completed = True
         if already_completed:
             released = any(
                 ev.type == "writelock.released" and ev.payload.get("task_id") == tid
