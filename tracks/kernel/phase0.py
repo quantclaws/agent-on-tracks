@@ -25,14 +25,18 @@ PHASE0_STATUSES = ("UNSEALED", "PHASE0_VALIDATING", "SEALED", "BLOCKED")
 def decide_phase0(state) -> list[Command]:
     """Issue phase0 commands based on the current Phase 0 projection.
 
-    Only the UNSEALED state triggers a new ``phase0_validate`` (SM-01.2).
-    PHASE0_VALIDATING is mid-cycle (its own re-checks are event driven),
-    SEALED is terminal and BLOCKED parks for a Human repair before a fresh
-    ``phase0_validate`` can be issued elsewhere.
+    The v0.7 entry guard (architecture §1.0.2) issues ``phase0_validate`` for
+    any non-SEALED state -- including a fresh state where ``phase0_status`` is
+    still None (v0.6 delivered → UNSEALED, SM-01.1) and PHASE0_VALIDATING
+    (re-validate loop, SM-01.3).  SEALED is terminal and BLOCKED parks for a
+    Human repair before a fresh ``phase0_validate`` can be issued elsewhere
+    (§1c: BLOCKED re-enters PHASE0_VALIDATING only via a NEW phase0_validate
+    after the repo facts are repaired -- never by auto re-issuing here).
     """
-    if getattr(state, "phase0_status", None) == "UNSEALED":
-        return [Command(kind="phase0_validate")]
-    return []
+    status = getattr(state, "phase0_status", None)
+    if status in ("SEALED", "BLOCKED"):
+        return []
+    return [Command(kind="phase0_validate")]
 
 
 def on_phase0_baseline_repaired(state, payload: dict, event: EventEnvelope) -> None:
