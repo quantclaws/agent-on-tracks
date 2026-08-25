@@ -188,10 +188,15 @@ def judge_authenticity(
             ac_ref, category, legal_red_found, illegal_reason,
             unrelated, outcomes, bound_set,
         )
-    return AuthenticityJudgement(
-        ac=ac_ref, category=category,
-        red="none", green_allowed=True,
-        counterexample_kill="none",
-        unrelated_nodes=tuple(sorted(unrelated)),
-        blocked_reason=None,
+    # existing branch: freeze the facade by delegating to authenticity_existing
+    # (IF-AUTH-002, T-012).  The module is imported lazily so that T-012 can
+    # land independently without modifying the facade.
+    try:
+        from tracks.executor.authenticity_existing import authenticity_existing as _impl
+    except ImportError:
+        raise NotImplementedError("IF-AUTH-002") from None
+    return _impl(
+        ac_ref, category, bound_set, outcomes,
+        legal_failure_kinds, counterexample_experiment,
+        unrelated, legal_red_found, illegal_reason,
     )
