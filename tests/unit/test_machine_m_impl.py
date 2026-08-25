@@ -6,6 +6,8 @@ routing, multi-task iteration, gate failures, and the kernel purity boundary
 (NFR-0030).
 """
 
+from pathlib import Path
+
 from tests.unit.helpers import (
     ARCHER_DISPATCH,
     ARCHER_DONE,
@@ -2481,3 +2483,77 @@ def test_refactor_gate_regression_also_routes_to_diagnose():
     assert s.substate == "DIAGNOSE"
     cmd = decide(s)
     assert cmd is not None and cmd.params.get("substate") == "DIAGNOSE"
+
+
+def test_diagnose_red_defect_routes_devon_back_to_red():
+    """B63 blocker (#81): a defective RED unit test is Devon's own artifact —
+    DIAGNOSE must be able to say red_defect and route Devon back to RED
+    (re-pin) where rewriting the tests is legal. Before the fix the token was
+    outside the M-IMPL DIAGNOSE vocabulary (executor whitelist + opencode
+    _DIAGNOSE_CLASSIFICATIONS + Prism.md/SKILL.md contract), so Prism could
+    only misroute: test_defect -> Shield (integration domain) or impl_defect
+    -> GREEN (may not touch frozen R tests; run 01M0S0FQ T-002 loop)."""
+    prism_diagnose_dispatch = (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "prism", "substate": "DIAGNOSE"},
+                "command_id": "CD1",
+            }
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "regression", "attempt": 1}),
+        prism_diagnose_dispatch,
+        ("verdict.failed", {"check": "red_defect", "attempt": 1}),
+    )
+    assert s.substate == "RED"
+    assert s.doc_dispatched is False
+    assert s.green_committed is False and s.refactor_done is False
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "devon"
+    assert cmd.params["substate"] == "RED"
+
+
+def test_red_defect_in_diagnose_vocabulary():
+    """B63 blocker (#81): red_defect must be present in every DIAGNOSE
+    vocabulary gate — the executor whitelist, the opencode backend
+    classification tuple, and the Prism prompt contract."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    repo_root = Path(__file__).resolve().parents[2]
+    assert "red_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
+    for rel in (
+        "tracks/agents/Prism.md",
+        "tracks/skills/tracks-prism-impl/SKILL.md",
+    ):
+        contract = (repo_root / rel).read_text(encoding="utf-8")
+        assert "red_defect" in contract, f"{rel} prompt contract lacks red_defect"

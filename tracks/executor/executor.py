@@ -2529,7 +2529,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # and has to re-derive the whole analysis (run 01KZTHE7 T-008: Shield
         # burned 52 minutes re-archaeologying what Prism had already found).
         verdict = result.get("verdict")
-        if verdict not in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect"):
+        if verdict not in (
+            "test_defect",
+            "stub_gap",
+            "ac_gap",
+            "spec_gap",
+            "impl_defect",
+            "red_defect",
+        ):
             # Prism DIAGNOSE contract violation: no valid classification JSON
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
             # budget exhaustion escalates) — do NOT fallback-derive a
@@ -4949,7 +4956,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         token = token_fn("diagnose", "classification", default) if token_fn else default
         return (
             token
-            if token in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
+            if token in (
+                "test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect",
+                "red_defect",
+            )
             else default
         )
 

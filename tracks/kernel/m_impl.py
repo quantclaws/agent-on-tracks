@@ -313,6 +313,20 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
             s.substate = "GREEN"
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "red_defect":
+        # B63 blocker (#81): a defective RED unit test is Devon's own RED
+        # artifact — the only rightful owner is Devon and the only legal
+        # rewrite phase is RED (re-pin). test_defect would misroute to
+        # Shield (frozen-acceptance domain); impl_defect re-enters GREEN,
+        # which may not touch the frozen R tests (run 01M0S0FQ T-002:
+        # structurally unsatisfiable GREEN loop). Mirror PRISM_FINAL's
+        # red_defect branch: the G/R state resets so the full cycle
+        # re-verifies forward.
+        s.substate = "RED"
+        s.green_committed = False
+        s.refactor_done = False
+        _reset_doc(s)
+        _consume_attempt(s)
     elif check == "test_defect":
         s.substate = "SHIELD_FIX"
         _reset_doc(s)

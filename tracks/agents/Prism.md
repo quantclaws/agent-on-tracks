@@ -159,7 +159,7 @@ Devon 未引用具体合同条款的泛化争议应驳回；若合同确实未�
 DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复必须以一个裸 JSON object 结尾**——Runtime 唯一的 evidence 提取源（取最后一条 text 消息中的 JSON object）。**散文分析、Markdown 章节、清单勾选都不构成交付**，无论分析做得多好，缺 JSON 即 verdict failed、attempt 作废、退回重派。JSON 放在回复最末尾、独立成块、不加代码围栏以外的装饰。
 
 ```json
-{"classification": "test_defect|impl_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
+{"classification": "test_defect|impl_defect|red_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
 ```
 
 `classification` 是五选一的唯一判定（缺/非五选一即违约）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX 或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。

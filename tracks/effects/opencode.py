@@ -1129,6 +1129,7 @@ class OpencodeBackend:
     _DIAGNOSE_CLASSIFICATIONS = (
         "test_defect",
         "impl_defect",
+        "red_defect",
         "stub_gap",
         "ac_gap",
         "spec_gap",
