@@ -2276,3 +2276,122 @@ def test_green_gate_lint_fail_returns_to_green_without_consuming_attempt():
     )
     assert s.substate == "GREEN"
     assert s.current_attempt == 0
+
+
+def test_diagnose_contract_violation_stays_dispatchable():
+    """B62 (#80): an unrecognized DIAGNOSE verdict check (e.g.
+    diagnose_contract_violation from a contract-violating reply) stays in
+    DIAGNOSE with the attempt consumed — the executor contract promises
+    "consume attempt, redispatch Prism; budget exhaustion escalates".
+    The stale-flag path (run 01M0S0FQ T-006, 2026-08-25): the else branch
+    used to leave reviewer_dispatched=True, so _decide_m_impl_prism
+    returned None forever and the run loop exited silently on every
+    restart — the budget could never be exhausted."""
+    prism_diagnose_dispatch = (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "prism", "substate": "DIAGNOSE"},
+                "command_id": "CD1",
+            }
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        # GREEN gate failure -> DIAGNOSE (preset impl_defect, review reset)
+        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
+        # loop dispatches Prism DIAGNOSE -> sets reviewer_dispatched=True
+        prism_diagnose_dispatch,
+        # Prism reply violates the DIAGNOSE JSON contract
+        ("verdict.failed", {"check": "diagnose_contract_violation", "attempt": 2}),
+    )
+    assert s.substate == "DIAGNOSE"
+    assert s.status == "active"  # budget (attempt 2 of 3) not exhausted yet
+    assert s.reviewer_dispatched is False
+    cmd = decide(s)
+    assert cmd is not None, "must re-dispatch Prism DIAGNOSE, not stall"
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    assert cmd.params["substate"] == "DIAGNOSE"
+
+
+def test_diagnose_contract_violation_budget_exhaustion_escalates():
+    """B62 (#80): three consecutive contract violations consume the attempt
+    budget and escalate to awaiting_human — the escalation the executor
+    comment promises; unreachable before the re-dispatch fix."""
+    prism_diagnose_dispatch = (
+        "command.issued",
+        {
+            "command": {
+                "kind": "dispatch_agent",
+                "params": {"role": "prism", "substate": "DIAGNOSE"},
+                "command_id": "CD1",
+            }
+        },
+    )
+    base = [
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
+    ]
+    s = state_of(
+        *base,
+        # three contract-violation rounds, each consumed by the else branch
+        prism_diagnose_dispatch,
+        ("verdict.failed", {"check": "diagnose_contract_violation", "attempt": 1}),
+        prism_diagnose_dispatch,
+        ("verdict.failed", {"check": "diagnose_contract_violation", "attempt": 2}),
+        prism_diagnose_dispatch,
+        ("verdict.failed", {"check": "diagnose_contract_violation", "attempt": 3}),
+    )
+    assert s.substate == "DIAGNOSE"
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"

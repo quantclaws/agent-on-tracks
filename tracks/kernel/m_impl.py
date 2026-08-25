@@ -324,6 +324,17 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         s.awaiting = "rollback"
         s.return_target = "M-ACC" if check == "ac_gap" else "M-SPEC"
     else:
+        # B62 (#80): an unrecognized check (e.g. diagnose_contract_violation
+        # from a contract-violating DIAGNOSE reply) STAYS in DIAGNOSE for the
+        # promised re-dispatch + budget-exhaustion escalation. Unlike the
+        # impl_defect/test_defect branches above (which leave this substate
+        # and deliberately keep reviewer flags until task_review resets
+        # them), staying here means decide() runs _decide_m_impl_prism,
+        # which returns None on a stale reviewer_dispatched — the loop then
+        # exits silently and the attempt budget can never be consumed (run
+        # 01M0S0FQ T-006, 2026-08-25: DIAGNOSE attempt 2 contract violation
+        # stalled active/DIAGNOSE across process restarts).
+        _reset_review(s)
         _reset_doc(s)
         _consume_attempt(s)
 
