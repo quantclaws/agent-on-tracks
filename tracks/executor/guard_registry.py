@@ -310,10 +310,19 @@ def check_parity(
     ci_workflow_path: Path,
     cwd: Path,
 ) -> ParityReport:
-    raise NotImplementedError("IF-GUARD-002")
+    """Three-way parity checker (IF-GUARD-002).  Delegates to the
+    implementation in ``guard_parity.py`` to avoid a module-level import cycle
+    (``guard_parity`` imports this module's dataclasses)."""
+    from tracks.executor.guard_parity import check_parity as _impl
+
+    return _impl(registry, runtime_commands, pre_commit_path, ci_workflow_path, cwd)
 
 
 def deploy_guard_configs(
     registry: GuardRegistry, target_repo: Path
 ) -> GuardDeployment:
-    raise NotImplementedError("IF-GUARD-002")
+    """Deploy hook/CI configs (IF-GUARD-002).  Delegates to the
+    implementation in ``guard_parity.py`` (avoids an import cycle)."""
+    from tracks.executor.guard_parity import deploy_guard_configs as _impl
+
+    return _impl(registry, target_repo)
