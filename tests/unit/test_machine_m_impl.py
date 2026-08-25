@@ -1629,6 +1629,94 @@ def test_refactor_gate_public_interface_to_diagnose_stub_gap():
     assert cmd.params["to_stage"] == "M-DESIGN"
 
 
+# -- B49 (#64): contract_error parks instead of stub_gap rollback --------------
+
+
+def test_green_gate_contract_error_parks_for_operator():
+    """B49 (run 01M0S0FQ, 2026-08-24): a gate-contract mismatch must park the
+    run for the operator (awaiting_human/escalation) -- NOT route into
+    DIAGNOSE/stub_gap whose decide() emits rollback_stage(M-DESIGN). The
+    auto-rollback loop sent runtime-side defects to be "fixed" in a design
+    that was not defective."""
+    base = [
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+    ]
+    fail = (
+        "verdict.failed",
+        {"check": "contract_error", "reason": "gate-contract mismatch", "attempt": 1},
+    )
+    s = state_of(*base, fail)
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"
+    assert s.substate == "GREEN_GATE", "parking must not move the substate"
+    assert s.diagnose_classification is None
+    # Parked: no further command (in particular no rollback_stage) is issued.
+    assert decide(s) is None
+
+
+def test_contract_error_does_not_burn_attempt_budget():
+    """B49: parking consumes no attempt -- human.retry after the underlying
+    fix re-dispatches the gate from the current substate with a fresh
+    budget, so the parked verdict must leave current_attempt untouched."""
+    base = [
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+    ]
+    fail = (
+        "verdict.failed",
+        {"check": "contract_error", "reason": "gate-contract mismatch", "attempt": 1},
+    )
+    s = state_of(*base, fail)
+    assert s.current_attempt == 0, "parking must not consume the attempt budget"
+
+
 # -- SHIELD_FIX -> GREEN_GATE ------------------------------------------------
 
 

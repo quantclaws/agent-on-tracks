@@ -370,11 +370,17 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.diagnose_classification = "stub_gap"
         _reset_review(s)
     elif check == "contract_error":
-        # D-41: an unusable Archer-owned test contract cannot be repaired by
-        # Devon. Route to the existing M-DESIGN rollback without consuming a
-        # semantic implementation attempt.
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = "stub_gap"
+        # B49 (#64): a gate-contract mismatch (planning convention vs runtime
+        # enforcement, or an unusable Archer-owned contract) cannot be
+        # reliably auto-attributed. The 2026-08-24 stub_gap auto-rollback
+        # loop (run 01M0S0FQ, three M-DESIGN rollbacks for runtime-side
+        # defects) proved routing it into DIAGNOSE->M-DESIGN sends runtime
+        # bugs to be "fixed" in a design that is not defective. Park for the
+        # operator: human.retry after the underlying fix re-dispatches the
+        # gate from the current substate (fresh attempt budget, no rollback,
+        # no Devon dispatch burned).
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
         _reset_review(s)
     elif check == "verification_failed":
         # Runtime acceptance of a verification-only task failed (user ruling
@@ -466,6 +472,10 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
         "fr_refs": None,
         "if_ids": None,
         "test_refs": None,
+        # B50 (#65): split contract placeholders -- executor materializes
+        # both from the task graph alongside test_refs.
+        "unit_refs": None,
+        "acceptance_refs": None,
         "commands": None,
         "r_tree_identity": None,
         "pre_dirty_snapshot": None,
@@ -519,6 +529,8 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph
     assignment["test_refs"] = None  # executor materializes from task graph
+    assignment["unit_refs"] = None  # executor materializes (B50 split)
+    assignment["acceptance_refs"] = None  # executor materializes (B50 split)
     assignment["commands"] = None  # executor materializes (test/guard cmds)
     if s.r_tree_identity and sub in ("GREEN", "REFACTOR"):
         assignment["r_tree_identity"] = s.r_tree_identity

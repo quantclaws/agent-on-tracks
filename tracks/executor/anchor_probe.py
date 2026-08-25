@@ -138,10 +138,14 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
         return report
     cwd = repo / (section.cwd if section and section.cwd != "." else ".")
     for task in tasks:
-        refs = tuple(task.test_refs or ())
+        # B50 (#65): probe the task's ACCEPTANCE anchors -- Shield-owned
+        # integration nodes that exist at planning time. Legacy graphs map
+        # their test_refs here; unit_refs are Devon's not-yet-written RED
+        # artifacts and probing them would only emit entry/collect noise.
+        refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
         if not refs:
             report.probes.append(
-                AnchorProbe(task.task_id, "skipped", refs, "no test_refs")
+                AnchorProbe(task.task_id, "skipped", refs, "no acceptance refs")
             )
             continue
         probe = _run_one_probe([*base_argv, *refs], cwd)

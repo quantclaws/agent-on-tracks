@@ -52,7 +52,9 @@ assignment 必须包含以下键，否则 **fail closed**（返回 `stale|scope_
 - `phase`：`red` | `green` | `refactor`（决定你执行哪个阶段）。
 - `if_ids`：本 task 涉及的接口 IF ID 列表。
 - `ac_refs`：本 task 关联的验收条件引用。
-- `test_refs`：本 task 授权的 unit test 目标引用。
+- `test_refs`：本 task 声明的测试锚点合并列表（向后兼容字段）。
+- `unit_refs`（B50/#65 分家合同）：本 task 点名的 RED 义务（`tests/unit/` 节点，可为空——空列表表示你的通用 RED 义务照常：在 `red_test_paths` 下自行为本 task 的 IF 写失败单测，R commit manifest 会捕获它们）。
+- `acceptance_refs`（B50/#65 分家合同）：本 task 的验收锚点（Shield 拥有的 `tests/integration/` 节点，对桩合法红）。**它们不是你的工件，你永远不写、不改它们**——本 task 落地后 GREEN 门会要求它们转绿，这是验收要求而非你的交付物。
 - `commands`：test/guard 命令（executor 物化的虚拟环境命令）。
 - `manifest`：包含 `allowed_paths`（写白名单）+ `forbidden_paths`（禁止路径）。
 - `pre_dirty_snapshot`：dispatch 前的文件快照 identity（Runtime 归因用）。

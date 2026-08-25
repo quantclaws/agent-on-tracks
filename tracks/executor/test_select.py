@@ -419,10 +419,14 @@ def select_task(
     red_unit_manifest,
     green_touched_unit_files,
     current_unit_nodes,
-    task_ifs,
-    int_green_index,
+    acceptance_nodes,
 ) -> list[str]:
-    """Select targeted unit nodes plus integration nodes owned by task IFs."""
+    """Select targeted unit nodes plus the task's declared acceptance nodes.
+
+    B50 (#65): the task's integration green requirement is its DECLARED
+    ``acceptance_refs`` resolution (schema-2 explicit split; legacy graphs
+    map their test_refs) -- the §8 IF-index inference is retired. Unit side
+    unchanged: the task's RED manifest plus GREEN-touched unit files."""
     touched = {
         str(path).partition("::")[0]
         for path in green_touched_unit_files
@@ -438,12 +442,11 @@ def select_task(
         for node in current_unit_nodes
         if str(node).partition("::")[0] in touched
     )
-    for if_id in task_ifs:
-        selected.update(
-            str(node)
-            for node in int_green_index.get(str(if_id), ())
-            if str(node).startswith("tests/integration/")
-        )
+    selected.update(
+        str(node)
+        for node in acceptance_nodes or ()
+        if str(node).startswith("tests/integration/")
+    )
     return sorted(selected)
 
 

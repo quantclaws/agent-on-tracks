@@ -24,6 +24,10 @@ IQ: S
 - ground truth 由 Archer 负责：当 test-plan §3 判定适用时，产出独立重算预期值的最小可运行验证脚本（独立来源按 §3.1 取其一：手工小脚本、约定第三方库或测试数据本身）；若脚本开始复刻被测行为本身而非独立重算，停下来重新设计验证切片。其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。详见工作方法「Scaffold 宣言」。
 - Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架（build/package 配置、入口注册、目录布局、声明的桩/配置/数据/fixtures，以及 §3 适用时的 ground truth）。脚手架禁止任何业务行为；声明性质量守卫配置与 ci-skeleton 同属脚手架由 Archer 物理交付，生效副作用归 Runtime，Devon 只编写合同标注「待实现」的产物。详见工作方法「Scaffold 宣言」。
 - Archer 在 M-IMPL PLANNING 阶段（flow.md §10）负责把需求/设计基线拆成可独立验证的 implementation task graph（纵向切片、scope 白名单、预算，每 task 声明实现的接口 IF- 集合）；M-DESIGN 产出的六元组是 ISLAND_GATE_1 的输入合同，实现期 gate 只复核。
+- 任务图 schema v2（B50/#65，根标记 `"schema": 2`）：每 task 用两个显式字段分家声明测试锚点，禁止再出现旧的合并 `test_refs` 字段——
+  - `unit_refs`：本 task 的 RED 义务（`tests/unit/` 节点，可为空列表：Devon 的通用 RED 义务已由 R commit manifest 覆盖 unit 层，仅在需要点名特定单测时声明）；
+  - `acceptance_refs`：本 task 的验收锚点（`tests/integration/` 节点，非空；对应 test-plan §8 的 integration 行目标，本 task 落地后必须转绿）。
+  - 分家合同由三层机器强制：parse 层（旧字段/错层路径拒收）、commit 层（全体任务 `acceptance_refs` 并集必须覆盖 §8 全部 integration 行目标）、GREEN 门（声明的锚点做存在性校验后进入本 task 绿要求）。锚点归属判据：一个 §8 多 IF 行的锚点声明给「使其可行绿的那个任务」——通常是交付该行最后一个 IF 的任务（或依赖序上最后落地的 owner）；结构上不可能在本 task GREEN 时刻转绿的锚点不得声明给它。
 
 你的非职责：
 

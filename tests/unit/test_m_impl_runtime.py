@@ -1515,15 +1515,21 @@ def test_green_gate_ambiguous_r_identity_fails_closed_as_contract_error(tmp_path
     assert "SELECT_TASK failed closed" in last["reason"]
     passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
     assert not passed, "an ambiguous R identity must never pass GREEN"
-    assert store.state("RUN").substate == "DIAGNOSE"
+    # B49 (#64): contract_error parks for the operator instead of routing
+    # into DIAGNOSE (the stub_gap auto-rollback loop, run 01M0S0FQ).
+    state = store.state("RUN")
+    assert state.substate == "GREEN_GATE"
+    assert state.status == "awaiting_human"
+    assert state.awaiting == "escalation"
 
 
 def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_path):
     """D-41 supersession of Contract 3: REFACTOR `no_change` no longer blind-
     reruns the Green gate — it reuses the persisted green.committed
     evidence/identity. Without that persisted evidence the reuse state is
-    unresolvable, so the gate fails closed with contract_error and routes to
-    DIAGNOSE instead of emitting refactor.no_change or re-executing anything."""
+    unresolvable, so the gate fails closed with contract_error and parks for
+    the operator (B49: awaiting_human/escalation) instead of emitting
+    refactor.no_change or re-executing anything."""
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     outcome = _structured_outcome("refactor", [], r_identity="1" * 40)
@@ -1548,7 +1554,12 @@ def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_pa
     assert not any(ev.type == "test.selected" for ev in events), (
         "the gate must not re-execute any selection without persisted evidence"
     )
-    assert store.state("RUN").substate == "DIAGNOSE"
+    # B49 (#64): contract_error parks instead of DIAGNOSE routing -- the
+    # substate stays wherever the gate ran from.
+    state = store.state("RUN")
+    assert state.substate != "DIAGNOSE"
+    assert state.status == "awaiting_human"
+    assert state.awaiting == "escalation"
 
 
 _TASK_REVIEW_FLAWS = (
@@ -2313,3 +2324,261 @@ def test_green_gate_lint_findings_fail_with_check_lint(tmp_path):
     assert fails, "lint findings must fail the GREEN gate closed"
     assert fails[-1].payload["check"] == "lint"
     assert "E501" in fails[-1].payload["evidence"]
+
+
+# -- B50 (#65): declared-binding gate layer routing -----------------------------
+
+
+def _runtime(tmp_path) -> Executor:
+    """Bare executor for the pure ref-resolution helpers (no event history
+    needed: _expand_unit_refs/_acceptance_anchors/_integration_row_targets
+    are inventory-in/selection-out functions)."""
+    repo = _repo(tmp_path)
+    store = Store(paths.tracks_home(repo))
+    return Executor(store, repo, "RUN")
+
+
+def test_expand_unit_refs_node_exact_and_file_expansion(tmp_path):
+    """NODE ref selects exactly that node; FILE ref expands to every
+    collected node in the file (explicit whole-file declaration)."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/unit/test_a.py::test_one",
+        "tests/unit/test_a.py::test_two",
+        "tests/unit/test_b.py::test_three",
+    ]
+    assert executor._expand_unit_refs(
+        ["tests/unit/test_a.py::test_one"], inventory
+    ) == ["tests/unit/test_a.py::test_one"]
+    assert executor._expand_unit_refs(["tests/unit/test_a.py"], inventory) == [
+        "tests/unit/test_a.py::test_one",
+        "tests/unit/test_a.py::test_two",
+    ]
+
+
+def test_expand_unit_refs_absent_ref_fails_closed(tmp_path):
+    """B50 fail-closed: a unit_ref absent from the unit collect raises
+    TestSelectError (both unknown file and unknown node variants)."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = ["tests/unit/test_a.py::test_one"]
+    with pytest.raises(TestSelectError, match="absent from unit collect"):
+        executor._expand_unit_refs(["tests/unit/test_missing.py"], inventory)
+    with pytest.raises(TestSelectError, match="absent from unit collect"):
+        executor._expand_unit_refs(["tests/unit/test_a.py::test_other"], inventory)
+
+
+def test_acceptance_anchors_resolve_and_schema1_skips_cross_check(tmp_path):
+    """Legacy (schema-1) graphs resolve their mapped acceptance refs against
+    the integration inventory without the §8 cross-check."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    # No test-plan text at all: schema-1 must still resolve (skip cross-check).
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_a"],
+        inventory,
+        "",
+        schema=1,
+    )
+    assert anchors == ["tests/integration/test_app.py::test_flow_a"]
+    # FILE ref expands to the whole file.
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py"], inventory, "", schema=1
+    )
+    assert anchors == inventory
+
+
+def test_acceptance_anchors_schema2_absent_from_inventory_fails_closed(tmp_path):
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    with pytest.raises(TestSelectError, match="absent from integration collect"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_app.py::test_flow_a"],
+            ["tests/integration/test_other.py::test_x"],
+            "",
+            schema=2,
+        )
+
+
+_PLAN_WITH_TWO_FLOWS = (
+    "# Test plan\n\n## 8. AC Coverage\n\n"
+    "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+    "| AC-FR0001-01 | integration | "
+    "`tests/integration/test_app.py::test_flow_a` + "
+    "`tests/integration/test_app.py::test_flow_b` | IF-IMPL-001 |\n"
+)
+
+
+def test_acceptance_anchors_schema2_declared_must_be_planned_row_target(tmp_path):
+    """Schema-2 cross-check: a declared anchor absent from every §8
+    integration row target fails closed (binding is declared AND planned)."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    # flow_a IS a §8 row target -> resolves.
+    assert executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_a"],
+        inventory,
+        _PLAN_WITH_TWO_FLOWS,
+        schema=2,
+    ) == ["tests/integration/test_app.py::test_flow_a"]
+    # A node that exists in the inventory but is NOT a §8 target -> fail.
+    with pytest.raises(TestSelectError, match="not a test-plan §8 integration row target"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_app.py::test_flow_b", "tests/integration/test_app.py::test_flow_a"],
+            inventory,
+            _PLAN_WITH_TWO_FLOWS.replace("test_flow_b", "test_flow_c"),
+            schema=2,
+        )
+
+
+def test_acceptance_anchors_schema2_file_declaration_covers_planned_nodes(tmp_path):
+    """PRISM-B49B50-R1-01 mirror: a FILE-level declaration against a §8 row
+    that names individual NODE targets must pass the gate cross-check --
+    same whole-file coverage the commit-time closure applies."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py"],
+        inventory,
+        _PLAN_WITH_TWO_FLOWS,
+        schema=2,
+    )
+    assert anchors == inventory
+
+
+def test_acceptance_anchors_schema2_node_declaration_with_file_target_row(tmp_path):
+    """PRISM-B49B50-R1-01 mirror (reverse): a NODE declaration against a §8
+    row whose target is the whole FILE is planned (file target subsumes its
+    nodes)."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    plan_file_target = (
+        "# Test plan\n\n## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0001-01 | integration | tests/integration/test_app.py | "
+        "IF-IMPL-001 |\n"
+    )
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_b"],
+        inventory,
+        plan_file_target,
+        schema=2,
+    )
+    assert anchors == ["tests/integration/test_app.py::test_flow_b"]
+
+
+def test_acceptance_anchors_schema2_undeclared_node_still_fails_closed(tmp_path):
+    """The FILE/NODE coverage relaxation must not open a hole: a NODE anchor
+    in a file §8 never mentions (neither the file nor any of its nodes) is
+    still rejected."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_unrelated.py::test_x",
+    ]
+    with pytest.raises(TestSelectError, match="not a test-plan §8 integration row target"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_unrelated.py::test_x"],
+            inventory,
+            _PLAN_WITH_TWO_FLOWS,
+            schema=2,
+        )
+
+
+def test_integration_row_targets_parse_every_plus_separated_item(tmp_path):
+    """Bug 3 (run 01M0S0FQ T-001, 2026-08-24): a multi-test §8 cell
+    (``A + B + C``) must yield per-item targets, and a NODE item binds that
+    node exactly -- never the whole first file."""
+    executor = _runtime(tmp_path)
+    targets = executor._integration_row_targets(
+        "`tests/integration/test_app.py::test_flow_a` + `tests/integration/test_other.py`"
+    )
+    assert targets == [
+        ("tests/integration/test_app.py", "tests/integration/test_app.py::test_flow_a"),
+        ("tests/integration/test_other.py", None),
+    ]
+
+
+def test_integration_row_targets_bare_filename_normalizes_under_integration(tmp_path):
+    executor = _runtime(tmp_path)
+    targets = executor._integration_row_targets("test_app.py::test_flow_a + `test_app.py`")
+    assert targets == [
+        ("tests/integration/test_app.py", "tests/integration/test_app.py::test_flow_a"),
+        ("tests/integration/test_app.py", None),
+    ]
+
+
+def test_task_node_maps_legacy_test_refs_by_layer_prefix():
+    """_task_node: a legacy raw payload (only test_refs) is layer-routed by
+    path prefix into unit_refs/acceptance_refs (196cbc9 convention)."""
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+
+    node = MImplRuntimeMixin._task_node(
+        {
+            "task_id": "T-001",
+            "issue_number": 1,
+            "description": "slice",
+            "ac_refs": ["AC-FR0001-01"],
+            "fr_refs": ["FR-0001"],
+            "if_ids": ["IF-IMPL-001"],
+            "test_refs": [
+                "tests/unit/test_app.py::test_app",
+                "tests/integration/test_app.py",
+            ],
+            "scope_boundary": "tracks/app.py",
+            "depends_on": [],
+            "batch": "1",
+            "parallel": False,
+            "budget": 3,
+        }
+    )
+    assert node.schema == 1
+    assert node.unit_refs == ("tests/unit/test_app.py::test_app",)
+    assert node.acceptance_refs == ("tests/integration/test_app.py",)
+
+
+def test_task_node_schema2_payload_keeps_explicit_split():
+    """A schema-2 raw payload carries its explicit split: the fields pass
+    through untouched (no prefix re-routing over the declaration)."""
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+
+    node = MImplRuntimeMixin._task_node(
+        {
+            "task_id": "T-001",
+            "issue_number": 1,
+            "description": "slice",
+            "ac_refs": ["AC-FR0001-01"],
+            "fr_refs": ["FR-0001"],
+            "if_ids": ["IF-IMPL-001"],
+            "test_refs": [],
+            "unit_refs": ["tests/unit/test_app.py::test_app"],
+            "acceptance_refs": ["tests/integration/test_app.py"],
+            "schema": 2,
+            "scope_boundary": "tracks/app.py",
+            "depends_on": [],
+            "batch": "1",
+            "parallel": False,
+            "budget": 3,
+        }
+    )
+    assert node.schema == 2
+    assert node.unit_refs == ("tests/unit/test_app.py::test_app",)
+    assert node.acceptance_refs == ("tests/integration/test_app.py",)

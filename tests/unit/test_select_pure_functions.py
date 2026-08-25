@@ -161,10 +161,12 @@ def test_select_r2_returns_sorted_r2_only():
     ]
 
 
-# IF-SELECT-002: SELECT_TASK is exactly targeted unit nodes plus integration
-# nodes mapped by the task IFs. It never admits e2e, unrelated unit nodes, or
-# an integration node owned by another IF.
-def test_select_task_composes_targeted_unit_and_task_if_integration_only():
+# IF-SELECT-002 + B50 (#65): SELECT_TASK is exactly targeted unit nodes plus
+# the task's DECLARED acceptance nodes (the gate resolves acceptance_refs
+# fail-closed upstream in _acceptance_anchors -- see test_m_impl_runtime.py).
+# Here select_task enforces the layer boundary: integration acceptance nodes
+# are admitted, e2e never, unrelated unit nodes never.
+def test_select_task_composes_targeted_unit_and_declared_acceptance_only():
     mod = _test_select_module()
     select_task = _require(mod, "select_task")
     selected = select_task(
@@ -176,14 +178,10 @@ def test_select_task_composes_targeted_unit_and_task_if_integration_only():
             "tests/unit/test_b.py::test_green_two",
             "tests/unit/test_other.py::test_unrelated",
         ],
-        task_ifs=["IF-ONE"],
-        int_green_index={
-            "IF-ONE": [
-                "tests/integration/test_one.py::test_if_one",
-                "tests/e2e/test_one.py::test_must_not_leak",
-            ],
-            "IF-TWO": ["tests/integration/test_two.py::test_other_if"],
-        },
+        acceptance_nodes=[
+            "tests/integration/test_one.py::test_if_one",
+            "tests/e2e/test_one.py::test_must_not_leak",
+        ],
     )
     assert selected == [
         "tests/integration/test_one.py::test_if_one",

@@ -46,7 +46,9 @@ from tracks.executor.rgr import (
 from tracks.executor.taskgraph import (
     TaskNode,
     parse_tasks_json,
+    plan_row_targets,
     validate_ac_coverage,
+    validate_acceptance_coverage,
     validate_dag,
     validate_island_closure,
     validate_issue_numbers,
@@ -439,7 +441,17 @@ class MImplRuntimeMixin:
             }
         )
         if task:
-            for key in ("issue_number", "ac_refs", "fr_refs", "if_ids", "test_refs"):
+            for key in (
+                "issue_number",
+                "ac_refs",
+                "fr_refs",
+                "if_ids",
+                "test_refs",
+                # B50 (#65): the split contract travels with the assignment
+                # so Devon/Shield see the layer-resolved anchors explicitly.
+                "unit_refs",
+                "acceptance_refs",
+            ):
                 value = task.get(key)
                 assignment[key] = list(value) if isinstance(value, tuple) else value
 
@@ -583,6 +595,18 @@ class MImplRuntimeMixin:
 
     @staticmethod
     def _task_node(raw: dict) -> TaskNode:
+        # B50 (#65): raw dicts arrive from two eras -- schema-2 payloads carry
+        # the explicit unit_refs/acceptance_refs split, legacy event payloads
+        # only the monolithic test_refs (layer-routed by path prefix, the
+        # verified 196cbc9 convention: tests/unit/ -> RED obligation,
+        # integration -> acceptance anchor). A raw with both split fields
+        # empty but a non-empty test_refs is a legacy direct construction.
+        test_refs = tuple(str(ref) for ref in (raw.get("test_refs") or ()))
+        unit_refs = tuple(raw.get("unit_refs") or ())
+        acceptance_refs = tuple(raw.get("acceptance_refs") or ())
+        if not unit_refs and not acceptance_refs and test_refs:
+            unit_refs = tuple(r for r in test_refs if r.startswith("tests/unit/"))
+            acceptance_refs = tuple(r for r in test_refs if not r.startswith("tests/unit/"))
         return TaskNode(
             task_id=raw["task_id"],
             issue_number=raw["issue_number"],
@@ -590,12 +614,15 @@ class MImplRuntimeMixin:
             ac_refs=tuple(raw["ac_refs"]),
             fr_refs=tuple(raw["fr_refs"]),
             if_ids=tuple(raw["if_ids"]),
-            test_refs=tuple(raw["test_refs"]),
+            test_refs=tuple(unit_refs) + tuple(acceptance_refs) or test_refs,
             scope_boundary=raw["scope_boundary"],
             depends_on=tuple(raw["depends_on"]),
             batch=raw["batch"],
             parallel=raw["parallel"],
             budget=raw["budget"],
+            unit_refs=unit_refs,
+            acceptance_refs=acceptance_refs,
+            schema=int(raw.get("schema") or 1),
         )
 
     def _current_manifest(self) -> dict | None:
@@ -923,6 +950,14 @@ class MImplRuntimeMixin:
             self._requirements_baseline_dir(state, vdir),
             state.hotfix_anchor_acs if state.hotfix_issue is not None else None,
         )
+        # B50 (#65): schema-2 acceptance coverage closure -- planning-time
+        # fail-closed (§8 integration rows must be declared anchors), the
+        # replacement for the retired GREEN_GATE IF-index inference.
+        plan_path = vdir / "test-plan.md"
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        valid, coverage_errors = validate_acceptance_coverage(tasks, plan_text)
+        if not valid:
+            errors.extend(coverage_errors)
         if errors:
             self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(errors))
             return
@@ -1047,6 +1082,11 @@ class MImplRuntimeMixin:
             "fr_refs": list(task.fr_refs),
             "if_ids": list(task.if_ids),
             "test_refs": list(task.test_refs),
+            # B50 (#65) schema v2 split (test_refs stays as the combined list
+            # for legacy consumers; schema marks which contract the graph used).
+            "unit_refs": list(task.unit_refs),
+            "acceptance_refs": list(task.acceptance_refs),
+            "schema": task.schema,
             "scope_boundary": task.scope_boundary,
             "depends_on": list(task.depends_on),
             "batch": task.batch,
@@ -1066,7 +1106,8 @@ class MImplRuntimeMixin:
                     f"- AC refs: {', '.join(task.ac_refs)}",
                     f"- FR refs: {', '.join(task.fr_refs)}",
                     f"- IF ids: {', '.join(task.if_ids)}",
-                    f"- Test refs: {', '.join(task.test_refs)}",
+                    f"- Unit refs: {', '.join(task.unit_refs) if task.unit_refs else '-'}",
+                    f"- Acceptance refs: {', '.join(task.acceptance_refs)}",
                     f"- Scope: {task.scope_boundary}",
                     f"- Depends on: {', '.join(task.depends_on) if task.depends_on else '-'}",
                     f"- Batch: {task.batch}",
@@ -1478,7 +1519,16 @@ class MImplRuntimeMixin:
         owners = [
             task
             for task in state.task_refs
-            if any(str(ref).partition("::")[0] == path for ref in task.get("test_refs", []))
+            # B50 (#65): anchor ownership follows the declared acceptance
+            # refs (legacy payloads fall back to their test_refs mapping).
+            if any(
+                str(ref).partition("::")[0] == path
+                for ref in (
+                    task.get("acceptance_refs")
+                    or task.get("test_refs")
+                    or []
+                )
+            )
         ]
         if not owners and len(state.task_refs) == 1:
             owners = [state.task_refs[0]]
@@ -2043,6 +2093,8 @@ class MImplRuntimeMixin:
             "ac_refs": list(task.ac_refs),
             "fr_refs": list(task.fr_refs),
             "test_refs": list(task.test_refs),
+            "unit_refs": list(task.unit_refs),
+            "acceptance_refs": list(task.acceptance_refs),
             "scope_boundary": task.scope_boundary,
             "allowed_paths": self._task_allowed_paths(task),
             "forbidden_paths": self._forbidden_paths(),
@@ -2074,7 +2126,10 @@ class MImplRuntimeMixin:
 
     def _task_allowed_paths(self, task: TaskNode) -> list[str]:
         allowed = set(self._parse_allowed_paths(task.scope_boundary))
-        for ref in task.test_refs:
+        # B50 (#65): only unit_refs are Devon-writable RED artifacts; legacy
+        # graphs declare none (their test_refs are integration acceptance
+        # anchors, Shield-owned and frozen).
+        for ref in task.unit_refs:
             path = ref.split("::", 1)[0].strip()
             if path.startswith("tests/unit/"):
                 allowed.add(path)
@@ -2378,98 +2433,106 @@ class MImplRuntimeMixin:
         return None, ""
 
     @staticmethod
-    def _expand_declared_unit_refs(refs, current_nodes: list[str]) -> list[str]:
-        """Expand task RED refs (node or file) against the current unit inventory."""
-        selected: set[str] = set()
-        inventory = set(current_nodes)
-        for raw in refs:
-            ref = str(raw).strip()
-            path = ref.partition("::")[0]
-            matches = [node for node in current_nodes if node.partition("::")[0] == path]
-            if "::" in ref:
-                if ref not in inventory:
-                    raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
-                selected.add(ref)
-            elif matches:
-                selected.update(matches)
-            else:
-                raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
-        return sorted(selected)
+    def _expand_unit_refs(refs, unit_inventory: list[str]) -> list[str]:
+        """B50 (#65): expand schema-2 ``unit_refs`` against the unit collect
+        inventory, fail-closed on any absent ref.
 
-    @staticmethod
-    def _expand_task_refs_by_layer(
-        refs, inventories: dict[str, list[str]]
-    ) -> list[str]:
-        """Validate task test_refs against their OWN layer's inventory and
-        return only the unit-layer anchors as RED nodes.
-
-        Operator finding (2026-08-24, run 01M0S0FQ): the planning convention
-        (v0.5 proven, v0.6/v0.7 taskgraphs, Archer's stable behavior across
-        three PLANNING rounds) declares task test_refs as the task's
-        ACCEPTANCE anchors -- usually Shield-owned integration nodes that are
-        RED against the stubs and green only after this task lands. The
-        unit-only tightening of the GREEN gate rejected that convention and
-        rolled the whole stage back to M-DESIGN twice. Layer-routed contract:
-
-        - every ref must resolve (node or file) in the inventory of the layer
-          its path declares (unit or integration) -- absent refs still fail
-          closed;
-        - only ``tests/unit/`` refs become RED nodes (they are Devon's own
-          RED artifacts, verified against the immutable R commit);
-        - integration refs are validated for existence, then ride the
-          test-plan §8 IF index selection (``select_task`` already consumes
-          it) -- they are not RED artifacts and never enter R.
-        """
+        Unit refs are Devon's RED obligations -- the immutable R commit
+        carries them (``_require_r_artifacts``) and only unit-layer nodes
+        enter the RED node set. A FILE ref (no ``::``) expands to every
+        collected node in that file (explicit whole-file declaration, not
+        the retired path-prefix inference)."""
+        inventory = list(unit_inventory or [])
+        by_path: dict[str, list[str]] = {}
+        for node in inventory:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
         selected: set[str] = set()
         for raw in refs or []:
             ref = str(raw).strip()
             path = ref.partition("::")[0]
-            layer_inventory: list[str] | None = None
-            for layer in ("unit", "integration"):
-                if any(
-                    node.partition("::")[0] == path for node in inventories.get(layer, ())
-                ):
-                    layer_inventory = inventories[layer]
-                    break
-            if layer_inventory is None:
-                raise TestSelectError(
-                    f"task test ref is absent from collect (unit/integration): {ref}"
-                )
+            nodes = by_path.get(path)
+            if nodes is None or ("::" in ref and ref not in inventory):
+                raise TestSelectError(f"task unit ref is absent from unit collect: {ref}")
             if "::" in ref:
-                if ref not in layer_inventory:
-                    raise TestSelectError(
-                        f"task test ref is absent from its layer collect: {ref}"
-                    )
-                resolved = [ref]
+                selected.add(ref)
             else:
-                resolved = [
-                    node
-                    for node in layer_inventory
-                    if node.partition("::")[0] == path
-                ]
-            selected.update(node for node in resolved if node.startswith("tests/unit/"))
+                selected.update(nodes)
         return sorted(selected)
 
-    def _task_integration_index(
+    def _acceptance_anchors(
         self,
+        refs,
+        integration_inventory: list[str],
         plan_text: str,
-        current_nodes: list[str],
-        task_ifs,
-    ) -> dict[str, list[str]]:
-        """Map §8 integration rows' IFs to currently collected integration nodes."""
-        index: dict[str, set[str]] = {}
-        required = {str(if_id) for if_id in task_ifs}
-        inventory = set(current_nodes)
-        for _ac_id, layer_cell, test_cell, if_cell in _coverage_rows_with_test(plan_text):
+        schema: int,
+    ) -> list[str]:
+        """B50 (#65): resolve the task's DECLARED acceptance anchors against
+        the integration collect inventory.
+
+        Binding is declared, not inferred: every ``acceptance_refs`` entry
+        must resolve at gate time (NODE item exact, FILE item expands to the
+        whole file) -- absent anchors fail closed. Schema-2 graphs add the
+        §8 cross-check: a declared anchor must be a planned acceptance row
+        target (the §8 IF index is retired as a binding source and kept only
+        as this planning-contract cross-validation). Legacy (schema-1)
+        graphs map their historical test_refs here and skip the cross-check."""
+        by_path: dict[str, list[str]] = {}
+        for node in integration_inventory or []:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
+        resolved: set[str] = set()
+        for raw in refs or []:
+            self._resolve_one_acceptance_ref(raw, by_path, resolved)
+        if schema == 2:
+            self._require_plan_anchor_rows(resolved, plan_text)
+        return sorted(resolved)
+
+    @staticmethod
+    def _resolve_one_acceptance_ref(
+        raw, by_path: dict[str, list[str]], resolved: set[str]
+    ) -> None:
+        """Resolve one acceptance_ref entry into ``resolved`` (fail-closed).
+
+        A NODE entry must be an exact inventory node; a FILE entry expands to
+        every inventory node in that file."""
+        ref = str(raw).strip()
+        path = ref.partition("::")[0]
+        nodes = by_path.get(path)
+        if nodes is None or ("::" in ref and ref not in nodes):
+            raise TestSelectError(
+                f"task acceptance ref is absent from integration collect: {ref}"
+            )
+        if "::" in ref:
+            resolved.add(ref)
+        else:
+            resolved.update(nodes)
+
+    def _require_plan_anchor_rows(self, anchors: set[str], plan_text: str) -> None:
+        """B50 (#65): every declared acceptance anchor must appear in §8."""
+        if not plan_text or not anchors:
+            return
+        planned: set[str] = set()
+        for _ac_id, layer_cell, test_cell, _if_cell in _coverage_rows_with_test(plan_text):
             if not self._row_has_integration_layer(layer_cell, test_cell):
                 continue
-            targets = self._integration_row_targets(test_cell)
-            matches = self._resolve_row_targets(targets, current_nodes, inventory)
-            row_ifs = set(re.findall(r"IF-[A-Z0-9][A-Z0-9-]*", if_cell or ""))
-            if self._row_binds_to_task(row_ifs, required, matches, targets):
-                for if_id in row_ifs:
-                    index.setdefault(if_id, set()).update(matches)
-        return {if_id: sorted(nodes) for if_id, nodes in sorted(index.items())}
+            for path, node in self._integration_row_targets(test_cell):
+                planned.add(node if node is not None else path)
+        for anchor in sorted(anchors):
+            if not self._anchor_is_planned(anchor, planned):
+                raise TestSelectError(
+                    "task acceptance ref is not a test-plan §8 integration "
+                    f"row target: {anchor}"
+                )
+
+    @staticmethod
+    def _anchor_is_planned(anchor: str, planned: set[str]) -> bool:
+        """PRISM-B49B50-R1-01: symmetric FILE/NODE coverage -- a NODE anchor
+        is planned when §8 names it or its whole file; a FILE anchor is
+        planned when §8 names the file or any node in it."""
+        if anchor in planned or anchor.partition("::")[0] in planned:
+            return True
+        if "::" not in anchor:
+            return any(p.startswith(anchor + "::") for p in planned)
+        return False
 
     @staticmethod
     def _row_has_integration_layer(layer_cell: str | None, test_cell: str | None) -> bool:
@@ -2484,22 +2547,6 @@ class MImplRuntimeMixin:
         return "integration" in layers
 
     @staticmethod
-    def _resolve_row_targets(
-        targets: list[tuple[str, str | None]], current_nodes: list[str], inventory: set
-    ) -> list[str]:
-        """Collected nodes a row's (file, node|None) targets resolve to."""
-        matches: list[str] = []
-        for path, node in targets:
-            if node is not None:
-                if node in inventory:
-                    matches.append(node)
-            else:
-                matches.extend(
-                    n for n in current_nodes if n.partition("::")[0] == path
-                )
-        return matches
-
-    @staticmethod
     def _integration_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
         """(file, node|None) pairs a §8 test_cell names, item by item.
 
@@ -2508,50 +2555,12 @@ class MImplRuntimeMixin:
         (``A + B + C``) and then matched the WHOLE file -- dragging sibling
         tests of other tasks/IFs into this task's green requirement. Parse
         every ``+``-separated item: a NODE item (``file::test``) binds that
-        node exactly; a FILE item binds the whole file."""
-        items = [
-            item.strip().strip("`")
-            for item in re.split(r"\+", str(test_cell))
-            if item.strip()
-        ]
-        targets: list[tuple[str, str | None]] = []
-        for item in items:
-            file_part, sep, node_part = item.partition("::")
-            if not file_part:
-                continue
-            path = (
-                file_part
-                if file_part.startswith("tests/integration/")
-                else f"tests/integration/{Path(file_part).name}"
-            )
-            if sep and node_part:
-                pair = (path, f"{path}::{node_part}")
-            else:
-                pair = (path, None)
-            if pair not in targets:
-                targets.append(pair)
-        return targets
+        node exactly; a FILE item binds the whole file.
 
-    @staticmethod
-    def _row_binds_to_task(row_ifs: set, required: set, matches: list, targets) -> bool:
-        """Whether a plan §8 integration row binds to this task.
-
-        Operator finding (2026-08-24, run 01M0S0FQ T-001): a multi-IF row
-        only PARTIALLY owned by the task (row_ifs ∩ required ≠ ∅ but ⊄)
-        exercises IFs the task does not implement -- it stays legally red
-        until a later task lands the remaining IFs, so requiring it green is
-        structurally unsatisfiable for vertical-slice tasks. Bind only rows
-        the task fully owns; absent-but-bound rows still fail closed."""
-        if not (row_ifs & required):
-            return False
-        if not (row_ifs <= required):
-            return False  # partially-owned row: legally red, later tasks own it
-        if not matches:
-            raise TestSelectError(
-                "task IF integration test is absent from collect: "
-                + ", ".join(targets)
-            )
-        return True
+        PRISM-B49B50-R1-01 (#65): delegates to the shared taskgraph parser
+        so the gate cross-check and the commit-time coverage closure anchor
+        identical (path, node) pairs."""
+        return plan_row_targets(test_cell)
 
     def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
         """Run unit/integration collect commands against the gate cwd."""
@@ -2579,10 +2588,17 @@ class MImplRuntimeMixin:
                 )
 
     def _collect_task_gate_nodes(self, cwd: str, task: TaskNode):
-        """Collect unit/integration inventories and compute SELECT_TASK."""
+        """Collect unit/integration inventories and compute SELECT_TASK.
+
+        B50 (#65) declared-binding contract: ``unit_refs`` expand strictly
+        against the unit inventory (RED nodes, R-artifact gated); declared
+        ``acceptance_refs`` resolve against the integration inventory and
+        join the green requirement directly -- the §8 IF-index inference is
+        retired (§8 remains as the schema-2 cross-validation and the
+        planning-time coverage closure)."""
         contract = load_contract(self.repo)
         inventories = self._collect_layer_inventories(contract, cwd)
-        red_nodes = self._expand_task_refs_by_layer(task.test_refs, inventories)
+        red_nodes = self._expand_unit_refs(task.unit_refs, inventories["unit"])
         r_sha = self.store.state(self.run_id).r_tree_identity or ""
         self._require_r_artifacts(red_nodes, r_sha)
         touched = [
@@ -2592,12 +2608,13 @@ class MImplRuntimeMixin:
         ]
         plan_path = self._vdir() / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
-        int_index = self._task_integration_index(
-            plan_text,
+        acceptance_nodes = self._acceptance_anchors(
+            task.acceptance_refs,
             inventories["integration"],
-            task.if_ids,
+            plan_text,
+            task.schema,
         )
-        nodes = select_task(red_nodes, touched, inventories["unit"], task.if_ids, int_index)
+        nodes = select_task(red_nodes, touched, inventories["unit"], acceptance_nodes)
         if not nodes:
             raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
         return contract, nodes
