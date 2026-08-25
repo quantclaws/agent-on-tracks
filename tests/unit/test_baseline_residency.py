@@ -113,6 +113,28 @@ def test_baseline_digest_recovered_reentry_is_boundary(tmp_path):
     assert _gate(store)._last_baseline_digest() == ""
 
 
+def test_residency_cutoff_recovered_reentry_is_boundary(tmp_path):
+    """B53 (#69): stage.recovered(M-IMPL) advances the RGR residency cutoff
+    too -- the abandoned cycle's red.checkpointed attempts are orphans, so
+    _red_ref_free_attempt may renumber past their slots."""
+    store = _store_with(
+        [
+            ("red.checkpointed", {"task_id": "T-001", "attempt": 1}),
+            ("stage.rolled_back", {"from_stage": "M-IMPL", "to_stage": "M-DESIGN"}),
+            ("stage.entered", {"stage": "M-DESIGN"}),
+            ("stage.recovered", {"stage": "M-IMPL", "from_stage": "M-DESIGN"}),
+            ("red.checkpointed", {"task_id": "T-001", "attempt": 2}),
+        ],
+        tmp_path,
+    )
+    events = list(store.events(_RUN))
+    recovered_seq = next(e.seq for e in events if e.type == "stage.recovered")
+    abandoned_seq = next(e.seq for e in events if e.type == "red.checkpointed")
+    cutoff = _gate(store)._m_impl_residency_cutoff_seq()
+    assert cutoff == recovered_seq
+    assert cutoff > abandoned_seq  # attempt-1 checkpoint is an orphan
+
+
 def test_human_retry_exits_needs_attention_to_baseline():
     """retry at M-IMPL/NEEDS_ATTENTION re-enters BASELINE (reconcile
     confirmation); decide() then issues freeze_baseline again."""

@@ -1937,7 +1937,8 @@ class MImplRuntimeMixin:
             (
                 e.seq
                 for e in events
-                if e.type == "stage.entered" and e.payload.get("stage") == "M-IMPL"
+                if e.type in ("stage.entered", "stage.recovered")
+                and e.payload.get("stage") == "M-IMPL"
             ),
             default=0,
         )
@@ -3198,16 +3199,24 @@ class MImplRuntimeMixin:
         self._rebuild_task_log_projection()
 
     def _m_impl_residency_cutoff_seq(self) -> int:
-        """Seq of the latest ``stage.entered(M-IMPL)`` (0 when never).
+        """Seq of the latest M-IMPL residency boundary (0 when never).
 
         RGR per-task artifacts (refs, checkpoints) are idempotent within ONE
         M-IMPL residency; a rollback abandons the cycle and its artifacts
         become orphans (operator finding 2026-08-24, run 01M0S0FQ: the
         retry-cutoff scope misclassified a prior residency's checkpointed
-        attempt as live and refused the slot renumber)."""
+        attempt as live and refused the slot renumber).
+
+        B53 (#69): the boundary is ``stage.entered`` OR -- B32 -- the
+        ``stage.recovered`` forward-recovery re-entry (same seam as B51's
+        _last_baseline_digest): a recovered residency must not see the
+        abandoned cycle's checkpointed attempts as live."""
         cutoff = 0
         for ev in self.store.events(self.run_id):
-            if ev.type == "stage.entered" and ev.payload.get("stage") == "M-IMPL":
+            if (
+                ev.type in ("stage.entered", "stage.recovered")
+                and ev.payload.get("stage") == "M-IMPL"
+            ):
                 cutoff = ev.seq
         return cutoff
 

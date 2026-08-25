@@ -342,6 +342,64 @@ def test_manifest_persists_replays_and_ready_selection_is_serial(tmp_path):
     assert store.state("RUN").current_task_metadata["task_id"] == "T-002"
 
 
+def test_select_task_after_recovered_reentry_ignores_abandoned_started(tmp_path):
+    """B53 (#69): stage.recovered(M-IMPL) is a residency boundary for the
+    in-flight-lease guard. A task.started from the abandoned cycle (never
+    completed, rolled back through M-DESIGN, re-entered via B32 recovery)
+    must not strand TASK_DISPATCH -- the pre-fix boundary scan only counted
+    stage.entered, so the stale start looked in-flight and _do_select_task
+    returned silently on every command (run 01M0S0FQ hot loop, ~120ms per
+    select_task). FR-0150: stale starts remain selectable."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    # abandoned cycle: T-001 started, never completed
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task["task_id"],
+            "task": task,
+            "manifest": {
+                "task_id": task["task_id"],
+                "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                "forbidden_paths": [".tracks/projects/**"],
+            },
+        },
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "stage.rolled_back",
+        {"from_stage": "M-IMPL", "to_stage": "M-DESIGN", "reason": "stub_gap"},
+    )
+    store.append("RUN", "v0.5", "stage.entered", {"stage": "M-DESIGN"})
+    # B32 forward recovery re-enters M-IMPL (the CURRENT residency boundary)
+    store.append(
+        "RUN",
+        "v0.5",
+        "stage.recovered",
+        {"stage": "M-IMPL", "from_stage": "M-DESIGN", "reason": "mis-typed stub_gap"},
+    )
+    # fresh residency re-commits its taskgraph (stage.recovered reuses the
+    # fresh-cycle reset, clearing task_refs)
+    _graph(store, task)
+    executor = _executor(repo, store)
+    state = store.state("RUN")
+    assert state.current_task_id is None  # recovery reset the stage cycle
+    executor._do_select_task(
+        Command("select_task", command_id="C-SELECT"), state, None, False
+    )
+    started = [ev for ev in store.events("RUN") if ev.type == "task.started"]
+    # T-001 re-selected in the fresh residency (clean budget re-run)
+    assert [ev.payload["task_id"] for ev in started] == ["T-001", "T-001"]
+    assert store.state("RUN").current_task_id == "T-001"
+
+
 class _RecordingBackend:
     def __init__(self, result):
         self.result = result
