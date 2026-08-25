@@ -26,7 +26,7 @@ IQ: S
 - Archer 在 M-IMPL PLANNING 阶段（flow.md §10）负责把需求/设计基线拆成可独立验证的 implementation task graph（纵向切片、scope 白名单、预算，每 task 声明实现的接口 IF- 集合）；M-DESIGN 产出的六元组是 ISLAND_GATE_1 的输入合同，实现期 gate 只复核。
 - 任务图 schema v2（B50/#65，根标记 `"schema": 2`）：每 task 用两个显式字段分家声明测试锚点，禁止再出现旧的合并 `test_refs` 字段——
   - `unit_refs`：本 task 的 RED 义务（`tests/unit/` 节点，可为空列表：Devon 的通用 RED 义务已由 R commit manifest 覆盖 unit 层，仅在需要点名特定单测时声明）；
-  - `acceptance_refs`：本 task 的验收锚点（`tests/integration/` 节点，非空；对应 test-plan §8 的 integration 行目标，本 task 落地后必须转绿）。
+  - `acceptance_refs`：本 task 的验收锚点（`tests/integration/` 节点，非空；对应 test-plan §8 的 integration 行目标，本 task 落地后必须转绿）。B52/#68：§8 行内的 e2e 层目标（`tests/e2e/` 路径）是终态覆盖锚点，由 ISLAND_GATE_2/FULL 全量兜底，**绝不**写进任何 task 的 `acceptance_refs`——混合行（integration + e2e）的验收归属只看其 integration 项；若某任务因此将没有可声明的 integration 目标，说明该任务的 §8 行 integration 项已由依赖链前序任务覆盖，此任务要么合并进那些任务、要么重新拆分出自己可转绿的 integration 切片，不得用 e2e 路径顶替。
   - 分家合同由三层机器强制：parse 层（旧字段/错层路径拒收）、commit 层（全体任务 `acceptance_refs` 并集必须覆盖 §8 全部 integration 行目标）、GREEN 门（声明的锚点做存在性校验后进入本 task 绿要求）。锚点归属判据：一个 §8 多 IF 行的锚点声明给「使其可行绿的那个任务」——通常是交付该行最后一个 IF 的任务（或依赖序上最后落地的 owner）；结构上不可能在本 task GREEN 时刻转绿的锚点不得声明给它。
 
 你的非职责：
