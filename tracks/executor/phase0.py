@@ -121,4 +121,14 @@ def build_seal_manifest(
     marks: Sequence[str],
     environment_contract_digest: str,
 ) -> SealManifest:
-    raise NotImplementedError("IF-PHASE-003")
+    """Construct a stable seal manifest (IF-PHASE-003, AC-FR0257-04/05).
+
+    Delegates to the implementation in ``phase0_seal.py`` to keep the facade
+    thin.  The ``seal_id`` is ``sha256(canonical_json(remaining fields))``.
+    """
+    from tracks.executor.phase0_seal import build_seal_manifest as _impl
+
+    return _impl(
+        baseline_version, document_digests, frozen_test_digests,
+        marks, environment_contract_digest,
+    )
