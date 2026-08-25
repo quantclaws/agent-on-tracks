@@ -97,13 +97,21 @@ def scan_trace_gaps(
 def judge_real_coverage(
     ratio: float, threshold: float, excluded_sources: Sequence[str]
 ) -> CoverageJudgement:
-    raise NotImplementedError("IF-PHASE-002")
+    """Real-coverage hard gate (IF-PHASE-002, AC-FR0257-01).  Delegates to the
+    implementation in ``phase0_quality.py`` to keep the facade thin."""
+    from tracks.executor.phase0_quality import judge_real_coverage as _impl
+
+    return _impl(ratio, threshold, excluded_sources)
 
 
 def validate_registered_marks(
     declared_marks: Set[str], required_marks: Set[str]
 ) -> tuple[str, ...]:
-    raise NotImplementedError("IF-PHASE-002")
+    """Marks-registration hard gate (IF-PHASE-002, AC-FR0257-03).  Delegates
+    to the implementation in ``phase0_quality.py``."""
+    from tracks.executor.phase0_quality import validate_registered_marks as _impl
+
+    return _impl(declared_marks, required_marks)
 
 
 def build_seal_manifest(
