@@ -89,6 +89,24 @@ class LintSection:
 
 
 @dataclass(frozen=True, slots=True)
+class AdapterDeclaration:
+    """Declared host test adapter (interfaces §1h / project.toml ``[adapter]``).
+
+    The loader surfaces a single versioned declaration to the Runtime: the
+    ``id``/``protocol``/``version`` named by the host, so the Runtime consumes
+    only the declared ``tracks-test-result`` protocol and never branches on a
+    host framework (AC-FR0264-01).  Known-ness is enforced at load time: only
+    the tracks-test-result v1 reference declaration is surfaced; any other
+    combination fails closed (``None``) so the Runtime rejects an undeclared
+    host contract instead of guessing (AC-FR0264-03).
+    """
+
+    id: str
+    protocol: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectContract:
     integration: TestSection
     unit: TestSection
@@ -96,6 +114,7 @@ class ProjectContract:
     nightly: NightlySection
     layout: LayoutConfig | None = None
     lint: LintSection | None = None
+    adapter: AdapterDeclaration | None = None
 
 
 def contract_path(repo: Path) -> Path:
@@ -134,6 +153,7 @@ def _build_contract(data: dict) -> ProjectContract:
     nightly = _build_nightly(data)
     layout = _build_layout(data)
     lint = _build_lint(data)
+    adapter = _build_adapter(data)
     return ProjectContract(
         integration=integration,
         unit=unit,
@@ -141,6 +161,7 @@ def _build_contract(data: dict) -> ProjectContract:
         nightly=nightly,
         layout=layout,
         lint=lint,
+        adapter=adapter,
     )
 
 
@@ -327,6 +348,50 @@ def _build_lint(data: dict) -> LintSection | None:
     if not isinstance(check, str) or not check.strip():
         return None
     return LintSection(check=check.strip())
+
+
+# Fixed, language-agnostic versioned adapter protocol the Runtime consumes
+# exclusively (interfaces §1h / IF-ADAPTER-001 AC-FR0264-01): the loader
+# surfaces ONLY the reference declaration; any other id/protocol/version is an
+# undeclared host contract the Runtime must never guess at (AC-FR0264-03).
+_ADAPTER_ID = "reference-pytest"
+_ADAPTER_PROTOCOL = "tracks-test-result"
+_ADAPTER_VERSION = 1
+
+
+def _build_adapter(data: dict) -> AdapterDeclaration | None:
+    """Parse the optional [adapter] declaration; None if absent/malformed/unknown.
+
+    The loader surfaces the host's declared adapter as a single versioned
+    declaration.  ``None`` when the section is absent, malformed, or declares
+    an unknown id/protocol/version keeps pre-v0.7 contracts loadable and
+    prevents the Runtime from guessing a host framework (AC-FR0264-03) —
+    an undeclared host contract never degrades into a survivable
+    ``AdapterDeclaration`` the Runtime could consume.
+    """
+    raw = data.get("adapter")
+    if not isinstance(raw, dict):
+        return None
+    adapter_id = raw.get("id")
+    protocol = raw.get("protocol")
+    version = raw.get("version")
+    if (
+        not isinstance(adapter_id, str)
+        or not adapter_id.strip()
+        or not isinstance(protocol, str)
+        or not protocol.strip()
+        or not isinstance(version, int)
+        or isinstance(version, bool)
+        or adapter_id.strip() != _ADAPTER_ID
+        or protocol.strip() != _ADAPTER_PROTOCOL
+        or version != _ADAPTER_VERSION
+    ):
+        return None
+    return AdapterDeclaration(
+        id=adapter_id.strip(),
+        protocol=protocol.strip(),
+        version=version,
+    )
 
 
 def lint_check_command(repo: Path) -> str | None:
