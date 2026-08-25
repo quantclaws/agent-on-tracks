@@ -1885,6 +1885,10 @@ def test_task_review_budget_failure_stays_green():
     assert s.current_attempt == 1, "budget must consume the attempt"
     assert s.doc_dispatched is False
     assert s.doc_produced is False
+    # #86 follow-up: the budget re-entry into GREEN must drop green_committed
+    # so the B56 same-R re-commit guard lets the new G through (the prior G
+    # for this task/slot may already be recorded).
+    assert s.green_committed is False, "budget route must reset green_committed"
 
 
 def test_scope_route_replan_can_commit_taskgraph():

@@ -488,6 +488,12 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         _consume_attempt(s)
     elif check == "budget":
         s.substate = "GREEN"
+        # #86 (follow-up): the budget route re-enters GREEN for a task whose
+        # green.committed may already be recorded (same immutable R -> same
+        # lineage slot). Without this reset the B56 guard no-ops the re-commit
+        # and decide() livelocks on commit_green (run 01M0S0FQ T-004: the
+        # route back was budget, not PRISM_FINAL revise).
+        s.green_committed = False
         _reset_doc(s)
         _consume_attempt(s)
     elif check == "scope":
