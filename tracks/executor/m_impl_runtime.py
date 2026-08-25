@@ -3408,6 +3408,33 @@ class MImplRuntimeMixin:
             {},
         )
 
+    def _r_lineage_attempt(self, task_id: str, r_sha: str | None, attempt: int) -> int:
+        """B56 (#72): the G lineage attempt is the R ref slot allocated at
+        checkpoint time, not the logical attempt counter.
+
+        B54's first-free-slot walk lets the immutable R ref live at a slot
+        HIGHER than the logical attempt (run 01M0S0FQ T-001: logical attempt
+        3 checkpointed into slot 5 after the abandoned cycle and the Prism
+        red_defect retry occupied 3-4). verify_lineage resolves
+        refs/trac/rgr/{run}/{task}/{attempt}/red by the attempt recorded in
+        green.committed, so G's Tracks-Attempt must be that slot; a G built
+        on the logical attempt binds a slot it does not live in and parks
+        TASK_REVIEW lineage. The latest red.checkpointed matching
+        (task, r_sha) is authoritative; the logical attempt is only the
+        fallback when no checkpoint matches."""
+        if not r_sha:
+            return attempt
+        for ev in reversed(list(self.store.events(self.run_id))):
+            if (
+                ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and ev.payload.get("r_sha") == r_sha
+            ):
+                recorded = ev.payload.get("attempt")
+                if isinstance(recorded, int):
+                    return recorded
+        return attempt
+
     def _do_commit_green(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
@@ -3423,7 +3450,13 @@ class MImplRuntimeMixin:
             )
             self._rebuild_task_log_projection()
             return
-        if self._m_impl_event_recorded("green.committed", task_id, attempt):
+        # B56 (#72): the green.committed idempotency guard keys on the
+        # lineage attempt (the R ref slot) -- the same identity the payload
+        # and G trailers record -- so a crash-replay reconciles.
+        lineage_attempt = self._r_lineage_attempt(
+            task_id, state.r_tree_identity, attempt
+        )
+        if self._m_impl_event_recorded("green.committed", task_id, lineage_attempt):
             self._rebuild_task_log_projection()
             return
         reason, diff = self._validated_diff("green", state)
@@ -3460,7 +3493,7 @@ class MImplRuntimeMixin:
             repo=str(self.repo),
             run_id=self.run_id,
             task_id=task_id,
-            attempt=attempt,
+            attempt=lineage_attempt,
             impl_diff=diff,
             base_sha=green_base,
             r_sha=r_sha,
@@ -3492,7 +3525,7 @@ class MImplRuntimeMixin:
         green_payload = {
             "g_sha": g.sha,
             "task_id": task_id,
-            "attempt": attempt,
+            "attempt": lineage_attempt,
             "r_sha": r_sha,
             "base_sha": g.parent,
             "trailers": g.trailers,

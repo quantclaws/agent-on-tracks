@@ -52,6 +52,7 @@ from tracks.executor.rgr import (
     create_green_commit,
     create_red_ref,
     red_base_sha,
+    verify_lineage,
 )
 from tracks.executor.worktree import (
     cleanup_worktree,
@@ -929,6 +930,103 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     assert "Tracks-AC: AC-FR0001-01,FR-0001" in message
     assert "Tracks-FR:" not in message
     assert "Tracks-NFR:" not in message
+
+
+def test_green_commit_binds_r_ref_slot_not_logical_attempt(tmp_path):
+    """B56 (#72): B54's first-free-slot R allocation can place the immutable
+    R ref at a slot above the logical attempt counter; G's Tracks-Attempt and
+    green.committed.attempt must record that slot so TASK_REVIEW's
+    verify_lineage resolves the ref the G trailer actually binds (run
+    01M0S0FQ T-001: logical attempt 3, R checkpointed into slot 5, G trailer
+    attempt 3 resolved the abandoned cycle's slot-3 R -> lineage park)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Pre-occupy slots 1-2 with orphan refs (abandoned-cycle semantics): the
+    # fresh residency's first checkpoint (logical attempt 1) must allocate
+    # slot 3.
+    base = _git(repo, "rev-parse", "HEAD")
+    for slot in (1, 2):
+        _git(repo, "update-ref", f"refs/trac/rgr/RUN/T-001/{slot}/red", base)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    assert red.payload["attempt"] == 3  # first free slot, not logical 1
+
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=RGR_GREEN_DIFF
+        ),
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    # G binds the R ref slot (3), not the logical attempt (1)
+    assert green.payload["attempt"] == 3
+    assert green.payload["trailers"]["Tracks-Attempt"] == "3"
+    assert green.payload["trailers"]["Tracks-R"] == red.payload["r_sha"]
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert "Tracks-Attempt: 3" in message
+    # TASK_REVIEW lineage resolves the ref the G trailer actually binds
+    events = [
+        {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
+        for ev in store.events("RUN")
+    ]
+    proof = verify_lineage(
+        str(repo),
+        "RUN",
+        task["task_id"],
+        green.payload["attempt"],
+        green.payload["g_sha"],
+        events,
+        issue_number=1,
+        ac_refs=["AC-FR0001-01", "FR-0001"],
+    )
+    assert proof.g_trailers_valid
+    assert proof.r_before_g
+
+
+def test_r_lineage_attempt_falls_back_to_logical_attempt(tmp_path):
+    """B56 (#72): without a matching red.checkpointed (r_sha unknown or no
+    R identity at all) the lineage attempt falls back to the logical attempt
+    -- pre-B54 behavior, fail-closed rather than guessing a slot."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 4, "r_sha": "R-live"},
+    )
+    assert executor._r_lineage_attempt(task["task_id"], "R-live", 1) == 4
+    assert executor._r_lineage_attempt(task["task_id"], "R-unknown", 1) == 1
+    assert executor._r_lineage_attempt(task["task_id"], None, 2) == 2
+    assert executor._r_lineage_attempt(task["task_id"], "", 2) == 2
 
 
 def test_red_checkpoint_retry_uses_next_public_attempt(tmp_path):
