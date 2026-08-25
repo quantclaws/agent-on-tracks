@@ -3746,6 +3746,22 @@ class MImplRuntimeMixin:
             or diff_ref.strip() == "no-change"
         )
 
+    def _refactor_diff_reconstructable(self, outcome: dict, observed_changed) -> bool:
+        """B55 (#71): the OpenCode backend never captures diff_ref for Devon
+        RGR worktree phases (the artifact is changed_paths + pre/post
+        identities; GREEN outcomes carry diff_ref=None too). RED/GREEN
+        already reconstruct the diff from the working tree
+        (_validated_diff's fallback); REFACTOR must accept the same
+        reconstruction -- the refactor changes sit uncommitted in the main
+        tree at gate time -- instead of parking every real refactor with a
+        contract_error."""
+        union = {
+            "changed_paths": sorted(
+                set(outcome.get("changed_paths") or []) | set(observed_changed or [])
+            )
+        }
+        return self._generate_diff_from_changed_paths(union) is not None
+
     @staticmethod
     def _refactor_outside_paths(changed, allowed) -> list[str]:
         return sorted(
@@ -3812,7 +3828,9 @@ class MImplRuntimeMixin:
             task = self._lookup_task(task_id)
             if task is None:
                 raise TestSelectError(f"REFACTOR_GATE task not found: {task_id}")
-            if self._refactor_diff_missing(outcome, observed_changed):
+            if self._refactor_diff_missing(
+                outcome, observed_changed
+            ) and not self._refactor_diff_reconstructable(outcome, observed_changed):
                 raise TestSelectError(
                     "refactor content identity changed without a captured diff"
                 )

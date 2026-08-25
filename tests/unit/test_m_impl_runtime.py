@@ -427,6 +427,41 @@ def test_red_ref_free_attempt_skips_live_slot_of_same_residency(tmp_path):
     assert executor._red_ref_free_attempt("T-002", 1) == 1
 
 
+def test_refactor_diff_reconstructable_from_working_tree(tmp_path):
+    """B55 (#71): the OpenCode backend never captures diff_ref for RGR
+    refactor phases (GREEN outcomes carry diff_ref=None too); the gate must
+    accept a working-tree reconstruction -- RED/GREEN's _validated_diff
+    fallback -- instead of parking every real refactor with a contract_error
+    (run 01M0S0FQ T-001: refactor changed tracks/adapters/base.py with
+    diff_ref=None -> escalation park)."""
+    repo = _repo(tmp_path)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    target = repo / "tracks" / "app.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "tracks/app.py")
+    _git(repo, "commit", "-m", "app")
+    # committed and unmodified: no diff to reconstruct
+    assert not executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/app.py"]}, []
+    )
+    # refactor change sitting uncommitted in the main tree -> reconstructable
+    target.write_text("x = 2\n", encoding="utf-8")
+    assert executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/app.py"]}, []
+    )
+    # union with observed_changed covers outcomes whose changed_paths are
+    # empty while the tree drifted
+    assert executor._refactor_diff_reconstructable(
+        {"changed_paths": []}, ["tracks/app.py"]
+    )
+    # paths with no on-disk change are not reconstructable (fail-closed kept)
+    assert not executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/absent.py"]}, []
+    )
+
+
 class _RecordingBackend:
     def __init__(self, result):
         self.result = result
