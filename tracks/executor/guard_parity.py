@@ -19,6 +19,7 @@ deployment files with consistent ``TRACKS_GUARD_REGISTRY`` digests.
 from __future__ import annotations
 
 import hashlib
+import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -94,6 +95,27 @@ def check_parity(
     )
 
 
+def _exit_zero_mismatch(place: str, guard_id: str) -> list[GuardMismatch]:
+    """A ``--exit-zero`` command is always a fail-closed mismatch
+    (AC-FR0258-02), never silently accepted."""
+    return [
+        GuardMismatch(
+            place=place, guard_id=guard_id, kind="exit_zero",
+            detail=f"guard {guard_id} has --exit-zero in {place}",
+        )
+    ]
+
+
+def _missing_mismatch(place: str, guard_id: str) -> list[GuardMismatch]:
+    """A guard absent from one execution point is a fail-closed mismatch."""
+    return [
+        GuardMismatch(
+            place=place, guard_id=guard_id, kind="missing",
+            detail=f"guard {guard_id} not found in {place} commands",
+        )
+    ]
+
+
 def _compare_against_candidates(
     place: str, guard_id: str, expected: tuple[str, ...],
     candidates: Sequence[Sequence[str]], cwd: Path,
@@ -115,23 +137,13 @@ def _compare_against_candidates(
     # No exact match: check for exit-zero first
     for candidate in candidates:
         if any("--exit-zero" in arg for arg in candidate):
-            return [
-                GuardMismatch(
-                    place=place, guard_id=guard_id, kind="exit_zero",
-                    detail=f"guard {guard_id} has --exit-zero in {place}",
-                )
-            ]
+            return _exit_zero_mismatch(place, guard_id)
 
     # Drift or missing
     closest = next(iter(candidates), None)
     if closest is not None:
         return _compare_command(place, guard_id, expected, closest, cwd)
-    return [
-        GuardMismatch(
-            place=place, guard_id=guard_id, kind="missing",
-            detail=f"guard {guard_id} not found in {place} commands",
-        )
-    ]
+    return _missing_mismatch(place, guard_id)
 
 
 def _compare_command(
@@ -146,24 +158,10 @@ def _compare_command(
     ``--exit-zero`` in the actual command is always a fail-closed mismatch
     (AC-FR0258-02), regardless of argv equality."""
     if actual is None:
-        return [
-            GuardMismatch(
-                place=place,
-                guard_id=guard_id,
-                kind="missing",
-                detail=f"guard {guard_id} not found in {place} commands",
-            )
-        ]
+        return _missing_mismatch(place, guard_id)
     # --exit-zero is always a fail-closed mismatch, never silently accepted
     if any("--exit-zero" in arg for arg in actual):
-        return [
-            GuardMismatch(
-                place=place,
-                guard_id=guard_id,
-                kind="exit_zero",
-                detail=f"guard {guard_id} has --exit-zero in {place}",
-            )
-        ]
+        return _exit_zero_mismatch(place, guard_id)
     try:
         ok = audit_no_concurrency_injection(list(expected), list(actual), cwd)
     except Exception:
@@ -184,8 +182,6 @@ def _compare_command(
 def _parse_shell_commands(path: Path) -> tuple[tuple[str, ...], ...]:
     """Parse a shell script into argv tuples (one per non-comment, non-empty
     shell line)."""
-    import shlex
-
     commands: list[tuple[str, ...]] = []
     if not path.exists():
         return tuple(commands)
@@ -201,8 +197,6 @@ def _parse_shell_commands(path: Path) -> tuple[tuple[str, ...], ...]:
 
 def _parse_ci_commands(path: Path) -> tuple[tuple[str, ...], ...]:
     """Parse a CI workflow into argv tuples from ``run:`` lines."""
-    import shlex
-
     commands: list[tuple[str, ...]] = []
     if not path.exists():
         return tuple(commands)
