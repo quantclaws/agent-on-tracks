@@ -111,6 +111,24 @@ def test_ensure_runtime_assets_links_opencode(tmp_path):
     assert body == "canonical body\n"
 
 
+def test_ensure_runtime_assets_links_venv(tmp_path):
+    """B59 (#75): .venv joins the runtime asset set — agent-side guard/unit
+    commands use the relative interpreter path ``.venv/bin/python``, which
+    without the symlink only resolves in the main repo (run 01M0S0FQ T-001:
+    Devon verified against the contaminated main tree instead of its clean
+    worktree)."""
+    repo, _ = _repo_with_opencode(tmp_path)
+    venv_bin = repo / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    ensure_runtime_assets(str(repo), str(wt))
+    link = wt / ".venv"
+    assert link.is_symlink()
+    assert (link / "bin" / "python").exists()
+
+
 def test_ensure_runtime_assets_idempotent(tmp_path):
     repo, _ = _repo_with_opencode(tmp_path)
     wt = tmp_path / "wt"

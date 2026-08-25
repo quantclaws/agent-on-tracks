@@ -61,7 +61,7 @@ def create_test_authority_worktree(
     return WorktreeHandle(path=path, base_sha=c_design_sha, kind="test_authority")
 
 
-_RUNTIME_ASSETS = (".opencode",)
+_RUNTIME_ASSETS = (".opencode", ".venv")
 
 
 def ensure_runtime_assets(repo: str, wt_path: str) -> None:
@@ -74,6 +74,19 @@ def ensure_runtime_assets(repo: str, wt_path: str) -> None:
     FileNotFoundError (run 01KZTHE7 T-013). Symlink each asset back to the main
     repo's deployment so the worktree sees the same environment. Best-effort and
     idempotent: never raises, never clobbers an existing entry.
+
+    B59 (#75): ``.venv/`` joins the asset set. Agent-side guard/unit commands
+    use the RELATIVE interpreter path ``.venv/bin/python`` (project.toml
+    contract + manifest guard_commands); without the symlink that path only
+    resolves in the main repo, so an agent verifying in its worktree falls
+    back to running commands in the MAIN tree — measuring the contaminated
+    main-repo state instead of the candidate worktree (run 01M0S0FQ T-001:
+    attempt 2 reported "10 passed" from the main tree while 6 loader tests
+    legitimately failed in the clean worktree). Import safety: running the
+    main venv's interpreter with cwd=worktree keeps imports correct —
+    ``python -m`` prepends the cwd to sys.path, so the worktree's ``tracks``
+    package shadows the main repo's editable install; the venv only supplies
+    third-party dependencies.
     """
     for name in _RUNTIME_ASSETS:
         src = os.path.join(repo, name)

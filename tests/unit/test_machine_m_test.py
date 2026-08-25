@@ -376,6 +376,43 @@ def test_criteria_pack_mismatch():
     assert cmd.params["role"] == "prism"
 
 
+# B59 (#75) TRACKS-TRACE freeze contamination parks for the operator
+def test_freeze_contamination_parks_for_human():
+    """B59 (#75): verdict.failed(test_freeze_contamination) at COMMIT 是废弃
+    周期的主树残留 —— 非 Shield 缺陷、重派不可修：停车 awaiting_human/
+    escalation，由操作者清理主树后 `trac retry` 重入 freeze。"""
+    contam = (
+        "verdict.failed",
+        {
+            "check": "test_freeze_contamination",
+            "reason": "tracked files under tests/ are modified at freeze time",
+            "evidence": "tests/unit/test_red.py",
+            "attempt": 1,
+        },
+    )
+    s = state_of(
+        CAPTURE_CMD,
+        BASELINE_CAPTURED,
+        SHIELD_DISPATCH,
+        SHIELD_DONE,
+        COLLECT_CMD,
+        COLLECTED,
+        RUN_CMD,
+        RED_VALID,
+        PRISM_DISPATCH,
+        PRISM_DONE,
+        PRISM_PASS,
+        TRACE_CMD,
+        TRACE_PASS,
+        COMMIT_CMD,
+        contam,
+    )
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "escalation"
+    assert s.test_committed is False
+    assert decide(s) is None  # halted for the operator
+
+
 # AC-FR0040-03@v0.4 TRACKS-TRACE prism pass to exit
 def test_prism_pass_to_exit():
     """AC-FR0040-03@v0.4 (D-41 v3): RED_CHECK already ran, pass -> EXIT."""

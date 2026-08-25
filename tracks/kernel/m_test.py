@@ -132,6 +132,21 @@ def _on_test_written(s: State, p: dict, ev: EventEnvelope) -> None:
         s.substate = "COLLECT"
 
 
+def _park_for_operator(s: State) -> None:
+    """B59 (#75): runtime/contract defects that re-dispatching an agent can
+    never fix park awaiting_human/escalation for the operator."""
+    s.status = "awaiting_human"
+    s.awaiting = "escalation"
+
+
+def _route_upstream_tree_defect(s: State) -> None:
+    """baseline_defect / contract_error(M-DESIGN): an unusable tree is an
+    upstream design defect -- rollback M-DESIGN, never a Shield re-dispatch,
+    no attempt charge (D-41 v5 / FRB-K1)."""
+    s.diagnose_classification = "stub_gap"
+    s.substate = "DIAGNOSE"
+
+
 def _on_m_test_verdict_failed(s: State, p: dict) -> None:
     """M-TEST verdict.failed routing (FR-0040/0060/0070).
 
@@ -162,28 +177,28 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         # first Shield WRITE -- an upstream/design/contract defect. Route
         # fail-closed to M-DESIGN rollback; never re-dispatch Shield and never
         # silently continue with a vacated R1 snapshot.
-        s.diagnose_classification = "stub_gap"
-        s.substate = "DIAGNOSE"
+        _route_upstream_tree_defect(s)
         return
     if check == "contract_error" and p.get("target_stage") == "M-DESIGN":
         # FRB-K1: contract_error(rollback -> M-DESIGN) mirrors baseline_defect:
         # an unusable tree is an upstream defect discovered before any agent
         # wrote -- rollback without burning the shared attempt budget.
-        s.diagnose_classification = "stub_gap"
-        s.substate = "DIAGNOSE"
+        _route_upstream_tree_defect(s)
         return
-    if check == "collect_defect":
-        # Operator finding (2026-08-24, run 01M0S0FQ pytest-9 incident): the
-        # collect/classification pipeline was blind to the agent's committed
-        # test artifacts (empty baseline + zero collected nodes while test
-        # modules exist, or new test files with zero collected nodes). That
-        # is a runtime/contract defect, never Shield's: no attempt charge and
-        # NO auto re-dispatch (re-running Shield cannot fix the collector).
-        # Park for the operator; `trac retry` re-enters RED_CHECK directly
-        # once the contract/runtime is repaired -- the checkpointed test
-        # work is preserved and is not rewritten.
-        s.status = "awaiting_human"
-        s.awaiting = "escalation"
+    if check in ("collect_defect", "test_freeze_contamination"):
+        # collect_defect (operator finding 2026-08-24, run 01M0S0FQ pytest-9
+        # incident): the collect/classification pipeline was blind to the
+        # agent's committed test artifacts -- a runtime/contract defect, never
+        # Shield's: no attempt charge and NO auto re-dispatch (re-running
+        # Shield cannot fix the collector); `trac retry` re-enters RED_CHECK
+        # once repaired, preserving the checkpointed test work.
+        # test_freeze_contamination (B59 #75): ANY dirty file (tracked or
+        # untracked) under tests/ at commit_tests is residue from a discarded
+        # cycle (three run-01M0S0FQ freeze commits silently absorbed prior
+        # Devon RED residue into the baseline) -- never Shield's defect,
+        # never auto-fixable by re-dispatch: park for the operator to clean
+        # the tree, then `trac retry` re-enters the freeze.
+        _park_for_operator(s)
         return
     if check in ("trace", "commit"):
         # trace: SM-01.15 — re-dispatch Shield (WRITE), consume budget.

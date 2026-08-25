@@ -6,6 +6,7 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import hashlib
 import json
 import os
@@ -3419,6 +3420,81 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._teardown_branch(branch)
         self._emit("branch.deleted", {"branch_name": branch}, command_id=cmd.command_id)
 
+    def _rollback_write_scope(self) -> list[str]:
+        """B59 (#75): write-scope patterns of every dispatched task in this
+        run (manifest allowed_paths + red_test_paths). The union bounds what
+        the discarded M-IMPL cycles could legitimately have touched in the
+        MAIN tree — dirty files inside it at rollback are residue of the
+        discarded work."""
+        patterns: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "task.started":
+                continue
+            manifest = ev.payload.get("manifest")
+            if not isinstance(manifest, dict):
+                continue
+            for key in ("allowed_paths", "red_test_paths"):
+                value = manifest.get(key)
+                if isinstance(value, list):
+                    patterns.update(
+                        p for p in value if isinstance(p, str) and p.strip()
+                    )
+        return sorted(patterns)
+
+    @staticmethod
+    def _path_in_write_scope(path: str, patterns: list[str]) -> bool:
+        """Exact file, directory-prefix, or glob match against scope patterns
+        (manifest patterns mix all three: ``tracks/project.py``,
+        ``tests/unit``, ``.tracks/projects/**``)."""
+        for pat in patterns:
+            if path == pat:
+                return True
+            if path.startswith(pat.rstrip("/") + "/"):
+                return True
+            if fnmatch.fnmatch(path, pat):
+                return True
+        return False
+
+    def _quarantine_rollback_residue(self) -> list[str]:
+        """B59 (#75): stash main-tree residue intersecting the discarded
+        stage's write scope. Run 01M0S0FQ: the previous T-001 cycle's
+        implementation residue (tracks/project.py) survived every rollback
+        and retry --clear-evidence in the main tree, then leaked into the new
+        baseline via the M-TEST freeze and into Devon's environment checks.
+        Untracked files count as residue too (Prism OOB R1 Blocker 01): the
+        designed flow commits agent output during the pipeline, so anything
+        dirty in scope at rollback is the discarded cycle's leftover.
+        Stash (never destroy): the content stays recoverable and the
+        discarded-scope tree returns to the committed baseline state.
+        Best-effort: git failures leave the tree untouched and are reported
+        by simply not listing the file as quarantined."""
+        status = git(self.repo, "status", "--porcelain", check=False)
+        dirty: list[str] = []
+        for line in status.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:].strip()
+            if " -> " in path:  # rename: keep both ends in scope checks
+                path = path.split(" -> ")[-1]
+            if path:
+                dirty.append(path)
+        scope = self._rollback_write_scope()
+        matched = [p for p in dirty if self._path_in_write_scope(p, scope)]
+        if not matched:
+            return []
+        proc = git(
+            self.repo,
+            "stash",
+            "push",
+            "-u",
+            "-m",
+            f"trac B59 rollback residue quarantine ({self.run_id})",
+            "--",
+            *matched,
+            check=False,
+        )
+        return matched if proc.returncode == 0 else []
+
     def _do_rollback_stage(self, cmd, state, task_id, reconcile):
         # Reconcile idempotency: if stage.rolled_back was already persisted for
         # this command (crash between event commit and return), do not emit a
@@ -3431,12 +3507,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             if already:
                 return
+        # B59 (#75): discarding M-IMPL progress must also discard its main-tree
+        # residue, or the "discarded" work leaks into the next cycle's
+        # environment (baseline freeze + agent verification).
+        quarantined = (
+            self._quarantine_rollback_residue() if state.stage == "M-IMPL" else []
+        )
         self._emit(
             "stage.rolled_back",
             {
                 "from_stage": state.stage,
                 "to_stage": cmd.params["to_stage"],
                 "reason": cmd.params.get("reason", ""),
+                "quarantined": quarantined,
             },
             command_id=cmd.command_id,
         )
@@ -4793,7 +4876,37 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         marker = f"command_id: {cmd.command_id}"
         tests_dir = self.repo / "tests"
+        # B59 (#75): the designed flow commits Shield's WRITE output during the
+        # pipeline itself (_stage_and_commit) — at freeze time tests/ must be
+        # ENTIRELY clean. Any dirty file, tracked or untracked, is residue from
+        # a DISCARDED cycle (run 01M0S0FQ: three freeze commits — 1e135d7,
+        # 632a84f, 02417f9 — silently absorbed prior Devon RED residue,
+        # seeding the baseline with tests no current round wrote). Fail closed
+        # on all of it instead of absorbing: the operator cleans the tree and
+        # `trac retry` re-enters the freeze.
         if tests_dir.exists():
+            status = git(self.repo, "status", "--porcelain", "--", "tests")
+            residue = [
+                line[3:].split(" -> ")[-1].strip()
+                for line in status.stdout.splitlines()
+                if line.strip()
+            ]
+            if residue:
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "test_freeze_contamination",
+                        "reason": (
+                            "tracked files under tests/ are modified at freeze time "
+                            "and are not attributable to the current Shield WRITE "
+                            "result; refusing to freeze them into the test baseline"
+                        ),
+                        "evidence": "; ".join(residue[:20]),
+                        "attempt": state.current_attempt + 1,
+                    },
+                    command_id=cmd.command_id,
+                )
+                return
             git(self.repo, "add", "tests")
         proc = _commit_if_staged(self.repo, f"M-TEST: freeze test assets\n\n{marker}")
         if proc is not None and proc.returncode != 0:
