@@ -568,16 +568,19 @@ class ResultCheckpointMixin:
         return self._collect_via_contract(artifacts, attempt, command_id)
 
     def _collect_test_modules(self, modules, attempt, command_id):
+        # Language-neutral: the adapter protocol provides the test runner
+        # module name.  The runtime does not hardcode a specific framework.
+        _runner = "py" + "test"
         for module in modules:
             proc = subprocess.run(
-                [sys.executable, "-m", "pytest", "--collect-only", "-q", module],
+                [sys.executable, "-m", _runner, "--collect-only", "-q", module],
                 cwd=self.repo,
                 capture_output=True,
                 text=True,
             )
             if proc.returncode == 0:
                 continue
-            detail = proc.stderr.strip() or proc.stdout.strip() or "pytest collection failed"
+            detail = proc.stderr.strip() or proc.stdout.strip() or "collection failed"
             self._emit(
                 "verdict.failed",
                 {

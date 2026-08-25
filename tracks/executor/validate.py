@@ -730,3 +730,24 @@ def has_staged_changes(repo, doc_paths):
         if proc.stdout.strip():
             return True
     return False
+
+
+def scan_language_tokens(
+    forbidden_tokens: list[str] | None = None,
+    source_paths: list[str] | None = None,
+) -> dict[str, list[str]]:
+    """Scan kernel/executor/cli runtime source for forbidden language tokens.
+
+    IF-ADAPTER-003 (AC-FR0264-04 / AC-NFR0141-02): the kernel, executor and
+    CLI must consume only the Adapter protocol and must not contain language-
+    specific tokens such as ``framework_runner``, ``test_result`` or ``runner``.
+
+    Args:
+        forbidden_tokens: List of language tokens to scan for.
+        source_paths: Directories to scan (defaults to kernel/executor/cli).
+
+    Returns:
+        A dict mapping each found token to the list of file paths containing
+        it.  An empty dict means no tokens were found.
+    """
+    raise NotImplementedError("IF-ADAPTER-003")

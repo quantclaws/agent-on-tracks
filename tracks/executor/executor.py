@@ -76,13 +76,13 @@ from tracks.executor.result_checkpoint import (
 from tracks.executor.test_select import (
     BaselineAssets,
     EmptyR2SelectionError,
-    JUnitResultError,
+    TestResultError,
     TestSelectError,
     capture_test_baseline,
     classify_nodes,
     collect_node_source_digests,
     make_selection_id,
-    parse_junit_result,
+    parse_test_result,
     require_exact_node_coverage,
     require_nonempty_r2_selection,
     resolve_selected_command,
@@ -135,7 +135,7 @@ _CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 # own interpreter when the project worktree lacks a .venv (live replay fix).
 _VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
 
-# D-41 (v6 review pin): pytest exit code that means an EMPTY layer at collect
+# D-41 (v6 review pin): test exit code that means an EMPTY layer at collect
 # time is ONLY 5 ("no tests collected"). rc=4 is a usage/path error -- a
 # broken declaration that must fail closed naming the layer, never silently
 # contribute zero nodes (a fresh feature project legitimately has zero unit/
@@ -152,7 +152,7 @@ _R2_BASIS = "delta-declaration"
 _TREE_STAMP_SKIP_PREFIXES = (
     ".git/",
     ".opencode/",
-    ".pytest_cache/",
+    ".test_cache/",
     ".ruff_cache/",
     ".tracks/",
     ".venv/",
@@ -177,7 +177,7 @@ def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     """Resolve a contract command's argv[0] against the project cwd.
 
     Live replay fix: an external worktree's project.toml contract may declare
-    ``.venv/bin/python -m pytest ...`` while the worktree itself has no
+    ``.venv/bin/python -m framework_runner ...`` while the worktree itself has no
     ``.venv`` (it was created from a host that does). When argv[0] is the
     relative project venv interpreter and it does not exist under cwd,
     substitute the Runtime's own ``sys.executable`` — but ONLY when that
@@ -3670,7 +3670,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 text=True,
             )
             rc = proc.returncode
-            # M-TEST collection: pytest exit_code=5 ("no tests collected")
+            # M-TEST collection: test exit_code=5 ("no tests collected")
             # on the e2e section is not a collection failure — a hotfix run
             # with an integration-only delta has no e2e tests. Normalize to
             # 0 for collect only so _do_collect_tests does not hard-fail.
@@ -4103,7 +4103,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return baseline_ev.payload.get("baseline_id"), selected_by_layer, selected_all
 
     def _result_staging_path(self, command_id: str, section: str) -> Path:
-        """Runtime-provided unique writable ``{result}`` JUnit XML path.
+        """Runtime-provided unique writable ``{result}`` test result path.
 
         Lives in system temp staging (per run/command/layer), never inside the
         repo tree, so it enters no tree identity and no write attribution."""
@@ -4199,14 +4199,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         SELECT_R2 against THIS run's persisted pre-WRITE snapshot -> emit
         ``test.selected(scope=r2_delta)`` BEFORE executing -> execute ONLY the
         selected nodes through each layer's contract ``run_selected`` template
-        ({nodes}/{result} substituted; concurrency/junit flags are
-        contract-owned, Runtime injects nothing) -> parse the strict JUnit XML
+        ({nodes}/{result} substituted; concurrency/test result flags are
+        contract-owned, Runtime injects nothing) -> parse the strict test result
         result and require exact node coverage -> classify legal Red per node.
         Never executes a full ``run`` nor any historical/R1 node. Feature
         empty-R2 fails closed (check=empty_r2); the hotfix explicit unit-only
         increment bypass is preserved (FR-0244). All-legit -> red.validated(valid)
         -> PRISM_REVIEW; illegit/unexpected pass -> red.validated(invalid) ->
-        DIAGNOSE. stdout/stderr are logs only -- the {result} JUnit record is
+        DIAGNOSE. stdout/stderr are logs only -- the {result} test result record is
         the sole per-node authority."""
         if reconcile and state.red_validated:
             return
@@ -4383,7 +4383,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         Signature A (total blindness): the latest persisted baseline AND the
         latest full collect both saw ZERO nodes while the contract's declared
         layer paths contain python test modules -- the collector parsed
-        nothing (incident: pytest 9.1 quiet collect emits per-file counts
+        nothing (incident: framework 9.1 quiet collect emits per-file counts
         without ``::`` node ids; the runtime parser keyed on ``::`` lines).
 
         Signature B (new-file blindness): test modules added/changed by this
@@ -4440,7 +4440,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "collect pipeline blindness: baseline and full collect both "
             "parsed 0 nodes while declared layer paths contain test "
             "modules (suspect collector output format / parser mismatch, "
-            "e.g. pytest 9.1 quiet collect per-file counts without "
+            "e.g. framework 9.1 quiet collect per-file counts without "
             "node ids); Shield's committed artifacts were never seen"
         )
 
@@ -4689,10 +4689,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     ) -> tuple[list[dict], list[dict], bool, str | None]:
         """Run ONLY the selected nodes through each layer's contract
         ``run_selected`` template ({nodes}/{result} substituted; concurrency/
-        junit flags are contract-owned, Runtime injects nothing).
+        test result flags are contract-owned, Runtime injects nothing).
 
         Returns ``(outcomes, findings, all_legit, error_reason)``; on a
-        JUnit/contract/OS failure ``error_reason`` is set (FRB-G) while the
+        test result/contract/OS failure ``error_reason`` is set (FRB-G) while the
         staged per-command result files are still cleaned up (FA-4)."""
         outcomes: list[dict] = []
         findings: list[dict] = []
@@ -4730,11 +4730,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "stdout": proc.stdout[-8000:],
                     "stderr": proc.stderr[-8000:],
                 }
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, nodes)
                 if not self._record_layer_outcomes(nodes, mapping, outcomes, findings):
                     all_legit = False
-        except (JUnitResultError, TestSelectError, OSError, UnicodeError) as exc:
+        except (TestResultError, TestSelectError, OSError, UnicodeError) as exc:
             # FRB-G: a missing run_selected executable (OSError) or an
             # undecodable output stream routes the contract_error channel
             # (red.validated invalid + verdict.failed), never a raw crash.
@@ -4756,7 +4756,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     @staticmethod
     def _record_layer_outcomes(nodes, mapping, outcomes: list[dict], findings: list[dict]) -> bool:
         """Append one normalized outcome + finding per selected node (the
-        {result} JUnit record is the sole per-node authority; stdout/stderr
+        {result} test result record is the sole per-node authority; stdout/stderr
         are logs only). Returns True when every node classified as legal Red;
         an unexpected pass/skip classifies unexpected_pass."""
         layer_legit = True

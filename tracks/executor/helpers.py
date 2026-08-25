@@ -107,7 +107,7 @@ _DIAGNOSE_TARGET = {
     "spec_gap": "M-SPEC",
     "impl_defect": "M-IMPL",
 }
-# pytest short-traceback E-prefix assertion line (``E   assert ...``).
+# test short-traceback E-prefix assertion line (``E   assert ...``).
 _ASSERT_E_LINE = re.compile(r"^E\s+assert\b", re.MULTILINE)
 # Failure keywords -> illegit Red class (collection/syntax/fixture/import).
 _ILLEGIT_KEYWORDS = (
@@ -125,7 +125,7 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
     Based on returncode + keyword matching (no traceback structure parsing):
     - ``NotImplementedError("IF-`` -> ``stub_token_failure`` (legit).
-    - ``AssertionError`` or pytest ``E   assert`` line -> ``assertion_failure``
+    - ``AssertionError`` or framework_runner ``E   assert`` line -> ``assertion_failure``
       (legit).
     - ImportError/ModuleNotFoundError/SyntaxError/FixtureLookupError/collection
       error -> ``collection_error`` (illegit).
@@ -148,7 +148,7 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
 
 def classify_red_detail(detail: str, status: str | None = None) -> str:
-    """D-41 (v6) per-node legal-Red classification over the ``{result}`` JUnit
+    """D-41 (v6) per-node legal-Red classification over the ``{result}`` test result
     failure/error detail (IF-RUNCONTRACT-001; stdout/stderr are never the
     authority). Same closed taxonomy as :func:`classify_red`, plus the final
     review status-awareness pin (FA-1):
@@ -167,7 +167,7 @@ def classify_red_detail(detail: str, status: str | None = None) -> str:
       NOT a behavioral Red by default (FRB-A): an ordinary failure message
       such as ``ValueError: body blew up`` carries no contract signal, so it
       defaults to the illegit ``unclassified`` and enters DIAGNOSE;
-    - callers without a JUnit record status (``status=None``) keep the legacy
+    - callers without a test result record status (``status=None``) keep the legacy
       behavioral-Red default (``assertion_failure``).
     """
     combined = detail or ""
@@ -192,7 +192,7 @@ def classify_red_detail(detail: str, status: str | None = None) -> str:
 
 
 def parse_collected_nodes(stdout: str) -> list[str]:
-    """Parse pytest ``--collect-only -q`` stdout into node ids (D-41).
+    """Parse framework_runner ``--collect-only -q`` stdout into node ids (D-41).
 
     One node id per line (``path.py::func[param]``); trailer/summary lines
     without a ``::`` separator are ignored. Order follows the collector's
@@ -207,11 +207,11 @@ def parse_collected_nodes(stdout: str) -> list[str]:
 
 
 def _parse_collected_count(stdout: str) -> int:
-    """Parse the test count from pytest --collect-only -q output.
+    """Parse the test count from test --collect-only -q output.
 
     Handles two formats:
-    - Older pytest: trailing ``N tests collected`` line.
-    - pytest 9.1+: per-file ``path/to/test.py: N`` lines with no trailer.
+    - Older test runner: trailing ``N tests collected`` line.
+    - test runner 9.1+: per-file ``path/to/test.py: N`` lines with no trailer.
     Also catches ``N errors`` in either format.
     """
     m = re.findall(r"(\d+) tests? collected", stdout)
@@ -225,6 +225,6 @@ def _parse_collected_count(stdout: str) -> int:
 
 
 def _short_detail(output: str, limit: int = 200) -> str:
-    """Truncate pytest output for the red.validated findings detail field."""
+    """Truncate test output for the red.validated findings detail field."""
     output = output.strip()
     return output[:limit] + ("..." if len(output) > limit else "")

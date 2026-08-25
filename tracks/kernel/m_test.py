@@ -186,7 +186,7 @@ def _on_m_test_verdict_failed(s: State, p: dict) -> None:
         _route_upstream_tree_defect(s)
         return
     if check in ("collect_defect", "test_freeze_contamination"):
-        # collect_defect (operator finding 2026-08-24, run 01M0S0FQ pytest-9
+        # collect_defect (operator finding 2026-08-24, run 01M0S0FQ
         # incident): the collect/classification pipeline was blind to the
         # agent's committed test artifacts -- a runtime/contract defect, never
         # Shield's: no attempt charge and NO auto re-dispatch (re-running

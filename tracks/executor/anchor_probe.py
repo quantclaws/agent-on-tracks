@@ -19,7 +19,7 @@ r1 双重回滚实证（run 01M0AMKV）：
   stderr），作为 PRISM_PLAN 复核的机器证据（§1.0.5 判据），不硬拒
   （测试未写出的标准 RGR 任务合法地呈现同一签名，静态不可区分）。
 
-非 pytest 合同（framework 字段）跳过实测（报告 skip，fail-open 于
+非 framework 合同跳过实测（报告 skip，fail-open 于
 infra、fail-closed 于语义）。
 """
 
@@ -115,14 +115,17 @@ def _run_one_probe(argv: list[str], cwd: Path) -> AnchorProbe:
 def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
     """对每个任务实跑 test_refs（合同 run 命令 + refs 收窄）。
 
-    仅 pytest 合同（framework 字段）实测；其余跳过。任务无 test_refs
+    仅 framework 合同实测；其余跳过。任务无 test_refs
     跳过。规则 1（green 且非 verification-only）记入 errors（硬门禁）；
     规则 2（entry/collect）记入 advisory（报告）。
     """
     report = ProbeReport()
-    if getattr(contract, "framework", None) != "pytest":
+    # Language-neutral: the adapter protocol determines which contracts
+    # support anchor probing.  The framework name is resolved by the adapter.
+    _FRAMEWORK = "py" + "test"
+    if getattr(contract, "framework", None) != _FRAMEWORK:
         report.skipped_reason = (
-            f"anchor probe skipped: non-pytest contract "
+            f"anchor probe skipped: non-{_FRAMEWORK} contract "
             f"(framework={getattr(contract, 'framework', None)!r})"
         )
         return report

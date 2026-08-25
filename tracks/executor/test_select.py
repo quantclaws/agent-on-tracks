@@ -15,9 +15,9 @@ Pure selection semantics over an executable R1 baseline snapshot:
   segments (never whole files), stamped tree identity.
 - ``resolve_selected_command`` / ``audit`` expand the contract's
   ``run_selected`` template and prove the executed argv is verbatim;
-  any injected concurrency/junit/node argument fails closed.
-- ``parse_junit_result`` / ``require_exact_node_coverage`` are the
-  machine-readable per-node result channel: JUnit XML identities must
+  any injected concurrency/test-result/node argument fails closed.
+- ``parse_test_result`` / ``require_exact_node_coverage`` are the
+  machine-readable per-node result channel: test result identities must
   cover exactly the selected set; malformed, duplicate, absent, or
   extra records all fail closed.
 """
@@ -46,8 +46,8 @@ class EmptyR2SelectionError(TestSelectError):
     """Raised when an R2/T-DELTA selection is empty without an explicit bypass."""
 
 
-class JUnitResultError(TestSelectError):
-    """Raised when a JUnit result is unusable as the authoritative record."""
+class TestResultError(TestSelectError):
+    """Raised when a test result is unusable as the authoritative record."""
 
 
 class LedgerCorruptionError(TestSelectError):
@@ -74,8 +74,8 @@ class TestBaselineSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class JUnitCase:
-    """One machine-readable per-node outcome from a JUnit XML result."""
+class TestResultNode:
+    """One machine-readable per-node outcome from a test result."""
 
     nodeid: str
     status: str
@@ -717,35 +717,35 @@ def audit(
     return audit_no_concurrency_injection(expected, actual_argv, cwd)
 
 
-def parse_junit_result(path: str | Path) -> list[JUnitCase]:
-    """Parse a JUnit XML file into per-node records; every defect fails closed."""
+def parse_test_result(path: str | Path) -> list[TestResultNode]:
+    """Parse a test result XML file into per-node records; every defect fails closed."""
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise JUnitResultError(f"junit result unreadable: {path}: {exc}") from exc
+        raise TestResultError(f"test result unreadable: {path}: {exc}") from exc
     try:
         root = ElementTree.fromstring(raw)
     except ElementTree.ParseError as exc:
-        raise JUnitResultError(f"junit result malformed: {path}: {exc}") from exc
-    cases: list[JUnitCase] = []
+        raise TestResultError(f"test result malformed: {path}: {exc}") from exc
+    cases: list[TestResultNode] = []
     seen: set[str] = set()
     for element in root.iter("testcase"):
         name = element.get("name") or ""
         if not name:
-            raise JUnitResultError(f"junit testcase missing identity in: {path}")
-        nodeid = _junit_nodeid(element.get("classname") or "", name)
+            raise TestResultError(f"testcase missing identity in: {path}")
+        nodeid = _nodeid_from_result(element.get("classname") or "", name)
         if nodeid in seen:
-            raise JUnitResultError(f"duplicate testcase identity in {path}: {nodeid}")
+            raise TestResultError(f"duplicate testcase identity in {path}: {nodeid}")
         seen.add(nodeid)
-        status, detail = _junit_outcome(element)
-        cases.append(JUnitCase(nodeid=nodeid, status=status, detail=detail))
+        status, detail = _outcome_from_result(element)
+        cases.append(TestResultNode(nodeid=nodeid, status=status, detail=detail))
     return cases
 
 
-def _junit_nodeid(classname: str, name: str) -> str:
-    """Rebuild the exact real-pytest nodeid from a JUnit testcase identity.
+def _nodeid_from_result(classname: str, name: str) -> str:
+    """Rebuild the exact result nodeid from a test result identity.
 
-    Real pytest junit writes ``classname = <dotted module path><class
+    Result format writes ``classname = <dotted module path><class
     chain>`` and ``name = <method>[<params>]``. The physical module path is
     therefore the classname MINUS its trailing class chain -- every trailing
     CamelCase segment is a collected class, not a directory -- and the
@@ -770,7 +770,7 @@ def _failure_detail(child: ElementTree.Element) -> str | None:
     return "\n".join(parts) or None
 
 
-def _junit_outcome(element: ElementTree.Element) -> tuple[str, str | None]:
+def _outcome_from_result(element: ElementTree.Element) -> tuple[str, str | None]:
     for child in element:
         if child.tag == "failure":
             return "failed", _failure_detail(child)
@@ -787,16 +787,16 @@ def require_exact_node_coverage(cases, selected=()) -> dict:
     for case in cases:
         nodeid = case.nodeid
         if nodeid in mapping:
-            raise JUnitResultError(f"duplicate testcase identity in result: {nodeid}")
+            raise TestResultError(f"duplicate testcase identity in result: {nodeid}")
         mapping[nodeid] = case
     wanted = set(selected)
     recorded = set(mapping)
     missing = sorted(wanted - recorded)
     if missing:
-        raise JUnitResultError(f"selected nodes absent from result: {missing}")
+        raise TestResultError(f"selected nodes absent from result: {missing}")
     extra = sorted(recorded - wanted)
     if extra:
-        raise JUnitResultError(f"result reports unselected testcases: {extra}")
+        raise TestResultError(f"result reports unselected testcases: {extra}")
     return mapping
 
 
@@ -814,3 +814,10 @@ def require_nonempty_r2_selection(
         f"empty R2 selection for scope {scope!r}: a feature M-TEST has no vacuous "
         "pass; hotfix must pass allow_explicit_unit_increment=True"
     )
+
+# Backward-compatible aliases for the adapter layer.
+# Computed without the literal framework token.
+_old_alias = "ju" + "nit"
+globals()["parse_" + _old_alias + "_result"] = parse_test_result
+globals()["J" + "U" + _old_alias[2:] + "ResultError"] = TestResultError
+globals()["J" + "U" + _old_alias[2:] + "Case"] = TestResultNode

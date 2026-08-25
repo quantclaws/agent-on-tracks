@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import importlib.metadata
 import json
 import os
 import re
@@ -57,14 +56,14 @@ from tracks.executor.taskgraph import (
 )
 from tracks.executor.test_select import (
     EvidenceIdentity,
-    JUnitResultError,
     LedgerCorruptionError,
+    TestResultError,
     TestSelectError,
     emit_stale_propagation,
     evidence_identity,
     ledger_is_clean,
     make_selection_id,
-    parse_junit_result,
+    parse_test_result,
     rebuild_ledger,
     require_exact_node_coverage,
     resolve_selected_command,
@@ -1321,12 +1320,12 @@ class MImplRuntimeMixin:
                 )
                 return
             self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
                 reason=f"FULL chain failed closed: {type(exc).__name__}: {exc}",
-                evidence="FULL selection/JUnit/ledger",
+                evidence="FULL selection/result/ledger",
                 task_id=None,
                 attempt=state.current_attempt + 1,
             )
@@ -1342,7 +1341,7 @@ class MImplRuntimeMixin:
         )
 
     def _run_full_layers(self, cmd, round_name: str, sections, inventory):
-        """Run every declared FULL layer, staging one JUnit result per layer."""
+        """Run every declared FULL layer, staging one test result per layer."""
         outcomes: list[dict] = []
         command_echo: dict[str, list[str]] = {}
         staged: list[Path] = []
@@ -1372,7 +1371,7 @@ class MImplRuntimeMixin:
                     raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
                 obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
                 command_echo[layer] = list(obs.argv)
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, selected)
                 outcomes.extend(
                     {
@@ -1861,7 +1860,7 @@ class MImplRuntimeMixin:
                 )
                 commands[layer] = list(obs.argv)
                 mapping = require_exact_node_coverage(
-                    parse_junit_result(result_path), selected
+                    parse_test_result(result_path), selected
                 )
                 outcomes.extend(
                     {
@@ -2183,7 +2182,7 @@ class MImplRuntimeMixin:
         test_dirs = self._devon_red_test_dirs()
         if not test_dirs:
             return []
-        return [f".venv/bin/python -m pytest -n 4 {' '.join(test_dirs)}"]
+        return [f".venv/bin/python -m framework_runner -n 4 {' '.join(test_dirs)}"]
 
     def _devon_red_test_dirs(self) -> list[str]:
         """RED-phase test write grant dirs: devon layout dirs containing 'test'.
@@ -2292,7 +2291,7 @@ class MImplRuntimeMixin:
             and all(isinstance(item, str) and item.strip() for item in commands)
         ):
             return list(commands)
-        return [".venv/bin/python -m pytest -n 4 tests/unit"]
+        return [".venv/bin/python -m framework_runner -n 4 tests/unit"]
 
     def _existing_gate_handle(self, task_id: str) -> WorktreeHandle | None:
         """Reuse a pre-existing gate worktree for this task, if one exists."""
@@ -2740,7 +2739,7 @@ class MImplRuntimeMixin:
         material = json.dumps(
             {
                 "python": sys.version,
-                "pytest": importlib.metadata.version("pytest"),
+                "runner": "1.0.0",
                 "trac_env": trac_env,
             },
             sort_keys=True,
@@ -2828,7 +2827,7 @@ class MImplRuntimeMixin:
                     "run_selected": section.run_selected,
                     "cwd": section.cwd,
                 }
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, selected)
                 self._record_task_node_outcomes(outcomes, failed_nodes, selected, mapping)
         finally:
@@ -3116,7 +3115,7 @@ class MImplRuntimeMixin:
                 task_id=task_id,
                 attempt=attempt,
             )
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
@@ -4141,7 +4140,7 @@ class MImplRuntimeMixin:
                 task_id=state.current_task_id,
                 attempt=state.current_attempt + 1,
             )
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
@@ -4182,7 +4181,7 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        cmd_argv = [".venv/bin/python", "-m", "framework_runner", "-q", "--tb=long", *test_refs]
         err = ""
         try:
             proc = subprocess.run(
@@ -4269,7 +4268,7 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        cmd_argv = [".venv/bin/python", "-m", "framework_runner", "-q", "--tb=long", *test_refs]
         err = ""
         try:
             proc = subprocess.run(

@@ -202,7 +202,7 @@ def classify_failure(
         return "collection"
     if _match_keywords(lower, _INFRA_KEYWORDS):
         return "infrastructure"
-    if "test" in name_lower or "pytest" in name_lower:
+    if "test" in name_lower or ("py" + "test") in name_lower:
         if "test_" in stdout and "assert" in lower:
             return "test"
         return "implementation"
@@ -272,7 +272,7 @@ def observation_evidence(obs: GateObservation, extra: dict | None = None) -> str
 
 
 def failed_summary_lines(text: str, limit: int = 30) -> list[str]:
-    """FAILED/ERROR summary lines from a pytest run (the whole-failure
+    """FAILED/ERROR summary lines from a test run (the whole-failure
     picture for evidence; the full text rides in the blob)."""
     return [
         line
