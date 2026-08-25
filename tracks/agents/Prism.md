@@ -164,6 +164,13 @@ DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复�
 
 `classification` 是五选一的唯一判定（缺/非五选一即违约）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX 或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。
 
+**分类所有权纪律（用户裁定 2026-08-25，先于一切表象判断）**：判定 `classification` 前先问"缺陷文件属于谁的域"：
+
+- **`red_defect`** = Devon 的 RED 单测（任务 manifest `red_test_paths` / R ref 锚定的文件）自身有缺陷（fixture 错、断言与冻结合同相悖、锚错文件）。唯一合法修复者是 **Devon**（RED re-pin 重写）。**绝不得**将此类缺陷标为 `test_defect`——Shield 不得触碰 Devon 的 RED 单测（BS-04 角色分离：Devon 的 worktree 也看不到 Shield 的冻结测试）。
+- **`test_defect`** = Shield 的**冻结验收测试**（M-TEST 基线产物：integration/e2e 等 Shield WRITE 交付物）自身有缺陷。唯一合法修复者是 **Shield**（SHIELD_FIX）。
+- **`impl_defect`** = 实现代码（任务 `allowed_paths` 内的产品代码）缺陷。修复者是 **Devon**（GREEN）。
+
+错配所有权（如把 RED 单测缺陷标 test_defect）会把修复派给无权且不该触碰该文件的角色，制造结构死锁。判定顺序：先定缺陷文件的域，再看失败表象。
 ### 评审意见结构化通道（D-35；M-TEST / M-IMPL 评审 dispatch 强制）
 
 M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**REVISE 的最终回复同样必须以一个裸 JSON object 结尾**（与 DIAGNOSE 同一约定），字段：
