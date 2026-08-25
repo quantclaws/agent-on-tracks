@@ -246,6 +246,8 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 
 ## 8. AC Coverage
 
+锚点归属（task graph schema v2，interfaces §5 IF-IMPL-007 / architecture §4.1）：每行 `test` 列的 **integration 项**是可由 task 声明转绿的验收锚点（进入对应落地任务的 `acceptance_refs`，commit 期并集闭合校验）；**e2e 项**是终态覆盖锚点，由 ISLAND_GATE_2/FULL 全量兜底，不写入任何 task 的验收声明——混合行（integration + e2e）的验收归属只看 integration 项。
+
 | AC id | layer | test | IF |
 |---|---|---|---|
 | AC-FR0256-01 | integration + e2e | tests/integration/test_phase0_binding.py::test_gap_acs_bound_to_real_collected_nodes + tests/e2e/test_v07_journey.py::test_v07a_journey_phase0_to_closure | IF-PHASE-001 |

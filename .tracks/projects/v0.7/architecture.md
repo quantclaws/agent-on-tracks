@@ -32,6 +32,7 @@ sha:
 - `checks/trace.py` 与 ISLAND_GATE_2 增强为 candidate-bound closure；`executor/demo_host.py` 在真实安装路径创建最小宿主并完成双宿主 9 类 fail-closed 演证。
 - EVENT_TYPES 追加 `phase0.*`、`guard.parity`、`authenticity.judged`、`mutation.*`、`demo.equivalence`、`failclosed.*`；COMMAND_KINDS 追加 `phase0_validate`、`check_guard_parity`、`mutation_verify`、`demonstrate_failclosed`。
 - registry 冻结 `.githooks/pre-commit` 去除 `--exit-zero` 并与 CI scope 对齐的目标形态；当前软 hook 是 Phase 0 的已知 mismatch 输入，违规清零后由 Runtime `deploy_guard_configs` 更新/激活。`pyproject.toml` 注册 `integration`/`e2e` marks。
+- 【R 修订（lineage 回滚重入）】冻结 task graph schema v2 层分家合同（interfaces §5 IF-IMPL-007）：tasks.json 根 `"schema": 2`、每 task 显式 `unit_refs`/`acceptance_refs` 分家（acceptance 仅 integration 层）、§8 e2e 目标为 ISLAND_GATE_2/FULL 兜底的终态锚点不进 task 验收声明、commit 期 integration 锚点闭合 fail-closed。该合同由本 run M-IMPL PLANNING 轮 Prism findings（B50/#65、B52/#68）裁定并已由 Runtime 三层机器强制（parse/commit/GREEN 门）；本修订将其从实现事实提升为设计合同。触发本次重入的 TASK_REVIEW lineage 失败（G trailers 与不可变 R lineage 不匹配）按 B57 语义路由 awaiting=rollback → Human 批准丢弃 M-IMPL 进度 → `trac recover` 重回 M-DESIGN；R refs/G commits 不可变使重试必然确定性复败，该恢复边界是既有 RGR machine contract 的运行时修正，不改变 v0.7-A 模块边界、事件封闭集与 IF 集合。
 
 ## 1. 模块边界
 
@@ -279,6 +280,8 @@ version = 1
 ```
 
 `project.py` loader 与 `trac validate` 必须验证该段；未知 id/version fail-closed。`framework="pytest"` 仅是 adapter-owned contract data，kernel/executor 不解释。integration/e2e collect/run/cwd 仍由 `.tracks/projects/project.toml` 唯一拥有。
+
+**任务图 schema v2（`.tracks/projects/{ver}/tasks.json`，IF-IMPL-007）**：根标记 `"schema": 2`（真整数，否则 parse fail-closed）；每 task 声明 `unit_refs`（tests/unit/ RED 义务，可空）与 `acceptance_refs`（tests/integration/ 验收锚点，非空），遗留 `test_refs` 拒收，错层路径 parse 拒收。commit 期校验全体 `acceptance_refs` 并集覆盖 §8 全部 integration 行目标（缺口 fail-closed，PRISM_PLAN 领域）；GREEN 门按声明锚点解析（integration inventory 缺失 fail-closed + §8 cross-check）。§8 e2e 行目标是 ISLAND_GATE_2/FULL 兜底的终态覆盖锚点，不进入任何 task 的 acceptance_refs——混合行的验收归属只看 integration 项。tasks.md 是 Runtime 确定性投影，非校验来源。
 
 ### 4.2 Canonical quality guard registry
 

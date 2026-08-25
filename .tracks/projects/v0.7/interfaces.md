@@ -608,7 +608,16 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-IMPL-006 三 worktree 方案合同（继承 IF-006）
 
-### IF-IMPL-007 tasks.json/tasks.md 真相源合同（继承 IF-006）
+### IF-IMPL-007 tasks.json/tasks.md 真相源合同（继承 IF-006；v0.7 冻结 task graph schema v2 层分家合同）
+
+**modules**: executor/taskgraph.py（parser/validator）、executor/m_impl_runtime.py（commit 期闭合与 GREEN 门锚点解析）、executor/test_select.py（SELECT_TASK 消费）——跨模块合同。
+
+- **schema v2 根标记**：tasks.json 根对象携带 `"schema": 2`（真整数；bool/float/其它值 parse 期 fail-closed）。每个 task 必须显式声明两个测试锚点字段，遗留合并字段 `test_refs` 在 schema 2 下拒收：`unit_refs`（`tests/unit/` 节点，Devon RED 义务，可为空列表）与 `acceptance_refs`（`tests/integration/` 节点，验收锚点，非空）。错层路径 parse 期拒收（unit_refs 不在 tests/unit/ 或 acceptance_refs 不在 tests/integration/ 均为 parse error）。
+- **schema 1 遗留映射**：无根标记的旧图保持遗留 `test_refs` 必填，按 `tests/unit/` 前缀路由为 unit_refs/acceptance_refs，replay 语义不变。
+- **锚点归属（B52/#68）**：§8 行内的 e2e 层目标（`tests/e2e/` 路径）是终态覆盖锚点，由 ISLAND_GATE_2/FULL 全量兜底，**绝不**写入任何 task 的 `acceptance_refs`；混合行（integration + e2e）的验收归属只看其 integration 项——本 task 落地后必须转绿的锚点即其声明的 integration 节点。
+- **commit 期闭合**：全体任务 `acceptance_refs` 并集必须覆盖 §8 全部 integration 行目标（NODE 条目精确绑定自身、FILE 条目绑定整文件、裸文件名归一化到 `tests/integration/` 下；声明一个 NODE 不豁免其文件内兄弟节点）；缺口在 taskgraph commit 期 fail-closed，属 PRISM_PLAN 领域。
+- **GREEN 门消费**：task 变绿子集 = targeted unit（R commit manifest + GREEN-touched unit 文件）+ 声明的 acceptance_refs 解析结果（锚点在 integration collect inventory 中必须可解析，缺失 fail-closed，并经 §8 cross-check）。
+- **tasks.md**：由 Runtime 从 tasks.json 确定性生成的投影（`Unit refs`/`Acceptance refs` 分行），不作为校验来源。
 
 ### IF-DEVON-001 Devon agent 与 manifest 越界审计合同（继承 IF-006）
 
