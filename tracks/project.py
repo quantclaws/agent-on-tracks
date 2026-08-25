@@ -377,19 +377,24 @@ def _build_adapter(data: dict) -> AdapterDeclaration | None:
     version = raw.get("version")
     if (
         not isinstance(adapter_id, str)
-        or not adapter_id.strip()
         or not isinstance(protocol, str)
-        or not protocol.strip()
         or not isinstance(version, int)
         or isinstance(version, bool)
-        or adapter_id.strip() != _ADAPTER_ID
-        or protocol.strip() != _ADAPTER_PROTOCOL
+    ):
+        return None
+    adapter_id = adapter_id.strip()
+    protocol = protocol.strip()
+    if (
+        not adapter_id
+        or not protocol
+        or adapter_id != _ADAPTER_ID
+        or protocol != _ADAPTER_PROTOCOL
         or version != _ADAPTER_VERSION
     ):
         return None
     return AdapterDeclaration(
-        id=adapter_id.strip(),
-        protocol=protocol.strip(),
+        id=adapter_id,
+        protocol=protocol,
         version=version,
     )
 
