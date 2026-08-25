@@ -3257,6 +3257,17 @@ class MImplRuntimeMixin:
         if reason is None and not isinstance(diff, str):
             # Fail-closed fallback: Devon outcomes sometimes omit `diff_ref`.
             # Reconstruct it from the working tree using `changed_paths`.
+            # B58 (#74): GREEN must reconstruct from the union of every green
+            # outcome of the current RGR cycle -- impl_defect re-dispatches
+            # report only their own delta, so the last outcome alone
+            # under-captures the cycle's impl diff (run 01M0S0FQ T-001:
+            # dispatch 1 changed tracks/project.py, dispatch 3 changed
+            # tracks/adapters/base.py, G captured only base.py and the loader
+            # impl never reached any commit).
+            if phase == "green":
+                union = self._green_cycle_changed_paths(state.current_task_id)
+                if union:
+                    outcome = {**(outcome or {}), "changed_paths": union}
             generated = self._generate_diff_from_changed_paths(outcome)
             if generated is None:
                 return f"Devon {phase.upper()} outcome has no captured diff_ref", diff
@@ -3264,6 +3275,32 @@ class MImplRuntimeMixin:
         if reason is None and not diff.strip():
             return f"Devon {phase.upper()} captured diff is empty", diff
         return reason, diff
+
+    def _green_cycle_changed_paths(self, task_id: str | None = None) -> list[str] | None:
+        """B58 (#74): changed_paths union across every devon GREEN outcome of
+        the current RGR cycle (events after the last red.checkpointed; that
+        ref bounds the lineage the eventual G binds -- B56). The union only
+        widens the ``git diff -- <paths>`` filter of the working-tree
+        reconstruction: content still comes from the real tree, so a path a
+        later dispatch reverted contributes no diff lines.
+
+        Prism OOB A02: task_id filtering makes the task boundary explicit
+        (task.started/red.checkpointed already bound it implicitly); outcomes
+        without a task_id are legacy-shape and stay included."""
+        paths: set[str] = set()
+        for ev in reversed(list(self.store.events(self.run_id))):
+            if ev.type in ("red.checkpointed", "task.started"):
+                break
+            if (
+                ev.type == "outcome.received"
+                and ev.payload.get("role") == "devon"
+                and ev.payload.get("phase") in (None, "green")
+                and ev.payload.get("task_id") in (None, task_id)
+            ):
+                changed = ev.payload.get("changed_paths")
+                if isinstance(changed, list):
+                    paths.update(p for p in changed if isinstance(p, str) and p)
+        return sorted(paths) or None
 
     def _generate_diff_from_changed_paths(self, outcome: dict | None) -> str | None:
         if not outcome:

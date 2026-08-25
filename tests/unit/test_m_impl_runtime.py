@@ -1029,6 +1029,197 @@ def test_r_lineage_attempt_falls_back_to_logical_attempt(tmp_path):
     assert executor._r_lineage_attempt(task["task_id"], "", 2) == 2
 
 
+def test_green_commit_reconstructs_diff_from_cycle_outcome_union(tmp_path):
+    """B58 (#74): GREEN's working-tree diff reconstruction must union the
+    changed_paths of EVERY green outcome of the current RGR cycle, not just
+    the last one. impl_defect re-dispatches report only their own delta (run
+    01M0S0FQ T-001: dispatch 1 changed tracks/project.py, dispatch 3 changed
+    tracks/adapters/base.py; the reconstructed G captured only base.py and
+    the loader impl never reached any commit -- no gate caught it)."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    task["scope_boundary"] = "tracks/app.py, tracks/project.py"
+    store.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {"task_count": 1, "tasks": [task], "digest": "graph"},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task["task_id"],
+            "task": task,
+            "manifest": {
+                "task_id": task["task_id"],
+                "allowed_paths": [
+                    "tracks/app.py",
+                    "tracks/project.py",
+                    "tests/unit/test_app.py",
+                ],
+                "forbidden_paths": [".tracks/projects/**"],
+            },
+        },
+    )
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+
+    # Dispatch 1's impl (no diff_ref -- OpenCode backend contract, B55) is
+    # still sitting uncommitted in the main tree when dispatch 2 is re-sent
+    # after a GREEN_GATE impl_defect failure.
+    project = repo / "tracks" / "project.py"
+    project.parent.mkdir(parents=True, exist_ok=True)
+    project.write_text("ADAPTER = 'reference-pytest'\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/project.py"], red.payload["r_sha"]),
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "impl_defect", "attempt": 1, "reason": "TypeError in gate run"},
+    )
+    app = repo / "tracks" / "app.py"
+    app.write_text("x = 1\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"]),
+    )
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    # The union reconstruction captured BOTH dispatches' files in G.
+    changed = _git(repo, "show", "--name-only", "--format=", green.payload["g_sha"])
+    assert "tracks/project.py" in changed
+    assert "tracks/app.py" in changed
+
+
+def test_green_cycle_changed_paths_stops_at_last_checkpoint(tmp_path):
+    """B58 (#74): the union is bounded by the last red.checkpointed -- green
+    outcomes from a superseded (red_defect-retried) cycle must not leak into
+    the new cycle's diff reconstruction."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/stale.py"]),
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 1, "r_sha": "R-live"},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], "R-live"),
+    )
+    assert executor._green_cycle_changed_paths() == ["tracks/app.py"]
+    # No green outcome in the current cycle -> None (caller falls back to the
+    # last outcome's own changed_paths).
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 2, "r_sha": "R-live-2"},
+    )
+    assert executor._green_cycle_changed_paths() is None
+
+
+def test_green_union_beats_no_change_when_earlier_dispatch_left_changes(tmp_path):
+    """B58 (#74) / Prism OOB A01: a last outcome declaring no_change_reason
+    must NOT short-circuit into green.no_change when an earlier green dispatch
+    of the same cycle still has uncommitted worktree changes -- the union
+    reconstruction surfaces a non-empty diff, so the real change gets
+    committed instead of being silently dropped."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    # Dispatch 1 changed tracks/app.py (still uncommitted in the tree).
+    app = repo / "tracks" / "app.py"
+    app.parent.mkdir(parents=True, exist_ok=True)
+    app.write_text("x = 1\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"]),
+    )
+    # Dispatch 2 declares no change of its own.
+    no_change = _structured_outcome("green", [], red.payload["r_sha"])
+    no_change["no_change_reason"] = "already implemented"
+    store.append("RUN", "v0.5", "outcome.received", no_change)
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    events = list(store.events("RUN"))
+    assert not any(ev.type == "green.no_change" for ev in events)
+    green = [ev for ev in events if ev.type == "green.committed"][-1]
+    changed = _git(repo, "show", "--name-only", "--format=", green.payload["g_sha"])
+    assert "tracks/app.py" in changed
+
+
 def test_red_checkpoint_retry_uses_next_public_attempt(tmp_path):
     repo = _repo(tmp_path)
     store, _ = _started_task_store(repo)
