@@ -127,4 +127,13 @@ def run_mutation_experiment(
     run_nodes: Callable[[Path, Sequence[str]], Mapping[str, TestRunResult]],
     close_worktree: Callable[[Path], None],
 ) -> MutationExperimentResult:
-    raise NotImplementedError("IF-MUTATION-002")
+    """Execute an isolated mutation experiment (IF-MUTATION-002).
+
+    Delegates to the implementation in ``mutation_experiment.py`` to keep the
+    facade thin.  The facade is frozen -- successors must not change it.
+    """
+    from tracks.executor.mutation_experiment import run_mutation_experiment as _impl
+
+    return _impl(
+        manifest, repo, open_worktree, apply_patch, run_nodes, close_worktree,
+    )
