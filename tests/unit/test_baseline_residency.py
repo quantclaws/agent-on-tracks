@@ -97,6 +97,22 @@ def test_baseline_digest_fresh_residency_has_no_reference(tmp_path):
     assert _gate(store)._last_baseline_digest() == ""
 
 
+def test_baseline_digest_recovered_reentry_is_boundary(tmp_path):
+    """B51 (#67): stage.recovered(M-IMPL) is a residency boundary -- a
+    prior current freeze from the abandoned cycle is not referenced."""
+    store = _store_with(
+        [
+            ("baseline.frozen", {"status": "current", "digest": "D-abandoned"}),
+            ("stage.rolled_back", {"from_stage": "M-IMPL", "to_stage": "M-DESIGN"}),
+            ("stage.entered", {"stage": "M-DESIGN"}),
+            ("stage.exited", {"stage": "M-DESIGN"}),
+            ("stage.recovered", {"stage": "M-IMPL", "from_stage": "M-DESIGN"}),
+        ],
+        tmp_path,
+    )
+    assert _gate(store)._last_baseline_digest() == ""
+
+
 def test_human_retry_exits_needs_attention_to_baseline():
     """retry at M-IMPL/NEEDS_ATTENTION re-enters BASELINE (reconcile
     confirmation); decide() then issues freeze_baseline again."""

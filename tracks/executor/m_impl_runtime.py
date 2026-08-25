@@ -841,14 +841,20 @@ class MImplRuntimeMixin:
         the operator reconciles (human.retry -> BASELINE) the re-freeze must
         anchor to reality, and reconcile itself legitimately moves the tree
         (operator fix commits). Scope the scan to events after the latest
-        ``stage.entered(M-IMPL)`` and skip stale freezes."""
+        M-IMPL residency boundary (stage.entered or -- B51 (#67) -- the B32
+        stage.recovered forward-recovery re-entry, which reuses the
+        _on_stage_entered reducer under a different event type) and skip
+        stale freezes."""
         digest = ""
         for ev in reversed(list(self.store.events(self.run_id))):
             if ev.type == "baseline.frozen":
                 if ev.payload.get("status") == "current":
                     digest = str(ev.payload.get("digest") or "")
                 # stale freezes: conflict observations, not references
-            elif ev.type == "stage.entered" and ev.payload.get("stage") == "M-IMPL":
+            elif (
+                ev.type in ("stage.entered", "stage.recovered")
+                and ev.payload.get("stage") == "M-IMPL"
+            ):
                 # Hit the residency boundary: the digest now held is the
                 # latest current freeze of THIS residency ('' for fresh).
                 return digest
