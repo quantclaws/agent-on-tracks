@@ -412,7 +412,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter"]
-config_digest = "sha256:3ec206b42c0e8fb4695d0ec34f484591f7ca1c7d25b95e3120988c71c99f5c24"
+config_digest = "sha256:5ccdc0ea96411dce6bb6927889e2e9c6f3f49f93d11b8b585d59e6d5934b293b"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600
