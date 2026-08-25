@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 TEST_RESULT_PROTOCOL = "tracks-test-result"
 TEST_RESULT_PROTOCOL_VERSION = 1
@@ -36,6 +36,7 @@ class AdapterResultError(Exception):
     """IF-ADAPTER-001 malformed or inexact normalized result."""
 
 
+@runtime_checkable
 class Adapter(Protocol):
     adapter_id: str
     protocol: str
