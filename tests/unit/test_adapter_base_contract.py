@@ -172,3 +172,34 @@ def test_project_loader_absent_adapter_remains_none(tmp_path):
     )
     contract = load_contract(tmp_path)
     assert contract.adapter is None
+
+
+# AC-FR0264-01@v0.7 TRACKS-TRACE loader exposes ONLY tracks-test-result v1
+# (task: "project loader 只向 Runtime 暴露 tracks-test-result v1，不引入宿主
+# 框架分支"): an unknown id/protocol/version must fail closed at the loader
+# seam, never degrade into a survivable AdapterDeclaration the Runtime could
+# guess at.  RED: the loader surface is absent today, so ``contract.adapter``
+# raises AttributeError before known-ness can be enforced (contract token gap).
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        'id = "unknown-ruby"\n',
+        'protocol = "some-other-protocol"\n',
+        "version = 999\n",
+    ],
+)
+def test_project_loader_unknown_adapter_declaration_fails_closed(tmp_path, declaration):
+    if declaration.startswith("id"):
+        mutated = _body_with_adapter().replace('id = "reference-pytest"\n', declaration)
+    elif declaration.startswith("protocol"):
+        mutated = _body_with_adapter().replace('protocol = "tracks-test-result"\n', declaration)
+    else:
+        mutated = _body_with_adapter().replace("version = 1\n", declaration)
+    _write_contract(tmp_path, mutated)
+    contract = load_contract(tmp_path)
+    # Faithful fail-closed surface: an unknown declaration must NOT be coerced
+    # into, or faithfully surfaced as, a tracks-test-result v1 adapter the
+    # Runtime could consume; it must fail closed at the loader seam (None).
+    # RED: the loader surface is absent today, so ``contract.adapter`` raises
+    # AttributeError before known-ness can be enforced (contract token gap).
+    assert contract.adapter is None
