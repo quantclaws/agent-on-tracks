@@ -867,6 +867,113 @@ def test_refactor_no_change_to_task_review():
 # -- TASK_REVIEW -> PRISM_FINAL -> TASK_DONE ---------------------------------
 
 
+LINEAGE_FAIL = (
+    "verdict.failed",
+    {
+        "check": "lineage",
+        "reason": "G trailers do not match the immutable R lineage",
+        "task_id": "T1",
+        "attempt": 1,
+    },
+)
+
+
+def _at_task_review():
+    """Full prefix through REFACTOR_GATE -> TASK_REVIEW (refactor committed)."""
+    return [
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        GREEN_COMMITTED,
+        DEVON_REFACTOR_DISPATCH,
+        DEVON_REFACTOR_DONE,
+        REFACTOR_GATE_CMD,
+        REFACTOR_COMMITTED,
+    ]
+
+
+def test_task_review_lineage_failure_parks_for_rollback():
+    """B57 (#73): verdict.failed(lineage) at TASK_REVIEW parks awaiting Human
+    rollback to M-DESIGN. The old else-branch (stay in substate + consume
+    attempt) re-verified the same immutable green.committed forever: the G was
+    produced by pre-B56 runtime code (Tracks-Attempt bound the logical attempt
+    while its R lived at a different ref slot, run 01M0S0FQ T-001), so no
+    retry can ever change the verdict."""
+    s = state_of(*_at_task_review())
+    assert s.substate == "TASK_REVIEW"
+    s2 = state_of(*_at_task_review(), TASK_REVIEW_CMD, LINEAGE_FAIL)
+    assert s2.status == "awaiting_human"
+    assert s2.awaiting == "rollback"
+    assert s2.return_target == "M-DESIGN"
+    assert s2.substate == "TASK_REVIEW"
+    assert decide(s2) is None  # halted: only trac approve resolves the gate
+
+
+def test_task_review_lineage_failure_retry_loop_folds_to_rollback():
+    """B57 (#73): the incident replay -- interleaved human.retry (plain and
+    --clear-evidence) events between lineage failures -- still folds to the
+    rollback park: the trailing verdict.failed(lineage) wins and the operator
+    is offered the approve-rollback exit instead of the eternal loop."""
+    s = state_of(
+        *_at_task_review(),
+        TASK_REVIEW_CMD,
+        LINEAGE_FAIL,
+        ("human.retry", {"actor": "operator", "clear_evidence": False}),
+        TASK_REVIEW_CMD,
+        LINEAGE_FAIL,
+        ("human.retry", {"actor": "operator", "clear_evidence": True}),
+        TASK_REVIEW_CMD,
+        LINEAGE_FAIL,
+    )
+    assert s.status == "awaiting_human"
+    assert s.awaiting == "rollback"
+    assert s.return_target == "M-DESIGN"
+
+
+def test_task_review_lineage_rollback_approval_to_returned():
+    """B57 (#73): Human approves the lineage rollback -> RETURNED ->
+    rollback_stage(M-DESIGN); re-entry then goes through trac recover
+    (stage.recovered, B53 residency boundary) with the fixed runtime."""
+    s = state_of(
+        *_at_task_review(),
+        TASK_REVIEW_CMD,
+        LINEAGE_FAIL,
+        ("human.approval", {"actor": "operator"}),
+    )
+    assert s.substate == "RETURNED"
+    assert s.return_target == "M-DESIGN"
+    cmd = decide(s)
+    assert cmd.kind == "rollback_stage"
+    assert cmd.params["to_stage"] == "M-DESIGN"
+
+
+# -- TASK_REVIEW -> PRISM_FINAL -> TASK_DONE ---------------------------------
+
+
 def test_task_review_pass_to_prism_final():
     """verdict.passed(task_review) -> PRISM_FINAL."""
     s = state_of(

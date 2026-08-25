@@ -328,6 +328,46 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         _consume_attempt(s)
 
 
+def _route_parked_failure(s: State, check: str) -> None:
+    """Failures that park the run for the Human instead of auto-routing.
+
+    Extracted from ``_route_m_impl_gate_failure`` for cognitive-complexity
+    compliance (CCR001); behavior is unchanged.
+    """
+    if check == "lineage":
+        # B57 (#73): a lineage failure means the recorded RGR lineage (R ref +
+        # G trailers + event sequence) cannot be jointly proven. R refs and G
+        # commits are immutable, so re-running the gate re-verifies the same
+        # events and fails deterministically forever -- the old else-branch
+        # (stay in substate + consume attempt) parked TASK_REVIEW in an
+        # eternal re-verification loop (run 01M0S0FQ: three identical
+        # verdict.failed(lineage) rounds survived both `trac retry` and
+        # `retry --clear-evidence`). The G was produced by defective runtime
+        # code (pre-B56 attempt-slot binding): the recorded lineage is
+        # untrustworthy, not reworkable in place. Per the stop-fix-restart
+        # doctrine, park for the Human to approve discarding M-IMPL progress
+        # (rollback to M-DESIGN) and re-enter via `trac recover` with the
+        # fixed runtime -- mirroring the ac_gap/spec_gap awaiting=rollback
+        # semantics (FR-0150); `trac approve` already accepts M-IMPL.
+        s.status = "awaiting_human"
+        s.awaiting = "rollback"
+        s.return_target = "M-DESIGN"
+        _reset_review(s)
+    elif check == "contract_error":
+        # B49 (#64): a gate-contract mismatch (planning convention vs runtime
+        # enforcement, or an unusable Archer-owned contract) cannot be
+        # reliably auto-attributed. The 2026-08-24 stub_gap auto-rollback
+        # loop (run 01M0S0FQ, three M-DESIGN rollbacks for runtime-side
+        # defects) proved routing it into DIAGNOSE->M-DESIGN sends runtime
+        # bugs to be "fixed" in a design that is not defective. Park for the
+        # operator: human.retry after the underlying fix re-dispatches the
+        # gate from the current substate (fresh attempt budget, no rollback,
+        # no Devon dispatch burned).
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+        _reset_review(s)
+
+
 def _route_m_impl_gate_failure(s: State, check: str) -> None:
     """Gate failure routing (non-DIAGNOSE substates)."""
     if check == "criteria_pack_mismatch":
@@ -369,19 +409,8 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
         _reset_review(s)
-    elif check == "contract_error":
-        # B49 (#64): a gate-contract mismatch (planning convention vs runtime
-        # enforcement, or an unusable Archer-owned contract) cannot be
-        # reliably auto-attributed. The 2026-08-24 stub_gap auto-rollback
-        # loop (run 01M0S0FQ, three M-DESIGN rollbacks for runtime-side
-        # defects) proved routing it into DIAGNOSE->M-DESIGN sends runtime
-        # bugs to be "fixed" in a design that is not defective. Park for the
-        # operator: human.retry after the underlying fix re-dispatches the
-        # gate from the current substate (fresh attempt budget, no rollback,
-        # no Devon dispatch burned).
-        s.status = "awaiting_human"
-        s.awaiting = "escalation"
-        _reset_review(s)
+    elif check in ("lineage", "contract_error"):
+        _route_parked_failure(s, check)
     elif check == "verification_failed":
         # Runtime acceptance of a verification-only task failed (user ruling
         # 2026-08-15): the pre-implemented contract did not hold. No blind
