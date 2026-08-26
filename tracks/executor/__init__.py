@@ -11,6 +11,9 @@ from tracks.effects import FakeBackend
 from . import mutation_manifest  # noqa: F401
 from .executor import Executor, git
 
+# Expose individual functions at the package level (executor composition).
+from .mutation_manifest import build_manifest, validate_manifest  # noqa: F401
+
 FakeAgent = FakeBackend  # v0.1 compatibility alias
 
 __all__ = ["Executor", "FakeAgent", "FakeBackend", "git"]
