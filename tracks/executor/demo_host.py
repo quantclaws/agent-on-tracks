@@ -11,6 +11,7 @@ from tracks.executor.guard_registry import (
     load_guard_registry,
     validate_guard_registry,
 )
+from tracks.project import load_contract
 
 FAIL_CLOSED_SCENARIOS = (
     "broad_mutation",
@@ -133,6 +134,15 @@ def create_demo_host(
     # validation requires the config files to be present; provision the demo
     # project contract so parity is real rather than silently deferred.
     _provision_project_config(asset_dir, target_dir)
+    # The adapter id is consumed from the host project contract's [adapter]
+    # declaration, never from a zone literal (IF-ADAPTER-003): the executor
+    # zone stays language neutral and simply follows whatever the host
+    # contract declares (AC-FR0264-04).
+    contract = load_contract(target_dir)
+    if contract.adapter is None:
+        raise ValueError(
+            "demo host contract declares no known [adapter] id"
+        )
     errors = validate_guard_registry(registry, target_dir)
     if errors:
         raise ValueError(f"demo guard registry invalid: {errors}")
@@ -155,7 +165,7 @@ def create_demo_host(
         registry_digest=registry.digest,
         hooks_path=".githooks",
         ci_binding="declared",
-        adapter_id="reference-pytest",
+        adapter_id=contract.adapter.id,
     )
 
 
@@ -198,13 +208,13 @@ def synthesize_scenario_fixture(
 
     Produces a replayable ``ScenarioFixture`` describing the manifest/config
     reference and the expected fail-closed block reason for the given scenario
-    against the demo-pytest host.
+    against the demo host.
     """
     config_ref = f".tracks/demo/manifest.{scenario}.json"
     title = scenario.replace("_", " ")
     return ScenarioFixture(
         scenario=scenario,
-        host=host_repo.name or "demo-pytest",
+        host=host_repo.name or "demo-host",
         manifest_or_config_ref=config_ref,
         expected_block_reason=f"blocked on {scenario} for {title}",
     )
