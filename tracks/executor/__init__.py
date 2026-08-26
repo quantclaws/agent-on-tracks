@@ -16,5 +16,12 @@ from .mutation_manifest import build_manifest, validate_manifest  # noqa: F401
 
 FakeAgent = FakeBackend  # v0.1 compatibility alias
 
-__all__ = ["Executor", "FakeAgent", "FakeBackend", "build_manifest",
-           "git", "mutation_manifest", "validate_manifest"]
+__all__ = [
+    "Executor",
+    "FakeAgent",
+    "FakeBackend",
+    "build_manifest",
+    "git",
+    "mutation_manifest",
+    "validate_manifest",
+]
