@@ -78,7 +78,13 @@ def _wheel_sha256(wheel: Path, asset_dir: Path) -> str:
 
 def _provision_project_config(asset_dir: Path, target_dir: Path) -> None:
     """Copy the demo project-contract config files into the target repo so
-    guard-registry validation has real on-disk config bytes to compare."""
+    guard-registry validation has real on-disk config bytes to compare.
+
+    ``architecture.md`` is deliberately absent: ``create_demo_host`` performs
+    the single authoritative byte-deployment of the demo registry to the
+    canonical landing point ``.tracks/projects/v0.1/architecture.md``, so this
+    helper only provisions the contract configs that feed parity validation.
+    """
 
     def _copy(name: str, rel: Path | str) -> None:
         src = asset_dir / name
@@ -94,7 +100,6 @@ def _provision_project_config(asset_dir: Path, target_dir: Path) -> None:
         "tracks-project.toml",
         Path(".tracks") / "projects" / "project.toml",
     )
-    _copy("architecture.md", ".tracks/projects/v0.1/architecture.md")
 
 
 def create_demo_host(
