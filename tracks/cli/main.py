@@ -7,6 +7,7 @@ the holder PID on stderr and writes no events.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -334,6 +335,76 @@ def _read_assignment_overlay(path: str) -> dict:
     return overlay
 
 
+def _ls_tracks_py(repo: Path) -> list[str]:
+    """git 已跟踪 + 未跟踪 tracks/**/*.py（repo 相对路径）。
+
+    git 不可用/非仓库返回空列表，由调用方用目录遍历兜底。"""
+    try:
+        proc = git(
+            repo,
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "tracks/",
+            check=False,
+        )
+    except OSError:
+        return []
+    rels: list[str] = []
+    for rel in proc.stdout.splitlines():
+        rel = rel.strip()
+        if rel.endswith(".py") and "__pycache__" not in rel:
+            rels.append(rel)
+    return rels
+
+
+def _tracks_python_files(repo: Path) -> list[Path]:
+    """全部 tracks/**/*.py：跟踪 + 未跟踪（含在飞未提交——正是风险源）。"""
+    pkg = Path(repo) / "tracks"
+    if not pkg.is_dir():
+        return []
+    candidates: dict[str, Path] = {}
+    for rel in _ls_tracks_py(repo):
+        candidates[rel] = repo / rel
+    if not candidates:
+        # non-git fallback; recurse_symlinks=False keeps a stray symlink from
+        # pulling files outside the repo into the smoke set
+        for p in pkg.rglob("*.py", recurse_symlinks=False):
+            if "__pycache__" not in p.parts:
+                candidates[str(p.relative_to(repo))] = p
+    return sorted(p for p in candidates.values() if p.is_file())
+
+
+def _startup_smoke_error(repo: Path) -> tuple[str, list[str]] | None:
+    """#87 启动烟测：ast.parse 全部 tracks/**/*.py（含在飞未提交文件）。
+
+    只做语法级解析——不 import、不执行、不写字节码，不受 import 副作用影响。
+    覆盖 #87 现场：T-003 半成品增量（IndentationError）让 trac 本体
+    ImportError 无法启动。返回 ``(summary, broken_files)`` 或 None（全绿）。"""
+    broken: list[str] = []
+    for py in _tracks_python_files(repo):
+        try:
+            ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        except SyntaxError as exc:
+            broken.append(
+                f"{py.relative_to(repo)}: {exc.msg} (line {exc.lineno or 0})"
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            # review (f): unreadable/binary/damaged files must fail CLOSED —
+            # if syntax cannot be verified the loop must not start
+            broken.append(f"{py.relative_to(repo)}: cannot read ({type(exc).__name__}): {exc}")
+    if not broken:
+        return None
+    summary = (
+        "trac run 拒绝启动：tracks/** 存在语法损坏文件（#87 启动烟测）\n"
+        + "\n".join(f"  - {b}" for b in broken)
+        + "\n修复指引：git checkout HEAD -- <files> 后重启，GREEN_GATE "
+        "会以 impl_defect 重做。"
+    )
+    return summary, broken
+
+
 def cmd_run(repo: Path, *args: str) -> int:
     try:
         overlay_path, max_dispatches = _parse_run_args(args)
@@ -354,6 +425,21 @@ def cmd_run(repo: Path, *args: str) -> int:
                 return 0
         return _err("no active run; `trac start <version>` first")
     with writer_lock(home):
+        smoke = _startup_smoke_error(repo)
+        if smoke is not None:
+            # #87：坏树立即停车，进 loop 前落 loop.aborted 审计事件
+            # （screen 无重定向时 stdout 证据会丢，同 B85/#85 的 append 模式，
+            # writer_lock 内执行）。version 沿用 executor 的解析方式。
+            summary, broken_files = smoke
+            version = _resolve_run_version(store.state(run_id))
+            store.append(
+                run_id,
+                version,
+                "loop.aborted",
+                {"reason": "startup_smoke", "detail": summary, "files": broken_files},
+            )
+            print(summary, file=sys.stderr, flush=True)
+            return 1
         try:
             state = Executor(
                 store,
