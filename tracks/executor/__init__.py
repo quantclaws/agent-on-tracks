@@ -6,8 +6,8 @@ The deterministic FakeBackend lives in tracks/effects (the effects boundary);
 
 from tracks.effects import FakeBackend
 
-# Import mutation_manifest helper so that hasattr(tracks.executor,
-# "mutation_manifest") works for the R test.
+# Re-export the mutation_manifest helper module at package level so it is
+# stably discoverable via the executor composition surface.
 from . import mutation_manifest  # noqa: F401
 from .executor import Executor, git
 
