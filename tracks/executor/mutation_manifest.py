@@ -69,41 +69,77 @@ def validate_manifest(manifest: Mapping, patch_paths: Sequence[str | Path]):
 
     patch_strs = [str(p) for p in patch_paths]
     if not patch_strs:
-        raise ValueError(
-            "no-op patch: no_selectable_diff_identity -- no patch paths"
-        )
+        raise ValueError("no-op patch: no_selectable_diff_identity -- no patch paths")
     # Detect empty patch files (0 bytes) as no-op patches.
     for p in patch_paths:
         try:
             if Path(p).stat().st_size == 0:
-                raise ValueError(
-                    f"no-op patch: no_selectable_diff_identity -- {p} is empty"
-                )
+                raise ValueError(f"no-op patch: no_selectable_diff_identity -- {p} is empty")
         except (OSError, FileNotFoundError):
             pass  # patch file may not be locally accessible; skip check
     # Check for test-node directories (unit/integration/e2e) but NOT test
     # assets (tests/assets/).  The frozen integration test expects
     # no-op detection to fire before the test-scope check for asset paths.
-    _TEST_NODE_PREFIXES = ("tests/unit/", "tests/integration/", "tests/e2e/",
-                           "tests/e2e_live/", "tests/counterexamples/")
-    _all_paths = list(patch_strs) + [
-        str(s) for s in manifest.get("allowed_change_scope", ())
-    ]
+    _TEST_NODE_PREFIXES = (
+        "tests/unit/",
+        "tests/integration/",
+        "tests/e2e/",
+        "tests/e2e_live/",
+        "tests/counterexamples/",
+    )
+    _all_paths = list(patch_strs) + [str(s) for s in manifest.get("allowed_change_scope", ())]
     for p_str in _all_paths:
         seg = p_str.replace("\\", "/")
-        if any(seg.startswith(prefix) or f"/{prefix}" in seg
-               for prefix in _TEST_NODE_PREFIXES):
+        if any(seg.startswith(prefix) or f"/{prefix}" in seg for prefix in _TEST_NODE_PREFIXES):
             raise ValueError(f"path {p_str} includes test scope")
+    _REQUIRED_KEYS = [
+        "ac",
+        "if_ref",
+        "candidate_digest",
+        "patch_digest",
+        "target_nodes",
+        "control_nodes",
+        "runner_identity",
+        "allowed_change_scope",
+    ]
+    target_nodes, control_nodes = _validate_manifest_structure(manifest, _REQUIRED_KEYS)
+
     return MutationManifest(
         protocol_version=manifest.get("protocol_version", MUTATION_PROTOCOL_VERSION),
         ac=manifest["ac"],
         if_ref=manifest["if_ref"],
         candidate_digest=manifest["candidate_digest"],
         patch_digest=manifest["patch_digest"],
-        target_nodes=tuple(manifest["target_nodes"]),
-        control_nodes=tuple(manifest["control_nodes"]),
+        target_nodes=target_nodes,
+        control_nodes=control_nodes,
         runner_identity=manifest["runner_identity"],
         allowed_change_scope=tuple(manifest["allowed_change_scope"]),
         expected_result=dict(manifest.get("expected_result", {})),
     )
 
+
+def _validate_manifest_structure(
+    manifest: Mapping,
+    required_keys: list[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate manifest structure: required fields, non-empty nodes, no overlap.
+
+    Returns (target_nodes, control_nodes) as tuples.
+    Raises ValueError for any structural violation.
+    """
+    for key in required_keys:
+        if key not in manifest:
+            raise ValueError(f"missing required manifest field {key!r}")
+
+    target_nodes = tuple(manifest["target_nodes"])
+    control_nodes = tuple(manifest["control_nodes"])
+
+    if not target_nodes:
+        raise ValueError("empty target_nodes: experiment must have at least one target node")
+    if not control_nodes:
+        raise ValueError("empty control_nodes: experiment must have at least one control node")
+    if set(target_nodes) & set(control_nodes):
+        raise ValueError(
+            f"overlapping target/control nodes: {set(target_nodes) & set(control_nodes)}"
+        )
+    return target_nodes, control_nodes
