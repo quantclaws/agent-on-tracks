@@ -8,7 +8,7 @@
       "deviated_clause": "IF-IMPL-004 resolution step 2: identity mismatch after Shield-fix repoint must fall back to the seq-latest red.checkpointed r_sha; Tracks-R must never carry a non-checkpoint sha",
       "minimal_deviation": "In Executor._r_lineage_r_sha return state.r_tree_identity directly when set, skipping red.checkpointed family resolution (the sealed run 01M0S0FQ T-013 bug shape)",
       "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
-      "observed": "killed -- AssertionError on green.payload['r_sha'] == latest red.checkpointed r_sha; the deviant build bound the repointed shield commit sha instead",
+      "observed": "killed -- AssertionError on the step-2 fallback G: payload r_sha == Shield fix commit 6b4ab182 instead of the seq-latest red.checkpointed r_sha 34ffdb40 (the strengthened test's phase-1 exact-match leg coincides with correct behaviour under this deviation, so the kill lands on the fallback clauses)",
       "status": "killed"
     },
     {
@@ -19,7 +19,25 @@
       "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed",
       "observed": "killed -- AssertionError 'no checkpoint family -> lineage fails closed': proof.r_before_g flipped to True while all three sub-checks stayed False",
       "status": "killed"
+    },
+    {
+      "id": "CE-3",
+      "patch": "tests/counterexamples/v0.7/ce3_step1_recency_overrides_exact_match.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 1: state.r_tree_identity exactly equal to a family member's red.checkpointed.r_sha makes THAT member the authoritative anchor -- including when it is not the seq-latest one",
+      "minimal_deviation": "In _r_lineage_r_sha delete the exact-match early return so resolution always yields the seq-latest family member r_sha regardless of an exact match",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+      "observed": "killed -- AssertionError 'step 1: an exact family match is the authoritative lineage anchor even when it is not the seq-latest checkpoint': the deviant build anchored the first green commit to the newest sibling sha dc5a751a instead of the matched older member",
+      "status": "killed"
     }
   ],
-  "restoration": "Both product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files."
+  "restoration": "All product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files.",
+  "probe_evidence_at_HEAD_c3c407d": {
+    "note": "Clause-by-clause public-exit probes of interfaces.md IF-IMPL-004 v0.7 extension against HEAD -- every observable clause is honoured by the implementation inherited from f638075, which is why both delta-classified R2 nodes pass and legal Red at M-TEST is structurally unattainable for test-plan §10 row 6 additions.",
+    "matrix": [
+      {"clause": "step 1 exact match authoritative (non-latest member)", "observed": "anchor = matched older member r_sha; green.committed payload + Tracks-R trailer + per-slot verify_lineage all consistent"},
+      {"clause": "step 2 mismatch falls back to seq-latest", "observed": "anchor = seq-latest family r_sha; fix-commit sha never appears in payloads or trailers"},
+      {"clause": "step 3 no checkpoints -> fail closed", "observed": "no G minted from anchorless claim; verify_lineage flags False"},
+      {"clause": "dedup keyed through corrected r_sha (visible exit)", "observed": "duplicate verbatim green claim mints no second G and leaves the recorded payload byte-stable"}
+    ]
+  }
 }

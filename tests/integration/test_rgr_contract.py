@@ -69,6 +69,19 @@ def _checkpoint_red(executor, store, command_id):
     )
 
 
+# A follow-up product delta over the already-committed tracks/app.py, used by
+# the second anchored green claim so consecutive GREENs never share one
+# new-file diff (the first new-file application is immutable history).
+_GREEN_UPDATE_DIFF = (
+    "diff --git a/tracks/app.py b/tracks/app.py\n"
+    "--- a/tracks/app.py\n"
+    "+++ b/tracks/app.py\n"
+    "@@ -1 +1,2 @@\n"
+    " IMPLEMENTED_IF = \"IF-IMPL-001\"\n"
+    "+LINEAGE_ANCHOR = \"IF-IMPL-004\"\n"
+)
+
+
 def _events_as_dicts(store):
     return [
         {"type": e.type, "payload": dict(e.payload), "seq": e.seq}
@@ -126,17 +139,24 @@ def test_m_impl_red_classification_excludes_stub_tokens(trac, event_log):
 @pytest.mark.integration
 # AC-FR0120-02@v0.5 TRACKS-TRACE G binds the latest red.checkpointed anchor after Shield fix overwrite
 def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_repo):
-    """B91 (interfaces §5 IF-IMPL-004, v0.7 extension): in the test_defect
-    overwrite scenario ``_on_test_committed`` re-points
-    ``state.r_tree_identity`` at the sanctioned Shield fix commit, so the
-    identity no longer exactly matches any ``red.checkpointed`` r_sha. The G
-    lineage anchor must then be resolved through the task's checkpoint event
-    family -- exact match authoritative, mismatch falls back to the family's
-    seq-latest ``red.checkpointed`` r_sha -- never the fix commit itself, or
-    ``Tracks-R`` carries a non-checkpoint sha and verify_lineage dead-ends
-    into awaiting=rollback (sealed run 01M0S0FQ T-013). Asserted only through
-    public exits: store command dispatch, ``red.checkpointed`` /
-    ``green.committed`` payloads, git refs and G trailers."""
+    """B91 closed resolution order (interfaces §5 IF-IMPL-004 v0.7 extension),
+    asserted only through public exits -- ``red.checkpointed`` /
+    ``green.committed`` payloads, git R-family refs and G trailers,
+    ``verify_lineage``'s joint ref+trailer+event proof:
+
+    - step 1 (exact match authoritative): after SM-01.14 re-points
+      ``state.r_tree_identity`` at a sha that exactly equals a checkpoint
+      family member, that member is the authoritative anchor even when it is
+      NOT the seq-latest one;
+    - step 2 (mismatch fallback): after a further sanctioned overwrite onto a
+      real Shield fix commit sha that matches no member, the anchor falls
+      back to the family's seq-latest ``red.checkpointed.r_sha`` -- never the
+      fix commit itself, or ``Tracks-R`` carries a non-checkpoint sha and
+      verify_lineage dead-ends into awaiting=rollback (sealed run 01M0S0FQ
+      T-013);
+    - G commits are minted once per resolved anchor: a duplicate green claim
+      on the same anchor must not mint a second G commit nor relabel the
+      recorded one."""
     store, task = _started_task_store(host_repo)
     task_id = task["task_id"]
     executor = Executor(store, host_repo, "RUN")
@@ -170,19 +190,21 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
         "each checkpoint occupies its own immutable slot"
     )
 
-    # test_defect round: a real Shield fix commit is sanctioned via
-    # test.committed; SM-01.14 re-points r_tree_identity at it.
-    shield_sha = _shield_fix_commit(host_repo)
+    # Step 1 -- exact match authoritative, recency notwithstanding: the
+    # sanctioned test_defect overwrite re-points r_tree_identity at a sha
+    # equal to the OLDER family member's r_sha, so step 1 fires on a
+    # non-latest member and must win over any seq-latest preference.
     store.append(
         "RUN", "v0.5", "test.committed",
-        {"commit_sha": shield_sha, "test_count": 1},
+        {"commit_sha": older.payload["r_sha"], "test_count": 1},
     )
-    assert store.state("RUN").r_tree_identity == shield_sha
+    assert store.state("RUN").r_tree_identity == older.payload["r_sha"]
 
-    # GREEN is delivered on top of the fix; commit through public dispatch.
+    # First GREEN is delivered over the matched member; commit through the
+    # public dispatch.
     store.append(
         "RUN", "v0.5", "outcome.received",
-        _devon_outcome("green", ["tracks/app.py"], latest.payload["r_sha"],
+        _devon_outcome("green", ["tracks/app.py"], older.payload["r_sha"],
                        diff_ref=RGR_GREEN_DIFF),
         task_id=task_id,
     )
@@ -190,17 +212,66 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
         Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
     )
     greens = [e for e in store.events("RUN") if e.type == "green.committed"]
-    assert greens, "the anchored green claim must mint its G commit"
+    assert len(greens) == 1, (
+        "the exact-match anchored green claim must mint exactly one G commit"
+    )
+    first = greens[0]
+
+    # Anchor resolution honoured step 1: the matched member itself --
+    # neither the newer sibling nor any non-family sha.
+    assert first.seq > latest.seq
+    assert first.payload["r_sha"] == older.payload["r_sha"], (
+        "step 1: an exact family match is the authoritative lineage anchor "
+        "even when it is not the seq-latest checkpoint"
+    )
+    assert first.payload["attempt"] == older.payload["attempt"]
+    first_message = git_read(host_repo, "log", "--format=%B", "-1", first.payload["g_sha"])
+    assert f"Tracks-R: {older.payload['r_sha']}" in first_message
+    assert f"Tracks-R: {latest.payload['r_sha']}" not in first_message, (
+        "recency must not override an exact step-1 match"
+    )
+
+    # The matched anchor's own slot validates as a joint proof.
+    proof_first = verify_lineage(
+        str(host_repo), "RUN", task_id, first.payload["attempt"],
+        first.payload["g_sha"], _events_as_dicts(store),
+    )
+    assert proof_first.r_before_g, "exact-match anchored G must pass the joint proof"
+    assert proof_first.r_ref_exists and proof_first.g_trailers_valid
+    assert proof_first.event_order_valid
+
+    # Step 2 -- identity mismatch fallback: a further sanctioned Shield fix
+    # commit (real distinct-tree sha, matching no family member) re-points
+    # r_tree_identity; SM-01.14 now leaves the identity off the family.
+    shield_sha = _shield_fix_commit(host_repo)
+    store.append(
+        "RUN", "v0.5", "test.committed",
+        {"commit_sha": shield_sha, "test_count": 1},
+    )
+    assert store.state("RUN").r_tree_identity == shield_sha
+
+    # Second GREEN is delivered on top of the fix; commit through public dispatch.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _devon_outcome("green", ["tracks/app.py"], latest.payload["r_sha"],
+                       diff_ref=_GREEN_UPDATE_DIFF),
+        task_id=task_id,
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G2"), store.state("RUN"), None, False
+    )
+    greens = [e for e in store.events("RUN") if e.type == "green.committed"]
+    assert len(greens) == 2, "the fallback-anchored green claim must mint its G commit"
     green = greens[-1]
 
-    # Anchor resolution fell back to the family's seq-latest checkpoint --
+    # Fallback resolution landed on the family's seq-latest checkpoint --
     # neither an older family member nor the repointed fix commit.
     assert latest.seq < green.seq
     assert green.payload["r_sha"] == latest.payload["r_sha"]
     assert green.payload["r_sha"] not in {older.payload["r_sha"], shield_sha}
     assert green.payload["attempt"] == latest.payload["attempt"]
 
-    # R family immutability survives the overwrite round.
+    # R family immutability survives both overwrite rounds.
     for member in family:
         resolved = git_read(host_repo, "rev-parse", member.payload["ref"])
         assert resolved == member.payload["r_sha"], "R family refs must stay immutable"
@@ -215,13 +286,34 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
     assert f"Tracks-R: {shield_sha}" not in message
     assert f"Tracks-R: {older.payload['r_sha']}" not in message
 
-    # Cross-module lineage proof (the TASK_REVIEW consumer) validates the G.
+    # Cross-module lineage proof (the TASK_REVIEW consumer) validates the
+    # fallback-anchored G under the slot it advertises.
     proof = verify_lineage(
         str(host_repo), "RUN", task_id, latest.payload["attempt"],
         green.payload["g_sha"], _events_as_dicts(store),
     )
     assert proof.r_before_g, "anchored G must pass the joint ref+trailer+event proof"
     assert proof.r_ref_exists and proof.g_trailers_valid and proof.event_order_valid
+
+    # Deduplicated minting shares the resolved-anchor key: a duplicate green
+    # claim over the same sanctioned anchor mints nothing further and never
+    # relabels the recorded G (interfaces §5 IF-IMPL-004 v0.7 extension,
+    # dedup keyed through the corrected r_sha).
+    duplicated_claim = _devon_outcome(
+        "green", ["tracks/app.py"], latest.payload["r_sha"], diff_ref=_GREEN_UPDATE_DIFF
+    )
+    store.append("RUN", "v0.5", "outcome.received", duplicated_claim, task_id=task_id)
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G3"), store.state("RUN"), None, False
+    )
+    greens_after_dupe = [e for e in store.events("RUN") if e.type == "green.committed"]
+    assert len(greens_after_dupe) == 2, (
+        "a duplicate green claim on the same resolved anchor must not mint "
+        "another G commit"
+    )
+    assert greens_after_dupe[-1].payload == greens[-1].payload, (
+        "the recorded fallback-anchored G stays byte-stable across replays"
+    )
 
 
 @pytest.mark.integration
