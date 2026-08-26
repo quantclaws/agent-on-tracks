@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from tracks.adapters.base import TestRunResult
+from tracks.executor.authenticity_existing import tests_in_scope
 from tracks.executor.mutation import MutationExperimentResult, MutationManifest
 
 
@@ -33,6 +34,16 @@ def _missing_result_nodes(
     return [f"target:{n}" for n in target_missing] + [f"control:{n}" for n in control_missing]
 
 
+def _tests_in_scope(manifest: MutationManifest) -> bool:
+    """True when the manifest's allowed change scope touches a tests/ path.
+
+    Delegates to the shared tests-scope rule on ``authenticity_existing``
+    (AC-FR0261-03/AC-FR0262-03): any ``allowed_change_scope`` entry under
+    ``tests/`` forbids the experiment fail-closed.
+    """
+    return tests_in_scope(manifest.allowed_change_scope)
+
+
 def run_mutation_experiment(  # pylint: disable=too-many-locals
     manifest: MutationManifest,
     repo: Path,
@@ -50,7 +61,25 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
 
     Guards:
     - Unclean rollback blocks the experiment (AC-FR0263-04).
+    - A tests/ path in ``allowed_change_scope`` blocks the experiment at the
+      entry (tests_in_scope, AC-FR0261-03/AC-FR0262-03): Devon must never
+      mutate frozen tests, so a mutation whose change scope touches tests/ is
+      fail-closed with ``blocked_reason="tests_in_scope"`` — even when target/
+      control nodes would otherwise all pass.
     """
+    test_scope = _tests_in_scope(manifest)
+    if test_scope:
+        return MutationExperimentResult(
+            status="blocked",
+            baseline="",
+            apply="",
+            target_kill="",
+            controls="",
+            rollback="",
+            blocked_reason="tests_in_scope",
+            node_results_ref=None,
+        )
+
     # Phase 1: create worktree and capture baseline identity
     try:
         worktree = open_worktree("mutation")
