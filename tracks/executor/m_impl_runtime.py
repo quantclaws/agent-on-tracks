@@ -2079,8 +2079,16 @@ class MImplRuntimeMixin:
             default=0,
         )
         if lease.seq < latest_taskgraph_seq:
+            # B88 (#88): the idempotency check must be scoped to releases
+            # AFTER this lease (ev.seq > lease.seq). An all-time scan finds
+            # the PREVIOUS generation's release for the same task id and
+            # skips emitting -> writelock_held stays True forever and
+            # select_task livelocks (~280ms/cycle; run 01M0S0FQ T-010:
+            # old-gen release at seq 35, new-gen lease at 11480 unreleased).
             released = any(
-                ev.type == "writelock.released" and ev.payload.get("task_id") == lease_task
+                ev.type == "writelock.released"
+                and ev.payload.get("task_id") == lease_task
+                and ev.seq > lease.seq
                 for ev in events
             )
             if not released:
@@ -2092,8 +2100,13 @@ class MImplRuntimeMixin:
                 self._rebuild_task_log_projection()
             return
         if lease_task in completed:
+            # B88: same seq-scoping for the same-generation branch -- a
+            # release BEFORE the last lease (task re-selected in one
+            # generation) must not suppress the release of the CURRENT lease.
             released = any(
-                ev.type == "writelock.released" and ev.payload.get("task_id") == lease_task
+                ev.type == "writelock.released"
+                and ev.payload.get("task_id") == lease_task
+                and ev.seq > lease.seq
                 for ev in events
             )
             if not released:

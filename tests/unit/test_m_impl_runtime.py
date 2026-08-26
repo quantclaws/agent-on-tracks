@@ -3328,6 +3328,62 @@ def test_redefined_same_id_task_is_not_retained(tmp_path):
     assert state.current_task_id == "T-001"  # re-selected for a clean re-run
 
 
+def test_stale_lease_release_not_suppressed_by_old_generation_release(tmp_path):
+    """B88 (#88): the writelock recover idempotency check must be scoped to
+    releases AFTER the current lease. An all-time scan finds an earlier
+    release for the same task id and skips emitting — writelock_held stays
+    True forever and select_task livelocks (run 01M0S0FQ T-010: first
+    lease released, second lease from the RGR retry never released, then
+    the scope-failure replan committed a new graph under it)."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t10 = _b83_task("T-010", "tracks/mut.py", "tests/unit/test_mut.py::test_mut")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t10]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    # cycle 1: T-010 leased and RELEASED (RGR retry round finished cleanly)
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-010", "manifest": {}})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-010"})
+    # cycle 2: T-010 leased again (retry), NEVER released, loop crashed
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-010", "manifest": {}})
+    # scope failure of another task -> replan commits a new graph
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/x.py"]'},
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    state = store.state("RUN")
+    assert state.writelock_held is True
+
+    select = Command("select_task", command_id="C-SELECT")
+    # the cycle-1 release must NOT suppress the release of the cycle-2 lease
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    lease2_seq = max(
+        ev.seq
+        for ev in store.events("RUN")
+        if ev.type == "writelock.granted" and ev.payload.get("task_id") == "T-010"
+    )
+    releases = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "writelock.released" and ev.seq > lease2_seq
+    ]
+    assert [ev.payload["task_id"] for ev in releases] == ["T-010"]
+    assert store.state("RUN").writelock_held is False
+    # next pass selects normally again
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    state = store.state("RUN")
+    assert state.current_task_id is not None  # selection resumed
+
+
 # -- B84 (#84): TASK_REVIEW task-identity gate ----------------------------------
 
 
