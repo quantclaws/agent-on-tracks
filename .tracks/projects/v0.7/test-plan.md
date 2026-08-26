@@ -57,6 +57,7 @@ sha:
 6. **Frozen tests**：Phase 0 seal 后所有角色都不能修改基线 integration/e2e；Devon scope 仍仅 `tracks/`、`tests/unit/`。
 7. **PR classification**：New AC / Spec change / flake-environment issue 三选一；“实现与 spec 不符所以改测试”拒绝。
 8. **Testability fallback**：缺 public outlet 时回修 interfaces/acceptance，不 mock internals。
+9. **Baseline-repair 写入窗口（architecture §1.0.2 第 3 条 / interfaces §1c）**：`phase0.blocked(reason=node_missing)` 期间，Shield 可在 Human 批准的 phase0-scoped 派发下写入**仅** blocked detail 清单内的缺失 planned node（既有 `tests/integration/test_evidence_reuse.py`，v0.6 test-plan §8 声明的三个 id）；窗口在 `phase0.sealed` 后关闭，任何其它 tests/integration 写入仍只属 M-TEST。
 
 ### 1.5. Test Division of Labor
 
@@ -128,7 +129,7 @@ tests/
 
 ### 2.4. Test Data
 
-- **Source**：合成、git tracked small fixtures 与 wheel-shipped demo template。v0.6 gap 集固定为 AC-FR0250-03、AC-NFR0130-01、AC-NFR0130-02，额外 gap 由 fixture 增补。
+- **Source**：合成、git tracked small fixtures 与 wheel-shipped demo template。v0.6 gap 集固定为 AC-FR0250-03、AC-NFR0130-01、AC-NFR0130-02，其 planned node id 固定为 v0.6 test-plan §8 声明的 `tests/integration/test_evidence_reuse.py::{test_prism_consumes_runtime_evidence_without_suite_rerun, test_identity_fields_append_only_auditable, test_stale_propagation_uniform_across_gates}`（仓库现态：三节点从未落盘，`git log --all -S` 对 `test_evidence_reuse.py` 全历史为空）；baseline-repair fixture 按这三个 id 落盘（节点语义验收标准见 architecture §1.0.2 第 3 条），额外 gap 由 fixture 增补。
 - **Reproducibility**：candidate/patch/config/node inputs 全部 content digest；固定 timestamps 不参与 identity。
 - **Scenario data**：九类 fault 各自生成独立 patch/config/result，不共享一个 broad fixture。
 - **Demo**：`demo_calc` 源码 + unit/integration/e2e 三层小节点；Runtime fresh repo、fresh venv、non-editable wheel。
@@ -173,7 +174,7 @@ v0.7-A 判定不适用独立 ground-truth 脚本。需求是事件/身份/路由
 2. interfaces.md 每个 `modules` 2+ 的新合同至少一条 integration happy+关键 error/edge。
 3. 两条 e2e happy path 全绿；错误矩阵只在 integration。
 4. §8 的 48 条 AC 全部有 integration/e2e layer 与已注册 IF。
-5. Phase 0 三个已知 gap + 现场额外 gap 全部 real collected-node binding，marker-only 不通过。
+5. Phase 0 三个已知 gap + 现场额外 gap 全部 real collected-node binding，marker-only 不通过；已知三缺口按 blocked→baseline-repair→re-validate 编排达成（首验 `phase0.blocked(node_missing)` 为预期事件，非失败）。
 6. 八类 registry、三处 parity、无 `--exit-zero`、真实 required-check evidence。
 7. new legal Red / existing kill / mutation target-control / candidate-bound closure 均由 Runtime events+blobs 证明；v0.7 `test.selected` 记录实际 resolved adapter/protocol/version，配对的结果事件以同一 `selection_id` 记录 normalized result ref。
 8. 两宿主各九场景全部 fail-closed，demo path equivalent，crash recovery replay_ok。
@@ -312,6 +313,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | 4 | PHASE0_VALIDATING → SEALED | baseline_repaired + coverage + guard_hardened + sealed | test_phase0_quality_seal::test_seal_readonly_blocks_rewrite |
 | 5 | PHASE0_VALIDATING → BLOCKED | phase0.blocked + status reason | test_phase0_binding::test_field_gap_recovery_and_blocked_routing |
 | 6 | SEALED terminal/non-return | rewrite/drift rejected | test_phase0_quality_seal::test_seal_readonly_blocks_rewrite |
+| 7 | BLOCKED → PHASE0_VALIDATING（IF §1c：Human 批准 baseline-repair 后新一次 validate） | blocked(node_missing,detail=ids) → repaired ×3；事件历史保留 | test_phase0_binding::test_gap_acs_bound_to_real_collected_nodes（编排路径，architecture §1.0.2 第 3 条） |
 
 ---
 
@@ -334,7 +336,7 @@ Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方
 
 ### 11.1 v0.7-A 主旅程
 
-`test_v07a_journey_phase0_to_closure`：v0.6 baseline 含三 gap → `trac run` Phase 0 真实绑定、coverage/guards/marks/env 通过、seal → M-TEST new legal Red + existing green/counterexample kill → M-IMPL candidate mutation experiment target killed/control green → FULL pass → `trac check trace --version v0.7` candidate-bound pass。e2e 不展开每个错误原因，错误矩阵归 integration。
+`test_v07a_journey_phase0_to_closure`：v0.6 baseline 含三 gap（三 planned node 从未落盘，id 固定于 v0.6 test-plan §8）→ `trac run` 首次 Phase 0 校验落 `phase0.blocked(reason=node_missing, detail=三 planned id)`、M-TEST 不派发 → 在隔离 repo 内落盘 baseline-repair 产物（真实产物由 Shield 经 Human 批准派发写入 tracks 仓库，architecture §1.0.2 第 3 条；journey 内由测试以同语义 fixture 扮演修复落盘，门禁全部真实、不 mock kernel/executor）→ 新一次 `trac run` re-validate：真实绑定 `phase0.baseline_repaired` ×3、coverage/guards/marks/env 通过、seal → M-TEST new legal Red + existing green/counterexample kill → M-IMPL candidate mutation experiment target killed/control green → FULL pass → `trac check trace --version v0.7` candidate-bound pass。e2e 不展开每个错误原因，错误矩阵归 integration。
 
 同一 journey 的 `test_v07a_journey_uses_reference_adapter` 走真实 start/approval/run 路径，要求至少一条 `test.selected`，并逐条断言 `adapter="reference-pytest"`；结合 integration 的 protocol/version/result exact-coverage 断言，防止“只回显 contract、实际绕过 adapter”的假接线。
 
