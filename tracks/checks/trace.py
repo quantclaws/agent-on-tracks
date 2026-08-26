@@ -542,7 +542,7 @@ class ClosureReport:
     records: tuple[ClosureRecord, ...]
 
 
-def _closure_errors(ac: str, candidate_digest: str, evidence: dict) -> list[str]:
+def _closure_errors(candidate_digest: str, evidence: dict) -> list[str]:
     """Closed-set hard errors for one AC's candidate-bound evidence chain.
 
     Checks, in fixed order, every blocking condition (interfaces §1i / FR-0265):
@@ -597,7 +597,7 @@ def check_closure_candidate(
     hard_errors: list[str] = []
     for ac in acs:
         evidence = per_ac_evidence.get(ac) or {}
-        errors = _closure_errors(ac, candidate_digest, evidence)
+        errors = _closure_errors(candidate_digest, evidence)
         record = ClosureRecord(
             ac=ac,
             outlet=str(evidence.get("outlet", "")),
