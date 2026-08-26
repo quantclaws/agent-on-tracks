@@ -74,7 +74,7 @@ DIAGNOSE dispatch 的诊断结论**必须机器可读**：最终回复以一个�
 {"classification": "test_defect|impl_defect|red_defect|plan_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
 ```
 
-`classification` 是七选一的唯一判定；reason 一句话；evidence 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。
+`classification` 是七选一的唯一判定；**assignment 携带 `classification_vocabulary` 时以它为准**；reason 一句话；evidence 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。
 
 **分类所有权纪律（用户裁定 2026-08-25，先于一切表象判断）**：判定 `classification` 前先问"缺陷文件属于谁的域"：
 

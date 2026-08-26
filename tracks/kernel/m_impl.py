@@ -699,6 +699,21 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     return Command(kind="dispatch_agent", params=params)
 
 
+# flow.md §10.1 DIAGNOSE 七元分类词表（#89 单一真相源：kernel 定义，
+# effects/_DIAGNOSE_CLASSIFICATIONS 与 assignment 注入均引用此处）。
+# plan_defect（#89）：诊断出的修复需要修改当前任务 manifest
+# allowed_paths 之外的文件——任务图 scope 切分缺陷，Archer 重规划所有。
+DIAGNOSE_CLASSIFICATIONS = (
+    "test_defect",
+    "impl_defect",
+    "red_defect",
+    "plan_defect",
+    "stub_gap",
+    "ac_gap",
+    "spec_gap",
+)
+
+
 def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
     """PRISM_PLAN/PRISM_RED/PRISM_FINAL/DIAGNOSE: dispatch Prism with criteria."""
     objective = {
@@ -709,6 +724,13 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
     }.get(sub, "review")
     assignment = _m_impl_base_assignment(s, "prism", sub, ["tracks-discuz", "tracks-prism-impl"])
     assignment["criteria_pack"] = dict(_M_IMPL_CRITERIA_PACK)
+    if sub in ("DIAGNOSE", "PRISM_FINAL"):
+        # #89（B90 现场）：D-39 会话复用把 agent 定义/skill 词表冻结在
+        # 会话初建时——提示词合同修订到不了已存在的会话（run 01M0S0FQ
+        # T-012：#89 词表已提交，Prism 仍只能报 impl_defect）。词表由
+        # runtime 机器内联进 assignment，随每次派发新鲜送达，与会话缓存
+        # 无关；单一真相源为 kernel.DIAGNOSE_CLASSIFICATIONS。
+        assignment["classification_vocabulary"] = list(DIAGNOSE_CLASSIFICATIONS)
     if s.r_tree_identity and sub == "PRISM_RED":
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {

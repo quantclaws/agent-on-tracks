@@ -37,6 +37,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
+from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
 from tracks.project import COMMENTABLE_DOCS, layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 
@@ -1141,15 +1142,9 @@ class OpencodeBackend:
             reviewer_assignment,
         )
 
-    _DIAGNOSE_CLASSIFICATIONS = (
-        "test_defect",
-        "impl_defect",
-        "red_defect",
-        "plan_defect",
-        "stub_gap",
-        "ac_gap",
-        "spec_gap",
-    )
+    # #89 单一真相源在 kernel（assignment 注入 + 校验共用）；类属性保留
+    # 为既有引用点的稳定别名。
+    _DIAGNOSE_CLASSIFICATIONS = DIAGNOSE_CLASSIFICATIONS
 
     # D-35 (SC-D35 §2.2) structured review payload contract.
     _REVIEW_FINDING_FIELDS = (

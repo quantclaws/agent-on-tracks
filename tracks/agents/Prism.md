@@ -162,7 +162,7 @@ DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复�
 {"classification": "test_defect|impl_defect|red_defect|plan_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
 ```
 
-`classification` 是七选一的唯一判定（缺/非七选一即违约）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX、回 PLANNING 由 Archer 重规划，或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。
+`classification` 是七选一的唯一判定（缺/非七选一即违约）；**assignment 携带 `classification_vocabulary` 时以它为准**（runtime 每次派发新鲜注入，优先于任何缓存的会话词表）；`reason` 一句话点因；`evidence` 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。`classification` 决定 Runtime 路由（回 RED/GREEN/SHIELD_FIX、回 PLANNING 由 Archer 重规划，或 rollback M-DESIGN/M-ACC/M-SPEC），伪造或缺失将导致 attempt 作废。
 
 **分类所有权纪律（用户裁定 2026-08-25，先于一切表象判断）**：判定 `classification` 前先问"缺陷文件属于谁的域"：
 

@@ -2960,3 +2960,44 @@ def test_plan_defect_in_diagnose_vocabulary():
     ):
         contract = (repo_root / rel).read_text(encoding="utf-8")
         assert "plan_defect" in contract, f"{rel} prompt contract lacks plan_defect"
+
+
+# -- #89 follow-up (B90): vocabulary inlined into the dispatch -----------------
+
+
+def test_diagnose_dispatch_inlines_classification_vocabulary():
+    """#89/B90: D-39 session reuse freezes the agent/skill vocabulary at
+    session-creation time, so prompt-contract revisions never reach an
+    existing session (run 01M0S0FQ T-012: plan_defect committed, Prism
+    still said impl_defect). The runtime must inline the vocabulary into
+    every DIAGNOSE/PRISM_FINAL assignment — fresh per dispatch."""
+    from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+
+    s_diag = state_of(
+        *_full_single_task_cycle()[:24],  # through DEVON GREEN done
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "unknown_attribution", "reason": "x", "attempt": 1}),
+    )
+    cmd = decide(s_diag)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    vocab = cmd.params["assignment"]["classification_vocabulary"]
+    assert vocab == list(DIAGNOSE_CLASSIFICATIONS)
+    assert "plan_defect" in vocab
+
+    s_final = state_of(*_full_single_task_cycle()[:34])  # through TASK_REVIEW_PASS
+    cmd2 = decide(s_final)
+    assert cmd2 is not None and cmd2.params["role"] == "prism"
+    assert cmd2.params["assignment"]["classification_vocabulary"] == list(
+        DIAGNOSE_CLASSIFICATIONS
+    )
+
+
+def test_effects_whitelist_shares_kernel_vocabulary_source():
+    """#89 single source of truth: the opencode backend whitelist and the
+    kernel dispatch injection must be the SAME tuple — drift between them
+    recreates the B63 'Prism can never say it' failure class."""
+    from tracks.effects import opencode as _oc
+    from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+
+    assert _oc.OpencodeBackend._DIAGNOSE_CLASSIFICATIONS is DIAGNOSE_CLASSIFICATIONS
