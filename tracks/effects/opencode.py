@@ -1145,6 +1145,7 @@ class OpencodeBackend:
         "test_defect",
         "impl_defect",
         "red_defect",
+        "plan_defect",
         "stub_gap",
         "ac_gap",
         "spec_gap",

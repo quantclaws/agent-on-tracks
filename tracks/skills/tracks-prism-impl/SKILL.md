@@ -71,15 +71,16 @@ Prism 的语义判据与 Runtime 的形式校验互补：Prism 可放行语义�
 DIAGNOSE dispatch 的诊断结论**必须机器可读**：最终回复以一个裸 JSON object 结束（Runtime 从你最后一条 text 消息提取，散文结论不构成交付）：
 
 ```json
-{"classification": "test_defect|impl_defect|red_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
+{"classification": "test_defect|impl_defect|red_defect|plan_defect|stub_gap|ac_gap|spec_gap", "reason": "...", "evidence": "..."}
 ```
 
-`classification` 是五选一的唯一判定；reason 一句话；evidence 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。
+`classification` 是七选一的唯一判定；reason 一句话；evidence 指向具体文件/行/命令输出。分析与论证放正文，结论放 JSON。
 
 **分类所有权纪律（用户裁定 2026-08-25，先于一切表象判断）**：判定 `classification` 前先问"缺陷文件属于谁的域"：
 
 - **`red_defect`** = Devon 的 RED 单测（任务 manifest `red_test_paths` / R ref 锚定的文件）自身有缺陷（fixture 错、断言与冻结合同相悖、锚错文件）。唯一合法修复者是 **Devon**（RED re-pin 重写）。**绝不得**将此类缺陷标为 `test_defect`——Shield 不得触碰 Devon 的 RED 单测（BS-04 角色分离：Devon 的 worktree 也看不到 Shield 的冻结测试）。
 - **`test_defect`** = Shield 的**冻结验收测试**（M-TEST 基线产物：integration/e2e 等 Shield WRITE 交付物）自身有缺陷。唯一合法修复者是 **Shield**（SHIELD_FIX）。
 - **`impl_defect`** = 实现代码（任务 `allowed_paths` 内的产品代码）缺陷。修复者是 **Devon**（GREEN）。
+- **`plan_defect`** = 诊断出的修复需要修改当前任务 manifest `allowed_paths` 之外的文件（任务图 scope 切分缺陷，Archer 重规划所有；需点名文件）。
 
 错配所有权（如把 RED 单测缺陷标 test_defect）会把修复派给无权且不该触碰该文件的角色，制造结构死锁。判定顺序：先定缺陷文件的域，再看失败表象。

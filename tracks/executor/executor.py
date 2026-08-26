@@ -2596,6 +2596,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "spec_gap",
             "impl_defect",
             "red_defect",
+            "plan_defect",
         ):
             # Prism DIAGNOSE contract violation: no valid classification JSON
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
@@ -5040,7 +5041,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             token
             if token in (
                 "test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect",
-                "red_defect",
+                "red_defect", "plan_defect",
             )
             else default
         )

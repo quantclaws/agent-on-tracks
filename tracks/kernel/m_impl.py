@@ -246,17 +246,7 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
         if verdict == "pass":
             s.substate = "TASK_DONE"
         else:
-            dc = p.get("defect_classification", "impl_defect")
-            if dc == "red_defect":
-                s.substate = "RED"
-                s.green_committed = False
-            else:
-                s.substate = "GREEN"
-                # #86: legal same-R re-commit vs crash-replay must be observable
-                s.green_committed = False
-            s.refactor_done = False
-            _reset_doc(s)
-            _consume_attempt(s)
+            _route_prism_final_revise(s, p)
 
 
 def _route_prism_plan_revise(s: State, p: dict) -> None:
@@ -283,6 +273,26 @@ def _route_prism_plan_revise(s: State, p: dict) -> None:
         # re-commits (run 01KZTHE7 PLANNING round 2, 2026-08-15).
         s.taskgraph_committed = False
         _consume_attempt(s)
+
+
+def _route_prism_final_revise(s: State, p: dict) -> None:
+    """PRISM_FINAL revise: route by defect_classification (flow.md §10.1)."""
+    dc = p.get("defect_classification", "impl_defect")
+    if dc == "red_defect":
+        s.substate = "RED"
+        s.green_committed = False
+    elif dc == "plan_defect":
+        # #89: PRISM_FINAL revise plan_defect — Archer's scope-split
+        # defect, not Devon's. Route to PLANNING replan; do NOT consume
+        # attempt. _route_scope_replan handles all state cleanup.
+        _route_scope_replan(s)
+        return
+    else:
+        s.substate = "GREEN"
+        s.green_committed = False
+    s.refactor_done = False
+    _reset_doc(s)
+    _consume_attempt(s)
 
 
 def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
@@ -350,6 +360,13 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         s.refactor_done = False
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "plan_defect":
+        # #89: DIAGNOSE plan_defect — the fix requires modifying files outside
+        # the current task's manifest allowed_paths (task-graph scope-split
+        # defect). Route to Archer replan: PLANNING, clear task identity,
+        # preserve evidence, do NOT consume attempt (Archer's scope error, not
+        # Devon's).
+        _route_scope_replan(s)
     elif check == "test_defect":
         s.substate = "SHIELD_FIX"
         _reset_doc(s)

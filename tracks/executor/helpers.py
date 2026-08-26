@@ -106,6 +106,9 @@ _DIAGNOSE_TARGET = {
     "ac_gap": "M-ACC",
     "spec_gap": "M-SPEC",
     "impl_defect": "M-IMPL",
+    # #89: plan_defect routes to M-IMPL PLANNING (Archer replan) — same
+    # stage, explicit entry for audit-trail precision.
+    "plan_defect": "M-IMPL",
 }
 # test short-traceback E-prefix assertion line (``E   assert ...``).
 _ASSERT_E_LINE = re.compile(r"^E\s+assert\b", re.MULTILINE)

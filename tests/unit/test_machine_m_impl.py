@@ -2859,3 +2859,104 @@ def test_b83_retained_depends_on_chain():
     # level, check that the retention projection is correct.
     cmd = decide(s)
     assert cmd.kind == "select_task"
+
+
+def test_diagnose_plan_defect_routes_to_planning():
+    """#89: DIAGNOSE plan_defect -> PLANNING (Archer replan), no attempt
+    consumed, evidence preserved, task identity cleared."""
+    s = _diagnose_state("plan_defect")
+    assert s.substate == "PLANNING"
+    assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
+    assert s.taskgraph_committed is False
+    assert s.doc_dispatched is False
+    assert s.current_task_id is None, "stale task identity must be cleared"
+    assert s.green_committed is False
+    assert s.refactor_done is False
+    assert s.r_tree_identity is None
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer", "plan_defect must dispatch Archer, not Devon"
+    assert cmd.params["substate"] == "PLANNING"
+    assert "evidence" in cmd.params
+
+
+def test_prism_final_revise_plan_defect_to_planning():
+    """#89: PRISM_FINAL revise plan_defect -> PLANNING (Archer replan),
+    no attempt consumed, task identity cleared."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "defect_classification": "plan_defect",
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        GREEN_COMMITTED,
+        DEVON_REFACTOR_DISPATCH,
+        DEVON_REFACTOR_DONE,
+        REFACTOR_GATE_CMD,
+        REFACTOR_COMMITTED,
+        TASK_REVIEW_CMD,
+        TASK_REVIEW_PASS,
+        PRISM_FINAL_DISPATCH,
+        PRISM_FINAL_DONE,
+        revise,
+    )
+    assert s.substate == "PLANNING"
+    assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
+    assert s.taskgraph_committed is False
+    assert s.current_task_id is None
+    assert s.green_committed is False
+    assert s.refactor_done is False
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer"
+    assert cmd.params["substate"] == "PLANNING"
+
+
+def test_plan_defect_in_diagnose_vocabulary():
+    """#89: plan_defect must be present in every DIAGNOSE vocabulary gate —
+    the executor whitelist, the opencode backend classification tuple, the
+    fake-channel token filter, and both Prism prompt contracts."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    repo_root = Path(__file__).resolve().parents[2]
+    assert "plan_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
+    executor_py = (repo_root / "tracks/executor/executor.py").read_text(encoding="utf-8")
+    assert "plan_defect" in executor_py, "executor.py whitelist/filter lacks plan_defect"
+    for rel in (
+        "tracks/agents/Prism.md",
+        "tracks/skills/tracks-prism-impl/SKILL.md",
+    ):
+        contract = (repo_root / rel).read_text(encoding="utf-8")
+        assert "plan_defect" in contract, f"{rel} prompt contract lacks plan_defect"
