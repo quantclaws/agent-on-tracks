@@ -73,25 +73,24 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
 
         # Phase 3: run target nodes (filter by target node IDs)
         target_raw = run_nodes(worktree, manifest.target_nodes)
-        target_results = {
-            nid: r for nid, r in target_raw.items()
-            if nid in manifest.target_nodes
-        }
-        target_killed = any(
-            r.status in ("failed", "error") for r in target_results.values()
-        )
+        target_results = {nid: r for nid, r in target_raw.items() if nid in manifest.target_nodes}
+        target_killed = any(r.status in ("failed", "error") for r in target_results.values())
         target_kill = "verified" if target_killed else "survived"
 
         # Phase 4: run control nodes (filter by control node IDs)
         control_raw = run_nodes(worktree, manifest.control_nodes)
         control_results = {
-            nid: r for nid, r in control_raw.items()
-            if nid in manifest.control_nodes
+            nid: r for nid, r in control_raw.items() if nid in manifest.control_nodes
         }
-        all_control_green = all(
-            r.status in ("passed", "skipped") for r in control_results.values()
-        )
+        all_control_green = all(r.status in ("passed", "skipped") for r in control_results.values())
         controls = "green" if all_control_green else "failed"
+
+        # Phase 4b: detect missing results up front for a precise blocked
+        # reason.  The rollback phase still runs below (and propagates on
+        # unclean rollback) even when results are incomplete.
+        target_missing = [nid for nid in manifest.target_nodes if nid not in target_results]
+        control_missing = [nid for nid in manifest.control_nodes if nid not in control_results]
+        results_incomplete = bool(target_missing or control_missing)
 
         # Phase 5: try to roll back cleanly
         try:
@@ -99,6 +98,25 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
             rollback = "clean"
         except Exception as exc:
             raise ValueError(f"rollback_dirty: {exc}") from exc
+
+        # Missing-result fail-closed (AC-FR0263-03/04, AC-NFR0140-03).  A
+        # required node with no result must NEVER pass: the experiment did not
+        # actually run it, so blocks/reruns are the only sound verdicts (no
+        # phantom pass on partial run output).
+        if results_incomplete:
+            missing = [f"target:{n}" for n in target_missing] + [
+                f"control:{n}" for n in control_missing
+            ]
+            return MutationExperimentResult(
+                status="blocked",
+                baseline="verified",
+                apply=apply_result,
+                target_kill="",
+                controls="",
+                rollback=rollback,
+                blocked_reason=f"missing_result:{','.join(missing)}",
+                node_results_ref=None,
+            )
 
         # Determine result
         if target_kill == "verified" and controls == "green":
@@ -145,4 +163,3 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
             blocked_reason=str(exc),
             node_results_ref=None,
         )
-
