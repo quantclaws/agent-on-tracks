@@ -31,6 +31,7 @@ from tracks.executor.executor import (
     hotfix_feature_route,
     hotfix_human_anchor,
 )
+from tracks.executor.stall import CommandStallError
 from tracks.executor.taskgraph import (
     parse_tasks_json,
     validate_ac_coverage,
@@ -452,6 +453,11 @@ def cmd_run(repo: Path, *args: str) -> int:
             # B43（#45）：executor 已把完整提示打到 stderr（Prism batch2
             # advisory 1：不重复打印），这里只以非零退出码终止。
             print("run aborted: tracks/** code drift (see message above)", file=sys.stderr)
+            return 1
+        except CommandStallError:
+            # B86/B88（#77）：executor 已落 loop.aborted 并打印处置指引
+            # banner，这里只以非零退出码终止（同 B43 drift abort 处理链）。
+            print("run aborted: command stall (see message above)", file=sys.stderr)
             return 1
     print(f"run {run_id}: {_format_state(state)}")
     return 0

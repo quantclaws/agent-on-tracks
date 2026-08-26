@@ -73,6 +73,11 @@ from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
 )
+from tracks.executor.stall import (
+    STALL_COMMAND_LIMIT,
+    CommandStallError,
+    CommandStallTracker,
+)
 from tracks.executor.test_select import (
     BaselineAssets,
     EmptyR2SelectionError,
@@ -498,6 +503,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # B44（#46）：run 级熔断器计数（窗口：上次 human.retry/recover 之后；
         # 进程重启后从事件流重播种子，计数不丢）。
         self._breaker = RunBreaker.from_events(store.events(run_id))
+        # B86/B88（#77）：非派发命令紧循环熔断（STALL）。循环内内存计数，
+        # 无需持久化（崩溃重启清零可接受——紧循环 20 次在数秒内达成）。
+        self._stall = CommandStallTracker()
 
     def _fail_fast_on_code_drift(self) -> None:
         """B43（#45）：派发前复核 tracks/** 指纹；漂移即 fail-fast。
@@ -525,6 +533,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         # B44（#46）：统一漏斗——熔断计数与本进程内发出的事件保持同步。
         self._breaker.note(type, payload)
+        # B86/B88（#77）：非派发命令紧循环计数（进展事件清零；dispatch_agent
+        # 不计入）。loop.aborted 自身也走这里（触发后按重置处理，不影响判定）。
+        self._stall.observe(type, payload)
         return ev
 
     def _check_breaker(self, state: State) -> State | None:
@@ -706,6 +717,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 self._observe_oob()
 
     def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
+        # B86/B88（#77）：本次 run_loop 的紧循环计数从零开始（每次 run_loop
+        # 等同进程内一次运行窗口；崩溃/重启清零可接受）。limit 引用模块常量，
+        # 便于测试/调参在调用期覆盖。
+        self._stall = CommandStallTracker(limit=STALL_COMMAND_LIMIT)
         while True:
             # B43（#45）：派发前 fail-fast——进程存活期间 tracks/** 漂移
             # （含 OOB 修复提交）即停车提示重启，绝不带旧逻辑继续。
@@ -735,8 +750,37 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 return state
             self._progress(cmd, state)
             self.issue(cmd)
+            # B86/B88（#77）：handlers 已在本轮 issue() 内跑完——若期间出现
+            # 任何进展事件计数已被清零。连续 N 轮同 kind/同标识的 command.issued
+            # 之间零进展事件才是紧循环签名，此处判定并停车（与 B43 #45
+            # 一致：先落 loop.aborted 审计事件再 raise，CLI 捕获转非零）。
+            if self._stall.should_trip():
+                self._abort_command_stall()
             if self._is_phase_boundary(cmd):
                 return self.store.state(self.run_id)
+
+    def _abort_command_stall(self) -> None:
+        """B86/B88（#77）：非派发命令紧循环停车。
+
+        先 append loop.aborted（append-only 审计流，screen 无重定向时
+        stdout 证据会丢，同 B85/#85 模式），再打印处置指引 banner，最后
+        raise CommandStallError——由 CLI 捕获转为非零退出码。
+        """
+        detail = self._stall.summary()
+        self._emit(
+            "loop.aborted",
+            {"reason": "command_stall", "detail": detail},
+        )
+        print(
+            f"command stall detected: {detail}\n"
+            "This is a runtime defect's tight-loop signature (a non-dispatch "
+            "command re-issued with zero progress events between iterations). "
+            "Kill this process and open an issue carrying the loop.aborted "
+            "evidence above.",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise CommandStallError(detail)
 
     def _gate_loop_dispatch(
         self, cmd: Command, dispatches: int, bound_substate: str | None
