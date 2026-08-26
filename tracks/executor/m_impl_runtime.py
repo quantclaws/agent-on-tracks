@@ -3624,7 +3624,28 @@ class MImplRuntimeMixin:
                 None,
                 None,
             )
-        r_sha = state.r_tree_identity
+        r_sha = self._r_lineage_r_sha(task_id, state.r_tree_identity)
+        if not r_sha:
+            # B91 (#92): no checkpoint family exists at all -- the original
+            # fail-closed block below still fires via the empty-identity
+            # path only when r_tree_identity is also empty; a non-empty
+            # identity with NO recorded checkpoints is an inconsistent
+            # lineage, fail closed the same way.
+            return (
+                {
+                    "check": "impl_defect",
+                    "reason": (
+                        "green commit R lineage unresolvable: r_tree_identity "
+                        "matches no red.checkpointed for the task"
+                    ),
+                    "task_id": task_id,
+                    "attempt": attempt,
+                },
+                None,
+                "",
+                None,
+                None,
+            )
         # FR-0120 replay-safe base: B is derived from the immutable R commit's
         # parent (never blindly the current HEAD), so a crash after the branch
         # update but before green.committed reconciles to the same G.
@@ -3676,6 +3697,34 @@ class MImplRuntimeMixin:
             ),
             {},
         )
+
+    def _r_lineage_r_sha(self, task_id: str, identity: str | None) -> str | None:
+        """B91 (#92): resolve the TRUE R ref sha for the G lineage.
+
+        ``state.r_tree_identity`` carries two semantics: the GREEN regression
+        gate's diff baseline and the G commit's R lineage trailer source.
+        SM-01.14 (_on_test_committed) deliberately re-points it at the
+        runtime-committed Shield fix so sanctioned test fixes do not read as
+        drift -- after a test_defect round the identity is the fix COMMIT,
+        not an R ref. Binding Tracks-R to it produces a G that no
+        verify_lineage can ever validate (run 01M0S0FQ T-013, 2026-08-27:
+        Tracks-R=5b72700 shield commit vs slot-4 ref d826d34 -> TASK_REVIEW
+        lineage rollback). When the identity matches no recorded checkpoint
+        for the task, fall back to the LATEST red.checkpointed r_sha; the
+        immutable R family is the only valid lineage anchor."""
+        if not identity:
+            return None
+        latest = None
+        for ev in self.store.events(self.run_id):
+            if (
+                ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and isinstance(ev.payload.get("r_sha"), str)
+            ):
+                if ev.payload.get("r_sha") == identity:
+                    return identity
+                latest = ev.payload["r_sha"]
+        return latest
 
     def _r_lineage_attempt(self, task_id: str, r_sha: str | None, attempt: int) -> int:
         """B56 (#72): the G lineage attempt is the R ref slot allocated at
@@ -3729,7 +3778,13 @@ class MImplRuntimeMixin:
         # green_committed=False lets the same-R-slot green.committed be
         # re-emitted; TASK_REVIEW reads by task_id (most recent seq) per #84.
         lineage_attempt = self._r_lineage_attempt(
-            task_id, state.r_tree_identity, attempt
+            task_id,
+            # B91 (#92): resolve through the checkpoint family so a Shield
+            # fix commit re-pointed r_tree_identity (SM-01.14) cannot leak
+            # the fix sha into the dedup key; matches the r_sha the G will
+            # actually carry.
+            self._r_lineage_r_sha(task_id, state.r_tree_identity),
+            attempt,
         )
         if (
             self._m_impl_event_recorded("green.committed", task_id, lineage_attempt)

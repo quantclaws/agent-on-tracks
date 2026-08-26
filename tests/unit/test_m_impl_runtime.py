@@ -3718,3 +3718,57 @@ def test_red_checkpoint_double_fire_still_deduped_after_current_outcome(tmp_path
     )
     reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert len(reds) == 1
+
+
+def test_commit_green_binds_r_ref_not_shield_fix_after_test_defect_round(tmp_path):
+    """B91 (#92): after a test_defect round the runtime commits the Shield
+    fix (test.committed) and SM-01.14 re-points state.r_tree_identity at the
+    fix COMMIT. The G lineage must still bind the immutable R ref family:
+    Tracks-R = the latest red.checkpointed r_sha and Tracks-Attempt = its
+    slot, or TASK_REVIEW verify_lineage can never validate the G (run
+    01M0S0FQ T-013, 2026-08-27: Tracks-R=shield sha 5b72700 vs slot-4 ref
+    d826d34 -> awaiting rollback)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Round-1 RED checkpoint on slot 1 (natural).
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    r_sha, slot = red.payload["r_sha"], red.payload["attempt"]
+    # Shield fix commit: SM-01.14 re-points the identity at the fix commit.
+    shield = _git(repo, "rev-parse", "HEAD")
+    store.append(
+        "RUN", "v0.5", "test.committed", {"commit_sha": shield, "test_count": 1}
+    )
+    state = store.state("RUN")
+    assert state.r_tree_identity == shield  # SM-01.14 semantics intact
+    # GREEN on top of the fix commit.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], r_sha, diff_ref=_RGR_GREEN_DIFF),
+        task_id="T-001",
+    )
+    state = store.state("RUN")
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), state, None, False
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    assert green.payload["trailers"]["Tracks-R"] == r_sha
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert f"Tracks-R: {r_sha}" in message, (
+        "G must bind the immutable R ref sha, not the Shield fix commit"
+    )
+    assert f"Tracks-Attempt: {slot}" in message
+    assert shield not in message or f"Tracks-R: {shield}" not in message
+    assert green.payload["attempt"] == slot
