@@ -3345,8 +3345,13 @@ class MImplRuntimeMixin:
         event_type: str,
         task_id: str,
         attempt: int,
+        min_seq: int | None = None,
     ) -> bool:
         cutoff = self._retry_cutoff_seq()
+        if min_seq is not None:
+            # B90 (#91): an additional task-scoped staleness floor on top of
+            # the retry cutoff (see _last_task_outcome_seq).
+            cutoff = max(cutoff, min_seq)
         return any(
             ev.type == event_type
             and ev.seq > cutoff
@@ -3355,10 +3360,40 @@ class MImplRuntimeMixin:
             for ev in self.store.events(self.run_id)
         )
 
+    def _last_task_outcome_seq(self, task_id: str) -> int:
+        """B90 (#91): seq of the task's latest dispatch outcome (Devon or
+        Prism), 0 when none. A red.checkpointed recorded BEFORE the current
+        round's outcome belongs to an earlier review round -- it cannot
+        satisfy the live RED_CHECKPOINT wait, so it must not feed the
+        idempotency guard. Operator finding (2026-08-27, run 01M0S0FQ
+        T-013): the guard keyed on (task_id, attempt) alone livelocked
+        after a Prism revise round because _red_ref_free_attempt (B54/#70)
+        had inflated the earlier checkpoint's recorded attempt past the
+        machine's counter (orphan pre-replan ref held slot 2, so the event
+        logged attempt=3 while current_attempt+1 later equalled 3 again);
+        the guard silently returned, decide() re-issued checkpoint_red 20x,
+        and only the B86/B88 stall breaker stopped the loop. Mirrors the
+        #86 state-aware discriminator already present in commit_green's
+        guard (recorded + green_committed)."""
+        seq = 0
+        for ev in self.store.events(self.run_id):
+            if ev.type == "outcome.received" and ev.task_id == task_id:
+                seq = max(seq, ev.seq)
+        return seq
+
     def _do_checkpoint_red(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
-        if self._m_impl_event_recorded("red.checkpointed", task_id, attempt):
+        if self._m_impl_event_recorded(
+            "red.checkpointed",
+            task_id,
+            attempt,
+            # B90 (#91): only an event recorded after this round's dispatch
+            # outcome is a true duplicate (crash-replay double-fire); an
+            # earlier-round checkpoint is stale and must be re-issued on a
+            # fresh ref slot.
+            min_seq=self._last_task_outcome_seq(task_id),
+        ):
             self._rebuild_task_log_projection()
             return
         reason, diff = self._validated_diff("red", state)

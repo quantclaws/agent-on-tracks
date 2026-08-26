@@ -3623,3 +3623,98 @@ def test_task_review_fails_on_no_green_committed_event(tmp_path):
     assert "no green.committed event found" in new_events[-1].payload.get("reason", ""), (
         f"reason must mention 'no green.committed event found', got {new_events[-1].payload.get('reason')}"
     )
+
+
+def test_red_checkpoint_revise_round_reissue_not_deduped(tmp_path):
+    """B90 (#91): a red.checkpointed recorded in an EARLIER review round must
+    not feed the idempotency guard once a newer dispatch outcome exists for
+    the task. Run 01M0S0FQ T-013 (2026-08-27) livelocked exactly here: an
+    orphan pre-replan ref held slot 2, so _red_ref_free_attempt (B54/#70)
+    inflated the round-1 checkpoint event to attempt=3; the PRISM_RED revise
+    consumed an attempt (current_attempt 1->2), the round-2 RED_CHECKPOINT
+    computed attempt=3 again, the guard matched the stale event and silently
+    returned -- decide() re-issued checkpoint_red 20x until the B86/B88
+    stall breaker tripped."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Orphan ref from a pre-replan generation holds slot 2 (B54 skips it).
+    _git(repo, "update-ref", "refs/trac/rgr/RUN/T-001/2/red", "HEAD")
+    # attempt 1 fails red_invalid -> current_attempt=1.
+    store.append(
+        "RUN", "v0.5", "verdict.failed",
+        {"check": "red_invalid", "reason": "boom", "task_id": "T-001", "attempt": 1},
+        task_id="T-001",
+    )
+    # Round 1 passes: executor attempt=current_attempt+1=2, slot 2 taken ->
+    # event records attempt=3 (the inflation that later collides).
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1"), store.state("RUN"), None, False
+    )
+    first = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(first) == 1
+    assert first[0].payload["attempt"] == 3
+
+    # PRISM_RED revise consumes an attempt -> current_attempt=2, back to RED.
+    store.append(
+        "RUN", "v0.5", "prism.verdict",
+        {"verdict": "revise", "defect_classification": "red_defect"},
+        task_id="T-001",
+    )
+    # Round 2: fresh outcome for the task -> RED_CHECKPOINT waits on a NEW
+    # checkpoint; the round-1 event is stale for dedup purposes.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R2"), store.state("RUN"), None, False
+    )
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2, (
+        "revise round must re-issue a fresh checkpoint instead of silently "
+        "no-oping on the earlier round's inflated-attempt event"
+    )
+    assert reds[-1].payload["attempt"] == 4  # fresh slot, R immutability kept
+    assert _git(repo, "rev-parse", reds[-1].payload["ref"]) == reds[-1].payload["r_sha"]
+
+
+def test_red_checkpoint_double_fire_still_deduped_after_current_outcome(tmp_path):
+    """B90 (#91) counterweight: the crash-replay double-fire (no newer
+    outcome between the two executions) must stay a silent no-op -- the new
+    task-scoped floor only demotes checkpoints that predate the current
+    round's dispatch outcome."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1"), store.state("RUN"), None, False
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1b"), store.state("RUN"), None, False
+    )
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 1
