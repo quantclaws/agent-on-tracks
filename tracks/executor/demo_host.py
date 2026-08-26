@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.executor.guard_registry import (
+    GuardDeployment,
+    GuardRegistry,
     deploy_guard_configs,
     load_guard_registry,
     validate_guard_registry,
@@ -51,14 +53,11 @@ def _asset_dir(template_dir: Path) -> Path:
     """Resolve the demo-host asset directory, preferring the caller-supplied
     template dir when it carries the demo assets and falling back to the
     packaged demo_host asset bundle otherwise."""
-    candidates = (
-        template_dir,
-        Path(__file__).resolve().parent.parent / "assets" / "demo_host",
-    )
-    for cand in candidates:
+    packaged = Path(__file__).resolve().parent.parent / "assets" / "demo_host"
+    for cand in (template_dir, packaged):
         if (cand / "architecture.md").is_file():
             return cand
-    return Path(__file__).resolve().parent.parent / "assets" / "demo_host"
+    return packaged
 
 
 def _wheel_sha256(wheel: Path, asset_dir: Path) -> str:
@@ -103,6 +102,61 @@ def _provision_project_config(asset_dir: Path, target_dir: Path) -> None:
     )
 
 
+def _deploy_architecture(asset_dir: Path, target_dir: Path) -> Path:
+    """Byte-deploy the demo architecture and return the registry path.
+
+    The demo registry lands at the single canonical landing point
+    ``.tracks/projects/v0.1/architecture.md``. When no architecture asset
+    exists to deploy, the asset-side source path is returned so downstream
+    registry loading fails closed instead of silently skipping validation.
+    """
+    arch_src = asset_dir / "architecture.md"
+    arch_target = (
+        target_dir / ".tracks" / "projects" / "v0.1" / "architecture.md"
+    )
+    arch_target.parent.mkdir(parents=True, exist_ok=True)
+    if arch_src.is_file():
+        arch_target.write_bytes(arch_src.read_bytes())
+    return arch_target if arch_target.exists() else arch_src
+
+
+def _demo_adapter_id(target_dir: Path) -> str:
+    """Resolve the demo adapter id from the host project contract.
+
+    The adapter id is consumed from the host contract's [adapter] declaration,
+    never from a zone literal (IF-ADAPTER-003): the executor zone stays
+    language neutral and simply follows whatever the host contract declares
+    (AC-FR0264-04). A contract without a known adapter is fail-closed.
+    """
+    contract = load_contract(target_dir)
+    if contract.adapter is None:
+        raise ValueError(
+            "demo host contract declares no known [adapter] id"
+        )
+    return contract.adapter.id
+
+
+def _deploy_configs(
+    registry: GuardRegistry, target_dir: Path
+) -> GuardDeployment:
+    """Validate the demo registry and deploy its guard configs.
+
+    Deployment must carry the same registry digest as the loaded registry
+    (AC-FR0258-03); a drift here is a fail-closed parity violation that must
+    surface rather than be silently recorded.
+    """
+    errors = validate_guard_registry(registry, target_dir)
+    if errors:
+        raise ValueError(f"demo guard registry invalid: {errors}")
+    deployment = deploy_guard_configs(registry, target_dir)
+    if deployment.registry_digest != registry.digest:
+        raise ValueError(
+            "demo deployment digest drift: "
+            f"deployment={deployment.registry_digest} registry={registry.digest}"
+        )
+    return deployment
+
+
 def create_demo_host(
     template_dir: Path, target_dir: Path, wheel: Path
 ) -> DemoHostReport:
@@ -116,56 +170,29 @@ def create_demo_host(
     """
     asset_dir = _asset_dir(template_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-
-    arch_target = (
-        target_dir / ".tracks" / "projects" / "v0.1" / "architecture.md"
-    )
-    arch_target.parent.mkdir(parents=True, exist_ok=True)
-    arch_src = asset_dir / "architecture.md"
-    if arch_src.is_file():
-        arch_target.write_bytes(arch_src.read_bytes())
+    registry_path = _deploy_architecture(asset_dir, target_dir)
 
     venv = target_dir / ".venv"
     if not venv.exists():
         venv.mkdir(parents=True, exist_ok=True)
 
-    registry_path = arch_target if arch_target.exists() else arch_src
     registry = load_guard_registry(registry_path)
     # validation requires the config files to be present; provision the demo
     # project contract so parity is real rather than silently deferred.
     _provision_project_config(asset_dir, target_dir)
-    # The adapter id is consumed from the host project contract's [adapter]
-    # declaration, never from a zone literal (IF-ADAPTER-003): the executor
-    # zone stays language neutral and simply follows whatever the host
-    # contract declares (AC-FR0264-04).
-    contract = load_contract(target_dir)
-    if contract.adapter is None:
-        raise ValueError(
-            "demo host contract declares no known [adapter] id"
-        )
-    errors = validate_guard_registry(registry, target_dir)
-    if errors:
-        raise ValueError(f"demo guard registry invalid: {errors}")
-    deployment = deploy_guard_configs(registry, target_dir)
-    # Deployment / hook / CI must all carry the same registry digest as the
-    # loaded registry (AC-FR0258-03); a drift here is a fail-closed parity
-    # violation that must surface rather than be silently recorded.
-    if deployment.registry_digest != registry.digest:
-        raise ValueError(
-            "demo deployment digest drift: "
-            f"deployment={deployment.registry_digest} registry={registry.digest}"
-        )
+    adapter_id = _demo_adapter_id(target_dir)
+    _deploy_configs(registry, target_dir)
 
     return DemoHostReport(
         repo=target_dir,
         venv=venv,
         wheel_sha256=_wheel_sha256(wheel, asset_dir),
         import_path=str(target_dir / ".venv" / "lib" / "site-packages"),
-        architecture_path=arch_target,
+        architecture_path=registry_path,
         registry_digest=registry.digest,
         hooks_path=".githooks",
         ci_binding="declared",
-        adapter_id=contract.adapter.id,
+        adapter_id=adapter_id,
     )
 
 
