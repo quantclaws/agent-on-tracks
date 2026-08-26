@@ -17,6 +17,22 @@ from tracks.adapters.base import TestRunResult
 from tracks.executor.mutation import MutationExperimentResult, MutationManifest
 
 
+def _missing_result_nodes(
+    manifest: MutationManifest,
+    target_results: Mapping[str, TestRunResult],
+    control_results: Mapping[str, TestRunResult],
+) -> list[str]:
+    """Return the labelized missing node ids, or [] when every node ran.
+
+    A "missing" node is one declared by the manifest (target/control) with no
+    result in ``run_nodes`` output.  Labels are ``target:<id>`` / ``control:<id>``
+    so the blocked reason is precise for WAL/replay rerun decisions.
+    """
+    target_missing = [nid for nid in manifest.target_nodes if nid not in target_results]
+    control_missing = [nid for nid in manifest.control_nodes if nid not in control_results]
+    return [f"target:{n}" for n in target_missing] + [f"control:{n}" for n in control_missing]
+
+
 def run_mutation_experiment(  # pylint: disable=too-many-locals
     manifest: MutationManifest,
     repo: Path,
@@ -85,12 +101,10 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
         all_control_green = all(r.status in ("passed", "skipped") for r in control_results.values())
         controls = "green" if all_control_green else "failed"
 
-        # Phase 4b: detect missing results up front for a precise blocked
-        # reason.  The rollback phase still runs below (and propagates on
-        # unclean rollback) even when results are incomplete.
-        target_missing = [nid for nid in manifest.target_nodes if nid not in target_results]
-        control_missing = [nid for nid in manifest.control_nodes if nid not in control_results]
-        results_incomplete = bool(target_missing or control_missing)
+        # Phase 4b: detect missing results for a precise blocked reason.
+        # The rollback phase still runs below (and propagates on unclean
+        # rollback) even when results are incomplete.
+        missing_nodes = _missing_result_nodes(manifest, target_results, control_results)
 
         # Phase 5: try to roll back cleanly
         try:
@@ -103,10 +117,7 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
         # required node with no result must NEVER pass: the experiment did not
         # actually run it, so blocks/reruns are the only sound verdicts (no
         # phantom pass on partial run output).
-        if results_incomplete:
-            missing = [f"target:{n}" for n in target_missing] + [
-                f"control:{n}" for n in control_missing
-            ]
+        if missing_nodes:
             return MutationExperimentResult(
                 status="blocked",
                 baseline="verified",
@@ -114,7 +125,7 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
                 target_kill="",
                 controls="",
                 rollback=rollback,
-                blocked_reason=f"missing_result:{','.join(missing)}",
+                blocked_reason=f"missing_result:{','.join(missing_nodes)}",
                 node_results_ref=None,
             )
 
