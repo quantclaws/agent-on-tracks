@@ -21,6 +21,7 @@ sha:
 - `.tracks/projects/project.toml`、architecture.md §4.2 registry block、pre-commit/CI config、v0.6 sealed docs/test digests。
 - 隔离 git worktree 的实际 diff identity、target/control normalized result 与 rollback clean；真实宿主树保持不变。
 - wheel 安装创建的 demo repo：venv/import path/hooksPath/CI binding/adapter contract 与事件证据。
+- M-IMPL RGR lineage（B91，interfaces §5 IF-IMPL-004）：task 的 `red.checkpointed` 事件家族、G commit trailers（`Tracks-R=<解析后 r_sha>`）与 `green.committed` payload——lineage 锚点解析序（精确匹配权威 / Shield 覆写回退最新 checkpoint / 无 checkpoint fail-closed）只经这些公开出口断言。
 
 测试不因内部类、私有 state、函数调用次数或 mock 返回值通过；需要的内部判定必须先落 interfaces.md 的 event/CLI/file outlet。
 
@@ -323,6 +324,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 | 3 | `tests/integration/test_commit_hook_hard_gate.py` | 增硬门反例：守卫违规被 hook 拒绝、无 `--exit-zero` | Phase 0 hardening |
 | 4 | `tests/e2e/test_full_journey_v05.py` | 回归早期版本不触发 Phase 0/双宿主演证 | capability backward compatibility |
 | 5 | wheel/package-data integration | 安装 wheel 后定位 demo architecture/flake8/project/source/test assets，并证明 allowlist/wheel/fresh repo 无 legacy `guards.toml` 或预制 hook/CI（不修改仓库 inherited file） | demo 必须走真实安装路径与同一 registry mechanism |
+| 6 | `tests/integration/test_rgr_contract.py` | 【R 修订（B91）】追加 lineage 锚点解析序 integration 回归：test_defect 轮 Shield fix 覆写后，G commit 经 `red.checkpointed` 家族回溯解析（精确 `r_sha` 匹配权威、覆写回退最新 checkpoint `r_sha`、无 checkpoint fail-closed 路由 `check=lineage` → awaiting=rollback）；经 G trailers + `red.checkpointed`/`green.committed` 事件断言（interfaces §5 IF-IMPL-004）；标记引用既有跨版本 AC（`AC-FR0120-02@v0.5`，ref trailer lineage proof），不新增 §8 行 | 第二次 lineage 回滚重入的耐久合同化：R/G refs 不可变下 B91 解析是唯一非放水路径；Runtime 侧 unit 回归已随 f638075 落盘，本行补 Shield 侧公开出口覆盖 |
 
 Devon 对迁移函数的 unit 更新仍由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
 

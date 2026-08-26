@@ -16,6 +16,7 @@ sha:
 - 既有 IF 标识不可重定义；§5 重列 inherited headings 供 validator 解析，正文定义仍以 IF-006 及其上游文档为准。
 - feature/hotfix 的 test-plan trace 与版本解析不变；v0.7 candidate-bound 是 `--version v0.7` 的追加闭环。
 - 外部 CLI 顶层命令集合不变；本版只扩展现有命令输出/校验。
+- 【R 修订（B91 lineage 回滚重入）】IF-IMPL-004 的 G lineage 锚点解析语义在本版冻结为设计合同（见 §5 IF-IMPL-004 的 v0.7 扩展）：锚点经该 task 的 `red.checkpointed` 事件家族解析，精确 `r_sha` 匹配权威、Shield 覆写回退最新 checkpoint、无 checkpoint fail-closed。R/G refs 不可变性、trailer 语法（`Tracks-Task`/`Tracks-Attempt`/`Tracks-R`/`Tracks-Issue`/`Tracks-AC`）、既有事件 payload 与 B57 的 `check=lineage → awaiting=rollback` 路由全部不变；该扩展是继承标识符上的合同增补，不新增 IF 标识符。
 
 ## 1. 跨模块合同
 
@@ -602,7 +603,13 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-IMPL-003 task graph 解析与校验合同（继承 IF-006）
 
-### IF-IMPL-004 RGR git 操作合同（继承 IF-006）
+### IF-IMPL-004 RGR git 操作合同（继承 IF-006；v0.7 冻结 B91 G lineage 锚点解析语义）
+
+**modules**: executor/rgr.py（R ref 创建与 G commit trailer 合同）、executor/m_impl_runtime.py（`_r_lineage_r_sha`/`_r_lineage_attempt` 锚点解析与 verify_lineage/TASK_REVIEW 消费）——跨模块合同，须有 integration 覆盖（test-plan §10）。
+
+- **lineage 锚点解析（B91，封闭解析序）**：G commit 的 `Tracks-R` trailer 与该 task 权威 R lineage 的匹配锚点经该 task 的 `red.checkpointed` 事件家族解析，解析序封闭为三步：(1) `state.r_tree_identity` 与家族中某 `red.checkpointed.r_sha` 精确相等——该 `r_sha` 即权威锚点；(2) 身份不匹配（test_defect 轮后 `_on_test_committed` 把 `r_tree_identity` 重指到获准 Shield fix commit 的覆写场景）——回退到该家族按 seq 最新的 `red.checkpointed.r_sha`；(3) 该 task 无任何 `red.checkpointed` 事件——verify_lineage 一律 fail-closed。R refs 与 G commits 不可变；该解析收紧而非放宽 lineage 校验（覆写场景下 `Tracks-R=<fix commit sha>` 的确定性复败死点被消除，无 checkpoint 的 lineage 声明反而新增阻断）。
+- **去重键同向解析**：G commit 去重的 attempt 键（`_r_lineage_attempt`）经同一修正后的 `r_sha` 解析，禁止以 fix commit sha 作为 lineage 锚点参与去重。
+- **可观察出口**：解析结果经既有 `red.checkpointed` / `green.committed` 事件（`r_sha`/trailers payload）与 git G commit trailers（`Tracks-R=<解析后 r_sha>`）审计；不匹配仍路由 TASK_REVIEW `check=lineage` → awaiting=rollback（B57 语义，Human 批准丢弃 M-IMPL 进度后 `trac recover` 重回 M-DESIGN）。
 
 ### IF-IMPL-005 质量门禁分层执行合同（继承 IF-006；registry 成为唯一来源）
 
