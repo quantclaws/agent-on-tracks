@@ -1,0 +1,25 @@
+{
+  "project": "v0.7",
+  "scope": "B91 G-lineage anchor resolution (interfaces §5 IF-IMPL-004 v0.7 extension; test-plan §10 row 6)",
+  "counterexamples": [
+    {
+      "id": "CE-1",
+      "patch": "tests/counterexamples/v0.7/ce1_bind_identity_over_family.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 2: identity mismatch after Shield-fix repoint must fall back to the seq-latest red.checkpointed r_sha; Tracks-R must never carry a non-checkpoint sha",
+      "minimal_deviation": "In Executor._r_lineage_r_sha return state.r_tree_identity directly when set, skipping red.checkpointed family resolution (the sealed run 01M0S0FQ T-013 bug shape)",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+      "observed": "killed -- AssertionError on green.payload['r_sha'] == latest red.checkpointed r_sha; the deviant build bound the repointed shield commit sha instead",
+      "status": "killed"
+    },
+    {
+      "id": "CE-2",
+      "patch": "tests/counterexamples/v0.7/ce2_anchorless_lineage_accepted.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 3: a task with no red.checkpointed events fails closed in verify_lineage (no-checkpoint lineage claims are blocked)",
+      "minimal_deviation": "In verify_lineage replace the conjunction r_ref_exists and g_trailers_valid and event_order_valid with a vacuous truth on g_sha presence -- anchorless lineage claims validate",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed",
+      "observed": "killed -- AssertionError 'no checkpoint family -> lineage fails closed': proof.r_before_g flipped to True while all three sub-checks stayed False",
+      "status": "killed"
+    }
+  ],
+  "restoration": "Both product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files."
+}
