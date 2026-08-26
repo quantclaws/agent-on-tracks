@@ -44,6 +44,33 @@ def _tests_in_scope(manifest: MutationManifest) -> bool:
     return tests_in_scope(manifest.allowed_change_scope)
 
 
+def _blocked(
+    reason: str,
+    *,
+    baseline: str = "",
+    apply: str = "",
+    target_kill: str = "",
+    controls: str = "",
+    rollback: str = "",
+) -> MutationExperimentResult:
+    """Build a ``blocked`` ``MutationExperimentResult`` with shared defaults.
+
+    Every fail-closed exit of the experiment reports ``status="blocked"`` with
+    ``node_results_ref=None``; the remaining fields vary per guard.  Centralising
+    the construction removes the repetitive boilerplate across the guard paths.
+    """
+    return MutationExperimentResult(
+        status="blocked",
+        baseline=baseline,
+        apply=apply,
+        target_kill=target_kill,
+        controls=controls,
+        rollback=rollback,
+        blocked_reason=reason,
+        node_results_ref=None,
+    )
+
+
 def run_mutation_experiment(  # pylint: disable=too-many-locals
     manifest: MutationManifest,
     repo: Path,
@@ -67,33 +94,14 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
       fail-closed with ``blocked_reason="tests_in_scope"`` — even when target/
       control nodes would otherwise all pass.
     """
-    test_scope = _tests_in_scope(manifest)
-    if test_scope:
-        return MutationExperimentResult(
-            status="blocked",
-            baseline="",
-            apply="",
-            target_kill="",
-            controls="",
-            rollback="",
-            blocked_reason="tests_in_scope",
-            node_results_ref=None,
-        )
+    if _tests_in_scope(manifest):
+        return _blocked("tests_in_scope")
 
     # Phase 1: create worktree and capture baseline identity
     try:
         worktree = open_worktree("mutation")
     except Exception as exc:
-        return MutationExperimentResult(
-            status="blocked",
-            baseline="",
-            apply="",
-            target_kill="",
-            controls="",
-            rollback="",
-            blocked_reason=str(exc),
-            node_results_ref=None,
-        )
+        return _blocked(str(exc))
 
     try:
         # Phase 2: apply the patch
@@ -105,15 +113,11 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
         if "mismatch" in (apply_result or ""):
             with contextlib.suppress(Exception):
                 close_worktree(worktree)
-            return MutationExperimentResult(
-                status="blocked",
+            return _blocked(
+                "stale_patch",
                 baseline="verified",
                 apply=apply_result or "",
-                target_kill="",
-                controls="",
                 rollback="clean",
-                blocked_reason="stale_patch",
-                node_results_ref=None,
             )
 
         # Phase 3: run target nodes (filter by target node IDs)
@@ -147,15 +151,11 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
         # actually run it, so blocks/reruns are the only sound verdicts (no
         # phantom pass on partial run output).
         if missing_nodes:
-            return MutationExperimentResult(
-                status="blocked",
+            return _blocked(
+                f"missing_result:{','.join(missing_nodes)}",
                 baseline="verified",
                 apply=apply_result,
-                target_kill="",
-                controls="",
                 rollback=rollback,
-                blocked_reason=f"missing_result:{','.join(missing_nodes)}",
-                node_results_ref=None,
             )
 
         # Determine result
@@ -173,15 +173,13 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
 
         # Target survived or control hit
         blocked_reason = "target_survived" if target_kill != "verified" else "control_hit"
-        return MutationExperimentResult(
-            status="blocked",
+        return _blocked(
+            blocked_reason,
             baseline="verified",
             apply=apply_result,
             target_kill=target_kill,
             controls=controls,
             rollback=rollback,
-            blocked_reason=blocked_reason,
-            node_results_ref=None,
         )
     except ValueError:
         # Rollback failure (ValueError) propagates to the caller.
@@ -193,13 +191,4 @@ def run_mutation_experiment(  # pylint: disable=too-many-locals
         # Other exceptions: return a blocked result for WAL replay.
         with contextlib.suppress(Exception):
             close_worktree(worktree)
-        return MutationExperimentResult(
-            status="blocked",
-            baseline="verified",
-            apply="",
-            target_kill="",
-            controls="",
-            rollback="",
-            blocked_reason=str(exc),
-            node_results_ref=None,
-        )
+        return _blocked(str(exc), baseline="verified")
