@@ -1120,7 +1120,10 @@ class OpencodeBackend:
                 extract_devon_evidence(
                     proc,
                     self._final_text_event,
-                    self._first_json_object,
+                    # Shape-aware (2026-08-27): Devon manifests carry
+                    # phase/changed_paths; context-echo JSON echoed after
+                    # the manifest must not win the pick.
+                    lambda t: self._first_json_object(t, ("phase", "changed_paths")),
                 )
             )
         if name == "Prism" and substate == "DIAGNOSE":
@@ -1313,7 +1316,15 @@ class OpencodeBackend:
         event = cls._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = cls._first_json_object(text.strip()) if isinstance(text, str) else None
+        payload = (
+            # Shape-aware first (the review JSON carries "verdict"); the
+            # blind last-wins pick stays as fallback so the existing
+            # legal-absence semantics ("verdict" not in payload) is preserved.
+            cls._first_json_object(text.strip(), ("verdict",))
+            or cls._first_json_object(text.strip())
+            if isinstance(text, str)
+            else None
+        )
         if not isinstance(payload, dict) or "verdict" not in payload:
             return None, None
         if payload.get("verdict") not in ("pass", "revise"):
@@ -1350,7 +1361,14 @@ class OpencodeBackend:
         event = self._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = self._first_json_object(text.strip()) if isinstance(text, str) else None
+        payload = (
+            # Shape-aware first (the diagnostic carries "classification");
+            # blind last-wins stays as fallback for the no-payload path.
+            self._first_json_object(text.strip(), ("classification",))
+            or self._first_json_object(text.strip())
+            if isinstance(text, str)
+            else None
+        )
         if not isinstance(payload, dict):
             return None
         if payload.get("classification") not in self._DIAGNOSE_CLASSIFICATIONS:
@@ -2117,13 +2135,19 @@ class OpencodeBackend:
         return payload, None
 
     @staticmethod
-    def _first_json_object(text: str) -> dict | None:
+    def _first_json_object(text: str, required_keys: tuple[str, ...] = ()) -> dict | None:
         """Extract the last top-level JSON object from *text*.
 
         Agents often wrap the manifest in Markdown prose.  We try the
         fast path first (entire text is JSON); if that fails we scan
-        for top-level ``{`` positions and return the last dict found
-        (manifests are at the end of agent output).
+        for top-level ``{`` positions.
+
+        Shape-aware selection (2026-08-27, run 01M0S0FQ T-015): with
+        *required_keys*, the LAST object carrying ALL of them wins and the
+        last object overall stays the fallback — models that echo the
+        assignment-context JSON (e.g. the pre_dirty_snapshot path->sha
+        mapping) AFTER their manifest no longer poison the blind
+        last-wins pick (that round cost a full Devon refactor attempt).
         """
         try:
             decoded = json.loads(text)
@@ -2135,6 +2159,7 @@ class OpencodeBackend:
         i = 0
         n = len(text)
         payload: dict | None = None
+        shaped: dict | None = None
         while i < n:
             if text[i] != "{":
                 i += 1
@@ -2146,8 +2171,10 @@ class OpencodeBackend:
                 continue
             if isinstance(obj, dict):
                 payload = obj
+                if required_keys and all(k in obj for k in required_keys):
+                    shaped = obj
             i = end
-        return payload
+        return shaped if shaped is not None else payload
 
     @staticmethod
     def _manifest_include(
