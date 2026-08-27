@@ -395,6 +395,16 @@ def _referenced_acs(projects_dir: Path, version: str) -> set[str]:
     return {ac_id for ac_id, _ref, _ln, _sec in acs}
 
 
+def approved_acs(projects_dir: Path, version: str) -> list[str]:
+    """Approved AC set declared by ``<version>/acceptance.md`` (deterministic).
+
+    The acceptance document is the canonical approval artifact: its AC ids,
+    in sorted order, drive one closure record per required AC (interfaces
+    §1i -- the CLI consumes this instead of re-scanning documents itself).
+    """
+    return sorted(_referenced_acs(projects_dir, version))
+
+
 def _anchor_not_closed(
     ref: str,
     declared_refs: set[str],
@@ -486,3 +496,123 @@ def _anchor_ref_errors(
 def _ac_ref_id(ac_ref: str) -> str:
     """Strip an optional ``@<version>`` suffix from an AC reference."""
     return ac_ref.split("@", 1)[0].strip()
+
+
+# -- v0.7 candidate-bound closure (IF-CLOSURE-001, interfaces §1i / FR-0265) -----
+
+
+# Closed set of hard-error tokens (interfaces §1i: node_missing | skip_xfail |
+# identity_drift | control_failure | baseline_missing | mutation_missing |
+# full_pass_missing | foreign_candidate).
+CLOSURE_HARD_ERRORS = frozenset(
+    {
+        "node_missing",
+        "skip_xfail",
+        "identity_drift",
+        "control_failure",
+        "baseline_missing",
+        "mutation_missing",
+        "full_pass_missing",
+        "foreign_candidate",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ClosureRecord:
+    """Per-AC candidate-bound trace record (interfaces §1i)."""
+
+    ac: str
+    outlet: str
+    nodes: tuple[str, ...]
+    baseline_evidence: str | None
+    mutation_evidence: str | None
+    full_pass_evidence: str | None
+    candidate_digest: str
+    status: Literal["pass", "fail"]
+
+
+@dataclass(frozen=True)
+class ClosureReport:
+    """Candidate-bound trace closure report (interfaces §2c)."""
+
+    status: Literal["pass", "fail"]
+    closure: Literal["candidate-bound"]
+    hard_errors: tuple[str, ...]
+    records: tuple[ClosureRecord, ...]
+
+
+def _closure_errors(candidate_digest: str, evidence: dict) -> list[str]:
+    """Closed-set hard errors for one AC's candidate-bound evidence chain.
+
+    Checks, in fixed order, every blocking condition (interfaces §1i / FR-0265):
+    collected node missing, selected node skipped/xfailed (not truly executed),
+    selection/evidence identity drift (node_count vs status_count mismatch),
+    mutation control node not green, missing baseline/mutation/FULL evidence,
+    and a baseline or mutation candidate digest foreign to this candidate.
+    """
+    errors: list[str] = []
+    nodes = tuple(evidence.get("nodes") or ())
+    node_statuses = tuple(evidence.get("node_statuses") or ())
+    control_statuses = tuple(evidence.get("control_statuses") or ())
+
+    if not nodes:
+        errors.append("node_missing")
+    if node_statuses and len(node_statuses) != len(nodes):
+        errors.append("identity_drift")
+    if any(s in ("skipped", "xfail") for s in node_statuses):
+        errors.append("skip_xfail")
+    if any(c != "pass" for c in control_statuses):
+        errors.append("control_failure")
+    if evidence.get("baseline_evidence") is None:
+        errors.append("baseline_missing")
+    if evidence.get("mutation_evidence") is None:
+        errors.append("mutation_missing")
+    if evidence.get("full_pass_evidence") is None:
+        errors.append("full_pass_missing")
+    if evidence.get("baseline_candidate") != candidate_digest or (
+        evidence.get("mutation_candidate") != candidate_digest
+    ):
+        errors.append("foreign_candidate")
+    return errors
+
+
+def check_closure_candidate(
+    acs: list[str],
+    candidate_digest: str,
+    per_ac_evidence: dict,
+) -> ClosureReport:
+    """Candidate-bound executable trace checker (IF-CLOSURE-001 / FR-0265).
+
+    Pure join over every approved AC connecting acceptance -> outlet ->
+    collected node -> baseline evidence -> mutation evidence -> same-candidate
+    FULL pass. Top-level ``closure`` is always ``"candidate-bound"`` (the
+    schema is v0.7-only); top-level ``status=pass`` only when every required AC
+    record passes. Aggregates all hard errors without short-circuiting.
+
+    The same function backs ``trac check trace --version v0.7`` and the
+    ISLAND_GATE_2 exit gate (interfaces §1i / architecture §1.0.7).
+    """
+    records: list[ClosureRecord] = []
+    hard_errors: list[str] = []
+    for ac in acs:
+        evidence = per_ac_evidence.get(ac) or {}
+        errors = _closure_errors(candidate_digest, evidence)
+        record = ClosureRecord(
+            ac=ac,
+            outlet=str(evidence.get("outlet", "")),
+            nodes=tuple(evidence.get("nodes") or ()),
+            baseline_evidence=evidence.get("baseline_evidence"),
+            mutation_evidence=evidence.get("mutation_evidence"),
+            full_pass_evidence=evidence.get("full_pass_evidence"),
+            candidate_digest=candidate_digest,
+            status="pass" if not errors else "fail",
+        )
+        records.append(record)
+        hard_errors.extend(errors)
+    return ClosureReport(
+        status="pass" if all(r.status == "pass" for r in records) else "fail",
+        closure="candidate-bound",
+        hard_errors=tuple(dict.fromkeys(hard_errors)),
+        records=tuple(records),
+    )

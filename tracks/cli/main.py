@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -19,10 +20,15 @@ from tracks import paths, templating
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.checks.reach import check_reach_file
 from tracks.checks.release_evidence import check_release_evidence_file
-from tracks.checks.trace import check_trace_full_file
+from tracks.checks.trace import approved_acs, check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
-from tracks.executor import Executor, git
+from tracks.executor import (  # noqa: F401  (§1.0.9 assembly)
+    Executor,
+    git,
+    v07_runtime,
+    version_extensions,
+)
 from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import (
     _resolve_run_version,
@@ -1369,6 +1375,14 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
         version = _latest_version(home)
     if version is None:
         return _err("no .tracks/projects/v* version directories found")
+    # architecture §1.0.9 / FR-0264-02: resolution is keyed by the target
+    # version and precedes every classic-path precondition -- only a version
+    # whose extension provides the trace capability takes the candidate-bound
+    # closure exit (§2c), which needs no version directory; early versions
+    # resolve nothing and keep their classic behaviour untouched.
+    checker = version_extensions.resolve_capability(version, "trace")
+    if checker is not None:
+        return _cmd_check_trace_v07(repo, home, version, checker, use_json)
     vdir = paths.version_dir(home, version)
     if not vdir.exists():
         return _err(f"version directory not found: {vdir}")
@@ -1397,6 +1411,134 @@ def _print_trace_json(report) -> None:
     if report.status == "pass" and report.hotfix_scope is not None:
         payload["hotfix_scope"] = report.hotfix_scope
     print(json.dumps(payload, ensure_ascii=False))
+
+
+# -- v0.7 candidate-bound closure exit (IF-CLOSURE-001, interfaces §1i) ----------
+
+
+def _ac_base_ref(ac) -> str | None:
+    """Bare AC id from a possibly cross-version ``AC-FRXXXX-YY@vX.Y`` reference."""
+    if not isinstance(ac, str) or not ac.strip():
+        return None
+    return ac.split("@", 1)[0].strip()
+
+
+def _merge_baseline_repair(entry: dict, payload: dict) -> None:
+    """Fold one ``phase0.baseline_repaired`` payload into an AC evidence entry.
+
+    Interfaces §1a row-1 fields: ``evidence_id`` names the frozen-baseline
+    authenticity evidence, ``bound_node.node_id`` is the real collected node
+    the gap was repaired with and ``bound_node.digest`` is the candidate
+    identity the frozen baseline was repaired under -- the baseline-side
+    digest channel the pure join compares against (interfaces §1i).
+    """
+    entry["baseline_evidence"] = payload.get("evidence_id") or entry.get("baseline_evidence")
+    bound_node = payload.get("bound_node") or {}
+    node_id = bound_node.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        nodes = list(entry.get("nodes") or [])
+        nodes.append(node_id)
+        entry["nodes"] = list(dict.fromkeys(nodes))
+    digest = bound_node.get("digest")
+    if isinstance(digest, str) and digest:
+        entry["baseline_candidate"] = digest
+
+
+def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
+    """Fold one ``mutation.manifest`` payload (§1g field set) into an entry."""
+    digest = payload.get("candidate_digest")
+    if isinstance(digest, str) and digest:
+        entry["mutation_candidate"] = digest
+    patch = payload.get("patch_digest")
+    if isinstance(patch, str) and patch:
+        entry["mutation_evidence"] = patch
+
+
+def _apply_full_execution(per_ac: dict, acs: list[str], payload: dict) -> None:
+    """Credit a suite-level FULL execution to every required AC equally.
+
+    The FULL gate executes the whole suite, so its outcome (real emitted
+    ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
+    becomes each required AC's full-pass evidence for this candidate.
+    """
+    if not payload.get("serves_as_full_f"):
+        return
+    evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
+    evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")
+    for ac in acs:
+        per_ac.setdefault(ac, {})["full_pass_evidence"] = evidence_id
+
+
+def _merge_stream_event(
+    candidate_digest: str | None, per_ac: dict, acs: list[str], event
+) -> str | None:
+    """Fold one stream event into the harvest state; returns the current digest."""
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    if event.type == "mutation.manifest":
+        base = _ac_base_ref(payload.get("ac")) or ""
+        _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
+        digest = payload.get("candidate_digest")
+        if isinstance(digest, str) and digest:
+            return digest
+    elif event.type == "phase0.baseline_repaired":
+        base = _ac_base_ref(payload.get("ac")) or ""
+        _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
+    elif event.type == "full.executed":
+        _apply_full_execution(per_ac, acs, payload)
+    return candidate_digest
+
+
+def _closure_evidence(store: Store, version: str, acs: list[str]) -> tuple[str | None, dict]:
+    """Harvest per-AC candidate-bound evidence from *version*'s event stream.
+
+    Only contracted payloads feed the join: baseline repair (§3), mutation
+    manifest (§1g) and same-suite FULL executions. Absent elements stay
+    absent -- the pure join degrades those records to fail; evidence is
+    never invented, padded or suppressed.
+    """
+    candidate_digest: str | None = None
+    per_ac: dict[str, dict] = {}
+    for run_id in store.runs_for_version(version):
+        for event in store.events(run_id):
+            candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
+    return candidate_digest, per_ac
+
+
+def _closure_json(report) -> dict:
+    """§1i JSON shape: classic envelope plus closure schema (records ordered)."""
+    return {
+        "status": report.status,
+        "hard_errors": list(report.hard_errors),
+        "warnings": [],
+        "closure": report.closure,
+        "records": [asdict(record) for record in report.records],
+    }
+
+
+def _cmd_check_trace_v07(repo: Path, home: Path, version: str, checker, use_json: bool) -> int:
+    """Candidate-bound closure exit slice (IF-CLOSURE-001 / interfaces §1i).
+
+    Approved ACs come from the version's acceptance.md (canonical approval
+    artifact): one record per approved AC, degraded to fail when evidence is
+    missing -- records are never suppressed. ``checker`` is the same pure
+    join ISLAND_GATE_2 uses; this branch only assembles inputs and reports.
+    """
+    del repo  # evidence lives in .tracks events; kept for CLI signature symmetry
+    acs = approved_acs(paths.projects_dir(home), version)
+    store = Store(home)
+    try:
+        candidate_digest, harvested = _closure_evidence(store, version, acs)
+    finally:
+        store.close()
+    report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
+    if use_json:
+        print(json.dumps(_closure_json(report), ensure_ascii=False))
+    else:
+        for error in report.hard_errors:
+            print(error)
+        if not report.hard_errors:
+            print("trace ok")
+    return 1 if report.status == "fail" else 0
 
 
 def _active_hotfix_trace_context(home: Path, vdir: Path) -> dict | None:
