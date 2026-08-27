@@ -850,6 +850,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # 等同进程内一次运行窗口；崩溃/重启清零可接受）。limit 引用模块常量，
         # 便于测试/调参在调用期覆盖。
         self._stall = CommandStallTracker(limit=STALL_COMMAND_LIMIT)
+        # r10/SM-01.3: Phase 0 BLOCKED resume preflight -- the kernel parks at
+        # BLOCKED (decide_phase0 returns no commands), so the executor effects
+        # layer is the only legal IO edge that can issue a fresh
+        # phase0_validate after Human repairs the repo facts (AC-FR0257-05
+        # repair -> revalidate cycle). This method runs once per run_loop, so
+        # the resume fires at most once per drive invocation -- no tick-level
+        # hot loop -- and re-validation keeps the full hard checks.
+        self._phase0_blocked_resume(self.store.state(self.run_id))
         while True:
             # B43（#45）：派发前 fail-fast——进程存活期间 tracks/** 漂移
             # （含 OOB 修复提交）即停车提示重启，绝不带旧逻辑继续。
@@ -3852,20 +3860,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """Guard hardening input (§1d; registry surface IF-GUARD-001/002).
 
         Returns ``(violations, guard_refs, registry_present)``. A PRESENT but
-        unloadable registry yields violations (fail closed). An ABSENT §4.2
-        registry means no guard/parity evidence exists on this host: the Phase
-        0 pre-gate must park (``registry_present=False``) rather than fabricate
-        a passed hardening or a seal (interfaces §1c/§1e fail-closed).
+        unloadable §4.2 registry yields violations (fail closed -- the run
+        parks at phase0.blocked rather than proceeding under a substituted
+        registry, interfaces §1c/§1e fail-closed evidence authenticity). An
+        ABSENT §4.2 registry means no guard/parity evidence exists on this
+        host: the Phase 0 pre-gate must park (``registry_present=False``)
+        rather than fabricate a passed hardening or a seal.
 
-        SHIELD_FIX (issue 100 / T-016): the v0.7 host seed's §4.2 registry is
-        sourced from the packaged demo architecture (``tracks/assets/demo_host/
-        architecture.md`` -- the task's "demo asset 同源" data precondition).
-        A host whose M-DESIGN draft carries no loadable §4.2 block is a
-        registry-less draft, not a genuinely different host: read the packaged
-        demo registry as the same-source canonical the seed was meant to carry,
-        so Phase 0 can proceed to the fail-closed demonstration. This is data
-        reading (not fabrication); a genuinely absent packaged asset still
-        parks fail-closed.
+        No packaged-asset substitution is allowed to mask an unloadable host
+        registry into a pass (Prism R9-01): the host seed must itself carry a
+        valid §4.2 block ("demo asset 同源"); a seed that does not is a
+        test/seed defect (SHIELD_FIX), never a silent implementation pass.
         """
         arch = paths.projects_dir(self.store.home) / self.version / "architecture.md"
         if not arch.is_file():
@@ -3874,26 +3879,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
         try:
             load_guard_registry(arch)
-        except (ValueError, OSError, UnicodeError):
-            # Fall back to the packaged demo registry (task-designated
-            # same-source canonical, "demo asset 同源") before failing closed.
-            packaged = (
-                Path(__file__).resolve().parent.parent
-                / "assets"
-                / "demo_host"
-                / "architecture.md"
-            )
-            if packaged.is_file():
-                try:
-                    load_guard_registry(packaged)
-                except (ValueError, OSError, UnicodeError) as exc:
-                    return [
-                        f"architecture.md §4.2 registry block failed to load: {exc}"
-                    ], [str(arch)], True
-                return [], [str(packaged)], True
+        except (ValueError, OSError, UnicodeError) as exc:
             return [
-                "architecture.md §4.2 registry block failed to load and no "
-                "packaged demo registry is available"
+                f"architecture.md §4.2 registry block failed to load: {exc}"
             ], [str(arch)], True
         return [], [str(arch)], True
 
@@ -3912,15 +3900,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         evidence cannot be forged as canned identity strings."""
         contract = load_contract(self.repo)
         section = getattr(contract, "integration", None) or contract.unit
-        from tracks.adapters.base import resolve_adapter
+        from tracks.adapters.base import UnknownAdapterError, resolve_adapter
 
         declared = contract.adapter
-        if declared is not None:
-            adapter = resolve_adapter(
-                declared.id, declared.protocol, declared.version
+        if declared is None:
+            raise UnknownAdapterError(
+                "host project contract declares no [adapter] section "
+                "(IF-ADAPTER-001); the executor consumes only the host "
+                "declaration and never a built-in reference adapter"
             )
-        else:
-            adapter = resolve_adapter("reference-pytest", "tracks-test-result", 1)
+        adapter = resolve_adapter(
+            declared.id, declared.protocol, declared.version
+        )
         cwd = (
             Path(self.repo)
             if section.cwd == "."
@@ -3965,6 +3956,25 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             },
             command_id=cmd.command_id,
         )
+
+    def _phase0_blocked_resume(self, state) -> bool:
+        """SM-01.3 resume preflight (IF-FAILCLOSED-001 / interfaces §1c).
+
+        When a drive starts with ``phase0_status == "BLOCKED"`` the kernel
+        parks by design (``decide_phase0`` returns no commands at BLOCKED), so
+        only the executor effects layer can re-issue the validation once Human
+        repairs the repo facts. Appends one fresh ``phase0_validate`` command
+        (command.issued WAL) and executes it, returning True when a resume was
+        kicked; a no-op (False) for any other status. The run-loop entry calls
+        this at most once per drive -- no tick-level hot loop -- and the
+        re-validation runs the FULL hard checks: a still-broken host keeps
+        parking at phase0.blocked rather than receiving a watered-down SEALED
+        pass (SM-01.3, §1c fail-closed).
+        """
+        if getattr(state, "phase0_status", None) != "BLOCKED":
+            return False
+        self.issue(Command(kind="phase0_validate"))
+        return True
 
     def _do_phase0_validate(self, cmd, state, task_id, reconcile):
         """Runtime Phase 0 pre-gate for v0.7 hosts (interfaces §1c/§1d).
