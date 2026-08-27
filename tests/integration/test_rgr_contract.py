@@ -321,8 +321,10 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
 def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     """B91 resolution order step 3 (interfaces §5 IF-IMPL-004, v0.7): a task
     with no ``red.checkpointed`` events has no lineage anchor. verify_lineage
-    must fail closed -- no G may be minted from an anchorless green claim, and
-    no lineage declaration can validate against an empty checkpoint family."""
+    must fail closed -- no G may be minted from an anchorless green claim,
+    no lineage declaration can validate against an empty checkpoint family,
+    and the blocked claim must surface through the frozen B57 exit:
+    ``verdict.failed(check=lineage)`` routed to ``awaiting=rollback``."""
     store, task = _started_task_store(host_repo)
     task_id = task["task_id"]
     executor = Executor(store, host_repo, "RUN")
@@ -340,6 +342,29 @@ def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     )
     checkpoints = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
     assert checkpoints == [], "fixture sanity: the family stays empty"
+
+    # Routing leg of resolution step 3 -- interfaces §5 IF-IMPL-004 v0.7
+    # observable exits: "不匹配仍路由 TASK_REVIEW check=lineage ->
+    # awaiting=rollback（B57 语义）" (repeated as this regression's asserted
+    # exit in test-plan §8 row 6). The blocked anchorless claim must be
+    # classified as a LINEAGE gate failure on the public event stream, and
+    # the frozen B57 router must park the run for Human adjudication --
+    # recorded lineage is untrustworthy and not reworkable in place.
+    lineage_failures = [
+        e
+        for e in store.events("RUN")
+        if e.type == "verdict.failed" and e.payload.get("check") == "lineage"
+    ]
+    assert lineage_failures, (
+        "an anchorless green claim must surface as a check=lineage gate "
+        "failure on the public event stream"
+    )
+    assert lineage_failures[0]["payload"].get("task_id") == task_id
+    projected = store.state("RUN")
+    assert getattr(projected, "awaiting", None) == "rollback", (
+        "the frozen B57 router must route check=lineage to awaiting=rollback "
+        "(Human approves discarding M-IMPL progress; trac recover re-enters)"
+    )
 
     unrelated_g = git_read(host_repo, "rev-parse", "HEAD")
     proof = verify_lineage(

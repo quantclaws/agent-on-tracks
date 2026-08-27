@@ -1,0 +1,19 @@
+CE-4 -- minimal deviation of the frozen B57 lineage routing clause
+(interfaces §5 IF-IMPL-004 v0.7: "不匹配仍路由 TASK_REVIEW check=lineage →
+awaiting=rollback"). The gate failure is still classified check=lineage and
+still parks the run, but the router silently drops the rollback destination,
+so a Human never adjudicates discarding M-IMPL progress. Expected kill:
+tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed
+dies on its state-projection assertion (awaiting must equal "rollback") while
+the event-classification assertion above it already passed.
+
+Apply with: git apply tests/counterexamples/v0.7/ce4_lineage_route_loses_rollback.patch
+
+--- a/tracks/kernel/m_impl.py
++++ b/tracks/kernel/m_impl.py
+@@ -438,5 +438,4 @@
+         # semantics (FR-0150); `trac approve` already accepts M-IMPL.
+         s.status = "awaiting_human"
+-        s.awaiting = "rollback"
+         s.return_target = "M-DESIGN"
+         _reset_review(s)
