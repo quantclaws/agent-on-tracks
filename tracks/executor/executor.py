@@ -3851,7 +3851,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             ]
         return [], [str(arch)]
 
-    def _do_phase0_validate(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
+    def _do_phase0_validate(self, cmd, state, task_id, reconcile):
         """Runtime Phase 0 pre-gate for v0.7 hosts (interfaces §1c/§1d).
 
         Emits the append-only ``phase0.*`` sequence over the delivered domain
@@ -3862,11 +3862,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         rebuilds the identical phase0_status/seal/blocked fields."""
         if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
             return
-        from tracks.executor.phase0 import (
-            build_seal_manifest,
-            judge_real_coverage,
-            scan_trace_gaps,
-        )
+        from tracks.executor.phase0 import judge_real_coverage, scan_trace_gaps
         from tracks.executor.test_select import (
             TestSelectError,
             collect_node_source_digests,
@@ -3959,14 +3955,24 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 cmd, "guard_registry_invalid", "; ".join(violations), False
             )
             return
+        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+
+    def _emit_phase0_sealed(self, cmd, baseline_version: str, baseline_dir: Path) -> None:
+        """Emit the terminal ``phase0.sealed`` event (interfaces §1c).
+
+        Builds the seal manifest from the baseline documents and the frozen
+        test digests via the T-005 facade, persists it (plus the frozen-test
+        digest map) to audit blobs, and references both from the emitted
+        event. The ``seal_id`` is the stable content digest of the remaining
+        manifest fields (IF-PHASE-003)."""
+        from tracks.executor.phase0 import build_seal_manifest
+
         contract_toml = paths.project_toml_path(paths.tracks_home(Path(self.repo)))
         env_digest = hashlib.sha256(contract_toml.read_bytes()).hexdigest()
         manifest = build_seal_manifest(
             baseline_version,
             _phase0_document_digests(baseline_dir),
-            _phase0_frozen_test_digests(
-                Path(self.repo), self._frozen_test_paths()
-            ),
+            _phase0_frozen_test_digests(Path(self.repo), self._frozen_test_paths()),
             (),
             env_digest,
         )
