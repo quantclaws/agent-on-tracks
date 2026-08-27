@@ -4770,6 +4770,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         findings: list[dict] = []
         all_legit = True
         staged_results: list[Path] = []
+        oob_files = self._oob_accepted_test_files()
         try:
             for name, section in sections:
                 nodes = selected_by_layer.get(name) or []
@@ -4804,7 +4805,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 }
                 cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, nodes)
-                if not self._record_layer_outcomes(nodes, mapping, outcomes, findings):
+                if not self._record_layer_outcomes(
+                    nodes, mapping, outcomes, findings, oob_files
+                ):
                     all_legit = False
         except (TestResultError, TestSelectError, OSError, UnicodeError) as exc:
             # FRB-G: a missing run_selected executable (OSError) or an
@@ -4825,12 +4828,37 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     staged_results[0].parent.rmdir()
         return outcomes, findings, all_legit, None
 
+    def _oob_accepted_test_files(self) -> set[str]:
+        """Test files carried by operator OOB declarations (oob.accepted).
+
+        2026-08-27 doctrinal gap (run 01M0S0FQ M-TEST park): operator
+        emergency fixes ship with their regression tests, and those tests are
+        necessarily green-on-arrival -- the fix is already on the tree. The
+        must-be-red doctrine (a v0.7 acceptance instrument must fail until
+        M-IMPL implements it) does not apply to them: they are operator
+        verification of landed behavior, not version acceptance instruments.
+        The OOB channel is the system's own declaration for exactly this
+        operator scope; files it recorded are exempt from the unexpected_pass
+        verdict (classified ``oob_verified`` instead)."""
+        files: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "oob.accepted":
+                continue
+            for path in ev.payload.get("files") or []:
+                if isinstance(path, str) and path.startswith("tests/"):
+                    files.add(path)
+        return files
+
     @staticmethod
-    def _record_layer_outcomes(nodes, mapping, outcomes: list[dict], findings: list[dict]) -> bool:
+    def _record_layer_outcomes(
+        nodes, mapping, outcomes: list[dict], findings: list[dict], oob_files: set[str]
+    ) -> bool:
         """Append one normalized outcome + finding per selected node (the
         {result} test result record is the sole per-node authority; stdout/stderr
         are logs only). Returns True when every node classified as legal Red;
-        an unexpected pass/skip classifies unexpected_pass."""
+        an unexpected pass/skip classifies unexpected_pass -- unless the node's
+        file is OOB-declared (see _oob_accepted_test_files), in which case
+        green-on-arrival is legal (oob_verified)."""
         layer_legit = True
         for node in nodes:
             case = mapping[node]
@@ -4839,7 +4867,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 if case.status in ("passed", "skipped")
                 else classify_red_detail(case.detail or "", case.status)
             )
-            if klass not in _LEGIT_RED:
+            if klass == "unexpected_pass" and node.split("::")[0] in oob_files:
+                klass = "oob_verified"
+            if klass not in _LEGIT_RED and klass != "oob_verified":
                 layer_legit = False
             outcomes.append(
                 {
@@ -4897,6 +4927,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                         f["classification"]
                         for f in findings
                         if f["classification"] not in _LEGIT_RED
+                        and f["classification"] != "oob_verified"
                     ),
                     "invalid",
                 ),
