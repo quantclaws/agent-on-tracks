@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.hotfix_support import seed_v05_approved_baseline
 from tracks.adapters.base import TestRunResult
 from tracks.executor.authenticity import judge_authenticity
 from tracks.executor.mutation import (
@@ -36,12 +35,21 @@ def test_append_only_and_projection_replay(trac, host_repo, event_log):
     The outlet (§1a/NFR-04): ``drop`` the derived ``runs``/``backlog``
     projection tables, then ``trac status`` re-derives state from the
     append-only events; the rebuilt status must match the pre-drop status.
+
+    NOTE (SHIELD_FIX T-015 / issue 101): the v0.7 run must be ACTIVATED via
+    the real journey (init -> start -> triage -> reviews) BEFORE any
+    `trac run`, otherwise `trac run` exits rc=1 'no active run' and NO
+    phase0.* event is ever emitted regardless of the implementation (a
+    perpetual Red fixture). A bare `seed_v05_approved_baseline` created the
+    project docs but not a run, so it could never reach the append-only
+    phase0 outlet.
     """
     import sqlite3
 
+    from tests.e2e.helpers import walk_to_await_human
     from tracks import paths
 
-    seed_v05_approved_baseline(host_repo, version="v0.7")
+    walk_to_await_human(trac, version="v0.7")
     trac("run")
     pre_status = trac("status").stdout
     # v0.7 phase0 events must be present in the append-only stream.
