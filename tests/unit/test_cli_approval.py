@@ -59,3 +59,74 @@ def test_approve_digest_mismatch_rejected(host_repo, trac, event_log):
     approvals = _events_of(event_log, "human.approval")
     assert len(approvals) == 1
     assert approvals[0]["payload"]["digest"] == previews[1]["payload"]["digest"]
+
+
+# -- B57 re-fix (#73): rollback target resolution at approval time ------------
+
+
+def _rollback_state(stage, return_target):
+    import types
+
+    return types.SimpleNamespace(stage=stage, return_target=return_target)
+
+
+def test_approve_rollback_target_requires_choice_when_no_preset():
+    """A lineage park presets no return target: the Human MUST choose; the
+    guidance names the valid set and the real two-step M-IMPL re-entry path
+    (recover only unlocks after the rollback has executed)."""
+    from tracks.cli.main import _approve_rollback_target
+
+    target, err = _approve_rollback_target(_rollback_state("M-IMPL", None), None)
+    assert target is None
+    assert err and "--to" in err and "M-ACC|M-SPEC|M-DESIGN" in err
+    assert "trac recover --to M-IMPL" in err
+
+
+def test_approve_rollback_target_closed_set():
+    """--to is validated against exactly the kernel-preset rollback stages."""
+    from tracks.cli.main import _approve_rollback_target
+
+    for bad in ("M-IMPL", "M-STORY", "M-TEST", "M-REQ-APPROVAL", "m-design", ""):
+        target, err = _approve_rollback_target(_rollback_state("M-IMPL", None), bad)
+        assert target is None
+        assert err and "invalid --to target" in err, bad
+    assert _approve_rollback_target(_rollback_state("M-IMPL", None), "M-DESIGN") == (
+        "M-DESIGN",
+        None,
+    )
+
+
+def test_approve_rollback_target_preset_and_override():
+    """A gap-typed preset (ac_gap->M-ACC) stays authoritative without --to;
+    an explicit --to overrides it (the Human outranks the preset)."""
+    from tracks.cli.main import _approve_rollback_target
+
+    assert _approve_rollback_target(_rollback_state("M-IMPL", "M-ACC"), None) == ("M-ACC", None)
+    assert _approve_rollback_target(_rollback_state("M-IMPL", "M-ACC"), "M-SPEC") == (
+        "M-SPEC",
+        None,
+    )
+
+
+def test_approve_rollback_target_mtest_rejects_to():
+    """M-TEST rollbacks always carry gap-typed presets: --to is an M-IMPL
+    concern only (B57 re-fix scope)."""
+    from tracks.cli.main import _approve_rollback_target
+
+    target, err = _approve_rollback_target(_rollback_state("M-TEST", "M-ACC"), "M-DESIGN")
+    assert target is None
+    assert err and "only valid for M-IMPL" in err
+    assert _approve_rollback_target(_rollback_state("M-TEST", "M-ACC"), None) == ("M-ACC", None)
+
+
+def test_approve_parse_args_actor_and_to():
+    from tracks.cli.main import _parse_approve_args
+
+    assert _parse_approve_args([]) == (None, None, None)
+    assert _parse_approve_args(["--actor", "Aaron"]) == ("Aaron", None, None)
+    assert _parse_approve_args(["--to", "M-DESIGN"]) == (None, "M-DESIGN", None)
+    assert _parse_approve_args(["--actor", "A", "--to", "M-ACC"]) == ("A", "M-ACC", None)
+    assert _parse_approve_args(["--to", "M-DESIGN", "--actor", "A"]) == ("A", "M-DESIGN", None)
+    for bad in (["--actor"], ["--to"], ["bogus"], ["--actor", "A", "extra"]):
+        actor, to_stage, err = _parse_approve_args(bad)
+        assert err and err.startswith("usage:"), bad

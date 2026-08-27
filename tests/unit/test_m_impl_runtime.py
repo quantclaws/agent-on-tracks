@@ -3865,3 +3865,58 @@ def test_shield_fix_rebaseline_noop_without_red_family(tmp_path):
     executor._rebaseline_red_family("T-001", shield, "C-FIX")
     reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert reds == []
+
+
+def test_shield_fix_commit_rebaselines_family_through_executor_wiring(tmp_path):
+    """B91 follow-up wiring (review P1, 2026-08-27): the mid-M-IMPL SHIELD_FIX
+    commit path itself (_emit_shield_commit: result/role/state/cmd — the real
+    executor entry, not the mixin called directly) must re-baseline the R
+    family. Every other re-baseline test drives _rebaseline_red_family
+    directly, so deleting the hook would pass the suite and silently
+    reintroduce B91 (run 01M0S0FQ T-013)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # RED checkpoint slot 1: the family the re-baseline joins.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    # Park the cycle at SHIELD_FIX: the first test_defect verdict routes to
+    # DIAGNOSE (four-way attribution); the attributed re-verdict opens the
+    # sanctioned Shield fix round.
+    for _ in range(2):
+        store.append(
+            "RUN", "v0.5", "verdict.failed",
+            {"check": "test_defect", "reason": "seed missing", "task_id": "T-001", "attempt": 1},
+            task_id="T-001",
+        )
+    state = store.state("RUN")
+    assert state.stage == "M-IMPL" and state.substate == "SHIELD_FIX"
+    # The fix: a dirty tests/ file, manifest matching the observation.
+    fix = repo / "tests" / "unit" / "test_fix.py"
+    fix.parent.mkdir(parents=True, exist_ok=True)
+    fix.write_text("def test_fix():\n    assert True\n", encoding="utf-8")
+    result = {
+        "status": "done",
+        "artifact_manifest": {"include": [{"path": "tests/unit/test_fix.py"}]},
+    }
+    ok = executor._emit_shield_commit(
+        result, "shield", state, Command("dispatch_agent", command_id="C-FIX"), "T-001"
+    )
+    assert ok, "shield fix commit must succeed"
+    # The wiring: test.committed AND the sanctioned re-baseline checkpoint.
+    assert [e for e in store.events("RUN") if e.type == "test.committed"]
+    reds = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
+    assert len(reds) == 2, "the fix commit must join the R family as a new slot"
+    assert reds[-1].payload["sanction"] == "shield_fix"
+    assert reds[-1].payload["attempt"] == 2
+    assert _git(repo, "rev-parse", reds[-1].payload["ref"]) == reds[-1].payload["r_sha"]

@@ -3618,6 +3618,28 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             if already:
                 return
+        # B57 re-fix defense in depth (review 2026-08-27): the CLI validates a
+        # closed target set and the kernel adopts the approval payload's
+        # to_stage -- but a hand-crafted out-of-band human.approval could
+        # smuggle an arbitrary stage in. Mirror _do_recover_stage: reject
+        # out-of-set targets with an audit blob, no event, no state change.
+        # The set is every to_stage the kernel legally emits today: gap-typed
+        # presets (M-ACC/M-SPEC), stub_gap + lineage (M-DESIGN), and the
+        # human.return escalation sets (M-STORY included).
+        if cmd.params.get("to_stage") not in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN"):
+            self.store.write_audit_blob(
+                {
+                    "event": "stage.rolled_back",
+                    "command_id": cmd.command_id,
+                    "rejected": True,
+                    "reason": (
+                        "rollback_stage target not in closed set "
+                        "(M-STORY|M-SPEC|M-ACC|M-DESIGN): "
+                        f"{cmd.params.get('to_stage')!r}"
+                    ),
+                }
+            )
+            return
         # B59 (#75): discarding M-IMPL progress must also discard its main-tree
         # residue, or the "discarded" work leaks into the next cycle's
         # environment (baseline freeze + agent verification).
@@ -4994,10 +5016,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # 632a84f, 02417f9 — silently absorbed prior Devon RED residue,
         # seeding the baseline with tests no current round wrote). Fail closed
         # on all of it instead of absorbing: the operator cleans the tree and
-        # `trac retry` re-enters the freeze. (Runtime-owned pytest byproducts
-        # under tests/ are NOT residue: `trac init` gitignores them at the
-        # host root — see HOST_BYPRODUCTS_GITIGNORE — so they never reach
-        # this check.)
+        # `trac retry` re-enters the freeze. (Runtime-owned test-runner
+        # byproducts under tests/ are NOT residue: `trac init` gitignores them
+        # at the host root — see HOST_BYPRODUCTS_GITIGNORE — so they never
+        # reach this check.)
         if tests_dir.exists():
             status = git(self.repo, "status", "--porcelain", "--", "tests")
             residue = [

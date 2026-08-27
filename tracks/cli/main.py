@@ -129,9 +129,9 @@ RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
 # .tracks/-level transient artifacts (report output, discuss locks).
 TRACKS_GITIGNORE = "report/\n*.lock\n"
-# Host-tree byproducts of the runtime's own contract commands: the pytest
-# collect/run executions materialize __pycache__/ and .pytest_cache/ in the
-# host repo (under tests/ and at the root). Same doctrine as the .tracks
+# Host-tree byproducts of the runtime's own contract commands: the
+# collect/run test executions materialize __pycache__/ and .pytest_cache/ in
+# the host repo (under tests/ and at the root). Same doctrine as the .tracks
 # gitignores above -- runtime-owned transients must be ignored in every
 # stage or they pollute host git status; the B59 freeze gate has
 # false-positived on exactly these since it landed (944c0c0, 2026-08-25:
@@ -865,8 +865,9 @@ def _approve_rollback_target(state, to_stage: str | None) -> tuple[str | None, s
         return None, (
             "rollback target not set: pass --to {"
             + "|".join(_APPROVE_ROLLBACK_TARGETS)
-            + "} (or use `trac recover --to M-IMPL` to re-enter "
-            "M-IMPL without rolling back)"
+            + "} (to re-enter M-IMPL without redoing the design, approve "
+            "--to M-DESIGN and then `trac recover --to M-IMPL` -- recover "
+            "only unlocks after the rollback has executed)"
         )
     return target, None
 

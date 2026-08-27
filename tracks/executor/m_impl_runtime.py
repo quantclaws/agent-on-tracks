@@ -3573,14 +3573,19 @@ class MImplRuntimeMixin:
         ref bounds the lineage the eventual G binds -- B56). The union only
         widens the ``git diff -- <paths>`` filter of the working-tree
         reconstruction: content still comes from the real tree, so a path a
-        later dispatch reverted contributes no diff lines.
+        later dispatch reverted contributes no diff lines. A sanctioned
+        Shield-fix re-baseline (sanction=shield_fix, B91 follow-up) does NOT
+        bound the union -- the impl cycle continues through it; only a fresh
+        task-starting checkpoint does.
 
         Prism OOB A02: task_id filtering makes the task boundary explicit
         (task.started/red.checkpointed already bound it implicitly); outcomes
         without a task_id are legacy-shape and stay included."""
         paths: set[str] = set()
         for ev in reversed(list(self.store.events(self.run_id))):
-            if ev.type in ("red.checkpointed", "task.started"):
+            if ev.type == "red.checkpointed" and ev.payload.get("sanction") != "shield_fix":
+                break
+            if ev.type == "task.started":
                 break
             if (
                 ev.type == "outcome.received"
