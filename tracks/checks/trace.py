@@ -138,6 +138,60 @@ def _check_fr_ac_errors(
     return errors
 
 
+def _marker_format_error(marker_str: str) -> str | None:
+    """Context-free marker grammar layer.
+
+    Single canonical rule, shared by the M-TEST EXIT trace gate
+    (_check_one_marker_error) and the Shield WRITE preflight
+    (marker_preflight_errors) -- no duplicated parser (2026-08-27 fix:
+    short-format markers used to ride through every WRITE/red/Prism round
+    and explode only at the EXIT gate, run 01M0S0FQ)."""
+    if "@" not in marker_str:
+        return f"test marker {marker_str} short format (missing @version)"
+    return None
+
+
+def _preflight_file_errors(
+    path: Path, rel: str, current_version: str | None
+) -> list[str]:
+    """Per-file layer of marker_preflight_errors (CCR split)."""
+    content = path.read_text(encoding="utf-8", errors="replace")
+    out: list[str] = []
+    for m in _MARKER_LINE.finditer(content):
+        marker_str = m.group(2) + (m.group(3) or "")
+        fmt = _marker_format_error(marker_str)
+        if fmt:
+            out.append(f"{rel}: {fmt}")
+        elif current_version and marker_str.split("@", 1)[1] != current_version:
+            # Cross-version marker: its own version's gate validates it
+            # (same skip semantics as _check_one_marker_error).
+            continue
+    return out
+
+
+def marker_preflight_errors(
+    repo: Path, changed_paths: list[str], current_version: str | None
+) -> list[str]:
+    """Fail-fast marker grammar check for the Shield WRITE validation.
+
+    Reuses _MARKER_LINE and the SAME layered rules as _check_one_marker_error:
+    the format layer plus the version-match layer. The acceptance-existence
+    layer stays at the M-TEST EXIT trace gate, where the full document
+    context (acceptance.md, tombstones) exists. Scans only the round's
+    changed test files; returns human-readable error strings."""
+    errors: list[str] = []
+    for rel in sorted({p for p in changed_paths if isinstance(p, str)}):
+        if not rel.startswith("tests/"):
+            continue
+        path = repo / rel
+        if not path.is_file() or path.suffix not in _TEST_SUFFIXES:
+            continue
+        if _DATA_DIRS & set(Path(rel).parts):
+            continue
+        errors.extend(_preflight_file_errors(path, rel, current_version))
+    return errors
+
+
 def _check_one_marker_error(
     marker_str: str,
     ac_id: str,
@@ -146,8 +200,9 @@ def _check_one_marker_error(
     current_version: str | None,
 ) -> str | None:
     """Return a hard-error string for one marker, or None if it binds cleanly."""
-    if "@" not in marker_str:
-        return f"test marker {marker_str} short format (missing @version)"
+    fmt = _marker_format_error(marker_str)
+    if fmt:
+        return fmt
     # Skip cross-version markers (historical, validated against their own version)
     if current_version and marker_str.split("@", 1)[1] != current_version:
         return None

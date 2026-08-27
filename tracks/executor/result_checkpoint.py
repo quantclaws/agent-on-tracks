@@ -509,6 +509,31 @@ class ResultCheckpointMixin:
             return
         if self._validate_artifacts(artifacts, checks, attempt, cmd.command_id):
             return
+        # 2026-08-27 fail-fast fix: marker grammar preflights HERE, at the
+        # WRITE result gate, using the SAME canonical parser as the M-TEST
+        # EXIT trace gate (tracks.checks.trace.marker_preflight_errors). A
+        # short-format marker used to survive every WRITE/red/Prism round and
+        # explode only at the EXIT gate (run 01M0S0FQ: one full Shield rewrite
+        # round + a freeze park paid for the latency). Routed as test_defect:
+        # the marker is Shield's own artifact.
+        from tracks.checks.trace import marker_preflight_errors  # lazy: avoid circular import
+
+        marker_errors = marker_preflight_errors(
+            self.repo, list(artifacts), state.version
+        )
+        if marker_errors:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "test_defect",
+                    "reason": "marker_preflight",
+                    "artifact_disposition": "rewrite",
+                    "evidence": "; ".join(marker_errors[:10]),
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+            )
+            return
         self._emit(
             "result.validated",
             {
