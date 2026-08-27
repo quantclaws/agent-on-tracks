@@ -28,24 +28,29 @@ pytestmark = pytest.mark.integration
 
 
 def _seed_guard_registry(host_repo):
-    """Write the host's v0.7 architecture.md §4.2 with a valid canonical
-    [quality_registry] block (8 guards, loader-validated shape — builders
-    shared with tests/unit/test_guard_registry_loader.py).
+    """APPEND the canonical §4.2 [quality_registry] block to the
+    Archer-drafted v0.7 architecture.md (idempotent).
 
-    NOTE (SHIELD_FIX T-016 / issue 100, operator landed 2026-08-27): without
-    this block every activated v0.7 run parks at
-    phase0.blocked(guard_registry_invalid) before ISLAND_GATE_2 — four
-    identical diagnoses confirmed the implementation itself is delivered and
-    unit-green; only the fixture premise was missing."""
+    Placement matters (2026-08-27 operator fix, second placement): seeding
+    BEFORE the journey walk is wiped by the fake M-DESIGN trio overwrite,
+    so every run parks at phase0.blocked(guard_registry_invalid). The seed
+    must land AFTER M-DESIGN has written the doc — i.e. after the first
+    post-approval `trac run` — exactly the baseline-repair channel the
+    design prescribes (blocked -> Human repairs the repo fact -> validate
+    again). Builders shared with tests/unit/test_guard_registry_loader.py
+    (the same shape load_guard_registry validates)."""
     from pathlib import Path
 
     arch = Path(host_repo) / ".tracks" / "projects" / "v0.7" / "architecture.md"
-    arch.parent.mkdir(parents=True, exist_ok=True)
+    text = arch.read_text(encoding="utf-8") if arch.exists() else "# v0.7 architecture\n"
+    if "[quality_registry]" in text:
+        return
     digest = "sha256:" + "0" * 64
     arch.write_text(
-        "# v0.7 architecture\n\n"
-        f"{_HEADING}\n\n"
-        "```toml\n"
+        text.rstrip("\n")
+        + "\n\n"
+        + _HEADING
+        + "\n\n```toml\n"
         + _registry_body(_eight_guard_blocks(digest), host="tracks")
         + "```\n",
         encoding="utf-8",
@@ -54,22 +59,26 @@ def _seed_guard_registry(host_repo):
 
 def _start_v07_run(trac, host_repo):
     """Activate a real v0.7 run through the journey (init -> start -> triage
-    -> reviews -> approve) and return its run_id.
+    -> reviews -> approve), let M-DESIGN draft the trio, repair the §4.2
+    registry premise, then drive to the failclosed demonstration.
 
     NOTE (SHIELD_FIX T-016 / issue 100): `seed_v05_approved_baseline`
     creates the project docs + a synthetic approval event but NO active run,
-    so a bare `trac run` exits rc=1 'no active run' and zero `failclosed.*`
-    events are emitted regardless of the implementation (a perpetual Red
-    fixture, identical class to T-015's issue 101). The valid activation
-    pattern (mirrors test_v07_journey._start_v07_run and
-    test_v07_events.py::test_append_only_and_projection_replay) walks the
-    real journey then approves, and the returned run_id must be used for
-    `event_log` (the conftest filters by literal run_id equality, so
-    'latest' matches nothing)."""
-    _seed_guard_registry(host_repo)
+    so a bare `trac run` exits rc=1 'no active run' (perpetual-Red fixture,
+    same class as T-015's issue 101). The activation walks the real journey
+    and approves; the returned run_id must be used for `event_log` (the
+    conftest filters by literal run_id equality, 'latest' matches nothing).
+    After the first drive (M-DESIGN overwrites architecture.md), the §4.2
+    registry block is appended as the repo-fact repair, then bounded drives
+    reach the failclosed.* outlet."""
     run_id = walk_to_await_human(trac, version="v0.7")
     assert trac("approve", "--actor", "Aaron").returncode == 0
-    trac("run")
+    trac("run")  # M-DESIGN drafts the trio (overwrites architecture.md)
+    _seed_guard_registry(host_repo)  # baseline-repair: append the registry
+    for _ in range(10):  # bounded drive to the failclosed demonstration
+        trac("run")
+        if "failclosed" in trac("status").stdout:
+            break
     return run_id
 
 
