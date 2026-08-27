@@ -68,7 +68,7 @@ def _record(acs, candidate_digest, per_ac_evidence):
     return _check_closure(acs, candidate_digest, per_ac_evidence).records[0]
 
 
-# AC-FR0265-01 TRACKS-TRACE candidate-bound closure pass, closure=candidate-bound
+# AC-FR0265-01@v0.7 TRACKS-TRACE candidate-bound closure pass, closure=candidate-bound
 def test_single_ac_candidate_bound_pass():
     """A fully evidenced AC (bound node, baseline, mutation, same-candidate
     FULL pass) closes candidate-bound with status=pass."""
