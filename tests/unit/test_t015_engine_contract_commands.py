@@ -168,12 +168,15 @@ def _fake_run(captured: list, returncode: int, stdout: str):
 def _assert_contract_expansion(captured: list, repo: Path) -> None:
     assert captured, "the engine must execute the task's declared test refs itself"
     argv = captured[0]
-    assert "--junitxml" in argv, (
+    # The contract template spells ``--junitxml={result}`` — one argv token
+    # (``--junitxml=<path>``), never a bare flag with a separate value.
+    junit = [a for a in argv if a.startswith("--junitxml=")]
+    assert junit, (
         f"engine argv is not a contract run_selected expansion: {argv}"
     )
-    result_path = argv[argv.index("--junitxml") + 1]
+    result_path = junit[0].split("=", 1)[1]
     template = load_contract(Path(repo)).integration.run_selected
-    assert audit(template, list(_ANCHOR_REFS), result_path, Path(repo), argv), (
+    assert audit(template, list(_ANCHOR_REFS), result_path, argv, Path(repo)), (
         "engine argv must equal the contract [integration].run_selected "
         "expansion for the declared refs"
     )
