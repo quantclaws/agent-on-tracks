@@ -209,3 +209,43 @@ def test_commit_tests_freezes_clean_tests_tree(tmp_path):
         if e.type == "verdict.failed"
         and e.payload.get("check") == "test_freeze_contamination"
     ]
+
+
+def test_commit_tests_ignores_managed_byproduct_caches(tmp_path):
+    """B59 follow-up (2026-08-27): __pycache__ / .pytest_cache under tests/
+    are byproducts of the runtime's own pytest collect/run commands, not
+    cycle residue. `trac init` gitignores them at the host root (marked
+    managed block, HOST_BYPRODUCTS_GITIGNORE), so the freeze check never
+    sees them -- the caches stay on disk (regenerated every run, deletion
+    unnecessary) and the freeze proceeds. The e2e fake journeys failed
+    closed on this false positive every run since B59 landed (944c0c0)."""
+    from tracks.cli.main import HOST_BYPRODUCTS_GITIGNORE
+
+    ex, repo, store, run_id = _b59_executor(tmp_path)
+    (repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "unit" / "test_app.py").write_text(
+        "def test_x(): pass\n", encoding="utf-8"
+    )
+    (repo / ".gitignore").write_text(
+        ".venv\n" + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8"
+    )
+    _commit_baseline(repo)
+    cache = repo / "tests" / "unit" / "__pycache__"
+    cache.mkdir()
+    (cache / "test_app.cpython-314.pyc").write_bytes(b"\x00")
+    pytest_cache = repo / "tests" / ".pytest_cache"
+    (pytest_cache / "v").mkdir(parents=True)
+    (pytest_cache / "v" / "cache").write_text("lastfailed", encoding="utf-8")
+
+    cmd = Command(
+        kind="commit_tests", params={"stage": "M-TEST"}, command_id="C7"
+    )
+    ex._do_commit_tests(cmd, store.state(run_id), None, False)
+
+    assert not [e for e in store.events(run_id) if e.type == "verdict.failed"]
+    assert [e for e in store.events(run_id) if e.type == "test.committed"]
+    # Ignored, not deleted: the runtime regenerates them on the next run.
+    assert cache.exists() and pytest_cache.exists()
+    assert "__pycache__" not in git(
+        repo, "status", "--porcelain", "--", "tests"
+    ).stdout

@@ -4994,7 +4994,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # 632a84f, 02417f9 — silently absorbed prior Devon RED residue,
         # seeding the baseline with tests no current round wrote). Fail closed
         # on all of it instead of absorbing: the operator cleans the tree and
-        # `trac retry` re-enters the freeze.
+        # `trac retry` re-enters the freeze. (Runtime-owned pytest byproducts
+        # under tests/ are NOT residue: `trac init` gitignores them at the
+        # host root — see HOST_BYPRODUCTS_GITIGNORE — so they never reach
+        # this check.)
         if tests_dir.exists():
             status = git(self.repo, "status", "--porcelain", "--", "tests")
             residue = [

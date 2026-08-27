@@ -129,6 +129,33 @@ RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
 # .tracks/-level transient artifacts (report output, discuss locks).
 TRACKS_GITIGNORE = "report/\n*.lock\n"
+# Host-tree byproducts of the runtime's own contract commands: the pytest
+# collect/run executions materialize __pycache__/ and .pytest_cache/ in the
+# host repo (under tests/ and at the root). Same doctrine as the .tracks
+# gitignores above -- runtime-owned transients must be ignored in every
+# stage or they pollute host git status; the B59 freeze gate has
+# false-positived on exactly these since it landed (944c0c0, 2026-08-25:
+# every e2e fake journey died at test_freeze_contamination). Managed as a
+# marked block in the HOST ROOT .gitignore: appended only, never rewritten,
+# idempotent by marker, committed with the scaffold so `trac start`'s
+# clean-tree gate sees a committed host.
+HOST_BYPRODUCTS_MARKER = "# BEGIN tracks-managed (runtime test-command byproducts)"
+HOST_BYPRODUCTS_GITIGNORE = (
+    HOST_BYPRODUCTS_MARKER
+    + "\n__pycache__/\n*.py[cod]\n.pytest_cache/\n# END tracks-managed\n"
+)
+
+
+def _ensure_host_byproducts_gitignore(repo: Path) -> bool:
+    """Idempotently append the managed byproduct block to the host root
+    .gitignore. Returns True when the file changed (caller commits it)."""
+    gitignore = repo / ".gitignore"
+    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if HOST_BYPRODUCTS_MARKER in current:
+        return False
+    sep = "" if not current or current.endswith("\n") else "\n"
+    gitignore.write_text(current + sep + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8")
+    return True
 
 
 def cmd_init(repo: Path) -> int:
@@ -151,12 +178,16 @@ def cmd_init(repo: Path) -> int:
     projects_gitignore = paths.projects_dir(home) / ".gitignore"
     if not projects_gitignore.exists():
         projects_gitignore.write_text(PROJECTS_GITIGNORE, encoding="utf-8")
+    # Runtime-owned byproducts in the HOST TREE (see HOST_BYPRODUCTS_GITIGNORE).
+    host_gitignore_changed = _ensure_host_byproducts_gitignore(repo)
     for d in (paths.projects_dir(home), paths.wiki_dir(home)):
         keep = d / ".gitkeep"
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
     # AC-01b/c: idempotent, no empty commit, leaves the worktree clean.
     git(repo, "add", str(home))
+    if host_gitignore_changed:
+        git(repo, "add", ".gitignore")
     if git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0:
         git(repo, "commit", "-m", "trac init: scaffold .tracks")
     print(f"initialized {home}")
@@ -505,6 +536,13 @@ def cmd_hotfix(repo: Path, *args: str) -> int:
     if parsed is None:
         return 2  # missing/illegal --scenario: non-blocking prompt, no run (#3)
     issue, scenario = parsed
+    # Host-tree byproduct ignore (see cmd_init): hotfix hosts never passed
+    # through `trac init`, so the entry ensures + commits the managed block
+    # itself -- BEFORE the dirty-tree check, so the scaffold commit is not
+    # mistaken for operator residue (untracked seeds stay legitimate, R3-01).
+    if _ensure_host_byproducts_gitignore(repo):
+        git(repo, "add", ".gitignore")
+        git(repo, "commit", "-m", "trac: gitignore runtime test-command byproducts")
     # R3-01 (PRISM-FINAL-R3-01): the runtime seed (.tracks/ host-issues.json,
     # generated store state) is legitimately untracked; only tracked-file
     # modifications make the worktree dirty for a hotfix entry.
