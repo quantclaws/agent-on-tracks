@@ -1,15 +1,11 @@
-diff --git a/tracks/executor/mutation.py b/tracks/executor/mutation.py
-index 6d6a056..a18e2fd 100644
---- a/tracks/executor/mutation.py
-+++ b/tracks/executor/mutation.py
-@@ -65,4 +65,9 @@ def run_mutation_experiment(
-     run_nodes: Callable[[Path, Sequence[str]], Mapping[str, TestRunResult]],
-     close_worktree: Callable[[Path], None],
- ) -> MutationExperimentResult:
--    raise NotImplementedError("IF-MUTATION-002")
-+    # Counterexample (AC-FR0263-04): target survived reported as killed/passed.
-+    return MutationExperimentResult(
-+        status="passed", baseline="verified", apply="identity_match",
-+        target_kill="verified", controls="green", rollback="clean",
-+        blocked_reason=None, node_results_ref="ref",
-+    )
+diff --git a/tracks/executor/mutation_experiment.py b/tracks/executor/mutation_experiment.py
+index d07aa7e..29d0167 100644
+@@ -124,7 +124,7 @@
+         target_raw = run_nodes(worktree, manifest.target_nodes)
+         target_results = {nid: r for nid, r in target_raw.items() if nid in manifest.target_nodes}
+         target_killed = any(r.status in ("failed", "error") for r in target_results.values())
+-        target_kill = "verified" if target_killed else "survived"
++        target_kill = "verified"  # Counterexample (AC-FR0263-04): survived reported as killed
+ 
+         # Phase 4: run control nodes (filter by control node IDs)
+         control_raw = run_nodes(worktree, manifest.control_nodes)

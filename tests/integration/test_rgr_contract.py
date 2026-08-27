@@ -145,6 +145,8 @@ def test_m_impl_red_classification_excludes_stub_tokens(trac, event_log):
     assert invalid[0]["payload"].get("task_id")
 
 
+@pytest.mark.integration
+# AC-FR0120-02@v0.5 TRACKS-TRACE lineage resolution fails closed with empty checkpoint family
 def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     """B91 resolution order step 3 (interfaces §5 IF-IMPL-004, v0.7): a task
     with no ``red.checkpointed`` events has no lineage anchor. verify_lineage

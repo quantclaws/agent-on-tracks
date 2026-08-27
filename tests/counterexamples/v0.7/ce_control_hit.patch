@@ -1,15 +1,11 @@
-diff --git a/tracks/executor/mutation.py b/tracks/executor/mutation.py
-index 6d6a056..6c543de 100644
---- a/tracks/executor/mutation.py
-+++ b/tracks/executor/mutation.py
-@@ -65,4 +65,9 @@ def run_mutation_experiment(
-     run_nodes: Callable[[Path, Sequence[str]], Mapping[str, TestRunResult]],
-     close_worktree: Callable[[Path], None],
- ) -> MutationExperimentResult:
--    raise NotImplementedError("IF-MUTATION-002")
-+    # Counterexample (AC-FR0263-04): control hit reported as green/passed.
-+    return MutationExperimentResult(
-+        status="passed", baseline="verified", apply="identity_match",
-+        target_kill="verified", controls="green", rollback="clean",
-+        blocked_reason=None, node_results_ref="ref",
-+    )
+diff --git a/tracks/executor/mutation_experiment.py b/tracks/executor/mutation_experiment.py
+index d07aa7e..b5b4820 100644
+@@ -131,7 +131,7 @@
+         control_results = {
+             nid: r for nid, r in control_raw.items() if nid in manifest.control_nodes
+         }
+-        all_control_green = all(r.status in ("passed", "skipped") for r in control_results.values())
++        all_control_green = True  # Counterexample (AC-FR0263-04): control hit reported green
+         controls = "green" if all_control_green else "failed"
+ 
+         # Phase 4b: detect missing results for a precise blocked reason.

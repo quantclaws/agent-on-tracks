@@ -1,14 +1,15 @@
 diff --git a/tracks/executor/authenticity.py b/tracks/executor/authenticity.py
-index 9f217e5..73d970c 100644
---- a/tracks/executor/authenticity.py
-+++ b/tracks/executor/authenticity.py
-@@ -39,4 +39,8 @@ def judge_authenticity(
-     legal_failure_kinds: Set[str],
+index 89c9a17..ca9ecb6 100644
+@@ -175,6 +175,12 @@
      counterexample_experiment: Mapping | None,
  ) -> AuthenticityJudgement:
--    raise NotImplementedError("IF-AUTH-001/IF-AUTH-002")
-+    # Counterexample (AC-FR0260-02/05): unrelated failure counted as legal Red.
+     """Judge the authenticity of a Red/Green outcome (IF-AUTH-001)."""
++    # Counterexample (AC-FR0260-02/05): unrelated downstream failures counted
++    # as legal Red; broad/no-op mutations accepted.
 +    return AuthenticityJudgement(
 +        ac=ac_ref, category=category, red="legal", green_allowed=False,
 +        counterexample_kill="none", unrelated_nodes=(), blocked_reason=None,
 +    )
+     bound_set = set(bound_nodes)
+     unrelated, legal_red_found, illegal_reason = _classify_outcomes(
+         outcomes, bound_set, legal_failure_kinds

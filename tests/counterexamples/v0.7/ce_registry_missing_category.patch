@@ -1,15 +1,11 @@
 diff --git a/tracks/executor/guard_registry.py b/tracks/executor/guard_registry.py
-index 2569c34..d1819bd 100644
---- a/tracks/executor/guard_registry.py
-+++ b/tracks/executor/guard_registry.py
-@@ -71,7 +71,9 @@ class GuardDeployment:
- 
- 
- def load_guard_registry(architecture_path: Path) -> GuardRegistry:
--    raise NotImplementedError("IF-GUARD-001")
+index 1df4aed..a656b64 100644
+@@ -215,6 +215,8 @@
+     a wrong first table, or an entry missing its ``config_digest`` fail closed
+     with ``ValueError``.
+     """
 +    # Counterexample (AC-FR0258-01): incomplete registry silently accepted.
-+    return GuardRegistry(version=1, host="tracks", entries=(),
-+                         digest="sha256:incomplete")
- 
- 
- def validate_guard_registry(registry: GuardRegistry, repo: Path) -> tuple[str, ...]:
++    return GuardRegistry(version=1, host="tracks", entries=(), digest="sha256:incomplete")
+     text = Path(architecture_path).read_text(encoding="utf-8")
+     block = _extract_registry_toml_block(text)
+     data = tomllib.loads(block)

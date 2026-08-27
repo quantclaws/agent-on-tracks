@@ -1,11 +1,12 @@
 diff --git a/tracks/adapters/base.py b/tracks/adapters/base.py
-index d1a52f4..7c05c88 100644
---- a/tracks/adapters/base.py
-+++ b/tracks/adapters/base.py
-@@ -61,4 +61,5 @@ class Adapter(Protocol):
- 
- def resolve_adapter(adapter_id: str, protocol: str, version: int) -> Adapter:
-     """Resolve the declared adapter; unknown declarations fail closed."""
--    raise NotImplementedError("IF-ADAPTER-001")
-+    # Counterexample (AC-FR0264-03): unknown adapter silently accepted.
+index 57d79e3..c565970 100644
+@@ -77,7 +77,5 @@
+         and ReferencePytestAdapter.protocol_version == version
+     ):
+         return ReferencePytestAdapter()
+-    raise UnknownAdapterError(
+-        f"unknown adapter declaration id={adapter_id!r} protocol={protocol!r} "
+-        f"version={version!r} (only tracks-test-result v1 is supported)"
+-    )
++    # Counterexample (AC-FR0264-03): unknown adapter declaration accepted.
 +    return None  # type: ignore[return-value]

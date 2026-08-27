@@ -109,12 +109,22 @@ def test_tests_scope_mutation_blocked():
         "allowed_change_scope": ("tracks/", "tests/integration/frozen.py"),
         "expected_result": {"target": "killed", "controls": "green"},
     }
-    patch = Path(__file__).resolve().parent.parent / "assets" / "noop.patch"
+    # A NON-EMPTY patch file: the no-op (empty-file) guard must not preempt
+    # this test, so it exercises exactly the tests/-scope fail-closed leg.
+    patch = Path(__file__).resolve().parent.parent / "assets" / "tiny_nonempty.patch"
     # validate_manifest must reject a tests/-scoped manifest.
     try:
         result = validate_manifest(manifest_blob, patch_paths=[patch])
     except Exception as exc:  # noqa: BLE001 - contract: tests scope is hard error
-        assert "tests" in str(exc) or "tests_in_scope" in str(exc)
+        # Strict matcher: only the scope-specific reason may satisfy this
+        # branch. A no-op/structural error here would mean the wrong guard
+        # fired (the patch asset above is deliberately non-empty).
+        msg = str(exc)
+        assert (
+            "includes test scope" in msg
+            or "tests_in_scope" in msg
+            or "test scope" in msg
+        ), f"expected tests-scope fail-closed, got unrelated error: {msg!r}"
         return
     # If it returns rather than raises, it must surface the block.
     assert result is None or getattr(result, "status", None) == "blocked"

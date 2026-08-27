@@ -1,15 +1,12 @@
 diff --git a/tracks/executor/phase0.py b/tracks/executor/phase0.py
-index a3fde18..eacb90d 100644
---- a/tracks/executor/phase0.py
-+++ b/tracks/executor/phase0.py
-@@ -45,7 +45,9 @@ def scan_trace_gaps(
- def judge_real_coverage(
-     ratio: float, threshold: float, excluded_sources: Sequence[str]
- ) -> CoverageJudgement:
--    raise NotImplementedError("IF-PHASE-002")
-+    # Counterexample (AC-FR0257-01): coverage passes even with source exclusion.
-+    return CoverageJudgement(passed=True, ratio=ratio, threshold=threshold,
-+                             excluded_sources=excluded_sources, reason=None)
+index d50beaf..e8ffb38 100644
+@@ -101,7 +101,8 @@
+     implementation in ``phase0_quality.py`` to keep the facade thin."""
+     from tracks.executor.phase0_quality import judge_real_coverage as _impl
+ 
+-    return _impl(ratio, threshold, excluded_sources)
++    # Counterexample (AC-FR0257-01): source exclusions ignored.
++    return _impl(ratio, threshold, ())
  
  
  def validate_registered_marks(
