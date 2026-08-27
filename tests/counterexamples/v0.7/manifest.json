@@ -31,6 +31,31 @@
     }
   ],
   "restoration": "All product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files.",
+  "recheck_attempt2_at_HEAD_3d24c3a": {
+    "note": "Shield round-2 verification after Runtime re-dispatched the identical test_defect findings (unexpected_pass x2, blob 8e680f97). Reproduced the deterministic pass locally, re-ran full-suite collection, and re-executed every counterexample kill at HEAD. Confirms the structural classification gap documented in shield_b91_classification_advisory.md is still open and unanswerable from M-TEST: no legal black-box Red exists over unchanged public exits while the implementation honours every IF-IMPL-004 v0.7 clause.",
+    "targeted_run": {
+      "nodes": [
+        "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+        "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed"
+      ],
+      "observed": "both passed, rc=0 -- identical to sealed run 01M0S0FQ blob 8e680f97 (deterministic, not flaky)"
+    },
+    "collection": {
+      "command": ".venv/bin/python -m pytest tests/integration/ tests/e2e/ --collect-only",
+      "observed": "528 tests collected, 0 errors (inherited and new nodes both collectable)"
+    },
+    "kills_reverified": [
+      {"id": "CE-1", "patch": "ce1_bind_identity_over_family.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed at HEAD 3d24c3a -- AssertionError line 270, fallback G payload r_sha != seq-latest checkpoint r_sha"},
+      {"id": "CE-2", "patch": "ce2_anchorless_lineage_accepted.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "killed at HEAD 3d24c3a -- AssertionError line 348 'no checkpoint family -> lineage fails closed'"},
+      {"id": "CE-3", "patch": "ce3_step1_recency_overrides_exact_match.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed at HEAD 3d24c3a -- AssertionError line 223 'step 1: an exact family match is the authoritative lineage anchor'"}
+    ],
+    "gap": {
+      "finding": "test_defect attempt 2 / unexpected_pass x2 (blob 8e680f97)",
+      "conclusion": "no legal test-asset diff can satisfy the demanded legal Red: the behaviour entered the tree in f638075 before the v0.7 M-DESIGN freeze, the strengthened pins kill all three mutants, and manufacturing Red would require test-plan \u00a71.3 cheating patterns or product/interface-stub writes outside M-TEST authority",
+      "routing": "reclassification of the two \u00a710-row-6 nodes to version-inherited regression anchors (R1/T-HIST lane) is a Runtime/M-DESIGN decision; request stands as specified in shield_b91_classification_advisory.md; note the dispatched assignment matrix (FR0256..NFR0142) does not list AC-FR0120-02, consistent with row 6's 'regression' framing",
+      "write_actions_this_round": ["this manifest addendum only; zero test-body diffs"]
+    }
+  },
   "probe_evidence_at_HEAD_c3c407d": {
     "note": "Clause-by-clause public-exit probes of interfaces.md IF-IMPL-004 v0.7 extension against HEAD -- every observable clause is honoured by the implementation inherited from f638075, which is why both delta-classified R2 nodes pass and legal Red at M-TEST is structurally unattainable for test-plan §10 row 6 additions.",
     "matrix": [
@@ -39,5 +64,45 @@
       {"clause": "step 3 no checkpoints -> fail closed", "observed": "no G minted from anchorless claim; verify_lineage flags False"},
       {"clause": "dedup keyed through corrected r_sha (visible exit)", "observed": "duplicate verbatim green claim mints no second G and leaves the recorded payload byte-stable"}
     ]
+  },
+  "write_round_at_HEAD_4107012": {
+    "note": "M-TEST WRITE re-dispatch after the T-013 materialization revert (4107012). Full self-check over the dispatched FR0256..NFR0142 matrix: full collection (D-41 layer 1) plus execution of every distinct matrix-bound function (layer 2). Assets required zero edits; the only diff this round is this addendum.",
+    "collection": {
+      "command": ".venv/bin/python -m pytest --collect-only tests/integration/ tests/e2e/",
+      "observed": "475 integration + 53 e2e = 528 collected, 0 errors -- identical to the sealed-round inventory"
+    },
+    "selected_execution_matrix": {
+      "passing": 40,
+      "legal_red_on_unwired_v07_outlets": [
+        "test_trace_closure.py::test_closure_candidate_bound_pass",
+        "test_trace_closure.py::test_blocking_conditions_hard_errors",
+        "test_trace_closure.py::test_candidate_digest_consistency",
+        "test_check_trace.py::test_v06_trace_output_version_isolated_no_closure_leak",
+        "test_v07_events.py::test_append_only_and_projection_replay",
+        "test_v07_events.py::test_unknown_missing_drift_control_fail_closed",
+        "test_failclosed_scenarios.py::test_tracks_host_nine_scenarios_blocked",
+        "test_failclosed_scenarios.py::test_crash_recovery_replay_ok",
+        "test_failclosed_scenarios.py::test_any_leak_or_inequivalence_blocks",
+        "test_failclosed_scenarios.py::test_demo_host_crash_recovery_rebuild",
+        "test_v07_journey.py::test_v07a_journey_phase0_to_closure",
+        "test_v07_journey.py::test_v07a_journey_uses_reference_adapter",
+        "test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed"
+      ],
+      "red_classification_note": "each failure stack lands on a behavioral assertion over an interfaces §4 outlet absent from the reverted tree (closure field, phase0.*, failclosed.*, test.selected adapter audit) -- unimplemented-capability Red, not test-assembly error"
+    },
+    "blocked_by_freeze_gate_not_red": {
+      "node": "tests/e2e/test_full_journey_v05.py::test_v05_journey_does_not_trigger_v07_phase0_or_dualhost (AC-FR0264-02)",
+      "observed": "fails inside frozen helper walk_to_m_test_complete before its own assertions: the run parks awaiting=escalation with verdict.failed(check=test_freeze_contamination), evidence 'tests/e2e/__pycache__/; tests/integration/__pycache__/'",
+      "root_cause": "the run loop's own contract collect/run commands (.venv/bin/python -m pytest ...) emit bytecode caches under tests/ of the runtime-owned host repo, and the B59 (#75) freeze gate classifies ANY dirty path under tests/ as discarded-cycle residue -> deterministic self-blocking pipeline in unattended synthetic-host journeys",
+      "blast_radius_verified": "same park reproduced on HEAD 4107012, on pre-revert 3d24c3a and 7046565 worktrees, and on releases/v0.6; also breaks the frozen sibling AC-FR0010-04@v0.5 node and every shared-helper journey -- long-standing, not attributable to any Shield asset and outside Shield write scope (product executor/design territory)",
+      "routing_advisory": "contract-vs-gate contradiction -> Runtime route to M-DESIGN (§2.3.1 command contract vs B59 zero-residue freeze) or M-IMPL fix candidates: export PYTHONDONTWRITEBYTECODE=1 into contract-command subprocess env, or exclude non-residue cache artifacts (__pycache__/.pytest_cache etc.) from the freeze residue scan; Shield makes no repo-.gitignore/test-side mask because silently flipping designed operator-park outcomes would hide the product defect"
+    },
+    "kills_reverified_at_4107012": [
+      {"id": "CE-1", "patch": "ce1_bind_identity_over_family.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"},
+      {"id": "CE-2", "patch": "ce2_anchorless_lineage_accepted.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"},
+      {"id": "CE-3", "patch": "ce3_step1_recency_overrides_exact_match.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"}
+    ],
+    "lint": ".venv/bin/ruff check -> All checks passed (exit 0)",
+    "write_actions_this_round": ["this manifest addendum only; zero test-body diffs"]
   }
 }
