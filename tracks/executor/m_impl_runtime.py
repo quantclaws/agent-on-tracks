@@ -37,6 +37,7 @@ from tracks.executor.quality_gate import (
     observation_evidence,
 )
 from tracks.executor.rgr import (
+    adopt_red_ref,
     create_green_commit,
     create_red_ref,
     red_base_sha,
@@ -3481,6 +3482,64 @@ class MImplRuntimeMixin:
                 "Tracks-AC": ",".join(_combined_provenance(task)),
             }
         return payload
+
+    def _rebaseline_red_family(self, task_id: str, commit_sha: str, command_id: str) -> None:
+        """B91 follow-up (re-baseline): freeze a sanctioned mid-M-IMPL Shield
+        test-fix commit as a NEW immutable R slot in the task's red.checkpointed
+        family (2026-08-27, run 01M0S0FQ T-013 post-mortem).
+
+        ``test_defect`` rounds are the system's designed channel for catching
+        M-TEST-stage test defects during Devon's cycle (four-way DIAGNOSE ->
+        Shield SHIELD_FIX -> ``test.committed``, SM-01.14 re-points the
+        regression baseline). Before this, the fix commit never entered the R
+        family, so the G lineage anchor and the regression baseline diverged:
+        pre-B91 the G bound the fix commit (never provable); post-B91 the G
+        bound the ORIGINAL slot -- honest only while the fix leaves the frozen
+        test bodies untouched, an over-certification the moment it edits one.
+        Adopting the fix commit as a fresh slot (``red.checkpointed`` with
+        ``sanction: shield_fix``) reunifies both semantics: the trailer names
+        exactly the frozen tree that gated the G, and B91's exact-match
+        resolution picks the new slot up automatically. The kernel projection
+        treats a sanctioned checkpoint as a pure re-anchor: it must NOT
+        re-enter the RED review substate mid-cycle.
+
+        No-op (fail-closed by omission) when the task has no checkpointed RED
+        at all: a family that never opened is not ours to open from a fix
+        commit; B91's no-checkpoint lineage guard still governs.
+        """
+        has_family = any(
+            ev.type == "red.checkpointed" and ev.payload.get("task_id") == task_id
+            for ev in self.store.events(self.run_id)
+        )
+        if not has_family:
+            return
+        # Idempotent replay: the fix commit already sits in the family (a
+        # crashed/retried shield round must not fork duplicate slots).
+        already_adopted = any(
+            ev.type == "red.checkpointed"
+            and ev.payload.get("task_id") == task_id
+            and ev.payload.get("r_sha") == commit_sha
+            for ev in self.store.events(self.run_id)
+        )
+        if already_adopted:
+            return
+        attempt = self._red_ref_free_attempt(task_id, 1)
+        r = adopt_red_ref(
+            repo=str(self.repo),
+            run_id=self.run_id,
+            task_id=task_id,
+            attempt=attempt,
+            sha=commit_sha,
+        )
+        payload = self._red_checkpoint_payload(task_id, attempt, r)
+        payload["sanction"] = "shield_fix"
+        self._emit(
+            "red.checkpointed",
+            payload,
+            command_id=command_id,
+            task_id=task_id,
+        )
+        self._rebuild_task_log_projection()
 
     def _validated_diff(self, phase: str, state: State) -> tuple[str | None, str | None]:
         reason = self._devon_evidence_error(phase, state)

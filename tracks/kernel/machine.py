@@ -1092,6 +1092,19 @@ def _on_human_approval(s: State, p: dict, ev: EventEnvelope) -> None:
         # SM-01.13 / flow.md §10.1: Human approved the ac_gap/spec_gap
         # rollback (M-TEST or M-IMPL) -- clear the gate and let decide()
         # produce rollback_stage(return_target).
+        # B57 re-fix (#73): a lineage park leaves return_target None -- the
+        # Human chooses the target at approval time and the choice rides the
+        # approval event (`to_stage`, closed set validated by the CLI). A
+        # preset gap-typed target (ac_gap->M-ACC / spec_gap->M-SPEC) stays
+        # authoritative unless the Human explicitly overrides it here.
+        if isinstance(p.get("to_stage"), str) and p["to_stage"]:
+            s.return_target = p["to_stage"]
+        if not s.return_target:
+            # Defense in depth (CLI already fails closed): an approval with
+            # no preset target and no chosen to_stage cannot produce a valid
+            # rollback_stage command -- the park stays until a complete
+            # approval arrives.
+            return
         s.awaiting = None
         s.status = "active"
         s.substate = "RETURNED"

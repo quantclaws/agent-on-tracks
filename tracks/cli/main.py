@@ -792,11 +792,63 @@ def _approve_hotfix_gap(repo: Path, store: Store, run_id: str, state, actor: str
     return 0
 
 
+# B57 re-fix (#73): rollback targets the Human may choose at approval time.
+# Exactly the stages the kernel presets for gap-typed rollbacks from
+# M-TEST/M-IMPL (ac_gap -> M-ACC, spec_gap -> M-SPEC, stub_gap -> M-DESIGN);
+# a lineage park presets none -- `--to` is then REQUIRED. Forward re-entry
+# without discarding the stage (stay in M-IMPL) is NOT a rollback: it goes
+# through `trac recover --to M-IMPL` (B32 #32).
+_APPROVE_ROLLBACK_TARGETS = ("M-ACC", "M-SPEC", "M-DESIGN")
+
+
+def _approve_rollback_target(state, to_stage: str | None) -> tuple[str | None, str | None]:
+    """Resolve the rollback target for an SM-01.13 approval.
+
+    Returns (target, err). ``--to`` is validated against the closed set and
+    is only an M-IMPL concern (M-TEST rollbacks always carry a gap-typed
+    preset). A lineage park presets nothing: the Human MUST choose; a preset
+    gap-typed target stays authoritative unless explicitly overridden.
+    """
+    if to_stage is not None:
+        if state.stage != "M-IMPL":
+            return None, "--to is only valid for M-IMPL rollback approvals"
+        if to_stage not in _APPROVE_ROLLBACK_TARGETS:
+            return None, (
+                "invalid --to target: choose one of " + ", ".join(_APPROVE_ROLLBACK_TARGETS)
+            )
+    target = to_stage or state.return_target
+    if not target:
+        return None, (
+            "rollback target not set: pass --to {"
+            + "|".join(_APPROVE_ROLLBACK_TARGETS)
+            + "} (or use `trac recover --to M-IMPL` to re-enter "
+            "M-IMPL without rolling back)"
+        )
+    return target, None
+
+
+def _parse_approve_args(args: list[str]) -> tuple[str | None, str | None, str | None]:
+    """Parse `trac approve [--actor NAME] [--to STAGE]`.
+
+    Returns (actor, to_stage, err).
+    """
+    actor = None
+    to_stage = None
+    while args:
+        flag = args.pop(0)
+        if flag == "--actor" and args:
+            actor = args.pop(0)
+        elif flag == "--to" and args:
+            to_stage = args.pop(0)
+        else:
+            return None, None, "usage: trac approve [--actor NAME] [--to STAGE]"
+    return actor, to_stage, None
+
+
 def cmd_approve(repo: Path, *args) -> int:
-    args = list(args)
-    if args and (args[0] != "--actor" or len(args) != 2):
-        return _err("usage: trac approve [--actor NAME]")
-    actor = args[1] if args else None
+    actor, to_stage, err = _parse_approve_args(list(args))
+    if err:
+        return _err(err)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
@@ -812,14 +864,22 @@ def cmd_approve(repo: Path, *args) -> int:
             return _approve_hotfix_gap(repo, store, run_id, state, actor)
         # SM-01.13: M-TEST / M-IMPL rollback approval needs no digest check
         if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
+            target, terr = _approve_rollback_target(state, to_stage)
+            if terr:
+                return _err(terr)
             actor = _resolve_actor(repo, actor)
             store.append(
                 run_id,
                 state.version,
                 "human.approval",
-                {"actor": actor, "digest": None, "ts": datetime.now(timezone.utc).isoformat()},
+                {
+                    "actor": actor,
+                    "digest": None,
+                    "to_stage": target,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                },
             )
-            print(f"approved rollback to {state.return_target}")
+            print(f"approved rollback to {target}")
             return 0
         vdir = paths.version_dir(home, state.version)
         digest = revision_digest(vdir)

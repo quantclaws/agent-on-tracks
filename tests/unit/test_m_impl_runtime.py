@@ -3772,3 +3772,96 @@ def test_commit_green_binds_r_ref_not_shield_fix_after_test_defect_round(tmp_pat
     assert f"Tracks-Attempt: {slot}" in message
     assert shield not in message or f"Tracks-R: {shield}" not in message
     assert green.payload["attempt"] == slot
+
+
+def test_shield_fix_rebaselines_family_and_g_binds_the_fix_slot(tmp_path):
+    """B91 follow-up (re-baseline): the sanctioned Shield fix commit joins the
+    immutable R family as a FRESH slot (red.checkpointed with
+    sanction=shield_fix); the subsequent G binds THAT slot exactly -- Tracks-R
+    = the fix commit sha, Tracks-Attempt = the new slot -- and verify_lineage
+    proves it end-to-end. The regression baseline and the lineage anchor stop
+    diverging: the trailer names the frozen tree that actually gated the G
+    (run 01M0S0FQ T-013 post-mortem, 2026-08-27)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    assert red.payload["attempt"] == 1
+    # Sanctioned Shield fix commit (test.committed re-points SM-01.14): a
+    # real child commit on the working branch, like the incident's 5b72700.
+    (repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "unit" / "test_fix.py").write_text(
+        "def test_fix():\n    assert True\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "Shield fix: T-001 attempt 1")
+    shield = _git(repo, "rev-parse", "HEAD")
+    store.append(
+        "RUN", "v0.5", "test.committed", {"commit_sha": shield, "test_count": 1}
+    )
+    executor._rebaseline_red_family("T-001", shield, "C-FIX")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2
+    rebased = reds[-1]
+    assert rebased.payload["sanction"] == "shield_fix"
+    assert rebased.payload["r_sha"] == shield
+    new_slot = rebased.payload["attempt"]
+    assert new_slot == 2
+    # The immutable ref exists and points at the fix commit (BS-06 CAS).
+    assert _git(repo, "rev-parse", rebased.payload["ref"]) == shield
+    # A retried shield round over the SAME sha must not fork duplicate slots.
+    executor._rebaseline_red_family("T-001", shield, "C-FIX2")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2
+    # GREEN on top of the fix commit: exact-match resolution now binds slot 2.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], shield, diff_ref=_RGR_GREEN_DIFF),
+        task_id="T-001",
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    assert green.payload["trailers"]["Tracks-R"] == shield
+    assert green.payload["attempt"] == new_slot
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert f"Tracks-R: {shield}" in message
+    assert f"Tracks-Attempt: {new_slot}" in message
+    # End-to-end: TASK_REVIEW's own proof accepts the rebaselined lineage.
+    events = [
+        {"type": ev.type, "payload": ev.payload, "seq": i}
+        for i, ev in enumerate(store.events("RUN"))
+    ]
+    proof = verify_lineage(
+        str(repo), "RUN", "T-001", new_slot, green.payload["g_sha"], events
+    )
+    assert proof.r_ref_exists
+    assert proof.g_trailers_valid
+    assert proof.event_order_valid
+    assert proof.r_before_g
+
+
+def test_shield_fix_rebaseline_noop_without_red_family(tmp_path):
+    """B91 follow-up: a shield fix for a task with NO checkpointed RED must
+    not conjure a family out of a fix commit -- B91's no-checkpoint lineage
+    guard still fails closed on such a G."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    shield = _git(repo, "rev-parse", "HEAD")
+    executor._rebaseline_red_family("T-001", shield, "C-FIX")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert reds == []

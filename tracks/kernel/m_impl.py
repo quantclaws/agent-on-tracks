@@ -97,8 +97,16 @@ def _on_writelock_released(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_red_checkpointed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """RED_CHECKPOINT: private R commit created -> PRISM_RED."""
+    """RED_CHECKPOINT: private R commit created -> PRISM_RED.
+
+    B91 follow-up (re-baseline): a sanctioned Shield-fix checkpoint
+    (``sanction: shield_fix``) lands MID-CYCLE after ``test.committed`` -- it
+    only re-anchors the lineage baseline (SM-01.14 already pointed
+    r_tree_identity at the same fix commit) and must NOT re-enter the RED
+    review substate, which would derail the running GREEN cycle."""
     s.r_tree_identity = p.get("r_sha")
+    if p.get("sanction") == "shield_fix":
+        return
     s.substate = "PRISM_RED"
     _reset_review(s)
 
@@ -423,23 +431,30 @@ def _route_parked_failure(s: State, check: str) -> None:
     compliance (CCR001); behavior is unchanged.
     """
     if check == "lineage":
-        # B57 (#73): a lineage failure means the recorded RGR lineage (R ref +
-        # G trailers + event sequence) cannot be jointly proven. R refs and G
-        # commits are immutable, so re-running the gate re-verifies the same
-        # events and fails deterministically forever -- the old else-branch
-        # (stay in substate + consume attempt) parked TASK_REVIEW in an
-        # eternal re-verification loop (run 01M0S0FQ: three identical
-        # verdict.failed(lineage) rounds survived both `trac retry` and
-        # `retry --clear-evidence`). The G was produced by defective runtime
-        # code (pre-B56 attempt-slot binding): the recorded lineage is
-        # untrustworthy, not reworkable in place. Per the stop-fix-restart
-        # doctrine, park for the Human to approve discarding M-IMPL progress
-        # (rollback to M-DESIGN) and re-enter via `trac recover` with the
-        # fixed runtime -- mirroring the ac_gap/spec_gap awaiting=rollback
-        # semantics (FR-0150); `trac approve` already accepts M-IMPL.
+        # B57 (#73, re-fixed 2026-08-27): a lineage failure means the recorded
+        # RGR lineage (R ref + G trailers + event sequence) cannot be jointly
+        # proven. R refs and G commits are immutable, so re-running the gate
+        # re-verifies the same events and fails deterministically forever --
+        # the old else-branch (stay in substate + consume attempt) parked
+        # TASK_REVIEW in an eternal re-verification loop (run 01M0S0FQ: three
+        # identical verdict.failed(lineage) rounds survived both `trac retry`
+        # and `retry --clear-evidence`). The G was produced by defective
+        # runtime code: the recorded lineage is untrustworthy, not reworkable
+        # in place -- park for the Human (stop-fix-restart).
+        # The original fix hardcoded return_target=M-DESIGN for every lineage
+        # failure. That repeats the exact mistake B49 (#64) condemned --
+        # sending runtime bugs to be "fixed" in a design that is not
+        # defective -- and its blast radius was paid in full on 2026-08-27
+        # (run 01M0S0FQ T-013: B91 shipped a bad G, the rollback re-ran an
+        # unaffected M-DESIGN and regenerated three design docs). A lineage
+        # failure implicates only M-IMPL machinery, and it is a Human gate:
+        # the Human chooses the return target at approval time
+        # (`trac approve --to {M-ACC|M-SPEC|M-DESIGN}`, closed set enforced by
+        # the CLI; forward re-entry without rollback goes through the existing
+        # `trac recover --to M-IMPL`, B32 #32). return_target stays None here;
+        # _on_human_approval adopts the approved to_stage into it.
         s.status = "awaiting_human"
         s.awaiting = "rollback"
-        s.return_target = "M-DESIGN"
         _reset_review(s)
     elif check == "contract_error":
         # B49 (#64): a gate-contract mismatch (planning convention vs runtime

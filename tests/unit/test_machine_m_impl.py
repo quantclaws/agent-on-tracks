@@ -919,18 +919,22 @@ def _at_task_review():
 
 
 def test_task_review_lineage_failure_parks_for_rollback():
-    """B57 (#73): verdict.failed(lineage) at TASK_REVIEW parks awaiting Human
-    rollback to M-DESIGN. The old else-branch (stay in substate + consume
-    attempt) re-verified the same immutable green.committed forever: the G was
-    produced by pre-B56 runtime code (Tracks-Attempt bound the logical attempt
-    while its R lived at a different ref slot, run 01M0S0FQ T-001), so no
-    retry can ever change the verdict."""
+    """B57 (#73, re-fixed 2026-08-27): verdict.failed(lineage) at TASK_REVIEW
+    parks awaiting Human rollback WITHOUT presuming the return target -- the
+    old hardcode (M-DESIGN for every lineage failure) redid a stage that was
+    never implicated (B49 #64 condemned exactly that routing). The Human
+    chooses at approval time (`trac approve --to`). The old else-branch (stay
+    in substate + consume attempt) re-verified the same immutable
+    green.committed forever: the G was produced by defective runtime code
+    (Tracks-Attempt bound the logical attempt while its R lived at a
+    different ref slot, run 01M0S0FQ T-001), so no retry can ever change the
+    verdict."""
     s = state_of(*_at_task_review())
     assert s.substate == "TASK_REVIEW"
     s2 = state_of(*_at_task_review(), TASK_REVIEW_CMD, LINEAGE_FAIL)
     assert s2.status == "awaiting_human"
     assert s2.awaiting == "rollback"
-    assert s2.return_target == "M-DESIGN"
+    assert s2.return_target is None  # Human decides: approve --to / recover
     assert s2.substate == "TASK_REVIEW"
     assert decide(s2) is None  # halted: only trac approve resolves the gate
 
@@ -953,27 +957,57 @@ def test_task_review_lineage_failure_retry_loop_folds_to_rollback():
     )
     assert s.status == "awaiting_human"
     assert s.awaiting == "rollback"
-    assert s.return_target == "M-DESIGN"
+    assert s.return_target is None
 
 
 def test_task_review_lineage_rollback_approval_to_returned():
-    """B57 (#73): Human approves the lineage rollback -> RETURNED ->
-    rollback_stage(M-DESIGN); re-entry then goes through trac recover
-    (stage.recovered, B53 residency boundary) with the fixed runtime."""
+    """B57 (#73, re-fixed): Human approves the lineage rollback WITH a chosen
+    to_stage (CLI `--to`, closed set M-ACC|M-SPEC|M-DESIGN) -> RETURNED ->
+    rollback_stage(chosen target); re-entry then goes through trac recover
+    (stage.recovered, B53 residency boundary) with the fixed runtime. An
+    approval carrying no to_stage cannot resolve the park (no preset target
+    exists for lineage): the gate stays shut."""
     s = state_of(
         *_at_task_review(),
         TASK_REVIEW_CMD,
         LINEAGE_FAIL,
-        ("human.approval", {"actor": "operator"}),
+        ("human.approval", {"actor": "operator", "to_stage": "M-DESIGN"}),
     )
     assert s.substate == "RETURNED"
     assert s.return_target == "M-DESIGN"
     cmd = decide(s)
     assert cmd.kind == "rollback_stage"
     assert cmd.params["to_stage"] == "M-DESIGN"
+    # Incomplete approval (no to_stage, no preset): the park stays.
+    s2 = state_of(
+        *_at_task_review(),
+        TASK_REVIEW_CMD,
+        LINEAGE_FAIL,
+        ("human.approval", {"actor": "operator"}),
+    )
+    assert s2.status == "awaiting_human"
+    assert s2.awaiting == "rollback"
+    assert decide(s2) is None
 
 
 # -- TASK_REVIEW -> PRISM_FINAL -> TASK_DONE ---------------------------------
+
+
+def test_sanctioned_rebaseline_checkpoint_does_not_reenter_red_review():
+    """B91 follow-up (re-baseline): a red.checkpointed carrying
+    sanction=shield_fix lands MID-CYCLE (after green.committed, from the
+    sanctioned Shield fix round). It only re-anchors r_tree_identity -- it
+    must NOT flip the substate back to PRISM_RED, or the GREEN->REFACTOR flow
+    derails (run 01M0S0FQ T-013 post-mortem, 2026-08-27)."""
+    sanctioned = (
+        "red.checkpointed",
+        {"r_sha": "fix789", "sanction": "shield_fix", "task_id": "T1", "attempt": 2},
+    )
+    prefix = _at_task_review()
+    idx = prefix.index(GREEN_COMMITTED)
+    s = state_of(*prefix[: idx + 1], sanctioned)
+    assert s.substate == "REFACTOR"
+    assert s.r_tree_identity == "fix789"
 
 
 def test_task_review_pass_to_prism_final():

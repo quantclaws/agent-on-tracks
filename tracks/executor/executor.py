@@ -2768,6 +2768,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        # B91 follow-up (re-baseline): the sanctioned fix commit joins the
+        # task's immutable R family so the eventual G binds a provable anchor
+        # that is ALSO the tree that gated it (no-op without a prior RED).
+        if state.stage == "M-IMPL":
+            self._rebaseline_red_family(task_id, commit_sha, cmd.command_id)
         return True
 
     def _reject_invalid_test_tasks(self, state, role, substate, assignment, cmd, task_id) -> bool:
