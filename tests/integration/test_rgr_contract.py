@@ -63,9 +63,19 @@ def _devon_outcome(phase, changed, r_identity=None, *, classification=None, diff
     return outcome
 
 
-def _checkpoint_red(executor, store, command_id):
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id=command_id), store.state("RUN"), None, False
+def _checkpoint_red(executor, task_id, command_id):
+    """Checkpoint one legal RED round through the public command layer."""
+    executor.issue(
+        Command("checkpoint_red", {"stage": "M-IMPL", "task_id": task_id},
+                command_id=command_id)
+    )
+
+
+def _commit_green(executor, task_id, command_id):
+    """Commit a claimed GREEN through the public command layer."""
+    executor.issue(
+        Command("commit_green", {"stage": "M-IMPL", "task_id": task_id},
+                command_id=command_id)
     )
 
 
@@ -168,7 +178,7 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
                        classification="assertion_failure", diff_ref=RGR_RED_DIFF),
         task_id=task_id,
     )
-    _checkpoint_red(executor, store, "C-R1")
+    _checkpoint_red(executor, task_id, "C-R1")
     # PRISM revise round: a second checkpoint joins the family on a fresh slot.
     store.append(
         "RUN", "v0.5", "prism.verdict",
@@ -181,7 +191,7 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
                        classification="assertion_failure", diff_ref=RGR_RED_DIFF),
         task_id=task_id,
     )
-    _checkpoint_red(executor, store, "C-R2")
+    _checkpoint_red(executor, task_id, "C-R2")
 
     family = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
     assert len(family) == 2, "two RED rounds must join two checkpoints to the family"
@@ -208,9 +218,7 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
                        diff_ref=RGR_GREEN_DIFF),
         task_id=task_id,
     )
-    executor._do_commit_green(
-        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
-    )
+    _commit_green(executor, task_id, "C-G")
     greens = [e for e in store.events("RUN") if e.type == "green.committed"]
     assert len(greens) == 1, (
         "the exact-match anchored green claim must mint exactly one G commit"
@@ -257,9 +265,7 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
                        diff_ref=_GREEN_UPDATE_DIFF),
         task_id=task_id,
     )
-    executor._do_commit_green(
-        Command("commit_green", command_id="C-G2"), store.state("RUN"), None, False
-    )
+    _commit_green(executor, task_id, "C-G2")
     greens = [e for e in store.events("RUN") if e.type == "green.committed"]
     assert len(greens) == 2, "the fallback-anchored green claim must mint its G commit"
     green = greens[-1]
@@ -303,9 +309,7 @@ def test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite(host_rep
         "green", ["tracks/app.py"], latest.payload["r_sha"], diff_ref=_GREEN_UPDATE_DIFF
     )
     store.append("RUN", "v0.5", "outcome.received", duplicated_claim, task_id=task_id)
-    executor._do_commit_green(
-        Command("commit_green", command_id="C-G3"), store.state("RUN"), None, False
-    )
+    _commit_green(executor, task_id, "C-G3")
     greens_after_dupe = [e for e in store.events("RUN") if e.type == "green.committed"]
     assert len(greens_after_dupe) == 2, (
         "a duplicate green claim on the same resolved anchor must not mint "
@@ -333,9 +337,7 @@ def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
         "green", ["tracks/app.py"], "f" * 40, diff_ref=RGR_GREEN_DIFF
     )
     store.append("RUN", "v0.5", "outcome.received", green_claim, task_id=task_id)
-    executor._do_commit_green(
-        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
-    )
+    _commit_green(executor, task_id, "C-G")
     greens = [e for e in store.events("RUN") if e.type == "green.committed"]
     assert greens == [], (
         "an anchorless green claim must never mint a lineage-carrying G commit"
@@ -343,29 +345,8 @@ def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     checkpoints = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
     assert checkpoints == [], "fixture sanity: the family stays empty"
 
-    # Routing leg of resolution step 3 -- interfaces §5 IF-IMPL-004 v0.7
-    # observable exits: "不匹配仍路由 TASK_REVIEW check=lineage ->
-    # awaiting=rollback（B57 语义）" (repeated as this regression's asserted
-    # exit in test-plan §8 row 6). The blocked anchorless claim must be
-    # classified as a LINEAGE gate failure on the public event stream, and
-    # the frozen B57 router must park the run for Human adjudication --
-    # recorded lineage is untrustworthy and not reworkable in place.
-    lineage_failures = [
-        e
-        for e in store.events("RUN")
-        if e.type == "verdict.failed" and e.payload.get("check") == "lineage"
-    ]
-    assert lineage_failures, (
-        "an anchorless green claim must surface as a check=lineage gate "
-        "failure on the public event stream"
-    )
-    assert lineage_failures[0]["payload"].get("task_id") == task_id
-    projected = store.state("RUN")
-    assert getattr(projected, "awaiting", None) == "rollback", (
-        "the frozen B57 router must route check=lineage to awaiting=rollback "
-        "(Human approves discarding M-IMPL progress; trac recover re-enters)"
-    )
-
+    # Step-3 fail-closed proof runs FIRST so its counterexample surface
+    # (CE-2) stays observable independently of the routing leg below.
     unrelated_g = git_read(host_repo, "rev-parse", "HEAD")
     proof = verify_lineage(
         str(host_repo), "RUN", task_id, 1, unrelated_g, _events_as_dicts(store)
@@ -373,3 +354,29 @@ def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     assert proof.r_before_g is False, "no checkpoint family -> lineage fails closed"
     assert proof.r_ref_exists is False
     assert proof.event_order_valid is False
+
+    # Routing leg of resolution step 3 -- interfaces §5 IF-IMPL-004 v0.7
+    # observable exits: "不匹配仍路由 TASK_REVIEW check=lineage ->
+    # awaiting=rollback（B57 语义）" (repeated as this regression's asserted
+    # exit in test-plan §8 row 6: "无 checkpoint fail-closed 路由
+    # check=lineage → awaiting=rollback"). The public verdict that REFUSES
+    # this anchorless claim at its dispatch must classify it as a LINEAGE
+    # failure on the public event stream, and the frozen B57 router must park
+    # the run for Human adjudication -- recorded lineage is untrustworthy
+    # and not reworkable in place.
+    lineage_failures = [
+        e
+        for e in store.events("RUN")
+        if e.type == "verdict.failed" and e.payload.get("check") == "lineage"
+    ]
+    assert lineage_failures, (
+        "the anchorless claim's blocking verdict must be classified "
+        "check=lineage on the public event stream (test-plan §8 row 6 "
+        "routing leg), not any diagnostic category"
+    )
+    assert lineage_failures[0]["payload"].get("task_id") == task_id
+    projected = store.state("RUN")
+    assert getattr(projected, "awaiting", None) == "rollback", (
+        "the frozen B57 router must route check=lineage to awaiting=rollback "
+        "(Human approves discarding M-IMPL progress; trac recover re-enters)"
+    )

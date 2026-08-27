@@ -40,6 +40,38 @@
     }
   ],
   "restoration": "All product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files.",
+  "fix_round_attempt3_entry_integrity": {
+    "note": "M-TEST WRITE re-dispatch of the identical finding pair (blob cf700e8f, reason=unexpected_pass). This round the findings were re-diagnosed as an ENTRY-INTEGRITY defect instead of a pure classification dispute: both §8-row-6 nodes drove product internals directly (Executor._do_checkpoint_red / Executor._do_commit_green with hand-built Commands), bypassing the sanctioned public command layer that frozen integration tests use (Executor.issue(Command(...)), cf. tests/integration/test_executor_reconcile.py). The bypass mattered materially for the fail-closed node: the contract's routing leg lives on verdict.failed(check=lineage), and raw underscore calls made every observable-exit claim unverifiable against the real dispatch surface.",
+    "finding_disposition": {
+      "test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite": {
+        "action": "entry rewritten through executor.issue(checkpoint_red/commit_green); all assertions unchanged",
+        "observed": "PASSED -- deterministic, unchanged from prior rounds: the B91 resolution semantics are honoured by the deliberately retained f638075 baseline; CE-1..CE-3 still kill. The green-vs-selected-red discrepancy remains a classification-lane matter outside M-TEST authority; the reclassification request (R1/T-HIST) in shield_b91_classification_advisory.md stands for Runtime/M-DESIGN adjudication."
+      },
+      "test_rgr_lineage_no_checkpoint_fail_closed": {
+        "action": "(1) entry rewritten through executor.issue(commit_green); (2) fail-closed proof leg moved BEFORE the routing leg so CE-2's discriminating assertion is no longer masked by the always-red upstream assert; (3) routing-leg message cites test-plan §8 row 6 verbatim",
+        "observed": "LEGAL RED @ line 372: the public commit_green refusal classifies the anchorless claim check=impl_defect (m_impl_runtime._green_commit_lineage empty-family branch), while test-plan §8 row 6 freezes '无 checkpoint fail-closed 路由 check=lineage → awaiting=rollback' and interfaces §5 IF-IMPL-004 v0.7 freezes the B57 route. A fabricated TASK_REVIEW issuance was rejected because in production order impl_defect routes DIAGNOSE first, making gate-then-park unreachable by any trac-driven sequence; asserting it would pin a phantom journey. The remaining red therefore exposes a product-vs-frozen-contract classification deviation for M-IMPL to resolve, not a test defect: stack lands on a behavioral assertion over an interfaces-declared exit."
+      }
+    },
+    "collection_layer1": {
+      "command": ".venv/bin/python -m pytest tests/integration/ tests/e2e/ --collect-only",
+      "observed": "528 collected, 0 errors (unchanged sealed inventory)"
+    },
+    "targeted_layer2_final_statuses": [
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "passed"},
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "failed -- AssertionError line 372 'must be classified check=lineage ... not any diagnostic category' (legal Red)"}
+    ],
+    "kills_reverified_at_this_round_delta": [
+      {"id": "CE-1", "bound_node": "...binds_latest_checkpoint...", "observed": "killed -- AssertionError ~line 276: fallback G payload r_sha == Shield fix sha instead of seq-latest checkpoint r_sha"},
+      {"id": "CE-2", "bound_node": "...no_checkpoint_fail_closed", "observed": "killed ON ITS OWN CLAUSE for the first time since the routing-leg addition -- proof.r_before_g flipped True under the vacuous-truth deviation (the reorder un-masked it); base run passes this leg and dies at line 372"},
+      {"id": "CE-3", "bound_node": "...binds_latest_checkpoint...", "observed": "killed -- AssertionError line 231 'step 1: an exact family match is the authoritative lineage anchor...'"},
+      {"id": "CE-4", "bound_node": "...no_checkpoint_fail_closed", "observed": "node failed under patch at line 372; discrimination surface (awaiting=rollback projection) stays masked behind the base legal Red until M-IMPL wires the lineage emission, exactly as recorded in the original CE-4 entry"}
+    ],
+    "lint": ".venv/bin/ruff check -> All checks passed (exit 0)",
+    "write_actions_this_round": [
+      "tests/integration/test_rgr_contract.py -- entry integrity via executor.issue() (checkpoint_red helper + _commit_green helper replacing all four raw calls), node-B assert reorder (fail-closed proof before routing leg) + row-6 citation in the routing-leg message; node-A assertions untouched",
+      "tests/counterexamples/v0.7/manifest.json -- this round addendum"
+    ]
+  },
   "recheck_attempt2_at_HEAD_3d24c3a": {
     "note": "Shield round-2 verification after Runtime re-dispatched the identical test_defect findings (unexpected_pass x2, blob 8e680f97). Reproduced the deterministic pass locally, re-ran full-suite collection, and re-executed every counterexample kill at HEAD. Confirms the structural classification gap documented in shield_b91_classification_advisory.md is still open and unanswerable from M-TEST: no legal black-box Red exists over unchanged public exits while the implementation honours every IF-IMPL-004 v0.7 clause.",
     "targeted_run": {
