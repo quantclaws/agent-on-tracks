@@ -16,7 +16,6 @@ sha:
 - 既有 IF 标识不可重定义；§5 重列 inherited headings 供 validator 解析，正文定义仍以 IF-006 及其上游文档为准。
 - feature/hotfix 的 test-plan trace 与版本解析不变；v0.7 candidate-bound 是 `--version v0.7` 的追加闭环。
 - 外部 CLI 顶层命令集合不变；本版只扩展现有命令输出/校验。
-- 【R 修订（B91 lineage 回滚重入）】IF-IMPL-004 的 G lineage 锚点解析语义在本版冻结为设计合同（见 §5 IF-IMPL-004 的 v0.7 扩展）：锚点经该 task 的 `red.checkpointed` 事件家族解析，精确 `r_sha` 匹配权威、Shield 覆写回退最新 checkpoint、无 checkpoint fail-closed。R/G refs 不可变性、trailer 语法（`Tracks-Task`/`Tracks-Attempt`/`Tracks-R`/`Tracks-Issue`/`Tracks-AC`）、既有事件 payload 与 B57 的 `check=lineage → awaiting=rollback` 路由全部不变；该扩展是继承标识符上的合同增补，不新增 IF 标识符。
 
 ## 1. 跨模块合同
 
@@ -59,7 +58,7 @@ FailClosedScenario = Literal[
 ]
 ```
 
-新事件全部 append-only。`phase0.sealed`、`mutation.experiment(passed)`、`failclosed.summary(passed)` 不得在所引用 blob 缺失时产生。`phase0.blocked` 在 `reason=node_missing|node_uncollectable` 时 `detail` 必须以 `;` 连接枚举全部缺失 planned node id（机器可解析——baseline-repair 派发与节点验收都以该清单为准）且 `recoverable=true`；`identity_unrecoverable` 及 coverage/guard/marks/environment 类按 SM-01.5 不可恢复语义取 `recoverable=false`。
+新事件全部 append-only。`phase0.sealed`、`mutation.experiment(passed)`、`failclosed.summary(passed)` 不得在所引用 blob 缺失时产生。
 
 ### 1b. Command kind 追加
 
@@ -86,7 +85,7 @@ demo_equivalent: bool | None = None
 failclosed_hosts_passed: tuple[str, ...] = ()
 ```
 
-`phase0_status` 只允许 `UNSEALED→PHASE0_VALIDATING→SEALED|BLOCKED`、`PHASE0_VALIDATING→PHASE0_VALIDATING`。SEALED 不可回退；BLOCKED 只经 Human 修复仓库事实后新一次 `phase0_validate` 回 PHASE0_VALIDATING，不改写历史事件。`reason=node_missing` 的"Human 修复仓库事实"具体化为 architecture §1.0.2 第 3 条的 baseline-repair 通道合同：Human 批准 Runtime 以 phase0-scoped assignment 派发 Shield（RP-01 第 1 行唯一 integration 写者）按 `phase0.blocked.detail` 清单在既有 `tests/integration/test_evidence_reuse.py` 内创建缺失 planned nodes（含节点语义验收标准），该派发是 Shield 在 M-TEST 之外唯一的 tests/integration 写入窗口、`phase0.sealed` 后关闭；新一次 `phase0_validate` 的机器绑定结果是唯一采信的验证，不引入 Agent 自述通道。
+`phase0_status` 只允许 `UNSEALED→PHASE0_VALIDATING→SEALED|BLOCKED`、`PHASE0_VALIDATING→PHASE0_VALIDATING`。SEALED 不可回退；BLOCKED 只经 Human 修复仓库事实后新一次 `phase0_validate` 回 PHASE0_VALIDATING，不改写历史事件。
 
 ### 1d. Phase 0 公共函数（IF-PHASE-001/002/003）
 
@@ -138,8 +137,6 @@ def build_seal_manifest(
 ```
 
 `scan_trace_gaps` 必须把 marker-only 与真实 evidence 分开；计划 node 不在 actual collect inventory 时不得生成 repaired。`judge_real_coverage` 只有 ratio≥threshold 且 source exclusion 为空才 passed。`seal_id=sha256(canonical_json(其余字段))`。
-
-`planned_bindings` 的唯一来源是 baseline 版本 test-plan §8 的 AC→node 绑定行（机器解析）；v0.6 三缺口绑定固定为 `tests/integration/test_evidence_reuse.py::test_prism_consumes_runtime_evidence_without_suite_rerun`、`::test_identity_fields_append_only_auditable`、`::test_stale_propagation_uniform_across_gates`——三者从未落盘，首次校验产出 `node_missing` 是预期结果而非异常。经 §1c/architecture §1.0.2 第 3 条修复通道落盘后，由新一次 `phase0_validate` 重扫：节点进入 collect inventory → `run_selected` 执行并持久化 evidence → `phase0.baseline_repaired` 携带真实 node id/digest；计划 node 落盘前后都不存在"不经 run_selected 的直接 repaired"。
 
 ### 1e. Guard registry 与 parity（IF-GUARD-001/002）
 
@@ -605,13 +602,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-IMPL-003 task graph 解析与校验合同（继承 IF-006）
 
-### IF-IMPL-004 RGR git 操作合同（继承 IF-006；v0.7 冻结 B91 G lineage 锚点解析语义）
-
-**modules**: executor/rgr.py（R ref 创建与 G commit trailer 合同）、executor/m_impl_runtime.py（`_r_lineage_r_sha`/`_r_lineage_attempt` 锚点解析与 verify_lineage/TASK_REVIEW 消费）——跨模块合同，须有 integration 覆盖（test-plan §10）。
-
-- **lineage 锚点解析（B91，封闭解析序）**：G commit 的 `Tracks-R` trailer 与该 task 权威 R lineage 的匹配锚点经该 task 的 `red.checkpointed` 事件家族解析，解析序封闭为三步：(1) `state.r_tree_identity` 与家族中某 `red.checkpointed.r_sha` 精确相等——该 `r_sha` 即权威锚点；(2) 身份不匹配（test_defect 轮后 `_on_test_committed` 把 `r_tree_identity` 重指到获准 Shield fix commit 的覆写场景）——回退到该家族按 seq 最新的 `red.checkpointed.r_sha`；(3) 该 task 无任何 `red.checkpointed` 事件——verify_lineage 一律 fail-closed。R refs 与 G commits 不可变；该解析收紧而非放宽 lineage 校验（覆写场景下 `Tracks-R=<fix commit sha>` 的确定性复败死点被消除，无 checkpoint 的 lineage 声明反而新增阻断）。
-- **去重键同向解析**：G commit 去重的 attempt 键（`_r_lineage_attempt`）经同一修正后的 `r_sha` 解析，禁止以 fix commit sha 作为 lineage 锚点参与去重。
-- **可观察出口**：解析结果经既有 `red.checkpointed` / `green.committed` 事件（`r_sha`/trailers payload）与 git G commit trailers（`Tracks-R=<解析后 r_sha>`）审计；不匹配仍路由 TASK_REVIEW `check=lineage` → awaiting=rollback（B57 语义，Human 批准丢弃 M-IMPL 进度后 `trac recover` 重回 M-DESIGN）。
+### IF-IMPL-004 RGR git 操作合同（继承 IF-006）
 
 ### IF-IMPL-005 质量门禁分层执行合同（继承 IF-006；registry 成为唯一来源）
 
@@ -674,7 +665,7 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-PHASE-001 Phase 0 real collected-node binding 合同
 
-- **合同**：§1a/§1d 的 gap scan、run_selected real binding、marker-only 拒绝、BLOCKED 路由与 `phase0.baseline_repaired/blocked`；`node_missing` 的 BLOCKED→baseline-repair→re-validate 编排（§1c + architecture §1.0.2 第 3 条：planned_bindings 源自 baseline test-plan §8、blocked detail 枚举缺失清单、Shield 在 Human 批准派发下按清单创建 v0.6 planned nodes、节点语义验收标准、新一次 validate 机器验证为唯一采信）。
+- **合同**：§1a/§1d 的 gap scan、run_selected real binding、marker-only 拒绝、BLOCKED 路由与 `phase0.baseline_repaired/blocked`。
 - **modules**：kernel/phase0.py, executor/phase0.py, adapters, checks/trace.py, report.py。
 - **关联**：FR-0256。
 
