@@ -36,20 +36,21 @@ def test_append_only_and_projection_replay(trac, host_repo, event_log):
     projection tables, then ``trac status`` re-derives state from the
     append-only events; the rebuilt status must match the pre-drop status.
 
-    NOTE (SHIELD_FIX T-015 / issue 101): the v0.7 run must be ACTIVATED via
-    the real journey (init -> start -> triage -> reviews) BEFORE any
-    `trac run`, otherwise `trac run` exits rc=1 'no active run' and NO
-    phase0.* event is ever emitted regardless of the implementation (a
-    perpetual Red fixture). A bare `seed_v05_approved_baseline` created the
-    project docs but not a run, so it could never reach the append-only
-    phase0 outlet.
+    # NOTE (SHIELD_FIX T-015 / issue 101): the v0.7 run must be ACTIVATED via
+    # the real journey (init -> start -> triage -> reviews -> approve) BEFORE
+    # any `trac run`, otherwise `trac run` exits rc=1 'no active run' and NO
+    # phase0.* event is ever emitted (a perpetual Red fixture). The run_id
+    # returned by the walk must be used to query the event stream -- the
+    # conftest `event_log` filters by literal run_id equality, so the literal
+    # 'latest' matches nothing and would discard the real run's phase0.*
+    # events (a false implementation failure).
     """
     import sqlite3
 
     from tests.e2e.helpers import walk_to_await_human
     from tracks import paths
 
-    walk_to_await_human(trac, version="v0.7")
+    run_id = walk_to_await_human(trac, version="v0.7")
     # The journey walk leaves the run awaiting approval; approve it so the
     # next `trac run` advances into M-DESIGN/M-TEST where the v0.7 Phase 0
     # extension emits phase0.* events (mirrors test_v07_journey._start_v07_run).
@@ -57,7 +58,7 @@ def test_append_only_and_projection_replay(trac, host_repo, event_log):
     trac("run")
     pre_status = trac("status").stdout
     # v0.7 phase0 events must be present in the append-only stream.
-    events_before = [e["type"] for e in event_log("latest")]
+    events_before = [e["type"] for e in event_log(run_id)]
     assert any(t.startswith("phase0.") for t in events_before), (
         "phase0.* events missing from append-only stream"
     )
@@ -79,7 +80,7 @@ def test_append_only_and_projection_replay(trac, host_repo, event_log):
         "projection rebuild must be invariant: status changed after drop+rebuild"
     )
     # The events table is append-only: no rows were mutated/deleted.
-    events_after = [e["type"] for e in event_log("latest")]
+    events_after = [e["type"] for e in event_log(run_id)]
     assert events_after == events_before, (
         "event stream must be append-only (no mutation across rebuild)"
     )
