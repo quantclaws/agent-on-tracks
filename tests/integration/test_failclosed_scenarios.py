@@ -17,12 +17,42 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.helpers import walk_to_await_human
+from tests.unit.test_guard_registry_loader import (
+    _HEADING,
+    _eight_guard_blocks,
+    _registry_body,
+)
 from tracks.executor.demo_host import FAIL_CLOSED_SCENARIOS
 
 pytestmark = pytest.mark.integration
 
 
-def _start_v07_run(trac):
+def _seed_guard_registry(host_repo):
+    """Write the host's v0.7 architecture.md §4.2 with a valid canonical
+    [quality_registry] block (8 guards, loader-validated shape — builders
+    shared with tests/unit/test_guard_registry_loader.py).
+
+    NOTE (SHIELD_FIX T-016 / issue 100, operator landed 2026-08-27): without
+    this block every activated v0.7 run parks at
+    phase0.blocked(guard_registry_invalid) before ISLAND_GATE_2 — four
+    identical diagnoses confirmed the implementation itself is delivered and
+    unit-green; only the fixture premise was missing."""
+    from pathlib import Path
+
+    arch = Path(host_repo) / ".tracks" / "projects" / "v0.7" / "architecture.md"
+    arch.parent.mkdir(parents=True, exist_ok=True)
+    digest = "sha256:" + "0" * 64
+    arch.write_text(
+        "# v0.7 architecture\n\n"
+        f"{_HEADING}\n\n"
+        "```toml\n"
+        + _registry_body(_eight_guard_blocks(digest), host="tracks")
+        + "```\n",
+        encoding="utf-8",
+    )
+
+
+def _start_v07_run(trac, host_repo):
     """Activate a real v0.7 run through the journey (init -> start -> triage
     -> reviews -> approve) and return its run_id.
 
@@ -36,6 +66,7 @@ def _start_v07_run(trac):
     real journey then approves, and the returned run_id must be used for
     `event_log` (the conftest filters by literal run_id equality, so
     'latest' matches nothing)."""
+    _seed_guard_registry(host_repo)
     run_id = walk_to_await_human(trac, version="v0.7")
     assert trac("approve", "--actor", "Aaron").returncode == 0
     trac("run")
@@ -51,7 +82,7 @@ def test_tracks_host_nine_scenarios_blocked(trac, host_repo, event_log):
     produced; the per-scenario and summary assertions fail on absence of the
     contract outlet.
     """
-    run_id = _start_v07_run(trac)
+    run_id = _start_v07_run(trac, host_repo)
     events = event_log(run_id)
     demonstrated = [e for e in events if e["type"] == "failclosed.demonstrated"
                      and e["payload"].get("host") == "tracks"]
@@ -82,7 +113,7 @@ def test_crash_recovery_replay_ok(trac, host_repo, event_log):
     The crash-recovery outlet is the `failclosed.summary.crash_recovery` field
     (§1a row 12), observed via the event stream after an interruption/restart.
     A phantom pass (status=passed with missing results) is forbidden."""
-    run_id = _start_v07_run(trac)
+    run_id = _start_v07_run(trac, host_repo)
     events = event_log(run_id)
     summaries = [e for e in events if e["type"] == "failclosed.summary"]
     assert summaries, "failclosed.summary event missing (crash recovery outlet)"
@@ -102,7 +133,7 @@ def test_crash_recovery_replay_ok(trac, host_repo, event_log):
 def test_any_leak_or_inequivalence_blocks(trac, host_repo, event_log):
     """AC-FR0266-04: any leaked scenario (outcome != blocked) or demo
     inequivalence routes the host summary to status=blocked (not passed)."""
-    run_id = _start_v07_run(trac)
+    run_id = _start_v07_run(trac, host_repo)
     events = event_log(run_id)
     demonstrated = [e for e in events if e["type"] == "failclosed.demonstrated"]
     # If any scenario leaked, its host summary must be status=blocked.
@@ -124,7 +155,7 @@ def test_any_leak_or_inequivalence_blocks(trac, host_repo, event_log):
 def test_demo_host_crash_recovery_rebuild(trac, host_repo, event_log):
     """AC-NFR0142-02: the demo-pytest host summary also carries
     crash_recovery=replay_ok after interruption/restart (dual-host)."""
-    run_id = _start_v07_run(trac)
+    run_id = _start_v07_run(trac, host_repo)
     events = event_log(run_id)
     demo_summaries = [e for e in events if e["type"] == "failclosed.summary"
                       and e["payload"].get("host") == "demo-pytest"]
