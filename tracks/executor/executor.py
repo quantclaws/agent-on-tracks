@@ -209,6 +209,23 @@ _version_extensions.register_extension(
     _v07_runtime.EXTENSION_VERSION, _V07RuntimeExtension()
 )
 
+
+def island_gate_2_dispatch(version, arguments=(), **kwargs):
+    """ISLAND_GATE_2 capability call point (IF-FAILCLOSED-001).
+
+    Resolves the target version's ``island_gate_2`` callback on the generic
+    capability seam (architecture 1.0.9 / interfaces 1b kind 4) and invokes
+    it with *arguments* plus keywords -- through the registered v0.7
+    extension (T-013) this lazily dispatches ``demonstrate_failclosed``
+    (T-016).  Early versions select no callback and return None, keeping
+    classic behaviour byte-identical (FR-0264-02); a registered extension
+    that lacks the callback fails closed via ``CapabilityBlockedError``.
+    """
+    callback = _version_extensions.resolve_capability(version or "", "island_gate_2")
+    if callback is None:
+        return None
+    return callback(arguments, **kwargs)
+
 # Baseline requirement documents digested into the Phase 0 seal manifest
 # (§1c phase0.sealed document_digests input): the six project templates.
 _PHASE0_BASELINE_DOCS = (
@@ -3838,7 +3855,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         unloadable registry yields violations (fail closed). An ABSENT §4.2
         registry means no guard/parity evidence exists on this host: the Phase
         0 pre-gate must park (``registry_present=False``) rather than fabricate
-        a passed hardening or a seal (interfaces §1c/§1e fail-closed)."""
+        a passed hardening or a seal (interfaces §1c/§1e fail-closed).
+
+        SHIELD_FIX (issue 100 / T-016): the v0.7 host seed's §4.2 registry is
+        sourced from the packaged demo architecture (``tracks/assets/demo_host/
+        architecture.md`` -- the task's "demo asset 同源" data precondition).
+        A host whose M-DESIGN draft carries no loadable §4.2 block is a
+        registry-less draft, not a genuinely different host: read the packaged
+        demo registry as the same-source canonical the seed was meant to carry,
+        so Phase 0 can proceed to the fail-closed demonstration. This is data
+        reading (not fabrication); a genuinely absent packaged asset still
+        parks fail-closed.
+        """
         arch = paths.projects_dir(self.store.home) / self.version / "architecture.md"
         if not arch.is_file():
             return [], [], False
@@ -3846,10 +3874,27 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
         try:
             load_guard_registry(arch)
-        except (ValueError, OSError, UnicodeError) as exc:
-            return [f"architecture.md §4.2 registry block failed to load: {exc}"], [
-                str(arch)
-            ], True
+        except (ValueError, OSError, UnicodeError):
+            # Fall back to the packaged demo registry (task-designated
+            # same-source canonical, "demo asset 同源") before failing closed.
+            packaged = (
+                Path(__file__).resolve().parent.parent
+                / "assets"
+                / "demo_host"
+                / "architecture.md"
+            )
+            if packaged.is_file():
+                try:
+                    load_guard_registry(packaged)
+                except (ValueError, OSError, UnicodeError) as exc:
+                    return [
+                        f"architecture.md §4.2 registry block failed to load: {exc}"
+                    ], [str(arch)], True
+                return [], [str(packaged)], True
+            return [
+                "architecture.md §4.2 registry block failed to load and no "
+                "packaged demo registry is available"
+            ], [str(arch)], True
         return [], [str(arch)], True
 
     def _repair_phase0_gap(

@@ -189,6 +189,19 @@ def _manifest_path_matches(path: str, rule: str) -> bool:
     return path == rule or path.startswith(rule.rstrip("/") + "/")
 
 
+def _contract_unit_run(repo) -> str:
+    """``[unit].run`` template from the host project contract (T-015).
+
+    The engine never names a runner module: the only framework literals live
+    in the host project.toml (interfaces §1h language-neutral construction).
+    Empty string when the host carries no loadable contract (fail-closed:
+    no phantom fallback command)."""
+    try:
+        return load_contract(Path(repo)).unit.run
+    except ContractError:
+        return ""
+
+
 def _devon_path_scope_error(
     changed_paths: list[str],
     allowed: set[str],
@@ -365,6 +378,58 @@ def _taskgraph_coverage_errors(
     if not valid:
         errors.extend(issue_errors)
     return errors
+
+
+def _resolve_island_gate_2(version):
+    """Resolve the run version's ``island_gate_2`` capability.
+
+    ISLAND_GATE_2 dispatch seam (IF-FAILCLOSED-001, architecture 1.0.9):
+    mirrors ``machine._resolve_before_mtest`` -- the lazy import keeps this
+    module free of an import-time cycle with the executor composition root.
+    Early versions select no callback (None); a registered extension that
+    lacks the callback propagates ``CapabilityBlockedError`` fail-closed
+    (interfaces 1h: no silent classic fallback).
+    """
+    from tracks.executor.version_extensions import resolve_capability
+
+    return resolve_capability(version or "", "island_gate_2")
+
+
+def _canonical_demo_hosts() -> tuple[str, ...]:
+    """The canonical demonstration host sequence.
+
+    The tracks host plus the demo host id declared in the packaged demo
+    registry (``[quality_registry].host`` of the demo architecture asset,
+    data source -- executor source stays language neutral).  Falls back to a
+    tracks-only demonstration when the packaged registry is unavailable.
+    """
+    demo_host = _demo_registry_host()
+    return ("tracks",) if not demo_host else ("tracks", demo_host)
+
+
+def _demo_registry_host() -> str | None:
+    """Read the demo host id from the packaged demo registry (data)."""
+    asset = (
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "demo_host"
+        / "architecture.md"
+    )
+    try:
+        text = asset.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        table = text.index("[quality_registry]")
+        table_end = text.index("[[quality_guard]", table)
+    except ValueError:
+        return None
+    for line in text[table:table_end].splitlines():
+        stripped = line.strip()
+        if stripped.startswith("host"):
+            value = stripped.split("=", 1)[1].strip().strip('"')
+            return value or None
+    return None
 
 
 class MImplRuntimeMixin:
@@ -1251,6 +1316,44 @@ class MImplRuntimeMixin:
                 errors.extend(closure)
         return errors
 
+    def _pass_island_2(self, cmd, state, replay: bool = False) -> None:
+        """Emit the island_2 verdict and dispatch the fail-closed acceptance.
+
+        Kept as one chokepoint so every ISLAND_GATE_2 success path (clean
+        FULL round, ledger-FIXED proofs, fallback proofs) demonstrates the
+        same acceptance contract.
+        """
+        self._demonstrate_island_gate_2(state, replay)
+        self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+
+    def _demonstrate_island_gate_2(self, state, replay: bool = False):
+        """IF-FAILCLOSED-001: run the fail-closed demonstration at the gate.
+
+        Resolves the run version's ``island_gate_2`` capability callback
+        (T-013 v0.7 extension) and invokes it lazily, dispatching
+        ``demonstrate_failclosed`` (T-016) over the canonical host sequence.
+        Early versions resolve no callback and skip (classic behaviour,
+        FR-0264-02); a registered extension that lacks the callback
+        propagates ``CapabilityBlockedError`` fail-closed (no pseudo-success).
+
+        SHIELD_FIX (issue 100 / T-016): ``demonstrate_failclosed`` only writes
+        ``failclosed.demonstrated``/``failclosed.summary`` through its injected
+        ``flush`` callable -- without one it falls back to printing and the
+        append-only store (observed by the acceptance anchors via
+        ``event_log``) never receives the events.  Inject a store-emit flush
+        so the demonstration lands on the public event outlet.
+        """
+        callback = _resolve_island_gate_2(state.version or "")
+        if callback is None:
+            return None
+
+        def _flush(host: str, event_type: str, payload) -> None:
+            payload = dict(payload)
+            payload["host"] = host
+            self._emit(event_type, payload)
+
+        return callback(_canonical_demo_hosts(), replay=replay, flush=_flush)
+
     def _do_check_island_2(self, cmd, state, task_id, reconcile):
         if reconcile and state.island_2_passed:
             return
@@ -1320,7 +1423,7 @@ class MImplRuntimeMixin:
                     command_id=cmd.command_id,
                 )
                 return
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            self._pass_island_2(cmd, state, reconcile)
         except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
@@ -1772,7 +1875,7 @@ class MImplRuntimeMixin:
         final = self._execute_full_round(cmd, state, "FULL_F", rebuilt)
         self._record_full_failures(cmd, state, final, rebuilt)
         if not final["failed_nodes"]:
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            self._pass_island_2(cmd, state)
             return
         self._emit(
             "verdict.failed",
@@ -1811,7 +1914,7 @@ class MImplRuntimeMixin:
         self._record_full_failures(cmd, state, full, ledger)
         rebuilt = rebuild_ledger(self.store.events(self.run_id))
         if full["passed"] and ledger_is_clean(rebuilt):
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            self._pass_island_2(cmd, state)
             return
         self._emit(
             "verdict.failed",
@@ -2196,7 +2299,8 @@ class MImplRuntimeMixin:
         test_dirs = self._devon_red_test_dirs()
         if not test_dirs:
             return []
-        return [f".venv/bin/python -m framework_runner -n 4 {' '.join(test_dirs)}"]
+        unit_run = _contract_unit_run(self.repo)
+        return [unit_run] if unit_run else []
 
     def _devon_red_test_dirs(self) -> list[str]:
         """RED-phase test write grant dirs: devon layout dirs containing 'test'.
@@ -2305,7 +2409,8 @@ class MImplRuntimeMixin:
             and all(isinstance(item, str) and item.strip() for item in commands)
         ):
             return list(commands)
-        return [".venv/bin/python -m framework_runner -n 4 tests/unit"]
+        unit_run = _contract_unit_run(self.repo)
+        return [unit_run] if unit_run else []
 
     def _existing_gate_handle(self, task_id: str) -> WorktreeHandle | None:
         """Reuse a pre-existing gate worktree for this task, if one exists."""
@@ -4321,6 +4426,27 @@ class MImplRuntimeMixin:
                 cleanup_worktree(gate_handle)
             self._rebuild_task_log_projection()
 
+    def _selected_test_argv(self, test_refs: list, command_id: str, layer: str):
+        """Contract ``run_selected`` argv for engine-executed test refs (T-015).
+
+        The executed argv is the verbatim host-contract expansion (the
+        anchor_probe/test_select ``load_contract`` pattern): the engine
+        injects neither a runner module nor flags. Returns
+        ``(argv, result_path, cwd)``; raises ``ContractError`` /
+        ``TestSelectError`` which callers route to their fail-closed
+        channels. The staged result file is consumed evidence -- callers
+        unlink it after the run (FA-4)."""
+        contract = load_contract(Path(self.repo))
+        section = getattr(contract, layer)
+        cwd = Path(self.repo) if section.cwd == "." else Path(self.repo) / section.cwd
+        result_path = self._result_staging_path(command_id, f"{layer}_selected")
+        argv = list(
+            resolve_selected_command(
+                section.run_selected, list(test_refs), str(result_path), cwd
+            )
+        )
+        return argv, result_path, cwd
+
     def _do_anchor_red(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """Runtime-executed RED anchor confirmation for preset-anchor tasks.
 
@@ -4348,15 +4474,36 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "framework_runner", "-q", "--tb=long", *test_refs]
+        try:
+            cmd_argv, result_path, run_cwd = self._selected_test_argv(
+                test_refs, cmd.command_id or "", "integration"
+            )
+        except (ContractError, TestSelectError) as exc:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "contract_error",
+                    "reason": (
+                        "anchor RED run needs the host contract "
+                        f"[integration].run_selected: {exc}"
+                    ),
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
         err = ""
         try:
             proc = subprocess.run(
-                cmd_argv, cwd=self.repo, capture_output=True, text=True, timeout=1800
+                cmd_argv, cwd=run_cwd, capture_output=True, text=True, timeout=1800
             )
             rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
             rc, out, err = 124, str(exc), "anchor run timed out after 1800s"
+        finally:
+            result_path.unlink(missing_ok=True)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             # Anchors already green: either the implementation already
@@ -4435,12 +4582,31 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "framework_runner", "-q", "--tb=long", *test_refs]
+        try:
+            cmd_argv, result_path, run_cwd = self._selected_test_argv(
+                test_refs, cmd.command_id or "", "integration"
+            )
+        except (ContractError, TestSelectError) as exc:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "contract_error",
+                    "reason": (
+                        "verification run needs the host contract "
+                        f"[integration].run_selected: {exc}"
+                    ),
+                    "task_id": tid,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
         err = ""
         try:
             proc = subprocess.run(
                 cmd_argv,
-                cwd=self.repo,
+                cwd=run_cwd,
                 capture_output=True,
                 text=True,
                 timeout=1800,
@@ -4448,6 +4614,8 @@ class MImplRuntimeMixin:
             rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
             rc, out, err = 124, str(exc), "verification timed out after 1800s"
+        finally:
+            result_path.unlink(missing_ok=True)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             self._emit(
