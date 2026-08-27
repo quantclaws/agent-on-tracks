@@ -178,13 +178,122 @@ def _contract_sections(contract):
     ]
 
 
+# T-015 v0.7 runtime assembly (architecture §1.0.9/§1.1): the Executor is the
+# composition root. Importing this module re-registers the v0.7 extension
+# delivered by ``v07_runtime`` (T-013) with the Phase 0 entry-guard
+# capability added on top -- the T-013 file itself is consumed by import
+# only and never modified. Re-registering the same version replaces its
+# binding idempotently (version_extensions contract), so the trace /
+# island_gate_2 / render_closure capabilities are inherited unchanged and
+# kernel.machine's generic seam call point can resolve ``before_mtest``.
+from tracks.executor import v07_runtime as _v07_runtime  # noqa: E402
+from tracks.executor import version_extensions as _version_extensions  # noqa: E402
+
+
+class _V07RuntimeExtension(_v07_runtime.V07Extension):
+    """v0.7 extension assembled with the Phase 0 entry guard (T-015).
+
+    ``before_mtest`` delegates to the T-004 ``kernel.phase0.decide_phase0``
+    entry guard (pure, no I/O): any non-SEALED Phase 0 projection routes to
+    ``Command(phase0_validate)``; SEALED/BLOCKED park (§1c).
+    """
+
+    @staticmethod
+    def before_mtest(state):
+        from tracks.kernel.phase0 import decide_phase0
+
+        return decide_phase0(state)
+
+
+_version_extensions.register_extension(
+    _v07_runtime.EXTENSION_VERSION, _V07RuntimeExtension()
+)
+
+# Baseline requirement documents digested into the Phase 0 seal manifest
+# (§1c phase0.sealed document_digests input): the six project templates.
+_PHASE0_BASELINE_DOCS = (
+    "story.md",
+    "spec.md",
+    "acceptance.md",
+    "architecture.md",
+    "interfaces.md",
+    "test-plan.md",
+)
+
+
+def _phase0_baseline_version(version: str | None) -> str | None:
+    """Previous minor of a ``vX.Y`` run version (v0.7 -> v0.6, §1c
+    phase0_validate inputs); None when the shape carries no baseline."""
+    body = (version or "").removeprefix("v").split(".")
+    if len(body) != 2 or not all(part.isdigit() for part in body):
+        return None
+    major, minor = int(body[0]), int(body[1])
+    if minor <= 0:
+        return None
+    return f"v{major}.{minor - 1}"
+
+
+def _phase0_planned_bindings(baseline_dir: Path) -> dict[str, str]:
+    """AC -> planned node bindings from the baseline test-plan §8 rows (§1d
+    scan input); only node-level ``path::test`` targets bind (file-only cells
+    carry no node identity)."""
+    plan = baseline_dir / "test-plan.md"
+    if not plan.is_file():
+        return {}
+    from tracks.executor.test_tasks import _coverage_rows_with_test
+
+    return {
+        ac: test.strip()
+        for ac, _layer, test, _if_ids in _coverage_rows_with_test(
+            plan.read_text(encoding="utf-8")
+        )
+        if test and "::" in test
+    }
+
+
+def _phase0_approved_acs(baseline_dir: Path) -> set[str]:
+    """Approved AC ids from the baseline acceptance.md (§1d scan input)."""
+    acc = baseline_dir / "acceptance.md"
+    if not acc.is_file():
+        return set()
+    from tracks.executor.test_tasks import _known_ac_ids
+
+    return _known_ac_ids(acc.read_text(encoding="utf-8"))
+
+
+def _phase0_document_digests(baseline_dir: Path) -> dict[str, str]:
+    """sha256 of every present baseline requirement document (seal input)."""
+    digests: dict[str, str] = {}
+    for name in _PHASE0_BASELINE_DOCS:
+        path = baseline_dir / name
+        if path.is_file():
+            digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digests
+
+
+def _phase0_frozen_test_digests(repo: Path, frozen_paths: list[str]) -> dict[str, str]:
+    """sha256 of every frozen test file under the declared layer paths."""
+    digests: dict[str, str] = {}
+    for declared in frozen_paths:
+        root = repo / declared.rstrip("/")
+        if not root.is_dir():
+            continue
+        for file in sorted(root.rglob("*")):
+            if file.is_file():
+                digests[str(file.relative_to(repo))] = hashlib.sha256(
+                    file.read_bytes()
+                ).hexdigest()
+    return digests
+
+
 def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     """Resolve a contract command's argv[0] against the project cwd.
 
     Live replay fix: an external worktree's project.toml contract may declare
-    ``.venv/bin/python -m framework_runner ...`` while the worktree itself has no
-    ``.venv`` (it was created from a host that does). When argv[0] is the
-    relative project venv interpreter and it does not exist under cwd,
+    a ``.venv/bin/python -m <host runner> ...`` command while the worktree
+    itself has no ``.venv`` (it was created from a host that does). When
+    argv[0] is the relative project venv interpreter and it does not exist
+    under cwd,
     substitute the Runtime's own ``sys.executable`` — but ONLY when that
     executable is itself running inside a venv (so we never fall back to a
     system Python). If the project carries its own ``.venv/bin/python`` it is
@@ -253,12 +362,15 @@ def _hotfix_run_branch(store, run_id: str) -> str | None:
 def _resolve_run_version(state) -> str:
     """The run's version identity (ARCH-006 §1.0.3).
 
-    The kernel projects ``State.version`` only from ``story.requested``
-    (machine.py _on_story_requested); a hotfix run never emits that event, so
-    its identity ``{target_version}-hotfix-{issue}`` is re-derived from the
-    projected hotfix fields. Pre-PRECHECK (target unknown yet) falls back to
-    the stable ``hotfix-{issue}`` identity; a non-hotfix run keeps its
-    projected version.
+    The kernel projects ``State.version`` from ``story.requested``
+    (unconditional) and, while still unset, from any ``stage.entered``
+    envelope (T-015: every envelope carries the run identity, so seeded
+    partial streams surface it too; executor-emitted hotfix envelopes carry
+    the already-derived hotfix identity, making the fallback a no-op there).
+    A hotfix run without either projection gets its identity
+    ``{target_version}-hotfix-{issue}`` re-derived from the projected hotfix
+    fields. Pre-PRECHECK (target unknown yet) falls back to the stable
+    ``hotfix-{issue}`` identity; a non-hotfix run keeps its projected version.
     """
     if state.version:
         return state.version
@@ -3705,6 +3817,183 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "stage": "M-IMPL",
                 "from_stage": state.stage,
                 "reason": cmd.params.get("reason", ""),
+            },
+            command_id=cmd.command_id,
+        )
+
+    # -- v0.7 Phase 0 pre-gate handler (architecture §1.0.2/§1.1, T-015) -------
+
+    def _emit_phase0_blocked(self, cmd, reason: str, detail: str, recoverable: bool):
+        """Emit ``phase0.blocked`` (§1c-5): the run parks for Human repair."""
+        return self._emit(
+            "phase0.blocked",
+            {"reason": reason, "detail": detail, "recoverable": recoverable},
+            command_id=cmd.command_id,
+        )
+
+    def _phase0_guard_violations(self) -> tuple[list[str], list[str]]:
+        """Guard hardening input (§1d; registry surface IF-GUARD-001/002).
+
+        An absent §4.2 registry leaves nothing to harden in this assembly
+        slice (deployment/parity run through the §1k validate/deploy and
+        ``trac validate`` surfaces); a PRESENT but unloadable registry fails
+        closed -- never a pseudo-pass."""
+        arch = paths.projects_dir(self.store.home) / self.version / "architecture.md"
+        if not arch.is_file():
+            return [], []
+        from tracks.executor.guard_registry import load_guard_registry
+
+        try:
+            load_guard_registry(arch)
+        except (ValueError, OSError, UnicodeError) as exc:
+            return [f"architecture.md §4.2 registry block failed to load: {exc}"], [
+                str(arch)
+            ]
+        return [], [str(arch)]
+
+    def _do_phase0_validate(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
+        """Runtime Phase 0 pre-gate for v0.7 hosts (interfaces §1c/§1d).
+
+        Emits the append-only ``phase0.*`` sequence over the delivered domain
+        functions: gap scan over the baseline's real collected-node inventory
+        (unrecoverable identities BLOCK, §1d), the collected-coverage gate,
+        guard hardening, then the seal. Every event goes through the store
+        (append-only, AC-NFR0140-01): dropping the projection and replaying
+        rebuilds the identical phase0_status/seal/blocked fields."""
+        if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
+            return
+        from tracks.executor.phase0 import (
+            build_seal_manifest,
+            judge_real_coverage,
+            scan_trace_gaps,
+        )
+        from tracks.executor.test_select import (
+            TestSelectError,
+            collect_node_source_digests,
+        )
+
+        baseline_version = _phase0_baseline_version(self.version)
+        if baseline_version is None:
+            self._emit_phase0_blocked(
+                cmd,
+                "baseline_unresolvable",
+                f"cannot derive a baseline version from {self.version!r}",
+                True,
+            )
+            return
+        node_layer, collect_error = self._collect_all_declared_layers(
+            capture_absent_ok=True
+        )
+        if collect_error is not None:
+            self._emit_phase0_blocked(cmd, "collect_failed", collect_error, True)
+            return
+        nodes = sorted(node_layer)
+        try:
+            node_digests = collect_node_source_digests(Path(self.repo), nodes)
+        except TestSelectError as exc:
+            self._emit_phase0_blocked(cmd, "identity_unrecoverable", str(exc), True)
+            return
+        baseline_dir = paths.projects_dir(self.store.home) / baseline_version
+        planned = _phase0_planned_bindings(baseline_dir)
+        approved = _phase0_approved_acs(baseline_dir)
+        gaps = scan_trace_gaps(baseline_version, approved, planned, node_digests, {})
+        fatal = [gap for gap in gaps if gap.reason != "marker_only"]
+        if fatal:
+            self._emit_phase0_blocked(
+                cmd,
+                fatal[0].reason,
+                "; ".join(f"{gap.ac}: {gap.planned_node_id}" for gap in fatal),
+                False,
+            )
+            return
+        planned_nodes = set(planned.values())
+        ratio = (
+            len([node for node in planned_nodes if node_digests.get(node)])
+            / len(planned_nodes)
+            if planned_nodes
+            else 1.0
+        )
+        judgement = judge_real_coverage(ratio, 1.0, ())
+        outcomes_blob = self.store.write_audit_blob(
+            {
+                "nodes": [
+                    {"node": node, "layer": node_layer[node], "digest": node_digests[node]}
+                    for node in nodes
+                ]
+            }
+        )
+        self._emit(
+            "phase0.coverage",
+            {
+                "status": "passed" if judgement.passed else "failed",
+                "ratio": ratio,
+                "threshold": judgement.threshold,
+                "by": "collected",
+                "exclude": "none",
+                "excluded_sources": list(judgement.excluded_sources),
+                "outcomes_ref": f".tracks/runtime/blobs/{outcomes_blob}"
+                if outcomes_blob
+                else "",
+            },
+            command_id=cmd.command_id,
+        )
+        if not judgement.passed:
+            self._emit_phase0_blocked(
+                cmd, "coverage_below_threshold", judgement.reason or "", True
+            )
+            return
+        violations, guard_refs = self._phase0_guard_violations()
+        self._emit(
+            "phase0.guard_hardened",
+            {
+                "status": "passed" if not violations else "blocked",
+                "violations": len(violations),
+                "revised": 0,
+                "guard_evidence_refs": guard_refs,
+                "parity_event_seq": 0,
+            },
+            command_id=cmd.command_id,
+        )
+        if violations:
+            self._emit_phase0_blocked(
+                cmd, "guard_registry_invalid", "; ".join(violations), False
+            )
+            return
+        contract_toml = paths.project_toml_path(paths.tracks_home(Path(self.repo)))
+        env_digest = hashlib.sha256(contract_toml.read_bytes()).hexdigest()
+        manifest = build_seal_manifest(
+            baseline_version,
+            _phase0_document_digests(baseline_dir),
+            _phase0_frozen_test_digests(
+                Path(self.repo), self._frozen_test_paths()
+            ),
+            (),
+            env_digest,
+        )
+        seal_blob = self.store.write_audit_blob(
+            {
+                "baseline_version": manifest.baseline_version,
+                "document_digests": dict(manifest.document_digests),
+                "frozen_test_digests": dict(manifest.frozen_test_digests),
+                "marks": list(manifest.marks),
+                "environment_contract_digest": manifest.environment_contract_digest,
+                "seal_id": manifest.seal_id,
+            }
+        )
+        frozen_blob = self.store.write_audit_blob(dict(manifest.frozen_test_digests))
+        self._emit(
+            "phase0.sealed",
+            {
+                "baseline_version": baseline_version,
+                "seal_id": manifest.seal_id,
+                "seal_manifest_blob": f".tracks/runtime/blobs/{seal_blob}"
+                if seal_blob
+                else "",
+                "marks": "registered",
+                "env_contract": "pass",
+                "frozen_tests_blob": f".tracks/runtime/blobs/{frozen_blob}"
+                if frozen_blob
+                else "",
             },
             command_id=cmd.command_id,
         )

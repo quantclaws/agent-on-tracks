@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from . import state as kernel_state
 from .events import Command, EventEnvelope
 from .hotfix import (
     _decide_hotfix_triage,  # noqa: F401
@@ -75,6 +76,7 @@ from .m_test import (
     _reset_doc,
     _reset_review,
 )
+from .phase0 import on_phase0_baseline_repaired, on_phase0_blocked
 
 
 @dataclass
@@ -136,6 +138,13 @@ class State:
     test_committed: bool = False  # test asset frozen (commit_tests done)
     criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
     diagnose_classification: str | None = None  # DIAGNOSE routing verdict
+    # v0.7 Phase 0 (interfaces §1c/§1d, architecture §1.0.2, T-015 组装):
+    # projection of the phase0.* append-only events; None = classic pre-v0.7
+    # runs (no Phase 0 pre-gate). Rebuilt identically from the event stream
+    # after a projection drop (AC-NFR0140-01).
+    phase0_status: str | None = None  # UNSEALED|PHASE0_VALIDATING|SEALED|BLOCKED
+    phase0_seal_id: str | None = None
+    phase0_blocked_reason: str | None = None
     # v0.6 R6/D-41 selection semantics (interfaces §1c/§1j): the pre-WRITE R1
     # snapshot gate and the latest stamped selection identity.
     baseline_captured: bool = False  # test.baseline_captured(passed) persisted
@@ -373,6 +382,15 @@ def _reset_m_impl_cycle(s: State) -> None:
 
 
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
+    if not s.version and ev.version:
+        # T-015: every event envelope carries the run's version identity
+        # (§1a); runs without a story.requested projection (house-style
+        # seeded fixtures, replayed partial streams) still surface it here so
+        # version-keyed seams -- the v0.7 Phase 0 pre-gate -- can resolve.
+        # Never overrides story.requested (unconditional in its own reducer)
+        # nor hotfix identities: executor-emitted envelopes carry the
+        # already-resolved run identity (`_emit` stamps `self.version`).
+        s.version = ev.version
     s.stage = p["stage"]
     sd = _STAGES.get(s.stage)
     s.substate = sd.initial_substate if sd else None
@@ -1569,6 +1587,15 @@ _APPLY = {
     "human.anchor": lambda s, p, ev: _on_human_anchor(s, p),
     "increment.declared": lambda s, p, ev: _on_increment_declared(s, p),
     "baseline.inherited": lambda s, p, ev: _on_baseline_inherited(s, p),
+    # v0.7 Phase 0 projection (T-015 组装): baseline_repaired/blocked delegate
+    # to the T-004 kernel.phase0 handlers (frozen (State, payload, envelope)
+    # shape); coverage/guard_hardened/sealed project the SM-01 progression
+    # through kernel.state (pure, AC-NFR0140-01 rebuild invariant).
+    "phase0.baseline_repaired": on_phase0_baseline_repaired,
+    "phase0.coverage": kernel_state.on_phase0_coverage,
+    "phase0.guard_hardened": kernel_state.on_phase0_guard_hardened,
+    "phase0.sealed": kernel_state.on_phase0_sealed,
+    "phase0.blocked": on_phase0_blocked,
 }
 
 
@@ -1977,12 +2004,53 @@ def _decide_m_design_diagnose(s: State) -> Command | None:
     return None
 
 
+def _resolve_before_mtest(version: str | None):
+    """Resolve ``before_mtest`` on the generic capability seam (§1.0.9).
+
+    Lazy import: the seam lives in the executor package whose composition
+    root registers the v0.7 extension at import time; importing it at module
+    scope here would cycle machine -> executor -> machine. A registered
+    extension that lacks the capability blocks fail-closed -- the
+    ``CapabilityBlockedError`` propagates to the run loop (never a silent
+    classic-behaviour fallback, interfaces §1h).
+    """
+    from tracks.executor.version_extensions import resolve_capability
+
+    return resolve_capability(version or "", "before_mtest")
+
+
+def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
+    """v0.7 Phase 0 pre-gate at M-TEST entry (architecture §1.0.2/§1.1).
+
+    Returns ``(park, command)``: ``park`` halts decide() (a BLOCKED Phase 0
+    waits for Human repo repair -- §1c: no auto phase0_validate re-issue),
+    ``command`` is the phase0_validate pre-gate issued while Phase 0 is not
+    sealed, and ``(False, None)`` keeps the classic M-TEST routing (SEALED,
+    or a version whose extension selects no Phase 0 callbacks).
+    """
+    status = s.phase0_status
+    if status == "SEALED":
+        return False, None
+    before_mtest = _resolve_before_mtest(s.version)
+    if before_mtest is None:
+        return False, None
+    if status == "BLOCKED":
+        return True, None
+    commands = [cmd for cmd in (before_mtest(s) or ()) if cmd is not None]
+    return False, (commands[0] if commands else None)
+
+
 def _decide_stage_route(stage: str, sub: str, s: State) -> Command | None:
     """Stage dispatch routing after the common preamble checks in ``decide()``.
     Extracted to keep ``decide()`` cognitive complexity ≤15."""
     if stage == "M-HOTFIX-TRIAGE":
         return _decide_hotfix_triage(s, sub)
     if stage == "M-TEST":
+        park, pre_gate = _phase0_m_test_gate(s)
+        if park:
+            return None
+        if pre_gate is not None:
+            return pre_gate
         return _decide_m_test(s, sub)
     if stage == "M-IMPL":
         return _decide_m_impl(s, sub)
