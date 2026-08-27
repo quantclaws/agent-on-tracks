@@ -50,6 +50,10 @@ def test_append_only_and_projection_replay(trac, host_repo, event_log):
     from tracks import paths
 
     walk_to_await_human(trac, version="v0.7")
+    # The journey walk leaves the run awaiting approval; approve it so the
+    # next `trac run` advances into M-DESIGN/M-TEST where the v0.7 Phase 0
+    # extension emits phase0.* events (mirrors test_v07_journey._start_v07_run).
+    assert trac("approve", "--actor", "Aaron").returncode == 0
     trac("run")
     pre_status = trac("status").stdout
     # v0.7 phase0 events must be present in the append-only stream.
