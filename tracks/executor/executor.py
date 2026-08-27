@@ -3831,16 +3831,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
         )
 
-    def _phase0_guard_violations(self) -> tuple[list[str], list[str]]:
+    def _phase0_guard_violations(self) -> tuple[list[str], list[str], bool]:
         """Guard hardening input (§1d; registry surface IF-GUARD-001/002).
 
-        An absent §4.2 registry leaves nothing to harden in this assembly
-        slice (deployment/parity run through the §1k validate/deploy and
-        ``trac validate`` surfaces); a PRESENT but unloadable registry fails
-        closed -- never a pseudo-pass."""
+        Returns ``(violations, guard_refs, registry_present)``. A PRESENT but
+        unloadable registry yields violations (fail closed). An ABSENT §4.2
+        registry means no guard/parity evidence exists on this host: the Phase
+        0 pre-gate must park (``registry_present=False``) rather than fabricate
+        a passed hardening or a seal (interfaces §1c/§1e fail-closed)."""
         arch = paths.projects_dir(self.store.home) / self.version / "architecture.md"
         if not arch.is_file():
-            return [], []
+            return [], [], False
         from tracks.executor.guard_registry import load_guard_registry
 
         try:
@@ -3848,8 +3849,77 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         except (ValueError, OSError, UnicodeError) as exc:
             return [f"architecture.md §4.2 registry block failed to load: {exc}"], [
                 str(arch)
-            ]
-        return [], [str(arch)]
+            ], True
+        return [], [str(arch)], True
+
+    def _repair_phase0_gap(
+        self, cmd, gap, baseline_version: str, node_digests: dict
+    ) -> None:
+        """Bind a marker-only baseline gap to its real collected node through a
+        genuine adapter-selected execution (interfaces §1c phase0.baseline_
+        repaired; §1e/§1h adapter protocol).
+
+        Emits ``phase0.baseline_repaired`` carrying the version-qualified
+        ``ac``, the bound node (node_id + digest), and a selection identity
+        derived deterministically from the ACTUALLY executed selection
+        (``make_selection_id`` over the adapter-run nodes with the canonical
+        R2 scope/basis) plus the command echo of the executed argv -- so the
+        evidence cannot be forged as canned identity strings."""
+        contract = load_contract(self.repo)
+        section = getattr(contract, "integration", None) or contract.unit
+        from tracks.adapters.base import resolve_adapter
+
+        declared = contract.adapter
+        if declared is not None:
+            adapter = resolve_adapter(
+                declared.id, declared.protocol, declared.version
+            )
+        else:
+            adapter = resolve_adapter("reference-pytest", "tracks-test-result", 1)
+        cwd = (
+            Path(self.repo)
+            if section.cwd == "."
+            else Path(self.repo) / section.cwd
+        )
+        result_path = self._result_staging_path(cmd.command_id or "", "phase0-repair")
+        try:
+            argv = list(
+                adapter.run_selected(
+                    section.run_selected,
+                    [gap.planned_node_id],
+                    str(result_path),
+                    cwd,
+                )
+            )
+        finally:
+            result_path.unlink(missing_ok=True)
+        nodes = [gap.planned_node_id]
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope=_R2_SCOPE,
+            basis=_R2_BASIS,
+            baseline=baseline_version,
+            commit="",
+            tree_stamp="",
+        )
+        evidence_id = hashlib.sha256(
+            f"{gap.planned_node_id}@{baseline_version}".encode()
+        ).hexdigest()
+        self._emit(
+            "phase0.baseline_repaired",
+            {
+                "ac": f"{gap.ac}@{baseline_version}",
+                "bound_node": {
+                    "node_id": gap.planned_node_id,
+                    "digest": node_digests.get(gap.planned_node_id, ""),
+                },
+                "selection_id": selection_id,
+                "evidence_id": evidence_id,
+                "command_echo": argv,
+                "status": "repaired",
+            },
+            command_id=cmd.command_id,
+        )
 
     def _do_phase0_validate(self, cmd, state, task_id, reconcile):
         """Runtime Phase 0 pre-gate for v0.7 hosts (interfaces §1c/§1d).
@@ -3863,10 +3933,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
             return
         from tracks.executor.phase0 import judge_real_coverage, scan_trace_gaps
-        from tracks.executor.test_select import (
-            TestSelectError,
-            collect_node_source_digests,
-        )
+        from tracks.executor.test_select import TestSelectError
 
         baseline_version = _phase0_baseline_version(self.version)
         if baseline_version is None:
@@ -3902,6 +3969,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 False,
             )
             return
+        # Marker-only gaps (planned node collected with a real digest but no
+        # persisted evidence) are REPAIRED into real collected-node evidence
+        # before the run may continue; a repair-less seal is illegal (§1d).
+        for gap in gaps:
+            if gap.reason == "marker_only" and gap.planned_node_id in node_digests:
+                self._repair_phase0_gap(cmd, gap, baseline_version, node_digests)
         planned_nodes = set(planned.values())
         ratio = (
             len([node for node in planned_nodes if node_digests.get(node)])
@@ -3910,6 +3983,22 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             else 1.0
         )
         judgement = judge_real_coverage(ratio, 1.0, ())
+        self._phase0_emit_coverage(
+            cmd, judgement, ratio, node_layer, node_digests, nodes
+        )
+        if not judgement.passed:
+            self._emit_phase0_blocked(
+                cmd, "coverage_below_threshold", judgement.reason or "", True
+            )
+            return
+        if self._phase0_guard_harden(cmd, baseline_version, baseline_dir):
+            return
+        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+
+    def _phase0_emit_coverage(
+        self, cmd, judgement, ratio: float, node_layer, node_digests, nodes
+    ) -> None:
+        """Emit the ``phase0.coverage`` gate event (§1d, by=collected)."""
         outcomes_blob = self.store.write_audit_blob(
             {
                 "nodes": [
@@ -3933,12 +4022,22 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             },
             command_id=cmd.command_id,
         )
-        if not judgement.passed:
+
+    def _phase0_guard_harden(
+        self, cmd, baseline_version: str, baseline_dir: Path
+    ) -> bool:
+        """Guard-hardening gate (§1d): park when no registry/parity evidence
+        exists or the registry is invalid; otherwise harden. Returns True when
+        the run was parked (blocked) and must stop."""
+        violations, guard_refs, registry_present = self._phase0_guard_violations()
+        if not registry_present:
             self._emit_phase0_blocked(
-                cmd, "coverage_below_threshold", judgement.reason or "", True
+                cmd,
+                "guard_registry_invalid",
+                "no §4.2 guard registry/parity evidence on this host",
+                True,
             )
-            return
-        violations, guard_refs = self._phase0_guard_violations()
+            return True
         self._emit(
             "phase0.guard_hardened",
             {
@@ -3954,8 +4053,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self._emit_phase0_blocked(
                 cmd, "guard_registry_invalid", "; ".join(violations), False
             )
-            return
-        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+            return True
+        return False
 
     def _emit_phase0_sealed(self, cmd, baseline_version: str, baseline_dir: Path) -> None:
         """Emit the terminal ``phase0.sealed`` event (interfaces §1c).
