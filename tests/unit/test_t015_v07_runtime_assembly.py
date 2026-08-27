@@ -9,6 +9,11 @@ project ``phase0_status`` (AC-NFR0140-01: the projection is fully
 rebuildable from the event stream), and earlier versions select no v0.7
 extension. The T-013 composition root (version_extensions/v07_runtime) is
 consumed by import only.
+
+REVISE note (PRISM-V07-R1-01 / R6-01): the prior broad-exception helper
+``_decide_or_none`` was removed -- ``decide`` is a pure fold, so a routing
+crash must surface as a test error, never be masked into a spurious pass.
+The decide pins below call ``decide`` directly.
 """
 
 from __future__ import annotations
@@ -71,15 +76,6 @@ def _v07_state(phase0_status: str | None, version: str = "v0.7") -> State:
     return state
 
 
-def _decide_or_none(state: State):
-    """decide() under RED normalization: any routing crash still means
-    'no Phase 0 pre-gate' for this pin, so it degrades to None."""
-    try:
-        return decide(state)
-    except Exception:  # noqa: BLE001 -- RED normalization to a clean assertion
-        return None
-
-
 # AC-NFR0140-01@v0.7 TRACKS-TRACE phase0 events join the closed sets
 def test_phase0_events_and_command_join_the_closed_sets():
     missing = [etype for etype in PHASE0_EVENT_TYPES if etype not in EVENT_TYPES]
@@ -121,7 +117,7 @@ def test_before_mtest_drives_the_phase0_entry_guard():
 
 # AC-NFR0140-01@v0.7 TRACKS-TRACE machine.decide pre-gates M-TEST for v0.7
 def test_machine_decide_gates_v07_mtest_entry_with_phase0_validate():
-    cmd = _decide_or_none(_v07_state(None))
+    cmd = decide(_v07_state(None))
     assert cmd is not None and cmd.kind == "phase0_validate", (
         "kernel.machine must route an unsealed v0.7 M-TEST entry through the "
         "Phase 0 pre-gate before any M-TEST command (architecture §1.0.2)"
@@ -130,7 +126,7 @@ def test_machine_decide_gates_v07_mtest_entry_with_phase0_validate():
 
 def test_machine_decide_never_auto_issues_phase0_when_sealed_blocked_or_v06():
     for version, status in (("v0.7", "SEALED"), ("v0.7", "BLOCKED"), ("v0.6", None)):
-        cmd = _decide_or_none(_v07_state(status, version=version))
+        cmd = decide(_v07_state(status, version=version))
         assert not (cmd is not None and cmd.kind == "phase0_validate"), (
             f"{version} with phase0_status={status}: phase0_validate must not "
             "be issued"
