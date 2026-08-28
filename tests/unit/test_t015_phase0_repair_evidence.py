@@ -67,6 +67,7 @@ def _contract() -> str:
         "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
         "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
         "job='nightly'\nlayers=['unit','integration','e2e']\npurpose='r'\n"
+        "[adapter]\nid='reference-pytest'\nprotocol='tracks-test-result'\nversion=1\n"
     )
 
 

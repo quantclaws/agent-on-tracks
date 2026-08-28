@@ -32,8 +32,15 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
+from tests.unit.helpers import git_repo
+from tracks import paths
 from tracks.executor.demo_host import FAIL_CLOSED_SCENARIOS
+from tracks.executor.executor import Executor
+from tracks.kernel import decide
+from tracks.project import load_contract
+from tracks.store import Store
 
 _LEGAL_SCENARIOS = (
     "broad_mutation",
@@ -244,3 +251,230 @@ def test_crash_recovery_replay_ok_per_host():
     for payload in summaries:
         assert payload.get("crash_recovery") == "replay_ok", payload
         assert payload.get("status") == "passed", payload
+
+
+# --- ISLAND_GATE_2 capability call points (plan_defect replan #77) ----------
+# T-016 now atomically owns the public-entry wiring: the v0.7 extension
+# registers island_gate_2 (T-013, zero call points is the defect root), so
+# the executor composition-root assembly must expose the ISLAND_GATE_2
+# dispatch call point and m_impl_runtime must resolve the capability at the
+# gate -- both currently missing.  These pins carry the IF contract token.
+
+_EXECUTOR_ENTRY_TOKEN = (
+    "IF-FAILCLOSED-001: executor assembly island_gate_2_dispatch call point "
+    "missing (v0.7 registration exists, zero call points)"
+)
+
+
+def _executor_module():
+    """Normalize a missing executor import to a contract-token assertion."""
+    try:
+        return importlib.import_module("tracks.executor.executor")
+    except ModuleNotFoundError as exc:
+        raise AssertionError(
+            f"IF-FAILCLOSED-001: tracks.executor.executor not importable: {exc}"
+        ) from exc
+
+
+def test_executor_assembly_exposes_island_gate_2_dispatch():
+    """architecture 1.0.9 / interfaces 1b kind 4: the executor composition
+    root must expose an island_gate_2 capability CALL POINT -- the v0.7
+    registration already exists, the dispatch entry is the missing half."""
+    module = _executor_module()
+    dispatch = getattr(module, "island_gate_2_dispatch", None)
+    assert callable(dispatch), _EXECUTOR_ENTRY_TOKEN
+
+
+def test_island_gate_2_dispatch_forwards_to_demonstrate_failclosed(monkeypatch):
+    """The assembly dispatch, for the registered v0.7 extension, must resolve
+    island_gate_2 and lazily forward its arguments onto demonstrate_failclosed
+    (the failclosed module simulated in sys.modules -- call-time lazy dispatch
+    exercised against the REAL v07_runtime callback)."""
+    module = _executor_module()
+    dispatch = getattr(module, "island_gate_2_dispatch", None)
+    assert callable(dispatch), _EXECUTOR_ENTRY_TOKEN
+
+    import types
+
+    captured: dict[str, list] = {}
+
+    def fake_demonstrate(*args, **kwargs):
+        captured.setdefault("calls", []).append((args, kwargs))
+        return "demo-outcome"
+
+    fake = types.ModuleType("tracks.executor.failclosed")
+    fake.demonstrate_failclosed = fake_demonstrate
+    monkeypatch.setitem(sys.modules, "tracks.executor.failclosed", fake)
+
+    outcome = dispatch("v0.7", ("tracks", "demo-pytest"), replay=True)
+    assert outcome == "demo-outcome"
+    calls = captured.get("calls") or []
+    assert calls and calls[0] == (("tracks", "demo-pytest"), {"replay": True}), (
+        f"IF-FAILCLOSED-001: island_gate_2 dispatch did not forward arguments: {calls}"
+    )
+
+
+def test_island_gate_2_dispatch_early_version_is_classic_none():
+    """FR-0264-02 capability isolation: a version with no v0.7 extension
+    selects no island_gate_2 callback, so the dispatch returns None and early
+    versions keep their classic behaviour."""
+    module = _executor_module()
+    dispatch = getattr(module, "island_gate_2_dispatch", None)
+    assert callable(dispatch), _EXECUTOR_ENTRY_TOKEN
+    assert dispatch("v0.5", ("tracks", "demo-pytest")) is None
+
+
+def test_m_impl_runtime_resolves_island_gate_2_for_gate_dispatch():
+    """IF-FAILCLOSED-001 / architecture 1.0.9: m_impl_runtime's ISLAND_GATE_2
+    handler must resolve the run version's island_gate_2 capability (mirroring
+    machine._resolve_before_mtest) so the gate actually dispatches
+    demonstrate_failclosed -- the zero-call-point defect means the resolver
+    does not exist yet."""
+    runtime = importlib.import_module("tracks.executor.m_impl_runtime")
+    resolver = getattr(runtime, "_resolve_island_gate_2", None)
+    assert callable(resolver), (
+        "IF-FAILCLOSED-001: m_impl_runtime._resolve_island_gate_2 missing -- "
+        "ISLAND_GATE_2 never dispatches demonstrate_failclosed"
+    )
+
+
+# --- Phase 0 BLOCKED resume preflight (plan_defect replan x2, r10) ----------
+# SM-01.3 (interfaces section 1c / AC-FR0257-05) requires a repair -> revalidate
+# cycle: after phase0.blocked parks the run, the KERNEL parks by design
+# (decide_phase0 returns [] on BLOCKED -- no auto re-issue, section 1c). The
+# r10 defect is that the tree had NO channel to issue a NEW phase0_validate
+# once Human repairs the repo facts, so the resume half-loop never fires. The
+# executor (effects layer, the only legal IO edge) must land a BLOCKED resume
+# preflight at the run-loop entry: when a drive starts with phase0_status ==
+# "BLOCKED" it appends command.issued and executes one fresh phase0_validate
+# (at most once per drive, no tick-level hot loop, full hard checks -- a
+# still-broken host must keep parking, never a watered-down SEALED pass).
+# These pins carry the IF/§1c contract token and fail today (zero resume).
+
+
+def _phase0_contract() -> str:
+    """A loadable project contract for the phase0 resume host fixture."""
+    return (
+        "[unit]\nframework='pytest'\npaths=['tests/unit/']\n"
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/unit/'\n"
+        "run='.venv/bin/python -m pytest tests/unit/ --tb=short -q -n 4 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 4 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
+        "[integration]\nframework='pytest'\npaths=['tests/integration/']\n"
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/integration/'\n"
+        "run='.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
+        "[e2e]\nframework='pytest'\npaths=['tests/e2e/']\n"
+        "collect='.venv/bin/python -m pytest --collect-only -q tests/e2e/'\n"
+        "run='.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\n"
+        "run_selected='.venv/bin/python -m pytest {nodes} --tb=short -q -n 8 "
+        "--dist loadscope --junitxml={result}'\ncwd='.'\n\n"
+        "[nightly]\nschedule='0 3 * * *'\nworkflow='.github/workflows/nightly.yml'\n"
+        "job='nightly'\nlayers=['unit','integration','e2e']\npurpose='r'\n"
+    )
+
+
+def _phase0_host(tmp_path) -> Path:
+    """Host repo with a loadable contract and a v0.7 run parked at
+    phase0.blocked (BLOCKED) -- no §4.2 registry seeded, so any resumed
+    re-validation must keep parking fail-closed (never fabricate SEALED)."""
+    repo = git_repo(tmp_path, gitignore=True)
+    contract = paths.project_toml_path(paths.tracks_home(repo))
+    contract.parent.mkdir(parents=True, exist_ok=True)
+    contract.write_text(_phase0_contract(), encoding="utf-8")
+    return repo
+
+
+def _phase0_executor(repo: Path) -> Executor:
+    """Executor on a store seeded with a v0.7 M-TEST run whose Phase 0 parked
+    at BLOCKED (phase0.blocked appended, SM-01.5)."""
+    load_contract(repo)
+    store = Store(paths.tracks_home(repo))
+    store.append("RUN", "v0.7", "story.requested", {"raw_chars": 1})
+    store.append("RUN", "v0.7", "stage.entered", {"stage": "M-TEST"})
+    store.append(
+        "RUN",
+        "v0.7",
+        "phase0.blocked",
+        {"reason": "guard_registry_invalid", "detail": "no registry", "recoverable": True},
+    )
+    return Executor(store, repo, "RUN")
+
+
+def _issued_kinds(store: Store) -> list[str]:
+    """kinds of every command.issued event appended so far.
+
+    The ``command.issued`` payload nests the command descriptor under
+    ``command`` (``{"command": {"kind": ...}}``; executor.issue emits it, the
+    kernel ``_on_command_issued`` and existing tests read the same nested
+    shape). Re-pinned after red_defect (R-tree 3e8556e): the previous helper
+    read the top-level ``payload["kind"]``, which is never set, so even a
+    correct GREEN implementation could not turn the phase0 tests green.
+    """
+    return [
+        (ev.payload.get("command") or {}).get("kind")
+        for ev in store.events("RUN")
+        if ev.type == "command.issued"
+    ]
+
+
+def test_run_loop_resumes_phase0_validate_after_blocked(tmp_path):
+    """SM-01.3 resume half-loop (r10): when a drive starts with
+    phase0_status == BLOCKED, the executor run-loop entry must append a NEW
+    phase0_validate command -- the kernel parks (decide_phase0 -> []), so the
+    resume channel lives in the executor effects layer, not the kernel. The
+    resumed command is a fresh validation, never a reconcile replay."""
+    repo = _phase0_host(tmp_path)
+    executor = _phase0_executor(repo)
+    assert executor.store.state("RUN").phase0_status == "BLOCKED"
+    # Kernel pure boundary unchanged: decide still parks at BLOCKED.
+    assert decide(executor.store.state("RUN")) is None
+    executor.run_loop()
+    kinds = _issued_kinds(executor.store)
+    assert "phase0_validate" in kinds, (
+        "IF-FAILCLOSED-001/§1c SM-01.3: BLOCKED resume half-loop missing -- "
+        f"Human repair re-drive issued no new phase0_validate: {kinds}"
+    )
+
+
+def test_run_loop_phase0_resume_is_bounded_single_issue(tmp_path):
+    """SM-01.3: the BLOCKED resume issues AT MOST ONE fresh phase0_validate
+    per drive invocation -- no tick-level hot loop from the parked state."""
+    repo = _phase0_host(tmp_path)
+    executor = _phase0_executor(repo)
+    before = _issued_kinds(executor.store)
+    executor.run_loop()
+    after = _issued_kinds(executor.store)
+    new_kinds = after[len(before):]
+    assert new_kinds.count("phase0_validate") == 1, (
+        "IF-FAILCLOSED-001/§1c SM-01.3: BLOCKED resume must issue exactly one "
+        f"phase0_validate per drive, got {new_kinds}"
+    )
+
+
+def test_run_loop_phase0_resume_keeps_fail_closed(tmp_path):
+    """SM-01.3: the resumed phase0_validate re-runs the FULL hard checks -- a
+    host whose §4.2 registry is still broken must keep parking at BLOCKED (no
+    SEALED, no watered-down VALIDATING limp-along) on the resumed validation."""
+    repo = _phase0_host(tmp_path)  # no §4.2 registry seeded
+    executor = _phase0_executor(repo)
+    executor.run_loop()
+    events = list(executor.store.events("RUN"))
+    sealed = [ev for ev in events if ev.type == "phase0.sealed"]
+    assert not sealed, (
+        "IF-FAILCLOSED-001/§1c SM-01.3: resumed validation must not fabricate "
+        "a SEALED pass when the host registry is still broken"
+    )
+    assert "phase0_validate" in _issued_kinds(executor.store), (
+        "IF-FAILCLOSED-001/§1c SM-01.3: BLOCKED resume issued no phase0_validate"
+    )
+    # The resumed validation parked the run back at BLOCKED: fail-closed, not
+    # a silent VALIDATING limp-along.
+    assert executor.store.state("RUN").phase0_status == "BLOCKED", (
+        "IF-FAILCLOSED-001/§1c SM-01.3: resumed validation must re-park at "
+        f"BLOCKED, got {executor.store.state('RUN').phase0_status}"
+    )
