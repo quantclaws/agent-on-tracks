@@ -48,18 +48,32 @@ def test_trace_filters_required_only(trac, event_log):
 
 # AC-FR0070-04@v0.4 TRACKS-TRACE trace fail no exit
 def test_trace_fail_no_exit(trac, event_log):
-    """AC-FR0070-04@v0.4: trace gate failure -> no stage.exited(M-TEST)."""
+    """AC-FR0070-04@v0.4: short-marker Shield WRITE is rejected fail-closed;
+    re-dispatch fixes markers and the run eventually completes.
+
+    Evolution note: the short-format marker rejection legitimately moved to
+    the marker preflight (verdict.failed check=test_defect,
+    reason=marker_preflight) ahead of the trace verdict -- same fail-closed
+    contract, earlier enforcement point. The preserved semantics: a defective
+    marker WRITE never exits M-TEST until re-dispatch repairs it."""
     run_id = walk_to_m_test(trac)
-    # short_marker: Shield writes tests with short-format markers (trace fails)
-    # then ok on re-dispatch -> trace passes on second try
+    # short_marker: Shield writes tests with short-format markers (rejected)
+    # then ok on re-dispatch -> markers fixed on second try
     r = trac("run", simulate="shield:WRITE=short_marker|ok")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    # First trace check failed
-    trace_fails = [
-        e for e in evs if e["type"] == "verdict.failed" and e["payload"].get("check") == "trace"
+    # First marker/trace check failed (fail-closed rejection of the defective
+    # WRITE -- marker preflight or trace verdict, whichever enforcement point).
+    marker_fails = [
+        e
+        for e in evs
+        if e["type"] == "verdict.failed"
+        and (
+            e["payload"].get("check") == "trace"
+            or e["payload"].get("reason") == "marker_preflight"
+        )
     ]
-    assert trace_fails
+    assert marker_fails
     # But eventually completed (re-dispatch fixed the markers)
     assert any(e["type"] == "run.completed" for e in evs)
 
@@ -67,24 +81,34 @@ def test_trace_fail_no_exit(trac, event_log):
 # AC-FR0070-05@v0.4 TRACKS-TRACE trace fail redispatch
 # AC-FR0080-13@v0.4 TRACKS-TRACE Shield marker obligation enforced by trace
 def test_trace_fail_redispatch(trac, event_log):
-    """AC-FR0070-05@v0.4: trace fail -> EXIT->WRITE re-dispatch Shield."""
+    """AC-FR0070-05@v0.4: short-marker rejection -> Shield re-dispatch.
+
+    Evolution note: as in AC-FR0070-04, the rejection surfaces at the marker
+    preflight (check=test_defect, reason=marker_preflight); the Shield
+    re-dispatch contract is unchanged."""
     run_id = walk_to_m_test(trac)
     trac("run", simulate="shield:WRITE=short_marker|ok")
     evs = event_log(run_id)
-    # trace failure -> verdict.failed(trace)
-    trace_fail = [
-        e for e in evs if e["type"] == "verdict.failed" and e["payload"].get("check") == "trace"
+    # marker/trace failure -> verdict.failed (preflight or trace check)
+    marker_fail = [
+        e
+        for e in evs
+        if e["type"] == "verdict.failed"
+        and (
+            e["payload"].get("check") == "trace"
+            or e["payload"].get("reason") == "marker_preflight"
+        )
     ]
-    assert trace_fail
-    # Shield re-dispatched after trace failure
+    assert marker_fail
+    # Shield re-dispatched after the failure
     m_test_evs = m_test_events(evs)
-    trace_fail_seq = trace_fail[0]["seq"]
+    fail_seq = marker_fail[0]["seq"]
     shield_redispatch = [
         e
         for e in m_test_evs
         if e["type"] == "command.issued"
         and e["payload"]["command"]["params"].get("role") == "shield"
-        and e["seq"] > trace_fail_seq
+        and e["seq"] > fail_seq
     ]
     assert shield_redispatch  # Shield was re-dispatched to fix markers
 
@@ -117,11 +141,32 @@ def test_test_committed(trac, event_log, host_repo):
     committed = [e for e in evs if e["type"] == "test.committed"]
     assert len(committed) == 1
     assert committed[0]["payload"]["test_count"] > 0
-    # git log contains the controlled test commit
-    log = subprocess.run(
-        ["git", "log", "--format=%s"], cwd=host_repo, capture_output=True, text=True
+    # git log contains the controlled test commit. b230664/B59 legitimately
+    # evolved the freeze flow: Shield's WRITE output is committed during the
+    # pipeline (the commit message comes from the Shield manifest's
+    # suggested_commit_message, e.g. 'shield checkpoint'), and the M-TEST
+    # freeze anchors on that controlled commit instead of a fixed
+    # 'M-TEST: freeze test assets' literal. The preserved contract: the test
+    # assets land via a controlled commit at M-TEST (not dirty at freeze).
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", "tests"],
+        cwd=host_repo,
+        capture_output=True,
+        text=True,
     ).stdout
-    assert "M-TEST: freeze test assets" in log
+    assert not status.strip(), (
+        "test assets must be committed at the M-TEST freeze (controlled "
+        f"commit, no dirty tests/ residue); got: {status!r}"
+    )
+    assert committed[0]["payload"]["commit_sha"], (
+        "test.committed must reference the controlled freeze commit"
+    )
+    assert committed[0]["payload"]["commit_sha"] in subprocess.run(
+        ["git", "rev-list", "HEAD"],
+        cwd=host_repo,
+        capture_output=True,
+        text=True,
+    ).stdout, "test.committed commit_sha must be an actual git commit"
 
 
 # AC-FR0070-08@v0.4 TRACKS-TRACE boundary after M-TEST

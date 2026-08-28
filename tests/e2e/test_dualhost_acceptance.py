@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.hotfix_support import seed_v05_approved_baseline
+from tests.integration.test_failclosed_scenarios import _start_v07_run
 
 pytestmark = pytest.mark.e2e
 
@@ -24,14 +24,16 @@ pytestmark = pytest.mark.e2e
 def test_dualhost_nine_scenarios_all_fail_closed(trac, host_repo, event_log):
     """Both tracks + demo-pytest hosts: 9 scenarios blocked, recovery replay_ok.
 
-    Legal Red anchor: the dual-host fail-closed demonstration
-    (IF-FAILCLOSED-001) is not wired into the run loop, so no
-    `failclosed.summary` events are emitted; the assertion on the two-host
-    summary set fails.
+    SHIELD_FIX (issue 100, dualhost fixture): the old fixture seeded the
+    v0.5-baseline and issued a single bare ``trac run`` -- no active run and
+    no §4.2 registry journey step, the same perpetual-Red defect class the
+    integration anchors suffered (fixed by b085750). The repair reuses the
+    proven ``_start_v07_run`` activation (walk_to_await_human -> approve ->
+    M-DESIGN draft -> _seed_guard_registry -> bounded drives) and queries
+    ``event_log`` with the REAL run_id (the conftest filters by literal
+    run_id equality, so 'latest' matched nothing).
     """
-    seed_v05_approved_baseline(host_repo, version="v0.7")
-    trac("run")
-    run_id = "latest"
+    run_id = _start_v07_run(trac, host_repo)
     events = event_log(run_id)
 
     summaries = [e for e in events if e["type"] == "failclosed.summary"]

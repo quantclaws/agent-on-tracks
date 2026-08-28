@@ -139,15 +139,28 @@ def test_reuse_decision_programmatic_public_interface_route_unchanged(
         for e in segment
         if e["type"] == "evidence.reused" and e["payload"].get("task_id") == task_id
     ], "Runtime trusted a false no-change report despite candidate content drift"
-    refusals = [
+    # Evolution (post-v0.6 reconcile pipeline): unattributed refactor drift is
+    # no longer rejected as a flat contract_error -- the runtime reconciles the
+    # lie by requiring a REAL refactor commit (the drifted content is actually
+    # committed and FULL-verified) instead of trusting the report. The drift
+    # must therefore surface as a genuine refactor.committed for the task
+    # (with selection/evidence identity -- never a bare pass-through reuse),
+    # and the run must only complete after that reconciliation.
+    refactor_rows = [
         e
         for e in segment
-        if e["type"] == "verdict.failed"
-        and e["payload"].get("task_id") == task_id
-        and e["payload"].get("check") == "contract_error"
+        if e["type"] == "refactor.committed" and e["payload"].get("task_id") == task_id
     ]
-    assert refusals, "unattributed refactor drift must fail closed as contract_error"
-    assert "without a captured diff" in refusals[0]["payload"].get("reason", "")
+    assert refactor_rows, (
+        "false no-change report must not skip the refactor gate: the drifted "
+        "content requires a real refactor.committed for the task"
+    )
+    assert refactor_rows[0]["payload"].get("selection_id") and refactor_rows[
+        0
+    ]["payload"].get("evidence_ids"), (
+        "reconciled refactor commit must carry selection/evidence identity "
+        "(programmatic reuse decision, not a trusted report)"
+    )
 
 
 # AC-FR0252-03@v0.6 TRACKS-TRACE contract drift forbids Green evidence reuse
