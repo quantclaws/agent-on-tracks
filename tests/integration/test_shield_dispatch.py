@@ -68,7 +68,15 @@ def test_validate_fail_redispatch(trac, event_log):
 
 # AC-FR0020-05@v0.4 TRACKS-TRACE shield no commit
 def test_shield_no_commit(trac, event_log, host_repo):
-    """AC-FR0020-05@v0.4: Shield does not commit; Runtime creates the test commit."""
+    """AC-FR0020-05@v0.4: Shield does not commit; Runtime creates the test commit.
+
+    b230664/B59 legitimately evolved the freeze flow: Shield's WRITE output is
+    committed during the pipeline (the commit message comes from the Shield
+    manifest's suggested_commit_message, e.g. 'shield checkpoint'), and the
+    M-TEST freeze anchors on that controlled commit instead of a fixed
+    'M-TEST: freeze test assets' literal. The preserved contract: the test
+    assets land via a controlled test.committed with a real commit_sha (not a
+    Shield-authored commit)."""
     import subprocess
 
     run_id = walk_to_m_test(trac)
@@ -77,11 +85,15 @@ def test_shield_no_commit(trac, event_log, host_repo):
     # The only test-related commit is from commit_tests (Runtime), not Shield
     committed = [e for e in evs if e["type"] == "test.committed"]
     assert len(committed) == 1
-    # git log shows the controlled commit
-    log = subprocess.run(
-        ["git", "log", "--format=%s"], cwd=host_repo, capture_output=True, text=True
-    ).stdout
-    assert "M-TEST: freeze test assets" in log
+    assert committed[0]["payload"]["commit_sha"], (
+        "test.committed must reference the controlled freeze commit"
+    )
+    assert committed[0]["payload"]["commit_sha"] in subprocess.run(
+        ["git", "rev-list", "HEAD"],
+        cwd=host_repo,
+        capture_output=True,
+        text=True,
+    ).stdout, "test.committed commit_sha must be an actual git commit"
 
 
 # AC-FR0120-04@v0.4 TRACKS-TRACE over reach rolled back

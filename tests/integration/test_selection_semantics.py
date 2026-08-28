@@ -705,15 +705,26 @@ def test_empty_r2_feature_mtest_fail_closed(trac, host_repo, event_log):
     )
 
     # Feature gate: fail closed on the empty R2 selection.
+    # Evolution (2026-08-24, run 01M0S0FQ incident): the runtime screens an
+    # empty-R2 hit for collect-pipeline blindness FIRST -- the no-delta stub
+    # repoint makes checkpointed Shield files invisible to the collector, so
+    # the product classifies that exact shape as ``collect_defect`` (a
+    # runtime/contract defect: no attempt charge, operator escalation, task
+    # preserved) instead of the author-side ``empty_r2``.  Both are the SAME
+    # fail-closed outcome: a vacuous pass is refused and the run never
+    # proceeds to PRISM_REVIEW/EXIT.  The assertion accepts either
+    # classification so the bound contract (empty selection never passes
+    # vacuously, AC-FR0250-02/FR-0244) stays law-true after product eviction
+    # of the owner-vs-infra split.
     refusals = [
         e
         for e in evs
         if e["type"] == "verdict.failed"
-        and e["payload"].get("check") in ("empty_r2", "contract_error")
+        and e["payload"].get("check") in ("empty_r2", "contract_error", "collect_defect")
     ]
     assert refusals, (
         "feature M-TEST with an empty R2 selection passed vacuously: no "
-        "verdict.failed(check=empty_r2|contract_error) was emitted "
+        "verdict.failed(check=empty_r2|contract_error|collect_defect) was emitted "
         f"(final rc={final.returncode})"
     )
 
@@ -830,12 +841,20 @@ def test_select_task_stale_reselects_on_upstream_change(host_repo):
         ac_refs=("AC-FR0251-02",),
         fr_refs=("FR-0251",),
         if_ids=("IF-A",),
-        test_refs=("tests/unit/test_target.py::test_target",),
+        # B50 (#65): SELECT_TASK resolves the declared layer split, not the
+        # retired §8 IF-index.  The fixture must declare both sides: the
+        # task's RED unit obligation AND its integration acceptance anchors.
+        test_refs=(
+            "tests/unit/test_target.py::test_target",
+            "tests/integration/test_if_a.py",
+        ),
         scope_boundary="tracks/selection.py",
         depends_on=(),
         batch="1",
         parallel=False,
         budget=3,
+        unit_refs=("tests/unit/test_target.py::test_target",),
+        acceptance_refs=("tests/integration/test_if_a.py",),
     )
     store.append(
         "RUN",
@@ -872,7 +891,15 @@ def test_select_task_stale_reselects_on_upstream_change(host_repo):
         },
     )
 
-    changed_task = replace(task, if_ids=("IF-B",))
+    changed_task = replace(
+        task,
+        if_ids=("IF-B",),
+        acceptance_refs=("tests/integration/test_if_b.py",),
+        test_refs=(
+            "tests/unit/test_target.py::test_target",
+            "tests/integration/test_if_b.py",
+        ),
+    )
     second = executor._execute_task_selection(
         Command("run_task_gates", command_id="C-SECOND"),
         state,

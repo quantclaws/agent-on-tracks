@@ -100,26 +100,29 @@ def test_green_gate_emits_task_if_selection_before_execution(
             f"SELECT_TASK must include the task's targeted unit node {unit_ref}"
         )
 
-    # Integration composition comes from §8 rows owned by this task's IFs.
-    # Compare selected file identities to the declared integration test cells,
+    # Integration composition comes from the task's DECLARED anchor refs
+    # (B50/#65: schema-2 ``acceptance_refs``, legacy schema-1 maps the
+    # non-unit ``test_refs``), never the retired §8 IF-index inference.
+    # Compare selected file identities to those declared integration cells,
     # not to Runtime implementation internals.
-    plan = (
-        host_repo / ".tracks" / "projects" / "v0.5" / "test-plan.md"
-    ).read_text(encoding="utf-8")
-    expected_integration_files = set()
-    for line in plan.splitlines():
-        cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 4 or cells[1].lower() != "integration":
-            continue
-        if any(if_id in cells[3] for if_id in task.get("if_ids") or []):
-            expected_integration_files.add(cells[2].partition("::")[0])
+    declared_integration = [
+        r
+        for r in (task.get("acceptance_refs") or task.get("test_refs") or [])
+        if r.startswith("tests/integration/")
+    ]
+    expected_integration_files = {
+        ref.partition("::")[0] for ref in declared_integration
+    }
     selected_integration_files = {
         node.partition("::")[0]
         for node in selected_nodes
         if node.startswith("tests/integration/")
     }
-    assert expected_integration_files
-    assert selected_integration_files == expected_integration_files
+    assert selected_integration_files == expected_integration_files, (
+        "SELECT_TASK integration nodes must equal the task's declared "
+        f"integration anchors: selected={sorted(selected_integration_files)} "
+        f"declared={sorted(expected_integration_files)}"
+    )
 
     # Pre-execution event order: test.selected(scope=task_if) precedes the
     # GREEN_GATE pass verdict (selection is emitted BEFORE any selected run).

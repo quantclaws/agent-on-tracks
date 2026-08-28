@@ -22,12 +22,35 @@ pytestmark = pytest.mark.e2e
 
 def _start_v07_run(trac, host_repo):
     """Drive the REAL journey start for v0.7 (init -> start -> triage ->
-    reviews -> approve), so the run is ACTIVE and M-TEST RED_CHECK is
-    reachable. A run that is never started is a perpetual-Red fixture
-    (PRISM-V07-R4-01): `trac run` exits rc=1 'no active run' and no M-TEST
-    outlet can ever appear even with a conforming implementation."""
+    reviews -> approve), so the run is ACTIVE and the Phase 0 / M-TEST
+    outlets are reachable. A run that is never started is a perpetual-Red
+    fixture (PRISM-V07-R4-01): `trac run` exits rc=1 'no active run' and no
+    M-TEST outlet can ever appear even with a conforming implementation.
+
+    Phase-0 data premise (test-plan §2.4 / §11.1): the fake host repo starts
+    with NO v0.6 baseline, so `scan_trace_gaps` sees zero gaps and the
+    `phase0.baseline_repaired` outlet can never fire. The fixture seeds the
+    v0.6 baseline trio + real collectable gap nodes + the `[adapter]`
+    declaration (interfaces §1h: `_repair_phase0_gap` fail-closes with
+    UnknownAdapterError when absent) + the §4.2 quality-registry block, then
+    drives to the repair/seal outlets.
+    """
+    from tests.integration.v07_journey_seed import (
+        add_adapter_declaration,
+        seed_guard_registry,
+        seed_v06_baseline,
+    )
+
     run_id = walk_to_await_human(trac, version="v0.7")
     assert trac("approve", "--actor", "Aaron").returncode == 0
+    # M-DESIGN drafts the trio (overwrites architecture.md / writes
+    # project.toml).  Seed the Phase-0 premises AFTER that overwrite, exactly
+    # the baseline-repair channel the design prescribes (blocked -> Human
+    # repairs the repo fact -> validate again).
+    trac("run")
+    seed_v06_baseline(host_repo)
+    add_adapter_declaration(host_repo)
+    seed_guard_registry(host_repo)
     return run_id
 
 
@@ -48,9 +71,14 @@ def test_v07a_journey_phase0_to_closure(trac, host_repo, event_log):
     bound closure (IF-CLOSURE-001) is not produced; every assertion fails on
     the absent contract outlet.
     """
-    _start_v07_run(trac, host_repo)
-    trac("run")
-    run_id = "latest"
+    run_id = _start_v07_run(trac, host_repo)
+    # Bounded drive to run completion (Phase 0 -> M-TEST -> M-IMPL ->
+    # closure).  The drive is bounded: a conforming run emits the full chain
+    # in a few dispatches; a parked/blocked run aborts the loop.
+    for _ in range(20):
+        trac("run")
+        if "run.completed" in [e["type"] for e in event_log(run_id)]:
+            break
     events = [e["type"] for e in event_log(run_id)]
 
     # Phase 0 binding + seal (AC-FR0256-01 / AC-FR0257-04).
@@ -70,9 +98,21 @@ def test_v07a_journey_phase0_to_closure(trac, host_repo, event_log):
     )
 
     # Candidate-bound closure (AC-FR0265-01): trac check trace --version v0.7.
+    # interfaces §2c: `--json` renders `{status, closure, hard_errors,
+    # records}`.  The acceptance contract is closure = candidate-bound AND
+    # status = pass (every required AC's chain fully closed: approved AC ->
+    # outlet -> collected node -> baseline/mutation evidence -> same-candidate
+    # FULL pass).  A fail status with no hard errors proves the same closure
+    # schema, so both fields must be asserted.
+    import json as _json
+
     check = trac("check", "trace", "--version", "v0.7", "--json")
-    assert "closure=candidate-bound" in check.stdout, (
-        f"closure must be candidate-bound; got: {check.stdout!r}"
+    report = _json.loads(check.stdout)
+    assert report.get("closure") == "candidate-bound", (
+        f"closure must be candidate-bound; got: {check.stdout[:400]!r}"
+    )
+    assert report.get("status") == "pass", (
+        f"candidate-bound closure must be a pass; got: {check.stdout[:400]!r}"
     )
 
 
@@ -89,9 +129,16 @@ def test_v07a_journey_uses_reference_adapter(trac, host_repo, event_log):
     wired, so the selection/adapter outlet is absent — the assertions fail
     legally on the absent contract outlet, never on a fixture defect.
     """
-    _start_v07_run(trac, host_repo)
-    trac("run")
-    events = event_log("latest")
+    run_id = _start_v07_run(trac, host_repo)
+    # Bounded drive to the adapter-audit outlet (M-TEST RED_CHECK emits
+    # test.selected with the resolved reference-pytest adapter identity).
+    for _ in range(20):
+        trac("run")
+        if any(
+            e["type"] == "test.selected" for e in event_log(run_id)
+        ):
+            break
+    events = event_log(run_id)
     selected = [e for e in events if e["type"] == "test.selected"]
     # Adapter execution audit: a conforming v0.7 run leaves test.selected
     # records carrying the reference-pytest adapter identity. The assertion
