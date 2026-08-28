@@ -96,6 +96,15 @@ def _verify_kill(
     if counterexample_experiment.get("controls") != "green":
         return "missing", "counterexample_kill_controls_not_green"
 
+    # r12 (T-017) candidate-identity fail-closed: the kill must not be
+    # verified from a caller-supplied explicit candidate_digest without a
+    # trustworthy experiment binding (frozen foreign sha).  Such a digest is
+    # an untrusted caller claim (identity drift), not proof that the
+    # experiment ran against that candidate — fail closed even when
+    # target_kill/controls look green (IF-AUTH-002, FULL identity-drift Red).
+    if "candidate_digest" in counterexample_experiment:
+        return "missing", "candidate_digest_untrusted"
+
     # AC-FR0261-03: role separation.  A counterexample kill is not verifiable
     # when the experiment's allowed change scope touches tests/ — Devon must
     # never mutate frozen tests, so such a kill cannot green an existing
