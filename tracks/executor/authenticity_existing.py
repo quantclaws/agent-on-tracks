@@ -102,7 +102,11 @@ def _verify_kill(
     # an untrusted caller claim (identity drift), not proof that the
     # experiment ran against that candidate — fail closed even when
     # target_kill/controls look green (IF-AUTH-002, FULL identity-drift Red).
-    if "candidate_digest" in counterexample_experiment:
+    # The key check must not trust the mapping's own membership predicate:
+    # a caller-controlled Mapping can claim the key is absent via its
+    # ``__contains__`` while still carrying it, so the real key set is
+    # scanned directly (T-017 GREEN, fail-closed over caller claims).
+    if _carries_candidate_digest(counterexample_experiment):
         return "missing", "candidate_digest_untrusted"
 
     # AC-FR0261-03: role separation.  A counterexample kill is not verifiable
@@ -113,6 +117,21 @@ def _verify_kill(
         return "missing", "tests_in_scope"
 
     return "verified", None
+
+
+def _carries_candidate_digest(experiment: Mapping) -> bool:
+    """True when the counterexample experiment carries an explicit
+    ``candidate_digest`` key.
+
+    Membership is judged from the mapping's real key material, never from the
+    mapping's own ``__contains__``: a caller-supplied Mapping may lie about
+    membership while still carrying the key (identity drift), so the honest
+    ``in`` fast path is backed by a direct scan of the iterated keys
+    (IF-AUTH-002 fail-closed, T-017).
+    """
+    if "candidate_digest" in experiment:
+        return True
+    return any(key == "candidate_digest" for key in experiment)
 
 
 def _scope_touches_tests(scope: object) -> bool:
