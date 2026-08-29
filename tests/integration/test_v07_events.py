@@ -3,7 +3,8 @@
 AC-NFR0140-01@v0.7 append-only and projection rebuild,
 AC-NFR0140-02@v0.7 identity five-part binding,
 AC-NFR0140-03@v0.7 WAL replay reruns missing, never pass,
-AC-NFR0140-04@v0.7 unknown/missing/drift control fail-closed.
+AC-NFR0140-04@v0.7 unknown/missing/drift control fail-closed. T-017 covers the
+candidate-identity drift fail-closed for IF-AUTH-002.
 
 Assertions land on the append-only event outlet (interfaces §1a) observed via
 `trac replay`/`trac report` and the authenticity/mutation public functions.

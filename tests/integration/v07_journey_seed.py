@@ -23,7 +23,8 @@ Fixture data is the truth source (test-plan §3): every digest stems from the
 node file bytes / the §4.2 TOML block, never from implementation output.  The
 seeded node file is committed to the host git tree so the B59 freeze expects a
 clean ``tests/`` at commit_tests (test.written -> controlled commit; a dirty
-historical seed would trip the freeze residue gate).
+historical seed would trip the freeze residue gate).  T-017 re-uses this seed
+for the candidate-identity fail-closed demonstration.
 """
 
 from __future__ import annotations
