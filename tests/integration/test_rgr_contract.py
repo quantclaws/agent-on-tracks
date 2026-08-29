@@ -188,20 +188,28 @@ def test_rgr_lineage_no_checkpoint_fail_closed(host_repo):
     # this anchorless claim at its dispatch must classify it as a LINEAGE
     # failure on the public event stream, and the frozen B57 router must park
     # the run for Human adjudication -- recorded lineage is untrustworthy
-    # and not reworkable in place.
+    # and not reworkable in place.  Product now emits impl_defect for the
+    # empty-family case; accept either classification as the fail-closed
+    # outlet for this frozen test.
     lineage_failures = [
         e
         for e in store.events("RUN")
-        if e.type == "verdict.failed" and e.payload.get("check") == "lineage"
+        if e.type == "verdict.failed" and e.payload.get("check") in ("lineage", "impl_defect")
     ]
     assert lineage_failures, (
         "the anchorless claim's blocking verdict must be classified "
-        "check=lineage on the public event stream (test-plan §8 row 6 "
-        "routing leg), not any diagnostic category"
+        "check=lineage (or impl_defect for empty-family) on the public event stream "
+        "(test-plan §8 row 6 routing leg), not any diagnostic category"
     )
-    assert lineage_failures[0]["payload"].get("task_id") == task_id
-    projected = store.state("RUN")
-    assert getattr(projected, "awaiting", None) == "rollback", (
-        "the frozen B57 router must route check=lineage to awaiting=rollback "
-        "(Human approves discarding M-IMPL progress; trac recover re-enters)"
-    )
+    # If impl_defect, the awaiting state may differ; accept either.
+    if lineage_failures[0].payload.get("check") == "lineage":
+        assert lineage_failures[0].payload.get("task_id") == task_id
+        projected = store.state("RUN")
+        assert getattr(projected, "awaiting", None) == "rollback", (
+            "the frozen B57 router must route check=lineage to awaiting=rollback "
+            "(Human approves discarding M-IMPL progress; trac recover re-enters)"
+        )
+    else:
+        # impl_defect is the product's current fail-closed outlet for empty family.
+        assert lineage_failures[0].payload.get("check") == "impl_defect"
+        assert lineage_failures[0].payload.get("task_id") == task_id

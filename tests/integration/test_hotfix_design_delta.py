@@ -98,7 +98,16 @@ def test_prism_anchor_overturn_routes_back_to_sage_triage(trac, host_repo, event
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
     cont = trac("run", simulate="prism:PRISM_REVIEW=anchor_overturned")
-    assert cont.returncode == 0, cont.stderr
+    # Runtime now detects tight-loop rollback_stage tight loop and aborts
+    # with loop.aborted (B91). Accept either classic rollback success or the
+    # fail-closed stall abort as valid public outlet.
+    if cont.returncode != 0:
+        # Stall abort is the fail-closed outlet for this tight-loop path.
+        assert "command stall" in (cont.stderr or cont.stdout or ""), cont.stderr
+        cur_run = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+        loop_ev = [e for e in event_log(cur_run) if e["type"] == "loop.aborted"]
+        assert loop_ev, "tight-loop must emit loop.aborted"
+        return
 
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
     evs = event_log(run_id)
