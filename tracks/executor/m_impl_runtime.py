@@ -71,6 +71,7 @@ from tracks.executor.test_select import (
     reuse_allowed,
     select_diff,
     select_task,
+    settle_stale_identities,
 )
 from tracks.executor.test_select import (
     audit as audit_selection_argv,
@@ -210,18 +211,24 @@ def _devon_path_scope_error(
 ) -> str | None:
     """Validate one changed path against the manifest scope rules.
 
-    Devon test-dir paths (RED failing tests) are exempt from the
-    allowed_paths gate: impl-only manifests grant no test path, frozen
-    suites stay blocked by forbidden_paths.
+    Devon test-dir paths (RED failing tests) are exempt from both
+    allowed_paths and forbidden. Run 01M0S0FQ T-017 (2026-08-29): fixing
+    [layout.shield] to include the tests/ root for Shield correctness also
+    excluded tests/unit/ via forbidden `tests/**`, while
+    manifest.red_test_paths still declared `tests/unit` -- a required test
+    path was simultaneously required and forbidden.
     """
     for path in changed_paths:
         if path.startswith("/") or ".." in path.split("/"):
             return f"Devon evidence path is not repo-relative: {path}"
+        is_red_dir = bool(
+            devon_test_dirs and any(path == d or path.startswith(d + "/") for d in devon_test_dirs)
+        )
+        if is_red_dir:
+            continue
         if any(_manifest_path_matches(path, item) for item in forbidden):
             return f"Devon evidence path is forbidden: {path}"
-        if not any(_manifest_path_matches(path, item) for item in allowed) and not (
-            devon_test_dirs and any(path.startswith(d) for d in devon_test_dirs)
-        ):
+        if not any(_manifest_path_matches(path, item) for item in allowed):
             return f"Devon evidence path is outside manifest: {path}"
     return None
 
@@ -570,6 +577,27 @@ class MImplRuntimeMixin:
             assignment["phase"] = "shield_fix"
             self._strip_test_forbidden_paths(assignment)
             self._grant_diagnosed_test_paths(assignment, state)
+            self._align_shield_allowed_to_layout(assignment)
+
+    def _align_shield_allowed_to_layout(self, assignment: dict) -> None:
+        """SHIELD_FIX manifest must carry the Shield layout domain, not the
+        product task's allowed_paths. Run 01M0S0FQ v0.7 boundary
+        (2026-08-29): the dispatch inherited T-017's product manifest
+        (authenticity_existing.py only) while the diagnosed defects lived in
+        frozen test files; the over-reach auditor (manifest.allowed_paths)
+        rolled back every legal Shield test write. Align the manifest with
+        [layout.shield] (the same whitelist result_checkpoint attributes
+        Shield artifacts by) plus the diagnosed-path grants, keeping the
+        product entries as a harmless union."""
+        manifest = assignment.get("manifest")
+        if not isinstance(manifest, dict):
+            return
+        from tracks.project import layout_paths
+
+        allowed = list(manifest.get("allowed_paths") or [])
+        manifest["allowed_paths"] = list(
+            dict.fromkeys([*layout_paths(Path(self.repo), "shield"), *allowed])
+        )
 
     @staticmethod
     def _strip_test_forbidden_paths(assignment: dict) -> None:
@@ -587,28 +615,54 @@ class MImplRuntimeMixin:
                 ]
 
     _DIAGNOSED_TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+")
+    _BARE_TEST_FILENAME_RE = re.compile(r"(?<![A-Za-z0-9_./])[A-Za-z0-9_./-]+\.(?:py|json|toml|md)")
 
-    @staticmethod
-    def _grant_diagnosed_test_paths(assignment: dict, state) -> None:
+    def _grant_diagnosed_test_paths(self, assignment: dict, state) -> None:
         """SHIELD_FIX audit unlock (run 01KZTHE7 T-017): the over-reach audit
         whitelists Shield by [layout] dirs (tests/integration|e2e|...), but a
         diagnosed defect may live anywhere under tests/ (e.g. a unit-level
         RED contract test). Grant exactly the test files the Prism DIAGNOSE
         verdict names in its evidence by adding them to
-        manifest.allowed_paths. Fail-closed: only paths the diagnosis
-        literally mentions are granted — no blanket tests/ grant."""
+        manifest.allowed_paths.
+
+        Bare filenames (``hotfix_support.py`` without the tests/ prefix) are
+        resolved against the repository tree — run 01M0S0FQ v0.7 boundary
+        (2026-08-29): the diagnosis narrated the file by bare name, the
+        literal-path regex matched nothing, and Shield's legal fix was rolled
+        back as over-reach. Fail-closed: a bare name with zero or ambiguous
+        repo matches grants nothing."""
         report = getattr(state, "diagnose_report", None) or {}
         evidence = report.get("evidence") or ""
         if not isinstance(evidence, str):
             evidence = str(evidence)
-        named = sorted(set(MImplRuntimeMixin._DIAGNOSED_TEST_PATH_RE.findall(evidence)))
+        named = set(self._DIAGNOSED_TEST_PATH_RE.findall(evidence))
+        for bare in set(self._BARE_TEST_FILENAME_RE.findall(evidence)):
+            named.update(self._resolve_bare_test_path(bare))
         if not named:
             return
         manifest = assignment.get("manifest")
         if not isinstance(manifest, dict):
             return
         allowed = list(manifest.get("allowed_paths") or [])
-        manifest["allowed_paths"] = allowed + [p for p in named if p not in allowed]
+        manifest["allowed_paths"] = allowed + sorted(p for p in named if p not in allowed)
+
+    def _resolve_bare_test_path(self, filename: str) -> list[str]:
+        """Repo-relative paths under tests/ whose basename equals filename.
+
+        Fail-closed on ambiguity: a name that matches zero files, or more
+        than one file (e.g. helpers.py in both integration/ and e2e/),
+        grants nothing — those live under layout dirs Shield already has."""
+        root = Path(self.repo) / "tests"
+        if not root.is_dir():
+            return []
+        hits = [
+            p
+            for p in root.rglob(filename)
+            if "__pycache__" not in p.parts and p.is_file()
+        ]
+        if len(hits) != 1:
+            return []
+        return [hits[0].relative_to(self.repo).as_posix()]
 
     def _invalid_m_impl_assignment(
         self,
@@ -1393,16 +1447,7 @@ class MImplRuntimeMixin:
                 self._prove_fixed_ledger_entries(cmd, state, ledger)
                 return
             elif any(value == "OPEN" for value in ledger.values()):
-                self._emit(
-                    "verdict.failed",
-                    {
-                        "check": "full_suite",
-                        "reason": "FULL ledger has OPEN entries requiring diagnosis",
-                        "evidence": "ledger WAL",
-                        "attempt": state.current_attempt + 1,
-                    },
-                    command_id=cmd.command_id,
-                )
+                self._settle_stale_island_2_open(cmd, state, ledger)
                 return
             else:
                 raise LedgerCorruptionError(
@@ -1433,6 +1478,70 @@ class MImplRuntimeMixin:
                 task_id=None,
                 attempt=state.current_attempt + 1,
             )
+
+    def _settle_stale_island_2_open(self, cmd, state, ledger) -> None:
+        """IF-FULLCHAIN-001 stale-identity settlement closure (island_2 OPEN).
+
+        The OPEN branch runs one real FULL round first; non-PROVEN identities
+        re-verified green — ``(node, signature)`` absent from this round's
+        failure set and node in this round's executed set — are settled by
+        the IF-LEDGER-001 emitter (OPEN→CLASSIFIED→FIXED with the explicit
+        ``stale_identity_settlement`` program reason, never STALE), then the
+        existing fallback proof settles every FIXED entry PROVEN in one full
+        pass.  Identities still failing this round keep the per-item
+        diagnosis loop and are never swallowed; WAL inconsistency fails
+        closed through ``LedgerCorruptionError``.
+        """
+        full = self._execute_full_round(cmd, state, "full_settlement", ledger)
+        self._record_full_failures(cmd, state, full, ledger)
+        ledger = rebuild_ledger(self.store.events(self.run_id))
+        round_failures = [
+            (failure["node"], failure["failure_signature"])
+            for failure in full["failures"]
+        ]
+        for event in settle_stale_identities(
+            ledger, full["evidence_by_node"], round_failures
+        ):
+            self._emit(
+                "ledger.transitioned",
+                {
+                    **event["payload"],
+                    "attempt": state.current_attempt + 1,
+                    "actor": "runtime",
+                },
+                command_id=cmd.command_id,
+            )
+        rebuilt = rebuild_ledger(self.store.events(self.run_id))
+        if full["failed_nodes"]:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "full_suite",
+                    "reason": "FULL settlement round failures: "
+                    + "; ".join(full["failed_nodes"]),
+                    "evidence": full["outcomes_ref"],
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        if any(value == "FIXED" for value in rebuilt.values()):
+            self._prove_fixed_via_fallback(cmd, state, rebuilt)
+            return
+        if ledger_is_clean(rebuilt):
+            self._pass_island_2(cmd, state)
+            return
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "full_suite",
+                "reason": "stale settlement left the FULL ledger unclean "
+                "without FIXED entries",
+                "evidence": full["outcomes_ref"],
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
 
     def _current_baseline_digest(self) -> str:
         return next(
@@ -2812,10 +2921,33 @@ class MImplRuntimeMixin:
             inventories[layer] = sorted(parse_collected_nodes(obs.stdout))
         return inventories
 
-    def _require_r_artifacts(self, red_nodes: list[str], r_sha: str) -> None:
+    def _task_r_family_shas(self, task_id: str) -> list[str]:
+        """B91 family semantics: every ``red.checkpointed`` slot of this task
+        (RED re-pins and sanctioned Shield rebaselines alike) is part of the
+        task's immutable RED lineage. A multi-round task accumulates slots;
+        each slot's content was red_valid-gated when pinned."""
+        return list(
+            dict.fromkeys(
+                ev.payload["r_sha"]
+                for ev in self.store.events(self.run_id)
+                if ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and ev.payload.get("r_sha")
+            )
+        )
+
+    def _require_r_artifacts(self, red_nodes: list[str], r_sha: str, task_id: str) -> None:
+        """A declared RED unit artifact must exist in the task's immutable R
+        lineage. Run 01M0S0FQ T-016 (v0.7 boundary, 2026-08-28): the re-scoped
+        task's unit_refs still declared the reach test pinned in earlier
+        family slots while the latest RED re-pin carried only the new
+        obligation's test -- a current-slot-only check fail-closed a legal
+        multi-generation task, so presence is evaluated across the whole R
+        family (current r_tree_identity included)."""
+        shas = [s for s in dict.fromkeys([r_sha, *self._task_r_family_shas(task_id)]) if s]
         for node in red_nodes:
             path = node.partition("::")[0]
-            if not r_sha or not self._path_in_tree(r_sha, path):
+            if not shas or not any(self._path_in_tree(s, path) for s in shas):
                 raise TestSelectError(
                     f"task RED unit artifact is absent from immutable R commit: {node}"
                 )
@@ -2833,7 +2965,7 @@ class MImplRuntimeMixin:
         inventories = self._collect_layer_inventories(contract, cwd)
         red_nodes = self._expand_unit_refs(task.unit_refs, inventories["unit"])
         r_sha = self.store.state(self.run_id).r_tree_identity or ""
-        self._require_r_artifacts(red_nodes, r_sha)
+        self._require_r_artifacts(red_nodes, r_sha, task.task_id)
         touched = [
             path
             for path in (self._last_devon_outcome() or {}).get("changed_paths", [])

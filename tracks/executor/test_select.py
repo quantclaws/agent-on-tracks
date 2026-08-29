@@ -30,6 +30,7 @@ import json
 import os
 import shlex
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -213,6 +214,74 @@ def ledger_is_clean(state) -> bool:
     if not state:
         return False
     return all(value == "PROVEN" for value in state.values())
+
+
+_STALE_SETTLEMENT_REASON = "stale_identity_settlement"
+_SETTLEMENT_PATHS: dict[str, tuple[str, ...]] = {
+    "OPEN": ("CLASSIFIED", "FIXED"),
+    "CLASSIFIED": ("FIXED",),
+    "FIXED": (),
+}
+
+
+def settle_stale_identities(
+    ledger: Mapping[str, LedgerStateValue],
+    executed_nodes: Iterable[object],
+    round_failures: Iterable[tuple[object, object]],
+) -> list[dict]:
+    """Build the IF-LEDGER-001 stale-identity settlement events.
+
+    Pure Runtime program logic (no agent free text) deciding which non-PROVEN
+    ledger identities re-verified green in the current FULL round and no
+    longer require a per-identity DIAGNOSE dispatch (IF-FULLCHAIN-001): an
+    identity settles when ``(node, signature)`` is absent from
+    ``round_failures`` AND its node is in ``executed_nodes``.  OPEN identities
+    advance OPEN→CLASSIFIED→FIXED, CLASSIFIED identities advance
+    CLASSIFIED→FIXED — every transition legal, carrying the explicit
+    ``stale_identity_settlement`` reason, never STALE.  PROVEN identities emit
+    nothing and FIXED ones are handed to the existing proof ring untouched,
+    so the clean criterion stays all-PROVEN.  The returned events replay
+    through :func:`rebuild_ledger`; the function is deterministic (sorted by
+    identity) and idempotent, and a ledger carrying an unknown state or an
+    unparsable identity key fails closed with ``LedgerCorruptionError``
+    instead of guessing.
+    """
+    executed = {str(node) for node in executed_nodes}
+    failed = {(str(node), str(signature)) for node, signature in round_failures}
+    events: list[dict] = []
+    for key in sorted(ledger):
+        state = ledger[key]
+        if state not in _LEDGER_STATES:
+            raise LedgerCorruptionError(
+                f"ledger settlement found an unknown state: {key!r}"
+            )
+        path = _SETTLEMENT_PATHS.get(state)
+        if path is None:
+            continue  # PROVEN / STALE identities are not settlement candidates
+        try:
+            node, signature = (str(part) for part in json.loads(key))
+        except (TypeError, ValueError) as exc:
+            raise LedgerCorruptionError(
+                f"ledger settlement cannot parse identity key: {key!r}"
+            ) from exc
+        if (node, signature) in failed or node not in executed:
+            continue
+        before = state
+        for after in path:
+            events.append(
+                {
+                    "type": "ledger.transitioned",
+                    "payload": {
+                        "node": node,
+                        "failure_signature": signature,
+                        "from": before,
+                        "to": after,
+                        "reason": _STALE_SETTLEMENT_REASON,
+                    },
+                }
+            )
+            before = after
+    return events
 
 
 def select_diff(fixed_entry, repair_touched_files, import_graph) -> DiffSelection:
