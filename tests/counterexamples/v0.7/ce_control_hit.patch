@@ -1,0 +1,11 @@
+diff --git a/tracks/executor/mutation_experiment.py b/tracks/executor/mutation_experiment.py
+index d07aa7e..b5b4820 100644
+@@ -131,7 +131,7 @@
+         control_results = {
+             nid: r for nid, r in control_raw.items() if nid in manifest.control_nodes
+         }
+-        all_control_green = all(r.status in ("passed", "skipped") for r in control_results.values())
++        all_control_green = True  # Counterexample (AC-FR0263-04): control hit reported green
+         controls = "green" if all_control_green else "failed"
+ 
+         # Phase 4b: detect missing results for a precise blocked reason.

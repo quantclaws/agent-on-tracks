@@ -76,9 +76,30 @@ def test_run_loop_fails_fast_on_code_drift(tmp_path, capsys):
     (repo / "tracks" / "logic.py").write_text("X = 2  # hotfix\n", encoding="utf-8")
     with pytest.raises(RuntimeCodeDriftError, match="OLD logic"):
         ex.run_loop()
-    # stderr 提示可操作（含重启指引），不留事件副作用（停车点在 issue 之外）
+    # stderr 提示可操作（含重启指引）
     assert "Restart `trac run`" in capsys.readouterr().err
     assert ex._code_stamp is not None
+    # #85：fail-fast 退出前先落 loop.aborted 审计事件（screen 无重定向时
+    # stdout 证据会丢，事件流可事后区分 abort/crash/kill）。
+    events = list(ex.store.events("RUN-DRIFT"))
+    assert events[-1].type == "loop.aborted"
+    assert events[-1].payload["reason"] == "code_drift"
+
+
+def test_loop_aborted_replay_does_not_crash(tmp_path):
+    """#85：含 loop.aborted 的事件流重放不炸（reducer 无行为，projection
+    忽略该事件）。"""
+    repo = _repo_with_tracks_pkg(tmp_path)
+    ex = _executor(repo)
+    ex.backend = _StubBackend()
+    (repo / "tracks" / "logic.py").write_text("X = 2  # hotfix\n", encoding="utf-8")
+    with pytest.raises(RuntimeCodeDriftError):
+        ex.run_loop()
+    events = list(ex.store.events("RUN-DRIFT"))
+    assert events[-1].type == "loop.aborted"
+    state = ex.store.state("RUN-DRIFT")  # 重放含 loop.aborted 的事件流
+    assert state.status == "active"
+    assert state.stage == "M-STORY"
 
 
 def test_run_loop_proceeds_when_code_unchanged(tmp_path):

@@ -6,6 +6,7 @@ execute + reconcile (D-13), agent dispatch via the effects backend seam
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import hashlib
 import json
 import os
@@ -72,16 +73,21 @@ from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
 )
+from tracks.executor.stall import (
+    STALL_COMMAND_LIMIT,
+    CommandStallError,
+    CommandStallTracker,
+)
 from tracks.executor.test_select import (
     BaselineAssets,
     EmptyR2SelectionError,
-    JUnitResultError,
+    TestResultError,
     TestSelectError,
     capture_test_baseline,
     classify_nodes,
     collect_node_source_digests,
     make_selection_id,
-    parse_junit_result,
+    parse_test_result,
     require_exact_node_coverage,
     require_nonempty_r2_selection,
     resolve_selected_command,
@@ -96,6 +102,7 @@ from tracks.executor.validate import (
     validate_document,
 )
 from tracks.executor.worktree import (
+    _RUNTIME_ASSETS,
     WorktreeHandle,
     _writer_worktree_path,
     cleanup_worktree,
@@ -133,7 +140,7 @@ _CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 # own interpreter when the project worktree lacks a .venv (live replay fix).
 _VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
 
-# D-41 (v6 review pin): pytest exit code that means an EMPTY layer at collect
+# D-41 (v6 review pin): test exit code that means an EMPTY layer at collect
 # time is ONLY 5 ("no tests collected"). rc=4 is a usage/path error -- a
 # broken declaration that must fail closed naming the layer, never silently
 # contribute zero nodes (a fresh feature project legitimately has zero unit/
@@ -150,7 +157,7 @@ _R2_BASIS = "delta-declaration"
 _TREE_STAMP_SKIP_PREFIXES = (
     ".git/",
     ".opencode/",
-    ".pytest_cache/",
+    ".test_cache/",
     ".ruff_cache/",
     ".tracks/",
     ".venv/",
@@ -171,13 +178,139 @@ def _contract_sections(contract):
     ]
 
 
+# T-015 v0.7 runtime assembly (architecture §1.0.9/§1.1): the Executor is the
+# composition root. Importing this module re-registers the v0.7 extension
+# delivered by ``v07_runtime`` (T-013) with the Phase 0 entry-guard
+# capability added on top -- the T-013 file itself is consumed by import
+# only and never modified. Re-registering the same version replaces its
+# binding idempotently (version_extensions contract), so the trace /
+# island_gate_2 / render_closure capabilities are inherited unchanged and
+# kernel.machine's generic seam call point can resolve ``before_mtest``.
+from tracks.executor import v07_runtime as _v07_runtime  # noqa: E402
+from tracks.executor import version_extensions as _version_extensions  # noqa: E402
+
+
+class _V07RuntimeExtension(_v07_runtime.V07Extension):
+    """v0.7 extension assembled with the Phase 0 entry guard (T-015).
+
+    ``before_mtest`` delegates to the T-004 ``kernel.phase0.decide_phase0``
+    entry guard (pure, no I/O): any non-SEALED Phase 0 projection routes to
+    ``Command(phase0_validate)``; SEALED/BLOCKED park (§1c).
+    """
+
+    @staticmethod
+    def before_mtest(state):
+        from tracks.kernel.phase0 import decide_phase0
+
+        return decide_phase0(state)
+
+
+_version_extensions.register_extension(
+    _v07_runtime.EXTENSION_VERSION, _V07RuntimeExtension()
+)
+
+
+def island_gate_2_dispatch(version, arguments=(), **kwargs):
+    """ISLAND_GATE_2 capability call point (IF-FAILCLOSED-001).
+
+    Resolves the target version's ``island_gate_2`` callback on the generic
+    capability seam (architecture 1.0.9 / interfaces 1b kind 4) and invokes
+    it with *arguments* plus keywords -- through the registered v0.7
+    extension (T-013) this lazily dispatches ``demonstrate_failclosed``
+    (T-016).  Early versions select no callback and return None, keeping
+    classic behaviour byte-identical (FR-0264-02); a registered extension
+    that lacks the callback fails closed via ``CapabilityBlockedError``.
+    """
+    callback = _version_extensions.resolve_capability(version or "", "island_gate_2")
+    if callback is None:
+        return None
+    return callback(arguments, **kwargs)
+
+# Baseline requirement documents digested into the Phase 0 seal manifest
+# (§1c phase0.sealed document_digests input): the six project templates.
+_PHASE0_BASELINE_DOCS = (
+    "story.md",
+    "spec.md",
+    "acceptance.md",
+    "architecture.md",
+    "interfaces.md",
+    "test-plan.md",
+)
+
+
+def _phase0_baseline_version(version: str | None) -> str | None:
+    """Previous minor of a ``vX.Y`` run version (v0.7 -> v0.6, §1c
+    phase0_validate inputs); None when the shape carries no baseline."""
+    body = (version or "").removeprefix("v").split(".")
+    if len(body) != 2 or not all(part.isdigit() for part in body):
+        return None
+    major, minor = int(body[0]), int(body[1])
+    if minor <= 0:
+        return None
+    return f"v{major}.{minor - 1}"
+
+
+def _phase0_planned_bindings(baseline_dir: Path) -> dict[str, str]:
+    """AC -> planned node bindings from the baseline test-plan §8 rows (§1d
+    scan input); only node-level ``path::test`` targets bind (file-only cells
+    carry no node identity)."""
+    plan = baseline_dir / "test-plan.md"
+    if not plan.is_file():
+        return {}
+    from tracks.executor.test_tasks import _coverage_rows_with_test
+
+    return {
+        ac: test.strip()
+        for ac, _layer, test, _if_ids in _coverage_rows_with_test(
+            plan.read_text(encoding="utf-8")
+        )
+        if test and "::" in test
+    }
+
+
+def _phase0_approved_acs(baseline_dir: Path) -> set[str]:
+    """Approved AC ids from the baseline acceptance.md (§1d scan input)."""
+    acc = baseline_dir / "acceptance.md"
+    if not acc.is_file():
+        return set()
+    from tracks.executor.test_tasks import _known_ac_ids
+
+    return _known_ac_ids(acc.read_text(encoding="utf-8"))
+
+
+def _phase0_document_digests(baseline_dir: Path) -> dict[str, str]:
+    """sha256 of every present baseline requirement document (seal input)."""
+    digests: dict[str, str] = {}
+    for name in _PHASE0_BASELINE_DOCS:
+        path = baseline_dir / name
+        if path.is_file():
+            digests[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digests
+
+
+def _phase0_frozen_test_digests(repo: Path, frozen_paths: list[str]) -> dict[str, str]:
+    """sha256 of every frozen test file under the declared layer paths."""
+    digests: dict[str, str] = {}
+    for declared in frozen_paths:
+        root = repo / declared.rstrip("/")
+        if not root.is_dir():
+            continue
+        for file in sorted(root.rglob("*")):
+            if file.is_file():
+                digests[str(file.relative_to(repo))] = hashlib.sha256(
+                    file.read_bytes()
+                ).hexdigest()
+    return digests
+
+
 def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     """Resolve a contract command's argv[0] against the project cwd.
 
     Live replay fix: an external worktree's project.toml contract may declare
-    ``.venv/bin/python -m pytest ...`` while the worktree itself has no
-    ``.venv`` (it was created from a host that does). When argv[0] is the
-    relative project venv interpreter and it does not exist under cwd,
+    a ``.venv/bin/python -m <host runner> ...`` command while the worktree
+    itself has no ``.venv`` (it was created from a host that does). When
+    argv[0] is the relative project venv interpreter and it does not exist
+    under cwd,
     substitute the Runtime's own ``sys.executable`` — but ONLY when that
     executable is itself running inside a venv (so we never fall back to a
     system Python). If the project carries its own ``.venv/bin/python`` it is
@@ -246,12 +379,15 @@ def _hotfix_run_branch(store, run_id: str) -> str | None:
 def _resolve_run_version(state) -> str:
     """The run's version identity (ARCH-006 §1.0.3).
 
-    The kernel projects ``State.version`` only from ``story.requested``
-    (machine.py _on_story_requested); a hotfix run never emits that event, so
-    its identity ``{target_version}-hotfix-{issue}`` is re-derived from the
-    projected hotfix fields. Pre-PRECHECK (target unknown yet) falls back to
-    the stable ``hotfix-{issue}`` identity; a non-hotfix run keeps its
-    projected version.
+    The kernel projects ``State.version`` from ``story.requested``
+    (unconditional) and, while still unset, from any ``stage.entered``
+    envelope (T-015: every envelope carries the run identity, so seeded
+    partial streams surface it too; executor-emitted hotfix envelopes carry
+    the already-derived hotfix identity, making the fallback a no-op there).
+    A hotfix run without either projection gets its identity
+    ``{target_version}-hotfix-{issue}`` re-derived from the projected hotfix
+    fields. Pre-PRECHECK (target unknown yet) falls back to the stable
+    ``hotfix-{issue}`` identity; a non-hotfix run keeps its projected version.
     """
     if state.version:
         return state.version
@@ -496,16 +632,25 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # B44（#46）：run 级熔断器计数（窗口：上次 human.retry/recover 之后；
         # 进程重启后从事件流重播种子，计数不丢）。
         self._breaker = RunBreaker.from_events(store.events(run_id))
+        # B86/B88（#77）：非派发命令紧循环熔断（STALL）。循环内内存计数，
+        # 无需持久化（崩溃重启清零可接受——紧循环 20 次在数秒内达成）。
+        self._stall = CommandStallTracker()
 
     def _fail_fast_on_code_drift(self) -> None:
         """B43（#45）：派发前复核 tracks/** 指纹；漂移即 fail-fast。
 
         r1 实证：运行中进程外的代码修改不热加载，旧逻辑继续派发导致
         误判/escalation。这里宁可停车提示重启，绝不带旧逻辑继续。
+        #85：fail-fast 退出前先落 loop.aborted 审计事件——screen 无重定向
+        时 stdout 证据会丢，事件流是 append-only 审计流，事后可区分
+        abort/crash/kill。store.append 在 CLI 的 writer_lock 内执行，与
+        既有 append 点一致；_emit 走统一熔断漏斗，loop.aborted 在 breaker
+        是 no-op。
         """
         if self._code_stamp is None:
             return
         if code_stamp(Path(self.repo)) != self._code_stamp:
+            self._emit("loop.aborted", {"reason": "code_drift", "detail": DRIFT_MESSAGE})
             print(DRIFT_MESSAGE, file=sys.stderr, flush=True)
             raise RuntimeCodeDriftError(DRIFT_MESSAGE)
 
@@ -517,6 +662,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         # B44（#46）：统一漏斗——熔断计数与本进程内发出的事件保持同步。
         self._breaker.note(type, payload)
+        # B86/B88（#77）：非派发命令紧循环计数（进展事件清零；dispatch_agent
+        # 不计入）。loop.aborted 自身也走这里（触发后按重置处理，不影响判定）。
+        self._stall.observe(type, payload)
         return ev
 
     def _check_breaker(self, state: State) -> State | None:
@@ -698,6 +846,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 self._observe_oob()
 
     def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
+        # B86/B88（#77）：本次 run_loop 的紧循环计数从零开始（每次 run_loop
+        # 等同进程内一次运行窗口；崩溃/重启清零可接受）。limit 引用模块常量，
+        # 便于测试/调参在调用期覆盖。
+        self._stall = CommandStallTracker(limit=STALL_COMMAND_LIMIT)
+        # r10/SM-01.3: Phase 0 BLOCKED resume preflight -- the kernel parks at
+        # BLOCKED (decide_phase0 returns no commands), so the executor effects
+        # layer is the only legal IO edge that can issue a fresh
+        # phase0_validate after Human repairs the repo facts (AC-FR0257-05
+        # repair -> revalidate cycle). This method runs once per run_loop, so
+        # the resume fires at most once per drive invocation -- no tick-level
+        # hot loop -- and re-validation keeps the full hard checks.
+        self._phase0_blocked_resume(self.store.state(self.run_id))
         while True:
             # B43（#45）：派发前 fail-fast——进程存活期间 tracks/** 漂移
             # （含 OOB 修复提交）即停车提示重启，绝不带旧逻辑继续。
@@ -727,8 +887,37 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 return state
             self._progress(cmd, state)
             self.issue(cmd)
+            # B86/B88（#77）：handlers 已在本轮 issue() 内跑完——若期间出现
+            # 任何进展事件计数已被清零。连续 N 轮同 kind/同标识的 command.issued
+            # 之间零进展事件才是紧循环签名，此处判定并停车（与 B43 #45
+            # 一致：先落 loop.aborted 审计事件再 raise，CLI 捕获转非零）。
+            if self._stall.should_trip():
+                self._abort_command_stall()
             if self._is_phase_boundary(cmd):
                 return self.store.state(self.run_id)
+
+    def _abort_command_stall(self) -> None:
+        """B86/B88（#77）：非派发命令紧循环停车。
+
+        先 append loop.aborted（append-only 审计流，screen 无重定向时
+        stdout 证据会丢，同 B85/#85 模式），再打印处置指引 banner，最后
+        raise CommandStallError——由 CLI 捕获转为非零退出码。
+        """
+        detail = self._stall.summary()
+        self._emit(
+            "loop.aborted",
+            {"reason": "command_stall", "detail": detail},
+        )
+        print(
+            f"command stall detected: {detail}\n"
+            "This is a runtime defect's tight-loop signature (a non-dispatch "
+            "command re-issued with zero progress events between iterations). "
+            "Kill this process and open an issue carrying the loop.aborted "
+            "evidence above.",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise CommandStallError(detail)
 
     def _gate_loop_dispatch(
         self, cmd: Command, dispatches: int, bound_substate: str | None
@@ -784,6 +973,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if lint_cmd and lint_cmd not in guard:
                 guard.append(lint_cmd)
             assignment["commands"] = {"guard": guard}
+        if state.stage == "M-IMPL":
+            # B64 (#82): deterministic ownership wall — Shield's audit domain
+            # excludes every dispatched task's red_test_paths (Archer manifest
+            # data, no hardcoding). A Shield write inside Devon's RED unit
+            # tests is over-reach and rolls back regardless of what the
+            # diagnosis text names; attribution must route red_defect ->
+            # Devon RED re-pin instead.
+            red_scope = self._red_test_scope()
+            if red_scope:
+                assignment["forbidden_paths"] = red_scope
         params["assignment"] = assignment
         params["pre_dirty"] = sorted(self._dirty_files())
         params["pre_dirty_snapshot"] = self._dirty_snapshot()
@@ -2352,6 +2551,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         改动过的文件，mirror 回退不再覆盖——同名冲突 fail-closed 报错
         （主树侧内容保留，人工裁决后重试），杜绝 concurrent-collision
         replay 静默吞掉操作者已提交的工作。
+
+        B60 (#76)：``ensure_runtime_assets`` 在 agent 运行**前**把
+        ``_RUNTIME_ASSETS`` 链接进 worktree（.venv 是符号链接），而
+        canonical ``.gitignore`` 的 ``.venv/`` 尾斜杠模式只匹配目录、
+        不匹配符号链接——``git add -A`` 会把它 stage 进 replay diff，
+        ``git apply`` 拒绝后 mirror 兜底 copy2 目录直接 Errno 21。故
+        add 后对每个 runtime asset 显式 ``git reset -q``（只动 index，
+        不碰 working tree）：replay diff 只携带 agent 工作增量，环境
+        管线永不入镜。reset 对未 staged 的 asset 是无害 no-op 错误。
         """
         wt = handle.path
         subprocess.run(
@@ -2359,6 +2567,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             capture_output=True,
             check=False,
         )
+        for asset in _RUNTIME_ASSETS:
+            subprocess.run(
+                ["git", "-C", wt, "reset", "-q", "--", asset],
+                capture_output=True,
+                check=False,
+            )
         diff = subprocess.run(
             ["git", "-C", wt, "diff", "--cached", "--binary"],
             capture_output=True,
@@ -2512,7 +2726,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # and has to re-derive the whole analysis (run 01KZTHE7 T-008: Shield
         # burned 52 minutes re-archaeologying what Prism had already found).
         verdict = result.get("verdict")
-        if verdict not in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect"):
+        if verdict not in (
+            "test_defect",
+            "stub_gap",
+            "ac_gap",
+            "spec_gap",
+            "impl_defect",
+            "red_defect",
+            "plan_defect",
+        ):
             # Prism DIAGNOSE contract violation: no valid classification JSON
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
             # budget exhaustion escalates) — do NOT fallback-derive a
@@ -2683,6 +2905,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        # B91 follow-up (re-baseline): the sanctioned fix commit joins the
+        # task's immutable R family so the eventual G binds a provable anchor
+        # that is ALSO the tree that gated it (no-op without a prior RED).
+        if state.stage == "M-IMPL":
+            self._rebaseline_red_family(task_id, commit_sha, cmd.command_id)
         return True
 
     def _reject_invalid_test_tasks(self, state, role, substate, assignment, cmd, task_id) -> bool:
@@ -3419,6 +3646,103 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._teardown_branch(branch)
         self._emit("branch.deleted", {"branch_name": branch}, command_id=cmd.command_id)
 
+    def _rollback_write_scope(self) -> list[str]:
+        """B59 (#75): write-scope patterns of every dispatched task in this
+        run (manifest allowed_paths + red_test_paths). The union bounds what
+        the discarded M-IMPL cycles could legitimately have touched in the
+        MAIN tree — dirty files inside it at rollback are residue of the
+        discarded work."""
+        patterns: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "task.started":
+                continue
+            manifest = ev.payload.get("manifest")
+            if not isinstance(manifest, dict):
+                continue
+            for key in ("allowed_paths", "red_test_paths"):
+                value = manifest.get(key)
+                if isinstance(value, list):
+                    patterns.update(
+                        p for p in value if isinstance(p, str) and p.strip()
+                    )
+        return sorted(patterns)
+
+    def _red_test_scope(self) -> list[str]:
+        """B64 (#82): red_test_paths of every dispatched task in this run —
+        Archer-authored manifest data (language-neutral; nothing hardcoded).
+        These are Devon's RED unit artifacts: only Devon may rewrite them
+        (red_defect -> RED re-pin). Shield's SHIELD_FIX write domain excludes
+        them deterministically — the ownership wall is data, not prompt
+        discipline (user ruling 2026-08-25; run 01M0S0FQ T-002: a test_defect
+        misroute sent Shield into Devon's RED unit test)."""
+        patterns: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "task.started":
+                continue
+            manifest = ev.payload.get("manifest")
+            if not isinstance(manifest, dict):
+                continue
+            value = manifest.get("red_test_paths")
+            if isinstance(value, list):
+                patterns.update(
+                    p for p in value if isinstance(p, str) and p.strip()
+                )
+        return sorted(patterns)
+
+    @staticmethod
+    def _path_in_write_scope(path: str, patterns: list[str]) -> bool:
+        """Exact file, directory-prefix, or glob match against scope patterns
+        (manifest patterns mix all three: ``tracks/project.py``,
+        ``tests/unit``, ``.tracks/projects/**``)."""
+        for pat in patterns:
+            if path == pat:
+                return True
+            if path.startswith(pat.rstrip("/") + "/"):
+                return True
+            if fnmatch.fnmatch(path, pat):
+                return True
+        return False
+
+    def _quarantine_rollback_residue(self) -> list[str]:
+        """B59 (#75): stash main-tree residue intersecting the discarded
+        stage's write scope. Run 01M0S0FQ: the previous T-001 cycle's
+        implementation residue (tracks/project.py) survived every rollback
+        and retry --clear-evidence in the main tree, then leaked into the new
+        baseline via the M-TEST freeze and into Devon's environment checks.
+        Untracked files count as residue too (Prism OOB R1 Blocker 01): the
+        designed flow commits agent output during the pipeline, so anything
+        dirty in scope at rollback is the discarded cycle's leftover.
+        Stash (never destroy): the content stays recoverable and the
+        discarded-scope tree returns to the committed baseline state.
+        Best-effort: git failures leave the tree untouched and are reported
+        by simply not listing the file as quarantined."""
+        status = git(self.repo, "status", "--porcelain", check=False)
+        dirty: list[str] = []
+        for line in status.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = line[3:].strip()
+            if " -> " in path:  # rename: keep both ends in scope checks
+                path = path.split(" -> ")[-1]
+            if path:
+                dirty.append(path)
+        scope = self._rollback_write_scope()
+        matched = [p for p in dirty if self._path_in_write_scope(p, scope)]
+        if not matched:
+            return []
+        proc = git(
+            self.repo,
+            "stash",
+            "push",
+            "-u",
+            "-m",
+            f"trac B59 rollback residue quarantine ({self.run_id})",
+            "--",
+            *matched,
+            check=False,
+        )
+        return matched if proc.returncode == 0 else []
+
     def _do_rollback_stage(self, cmd, state, task_id, reconcile):
         # Reconcile idempotency: if stage.rolled_back was already persisted for
         # this command (crash between event commit and return), do not emit a
@@ -3431,12 +3755,41 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             if already:
                 return
+        # B57 re-fix defense in depth (review 2026-08-27): the CLI validates a
+        # closed target set and the kernel adopts the approval payload's
+        # to_stage -- but a hand-crafted out-of-band human.approval could
+        # smuggle an arbitrary stage in. Mirror _do_recover_stage: reject
+        # out-of-set targets with an audit blob, no event, no state change.
+        # The set is every to_stage the kernel legally emits today: gap-typed
+        # presets (M-ACC/M-SPEC), stub_gap + lineage (M-DESIGN), and the
+        # human.return escalation sets (M-STORY included).
+        if cmd.params.get("to_stage") not in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN"):
+            self.store.write_audit_blob(
+                {
+                    "event": "stage.rolled_back",
+                    "command_id": cmd.command_id,
+                    "rejected": True,
+                    "reason": (
+                        "rollback_stage target not in closed set "
+                        "(M-STORY|M-SPEC|M-ACC|M-DESIGN): "
+                        f"{cmd.params.get('to_stage')!r}"
+                    ),
+                }
+            )
+            return
+        # B59 (#75): discarding M-IMPL progress must also discard its main-tree
+        # residue, or the "discarded" work leaks into the next cycle's
+        # environment (baseline freeze + agent verification).
+        quarantined = (
+            self._quarantine_rollback_residue() if state.stage == "M-IMPL" else []
+        )
         self._emit(
             "stage.rolled_back",
             {
                 "from_stage": state.stage,
                 "to_stage": cmd.params["to_stage"],
                 "reason": cmd.params.get("reason", ""),
+                "quarantined": quarantined,
             },
             command_id=cmd.command_id,
         )
@@ -3493,6 +3846,318 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
         )
 
+    # -- v0.7 Phase 0 pre-gate handler (architecture §1.0.2/§1.1, T-015) -------
+
+    def _emit_phase0_blocked(self, cmd, reason: str, detail: str, recoverable: bool):
+        """Emit ``phase0.blocked`` (§1c-5): the run parks for Human repair."""
+        return self._emit(
+            "phase0.blocked",
+            {"reason": reason, "detail": detail, "recoverable": recoverable},
+            command_id=cmd.command_id,
+        )
+
+    def _phase0_guard_violations(self) -> tuple[list[str], list[str], bool]:
+        """Guard hardening input (§1d; registry surface IF-GUARD-001/002).
+
+        Returns ``(violations, guard_refs, registry_present)``. A PRESENT but
+        unloadable §4.2 registry yields violations (fail closed -- the run
+        parks at phase0.blocked rather than proceeding under a substituted
+        registry, interfaces §1c/§1e fail-closed evidence authenticity). An
+        ABSENT §4.2 registry means no guard/parity evidence exists on this
+        host: the Phase 0 pre-gate must park (``registry_present=False``)
+        rather than fabricate a passed hardening or a seal.
+
+        No packaged-asset substitution is allowed to mask an unloadable host
+        registry into a pass (Prism R9-01): the host seed must itself carry a
+        valid §4.2 block ("demo asset 同源"); a seed that does not is a
+        test/seed defect (SHIELD_FIX), never a silent implementation pass.
+        """
+        arch = paths.projects_dir(self.store.home) / self.version / "architecture.md"
+        if not arch.is_file():
+            return [], [], False
+        from tracks.executor.guard_registry import load_guard_registry
+
+        try:
+            load_guard_registry(arch)
+        except (ValueError, OSError, UnicodeError) as exc:
+            return [
+                f"architecture.md §4.2 registry block failed to load: {exc}"
+            ], [str(arch)], True
+        return [], [str(arch)], True
+
+    def _repair_phase0_gap(
+        self, cmd, gap, baseline_version: str, node_digests: dict
+    ) -> None:
+        """Bind a marker-only baseline gap to its real collected node through a
+        genuine adapter-selected execution (interfaces §1c phase0.baseline_
+        repaired; §1e/§1h adapter protocol).
+
+        Emits ``phase0.baseline_repaired`` carrying the version-qualified
+        ``ac``, the bound node (node_id + digest), and a selection identity
+        derived deterministically from the ACTUALLY executed selection
+        (``make_selection_id`` over the adapter-run nodes with the canonical
+        R2 scope/basis) plus the command echo of the executed argv -- so the
+        evidence cannot be forged as canned identity strings."""
+        contract = load_contract(self.repo)
+        section = getattr(contract, "integration", None) or contract.unit
+        from tracks.adapters.base import UnknownAdapterError, resolve_adapter
+
+        declared = contract.adapter
+        if declared is None:
+            raise UnknownAdapterError(
+                "host project contract declares no [adapter] section "
+                "(IF-ADAPTER-001); the executor consumes only the host "
+                "declaration and never a built-in reference adapter"
+            )
+        adapter = resolve_adapter(
+            declared.id, declared.protocol, declared.version
+        )
+        cwd = (
+            Path(self.repo)
+            if section.cwd == "."
+            else Path(self.repo) / section.cwd
+        )
+        result_path = self._result_staging_path(cmd.command_id or "", "phase0-repair")
+        try:
+            argv = list(
+                adapter.run_selected(
+                    section.run_selected,
+                    [gap.planned_node_id],
+                    str(result_path),
+                    cwd,
+                )
+            )
+        finally:
+            result_path.unlink(missing_ok=True)
+        nodes = [gap.planned_node_id]
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope=_R2_SCOPE,
+            basis=_R2_BASIS,
+            baseline=baseline_version,
+            commit="",
+            tree_stamp="",
+        )
+        evidence_id = hashlib.sha256(
+            f"{gap.planned_node_id}@{baseline_version}".encode()
+        ).hexdigest()
+        self._emit(
+            "phase0.baseline_repaired",
+            {
+                "ac": f"{gap.ac}@{baseline_version}",
+                "bound_node": {
+                    "node_id": gap.planned_node_id,
+                    "digest": node_digests.get(gap.planned_node_id, ""),
+                },
+                "selection_id": selection_id,
+                "evidence_id": evidence_id,
+                "command_echo": argv,
+                "status": "repaired",
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _phase0_blocked_resume(self, state) -> bool:
+        """SM-01.3 resume preflight (IF-FAILCLOSED-001 / interfaces §1c).
+
+        When a drive starts with ``phase0_status == "BLOCKED"`` the kernel
+        parks by design (``decide_phase0`` returns no commands at BLOCKED), so
+        only the executor effects layer can re-issue the validation once Human
+        repairs the repo facts. Appends one fresh ``phase0_validate`` command
+        (command.issued WAL) and executes it, returning True when a resume was
+        kicked; a no-op (False) for any other status. The run-loop entry calls
+        this at most once per drive -- no tick-level hot loop -- and the
+        re-validation runs the FULL hard checks: a still-broken host keeps
+        parking at phase0.blocked rather than receiving a watered-down SEALED
+        pass (SM-01.3, §1c fail-closed).
+        """
+        if getattr(state, "phase0_status", None) != "BLOCKED":
+            return False
+        self.issue(Command(kind="phase0_validate"))
+        return True
+
+    def _do_phase0_validate(self, cmd, state, task_id, reconcile):
+        """Runtime Phase 0 pre-gate for v0.7 hosts (interfaces §1c/§1d).
+
+        Emits the append-only ``phase0.*`` sequence over the delivered domain
+        functions: gap scan over the baseline's real collected-node inventory
+        (unrecoverable identities BLOCK, §1d), the collected-coverage gate,
+        guard hardening, then the seal. Every event goes through the store
+        (append-only, AC-NFR0140-01): dropping the projection and replaying
+        rebuilds the identical phase0_status/seal/blocked fields."""
+        if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
+            return
+        from tracks.executor.phase0 import judge_real_coverage, scan_trace_gaps
+        from tracks.executor.test_select import TestSelectError
+
+        baseline_version = _phase0_baseline_version(self.version)
+        if baseline_version is None:
+            self._emit_phase0_blocked(
+                cmd,
+                "baseline_unresolvable",
+                f"cannot derive a baseline version from {self.version!r}",
+                True,
+            )
+            return
+        node_layer, collect_error = self._collect_all_declared_layers(
+            capture_absent_ok=True
+        )
+        if collect_error is not None:
+            self._emit_phase0_blocked(cmd, "collect_failed", collect_error, True)
+            return
+        nodes = sorted(node_layer)
+        try:
+            node_digests = collect_node_source_digests(Path(self.repo), nodes)
+        except TestSelectError as exc:
+            self._emit_phase0_blocked(cmd, "identity_unrecoverable", str(exc), True)
+            return
+        baseline_dir = paths.projects_dir(self.store.home) / baseline_version
+        planned = _phase0_planned_bindings(baseline_dir)
+        approved = _phase0_approved_acs(baseline_dir)
+        gaps = scan_trace_gaps(baseline_version, approved, planned, node_digests, {})
+        fatal = [gap for gap in gaps if gap.reason != "marker_only"]
+        if fatal:
+            self._emit_phase0_blocked(
+                cmd,
+                fatal[0].reason,
+                "; ".join(f"{gap.ac}: {gap.planned_node_id}" for gap in fatal),
+                False,
+            )
+            return
+        # Marker-only gaps (planned node collected with a real digest but no
+        # persisted evidence) are REPAIRED into real collected-node evidence
+        # before the run may continue; a repair-less seal is illegal (§1d).
+        for gap in gaps:
+            if gap.reason == "marker_only" and gap.planned_node_id in node_digests:
+                self._repair_phase0_gap(cmd, gap, baseline_version, node_digests)
+        planned_nodes = set(planned.values())
+        ratio = (
+            len([node for node in planned_nodes if node_digests.get(node)])
+            / len(planned_nodes)
+            if planned_nodes
+            else 1.0
+        )
+        judgement = judge_real_coverage(ratio, 1.0, ())
+        self._phase0_emit_coverage(
+            cmd, judgement, ratio, node_layer, node_digests, nodes
+        )
+        if not judgement.passed:
+            self._emit_phase0_blocked(
+                cmd, "coverage_below_threshold", judgement.reason or "", True
+            )
+            return
+        if self._phase0_guard_harden(cmd, baseline_version, baseline_dir):
+            return
+        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+
+    def _phase0_emit_coverage(
+        self, cmd, judgement, ratio: float, node_layer, node_digests, nodes
+    ) -> None:
+        """Emit the ``phase0.coverage`` gate event (§1d, by=collected)."""
+        outcomes_blob = self.store.write_audit_blob(
+            {
+                "nodes": [
+                    {"node": node, "layer": node_layer[node], "digest": node_digests[node]}
+                    for node in nodes
+                ]
+            }
+        )
+        self._emit(
+            "phase0.coverage",
+            {
+                "status": "passed" if judgement.passed else "failed",
+                "ratio": ratio,
+                "threshold": judgement.threshold,
+                "by": "collected",
+                "exclude": "none",
+                "excluded_sources": list(judgement.excluded_sources),
+                "outcomes_ref": f".tracks/runtime/blobs/{outcomes_blob}"
+                if outcomes_blob
+                else "",
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _phase0_guard_harden(
+        self, cmd, baseline_version: str, baseline_dir: Path
+    ) -> bool:
+        """Guard-hardening gate (§1d): park when no registry/parity evidence
+        exists or the registry is invalid; otherwise harden. Returns True when
+        the run was parked (blocked) and must stop."""
+        violations, guard_refs, registry_present = self._phase0_guard_violations()
+        if not registry_present:
+            self._emit_phase0_blocked(
+                cmd,
+                "guard_registry_invalid",
+                "no §4.2 guard registry/parity evidence on this host",
+                True,
+            )
+            return True
+        self._emit(
+            "phase0.guard_hardened",
+            {
+                "status": "passed" if not violations else "blocked",
+                "violations": len(violations),
+                "revised": 0,
+                "guard_evidence_refs": guard_refs,
+                "parity_event_seq": 0,
+            },
+            command_id=cmd.command_id,
+        )
+        if violations:
+            self._emit_phase0_blocked(
+                cmd, "guard_registry_invalid", "; ".join(violations), False
+            )
+            return True
+        return False
+
+    def _emit_phase0_sealed(self, cmd, baseline_version: str, baseline_dir: Path) -> None:
+        """Emit the terminal ``phase0.sealed`` event (interfaces §1c).
+
+        Builds the seal manifest from the baseline documents and the frozen
+        test digests via the T-005 facade, persists it (plus the frozen-test
+        digest map) to audit blobs, and references both from the emitted
+        event. The ``seal_id`` is the stable content digest of the remaining
+        manifest fields (IF-PHASE-003)."""
+        from tracks.executor.phase0 import build_seal_manifest
+
+        contract_toml = paths.project_toml_path(paths.tracks_home(Path(self.repo)))
+        env_digest = hashlib.sha256(contract_toml.read_bytes()).hexdigest()
+        manifest = build_seal_manifest(
+            baseline_version,
+            _phase0_document_digests(baseline_dir),
+            _phase0_frozen_test_digests(Path(self.repo), self._frozen_test_paths()),
+            (),
+            env_digest,
+        )
+        seal_blob = self.store.write_audit_blob(
+            {
+                "baseline_version": manifest.baseline_version,
+                "document_digests": dict(manifest.document_digests),
+                "frozen_test_digests": dict(manifest.frozen_test_digests),
+                "marks": list(manifest.marks),
+                "environment_contract_digest": manifest.environment_contract_digest,
+                "seal_id": manifest.seal_id,
+            }
+        )
+        frozen_blob = self.store.write_audit_blob(dict(manifest.frozen_test_digests))
+        self._emit(
+            "phase0.sealed",
+            {
+                "baseline_version": baseline_version,
+                "seal_id": manifest.seal_id,
+                "seal_manifest_blob": f".tracks/runtime/blobs/{seal_blob}"
+                if seal_blob
+                else "",
+                "marks": "registered",
+                "env_contract": "pass",
+                "frozen_tests_blob": f".tracks/runtime/blobs/{frozen_blob}"
+                if frozen_blob
+                else "",
+            },
+            command_id=cmd.command_id,
+        )
+
     # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
 
     def _run_contract_sections(
@@ -3526,7 +4191,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 text=True,
             )
             rc = proc.returncode
-            # M-TEST collection: pytest exit_code=5 ("no tests collected")
+            # M-TEST collection: test exit_code=5 ("no tests collected")
             # on the e2e section is not a collection failure — a hotfix run
             # with an integration-only delta has no e2e tests. Normalize to
             # 0 for collect only so _do_collect_tests does not hard-fail.
@@ -3959,7 +4624,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return baseline_ev.payload.get("baseline_id"), selected_by_layer, selected_all
 
     def _result_staging_path(self, command_id: str, section: str) -> Path:
-        """Runtime-provided unique writable ``{result}`` JUnit XML path.
+        """Runtime-provided unique writable ``{result}`` test result path.
 
         Lives in system temp staging (per run/command/layer), never inside the
         repo tree, so it enters no tree identity and no write attribution."""
@@ -4055,14 +4720,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         SELECT_R2 against THIS run's persisted pre-WRITE snapshot -> emit
         ``test.selected(scope=r2_delta)`` BEFORE executing -> execute ONLY the
         selected nodes through each layer's contract ``run_selected`` template
-        ({nodes}/{result} substituted; concurrency/junit flags are
-        contract-owned, Runtime injects nothing) -> parse the strict JUnit XML
+        ({nodes}/{result} substituted; concurrency/test result flags are
+        contract-owned, Runtime injects nothing) -> parse the strict test result
         result and require exact node coverage -> classify legal Red per node.
         Never executes a full ``run`` nor any historical/R1 node. Feature
         empty-R2 fails closed (check=empty_r2); the hotfix explicit unit-only
         increment bypass is preserved (FR-0244). All-legit -> red.validated(valid)
         -> PRISM_REVIEW; illegit/unexpected pass -> red.validated(invalid) ->
-        DIAGNOSE. stdout/stderr are logs only -- the {result} JUnit record is
+        DIAGNOSE. stdout/stderr are logs only -- the {result} test result record is
         the sole per-node authority."""
         if reconcile and state.red_validated:
             return
@@ -4146,7 +4811,43 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _emit_empty_r2_failure(self, cmd, state) -> None:
         """Feature M-TEST empty R2 -> fail closed (check=empty_r2): a vacuous
-        pass is refused; hotfix must declare its unit-only increment."""
+        pass is refused; hotfix must declare its unit-only increment.
+
+        Before blaming the author, screen for collect-pipeline blindness
+        (operator finding 2026-08-24, run 01M0S0FQ): committed test artifacts
+        that the collector never saw indicate a runtime/contract defect
+        (check=collect_defect) -- no attempt charge, operator escalation,
+        preserved checkpointed work. A third screen covers the design
+        re-approval re-validation cycle: when this cycle's no-diff review was
+        ACCEPTED and the run already committed its test increment, the empty
+        selection is discharged (check=r2_discharged) to EXIT -- the
+        increment exists and was validated earlier in this run; the cycle
+        structurally cannot produce a new R2 delta (operator finding
+        2026-08-24, third M-TEST cycle)."""
+        defect = self._collect_defect_evidence()
+        if defect is not None:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "collect_defect",
+                    "reason": defect,
+                    "evidence": [],
+                    "target_stage": "M-TEST",
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        discharge = self._r2_discharge_evidence()
+        if discharge is not None:
+            self._emit(
+                "verdict.passed",
+                {
+                    "check": "r2_discharged",
+                    "detail": discharge,
+                },
+                command_id=cmd.command_id,
+            )
+            return
         self._emit(
             "verdict.failed",
             {
@@ -4161,6 +4862,173 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             },
             command_id=cmd.command_id,
         )
+
+    def _r2_discharge_evidence(self) -> str | None:
+        """Design re-approval discharge for an empty-R2 gate hit.
+
+        Conditions (all required, machine evidence only):
+        - this cycle's no-diff explanation was REVIEWED and ACCEPTED
+          (no_diff.reviewed verdict=pass after the retry cutoff);
+        - the run already committed its test increment (test.committed);
+        - the current full collect sees the committed assets
+          (collected_count > 0).
+
+        Under those, the vacuous-pass guard's purpose (refuse validation of a
+        nonexistent increment) is already satisfied by the committed and
+        earlier-validated increment; the re-validation cycle structurally
+        cannot add a new R2 delta. Returns the discharge detail, else None."""
+        cutoff = self._retry_cutoff_seq()
+        no_diff_accepted = any(
+            ev.type == "no_diff.reviewed"
+            and ev.seq > cutoff
+            and ev.payload.get("verdict") == "pass"
+            for ev in self.store.events(self.run_id)
+        )
+        if not no_diff_accepted:
+            return None
+        committed = self._latest_event("test.committed")
+        if committed is None:
+            return None
+        collected = self._latest_event("test.collected", status="passed")
+        if collected is None or collected.payload.get("collected_count", 0) <= 0:
+            return None
+        return (
+            "design re-approval re-validation: no-diff review accepted this "
+            f"cycle; increment already committed ({committed.payload.get('commit_sha', '')[:12]}) "
+            f"and collected ({collected.payload.get('collected_count')} nodes)"
+        )
+
+    def _collect_defect_evidence(self) -> str | None:
+        """Infra-side collect blindness signatures for an empty-R2 gate hit.
+
+        Signature A (total blindness): the latest persisted baseline AND the
+        latest full collect both saw ZERO nodes while the contract's declared
+        layer paths contain python test modules -- the collector parsed
+        nothing (incident: framework 9.1 quiet collect emits per-file counts
+        without ``::`` node ids; the runtime parser keyed on ``::`` lines).
+
+        Signature B (new-file blindness): test modules added/changed by this
+        run's checkpointed Shield commit (test.written -> result.checkpointed
+        base..commit diff) have NO collected node carrying that file prefix
+        -- the collector never saw the new file at all.
+
+        Returns a human-readable reason when either signature holds (the
+        gate is a collect/contract defect, not the author's), else None.
+        """
+        layer_paths = self._declared_layer_paths()
+        collected = self._latest_event("test.collected")
+        baseline = self._latest_event("test.baseline_captured", status="passed")
+        reason = self._total_blindness_reason(collected, baseline, layer_paths)
+        if reason is not None:
+            return reason
+        return self._new_file_blindness_reason(collected, layer_paths)
+
+    def _declared_layer_paths(self) -> list[str]:
+        """Repo-relative layer path prefixes declared by the host contract."""
+        try:
+            sections = _contract_sections(load_contract(self.repo))
+        except ContractError:
+            sections = []
+        layer_paths: list[str] = []
+        for _name, sec in sections:
+            if sec is None:
+                continue
+            declared = getattr(sec, "paths", None)
+            if declared is None and hasattr(sec, "get"):
+                declared = sec.get("paths")
+            layer_paths.extend(
+                rel for rel in declared or [] if isinstance(rel, str) and rel
+            )
+        return layer_paths
+
+    def _total_blindness_reason(self, collected, baseline, layer_paths) -> str | None:
+        """Signature A: zero-node baseline + zero-node collect while the
+        declared layer dirs demonstrably contain test modules."""
+        if collected is None or baseline is None:
+            return None
+        if collected.payload.get("collected_count") != 0:
+            return None
+        if baseline.payload.get("nodes_count") != 0:
+            return None
+        has_modules = any(
+            (Path(self.repo) / rel).is_dir()
+            and any((Path(self.repo) / rel).rglob("test_*.py"))
+            for rel in layer_paths
+        )
+        if not has_modules:
+            return None
+        return (
+            "collect pipeline blindness: baseline and full collect both "
+            "parsed 0 nodes while declared layer paths contain test "
+            "modules (suspect collector output format / parser mismatch, "
+            "e.g. framework 9.1 quiet collect per-file counts without "
+            "node ids); Shield's committed artifacts were never seen"
+        )
+
+    def _new_file_blindness_reason(self, collected, layer_paths) -> str | None:
+        """Signature B: checkpointed new/changed test modules absent from the
+        collected node inventory entirely (file prefix never collected)."""
+        written = self._latest_event("test.written")
+        if collected is None or written is None:
+            return None
+        result_id = written.payload.get("result_id")
+        commit = written.payload.get("commit_sha")
+        base = self._checkpoint_base_sha(result_id)
+        if not (base and commit and base != commit):
+            return None
+        test_modules = self._changed_test_modules(base, commit, layer_paths)
+        if not test_modules:
+            return None
+        prefixes = self._collected_prefixes(collected)
+        if prefixes is None:
+            return None
+        missing = [m for m in test_modules if m not in prefixes]
+        if not missing:
+            return None
+        return (
+            "collect pipeline blindness: checkpointed test modules have "
+            f"zero collected nodes: {', '.join(missing[:5])} "
+            "(collector never saw files the author committed)"
+        )
+
+    def _checkpoint_base_sha(self, result_id) -> str | None:
+        """base_sha of the result.checkpointed event for ``result_id``."""
+        for ev in self.store.events(self.run_id):
+            if (
+                ev.type == "result.checkpointed"
+                and ev.payload.get("result_id") == result_id
+                and ev.payload.get("base_sha")
+            ):
+                return ev.payload.get("base_sha")
+        return None
+
+    def _changed_test_modules(self, base, commit, layer_paths) -> list[str]:
+        """Test modules changed in base..commit under declared layer paths."""
+        try:
+            proc = git(
+                self.repo, "diff", "--name-only", f"{base}..{commit}", check=False
+            )
+            changed = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+        except Exception:
+            return []
+        return sorted(
+            ln
+            for ln in changed
+            if ln.endswith(".py")
+            and any(
+                ln == rel or ln.startswith(rel.rstrip("/") + "/")
+                for rel in layer_paths
+            )
+        )
+
+    def _collected_prefixes(self, collected) -> set[str] | None:
+        """File-prefix set of the latest collect's per-node blob (None when
+        the blob is unreadable -- the caller treats that as no signal)."""
+        try:
+            per_node = self._read_runtime_blob(collected.payload.get("per_node_blob"))
+        except TestSelectError:
+            return None
+        return {(entry.get("node") or "").partition("::")[0] for entry in per_node}
 
     @staticmethod
     def _stale_selection_fields(
@@ -4342,15 +5210,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     ) -> tuple[list[dict], list[dict], bool, str | None]:
         """Run ONLY the selected nodes through each layer's contract
         ``run_selected`` template ({nodes}/{result} substituted; concurrency/
-        junit flags are contract-owned, Runtime injects nothing).
+        test result flags are contract-owned, Runtime injects nothing).
 
         Returns ``(outcomes, findings, all_legit, error_reason)``; on a
-        JUnit/contract/OS failure ``error_reason`` is set (FRB-G) while the
+        test result/contract/OS failure ``error_reason`` is set (FRB-G) while the
         staged per-command result files are still cleaned up (FA-4)."""
         outcomes: list[dict] = []
         findings: list[dict] = []
         all_legit = True
         staged_results: list[Path] = []
+        oob_files = self._oob_accepted_test_files()
         try:
             for name, section in sections:
                 nodes = selected_by_layer.get(name) or []
@@ -4383,11 +5252,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "stdout": proc.stdout[-8000:],
                     "stderr": proc.stderr[-8000:],
                 }
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, nodes)
-                if not self._record_layer_outcomes(nodes, mapping, outcomes, findings):
+                if not self._record_layer_outcomes(
+                    nodes, mapping, outcomes, findings, oob_files
+                ):
                     all_legit = False
-        except (JUnitResultError, TestSelectError, OSError, UnicodeError) as exc:
+        except (TestResultError, TestSelectError, OSError, UnicodeError) as exc:
             # FRB-G: a missing run_selected executable (OSError) or an
             # undecodable output stream routes the contract_error channel
             # (red.validated invalid + verdict.failed), never a raw crash.
@@ -4406,12 +5277,37 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     staged_results[0].parent.rmdir()
         return outcomes, findings, all_legit, None
 
+    def _oob_accepted_test_files(self) -> set[str]:
+        """Test files carried by operator OOB declarations (oob.accepted).
+
+        2026-08-27 doctrinal gap (run 01M0S0FQ M-TEST park): operator
+        emergency fixes ship with their regression tests, and those tests are
+        necessarily green-on-arrival -- the fix is already on the tree. The
+        must-be-red doctrine (a v0.7 acceptance instrument must fail until
+        M-IMPL implements it) does not apply to them: they are operator
+        verification of landed behavior, not version acceptance instruments.
+        The OOB channel is the system's own declaration for exactly this
+        operator scope; files it recorded are exempt from the unexpected_pass
+        verdict (classified ``oob_verified`` instead)."""
+        files: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type != "oob.accepted":
+                continue
+            for path in ev.payload.get("files") or []:
+                if isinstance(path, str) and path.startswith("tests/"):
+                    files.add(path)
+        return files
+
     @staticmethod
-    def _record_layer_outcomes(nodes, mapping, outcomes: list[dict], findings: list[dict]) -> bool:
+    def _record_layer_outcomes(
+        nodes, mapping, outcomes: list[dict], findings: list[dict], oob_files: set[str]
+    ) -> bool:
         """Append one normalized outcome + finding per selected node (the
-        {result} JUnit record is the sole per-node authority; stdout/stderr
+        {result} test result record is the sole per-node authority; stdout/stderr
         are logs only). Returns True when every node classified as legal Red;
-        an unexpected pass/skip classifies unexpected_pass."""
+        an unexpected pass/skip classifies unexpected_pass -- unless the node's
+        file is OOB-declared (see _oob_accepted_test_files), in which case
+        green-on-arrival is legal (oob_verified)."""
         layer_legit = True
         for node in nodes:
             case = mapping[node]
@@ -4420,7 +5316,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 if case.status in ("passed", "skipped")
                 else classify_red_detail(case.detail or "", case.status)
             )
-            if klass not in _LEGIT_RED:
+            if klass == "unexpected_pass" and node.split("::")[0] in oob_files:
+                klass = "oob_verified"
+            if klass not in _LEGIT_RED and klass != "oob_verified":
                 layer_legit = False
             outcomes.append(
                 {
@@ -4478,6 +5376,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                         f["classification"]
                         for f in findings
                         if f["classification"] not in _LEGIT_RED
+                        and f["classification"] != "oob_verified"
                     ),
                     "invalid",
                 ),
@@ -4590,7 +5489,40 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         marker = f"command_id: {cmd.command_id}"
         tests_dir = self.repo / "tests"
+        # B59 (#75): the designed flow commits Shield's WRITE output during the
+        # pipeline itself (_stage_and_commit) — at freeze time tests/ must be
+        # ENTIRELY clean. Any dirty file, tracked or untracked, is residue from
+        # a DISCARDED cycle (run 01M0S0FQ: three freeze commits — 1e135d7,
+        # 632a84f, 02417f9 — silently absorbed prior Devon RED residue,
+        # seeding the baseline with tests no current round wrote). Fail closed
+        # on all of it instead of absorbing: the operator cleans the tree and
+        # `trac retry` re-enters the freeze. (Runtime-owned test-runner
+        # byproducts under tests/ are NOT residue: `trac init` gitignores them
+        # at the host root — see HOST_BYPRODUCTS_GITIGNORE — so they never
+        # reach this check.)
         if tests_dir.exists():
+            status = git(self.repo, "status", "--porcelain", "--", "tests")
+            residue = [
+                line[3:].split(" -> ")[-1].strip()
+                for line in status.stdout.splitlines()
+                if line.strip()
+            ]
+            if residue:
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "test_freeze_contamination",
+                        "reason": (
+                            "tracked files under tests/ are modified at freeze time "
+                            "and are not attributable to the current Shield WRITE "
+                            "result; refusing to freeze them into the test baseline"
+                        ),
+                        "evidence": "; ".join(residue[:20]),
+                        "attempt": state.current_attempt + 1,
+                    },
+                    command_id=cmd.command_id,
+                )
+                return
             git(self.repo, "add", "tests")
         proc = _commit_if_staged(self.repo, f"M-TEST: freeze test assets\n\n{marker}")
         if proc is not None and proc.returncode != 0:
@@ -4617,7 +5549,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         token = token_fn("diagnose", "classification", default) if token_fn else default
         return (
             token
-            if token in ("test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect")
+            if token in (
+                "test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect",
+                "red_defect", "plan_defect",
+            )
             else default
         )
 

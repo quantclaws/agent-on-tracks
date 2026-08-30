@@ -9,7 +9,7 @@ Covers:
 
 from __future__ import annotations
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests._support.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 
 
 # AC-FR0247-01@v0.6 TRACKS-TRACE design gap returns to hotfix M-DESIGN without Human gate

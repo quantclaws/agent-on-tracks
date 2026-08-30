@@ -205,7 +205,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if role != "prism" or substate != "DIAGNOSE":
             return
         classification = _simulate_map().get("diagnose:classification")
-        if classification in {"test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"}:
+        if classification in {
+            "test_defect",
+            "impl_defect",
+            "red_defect",
+            "plan_defect",
+            "stub_gap",
+            "ac_gap",
+            "spec_gap",
+        }:
             result["verdict"] = classification
             result["self_report"] = f"diagnose: {classification}"
 
@@ -836,7 +844,23 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             paths_value = manifest.get(key)
             if not FakeBackend._devon_manifest_paths_valid(paths_value):
                 return f"manifest.{key} must be a non-empty path list"
-        if not FakeBackend._devon_test_refs_valid(assignment["test_refs"]):
+        # B50 (#65): schema-2 assignments carry the split contract -- unit_refs
+        # (unit paths, may be empty: the fake Devon synthesizes its own RED
+        # test) and acceptance_refs (integration paths). Legacy assignments
+        # keep the unit-only test_refs rule.
+        unit_refs = assignment.get("unit_refs")
+        acceptance_refs = assignment.get("acceptance_refs")
+        if unit_refs is not None or acceptance_refs is not None:
+            if unit_refs and not FakeBackend._devon_test_refs_valid(unit_refs):
+                return "unit_refs must target repo-relative tests/unit paths"
+            if acceptance_refs and not all(
+                str(ref).split("::", 1)[0].replace("\\", "/").startswith(
+                    "tests/integration/"
+                )
+                for ref in acceptance_refs
+            ):
+                return "acceptance_refs must target repo-relative tests/integration paths"
+        elif not FakeBackend._devon_test_refs_valid(assignment["test_refs"]):
             return "test_refs must target repo-relative tests/unit paths"
         return None
 

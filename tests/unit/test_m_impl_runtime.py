@@ -52,6 +52,7 @@ from tracks.executor.rgr import (
     create_green_commit,
     create_red_ref,
     red_base_sha,
+    verify_lineage,
 )
 from tracks.executor.worktree import (
     cleanup_worktree,
@@ -340,6 +341,126 @@ def test_manifest_persists_replays_and_ready_selection_is_serial(tmp_path):
     started = [ev for ev in store.events("RUN") if ev.type == "task.started"]
     assert [ev.payload["task_id"] for ev in started] == ["T-001", "T-002"]
     assert store.state("RUN").current_task_metadata["task_id"] == "T-002"
+
+
+def test_select_task_after_recovered_reentry_ignores_abandoned_started(tmp_path):
+    """B53 (#69): stage.recovered(M-IMPL) is a residency boundary for the
+    in-flight-lease guard. A task.started from the abandoned cycle (never
+    completed, rolled back through M-DESIGN, re-entered via B32 recovery)
+    must not strand TASK_DISPATCH -- the pre-fix boundary scan only counted
+    stage.entered, so the stale start looked in-flight and _do_select_task
+    returned silently on every command (run 01M0S0FQ hot loop, ~120ms per
+    select_task). FR-0150: stale starts remain selectable."""
+    repo = _repo(tmp_path)
+    _contract(repo)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    # abandoned cycle: T-001 started, never completed
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task["task_id"],
+            "task": task,
+            "manifest": {
+                "task_id": task["task_id"],
+                "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                "forbidden_paths": [".tracks/projects/**"],
+            },
+        },
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "stage.rolled_back",
+        {"from_stage": "M-IMPL", "to_stage": "M-DESIGN", "reason": "stub_gap"},
+    )
+    store.append("RUN", "v0.5", "stage.entered", {"stage": "M-DESIGN"})
+    # B32 forward recovery re-enters M-IMPL (the CURRENT residency boundary)
+    store.append(
+        "RUN",
+        "v0.5",
+        "stage.recovered",
+        {"stage": "M-IMPL", "from_stage": "M-DESIGN", "reason": "mis-typed stub_gap"},
+    )
+    # fresh residency re-commits its taskgraph (stage.recovered reuses the
+    # fresh-cycle reset, clearing task_refs)
+    _graph(store, task)
+    executor = _executor(repo, store)
+    state = store.state("RUN")
+    assert state.current_task_id is None  # recovery reset the stage cycle
+    executor._do_select_task(
+        Command("select_task", command_id="C-SELECT"), state, None, False
+    )
+    started = [ev for ev in store.events("RUN") if ev.type == "task.started"]
+    # T-001 re-selected in the fresh residency (clean budget re-run)
+    assert [ev.payload["task_id"] for ev in started] == ["T-001", "T-001"]
+    assert store.state("RUN").current_task_id == "T-001"
+
+
+def test_red_ref_free_attempt_skips_live_slot_of_same_residency(tmp_path):
+    """B54 (#70): a same-residency re-checkpoint (Prism red_defect retry,
+    human.retry round) must allocate the NEXT free R slot, not crash. The
+    old walk raised on a slot live this residency -- run 01M0S0FQ T-001:
+    slots 1-3 orphaned by the rollback, slot 4 checkpointed in this
+    residency, the red_defect retry's checkpoint (attempt 2) walked into
+    live slot 4 and killed the trac run process."""
+    repo = _repo(tmp_path)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    # physical refs: slots 1-4 all taken (1-3 orphaned, 4 live this residency)
+    sha = _git(repo, "rev-parse", "HEAD")
+    for slot in (1, 2, 3, 4):
+        _git(repo, "update-ref", f"refs/trac/rgr/RUN/T-001/{slot}/red", sha)
+    # a live checkpoint event for slot 4 in THIS residency
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": "T-001", "attempt": 4, "r_sha": sha, "ref": "refs/trac/rgr/RUN/T-001/4/red"},
+    )
+    # retry's checkpoint requests attempt 2 -> walks orphans 2, 3 AND live 4 -> 5
+    assert executor._red_ref_free_attempt("T-001", 2) == 5
+    # fresh task with no refs at all keeps its requested slot
+    assert executor._red_ref_free_attempt("T-002", 1) == 1
+
+
+def test_refactor_diff_reconstructable_from_working_tree(tmp_path):
+    """B55 (#71): the OpenCode backend never captures diff_ref for RGR
+    refactor phases (GREEN outcomes carry diff_ref=None too); the gate must
+    accept a working-tree reconstruction -- RED/GREEN's _validated_diff
+    fallback -- instead of parking every real refactor with a contract_error
+    (run 01M0S0FQ T-001: refactor changed tracks/adapters/base.py with
+    diff_ref=None -> escalation park)."""
+    repo = _repo(tmp_path)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    target = repo / "tracks" / "app.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "tracks/app.py")
+    _git(repo, "commit", "-m", "app")
+    # committed and unmodified: no diff to reconstruct
+    assert not executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/app.py"]}, []
+    )
+    # refactor change sitting uncommitted in the main tree -> reconstructable
+    target.write_text("x = 2\n", encoding="utf-8")
+    assert executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/app.py"]}, []
+    )
+    # union with observed_changed covers outcomes whose changed_paths are
+    # empty while the tree drifted
+    assert executor._refactor_diff_reconstructable(
+        {"changed_paths": []}, ["tracks/app.py"]
+    )
+    # paths with no on-disk change are not reconstructable (fail-closed kept)
+    assert not executor._refactor_diff_reconstructable(
+        {"changed_paths": ["tracks/absent.py"]}, []
+    )
 
 
 class _RecordingBackend:
@@ -811,6 +932,416 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     assert "Tracks-NFR:" not in message
 
 
+# -- #86: commit_green idempotency guard distinguish reconcile vs revise -------
+
+
+def test_commit_green_reconcile_guard_noop_when_recorded_and_committed(tmp_path):
+    """B56/#86 reconcile form: green.committed recorded + state.green_committed=True
+    → guard no-ops (no duplicate git commit, no new event)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    # First commit: emits green.committed, state in store now has green_committed=True
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+    # Reconcile replay: fresh state from store (green_committed=True), event recorded
+    fresh_state = store.state("RUN")
+    assert fresh_state.green_committed is True
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G-REPLAY"), fresh_state, None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+
+def test_commit_green_revise_lets_through_when_recorded_but_not_committed(tmp_path):
+    """#86 revise form: green.committed recorded + state.green_committed=False
+    (PRISM_FINAL revise or DIAGNOSE routed back to GREEN) → guard lets through,
+    emits a NEW green.committed for the same lineage slot."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    # First commit: emits green.committed
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
+
+    # Simulate the revise re-dispatch: PRISM_FINAL revise(impl_defect) routes
+    # back to GREEN (reducer clears green_committed) and Devon re-runs GREEN,
+    # producing a fresh outcome with a modify diff (the impl revision).
+    revise_diff = (
+        "diff --git a/tracks/app.py b/tracks/app.py\n"
+        "--- a/tracks/app.py\n"
+        "+++ b/tracks/app.py\n"
+        "@@ -1 +1,2 @@\n"
+        " IMPLEMENTED = True\n"
+        "+# revised\n"
+    )
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=revise_diff
+        ),
+    )
+    revised_state = store.state("RUN")
+    revised_state.green_committed = False
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), revised_state, None, False,
+    )
+    green_events = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
+    assert len(green_events) == 2, "revise must emit a second green.committed"
+    assert green_events[0].payload["g_sha"] != green_events[1].payload["g_sha"], (
+        "second commit must produce a different G (revised content)"
+    )
+    assert green_events[0].payload["attempt"] == green_events[1].payload["attempt"], (
+        "same R slot must be reused"
+    )
+
+
+def test_commit_green_guard_first_commit_unaffected(tmp_path):
+    """#86 regression: a first-time green commit (no prior green.committed event)
+    must still pass through the guard normally."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"], diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=_RGR_GREEN_DIFF),
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"]
+    assert len(green) == 1
+    assert green[0].payload["task_id"] == task["task_id"]
+
+
+def test_green_commit_binds_r_ref_slot_not_logical_attempt(tmp_path):
+    """B56 (#72): B54's first-free-slot R allocation can place the immutable
+    R ref at a slot above the logical attempt counter; G's Tracks-Attempt and
+    green.committed.attempt must record that slot so TASK_REVIEW's
+    verify_lineage resolves the ref the G trailer actually binds (run
+    01M0S0FQ T-001: logical attempt 3, R checkpointed into slot 5, G trailer
+    attempt 3 resolved the abandoned cycle's slot-3 R -> lineage park)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Pre-occupy slots 1-2 with orphan refs (abandoned-cycle semantics): the
+    # fresh residency's first checkpoint (logical attempt 1) must allocate
+    # slot 3.
+    base = _git(repo, "rev-parse", "HEAD")
+    for slot in (1, 2):
+        _git(repo, "update-ref", f"refs/trac/rgr/RUN/T-001/{slot}/red", base)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    assert red.payload["attempt"] == 3  # first free slot, not logical 1
+
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "green", ["tracks/app.py"], red.payload["r_sha"], diff_ref=RGR_GREEN_DIFF
+        ),
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    # G binds the R ref slot (3), not the logical attempt (1)
+    assert green.payload["attempt"] == 3
+    assert green.payload["trailers"]["Tracks-Attempt"] == "3"
+    assert green.payload["trailers"]["Tracks-R"] == red.payload["r_sha"]
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert "Tracks-Attempt: 3" in message
+    # TASK_REVIEW lineage resolves the ref the G trailer actually binds
+    events = [
+        {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
+        for ev in store.events("RUN")
+    ]
+    proof = verify_lineage(
+        str(repo),
+        "RUN",
+        task["task_id"],
+        green.payload["attempt"],
+        green.payload["g_sha"],
+        events,
+        issue_number=1,
+        ac_refs=["AC-FR0001-01", "FR-0001"],
+    )
+    assert proof.g_trailers_valid
+    assert proof.r_before_g
+
+
+def test_r_lineage_attempt_falls_back_to_logical_attempt(tmp_path):
+    """B56 (#72): without a matching red.checkpointed (r_sha unknown or no
+    R identity at all) the lineage attempt falls back to the logical attempt
+    -- pre-B54 behavior, fail-closed rather than guessing a slot."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 4, "r_sha": "R-live"},
+    )
+    assert executor._r_lineage_attempt(task["task_id"], "R-live", 1) == 4
+    assert executor._r_lineage_attempt(task["task_id"], "R-unknown", 1) == 1
+    assert executor._r_lineage_attempt(task["task_id"], None, 2) == 2
+    assert executor._r_lineage_attempt(task["task_id"], "", 2) == 2
+
+
+def test_green_commit_reconstructs_diff_from_cycle_outcome_union(tmp_path):
+    """B58 (#74): GREEN's working-tree diff reconstruction must union the
+    changed_paths of EVERY green outcome of the current RGR cycle, not just
+    the last one. impl_defect re-dispatches report only their own delta (run
+    01M0S0FQ T-001: dispatch 1 changed tracks/project.py, dispatch 3 changed
+    tracks/adapters/base.py; the reconstructed G captured only base.py and
+    the loader impl never reached any commit -- no gate caught it)."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    task["scope_boundary"] = "tracks/app.py, tracks/project.py"
+    store.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {"task_count": 1, "tasks": [task], "digest": "graph"},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {
+            "task_id": task["task_id"],
+            "task": task,
+            "manifest": {
+                "task_id": task["task_id"],
+                "allowed_paths": [
+                    "tracks/app.py",
+                    "tracks/project.py",
+                    "tests/unit/test_app.py",
+                ],
+                "forbidden_paths": [".tracks/projects/**"],
+            },
+        },
+    )
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+
+    # Dispatch 1's impl (no diff_ref -- OpenCode backend contract, B55) is
+    # still sitting uncommitted in the main tree when dispatch 2 is re-sent
+    # after a GREEN_GATE impl_defect failure.
+    project = repo / "tracks" / "project.py"
+    project.parent.mkdir(parents=True, exist_ok=True)
+    project.write_text("ADAPTER = 'reference-pytest'\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/project.py"], red.payload["r_sha"]),
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "impl_defect", "attempt": 1, "reason": "TypeError in gate run"},
+    )
+    app = repo / "tracks" / "app.py"
+    app.write_text("x = 1\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"]),
+    )
+
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    # The union reconstruction captured BOTH dispatches' files in G.
+    changed = _git(repo, "show", "--name-only", "--format=", green.payload["g_sha"])
+    assert "tracks/project.py" in changed
+    assert "tracks/app.py" in changed
+
+
+def test_green_cycle_changed_paths_stops_at_last_checkpoint(tmp_path):
+    """B58 (#74): the union is bounded by the last red.checkpointed -- green
+    outcomes from a superseded (red_defect-retried) cycle must not leak into
+    the new cycle's diff reconstruction."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/stale.py"]),
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 1, "r_sha": "R-live"},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], "R-live"),
+    )
+    assert executor._green_cycle_changed_paths() == ["tracks/app.py"]
+    # No green outcome in the current cycle -> None (caller falls back to the
+    # last outcome's own changed_paths).
+    store.append(
+        "RUN",
+        "v0.5",
+        "red.checkpointed",
+        {"task_id": task["task_id"], "attempt": 2, "r_sha": "R-live-2"},
+    )
+    assert executor._green_cycle_changed_paths() is None
+
+
+def test_green_union_beats_no_change_when_earlier_dispatch_left_changes(tmp_path):
+    """B58 (#74) / Prism OOB A01: a last outcome declaring no_change_reason
+    must NOT short-circuit into green.no_change when an earlier green dispatch
+    of the same cycle still has uncommitted worktree changes -- the union
+    reconstruction surfaces a non-empty diff, so the real change gets
+    committed instead of being silently dropped."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            ["tests/unit/test_app.py"],
+            classification="assertion_failure",
+            verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    # Dispatch 1 changed tracks/app.py (still uncommitted in the tree).
+    app = repo / "tracks" / "app.py"
+    app.parent.mkdir(parents=True, exist_ok=True)
+    app.write_text("x = 1\n", encoding="utf-8")
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], red.payload["r_sha"]),
+    )
+    # Dispatch 2 declares no change of its own.
+    no_change = _structured_outcome("green", [], red.payload["r_sha"])
+    no_change["no_change_reason"] = "already implemented"
+    store.append("RUN", "v0.5", "outcome.received", no_change)
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"),
+        store.state("RUN"),
+        None,
+        False,
+    )
+    events = list(store.events("RUN"))
+    assert not any(ev.type == "green.no_change" for ev in events)
+    green = [ev for ev in events if ev.type == "green.committed"][-1]
+    changed = _git(repo, "show", "--name-only", "--format=", green.payload["g_sha"])
+    assert "tracks/app.py" in changed
+
+
 def test_red_checkpoint_retry_uses_next_public_attempt(tmp_path):
     repo = _repo(tmp_path)
     store, _ = _started_task_store(repo)
@@ -956,7 +1487,9 @@ def test_rgr_reconcile_replay_emits_no_duplicate_events(tmp_path):
     green_command = Command("commit_green", command_id="C-G-REPLAY")
     stale_green_state = store.state("RUN")
     executor._do_commit_green(green_command, stale_green_state, None, False)
-    executor._do_commit_green(green_command, stale_green_state, None, True)
+    # Reconcile replay: fresh state from store (reflects green.committed → green_committed=True)
+    fresh_state = store.state("RUN")
+    executor._do_commit_green(green_command, fresh_state, None, True)
     assert len([ev for ev in store.events("RUN") if ev.type == "green.committed"]) == 1
 
 
@@ -1515,15 +2048,21 @@ def test_green_gate_ambiguous_r_identity_fails_closed_as_contract_error(tmp_path
     assert "SELECT_TASK failed closed" in last["reason"]
     passed = [ev for ev in store.events("RUN") if ev.type == "verdict.passed"]
     assert not passed, "an ambiguous R identity must never pass GREEN"
-    assert store.state("RUN").substate == "DIAGNOSE"
+    # B49 (#64): contract_error parks for the operator instead of routing
+    # into DIAGNOSE (the stub_gap auto-rollback loop, run 01M0S0FQ).
+    state = store.state("RUN")
+    assert state.substate == "GREEN_GATE"
+    assert state.status == "awaiting_human"
+    assert state.awaiting == "escalation"
 
 
 def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_path):
     """D-41 supersession of Contract 3: REFACTOR `no_change` no longer blind-
     reruns the Green gate — it reuses the persisted green.committed
     evidence/identity. Without that persisted evidence the reuse state is
-    unresolvable, so the gate fails closed with contract_error and routes to
-    DIAGNOSE instead of emitting refactor.no_change or re-executing anything."""
+    unresolvable, so the gate fails closed with contract_error and parks for
+    the operator (B49: awaiting_human/escalation) instead of emitting
+    refactor.no_change or re-executing anything."""
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     outcome = _structured_outcome("refactor", [], r_identity="1" * 40)
@@ -1548,7 +2087,12 @@ def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_pa
     assert not any(ev.type == "test.selected" for ev in events), (
         "the gate must not re-execute any selection without persisted evidence"
     )
-    assert store.state("RUN").substate == "DIAGNOSE"
+    # B49 (#64): contract_error parks instead of DIAGNOSE routing -- the
+    # substate stays wherever the gate ran from.
+    state = store.state("RUN")
+    assert state.substate != "DIAGNOSE"
+    assert state.status == "awaiting_human"
+    assert state.awaiting == "escalation"
 
 
 _TASK_REVIEW_FLAWS = (
@@ -2313,3 +2857,1066 @@ def test_green_gate_lint_findings_fail_with_check_lint(tmp_path):
     assert fails, "lint findings must fail the GREEN gate closed"
     assert fails[-1].payload["check"] == "lint"
     assert "E501" in fails[-1].payload["evidence"]
+
+
+# -- B50 (#65): declared-binding gate layer routing -----------------------------
+
+
+def _runtime(tmp_path) -> Executor:
+    """Bare executor for the pure ref-resolution helpers (no event history
+    needed: _expand_unit_refs/_acceptance_anchors/_integration_row_targets
+    are inventory-in/selection-out functions)."""
+    repo = _repo(tmp_path)
+    store = Store(paths.tracks_home(repo))
+    return Executor(store, repo, "RUN")
+
+
+def test_expand_unit_refs_node_exact_and_file_expansion(tmp_path):
+    """NODE ref selects exactly that node; FILE ref expands to every
+    collected node in the file (explicit whole-file declaration)."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/unit/test_a.py::test_one",
+        "tests/unit/test_a.py::test_two",
+        "tests/unit/test_b.py::test_three",
+    ]
+    assert executor._expand_unit_refs(
+        ["tests/unit/test_a.py::test_one"], inventory
+    ) == ["tests/unit/test_a.py::test_one"]
+    assert executor._expand_unit_refs(["tests/unit/test_a.py"], inventory) == [
+        "tests/unit/test_a.py::test_one",
+        "tests/unit/test_a.py::test_two",
+    ]
+
+
+def test_expand_unit_refs_absent_ref_fails_closed(tmp_path):
+    """B50 fail-closed: a unit_ref absent from the unit collect raises
+    TestSelectError (both unknown file and unknown node variants)."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = ["tests/unit/test_a.py::test_one"]
+    with pytest.raises(TestSelectError, match="absent from unit collect"):
+        executor._expand_unit_refs(["tests/unit/test_missing.py"], inventory)
+    with pytest.raises(TestSelectError, match="absent from unit collect"):
+        executor._expand_unit_refs(["tests/unit/test_a.py::test_other"], inventory)
+
+
+def test_acceptance_anchors_resolve_and_schema1_skips_cross_check(tmp_path):
+    """Legacy (schema-1) graphs resolve their mapped acceptance refs against
+    the integration inventory without the §8 cross-check."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    # No test-plan text at all: schema-1 must still resolve (skip cross-check).
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_a"],
+        inventory,
+        "",
+        schema=1,
+    )
+    assert anchors == ["tests/integration/test_app.py::test_flow_a"]
+    # FILE ref expands to the whole file.
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py"], inventory, "", schema=1
+    )
+    assert anchors == inventory
+
+
+def test_acceptance_anchors_schema2_absent_from_inventory_fails_closed(tmp_path):
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    with pytest.raises(TestSelectError, match="absent from integration collect"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_app.py::test_flow_a"],
+            ["tests/integration/test_other.py::test_x"],
+            "",
+            schema=2,
+        )
+
+
+_PLAN_WITH_TWO_FLOWS = (
+    "# Test plan\n\n## 8. AC Coverage\n\n"
+    "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+    "| AC-FR0001-01 | integration | "
+    "`tests/integration/test_app.py::test_flow_a` + "
+    "`tests/integration/test_app.py::test_flow_b` | IF-IMPL-001 |\n"
+)
+
+
+def test_acceptance_anchors_schema2_declared_must_be_planned_row_target(tmp_path):
+    """Schema-2 cross-check: a declared anchor absent from every §8
+    integration row target fails closed (binding is declared AND planned)."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    # flow_a IS a §8 row target -> resolves.
+    assert executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_a"],
+        inventory,
+        _PLAN_WITH_TWO_FLOWS,
+        schema=2,
+    ) == ["tests/integration/test_app.py::test_flow_a"]
+    # A node that exists in the inventory but is NOT a §8 target -> fail.
+    with pytest.raises(TestSelectError, match="not a test-plan §8 integration row target"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_app.py::test_flow_b", "tests/integration/test_app.py::test_flow_a"],
+            inventory,
+            _PLAN_WITH_TWO_FLOWS.replace("test_flow_b", "test_flow_c"),
+            schema=2,
+        )
+
+
+def test_acceptance_anchors_schema2_file_declaration_covers_planned_nodes(tmp_path):
+    """PRISM-B49B50-R1-01 mirror: a FILE-level declaration against a §8 row
+    that names individual NODE targets must pass the gate cross-check --
+    same whole-file coverage the commit-time closure applies."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py"],
+        inventory,
+        _PLAN_WITH_TWO_FLOWS,
+        schema=2,
+    )
+    assert anchors == inventory
+
+
+def test_acceptance_anchors_schema2_node_declaration_with_file_target_row(tmp_path):
+    """PRISM-B49B50-R1-01 mirror (reverse): a NODE declaration against a §8
+    row whose target is the whole FILE is planned (file target subsumes its
+    nodes)."""
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_app.py::test_flow_b",
+    ]
+    plan_file_target = (
+        "# Test plan\n\n## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0001-01 | integration | tests/integration/test_app.py | "
+        "IF-IMPL-001 |\n"
+    )
+    anchors = executor._acceptance_anchors(
+        ["tests/integration/test_app.py::test_flow_b"],
+        inventory,
+        plan_file_target,
+        schema=2,
+    )
+    assert anchors == ["tests/integration/test_app.py::test_flow_b"]
+
+
+def test_acceptance_anchors_schema2_undeclared_node_still_fails_closed(tmp_path):
+    """The FILE/NODE coverage relaxation must not open a hole: a NODE anchor
+    in a file §8 never mentions (neither the file nor any of its nodes) is
+    still rejected."""
+    from tracks.executor.m_impl_runtime import TestSelectError
+
+    executor = _runtime(tmp_path)
+    inventory = [
+        "tests/integration/test_app.py::test_flow_a",
+        "tests/integration/test_unrelated.py::test_x",
+    ]
+    with pytest.raises(TestSelectError, match="not a test-plan §8 integration row target"):
+        executor._acceptance_anchors(
+            ["tests/integration/test_unrelated.py::test_x"],
+            inventory,
+            _PLAN_WITH_TWO_FLOWS,
+            schema=2,
+        )
+
+
+def test_integration_row_targets_parse_every_plus_separated_item(tmp_path):
+    """Bug 3 (run 01M0S0FQ T-001, 2026-08-24): a multi-test §8 cell
+    (``A + B + C``) must yield per-item targets, and a NODE item binds that
+    node exactly -- never the whole first file."""
+    executor = _runtime(tmp_path)
+    targets = executor._integration_row_targets(
+        "`tests/integration/test_app.py::test_flow_a` + `tests/integration/test_other.py`"
+    )
+    assert targets == [
+        ("tests/integration/test_app.py", "tests/integration/test_app.py::test_flow_a"),
+        ("tests/integration/test_other.py", None),
+    ]
+
+
+def test_integration_row_targets_bare_filename_normalizes_under_integration(tmp_path):
+    executor = _runtime(tmp_path)
+    targets = executor._integration_row_targets("test_app.py::test_flow_a + `test_app.py`")
+    assert targets == [
+        ("tests/integration/test_app.py", "tests/integration/test_app.py::test_flow_a"),
+        ("tests/integration/test_app.py", None),
+    ]
+
+
+def test_task_node_maps_legacy_test_refs_by_layer_prefix():
+    """_task_node: a legacy raw payload (only test_refs) is layer-routed by
+    path prefix into unit_refs/acceptance_refs (196cbc9 convention)."""
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+
+    node = MImplRuntimeMixin._task_node(
+        {
+            "task_id": "T-001",
+            "issue_number": 1,
+            "description": "slice",
+            "ac_refs": ["AC-FR0001-01"],
+            "fr_refs": ["FR-0001"],
+            "if_ids": ["IF-IMPL-001"],
+            "test_refs": [
+                "tests/unit/test_app.py::test_app",
+                "tests/integration/test_app.py",
+            ],
+            "scope_boundary": "tracks/app.py",
+            "depends_on": [],
+            "batch": "1",
+            "parallel": False,
+            "budget": 3,
+        }
+    )
+    assert node.schema == 1
+    assert node.unit_refs == ("tests/unit/test_app.py::test_app",)
+    assert node.acceptance_refs == ("tests/integration/test_app.py",)
+
+
+def test_task_node_schema2_payload_keeps_explicit_split():
+    """A schema-2 raw payload carries its explicit split: the fields pass
+    through untouched (no prefix re-routing over the declaration)."""
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+
+    node = MImplRuntimeMixin._task_node(
+        {
+            "task_id": "T-001",
+            "issue_number": 1,
+            "description": "slice",
+            "ac_refs": ["AC-FR0001-01"],
+            "fr_refs": ["FR-0001"],
+            "if_ids": ["IF-IMPL-001"],
+            "test_refs": [],
+            "unit_refs": ["tests/unit/test_app.py::test_app"],
+            "acceptance_refs": ["tests/integration/test_app.py"],
+            "schema": 2,
+            "scope_boundary": "tracks/app.py",
+            "depends_on": [],
+            "batch": "1",
+            "parallel": False,
+            "budget": 3,
+        }
+    )
+    assert node.schema == 2
+    assert node.unit_refs == ("tests/unit/test_app.py::test_app",)
+    assert node.acceptance_refs == ("tests/integration/test_app.py",)
+
+
+# -- B83 (#83): scope-failure replan — generation-aware completion/lease -----
+
+
+def _b83_task(tid: str, scope: str, ref: str) -> dict:
+    return {
+        **_task(ref),
+        "task_id": tid,
+        "scope_boundary": scope,
+    }
+
+
+def test_scope_replan_retains_only_payload_equivalent_completions(tmp_path):
+    """B83 (#83): after a scope-failure replan, retained completions are
+    derived from EVENT history (last taskgraph.committed payload), not from
+    live state -- the scope route clears taskgraph_committed/task_refs before
+    the replacement commit, so a state-only guard would retain nothing and
+    re-run every task. Only payload-equivalent completed tasks carry over;
+    the merged-away T-006 and the never-completed T-007 must not."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t6 = _b83_task("T-006", "tracks/registry.py", "tests/unit/test_r.py::test_r")
+    t7 = _b83_task("T-007", "tracks/parity.py", "tests/unit/test_p.py::test_p")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t6, t7]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    first = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert first.payload["retained_completed_task_ids"] == []
+
+    # T-001 and T-006 complete; T-007 starts, holds the lease, then its
+    # TASK_REVIEW fails the scope gate (kernel routes to PLANNING).
+    for tid in ("T-001", "T-006"):
+        store.append("RUN", "v0.5", "writelock.granted", {"task_id": tid, "manifest": {}})
+        store.append(
+            "RUN",
+            "v0.5",
+            "task.started",
+            {"task_id": tid, "task": {"task_id": tid}, "manifest": {"task_id": tid}},
+        )
+        store.append("RUN", "v0.5", "task.completed", {"task_id": tid})
+        store.append("RUN", "v0.5", "writelock.released", {"task_id": tid})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-007", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-007", "task": {"task_id": "T-007"}, "manifest": {"task_id": "T-007"}},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/registry.py"]'},
+    )
+    state = store.state("RUN")
+    assert state.substate == "PLANNING"  # scope routes to Archer, not Devon
+    assert state.taskgraph_committed is False
+    assert state.current_task_id is None
+    assert state.writelock_held is True  # stale lease — released at selection
+
+    # Archer replan: T-001 kept verbatim; T-006+T-007 merged into T-014.
+    t14 = _b83_task("T-014", "tracks/merged.py", "tests/unit/test_m.py::test_m")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t14]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    second = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert second.payload["retained_completed_task_ids"] == ["T-001"]
+    state = store.state("RUN")
+    assert state.tasks_completed == 1
+    assert state.retained_completed_task_ids == ["T-001"]
+    assert state.tasks_total == 2
+
+
+def test_scope_replan_releases_stale_lease_and_selects_merged_task(tmp_path):
+    """B83 (#83): after the replacement commit, the old generation's started
+    tasks (merged-away T-006, scope-failed T-007) must not block selection,
+    and the stale writelock must be RELEASED -- not resurrected with the old
+    manifest. The merged task is selected under the NEW graph."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t6 = _b83_task("T-006", "tracks/registry.py", "tests/unit/test_r.py::test_r")
+    t7 = _b83_task("T-007", "tracks/parity.py", "tests/unit/test_p.py::test_p")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t6, t7]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    for tid in ("T-001", "T-006"):
+        store.append("RUN", "v0.5", "writelock.granted", {"task_id": tid, "manifest": {}})
+        store.append(
+            "RUN",
+            "v0.5",
+            "task.started",
+            {"task_id": tid, "task": {"task_id": tid}, "manifest": {"task_id": tid}},
+        )
+        store.append("RUN", "v0.5", "task.completed", {"task_id": tid})
+        store.append("RUN", "v0.5", "writelock.released", {"task_id": tid})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-007", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-007", "task": {"task_id": "T-007"}, "manifest": {"task_id": "T-007"}},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/registry.py"]'},
+    )
+
+    t14 = _b83_task("T-014", "tracks/merged.py", "tests/unit/test_m.py::test_m")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t14]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    commit_seq = max(
+        ev.seq for ev in store.events("RUN") if ev.type == "taskgraph.committed"
+    )
+
+    select = Command("select_task", command_id="C-SELECT")
+    # First pass: stale T-007 lease predates the replacement commit — release
+    # it (taskgraph_replaced), do NOT resurrect task.started for T-007.
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    started_after = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "task.started" and ev.seq > commit_seq
+    ]
+    assert started_after == []
+    released = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "writelock.released" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in released] == ["T-007"]
+    assert store.state("RUN").writelock_held is False
+
+    # Second pass: old-generation starts no longer gate selection; T-001 is
+    # retained-complete, so the merged T-014 is selected under the new graph.
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    started_after = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "task.started" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in started_after] == ["T-014"]
+    state = store.state("RUN")
+    assert state.current_task_id == "T-014"
+    assert state.current_manifest["task_id"] == "T-014"
+    assert state.tasks_completed == 1  # T-001 retained; T-014 still running
+
+
+def test_redefined_same_id_task_is_not_retained(tmp_path):
+    """B83 (#83): a completed task whose payload is REDEFINED in the new
+    graph (same id, changed scope) must re-run — its old completion must not
+    satisfy the new task nor block a fresh completion."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-001", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-001", "task": t1, "manifest": {"task_id": "T-001"}},
+    )
+    store.append("RUN", "v0.5", "task.completed", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-001"})
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/x.py"]'},
+    )
+
+    t1_redefined = {**t1, "scope_boundary": "tracks/app2.py"}
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1_redefined]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    second = [ev for ev in store.events("RUN") if ev.type == "taskgraph.committed"][-1]
+    assert second.payload["retained_completed_task_ids"] == []
+    state = store.state("RUN")
+    assert state.tasks_completed == 0
+
+    executor._do_select_task(
+        Command("select_task", command_id="C-SELECT"), state, None, False
+    )
+    state = store.state("RUN")
+    assert state.current_task_id == "T-001"  # re-selected for a clean re-run
+
+
+def test_stale_lease_release_not_suppressed_by_old_generation_release(tmp_path):
+    """B88 (#88): the writelock recover idempotency check must be scoped to
+    releases AFTER the current lease. An all-time scan finds an earlier
+    release for the same task id and skips emitting — writelock_held stays
+    True forever and select_task livelocks (run 01M0S0FQ T-010: first
+    lease released, second lease from the RGR retry never released, then
+    the scope-failure replan committed a new graph under it)."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t10 = _b83_task("T-010", "tracks/mut.py", "tests/unit/test_mut.py::test_mut")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t10]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    # cycle 1: T-010 leased and RELEASED (RGR retry round finished cleanly)
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-010", "manifest": {}})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-010"})
+    # cycle 2: T-010 leased again (retry), NEVER released, loop crashed
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-010", "manifest": {}})
+    # scope failure of another task -> replan commits a new graph
+    store.append(
+        "RUN",
+        "v0.5",
+        "verdict.failed",
+        {"check": "scope", "reason": "outside manifest", "evidence": '["tracks/x.py"]'},
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    state = store.state("RUN")
+    assert state.writelock_held is True
+
+    select = Command("select_task", command_id="C-SELECT")
+    # the cycle-1 release must NOT suppress the release of the cycle-2 lease
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    lease2_seq = max(
+        ev.seq
+        for ev in store.events("RUN")
+        if ev.type == "writelock.granted" and ev.payload.get("task_id") == "T-010"
+    )
+    releases = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "writelock.released" and ev.seq > lease2_seq
+    ]
+    assert [ev.payload["task_id"] for ev in releases] == ["T-010"]
+    assert store.state("RUN").writelock_held is False
+    # next pass selects normally again
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    state = store.state("RUN")
+    assert state.current_task_id is not None  # selection resumed
+
+
+# -- B84 (#84): TASK_REVIEW task-identity gate ----------------------------------
+
+
+def test_task_review_no_change_passes_when_no_green_committed(tmp_path):
+    """B84 (#84): a green.no_change for the current task makes TASK_REVIEW
+    emit verdict.passed(task_review) — no new G exists, scope/lineage/secret/
+    provenance checks are vacuous (GREEN_GATE already programmatically verified
+    the behavior). Budget check still runs."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"],
+                            classification="assertion_failure",
+                            verdict="assertion_failure", diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # green.no_change for the current task — no green.committed
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": task["task_id"], "reason": "implementation already on disk"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": task["task_id"], "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.passed", (
+        f"green.no_change should pass, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "task_review"
+
+
+def test_task_review_fails_on_old_task_green_committed(tmp_path):
+    """B84 (#84): a green.committed for a DIFFERENT task (old generation) with
+    no green event for the current task must fail-closed with check=lineage
+    and reason "green.committed lacks task identity" — never re-use the old
+    task's G for trailer verification."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    store.append(
+        "RUN", "v0.5", "task.started",
+        {"task_id": task["task_id"], "task": task,
+         "manifest": {"task_id": task["task_id"],
+                      "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                      "forbidden_paths": [".tracks/projects/**"]}},
+    )
+    executor = _executor(repo, store)
+    # RED checkpoint → GREEN
+    store.append("RUN", "v0.5", "outcome.received",
+                 _structured_outcome("red", ["tests/unit/test_app.py"],
+                                     classification="assertion_failure",
+                                     verdict="assertion_failure", diff_ref=RGR_RED_DIFF))
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    # Build a green.committed for the current task (T-001) — this is the
+    # legitimate path. But we then simulate a B83-style replan: the current
+    # task changes to T-014 (merged from T-006+T-007), with no green event
+    # of its own.
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    g = create_green_commit(
+        repo=str(repo), run_id="RUN", task_id=task["task_id"], attempt=1,
+        impl_diff=RGR_GREEN_DIFF, base_sha=base_sha, r_sha=r_sha,
+        issue_number=task["issue_number"], ac_refs=["AC-FR0001-01", "FR-0001"],
+    )
+    store.append("RUN", "v0.5", "green.committed",
+                 {"g_sha": g.sha, "task_id": task["task_id"], "attempt": 1,
+                  "r_sha": r_sha, "base_sha": base_sha, "trailers": g.trailers})
+    _git(repo, "reset", "--hard", g.sha)
+    # Now simulate a B83 replan: T-001 is done, T-014 is the new task with
+    # no green event. The state's current_task_id is T-014.
+    t14 = {**task, "task_id": "T-014", "scope_boundary": "tracks/merged.py"}
+    store.append("RUN", "v0.5", "taskgraph.committed",
+                 {"task_count": 1, "task_ids": ["T-014"], "tasks": [t14],
+                  "digest": "graph2", "validate_status": "pass"})
+    store.append("RUN", "v0.5", "task.completed", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-014", "manifest": {}})
+    store.append("RUN", "v0.5", "task.started",
+                 {"task_id": "T-014", "task": t14,
+                  "manifest": {"task_id": "T-014",
+                               "allowed_paths": ["tracks/merged.py"],
+                               "forbidden_paths": [".tracks/projects/**"]}})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": "T-014", "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == "T-014", state.current_task_id
+    assert state.substate == "TASK_REVIEW", state.substate
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"wrong task green.committed must fail closed, got {new_events[-1].type}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "lacks task identity" in new_events[-1].payload.get("reason", ""), (
+        f"reason must mention 'lacks task identity', got {new_events[-1].payload.get('reason')}"
+    )
+
+
+def test_task_review_no_change_fails_on_missing_task(tmp_path):
+    """B84 (#84): no-change path where task lookup fails must fail-closed
+    with check=lineage — never silently pass when task identity is missing."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("red", ["tests/unit/test_app.py"],
+                            classification="assertion_failure",
+                            verdict="assertion_failure", diff_ref=RGR_RED_DIFF),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # Re-start with a task_id that has no backing task metadata — _lookup_task
+    # will return None because neither task_refs nor current_task_metadata
+    # carries this task_id.
+    store.append("RUN", "v0.5", "task.started",
+                 {"task_id": "T-GHOST", "manifest": {"task_id": "T-GHOST",
+                  "allowed_paths": [], "forbidden_paths": []}})
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": "T-GHOST", "reason": "implementation already on disk"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": "T-GHOST", "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == "T-GHOST"
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"missing task should fail closed, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "task lookup failed" in new_events[-1].payload.get("reason", "").lower(), (
+        f"reason must mention task lookup failure, got {new_events[-1].payload.get('reason')}"
+    )
+
+
+def test_task_review_fails_on_no_green_committed_event(tmp_path):
+    """B84 (#84): when no green.committed event exists and no green.no_change
+    matches the current task, TASK_REVIEW must fail-closed with check=lineage
+    and reason 'no green.committed event found'."""
+    repo = _repo(tmp_path)
+    _docs(repo)
+    store = _store(repo)
+    task = _task()
+    _graph(store, task)
+    store.append(
+        "RUN", "v0.5", "task.started",
+        {"task_id": task["task_id"], "task": task,
+         "manifest": {"task_id": task["task_id"],
+                      "allowed_paths": ["tracks/app.py", "tests/unit/test_app.py"],
+                      "forbidden_paths": [".tracks/projects/**"]}},
+    )
+    executor = _executor(repo, store)
+    store.append("RUN", "v0.5", "outcome.received",
+                 _structured_outcome("red", ["tests/unit/test_app.py"],
+                                     classification="assertion_failure",
+                                     verdict="assertion_failure", diff_ref=RGR_RED_DIFF))
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"),
+        store.state("RUN"), None, False,
+    )
+    r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
+    base_sha = red_base_sha(str(repo), r_sha)
+    assert base_sha is not None
+    store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
+    store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
+    store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
+    # green.no_change for a DIFFERENT task — state transitions to TASK_REVIEW,
+    # but the current task has no matching green event at all.
+    store.append("RUN", "v0.5", "green.no_change",
+                 {"task_id": "T-OTHER", "reason": "other task changed"})
+    store.append("RUN", "v0.5", "refactor.no_change",
+                 {"task_id": task["task_id"], "reason": "no improvements"})
+    state = store.state("RUN")
+    assert state.current_task_id == task["task_id"]
+    assert state.substate == "TASK_REVIEW"
+    before = len(list(store.events("RUN")))
+    executor._do_run_task_gates(
+        Command("run_task_gates", {"gate": "TASK_REVIEW"}, command_id="C-REV"),
+        state, None, False,
+    )
+    new_events = list(store.events("RUN"))[before:]
+    assert new_events, "TASK_REVIEW must emit a verdict"
+    assert new_events[-1].type == "verdict.failed", (
+        f"no green event should fail closed, got {new_events[-1]}"
+    )
+    assert new_events[-1].payload["check"] == "lineage", (
+        f"expected check=lineage, got {new_events[-1].payload}"
+    )
+    assert "no green.committed event found" in new_events[-1].payload.get("reason", ""), (
+        f"reason must mention 'no green.committed event found', got {new_events[-1].payload.get('reason')}"
+    )
+
+
+def test_red_checkpoint_revise_round_reissue_not_deduped(tmp_path):
+    """B90 (#91): a red.checkpointed recorded in an EARLIER review round must
+    not feed the idempotency guard once a newer dispatch outcome exists for
+    the task. Run 01M0S0FQ T-013 (2026-08-27) livelocked exactly here: an
+    orphan pre-replan ref held slot 2, so _red_ref_free_attempt (B54/#70)
+    inflated the round-1 checkpoint event to attempt=3; the PRISM_RED revise
+    consumed an attempt (current_attempt 1->2), the round-2 RED_CHECKPOINT
+    computed attempt=3 again, the guard matched the stale event and silently
+    returned -- decide() re-issued checkpoint_red 20x until the B86/B88
+    stall breaker tripped."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Orphan ref from a pre-replan generation holds slot 2 (B54 skips it).
+    _git(repo, "update-ref", "refs/trac/rgr/RUN/T-001/2/red", "HEAD")
+    # attempt 1 fails red_invalid -> current_attempt=1.
+    store.append(
+        "RUN", "v0.5", "verdict.failed",
+        {"check": "red_invalid", "reason": "boom", "task_id": "T-001", "attempt": 1},
+        task_id="T-001",
+    )
+    # Round 1 passes: executor attempt=current_attempt+1=2, slot 2 taken ->
+    # event records attempt=3 (the inflation that later collides).
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1"), store.state("RUN"), None, False
+    )
+    first = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(first) == 1
+    assert first[0].payload["attempt"] == 3
+
+    # PRISM_RED revise consumes an attempt -> current_attempt=2, back to RED.
+    store.append(
+        "RUN", "v0.5", "prism.verdict",
+        {"verdict": "revise", "defect_classification": "red_defect"},
+        task_id="T-001",
+    )
+    # Round 2: fresh outcome for the task -> RED_CHECKPOINT waits on a NEW
+    # checkpoint; the round-1 event is stale for dedup purposes.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R2"), store.state("RUN"), None, False
+    )
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2, (
+        "revise round must re-issue a fresh checkpoint instead of silently "
+        "no-oping on the earlier round's inflated-attempt event"
+    )
+    assert reds[-1].payload["attempt"] == 4  # fresh slot, R immutability kept
+    assert _git(repo, "rev-parse", reds[-1].payload["ref"]) == reds[-1].payload["r_sha"]
+
+
+def test_red_checkpoint_double_fire_still_deduped_after_current_outcome(tmp_path):
+    """B90 (#91) counterweight: the crash-replay double-fire (no newer
+    outcome between the two executions) must stay a silent no-op -- the new
+    task-scoped floor only demotes checkpoints that predate the current
+    round's dispatch outcome."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1"), store.state("RUN"), None, False
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R1b"), store.state("RUN"), None, False
+    )
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 1
+
+
+def test_commit_green_binds_r_ref_not_shield_fix_after_test_defect_round(tmp_path):
+    """B91 (#92): after a test_defect round the runtime commits the Shield
+    fix (test.committed) and SM-01.14 re-points state.r_tree_identity at the
+    fix COMMIT. The G lineage must still bind the immutable R ref family:
+    Tracks-R = the latest red.checkpointed r_sha and Tracks-Attempt = its
+    slot, or TASK_REVIEW verify_lineage can never validate the G (run
+    01M0S0FQ T-013, 2026-08-27: Tracks-R=shield sha 5b72700 vs slot-4 ref
+    d826d34 -> awaiting rollback)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # Round-1 RED checkpoint on slot 1 (natural).
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    r_sha, slot = red.payload["r_sha"], red.payload["attempt"]
+    # Shield fix commit: SM-01.14 re-points the identity at the fix commit.
+    shield = _git(repo, "rev-parse", "HEAD")
+    store.append(
+        "RUN", "v0.5", "test.committed", {"commit_sha": shield, "test_count": 1}
+    )
+    state = store.state("RUN")
+    assert state.r_tree_identity == shield  # SM-01.14 semantics intact
+    # GREEN on top of the fix commit.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], r_sha, diff_ref=_RGR_GREEN_DIFF),
+        task_id="T-001",
+    )
+    state = store.state("RUN")
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), state, None, False
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    assert green.payload["trailers"]["Tracks-R"] == r_sha
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert f"Tracks-R: {r_sha}" in message, (
+        "G must bind the immutable R ref sha, not the Shield fix commit"
+    )
+    assert f"Tracks-Attempt: {slot}" in message
+    assert shield not in message or f"Tracks-R: {shield}" not in message
+    assert green.payload["attempt"] == slot
+
+
+def test_shield_fix_rebaselines_family_and_g_binds_the_fix_slot(tmp_path):
+    """B91 follow-up (re-baseline): the sanctioned Shield fix commit joins the
+    immutable R family as a FRESH slot (red.checkpointed with
+    sanction=shield_fix); the subsequent G binds THAT slot exactly -- Tracks-R
+    = the fix commit sha, Tracks-Attempt = the new slot -- and verify_lineage
+    proves it end-to-end. The regression baseline and the lineage anchor stop
+    diverging: the trailer names the frozen tree that actually gated the G
+    (run 01M0S0FQ T-013 post-mortem, 2026-08-27)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
+    assert red.payload["attempt"] == 1
+    # Sanctioned Shield fix commit (test.committed re-points SM-01.14): a
+    # real child commit on the working branch, like the incident's 5b72700.
+    (repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (repo / "tests" / "unit" / "test_fix.py").write_text(
+        "def test_fix():\n    assert True\n", encoding="utf-8"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "Shield fix: T-001 attempt 1")
+    shield = _git(repo, "rev-parse", "HEAD")
+    store.append(
+        "RUN", "v0.5", "test.committed", {"commit_sha": shield, "test_count": 1}
+    )
+    executor._rebaseline_red_family("T-001", shield, "C-FIX")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2
+    rebased = reds[-1]
+    assert rebased.payload["sanction"] == "shield_fix"
+    assert rebased.payload["r_sha"] == shield
+    new_slot = rebased.payload["attempt"]
+    assert new_slot == 2
+    # The immutable ref exists and points at the fix commit (BS-06 CAS).
+    assert _git(repo, "rev-parse", rebased.payload["ref"]) == shield
+    # A retried shield round over the SAME sha must not fork duplicate slots.
+    executor._rebaseline_red_family("T-001", shield, "C-FIX2")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert len(reds) == 2
+    # GREEN on top of the fix commit: exact-match resolution now binds slot 2.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome("green", ["tracks/app.py"], shield, diff_ref=_RGR_GREEN_DIFF),
+        task_id="T-001",
+    )
+    executor._do_commit_green(
+        Command("commit_green", command_id="C-G"), store.state("RUN"), None, False
+    )
+    green = [ev for ev in store.events("RUN") if ev.type == "green.committed"][-1]
+    assert green.payload["trailers"]["Tracks-R"] == shield
+    assert green.payload["attempt"] == new_slot
+    message = _git(repo, "log", "--format=%B", "-1", green.payload["g_sha"])
+    assert f"Tracks-R: {shield}" in message
+    assert f"Tracks-Attempt: {new_slot}" in message
+    # End-to-end: TASK_REVIEW's own proof accepts the rebaselined lineage.
+    events = [
+        {"type": ev.type, "payload": ev.payload, "seq": i}
+        for i, ev in enumerate(store.events("RUN"))
+    ]
+    proof = verify_lineage(
+        str(repo), "RUN", "T-001", new_slot, green.payload["g_sha"], events
+    )
+    assert proof.r_ref_exists
+    assert proof.g_trailers_valid
+    assert proof.event_order_valid
+    assert proof.r_before_g
+
+
+def test_shield_fix_rebaseline_noop_without_red_family(tmp_path):
+    """B91 follow-up: a shield fix for a task with NO checkpointed RED must
+    not conjure a family out of a fix commit -- B91's no-checkpoint lineage
+    guard still fails closed on such a G."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    shield = _git(repo, "rev-parse", "HEAD")
+    executor._rebaseline_red_family("T-001", shield, "C-FIX")
+    reds = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
+    assert reds == []
+
+
+def test_shield_fix_commit_rebaselines_family_through_executor_wiring(tmp_path):
+    """B91 follow-up wiring (review P1, 2026-08-27): the mid-M-IMPL SHIELD_FIX
+    commit path itself (_emit_shield_commit: result/role/state/cmd — the real
+    executor entry, not the mixin called directly) must re-baseline the R
+    family. Every other re-baseline test drives _rebaseline_red_family
+    directly, so deleting the hook would pass the suite and silently
+    reintroduce B91 (run 01M0S0FQ T-013)."""
+    repo = _repo(tmp_path)
+    store, task = _started_task_store(repo)
+    executor = _executor(repo, store)
+    # RED checkpoint slot 1: the family the re-baseline joins.
+    store.append(
+        "RUN", "v0.5", "outcome.received",
+        _structured_outcome(
+            "red", ["tests/unit/test_app.py"],
+            classification="assertion_failure", verdict="assertion_failure",
+            diff_ref=RGR_RED_DIFF,
+        ),
+        task_id="T-001",
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id="C-R"), store.state("RUN"), None, False
+    )
+    # Park the cycle at SHIELD_FIX: the first test_defect verdict routes to
+    # DIAGNOSE (four-way attribution); the attributed re-verdict opens the
+    # sanctioned Shield fix round.
+    for _ in range(2):
+        store.append(
+            "RUN", "v0.5", "verdict.failed",
+            {"check": "test_defect", "reason": "seed missing", "task_id": "T-001", "attempt": 1},
+            task_id="T-001",
+        )
+    state = store.state("RUN")
+    assert state.stage == "M-IMPL" and state.substate == "SHIELD_FIX"
+    # The fix: a dirty tests/ file, manifest matching the observation.
+    fix = repo / "tests" / "unit" / "test_fix.py"
+    fix.parent.mkdir(parents=True, exist_ok=True)
+    fix.write_text("def test_fix():\n    assert True\n", encoding="utf-8")
+    result = {
+        "status": "done",
+        "artifact_manifest": {"include": [{"path": "tests/unit/test_fix.py"}]},
+    }
+    ok = executor._emit_shield_commit(
+        result, "shield", state, Command("dispatch_agent", command_id="C-FIX"), "T-001"
+    )
+    assert ok, "shield fix commit must succeed"
+    # The wiring: test.committed AND the sanctioned re-baseline checkpoint.
+    assert [e for e in store.events("RUN") if e.type == "test.committed"]
+    reds = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
+    assert len(reds) == 2, "the fix commit must join the R family as a new slot"
+    assert reds[-1].payload["sanction"] == "shield_fix"
+    assert reds[-1].payload["attempt"] == 2
+    assert _git(repo, "rev-parse", reds[-1].payload["ref"]) == reds[-1].payload["r_sha"]

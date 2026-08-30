@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests._support.m_test_support import make_dispatch_agent_payload
 from tests.e2e_live import m_test_helpers as _helpers
 from tests.e2e_live import test_full_journey as _journey
 from tests.e2e_live.harness import LiveInstall, prepare_host_venv
@@ -25,7 +26,6 @@ from tests.e2e_live.m_test_helpers import (
     snapshot_git_state,
 )
 from tests.e2e_live.test_full_journey import _run_m_test_review_loop
-from tests.m_test_support import make_dispatch_agent_payload
 
 
 def _event(seq: int, event_type: str, payload: dict) -> dict:

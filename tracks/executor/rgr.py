@@ -123,6 +123,37 @@ def create_red_ref(
     )
 
 
+def adopt_red_ref(
+    repo: str,
+    run_id: str,
+    task_id: str,
+    attempt: int,
+    sha: str,
+) -> RedRef:
+    """B91 follow-up (re-baseline): freeze an ALREADY-committed sanctioned
+    Shield test-fix commit as a new immutable R slot.
+
+    Unlike ``create_red_ref`` (which builds a fresh R commit from a captured
+    test diff), the mid-M-IMPL SHIELD_FIX path commits the fixed test tree on
+    the working branch first (``test.committed``); this adopts that existing
+    commit into the R family instead of duplicating it. Same compare-and-set
+    discipline as BS-06: the ref must not exist; an existing ref pointing at
+    the same sha is an idempotent replay, anything else refuses to overwrite.
+    """
+    if not isinstance(sha, str) or not sha.strip():
+        raise ValueError("cannot adopt a Red ref without a fix commit sha")
+    ref = f"refs/trac/rgr/{run_id}/{task_id}/{attempt}/red"
+    existing = _rev_parse(repo, ref)
+    if existing is None:
+        _git(repo, "update-ref", ref, sha)
+        return RedRef(ref=ref, sha=sha, created=True)
+    if existing == sha:
+        return RedRef(ref=ref, sha=existing, created=False)
+    raise RuntimeError(
+        f"immutable ref {ref} already points to {existing}, cannot overwrite with {sha}"
+    )
+
+
 def red_base_sha(repo: str, r_sha: str) -> str | None:
     """FR-0120 replay-safe base derivation: B = the R commit's parent.
 

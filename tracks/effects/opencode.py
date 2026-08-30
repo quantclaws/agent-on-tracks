@@ -37,6 +37,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
+from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
 from tracks.project import COMMENTABLE_DOCS, layout_paths
 from tracks.scaffold import _scaffold_declared_paths
 
@@ -229,6 +230,16 @@ class OpencodeBackend:
         return proc
 
     @staticmethod
+    def _assignment_forbidden_paths(assignment: dict | None) -> list[str]:
+        """B64 (#82): repo-relative forbidden patterns from the assignment
+        (executor-injected; see Executor._red_test_scope). Returns [] when
+        the dispatch carries no ownership veto."""
+        value = (assignment or {}).get("forbidden_paths")
+        if not isinstance(value, list):
+            return []
+        return [p for p in value if isinstance(p, str) and p.strip()]
+
+    @staticmethod
     def _extract_session_id(stdout: str) -> str | None:
         """从 opencode --format json 事件流提取 sessionID（事件顶层或
         part 内；同一派发的全部事件共享一个 id，取首个非空值）。"""
@@ -364,7 +375,12 @@ class OpencodeBackend:
             allowed = self._allowed_paths(
                 doc_paths, agent_dest, role, substate, assignment, root=root
             )
-            auditor = Auditor(root, allowed=allowed)
+            # B64 (#82): assignment-injected ownership veto (repo-relative
+            # patterns; e.g. Shield's SHIELD_FIX domain excludes the run's
+            # red_test_paths). Data-driven — the backend applies what the
+            # executor derived from Archer-authored manifests.
+            forbidden = self._assignment_forbidden_paths(assignment)
+            auditor = Auditor(root, allowed=allowed, forbidden=forbidden)
             baseline = auditor.baseline()
             author = substate in ("DRAFT", "RESPOND")
             # File-granular baseline for the batch B scaffold subset rule: a
@@ -1104,7 +1120,10 @@ class OpencodeBackend:
                 extract_devon_evidence(
                     proc,
                     self._final_text_event,
-                    self._first_json_object,
+                    # Shape-aware (2026-08-27): Devon manifests carry
+                    # phase/changed_paths; context-echo JSON echoed after
+                    # the manifest must not win the pick.
+                    lambda t: self._first_json_object(t, ("phase", "changed_paths")),
                 )
             )
         if name == "Prism" and substate == "DIAGNOSE":
@@ -1126,13 +1145,9 @@ class OpencodeBackend:
             reviewer_assignment,
         )
 
-    _DIAGNOSE_CLASSIFICATIONS = (
-        "test_defect",
-        "impl_defect",
-        "stub_gap",
-        "ac_gap",
-        "spec_gap",
-    )
+    # #89 单一真相源在 kernel（assignment 注入 + 校验共用）；类属性保留
+    # 为既有引用点的稳定别名。
+    _DIAGNOSE_CLASSIFICATIONS = DIAGNOSE_CLASSIFICATIONS
 
     # D-35 (SC-D35 §2.2) structured review payload contract.
     _REVIEW_FINDING_FIELDS = (
@@ -1301,7 +1316,15 @@ class OpencodeBackend:
         event = cls._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = cls._first_json_object(text.strip()) if isinstance(text, str) else None
+        payload = (
+            # Shape-aware first (the review JSON carries "verdict"); the
+            # blind last-wins pick stays as fallback so the existing
+            # legal-absence semantics ("verdict" not in payload) is preserved.
+            cls._first_json_object(text.strip(), ("verdict",))
+            or cls._first_json_object(text.strip())
+            if isinstance(text, str)
+            else None
+        )
         if not isinstance(payload, dict) or "verdict" not in payload:
             return None, None
         if payload.get("verdict") not in ("pass", "revise"):
@@ -1338,7 +1361,14 @@ class OpencodeBackend:
         event = self._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = self._first_json_object(text.strip()) if isinstance(text, str) else None
+        payload = (
+            # Shape-aware first (the diagnostic carries "classification");
+            # blind last-wins stays as fallback for the no-payload path.
+            self._first_json_object(text.strip(), ("classification",))
+            or self._first_json_object(text.strip())
+            if isinstance(text, str)
+            else None
+        )
         if not isinstance(payload, dict):
             return None
         if payload.get("classification") not in self._DIAGNOSE_CLASSIFICATIONS:
@@ -2105,13 +2135,19 @@ class OpencodeBackend:
         return payload, None
 
     @staticmethod
-    def _first_json_object(text: str) -> dict | None:
+    def _first_json_object(text: str, required_keys: tuple[str, ...] = ()) -> dict | None:
         """Extract the last top-level JSON object from *text*.
 
         Agents often wrap the manifest in Markdown prose.  We try the
         fast path first (entire text is JSON); if that fails we scan
-        for top-level ``{`` positions and return the last dict found
-        (manifests are at the end of agent output).
+        for top-level ``{`` positions.
+
+        Shape-aware selection (2026-08-27, run 01M0S0FQ T-015): with
+        *required_keys*, the LAST object carrying ALL of them wins and the
+        last object overall stays the fallback — models that echo the
+        assignment-context JSON (e.g. the pre_dirty_snapshot path->sha
+        mapping) AFTER their manifest no longer poison the blind
+        last-wins pick (that round cost a full Devon refactor attempt).
         """
         try:
             decoded = json.loads(text)
@@ -2123,6 +2159,7 @@ class OpencodeBackend:
         i = 0
         n = len(text)
         payload: dict | None = None
+        shaped: dict | None = None
         while i < n:
             if text[i] != "{":
                 i += 1
@@ -2134,8 +2171,10 @@ class OpencodeBackend:
                 continue
             if isinstance(obj, dict):
                 payload = obj
+                if required_keys and all(k in obj for k in required_keys):
+                    shaped = obj
             i = end
-        return payload
+        return shaped if shaped is not None else payload
 
     @staticmethod
     def _manifest_include(

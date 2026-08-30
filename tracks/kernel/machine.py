@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from . import state as kernel_state
 from .events import Command, EventEnvelope
 from .hotfix import (
     _decide_hotfix_triage,  # noqa: F401
@@ -75,6 +76,7 @@ from .m_test import (
     _reset_doc,
     _reset_review,
 )
+from .phase0 import on_phase0_baseline_repaired, on_phase0_blocked
 
 
 @dataclass
@@ -136,6 +138,13 @@ class State:
     test_committed: bool = False  # test asset frozen (commit_tests done)
     criteria_pack_loaded: dict | None = None  # Prism's loaded pack identity
     diagnose_classification: str | None = None  # DIAGNOSE routing verdict
+    # v0.7 Phase 0 (interfaces §1c/§1d, architecture §1.0.2, T-015 组装):
+    # projection of the phase0.* append-only events; None = classic pre-v0.7
+    # runs (no Phase 0 pre-gate). Rebuilt identically from the event stream
+    # after a projection drop (AC-NFR0140-01).
+    phase0_status: str | None = None  # UNSEALED|PHASE0_VALIDATING|SEALED|BLOCKED
+    phase0_seal_id: str | None = None
+    phase0_blocked_reason: str | None = None
     # v0.6 R6/D-41 selection semantics (interfaces §1c/§1j): the pre-WRITE R1
     # snapshot gate and the latest stamped selection identity.
     baseline_captured: bool = False  # test.baseline_captured(passed) persisted
@@ -162,6 +171,16 @@ class State:
     # not be passed to the next agent). Bounded: >=_INFRA_RETRY_LIMIT in a
     # row escalates to awaiting_human instead of storming a degraded gateway.
     infra_failure_streak: int = 0
+    # Consecutive output-contract format failures (final reply JSON failed a
+    # mechanical manifest check, e.g. review_summary over the 140-char cap).
+    # Digested like infra: never consumes the semantic attempt budget (the
+    # assignment's semantics were never evaluated -- only the reply shape
+    # was wrong). Bounded: >=_FORMAT_RETRY_LIMIT in a row escalates to
+    # awaiting_human instead of looping (operator finding 2026-08-24: Prism
+    # burned the whole shared M-TEST budget on review_summary>140 chars
+    # while the discipline was already in its prompt -- mechanical
+    # constraints must be enforced programmatically, not by prompts).
+    format_failure_streak: int = 0
     # v0.5 ResultCheckpoint pipeline (batch 1): when set, decide() drives
     # validate_result -> checkpoint_result -> publish_result instead of the
     # normal substate logic. Cleared by the domain event reducer (or
@@ -185,6 +204,8 @@ class State:
     taskgraph_digest: str | None = None
     taskgraph_path: str | None = None
     task_refs: list[dict] = field(default_factory=list)
+    taskgraph_generation: int = 0
+    retained_completed_task_ids: list = field(default_factory=list)
     current_task_metadata: dict | None = None
     current_manifest: dict | None = None
     # SM-02 doc-gap adjudication projection (IF-DOCGAP-001 / IF-QUARANTINE-001):
@@ -333,7 +354,43 @@ def _on_story_requested(s: State, p: dict, ev: EventEnvelope) -> None:
     s.run_id, s.version = ev.run_id, ev.version
 
 
+def _reset_m_impl_cycle(s: State) -> None:
+    """flow.md §10: fresh M-IMPL cycle — reset every per-stage field.
+
+    B83: includes the generation bookkeeping (taskgraph_generation,
+    retained_completed_task_ids) so a re-entered residency starts from a
+    clean projection."""
+    s.baseline_frozen = False
+    s.taskgraph_committed = False
+    s.tasks_total = 0
+    s.tasks_completed = 0
+    s.writelock_held = False
+    s.current_task_id = None
+    s.r_tree_identity = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.island_2_passed = False
+    s.diagnose_classification = None
+    s.diagnose_report = None
+    s.taskgraph_digest = None
+    s.taskgraph_path = None
+    s.task_refs = []
+    s.taskgraph_generation = 0
+    s.retained_completed_task_ids = []
+    s.current_task_metadata = None
+    s.current_manifest = None
+
+
 def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
+    if not s.version and ev.version:
+        # T-015: every event envelope carries the run's version identity
+        # (§1a); runs without a story.requested projection (house-style
+        # seeded fixtures, replayed partial streams) still surface it here so
+        # version-keyed seams -- the v0.7 Phase 0 pre-gate -- can resolve.
+        # Never overrides story.requested (unconditional in its own reducer)
+        # nor hotfix identities: executor-emitted envelopes carry the
+        # already-resolved run identity (`_emit` stamps `self.version`).
+        s.version = ev.version
     s.stage = p["stage"]
     sd = _STAGES.get(s.stage)
     s.substate = sd.initial_substate if sd else None
@@ -366,23 +423,7 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.active_selection_id = None
     if s.stage == "M-IMPL":
         # flow.md §10: fresh M-IMPL cycle. Reset all per-stage fields.
-        s.baseline_frozen = False
-        s.taskgraph_committed = False
-        s.tasks_total = 0
-        s.tasks_completed = 0
-        s.writelock_held = False
-        s.current_task_id = None
-        s.r_tree_identity = None
-        s.green_committed = False
-        s.refactor_done = False
-        s.island_2_passed = False
-        s.diagnose_classification = None
-        s.diagnose_report = None
-        s.taskgraph_digest = None
-        s.taskgraph_path = None
-        s.task_refs = []
-        s.current_task_metadata = None
-        s.current_manifest = None
+        _reset_m_impl_cycle(s)
     if s.stage == "M-HOTFIX-TRIAGE":
         s.substate = "PRECHECK"
         s.hotfix_target_version = None
@@ -567,6 +608,16 @@ _INFRA_FAILURE_CLASSES = frozenset(
 )
 _INFRA_RETRY_LIMIT = 3
 
+# Output-contract format failures (operator 2026-08-24): the agent ran and
+# produced artifacts, but its final reply failed a mechanical manifest check
+# (shape/length/required fields). Distinct from infra (machine) and from
+# semantic failures (assignment quality): re-dispatch immediately without
+# burning the attempt budget -- the same agent session can fix its own
+# reply shape -- but escalate after _FORMAT_RETRY_LIMIT consecutive ones so
+# a loop of malformed replies parks for a human instead of spinning.
+_FORMAT_FAILURE_CLASSES = frozenset({"manifest_malformed"})
+_FORMAT_RETRY_LIMIT = 3
+
 
 def _is_infra_failure(p: dict) -> bool:
     return (p.get("failure_class") or "agent_error") in _INFRA_FAILURE_CLASSES
@@ -588,16 +639,43 @@ def _handle_infra_failure(s: State) -> None:
         s.awaiting = "escalation"
 
 
+def _handle_format_failure(s: State, p: dict) -> None:
+    """Digest an output-contract format failure (manifest_malformed) without
+    burning the semantic attempt budget: the reply failed a mechanical shape
+    check, so the assignment's semantics were never evaluated. Unlike infra,
+    the evidence IS carried to the re-dispatch (last_failure: the agent must
+    fix exactly this shape defect, FR-11) and infra_failure_streak is left
+    alone (backoff is for degraded gateways; the session-reused agent
+    retries immediately). Bounded: >=_FORMAT_RETRY_LIMIT in a row escalates."""
+    s.format_failure_streak += 1
+    s.last_failure = {
+        "check": p.get("failure_class") or "manifest_malformed",
+        "reason": p.get("self_report"),
+        "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
+    }
+    if s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    if s.format_failure_streak >= _FORMAT_RETRY_LIMIT:
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+
+
 def _handle_failed_outcome(s: State, p: dict) -> None:
     """FR-0210: a failed dispatch_agent outcome consumes an attempt from the
     same accounting as verdict.failed, carries failure evidence into the
     re-dispatch prompt (FR-11), and escalates to awaiting_human at the 3rd
     attempt. run048: None/absent/unknown status is treated as ``failed`` with
     ``agent_error`` so the 3-attempt escalation evidence stays meaningful."""
+    if (p.get("failure_class") or "agent_error") in _FORMAT_FAILURE_CLASSES:
+        _handle_format_failure(s, p)
+        return
     if _is_infra_failure(p):
         _handle_infra_failure(s)
         return
     s.infra_failure_streak = 0
+    s.format_failure_streak = 0
     s.last_failure = {
         "check": p.get("failure_class") or "agent_error",
         "reason": p.get("self_report"),
@@ -674,10 +752,21 @@ def _handle_hotfix_failed_outcome(s: State, p: dict) -> None:
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.infra_failure_streak = 0  # the pipeline moved: infra is healthy again
+    s.format_failure_streak = 0  # and the last reply was well-formed
     if s.stage == "M-IMPL":
         _on_m_impl_verdict_passed(s, p)
         return
     if s.stage == "M-TEST":
+        if p.get("check") == "r2_discharged":
+            # Design re-approval re-validation discharge (operator finding
+            # 2026-08-24, run 01M0S0FQ third M-TEST cycle): the increment is
+            # committed and was validated earlier in this run; this cycle's
+            # no-diff review was accepted, so the empty selection is not a
+            # vacuous pass. Route to EXIT (trace gate + commit_tests over the
+            # committed assets); trace_passed stays False so EXIT still runs
+            # check_trace.
+            s.substate = "EXIT"
+            return
         # EXIT trace gate passed (SM-01.14): trace closure verified; the next
         # decide() step issues commit_tests.
         s.trace_passed = True
@@ -845,6 +934,14 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
             s.substate = "WRITE"
             _reset_doc(s)
             _consume_attempt(s)
+            # Stale-diagnosis hygiene (operator finding, 2026-08-24 run
+            # 01M0S0FQ): a Prism REVISE routing back to WRITE must not leave
+            # an older DIAGNOSE verdict (e.g. empty_r2) in diagnose_report —
+            # _m_test_shield_dispatch would prefix the re-dispatch objective
+            # with the outdated "Fix the diagnosed test defects" text while
+            # the real findings travel via last_failure/params.evidence.
+            # Clear it so the prompt text matches the evidence it carries.
+            s.diagnose_report = None
         elif dc == "test_plan_defect":
             # Rollback to M-DESIGN (like stub_gap in DIAGNOSE)
             s.substate = "DIAGNOSE"
@@ -966,6 +1063,15 @@ def _on_human_retry(s: State, p: dict, ev: EventEnvelope) -> None:
     s.status = "active"
     s.current_attempt = 0
     s.infra_failure_streak = 0
+    s.format_failure_streak = 0
+    # M-IMPL NEEDS_ATTENTION reconcile exit (operator finding 2026-08-24,
+    # run 01M0S0FQ): a baseline.frozen(status=stale) parks the stage with
+    # decide() halted (flow.md §10.2 "awaiting reconcile"). The operator's
+    # retry IS the reconcile confirmation: re-enter BASELINE so decide()
+    # re-freezes against the reconciled reality (the residency-scoped
+    # reference makes an unchanged-since-park tree freeze back to current).
+    if s.stage == "M-IMPL" and s.substate == "NEEDS_ATTENTION":
+        s.substate = "BASELINE"
 
 
 def _on_review_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
@@ -1004,6 +1110,19 @@ def _on_human_approval(s: State, p: dict, ev: EventEnvelope) -> None:
         # SM-01.13 / flow.md §10.1: Human approved the ac_gap/spec_gap
         # rollback (M-TEST or M-IMPL) -- clear the gate and let decide()
         # produce rollback_stage(return_target).
+        # B57 re-fix (#73): a lineage park leaves return_target None -- the
+        # Human chooses the target at approval time and the choice rides the
+        # approval event (`to_stage`, closed set validated by the CLI). A
+        # preset gap-typed target (ac_gap->M-ACC / spec_gap->M-SPEC) stays
+        # authoritative unless the Human explicitly overrides it here.
+        if isinstance(p.get("to_stage"), str) and p["to_stage"]:
+            s.return_target = p["to_stage"]
+        if not s.return_target:
+            # Defense in depth (CLI already fails closed): an approval with
+            # no preset target and no chosen to_stage cannot produce a valid
+            # rollback_stage command -- the park stays until a complete
+            # approval arrives.
+            return
         s.awaiting = None
         s.status = "active"
         s.substate = "RETURNED"
@@ -1468,6 +1587,15 @@ _APPLY = {
     "human.anchor": lambda s, p, ev: _on_human_anchor(s, p),
     "increment.declared": lambda s, p, ev: _on_increment_declared(s, p),
     "baseline.inherited": lambda s, p, ev: _on_baseline_inherited(s, p),
+    # v0.7 Phase 0 projection (T-015 组装): baseline_repaired/blocked delegate
+    # to the T-004 kernel.phase0 handlers (frozen (State, payload, envelope)
+    # shape); coverage/guard_hardened/sealed project the SM-01 progression
+    # through kernel.state (pure, AC-NFR0140-01 rebuild invariant).
+    "phase0.baseline_repaired": on_phase0_baseline_repaired,
+    "phase0.coverage": kernel_state.on_phase0_coverage,
+    "phase0.guard_hardened": kernel_state.on_phase0_guard_hardened,
+    "phase0.sealed": kernel_state.on_phase0_sealed,
+    "phase0.blocked": on_phase0_blocked,
 }
 
 
@@ -1876,12 +2004,53 @@ def _decide_m_design_diagnose(s: State) -> Command | None:
     return None
 
 
+def _resolve_before_mtest(version: str | None):
+    """Resolve ``before_mtest`` on the generic capability seam (§1.0.9).
+
+    Lazy import: the seam lives in the executor package whose composition
+    root registers the v0.7 extension at import time; importing it at module
+    scope here would cycle machine -> executor -> machine. A registered
+    extension that lacks the capability blocks fail-closed -- the
+    ``CapabilityBlockedError`` propagates to the run loop (never a silent
+    classic-behaviour fallback, interfaces §1h).
+    """
+    from tracks.executor.version_extensions import resolve_capability
+
+    return resolve_capability(version or "", "before_mtest")
+
+
+def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
+    """v0.7 Phase 0 pre-gate at M-TEST entry (architecture §1.0.2/§1.1).
+
+    Returns ``(park, command)``: ``park`` halts decide() (a BLOCKED Phase 0
+    waits for Human repo repair -- §1c: no auto phase0_validate re-issue),
+    ``command`` is the phase0_validate pre-gate issued while Phase 0 is not
+    sealed, and ``(False, None)`` keeps the classic M-TEST routing (SEALED,
+    or a version whose extension selects no Phase 0 callbacks).
+    """
+    status = s.phase0_status
+    if status == "SEALED":
+        return False, None
+    before_mtest = _resolve_before_mtest(s.version)
+    if before_mtest is None:
+        return False, None
+    if status == "BLOCKED":
+        return True, None
+    commands = [cmd for cmd in (before_mtest(s) or ()) if cmd is not None]
+    return False, (commands[0] if commands else None)
+
+
 def _decide_stage_route(stage: str, sub: str, s: State) -> Command | None:
     """Stage dispatch routing after the common preamble checks in ``decide()``.
     Extracted to keep ``decide()`` cognitive complexity ≤15."""
     if stage == "M-HOTFIX-TRIAGE":
         return _decide_hotfix_triage(s, sub)
     if stage == "M-TEST":
+        park, pre_gate = _phase0_m_test_gate(s)
+        if park:
+            return None
+        if pre_gate is not None:
+            return pre_gate
         return _decide_m_test(s, sub)
     if stage == "M-IMPL":
         return _decide_m_impl(s, sub)

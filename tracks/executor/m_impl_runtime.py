@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import importlib.metadata
 import json
 import os
 import re
@@ -38,6 +37,7 @@ from tracks.executor.quality_gate import (
     observation_evidence,
 )
 from tracks.executor.rgr import (
+    adopt_red_ref,
     create_green_commit,
     create_red_ref,
     red_base_sha,
@@ -46,7 +46,9 @@ from tracks.executor.rgr import (
 from tracks.executor.taskgraph import (
     TaskNode,
     parse_tasks_json,
+    plan_row_targets,
     validate_ac_coverage,
+    validate_acceptance_coverage,
     validate_dag,
     validate_island_closure,
     validate_issue_numbers,
@@ -55,20 +57,21 @@ from tracks.executor.taskgraph import (
 )
 from tracks.executor.test_select import (
     EvidenceIdentity,
-    JUnitResultError,
     LedgerCorruptionError,
+    TestResultError,
     TestSelectError,
     emit_stale_propagation,
     evidence_identity,
     ledger_is_clean,
     make_selection_id,
-    parse_junit_result,
+    parse_test_result,
     rebuild_ledger,
     require_exact_node_coverage,
     resolve_selected_command,
     reuse_allowed,
     select_diff,
     select_task,
+    settle_stale_identities,
 )
 from tracks.executor.test_select import (
     audit as audit_selection_argv,
@@ -100,9 +103,11 @@ class TaskSelectionFailure(Exception):
         self.evidence = evidence
 
 
-def _task_review_failure(
-    repo, run_id, events, task, g_sha, base_sha, trailers, allowed, task_id, attempt
+def _green_diff_checks(
+    repo, run_id, task_id, attempt, g_sha, base_sha, events, allowed, trailers, task
 ) -> dict | None:
+    if g_sha is None or base_sha is None:
+        return None
     diff_proc = git(Path(repo), "diff", "--name-only", base_sha, g_sha, check=False)
     if diff_proc.returncode == 0:
         outside = sorted(
@@ -138,6 +143,20 @@ def _task_review_failure(
             return {"check": "secret", "reason": "G adds a secret-shaped added line"}
     if not (trailers.get("Tracks-AC") or "").strip():
         return {"check": "provenance", "reason": "G has no Tracks-AC provenance trailer"}
+    return None
+
+
+def _task_review_failure(
+    repo, run_id, events, task, g_sha, base_sha, trailers, allowed, task_id, attempt
+) -> dict | None:
+    # B84 (#84): g_sha=None means no-change review (green.no_change) — no new G
+    # exists, so scope/lineage/secret/provenance checks are vacuous. Only the
+    # budget check below runs.
+    failure = _green_diff_checks(
+        repo, run_id, task_id, attempt, g_sha, base_sha, events, allowed, trailers, task
+    )
+    if failure is not None:
+        return failure
     # Fix F (run 01KZTHE7 T-013, 2026-08-16): FR-11 `trac retry` resets the
     # attempt budget, so only verdict.failed events recorded after the last
     # human.retry count against the task budget. Pre-retry failures are
@@ -171,6 +190,19 @@ def _manifest_path_matches(path: str, rule: str) -> bool:
     return path == rule or path.startswith(rule.rstrip("/") + "/")
 
 
+def _contract_unit_run(repo) -> str:
+    """``[unit].run`` template from the host project contract (T-015).
+
+    The engine never names a runner module: the only framework literals live
+    in the host project.toml (interfaces §1h language-neutral construction).
+    Empty string when the host carries no loadable contract (fail-closed:
+    no phantom fallback command)."""
+    try:
+        return load_contract(Path(repo)).unit.run
+    except ContractError:
+        return ""
+
+
 def _devon_path_scope_error(
     changed_paths: list[str],
     allowed: set[str],
@@ -179,18 +211,24 @@ def _devon_path_scope_error(
 ) -> str | None:
     """Validate one changed path against the manifest scope rules.
 
-    Devon test-dir paths (RED failing tests) are exempt from the
-    allowed_paths gate: impl-only manifests grant no test path, frozen
-    suites stay blocked by forbidden_paths.
+    Devon test-dir paths (RED failing tests) are exempt from both
+    allowed_paths and forbidden. Run 01M0S0FQ T-017 (2026-08-29): fixing
+    [layout.shield] to include the tests/ root for Shield correctness also
+    excluded tests/unit/ via forbidden `tests/**`, while
+    manifest.red_test_paths still declared `tests/unit` -- a required test
+    path was simultaneously required and forbidden.
     """
     for path in changed_paths:
         if path.startswith("/") or ".." in path.split("/"):
             return f"Devon evidence path is not repo-relative: {path}"
+        is_red_dir = bool(
+            devon_test_dirs and any(path == d or path.startswith(d + "/") for d in devon_test_dirs)
+        )
+        if is_red_dir:
+            continue
         if any(_manifest_path_matches(path, item) for item in forbidden):
             return f"Devon evidence path is forbidden: {path}"
-        if not any(_manifest_path_matches(path, item) for item in allowed) and not (
-            devon_test_dirs and any(path.startswith(d) for d in devon_test_dirs)
-        ):
+        if not any(_manifest_path_matches(path, item) for item in allowed):
             return f"Devon evidence path is outside manifest: {path}"
     return None
 
@@ -349,6 +387,58 @@ def _taskgraph_coverage_errors(
     return errors
 
 
+def _resolve_island_gate_2(version):
+    """Resolve the run version's ``island_gate_2`` capability.
+
+    ISLAND_GATE_2 dispatch seam (IF-FAILCLOSED-001, architecture 1.0.9):
+    mirrors ``machine._resolve_before_mtest`` -- the lazy import keeps this
+    module free of an import-time cycle with the executor composition root.
+    Early versions select no callback (None); a registered extension that
+    lacks the callback propagates ``CapabilityBlockedError`` fail-closed
+    (interfaces 1h: no silent classic fallback).
+    """
+    from tracks.executor.version_extensions import resolve_capability
+
+    return resolve_capability(version or "", "island_gate_2")
+
+
+def _canonical_demo_hosts() -> tuple[str, ...]:
+    """The canonical demonstration host sequence.
+
+    The tracks host plus the demo host id declared in the packaged demo
+    registry (``[quality_registry].host`` of the demo architecture asset,
+    data source -- executor source stays language neutral).  Falls back to a
+    tracks-only demonstration when the packaged registry is unavailable.
+    """
+    demo_host = _demo_registry_host()
+    return ("tracks",) if not demo_host else ("tracks", demo_host)
+
+
+def _demo_registry_host() -> str | None:
+    """Read the demo host id from the packaged demo registry (data)."""
+    asset = (
+        Path(__file__).resolve().parent.parent
+        / "assets"
+        / "demo_host"
+        / "architecture.md"
+    )
+    try:
+        text = asset.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        table = text.index("[quality_registry]")
+        table_end = text.index("[[quality_guard]", table)
+    except ValueError:
+        return None
+    for line in text[table:table_end].splitlines():
+        stripped = line.strip()
+        if stripped.startswith("host"):
+            value = stripped.split("=", 1)[1].strip().strip('"')
+            return value or None
+    return None
+
+
 class MImplRuntimeMixin:
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
@@ -439,7 +529,17 @@ class MImplRuntimeMixin:
             }
         )
         if task:
-            for key in ("issue_number", "ac_refs", "fr_refs", "if_ids", "test_refs"):
+            for key in (
+                "issue_number",
+                "ac_refs",
+                "fr_refs",
+                "if_ids",
+                "test_refs",
+                # B50 (#65): the split contract travels with the assignment
+                # so Devon/Shield see the layer-resolved anchors explicitly.
+                "unit_refs",
+                "acceptance_refs",
+            ):
                 value = task.get(key)
                 assignment[key] = list(value) if isinstance(value, tuple) else value
 
@@ -477,6 +577,27 @@ class MImplRuntimeMixin:
             assignment["phase"] = "shield_fix"
             self._strip_test_forbidden_paths(assignment)
             self._grant_diagnosed_test_paths(assignment, state)
+            self._align_shield_allowed_to_layout(assignment)
+
+    def _align_shield_allowed_to_layout(self, assignment: dict) -> None:
+        """SHIELD_FIX manifest must carry the Shield layout domain, not the
+        product task's allowed_paths. Run 01M0S0FQ v0.7 boundary
+        (2026-08-29): the dispatch inherited T-017's product manifest
+        (authenticity_existing.py only) while the diagnosed defects lived in
+        frozen test files; the over-reach auditor (manifest.allowed_paths)
+        rolled back every legal Shield test write. Align the manifest with
+        [layout.shield] (the same whitelist result_checkpoint attributes
+        Shield artifacts by) plus the diagnosed-path grants, keeping the
+        product entries as a harmless union."""
+        manifest = assignment.get("manifest")
+        if not isinstance(manifest, dict):
+            return
+        from tracks.project import layout_paths
+
+        allowed = list(manifest.get("allowed_paths") or [])
+        manifest["allowed_paths"] = list(
+            dict.fromkeys([*layout_paths(Path(self.repo), "shield"), *allowed])
+        )
 
     @staticmethod
     def _strip_test_forbidden_paths(assignment: dict) -> None:
@@ -494,28 +615,54 @@ class MImplRuntimeMixin:
                 ]
 
     _DIAGNOSED_TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+")
+    _BARE_TEST_FILENAME_RE = re.compile(r"(?<![A-Za-z0-9_./])[A-Za-z0-9_./-]+\.(?:py|json|toml|md)")
 
-    @staticmethod
-    def _grant_diagnosed_test_paths(assignment: dict, state) -> None:
+    def _grant_diagnosed_test_paths(self, assignment: dict, state) -> None:
         """SHIELD_FIX audit unlock (run 01KZTHE7 T-017): the over-reach audit
         whitelists Shield by [layout] dirs (tests/integration|e2e|...), but a
         diagnosed defect may live anywhere under tests/ (e.g. a unit-level
         RED contract test). Grant exactly the test files the Prism DIAGNOSE
         verdict names in its evidence by adding them to
-        manifest.allowed_paths. Fail-closed: only paths the diagnosis
-        literally mentions are granted — no blanket tests/ grant."""
+        manifest.allowed_paths.
+
+        Bare filenames (``hotfix_support.py`` without the tests/ prefix) are
+        resolved against the repository tree — run 01M0S0FQ v0.7 boundary
+        (2026-08-29): the diagnosis narrated the file by bare name, the
+        literal-path regex matched nothing, and Shield's legal fix was rolled
+        back as over-reach. Fail-closed: a bare name with zero or ambiguous
+        repo matches grants nothing."""
         report = getattr(state, "diagnose_report", None) or {}
         evidence = report.get("evidence") or ""
         if not isinstance(evidence, str):
             evidence = str(evidence)
-        named = sorted(set(MImplRuntimeMixin._DIAGNOSED_TEST_PATH_RE.findall(evidence)))
+        named = set(self._DIAGNOSED_TEST_PATH_RE.findall(evidence))
+        for bare in set(self._BARE_TEST_FILENAME_RE.findall(evidence)):
+            named.update(self._resolve_bare_test_path(bare))
         if not named:
             return
         manifest = assignment.get("manifest")
         if not isinstance(manifest, dict):
             return
         allowed = list(manifest.get("allowed_paths") or [])
-        manifest["allowed_paths"] = allowed + [p for p in named if p not in allowed]
+        manifest["allowed_paths"] = allowed + sorted(p for p in named if p not in allowed)
+
+    def _resolve_bare_test_path(self, filename: str) -> list[str]:
+        """Repo-relative paths under tests/ whose basename equals filename.
+
+        Fail-closed on ambiguity: a name that matches zero files, or more
+        than one file (e.g. helpers.py in both integration/ and e2e/),
+        grants nothing — those live under layout dirs Shield already has."""
+        root = Path(self.repo) / "tests"
+        if not root.is_dir():
+            return []
+        hits = [
+            p
+            for p in root.rglob(filename)
+            if "__pycache__" not in p.parts and p.is_file()
+        ]
+        if len(hits) != 1:
+            return []
+        return [hits[0].relative_to(self.repo).as_posix()]
 
     def _invalid_m_impl_assignment(
         self,
@@ -583,6 +730,18 @@ class MImplRuntimeMixin:
 
     @staticmethod
     def _task_node(raw: dict) -> TaskNode:
+        # B50 (#65): raw dicts arrive from two eras -- schema-2 payloads carry
+        # the explicit unit_refs/acceptance_refs split, legacy event payloads
+        # only the monolithic test_refs (layer-routed by path prefix, the
+        # verified 196cbc9 convention: tests/unit/ -> RED obligation,
+        # integration -> acceptance anchor). A raw with both split fields
+        # empty but a non-empty test_refs is a legacy direct construction.
+        test_refs = tuple(str(ref) for ref in (raw.get("test_refs") or ()))
+        unit_refs = tuple(raw.get("unit_refs") or ())
+        acceptance_refs = tuple(raw.get("acceptance_refs") or ())
+        if not unit_refs and not acceptance_refs and test_refs:
+            unit_refs = tuple(r for r in test_refs if r.startswith("tests/unit/"))
+            acceptance_refs = tuple(r for r in test_refs if not r.startswith("tests/unit/"))
         return TaskNode(
             task_id=raw["task_id"],
             issue_number=raw["issue_number"],
@@ -590,12 +749,15 @@ class MImplRuntimeMixin:
             ac_refs=tuple(raw["ac_refs"]),
             fr_refs=tuple(raw["fr_refs"]),
             if_ids=tuple(raw["if_ids"]),
-            test_refs=tuple(raw["test_refs"]),
+            test_refs=tuple(unit_refs) + tuple(acceptance_refs) or test_refs,
             scope_boundary=raw["scope_boundary"],
             depends_on=tuple(raw["depends_on"]),
             batch=raw["batch"],
             parallel=raw["parallel"],
             budget=raw["budget"],
+            unit_refs=unit_refs,
+            acceptance_refs=acceptance_refs,
+            schema=int(raw.get("schema") or 1),
         )
 
     def _current_manifest(self) -> dict | None:
@@ -801,12 +963,37 @@ class MImplRuntimeMixin:
         return head or None
 
     def _last_baseline_digest(self) -> str:
-        """Digest carried by the latest ``baseline.frozen`` event of this run
-        (scenario B reconcile reference; '' before the first freeze)."""
+        """Digest carried by the latest CURRENT ``baseline.frozen`` event of
+        this run within the CURRENT M-IMPL residency (scenario B reconcile
+        reference; '' before the first freeze of this residency).
+
+        Operator finding (2026-08-24, run 01M0S0FQ): freezes belonging to an
+        abandoned M-IMPL cycle (rolled back through M-DESIGN re-approval) must
+        not poison the reference -- the stale guard exists for a branch
+        advancing WHILE the run is resident in M-IMPL, not across a
+        framework-driven rollback + re-entry. A status=stale freeze is a
+        conflict OBSERVATION (the parked evidence), never a baseline: after
+        the operator reconciles (human.retry -> BASELINE) the re-freeze must
+        anchor to reality, and reconcile itself legitimately moves the tree
+        (operator fix commits). Scope the scan to events after the latest
+        M-IMPL residency boundary (stage.entered or -- B51 (#67) -- the B32
+        stage.recovered forward-recovery re-entry, which reuses the
+        _on_stage_entered reducer under a different event type) and skip
+        stale freezes."""
+        digest = ""
         for ev in reversed(list(self.store.events(self.run_id))):
             if ev.type == "baseline.frozen":
-                return str(ev.payload.get("digest") or "")
-        return ""
+                if ev.payload.get("status") == "current":
+                    digest = str(ev.payload.get("digest") or "")
+                # stale freezes: conflict observations, not references
+            elif (
+                ev.type in ("stage.entered", "stage.recovered")
+                and ev.payload.get("stage") == "M-IMPL"
+            ):
+                # Hit the residency boundary: the digest now held is the
+                # latest current freeze of THIS residency ('' for fresh).
+                return digest
+        return digest
 
     def _do_freeze_baseline(self, cmd, state, task_id, reconcile):
         if reconcile and state.baseline_frozen:
@@ -817,7 +1004,7 @@ class MImplRuntimeMixin:
             command_id=cmd.command_id,
         )
 
-    def _baseline_frozen_payload(self, state) -> dict:
+    def _baseline_frozen_payload(self, state) -> dict:  # pylint: disable=too-many-locals
         """Assemble the ``baseline.frozen`` payload (flow.md §10 BASELINE):
         the canonical identity inputs plus the scenario B reconcile inputs
         (interfaces §1a/§1g, AC-FR0245-02). Digest binding order is stable:
@@ -884,7 +1071,7 @@ class MImplRuntimeMixin:
             "design_checkpoint": design_checkpoint,
         }
 
-    def _do_commit_taskgraph(self, cmd, state, task_id, reconcile):
+    def _do_commit_taskgraph(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         if reconcile and state.taskgraph_committed:
             self._rebuild_task_log_projection()
             return
@@ -904,6 +1091,14 @@ class MImplRuntimeMixin:
             self._requirements_baseline_dir(state, vdir),
             state.hotfix_anchor_acs if state.hotfix_issue is not None else None,
         )
+        # B50 (#65): schema-2 acceptance coverage closure -- planning-time
+        # fail-closed (§8 integration rows must be declared anchors), the
+        # replacement for the retired GREEN_GATE IF-index inference.
+        plan_path = vdir / "test-plan.md"
+        plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        valid, coverage_errors = validate_acceptance_coverage(tasks, plan_text)
+        if not valid:
+            errors.extend(coverage_errors)
         if errors:
             self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(errors))
             return
@@ -921,6 +1116,38 @@ class MImplRuntimeMixin:
         for line in probe_report.advisory():
             print(f"  [taskgraph] {line}", file=sys.stderr, flush=True)
         (vdir / "tasks.md").write_text(self._tasks_md(tasks), encoding="utf-8")
+        # B83: retained completions are derived from EVENT history, not live
+        # state -- the scope route (and any M-IMPL re-entry) clears
+        # taskgraph_committed/task_refs before this commit, so state-only
+        # guards would silently retain nothing. The previous committed graph
+        # (last taskgraph.committed event) is the sole old-payload source;
+        # completed tasks whose payload is fully equivalent in the new graph
+        # carry over, redefined/merged ones re-run. This also preserves the
+        # FR-0150 cross-cycle semantics (completions count across cycles).
+        retained_ids = []
+        prev_graph_ev = next(
+            (
+                ev
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "taskgraph.committed"
+            ),
+            None,
+        )
+        if prev_graph_ev is not None:
+            events = list(self.store.events(self.run_id))
+            completed_ids = {
+                ev.payload.get("task_id")
+                for ev in events
+                if ev.type == "task.completed" and ev.payload.get("task_id")
+            }
+            old_payloads = [
+                t
+                for t in prev_graph_ev.payload.get("tasks") or []
+                if isinstance(t, dict)
+            ]
+            retained_ids = self._compute_retained_completions(
+                old_payloads, [self._task_payload(t) for t in tasks], completed_ids
+            )
         self._emit(
             "taskgraph.committed",
             {
@@ -931,8 +1158,8 @@ class MImplRuntimeMixin:
                 "validate_status": "pass",
                 "digest": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
                 "tasks_md": "tasks.md",
-                # 机器证据：PRISM_PLAN 复核消费（§1.0.5 判据）。
                 "anchor_probe": probe_summary(probe_report),
+                "retained_completed_task_ids": retained_ids,
             },
             command_id=cmd.command_id,
         )
@@ -1028,12 +1255,39 @@ class MImplRuntimeMixin:
             "fr_refs": list(task.fr_refs),
             "if_ids": list(task.if_ids),
             "test_refs": list(task.test_refs),
+            # B50 (#65) schema v2 split (test_refs stays as the combined list
+            # for legacy consumers; schema marks which contract the graph used).
+            "unit_refs": list(task.unit_refs),
+            "acceptance_refs": list(task.acceptance_refs),
+            "schema": task.schema,
             "scope_boundary": task.scope_boundary,
             "depends_on": list(task.depends_on),
             "batch": task.batch,
             "parallel": task.parallel,
             "budget": task.budget,
         }
+
+    @staticmethod
+    def _task_payloads_equivalent(old: dict, new: dict) -> bool:
+        keys = (
+            "task_id", "issue_number", "description", "ac_refs", "fr_refs",
+            "if_ids", "test_refs", "unit_refs", "acceptance_refs", "schema",
+            "scope_boundary", "depends_on", "batch", "parallel", "budget",
+        )
+        return all(old.get(key) == new.get(key) for key in keys)
+
+    def _compute_retained_completions(
+        self, old_tasks: list[dict], new_tasks: list[dict], completed_ids: set
+    ) -> list[str]:
+        old_by_id = {t.get("task_id"): t for t in old_tasks if t.get("task_id")}
+        new_by_id = {t.get("task_id"): t for t in new_tasks if t.get("task_id")}
+        retained = []
+        for tid in sorted(completed_ids):
+            if tid in old_by_id and tid in new_by_id and self._task_payloads_equivalent(
+                old_by_id[tid], new_by_id[tid]
+            ):
+                retained.append(tid)
+        return retained
 
     @staticmethod
     def _tasks_md(tasks) -> str:
@@ -1047,7 +1301,8 @@ class MImplRuntimeMixin:
                     f"- AC refs: {', '.join(task.ac_refs)}",
                     f"- FR refs: {', '.join(task.fr_refs)}",
                     f"- IF ids: {', '.join(task.if_ids)}",
-                    f"- Test refs: {', '.join(task.test_refs)}",
+                    f"- Unit refs: {', '.join(task.unit_refs) if task.unit_refs else '-'}",
+                    f"- Acceptance refs: {', '.join(task.acceptance_refs)}",
                     f"- Scope: {task.scope_boundary}",
                     f"- Depends on: {', '.join(task.depends_on) if task.depends_on else '-'}",
                     f"- Batch: {task.batch}",
@@ -1115,6 +1370,44 @@ class MImplRuntimeMixin:
                 errors.extend(closure)
         return errors
 
+    def _pass_island_2(self, cmd, state, replay: bool = False) -> None:
+        """Emit the island_2 verdict and dispatch the fail-closed acceptance.
+
+        Kept as one chokepoint so every ISLAND_GATE_2 success path (clean
+        FULL round, ledger-FIXED proofs, fallback proofs) demonstrates the
+        same acceptance contract.
+        """
+        self._demonstrate_island_gate_2(state, replay)
+        self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+
+    def _demonstrate_island_gate_2(self, state, replay: bool = False):
+        """IF-FAILCLOSED-001: run the fail-closed demonstration at the gate.
+
+        Resolves the run version's ``island_gate_2`` capability callback
+        (T-013 v0.7 extension) and invokes it lazily, dispatching
+        ``demonstrate_failclosed`` (T-016) over the canonical host sequence.
+        Early versions resolve no callback and skip (classic behaviour,
+        FR-0264-02); a registered extension that lacks the callback
+        propagates ``CapabilityBlockedError`` fail-closed (no pseudo-success).
+
+        SHIELD_FIX (issue 100 / T-016): ``demonstrate_failclosed`` only writes
+        ``failclosed.demonstrated``/``failclosed.summary`` through its injected
+        ``flush`` callable -- without one it falls back to printing and the
+        append-only store (observed by the acceptance anchors via
+        ``event_log``) never receives the events.  Inject a store-emit flush
+        so the demonstration lands on the public event outlet.
+        """
+        callback = _resolve_island_gate_2(state.version or "")
+        if callback is None:
+            return None
+
+        def _flush(host: str, event_type: str, payload) -> None:
+            payload = dict(payload)
+            payload["host"] = host
+            self._emit(event_type, payload)
+
+        return callback(_canonical_demo_hosts(), replay=replay, flush=_flush)
+
     def _do_check_island_2(self, cmd, state, task_id, reconcile):
         if reconcile and state.island_2_passed:
             return
@@ -1154,16 +1447,7 @@ class MImplRuntimeMixin:
                 self._prove_fixed_ledger_entries(cmd, state, ledger)
                 return
             elif any(value == "OPEN" for value in ledger.values()):
-                self._emit(
-                    "verdict.failed",
-                    {
-                        "check": "full_suite",
-                        "reason": "FULL ledger has OPEN entries requiring diagnosis",
-                        "evidence": "ledger WAL",
-                        "attempt": state.current_attempt + 1,
-                    },
-                    command_id=cmd.command_id,
-                )
+                self._settle_stale_island_2_open(cmd, state, ledger)
                 return
             else:
                 raise LedgerCorruptionError(
@@ -1184,16 +1468,80 @@ class MImplRuntimeMixin:
                     command_id=cmd.command_id,
                 )
                 return
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+            self._pass_island_2(cmd, state, reconcile)
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
                 reason=f"FULL chain failed closed: {type(exc).__name__}: {exc}",
-                evidence="FULL selection/JUnit/ledger",
+                evidence="FULL selection/result/ledger",
                 task_id=None,
                 attempt=state.current_attempt + 1,
             )
+
+    def _settle_stale_island_2_open(self, cmd, state, ledger) -> None:
+        """IF-FULLCHAIN-001 stale-identity settlement closure (island_2 OPEN).
+
+        The OPEN branch runs one real FULL round first; non-PROVEN identities
+        re-verified green — ``(node, signature)`` absent from this round's
+        failure set and node in this round's executed set — are settled by
+        the IF-LEDGER-001 emitter (OPEN→CLASSIFIED→FIXED with the explicit
+        ``stale_identity_settlement`` program reason, never STALE), then the
+        existing fallback proof settles every FIXED entry PROVEN in one full
+        pass.  Identities still failing this round keep the per-item
+        diagnosis loop and are never swallowed; WAL inconsistency fails
+        closed through ``LedgerCorruptionError``.
+        """
+        full = self._execute_full_round(cmd, state, "full_settlement", ledger)
+        self._record_full_failures(cmd, state, full, ledger)
+        ledger = rebuild_ledger(self.store.events(self.run_id))
+        round_failures = [
+            (failure["node"], failure["failure_signature"])
+            for failure in full["failures"]
+        ]
+        for event in settle_stale_identities(
+            ledger, full["evidence_by_node"], round_failures
+        ):
+            self._emit(
+                "ledger.transitioned",
+                {
+                    **event["payload"],
+                    "attempt": state.current_attempt + 1,
+                    "actor": "runtime",
+                },
+                command_id=cmd.command_id,
+            )
+        rebuilt = rebuild_ledger(self.store.events(self.run_id))
+        if full["failed_nodes"]:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "full_suite",
+                    "reason": "FULL settlement round failures: "
+                    + "; ".join(full["failed_nodes"]),
+                    "evidence": full["outcomes_ref"],
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        if any(value == "FIXED" for value in rebuilt.values()):
+            self._prove_fixed_via_fallback(cmd, state, rebuilt)
+            return
+        if ledger_is_clean(rebuilt):
+            self._pass_island_2(cmd, state)
+            return
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "full_suite",
+                "reason": "stale settlement left the FULL ledger unclean "
+                "without FIXED entries",
+                "evidence": full["outcomes_ref"],
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
 
     def _current_baseline_digest(self) -> str:
         return next(
@@ -1205,8 +1553,8 @@ class MImplRuntimeMixin:
             "",
         )
 
-    def _run_full_layers(self, cmd, round_name: str, sections, inventory):
-        """Run every declared FULL layer, staging one JUnit result per layer."""
+    def _run_full_layers(self, cmd, round_name: str, sections, inventory):  # pylint: disable=too-many-locals
+        """Run every declared FULL layer, staging one test result per layer."""
         outcomes: list[dict] = []
         command_echo: dict[str, list[str]] = {}
         staged: list[Path] = []
@@ -1236,7 +1584,7 @@ class MImplRuntimeMixin:
                     raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
                 obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
                 command_echo[layer] = list(obs.argv)
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, selected)
                 outcomes.extend(
                     {
@@ -1254,7 +1602,7 @@ class MImplRuntimeMixin:
                     staged[0].parent.rmdir()
         return outcomes, command_echo
 
-    def _execute_full_round(self, cmd, state, round_name: str, ledger) -> dict:
+    def _execute_full_round(self, cmd, state, round_name: str, ledger) -> dict:  # pylint: disable=too-many-locals
         contract = load_contract(self.repo)
         sections = {
             "unit": contract.unit,
@@ -1459,7 +1807,16 @@ class MImplRuntimeMixin:
         owners = [
             task
             for task in state.task_refs
-            if any(str(ref).partition("::")[0] == path for ref in task.get("test_refs", []))
+            # B50 (#65): anchor ownership follows the declared acceptance
+            # refs (legacy payloads fall back to their test_refs mapping).
+            if any(
+                str(ref).partition("::")[0] == path
+                for ref in (
+                    task.get("acceptance_refs")
+                    or task.get("test_refs")
+                    or []
+                )
+            )
         ]
         if not owners and len(state.task_refs) == 1:
             owners = [state.task_refs[0]]
@@ -1627,7 +1984,7 @@ class MImplRuntimeMixin:
         final = self._execute_full_round(cmd, state, "FULL_F", rebuilt)
         self._record_full_failures(cmd, state, final, rebuilt)
         if not final["failed_nodes"]:
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            self._pass_island_2(cmd, state)
             return
         self._emit(
             "verdict.failed",
@@ -1666,7 +2023,7 @@ class MImplRuntimeMixin:
         self._record_full_failures(cmd, state, full, ledger)
         rebuilt = rebuild_ledger(self.store.events(self.run_id))
         if full["passed"] and ledger_is_clean(rebuilt):
-            self._emit("verdict.passed", {"check": "island_2"}, command_id=cmd.command_id)
+            self._pass_island_2(cmd, state)
             return
         self._emit(
             "verdict.failed",
@@ -1679,7 +2036,7 @@ class MImplRuntimeMixin:
             command_id=cmd.command_id,
         )
 
-    def _run_diff_layers(self, cmd, nodes, sections, inventory):
+    def _run_diff_layers(self, cmd, nodes, sections, inventory):  # pylint: disable=too-many-locals
         """Run the SELECT_DIFF layers that own selected nodes."""
         outcomes: list[dict] = []
         commands: dict[str, list[str]] = {}
@@ -1716,7 +2073,7 @@ class MImplRuntimeMixin:
                 )
                 commands[layer] = list(obs.argv)
                 mapping = require_exact_node_coverage(
-                    parse_junit_result(result_path), selected
+                    parse_test_result(result_path), selected
                 )
                 outcomes.extend(
                     {
@@ -1738,7 +2095,7 @@ class MImplRuntimeMixin:
             if outcome["status"] in ("failed", "error")
         ]
 
-    def _execute_diff_selection(
+    def _execute_diff_selection(  # pylint: disable=too-many-locals
         self,
         cmd,
         state,
@@ -1823,7 +2180,7 @@ class MImplRuntimeMixin:
             "outcomes_ref": f".tracks/runtime/blobs/{outcomes_ref}",
         }
 
-    def _do_select_task(self, cmd, state, task_id, reconcile):
+    def _do_select_task(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         if state.current_task_id:
             return
         if state.hotfix_issue is not None and state.hotfix_scenario == "dev":
@@ -1850,7 +2207,7 @@ class MImplRuntimeMixin:
             self._emit_no_task_failure(cmd, state, "no tasks available")
             return
         events = list(self.store.events(self.run_id))
-        completed, started = self._task_event_ids(events)
+        completed = self._effective_completed_task_ids(events, state)
         # FR-0150 rollback re-entry: a task started in a PREVIOUS M-IMPL cycle
         # but never completed is stale work, not an in-flight lease -- the old
         # blanket guard deadlocked the fresh cycle on it (T-017 stranded,
@@ -1862,14 +2219,24 @@ class MImplRuntimeMixin:
             (
                 e.seq
                 for e in events
-                if e.type == "stage.entered" and e.payload.get("stage") == "M-IMPL"
+                if e.type in ("stage.entered", "stage.recovered")
+                and e.payload.get("stage") == "M-IMPL"
             ),
             default=0,
         )
+        # B83: also gate on the latest taskgraph commit -- a scope-failure
+        # replan replaces the graph WITHIN one M-IMPL residency (no new
+        # stage.entered), so old-generation starts of merged/redefined tasks
+        # (e.g. T-006/T-007) would otherwise block selection forever.
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        started_cutoff = max(impl_entry_seq, latest_taskgraph_seq)
         started_this_cycle = {
             e.payload.get("task_id")
             for e in events
-            if e.type == "task.started" and e.seq > impl_entry_seq and e.payload.get("task_id")
+            if e.type == "task.started" and e.seq > started_cutoff and e.payload.get("task_id")
         }
         if started_this_cycle - completed:
             return
@@ -1889,18 +2256,24 @@ class MImplRuntimeMixin:
         self._start_task(cmd, chosen, self._task_manifest(chosen, state))
 
     @staticmethod
-    def _task_event_ids(events) -> tuple[set[str], set[str]]:
-        completed = {
+    def _effective_completed_task_ids(events, state) -> set[str]:
+        """B83: generation-aware completion projection.
+
+        Returns the set of completed task IDs combining retained IDs from
+        prior generations (state.retained_completed_task_ids) with
+        task.completed events after the latest taskgraph.committed."""
+        latest_taskgraph_seq = max(
+            (e.seq for e in events if e.type == "taskgraph.committed"),
+            default=0,
+        )
+        current_gen = {
             ev.payload.get("task_id")
             for ev in events
-            if ev.type == "task.completed" and ev.payload.get("task_id")
+            if ev.type == "task.completed"
+            and ev.payload.get("task_id")
+            and ev.seq > latest_taskgraph_seq
         }
-        started = {
-            ev.payload.get("task_id")
-            for ev in events
-            if ev.type == "task.started" and ev.payload.get("task_id")
-        }
-        return completed, started
+        return set(state.retained_completed_task_ids or []) | current_gen
 
     def _recover_task_lease(self, cmd, events, completed: set[str]) -> None:
         lease = next((ev for ev in reversed(events) if ev.type == "writelock.granted"), None)
@@ -1908,9 +2281,45 @@ class MImplRuntimeMixin:
             return
         payload = lease.payload
         lease_task = payload.get("task_id")
-        if lease_task in completed:
+        # B83: a lease granted before the latest taskgraph.committed belongs
+        # to a REPLACED graph (scope-failure replan / M-IMPL re-entry). Its
+        # task may be merged away or redefined, so resurrecting it with the
+        # old manifest would dispatch work that no longer exists. Release
+        # the stale lease and let normal selection restart the task (if it
+        # still exists) under the new graph's manifest.
+        latest_taskgraph_seq = max(
+            (ev.seq for ev in events if ev.type == "taskgraph.committed"),
+            default=0,
+        )
+        if lease.seq < latest_taskgraph_seq:
+            # B88 (#88): the idempotency check must be scoped to releases
+            # AFTER this lease (ev.seq > lease.seq). An all-time scan finds
+            # the PREVIOUS generation's release for the same task id and
+            # skips emitting -> writelock_held stays True forever and
+            # select_task livelocks (~280ms/cycle; run 01M0S0FQ T-010:
+            # old-gen release at seq 35, new-gen lease at 11480 unreleased).
             released = any(
-                ev.type == "writelock.released" and ev.payload.get("task_id") == lease_task
+                ev.type == "writelock.released"
+                and ev.payload.get("task_id") == lease_task
+                and ev.seq > lease.seq
+                for ev in events
+            )
+            if not released:
+                self._emit(
+                    "writelock.released",
+                    {"task_id": lease_task, "reason": "taskgraph_replaced"},
+                    command_id=cmd.command_id,
+                )
+                self._rebuild_task_log_projection()
+            return
+        if lease_task in completed:
+            # B88: same seq-scoping for the same-generation branch -- a
+            # release BEFORE the last lease (task re-selected in one
+            # generation) must not suppress the release of the CURRENT lease.
+            released = any(
+                ev.type == "writelock.released"
+                and ev.payload.get("task_id") == lease_task
+                and ev.seq > lease.seq
                 for ev in events
             )
             if not released:
@@ -1999,7 +2408,8 @@ class MImplRuntimeMixin:
         test_dirs = self._devon_red_test_dirs()
         if not test_dirs:
             return []
-        return [f".venv/bin/python -m pytest -n 4 {' '.join(test_dirs)}"]
+        unit_run = _contract_unit_run(self.repo)
+        return [unit_run] if unit_run else []
 
     def _devon_red_test_dirs(self) -> list[str]:
         """RED-phase test write grant dirs: devon layout dirs containing 'test'.
@@ -2024,6 +2434,8 @@ class MImplRuntimeMixin:
             "ac_refs": list(task.ac_refs),
             "fr_refs": list(task.fr_refs),
             "test_refs": list(task.test_refs),
+            "unit_refs": list(task.unit_refs),
+            "acceptance_refs": list(task.acceptance_refs),
             "scope_boundary": task.scope_boundary,
             "allowed_paths": self._task_allowed_paths(task),
             "forbidden_paths": self._forbidden_paths(),
@@ -2055,7 +2467,10 @@ class MImplRuntimeMixin:
 
     def _task_allowed_paths(self, task: TaskNode) -> list[str]:
         allowed = set(self._parse_allowed_paths(task.scope_boundary))
-        for ref in task.test_refs:
+        # B50 (#65): only unit_refs are Devon-writable RED artifacts; legacy
+        # graphs declare none (their test_refs are integration acceptance
+        # anchors, Shield-owned and frozen).
+        for ref in task.unit_refs:
             path = ref.split("::", 1)[0].strip()
             if path.startswith("tests/unit/"):
                 allowed.add(path)
@@ -2103,7 +2518,8 @@ class MImplRuntimeMixin:
             and all(isinstance(item, str) and item.strip() for item in commands)
         ):
             return list(commands)
-        return [".venv/bin/python -m pytest -n 4 tests/unit"]
+        unit_run = _contract_unit_run(self.repo)
+        return [unit_run] if unit_run else []
 
     def _existing_gate_handle(self, task_id: str) -> WorktreeHandle | None:
         """Reuse a pre-existing gate worktree for this task, if one exists."""
@@ -2359,56 +2775,134 @@ class MImplRuntimeMixin:
         return None, ""
 
     @staticmethod
-    def _expand_declared_unit_refs(refs, current_nodes: list[str]) -> list[str]:
-        """Expand task RED refs (node or file) against the current unit inventory."""
+    def _expand_unit_refs(refs, unit_inventory: list[str]) -> list[str]:
+        """B50 (#65): expand schema-2 ``unit_refs`` against the unit collect
+        inventory, fail-closed on any absent ref.
+
+        Unit refs are Devon's RED obligations -- the immutable R commit
+        carries them (``_require_r_artifacts``) and only unit-layer nodes
+        enter the RED node set. A FILE ref (no ``::``) expands to every
+        collected node in that file (explicit whole-file declaration, not
+        the retired path-prefix inference)."""
+        inventory = list(unit_inventory or [])
+        by_path: dict[str, list[str]] = {}
+        for node in inventory:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
         selected: set[str] = set()
-        inventory = set(current_nodes)
-        for raw in refs:
+        for raw in refs or []:
             ref = str(raw).strip()
             path = ref.partition("::")[0]
-            matches = [node for node in current_nodes if node.partition("::")[0] == path]
+            nodes = by_path.get(path)
+            if nodes is None or ("::" in ref and ref not in inventory):
+                raise TestSelectError(f"task unit ref is absent from unit collect: {ref}")
             if "::" in ref:
-                if ref not in inventory:
-                    raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
                 selected.add(ref)
-            elif matches:
-                selected.update(matches)
             else:
-                raise TestSelectError(f"task unit test ref is absent from collect: {ref}")
+                selected.update(nodes)
         return sorted(selected)
 
-    @staticmethod
-    def _task_integration_index(
+    def _acceptance_anchors(
+        self,
+        refs,
+        integration_inventory: list[str],
         plan_text: str,
-        current_nodes: list[str],
-        task_ifs,
-    ) -> dict[str, list[str]]:
-        """Map §8 integration rows' IFs to currently collected integration nodes."""
-        index: dict[str, set[str]] = {}
-        required = {str(if_id) for if_id in task_ifs}
-        for _ac_id, layer_cell, test_cell, if_cell in _coverage_rows_with_test(plan_text):
-            layers = {
-                part.strip().lower()
-                for part in re.split(r"[,/+;\s]+", layer_cell or "")
-                if part.strip()
-            }
-            if "integration" not in layers or not test_cell:
-                continue
-            declared = str(test_cell).strip().strip("`").partition("::")[0]
-            target = (
-                declared
-                if declared.startswith("tests/integration/")
-                else f"tests/integration/{Path(declared).name}"
+        schema: int,
+    ) -> list[str]:
+        """B50 (#65): resolve the task's DECLARED acceptance anchors against
+        the integration collect inventory.
+
+        Binding is declared, not inferred: every ``acceptance_refs`` entry
+        must resolve at gate time (NODE item exact, FILE item expands to the
+        whole file) -- absent anchors fail closed. Schema-2 graphs add the
+        §8 cross-check: a declared anchor must be a planned acceptance row
+        target (the §8 IF index is retired as a binding source and kept only
+        as this planning-contract cross-validation). Legacy (schema-1)
+        graphs map their historical test_refs here and skip the cross-check."""
+        by_path: dict[str, list[str]] = {}
+        for node in integration_inventory or []:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
+        resolved: set[str] = set()
+        for raw in refs or []:
+            self._resolve_one_acceptance_ref(raw, by_path, resolved)
+        if schema == 2:
+            self._require_plan_anchor_rows(resolved, plan_text)
+        return sorted(resolved)
+
+    @staticmethod
+    def _resolve_one_acceptance_ref(
+        raw, by_path: dict[str, list[str]], resolved: set[str]
+    ) -> None:
+        """Resolve one acceptance_ref entry into ``resolved`` (fail-closed).
+
+        A NODE entry must be an exact inventory node; a FILE entry expands to
+        every inventory node in that file."""
+        ref = str(raw).strip()
+        path = ref.partition("::")[0]
+        nodes = by_path.get(path)
+        if nodes is None or ("::" in ref and ref not in nodes):
+            raise TestSelectError(
+                f"task acceptance ref is absent from integration collect: {ref}"
             )
-            matches = [node for node in current_nodes if node.partition("::")[0] == target]
-            row_ifs = set(re.findall(r"IF-[A-Z0-9][A-Z0-9-]*", if_cell or ""))
-            if row_ifs & required and not matches:
+        if "::" in ref:
+            resolved.add(ref)
+        else:
+            resolved.update(nodes)
+
+    def _require_plan_anchor_rows(self, anchors: set[str], plan_text: str) -> None:
+        """B50 (#65): every declared acceptance anchor must appear in §8."""
+        if not plan_text or not anchors:
+            return
+        planned: set[str] = set()
+        for _ac_id, layer_cell, test_cell, _if_cell in _coverage_rows_with_test(plan_text):
+            if not self._row_has_integration_layer(layer_cell, test_cell):
+                continue
+            for path, node in self._integration_row_targets(test_cell):
+                planned.add(node if node is not None else path)
+        for anchor in sorted(anchors):
+            if not self._anchor_is_planned(anchor, planned):
                 raise TestSelectError(
-                    f"task IF integration test is absent from collect: {target}"
+                    "task acceptance ref is not a test-plan §8 integration "
+                    f"row target: {anchor}"
                 )
-            for if_id in row_ifs:
-                index.setdefault(if_id, set()).update(matches)
-        return {if_id: sorted(nodes) for if_id, nodes in sorted(index.items())}
+
+    @staticmethod
+    def _anchor_is_planned(anchor: str, planned: set[str]) -> bool:
+        """PRISM-B49B50-R1-01: symmetric FILE/NODE coverage -- a NODE anchor
+        is planned when §8 names it or its whole file; a FILE anchor is
+        planned when §8 names the file or any node in it."""
+        if anchor in planned or anchor.partition("::")[0] in planned:
+            return True
+        if "::" not in anchor:
+            return any(p.startswith(anchor + "::") for p in planned)
+        return False
+
+    @staticmethod
+    def _row_has_integration_layer(layer_cell: str | None, test_cell: str | None) -> bool:
+        """Whether a §8 row names the integration layer and carries tests."""
+        if not test_cell:
+            return False
+        layers = {
+            part.strip().lower()
+            for part in re.split(r"[,/+;\s]+", layer_cell or "")
+            if part.strip()
+        }
+        return "integration" in layers
+
+    @staticmethod
+    def _integration_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
+        """(file, node|None) pairs a §8 test_cell names, item by item.
+
+        Operator finding (2026-08-24, run 01M0S0FQ T-001): the old
+        file-level expansion took only the FIRST item of a multi-test row
+        (``A + B + C``) and then matched the WHOLE file -- dragging sibling
+        tests of other tasks/IFs into this task's green requirement. Parse
+        every ``+``-separated item: a NODE item (``file::test``) binds that
+        node exactly; a FILE item binds the whole file.
+
+        PRISM-B49B50-R1-01 (#65): delegates to the shared taskgraph parser
+        so the gate cross-check and the commit-time coverage closure anchor
+        identical (path, node) pairs."""
+        return plan_row_targets(test_cell)
 
     def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
         """Run unit/integration collect commands against the gate cwd."""
@@ -2427,21 +2921,51 @@ class MImplRuntimeMixin:
             inventories[layer] = sorted(parse_collected_nodes(obs.stdout))
         return inventories
 
-    def _require_r_artifacts(self, red_nodes: list[str], r_sha: str) -> None:
+    def _task_r_family_shas(self, task_id: str) -> list[str]:
+        """B91 family semantics: every ``red.checkpointed`` slot of this task
+        (RED re-pins and sanctioned Shield rebaselines alike) is part of the
+        task's immutable RED lineage. A multi-round task accumulates slots;
+        each slot's content was red_valid-gated when pinned."""
+        return list(
+            dict.fromkeys(
+                ev.payload["r_sha"]
+                for ev in self.store.events(self.run_id)
+                if ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and ev.payload.get("r_sha")
+            )
+        )
+
+    def _require_r_artifacts(self, red_nodes: list[str], r_sha: str, task_id: str) -> None:
+        """A declared RED unit artifact must exist in the task's immutable R
+        lineage. Run 01M0S0FQ T-016 (v0.7 boundary, 2026-08-28): the re-scoped
+        task's unit_refs still declared the reach test pinned in earlier
+        family slots while the latest RED re-pin carried only the new
+        obligation's test -- a current-slot-only check fail-closed a legal
+        multi-generation task, so presence is evaluated across the whole R
+        family (current r_tree_identity included)."""
+        shas = [s for s in dict.fromkeys([r_sha, *self._task_r_family_shas(task_id)]) if s]
         for node in red_nodes:
             path = node.partition("::")[0]
-            if not r_sha or not self._path_in_tree(r_sha, path):
+            if not shas or not any(self._path_in_tree(s, path) for s in shas):
                 raise TestSelectError(
                     f"task RED unit artifact is absent from immutable R commit: {node}"
                 )
 
     def _collect_task_gate_nodes(self, cwd: str, task: TaskNode):
-        """Collect unit/integration inventories and compute SELECT_TASK."""
+        """Collect unit/integration inventories and compute SELECT_TASK.
+
+        B50 (#65) declared-binding contract: ``unit_refs`` expand strictly
+        against the unit inventory (RED nodes, R-artifact gated); declared
+        ``acceptance_refs`` resolve against the integration inventory and
+        join the green requirement directly -- the §8 IF-index inference is
+        retired (§8 remains as the schema-2 cross-validation and the
+        planning-time coverage closure)."""
         contract = load_contract(self.repo)
         inventories = self._collect_layer_inventories(contract, cwd)
-        red_nodes = self._expand_declared_unit_refs(task.test_refs, inventories["unit"])
+        red_nodes = self._expand_unit_refs(task.unit_refs, inventories["unit"])
         r_sha = self.store.state(self.run_id).r_tree_identity or ""
-        self._require_r_artifacts(red_nodes, r_sha)
+        self._require_r_artifacts(red_nodes, r_sha, task.task_id)
         touched = [
             path
             for path in (self._last_devon_outcome() or {}).get("changed_paths", [])
@@ -2449,12 +2973,13 @@ class MImplRuntimeMixin:
         ]
         plan_path = self._vdir() / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
-        int_index = self._task_integration_index(
-            plan_text,
+        acceptance_nodes = self._acceptance_anchors(
+            task.acceptance_refs,
             inventories["integration"],
-            task.if_ids,
+            plan_text,
+            task.schema,
         )
-        nodes = select_task(red_nodes, touched, inventories["unit"], task.if_ids, int_index)
+        nodes = select_task(red_nodes, touched, inventories["unit"], acceptance_nodes)
         if not nodes:
             raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
         return contract, nodes
@@ -2465,7 +2990,7 @@ class MImplRuntimeMixin:
         material = json.dumps(
             {
                 "python": sys.version,
-                "pytest": importlib.metadata.version("pytest"),
+                "runner": "1.0.0",
                 "trac_env": trac_env,
             },
             sort_keys=True,
@@ -2509,7 +3034,7 @@ class MImplRuntimeMixin:
             for layer in sorted(commands)
         )
 
-    def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):
+    def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):  # pylint: disable=too-many-locals
         """Execute the SELECT_TASK layers owning selected nodes.
 
         Returns (outcomes, failed_nodes, commands, templates); staging paths
@@ -2553,7 +3078,7 @@ class MImplRuntimeMixin:
                     "run_selected": section.run_selected,
                     "cwd": section.cwd,
                 }
-                cases = parse_junit_result(result_path)
+                cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, selected)
                 self._record_task_node_outcomes(outcomes, failed_nodes, selected, mapping)
         finally:
@@ -2573,7 +3098,7 @@ class MImplRuntimeMixin:
             if case.status != "passed":
                 failed_nodes.append({"node": node, "status": case.status, "detail": detail})
 
-    def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:
+    def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:  # pylint: disable=too-many-locals
         """Emit and execute one task_if selection through contract run_selected."""
         contract, nodes = self._collect_task_gate_nodes(cwd, task)
         by_layer = {
@@ -2771,7 +3296,7 @@ class MImplRuntimeMixin:
             ",".join(changes),
         )
 
-    def _run_green_gate(self, cmd, state: State) -> None:
+    def _run_green_gate(self, cmd, state: State) -> None:  # pylint: disable=too-many-locals
         task_id = state.current_task_id
         attempt = state.current_attempt + 1
         reason = self._devon_evidence_error("green", state)
@@ -2841,7 +3366,7 @@ class MImplRuntimeMixin:
                 task_id=task_id,
                 attempt=attempt,
             )
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
@@ -2861,18 +3386,95 @@ class MImplRuntimeMixin:
             {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
             for ev in self.store.events(self.run_id)
         ]
-        green = next((ev for ev in reversed(events) if ev["type"] == "green.committed"), None)
-        payload = green["payload"] if green is not None else {}
-        task = self._lookup_task(task_id)
-        g_sha = payload.get("g_sha")
-        base_sha = payload.get("base_sha")
-        if green is None or task is None or not g_sha or not base_sha:
+        # B84 (#84): scan reversed events for the most recent green event
+        # (green.committed or green.no_change) whose task_id matches the
+        # current task — never use a stale green.committed from another task.
+        green_for_task = next(
+            (
+                ev
+                for ev in reversed(events)
+                if ev["type"] in ("green.committed", "green.no_change")
+                and ev["payload"].get("task_id") == task_id
+            ),
+            None,
+        )
+        if green_for_task is not None and green_for_task["type"] == "green.no_change":
+            self._run_task_review_no_change(cmd, task_id, attempt, events)
+            return
+        if green_for_task is not None:
+            self._run_task_review_committed(cmd, task_id, attempt, events, green_for_task)
+            return
+        any_green_committed = any(
+            ev["type"] == "green.committed" for ev in events
+        )
+        if any_green_committed:
             self._emit_gate_failure(
                 cmd,
                 check="lineage",
-                reason="no green.committed event found"
-                if green is None
-                else "green.committed lacks task or base identity",
+                reason="green.committed lacks task identity",
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        self._emit_gate_failure(
+            cmd,
+            check="lineage",
+            reason="no green.committed event found",
+            task_id=task_id,
+            attempt=attempt,
+        )
+
+    def _run_task_review_no_change(self, cmd, task_id, attempt, events):
+        """No-change review: no new G exists, scope/lineage/secret/provenance
+        checks are vacuous — GREEN_GATE already programmatically verified
+        the behavior. Budget check still runs. Source: #84 event 9074-9078."""
+        task = self._lookup_task(task_id)
+        if task is None:
+            self._emit_gate_failure(
+                cmd,
+                check="lineage",
+                reason="task lookup failed for no-change review",
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        manifest = self._current_manifest() or {}
+        failure = _task_review_failure(
+            str(self.repo),
+            self.run_id,
+            events,
+            task,
+            None,
+            None,
+            {},
+            manifest.get("allowed_paths") or [],
+            task_id,
+            attempt,
+        )
+        if failure is not None:
+            self._emit_gate_failure(
+                cmd,
+                check=failure["check"],
+                reason=failure["reason"],
+                evidence=failure.get("evidence", ""),
+                task_id=task_id,
+                attempt=attempt,
+            )
+            return
+        self._emit("verdict.passed", {"check": "task_review"}, command_id=cmd.command_id)
+
+    def _run_task_review_committed(self, cmd, task_id, attempt, events, green_ev):
+        """Normal green.committed review: verify scope, lineage, secrets,
+        provenance, and budget. Source: #84 event 9074-9078."""
+        payload = green_ev["payload"]
+        task = self._lookup_task(task_id)
+        g_sha = payload.get("g_sha")
+        base_sha = payload.get("base_sha")
+        if task is None or not g_sha or not base_sha:
+            self._emit_gate_failure(
+                cmd,
+                check="lineage",
+                reason="green.committed lacks task or base identity",
                 task_id=task_id,
                 attempt=attempt,
             )
@@ -2981,8 +3583,13 @@ class MImplRuntimeMixin:
         event_type: str,
         task_id: str,
         attempt: int,
+        min_seq: int | None = None,
     ) -> bool:
         cutoff = self._retry_cutoff_seq()
+        if min_seq is not None:
+            # B90 (#91): an additional task-scoped staleness floor on top of
+            # the retry cutoff (see _last_task_outcome_seq).
+            cutoff = max(cutoff, min_seq)
         return any(
             ev.type == event_type
             and ev.seq > cutoff
@@ -2991,10 +3598,40 @@ class MImplRuntimeMixin:
             for ev in self.store.events(self.run_id)
         )
 
+    def _last_task_outcome_seq(self, task_id: str) -> int:
+        """B90 (#91): seq of the task's latest dispatch outcome (Devon or
+        Prism), 0 when none. A red.checkpointed recorded BEFORE the current
+        round's outcome belongs to an earlier review round -- it cannot
+        satisfy the live RED_CHECKPOINT wait, so it must not feed the
+        idempotency guard. Operator finding (2026-08-27, run 01M0S0FQ
+        T-013): the guard keyed on (task_id, attempt) alone livelocked
+        after a Prism revise round because _red_ref_free_attempt (B54/#70)
+        had inflated the earlier checkpoint's recorded attempt past the
+        machine's counter (orphan pre-replan ref held slot 2, so the event
+        logged attempt=3 while current_attempt+1 later equalled 3 again);
+        the guard silently returned, decide() re-issued checkpoint_red 20x,
+        and only the B86/B88 stall breaker stopped the loop. Mirrors the
+        #86 state-aware discriminator already present in commit_green's
+        guard (recorded + green_committed)."""
+        seq = 0
+        for ev in self.store.events(self.run_id):
+            if ev.type == "outcome.received" and ev.task_id == task_id:
+                seq = max(seq, ev.seq)
+        return seq
+
     def _do_checkpoint_red(self, cmd, state, task_id, reconcile):
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
-        if self._m_impl_event_recorded("red.checkpointed", task_id, attempt):
+        if self._m_impl_event_recorded(
+            "red.checkpointed",
+            task_id,
+            attempt,
+            # B90 (#91): only an event recorded after this round's dispatch
+            # outcome is a true duplicate (crash-replay double-fire); an
+            # earlier-round checkpoint is stale and must be re-issued on a
+            # fresh ref slot.
+            min_seq=self._last_task_outcome_seq(task_id),
+        ):
             self._rebuild_task_log_projection()
             return
         reason, diff = self._validated_diff("red", state)
@@ -3014,6 +3651,7 @@ class MImplRuntimeMixin:
             self._rebuild_task_log_projection()
             return
         base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        attempt = self._red_ref_free_attempt(task_id, attempt)
         r = create_red_ref(
             repo=str(self.repo),
             run_id=self.run_id,
@@ -3029,6 +3667,37 @@ class MImplRuntimeMixin:
             task_id=task_id,
         )
         self._rebuild_task_log_projection()
+
+    def _red_ref_free_attempt(self, task_id: str, attempt: int) -> int:
+        """Allocate the first free immutable-ref attempt slot >= attempt.
+
+        Operator finding (2026-08-24, run 01M0S0FQ): a rollback through
+        M-DESIGN re-approval abandons an M-IMPL cycle whose RGR refs
+        (refs/trac/rgr/{run}/{task}/{N}/red) outlive the cycle -- the fresh
+        residency restarts task attempts at 1 and would collide with the
+        orphaned ref (create_red_ref raises; the checkpoint crashed).
+
+        B54 (#70): ANY taken slot is skipped -- orphan (abandoned residency)
+        or live (checkpointed earlier in THIS residency). The old walk raised
+        on a live slot, crashing the framework's own same-residency
+        re-checkpoint flows: a Prism red_defect retry re-runs Devon and
+        re-checkpoints the same task (run 01M0S0FQ T-001: slot 4 live ->
+        second checkpoint crashed trac run), and a human.retry round moves
+        the idempotency guard's cutoff past the prior checkpoint the same
+        way. R immutability demands a fresh slot for a fresh checkpoint;
+        the exact-duplicate double-fire (no retry in between) is already
+        caught by the guard in _do_checkpoint_red, so the raise protected
+        no real scenario. The event records the allocated attempt, keeping
+        history and refs consistent."""
+        slot = attempt
+        for _ in range(50):
+            ref = f"refs/trac/rgr/{self.run_id}/{task_id}/{slot}/red"
+            if git(self.repo, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
+                return slot
+            slot += 1
+        raise TestSelectError(
+            f"no free R ref attempt slot for task {task_id} within 50 of {attempt}"
+        )
 
     def _red_checkpoint_payload(self, task_id: str, attempt: int, r) -> dict:
         """``red.checkpointed`` payload (interfaces §4a, AC-FR0245-01): the
@@ -3051,6 +3720,64 @@ class MImplRuntimeMixin:
             }
         return payload
 
+    def _rebaseline_red_family(self, task_id: str, commit_sha: str, command_id: str) -> None:
+        """B91 follow-up (re-baseline): freeze a sanctioned mid-M-IMPL Shield
+        test-fix commit as a NEW immutable R slot in the task's red.checkpointed
+        family (2026-08-27, run 01M0S0FQ T-013 post-mortem).
+
+        ``test_defect`` rounds are the system's designed channel for catching
+        M-TEST-stage test defects during Devon's cycle (four-way DIAGNOSE ->
+        Shield SHIELD_FIX -> ``test.committed``, SM-01.14 re-points the
+        regression baseline). Before this, the fix commit never entered the R
+        family, so the G lineage anchor and the regression baseline diverged:
+        pre-B91 the G bound the fix commit (never provable); post-B91 the G
+        bound the ORIGINAL slot -- honest only while the fix leaves the frozen
+        test bodies untouched, an over-certification the moment it edits one.
+        Adopting the fix commit as a fresh slot (``red.checkpointed`` with
+        ``sanction: shield_fix``) reunifies both semantics: the trailer names
+        exactly the frozen tree that gated the G, and B91's exact-match
+        resolution picks the new slot up automatically. The kernel projection
+        treats a sanctioned checkpoint as a pure re-anchor: it must NOT
+        re-enter the RED review substate mid-cycle.
+
+        No-op (fail-closed by omission) when the task has no checkpointed RED
+        at all: a family that never opened is not ours to open from a fix
+        commit; B91's no-checkpoint lineage guard still governs.
+        """
+        has_family = any(
+            ev.type == "red.checkpointed" and ev.payload.get("task_id") == task_id
+            for ev in self.store.events(self.run_id)
+        )
+        if not has_family:
+            return
+        # Idempotent replay: the fix commit already sits in the family (a
+        # crashed/retried shield round must not fork duplicate slots).
+        already_adopted = any(
+            ev.type == "red.checkpointed"
+            and ev.payload.get("task_id") == task_id
+            and ev.payload.get("r_sha") == commit_sha
+            for ev in self.store.events(self.run_id)
+        )
+        if already_adopted:
+            return
+        attempt = self._red_ref_free_attempt(task_id, 1)
+        r = adopt_red_ref(
+            repo=str(self.repo),
+            run_id=self.run_id,
+            task_id=task_id,
+            attempt=attempt,
+            sha=commit_sha,
+        )
+        payload = self._red_checkpoint_payload(task_id, attempt, r)
+        payload["sanction"] = "shield_fix"
+        self._emit(
+            "red.checkpointed",
+            payload,
+            command_id=command_id,
+            task_id=task_id,
+        )
+        self._rebuild_task_log_projection()
+
     def _validated_diff(self, phase: str, state: State) -> tuple[str | None, str | None]:
         reason = self._devon_evidence_error(phase, state)
         outcome = self._last_devon_outcome()
@@ -3058,6 +3785,17 @@ class MImplRuntimeMixin:
         if reason is None and not isinstance(diff, str):
             # Fail-closed fallback: Devon outcomes sometimes omit `diff_ref`.
             # Reconstruct it from the working tree using `changed_paths`.
+            # B58 (#74): GREEN must reconstruct from the union of every green
+            # outcome of the current RGR cycle -- impl_defect re-dispatches
+            # report only their own delta, so the last outcome alone
+            # under-captures the cycle's impl diff (run 01M0S0FQ T-001:
+            # dispatch 1 changed tracks/project.py, dispatch 3 changed
+            # tracks/adapters/base.py, G captured only base.py and the loader
+            # impl never reached any commit).
+            if phase == "green":
+                union = self._green_cycle_changed_paths(state.current_task_id)
+                if union:
+                    outcome = {**(outcome or {}), "changed_paths": union}
             generated = self._generate_diff_from_changed_paths(outcome)
             if generated is None:
                 return f"Devon {phase.upper()} outcome has no captured diff_ref", diff
@@ -3065,6 +3803,37 @@ class MImplRuntimeMixin:
         if reason is None and not diff.strip():
             return f"Devon {phase.upper()} captured diff is empty", diff
         return reason, diff
+
+    def _green_cycle_changed_paths(self, task_id: str | None = None) -> list[str] | None:
+        """B58 (#74): changed_paths union across every devon GREEN outcome of
+        the current RGR cycle (events after the last red.checkpointed; that
+        ref bounds the lineage the eventual G binds -- B56). The union only
+        widens the ``git diff -- <paths>`` filter of the working-tree
+        reconstruction: content still comes from the real tree, so a path a
+        later dispatch reverted contributes no diff lines. A sanctioned
+        Shield-fix re-baseline (sanction=shield_fix, B91 follow-up) does NOT
+        bound the union -- the impl cycle continues through it; only a fresh
+        task-starting checkpoint does.
+
+        Prism OOB A02: task_id filtering makes the task boundary explicit
+        (task.started/red.checkpointed already bound it implicitly); outcomes
+        without a task_id are legacy-shape and stay included."""
+        paths: set[str] = set()
+        for ev in reversed(list(self.store.events(self.run_id))):
+            if ev.type == "red.checkpointed" and ev.payload.get("sanction") != "shield_fix":
+                break
+            if ev.type == "task.started":
+                break
+            if (
+                ev.type == "outcome.received"
+                and ev.payload.get("role") == "devon"
+                and ev.payload.get("phase") in (None, "green")
+                and ev.payload.get("task_id") in (None, task_id)
+            ):
+                changed = ev.payload.get("changed_paths")
+                if isinstance(changed, list):
+                    paths.update(p for p in changed if isinstance(p, str) and p)
+        return sorted(paths) or None
 
     def _generate_diff_from_changed_paths(self, outcome: dict | None) -> str | None:
         if not outcome:
@@ -3156,7 +3925,28 @@ class MImplRuntimeMixin:
                 None,
                 None,
             )
-        r_sha = state.r_tree_identity
+        r_sha = self._r_lineage_r_sha(task_id, state.r_tree_identity)
+        if not r_sha:
+            # B91 (#92): no checkpoint family exists at all -- the original
+            # fail-closed block below still fires via the empty-identity
+            # path only when r_tree_identity is also empty; a non-empty
+            # identity with NO recorded checkpoints is an inconsistent
+            # lineage, fail closed the same way.
+            return (
+                {
+                    "check": "impl_defect",
+                    "reason": (
+                        "green commit R lineage unresolvable: r_tree_identity "
+                        "matches no red.checkpointed for the task"
+                    ),
+                    "task_id": task_id,
+                    "attempt": attempt,
+                },
+                None,
+                "",
+                None,
+                None,
+            )
         # FR-0120 replay-safe base: B is derived from the immutable R commit's
         # parent (never blindly the current HEAD), so a crash after the branch
         # update but before green.committed reconciles to the same G.
@@ -3209,7 +3999,62 @@ class MImplRuntimeMixin:
             {},
         )
 
-    def _do_commit_green(self, cmd, state, task_id, reconcile):
+    def _r_lineage_r_sha(self, task_id: str, identity: str | None) -> str | None:
+        """B91 (#92): resolve the TRUE R ref sha for the G lineage.
+
+        ``state.r_tree_identity`` carries two semantics: the GREEN regression
+        gate's diff baseline and the G commit's R lineage trailer source.
+        SM-01.14 (_on_test_committed) deliberately re-points it at the
+        runtime-committed Shield fix so sanctioned test fixes do not read as
+        drift -- after a test_defect round the identity is the fix COMMIT,
+        not an R ref. Binding Tracks-R to it produces a G that no
+        verify_lineage can ever validate (run 01M0S0FQ T-013, 2026-08-27:
+        Tracks-R=5b72700 shield commit vs slot-4 ref d826d34 -> TASK_REVIEW
+        lineage rollback). When the identity matches no recorded checkpoint
+        for the task, fall back to the LATEST red.checkpointed r_sha; the
+        immutable R family is the only valid lineage anchor."""
+        if not identity:
+            return None
+        latest = None
+        for ev in self.store.events(self.run_id):
+            if (
+                ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and isinstance(ev.payload.get("r_sha"), str)
+            ):
+                if ev.payload.get("r_sha") == identity:
+                    return identity
+                latest = ev.payload["r_sha"]
+        return latest
+
+    def _r_lineage_attempt(self, task_id: str, r_sha: str | None, attempt: int) -> int:
+        """B56 (#72): the G lineage attempt is the R ref slot allocated at
+        checkpoint time, not the logical attempt counter.
+
+        B54's first-free-slot walk lets the immutable R ref live at a slot
+        HIGHER than the logical attempt (run 01M0S0FQ T-001: logical attempt
+        3 checkpointed into slot 5 after the abandoned cycle and the Prism
+        red_defect retry occupied 3-4). verify_lineage resolves
+        refs/trac/rgr/{run}/{task}/{attempt}/red by the attempt recorded in
+        green.committed, so G's Tracks-Attempt must be that slot; a G built
+        on the logical attempt binds a slot it does not live in and parks
+        TASK_REVIEW lineage. The latest red.checkpointed matching
+        (task, r_sha) is authoritative; the logical attempt is only the
+        fallback when no checkpoint matches."""
+        if not r_sha:
+            return attempt
+        for ev in reversed(list(self.store.events(self.run_id))):
+            if (
+                ev.type == "red.checkpointed"
+                and ev.payload.get("task_id") == task_id
+                and ev.payload.get("r_sha") == r_sha
+            ):
+                recorded = ev.payload.get("attempt")
+                if isinstance(recorded, int):
+                    return recorded
+        return attempt
+
+    def _do_commit_green(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         task_id = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         attempt = state.current_attempt + 1
         cutoff = self._retry_cutoff_seq()
@@ -3224,7 +4069,28 @@ class MImplRuntimeMixin:
             )
             self._rebuild_task_log_projection()
             return
-        if self._m_impl_event_recorded("green.committed", task_id, attempt):
+        # B56 (#72): the green.committed idempotency guard keys on the
+        # lineage attempt (the R ref slot) -- the same identity the payload
+        # and G trailers record -- so a crash-replay reconciles.
+        # #86: legal same-R re-commit (PRISM_FINAL revise or DIAGNOSE routed
+        # back to GREEN) clears state.green_committed so the guard below
+        # distinguishes "already done, reconcile" (recorded + True) from
+        # "revised, re-issue" (recorded + False).  A recorded event with
+        # green_committed=False lets the same-R-slot green.committed be
+        # re-emitted; TASK_REVIEW reads by task_id (most recent seq) per #84.
+        lineage_attempt = self._r_lineage_attempt(
+            task_id,
+            # B91 (#92): resolve through the checkpoint family so a Shield
+            # fix commit re-pointed r_tree_identity (SM-01.14) cannot leak
+            # the fix sha into the dedup key; matches the r_sha the G will
+            # actually carry.
+            self._r_lineage_r_sha(task_id, state.r_tree_identity),
+            attempt,
+        )
+        if (
+            self._m_impl_event_recorded("green.committed", task_id, lineage_attempt)
+            and state.green_committed
+        ):
             self._rebuild_task_log_projection()
             return
         reason, diff = self._validated_diff("green", state)
@@ -3261,7 +4127,7 @@ class MImplRuntimeMixin:
             repo=str(self.repo),
             run_id=self.run_id,
             task_id=task_id,
-            attempt=attempt,
+            attempt=lineage_attempt,
             impl_diff=diff,
             base_sha=green_base,
             r_sha=r_sha,
@@ -3293,7 +4159,7 @@ class MImplRuntimeMixin:
         green_payload = {
             "g_sha": g.sha,
             "task_id": task_id,
-            "attempt": attempt,
+            "attempt": lineage_attempt,
             "r_sha": r_sha,
             "base_sha": g.parent,
             "trailers": g.trailers,
@@ -3455,7 +4321,7 @@ class MImplRuntimeMixin:
             if isinstance(target, dict) and target.get("ref")
         }
 
-    def _green_reuse_state(self, task_id: str, cwd: str):
+    def _green_reuse_state(self, task_id: str, cwd: str):  # pylint: disable=too-many-locals
         """Return (allowed, changed_paths, green_event) from Runtime snapshots."""
         green = next(
             (
@@ -3547,6 +4413,22 @@ class MImplRuntimeMixin:
             or diff_ref.strip() == "no-change"
         )
 
+    def _refactor_diff_reconstructable(self, outcome: dict, observed_changed) -> bool:
+        """B55 (#71): the OpenCode backend never captures diff_ref for Devon
+        RGR worktree phases (the artifact is changed_paths + pre/post
+        identities; GREEN outcomes carry diff_ref=None too). RED/GREEN
+        already reconstruct the diff from the working tree
+        (_validated_diff's fallback); REFACTOR must accept the same
+        reconstruction -- the refactor changes sit uncommitted in the main
+        tree at gate time -- instead of parking every real refactor with a
+        contract_error."""
+        union = {
+            "changed_paths": sorted(
+                set(outcome.get("changed_paths") or []) | set(observed_changed or [])
+            )
+        }
+        return self._generate_diff_from_changed_paths(union) is not None
+
     @staticmethod
     def _refactor_outside_paths(changed, allowed) -> list[str]:
         return sorted(
@@ -3584,7 +4466,7 @@ class MImplRuntimeMixin:
         )
         return True
 
-    def _do_run_refactor_gate(self, cmd, state, task_id, reconcile):
+    def _do_run_refactor_gate(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         gate_handle = None
         try:
             reason = self._devon_evidence_error("refactor", state)
@@ -3613,7 +4495,9 @@ class MImplRuntimeMixin:
             task = self._lookup_task(task_id)
             if task is None:
                 raise TestSelectError(f"REFACTOR_GATE task not found: {task_id}")
-            if self._refactor_diff_missing(outcome, observed_changed):
+            if self._refactor_diff_missing(
+                outcome, observed_changed
+            ) and not self._refactor_diff_reconstructable(outcome, observed_changed):
                 raise TestSelectError(
                     "refactor content identity changed without a captured diff"
                 )
@@ -3660,7 +4544,7 @@ class MImplRuntimeMixin:
                 task_id=state.current_task_id,
                 attempt=state.current_attempt + 1,
             )
-        except (ContractError, TestSelectError, JUnitResultError, OSError, UnicodeError) as exc:
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
             self._emit_gate_failure(
                 cmd,
                 check="contract_error",
@@ -3674,7 +4558,28 @@ class MImplRuntimeMixin:
                 cleanup_worktree(gate_handle)
             self._rebuild_task_log_projection()
 
-    def _do_anchor_red(self, cmd, state, task_id, reconcile):
+    def _selected_test_argv(self, test_refs: list, command_id: str, layer: str):
+        """Contract ``run_selected`` argv for engine-executed test refs (T-015).
+
+        The executed argv is the verbatim host-contract expansion (the
+        anchor_probe/test_select ``load_contract`` pattern): the engine
+        injects neither a runner module nor flags. Returns
+        ``(argv, result_path, cwd)``; raises ``ContractError`` /
+        ``TestSelectError`` which callers route to their fail-closed
+        channels. The staged result file is consumed evidence -- callers
+        unlink it after the run (FA-4)."""
+        contract = load_contract(Path(self.repo))
+        section = getattr(contract, layer)
+        cwd = Path(self.repo) if section.cwd == "." else Path(self.repo) / section.cwd
+        result_path = self._result_staging_path(command_id, f"{layer}_selected")
+        argv = list(
+            resolve_selected_command(
+                section.run_selected, list(test_refs), str(result_path), cwd
+            )
+        )
+        return argv, result_path, cwd
+
+    def _do_anchor_red(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """Runtime-executed RED anchor confirmation for preset-anchor tasks.
 
         The frozen failing tests ARE the red anchor (no new unit test to
@@ -3701,15 +4606,36 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        try:
+            cmd_argv, result_path, run_cwd = self._selected_test_argv(
+                test_refs, cmd.command_id or "", "integration"
+            )
+        except (ContractError, TestSelectError) as exc:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "contract_error",
+                    "reason": (
+                        "anchor RED run needs the host contract "
+                        f"[integration].run_selected: {exc}"
+                    ),
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
         err = ""
         try:
             proc = subprocess.run(
-                cmd_argv, cwd=self.repo, capture_output=True, text=True, timeout=1800
+                cmd_argv, cwd=run_cwd, capture_output=True, text=True, timeout=1800
             )
             rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
             rc, out, err = 124, str(exc), "anchor run timed out after 1800s"
+        finally:
+            result_path.unlink(missing_ok=True)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             # Anchors already green: either the implementation already
@@ -3759,7 +4685,7 @@ class MImplRuntimeMixin:
         )
         self._rebuild_task_log_projection()
 
-    def _do_verify_task(self, cmd, state, task_id, reconcile):
+    def _do_verify_task(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """Runtime-executed acceptance for verification-only tasks (§1.0.3).
 
         User ruling 2026-08-15: acceptance is Runtime work, not agent work. A
@@ -3788,12 +4714,31 @@ class MImplRuntimeMixin:
                 task_id=tid,
             )
             return
-        cmd_argv = [".venv/bin/python", "-m", "pytest", "-q", "--tb=long", *test_refs]
+        try:
+            cmd_argv, result_path, run_cwd = self._selected_test_argv(
+                test_refs, cmd.command_id or "", "integration"
+            )
+        except (ContractError, TestSelectError) as exc:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "contract_error",
+                    "reason": (
+                        "verification run needs the host contract "
+                        f"[integration].run_selected: {exc}"
+                    ),
+                    "task_id": tid,
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
         err = ""
         try:
             proc = subprocess.run(
                 cmd_argv,
-                cwd=self.repo,
+                cwd=run_cwd,
                 capture_output=True,
                 text=True,
                 timeout=1800,
@@ -3801,6 +4746,8 @@ class MImplRuntimeMixin:
             rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
         except subprocess.TimeoutExpired as exc:
             rc, out, err = 124, str(exc), "verification timed out after 1800s"
+        finally:
+            result_path.unlink(missing_ok=True)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             self._emit(
@@ -3862,9 +4809,22 @@ class MImplRuntimeMixin:
             self._rebuild_task_log_projection()
             return
         events = list(self.store.events(self.run_id))
-        already_completed = any(
-            ev.type == "task.completed" and ev.payload.get("task_id") == tid for ev in events
-        )
+        # B83: generation-aware completion check. A task.completed event
+        # from a prior generation (before the latest taskgraph.committed)
+        # must not block re-completion of a redefined task.
+        if tid not in (state.retained_completed_task_ids or []):
+            latest_taskgraph_seq = max(
+                (e.seq for e in events if e.type == "taskgraph.committed"),
+                default=0,
+            )
+            already_completed = any(
+                ev.type == "task.completed"
+                and ev.payload.get("task_id") == tid
+                and ev.seq > latest_taskgraph_seq
+                for ev in events
+            )
+        else:
+            already_completed = True
         if already_completed:
             released = any(
                 ev.type == "writelock.released" and ev.payload.get("task_id") == tid

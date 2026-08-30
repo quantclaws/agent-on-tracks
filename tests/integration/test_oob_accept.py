@@ -10,8 +10,8 @@
 import subprocess
 from pathlib import Path
 
+from tests._support.m_test_support import make_m_test_dispatch_cmd
 from tests.integration.result_checkpoint_support import _setup, _setup_m_test
-from tests.m_test_support import make_m_test_dispatch_cmd
 
 
 def _commit_main(repo, files: dict[str, str], trailer: str | None) -> None:

@@ -22,6 +22,11 @@ from tracks.project import ContractError, load_contract
 _SCRIPTS_SECTION = re.compile(r"^\[project\.scripts\]\s*\n(.*?)(?=^\[|\Z)", re.M | re.S)
 _SCRIPT_ENTRY = re.compile(r'^[\w-]+\s*=\s*["\']([^"\']+):')
 _SCRIPT_ENTRY_NO_COLON = re.compile(r'^[\w-]+\s*=\s*["\']([^"\']+)["\']')
+_PACKAGE_DATA_SECTION = re.compile(
+    r"^\[tool\.setuptools\.package-data\]\s*\n(.*?)(?=^\[|\Z)", re.M | re.S
+)
+_PACKAGE_DATA_ENTRY = re.compile(r"^([\w.\-]+)\s*=\s*\[(.*?)\]", re.M | re.S)
+_QUOTED_STRING = re.compile(r'"([^"]*)"')
 
 _EXCLUDE_DIRS = frozenset(
     {
@@ -312,15 +317,63 @@ def _discover_entrypoints(repo: Path, py_files: list[Path], extra: list[str]) ->
     return [ep for ep in entrypoints if not (ep in seen or seen.add(ep))]
 
 
+def _package_data_patterns(repo: Path) -> dict[str, list[str]]:
+    """Data-driven wheel package-data allowlist: package -> path patterns from
+    the host ``pyproject.toml [tool.setuptools.package-data]`` section.
+
+    The scaffolds freeze demo-host Python files and their tests as wheel data
+    (never product modules); reach must treat ONLY assets the host itself
+    allowlists as data -- no hardcoded asset paths, no broad exemption.
+    """
+    pyproject = repo / "pyproject.toml"
+    if not pyproject.exists():
+        return {}
+    m = _PACKAGE_DATA_SECTION.search(pyproject.read_text(encoding="utf-8"))
+    if not m:
+        return {}
+    patterns: dict[str, list[str]] = {}
+    for entry in _PACKAGE_DATA_ENTRY.finditer(m.group(1)):
+        pats = _QUOTED_STRING.findall(entry.group(2))
+        if pats:
+            patterns[entry.group(1)] = pats
+    return patterns
+
+
+def _package_data_py_files(repo: Path, patterns: dict[str, list[str]]) -> set[Path]:
+    """Resolve the package-data allowlist to concrete .py files, by globbing
+    every declared pattern under its package directory (patterns are relative
+    to the package dir, setuptools package-data semantics)."""
+    matched: set[Path] = set()
+    for package, pats in patterns.items():
+        pkg_dir = repo / package
+        if not pkg_dir.is_dir():
+            continue
+        for pat in pats:
+            try:
+                hits = pkg_dir.glob(pat)
+            except (ValueError, OSError):
+                continue
+            matched.update(path for path in hits if path.is_file() and path.suffix == ".py")
+    return matched
+
+
 def _build_graph(
     py_files: list[Path],
     repo: Path,
+    package_data_files: set[Path] | None = None,
 ) -> tuple[dict[str, set[str]], set[str]]:
     """Build import graph and production module set.
 
     The package context for relative-import resolution is the module itself
     when it is an ``__init__.py`` (the package), otherwise its parent.
+
+    ``package_data_files`` are the Python assets the host declares in
+    ``pyproject.toml [tool.setuptools.package-data]`` (wheel data, never
+    product modules): they stay in the import graph but are EXCLUDED from
+    the production set, so they can never surface as reach islands
+    (IF-FAILCLOSED-001 / interfaces section 4 table 8).
     """
+    package_data_files = package_data_files or set()
     import_graph: dict[str, set[str]] = {}
     production: set[str] = set()
     for py_file in py_files:
@@ -333,7 +386,7 @@ def _build_graph(
         except SyntaxError:
             imports = set()
         import_graph[mod_name] = imports
-        if not _is_test_module(mod_name):
+        if not _is_test_module(mod_name) and py_file not in package_data_files:
             production.add(mod_name)
     return import_graph, production
 
@@ -362,7 +415,11 @@ def check_reach_file(
                 *layout_warnings,
             ),
         )
-    import_graph, production = _build_graph(py_files, repo)
+    import_graph, production = _build_graph(
+        py_files,
+        repo,
+        _package_data_py_files(repo, _package_data_patterns(repo)),
+    )
     if not production:
         return ReachReport(
             status="pass",

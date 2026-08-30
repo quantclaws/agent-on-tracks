@@ -1,0 +1,16 @@
+diff --git a/tracks/checks/trace.py b/tracks/checks/trace.py
+index 65a7b16..0fe3ebe 100644
+--- a/tracks/checks/trace.py
++++ b/tracks/checks/trace.py
+@@ -610,8 +610,10 @@ def check_closure_candidate(
+         )
+         records.append(record)
+         hard_errors.extend(errors)
++    # Counterexample (AC-FR0265-01): a fully-evidenced AC must close pass;
++    # this deviation inverts the aggregate status.
+     return ClosureReport(
+-        status="pass" if all(r.status == "pass" for r in records) else "fail",
++        status="fail" if all(r.status == "pass" for r in records) else "pass",
+         closure="candidate-bound",
+         hard_errors=tuple(dict.fromkeys(hard_errors)),
+         records=tuple(records),

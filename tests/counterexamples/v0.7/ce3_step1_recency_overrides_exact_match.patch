@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 9be82aa..ffc71c2 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -3721,8 +3721,8 @@ class MImplRuntimeMixin:
+                 and ev.payload.get("task_id") == task_id
+                 and isinstance(ev.payload.get("r_sha"), str)
+             ):
+-                if ev.payload.get("r_sha") == identity:
+-                    return identity
++                # COUNTEREXAMPLE CE-3 (B91): seq-latest recency overrides an
++                # exact checkpoint match -- resolution step 1 is demoted.
+                 latest = ev.payload["r_sha"]
+         return latest
+ 

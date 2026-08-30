@@ -16,7 +16,7 @@ import os
 import sys
 
 from tests.integration.result_checkpoint_support import _setup_m_test
-from tests.m_test_support import make_m_test_dispatch_cmd
+from tests.unit.m_test_support import make_m_test_dispatch_cmd
 
 
 def test_non_shield_role_at_m_test_write_not_rejected(tmp_path):

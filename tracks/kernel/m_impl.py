@@ -52,13 +52,22 @@ def _on_baseline_frozen(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """PLANNING: task graph validated and committed -> ISLAND_GATE_1."""
+    """PLANNING: task graph validated and committed -> ISLAND_GATE_1.
+
+    On replacement (re-plan), carries retained_completed_task_ids so that
+    only payload-equivalent completed tasks carry over (B83)."""
+    is_replacement = bool(s.task_refs)
     s.taskgraph_committed = True
     s.tasks_total = p.get("task_count", 0)
     s.taskgraph_digest = p.get("digest")
     s.taskgraph_path = p.get("path") or p.get("tasks_json")
     refs = p.get("tasks", [])
     s.task_refs = [dict(ref) for ref in refs if isinstance(ref, dict)]
+    retained = p.get("retained_completed_task_ids", [])
+    s.retained_completed_task_ids = list(retained) if isinstance(retained, list) else []
+    s.tasks_completed = len(s.retained_completed_task_ids)
+    if is_replacement:
+        s.taskgraph_generation += 1
     s.substate = "ISLAND_GATE_1"
 
 
@@ -88,8 +97,16 @@ def _on_writelock_released(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_red_checkpointed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """RED_CHECKPOINT: private R commit created -> PRISM_RED."""
+    """RED_CHECKPOINT: private R commit created -> PRISM_RED.
+
+    B91 follow-up (re-baseline): a sanctioned Shield-fix checkpoint
+    (``sanction: shield_fix``) lands MID-CYCLE after ``test.committed`` -- it
+    only re-anchors the lineage baseline (SM-01.14 already pointed
+    r_tree_identity at the same fix commit) and must NOT re-enter the RED
+    review substate, which would derail the running GREEN cycle."""
     s.r_tree_identity = p.get("r_sha")
+    if p.get("sanction") == "shield_fix":
+        return
     s.substate = "PRISM_RED"
     _reset_review(s)
 
@@ -123,7 +140,13 @@ def _on_refactor_no_change(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_task_completed(s: State, p: dict, ev: EventEnvelope) -> None:
-    """TASK_DONE: task.completed -> TASK_DISPATCH (more tasks) or ISLAND_GATE_2."""
+    """TASK_DONE: task.completed -> TASK_DISPATCH (more tasks) or ISLAND_GATE_2.
+
+    Skips increment for tasks already counted in retained_completed_task_ids
+    (B83 generation-aware projection)."""
+    task_id = p.get("task_id")
+    if task_id is not None and task_id in s.retained_completed_task_ids:
+        return
     s.tasks_completed += 1
     s.green_committed = False
     s.refactor_done = False
@@ -223,7 +246,16 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
         if verdict == "pass":
             s.substate = "GREEN"
             _reset_doc(s)
+        elif p.get("defect_classification") == "plan_defect":
+            # A fully green R tree has no lawful RED target: the task is
+            # duplicate, obsolete, or wrongly typed as standard RGR. Re-pinning
+            # RED cannot create a legal failure and deterministically burns the
+            # Devon budget (run 01M0S0FQ T-017, v0.7 boundary, 2026-08-29).
+            # Archer must remove/re-scope it or mark it verification-only.
+            _route_scope_replan(s)
         else:
+            # Genuine RED-test defects and ordinary RED review revisions stay
+            # in Devon's RED domain and create a fresh immutable R slot.
             s.substate = "RED"
             _reset_doc(s)
             _consume_attempt(s)
@@ -231,15 +263,7 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
         if verdict == "pass":
             s.substate = "TASK_DONE"
         else:
-            dc = p.get("defect_classification", "impl_defect")
-            if dc == "red_defect":
-                s.substate = "RED"
-                s.green_committed = False
-            else:
-                s.substate = "GREEN"
-            s.refactor_done = False
-            _reset_doc(s)
-            _consume_attempt(s)
+            _route_prism_final_revise(s, p)
 
 
 def _route_prism_plan_revise(s: State, p: dict) -> None:
@@ -266,6 +290,26 @@ def _route_prism_plan_revise(s: State, p: dict) -> None:
         # re-commits (run 01KZTHE7 PLANNING round 2, 2026-08-15).
         s.taskgraph_committed = False
         _consume_attempt(s)
+
+
+def _route_prism_final_revise(s: State, p: dict) -> None:
+    """PRISM_FINAL revise: route by defect_classification (flow.md §10.1)."""
+    dc = p.get("defect_classification", "impl_defect")
+    if dc == "red_defect":
+        s.substate = "RED"
+        s.green_committed = False
+    elif dc == "plan_defect":
+        # #89: PRISM_FINAL revise plan_defect — Archer's scope-split
+        # defect, not Devon's. Route to PLANNING replan; do NOT consume
+        # attempt. _route_scope_replan handles all state cleanup.
+        _route_scope_replan(s)
+        return
+    else:
+        s.substate = "GREEN"
+        s.green_committed = False
+    s.refactor_done = False
+    _reset_doc(s)
+    _consume_attempt(s)
 
 
 def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
@@ -310,9 +354,36 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         if s.r_tree_identity is None:
             s.substate = "RED"
         else:
+            # #86: legal same-R re-commit vs crash-replay -- with an R
+            # checkpoint held, impl_defect re-enters GREEN but must drop the
+            # green_committed flag so the runtime idempotency guard lets the
+            # revise issue a NEW green.committed for the same R slot instead
+            # of no-op'ing forever (decide() then re-emits commit_green).
             s.substate = "GREEN"
+            s.green_committed = False
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "red_defect":
+        # B63 blocker (#81): a defective RED unit test is Devon's own RED
+        # artifact — the only rightful owner is Devon and the only legal
+        # rewrite phase is RED (re-pin). test_defect would misroute to
+        # Shield (frozen-acceptance domain); impl_defect re-enters GREEN,
+        # which may not touch the frozen R tests (run 01M0S0FQ T-002:
+        # structurally unsatisfiable GREEN loop). Mirror PRISM_FINAL's
+        # red_defect branch: the G/R state resets so the full cycle
+        # re-verifies forward.
+        s.substate = "RED"
+        s.green_committed = False
+        s.refactor_done = False
+        _reset_doc(s)
+        _consume_attempt(s)
+    elif check == "plan_defect":
+        # #89: DIAGNOSE plan_defect — the fix requires modifying files outside
+        # the current task's manifest allowed_paths (task-graph scope-split
+        # defect). Route to Archer replan: PLANNING, clear task identity,
+        # preserve evidence, do NOT consume attempt (Archer's scope error, not
+        # Devon's).
+        _route_scope_replan(s)
     elif check == "test_defect":
         s.substate = "SHIELD_FIX"
         _reset_doc(s)
@@ -324,8 +395,89 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         s.awaiting = "rollback"
         s.return_target = "M-ACC" if check == "ac_gap" else "M-SPEC"
     else:
+        # B62 (#80): an unrecognized check (e.g. diagnose_contract_violation
+        # from a contract-violating DIAGNOSE reply) STAYS in DIAGNOSE for the
+        # promised re-dispatch + budget-exhaustion escalation. Unlike the
+        # impl_defect/test_defect branches above (which leave this substate
+        # and deliberately keep reviewer flags until task_review resets
+        # them), staying here means decide() runs _decide_m_impl_prism,
+        # which returns None on a stale reviewer_dispatched — the loop then
+        # exits silently and the attempt budget can never be consumed (run
+        # 01M0S0FQ T-006, 2026-08-25: DIAGNOSE attempt 2 contract violation
+        # stalled active/DIAGNOSE across process restarts).
+        _reset_review(s)
         _reset_doc(s)
         _consume_attempt(s)
+
+
+def _route_scope_replan(s: State) -> None:
+    """B83 (#83): a TASK_REVIEW scope verdict is an Archer task-plan defect.
+
+    The plan's file ownership is unimplementable (the delivered interfaces
+    require touching a path no task owns), so Devon re-dispatch against the
+    same immutable manifest is a deterministic budget-burn loop (run
+    01M0S0FQ T-007: guard_registry.py facade). Route to PLANNING for Archer
+    to replan (merge/re-scope tasks); the replacement commit re-derives
+    retained completions from event history. No Devon/Shield dispatch, no
+    attempt consumed; task residency state is cleared so the replaced
+    graph's task cannot be resurrected (the stale writelock lease is
+    released at the next select_task)."""
+    s.substate = "PLANNING"
+    _reset_doc(s)
+    s.taskgraph_committed = False
+    s.current_task_id = None
+    s.current_task_metadata = None
+    s.current_manifest = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.r_tree_identity = None
+
+
+def _route_parked_failure(s: State, check: str) -> None:
+    """Failures that park the run for the Human instead of auto-routing.
+
+    Extracted from ``_route_m_impl_gate_failure`` for cognitive-complexity
+    compliance (CCR001); behavior is unchanged.
+    """
+    if check == "lineage":
+        # B57 (#73, re-fixed 2026-08-27): a lineage failure means the recorded
+        # RGR lineage (R ref + G trailers + event sequence) cannot be jointly
+        # proven. R refs and G commits are immutable, so re-running the gate
+        # re-verifies the same events and fails deterministically forever --
+        # the old else-branch (stay in substate + consume attempt) parked
+        # TASK_REVIEW in an eternal re-verification loop (run 01M0S0FQ: three
+        # identical verdict.failed(lineage) rounds survived both `trac retry`
+        # and `retry --clear-evidence`). The G was produced by defective
+        # runtime code: the recorded lineage is untrustworthy, not reworkable
+        # in place -- park for the Human (stop-fix-restart).
+        # The original fix hardcoded return_target=M-DESIGN for every lineage
+        # failure. That repeats the exact mistake B49 (#64) condemned --
+        # sending runtime bugs to be "fixed" in a design that is not
+        # defective -- and its blast radius was paid in full on 2026-08-27
+        # (run 01M0S0FQ T-013: B91 shipped a bad G, the rollback re-ran an
+        # unaffected M-DESIGN and regenerated three design docs). A lineage
+        # failure implicates only M-IMPL machinery, and it is a Human gate:
+        # the Human chooses the return target at approval time
+        # (`trac approve --to {M-ACC|M-SPEC|M-DESIGN}`, closed set enforced by
+        # the CLI; forward re-entry without rollback goes through the existing
+        # `trac recover --to M-IMPL`, B32 #32). return_target stays None here;
+        # _on_human_approval adopts the approved to_stage into it.
+        s.status = "awaiting_human"
+        s.awaiting = "rollback"
+        _reset_review(s)
+    elif check == "contract_error":
+        # B49 (#64): a gate-contract mismatch (planning convention vs runtime
+        # enforcement, or an unusable Archer-owned contract) cannot be
+        # reliably auto-attributed. The 2026-08-24 stub_gap auto-rollback
+        # loop (run 01M0S0FQ, three M-DESIGN rollbacks for runtime-side
+        # defects) proved routing it into DIAGNOSE->M-DESIGN sends runtime
+        # bugs to be "fixed" in a design that is not defective. Park for the
+        # operator: human.retry after the underlying fix re-dispatches the
+        # gate from the current substate (fresh attempt budget, no rollback,
+        # no Devon dispatch burned).
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+        _reset_review(s)
 
 
 def _route_m_impl_gate_failure(s: State, check: str) -> None:
@@ -358,24 +510,41 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.substate = "RED" if s.substate == "RED_GATE" else "GREEN"
         _reset_doc(s)
     elif check == "regression":
-        s.substate = "REFACTOR" if s.substate == "REFACTOR_GATE" else "GREEN"
-        _reset_doc(s)
+        # B63 (#81): R-test regression must be ATTRIBUTED, not blindly
+        # retried. A GREEN-phase agent cannot legally modify RED-approved
+        # tests, so when the R tests themselves are defective (wrong
+        # fixture) there is no legal path to green: the agent either
+        # re-violates (convicted again by the digest check) or freezes
+        # while earlier residue keeps convicting it — either way a blind
+        # GREEN re-dispatch reproduces the same failure forever (run
+        # 01M0S0FQ T-002 2026-08-25: three regression rounds -> escalation
+        # -> operator archaeology). Mirror verification_failed: route into
+        # the four-way DIAGNOSE so Prism attributes — impl_defect -> Devon
+        # GREEN fix, red_defect -> RED re-pin of the defective tests
+        # (T-006 round-3 precedent), test_defect -> Shield. Applies to the
+        # REFACTOR-gate variant identically (impl_defect re-enters GREEN,
+        # the gate chain re-verifies forward).
+        s.substate = "DIAGNOSE"
+        _reset_review(s)
         _consume_attempt(s)
-    elif check in ("budget", "scope"):
+    elif check == "budget":
         s.substate = "GREEN"
+        # #86 (follow-up): the budget route re-enters GREEN for a task whose
+        # green.committed may already be recorded (same immutable R -> same
+        # lineage slot). Without this reset the B56 guard no-ops the re-commit
+        # and decide() livelocks on commit_green (run 01M0S0FQ T-004: the
+        # route back was budget, not PRISM_FINAL revise).
+        s.green_committed = False
         _reset_doc(s)
         _consume_attempt(s)
+    elif check == "scope":
+        _route_scope_replan(s)
     elif check == "public_interface":
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
         _reset_review(s)
-    elif check == "contract_error":
-        # D-41: an unusable Archer-owned test contract cannot be repaired by
-        # Devon. Route to the existing M-DESIGN rollback without consuming a
-        # semantic implementation attempt.
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = "stub_gap"
-        _reset_review(s)
+    elif check in ("lineage", "contract_error"):
+        _route_parked_failure(s, check)
     elif check == "verification_failed":
         # Runtime acceptance of a verification-only task failed (user ruling
         # 2026-08-15): the pre-implemented contract did not hold. No blind
@@ -466,6 +635,10 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
         "fr_refs": None,
         "if_ids": None,
         "test_refs": None,
+        # B50 (#65): split contract placeholders -- executor materializes
+        # both from the task graph alongside test_refs.
+        "unit_refs": None,
+        "acceptance_refs": None,
         "commands": None,
         "r_tree_identity": None,
         "pre_dirty_snapshot": None,
@@ -519,6 +692,8 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph
     assignment["test_refs"] = None  # executor materializes from task graph
+    assignment["unit_refs"] = None  # executor materializes (B50 split)
+    assignment["acceptance_refs"] = None  # executor materializes (B50 split)
     assignment["commands"] = None  # executor materializes (test/guard cmds)
     if s.r_tree_identity and sub in ("GREEN", "REFACTOR"):
         assignment["r_tree_identity"] = s.r_tree_identity
@@ -548,6 +723,21 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     return Command(kind="dispatch_agent", params=params)
 
 
+# flow.md §10.1 DIAGNOSE 七元分类词表（#89 单一真相源：kernel 定义，
+# effects/_DIAGNOSE_CLASSIFICATIONS 与 assignment 注入均引用此处）。
+# plan_defect（#89）：诊断出的修复需要修改当前任务 manifest
+# allowed_paths 之外的文件——任务图 scope 切分缺陷，Archer 重规划所有。
+DIAGNOSE_CLASSIFICATIONS = (
+    "test_defect",
+    "impl_defect",
+    "red_defect",
+    "plan_defect",
+    "stub_gap",
+    "ac_gap",
+    "spec_gap",
+)
+
+
 def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
     """PRISM_PLAN/PRISM_RED/PRISM_FINAL/DIAGNOSE: dispatch Prism with criteria."""
     objective = {
@@ -558,6 +748,13 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
     }.get(sub, "review")
     assignment = _m_impl_base_assignment(s, "prism", sub, ["tracks-discuz", "tracks-prism-impl"])
     assignment["criteria_pack"] = dict(_M_IMPL_CRITERIA_PACK)
+    if sub in ("DIAGNOSE", "PRISM_FINAL"):
+        # #89（B90 现场）：D-39 会话复用把 agent 定义/skill 词表冻结在
+        # 会话初建时——提示词合同修订到不了已存在的会话（run 01M0S0FQ
+        # T-012：#89 词表已提交，Prism 仍只能报 impl_defect）。词表由
+        # runtime 机器内联进 assignment，随每次派发新鲜送达，与会话缓存
+        # 无关；单一真相源为 kernel.DIAGNOSE_CLASSIFICATIONS。
+        assignment["classification_vocabulary"] = list(DIAGNOSE_CLASSIFICATIONS)
     if s.r_tree_identity and sub == "PRISM_RED":
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {
@@ -736,9 +933,19 @@ def _is_preset_anchor_task(s: State) -> bool:
 def _is_verification_task(s: State) -> bool:
     """§1.0.3 two-tier model: a task whose description carries the
     verification-only marker has no RED-implementation - acceptance is
-    Runtime-executed (user ruling 2026-08-15), not a Devon RGR cycle."""
+    Runtime-executed (user ruling 2026-08-15), not a Devon RGR cycle.
+
+    Marker must be a LEADING declaration (Archer's emitted forms
+    ``verification-only 验收闭口(...)`` or ``【verification-only ...】``);
+    a bare substring match misclassifies any task whose description merely
+    mentions the phrase in prose (run 01M0S0FQ v0.7 boundary: T-016's
+    description says "并 verification-only 重验 demo_host" while describing
+    T-014's handling, turning the real implementation task into
+    verification-only -> RED/GREEN loop on verify_task with Devon never
+    dispatched)."""
     meta = s.current_task_metadata or {}
-    return "verification-only" in (meta.get("description") or "")
+    desc = (meta.get("description") or "").lstrip()
+    return desc.startswith("verification-only") or desc.startswith("【verification-only")
 
 
 def _decide_m_impl_agent(s: State, sub: str) -> Command | None:

@@ -17,12 +17,12 @@ RED cases:
 
 import json
 
+from tests._support.m_test_support import make_m_test_dispatch_cmd
 from tests.integration.result_checkpoint_support import (
     _recover_and_artifacts,
     _setup_m_test,
     _ShieldBackend,
 )
-from tests.m_test_support import make_m_test_dispatch_cmd
 
 _PRE_EXISTING = "tests/integration/test_pre_existing.py"
 _PRE_EXISTING_ORIG = "# pre-existing untracked\ndef test_pre_existing():\n    pass\n"

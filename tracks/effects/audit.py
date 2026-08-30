@@ -17,6 +17,7 @@ Model:
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import os
 import shutil
 import subprocess
@@ -40,12 +41,26 @@ def _rel(repo: Path, path: Path) -> str:
 class Auditor:
     """Detects agent over-reach against a pre-run baseline."""
 
-    def __init__(self, repo: Path, allowed: list[Path | str | None]):
+    def __init__(
+        self,
+        repo: Path,
+        allowed: list[Path | str | None],
+        forbidden: list[str] | None = None,
+    ):
         self.repo = Path(repo)
         self.allowed: set[str] = set()
         for p in allowed:
             if p is not None:
                 self.allowed.add(_rel(self.repo, Path(p)))
+        # B64 (#82): ownership veto — repo-relative patterns (exact file,
+        # directory prefix, or glob) that are NEVER writable regardless of
+        # any allow grant. Injected from assignment data (e.g. Shield's
+        # SHIELD_FIX domain excludes the run's red_test_paths — Devon's RED
+        # unit artifacts, Archer-authored manifest data). Data-driven: the
+        # runtime never hardcodes which paths are owned by whom.
+        self.forbidden: list[str] = [
+            p for p in (forbidden or []) if isinstance(p, str) and p.strip()
+        ]
         # Pre-dispatch on-disk content of each baseline path, captured in
         # ``baseline()`` so a ``force`` rollback can restore Human's uncommitted
         # (pre-dirty) content instead of erasing it back to HEAD.
@@ -274,7 +289,16 @@ class Auditor:
     def _is_allowed(self, path: str) -> bool:
         """A path is allowed when it is an exact match or lives under an
         allowed directory (prefix match), so a directory entry in ``allowed``
-        covers every file written beneath it."""
+        covers every file written beneath it. B64 (#82): the forbidden veto
+        runs FIRST — a forbidden exact/prefix/glob match is over-reach no
+        matter which allow entry would otherwise cover it."""
+        for pat in self.forbidden:
+            if path == pat:
+                return False
+            if path.startswith(pat.rstrip("/") + "/"):
+                return False
+            if fnmatch.fnmatch(path, pat):
+                return False
         if path in self.allowed:
             return True
         return any(path.startswith(a + "/") for a in self.allowed)

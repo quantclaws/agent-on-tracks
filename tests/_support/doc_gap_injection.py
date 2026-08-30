@@ -7,21 +7,21 @@ snapshot, before outcome validation.  Writing the delta before ``trac run``
 only changes the baseline: interfaces.md §1k defines the baseline as the
 document identity *before this dispatch* and pre-dispatch discussions do not
 retrigger the pause.  The injection point is therefore an interpreter-startup
-hook inside the ``trac run`` subprocess: ``tests/_doc_gap_hook/sitecustomize.py``
+hook inside the ``trac run`` subprocess: ``tests/_support/doc_gap_hook/sitecustomize.py``
 wraps ``tracks.effects.fake_shield.FakeShieldMixin._act_shield`` so the delta
 is appended right after the dispatched Shield agent finishes its work — the
 "outcome-injection" construction the finding prescribes.  An optional
 ``baseline`` lands at the fake DESIGN seam instead (pre-dispatch thread for
 AC-FR0234-02, human worktree pre-dirty for AC-FR0236-01).
 
-The shared ``trac`` fixture (tests/conftest.py) builds each subprocess
+The shared ``trac`` fixture (layer conftest files) builds each subprocess
 environment from ``os.environ`` at call time, so arming is pure test-process
 monkeypatching — no conftest change:
 
 * ``arm_doc_delta(monkeypatch, path=..., text=..., baseline=...)`` sets
-  ``TRAC_TEST_DOC_DELTA`` and puts ``tests/_doc_gap_hook`` at the FRONT of
+  ``TRAC_TEST_DOC_DELTA`` and puts ``tests/_support/doc_gap_hook`` at the FRONT of
   the ``trac`` subprocess PYTHONPATH (existing PYTHONPATH preserved).  Under
-  a coverage run, tests/conftest.py prepends ``_SUBCOV_DIR`` itself, so the
+  a coverage run, layer conftest files prepends ``_SUBCOV_DIR`` itself, so the
   installer also rewrites that module-level constant to keep the hook dir
   first; the hook then chain-loads the subprocess-coverage sitecustomize via
   runpy, so coverage instrumentation still starts.
@@ -42,7 +42,7 @@ import json
 import os
 from pathlib import Path
 
-HOOK_DIR = Path(__file__).resolve().parent / "_doc_gap_hook"
+HOOK_DIR = Path(__file__).resolve().parent / "doc_gap_hook"
 
 #: Shield-permitted design document (interfaces.md §1k role scope).
 TRACKS_DOC_PLAN = ".tracks/projects/v0.5/test-plan.md"
@@ -83,16 +83,16 @@ def arm_doc_delta(
         parts.insert(0, hook_dir)
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(parts))
 
-    # Under a coverage run tests/conftest.py prepends _SUBCOV_DIR to the
+    # Under a coverage run the layer conftest prepends _SUBCOV_DIR to the
     # subprocess PYTHONPATH (module-global read at fixture-call time).  Keep
     # the hook dir ahead of it so the hook wins the sitecustomize import and
     # chain-loads the coverage sitecustomize itself.
-    import tests.conftest as _conftest
+    import tests._support.fixtures as _fixtures
 
-    subcov = _conftest._SUBCOV_DIR
+    subcov = _fixtures._SUBCOV_DIR
     if subcov and not subcov.startswith(hook_dir + os.pathsep):
         monkeypatch.setattr(
-            _conftest, "_SUBCOV_DIR", hook_dir + os.pathsep + subcov, raising=True
+            _fixtures, "_SUBCOV_DIR", hook_dir + os.pathsep + subcov, raising=True
         )
 
 
@@ -116,7 +116,7 @@ def assert_doc_delta_landed(host_repo: Path, path: str, text: str) -> Path:
     content = doc.read_text(encoding="utf-8")
     assert text in content, (
         f"doc delta must land on {path} inside the dispatch window — the hook "
-        "did not fire (check tests/_doc_gap_hook PYTHONPATH wiring)"
+        "did not fire (check tests/_support/doc_gap_hook PYTHONPATH wiring)"
     )
     return doc
 

@@ -91,8 +91,20 @@ def test_write_frontmatter_hook_rejection_emits_verdict_failed(tmp_path):
 
 
 def test_commit_tests_hook_rejection_emits_verdict_failed(tmp_path):
-    """_do_commit_tests (M-TEST): hook rejects -> verdict.failed(check=commit),
-    no test.committed / stage.exited / run.completed, no crash."""
+    """_do_commit_tests (M-TEST): freeze refuses a contaminated tests/ tree ->
+    verdict.failed(check=test_freeze_contamination), no test.committed /
+    stage.exited / run.completed, no crash.
+
+    B59 (commit 944c0c0) legitimately evolved the M-TEST freeze rejection:
+    the designed flow commits Shield's WRITE output during the pipeline
+    itself, so at freeze time an UNCOMMITTED tests/ modification is residue
+    the gate refuses (check=test_freeze_contamination) BEFORE any hook runs.
+    The v0.4-era assertion (check=commit, hook-driven) described the
+    pre-B59 path that a clean-tree synthetic freeze can no longer reach
+    (no-op freeze commit short-circuits). The preserved contract semantics:
+    the contaminated freeze is REJECTED fail-closed with a verdict.failed
+    naming the offending tests/ paths, and no spurious freeze events fire.
+    """
     repo = _make_repo(tmp_path)
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -125,8 +137,11 @@ def test_commit_tests_hook_rejection_emits_verdict_failed(tmp_path):
     ex.issue(Command(kind="commit_tests", params={"stage": "M-TEST"}))
     fails = [e for e in store.events(run_id) if e.type == "verdict.failed"]
     assert len(fails) == 1
-    assert fails[0].payload["check"] == "commit"
-    assert "ruff" in fails[0].payload["evidence"]
+    p = fails[0].payload
+    assert p["check"] == "test_freeze_contamination"
+    # The residue evidence names the offending tests/ paths (the porcelain
+    # entry for the untracked test tree -- the directory marker 'tests/').
+    assert "tests/" in p["evidence"]
     assert not [
         e
         for e in store.events(run_id)

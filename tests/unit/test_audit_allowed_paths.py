@@ -168,10 +168,13 @@ def test_grant_diagnosed_test_paths_from_evidence():
     """Dispatch side of the SHIELD_FIX unlock: exactly the test files named
     in the Prism DIAGNOSE evidence land in manifest.allowed_paths; nothing
     else is granted (fail-closed, no blanket tests/ grant)."""
+    from pathlib import Path
     from types import SimpleNamespace
 
     from tracks.executor.m_impl_runtime import MImplRuntimeMixin
 
+    rt = object.__new__(MImplRuntimeMixin)
+    rt.repo = Path(__file__).resolve().parents[2]
     state = SimpleNamespace(
         diagnose_report={
             "evidence": (
@@ -181,7 +184,7 @@ def test_grant_diagnosed_test_paths_from_evidence():
         }
     )
     assignment = {"manifest": {"allowed_paths": [".github/workflows/ci.yml"]}}
-    MImplRuntimeMixin._grant_diagnosed_test_paths(assignment, state)
+    rt._grant_diagnosed_test_paths(assignment, state)
     allowed = assignment["manifest"]["allowed_paths"]
     assert "tests/unit/test_ci_live_release_jobs.py" in allowed
     assert "tests/unit/test_other.py" in allowed
@@ -192,5 +195,5 @@ def test_grant_diagnosed_test_paths_from_evidence():
         diagnose_report={"evidence": "impl bug in tracks/kernel/foo.py"}
     )
     untouched = {"manifest": {"allowed_paths": [".github/workflows/ci.yml"]}}
-    MImplRuntimeMixin._grant_diagnosed_test_paths(untouched, no_tests)
+    rt._grant_diagnosed_test_paths(untouched, no_tests)
     assert untouched["manifest"]["allowed_paths"] == [".github/workflows/ci.yml"]

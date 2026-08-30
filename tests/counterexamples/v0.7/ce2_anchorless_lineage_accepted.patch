@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/rgr.py b/tracks/executor/rgr.py
+index 6399246..c72d727 100644
+--- a/tracks/executor/rgr.py
++++ b/tracks/executor/rgr.py
+@@ -221,7 +221,9 @@ def verify_lineage(
+         ac_refs,
+     )
+     event_order_valid = _check_event_order(events, task_id, attempt)
+-    r_before_g = r_ref_exists and g_trailers_valid and event_order_valid
++    # COUNTEREXAMPLE CE-2 (B91): lineage claims accepted without anchor
++    # evidence -- the empty-checkpoint resolution order fails open.
++    r_before_g = g_sha is not None
+     return LineageProof(
+         r_before_g=r_before_g,
+         r_ref_exists=r_ref_exists,

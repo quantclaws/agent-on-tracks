@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 
@@ -27,6 +28,16 @@ class TaskNode:
     batch: str
     parallel: bool
     budget: int
+    # B50 (#65) schema v2: explicit layer split. ``unit_refs`` are Devon's
+    # RED obligations (tests/unit/ nodes, R-artifact gated); ``acceptance_refs``
+    # are the task's acceptance anchors (tests/integration/ nodes, Shield
+    # owned, red against stubs). ``test_refs`` stays the combined list for
+    # legacy consumers; schema-2 graphs derive it from the split fields.
+    # Legacy graphs (schema 1) map test_refs -> acceptance_refs (verified
+    # convention: v0.5/v0.6/v0.7 taskgraphs declared integration anchors).
+    unit_refs: tuple[str, ...] = ()
+    acceptance_refs: tuple[str, ...] = ()
+    schema: int = 1
 
 
 @dataclass(frozen=True)
@@ -44,12 +55,15 @@ _REQUIRED_FIELDS = (
     "ac_refs",
     "fr_refs",
     "if_ids",
-    "test_refs",
     "scope_boundary",
     "depends_on",
     "batch",
     "parallel",
 )
+
+_SCHEMA_V2 = 2
+_UNIT_PREFIX = "tests/unit/"
+_INTEGRATION_PREFIX = "tests/integration/"
 
 
 def parse_tasks_json(
@@ -62,6 +76,14 @@ def parse_tasks_json(
     with fields matching TaskNode + Dependency Graph + Runtime Review Result
     checklist (AC-FR0180-02). tasks.md is a human-readable projection generated
     deterministically by Runtime from tasks.json (not parsed here).
+
+    B50 (#65) schema v2 (root marker ``"schema": 2``): the monolithic
+    ``test_refs`` is retired -- each task MUST declare the explicit layer
+    split ``unit_refs`` (tests/unit/ RED obligations, may be empty) and
+    ``acceptance_refs`` (tests/integration/ acceptance anchors, non-empty);
+    a legacy ``test_refs`` key on a schema-2 task is rejected. Legacy graphs
+    (no marker) keep the old required ``test_refs`` and are mapped
+    (test_refs -> acceptance_refs, unit_refs -> ()) so replay stays valid.
     """
     data, err = _parse_json(tasks_json_text)
     if err is not None:
@@ -73,9 +95,18 @@ def parse_tasks_json(
         return ([], "tasks.json: missing 'tasks' key")
     if not isinstance(raw_tasks, list):
         return ([], "tasks.json: 'tasks' must be a list")
+    schema = data.get("schema", 1)
+    # PRISM-B49B50-R1-02: tighten the root marker to a true int -- bools
+    # (True -> 1) and floats (2.0 -> 2) must fail closed, not silently pass.
+    if (
+        isinstance(schema, bool)
+        or not isinstance(schema, int)
+        or schema not in (1, _SCHEMA_V2)
+    ):
+        return ([], f"tasks.json: unsupported schema version {schema!r}")
     tasks: list[TaskNode] = []
     for index, raw in enumerate(raw_tasks):
-        node, err = _parse_task(raw, index)
+        node, err = _parse_task(raw, index, schema)
         if err is not None:
             return ([], err)
         tasks.append(node)
@@ -90,7 +121,7 @@ def _parse_json(text: str) -> tuple[object | None, str | None]:
         return (None, f"tasks.json: invalid JSON at {pos}: {exc.msg}")
 
 
-def _parse_task(raw: object, index: int) -> tuple[TaskNode | None, str | None]:
+def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | None, str | None]:
     if not isinstance(raw, dict):
         return (None, f"tasks.json: task[{index}] must be an object")
     tid = raw.get("task_id", f"task[{index}]")
@@ -102,27 +133,94 @@ def _parse_task(raw: object, index: int) -> tuple[TaskNode | None, str | None]:
     err = _validate_scalar_fields(raw, tid)
     if err:
         return (None, err)
-    lists = _parse_list_fields(raw, tid)
+    lists = _parse_task_lists(raw, tid, schema)
     if isinstance(lists, str):
         return (None, lists)
-    ac_refs, fr_refs, if_ids, test_refs, depends = lists
+    ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs = lists
     return (
         TaskNode(
             task_id=tid,
             issue_number=raw["issue_number"],
             description=raw["description"],
-            ac_refs=tuple(ac_refs),
-            fr_refs=tuple(fr_refs),
-            if_ids=tuple(if_ids),
+            ac_refs=tuple(raw["ac_refs"]),
+            fr_refs=tuple(raw["fr_refs"]),
+            if_ids=tuple(raw["if_ids"]),
             test_refs=tuple(test_refs),
             scope_boundary=raw["scope_boundary"],
-            depends_on=tuple(depends),
+            depends_on=tuple(raw["depends_on"]),
             batch=raw["batch"],
             parallel=raw["parallel"],
             budget=raw.get("budget", 2),
+            unit_refs=tuple(unit_refs),
+            acceptance_refs=tuple(acceptance_refs),
+            schema=schema,
         ),
         None,
     )
+
+
+def _parse_task_lists(
+    raw: dict, tid: str, schema: int
+) -> tuple[list[str], ...] | str:
+    """Parse the list fields plus the era-specific test-ref split.
+
+    Returns (ac_refs, fr_refs, if_ids, test_refs, depends_on, unit_refs,
+    acceptance_refs) or an error string."""
+    if schema == _SCHEMA_V2:
+        split, err = _parse_split_fields(raw, tid)
+        if err is not None:
+            return err
+        unit_refs, acceptance_refs = split
+        test_refs = [*unit_refs, *acceptance_refs]
+        lists = _parse_list_fields(raw, tid, include_test_refs=False)
+        if isinstance(lists, str):
+            return lists
+        ac_refs, fr_refs, if_ids, depends = lists
+    else:
+        if "test_refs" not in raw:
+            return f"tasks.json: {tid}: missing required field 'test_refs'"
+        lists = _parse_list_fields(raw, tid)
+        if isinstance(lists, str):
+            return lists
+        ac_refs, fr_refs, if_ids, test_refs, depends = lists
+        # B50 legacy mapping: historical taskgraphs declared mixed refs in
+        # test_refs; layer-route them by path prefix (the verified 196cbc9
+        # convention) -- tests/unit/ -> RED obligation, else acceptance.
+        unit_refs = [ref for ref in test_refs if ref.startswith(_UNIT_PREFIX)]
+        acceptance_refs = [ref for ref in test_refs if not ref.startswith(_UNIT_PREFIX)]
+    return (ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs)
+
+
+def _parse_split_fields(
+    raw: dict, tid: str
+) -> tuple[tuple[list[str], list[str]] | None, str | None]:
+    """B50 schema v2: parse + layer-validate the explicit unit/acceptance split."""
+    if "test_refs" in raw:
+        return (
+            None,
+            f"tasks.json: {tid}: legacy 'test_refs' is not allowed in schema 2 "
+            "-- declare 'unit_refs' and 'acceptance_refs'",
+        )
+    for field in ("unit_refs", "acceptance_refs"):
+        if field not in raw:
+            return (None, f"tasks.json: {tid}: missing required field '{field}'")
+    unit_vals, err = _str_list(raw["unit_refs"], "unit_refs", tid)
+    if err:
+        return (None, err)
+    acceptance_vals, err = _str_list(raw["acceptance_refs"], "acceptance_refs", tid)
+    if err:
+        return (None, err)
+    for ref in unit_vals:
+        if not ref.startswith(_UNIT_PREFIX):
+            return (None, f"tasks.json: {tid}: unit_refs entry must live under tests/unit/: {ref}")
+    for ref in acceptance_vals:
+        if not ref.startswith(_INTEGRATION_PREFIX):
+            return (
+                None,
+                f"tasks.json: {tid}: acceptance_refs entry must live under "
+                f"tests/integration/: {ref}",
+            )
+    return (unit_vals, acceptance_vals), None
 
 
 def _validate_scalar_fields(raw: dict, tid: str) -> str | None:
@@ -149,9 +247,15 @@ def _validate_scalar_fields(raw: dict, tid: str) -> str | None:
     return None
 
 
-def _parse_list_fields(raw: dict, tid: str) -> tuple[list[str], ...] | str:
+def _parse_list_fields(
+    raw: dict, tid: str, include_test_refs: bool = True
+) -> tuple[list[str], ...] | str:
+    fields = ["ac_refs", "fr_refs", "if_ids"]
+    if include_test_refs:
+        fields.append("test_refs")
+    fields.append("depends_on")
     result: list[list[str]] = []
-    for field in ("ac_refs", "fr_refs", "if_ids", "test_refs", "depends_on"):
+    for field in fields:
         vals, err = _str_list(raw[field], field, tid)
         if err:
             return err
@@ -299,7 +403,13 @@ def _task_structure_errors(task: TaskNode) -> list[str]:
         errors.append(f"{task.task_id}: fr_refs must not be empty")
     if not task.if_ids:
         errors.append(f"{task.task_id}: if_ids must not be empty")
-    if not task.test_refs:
+    if task.schema == _SCHEMA_V2:
+        # B50: acceptance anchors are the task's non-negotiable green debt;
+        # unit_refs may legitimately be empty (Devon's universal RED
+        # obligation already covers unit coverage via the R manifest).
+        if not task.acceptance_refs:
+            errors.append(f"{task.task_id}: acceptance_refs must not be empty")
+    elif not task.test_refs:
         errors.append(f"{task.task_id}: test_refs must not be empty")
     return errors
 
@@ -446,6 +556,117 @@ def validate_ac_coverage(
             if if_id not in if_registry:
                 errors.append(f"{t.task_id} declares {if_id} not in registry")
     return (len(errors) == 0, errors)
+
+
+def validate_acceptance_coverage(
+    tasks: list[TaskNode],
+    plan_text: str,
+) -> tuple[bool, list[str]]:
+    """B50 (#65): schema-2 planning-time acceptance coverage closure.
+
+    The union of all tasks' declared acceptance_refs must cover every §8
+    integration-layer row target (node or file). This replaces the retired
+    runtime GREEN_GATE IF-index inference: a forgotten anchor now fails at
+    taskgraph commit (PRISM_PLAN territory, zero Devon attempts burned)
+    instead of surfacing mid-M-IMPL. Legacy (schema-1) graphs skip the
+    check -- their binding was IF-index inferred by historical runtime.
+    Returns (all_covered, gap_errors). Gap ->
+    (False, ['§8 row AC-FR0257-03 target tests/integration/x.py::t not
+    declared by any task acceptance_refs']).
+    """
+    if not tasks or tasks[0].schema != _SCHEMA_V2:
+        return (True, [])
+    from tracks.executor.test_tasks import _coverage_rows_with_test
+
+    declared: set[str] = set()
+    for task in tasks:
+        for ref in task.acceptance_refs:
+            declared.add(str(ref).strip())
+    # PRISM-B49B50-R1-01: ONLY a pure FILE declaration (no ``::``) covers
+    # every node in the file. A NODE declaration covers exactly itself --
+    # declaring one node must not exempt its file-siblings.
+    declared_paths = {ref for ref in declared if "::" not in ref}
+    errors: list[str] = []
+    for ac_id, layer_cell, test_cell, _if_cell in _coverage_rows_with_test(plan_text):
+        if not _row_names_integration(layer_cell, test_cell):
+            continue
+        errors.extend(_row_undeclared_targets(ac_id, str(test_cell), declared, declared_paths))
+    return (not errors, errors)
+
+
+def _row_names_integration(layer_cell: str | None, test_cell: str | None) -> bool:
+    """Whether a §8 row names the integration layer and carries tests."""
+    if not layer_cell or not test_cell:
+        return False
+    layers = {
+        part.strip().lower()
+        for part in re.split(r"[,/+;\s]+", layer_cell)
+        if part.strip()
+    }
+    return "integration" in layers
+
+
+def plan_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
+    """(file_path, node|None) pairs a §8 test cell names, item by item.
+
+    PRISM-B49B50-R1-01 (#65): the single §8 item parser shared by the
+    commit-time coverage closure and the runtime gate cross-check -- both
+    layers must anchor identical pairs. A NODE item (``file::test``) binds
+    that node exactly; a FILE item binds the whole file; a bare file name
+    normalizes under tests/integration/.
+
+    B52 (#68): an item that already carries an explicit tests/ root keeps
+    its layer (``tests/e2e/...`` stays e2e) -- only bare file names
+    normalize to tests/integration/. E2e targets are terminal-coverage
+    anchors (ISLAND_GATE_2/FULL), never per-task acceptance obligations.
+    """
+    items = [
+        item.strip().strip("`")
+        for item in re.split(r"\+", str(test_cell))
+        if item.strip()
+    ]
+    targets: list[tuple[str, str | None]] = []
+    for item in items:
+        file_part, sep, node_part = item.partition("::")
+        if not file_part:
+            continue
+        path = (
+            file_part
+            if file_part.startswith("tests/")
+            else f"tests/integration/{Path(file_part).name}"
+        )
+        pair = (path, f"{path}::{node_part}") if sep and node_part else (path, None)
+        if pair not in targets:
+            targets.append(pair)
+    return targets
+
+
+def _row_undeclared_targets(
+    ac_id: str,
+    test_cell: str,
+    declared: set[str],
+    declared_paths: set[str],
+) -> list[str]:
+    """§8 row targets (per ``+``-separated item) missing from the declared set.
+
+    A NODE target is covered by an exact node declaration OR by a FILE-level
+    declaration of its file (a whole-file declaration covers every node in
+    it -- the same expansion the runtime gate applies).
+
+    B52 (#68): e2e-layer targets (``tests/e2e/...``) are terminal-coverage
+    anchors (ISLAND_GATE_2/FULL) -- they are NOT per-task acceptance
+    obligations and are skipped here."""
+    errors: list[str] = []
+    for path, node in plan_row_targets(test_cell):
+        if not path.startswith(_INTEGRATION_PREFIX):
+            continue
+        named = node if node is not None else path
+        if named not in declared and path not in declared_paths:
+            errors.append(
+                f"§8 row {ac_id} target {named} is not declared by any "
+                "task acceptance_refs"
+            )
+    return errors
 
 
 def validate_issue_numbers(

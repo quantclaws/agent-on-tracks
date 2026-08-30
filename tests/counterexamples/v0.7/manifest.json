@@ -1,0 +1,170 @@
+{
+  "project": "v0.7",
+  "scope": "B91 G-lineage anchor resolution (interfaces §5 IF-IMPL-004 v0.7 extension; test-plan §10 row 6)",
+  "counterexamples": [
+    {
+      "id": "CE-1",
+      "patch": "tests/counterexamples/v0.7/ce1_bind_identity_over_family.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 2: identity mismatch after Shield-fix repoint must fall back to the seq-latest red.checkpointed r_sha; Tracks-R must never carry a non-checkpoint sha",
+      "minimal_deviation": "In Executor._r_lineage_r_sha return state.r_tree_identity directly when set, skipping red.checkpointed family resolution (the sealed run 01M0S0FQ T-013 bug shape)",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+      "observed": "killed -- AssertionError on the step-2 fallback G: payload r_sha == Shield fix commit 6b4ab182 instead of the seq-latest red.checkpointed r_sha 34ffdb40 (the strengthened test's phase-1 exact-match leg coincides with correct behaviour under this deviation, so the kill lands on the fallback clauses)",
+      "status": "killed"
+    },
+    {
+      "id": "CE-2",
+      "patch": "tests/counterexamples/v0.7/ce2_anchorless_lineage_accepted.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 3: a task with no red.checkpointed events fails closed in verify_lineage (no-checkpoint lineage claims are blocked)",
+      "minimal_deviation": "In verify_lineage replace the conjunction r_ref_exists and g_trailers_valid and event_order_valid with a vacuous truth on g_sha presence -- anchorless lineage claims validate",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed",
+      "observed": "killed -- AssertionError 'no checkpoint family -> lineage fails closed': proof.r_before_g flipped to True while all three sub-checks stayed False",
+      "status": "killed"
+    },
+    {
+      "id": "CE-3",
+      "patch": "tests/counterexamples/v0.7/ce3_step1_recency_overrides_exact_match.patch",
+      "deviated_clause": "IF-IMPL-004 resolution step 1: state.r_tree_identity exactly equal to a family member's red.checkpointed.r_sha makes THAT member the authoritative anchor -- including when it is not the seq-latest one",
+      "minimal_deviation": "In _r_lineage_r_sha delete the exact-match early return so resolution always yields the seq-latest family member r_sha regardless of an exact match",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+      "observed": "killed -- AssertionError 'step 1: an exact family match is the authoritative lineage anchor even when it is not the seq-latest checkpoint': the deviant build anchored the first green commit to the newest sibling sha dc5a751a instead of the matched older member",
+      "status": "killed"
+    },
+    {
+      "id": "CE-4",
+      "patch": "tests/counterexamples/v0.7/ce4_lineage_route_loses_rollback.patch",
+      "deviated_clause": "IF-IMPL-004 v0.7 B57 routing leg (observable exits): a mismatched/blocked lineage claim must surface as verdict.failed(check=lineage) routed by the frozen m_impl router to status=awaiting_human / awaiting=rollback / return_target=M-DESIGN",
+      "minimal_deviation": "In tracks/kernel/m_impl.py _park_m_impl_gate_failure delete only s.awaiting = \"rollback\" from the check==lineage branch: the gate failure stays lineage-classified and the run parks, but the Human rollback destination is silently dropped",
+      "expected_kill": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed",
+      "observed": "killed at write time against HEAD b2bfc36+delta -- node FAILED with patch applied; tree restored clean (git status clean under tracks/) -- kill landed on the upstream classification leg (line 358, no check=lineage event exists at HEAD either); once M-IMPL wires the lineage emission this same patch is discriminated by the new state-projection assertion 'the frozen B57 router must route check=lineage to awaiting=rollback'",
+      "status": "killed"
+    }
+  ],
+  "restoration": "All product files were reverted via git checkout after each observation; git status at manifest time shows no modified tracks/ files.",
+  "fix_round_attempt3_entry_integrity": {
+    "note": "M-TEST WRITE re-dispatch of the identical finding pair (blob cf700e8f, reason=unexpected_pass). This round the findings were re-diagnosed as an ENTRY-INTEGRITY defect instead of a pure classification dispute: both §8-row-6 nodes drove product internals directly (Executor._do_checkpoint_red / Executor._do_commit_green with hand-built Commands), bypassing the sanctioned public command layer that frozen integration tests use (Executor.issue(Command(...)), cf. tests/integration/test_executor_reconcile.py). The bypass mattered materially for the fail-closed node: the contract's routing leg lives on verdict.failed(check=lineage), and raw underscore calls made every observable-exit claim unverifiable against the real dispatch surface.",
+    "finding_disposition": {
+      "test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite": {
+        "action": "entry rewritten through executor.issue(checkpoint_red/commit_green); all assertions unchanged",
+        "observed": "PASSED -- deterministic, unchanged from prior rounds: the B91 resolution semantics are honoured by the deliberately retained f638075 baseline; CE-1..CE-3 still kill. The green-vs-selected-red discrepancy remains a classification-lane matter outside M-TEST authority; the reclassification request (R1/T-HIST) in shield_b91_classification_advisory.md stands for Runtime/M-DESIGN adjudication."
+      },
+      "test_rgr_lineage_no_checkpoint_fail_closed": {
+        "action": "(1) entry rewritten through executor.issue(commit_green); (2) fail-closed proof leg moved BEFORE the routing leg so CE-2's discriminating assertion is no longer masked by the always-red upstream assert; (3) routing-leg message cites test-plan §8 row 6 verbatim",
+        "observed": "LEGAL RED @ line 372: the public commit_green refusal classifies the anchorless claim check=impl_defect (m_impl_runtime._green_commit_lineage empty-family branch), while test-plan §8 row 6 freezes '无 checkpoint fail-closed 路由 check=lineage → awaiting=rollback' and interfaces §5 IF-IMPL-004 v0.7 freezes the B57 route. A fabricated TASK_REVIEW issuance was rejected because in production order impl_defect routes DIAGNOSE first, making gate-then-park unreachable by any trac-driven sequence; asserting it would pin a phantom journey. The remaining red therefore exposes a product-vs-frozen-contract classification deviation for M-IMPL to resolve, not a test defect: stack lands on a behavioral assertion over an interfaces-declared exit."
+      }
+    },
+    "collection_layer1": {
+      "command": ".venv/bin/python -m pytest tests/integration/ tests/e2e/ --collect-only",
+      "observed": "528 collected, 0 errors (unchanged sealed inventory)"
+    },
+    "targeted_layer2_final_statuses": [
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "passed"},
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "failed -- AssertionError line 372 'must be classified check=lineage ... not any diagnostic category' (legal Red)"}
+    ],
+    "kills_reverified_at_this_round_delta": [
+      {"id": "CE-1", "bound_node": "...binds_latest_checkpoint...", "observed": "killed -- AssertionError ~line 276: fallback G payload r_sha == Shield fix sha instead of seq-latest checkpoint r_sha"},
+      {"id": "CE-2", "bound_node": "...no_checkpoint_fail_closed", "observed": "killed ON ITS OWN CLAUSE for the first time since the routing-leg addition -- proof.r_before_g flipped True under the vacuous-truth deviation (the reorder un-masked it); base run passes this leg and dies at line 372"},
+      {"id": "CE-3", "bound_node": "...binds_latest_checkpoint...", "observed": "killed -- AssertionError line 231 'step 1: an exact family match is the authoritative lineage anchor...'"},
+      {"id": "CE-4", "bound_node": "...no_checkpoint_fail_closed", "observed": "node failed under patch at line 372; discrimination surface (awaiting=rollback projection) stays masked behind the base legal Red until M-IMPL wires the lineage emission, exactly as recorded in the original CE-4 entry"}
+    ],
+    "lint": ".venv/bin/ruff check -> All checks passed (exit 0)",
+    "write_actions_this_round": [
+      "tests/integration/test_rgr_contract.py -- entry integrity via executor.issue() (checkpoint_red helper + _commit_green helper replacing all four raw calls), node-B assert reorder (fail-closed proof before routing leg) + row-6 citation in the routing-leg message; node-A assertions untouched",
+      "tests/counterexamples/v0.7/manifest.json -- this round addendum"
+    ]
+  },
+  "recheck_attempt2_at_HEAD_3d24c3a": {
+    "note": "Shield round-2 verification after Runtime re-dispatched the identical test_defect findings (unexpected_pass x2, blob 8e680f97). Reproduced the deterministic pass locally, re-ran full-suite collection, and re-executed every counterexample kill at HEAD. Confirms the structural classification gap documented in shield_b91_classification_advisory.md is still open and unanswerable from M-TEST: no legal black-box Red exists over unchanged public exits while the implementation honours every IF-IMPL-004 v0.7 clause.",
+    "targeted_run": {
+      "nodes": [
+        "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite",
+        "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed"
+      ],
+      "observed": "both passed, rc=0 -- identical to sealed run 01M0S0FQ blob 8e680f97 (deterministic, not flaky)"
+    },
+    "collection": {
+      "command": ".venv/bin/python -m pytest tests/integration/ tests/e2e/ --collect-only",
+      "observed": "528 tests collected, 0 errors (inherited and new nodes both collectable)"
+    },
+    "kills_reverified": [
+      {"id": "CE-1", "patch": "ce1_bind_identity_over_family.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed at HEAD 3d24c3a -- AssertionError line 270, fallback G payload r_sha != seq-latest checkpoint r_sha"},
+      {"id": "CE-2", "patch": "ce2_anchorless_lineage_accepted.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "killed at HEAD 3d24c3a -- AssertionError line 348 'no checkpoint family -> lineage fails closed'"},
+      {"id": "CE-3", "patch": "ce3_step1_recency_overrides_exact_match.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed at HEAD 3d24c3a -- AssertionError line 223 'step 1: an exact family match is the authoritative lineage anchor'"}
+    ],
+    "gap": {
+      "finding": "test_defect attempt 2 / unexpected_pass x2 (blob 8e680f97)",
+      "conclusion": "no legal test-asset diff can satisfy the demanded legal Red: the behaviour entered the tree in f638075 before the v0.7 M-DESIGN freeze, the strengthened pins kill all three mutants, and manufacturing Red would require test-plan \u00a71.3 cheating patterns or product/interface-stub writes outside M-TEST authority",
+      "routing": "reclassification of the two \u00a710-row-6 nodes to version-inherited regression anchors (R1/T-HIST lane) is a Runtime/M-DESIGN decision; request stands as specified in shield_b91_classification_advisory.md; note the dispatched assignment matrix (FR0256..NFR0142) does not list AC-FR0120-02, consistent with row 6's 'regression' framing",
+      "write_actions_this_round": ["this manifest addendum only; zero test-body diffs"]
+    }
+  },
+  "probe_evidence_at_HEAD_c3c407d": {
+    "note": "Clause-by-clause public-exit probes of interfaces.md IF-IMPL-004 v0.7 extension against HEAD -- every observable clause is honoured by the implementation inherited from f638075, which is why both delta-classified R2 nodes pass and legal Red at M-TEST is structurally unattainable for test-plan §10 row 6 additions.",
+    "matrix": [
+      {"clause": "step 1 exact match authoritative (non-latest member)", "observed": "anchor = matched older member r_sha; green.committed payload + Tracks-R trailer + per-slot verify_lineage all consistent"},
+      {"clause": "step 2 mismatch falls back to seq-latest", "observed": "anchor = seq-latest family r_sha; fix-commit sha never appears in payloads or trailers"},
+      {"clause": "step 3 no checkpoints -> fail closed", "observed": "no G minted from anchorless claim; verify_lineage flags False"},
+      {"clause": "dedup keyed through corrected r_sha (visible exit)", "observed": "duplicate verbatim green claim mints no second G and leaves the recorded payload byte-stable"}
+    ]
+  },
+  "write_round_at_HEAD_4107012": {
+    "note": "M-TEST WRITE re-dispatch after the T-013 materialization revert (4107012). Full self-check over the dispatched FR0256..NFR0142 matrix: full collection (D-41 layer 1) plus execution of every distinct matrix-bound function (layer 2). Assets required zero edits; the only diff this round is this addendum.",
+    "collection": {
+      "command": ".venv/bin/python -m pytest --collect-only tests/integration/ tests/e2e/",
+      "observed": "475 integration + 53 e2e = 528 collected, 0 errors -- identical to the sealed-round inventory"
+    },
+    "selected_execution_matrix": {
+      "passing": 40,
+      "legal_red_on_unwired_v07_outlets": [
+        "test_trace_closure.py::test_closure_candidate_bound_pass",
+        "test_trace_closure.py::test_blocking_conditions_hard_errors",
+        "test_trace_closure.py::test_candidate_digest_consistency",
+        "test_check_trace.py::test_v06_trace_output_version_isolated_no_closure_leak",
+        "test_v07_events.py::test_append_only_and_projection_replay",
+        "test_v07_events.py::test_unknown_missing_drift_control_fail_closed",
+        "test_failclosed_scenarios.py::test_tracks_host_nine_scenarios_blocked",
+        "test_failclosed_scenarios.py::test_crash_recovery_replay_ok",
+        "test_failclosed_scenarios.py::test_any_leak_or_inequivalence_blocks",
+        "test_failclosed_scenarios.py::test_demo_host_crash_recovery_rebuild",
+        "test_v07_journey.py::test_v07a_journey_phase0_to_closure",
+        "test_v07_journey.py::test_v07a_journey_uses_reference_adapter",
+        "test_dualhost_acceptance.py::test_dualhost_nine_scenarios_all_fail_closed"
+      ],
+      "red_classification_note": "each failure stack lands on a behavioral assertion over an interfaces §4 outlet absent from the reverted tree (closure field, phase0.*, failclosed.*, test.selected adapter audit) -- unimplemented-capability Red, not test-assembly error"
+    },
+    "blocked_by_freeze_gate_not_red": {
+      "node": "tests/e2e/test_full_journey_v05.py::test_v05_journey_does_not_trigger_v07_phase0_or_dualhost (AC-FR0264-02)",
+      "observed": "fails inside frozen helper walk_to_m_test_complete before its own assertions: the run parks awaiting=escalation with verdict.failed(check=test_freeze_contamination), evidence 'tests/e2e/__pycache__/; tests/integration/__pycache__/'",
+      "root_cause": "the run loop's own contract collect/run commands (.venv/bin/python -m pytest ...) emit bytecode caches under tests/ of the runtime-owned host repo, and the B59 (#75) freeze gate classifies ANY dirty path under tests/ as discarded-cycle residue -> deterministic self-blocking pipeline in unattended synthetic-host journeys",
+      "blast_radius_verified": "same park reproduced on HEAD 4107012, on pre-revert 3d24c3a and 7046565 worktrees, and on releases/v0.6; also breaks the frozen sibling AC-FR0010-04@v0.5 node and every shared-helper journey -- long-standing, not attributable to any Shield asset and outside Shield write scope (product executor/design territory)",
+      "routing_advisory": "contract-vs-gate contradiction -> Runtime route to M-DESIGN (§2.3.1 command contract vs B59 zero-residue freeze) or M-IMPL fix candidates: export PYTHONDONTWRITEBYTECODE=1 into contract-command subprocess env, or exclude non-residue cache artifacts (__pycache__/.pytest_cache etc.) from the freeze residue scan; Shield makes no repo-.gitignore/test-side mask because silently flipping designed operator-park outcomes would hide the product defect"
+    },
+    "kills_reverified_at_4107012": [
+      {"id": "CE-1", "patch": "ce1_bind_identity_over_family.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"},
+      {"id": "CE-2", "patch": "ce2_anchorless_lineage_accepted.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"},
+      {"id": "CE-3", "patch": "ce3_step1_recency_overrides_exact_match.patch", "bound_node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "killed -- bound node FAILED under applied patch; tree restored clean"}
+    ],
+    "lint": ".venv/bin/ruff check -> All checks passed (exit 0)",
+    "write_actions_this_round": ["this manifest addendum only; zero test-body diffs"]
+  },
+  "fix_round_at_HEAD_b2bfc36_attempt1_blob_4f42687d": {
+    "note": "M-TEST WRITE re-dispatch of the identical unexpected_pass x2 findings. Root cause for finding #2 is now precisely located and WAS missed by the prior clause-probe matrices: they never exercised the frozen B57 ROUTING exit. interfaces.md (header revision note + IF-IMPL-004 v0.7 observable exits) freezes 'mismatch still routes TASK_REVIEW check=lineage -> awaiting=rollback'; kernel/m_impl.py:425 implements that router, but the executor-side anchorless blocker paths (_green_commit_lineage, m_impl_runtime.py ~3630/3648) classify their verdict.failed as check=impl_defect, so the frozen route can never fire and the run never reaches awaiting=rollback for an anchorless claim -- an off-contract classification the old test ignored by asserting only 'no G minted'. Fix: test_rgr_lineage_no_checkpoint_fail_closed now also asserts (a) a verdict.failed(check=lineage) bound to task_id appears on the public event stream and (b) store.state('RUN').awaiting == 'rollback' after commit_green. Targeted run at HEAD: node fails exactly on assertion (a) -- legal behavioral Red over public exits, not assembly error.",
+    "finding_disposition": {
+      "test_rgr_lineage_no_checkpoint_fail_closed": "resolved_this_round -- legal Red grounded in frozen contract text; counterexample CE-4 recorded",
+      "test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite": "standing_gap_unchanged -- every IF-IMPL-004 v0.7 clause it freezes is honoured at HEAD by the deliberately retained f638075 baseline (revert 4107012 kept B90/B91 runtime fixes), all three mutants CE-1..CE-3 still kill, and no contract-faithful legal Red exists without §1.3 cheating or out-of-scope product writes; reclassification-to-T-HIST request stands per recheck_attempt2_at_HEAD_3d24c3a.gap/shield_b91_classification_advisory.md for Runtime/M-DESIGN adjudication"
+    },
+    "collection_layer1": {
+      "command": ".venv/bin/python -m pytest tests/integration/ tests/e2e/ --collect-only -q",
+      "observed": "528 collected, 0 errors (unchanged sealed inventory)"
+    },
+    "targeted_layer2": [
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_no_checkpoint_fail_closed", "observed": "FAILED -- AssertionError line 358 'an anchorless green claim must surface as a check=lineage gate failure on the public event stream' (legal Red: behavior assertion over interfaces-declared event exit)"},
+      {"node": "tests/integration/test_rgr_contract.py::test_rgr_lineage_binds_latest_checkpoint_after_shield_fix_overwrite", "observed": "passed (contract-faithful under retained baseline; standing gap above)"}
+    ],
+    "lint": ".venv/bin/ruff check tests/integration/test_rgr_contract.py && .venv/bin/ruff check -> All checks passed",
+    "write_actions_this_round": [
+      "tests/integration/test_rgr_contract.py -- routing assertions added to test_rgr_lineage_no_checkpoint_fail_closed (docstring + two assertions); other tests untouched",
+      "tests/counterexamples/v0.7/ce4_lineage_route_loses_rollback.patch -- new CE-4 asset",
+      "tests/counterexamples/v0.7/manifest.json -- CE-4 entry + this round addendum"
+    ]
+  }
+}

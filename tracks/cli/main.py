@@ -7,10 +7,12 @@ the holder PID on stderr and writes no events.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
 from contextlib import contextmanager
+from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -18,10 +20,15 @@ from tracks import paths, templating
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.checks.reach import check_reach_file
 from tracks.checks.release_evidence import check_release_evidence_file
-from tracks.checks.trace import check_trace_full_file
+from tracks.checks.trace import approved_acs, check_trace_full_file
 from tracks.deliverables import check_deliverables
 from tracks.discuss.cli import run_discuss
-from tracks.executor import Executor, git
+from tracks.executor import (  # noqa: F401  (§1.0.9 assembly)
+    Executor,
+    git,
+    v07_runtime,
+    version_extensions,
+)
 from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import (
     _resolve_run_version,
@@ -30,6 +37,7 @@ from tracks.executor.executor import (
     hotfix_feature_route,
     hotfix_human_anchor,
 )
+from tracks.executor.stall import CommandStallError
 from tracks.executor.taskgraph import (
     parse_tasks_json,
     validate_ac_coverage,
@@ -121,6 +129,33 @@ RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
 PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
 # .tracks/-level transient artifacts (report output, discuss locks).
 TRACKS_GITIGNORE = "report/\n*.lock\n"
+# Host-tree byproducts of the runtime's own contract commands: the
+# collect/run test executions materialize __pycache__/ and .pytest_cache/ in
+# the host repo (under tests/ and at the root). Same doctrine as the .tracks
+# gitignores above -- runtime-owned transients must be ignored in every
+# stage or they pollute host git status; the B59 freeze gate has
+# false-positived on exactly these since it landed (944c0c0, 2026-08-25:
+# every e2e fake journey died at test_freeze_contamination). Managed as a
+# marked block in the HOST ROOT .gitignore: appended only, never rewritten,
+# idempotent by marker, committed with the scaffold so `trac start`'s
+# clean-tree gate sees a committed host.
+HOST_BYPRODUCTS_MARKER = "# BEGIN tracks-managed (runtime test-command byproducts)"
+HOST_BYPRODUCTS_GITIGNORE = (
+    HOST_BYPRODUCTS_MARKER
+    + "\n__pycache__/\n*.py[cod]\n.pytest_cache/\n# END tracks-managed\n"
+)
+
+
+def _ensure_host_byproducts_gitignore(repo: Path) -> bool:
+    """Idempotently append the managed byproduct block to the host root
+    .gitignore. Returns True when the file changed (caller commits it)."""
+    gitignore = repo / ".gitignore"
+    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if HOST_BYPRODUCTS_MARKER in current:
+        return False
+    sep = "" if not current or current.endswith("\n") else "\n"
+    gitignore.write_text(current + sep + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8")
+    return True
 
 
 def cmd_init(repo: Path) -> int:
@@ -143,12 +178,16 @@ def cmd_init(repo: Path) -> int:
     projects_gitignore = paths.projects_dir(home) / ".gitignore"
     if not projects_gitignore.exists():
         projects_gitignore.write_text(PROJECTS_GITIGNORE, encoding="utf-8")
+    # Runtime-owned byproducts in the HOST TREE (see HOST_BYPRODUCTS_GITIGNORE).
+    host_gitignore_changed = _ensure_host_byproducts_gitignore(repo)
     for d in (paths.projects_dir(home), paths.wiki_dir(home)):
         keep = d / ".gitkeep"
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
     # AC-01b/c: idempotent, no empty commit, leaves the worktree clean.
     git(repo, "add", str(home))
+    if host_gitignore_changed:
+        git(repo, "add", ".gitignore")
     if git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0:
         git(repo, "commit", "-m", "trac init: scaffold .tracks")
     print(f"initialized {home}")
@@ -334,6 +373,76 @@ def _read_assignment_overlay(path: str) -> dict:
     return overlay
 
 
+def _ls_tracks_py(repo: Path) -> list[str]:
+    """git 已跟踪 + 未跟踪 tracks/**/*.py（repo 相对路径）。
+
+    git 不可用/非仓库返回空列表，由调用方用目录遍历兜底。"""
+    try:
+        proc = git(
+            repo,
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "tracks/",
+            check=False,
+        )
+    except OSError:
+        return []
+    rels: list[str] = []
+    for rel in proc.stdout.splitlines():
+        rel = rel.strip()
+        if rel.endswith(".py") and "__pycache__" not in rel:
+            rels.append(rel)
+    return rels
+
+
+def _tracks_python_files(repo: Path) -> list[Path]:
+    """全部 tracks/**/*.py：跟踪 + 未跟踪（含在飞未提交——正是风险源）。"""
+    pkg = Path(repo) / "tracks"
+    if not pkg.is_dir():
+        return []
+    candidates: dict[str, Path] = {}
+    for rel in _ls_tracks_py(repo):
+        candidates[rel] = repo / rel
+    if not candidates:
+        # non-git fallback; recurse_symlinks=False keeps a stray symlink from
+        # pulling files outside the repo into the smoke set
+        for p in pkg.rglob("*.py", recurse_symlinks=False):
+            if "__pycache__" not in p.parts:
+                candidates[str(p.relative_to(repo))] = p
+    return sorted(p for p in candidates.values() if p.is_file())
+
+
+def _startup_smoke_error(repo: Path) -> tuple[str, list[str]] | None:
+    """#87 启动烟测：ast.parse 全部 tracks/**/*.py（含在飞未提交文件）。
+
+    只做语法级解析——不 import、不执行、不写字节码，不受 import 副作用影响。
+    覆盖 #87 现场：T-003 半成品增量（IndentationError）让 trac 本体
+    ImportError 无法启动。返回 ``(summary, broken_files)`` 或 None（全绿）。"""
+    broken: list[str] = []
+    for py in _tracks_python_files(repo):
+        try:
+            ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        except SyntaxError as exc:
+            broken.append(
+                f"{py.relative_to(repo)}: {exc.msg} (line {exc.lineno or 0})"
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            # review (f): unreadable/binary/damaged files must fail CLOSED —
+            # if syntax cannot be verified the loop must not start
+            broken.append(f"{py.relative_to(repo)}: cannot read ({type(exc).__name__}): {exc}")
+    if not broken:
+        return None
+    summary = (
+        "trac run 拒绝启动：tracks/** 存在语法损坏文件（#87 启动烟测）\n"
+        + "\n".join(f"  - {b}" for b in broken)
+        + "\n修复指引：git checkout HEAD -- <files> 后重启，GREEN_GATE "
+        "会以 impl_defect 重做。"
+    )
+    return summary, broken
+
+
 def cmd_run(repo: Path, *args: str) -> int:
     try:
         overlay_path, max_dispatches = _parse_run_args(args)
@@ -354,6 +463,21 @@ def cmd_run(repo: Path, *args: str) -> int:
                 return 0
         return _err("no active run; `trac start <version>` first")
     with writer_lock(home):
+        smoke = _startup_smoke_error(repo)
+        if smoke is not None:
+            # #87：坏树立即停车，进 loop 前落 loop.aborted 审计事件
+            # （screen 无重定向时 stdout 证据会丢，同 B85/#85 的 append 模式，
+            # writer_lock 内执行）。version 沿用 executor 的解析方式。
+            summary, broken_files = smoke
+            version = _resolve_run_version(store.state(run_id))
+            store.append(
+                run_id,
+                version,
+                "loop.aborted",
+                {"reason": "startup_smoke", "detail": summary, "files": broken_files},
+            )
+            print(summary, file=sys.stderr, flush=True)
+            return 1
         try:
             state = Executor(
                 store,
@@ -366,6 +490,11 @@ def cmd_run(repo: Path, *args: str) -> int:
             # B43（#45）：executor 已把完整提示打到 stderr（Prism batch2
             # advisory 1：不重复打印），这里只以非零退出码终止。
             print("run aborted: tracks/** code drift (see message above)", file=sys.stderr)
+            return 1
+        except CommandStallError:
+            # B86/B88（#77）：executor 已落 loop.aborted 并打印处置指引
+            # banner，这里只以非零退出码终止（同 B43 drift abort 处理链）。
+            print("run aborted: command stall (see message above)", file=sys.stderr)
             return 1
     print(f"run {run_id}: {_format_state(state)}")
     return 0
@@ -407,6 +536,13 @@ def cmd_hotfix(repo: Path, *args: str) -> int:
     if parsed is None:
         return 2  # missing/illegal --scenario: non-blocking prompt, no run (#3)
     issue, scenario = parsed
+    # Host-tree byproduct ignore (see cmd_init): hotfix hosts never passed
+    # through `trac init`, so the entry ensures + commits the managed block
+    # itself -- BEFORE the dirty-tree check, so the scaffold commit is not
+    # mistaken for operator residue (untracked seeds stay legitimate, R3-01).
+    if _ensure_host_byproducts_gitignore(repo):
+        git(repo, "add", ".gitignore")
+        git(repo, "commit", "-m", "trac: gitignore runtime test-command byproducts")
     # R3-01 (PRISM-FINAL-R3-01): the runtime seed (.tracks/ host-issues.json,
     # generated store state) is legitimately untracked; only tracked-file
     # modifications make the worktree dirty for a hotfix entry.
@@ -588,6 +724,25 @@ def cmd_review(repo: Path, *args: str) -> int:
     return _pipeline_outcome(result, "review", f"review recorded: {action}")
 
 
+def _retry_gate_error(state, clear_evidence: bool) -> str | None:
+    if clear_evidence:
+        if state.awaiting != "escalation" and not (
+            state.status == "active" and state.awaiting is None
+        ):
+            return (
+                "retry --clear-evidence requires escalation or a clean "
+                f"active state (status={state.status} "
+                f"awaiting={state.awaiting or 'nothing'})"
+            )
+    elif state.awaiting != "escalation" and not (
+        state.stage == "M-IMPL"
+        and state.awaiting == "rollback"
+        and (state.last_failure or {}).get("check") == "lineage"
+    ):
+        return f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})"
+    return None
+
+
 def cmd_retry(repo: Path, *args: str) -> int:
     usage = "usage: trac retry [--actor NAME] [--clear-evidence]"
     actor = None
@@ -610,24 +765,9 @@ def cmd_retry(repo: Path, *args: str) -> int:
         return _err("no active run")
     with writer_lock(home):
         state = store.state(run_id)
-        if clear_evidence:
-            # Operator signals the underlying program/config/validator was
-            # fixed and the old failure evidence is stale. Allowed at escalation
-            # (same as ordinary retry) OR at a clean active state (the recovery
-            # path: ordinary retry already happened, a dispatch was killed, and
-            # stale evidence must not leak into the next dispatch). Other
-            # awaiting gates (review/approval/triage/rollback) are NOT relaxed.
-            if state.awaiting != "escalation" and not (
-                state.status == "active" and state.awaiting is None
-            ):
-                return _err(
-                    "retry --clear-evidence requires escalation or a clean "
-                    f"active state (status={state.status} "
-                    f"awaiting={state.awaiting or 'nothing'})"
-                )
-        elif state.awaiting != "escalation":
-            # Ordinary retry: only at escalation, preserves evidence (FR-11).
-            return _err(f"run not awaiting escalation (awaiting={state.awaiting or 'nothing'})")
+        gate_err = _retry_gate_error(state, clear_evidence)
+        if gate_err is not None:
+            return _err(gate_err)
         store.append(
             run_id,
             state.version,
@@ -696,11 +836,64 @@ def _approve_hotfix_gap(repo: Path, store: Store, run_id: str, state, actor: str
     return 0
 
 
+# B57 re-fix (#73): rollback targets the Human may choose at approval time.
+# Exactly the stages the kernel presets for gap-typed rollbacks from
+# M-TEST/M-IMPL (ac_gap -> M-ACC, spec_gap -> M-SPEC, stub_gap -> M-DESIGN);
+# a lineage park presets none -- `--to` is then REQUIRED. Forward re-entry
+# without discarding the stage (stay in M-IMPL) is NOT a rollback: it goes
+# through `trac recover --to M-IMPL` (B32 #32).
+_APPROVE_ROLLBACK_TARGETS = ("M-ACC", "M-SPEC", "M-DESIGN")
+
+
+def _approve_rollback_target(state, to_stage: str | None) -> tuple[str | None, str | None]:
+    """Resolve the rollback target for an SM-01.13 approval.
+
+    Returns (target, err). ``--to`` is validated against the closed set and
+    is only an M-IMPL concern (M-TEST rollbacks always carry a gap-typed
+    preset). A lineage park presets nothing: the Human MUST choose; a preset
+    gap-typed target stays authoritative unless explicitly overridden.
+    """
+    if to_stage is not None:
+        if state.stage != "M-IMPL":
+            return None, "--to is only valid for M-IMPL rollback approvals"
+        if to_stage not in _APPROVE_ROLLBACK_TARGETS:
+            return None, (
+                "invalid --to target: choose one of " + ", ".join(_APPROVE_ROLLBACK_TARGETS)
+            )
+    target = to_stage or state.return_target
+    if not target:
+        return None, (
+            "rollback target not set: pass --to {"
+            + "|".join(_APPROVE_ROLLBACK_TARGETS)
+            + "} (to re-enter M-IMPL without redoing the design, approve "
+            "--to M-DESIGN and then `trac recover --to M-IMPL` -- recover "
+            "only unlocks after the rollback has executed)"
+        )
+    return target, None
+
+
+def _parse_approve_args(args: list[str]) -> tuple[str | None, str | None, str | None]:
+    """Parse `trac approve [--actor NAME] [--to STAGE]`.
+
+    Returns (actor, to_stage, err).
+    """
+    actor = None
+    to_stage = None
+    while args:
+        flag = args.pop(0)
+        if flag == "--actor" and args:
+            actor = args.pop(0)
+        elif flag == "--to" and args:
+            to_stage = args.pop(0)
+        else:
+            return None, None, "usage: trac approve [--actor NAME] [--to STAGE]"
+    return actor, to_stage, None
+
+
 def cmd_approve(repo: Path, *args) -> int:
-    args = list(args)
-    if args and (args[0] != "--actor" or len(args) != 2):
-        return _err("usage: trac approve [--actor NAME]")
-    actor = args[1] if args else None
+    actor, to_stage, err = _parse_approve_args(list(args))
+    if err:
+        return _err(err)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
@@ -716,14 +909,22 @@ def cmd_approve(repo: Path, *args) -> int:
             return _approve_hotfix_gap(repo, store, run_id, state, actor)
         # SM-01.13: M-TEST / M-IMPL rollback approval needs no digest check
         if state.awaiting == "rollback" and state.stage in ("M-TEST", "M-IMPL"):
+            target, terr = _approve_rollback_target(state, to_stage)
+            if terr:
+                return _err(terr)
             actor = _resolve_actor(repo, actor)
             store.append(
                 run_id,
                 state.version,
                 "human.approval",
-                {"actor": actor, "digest": None, "ts": datetime.now(timezone.utc).isoformat()},
+                {
+                    "actor": actor,
+                    "digest": None,
+                    "to_stage": target,
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                },
             )
-            print(f"approved rollback to {state.return_target}")
+            print(f"approved rollback to {target}")
             return 0
         vdir = paths.version_dir(home, state.version)
         digest = revision_digest(vdir)
@@ -1213,6 +1414,14 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
         version = _latest_version(home)
     if version is None:
         return _err("no .tracks/projects/v* version directories found")
+    # architecture §1.0.9 / FR-0264-02: resolution is keyed by the target
+    # version and precedes every classic-path precondition -- only a version
+    # whose extension provides the trace capability takes the candidate-bound
+    # closure exit (§2c), which needs no version directory; early versions
+    # resolve nothing and keep their classic behaviour untouched.
+    checker = version_extensions.resolve_capability(version, "trace")
+    if checker is not None:
+        return _cmd_check_trace_v07(repo, home, version, checker, use_json)
     vdir = paths.version_dir(home, version)
     if not vdir.exists():
         return _err(f"version directory not found: {vdir}")
@@ -1241,6 +1450,134 @@ def _print_trace_json(report) -> None:
     if report.status == "pass" and report.hotfix_scope is not None:
         payload["hotfix_scope"] = report.hotfix_scope
     print(json.dumps(payload, ensure_ascii=False))
+
+
+# -- v0.7 candidate-bound closure exit (IF-CLOSURE-001, interfaces §1i) ----------
+
+
+def _ac_base_ref(ac) -> str | None:
+    """Bare AC id from a possibly cross-version ``AC-FRXXXX-YY@vX.Y`` reference."""
+    if not isinstance(ac, str) or not ac.strip():
+        return None
+    return ac.split("@", 1)[0].strip()
+
+
+def _merge_baseline_repair(entry: dict, payload: dict) -> None:
+    """Fold one ``phase0.baseline_repaired`` payload into an AC evidence entry.
+
+    Interfaces §1a row-1 fields: ``evidence_id`` names the frozen-baseline
+    authenticity evidence, ``bound_node.node_id`` is the real collected node
+    the gap was repaired with and ``bound_node.digest`` is the candidate
+    identity the frozen baseline was repaired under -- the baseline-side
+    digest channel the pure join compares against (interfaces §1i).
+    """
+    entry["baseline_evidence"] = payload.get("evidence_id") or entry.get("baseline_evidence")
+    bound_node = payload.get("bound_node") or {}
+    node_id = bound_node.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        nodes = list(entry.get("nodes") or [])
+        nodes.append(node_id)
+        entry["nodes"] = list(dict.fromkeys(nodes))
+    digest = bound_node.get("digest")
+    if isinstance(digest, str) and digest:
+        entry["baseline_candidate"] = digest
+
+
+def _merge_mutation_manifest(entry: dict, payload: dict) -> None:
+    """Fold one ``mutation.manifest`` payload (§1g field set) into an entry."""
+    digest = payload.get("candidate_digest")
+    if isinstance(digest, str) and digest:
+        entry["mutation_candidate"] = digest
+    patch = payload.get("patch_digest")
+    if isinstance(patch, str) and patch:
+        entry["mutation_evidence"] = patch
+
+
+def _apply_full_execution(per_ac: dict, acs: list[str], payload: dict) -> None:
+    """Credit a suite-level FULL execution to every required AC equally.
+
+    The FULL gate executes the whole suite, so its outcome (real emitted
+    ``full.executed`` payload keys: ``serves_as_full_f`` + ``evidence_ids``)
+    becomes each required AC's full-pass evidence for this candidate.
+    """
+    if not payload.get("serves_as_full_f"):
+        return
+    evidences = sorted(e for e in payload.get("evidence_ids") or [] if isinstance(e, str))
+    evidence_id = evidences[0] if evidences else payload.get("outcomes_ref")
+    for ac in acs:
+        per_ac.setdefault(ac, {})["full_pass_evidence"] = evidence_id
+
+
+def _merge_stream_event(
+    candidate_digest: str | None, per_ac: dict, acs: list[str], event
+) -> str | None:
+    """Fold one stream event into the harvest state; returns the current digest."""
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    if event.type == "mutation.manifest":
+        base = _ac_base_ref(payload.get("ac")) or ""
+        _merge_mutation_manifest(per_ac.setdefault(base, {}), payload)
+        digest = payload.get("candidate_digest")
+        if isinstance(digest, str) and digest:
+            return digest
+    elif event.type == "phase0.baseline_repaired":
+        base = _ac_base_ref(payload.get("ac")) or ""
+        _merge_baseline_repair(per_ac.setdefault(base, {}), payload)
+    elif event.type == "full.executed":
+        _apply_full_execution(per_ac, acs, payload)
+    return candidate_digest
+
+
+def _closure_evidence(store: Store, version: str, acs: list[str]) -> tuple[str | None, dict]:
+    """Harvest per-AC candidate-bound evidence from *version*'s event stream.
+
+    Only contracted payloads feed the join: baseline repair (§3), mutation
+    manifest (§1g) and same-suite FULL executions. Absent elements stay
+    absent -- the pure join degrades those records to fail; evidence is
+    never invented, padded or suppressed.
+    """
+    candidate_digest: str | None = None
+    per_ac: dict[str, dict] = {}
+    for run_id in store.runs_for_version(version):
+        for event in store.events(run_id):
+            candidate_digest = _merge_stream_event(candidate_digest, per_ac, acs, event)
+    return candidate_digest, per_ac
+
+
+def _closure_json(report) -> dict:
+    """§1i JSON shape: classic envelope plus closure schema (records ordered)."""
+    return {
+        "status": report.status,
+        "hard_errors": list(report.hard_errors),
+        "warnings": [],
+        "closure": report.closure,
+        "records": [asdict(record) for record in report.records],
+    }
+
+
+def _cmd_check_trace_v07(repo: Path, home: Path, version: str, checker, use_json: bool) -> int:
+    """Candidate-bound closure exit slice (IF-CLOSURE-001 / interfaces §1i).
+
+    Approved ACs come from the version's acceptance.md (canonical approval
+    artifact): one record per approved AC, degraded to fail when evidence is
+    missing -- records are never suppressed. ``checker`` is the same pure
+    join ISLAND_GATE_2 uses; this branch only assembles inputs and reports.
+    """
+    del repo  # evidence lives in .tracks events; kept for CLI signature symmetry
+    acs = approved_acs(paths.projects_dir(home), version)
+    store = Store(home)
+    try:
+        candidate_digest, harvested = _closure_evidence(store, version, acs)
+    finally:
+        store.close()
+    report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
+    if use_json:
+        print(json.dumps(_closure_json(report), ensure_ascii=False))
+    else:
+        for error in report.hard_errors:
+            print(error)
+        if not report.hard_errors:
+            print("trace ok")
+    return 1 if report.status == "fail" else 0
 
 
 def _active_hotfix_trace_context(home: Path, vdir: Path) -> dict | None:

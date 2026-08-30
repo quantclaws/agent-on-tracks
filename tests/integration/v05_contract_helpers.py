@@ -42,7 +42,7 @@ def pause_then_adjudicate(
     optional legal root resolve), disarms the injection hook and continues
     the run.  Returns the post-resume event stream.
     """
-    from tests.doc_gap_injection import (
+    from tests._support.doc_gap_injection import (
         disarm_doc_delta,
         prism_adjudicates,
     )

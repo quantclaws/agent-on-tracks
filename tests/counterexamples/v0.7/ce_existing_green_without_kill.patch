@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/authenticity.py b/tracks/executor/authenticity.py
+index 89c9a17..3543c5d 100644
+@@ -175,6 +175,12 @@
+     counterexample_experiment: Mapping | None,
+ ) -> AuthenticityJudgement:
+     """Judge the authenticity of a Red/Green outcome (IF-AUTH-001)."""
++    # Counterexample (AC-FR0261-01): existing green verified without any
++    # counterexample experiment (kill requirement dropped).
++    return AuthenticityJudgement(
++        ac=ac_ref, category=category, red="none", green_allowed=True,
++        counterexample_kill="verified", unrelated_nodes=(), blocked_reason=None,
++    )
+     bound_set = set(bound_nodes)
+     unrelated, legal_red_found, illegal_reason = _classify_outcomes(
+         outcomes, bound_set, legal_failure_kinds

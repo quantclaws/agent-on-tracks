@@ -1,0 +1,4 @@
+# Intentionally NON-EMPTY placeholder fixture (v0.7 counterexample support).
+# Purpose: give AC-FR0262-03's tests-scope manifest a patch file that passes
+# the no-op (empty-file) leg of validate_manifest, so the test exercises ONLY
+# the tests/-scope fail-closed guard. Never applied to any tree.

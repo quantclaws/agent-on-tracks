@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.hotfix_support import seed_host_issues, seed_v05_approved_baseline
+from tests._support.hotfix_support import seed_host_issues, seed_v05_approved_baseline
 
 
 def _hotfix_project_dir(host_repo: Path, version: str = "v0.5", issue: int = 42) -> Path:

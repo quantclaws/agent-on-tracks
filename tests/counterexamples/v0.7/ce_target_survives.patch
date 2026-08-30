@@ -1,0 +1,11 @@
+diff --git a/tracks/executor/mutation_experiment.py b/tracks/executor/mutation_experiment.py
+index d07aa7e..29d0167 100644
+@@ -124,7 +124,7 @@
+         target_raw = run_nodes(worktree, manifest.target_nodes)
+         target_results = {nid: r for nid, r in target_raw.items() if nid in manifest.target_nodes}
+         target_killed = any(r.status in ("failed", "error") for r in target_results.values())
+-        target_kill = "verified" if target_killed else "survived"
++        target_kill = "verified"  # Counterexample (AC-FR0263-04): survived reported as killed
+ 
+         # Phase 4: run control nodes (filter by control node IDs)
+         control_raw = run_nodes(worktree, manifest.control_nodes)

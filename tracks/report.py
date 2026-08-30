@@ -17,6 +17,7 @@ from tracks import paths
 from tracks.discuss.gate import check_ready
 from tracks.discuss.model import iter_comments
 from tracks.discuss.parser import parse_threads
+from tracks.executor import version_extensions
 from tracks.executor.executor import git
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import project
@@ -426,6 +427,28 @@ def _audit_lines(events: list, activities: list[Activity]) -> list[str]:
     return lines
 
 
+def _closure_blocks(events: list) -> list[str]:
+    """Candidate-bound closure evidence sections for the report.
+
+    Every stored gate payload keyed ``gate``/``closure``/``records`` renders
+    through the event version's extension renderer capability (architecture
+    §1.0.9); versions without such an extension contribute nothing, keeping
+    non-v0.7 reports byte-identical (FR-0264-02 schema isolation).
+    """
+    blocks: list[str] = []
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else None
+        if not payload or "records" not in payload or "gate" not in payload:
+            continue
+        renderer = version_extensions.resolve_capability(
+            str(event.version), "render_closure"
+        )
+        if renderer is None:
+            continue
+        blocks.extend(renderer(payload))
+    return blocks
+
+
 def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     lines = [
         f"# Workflow report: `{run_id}`",
@@ -443,6 +466,7 @@ def _markdown(repo: Path, run_id: str, state, events: list) -> str:
         lines.extend(_activity_lines(activity, repo, repo / ".tracks"))
     lines.extend(_discussion_lines(repo, state.version))
     lines.extend(_audit_lines(events, activities))
+    lines.extend(_closure_blocks(events))
     lines.extend(["", "## Events", ""])
     hidden_validates = {
         event.command_id

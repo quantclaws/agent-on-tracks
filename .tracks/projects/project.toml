@@ -6,7 +6,7 @@
 [unit]
 framework = "pytest"
 paths = ["tests/unit/"]
-collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"
+collect = ".venv/bin/python -m pytest --collect-only tests/unit/"
 run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 cwd = "."
@@ -14,7 +14,7 @@ cwd = "."
 [integration]
 framework = "pytest"
 paths = ["tests/integration/"]
-collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"
+collect = ".venv/bin/python -m pytest --collect-only tests/integration/"
 run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 cwd = "."
@@ -22,7 +22,7 @@ cwd = "."
 [e2e]
 framework = "pytest"
 paths = ["tests/e2e/"]
-collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
+collect = ".venv/bin/python -m pytest --collect-only tests/e2e/"
 run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q -n 8 --dist loadscope --junitxml={result}"
 cwd = "."
@@ -34,6 +34,11 @@ job = "nightly-regression"
 layers = ["unit", "integration", "e2e"]
 purpose = "current FULL suite (R1+R2) regression; result fetch future; not a local gate"
 
+[adapter]
+id = "reference-pytest"
+protocol = "tracks-test-result"
+version = 1
+
 # Directory layout designed by Archer in M-DESIGN (FR-0120).
 # Consumed by the runtime auditor to authorize agent writes per role.
 [layout]
@@ -42,7 +47,7 @@ purpose = "current FULL suite (R1+R2) regression; result fetch future; not a loc
 writable = ["tracks/", "tests/unit/"]
 
 [layout.shield]
-writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]
+writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/", "tests/_support/"]
 
 # Lint validation contract (B4, issue #5): command the runtime runs over
 # Devon's changed deliverables at RED_GATE / GREEN_GATE. Tooling is

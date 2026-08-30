@@ -1,0 +1,17 @@
+diff --git a/tracks/executor/mutation_manifest.py b/tracks/executor/mutation_manifest.py
+index 5c0a86e..5f82c75 100644
+@@ -70,13 +70,7 @@
+     patch_strs = [str(p) for p in patch_paths]
+     if not patch_strs:
+         raise ValueError("no-op patch: no_selectable_diff_identity -- no patch paths")
+-    # Detect empty patch files (0 bytes) as no-op patches.
+-    for p in patch_paths:
+-        try:
+-            if Path(p).stat().st_size == 0:
+-                raise ValueError(f"no-op patch: no_selectable_diff_identity -- {p} is empty")
+-        except (OSError, FileNotFoundError):
+-            pass  # patch file may not be locally accessible; skip check
++    # Counterexample (AC-FR0262-02): no-op/empty patches accepted silently.
+     # Check for test-node directories (unit/integration/e2e) but NOT test
+     # assets (tests/assets/).  The frozen integration test expects
+     # no-op detection to fire before the test-scope check for asset paths.

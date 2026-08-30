@@ -19,7 +19,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from tests.runtime_resources import RUNTIME_RESOURCE_PATHS
+from tests._support.runtime_resources import RUNTIME_RESOURCE_PATHS
 from tracks.effects.opencode import AGENT_NAME
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

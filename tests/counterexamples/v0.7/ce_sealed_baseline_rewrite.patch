@@ -1,0 +1,20 @@
+diff --git a/tracks/executor/phase0.py b/tracks/executor/phase0.py
+index d50beaf..9c525c8 100644
+@@ -128,7 +128,16 @@
+     """
+     from tracks.executor.phase0_seal import build_seal_manifest as _impl
+ 
+-    return _impl(
++    _seal = _impl(
+         baseline_version, document_digests, frozen_test_digests,
+         marks, environment_contract_digest,
+     )
++    # Counterexample (AC-FR0257-04): seal_id pinned constant, input drift hidden.
++    return SealManifest(
++        baseline_version=_seal.baseline_version,
++        document_digests=_seal.document_digests,
++        frozen_test_digests=_seal.frozen_test_digests,
++        marks=_seal.marks,
++        environment_contract_digest=_seal.environment_contract_digest,
++        seal_id="sha256:frozen-seal-id",
++    )

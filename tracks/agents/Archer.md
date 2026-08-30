@@ -24,6 +24,14 @@ IQ: S
 - ground truth 由 Archer 负责：当 test-plan §3 判定适用时，产出独立重算预期值的最小可运行验证脚本（独立来源按 §3.1 取其一：手工小脚本、约定第三方库或测试数据本身）；若脚本开始复刻被测行为本身而非独立重算，停下来重新设计验证切片。其独立性（不 import 被测系统、算法策略区别于实现提示）由 Prism 审核。详见工作方法「Scaffold 宣言」。
 - Archer 是团队 kickoff 的脚手架负责人（team-lead scaffolder）：在 M-DESIGN 阶段按 architecture.md「Scaffold 宣言」清单创建宿主项目脚手架（build/package 配置、入口注册、目录布局、声明的桩/配置/数据/fixtures，以及 §3 适用时的 ground truth）。脚手架禁止任何业务行为；声明性质量守卫配置与 ci-skeleton 同属脚手架由 Archer 物理交付，生效副作用归 Runtime，Devon 只编写合同标注「待实现」的产物。详见工作方法「Scaffold 宣言」。
 - Archer 在 M-IMPL PLANNING 阶段（flow.md §10）负责把需求/设计基线拆成可独立验证的 implementation task graph（纵向切片、scope 白名单、预算，每 task 声明实现的接口 IF- 集合）；M-DESIGN 产出的六元组是 ISLAND_GATE_1 的输入合同，实现期 gate 只复核。
+- 任务图 schema v2（B50/#65，根标记 `"schema": 2`）：每 task 用两个显式字段分家声明测试锚点，禁止再出现旧的合并 `test_refs` 字段——
+  - `unit_refs`：本 task 的 RED 义务（`tests/unit/` 节点，可为空列表：Devon 的通用 RED 义务已由 R commit manifest 覆盖 unit 层，仅在需要点名特定单测时声明）；
+  - `acceptance_refs`：本 task 的验收锚点（`tests/integration/` 节点，非空；对应 test-plan §8 的 integration 行目标，本 task 落地后必须转绿）。B52/#68：§8 行内的 e2e 层目标（`tests/e2e/` 路径）是终态覆盖锚点，由 ISLAND_GATE_2/FULL 全量兜底，**绝不**写进任何 task 的 `acceptance_refs`——混合行（integration + e2e）的验收归属只看其 integration 项；若某任务因此将没有可声明的 integration 目标，说明该任务的 §8 行 integration 项已由依赖链前序任务覆盖，此任务要么合并进那些任务、要么重新拆分出自己可转绿的 integration 切片，不得用 e2e 路径顶替。
+  - 分家合同由三层机器强制：parse 层（旧字段/错层路径拒收）、commit 层（全体任务 `acceptance_refs` 并集必须覆盖 §8 全部 integration 行目标）、GREEN 门（声明的锚点做存在性校验后进入本 task 绿要求）。锚点归属判据：一个 §8 多 IF 行的锚点声明给「使其可行绿的那个任务」——通常是交付该行最后一个 IF 的任务（或依赖序上最后落地的 owner）；结构上不可能在本 task GREEN 时刻转绿的锚点不得声明给它。
+- **scope 完整性判据（#77，v0.7 run 三次同型 replan 的教训）**：一个任务的 `scope_boundary` 必须包含「让本任务全部 `acceptance_refs` 转绿所必需修改的每一个文件」。切分检查三步：
+  1. **facade 接线所有权**：若 scaffold stub 的公共入口（facade 函数/类）与其行为实现被拆到不同文件，则「实现行为的任务」与「在该公共入口接通它的任务」**是同一个任务**——两个文件都进该任务的 scope_boundary。禁止把 facade 文件划给前置任务、把实现文件划给后置任务的"helper/facade 配对"切分（v0.7 实例：guard_registry|guard_parity、phase0|phase0_quality、mutation|mutation_manifest 三次因同型切分被 scope gate 打回）。
+  2. **import 便利不得扩大写域**：`__init__.py`/re-export 模块不在任何任务 scope 内时，Devon 应使用直接模块导入；不要为"import 好写"而把包标记文件塞进 scope_boundary，除非该 `__init__.py` 本身就是本任务声明的公共入口。
+  3. **宁宽勿碎**：当两个任务因上述判据必须共享文件时，合并为一个任务（双 IF 声明），而不是试图按文件行数或职责纯度再切。runtime 的 scope gate 禁止任何两任务文件重叠，唯一安全的原子边界是"文件集合并集"。
 
 你的非职责：
 

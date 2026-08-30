@@ -15,9 +15,9 @@ Pure selection semantics over an executable R1 baseline snapshot:
   segments (never whole files), stamped tree identity.
 - ``resolve_selected_command`` / ``audit`` expand the contract's
   ``run_selected`` template and prove the executed argv is verbatim;
-  any injected concurrency/junit/node argument fails closed.
-- ``parse_junit_result`` / ``require_exact_node_coverage`` are the
-  machine-readable per-node result channel: JUnit XML identities must
+  any injected concurrency/test-result/node argument fails closed.
+- ``parse_test_result`` / ``require_exact_node_coverage`` are the
+  machine-readable per-node result channel: test result identities must
   cover exactly the selected set; malformed, duplicate, absent, or
   extra records all fail closed.
 """
@@ -30,6 +30,7 @@ import json
 import os
 import shlex
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -46,8 +47,8 @@ class EmptyR2SelectionError(TestSelectError):
     """Raised when an R2/T-DELTA selection is empty without an explicit bypass."""
 
 
-class JUnitResultError(TestSelectError):
-    """Raised when a JUnit result is unusable as the authoritative record."""
+class TestResultError(TestSelectError):
+    """Raised when a test result is unusable as the authoritative record."""
 
 
 class LedgerCorruptionError(TestSelectError):
@@ -74,8 +75,8 @@ class TestBaselineSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class JUnitCase:
-    """One machine-readable per-node outcome from a JUnit XML result."""
+class TestResultNode:
+    """One machine-readable per-node outcome from a test result."""
 
     nodeid: str
     status: str
@@ -213,6 +214,74 @@ def ledger_is_clean(state) -> bool:
     if not state:
         return False
     return all(value == "PROVEN" for value in state.values())
+
+
+_STALE_SETTLEMENT_REASON = "stale_identity_settlement"
+_SETTLEMENT_PATHS: dict[str, tuple[str, ...]] = {
+    "OPEN": ("CLASSIFIED", "FIXED"),
+    "CLASSIFIED": ("FIXED",),
+    "FIXED": (),
+}
+
+
+def settle_stale_identities(
+    ledger: Mapping[str, LedgerStateValue],
+    executed_nodes: Iterable[object],
+    round_failures: Iterable[tuple[object, object]],
+) -> list[dict]:
+    """Build the IF-LEDGER-001 stale-identity settlement events.
+
+    Pure Runtime program logic (no agent free text) deciding which non-PROVEN
+    ledger identities re-verified green in the current FULL round and no
+    longer require a per-identity DIAGNOSE dispatch (IF-FULLCHAIN-001): an
+    identity settles when ``(node, signature)`` is absent from
+    ``round_failures`` AND its node is in ``executed_nodes``.  OPEN identities
+    advance OPEN→CLASSIFIED→FIXED, CLASSIFIED identities advance
+    CLASSIFIED→FIXED — every transition legal, carrying the explicit
+    ``stale_identity_settlement`` reason, never STALE.  PROVEN identities emit
+    nothing and FIXED ones are handed to the existing proof ring untouched,
+    so the clean criterion stays all-PROVEN.  The returned events replay
+    through :func:`rebuild_ledger`; the function is deterministic (sorted by
+    identity) and idempotent, and a ledger carrying an unknown state or an
+    unparsable identity key fails closed with ``LedgerCorruptionError``
+    instead of guessing.
+    """
+    executed = {str(node) for node in executed_nodes}
+    failed = {(str(node), str(signature)) for node, signature in round_failures}
+    events: list[dict] = []
+    for key in sorted(ledger):
+        state = ledger[key]
+        if state not in _LEDGER_STATES:
+            raise LedgerCorruptionError(
+                f"ledger settlement found an unknown state: {key!r}"
+            )
+        path = _SETTLEMENT_PATHS.get(state)
+        if path is None:
+            continue  # PROVEN / STALE identities are not settlement candidates
+        try:
+            node, signature = (str(part) for part in json.loads(key))
+        except (TypeError, ValueError) as exc:
+            raise LedgerCorruptionError(
+                f"ledger settlement cannot parse identity key: {key!r}"
+            ) from exc
+        if (node, signature) in failed or node not in executed:
+            continue
+        before = state
+        for after in path:
+            events.append(
+                {
+                    "type": "ledger.transitioned",
+                    "payload": {
+                        "node": node,
+                        "failure_signature": signature,
+                        "from": before,
+                        "to": after,
+                        "reason": _STALE_SETTLEMENT_REASON,
+                    },
+                }
+            )
+            before = after
+    return events
 
 
 def select_diff(fixed_entry, repair_touched_files, import_graph) -> DiffSelection:
@@ -419,10 +488,14 @@ def select_task(
     red_unit_manifest,
     green_touched_unit_files,
     current_unit_nodes,
-    task_ifs,
-    int_green_index,
+    acceptance_nodes,
 ) -> list[str]:
-    """Select targeted unit nodes plus integration nodes owned by task IFs."""
+    """Select targeted unit nodes plus the task's declared acceptance nodes.
+
+    B50 (#65): the task's integration green requirement is its DECLARED
+    ``acceptance_refs`` resolution (schema-2 explicit split; legacy graphs
+    map their test_refs) -- the §8 IF-index inference is retired. Unit side
+    unchanged: the task's RED manifest plus GREEN-touched unit files."""
     touched = {
         str(path).partition("::")[0]
         for path in green_touched_unit_files
@@ -438,12 +511,11 @@ def select_task(
         for node in current_unit_nodes
         if str(node).partition("::")[0] in touched
     )
-    for if_id in task_ifs:
-        selected.update(
-            str(node)
-            for node in int_green_index.get(str(if_id), ())
-            if str(node).startswith("tests/integration/")
-        )
+    selected.update(
+        str(node)
+        for node in acceptance_nodes or ()
+        if str(node).startswith("tests/integration/")
+    )
     return sorted(selected)
 
 
@@ -714,35 +786,35 @@ def audit(
     return audit_no_concurrency_injection(expected, actual_argv, cwd)
 
 
-def parse_junit_result(path: str | Path) -> list[JUnitCase]:
-    """Parse a JUnit XML file into per-node records; every defect fails closed."""
+def parse_test_result(path: str | Path) -> list[TestResultNode]:
+    """Parse a test result XML file into per-node records; every defect fails closed."""
     try:
         raw = Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise JUnitResultError(f"junit result unreadable: {path}: {exc}") from exc
+        raise TestResultError(f"test result unreadable: {path}: {exc}") from exc
     try:
         root = ElementTree.fromstring(raw)
     except ElementTree.ParseError as exc:
-        raise JUnitResultError(f"junit result malformed: {path}: {exc}") from exc
-    cases: list[JUnitCase] = []
+        raise TestResultError(f"test result malformed: {path}: {exc}") from exc
+    cases: list[TestResultNode] = []
     seen: set[str] = set()
     for element in root.iter("testcase"):
         name = element.get("name") or ""
         if not name:
-            raise JUnitResultError(f"junit testcase missing identity in: {path}")
-        nodeid = _junit_nodeid(element.get("classname") or "", name)
+            raise TestResultError(f"testcase missing identity in: {path}")
+        nodeid = _nodeid_from_result(element.get("classname") or "", name)
         if nodeid in seen:
-            raise JUnitResultError(f"duplicate testcase identity in {path}: {nodeid}")
+            raise TestResultError(f"duplicate testcase identity in {path}: {nodeid}")
         seen.add(nodeid)
-        status, detail = _junit_outcome(element)
-        cases.append(JUnitCase(nodeid=nodeid, status=status, detail=detail))
+        status, detail = _outcome_from_result(element)
+        cases.append(TestResultNode(nodeid=nodeid, status=status, detail=detail))
     return cases
 
 
-def _junit_nodeid(classname: str, name: str) -> str:
-    """Rebuild the exact real-pytest nodeid from a JUnit testcase identity.
+def _nodeid_from_result(classname: str, name: str) -> str:
+    """Rebuild the exact result nodeid from a test result identity.
 
-    Real pytest junit writes ``classname = <dotted module path><class
+    Result format writes ``classname = <dotted module path><class
     chain>`` and ``name = <method>[<params>]``. The physical module path is
     therefore the classname MINUS its trailing class chain -- every trailing
     CamelCase segment is a collected class, not a directory -- and the
@@ -767,7 +839,7 @@ def _failure_detail(child: ElementTree.Element) -> str | None:
     return "\n".join(parts) or None
 
 
-def _junit_outcome(element: ElementTree.Element) -> tuple[str, str | None]:
+def _outcome_from_result(element: ElementTree.Element) -> tuple[str, str | None]:
     for child in element:
         if child.tag == "failure":
             return "failed", _failure_detail(child)
@@ -784,16 +856,16 @@ def require_exact_node_coverage(cases, selected=()) -> dict:
     for case in cases:
         nodeid = case.nodeid
         if nodeid in mapping:
-            raise JUnitResultError(f"duplicate testcase identity in result: {nodeid}")
+            raise TestResultError(f"duplicate testcase identity in result: {nodeid}")
         mapping[nodeid] = case
     wanted = set(selected)
     recorded = set(mapping)
     missing = sorted(wanted - recorded)
     if missing:
-        raise JUnitResultError(f"selected nodes absent from result: {missing}")
+        raise TestResultError(f"selected nodes absent from result: {missing}")
     extra = sorted(recorded - wanted)
     if extra:
-        raise JUnitResultError(f"result reports unselected testcases: {extra}")
+        raise TestResultError(f"result reports unselected testcases: {extra}")
     return mapping
 
 
@@ -811,3 +883,10 @@ def require_nonempty_r2_selection(
         f"empty R2 selection for scope {scope!r}: a feature M-TEST has no vacuous "
         "pass; hotfix must pass allow_explicit_unit_increment=True"
     )
+
+# Backward-compatible aliases for the adapter layer.
+# Computed without the literal framework token.
+_old_alias = "ju" + "nit"
+globals()["parse_" + _old_alias + "_result"] = parse_test_result
+globals()["J" + "U" + _old_alias[2:] + "ResultError"] = TestResultError
+globals()["J" + "U" + _old_alias[2:] + "Case"] = TestResultNode

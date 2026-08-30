@@ -63,7 +63,7 @@ DEVON_EVIDENCE_CONTRACT: dict = {
         "changed_paths": ["tracks/kernel/hotfix.py"],
         "commands": [
             {
-                "cmd": ".venv/bin/python -m pytest -n 4 tests/unit",
+                "cmd": "<host contract [unit].run command>",
                 "result": "pass",
                 "output_summary": "361 passed",
             }

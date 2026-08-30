@@ -16,12 +16,12 @@ RED cases:
    ``test.written``; collection attribution requires a project contract.
 """
 
+from tests._support.m_test_support import make_m_test_dispatch_cmd
 from tests.integration.helpers import g
 from tests.integration.result_checkpoint_support import (
     _setup_m_test,
     _ShieldBackend,
 )
-from tests.m_test_support import make_m_test_dispatch_cmd
 from tracks import paths
 
 _PATCH_CONTENT = (

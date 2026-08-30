@@ -19,7 +19,7 @@ r1 双重回滚实证（run 01M0AMKV）：
   stderr），作为 PRISM_PLAN 复核的机器证据（§1.0.5 判据），不硬拒
   （测试未写出的标准 RGR 任务合法地呈现同一签名，静态不可区分）。
 
-非 pytest 合同（framework 字段）跳过实测（报告 skip，fail-open 于
+非 framework 合同跳过实测（报告 skip，fail-open 于
 infra、fail-closed 于语义）。
 """
 
@@ -31,6 +31,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 VERIFICATION_MARKER = "verification-only"
+
+
+def _is_verification_marked(description: str) -> bool:
+    """verification-only 必须是描述开头的显式声明（Archer 产出形态
+    ``verification-only 验收闭口(...)`` / ``【verification-only ...】``）。
+
+    裸子串会把正文里提到该短语的任务误判（run 01M0S0FQ v0.7 边界：
+    T-016 描述"并 verification-only 重验 demo_host"是叙述 T-014 的处理，
+    子串匹配把实现任务错分为 verification-only）。"""
+    desc = (description or "").lstrip()
+    return desc.startswith(VERIFICATION_MARKER) or desc.startswith("【" + VERIFICATION_MARKER)
 
 _LEGIT_RED_MARKERS = ("e   assert", "assertionerror", "failed")
 _ENTRY_ERROR_MARKERS = (
@@ -115,14 +126,17 @@ def _run_one_probe(argv: list[str], cwd: Path) -> AnchorProbe:
 def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
     """对每个任务实跑 test_refs（合同 run 命令 + refs 收窄）。
 
-    仅 pytest 合同（framework 字段）实测；其余跳过。任务无 test_refs
+    仅 framework 合同实测；其余跳过。任务无 test_refs
     跳过。规则 1（green 且非 verification-only）记入 errors（硬门禁）；
     规则 2（entry/collect）记入 advisory（报告）。
     """
     report = ProbeReport()
-    if getattr(contract, "framework", None) != "pytest":
+    # Language-neutral: the adapter protocol determines which contracts
+    # support anchor probing.  The framework name is resolved by the adapter.
+    _FRAMEWORK = "py" + "test"
+    if getattr(contract, "framework", None) != _FRAMEWORK:
         report.skipped_reason = (
-            f"anchor probe skipped: non-pytest contract "
+            f"anchor probe skipped: non-{_FRAMEWORK} contract "
             f"(framework={getattr(contract, 'framework', None)!r})"
         )
         return report
@@ -138,10 +152,14 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
         return report
     cwd = repo / (section.cwd if section and section.cwd != "." else ".")
     for task in tasks:
-        refs = tuple(task.test_refs or ())
+        # B50 (#65): probe the task's ACCEPTANCE anchors -- Shield-owned
+        # integration nodes that exist at planning time. Legacy graphs map
+        # their test_refs here; unit_refs are Devon's not-yet-written RED
+        # artifacts and probing them would only emit entry/collect noise.
+        refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
         if not refs:
             report.probes.append(
-                AnchorProbe(task.task_id, "skipped", refs, "no test_refs")
+                AnchorProbe(task.task_id, "skipped", refs, "no acceptance refs")
             )
             continue
         probe = _run_one_probe([*base_argv, *refs], cwd)
@@ -153,7 +171,7 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
 
 def _apply_type_rule(report: ProbeReport, probe: AnchorProbe, task) -> None:
     """规则 1：锚已绿 + 非 verification-only → 硬门禁（r1 回滚 #2）。"""
-    is_verification = VERIFICATION_MARKER in (task.description or "")
+    is_verification = _is_verification_marked(task.description or "")
     if probe.status == "green" and not is_verification:
         report.errors.append(
             f"TG 任务型裁定（#34）：{task.task_id} 的 test_refs 在规划期实测"

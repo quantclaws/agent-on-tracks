@@ -124,3 +124,41 @@ def test_trace_version_flag(tmp_path, capsys):
     --version, not stage-aware; M-TEST gate filters required ACs separately."""
     repo = setup_trace_repo(tmp_path, "clean")
     assert cmd_check(repo, "trace", "--version", "v0.4") == 0
+
+
+# AC-FR0264-02@v0.7 TRACKS-TRACE §10.2 version isolation: early trace output unchanged
+def test_v06_trace_output_version_isolated_no_closure_leak(tmp_path, capsys):
+    """§10.2 regression (test-plan §10 item 2): early-version (v0.4/v0.6) trace
+    output semantics are unchanged and version-isolated — the JSON carries only
+    the classic {status, hard_errors, warnings} field set with NO v0.7
+    candidate-bound closure field. The v0.7 path must instead go through the
+    candidate-bound closure (IF-CLOSURE-001); that outlet is not wired, so the
+    v0.7 clause is the legal-Red anchor (the regression clause stays green)."""
+    repo = setup_trace_repo(tmp_path, "clean")
+    rc = cmd_check(repo, "trace", "--version", "v0.4", "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["status"] == "pass"
+    # Version isolation: early-version output keeps its classic field set.
+    assert set(payload) <= {"status", "hard_errors", "warnings"}, (
+        f"early-version trace JSON must keep its classic field set; got {sorted(payload)}"
+    )
+    assert "closure" not in payload, (
+        "early-version trace output must not carry the v0.7 candidate-bound "
+        "closure field (capability backward compatibility)"
+    )
+    # v0.7 goes the candidate-bound closure path; the closure record must be
+    # emitted with closure=candidate-bound. Not wired -> legal Red anchor.
+    cmd_check(repo, "trace", "--version", "v0.7", "--json")
+    v07_raw = capsys.readouterr().out
+    try:
+        v07 = json.loads(v07_raw)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            "v0.7 trace must emit a JSON candidate-bound closure record "
+            f"(stdout={v07_raw!r})"
+        ) from exc
+    assert v07.get("closure") == "candidate-bound", (
+        f"v0.7 trace must report closure=candidate-bound (version isolation); "
+        f"payload={v07}"
+    )

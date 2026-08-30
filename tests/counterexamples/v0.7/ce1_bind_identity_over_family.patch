@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/m_impl_runtime.py b/tracks/executor/m_impl_runtime.py
+index 9be82aa..e96dee2 100644
+--- a/tracks/executor/m_impl_runtime.py
++++ b/tracks/executor/m_impl_runtime.py
+@@ -3714,6 +3714,9 @@ class MImplRuntimeMixin:
+         immutable R family is the only valid lineage anchor."""
+         if not identity:
+             return None
++        # COUNTEREXAMPLE CE-1 (B91): bind the repointed identity directly,
++        # skipping the red.checkpointed family resolution order.
++        return identity
+         latest = None
+         for ev in self.store.events(self.run_id):
+             if (

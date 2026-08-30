@@ -6,8 +6,22 @@ The deterministic FakeBackend lives in tracks/effects (the effects boundary);
 
 from tracks.effects import FakeBackend
 
+# Re-export the mutation_manifest helper module at package level so it is
+# stably discoverable via the executor composition surface.
+from . import mutation_manifest  # noqa: F401
 from .executor import Executor, git
+
+# Expose individual functions at the package level (executor composition).
+from .mutation_manifest import build_manifest, validate_manifest  # noqa: F401
 
 FakeAgent = FakeBackend  # v0.1 compatibility alias
 
-__all__ = ["Executor", "FakeAgent", "FakeBackend", "git"]
+__all__ = [
+    "Executor",
+    "FakeAgent",
+    "FakeBackend",
+    "build_manifest",
+    "git",
+    "mutation_manifest",
+    "validate_manifest",
+]
