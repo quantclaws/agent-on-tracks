@@ -1,0 +1,63 @@
+[project]
+name = "tracks-reference-host"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+hostcalc = "host_calc:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.1.1",
+  "pytest-xdist==3.8.0",
+  "coverage==7.15.2",
+  "ruff==0.16.0",
+  "pylint==4.0.6",
+  "flake8==7.3.0",
+  "flake8-cognitive-complexity==0.1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["host_calc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: deterministic integration layer",
+  "e2e: end-to-end happy-path layer",
+]
+
+[tool.coverage.run]
+source = ["host_calc"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4"]
+
+[tool.pylint.messages_control]
+disable = "all"
+enable = "R0801,C0302,R0915,R0914"
+
+[tool.pylint.format]
+max-module-lines = 500
+
+[tool.pylint.similarities]
+min-similarity-lines = 5
+ignore-comments = true
+ignore-docstrings = true
+ignore-signatures = true
+
+[tool.pylint.design]
+max-statements = 50
+max-locals = 15

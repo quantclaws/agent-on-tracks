@@ -56,3 +56,150 @@ writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets
 # consumed; mechanical findings never burn the semantic budget).
 [lint]
 check = ".venv/bin/ruff check"
+
+# ---------------------------------------------------------------------------
+# Host contract v1 (FR-0281 / IF-HOSTCONTRACT-001, v0.8).
+# Release-pipeline machine truth merged into this file per the spec's
+# "project.toml / host-contract.toml" alternative (single contract file per
+# host). Consumed by executor/host_contract.py and the M-VERIFY /
+# M-SECURITY / M-RELEASE / M-PUBLISH handlers. The Runtime executes only
+# these declared commands and consumes versioned normalized results
+# (tracks-gate-result v1); it never hardcodes host language semantics.
+# Placeholders: {version} {major} {minor} {n} {ulid} {artifact} {prefix}
+# {prefix_bin} {result} are resolved from run version facts / build outputs.
+# ---------------------------------------------------------------------------
+
+[host-contract]
+version = 1
+language = "python"
+toolchain = "cpython>=3.10"
+install = ".venv/bin/python -m pip install -e '.[dev]'"
+
+# ---- M-VERIFY local gates (FR-0269) ---------------------------------------
+
+[[host-contract.local_gate]]
+kind = "quality"
+source = "guard_registry"
+categories = [
+  "lint_format", "static_analysis", "cognitive_complexity", "file_length",
+  "method_length_locals", "duplication", "coverage_threshold",
+]
+result_channel = "exit_code"
+timeout_seconds = 3600
+
+[[host-contract.local_gate]]
+kind = "trace"
+command = ".venv/bin/trac check trace --version {version}"
+result_channel = "exit_code"
+timeout_seconds = 600
+
+[[host-contract.local_gate]]
+kind = "reach"
+command = ".venv/bin/trac check reach"
+result_channel = "exit_code"
+timeout_seconds = 600
+
+[[host-contract.local_gate]]
+kind = "anti_slop"
+command = ".venv/bin/trac validate --file .tracks/projects/{version}/architecture.md"
+result_channel = "exit_code"
+timeout_seconds = 600
+
+[[host-contract.local_gate]]
+kind = "version"
+source = "version_decl"
+result_channel = "exit_code"
+timeout_seconds = 60
+
+# ---- version scheme (FR-0277 patch semantics) ------------------------------
+# The version gate is tag-derivation based: computed release tags must be
+# absent on the remote and derivation inputs ({n} from remote tag census) are
+# recorded. file/key/expect binding is intentionally NOT declared for this
+# host: pyproject.toml is a guard-registry config input and a version bump
+# would churn its frozen config_digest (architecture §3.7).
+
+[host-contract.version_scheme]
+feature_tag = "v{minor}.0"
+patch_line = "v{minor}.{n}"
+prerelease_tag = "v{minor}.{n}-pre.{ulid}"
+
+# ---- build / artifact + post-install public outlet smoke (FR-0269) ---------
+
+[host-contract.build]
+command = ".venv/bin/python -m pip wheel --no-deps -w dist ."
+artifact = "dist/*.whl"
+result_channel = "exit_code"
+timeout_seconds = 900
+
+[host-contract.smoke]
+steps = [
+  ".venv/bin/python -m pip install --no-deps --force-reinstall --prefix {prefix} {artifact}",
+  "{prefix_bin}/trac --help",
+]
+result_channel = "exit_code"
+timeout_seconds = 600
+
+# ---- M-SECURITY policy (FR-0272) -------------------------------------------
+
+[[host-contract.security_scan]]
+id = "dependency-audit"
+tool = "pip-audit"
+tool_version = "2.7.3"
+install = ".venv/bin/python -m pip install pip-audit==2.7.3"
+command = ".venv/bin/pip-audit --strict"
+result_channel = "exit_code"
+threshold = "vulnerabilities=0"
+timeout_seconds = 900
+
+[[host-contract.security_scan]]
+id = "static-security-lint"
+tool = "bandit"
+tool_version = "1.8.3"
+install = ".venv/bin/python -m pip install bandit==1.8.3"
+command = ".venv/bin/bandit -r tracks -ll -q"
+result_channel = "exit_code"
+threshold = "severity_high_or_above=0"
+timeout_seconds = 600
+
+# ---- required-CI binding (FR-0270) -----------------------------------------
+
+[host-contract.ci]
+repo_env = "TRAC_GITHUB_REPO"
+workflow = "ci.yml"
+required_checks = ["lint", "coverage", "test", "deliverables", "trace", "reach"]
+conclusion = "success"
+
+# ---- issue tracker lifecycle (FR-0283/FR-0284) ------------------------------
+
+[host-contract.tracker]
+repo_env = "TRAC_GITHUB_REPO"
+project_env = "TRAC_GITHUB_PROJECT"
+milestone_template = "release {version}"
+
+# ---- M-PUBLISH operation plans (FR-0275) ------------------------------------
+# step grammar: KIND:TARGET[:when=COND]; when=active_release_branch makes the
+# step conditional on the existence of the journey's active release branch.
+
+[host-contract.operations.feature]
+steps = [
+  "merge:main",
+  "tag:{feature_tag}",
+  "artifact:{artifact}",
+  "release:{feature_tag}",
+]
+
+[host-contract.operations.post_release]
+steps = [
+  "merge:main",
+  "merge:release/{minor}:when=active_release_branch",
+  "tag:{patch_line}",
+  "artifact:{artifact}",
+  "release:{patch_line}",
+]
+
+[host-contract.operations.dev]
+requires = ["active_release_branch"]
+steps = [
+  "merge:release/{minor}",
+  "tag:{prerelease_tag}",
+]

@@ -46,6 +46,15 @@ tracks = [
     "assets/demo_host/tests/unit/*",
     "assets/demo_host/tests/integration/*",
     "assets/demo_host/tests/e2e/*",
+    "assets/reference_host/architecture.md",
+    "assets/reference_host/ci.yml",
+    "assets/reference_host/flake8.ini",
+    "assets/reference_host/host_calc.py",
+    "assets/reference_host/pyproject.toml",
+    "assets/reference_host/tracks-project.toml",
+    "assets/reference_host/tests/unit/*",
+    "assets/reference_host/tests/integration/*",
+    "assets/reference_host/tests/e2e/*",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,167 @@
+[unit]
+framework = "pytest"
+paths = ["tests/unit/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/unit/"
+run = ".venv/bin/python -m pytest tests/unit/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[integration]
+framework = "pytest"
+paths = ["tests/integration/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/integration/"
+run = ".venv/bin/python -m pytest tests/integration/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[e2e]
+framework = "pytest"
+paths = ["tests/e2e/"]
+collect = ".venv/bin/python -m pytest --collect-only -q tests/e2e/"
+run = ".venv/bin/python -m pytest tests/e2e/ --tb=short -q --junitxml={result}"
+run_selected = ".venv/bin/python -m pytest {nodes} --tb=short -q --junitxml={result}"
+cwd = "."
+
+[nightly]
+schedule = "0 3 * * *"
+workflow = ".github/workflows/nightly.yml"
+job = "nightly-regression"
+layers = ["unit", "integration", "e2e"]
+purpose = "reference host FULL suite regression; not a local gate"
+
+[adapter]
+id = "reference-pytest"
+protocol = "tracks-test-result"
+version = 1
+
+[layout]
+
+[layout.devon]
+writable = ["host_calc.py", "tests/unit/"]
+
+[layout.shield]
+writable = ["tests/integration/", "tests/e2e/", "tests/counterexamples/"]
+
+[lint]
+check = ".venv/bin/ruff check"
+
+# ---------------------------------------------------------------------------
+# Host contract v1 (FR-0282 / IF-HOSTCONTRACT-001) — release-pipeline machine
+# truth merged into this template per the spec's "project.toml /
+# host-contract.toml" alternative; deployed to `.tracks/projects/project.toml`
+# of the provisioned reference host repo. Same schema as the tracks contract.
+# ---------------------------------------------------------------------------
+
+[host-contract]
+version = 1
+language = "python"
+toolchain = "cpython>=3.10"
+install = ".venv/bin/python -m pip install -e '.[dev]'"
+
+[[host-contract.local_gate]]
+kind = "quality"
+source = "guard_registry"
+categories = [
+  "lint_format", "static_analysis", "cognitive_complexity", "file_length",
+  "method_length_locals", "duplication", "coverage_threshold",
+]
+result_channel = "exit_code"
+timeout_seconds = 900
+
+[[host-contract.local_gate]]
+kind = "trace"
+command = ".venv/bin/trac check trace --version {version}"
+result_channel = "exit_code"
+timeout_seconds = 300
+
+[[host-contract.local_gate]]
+kind = "reach"
+command = ".venv/bin/trac check reach"
+result_channel = "exit_code"
+timeout_seconds = 300
+
+[[host-contract.local_gate]]
+kind = "anti_slop"
+command = ".venv/bin/trac validate --file .tracks/projects/{version}/architecture.md"
+result_channel = "exit_code"
+timeout_seconds = 300
+
+[[host-contract.local_gate]]
+kind = "version"
+source = "version_decl"
+result_channel = "exit_code"
+timeout_seconds = 60
+
+[host-contract.version_scheme]
+feature_tag = "v{minor}.0"
+patch_line = "v{minor}.{n}"
+prerelease_tag = "v{minor}.{n}-pre.{ulid}"
+
+[host-contract.build]
+command = ".venv/bin/python -m pip wheel --no-deps -w dist ."
+artifact = "dist/*.whl"
+result_channel = "exit_code"
+timeout_seconds = 600
+
+[host-contract.smoke]
+steps = [
+  ".venv/bin/python -m pip install --no-deps --force-reinstall --prefix {prefix} {artifact}",
+  "{prefix_bin}/hostcalc --help",
+]
+result_channel = "exit_code"
+timeout_seconds = 300
+
+[[host-contract.security_scan]]
+id = "dependency-audit"
+tool = "pip-audit"
+tool_version = "2.7.3"
+install = ".venv/bin/python -m pip install pip-audit==2.7.3"
+command = ".venv/bin/pip-audit --strict"
+result_channel = "exit_code"
+threshold = "vulnerabilities=0"
+timeout_seconds = 900
+
+[[host-contract.security_scan]]
+id = "static-security-lint"
+tool = "bandit"
+tool_version = "1.8.3"
+install = ".venv/bin/python -m pip install bandit==1.8.3"
+command = ".venv/bin/bandit -r host_calc.py -ll -q"
+result_channel = "exit_code"
+threshold = "severity_high_or_above=0"
+timeout_seconds = 300
+
+[host-contract.ci]
+repo_env = "TRAC_GITHUB_REPO"
+workflow = "ci.yml"
+required_checks = ["lint", "coverage", "test"]
+conclusion = "success"
+
+[host-contract.tracker]
+repo_env = "TRAC_GITHUB_REPO"
+project_env = "TRAC_GITHUB_PROJECT"
+milestone_template = "release {version}"
+
+[host-contract.operations.feature]
+steps = [
+  "merge:main",
+  "tag:{feature_tag}",
+  "artifact:{artifact}",
+  "release:{feature_tag}",
+]
+
+[host-contract.operations.post_release]
+steps = [
+  "merge:main",
+  "merge:release/{minor}:when=active_release_branch",
+  "tag:{patch_line}",
+  "artifact:{artifact}",
+  "release:{patch_line}",
+]
+
+[host-contract.operations.dev]
+requires = ["active_release_branch"]
+steps = [
+  "merge:release/{minor}",
+  "tag:{prerelease_tag}",
+]
