@@ -3,7 +3,7 @@ story_id: S-001
 title: 可信发布闭环与流程合同收敛
 created: 2026-08-30
 status: draft
-sha:
+sha: 94ceb52f9d7f0fb441c2ebd5dc2e79dc1fbfdd9bb5b8a1e3c2d0ec3ac2eebea4
 ---
 
 # S-001: 可信发布闭环与流程合同收敛
