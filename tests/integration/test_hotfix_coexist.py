@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 
-from tests.hotfix_support import (
+from tests._support.hotfix_support import (
     assert_hotfix_drives_to_mtest,
     seed_host_issues,
     seed_inprogress_feature_run,

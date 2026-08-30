@@ -128,7 +128,7 @@ def classify_red(test_id: str, returncode: int, stdout: str, stderr: str) -> str
 
     Based on returncode + keyword matching (no traceback structure parsing):
     - ``NotImplementedError("IF-`` -> ``stub_token_failure`` (legit).
-    - ``AssertionError`` or framework_runner ``E   assert`` line -> ``assertion_failure``
+    - ``AssertionError`` or the host runner's ``E   assert`` line -> ``assertion_failure``
       (legit).
     - ImportError/ModuleNotFoundError/SyntaxError/FixtureLookupError/collection
       error -> ``collection_error`` (illegit).
@@ -195,7 +195,7 @@ def classify_red_detail(detail: str, status: str | None = None) -> str:
 
 
 def parse_collected_nodes(stdout: str) -> list[str]:
-    """Parse framework_runner ``--collect-only -q`` stdout into node ids (D-41).
+    """Parse the host runner's ``--collect-only -q`` stdout into node ids (D-41).
 
     One node id per line (``path.py::func[param]``); trailer/summary lines
     without a ``::`` separator are ignored. Order follows the collector's

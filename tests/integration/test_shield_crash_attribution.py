@@ -8,12 +8,12 @@ pre_dirty (which now includes the crash-written files), making the diff
 empty and causing a spurious no_diff failure.
 """
 
+from tests._support.m_test_support import make_m_test_dispatch_cmd
 from tests.integration.result_checkpoint_support import (
     _recover_and_artifacts,
     _setup_m_test,
     _ShieldBackend,
 )
-from tests.m_test_support import make_m_test_dispatch_cmd
 
 _TEST_FILE = "tests/integration/test_ac_fr0010_01.py"
 _TEST_CONTENT = (

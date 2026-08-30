@@ -1,8 +1,8 @@
-"""Shield-layer fixtures for live e2e tests."""
+"""Shield-layer fixtures: shared test fixtures for e2e."""
 
 import pytest
 
-from tests._support.fixtures import (  # noqa: F401
+from tests._support.fixtures import (  # noqa: F401  re-export
     event_log,
     host_repo,
     steps,

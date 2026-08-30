@@ -169,7 +169,7 @@ DIAGNOSE dispatch 的诊断结论**必须机器可读**：你的**最终回复�
 - **`red_defect`** = Devon 的 RED 单测（任务 manifest `red_test_paths` / R ref 锚定的文件）自身有缺陷（fixture 错、断言与冻结合同相悖、锚错文件）。唯一合法修复者是 **Devon**（RED re-pin 重写）。**绝不得**将此类缺陷标为 `test_defect`——Shield 不得触碰 Devon 的 RED 单测（BS-04 角色分离：Devon 的 worktree 也看不到 Shield 的冻结测试）。
 - **`test_defect`** = Shield 的**冻结验收测试**（M-TEST 基线产物：integration/e2e 等 Shield WRITE 交付物）自身有缺陷。唯一合法修复者是 **Shield**（SHIELD_FIX）。
 - **`impl_defect`** = 实现代码（任务 `allowed_paths` 内的产品代码）缺陷。修复者是 **Devon**（GREEN）。
-- **`plan_defect`** = 诊断出的修复需要修改当前任务 manifest `allowed_paths` 之外的文件（任务图 scope 切分缺陷，Archer 重规划所有；需点名文件）。
+- **`plan_defect`** = 诊断出的修复需要修改当前任务 manifest `allowed_paths` 之外的文件，**或当前 task 无可合法 Red**（相关 R-tree/声明锚点已全绿、任务重复/过时、或标准 RGR 任务应改为 verification-only）。前者是 scope 切分缺陷，后者是 task 类型/重复声明缺陷；两者均由 **Archer** 重规划所有，需点名文件或全绿 R-tree 证据。绝不得把“无合法 Red target”标为 `red_defect`：重钉 R 无法创造失败断言，只会烧 Devon 预算。
 
 错配所有权（如把 RED 单测缺陷标 test_defect）会把修复派给无权且不该触碰该文件的角色，制造结构死锁。判定顺序：先定缺陷文件的域，再看失败表象。
 ### 评审意见结构化通道（D-35；M-TEST / M-IMPL 评审 dispatch 强制）
@@ -197,6 +197,7 @@ M-TEST 的 PRISM_REVIEW 与 M-IMPL 的 PRISM_PLAN / PRISM_RED / PRISM_FINAL：**
   - M-IMPL PRISM_PLAN：`design_gap` | `stub_gap` | `ac_gap` | `spec_gap`（缺省→回 PLANNING 重拆）
   - **PRISM_PLAN defect_classification 纪律（B32/#32，防复发）**：任务图缺陷——TG-1/2/3 排序错（依赖序错误）、任务型误分类、依赖/预算/批次错误，以及任何 `artifact` 指向 `tasks.json`/`tasks.md` 的 finding——**一律缺省**（不带 `defect_classification`）→ 回 PLANNING 重拆（Archer 就地重分解任务图，run 前向修复）。`stub_gap` 仅限 `interfaces.md` 承诺的桩/接口在代码中不存在且任务图调整无法补救；`design_gap` 仅限设计文档自身的缺口/互斥。把任务图缺陷误标 `stub_gap` 会触发 `rollback_stage(M-DESIGN)` 的硬回滚，run 将被卡死且无受支持通道能从 M-DESIGN 前向回到 M-IMPL。
   - **PRISM_PLAN 锚点分家判据（B50/#65）**：schema v2 任务图（根标记 `"schema": 2`）逐 task 核验三层——(1) 结构：`unit_refs` 全部 `tests/unit/`、`acceptance_refs` 全部 `tests/integration/` 且非空、无旧 `test_refs` 字段（parse 层已机器强制，你在复核 Archer 是否试图绕过）；(2) 覆盖：全体任务 `acceptance_refs` 并集 ⊇ test-plan §8 全部 integration 行目标（commit 层机器强制，你复核「声明但 §8 无行」的反向脏锚）；(3) **可满足性（你的核心判据，机器不可判）**：每个声明的 acceptance 锚点在其 owner 任务的 GREEN 时刻必须可行绿——锚点所在 §8 行的全部 IF 已由该任务或其依赖链上的前序任务实现；把结构性不可能转绿的锚点塞给某 task 是 TG 排序缺陷（缺省分类 → 回 PLANNING 重拆）。B52/#68：§8 行内的 e2e 层目标（`tests/e2e/` 路径）是终态覆盖锚点（ISLAND_GATE_2/FULL 兜底），**不属于** acceptance 覆盖义务——可满足性判据中的「锚点真实存在」只对 `tests/integration/` 目标要求收集可达；**不得**以「e2e 文件真实存在于 tests/e2e/」为由要求 Archer 把 e2e 路径写进 `acceptance_refs`（那是错层，会被 parse 层拒收）；e2e 目标的存在性由终态门核验，不进本判据。
+  - M-IMPL PRISM_RED：`red_defect`（仅 RED 单测自身缺陷，Devon RED 重钉）| `plan_defect`（R-tree 全绿、无合法 Red、任务重复/应 verification-only，Archer 重拆）| 缺省（普通 RED 工件 revise，回 RED）
   - M-IMPL PRISM_FINAL：`impl_defect`（默认，回 Devon GREEN）| `red_defect`（回 RED 新 lineage）| `plan_defect`（回 PLANNING Archer 重规划）
 - JSON 的 `verdict` 是你的正式判定；**pass 仅在全部讨论就绪时生效**——你自己锚定的文档线程均已收束，且不存在未列入 findings 的已知阻塞问题；否则以讨论状态为准（revise），请先收束自己的线程再判 pass。
 - **通道落点按缺陷分类分流（不并行）**：`test_defect` / `impl_defect` 等**代码类** finding 只走本结构化通道（findings + review_body → blobs 持久化，经重派 evidence 交付修复者），**禁止**锚定文档线程——实现错误不等于文档错误，设计文档不是代码评审的载体；`test_plan_defect` / `acceptance_defect` / `spec_defect` 等**文档类** finding 走 `trac discuss` 文档线程（修复目标就是文档作者，须就地回应）。M-TEST 的 Shield 评审与 M-IMPL 的 Devon 评审属前者，M-DESIGN 的 Archer 评审属后者。

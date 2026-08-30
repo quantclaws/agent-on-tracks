@@ -11,8 +11,8 @@ M-TEST) at awaiting=escalation accepts a `trac return --to` the current or an
 earlier author stage (closed per-stage set); M-TEST itself is never a target.
 """
 
-from tests.m_test_support import make_dispatch_agent_payload
 from tests.unit.helpers import seq
+from tests.unit.m_test_support import make_dispatch_agent_payload
 
 
 def _m_test_escalation_events():

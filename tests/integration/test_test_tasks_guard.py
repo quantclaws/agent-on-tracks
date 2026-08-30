@@ -9,13 +9,13 @@
 - Valid tasks + real diff keep the happy path unchanged.
 """
 
+from tests._support.m_test_support import make_m_test_dispatch_cmd
 from tests.integration.result_checkpoint_support import (
     _init_workspace,
     _setup_m_test,
     _ShieldBackend,
     _StubBackend,
 )
-from tests.m_test_support import make_m_test_dispatch_cmd
 from tracks.executor import Executor
 from tracks.kernel import decide
 

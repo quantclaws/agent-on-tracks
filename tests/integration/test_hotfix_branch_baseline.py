@@ -13,7 +13,7 @@ wired into the run-loop validate step.
 
 from __future__ import annotations
 
-from tests.hotfix_support import (
+from tests._support.hotfix_support import (
     assert_hotfix_drives_to_mtest,
     git,
     seed_host_issues,

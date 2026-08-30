@@ -9,7 +9,7 @@ keeping the fix branch, and the no-release-events invariant.
 
 from __future__ import annotations
 
-from tests.hotfix_support import git, seed_host_issues, seed_v05_approved_baseline
+from tests._support.hotfix_support import git, seed_host_issues, seed_v05_approved_baseline
 
 
 # AC-FR0245-01@v0.6 TRACKS-TRACE M-IMPL commits isolated on fix branch
@@ -90,7 +90,7 @@ def test_scenario_b_baseline_stale_reconcile_needs_attention(trac, host_repo, ev
     bind; the ``baseline.frozen(status=stale)`` path is the downstream
     contract once the seam is implemented.
     """
-    from tests.hotfix_support import seed_release_branch
+    from tests._support.hotfix_support import seed_release_branch
 
     seed_v05_approved_baseline(host_repo, version="v0.6")
     seed_release_branch(host_repo, "releases/v0.6")

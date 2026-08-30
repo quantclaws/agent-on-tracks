@@ -127,6 +127,14 @@ EVENT_TYPES = (
     # 到 stdout，screen 无重定向时证据全丢。executor 在 abort 前落此审计
     # 事件；reducer 无需行为（projection 忽略），replay 是 no-op。
     "loop.aborted",
+    # v0.7 Phase 0（interfaces §1c/§1d，architecture §1.0.2/§1.1，T-015 组装）：
+    # M-DESIGN EXIT 到 M-TEST 入口的 Runtime 前置门 append-only 事件序列，
+    # 最终 sealed 或 blocked；投影可从事件流完整重建（AC-NFR0140-01）。
+    "phase0.baseline_repaired",
+    "phase0.coverage",
+    "phase0.guard_hardened",
+    "phase0.sealed",
+    "phase0.blocked",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -160,6 +168,10 @@ COMMAND_KINDS = (
     "precheck_hotfix",
     "validate_anchor",
     "complete_hotfix_entry",
+    # v0.7 Phase 0 pre-gate command (interfaces §1c/§4, T-015 组装): issued by
+    # the kernel entry guard through the before_mtest capability while
+    # phase0_status != SEALED; executed by the Executor phase0 handler.
+    "phase0_validate",
 )
 
 

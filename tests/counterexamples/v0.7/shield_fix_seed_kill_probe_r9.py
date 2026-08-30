@@ -25,7 +25,7 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[3])
 )  # repo root (tests/counterexamples/v0.7/)
 
-from tests.hotfix_support import seed_v05_approved_baseline  # noqa: E402
+from tests._support.hotfix_support import seed_v05_approved_baseline  # noqa: E402
 from tests.integration import v07_closure_seed as seed_mod  # noqa: E402
 from tracks import paths  # noqa: E402
 from tracks.cli.main import cmd_check  # noqa: E402

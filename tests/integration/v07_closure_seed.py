@@ -23,7 +23,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from tests.hotfix_support import seed_v05_approved_baseline
+from tests._support.hotfix_support import seed_v05_approved_baseline
 from tracks import paths
 from tracks.store.store import Store
 

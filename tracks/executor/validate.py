@@ -740,7 +740,8 @@ def scan_language_tokens(
 
     IF-ADAPTER-003 (AC-FR0264-04 / AC-NFR0141-02): the kernel, executor and
     CLI must consume only the Adapter protocol and must not contain language-
-    specific tokens such as ``framework_runner``, ``test_result`` or ``runner``.
+    specific runner or result-format tokens (framework literals live only in
+    the host project contract).
 
     Args:
         forbidden_tokens: List of language tokens to scan for.

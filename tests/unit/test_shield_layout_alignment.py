@@ -24,8 +24,9 @@ def _runtime(repo_path=None):
 
 def test_shield_allowed_paths_absorb_layout_domain():
     """A product-task manifest must not bound Shield's test writes: the
-    layout domain ([layout.shield], including the tests/ root for support
-    files like conftest.py / hotfix_support.py) is unioned in front."""
+    layout domain ([layout.shield] precise set) is unioned in front.
+    Discipline (user ruling 2026-08-29): Shield NEVER receives a bare
+    tests/ root grant — only layer dirs, tests/_support/, and exact files."""
     rt = _runtime()
     assignment = {
         "manifest": {
@@ -37,12 +38,13 @@ def test_shield_allowed_paths_absorb_layout_domain():
     allowed = assignment["manifest"]["allowed_paths"]
     # product entry survives (harmless union) ...
     assert "tracks/executor/authenticity_existing.py" in allowed
-    # ... and every layout dir precedes it (tests/ root now included)
+    # ... and every layout entry precedes it
     from tracks.project import layout_paths
 
     layout = layout_paths(_REPO, "shield")
     assert all(d in allowed for d in layout)
-    assert "tests/" in layout
+    assert "tests/_support/" in layout
+    assert "tests/" not in layout  # bare root grant is forbidden, ever
 
 
 def test_shield_allowed_paths_no_manifest_noop():

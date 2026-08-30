@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.hotfix_support import (
+from tests._support.hotfix_support import (
     assert_hotfix_drives_to_mtest,
     seed_host_issues,
     seed_v05_approved_baseline,

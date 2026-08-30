@@ -1,6 +1,6 @@
 """Interpreter-startup hook: dispatch-window doc-delta injection (T-007 fix).
 
-Loaded via PYTHONPATH only when ``tests/doc_gap_injection.py`` puts this
+Loaded via PYTHONPATH only when ``tests/_support/doc_gap_injection.py`` puts this
 directory on a ``trac run`` subprocess's PYTHONPATH.  No-op unless
 ``TRAC_TEST_DOC_DELTA`` is set, so ordinary subprocesses are unaffected.
 
@@ -15,7 +15,7 @@ sets ``TRAC_TEST_DOC_DELTA``), so the append happens while the dispatched
 Shield agent "is working".
 
 Chain-loading: Python imports only the FIRST ``sitecustomize`` found on
-sys.path.  When this hook wins the lookup (tests/conftest.py preserves
+sys.path.  When this hook wins the lookup (layer conftest files preserves
 caller PYTHONPATH precedence under coverage), it executes the next
 ``sitecustomize.py`` later on sys.path — e.g. the subprocess-coverage hook in
 ``tests/_subprocess_coverage`` — so coverage instrumentation still starts.

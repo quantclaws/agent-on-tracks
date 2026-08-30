@@ -1,18 +1,23 @@
-"""Shared fixtures for tests/integration (Shield-owned support asset).
-
-Currently hosts ONLY the SHIELD_FIX seed application diagnosed by T-013
-(review round 8): the IF-CLOSURE-001 integration anchors depend on a
-host_repo v0.7 candidate-bound evidence chain (approved AC + baseline /
-mutation / FULL evidence at one candidate digest, test-plan §2.4). Frozen
-test bodies stay untouched; the seed attaches around them via an autouse
-fixture scoped strictly to the anchor module.
-"""
+"""Shield-layer fixtures: shared test fixtures + closure seed."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
+
+# Re-export shared fixtures so every Shield suite sees the same helpers.
+from tests._support.fixtures import (  # noqa: F401  re-export
+    event_log,
+    host_repo,
+    steps,
+    trac,
+)
+
+
+@pytest.fixture(autouse=True)
+def _force_fake_backend(monkeypatch):
+    monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
 
 _ANCHOR_MODULE = "tests.integration.test_trace_closure"
 
@@ -36,11 +41,12 @@ def _v07_closure_seed(request: Any):
     nodes in FULL). Non-anchor nodes must never instantiate host_repo just
     because this autouse fixture exists.
     """
+
     if request.module.__name__ != _ANCHOR_MODULE:
         yield
         return
-    host_repo = request.getfixturevalue("host_repo")
+    seeded_host_repo = request.getfixturevalue("host_repo")
     from tests.integration.v07_closure_seed import seed_v07_closure_chain
 
-    seed_v07_closure_chain(host_repo)
+    seed_v07_closure_chain(seeded_host_repo)
     yield

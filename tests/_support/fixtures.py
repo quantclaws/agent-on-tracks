@@ -1,45 +1,83 @@
-"""Shared fixtures: tmp host git repo + installed `trac` CLI + event-log query."""
+"""Shared test fixtures: available to integration/e2e via their conftest imports."""
 
+import contextlib
 import json
 import os
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from tests.steps import StepLog
 from tracks import paths
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_SUBCOV_DIR = str(Path(__file__).resolve().parent / "_subprocess_coverage")
-# True when the test session runs under coverage (e.g. `coverage run -m pytest`):
-# coverage imports itself into this process before pytest collects conftest.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SUBCOV_DIR = str(Path(__file__).resolve().parent.parent / "_subprocess_coverage")
 _UNDER_COVERAGE = "coverage" in sys.modules
+
+
+def steps_dir() -> Path:
+    override = os.environ.get("TRACKS_STEPS_DIR", "").strip()
+    if override:
+        p = Path(override)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    base = Path(os.environ.get("TMPDIR", "/tmp")) / "tracks-steps"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _node_id(node: str) -> str:
+    return node.replace("::", "__").replace("/", "_").replace(".py", "")
+
+
+class StepLog:
+    def __init__(self, nodeid: str, truncate: bool = False):
+        self.path = steps_dir() / f"{_node_id(nodeid)}.steps.ndjson"
+        self._seq = 0
+        if truncate and self.path.exists():
+            self.path.unlink()
+        self._fh = self.path.open("a", encoding="utf-8")
+
+    def step(self, step: str, status: str = "ok", **detail) -> None:
+        self._seq += 1
+        rec = {"seq": self._seq, "ts_ms": int(time.time() * 1000), "step": step, "status": status}
+        if detail:
+            rec["detail"] = _safe(detail)
+        try:
+            self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            self._fh.flush()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            self._fh.close()
+
+
+def _safe(obj):
+    if isinstance(obj, dict):
+        return {k: _safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe(v) for v in obj]
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
 
 
 @pytest.fixture(autouse=True)
 def _force_fake_backend(monkeypatch):
-    """Deterministic suite forces the fake backend (SPEC test-plan §6 dual-channel).
-
-    The live opencode E2E channel is a separate opt-in job that overrides
-    TRAC_AGENT_BACKEND in its own fixture; everything else stays fake so the
-    suite never shells out to a real model.
-    """
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
 
 
 @pytest.fixture
 def steps(request):
-    """Per-test structured step log (NDJSON). See tests/steps.py.
-
-    Usage::
-
-        steps.step("trac init", returncode=0)
-        ...
-        steps.step("assert awaiting=review", status="fail" if cond else "ok")
-    """
     log = StepLog(request.node.nodeid, truncate=True)
     yield log
     log.close()
@@ -57,8 +95,6 @@ def host_repo(tmp_path):
     g("config", "user.email", "test@example.com")
     g("config", "user.name", "Test Human")
     (repo / "README.md").write_text("host project\n", encoding="utf-8")
-    # M-TEST contract commands use `.venv/bin/python`; symlink to the test
-    # runner's venv so pytest is importable without a separate install step.
     venv_target = Path(sys.prefix).resolve()
     (repo / ".venv").symlink_to(venv_target, target_is_directory=True)
     (repo / ".gitignore").write_text(".venv\n", encoding="utf-8")
@@ -73,22 +109,13 @@ def trac(host_repo, steps):
         env = {
             k: v for k, v in os.environ.items() if k not in ("TRACKS_HOME", "TRAC_FAKE_SIMULATE")
         }
-        # Deterministic channel: fake backend unless the caller opts into live.
         env["TRAC_AGENT_BACKEND"] = os.environ.get("TRAC_AGENT_BACKEND", "fake")
         if simulate:
             env["TRAC_FAKE_SIMULATE"] = simulate
         if _UNDER_COVERAGE:
-            # Merge E2E subprocess coverage into the report: the subprocess
-            # auto-starts coverage (sitecustomize on PYTHONPATH), reads config
-            # from COVERAGE_PROCESS_START, and writes a parallel data file under
-            # the absolute COVERAGE_FILE base (its cwd is the tmp host repo, so
-            # a relative path would be lost). `coverage combine` merges these.
             env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
             env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
             env["PYTHONPATH"] = _SUBCOV_DIR + os.pathsep + env.get("PYTHONPATH", "")
-        # Invoke the CLI as a module with the SAME interpreter running the
-        # tests, so it works regardless of how pytest/coverage is launched and
-        # does not depend on a `trac` console-script shim existing on disk.
         proc = subprocess.run(
             [sys.executable, "-m", "tracks.cli.main", *args],
             cwd=host_repo,
@@ -137,7 +164,6 @@ def event_log(host_repo):
 
 
 def _load_event_payload(home: Path, payload: dict) -> dict:
-    """Mirror Store.events(): resolve spilled audit payloads for assertions."""
     if set(payload) == {"$ref"}:
         return json.loads((paths.blobs_dir(home) / payload["$ref"]).read_bytes())
     return payload

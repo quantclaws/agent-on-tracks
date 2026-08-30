@@ -11,7 +11,7 @@ the NO_ANCHOR branch; the kernel / executor are NOT mocked.
 
 from __future__ import annotations
 
-from tests.hotfix_support import (
+from tests._support.hotfix_support import (
     git,
     seed_host_issues,
     seed_v05_approved_baseline,

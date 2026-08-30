@@ -205,7 +205,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if role != "prism" or substate != "DIAGNOSE":
             return
         classification = _simulate_map().get("diagnose:classification")
-        if classification in {"test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"}:
+        if classification in {
+            "test_defect",
+            "impl_defect",
+            "red_defect",
+            "plan_defect",
+            "stub_gap",
+            "ac_gap",
+            "spec_gap",
+        }:
             result["verdict"] = classification
             result["self_report"] = f"diagnose: {classification}"
 

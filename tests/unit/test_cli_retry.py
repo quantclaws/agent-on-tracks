@@ -6,7 +6,7 @@ followed by the formatted run state. Failed/invalid retries (not awaiting
 escalation) must NOT print the activity line and must exit non-zero.
 """
 
-from tests.m_test_support import make_dispatch_agent_payload
+from tests.unit.m_test_support import make_dispatch_agent_payload
 from tracks.cli.main import cmd_retry
 from tracks.store import Store
 

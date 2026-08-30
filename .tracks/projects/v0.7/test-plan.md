@@ -224,7 +224,7 @@ L3 缺凭据必须显式 `LIVE_SKIPPED: missing <NAME>`；weekly/manual skip 不
 
 `test_deploy_mechanism_generates_host_configs` 必须从 wheel asset 逐字节物化 demo `.tracks/projects/v0.1/architecture.md`、用公开 `load_guard_registry`/`validate_guard_registry`/`deploy_guard_configs`，并断言：八类与三个真实 config digest 通过；package-data allowlist、built wheel 与 fresh repo 均不含仓库 inherited legacy `guards.toml`；deployment record、hook `TRACKS_GUARD_REGISTRY`、CI env 与 `guard.parity.registry` 四者同 digest；tracks/demo digest 因已声明 host profile 差异而不相等。篡改 `flake8.ini` 或任一生成点只产生 hard error/blocked，不允许 fallback。
 
-同一测试还必须对 tracks/demo 的第 8 项分别重算 `.tracks/projects/project.toml` raw bytes（期望 `5ccdc0ea…` / `103a0041…`；tracks 值经 OOB 审计重同步 fd88786 后现状，见 issue 关联 commit），证明生成 hook/CI 的 `artifact_digests` 未被当成 config expected value。只改输出格式且规范化语义与 registry-digest header 不变可 parity pass；注入 `--exit-zero`、scope/command/threshold/required-check 或 digest-header 漂移必须 blocked。现有 tracks 软 hook 的初始失败断言必须是这些语义 mismatch，不得伪造成 config digest mismatch。
+同一测试还必须对 tracks/demo 的第 8 项分别重算 `.tracks/projects/project.toml` raw bytes（期望 `8e1a959f…` / `103a0041…`；tracks 值为 `[layout.shield]` 精确集——tests/{integration,e2e,e2e_live,assets,counterexamples,_support}/ ，无 tests/ 根前缀；Shield 侧 `forbidden` 对 tests/unit 先于 allow 判定，Devon 的 red_test_dirs 命中路径豁免该 veto），证明生成 hook/CI 的 `artifact_digests` 未被当成 config expected value。只改输出格式且规范化语义与 registry-digest header 不变可 parity pass；注入 `--exit-zero`、scope/command/threshold/required-check 或 digest-header 漂移必须 blocked。现有 tracks 软 hook 的初始失败断言必须是这些语义 mismatch，不得伪造成 config digest mismatch。
 
 ---
 

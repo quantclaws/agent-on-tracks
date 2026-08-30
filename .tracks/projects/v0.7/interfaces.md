@@ -657,7 +657,15 @@ seal blob schema：`{baseline_version, document_digests, frozen_test_digests, ma
 
 ### IF-LEDGER-001 失败台账合同（继承 IF-006）
 
+- **合同**：继承 v0.6 身份/合法转移集/WAL 重放语义；v0.7 增补陈旧身份结算发射方——ISLAND_GATE_2 的 OPEN 分支对"经真实 FULL 执行复验为绿"的非 PROVEN 身份（(node,signature) 不在本轮失败集且 node 在本轮执行集），以显式 settlement 理由发射 OPEN→CLASSIFIED→FIXED，交由既有 FIXED 证明环结算 PROVEN。不改变状态集、合法转移集与 clean 判据（全 PROVEN）；不发射 STALE；结算为 Runtime 程序逻辑（无 agent 自述），纯函数于事件 + 本轮 FULL outcomes，幂等可重放，WAL 不一致 fail-closed。
+- **modules**：executor/m_impl_runtime.py, executor/test_select.py, store。
+- **关联**：FR-0265-01（M-IMPL 出口可达性）。
+
 ### IF-FULLCHAIN-001 FULL 链合同（继承 IF-006）
+
+- **合同**：继承 v0.6 FULL_1/诊断/修复/证明/FULL_F 生命周期；v0.7 增补收敛边界——长修复史累积的陈旧 OPEN 身份不得要求逐条 DIAGNOSE 派发：island_2 OPEN 分支先执行真实 FULL 轮，复验为绿的陈旧身份经 IF-LEDGER-001 结算为 FIXED，随后一次 fallback 证明全量 PROVEN；本轮仍失败的身份保留既有逐条诊断环，不得被结算吞没。FULL 判据与 `ledger_is_clean` 不变。
+- **modules**：executor/m_impl_runtime.py, executor/test_select.py。
+- **关联**：FR-0265-01（M-IMPL 出口可达性）。
 
 ### IF-RUNCONTRACT-001 测试命令与结果通道合同（继承 IF-006；框架解析迁入 adapter）
 

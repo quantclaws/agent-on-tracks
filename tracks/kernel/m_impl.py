@@ -246,7 +246,16 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
         if verdict == "pass":
             s.substate = "GREEN"
             _reset_doc(s)
+        elif p.get("defect_classification") == "plan_defect":
+            # A fully green R tree has no lawful RED target: the task is
+            # duplicate, obsolete, or wrongly typed as standard RGR. Re-pinning
+            # RED cannot create a legal failure and deterministically burns the
+            # Devon budget (run 01M0S0FQ T-017, v0.7 boundary, 2026-08-29).
+            # Archer must remove/re-scope it or mark it verification-only.
+            _route_scope_replan(s)
         else:
+            # Genuine RED-test defects and ordinary RED review revisions stay
+            # in Devon's RED domain and create a fresh immutable R slot.
             s.substate = "RED"
             _reset_doc(s)
             _consume_attempt(s)
@@ -924,9 +933,19 @@ def _is_preset_anchor_task(s: State) -> bool:
 def _is_verification_task(s: State) -> bool:
     """§1.0.3 two-tier model: a task whose description carries the
     verification-only marker has no RED-implementation - acceptance is
-    Runtime-executed (user ruling 2026-08-15), not a Devon RGR cycle."""
+    Runtime-executed (user ruling 2026-08-15), not a Devon RGR cycle.
+
+    Marker must be a LEADING declaration (Archer's emitted forms
+    ``verification-only 验收闭口(...)`` or ``【verification-only ...】``);
+    a bare substring match misclassifies any task whose description merely
+    mentions the phrase in prose (run 01M0S0FQ v0.7 boundary: T-016's
+    description says "并 verification-only 重验 demo_host" while describing
+    T-014's handling, turning the real implementation task into
+    verification-only -> RED/GREEN loop on verify_task with Devon never
+    dispatched)."""
     meta = s.current_task_metadata or {}
-    return "verification-only" in (meta.get("description") or "")
+    desc = (meta.get("description") or "").lstrip()
+    return desc.startswith("verification-only") or desc.startswith("【verification-only")
 
 
 def _decide_m_impl_agent(s: State, sub: str) -> Command | None:

@@ -47,7 +47,7 @@ version = 1
 writable = ["tracks/", "tests/unit/"]
 
 [layout.shield]
-writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/"]
+writable = ["tests/integration/", "tests/e2e/", "tests/e2e_live/", "tests/assets/", "tests/counterexamples/", "tests/_support/"]
 
 # Lint validation contract (B4, issue #5): command the runtime runs over
 # Devon's changed deliverables at RED_GATE / GREEN_GATE. Tooling is

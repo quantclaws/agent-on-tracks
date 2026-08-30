@@ -32,6 +32,17 @@ from pathlib import Path
 
 VERIFICATION_MARKER = "verification-only"
 
+
+def _is_verification_marked(description: str) -> bool:
+    """verification-only 必须是描述开头的显式声明（Archer 产出形态
+    ``verification-only 验收闭口(...)`` / ``【verification-only ...】``）。
+
+    裸子串会把正文里提到该短语的任务误判（run 01M0S0FQ v0.7 边界：
+    T-016 描述"并 verification-only 重验 demo_host"是叙述 T-014 的处理，
+    子串匹配把实现任务错分为 verification-only）。"""
+    desc = (description or "").lstrip()
+    return desc.startswith(VERIFICATION_MARKER) or desc.startswith("【" + VERIFICATION_MARKER)
+
 _LEGIT_RED_MARKERS = ("e   assert", "assertionerror", "failed")
 _ENTRY_ERROR_MARKERS = (
     "usage:",
@@ -160,7 +171,7 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
 
 def _apply_type_rule(report: ProbeReport, probe: AnchorProbe, task) -> None:
     """规则 1：锚已绿 + 非 verification-only → 硬门禁（r1 回滚 #2）。"""
-    is_verification = VERIFICATION_MARKER in (task.description or "")
+    is_verification = _is_verification_marked(task.description or "")
     if probe.status == "green" and not is_verification:
         report.errors.append(
             f"TG 任务型裁定（#34）：{task.task_id} 的 test_refs 在规划期实测"

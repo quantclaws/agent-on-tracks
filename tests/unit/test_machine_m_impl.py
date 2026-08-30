@@ -574,7 +574,7 @@ def test_prism_red_pass_to_green():
 
 
 def test_prism_red_revise_to_red():
-    """prism.verdict(revise) at PRISM_RED -> RED, attempt consumed."""
+    """An ordinary PRISM_RED revise returns to RED and consumes an attempt."""
     revise = ("prism.verdict", {"verdict": "revise", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)})
     s = state_of(
         BASELINE_CMD,
@@ -602,6 +602,93 @@ def test_prism_red_revise_to_red():
     )
     assert s.substate == "RED"
     assert s.current_attempt == 1
+
+
+def test_prism_red_plan_defect_replans_without_consuming_devon_budget():
+    """A wholly green R-tree/no-lawful-RED finding is a taskgraph defect,
+    not a defective RED test: Archer must remove/retype/re-scope it."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "defect_classification": "plan_defect",
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        revise,
+    )
+    assert s.substate == "PLANNING"
+    assert s.current_attempt == 0
+    assert s.current_task_id is None
+    assert s.current_task_metadata is None
+    assert s.current_manifest is None
+    assert s.r_tree_identity is None
+    assert s.taskgraph_committed is False
+    cmd = decide(s)
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer"
+    assert cmd.params["substate"] == "PLANNING"
+
+
+def test_prism_red_red_defect_stays_red_for_repin():
+    """A genuinely defective Devon RED artifact remains a RED re-pin case."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "defect_classification": "red_defect",
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        revise,
+    )
+    assert s.substate == "RED"
+    assert s.current_attempt == 1
+    assert s.r_tree_identity == "abc123"
 
 
 # -- GREEN -> GREEN_GATE -> GREEN_COMMIT -> REFACTOR -------------------------

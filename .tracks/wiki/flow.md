@@ -620,7 +620,8 @@ stateDiagram-v2
 
     PRISM_RED : dispatch Prism 评 B..R
     PRISM_RED --> GREEN : prism.verdict(pass) 绑定 R
-    PRISM_RED --> RED : revise -> 新 attempt
+    PRISM_RED --> RED : revise(red_defect / 普通 RED 工件修订) -> 新 attempt、新 R slot
+    PRISM_RED --> PLANNING : revise(plan_defect：R tree 全绿/无合法 Red/任务重复或类型错误) -> Archer 重拆
 
     GREEN : 从 R tree 恢复工作区
     GREEN : dispatch Devon (phase=green)

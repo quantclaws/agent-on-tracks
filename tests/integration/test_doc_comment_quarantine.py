@@ -21,7 +21,7 @@ reason ``empty``; stale/conflicting identities discard fail-closed.
 
 import pytest
 
-from tests.doc_gap_injection import TRACKS_DOC_PLAN, arm_doc_delta, assert_doc_delta_landed
+from tests._support.doc_gap_injection import TRACKS_DOC_PLAN, arm_doc_delta, assert_doc_delta_landed
 from tests.integration.helpers import walk_to_m_test
 from tests.integration.v05_contract_helpers import (
     events_of,

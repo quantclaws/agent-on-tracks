@@ -7,7 +7,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from tests.runtime_resources import RUNTIME_RESOURCE_PATHS
+from tests._support.runtime_resources import RUNTIME_RESOURCE_PATHS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURRENT_PYTHON = Path(sys.executable).resolve()

@@ -23,7 +23,7 @@ restores the document byte-for-byte.
 
 import pytest
 
-from tests.doc_gap_injection import (
+from tests._support.doc_gap_injection import (
     TRACKS_DOC_PLAN,
     arm_doc_delta,
     assert_doc_delta_landed,
