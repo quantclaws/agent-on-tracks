@@ -2,7 +2,7 @@
 spec_id: SPEC-008
 created: 2026-08-30
 status: draft
-sha:
+sha: 8a0cdea2b2b12f061bc12829770d0b0ee40ae5bba87969cd516ab8ab0f4faa63
 ---
 
 # 可信发布闭环与流程合同收敛（v0.8） — 需求规格
