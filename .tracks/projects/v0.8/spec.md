@@ -11,7 +11,7 @@ sha: 8a0cdea2b2b12f061bc12829770d0b0ee40ae5bba87969cd516ab8ab0f4faa63
 
 ## 界面与入口
 
-> **Lex:** 界面与入口未覆盖 FR-0286/FR-0287 新增的人机面：FR-0286 要求 M-RELEASE preview 列出未修复 Known Issue（Human 知情同意）且 status 显示 repair=in_place round n/3，FR-0287 要求通用 trac return（任意源→任意上游）与轻量终止 trac abandon --reason（terminal cancelled）的独立入口及先建 escape barrier 的可观测约束，但 E-01 仍仅示例 M-RELEASE 三择一（release/delay/return --to M-DESIGN），E-02 仍仅示例 M-VERIFY→M-SECURITY→M-RELEASE 流水，未出现 repair 状态、Known Issue 列表、abandon/cancelled 终态及 barrier/late_outcome quarantine 的观测示例。用户无法从现有产品上下文的 E 面发现新能力的入口/触发与结果位置，‘继续/返回’路径不完整。请 Sage 在 E-01/E-02 增补对应 transcript（建议：preview 含 known-issue 列表与 repair 字段，status 含 repair/cancelled，新增 abandon 示例及 barrier 观测），使新能力有机接入现有 trac CLI 面而非孤立文字描述。
+> **Lex [RESOLVED]:** 界面与入口未覆盖 FR-0286/FR-0287 新增的人机面：FR-0286 要求 M-RELEASE preview 列出未修复 Known Issue（Human 知情同意）且 status 显示 repair=in_place round n/3，FR-0287 要求通用 trac return（任意源→任意上游）与轻量终止 trac abandon --reason（terminal cancelled）的独立入口及先建 escape barrier 的可观测约束，但 E-01 仍仅示例 M-RELEASE 三择一（release/delay/return --to M-DESIGN），E-02 仍仅示例 M-VERIFY→M-SECURITY→M-RELEASE 流水，未出现 repair 状态、Known Issue 列表、abandon/cancelled 终态及 barrier/late_outcome quarantine 的观测示例。用户无法从现有产品上下文的 E 面发现新能力的入口/触发与结果位置，‘继续/返回’路径不完整。请 Sage 在 E-01/E-02 增补对应 transcript（建议：preview 含 known-issue 列表与 repair 字段，status 含 repair/cancelled，新增 abandon 示例及 barrier 观测），使新能力有机接入现有 trac CLI 面而非孤立文字描述。
 >> **Sage:** 已修订 E-01/E-02：E-01 增补 preview 的 known_issues/repair 字段、repair 轮次、通用 trac return（任意源→任意上游）与轻量终止 trac abandon --reason（cancelled）及失败拒绝示例，使 M-RELEASE 逃生门入口可发现；E-02 增补 repair=in_place/evidence.staled 新 candidate 重走、human.return/escape.barrier/late_outcome quarantine 的 barrier 可观测以及 run.completed cancelled 终态与 trac run 拒绝约束，补齐 repair/cancelled/barrier 的状态与事件观测，使新能力有机接入现有 trac CLI 面；同时 FR-0271 增补 revise 锚定（revise_without_findings）约束；trac validate=valid。
 
 ### E-01 独立 `trac release` Human 发布门禁与逃生出口（新增）
@@ -528,7 +528,7 @@ tracks 自身与至少一个全新 Python reference host（专用真实 GitHub �
 - 通用多宿主编排与跨宿主并发调度——本版仅 tracks 自身与一个 reference host 的 6 旅程；规模化多宿主编排不在范围。
 - 发布闭环之外的既有流程重制——`trac start/hotfix` 的起止与 HOTFIX-TRIAGE、M-TEST/M-IMPL 既有语义保持不变，仅新增 M-VERIFY 及后续发布四阶段的注册与执行。
 
-> **Maestro:** **Maestro 记录：Human 决定（2026-08-31，讨论收敛，canonical 语义已落 wiki/flow.md §11.4/§11.5/§12.3）——请 Sage 据此修订本 spec：
+> **Maestro [RESOLVED]:** **Maestro 记录：Human 决定（2026-08-31，讨论收敛，canonical 语义已落 wiki/flow.md §11.4/§11.5/§12.3）——请 Sage 据此修订本 spec：
 > 
 > 1. **新增 FR-0286「发布闭环就地修复与 Known Issue 政策」**：
 >    - 就地修复、自动路径不回退：M-VERIFY/M-SECURITY/M-PUBLISH/M-MILESTONE 发现的缺陷在当前 run 内就地修复；分类只决定由谁修（Devon 实现 / Shield 定点测试 / Archer 咨询合同），不产生 M-DESIGN/M-PLANNING 自动回退。
