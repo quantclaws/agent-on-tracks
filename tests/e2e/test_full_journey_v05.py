@@ -65,9 +65,11 @@ def test_v05_journey_does_not_trigger_v08_release_chain(trac, event_log):
     assert not any(t.startswith("release.") for t in types), "v0.5 must not emit release.*"
     assert not any(t.startswith("publish.") for t in types), "v0.5 must not emit publish.*"
     assert not any(t.startswith("milestone.") for t in types), "v0.5 must not emit milestone.*"
-    # Legal red anchor for v0.8 release pipeline
+    # Legal red anchor for v0.8 release pipeline: version must be v0.8 and trace must expose release segment
     from tracks.kernel.release import RELEASE_PIPELINE_VERSION
 
     assert RELEASE_PIPELINE_VERSION == "v0.8"
     check = trac("check", "trace", "--version", "v0.8", "--json")
-    assert "release" in check.stdout.lower() or "candidate" in check.stdout.lower() or check.returncode in (0, 1)
+    assert "release" in check.stdout.lower() or "candidate" in check.stdout.lower(), (
+        f"v0.8 trace must expose release/candidate, got stdout={check.stdout!r} stderr={check.stderr!r}"
+    )

@@ -141,7 +141,6 @@ def test_malformed_no_business_mutation(host_repo, trac, event_log):
     except NotImplementedError as exc:
         assert "IF-ENVELOPE-001" in str(exc) or "IF-ENVELOPE-002" in str(exc)
 
-    event_log()
     trac("run")
     events_after = event_log()
     format_errors = [e for e in events_after if e["type"] == "format_error"]
@@ -150,4 +149,7 @@ def test_malformed_no_business_mutation(host_repo, trac, event_log):
         after_fe = [e for e in events_after if e["seq"] > fe["seq"] and e["type"] in ("publish.executed", "release.decided")]
         assert not after_fe
     replay_out = trac("replay").stdout
-    assert replay_out is not None
+    # Pre-implementation legal red: replay must show format handling
+    assert "format_error" in replay_out.lower() or "envelope" in replay_out.lower(), (
+        f"replay must show format handling, got {replay_out!r}"
+    )

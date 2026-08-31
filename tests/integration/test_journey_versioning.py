@@ -79,7 +79,7 @@ def test_dev_prerelease_only(host_repo, trac, event_log):
         build_operation_plan(None, "dev", {"minor": 8})
         raise AssertionError("expected NotImplementedError")
     except NotImplementedError as exc:
-        assert "IF-JOURNEY-001" in str(exc)
+        assert "IF-JOURNEY-001" in str(exc) or "IF-RELEASE-002" in str(exc)
 
     bare = host_repo.parent / "journey_bare3.git"
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
@@ -142,8 +142,8 @@ def test_dev_precheck_fails_without_release_branch(host_repo, trac, event_log):
         assert "IF-JOURNEY-001" in str(exc) or "IF-RELEASE-002" in str(exc)
 
     trac("run")
-    # Attempt dev hotfix without active release branch must fail precheck
-    result = trac("hotfix", "--scenario", "dev")
+    # Attempt dev hotfix without active release branch must fail precheck - correct CLI needs issue number
+    result = trac("hotfix", "103", "--scenario", "dev")
     # The CLI may be hotfix with scenario dev; expected to fail when no release branch
     assert result.returncode != 0 or "precheck failed" in result.stdout or "no active release branch" in result.stdout or "no active release branch" in result.stderr
     status = trac("status")

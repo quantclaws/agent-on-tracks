@@ -23,11 +23,8 @@ def test_post_release_hotfix_journey(host_repo, trac, event_log, tmp_path, monke
     subprocess.run(["git", "push", "-u", "origin", "release/8"], cwd=host_repo, check=True, capture_output=True)
     subprocess.run(["git", "checkout", "main"], cwd=host_repo, check=True, capture_output=True)
 
-    # Start hotfix post-release
-    r = trac("hotfix", "post-release", "--scenario", "post-release")
-    # The CLI for hotfix may be `trac hotfix <issue> --scenario post-release`; try generic
-    if r.returncode != 0:
-        r = trac("hotfix", "--scenario", "post-release")
+    # Start hotfix post-release - correct CLI is `trac hotfix <issue> --scenario post-release`
+    r = trac("hotfix", "101", "--scenario", "post-release")
     assert r.returncode in (0, 1)
     assert trac("run").returncode in (0, 1)
     assert trac("release", "preview").returncode in (0, 1, 2)
@@ -61,7 +58,7 @@ def test_dev_hotfix_journey(host_repo, trac, event_log, tmp_path, monkeypatch):
     subprocess.run(["git", "push", "-u", "origin", "release/8"], cwd=host_repo, check=True, capture_output=True)
     subprocess.run(["git", "checkout", "main"], cwd=host_repo, check=True, capture_output=True)
 
-    r = trac("hotfix", "--scenario", "dev")
+    r = trac("hotfix", "102", "--scenario", "dev")
     assert r.returncode in (0, 1)
     assert trac("run").returncode in (0, 1)
     trac("release", "preview")

@@ -17,18 +17,26 @@ pytestmark = pytest.mark.integration
 
 # AC-FR0280-01@v0.8 TRACKS-TRACE chain events replay and rich evidence not overwritten
 def test_chain_events_replay(host_repo, trac, event_log):
-    for fn in (record_failure, select_failure, inject_into_assignment, acknowledge_failure):
-        try:
-            fn("run", 1, "x")  # type: ignore[call-arg]
-            raise AssertionError("expected NotImplementedError")
-        except NotImplementedError as exc:
-            assert "IF-FAILURE-001" in str(exc)
-        except TypeError:
-            try:
-                fn()  # type: ignore[call-arg]
-                raise AssertionError("expected NotImplementedError")
-            except NotImplementedError as exc2:
-                assert "IF-FAILURE-001" in str(exc2)
+    try:
+        record_failure("run", 1, "last_failure", {"msg": "x"})
+        raise AssertionError("expected NotImplementedError")
+    except NotImplementedError as exc:
+        assert "IF-FAILURE-001" in str(exc)
+    try:
+        select_failure("run", "Devon", 1)
+        raise AssertionError("expected NotImplementedError")
+    except NotImplementedError as exc:
+        assert "IF-FAILURE-001" in str(exc)
+    try:
+        inject_into_assignment({"kind": "devon:red"}, {"failure_id": "1-last_failure-0"})
+        raise AssertionError("expected NotImplementedError")
+    except NotImplementedError as exc:
+        assert "IF-FAILURE-001" in str(exc)
+    try:
+        acknowledge_failure("run", "1-last_failure-0", "Devon")
+        raise AssertionError("expected NotImplementedError")
+    except NotImplementedError as exc:
+        assert "IF-FAILURE-001" in str(exc)
 
     try:
         review_failure_chain([])

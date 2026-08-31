@@ -171,14 +171,15 @@ def test_v08_release_trace_version_isolated(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert "release" not in payload
-    # v0.8 must expose release segment
+    # v0.8 must expose release segment - legal Red anchor: not yet wired must fail
     cmd_check(repo, "trace", "--version", "v0.8", "--json")
     v08_raw = capsys.readouterr().out
+    # Early version must be isolated (no release/closure leak)
+    assert rc == 0
+    # v0.8 trace must emit JSON with release segment; pre-implementation this fails legally
     try:
         v08 = json.loads(v08_raw)
-    except json.JSONDecodeError:
-        # legal red if not yet wired
-        assert "release" in v08_raw.lower() or v08_raw == ""
-        return
-    assert "release" in v08 or "closure" in v08
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"v0.8 trace must emit JSON with release segment, got {v08_raw!r}") from exc
+    assert "release" in v08, f"v0.8 trace JSON must contain release, got {sorted(v08.keys())}"
     assert v08.get("release", {}).get("status") in ("closed", "pending", None)
