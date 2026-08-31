@@ -144,7 +144,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:cd7e2adef6886bd2e7f73047acaf870de02725f0198d68c3a5ad67e090fdfab9"
+config_digest = "sha256:363076149186e5bc55ea0f19428647192f67f36b339da588e656115497ecb125"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test"
 timeout_seconds = 1800

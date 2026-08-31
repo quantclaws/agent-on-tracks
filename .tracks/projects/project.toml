@@ -65,8 +65,11 @@ check = ".venv/bin/ruff check"
 # M-SECURITY / M-RELEASE / M-PUBLISH handlers. The Runtime executes only
 # these declared commands and consumes versioned normalized results
 # (tracks-gate-result v1); it never hardcodes host language semantics.
-# Placeholders: {version} {major} {minor} {n} {ulid} {artifact} {prefix}
-# {prefix_bin} {result} are resolved from run version facts / build outputs.
+# Placeholders (two-level, interfaces §1e): base set {version} {major}
+# {minor} {n} {ulid} {artifact} {prefix} {prefix_bin} {result} resolve from
+# run version facts / build outputs; operation-step TARGET positions also
+# accept {feature_tag} / {patch_line} / {prerelease_tag}, expanded via the
+# [host-contract.version_scheme] templates. Anything else fails closed.
 # ---------------------------------------------------------------------------
 
 [host-contract]

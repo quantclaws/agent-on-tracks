@@ -49,7 +49,11 @@ check = ".venv/bin/ruff check"
 # Host contract v1 (FR-0282 / IF-HOSTCONTRACT-001) — release-pipeline machine
 # truth merged into this template per the spec's "project.toml /
 # host-contract.toml" alternative; deployed to `.tracks/projects/project.toml`
-# of the provisioned reference host repo. Same schema as the tracks contract.
+# of the provisioned reference host repo. Same schema as the tracks contract
+# (two-level placeholders per interfaces §1e: base set {version} {major}
+# {minor} {n} {ulid} {artifact} {prefix} {prefix_bin} {result}; operation-step
+# TARGET positions also accept {feature_tag}/{patch_line}/{prerelease_tag}
+# expanded via [host-contract.version_scheme]).
 # ---------------------------------------------------------------------------
 
 [host-contract]

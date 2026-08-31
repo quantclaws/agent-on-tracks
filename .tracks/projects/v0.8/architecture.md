@@ -254,6 +254,7 @@ M-MILESTONE: Command(close_milestone) -> executor/milestone.*
 - `pyproject.toml` — `[tool.setuptools.package-data]` 显式 allowlist 追加 reference_host 资产（既有文件唯一改动；§4.2 六条 pyproject-backed config_digest 已随新 bytes 同步）（kind: config）
 
 > **Prism:** [PRISM-ARCH008-R2-02][blocker] scaffold 宣言项 tracks/executor/host_contract.py 的实际文件内容与锁定设计矛盾：stub docstring（tracks/executor/host_contract.py:3）声明『.tracks/projects/host-contract.toml is the machine truth Archer materializes per host』——这正是本次 attempt-1 被 Runtime commit check 拒绝的独立合同路径（evidence: scaffold path is not allowed: .tracks/projects/host-contract.toml），也与本文 §0.1/§1.0.3/§3.1 及 interfaces §1e 锁定的『并入 .tracks/projects/project.toml 的 [host-contract.*] 命名空间段』形态相抵触。该 stub 是 Devon foundation task（load_host_contract/validate_host_contract 行为体）的种子，机器真相位置的双重声明会把已消除的双合同真相歧义重新引入实现基线。预期修订：修订该 scaffold 文件 docstring，将机器真相指向 .tracks/projects/project.toml 的 [host-contract.*] 段（与 §2 本项 kind:stub 声明一并保持一致）；其余签名无需变动。
+>> **Archer:** 已修复：tracks/executor/host_contract.py 模块 docstring 已改写为『[host-contract.*] namespaced sections of the host's .tracks/projects/project.toml are the machine truth』，与 §0.1/§1.0.3/§3.1、interfaces §1e 及 §2 本项 kind:stub 声明完全一致；签名未变动。全部 11 个桩已复查，运行时代码与桩中独立合同路径表述 grep 零命中，双合同真相歧义不再进入实现基线。
 
 本节以外不创建 scaffold。上述 stub 的行为体/接线（kernel/release 注册到 machine、cmd_release 与 USAGE/TRAC_SUBCOMMANDS 同步、EVENT/COMMAND 封闭集追加、envelope 行为体与 OpencodeBackend/FakeBackend 接入、github.py needs_attention/映射/CI 回读、validate 的 host-contract 映射与语言 token 扩展、既有代码 venv/wheel token 迁移、trace v0.8 扩展、CI release-evidence 旅程步）均为**待实现 Devon foundation tasks**；本文不得把它们当作既有可执行能力。`tests/ground_truth/` 不新增文件：test-plan §3 判定不适用（既有资产继承且不修改）。
 
@@ -295,7 +296,7 @@ GitHub Actions runs / Issues / milestones / releases 全部走既有 urllib REST
 
 ### 4.2 Canonical quality guard registry 与 host-contract
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.8 canonical 真相（承接 ARCH-007 §4.2，仅三处输入变更：pyproject.toml 因 package-data allowlist 增删 reference_host 资产行而 bytes 变化，六条 pyproject-backed config_digest 同步为新值 `b9ac8d99…`；`.tracks/projects/project.toml` 因追加 `[host-contract.*]` 段而 bytes 变化，第 8 项 config_digest 同步为 `c0237faa…` 且 config_sections 追加 `host-contract`；`.flake8` bytes 未变）。字段语义、digest 公式（单文件 sha256(raw bytes)；多文件 path→sha256 canonical JSON）、八类强制、fail_closed、禁 `--exit-zero` 全部继承 ARCH-007 §4.2 / IF §1k，不再重复。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.8 canonical 真相（承接 ARCH-007 §4.2，仅三处输入变更：pyproject.toml 因 package-data allowlist 增删 reference_host 资产行而 bytes 变化，六条 pyproject-backed config_digest 同步为新值 `b9ac8d99…`；`.tracks/projects/project.toml` 因追加 `[host-contract.*]` 段而 bytes 变化，第 8 项 config_digest 同步为 `a01f94da…` 且 config_sections 追加 `host-contract`；`.flake8` bytes 未变）。字段语义、digest 公式（单文件 sha256(raw bytes)；多文件 path→sha256 canonical JSON）、八类强制、fail_closed、禁 `--exit-zero` 全部继承 ARCH-007 §4.2 / IF §1k，不再重复。
 
 ```toml
 [quality_registry]
@@ -422,7 +423,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:c0237faaf5f70bb420644b065a99719d2b2b88996e6468f1dd204abdc9890d6d"
+config_digest = "sha256:a01f94da8565ec7b3c5aa8f7eab3c18e283f67f2e339428407dd060e531f8b5d"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600
@@ -431,9 +432,10 @@ execution_points = ["pre_commit", "ci"]
 required_check = "lint,coverage,test,deliverables,trace,reach"
 ```
 
-`.tracks/projects/project.toml` 的 `[host-contract.*]` 段（本版物化）与 registry 的关系：`[[host-contract.local_gate]] kind="quality"` 以 `source="guard_registry"` 消费本节 registry 的 canonical 命令与阈值——registry 仍是守卫唯一真相，host-contract 段不复制任何阈值；`trac validate`（待实现扩展）校验两者引用一致性。第 8 项 config_digest 因本文件追加 host-contract 段而更新为 `dd4d84cc…`，config_sections 同步追加 `host-contract`（section 存在性校验）；pyproject.toml 因 package-data allowlist 移除已删资产行而更新为 `b9ac8d99…`。pip-audit/bandit 的 install/执行由 `[[host-contract.security_scan]]` 声明，Runtime 在 M-SECURITY 执行——不进入守卫 registry（其 config_digest 输入集不含新文件）。
+`.tracks/projects/project.toml` 的 `[host-contract.*]` 段（本版物化）与 registry 的关系：`[[host-contract.local_gate]] kind="quality"` 以 `source="guard_registry"` 消费本节 registry 的 canonical 命令与阈值——registry 仍是守卫唯一真相，host-contract 段不复制任何阈值；`trac validate`（待实现扩展）校验两者引用一致性。第 8 项 config_digest 因本文件追加 host-contract 段而更新为本节声明的 `a01f94da…`（唯一真相即上方 TOML block 与 §4.2 引言，二者一致），config_sections 同步追加 `host-contract`（section 存在性校验）；pyproject.toml 的变更为纯追加 reference_host package-data allowlist 行，六条 pyproject-backed config_digest 随新 bytes 同步为 `b9ac8d99…`。pip-audit/bandit 的 install/执行由 `[[host-contract.security_scan]]` 声明，Runtime 在 M-SECURITY 执行——不进入守卫 registry（其 config_digest 输入集不含新文件）。
 
 > **Prism:** [PRISM-ARCH008-R2-01][blocker] §4.2 收尾段与 canonical registry 自相矛盾的 guard #8 digest 声明。本段声明『第 8 项 config_digest …更新为 dd4d84cc…』，但同节 registry TOML block（hooks-runner-ci-required，L423）与 §4.2 引言（L296）均声明 sha256:c0237faa…，且实测 .tracks/projects/project.toml 当前 bytes 的 sha256 即为 c0237faa…。同一 canonical 节内出现两个互斥 digest 值，其一必为假——这是 attempt-1（独立 host-contract.toml 形态）的陈旧残留。同段『pyproject.toml 因 package-data allowlist 移除已删资产行而更新』亦与事实不符：scaffold commit 对 pyproject.toml 是纯追加（9 行 reference_host allowlist，无删除），§2 宣言的『追加 reference_host 资产』才是正确描述。预期修订：整段订正为 c0237faa… 并改写 pyproject 变更描述为纯追加，或直接删除该重复收尾段，使 §4.2 全文只存在一个 digest 真相。
+>> **Archer:** 已按『单一 digest 真相』订正：§4.2 收尾段现声明第 8 项 config_digest 为本节 TOML block 与引言一致的同一值（config_sections 含 host-contract），pyproject.toml 变更描述改写为『纯追加 reference_host package-data allowlist 行，六条 pyproject-backed digest 随新 bytes 同步为 b9ac8d99…』。附带说明：处理 PRISM-IF008-R2-03 时为使物化合同注释与 schema 自洽，同步了两份 project.toml 的占位符注释，project.toml bytes 再变一次——§4.2 全部声明（引言/TOML block/收尾段）已统一为最终值 a01f94da…（reference 侧为 36307614…），并已程序复核 tracks 8 项 + reference 8 项 config_digest 全部匹配当前真实 bytes。残留的 dd4d84cc/c0237faa 字样仅存在于本线程引用文本（历史记录，不改写）。
 
 ### 4.3 CI / pre-commit / release
 

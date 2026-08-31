@@ -1,9 +1,11 @@
 """Versioned host contract (FR-0281, IF-HOSTCONTRACT-001/002).
 
-``.tracks/projects/host-contract.toml`` is the machine truth Archer
-materializes per host: language/toolchain declaration, dependency install,
-local gates for M-VERIFY, build/artifact, post-install smoke, version scheme,
-M-SECURITY scan policy, required-CI binding and M-PUBLISH operation plans.
+The ``[host-contract.*]`` namespaced sections of the host's
+``.tracks/projects/project.toml`` are the machine truth Archer materializes
+per host (architecture §1.0.3/§3.1): language/toolchain declaration,
+dependency install, local gates for M-VERIFY, build/artifact, post-install
+smoke, version scheme, M-SECURITY scan policy, required-CI binding and
+M-PUBLISH operation plans.
 
 The Runtime only executes declared commands and consumes versioned
 ``tracks-gate-result`` normalized results; it never interprets host language
