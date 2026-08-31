@@ -1,0 +1,12 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index 9999999..aaaaaaa 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -10,6 +10,9 @@ def select_issue_backend(repo: Path, version: str): ...   # 修改：真实模式缺凭据抛 GithubIssuesError(classification="auth"|"not_found")
+ def create_issue_verified(backend, title, body, labels) -> IssueMapping: ...
+ def persist_issue_mapping(repo, mapping) -> None: ...      # .tracks/runtime/issue-map.json，键 repo+baseline_digest
+ def readback_issue(repo_id, number) -> dict: ...           # GET /repos/{repo}/issues/{n}
+ def reject_fake_artifact(context, artifact) -> None: ...   # 真实模式 FAKE-N → fake_rejected
++    # Counterexample AC-FR0283-02: silently fall back to FakeIssueBackend when token missing
++    from tracks.effects.fake import FakeIssueBackend
++    return FakeIssueBackend()

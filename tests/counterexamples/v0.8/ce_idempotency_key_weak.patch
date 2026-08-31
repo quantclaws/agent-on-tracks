@@ -1,0 +1,9 @@
+diff --git a/tracks/executor/publish.py b/tracks/executor/publish.py
+index 5555555..6666666 100644
+--- a/tracks/executor/publish.py
++++ b/tracks/executor/publish.py
+@@ -11,7 +11,8 @@ ReconcileVerdict = Literal["done", "skip", "pending", "conflict"]
+ def operation_idempotency_key(preview_digest: str, kind: str, target: str) -> str:
+-    raise NotImplementedError("IF-PUBLISH-001")
++    # Counterexample AC-NFR0144-01: weak key without preview_digest
++    return "sha256:" + kind + ":" + target

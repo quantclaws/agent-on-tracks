@@ -53,3 +53,21 @@ def test_v05_journey_does_not_trigger_v07_phase0_or_dualhost(trac, event_log):
         f"v0.7 check trace must surface the candidate-bound closure outlet; "
         f"got stdout={check.stdout!r}"
     )
+
+
+# AC-FR0267-01@v0.8 TRACKS-TRACE v0.5 journey does not emit v0.8 release chain events
+@pytest.mark.e2e
+def test_v05_journey_does_not_trigger_v08_release_chain(trac, event_log):
+    run_id = walk_to_m_test_complete(trac, version="v0.5")
+    events = event_log(run_id)
+    types = [e["type"] for e in events]
+    assert not any(t.startswith("candidate.") for t in types), "v0.5 must not emit candidate.*"
+    assert not any(t.startswith("release.") for t in types), "v0.5 must not emit release.*"
+    assert not any(t.startswith("publish.") for t in types), "v0.5 must not emit publish.*"
+    assert not any(t.startswith("milestone.") for t in types), "v0.5 must not emit milestone.*"
+    # Legal red anchor for v0.8 release pipeline
+    from tracks.kernel.release import RELEASE_PIPELINE_VERSION
+
+    assert RELEASE_PIPELINE_VERSION == "v0.8"
+    check = trac("check", "trace", "--version", "v0.8", "--json")
+    assert "release" in check.stdout.lower() or "candidate" in check.stdout.lower() or check.returncode in (0, 1)

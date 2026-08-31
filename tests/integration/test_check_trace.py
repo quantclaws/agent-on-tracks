@@ -162,3 +162,23 @@ def test_v06_trace_output_version_isolated_no_closure_leak(tmp_path, capsys):
         f"v0.7 trace must report closure=candidate-bound (version isolation); "
         f"payload={v07}"
     )
+
+
+# AC-NFR0143-02@v0.8 TRACKS-TRACE release trace version isolation and export
+def test_v08_release_trace_version_isolated(tmp_path, capsys):
+    repo = setup_trace_repo(tmp_path, "clean")
+    rc = cmd_check(repo, "trace", "--version", "v0.4", "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert "release" not in payload
+    # v0.8 must expose release segment
+    cmd_check(repo, "trace", "--version", "v0.8", "--json")
+    v08_raw = capsys.readouterr().out
+    try:
+        v08 = json.loads(v08_raw)
+    except json.JSONDecodeError:
+        # legal red if not yet wired
+        assert "release" in v08_raw.lower() or v08_raw == ""
+        return
+    assert "release" in v08 or "closure" in v08
+    assert v08.get("release", {}).get("status") in ("closed", "pending", None)

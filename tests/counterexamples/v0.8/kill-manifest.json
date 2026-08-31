@@ -1,0 +1,16 @@
+{
+  "version": "v0.8",
+  "contract": "Each v0.8 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan §12.2. All 10 patches apply cleanly via git apply --check, scope contains no tests/ paths, and each patch kills its bound test node.",
+  "bindings": [
+    {"test": "tests/integration/test_release_trace.py::test_same_candidate_all_events", "patch": "ce_binding_drop.patch", "ac": "AC-NFR0143-01", "if_ref": "IF-VERIFY-001", "result": "killed", "mutation": "drop candidate_sha binding"},
+    {"test": "tests/integration/test_release_preview.py::test_preview_digest_binds_all", "patch": "ce_preview_digest_omit_plan.patch", "ac": "AC-FR0273-01", "if_ref": "IF-RELEASE-002", "result": "killed", "mutation": "omit operation_plan_digest from preview digest"},
+    {"test": "tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates", "patch": "ce_idempotency_key_weak.patch", "ac": "AC-NFR0144-01", "if_ref": "IF-PUBLISH-002", "result": "killed", "mutation": "weaken idempotency key without preview_digest"},
+    {"test": "tests/integration/test_envelope_contract.py::test_malformed_format_error", "patch": "ce_envelope_last_json_fallback.patch", "ac": "AC-FR0278-02", "if_ref": "IF-ENVELOPE-001", "result": "killed", "mutation": "restore last-JSON fallback"},
+    {"test": "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention", "patch": "ce_fake_silent_fallback.patch", "ac": "AC-FR0283-02", "if_ref": "IF-ISSUE-001", "result": "killed", "mutation": "silent fake fallback on missing token"},
+    {"test": "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed", "patch": "ce_gate_exit_zero.patch", "ac": "AC-FR0269-02", "if_ref": "IF-VERIFY-003", "result": "killed", "mutation": "gate soft pass with exit zero"},
+    {"test": "tests/integration/test_publish_idempotency.py::test_agent_forbidden", "patch": "ce_agent_publish.patch", "ac": "AC-FR0275-03", "if_ref": "IF-PUBLISH-001", "result": "killed", "mutation": "allow agent publish"},
+    {"test": "tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused", "patch": "ce_stale_evidence_reuse.patch", "ac": "AC-FR0268-03", "if_ref": "IF-VERIFY-002", "result": "killed", "mutation": "reuse stale evidence"},
+    {"test": "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay", "patch": "ce_rich_evidence_overwrite.patch", "ac": "AC-FR0280-01", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "overwrite rich evidence without ACK"},
+    {"test": "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding", "patch": "ce_kernel_venv_token.patch", "ac": "AC-NFR0147-01", "if_ref": "IF-ADAPTER-003", "result": "killed", "mutation": "inject venv token into kernel"}
+  ]
+}

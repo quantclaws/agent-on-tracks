@@ -1,0 +1,10 @@
+diff --git a/tracks/executor/host_contract.py b/tracks/executor/host_contract.py
+index bbbbbbb..ccccccc 100644
+--- a/tracks/executor/host_contract.py
++++ b/tracks/executor/host_contract.py
+@@ -103,7 +103,8 @@ def execute_gate(
+     decl: LocalGateDecl, repo: Path, placeholders: dict
+ ) -> NormalizedGateResult:
+-    raise NotImplementedError("IF-HOSTCONTRACT-001")
++    # Counterexample AC-FR0269-02: soft-pass gate with exit zero
++    return NormalizedGateResult(gate_id=decl.kind, result_version=1, status="passed", exit_code=0, summary={})

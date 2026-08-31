@@ -1,0 +1,11 @@
+diff --git a/tracks/kernel/__init__.py b/tracks/kernel/__init__.py
+index 90103f0..8d47bf2 100644
+--- a/tracks/kernel/__init__.py
++++ b/tracks/kernel/__init__.py
+@@ -11,3 +11,6 @@ __all__ = [
+     "decide",
+     "project",
+ ]
++
++# Counterexample AC-NFR0147-01: forbidden venv token
++VENV_TOKEN = "venv"

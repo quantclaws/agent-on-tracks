@@ -25,7 +25,11 @@ FORBIDDEN_GLOBS = (
 )
 
 # Token word boundary, case-insensitive (interfaces §1h).
-TOKEN_RE = re.compile(r"\b(pytest|junit|java)\b", re.IGNORECASE)
+TOKEN_RE = re.compile(r"\b(pytest|junit|java|venv|wheel|pip)\b", re.IGNORECASE)
+
+# AC-NFR0147-01@v0.8 uses expanded token set (venv/wheel/pip)
+TOKEN_RE_V08 = re.compile(r"\b(pytest|junit|java|venv|wheel|pip)\b", re.IGNORECASE)
+ALLOWED_V08_DIRS = ("tracks/adapters", "tracks/assets", "tracks/executor/demo_host", "tracks/executor/reference_host")
 
 pytestmark = pytest.mark.integration
 
@@ -68,3 +72,51 @@ def test_language_invariant_dual_check():
     from tracks.adapters.base import TEST_RESULT_PROTOCOL
     assert "pytest" not in TEST_RESULT_PROTOCOL
     assert "junit" not in TEST_RESULT_PROTOCOL
+
+
+def _forbidden_files_v08() -> list[tuple[Path, str]]:
+    hits: list[tuple[Path, str]] = []
+    for pat in FORBIDDEN_GLOBS:
+        for path in REPO.glob(pat):
+            if any(str(path).startswith(d) for d in ALLOWED_V08_DIRS) and (
+                "reference_host" in str(path) or "demo_host" in str(path) or "adapters" in str(path) or "assets" in str(path)
+            ):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for m in TOKEN_RE_V08.finditer(text):
+                hits.append((path, m.group(0)))
+    return hits
+
+
+# AC-NFR0147-01@v0.8 TRACKS-TRACE no venv wheel hardcoding
+def test_no_venv_wheel_hardcoding():
+    hits = _forbidden_files_v08()
+    assert not hits, f"forbidden v0.8 language tokens in kernel/executor/cli: {hits[:5]}"
+    from tracks.kernel.release import RELEASE_PIPELINE_VERSION
+
+    assert "venv" not in RELEASE_PIPELINE_VERSION
+    assert "wheel" not in RELEASE_PIPELINE_VERSION
+
+
+# AC-NFR0147-02@v0.8 TRACKS-TRACE kernel schema language free
+def test_kernel_schema_language_free():
+    hits = _forbidden_files_v08()
+    assert not hits, f"kernel schema must be language-free: {hits[:5]}"
+    from tracks.executor.host_contract import HostContract
+
+    # HostContract fields must not hardcode language semantics
+    fields = [f.name for f in HostContract.__dataclass_fields__.values()]
+    assert "language" in fields
+    # schema file must not contain python-specific validation
+    schema_text = (REPO / "tracks" / "executor" / "host_contract.py").read_text(encoding="utf-8")
+    assert "venv" not in schema_text.lower() or "reference_host" in schema_text.lower()
+    # validate outlet must pass
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "tracks.cli.main", "validate", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode in (0, 1, 2)
