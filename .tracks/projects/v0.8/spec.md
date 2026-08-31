@@ -7,7 +7,7 @@ sha: 8a0cdea2b2b12f061bc12829770d0b0ee40ae5bba87969cd516ab8ab0f4faa63
 
 # 可信发布闭环与流程合同收敛（v0.8） — 需求规格
 
-> 本 spec 为 v0.8 单 spec 收敛：优先覆盖 seed 问题 2、3、4、6、7、8、9 并对问题 5 做回归核验，问题 1（自举 Runtime 安全边界）明确排除。容量分析：19 有效 FR（<30），无需拆分；后续仍需 Human 裁定拆分时由 Sage 另行提案。保持 kernel/provider/language 中性；宿主特定实现仅以 adapter/provider/reference materialization 存在。
+> 本 spec 为 v0.8 单 spec 收敛：优先覆盖 seed 问题 2、3、4、6、7、8、9 并对问题 5 做回归核验，问题 1（自举 Runtime 安全边界）明确排除。容量分析：21 有效 FR（<30，7 NFR 不计；含 NFR 合计 28 项 ），无需拆分；后续仍需 Human 裁定拆分时由 Sage 另行提案。保持 kernel/provider/language 中性；宿主特定实现仅以 adapter/provider/reference materialization 存在。
 
 ## 界面与入口
 
@@ -206,7 +206,7 @@ Runtime 注册 M-VERIFY 为 StageDef（修改 v0.5 FR-0160 与 v0.6 FR-0246 的 
 
 **用户可观察结果**：`trac status` 显示 `prism=pass|fail` 及绑定 candidate；`trac replay` 显示 Prism 输入证据集合与 verdict。
 
-**关键失败/恢复边界**：Prism verdict 事件 append-only 且绑定 candidate；Prism 失败不进入后续发布阶段；修复缺口后重审同一 candidate。
+**关键失败/恢复边界**：Prism verdict 事件 append-only 且绑定 candidate；Prism 失败不进入后续发布阶段；按 FR-0286 就地修复（行为缺陷 RED-first，门禁缺陷 verification-only），修复后新 commit = 新 candidate，旧 candidate 的 FULL_F/CI/preview/Human 决定全部 stale，完整重走 M-VERIFY；不可修复（就地修复预算默认 3 穷尽且 Prism 确认归因不变等）则转 Known Issue 或经 FR-0287 逃生门人工处置。
 
 ### FR-0272 M-SECURITY 合同化安全扫描与深度审计
 
@@ -219,7 +219,7 @@ Runtime 注册 M-VERIFY 为 StageDef（修改 v0.5 FR-0160 与 v0.6 FR-0246 的 
 
 **用户可观察结果**：`trac status` 显示 `security=passed|failed|unknown` 及 policy digest；`trac replay` 可审计策略声明与执行结果。
 
-**关键失败/恢复边界**：安全评估事件 append-only；安全失败可在修复策略/代码后重跑同一 candidate 的 M-SECURITY。
+**关键失败/恢复边界**：安全评估事件 append-only；按 FR-0286 就地修复（依赖 CVE 由 Archer 咨询评估换版本/换库，合同级缺陷受控修订），修复后新 commit = 新 candidate 重走 M-VERIFY；安全 finding 零 known issue，M-SECURITY 未通过则 `release.decided` 一律拒绝；架构级安全问题（不换架构修不了）发布阻断于 M-SECURITY，经 FR-0287 逃生门人工补救。
 
 ### FR-0273 M-RELEASE preview 生成与绑定
 
@@ -393,6 +393,45 @@ Runtime 注册 M-VERIFY 为 StageDef（修改 v0.5 FR-0160 与 v0.6 FR-0246 的 
 
 **关键失败/恢复边界**：流水线改动需经新 spec 授权，非本 spec 行为。
 
+### FR-0286 发布闭环就地修复与 Known Issue 政策
+
+- **来源**：`Maestro 决定 2026-08-31` / `§3.1` `§3.2` / `BS-01`~`BS-10`
+- **交付入口**：`E-02`（`trac run/status/replay/report` 就地修复循环）/ `E-03`（GitHub known-issue 登记与 preview 列出）/ `E-04`（Archer 咨询派发）
+
+M-VERIFY/M-SECURITY/M-PUBLISH/M-MILESTONE 发现的缺陷在当前 run 内就地修复；分类只决定由谁修（Devon 实现 / Shield 定点测试 / Archer 咨询合同），不产生 `M-DESIGN`/`M-PLANNING` 自动回退。
+
+1. **就地修复与自动路径不回退**：THE 系统 SHALL 在当前 run 内就地修复缺陷；THE 系统 SHALL NOT 因发布闭环缺陷自动回退至 `M-DESIGN`/`M-PLANNING`；分类仅决定修复职责（Devon/Shield/Archer）。
+2. **修复纪律两分**：行为缺陷 THE 系统 SHALL 按 RED-first 修复（新增 unit 回归复现，不改冻结 `int/e2e`）；门禁缺陷 THE 系统 SHALL 按 verification-only 修复（修复后重跑该 gate 即证明，不人造无意义失败测试）。依赖 CVE 由 Archer 经咨询派发评估换版本/换库（不回阶段），Devon 执行；合同级缺陷（含安全合同错位）允许受控合同修订（delta 文档+评审），不回阶段。
+3. **新 candidate 重走**：修复后产生新 commit 时，THE 系统 SHALL 视为新 candidate，旧 candidate 的 `FULL_F`/`CI`/`preview`/`Human 决定` 全部 `stale`，落 `evidence.staled reason=fix_new_candidate`，并完整重走 `M-VERIFY`（FR-0267 起）。
+4. **不可修复判据**：IF 就地修复预算（默认 3）穷尽且 Prism 确认归因不变，或修复需变更冻结 `interfaces` 或 `AC` 且超出受控合同修订可承载范围，或外部依赖无可用修复，THE 系统 SHALL 判不可修复；可经 Known Issue 登记或 FR-0287 逃生门处置。
+5. **Known Issue 政策**：仅适用于产品质量缺陷；经 Prism 确认归因后 Runtime 登记 GitHub issue（`known-issue` 标签，关联 `candidate` 与证据），THE 系统 SHALL 在 `M-RELEASE preview` 列出未修复 Known Issue（Human 知情同意），未列出的 SHALL NOT 存在；`M-MILESTONE release trace` 以 `waiver` 语义豁免绑定 `AC` 并转下版 `backlog`，下版 `triage` 必须消费。
+6. **排除项**：发布机制本身失败（`artifact`/`tag`/`CI`/`registry` 无可用修复）SHALL NOT 适用 Known Issue；THE 系统 SHALL 要求修好或放弃发布。
+7. **不衍生 hotfix**：run 内修复 SHALL NOT 起新 hotfix run（hotfix 是发布后通道；单活跃 run 原则保持）。
+8. **安全零 known issue**：安全 finding 必须修复，不允许带病发布；`M-SECURITY` 未通过则 `release.decided` 一律拒绝（FR-0274）。
+9. **架构级安全问题**：不换架构修不了的发布阻断，run 停于 `M-SECURITY`；v0.8 不设自动化机制，经 FR-0287 逃生门人工补救。
+10. **冻结测试保护**：冻结 `int/e2e` SHALL NOT 因修复被修改；集成层观察必需时 Shield 定点新增（非修改）。
+
+**用户可观察结果**：`trac status` 显示 `repair=in_place round=<n>/3` 及 `stale candidate` 重走提示；`trac replay/report` 显示修复纪律、受控合同修订、`evidence.staled`、`known-issue` 登记与 preview 列出；`release.trace` 对 waiver AC 标记 `waived` 并关联下版 backlog。
+
+**关键失败/恢复边界**：预算穷尽可能转 Known Issue 或逃生门；不产生自动回退；Known Issue 未在 preview 列出时发布阻断。
+
+### FR-0287 Human 逃生门：指针回拨与终止出口
+
+- **来源**：`Maestro 决定 2026-08-31` / `§3.1` `§3.2` / `wiki/flow.md §11.4/§11.5/§12.3`
+- **交付入口**：`trac return`（通用回拨）/ `trac abandon --reason`（终止）；`trac status/replay/report`；`trac run` 拒绝
+
+Human 逃生门为轻量实现，不设复杂终止状态机：
+
+1. **通用回拨**：`trac return` 升级为通用逃生门；源阶段任意（含 `M-VERIFY`/`M-SECURITY`/`M-RELEASE`/`M-PUBLISH`/`M-MILESTONE`），目标任意上游 canonical 阶段（含 `M-TEST`/`M-IMPL`）；Human-only，落 `append-only human.return` 事件（含 `actor`/`from`/`to`/`reason`）；Runtime 自动策略 SHALL NOT 阻止 Human 回拨；Agent 咨询（Prism/Archer 影响评估）仅为 `advisory`，不改变状态，决定与责任归 Human。
+2. **线性化与 escape barrier**：Runtime SHALL 先建立 `escape barrier`（`cutover sequence`），`quiesce`/取消在飞 dispatch；`barrier` 前派发而在其后到达的 outcome SHALL 以 `escape.late_outcome`/`quarantine` `append-only` 审计，SHALL 禁止 `checkpoint`、`publish` 或覆盖已回拨 State；之后才移动指针并 `stale` 下游证据（`evidence.staled reason=human_return`）。本轮在缺少该 barrier 时，先追加的 `human.return` 被此前已提交但尚未 `checkpoint` 的 Archer outcome 之后的 `design.committed` 覆盖，正是回归反例（bootstrap 实证）。
+3. **证据失效**：回拨到 `T` 时，`T` 之后全部证据（`candidate` 冻结/`FULL_F`/`CI` 绑定/安全评估/`preview`/`release` 决定）SHALL 显式 `evidence.staled(reason=human_return)`，不删除、可 `replay`，重进时 SHALL NOT 复用；回拨到 `M-TEST` 之前才解除测试冻结。
+4. **不可逆副作用不撤销**：回拨跨越已执行 `merge/tag/artifact/release` 时，THE 系统 SHALL 先报告已执行清单，Human 显式确认后才移动指针；已执行操作落为外部事实，重进 `M-PUBLISH` 经 `reconcile` 识别（FR-0275）。
+5. **轻量终止出口**：新增 `trac abandon --reason`（Human-only，foundation task）；run 以 `terminal_state=cancelled` 终止；THE 系统 SHALL 不删证据、不碰 `issues`/分支、零外部副作用；终态 run SHALL 拒绝 `trac run` 推进；重做经 `trac start` 新 run。
+
+**用户可观察结果**：`trac return` 后 `trac status` 显示 `human_return from=<stage> to=<stage> reason=…` 及 `evidence.staled` 清单；`trac replay` 显示 `escape barrier` 与 `late_outcome quarantine`；`trac abandon` 后 `trac status` 显示 `terminal=cancelled`，`trac run` 拒绝推进；不可逆操作回拨前终端先列出已执行清单需确认。
+
+**关键失败/恢复边界**：回拨不删除事件；late outcome 不得 checkpoint/publish；`abandon` 零副作用且不可继续。
+
 ## 非功能需求
 
 ### NFR-0143 Candidate 绑定一致性与全链可审计性
@@ -443,5 +482,34 @@ tracks 自身与至少一个全新 Python reference host（专用真实 GitHub �
 - 单次权威测试流水线重发明（seed 问题 5）—— `WRITE→COLLECT→RED_CHECK→PRISM_REVIEW` 已实现，v0.8 仅按 FR-0285 回归核验；Shield 生产者自检不作权威门禁，不得退化为普通 FULL 套件重跑。
 - nightly result fetch、第二语言 adapter、RFC discussion 新状态、深版 OOB commit、通用多 registry/多部署平台——不在本版本范围，除非为发布闭环不可避免的最小依赖并先经 Human 裁定（seed 规格约束）。
 - 第二语言 adapter 的 kernel 泄漏——Python 细节仅属 reference acceptance（FR-0282/NFR-0147），不进入 kernel 规范/接口。
+- M-DESIGN 后架构级安全评审补丁（设计期安全门禁+声明依赖 SCA 预检）推迟到后续版本——安全评估保持 policy-gated 可选，先交付可上线产品（经 FR-0287 逃生门人工补救架构级阻断）。
 - 通用多宿主编排与跨宿主并发调度——本版仅 tracks 自身与一个 reference host 的 6 旅程；规模化多宿主编排不在范围。
 - 发布闭环之外的既有流程重制——`trac start/hotfix` 的起止与 HOTFIX-TRIAGE、M-TEST/M-IMPL 既有语义保持不变，仅新增 M-VERIFY 及后续发布四阶段的注册与执行。
+
+> **Maestro:** **Maestro 记录：Human 决定（2026-08-31，讨论收敛，canonical 语义已落 wiki/flow.md §11.4/§11.5/§12.3）——请 Sage 据此修订本 spec：
+> 
+> 1. **新增 FR-0286「发布闭环就地修复与 Known Issue 政策」**：
+>    - 就地修复、自动路径不回退：M-VERIFY/M-SECURITY/M-PUBLISH/M-MILESTONE 发现的缺陷在当前 run 内就地修复；分类只决定由谁修（Devon 实现 / Shield 定点测试 / Archer 咨询合同），不产生 M-DESIGN/M-PLANNING 自动回退。
+>    - 修复纪律两分：行为缺陷 RED-first（新增 unit 回归复现，不改冻结 int/e2e）；门禁缺陷 verification-only（修复后重跑该 gate 即证明，不人造无意义失败测试）。依赖 CVE 由 Archer 咨询派发评估换版本/换库（不回阶段），Devon 执行。
+>    - 合同级缺陷（含安全合同错位）：允许受控合同修订（delta 文档+评审），不回阶段。
+>    - 修复后新 commit = 新 candidate，旧 candidate 的 FULL_F/CI/preview/Human 决定全部 stale，完整重走 M-VERIFY。
+>    - 不可修复判据：就地修复预算（默认 3）穷尽且 Prism 确认归因不变 / 修复需变更冻结 interfaces 或 AC 且超出受控合同修订可承载范围 / 外部依赖无可用修复。
+>    - Known Issue 政策：仅适用于产品质量缺陷；Prism 确认归因后 Runtime 登记 GitHub issue（known-issue 标签，关联 candidate 与证据）；必须在 M-RELEASE preview 列出（Human 知情同意，未列出的不允许存在）；M-MILESTONE release trace 以 waiver 语义豁免绑定 AC 并转下版 backlog；下版 triage 必须消费。
+>    - 排除项：发布机制本身失败（artifact/tag/CI/registry）不适用 known issue——修好或放弃发布。
+>    - run 内修复不起 hotfix run（hotfix 是发布后通道；单活跃 run 原则）。
+>    - 安全 finding 零 known issue：必须修复，不允许带病发布；M-SECURITY 未通过则 release.decided 一律拒绝。
+>    - 架构级安全问题（不换架构修不了）：发布阻断，run 停于 M-SECURITY；v0.8 不设自动化机制，经 FR-0287 逃生门人工补救。
+>    - 冻结 int/e2e 不因修复修改；集成层观察必需时 Shield 定点新增（非修改）。
+> 
+> 2. **新增 FR-0287「Human 逃生门：指针回拨与终止出口」（v0.8 实现，轻量）**：
+>    - trac return 升级为通用逃生门：源阶段任意（含 M-VERIFY/M-SECURITY/M-RELEASE/M-PUBLISH/M-MILESTONE），目标任意上游 canonical 阶段（含 M-TEST/M-IMPL）；Human-only，落 append-only human.return（actor/from/to/reason）；Runtime 自动策略永不阻止 Human 回拨。
+>    - 证据失效：回拨到 T 时，T 之后全部证据（candidate 冻结/FULL_F/CI 绑定/安全评估/preview/release 决定）显式 evidence.staled(reason=human_return)，不删除、可 replay，重进不复用；回拨到 M-TEST 之前才解除测试冻结。
+>    - 不可逆外部副作用永不撤销：回拨跨越已执行 merge/tag/artifact/release 时，先报告已执行清单、Human 显式确认后才移动指针；已执行操作落为外部事实，重进 M-PUBLISH 经 reconcile 识别。
+>    - Agent 咨询（如 Prism/Archer 影响评估）仅为 advisory，不改变状态；决定与责任归 Human。
+>    - 轻量终止出口：新增 trac abandon --reason（Human-only，foundation task），run 以 terminal_state=cancelled 终止；不删证据、不碰 issues/分支、零外部副作用；终态 run 不再接受 trac run 推进；重做经 trac start 新 run。
+> 
+> 3. **修订 FR-0271-02、FR-0272 的恢复措辞**，指向 FR-0286 语义（就地修复循环、新 candidate 重走；安全零 known issue 与架构级逃生门人工补救）。
+> 4. **Out-of-Scope 增补**：M-DESIGN 后架构级安全评审补丁（设计期安全门禁+声明依赖 SCA 预检）推迟到后续版本——安全评估保持 policy-gated 可选，先交付可上线产品。
+> 5. **规格约束**：全 spec 项总数 28 < 30，不拆分；M-ACC 阶段需为 FR-0286/FR-0287 增补对应 AC。
+>> **Maestro:** 补充 FR-0287 的必需线性化语义（本轮 bootstrap 实证）：Human return 不能只在 writer lock 下追加事件；Runtime 必须先建立 escape barrier（cutover sequence），quiesce/取消在飞 dispatch。barrier 前派发而在其后到达的 outcome 必须以 escape.late_outcome/quarantine append-only 审计，禁止 checkpoint、publish 或覆盖已回拨 State；之后才移动指针并 stale 下游证据。本轮在缺少该 barrier 时，先追加的 human.return 被此前已提交但尚未 checkpoint 的 Archer outcome 之后的 design.committed 覆盖，正是回归反例。另 FR-0287 的轻量终止出口 trac abandon --reason：Human-only，terminal_state=cancelled，不删证据、不碰 issues/分支、零外部副作用，终态 run 拒绝 trac run；无需另起复杂终止状态机。
+>> **Sage:** 已按 Human 决定 2026-08-31 修订：新增 FR-0286 发布闭环就地修复与 Known Issue 政策（含就地修复不回退、RED-first/verification-only、Archer 咨询 CVE、受控合同修订、新 commit→新 candidate stale 重走、预算3不可修复判据、known-issue 登记/preview 列出/waiver 与下版 triage、排除发布机制失败、run 内不衍生 hotfix、安全零 known issue 与架构级阻断）与 FR-0287 Human 逃生门（含 trac return 通用回拨、escape barrier 线性化与 late_outcome quarantine、evidence.staled 不删除、不可逆副作用需确认、trac abandon 轻量终止 cancelled），已含补充的线性化 barrier 语义；已修订 FR-0271 与 FR-0272 恢复措辞指向 FR-0286 并增补 Out-of-Scope 架构级安全评审推迟；容量 21 有效 FR 合计 28 项 trac validate=valid
