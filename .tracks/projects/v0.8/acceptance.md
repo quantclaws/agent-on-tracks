@@ -2,7 +2,7 @@
 acc_id: ACC-008
 created: 2026-08-30
 status: draft
-sha: f71aa2409d6339ac8c714b37a6962d1bf96c3a7a21727acc1946458baf66430d
+sha: f820a848cc41a43266dabd9454d16e231e66a246f5ab2d841148579788830f01
 ---
 
 # 可信发布闭环与流程合同收敛（v0.8） — 验收标准
