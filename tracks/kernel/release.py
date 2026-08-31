@@ -40,6 +40,25 @@ VerifyBlockReason = Literal[
 ReleaseDecision = Literal["release", "delay", "return"]
 TerminalReleaseState = Literal["released", "retry_tail"]
 
+# architecture §1.0.14 blocked-recovery classes: in-place repair (FR-0286)
+# plus env-transient retry and the Human escape gate (FR-0287). No automatic
+# rollback to M-DESIGN/M-PLANNING; classification only decides who repairs.
+DefectClass = Literal[
+    "behavior",  # Devon RED-first: new unit regression; frozen int/e2e kept
+    "gate",  # verification-only: re-running the repaired gate is the proof
+    "cve",  # Archer advisory consult (no stage return); Devon executes
+    "contract",  # controlled contract revision (delta doc + review)
+]
+BlockExitClass = Literal[
+    "env_transient",  # A: operator restores env; in-place retry, candidate kept
+    "defect_repair",  # B: in-place repair; fix commit -> new candidate re-walk
+    "irreparable",  # C: known issue (product defects) or Human escape gate
+    "human_escape",  # D: trac return / abandon (RP-01 #15/16)
+]
+
+REPAIR_BUDGET_DEFAULT = 3
+
+
 
 def release_stage_defs() -> tuple:
     """StageDef registrations appended to the canonical stage table.
@@ -103,3 +122,14 @@ def on_publish_events(state: State, payload: dict, event) -> None:
 def on_milestone_events(state: State, payload: dict, event) -> None:
     """Project milestone/terminal=released|retry_tail (SM-01.14–.16)."""
     raise NotImplementedError("IF-MILESTONE-001")
+
+
+def classify_defect_route(reason: str, context: dict) -> dict:
+    """Single closed-set classifier reason -> repair_route (§1.0.14, FR-0286).
+
+    Returns {exit_class, defect_class, owner, discipline, budget_remaining}.
+    Classification only decides WHO repairs (Devon RED-first / Shield targeted
+    tests / Archer advisory) — it never produces a stage rollback. An unknown
+    reason fails closed: it never emits a pass or an empty route.
+    """
+    raise NotImplementedError("IF-REPAIR-001")

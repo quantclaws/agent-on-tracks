@@ -33,7 +33,8 @@ sha:
 - 新增 `executor/failure_review.py`：failure.emitted→stored→selected→injected→consumed→acked→invalidated 链与 review reducer；last_failure/diagnose_report 保留为链上 source，富证据在 ACK 前不得被覆盖。
 - 扩展 `effects/github.py`：真实 run 缺凭据转 needs_attention（废除静默 fake 回退——v0.7 `select_issue_backend` 的 missing-token 降级路径被删除）、`issue.mapped` 权威映射持久化与 API 回读、`fake_rejected`、milestone/Project 关闭、CI runs API 回读；显式测试/模拟模式（TRAC_FAKE_* / TRAC_AGENT_BACKEND=fake / --assignment-overlay）仍是合法 fake 通道。
 - 新增 `executor/reference_host.py` + `tracks/assets/reference_host/**`（wheel 数据资产）：从零创建 Python reference host，绑定专用真实 GitHub 远程（Maestro 裁定 T-003 A），与 tracks 自身同等走发布旅程。
-- EVENT_TYPES 追加 §1a v0.8 封闭集成员；COMMAND_KINDS 追加 `freeze_candidate`、`judge_full_f_reuse`、`run_local_gates`、`observe_ci_runs`、`assess_security`、`generate_preview`、`record_release_decision`、`execute_publish`、`close_milestone`、`materialize_host_contract`、`check_envelope_parity`、`review_failure_chain`（Devon foundation tasks 落地）。
+- 新增 `executor/repair.py`（FR-0286 就地修复：分类派发 Devon RED-first/Shield 定点/Archer advisory、预算 3 轮、受控合同修订、Known Issue 登记与 waiver）与 `executor/escape.py`（FR-0287 逃生门：escape barrier/cutover、late outcome quarantine、通用回拨证据失效、abandon 终止）；`trac return` 升级为通用逃生门（既有子命令语义扩展，foundation task），abandon 为新增 Human-only 子命令（**待实现：Devon foundation task 交付 cmd_abandon 并同步 USAGE 与 TRAC_SUBCOMMANDS**；本文以散文形式引用该待实现命令，不加反引号、不入代码 fence）。Prism revise 锚定检查复用 v0.3 `revise_without_findings` 协议（FR-0271-03）。
+- EVENT_TYPES 追加 §1a v0.8 封闭集成员（含 `repair.round_started`、`known_issue.registered/rejected`、`escape.barrier_established`、`escape.late_outcome`、`advisory.recorded`）；COMMAND_KINDS 追加 `freeze_candidate`、`judge_full_f_reuse`、`run_local_gates`、`observe_ci_runs`、`assess_security`、`generate_preview`、`record_release_decision`、`execute_publish`、`close_milestone`、`materialize_host_contract`、`check_envelope_parity`、`review_failure_chain`、`dispatch_repair`、`register_known_issue`、`establish_escape_barrier`、`abandon_run`（Devon foundation tasks 落地）。
 - 语言中立收尾（NFR-0147）：kernel/executor 运行时代码中残留的 venv/pytest/wheel 词边界 token（kernel/contracts.py、executor/{executor,test_select,quality_gate,worktree,m_impl_runtime}.py 现存 `.venv/bin/...` 字面量与 guard 命令文本）迁出为合同数据/资产区，扫描 token 扩展为 `pytest|junit|java|venv|wheel|pip`（词边界、大小写不敏感；允许区不变并追加 reference_host 资产区）；Devon foundation task 执行迁移。
 
 ## 1. 模块边界
@@ -55,10 +56,12 @@ sha:
 | 11 | `effects/github.py` | needs_attention、issue.mapped、fake_rejected、CI readback、milestone 关闭 | FR-0283 | IF-ISSUE-001 |
 | 12 | `executor/reference_host.py` + `assets/reference_host/**` | reference host 物化与验收 | FR-0282 | IF-REFERENCE-001 |
 | 13 | `checks/trace.py` | v0.8 release trace 闭环（--version v0.8 追加 release 段） | NFR-0143 | IF-TRACE-003 |
+| 14 | `executor/repair.py` | 就地修复分类/派发/预算轮次、Known Issue 登记 | FR-0286 | IF-REPAIR-001/002, IF-KNOWNISSUE-001 |
+| 15 | `executor/escape.py` | escape barrier/cutover、late outcome quarantine、通用回拨与终止 | FR-0287 | IF-ESCAPE-001/002 |
 
 ### 1.0.2 M-VERIFY 与 candidate 主身份
 
-M-VERIFY 是 canonical StageDef（非前置门），feature/hotfix run 在 M-IMPL 干净 FULL_F 后经 `trac run` 自动进入。进入时 Runtime 在 clean tree（`git status --porcelain` 对已跟踪文件为空）上冻结完整 HEAD SHA 为 candidate 主身份，落 `candidate.frozen (candidate_sha, clean_tree=true, branch)`；已存在同 run 的成功冻结事件时幂等不重冻（SM-01.17）。dirty 树落 `attention.required reason=dirty_tree`，不进入 M-VERIFY 门禁链。后续所有门禁/preview/外部操作事件必须携带同一 `candidate_sha`；`collect_binding_violations` 纯函数扫描漂移并落 `candidate.stale`。FULL_F 复用判定引用被复用证据的 `identity_basis`（v0.6 四元组 tree ∧ command ∧ env ∧ selection_id 全一致且无 STALE 传播）才落 `evidence.reused kind=full_f`；否则按宿主合同 LOCAL_GATES 重跑 FULL 落 `full.executed`。
+M-VERIFY 是 canonical StageDef（非前置门），feature/hotfix run 在 M-IMPL 干净 FULL_F 后经 `trac run` 自动进入。进入时 Runtime 在 clean tree（`git status --porcelain` 对已跟踪文件为空）上冻结完整 HEAD SHA 为 candidate 主身份，落 `candidate.frozen (candidate_sha, clean_tree=true, branch)`；已存在同 run 的成功冻结事件时幂等不重冻（SM-01.17）。dirty 树落 `attention.required reason=dirty_tree`，不进入 M-VERIFY 门禁链——清理后同 HEAD 原地重试（§1.0.14 A 类，candidate 不变）。后续所有门禁/preview/外部操作事件必须携带同一 `candidate_sha`；`collect_binding_violations` 纯函数扫描漂移并落 `candidate.stale`，修复产生的新 commit 按 §1.0.14 B 类走新 candidate 重走（SM-01.20）。FULL_F 复用判定引用被复用证据的 `identity_basis`（v0.6 四元组 tree ∧ command ∧ env ∧ selection_id 全一致且无 STALE 传播）才落 `evidence.reused kind=full_f`；否则按宿主合同 LOCAL_GATES 重跑 FULL 落 `full.executed`。任一门禁失败/needs_attention 的处置统一走 §1.0.14 的恢复分类（就地修复 + Known Issue + 逃生门，不自动回退）。
 
 ### 1.0.3 宿主合同与语言中立（FR-0281/NFR-0147）
 
@@ -66,7 +69,7 @@ M-VERIFY 是 canonical StageDef（非前置门），feature/hotfix run 在 M-IMP
 
 ### 1.0.4 M-SECURITY
 
-按 `[security_scan]` 逐项安装（声明 install）并执行 pinned 工具（pip-audit 2.7.3 依赖审计、bandit 1.8.3 静态安全 lint，均 exit_code 通道、阈值 0），每项落 normalized result 并绑定 candidate；随后派发 Prism 安全策略复审（RP-01 #4：输入为扫描结果 + policy digest + candidate SHA，verdict 落 `prism.verdict scope=security`）；聚合通过才落 `security.assessed status=passed`。策略版本/阈值由合同 pin，未知/缺失/畸形 fail-closed（`status=unknown` 阻断）。修复后同 candidate 重跑 M-SECURITY 落新事件。
+按 `[security_scan]` 逐项安装（声明 install）并执行 pinned 工具（pip-audit 2.7.3 依赖审计、bandit 1.8.3 静态安全 lint，均 exit_code 通道、阈值 0），每项落 normalized result 并绑定 candidate；随后派发 Prism 安全策略复审（RP-01 #4：输入为扫描结果 + policy digest + candidate SHA，verdict 落 `prism.verdict scope=security`）；聚合通过才落 `security.assessed status=passed`。策略版本/阈值由合同 pin，未知/缺失/畸形 fail-closed（`status=unknown` 阻断）。阻断出口按 §1.0.14 恢复分类处置：不移动 HEAD 的修复（瞬态扫描失败、补充复审证据）保持 candidate 原地重跑（FR-0272-02）；代码 finding 一律修复（安全零 known issue，未过则 release 一律拒绝，FR-0286-8）；依赖 CVE 走 Archer 咨询派发评估换版本/换库后 Devon 执行（不回阶段）；架构级安全问题 run 停于 M-SECURITY 经逃生门人工处置（FR-0286-9）。
 
 ### 1.0.5 M-RELEASE preview 与独立 Human 门禁
 
@@ -110,6 +113,25 @@ feature：operations.feature 全量（merge main、公开 tag、artifact、relea
 | 4 | candidate 冻结/门禁执行/CI 回读/preview/幂等执行/归档 | ❌ | ❌ | ❌ | 同 candidate 复审 | ✅ 程序独家 |
 | 5 | release/delay/return 三择一 | Human 独占（release CLI） | ❌ | ❌ | ❌ | 校验/落事件 |
 | 6 | 不可逆外部操作 | ❌ | ❌ | ❌ | ❌ | ✅ 唯一（effects/publish） |
+| 7 | 就地修复分类/派发/预算与 Known Issue 登记（FR-0286） | 咨询 advisory（CVE/合同） | 定点新增测试 | RED-first / verification-only 执行 | 归因确认 | ✅ 程序独家分类/预算/登记 |
+| 8 | 通用回拨与终止（FR-0287，RP-01 #15/16） | Human 独占（return/abandon） | ❌ | ❌ | advisory | ✅ barrier/quiesce/stale，永不阻止 Human |
+
+### 1.0.14 阻断恢复模型：就地修复 + Known Issue + Human 逃生门（FR-0286/FR-0287）
+
+门禁 fail-closed 只约束「不得带病放行」，不约束「一阻断即废弃」。按 Maestro 决定（2026-08-31），发布闭环缺陷**在当前 run 内就地修复**——不产生 M-DESIGN/M-PLANNING 自动回退；分类只决定由谁修；不可修复经 Known Issue（产品质量缺陷）或 Human 逃生门处置；环境瞬态原地重试。每个封闭 reason 都有非空处置路径，`trac status` 在任何非通过出口都显示下一步。
+
+| 类 | reason（封闭集来源） | 处置 | candidate 身份 | 可观察出口 |
+|:--|:--|:--|:--|:--|
+| A 环境瞬态 | attention.required 的 missing_token / network_error / remote_unavailable / dirty_tree（可清理）/ CI 未完成 | 操作者恢复环境；`trac run` 对未完成门禁原地幂等重试；已完成门禁证据按绑定保留不重跑（FR-0270：CI 已绑定不重复 API 调用） | **保持**（无新 commit） | `needs_attention … next=…`（E-03） |
+| B 缺陷就地修复 | 门禁/扫描/复审/发布执行发现的缺陷（local_gate.failed、security findings、prism failed、publish.failed 等） | `classify_defect_route` 分类（kernel 单一分类器，封闭 defect_class）：**行为缺陷**→Devon RED-first（新增 unit 回归复现，冻结 int/e2e 不改）；**门禁缺陷**→verification-only（修复后重跑该 gate 即证明，不人造失败测试）；**依赖 CVE**→Archer 咨询派发（advisory，评估换版本/换库，不回阶段）+ Devon 执行；**合同级缺陷**（含安全合同错位）→受控合同修订（delta 文档+Prism 评审），不回阶段。预算默认 3 轮，`trac status` 显示 `repair=in_place round=<n>/3` | 修复产生新 commit → **新 candidate**：旧 FULL_F/CI/preview/Human 决定落 `evidence.staled reason=fix_new_candidate`，完整重走 M-VERIFY（SM-01.20，新 candidate.frozen，full_reuse 重新判定，旧 preview_digest 不复用） | `repair.round_started {round, budget, classification}` + 分类职责/纪律事件可 replay；**事件流不出现自动 `stage.rolled_back` 至 M-DESIGN**（AC-FR0286-01） |
+| C 不可修复 | 预算穷尽且 Prism 确认归因不变；或修复需变更冻结 interfaces/AC 超出受控合同修订；或外部依赖无可用修复 | 产品质量缺陷 → **Known Issue**：Prism 确认归因后 Runtime 登记 GitHub issue（`known-issue` 标签、关联 candidate 与证据）；M-RELEASE preview 必须列出全部未修复 Known Issue（Human 知情同意，未列出即阻断 release）；M-MILESTONE release.trace 对 waiver AC 标记 `waived` 并转下版 backlog（下版 triage 必须消费）。**排除**：发布机制本身失败（artifact/tag/CI/registry 无可用修复）与安全 finding（零 known issue，M-SECURITY 未过则 release 一律拒绝）不得登记，须修好或经 D 类放弃；run 内修复不起 hotfix run（单活跃 run 原则） | Known Issue 登记于当前 candidate；waiver 后发布继续 | `known_issue.registered`（或 `known_issue.rejected reason=not_product_defect`）、preview `known_issues=[…]`、trace `waived` |
+| D Human 逃生门 | 任意时刻（含 B/C 处置中）Human 判定需回拨或放弃 | **trac return 通用回拨**（SM-01.19，升级既有 return 子命令，foundation task）：任意可回拨阶段→任意上游 canonical 阶段；Runtime 先建 `escape.barrier`（cutover sequence）并 quiesce/取消在飞 dispatch，barrier 前派发而后到达的 outcome 以 `escape.late_outcome` quarantine 审计（禁止 checkpoint/publish/覆盖已回拨 State），之后移动指针并把 T 之后全部证据落 `evidence.staled reason=human_return`（不删除、重进不复用；回拨到 M-TEST 之前才解除测试冻结）；回拨跨越已执行 merge/tag/artifact/release 时先报告已执行清单、Human 显式确认后才动指针，已执行操作作为外部事实由重进 M-PUBLISH 的 reconcile 识别；Agent 咨询（Prism/Archer 影响评估）仅 `advisory.recorded`，不改状态。**轻量终止**：abandon 子命令（Human-only，foundation task，本文以散文引用）→ `run.completed terminal_state=cancelled`，不删证据、不碰 issues/分支、零外部副作用；终态 run 拒绝 `trac run`，重做经 `trac start` 新 run（SM-01.21/22） | 回拨后重进按新链执行（旧证据 stale） | `human.return(actor,from,to,reason)`、`escape.barrier_established(cutover_seq)`、`escape.late_outcome(quarantined)`、`evidence.staled(human_return)`、`terminal=cancelled` |
+
+同 candidate 与新 candidate 的判据只有一条：**修复是否移动了 HEAD**。A 类与「不触碰 tracked 文件的修复」（补充复审证据、瞬态扫描重跑、Archer advisory 不产 commit）保持 candidate 身份，受影响门禁原地重跑（FR-0271-02 同 candidate 重审、FR-0272-02 同 candidate 重跑）；任何 tracked 文件修复（含受控合同修订）= 新 commit = 新 candidate 重走（B 类）。两类都产生新事件，AC 可观察合同不因分类丢失。
+
+路由与可观察合同：失败类事件 payload 携带 `repair_route {defect_class, owner, discipline, budget_remaining}`（kernel 的 `classify_defect_route` 单一分类，事件生产者不得自报其他路由）；`trac status` 渲染 `blocked: <reason>`、`repair=in_place round=<n>/3` 或 needs_attention 的 `next=` 指引。Prism `revise/failed` 必须经 discuss 锚定阻塞性发现（FR-0271-03）：verdict=revise 而无对应开放线程时 Runtime 判 `revise_without_findings`，不计为有效阻断（承 v0.3 评审协议，复用 `_revise_without_findings` 判定与 `trac discuss start/query` 协议）。
+
+不死锁论证：封闭 reason 集每个成员落入 A–D 且均有非空处置路径；B 类有预算上界（默认 3），穷尽即转入 C（Known Issue，产品质量缺陷可带 waiver 发布）或 D（Human 回拨/终止）——不存在「既修不好又出不去」的状态。自动路径永不回退 M-DESIGN/M-PLANNING（防发布缺陷把需求阶段拖入循环）；Human 逃生门永不被 Runtime 策略阻止；`abandon` 提供零副作用终态出口，被终止 run 不阻塞新 `trac start`。最坏情形是「该版本经 Human 显式放弃」，而非仓库永久卡死。
 
 ### 1.1 Composition Root
 
@@ -155,6 +177,40 @@ M-MILESTONE: Command(close_milestone) -> executor/milestone.*
 **Envelope/failure 链路径**：每次派发前 `check_envelope_parity`（dispatch.parity / dispatch.rejected）；回收时 `parse_agent_output`（format_error vs semantic_attempt_failed）；失败产生时 `failure_review.record_failure` → select → inject → outcome `evidence_ack` → acked/invalidated；`review_failure_chain` 在每次注入前核验。
 
 **Issue 路径**：M-REQ-APPROVAL ISSUES 子状态 → `create_issues`（既有）→ effects/github（真实通道；缺凭据 attention.required）→ API 回读 → `issue.mapped` → task/commit/report/关闭 effector 消费 issue-map.json。
+
+**阻断恢复路径（§1.0.14：就地修复 + Known Issue + 逃生门）**：
+
+```text
+gate/scan/prism/publish failure OR attention.required
+  -> event payload repair_route{defect_class,owner,discipline,budget_remaining}
+       (kernel/release.classify_defect_route — 单一封闭分类器)
+  -> A(env transient): operator restores env -> trac run retries the
+       unfinished gate in place; candidate unchanged
+  -> B(defect): repair.round_started{round<=3, classification}
+       behavior  -> Devon RED-first (new unit regression; frozen int/e2e kept)
+       gate      -> verification-only (re-run the gate as the proof)
+       cve       -> Archer advisory consult (no stage return) + Devon executes
+       contract  -> controlled contract revision (delta doc + Prism review)
+       NO automatic stage.rolled_back to M-DESIGN/M-PLANNING (AC-FR0286-01)
+       fix commit lands -> evidence.staled(reason=fix_new_candidate)
+       -> full M-VERIFY re-walk on the new candidate (SM-01.20)
+  -> C(irreparable, budget exhausted + Prism attribution unchanged):
+       product-quality defect -> known_issue.registered (GitHub
+       known-issue label, candidate+evidence linked) -> preview lists
+       ALL unfixed known issues (release blocked if unlisted) ->
+       milestone trace waives bound ACs -> next-version backlog
+       (mechanism failure & security findings excluded: fix or abandon)
+  -> D(Human escape, never blocked by Runtime policy):
+       trac return --to <any upstream canonical stage>: escape barrier
+       (cutover seq) -> quiesce in-flight dispatches -> late outcomes
+       quarantined (escape.late_outcome; no checkpoint/publish) -> pointer
+       move + evidence.staled(reason=human_return); irreversible ops
+       reported + explicit confirmation first; re-enter reconciles (FR-0275)
+       abandon (prose form; foundation task) -> terminal=cancelled,
+       zero side effects, trac run rejected (SM-01.21/22)
+  -> trac status renders blocked:<reason> repair=in_place round=<n>/3
+     (or next=) at every non-pass exit
+```
 
 ### 1.2 Required AC closure (ISLAND_GATE_1)
 
@@ -212,6 +268,18 @@ M-MILESTONE: Command(close_milestone) -> executor/milestone.*
 - **FR-0285** owner=kernel/m_test.py(既有)：AC-FR0285-01 surface=trac-run-M-TEST+trac-replay composition=既有 WRITE→COLLECT→RED_CHECK→PRISM_REVIEW 链回归 wiring=red.validated→prism.verdict 消费该证据且仅隔离 kill→链路完整；缺失环节 pipeline incomplete test=integration:tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact evidence=`.venv/bin/python -m pytest -q tests/integration/test_pipeline_regression.py`输出`passed`且 replay 链四环节齐备 IF-PIPELINE-001
 - **FR-0285** owner=kernel/m_test.py(既有)：AC-FR0285-02 surface=trac-run+trac-status composition=生产者自检边界 wiring=Shield 自检不产生 red.validated/prism.verdict 权威记录；FULL 重跑不冒充 RED_CHECK test=integration:tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority evidence=`.venv/bin/python -m pytest -q tests/integration/test_pipeline_regression.py`输出`passed`且自检事件无权威结论 IF-PIPELINE-001
 - **FR-0285** owner=executor/validate.py(既有扩展)：AC-FR0285-03 surface=trac-validate+trac-report composition=流水线定义冻结 wiring=v0.8 无新增流水线阶段→validate 通过、report 显示流水线版本与 v0.7 一致 test=integration:tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition evidence=`.venv/bin/python -m pytest -q tests/integration/test_pipeline_regression.py`输出`passed`且版本一致 IF-PIPELINE-001
+- **FR-0271** owner=executor/m_verify.py:AC-FR0271-03 surface=trac-run+trac-discuss-query composition=revise 锚定检查（复用 v0.3 revise_without_findings 协议） wiring=prism.verdict=revise→trac discuss 开放线程锚定检查→无锚定线程判 revise_without_findings 失败、不计有效阻断 test=integration:tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings evidence=`.venv/bin/python -m pytest -q tests/integration/test_verify_prism_final.py`输出`passed`且无锚定 revise 被 revise_without_findings 拒绝且 status 报告该失败 IF-VERIFY-005
+- **FR-0286** owner=executor/repair.py:AC-FR0286-01 surface=trac-run+trac-status/replay composition=classify_defect_route→repair.round_started 就地修复循环 wiring=缺陷分类(behavior/gate/cve/contract)→owner 派发(Devon/Shield/Archer)→repair=in_place round=n/3→无 stage.rolled_back 至 M-DESIGN 的自动回退 test=integration:tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds evidence=`.venv/bin/python -m pytest -q tests/integration/test_inplace_repair.py`输出`passed`且事件流无自动回退、status 含 repair=in_place round=1/3 IF-REPAIR-001
+- **FR-0286** owner=executor/repair.py:AC-FR0286-02 surface=trac-replay+git-audit composition=修复纪律两分 wiring=行为缺陷→新增 unit 回归 red.validated 后变绿、冻结 int/e2e 不改；门禁缺陷 verification-only 重跑 gate 即证明；CVE→Archer advisory+Devon 执行；合同级→受控修订(delta+评审) test=integration:tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests evidence=`.venv/bin/python -m pytest -q tests/integration/test_inplace_repair.py`输出`passed`且冻结测试前后无 diff、纪律事件可 replay IF-REPAIR-001
+- **FR-0286** owner=kernel/release.py+executor/repair.py:AC-FR0286-03 surface=trac-run+trac-status composition=新 candidate 重走（SM-01.20） wiring=修复 commit→evidence.staled(reason=fix_new_candidate)→旧 FULL_F/CI/preview/决定 stale→新 candidate.frozen→完整重走 M-VERIFY、旧 preview_digest 不复用 test=integration:tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify evidence=`.venv/bin/python -m pytest -q tests/integration/test_inplace_repair.py`输出`passed`且重走链含新冻结、full_reuse 重新判定 IF-REPAIR-002
+- **FR-0286** owner=executor/repair.py:AC-FR0286-04 surface=trac-run+trac-status composition=不可修复判据 wiring=预算穷尽+Prism 归因不变/超受控修订/无可用修复→blocked: irreparable→Known Issue 或逃生门处置 test=integration:tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape evidence=`.venv/bin/python -m pytest -q tests/integration/test_inplace_repair.py`输出`passed`且 status 报告 blocked: irreparable IF-REPAIR-002 IF-KNOWNISSUE-001
+- **FR-0286** owner=executor/repair.py+effects/github.py:AC-FR0286-05 surface=release-preview-CLI+trac-status/report+GitHub composition=Known Issue 登记与知情同意 wiring=Prism 归因→known-issue 标签 issue(candidate+证据)→preview 列出全部未修复项(未列出即拒绝 release)→milestone trace waived+下版 backlog test=integration:tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived evidence=`.venv/bin/python -m pytest -q tests/integration/test_known_issue.py`输出`passed`且 preview 含 known_issues 列表、trace 标记 waived IF-KNOWNISSUE-001
+- **FR-0286** owner=executor/repair.py:AC-FR0286-06 surface=trac-run+trac-status/replay composition=排除项与零安全豁免 wiring=机制失败→known_issue.rejected(not_product_defect)+blocked；run 内不起 hotfix run；安全未过 release 一律拒绝；架构级安全停于 M-SECURITY 走逃生门 test=integration:tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix evidence=`.venv/bin/python -m pytest -q tests/integration/test_known_issue.py`输出`passed`且登记被拒、无 hotfix.requested、release 拒绝提示 IF-KNOWNISSUE-001 IF-JOURNEY-001
+- **FR-0287** owner=cli/main.py+executor/escape.py:AC-FR0287-01 surface=trac-return+trac-status/replay composition=通用回拨（SM-01.19，既有 return 子命令升级） wiring=任意可回拨阶段→human.return(actor,from,to,reason)→Runtime 不阻止→advisory 仅记录不改状态→指针移动 test=integration:tests/integration/test_escape_gate.py::test_universal_return_moves_pointer evidence=`.venv/bin/python -m pytest -q tests/integration/test_escape_gate.py`输出`passed`且 human.return 与 advisory 分离、status 显示 human_return IF-ESCAPE-001
+- **FR-0287** owner=executor/escape.py:AC-FR0287-02 surface=trac-replay+trac-status composition=escape barrier/cutover wiring=escape.barrier_established(cutover_seq)→quiesce 在飞 dispatch→late outcome escape.late_outcome(quarantined)→禁止 checkpoint/publish/覆盖 State test=integration:tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes evidence=`.venv/bin/python -m pytest -q tests/integration/test_escape_gate.py`输出`passed`且 late outcome 不产生 design.committed/publish.executed、status 显示 late_outcome=quarantined IF-ESCAPE-001
+- **FR-0287** owner=executor/escape.py:AC-FR0287-03 surface=trac-status+trac-replay composition=回拨证据失效 wiring=回拨到 T→T 后全部证据 evidence.staled(reason=human_return)→重进不复用；回拨到 M-TEST 前解除测试冻结(frozen_tests=unfrozen) test=integration:tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence evidence=`.venv/bin/python -m pytest -q tests/integration/test_escape_gate.py`输出`passed`且 stale 清单可 replay、重走无旧证据复用 IF-ESCAPE-001
+- **FR-0287** owner=executor/escape.py+executor/publish.py:AC-FR0287-04 surface=trac-return+trac-replay composition=不可逆操作确认与 reconcile wiring=跨越已执行 merge/tag/artifact/release→先报告 already_executed 清单→Human 确认→指针移动→重进 M-PUBLISH 识别 reconciled_skip test=integration:tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip evidence=`.venv/bin/python -m pytest -q tests/integration/test_escape_gate.py`输出`passed`且确认事件先于指针移动、重进落 reconciled_skip IF-ESCAPE-001 IF-PUBLISH-002
+- **FR-0287** owner=cli/main.py+executor/escape.py:AC-FR0287-05 surface=abandon-CLI+trac-status+git/GitHub composition=轻量终止（SM-01.21/22，新子命令待实现 foundation task） wiring=abandon --reason→run.completed(terminal=cancelled)→零外部副作用(无新 tag/branch、issue 状态不变)→trac run 拒绝提示、重做经 start 新 run test=integration:tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects evidence=`.venv/bin/python -m pytest -q tests/integration/test_escape_gate.py`输出`passed`且 for-each-ref 无新增、终态 run 推进被拒退出非零 IF-ESCAPE-002
 - **NFR-0143** owner=kernel/release.py:AC-NFR0143-01 surface=trac-replay/report+trac-status composition=collect_binding_violations 全链核验 wiring=五阶段事件均携带同 candidate_sha→replay 验证一致性；漂移→release.trace=inconsistent+blocked: candidate mismatch test=integration:tests/integration/test_release_trace.py::test_same_candidate_all_events evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_trace.py`输出`passed`且注入异 SHA 证据后 trace=inconsistent IF-TRACE-003 IF-VERIFY-001
 - **NFR-0143** owner=executor/milestone.py:AC-NFR0143-02 surface=trac-report-md composition=release.trace 同一性证明导出 wiring=trace 含 candidate/artifact/evidence/preview/human approval event id/operation digests→与外部 tag/release 互验 test=integration+e2e:tests/integration/test_release_trace.py::test_trace_export_digests+tests/e2e/test_release_journey.py::test_feature_release_journey evidence=`.venv/bin/python -m pytest -q tests/integration/test_release_trace.py`输出`passed`且导出 trace 与远端 digest 互验一致 IF-TRACE-003
 - **NFR-0144** owner=executor/publish.py:AC-NFR0144-01 surface=trac-run-resume+远端验证 composition=同 preview 重复执行→reconciled_skip wiring=第二次 resume 落 reconciled_skip(同键)→远端无重复 tag/release/merge；未完成继续 done test=integration:tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates+test_publish_reconcile.py::test_unfinished_continues evidence=`.venv/bin/python -m pytest -q tests/integration/test_publish_reconcile.py`输出`passed`且远端记录唯一 IF-PUBLISH-002
@@ -240,6 +308,8 @@ M-MILESTONE: Command(close_milestone) -> executor/milestone.*
 - `tracks/executor/milestone.py` — trace/关闭/封存/清理签名，行为体仅 raise `IF-MILESTONE-001/IF-ISSUE-002`（kind: stub）
 - `tracks/executor/failure_review.py` — 失败证据链签名，行为体仅 raise `IF-FAILURE-001`（kind: stub）
 - `tracks/executor/reference_host.py` — reference host 物化签名，行为体仅 raise `IF-REFERENCE-001`（kind: stub）
+- `tracks/executor/repair.py` — 就地修复分类/派发/预算与 Known Issue 登记签名，行为体仅 raise `IF-REPAIR-001/002`、`IF-KNOWNISSUE-001`（kind: stub）
+- `tracks/executor/escape.py` — escape barrier/late outcome quarantine/回拨证据失效/终止签名，行为体仅 raise `IF-ESCAPE-001/002`（kind: stub）
 - `tracks/effects/publish.py` — 不可逆外部操作效果边界签名，行为体仅 raise `IF-PUBLISH-001/002`（kind: stub）
 - `.tracks/projects/project.toml` — 追加 `[host-contract.*]` 段：tracks 宿主发布闭环合同（七类 local gates、version、build/smoke、security、ci、tracker、三旅程 operations；真实机器配置，非桩）。既有 [unit]/[integration]/[e2e]/[nightly]/[adapter]/[layout]/[lint] 段逐字不变；本文件 bytes 变化已同步 §4.2 第 8 项 config_digest（kind: config）
 - `tracks/assets/reference_host/pyproject.toml` — reference 宿主 pinned 工具与守卫配置模板（kind: data）
@@ -257,7 +327,7 @@ M-MILESTONE: Command(close_milestone) -> executor/milestone.*
 >> **Archer:** 已修复：tracks/executor/host_contract.py 模块 docstring 已改写为『[host-contract.*] namespaced sections of the host's .tracks/projects/project.toml are the machine truth』，与 §0.1/§1.0.3/§3.1、interfaces §1e 及 §2 本项 kind:stub 声明完全一致；签名未变动。全部 11 个桩已复查，运行时代码与桩中独立合同路径表述 grep 零命中，双合同真相歧义不再进入实现基线。
 >> **Prism:** 已复核 commit 982371b：docstring 现指向 [host-contract.*] sections of .tracks/projects/project.toml，全仓 grep 无独立路径残留（仅剩二择一说明的合法提及），签名未动。验证通过。
 
-本节以外不创建 scaffold。上述 stub 的行为体/接线（kernel/release 注册到 machine、cmd_release 与 USAGE/TRAC_SUBCOMMANDS 同步、EVENT/COMMAND 封闭集追加、envelope 行为体与 OpencodeBackend/FakeBackend 接入、github.py needs_attention/映射/CI 回读、validate 的 host-contract 映射与语言 token 扩展、既有代码 venv/wheel token 迁移、trace v0.8 扩展、CI release-evidence 旅程步）均为**待实现 Devon foundation tasks**；本文不得把它们当作既有可执行能力。`tests/ground_truth/` 不新增文件：test-plan §3 判定不适用（既有资产继承且不修改）。
+本节以外不创建 scaffold。上述 stub 的行为体/接线（kernel/release 注册到 machine、cmd_release 与 USAGE/TRAC_SUBCOMMANDS 同步、EVENT/COMMAND 封闭集追加、envelope 行为体与 OpencodeBackend/FakeBackend 接入、github.py needs_attention/映射/CI 回读、validate 的 host-contract 校验与语言 token 扩展、既有代码 venv/wheel token 迁移、trace v0.8 扩展、cmd_return 通用化、cmd_abandon 新增、revise 锚定检查接入 M-VERIFY verdict、CI release-evidence 旅程步）均为**待实现 Devon foundation tasks**；本文不得把它们当作既有可执行能力。`tests/ground_truth/` 不新增文件：test-plan §3 判定不适用（既有资产继承且不修改）。
 
 ## 3. 技术选型
 

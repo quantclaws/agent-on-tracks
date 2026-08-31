@@ -50,10 +50,11 @@ sha:
 1. **AC trace**：每个 Shield test 的 `def` 紧邻上方使用 `# AC-FRXXXX-YY@v0.8 TRACKS-TRACE ...`；多 AC 各一行。每 AC ≥1 collected node、每 node ≥1 AC；变绿条件引用所依赖 IF- 标识（FR-0140）。
 2. **Assertion taboos**：禁止 sole trivial assert、bare swallow、无 issue 链接的 skip/xfail（静态扫描阻断 merge）。
 3. **发布链绑定断言**：凡断言发布链事件的测试必须同时断言 payload 的 candidate_sha/preview_digest/idempotency_key 绑定，不得只断言事件类型存在。
-4. **模拟模式显式性**：stand-in API/bare 远程/FAKE 通道只经显式 env（TRAC_GITHUB_API_BASE、TRAC_FAKE_SIMULATE、TRAC_AGENT_BACKEND、--assignment-overlay）启用；测试结束显式清理，防泄漏到真实模式用例。
-5. **L3 不可静默 skip**：milestone/release-tag 通道缺凭据必须 fail（`LIVE_SKIPPED` 语义只适用于 weekly/manual），与 NFR-0149-01 的 needs_attention 计数一致。
-6. **PR classification**：New AC / Spec change / flake-environment issue 三选一；「实现与 spec 不符所以改测试」拒绝。
-7. **Testability fallback**：缺 public outlet 时回修 interfaces/acceptance，不 mock internals。
+4. **阻断出口可观察**：凡断言 blocked/needs_attention 的测试必须同时断言 `repair_route` 非空且 exit_class/defect_class 落入封闭集（或 `next=` 指引存在）——「无下一步的死端」按反模式处理；就地修复断言必须含「无自动 stage.rolled_back」（architecture §1.0.14 / FR-0286）。
+5. **模拟模式显式性**：stand-in API/bare 远程/FAKE 通道只经显式 env（TRAC_GITHUB_API_BASE、TRAC_FAKE_SIMULATE、TRAC_AGENT_BACKEND、--assignment-overlay）启用；测试结束显式清理，防泄漏到真实模式用例。
+6. **L3 不可静默 skip**：milestone/release-tag 通道缺凭据必须 fail（`LIVE_SKIPPED` 语义只适用于 weekly/manual），与 NFR-0149-01 的 needs_attention 计数一致。
+7. **PR classification**：New AC / Spec change / flake-environment issue 三选一；「实现与 spec 不符所以改测试」拒绝。
+8. **Testability fallback**：缺 public outlet 时回修 interfaces/acceptance，不 mock internals。
 
 ### 1.5. Test Division of Labor
 
@@ -96,6 +97,9 @@ tests/
 │   ├── test_pipeline_regression.py
 │   ├── test_release_trace.py
 │   ├── test_failclosed_release.py
+│   ├── test_inplace_repair.py
+│   ├── test_known_issue.py
+│   ├── test_escape_gate.py
 │   ├── test_kernel_language_neutrality.py     # 既有文件追加 venv/wheel token 用例
 │   └── test_github_effects.py                 # 既有文件追加 needs_attention 用例
 ├── e2e/
@@ -160,7 +164,7 @@ v0.8 判定不适用独立 ground-truth 脚本。需求的正确性对象是事�
 
 ## 4. Test Scope
 
-本计划覆盖 SPEC-008 与 ACC-008 全部 69 条 required AC（FR-0267～FR-0285 共 54 条 + NFR-0143～NFR-0149 共 15 条）。Validity/Testability/Decision 均为绿；无开放产品决定。
+本计划覆盖 SPEC-008 与 ACC-008 全部 81 条 required AC（FR-0267～FR-0287 共 66 条 + NFR-0143～NFR-0149 共 15 条）。Validity/Testability/Decision 均为绿；无开放产品决定。
 
 | Valid | Testable | Decided |
 |:--|:--|:--|
@@ -175,7 +179,7 @@ v0.8 判定不适用独立 ground-truth 脚本。需求的正确性对象是事�
 1. Unit coverage ≥95%，source omit 为空；Devon unit + Shield integration/e2e 合并计量。
 2. interfaces.md 每个 `modules` 2+ 的新合同至少一条 integration happy+关键 error/edge。
 3. deterministic e2e happy path（4 条文件级旅程 + 六旅程矩阵）全绿；错误矩阵只在 integration。
-4. §8 的 69 条 AC 全部有 integration/e2e layer 与已注册 IF。
+4. §8 的 81 条 AC 全部有 integration/e2e layer 与已注册 IF。
 5. 发布链事件的断言全部含 candidate_sha/preview_digest/idempotency_key 绑定（§1.4-3）。
 6. 语言中立扫描（pytest|junit|java|venv|wheel|pip，词边界，允许区外）零命中且注入副本必红。
 7. L1/L2 默认 CI 全绿；L3 旅程在 milestone/release-tag 通道凭据齐全时全绿、缺失时 fail（never skip）。
@@ -300,6 +304,18 @@ L3 缺凭据在 weekly/manual 输出 `LIVE_SKIPPED: missing <NAME>` 且不 fail�
 | AC-FR0285-01 | integration | tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact | IF-PIPELINE-001 |
 | AC-FR0285-02 | integration | tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority | IF-PIPELINE-001 |
 | AC-FR0285-03 | integration | tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition | IF-PIPELINE-001 |
+| AC-FR0271-03 | integration | tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings | IF-VERIFY-005 |
+| AC-FR0286-01 | integration | tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds | IF-REPAIR-001 |
+| AC-FR0286-02 | integration | tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests | IF-REPAIR-001 |
+| AC-FR0286-03 | integration | tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify | IF-REPAIR-002 |
+| AC-FR0286-04 | integration | tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape | IF-REPAIR-002, IF-KNOWNISSUE-001 |
+| AC-FR0286-05 | integration | tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived | IF-KNOWNISSUE-001 |
+| AC-FR0286-06 | integration | tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix | IF-KNOWNISSUE-001, IF-JOURNEY-001 |
+| AC-FR0287-01 | integration | tests/integration/test_escape_gate.py::test_universal_return_moves_pointer | IF-ESCAPE-001 |
+| AC-FR0287-02 | integration | tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes | IF-ESCAPE-001 |
+| AC-FR0287-03 | integration | tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence | IF-ESCAPE-001 |
+| AC-FR0287-04 | integration | tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip | IF-ESCAPE-001, IF-PUBLISH-002 |
+| AC-FR0287-05 | integration | tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects | IF-ESCAPE-002 |
 | AC-NFR0143-01 | integration | tests/integration/test_release_trace.py::test_same_candidate_all_events | IF-TRACE-003, IF-VERIFY-001 |
 | AC-NFR0143-02 | integration + e2e | tests/integration/test_release_trace.py::test_trace_export_digests + tests/e2e/test_release_journey.py::test_feature_release_journey | IF-TRACE-003 |
 | AC-NFR0144-01 | integration | tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates + tests/integration/test_publish_reconcile.py::test_unfinished_continues | IF-PUBLISH-002 |
@@ -332,6 +348,19 @@ L3 缺凭据在 weekly/manual 输出 `LIVE_SKIPPED: missing <NAME>` 且不 fail�
 | 8 | M-PUBLISH → M-MILESTONE / BLOCKED | publish.executed done 集 / blocked | test_publish_idempotency 全部 |
 | 9 | M-MILESTONE → RELEASED / RETRY_TAIL | milestone.sealed / retry_tail | test_milestone_lifecycle 全部 |
 | 10 | 任意 → 同状态（崩溃恢复） | replay 重建 + resume reconcile | test_journey_recovery::test_interrupt_replay_reconcile_matrix |
+
+### 9.1 阻断恢复转移（architecture §1.0.14：就地修复 + Known Issue + 逃生门，FR-0286/FR-0287）
+
+| # | Transition | Observable | integration test |
+|:--|:--|:--|:--|
+| R1 | needs_attention → 同阶段重试（A 类，candidate 保持） | 恢复 env 后 resume；失败门禁重跑、已完成门禁不重执行、candidate.frozen 不重复 | test_verify_ci_readback::test_missing_credentials_needs_attention（恢复后 ci=bound 且无重复冻结）；test_verify_candidate::test_dirty_tree_needs_attention |
+| R2 | 缺陷 → 就地修复轮（B 类，SM-01 无回退） | repair.round_started(round≤3, classification)；status repair=in_place round=n/3；事件流无 stage.rolled_back 至 M-DESIGN 的自动回退 | test_inplace_repair::test_no_auto_rollback_in_place_rounds |
+| R3 | 修复 commit → 新 candidate 重走（SM-01.20） | evidence.staled(reason=fix_new_candidate)；新 candidate.frozen；full_reuse 重判；旧 preview_digest 不复用 | test_inplace_repair::test_fix_new_candidate_rewalks_verify |
+| R4 | 同 candidate 原地重跑（无 HEAD 移动修复） | 新 prism.verdict/security.assessed 绑定同一 candidate_sha（FR-0271-02/FR-0272-02） | test_verify_prism_final::test_prism_fail_blocks_m_impl_gap；test_security_assessment::test_unknown_or_malformed_blocks（瞬态路径） |
+| R5 | 不可修复 → Known Issue / 逃生门（C 类） | blocked: irreparable；known-issue 登记/拒绝（not_product_defect）；preview 列出、trace waived+backlog | test_inplace_repair::test_irreparable_blocked_routes_to_known_issue_or_escape；test_known_issue 全部 |
+| R6 | 通用回拨（SM-01.19，D 类） | escape.barrier_established(cutover_seq)→late outcome quarantine→human.return→evidence.staled(human_return)；不可逆清单确认后指针移动 | test_escape_gate::test_universal_return_moves_pointer + test_escape_barrier_quarantines_late_outcomes + test_return_stales_downstream_evidence + test_irreversible_confirm_then_reconcile_skip |
+| R7 | 终止（SM-01.21/22） | terminal=cancelled；零外部副作用；trac run 拒绝 | test_escape_gate::test_abandon_terminal_zero_side_effects |
+| R8 | Prism revise 锚定（FR-0271-03） | 无锚定线程的 revise 判 revise_without_findings、不计有效阻断 | test_verify_prism_final::test_revise_requires_anchored_findings |
 
 ---
 
@@ -395,6 +424,12 @@ Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函�
 | 18 | 六面版本不一致 | dispatch.rejected(version_parity_mismatch) |
 | 19 | 未 ACK 富证据遭遇普通失败 | stored 记录保留、review 通过 |
 | 20 | injected 引用不存在的 stored | review.failed blocked |
+| 21 | 修复预算穷尽且 Prism 归因不变 | blocked: irreparable，可转 Known Issue 或逃生门 |
+| 22 | Known Issue 未在 preview 列出时请求 release | release 拒绝并提示 known_issue not listed |
+| 23 | 机制失败/安全 finding 申请 Known Issue | known_issue.rejected(not_product_defect)；安全未过 release 一律拒绝 |
+| 24 | barrier 后到达的 late outcome | escape.late_outcome quarantine，无 checkpoint/publish/state 覆盖 |
+| 25 | abandon 后的 run 推进 | trac run 非零拒绝；零外部副作用（无新 tag/branch、issue 不变） |
+| 26 | 修复轮内修改冻结 int/e2e | 冻结保护拒绝（git diff 断言原冻结文件未改） |
 
 ### 12.2 Shield counterexample assets（`tests/counterexamples/v0.8/`）
 
@@ -412,3 +447,7 @@ Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函�
 | 10 | `ce_kernel_venv_token.patch`（kernel 硬编码语言 token） | AC-NFR0147-01 |
 
 每 patch 单 AC/IF、`git apply --check` 可应用、scope 不含 tests/；由 Runtime 在隔离 worktree 真跑对应真实 gate 验证 kill（v0.7 mutation 机制复用）。
+
+### 12.3 阻断恢复断言（§1.0.14 / §9.1）
+
+上表 1–26 的每条注入在断言阻断之外，同时断言恢复出口：blocked 注入携带非空 `repair_route`（exit_class 落入 A–D 封闭集）或 needs_attention 注入携带 `next=` 指引；就地修复注入断言无自动 stage.rolled_back；修复 commit 注入追加一轮修复动作断言新 candidate 重走（evidence.staled(reason=fix_new_candidate) + 新 candidate.frozen，旧证据未被复用）；逃生注入断言 barrier 先于指针移动、late outcome 不产生 checkpoint/publish。恢复断言不新增 §8 行——归属既有 AC（AC-FR0267-03、AC-FR0269-02、AC-FR0270-03、AC-FR0271-02/03、AC-FR0272-02、AC-FR0273-02、AC-FR0275-04、AC-FR0286-01..06、AC-FR0287-01..05、AC-NFR0149-02/03 的修复后路径）。

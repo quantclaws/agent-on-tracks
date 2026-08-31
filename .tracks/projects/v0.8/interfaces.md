@@ -52,8 +52,15 @@ sha:
 | 25 | `semantic_attempt_failed` | `kind: str`, `role: str`, `detail: str` | executor | executor, kernel, report |
 | 26 | `failure.emitted` / `failure.stored` / `failure.selected` / `failure.injected` / `failure.consumed` / `failure.acked` / `failure.invalidated` | `failure_id: str`, `round: int`, `source: str`（含 `last_failure`、`diagnose_report`）, `role: str\|null`, `record_ref: str\|null`, `rule: str\|null`（selected 的选择规则） | failure_review executor | executor/failure_review, effects/backend, kernel, report |
 | 27 | `review.failed` | `area: "failure_evidence"`, `outcome: "evidence_lost"\|"mismatched"`, `detail: str` | failure_review executor | executor/failure_review, kernel/release, report |
+| 28 | `repair.round_started` | `round: int`, `budget: int`, `classification: {defect_class, owner, discipline}`, `candidate_sha: str`, `trigger_event_seq: int` | repair executor | executor/repair, kernel/release, report |
+| 29 | `known_issue.registered` / `known_issue.rejected` | `issue_number: int\|null`, `url: str\|null`, `item_or_ac: str`, `candidate_sha: str`, `evidence_refs: list[str]`, `label: "known-issue"`；rejected 携带 `reason: "not_product_defect"` | repair executor + github effects | executor/repair, effects/github, release_gate, milestone, report |
+| 30 | `escape.barrier_established` | `cutover_seq: int`, `quiesced_dispatches: list[str]` | escape executor | executor/escape, executor, report |
+| 31 | `escape.late_outcome` | `dispatch_id: str`, `outcome_ref: str`, `status: "quarantined"`（禁止 checkpoint/publish） | escape executor | executor/escape, effects/backend, report |
+| 32 | `advisory.recorded` | `advisor: "Prism"\|"Archer"`, `topic: "escape_impact"\|"cve_remediation"\|"contract_delta"`, `from_stage: str`, `to_stage: str\|null`, `advisory_only: true`（不改状态） | executor 派发回收 | executor/repair, executor/escape, report |
 
-既有事件的 v0.8 payload 扩展（向后兼容，缺省保持历史含义）：`evidence.reused` 增加 `kind="full_f"` 与 `identity_basis`；`prism.verdict` 增加 `scope: "verify_final"\|"security"` 与 `candidate_sha`、`evidence_digests`；`run.completed` 的 `terminal_state` 扩展取值 `released`、`retry_tail` 并增加 `release_tag`、`preview_digest`；`stage.entered` 的 stage 封闭集追加五个发布阶段。
+既有事件的 v0.8 payload 扩展（向后兼容，缺省保持历史含义）：`evidence.reused` 增加 `kind="full_f"` 与 `identity_basis`；`prism.verdict` 增加 `scope: "verify_final"\|"security"` 与 `candidate_sha`、`evidence_digests`；`run.completed` 的 `terminal_state` 扩展取值 `released`、`retry_tail`、`cancelled` 并增加 `release_tag`、`preview_digest`、`reason`；`stage.entered` 的 stage 封闭集追加五个发布阶段；`evidence.staled` 的 reason 封闭集追加 `fix_new_candidate`、`human_return`；`human.return`（v0.2 既有）升级为通用逃生回拨事件（任意可回拨源阶段→任意上游 canonical 阶段，SM-01.19）。
+
+**失败类事件的统一修复路由（阻断恢复模型，architecture §1.0.14 / FR-0286）**：`local_gate.failed`、`security.assessed(failed|unknown)`、`prism.verdict(failed|revise)`、`publish.blocked`、`publish.failed`、`reconcile_conflict`、`candidate.stale` 与 `attention.required` 一律追加 `repair_route: {exit_class: "env_transient"|"defect_repair"|"irreparable"|"human_escape", defect_class: "behavior"|"gate"|"cve"|"contract"|null, owner: "Devon"|"Shield"|"Archer"|"operator"|null, discipline: RepairDiscipline|null, budget_remaining: int|null}`。分类由 kernel 的 `classify_defect_route` 单一函数决定（封闭 reason → 分类），事件生产者不得自报其他路由；**分类只决定由谁修，不产生任何 stage.rolled_back 自动回退**（AC-FR0286-01）。`trac status` 在非通过出口渲染 `blocked: <reason>`、`repair=in_place round=<n>/3` 或 needs_attention 的 `next=` 指引——任何非通过出口都有可观察下一步。Prism `revise/failed` 必须经 discuss 锚定：verdict=revise 而无对应开放阻塞线程时 Runtime 判 `revise_without_findings`，不计为有效阻断（FR-0271-03，v0.3 协议复用）。
 
 ### 1b. Command kind 追加
 
@@ -71,6 +78,10 @@ sha:
 | 10 | `materialize_host_contract` | `contract_path: str` | `host_contract.materialized` 或 `host_contract.invalid` | cli(init), executor/host_contract |
 | 11 | `check_envelope_parity` | `dispatch_id: str` | `dispatch.parity` 或 `dispatch.rejected` | kernel/envelope, executor 派发器 |
 | 12 | `review_failure_chain` | `run_id: str` | 通过（无事件）或 `review.failed` | executor/failure_review, kernel |
+| 13 | `dispatch_repair` | `run_id: str`, `classification: dict`, `round: int`, `budget: int` | `repair.round_started` + 修复派发（Devon/Shield/Archer advisory） | kernel/release, executor/repair |
+| 14 | `register_known_issue` | `run_id: str`, `attribution: dict`, `candidate_sha: str` | `known_issue.registered` 或 `known_issue.rejected` | executor/repair, effects/github |
+| 15 | `establish_escape_barrier` | `run_id: str`, `to_stage: str`（由 human.return 触发） | `escape.barrier_established`（+ 后续 `escape.late_outcome` quarantine、`evidence.staled(reason=human_return)`） | cli, executor/escape, kernel |
+| 16 | `abandon_run` | `run_id: str`, `reason: str` | `run.completed(terminal_state=cancelled, reason)` | cli, executor/escape, kernel |
 
 所有 kind 遵守 command.issued WAL 与 per-kind reconcile；幂等键分别为 candidate_sha / gate kind+contract_digest / operation idempotency_key / preview_digest / failure_id。
 
@@ -93,9 +104,31 @@ milestone_status: str | None = None     # trace_closed|sealed|retry_tail
 release_tag: str | None = None
 attention: dict | None = None           # {area, reason, next}
 issue_map_verified: bool = False
+repair_round: int = 0                  # in-place repair rounds used (FR-0286)
+repair_budget_remaining: int = 3
+defect_classification: dict | None = None  # {defect_class, owner, discipline}
+known_issues: tuple[str, ...] = ()     # issue refs listed in preview (waivers)
+escape_barrier_seq: int | None = None  # active escape barrier cutover seq
+late_outcomes_quarantined: int = 0
+blocked_route: dict | None = None       # repair_route（§1.0.14 分类）
 ```
 
-合法转移遵循 SM-01；SEALED/RELEASED 不可回退；BLOCKED 经修复后重入对应阶段不改写历史。
+合法转移遵循 SM-01（含 19–22：通用逃生回拨、新 candidate 重走、cancelled 终态与 trac run 拒绝）；SEALED/RELEASED 不可回退；BLOCKED 经 §1.0.14 恢复分类处置（就地修复/Known Issue/逃生门）不改写历史。**阻断恢复分类器（architecture §1.0.14 / FR-0286）**：
+
+```python
+DefectClass = Literal["behavior", "gate", "cve", "contract"]
+BlockExitClass = Literal["env_transient", "defect_repair", "irreparable", "human_escape"]
+
+def classify_defect_route(reason: str, context: dict) -> dict:
+    """Closed-set mapping reason -> {exit_class, defect_class, owner,
+    discipline, budget_remaining}. Classification only decides WHO repairs
+    (behavior->Devon RED-first, gate->verification-only, cve->Archer advisory
+    + Devon executes, contract->controlled delta revision); it never emits a
+    stage rollback. Unknown reason fails closed (never a pass/empty route).
+    """
+```
+
+`classify_defect_route` 由 `kernel/release.py` 实现（签名随 §2 Scaffold stub 交付）；HEAD 是否移动是同 candidate 重跑与新 candidate 重走的唯一判据：不触碰 tracked 文件的修复保持 candidate（A 类原地重跑、FR-0271-02 同 candidate 重审、FR-0272-02 同 candidate 重跑）；任何 tracked 文件修复 = 新 commit = `evidence.staled(reason=fix_new_candidate)` + 完整重走 M-VERIFY（SM-01.20）。
 
 ### 1d. M-VERIFY 公共函数（IF-VERIFY-001/002/005）
 
@@ -251,14 +284,20 @@ release --action return --to <stage> --reason "<text>"
 ### 2b. `trac run` / `trac status` / `trac replay` / `trac report` 扩展
 
 - `trac run`：进入/推进发布五阶段；输出行示例 `candidate.frozen (candidate_sha=… clean_tree=true)`、`local_gate.passed (kind=quality)`、`ci.run_observed (repo=… workflow=ci.yml run=… head=… status=passed)`、`prism.verdict (pass scope=verify_final)`、`security.assessed (policy_digest=… status=passed)`、`awaiting_release (preview_digest=…)`、`publish.planned/executed (operation=merge idempotency_key=… status=done|reconciled_skip)`、`milestone.sealed (trace_digest=…)`、`run.completed (terminal=released release_tag=…)`。任一门禁 blocked/needs_attention 时非零退出或 park（沿用既有 awaiting 机制）。`--resume` 为显式续跑别名（既有活跃 run reconcile 语义）。
-- `trac status` 新增稳定字段：`stage=M-VERIFY|M-SECURITY|awaiting_release|M-PUBLISH|M-MILESTONE|released|retry_tail|delayed|returned`、`candidate=<full SHA>`、`full_reuse=full_f|full_rerun`、`ci=bound|mismatch|missing|stale|needs_attention`、`prism=pass|fail`、`security=passed|failed|unknown`、`preview_digest=…`、`decision=release|delay|return`、`publish=<op:done|reconciled_skip…>`、`terminal=released`、`needs_attention: <area> <reason> next=…`（E-03 形态）。
+- `trac status` 新增稳定字段：`stage=M-VERIFY|M-SECURITY|awaiting_release|M-PUBLISH|M-MILESTONE|released|retry_tail|delayed|returned|cancelled`、`candidate=<full SHA>`、`full_reuse=full_f|full_rerun`、`ci=bound|mismatch|missing|stale|needs_attention`、`prism=pass|fail`、`security=passed|failed|unknown`、`preview_digest=…`、`decision=release|delay|return`、`publish=<op:done|reconciled_skip…>`、`terminal=released|cancelled`、`known_issues=[…]`、`repair=in_place round=<n>/3`、`human_return from=<stage> to=<stage>`、`late_outcome=quarantined`、`needs_attention: <area> <reason> next=…`（E-03 形态）、阻断时 `blocked: <reason>`（§1.0.14 恢复分类，任何非通过出口都有可观察下一步）。
+
+### 2d. 通用逃生门（FR-0287；return 为既有子命令升级，abandon 为待实现 foundation task——散文引用形态）
+
+- 通用回拨：`trac return --to <stage> --reason "<text>"`，源阶段任意可回拨阶段（五个发布阶段 + AWAITING_RELEASE），目标任意上游 canonical 阶段（含 M-TEST/M-IMPL）。Runtime 先建 escape barrier 并 quarantine late outcome，再移动指针；回拨跨越已执行不可逆操作时终端先输出 `already_executed=[merge, tag=…, artifact=…]` 并要求显式确认。成功后 status 显示 `human_return from=<s> to=<t>` 与 evidence.staled 清单；回拨到 M-TEST 之前显示 `frozen_tests=unfrozen`。
+- 轻量终止：abandon 子命令（Human-only，待实现 foundation task，USAGE/TRAC_SUBCOMMANDS 同步后生效）携带 `--reason`；run 落 `terminal_state=cancelled`，零外部副作用；此后 `trac run` 非零退出并提示 `run is cancelled, use trac start for new run`。
+- Agent 咨询：Prism/Archer 影响评估只产生 `advisory.recorded`（advisory_only=true），不改变阶段状态、不阻止 Human 回拨（RP-01 #15/16）。
 - `trac replay`/`trac report`：按 seq 展示 §1a 全 payload；report 新增 `Release pipeline`、`Issue map`、`Release trace` sections（issue_map/ci_binding/project 行按 E-03 形态），只渲染事件/blob 不重算结论。`trac check trace --version v0.8` 在既有 candidate-bound 闭环后追加 release 段（trace: approved_ac→…→release status=closed）。
 
 ### 2c. `trac validate` 扩展（待实现 foundation task）
 
 追加校验：`trac validate --file .tracks/projects/project.toml` 对 `[host-contract.*]` 段的 schema 校验（§1e；既有 canonical 路径入口不变）；envelope 样本（tests/assets 内）经真实 validator；语言 token 扫描扩展 `pytest|junit|java|venv|wheel|pip`（允许区：adapters、assets、executor/{demo_host,reference_host}.py）；TRAC_SUBCOMMANDS 与 USAGE 同步（含 release）。
 
-### 2d. 操作者交互闭合
+### 2e. 操作者交互闭合
 
 | # | surface/context | 状态 | 动作/可用条件 | 可见结果与继续路径 |
 |:--|:--|:--|:--|:--|
@@ -409,9 +448,39 @@ release --action return --to <stage> --reason "<text>"
 
 ### IF-VERIFY-005 Prism 同 candidate 终审合同
 
-- **合同**：§1d——本地+CI 门禁后派发同 candidate 一致性复审（scope=verify_final），输入证据集合同 SHA；failed/revise 阻断；重审绑定同 SHA。
-- **modules**：executor/m_verify.py, kernel/release.py, effects/backend。
+- **合同**：§1d——本地+CI 门禁后派发同 candidate 一致性复审（scope=verify_final），输入证据集合同 SHA；failed/revise 阻断；重审绑定同 SHA；revise/failed 必须经 discuss 锚定阻塞性发现，无锚定线程判 `revise_without_findings`、不计有效阻断（FR-0271-03，v0.3 协议复用）。
+- **modules**：executor/m_verify.py, kernel/release.py, effects/backend, discuss 协议。
 - **关联**：FR-0271。
+
+### IF-REPAIR-001 就地修复分类与纪律合同
+
+- **合同**：§1a#28、kernel classify_defect_route——封闭 defect_class（behavior/gate/cve/contract）→ owner/discipline（Devon RED-first、verification-only、Archer advisory+Devon 执行、受控合同修订）；预算默认 3 轮（repair=in_place round=n/3）；不产生 stage.rolled_back 自动回退；冻结 int/e2e 不因修复被修改（Shield 仅定点新增）。
+- **modules**：kernel/release.py, executor/repair.py, executor 派发器。
+- **关联**：FR-0286-01/02。
+
+### IF-REPAIR-002 新 candidate 重走与不可修复判据合同
+
+- **合同**：修复 commit → `evidence.staled(reason=fix_new_candidate)`（旧 FULL_F/CI/preview/Human 决定全部 stale）→ 新 candidate.frozen 完整重走 M-VERIFY（SM-01.20）；不可修复判据（预算穷尽+Prism 归因不变/超受控修订/无可用修复）→ blocked: irreparable → Known Issue 或逃生门。
+- **modules**：kernel/release.py, executor/repair.py。
+- **关联**：FR-0286-03/04。
+
+### IF-KNOWNISSUE-001 Known Issue 登记与知情同意合同
+
+- **合同**：仅产品质量缺陷（Prism 归因确认）；GitHub issue 带 known-issue 标签、关联 candidate 与证据；preview 必须列出全部未修复项（未列出拒绝 release）；milestone trace 对 waiver AC 标记 waived 并转下版 backlog（下版 triage 消费）；排除项（机制失败、安全 finding 零豁免）登记被拒；run 内修复不起 hotfix run。
+- **modules**：executor/repair.py, effects/github.py, executor/release_gate.py, executor/milestone.py。
+- **关联**：FR-0286-04/05/06。
+
+### IF-ESCAPE-001 通用回拨与 escape barrier 合同
+
+- **合同**：SM-01.19——human.return 任意可回拨阶段→任意上游 canonical 阶段；Runtime 先建 escape.barrier（cutover seq）并 quiesce 在飞 dispatch，late outcome 以 escape.late_outcome quarantine（禁止 checkpoint/publish/覆盖 State）；T 之后证据 evidence.staled(reason=human_return) 不删除不复用；回拨到 M-TEST 前解除测试冻结；跨越不可逆操作先报告清单并需 Human 显式确认，已执行操作经 reconcile 识别；Agent 咨询仅 advisory，Runtime 永不阻止 Human。
+- **modules**：executor/escape.py, cli/main.py, executor, kernel/release.py。
+- **关联**：FR-0287-01/02/03/04。
+
+### IF-ESCAPE-002 轻量终止合同
+
+- **合同**：SM-01.21/22——abandon（Human-only，待实现 foundation task）→ run.completed(terminal_state=cancelled, reason)；不删证据、不碰 issues/分支、零外部副作用；终态 run 拒绝 trac run；重做经 trac start 新 run。
+- **modules**：cli/main.py, executor/escape.py, kernel。
+- **关联**：FR-0287-05。
 
 ### IF-SECURITY-001 合同化安全评估合同
 
