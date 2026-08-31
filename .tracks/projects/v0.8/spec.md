@@ -90,6 +90,8 @@ host-contract: valid
 
 ## 状态与生命周期
 
+> **Lex:** 状态机 SM-01 未覆盖 FR-0287 新增的通用回拨与终止出口：FR-0287 定义源阶段任意（含 M-VERIFY/M-SECURITY/M-RELEASE/M-PUBLISH/M-MILESTONE）→ 目标任意上游 canonical 阶段（含 M-TEST/M-IMPL）的 Human 逃生回拨，以及新增的 terminal_state=cancelled（trac abandon --reason）轻量终止，但 SM-01 仍仅列出原发布闭环的 18 条转移（BLOCKED/RETURNED→上游 仅指向 FR-0274/0275/0276），未出现 CANCELLED 终态及对应逃逸转移，且未说明新 candidate 重走 M-VERIFY（FR-0286 §3）在状态机中的落位。按 SM-01‘未列出的状态转移即不允许’，当前 FR-0287 的通用回拨/abandon 在规范层面即不被允许，与 FR 文字矛盾，且影响操作路径的‘继续/返回’是否可达判断。请 Sage 在 SM-01 增补逃生回拨的通用转移（含 escape barrier 前置）与 cancelled 终态及 trac run 拒绝约束，或显式声明其不在 SM-01 管辖并更新规范性说明。
+
 ### SM-01 发布闭环状态机
 
 未列出的状态转移即不允许；FR 描述可直接引用本清单行号（如 SM-01.3）。
@@ -112,6 +114,8 @@ host-contract: valid
 16. `RETRY_TAIL` → `RELEASED`：收尾重试成功（SM-01.8.3）
 17. 任意状态 → 同状态（崩溃恢复）：`trac replay` 重建状态，`trac run --resume` reconcile；已完成副作用经幂等键跳过（SM-01.9）
 18. `BLOCKED` / `RETURNED` → 上游：按 FR-0274/0275/0276 路由至对应阶段再进入（SM-01.10）
+
+> **Lex:** 角色权限 RP-01 未登记 FR-0287 的 Human 逃生门权限：FR-0287 定义 trac return 通用回拨（任意源→任意上游，Human-only）与 trac abandon --reason 轻量终止（Human-only，terminal cancelled），含 Runtime 需先建 escape barrier 并 quarantine late_outcome 等约束，但 RP-01 仍仅保留原 14 行（#6 仅覆盖 M-RELEASE 的 release/delay/return 三择一），未出现通用 return/abandon 的操作行及 Human/Runtime/Agent 权限矩阵，且未声明 Runtime 不阻止 Human 回拨、Agent 咨询仅 advisory 等权限边界。权限缺口使‘权限与作用范围、不可逆后果’等需显式合同的项被当作默认。请 Sage 在 RP-01 增补对应行（建议 #15 trac return 通用回拨 Human ✅ Runtime 建 barrier/quiesce，其余 ❌；#16 trac abandon Human ✅ 其余 ❌），保持单写者纪律与唯一流程 authority 说明一致。
 
 ## 角色与权限
 
