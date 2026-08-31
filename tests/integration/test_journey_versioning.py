@@ -129,8 +129,13 @@ def test_identity_and_idempotent_journeys(host_repo, trac, event_log):
     # Idempotent resume
     trac("run", "--resume")
     events2 = event_log()
-    [e for e in events2 if e["type"] == "publish.executed" and e["payload"].get("status") == "reconciled_skip"]
-    assert True
+    skipped = [
+        e for e in events2 if e["type"] == "publish.executed" and e["payload"].get("status") == "reconciled_skip"
+    ]
+    assert skipped, "reconciled_skip required for idempotent journey resume"
+    for s in skipped:
+        assert s["payload"]["idempotency_key"].startswith("sha256:")
+        assert s["payload"]["candidate_sha"] == candidate
 
 
 # AC-FR0277-04@v0.8 TRACKS-TRACE dev precheck fails without release branch

@@ -1,14 +1,16 @@
 diff --git a/tracks/kernel/envelope.py b/tracks/kernel/envelope.py
-index 7777777..8888888 100644
+index 41f0e6c..505066a 100644
 --- a/tracks/kernel/envelope.py
 +++ b/tracks/kernel/envelope.py
-@@ -39,7 +39,8 @@ class EnvelopeFormatError(ValueError):
+@@ -38,6 +38,11 @@ class EnvelopeFormatError(ValueError):
+ 
  def parse_agent_output(text: str) -> dict:
      """Extract and validate the single envelope block from agent output."""
--    raise NotImplementedError("IF-ENVELOPE-001")
 +    # Counterexample AC-FR0278-02: restore last-JSON fallback (lenient parse)
 +    import json, re
 +    m = re.findall(r"\{.*\}", text, re.DOTALL)
 +    if m:
 +        return json.loads(m[-1])
-+    raise NotImplementedError("IF-ENVELOPE-001")
+     raise NotImplementedError("IF-ENVELOPE-001")
+ 
+ 

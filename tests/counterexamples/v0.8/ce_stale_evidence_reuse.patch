@@ -1,8 +1,8 @@
 diff --git a/tracks/executor/m_verify.py b/tracks/executor/m_verify.py
-index fffffff..0000000 100644
+index f4e6992..ec42b4d 100644
 --- a/tracks/executor/m_verify.py
 +++ b/tracks/executor/m_verify.py
-@@ -37,7 +37,8 @@ def judge_full_f_reuse(
+@@ -40,8 +40,8 @@ def judge_full_f_reuse(
      identity_quadruple: dict,
      stale_marks: tuple[str, ...],
  ) -> ReuseDecision:
@@ -10,3 +10,6 @@ index fffffff..0000000 100644
 -    raise NotImplementedError("IF-VERIFY-002")
 +    # Counterexample AC-FR0268-03: reuse stale evidence
 +    return ReuseDecision(decision="reuse", reason="reuse_full_f", identity_basis=("a",))
+ 
+ 
+ def collect_binding_violations(events: list[dict], candidate_sha: str) -> list[str]:

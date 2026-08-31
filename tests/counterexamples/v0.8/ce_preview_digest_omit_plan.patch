@@ -1,11 +1,14 @@
 diff --git a/tracks/executor/release_gate.py b/tracks/executor/release_gate.py
-index 3333333..4444444 100644
+index 115c99e..cde21d8 100644
 --- a/tracks/executor/release_gate.py
 +++ b/tracks/executor/release_gate.py
-@@ -21,7 +21,8 @@ def compute_preview_digest(
+@@ -25,7 +25,8 @@ def compute_preview_digest(
      operation_plan_digest: str,
      contract_policy_digest: str,
  ) -> str:
 -    raise NotImplementedError("IF-RELEASE-002")
 +    # Counterexample AC-FR0273-01: omit operation_plan_digest from digest
 +    return "sha256:" + "0" * 64
+ 
+ 
+ def generate_preview(candidate_sha: str, digests: dict, risks: list, plan: dict) -> dict:

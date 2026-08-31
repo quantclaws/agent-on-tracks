@@ -49,12 +49,18 @@ def test_unfinished_continues(host_repo, trac, event_log):
     # Simulate interrupted publish (only planned, not executed)
     events = event_log()
     planned = [e for e in events if e["type"] == "publish.planned"]
-    assert True
+    assert planned, "publish.planned required before resume"
+    for p in planned:
+        assert p["payload"]["idempotency_key"].startswith("sha256:")
+        assert p["payload"]["candidate_sha"]
     trac("run", "--resume")
     events2 = event_log()
     done = [e for e in events2 if e["type"] == "publish.executed" and e["payload"].get("status") == "done"]
     # Unfinished ops must continue to done after reconcile
-    assert done or planned
+    assert done, "unfinished ops must continue to done after reconcile"
+    for d in done:
+        assert d["payload"]["idempotency_key"].startswith("sha256:")
+        assert d["payload"]["candidate_sha"]
 
 
 # AC-NFR0144-02@v0.8 TRACKS-TRACE same key remote diff conflict is blocked

@@ -1,10 +1,15 @@
 diff --git a/tracks/executor/host_contract.py b/tracks/executor/host_contract.py
-index bbbbbbb..ccccccc 100644
+index 47cc2bc..efa27d0 100644
 --- a/tracks/executor/host_contract.py
 +++ b/tracks/executor/host_contract.py
-@@ -103,7 +103,8 @@ def execute_gate(
+@@ -104,7 +104,9 @@ def validate_host_contract(contract: HostContract, repo: Path) -> tuple[str, ...
+ def execute_gate(
      decl: LocalGateDecl, repo: Path, placeholders: dict
  ) -> NormalizedGateResult:
 -    raise NotImplementedError("IF-HOSTCONTRACT-001")
 +    # Counterexample AC-FR0269-02: soft-pass gate with exit zero
-+    return NormalizedGateResult(gate_id=decl.kind, result_version=1, status="passed", exit_code=0, summary={})
++    gate_id = getattr(decl, "kind", "quality") if decl is not None else "quality"
++    return NormalizedGateResult(gate_id=gate_id, result_version=1, status="passed", exit_code=0, summary={})
+ 
+ 
+ def parse_gate_result(

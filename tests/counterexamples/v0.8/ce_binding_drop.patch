@@ -1,9 +1,16 @@
 diff --git a/tracks/kernel/release.py b/tracks/kernel/release.py
-index 1111111..2222222 100644
+index fe5b3e9..2c21440 100644
 --- a/tracks/kernel/release.py
 +++ b/tracks/kernel/release.py
-@@ -77,4 +77,5 @@ def on_candidate_frozen(state: State, payload: dict, event) -> None:
+@@ -76,7 +76,10 @@ def decide_release_stage(stage: str, substate: str, state: State) -> Command | N
+ 
+ def on_candidate_frozen(state: State, payload: dict, event) -> None:
      """Project candidate_sha/clean_tree; idempotent re-freeze is a no-op."""
 -    raise NotImplementedError("IF-VERIFY-001")
 +    # Counterexample AC-NFR0143-01: drop candidate_sha binding
-+    state.candidate_sha = None  # type: ignore
++    if state is not None:
++        state.candidate_sha = None  # type: ignore
++    return None
+ 
+ 
+ def on_candidate_stale(state: State, payload: dict, event) -> None:
