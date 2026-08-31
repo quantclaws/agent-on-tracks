@@ -12,12 +12,16 @@ sha: 8a0cdea2b2b12f061bc12829770d0b0ee40ae5bba87969cd516ab8ab0f4faa63
 ## 界面与入口
 
 > **Lex:** 界面与入口未覆盖 FR-0286/FR-0287 新增的人机面：FR-0286 要求 M-RELEASE preview 列出未修复 Known Issue（Human 知情同意）且 status 显示 repair=in_place round n/3，FR-0287 要求通用 trac return（任意源→任意上游）与轻量终止 trac abandon --reason（terminal cancelled）的独立入口及先建 escape barrier 的可观测约束，但 E-01 仍仅示例 M-RELEASE 三择一（release/delay/return --to M-DESIGN），E-02 仍仅示例 M-VERIFY→M-SECURITY→M-RELEASE 流水，未出现 repair 状态、Known Issue 列表、abandon/cancelled 终态及 barrier/late_outcome quarantine 的观测示例。用户无法从现有产品上下文的 E 面发现新能力的入口/触发与结果位置，‘继续/返回’路径不完整。请 Sage 在 E-01/E-02 增补对应 transcript（建议：preview 含 known-issue 列表与 repair 字段，status 含 repair/cancelled，新增 abandon 示例及 barrier 观测），使新能力有机接入现有 trac CLI 面而非孤立文字描述。
+>> **Sage:** 已修订 E-01/E-02：E-01 增补 preview 的 known_issues/repair 字段、repair 轮次、通用 trac return（任意源→任意上游）与轻量终止 trac abandon --reason（cancelled）及失败拒绝示例，使 M-RELEASE 逃生门入口可发现；E-02 增补 repair=in_place/evidence.staled 新 candidate 重走、human.return/escape.barrier/late_outcome quarantine 的 barrier 可观测以及 run.completed cancelled 终态与 trac run 拒绝约束，补齐 repair/cancelled/barrier 的状态与事件观测，使新能力有机接入现有 trac CLI 面；同时 FR-0271 增补 revise 锚定（revise_without_findings）约束；trac validate=valid。
 
-### E-01 独立 `trac release` Human 发布门禁（新增）
+### E-01 独立 `trac release` Human 发布门禁与逃生出口（新增）
 
 ```
 $ trac release preview
-preview: candidate=abc1234... preview_digest=sha256:… artifact=sha256:… ci_run={repo,workflow,run_id,head_sha} evidence_digests={full_f,local_gates,security} operation_plan=sha256:… status=awaiting_release stale_reason=none
+preview: candidate=abc1234... preview_digest=sha256:… artifact=sha256:… ci_run={repo,workflow,run_id,head_sha} evidence_digests={full_f,local_gates,security} operation_plan=sha256:… status=awaiting_release stale_reason=none repair=n/a known_issues=[]
+# 就地修复与 Known Issue 列表示例（FR-0286）
+$ trac release preview
+preview: candidate=abc1234... preview_digest=sha256:… status=awaiting_release repair=in_place round=2/3 known_issues=[{issue=acme/host#45 waiver=AC-FR0120 candidate=abc1234… reason="flake, Prism confirmed"}] stale_reason=none
 
 $ trac release --action release
 decision: release (candidate=abc1234… preview_digest=sha256:…) status=approved
@@ -27,6 +31,16 @@ decision: delay (candidate=abc1234… preview_digest=sha256:…) status=delayed
 
 $ trac release --action return --to M-DESIGN --reason "…"
 decision: return (candidate=abc1234… preview_digest=sha256:…) status=returned
+# 通用回拨（FR-0287，源任意→任意上游）
+$ trac return --to M-IMPL --reason "re-scope after security finding"
+human.return: actor=Human from=M-SECURITY to=M-IMPL reason="re-scope after security finding"
+$ trac status
+run=01KZ… stage=M-IMPL human_return=Human→M-IMPL evidence.staled=6 barrier=established late_outcome=quarantined
+# 轻量终止（FR-0287）
+$ trac abandon --reason "scope overflow beyond controlled contract"
+run 01KZ… terminal=cancelled reason="scope overflow beyond controlled contract"
+$ trac run
+error: run 01KZ… is cancelled (terminal_state=cancelled), use `trac start` for new run
 
 # 失败门禁或 stale preview 时拒绝
 $ trac release --action release
@@ -56,11 +70,22 @@ $ trac run
 [run 01KZ...] stage.entered(M-MILESTONE) trace=approved_ac→…→release
 [run 01KZ...] milestone.sealed candidate=abc1234… trace_digest=sha256:…
 [run 01KZ...] run.completed terminal=released release_tag=v0.8.0 candidate=abc1234… preview_digest=sha256:…
+# 就地修复与重走示例（FR-0286）
+[run 01KZ...] repair=in_place round=2/3 defect=behavior RED-first
+[run 01KZ...] evidence.staled reason=fix_new_candidate candidate=abc1234… new_candidate=def5678…
+[run 01KZ...] stage.entered(M-VERIFY) candidate=def5678…  # 新 candidate 重走
+# 逃生回拨与 barrier 示例（FR-0287）
+[run 01KZ...] human.return actor=Human from=M-PUBLISH to=M-IMPL reason="re-scope"
+[run 01KZ...] escape.barrier established cutover=seq42
+[run 01KZ...] escape.late_outcome quarantined outcome=Archer/design.committed seq=41 barrier=seq42
+[run 01KZ...] evidence.staled reason=human_return candidate=abc1234…
+# 轻量终止示例（FR-0287）
+[run 01KZ...] run.completed terminal=cancelled reason="scope overflow beyond controlled contract"
 
 $ trac status
-run=01KZ… stage=M-VERIFY candidate=abc1234… full_reuse=full_f ci=bound prism=pass  # 或 stage=awaiting_release / M-PUBLISH / M-MILESTONE / released|delayed|returned|needs_attention
+run=01KZ… stage=M-VERIFY candidate=abc1234… full_reuse=full_f ci=bound prism=pass repair=n/a  # 或 stage=awaiting_release preview_known_issues=1 / M-PUBLISH / M-MILESTONE / released|delayed|returned|cancelled|needs_attention barrier=established
 $ trac replay 01KZ… ; trac report --run-id 01KZ… --format md
-# 事件流含 candidate.frozen / evidence.reused / local_gate.* / ci.run_observed / prism.verdict / security.assessed / publish.* / milestone.*
+# 事件流含 candidate.frozen / evidence.reused / local_gate.* / ci.run_observed / prism.verdict / security.assessed / publish.* / milestone.* / human.return / escape.barrier / escape.late_outcome / evidence.staled / run.completed(cancelled)
 $ trac check trace --version v0.8
 trace: approved_ac→test-plan/collected_node→candidate→FULL_F→CI→Human approval→external operation→release  candidate=abc1234… status=closed
 ```
@@ -219,6 +244,7 @@ Runtime 注册 M-VERIFY 为 StageDef（修改 v0.5 FR-0160 与 v0.6 FR-0246 的 
 
 1. **同 candidate 复审**：THE 系统 SHALL 在 M-VERIFY 完成本地与 CI 门禁后，由 Prism 对同一 candidate 做最终一致性复审；`prism.verdict` 必须绑定 candidate SHA 并复核跨门禁一致性（FULL_F 身份、本地验证、CI 绑定、合同/policy 版本 digest 均指向同一 candidate）。
 2. **阻断**：IF 复审不通过（`verdict=failed/revise`），THE 系统 SHALL 阻断进入 M-SECURITY；`trac status` 报告 Prism 失败原因。
+3. **Revise 锚定**：Prism `revise`/`failed` 必须经 `trac discuss start` 锚定阻塞性发现，否则 Runtime 判 `revise_without_findings` 失败（承 v0.3 评审协议）；`trac discuss query` 可审计对应线程，`verdict=revise` 无锚定线程时不计为有效阻断。
 
 **用户可观察结果**：`trac status` 显示 `prism=pass|fail` 及绑定 candidate；`trac replay` 显示 Prism 输入证据集合与 verdict。
 
