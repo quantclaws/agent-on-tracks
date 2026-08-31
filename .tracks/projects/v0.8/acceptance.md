@@ -77,7 +77,12 @@ sha: f71aa2409d6339ac8c714b37a6962d1bf96c3a7a21727acc1946458baf66430d
 ### AC-FR0271-02
 
   - `prism.verdict` 为 `failed` 或 `revise` 时，`trac run` 不进入 `M-SECURITY`，`trac status` 报告 `prism=failed` 及失败原因，`trac replay` 可审计复审输入与 `verdict` 绑定 `candidate SHA`
-  - 修复缺口后重审同一 `candidate`，新 `prism.verdict` 事件出现且绑定同一 `candidate SHA`
+  - 修复缺口后按 FR-0286 就地修复（见 FR-0286），新 commit 产生时新 `candidate` 重走 `M-VERIFY`，旧 `candidate` 证据全部 stale
+
+### AC-FR0271-03
+
+  - `prism.verdict=revise` 时 `trac discuss query --file <spec>` 存在 Lex/Prism 锚定的阻塞性发现线程；无锚定线程时 `trac run` 判 `revise_without_findings` 失败，`trac status` 报告 `blocked: revise_without_findings`，不计为有效阻断，`trac replay` 显示该失败
+  - 该检查沿用 `trac discuss` 协议：`revise` 必须经 `trac discuss start` 锚定，`verdict=revise` 无对应开放线程时即失败
 
 ## FR-0272 M-SECURITY 合同化安全扫描与深度审计
 
@@ -89,7 +94,7 @@ sha: f71aa2409d6339ac8c714b37a6962d1bf96c3a7a21727acc1946458baf66430d
 ### AC-FR0272-02
 
   - 策略未声明、结果未知、缺失或畸形（策略版本不匹配、输出无法解析），`trac run` 落 `security.assessed status=failed|unknown` 且 `trac status` 报告 `security=failed|unknown` 并 `blocked`，不进入 `M-RELEASE`，且不推断或跳过
-  - 修复策略或代码后重跑同一 `candidate` 的 `M-SECURITY`，新 `security.assessed` 事件出现
+  - 安全失败按 FR-0286 就地修复（依赖 CVE 由 Archer 咨询评估换版本/换库，合同级缺陷受控修订），修复后新 commit 产生时新 `candidate` 重走 `M-VERIFY`；安全 finding 零 known issue，`M-SECURITY` 未通过时 `trac release --action release` 一律拒绝；架构级安全问题发布阻断于 `M-SECURITY`，经 FR-0287 逃生门人工处置
 
 ## FR-0273 M-RELEASE preview 生成与绑定
 
@@ -290,6 +295,59 @@ sha: f71aa2409d6339ac8c714b37a6962d1bf96c3a7a21727acc1946458baf66430d
 ### AC-FR0285-03
 
   - 回归核验仅验证既有链路保持，不产生新流水线定义：`trac validate` 对流水线定义无新增阶段，`trac report` 显示流水线版本与 `v0.7` 一致
+
+## FR-0286 发布闭环就地修复与 Known Issue 政策
+
+### AC-FR0286-01
+
+  - `M-VERIFY`/`M-SECURITY`/`M-PUBLISH`/`M-MILESTONE` 发现缺陷时，`trac run` 不自动回退至 `M-DESIGN`/`M-PLANNING`，事件流不出现 `stage.rolled_back` 至 `M-DESIGN` 的自动回退；分类仅决定由谁修（`Devon` 实现/`Shield` 定点测试/`Archer` 咨询合同），`trac status` 报告 `repair=in_place round=<n>/3`，`trac replay` 显示修复职责与纪律
+  - `trac discuss query` 无对应自动回退的 `stage.rolled_back` 事件
+
+### AC-FR0286-02
+
+  - 行为缺陷修复按 `RED-first`：新增 `unit` 回归复现（不改冻结 `int/e2e`），事件流出现新增 `unit` 测试的 `red.validated` 后变绿；门禁缺陷修复按 `verification-only`：修复后重跑该 `gate` 即证明，事件流不出现人造无意义失败测试的 `red.validated`；依赖 `CVE` 由 `Archer` 经咨询派发评估换版本/换库（不回阶段），`Devon` 执行；合同级缺陷经受控合同修订（`delta` 文档+评审）不回阶段，`trac replay` 可审计
+  - 冻结 `int/e2e` 在修复前后对比无改动（除 `Shield` 定点新增外），`git diff` 显示 `tests/integration` 与 `tests/e2e` 原冻结文件未被修改
+
+### AC-FR0286-03
+
+  - 修复后产生新 `commit` 时，事件流出现 `evidence.staled reason=fix_new_candidate` 且旧 `candidate` 的 `FULL_F`/`CI`/`preview`/`Human 决定` 标记 `stale`，`trac status` 报告 `candidate` 为新 SHA 且 `full_reuse` 重新判定，`trac run` 完整重走 `M-VERIFY`（出现新 `candidate.frozen`），旧 `preview_digest` 不被复用
+
+### AC-FR0286-04
+
+  - 就地修复预算（默认 3）穷尽且 `Prism` 确认归因不变，或修复需变更冻结 `interfaces`/`AC` 且超出受控合同修订可承载范围，或外部依赖无可用修复时，`trac status` 报告 `blocked: irreparable`，可经 Known Issue 登记或 `trac return`/`trac abandon`（FR-0287）处置
+
+### AC-FR0286-05
+
+  - `Prism` 确认产品质量缺陷归因后，`GitHub Issue` 出现 `known-issue` 标签且关联 `candidate` 与证据，`trac release preview` 显示 `known_issues=[{issue=acme/host#45 waiver=AC-FRXXXX}]`，`trac status` 报告 `known_issues` 列表；未在 `preview` 列出的未修复缺陷不允许存在（`trac release --action release` 拒绝并提示 `known_issue not listed`）
+  - `M-MILESTONE` 的 `release.trace` 对 waiver `AC` 标记 `waived` 并关联下版 `backlog`，`trac report` 显示 `waiver` 语义；下版 `triage` 的 `trac replay` 显示消费该 `known-issue`
+
+### AC-FR0286-06
+
+  - 发布机制本身失败（`artifact`/`tag`/`CI`/`registry` 无可用修复）不适用 Known Issue，`trac status` 报告 `blocked: publish mechanism failure` 且 `known-issue` 登记被拒绝（`trac replay` 显示 `known_issue rejected: not product defect`）
+  - `run` 内修复不衍生新 `hotfix` run（单活跃 run 原则保持），事件流不出现新 `hotfix.requested`，`trac hotfix` 仍需 `trac start` 另起；安全 finding 未修复时 `trac release --action release` 一律拒绝（`trac status` 报告 `blocked: security not passed, zero known issue`），架构级安全问题 `run` 停于 `M-SECURITY` 经 `trac return`/`trac abandon` 人工处置
+
+## FR-0287 Human 逃生门：指针回拨与终止出口
+
+### AC-FR0287-01
+
+  - 任意可回拨阶段（`M-VERIFY`/`M-SECURITY`/`M-RELEASE`/`AWAITING_RELEASE`/`M-PUBLISH`/`M-MILESTONE`）执行 `trac return --to M-TEST --reason "…"` 或 ` --to M-IMPL` 等，事件流出现 `human.return actor=Human from=<source> to=<target> reason=…`，`trac status` 报告 `human_return` 及 `evidence.staled` 清单；`Runtime` 自动策略不阻止 `Human` 回拨，`trac run` 接受该回拨并移动指针
+  - `Agent` 咨询（`Prism`/`Archer` 影响评估）仅产生 `advisory` 事件，不改变阶段状态，`trac replay` 显示 `advisory` 与 `human.return` 分离
+
+### AC-FR0287-02
+
+  - 回拨建立 `escape barrier`（`cutover sequence`）并 `quiesce`/取消在飞 `dispatch`：`trac replay` 显示 `escape.barrier established cutover=seq< N>`，`barrier` 前派发而后到达的 `outcome` 以 `escape.late_outcome quarantined` `append-only` 审计并禁止 `checkpoint`/`publish` 或覆盖已回拨 `State`，事件流中该 `late_outcome` 不产生 `design.committed` 或 `publish.executed`，`trac status` 显示 `late_outcome=quarantined`
+
+### AC-FR0287-03
+
+  - 回拨到 `T` 时，`T` 之后全部证据（`candidate` 冻结/`FULL_F`/`CI` 绑定/安全评估/`preview`/`release` 决定）落 `evidence.staled reason=human_return`，不删除、可 `replay`，重进时 `trac run` 不复用旧证据而重新执行对应门禁；回拨到 `M-TEST` 之前时 `trac status` 显示测试冻结已解除（`frozen_tests=unfrozen`）
+
+### AC-FR0287-04
+
+  - 回拨跨越已执行不可逆操作（`merge`/`tag`/`artifact`/`release`）时，终端先报告已执行清单（`already_executed=[merge, tag=v0.8.0, artifact=sha256:…]`），`Human` 显式确认后才移动指针；已执行操作落为外部事实，重进 `M-PUBLISH` 经 `reconcile` 识别为 `reconciled_skip`，`trac replay` 显示确认事件与 `reconcile`
+
+### AC-FR0287-05
+
+  - 执行 `trac abandon --reason "…"`（`Human-only`，`foundation task`），事件流出现 `run.completed terminal=cancelled reason=…`，`trac status` 报告 `terminal=cancelled`，不删证据、不碰 `issues`/分支、零外部副作用（`git for-each-ref refs/trac` 无新增外部 `tag`/`branch`，`GitHub Issue` 状态不变），终态 `run` 执行 `trac run` 退出非零且提示 `run is cancelled, use trac start for new run`，重做经 `trac start` 新 `run`
 
 ## NFR-0143 Candidate 绑定一致性与全链可审计性
 
