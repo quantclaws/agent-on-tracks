@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/escape.py b/tracks/executor/escape.py
+--- a/tracks/executor/escape.py
++++ b/tracks/executor/escape.py
+@@ -31,6 +31,7 @@
+     return {
+         "dispatch_id": dispatch_id,
+         "outcome_ref": str(dispatch_id),
+-        "status": "quarantined",
++        # Counterexample AC-FR0287-02: late outcome passes through
++        "status": "checkpointed",
+         "quarantined": True,
+         "cutover_seq": barrier.get("cutover_seq"),

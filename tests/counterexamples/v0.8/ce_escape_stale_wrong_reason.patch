@@ -1,0 +1,10 @@
+diff --git a/tracks/executor/escape.py b/tracks/executor/escape.py
+--- a/tracks/executor/escape.py
++++ b/tracks/executor/escape.py
+@@ -47,4 +47,5 @@
+         "payload": {
+-            "reason": "human_return",
++            # Counterexample AC-FR0287-03: wrong stale reason
++            "reason": "fix_new_candidate",
+             "run_id": run_id,
+             "target_stage": target_stage,

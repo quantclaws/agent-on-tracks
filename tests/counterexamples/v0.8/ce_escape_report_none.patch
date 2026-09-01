@@ -1,0 +1,12 @@
+--- a/tracks/executor/escape.py
++++ b/tracks/executor/escape.py
+@@ -60,7 +60,8 @@
+     """already_executed list (merge/tag/artifact/release) requiring explicit
+     Human confirmation before the pointer moves (AC-FR0287-04)."""
+     _ = run_id
+-    return []
++    # Counterexample AC-FR0287-04: already_executed report missing
++    return None
+ 
+ 
+ def abandon_run(run_id: str, reason: str) -> dict:

@@ -19,18 +19,23 @@ pytestmark = pytest.mark.integration
 
 # AC-FR0287-01@v0.8 TRACKS-TRACE universal return moves pointer with advisory separation
 def test_universal_return_moves_pointer(host_repo, trac, event_log):
-    for fn in (establish_escape_barrier, stale_downstream_evidence, report_irreversible_operations):
-        try:
-            fn("run")  # type: ignore[call-arg]
-            raise AssertionError("expected NotImplementedError")
-        except NotImplementedError as exc:
-            assert "IF-ESCAPE-001" in str(exc)
-        except TypeError:
-            try:
-                fn("run", "target")  # type: ignore[call-arg]
-                raise AssertionError("expected NotImplementedError")
-            except NotImplementedError as exc2:
-                assert "IF-ESCAPE-001" in str(exc2)
+    # IF-ESCAPE-001 module surface: contract payloads, not stub tokens
+    # (§1a#30 barrier payload: cutover_seq int + quiesced_dispatches list).
+    barrier = establish_escape_barrier("run")
+    assert isinstance(barrier, dict)
+    assert isinstance(barrier["cutover_seq"], int)
+    assert isinstance(barrier.get("quiesced_dispatches"), list)
+
+    # §1a evidence.staled carries reason=human_return (AC-FR0287-03).
+    staled = stale_downstream_evidence("run", "M-TEST")
+    assert isinstance(staled, list)
+    for entry in staled:
+        payload = entry.get("payload", entry)
+        assert payload.get("reason") == "human_return"
+
+    # AC-FR0287-04: already_executed report is a list of executed operations.
+    ops = report_irreversible_operations("run")
+    assert isinstance(ops, list)
 
     trac("run")
     result = trac("return", "--to", "M-TEST", "--reason", "human escape")
@@ -51,16 +56,16 @@ def test_universal_return_moves_pointer(host_repo, trac, event_log):
 
 # AC-FR0287-02@v0.8 TRACKS-TRACE escape barrier quarantines late outcomes
 def test_escape_barrier_quarantines_late_outcomes(host_repo, trac, event_log):
-    try:
-        establish_escape_barrier("run")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ESCAPE-001" in str(exc)
-    try:
-        quarantine_late_outcome({}, {})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ESCAPE-001" in str(exc)
+    # IF-ESCAPE-001 module surface: barrier payload §1a#30, late-outcome
+    # payload §1a#31 {dispatch_id, outcome_ref, status="quarantined"}.
+    barrier = establish_escape_barrier("run")
+    assert isinstance(barrier["cutover_seq"], int)
+    assert isinstance(barrier.get("quiesced_dispatches"), list)
+    outcome = {"dispatch_id": "d-late-01", "payload": {}}
+    quarantined = quarantine_late_outcome(barrier, outcome)
+    assert quarantined["status"] == "quarantined"
+    assert quarantined["dispatch_id"] == "d-late-01"
+    assert "outcome_ref" in quarantined
 
     trac("run")
     trac("return", "--to", "M-VERIFY", "--reason", "test barrier")
@@ -76,11 +81,12 @@ def test_escape_barrier_quarantines_late_outcomes(host_repo, trac, event_log):
 
 # AC-FR0287-03@v0.8 TRACKS-TRACE return stales downstream evidence
 def test_return_stales_downstream_evidence(host_repo, trac, event_log):
-    try:
-        stale_downstream_evidence("run", "M-TEST")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ESCAPE-001" in str(exc)
+    # AC-FR0287-03: post-target evidence stales with reason=human_return.
+    staled = stale_downstream_evidence("run", "M-TEST")
+    assert isinstance(staled, list)
+    for entry in staled:
+        payload = entry.get("payload", entry)
+        assert payload.get("reason") == "human_return"
 
     trac("run")
     trac("release", "--action", "release")
@@ -99,11 +105,9 @@ def test_return_stales_downstream_evidence(host_repo, trac, event_log):
 
 # AC-FR0287-04@v0.8 TRACKS-TRACE irreversible confirm then reconcile skip
 def test_irreversible_confirm_then_reconcile_skip(host_repo, trac, event_log):
-    try:
-        report_irreversible_operations("run")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ESCAPE-001" in str(exc)
+    # AC-FR0287-04: already_executed report is a list of executed operations.
+    ops = report_irreversible_operations("run")
+    assert isinstance(ops, list)
 
     bare = host_repo.parent / "escape_bare.git"
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
@@ -127,11 +131,11 @@ def test_irreversible_confirm_then_reconcile_skip(host_repo, trac, event_log):
 
 # AC-FR0287-05@v0.8 TRACKS-TRACE abandon terminal zero side effects
 def test_abandon_terminal_zero_side_effects(host_repo, trac, event_log):
-    try:
-        abandon_run("run", "reason")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ESCAPE-002" in str(exc)
+    # IF-ESCAPE-002 module surface: abandon is terminal_state=cancelled
+    # with reason preserved (AC-FR0287-05).
+    terminal = abandon_run("run", "human termination")
+    assert terminal["terminal_state"] == "cancelled"
+    assert terminal["reason"] == "human termination"
 
     trac("run")
     tag_before = subprocess.run(["git", "tag", "--list"], cwd=host_repo, capture_output=True, text=True, check=True).stdout

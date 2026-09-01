@@ -1,0 +1,12 @@
+--- a/tracks/executor/escape.py
++++ b/tracks/executor/escape.py
+@@ -21,7 +21,8 @@
+     escape.barrier_established {cutover_seq} (AC-FR0287-02)."""
+     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
+     seq = int(digest[:6], 16) % 1000 + 10
+-    return {"cutover_seq": seq, "quiesced_dispatches": []}
++    # Counterexample AC-FR0287-02: barrier payload missing cutover_seq
++    return {"quiesced_dispatches": []}
+ 
+ 
+ def quarantine_late_outcome(barrier: dict, outcome: dict) -> dict:
