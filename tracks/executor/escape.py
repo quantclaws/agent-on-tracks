@@ -11,22 +11,18 @@ external facts re-identified by reconcile. The abandon subcommand terminates
 the run with terminal_state=cancelled and zero side effects.
 """
 
-# ruff: noqa: SIM105
-
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
 
 _BARRIER_SEQ = 0
 _BARRIER_LAST: dict[str, int] = {}
 
 
-def _persistent_max_seq(run_id: str) -> int | None:  # noqa: CCR001
-    """Best-effort read of persistent max seq for run from event store.
-
-    b93: cutover_seq is persistent max seq (barrier seq = cutover+1).
-    Falls back to None when no store/run without events.
-    """
+def _open_store():
+    """Best-effort open of the event store; returns Store or None."""
     try:
         from tracks.paths import db_path, tracks_home
         from tracks.store import Store
@@ -35,21 +31,50 @@ def _persistent_max_seq(run_id: str) -> int | None:  # noqa: CCR001
         db = db_path(home)
         if not db.exists():
             return None
-        store = Store(home)
-        try:
-            cur = store.conn.execute(
-                "SELECT COALESCE(MAX(seq), 0) FROM events WHERE run_id = ?",
-                (run_id,),
-            )
-            row = cur.fetchone()
-            return int(row[0]) if row else 0
-        finally:
-            try:
-                store.close()  # noqa: SIM105
-            except Exception:
-                pass
+        return Store(home)
     except Exception:
         return None
+
+
+def _close_store(store) -> None:
+    if store is None:
+        return
+    with contextlib.suppress(Exception):
+        store.close()
+
+
+def _persistent_max_seq(run_id: str) -> int | None:
+    """Persistent max seq for run; None when no store."""
+    store = _open_store()
+    if store is None:
+        return None
+    try:
+        cur = store.conn.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM events WHERE run_id = ?",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return None
+    finally:
+        _close_store(store)
+
+
+def _existing_event_types(run_id: str) -> set[str] | None:
+    """Distinct event types for run; None when no store."""
+    store = _open_store()
+    if store is None:
+        return None
+    try:
+        cur = store.conn.execute(
+            "SELECT DISTINCT type FROM events WHERE run_id = ?", (run_id,)
+        )
+        return {row[0] for row in cur.fetchall()}
+    except Exception:
+        return None
+    finally:
+        _close_store(store)
 
 
 def establish_escape_barrier(run_id: str) -> dict:
@@ -64,18 +89,13 @@ def establish_escape_barrier(run_id: str) -> dict:
     _BARRIER_SEQ += 1
     max_seq = _persistent_max_seq(run_id)
     if max_seq is not None and max_seq > 0:
-        # persistent path: cutover is current max, barrier will be max+1
         seq = max_seq
-        # ensure strict monotonic even if DB hasn't yet recorded our
-        # previous barrier (fallback counter)
         last = _BARRIER_LAST.get(run_id, 0)
         if seq <= last:
             seq = last + 1
-        # also ensure global monotonic contribution
         seq = max(seq, last + 1)
         _BARRIER_LAST[run_id] = seq
         return {"cutover_seq": seq, "quiesced_dispatches": []}
-    # fallback for unit tests without store: hash + global counter
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
     base = int(digest[:6], 16) % 1000
     seq = base + _BARRIER_SEQ * 1000 + 10
@@ -116,36 +136,6 @@ def quarantine_late_outcome(barrier: dict, outcome: dict) -> dict:
     }
 
 
-def _existing_event_types(run_id: str) -> set[str] | None:  # noqa: CCR001
-    """Best-effort read of distinct event types for run.
-
-    b93: evidence.staled only for actually existing buckets.
-    Returns None when no store / run not found.
-    """
-    try:
-        from tracks.paths import db_path, tracks_home
-        from tracks.store import Store
-
-        home = tracks_home()
-        db = db_path(home)
-        if not db.exists():
-            return None
-        store = Store(home)
-        try:
-            cur = store.conn.execute(
-                "SELECT DISTINCT type FROM events WHERE run_id = ?", (run_id,)
-            )
-            types = {row[0] for row in cur.fetchall()}
-            return types
-        finally:
-            try:
-                store.close()  # noqa: SIM105
-            except Exception:
-                pass
-    except Exception:
-        return None
-
-
 def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
     """evidence.staled(reason=human_return) for everything after the target
     (candidate freeze / FULL_F / CI / security / preview / decision); the
@@ -165,12 +155,10 @@ def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
     ]
     existing = _existing_event_types(run_id)
     if existing is not None and len(existing) > 0:
-        # only buckets that actually exist in the log
         buckets = [b for b in all_buckets if b in existing]
         if not buckets:
             return []
     else:
-        # fallback for unit tests without store: keep v2 expectation (>=4)
         buckets = all_buckets
     out: list[dict] = []
     for bucket in buckets:
@@ -193,60 +181,55 @@ def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
     return out
 
 
-def report_irreversible_operations(run_id: str) -> list[dict]:  # noqa: CCR001
+def _is_already_executed(typ: str, payload: dict) -> bool:
+    return typ == "publish.executed" and payload.get("status") == "done"
+
+
+def _load_event_payload(store, payload_raw: str) -> dict:
+    try:
+        payload = json.loads(payload_raw)
+        if isinstance(payload, dict) and "$ref" in payload:
+            payload = store.load_payload(payload)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def report_irreversible_operations(run_id: str) -> list[dict]:
     """already_executed list (merge/tag/artifact/release) requiring explicit
     Human confirmation before the pointer moves (AC-FR0287-04).
 
     b93: honest read from the run's event log; batch 1 has no publish
     events so correctly returns empty.
     """
+    store = _open_store()
+    if store is None:
+        return []
     try:
-        from tracks.paths import db_path, tracks_home
-        from tracks.store import Store
-
-        home = tracks_home()
-        db = db_path(home)
-        if not db.exists():
-            return []
-        store = Store(home)
-        try:
-            cur = store.conn.execute(
-                "SELECT type, payload FROM events WHERE run_id = ? "
-                "AND type IN ('publish.executed','publish.planned','publish.failed')",
-                (run_id,),
-            )
-            out: list[dict] = []
-            for typ, payload_raw in cur.fetchall():
-                try:
-                    import json
-
-                    payload = json.loads(payload_raw)
-                    if isinstance(payload, dict) and "$ref" in payload:
-                        payload = store.load_payload(payload)
-                except Exception:
-                    payload = {}
-                # already_executed are those with status done
-                status = payload.get("status") if isinstance(payload, dict) else None
-                if typ == "publish.executed" and status == "done":
-                    out.append(
-                        {
-                            "operation_kind": payload.get("operation_kind")
-                            or payload.get("kind")
-                            or typ,
-                            "target": payload.get("target") or "",
-                            "type": typ,
-                            "payload": payload,
-                        }
-                    )
-            return out
-        finally:
-            try:
-                store.close()  # noqa: SIM105
-            except Exception:
-                pass
+        cur = store.conn.execute(
+            "SELECT type, payload FROM events WHERE run_id = ? "
+            "AND type IN ('publish.executed','publish.planned','publish.failed')",
+            (run_id,),
+        )
+        out: list[dict] = []
+        for typ, payload_raw in cur.fetchall():
+            payload = _load_event_payload(store, payload_raw)
+            if _is_already_executed(typ, payload):
+                out.append(
+                    {
+                        "operation_kind": payload.get("operation_kind")
+                        or payload.get("kind")
+                        or typ,
+                        "target": payload.get("target") or "",
+                        "type": typ,
+                        "payload": payload,
+                    }
+                )
+        return out
     except Exception:
         return []
-    return []
+    finally:
+        _close_store(store)
 
 
 def abandon_run(run_id: str, reason: str) -> dict:
