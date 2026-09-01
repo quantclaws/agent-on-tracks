@@ -163,12 +163,22 @@ def test_assignment_surface_valid_shape(tmp_path: Path):
         ],
     }
     (vdir / "tasks.json").write_text(json.dumps(data), encoding="utf-8")
-    # sidecar that makes T-001 missing edge for bar
+    # sidecar that makes T-001 miss T-002's bar (b92 split form)
     sidecar = {
         "schema": 1,
         "anchors": {
-            "tests/integration/test_a.py::test_x": {"modules": ["tracks.bar"], "outcome": "fail"},
-            "tests/integration/test_b.py::test_y": {"modules": ["tracks.bar"], "outcome": "pass"},
+            "tests/integration/test_a.py::test_x": {
+                "ast_modules": ["tracks.bar"],
+                "dynamic_modules": ["tracks.fake_dynamic"],
+                "modules": ["tracks.bar", "tracks.fake_dynamic"],
+                "outcome": "fail",
+            },
+            "tests/integration/test_b.py::test_y": {
+                "ast_modules": ["tracks.bar"],
+                "dynamic_modules": ["tracks.fake_dynamic"],
+                "modules": ["tracks.bar", "tracks.fake_dynamic"],
+                "outcome": "pass",
+            },
         },
         "anchor_set_digest": "d",
         "recorded_tree": "r",
@@ -176,24 +186,28 @@ def test_assignment_surface_valid_shape(tmp_path: Path):
     (vdir / "anchor-surface.json").write_text(json.dumps(sidecar), encoding="utf-8")
     mixin = _fake_mixin(vdir, repo)
     result = mixin._anchor_surface_for_assignment()
-    # Valid shape: task_id keys + advisories, no unavailable
+    # Aggregated shape: violations/missing_edges + advisory refs/stats, no unavailable
     assert "unavailable" not in result
-    assert "T-001" in result
-    assert "T-002" in result
-    assert "advisories" in result
-    assert isinstance(result["advisories"], list)
-    # T-001 should have one missing edge entry
-    t1_list = result["T-001"]
-    assert isinstance(t1_list, list)
-    assert len(t1_list) == 1
-    entry = t1_list[0]
-    assert set(entry.keys()) >= {"anchor", "module", "owner_task", "depends_missing"}
-    assert entry["anchor"] == "tests/integration/test_a.py::test_x"
+    assert "T-001" in result["violations"]
+    assert "T-002" in result["violations"]
+    assert result["advisories_ref"]
+    assert result["advisories_count"] >= 0
+    assert result["advisories_digest"]
+    assert result["sidecar_digest"]
+    assert "recorded_tree" in result
+    assert result["stats"]["anchors_total"] == 2
+    # T-001 should have one missing edge: bar (owned by T-002)
+    t1_edges = result["violations"]["T-001"]["missing_edges"]
+    assert len(t1_edges) == 1
+    entry = t1_edges[0]
+    assert set(entry.keys()) >= {"owner_task", "module", "anchors"}
     assert entry["module"] == "tracks/bar.py"
     assert entry["owner_task"] == "T-002"
-    assert entry["depends_missing"] is True
+    assert entry["anchors"] == ["tests/integration/test_a.py::test_x"]
     # T-002 owns bar itself, so no violation
-    assert result["T-002"] == []
+    assert result["violations"]["T-002"]["missing_edges"] == []
+    # dynamic-only modules never enter violations
+    assert "fake_dynamic" not in json.dumps(result["violations"])
 
 
 def test_assignment_surface_advisories_shape(tmp_path: Path):
@@ -225,7 +239,12 @@ def test_assignment_surface_advisories_shape(tmp_path: Path):
     sidecar = {
         "schema": 1,
         "anchors": {
-            "tests/integration/test_a.py::test_x": {"modules": ["tracks.unowned"], "outcome": "pass"},
+            "tests/integration/test_a.py::test_x": {
+                "ast_modules": ["tracks.unowned"],
+                "dynamic_modules": ["tracks.zzz_dynamic"],
+                "modules": ["tracks.unowned", "tracks.zzz_dynamic"],
+                "outcome": "pass",
+            },
         },
         "anchor_set_digest": "d",
         "recorded_tree": "r",
@@ -234,10 +253,14 @@ def test_assignment_surface_advisories_shape(tmp_path: Path):
     mixin = _fake_mixin(vdir, repo)
     result = mixin._anchor_surface_for_assignment()
     assert "unavailable" not in result
-    assert "advisories" in result
-    assert any("unowned" in adv for adv in result["advisories"])
-    # No task violations, empty list
-    assert result["T-001"] == []
+    assert "advisories_count" in result
+    assert result["advisories_count"] >= 1
+    assert "advisories_ref" in result
+    # Advisory strings stay externalized, never in the payload
+    assert "imports unowned tracks module" not in json.dumps(result)
+    assert "dynamically loads" not in json.dumps(result)
+    # No task violations, empty missing_edges
+    assert result["violations"]["T-001"]["missing_edges"] == []
 
 
 def test_assignment_surface_unavailable_shape_is_compatible(tmp_path: Path):

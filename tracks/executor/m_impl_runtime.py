@@ -167,9 +167,7 @@ def _task_review_failure(
         (ev["seq"] for ev in events if ev["type"] == "human.retry"),
         default=0,
     )
-    if sum(
-        ev["type"] == "verdict.failed" and ev["seq"] > cutoff for ev in events
-    ) > task.budget:
+    if sum(ev["type"] == "verdict.failed" and ev["seq"] > cutoff for ev in events) > task.budget:
         return {
             "check": "budget",
             "reason": f"verdict.failed count exceeds task budget {task.budget}",
@@ -236,6 +234,11 @@ def _devon_path_scope_error(
 
 _M_IMPL_RED_CLASSIFICATIONS = frozenset({"assertion_failure", "symbol_missing"})
 
+# b92 R3 role grading: Devon RGR substates and Shield write substates that
+# receive the trimmed per-task test_tasks slice (anchor_surface stays None).
+_DEVON_RGR_SUBSTATES = frozenset({"RED", "GREEN", "REFACTOR"})
+_SHIELD_WRITE_SUBSTATES = frozenset({"WRITE", "SHIELD_FIX"})
+
 
 def _red_classification_label(value: object) -> str:
     if value is None:
@@ -246,9 +249,7 @@ def _red_classification_label(value: object) -> str:
     return value or "missing"
 
 
-_RED_CLASSIFY_PATTERN = re.compile(
-    r"classify_red\s*->\s*(assertion_failure|symbol_missing)"
-)
+_RED_CLASSIFY_PATTERN = re.compile(r"classify_red\s*->\s*(assertion_failure|symbol_missing)")
 
 # Natural-language RED summaries (T-016 attempt 2, 2026-08-16): Devon
 # describes failing assertions without the classify_red token. Infer the
@@ -417,12 +418,7 @@ def _canonical_demo_hosts() -> tuple[str, ...]:
 
 def _demo_registry_host() -> str | None:
     """Read the demo host id from the packaged demo registry (data)."""
-    asset = (
-        Path(__file__).resolve().parent.parent
-        / "assets"
-        / "demo_host"
-        / "architecture.md"
-    )
+    asset = Path(__file__).resolve().parent.parent / "assets" / "demo_host" / "architecture.md"
     try:
         text = asset.read_text(encoding="utf-8")
     except OSError:
@@ -471,15 +467,10 @@ class MImplRuntimeMixin:
         )
         vdir = self._vdir()
         acc_path, _ = resolve_inherited_baseline_docs(vdir / "test-plan.md")
-        assignment["test_tasks"] = parse_test_tasks(acc_path, vdir / "test-plan.md")
         self._add_assignment_role_fields(assignment, state, params)
         if state.hotfix_issue is not None:
             assignment["issue_number"] = state.hotfix_issue
-        # OOB b89 OB-5 — assignment anchor_surface injection
-        try:
-            assignment["anchor_surface"] = self._anchor_surface_for_assignment()
-        except Exception as exc:  # fail-closed: unavailable marker, never crash dispatch
-            assignment["anchor_surface"] = {"unavailable": f"infra: {exc}"}
+        self._apply_assignment_context_grading(assignment, params, task, vdir, acc_path)
         return assignment
 
     def _materialized_task(self, state: State) -> dict | None:
@@ -496,10 +487,21 @@ class MImplRuntimeMixin:
         return self._task_payload(task_node) if task_node is not None else None
 
     def _anchor_surface_for_assignment(self) -> dict:  # noqa: CCR001
-        """OOB b89 OB-5: structured anchor_surface summary for the assignment.
+        """OOB b92: aggregated, AST-only, advisory-externalized anchor surface.
 
-        Returns ``{task_id: [{anchor, module, owner_task, depends_missing}], advisories: [...]}``
-        or ``{"unavailable": "<reason>"}`` on sidecar miss / infra / schema-1.
+        Returns
+        ``{violations: {task_id: {missing_edges: [{owner_task, module,
+        anchors}]}}, advisories_ref, advisories_count, advisories_digest,
+        sidecar_digest, recorded_tree, stats}`` or ``{"unavailable":
+        "<reason>"}`` on sidecar miss / infra / schema-1.
+
+        ``missing_edges`` is grouped per ``(owner_task, module)`` -- ``module``
+        is a single string and ``anchors`` the deduped sorted set of anchors
+        that actually exercise it (no ``{modules[], anchors[]}`` double array,
+        no cartesian pairing). ``expand(missing_edges)`` equals
+        ``validate_anchor_satisfiability``'s AST violations set; dynamic-only
+        modules never enter ``violations``. Advisory detail stays out of the
+        payload (ref/count/digest only).
         """
         vdir = self._vdir()
         tasks_json_path = vdir / "tasks.json"
@@ -525,7 +527,8 @@ class MImplRuntimeMixin:
             return {"unavailable": f"sidecar unavailable: {exc}"}
         if isinstance(surface, dict) and surface.get("skipped"):
             return {"unavailable": str(surface.get("skipped_reason") or "skipped")}
-        # Build structured summary from the same logic as validate_anchor_satisfiability
+        # Build the aggregated summary from the same logic as
+        # validate_anchor_satisfiability (AST口径 hard / dynamic advisory).
         try:
             from tracks.executor.taskgraph import _module_to_path, _scope_paths
 
@@ -558,64 +561,211 @@ class MImplRuntimeMixin:
                 return scopes
 
             anchors_map = surface.get("anchors", {}) if isinstance(surface, dict) else {}
-            # Advisories via same mapping
-            violations_by_task: dict[str, list[dict]] = {t.task_id: [] for t in tasks}
-            advisories: list[str] = []
+            if not isinstance(anchors_map, dict):
+                anchors_map = {}
+
+            # Per-entry (ast_modules, dynamic_modules); a legacy entry without
+            # the split fields falls back to ast=modules / dynamic=[] (same
+            # hard-gate semantics as the gate), but still aggregated here.
+            ast_total = 0
+            dyn_total = 0
+            entry_ast: dict[str, list[str]] = {}
+            for a, entry in anchors_map.items():
+                if not isinstance(entry, dict):
+                    continue
+                if "ast_modules" in entry and "dynamic_modules" in entry:
+                    ast = [m for m in entry.get("ast_modules", []) if isinstance(m, str)]
+                    dyn = [m for m in entry.get("dynamic_modules", []) if isinstance(m, str)]
+                else:
+                    ast = [m for m in entry.get("modules", []) if isinstance(m, str)]
+                    dyn = []
+                entry_ast[a] = ast
+                ast_total += len(ast)
+                dyn_total += len(dyn)
+
+            edges: dict[tuple[str, str, str], set[str]] = {}
+
+            def _map_paths(modnames: list[str]) -> set[str]:
+                out: set[str] = set()
+                for m in modnames:
+                    try:
+                        out.add(_module_to_path(m))
+                    except Exception:
+                        out.add(m.replace(".", "/") + ".py")
+                return out
+
             for t in tasks:
                 refs = getattr(t, "acceptance_refs", None)
                 if refs is None:
                     refs = getattr(t, "test_refs", ()) or ()
-                if not refs:
-                    continue
                 own = task_scopes.get(t.task_id, set())
                 dep_scopes = _closure_scopes(t.task_id)
                 for a in refs:
                     if not isinstance(a, str) or not a:
                         continue
-                    entry = anchors_map.get(a)
-                    if entry is None:
-                        violations_by_task[t.task_id].append(
-                            {
-                                "anchor": a,
-                                "module": "",
-                                "owner_task": "",
-                                "depends_missing": True,
-                                "reason": "anchor missing from sidecar",
-                            }
-                        )
+                    if a not in anchors_map:
+                        # fail-closed: mirror the gate's missing-anchor violation
+                        edges.setdefault((t.task_id, "", ""), set()).add(a)
                         continue
-                    mods = entry.get("modules", []) if isinstance(entry, dict) else []
-                    mapped: set[str] = set()
-                    for m in mods:
-                        if not isinstance(m, str):
-                            continue
-                        try:
-                            mapped.add(_module_to_path(m))
-                        except Exception:
-                            mapped.add(m.replace(".", "/") + ".py")
-                    # advisories: unowned
-                    for mp in sorted(mapped - all_scopes):
-                        advisories.append(f"anchor {a} imports unowned tracks module {mp}")
-                    needs = mapped & all_scopes
+                    ast_mapped = _map_paths(entry_ast.get(a, []))
+                    needs = ast_mapped & all_scopes
                     missing = needs - own - dep_scopes
                     for path in sorted(missing):
                         owner = owner_map.get(path, "unknown")
-                        violations_by_task[t.task_id].append(
-                            {
-                                "anchor": a,
-                                "module": path,
-                                "owner_task": owner,
-                                "depends_missing": True,
-                            }
-                        )
-            # Keep all keys for shape stability (advisories side channel separate)
-            result: dict = {}
-            for tid, lst in violations_by_task.items():
-                result[tid] = lst
-            result["advisories"] = sorted(set(advisories))
-            return result
+                        edges.setdefault((t.task_id, path, owner), set()).add(a)
+
+            by_task: dict[str, dict[tuple[str, str], set[str]]] = {}
+            for (task_id, module, owner), anchors in edges.items():
+                by_task.setdefault(task_id, {}).setdefault((owner, module), set()).update(anchors)
+
+            violations: dict[str, dict] = {}
+            for t in tasks:
+                tid = t.task_id
+                bucket = by_task.get(tid, {})
+                violations[tid] = {
+                    "missing_edges": [
+                        {
+                            "owner_task": owner,
+                            "module": module,
+                            "anchors": sorted(anchor_set),
+                        }
+                        for (owner, module), anchor_set in sorted(bucket.items())
+                    ]
+                }
+
+            # Advisory count via the authoritative gate (A3: count parity);
+            # the detail itself stays externalized, never in the payload.
+            advisories_count = 0
+            try:
+                from tracks.executor.taskgraph import validate_anchor_satisfiability
+
+                _ok, _vs, advisories = validate_anchor_satisfiability(tasks, surface)
+                advisories_count = len(advisories)
+            except Exception:
+                advisories_count = 0
+
+            sidecar_digest = ""
+            try:
+                canonical = json.dumps(surface, sort_keys=True).encode("utf-8")
+                sidecar_digest = hashlib.sha256(canonical).hexdigest()
+            except Exception:
+                sidecar_digest = ""
+            blob = Path(self.repo) / ".tracks" / "runtime" / "blobs" / sidecar_digest
+            if blob.exists():
+                advisories_ref = f".tracks/runtime/blobs/{sidecar_digest}"
+            else:
+                try:
+                    advisories_ref = sidecar_path.relative_to(Path(self.repo)).as_posix()
+                except ValueError:
+                    advisories_ref = str(sidecar_path)
+
+            return {
+                "violations": violations,
+                "advisories_ref": advisories_ref,
+                "advisories_count": advisories_count,
+                "advisories_digest": f"sha256:{sidecar_digest}" if sidecar_digest else "",
+                "sidecar_digest": sidecar_digest,
+                "recorded_tree": str((surface or {}).get("recorded_tree") or ""),
+                "stats": {
+                    "ast_modules_total": ast_total,
+                    "dynamic_modules_total": dyn_total,
+                    "anchors_total": len(anchors_map),
+                },
+            }
         except Exception as exc:
             return {"unavailable": f"infra: {exc}"}
+
+    def _apply_assignment_context_grading(
+        self,
+        assignment: dict,
+        params: dict,
+        task: dict | None,
+        vdir,
+        acc_path,
+    ) -> None:
+        """b92 R3: inject only machine-actionable context per role/substate.
+
+        Archer PLANNING (and Prism PRISM_PLAN) receive the aggregated
+        ``anchor_surface`` (violations + advisory refs/count/stats) and never
+        the full test_tasks payload; Devon gets an anchors-form test_tasks
+        slice for the current task only; Shield keeps the layers-form slice
+        (valid_test_tasks shape) trimmed to the current task; unknown roles
+        get ``anchor_surface=None / test_tasks=None``. Devon and Shield slice
+        with separate functions per F-02.
+        """
+        role = params.get("role")
+        substate = params.get("substate")
+        plan_path = vdir / "test-plan.md"
+        self._set_test_tasks_ref(assignment, vdir)
+        if (role == "archer" and substate == "PLANNING") or (
+            role == "prism" and substate == "PRISM_PLAN"
+        ):
+            assignment["test_tasks"] = None
+            assignment["test_tasks_count"] = len(parse_test_tasks(acc_path, plan_path))
+            try:
+                assignment["anchor_surface"] = self._anchor_surface_for_assignment()
+            except Exception as exc:  # fail-closed: unavailable marker, never crash
+                assignment["anchor_surface"] = {"unavailable": f"infra: {exc}"}
+            return
+        if role == "devon" and substate in _DEVON_RGR_SUBSTATES:
+            assignment["anchor_surface"] = None
+            assignment["test_tasks"] = self._devon_test_tasks_slice(task)
+            return
+        if role == "shield" and substate in _SHIELD_WRITE_SUBSTATES:
+            assignment["anchor_surface"] = None
+            assignment["test_tasks"] = self._shield_test_tasks_slice(
+                task, acc_path, plan_path, assignment.get("test_tasks")
+            )
+            return
+        assignment["anchor_surface"] = None
+        assignment["test_tasks"] = None
+
+    def _set_test_tasks_ref(self, assignment: dict, vdir) -> None:
+        """``test_tasks_ref`` pointing at the canonical test-plan §8 table."""
+        try:
+            rel = str((vdir / "test-plan.md").relative_to(Path(self.repo)))
+        except ValueError:
+            rel = str(vdir / "test-plan.md")
+        assignment["test_tasks_ref"] = f"{rel}#8"
+
+    @staticmethod
+    def _devon_test_tasks_slice(task: dict | None) -> list[dict]:
+        """Devon-only slice (b92 F-02): ``{ac_id, anchors, if_ids}`` per AC of
+        the current task. Separate from the Shield trimmer -- Devon anchors
+        are the task's acceptance anchors, not the layers-form contract."""
+        if not task:
+            return []
+        anchors = [a for a in (task.get("acceptance_refs") or ()) if isinstance(a, str)]
+        if not anchors:
+            anchors = [a for a in (task.get("test_refs") or ()) if isinstance(a, str)]
+        if_ids = [i for i in (task.get("if_ids") or ()) if isinstance(i, str)]
+        return [
+            {"ac_id": ac, "anchors": list(anchors), "if_ids": list(if_ids)}
+            for ac in (task.get("ac_refs") or ())
+            if isinstance(ac, str) and ac
+        ]
+
+    def _shield_test_tasks_slice(
+        self,
+        task: dict | None,
+        acc_path,
+        plan_path,
+        incoming,
+    ) -> list[dict]:
+        """Shield-only slice (b92 F-02): the ``parse_test_tasks`` layers-form
+        entries filtered to the current task's ACs, preserving the
+        ``valid_test_tasks`` shape (``{ac_id, layers, if_ids}``). Keeps an
+        already-valid incoming list (kernel-provided) only when the task's ACs
+        carry no integration/e2e coverage rows -- never rewrites the shape to
+        the Devon anchors form."""
+        full = parse_test_tasks(acc_path, plan_path)
+        ac_refs = {str(a) for a in ((task or {}).get("ac_refs") or ()) if a}
+        sliced = [t for t in full if isinstance(t, dict) and t.get("ac_id") in ac_refs]
+        if sliced:
+            return sliced
+        if valid_test_tasks(incoming):
+            return list(incoming)
+        return []
 
     def _add_assignment_runtime_fields(
         self,
@@ -738,9 +888,7 @@ class MImplRuntimeMixin:
         if isinstance(manifest, dict):
             forbidden = manifest.get("forbidden_paths")
             if isinstance(forbidden, list):
-                manifest["forbidden_paths"] = [
-                    p for p in forbidden if not p.startswith("tests/")
-                ]
+                manifest["forbidden_paths"] = [p for p in forbidden if not p.startswith("tests/")]
 
     _DIAGNOSED_TEST_PATH_RE = re.compile(r"tests/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+")
     _BARE_TEST_FILENAME_RE = re.compile(r"(?<![A-Za-z0-9_./])[A-Za-z0-9_./-]+\.(?:py|json|toml|md)")
@@ -783,11 +931,7 @@ class MImplRuntimeMixin:
         root = Path(self.repo) / "tests"
         if not root.is_dir():
             return []
-        hits = [
-            p
-            for p in root.rglob(filename)
-            if "__pycache__" not in p.parts and p.is_file()
-        ]
+        hits = [p for p in root.rglob(filename) if "__pycache__" not in p.parts and p.is_file()]
         if len(hits) != 1:
             return []
         return [hits[0].relative_to(self.repo).as_posix()]
@@ -1003,9 +1147,13 @@ class MImplRuntimeMixin:
         )
         if path_error is not None:
             return path_error
-        if phase == "red" and devon_test_dirs and any(
-            not any(path.startswith(d + "/") or path == d for d in devon_test_dirs)
-            for path in outcome["changed_paths"]
+        if (
+            phase == "red"
+            and devon_test_dirs
+            and any(
+                not any(path.startswith(d + "/") or path == d for d in devon_test_dirs)
+                for path in outcome["changed_paths"]
+            )
         ):
             return "Devon RED evidence includes a non-test path"
         return None
@@ -1170,9 +1318,9 @@ class MImplRuntimeMixin:
                 frozen_test_paths=frozen,
                 contract_valid=contract_valid,
                 branch=branch,
-            tip=tip,
-            design_checkpoint=design_checkpoint,
-            requirements_dir=requirements_dir,
+                tip=tip,
+                design_checkpoint=design_checkpoint,
+                requirements_dir=requirements_dir,
             )
         )
         # Scenario B (interfaces §1g): bind the dev-scenario active release
@@ -1241,9 +1389,7 @@ class MImplRuntimeMixin:
             for adv in satisfiability_advisories_for_evidence:
                 if adv not in evidence_parts:
                     evidence_parts.append(adv)
-            self._emit_taskgraph_failure(
-                cmd, state, "; ".join(errors), "\n".join(evidence_parts)
-            )
+            self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(evidence_parts))
             return
         # B33（#34）：规划期锚点实测——任务型裁定机械化（r1 回滚 #2 的
         # 拦截：锚已绿的任务不得排成标准 RGR/preset-anchor）。
@@ -1309,11 +1455,7 @@ class MImplRuntimeMixin:
             for ev in events
             if ev.type == "task.completed" and ev.payload.get("task_id")
         }
-        old_payloads = [
-            t
-            for t in prev_graph_ev.payload.get("tasks") or []
-            if isinstance(t, dict)
-        ]
+        old_payloads = [t for t in prev_graph_ev.payload.get("tasks") or [] if isinstance(t, dict)]
         return self._compute_retained_completions(
             old_payloads, [self._task_payload(t) for t in tasks], completed_ids
         )
@@ -1377,9 +1519,7 @@ class MImplRuntimeMixin:
         try:
             contract = load_contract(self.repo)
         except ContractError:
-            return ProbeReport(
-                skipped_reason="anchor probe skipped: no project contract"
-            )
+            return ProbeReport(skipped_reason="anchor probe skipped: no project contract")
         return probe_task_anchors(Path(self.repo), tasks, contract)
 
     def _evaluate_satisfiability(  # noqa: CCR001
@@ -1606,9 +1746,21 @@ class MImplRuntimeMixin:
     @staticmethod
     def _task_payloads_equivalent(old: dict, new: dict) -> bool:
         keys = (
-            "task_id", "issue_number", "description", "ac_refs", "fr_refs",
-            "if_ids", "test_refs", "unit_refs", "acceptance_refs", "schema",
-            "scope_boundary", "depends_on", "batch", "parallel", "budget",
+            "task_id",
+            "issue_number",
+            "description",
+            "ac_refs",
+            "fr_refs",
+            "if_ids",
+            "test_refs",
+            "unit_refs",
+            "acceptance_refs",
+            "schema",
+            "scope_boundary",
+            "depends_on",
+            "batch",
+            "parallel",
+            "budget",
         )
         return all(old.get(key) == new.get(key) for key in keys)
 
@@ -1619,8 +1771,10 @@ class MImplRuntimeMixin:
         new_by_id = {t.get("task_id"): t for t in new_tasks if t.get("task_id")}
         retained = []
         for tid in sorted(completed_ids):
-            if tid in old_by_id and tid in new_by_id and self._task_payloads_equivalent(
-                old_by_id[tid], new_by_id[tid]
+            if (
+                tid in old_by_id
+                and tid in new_by_id
+                and self._task_payloads_equivalent(old_by_id[tid], new_by_id[tid])
             ):
                 retained.append(tid)
         return retained
@@ -1753,9 +1907,7 @@ class MImplRuntimeMixin:
                     for ev in self.store.events(self.run_id)
                 ]
             )
-            full_rows = [
-                ev for ev in self.store.events(self.run_id) if ev.type == "full.executed"
-            ]
+            full_rows = [ev for ev in self.store.events(self.run_id) if ev.type == "full.executed"]
             if full_rows and not full_rows[-1].payload.get("passed"):
                 self._reconcile_full_failure_wal(cmd, state, full_rows[-1], ledger)
                 ledger = rebuild_ledger(self.store.events(self.run_id))
@@ -1816,12 +1968,9 @@ class MImplRuntimeMixin:
         self._record_full_failures(cmd, state, full, ledger)
         ledger = rebuild_ledger(self.store.events(self.run_id))
         round_failures = [
-            (failure["node"], failure["failure_signature"])
-            for failure in full["failures"]
+            (failure["node"], failure["failure_signature"]) for failure in full["failures"]
         ]
-        for event in settle_stale_identities(
-            ledger, full["evidence_by_node"], round_failures
-        ):
+        for event in settle_stale_identities(ledger, full["evidence_by_node"], round_failures):
             self._emit(
                 "ledger.transitioned",
                 {
@@ -1837,8 +1986,7 @@ class MImplRuntimeMixin:
                 "verdict.failed",
                 {
                     "check": "full_suite",
-                    "reason": "FULL settlement round failures: "
-                    + "; ".join(full["failed_nodes"]),
+                    "reason": "FULL settlement round failures: " + "; ".join(full["failed_nodes"]),
                     "evidence": full["outcomes_ref"],
                     "attempt": state.current_attempt + 1,
                 },
@@ -1855,8 +2003,7 @@ class MImplRuntimeMixin:
             "verdict.failed",
             {
                 "check": "full_suite",
-                "reason": "stale settlement left the FULL ledger unclean "
-                "without FIXED entries",
+                "reason": "stale settlement left the FULL ledger unclean without FIXED entries",
                 "evidence": full["outcomes_ref"],
                 "attempt": state.current_attempt + 1,
             },
@@ -1989,8 +2136,7 @@ class MImplRuntimeMixin:
             for outcome in outcomes
         }
         persisted_outcomes = [
-            {**outcome, "evidence_id": evidence_by_node[outcome["node"]]}
-            for outcome in outcomes
+            {**outcome, "evidence_id": evidence_by_node[outcome["node"]]} for outcome in outcomes
         ]
         outcomes_ref = self.store.write_audit_blob(persisted_outcomes)
         if outcomes_ref is None:
@@ -2024,9 +2170,7 @@ class MImplRuntimeMixin:
     def _reconcile_full_failure_wal(self, cmd, state, full_event, ledger) -> None:
         outcomes = self._read_runtime_blob(full_event.payload.get("outcomes_ref"))
         if not isinstance(outcomes, list):
-            raise LedgerCorruptionError(
-                "failed full.executed lacks replayable outcomes WAL"
-            )
+            raise LedgerCorruptionError("failed full.executed lacks replayable outcomes WAL")
         failures = []
         evidence_by_node = {}
         for outcome in outcomes:
@@ -2085,9 +2229,7 @@ class MImplRuntimeMixin:
         ).hexdigest()
 
     def _record_full_failures(self, cmd, state, full: dict, ledger) -> None:
-        identities = {
-            tuple(json.loads(key)): value for key, value in ledger.items()
-        }
+        identities = {tuple(json.loads(key)): value for key, value in ledger.items()}
         for failure in full["failures"]:
             signature = failure.get("failure_signature") or self._full_failure_signature(failure)
             identity = (failure["node"], signature)
@@ -2131,11 +2273,7 @@ class MImplRuntimeMixin:
             # refs (legacy payloads fall back to their test_refs mapping).
             if any(
                 str(ref).partition("::")[0] == path
-                for ref in (
-                    task.get("acceptance_refs")
-                    or task.get("test_refs")
-                    or []
-                )
+                for ref in (task.get("acceptance_refs") or task.get("test_refs") or [])
             )
         ]
         if not owners and len(state.task_refs) == 1:
@@ -2234,11 +2372,7 @@ class MImplRuntimeMixin:
     def _diff_test_reach(inventory, path) -> set:
         if not str(path).startswith("tests/"):
             return set()
-        return {
-            candidate
-            for candidate in inventory
-            if candidate.partition("::")[0] == str(path)
-        }
+        return {candidate for candidate in inventory if candidate.partition("::")[0] == str(path)}
 
     def _prove_fixed_ledger_entries(self, cmd, state, ledger) -> None:
         node, signature = json.loads(self._fixed_ledger_key(ledger))
@@ -2252,9 +2386,7 @@ class MImplRuntimeMixin:
             lambda path: self._diff_test_reach(inventory, path),
         )
         if selection.reliable:
-            self._prove_fixed_via_diff(
-                cmd, state, node, signature, selection, inventory, ledger
-            )
+            self._prove_fixed_via_diff(cmd, state, node, signature, selection, inventory, ledger)
             return
         self._prove_fixed_via_fallback(cmd, state, ledger)
 
@@ -2270,8 +2402,7 @@ class MImplRuntimeMixin:
             inventory,
         )
         target_failed = any(
-            failure["node"] == node
-            and failure["failure_signature"] == signature
+            failure["node"] == node and failure["failure_signature"] == signature
             for failure in proof["failures"]
         )
         self._emit(
@@ -2320,8 +2451,7 @@ class MImplRuntimeMixin:
     def _prove_fixed_via_fallback(self, cmd, state, ledger) -> None:
         full = self._execute_full_round(cmd, state, "fallback_full", ledger)
         failed_identities = {
-            (failure["node"], failure["failure_signature"])
-            for failure in full["failures"]
+            (failure["node"], failure["failure_signature"]) for failure in full["failures"]
         }
         for key, value in sorted(ledger.items()):
             if value != "FIXED":
@@ -2369,9 +2499,7 @@ class MImplRuntimeMixin:
                 if section is None:
                     raise TestSelectError(f"SELECT_DIFF lacks [{layer}] contract")
                 section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
-                result_path = self._result_staging_path(
-                    cmd.command_id, f"select-diff-{layer}"
-                )
+                result_path = self._result_staging_path(cmd.command_id, f"select-diff-{layer}")
                 staged.append(result_path)
                 result_path.unlink(missing_ok=True)
                 argv = resolve_selected_command(
@@ -2392,9 +2520,7 @@ class MImplRuntimeMixin:
                     shlex.join(argv), str(section_cwd), f"select-diff-{layer}"
                 )
                 commands[layer] = list(obs.argv)
-                mapping = require_exact_node_coverage(
-                    parse_test_result(result_path), selected
-                )
+                mapping = require_exact_node_coverage(parse_test_result(result_path), selected)
                 outcomes.extend(
                     {
                         "node": node,
@@ -2763,7 +2889,7 @@ class MImplRuntimeMixin:
             "frozen_test_paths": self._frozen_test_paths(),
             "phase_rules": {
                 "red": "write failing unit tests only under red_test_paths; "
-                       "allowed_paths lists the green-phase impl scope and is not writable in RED",
+                "allowed_paths lists the green-phase impl scope and is not writable in RED",
                 "green": "write implementation only; keep R tests immutable",
                 "refactor": "quality-only changes; preserve green behavior",
             },
@@ -2868,8 +2994,7 @@ class MImplRuntimeMixin:
             (
                 ev
                 for ev in reversed(list(self.store.events(self.run_id)))
-                if ev.type == "green.committed"
-                and ev.payload.get("task_id") == task_id
+                if ev.type == "green.committed" and ev.payload.get("task_id") == task_id
             ),
             None,
         )
@@ -3149,9 +3274,7 @@ class MImplRuntimeMixin:
         return sorted(resolved)
 
     @staticmethod
-    def _resolve_one_acceptance_ref(
-        raw, by_path: dict[str, list[str]], resolved: set[str]
-    ) -> None:
+    def _resolve_one_acceptance_ref(raw, by_path: dict[str, list[str]], resolved: set[str]) -> None:
         """Resolve one acceptance_ref entry into ``resolved`` (fail-closed).
 
         A NODE entry must be an exact inventory node; a FILE entry expands to
@@ -3160,9 +3283,7 @@ class MImplRuntimeMixin:
         path = ref.partition("::")[0]
         nodes = by_path.get(path)
         if nodes is None or ("::" in ref and ref not in nodes):
-            raise TestSelectError(
-                f"task acceptance ref is absent from integration collect: {ref}"
-            )
+            raise TestSelectError(f"task acceptance ref is absent from integration collect: {ref}")
         if "::" in ref:
             resolved.add(ref)
         else:
@@ -3181,8 +3302,7 @@ class MImplRuntimeMixin:
         for anchor in sorted(anchors):
             if not self._anchor_is_planned(anchor, planned):
                 raise TestSelectError(
-                    "task acceptance ref is not a test-plan §8 integration "
-                    f"row target: {anchor}"
+                    f"task acceptance ref is not a test-plan §8 integration row target: {anchor}"
                 )
 
     @staticmethod
@@ -3326,9 +3446,7 @@ class MImplRuntimeMixin:
             path = root / rule
             if path.is_dir():
                 files = sorted(
-                    item
-                    for item in path.rglob("*")
-                    if item.is_file() or item.is_symlink()
+                    item for item in path.rglob("*") if item.is_file() or item.is_symlink()
                 )
                 if not files:
                     entries[rule] = "empty-dir"
@@ -3370,9 +3488,7 @@ class MImplRuntimeMixin:
                 selected = by_layer[layer]
                 if not selected:
                     continue
-                section_cwd = (
-                    str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
-                )
+                section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
                 result_path = self._result_staging_path(cmd.command_id, f"green-{layer}")
                 staged.append(result_path)
                 result_path.unlink(missing_ok=True)
@@ -3390,9 +3506,7 @@ class MImplRuntimeMixin:
                     Path(section_cwd),
                 ):
                     raise TestSelectError(f"[{layer}] selected argv diverges from contract")
-                obs = execute_gate_command(
-                    shlex.join(argv), section_cwd, f"{layer}-selected"
-                )
+                obs = execute_gate_command(shlex.join(argv), section_cwd, f"{layer}-selected")
                 commands[layer] = tuple(obs.argv)
                 templates[layer] = {
                     "run_selected": section.run_selected,
@@ -3558,9 +3672,7 @@ class MImplRuntimeMixin:
             if isinstance(target, dict)
         }
         fresh_targets = [
-            target
-            for target in targets
-            if (target["kind"], target["ref"]) not in already_stale
+            target for target in targets if (target["kind"], target["ref"]) not in already_stale
         ]
         if fresh_targets:
             self._emit(
@@ -3660,9 +3772,7 @@ class MImplRuntimeMixin:
             if task is None:
                 raise TestSelectError(f"GREEN_GATE task not found: {task_id}")
             selection_evidence = self._execute_task_selection(cmd, state, cwd, task)
-            lint_findings, lint_note = self._run_declared_lint(
-                self._lint_targets("green")
-            )
+            lint_findings, lint_note = self._run_declared_lint(self._lint_targets("green"))
             if lint_findings is not None:
                 self._emit_gate_failure(
                     cmd,
@@ -3724,9 +3834,7 @@ class MImplRuntimeMixin:
         if green_for_task is not None:
             self._run_task_review_committed(cmd, task_id, attempt, events, green_for_task)
             return
-        any_green_committed = any(
-            ev["type"] == "green.committed" for ev in events
-        )
+        any_green_committed = any(ev["type"] == "green.committed" for ev in events)
         if any_green_committed:
             self._emit_gate_failure(
                 cmd,
@@ -4514,9 +4622,7 @@ class MImplRuntimeMixin:
         # --is-ancestor signals its verdict via exit code (0=yes, 1=no), so
         # check must be off; any other failure also lands on the fail-closed
         # path below.
-        anc = git(
-            self.repo, "merge-base", "--is-ancestor", b_sha, "HEAD", check=False
-        )
+        anc = git(self.repo, "merge-base", "--is-ancestor", b_sha, "HEAD", check=False)
         if anc.returncode == 0:
             return head
         return None
@@ -4554,9 +4660,7 @@ class MImplRuntimeMixin:
         # ``reset --hard`` reverted them to the stale version committed by
         # a previous cycle (the r1 taskgraph resurrected over the in-flight
         # r2 graph). Preserve every dirty path G does not touch.
-        changed_by_g = set(
-            git(self.repo, "diff", "--name-only", b_sha, g_sha).stdout.splitlines()
-        )
+        changed_by_g = set(git(self.repo, "diff", "--name-only", b_sha, g_sha).stdout.splitlines())
         dirty: set[str] = set()
         for line in git(self.repo, "status", "--porcelain").stdout.splitlines():
             if not line.strip():
@@ -4647,8 +4751,7 @@ class MImplRuntimeMixin:
             (
                 ev
                 for ev in reversed(list(self.store.events(self.run_id)))
-                if ev.type == "green.committed"
-                and ev.payload.get("task_id") == task_id
+                if ev.type == "green.committed" and ev.payload.get("task_id") == task_id
             ),
             None,
         )
@@ -4679,9 +4782,7 @@ class MImplRuntimeMixin:
             *(str(ref) for ref in (green.payload.get("evidence_ids") or []) if ref),
         }
         changed = sorted(
-            path
-            for path in set(previous) | set(current)
-            if previous.get(path) != current.get(path)
+            path for path in set(previous) | set(current) if previous.get(path) != current.get(path)
         )
         return (
             reuse_allowed(green_identity, current_identity, stale_refs & related_refs),
@@ -4695,12 +4796,8 @@ class MImplRuntimeMixin:
             {
                 "kind": "green",
                 "task_id": task_id,
-                "reused_evidence_ids": list(
-                    green.payload.get("evidence_ids") or []
-                ),
-                "identity_basis": dict(
-                    green.payload.get("identity_basis") or {}
-                ),
+                "reused_evidence_ids": list(green.payload.get("evidence_ids") or []),
+                "identity_basis": dict(green.payload.get("identity_basis") or {}),
                 "consumer_gate": "REFACTOR_GATE",
             },
             command_id=cmd.command_id,
@@ -4719,18 +4816,14 @@ class MImplRuntimeMixin:
             task_id,
             [str(green_basis.get("selection_id") or "")],
             list(green.payload.get("evidence_ids") or []),
-            "green_content_identity_changed"
-            if observed_changed
-            else "green_evidence_stale",
+            "green_content_identity_changed" if observed_changed else "green_evidence_stale",
         )
 
     @staticmethod
     def _refactor_diff_missing(outcome: dict, observed_changed) -> bool:
         diff_ref = outcome.get("diff_ref")
         return bool(observed_changed) and (
-            not isinstance(diff_ref, str)
-            or not diff_ref.strip()
-            or diff_ref.strip() == "no-change"
+            not isinstance(diff_ref, str) or not diff_ref.strip() or diff_ref.strip() == "no-change"
         )
 
     def _refactor_diff_reconstructable(self, outcome: dict, observed_changed) -> bool:
@@ -4805,9 +4898,7 @@ class MImplRuntimeMixin:
             cwd, gate_handle = self._ensure_gate_worktree(state, phase="refactor")
             outcome = self._last_devon_outcome() or {}
             task_id = state.current_task_id or task_id or ""
-            reusable, observed_changed, green = self._green_reuse_state(
-                task_id, str(self.repo)
-            )
+            reusable, observed_changed, green = self._green_reuse_state(task_id, str(self.repo))
             if reusable:
                 self._reuse_green_evidence(cmd, task_id, outcome, green)
                 return
@@ -4818,13 +4909,9 @@ class MImplRuntimeMixin:
             if self._refactor_diff_missing(
                 outcome, observed_changed
             ) and not self._refactor_diff_reconstructable(outcome, observed_changed):
-                raise TestSelectError(
-                    "refactor content identity changed without a captured diff"
-                )
+                raise TestSelectError("refactor content identity changed without a captured diff")
             selection_evidence = self._execute_task_selection(cmd, state, cwd, task)
-            changed = sorted(
-                set(outcome.get("changed_paths", [])) | set(observed_changed)
-            )
+            changed = sorted(set(outcome.get("changed_paths", [])) | set(observed_changed))
             allowed = set((state.current_manifest or {}).get("allowed_paths", []))
             outside = self._refactor_outside_paths(changed, allowed)
             if outside:
@@ -4893,9 +4980,7 @@ class MImplRuntimeMixin:
         cwd = Path(self.repo) if section.cwd == "." else Path(self.repo) / section.cwd
         result_path = self._result_staging_path(command_id, f"{layer}_selected")
         argv = list(
-            resolve_selected_command(
-                section.run_selected, list(test_refs), str(result_path), cwd
-            )
+            resolve_selected_command(section.run_selected, list(test_refs), str(result_path), cwd)
         )
         return argv, result_path, cwd
 
@@ -4936,8 +5021,7 @@ class MImplRuntimeMixin:
                 {
                     "check": "contract_error",
                     "reason": (
-                        "anchor RED run needs the host contract "
-                        f"[integration].run_selected: {exc}"
+                        f"anchor RED run needs the host contract [integration].run_selected: {exc}"
                     ),
                     "task_id": tid,
                     "attempt": attempt,
