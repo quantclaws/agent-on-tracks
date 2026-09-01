@@ -2341,6 +2341,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             return
         self._dispatch_log_end(p, result, time.monotonic() - t0)
+        # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
+        # Must run before any early-return handling so attribution is correct
+        # and restoration is performed in the same command_id. A violation
+        # fail-closes the turn; a system_repaired heals inherited dirty state.
+        _guard = self._handle_tasks_md_projection(cmd, state, task_id, p)
+        if _guard == "violation":
+            return
         # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
         # do NOT enter the ResultCheckpoint pipeline. The explanation/review
         # events drive the state machine directly.
@@ -2399,6 +2406,177 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
         shield_committed = self._emit_shield_commit(result, role, state, cmd, task_id)
         self._maybe_transition_full_ledger(cmd, state, role, result, shield_committed)
+
+    # ------------------------------------------------------------------
+    # OOB b89 OB-4 — tasks.md projection guard helpers
+    # ------------------------------------------------------------------
+
+    def _extract_pre_snapshot_for_guards(self, params: dict) -> dict | None:
+        """Return the pre-dispatch dirty snapshot dict for incremental attribution.
+
+        Carries the same identity map the runtime persisted in the dispatched
+        assignment (or top-level params). ``None`` means the guard cannot
+        attribute and must fall back to ``system_repaired`` semantics for a
+        mismatched projection (never a false violation).
+        """
+        # 1) M-IMPL assignment carries pre_dirty_snapshot both top-level and in manifest
+        assignment = params.get("assignment")
+        if isinstance(assignment, dict):
+            snap = assignment.get("pre_dirty_snapshot")
+            if isinstance(snap, dict):
+                return snap
+            manifest = assignment.get("manifest")
+            if isinstance(manifest, dict):
+                snap = manifest.get("pre_dirty_snapshot")
+                if isinstance(snap, dict):
+                    return snap
+        # 2) Shield WRITE / other dispatches stash at top-level
+        snap = params.get("pre_dirty_snapshot")
+        if isinstance(snap, dict):
+            return snap
+        # 3) fallback: no attribution baseline
+        return None
+
+    @staticmethod
+    def _is_path_in_diff(rel_path: str, pre: dict | None, post: dict) -> bool:
+        """Whether *rel_path* identity changed between *pre* and *post*."""
+        if pre is None:
+            # without a baseline we cannot attribute → treat as not in diff
+            # (system_repaired path, never a false violation)
+            return False
+        pre_id = pre.get(rel_path)
+        post_id = post.get(rel_path)
+        if pre_id is None and post_id is None:
+            return False
+        if pre_id is None or post_id is None:
+            return True
+        return pre_id != post_id
+
+    def _handle_tasks_md_projection(  # noqa: CCR001
+        self, cmd, state, task_id, params: dict
+    ) -> str:
+        """OOB b89 OB-4 incremental attribution guard.
+
+        Returns ``violation`` (fail-closed, already emitted ``verdict.failed`` +
+        ``tasks_md.restored``), ``repaired`` (emitted ``tasks_md.system_repaired``),
+        ``ok`` (no action), or ``skipped`` (tasks.json unparsable).
+
+        The guard is evaluated on every dispatch that could touch
+        ``.tracks/projects/<version>/tasks.{json,md}``.  It is a pure
+        file-content check plus an incremental-diff attribution using the
+        dispatched ``pre_dirty_snapshot``.
+        """
+        # Resolve version dir (same as MImplRuntimeMixin._vdir)
+        try:
+            vdir = self._vdir()
+        except Exception:
+            return "skipped"
+        tasks_json_path = vdir / "tasks.json"
+        tasks_md_path = vdir / "tasks.md"
+        # No graph yet → nothing to guard
+        if not tasks_json_path.exists():
+            return "skipped"
+        # Read and parse tasks.json (guard skips when unparsable → taskgraph channel reports)
+        try:
+            raw_json = tasks_json_path.read_text(encoding="utf-8")
+        except Exception:
+            return "skipped"
+        try:
+            from tracks.executor.taskgraph import (
+                classify_tasks_md_guard,
+                parse_tasks_json,
+                render_tasks_md,
+            )
+        except Exception:
+            return "skipped"
+        tasks, err = parse_tasks_json(raw_json)
+        if err is not None:
+            return "skipped"
+        try:
+            rendered = render_tasks_md(tasks)
+        except Exception:
+            return "skipped"
+        # Post tasks.md content (None when missing → treat as mismatch with rendered)
+        try:
+            post_md = tasks_md_path.read_text(encoding="utf-8") if tasks_md_path.exists() else None
+        except Exception:
+            post_md = None
+        # Fast path: match → nothing to do (no restoration, no events)
+        # Note: rendered is never None here; if post_md is None, it's a mismatch.
+        if rendered == post_md:
+            return "ok"
+        # Mismatch → decide violation vs system_repaired via incremental attribution
+        pre = self._extract_pre_snapshot_for_guards(params)
+        try:
+            post_snapshot = self._dirty_snapshot()
+        except Exception:
+            post_snapshot = {}
+        # Compute repo-relative key for tasks.md
+        try:
+            rel_md = str(tasks_md_path.relative_to(Path(self.repo)).as_posix())  # type: ignore[arg-type]
+        except Exception:
+            # fallback: .tracks/projects/... form
+            try:
+                rel_md = str(tasks_md_path.relative_to(Path(self.repo).resolve()).as_posix())
+            except Exception:
+                rel_md = tasks_md_path.name
+        pre_contains = self._is_path_in_diff(rel_md, pre, post_snapshot)
+        decision = classify_tasks_md_guard(pre_contains, rendered, post_md)
+        if decision == "violation":
+            # Fail-closed: this turn's diff introduced the mismatch
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "tasks_md_projection",
+                    "reason": (
+                        "tasks.md is a runtime projection of tasks.json; "
+                        "modify tasks.json instead"
+                    ),
+                    "evidence": (
+                        "tasks.md mismatch: expected render of tasks.json but "
+                        "got different content; diff contains tasks.md "
+                        "(attributed to this turn)"
+                    ),
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            # Restore in the same command (audited, idempotent)
+            try:
+                tasks_md_path.parent.mkdir(parents=True, exist_ok=True)
+                tasks_md_path.write_text(rendered, encoding="utf-8")
+            except Exception as exc:
+                # restoration failure → emit as evidence but don't crash
+                print(f"tasks_md restore failed: {exc}", file=sys.stderr, flush=True)
+            self._emit(
+                "tasks_md.restored",
+                {
+                    "path": "tasks.md",
+                    "reason": "tasks_md_projection violation — restored to render(tasks.json)",
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return "violation"
+        if decision == "system_repaired":
+            # Inherited dirty (crash, checkout residual): self-heal without violation
+            try:
+                tasks_md_path.parent.mkdir(parents=True, exist_ok=True)
+                tasks_md_path.write_text(rendered, encoding="utf-8")
+            except Exception as exc:
+                print(f"tasks_md system repair failed: {exc}", file=sys.stderr, flush=True)
+            self._emit(
+                "tasks_md.system_repaired",
+                {
+                    "path": "tasks.md",
+                    "reason": "tasks.md mismatched but not in this turn's diff — system repaired",
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return "repaired"
+        return "ok"
 
     def _act_in_worktree(
         self,

@@ -102,7 +102,16 @@ def test_fake_design_closure_matches_planning_tasks(tmp_path):
     assert ok, errors
 
 
-def test_architecture_and_archer_define_the_same_closure_syntax():
+def test_architecture_template_defines_closure_syntax():
+    """Machine syntax of the architecture template only: the section header
+    and the exact closure-line shape stay meaningful in a template fixture.
+
+    OOB b91 Q0: the former skill-prose assertions (``exact in prose``,
+    ``DRAFT / RESPOND``, AC tokens, fixed phrases) were prose pins on
+    tracks-archer-design/SKILL.md and are removed per the Human ruling --
+    design-skill routing is asserted behaviorally in
+    test_archer_skill_routing.py::test_m_design_skills_include_archer_design.
+    """
     template = templating.load_template("architecture")
     exact = (
         "- **FR-0010** owner=<...> surface=<...> composition=<...> "
@@ -110,10 +119,3 @@ def test_architecture_and_archer_define_the_same_closure_syntax():
     )
     assert "### 1.2 Required AC closure (ISLAND_GATE_1)" in template
     assert exact in template
-
-    archer = Path(__file__).parents[2] / "tracks" / "agents" / "Archer.md"
-    prose = archer.read_text(encoding="utf-8")
-    assert exact in prose
-    assert "DRAFT 和 RESPOND" in prose
-    assert "_requirement_ref" in prose
-    assert "全部适用 IF- IDs" in prose

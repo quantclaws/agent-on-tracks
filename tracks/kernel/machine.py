@@ -1708,10 +1708,16 @@ def _decide_design_draft(s: State, sub: str) -> Command | None:
                     "kind": sub,
                     "template_kind": None,
                     "templates": [doc.removesuffix(".md") for doc in DESIGN_DOCS],
-                    # batch B: multi-skill — the design doc-set plus the
-                    # host guard-stack catalog (single-skill shape stays
-                    # for every other stage, see _dispatch).
-                    "skills": ["tracks-discuz", "tracks-quality-guards"],
+                    # batch B: multi-skill — the design doc-set, the
+                    # stage methodology skill and the discussion protocol.
+                    # The host guard-stack catalog (tracks-quality-guards)
+                    # stays only for assignments whose task actually
+                    # requires the guard-stack catalog.
+                    "skills": [
+                        "tracks-discuz",
+                        "tracks-archer-design",
+                        "tracks-quality-guards",
+                    ],
                     "docs": list(DESIGN_DOCS),
                 },
             },

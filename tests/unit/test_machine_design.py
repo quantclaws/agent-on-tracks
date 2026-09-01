@@ -144,11 +144,16 @@ def test_design_dispatch_assignments_carry_doc_set():
 
 def test_design_author_assignment_carries_both_skills():
     # batch B: the M-DESIGN author assignment is multi-skill - the discussion
-    # protocol plus the host guard-stack catalog; the single-skill shape stays
-    # the contract everywhere else (other reviewers).
+    # protocol, the stage methodology skill (b90) and the host guard-stack
+    # catalog (on-demand); the single-skill shape stays the contract
+    # everywhere else (other reviewers).
     draft = decide(state_of())
     assignment = draft.params["assignment"]
-    assert assignment["skills"] == ["tracks-discuz", "tracks-quality-guards"]
+    assert assignment["skills"] == [
+        "tracks-discuz",
+        "tracks-archer-design",
+        "tracks-quality-guards",
+    ]
     assert "skill" not in assignment
     review = decide(state_of(*draft_cycle()))
     review_assignment = review.params["assignment"]

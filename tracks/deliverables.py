@@ -30,6 +30,10 @@ DELIVERABLES = AGENT_DELIVERABLES + (
     _PKG / "skills" / "tracks-prism-test" / "SKILL.md",  # v0.4 D-29 (FR-0040)
     _PKG / "skills" / "tracks-prism-design" / "SKILL.md",  # v0.5 D-29 design criteria
     _PKG / "skills" / "tracks-prism-impl" / "SKILL.md",  # v0.5 D-29 impl criteria
+    _PKG / "skills" / "tracks-archer-design" / "SKILL.md",  # b90 Archer M-DESIGN method
+    _PKG / "skills" / "tracks-archer-planning" / "SKILL.md",  # b90 Archer PLANNING graph contract
+    _PKG / "skills" / "tracks-devon-rgr" / "SKILL.md",  # b91 Devon single-phase RGR method
+    _PKG / "skills" / "tracks-shield" / "SKILL.md",  # b91 Shield test-writing method
 )
 
 IQ_GRADES = ("S", "A", "B")

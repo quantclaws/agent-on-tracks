@@ -277,7 +277,7 @@ def _m_test_shield_dispatch(s: State) -> Command:
         "docs": list(_M_TEST_CONTEXT_DOCS),
         "assignment": {
             "kind": "WRITE",
-            "skills": ["tracks-discuz"],
+            "skills": ["tracks-discuz", "tracks-shield"],
             "docs": list(_M_TEST_CONTEXT_DOCS),
             # B28/#30 slim: front-load the manifest contract (schema +
             # example + pre-return self-checks) so the writer validates its

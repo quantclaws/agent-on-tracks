@@ -1706,6 +1706,7 @@ def test_shield_fix_dispatch_contract_is_write():
     assert cmd.params["substate"] == "WRITE"
     assert cmd.params["assignment"]["substate"] == "WRITE"
     assert cmd.params["assignment"]["role"] == "shield"
+    assert cmd.params["assignment"]["skills"] == ["tracks-discuz", "tracks-shield"]
     assert "SHIELD_FIX" in cmd.params["objective"]
 
 
@@ -2756,19 +2757,13 @@ def test_diagnose_red_defect_routes_devon_back_to_red():
 
 
 def test_red_defect_in_diagnose_vocabulary():
-    """B63 blocker (#81): red_defect must be present in every DIAGNOSE
-    vocabulary gate — the executor whitelist, the opencode backend
-    classification tuple, and the Prism prompt contract."""
+    """red_defect must remain a legal DIAGNOSE classification: present in the
+    executor/opencode vocabulary gates. The classification vocabulary itself
+    is assignment-authoritative (inlined per dispatch), so the prompt/skill
+    prose is deliberately NOT text-pinned here (b91 host-neutrality)."""
     from tracks.effects.opencode import OpencodeBackend
 
-    repo_root = Path(__file__).resolve().parents[2]
     assert "red_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
-    for rel in (
-        "tracks/agents/Prism.md",
-        "tracks/skills/tracks-prism-impl/SKILL.md",
-    ):
-        contract = (repo_root / rel).read_text(encoding="utf-8")
-        assert "red_defect" in contract, f"{rel} prompt contract lacks red_defect"
 
 
 # -- B83 (#83): generation-aware retained completion on replacement taskgraph ---
@@ -3066,21 +3061,17 @@ def test_prism_final_revise_plan_defect_to_planning():
 
 
 def test_plan_defect_in_diagnose_vocabulary():
-    """#89: plan_defect must be present in every DIAGNOSE vocabulary gate —
-    the executor whitelist, the opencode backend classification tuple, the
-    fake-channel token filter, and both Prism prompt contracts."""
+    """plan_defect must remain a legal DIAGNOSE classification: present in
+    the executor whitelist and the opencode backend classification tuple.
+    The classification vocabulary itself is assignment-authoritative
+    (inlined per dispatch), so the prompt/skill prose is deliberately NOT
+    text-pinned here (b91 host-neutrality)."""
     from tracks.effects.opencode import OpencodeBackend
 
     repo_root = Path(__file__).resolve().parents[2]
     assert "plan_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
     executor_py = (repo_root / "tracks/executor/executor.py").read_text(encoding="utf-8")
     assert "plan_defect" in executor_py, "executor.py whitelist/filter lacks plan_defect"
-    for rel in (
-        "tracks/agents/Prism.md",
-        "tracks/skills/tracks-prism-impl/SKILL.md",
-    ):
-        contract = (repo_root / rel).read_text(encoding="utf-8")
-        assert "plan_defect" in contract, f"{rel} prompt contract lacks plan_defect"
 
 
 # -- #89 follow-up (B90): vocabulary inlined into the dispatch -----------------

@@ -4,6 +4,8 @@ L2 contract sim: Shield writes tests, write-scope audit enforces the four
 test-asset directories, over-reach is rolled back.
 """
 
+from pathlib import Path
+
 from tests.e2e.helpers import dispatches
 from tests.integration.helpers import walk_to_m_test
 
@@ -142,13 +144,25 @@ def test_no_product_code_writes(trac, event_log, host_repo):
 
 # AC-FR0120-01@v0.4 TRACKS-TRACE materialization lifecycle
 def test_materialization_lifecycle(trac, event_log, host_repo):
-    """AC-FR0120-01@v0.4: Shield agent is materialized and cleaned up."""
+    """AC-FR0120-01@v0.4: Shield agent + skills are materialized and cleaned up."""
     walk_to_m_test(trac)
     trac("run")
     # After the run, the materialized agent is cleaned up (no residual)
     agent_dest = host_repo / ".opencode" / "agents" / "Shield.md"
     # The cleanup restores the pre-existing state (absent -> absent)
     assert not agent_dest.exists() or agent_dest.read_text() != ""
+    # b91: the declared tracks-shield skill is materialized from the canonical
+    # deliverable and cleaned up after the run (same lifecycle as the agent)
+    canonical = (
+        Path(__file__).resolve().parent.parent.parent
+        / "tracks"
+        / "skills"
+        / "tracks-shield"
+        / "SKILL.md"
+    )
+    assert canonical.exists()
+    skill_dest = host_repo / ".opencode" / "skills" / "tracks-shield" / "SKILL.md"
+    assert not skill_dest.exists() or skill_dest.read_text() != ""
 
 
 # AC-FR0120-06@v0.4 TRACKS-TRACE shield workflow
@@ -168,5 +182,6 @@ def test_shield_workflow(trac, event_log):
     assert "test-plan.md" in assignment["docs"]
     assert "interfaces.md" in assignment["docs"]
     assert "acceptance.md" in assignment["docs"]
-    # Shield assignment carries tracks-discuz skill
-    assert "tracks-discuz" in assignment["skills"]
+    # Shield assignment carries the discussion protocol + the test-writing
+    # method skill (discussion first, b91 routing)
+    assert assignment["skills"] == ["tracks-discuz", "tracks-shield"]

@@ -2,13 +2,13 @@
 
 Covers: role selection (AGENT_NAME + --agent Devon), prompt materialization,
 canonical/deployed equality (agent + skill), Devon dispatch assignment shape
-(phase, skill, public keys, r_tree_identity gating), and Devon.md contract
-checks (three isolated phases, fail-closed, no whole-cycle, no commit/push).
+(phase, skill, public keys, r_tree_identity gating), kernel purity, and the
+Runtime-authoritative defect routing contract. Prose-shape assertions on
+Devon.md/tracks-devon-rgr live (if anywhere) in the minimal machine protocol
+test module (b91: behavior over prose pinning).
 """
 
 from pathlib import Path
-
-import pytest
 
 from tests.unit.helpers import (
     ARCHER_DISPATCH,
@@ -264,106 +264,6 @@ def test_devon_dispatch_still_has_required_base_keys():
     cmd = decide(s)
     assignment = cmd.params["assignment"]
     assert assignment.keys() >= M_IMPL_REQUIRED_ASSIGNMENT_KEYS
-
-
-# -- Devon.md contract checks ------------------------------------------------
-
-
-def _devon_md_text():
-    return (_CANONICAL_AGENTS / "Devon.md").read_text(encoding="utf-8")
-
-
-def test_devon_md_describes_three_isolated_phases():
-    """Devon.md describes three isolated dispatch modes: red, green, refactor."""
-    text = _devon_md_text()
-    for phase in ("red", "green", "refactor"):
-        assert phase in text.lower()
-
-
-def test_devon_md_no_whole_rgr_cycle():
-    """Devon.md states it never runs a whole RGR cycle in one assignment."""
-    text = _devon_md_text()
-    assert "phase" in text.lower()
-    assert "停止" in text or "stop" in text.lower()
-
-
-def test_devon_md_fail_closed_contract():
-    """Devon.md lists required assignment keys for fail-closed."""
-    text = _devon_md_text()
-    assert "fail closed" in text.lower()
-    for key in (
-        "task_id",
-        "phase",
-        "if_ids",
-        "ac_refs",
-        "test_refs",
-        "commands",
-        "manifest",
-        "pre_dirty_snapshot",
-        "result_identity",
-        "r_tree_identity",
-    ):
-        assert key in text
-
-
-def test_devon_md_red_forbids_product_code():
-    """RED phase contract: product code forbidden."""
-    text = _devon_md_text()
-    assert "产品代码" in text or "product code" in text.lower()
-    assert "禁止" in text or "forbidden" in text.lower()
-
-
-def test_devon_md_green_r_tests_immutable():
-    """GREEN phase contract: R tests and frozen tests immutable."""
-    text = _devon_md_text()
-    assert "不可变" in text or "immutable" in text.lower()
-
-
-def test_devon_md_refactor_no_change_allowed():
-    """REFACTOR phase contract: may return no_change + reason."""
-    text = _devon_md_text()
-    assert "no_change" in text
-
-
-def test_devon_md_no_commit_push_issues():
-    """Devon.md forbids commit/push/Issues/task state in all phases."""
-    text = _devon_md_text()
-    assert "不 commit/push" in text or "no commit" in text.lower()
-    assert "Issues" in text
-    assert "task state" in text.lower()
-
-
-def test_devon_md_virtualenv_and_n4():
-    """Devon.md requires virtualenv and pytest -n 4."""
-    text = _devon_md_text()
-    assert ".venv" in text or "虚拟环境" in text
-    assert "-n 4" in text
-
-
-def test_devon_md_output_schema():
-    """Devon.md defines structured output schema with required fields."""
-    text = _devon_md_text()
-    for field in ("phase", "changed_paths", "manifest_compliance", "no_change_reason"):
-        assert field in text
-
-
-def test_devon_md_frozen_test_isolation():
-    """Devon.md preserves frozen test isolation rules."""
-    text = _devon_md_text()
-    for path in ("tests/integration", "tests/e2e", "tests/counterexamples", "tests/ground_truth"):
-        assert path in text
-
-
-def test_devon_md_version_bumped():
-    """Devon.md version bumped to reflect phase-separated contract."""
-    from tracks.frontmatter import split_frontmatter
-
-    head, _ = split_frontmatter(_devon_md_text())
-    for line in head.splitlines():
-        if line.startswith("version:"):
-            assert line.split(":", 1)[1].strip().startswith("0.")
-            return
-    pytest.fail("no version in frontmatter")
 
 
 # -- kernel purity (Devon dispatch is pure) ----------------------------------

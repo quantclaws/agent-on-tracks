@@ -244,7 +244,7 @@ def test_dispatch_creates_shield_tasks():
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "shield"
     assert cmd.params["substate"] == "WRITE"
-    assert "tracks-discuz" in cmd.params["assignment"]["skills"]
+    assert cmd.params["assignment"]["skills"] == ["tracks-discuz", "tracks-shield"]
 
 
 # -- AC-FR0020-04@v0.4: WRITE validate failure <=3 -> escalation ---------------------

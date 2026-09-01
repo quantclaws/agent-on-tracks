@@ -53,6 +53,7 @@ from tracks.executor.taskgraph import (
     validate_island_closure,
     validate_issue_numbers,
     validate_scope,
+    validate_scope_existence,
     validate_task_structure,
 )
 from tracks.executor.test_select import (
@@ -474,6 +475,11 @@ class MImplRuntimeMixin:
         self._add_assignment_role_fields(assignment, state, params)
         if state.hotfix_issue is not None:
             assignment["issue_number"] = state.hotfix_issue
+        # OOB b89 OB-5 — assignment anchor_surface injection
+        try:
+            assignment["anchor_surface"] = self._anchor_surface_for_assignment()
+        except Exception as exc:  # fail-closed: unavailable marker, never crash dispatch
+            assignment["anchor_surface"] = {"unavailable": f"infra: {exc}"}
         return assignment
 
     def _materialized_task(self, state: State) -> dict | None:
@@ -488,6 +494,128 @@ class MImplRuntimeMixin:
             None,
         )
         return self._task_payload(task_node) if task_node is not None else None
+
+    def _anchor_surface_for_assignment(self) -> dict:  # noqa: CCR001
+        """OOB b89 OB-5: structured anchor_surface summary for the assignment.
+
+        Returns ``{task_id: [{anchor, module, owner_task, depends_missing}], advisories: [...]}``
+        or ``{"unavailable": "<reason>"}`` on sidecar miss / infra / schema-1.
+        """
+        vdir = self._vdir()
+        tasks_json_path = vdir / "tasks.json"
+        if not tasks_json_path.exists():
+            return {"unavailable": "tasks.json missing"}
+        try:
+            raw = tasks_json_path.read_text(encoding="utf-8")
+            tasks, err = parse_tasks_json(raw)
+            if err is not None:
+                return {"unavailable": f"tasks.json parse error: {err}"}
+        except Exception as exc:
+            return {"unavailable": f"tasks.json unreadable: {exc}"}
+        if not tasks:
+            return {"unavailable": "no tasks"}
+        if any(getattr(t, "schema", 1) == 1 for t in tasks):
+            return {"unavailable": "schema-1"}
+        sidecar_path = vdir / "anchor-surface.json"
+        try:
+            from tracks.executor.anchor_surface import load_anchor_surface
+
+            surface = load_anchor_surface(sidecar_path)
+        except Exception as exc:
+            return {"unavailable": f"sidecar unavailable: {exc}"}
+        if isinstance(surface, dict) and surface.get("skipped"):
+            return {"unavailable": str(surface.get("skipped_reason") or "skipped")}
+        # Build structured summary from the same logic as validate_anchor_satisfiability
+        try:
+            from tracks.executor.taskgraph import _module_to_path, _scope_paths
+
+            # all scopes → owner
+            all_scopes: set[str] = set()
+            owner_map: dict[str, str] = {}
+            task_scopes: dict[str, set[str]] = {}
+            for t in tasks:
+                paths, _ = _scope_paths(t.scope_boundary, t.task_id)
+                normed = set(paths)
+                task_scopes[t.task_id] = normed
+                for p in normed:
+                    all_scopes.add(p)
+                    owner_map[p] = t.task_id
+            task_by_id = {t.task_id: t for t in tasks}
+
+            def _closure_scopes(tid: str) -> set[str]:
+                stack = list(task_by_id[tid].depends_on) if tid in task_by_id else []
+                visited: set[str] = set()
+                scopes: set[str] = set()
+                while stack:
+                    cur = stack.pop()
+                    if cur == "-" or cur in visited:
+                        continue
+                    visited.add(cur)
+                    if cur in task_scopes:
+                        scopes.update(task_scopes[cur])
+                    if cur in task_by_id:
+                        stack.extend(task_by_id[cur].depends_on)
+                return scopes
+
+            anchors_map = surface.get("anchors", {}) if isinstance(surface, dict) else {}
+            # Advisories via same mapping
+            violations_by_task: dict[str, list[dict]] = {t.task_id: [] for t in tasks}
+            advisories: list[str] = []
+            for t in tasks:
+                refs = getattr(t, "acceptance_refs", None)
+                if refs is None:
+                    refs = getattr(t, "test_refs", ()) or ()
+                if not refs:
+                    continue
+                own = task_scopes.get(t.task_id, set())
+                dep_scopes = _closure_scopes(t.task_id)
+                for a in refs:
+                    if not isinstance(a, str) or not a:
+                        continue
+                    entry = anchors_map.get(a)
+                    if entry is None:
+                        violations_by_task[t.task_id].append(
+                            {
+                                "anchor": a,
+                                "module": "",
+                                "owner_task": "",
+                                "depends_missing": True,
+                                "reason": "anchor missing from sidecar",
+                            }
+                        )
+                        continue
+                    mods = entry.get("modules", []) if isinstance(entry, dict) else []
+                    mapped: set[str] = set()
+                    for m in mods:
+                        if not isinstance(m, str):
+                            continue
+                        try:
+                            mapped.add(_module_to_path(m))
+                        except Exception:
+                            mapped.add(m.replace(".", "/") + ".py")
+                    # advisories: unowned
+                    for mp in sorted(mapped - all_scopes):
+                        advisories.append(f"anchor {a} imports unowned tracks module {mp}")
+                    needs = mapped & all_scopes
+                    missing = needs - own - dep_scopes
+                    for path in sorted(missing):
+                        owner = owner_map.get(path, "unknown")
+                        violations_by_task[t.task_id].append(
+                            {
+                                "anchor": a,
+                                "module": path,
+                                "owner_task": owner,
+                                "depends_missing": True,
+                            }
+                        )
+            # Keep all keys for shape stability (advisories side channel separate)
+            result: dict = {}
+            for tid, lst in violations_by_task.items():
+                result[tid] = lst
+            result["advisories"] = sorted(set(advisories))
+            return result
+        except Exception as exc:
+            return {"unavailable": f"infra: {exc}"}
 
     def _add_assignment_runtime_fields(
         self,
@@ -1099,8 +1227,23 @@ class MImplRuntimeMixin:
         valid, coverage_errors = validate_acceptance_coverage(tasks, plan_text)
         if not valid:
             errors.extend(coverage_errors)
+        # ------------------------------------------------------------------
+        # OOB b89 OB-3 — scope existence + sidecar freshness + satisfiability
+        # ------------------------------------------------------------------
+        satisfiability, satisfiability_advisories_for_evidence = self._b89_planning_gate(
+            tasks, vdir, plan_text, errors
+        )
+
         if errors:
-            self._emit_taskgraph_failure(cmd, state, "; ".join(errors), "\n".join(errors))
+            # evidence for satisfiability hard gate includes violations +
+            # advisories line-by-line (advisories not already in errors too)
+            evidence_parts: list[str] = list(errors)
+            for adv in satisfiability_advisories_for_evidence:
+                if adv not in evidence_parts:
+                    evidence_parts.append(adv)
+            self._emit_taskgraph_failure(
+                cmd, state, "; ".join(errors), "\n".join(evidence_parts)
+            )
             return
         # B33（#34）：规划期锚点实测——任务型裁定机械化（r1 回滚 #2 的
         # 拦截：锚已绿的任务不得排成标准 RGR/preset-anchor）。
@@ -1115,16 +1258,41 @@ class MImplRuntimeMixin:
             return
         for line in probe_report.advisory():
             print(f"  [taskgraph] {line}", file=sys.stderr, flush=True)
+        # OB-4: use the single rendering implementation (delegated)
         (vdir / "tasks.md").write_text(self._tasks_md(tasks), encoding="utf-8")
-        # B83: retained completions are derived from EVENT history, not live
-        # state -- the scope route (and any M-IMPL re-entry) clears
-        # taskgraph_committed/task_refs before this commit, so state-only
-        # guards would silently retain nothing. The previous committed graph
-        # (last taskgraph.committed event) is the sole old-payload source;
-        # completed tasks whose payload is fully equivalent in the new graph
-        # carry over, redefined/merged ones re-run. This also preserves the
-        # FR-0150 cross-cycle semantics (completions count across cycles).
-        retained_ids = []
+        retained_ids = self._retained_completed_ids(tasks)
+        # OB-3: enrich anchor_probe summary and committed payload with satisfiability
+        probe_payload = probe_summary(probe_report)
+        probe_payload["satisfiability"] = dict(satisfiability)
+        committed_payload: dict = {
+            "task_count": len(tasks),
+            "task_ids": [t.task_id for t in tasks],
+            "tasks": [self._task_payload(t) for t in tasks],
+            "path": "tasks.json",
+            "validate_status": "pass",
+            "digest": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+            "tasks_md": "tasks.md",
+            "anchor_probe": probe_payload,
+            "satisfiability": dict(probe_payload["satisfiability"]),
+            "probe_summary": dict(probe_payload),
+            "retained_completed_task_ids": retained_ids,
+        }
+        self._emit(
+            "taskgraph.committed",
+            committed_payload,
+            command_id=cmd.command_id,
+        )
+        self._rebuild_task_log_projection()
+
+    def _retained_completed_ids(self, tasks: list[TaskNode]) -> list[str]:
+        """B83: retained completions are derived from EVENT history, not live
+        state -- the scope route (and any M-IMPL re-entry) clears
+        taskgraph_committed/task_refs before this commit, so state-only
+        guards would silently retain nothing. The previous committed graph
+        (last taskgraph.committed event) is the sole old-payload source;
+        completed tasks whose payload is fully equivalent in the new graph
+        carry over, redefined/merged ones re-run. This also preserves the
+        FR-0150 cross-cycle semantics (completions count across cycles)."""
         prev_graph_ev = next(
             (
                 ev
@@ -1133,37 +1301,76 @@ class MImplRuntimeMixin:
             ),
             None,
         )
-        if prev_graph_ev is not None:
-            events = list(self.store.events(self.run_id))
-            completed_ids = {
-                ev.payload.get("task_id")
-                for ev in events
-                if ev.type == "task.completed" and ev.payload.get("task_id")
-            }
-            old_payloads = [
-                t
-                for t in prev_graph_ev.payload.get("tasks") or []
-                if isinstance(t, dict)
-            ]
-            retained_ids = self._compute_retained_completions(
-                old_payloads, [self._task_payload(t) for t in tasks], completed_ids
-            )
-        self._emit(
-            "taskgraph.committed",
-            {
-                "task_count": len(tasks),
-                "task_ids": [t.task_id for t in tasks],
-                "tasks": [self._task_payload(t) for t in tasks],
-                "path": "tasks.json",
-                "validate_status": "pass",
-                "digest": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
-                "tasks_md": "tasks.md",
-                "anchor_probe": probe_summary(probe_report),
-                "retained_completed_task_ids": retained_ids,
-            },
-            command_id=cmd.command_id,
+        if prev_graph_ev is None:
+            return []
+        events = list(self.store.events(self.run_id))
+        completed_ids = {
+            ev.payload.get("task_id")
+            for ev in events
+            if ev.type == "task.completed" and ev.payload.get("task_id")
+        }
+        old_payloads = [
+            t
+            for t in prev_graph_ev.payload.get("tasks") or []
+            if isinstance(t, dict)
+        ]
+        return self._compute_retained_completions(
+            old_payloads, [self._task_payload(t) for t in tasks], completed_ids
         )
-        self._rebuild_task_log_projection()
+
+    def _b89_planning_gate(
+        self,
+        tasks: list[TaskNode],
+        vdir: Path,
+        plan_text: str,
+        errors: list[str],
+    ) -> tuple[dict, list[str]]:
+        """OOB b89 OB-3: scope existence + sidecar freshness + satisfiability.
+
+        Schema-1 legacy graphs skip all three checks (same bound as
+        ``validate_acceptance_coverage``). Scope-existence errors join the
+        hard-gate ``errors`` channel; anchor-satisfiability infra failures
+        degrade to a non-blocking ``skipped`` marker (stderr already printed
+        inside the helper) so an otherwise-good graph still commits without
+        a silent pass. Returns ``(satisfiability, advisories_for_evidence)``.
+        """
+        is_legacy = bool(tasks) and any(getattr(t, "schema", 1) == 1 for t in tasks)
+        if is_legacy:
+            return {"violations": [], "advisories": [], "skipped": "schema-1"}, []
+        # 1) scope existence (hard gate, same errors channel)
+        try:
+            arch_path = vdir / "architecture.md"
+            arch_text = arch_path.read_text(encoding="utf-8") if arch_path.exists() else ""
+            design_text = arch_text + "\n" + plan_text
+            ok_scope, scope_errs = validate_scope_existence(
+                tasks, repo=Path(self.repo), design_docs_text=design_text
+            )
+            if not ok_scope:
+                errors.extend(scope_errs)
+        except Exception as exc:  # infra / unexpected
+            print(f"scope existence check failed (infra): {exc}", file=sys.stderr, flush=True)
+            errors.append(f"scope existence infra failure: {exc}")
+        # 2+3) sidecar freshness + satisfiability (hard gate, infra → skipped)
+        satisfiability: dict
+        advisories_for_evidence: list[str] = []
+        try:
+            violations, advisories, skipped = self._evaluate_satisfiability(tasks, vdir)
+            if skipped is not None:
+                satisfiability = {
+                    "violations": [],
+                    "advisories": advisories,
+                    "skipped": skipped,
+                }
+            else:
+                satisfiability = {"violations": violations, "advisories": advisories}
+                if violations:
+                    errors.extend(violations)
+            advisories_for_evidence = list(advisories)
+        except Exception as exc:
+            # infra failure already printed inside helper; keep skip marker
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            satisfiability = {"violations": [], "advisories": [], "skipped": f"infra: {exc}"}
+        return satisfiability, advisories_for_evidence
 
     def _probe_anchor_types(self, tasks):
         """B33（#34）：load_contract 失败（宿主无合同）时跳过实测。"""
@@ -1174,6 +1381,135 @@ class MImplRuntimeMixin:
                 skipped_reason="anchor probe skipped: no project contract"
             )
         return probe_task_anchors(Path(self.repo), tasks, contract)
+
+    def _evaluate_satisfiability(  # noqa: CCR001
+        self, tasks, vdir: Path
+    ) -> tuple[list[str], list[str], str | None]:
+        """OOB b89 OB-3: sidecar freshness + ``validate_anchor_satisfiability``.
+
+        Returns ``(violations, advisories, skipped)``. ``skipped`` non-None
+        indicates infra skip (stderr already printed) and violations/advisories
+        must not be treated as hard failures.
+
+        Freshness keys: ``schema==1``, ``anchor_set_digest`` vs current anchor
+        set, ``recorded_tree`` vs current ``_dirty_tree_stamp``. Stale triggers
+        a regen via ``collect_anchor_surface(jobs=4)`` and an atomic write to
+        ``vdir/anchor-surface.json`` + ``.tracks/runtime/blobs/<sha>``.
+        """
+        import hashlib as _hashlib
+        import json as _json
+        from pathlib import Path as _Path
+
+        from tracks.executor.anchor_surface import (
+            AnchorSurfaceError,
+            collect_anchor_surface,
+            load_anchor_surface,
+        )
+        from tracks.executor.taskgraph import validate_anchor_satisfiability
+
+        repo = _Path(self.repo)
+        vdir = _Path(vdir)
+        sidecar_path = vdir / "anchor-surface.json"
+
+        # Collect anchor node-ids (mirrors anchor_surface._load_anchors_from_tasks)
+        anchors: list[str] = []
+        seen: set[str] = set()
+        for t in tasks:
+            refs = getattr(t, "acceptance_refs", None)
+            if refs is None:
+                refs = getattr(t, "test_refs", ()) or ()
+            for r in refs or []:
+                if isinstance(r, str) and r.startswith("tests/") and r not in seen:
+                    seen.add(r)
+                    anchors.append(r)
+        anchors = sorted(seen)
+
+        # Expected digest (mirrors anchor_surface._anchor_set_digest)
+        expected_digest = _hashlib.sha256("\n".join(sorted(anchors)).encode("utf-8")).hexdigest()
+        # Current dirty tree stamp (mirrors executor._dirty_tree_stamp)
+        try:
+            current_tree = self._dirty_tree_stamp()  # type: ignore[attr-defined]
+        except Exception:
+            # fallback to anchor_surface's stamp
+            from tracks.executor.anchor_surface import _dirty_tree_stamp as _surface_stamp
+
+            current_tree = _surface_stamp(repo)
+
+        # Try to load existing sidecar and decide freshness
+        need_regen = False
+        surface: dict | None = None
+        try:
+            data = load_anchor_surface(sidecar_path)
+            if (
+                data.get("schema") != 1
+                or data.get("anchor_set_digest") != expected_digest
+                or data.get("recorded_tree") != current_tree
+            ):
+                need_regen = True
+            else:
+                surface = data
+        except AnchorSurfaceError as exc:
+            need_regen = True
+            # keep exc for stale reason; regen will be attempted
+            _regen_reason = str(exc)
+        except Exception as exc:
+            need_regen = True
+            _regen_reason = str(exc)
+
+        if surface is not None and not need_regen:
+            ok, violations, advisories = validate_anchor_satisfiability(tasks, surface)
+            return violations, advisories, None
+
+        # Need regeneration (stale or missing)
+        # Load contract as _probe_anchor_types does
+        try:
+            contract = load_contract(repo)
+        except ContractError as exc:
+            # no contract → satisfiability cannot be evaluated; treat as infra skip
+            msg = f"infra: no contract: {exc}"
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return [], [], msg
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return [], [], f"infra: {exc}"
+
+        # Collect (jobs=4)
+        try:
+            surface = collect_anchor_surface(repo, anchors, contract, jobs=4)
+        except AnchorSurfaceError as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return [], [], f"infra: {exc}"
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return [], [], f"infra: {exc}"
+
+        # Persist sidecar + blobs cache (best-effort)
+        try:
+            sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+            sidecar_path.write_text(
+                _json.dumps(surface, indent=2, sort_keys=True), encoding="utf-8"
+            )
+            try:
+                stamp = _json.dumps(surface, sort_keys=True).encode("utf-8")
+                h = _hashlib.sha256(stamp).hexdigest()
+                blobs_dir = repo / ".tracks" / "runtime" / "blobs"
+                blobs_dir.mkdir(parents=True, exist_ok=True)
+                (blobs_dir / h).write_text(_json.dumps(surface, sort_keys=True), encoding="utf-8")
+            except Exception:
+                pass
+        except Exception as exc:
+            # write failure → treat as infra skip (but still try to validate with in-memory surface)
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            # still validate with the in-memory surface if usable
+            pass
+
+        # Validate with the (fresh or best-effort) surface
+        try:
+            ok, violations, advisories = validate_anchor_satisfiability(tasks, surface)
+            return violations, advisories, None
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return [], [], f"infra: {exc}"
 
     @staticmethod
     def _read_taskgraph(path: Path) -> tuple[str, str | None]:
@@ -1291,26 +1627,10 @@ class MImplRuntimeMixin:
 
     @staticmethod
     def _tasks_md(tasks) -> str:
-        lines = ["# Task Graph", ""]
-        for task in tasks:
-            lines.extend(
-                [
-                    f"## {task.task_id}",
-                    f"- Issue: #{task.issue_number}",
-                    f"- Description: {task.description}",
-                    f"- AC refs: {', '.join(task.ac_refs)}",
-                    f"- FR refs: {', '.join(task.fr_refs)}",
-                    f"- IF ids: {', '.join(task.if_ids)}",
-                    f"- Unit refs: {', '.join(task.unit_refs) if task.unit_refs else '-'}",
-                    f"- Acceptance refs: {', '.join(task.acceptance_refs)}",
-                    f"- Scope: {task.scope_boundary}",
-                    f"- Depends on: {', '.join(task.depends_on) if task.depends_on else '-'}",
-                    f"- Batch: {task.batch}",
-                    f"- Parallel: {task.parallel}",
-                    "",
-                ]
-            )
-        return "\n".join(lines)
+        """OOB b89 OB-4: delegate to the single ``taskgraph.render_tasks_md`` implementation."""
+        from tracks.executor.taskgraph import render_tasks_md
+
+        return render_tasks_md(tasks)
 
     def _do_check_island_1(self, cmd, state, task_id, reconcile):
         vdir = self._vdir()

@@ -647,9 +647,15 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
 
 
 def _m_impl_archer_dispatch(s: State) -> Command:
-    """PLANNING: dispatch Archer to decompose the task graph."""
+    """PLANNING: dispatch Archer to decompose the task graph.
+
+    Skills: the stage methodology skill (tracks-archer-planning) plus the
+    discussion protocol. The large guard-stack catalog (tracks-quality-guards)
+    is NOT injected by default — PLANNING does not design the host guard
+    stack; inject it only when an assignment's task actually requires it.
+    """
     assignment = _m_impl_base_assignment(
-        s, "archer", "PLANNING", ["tracks-discuz", "tracks-quality-guards"]
+        s, "archer", "PLANNING", ["tracks-discuz", "tracks-archer-planning"]
     )
     assignment["target_doc"] = "tasks.json"
     params = {
@@ -802,7 +808,9 @@ def _m_impl_shield_dispatch(s: State) -> Command:
     The machine substate stays SHIELD_FIX (flow.md §10), but the dispatched
     agent substate is WRITE per test_dispatch_materialization.py lines 35-43.
     """
-    assignment = _m_impl_base_assignment(s, "shield", "WRITE", ["tracks-discuz"])
+    assignment = _m_impl_base_assignment(
+        s, "shield", "WRITE", ["tracks-discuz", "tracks-shield"]
+    )
     # B28/#30 slim (PRISM-B28-R1-04): same writer manifest contract as the
     # M-TEST Shield WRITE dispatch — SHIELD_FIX returns a manifest too.
     assignment["manifest_contract"] = dict(WRITE_MANIFEST_CONTRACT)
