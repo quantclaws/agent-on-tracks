@@ -76,6 +76,53 @@ def test_diagnose_unknown_classification_emits_contract_violation():
     assert payload["attempt"] == 2
 
 
+def test_diagnose_dict_evidence_with_output_ref_is_json_encoded():
+    """run 01M19FJ T-004: Prism evidence may be a dict; appending the
+    blob-ref transcript suffix must JSON-encode non-str evidence instead of
+    crashing with ``TypeError: unsupported operand for +=: 'dict' and 'str'``."""
+    ex = _RecordingExecutor()
+    state = _diagnose_state(attempt=0)
+    result = {
+        "status": "done",
+        "verdict": "impl_defect",
+        "diagnosis": {
+            "reason": "GREEN attempt 2 failed",
+            "evidence": {"failing": "test_escape_gate_red.py", "attempts": 2},
+        },
+        "output_ref": "blob-abc123",
+    }
+    cmd = _cmd()
+
+    ex._emit_diagnose_verdict(result, state, cmd, task_id="T-DIAG-1")
+
+    assert len(ex.emitted) == 1
+    event_type, payload, _ = ex.emitted[0]
+    assert event_type == "verdict.failed"
+    assert isinstance(payload["evidence"], str)
+    assert "full diagnosis transcript: .tracks/runtime/blobs/blob-abc123" in payload["evidence"]
+    assert "test_escape_gate_red.py" in payload["evidence"]
+
+
+def test_diagnose_str_evidence_with_output_ref_keeps_suffix_append():
+    """str evidence still gets the plain suffix (no JSON re-encoding)."""
+    ex = _RecordingExecutor()
+    state = _diagnose_state(attempt=0)
+    result = {
+        "status": "done",
+        "verdict": "test_defect",
+        "diagnosis": {"reason": "r", "evidence": "plain string evidence"},
+        "output_ref": "blob-xyz",
+    }
+    cmd = _cmd()
+
+    ex._emit_diagnose_verdict(result, state, cmd, task_id="T-DIAG-1")
+
+    _, payload, _ = ex.emitted[0]
+    assert payload["evidence"] == (
+        "plain string evidence; full diagnosis transcript: .tracks/runtime/blobs/blob-xyz"
+    )
+
+
 def test_diagnose_valid_classification_does_not_emit_contract_violation():
     """A valid classification still routes through the normal verdict path."""
     for valid in ("test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"):

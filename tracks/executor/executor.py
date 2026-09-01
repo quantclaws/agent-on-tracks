@@ -2950,6 +2950,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # output is passed by blob reference, not re-derived downstream).
         ref = result.get("output_ref")
         if ref:
+            if not isinstance(evidence, str):
+                evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
             evidence += f"; full diagnosis transcript: .tracks/runtime/blobs/{ref}"
         target = (
             "M-IMPL"
