@@ -81,21 +81,23 @@ def establish_escape_barrier(run_id: str) -> dict:
     """Cutover sequence + quiesce/cancel in-flight dispatches; emits
     escape.barrier_established {cutover_seq} (AC-FR0287-02).
 
-    b93: persistent max seq from event store (barrier seq = cutover+1,
-    cross-process monotonic); in-memory fallback for pure unit tests
-    without a store.
+    b93: cutover_seq is the run's persistent max seq (the barrier event
+    lands at cutover+1, cross-process monotonic). A store-backed run with an
+    empty log reports cutover_seq == 0 — the run_id-hash/in-process counter
+    fallback is reserved for the no-store pure-unit context only.
     """
     global _BARRIER_SEQ
     _BARRIER_SEQ += 1
     max_seq = _persistent_max_seq(run_id)
-    if max_seq is not None and max_seq > 0:
-        seq = max_seq
-        last = _BARRIER_LAST.get(run_id, 0)
-        if seq <= last:
-            seq = last + 1
-        seq = max(seq, last + 1)
+    if max_seq is not None:
+        # store-backed: persistent max seq is authoritative (0 is a valid
+        # cutover); the in-process marker only guarantees strict monotonic
+        # successive calls before the barrier event is recorded.
+        last = _BARRIER_LAST.get(run_id, -1)
+        seq = max(max_seq, last + 1)
         _BARRIER_LAST[run_id] = seq
         return {"cutover_seq": seq, "quiesced_dispatches": []}
+    # no store (pure unit context): deterministic hash + monotonic counter
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
     base = int(digest[:6], 16) % 1000
     seq = base + _BARRIER_SEQ * 1000 + 10
@@ -110,13 +112,14 @@ def quarantine_late_outcome(barrier: dict, outcome: dict) -> dict:
     """Outcome dispatched before the barrier but arriving after it:
     escape.late_outcome quarantined; never checkpointed or published.
 
-    Only outcomes with seq < cutover are quarantined; at/after cutover
-    are allowed (not quarantined).
+    b93/test-plan §8.1: the barrier event lands at cutover+1, so outcomes
+    with seq <= cutover were dispatched before the barrier and are
+    quarantined; seq >= cutover+1 arrived after and are allowed.
     """
     dispatch_id = outcome.get("dispatch_id", "")
     b_seq = barrier.get("cutover_seq")
     o_seq = outcome.get("seq")
-    is_before = isinstance(b_seq, int) and isinstance(o_seq, int) and o_seq < b_seq
+    is_before = isinstance(b_seq, int) and isinstance(o_seq, int) and o_seq <= b_seq
     if is_before:
         return {
             "dispatch_id": dispatch_id,
@@ -142,8 +145,9 @@ def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
     test freeze lifts only when returning to before M-TEST.
 
     b93: only emit for buckets that actually exist in the run's event
-    log; fallback to all buckets for pure unit tests without a store
-    (keeps existing v2 tests green).
+    log — a store-backed run with an empty log emits NOTHING. The
+    all-buckets fallback applies only when no store exists (pure unit
+    context).
     """
     all_buckets = [
         "candidate.frozen",
@@ -154,11 +158,13 @@ def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
         "release.decided",
     ]
     existing = _existing_event_types(run_id)
-    if existing is not None and len(existing) > 0:
+    if existing is not None:
+        # store-backed: only buckets actually present in the log
         buckets = [b for b in all_buckets if b in existing]
         if not buckets:
             return []
     else:
+        # no store (pure unit context): keep the coarse fallback
         buckets = all_buckets
     out: list[dict] = []
     for bucket in buckets:
