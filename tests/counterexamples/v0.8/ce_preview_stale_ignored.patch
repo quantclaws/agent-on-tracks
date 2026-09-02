@@ -1,0 +1,11 @@
+--- a/tracks/executor/release_gate.py
++++ b/tracks/executor/release_gate.py
+@@ -106,7 +106,7 @@
+     current = current_aggregate or {}
+     if not current:
+         return None
+-    if current.get("candidate_sha") != preview.get("candidate_sha"):
++    if False:  # Counterexample AC-FR0273-02: candidate drift ignored
+         return "candidate_drift"
+     if current.get("preview_digest") is not None and current.get("preview_digest") != preview.get(
+         "preview_digest"

@@ -1,12 +1,11 @@
-diff --git a/tracks/executor/release_gate.py b/tracks/executor/release_gate.py
-index 115c99e..cde21d8 100644
 --- a/tracks/executor/release_gate.py
 +++ b/tracks/executor/release_gate.py
-@@ -25,7 +25,8 @@ def compute_preview_digest(
-     operation_plan_digest: str,
-     contract_policy_digest: str,
- ) -> str:
--    raise NotImplementedError("IF-RELEASE-002")
+@@ -76,8 +76,8 @@
+         "operation_plan_digest": operation_plan_digest,
+         "contract_policy_digest": contract_policy_digest,
+     }
+-    canonical = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+-    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 +    # Counterexample AC-FR0273-01: omit operation_plan_digest from digest
 +    return "sha256:" + "0" * 64
  
