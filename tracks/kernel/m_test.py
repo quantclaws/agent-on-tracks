@@ -291,7 +291,14 @@ def _m_test_shield_dispatch(s: State) -> Command:
 
 
 def _m_test_prism_dispatch(s: State) -> Command:
-    """PRISM_REVIEW: dispatch Prism with the criteria pack (D-29 triple ①)."""
+    """PRISM_REVIEW: dispatch Prism with the criteria pack (D-29 triple ①).
+
+    IF-PIPELINE-001 (FR-0285 / AC-FR0285-01): the dispatch envelope carries
+    the red.validated evidence reference so the prism.verdict consumes it
+    (isolated counterexample kill) — the red evidence, never a producer
+    self-check, is the authority Prism reviews against.
+    """
+    red_evidence = {"red_validated": s.red_validated, "findings": s.red_findings}
     params = {
         "role": "prism",
         "substate": "PRISM_REVIEW",
@@ -299,11 +306,13 @@ def _m_test_prism_dispatch(s: State) -> Command:
         "stage": "M-TEST",
         "attempt": s.current_attempt + 1,
         "docs": list(_M_TEST_CONTEXT_DOCS),
+        "red_evidence": dict(red_evidence),
         "assignment": {
             "kind": "PRISM_REVIEW",
             "skills": ["tracks-discuz", "tracks-prism-test"],
             "docs": list(_M_TEST_CONTEXT_DOCS),
             "criteria_pack": dict(_CRITERIA_PACK),
+            "red_evidence": dict(red_evidence),
         },
     }
     if s.last_failure:
@@ -337,9 +346,18 @@ def _m_test_write_route(s: State) -> Command | None:
 
 
 def _m_test_review_route(s: State) -> Command | None:
-    """PRISM_REVIEW route (SM-01.7): await an in-flight verdict or dispatch."""
+    """PRISM_REVIEW route (SM-01.7): await an in-flight verdict or dispatch.
+
+    IF-PIPELINE-001 (FR-0285 / AC-FR0285-01): Prism only ever consumes the
+    Runtime RED_CHECK evidence. A PRISM_REVIEW state whose red was never
+    validated (out-of-order / injected event stream — a missing pipeline
+    link) fails closed here: Prism is never dispatched on it.
+    """
     if s.reviewer_dispatched:
         return None  # awaiting Prism verdict
+    if not s.red_validated:
+        # IF-PIPELINE-001: no Runtime red.validated -> no Prism dispatch.
+        return None
     return _m_test_prism_dispatch(s)
 
 
