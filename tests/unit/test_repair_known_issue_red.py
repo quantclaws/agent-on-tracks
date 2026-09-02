@@ -18,6 +18,7 @@ added (RED discipline, manifest red_test_paths = tests/unit).
 from __future__ import annotations
 
 from tracks.executor.repair import (
+    assert_frozen_tests_untouched,
     classify_defect,
     judge_irreparable,
     list_known_issues_for_preview,
@@ -99,6 +100,33 @@ def test_open_repair_round_never_rolls_back():
     )
 
 
+# AC-FR0286-04@v0.8 TRACKS-TRACE IF-REPAIR-001 budget-exhaustion signal
+def test_open_repair_round_reports_budget_exhaustion():
+    """FR-0286 §4 / AC-FR0286-04: the repair budget is finite (default 3,
+    status shows round=<n>/3). Once the used rounds reach the budget, a
+    further open_repair_round MUST surface budget exhaustion (so the caller
+    routes to irreparable) instead of emitting an unbounded fresh round."""
+    first = _calls(
+        open_repair_round,
+        "RUN-budget",
+        {"defect_class": "behavior", "owner": "Devon", "discipline": "red_first"},
+        1,
+        label="open_repair_round",
+    )
+    assert first.get("round") == 1, f"assertion failure: first round must be 1, got {first!r}"
+    second = _calls(
+        open_repair_round,
+        "RUN-budget",
+        {"defect_class": "behavior", "owner": "Devon", "discipline": "red_first"},
+        1,
+        label="open_repair_round",
+    )
+    assert second.get("rounds_exhausted") is True or second.get("exhausted") is True, (
+        "assertion failure: with budget 1 a second open_repair_round must surface "
+        f"budget exhaustion, got {second!r}"
+    )
+
+
 # AC-FR0286-04@v0.8 TRACKS-TRACE IF-REPAIR-001 irreparable judgment
 def test_judge_irreparable_budget_and_attribution():
     """AC-FR0286-04: irreparable only when budget exhausted AND Prism confirms
@@ -132,6 +160,63 @@ def test_judge_irreparable_budget_and_attribution():
     )
     assert changed is False, (
         "assertion failure: Prism attribution changed must keep repair path open"
+    )
+
+
+# AC-FR0286-04@v0.8 TRACKS-TRACE IF-REPAIR-002 C-class alternate triggers
+def test_judge_irreparable_no_fix_or_contract_revision():
+    """AC-FR0286-04: the two alternate C-class triggers are irreparable on
+    their own — a fix that exceeds controlled contract revision, or a
+    dependency with no available fix — regardless of remaining budget."""
+    no_fix = _calls(
+        judge_irreparable,
+        1,
+        3,
+        {"attribution_unchanged": True, "no_fix_available": True},
+        label="judge_irreparable",
+    )
+    assert no_fix is True, (
+        "assertion failure: a dependency with no available fix must be judged "
+        "irreparable even with repair budget remaining"
+    )
+    exceeds = _calls(
+        judge_irreparable,
+        1,
+        3,
+        {"attribution_unchanged": True, "exceeds_contract_revision": True},
+        label="judge_irreparable",
+    )
+    assert exceeds is True, (
+        "assertion failure: a fix exceeding controlled contract revision must "
+        "be judged irreparable even with repair budget remaining"
+    )
+
+
+# AC-FR0286-02@v0.8 TRACKS-TRACE IF-REPAIR-001 frozen missing file blocks
+def test_assert_frozen_tests_untouched_missing_file_blocks(tmp_path):
+    """FR-0286 §10: a frozen test registered in before_digests that is MISSING
+    from the repo is also a frozen-test breach — it must fail closed as a
+    contract assertion, not leak an unrelated FileNotFoundError."""
+    breach = AssertionError  # the contracted fail-closed shape
+    try:
+        assert_frozen_tests_untouched(
+            tmp_path,
+            {"tests/integration/test_vanished_frozen.py": "deadbeef"},
+        )
+    except breach:
+        return  # contract breach surfaced fail-closed
+    except NotImplementedError as err:
+        raise AssertionError(
+            "assertion failure: assert_frozen_tests_untouched not implemented"
+        ) from err
+    except Exception as err:  # noqa: BLE001
+        raise AssertionError(
+            "assertion failure: a missing frozen test must fail closed as a "
+            f"frozen-test contract breach (AssertionError), got {type(err).__name__}"
+        ) from err
+    raise AssertionError(
+        "assertion failure: a missing frozen test must fail closed, but no "
+        "breach was raised"
     )
 
 

@@ -1,0 +1,12 @@
+--- a/tracks/kernel/m_test.py
++++ b/tracks/kernel/m_test.py
+@@ -103,8 +103,7 @@
+         if p.get("basis") == "unit-only hotfix increment":
+             s.substate = "EXIT"
+         else:
+-            s.substate = "PRISM_REVIEW"
+-            _reset_review(s)
++            s.substate = "DIAGNOSE"  # Counterexample AC-FR0285-01: valid red never reaches Prism
+     else:
+         s.red_validated = False
+         s.substate = "DIAGNOSE"

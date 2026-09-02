@@ -1,0 +1,11 @@
+--- a/tracks/kernel/m_test.py
++++ b/tracks/kernel/m_test.py
+@@ -129,7 +129,7 @@
+     # (same as _on_m_test_outcome_done for WRITE -> COLLECT).
+     s.active_result = None  # v0.5: pipeline publish complete
+     if s.substate == "WRITE":
+-        s.substate = "COLLECT"
++        s.substate = "PRISM_REVIEW"  # Counterexample AC-FR0285-02: selfcheck becomes authority
+ 
+ 
+ def _park_for_operator(s: State) -> None:
