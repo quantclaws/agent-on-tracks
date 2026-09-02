@@ -1,0 +1,11 @@
+--- a/tracks/executor/repair.py
++++ b/tracks/executor/repair.py
+@@ -118,7 +118,7 @@
+     attribution = attribution or {}
+     kind = str(attribution.get("kind", ""))
+     item = attribution.get("item_or_ac", "")
+-    if kind in _NOT_PRODUCT_DEFECT:
++    if kind in _NOT_PRODUCT_DEFECT and False:  # Counterexample AC-FR0286-06: mechanism wrongly registered
+         return {
+             "event": "known_issue.rejected",
+             "reason": "not_product_defect",

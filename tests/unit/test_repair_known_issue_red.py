@@ -1,0 +1,197 @@
+"""T-029 RED: in-place repair + Known Issue policy (FR-0286, NFR-0143).
+
+Pins the still-unimplemented slices of tracks/executor/repair.py:
+
+- IF-REPAIR-001: closed-set defect classification (behavior/gate/cve/
+  contract -> owner + discipline), round_started without any stage.rolled_back
+  semantics, frozen-test preservation across a repair round.
+- IF-KNOWNISSUE-001: register only Prism-confirmed product-quality defects
+  (known-issue label + candidate/evidence linkage); reject mechanism failures
+  and security findings (not_product_defect); the preview must list every
+  unfixed known issue (informed consent, AC-FR0286-05).
+
+All target tests fail on the pre-fix baseline with assertion_failure on the
+contract behaviour (no stub_token, no assembly errors). Only unit tests are
+added (RED discipline, manifest red_test_paths = tests/unit).
+"""
+
+from __future__ import annotations
+
+from tracks.executor.repair import (
+    classify_defect,
+    judge_irreparable,
+    list_known_issues_for_preview,
+    open_repair_round,
+    register_known_issue,
+)
+
+
+def _calls(fn, *args, label: str):
+    try:
+        return fn(*args)
+    except NotImplementedError as err:
+        raise AssertionError(
+            f"assertion failure: {label} not implemented"
+        ) from err
+
+
+# AC-FR0286-02@v0.8 TRACKS-TRACE IF-REPAIR-001 closed classification
+def test_classify_defect_closed_set():
+    """IF-REPAIR-001: closed defect_class -> owner + discipline mapping
+    (behavior->Devon RED-first, gate->verification-only, cve->Archer advisory,
+    contract->controlled revision); unknown finding fails closed."""
+    for finding, expected in (
+        ({"kind": "behavior"}, "behavior"),
+        ({"kind": "gate"}, "gate"),
+        ({"kind": "cve"}, "cve"),
+        ({"kind": "contract"}, "contract"),
+    ):
+        result = _calls(classify_defect, finding, {}, label="classify_defect")
+        assert isinstance(result, dict), "assertion failure: classification must be dict"
+        assert result.get("defect_class") == expected, (
+            f"assertion failure: expected defect_class={expected}, got {result!r}"
+        )
+        assert result.get("owner"), f"assertion failure: missing owner in {result!r}"
+        assert result.get("discipline"), f"assertion failure: missing discipline in {result!r}"
+
+
+# AC-FR0286-02@v0.8 TRACKS-TRACE IF-REPAIR-001 discipline mapping
+def test_classify_defect_discipline_owner():
+    """IF-REPAIR-001: the discipline/owner pairs are exact per FR-0286 §2
+    (behavior->Devon + red_first; gate->verification_only; cve->Archer advisory;
+    contract->contract_delta)."""
+    mapping = {
+        "behavior": ("Devon", "red_first"),
+        "gate": (None, "verification_only"),
+        "cve": ("Archer", "cve_advisory"),
+        "contract": (None, "contract_delta"),
+    }
+    for kind, (owner, discipline) in mapping.items():
+        result = _calls(classify_defect, {"kind": kind}, {}, label="classify_defect")
+        if owner is not None:
+            assert result.get("owner") == owner, (
+                f"assertion failure: {kind} owner must be {owner}, got {result!r}"
+            )
+        assert result.get("discipline") == discipline, (
+            f"assertion failure: {kind} discipline must be {discipline}, got {result!r}"
+        )
+
+
+# AC-FR0286-01@v0.8 TRACKS-TRACE IF-REPAIR-001 round_started never rollback
+def test_open_repair_round_never_rolls_back():
+    """AC-FR0286-01: open_repair_round emits round_started {round, budget,
+    classification} bound to the candidate; it NEVER carries a
+    stage.rolled_back / rollback command — in-place repair only."""
+    result = _calls(
+        open_repair_round,
+        "RUN",
+        {"defect_class": "behavior", "owner": "Devon", "discipline": "red_first"},
+        3,
+        label="open_repair_round",
+    )
+    assert isinstance(result, dict), "assertion failure: round_started must be dict"
+    assert result.get("round") == 1, f"assertion failure: first round must be 1, got {result!r}"
+    assert result.get("budget") == 3
+    assert result.get("classification", {}).get("defect_class") == "behavior"
+    serialized = str(result)
+    assert "rolled_back" not in serialized, (
+        f"assertion failure: in-place repair must never roll back, got {serialized!r}"
+    )
+
+
+# AC-FR0286-04@v0.8 TRACKS-TRACE IF-REPAIR-001 irreparable judgment
+def test_judge_irreparable_budget_and_attribution():
+    """AC-FR0286-04: irreparable only when budget exhausted AND Prism confirms
+    attribution unchanged; with budget remaining it is never irreparable."""
+    exhausted = _calls(
+        judge_irreparable,
+        3,
+        3,
+        {"attribution_unchanged": True},
+        label="judge_irreparable",
+    )
+    assert exhausted is True, (
+        "assertion failure: budget exhausted + attribution unchanged must be irreparable"
+    )
+    remaining = _calls(
+        judge_irreparable,
+        1,
+        3,
+        {"attribution_unchanged": True},
+        label="judge_irreparable",
+    )
+    assert remaining is False, (
+        "assertion failure: budget not exhausted must not be irreparable"
+    )
+    changed = _calls(
+        judge_irreparable,
+        3,
+        3,
+        {"attribution_unchanged": False},
+        label="judge_irreparable",
+    )
+    assert changed is False, (
+        "assertion failure: Prism attribution changed must keep repair path open"
+    )
+
+
+# AC-FR0286-05@v0.8 TRACKS-TRACE IF-KNOWNISSUE-001 register product defect
+def test_register_known_issue_product_defect():
+    """AC-FR0286-05: a Prism-confirmed product-quality defect registers with
+    the known-issue label and links candidate + evidence refs."""
+    result = _calls(
+        register_known_issue,
+        "repo",
+        {"kind": "behavior", "item_or_ac": "AC-FR0286-05"},
+        "c" * 40,
+        label="register_known_issue",
+    )
+    assert isinstance(result, dict), "assertion failure: registration must be dict"
+    assert result.get("label") == "known-issue", (
+        f"assertion failure: label must be known-issue, got {result!r}"
+    )
+    assert result.get("candidate_sha") == "c" * 40
+    assert result.get("issue_number") or result.get("url"), (
+        f"assertion failure: registration must carry issue number/url, got {result!r}"
+    )
+
+
+# AC-FR0286-06@v0.8 TRACKS-TRACE IF-KNOWNISSUE-001 exclusions rejected
+def test_register_known_issue_rejects_mechanism_and_security():
+    """AC-FR0286-06: mechanism failures and security findings are excluded —
+    registration is rejected with reason=not_product_defect."""
+    for excluded in ("mechanism_failure", "security_finding"):
+        result = _calls(
+            register_known_issue,
+            "repo",
+            {"kind": excluded, "item_or_ac": "AC-FR0286-06"},
+            "c" * 40,
+            label="register_known_issue",
+        )
+        assert isinstance(result, dict)
+        assert result.get("reason") == "not_product_defect", (
+            f"assertion failure: excluded {excluded} must reject with "
+            f"not_product_defect, got {result!r}"
+        )
+        assert not result.get("issue_number"), (
+            f"assertion failure: excluded {excluded} must not register an issue"
+        )
+
+
+# AC-FR0286-05@v0.8 TRACKS-TRACE IF-KNOWNISSUE-001 preview lists all unfixed
+def test_list_known_issues_for_preview():
+    """AC-FR0286-05: every unfixed known issue MUST appear in the preview —
+    an unlisted known issue blocks release (informed consent)."""
+    listed = _calls(
+        list_known_issues_for_preview,
+        "RUN-known",
+        label="list_known_issues_for_preview",
+    )
+    assert isinstance(listed, list), "assertion failure: preview list must be a list"
+    # each entry carries issue + waiver/AC linkage for the preview rendering
+    for entry in listed:
+        assert isinstance(entry, dict)
+        assert entry.get("issue"), f"assertion failure: preview entry missing issue, got {entry!r}"
+        assert entry.get("waiver"), (
+            f"assertion failure: preview entry missing waiver/AC binding, got {entry!r}"
+        )

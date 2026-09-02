@@ -152,3 +152,114 @@ def test_preview_digest_tracks_any_component_change():
         ) from err
     assert d1 != d2, "assertion failure: candidate change must change digest"
     assert d1 != d3, "assertion failure: contract change must change digest"
+
+
+# AC-FR0277-02@v0.8 TRACKS-TRACE IF-JOURNEY-001 when=active_release_branch skip
+def test_post_release_when_active_branch_step_skipped_without_branch():
+    """IF-JOURNEY-001 §1m: a post-release `merge:release/{minor}:when=
+    active_release_branch` step is silently SKIPPED when no active release
+    branch exists — the plan digest is computed over the actually-resolved
+    step set (no phantom sync-merge step)."""
+    try:
+        from tracks.executor.release_gate import build_operation_plan
+    except ImportError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan not implemented in release_gate"
+        ) from err
+    try:
+        plan = build_operation_plan(
+            {
+                "operations": {
+                    "post_release": {
+                        "steps": [
+                            "merge:main",
+                            "merge:release/{minor}:when=active_release_branch",
+                            "tag:v{minor}.{n}",
+                        ]
+                    }
+                }
+            },
+            "post-release",
+            {"minor": "0", "n": "1"},
+            active_release_branch=None,
+        )
+    except TypeError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan must accept an "
+            "active_release_branch input to honour the when=active_release_branch "
+            "step semantics (§1m)"
+        ) from err
+    except NotImplementedError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan not implemented for post-release"
+        ) from err
+    assert isinstance(plan, dict), "assertion failure: plan must be dict"
+    steps = plan.get("steps")
+    if steps is None:
+        steps = list(
+            plan.get("operations", {}).get("post_release", {}).get("steps", [])
+        )
+    assert "merge:main" in steps, (
+        f"assertion failure: unconditional merge:main must be in the resolved plan, "
+        f"got {steps!r}"
+    )
+    assert not any("when=active_release_branch" in s for s in steps), (
+        f"assertion failure: the when=active_release_branch step must be silently "
+        f"skipped when no active release branch exists, got {steps!r}"
+    )
+    assert not any("merge:release/" in s for s in steps), (
+        f"assertion failure: no sync-merge step may remain without an active "
+        f"release branch, got {steps!r}"
+    )
+
+
+# AC-FR0277-02@v0.8 TRACKS-TRACE IF-JOURNEY-001 when-step kept with branch
+def test_post_release_when_active_branch_kept_with_branch():
+    """IF-JOURNEY-001 §1m: with an active release branch present, the
+    `when=active_release_branch` step IS kept and its `{minor}` placeholder
+    resolved."""
+    try:
+        from tracks.executor.release_gate import build_operation_plan
+    except ImportError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan not implemented in release_gate"
+        ) from err
+    try:
+        plan = build_operation_plan(
+            {
+                "operations": {
+                    "post_release": {
+                        "steps": [
+                            "merge:release/{minor}:when=active_release_branch",
+                        ]
+                    }
+                }
+            },
+            "post-release",
+            {"minor": "0", "n": "1"},
+            active_release_branch="release/0",
+        )
+    except TypeError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan must accept an "
+            "active_release_branch input to honour the when=active_release_branch "
+            "step semantics (§1m)"
+        ) from err
+    except NotImplementedError as err:
+        raise AssertionError(
+            "assertion failure: build_operation_plan not implemented for post-release"
+        ) from err
+    assert isinstance(plan, dict), "assertion failure: plan must be dict"
+    steps = plan.get("steps")
+    if steps is None:
+        steps = list(
+            plan.get("operations", {}).get("post_release", {}).get("steps", [])
+        )
+    assert any("merge:release/" in s for s in steps), (
+        f"assertion failure: with an active release branch the sync-merge step "
+        f"must be kept, got {steps!r}"
+    )
+    assert any("release/0" in s for s in steps), (
+        f"assertion failure: the {{minor}} placeholder of the kept step must be "
+        f"resolved, got {steps!r}"
+    )

@@ -1,0 +1,11 @@
+--- a/tracks/executor/repair.py
++++ b/tracks/executor/repair.py
+@@ -34,7 +34,7 @@
+ 
+ # FR-0286 §6 exclusions: these NEVER become Known Issues (zero known issue
+ # for security; publish-mechanism failures must be fixed or abandoned).
+-_NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding"})
++_NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding", "behavior"})  # Counterexample AC-FR0286-05: behavior wrongly rejected
+ 
+ _ROUNDS: dict[str, int] = {}
+ _KNOWN_ISSUES: list[dict] = []
