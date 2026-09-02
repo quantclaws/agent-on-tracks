@@ -1,9 +1,18 @@
-"""Integration: issue mapping and fake rejection (FR-0283, NFR-0148, IF-ISSUE-001)."""
+"""Integration: issue mapping and fake rejection (FR-0283, NFR-0148, IF-ISSUE-001).
+
+b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
+(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
+is forbidden (v0.8 suite-wide defect). The issue-mapped / fake-rejected
+event producers are wired via the github effects boundary; until the runtime
+wiring for issue.mapped emission is complete the event-level assertions are
+legal Red against that product gap.
+"""
 
 from __future__ import annotations
 
 import pytest
 
+from tests.e2e.helpers import walk_to_m_impl_parked
 from tracks.effects.github import select_issue_backend
 
 pytestmark = pytest.mark.integration
@@ -11,8 +20,6 @@ pytestmark = pytest.mark.integration
 
 # AC-FR0283-01@v0.8 TRACKS-TRACE real issue created and mapped with api_verified
 def test_real_issue_created_and_mapped(host_repo, trac, event_log, monkeypatch):
-    # IF-ISSUE-001 is anchored via select_issue_backend; additional issue helpers are
-    # optional stubs that may not exist pre-implementation. We guard their import.
     try:
         from tracks.effects.github import create_issue_verified  # type: ignore[attr-defined]
 
@@ -26,7 +33,7 @@ def test_real_issue_created_and_mapped(host_repo, trac, event_log, monkeypatch):
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
     monkeypatch.setenv("GITHUB_TOKEN", "token")
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     mapped = [e for e in events if e["type"] == "issue.mapped"]
     assert mapped, "issue.mapped must appear after real issue creation"
@@ -47,19 +54,17 @@ def test_missing_credentials_needs_attention(host_repo, trac, event_log, monkeyp
     monkeypatch.delenv("TRAC_GITHUB_API_BASE", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("TRAC_GITHUB_REPO", raising=False)
-    # select_issue_backend is implemented (returns Fake backend in fake mode); verify it does not raise IF token
     backend = select_issue_backend(host_repo, "v0.8")
     assert backend is not None
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     mapped = [e for e in events if e["type"] == "issue.mapped" and e["payload"].get("api_verified") is True]
     assert not mapped, "without credentials, no api_verified mapping should appear"
     status = trac("status")
     assert "needs_attention" in status.stdout
     assert "issue_creation" in status.stdout or "missing_token" in status.stdout
-    assert 'export GITHUB_TOKEN' in status.stdout or 'next=' in status.stdout
-    # Restore and resume must create mapping
+    assert "export GITHUB_TOKEN" in status.stdout or "next=" in status.stdout
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
     monkeypatch.setenv("GITHUB_TOKEN", "token")
@@ -84,12 +89,11 @@ def test_fake_rejected_in_real_mode(host_repo, trac, event_log, monkeypatch):
     except NotImplementedError as exc:
         assert "IF-ISSUE-001" in str(exc)
 
-    # Real mode = no fake env vars
+    walk_to_m_impl_parked(trac)
     monkeypatch.delenv("TRAC_FAKE_SIMULATE", raising=False)
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "real")
     trac("run")
     events = event_log()
-    # If a FAKE-N artifact appears in real mode, fake_rejected must be emitted and blocked
     fake = [e for e in events if e["type"] == "fake_rejected"]
     assert fake, "fake_rejected must appear in real mode"
     assert fake[0]["payload"]["mode"] == "real"
@@ -114,14 +118,12 @@ def test_crash_idempotent_dedup(host_repo, trac, event_log, monkeypatch):
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
     monkeypatch.setenv("GITHUB_TOKEN", "token")
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     [e for e in events if e["type"] == "issue.mapped"]
-    # Simulate crash after first mapping and resume
     trac("run", "--resume")
     events2 = event_log()
     mapped2 = [e for e in events2 if e["type"] == "issue.mapped"]
-    # Dedup by repo+baseline_digest: no duplicate issue numbers
     numbers = [m["payload"]["issue_number"] for m in mapped2]
     assert len(numbers) == len(set(numbers)), "issue.mapped must be deduped by repo+baseline"
     replay = trac("replay").stdout
@@ -146,13 +148,12 @@ def test_authoritative_map_consumed(host_repo, trac, event_log, monkeypatch):
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
     monkeypatch.setenv("GITHUB_TOKEN", "token")
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     mapped = [e for e in events if e["type"] == "issue.mapped"]
     assert mapped
     report = trac("report").stdout
     assert "api_verified=true" in report
-    # Task/commit trailers must reference the mapped issue number
     replay = trac("replay").stdout
     if mapped:
         assert str(mapped[0]["payload"]["issue_number"]) in replay or "issue" in replay.lower()
@@ -173,6 +174,7 @@ def test_fake_map_not_consumed_by_closers(host_repo, trac, event_log, monkeypatc
     except NotImplementedError as exc:
         assert "IF-ISSUE-001" in str(exc)
 
+    walk_to_m_impl_parked(trac)
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", "1")
     trac("run")
     events = event_log()
