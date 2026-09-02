@@ -311,8 +311,8 @@ L3 缺凭据在 weekly/manual 输出 `LIVE_SKIPPED: missing <NAME>` 且不 fail�
 | AC-FR0286-04 | integration | tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape | IF-REPAIR-002, IF-KNOWNISSUE-001 |
 | AC-FR0286-05 | integration | tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived | IF-KNOWNISSUE-001 |
 | AC-FR0286-06 | integration | tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix | IF-KNOWNISSUE-001, IF-JOURNEY-001 |
-| AC-FR0287-01 | integration | tests/integration/test_escape_gate.py::test_universal_return_moves_pointer | IF-ESCAPE-001 |
-| AC-FR0287-02 | integration | tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes | IF-ESCAPE-001 |
+| AC-FR0287-01 | integration | tests/integration/test_escape_gate.py::test_universal_return_moves_pointer + tests/integration/test_escape_gate.py::test_pointer_rollback_lands_target_stage | IF-ESCAPE-001 |
+| AC-FR0287-02 | integration | tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes + tests/integration/test_escape_gate.py::test_escape_barrier_quiesces_inflight_dispatch | IF-ESCAPE-001 |
 | AC-FR0287-03 | integration | tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence | IF-ESCAPE-001 |
 | AC-FR0287-04 | integration | tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip | IF-ESCAPE-001, IF-PUBLISH-002 |
 | AC-FR0287-05 | integration | tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects | IF-ESCAPE-002 |
@@ -331,6 +331,17 @@ L3 缺凭据在 weekly/manual 输出 `LIVE_SKIPPED: missing <NAME>` 且不 fail�
 | AC-NFR0149-01 | e2e | tests/e2e/test_release_journeys_matrix.py::test_six_journeys_dual_host | IF-JOURNEY-001, IF-REFERENCE-001 |
 | AC-NFR0149-02 | integration | tests/integration/test_journey_recovery.py::test_interrupt_replay_reconcile_matrix | IF-PUBLISH-002, IF-MILESTONE-001 |
 | AC-NFR0149-03 | integration | tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked | IF-VERIFY-001, IF-PUBLISH-002, IF-ISSUE-001 |
+
+### 8.1 escape gate 锚点 batch 1 修订（b93 裁定；引导/前提/helper 合同）
+
+- **停车 walker**：A1-A4 的源态统一为 **M-IMPL/DIAGNOSE/awaiting=escalation**（失败注入停车；M-IMPL NEEDS_ATTENTION 同为合法源）。`walk_to_m_test_complete` 一次跑完即 completed(boundary)，**M-IMPL 停车只能靠失败注入**——新 helper（如 `walk_to_m_impl_parked`）沉入共享 helpers 并登记本节；引导链 `init → start <ver>（stdin 喂需求）→ run → triage go → 文档三阶段（run + review no-comment）→ run → approve --actor X → run → 失败注入停车`。**禁止裸 `trac run` 引导**（无 init/start 必 rc=1，系 v0.8 套件系统性缺陷，同因红的 sibling 套件一并按本 helper 修）。
+- **回拨目标可达上游化**：batch 1 机器注册止于 M-IMPL（M-VERIFY..M-MILESTONE 不可达），A1/A2 目标改 `--to M-TEST`（M-IMPL 停车的合法上游）；任何 `--to M-VERIFY` 锚点在 batch 1 均为前向、正确实现必拒，不得保留。
+- **A3 下游证据 seeding**：夹具直写 event store seed `candidate.frozen` + release 侧证据最小集（evidence.reused/ci.run_observed/security.assessed/release.previewed/release.decided），先例 `tests/integration/v07_closure_seed.py` + conftest `_v07_closure_seed`；断言「仅实际存在桶收到 evidence.staled(reason=human_return)」。
+- **A4 拆分**：(i) already_executed 报告 + `--confirm` 确认门（seed publish.executed done；无确认零事件不动指针）留 T-004 batch 1 锚点；(ii) `reconciled_skip` 断言移交 T-021/T-039 时代锚点（IF-PUBLISH-002 reconcile 语义，batch 1 无 M-PUBLISH 路由，seeding 亦不可达），由 PLANNING 注册。
+- **A5**：锚点归 T-001 族承载；正常引导 + 末断言查 `stdout+stderr`（`_err` 惯例走 stderr）；实现面无需改动。
+- **指针迁移断言分层**：batch 1 的 A1 断言门禁接受 + 事件序列（barrier→staled→human.return 双轨）+ kernel RETURNED 采纳 + escape status 五片段；「指针真实迁移完成」（stage.rolled_back 落目标阶段正确初始 substate、可再回拨不砖化）登记到 §1.0.14.1 后续任务（batch 2）锚点层——不得利用现弱断言洞让实现偷懒。
+- **cutover 判别**：`cutover_seq` 取事件库持久最大 seq（IF-ESCAPE-001 b93 B3）；late-outcome 判别 `outcome.seq ≤ cutover_seq ⇒ quarantine`；断言两次连续 return 的 cutover 严格递增（跨进程单调）。**边界案例钉死（b93 R2-B2）**：`outcome.seq == cutover_seq ⇒ quarantine`（barrier 前最后一条真实事件，必属 pre-barrier dispatch）；`outcome.seq > cutover_seq ⇒ allowed`（post-barrier 新事件 ≥ cutover+2，barrier 自身占 +1）。`tests/unit/test_escape_gate_red_v2.py::test_quarantine_allows_post_barrier_outcome` 的等值放行 pin（seq==cutover 判 allowed）停留在已废弃的旧合成 cutover 约定，**被本节语义 supersede**——后续由受控测试修订（T-004 修复流程，Devon red manifest）将 allowed 样本改为 `seq ≥ cutover_seq+1`；集成锚点现用 `cutover-1` 样本，两种语义下均 quarantined，不受影响。
+- **真实 quiesce / escape.late_outcome 拦截（deferred acceptance item，AC-FR0287-02 的 quiesce 半句）**：barrier 建立后在飞 dispatch 被取消/冻结、其迟到 outcome 落 `escape.late_outcome(quarantined)` 且不产生 checkpoint/publish——**Archer 裁定：并入 §1.0.14.1 batch 2 后续任务**（escape kernel/executor 落地任务：其 scope 已含 executor/executor.py 与 kernel 侧，dispatch 循环消费 cutover 与 rollback 闭合集扩展同文件同语义域，depends 仅 escape 实现任务，batch 2 即可闭环；不后移 T-039、不新建第三任务），由 PLANNING 注册进该任务 scope 与锚点层。
 
 ---
 
@@ -358,8 +369,8 @@ L3 缺凭据在 weekly/manual 输出 `LIVE_SKIPPED: missing <NAME>` 且不 fail�
 | R3 | 修复 commit → 新 candidate 重走（SM-01.20） | evidence.staled(reason=fix_new_candidate)；新 candidate.frozen；full_reuse 重判；旧 preview_digest 不复用 | test_inplace_repair::test_fix_new_candidate_rewalks_verify |
 | R4 | 同 candidate 原地重跑（无 HEAD 移动修复） | 新 prism.verdict/security.assessed 绑定同一 candidate_sha（FR-0271-02/FR-0272-02） | test_verify_prism_final::test_prism_fail_blocks_m_impl_gap；test_security_assessment::test_unknown_or_malformed_blocks（瞬态路径） |
 | R5 | 不可修复 → Known Issue / 逃生门（C 类） | blocked: irreparable；known-issue 登记/拒绝（not_product_defect）；preview 列出、trace waived+backlog | test_inplace_repair::test_irreparable_blocked_routes_to_known_issue_or_escape；test_known_issue 全部 |
-| R6 | 通用回拨（SM-01.19，D 类） | escape.barrier_established(cutover_seq)→late outcome quarantine→human.return→evidence.staled(human_return)；不可逆清单确认后指针移动 | test_escape_gate::test_universal_return_moves_pointer + test_escape_barrier_quarantines_late_outcomes + test_return_stales_downstream_evidence + test_irreversible_confirm_then_reconcile_skip |
-| R7 | 终止（SM-01.21/22） | terminal=cancelled；零外部副作用；trac run 拒绝 | test_escape_gate::test_abandon_terminal_zero_side_effects |
+| R6 | 通用回拨（SM-01.19，D 类） | escape.barrier_established(cutover_seq=事件库持久 seq)→late outcome quarantine→evidence.staled(human_return，仅存在桶)→human.return 双轨 payload；不可逆清单 already_executed 无确认零事件、`--confirm` 后事件序列；batch 1 指针迁移完成断言归后续任务（§8.1） | test_escape_gate::test_universal_return_moves_pointer + test_escape_barrier_quarantines_late_outcomes + test_return_stales_downstream_evidence + test_irreversible_confirm_then_reconcile_skip（均按 §8.1 修订：M-IMPL 停车 + `--to M-TEST` + seeding + A4 拆分） |
+| R7 | 终止（SM-01.21/22） | terminal=cancelled；零外部副作用；trac run 拒绝（_err 走 stderr） | test_escape_gate::test_abandon_terminal_zero_side_effects（T-001 族承载；正常引导 + stdout+stderr 断言） |
 | R8 | Prism revise 锚定（FR-0271-03） | 无锚定线程的 revise 判 revise_without_findings、不计有效阻断 | test_verify_prism_final::test_revise_requires_anchored_findings |
 
 ---

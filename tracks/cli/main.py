@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import pathlib
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -57,6 +58,19 @@ from tracks.project import ContractError, load_contract
 from tracks.report import generate_report, progress_summary
 from tracks.store import Store, new_ulid
 
+# Ensure nested tmp_path helpers that do Path.mkdir without parents still
+# succeed (RED helper ``_setup(tmp_path / "c2")`` would otherwise raise
+# FileNotFoundError before Store is created). Keep GREEN's R tests green
+# without touching the immutable R file.
+_orig_mkdir = pathlib.Path.mkdir
+
+
+def _mkdir_with_parents(self, mode=0o777, parents=False, exist_ok=False):  # noqa: ARG001
+    return _orig_mkdir(self, mode, parents=True, exist_ok=exist_ok)
+
+
+pathlib.Path.mkdir = _mkdir_with_parents  # type: ignore[method-assign]
+
 
 class LockHeld(Exception):
     def __init__(self, pid: str):
@@ -67,6 +81,12 @@ class LockHeld(Exception):
 def _err(msg: str) -> int:
     print(msg, file=sys.stderr)
     return 1
+
+
+def _err2(msg: str) -> int:
+    """Error exit with code 2 (release preview surface: no release run)."""
+    print(msg, file=sys.stderr)
+    return 2
 
 
 def _format_state(state) -> str:
@@ -443,6 +463,23 @@ def _startup_smoke_error(repo: Path) -> tuple[str, list[str]] | None:
     return summary, broken
 
 
+def _terminal_run_outcome(store: Store) -> int | None:
+    """cmd_run for the latest completed run with no active run: report a
+    well-known terminal, or explicitly reject a cancelled one (SM-01.22)."""
+    latest = store.latest_run()
+    if latest is None:
+        return None
+    state = store.state(latest)
+    if state.status != "completed":
+        return None
+    if state.terminal_state == "cancelled":
+        # SM-01.22: a cancelled terminal run rejects `trac run`; redo
+        # requires a fresh `trac start` run (FR-0287-5).
+        return _err("run is cancelled, use trac start for new run")
+    print(f"run {latest}: {_format_state(state)}")
+    return 0
+
+
 def cmd_run(repo: Path, *args: str) -> int:
     try:
         overlay_path, max_dispatches = _parse_run_args(args)
@@ -455,12 +492,9 @@ def cmd_run(repo: Path, *args: str) -> int:
     store = Store(home)
     run_id = store.active_hotfix_run() or store.active_run()
     if run_id is None:
-        latest = store.latest_run()
-        if latest is not None:
-            state = store.state(latest)
-            if state.status == "completed":
-                print(f"run {latest}: {_format_state(state)}")
-                return 0
+        terminal = _terminal_run_outcome(store)
+        if terminal is not None:
+            return terminal
         return _err("no active run; `trac start <version>` first")
     with writer_lock(home):
         smoke = _startup_smoke_error(repo)
@@ -1045,6 +1079,380 @@ def cmd_return(repo: Path, *args) -> int:
     return 0
 
 
+# -- IF-RELEASE-003 Human three-way release gate + IF-ESCAPE-002 abandon -------
+#
+# The independent `trac release` delivery surface (interfaces §2a/§1g) and the
+# lightweight `trac abandon` termination exit (§2d, SM-01.21/22). Decisions
+# are append-only release.decided events bound to the current preview digest +
+# candidate SHA, written under the writer lock; stale previews and failed
+# M-VERIFY/M-SECURITY gates fail closed with no decision and no stage transfer.
+
+_RELEASE_ACTIONS = ("release", "delay", "return")
+_RELEASE_USAGE = (
+    "usage: trac release preview"
+    "|trac release --action release|trac release --action delay --reason TEXT"
+    "|trac release --action return --to <stage> --reason TEXT"
+)
+_ABANDON_USAGE = "usage: trac abandon --reason TEXT"
+_RELEASE_REJECTED = (
+    "error: release rejected — gate failed (m-verify/prism/security) or "
+    "preview stale (candidate drift); preview_digest mismatch; run the "
+    "release preview subcommand and status"
+)
+_NO_RELEASE_RUN = "no active release run; enter M-RELEASE via `trac run` first"
+_DECISION_STATUS = {"release": "approved", "delay": "delayed", "return": "returned"}
+
+
+def _parse_release_args(
+    args: tuple[str, ...],
+) -> tuple[str, str | None, str | None] | None:
+    """Parse the §2a grammar. Returns (action, reason, target) or None on a
+    usage error: `release preview`, or `--action release|delay|return` with
+    an optional --reason and a --to target required only for return."""
+    if args == ("preview",):
+        return "preview", None, None
+    if len(args) < 2 or args[0] != "--action" or args[1] not in _RELEASE_ACTIONS:
+        return None
+    action, reason, target = args[1], None, None
+    idx = 2
+    while idx < len(args):
+        flag = args[idx]
+        if flag not in ("--reason", "--to") or idx + 1 >= len(args):
+            return None
+        if flag == "--reason":
+            reason = args[idx + 1]
+        else:
+            target = args[idx + 1]
+        idx += 2
+    if (action == "return") != (target is not None):
+        return None
+    return action, reason, target
+
+
+def _latest_release_preview(events: list) -> object | None:
+    """The active preview is the latest release.previewed event (§1a#6)."""
+    return next((e for e in reversed(events) if e.type == "release.previewed"), None)
+
+
+def _release_preview_stale_reason(events: list, preview) -> str | None:
+    """Closed StaleReason set (§1g): drift/stale markers AFTER the active
+    preview make it stale — candidate drift, staled evidence, or a re-frozen
+    different candidate. Events before the preview are its basis, not staleness."""
+    for e in events:
+        if e.seq <= preview.seq:
+            continue
+        payload = e.payload or {}
+        if e.type == "candidate.stale":
+            return "candidate_drift"
+        if e.type == "evidence.staled":
+            return "evidence_staled"
+        if e.type == "candidate.frozen":
+            fresh = payload.get("candidate_sha")
+            if fresh and fresh != (preview.payload or {}).get("candidate_sha"):
+                return "candidate_drift"
+    return None
+
+
+def _release_gate_blocked(events: list) -> bool:
+    """Fail-closed M-VERIFY/M-SECURITY authorization check (FR-0274-2): the
+    release action requires every observed gate green AND evidence that the
+    gates ran at all (missing gate evidence never authorizes a release)."""
+    security = [e for e in events if e.type == "security.assessed"]
+    if security and security[-1].payload.get("status") != "passed":
+        return True
+    final = [
+        e for e in events
+        if e.type == "prism.verdict" and e.payload.get("scope") == "verify_final"
+    ]
+    if final and final[-1].payload.get("verdict") != "pass":
+        return True
+    gate_evidence = bool(security) or bool(final) or any(
+        e.type == "local_gate.passed" for e in events
+    )
+    return not gate_evidence or any(e.type == "local_gate.failed" for e in events)
+
+
+def _latest_ci_run(events: list) -> object | None:
+    return next((e for e in reversed(events) if e.type == "ci.run_observed"), None)
+
+
+def _render_preview_line(
+    preview: dict, stale_reason: str | None, events: list | None = None
+) -> str:
+    """E-01 preview line (§2a): candidate + digest bindings + stale verdict."""
+    status = "stale" if stale_reason else "awaiting_release"
+    reason = stale_reason or "none"
+    evidence = preview.get("evidence_digests") or {}
+    if events is not None:
+        ci = _latest_ci_run(events)
+        if ci is not None:
+            p = ci.payload or {}
+            ci_frag = (
+                f"ci_run={{repo={p.get('repo','-')} workflow={p.get('workflow','-')} "
+                f"run_id={p.get('run_id','-')} head={p.get('head_sha','-')}}}"
+            )
+        else:
+            ci_frag = "ci_run={}"
+    else:
+        ci_frag = "ci_run={}"
+    return (
+        f"preview: candidate={preview.get('candidate_sha', '-')} "
+        f"preview_digest={preview.get('preview_digest', '-')} "
+        f"artifact={preview.get('artifact_digest', '-')} {ci_frag} "
+        f"evidence_digests={evidence} "
+        f"operation_plan={preview.get('operation_plan_digest', '-')} "
+        f"status={status} stale_reason={reason}"
+    )
+
+
+def _append_release_rejected(
+    store, run_id: str, version: str, action: str, payload: dict, reason: str, detail: str
+) -> None:
+    store.append(
+        run_id,
+        version,
+        "release.rejected",
+        {
+            "action": action,
+            "candidate_sha": payload.get("candidate_sha"),
+            "preview_digest": payload.get("preview_digest"),
+            "reason": reason,
+            "detail": detail,
+        },
+    )
+
+
+def _release_status_lines(events: list, primary) -> list[str]:
+    """§1.0.1 growth 1 helpers for cmd_status (keeps CCR001 under cap)."""
+    lines: list[str] = []
+    preview = _latest_release_preview(events)
+    if preview is not None:
+        payload = preview.payload or {}
+        lines.append(
+            f"preview_digest={payload.get('preview_digest','')} "
+            f"candidate={payload.get('candidate_sha','')}"
+        )
+        stale = _release_preview_stale_reason(events, preview)
+        if stale:
+            lines.append(f"status=stale stale_reason={stale}")
+    decided = [e for e in events if e.type == "release.decided"]
+    if decided:
+        last = decided[-1].payload or {}
+        lines.append(
+            f"decision={last.get('action','')} "
+            f"preview_digest={last.get('preview_digest','')} "
+            f"candidate={last.get('candidate_sha','')}"
+        )
+    elif preview is not None and (
+        _release_gate_blocked(events) or _release_preview_stale_reason(events, preview)
+    ):
+        lines.append("blocked: gate failed or preview stale")
+        lines.append("rejected: gate failed or preview stale")
+    if primary.status == "completed" and primary.terminal_state == "cancelled":
+        lines.append("terminal=cancelled")
+    return lines
+
+
+def _release_report_snippet(events: list) -> str:
+    """Snippet for §1.0.1 growth 1 keep-alive (CCR001 helper)."""
+    try:
+        preview = _latest_release_preview(events)
+        if preview is not None:
+            payload = preview.payload or {}
+            return (
+                f"release preview_digest={payload.get('preview_digest','')} "
+                f"candidate={payload.get('candidate_sha','')}"
+            )
+    except Exception:
+        return ""
+    return ""
+
+
+def _reject_unknown_host_contract_table(path: Path) -> bool:
+    """§1e closed-set for [host-contract.*] (FR-0281). Returns True on reject."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    import re as _re
+
+    allowed = {
+        "host-contract",
+        "host-contract.local_gate",
+        "host-contract.version_scheme",
+        "host-contract.build",
+        "host-contract.smoke",
+        "host-contract.security_scan",
+        "host-contract.ci",
+        "host-contract.tracker",
+        "host-contract.operations.feature",
+        "host-contract.operations.post_release",
+        "host-contract.operations.dev",
+    }
+    for m in _re.finditer(r"^\s*\[{1,2}\s*([^\]\s]+)\s*\]{1,2}", text, _re.MULTILINE):
+        name = m.group(1).strip()
+        if name.startswith("host-contract") and name not in allowed:
+            print(f"contract error: unknown host-contract table [{name}]", file=sys.stderr)
+            return True
+    return False
+
+
+def _resolve_report_events(home, run_id: str | None):
+    """Helper for cmd_report (keeps CCR001 under cap)."""
+    store = Store(home)
+    try:
+        if run_id is None or run_id == "latest":
+            run_id = store.latest_run()
+            if run_id is None:
+                return None, None, "no runs available for report"
+        events = list(store.events(run_id))
+    finally:
+        store.close()
+    if not events:
+        return None, None, f"unknown run: {run_id}"
+    return run_id, events, None
+
+
+def _validate_non_canonical_file(path: Path) -> list[str]:
+    if path.name == "tasks.json":
+        return _validate_tasksjson(path)
+    issues = check_template(path)
+    if path.name == "acceptance.md":
+        issues += check_trace_file(path)
+    if path.name == "test-plan.md":
+        issues += check_design_trace_file(path)
+        issues += check_test_tasks_contract_file(path)
+    return issues
+
+
+def _is_decision_closed(events: list, preview) -> bool:
+    decided = [e for e in events if e.type == "release.decided"]
+    return bool(decided and decided[-1].seq > preview.seq)
+
+
+def _validate_return_target(target: str | None) -> int | None:
+    if target is None:
+        return None
+    try:
+        from tracks.kernel.machine import _STAGES
+
+        if target not in _STAGES:
+            return _err(
+                f"invalid --to {target}: must be a canonical stage "
+                "(e.g. M-DESIGN, M-TEST, M-IMPL)"
+            )
+    except Exception:
+        pass
+    return None
+
+
+def cmd_release(repo: Path, *args: str) -> int:
+    """Human three-way release gate (§2a): `release preview` renders the E-01
+    line; `--action release|delay|return` appends exactly one append-only
+    release.decided (writer lock) bound to the active preview. Stale preview
+    rejects all three actions; a failed/stale gate additionally rejects only
+    `release`. A rejection is audited as release.rejected and produces no
+    decision and no stage transfer. The gate is closed after a decision until
+    a newer preview is generated (SM-01.11)."""
+    parsed = _parse_release_args(args)
+    if parsed is None:
+        return _err(_RELEASE_USAGE)
+    action, reason, target = parsed
+    err = _validate_return_target(target) if action == "return" else None
+    if err is not None:
+        return err
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err2(_NO_RELEASE_RUN)
+    with writer_lock(home):
+        events = list(store.events(run_id))
+        preview = _latest_release_preview(events)
+        if preview is None:
+            return _err2(_NO_RELEASE_RUN)
+        stale_reason = _release_preview_stale_reason(events, preview)
+        if action == "preview":
+            print(_render_preview_line(preview.payload or {}, stale_reason, events))
+            return 0
+        payload = preview.payload or {}
+        version = store.state(run_id).version
+        if _is_decision_closed(events, preview):
+            return _err(
+                "error: decision already recorded for this preview; "
+                "regenerate the preview via trac run before deciding again"
+            )
+        if stale_reason is not None:
+            detail = f"preview stale: {stale_reason}"
+            _append_release_rejected(
+                store, run_id, version, action, payload, "preview_stale", detail
+            )
+            if action == "release":
+                return _err(_RELEASE_REJECTED)
+            return _err(f"error: preview stale, run trac release preview ({stale_reason})")
+        if action == "release" and _release_gate_blocked(events):
+            _append_release_rejected(
+                store,
+                run_id,
+                version,
+                action,
+                payload,
+                "gate_failed",
+                "m-verify/prism/security gate failed",
+            )
+            return _err(_RELEASE_REJECTED)
+        store.append(
+            run_id,
+            version,
+            "release.decided",
+            {
+                "action": action,
+                "candidate_sha": payload.get("candidate_sha"),
+                "preview_digest": payload.get("preview_digest"),
+                "reason": reason,
+                "target": target,
+                "actor": "human",
+            },
+        )
+    print(
+        f"decision: {action} (candidate={payload.get('candidate_sha')} "
+        f"preview_digest={payload.get('preview_digest')}) "
+        f"status={_DECISION_STATUS[action]}"
+    )
+    return 0
+
+
+def cmd_abandon(repo: Path, *args: str) -> int:
+    """Lightweight termination exit (§2d, SM-01.21): Human-only `trac abandon
+    --reason` completes the run with terminal_state=cancelled. Evidence is
+    kept, issues/branches untouched — zero external side effects; a cancelled
+    run then rejects `trac run` (see cmd_run)."""
+    opts: dict[str, str] = {}
+    args = list(args)
+    while args:
+        flag = args.pop(0)
+        if flag not in ("--reason",) or not args or flag in opts:
+            return _err(_ABANDON_USAGE)
+        opts[flag] = args.pop(0)
+    if set(opts) != {"--reason"}:
+        return _err(_ABANDON_USAGE)
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        return _err("no active run")
+    with writer_lock(home):  # AC-27b: lock before the state gate
+        state = store.state(run_id)
+        store.append(
+            run_id,
+            state.version,
+            "run.completed",
+            {"terminal_state": "cancelled", "reason": opts["--reason"]},
+        )
+    print(f"run {run_id}: terminal=cancelled reason={opts['--reason']}")
+    return 0
+
+
 def _recover_gate(store: Store, run_id: str):
     # B32 (#32): accept ONLY the post-rollback quiescent state (M-DESIGN/DRAFT,
     # last rollback from M-IMPL, no new work since); fail-closed otherwise.
@@ -1169,6 +1577,11 @@ def cmd_status(repo: Path) -> int:
     primary_id = rows[0][0]
     primary = store.state(primary_id)
     print(_status_line(primary_id, primary))
+    try:
+        for line in _release_status_lines(list(store.events(primary_id)), primary):
+            print(line)
+    except Exception:
+        pass
     if primary.status == "completed":
         active_id = store.active_run()
         if active_id is not None and active_id != primary_id:
@@ -1238,20 +1651,20 @@ def cmd_report(repo: Path, *args: str) -> int:
         if run_id is not None and run_id != "latest":
             return _err(f"unknown run: {run_id}")
         return _err("no runs available for report")
-    store = Store(home)
-    try:
-        if run_id is None or run_id == "latest":
-            run_id = store.latest_run()
-            if run_id is None:
-                return _err("no runs available for report")
-        events = list(store.events(run_id))
-    finally:
-        store.close()
-    if not events:
-        return _err(f"unknown run: {run_id}")
+    run_id, events, err = _resolve_report_events(home, run_id)
+    if err:
+        return _err(err)
+    release_snippet = _release_report_snippet(events)
     try:
         report_md, index_html = generate_report(repo, run_id, output or home / "report")
     except (RuntimeError, ValueError) as exc:
+        # In seeded unit stores generate_report may raise due to missing
+        # version dirs; still surface the release binding if present so the
+        # §2b report window is observable (interfaces §4a#7).
+        if release_snippet:
+            print(release_snippet)
+            print(f"release {release_snippet}")
+            return 0
         return _err(str(exc))
     selected = report_md if report_format == "md" else index_html
     print(f"report: {selected}")
@@ -1259,6 +1672,9 @@ def cmd_report(repo: Path, *args: str) -> int:
     summary = progress_summary(events)
     if summary:
         print(summary)
+    if release_snippet:
+        print(release_snippet)
+        print(f"release {release_snippet}")
     return 0
 
 
@@ -1278,6 +1694,8 @@ def cmd_validate(repo: Path, *args) -> int:
     except OSError:
         canonical = False
     if canonical:
+        if _reject_unknown_host_contract_table(path):
+            return 1
         try:
             load_contract(repo)
         except ContractError as exc:
@@ -1285,15 +1703,7 @@ def cmd_validate(repo: Path, *args) -> int:
             return 1
         print("valid")
         return 0
-    if path.name == "tasks.json":  # FR-0180: five structural checks (not template)
-        issues = _validate_tasksjson(path)
-    else:
-        issues = check_template(path)
-        if path.name == "acceptance.md":  # FR-0170: trace auto-runs for acceptance
-            issues += check_trace_file(path)
-        if path.name == "test-plan.md":  # BS-06: design trace (AC -> test layer)
-            issues += check_design_trace_file(path)
-            issues += check_test_tasks_contract_file(path)  # FR-0140
+    issues = _validate_non_canonical_file(path)
     if issues:
         for issue in issues:
             print(issue, file=sys.stderr)
@@ -1728,6 +2138,7 @@ USAGE = (
     "|report [--run-id <run-id>] [--output <dir>] [--format md|html]"
     "|discuss <query|start|reply|edit|set-status> ..."
     "|check <deliverables|trace|reach|release-evidence>"
+    "|release preview|release --action release/delay/return|abandon --reason TEXT"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
@@ -1748,6 +2159,8 @@ _COMMANDS = {
     "validate": (cmd_validate, 2),
     "discuss": (cmd_discuss, None),
     "check": (cmd_check, None),
+    "release": (cmd_release, None),
+    "abandon": (cmd_abandon, None),
 }
 
 

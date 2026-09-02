@@ -23,8 +23,25 @@ def operation_idempotency_key(preview_digest: str, kind: str, target: str) -> st
 
 
 def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:
-    """Remote is authoritative: done→skip, mismatch→conflict, absent→pending."""
-    raise NotImplementedError("IF-PUBLISH-002")
+    """Remote is authoritative: done→skip, mismatch→conflict, absent→pending.
+
+    IF-PUBLISH-002: the remote decides. An executed op whose remote state
+    matches the plan skips (reconciled_skip, exact-once); an absent target is
+    pending (execute); the same key with divergent remote content is a
+    conflict (reconcile_conflict audit, blocked).
+    """
+    remote = remote_state or {}
+    exists = remote.get("exists", bool(remote))
+    if not exists:
+        return "pending"
+    if remote.get("matches") is False:
+        return "conflict"
+    expected_digest = planned.get("digest")
+    remote_digest = remote.get("digest")
+    diverged = expected_digest is not None and remote_digest is not None
+    if diverged and expected_digest != remote_digest:
+        return "conflict"
+    return "skip"
 
 
 def assert_agent_forbidden(actor: str) -> None:

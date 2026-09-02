@@ -265,3 +265,116 @@ def select_issue_backend(repo: Path, version: str):
     ):
         return FakeIssueBackend(repo, version)
     return GithubBackend(repo, version)
+
+
+# -- IF-VERIFY-004 required-CI API readback (FR-0270) --------------------------
+#
+# GET actions/runs, filter by head_sha == candidate, validate the four-tuple
+# binding and required-check success; fail closed on mismatch/missing/stale and
+# never silently pass without credentials (missing_token stays a classified
+# error so the caller can surface attention.required).
+
+
+def _api_base() -> str:
+    """Explicit stand-in override or the real GitHub REST base."""
+    return os.environ.get("TRAC_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
+
+
+def readback_ci_run(repo_id: str, workflow: str, candidate_sha: str) -> dict:
+    """GET /repos/{repo}/actions/runs filtered by head_sha; returns the
+    normalized `ci.run_observed` payload (IF-VERIFY-004). Missing credentials
+    raise a classified GithubIssuesError(missing_token) — never a silent pass."""
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+    base = _api_base()
+    url = (
+        f"{base}/repos/{repo_id}/actions/runs"
+        f"?head_sha={candidate_sha}&per_page=100"
+    )
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    data = _get_any(req)
+    runs = data.get("workflow_runs") or []
+    if not runs:
+        return {
+            "repo": repo_id,
+            "workflow": workflow,
+            "head_sha": candidate_sha,
+            "run_id": None,
+            "candidate_sha": candidate_sha,
+            "conclusion": None,
+            "status": "failed",
+            "reason": "missing",
+            "api_verified": False,
+        }
+    run = runs[0]
+    return {
+        "repo": repo_id,
+        "workflow": run.get("name") or workflow,
+        "run_id": run.get("id"),
+        "head_sha": run.get("head_sha") or candidate_sha,
+        "candidate_sha": candidate_sha,
+        "conclusion": run.get("conclusion"),
+        "status": "passed" if run.get("conclusion") == "success" else "failed",
+        "api_verified": True,
+    }
+
+
+def _get_any(req) -> dict:
+    """urlopen wrapper (module-level; mirrors _urlopen but without backend
+    state). Returns the decoded JSON body."""
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (test stand-in base)
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks: list) -> dict:
+    """Pure fail-closed binding verdict over an observed CI run.
+
+    Returns the closed `ci.run_observed` payload with status in
+    {passed, failed} and reason in {mismatch, missing, stale, failed_conclusion,
+    check_failed} when failed.
+    """
+    if observed is None:
+        return {
+            "head_sha": candidate_sha,
+            "candidate_sha": candidate_sha,
+            "status": "failed",
+            "reason": "missing",
+            "api_verified": False,
+        }
+    out = dict(observed)
+    out["candidate_sha"] = candidate_sha
+    if observed.get("stale"):
+        out["status"] = "failed"
+        out["reason"] = "stale"
+        out["api_verified"] = False
+        return out
+    head = observed.get("head_sha")
+    if head != candidate_sha:
+        out["status"] = "failed"
+        out["reason"] = "mismatch"
+        out["api_verified"] = False
+        return out
+    if observed.get("conclusion") != "success":
+        out["status"] = "failed"
+        out["reason"] = "failed_conclusion"
+        out["api_verified"] = False
+        return out
+    checks = observed.get("checks") or {}
+    for requirement in required_checks:
+        if checks.get(requirement) != "success":
+            out["status"] = "failed"
+            out["reason"] = "check_failed"
+            out["api_verified"] = False
+            return out
+    out["status"] = "passed"
+    out["reason"] = "bound"
+    out["api_verified"] = True
+    return out

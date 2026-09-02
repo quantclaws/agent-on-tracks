@@ -41,7 +41,30 @@ def judge_full_f_reuse(
     stale_marks: tuple[str, ...],
 ) -> ReuseDecision:
     """Reuse only when candidate is undrifted, identity matches and no STALE."""
-    raise NotImplementedError("IF-VERIFY-002")
+    # stale has highest priority: any STALE mark or evidence flag means rerun
+    if stale_marks or full_f_evidence.get("stale"):
+        basis = tuple(full_f_evidence.get("identity_basis", ()))
+        return ReuseDecision(decision="rerun", reason="stale", identity_basis=basis)
+    expected = full_f_evidence.get("identity_basis")
+    if expected is not None:
+        quad = (
+            identity_quadruple.get("tree"),
+            identity_quadruple.get("command"),
+            identity_quadruple.get("env"),
+            identity_quadruple.get("selection_id"),
+        )
+        # expected is a tuple; compare as tuple
+        exp_tuple = tuple(expected)
+        # mismatch when lengths differ or values differ
+        if exp_tuple != quad:
+            return ReuseDecision(
+                decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
+            )
+    # check drift via candidate_sha vs expected? For this slice, drift is
+    # treated as identity mismatch; stale already handled
+    # if no mismatch and no stale, reuse
+    basis = tuple(full_f_evidence.get("identity_basis", ())) if expected is not None else ()
+    return ReuseDecision(decision="reuse", reason="reuse_full_f", identity_basis=basis)
 
 
 def collect_binding_violations(events: list[dict], candidate_sha: str) -> list[str]:
