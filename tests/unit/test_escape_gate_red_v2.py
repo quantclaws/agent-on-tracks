@@ -64,10 +64,17 @@ def test_quarantine_allows_post_barrier_outcome():
 
 
 # AC-FR0287-03@v0.8 TRACKS-TRACE IF-ESCAPE-001 stale multiplicity
-def test_stale_downstream_returns_per_type_entries():
+def test_stale_downstream_returns_per_type_entries(monkeypatch, tmp_path):
     """AC-FR0287-03: stale must emit one evidence.staled per downstream
     evidence type after the target (candidate/FULL_F/CI/security/preview
-    etc.), not a single generic entry. Minimal stub returns 1."""
+    etc.), not a single generic entry. Minimal stub returns 1.
+
+    b93 control revision (red_defect re-pin, Prism ruling 2026-09-02):
+    this pin targets the documented no-store coarse fallback branch --
+    isolate TRACKS_HOME so no store backs the call. The store-backed
+    existing-bucket-only semantics are pinned by
+    test_escape_gate_red_v3.py::test_stale_emits_only_existing_buckets."""
+    monkeypatch.setenv("TRACKS_HOME", str(tmp_path / "no-store"))
     staled = stale_downstream_evidence("run-stale-multi", "M-IMPL")
     assert isinstance(staled, list), "assertion failure: stale must return list"
     # at least the major downstream buckets

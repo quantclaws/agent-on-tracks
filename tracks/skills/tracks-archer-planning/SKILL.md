@@ -44,6 +44,14 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 - Runtime 注入的 anchor_surface 数据把每个锚点按静态解析（ast_modules）与动态加载（dynamic_modules）拆分依赖清单：静态解析映射到文件后若属于某任务 scope 且不在本任务 depends_on 传递闭包内，commit 时硬拒，必须补边；动态加载独有的依赖仅进 advisory，不硬拒。
 - depends_on 必须由注入数据推导，不做文件名猜测；修订轮自查先读注入的缺边清单，对每个承载锚点的任务逐锚点检查，缺边就补边——这是图结构缺陷，改解释或改 tasks.md 投影都不是修复。
 
+## B94 deferred 锚点机制（2026-09-02 起生效，优先于上方旧可满足性条款）
+
+- schema 2 扩展是**合法一等公民**：任务级 `deferred_refs`（与自身 acceptance_refs 互斥）与 `integration: true` 集成任务。看到全图锚点大量位于 deferred_refs + 一个 T-INT 收口任务时，**禁止误判为「落盘损坏/覆盖不变量被破坏」并恢复 acceptance_refs**——那是已裁定的新机制，不是中途态。
+- 可行绿判据升级：锚点归属必须用 ast_modules ∪ dynamic_modules（不只是 ast）。集成测试经 CLI 子进程 / kernel 动态分发跨越 owner 闭包的锚点静态不可证，**一律 deferred**，由依赖序最后的集成任务（integration: true、union scope、跳过 RED、REFACTOR 与质量门禁不豁免）收口为硬门禁。为这类锚点恢复 acceptance_refs = 重建运行时 plan_defect 循环（T-004 六次熔断的教训），即使静态门禁能放行也不允许——静态门禁看不见动态依赖。
+- 修订轮最小 delta：若磁盘图已是 B94 形态且当前 plan_defect 证据与该形态相容，正确动作是增量修订（补 deferred、修描述失实、补 T-INT 接线清单），不是全量恢复 acceptance。
+- 机械化优先：锚点分类是纯计算，不是写作。项目目录存在 replan 脚本（如 .tracks/projects/v0.8/replan_deferred.py）时先运行它再人工审 diff；禁止手工推算数十个锚点的归属。
+- deferred 锚点照常执行（早期信号不丢），但不计 task verdict、不进 task_failures 熔断、DIAGNOSE 不归因；登记簿之外的意外红触发 drift_breaker。
+
 ## 存在性门禁与 tasks.md 投影
 
 - scope_boundary 的每个路径必须「存在于仓库树」或「在冻结设计文档（architecture.md / test-plan.md）中逐字声明为交付文件」，两者皆非则硬拒（幻觉路径拦截）。
@@ -70,6 +78,7 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 - PLAN-06 存在性通过：scope 每个路径存在于仓库树或被冻结设计声明。
 - PLAN-07 tasks.md 只读投影：Archer 不写 tasks.md。
 - PLAN-08 预算合规：预算/批/并行约束满足且不牺牲锚点覆盖。
+- PLAN-09 B94 归属合规：deferred_refs/integration 字段视为合法；动态跨界锚点未误入 acceptance_refs；B94 形态图只做最小 delta；覆盖并集口径 = acceptance ∪ deferred。
 
 ## 退出前自审（程序性动作，引用 ID）
 
