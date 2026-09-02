@@ -9,7 +9,6 @@ steps with version facts; dev precheck fails closed without an active release
 branch.
 """
 
-# ruff: noqa
 from __future__ import annotations
 
 import hashlib
@@ -18,12 +17,11 @@ from typing import Literal
 
 StaleReason = Literal["candidate_drift", "evidence_staled", "operation_plan_changed"]
 
-_JOURNEY_MAP = {
-    "feature": "feature",
-    "post-release": "post_release",
-    "post_release": "post_release",
-    "dev": "dev",
-}
+# IF-JOURNEY-001 §1m: step COND closed set (KIND:TARGET[:when=COND]).
+_WHEN_ACTIVE_BRANCH = "when=active_release_branch"
+
+# journey CLI/attr spellings -> contract [operations.*] section keys.
+_JOURNEY_MAP = {"post-release": "post_release", "post_release": "post_release"}
 
 
 def _render_placeholders(template: str, facts: dict) -> str:
@@ -53,10 +51,10 @@ def build_operation_plan(
     steps = list(section.get("steps") or [])
     resolved: list[str] = []
     for step in steps:
-        if step.endswith(":when=active_release_branch"):
+        if step.endswith(f":{_WHEN_ACTIVE_BRANCH}"):
             if not active_release_branch:
                 continue  # silent skip: no active release branch
-            step = step[: -len(":when=active_release_branch")]
+            step = step[: -len(f":{_WHEN_ACTIVE_BRANCH}")]
         resolved.append(_render_placeholders(step, version_facts))
     return {
         "journey": journey,
@@ -69,6 +67,7 @@ def build_operation_plan(
 def dev_precheck(contract: dict, version_facts: dict, *, active_release_branch) -> tuple[bool, str]:
     """IF-JOURNEY-001 dev precheck: no active release branch -> fail closed
     (no plan steps, no fake public release)."""
+    del version_facts
     if not active_release_branch:
         return False, "no active release branch"
     ops = (contract or {}).get("operations", {})
