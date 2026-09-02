@@ -12,8 +12,6 @@ be registered as Known Issues (waiver + next-version backlog); mechanism
 failures and security findings are excluded and must be fixed or abandoned.
 """
 
-# ruff: noqa
-
 from __future__ import annotations
 
 import hashlib
