@@ -1,13 +1,11 @@
-diff --git a/tracks/executor/failure_review.py b/tracks/executor/failure_review.py
-index f7e9a08..d475417 100644
 --- a/tracks/executor/failure_review.py
 +++ b/tracks/executor/failure_review.py
-@@ -14,7 +14,8 @@ ReviewOutcome = Literal["consistent", "evidence_lost", "mismatched"]
- 
- 
- def record_failure(run_id: str, round_no: int, source: str, record: dict) -> dict:
--    raise NotImplementedError("IF-FAILURE-001")
-+    # Counterexample AC-FR0280-01: overwrite un-ACKed rich evidence
+@@ -33,7 +33,8 @@
+         "seq": len(_STORE.get(run_id, [])),
+     }
+     _STORE.setdefault(run_id, []).append(entry)
+-    return {"failure_id": fid, "run_id": run_id, "round": round_no, "source": source, "record": dict(record)}
++    # Counterexample AC-FR0280-01: overwrite the un-ACKed rich record identity
 +    return {"failure_id": f"{round_no}-{source}-0", "overwrote": True}
  
  

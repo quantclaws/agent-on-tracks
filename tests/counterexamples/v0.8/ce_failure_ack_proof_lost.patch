@@ -1,0 +1,13 @@
+--- a/tracks/executor/failure_review.py
++++ b/tracks/executor/failure_review.py
+@@ -62,8 +62,8 @@
+ 
+ 
+ def acknowledge_failure(run_id: str, failure_id: str, role: str) -> dict:
+-    _ACKED.add((run_id, failure_id, role))
+-    return {"failure_id": failure_id, "run_id": run_id, "role": role, "acked": True}
++    # Counterexample AC-NFR0146-02: ACK produces no consumption proof
++    return {"failure_id": failure_id, "run_id": run_id, "role": role, "acked": False}
+ 
+ 
+ def invalidate_failure(run_id: str, failure_id: str, reason: str) -> dict:

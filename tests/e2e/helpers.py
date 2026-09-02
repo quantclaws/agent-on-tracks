@@ -42,6 +42,36 @@ def walk_to_m_test_complete(trac, stdin="构建一个事件溯源运行时", ver
 walk_to_design_complete = walk_to_m_test_complete
 
 
+# The b93 §8.1 M-IMPL park injection: devon:RED fails the shared <=3 attempt
+# budget (diagnose routes impl_defect back to RED each round) until the run
+# parks at M-IMPL/DIAGNOSE/awaiting=escalation — the proven parking logic.
+M_IMPL_PARK_SIMULATE = "devon:RED=fail;diagnose:classification=impl_defect"
+
+
+def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", version="v0.8"):
+    """init -> start -> triage go -> doc trio -> approval -> M-IMPL RED failure
+    injection -> parks at M-IMPL/DIAGNOSE/awaiting=escalation.
+
+    b93 §8.1 escape-gate walker contract: the batch-1 machine registers stages
+    only through M-IMPL, so the sole reachable *legal escape source* is the
+    M-IMPL failure-injection park (DIAGNOSE awaiting=escalation; NEEDS_ATTENTION
+    is the sibling source). ``walk_to_m_test_complete`` runs the whole journey
+    to the completed boundary, so parking here REQUIRES the failure injection
+    (M_IMPL_PARK_SIMULATE burns the shared attempt budget). Bare ``trac run``
+    bootstrap is forbidden for escape anchors (v0.8 suite-wide bootstrap
+    defect, no init/start -> rc=1). The escape anchors are v0.8 ACs, so the
+    walker default binds them to version v0.8 (the injection parks INSIDE
+    M-IMPL, so the unregistered M-IMPL->M-VERIFY exit is never attempted)."""
+    run_id = walk_to_await_human(trac, stdin=stdin, version=version)
+    assert trac("approve", "--actor", "Aaron").returncode == 0
+    r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+    assert r.returncode == 0, r.stderr
+    assert "stage=M-IMPL" in r.stdout
+    assert "substate=DIAGNOSE" in r.stdout
+    assert "awaiting=escalation" in r.stdout
+    return run_id
+
+
 def dispatches(evs, substate=None):
     """Filter event-log rows to `dispatch_agent` command.issued events,
     optionally narrowed to a substate."""

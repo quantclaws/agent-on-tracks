@@ -1,0 +1,11 @@
+--- a/tracks/executor/failure_review.py
++++ b/tracks/executor/failure_review.py
+@@ -94,7 +94,7 @@
+             if fid and fid not in stored and fid not in {f.get("failure_id") for lst in _STORE.values() for f in lst}:
+                 # also check global store, but if not found, it's lost
+                 if fid not in stored:
+-                    return "evidence_lost", [f"injected {fid} not stored"]
++                    pass  # Counterexample AC-FR0280-03: lost reference soft-pass
+     # check stored order by seq if present
+     seqs: list[int] = []
+     for e in events:

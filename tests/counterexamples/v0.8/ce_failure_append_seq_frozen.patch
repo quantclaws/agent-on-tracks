@@ -1,0 +1,11 @@
+--- a/tracks/executor/failure_review.py
++++ b/tracks/executor/failure_review.py
+@@ -18,7 +18,7 @@
+ 
+ 
+ def _next_failure_id(run_id: str, round_no: int, source: str) -> str:
+-    seq = len(_STORE.get(run_id, []))
++    seq = 0  # Counterexample AC-NFR0146-01: append slot frozen, records overwrite
+     return f"{round_no}-{source}-{seq}"
+ 
+ 
