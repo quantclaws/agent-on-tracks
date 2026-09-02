@@ -1,9 +1,19 @@
-"""Integration: publish reconcile idempotency (NFR-0144, IF-PUBLISH-002)."""
+"""Integration: publish reconcile idempotency (NFR-0144, IF-PUBLISH-002).
+
+b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
+(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
+is forbidden (v0.8 suite-wide defect). The M-PUBLISH reconcile event
+producers are wired by later runtime tasks (kernel/release routing T-039 +
+executor handler T-001); until then the event-level assertions are legal Red
+against that product gap. The module-level halves assert the delivered
+IF-PUBLISH-002 reconcile contract.
+"""
 
 from __future__ import annotations
 
 import pytest
 
+from tests.e2e.helpers import walk_to_m_impl_parked
 from tracks.executor.publish import reconcile_operation
 
 pytestmark = pytest.mark.integration
@@ -11,13 +21,10 @@ pytestmark = pytest.mark.integration
 
 # AC-NFR0144-01@v0.8 TRACKS-TRACE repeat operation skips no duplicates
 def test_repeat_operation_skips_no_duplicates(host_repo, trac, event_log):
-    try:
-        reconcile_operation({"idempotency_key": "k1", "target": "t"}, {"exists": True, "matches": True})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-002" in str(exc)
+    verdict = reconcile_operation({"idempotency_key": "k1", "target": "t"}, {"exists": True, "matches": True})
+    assert verdict == "skip"
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()
@@ -38,13 +45,10 @@ def test_repeat_operation_skips_no_duplicates(host_repo, trac, event_log):
 
 # AC-NFR0144-01@v0.8 TRACKS-TRACE unfinished continues after reconcile
 def test_unfinished_continues(host_repo, trac, event_log):
-    try:
-        reconcile_operation({"idempotency_key": "k2"}, {"exists": False})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-002" in str(exc)
+    verdict = reconcile_operation({"idempotency_key": "k2"}, {"exists": False})
+    assert verdict == "pending"
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     # Simulate interrupted publish (only planned, not executed)
     events = event_log()
@@ -65,16 +69,13 @@ def test_unfinished_continues(host_repo, trac, event_log):
 
 # AC-NFR0144-02@v0.8 TRACKS-TRACE same key remote diff conflict is blocked
 def test_same_key_remote_diff_conflict(host_repo, trac, event_log):
-    try:
-        reconcile_operation(
-            {"idempotency_key": "sha256:abc", "target": "t", "digest": "d1"},
-            {"idempotency_key": "sha256:abc", "target": "t", "digest": "d2"},
-        )
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-002" in str(exc)
+    verdict = reconcile_operation(
+        {"idempotency_key": "sha256:abc", "target": "t", "digest": "d1"},
+        {"idempotency_key": "sha256:abc", "target": "t", "digest": "d2"},
+    )
+    assert verdict == "conflict"
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()

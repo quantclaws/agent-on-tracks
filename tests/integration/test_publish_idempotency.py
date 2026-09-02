@@ -1,4 +1,14 @@
-"""Integration: M-PUBLISH write-ahead & idempotency (FR-0275, IF-PUBLISH-001/002)."""
+"""Integration: M-PUBLISH write-ahead & idempotency (FR-0275, IF-PUBLISH-001/002).
+
+b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
+(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
+is forbidden (v0.8 suite-wide defect). The M-PUBLISH write-ahead &
+reconcile event producers are wired by later runtime tasks (kernel/release
+routing T-039 + executor handler T-001 + agent guard T-001); until then the
+event-level assertions are legal Red against that product gap. The
+module-level halves assert the delivered IF-PUBLISH-002 reconcile contract
+where applicable.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +18,7 @@ import subprocess
 
 import pytest
 
+from tests.e2e.helpers import walk_to_m_impl_parked
 from tracks.executor.publish import (
     assert_agent_forbidden,
     operation_idempotency_key,
@@ -41,7 +52,7 @@ def test_planned_then_executed_done(host_repo, trac, event_log):
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
     subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=host_repo, check=True)
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     # Release decision if needed
     trac("release", "--action", "release")
     trac("run")
@@ -68,16 +79,13 @@ def test_planned_then_executed_done(host_repo, trac, event_log):
 
 # AC-FR0275-02@v0.8 TRACKS-TRACE resume reconciled_skip without duplicate effects
 def test_resume_reconciled_skip(host_repo, trac, event_log):
-    try:
-        reconcile_operation({}, {})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-002" in str(exc)
+    verdict = reconcile_operation({"idempotency_key": "k", "target": "t"}, {"exists": True, "matches": True})
+    assert verdict == "skip"
 
     bare = host_repo.parent / "bare2.git"
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
     subprocess.run(["git", "remote", "add", "origin2", str(bare)], cwd=host_repo, check=True)
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()
@@ -109,7 +117,7 @@ def test_agent_forbidden(host_repo, trac, event_log):
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
     subprocess.run(["git", "remote", "add", "origin3", str(bare)], cwd=host_repo, check=True)
     # Simulate agent attempting publish by setting actor env (harness would block)
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     # Directly test the guard: any agent actor must be rejected
     try:
@@ -137,13 +145,13 @@ def test_unknown_operation_and_conflict(host_repo, trac, event_log):
         raise AssertionError("expected NotImplementedError")
     except NotImplementedError as exc:
         assert "IF-PUBLISH-001" in str(exc)
-    try:
-        reconcile_operation({"idempotency_key": "k", "target": "t"}, {"remote": "different"})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-002" in str(exc) or "IF-PUBLISH-001" in str(exc)
+    verdict = reconcile_operation(
+        {"idempotency_key": "sha256:abc", "target": "t", "digest": "d1"},
+        {"idempotency_key": "sha256:abc", "target": "t", "digest": "d2"},
+    )
+    assert verdict == "conflict"
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     [e for e in events if e["type"] == "publish.failed" and e["payload"].get("reason") in ("unknown_operation", "malformed")]
     # For unknown operation injection, must get failed
