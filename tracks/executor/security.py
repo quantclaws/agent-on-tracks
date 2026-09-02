@@ -6,13 +6,10 @@ unknown, missing or malformed result is fail-closed — the Runtime never
 infers or skips a policy item.
 """
 
-# ruff: noqa
-
 from __future__ import annotations
 
 import shlex
 import subprocess
-
 from typing import Literal
 
 from .host_contract import HostContract, NormalizedGateResult, SecurityScanDecl
@@ -39,7 +36,9 @@ def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, 
         return None, {"stdout_tail": "", "stderr_tail": f"timeout: {err}"}
 
 
-def _scan_result(decl: SecurityScanDecl, exit_code: int | None, summary: dict) -> NormalizedGateResult:
+def _scan_result(
+    decl: SecurityScanDecl, exit_code: int | None, summary: dict
+) -> NormalizedGateResult:
     """exit_code channel: the Runtime synthesizes the normalized result."""
     if exit_code is None:
         status: Literal["passed", "failed", "malformed"] = "malformed"
