@@ -1,4 +1,11 @@
-"""Integration: M-MILESTONE trace close and retry tail (FR-0276, IF-MILESTONE-001)."""
+"""Integration: M-MILESTONE trace close and retry tail (FR-0276, IF-MILESTONE-001).
+
+b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
+(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
+is forbidden (v0.8 suite-wide defect). The M-MILESTONE trace/refs producers
+are wired by later runtime tasks (kernel/release T-039 + T-001-era handler);
+until then the event-level assertions are legal Red against that product gap.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +13,14 @@ import subprocess
 
 import pytest
 
+from tests.e2e.helpers import walk_to_m_impl_parked
+
 pytestmark = pytest.mark.integration
 
 
 # AC-FR0276-01@v0.8 TRACKS-TRACE trace closed sealed refs clean and report mutual verification
 def test_trace_closed_sealed_refs_clean(host_repo, trac, event_log):
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()
@@ -39,7 +48,7 @@ def test_trace_closed_sealed_refs_clean(host_repo, trac, event_log):
 
 # AC-FR0276-02@v0.8 TRACKS-TRACE retry tail no republish on archive failure
 def test_retry_tail_no_republish(host_repo, trac, event_log):
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()

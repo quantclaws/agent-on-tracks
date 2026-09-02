@@ -1,10 +1,20 @@
-"""Integration: issue/project/milestone close (FR-0284, IF-ISSUE-002)."""
+"""Integration: issue/project/milestone close (FR-0284, IF-ISSUE-002).
+
+b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
+(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
+is forbidden (v0.8 suite-wide defect). The M-MILESTONE close/seal producers
+are wired by later runtime tasks (kernel/release routing T-039 + executor
+handler T-001-era); until then the event-level assertions are legal Red
+against that product gap.
+"""
 
 from __future__ import annotations
 
 import subprocess
 
 import pytest
+
+from tests.e2e.helpers import walk_to_m_impl_parked
 
 pytestmark = pytest.mark.integration
 
@@ -15,7 +25,7 @@ def test_close_with_trace_comment(host_repo, trac, event_log, monkeypatch):
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
     monkeypatch.setenv("GITHUB_TOKEN", "token")
 
-    trac("run")
+    walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     trac("run")
     events = event_log()
@@ -48,7 +58,7 @@ def test_close_with_trace_comment(host_repo, trac, event_log, monkeypatch):
 
 # AC-FR0284-02@v0.8 TRACKS-TRACE fake counterexamples rejected and not sealed
 def test_fake_counterexamples_rejected(host_repo, trac, event_log, monkeypatch):
-    trac("run")
+    walk_to_m_impl_parked(trac)
     events = event_log()
     assert events is not None
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
