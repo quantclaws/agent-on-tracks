@@ -22,7 +22,7 @@ _BARRIER_LAST: dict[str, int] = {}
 
 
 def _open_store():
-    """Best-effort open of the event store; returns Store or None."""
+    """Best-effort open of the event store; returns the Store or None."""
     try:
         from tracks.paths import db_path, tracks_home
         from tracks.store import Store
@@ -86,8 +86,6 @@ def establish_escape_barrier(run_id: str) -> dict:
     empty log reports cutover_seq == 0 — the run_id-hash/in-process counter
     fallback is reserved for the no-store pure-unit context only.
     """
-    global _BARRIER_SEQ
-    _BARRIER_SEQ += 1
     max_seq = _persistent_max_seq(run_id)
     if max_seq is not None:
         # store-backed: persistent max seq is authoritative (0 is a valid
@@ -98,6 +96,8 @@ def establish_escape_barrier(run_id: str) -> dict:
         _BARRIER_LAST[run_id] = seq
         return {"cutover_seq": seq, "quiesced_dispatches": []}
     # no store (pure unit context): deterministic hash + monotonic counter
+    global _BARRIER_SEQ
+    _BARRIER_SEQ += 1
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
     base = int(digest[:6], 16) % 1000
     seq = base + _BARRIER_SEQ * 1000 + 10
