@@ -34,12 +34,30 @@ def _render_placeholders(template: str, facts: dict) -> str:
     return out
 
 
-def build_operation_plan(contract: dict, journey: str, version_facts: dict) -> dict:
-    """Resolve the journey's declared operation steps with placeholders."""
+def build_operation_plan(
+    contract: dict,
+    journey: str,
+    version_facts: dict,
+    *,
+    active_release_branch: str | None = None,
+) -> dict:
+    """Resolve the journey's declared operation steps with placeholders.
+
+    IF-JOURNEY-001 §1m: a ``KIND:TARGET:when=active_release_branch`` step is
+    kept only when an active release branch exists; without one it is
+    silently skipped and the plan digest is computed over the
+    actually-resolved step set.
+    """
     ops = (contract or {}).get("operations", {})
     section = ops.get(journey) or ops.get(_JOURNEY_MAP.get(journey, journey)) or {}
     steps = list(section.get("steps") or [])
-    resolved = [_render_placeholders(s, version_facts) for s in steps]
+    resolved: list[str] = []
+    for step in steps:
+        if step.endswith(":when=active_release_branch"):
+            if not active_release_branch:
+                continue  # silent skip: no active release branch
+            step = step[: -len(":when=active_release_branch")]
+        resolved.append(_render_placeholders(step, version_facts))
     return {
         "journey": journey,
         "steps": resolved,
