@@ -71,25 +71,57 @@ class RunBreaker:
 
     def note(self, type: str, payload: dict) -> None:
         if type in _RESET_EVENTS:
-            # 人工重置点：计数窗口清零（进程内在途不会出现——retry 时
-            # run 已停；这是防御性处理，保证语义完整）。
             self._reset()
             return
         if type == "stage.rolled_back":
-            self.rollbacks += 1
-        elif type == "command.issued":
-            command = payload.get("command") or {}
-            if command.get("kind") == "dispatch_agent":
-                self.dispatches += 1
-        elif type == "verdict.failed":
-            self.verdict_failed += 1
-            cls_name = payload.get("failure_class") or payload.get("check") or "unknown"
-            self.failure_classes[cls_name] += 1
-            task_id = payload.get("task_id")
-            if task_id:
-                self.task_failures[str(task_id)] = (
-                    self.task_failures.get(str(task_id), 0) + 1
-                )
+            self._on_rollback()
+            return
+        if type == "command.issued":
+            self._on_command(payload)
+            return
+        if type == "verdict.failed":
+            self._on_verdict_failed(payload)
+            return
+
+    def _on_rollback(self) -> None:
+        self.rollbacks += 1
+
+    def _on_command(self, payload: dict) -> None:
+        command = payload.get("command") or {}
+        if command.get("kind") == "dispatch_agent":
+            self.dispatches += 1
+
+    def _is_deferred_only(self, payload: dict) -> bool:
+        return isinstance(payload, dict) and bool(payload.get("deferred_only"))
+
+    def _should_skip_task_count(self, payload: dict) -> bool:
+        try:
+            from tracks.executor.deferred_gate import should_count_breaker_task_failure
+
+            return not should_count_breaker_task_failure(payload)
+        except Exception:
+            return False
+
+    def _on_verdict_failed(self, payload: dict) -> None:
+        if self._is_deferred_only(payload):
+            return
+        if self._should_skip_task_count(payload):
+            self._count_verdict_only(payload)
+            return
+        self._count_verdict_and_task(payload)
+
+    def _count_verdict_only(self, payload: dict) -> None:
+        self.verdict_failed += 1
+        cls_name = payload.get("failure_class") or payload.get("check") or "unknown"
+        self.failure_classes[cls_name] += 1
+
+    def _count_verdict_and_task(self, payload: dict) -> None:
+        self.verdict_failed += 1
+        cls_name = payload.get("failure_class") or payload.get("check") or "unknown"
+        self.failure_classes[cls_name] += 1
+        task_id = payload.get("task_id")
+        if task_id:
+            self.task_failures[str(task_id)] = self.task_failures.get(str(task_id), 0) + 1
 
     # -- 判定 ---------------------------------------------------------------
 

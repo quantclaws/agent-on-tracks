@@ -135,6 +135,8 @@ EVENT_TYPES = (
     "phase0.guard_hardened",
     "phase0.sealed",
     "phase0.blocked",
+    # B94 drift breaker (deferred anchor legitimancy)
+    "drift_breaker",
 )
 
 # interfaces §4 — v0.1 closed command set.

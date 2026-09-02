@@ -38,6 +38,11 @@ class TaskNode:
     unit_refs: tuple[str, ...] = ()
     acceptance_refs: tuple[str, ...] = ()
     schema: int = 1
+    # B94 deferred anchors: dynamic cross-boundary anchors that run but do
+    # not gate the owner task. Collected in deferred_refs; the integration
+    # task's hard gate merges all deferred.
+    deferred_refs: tuple[str, ...] = ()
+    integration: bool = False
 
 
 @dataclass(frozen=True)
@@ -121,15 +126,55 @@ def _parse_json(text: str) -> tuple[object | None, str | None]:
         return (None, f"tasks.json: invalid JSON at {pos}: {exc.msg}")
 
 
+_E2E_PREFIX = "tests/e2e/"
+
+
+def _tid_of(raw: dict, index: int) -> str:
+    return str(raw.get("task_id", f"task[{index}]"))
+
+
+def _missing_required_field(raw: dict, tid: str) -> str | None:
+    for field in _REQUIRED_FIELDS:
+        if field not in raw:
+            return f"tasks.json: {tid}: missing required field '{field}'"
+    return None
+
+
+def _validate_deferred_refs(
+    raw: dict, tid: str, acceptance_refs
+) -> tuple[list[str] | None, str | None]:
+    deferred_raw = raw.get("deferred_refs", [])
+    if not isinstance(deferred_raw, list):
+        return None, f"tasks.json: {tid}: deferred_refs must be a list"
+    for item in deferred_raw:
+        if not isinstance(item, str):
+            return None, f"tasks.json: {tid}: deferred_refs must be a list of strings"
+        if not (item.startswith(_INTEGRATION_PREFIX) or item.startswith(_E2E_PREFIX)):
+            return None, (
+                f"tasks.json: {tid}: deferred_refs entry must live under "
+                f"tests/integration/ or tests/e2e/: {item}"
+            )
+    if any(item in acceptance_refs for item in deferred_raw):
+        return None, f"tasks.json: {tid}: deferred_refs must not intersect acceptance_refs"
+    return deferred_raw, None
+
+
+def _validate_integration_flag(raw: dict, tid: str) -> tuple[bool | None, str | None]:
+    val = raw.get("integration", False)
+    if not isinstance(val, bool):
+        return None, f"tasks.json: {tid}: integration must be a boolean"
+    return bool(val), None
+
+
 def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | None, str | None]:
     if not isinstance(raw, dict):
         return (None, f"tasks.json: task[{index}] must be an object")
-    tid = raw.get("task_id", f"task[{index}]")
+    tid = _tid_of(raw, index)
     if not isinstance(tid, str) or not tid:
         return (None, f"tasks.json: task[{index}] task_id must be a non-empty string")
-    for field in _REQUIRED_FIELDS:
-        if field not in raw:
-            return (None, f"tasks.json: {tid}: missing required field '{field}'")
+    miss = _missing_required_field(raw, tid)
+    if miss:
+        return (None, miss)
     err = _validate_scalar_fields(raw, tid)
     if err:
         return (None, err)
@@ -137,6 +182,12 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
     if isinstance(lists, str):
         return (None, lists)
     ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs = lists
+    deferred_raw, err = _validate_deferred_refs(raw, tid, acceptance_refs)
+    if err:
+        return (None, err)
+    integration, err = _validate_integration_flag(raw, tid)
+    if err:
+        return (None, err)
     return (
         TaskNode(
             task_id=tid,
@@ -154,6 +205,8 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
             unit_refs=tuple(unit_refs),
             acceptance_refs=tuple(acceptance_refs),
             schema=schema,
+            deferred_refs=tuple(deferred_raw or []),
+            integration=bool(integration),
         ),
         None,
     )
@@ -351,6 +404,37 @@ def _extract_cycle(u: str, v: str, parent: dict[str, str]) -> str:
     return "->".join(path + [path[0]])
 
 
+def _is_integration_task(task) -> bool:
+    return bool(getattr(task, "integration", False))
+
+
+def _scope_single_errors(task: TaskNode) -> list[str]:
+    if _is_integration_task(task):
+        return []
+    errs: list[str] = []
+    paths, path_errors = _scope_paths(task.scope_boundary, task.task_id)
+    if path_errors:
+        errs.extend(path_errors)
+    if not paths:
+        errs.append(f"{task.task_id}: scope_boundary must not be empty")
+    return errs
+
+
+def _scope_overlap_errors(tasks: list[TaskNode]) -> list[str]:
+    errs: list[str] = []
+    for i, t1 in enumerate(tasks):
+        if _is_integration_task(t1):
+            continue
+        s1 = _parse_scope_paths(t1.scope_boundary)
+        for t2 in tasks[i + 1 :]:
+            if _is_integration_task(t2):
+                continue
+            overlap = s1 & _parse_scope_paths(t2.scope_boundary)
+            for path in sorted(overlap):
+                errs.append(f"scope overlap: {t1.task_id} and {t2.task_id} both target {path}")
+    return errs
+
+
 def validate_scope(
     tasks: list[TaskNode],
 ) -> tuple[bool, list[str]]:
@@ -363,17 +447,8 @@ def validate_scope(
     """
     errors: list[str] = []
     for task in tasks:
-        paths, path_errors = _scope_paths(task.scope_boundary, task.task_id)
-        if path_errors:
-            errors.extend(path_errors)
-        if not paths:
-            errors.append(f"{task.task_id}: scope_boundary must not be empty")
-    for i, t1 in enumerate(tasks):
-        s1 = _parse_scope_paths(t1.scope_boundary)
-        for t2 in tasks[i + 1 :]:
-            overlap = s1 & _parse_scope_paths(t2.scope_boundary)
-            for path in sorted(overlap):
-                errors.append(f"scope overlap: {t1.task_id} and {t2.task_id} both target {path}")
+        errors.extend(_scope_single_errors(task))
+    errors.extend(_scope_overlap_errors(tasks))
     return (len(errors) == 0, errors)
 
 
@@ -389,28 +464,53 @@ def validate_task_structure(tasks: list[TaskNode]) -> list[str]:
     return [error for task in tasks for error in _task_structure_errors(task)]
 
 
-def _task_structure_errors(task: TaskNode) -> list[str]:
-    errors: list[str] = []
+def _common_structure_errors(task: TaskNode) -> list[str]:
+    errs: list[str] = []
     if not task.description.strip():
-        errors.append(f"{task.task_id}: description must not be empty")
+        errs.append(f"{task.task_id}: description must not be empty")
     if not task.batch.strip():
-        errors.append(f"{task.task_id}: batch must not be empty")
+        errs.append(f"{task.task_id}: batch must not be empty")
     if task.budget < 1:
-        errors.append(f"{task.task_id}: budget must be a positive integer")
-    if not task.ac_refs:
-        errors.append(f"{task.task_id}: ac_refs must not be empty")
-    if not task.fr_refs:
-        errors.append(f"{task.task_id}: fr_refs must not be empty")
-    if not task.if_ids:
-        errors.append(f"{task.task_id}: if_ids must not be empty")
+        errs.append(f"{task.task_id}: budget must be a positive integer")
+    return errs
+
+
+def _integration_structure_errors(task: TaskNode) -> list[str]:
     if task.schema == _SCHEMA_V2:
-        # B50: acceptance anchors are the task's non-negotiable green debt;
-        # unit_refs may legitimately be empty (Devon's universal RED
-        # obligation already covers unit coverage via the R manifest).
-        if not task.acceptance_refs:
-            errors.append(f"{task.task_id}: acceptance_refs must not be empty")
-    elif not task.test_refs:
-        errors.append(f"{task.task_id}: test_refs must not be empty")
+        return []
+    if not task.test_refs and not getattr(task, "deferred_refs", ()):
+        return [f"{task.task_id}: test_refs must not be empty"]
+    return []
+
+
+def _standard_acfr_errors(task: TaskNode) -> list[str]:
+    errs: list[str] = []
+    if not task.ac_refs:
+        errs.append(f"{task.task_id}: ac_refs must not be empty")
+    if not task.fr_refs:
+        errs.append(f"{task.task_id}: fr_refs must not be empty")
+    if not task.if_ids:
+        errs.append(f"{task.task_id}: if_ids must not be empty")
+    return errs
+
+
+def _standard_ref_errors(task: TaskNode) -> list[str]:
+    if task.schema == _SCHEMA_V2:
+        if not task.acceptance_refs and not getattr(task, "deferred_refs", ()):
+            return [f"{task.task_id}: acceptance_refs must not be empty"]
+        return []
+    if not task.test_refs:
+        return [f"{task.task_id}: test_refs must not be empty"]
+    return []
+
+
+def _task_structure_errors(task: TaskNode) -> list[str]:
+    errors = _common_structure_errors(task)
+    if _is_integration_task(task):
+        errors.extend(_integration_structure_errors(task))
+        return errors
+    errors.extend(_standard_acfr_errors(task))
+    errors.extend(_standard_ref_errors(task))
     return errors
 
 
@@ -580,7 +680,7 @@ def validate_acceptance_coverage(
 
     declared: set[str] = set()
     for task in tasks:
-        for ref in task.acceptance_refs:
+        for ref in (*task.acceptance_refs, *getattr(task, "deferred_refs", ())):
             declared.add(str(ref).strip())
     # PRISM-B49B50-R1-01: ONLY a pure FILE declaration (no ``::``) covers
     # every node in the file. A NODE declaration covers exactly itself --

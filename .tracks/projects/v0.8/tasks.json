@@ -18,7 +18,16 @@
         "IF-RELEASE-003"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
+      "acceptance_refs": [],
+      "scope_boundary": "tracks/cli/main.py, tracks/executor/executor.py, tracks/kernel/machine.py, tracks/kernel/m_impl.py",
+      "depends_on": [
+        "T-004",
+        "T-026"
+      ],
+      "batch": "3",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": [
         "tests/integration/test_escape_gate.py::test_universal_return_moves_pointer",
         "tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes",
         "tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence",
@@ -29,15 +38,7 @@
         "tests/integration/test_release_gate_cli.py::test_rejected_gate_or_stale",
         "tests/integration/test_release_gate_cli.py::test_release_action_allowed",
         "tests/integration/test_release_gate_cli.py::test_surface_exclusivity"
-      ],
-      "scope_boundary": "tracks/cli/main.py, tracks/executor/executor.py, tracks/kernel/machine.py, tracks/kernel/m_impl.py",
-      "depends_on": [
-        "T-004",
-        "T-026"
-      ],
-      "batch": "3",
-      "parallel": true,
-      "budget": 3
+      ]
     },
     {
       "task_id": "T-002",
@@ -55,21 +56,22 @@
         "IF-VERIFY-004"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_issue_mapping.py::test_authoritative_map_consumed",
-        "tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup",
-        "tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers",
-        "tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode",
-        "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
-        "tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/effects/github.py",
       "depends_on": [
         "T-001"
       ],
       "batch": "4",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_issue_mapping.py::test_authoritative_map_consumed",
+        "tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup",
+        "tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers",
+        "tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode",
+        "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
+        "tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped"
+      ]
     },
     {
       "task_id": "T-004",
@@ -92,14 +94,15 @@
       "unit_refs": [
         "tests/unit/test_escape_gate_red_v2.py::test_quarantine_allows_post_barrier_outcome"
       ],
-      "acceptance_refs": [
-        "tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/escape.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects"
+      ]
     },
     {
       "task_id": "T-007",
@@ -120,20 +123,21 @@
         "IF-FAILURE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical",
-        "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay",
-        "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules",
-        "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks",
-        "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/failure_review.py",
       "depends_on": [
         "T-001"
       ],
       "batch": "4",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical",
+        "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay",
+        "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules",
+        "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks",
+        "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs"
+      ]
     },
     {
       "task_id": "T-008",
@@ -157,7 +161,15 @@
         "IF-HOSTCONTRACT-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
+      "acceptance_refs": [],
+      "scope_boundary": "tracks/executor/host_contract.py, tracks/executor/validate.py, tracks/project.py",
+      "depends_on": [
+        "T-039"
+      ],
+      "batch": "5",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": [
         "tests/integration/test_kernel_language_neutrality.py::test_kernel_schema_language_free",
         "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding",
         "tests/integration/test_host_contract.py::test_materialized_contract_valid",
@@ -165,14 +177,7 @@
         "tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass",
         "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed",
         "tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop"
-      ],
-      "scope_boundary": "tracks/executor/host_contract.py, tracks/executor/validate.py, tracks/project.py",
-      "depends_on": [
-        "T-039"
-      ],
-      "batch": "5",
-      "parallel": true,
-      "budget": 3
+      ]
     },
     {
       "task_id": "T-013",
@@ -191,7 +196,17 @@
         "IF-VERIFY-002"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
+      "acceptance_refs": [],
+      "scope_boundary": "tracks/executor/m_verify.py",
+      "depends_on": [
+        "T-039",
+        "T-002",
+        "T-021"
+      ],
+      "batch": "6",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": [
         "tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused",
         "tests/integration/test_verify_fullf_reuse.py::test_drift_or_stale_reruns_full",
         "tests/integration/test_verify_fullf_reuse.py::test_undrifted_identity_reuses_full_f",
@@ -205,16 +220,7 @@
         "tests/integration/test_verify_prism_final.py::test_prism_fail_blocks_m_impl_gap",
         "tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings",
         "tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked"
-      ],
-      "scope_boundary": "tracks/executor/m_verify.py",
-      "depends_on": [
-        "T-039",
-        "T-002",
-        "T-021"
-      ],
-      "batch": "6",
-      "parallel": true,
-      "budget": 3
+      ]
     },
     {
       "task_id": "T-016",
@@ -241,11 +247,7 @@
         "tests/unit/test_milestone_red.py::test_seal_evidence_readonly",
         "tests/unit/test_milestone_red.py::test_clean_temp_refs_returns_zero_remaining"
       ],
-      "acceptance_refs": [
-        "tests/integration/test_issue_close.py::test_fake_counterexamples_rejected",
-        "tests/integration/test_issue_close.py::test_close_with_trace_comment",
-        "tests/integration/test_milestone_lifecycle.py::test_trace_closed_sealed_refs_clean"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/milestone.py",
       "depends_on": [
         "T-001",
@@ -253,7 +255,12 @@
       ],
       "batch": "5",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_issue_close.py::test_fake_counterexamples_rejected",
+        "tests/integration/test_issue_close.py::test_close_with_trace_comment",
+        "tests/integration/test_milestone_lifecycle.py::test_trace_closed_sealed_refs_clean"
+      ]
     },
     {
       "task_id": "T-021",
@@ -275,7 +282,16 @@
         "IF-PUBLISH-002"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
+      "acceptance_refs": [],
+      "scope_boundary": "tracks/executor/publish.py, tracks/effects/publish.py",
+      "depends_on": [
+        "T-039",
+        "T-001"
+      ],
+      "batch": "5",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": [
         "tests/integration/test_publish_idempotency.py::test_agent_forbidden",
         "tests/integration/test_publish_idempotency.py::test_planned_then_executed_done",
         "tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict",
@@ -290,15 +306,7 @@
         "tests/integration/test_journey_versioning.py::test_post_release_patch",
         "tests/integration/test_journey_versioning.py::test_dev_precheck_fails_without_release_branch",
         "tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys"
-      ],
-      "scope_boundary": "tracks/executor/publish.py, tracks/effects/publish.py",
-      "depends_on": [
-        "T-039",
-        "T-001"
-      ],
-      "batch": "5",
-      "parallel": true,
-      "budget": 3
+      ]
     },
     {
       "task_id": "T-024",
@@ -327,18 +335,19 @@
         "IF-REFERENCE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_reference_host.py::test_python_details_isolated",
-        "tests/integration/test_reference_host.py::test_missing_credentials_needs_attention",
-        "tests/integration/test_reference_host.py::test_reference_host_journey_same_shape"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/reference_host.py",
       "depends_on": [
         "T-008"
       ],
       "batch": "6",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_reference_host.py::test_python_details_isolated",
+        "tests/integration/test_reference_host.py::test_missing_credentials_needs_attention",
+        "tests/integration/test_reference_host.py::test_reference_host_journey_same_shape"
+      ]
     },
     {
       "task_id": "T-026",
@@ -357,15 +366,16 @@
         "IF-JOURNEY-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_release_preview.py::test_preview_digest_binds_all",
-        "tests/integration/test_release_preview.py::test_stale_preview_reported"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/release_gate.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_release_preview.py::test_preview_digest_binds_all",
+        "tests/integration/test_release_preview.py::test_stale_preview_reported"
+      ]
     },
     {
       "task_id": "T-029",
@@ -390,15 +400,16 @@
         "IF-REPAIR-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix",
-        "tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/repair.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix",
+        "tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived"
+      ]
     },
     {
       "task_id": "T-034",
@@ -415,15 +426,16 @@
         "IF-SECURITY-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_security_assessment.py::test_contract_scans_pass",
-        "tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/executor/security.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_security_assessment.py::test_contract_scans_pass",
+        "tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks"
+      ]
     },
     {
       "task_id": "T-035",
@@ -444,7 +456,15 @@
         "IF-ENVELOPE-002"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
+      "acceptance_refs": [],
+      "scope_boundary": "tracks/kernel/envelope.py, tracks/effects/fake.py, tracks/effects/opencode.py",
+      "depends_on": [
+        "T-001"
+      ],
+      "batch": "4",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": [
         "tests/integration/test_envelope_contract.py::test_malformed_format_error",
         "tests/integration/test_envelope_contract.py::test_unified_envelope_parse",
         "tests/integration/test_envelope_parity.py::test_malformed_no_business_mutation",
@@ -452,14 +472,7 @@
         "tests/integration/test_envelope_parity.py::test_format_vs_semantic_events_separated",
         "tests/integration/test_envelope_parity.py::test_malformed_regression_corpus",
         "tests/integration/test_envelope_parity.py::test_parity_mismatch_rejects"
-      ],
-      "scope_boundary": "tracks/kernel/envelope.py, tracks/effects/fake.py, tracks/effects/opencode.py",
-      "depends_on": [
-        "T-001"
-      ],
-      "batch": "4",
-      "parallel": true,
-      "budget": 3
+      ]
     },
     {
       "task_id": "T-038",
@@ -477,16 +490,17 @@
         "IF-PIPELINE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
-        "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
-        "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/kernel/m_test.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
+        "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
+        "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact"
+      ]
     },
     {
       "task_id": "T-039",
@@ -504,13 +518,7 @@
         "IF-VERIFY-005"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_release_trace.py::test_same_candidate_all_events",
-        "tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify",
-        "tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape",
-        "tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds",
-        "tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/kernel/release.py",
       "depends_on": [
         "T-001",
@@ -518,7 +526,14 @@
       ],
       "batch": "4",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_release_trace.py::test_same_candidate_all_events",
+        "tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify",
+        "tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape",
+        "tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds",
+        "tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests"
+      ]
     },
     {
       "task_id": "T-040",
@@ -541,16 +556,51 @@
         "IF-MILESTONE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [
-        "tests/integration/test_release_trace.py::test_trace_export_digests"
-      ],
+      "acceptance_refs": [],
       "scope_boundary": "tracks/checks/trace.py, tracks/report.py",
       "depends_on": [
         "T-039"
       ],
       "batch": "5",
       "parallel": true,
-      "budget": 3
+      "budget": 3,
+      "deferred_refs": [
+        "tests/integration/test_release_trace.py::test_trace_export_digests"
+      ]
+    },
+    {
+      "task_id": "T-INT",
+      "issue_number": 999,
+      "description": "最终集成收口：全图 deferred 锚点在此转硬门禁；跳过 RED，REFACTOR 与质量门禁不豁免",
+      "ac_refs": [],
+      "fr_refs": [],
+      "if_ids": [],
+      "unit_refs": [],
+      "acceptance_refs": [],
+      "deferred_refs": [],
+      "scope_boundary": "",
+      "depends_on": [
+        "T-001",
+        "T-002",
+        "T-004",
+        "T-007",
+        "T-008",
+        "T-013",
+        "T-016",
+        "T-021",
+        "T-024",
+        "T-026",
+        "T-029",
+        "T-034",
+        "T-035",
+        "T-038",
+        "T-039",
+        "T-040"
+      ],
+      "batch": "7",
+      "parallel": false,
+      "budget": 3,
+      "integration": true
     }
   ]
 }

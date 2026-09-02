@@ -7,7 +7,7 @@
 - FR refs: FR-0274
 - IF ids: IF-RELEASE-003
 - Unit refs: -
-- Acceptance refs: tests/integration/test_escape_gate.py::test_universal_return_moves_pointer, tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes, tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence, tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip, tests/integration/test_escape_gate.py::test_pointer_rollback_lands_target_stage, tests/integration/test_escape_gate.py::test_escape_barrier_quiesces_inflight_dispatch, tests/integration/test_release_gate_cli.py::test_delay_and_return, tests/integration/test_release_gate_cli.py::test_rejected_gate_or_stale, tests/integration/test_release_gate_cli.py::test_release_action_allowed, tests/integration/test_release_gate_cli.py::test_surface_exclusivity
+- Acceptance refs: 
 - Scope: tracks/cli/main.py, tracks/executor/executor.py, tracks/kernel/machine.py, tracks/kernel/m_impl.py
 - Depends on: T-004, T-026
 - Batch: 3
@@ -20,7 +20,7 @@
 - FR refs: FR-0270
 - IF ids: IF-VERIFY-004
 - Unit refs: -
-- Acceptance refs: tests/integration/test_issue_mapping.py::test_authoritative_map_consumed, tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup, tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers, tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode, tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention, tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped
+- Acceptance refs: 
 - Scope: tracks/effects/github.py
 - Depends on: T-001
 - Batch: 4
@@ -33,7 +33,7 @@
 - FR refs: FR-0287
 - IF ids: IF-ESCAPE-001, IF-ESCAPE-002
 - Unit refs: tests/unit/test_escape_gate_red_v2.py::test_quarantine_allows_post_barrier_outcome
-- Acceptance refs: tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects
+- Acceptance refs: 
 - Scope: tracks/executor/escape.py
 - Depends on: -
 - Batch: 1
@@ -46,7 +46,7 @@
 - FR refs: FR-0280, NFR-0146
 - IF ids: IF-FAILURE-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical, tests/integration/test_failure_evidence_chain.py::test_chain_events_replay, tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules, tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks, tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs
+- Acceptance refs: 
 - Scope: tracks/executor/failure_review.py
 - Depends on: T-001
 - Batch: 4
@@ -59,7 +59,7 @@
 - FR refs: FR-0269, FR-0281, NFR-0147
 - IF ids: IF-HOSTCONTRACT-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_kernel_language_neutrality.py::test_kernel_schema_language_free, tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding, tests/integration/test_host_contract.py::test_materialized_contract_valid, tests/integration/test_host_contract.py::test_execute_per_contract_only, tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass, tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed, tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop
+- Acceptance refs: 
 - Scope: tracks/executor/host_contract.py, tracks/executor/validate.py, tracks/project.py
 - Depends on: T-039
 - Batch: 5
@@ -72,7 +72,7 @@
 - FR refs: FR-0268
 - IF ids: IF-EVIDENCE-001, IF-VERIFY-002
 - Unit refs: -
-- Acceptance refs: tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused, tests/integration/test_verify_fullf_reuse.py::test_drift_or_stale_reruns_full, tests/integration/test_verify_fullf_reuse.py::test_undrifted_identity_reuses_full_f, tests/integration/test_verify_ci_readback.py::test_api_readback_binds_candidate, tests/integration/test_verify_ci_readback.py::test_mismatch_missing_stale_blocks, tests/integration/test_verify_ci_readback.py::test_missing_credentials_needs_attention, tests/integration/test_verify_candidate.py::test_clean_tree_freezes_candidate, tests/integration/test_verify_candidate.py::test_dirty_tree_needs_attention, tests/integration/test_verify_candidate.py::test_drift_marks_stale_no_refreeze, tests/integration/test_verify_prism_final.py::test_same_candidate_consistency_pass, tests/integration/test_verify_prism_final.py::test_prism_fail_blocks_m_impl_gap, tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings, tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked
+- Acceptance refs: 
 - Scope: tracks/executor/m_verify.py
 - Depends on: T-039, T-002, T-021
 - Batch: 6
@@ -85,7 +85,7 @@
 - FR refs: FR-0283, NFR-0148
 - IF ids: IF-ISSUE-001
 - Unit refs: tests/unit/test_milestone_red.py::test_close_consumes_only_authoritative_map, tests/unit/test_milestone_red.py::test_close_project_milestone_returns_closed_state, tests/unit/test_milestone_red.py::test_seal_evidence_readonly, tests/unit/test_milestone_red.py::test_clean_temp_refs_returns_zero_remaining
-- Acceptance refs: tests/integration/test_issue_close.py::test_fake_counterexamples_rejected, tests/integration/test_issue_close.py::test_close_with_trace_comment, tests/integration/test_milestone_lifecycle.py::test_trace_closed_sealed_refs_clean
+- Acceptance refs: 
 - Scope: tracks/executor/milestone.py
 - Depends on: T-001, T-039
 - Batch: 5
@@ -98,7 +98,7 @@
 - FR refs: FR-0275, NFR-0144
 - IF ids: IF-PUBLISH-002
 - Unit refs: -
-- Acceptance refs: tests/integration/test_publish_idempotency.py::test_agent_forbidden, tests/integration/test_publish_idempotency.py::test_planned_then_executed_done, tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict, tests/integration/test_publish_idempotency.py::test_resume_reconciled_skip, tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates, tests/integration/test_publish_reconcile.py::test_same_key_remote_diff_conflict, tests/integration/test_publish_reconcile.py::test_unfinished_continues, tests/integration/test_journey_recovery.py::test_interrupt_replay_reconcile_matrix, tests/integration/test_milestone_lifecycle.py::test_retry_tail_no_republish, tests/integration/test_journey_versioning.py::test_dev_prerelease_only, tests/integration/test_journey_versioning.py::test_feature_public_release, tests/integration/test_journey_versioning.py::test_post_release_patch, tests/integration/test_journey_versioning.py::test_dev_precheck_fails_without_release_branch, tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys
+- Acceptance refs: 
 - Scope: tracks/executor/publish.py, tracks/effects/publish.py
 - Depends on: T-039, T-001
 - Batch: 5
@@ -111,7 +111,7 @@
 - FR refs: FR-0282, NFR-0149, FR-0267, FR-0278
 - IF ids: IF-REFERENCE-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_reference_host.py::test_python_details_isolated, tests/integration/test_reference_host.py::test_missing_credentials_needs_attention, tests/integration/test_reference_host.py::test_reference_host_journey_same_shape
+- Acceptance refs: 
 - Scope: tracks/executor/reference_host.py
 - Depends on: T-008
 - Batch: 6
@@ -124,7 +124,7 @@
 - FR refs: FR-0277
 - IF ids: IF-JOURNEY-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_release_preview.py::test_preview_digest_binds_all, tests/integration/test_release_preview.py::test_stale_preview_reported
+- Acceptance refs: 
 - Scope: tracks/executor/release_gate.py
 - Depends on: -
 - Batch: 1
@@ -137,7 +137,7 @@
 - FR refs: FR-0286, NFR-0143
 - IF ids: IF-KNOWNISSUE-001, IF-REPAIR-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix, tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived
+- Acceptance refs: 
 - Scope: tracks/executor/repair.py
 - Depends on: -
 - Batch: 1
@@ -150,7 +150,7 @@
 - FR refs: FR-0272
 - IF ids: IF-SECURITY-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_security_assessment.py::test_contract_scans_pass, tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks
+- Acceptance refs: 
 - Scope: tracks/executor/security.py
 - Depends on: -
 - Batch: 1
@@ -163,7 +163,7 @@
 - FR refs: FR-0279, NFR-0145
 - IF ids: IF-ENVELOPE-002
 - Unit refs: -
-- Acceptance refs: tests/integration/test_envelope_contract.py::test_malformed_format_error, tests/integration/test_envelope_contract.py::test_unified_envelope_parse, tests/integration/test_envelope_parity.py::test_malformed_no_business_mutation, tests/integration/test_envelope_parity.py::test_deterministic_parse_and_parity, tests/integration/test_envelope_parity.py::test_format_vs_semantic_events_separated, tests/integration/test_envelope_parity.py::test_malformed_regression_corpus, tests/integration/test_envelope_parity.py::test_parity_mismatch_rejects
+- Acceptance refs: 
 - Scope: tracks/kernel/envelope.py, tracks/effects/fake.py, tracks/effects/opencode.py
 - Depends on: T-001
 - Batch: 4
@@ -176,7 +176,7 @@
 - FR refs: FR-0285
 - IF ids: IF-PIPELINE-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition, tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority, tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact
+- Acceptance refs: 
 - Scope: tracks/kernel/m_test.py
 - Depends on: -
 - Batch: 1
@@ -189,7 +189,7 @@
 - FR refs: FR-0271
 - IF ids: IF-VERIFY-005
 - Unit refs: -
-- Acceptance refs: tests/integration/test_release_trace.py::test_same_candidate_all_events, tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify, tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape, tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds, tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests
+- Acceptance refs: 
 - Scope: tracks/kernel/release.py
 - Depends on: T-001, T-029
 - Batch: 4
@@ -202,8 +202,21 @@
 - FR refs: FR-0284, FR-0276, FR-0273
 - IF ids: IF-MILESTONE-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_release_trace.py::test_trace_export_digests
+- Acceptance refs: 
 - Scope: tracks/checks/trace.py, tracks/report.py
 - Depends on: T-039
 - Batch: 5
 - Parallel: True
+
+## T-INT
+- Issue: #999
+- Description: 最终集成收口：全图 deferred 锚点在此转硬门禁；跳过 RED，REFACTOR 与质量门禁不豁免
+- AC refs: 
+- FR refs: 
+- IF ids: 
+- Unit refs: -
+- Acceptance refs: 
+- Scope: 
+- Depends on: T-001, T-002, T-004, T-007, T-008, T-013, T-016, T-021, T-024, T-026, T-029, T-034, T-035, T-038, T-039, T-040
+- Batch: 7
+- Parallel: False

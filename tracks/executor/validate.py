@@ -98,12 +98,14 @@ _VERSION_QUALIFIED = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}@(v\d+\.\d+)")
 # existed); to-be-created tooling must be marked as a foundation task instead.
 TRAC_SUBCOMMANDS = frozenset(
     {
+        "abandon",
         "approve",
         "check",
         "discuss",
         "hotfix",
         "init",
         "recover",
+        "release",
         "replay",
         "report",
         "retry",

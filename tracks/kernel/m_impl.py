@@ -72,13 +72,20 @@ def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_task_started(s: State, p: dict, ev: EventEnvelope) -> None:
-    """TASK_DISPATCH: Runtime selected a ready task -> RED (fresh RGR cycle)."""
+    """TASK_DISPATCH: Runtime selected a ready task -> RED (fresh RGR cycle).
+    B94: integration tasks skip RED (no new unit test to write; their hard
+    gate already covers all deferred)."""
     s.current_task_id = p.get("task_id")
     task = p.get("task")
     s.current_task_metadata = dict(task) if isinstance(task, dict) else None
     manifest = p.get("manifest")
     s.current_manifest = dict(manifest) if isinstance(manifest, dict) else None
-    s.substate = "RED"
+    # B94 integration tasks start directly at GREEN (skip RED)
+    try:
+        is_integration = bool(task.get("integration")) if isinstance(task, dict) else False
+    except Exception:
+        is_integration = False
+    s.substate = "GREEN" if is_integration else "RED"
     _reset_doc(s)
     s.current_attempt = 0
     s.green_committed = False

@@ -817,6 +817,9 @@ class MImplRuntimeMixin:
                 # so Devon/Shield see the layer-resolved anchors explicitly.
                 "unit_refs",
                 "acceptance_refs",
+                # B94 deferred anchors and integration marker
+                "deferred_refs",
+                "integration",
             ):
                 value = task.get(key)
                 assignment[key] = list(value) if isinstance(value, tuple) else value
@@ -1014,6 +1017,12 @@ class MImplRuntimeMixin:
         if not unit_refs and not acceptance_refs and test_refs:
             unit_refs = tuple(r for r in test_refs if r.startswith("tests/unit/"))
             acceptance_refs = tuple(r for r in test_refs if not r.startswith("tests/unit/"))
+        # B94 deferred anchors (optional, default empty; integration flag)
+        deferred_raw = raw.get("deferred_refs") or ()
+        deferred_refs = tuple(
+            str(r) for r in deferred_raw if isinstance(r, str)
+        )
+        integration = bool(raw.get("integration", False))
         return TaskNode(
             task_id=raw["task_id"],
             issue_number=raw["issue_number"],
@@ -1030,6 +1039,8 @@ class MImplRuntimeMixin:
             unit_refs=unit_refs,
             acceptance_refs=acceptance_refs,
             schema=int(raw.get("schema") or 1),
+            deferred_refs=deferred_refs,
+            integration=integration,
         )
 
     def _current_manifest(self) -> dict | None:
@@ -1741,6 +1752,8 @@ class MImplRuntimeMixin:
             "batch": task.batch,
             "parallel": task.parallel,
             "budget": task.budget,
+            "deferred_refs": list(getattr(task, "deferred_refs", ())),
+            "integration": bool(getattr(task, "integration", False)),
         }
 
     @staticmethod
@@ -1761,6 +1774,8 @@ class MImplRuntimeMixin:
             "batch",
             "parallel",
             "budget",
+            "deferred_refs",
+            "integration",
         )
         return all(old.get(key) == new.get(key) for key in keys)
 
@@ -2872,6 +2887,17 @@ class MImplRuntimeMixin:
         # graph-less replay falls back to the last frozen BASELINE digest
         # (single resolution site, shared with the scenario B reconcile).
         baseline_digest = state.taskgraph_digest or self._last_baseline_digest()
+        allowed = self._task_allowed_paths(task)
+        # B94 integration exemption: allowed = union of all task scopes
+        if getattr(task, "integration", False):
+            try:
+                from tracks.executor.deferred_gate import integration_allowed_paths
+
+                all_nodes = [self._task_node(r) for r in (state.task_refs or [])]
+                if all_nodes:
+                    allowed = integration_allowed_paths(all_nodes)
+            except Exception:
+                pass
         manifest = {
             "task_id": task.task_id,
             "task_ref": self._task_payload(task),
@@ -2882,8 +2908,10 @@ class MImplRuntimeMixin:
             "test_refs": list(task.test_refs),
             "unit_refs": list(task.unit_refs),
             "acceptance_refs": list(task.acceptance_refs),
+            "deferred_refs": list(getattr(task, "deferred_refs", ())),
+            "integration": bool(getattr(task, "integration", False)),
             "scope_boundary": task.scope_boundary,
-            "allowed_paths": self._task_allowed_paths(task),
+            "allowed_paths": allowed,
             "forbidden_paths": self._forbidden_paths(),
             "red_test_paths": self._devon_red_test_dirs(),
             "frozen_test_paths": self._frozen_test_paths(),
@@ -2912,6 +2940,20 @@ class MImplRuntimeMixin:
         return manifest
 
     def _task_allowed_paths(self, task: TaskNode) -> list[str]:
+        # B94: integration tasks are exempt from scope isolation (union)
+        if getattr(task, "integration", False):
+            try:
+                from tracks.executor.deferred_gate import integration_allowed_paths
+
+                state = self.store.state(self.run_id)
+                all_nodes = [self._task_node(r) for r in (state.task_refs or [])]
+                # include current task if not yet in refs (e.g. during commit)
+                if not any(n.task_id == task.task_id for n in all_nodes):
+                    all_nodes.append(task)
+                if all_nodes:
+                    return integration_allowed_paths(all_nodes)
+            except Exception:
+                pass
         allowed = set(self._parse_allowed_paths(task.scope_boundary))
         # B50 (#65): only unit_refs are Devon-writable RED artifacts; legacy
         # graphs declare none (their test_refs are integration acceptance
@@ -3345,15 +3387,27 @@ class MImplRuntimeMixin:
         return plan_row_targets(test_cell)
 
     def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
-        """Run unit/integration collect commands against the gate cwd."""
+        """Run unit/integration (and e2e for B94 deferred) collects."""
         inventories: dict[str, list[str]] = {}
-        for layer, section in (("unit", contract.unit), ("integration", contract.integration)):
+        layers = [("unit", contract.unit), ("integration", contract.integration)]
+        # B94: deferred may be e2e, so collect e2e when present
+        if getattr(contract, "e2e", None) is not None:
+            layers.append(("e2e", contract.e2e))
+        for layer, section in layers:
+            if section is None:
+                inventories[layer] = []
+                continue
             section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
             obs = execute_gate_command(section.collect, section_cwd, f"{layer}-collect")
             if obs.exit_code == 5:
                 inventories[layer] = []
                 continue
             if obs.exit_code != 0:
+                # B94: e2e is optional for deferred; missing dir is not a hard
+                # failure (unit/integration missing is). Treat as empty.
+                if layer == "e2e":
+                    inventories[layer] = []
+                    continue
                 raise TestSelectError(
                     f"[{layer}] collect failed (rc={obs.exit_code}): "
                     f"{(obs.stderr or obs.stdout).strip()[:400]}"
@@ -3392,6 +3446,30 @@ class MImplRuntimeMixin:
                     f"task RED unit artifact is absent from immutable R commit: {node}"
                 )
 
+    def _effective_refs_for_gate(self, task: TaskNode) -> list[str]:
+        if getattr(task, "integration", False):
+            try:
+                from tracks.executor.deferred_gate import integration_hard_refs
+
+                all_nodes = [
+                    self._task_node(r) for r in (self.store.state(self.run_id).task_refs or [])
+                ]
+                return integration_hard_refs(task, all_nodes)
+            except Exception:
+                return list(task.acceptance_refs)
+        return list(task.acceptance_refs) + list(getattr(task, "deferred_refs", ()) or [])
+
+    def _resolve_e2e_nodes(self, e2e_refs: list[str], inventories: dict) -> set[str]:
+        if not e2e_refs:
+            return set()
+        by_path: dict[str, list[str]] = {}
+        for node in inventories.get("e2e", []) or []:
+            by_path.setdefault(node.partition("::")[0], []).append(node)
+        out: set[str] = set()
+        for raw in e2e_refs:
+            self._resolve_one_acceptance_ref(raw, by_path, out)
+        return out
+
     def _collect_task_gate_nodes(self, cwd: str, task: TaskNode):
         """Collect unit/integration inventories and compute SELECT_TASK.
 
@@ -3400,7 +3478,9 @@ class MImplRuntimeMixin:
         ``acceptance_refs`` resolve against the integration inventory and
         join the green requirement directly -- the §8 IF-index inference is
         retired (§8 remains as the schema-2 cross-validation and the
-        planning-time coverage closure)."""
+        planning-time coverage closure).
+        B94: selection set is acceptance ∪ deferred; integration hard gate
+        merges all deferred."""
         contract = load_contract(self.repo)
         inventories = self._collect_layer_inventories(contract, cwd)
         red_nodes = self._expand_unit_refs(task.unit_refs, inventories["unit"])
@@ -3413,16 +3493,62 @@ class MImplRuntimeMixin:
         ]
         plan_path = self._vdir() / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
+        effective = self._effective_refs_for_gate(task)
+        int_refs = [r for r in effective if str(r).startswith("tests/integration/")]
+        e2e_refs = [r for r in effective if str(r).startswith("tests/e2e/")]
         acceptance_nodes = self._acceptance_anchors(
-            task.acceptance_refs,
-            inventories["integration"],
-            plan_text,
-            task.schema,
+            int_refs, inventories.get("integration", []), plan_text, task.schema
         )
+        if e2e_refs:
+            e2e_nodes = self._resolve_e2e_nodes(e2e_refs, inventories)
+            acceptance_nodes = sorted(set(acceptance_nodes) | e2e_nodes)
         nodes = select_task(red_nodes, touched, inventories["unit"], acceptance_nodes)
         if not nodes:
             raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
         return contract, nodes
+
+    def _all_task_nodes(self):
+        state = self.store.state(self.run_id)
+        return [self._task_node(r) for r in (state.task_refs or [])]
+
+    def _completed_ids(self) -> set[str]:
+        completed: set[str] = set()
+        for ev in self.store.events(self.run_id):
+            if ev.type == "task.completed" and ev.payload.get("task_id"):
+                completed.add(str(ev.payload.get("task_id")))
+        state = self.store.state(self.run_id)
+        completed.update(set(getattr(state, "retained_completed_task_ids", []) or []))
+        return completed
+
+    def _failed_ids(self, failed_nodes) -> list[str]:
+        ids = [str(f.get("node") or "") for f in (failed_nodes or []) if isinstance(f, dict)]
+        if not ids and failed_nodes:
+            ids = [str(x) for x in failed_nodes if isinstance(x, str)]
+        return ids
+
+    def _check_drift_breaker(self, cmd, task, failed_nodes) -> None:
+        """B94 drift breaker: failed - legal != empty -> drift_breaker."""
+        if not failed_nodes:
+            return
+        try:
+            from tracks.executor.deferred_gate import legal_red_refs, unexpected_reds
+
+            legal = legal_red_refs(self._all_task_nodes(), self._completed_ids())
+            failed_ids = self._failed_ids(failed_nodes)
+            unexpected = unexpected_reds(failed_ids, legal)
+            if unexpected:
+                self._emit(
+                    "drift_breaker",
+                    {
+                        "unexpected": unexpected,
+                        "failed": sorted(failed_ids),
+                        "legal": sorted(legal),
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task.task_id,
+                )
+        except Exception:
+            return
 
     @staticmethod
     def _gate_environment_identity() -> str:
@@ -3477,6 +3603,7 @@ class MImplRuntimeMixin:
 
         Returns (outcomes, failed_nodes, commands, templates); staging paths
         are always cleaned up, even when a layer raises.
+        B94: also handles e2e deferred anchors when present.
         """
         outcomes: list[dict] = []
         failed_nodes: list[dict] = []
@@ -3484,8 +3611,15 @@ class MImplRuntimeMixin:
         commands: dict[str, tuple[str, ...]] = {}
         templates: dict[str, dict[str, str]] = {}
         try:
-            for layer, section in (("unit", contract.unit), ("integration", contract.integration)):
-                selected = by_layer[layer]
+            layers = [
+                ("unit", contract.unit),
+                ("integration", contract.integration),
+                ("e2e", getattr(contract, "e2e", None)),
+            ]
+            for layer, section in layers:
+                if section is None:
+                    continue
+                selected = by_layer.get(layer) or []
                 if not selected:
                     continue
                 section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
@@ -3532,13 +3666,118 @@ class MImplRuntimeMixin:
             if case.status != "passed":
                 failed_nodes.append({"node": node, "status": case.status, "detail": detail})
 
-    def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:  # pylint: disable=too-many-locals
-        """Emit and execute one task_if selection through contract run_selected."""
-        contract, nodes = self._collect_task_gate_nodes(cwd, task)
-        by_layer = {
-            "unit": [node for node in nodes if node.startswith("tests/unit/")],
-            "integration": [node for node in nodes if node.startswith("tests/integration/")],
+    def _by_layer(self, nodes: list[str]) -> dict[str, list[str]]:
+        return {
+            "unit": [n for n in nodes if n.startswith("tests/unit/")],
+            "integration": [n for n in nodes if n.startswith("tests/integration/")],
+            "e2e": [n for n in nodes if n.startswith("tests/e2e/")],
         }
+
+    def _is_deferred_only(self, failed_nodes, hard, deferred) -> bool:
+        return bool(failed_nodes and not hard and deferred)
+
+    def _snapshot_ref_or_raise(self, scope_rules, snapshot, commands, templates) -> str:
+        ref = self.store.write_audit_blob(
+            {
+                "rules": scope_rules,
+                "entries": snapshot,
+                "commands": {layer: list(argv) for layer, argv in commands.items()},
+                "templates": templates,
+            }
+        )
+        if ref is None:
+            raise TestSelectError("GREEN content identity blob write failed")
+        return f".tracks/runtime/blobs/{ref}"
+
+    def _raise_hard_failure(
+        self, selection_id: str, outcomes_ref_path: str, hard, deferred
+    ) -> None:
+        raise TaskSelectionFailure(
+            "selected task tests did not all pass",
+            json.dumps(
+                {
+                    "selection_id": selection_id,
+                    "outcomes_ref": outcomes_ref_path,
+                    "failed_nodes": hard,
+                    "deferred_failures": (
+                        [str(x.get("node") or "") for x in deferred]
+                        if deferred
+                        else []
+                    ),
+                },
+                sort_keys=True,
+            ),
+        )
+
+    def _success_payload(
+        self,
+        selection_id,
+        nodes_blob,
+        outcomes_ref_path,
+        evidence_ids,
+        content_digest,
+        command_identity,
+        env_identity,
+        scope_rules,
+        snapshot,
+        commands,
+        templates,
+    ) -> dict:
+        snapshot_ref = self._snapshot_ref_or_raise(
+            scope_rules, snapshot, commands, templates
+        )
+        return {
+            "selection_id": selection_id,
+            "nodes_blob": nodes_blob,
+            "outcomes_ref": outcomes_ref_path,
+            "evidence_ids": sorted(evidence_ids),
+            "snapshot_ref": snapshot_ref,
+            "identity_basis": {
+                "tree": content_digest,
+                "command": list(command_identity),
+                "env": env_identity,
+                "selection_id": selection_id,
+            },
+        }
+
+    def _deferred_success_payload(
+        self,
+        selection_id,
+        nodes_blob,
+        outcomes_ref_path,
+        evidence_ids,
+        content_digest,
+        command_identity,
+        env_identity,
+        scope_rules,
+        snapshot,
+        commands,
+        templates,
+        deferred,
+    ) -> dict:
+        payload = self._success_payload(
+            selection_id,
+            nodes_blob,
+            outcomes_ref_path,
+            evidence_ids,
+            content_digest,
+            command_identity,
+            env_identity,
+            scope_rules,
+            snapshot,
+            commands,
+            templates,
+        )
+        payload["deferred_failures"] = sorted(
+            str(x.get("node") or "") for x in deferred
+        )
+        return payload
+
+    def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:
+        """Emit and execute one task_if selection through contract run_selected.
+        B94: selection includes deferred refs (and integration hard gate)."""
+        contract, nodes = self._collect_task_gate_nodes(cwd, task)
+        by_layer = self._by_layer(nodes)
         baseline = str(state.r_tree_identity or "")
         if not baseline:
             raise TestSelectError("SELECT_TASK lacks immutable R baseline identity")
@@ -3614,41 +3853,42 @@ class MImplRuntimeMixin:
         if outcomes_ref is None:
             raise TestSelectError("GREEN outcomes blob write failed")
         outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
-        if failed_nodes:
-            raise TaskSelectionFailure(
-                "selected task tests did not all pass",
-                json.dumps(
-                    {
-                        "selection_id": selection_id,
-                        "outcomes_ref": outcomes_ref_path,
-                        "failed_nodes": failed_nodes,
-                    },
-                    sort_keys=True,
-                ),
-            )
-        snapshot_ref = self.store.write_audit_blob(
-            {
-                "rules": scope_rules,
-                "entries": snapshot,
-                "commands": {layer: list(argv) for layer, argv in commands.items()},
-                "templates": templates,
-            }
+        self._check_drift_breaker(cmd, task, failed_nodes)
+        from tracks.executor.deferred_gate import partition_failures
+
+        hard, deferred = partition_failures(
+            failed_nodes, getattr(task, "deferred_refs", ()) or ()
         )
-        if snapshot_ref is None:
-            raise TestSelectError("GREEN content identity blob write failed")
-        return {
-            "selection_id": selection_id,
-            "nodes_blob": nodes_blob,
-            "outcomes_ref": outcomes_ref_path,
-            "evidence_ids": sorted(evidence_ids),
-            "snapshot_ref": f".tracks/runtime/blobs/{snapshot_ref}",
-            "identity_basis": {
-                "tree": content_digest,
-                "command": list(command_identity),
-                "env": env_identity,
-                "selection_id": selection_id,
-            },
-        }
+        if self._is_deferred_only(failed_nodes, hard, deferred):
+            return self._deferred_success_payload(
+                selection_id,
+                nodes_blob,
+                outcomes_ref_path,
+                evidence_ids,
+                content_digest,
+                command_identity,
+                env_identity,
+                scope_rules,
+                snapshot,
+                commands,
+                templates,
+                deferred,
+            )
+        if hard:
+            self._raise_hard_failure(selection_id, outcomes_ref_path, hard, deferred)
+        return self._success_payload(
+            selection_id,
+            nodes_blob,
+            outcomes_ref_path,
+            evidence_ids,
+            content_digest,
+            command_identity,
+            env_identity,
+            scope_rules,
+            snapshot,
+            commands,
+            templates,
+        )
 
     def _emit_stale_refs(
         self,
