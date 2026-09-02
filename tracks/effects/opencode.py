@@ -2135,27 +2135,64 @@ class OpencodeBackend:
         return payload, None
 
     @staticmethod
+    def _effective_len(text: str) -> int:
+        """Length after stripping trailing space and ``` fence."""
+        t = text.rstrip()
+        if t.endswith("```"):
+            t = t[:-3].rstrip()
+        return len(t)
+
+    @staticmethod
+    def _is_tail_error(exc: json.JSONDecodeError, text: str) -> bool:
+        return exc.pos >= OpencodeBackend._effective_len(text)
+
+    @staticmethod
+    def _repair_at(
+        text: str, start: int, decoder: json.JSONDecoder, exc: json.JSONDecodeError
+    ) -> tuple[dict, int] | None:
+        """Tail missing-brace: try 1-3 `}` on the tail slice."""
+        if not OpencodeBackend._is_tail_error(exc, text):
+            return None
+        eff = OpencodeBackend._effective_len(text)
+        seg = text[start:eff]
+        for k in (1, 2, 3):
+            cand = seg + "}" * k
+            try:
+                obj, end = decoder.raw_decode(cand, 0)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict) and end == len(cand):
+                return obj, eff
+        return None
+
+    @staticmethod
+    def _decode_at(text: str, pos: int, decoder: json.JSONDecoder):
+        """Decode at *pos* with tail-repair fallback."""
+        try:
+            return decoder.raw_decode(text, pos)
+        except json.JSONDecodeError as exc:
+            return OpencodeBackend._repair_at(text, pos, decoder, exc)
+
+    @staticmethod
+    def _update_payload(
+        obj, required_keys: tuple[str, ...], payload, shaped
+    ) -> tuple[dict | None, dict | None]:
+        if isinstance(obj, dict):
+            payload = obj
+            if required_keys and all(k in obj for k in required_keys):
+                shaped = obj
+        return payload, shaped
+
+    @staticmethod
     def _first_json_object(text: str, required_keys: tuple[str, ...] = ()) -> dict | None:
-        """Extract the last top-level JSON object from *text*.
-
-        Agents often wrap the manifest in Markdown prose.  We try the
-        fast path first (entire text is JSON); if that fails we scan
-        for top-level ``{`` positions.
-
-        Shape-aware selection (2026-08-27, run 01M0S0FQ T-015): with
-        *required_keys*, the LAST object carrying ALL of them wins and the
-        last object overall stays the fallback — models that echo the
-        assignment-context JSON (e.g. the pre_dirty_snapshot path->sha
-        mapping) AFTER their manifest no longer poison the blind
-        last-wins pick (that round cost a full Devon refactor attempt).
-        """
+        """Extract the last top-level JSON object from *text*."""
         try:
             decoded = json.loads(text)
             if isinstance(decoded, dict):
                 return decoded
         except json.JSONDecodeError:
             pass
-        decoder = json.JSONDecoder()
+        dec = json.JSONDecoder()
         i = 0
         n = len(text)
         payload: dict | None = None
@@ -2164,15 +2201,14 @@ class OpencodeBackend:
             if text[i] != "{":
                 i += 1
                 continue
-            try:
-                obj, end = decoder.raw_decode(text, i)
-            except json.JSONDecodeError:
+            res = OpencodeBackend._decode_at(text, i, dec)
+            if res is None:
                 i += 1
                 continue
-            if isinstance(obj, dict):
-                payload = obj
-                if required_keys and all(k in obj for k in required_keys):
-                    shaped = obj
+            obj, end = res
+            payload, shaped = OpencodeBackend._update_payload(
+                obj, required_keys, payload, shaped
+            )
             i = end
         return shaped if shaped is not None else payload
 
