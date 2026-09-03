@@ -16,9 +16,11 @@ fail-closed with machine evidence for the M-DESIGN revision loop.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -29,13 +31,20 @@ import tomllib
 GATE_RESULT_PROTOCOL = "tracks-gate-result"
 GATE_RESULT_VERSION = 1
 
-# Reference-contract default env interpreter (IF-HOSTCONTRACT-001): the
-# interpreter spelling the bundled project.toml ``[host-contract].install``
-# declares. Command-construction sites resolve interpreter paths through
-# ``resolve_install_interpreter`` and never spell one themselves (NFR-0147
-# language neutrality); this constant is the boundary module's declared
-# default for hosts without a loadable contract, not a consumer literal.
-DEFAULT_INSTALL_INTERPRETER = ".venv/bin/python"
+# Reference-contract default env interpreter (IF-HOSTCONTRACT-001): derived
+# from the running environment (sys.prefix / sys.executable), never a
+# hardcoded env spelling (NFR-0147 language neutrality). The Runtime process
+# executes inside the project environment, so this resolves to the
+# project-relative "<env-dir>/bin/<interpreter>" spelling the bundled
+# project.toml ``[host-contract].install`` declares. Command-construction
+# sites resolve interpreter paths through ``resolve_install_interpreter``
+# and never spell one themselves; this constant is the boundary module's
+# declared default for hosts without a loadable contract, not a consumer
+# literal.
+_ENV_DIRNAME = posixpath.basename(posixpath.normpath(sys.prefix))
+DEFAULT_INSTALL_INTERPRETER = posixpath.join(
+    _ENV_DIRNAME, "bin", posixpath.basename(sys.executable)
+)
 
 # Canonical host-contract location relative to a repo root (single truth
 # for loaders that resolve the contract from a repo).
