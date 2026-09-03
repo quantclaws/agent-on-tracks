@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tracks.executor.host_contract import load_host_contract, validate_host_contract
+from tracks.executor.host_contract import load_host_contract
 
 pytestmark = pytest.mark.integration
 
@@ -43,14 +43,21 @@ def test_materialized_contract_valid(host_repo, trac, event_log):
 
 
 # AC-FR0281-02@v0.8 TRACKS-TRACE execute per contract only and unknown language blocked
-def test_execute_per_contract_only(host_repo, trac, event_log):
+def test_execute_per_contract_only(host_repo, trac, event_log, tmp_path):
     contract_path = host_repo / ".tracks" / "projects" / "project.toml"
-    try:
-        validate_host_contract(None, host_repo)  # type: ignore[arg-type]
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-HOSTCONTRACT-001" in str(exc)
+    # Module contract (IF-HOSTCONTRACT-001, unit-pinned): unknown
+    # host-contract tables fail closed at load time — only declared gates run.
+    bad_path = tmp_path / "project.toml"
+    bad_path.write_text(
+        "[host-contract]\nversion = 1\n[host-contract.bogus]\nkey = 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unknown host-contract table"):
+        load_host_contract(bad_path)
 
+    assert trac("init").returncode == 0
+    started = trac("start", "v0.8", stdin="构建一个事件溯源运行时")
+    assert started.returncode == 0, started.stderr
     trac("run")
     events = event_log()
     replay = trac("replay").stdout
@@ -71,15 +78,27 @@ def test_execute_per_contract_only(host_repo, trac, event_log):
 
 
 # AC-FR0281-03@v0.8 TRACKS-TRACE failed gate machine evidence revision loop
-def test_failed_gate_machine_evidence_revision_loop(host_repo, trac, event_log):
-    from tracks.executor.host_contract import execute_gate
+def test_failed_gate_machine_evidence_revision_loop(host_repo, trac, event_log, tmp_path):
+    from tracks.executor.host_contract import LocalGateDecl, execute_gate
 
-    try:
-        execute_gate(None, host_repo, {})  # type: ignore[arg-type]
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-HOSTCONTRACT-001" in str(exc)
+    # Module contract (IF-HOSTCONTRACT-001, unit-pinned): a failing declared
+    # gate yields failed machine evidence (exit code + captured streams).
+    decl = LocalGateDecl(
+        kind="quality",
+        source="command",
+        command="false",
+        categories=(),
+        result_channel="exit_code",
+        timeout_seconds=60,
+    )
+    result = execute_gate(decl, tmp_path, {})
+    assert result.status == "failed"
+    assert result.exit_code == 1
+    assert {"exit", "stdout", "stderr"} <= set(result.summary)
 
+    assert trac("init").returncode == 0
+    started = trac("start", "v0.8", stdin="构建一个事件溯源运行时")
+    assert started.returncode == 0, started.stderr
     trac("run")
     events = event_log()
     failed = [e for e in events if e["type"] == "host_contract.failed"]

@@ -30,6 +30,10 @@ TOKEN_RE = re.compile(r"\b(pytest|junit|java|venv|wheel|pip)\b", re.IGNORECASE)
 # AC-NFR0147-01@v0.8 uses expanded token set (venv/wheel/pip)
 TOKEN_RE_V08 = re.compile(r"\b(pytest|junit|java|venv|wheel|pip)\b", re.IGNORECASE)
 ALLOWED_V08_DIRS = ("tracks/adapters", "tracks/assets", "tracks/executor/demo_host", "tracks/executor/reference_host")
+# REPO.glob yields absolute paths while the allowlist above is repo-relative:
+# anchor every entry at the repo root or the prefix match is always false and
+# the whole exemption silently dies.
+_ALLOWED_V08_PREFIXES = tuple(str(REPO / d) for d in ALLOWED_V08_DIRS)
 
 pytestmark = pytest.mark.integration
 
@@ -78,7 +82,7 @@ def _forbidden_files_v08() -> list[tuple[Path, str]]:
     hits: list[tuple[Path, str]] = []
     for pat in FORBIDDEN_GLOBS:
         for path in REPO.glob(pat):
-            if any(str(path).startswith(d) for d in ALLOWED_V08_DIRS) and (
+            if any(str(path).startswith(p) for p in _ALLOWED_V08_PREFIXES) and (
                 "reference_host" in str(path) or "demo_host" in str(path) or "adapters" in str(path) or "assets" in str(path)
             ):
                 continue
