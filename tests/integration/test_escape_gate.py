@@ -235,14 +235,25 @@ def test_abandon_terminal_zero_side_effects(host_repo, trac, event_log):
 def test_pointer_rollback_lands_target_stage(trac, event_log):
     """b93 B4 batch-2 anchor: real pointer migration. The run following the
     escape consumes RETURNED, appends stage.rolled_back to the target stage
-    and lands its StageDef.initial_substate (M-TEST=DISPATCH /
-    M-IMPL=BASELINE — no fixed-DRAFT dead state); the run stays re-enterable
-    and a further escape is accepted with a strictly increasing cutover."""
+    and routes re-entry via its StageDef.initial_substate (M-TEST=DISPATCH —
+    no fixed-DRAFT dead state); the run stays re-enterable and a further
+    escape is accepted with a strictly increasing cutover. A second migration
+    lands M-TEST again inside the run-breaker budget of two, parking legally
+    executable; --to M-IMPL has no legal batch-1 source (universal targets
+    are strictly upstream — no self-target — and release stages land with
+    T-039), so the M-IMPL=BASELINE routing stays pinned at unit level until
+    the T-039 era."""
     run_id = walk_to_m_impl_parked(trac)
     assert trac("return", "--to", "M-TEST", "--reason", "pointer rollback").returncode == 0
     c1 = _cutover(event_log(run_id))
     # Strangled run: consumes RETURNED, migrates the pointer to M-TEST and
-    # stops after one dispatch so the landing substate is observable.
+    # stops after one dispatch. The landing initial_substate (DISPATCH) is a
+    # pre-dispatch transient, not the readable stable stop: the first Shield
+    # dispatch advances DISPATCH→WRITE (SM-01.2) and inline non-dispatch
+    # commands reach the PRISM_REVIEW stop (quota counts dispatch_agent
+    # only). The not-bricked contract is therefore observed via the
+    # stage.rolled_back payload plus a non-DRAFT stop in the M-TEST domain
+    # (M-TEST has no DRAFT route; DRAFT would be the fossilized dead state).
     r_land = trac("run", "--max-dispatches", "1")
     assert r_land.returncode == 0, r_land.stderr
     rolled = [
@@ -251,8 +262,10 @@ def test_pointer_rollback_lands_target_stage(trac, event_log):
         if e["type"] == "stage.rolled_back" and e["payload"].get("to_stage") == "M-TEST"
     ]
     assert rolled, "pointer migration must append stage.rolled_back to M-TEST"
+    assert rolled[-1]["payload"].get("reason") == "human_return"
     status = trac("status").stdout
-    assert "stage=M-TEST" in status and "substate=DISPATCH" in status
+    assert "stage=M-TEST" in status
+    assert "substate=DRAFT" not in status, "landing must not fossilize into DRAFT"
     # The run is not bricked: continuing it re-parks at M-IMPL escalation.
     r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r.returncode == 0, r.stderr
@@ -261,22 +274,17 @@ def test_pointer_rollback_lands_target_stage(trac, event_log):
     # (store seq space is cross-process monotone, b93 B3).
     assert trac("return", "--to", "M-TEST", "--reason", "pointer rollback 2").returncode == 0
     assert _cutover(event_log(run_id)) > c1
-    # Migrate again and re-park so the next escape has a legal source.
+    # Second migration: r3run consumes the second RETURNED and migrates to
+    # M-TEST again (rollback #2 of the run-breaker budget of two), then parks
+    # legally executable instead of dispatching further.
     r3run = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r3run.returncode == 0, r3run.stderr
-    assert "awaiting=escalation" in r3run.stdout
-    # Landing 2: --to M-IMPL (current-or-earlier is allowed) lands BASELINE.
-    assert trac("return", "--to", "M-IMPL", "--reason", "pointer rollback 3").returncode == 0
-    r_land2 = trac("run", "--max-dispatches", "1")
-    assert r_land2.returncode == 0, r_land2.stderr
-    rolled2 = [
-        e
-        for e in event_log(run_id)
-        if e["type"] == "stage.rolled_back" and e["payload"].get("to_stage") == "M-IMPL"
-    ]
-    assert rolled2, "pointer migration must append stage.rolled_back to M-IMPL"
-    status2 = trac("status").stdout
-    assert "stage=M-IMPL" in status2 and "substate=BASELINE" in status2
+    rolled_again = [e for e in event_log(run_id) if e["type"] == "stage.rolled_back"]
+    assert len(rolled_again) == 2, "exactly the two accepted escapes may migrate"
+    assert rolled_again[-1]["payload"].get("to_stage") == "M-TEST"
+    assert rolled_again[-1]["payload"].get("reason") == "human_return"
+    status3 = trac("status").stdout
+    assert "stage=M-TEST" in status3 and "awaiting=escalation" in status3
 
 
 # AC-FR0287-02@v0.8 TRACKS-TRACE real quiesce freezes in-flight dispatch (batch 2 §1.0.14.1)
