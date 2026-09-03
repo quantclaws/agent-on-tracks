@@ -1362,6 +1362,21 @@ def _latest_ci_run(events: list) -> object | None:
     return next((e for e in reversed(events) if e.type == "ci.run_observed"), None)
 
 
+def _known_issues_fragment(events: list | None) -> str:
+    """(I) known_issues preview fragment (FR-0274): every
+    known_issue.registered event contributes its title to the release
+    preview; known_issue.rejected (shield-rejected fakes) never surface.
+    Renders empty (no output change) when nothing is registered."""
+    registered = [
+        (e.payload or {}).get("title", "-")
+        for e in (events or [])
+        if e.type == "known_issue.registered"
+    ]
+    if not registered:
+        return ""
+    return " known_issues={" + " | ".join(registered) + "}"
+
+
 def _render_preview_line(
     preview: dict, stale_reason: str | None, events: list | None = None
 ) -> str:
@@ -1388,6 +1403,7 @@ def _render_preview_line(
         f"evidence_digests={evidence} "
         f"operation_plan={preview.get('operation_plan_digest', '-')} "
         f"status={status} stale_reason={reason}"
+        f"{_known_issues_fragment(events)}"
     )
 
 
@@ -1434,6 +1450,12 @@ def _release_status_lines(events: list, primary) -> list[str]:
     ):
         lines.append("blocked: gate failed or preview stale")
         lines.append("rejected: gate failed or preview stale")
+    # (G) publish state: a publish.blocked event (e.g. agent_forbidden guard)
+    # surfaces in status with its block reason (FR-0287, must-not-drop face).
+    pub_blocked = [e for e in events if e.type == "publish.blocked"]
+    if pub_blocked:
+        block_reason = (pub_blocked[-1].payload or {}).get("reason", "unknown")
+        lines.append(f"publish=blocked reason={block_reason}")
     if primary.status == "completed" and primary.terminal_state == "cancelled":
         lines.append("terminal=cancelled")
     return lines
