@@ -449,6 +449,105 @@ def _closure_blocks(events: list) -> list[str]:
     return blocks
 
 
+def _issue_map_lines(events: list) -> list[str]:
+    """§2b Issue map rows: mapped authority, FAKE rejections, closes (FR-0284)."""
+    lines: list[str] = []
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if event.type == "issue.mapped":
+            lines.append(
+                f"- `#{payload.get('issue_number')}` {payload.get('repo', '')} "
+                f"{payload.get('url', '')} api_verified={payload.get('api_verified')}"
+            )
+        elif event.type == "issue.fake_rejected":
+            lines.append(
+                f"- rejected: {payload.get('issue', '')} "
+                f"(project={payload.get('project', '')}) "
+                f"reason={payload.get('reason', 'fake_rejected')}"
+            )
+        elif event.type == "issue.closed":
+            comment = str(payload.get("comment", ""))
+            lines.append(f"- closed `#{payload.get('issue_number')}`: {comment}")
+    return lines
+
+
+def _release_pipeline_lines(events: list) -> list[str]:
+    """§2b Release pipeline rows: preview bindings, stale judgement, decision."""
+    previews = [e for e in events if e.type == "release.previewed"]
+    lines: list[str] = []
+    for index, event in enumerate(previews):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        stale = index < len(previews) - 1
+        lines.append(
+            f"preview: candidate={payload.get('candidate_sha', '')} "
+            f"preview_digest={payload.get('preview_digest', '')} "
+            f"artifact={payload.get('artifact_digest', '')} "
+            f"status={'stale' if stale else payload.get('status', 'awaiting_release')} "
+            f"stale_reason="
+            f"{'superseded by later preview' if stale else payload.get('stale_reason', 'none')}"
+        )
+    for event in events:
+        if event.type != "release.decided":
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        lines.append(
+            f"decided: kind={payload.get('kind', '')} "
+            f"candidate={payload.get('candidate_sha', '')} "
+            f"preview_digest={payload.get('preview_digest', '')}"
+        )
+    return lines
+
+
+_RELEASE_TRACE_FIELD_ORDER = (
+    "candidate_sha",
+    "artifact_digest",
+    "evidence_digests",
+    "preview_digest",
+    "human_approval_event_seq",
+    "operation_digests",
+    "release_tag",
+    "trace_digest",
+)
+
+
+def _release_trace_lines(events: list) -> list[str]:
+    """§2b Release trace rows: §1i payload plus closure completion (FR-0276)."""
+    lines: list[str] = []
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if event.type == "milestone.trace_closed":
+            lines.extend(
+                f"- {field}: {payload[field]}"
+                for field in _RELEASE_TRACE_FIELD_ORDER
+                if field in payload
+            )
+        elif event.type == "milestone.sealed":
+            lines.append(f"- milestone.sealed: {payload.get('archive', 'sealed')}")
+        elif event.type == "refs.cleaned":
+            lines.append(f"- refs.cleaned: {_short_json(payload)}")
+    return lines
+
+
+def _release_sections(events: list) -> list[str]:
+    """§2b report sections over the release journey events (T-040).
+
+    Each section renders only when its event types are present, keeping
+    non-release reports byte-identical. Headings use the report's section
+    level (``##``, sibling of ``## Timeline`` / ``## Events``); the
+    document's single top-level heading remains the report title.
+    """
+    blocks: list[str] = []
+    for title, rows in (
+        ("Issue map", _issue_map_lines(events)),
+        ("Release pipeline", _release_pipeline_lines(events)),
+        ("Release trace", _release_trace_lines(events)),
+    ):
+        if not rows:
+            continue
+        blocks.extend(["", f"## {title}", "", *rows])
+    return blocks
+
+
 def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     lines = [
         f"# Workflow report: `{run_id}`",
@@ -467,6 +566,7 @@ def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     lines.extend(_discussion_lines(repo, state.version))
     lines.extend(_audit_lines(events, activities))
     lines.extend(_closure_blocks(events))
+    lines.extend(_release_sections(events))
     lines.extend(["", "## Events", ""])
     hidden_validates = {
         event.command_id
