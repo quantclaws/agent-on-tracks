@@ -340,6 +340,45 @@ for sd in _STAGES.values():
         _VERDICT_OWNERS.setdefault(sd.verdict_event, []).append(sd)
 
 
+def canonical_stage_order() -> tuple[str, ...]:
+    """IF-RELEASE-003 / FR-0274/FR-0287: the canonical stage order single
+    source — ``tuple(_STAGES)`` minus M-REQ-APPROVAL plus the five release
+    stages (``release.RELEASE_STAGES``). Upstream = a smaller ordinal. The
+    release import is lazy (release imports machine.State at module level).
+    """
+    from .release import RELEASE_STAGES
+
+    return tuple(s for s in _STAGES if s != "M-REQ-APPROVAL") + tuple(RELEASE_STAGES)
+
+
+# IF-RELEASE-003 (face C): rollback re-entry routes via the target StageDef
+# .initial_substate — M-TEST=DISPATCH, M-IMPL=BASELINE — never a fossilized
+# DRAFT literal. The author stages keep the SM-01.12/.13 re-author semantics
+# (re-entry DRAFT): M-STORY's TRIAGE is a fresh-entry substate only, so a
+# return re-authors from DRAFT; M-SPEC/M-ACC/M-DESIGN re-enter DRAFT.
+_AUTHOR_REENTRY_DRAFT = frozenset({"M-STORY", "M-SPEC", "M-ACC", "M-DESIGN"})
+
+
+def _rolled_back_entry_substate(target: str) -> str:
+    """Re-entry substate for a rolled-back target (IF-RELEASE-003 face C).
+    Release-stage targets read the release stage-table seam
+    (``release_stage_defs``; DRAFT fallback until the T-039 body lands)."""
+    if target in _AUTHOR_REENTRY_DRAFT:
+        return "DRAFT"
+    sd = _STAGES.get(target)
+    if sd is not None:
+        return sd.initial_substate
+    try:
+        from .release import release_stage_defs
+
+        for rel in release_stage_defs():
+            if getattr(rel, "stage", None) == target:
+                return rel.initial_substate
+    except NotImplementedError:
+        pass
+    return "DRAFT"
+
+
 def _uncommit(s: State) -> None:
     """RESPOND must re-commit the current stage's doc to re-enter review."""
     sd = _STAGES.get(s.stage)
@@ -440,7 +479,11 @@ def _on_stage_exited(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_stage_rolled_back(s: State, p: dict, ev: EventEnvelope) -> None:
     s.stage = p["to_stage"]
-    s.substate = "DRAFT"
+    # IF-RELEASE-003 (face C): re-entry routes via the target StageDef's
+    # initial_substate (M-TEST=DISPATCH, M-IMPL=BASELINE) — no fossilized
+    # DRAFT literal. Author stages keep DRAFT; the M-HOTFIX-TRIAGE branch
+    # below still overrides to SAGE_TRIAGE.
+    s.substate = _rolled_back_entry_substate(p["to_stage"])
     _reset_doc(s)
     _reset_review(s)
     s.current_attempt = 0

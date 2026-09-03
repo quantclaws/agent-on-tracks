@@ -902,11 +902,22 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
     if sub == "EXIT":
         return _decide_m_impl_exit(s)
     if sub == "RETURNED":
-        return Command(
-            kind="rollback_stage",
-            params={"to_stage": s.return_target, "reason": "diagnose_rollback"},
-        )
+        return _m_impl_returned_route(s)
     return None
+
+
+def _m_impl_returned_route(s: State) -> Command:
+    """RETURNED: SM-01.13 Human-approved rollback or SM-05.7 escalation
+    return. IF-RELEASE-003 (face D) mirrors m_test: a human return
+    (s.returned) carries reason=human_return; a Human-approved DIAGNOSE
+    rollback keeps diagnose_rollback."""
+    return Command(
+        kind="rollback_stage",
+        params={
+            "to_stage": s.return_target,
+            "reason": "human_return" if s.returned else "diagnose_rollback",
+        },
+    )
 
 
 def _decide_m_impl_planning(s: State) -> Command | None:

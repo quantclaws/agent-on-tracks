@@ -1003,6 +1003,29 @@ _RETURN_STAGES_ESCALATION = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
 _RETURN_AUTHOR_STAGES = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
 
 
+def _canonical_stage_order() -> tuple[str, ...]:
+    """IF-RELEASE-003 / FR-0274/FR-0287: the canonical stage order single
+    source — tuple(machine._STAGES) minus M-REQ-APPROVAL plus
+    release.RELEASE_STAGES. Upstream = a smaller ordinal."""
+    from tracks.kernel import machine as _kernel_machine
+    from tracks.kernel import release as _kernel_release
+
+    return (
+        tuple(s for s in _kernel_machine._STAGES if s != "M-REQ-APPROVAL")
+        + tuple(_kernel_release.RELEASE_STAGES)
+    )
+
+
+def _universal_return_targets(stage: str) -> tuple[str, ...]:
+    """IF-RELEASE-003 / FR-0287: universal return targets — the canonical
+    stages with a strictly smaller ordinal than ``stage`` (no self, no
+    downstream, M-REQ-APPROVAL never a target). Unknown stages -> ()."""
+    order = _canonical_stage_order()
+    if stage not in order:
+        return ()
+    return order[: order.index(stage)]
+
+
 def _escalation_return_targets(stage: str) -> tuple[str, ...]:
     """Closed per-stage set of `--to` targets for an escalation return.
 
@@ -1030,10 +1053,25 @@ def _return_gate(store: Store, run_id: str):
     state = store.state(run_id)
     if state.stage == "M-REQ-APPROVAL" and state.awaiting == "approval":
         return state, _RETURN_STAGES_APPROVAL, None
+    # IF-RELEASE-003 / FR-0287 universal sources (interfaces §2d): M-IMPL at
+    # NEEDS_ATTENTION or DIAGNOSE-escalation is a legal return source whose
+    # targets are the canonical strictly-upstream stages — this branch MUST
+    # precede the author-escalation branch, whose closed author set returns
+    # no targets for M-IMPL and would otherwise reject the legal source.
+    if state.stage == "M-IMPL" and (
+        state.substate == "NEEDS_ATTENTION" or state.awaiting == "escalation"
+    ):
+        return state, _universal_return_targets("M-IMPL"), None
     if state.awaiting == "escalation":
         allowed = _escalation_return_targets(state.stage)
         if allowed:
             return state, allowed, None
+        # Non-author stages (the re-enterable release stages) fall through
+        # to the universal canonical-upstream set instead of dead-ending.
+        if state.stage in _canonical_stage_order():
+            universal = _universal_return_targets(state.stage)
+            if universal:
+                return state, universal, None
         return state, (), (f"escalation at stage {state.stage} has no return targets")
     return (
         state,
@@ -1045,17 +1083,143 @@ def _return_gate(store: Store, run_id: str):
     )
 
 
-def cmd_return(repo: Path, *args) -> int:
-    opts = {}
-    args = list(args)
-    usage = "usage: trac return --to <M-STORY|M-SPEC|M-ACC|M-DESIGN> --reason TEXT"
+_RETURN_USAGE = (
+    "usage: trac return --to <stage> --reason TEXT [--confirm] "
+    "(stage: an upstream canonical stage; --confirm crosses irreversible ops)"
+)
+
+# escape.stale_downstream_evidence buckets (IF-RELEASE-003 / FR-0287): only
+# buckets actually present in the run's log are staled on a return.
+_STALE_EVIDENCE_BUCKETS = (
+    "candidate.frozen",
+    "evidence.reused",
+    "ci.run_observed",
+    "security.assessed",
+    "release.previewed",
+    "release.decided",
+)
+
+
+def _publish_plan_index(store: Store, run_id: str) -> dict:
+    """interfaces §1a#9: publish.planned carries the operation descriptor
+    (operation_kind/target) keyed by idempotency_key; publish.executed
+    (§1a#10) carries only idempotency_key/status/remote_check/candidate_sha
+    and joins back to its plan for the operation identity."""
+    plans: dict[str, dict] = {}
+    for ev in store.events(run_id):
+        if ev.type == "publish.planned":
+            key = ev.payload.get("idempotency_key") or ev.command_id or ""
+            if key:
+                plans[key] = {
+                    "operation_kind": ev.payload.get("operation_kind")
+                    or ev.payload.get("kind"),
+                    "target": ev.payload.get("target") or "",
+                    "planned_seq": ev.seq,
+                }
+    return plans
+
+
+def _already_executed_ops(store: Store, run_id: str) -> list[dict]:
+    """AC-FR0287-04: irreversible operations (merge/tag/artifact/release)
+    already executed in this run — crossing them requires an explicit
+    --confirm. The operation identity joins publish.executed(done) back to
+    its publish.planned via idempotency_key (§1a#9/#10); an executed event
+    carrying the descriptor inline still reports directly. Mirrors
+    executor/escape.report_irreversible_operations's store-backed rule on
+    the CLI's own locked store (the escape helper resolves a process-global
+    store instead of accepting one)."""
+    plans = _publish_plan_index(store, run_id)
+    ops: list[dict] = []
+    for ev in store.events(run_id):
+        if ev.type != "publish.executed" or ev.payload.get("status") != "done":
+            continue
+        plan = plans.get(ev.payload.get("idempotency_key") or "", {})
+        ops.append(
+            {
+                "operation_kind": ev.payload.get("operation_kind")
+                or plan.get("operation_kind")
+                or ev.payload.get("kind")
+                or ev.type,
+                "target": ev.payload.get("target") or plan.get("target") or "",
+                "type": ev.type,
+            }
+        )
+    return ops
+
+
+def _establish_escape_barrier(store: Store, run_id: str, version: str) -> int:
+    """IF-RELEASE-003 (A): the Runtime escape barrier — cutover at the run's
+    current max seq; late outcomes (seq <= cutover) are quarantined by the
+    executor's cutover consumption. Mirrors executor/escape
+    .establish_escape_barrier's store-backed semantics on the CLI's own
+    locked store."""
+    cutover = 0
+    for ev in store.events(run_id):
+        cutover = max(cutover, ev.seq)
+    store.append(
+        run_id,
+        version,
+        "escape.barrier_established",
+        {"cutover_seq": cutover, "quiesced_dispatches": []},
+    )
+    return cutover
+
+
+def _stale_downstream_evidence(
+    store: Store, run_id: str, version: str, target_stage: str
+) -> int:
+    """IF-RELEASE-003 (A): evidence.staled(reason=human_return) for every
+    post-target evidence bucket present in the log (the test freeze lifts
+    only when returning to before M-TEST). b93 Q3.3: each staled payload
+    carries the bucket's evidence_type and the store seq of the bucket's
+    latest event (the authoritative reference back into the log)."""
+    latest_seq: dict[str, int] = {}
+    existing: set[str] = set()
+    for ev in store.events(run_id):
+        existing.add(ev.type)
+        latest_seq[ev.type] = ev.seq
+    count = 0
+    for bucket in _STALE_EVIDENCE_BUCKETS:
+        if bucket in existing:
+            store.append(
+                run_id,
+                version,
+                "evidence.staled",
+                {
+                    "reason": "human_return",
+                    "run_id": run_id,
+                    "target_stage": target_stage,
+                    "type": bucket,
+                    "evidence_type": bucket,
+                    "bucket": bucket,
+                    "source_seq": latest_seq.get(bucket),
+                },
+            )
+            count += 1
+    return count
+
+
+def _parse_return_args(args: list) -> tuple[dict, str | None]:
+    """Parse the `trac return` grammar: --to/--reason values plus the
+    optional --confirm flag. Returns (opts, None) or ({}, usage_error)."""
+    opts: dict = {}
     while args:
         flag = args.pop(0)
+        if flag == "--confirm":
+            opts["--confirm"] = True
+            continue
         if flag not in ("--to", "--reason") or not args or flag in opts:
-            return _err(usage)
+            return {}, _RETURN_USAGE
         opts[flag] = args.pop(0)
-    if set(opts) != {"--to", "--reason"}:
-        return _err(usage)
+    if "--to" not in opts or "--reason" not in opts:
+        return {}, _RETURN_USAGE
+    return opts, None
+
+
+def cmd_return(repo: Path, *args) -> int:
+    opts, usage_err = _parse_return_args(list(args))
+    if usage_err:
+        return _err(usage_err)
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
@@ -1066,14 +1230,36 @@ def cmd_return(repo: Path, *args) -> int:
         if err:
             return _err(err)
         if opts["--to"] not in allowed:
-            # SM-05.7a/C-03: closed per-gate set, explicitly validated — no
-            # event on reject.
-            return _err(f"invalid --to {opts['--to']}: must be one of " + "|".join(allowed))
+            # SM-05.7a/C-03 + FR-0287: closed upstream set, explicitly
+            # validated — no event on reject.
+            return _err(
+                f"invalid --to {opts['--to']}: must be one of " + "|".join(allowed)
+            )
+        # AC-FR0287-04: crossing already-executed irreversible operations
+        # requires an explicit confirmation — no events, pointer unmoved.
+        executed = _already_executed_ops(store, run_id)
+        if executed and "--confirm" not in opts:
+            print("already_executed operations this return would cross:")
+            for op in executed:
+                print(f"  - {op['operation_kind']} {op['target']} ({op['type']})")
+            return _err("irreversible operations present: re-run with --confirm")
+        # interfaces §1a: the human.return payload actor is pinned to the
+        # literal "Human" (E-01 renders human_return=Human→<to>) — not an
+        # environment-sourced operator name.
+        actor = "Human"
+        _establish_escape_barrier(store, run_id, state.version)
+        _stale_downstream_evidence(store, run_id, state.version, opts["--to"])
         store.append(
             run_id,
             state.version,
             "human.return",
-            {"reason": opts["--reason"], "to_stage": opts["--to"]},
+            {
+                "actor": actor,
+                "from": state.stage,
+                "to": opts["--to"],
+                "to_stage": opts["--to"],  # the kernel hard-read key
+                "reason": opts["--reason"],
+            },
         )
     print(f"returned to {opts['--to']}")
     return 0
@@ -1559,6 +1745,52 @@ def _print_suspended_statuses(store: Store, rows: list[tuple[str]], primary_id: 
             )
 
 
+def _escape_status_scan(events) -> tuple:
+    """Scan the event stream for the escape status inputs: (latest
+    human.return payload, evidence.staled count, barrier established).
+    Quarantine is not event-derived: it is the barrier policy state and
+    renders with the barrier itself (b93 Q3.5)."""
+    latest_return = None
+    staled = 0
+    barrier = False
+    for ev in events:
+        etype = getattr(ev, "type", None)
+        if etype == "human.return":
+            latest_return = getattr(ev, "payload", None) or {}
+        elif etype == "evidence.staled":
+            staled += 1
+        elif etype == "escape.barrier_established":
+            barrier = True
+    return latest_return, staled, barrier
+
+
+def _escape_status_fragments(events) -> list[str]:
+    """IF-RELEASE-003 (A) / AC-FR0274+FR-0287: the five escape status
+    fragments rendered by `trac status`:
+
+    - human_return=<actor>→<to> (latest human.return)
+    - evidence.staled=<n> (staled evidence count, always rendered)
+    - barrier=established (escape.barrier_established seen)
+    - late_outcome=quarantined (barrier policy state — renders with the
+      barrier, even before any late outcome event arrives; b93 Q3.5)
+    - frozen_tests=unfrozen (return target ordinal <= M-TEST)
+    """
+    latest_return, staled, barrier = _escape_status_scan(events)
+    fragments: list[str] = []
+    if latest_return is not None:
+        to = latest_return.get("to") or latest_return.get("to_stage") or "?"
+        fragments.append(f"human_return={latest_return.get('actor', '?')}→{to}")
+        order = _canonical_stage_order()
+        target = latest_return.get("to_stage") or to
+        if target in order and order.index(target) <= order.index("M-TEST"):
+            fragments.append("frozen_tests=unfrozen")
+    fragments.append(f"evidence.staled={staled}")
+    if barrier:
+        fragments.append("barrier=established")
+        fragments.append("late_outcome=quarantined")
+    return fragments
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -1580,6 +1812,13 @@ def cmd_status(repo: Path) -> int:
     try:
         for line in _release_status_lines(list(store.events(primary_id)), primary):
             print(line)
+    except Exception:
+        pass
+    # IF-RELEASE-003 (A): escape status fragments (human_return /
+    # evidence.staled / barrier / late_outcome / frozen_tests).
+    try:
+        for fragment in _escape_status_fragments(list(store.events(primary_id))):
+            print(f"escape: {fragment}")
     except Exception:
         pass
     if primary.status == "completed":

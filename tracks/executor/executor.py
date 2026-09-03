@@ -50,6 +50,12 @@ from tracks.executor.doc_comment import (
     quarantine_authorized_changes,
     scan_adjudication_markers,
 )
+from tracks.executor.escape import quarantine_late_outcome
+from tracks.executor.failure_review import (  # noqa: F401  (T-001 E wiring seam)
+    record_failure,
+    review_failure_chain,
+    select_failure,
+)
 from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
@@ -111,8 +117,24 @@ from tracks.executor.worktree import (
     ensure_runtime_assets,
 )
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
+
+# T-001 face (E) wiring seam (architecture §1.1 Envelope/failure chain —
+# executor.py is the single writer/consumer): the kernel envelope faces and
+# the failure-review chain are imported here so the dispatch loop consumes
+# them; their behavior bodies land with IF-ENVELOPE-001/002 and the
+# failure-chain anchors (T-007/T-035).
+from tracks.kernel.envelope import (  # noqa: F401  (T-001 E wiring seam)
+    check_envelope_parity,
+    parse_agent_output,
+)
 from tracks.kernel.events import Command
-from tracks.kernel.machine import _REVIEW_SUBSTATE, DESIGN_DOCS, State, decide
+from tracks.kernel.machine import (
+    _REVIEW_SUBSTATE,
+    DESIGN_DOCS,
+    State,
+    canonical_stage_order,
+    decide,
+)
 from tracks.project import (
     ContractError,
     lint_check_command,
@@ -2383,6 +2405,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # (attempt consumed, substate reset) — no pipeline payload.
         result.setdefault("self_report", "")
         payload = _dispatch_payload(self.store, p, result)
+        # T-001 face (B) / AC-FR0287-02: dispatch-loop cutover consumption —
+        # with an established escape barrier, an outcome whose originating
+        # seq <= cutover_seq was dispatched before the barrier and is
+        # quarantined: no outcome.received, no checkpoint/publish, no State
+        # overwrite (escape.late_outcome records the quarantine).
+        if self._consume_escape_cutover(
+            {"dispatch_id": cmd.command_id or "", "seq": None}
+        ):
+            return
         # v0.6 hotfix SAGE_TRIAGE (IF-HOTFIX-004): carry the Sage anchor-search
         # outcome fields (acs / no_anchor / searched_versions / corpus_digests /
         # rationale_refs) into the persisted outcome so _do_validate_anchor can
@@ -3940,18 +3971,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # to_stage -- but a hand-crafted out-of-band human.approval could
         # smuggle an arbitrary stage in. Mirror _do_recover_stage: reject
         # out-of-set targets with an audit blob, no event, no state change.
-        # The set is every to_stage the kernel legally emits today: gap-typed
-        # presets (M-ACC/M-SPEC), stub_gap + lineage (M-DESIGN), and the
-        # human.return escalation sets (M-STORY included).
-        if cmd.params.get("to_stage") not in ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN"):
+        # T-001 face (B) / IF-RELEASE-003: the closed set is derived from the
+        # canonical stage order (machine table + the five release stages), so
+        # the impl-cycle targets M-TEST/M-IMPL and the release stages are
+        # legal return destinations; M-REQ-APPROVAL is never a target.
+        allowed_targets = canonical_stage_order()
+        if cmd.params.get("to_stage") not in allowed_targets:
             self.store.write_audit_blob(
                 {
                     "event": "stage.rolled_back",
                     "command_id": cmd.command_id,
                     "rejected": True,
                     "reason": (
-                        "rollback_stage target not in closed set "
-                        "(M-STORY|M-SPEC|M-ACC|M-DESIGN): "
+                        "rollback_stage target not in canonical closed set "
+                        f"({'|'.join(allowed_targets)}): "
                         f"{cmd.params.get('to_stage')!r}"
                     ),
                 }
@@ -3970,6 +4003,126 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "to_stage": cmd.params["to_stage"],
                 "reason": cmd.params.get("reason", ""),
                 "quarantined": quarantined,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _consume_escape_cutover(self, outcome: dict) -> bool:
+        """T-001 face (B) / AC-FR0287-02: dispatch-loop cutover consumption.
+
+        With an established escape barrier (escape.barrier_established), an
+        outcome whose originating seq <= cutover_seq was dispatched before
+        the barrier: quarantine it (escape.late_outcome, status=quarantined;
+        never checkpointed, never published, never overwriting State) and
+        return True so the caller drops the outcome. Outcomes originating
+        after the barrier (and barrier-less runs) pass through untouched.
+        """
+        barrier = None
+        for ev in self.store.events(self.run_id):
+            if ev.type == "escape.barrier_established":
+                barrier = ev.payload
+        if not barrier:
+            return False
+        seq = outcome.get("seq")
+        if seq is None:
+            # Resolve the originating dispatch's seq from its command.issued
+            # event (the loop guard passes only the dispatch id).
+            dispatch_id = outcome.get("dispatch_id") or ""
+            for ev in self.store.events(self.run_id):
+                if ev.type == "command.issued" and ev.command_id == dispatch_id:
+                    seq = ev.seq
+                    break
+            outcome = {**outcome, "seq": seq}
+        verdict = quarantine_late_outcome(barrier, outcome)
+        if not verdict.get("quarantined"):
+            return False
+        self._emit(
+            "escape.late_outcome",
+            {
+                "dispatch_id": verdict.get("dispatch_id", ""),
+                "status": "quarantined",
+                "outcome_seq": seq,
+                "cutover_seq": verdict.get("cutover_seq"),
+            },
+        )
+        return True
+
+    # -- T-001 faces (G/I/J): release-domain handler registrations ----------
+    #
+    # must-not-drop wiring (plan_defect rounds): the handlers consume the
+    # Command kinds routed by decide_release_stage (T-039) and emit the
+    # domain event families; deep behavior lands with their owning anchors
+    # (T-021 publish / T-029 known-issue / T-034 security).
+
+    def _assert_agent_forbidden(self) -> bool:
+        """(G) True when the selected backend is an Agent backend — the
+        publish execution path must run on non-Agent infrastructure only."""
+        backend_kind = type(self.backend).__name__.lower()
+        return "opencode" in backend_kind or "agent" in backend_kind
+
+    def _do_execute_publish(self, cmd, state, task_id, reconcile):
+        """(G) Consume Command(execute_publish) (bound to a preview digest):
+        publish.planned -> publish.executed(done|reconciled_skip) /
+        publish.blocked(agent_forbidden) / publish.failed."""
+        params = dict(cmd.params or {})
+        preview_digest = params.get("preview_digest", "")
+        if reconcile and any(
+            e.type in ("publish.executed", "publish.blocked", "publish.failed")
+            and e.command_id == cmd.command_id
+            for e in self.store.events(self.run_id)
+        ):
+            return
+        self._emit(
+            "publish.planned",
+            {"preview_digest": preview_digest},
+            command_id=cmd.command_id,
+        )
+        if self._assert_agent_forbidden():
+            self._emit(
+                "publish.blocked",
+                {"preview_digest": preview_digest, "reason": "agent_forbidden"},
+                command_id=cmd.command_id,
+            )
+            return
+        if params.get("reconcile_skip"):
+            self._emit(
+                "publish.executed",
+                {"preview_digest": preview_digest, "status": "reconciled_skip"},
+                command_id=cmd.command_id,
+            )
+            return
+        self._emit(
+            "publish.executed",
+            {"preview_digest": preview_digest, "status": "done"},
+            command_id=cmd.command_id,
+        )
+
+    def _do_register_known_issue(self, cmd, state, task_id, reconcile):
+        """(I) Consume Command(register_known_issue): known_issue.registered
+        on acceptance, known_issue.rejected on rejection."""
+        params = dict(cmd.params or {})
+        rejected = params.get("rejected") is True or params.get("decision") == "reject"
+        self._emit(
+            "known_issue.rejected" if rejected else "known_issue.registered",
+            {
+                "title": params.get("title", ""),
+                "reason": params.get("reason", ""),
+                "issue": params.get("issue"),
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _do_assess_security(self, cmd, state, task_id, reconcile):
+        """(J) Consume Command(assess_security): security.assessed carries
+        the aggregated status and repair_route (failures route via the
+        repair classification)."""
+        params = dict(cmd.params or {})
+        self._emit(
+            "security.assessed",
+            {
+                "status": params.get("status", "pass"),
+                "repair_route": params.get("repair_route", "none"),
+                "findings": list(params.get("findings", [])),
             },
             command_id=cmd.command_id,
         )
