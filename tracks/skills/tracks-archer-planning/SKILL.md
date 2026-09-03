@@ -51,6 +51,7 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 - 修订轮最小 delta：若磁盘图已是 B94 形态且当前 plan_defect 证据与该形态相容，正确动作是增量修订（补 deferred、修描述失实、补 T-INT 接线清单），不是全量恢复 acceptance。
 - 机械化优先：锚点分类是纯计算，不是写作。项目目录存在 replan 脚本（如 .tracks/projects/v0.8/replan_deferred.py）时先运行它再人工审 diff；禁止手工推算数十个锚点的归属。
 - deferred 锚点照常执行（早期信号不丢），但不计 task verdict、不进 task_failures 熔断、DIAGNOSE 不归因；登记簿之外的意外红触发 drift_breaker。
+- DIAGNOSE 的 reason/evidence 是**事实输入**而非方案；补救方案（defer 选择、任务拆分/合并、承接任务创建）由本角色自主设计并承担责任。
 
 ## 存在性门禁与 tasks.md 投影
 

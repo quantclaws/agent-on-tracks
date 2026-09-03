@@ -658,8 +658,42 @@ _INFRA_RETRY_LIMIT = 3
 # burning the attempt budget -- the same agent session can fix its own
 # reply shape -- but escalate after _FORMAT_RETRY_LIMIT consecutive ones so
 # a loop of malformed replies parks for a human instead of spinning.
-_FORMAT_FAILURE_CLASSES = frozenset({"manifest_malformed"})
+_FORMAT_FAILURE_CLASSES = frozenset({"manifest_malformed", "evidence_malformed"})
 _FORMAT_RETRY_LIMIT = 3
+
+
+def _is_format_verdict(p: dict) -> bool:
+    return (p.get("failure_class") or p.get("check") or "") in _FORMAT_FAILURE_CLASSES
+
+
+_FORMAT_VERDICT_ROUTE = {
+    "RED_GATE": "RED",
+    "RED_CHECKPOINT": "RED",
+    "GREEN_GATE": "GREEN",
+    "GREEN_COMMIT": "GREEN",
+    "REFACTOR_GATE": "REFACTOR",
+}
+
+
+def _handle_verdict_format_failure(s: State, p: dict) -> None:
+    fmt = p.get("failure_class") or p.get("check") or "evidence_malformed"
+    s.format_failure_streak += 1
+    s.last_failure = {
+        "check": fmt,
+        "reason": p.get("reason"),
+        "evidence": p.get("evidence"),
+    }
+    target = _FORMAT_VERDICT_ROUTE.get(s.substate or "")
+    if target is not None:
+        s.substate = target
+        _reset_doc(s)
+    elif s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
+    if s.format_failure_streak >= _FORMAT_RETRY_LIMIT:
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
 
 
 def _is_infra_failure(p: dict) -> bool:
@@ -836,6 +870,10 @@ def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
         # Human pipeline failure: keep the awaiting gate, no agent retry,
         # no escalation, no substate change.
         return
+    if _is_format_verdict(p):
+        _handle_verdict_format_failure(s, p)
+        return
+    s.format_failure_streak = 0
     if s.stage == "M-HOTFIX-TRIAGE":
         _handle_hotfix_failed_outcome(s, p)
         return

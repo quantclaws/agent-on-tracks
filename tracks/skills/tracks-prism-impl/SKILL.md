@@ -92,6 +92,8 @@ classification 的具体 token、默认取值与 payload 字段以 assignment �
 
 错配所有权（如把 RED 单测缺陷归给测试编写者）会把修复派给无权且不该触碰该文件的角色，制造结构死锁。诊断结论必须为唯一判定 + 一句话 reason + evidence 指向具体文件/行/命令输出；分析与论证放正文，结论放交付。其余情形按 assignment 注入的 vocabulary 与 schema 输出。
 
+- DIAGNOSE 只归因不开处方：输出 classification + evidence + 约束/事实陈述（如依赖序、hash 事实），**禁止 remedy 处方**（不设计补救方案、不裁定二选一）；方案设计权在 Archer PLANNING。
+
 ## 边界
 
 本判据包不含形式校验规则：template 合规、binding 完整性、ID 文法、测试集合/执行/Red 程序分类均归 Runtime 程序校验。Prism 的语义判据与 Runtime 的形式校验互补：Prism 可放行语义合格的实现，但 trace/binding 不合规的情况仍由运行时捕获。

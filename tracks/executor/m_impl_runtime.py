@@ -436,6 +436,25 @@ def _demo_registry_host() -> str | None:
     return None
 
 
+_EVIDENCE_SHAPE_PREFIXES = (
+    "Devon evidence missing: ",
+    "Devon evidence phase mismatch",
+    "Devon evidence changed_paths must be a list",
+    "Devon evidence commands must be a list",
+    "Devon evidence is missing pre/post identity",
+    "Devon evidence implemented_if_ids must be a list",
+    "Devon evidence missing r_identity",
+)
+
+
+def _is_evidence_shape_error(reason: str | None) -> bool:
+    if not isinstance(reason, str) or not reason:
+        return False
+    if "contains an invalid path" in reason:
+        return True
+    return reason.startswith(_EVIDENCE_SHAPE_PREFIXES)
+
+
 class MImplRuntimeMixin:
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
@@ -3194,16 +3213,24 @@ class MImplRuntimeMixin:
             extra["log_ref"] = f".tracks/runtime/blobs/{ref}"
         return observation_evidence(obs, extra)
 
-    def _emit_gate_failure(self, cmd, *, check, reason, task_id, attempt, evidence=""):
+    def _emit_gate_failure(
+        self, cmd, *, check, reason, task_id, attempt, evidence="", failure_class=None
+    ):
+        if failure_class is None and _is_evidence_shape_error(reason):
+            failure_class = "evidence_malformed"
+            check = "evidence_malformed"
+        payload: dict = {
+            "check": check,
+            "reason": reason,
+            "evidence": evidence,
+            "task_id": task_id,
+            "attempt": attempt,
+        }
+        if failure_class is not None:
+            payload["failure_class"] = failure_class
         self._emit(
             "verdict.failed",
-            {
-                "check": check,
-                "reason": reason,
-                "evidence": evidence,
-                "task_id": task_id,
-                "attempt": attempt,
-            },
+            payload,
             command_id=cmd.command_id,
             task_id=task_id,
         )
@@ -4193,17 +4220,13 @@ class MImplRuntimeMixin:
                 )
                 return
         if reason is not None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": failure_check,
-                    "reason": reason,
-                    "evidence": "backend Devon outcome",
-                    "task_id": state.current_task_id,
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
+            self._emit_gate_failure(
+                cmd,
+                check=failure_check,
+                reason=reason,
+                evidence="backend Devon outcome",
                 task_id=state.current_task_id,
+                attempt=state.current_attempt + 1,
             )
             return
         lint_findings, lint_note = None, ""
@@ -4304,17 +4327,13 @@ class MImplRuntimeMixin:
             return
         reason, diff = self._validated_diff("red", state)
         if reason is not None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "red_invalid",
-                    "reason": reason,
-                    "evidence": "backend Devon outcome",
-                    "task_id": task_id,
-                    "attempt": attempt,
-                },
-                command_id=cmd.command_id,
+            self._emit_gate_failure(
+                cmd,
+                check="red_invalid",
+                reason=reason,
+                evidence="backend Devon outcome",
                 task_id=task_id,
+                attempt=attempt,
             )
             self._rebuild_task_log_projection()
             return
@@ -4765,17 +4784,13 @@ class MImplRuntimeMixin:
         if reason is not None:
             if self._emit_green_no_change(cmd, state, task_id, diff, reconcile):
                 return
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "impl_defect",
-                    "reason": reason,
-                    "evidence": "backend Devon outcome",
-                    "task_id": task_id,
-                    "attempt": attempt,
-                },
-                command_id=cmd.command_id,
+            self._emit_gate_failure(
+                cmd,
+                check="impl_defect",
+                reason=reason,
+                evidence="backend Devon outcome",
                 task_id=task_id,
+                attempt=attempt,
             )
             self._rebuild_task_log_projection()
             return
@@ -5119,21 +5134,37 @@ class MImplRuntimeMixin:
         )
         return True
 
+    def _emit_refactor_evidence_error(self, cmd, reason: str, state) -> None:
+        if _is_evidence_shape_error(reason):
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "evidence_malformed",
+                    "failure_class": "evidence_malformed",
+                    "reason": reason,
+                    "evidence": "backend Devon outcome",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+        else:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "regression",
+                    "reason": reason,
+                    "evidence": "backend Devon outcome",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+            )
+
     def _do_run_refactor_gate(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         gate_handle = None
         try:
             reason = self._devon_evidence_error("refactor", state)
             if reason is not None:
-                self._emit(
-                    "verdict.failed",
-                    {
-                        "check": "regression",
-                        "reason": reason,
-                        "evidence": "backend Devon outcome",
-                        "attempt": state.current_attempt + 1,
-                    },
-                    command_id=cmd.command_id,
-                )
+                self._emit_refactor_evidence_error(cmd, reason, state)
                 return
             cwd, gate_handle = self._ensure_gate_worktree(state, phase="refactor")
             outcome = self._last_devon_outcome() or {}
