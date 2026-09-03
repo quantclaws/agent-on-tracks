@@ -13,22 +13,27 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.helpers import walk_to_m_impl_parked
-from tracks.effects.github import select_issue_backend
+from tracks.effects.github import (
+    FakeIssueBackend,
+    GithubIssuesError,
+    create_issue_verified,
+    persist_issue_mapping,
+    readback_issue,
+    reject_fake_artifact,
+    select_issue_backend,
+)
 
 pytestmark = pytest.mark.integration
 
 
 # AC-FR0283-01@v0.8 TRACKS-TRACE real issue created and mapped with api_verified
-def test_real_issue_created_and_mapped(host_repo, trac, event_log, monkeypatch):
-    try:
-        from tracks.effects.github import create_issue_verified  # type: ignore[attr-defined]
-
-        create_issue_verified(None, "t", "b", [])  # type: ignore[misc]
-        raise AssertionError("expected NotImplementedError")
-    except ImportError:
-        pass
-    except NotImplementedError as exc:
-        assert "IF-ISSUE-001" in str(exc)
+def test_real_issue_created_and_mapped(host_repo, trac, event_log, monkeypatch, tmp_path):
+    # Module contract (IF-ISSUE-001, unit-pinned): the fake stand-in channel
+    # can never verify — creation returns api_verified=False without network.
+    monkeypatch.delenv("TRAC_FAKE_SIMULATE", raising=False)
+    probe = create_issue_verified(FakeIssueBackend(tmp_path, "v0.8"), "t", "b", [])
+    assert probe.get("api_verified") is False
+    assert str(probe.get("issue_number", "")).startswith("FAKE-")
 
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
@@ -79,15 +84,11 @@ def test_missing_credentials_needs_attention(host_repo, trac, event_log, monkeyp
 
 # AC-FR0283-03@v0.8 TRACKS-TRACE fake rejected in real mode
 def test_fake_rejected_in_real_mode(host_repo, trac, event_log, monkeypatch):
-    try:
-        from tracks.effects.github import reject_fake_artifact  # type: ignore[attr-defined]
-
-        reject_fake_artifact("ctx", "FAKE-90")  # type: ignore[misc]
-        raise AssertionError("expected NotImplementedError")
-    except ImportError:
-        pass
-    except NotImplementedError as exc:
-        assert "IF-ISSUE-001" in str(exc)
+    # Module contract (IF-ISSUE-001, unit-pinned): a FAKE-prefixed artifact is
+    # rejected with the closed fake_rejected verdict, never api_verified.
+    verdict = reject_fake_artifact("FAKE-90")
+    assert verdict.get("reason") == "fake_rejected"
+    assert verdict.get("api_verified") is not True
 
     walk_to_m_impl_parked(trac)
     monkeypatch.delenv("TRAC_FAKE_SIMULATE", raising=False)
@@ -104,16 +105,17 @@ def test_fake_rejected_in_real_mode(host_repo, trac, event_log, monkeypatch):
 
 
 # AC-FR0283-04@v0.8 TRACKS-TRACE crash idempotent dedup for issue mapping
-def test_crash_idempotent_dedup(host_repo, trac, event_log, monkeypatch):
-    try:
-        from tracks.effects.github import persist_issue_mapping  # type: ignore[attr-defined]
-
-        persist_issue_mapping(host_repo, {"repo": "acme/host", "issue_number": 1})  # type: ignore[misc]
-        raise AssertionError("expected NotImplementedError")
-    except ImportError:
-        pass
-    except NotImplementedError as exc:
-        assert "IF-ISSUE-001" in str(exc)
+def test_crash_idempotent_dedup(host_repo, trac, event_log, monkeypatch, tmp_path):
+    # Module contract (IF-ISSUE-001, unit-pinned): the authoritative map at
+    # .tracks/runtime/issue-map.json dedups a crash-retry re-persist by item.
+    stored = persist_issue_mapping(
+        tmp_path, "FR-0270", {"issue_number": "FAKE-1", "api_verified": False}
+    )
+    assert stored["FR-0270"]["issue_number"] == "FAKE-1"
+    restated = persist_issue_mapping(
+        tmp_path, "FR-0270", {"issue_number": "FAKE-1", "api_verified": False}
+    )
+    assert list(restated.keys()) == ["FR-0270"]
 
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
@@ -135,15 +137,14 @@ def test_crash_idempotent_dedup(host_repo, trac, event_log, monkeypatch):
 
 # AC-NFR0148-01@v0.8 TRACKS-TRACE authoritative map consumed by task/commit/report
 def test_authoritative_map_consumed(host_repo, trac, event_log, monkeypatch):
-    try:
-        from tracks.effects.github import readback_issue  # type: ignore[attr-defined]
-
-        readback_issue("acme/host", 1)  # type: ignore[misc]
-        raise AssertionError("expected NotImplementedError")
-    except ImportError:
-        pass
-    except NotImplementedError as exc:
-        assert "IF-ISSUE-001" in str(exc)
+    # Module contract (IF-ISSUE-001, unit-pinned): without credentials the
+    # readback fails closed with the classified missing_token error — never a
+    # silent pass. (The stand-in readback itself is exercised by the unit RED;
+    # integration observes the event/CLI outlets below.)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    with pytest.raises(GithubIssuesError) as excinfo:
+        readback_issue("acme/host", 1)
+    assert excinfo.value.classification == "missing_token"
 
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
@@ -164,15 +165,10 @@ def test_authoritative_map_consumed(host_repo, trac, event_log, monkeypatch):
 
 # AC-NFR0148-02@v0.8 TRACKS-TRACE fake map not consumed by closers
 def test_fake_map_not_consumed_by_closers(host_repo, trac, event_log, monkeypatch):
-    try:
-        from tracks.effects.github import reject_fake_artifact  # type: ignore[attr-defined]
-
-        reject_fake_artifact("ctx", "project=fake-project")  # type: ignore[misc]
-        raise AssertionError("expected NotImplementedError")
-    except ImportError:
-        pass
-    except NotImplementedError as exc:
-        assert "IF-ISSUE-001" in str(exc)
+    # Module contract (IF-ISSUE-001, unit-pinned): a fake-project artifact can
+    # never claim api_verified, so closers must not consume it.
+    verdict = reject_fake_artifact("project=fake-project")
+    assert verdict.get("api_verified") is not True
 
     walk_to_m_impl_parked(trac)
     monkeypatch.setenv("TRAC_FAKE_SIMULATE", "1")
