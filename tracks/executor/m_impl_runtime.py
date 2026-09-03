@@ -31,6 +31,7 @@ from tracks.baseline import (
 from tracks.effects.backend import valid_test_tasks
 from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
 from tracks.executor.helpers import _commit_if_staged, git, parse_collected_nodes
+from tracks.executor.host_contract import declared_install_interpreter
 from tracks.executor.quality_gate import (
     execute_gate_command,
     failed_summary_lines,
@@ -2912,10 +2913,15 @@ class MImplRuntimeMixin:
         }
 
     def _guard_commands(self) -> list[str]:
+        """(attempt-4 language neutrality) Guard command construction
+        resolves the interpreter prefix through the host contract's
+        declared install interpreter (IF-HOSTCONTRACT-001) — never a
+        hardcoded env spelling (NFR-0147)."""
+        interp = declared_install_interpreter(Path(self.repo))
         return [
-            ".venv/bin/python -m ruff check",
-            ".venv/bin/python -m flake8 --select=CCR001",
-            ".venv/bin/python -m pylint --disable=all --enable=R0801,C0302,R0915,R0914",
+            f"{interp} -m ruff check",
+            f"{interp} -m flake8 --select=CCR001",
+            f"{interp} -m pylint --disable=all --enable=R0801,C0302,R0915,R0914",
         ]
 
     def _unit_commands(self) -> list[str]:

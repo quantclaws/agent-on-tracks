@@ -16,7 +16,10 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from tracks.executor.host_contract import declared_install_interpreter
 
 
 @dataclass(frozen=True)
@@ -45,20 +48,25 @@ class GateResult:
     observations: tuple[GateObservation, ...] = ()
 
 
-_VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
-
-
 def _resolve_argv0(argv: list[str], cwd: str) -> list[str]:
-    if not argv or argv[0] not in _VENV_PYTHON_RELS:
+    """Substitute the Runtime's own interpreter for a repo-relative env
+    interpreter path that is absent in the audited repo.
+
+    IF-HOSTCONTRACT-001 / NFR-0147: interpreter identity is resolved
+    structurally (basename + relative path shape), never from a hardcoded
+    env spelling. A declared interpreter that exists relative to the gate
+    cwd runs verbatim; an absent one falls back to the running Runtime's
+    interpreter when it itself executes inside an environment.
+    """
+    if not argv or not os.path.basename(argv[0]).startswith("python"):
+        return argv
+    if "/" not in argv[0] and os.sep not in argv[0]:
         return argv
     if os.path.exists(os.path.join(cwd, argv[0])):
         return argv
     if sys.prefix != sys.base_prefix and os.access(sys.executable, os.X_OK):
         return [sys.executable, *argv[1:]]
     return argv
-
-
-_PYTHON = ".venv/bin/python"
 
 _COLLECTION_KEYWORDS = (
     "ImportError",
@@ -141,7 +149,7 @@ def run_production_checks(
         return GateResult(status="pass", checks_run=(), failures=(), layer="production")
     checks_run: list[str] = []
     failures: list[str] = []
-    for name, argv in _production_commands(changed_paths):
+    for name, argv in _production_commands(repo, changed_paths):
         result = _run_check(repo, name, argv)
         checks_run.append(result[0])
         if result[1] != 0:
@@ -166,7 +174,7 @@ def run_test_checks(
         return GateResult(status="pass", checks_run=(), failures=(), layer="test")
     checks_run: list[str] = []
     failures: list[str] = []
-    for name, argv in _test_commands(changed_paths):
+    for name, argv in _test_commands(repo, changed_paths):
         result = _run_check(repo, name, argv)
         checks_run.append(result[0])
         if result[1] != 0:
@@ -215,7 +223,8 @@ def execute_gate_command(
     check_name: str = "unit-tests",
 ) -> GateObservation:
     """Execute a gate command as a real subprocess (shell=False), resolve
-    .venv/bin/python if needed, and return an immutable GateObservation."""
+    a repo-relative env interpreter via the contract declaration when
+    needed, and return an immutable GateObservation."""
     argv = shlex.split(command)
     argv = _resolve_argv0(argv, cwd)
     try:
@@ -309,25 +318,32 @@ def _layer_for(prod: list[str], test: list[str]) -> Literal["production", "test"
     return "both"
 
 
-def _production_commands(paths: list[str]) -> list[tuple[str, list[str]]]:
+def _production_commands(
+    repo: str, paths: list[str]
+) -> list[tuple[str, list[str]]]:
+    """Gate check commands with the contract-declared env interpreter
+    (IF-HOSTCONTRACT-001): the interpreter prefix resolves through the
+    audited repo's ``[host-contract].install``, never hardcoded."""
+    interp = declared_install_interpreter(Path(repo))
     return [
-        ("ruff", [_PYTHON, "-m", "ruff", "check", *paths]),
+        ("ruff", [interp, "-m", "ruff", "check", *paths]),
         (
             "flake8-CCR001",
-            [_PYTHON, "-m", "flake8", "--select=CCR001", "--max-cognitive-complexity=15", *paths],
+            [interp, "-m", "flake8", "--select=CCR001", "--max-cognitive-complexity=15", *paths],
         ),
         (
             "pylint-R0801+C0302+R0915+R0914",
-            [_PYTHON, "-m", "pylint", "--disable=all", "--enable=R0801,C0302,R0915,R0914", *paths],
+            [interp, "-m", "pylint", "--disable=all", "--enable=R0801,C0302,R0915,R0914", *paths],
         ),
     ]
 
 
-def _test_commands(paths: list[str]) -> list[tuple[str, list[str]]]:
+def _test_commands(repo: str, paths: list[str]) -> list[tuple[str, list[str]]]:
+    interp = declared_install_interpreter(Path(repo))
     return [
         (
             "pylint-R0801+C0302",
-            [_PYTHON, "-m", "pylint", "--disable=all", "--enable=R0801,C0302", *paths],
+            [interp, "-m", "pylint", "--disable=all", "--enable=R0801,C0302", *paths],
         ),
     ]
 
