@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Literal
 
 from .events import Command
-from .machine import State
+from .machine import StageDef, State
 
 RELEASE_PIPELINE_VERSION = "v0.8"
 
@@ -58,6 +58,19 @@ BlockExitClass = Literal[
 
 REPAIR_BUDGET_DEFAULT = 3
 
+# SM-01.5/6: the M-RELEASE human gate. It opens only after the preview is
+# generated (SM-01.4), so M-RELEASE's initial substate must precede it.
+M_RELEASE_GATE_SUBSTATE = "AWAITING_RELEASE"
+
+# Entry substates for the five release stages (SM-01.1): the four linear
+# stages re-enter here after a rollback; M-RELEASE re-enters before the gate.
+_RELEASE_STAGE_SUBSTATES = {
+    "M-VERIFY": "VERIFYING",
+    "M-SECURITY": "ASSESSING",
+    "M-RELEASE": "PREVIEWING",
+    "M-PUBLISH": "PUBLISHING",
+    "M-MILESTONE": "CLOSING",
+}
 
 
 def release_stage_defs() -> tuple:
@@ -65,13 +78,74 @@ def release_stage_defs() -> tuple:
 
     M-VERIFY/M-SECURITY/M-PUBLISH/M-MILESTONE are linear; M-RELEASE carries
     the AWAITING_RELEASE → DELAYED/RETURNED human-gate substates (SM-01.5/6/8).
+    Like M-TEST/M-IMPL, the release stages are flow-driven: no drafting_role/
+    doc/reviewer — the executor walk and ``decide_release_stage`` route them.
     """
-    raise NotImplementedError("IF-VERIFY-001")
+    return tuple(
+        StageDef(stage=stage, initial_substate=_RELEASE_STAGE_SUBSTATES[stage])
+        for stage in RELEASE_STAGES
+    )
+
+
+def _repair_command(route: dict) -> Command | None:
+    """§1.0.14 classified route -> repair command; other classes stay at walk."""
+    if route.get("exit_class") == "defect_repair":
+        return Command(kind="dispatch_repair")
+    if route.get("exit_class") == "irreparable":
+        return Command(kind="register_known_issue")
+    return None
+
+
+def _decide_verify(substate: str, state: State) -> Command | None:
+    """SM-01.2.1 -> SM-01.3: the completed M-VERIFY chain hands to security."""
+    if substate == _RELEASE_STAGE_SUBSTATES["M-VERIFY"] and state.stage_exited:
+        return Command(kind="assess_security")
+    return None
+
+
+def _decide_release(substate: str, state: State) -> Command | None:
+    """SM-01.3.1 -> .4/.6 entry preview; SM-01.5.1 -> .7 accepted release."""
+    if substate == _RELEASE_STAGE_SUBSTATES["M-RELEASE"]:
+        return Command(kind="generate_preview")
+    if substate == M_RELEASE_GATE_SUBSTATE:
+        if getattr(state, "release_decision", None) == "release":
+            return Command(kind="execute_publish")
+        return None
+    return None
+
+
+def _decide_publish(substate: str, state: State) -> Command | None:
+    """SM-01.7.1 -> SM-01.8: the reconciled M-PUBLISH hands to the milestone."""
+    if substate == _RELEASE_STAGE_SUBSTATES["M-PUBLISH"] and state.stage_exited:
+        return Command(kind="close_milestone")
+    return None
+
+
+_DECIDERS = {
+    "M-VERIFY": _decide_verify,
+    "M-RELEASE": _decide_release,
+    "M-PUBLISH": _decide_publish,
+}
 
 
 def decide_release_stage(stage: str, substate: str, state: State) -> Command | None:
-    """Route decide() for the five release stages (SM-01.1–.10)."""
-    raise NotImplementedError("IF-VERIFY-001")
+    """Route decide() for the five release stages (SM-01.1–.10).
+
+    A classified repair route (architecture §1.0.14; classification is
+    T-029's ``classify_defect_route``, carried in ``state.last_failure``)
+    dominates: defect_repair dispatches the in-place repair, irreparable
+    product defects register a known issue, env_transient/human_escape retry
+    at walk level (None). Otherwise the walk boundaries route the executor
+    commands; anything unmatched routes None (fail-closed).
+    """
+    failure = getattr(state, "last_failure", None)
+    route = failure.get("repair_route") if isinstance(failure, dict) else None
+    if isinstance(route, dict):
+        return _repair_command(route)
+    decider = _DECIDERS.get(stage)
+    if decider is None:
+        return None
+    return decider(substate, state)
 
 
 def on_candidate_frozen(state: State, payload: dict, event) -> None:
