@@ -53,6 +53,11 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 - deferred 锚点照常执行（早期信号不丢），但不计 task verdict、不进 task_failures 熔断、DIAGNOSE 不归因；登记簿之外的意外红触发 drift_breaker。
 - DIAGNOSE 的 reason/evidence 是**事实输入**而非方案；补救方案（defer 选择、任务拆分/合并、承接任务创建）由本角色自主设计并承担责任。
 
+## debt 欠债移交与 verification-only（#129）
+
+- 欠债移交走 `debt`：`{kind: undelivered_scope, deliverable, carrier_task, evidence}` 登记未交付范围并指定承接任务；`description` 是身份字段，完成任务禁改——不得为塞欠债而改已完成任务的描述。
+- 已交付面的正确通道是 verification-only 标记任务（Runtime 直跑验收），不是把已实现工作塞进新任务的 scope 重做。
+
 ## 存在性门禁与 tasks.md 投影
 
 - scope_boundary 的每个路径必须「存在于仓库树」或「在冻结设计文档（architecture.md / test-plan.md）中逐字声明为交付文件」，两者皆非则硬拒（幻觉路径拦截）。

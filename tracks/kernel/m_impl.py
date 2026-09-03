@@ -11,6 +11,7 @@ No circular import: this module imports only from ``events`` at runtime;
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from .contracts import DEVON_EVIDENCE_CONTRACT, WRITE_MANIFEST_CONTRACT
@@ -73,19 +74,17 @@ def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 def _on_task_started(s: State, p: dict, ev: EventEnvelope) -> None:
     """TASK_DISPATCH: Runtime selected a ready task -> RED (fresh RGR cycle).
-    B94: integration tasks skip RED (no new unit test to write; their hard
-    gate already covers all deferred)."""
+
+    All tasks start at RED, including integration tasks: an integration
+    task's RED is a runtime walk_red anchor confirmation (seal the unit
+    R-tree on site, no Devon dispatch), never a GREEN start with an
+    unsealed R lineage (run 01M19FJVES7G113RD8QXXY3PQZ T-042)."""
     s.current_task_id = p.get("task_id")
     task = p.get("task")
     s.current_task_metadata = dict(task) if isinstance(task, dict) else None
     manifest = p.get("manifest")
     s.current_manifest = dict(manifest) if isinstance(manifest, dict) else None
-    # B94 integration tasks start directly at GREEN (skip RED)
-    try:
-        is_integration = bool(task.get("integration")) if isinstance(task, dict) else False
-    except Exception:
-        is_integration = False
-    s.substate = "GREEN" if is_integration else "RED"
+    s.substate = "RED"
     _reset_doc(s)
     s.current_attempt = 0
     s.green_committed = False
@@ -338,6 +337,33 @@ def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
     s.last_failure = None
 
 
+_RED_NO_RICE = frozenset({"missing", "unexpected_pass"})
+
+
+def _red_missing_only(evidence) -> bool:
+    if not isinstance(evidence, str) or not evidence.strip():
+        return False
+    try:
+        payload = json.loads(evidence)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    classifications = payload.get("classifications")
+    if not isinstance(classifications, list) or not classifications:
+        return False
+    return all(item in _RED_NO_RICE for item in classifications)
+
+
+def _route_red_invalid(s: State, evidence) -> None:
+    if _red_missing_only(evidence):
+        _route_scope_replan(s)
+        return
+    s.substate = "RED"
+    _reset_doc(s)
+    _consume_attempt(s)
+
+
 def _on_m_impl_verdict_failed(s: State, p: dict) -> None:
     """verdict.failed routing for M-IMPL (flow.md §10.1)."""
     check = p.get("check")
@@ -351,7 +377,7 @@ def _on_m_impl_verdict_failed(s: State, p: dict) -> None:
         }
         _route_m_impl_diagnose(s, check)
         return
-    _route_m_impl_gate_failure(s, check)
+    _route_m_impl_gate_failure(s, check, p.get("evidence"))
 
 
 def _route_m_impl_diagnose(s: State, check: str) -> None:
@@ -487,7 +513,7 @@ def _route_parked_failure(s: State, check: str) -> None:
         _reset_review(s)
 
 
-def _route_m_impl_gate_failure(s: State, check: str) -> None:
+def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
     """Gate failure routing (non-DIAGNOSE substates)."""
     if check == "criteria_pack_mismatch":
         _reset_review(s)
@@ -506,9 +532,7 @@ def _route_m_impl_gate_failure(s: State, check: str) -> None:
         s.taskgraph_committed = False
         _consume_attempt(s)
     elif check == "red_invalid":
-        s.substate = "RED"
-        _reset_doc(s)
-        _consume_attempt(s)
+        _route_red_invalid(s, evidence)
     elif check == "lint":
         # B4 (issue #5, user ruling 2026-08-18): mechanical lint findings
         # route back to the producing phase for rework but do NOT consume
@@ -956,6 +980,16 @@ def _is_preset_anchor_task(s: State) -> bool:
     return "RED 锚点" in (meta.get("description") or "")
 
 
+def _is_integration_task(s: State) -> bool:
+    """B94 integration tasks carry no new RED unit test to write either:
+    their RED is a runtime walk_red anchor confirmation (seal the unit
+    R-tree on site from unit_refs, expect green), never a Devon dispatch.
+    The integration flag itself triggers, independent of any description
+    marker (unlike _is_preset_anchor_task)."""
+    meta = s.current_task_metadata or {}
+    return bool(meta.get("integration"))
+
+
 def _is_verification_task(s: State) -> bool:
     """§1.0.3 two-tier model: a task whose description carries the
     verification-only marker has no RED-implementation - acceptance is
@@ -991,11 +1025,14 @@ def _decide_m_impl_agent(s: State, sub: str) -> Command | None:
             kind="verify_task",
             params={"stage": "M-IMPL", "task_id": s.current_task_id},
         )
-    if sub == "RED" and _is_preset_anchor_task(s):
+    if sub == "RED" and (_is_preset_anchor_task(s) or _is_integration_task(s)):
         # Standard RGR with a preset anchor (frozen failing tests): the RED
         # phase is a Runtime anchor confirmation - Devon has no new unit
         # test to write, so dispatching it only produces an empty
         # changed_paths evidence the gate must reject (run 01KZTHE7 T-013).
+        # Integration tasks ride the same anchor_red command channel: their
+        # RED is the walk_red confirmation (seal the unit R-tree on site),
+        # triggered by the integration flag itself, no description marker.
         return Command(
             kind="anchor_red",
             params={"stage": "M-IMPL", "task_id": s.current_task_id},

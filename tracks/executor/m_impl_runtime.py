@@ -50,6 +50,7 @@ from tracks.executor.taskgraph import (
     validate_ac_coverage,
     validate_acceptance_coverage,
     validate_dag,
+    validate_debt_references,
     validate_island_closure,
     validate_issue_numbers,
     validate_scope,
@@ -839,6 +840,8 @@ class MImplRuntimeMixin:
                 # B94 deferred anchors and integration marker
                 "deferred_refs",
                 "integration",
+                # #129 debt ledger (pure annotation, carried to assignment)
+                "debt",
             ):
                 value = task.get(key)
                 assignment[key] = list(value) if isinstance(value, tuple) else value
@@ -953,7 +956,17 @@ class MImplRuntimeMixin:
         root = Path(self.repo) / "tests"
         if not root.is_dir():
             return []
-        hits = [p for p in root.rglob(filename) if "__pycache__" not in p.parts and p.is_file()]
+        # OOB 2026-09-03 (run 01M19FJVES7G113RD8QXXY3PQZ): DIAGNOSE evidence
+        # may embed absolute paths (e.g. PosixPath('/.../demo_host.py')).
+        # Path.rglob rejects non-relative patterns with NotImplementedError,
+        # which killed the whole run. Only the basename is meaningful here.
+        name = filename.rsplit("/", 1)[-1].strip()
+        if not name:
+            return []
+        try:
+            hits = [p for p in root.rglob(name) if "__pycache__" not in p.parts and p.is_file()]
+        except (NotImplementedError, ValueError):
+            return []
         if len(hits) != 1:
             return []
         return [hits[0].relative_to(self.repo).as_posix()]
@@ -1042,6 +1055,9 @@ class MImplRuntimeMixin:
             str(r) for r in deferred_raw if isinstance(r, str)
         )
         integration = bool(raw.get("integration", False))
+        # #129 debt ledger (optional, default empty; pure annotation)
+        debt_raw = raw.get("debt") or ()
+        debt = tuple(dict(item) for item in debt_raw if isinstance(item, dict))
         return TaskNode(
             task_id=raw["task_id"],
             issue_number=raw["issue_number"],
@@ -1060,6 +1076,7 @@ class MImplRuntimeMixin:
             schema=int(raw.get("schema") or 1),
             deferred_refs=deferred_refs,
             integration=integration,
+            debt=debt,
         )
 
     def _current_manifest(self) -> dict | None:
@@ -1440,6 +1457,9 @@ class MImplRuntimeMixin:
         # OB-3: enrich anchor_probe summary and committed payload with satisfiability
         probe_payload = probe_summary(probe_report)
         probe_payload["satisfiability"] = dict(satisfiability)
+        # #133 advisory: scope files with no static anchor coverage (debt exempts)
+        scope_advisory = self._scope_anchor_advisories(tasks, vdir)
+        probe_payload["scope_anchor_advisory"] = list(scope_advisory)
         committed_payload: dict = {
             "task_count": len(tasks),
             "task_ids": [t.task_id for t in tasks],
@@ -1451,6 +1471,7 @@ class MImplRuntimeMixin:
             "anchor_probe": probe_payload,
             "satisfiability": dict(probe_payload["satisfiability"]),
             "probe_summary": dict(probe_payload),
+            "scope_anchor_advisory": list(scope_advisory),
             "retained_completed_task_ids": retained_ids,
         }
         self._emit(
@@ -1489,6 +1510,16 @@ class MImplRuntimeMixin:
         return self._compute_retained_completions(
             old_payloads, [self._task_payload(t) for t in tasks], completed_ids
         )
+
+    def _scope_anchor_advisories(self, tasks: list[TaskNode], vdir: Path) -> list[str]:
+        try:
+            from tracks.executor.anchor_surface import load_anchor_surface
+            from tracks.executor.taskgraph import scope_anchor_advisories
+
+            surface = load_anchor_surface(vdir / "anchor-surface.json")
+            return scope_anchor_advisories(tasks, surface, repo=self.repo)
+        except Exception:
+            return []
 
     def _b89_planning_gate(
         self,
@@ -1729,6 +1760,7 @@ class MImplRuntimeMixin:
                         errors.append(f"{task.task_id} declares unanchored AC {ac_id}")
             ac_ids = sorted(anchored_ids)
         errors.extend(_taskgraph_coverage_errors(tasks, ac_ids, if_registry))
+        errors.extend(validate_debt_references(tasks))
         return errors
 
     @staticmethod
@@ -1773,10 +1805,12 @@ class MImplRuntimeMixin:
             "budget": task.budget,
             "deferred_refs": list(getattr(task, "deferred_refs", ())),
             "integration": bool(getattr(task, "integration", False)),
+            "debt": [dict(item) for item in (getattr(task, "debt", ()) or ())],
         }
 
     @staticmethod
     def _task_payloads_equivalent(old: dict, new: dict) -> bool:
+        # #129 debt is a pure annotation: excluded from identity on purpose.
         keys = (
             "task_id",
             "issue_number",
@@ -5255,6 +5289,40 @@ class MImplRuntimeMixin:
         )
         return argv, result_path, cwd
 
+    def _run_anchor_suite(self, cmd_argv, run_cwd, result_path) -> tuple[int, str, str]:
+        """Run one engine-selected anchor suite; always consume the staging result."""
+        try:
+            proc = subprocess.run(
+                cmd_argv, cwd=run_cwd, capture_output=True, text=True, timeout=1800
+            )
+            return proc.returncode, proc.stdout or "", proc.stderr or ""
+        except subprocess.TimeoutExpired as exc:
+            return 124, str(exc), "anchor run timed out after 1800s"
+        finally:
+            result_path.unlink(missing_ok=True)
+
+    def _pin_r_ref(self, tid: str, attempt: int) -> tuple[str, str]:
+        """Pin the R ref straight to HEAD; return (ref, base_sha)."""
+        base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        ref = f"refs/trac/rgr/{self.run_id}/{tid}/{attempt}/red"
+        git(self.repo, "update-ref", ref, base_sha)
+        return ref, base_sha
+
+    def _fail_anchor_contract(self, cmd, tid: str, attempt: int, layer: str, exc) -> None:
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "contract_error",
+                "reason": (
+                    f"anchor RED run needs the host contract [{layer}].run_selected: {exc}"
+                ),
+                "task_id": tid,
+                "attempt": attempt,
+            },
+            command_id=cmd.command_id,
+            task_id=tid,
+        )
+
     def _do_anchor_red(self, cmd, state, task_id, reconcile):  # pylint: disable=too-many-locals
         """Runtime-executed RED anchor confirmation for preset-anchor tasks.
 
@@ -5267,6 +5335,9 @@ class MImplRuntimeMixin:
         """
         tid = state.current_task_id or cmd.params.get("task_id") or task_id or ""
         meta = state.current_task_metadata or {}
+        if meta.get("integration"):
+            self._do_walk_red(cmd, state, tid, meta)
+            return
         test_refs = meta.get("test_refs") or []
         attempt = state.current_attempt + 1
         if not isinstance(test_refs, list) or not test_refs:
@@ -5287,30 +5358,9 @@ class MImplRuntimeMixin:
                 test_refs, cmd.command_id or "", "integration"
             )
         except (ContractError, TestSelectError) as exc:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "contract_error",
-                    "reason": (
-                        f"anchor RED run needs the host contract [integration].run_selected: {exc}"
-                    ),
-                    "task_id": tid,
-                    "attempt": attempt,
-                },
-                command_id=cmd.command_id,
-                task_id=tid,
-            )
+            self._fail_anchor_contract(cmd, tid, attempt, "integration", exc)
             return
-        err = ""
-        try:
-            proc = subprocess.run(
-                cmd_argv, cwd=run_cwd, capture_output=True, text=True, timeout=1800
-            )
-            rc, out, err = proc.returncode, proc.stdout or "", proc.stderr or ""
-        except subprocess.TimeoutExpired as exc:
-            rc, out, err = 124, str(exc), "anchor run timed out after 1800s"
-        finally:
-            result_path.unlink(missing_ok=True)
+        rc, out, err = self._run_anchor_suite(cmd_argv, run_cwd, result_path)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
             # Anchors already green: either the implementation already
@@ -5333,9 +5383,7 @@ class MImplRuntimeMixin:
             )
             self._rebuild_task_log_projection()
             return
-        base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        ref = f"refs/trac/rgr/{self.run_id}/{tid}/{attempt}/red"
-        git(self.repo, "update-ref", ref, base_sha)
+        ref, base_sha = self._pin_r_ref(tid, attempt)
         ref_payload = {
             "failed": failed_summary_lines(out),
             "tail": out[-400:],
@@ -5353,6 +5401,84 @@ class MImplRuntimeMixin:
                 "task_id": tid,
                 "attempt": attempt,
                 "anchor": True,
+                "evidence": json.dumps(ref_payload, ensure_ascii=False),
+            },
+            command_id=cmd.command_id,
+            task_id=tid,
+        )
+        self._rebuild_task_log_projection()
+
+    def _do_walk_red(self, cmd, state, tid: str, meta: dict) -> None:
+        """Runtime-executed RED for integration tasks (walk the R-tree).
+
+        An integration task carries no new RED unit test to write; its
+        unit pins are already delivered. Seal the unit R-tree on site:
+        run the unit_refs expecting green, then pin the R ref straight
+        to the base sha and emit red.checkpointed so the normal
+        PRISM_RED -> GREEN flow continues with a resolvable
+        r_tree_identity (run 01M19FJVES7G113RD8QXXY3PQZ T-042:
+        GREEN start with no RED checkpoint left GREEN structurally
+        unpassable - Devon assignment without r_tree_identity plus
+        green commit lineage without R ref).
+        """
+        attempt = state.current_attempt + 1
+        unit_refs = [r for r in (meta.get("unit_refs") or []) if isinstance(r, str)]
+        if not unit_refs:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "red_invalid",
+                    "reason": "walk_red integration task declares no unit_refs",
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            return
+        try:
+            cmd_argv, result_path, run_cwd = self._selected_test_argv(
+                unit_refs, cmd.command_id or "", "unit"
+            )
+        except (ContractError, TestSelectError) as exc:
+            self._fail_anchor_contract(cmd, tid, attempt, "unit", exc)
+            return
+        rc, out, err = self._run_anchor_suite(cmd_argv, run_cwd, result_path)
+        if rc != 0:
+            summary = out.strip().splitlines()[-1] if out.strip() else ""
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "red_invalid",
+                    "reason": (
+                        "walk_red unit pins are not green - regression "
+                        f"baseline cannot be sealed. {summary}"
+                    ),
+                    "evidence": out[-2000:],
+                    "task_id": tid,
+                    "attempt": attempt,
+                },
+                command_id=cmd.command_id,
+                task_id=tid,
+            )
+            self._rebuild_task_log_projection()
+            return
+        ref, base_sha = self._pin_r_ref(tid, attempt)
+        ref_payload: dict = {"passed": True, "tail": out[-400:], "walk_red": True}
+        blob = self.store.write_audit_blob(
+            {"cmd": cmd_argv, "rc": rc, "stdout": out, "stderr": err}
+        )
+        if blob:
+            ref_payload["log_ref"] = f".tracks/runtime/blobs/{blob}"
+        self._emit(
+            "red.checkpointed",
+            {
+                "ref": ref,
+                "r_sha": base_sha,
+                "task_id": tid,
+                "attempt": attempt,
+                "anchor": True,
+                "walk_red": True,
                 "evidence": json.dumps(ref_payload, ensure_ascii=False),
             },
             command_id=cmd.command_id,

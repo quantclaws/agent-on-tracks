@@ -205,7 +205,7 @@ def test_integration_scope_union_and_hard_gate(tmp_path):
     assert selection_union(t1) == ["tests/integration/test_a.py::test_one", "tests/integration/test_b.py::t"]
 
 
-def test_integration_skips_red(tmp_path):
+def test_integration_starts_red_for_walk_red(tmp_path):
     repo = git_repo(tmp_path, gitignore=True)
     _ = m_impl_docs(repo)
     store = m_impl_store(repo)
@@ -242,7 +242,7 @@ def test_integration_skips_red(tmp_path):
 
     ev = EventEnvelope(seq=99, ts="2026-01-01T00:00:00+00:00", run_id="RUN", version="v0.5", type="task.started", schema_version=1, command_id=None, task_id=None, payload=payload)
     _on_task_started(state, payload, ev)
-    assert state.substate == "GREEN"
+    assert state.substate == "RED"
     assert state.current_task_id == "T-INT"
     # non-integration stays RED
     task2 = dict(task)

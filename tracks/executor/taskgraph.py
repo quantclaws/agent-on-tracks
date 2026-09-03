@@ -43,6 +43,9 @@ class TaskNode:
     # task's hard gate merges all deferred.
     deferred_refs: tuple[str, ...] = ()
     integration: bool = False
+    # #129 debt: explicit undelivered-scope ledger, pure annotation.
+    # Never participates in identity/equivalence; carried to assignment.
+    debt: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,43 @@ def _validate_integration_flag(raw: dict, tid: str) -> tuple[bool | None, str | 
     return bool(val), None
 
 
+_DEBT_KINDS = frozenset({"undelivered_scope"})
+
+
+def _validate_debt_shape(raw: dict, tid: str) -> tuple[list[dict] | None, str | None]:
+    val = raw.get("debt", [])
+    if not isinstance(val, list):
+        return None, f"tasks.json: {tid}: debt must be a list"
+    for item in val:
+        if not isinstance(item, dict):
+            return None, f"tasks.json: {tid}: debt entry must be an object"
+        kind = item.get("kind")
+        if kind not in _DEBT_KINDS:
+            return None, f"tasks.json: {tid}: debt kind must be one of {sorted(_DEBT_KINDS)}"
+        deliverable = item.get("deliverable")
+        if not isinstance(deliverable, str) or not deliverable.strip():
+            return None, f"tasks.json: {tid}: debt deliverable must be a non-empty string"
+        carrier = item.get("carrier_task")
+        if not isinstance(carrier, str) or not carrier.strip():
+            return None, f"tasks.json: {tid}: debt carrier_task must be a non-empty string"
+        if "evidence" in item and not isinstance(item.get("evidence"), str):
+            return None, f"tasks.json: {tid}: debt evidence must be a string"
+    return val, None
+
+
+def validate_debt_references(tasks: list[TaskNode]) -> list[str]:
+    ids = {t.task_id for t in tasks}
+    errors: list[str] = []
+    for task in tasks:
+        for item in getattr(task, "debt", ()) or ():
+            carrier = item.get("carrier_task") if isinstance(item, dict) else None
+            if carrier not in ids:
+                errors.append(
+                    f"{task.task_id} declares unknown debt carrier_task '{carrier}'"
+                )
+    return errors
+
+
 def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | None, str | None]:
     if not isinstance(raw, dict):
         return (None, f"tasks.json: task[{index}] must be an object")
@@ -188,6 +228,9 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
     integration, err = _validate_integration_flag(raw, tid)
     if err:
         return (None, err)
+    debt_raw, err = _validate_debt_shape(raw, tid)
+    if err:
+        return (None, err)
     return (
         TaskNode(
             task_id=tid,
@@ -207,6 +250,7 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
             schema=schema,
             deferred_refs=tuple(deferred_raw or []),
             integration=bool(integration),
+            debt=tuple(dict(item) for item in (debt_raw or [])),
         ),
         None,
     )
@@ -767,6 +811,67 @@ def _row_undeclared_targets(
                 "task acceptance_refs"
             )
     return errors
+
+
+def _anchor_ast_modules(anchors_map: dict, ref: str) -> list[str]:
+    entry = anchors_map.get(ref)
+    if not isinstance(entry, dict):
+        return []
+    if "ast_modules" in entry:
+        return [m for m in entry.get("ast_modules", []) if isinstance(m, str)]
+    return [m for m in entry.get("modules", []) if isinstance(m, str)]
+
+
+def _anchor_files_for_refs(anchors_map: dict, refs, repo=None) -> set[str]:
+    out: set[str] = set()
+    for ref in refs or ():
+        if not isinstance(ref, str) or not ref:
+            continue
+        for mod in _anchor_ast_modules(anchors_map, ref):
+            try:
+                out.add(_module_to_path(mod, repo))
+            except Exception:
+                out.add(mod.replace(".", "/") + ".py")
+    return out
+
+
+def _scope_entry_covered(entry: str, anchor_files: set[str]) -> bool:
+    base = entry.rstrip("/")
+    for path in anchor_files:
+        if path in (entry, base):
+            return True
+        if path.startswith(base + "/"):
+            return True
+    return False
+
+
+def scope_anchor_advisories(tasks, surface: dict | None, repo=None) -> list[str]:
+    """#133 advisory: scope files with no static anchor-module coverage."""
+    if not tasks or not isinstance(surface, dict):
+        return []
+    anchors_map = surface.get("anchors", {})
+    if not isinstance(anchors_map, dict):
+        return []
+    advisories: list[str] = []
+    for task in tasks:
+        if getattr(task, "debt", ()):
+            continue
+        refs = [
+            *(getattr(task, "acceptance_refs", ()) or ()),
+            *(getattr(task, "deferred_refs", ()) or ()),
+            *(getattr(task, "unit_refs", ()) or ()),
+        ]
+        anchor_files = _anchor_files_for_refs(anchors_map, refs, repo)
+        if not anchor_files:
+            continue
+        scope_files = set(_parse_scope_paths(getattr(task, "scope_boundary", "") or ""))
+        diff = sorted(s for s in scope_files if not _scope_entry_covered(s, anchor_files))
+        if diff:
+            advisories.append(
+                f"{task.task_id}: scope files without anchor coverage: "
+                + ", ".join(diff)
+            )
+    return advisories
 
 
 def validate_issue_numbers(
