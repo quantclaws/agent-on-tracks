@@ -95,16 +95,14 @@ def judge_full_f_reuse(
             identity_quadruple.get("env"),
             identity_quadruple.get("selection_id"),
         )
-        # expected is a tuple; compare as tuple
         exp_tuple = tuple(expected)
-        # mismatch when lengths differ or values differ
         if exp_tuple != quad:
             return ReuseDecision(
                 decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
             )
-    # check drift via candidate_sha vs expected? For this slice, drift is
-    # treated as identity mismatch; stale already handled
-    # if no mismatch and no stale, reuse
+    # Drift folds into identity_mismatch in this slice: a moved candidate
+    # surfaces as a basis mismatch above. With no STALE and a matching
+    # basis, the FULL_F evidence is reused verbatim.
     basis = tuple(full_f_evidence.get("identity_basis", ())) if expected is not None else ()
     return ReuseDecision(decision="reuse", reason="reuse_full_f", identity_basis=basis)
 
