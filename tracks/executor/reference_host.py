@@ -46,6 +46,9 @@ _JOURNEY_CHAIN = (
     "run.completed",
 )
 _SEAL_KIND = "milestone.sealed"
+# The seal link and everything after it: a chain missing any of these
+# cannot confirm the milestone seal closed out with a completed run.
+_POST_SEAL_CHAIN = _JOURNEY_CHAIN[_JOURNEY_CHAIN.index(_SEAL_KIND):]
 
 
 def create_reference_host(
@@ -61,9 +64,9 @@ def create_reference_host(
         return {
             "status": "needs_attention",
             "reason": (
-                "missing remote credential binding: remote_url is None; an "
-                "explicit simulation declaration is required for local-only "
-                "runs"
+                "missing remote credential binding: remote_url is missing; "
+                "an explicit simulation declaration is required for "
+                "local-only runs"
             ),
         }
     return _materialize(template_dir, target_dir, wheel, remote_url)
@@ -140,7 +143,7 @@ def _divergence_reasons(kinds: list) -> tuple[str, ...]:
     reasons.extend(_missing_chain_reasons(seen))
     reasons.extend(_unexpected_chain_reasons(kinds, chain_set))
     reasons.extend(_misordered_reasons(kinds, seen, bool(reasons)))
-    if any(kind not in seen for kind in _JOURNEY_CHAIN[_JOURNEY_CHAIN.index(_SEAL_KIND):]):
+    if any(kind not in seen for kind in _POST_SEAL_CHAIN):
         reasons.append(f"{_SEAL_KIND} seal unconfirmed: run completion missing")
     return tuple(reasons)
 
