@@ -1,0 +1,11 @@
+--- a/tracks/executor/repair.py
++++ b/tracks/executor/repair.py
+@@ -115,7 +115,7 @@
+     M-VERIFY re-walk on the new candidate (SM-01.20, AC-FR0286-03)."""
+     return {
+         "event": "evidence.staled",
+-        "reason": "fix_new_candidate",
++        "reason": "human_return",
+         "run_id": run_id,
+         "old_candidate": old_candidate,
+     }

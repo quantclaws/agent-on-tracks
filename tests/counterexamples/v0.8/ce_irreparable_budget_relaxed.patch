@@ -1,0 +1,11 @@
+--- a/tracks/executor/repair.py
++++ b/tracks/executor/repair.py
+@@ -135,7 +135,7 @@
+         return True
+     if attribution.get("attribution_unchanged") is not True:
+         return False
+-    return rounds_used >= budget
++    return rounds_used > budget
+ 
+ 
+ def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:

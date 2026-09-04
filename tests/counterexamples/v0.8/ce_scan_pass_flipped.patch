@@ -1,0 +1,11 @@
+--- a/tracks/executor/security.py
++++ b/tracks/executor/security.py
+@@ -43,7 +43,7 @@
+     if exit_code is None:
+         status: Literal["passed", "failed", "malformed"] = "malformed"
+     elif exit_code == 0:
+-        status = "passed"
++        status = "failed"
+     else:
+         status = "failed"
+     return NormalizedGateResult(

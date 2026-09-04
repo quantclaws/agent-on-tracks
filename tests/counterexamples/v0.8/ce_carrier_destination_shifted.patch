@@ -1,0 +1,11 @@
+--- a/tracks/executor/reference_host.py
++++ b/tracks/executor/reference_host.py
+@@ -27,7 +27,7 @@
+     "pyproject.toml": "pyproject.toml",
+     "flake8.ini": "flake8.ini",
+     "host_calc.py": "host_calc.py",
+-    "tracks-project.toml": ".tracks/projects/project.toml",
++    "tracks-project.toml": ".tracks/projects/project.toml.dist",
+     "architecture.md": ".tracks/projects/v0.1/architecture.md",
+     "ci.yml": ".github/workflows/ci.yml",
+ }

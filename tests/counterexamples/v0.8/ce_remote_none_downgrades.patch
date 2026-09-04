@@ -1,0 +1,11 @@
+--- a/tracks/executor/reference_host.py
++++ b/tracks/executor/reference_host.py
+@@ -60,7 +60,7 @@
+     declaration) reports needs_attention without materializing anything —
+     never a local-success downgrade (NFR-0149-01).
+     """
+-    if not remote_url:
++    if False and remote_url:
+         return {
+             "status": "needs_attention",
+             "reason": (

@@ -48,6 +48,49 @@ walk_to_design_complete = walk_to_m_test_complete
 M_IMPL_PARK_SIMULATE = "devon:RED=fail;diagnose:classification=impl_defect"
 
 
+def _seed_phase0_premises(repo, version):
+    """Seed the phase0 baseline-repair premises into the host repo (v0.7+).
+
+    The phase0 M-TEST pre-gate (v0.7+ architecture §1.0.2/§1.1) blocks a bare
+    host repo before M-IMPL is ever reachable: `scan_trace_gaps` finds no
+    v0.6 baseline, no `[adapter]` declaration, no §4.2 quality registry. The
+    premises must land AFTER the fake M-DESIGN trio overwrite (seeding before
+    the walk is wiped; every run parks at phase0.blocked) — exactly the
+    blocked -> Human repairs the repo fact -> validate again channel the
+    design prescribes (tests/integration/v07_journey_seed.py seed order).
+    """
+    from tests.integration.v07_journey_seed import (
+        add_adapter_declaration,
+        seed_v06_baseline,
+    )
+
+    seed_v06_baseline(repo)
+    add_adapter_declaration(repo)
+    from pathlib import Path
+
+    from tests.integration.test_failclosed_scenarios import (
+        _HEADING,
+        _eight_guard_blocks,
+        _registry_body,
+    )
+
+    arch = Path(repo) / ".tracks" / "projects" / version / "architecture.md"
+    arch.parent.mkdir(parents=True, exist_ok=True)
+    text = arch.read_text(encoding="utf-8") if arch.exists() else f"# {version} architecture\n"
+    if "[quality_registry]" in text:
+        return
+    digest = "sha256:" + "0" * 64
+    arch.write_text(
+        text.rstrip("\n")
+        + "\n\n"
+        + _HEADING
+        + "\n\n```toml\n"
+        + _registry_body(_eight_guard_blocks(digest), host="tracks")
+        + "```\n",
+        encoding="utf-8",
+    )
+
+
 def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", version="v0.8"):
     """init -> start -> triage go -> doc trio -> approval -> M-IMPL RED failure
     injection -> parks at M-IMPL/DIAGNOSE/awaiting=escalation.
@@ -60,11 +103,20 @@ def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", versi
     (M_IMPL_PARK_SIMULATE burns the shared attempt budget). Bare ``trac run``
     bootstrap is forbidden for escape anchors (v0.8 suite-wide bootstrap
     defect, no init/start -> rc=1). The escape anchors are v0.8 ACs, so the
-    walker default binds them to version v0.8 (the injection parks INSIDE
-    M-IMPL, so the unregistered M-IMPL->M-VERIFY exit is never attempted)."""
+    walker default binds them to version v0.8.
+
+    v0.7+ phase0 pre-gate: the first post-approval ``trac run`` drafts the
+    M-DESIGN trio and fails the phase0 validate on a bare repo; when the trac
+    fixture exposes its backing host repo (``trac.repo``), the phase0
+    premises are seeded on the baseline-repair channel so the next injected
+    run seals phase0 and reaches the M-IMPL park."""
     run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+    repo = getattr(trac, "repo", None)
+    if repo is not None:
+        _seed_phase0_premises(repo, version)
+        r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r.returncode == 0, r.stderr
     assert "stage=M-IMPL" in r.stdout
     assert "substate=DIAGNOSE" in r.stdout

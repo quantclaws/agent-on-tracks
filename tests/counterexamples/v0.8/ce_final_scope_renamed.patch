@@ -1,0 +1,11 @@
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -145,7 +145,7 @@
+     """
+     return {
+         "candidate_sha": candidate_sha,
+-        "scope": "verify_final",
++        "scope": "verify",
+         "evidence_digests": dict(evidence_digests),
+     }
+ 

@@ -1,0 +1,11 @@
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -70,7 +70,7 @@
+             f"(interfaces §1d): {dirty.splitlines()[:3]}"
+         )
+     return CandidateIdentity(
+-        candidate_sha=_git(repo, "rev-parse", "HEAD"),
++        candidate_sha=_git(repo, "rev-parse", "HEAD")[:12],
+         clean_tree=True,
+         branch=_git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+     )

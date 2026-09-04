@@ -283,18 +283,21 @@ def test_placeholders_and_execute_per_contract(tmp_path):
         ("{prefix_bin} must derive under prefix", str(resolved.get("prefix_bin", "")).startswith(stage)),
     ]
     py = shlex.quote(sys.executable)
+    # T008-RED-FIND-1 re-pin: @TARGET@ carries only the quoted element; the
+    # template's surrounding brackets form the single-layer list literal
+    # (nested brackets produced [["v0.8.1"]], unsatisfiable under argv[1:]).
     tpl = py + " -c 'import sys; sys.exit(0 if sys.argv[1:] == [@TARGET@] else 1)' {version}"
     decl = LocalGateDecl(
         kind="trace",
         source="command",
-        command=tpl.replace("@TARGET@", '["v0.8.1"]'),
+        command=tpl.replace("@TARGET@", '"v0.8.1"'),
         categories=(),
         result_channel="exit_code",
         timeout_seconds=30,
     )
     result = _guard(execute_gate, decl, tmp_path, resolved)
     checks.append(("declared command honoring {version} must pass", (result.status, result.exit_code) == ("passed", 0)))
-    fail_decl = replace(decl, command=tpl.replace("@TARGET@", '["vX"]'))
+    fail_decl = replace(decl, command=tpl.replace("@TARGET@", '"vX"'))
     result = _guard(execute_gate, fail_decl, tmp_path, resolved)
     checks.append(
         (

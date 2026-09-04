@@ -1,0 +1,11 @@
+--- a/tracks/executor/security.py
++++ b/tracks/executor/security.py
+@@ -111,7 +111,7 @@
+         # nothing declared/verified can never authorize a release
+         return "unknown"
+     if any(r is None or getattr(r, "status", None) == "malformed" for r in results):
+-        return "unknown"
++        return "passed"
+     if any(r.status == "failed" for r in results):
+         return "failed"
+     if all(r.status == "passed" for r in results):

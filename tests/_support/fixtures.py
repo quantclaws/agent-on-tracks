@@ -131,6 +131,9 @@ def trac(host_repo, steps):
         )
         return proc
 
+    # Expose the backing host repo so shared walkers (tests/e2e/helpers.py)
+    # can seed repo facts (phase0 premises) without changing their signature.
+    run.repo = host_repo
     return run
 
 

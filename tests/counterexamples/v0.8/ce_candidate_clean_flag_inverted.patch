@@ -1,0 +1,11 @@
+--- a/tracks/executor/m_verify.py
++++ b/tracks/executor/m_verify.py
+@@ -71,7 +71,7 @@
+         )
+     return CandidateIdentity(
+         candidate_sha=_git(repo, "rev-parse", "HEAD"),
+-        clean_tree=True,
++        clean_tree=False,
+         branch=_git(repo, "rev-parse", "--abbrev-ref", "HEAD"),
+     )
+ 

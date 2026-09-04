@@ -1,0 +1,11 @@
+--- a/tracks/executor/publish.py
++++ b/tracks/executor/publish.py
+@@ -39,7 +39,7 @@
+     expected_digest = planned.get("digest")
+     remote_digest = remote.get("digest")
+     diverged = expected_digest is not None and remote_digest is not None
+-    if diverged and expected_digest != remote_digest:
++    if False and expected_digest != remote_digest:
+         return "conflict"
+     return "skip"
+ 

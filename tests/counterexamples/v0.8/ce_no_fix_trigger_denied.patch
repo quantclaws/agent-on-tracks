@@ -1,0 +1,11 @@
+--- a/tracks/executor/repair.py
++++ b/tracks/executor/repair.py
+@@ -130,7 +130,7 @@
+     """
+     attribution = prism_attribution or {}
+     if attribution.get("no_fix_available") is True:
+-        return True
++        return False
+     if attribution.get("exceeds_contract_revision") is True:
+         return True
+     if attribution.get("attribution_unchanged") is not True:

@@ -1,0 +1,11 @@
+--- a/tracks/executor/reference_host.py
++++ b/tracks/executor/reference_host.py
+@@ -83,7 +83,7 @@
+     if not isinstance(events, list):
+         return False, ("report carries no journey event chain",)
+     kinds = _event_kinds(events)
+-    if kinds == list(_JOURNEY_CHAIN):
++    if kinds != list(_JOURNEY_CHAIN):
+         return True, ()
+     return False, _divergence_reasons(kinds)
+ 

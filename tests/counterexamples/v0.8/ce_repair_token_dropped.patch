@@ -1,0 +1,8 @@
+--- a/tracks/kernel/release.py
++++ b/tracks/kernel/release.py
+@@ -206,4 +206,4 @@
+     tests / Archer advisory) — it never produces a stage rollback. An unknown
+     reason fails closed: it never emits a pass or an empty route.
+     """
+-    raise NotImplementedError("IF-REPAIR-001")
++    raise NotImplementedError("IF-REPAIR-000")
