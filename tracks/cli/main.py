@@ -530,10 +530,17 @@ def cmd_run(repo: Path, *args: str) -> int:
                 max_dispatches=max_dispatches,
             ).run_loop()
         except RuntimeCodeDriftError:
-            # B43（#45）：executor 已把完整提示打到 stderr（Prism batch2
-            # advisory 1：不重复打印），这里只以非零退出码终止。
-            print("run aborted: tracks/** code drift (see message above)", file=sys.stderr)
-            return 1
+            # M7 (convergence plan 2026-09-05): drift at a dispatch
+            # boundary is a HANDOVER, not an abort -- the in-flight
+            # dispatch concluded, code.drift is on the audit stream, and
+            # the run state stays active. Exit 0 so the restart watcher
+            # treats this as a normal dead-loop takeover (executor has
+            # already printed the handover banner).
+            print(
+                "run handover: tracks/** code drift (see message above)",
+                file=sys.stderr,
+            )
+            return 0
         except CommandStallError:
             # B86/B88（#77）：executor 已落 loop.aborted 并打印处置指引
             # banner，这里只以非零退出码终止（同 B43 drift abort 处理链）。

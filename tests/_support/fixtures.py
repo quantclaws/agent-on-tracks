@@ -116,6 +116,12 @@ def trac(host_repo, steps):
             env["COVERAGE_PROCESS_START"] = str(_REPO_ROOT / "pyproject.toml")
             env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
             env["PYTHONPATH"] = _SUBCOV_DIR + os.pathsep + env.get("PYTHONPATH", "")
+        # M7 (convergence plan 2026-09-05): the runtime loop executes the
+        # installed wheel, but the TESTS exercise the tree under
+        # development -- pin the repo root ahead of site-packages so
+        # `python -m tracks.cli.main` resolves the tree's package even
+        # when the venv carries a non-editable install.
+        env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         proc = subprocess.run(
             [sys.executable, "-m", "tracks.cli.main", *args],
             cwd=host_repo,

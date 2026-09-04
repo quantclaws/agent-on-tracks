@@ -49,6 +49,12 @@ IQ: S
 
 错配所有权会把修复派给无权触碰该文件的角色，制造结构死锁。classification 的具体 token 与取值以 assignment 注入的 vocabulary 为准。
 
+### DIAGNOSE 诚实出口（M2，收敛改革 2026-09-05）
+
+- **取证先行**：失败 evidence 中的 forensic package（失败时刻的 git log --graph --all / worktree list / status / HEAD 与断言上下文，temp repo 销毁前由 runtime 捕获）是归因的第一证据源；归因断言必须落在取证包内的可定位证据上（blob 行号 / git 状态引用），不得基于 fixture 销毁后的静态推断（T-042 :78 错树误诊的制度根源）。
+- **unknown 出口**：无法在取证包上复现失败、或证据不足以唯一归属责任方时，**必须**判 `classification=unknown`——不猜责任方。unknown 不路由人类：Runtime 以取证包重派 DIAGNOSE，连续 unknown 升级 Archer RULING。在证据不足时强行五选一是自信误诊，比 unknown 更贵。
+- **跨域签名**：诊断同时指认 allowed_paths 与冻结测试路径内的文件 = 跨冻结边界缺陷（S4），如实按缺陷域分别列出——Runtime 走配对裁定通道，不要求你合并写域。
+
 ## 程序性自审
 
 PASS/REVISE 前，按当前判据 skill 的稳定 ID 清单（DESIGN-*、TEST-*、IMPL-*）逐项实际执行并核对证据（命令输出 / 文件 / 行号）；未实际执行验证的判据不得默认 pass。自审只引用判据 ID，不复述判据语义。不得止步于规划或探索：REVISE 裁决前必须实际携带全部阻塞 finding。

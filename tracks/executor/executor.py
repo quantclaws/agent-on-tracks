@@ -806,9 +806,34 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         """
         if self._code_stamp is None:
             return
-        if code_stamp(Path(self.repo)) != self._code_stamp:
-            self._emit("loop.aborted", {"reason": "code_drift", "detail": DRIFT_MESSAGE})
-            print(DRIFT_MESSAGE, file=sys.stderr, flush=True)
+        stamp = code_stamp(Path(self.repo))
+        if stamp != self._code_stamp:
+            # M7 (convergence plan 2026-09-05): graceful handover. The
+            # loop runs from the installed wheel (bootstrap isolation),
+            # so tree drift no longer means this process executes stale
+            # logic mid-pipeline -- and this check only runs at dispatch
+            # boundaries, so the in-flight dispatch has already fully
+            # concluded (129 loop.aborted events and their 55-event
+            # evidence.staled cascade in tracks.db were mid-pipeline
+            # interruptions of exactly this shape). Record code.drift
+            # for the audit trail; the restart watcher rebuilds the
+            # wheel and the next process takes over from the event
+            # store. The run state stays active -- no abort, no staling.
+            self._emit(
+                "code.drift",
+                {
+                    "reason": "handover",
+                    "stamp_at_start": self._code_stamp,
+                    "stamp_now": stamp,
+                },
+            )
+            print(
+                "run handover: tracks/** code drift -- dispatch boundary "
+                "reached, nothing aborted (M7); the restart watcher "
+                "rebuilds and the next process takes over",
+                file=sys.stderr,
+                flush=True,
+            )
             raise RuntimeCodeDriftError(DRIFT_MESSAGE)
 
     def _emit(
