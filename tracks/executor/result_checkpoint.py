@@ -236,7 +236,7 @@ class ResultCheckpointMixin:
             "artifacts": artifacts,
             "allowed_paths": artifacts,
             "base_sha": base_sha,
-            "checks": ["write_scope", "collection"],
+            "checks": ["write_scope", "collection", "anchor_static"],
             # D-32: WRITE requires an attributable test-asset diff (test
             # modules and/or support assets), so a done/no-diff Shield
             # output fails validation and can never publish test.written
@@ -551,6 +551,11 @@ class ResultCheckpointMixin:
             return True
         if "collection" in checks and self._check_collection(artifacts, attempt, command_id):
             return True
+        if (
+            "anchor_static" in checks
+            and self._check_anchor_static(artifacts, attempt, command_id)
+        ):
+            return True
         if not ("write_scope" in checks or "collection" in checks):
             return self._check_templates(artifacts, checks, attempt, command_id)
         return False
@@ -572,6 +577,42 @@ class ResultCheckpointMixin:
                 )
                 return True
         return False
+
+    def _check_anchor_static(self, artifacts, attempt, command_id):
+        """M4 (convergence plan 2026-09-05): birth-time
+        anchor-satisfiability lint on the freshly written test assets.
+
+        Rule 1's two mechanically recognizable classes (HEAD-equality
+        across runtime activity, count-equality between event-log
+        snapshots) fail the WRITE -- an unsatisfiable anchor cannot be
+        frozen (T-042 :78/:150 burned ~40 dispatches post-freeze). The
+        line-level # tracks-anchor-ok suppression is the documented
+        escape for genuine stability contracts: it lands in the diff, so
+        Prism can challenge the self-attestation."""
+        from tracks.checks.anchor_lint import anchor_static_violations
+
+        violations: list[str] = []
+        for artifact in artifacts:
+            path = self.repo / artifact
+            if path.suffix != ".py":
+                continue
+            violations.extend(anchor_static_violations(path))
+        if not violations:
+            return False
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "anchor_static",
+                "reason": (
+                    "unsatisfiable anchor (M4 rule 1): "
+                    + "; ".join(violations[:3])
+                ),
+                "evidence": "\n".join(violations),
+                "attempt": attempt,
+            },
+            command_id=command_id,
+        )
+        return True
 
     def _check_collection(self, artifacts, attempt, command_id):
         """Validate test modules directly and support assets by contract."""

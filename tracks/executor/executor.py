@@ -3485,6 +3485,34 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 task_id=task_id,
             )
             return False
+        # M4 (convergence plan 2026-09-05): birth-time anchor
+        # satisfiability lint on the freshly revised test assets --
+        # same two rule-1 signatures as the M-TEST WRITE gate. Routes
+        # as test_defect so Shield rewrites the anchor in-domain.
+        from tracks.checks.anchor_lint import anchor_static_violations
+
+        _anchor_violations: list[str] = []
+        for rel in changed:
+            if rel.endswith(".py"):
+                _anchor_violations.extend(
+                    anchor_static_violations(self.repo / rel)
+                )
+        if _anchor_violations:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "test_defect",
+                    "reason": (
+                        "anchor_static (M4 rule 1): "
+                        + "; ".join(_anchor_violations[:3])
+                    ),
+                    "evidence": "\n".join(_anchor_violations),
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return False
         # Stage all changed tests/ files
         git(self.repo, "add", "--", "tests/")
         # Create commit with trailers

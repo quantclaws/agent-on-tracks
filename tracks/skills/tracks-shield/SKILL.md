@@ -21,6 +21,16 @@ description: Shield 集成/e2e 测试编写方法——test-plan→测试资产�
 3. 逐主旅程写 e2e：只写 happy path；从合同声明的交付入口进入，断言落在用户可见结果与合同出口上。
 4. 断言值与预期行为只从合同推导（AC / interfaces / test-plan，或经合同声明的 ground truth 在运行期计算），不从任何代码输出抄写，不硬编码拍脑袋的期望值。
 
+### 锚点可满足性三条硬规则（M-TEST 冻结前静态检查，违反即拒绝冻结；M4，收敛改革 2026-09-05）
+
+三条规则的共同背景：walk/repair 会**合法地**产 commit 与事件——对移动目标的相等期望在重放/修复窗口内结构性不可满足。T-042 的 :78（walk 前锚定 HEAD→错树误诊、约 12 次空转）与 :150（计数相等↔rewalk 互斥、ping-pong 烧穿 budget）均在这三条规则下于出生时被拦下。
+
+1. **移动目标禁相等期望**：walk 驱动的 CLI 半不得对 `rev-parse HEAD` 捕获值或事件计数快照做相等断言（`len(after) == len(before)`）。Runtime 在 M-TEST WRITE 与 SHIELD_FIX 提交前执行 anchor_static 静态检查（tracks/checks/anchor_lint.py），命中即拒。真正的稳定性契约（幂等不重冻等）必须用**判别器**承载（如修复溯源 trailer 区分 drift 与 repair），不得用裸计数相等。
+2. **CLI 半断言三形**：事件存在性（`assert events_of_type` / `any(...)`）、payload 谓词（事件字段的谓词断言）、status 渲染（CLI 输出的渲染断言）——三形之一。HEAD 锚定必须在断言邻域内捕获（walk 之后、无运行时活动间隔），不得跨窗口携带。
+3. **互斥锚点拒冻**：同一运行时路径被两个锚点断言相反结果（一禁一允）= 互斥，任何实现都不可能同时满足。冻结前自查本批测试与既有冻结锚点的运行时路径；发现互斥立即回报 gap，不提交。运行时的 S1 振荡检测器是事后兜底，不替代本出生检查。
+
+抑制逃生口：确有合同依据的稳定性断言可在该行追加 `# tracks-anchor-ok` 注释通过静态检查——该注释进入 diff，Prism 评审有权挑战；它是自我声明的例外，不是常规手段。
+
 ## 3. trace 标记语义
 
 - 每条测试函数上方写标记注释行，声明该测试绑定的 AC；同一函数绑定多条 AC 时每条 AC 各占一行。
@@ -90,6 +100,7 @@ outcome 前逐项实际执行（动作 + 判据引用）；任一为"否"先补�
 - SHIELD-A6：每条 required 测试有 killed 的 counterexample，且工作区已恢复（core SHIELD-Q3）。
 - SHIELD-A7：无作弊模式——空洞断言、无依据 skip、断言降级、吞异常、过度 mock、抄实现输出、硬编码期望值均不存在（core SHIELD-Q5）。
 - SHIELD-A8：写域合规——产物只在合同声明的测试资产路径，manifest 与落盘一致（core SHIELD-Q6）。
+- SHIELD-A9：锚点可满足性——CLI 半无移动目标相等期望（规则 1）、断言为三形之一（规则 2）、无互斥锚点（规则 3）；anchor_static 静态检查零违规，或每处抑制注释有明确合同依据（M4，收敛改革 2026-09-05）。
 
 ## 10. 边界（Shield 特有）
 
