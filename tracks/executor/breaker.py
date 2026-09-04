@@ -105,10 +105,22 @@ class RunBreaker:
     def _on_verdict_failed(self, payload: dict) -> None:
         if self._is_deferred_only(payload):
             return
+        if self._is_contract_conflict(payload):
+            # M1-S1: an oscillation verdict routes the contract authority
+            # (Archer RULING) -- it is not a writer failure, so it must not
+            # burn the task budget that protects writer retries.
+            self._count_verdict_only(payload)
+            return
         if self._should_skip_task_count(payload):
             self._count_verdict_only(payload)
             return
         self._count_verdict_and_task(payload)
+
+    @staticmethod
+    def _is_contract_conflict(payload: dict) -> bool:
+        return payload.get("check") == "contract_conflict" or (
+            payload.get("failure_class") == "contract_conflict"
+        )
 
     def _count_verdict_only(self, payload: dict) -> None:
         self.verdict_failed += 1

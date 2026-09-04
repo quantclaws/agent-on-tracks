@@ -218,6 +218,14 @@ def _on_m_impl_outcome_done(s: State) -> None:
     """Route a successful (status=done) M-IMPL outcome by substate."""
     if s.substate == "PLANNING":
         s.doc_produced = True
+    elif s.substate == "RULING":
+        # M1-S1: Archer's paired-delta ruling is delivered. Route into
+        # DIAGNOSE with the ruling as evidence so Prism's classification
+        # dispatches the ruled fix (until the M3 bundle channel lands the
+        # pairing natively).
+        s.substate = "DIAGNOSE"
+        s.diagnose_classification = None
+        _reset_review(s)
     elif s.substate == "RED":
         s.substate = "RED_GATE"
     elif s.substate == "GREEN":
@@ -513,8 +521,44 @@ def _route_parked_failure(s: State, check: str) -> None:
         _reset_review(s)
 
 
+# Data-driven simple failure routes: check -> (substate, classification).
+# These checks have no overlap with the chained branches below (distinct
+# check strings), so the dict lookup can run first without changing
+# routing semantics.
+_FAILURE_ROUTES = {
+    "public_interface": ("DIAGNOSE", "stub_gap"),
+    "verification_failed": ("DIAGNOSE", None),
+    # M1-S1 (convergence plan 2026-09-05): mechanical oscillation signature
+    # -- consecutive GREEN_GATE failures swapped anchor outcomes (healed AND
+    # newly_red AND common). Mutually exclusive anchors: no writer retry can
+    # satisfy both (T-042 test_verify_candidate.py:150 <->
+    # test_inplace_repair.py rewalk, 2026-09-04, ~40 burned dispatches).
+    # Route the contract authority (Archer RULING, dual-side read
+    # visibility) with the oscillation dossier; NOT a writer failure -- no
+    # attempt consumed.
+    "contract_conflict": ("RULING", None),
+    # Gate-level attribution routing directly into DIAGNOSE with a preset
+    # classification: reset the reviewer flag so decide() can dispatch the
+    # Prism DIAGNOSE review. Without this, a stale reviewer_dispatched
+    # (e.g. left over from the previous DIAGNOSE round whose verdict routed
+    # back to GREEN via _route_m_impl_diagnose, which deliberately does not
+    # reset - task_review pass resets it later) makes _decide_m_impl_prism
+    # return None forever and the run loop exits.
+    "test_defect": ("DIAGNOSE", "test_defect"),
+    "impl_defect": ("DIAGNOSE", "impl_defect"),
+    "stub_gap": ("DIAGNOSE", "stub_gap"),
+    "ac_gap": ("DIAGNOSE", "ac_gap"),
+    "spec_gap": ("DIAGNOSE", "spec_gap"),
+}
+
+
 def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
     """Gate failure routing (non-DIAGNOSE substates)."""
+    simple = _FAILURE_ROUTES.get(check)
+    if simple is not None:
+        s.substate, s.diagnose_classification = simple
+        _reset_review(s)
+        return
     if check == "criteria_pack_mismatch":
         _reset_review(s)
         _consume_attempt(s)
@@ -570,33 +614,8 @@ def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
         _consume_attempt(s)
     elif check == "scope":
         _route_scope_replan(s)
-    elif check == "public_interface":
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = "stub_gap"
-        _reset_review(s)
     elif check in ("lineage", "contract_error"):
         _route_parked_failure(s, check)
-    elif check == "verification_failed":
-        # Runtime acceptance of a verification-only task failed (user ruling
-        # 2026-08-15): the pre-implemented contract did not hold. No blind
-        # retry - route into the existing four-way DIAGNOSE so Prism
-        # attributes the failure (impl_defect -> Devon GREEN fix,
-        # test_defect -> Shield SHIELD_FIX, spec/ac_gap -> upstream stage,
-        # stub_gap -> M-DESIGN rollback).
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = None
-        _reset_review(s)
-    elif check in ("test_defect", "impl_defect", "stub_gap", "ac_gap", "spec_gap"):
-        # Gate-level attribution routing directly into DIAGNOSE with a preset
-        # classification: reset the reviewer flag so decide() can dispatch the
-        # Prism DIAGNOSE review. Without this, a stale reviewer_dispatched
-        # (e.g. left over from the previous DIAGNOSE round whose verdict
-        # routed back to GREEN via _route_m_impl_diagnose, which deliberately
-        # does not reset - task_review pass resets it later) makes
-        # _decide_m_impl_prism return None forever and the run loop exits.
-        s.substate = "DIAGNOSE"
-        s.diagnose_classification = check
-        _reset_review(s)
     else:
         _reset_doc(s)
         _consume_attempt(s)
@@ -675,6 +694,33 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
         "pre_dirty_snapshot": None,
         "result_identity": None,
     }
+
+
+def _m_impl_archer_ruling_dispatch(s: State) -> Command:
+    """RULING: dispatch Archer to rule on the oscillating anchor pair.
+
+    The S1 oscillation dossier rides the assignment (executor materializes
+    the latest oscillation.detected payload into the dispatch context);
+    Archer rules a paired delta and the runtime lands both sides through
+    the single-writer channels (M3 bundles the pairing; until then the
+    delta lands as DIAGNOSE evidence)."""
+    assignment = _m_impl_base_assignment(
+        s, "archer", "RULING", ["tracks-discuz", "tracks-archer-planning"]
+    )
+    assignment["target_doc"] = None
+    params = {
+        "role": "archer",
+        "substate": "RULING",
+        "objective": "rule on the oscillating anchor pair (S1 contract conflict)",
+        "stage": "M-IMPL",
+        "attempt": s.current_attempt + 1,
+        "review_round": s.review_round,
+        "docs": list(_M_IMPL_CONTEXT_DOCS),
+        "assignment": assignment,
+    }
+    if s.last_failure:
+        params["evidence"] = dict(s.last_failure)
+    return Command(kind="dispatch_agent", params=params)
 
 
 def _m_impl_archer_dispatch(s: State) -> Command:
@@ -897,6 +943,8 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
         return Command(kind="freeze_baseline", params={"stage": "M-IMPL"})
     if sub == "NEEDS_ATTENTION":
         return None  # awaiting reconcile or return upstream
+    if sub == "RULING":
+        return _decide_m_impl_ruling(s)
     if sub == "PLANNING":
         return _decide_m_impl_planning(s)
     if sub in ("ISLAND_GATE_1", "ISLAND_GATE_2"):
@@ -942,6 +990,19 @@ def _m_impl_returned_route(s: State) -> Command:
             "reason": "human_return" if s.returned else "diagnose_rollback",
         },
     )
+
+
+def _decide_m_impl_ruling(s: State) -> Command | None:
+    """RULING: dispatch Archer with the oscillation dossier (M1-S1).
+
+    Archer is the contract authority with dual-side read visibility: the
+    assignment carries the oscillation dossier (healed/newly_red/common
+    anchors + the S1 signature evidence) and asks for a machine-executable
+    paired delta {devon_side, shield_side, ordering}. No Devon/Shield
+    dispatch ever repeats against the unsatisfiable anchor pair."""
+    if not s.doc_dispatched:
+        return _m_impl_archer_ruling_dispatch(s)
+    return None  # awaiting Archer outcome
 
 
 def _decide_m_impl_planning(s: State) -> Command | None:

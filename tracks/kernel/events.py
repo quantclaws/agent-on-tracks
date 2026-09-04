@@ -174,6 +174,10 @@ COMMAND_KINDS = (
     # the kernel entry guard through the before_mtest capability while
     # phase0_status != SEALED; executed by the Executor phase0 handler.
     "phase0_validate",
+    # M1-S1 (convergence plan 2026-09-05): mechanical oscillation signature —
+    # consecutive GREEN_GATE failures swapped anchor outcomes; audit event
+    # (the state change rides the paired verdict.failed contract_conflict).
+    "oscillation.detected",
 )
 
 

@@ -1,0 +1,118 @@
+"""M1-S1 振荡检测：签名路由器的核心签名（收敛简化方案 2026-09-05）。
+
+机械判据（纯事件日志算术，无 agent 参与）：同一 task 相邻两次
+GREEN_GATE verdict.failed(impl_defect) 的失败锚点集合发生对调——
+上次失败的锚点转绿（healed≠∅）∧ 上次通过的锚点转红（newly_red≠∅）
+∧ 仍有共同失败（common≠∅，同一失败族仍在场，排除"两次全然不同的
+失败"的误报）。
+
+对调特征 = 锚点互斥/契约矛盾：任何单写者重试在两个锚点之间
+ping-pong，budget 必烧穿（实证：T-042 的 test_verify_candidate.py:150
+↔ test_inplace_repair.py::test_fix_new_candidate_rewalks_verify，
+2026-09-04，约 40 次派发空转）。检出即路由契约权威（Archer
+RULING，双边可视），跳过一切写者重试。
+
+时点契约：检测发生在**第二次**失败落 verdict 之前——当前失败的
+锚点来自 TaskSelectionFailure.evidence（尚未入库），上一次失败从
+事件流取最近一条。中间若出现该 task 的 verdict.passed（如 retry 后
+转绿）即重置：振荡只定义在相邻失败之间，跨成功窗口不比。
+"""
+
+from __future__ import annotations
+
+import json
+
+OSCILLATION_CHECK = "contract_conflict"
+
+
+def _node_id(node) -> str:
+    """归一化单个失败锚点为稳定字符串 id。
+
+    GREEN_GATE 的 TaskSelectionFailure.evidence 里 failed_nodes 是
+    [{"node": ..., "status": ..., "detail": ...}] 的 dict 列表；锚点
+    id 取其 "node" 字段。非 dict 条目按字符串处理。
+    """
+    if isinstance(node, dict):
+        return str(node.get("node") or "")
+    return str(node) if node else ""
+
+
+def parse_failed_nodes(evidence) -> list[str]:
+    """从 verdict.failed 的 evidence（JSON 字符串或 dict）解析失败锚点。
+
+    非 JSON/缺 failed_nodes/空列表一律返回 []（fail-closed：解析不出
+    锚点就不参与检测，绝不猜）。
+    """
+    if isinstance(evidence, str):
+        try:
+            data = json.loads(evidence)
+        except (ValueError, TypeError):
+            return []
+    elif isinstance(evidence, dict):
+        data = evidence
+    else:
+        return []
+    if not isinstance(data, dict):
+        return []
+    nodes = data.get("failed_nodes")
+    if not isinstance(nodes, list):
+        return []
+    ids = [_node_id(node) for node in nodes]
+    return [node for node in ids if node]
+
+
+def detect(prev: list[str], curr: list[str]) -> dict | None:
+    """相邻两次失败锚点集合的对调检测（S1 签名）。
+
+    三条件合取：healed≠∅ ∧ newly_red≠∅ ∧ common≠∅。命中返回
+    {"healed", "newly_red", "common"}（排序稳定，事件 payload 可
+    replay），否则 None。
+    """
+    prev_set, curr_set = set(prev), set(curr)
+    healed = sorted(prev_set - curr_set)
+    newly_red = sorted(curr_set - prev_set)
+    common = sorted(prev_set & curr_set)
+    if healed and newly_red and common:
+        return {"healed": healed, "newly_red": newly_red, "common": common}
+    return None
+
+
+def last_failed_nodes(events: list[dict], task_id: str) -> list[str] | None:
+    """事件流中该 task 最近一次 impl_defect 失败的锚点集合。
+
+    events: [{"type": ..., "payload": {...}}, ...]（seq 升序）。从尾
+    向前扫：先遇到该 task 的 verdict.passed（check=green）即返回
+    None——成功重置振荡窗口；先遇到可解析的
+    verdict.failed(check=impl_defect) 即返回其锚点。无历史失败返回
+    None（首败必放行，永不误报）。
+    """
+    for ev in reversed(events):
+        if ev.get("type") not in ("verdict.failed", "verdict.passed"):
+            continue
+        payload = ev.get("payload") or {}
+        if payload.get("task_id") != task_id:
+            continue
+        if ev.get("type") == "verdict.passed":
+            return None
+        if payload.get("check") != "impl_defect":
+            continue
+        nodes = parse_failed_nodes(payload.get("evidence"))
+        if nodes:
+            return nodes
+    return None
+
+
+def detect_oscillation(
+    events: list[dict], task_id: str, current_evidence
+) -> dict | None:
+    """S1 完整判定：当前失败（未入库）vs 最近一次已入库失败。
+
+    当前失败锚点解析不出（fail-closed）或无前次失败时返回 None。
+    """
+    current_nodes = parse_failed_nodes(current_evidence)
+    if not current_nodes:
+        return None
+    prev_nodes = last_failed_nodes(events, task_id)
+    if not prev_nodes:
+        return None
+    return detect(prev_nodes, current_nodes)
