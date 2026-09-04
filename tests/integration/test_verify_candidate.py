@@ -71,6 +71,11 @@ def test_clean_tree_freezes_candidate(host_repo, trac, event_log):
     # Legal Red: the M-VERIFY freeze producer is not wired on this baseline,
     # so the event is absent (never a scaffold crash).
     walk_to_m_impl_parked(trac)
+    # Anchor AFTER the walk: the walker journey itself commits (init
+    # scaffold, stage seals, agent commits, phase0 seeds, shield
+    # checkpoint), so the park-chain freeze correctly binds the
+    # park-time HEAD (interfaces 1d) -- never the pre-walk HEAD.
+    head = _git(host_repo, "rev-parse", "HEAD")
     events = event_log()
     frozen = [e for e in events if e["type"] == "candidate.frozen"]
     assert frozen, "candidate.frozen must appear after clean-tree freeze"
