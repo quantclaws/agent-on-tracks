@@ -582,6 +582,13 @@ def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
         s.substate, s.diagnose_classification = simple
         _reset_review(s)
         return
+    if check == "plan_defect":
+        # M5 (convergence plan 2026-09-05): dispatch-side assignment
+        # budget rejection -- the card itself is structurally over
+        # budget (scope bloat), a task-graph defect. Same route as the
+        # DIAGNOSE plan_defect (#89): Archer replans, no attempt charge.
+        _route_scope_replan(s)
+        return
     if check == "contract_conflict":
         # M1-S1: route the contract authority (Archer RULING, dual-side
         # read visibility) with the oscillation dossier; NOT a writer

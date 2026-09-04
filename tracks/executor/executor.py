@@ -738,6 +738,17 @@ def hotfix_feature_route(repo, store, run_id: str) -> int:
     return 0
 
 
+def _assignment_budget() -> int:
+    """M5: the dispatch-side assignment byte budget (0 disables).
+
+    Default 8192 per the convergence plan; environment-overridable for
+    test fixtures and emergency bumps."""
+    try:
+        return int(os.environ.get("TRAC_ASSIGNMENT_BUDGET", "").strip() or 8192)
+    except ValueError:
+        return 8192
+
+
 class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     """Drives one run: project -> decide -> issue -> execute -> observe."""
 
@@ -1427,6 +1438,40 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         if materialization_error is not None:
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
+            return
+        # M5 (convergence plan 2026-09-05): dispatch-side hard budget on
+        # the CARD itself (pre-enrichment assignment from the kernel --
+        # the runtime-injected FR-11 evidence channel rides alongside and
+        # is not the card's liability). A card JSON over
+        # TRAC_ASSIGNMENT_BUDGET bytes (default 8KB) is a structural
+        # task-graph defect (scope bloat: revision archaeology and
+        # escalation add-ons living in the prompt instead of the event
+        # log, b92's 200-600k token dispatches) -- never the writer's.
+        # Reject before any backend I/O; routes as plan_defect (scope
+        # replan, no agent attempt burned).
+        card = p.get("assignment")
+        budget = _assignment_budget()
+        if isinstance(card, dict) and budget and len(
+            json.dumps(card, ensure_ascii=False, default=str)
+        ) > budget:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "plan_defect",
+                    "target_stage": state.stage,
+                    "task_id": task_id or state.current_task_id or "",
+                    "reason": (
+                        "assignment card over hard budget (M5): "
+                        f"{len(json.dumps(card, ensure_ascii=False, default=str))}"
+                        f" bytes > {budget} -- split the card; the event log "
+                        "carries the history, not the prompt"
+                    ),
+                    "evidence": "dispatch-side assignment budget check",
+                    "attempt": state.current_attempt + 1,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return
         if self._release_empty_hotfix_shield(cmd, state, task_id, role, substate, assignment):
             return
