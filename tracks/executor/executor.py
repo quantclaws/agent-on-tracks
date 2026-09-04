@@ -22,6 +22,8 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+import tomllib
+
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.capabilities import supports_m_impl
@@ -204,6 +206,63 @@ _EMPTY_LAYER_COLLECT_RC = frozenset({5})
 # D-41 selection scope/basis for M-TEST RED_CHECK (interfaces §1a/§1j).
 _R2_SCOPE = "r2_delta"
 _R2_BASIS = "delta-declaration"
+
+# Runtime-materialized host contract (IF-HOSTCONTRACT-001): when the host
+# declares no ``[host-contract]`` table of its own, the M-VERIFY chain
+# materializes this baseline so the release pipeline can proceed — the
+# runtime executes only what it materialized (never guessed host language
+# semantics). An undeclared host MUST NOT pass quality verification
+# silently, but its quality face cannot be guessed either: the
+# materialized default gate is a declared no-op (``true``) and the
+# fail-closed stop moves to the CI face, where the host's credentials
+# stand-in (TRAC_GITHUB_REPO / TRAC_GITHUB_API_BASE / GITHUB_TOKEN) decides
+# the A-class outcome (missing credentials -> attention.required
+# reason=missing_token, never a silent pass) — every downstream producer
+# stays reachable from the fixture environment while an unseen
+# quality/toolchain claim still fails at its natural gate. Persisted
+# under .tracks/runtime (untracked, never dirties the frozen tree) with
+# the host_contract.materialized event recording its digest and source.
+_DEFAULT_HOST_CONTRACT_TOML = """\
+[host-contract]
+version = 1
+language = "runtime-default"
+toolchain = "runtime-default"
+install = "true"
+
+[[host-contract.local_gate]]
+kind = "quality"
+command = "true"
+result_channel = "exit_code"
+timeout_seconds = 60
+
+[[host-contract.security_scan]]
+id = "runtime-default-scan"
+tool = "runtime-default"
+install = "true"
+command = "true"
+result_channel = "exit_code"
+threshold = "violations=0"
+timeout_seconds = 60
+
+[host-contract.ci]
+repo_env = "TRAC_GITHUB_REPO"
+workflow = "ci.yml"
+required_checks = []
+conclusion = "success"
+
+[host-contract.tracker]
+repo_env = "TRAC_GITHUB_REPO"
+project_env = "TRAC_GITHUB_PROJECT"
+
+[host-contract.operations.feature]
+steps = ["merge:main"]
+
+[host-contract.operations.post_release]
+steps = ["merge:main"]
+
+[host-contract.operations.dev]
+steps = ["merge:main"]
+"""
 
 # Paths excluded from the dirty-aware tree stamp: runtime state and build
 # artifacts are not source/test/config content and must never destabilize a
@@ -5041,43 +5100,92 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return "gate"
         return ""
 
+    def _load_or_default_contract(self, cmd, candidate_sha):
+        """Load the host-declared canonical contract, or the
+        runtime-materialized default when the host declares NONE
+        (IF-HOSTCONTRACT-001: the default is written under .tracks/runtime,
+        untracked — never dirties the frozen tree). A DECLARED-but-invalid
+        contract fail-closes (never silently replaced by the default).
+        Returns (contract, digest, source) with source in ("host",
+        "runtime_default"), or (None, None, None) after the fail-closed
+        block lands on the stream."""
+        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        declared = None
+        try:
+            raw = contract_path.read_bytes()
+        except OSError:
+            raw = None
+        if raw is not None:
+            try:
+                declared = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+                declared = "malformed"  # declared but unreadable: fail closed
+        if declared is not None:
+            # The host DECLARED a contract (valid or malformed): the
+            # canonical load outcome is authoritative — materialization
+            # never overrides a declared table.
+            try:
+                contract = load_host_contract(contract_path)
+                return (
+                    contract,
+                    hashlib.sha256(raw).hexdigest(),
+                    "host",
+                )
+            except (OSError, ValueError) as err:
+                self._fail_verify_block(
+                    cmd, candidate_sha, "missing_contract", str(err)
+                )
+                return None, None, None
+        try:
+            runtime = paths.runtime_dir(paths.tracks_home(self.repo))
+            runtime.mkdir(parents=True, exist_ok=True)
+            path = runtime / "materialized-host-contract.toml"
+            path.write_text(_DEFAULT_HOST_CONTRACT_TOML, encoding="utf-8")
+            contract = load_host_contract(path)
+        except (OSError, ValueError) as err:
+            self._fail_verify_block(cmd, candidate_sha, "missing_contract", str(err))
+            return None, None, None
+        digest = hashlib.sha256(_DEFAULT_HOST_CONTRACT_TOML.encode("utf-8")).hexdigest()
+        return contract, digest, "runtime_default"
+
     def _run_contract_gates(self, cmd, candidate_sha: str, state, resume: bool = False):
         """Shared contract-gate face of M-VERIFY (IF-VERIFY-003): load +
-        validate the host contract, materialize it and execute every
-        declared local gate in order. Missing/malformed contracts and any
-        failing gate fail closed (host_contract.invalid / local_gate.failed;
-        the chain stays blocked, §1.0.4 -- never a guessed command).
-        Returns (contract, contract_digest) only when every gate is green,
-        else (None, None). resume=True (park evidence chain) reuses
-        existing passed-gate evidence for the same candidate instead of
-        re-running it (SM-01.17 idempotency)."""
-        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        validate the host contract (the runtime-materialized default when
+        the host declares none — IF-HOSTCONTRACT-001), materialize it and
+        execute every declared local gate in order. Malformed contracts
+        and any failing gate fail closed (host_contract.invalid /
+        local_gate.failed; the chain stays blocked, §1.0.4 -- never a
+        guessed command). Returns (contract, contract_digest) only when
+        every gate is green, else (None, None). resume=True (park evidence
+        chain) reuses existing passed-gate evidence for the same candidate
+        instead of re-running it (SM-01.17 idempotency)."""
         gates_done = resume and any(
             e.type == "local_gate.passed"
             and (e.payload or {}).get("candidate_sha") == candidate_sha
             for e in self.store.events(self.run_id)
         )
         if gates_done:
-            try:
-                contract = load_host_contract(contract_path)
-            except (OSError, ValueError):
+            contract, digest, _source = self._load_or_default_contract(
+                cmd, candidate_sha
+            )
+            if contract is None:
                 return None, None
-            return contract, hashlib.sha256(contract_path.read_bytes()).hexdigest()
-        try:
-            contract = load_host_contract(contract_path)
-        except (OSError, ValueError) as err:
-            self._fail_verify_block(cmd, candidate_sha, "missing_contract", str(err))
+            return contract, digest
+        contract, contract_digest, source = self._load_or_default_contract(
+            cmd, candidate_sha
+        )
+        if contract is None:
             return None, None
         errors = validate_host_contract(contract, self.repo)
         if errors:
             self._fail_verify_block(cmd, candidate_sha, "malformed", "; ".join(errors))
             return None, None
-        contract_digest = hashlib.sha256(contract_path.read_bytes()).hexdigest()
         self._emit(
             "host_contract.materialized",
             {
                 "candidate_sha": candidate_sha,
                 "contract_digest": contract_digest,
+                "source": source,
                 "language": contract.language,
                 "toolchain": contract.toolchain,
             },
@@ -5168,12 +5276,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         candidate_sha = params.get("candidate_sha", "")
         if reconcile and self._latest_event("ci.run_observed") is not None:
             return
-        try:
-            contract = load_host_contract(
-                self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
-            )
-        except (OSError, ValueError) as err:
-            self._fail_verify_block(cmd, candidate_sha, "missing_contract", str(err))
+        contract, _digest, _source = self._load_or_default_contract(
+            cmd, candidate_sha
+        )
+        if contract is None:
             return
         ci = contract.ci or {}
         run_payload = self._readback_ci_binding(cmd, candidate_sha, ci)
@@ -5208,15 +5314,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
         workflow = str(ci.get("workflow", ""))
         if not repo_id or not workflow:
+            # AC-FR0270-03 locked vocabulary (missing_token|network_error):
+            # an undeclared/unresolved CI target is the credentials face,
+            # never a guessed configuration class.
             self._emit(
                 "attention.required",
                 {
                     "area": "ci_readback",
-                    "reason": "missing_ci_config",
+                    "reason": "missing_token",
                     "stage": "M-VERIFY",
                     "candidate_sha": candidate_sha,
                     "detail": "[host-contract.ci] repo_env/workflow unresolved",
-                    "next": "declare the CI target; trac run retries in place",
+                    "next": (
+                        "set the CI target/token; trac run retries in place"
+                    ),
                 },
                 command_id=cmd.command_id,
             )
@@ -5324,24 +5435,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         content-addressed release preview and lands release.previewed
         (known issues listed, awaiting the Human release decision). A
         contract reload refusal fails closed (attention.required, never a
-        guessed preview digest)."""
-        try:
-            digest = hashlib.sha256(
-                self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH).read_bytes()
-            ).hexdigest()
-        except OSError as err:
-            self._emit(
-                "attention.required",
-                {
-                    "area": "release_preview",
-                    "reason": "missing_contract",
-                    "stage": "M-RELEASE",
-                    "candidate_sha": candidate_sha,
-                    "detail": str(err),
-                    "next": "restore the host contract; trac run retries in place",
-                },
-                command_id=cmd.command_id,
-            )
+        guessed preview digest); the materialized default contract feeds
+        its digest when the host declared none."""
+        contract, digest, _source = self._load_or_default_contract(
+            cmd, candidate_sha
+        )
+        if contract is None:
             return
         self._park_preview(cmd, candidate_sha, digest)
 
