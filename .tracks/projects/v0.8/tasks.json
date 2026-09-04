@@ -4,7 +4,7 @@
     {
       "task_id": "T-001",
       "issue_number": 100,
-      "description": "【标准 RGR】v0.8 CLI 交付面 + escape kernel/executor 落地（b93 planning 重构：main.py 单主 + IF-silo 约束下的合法布局）。(A) tracks/cli/main.py 全部 v0.8 面：cmd_return universal 门禁（可回拨源=M-REQ-APPROVAL awaiting=approval/作者评审 escalation/M-IMPL NEEDS_ATTENTION 与 DIAGNOSE-escalation；canonical 序唯一来源 tuple(machine._STAGES)−M-REQ-APPROVAL+release.RELEASE_STAGES，上游=序数更小；拒绝 _err 零事件）、already_executed 报告与 --confirm 确认门（无确认零事件不动指针）、_escape_status_fragments 五片段渲染与 cmd_status 调用点（human_return=<actor>→<to>/evidence.staled=<n>/barrier=established/late_outcome=quarantined/frozen_tests=unfrozen[目标序数≤M-TEST]）、human.return 双轨 payload（actor/from/to/to_stage，to_stage 供 kernel 硬读）、cmd_release/cmd_abandon/status/report/replay release 侧扩展、host-contract 校验入口、USAGE/TRAC_SUBCOMMANDS 同步；(B) tracks/executor/executor.py：rollback 目标闭合集扩展（含 M-TEST/M-IMPL，canonical 序表推导，越集仍 audit blob 拒绝）+ dispatch 循环 cutover 消费（真实 quiesce 在飞 dispatch 取消/冻结；迟到 outcome seq≤cutover 落 escape.late_outcome(quarantined)，禁止 checkpoint/publish/覆盖 State——AC-FR0287-02 quiesce 半句 deferred acceptance item 落地）；(C) tracks/kernel/machine.py：_on_stage_rolled_back 按目标 StageDef.initial_substate 路由（M-TEST=DISPATCH、M-IMPL=BASELINE，禁固定 DRAFT 砖化）+ 发布五阶段 stage 表消费 seam（读 release.RELEASE_STAGES/release_stage_defs，行为体 T-039 落地）；(D) tracks/kernel/m_impl.py：RETURNED 路由 reason 镜像（human_return if returned else diagnose_rollback）；(E) tracks/executor/executor.py 派发循环的 envelope/failure 链接线（architecture §1.1 Envelope/failure 链路径——executor.py 唯一写者，plan_defect 修订）：每次派发前 kernel/envelope.check_envelope_parity（不一致落 dispatch.rejected version_parity_mismatch，不进 Agent 执行）、回收时 parse_agent_output（format_error 与 semantic_attempt_failed 分离落事件、format 不计 attempt）、失败产生时 failure_review.record_failure→select_failure→注入前 review_failure_chain 校验→assignment evidence 段注入→outcome evidence_ack 消费（failure.*/review.failed 事件族 producers——T-007/T-035 的事件半边经此接线转绿）；(F) M-REQ-APPROVAL ISSUES 执行路径的 issue 权威映射接线（plan_defect 修订 attempt-2 T-002，architecture §1.0.11/§1.1 Issue 路径——executor/CLI 接线面）：issue 创建改调 effects/github.create_issue_verified（成功落 issue.mapped api_verified=true 并 persist_issue_mapping），缺 GITHUB_TOKEN/TRAC_GITHUB_REPO 落 attention.required(area=issue_creation, reason=missing_token, next=指引)（废除静默 Fake 回退消费），真实模式 FAKE-N 产物经 reject_fake_artifact 落 fake_rejected+blocked；task/commit/report/关闭 effector 消费 issue-map.json 权威映射（T-002 的 github 模块面 + 本接线双落地后 issue_mapping ×6 锚点转绿）。锚点：A1-A4（batch-1 事件/status/确认/stale/cutover 断言面）+ A6/A7（真实 pointer 可继续/可再 return + 真实 quiesce 无 checkpoint/publish）+ release_gate_cli ×4（原 T-001 承载不变；AC 登记随 FR-0274 族归本任务）。escape.py 行为体（T-004）与 release_gate 校验体（T-026）经 depends_on 前置。Devon GREEN 禁改 tests/（Shield 资产 M-TEST 已 PASS）；Issue #127 明确排除。plan_defect 修订（attempt-2 T-021 escalation 增补交付面 (G)，architecture §1.1 Envelope/failure 链同类 must-not-drop 接线）：executor.py 登记 execute_publish handler——消费 T-039 decide_release_stage 路由的 Command(execute_publish)（绑定 preview_digest），发射 publish.planned/publish.executed(done|reconciled_skip)/publish.blocked(agent_forbidden)/publish.failed 事件族，挂 assert_agent_forbidden 后端守卫（Agent 后端禁入 publish 执行路径），并在 status 渲染 blocked 状态（T-021 的 publish 域 14 锚点事件半边经此接线转绿；与 close_milestone handler 同属 must-not-drop 类）",
+      "description": "【标准 RGR】v0.8 CLI 交付面 + escape kernel/executor 落地（b93 planning 重构：main.py 单主 + IF-silo 约束下的合法布局）。(A) tracks/cli/main.py 全部 v0.8 面：cmd_return universal 门禁（可回拨源=M-REQ-APPROVAL awaiting=approval/作者评审 escalation/M-IMPL NEEDS_ATTENTION 与 DIAGNOSE-escalation；canonical 序唯一来源 tuple(machine._STAGES)−M-REQ-APPROVAL+release.RELEASE_STAGES，上游=序数更小；拒绝 _err 零事件）、already_executed 报告与 --confirm 确认门（无确认零事件不动指针）、_escape_status_fragments 五片段渲染与 cmd_status 调用点（human_return=<actor>→<to>/evidence.staled=<n>/barrier=established/late_outcome=quarantined/frozen_tests=unfrozen[目标序数≤M-TEST]）、human.return 双轨 payload（actor/from/to/to_stage，to_stage 供 kernel 硬读）、cmd_release/cmd_abandon/status/report/replay release 侧扩展、host-contract 校验入口、USAGE/TRAC_SUBCOMMANDS 同步；(B) tracks/executor/executor.py：rollback 目标闭合集扩展（含 M-TEST/M-IMPL，canonical 序表推导，越集仍 audit blob 拒绝）+ dispatch 循环 cutover 消费（真实 quiesce 在飞 dispatch 取消/冻结；迟到 outcome seq≤cutover 落 escape.late_outcome(quarantined)，禁止 checkpoint/publish/覆盖 State——AC-FR0287-02 quiesce 半句 deferred acceptance item 落地）；(C) tracks/kernel/machine.py：_on_stage_rolled_back 按目标 StageDef.initial_substate 路由（M-TEST=DISPATCH、M-IMPL=BASELINE，禁固定 DRAFT 砖化）+ 发布五阶段 stage 表消费 seam（读 release.RELEASE_STAGES/release_stage_defs，行为体 T-039 落地）；(D) tracks/kernel/m_impl.py：RETURNED 路由 reason 镜像（human_return if returned else diagnose_rollback）；(E) tracks/executor/executor.py 派发循环的 envelope/failure 链接线（architecture §1.1 Envelope/failure 链路径——executor.py 唯一写者，plan_defect 修订）：每次派发前 kernel/envelope.check_envelope_parity（不一致落 dispatch.rejected version_parity_mismatch，不进 Agent 执行）、回收时 parse_agent_output（format_error 与 semantic_attempt_failed 分离落事件、format 不计 attempt）、失败产生时 failure_review.record_failure→select_failure→注入前 review_failure_chain 校验→assignment evidence 段注入→outcome evidence_ack 消费（failure.*/review.failed 事件族 producers——T-007/T-035 的事件半边经此接线转绿）；(F) M-REQ-APPROVAL ISSUES 执行路径的 issue 权威映射接线（plan_defect 修订 attempt-2 T-002，architecture §1.0.11/§1.1 Issue 路径——executor/CLI 接线面）：issue 创建改调 effects/github.create_issue_verified（成功落 issue.mapped api_verified=true 并 persist_issue_mapping），缺 GITHUB_TOKEN/TRAC_GITHUB_REPO 落 attention.required(area=issue_creation, reason=missing_token, next=指引)（废除静默 Fake 回退消费），真实模式 FAKE-N 产物经 reject_fake_artifact 落 fake_rejected+blocked；task/commit/report/关闭 effector 消费 issue-map.json 权威映射（T-002 的 github 模块面 + 本接线双落地后 issue_mapping ×6 锚点转绿）。锚点：A1-A4（batch-1 事件/status/确认/stale/cutover 断言面）+ A6/A7（真实 pointer 可继续/可再 return + 真实 quiesce 无 checkpoint/publish）+ release_gate_cli ×4（原 T-001 承载不变；AC 登记随 FR-0274 族归本任务）。escape.py 行为体（T-004）与 release_gate 校验体（T-026）经 depends_on 前置。Devon GREEN 禁改 tests/（Shield 资产 M-TEST 已 PASS）；Issue #127 明确排除。plan_defect 修订（attempt-2 T-021 escalation 增补交付面 (G)，architecture §1.1 Envelope/failure 链同类 must-not-drop 接线）：executor.py 登记 execute_publish handler——消费 T-039 decide_release_stage 路由的 Command(execute_publish)（绑定 preview_digest），发射 publish.planned/publish.executed(done|reconciled_skip)/publish.blocked(agent_forbidden)/publish.failed 事件族，挂 assert_agent_forbidden 后端守卫（Agent 后端禁入 publish 执行路径），并在 status 渲染 blocked 状态（T-021 的 publish 域 9 锚点事件半边经此接线转绿；与 close_milestone handler 同属 must-not-drop 类）；(H) CLI preview/stale 读取面（attempt-2 release_preview escalation，PRISM_PLAN REVISE A4 must-not-drop 类）：cmd_release 消费 T-039 M-RELEASE 路由的 Command(generate_preview)，发射/透出 release.previewed 事件与 stale 报告——release_preview ×2 锚点按 A4「登记 deferred anchor」分支落 T-026.deferred_refs（run-not-gate），其事件半边经本面 + T-039 路由转绿、由 T-INT 集成收口硬门禁复检；attempt-2 known_issue escalation 增补交付面 (I)（must-not-drop 类）：executor.py 登记 known_issue.registered/known_issue.rejected 事件发射（消费 T-039 的 Command(register_known_issue)，登记/拒绝各落事件）+ CLI preview 渲染 known_issues 列表（T-029 的 known_issue ×2 锚点事件半边经此接线转绿——锚点 deferred 留 T-029、T-INT 硬门禁复检）；attempt-1 security_assessment escalation 增补交付面 (J)（must-not-drop 类）：executor.py 登记 assess_security handler——消费 T-039 M-SECURITY 路由的 Command(assess_security)，发射 security.assessed 事件（payload 含聚合状态与 repair_route，失败经 repair 分类路由）——security_assessment ×2 锚点事件半边经此接线转绿（锚点 deferred 留 T-034、T-INT 硬门禁复检）。；attempt-2 T-002 escalation 诊断裁定：本任务已关闭但 executor.py 交付面（(B)/(E)/(F)/(G)/(I)/(J) 接线）从未落盘（executor.py hash 恒定未写）——接线欠债整体移交新 integration 任务 T-042 承载（scope 豁免重叠，本任务已交付面不重做）",
       "ac_refs": [
         "AC-FR0274-01",
         "AC-FR0274-02",
@@ -18,16 +18,7 @@
         "IF-RELEASE-003"
       ],
       "unit_refs": [],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/cli/main.py, tracks/executor/executor.py, tracks/kernel/machine.py, tracks/kernel/m_impl.py",
-      "depends_on": [
-        "T-004",
-        "T-026"
-      ],
-      "batch": "3",
-      "parallel": true,
-      "budget": 3,
-      "deferred_refs": [
+      "acceptance_refs": [
         "tests/integration/test_escape_gate.py::test_universal_return_moves_pointer",
         "tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes",
         "tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence",
@@ -38,40 +29,16 @@
         "tests/integration/test_release_gate_cli.py::test_rejected_gate_or_stale",
         "tests/integration/test_release_gate_cli.py::test_release_action_allowed",
         "tests/integration/test_release_gate_cli.py::test_surface_exclusivity"
-      ]
-    },
-    {
-      "task_id": "T-002",
-      "issue_number": 101,
-      "description": "【标准 RGR】实现 tracks/effects/github.py 全量 v0.8 合同。plan_defect 修订（attempt-2 T-002 issue 族）：(1) IF-ISSUE-001 模块面为本任务钉定交付（本文件唯二写者之一——issue 族锚点 6 个全部由本任务承载）：select_issue_backend 删除 missing-token 静默 Fake 回退（stale_fallback github.py:259-267）、create_issue_verified（创建即 API 回读 api_verified=true）、persist_issue_mapping（.tracks/runtime/issue-map.json 权威映射）、readback_issue、reject_fake_artifact（真实模式 FAKE-N → fake_rejected）——Devon 派发以此为准；(2) IF-VERIFY-004 CI 回读面（readback_ci_run/judge_ci_binding 已交付保持）。claim 词表受 island closure 格位限制保持 [IF-VERIFY-004]（FR-0270 closure 单独含 IF-VERIFY-004，与 FR-0283/NFR-0148 词表交集为空——FR-0283/NFR-0148 AC 登记维持 T-016 槽位，已上报架构修订阻塞）；issue.mapped/fake_rejected/attention.required 的事件接线在 M-REQ-APPROVAL ISSUES 执行路径（executor/CLI = T-001 交付面 (F)），故 depends_on [T-001]、batch 4",
-      "ac_refs": [
-        "AC-FR0270-01",
-        "AC-FR0270-02",
-        "AC-FR0270-03"
       ],
-      "fr_refs": [
-        "FR-0270"
-      ],
-      "if_ids": [
-        "IF-VERIFY-004"
-      ],
-      "unit_refs": [],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/effects/github.py",
+      "scope_boundary": "tracks/cli/main.py, tracks/executor/executor.py, tracks/kernel/machine.py, tracks/kernel/m_impl.py",
       "depends_on": [
-        "T-001"
+        "T-004",
+        "T-026"
       ],
-      "batch": "4",
+      "batch": "3",
       "parallel": true,
       "budget": 3,
-      "deferred_refs": [
-        "tests/integration/test_issue_mapping.py::test_authoritative_map_consumed",
-        "tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup",
-        "tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers",
-        "tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode",
-        "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
-        "tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped"
-      ]
+      "deferred_refs": []
     },
     {
       "task_id": "T-004",
@@ -94,20 +61,20 @@
       "unit_refs": [
         "tests/unit/test_escape_gate_red_v2.py::test_quarantine_allows_post_barrier_outcome"
       ],
-      "acceptance_refs": [],
+      "acceptance_refs": [
+        "tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects"
+      ],
       "scope_boundary": "tracks/executor/escape.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
       "budget": 3,
-      "deferred_refs": [
-        "tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects"
-      ]
+      "deferred_refs": []
     },
     {
       "task_id": "T-007",
       "issue_number": 106,
-      "description": "【标准 RGR】实现 tracks/executor/failure_review.py 的 IF-FAILURE-001 合同（七环节证据链/选择规则/review）：AC 登记为 AC-FR0280-01..03、AC-NFR0146-01/02。锚点双半边：模块半边（record/select/inject/ack/invalidate/review 纯函数）在本任务 scope 内转绿；事件半边（failure.*/review.failed 事件族）的 producers 按 architecture §1.1 Envelope/failure 链路径接线于 executor 派发循环（executor.py = T-001 scope，接线已登记为 T-001 交付面 (E)）——故 depends_on T-001、batch 4，锚点归本任务于双半边齐备时转绿（plan_defect 修订：b93 同类缺陷，T-007 曾因事件半边不可达烧毁 attempt）",
+      "description": "【标准 RGR（RED 锚点 preset-anchor 形）】实现 tracks/executor/failure_review.py 的 IF-FAILURE-001 合同（七环节证据链/选择规则/review）：AC 登记为 AC-FR0280-01..03、AC-NFR0146-01/02。锚点双半边：模块半边（record/select/inject/ack/invalidate/review 纯函数）在本任务 scope 内转绿；事件半边（failure.*/review.failed 事件族）的 producers 按 architecture §1.1 Envelope/failure 链路径接线于 executor 派发循环（executor.py = T-001 scope，接线已登记为 T-001 交付面 (E)）——故 depends_on T-001、batch 4，锚点归本任务于双半边齐备时转绿（plan_defect 修订：b93 同类缺陷，T-007 曾因事件半边不可达烧毁 attempt）；attempt-3 RED-no-rice 预检闭包（第二十二例连带）：模块面已终态（failure_review.py 无 NotImplementedError），标准 RED 无米下锅——转 preset-anchor 形：RED 相为运行时 anchor_red 确认（冻结锚点当前即红：failure.* 事件发射器归 T-042 (E) 接线 b8 先行），GREEN 相经接线转绿、green.no_change 合法收口",
       "ac_refs": [
         "AC-FR0280-01",
         "AC-FR0280-02",
@@ -123,26 +90,27 @@
         "IF-FAILURE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/executor/failure_review.py",
-      "depends_on": [
-        "T-001"
-      ],
-      "batch": "4",
-      "parallel": true,
-      "budget": 3,
-      "deferred_refs": [
+      "acceptance_refs": [
         "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical",
         "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay",
         "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules",
         "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks",
         "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs"
-      ]
+      ],
+      "scope_boundary": "tracks/executor/failure_review.py",
+      "depends_on": [
+        "T-001",
+        "T-042"
+      ],
+      "batch": "9",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": []
     },
     {
       "task_id": "T-008",
       "issue_number": 107,
-      "description": "【标准 RGR】实现 tracks/executor/host_contract.py 全量合同（加载/校验/执行/normalized result/容错回流，IF-HOSTCONTRACT-001）：AC 登记为 AC-FR0269-01/02、AC-FR0281-01..03、AC-NFR0147-01/02；语言中立扫描锚点静态覆盖 kernel/release.py（T-039）故依赖之；AC-FR0278 族登记归 T-024（锚点仍由本任务承载）",
+      "description": "【标准 RGR】实现 tracks/executor/host_contract.py 全量合同（加载/校验/执行/normalized result/容错回流，IF-HOSTCONTRACT-001）＋语言中立改造（attempt-4 熔断二次裁定，全量命中清单修正 + 行为级改造，拓扑 (ii)）。AC 登记为 AC-FR0269-01/02、AC-FR0281-01..03、AC-NFR0147-01/02、AC-FR0278-01/02（island 词表照旧）。plan_defect 修订史：attempt-3 扩三文件（contracts/test_select/anchor_surface——Devon GREEN 已清零，成果保留）；attempt-4 熔断诊断给出全量命中 4 文件 ×25 处（executor.py ×13/worktree.py ×5/quality_gate.py ×4/m_impl_runtime.py ×3）。裁定：executor.py ×13 归 T-042（其 scope 本含 executor.py，且 (E) 接线同域同批落地，T-001 已完成卡持 executor.py 使本任务不可扩入——scope 重叠硬拒实证）；其余三文件（worktree/quality_gate/m_impl_runtime，无任务承载零重叠）扩入本任务 scope；本任务后移 T-042 之后（deps [T-039, T-042]、batch 6）——语言锚点 ×2 于全树扫描，需 executor.py 清理（T-042 b5）先行后自绿。修复语义：行为级改造——'.venv/bin/python' 类命令构造硬编码一律经 IF-HOSTCONTRACT-001 的 language/toolchain/install 配置解析注入（host_contract 五函数合同已终态 e83d6dd0 可消费——语言中立机制的架构意图）。事件半边 ×5 改挂 T-042 自身 deferred_refs（其接线消费 host_contract 模块，本任务后移后模块于其 GREEN 时刻未落地、deferred-only-pass 容忍，硬门禁由全图 deferred 收口机制于全绿后复检）。模块面终态 + unit ×3 钉定；语言锚点 ×2 留 acceptance。附带列支（不阻塞门禁）：同文件两个 v0.7 老锚点（:55/:64 无排除扫描器）红于 demo_host.py 命中——扫描语义与 v0.8 排除规则不一致，归 Human/后续版本评估。重规划落地后需 trac retry --actor 重置 breaker（Runtime 机制）；attempt-3 终局重排（第二十一例连带）：executor.py ×13 的清理归 T-042（b8）后，语言锚点 ×2 于本任务 GREEN（b6）结构性不可绿——循 B94 转 deferred（run-not-gate，T-042 终局收口）；本任务交付面=3 文件语言改造（worktree/quality_gate/m_impl_runtime）+ host_contract 模块终态 + unit ×3；deps 收敛 [T-039]（自身交付不再消费 T-042；语言锚点的 T-042 依赖转由 deferred 收口机制承载）",
       "ac_refs": [
         "AC-FR0269-01",
         "AC-FR0269-02",
@@ -160,29 +128,28 @@
       "if_ids": [
         "IF-HOSTCONTRACT-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_host_contract_red.py::test_load_and_validate_host_contract_schema",
+        "tests/unit/test_host_contract_red.py::test_gate_result_normalized_v1",
+        "tests/unit/test_host_contract_red.py::test_placeholders_and_execute_per_contract"
+      ],
       "acceptance_refs": [],
-      "scope_boundary": "tracks/executor/host_contract.py, tracks/executor/validate.py, tracks/project.py",
+      "scope_boundary": "tracks/executor/host_contract.py, tracks/executor/validate.py, tracks/project.py, tracks/kernel/contracts.py, tracks/executor/test_select.py, tracks/executor/anchor_surface.py, tracks/executor/worktree.py, tracks/executor/quality_gate.py, tracks/executor/m_impl_runtime.py",
       "depends_on": [
         "T-039"
       ],
-      "batch": "5",
+      "batch": "6",
       "parallel": true,
       "budget": 3,
       "deferred_refs": [
         "tests/integration/test_kernel_language_neutrality.py::test_kernel_schema_language_free",
-        "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding",
-        "tests/integration/test_host_contract.py::test_materialized_contract_valid",
-        "tests/integration/test_host_contract.py::test_execute_per_contract_only",
-        "tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass",
-        "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed",
-        "tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop"
+        "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding"
       ]
     },
     {
       "task_id": "T-013",
       "issue_number": 112,
-      "description": "【标准 RGR】实现 tracks/executor/m_verify.py 的 M-VERIFY 链模块合同（IF-VERIFY-001/002/004/005 + IF-EVIDENCE-001 消费面）：AC 登记为 AC-FR0268-01..03。plan_defect 修订（attempt-2）：承载 M-VERIFY 生产者链全部锚点 13 个——fullf_reuse ×3（本任务原生）+ ci_readback ×3（自 T-002 迁入）+ verify_candidate ×3 / prism_final ×3 / failclosed ×1（自 T-039 迁入）；事件半边的生产者 kernel/release decide_release_stage（T-039）与本任务模块双落地后转绿，故 depends_on [T-039, T-002, T-021]、batch 6（破环：T-039 已卸出全部 m_verify 锚点，不再依赖本任务；github/publish 行为体先行；attempt-2 T-021 escalation 联动：T-021 后移至 b5，本任务随之后移至 b6）。锚点内 stub-pin 模块半边随实现翻红属 Shield 受控测试修订域（b93 先例），归 test_defect 通道收敛",
+      "description": "【标准 RGR】实现 tracks/executor/m_verify.py 的 M-VERIFY 链模块合同（IF-EVIDENCE-001 消费面 + IF-VERIFY-002 词表登记）：AC 登记为 AC-FR0268-01..03。plan_defect 修订（attempt-2）：承载 M-VERIFY 生产者链全部锚点 13 个——fullf_reuse ×3（本任务原生）+ ci_readback ×3（自 T-002 迁入）+ verify_candidate ×3 / prism_final ×3 / failclosed ×1（自 T-039 迁入）；事件半边的生产者 kernel/release decide_release_stage（T-039）与本任务模块双落地后转绿，故 depends_on [T-039, T-002, T-021]、batch 6（破环：T-039 已卸出全部 m_verify 锚点，不再依赖本任务；github/publish 行为体先行；attempt-2 T-021 escalation 联动：T-021 后移至 b5，本任务随之后移至 b6）。锚点内 stub-pin 模块半边随实现翻红属 Shield 受控测试修订域（b93 先例），归 test_defect 通道收敛；attempt-2 第十一例连带：deps 的 T-002 随其完成态关闭换为 T-042（github.py 合同并载）、batch 7；attempt-2 终局重排（第二十一例）：13 个 M-VERIFY 链锚点的事件半边（candidate.frozen/evidence.reused/ci.run_observed/prism.verdict 等）需边界守卫（本任务 m_verify.py freeze_candidate 接线——architecture.md:144-150 登记面）+ T-039 路由 + T-042 接线，而 T-042 终局门禁需本任务先行——锚点循 B94 转 deferred（run-not-gate，硬门禁由 T-042 终局收口）；deps 收敛 [T-039]（交付面=m_verify 模块面：freeze_candidate/边界守卫实现+unit 钉定，自身锚点 deferred 后无对 T-042 的模块依赖，断开 T-013→T-042 避环；T-021 边随锚点迁出卸除）；attempt-2 RED-no-rice 闭口（第二十二例连带，auto-route 先例）：原 unit 钉定 ×3 全绿属旧模块合同，边界守卫工作（freeze_candidate/边界路由，m_verify.py:34/:72/:80 三处 NotImplementedError 未交付）缺 RED 义务致派发无米——补挂待著作 RED 义务节点 ×3（tests/unit/test_boundary_guard_red.py，Devon RED 相撰写并落入 R lineage，钉定候选身份绑定/脏树拒收/RELEASE-capable 路由三面）；attempt-2 词表互斥修正（第二十三例）：卡 if_ids=[IF-EVIDENCE-001, IF-VERIFY-002] 与 FR-0268 closure 词表恰一致（architecture.md:226-228 实证），原描述枚举 IF-VERIFY-001/004/005 属 over-claim（Devon 交付 freeze_candidate 等 IF-VERIFY-001 合同面工作时 implemented_if_ids 必越卡词表 → 校验炸）——描述收敛至卡词表；freeze_candidate/边界守卫（interfaces.md:425 IF-VERIFY-001 合同面、FR-0267/T-024 族登记）以本卡词表登记交付属簿记事实，closure 词表修订归 Sage/架构通道（不在本角色权限）；attempt-3 词表一致性闭口（round-10 PLAN-FIND-1，「迁 anchor」分支）：补 if_ids 分支经实证被 island 词表硬拒（FR-0268 closure 仅含 IF-EVIDENCE-001/IF-VERIFY-002，commit 门禁 3 错）——boundary RED 义务 ×3 的订购职责已毕（Devon 著作资产 tests/unit/test_boundary_guard_red.py 在树且 6/6 绿，随全量 unit 门禁持续运行），其针定从卡上摘除，卡词表与验收集恢复一致（if_ids=[IF-EVIDENCE-001, IF-VERIFY-002]）；freeze_candidate/边界守卫交付以卡词表登记（如实申报 = 在卡词表内申报，interfaces.md:425 的 IF-VERIFY-001 合同面归属经 FR-0267 族/T-024 登记，closure 词表修订归 Sage/架构通道）；；【REGISTERED BLOCKER｜round-10~15 五迭代同款 PLAN-FIND-1 的终局穷尽证明（图侧不可解，请求升级）】事实一：全图 16 任务中 T-013 是**唯一** if_ids ⊆ FR-0268 closure 词表 {IF-VERIFY-002, IF-EVIDENCE-001} 的卡，FR-0268 的 AC 登记（AC-FR0268-01..03）**无处可迁** → T-013 卡词表被钉死，挂 IF-VERIFY-001 即 island commit 硬拒（实证 3 错）。事实二：m_verify.py 残留桩横跨两个异族词表（:114 IF-VERIFY-001 属 FR-0267 族、:122 IF-VERIFY-005 属 FR-0271 族），合取式 island 规则下——申报 IF-VERIFY-001 需 ac_refs ⊆ {FR-0143/0149/0267/0278}（FR-0268 即失唯一宿主、ac_coverage 塌）；申报 IF-VERIFY-005 需 ac_refs ⊆ FR-0271（与 FR-0268/FR-0267 无交集 token，同卡不可并存）→ **拥有 m_verify.py 的任何卡都不可能合法申报其完整工作集**。根因定位：architecture.md layout 表 :47-49 把 executor/m_verify.py 指派给 IF-VERIFY-001~005 全域，而 closure 条目把各 FR 钉到互斥词表——冻结设计自相矛盾。过渡申报规则（簿记合法）：Devon 在卡词表内申报（claim ⊆ declared 校验可过）。**后续 PLANNING 轮次无法改变本结论**；解锁须来自 (a) 架构 closure 词表修订（Sage 通道）或 (b) Human 对本任务 island 词表的显式豁免裁定。；【BLOCKER RESOLVED｜round-17解锁（OOB 218f419，issue #137，用户授权）】上述终局穷尽证明的前置事实已失效：该证明成立于「FR-0268 closure 词表恰为 {IF-EVIDENCE-001, IF-VERIFY-002}」这一前提，而 OOB commit 218f419（2026-09-04，issue #137，用户授权的操作者修复，修的正是本卡证明所指的设计文档内部不一致）已把 IF-VERIFY-001 与 IF-VERIFY-005 两个模块面 token 追加进 FR-0268/AC-FR0268-01 的 closure 条目（同一 commit 的 island 模拟即声明：if_ids=[IF-EVIDENCE-001, IF-VERIFY-002, IF-VERIFY-001, IF-VERIFY-005] 通过 validate_island_closure）。故「挂 IF-VERIFY-001 即硬拒」不再成立，事实二的合取互斥也随之消解（两个异族 token 现已同现于 FR-0268 单一 closure 条目，同卡并存合法）。据本卡自陈的解锁通道 (a)，词表现已对齐，本轮按「如实申报」原则恢复卡词表与订购工作集一致：if_ids=[IF-EVIDENCE-001, IF-VERIFY-002, IF-VERIFY-001, IF-VERIFY-005]，Devon 交付 freeze_candidate/边界守卫（IF-VERIFY-001）与 build_prism_final_review_assignment（IF-VERIFY-005）时 implemented_if_ids 不再越卡词表，claim ⊆ declared 校验可过；全图八项校验（dag/scope_overlap/ac_coverage/issue_numbers/island_closure/acceptance_coverage/debt_refs/scope_existence）复跑全绿。注意：本次修订只动 declaration 通道（词表与订购对齐），不重开已闭合的「迁 anchor」分支。；【attempt-4 RED-no-rice 预检闭包（round-17 连带）】恢复词表后，卡上 3 个 unit 针定（test_m_verify_fullf_reuse_red.py ×3）全部已绿，而 m_verify.py 仍有两处未交付桩：:114 collect_binding_violations（IF-VERIFY-001 绑定不变式）与 :122 build_prism_final_review_assignment（IF-VERIFY-005 Prism 终审装配），二者在 prod 代码中无任何调用方（全仓 grep 零命中），标准 RED 无米下锅——补挂待著作 RED 义务节点 ×3：tests/unit/test_m_verify_binding_red.py::test_collect_binding_violations_flags_unbound_evidence 与 ::test_collect_binding_violations_accepts_fully_bound_chain（钉定异 SHA/未绑定证据被标出、全绑定链返回空），tests/unit/test_m_verify_prism_final_red.py::test_prism_final_assignment_binds_evidence_digests（钉定装配信封的证据 digest 全部绑定同一 candidate_sha）；Devon 于 RED 相在 tests/unit/ 撰写并落入 R lineage，契约面引用 interfaces §1d 四函数合同与 IF-VERIFY-001/005 的 modules 声明（均含 executor/m_verify.py）。两桩的 acceptance 半边（test_verify_candidate ×3、test_verify_prism_final ×3、test_failclosed_release ×1）维持 deferred（run-not-gate，T-042 终局收口），本轮不迁移。",
       "ac_refs": [
         "AC-FR0268-01",
         "AC-FR0268-02",
@@ -193,17 +160,24 @@
       ],
       "if_ids": [
         "IF-EVIDENCE-001",
-        "IF-VERIFY-002"
+        "IF-VERIFY-002",
+        "IF-VERIFY-001",
+        "IF-VERIFY-005"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_m_verify_fullf_reuse_red.py::test_undrifted_identity_reuses_full_f",
+        "tests/unit/test_m_verify_fullf_reuse_red.py::test_drift_or_stale_reruns_full",
+        "tests/unit/test_m_verify_fullf_reuse_red.py::test_stale_evidence_not_reused",
+        "tests/unit/test_m_verify_binding_red.py::test_collect_binding_violations_flags_unbound_evidence",
+        "tests/unit/test_m_verify_binding_red.py::test_collect_binding_violations_accepts_fully_bound_chain",
+        "tests/unit/test_m_verify_prism_final_red.py::test_prism_final_assignment_binds_evidence_digests"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/executor/m_verify.py",
       "depends_on": [
-        "T-039",
-        "T-002",
-        "T-021"
+        "T-039"
       ],
-      "batch": "6",
+      "batch": "7",
       "parallel": true,
       "budget": 3,
       "deferred_refs": [
@@ -225,7 +199,7 @@
     {
       "task_id": "T-016",
       "issue_number": 115,
-      "description": "【标准 RGR】实现 tracks/executor/milestone.py 的归档合同（Issue/Project/milestone 关闭、封存、refs 清理）。AC 登记职能：FR-0283-01..04/NFR-0148-01/02 登记在本任务（island closure 格位：milestone.py 是 IF-ISSUE-001 的关闭消费面——close_issues_with_comment 消费权威映射，词表 [IF-ISSUE-001] 对本任务保真）；issue 族行为体（github.py）与全部 6 个 issue_mapping 锚点在 T-002，事件接线在 T-001 交付面 (F)。plan_defect 修订（T-016 escalation 终裁，Human 裁定方案 ii）：issue_close ×2 + trace_closed 共 3 个验收锚点由本任务承载——其事件半边（issue.closed/fake_rejected/milestone.trace_closed/milestone.sealed）依赖 T-039 M-MILESTONE StageDef 路由 + T-001 close_milestone handler + 本任务 milestone 行为体，本任务为依赖序最后 owner，故 depends_on [T-001, T-039]、batch 5（T-039 b4 之后；原 b1 内 walk 不可达 M-MILESTONE 的 plan_defect 由此解除）；FR-0283/NFR-0148 登记随锚点全部留在本任务（island 词表阻断的合并/迁出阻塞就此消解，无需架构修订）。模块面 unit 锚点（tests/unit/test_milestone_red.py ×4：close_issues_with_comment 只消费 api_verified 权威映射、close_project_milestone、seal_evidence_readonly、clean_temp_refs）钉定纯行为体合同；实现已 GREEN（commit f5c3201），本轮仅图修订后移门禁复跑。trace/report 导出面与 FR-0284/0276/0273 族登记在 T-040",
+      "description": "【标准 RGR（RED 锚点 preset-anchor 形）】实现 tracks/executor/milestone.py 的归档合同（Issue/Project/milestone 关闭、封存、refs 清理）。AC 登记职能：FR-0283-01..04/NFR-0148-01/02 登记在本任务（island closure 格位：milestone.py 是 IF-ISSUE-001 的关闭消费面——close_issues_with_comment 消费权威映射，词表 [IF-ISSUE-001] 对本任务保真）；issue 族行为体（github.py）与全部 6 个 issue_mapping 锚点在 T-002，事件接线在 T-001 交付面 (F)。plan_defect 修订（T-016 escalation 终裁，Human 裁定方案 ii）：issue_close ×2 + trace_closed 共 3 个验收锚点由本任务承载——其事件半边（issue.closed/fake_rejected/milestone.trace_closed/milestone.sealed）依赖 T-039 M-MILESTONE StageDef 路由 + T-001 close_milestone handler + 本任务 milestone 行为体，本任务为依赖序最后 owner，故 depends_on [T-001, T-039]、batch 5（T-039 b4 之后；原 b1 内 walk 不可达 M-MILESTONE 的 plan_defect 由此解除）；FR-0283/NFR-0148 登记随锚点全部留在本任务（island 词表阻断的合并/迁出阻塞就此消解，无需架构修订）。模块面 unit 锚点（tests/unit/test_milestone_red.py ×4：close_issues_with_comment 只消费 api_verified 权威映射、close_project_milestone、seal_evidence_readonly、clean_temp_refs）钉定纯行为体合同；实现已 GREEN（commit f5c3201），本轮仅图修订后移门禁复跑。trace/report 导出面与 FR-0284/0276/0273 族登记在 T-040；attempt-2 第十一例连带：deps 增补 T-042（close_milestone handler 接线先行）、batch 6；attempt-3 RED-no-rice 预检闭包（第二十二例连带）：模块面已终态（milestone.py 无 NotImplementedError，unit ×4 全绿），标准 RED 无米下锅——转 preset-anchor 形：RED 相为运行时 anchor_red 确认（冻结验收锚点当前即红：close_milestone 接线未落地，T-042 b8 先行），GREEN 相锚点经接线转绿、green.no_change 合法收口",
       "ac_refs": [
         "AC-FR0283-01",
         "AC-FR0283-02",
@@ -247,25 +221,26 @@
         "tests/unit/test_milestone_red.py::test_seal_evidence_readonly",
         "tests/unit/test_milestone_red.py::test_clean_temp_refs_returns_zero_remaining"
       ],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/executor/milestone.py",
-      "depends_on": [
-        "T-001",
-        "T-039"
-      ],
-      "batch": "5",
-      "parallel": true,
-      "budget": 3,
-      "deferred_refs": [
+      "acceptance_refs": [
         "tests/integration/test_issue_close.py::test_fake_counterexamples_rejected",
         "tests/integration/test_issue_close.py::test_close_with_trace_comment",
         "tests/integration/test_milestone_lifecycle.py::test_trace_closed_sealed_refs_clean"
-      ]
+      ],
+      "scope_boundary": "tracks/executor/milestone.py",
+      "depends_on": [
+        "T-001",
+        "T-039",
+        "T-042"
+      ],
+      "batch": "9",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": []
     },
     {
       "task_id": "T-021",
       "issue_number": 120,
-      "description": "【标准 RGR】实现 tracks/executor/publish.py + tracks/effects/publish.py 的发布合同（幂等键/reconcile/Agent 禁入，IF-PUBLISH-002 为本任务登记词表）：AC 登记为 AC-FR0275-01..04、AC-NFR0144-01/02。plan_defect 修订（attempt-2 T-021 escalation，第五次同型锚点/生产者拓扑缺陷，DIAGNOSE 终裁 + 闭包合法补全）：publish 域 7 锚点的事件半边（publish.planned/executed/blocked/failed/reconciled_skip + blocked 状态）需 M-PUBLISH 生产者链——T-039 StageDef 路由（decide_release_stage 发出 Command(execute_publish)）+ T-001 execute_publish handler/事件发射/agent_forbidden 守卫——全部在本任务 allowed_paths 与依赖闭包之外，且本任务不能依赖 T-039（T-039 原依赖本任务，成环），锚点必须迁移至最后 owner。补救后本任务为 publish+journey 域依赖序最后 owner，承载 14 个验收锚点：7 原生（publish_idempotency ×4 + publish_reconcile ×3）+ journey_recovery/retry_tail（自 T-039 迁入）+ journey_versioning ×5（自 T-026 迁入——publish 行为体随本任务后移至 b5 后，journey 锚点（ast=publish+release_gate）的最后 owner 由 T-026 变为本任务；AC-FR0277 登记随族留 T-026，island 词表不动）；depends_on [T-039, T-001]（路由 b4 + handler/machine seam b3 + release_gate 经 T-001→T-026 传递闭包）、batch 5；此拓扑同时破除 T-021→T-039→T-001→T-026→T-021 潜在环（T-026→T-021 边随 journey 锚点迁出而卸除）。模块切片已绿（tests/unit/test_publish_reconcile_red.py 4/4 PASS——b93 形态，事件半边登记为产品 gap 的 legal Red）；锚点内事件半边的 producer 接线由 T-039（路由）与 T-001（handler/发射/守卫/blocked 渲染）先行交付后转绿",
+      "description": "【标准 RGR】实现 tracks/executor/publish.py + tracks/effects/publish.py 的发布合同（幂等键/reconcile/Agent 禁入，IF-PUBLISH-002 为本任务登记词表）：AC 登记为 AC-FR0275-01..04、AC-NFR0144-01/02。plan_defect 修订（attempt-2 T-021 escalation，第五次同型锚点/生产者拓扑缺陷，DIAGNOSE 终裁 + 闭包合法补全）：publish 域 7 锚点的事件半边（publish.planned/executed/blocked/failed/reconciled_skip + blocked 状态）需 M-PUBLISH 生产者链——T-039 StageDef 路由（decide_release_stage 发出 Command(execute_publish)）+ T-001 execute_publish handler/事件发射/agent_forbidden 守卫——全部在本任务 allowed_paths 与依赖闭包之外，且本任务不能依赖 T-039（T-039 原依赖本任务，成环），锚点必须迁移至最后 owner。补救后本任务为 publish+journey 域依赖序最后 owner，承载 14 个验收锚点：7 原生（publish_idempotency ×4 + publish_reconcile ×3）+ journey_recovery/retry_tail（自 T-039 迁入）+ journey_versioning ×5（自 T-026 迁入——publish 行为体随本任务后移至 b5 后，journey 锚点（ast=publish+release_gate）的最后 owner 由 T-026 变为本任务；AC-FR0277 登记随族留 T-026，island 词表不动）；depends_on [T-039, T-001]（路由 b4 + handler/machine seam b3 + release_gate 经 T-001→T-026 传递闭包）、batch 5；此拓扑同时破除 T-021→T-039→T-001→T-026→T-021 潜在环（T-026→T-021 边随 journey 锚点迁出而卸除）。attempt-2 release_preview escalation（PRISM_PLAN REVISE A4）不影响本任务锚点面——release_preview ×2 按 deferred 分支落 T-026.deferred_refs。模块切片已绿（tests/unit/test_publish_reconcile_red.py 4/4 PASS——b93 形态，事件半边登记为产品 gap 的 legal Red）；锚点内事件半边的 producer 接线由 T-039（路由）与 T-001（handler/发射/守卫/blocked 渲染）先行交付后转绿；attempt-2 第十一例连带：deps 增补 T-042（execute_publish handler 接线先行）、batch 6",
       "ac_refs": [
         "AC-FR0275-01",
         "AC-FR0275-02",
@@ -282,16 +257,7 @@
         "IF-PUBLISH-002"
       ],
       "unit_refs": [],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/executor/publish.py, tracks/effects/publish.py",
-      "depends_on": [
-        "T-039",
-        "T-001"
-      ],
-      "batch": "5",
-      "parallel": true,
-      "budget": 3,
-      "deferred_refs": [
+      "acceptance_refs": [
         "tests/integration/test_publish_idempotency.py::test_agent_forbidden",
         "tests/integration/test_publish_idempotency.py::test_planned_then_executed_done",
         "tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict",
@@ -306,12 +272,22 @@
         "tests/integration/test_journey_versioning.py::test_post_release_patch",
         "tests/integration/test_journey_versioning.py::test_dev_precheck_fails_without_release_branch",
         "tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys"
-      ]
+      ],
+      "scope_boundary": "tracks/executor/publish.py, tracks/effects/publish.py",
+      "depends_on": [
+        "T-039",
+        "T-001",
+        "T-042"
+      ],
+      "batch": "9",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": []
     },
     {
       "task_id": "T-024",
       "issue_number": 123,
-      "description": "【标准 RGR】实现 tracks/executor/reference_host.py 的 IF-REFERENCE-001 合同（物化/同构验收/凭据分支/语言隔离）：AC 登记为 AC-FR0282-01..03、AC-NFR0149-01..03、AC-FR0267-01..03、AC-FR0278-01/02（后两族 AC 登记随 ∩ 词表归并，锚点由 T-039/T-035 承载）；依赖 T-008（host_contract 消费面）",
+      "description": "【标准 RGR】实现 tracks/executor/reference_host.py 的 IF-REFERENCE-001 合同（物化/同构验收/凭据分支/语言隔离）：AC 登记为 AC-FR0282-01..03、AC-NFR0149-01..03、AC-FR0267-01..03、AC-FR0278-01/02（后两族 AC 登记随 ∩ 词表归并，锚点由 T-039/T-035 承载）；依赖 T-008（host_contract 消费面）；attempt-2 终局重排（第二十一例连带）：三锚点（journey 锚点断言 candidate.frozen→milestone.sealed 全链、另两锚点消费 host_contract 执行事件与 needs_attention 渲染）均需发布链可达（T-013 边界守卫）+ T-042 接线——循 B94 转 deferred（run-not-gate，T-042 终局硬门禁）；deps [T-008]（reference_host 消费 host_contract 模块，batch 7 后置其 b6）；unit RED 义务钉定 reference_host 模块合同（tests/unit/test_reference_host_red.py ×3，Devon RED 相撰写）",
       "ac_refs": [
         "AC-FR0282-01",
         "AC-FR0282-02",
@@ -334,13 +310,17 @@
       "if_ids": [
         "IF-REFERENCE-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_reference_host_red.py::test_reference_host_materializes_isolated_python_env",
+        "tests/unit/test_reference_host_red.py::test_reference_host_missing_credentials_needs_attention",
+        "tests/unit/test_reference_host_red.py::test_reference_host_journey_event_chain_shape"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/executor/reference_host.py",
       "depends_on": [
         "T-008"
       ],
-      "batch": "6",
+      "batch": "7",
       "parallel": true,
       "budget": 3,
       "deferred_refs": [
@@ -352,7 +332,7 @@
     {
       "task_id": "T-026",
       "issue_number": 125,
-      "description": "【标准 RGR】实现 tracks/executor/release_gate.py 的三旅程合同（IF-JOURNEY-001）：AC 登记为 AC-FR0277-01..04（preview 族 FR-0273 AC 登记归 T-040，锚点仍由本任务承载）。plan_defect 修订（attempt-2 T-021 escalation 连带，闭包合法补全）：journey_versioning ×5 锚点迁至 T-021 承载——publish 行为体（T-021）因 M-PUBLISH 生产者链缺陷（事件半边需 T-039 路由 + T-001 handler）后移至 b5 后，旅程锚点（ast=publish+release_gate）的依赖序最后 owner 由本任务变为 T-021，锚点随 owner 迁移；AC-FR0277 登记随族留本任务（island 词表不动）。本任务保留 release_preview ×2 锚点（ast=release_gate 自包含，不依赖 publish 行为体，preview 路径走 v0.7 既有机器面）；depends_on 收敛为 []、batch 1（原 T-021 边随 journey 锚点迁出而卸除，同步破除 T-021→T-039→T-001→T-026→T-021 潜在环）",
+      "description": "【标准 RGR】实现 tracks/executor/release_gate.py 的三旅程合同（IF-JOURNEY-001）：AC 登记为 AC-FR0277-01..04（preview 族 FR-0273 AC 登记归 T-040）。plan_defect 修订（attempt-2 T-021 escalation 连带）：journey_versioning ×5 锚点迁至 T-021 承载——publish 行为体（T-021）因 M-PUBLISH 生产者链缺陷后移至 b5 后，旅程锚点（ast=publish+release_gate）的依赖序最后 owner 由本任务变为 T-021，锚点随 owner 迁移（AC 登记随族留本任务，island 词表不动）；depends_on 收敛为 []、batch 1。plan_defect 修订（attempt-2 release_preview escalation，PRISM_PLAN REVISE A4 裁定「登记 deferred anchor」分支，B94 机制）：release_preview ×2 锚点的事件半边（test_release_preview.py:51/:85 release.previewed 入 M-RELEASE）需 T-039 的 M-RELEASE Command(generate_preview) 路由 + T-001 的 CLI/generate_preview handler——均在原 b1 位形下游且任何依赖边经 T-001→T-026 传递成环（allowed_paths 内无合法修复）；两锚点登记于本任务 deferred_refs（run-but-not-gate：模块半边——compute_preview_digest 本地重算断言 :45——已绿、随本任务运行但不设门禁；事件半边由 T-INT 集成收口任务 b7 硬门禁复检，其时 T-039 路由/T-001 handler 均已先行落地）；acceptance_refs 为空、deferred 非空（structure 法 B94 合法形）。模块面 unit 锚点钉定（tests/unit/test_release_gate_red.py ×4：旅程计划输出/dev 前置校验/compute_preview_digest 规范公式/成分追踪——4/4 已绿）。A4 其余增补：T-039 登记 M-RELEASE generate_preview 路由（与 M-MILESTONE/M-PUBLISH 并列）、T-001 CLI preview/stale 读取面 must-not-drop",
       "ac_refs": [
         "AC-FR0277-01",
         "AC-FR0277-02",
@@ -365,7 +345,12 @@
       "if_ids": [
         "IF-JOURNEY-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_release_gate_red.py::test_feature_journey_plan_public_output",
+        "tests/unit/test_release_gate_red.py::test_dev_journey_requires_active_release_branch",
+        "tests/unit/test_release_gate_red.py::test_compute_preview_digest_canonical_formula",
+        "tests/unit/test_release_gate_red.py::test_preview_digest_tracks_any_component_change"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/executor/release_gate.py",
       "depends_on": [],
@@ -380,7 +365,7 @@
     {
       "task_id": "T-029",
       "issue_number": 128,
-      "description": "【标准 RGR】实现 tracks/executor/repair.py 的就地修复合同（IF-REPAIR-001/IF-KNOWNISSUE-001 为本任务登记词表）：AC 登记为 AC-FR0286-01..06、AC-NFR0143-01/02（inplace 锚点由 T-039 承载，AC 登记随修复族归本任务）；承载 known_issue ×2 验收锚点",
+      "description": "【标准 RGR】实现 tracks/executor/repair.py 的就地修复合同（IF-REPAIR-001/IF-KNOWNISSUE-001 为本任务登记词表）：AC 登记为 AC-FR0286-01..06、AC-NFR0143-01/02（inplace 锚点由 T-039 承载，AC 登记随修复族归本任务——island 词表照旧，plan_defect 修订中不丢失）。plan_defect 修订（attempt-2 known_issue escalation，第七次同型锚点/生产者拓扑缺陷，循 PRISM_PLAN 先例裁定 deferred 分支，B94 机制）：known_issue ×2 锚点（test_known_issue.py:37/:61 事件半边 known_issue.registered/rejected 入流）需 T-039 的 Command(register_known_issue)/dispatch_repair 路由 + T-001 的 executor handler/事件发射/CLI preview known_issues 列表渲染——均在本任务（deps=[] b1）闭包之外且任何补边经 T-039 闭包成环；按 T-026（release_preview ×2）同款 B94 处理，两锚点登记于本任务 deferred_refs（run-but-not-gate：模块半边——repair.py 3040a2b5 已实现、unit RED 7/7 PASS——随本任务运行不设门禁；事件半边由 T-INT 集成收口任务 b7 硬门禁复检，其时 T-039 路由/T-001 发射均已先行落地）；acceptance_refs 为空、deferred 非空（structure 法 B94 合法形）。模块面 unit 锚点钉定（tests/unit/test_repair_known_issue_red.py ×7：classify 封闭集/discipline-owner/round 不回滚/不可修复预算归因/登记产品缺陷/拒绝 mechanism-security 反例/preview 列表）。连带增补：T-039 登记 register_known_issue/dispatch_repair 路由（与 M-MILESTONE/M-PUBLISH/M-RELEASE 并列）、T-001 登记 known_issue.registered/rejected 发射 + CLI preview known_issues 渲染（must-not-drop 类）",
       "ac_refs": [
         "AC-FR0286-01",
         "AC-FR0286-02",
@@ -399,7 +384,15 @@
         "IF-KNOWNISSUE-001",
         "IF-REPAIR-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_repair_known_issue_red.py::test_classify_defect_closed_set",
+        "tests/unit/test_repair_known_issue_red.py::test_classify_defect_discipline_owner",
+        "tests/unit/test_repair_known_issue_red.py::test_open_repair_round_never_rolls_back",
+        "tests/unit/test_repair_known_issue_red.py::test_judge_irreparable_budget_and_attribution",
+        "tests/unit/test_repair_known_issue_red.py::test_register_known_issue_product_defect",
+        "tests/unit/test_repair_known_issue_red.py::test_register_known_issue_rejects_mechanism_and_security",
+        "tests/unit/test_repair_known_issue_red.py::test_list_known_issues_for_preview"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/executor/repair.py",
       "depends_on": [],
@@ -414,7 +407,7 @@
     {
       "task_id": "T-034",
       "issue_number": 133,
-      "description": "【标准 RGR】实现 tracks/executor/security.py 的 IF-SECURITY-001 合同（扫描执行/复审派发/聚合 fail-closed）：AC 登记为 AC-FR0272-01/02；承载 security_assessment ×2 验收锚点",
+      "description": "【标准 RGR】实现 tracks/executor/security.py 的 IF-SECURITY-001 合同（扫描执行/复审派发/聚合 fail-closed）：AC 登记为 AC-FR0272-01/02（island 词表照旧，plan_defect 修订中不丢失）。plan_defect 修订（attempt-1 security_assessment escalation，第九次同型锚点/生产者拓扑缺陷，循 PRISM_PLAN 先例裁定 deferred 分支，B94 机制）：security_assessment ×2 锚点被独立阻断点阻断——节点 1（test_security_assessment.py:15 run_security_scans(None,...) AttributeError）系本任务范围内的实现缺陷：交付 GREEN（1ff5fcad）缺 None/格式错误合约的 fail-closed 分支（FR-0272-02 要求未声明策略 → failed|unknown 阻塞而非崩溃），Devon 下次 GREEN 必修（allowed_paths 内合法修复）；节点 2（:60 security.assessed 事件）需 T-039 的 M-SECURITY Command(assess_security) 路由 + T-001 的 executor handler/事件发射——均在本任务（deps=[] b1）闭包之外；按 T-026/T-029 同款 B94 处理，两锚点登记于本任务 deferred_refs（run-but-not-gate：模块半边——unit RED 4/4 PASS——随本任务运行不设门禁；事件半边由 T-INT 集成收口 b7 硬门禁复检，其时 T-039 路由/T-001 发射均已先行落地）；acceptance_refs 为空、deferred 非空（structure 法 B94 合法形）。模块面 unit 锚点钉定（tests/unit/test_security_red.py ×4：聚合 passed/fail-closed/扫描执行/复审 assignment envelope）。连带增补：T-039 登记 Command(assess_security) M-SECURITY 路由（与其他四个路由并列）、T-001 登记 security.assessed 发射 handler + repair_route payload（must-not-drop 类）",
       "ac_refs": [
         "AC-FR0272-01",
         "AC-FR0272-02"
@@ -425,7 +418,12 @@
       "if_ids": [
         "IF-SECURITY-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_security_red.py::test_aggregate_security_status_passed",
+        "tests/unit/test_security_red.py::test_aggregate_security_status_fail_closed",
+        "tests/unit/test_security_red.py::test_run_security_scans_executes_declared",
+        "tests/unit/test_security_red.py::test_build_security_review_assignment_envelope"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/executor/security.py",
       "depends_on": [],
@@ -456,15 +454,7 @@
         "IF-ENVELOPE-002"
       ],
       "unit_refs": [],
-      "acceptance_refs": [],
-      "scope_boundary": "tracks/kernel/envelope.py, tracks/effects/fake.py, tracks/effects/opencode.py",
-      "depends_on": [
-        "T-001"
-      ],
-      "batch": "4",
-      "parallel": true,
-      "budget": 3,
-      "deferred_refs": [
+      "acceptance_refs": [
         "tests/integration/test_envelope_contract.py::test_malformed_format_error",
         "tests/integration/test_envelope_contract.py::test_unified_envelope_parse",
         "tests/integration/test_envelope_parity.py::test_malformed_no_business_mutation",
@@ -472,7 +462,16 @@
         "tests/integration/test_envelope_parity.py::test_format_vs_semantic_events_separated",
         "tests/integration/test_envelope_parity.py::test_malformed_regression_corpus",
         "tests/integration/test_envelope_parity.py::test_parity_mismatch_rejects"
-      ]
+      ],
+      "scope_boundary": "tracks/kernel/envelope.py, tracks/effects/fake.py, tracks/effects/opencode.py",
+      "depends_on": [
+        "T-001",
+        "T-042"
+      ],
+      "batch": "9",
+      "parallel": true,
+      "budget": 3,
+      "deferred_refs": []
     },
     {
       "task_id": "T-038",
@@ -490,22 +489,22 @@
         "IF-PIPELINE-001"
       ],
       "unit_refs": [],
-      "acceptance_refs": [],
+      "acceptance_refs": [
+        "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
+        "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
+        "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact"
+      ],
       "scope_boundary": "tracks/kernel/m_test.py",
       "depends_on": [],
       "batch": "1",
       "parallel": true,
       "budget": 3,
-      "deferred_refs": [
-        "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
-        "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
-        "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact"
-      ]
+      "deferred_refs": []
     },
     {
       "task_id": "T-039",
       "issue_number": 118,
-      "description": "【标准 RGR】实现 tracks/kernel/release.py 的发布五阶段 StageDef/路由/reducer 合同（IF-VERIFY-005 为本任务登记词表——Prism 终审阻断的 kernel 路由面）：AC 登记为 AC-FR0271-01..03。plan_defect 修订（attempt-2）：卸出全部 m_verify 锚点（verify_candidate ×3 / prism_final ×3 / failclosed → T-013，破除 T-013↔T-039 环）。plan_defect 修订（attempt-2 T-021 escalation，第五次同型）：承载 5 个锚点（same_candidate_all_events + inplace_repair ×4——AC 登记随族归 T-029/T-024/T-040 等，锚点按依赖序最后 owner 归本任务）；journey_recovery + retry_tail 迁至 T-021（publish 域锚点事件半边需 M-PUBLISH 生产者链，最后 owner 归 T-021），depends_on 卸除 T-021 边收敛为 [T-001, T-029]（剩余锚点闭包干净：kernel.release 自身 + repair 经 T-029；machine seam 由 T-001 先行；T-013/T-002/T-026 依赖随 attempt-2 锚点迁出而卸除；T-016 escalation 终裁方案 ii 撤销曾拟的 T-016 依赖边——issue_close ×2 + trace_closed 锚点归 T-016 后置承载，T-016 depends_on 本任务，无环）。本轮 plan_defect 增补明确交付：注册 M-MILESTONE 与 M-PUBLISH StageDef，decide_release_stage 在发布操作完成后发出 close_milestone Command（绑定 candidate_sha/preview_digest，路由到 T-001 executor handler）并在 release 决定后路由 Command(execute_publish)（绑定 preview_digest，M-PUBLISH 路由半边；handler/agent_forbidden 守卫/事件发射/blocked 渲染在 T-001）；kernel/release.py:72 的 NotImplementedError 必须由该路由/reducer 行为体替换（milestone 行为体半边在 T-016，publish 行为体半边在 T-021）。b93 planning 遗留：AC-FR0287-04 reconcile 半句仍为 deferred anchor（tests/integration/test_publish_reconcile.py::test_escape_return_then_reconciled_skip，资产由 Shield 后续交付后经图修订进 acceptance_refs，现阶段无资产不入 refs 防机械红）",
+      "description": "【标准 RGR】实现 tracks/kernel/release.py 的发布五阶段 StageDef/路由/reducer 合同（IF-VERIFY-005 为本任务登记词表）：AC 登记为 AC-FR0271-01..03（island 词表照旧）。plan_defect 修订（attempt-2，第十一例连带闭包）：本任务原 5 个验收锚点（same_candidate_all_events + inplace_repair ×4）的 walk 需要 executor 对 Command(close_milestone/execute_publish/dispatch_repair/generate_preview/register_known_issue/assess_security) 的消费接线——接线载体 T-042 排在本任务之后（b5，其终局收口位形要求路由先行），本任务 GREEN 时刻结构性不可绿锚 → 按 B94 转入自身 deferred_refs（run-not-gate；deferred-only-pass 通过本任务，硬门禁由 T-042 终局收口承载——其时本任务路由已先行落地）。交付面：注册 M-VERIFY/M-SECURITY/M-RELEASE/M-PUBLISH/M-MILESTONE 五阶段 StageDef 与 repair 路由（decide_release_stage：M-VERIFY 后 Command(generate_preview)、发布决定后 Command(execute_publish) 与 Command(close_milestone)、repair 分类后 Command(register_known_issue)/Command(dispatch_repair)、M-VERIFY 链后 Command(assess_security)）；kernel/release.py:72 的 NotImplementedError 必须由该路由/reducer 行为体替换（行为体半边：milestone=T-016、publish=T-021、repair=T-029、security=T-034、github=T-042 并载）。depends_on [T-001, T-029]（machine seam b3、repair 行为体 b1）、batch 4；attempt-3 dispatch 通道闭口（round-7 attempt-2 派发错配，诊断路径 (1) 变体）：def-only 卡使派发集 test_refs（ac∪unit）派生为空而 stale——按 RGR 著作模型恢复：unit_refs 声明本任务模块合同的 RED 义务节点（tests/unit/test_release_routing_red.py：五阶段 StageDef 注册/decide_release_stage 六 Command 路由/NotImplementedError 替换——Devon 于 RED 相在 red_test_paths 下撰写并落入 R lineage，非 Shield 预制资产）；验收门禁维持 deferred-only-pass（B94），walk 硬门禁仍在 T-042 终局收口",
       "ac_refs": [
         "AC-FR0271-01",
         "AC-FR0271-02",
@@ -517,7 +516,11 @@
       "if_ids": [
         "IF-VERIFY-005"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_release_routing_red.py::test_release_stage_defs_register_five_stages",
+        "tests/unit/test_release_routing_red.py::test_decide_release_stage_routes_six_commands",
+        "tests/unit/test_release_routing_red.py::test_release_routing_replaces_notimplemented_error"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/kernel/release.py",
       "depends_on": [
@@ -538,7 +541,7 @@
     {
       "task_id": "T-040",
       "issue_number": 116,
-      "description": "【标准 RGR】实现 tracks/checks/trace.py + tracks/report.py 的 release trace 闭环导出与 report 渲染面（IF-MILESTONE-001 的 trace 侧；含 §2b Issue map/Release pipeline/Release trace 段渲染）：AC 登记为 AC-FR0284-01/02、AC-FR0276-01/02、AC-FR0273-01/02（checks/trace.py 是 IF-MILESTONE-001 modules 之一；issue_close/trace_closed 锚点仍由 T-016 的 milestone 行为体承载）；承载 test_release_trace::test_trace_export_digests 锚点（静态依赖 kernel/release.py，T-039 先行）；由 T-016 拆分而来（trace/report 与 milestone 的合法原子文件边界）",
+      "description": "【verification-only 重验已交付面：模块面已全绿（build_release_trace §1i 封闭字段集 composer + digest 重算绑定 + §2b 三段渲染——trace.py/report.py 已交付，unit RED ×6 全绿），唯一锚点 test_trace_export_digests 已 deferred （T-042 终局收口承载其事件半边硬门禁）；本任务以运行时验收闭口，不再派 Devon RGR——RED 无米下锅（6fb5e8c RED-no-rice auto-route：classifications=[missing] → PLANNING，本轮按 anchor_probe 任务型契约转 verification-only，verify 通道消费 unit ×6 绿集）】【标准 RGR】实现 tracks/checks/trace.py + tracks/report.py 的 release trace 闭环导出与 report 渲染面（IF-MILESTONE-001 的 trace 侧；含 §2b Issue map/Release pipeline/Release trace 段渲染）：AC 登记为 AC-FR0284-01/02、AC-FR0276-01/02、AC-FR0273-01/02（island 词表照旧）。plan_defect 修订（attempt-1 trace_export escalation，第十四例，诊断路径 (2)）：唯一锚点 test_trace_export_digests 的事件半边（walk 后断言 milestone.trace_closed 事件 + trace_digest 重算，:65/:67-70）依赖 producer 链——kernel 路由（T-039 b4 已 GREEN）+ executor close_milestone 消费接线（T-042 b5 与本任务同批并行且 deps 不含）+ milestone 行为体发射链（T-016 b6 后置）——本任务 GREEN 时刻结构性不可绿，与 T-039 walk ×5 / T-008 事件 ×5 同款；循 B94 转自身 deferred_refs（run-not-gate，硬门禁由 T-042 终局收口全图 deferred 机制承载）。模块面已终态：unit RED ×6 全绿（composer §1i 封闭字段集 + digest 独立重算绑定 + 开集/缺集 fail-closed + §2b 三段渲染——trace.py=84330cd4/report.py=fb387d37 已落盘，无 Devon 写域内剩余工作）；路径 (1)（迁 T-016）会使本任务 acceptance/deferred 双空触 structure 法、路径 (3)（后移整任务）空转不经济，均不取。deps [T-039]、batch 5 不变。词义澄清（诊断列示的自述矛盾）：T-016 描述所称「trace_closed 锚点」指 test_milestone_lifecycle::test_trace_closed_sealed_refs_clean（其 acceptance 实有项），test_trace_export_digests 归本任务 deferred，无归属冲突",
       "ac_refs": [
         "AC-FR0284-01",
         "AC-FR0284-02",
@@ -555,13 +558,20 @@
       "if_ids": [
         "IF-MILESTONE-001"
       ],
-      "unit_refs": [],
+      "unit_refs": [
+        "tests/unit/test_release_trace_red.py::test_build_release_trace_composes_closed_field_set",
+        "tests/unit/test_release_trace_red.py::test_trace_digest_binds_remaining_fields_canonically",
+        "tests/unit/test_release_trace_red.py::test_build_release_trace_rejects_open_and_partial_inputs",
+        "tests/unit/test_release_trace_red.py::test_report_renders_issue_map_and_fake_rejection",
+        "tests/unit/test_release_trace_red.py::test_report_renders_release_pipeline_preview_and_decision",
+        "tests/unit/test_release_trace_red.py::test_report_renders_release_trace_section"
+      ],
       "acceptance_refs": [],
       "scope_boundary": "tracks/checks/trace.py, tracks/report.py",
       "depends_on": [
         "T-039"
       ],
-      "batch": "5",
+      "batch": "6",
       "parallel": true,
       "budget": 3,
       "deferred_refs": [
@@ -569,35 +579,50 @@
       ]
     },
     {
-      "task_id": "T-INT",
-      "issue_number": 999,
-      "description": "最终集成收口：全图 deferred 锚点在此转硬门禁；跳过 RED，REFACTOR 与质量门禁不豁免",
-      "ac_refs": [],
-      "fr_refs": [],
-      "if_ids": [],
-      "unit_refs": [],
+      "task_id": "T-042",
+      "issue_number": 998,
+      "description": "终局收口 integration task（PRISM_PLAN round-7 PLAN-FIND-1「完成态关闭」分支落地 + T-INT 收口角色并载）：三重职责。(1) executor/CLI 接线（原 T-001 未落盘欠债）：(B) rollback 闭合集扩展+dispatch cutover/quiesce、(E) envelope/failure 链（check_envelope_parity/parse_agent_output/format_error 与 semantic_attempt_failed 分离/failure_review record→select→inject→ack）、(F) M-REQ-APPROVAL ISSUES 路径（issue.mapped/fake_rejected/attention.required 发射）、close_milestone handler、(G) execute_publish handler（+agent_forbidden 守卫+blocked 渲染）、(I) known_issue.registered/rejected 发射、(J) assess_security handler（+repair_route payload）、(H) CLI known_issues/needs_attention 渲染。(2) github.py 模块合同（T-002 完成态关闭并载——PLAN-FIND-1：verification-only 卡通道错配，模块面已全绿（b2b39b5c 五函数合同+unit 6/6），issue ×6 锚点随并载转本任务 deferred；AC-FR0270-01..03 登记随并）。(3) 终局硬门禁（原 T-INT 职责）：integration 门禁 = 自身 acceptance ∪ 全图 deferred（当前 17：T-026 preview ×2、T-029 known_issue ×2、T-034 security ×2、T-039 walk ×5、本任务 issue ×6）——depends_on [T-001, T-039]（machine/CLI 面 b3、五阶段路由 b4 先行）、batch 5：本任务落地全部接线后，17 个 deferred 于此刻全绿，硬门禁一次收口。质量门禁不豁免；issue 998 sentinel；attempt-3：if_ids 补挂 [IF-VERIFY-004]（FR-0270 closure 词表，消解派发通道 if_ids 必填缺口）；attempt-3 连带：deps 增补 T-008（host_contract 模块先行）、batch 6；attempt-4 熔断二次扩载：executor.py ×13 处语言中立改造并入（命令构造硬编码经 IF-HOSTCONTRACT-001 language/toolchain/install 配置注入——与本任务 (E) 接线同域同批落地，T-008 语言锚点经此先行）；T-008 事件半边 ×5（host_contract.materialized/failed + local_gate.passed/failed + replay）收编入本任务自身 deferred_refs（host_contract 模块由后置 T-008 交付、本任务 GREEN 时刻 deferred-only-pass 容忍、全绿后收口复检）；deps 收敛 [T-001, T-039]、batch 5（T-008 后移 batch 6 依赖本任务）；attempt-2 r_tree 冻结裁定（第十五例，通道契约错配家族第三例）：跳 RED 的 integration GREEN 相无 R lineage、派发通道 r_tree_identity 必填（m_impl_runtime.py:812/:861/:878/:1011）→ stale。attempt-3 复核修正（程序性自纠）：上轮「解锁唯一路径在通道侧」论证有遗漏——通道代码实证（m_impl_runtime.py:1008-1014）r_tree_identity 仅 phase ∈ (green,refactor) 时追加必填，**RED 相派发无 r_tree 要求**（R 尚未产生，通道设计使然；:859-862 red 分支注入 red_test_paths 即合法）；「保留 integration 标志（规避与已完成卡 T-001 的 scope 重叠墙——摘标志即硬拒，attempt-4 同墙实证）+ 走 RED 相」图侧完全可及。本任务相位声明改为**走 RED 相**：Devon 于 RED 相撰写接线面 RED 义务 ×6（tests/unit/test_t042_wiring_red.py：close_milestone/execute_publish+agent_forbidden 守卫/assess_security+repair_route/known_issue 双发射/ISSUES 路径三事件/envelope-failure 链环节——unit_refs/test_refs 已钉定）→ R lineage 产生 → GREEN 相 r_tree 自然有值 → 派发链解锁；通道侧豁免/播种 R 两候选降级为备选（若 RED 相路径遇未知通道约束再启用）；attempt-3 终点取证定论（第十七例，联合死锁闭合 + OOB 移交）：kernel 相序硬编码实证（kernel/m_impl.py:84-93 _on_task_started——s.substate 由 integration 布尔唯一决定，任务启动即置 r_tree=None；desc 相位声明非相序输入，attempt-2 修订版派发 assignment phase=null 证伪）＋ executor scope 豁免同源（m_impl_runtime.py:2997-3005 以 integration 为唯一条件）→ 双向墙成立：True 侧 GREEN 起步三连 stale / False 侧与已完成卡 T-001（executor.py/main.py）重叠拒。修复产品补丁（两文件协调）：(a) kernel _on_task_started 增读任务卡声明字段 walk_red 覆盖 integration 默认相序（integration+walk_red 从 RED 起步）；(b) executor _task_allowed_paths 豁免条件同步扩展（integration 或 walk_red）；配 unit RED 钉定新相序行为。自举悖论实证：kernel/m_impl.py 持有者为已完成卡 T-001（标准新任务即 scope 重叠拒、integration 新任务先死于被修复的死锁）——图内无合法补丁承载者，补丁须经 Runtime/OOB 通道先行落地；本卡已预置 walk_red: true（惰性字段，补丁落地即激活 RED→GREEN 全链：Devon 撰写接线面 RED ×6 → R lineage → GREEN r_tree 自然有值）。通道侧豁免（def 非空 integration 卡免 GREEN 相 r_tree）保留为备选；attempt-4 熔断后落图（第二十例，OOB 补丁已落地适配）：commit 6fb5e8c（walk_red integration R-tree sealing）重定义相序——所有任务统一 RED 起步，integration 的 RED 为运行时 walk_red 确认：跑 unit_refs 期望已绿、就地封 R 树、发 red.checkpointed → r_tree 建立 → PRISM_RED→GREEN 正常流（GREEN 派发 r_tree 自然有值）。适配修订：unit_refs 收敛为已交付的 github 模块锚点 ×6（实跑全绿）——旧模型声明的 6 个待著作 wiring RED 节点（test_t042_wiring_red.py）与 walk_red 契约冲突（pins 须绿，未著作节点触发 not-green 拒绝），回撤；wiring 行为验证由自身 deferred ×11 于 GREEN 门禁承载（deferred-only-pass）+ 全图 deferred 终局复检。walk_red:true 惰性字段移除（新机制不消费，无条件 RED）。熔断复位需 trac retry --actor（Runtime 机制）；attempt-2 终局重排（第二十一例诊断裁定：deferred 延后门禁——终局门禁后移至边界守卫交付之后）：integration 硬门禁（全图 deferred 并集）在边界守卫（T-013 freeze_candidate 接线，architecture.md:144-150 登记面）未落地前结构性不可绿——发布五阶段链（M-VERIFY→M-MILESTONE）需其路由进入（_NEXT_STAGE 原止 M-IMPL、machine._STAGES 无发布阶段）；本任务移 batch 8、deps [T-001, T-039, T-008, T-013]（T-008/T-013 交付面均为纯模块+deferred-only-pass，与本任务无环）；GREEN 时刻接线自交付 + 路由（b4）+ 边界守卫（b7）+ 全部模块面齐备 → 全图 deferred（41 个）一次收口全绿",
+      "ac_refs": [
+        "AC-FR0270-01",
+        "AC-FR0270-02",
+        "AC-FR0270-03"
+      ],
+      "fr_refs": [
+        "FR-0270"
+      ],
+      "if_ids": [
+        "IF-VERIFY-004"
+      ],
+      "unit_refs": [
+        "tests/unit/test_t002_issue_mapping_red.py::test_select_missing_token_fails_closed",
+        "tests/unit/test_t002_issue_mapping_red.py::test_create_issue_verified_real_mode_api_verified",
+        "tests/unit/test_t002_issue_mapping_red.py::test_create_issue_verified_fake_channel_never_verified",
+        "tests/unit/test_t002_issue_mapping_red.py::test_readback_issue_verified_payload",
+        "tests/unit/test_t002_issue_mapping_red.py::test_persist_issue_mapping_idempotent",
+        "tests/unit/test_t002_issue_mapping_red.py::test_reject_fake_artifact_in_real_mode"
+      ],
       "acceptance_refs": [],
-      "deferred_refs": [],
-      "scope_boundary": "",
+      "deferred_refs": [
+        "tests/integration/test_issue_mapping.py::test_authoritative_map_consumed",
+        "tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup",
+        "tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers",
+        "tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode",
+        "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
+        "tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped",
+        "tests/integration/test_host_contract.py::test_materialized_contract_valid",
+        "tests/integration/test_host_contract.py::test_execute_per_contract_only",
+        "tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass",
+        "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed",
+        "tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop"
+      ],
+      "scope_boundary": "tracks/executor/executor.py, tracks/cli/main.py, tracks/effects/github.py",
       "depends_on": [
         "T-001",
-        "T-002",
-        "T-004",
-        "T-007",
-        "T-008",
-        "T-013",
-        "T-016",
-        "T-021",
-        "T-024",
-        "T-026",
-        "T-029",
-        "T-034",
-        "T-035",
-        "T-038",
         "T-039",
-        "T-040"
+        "T-008",
+        "T-013"
       ],
-      "batch": "7",
+      "batch": "8",
       "parallel": false,
       "budget": 3,
       "integration": true

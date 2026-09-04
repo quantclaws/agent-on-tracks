@@ -17,6 +17,10 @@ from .host_contract import HostContract, NormalizedGateResult, SecurityScanDecl
 
 def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, dict]:
     """Execute a declared scan command (shell=False, contract timeout)."""
+    if not command or not command.strip():
+        # Fail closed: an empty/blank declared command is malformed contract
+        # input, never an implicit pass (subprocess would raise on empty argv).
+        return None, {"stdout_tail": "", "stderr_tail": "malformed: empty command"}
     try:
         proc = subprocess.run(  # noqa: S603 (declared contract command)
             shlex.split(command),
@@ -75,7 +79,7 @@ def run_security_scans(
         return []
     results: list[NormalizedGateResult] = []
     for decl in scans:
-        if decl.install:
+        if decl.install and decl.install.strip():
             subprocess.run(  # noqa: S603 (declared contract install)
                 shlex.split(decl.install),
                 cwd=str(repo),

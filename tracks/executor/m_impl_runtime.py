@@ -30,7 +30,7 @@ from tracks.baseline import (
 )
 from tracks.effects.backend import valid_test_tasks
 from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
-from tracks.executor.helpers import _commit_if_staged, git, parse_collected_nodes
+from tracks.executor.helpers import git, parse_collected_nodes
 from tracks.executor.host_contract import declared_install_interpreter
 from tracks.executor.quality_gate import (
     execute_gate_command,
@@ -5149,9 +5149,14 @@ class MImplRuntimeMixin:
         self, cmd, state, task_id: str, changed, selection_evidence
     ) -> bool:
         git(self.repo, "add", "--", *changed)
-        proc = _commit_if_staged(
+        # Lazy import: executor.py imports this module's mixin at module
+        # scope, so the scoped commit helper resolves at call time.
+        from tracks.executor.executor import _scoped_commit_if_staged
+
+        proc = _scoped_commit_if_staged(
             self.repo,
             f"M-IMPL: refactor\n\ncommand_id: {cmd.command_id}",
+            paths=sorted(changed),
         )
         if proc is None:
             self._emit(

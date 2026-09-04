@@ -2130,6 +2130,17 @@ def _phase0_m_test_gate(s: State) -> tuple[bool, Command | None]:
 def _decide_stage_route(stage: str, sub: str, s: State) -> Command | None:
     """Stage dispatch routing after the common preamble checks in ``decide()``.
     Extracted to keep ``decide()`` cognitive complexity ≤15."""
+    from .release import RELEASE_STAGES, decide_release_stage
+
+    if stage in RELEASE_STAGES:
+        # v0.8 release pipeline (SM-01): the five release stages route
+        # through the release kernel's decider (classified repair-route
+        # dominance included). Checked first so M-RELEASE's own gate
+        # substates (AWAITING_RELEASE/DELAYED/RETURNED) keep their release
+        # semantics instead of falling into the generic approval routing.
+        # Lazy import: release.py imports machine at module scope
+        # (StageDef/State) — same seam discipline as release_stage_defs.
+        return decide_release_stage(stage, sub, s)
     if stage == "M-HOTFIX-TRIAGE":
         return _decide_hotfix_triage(s, sub)
     if stage == "M-TEST":

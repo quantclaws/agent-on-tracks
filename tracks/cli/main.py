@@ -205,11 +205,18 @@ def cmd_init(repo: Path) -> int:
         if not keep.exists():
             keep.write_text("", encoding="utf-8")
     # AC-01b/c: idempotent, no empty commit, leaves the worktree clean.
-    git(repo, "add", str(home))
+    # Path-scoped commit: the runtime never sweeps unrelated operator-staged
+    # content into its scaffold commit (AC-FR0236-01 attribution).
+    init_paths = [str(home)]
     if host_gitignore_changed:
         git(repo, "add", ".gitignore")
-    if git(repo, "diff", "--cached", "--quiet", check=False).returncode != 0:
-        git(repo, "commit", "-m", "trac init: scaffold .tracks")
+        init_paths.append(".gitignore")
+    git(repo, "add", str(home))
+    if git(
+        repo, "diff", "--cached", "--quiet", "--", *init_paths, check=False
+    ).returncode != 0:
+        git(repo, "commit", "-m", "trac init: scaffold .tracks",
+            "--only", "--", *init_paths)
     print(f"initialized {home}")
     return 0
 
@@ -219,8 +226,9 @@ def cmd_start(repo: Path, *args: str) -> int:
     raw = sys.stdin.read().strip()
     if not raw:
         return _err("empty stdin: pipe the raw requirement into `trac start <version>`")
-    if git(repo, "status", "--porcelain", check=False).stdout.strip():
-        return _err("working tree dirty (uncommitted changes); commit or stash first")
+    # AC-FR0267-02 locked exit: a dirty tree is NOT refused here — the run
+    # starts and the M-VERIFY freeze lands attention.required(dirty_tree)
+    # (needs_attention with recovery guidance) at the contract's gate.
     home = paths.tracks_home(repo)
     store = Store(home)
     with writer_lock(home):
@@ -279,7 +287,8 @@ def cmd_start(repo: Path, *args: str) -> int:
             encoding="utf-8",
         )
         git(repo, "add", str(story))
-        git(repo, "commit", "-m", f"M-START: capture raw requirement for {version}")
+        git(repo, "commit", "-m", f"M-START: capture raw requirement for {version}",
+            "--only", "--", str(story))
         store.append(run_id, version, "stage.exited", {"stage": "M-START"})
         store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     print(f"run {run_id} started on {branch}")
@@ -317,28 +326,28 @@ def _human_actor(repo: Path) -> str:
     return git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
 
 
-def _reject_dirty_staged(repo: Path, version: str, label: str) -> int:
-    """v0.5 review-A: reject dirty files outside the allowlist and pre-staged
-    content before any event is appended. Returns 0 if clean, non-zero on
-    rejection (with stderr message)."""
+def _scope_staged_attribution(repo: Path, version: str, label: str) -> int:
+    """v0.5 review-A attribution, AC-FR0267-02 realignment: pre-staged
+    content OUTSIDE the artifact allowlist is unstaged (``git reset`` --
+    content preserved in the working tree, never swept into the human
+    checkpoint commit) instead of refusing the gate; a dirty tree is
+    never a CLI-stage refusal — the walk proceeds and the M-VERIFY
+    freeze lands attention.required(dirty_tree) (needs_attention with
+    recovery guidance) at the contract's locked exit. Always returns 0."""
+    del label  # retained in the signature for caller stability
     allowed_prefix = f".tracks/projects/{version}/"
-    dirty = [
-        line[3:].strip()
-        for line in git(repo, "status", "--porcelain", check=False).stdout.splitlines()
-        if line.strip()
-    ]
-    outside = [f for f in dirty if not f.startswith(allowed_prefix)]
-    if outside:
-        return _err(
-            f"{label} touches files outside {allowed_prefix}: " + ", ".join(sorted(outside))
-        )
     staged = [
-        line[3:].strip()
-        for line in git(repo, "diff", "--cached", "--name-only", check=False).stdout.splitlines()
+        line.strip()
+        for line in git(
+            repo, "diff", "--cached", "--name-only", check=False
+        ).stdout.splitlines()
         if line.strip()
     ]
-    if staged:
-        return _err("pre-staged content found; unstage first: " + ", ".join(sorted(staged)))
+    foreign = [f for f in staged if not f.startswith(allowed_prefix)]
+    if foreign:
+        # Unstage only; the working tree keeps the operator's content and
+        # the scoped checkpoint commit never picks it up.
+        git(repo, "reset", "--", *foreign, check=False)
     return 0
 
 
@@ -576,12 +585,14 @@ def cmd_hotfix(repo: Path, *args: str) -> int:
     # mistaken for operator residue (untracked seeds stay legitimate, R3-01).
     if _ensure_host_byproducts_gitignore(repo):
         git(repo, "add", ".gitignore")
-        git(repo, "commit", "-m", "trac: gitignore runtime test-command byproducts")
+        git(repo, "commit", "-m", "trac: gitignore runtime test-command byproducts",
+            "--only", "--", ".gitignore")
     # R3-01 (PRISM-FINAL-R3-01): the runtime seed (.tracks/ host-issues.json,
-    # generated store state) is legitimately untracked; only tracked-file
-    # modifications make the worktree dirty for a hotfix entry.
-    if git(repo, "status", "--porcelain", "--untracked-files=no", check=False).stdout.strip():
-        return _err("working tree dirty (uncommitted changes); commit or stash first")
+    # generated store state) is legitimately untracked. AC-FR0267-02 locked
+    # exit: a dirty tracked tree is not refused at entry — the hotfix walk
+    # reaches the M-VERIFY freeze, which lands
+    # attention.required(dirty_tree) (needs_attention with recovery
+    # guidance) at the contract's gate.
     with writer_lock(home):
         run_id = hotfix_entry_run(repo, store, issue, scenario)
     return hotfix_entry_output(store, run_id)
@@ -661,8 +672,10 @@ def _do_human_pipeline(
 ):
     """Run one Human ResultCheckpoint pipeline under the writer lock (triage /
     review). Returns (rc, (final_state, awaiting_before)) or (rc, None) on an
-    early dirty-tree rejection."""
-    rc = _reject_dirty_staged(repo, state.version, label)
+    early rejection. Pre-staged foreign content is unstaged for attribution
+    (_scope_staged_attribution); a dirty tree is never refused here (the
+    M-VERIFY freeze owns the AC-FR0267-02 exit)."""
+    rc = _scope_staged_attribution(repo, state.version, label)
     if rc:
         return rc, None
     awaiting_before = state.awaiting
@@ -1362,6 +1375,31 @@ def _latest_ci_run(events: list) -> object | None:
     return next((e for e in reversed(events) if e.type == "ci.run_observed"), None)
 
 
+def _release_block_reason(events: list) -> str:
+    """Fail-closed block reason for a started-but-unverified evidence chain
+    (interfaces §1d: a non-passing exit renders ``blocked: <reason>``).
+    Priority: security verdict > local gate failure > contract refusal >
+    parked M-VERIFY attention > missing gate evidence."""
+    security = [e for e in events if e.type == "security.assessed"]
+    if security and (security[-1].payload or {}).get("status") != "passed":
+        return "security_" + str(
+            (security[-1].payload or {}).get("status", "unknown")
+        )
+    if any(e.type == "local_gate.failed" for e in events):
+        return "local_gate_failed"
+    if any(e.type == "host_contract.invalid" for e in events):
+        return "contract_invalid"
+    attention = [
+        (e.payload or {}).get("reason", "unknown")
+        for e in events
+        if e.type == "attention.required"
+        and (e.payload or {}).get("stage") == "M-VERIFY"
+    ]
+    if attention:
+        return str(attention[-1])
+    return "gate_evidence_missing"
+
+
 def _known_issues_fragment(events: list | None) -> str:
     """(I) known_issues preview fragment (FR-0274): every
     known_issue.registered event contributes its title to the release
@@ -1375,6 +1413,22 @@ def _known_issues_fragment(events: list | None) -> str:
     if not registered:
         return ""
     return " known_issues={" + " | ".join(registered) + "}"
+
+
+def _attention_fragment(events: list | None) -> str:
+    """(H) needs_attention preview fragment (M-REQ-APPROVAL, IF-ISSUE-001):
+    every attention.required event surfaces its area and reason so the
+    operator sees what the run is waiting on (e.g. issue_creation /
+    missing_token — the fail-closed no-fake-fallback path). Renders empty
+    (no output change) when nothing requires attention."""
+    attention = [
+        (e.payload or {}).get("area", "-") + ":" + (e.payload or {}).get("reason", "-")
+        for e in (events or [])
+        if e.type == "attention.required"
+    ]
+    if not attention:
+        return ""
+    return " attention={" + " | ".join(attention) + "}"
 
 
 def _render_preview_line(
@@ -1404,6 +1458,7 @@ def _render_preview_line(
         f"operation_plan={preview.get('operation_plan_digest', '-')} "
         f"status={status} stale_reason={reason}"
         f"{_known_issues_fragment(events)}"
+        f"{_attention_fragment(events)}"
     )
 
 
@@ -1422,6 +1477,40 @@ def _append_release_rejected(
             "detail": detail,
         },
     )
+
+
+def _release_chain_fragments(events: list, lines: list[str]) -> None:
+    """(F) evidence-chain fragments (FR-0270/FR-0287 wiring): CI readback
+    binding and security verdict surface whenever the chain emitted them; a
+    started-but-unverified chain is a non-passing exit and renders the
+    fail-closed block reason (interfaces §1d) -- never without chain
+    evidence, and never once a preview exists (the release gates own that
+    verdict)."""
+    ci = _latest_ci_run(events)
+    if ci is not None:
+        p = ci.payload or {}
+        if p.get("api_verified") is True:
+            lines.append("ci=bound")
+        else:
+            lines.append("ci=" + str(p.get("reason") or p.get("status") or "failed"))
+    security = [e for e in events if e.type == "security.assessed"]
+    if security:
+        lines.append(
+            "security=" + str((security[-1].payload or {}).get("status", "unknown"))
+        )
+    rounds = [e for e in events if e.type == "repair.round_started"]
+    if rounds:
+        # §1.0.14 B: an open in-place repair renders its budget position
+        # (repair=in_place round=<n>/3) on every non-passing exit.
+        last_round = rounds[-1].payload or {}
+        lines.append(
+            f"repair=in_place round={last_round.get('round', len(rounds))}"
+            f"/{last_round.get('budget', 3)}"
+        )
+    if any(e.type == "candidate.frozen" for e in events) and not [
+        e for e in events if e.type == "release.previewed"
+    ]:
+        lines.append("blocked: " + _release_block_reason(events))
 
 
 def _release_status_lines(events: list, primary) -> list[str]:
@@ -1450,6 +1539,7 @@ def _release_status_lines(events: list, primary) -> list[str]:
     ):
         lines.append("blocked: gate failed or preview stale")
         lines.append("rejected: gate failed or preview stale")
+    _release_chain_fragments(events, lines)
     # (G) publish state: a publish.blocked event (e.g. agent_forbidden guard)
     # surfaces in status with its block reason (FR-0287, must-not-drop face).
     pub_blocked = [e for e in events if e.type == "publish.blocked"]

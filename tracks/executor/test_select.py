@@ -745,6 +745,22 @@ def resolve_selected_command(
     return tuple(argv)
 
 
+def _is_local_env_interpreter(argv0: str) -> bool:
+    """Whether *argv0* names a repo-local environment interpreter relatively.
+
+    Matches ``<dot-env-dir>/bin/python[3][.N]`` (a dot-prefixed environment
+    directory) structurally — NFR-0147: no host-specific directory spelling.
+    """
+    segs = argv0.split("/")
+    return (
+        len(segs) == 3
+        and segs[0].startswith(".")
+        and "env" in segs[0].lower()
+        and segs[1] == "bin"
+        and segs[2].split(".", 1)[0] in ("python", "python3")
+    )
+
+
 def _resolve_argv0(argv0: str, cwd: Path) -> str:
     if "/" not in argv0:
         return argv0
@@ -753,7 +769,7 @@ def _resolve_argv0(argv0: str, cwd: Path) -> str:
     if resolved.exists():
         return str(resolved.absolute())
     if (
-        argv0 in (".venv/bin/python", ".venv/bin/python3")
+        _is_local_env_interpreter(argv0)
         and sys.prefix != sys.base_prefix
         and os.access(sys.executable, os.X_OK)
     ):

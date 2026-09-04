@@ -44,7 +44,7 @@ WRITE_MANIFEST_CONTRACT: dict = {
     "mechanical_checks_before_return": [
         "manifest 的 include 与 git status/实际产物逐一对照（多报漏报即失败）",
         "至少一个测试模块（test_*.py）或可收集支持资产（*.patch/*.json）——否则判 collection 失败",
-        "对全部产出文件运行 .venv/bin/ruff check 与 assignment.commands.guard",
+        "对全部产出文件运行宿主环境的 ruff check 与 assignment.commands.guard",
         "宿主 repo 的 pre-commit 钩子（若安装）会在提交时重跑 lint——返回前不绿即有作废风险",
     ],
 }

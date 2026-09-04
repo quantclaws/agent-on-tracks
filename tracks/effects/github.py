@@ -257,13 +257,20 @@ class GithubBackend:
 
 
 def select_issue_backend(repo: Path, version: str):
-    """Boundary selection (D-05): fake channel / missing token -> stand-in."""
+    """Boundary selection (D-05): explicit fake channel -> stand-in.
+
+    A live agent channel without GITHUB_TOKEN fails closed with the
+    classified ``missing_token`` error (AC-FR0270-03, readback precedent) —
+    the stale silent Fake fallback on a missing token is removed: a fake
+    stand-in may only be selected deliberately, never by missing secrets.
+    """
     if (
         os.environ.get("TRAC_FAKE_SIMULATE")
         or os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
-        or not os.environ.get("GITHUB_TOKEN")
     ):
         return FakeIssueBackend(repo, version)
+    if not os.environ.get("GITHUB_TOKEN"):
+        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
     return GithubBackend(repo, version)
 
 
@@ -378,3 +385,112 @@ def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks:
     out["reason"] = "bound"
     out["api_verified"] = True
     return out
+
+
+# -- IF-VERIFY-004 issue creation verification & authoritative map (FR-0270) ---
+#
+# Create-then-verify issue flow plus the authoritative issue map consumed by
+# the milestone closers (issue_number + api_verified vocabulary). FAKE
+# artifacts are rejected in the real channel and can never claim
+# api_verified=true, so unverified mappings can never close work.
+
+
+def readback_issue(repo_id: str, issue_number: int) -> dict:
+    """GET /repos/{repo}/issues/{n} verified readback (AC-FR0270-01).
+
+    Honors ``TRAC_GITHUB_API_BASE`` (explicit stand-in channel) like
+    ``readback_ci_run``; missing credentials raise the classified
+    ``missing_token`` error — never a silent pass. HTTP failures are
+    classified (auth | rate_limit | not_found | network) and fail closed.
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+    url = f"{_api_base()}/repos/{repo_id}/issues/{issue_number}"
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    try:
+        data = _get_any(req)
+    except urllib.error.HTTPError as e:
+        cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
+        raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise GithubIssuesError("network", str(e.reason)) from e
+    return {
+        "issue_number": data.get("number", issue_number),
+        "title": data.get("title", ""),
+        "state": data.get("state", ""),
+        "api_verified": True,
+    }
+
+
+def create_issue_verified(backend, title: str, body: str, labels: list) -> dict:
+    """Create an issue and verify it by an immediate API readback.
+
+    Live channel: create -> GET the created issue -> mapping with
+    ``api_verified=true`` (AC-FR0270-01). Fake stand-in channel: the
+    deterministic stand-in can never verify (``api_verified=false``,
+    AC-FR0270-02) — fake mappings must stay unclosable.
+    """
+    issue_id = backend.create_issue(title, body, labels)
+    if isinstance(backend, FakeIssueBackend):
+        return {"issue_number": issue_id, "api_verified": False}
+    readback = readback_issue(backend.gh_repo, int(str(issue_id)))
+    return {
+        "issue_number": issue_id,
+        "title": readback.get("title", ""),
+        "state": readback.get("state", ""),
+        "api_verified": bool(readback.get("api_verified")),
+    }
+
+
+def persist_issue_mapping(repo: Path, item_id: str, mapping: dict) -> dict:
+    """Merge ``{item_id: mapping}`` into the authoritative issue map at
+    ``.tracks/runtime/issue-map.json`` (AC-FR0270-01).
+
+    Entries use the closer vocabulary (``issue_number`` + ``api_verified``,
+    see milestone.close_issues_with_comment). A crash-retry re-persist dedups
+    by item id — one entry per item, the last verified write wins.
+    """
+    path = repo / ".tracks" / "runtime" / "issue-map.json"
+    data: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            data = {}
+    data[str(item_id)] = dict(mapping)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return data
+
+
+def reject_fake_artifact(issue_id) -> dict:
+    """Real-channel fake-artifact rejection (AC-FR0270-02).
+
+    A FAKE-prefixed id can never be API-verified and is rejected with the
+    closed ``fake_rejected`` verdict so callers surface it as such instead of
+    letting an unverified stand-in mapping enter the authoritative map.
+    """
+    sid = str(issue_id)
+    if sid.startswith(("FAKE-", "fake")):
+        return {
+            "issue_id": sid,
+            "status": "rejected",
+            "reason": "fake_rejected",
+            "api_verified": False,
+        }
+    return {
+        "issue_id": sid,
+        "status": "ok",
+        "reason": "not_fake",
+        "api_verified": False,
+    }

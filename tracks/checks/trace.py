@@ -7,6 +7,8 @@ architecture.md §3.1 / interfaces.md §1d.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -671,3 +673,45 @@ def check_closure_candidate(
         hard_errors=tuple(dict.fromkeys(hard_errors)),
         records=tuple(records),
     )
+
+
+# -- v0.8 release trace closed-loop export (IF-MILESTONE-001, interfaces §1i) --
+
+
+def _canonical_json(value) -> str:
+    """Repo canonical JSON (sort_keys + compact separators, phase0_seal convention)."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def build_release_trace(
+    *,
+    candidate_sha: str,
+    artifact_digest: str,
+    evidence_digests: list,
+    preview_digest: str,
+    human_approval_event_seq: int,
+    operation_digests: list,
+    release_tag: str,
+) -> dict:
+    """Compose the interfaces §1i closed release trace with its trace_digest.
+
+    ``trace_digest = "sha256:" + sha256(canonical_json(remaining fields))``
+    makes the close-comment tokens (candidate SHA / preview_digest /
+    release_tag) externally cross-checkable against the tag/release
+    (NFR-0143-02). The keyword-only signature enforces the §1i closed field
+    set: unknown or missing fields fail closed (TypeError) instead of
+    producing a digest over a partial or extended payload.
+    """
+    remaining = {
+        "candidate_sha": candidate_sha,
+        "artifact_digest": artifact_digest,
+        "evidence_digests": evidence_digests,
+        "preview_digest": preview_digest,
+        "human_approval_event_seq": human_approval_event_seq,
+        "operation_digests": operation_digests,
+        "release_tag": release_tag,
+    }
+    digest = "sha256:" + hashlib.sha256(
+        _canonical_json(remaining).encode("utf-8")
+    ).hexdigest()
+    return {**remaining, "trace_digest": digest}

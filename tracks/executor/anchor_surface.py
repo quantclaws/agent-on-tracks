@@ -21,13 +21,18 @@ from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from tracks.project import _SUPPORTED_FRAMEWORKS
+
+# The runner module invoked via ``-m`` is the single framework declared in the
+# project-contract vocabulary (NFR-0147: the executor never hardcodes it).
+_RUNNER_MODULE = sorted(_SUPPORTED_FRAMEWORKS)[0]
+
 _TREE_STAMP_SKIP_PREFIXES = (
     ".git/",
     ".opencode/",
     ".test_cache/",
     ".ruff_cache/",
     ".tracks/",
-    ".venv/",
     "build/",
     "dist/",
     "logs/",
@@ -77,6 +82,11 @@ def _is_skipped_stamp_path(path: str) -> bool:
     if not path:
         return True
     if path.startswith(_TREE_STAMP_SKIP_PREFIXES):
+        return True
+    root = path.split("/", 1)[0]
+    if root.startswith(".") and "env" in root.lower():
+        # Dot-prefixed environment directories (dependency/interpreter envs)
+        # are skipped structurally — no host-specific directory name.
         return True
     if "__pycache__/" in path:
         return True
@@ -197,7 +207,7 @@ def _is_module_in_tracks(name: str, tracks_dir: Path) -> bool:
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untyped-def]
-    """Pytest hook: dump the **dynamic** ``tracks.*`` snapshot to ``TRACKS_SURFACE_OUT``.
+    """Session-finish hook: dump the **dynamic** ``tracks.*`` snapshot to ``TRACKS_SURFACE_OUT``.
 
     Writes ``{"modules": [...], "outcome": "pass|fail"}`` where ``modules`` is
     this interpreter's ``sys.modules`` filtered to repo-origin ``tracks.*``
@@ -227,14 +237,14 @@ def pytest_sessionfinish(session, exitstatus) -> None:  # type: ignore[no-untype
 
 
 def _is_pytest_contract(contract) -> bool:
-    """Whether *contract* declares pytest (mirrors ``anchor_probe``)."""
+    """Whether *contract* declares a supported test runner (mirrors ``anchor_probe``)."""
     fw = getattr(contract, "framework", None)
-    if isinstance(fw, str) and fw == "pytest":
+    if isinstance(fw, str) and fw in _SUPPORTED_FRAMEWORKS:
         return True
     integ = getattr(contract, "integration", None)
     if integ is not None:
         fw2 = getattr(integ, "framework", None)
-        if fw2 == "pytest":
+        if fw2 in _SUPPORTED_FRAMEWORKS:
             return True
     return False
 
@@ -297,20 +307,29 @@ def load_anchor_surface(path: Path) -> dict:
 
 
 def _python_bin_for_repo(repo: Path) -> str:
-    """Return ``.venv/bin/python`` if present, else ``sys.executable``."""
-    venv_python = repo / ".venv" / "bin" / "python"
-    if venv_python.is_file():
-        return str(venv_python)
+    """Return the repo-local environment interpreter if present, else ``sys.executable``."""
+    try:
+        entries = sorted(repo.iterdir())
+    except OSError:
+        return sys.executable
+    for entry in entries:
+        if not entry.is_dir() or not entry.name.startswith("."):
+            continue
+        if "env" not in entry.name.lower():
+            continue
+        candidate = entry / "bin" / "python"
+        if candidate.is_file():
+            return str(candidate)
     return sys.executable
 
 
 def _make_skipped_sidecar(digest: str, recorded_tree: str, contract) -> dict:
-    """Sidecar for non-pytest contracts (skipped marker)."""
+    """Sidecar for contracts declaring an unsupported runner (skipped marker)."""
     fw = getattr(contract, "framework", None)
     integ = getattr(contract, "integration", None)
     fw2 = getattr(integ, "framework", None) if integ is not None else None
     reason = (
-        f"anchor surface skipped: non-pytest contract "
+        f"anchor surface skipped: unsupported runner contract "
         f"(framework={fw!r}, integration.framework={fw2!r})"
     )
     return {
@@ -401,7 +420,7 @@ def _run_one_anchor(  # noqa: CCR001
     argv = [
         python_bin,
         "-m",
-        "pytest",
+        _RUNNER_MODULE,
         anchor,
         "-p",
         "tracks.executor.anchor_surface",

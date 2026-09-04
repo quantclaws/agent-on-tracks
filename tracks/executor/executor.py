@@ -10,6 +10,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import posixpath
 import shlex
 import shutil
 import subprocess
@@ -17,9 +18,9 @@ import sys
 import tempfile
 import time
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
@@ -27,7 +28,19 @@ from tracks.capabilities import supports_m_impl
 from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
 from tracks.effects.backend import valid_test_tasks
-from tracks.effects.github import GithubIssuesError, issue_items, select_issue_backend
+from tracks.effects.github import (
+    FakeIssueBackend,
+    GithubIssuesError,
+    create_issue_verified,
+    issue_items,
+    judge_ci_binding,
+    persist_issue_mapping,
+    readback_ci_run,
+    reject_fake_artifact,
+    select_issue_backend,
+)
+from tracks.executor import m_verify
+from tracks.executor import repair as _repair
 from tracks.executor.breaker import RunBreaker
 from tracks.executor.code_stamp import (
     DRIFT_MESSAGE,
@@ -51,7 +64,9 @@ from tracks.executor.doc_comment import (
     scan_adjudication_markers,
 )
 from tracks.executor.escape import quarantine_late_outcome
-from tracks.executor.failure_review import (  # noqa: F401  (T-001 E wiring seam)
+from tracks.executor.failure_review import (
+    acknowledge_failure,
+    inject_into_assignment,
     record_failure,
     review_failure_chain,
     select_failure,
@@ -60,13 +75,20 @@ from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
     _LEGIT_RED,
-    _commit_if_staged,
     _dispatch_payload,
     _hook_output,
     _short_detail,
     classify_red_detail,
     git,
     parse_collected_nodes,
+)
+from tracks.executor.host_contract import (
+    CANONICAL_CONTRACT_RELPATH,
+    DEFAULT_INSTALL_INTERPRETER,
+    declared_install_interpreter,
+    execute_gate,
+    load_host_contract,
+    validate_host_contract,
 )
 from tracks.executor.hotfix import (
     complete_hotfix_entry,
@@ -75,9 +97,22 @@ from tracks.executor.hotfix import (
     validate_anchor_refs,
 )
 from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+from tracks.executor.milestone import (
+    build_release_trace,
+    clean_temp_refs,
+    close_issues_with_comment,
+    close_project_milestone,
+    compute_trace_digest,
+    seal_evidence_readonly,
+)
+from tracks.executor.release_gate import generate_preview
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
+)
+from tracks.executor.security import (
+    aggregate_security_status,
+    run_security_scans,
 )
 from tracks.executor.stall import (
     STALL_COMMAND_LIMIT,
@@ -123,7 +158,9 @@ from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 # the failure-review chain are imported here so the dispatch loop consumes
 # them; their behavior bodies land with IF-ENVELOPE-001/002 and the
 # failure-chain anchors (T-007/T-035).
-from tracks.kernel.envelope import (  # noqa: F401  (T-001 E wiring seam)
+from tracks.kernel.envelope import (
+    ENVELOPE_VERSION,
+    EnvelopeFormatError,
     check_envelope_parity,
     parse_agent_output,
 )
@@ -157,11 +194,6 @@ _SCAFFOLD_RESERVED_ROOTS = frozenset({".git", ".opencode", ".tracks"})
 _CANONICAL_CONTRACT_PATH = (".tracks", "projects", "project.toml")
 _CANONICAL_REACH_ENTRIES_PATH = (".tracks", "reach-entries.txt")
 
-# Relative project-venv interpreter paths a contract may declare as argv[0].
-# Used by _resolve_contract_argv0 to decide whether to substitute the Runtime's
-# own interpreter when the project worktree lacks a .venv (live replay fix).
-_VENV_PYTHON_RELS = frozenset({".venv/bin/python", ".venv/bin/python3"})
-
 # D-41 (v6 review pin): test exit code that means an EMPTY layer at collect
 # time is ONLY 5 ("no tests collected"). rc=4 is a usage/path error -- a
 # broken declaration that must fail closed naming the layer, never silently
@@ -175,14 +207,17 @@ _R2_BASIS = "delta-declaration"
 
 # Paths excluded from the dirty-aware tree stamp: runtime state and build
 # artifacts are not source/test/config content and must never destabilize a
-# selection identity across WAL/replay of the same command.
+# selection identity across WAL/replay of the same command. The declared env
+# directory component is derived from the contract boundary's default
+# interpreter spelling (IF-HOSTCONTRACT-001) — never spelled here.
+_ENV_DIR_PREFIX = posixpath.normpath(DEFAULT_INSTALL_INTERPRETER).split(posixpath.sep)[0] + "/"
 _TREE_STAMP_SKIP_PREFIXES = (
     ".git/",
     ".opencode/",
     ".test_cache/",
     ".ruff_cache/",
     ".tracks/",
-    ".venv/",
+    _ENV_DIR_PREFIX,
     "build/",
     "dist/",
     "logs/",
@@ -325,22 +360,52 @@ def _phase0_frozen_test_digests(repo: Path, frozen_paths: list[str]) -> dict[str
     return digests
 
 
+def _scoped_commit_if_staged(
+    repo: Path, message: str, paths: list[Path | str] | None = None
+) -> subprocess.CompletedProcess | None:
+    """Attempt to commit staged changes (check=False), scoped to ``paths``
+    when given: the runtime commits only files it deliberately staged and
+    never sweeps unrelated operator-staged content into its commits
+    (AC-FR0236-01 attribution; same path-scoped pattern as the doc-gap
+    revision commit). Returns None if nothing was staged for the scoped
+    paths, or the CompletedProcess so the caller can inspect
+    ``.returncode`` for pre-commit hook rejection without crashing.
+    Module-local to executor.py (manifest scope): callers outside this
+    module lazy-import it to avoid the ResultCheckpoint import cycle."""
+    cached = ["diff", "--cached", "--quiet"]
+    if paths:
+        cached += ["--", *[str(p) for p in paths]]
+    if git(repo, *cached, check=False).returncode == 0:
+        return None
+    cmd = ["commit", "-m", message]
+    if paths:
+        cmd += ["--only", "--", *[str(p) for p in paths]]
+    return git(repo, *cmd, check=False)
+
+
 def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:
     """Resolve a contract command's argv[0] against the project cwd.
 
-    Live replay fix: an external worktree's project.toml contract may declare
-    a ``.venv/bin/python -m <host runner> ...`` command while the worktree
-    itself has no ``.venv`` (it was created from a host that does). When
-    argv[0] is the relative project venv interpreter and it does not exist
-    under cwd,
-    substitute the Runtime's own ``sys.executable`` — but ONLY when that
-    executable is itself running inside a venv (so we never fall back to a
-    system Python). If the project carries its own ``.venv/bin/python`` it is
-    used as-is (project interpreter is authoritative); non-Python commands,
-    absolute paths, and other missing executables keep their original
-    subprocess error / contract-failure semantics.
+    Live replay fix, contract-driven (IF-HOSTCONTRACT-001, NFR-0147): the
+    recognizer for a substitutable env interpreter comes from the host
+    contract's declared install interpreter (first token of ``install``;
+    the boundary default when no contract loads) — this module never
+    spells an interpreter itself. When argv[0] IS the declared env
+    interpreter and no file of that relative path exists under cwd (a
+    worktree created from a host that carries its environment, replayed
+    where it does not), substitute the Runtime's own ``sys.executable`` —
+    but ONLY when that executable is itself running inside an isolated
+    environment (so we never fall back to a system Python). A worktree
+    interpreter that exists is authoritative and is used verbatim;
+    non-matching commands, absolute paths, and other missing executables
+    keep their original subprocess error / contract-failure semantics.
     """
-    if not argv or argv[0] not in _VENV_PYTHON_RELS:
+    if not argv:
+        return argv
+    first = PurePosixPath(argv[0])
+    if first.is_absolute() or posixpath.normpath(argv[0]) != argv[0]:
+        return argv
+    if argv[0] != posixpath.normpath(declared_install_interpreter(cwd)):
         return argv
     if (cwd / argv[0]).exists():
         return argv
@@ -901,6 +966,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 continue
             cmd = decide(state)
             if cmd is None:
+                self._verify_chain_park_evidence(state)
                 return state
             stop, dispatches, bound_substate = self._gate_loop_dispatch(
                 cmd, dispatches, bound_substate
@@ -965,6 +1031,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return self._is_phase_boundary(recovered), recovered_kind, pending
         return False, recovered_kind, pending
 
+    def _contract_guard_commands(self) -> list[str]:
+        """(attempt-4 language neutrality) IF-HOSTCONTRACT-001: guard
+        commands are constructed from the host contract, never hardcoded.
+
+        A quality gate with an inline command renders verbatim from the
+        contract; a source=guard_registry quality gate (and a missing or
+        malformed [host-contract] table) resolves through the single-truth
+        registry loader (lint_check_command, None -> skip): gates skip,
+        never guess a host toolchain invocation.
+        """
+        commands: list[str] = []
+        try:
+            contract = load_host_contract(self.repo.joinpath(*_CANONICAL_CONTRACT_PATH))
+        except (OSError, ValueError):
+            contract = None
+        for gate in contract.local_gates if contract else ():
+            if gate.kind == "quality" and gate.command:
+                commands.append(gate.command)
+        lint_cmd = lint_check_command(self.repo)
+        if lint_cmd and lint_cmd not in commands:
+            commands.append(lint_cmd)
+        return commands
+
     def _enrich_shield_write_params(self, params: dict, state: State) -> None:
         """D-28: enrich Shield WRITE assignments with structured test_tasks
         parsed from test-plan §8 and the pre-dirty content snapshot.
@@ -990,11 +1079,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 acc_path, vdir / "test-plan.md"
             )
         if not assignment.get("commands"):
-            guard = [".venv/bin/ruff check"]
-            lint_cmd = lint_check_command(self.repo)
-            if lint_cmd and lint_cmd not in guard:
-                guard.append(lint_cmd)
-            assignment["commands"] = {"guard": guard}
+            assignment["commands"] = {"guard": self._contract_guard_commands()}
         if state.stage == "M-IMPL":
             # B64 (#82): deterministic ownership wall — Shield's audit domain
             # excludes every dispatched task's red_test_paths (Archer manifest
@@ -1081,6 +1166,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         elif cmd.kind == "publish_result":
             ev = cmd.params.get("domain_event", {}).get("type", "?")
             print(f"  [{state.stage}] publish {ev}", file=sys.stderr, flush=True)
+        elif cmd.kind == "register_known_issue":
+            print(f"  [{state.stage}] register known issue", file=sys.stderr, flush=True)
+        elif cmd.kind == "assess_security":
+            print(f"  [{state.stage}] assess security", file=sys.stderr, flush=True)
+        elif cmd.kind == "generate_preview":
+            print(f"  [{state.stage}] generate preview", file=sys.stderr, flush=True)
+        elif cmd.kind == "execute_publish":
+            print(f"  [{state.stage}] execute publish", file=sys.stderr, flush=True)
+        elif cmd.kind == "close_milestone":
+            print(f"  [{state.stage}] close milestone", file=sys.stderr, flush=True)
 
     def _dispatch_gate(
         self, cmd, dispatches: int, bound_substate: str | None
@@ -2331,6 +2426,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         p = cmd.params
         self._dispatch_log_start(p, state)
         t0 = time.monotonic()
+        # T-001 face (E) / architecture §1.1 Envelope/failure chain: pre-
+        # dispatch parity gate (dispatch.rejected on version mismatch) and
+        # the failure-evidence injection seam (select -> review -> inject).
+        if not self._dispatch_parity_ok(cmd, task_id, assignment):
+            return
+        assignment = self._inject_failure_evidence(assignment, role, state, task_id, cmd)
         pre_dirty = self._resolve_pre_dirty(state, substate, p)
         # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
         # and dirty snapshot BEFORE act() so deltas can be classified after.
@@ -2363,6 +2464,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             return
         self._dispatch_log_end(p, result, time.monotonic() - t0)
+        # T-001 face (E): collection-time single parse path — a malformed
+        # envelope is a format_error, never a semantic attempt (no attempt
+        # consumed, no business-state mutation); the handler returns before
+        # any ordinary validation pipeline runs.
+        if self._format_error_shortcircuit(result, cmd, task_id):
+            return
         # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
         # Must run before any early-return handling so attribution is correct
         # and restoration is performed in the same command_id. A violation
@@ -2432,6 +2539,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 cmd, state, result, p, substate, role, doc, pre_dirty
             )
         self._emit("outcome.received", payload, command_id=cmd.command_id, task_id=task_id)
+        # T-001 face (E) / IF-FAILURE-001: emitted -> stored (append-only
+        # failure evidence at production time) and consumed -> acked (the
+        # outcome's evidence_ack closes the loop on injected evidence).
+        self._record_failure_stored(result, role, state, task_id, cmd)
+        self._consume_evidence_ack(result, role)
         if "result_checkpoint" in payload:
             return  # pipeline drives the domain event
         self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
@@ -2609,6 +2721,149 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return "repaired"
         return "ok"
 
+    def _dispatch_parity_ok(self, cmd, task_id, assignment) -> bool:
+        """(E) IF-ENVELOPE-002 pre-dispatch version-parity gate.
+
+        Collects the envelope contract versions referenced by the surfaces
+        this process controls (assignment materialization, selected backend,
+        the Runtime validator) and asks kernel.envelope.check_envelope_parity
+        to compare all six faces. Any mismatch emits dispatch.rejected
+        (reason=version_parity_mismatch) and blocks the Agent execution path.
+        While the envelope module is pending (NotImplementedError stub,
+        T-035) the check is deferred-tolerant: dispatch proceeds and the
+        behavior half is carried by the deferred gate.
+        """
+        referenced = {
+            "assignment": (assignment or {}).get("envelope_version"),
+            "backend": getattr(self.backend, "envelope_version", None),
+            "validator": ENVELOPE_VERSION,
+        }
+        try:
+            verdict = check_envelope_parity(referenced)
+        except NotImplementedError:
+            return True  # T-035 module pending; deferred-only-pass
+        if verdict.get("consistent", True):
+            self._emit(
+                "dispatch.parity",
+                {"task_id": task_id, "referenced": referenced},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return True
+        self._emit(
+            "dispatch.rejected",
+            {
+                "reason": "version_parity_mismatch",
+                "mismatches": list(verdict.get("mismatches", [])),
+                "task_id": task_id,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return False
+
+    def _inject_failure_evidence(self, assignment, role, state, task_id, cmd):
+        """(E) IF-FAILURE-001 select -> review -> inject seam.
+
+        Picks the shared-rule failure evidence for this role/round, fail-
+        closes on a review-inconsistent chain (review.failed), and injects
+        the failure id into the assignment's evidence segment before the
+        Agent runs. No stored evidence for this role -> assignment unchanged.
+        """
+        failure = select_failure(self.run_id, role, getattr(state, "review_round", 0))
+        if failure is None:
+            return assignment
+        chain = [
+            {"type": e.type, "payload": dict(e.payload or {}), "seq": e.seq}
+            for e in self.store.events(self.run_id)
+        ]
+        outcome, gaps = review_failure_chain(chain)
+        if outcome != "consistent":
+            self._emit(
+                "review.failed",
+                {"outcome": outcome, "gaps": gaps, "task_id": task_id},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return assignment
+        injected = inject_into_assignment(assignment, failure)
+        self._emit(
+            "failure.injected",
+            {
+                "failure_id": failure.get("failure_id", ""),
+                "role": role,
+                "task_id": task_id,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return injected
+
+    def _format_error_shortcircuit(self, result, cmd, task_id) -> bool:
+        """(E) IF-ENVELOPE-001/002 collection-time single parse path.
+
+        EnvelopeFormatError -> format_error event and True (handled: never a
+        semantic attempt — no attempt consumed, no business-state mutation,
+        the ordinary validation pipeline never runs). While the parser module
+        is pending (NotImplementedError, T-035) collection falls through to
+        the legacy result handling; a successful parse enriches the result
+        with the envelope payload and falls through as well.
+        """
+        raw = result.get("raw_output")
+        if not isinstance(raw, str) or not raw:
+            return False
+        try:
+            envelope = parse_agent_output(raw)
+        except EnvelopeFormatError as exc:
+            self._emit(
+                "format_error",
+                {"kind": exc.kind, "detail": exc.detail, "task_id": task_id},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return True
+        except NotImplementedError:
+            return False  # T-035 module pending; deferred-only-pass
+        result.setdefault("envelope", envelope)
+        return False
+
+    def _record_failure_stored(self, result, role, state, task_id, cmd) -> None:
+        """(E) IF-FAILURE-001: append-only storage at failure production.
+
+        Every non-done outcome is recorded into the shared failure-review
+        store (round/source rule input) and reflected as a failure.stored
+        event; rich evidence already awaiting consumption is never silently
+        overwritten by ordinary failures (the store keeps every record).
+        """
+        if result.get("status") in (None, "done"):
+            return
+        record = {
+            "task_id": task_id,
+            "failure_class": result.get("failure_class", ""),
+            "self_report": str(result.get("self_report", ""))[:2000],
+        }
+        stored = record_failure(self.run_id, state.review_round, role, record)
+        self._emit(
+            "failure.stored",
+            stored,
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _consume_evidence_ack(self, result, role) -> None:
+        """(E) IF-FAILURE-001: outcome evidence_ack consumption -> acked.
+
+        The outcome's evidence_ack names the injected failure ids the agent
+        actually consumed; each is acknowledged for the role so the shared
+        selection rule stops re-injecting it.
+        """
+        for fid in result.get("evidence_ack") or []:
+            acknowledge_failure(self.run_id, str(fid), role)
+            self._emit(
+                "failure.acked",
+                {"failure_id": str(fid), "role": role},
+            )
+
     def _act_in_worktree(
         self,
         cmd,
@@ -2762,8 +3017,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         replay 静默吞掉操作者已提交的工作。
 
         B60 (#76)：``ensure_runtime_assets`` 在 agent 运行**前**把
-        ``_RUNTIME_ASSETS`` 链接进 worktree（.venv 是符号链接），而
-        canonical ``.gitignore`` 的 ``.venv/`` 尾斜杠模式只匹配目录、
+        ``_RUNTIME_ASSETS`` 链接进 worktree（声明的环境目录是符号链接），而
+        canonical ``.gitignore`` 的该目录尾斜杠模式只匹配目录、
         不匹配符号链接——``git add -A`` 会把它 stage 进 replay diff，
         ``git apply`` 拒绝后 mirror 兜底 copy2 目录直接 Errno 21。故
         add 后对每个 runtime asset 显式 ``git reset -q``（只动 index，
@@ -3094,7 +3349,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             f"Tracks-Attempt: {attempt_val}\n"
             f"command_id: {cmd.command_id}"
         )
-        proc = _commit_if_staged(self.repo, message)
+        proc = _scoped_commit_if_staged(self.repo, message, paths=["tests/"])
         if proc is not None and proc.returncode != 0:
             self._emit(
                 "verdict.failed",
@@ -3301,6 +3556,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (PRISM-V06-R1-T003-01), so a pass checkpoint has no explicit
         anchor_verdict key and defaults to upheld here. Non-M-DESIGN publish
         keeps the mixin semantics via delegation."""
+        if state.stage == "M-VERIFY":
+            self._publish_verify_final_verdict(
+                verdict, commit_sha, created_commit, result_id, cmd, task_id
+            )
+            return
         if state.stage != "M-DESIGN":
             ResultCheckpointMixin._publish_prism_verdict(
                 self, verdict, commit_sha, created_commit, result_id, state, cmd, task_id
@@ -3326,6 +3586,47 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 round_payload,
                 command_id=cmd.command_id,
                 task_id=task_id,
+            )
+
+    def _publish_verify_final_verdict(
+        self, verdict, commit_sha, created_commit, result_id, cmd, task_id
+    ):
+        """IF-VERIFY-005 / AC-FR0270: the same-candidate final-review verdict
+        is scoped verify_final and bound to the frozen candidate. A pass
+        exits M-VERIFY into M-SECURITY (all gates green, §1.1); any other
+        verdict stops the chain blocked with the findings on the stream (no
+        silent retry, no guessed next)."""
+        frozen = self._latest_event("candidate.frozen")
+        candidate_sha = (
+            (frozen.payload or {}).get("candidate_sha", "") if frozen else ""
+        )
+        domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
+        payload = {
+            "verdict": verdict,
+            "diff_ref": commit_sha if created_commit and commit_sha else None,
+            "result_id": result_id,
+            "scope": "verify_final",
+            "candidate_sha": candidate_sha,
+        }
+        for key in _DESIGN_PRISM_THREAD_KEYS:
+            val = domain_payload.get(key)
+            if val:
+                payload[key] = val
+        self._emit(
+            "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
+        )
+        if verdict == "pass":
+            self._advance_verify_chain(cmd, candidate_sha)
+        else:
+            self._emit(
+                "attention.required",
+                {
+                    "reason": "verify_final_rejected",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "next": "address findings; trac run re-dispatches the review",
+                },
+                command_id=cmd.command_id,
             )
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
@@ -3381,7 +3682,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # manifest and returned by _project_contract_paths(); stage once.
             stage_paths.extend(dict.fromkeys([*scaffold_paths, *self._project_contract_paths()]))
         git(self.repo, "add", *(str(path) for path in stage_paths))
-        proc = _commit_if_staged(self.repo, f"{message}\n\n{marker}")
+        proc = _scoped_commit_if_staged(
+            self.repo, f"{message}\n\n{marker}", paths=stage_paths
+        )
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
@@ -3478,8 +3781,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             path = self._doc_path(doc)
             set_frontmatter_field(path, "sha", doc_body_sha(path))
             git(self.repo, "add", str(path))
-            proc = _commit_if_staged(
-                self.repo, f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}"
+            proc = _scoped_commit_if_staged(
+                self.repo,
+                f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}",
+                paths=[path],
             )
             if proc is not None and proc.returncode != 0:
                 self._emit_commit_failure(proc, state, cmd.command_id)
@@ -3497,6 +3802,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # successor) -> stop at the next-stage boundary. M-DESIGN boundary
             # pre-v0.3; M-TEST boundary for pre-v0.5 runs; M-IMPL boundary
             # since. v0.6 hotfix boundary restores the suspended run's branch.
+            # v0.8 (IF-VERIFY-001): a RELEASE-capable run re-routes at the
+            # boundary through the version capability seam (after_m_impl)
+            # instead of completing -- the seam's None keeps the boundary.
+            route = self._release_boundary_route(state)
+            if route is not None:
+                entered = (route.params or {}).get("stage") or "M-VERIFY"
+                self._emit(
+                    "stage.entered",
+                    {"stage": entered},
+                    command_id=cmd.command_id,
+                )
+                self.issue(route)
+                return
             self._emit(
                 "run.completed",
                 self._hotfix_boundary_completion(state),
@@ -3514,6 +3832,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         malformed versions complete at the M-TEST boundary.
         """
         return stage == "M-TEST" and nxt == "M-IMPL" and not supports_m_impl(self.version)
+
+    def _release_boundary_route(self, state):
+        """M-IMPL boundary guard (architecture §1.1 / IF-VERIFY-001): a
+        RELEASE-capable run re-routes at the boundary through the version
+        capability seam — ``after_m_impl`` returns the M-VERIFY chain-head
+        command (Command(freeze_candidate)); below-threshold versions select
+        no extension and get ``None`` back, keeping their boundary
+        completion. The gate runs only here at execution time, keeping
+        ``_NEXT_STAGE`` declarative (single source of truth)."""
+        callback = _version_extensions.resolve_capability(
+            self.version or "", "after_m_impl"
+        )
+        return callback(state) if callback is not None else None
 
     def _do_record_backlog(self, cmd, state, task_id, reconcile):
         if reconcile and state.backlog_recorded:
@@ -4115,16 +4446,993 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _do_assess_security(self, cmd, state, task_id, reconcile):
         """(J) Consume Command(assess_security): security.assessed carries
         the aggregated status and repair_route (failures route via the
-        repair classification)."""
+        repair classification); the event binds the frozen candidate
+        (NFR-0143) when the chain supplies it."""
         params = dict(cmd.params or {})
+        payload = {
+            "status": params.get("status", "pass"),
+            "repair_route": params.get("repair_route", "none"),
+            "findings": list(params.get("findings", [])),
+        }
+        if params.get("candidate_sha"):
+            payload["candidate_sha"] = params["candidate_sha"]
+        self._emit(
+            "security.assessed",
+            payload,
+            command_id=cmd.command_id,
+        )
+
+    # -- v0.8 M-VERIFY chain (IF-VERIFY-001/003/004, architecture §1.1) -------
+
+    def _verify_chain_park_evidence(self, state) -> None:
+        """M-IMPL escalation park evidence chain (FR-0287 wiring, §1.0.14):
+        the parked run itself produces the machine-checkable M-VERIFY
+        evidence (candidate freeze -> contract gates -> CI readback ->
+        security -> release preview) so the Human escalation decision sees
+        facts, not claims. Runs synchronously at the decide()->None park
+        return; events only -- no stage change, no command queueing (the
+        parked State the walk asserts stays untouched). Every step is
+        idempotent per candidate_sha and any fail-closed block (dirty tree,
+        contract refusal, gate failure, CI/security stop) halts the chain
+        at that step (§1.0.4)."""
+        if (
+            state.stage,
+            state.substate,
+            getattr(state, "awaiting", None),
+        ) != ("M-IMPL", "DIAGNOSE", "escalation"):
+            return
+        park_cmd = Command(kind="park_evidence_chain")
+        candidate_sha = self._park_freeze_candidate(park_cmd)
+        if candidate_sha is None:
+            return
+        contract, contract_digest = self._run_contract_gates(
+            park_cmd, candidate_sha, state, resume=True
+        )
+        if contract is None:
+            # Classify the stop by its actual stream evidence: a contract
+            # refusal (host_contract.invalid) is the contract class, a
+            # failing declared gate (local_gate.failed) the gate class —
+            # the rewalk policy keys on this distinction.
+            self._park_repair_route(
+                park_cmd, candidate_sha, self._verify_stop_class(candidate_sha),
+                self._park_stop_reason("local_gate.failed"),
+            )
+            return
+        if not self._park_observe_ci(park_cmd, candidate_sha, contract):
+            return
+        if not self._park_assess_security(
+            park_cmd, candidate_sha, contract, contract_digest
+        ):
+            security_status = self._park_stop_payload("security.assessed").get(
+                "status"
+            )
+            if security_status == "failed":
+                # §1.0.14 B: a failing scan is a cve-class finding -> Archer
+                # advisory repair route (in-place, never a rollback).
+                self._park_repair_route(
+                    park_cmd, candidate_sha, "cve", self._park_stop_reason(
+                        "security.assessed"
+                    )
+                )
+            return
+        self._park_preview(park_cmd, candidate_sha, contract_digest)
+
+    def _try_freeze(self, cmd) -> m_verify.CandidateIdentity | None:
+        """freeze_candidate with the dirty-tree refusal mapped to
+        attention.required (interfaces §1d; §1.0.14 A in-place retry)."""
+        try:
+            return m_verify.freeze_candidate(self.repo)
+        except m_verify.FreezeBlocked as err:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "freeze",
+                    "reason": "dirty_tree",
+                    "stage": "M-VERIFY",
+                    "detail": str(err),
+                    "next": "clean tracked changes; trac run retries in place",
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+
+    def _park_freeze_candidate(self, cmd) -> str | None:
+        """Park chain step 1 (IF-VERIFY-001): bind the full HEAD SHA as the
+        candidate. Same-HEAD re-entry is idempotent (no re-freeze,
+        SM-01.17); a drifted HEAD never re-freezes on its own -- it is
+        marked candidate.stale and the chain halts fail-closed (§1d
+        idempotent no-refreeze). Only an OPEN repair round (§1.0.14 B,
+        SM-01.20: a fix commit is a new candidate) legitimizes the
+        re-freeze: the old frozen candidate is marked stale, its
+        downstream evidence goes stale with reason=fix_new_candidate
+        (§1.0.14 B), and the new HEAD freezes as a fresh candidate so the
+        chain re-walks it -- never a reuse of stale evidence."""
+        frozen = self._latest_event("candidate.frozen")
+        frozen_sha = ""
+        if frozen is not None:
+            frozen_sha = (frozen.payload or {}).get("candidate_sha", "")
+        identity = self._try_freeze(cmd)
+        if identity is None:
+            return None
+        if frozen is not None and identity.candidate_sha == frozen_sha:
+            return frozen_sha
+        if frozen is not None:
+            if not self._repair_rewalk_allowed(frozen_sha):
+                # SM-01.17: no repair context -- mark the drift, never
+                # re-freeze; the walk's repair routing owns what happens
+                # next.
+                self._emit(
+                    "candidate.stale",
+                    {
+                        "candidate_sha": frozen_sha,
+                        "reason": "head_moved",
+                        "detail": (
+                            f"HEAD {identity.candidate_sha[:12]} moved past "
+                            f"frozen candidate {frozen_sha[:12]}"
+                        ),
+                    },
+                    command_id=cmd.command_id,
+                )
+                return None
+            self._emit(
+                "candidate.stale",
+                {
+                    "candidate_sha": frozen_sha,
+                    "reason": "head_moved",
+                    "detail": (
+                        f"HEAD {identity.candidate_sha[:12]} moved past "
+                        f"frozen candidate {frozen_sha[:12]}"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
+            # §1.0.14 B / SM-01.20: a repair commit is a new candidate --
+            # the old candidate's downstream evidence goes stale with
+            # reason=fix_new_candidate (idempotent per old candidate).
+            already_staled = any(
+                e.type == "evidence.staled"
+                and (e.payload or {}).get("reason") == "fix_new_candidate"
+                and (e.payload or {}).get("old_candidate") == frozen_sha
+                for e in self.store.events(self.run_id)
+            )
+            if not already_staled:
+                staled = _repair.mark_fix_new_candidate(self.run_id, frozen_sha)
+                self._emit(
+                    staled["event"],
+                    {k: v for k, v in staled.items() if k != "event"},
+                    command_id=cmd.command_id,
+                )
+        self._emit(
+            "candidate.frozen",
+            {
+                "candidate_sha": identity.candidate_sha,
+                "clean_tree": identity.clean_tree,
+                "branch": identity.branch,
+                "frozen_at_seq": self._next_event_seq(),
+            },
+            command_id=cmd.command_id,
+        )
+        return identity.candidate_sha
+
+    def _park_observe_ci(self, cmd, candidate_sha: str, contract) -> bool:
+        """Park chain step 3 (IF-VERIFY-004, AC-FR0270-01..03): API readback
+        of the required-CI run bound to the frozen candidate; a resumed run
+        never repeats the API call (FR-0270). Returns False when the chain
+        is blocked with the attention/binding verdict already on the
+        stream (missing config/credentials, network error, binding
+        mismatch -- never a silent pass)."""
+        seen = [
+            e
+            for e in self.store.events(self.run_id)
+            if e.type == "ci.run_observed"
+            and (e.payload or {}).get("candidate_sha") == candidate_sha
+        ]
+        if seen:
+            return (seen[-1].payload or {}).get("api_verified") is True
+        run_payload = self._readback_ci_binding(
+            cmd, candidate_sha, contract.ci or {}
+        )
+        if run_payload is None:
+            return False
+        self._emit("ci.run_observed", run_payload, command_id=cmd.command_id)
+        return True
+
+    def _park_assess_security(
+        self, cmd, candidate_sha: str, contract, contract_digest: str
+    ) -> bool:
+        """Park chain step 4 (IF-SECURITY-001 face): run the contract-
+        declared scans and aggregate fail-closed -- no declared scans or
+        any malformed result aggregates to unknown, never a pass (§1.0.4).
+        Emits security.assessed bound to the candidate; returns True only
+        for a passed assessment so the preview can never imply a green
+        policy that was never verified."""
+        seen = [
+            e
+            for e in self.store.events(self.run_id)
+            if e.type == "security.assessed"
+            and (e.payload or {}).get("candidate_sha") == candidate_sha
+        ]
+        if seen:
+            return (seen[-1].payload or {}).get("status") == "passed"
+        results = run_security_scans(contract, self.repo, candidate_sha)
+        status = aggregate_security_status(results)
         self._emit(
             "security.assessed",
             {
-                "status": params.get("status", "pass"),
-                "repair_route": params.get("repair_route", "none"),
-                "findings": list(params.get("findings", [])),
+                "status": status,
+                "candidate_sha": candidate_sha,
+                "policy_digest": contract_digest,
+                "findings": [
+                    {
+                        "scan_id": r.gate_id,
+                        "status": r.status,
+                        "exit_code": r.exit_code,
+                    }
+                    for r in results
+                ],
+                "repair_route": "none",
             },
             command_id=cmd.command_id,
+        )
+        return status == "passed"
+
+    def _park_stop_payload(self, event_type: str) -> dict:
+        """Latest park-chain stop event payload (empty when absent)."""
+        event = self._latest_event(event_type)
+        if event is None or not isinstance(event.payload, dict):
+            return {}
+        return event.payload
+
+    def _park_stop_reason(self, event_type: str) -> str:
+        """Reason token of the latest stop event (fail-closed detail)."""
+        return str(self._park_stop_payload(event_type).get("reason", ""))
+
+    def _park_repair_budget_used(self) -> int:
+        """Repair rounds already opened in this run (FR-0286 §4: the budget
+        is finite, default 3 -- ``repair=in_place round=<n>/3``)."""
+        return sum(
+            1
+            for e in self.store.events(self.run_id)
+            if e.type == "repair.round_started"
+        )
+
+    def _park_candidate_seen(self, event_types: tuple, candidate_sha: str) -> bool:
+        """True when any of the event types is already bound to the
+        candidate -- the per-candidate idempotency guard of the repair
+        route (a re-entered park never re-opens a round or re-registers)."""
+        for event in self.store.events(self.run_id):
+            if event.type in event_types and (
+                event.payload or {}
+            ).get("candidate_sha") == candidate_sha:
+                return True
+        return False
+
+    def _park_prism_attribution(self) -> dict:
+        """Prism attribution confirmation (IF-KNOWNISSUE-001): a registered
+        failed verdict is the park chain's only Prism signal -- without one
+        the empty attribution keeps judge_irreparable False (no confirmed
+        product defect is ever registered on an unconfirmed attribution)."""
+        for event in self.store.events(self.run_id):
+            if event.type in ("verdict.failed", "prism.verdict"):
+                return {"attribution_unchanged": True}
+        return {}
+
+    def _park_repair_route(
+        self, cmd, candidate_sha: str, finding_kind: str, reason: str
+    ) -> None:
+        """§1.0.14 B/C-class in-place repair face of the park chain.
+
+        Classifies the chain stop through the FR-0286 closed mapping
+        (classify_defect), opens one repair round per candidate within the
+        budget (repair.round_started + repair_route), and on budget
+        exhaustion routes the irreparable verdict to Known Issue
+        registration. Never a stage rollback (AC-FR0286-01); never a
+        guessed route for an unknown finding (fail closed)."""
+        classification = _repair.classify_defect({"kind": finding_kind}, {})
+        if classification.get("failed_class"):
+            return
+        if self._park_candidate_seen(
+            ("repair.round_started", "known_issue.registered"), candidate_sha
+        ):
+            return
+        budget = 3
+        used = self._park_repair_budget_used()
+        if used >= budget:
+            self._park_known_issue(
+                cmd, candidate_sha, finding_kind, reason, used, budget
+            )
+            return
+        result = _repair.open_repair_round(self.run_id, classification, budget)
+        payload = {k: v for k, v in result.items() if k != "event"}
+        payload["candidate_sha"] = candidate_sha
+        payload["repair_route"] = {
+            "defect_class": classification["defect_class"],
+            "owner": classification["owner"],
+            "discipline": classification["discipline"],
+            "budget_remaining": budget - (used + 1),
+        }
+        if reason:
+            payload["reason"] = reason
+        self._emit(result["event"], payload, command_id=cmd.command_id)
+
+    def _park_known_issue(
+        self,
+        cmd,
+        candidate_sha: str,
+        finding_kind: str,
+        reason: str,
+        used: int,
+        budget: int,
+    ) -> None:
+        """C-class exit (§1.0.14): with the budget exhausted and Prism
+        confirming the attribution, a product-quality defect registers a
+        Known Issue (known-issue label, candidate+evidence linked); the
+        excluded classes (mechanism/security) are rejected with
+        not_product_defect -- zero known issue for security."""
+        if self._park_candidate_seen(
+            ("known_issue.registered", "known_issue.rejected"), candidate_sha
+        ):
+            return
+        attribution = self._park_prism_attribution()
+        if not _repair.judge_irreparable(used, budget, attribution):
+            return
+        verdict = self._park_stop_payload("verdict.failed")
+        item_or_ac = str(
+            verdict.get("classification") or verdict.get("item_or_ac") or reason
+        )
+        registration = _repair.register_known_issue(
+            "repo",
+            {"kind": finding_kind, "item_or_ac": item_or_ac},
+            candidate_sha,
+        )
+        payload = {
+            k: v for k, v in registration.items() if k != "event"
+        }
+        self._emit(registration["event"], payload, command_id=cmd.command_id)
+
+    def _park_preview(self, cmd, candidate_sha: str, contract_digest: str) -> None:
+        """Park chain step 5 (IF-RELEASE-002 face): assemble the content-
+        addressed preview from the verified evidence digests; reached only
+        after gates + CI + security are green."""
+        seen = [
+            e
+            for e in self.store.events(self.run_id)
+            if e.type == "release.previewed"
+            and (e.payload or {}).get("candidate_sha") == candidate_sha
+        ]
+        if seen:
+            return
+        preview = generate_preview(
+            candidate_sha,
+            {
+                "artifact_digest": "",
+                "evidence_digests": self._verify_evidence_digests(),
+                "operation_plan_digest": "",
+                "contract_policy_digest": contract_digest,
+            },
+            risks=[],
+            plan={},
+        )
+        known_issues = _repair.list_known_issues_for_preview(self.run_id)
+        if known_issues:
+            # AC-FR0286-05 informed consent: every unfixed known issue must
+            # appear in the preview -- an unlisted one blocks release.
+            preview = dict(preview)
+            preview["known_issues"] = known_issues
+        self._emit("release.previewed", preview, command_id=cmd.command_id)
+
+    def _release_version_facts(self, state) -> dict:
+        """Placeholder scope for contract gate commands ({version}/{major}/...
+
+        Derived from the run's declared version plus the frozen candidate; a
+        gate command referencing an undeclared placeholder fails closed
+        through the per-gate execution guard (unknown placeholder ->
+        local_gate.failed), never a guessed substitution (§1.0.4)."""
+        version = getattr(state, "version", None) or ""
+        digits = version.lstrip("v")
+        parts = digits.split(".")
+        major = parts[0] if parts and parts[0].isdigit() else "0"
+        minor = parts[1] if len(parts) > 1 and parts[1].isdigit() else "0"
+        return {"version": version, "major": major, "minor": minor}
+
+    def _fail_verify_block(self, cmd, candidate_sha, reason, detail):
+        """Fail-closed M-VERIFY contract refusal (AC-FR0269-02): the
+        contract-level refusal lands host_contract.invalid +
+        local_gate.failed and halts the chain blocked -- no M-SECURITY
+        entry, no guessed commands (§1.0.4)."""
+        self._emit(
+            "host_contract.invalid",
+            {"candidate_sha": candidate_sha, "reason": reason, "detail": detail},
+            command_id=cmd.command_id,
+        )
+        self._emit(
+            "local_gate.failed",
+            {"kind": "contract", "candidate_sha": candidate_sha, "reason": reason},
+            command_id=cmd.command_id,
+        )
+
+    def _do_freeze_candidate(self, cmd, state, task_id, reconcile):
+        """M-VERIFY chain head (IF-VERIFY-001, AC-FR0267-01/02): bind the
+        candidate identity on a clean tree and hand to the local-gate chain.
+        A dirty tree lands attention.required(reason=dirty_tree) with no
+        freeze; cleanup + ``trac run`` retries in place (§1.0.14 A,
+        candidate unchanged). Idempotent (SM-01.17, interfaces §1d): an
+        existing successful freeze is never re-frozen and a drifted HEAD
+        never mints a candidate without an OPEN repair round -- the drift
+        is marked candidate.stale and the chain stops fail-closed (the
+        gate lives in the shared freeze face so the plain entry and the
+        park evidence chain cannot disagree). Only §1.0.14 B / SM-01.20
+        (an open repair round: a fix commit is a new candidate that
+        re-walks the full M-VERIFY chain) legitimizes the re-freeze with
+        its evidence.staled(reason=fix_new_candidate) semantics."""
+        if reconcile and self._latest_event("candidate.frozen") is not None:
+            return
+        candidate_sha = self._park_freeze_candidate(cmd)
+        if candidate_sha is None:
+            return
+        # architecture §1.1 chain order: freeze -> judge_full_f_reuse
+        # (evidence.reused | full.executed) -> run_local_gates.
+        self.issue(
+            Command(
+                kind="judge_full_f_reuse",
+                params={"candidate_sha": candidate_sha},
+            )
+        )
+
+    def _do_judge_full_f_reuse(self, cmd, state, task_id, reconcile):
+        """M-VERIFY FULL_F reuse judgment (IF-VERIFY-002, architecture
+        §1.1): judge the stored FULL_F evidence against the current
+        identity quadruple. Reuse-eligible lands evidence.reused
+        (kind=full_f, identity_basis); otherwise full.executed records
+        the rerun and the local gates execute it. With no stored FULL_F
+        evidence (first verification) no judgment event is emitted and
+        the local gates run directly — the reuse vocabulary never
+        fabricates a battery that was never run."""
+        params = dict(cmd.params or {})
+        candidate_sha = params.get("candidate_sha", "")
+        if reconcile and self._latest_event("evidence.reused") is not None:
+            self.issue(
+                Command(
+                    kind="run_local_gates",
+                    params={"candidate_sha": candidate_sha},
+                )
+            )
+            return
+        selected = self._latest_event("test.selected")
+        if selected is not None:
+            evidence = dict(selected.payload or {})
+            quadruple = {
+                "tree": evidence.get("tree"),
+                "command": evidence.get("command"),
+                "env": evidence.get("env"),
+                "selection_id": evidence.get("selection_id"),
+            }
+            stale_marks = tuple(
+                event.type
+                for event in self.store.events(self.run_id)
+                if event.type in ("candidate.stale", "evidence.staled")
+            )
+            decision = m_verify.judge_full_f_reuse(
+                candidate_sha, evidence, quadruple, stale_marks
+            )
+            if decision.decision == "reuse":
+                self._emit(
+                    "evidence.reused",
+                    {
+                        "kind": "full_f",
+                        "candidate_sha": candidate_sha,
+                        "identity_basis": list(decision.identity_basis),
+                    },
+                    command_id=cmd.command_id,
+                )
+            else:
+                self._emit(
+                    "full.executed",
+                    {"candidate_sha": candidate_sha, "reason": decision.reason},
+                    command_id=cmd.command_id,
+                )
+        self.issue(
+            Command(
+                kind="run_local_gates",
+                params={"candidate_sha": candidate_sha},
+            )
+        )
+
+    def _repair_rewalk_allowed(self, frozen_sha: str) -> bool:
+        """True only inside an OPEN repair round (§1.0.14 B, SM-01.20).
+
+        The round's defect class drives the policy (the budget is the
+        finite protection against non-fix drifts):
+        - ``gate`` / ``behavior`` (verification_only / red-first): re-freeze —
+          the re-walk re-runs the gate / re-exerts the unit anchor as the
+          proof; a non-fix drift burns a round and hits the budget.
+        - ``contract`` (contract_delta): re-freeze ONLY when the drift
+          actually resolves the contract surface — the host contract now
+          loads and validates (a walker-family host without a contract is
+          an environment refusal, A-class, not a candidate defect; a
+          drift without a contract revision stays stale, never a new
+          candidate — interfaces §1d 幂等不重冻).
+        Without an open round, no freeze entry ever re-freezes a drifted
+        HEAD (SM-01.17): the drift is marked candidate.stale instead.
+        """
+        if self._park_repair_budget_used() == 0:
+            return False
+        if self._park_candidate_seen(
+            ("known_issue.registered", "known_issue.rejected"), frozen_sha
+        ):
+            return False
+        round_class = self._open_repair_defect_class()
+        if round_class == "contract":
+            return self._contract_resolved_now()
+        return True
+
+    def _open_repair_defect_class(self) -> str:
+        """defect_class of the LATEST repair.round_started of the run
+        ("" when none exists)."""
+        cls = ""
+        for event in self.store.events(self.run_id):
+            if event.type == "repair.round_started":
+                payload = event.payload or {}
+                classification = payload.get("classification") or {}
+                cls = str(classification.get("defect_class") or "")
+        return cls
+
+    def _contract_resolved_now(self) -> bool:
+        """True when the host contract at its canonical path loads and
+        validates right now (the drift revised the contract surface)."""
+        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        try:
+            contract = load_host_contract(contract_path)
+        except (OSError, ValueError):
+            return False
+        return not validate_host_contract(contract, self.repo)
+
+    def _next_event_seq(self) -> int:
+        """Seq the next appended event of this run will carry (the store
+        assigns MAX(seq)+1); 1 for an empty log."""
+        return max(
+            (getattr(e, "seq", 0) for e in self.store.events(self.run_id)),
+            default=0,
+        ) + 1
+
+    def _do_run_local_gates(self, cmd, state, task_id, reconcile):
+        """M-VERIFY local-gate chain (IF-VERIFY-003, AC-FR0269-01/02): load +
+        validate the host contract (missing/malformed fail closed with
+        host_contract.invalid + local_gate.failed and no M-SECURITY entry),
+        materialize it (host_contract.materialized bound to the candidate),
+        then execute each declared gate in contract order. Any gate failure
+        stops the chain blocked -- security is routed only from a fully
+        green M-VERIFY (§1.1). The stop itself is a defect finding
+        (§1.0.14 B): it opens an in-place repair round on the closed
+        classification (contract refusal -> contract delta, failing gate ->
+        verification-only), never a stage rollback (AC-FR0286-01)."""
+        params = dict(cmd.params or {})
+        candidate_sha = params.get("candidate_sha", "")
+        if reconcile and self._latest_event("local_gate.passed") is not None:
+            return
+        contract, _digest = self._run_contract_gates(cmd, candidate_sha, state)
+        if contract is not None:
+            self.issue(
+                Command(
+                    kind="observe_ci_runs",
+                    params={"candidate_sha": candidate_sha},
+                )
+            )
+            return
+        self._park_repair_route(
+            cmd,
+            candidate_sha,
+            self._verify_stop_class(candidate_sha),
+            self._park_stop_reason("local_gate.failed"),
+        )
+
+    def _verify_stop_class(self, candidate_sha: str) -> str:
+        """Closed defect class of the M-VERIFY stop bound to the candidate
+        (§1.0.14 B): host_contract.invalid is the contract class, a failing
+        local gate the verification-only gate class; anything else stays
+        unlabeled (classify_defect fails closed, never a guessed route)."""
+        contract_invalid = False
+        gate_failed = False
+        for event in self.store.events(self.run_id):
+            payload = event.payload or {}
+            if payload.get("candidate_sha") != candidate_sha:
+                continue
+            if event.type == "host_contract.invalid":
+                contract_invalid = True
+            elif event.type == "local_gate.failed":
+                gate_failed = True
+        if contract_invalid:
+            return "contract"
+        if gate_failed:
+            return "gate"
+        return ""
+
+    def _run_contract_gates(self, cmd, candidate_sha: str, state, resume: bool = False):
+        """Shared contract-gate face of M-VERIFY (IF-VERIFY-003): load +
+        validate the host contract, materialize it and execute every
+        declared local gate in order. Missing/malformed contracts and any
+        failing gate fail closed (host_contract.invalid / local_gate.failed;
+        the chain stays blocked, §1.0.4 -- never a guessed command).
+        Returns (contract, contract_digest) only when every gate is green,
+        else (None, None). resume=True (park evidence chain) reuses
+        existing passed-gate evidence for the same candidate instead of
+        re-running it (SM-01.17 idempotency)."""
+        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        gates_done = resume and any(
+            e.type == "local_gate.passed"
+            and (e.payload or {}).get("candidate_sha") == candidate_sha
+            for e in self.store.events(self.run_id)
+        )
+        if gates_done:
+            try:
+                contract = load_host_contract(contract_path)
+            except (OSError, ValueError):
+                return None, None
+            return contract, hashlib.sha256(contract_path.read_bytes()).hexdigest()
+        try:
+            contract = load_host_contract(contract_path)
+        except (OSError, ValueError) as err:
+            self._fail_verify_block(cmd, candidate_sha, "missing_contract", str(err))
+            return None, None
+        errors = validate_host_contract(contract, self.repo)
+        if errors:
+            self._fail_verify_block(cmd, candidate_sha, "malformed", "; ".join(errors))
+            return None, None
+        contract_digest = hashlib.sha256(contract_path.read_bytes()).hexdigest()
+        self._emit(
+            "host_contract.materialized",
+            {
+                "candidate_sha": candidate_sha,
+                "contract_digest": contract_digest,
+                "language": contract.language,
+                "toolchain": contract.toolchain,
+            },
+            command_id=cmd.command_id,
+        )
+        if not self._execute_verify_gates(
+            cmd, candidate_sha, contract_digest, contract, state
+        ):
+            return None, None
+        return contract, contract_digest
+
+    def _execute_verify_gates(self, cmd, candidate_sha, contract_digest, contract, state):
+        """Run the contract's local gates in order (AC-FR0269-01), emitting
+        local_gate.passed|failed per gate bound to the candidate. Returns
+        True when every gate passed; any failure or unknown stops the chain
+        blocked (fail closed, §1.0.4 -- never a guessed command).
+
+        Source-based gates resolve their executable through the declared
+        single truth: ``source=guard_registry`` quality gates resolve via
+        ``lint_check_command`` (the project's declared [lint] command);
+        ``source=version_decl`` gates have no executable command and skip.
+        A registry gate that resolves to nothing is skipped too (gates
+        skip, never guess a host toolchain invocation — IF-HOSTCONTRACT-001
+        NFR-0147). Inline-command gates render and run verbatim.
+        """
+        scope = self._release_version_facts(state)
+        scope["candidate_sha"] = candidate_sha
+        all_passed = True
+        for gate in contract.local_gates:
+            command = gate.command
+            if gate.source == "guard_registry":
+                resolved_lint = lint_check_command(self.repo)
+                if not resolved_lint:
+                    continue  # skip, never guess
+                command = resolved_lint
+            elif gate.source == "version_decl":
+                continue  # no executable declaration target; skip
+            try:
+                result = execute_gate(
+                    replace(gate, command=command), self.repo, scope
+                )
+            except Exception as err:  # noqa: BLE001 -- fail closed per gate
+                self._emit(
+                    "local_gate.failed",
+                    {
+                        "kind": gate.kind,
+                        "candidate_sha": candidate_sha,
+                        "contract_digest": contract_digest,
+                        "reason": "unknown",
+                        "detail": str(err),
+                    },
+                    command_id=cmd.command_id,
+                )
+                all_passed = False
+                continue
+            payload = {
+                "kind": gate.kind,
+                "candidate_sha": candidate_sha,
+                "contract_digest": contract_digest,
+                "status": result.status,
+                "exit_code": result.exit_code,
+                "summary": result.summary,
+            }
+            if result.status == "passed":
+                self._emit(
+                    "local_gate.passed", payload, command_id=cmd.command_id
+                )
+            else:
+                payload["reason"] = (
+                    "malformed" if result.status == "malformed" else "failed"
+                )
+                self._emit(
+                    "local_gate.failed", payload, command_id=cmd.command_id
+                )
+                all_passed = False
+        return all_passed
+
+    def _do_observe_ci_runs(self, cmd, state, task_id, reconcile):
+        """M-VERIFY CI readback (IF-VERIFY-004, AC-FR0270-01..03): API
+        readback of the required-CI run bound to the frozen candidate;
+        ``ci.run_observed`` carries the repo/workflow/run/head quadruple
+        binding (api_verified). Missing credentials, CI config and network
+        errors land attention.required (never a silent pass); a
+        mismatch/missing/stale binding stops the chain blocked; a bound run
+        hands to the Prism same-candidate final review (FR-0270: bound
+        evidence is kept, a resumed run never repeats the API call)."""
+        params = dict(cmd.params or {})
+        candidate_sha = params.get("candidate_sha", "")
+        if reconcile and self._latest_event("ci.run_observed") is not None:
+            return
+        try:
+            contract = load_host_contract(
+                self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+            )
+        except (OSError, ValueError) as err:
+            self._fail_verify_block(cmd, candidate_sha, "missing_contract", str(err))
+            return
+        ci = contract.ci or {}
+        run_payload = self._readback_ci_binding(cmd, candidate_sha, ci)
+        if run_payload is None:
+            return
+        self._emit("ci.run_observed", run_payload, command_id=cmd.command_id)
+        assignment = m_verify.build_prism_final_review_assignment(
+            candidate_sha, self._verify_evidence_digests()
+        )
+        self.issue(
+            Command(
+                kind="dispatch_agent",
+                params={
+                    "role": "prism",
+                    "substate": "VERIFY_FINAL",
+                    "stage": "M-VERIFY",
+                    "objective": (
+                        "same-candidate final review of the frozen candidate "
+                        "(IF-VERIFY-005)"
+                    ),
+                    **assignment,
+                },
+            )
+        )
+
+    def _readback_ci_binding(self, cmd, candidate_sha, ci):
+        """API readback + binding judge (IF-VERIFY-004, AC-FR0270-01..03).
+        Returns the bound ci.run_observed payload, or None with the block
+        already on the stream: missing CI config/credentials and network
+        errors land attention.required (never a silent pass); a
+        mismatch/missing/stale binding stops the chain blocked."""
+        repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
+        workflow = str(ci.get("workflow", ""))
+        if not repo_id or not workflow:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "missing_ci_config",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "detail": "[host-contract.ci] repo_env/workflow unresolved",
+                    "next": "declare the CI target; trac run retries in place",
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+        try:
+            observed = readback_ci_run(repo_id, workflow, candidate_sha)
+        except GithubIssuesError as err:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "missing_token",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "detail": str(err),
+                    "next": "set the CI token; trac run retries in place",
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+        except (OSError, ValueError) as err:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "network_error",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "detail": str(err),
+                    "next": "retry when the CI API is reachable",
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+        binding = judge_ci_binding(
+            observed, candidate_sha, ci.get("required_checks", [])
+        )
+        if binding.get("status") != "passed":
+            self._emit(
+                "attention.required",
+                {
+                    "area": "ci_readback",
+                    "reason": "ci_binding_blocked",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "detail": binding.get("reason", "mismatch"),
+                    "next": "re-run CI on the frozen candidate; trac run retries",
+                },
+                command_id=cmd.command_id,
+            )
+            return None
+        return {
+            "candidate_sha": candidate_sha,
+            "repo": repo_id,
+            "workflow": workflow,
+            "run_id": str(observed.get("run_id", "")),
+            "head_sha": str(observed.get("head_sha", "")),
+            "conclusion": str(ci.get("conclusion", "success")),
+            "api_verified": True,
+        }
+
+    def _verify_evidence_digests(self) -> dict:
+        """Evidence manifest for the final-review envelope (IF-VERIFY-005):
+        the contract digest of every passed local gate, keyed by gate kind."""
+        digests = {}
+        for event in self.store.events(self.run_id):
+            if event.type == "local_gate.passed":
+                gate_payload = event.payload or {}
+                digests[str(gate_payload.get("kind"))] = gate_payload.get(
+                    "contract_digest"
+                )
+        return digests
+
+    def _advance_verify_chain(self, cmd, candidate_sha):
+        """All M-VERIFY gates green (§1.1): exit M-VERIFY, enter M-SECURITY
+        and run the security assessment; a passing assessment exits to
+        M-RELEASE where the kernel release routing takes over (preview ->
+        release decision -> publish). A failed assessment stops blocked with
+        its repair_route on the stream (§1.0.14 classification; never an
+        automatic rollback)."""
+        self._emit("stage.exited", {"stage": "M-VERIFY"}, command_id=cmd.command_id)
+        self._emit(
+            "stage.entered", {"stage": "M-SECURITY"}, command_id=cmd.command_id
+        )
+        self.issue(
+            Command(kind="assess_security", params={"candidate_sha": candidate_sha})
+        )
+        assessed = self._latest_event("security.assessed")
+        if assessed is None or (assessed.payload or {}).get("status") not in (
+            "pass",
+            "passed",
+        ):
+            return
+        self._emit(
+            "stage.exited", {"stage": "M-SECURITY"}, command_id=cmd.command_id
+        )
+        self._emit(
+            "stage.entered", {"stage": "M-RELEASE"}, command_id=cmd.command_id
+        )
+        self._release_preview(cmd, candidate_sha)
+
+    def _release_preview(self, cmd, candidate_sha: str) -> None:
+        """M-RELEASE entry preview (SM-01.6, FR-0284/FR-0286): the fully
+        green chain aggregates the verified evidence into the
+        content-addressed release preview and lands release.previewed
+        (known issues listed, awaiting the Human release decision). A
+        contract reload refusal fails closed (attention.required, never a
+        guessed preview digest)."""
+        try:
+            digest = hashlib.sha256(
+                self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH).read_bytes()
+            ).hexdigest()
+        except OSError as err:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "release_preview",
+                    "reason": "missing_contract",
+                    "stage": "M-RELEASE",
+                    "candidate_sha": candidate_sha,
+                    "detail": str(err),
+                    "next": "restore the host contract; trac run retries in place",
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        self._park_preview(cmd, candidate_sha, digest)
+
+    def _load_authoritative_issue_map(self) -> dict:
+        """The authoritative issue map (IF-ISSUE-001): the closer vocabulary
+        lives at .tracks/runtime/issue-map.json; missing/corrupt -> empty
+        (nothing closable, never guessed)."""
+        path = self.repo / ".tracks" / "runtime" / "issue-map.json"
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _do_close_milestone(self, cmd, state, task_id, reconcile):
+        """Consume Command(close_milestone) (IF-MILESTONE-001, §1i): fold the
+        run's events into the release trace (milestone.trace_closed with the
+        trace_digest), close mapped issues (authoritative-map re-validation),
+        close Project/milestone, seal the evidence read-only and clean the
+        temp refs (milestone.sealed + refs.cleaned). RETRY_TAIL only ever
+        re-enters this tail: external effects already persisted are skipped
+        by the reconcile idempotency above."""
+        if reconcile and any(
+            e.type == "milestone.trace_closed" and e.command_id == cmd.command_id
+            for e in self.store.events(self.run_id)
+        ):
+            return
+        params = dict(cmd.params or {})
+        candidate_sha = params.get("candidate_sha", "")
+        if not candidate_sha:
+            for e in reversed(self.store.events(self.run_id)):
+                if e.type == "candidate.frozen":
+                    candidate_sha = (e.payload or {}).get("candidate_sha", "")
+                    break
+        events = [
+            {"type": e.type, "payload": dict(e.payload or {}), "seq": e.seq}
+            for e in self.store.events(self.run_id)
+        ]
+        trace = build_release_trace(events, candidate_sha)
+        trace["trace_digest"] = compute_trace_digest(trace)
+        self._emit(
+            "milestone.trace_closed",
+            dict(trace),
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        closed = close_issues_with_comment(
+            self.repo, self._load_authoritative_issue_map(), trace
+        )
+        for entry in closed:
+            self._emit(
+                "issue.closed",
+                dict(entry),
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+        project = close_project_milestone(self.repo, params.get("tracker") or {}, trace)
+        self._emit(
+            "project.closed",
+            dict(project),
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "milestone.closed",
+            {
+                "milestone": project.get("milestone", ""),
+                "trace_digest": trace["trace_digest"],
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "milestone.sealed",
+            dict(seal_evidence_readonly(self.repo, candidate_sha)),
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        self._emit(
+            "refs.cleaned",
+            dict(clean_temp_refs(self.repo, self.run_id)),
+            command_id=cmd.command_id,
+            task_id=task_id,
         )
 
     def _do_recover_stage(self, cmd, state, task_id, reconcile):
@@ -5857,7 +7165,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 )
                 return
             git(self.repo, "add", "tests")
-        proc = _commit_if_staged(self.repo, f"M-TEST: freeze test assets\n\n{marker}")
+        proc = _scoped_commit_if_staged(
+            self.repo, f"M-TEST: freeze test assets\n\n{marker}", paths=["tests"]
+        )
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return
@@ -5935,14 +7245,99 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
         )
 
+    def _map_issue_item(self, backend, item_id, title, body, digest, cmd, task_id):
+        """(F) IF-ISSUE-001 per-item create + verify + persist.
+
+        Real channel: create -> immediate API readback -> issue.mapped with
+        api_verified=true and the authoritative issue-map persistence. The
+        explicit fake stand-in channel is persisted api_verified=false so
+        closers never consume it. A FAKE artifact surfacing on the real
+        channel is rejected fail-closed (fake_rejected + blocked outcome);
+        returns None then, else the issue id.
+        """
+        verified = create_issue_verified(backend, title, body, [self.version])
+        issue_id = verified.get("issue_number")
+        api_verified = bool(verified.get("api_verified"))
+        if not api_verified and not isinstance(backend, FakeIssueBackend):
+            rejection = reject_fake_artifact(issue_id)
+            if rejection.get("status") == "rejected":
+                self._emit(
+                    "fake_rejected",
+                    {
+                        "item_id": item_id,
+                        "issue_id": issue_id,
+                        "reason": "fake_rejected",
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
+                self._emit(
+                    "outcome.received",
+                    {
+                        "role": "github",
+                        "status": "failed",
+                        "failure_class": "fake_rejected",
+                        "self_report": (
+                            f"FAKE artifact refused on the real channel: {issue_id}"
+                        ),
+                    },
+                    command_id=cmd.command_id,
+                )
+                return None
+        backend.add_to_project(issue_id, backend.project)
+        persist_issue_mapping(self.repo, item_id, dict(verified))
+        self._emit(
+            "issue.created",
+            {"item_id": item_id, "issue_id": issue_id, "digest": digest},
+            command_id=cmd.command_id,
+        )
+        self._emit(
+            "issue.mapped",
+            {
+                "item_id": item_id,
+                "issue_number": issue_id,
+                "api_verified": api_verified,
+                "digest": digest,
+            },
+            command_id=cmd.command_id,
+        )
+        return issue_id
+
     def _do_create_issues(self, cmd, state, task_id, reconcile):
+        """(F) M-REQ-APPROVAL ISSUES execution path (IF-ISSUE-001).
+
+        Backend selection is fail-closed: missing credentials surface
+        attention.required(area=issue_creation, reason=missing_token) and
+        no silent Fake fallback is consumed. Each item goes through
+        create_issue_verified + persist_issue_mapping (authoritative map,
+        crash-idempotent dedup by item id); unverified real-channel
+        artifacts are rejected fake_rejected + blocked.
+        """
         digest = cmd.params["digest"]
         if reconcile and state.issues_created:
             return
         if self._stale_regenerate(cmd, digest):
             return
         if self._issue_backend is None:
-            self._issue_backend = select_issue_backend(self.repo, self.version)
+            try:
+                self._issue_backend = select_issue_backend(self.repo, self.version)
+            except GithubIssuesError as exc:
+                if exc.classification == "missing_token":
+                    self._emit(
+                        "attention.required",
+                        {
+                            "area": "issue_creation",
+                            "reason": "missing_token",
+                            "next": (
+                                "export GITHUB_TOKEN (and TRAC_GITHUB_REPO) then "
+                                "re-run; no silent Fake fallback is consumed"
+                            ),
+                        },
+                        command_id=cmd.command_id,
+                        task_id=task_id,
+                    )
+                    return
+                raise
         backend = self._issue_backend
         # D-06 breakpoint resume: item_ids already logged are never rebuilt.
         done = {
@@ -5954,14 +7349,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             for item_id, title, body in issue_items(self._vdir(), digest):
                 if item_id in done:
                     continue
-                issue_id = backend.create_issue(title, body, [self.version])
-                backend.add_to_project(issue_id, backend.project)
-                done[item_id] = issue_id
-                self._emit(
-                    "issue.created",
-                    {"item_id": item_id, "issue_id": issue_id, "digest": digest},
-                    command_id=cmd.command_id,
+                issue_id = self._map_issue_item(
+                    backend, item_id, title, body, digest, cmd, task_id
                 )
+                if issue_id is None:
+                    return
+                done[item_id] = issue_id
         except GithubIssuesError as e:
             # NFR-0030 style: no half-written summary; the reducer counts the
             # failed outcome as an attempt (3rd escalates to Human).

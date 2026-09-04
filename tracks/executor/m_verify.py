@@ -169,18 +169,38 @@ def _after_m_impl(state):
     return Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
 
 
+def _before_mtest(state):
+    """M-TEST entry pre-gate for RELEASE-capable runs (IF-VERIFY-004).
+
+    v0.8 inherits the v0.7 Phase 0 sealing unchanged (architecture: 事件溯源
+    与 Phase 0 封存全部保持不变), so the kernel entry guard resolves the
+    same pure ``decide_phase0`` projection the v0.7 composition root
+    assembles: any non-SEALED Phase 0 projection routes to
+    ``Command(phase0_validate)``; SEALED/BLOCKED park (§1c). The lazy
+    import mirrors ``machine._resolve_before_mtest`` -- importing
+    ``kernel.phase0`` at module scope here would cycle through the kernel
+    package's own lazy seam call points.
+    """
+    from tracks.kernel.phase0 import decide_phase0
+
+    return decide_phase0(state)
+
+
 class V08Extension:
     """Capability namespace registered for the v0.8 project version.
 
     Importing this module registers the extension exactly once on the
     version capability seam (architecture §1.0.9, ``V07Extension``
     precedent in ``executor/v07_runtime.py``): RELEASE-capable versions
-    re-route at the M-IMPL boundary via ``after_m_impl`` while
-    below-threshold versions select no extension and keep their boundary
-    (未达门槛保持 boundary; the seam's ``None``).
+    re-route at the M-IMPL boundary via ``after_m_impl`` while the M-TEST
+    entry resolves the inherited Phase 0 pre-gate via ``before_mtest``
+    (missing pieces block fail-closed, §1.0.9). Below-threshold versions
+    select no extension and keep their boundary (未达门槛保持 boundary;
+    the seam's ``None``).
     """
 
     after_m_impl = staticmethod(_after_m_impl)
+    before_mtest = staticmethod(_before_mtest)
 
 
 version_extensions.register_extension(EXTENSION_VERSION, V08Extension())
