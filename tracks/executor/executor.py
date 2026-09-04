@@ -3257,6 +3257,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "impl_defect",
             "red_defect",
             "plan_defect",
+            # M2 (convergence plan 2026-09-05): the honest exit -- Prism
+            # could not reproduce the failure on the forensic package, so
+            # it must NOT guess an owner. Routes to a forensic-forced
+            # re-DIAGNOSE; a repeated unknown escalates to Archer RULING
+            # (see _diagnose_unknown_streak below).
+            "unknown",
         ):
             # Prism DIAGNOSE contract violation: no valid classification JSON
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
@@ -3298,6 +3304,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if not isinstance(evidence, str):
                 evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
             evidence += f"; full diagnosis transcript: .tracks/runtime/blobs/{ref}"
+        evidence, emitted_check, reason = self._m2_diagnosis_envelope(
+            task_id or state.current_task_id, evidence, classification, reason
+        )
         target = (
             "M-IMPL"
             if classification in ("test_defect", "impl_defect")
@@ -3314,7 +3323,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit(
             "verdict.failed",
             {
-                "check": classification,
+                "check": emitted_check,
                 "target_stage": target,
                 "task_id": task_id or state.current_task_id or "",
                 "reason": reason,
@@ -3324,6 +3333,85 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+
+    def _m2_diagnosis_envelope(
+        self, task_id, evidence, classification: str, reason: str
+    ) -> tuple:
+        """M2 (convergence plan 2026-09-05): surface the latest forensic
+        package on every diagnosis and resolve the unknown honest exit.
+
+        The ruling must be grounded in the live git state captured at
+        failure time, never in post-teardown static inference (T-042 :78
+        misdiagnosis). First unknown -> check="unknown" (kernel
+        re-dispatches DIAGNOSE with the package). A repeated consecutive
+        unknown means the diagnosis extracted no new information ->
+        diagnosis_exhausted (M1-S2): the contract authority carries it
+        instead of the remaining diagnosis budget.
+        """
+        forensics = self._latest_forensics_ref(task_id)
+        if forensics:
+            if not isinstance(evidence, str):
+                evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+            evidence += f"; forensic package: {forensics}"
+        emitted_check = classification
+        if classification == "unknown" and self._diagnose_unknown_streak(task_id):
+            emitted_check = "diagnosis_exhausted"
+            reason = (
+                "repeated unknown attribution (S2): DIAGNOSE could not "
+                "reproduce on the forensic package twice in a row; Archer "
+                "RULING carries the paired-delta decision"
+            )
+        return evidence, emitted_check, reason
+
+    def _diagnose_unknown_streak(self, task_id) -> bool:
+        """M2: True when the most recent prior verdict for this task is
+        already check=unknown (i.e. THIS unknown is a repeat).
+
+        Pure event-log arithmetic: scan backward for this task's
+        verdict.failed events; stop at the first one -- a prior unknown
+        means the streak is live, anything else resets it."""
+        if not task_id:
+            return False
+        store = getattr(self, "store", None)
+        if store is None:
+            return False
+        for ev in reversed(list(store.events(self.run_id))):
+            if ev.type != "verdict.failed":
+                continue
+            payload = ev.payload or {}
+            if payload.get("task_id") != task_id:
+                continue
+            return payload.get("check") == "unknown"
+        return False
+
+    def _latest_forensics_ref(self, task_id) -> str | None:
+        """M2: the most recent forensics_ref recorded in this task's
+        verdict.failed evidence chain (the GREEN_GATE failure evidence
+        carries it; see _raise_hard_failure)."""
+        if not task_id:
+            return None
+        store = getattr(self, "store", None)
+        if store is None:
+            return None
+        for ev in reversed(list(store.events(self.run_id))):
+            if ev.type != "verdict.failed":
+                continue
+            payload = ev.payload or {}
+            if payload.get("task_id") != task_id:
+                continue
+            evidence = payload.get("evidence")
+            if not isinstance(evidence, str):
+                continue
+            try:
+                data = json.loads(evidence)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and data.get("forensics_ref"):
+                return str(data["forensics_ref"])
+            # A verdict for this task without a forensics_ref (older or
+            # non-gate shape): keep scanning -- the package may ride an
+            # earlier gate verdict.
+        return None
 
     def _shield_fix_manifest_mismatch(self, result: dict, changed: list) -> str | None:
         """PRISM-B28-R2-02: SHIELD_FIX include vs observed tests/ files,
@@ -7287,7 +7375,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             token
             if token in (
                 "test_defect", "stub_gap", "ac_gap", "spec_gap", "impl_defect",
-                "red_defect", "plan_defect",
+                "red_defect", "plan_defect", "unknown",
             )
             else default
         )

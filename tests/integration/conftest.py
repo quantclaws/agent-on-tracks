@@ -19,6 +19,31 @@ from tests._support.fixtures import (  # noqa: F401  re-export
 def _force_fake_backend(monkeypatch):
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
 
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """M2 forensic capture (convergence plan 2026-09-05).
+
+    On a call-phase failure, capture the host repo's live git state +
+    assertion context (and preserve the repo) BEFORE the temp fixture is
+    torn down -- DIAGNOSE then rules on real evidence instead of static
+    post-teardown inference (T-042 :78 "wrong tree" misdiagnosis class).
+    Inert unless the runtime sets TRAC_FORENSICS_DIR.
+    """
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" and rep.failed:
+        host_repo = item.funcargs.get("host_repo")
+        if host_repo is not None:
+            from tests._support.forensics import (
+                capture_failure_forensics,
+                forensics_dir,
+            )
+
+            if forensics_dir() is not None:
+                capture_failure_forensics(item, rep, host_repo)
+
+
 _ANCHOR_MODULE = "tests.integration.test_trace_closure"
 
 

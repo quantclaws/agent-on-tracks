@@ -105,10 +105,11 @@ class RunBreaker:
     def _on_verdict_failed(self, payload: dict) -> None:
         if self._is_deferred_only(payload):
             return
-        if self._is_contract_conflict(payload):
-            # M1-S1: an oscillation verdict routes the contract authority
-            # (Archer RULING) -- it is not a writer failure, so it must not
-            # burn the task budget that protects writer retries.
+        if self._is_authority_route(payload):
+            # M1-S1 / M2: oscillation (contract_conflict) and repeated
+            # unknown attribution (diagnosis_exhausted) route the contract
+            # authority (Archer RULING) -- not writer failures, so they
+            # must not burn the task budget that protects writer retries.
             self._count_verdict_only(payload)
             return
         if self._should_skip_task_count(payload):
@@ -116,10 +117,16 @@ class RunBreaker:
             return
         self._count_verdict_and_task(payload)
 
-    @staticmethod
-    def _is_contract_conflict(payload: dict) -> bool:
-        return payload.get("check") == "contract_conflict" or (
-            payload.get("failure_class") == "contract_conflict"
+    # Authority-routed checks: the verdict hands the decision to Archer
+    # RULING instead of a writer retry (M1-S1 contract_conflict, M2
+    # diagnosis_exhausted).
+    _AUTHORITY_ROUTE_CHECKS = frozenset({"contract_conflict", "diagnosis_exhausted"})
+
+    @classmethod
+    def _is_authority_route(cls, payload: dict) -> bool:
+        return (
+            payload.get("check") in cls._AUTHORITY_ROUTE_CHECKS
+            or payload.get("failure_class") in cls._AUTHORITY_ROUTE_CHECKS
         )
 
     def _count_verdict_only(self, payload: dict) -> None:

@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from copy import deepcopy
@@ -32,6 +33,12 @@ from tracks.effects.backend import valid_test_tasks
 from tracks.executor.anchor_probe import ProbeReport, probe_summary, probe_task_anchors
 from tracks.executor.helpers import git, parse_collected_nodes
 from tracks.executor.host_contract import declared_install_interpreter
+from tracks.executor.oscillation import (
+    OSCILLATION_CHECK as _OSCILLATION_CHECK,
+)
+from tracks.executor.oscillation import (
+    detect_oscillation as _detect_oscillation,
+)
 from tracks.executor.quality_gate import (
     execute_gate_command,
     failed_summary_lines,
@@ -3668,15 +3675,24 @@ class MImplRuntimeMixin:
     def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):  # pylint: disable=too-many-locals
         """Execute the SELECT_TASK layers owning selected nodes.
 
-        Returns (outcomes, failed_nodes, commands, templates); staging paths
-        are always cleaned up, even when a layer raises.
+        Returns (outcomes, failed_nodes, commands, templates,
+        forensics_ref); staging paths are always cleaned up, even when a
+        layer raises.
         B94: also handles e2e deferred anchors when present.
+        M2 (convergence plan 2026-09-05): every layer subprocess runs with
+        TRAC_FORENSICS_DIR set under .tracks/runtime/forensics/<command_id>/
+        -- failing integration nodes persist their git-state forensic
+        package there (conftest hook); when failures occur the package is
+        written to an audit blob and referenced from the failure evidence
+        so DIAGNOSE rules on live evidence, never post-teardown inference
+        (T-042 :78 "wrong tree" misdiagnosis class).
         """
         outcomes: list[dict] = []
         failed_nodes: list[dict] = []
         staged: list[Path] = []
         commands: dict[str, tuple[str, ...]] = {}
         templates: dict[str, dict[str, str]] = {}
+        forensics_root = self._forensics_root(cmd.command_id)
         try:
             layers = [
                 ("unit", contract.unit),
@@ -3707,7 +3723,12 @@ class MImplRuntimeMixin:
                     Path(section_cwd),
                 ):
                     raise TestSelectError(f"[{layer}] selected argv diverges from contract")
-                obs = execute_gate_command(shlex.join(argv), section_cwd, f"{layer}-selected")
+                obs = execute_gate_command(
+                    shlex.join(argv),
+                    section_cwd,
+                    f"{layer}-selected",
+                    env_extra={"TRAC_FORENSICS_DIR": str(forensics_root / layer)},
+                )
                 commands[layer] = tuple(obs.argv)
                 templates[layer] = {
                     "run_selected": section.run_selected,
@@ -3722,7 +3743,54 @@ class MImplRuntimeMixin:
             if staged:
                 with contextlib.suppress(OSError):
                     staged[0].parent.rmdir()
-        return outcomes, failed_nodes, commands, templates
+        forensics_ref = self._collect_forensics_ref(forensics_root, failed_nodes)
+        return outcomes, failed_nodes, commands, templates, forensics_ref
+
+    def _forensics_root(self, command_id: str) -> Path:
+        """M2: per-selection forensic capture root under runtime state.
+
+        ``.tracks/runtime/forensics/<command_id>/<layer>/`` is untracked
+        runtime state (never dirties the frozen tree); sibling dirs older
+        than 24h are pruned so the diagnostic window stays bounded."""
+        import time as _time
+
+        root = paths.runtime_dir(paths.tracks_home(Path(self.repo))) / "forensics"
+        root.mkdir(parents=True, exist_ok=True)
+        cutoff = _time.time() - 24 * 3600
+        for stale in root.iterdir():
+            try:
+                if stale.is_dir() and stale.stat().st_mtime < cutoff:
+                    shutil.rmtree(stale, ignore_errors=True)
+            except OSError:
+                continue
+        return root / command_id
+
+    def _collect_forensics_ref(self, forensics_root: Path, failed_nodes) -> str | None:
+        """M2: persist the captured forensic package to an audit blob.
+
+        Returns the blob path (referenced from the failure evidence) when
+        failures occurred and the conftest hook captured forensics for
+        them; None otherwise (nothing failed / nothing captured -- the
+        evidence chain stays exactly as before)."""
+        if not failed_nodes:
+            return None
+        records: list[dict] = []
+        for path in sorted(forensics_root.glob("*/failures/*.json")):
+            try:
+                records.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        if not records:
+            return None
+        ref = self.store.write_audit_blob(
+            {
+                "forensics_dir": str(forensics_root),
+                "records": records,
+            }
+        )
+        if ref is None:
+            return None
+        return f".tracks/runtime/blobs/{ref}"
 
     @staticmethod
     def _record_task_node_outcomes(outcomes, failed_nodes, selected, mapping) -> None:
@@ -3757,23 +3825,27 @@ class MImplRuntimeMixin:
         return f".tracks/runtime/blobs/{ref}"
 
     def _raise_hard_failure(
-        self, selection_id: str, outcomes_ref_path: str, hard, deferred
+        self, selection_id: str, outcomes_ref_path: str, hard, deferred,
+        forensics_ref: str | None = None,
     ) -> None:
+        evidence = {
+            "selection_id": selection_id,
+            "outcomes_ref": outcomes_ref_path,
+            "failed_nodes": hard,
+            "deferred_failures": (
+                [str(x.get("node") or "") for x in deferred]
+                if deferred
+                else []
+            ),
+        }
+        if forensics_ref:
+            # M2: live forensic package (git state at failure + preserved
+            # repos) -- DIAGNOSE must rule on this, never on static
+            # post-teardown inference.
+            evidence["forensics_ref"] = forensics_ref
         raise TaskSelectionFailure(
             "selected task tests did not all pass",
-            json.dumps(
-                {
-                    "selection_id": selection_id,
-                    "outcomes_ref": outcomes_ref_path,
-                    "failed_nodes": hard,
-                    "deferred_failures": (
-                        [str(x.get("node") or "") for x in deferred]
-                        if deferred
-                        else []
-                    ),
-                },
-                sort_keys=True,
-            ),
+            json.dumps(evidence, sort_keys=True),
         )
 
     def _success_payload(
@@ -3896,8 +3968,8 @@ class MImplRuntimeMixin:
         snapshot = self._task_content_snapshot(Path(cwd), scope_rules)
         content_digest = self._snapshot_digest(snapshot)
         env_identity = self._gate_environment_identity()
-        outcomes, failed_nodes, commands, templates = self._run_task_selected_layers(
-            cmd, contract, cwd, by_layer
+        outcomes, failed_nodes, commands, templates, forensics_ref = (
+            self._run_task_selected_layers(cmd, contract, cwd, by_layer)
         )
         command_identity = self._selection_command_identity(commands)
         identity = EvidenceIdentity(
@@ -3942,7 +4014,10 @@ class MImplRuntimeMixin:
                 deferred,
             )
         if hard:
-            self._raise_hard_failure(selection_id, outcomes_ref_path, hard, deferred)
+            self._raise_hard_failure(
+                selection_id, outcomes_ref_path, hard, deferred,
+                forensics_ref=forensics_ref,
+            )
         return self._success_payload(
             selection_id,
             nodes_blob,
@@ -4095,6 +4170,49 @@ class MImplRuntimeMixin:
                 payload["lint"] = lint_note
             self._emit("verdict.passed", payload, command_id=cmd.command_id)
         except TaskSelectionFailure as exc:
+            # M1-S1 (convergence plan 2026-09-05): mechanical oscillation
+            # signature -- consecutive GREEN_GATE failures of this task
+            # swapped anchor outcomes. Mutually exclusive anchors admit no
+            # writer retry; route the contract authority instead of
+            # re-burning the writer budget. The CURRENT failure's anchors
+            # (exc.evidence, not yet stored) are compared against the last
+            # recorded failure for this task so the signature trips at the
+            # SECOND failure, not one attempt later.
+            events = [
+                {"type": ev.type, "payload": dict(ev.payload or {})}
+                for ev in self.store.events(self.run_id)
+            ]
+            osc = _detect_oscillation(events, task_id, exc.evidence)
+            if osc is not None:
+                self._emit(
+                    "oscillation.detected",
+                    {
+                        "task_id": task_id,
+                        "signature": "S1",
+                        **osc,
+                        "task_selection": exc.evidence,
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
+                self._emit_gate_failure(
+                    cmd,
+                    check=_OSCILLATION_CHECK,
+                    reason=(
+                        "anchor oscillation (S1): healed∧newly_red∧common "
+                        "across consecutive attempts — mutually exclusive "
+                        "anchors, no writer retry can satisfy both; Archer "
+                        "RULING carries the paired-delta decision"
+                    ),
+                    evidence=json.dumps(
+                        {"oscillation": osc, "task_selection": exc.evidence},
+                        sort_keys=True,
+                    ),
+                    task_id=task_id,
+                    attempt=attempt,
+                    failure_class="contract_conflict",
+                )
+                return
             self._emit_gate_failure(
                 cmd,
                 check="impl_defect",

@@ -221,16 +221,22 @@ def execute_gate_command(
     command: str,
     cwd: str,
     check_name: str = "unit-tests",
+    env_extra: dict[str, str] | None = None,
 ) -> GateObservation:
     """Execute a gate command as a real subprocess (shell=False), resolve
     a repo-relative env interpreter via the contract declaration when
-    needed, and return an immutable GateObservation."""
+    needed, and return an immutable GateObservation. ``env_extra`` (M2
+    forensic capture, convergence plan 2026-09-05) overlays additional
+    environment variables -- e.g. TRAC_FORENSICS_DIR so failing
+    integration tests persist their git-state forensic package."""
     argv = shlex.split(command)
     argv = _resolve_argv0(argv, cwd)
+    run_env = {**os.environ, **env_extra} if env_extra else None
     try:
         proc = subprocess.run(
             argv,
             cwd=cwd,
+            env=run_env,
             capture_output=True,
             text=True,
             check=False,

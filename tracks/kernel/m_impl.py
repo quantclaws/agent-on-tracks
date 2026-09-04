@@ -435,6 +435,26 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         s.status = "awaiting_human"
         s.awaiting = "rollback"
         s.return_target = "M-ACC" if check == "ac_gap" else "M-SPEC"
+    elif check == "unknown":
+        # M2 (convergence plan 2026-09-05): the honest exit -- Prism could
+        # not reproduce the failure on the forensic package, so it named no
+        # owner. Stay in DIAGNOSE: the re-dispatch assignment carries the
+        # forensic package (executor surfaces it on every verdict), so the
+        # next round rules on live evidence, never post-teardown inference
+        # (T-042 :78 misdiagnosis class). Consumes the diagnosis budget --
+        # an empty diagnosis is still a spent round; a repeated unknown
+        # arrives as diagnosis_exhausted and routes the authority instead.
+        _reset_review(s)
+        _reset_doc(s)
+        _consume_attempt(s)
+    elif check == "diagnosis_exhausted":
+        # M1-S2/M2: repeated unknown attribution -- DIAGNOSE extracted no
+        # new information twice in a row. Route the contract authority
+        # (Archer RULING, same channel as contract_conflict): the ruling
+        # rides the forensic package + diagnosis history in last_failure;
+        # NOT a writer failure -- no attempt consumed.
+        s.substate = "RULING"
+        _reset_review(s)
     else:
         # B62 (#80): an unrecognized check (e.g. diagnose_contract_violation
         # from a contract-violating DIAGNOSE reply) STAYS in DIAGNOSE for the
@@ -697,21 +717,33 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
 
 
 def _m_impl_archer_ruling_dispatch(s: State) -> Command:
-    """RULING: dispatch Archer to rule on the oscillating anchor pair.
+    """RULING: dispatch Archer to rule on the failure the writers cannot
+    resolve alone.
 
-    The S1 oscillation dossier rides the assignment (executor materializes
-    the latest oscillation.detected payload into the dispatch context);
-    Archer rules a paired delta and the runtime lands both sides through
-    the single-writer channels (M3 bundles the pairing; until then the
-    delta lands as DIAGNOSE evidence)."""
+    Two entries share this channel: the S1 oscillation dossier (executor
+    materializes the latest oscillation.detected payload into the dispatch
+    context) and the M2 diagnosis exhaustion (repeated unknown attribution
+    -- the forensic package + diagnosis history ride last_failure). Archer
+    rules a machine-executable paired delta and the runtime lands both
+    sides through the single-writer channels (M3 bundles the pairing;
+    until then the delta lands as DIAGNOSE evidence)."""
     assignment = _m_impl_base_assignment(
         s, "archer", "RULING", ["tracks-discuz", "tracks-archer-planning"]
     )
     assignment["target_doc"] = None
+    if (s.last_failure or {}).get("check") == "diagnosis_exhausted":
+        objective = (
+            "rule on the diagnosis-exhausted failure (repeated unknown "
+            "attribution, M2): the forensic package and diagnosis history "
+            "ride the evidence; produce a machine-executable paired delta "
+            "{devon_side, shield_side, ordering}"
+        )
+    else:
+        objective = "rule on the oscillating anchor pair (S1 contract conflict)"
     params = {
         "role": "archer",
         "substate": "RULING",
-        "objective": "rule on the oscillating anchor pair (S1 contract conflict)",
+        "objective": objective,
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
         "review_round": s.review_round,
@@ -818,6 +850,12 @@ DIAGNOSE_CLASSIFICATIONS = (
     "stub_gap",
     "ac_gap",
     "spec_gap",
+    # M2 (convergence plan 2026-09-05): the honest exit -- Prism could not
+    # reproduce the failure on the forensic package, so it must NOT guess
+    # an owner. Stays in DIAGNOSE (forensics-forced re-dispatch); a
+    # repeated consecutive unknown escalates to Archer RULING as
+    # diagnosis_exhausted (executor streak detection, M1-S2).
+    "unknown",
 )
 
 
