@@ -129,6 +129,8 @@ feature：operations.feature 全量（merge main、公开 tag、artifact、relea
 
 同 candidate 与新 candidate 的判据只有一条：**修复是否移动了 HEAD**。A 类与「不触碰 tracked 文件的修复」（补充复审证据、瞬态扫描重跑、Archer advisory 不产 commit）保持 candidate 身份，受影响门禁原地重跑（FR-0271-02 同 candidate 重审、FR-0272-02 同 candidate 重跑）；任何 tracked 文件修复（含受控合同修订）= 新 commit = 新 candidate 重走（B 类）。两类都产生新事件，AC 可观察合同不因分类丢失。
 
+**修复通道可机器识别（SM-01.20 溯源标记）**：B 类修复 commit 必须携带 `Tracks-Repair-Round: <run_id>/<round>` trailer（Runtime 中介的修复 commit 由 Runtime 附加；人工修复经 `repair_route`/`next=` 指引告知操作员）。重冻放行判据（executor `_repair_rewalk_allowed`）＝ OPEN repair round 存在 ∧ round 绑定该 frozen candidate ∧ 移动后的 HEAD 携带匹配当前 open round 的 trailer；无标记的 HEAD 移动一律按漂移处理（`candidate.stale reason=head_moved`，不重冻、fail-closed，SM-01.17/interfaces §1d）。drift 与 repair 的意图区分由此从散文落到机器可检验信号。
+
 路由与可观察合同：失败类事件 payload 携带 `repair_route {defect_class, owner, discipline, budget_remaining}`（kernel 的 `classify_defect_route` 单一分类，事件生产者不得自报其他路由）；`trac status` 渲染 `blocked: <reason>`、`repair=in_place round=<n>/3` 或 needs_attention 的 `next=` 指引。Prism `revise/failed` 必须经 discuss 锚定阻塞性发现（FR-0271-03）：verdict=revise 而无对应开放线程时 Runtime 判 `revise_without_findings`，不计为有效阻断（承 v0.3 评审协议，复用 `_revise_without_findings` 判定与 `trac discuss start/query` 协议）。
 
 不死锁论证：封闭 reason 集每个成员落入 A–D 且均有非空处置路径；B 类有预算上界（默认 3），穷尽即转入 C（Known Issue，产品质量缺陷可带 waiver 发布）或 D（Human 回拨/终止）——不存在「既修不好又出不去」的状态。自动路径永不回退 M-DESIGN/M-PLANNING（防发布缺陷把需求阶段拖入循环）；Human 逃生门永不被 Runtime 策略阻止；`abandon` 提供零副作用终态出口，被终止 run 不阻塞新 `trac start`。最坏情形是「该版本经 Human 显式放弃」，而非仓库永久卡死。

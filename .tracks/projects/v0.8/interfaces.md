@@ -146,7 +146,7 @@ def build_prism_final_review_assignment(
 ) -> dict: ...
 ```
 
-`freeze_candidate` 在 dirty tree（已跟踪文件有变更）时不得返回身份（调用方落 attention.required）；`judge_full_f_reuse` 仅在四元组全一致且无 STALE 时返回 reuse；`build_prism_final_review_assignment` 的输入证据集合必须全部绑定同一 candidate_sha。
+`freeze_candidate` 在 dirty tree（已跟踪文件有变更）时不得返回身份（调用方落 attention.required）；`judge_full_f_reuse` 仅在四元组全一致且无 STALE 时返回 reuse；`build_prism_final_review_assignment` 的输入证据集合必须全部绑定同一 candidate_sha。`freeze_candidate` 的幂等不重冻同链约束（SM-01.17/SM-01.20）：同 run 已有成功冻结时，HEAD 移动仅在移动后 HEAD 携带 `Tracks-Repair-Round: <run_id>/<round>` 溯源 trailer 且匹配绑定该 frozen candidate 的 OPEN repair round 时才允许新冻结（修复通道可机器识别）；无标记的移动一律 `candidate.stale reason=head_moved`，不重冻（fail-closed）。
 
 ### 1e. Host contract schema 与 normalized result（IF-HOSTCONTRACT-001）
 

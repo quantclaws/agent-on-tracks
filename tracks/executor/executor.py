@@ -4474,7 +4474,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         parked State the walk asserts stays untouched). Every step is
         idempotent per candidate_sha and any fail-closed block (dirty tree,
         contract refusal, gate failure, CI/security stop) halts the chain
-        at that step (§1.0.4)."""
+        at that step (§1.0.14)."""
         if (
             state.stage,
             state.substate,
@@ -4939,21 +4939,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
 
     def _repair_rewalk_allowed(self, frozen_sha: str) -> bool:
-        """True only inside an OPEN repair round (§1.0.14 B, SM-01.20).
+        """True only when the moved HEAD carries repair provenance
+        (§1.0.14 B, SM-01.20).
 
-        The round's defect class drives the policy (the budget is the
-        finite protection against non-fix drifts):
-        - ``gate`` / ``behavior`` (verification_only / red-first): re-freeze —
-          the re-walk re-runs the gate / re-exerts the unit anchor as the
-          proof; a non-fix drift burns a round and hits the budget.
-        - ``contract`` (contract_delta): re-freeze ONLY when the drift
-          actually resolves the contract surface — the host contract now
-          loads and validates (a walker-family host without a contract is
-          an environment refusal, A-class, not a candidate defect; a
-          drift without a contract revision stays stale, never a new
-          candidate — interfaces §1d 幂等不重冻).
-        Without an open round, no freeze entry ever re-freezes a drifted
-        HEAD (SM-01.17): the drift is marked candidate.stale instead.
+        The repair channel is machine-identifiable, never guessed from
+        content: an OPEN repair round must exist for the frozen candidate
+        AND the moved HEAD must carry a ``Tracks-Repair-Round:
+        <run_id>/<round>`` trailer matching that open round (a repair
+        commit is a new candidate; the trailer is how the runtime tells
+        a repair commit from an unrelated drift — SM-01.20). Any
+        unmarked HEAD move is drift: candidate.stale, no re-freeze,
+        fail-closed (SM-01.17, interfaces §1d 幂等不重冻).
         """
         if self._park_repair_budget_used() == 0:
             return False
@@ -4961,31 +4957,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             ("known_issue.registered", "known_issue.rejected"), frozen_sha
         ):
             return False
-        round_class = self._open_repair_defect_class()
-        if round_class == "contract":
-            return self._contract_resolved_now()
-        return True
+        return self._head_carries_repair_trailer(frozen_sha)
 
-    def _open_repair_defect_class(self) -> str:
-        """defect_class of the LATEST repair.round_started of the run
-        ("" when none exists)."""
-        cls = ""
+    def _head_carries_repair_trailer(self, frozen_sha: str) -> bool:
+        """SM-01.20 repair provenance: the moved HEAD carries a
+        ``Tracks-Repair-Round: <run_id>/<round>`` trailer matching the
+        OPEN repair round bound to the frozen candidate (the
+        round_started payload carries candidate_sha; one round per
+        candidate within the budget)."""
+        round_no = None
         for event in self.store.events(self.run_id):
-            if event.type == "repair.round_started":
-                payload = event.payload or {}
-                classification = payload.get("classification") or {}
-                cls = str(classification.get("defect_class") or "")
-        return cls
-
-    def _contract_resolved_now(self) -> bool:
-        """True when the host contract at its canonical path loads and
-        validates right now (the drift revised the contract surface)."""
-        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
-        try:
-            contract = load_host_contract(contract_path)
-        except (OSError, ValueError):
+            if event.type != "repair.round_started":
+                continue
+            payload = event.payload or {}
+            if payload.get("candidate_sha") == frozen_sha:
+                round_no = payload.get("round")
+        if round_no is None:
             return False
-        return not validate_host_contract(contract, self.repo)
+        expected = f"Tracks-Repair-Round: {self.run_id}/{round_no}"
+        proc = git(
+            self.repo, "log", "-1", "--format=%B", "HEAD", check=False
+        )
+        body = proc.stdout or ""
+        return any(line.strip() == expected for line in body.splitlines())
 
     def _next_event_seq(self) -> int:
         """Seq the next appended event of this run will carry (the store

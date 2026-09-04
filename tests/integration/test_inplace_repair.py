@@ -114,17 +114,28 @@ def test_fix_new_candidate_rewalks_verify(host_repo, trac, event_log):
     assert staled.get("reason") == "fix_new_candidate"
 
     # CLI half: after a fix commit the old candidate's evidence is staled and
-    # a new candidate is frozen (never reusing the old preview).
+    # a new candidate is frozen (never reusing the old preview). The fix
+    # commit carries the Tracks-Repair-Round provenance trailer (SM-01.20:
+    # the repair channel is machine-identifiable -- a bare commit is drift,
+    # never a new candidate).
     walk_to_m_impl_parked(trac)
     candidate_before = next(
         (e["payload"]["candidate_sha"] for e in event_log() if "candidate_sha" in e["payload"]),
         None,
     )
+    round_events = [e for e in event_log() if e["type"] == "repair.round_started"]
+    assert round_events, "park chain must have opened a repair round"
+    open_round = round_events[-1]["payload"]["round"]
+    run_id = round_events[-1]["run_id"]
     (host_repo / "fix.txt").write_text("fix\n", encoding="utf-8")
     import subprocess
 
     subprocess.run(["git", "add", "fix.txt"], cwd=host_repo, check=True)
-    subprocess.run(["git", "commit", "-m", "fix: repair"], cwd=host_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"fix: repair\n\nTracks-Repair-Round: {run_id}/{open_round}"],
+        cwd=host_repo,
+        check=True,
+    )
     for _ in range(3):
         trac("run")
     events2 = event_log()

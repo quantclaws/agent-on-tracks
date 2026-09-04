@@ -1944,9 +1944,17 @@ def cmd_status(repo: Path) -> int:
     return 0
 
 
-def cmd_replay(repo: Path, run_id: str) -> int:
+def cmd_replay(repo: Path, *args: str) -> int:
+    """Replay one run's event log (latest when no RUN_ID given)."""
+    if len(args) > 1:
+        return _err("usage: trac replay [RUN_ID]")
+    run_id = args[0] if args else "latest"
     home = paths.tracks_home(repo)
     store = Store(home)
+    if run_id == "latest":
+        run_id = store.latest_run()
+        if run_id is None:
+            return _err("no runs available for replay")
     events = list(store.events(run_id))
     if not events:
         return _err(f"unknown run: {run_id}")
@@ -2505,7 +2513,7 @@ _COMMANDS = {
     "recover": (cmd_recover, None),
     "retry": (cmd_retry, None),
     "status": (cmd_status, 0),
-    "replay": (cmd_replay, 1),
+    "replay": (cmd_replay, None),
     "report": (cmd_report, None),
     "validate": (cmd_validate, 2),
     "discuss": (cmd_discuss, None),
