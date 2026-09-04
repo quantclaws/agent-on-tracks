@@ -90,6 +90,32 @@ def _seed_phase0_premises(repo, version):
         encoding="utf-8",
     )
 
+    # The parked run's evidence chain fail-closes at freeze_candidate on a
+    # dirty tracked tree (interfaces section 1d), so the seeded premises
+    # must land as a commit -- same pattern as seed_v06_baseline (B59
+    # clean-tree expectation). check=False: no-op when the premises are
+    # already committed (idempotent re-walk of the same host repo).
+    import subprocess
+
+    subprocess.run(
+        ["git", "add", ".tracks/projects/project.toml",
+         f".tracks/projects/{version}/architecture.md"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    # Path-scoped commit: never swallow a test's own staged dirt (the
+    # dirty-tree anchors stage README.md before the walk -- a bare commit
+    # would clean it and flip the freeze outcome).
+    subprocess.run(
+        ["git", "commit", "-m", "seed phase0 premises (adapter + quality registry)",
+         "--", ".tracks/projects/project.toml",
+         f".tracks/projects/{version}/architecture.md"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+    )
+
 
 def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", version="v0.8"):
     """init -> start -> triage go -> doc trio -> approval -> M-IMPL RED failure

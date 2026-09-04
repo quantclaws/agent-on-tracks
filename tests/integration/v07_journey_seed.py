@@ -92,8 +92,12 @@ def seed_v06_baseline(host_repo: Path) -> None:
         check=True,
         capture_output=True,
     )
+    # Path-scoped commit: never swallow a caller's staged dirt (the
+    # dirty-tree anchors stage README.md before walking -- a bare commit
+    # would clean it and flip the freeze outcome).
     subprocess.run(
-        ["git", "commit", "-m", "seed v0.6 Phase 0 baseline + gap nodes"],
+        ["git", "commit", "-m", "seed v0.6 Phase 0 baseline + gap nodes",
+         "--", ".tracks/projects/v0.6", _GAP_NODE_FILE],
         cwd=host_repo,
         check=True,
         capture_output=True,
