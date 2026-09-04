@@ -57,6 +57,32 @@ def test_route_diagnosis_exhausted_sets_ruling_without_attempt():
     assert st.current_attempt == 1
 
 
+def test_route_diagnosis_exhausted_resets_doc_flags():
+    # Silent-exit regression (live 2026-09-05): a stale doc_dispatched
+    # left over from the interrupted GREEN dispatch must be cleared --
+    # otherwise _decide_m_impl_ruling awaits a phantom outcome forever
+    # and the loop exits with the run parked in RULING.
+    st = _state_in_diagnose()
+    st.doc_dispatched = True
+    m_impl._route_m_impl_diagnose(st, "diagnosis_exhausted")
+    assert st.doc_dispatched is False
+    cmd = m_impl._decide_m_impl_ruling(st)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+
+
+def test_route_contract_conflict_resets_doc_flags():
+    st = State()
+    st.substate = "GREEN_GATE"
+    st.current_attempt = 2
+    st.doc_dispatched = True
+    m_impl._route_m_impl_gate_failure(st, "contract_conflict", None)
+    assert st.substate == "RULING"
+    assert st.doc_dispatched is False
+    assert st.current_attempt == 2
+    cmd = m_impl._decide_m_impl_ruling(st)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+
+
 def test_ruling_objective_names_diagnosis_exhaustion():
     st = _state_in_diagnose()
     st.substate = "RULING"

@@ -455,6 +455,7 @@ def _route_m_impl_diagnose(s: State, check: str) -> None:
         # NOT a writer failure -- no attempt consumed.
         s.substate = "RULING"
         _reset_review(s)
+        _reset_doc(s)
     else:
         # B62 (#80): an unrecognized check (e.g. diagnose_contract_violation
         # from a contract-violating DIAGNOSE reply) STAYS in DIAGNOSE for the
@@ -553,10 +554,12 @@ _FAILURE_ROUTES = {
     # newly_red AND common). Mutually exclusive anchors: no writer retry can
     # satisfy both (T-042 test_verify_candidate.py:150 <->
     # test_inplace_repair.py rewalk, 2026-09-04, ~40 burned dispatches).
-    # Route the contract authority (Archer RULING, dual-side read
-    # visibility) with the oscillation dossier; NOT a writer failure -- no
-    # attempt consumed.
-    "contract_conflict": ("RULING", None),
+    # contract_conflict is NOT in this dict: it needs _reset_doc as well
+    # (see the explicit branch below) -- a stale doc_dispatched left over
+    # from the interrupted GREEN dispatch would make _decide_m_impl_ruling
+    # return None forever and the loop would exit silently with the run
+    # parked in RULING (live 2026-09-05: the drift-restart watcher then
+    # refused the non-drift death and the run stalled).
     # Gate-level attribution routing directly into DIAGNOSE with a preset
     # classification: reset the reviewer flag so decide() can dispatch the
     # Prism DIAGNOSE review. Without this, a stale reviewer_dispatched
@@ -578,6 +581,16 @@ def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
     if simple is not None:
         s.substate, s.diagnose_classification = simple
         _reset_review(s)
+        return
+    if check == "contract_conflict":
+        # M1-S1: route the contract authority (Archer RULING, dual-side
+        # read visibility) with the oscillation dossier; NOT a writer
+        # failure -- no attempt consumed. Reset the doc flags too so
+        # decide() dispatches Archer instead of awaiting a phantom
+        # outcome (silent-exit bug, live 2026-09-05).
+        s.substate = "RULING"
+        _reset_review(s)
+        _reset_doc(s)
         return
     if check == "criteria_pack_mismatch":
         _reset_review(s)
