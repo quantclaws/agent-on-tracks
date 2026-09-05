@@ -741,12 +741,18 @@ def hotfix_feature_route(repo, store, run_id: str) -> int:
 def _assignment_budget() -> int:
     """M5: the dispatch-side assignment byte budget (0 disables).
 
-    Default 8192 per the convergence plan; environment-overridable for
-    test fixtures and emergency bumps."""
+    Default 16384, calibrated against the POST-enrichment materialized
+    card (the bytes the backend actually receives). Healthy writer cards
+    legitimately run ~6-12KB (task payload + manifest + ref lists), so
+    16KB keeps the teeth on the pathological class (b92's 50KB+ prompt
+    blowups) with margin while never false-firing on a healthy card;
+    authority-role (archer/prism) cards run ~1-3KB since the M5 card diet.
+    Environment-overridable via TRAC_ASSIGNMENT_BUDGET for test fixtures
+    and emergency bumps."""
     try:
-        return int(os.environ.get("TRAC_ASSIGNMENT_BUDGET", "").strip() or 8192)
+        return int(os.environ.get("TRAC_ASSIGNMENT_BUDGET", "").strip() or 16384)
     except ValueError:
-        return 8192
+        return 16384
 
 
 class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
@@ -1470,7 +1476,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # bytes the backend actually receives; the FR-11 evidence channel
         # merges afterwards in _assignment_with_evidence and is not the
         # card's liability. A card JSON over TRAC_ASSIGNMENT_BUDGET bytes
-        # (default 8KB) is a structural task-graph defect (scope bloat:
+        # (default 16KB) is a structural task-graph defect (scope bloat:
         # revision archaeology and escalation add-ons living in the prompt
         # instead of the event log, b92's 200-600k token dispatches).
         # Since the M5 card diet, non-writer (archer/prism) cards are lean

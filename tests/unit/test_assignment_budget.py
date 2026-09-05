@@ -1,6 +1,6 @@
 """Unit: M5 dispatch-side assignment hard budget (convergence plan 2026-09-05).
 
-An assignment JSON over TRAC_ASSIGNMENT_BUDGET (default 8KB) is a
+An assignment JSON over TRAC_ASSIGNMENT_BUDGET (default 16KB) is a
 structural task-graph defect: it is rejected before any backend I/O as
 plan_defect (scope replan, no agent attempt burned) -- revision
 archaeology and escalation add-ons belong in the event log, not the
@@ -27,9 +27,9 @@ from tracks.kernel.machine import State
 # -- budget knob ---------------------------------------------------------------
 
 
-def test_assignment_budget_default_8kb(monkeypatch):
+def test_assignment_budget_default_16kb(monkeypatch):
     monkeypatch.delenv("TRAC_ASSIGNMENT_BUDGET", raising=False)
-    assert _assignment_budget() == 8192
+    assert _assignment_budget() == 16384
 
 
 def test_assignment_budget_env_override_and_disable(monkeypatch):
@@ -41,7 +41,7 @@ def test_assignment_budget_env_override_and_disable(monkeypatch):
 
 def test_assignment_budget_garbage_falls_back(monkeypatch):
     monkeypatch.setenv("TRAC_ASSIGNMENT_BUDGET", "not-a-number")
-    assert _assignment_budget() == 8192
+    assert _assignment_budget() == 16384
 
 
 # -- kernel routing ------------------------------------------------------------
@@ -241,7 +241,7 @@ def test_devon_green_card_keeps_full_writer_contract(tmp_path, monkeypatch):
     st.current_manifest = {
         "allowed_paths": ["tracks/app.py"],
         "forbidden_paths": [".tracks/projects/**"],
-        "big_contract_member": "y" * 5000,
+        "big_contract_member": "y" * 12000,
     }
     base = m_impl._m_impl_base_assignment(st, "devon", "GREEN", ["tracks-devon-rgr"])
     base["phase"] = "green"
