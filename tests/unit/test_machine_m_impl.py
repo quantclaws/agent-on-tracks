@@ -1667,6 +1667,34 @@ def test_infra_failure_streak_escalates_without_consuming_attempts():
     assert s2.infra_failure_streak == 0
 
 
+def test_non_zero_exit_is_infra_not_semantic():
+    """OOB 2026-09-05: opencode exiting 1 (CLI crash, provider 400) is
+    machine-side infra -- no attempt consumed, no last_failure overwrite,
+    streak increments toward the bounded infra re-dispatch."""
+    pre = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH, DEVON_GREEN_DONE, GREEN_GATE_CMD,
+    ]
+    crash = ("outcome.received", {
+        "role": "devon",
+        "status": "failed",
+        "failure_class": "non_zero_exit",
+        "self_report": "opencode exited 1",
+    })
+    verdict = ("verdict.failed", {"check": "impl_defect", "attempt": 1,
+                                  "reason": "selected task tests did not all pass",
+                                  "evidence": "seed"})
+    s = state_of(*pre, verdict, DEVON_GREEN_DISPATCH, crash)
+    assert s.infra_failure_streak == 1
+    assert s.current_attempt == 0  # untouched: infra never burns the budget
+    assert s.last_failure["check"] == "impl_defect"  # evidence not overwritten
+
+
 def test_shield_diagnose_report_survives_semantic_failure():
     """A semantic Shield failure (FR-0210) overwrites last_failure with the
     attempt's own failure signal but must not touch diagnose_report."""

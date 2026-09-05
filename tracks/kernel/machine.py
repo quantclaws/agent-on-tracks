@@ -647,6 +647,14 @@ _INFRA_FAILURE_CLASSES = frozenset(
         "provider_unavailable",
         "timeout",
         "abnormal_step_finish",
+        # OOB 2026-09-05 (run 01M19FJVES7G113RD8QXXY3PQZ): opencode exiting 1
+        # is a process-level failure (CLI crash, provider 400/5xx rejected the
+        # request, gateway misconfig) -- machine-side, never agent semantics.
+        # Classified as semantic it burned a Devon attempt + a DIAGNOSE round
+        # on a deterministic APIError (which the DIAGNOSE vocabulary cannot
+        # even name). Infra: bounded backoff re-dispatch, no attempt, no
+        # DIAGNOSE detour.
+        "non_zero_exit",
     }
 )
 _INFRA_RETRY_LIMIT = 3
