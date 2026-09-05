@@ -1465,13 +1465,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
             return
         # M5 (convergence plan 2026-09-05): dispatch-side hard budget on
-        # the CARD itself (pre-enrichment assignment from the kernel --
-        # the runtime-injected FR-11 evidence channel rides alongside and
-        # is not the card's liability). A card JSON over
-        # TRAC_ASSIGNMENT_BUDGET bytes (default 8KB) is a structural
-        # task-graph defect (scope bloat: revision archaeology and
-        # escalation add-ons living in the prompt instead of the event
-        # log, b92's 200-600k token dispatches) -- never the writer's.
+        # the CARD itself. This is the POST-enrichment materialized card
+        # (issue() already ran _materialize_m_impl_assignment), i.e. the
+        # bytes the backend actually receives; the FR-11 evidence channel
+        # merges afterwards in _assignment_with_evidence and is not the
+        # card's liability. A card JSON over TRAC_ASSIGNMENT_BUDGET bytes
+        # (default 8KB) is a structural task-graph defect (scope bloat:
+        # revision archaeology and escalation add-ons living in the prompt
+        # instead of the event log, b92's 200-600k token dispatches).
+        # Since the M5 card diet, non-writer (archer/prism) cards are lean
+        # by construction (manifest=None, slim task identity): the
+        # budget's teeth are for writer (devon/shield) cards, where an
+        # oversized card means real prompt blowup.
         # Reject before any backend I/O; routes as plan_defect (scope
         # replan, no agent attempt burned).
         card = p.get("assignment")

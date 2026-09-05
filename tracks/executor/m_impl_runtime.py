@@ -806,7 +806,6 @@ class MImplRuntimeMixin:
         role = params.get("role")
         substate = params.get("substate")
         task_id = task.get("task_id") if isinstance(task, dict) else "none"
-        manifest = dict(state.current_manifest) if state.current_manifest is not None else None
         result_identity = self._result_identity(
             task_id,
             str(substate or "dispatch").lower(),
@@ -814,6 +813,14 @@ class MImplRuntimeMixin:
             pre_dirty,
             state.taskgraph_digest or "",
         )
+        if role in ("archer", "prism"):
+            # M5 card diet: non-writer authority cards are lean by
+            # construction (see the helper docstring).
+            self._add_assignment_runtime_fields_authority(
+                assignment, role, substate, task, pre_dirty, result_identity
+            )
+            return
+        manifest = dict(state.current_manifest) if state.current_manifest is not None else None
         if manifest is not None:
             manifest.update({"pre_dirty_snapshot": pre_dirty, "result_identity": result_identity})
             if substate in ("GREEN", "REFACTOR", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE"):
@@ -835,24 +842,74 @@ class MImplRuntimeMixin:
             }
         )
         if task:
-            for key in (
-                "issue_number",
-                "ac_refs",
-                "fr_refs",
-                "if_ids",
-                "test_refs",
-                # B50 (#65): the split contract travels with the assignment
-                # so Devon/Shield see the layer-resolved anchors explicitly.
-                "unit_refs",
-                "acceptance_refs",
-                # B94 deferred anchors and integration marker
-                "deferred_refs",
-                "integration",
-                # #129 debt ledger (pure annotation, carried to assignment)
-                "debt",
-            ):
-                value = task.get(key)
-                assignment[key] = list(value) if isinstance(value, tuple) else value
+            self._copy_task_ref_keys(assignment, task)
+
+    def _copy_task_ref_keys(self, assignment: dict, task: dict) -> None:
+        """Writer-only per-task ref keys, copied from the task payload."""
+        for key in (
+            "issue_number",
+            "ac_refs",
+            "fr_refs",
+            "if_ids",
+            "test_refs",
+            # B50 (#65): the split contract travels with the assignment
+            # so Devon/Shield see the layer-resolved anchors explicitly.
+            "unit_refs",
+            "acceptance_refs",
+            # B94 deferred anchors and integration marker
+            "deferred_refs",
+            "integration",
+            # #129 debt ledger (pure annotation, carried to assignment)
+            "debt",
+        ):
+            value = task.get(key)
+            assignment[key] = list(value) if isinstance(value, tuple) else value
+
+    def _add_assignment_runtime_fields_authority(
+        self,
+        assignment: dict,
+        role: str,
+        substate,
+        task: dict | None,
+        pre_dirty: dict[str, str],
+        result_identity: str,
+    ) -> None:
+        """M5 card diet (convergence plan 2026-09-05): non-writer authority
+        roles (archer/prism) get a lean dispatch card. They read tasks.json,
+        design docs, and the event log from disk -- the writer execution
+        contract (manifest) and the full task payload are dead weight in
+        their card (run 01M19FJVES7G113RD8QXXY3PQZ: a 22534-byte Archer
+        RULING card -- 12KB manifest + 6.5KB task -- blew the M5 dispatch
+        budget). Their failure context rides the evidence channel
+        (merged in _assignment_with_evidence, deliberately unbudgeted).
+        ``task`` shrinks to a slim identity; the per-task ref keys stay at
+        their kernel base values (None). Writer roles (devon/shield) keep
+        the full contract unchanged."""
+        assignment.update(
+            {
+                "role": role,
+                "substate": substate,
+                "task_id": task.get("task_id") if task else None,
+                "task": (
+                    {
+                        "task_id": task.get("task_id"),
+                        "issue_number": task.get("issue_number"),
+                        "ac_refs": list(task.get("ac_refs") or ()),
+                        "if_ids": list(task.get("if_ids") or ()),
+                    }
+                    if task
+                    else None
+                ),
+                "manifest": None,
+                "pre_dirty_snapshot": pre_dirty,
+                "result_identity": result_identity,
+                "commands": {
+                    "unit": self._unit_commands(),
+                    "test": self._test_commands(),
+                    "guard": self._guard_commands(),
+                },
+            }
+        )
 
     def _add_assignment_role_fields(
         self,
@@ -2966,7 +3023,10 @@ class MImplRuntimeMixin:
                 pass
         manifest = {
             "task_id": task.task_id,
-            "task_ref": self._task_payload(task),
+            # M5 card diet: the full task payload already rides
+            # assignment["task"] for writers; task_ref only pins the identity
+            # (a duplicated 6.5KB payload cost the deadlocked RULING card).
+            "task_ref": {"task_id": task.task_id},
             "issue_number": task.issue_number,
             "if_ids": list(task.if_ids),
             "ac_refs": list(task.ac_refs),
