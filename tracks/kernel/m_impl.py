@@ -751,7 +751,15 @@ def _m_impl_archer_ruling_dispatch(s: State) -> Command:
         s, "archer", "RULING", ["tracks-discuz", "tracks-archer-planning"]
     )
     assignment["target_doc"] = None
-    if (s.last_failure or {}).get("check") == "diagnosis_exhausted":
+    last_check = (s.last_failure or {}).get("check")
+    if last_check in ("evidence_malformed", "manifest_malformed"):
+        objective = (
+            "simplify the output contract (repeated shape violations, S3): "
+            "the writer failed the same envelope schema twice in a row -- "
+            "rule a machine-executable contract simplification delta; the "
+            "current envelope overstrains the writer"
+        )
+    elif last_check == "diagnosis_exhausted":
         objective = (
             "rule on the diagnosis-exhausted failure (repeated unknown "
             "attribution, M2): the forensic package and diagnosis history "

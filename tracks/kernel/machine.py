@@ -691,6 +691,22 @@ def _handle_verdict_format_failure(s: State, p: dict) -> None:
         _reset_review(s)
     else:
         _reset_doc(s)
+    if s.format_failure_streak >= 5:
+        # Terminal escape (M1-S3): even a simplified contract did not
+        # stop the shape violations -- the writer model cannot comply.
+        # Human stays the terminal escape, never the first.
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+        return
+    if s.stage == "M-IMPL" and s.format_failure_streak >= 2:
+        # M1-S3 (convergence plan 2026-09-05): two consecutive shape
+        # violations mean the envelope contract itself overstrains the
+        # writer -- route the contract authority (Archer RULING) for a
+        # simplification delta instead of a third agent retry.
+        s.substate = "RULING"
+        _reset_review(s)
+        _reset_doc(s)
+        return
     if s.format_failure_streak >= _FORMAT_RETRY_LIMIT:
         s.status = "awaiting_human"
         s.awaiting = "escalation"
@@ -734,6 +750,22 @@ def _handle_format_failure(s: State, p: dict) -> None:
         _reset_review(s)
     else:
         _reset_doc(s)
+    if s.format_failure_streak >= 5:
+        # Terminal escape (M1-S3): even a simplified contract did not
+        # stop the shape violations -- the writer model cannot comply.
+        # Human stays the terminal escape, never the first.
+        s.status = "awaiting_human"
+        s.awaiting = "escalation"
+        return
+    if s.stage == "M-IMPL" and s.format_failure_streak >= 2:
+        # M1-S3 (convergence plan 2026-09-05): two consecutive shape
+        # violations mean the envelope contract itself overstrains the
+        # writer -- route the contract authority (Archer RULING) for a
+        # simplification delta instead of a third agent retry.
+        s.substate = "RULING"
+        _reset_review(s)
+        _reset_doc(s)
+        return
     if s.format_failure_streak >= _FORMAT_RETRY_LIMIT:
         s.status = "awaiting_human"
         s.awaiting = "escalation"
