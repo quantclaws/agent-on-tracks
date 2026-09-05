@@ -4754,6 +4754,21 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 self._park_stop_reason("local_gate.failed"),
             )
             return
+        # OOB 2026-09-05 (origin disposition): a run parked at
+        # M-IMPL/DIAGNOSE/escalation arrived here through a task failure
+        # verdict. When the verify-side gates all pass -- e.g. the
+        # runtime-materialized default contract's declared no-op gate
+        # (6ec2dc3) -- that origin defect still requires its observable
+        # disposition (interfaces §1d unified repair route: every non-pass
+        # exit has one). Without this, the walked undeclared-host scenario
+        # parked at CI credentials attention with the M-IMPL defect never
+        # classified, and the frozen inplace-repair anchors
+        # (test_no_auto_rollback_in_place_rounds et al.) lost their
+        # repair.round_started (run 01M19FJVES7G113RD8QXXY3PQZ, red since
+        # 6ec2dc3 landed). Idempotency/budget/closed-set guards all apply
+        # inside _park_repair_route; the chain still proceeds to its CI /
+        # security / preview stops unchanged.
+        self._park_origin_repair_route(park_cmd, candidate_sha)
         if not self._park_observe_ci(park_cmd, candidate_sha, contract):
             return
         if not self._park_assess_security(
@@ -5010,6 +5025,36 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if reason:
             payload["reason"] = reason
         self._emit(result["event"], payload, command_id=cmd.command_id)
+
+    def _park_origin_repair_route(self, cmd, candidate_sha: str) -> None:
+        """OOB 2026-09-05: open the repair disposition for the ORIGIN defect
+        that parked the run (M-IMPL task failure) when the verify-side gates
+        all passed. Classifies behaviour (owner Devon, red_first) from the
+        latest impl_defect verdict; every _park_repair_route guard applies
+        (per-candidate idempotency, budget, closed-set classification).
+        test_defect origins stay fail-closed (not in the verify-side
+        classification table -- the ruling channel owns them)."""
+        if self._park_candidate_seen(
+            ("repair.round_started", "known_issue.registered"), candidate_sha
+        ):
+            return
+        origin_reason = ""
+        origin = False
+        for event in self.store.events(self.run_id):
+            if event.type != "verdict.failed":
+                continue
+            payload = event.payload or {}
+            if payload.get("check") == "impl_defect":
+                origin = True
+                origin_reason = str(payload.get("reason") or "")
+        if not origin:
+            return
+        self._park_repair_route(
+            cmd,
+            candidate_sha,
+            "behavior",
+            origin_reason or "park origin: M-IMPL task failure verdict",
+        )
 
     def _park_known_issue(
         self,
