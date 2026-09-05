@@ -39,6 +39,9 @@ from tracks.executor.oscillation import (
 from tracks.executor.oscillation import (
     detect_oscillation as _detect_oscillation,
 )
+from tracks.executor.oscillation import (
+    parse_failed_nodes as _parse_failed_nodes,
+)
 from tracks.executor.quality_gate import (
     execute_gate_command,
     failed_summary_lines,
@@ -4265,7 +4268,19 @@ class MImplRuntimeMixin:
                         "RULING carries the paired-delta decision"
                     ),
                     evidence=json.dumps(
-                        {"oscillation": osc, "task_selection": exc.evidence},
+                        {
+                            "oscillation": osc,
+                            "task_selection": exc.evidence,
+                            # OOB 2026-09-05 (baseline-advance fix): carry the
+                            # CURRENT failing set at the evidence root so the
+                            # next detection compares against THIS round, not
+                            # the pre-oscillation baseline. Without it the
+                            # contract_conflict verdict is skipped by
+                            # last_failed_nodes and the replan->Devon->gate
+                            # loop re-fires the identical S1 forever (run
+                            # 01M19FJVES7G113RD8QXXY3PQZ seq 3016==3054).
+                            "failed_nodes": _parse_failed_nodes(exc.evidence),
+                        },
                         sort_keys=True,
                     ),
                     task_id=task_id,

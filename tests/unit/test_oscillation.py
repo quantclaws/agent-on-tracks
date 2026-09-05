@@ -166,3 +166,63 @@ def test_check_name_is_contract_conflict():
     # The routed classification: mutually exclusive anchors are a contract
     # conflict owned by the ruling authority, never a writer retry.
     assert OSCILLATION_CHECK == "contract_conflict"
+
+
+def _contract_conflict(task_id: str, nodes: list) -> dict:
+    """The verdict an S1 firing itself records (baseline-advance fix)."""
+    return _ev(
+        {
+            "check": "contract_conflict",
+            "task_id": task_id,
+            "evidence": json.dumps(
+                {
+                    "oscillation": {"healed": [], "newly_red": [], "common": []},
+                    "task_selection": "{}",
+                    "failed_nodes": nodes,
+                }
+            ),
+        }
+    )
+
+
+def test_contract_conflict_advances_the_baseline():
+    """OOB 2026-09-05: an S1 firing is itself a failing round -- the NEXT
+    detection must compare against it, not against the pre-oscillation
+    failure. Otherwise replan->Devon->gate legally returns and the same
+    signature re-fires forever (run 01M19FJVES7G113RD8QXXY3PQZ,
+    seq 3016 == 3054: identical healed/newly_red across a replan and a
+    real 542s GREEN round)."""
+    events = [
+        _gate_failure("T-042", [_node("a"), _node("b"), _node("c")]),
+        # round 2 swaps -> S1 fires; the recorded verdict carries round 2's set
+        _contract_conflict("T-042", [_node("b"), _node("c"), _node("d")]),
+    ]
+    # round 3 fails with EXACTLY round 2's set (no further swap): the
+    # baseline must now be round 2 -> no healed anchors -> no re-fire.
+    assert (
+        detect_oscillation(
+            events, "T-042", json.dumps({"failed_nodes": [_node("b"), _node("c"), _node("d")]})
+        )
+        is None
+    )
+    # a genuine NEW swap against the advanced baseline still fires.
+    assert (
+        detect_oscillation(
+            events, "T-042", json.dumps({"failed_nodes": [_node("c"), _node("d"), _node("e")]})
+        )
+        == {"healed": ["b"], "newly_red": ["e"], "common": ["c", "d"]}
+    )
+
+
+def test_stale_baseline_without_failed_nodes_still_skipped():
+    """Legacy contract_conflict events (pre-fix) carry no parseable
+    failed_nodes and must stay skipped -- fail-closed, never guessed."""
+    legacy = _ev(
+        {
+            "check": "contract_conflict",
+            "task_id": "T-042",
+            "evidence": json.dumps({"oscillation": {}, "task_selection": "{}"}),
+        }
+    )
+    events = [_gate_failure("T-042", [_node("a"), _node("b")]), legacy]
+    assert last_failed_nodes(events, "T-042") == ["a", "b"]

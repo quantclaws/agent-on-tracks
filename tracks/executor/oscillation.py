@@ -78,13 +78,18 @@ def detect(prev: list[str], curr: list[str]) -> dict | None:
 
 
 def last_failed_nodes(events: list[dict], task_id: str) -> list[str] | None:
-    """事件流中该 task 最近一次 impl_defect 失败的锚点集合。
+    """事件流中该 task 最近一次失败（impl_defect 或 contract_conflict）的锚点集合。
 
     events: [{"type": ..., "payload": {...}}, ...]（seq 升序）。从尾
     向前扫：先遇到该 task 的 verdict.passed（check=green）即返回
-    None——成功重置振荡窗口；先遇到可解析的
-    verdict.failed(check=impl_defect) 即返回其锚点。无历史失败返回
-    None（首败必放行，永不误报）。
+    None——成功重置振荡窗口；先遇到可解析的失败即返回其锚点。
+    无历史失败返回 None（首败必放行，永不误报）。
+
+    OOB 2026-09-05（基线推进修复）：contract_conflict（S1 自身的落库
+    verdict）也推进基线——否则 S1 触发后基线被永久跳过，replan 合法
+    带回 GREEN_GATE 时，新失败永远与振荡前的陈旧基线比较，同一签名
+    无限重触发（run 01M19FJVES7G113RD8QXXY3PQZ seq 3016==3054 实证）。
+    该 verdict 的 evidence 自带 failed_nodes（发射侧同批修复）。
     """
     for ev in reversed(events):
         if ev.get("type") not in ("verdict.failed", "verdict.passed"):
@@ -94,7 +99,7 @@ def last_failed_nodes(events: list[dict], task_id: str) -> list[str] | None:
             continue
         if ev.get("type") == "verdict.passed":
             return None
-        if payload.get("check") != "impl_defect":
+        if payload.get("check") not in ("impl_defect", "contract_conflict"):
             continue
         nodes = parse_failed_nodes(payload.get("evidence"))
         if nodes:

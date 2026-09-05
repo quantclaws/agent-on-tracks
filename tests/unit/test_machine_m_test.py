@@ -346,7 +346,10 @@ def test_prism_dispatch_failure_re_dispatches():
     cmd = decide(s)
     assert cmd is not None and cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "prism"
-    assert cmd.params["evidence"]["check"] == "non_zero_exit"
+    # 4ca0207: non_zero_exit is infra -- the re-dispatch still happens
+    # (reviewer flag reset) but machine noise never rides the evidence
+    # channel (infra failures do not overwrite last_failure).
+    assert "evidence" not in cmd.params or cmd.params["evidence"] is None
 
 
 # AC-FR0040-02@v0.4 TRACKS-TRACE criteria pack mismatch
