@@ -3030,15 +3030,13 @@ class MImplRuntimeMixin:
             # assignment["task"] for writers; task_ref only pins the identity
             # (a duplicated 6.5KB payload cost the deadlocked RULING card).
             "task_ref": {"task_id": task.task_id},
+            # OOB 2026-09-05 (writer-card dedup, second pass): drop the
+            # manifest's copies of the task's ref lists too -- they ride
+            # assignment.task exactly once. Zero readers of the manifest
+            # copies (verified by grep); the triple carriage pushed T-042's
+            # card over the M5 budget on contract data alone
+            # (16489 > 16384, run 01M19FJVES7G113RD8QXXY3PQZ seq 3084).
             "issue_number": task.issue_number,
-            "if_ids": list(task.if_ids),
-            "ac_refs": list(task.ac_refs),
-            "fr_refs": list(task.fr_refs),
-            "test_refs": list(task.test_refs),
-            "unit_refs": list(task.unit_refs),
-            "acceptance_refs": list(task.acceptance_refs),
-            "deferred_refs": list(getattr(task, "deferred_refs", ())),
-            "integration": bool(getattr(task, "integration", False)),
             "scope_boundary": task.scope_boundary,
             "allowed_paths": allowed,
             "forbidden_paths": self._forbidden_paths(),
