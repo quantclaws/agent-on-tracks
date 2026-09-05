@@ -6,6 +6,7 @@ routing, multi-task iteration, gate failures, and the kernel purity boundary
 (NFR-0030).
 """
 
+import json
 from pathlib import Path
 
 from tests.unit.helpers import (
@@ -3141,3 +3142,80 @@ def test_effects_whitelist_shares_kernel_vocabulary_source():
     from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
 
     assert _oc.OpencodeBackend._DIAGNOSE_CLASSIFICATIONS is DIAGNOSE_CLASSIFICATIONS
+
+
+def test_green_objective_names_the_failed_anchors():
+    """OOB 2026-09-05: a GREEN re-dispatch must point at the anchors the
+    GREEN_GATE will re-run -- a generic "implement task X" objective let the
+    writer work adjacent faces while the same anchors stayed red (run
+    01M19FJVES7G113RD8QXXY3PQZ). Deterministic (sorted) and bounded (cap)."""
+    pre = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        GREEN_GATE_CMD,
+    ]
+    failed = (
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "task_id": "T-042",
+            "attempt": 1,
+            "evidence": json.dumps(
+                {
+                    "failed_nodes": [
+                        {"node": "tests/integration/test_b.py::test_two"},
+                        {"node": "tests/integration/test_a.py::test_one"},
+                    ]
+                }
+            ),
+        },
+    )
+    # Real flow: the gate verdict routes DIAGNOSE; Prism's diagnosis
+    # verdict (impl_defect, anchors on the payload) routes GREEN.
+    diagnosis = (
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "task_id": "T-042",
+            "attempt": 2,
+            "reason": "wiring gaps",
+            "evidence": "Prism diagnosis prose (not JSON)",
+            "failed_nodes": [
+                {"node": "tests/integration/test_b.py::test_two"},
+                {"node": "tests/integration/test_a.py::test_one"},
+            ],
+        },
+    )
+    s = state_of(*pre, failed, diagnosis)
+    assert s.substate == "GREEN"
+    cmd = decide(s)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "devon"
+    objective = cmd.params["objective"]
+    assert "test_a.py::test_one" in objective and "test_b.py::test_two" in objective
+    # sorted ascending: a before b
+    assert objective.index("test_a.py") < objective.index("test_b.py")
+
+
+def test_green_objective_omits_anchor_clause_without_nodes():
+    """No parseable failed_nodes -> no invented clause (fail-closed)."""
+    pre = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        GREEN_GATE_CMD,
+    ]
+    failed = (
+        "verdict.failed",
+        {"check": "impl_defect", "task_id": "T-042", "attempt": 1, "evidence": "not json"},
+    )
+    s = state_of(*pre, failed)
+    cmd = decide(s)
+    assert "the gate failed on these anchors" not in cmd.params["objective"]

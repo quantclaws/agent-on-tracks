@@ -815,15 +815,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         stamp = code_stamp(Path(self.repo))
         if stamp != self._code_stamp:
             # M7 (convergence plan 2026-09-05): graceful handover. The
-            # loop runs from the installed wheel (bootstrap isolation),
-            # so tree drift no longer means this process executes stale
+            # loop runs from the installed distribution (bootstrap
+            # isolation), so tree drift no longer means this process
+            # executes stale
             # logic mid-pipeline -- and this check only runs at dispatch
             # boundaries, so the in-flight dispatch has already fully
             # concluded (129 loop.aborted events and their 55-event
             # evidence.staled cascade in tracks.db were mid-pipeline
             # interruptions of exactly this shape). Record code.drift
             # for the audit trail; the restart watcher rebuilds the
-            # wheel and the next process takes over from the event
+            # installed distribution and the next process takes over
+            # from the event
             # store. The run state stays active -- no abort, no staling.
             self._emit(
                 "code.drift",
@@ -3321,6 +3323,22 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return
         self._emit_verdict(role, result["verdict"], result, state, params, cmd, task_id)
 
+    def _gate_failed_nodes(self, task_id: str) -> list[str]:
+        """OOB 2026-09-05: the triggering gate's failing anchors, so the
+        diagnosis verdict can carry them on its payload (machine-readable;
+        the evidence string carries Prism's prose). The GREEN re-dispatch
+        objective names them -- the writer targets what the gate will
+        re-run (M2 live-evidence rule)."""
+        from tracks.executor.oscillation import last_failed_nodes
+
+        return last_failed_nodes(
+            [
+                {"type": e.type, "payload": dict(e.payload or {})}
+                for e in self.store.events(self.run_id)
+            ],
+            task_id,
+        )
+
     def _emit_diagnose_verdict(self, result, state, cmd, task_id):
         # Real channel (opencode): the Prism DIAGNOSE reply ends with a
         # {"classification", "reason", "evidence"} JSON (skill contract)
@@ -3388,6 +3406,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         evidence, emitted_check, reason = self._m2_diagnosis_envelope(
             task_id or state.current_task_id, evidence, classification, reason
         )
+        gate_nodes = self._gate_failed_nodes(task_id or state.current_task_id or "")
         target = (
             "M-IMPL"
             if classification in ("test_defect", "impl_defect")
@@ -3410,6 +3429,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "reason": reason,
                 "evidence": evidence,
                 "attempt": state.current_attempt + 1,
+                **({"failed_nodes": gate_nodes} if gate_nodes else {}),
             },
             command_id=cmd.command_id,
             task_id=task_id,
@@ -5769,6 +5789,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        # §1.0.7 terminal face: the closing tail completes with
+        # run.completed(terminal_state=released, release_tag).
+        self._emit(
+            "run.completed",
+            {
+                "terminal_state": "released",
+                "release_tag": trace.get("release_tag", ""),
+                "trace_digest": trace.get("trace_digest", ""),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
 
     def _do_recover_stage(self, cmd, state, task_id, reconcile):
         # B32 (#32): forward recovery. Reconcile idempotency mirrors
@@ -7540,6 +7572,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return paths.version_dir(self.store.home, self.version)
 
     def _do_generate_preview(self, cmd, state, task_id, reconcile):
+        if state.stage == "M-RELEASE":
+            # M-RELEASE face (SM-01.6, §1.0.5): the aggregate release
+            # preview -- evidence digests + contract policy + operation
+            # plan, content-addressed, then AWAITING_RELEASE via the
+            # kernel reducer. The approval preview never fires here.
+            candidate_sha = str(getattr(state, "candidate_sha", "") or "")
+            if not candidate_sha:
+                # Fail closed: a release preview without a frozen candidate
+                # would mint an unbound preview digest (NFR-0143).
+                self._emit(
+                    "attention.required",
+                    {
+                        "area": "freeze",
+                        "reason": "candidate_missing",
+                        "stage": "M-RELEASE",
+                        "detail": "release preview reached with no frozen candidate",
+                        "next": "re-run M-VERIFY; trac run retries in place",
+                    },
+                    command_id=cmd.command_id,
+                )
+                return
+            self._release_preview(cmd, candidate_sha)
+            return
         if reconcile and state.preview_ready:
             return
         vdir = self._vdir()

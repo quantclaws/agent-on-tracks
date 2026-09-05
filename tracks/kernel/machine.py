@@ -225,6 +225,26 @@ class State:
     hotfix_anchor_validated: bool = False
     hotfix_branch: str | None = None
     baseline_inherited: bool = False
+    # v0.8 release pipeline (SM-01, kernel/release reducers): the five-stage
+    # projection. Safe defaults keep pre-v0.8 replays unchanged. The candidate
+    # SHA is the single primary identity every release event carries
+    # (NFR-0143); a NEW candidate.frozen resets the whole downstream evidence
+    # projection (SM-01.20 full re-walk) while a same-SHA re-freeze is an
+    # idempotent no-op (SM-01.17).
+    candidate_sha: str | None = None
+    candidate_clean: bool = False
+    candidate_stale: bool = False
+    full_reuse: str | None = None  # "full_f" while the reuse evidence binds
+    reuse_identity_basis: list | None = None
+    local_gates: dict = field(default_factory=dict)  # kind -> gate projection
+    ci_status: str | None = None  # bound|mismatch|missing|stale|needs_attention
+    security_status: str | None = None  # passed|failed|unknown
+    security_policy_digest: str | None = None
+    preview_digest: str | None = None
+    release_decision: str | None = None  # release|delay|return
+    release_decision_digest: str | None = None
+    publish_status: str | None = None  # planned|executing|reconciled_skip|done|blocked
+    milestone_status: str | None = None  # closing|sealed|released|retry_tail
 
 
 # FR-0160 / BS-01: declarative stage registry. Every per-stage fact lives here
@@ -432,6 +452,17 @@ def _on_stage_entered(s: State, p: dict, ev: EventEnvelope) -> None:
         s.version = ev.version
     s.stage = p["stage"]
     sd = _STAGES.get(s.stage)
+    if sd is None:
+        # SM-01 five-stage release pipeline (architecture §338 "kernel/
+        # release 注册到 machine"): the release StageDefs live in
+        # kernel/release (which imports machine at module scope), so the
+        # entry substate resolves through the same lazy seam as decide().
+        from .release import release_stage_defs
+
+        for rel in release_stage_defs():
+            if rel.stage == s.stage:
+                sd = rel
+                break
     s.substate = sd.initial_substate if sd else None
     _reset_doc(s)
     _reset_review(s)
@@ -903,7 +934,13 @@ def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
 
 
 def _on_verdict_failed(s: State, p: dict, ev: EventEnvelope) -> None:
-    s.last_failure = {k: p.get(k) for k in ("check", "reason", "evidence", "log_ref", "attempt")}
+    # failed_nodes (OOB 2026-09-05): the diagnosis verdict may carry the
+    # triggering gate's failing anchors -- the GREEN re-dispatch objective
+    # names them (M2 live-evidence rule). Absent on older events -> None.
+    s.last_failure = {
+        k: p.get(k)
+        for k in ("check", "reason", "evidence", "log_ref", "attempt", "failed_nodes")
+    }
     is_human = bool(s.active_result and s.active_result.get("actor_kind") == "human")
     s.active_result = None  # v0.5: pipeline failure clears the checkpoint
     if is_human:
@@ -1618,6 +1655,24 @@ def _on_doc_gap_design_reviewed(s: State, p: dict, ev: EventEnvelope) -> None:
             record["reason"] = "Prism design review budget exhausted"
 
 
+def _release_apply(name: str):
+    """Lazy release-kernel reducer binding (SM-01, architecture §338).
+
+    ``release.py`` imports machine at module scope (``StageDef``/``State``),
+    so the ``_APPLY`` registration resolves the kernel module per call --
+    the same lazy seam discipline as ``decide()``'s
+    ``decide_release_stage`` import. Python's import cache makes the
+    per-call resolution a dict lookup.
+    """
+
+    def _apply(s: State, p: dict, ev: EventEnvelope) -> None:
+        from . import release
+
+        getattr(release, name)(s, p, ev)
+
+    return _apply
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -1717,6 +1772,28 @@ _APPLY = {
     "phase0.guard_hardened": kernel_state.on_phase0_guard_hardened,
     "phase0.sealed": kernel_state.on_phase0_sealed,
     "phase0.blocked": on_phase0_blocked,
+    # v0.8 release pipeline (SM-01, kernel/release reducers -- architecture
+    # §338 "kernel/release 注册到 machine"): the five-stage projection over
+    # the candidate-bound release event face (NFR-0143 same-identity chain).
+    "candidate.frozen": _release_apply("on_candidate_frozen"),
+    "candidate.stale": _release_apply("on_candidate_stale"),
+    "evidence.reused": _release_apply("on_evidence_reused_full_f"),
+    "local_gate.passed": _release_apply("on_local_gate_result"),
+    "local_gate.failed": _release_apply("on_local_gate_result"),
+    "ci.run_observed": _release_apply("on_ci_run_observed"),
+    "security.assessed": _release_apply("on_security_assessed"),
+    "release.previewed": _release_apply("on_release_previewed"),
+    "release.decided": _release_apply("on_release_decided"),
+    "publish.planned": _release_apply("on_publish_events"),
+    "publish.executed": _release_apply("on_publish_events"),
+    "publish.blocked": _release_apply("on_publish_events"),
+    "publish.failed": _release_apply("on_publish_events"),
+    "milestone.trace_closed": _release_apply("on_milestone_events"),
+    "milestone.closed": _release_apply("on_milestone_events"),
+    "milestone.sealed": _release_apply("on_milestone_events"),
+    "issue.closed": _release_apply("on_milestone_events"),
+    "project.closed": _release_apply("on_milestone_events"),
+    "refs.cleaned": _release_apply("on_milestone_events"),
 }
 
 

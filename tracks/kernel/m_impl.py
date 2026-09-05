@@ -853,7 +853,7 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
             f"implement task {s.current_task_id} ({phase}); your FINAL reply "
             "must end with the bare evidence JSON object per skill "
             "tracks-devon-rgr §4 - prose or Markdown reports are not a "
-            "deliverable" + _shield_diagnosis_clause(s)
+            "deliverable" + _green_gate_anchor_clause(s) + _shield_diagnosis_clause(s)
         ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
@@ -864,6 +864,68 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     if s.last_failure:
         params["evidence"] = dict(s.last_failure)
     return Command(kind="dispatch_agent", params=params)
+
+
+_GREEN_ANCHOR_CAP = 15
+
+
+def _node_names(carrier) -> list[str]:
+    """Anchor names from one failed_nodes carrier (list of dicts/strings)."""
+    if not isinstance(carrier, list):
+        return []
+    names: list[str] = []
+    for node in carrier:
+        if isinstance(node, dict):
+            name = str(node.get("node") or "")
+        else:
+            name = str(node) if node else ""
+        if name:
+            names.append(name)
+    return names
+
+
+def _evidence_failed_nodes(evidence) -> list[str]:
+    """Anchor names embedded in the evidence channel (JSON string or dict)."""
+    data = None
+    if isinstance(evidence, str):
+        try:
+            data = json.loads(evidence)
+        except (ValueError, TypeError):
+            data = None
+    elif isinstance(evidence, dict):
+        data = evidence
+    if not isinstance(data, dict):
+        return []
+    return _node_names(data.get("failed_nodes"))
+
+
+def _green_gate_anchor_clause(s: State) -> str:
+    """GREEN re-dispatch: name the anchors the gate actually failed on.
+
+    FR-11 carries the failed nodes in the evidence channel, but a generic
+    "implement task X (green)" objective lets the writer pick its own
+    priorities -- live evidence (run 01M19FJVES7G113RD8QXXY3PQZ) it spent
+    two 30+ minute rounds on adjacent faces while the same 15 event-producer
+    anchors stayed red. The re-dispatch must point at the failure the gate
+    will re-run, not at the task in the abstract (M2: the fixer rules on
+    live evidence, never on archaeology). Deterministic and bounded: sorted,
+    capped, and empty when no carrier holds parseable nodes.
+    """
+    last_failure = s.last_failure or {}
+    names = _evidence_failed_nodes(last_failure.get("evidence"))
+    # Payload-level carrier (diagnosis verdicts): the anchors ride the
+    # last_failure dict directly, not inside the evidence prose.
+    names += _node_names(last_failure.get("failed_nodes"))
+    if not names:
+        return ""
+    unique = sorted(dict.fromkeys(names))
+    shown = unique[:_GREEN_ANCHOR_CAP]
+    clause = "; ".join(shown)
+    suffix = f" (+{len(unique) - len(shown)} more)" if len(unique) > len(shown) else ""
+    return (
+        "; the gate failed on these anchors and will re-run them: "
+        f"{clause}{suffix}"
+    )
 
 
 # flow.md §10.1 DIAGNOSE 七元分类词表（#89 单一真相源：kernel 定义，
