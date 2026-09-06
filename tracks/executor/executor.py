@@ -152,6 +152,7 @@ from tracks.executor.worktree import (
     create_devon_worktree,
     create_test_authority_worktree,
     ensure_runtime_assets,
+    seed_worktree_with_cycle_wip,
 )
 from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 
@@ -3110,6 +3111,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "devon_candidate",
             )
             handle = create_devon_worktree(str(self.repo), head, self.run_id, task_id)
+            # OOB 2026-09-06: seed with the current cycle's accumulated WIP so
+            # a re-dispatched writer resumes from it instead of clean HEAD
+            # (worktree blindness, run 01M19FJVES7G113RD8QXXY3PQZ).
+            scope = (state.current_manifest or {}).get("allowed_paths") or []
+            seeded = seed_worktree_with_cycle_wip(
+                str(self.repo), handle.path, [p for p in scope if isinstance(p, str)]
+            )
+            if seeded:
+                print(
+                    f"  [worktree] seeded {seeded} in-scope WIP path(s) into the "
+                    f"devon worktree (cycle accumulation)",
+                    file=sys.stderr,
+                    flush=True,
+                )
         else:
             self._clear_stale_worktree_path(
                 _writer_worktree_path(str(self.repo), self.run_id, None, "test_authority"),

@@ -206,3 +206,38 @@ def test_sweep_worktrees_removes_all_runs_registered_and_shells(tmp_path):
 def test_sweep_worktrees_noop_when_absent(tmp_path):
     repo, _base = _init_repo(tmp_path)
     assert sweep_worktrees(str(repo)) == []
+
+
+def test_seed_worktree_with_cycle_wip_carries_in_scope_dirty(tmp_path):
+    """OOB 2026-09-06: a fresh writer worktree must see the cycle's
+    accumulated WIP (run 01M19FJVES7G113RD8QXXY3PQZ: work built from clean
+    HEAD every round -> 15 anchors never shrank). In-scope tracked edits AND
+    new files seed; out-of-scope dirty content never crosses."""
+    repo, base = _init_repo(tmp_path)
+    # in-scope tracked file committed, then dirtied
+    (repo / "tracks").mkdir()
+    (repo / "tracks" / "a.py").write_text("v1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "a")
+    (repo / "tracks" / "a.py").write_text("v2-wip\n")            # tracked dirty
+    (repo / "tracks" / "b.py").write_text("new-wip\n")          # untracked in-scope
+    (repo / "notes.md").write_text("operator-only\n")            # out-of-scope dirty
+    wt = create_devon_worktree(str(repo), base, "run-1", "T-001")
+    from tracks.executor.worktree import seed_worktree_with_cycle_wip
+    n = seed_worktree_with_cycle_wip(str(repo), wt.path, ["tracks"])
+    assert n == 2  # a.py + b.py; notes.md stays out
+    assert (Path(wt.path) / "tracks" / "a.py").read_text() == "v2-wip\n"
+    assert (Path(wt.path) / "tracks" / "b.py").read_text() == "new-wip\n"
+    assert not (Path(wt.path) / "notes.md").exists()
+    cleanup_worktree(wt)
+
+
+def test_seed_worktree_with_cycle_wip_empty_scope_noop(tmp_path):
+    """No scope -> nothing seeded (fail-closed, never bleeds operator state)."""
+    repo, base = _init_repo(tmp_path)
+    (repo / "README.md").write_text("dirty\n")
+    wt = create_devon_worktree(str(repo), base, "run-1", "T-001")
+    from tracks.executor.worktree import seed_worktree_with_cycle_wip
+    assert seed_worktree_with_cycle_wip(str(repo), wt.path, []) == 0
+    assert (Path(wt.path) / "README.md").read_text() == "hello\n"
+    cleanup_worktree(wt)

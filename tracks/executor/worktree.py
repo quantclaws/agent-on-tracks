@@ -33,6 +33,51 @@ def _writer_worktree_path(repo: str, run_id: str, task_id: str | None, kind: str
     return _worktree_path(repo, run_id, task_id, kind)
 
 
+def _iter_scope_paths(repo: str, scope_paths: list[str]):
+    """Yield in-scope repo-relative paths: tracked-changed vs HEAD plus
+    untracked. ``scope_paths`` may name files or directories (git pathspec)."""
+    if not scope_paths:
+        return
+    changed = _git(repo, "diff", "HEAD", "--name-only", "--", *scope_paths)
+    untracked = _git(repo, "ls-files", "--others", "--exclude-standard", "--", *scope_paths)
+    seen: set[str] = set()
+    for rel in (changed + "\n" + untracked).splitlines():
+        rel = rel.strip()
+        if rel and rel not in seen:
+            seen.add(rel)
+            yield rel
+
+
+def seed_worktree_with_cycle_wip(repo: str, worktree_path: str, scope_paths: list[str]) -> int:
+    """Seed a fresh writer worktree with the cycle's accumulated WIP.
+
+    OOB 2026-09-06 (run 01M19FJVES7G113RD8QXXY3PQZ): GREEN work that fails its
+    gate stays UNCOMMITTED in the main tree (no G commit), so a re-dispatch's
+    worktree -- freshly checked out from HEAD -- cannot see it. On a large
+    task Devon then re-derives the same wiring every round while the anchors
+    never shrink (one 2h20m round produced zero net change). Seeding copies
+    the in-scope current main-tree content into the worktree so the writer
+    resumes from the accumulated cycle state, never from clean HEAD. Scope
+    restriction keeps operator edits / runtime state out of the writer's
+    view. Returns the number of seeded paths (0 = nothing to carry).
+    """
+    from pathlib import Path
+
+    main = Path(repo)
+    wt = Path(worktree_path)
+    seeded = 0
+    for rel in _iter_scope_paths(repo, scope_paths):
+        src = main / rel
+        dst = wt / rel
+        if src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(src.read_bytes())
+        elif dst.exists():
+            dst.unlink()
+        seeded += 1
+    return seeded
+
+
 def create_devon_worktree(
     repo: str,
     c_design_sha: str,
