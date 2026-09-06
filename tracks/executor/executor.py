@@ -3131,26 +3131,14 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if kind is None or (kind == "devon" and not task_id):
             return None, None
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        seed_note: dict | None = None
         if kind == "devon":
             self._clear_stale_worktree_path(
                 _writer_worktree_path(str(self.repo), self.run_id, task_id, "devon"),
                 "devon_candidate",
             )
             handle = create_devon_worktree(str(self.repo), head, self.run_id, task_id)
-            # OOB 2026-09-06: seed with the current cycle's accumulated WIP so
-            # a re-dispatched writer resumes from it instead of clean HEAD
-            # (worktree blindness, run 01M19FJVES7G113RD8QXXY3PQZ).
-            scope = (state.current_manifest or {}).get("allowed_paths") or []
-            seeded = seed_worktree_with_cycle_wip(
-                str(self.repo), handle.path, [p for p in scope if isinstance(p, str)]
-            )
-            if seeded:
-                print(
-                    f"  [worktree] seeded {seeded} in-scope WIP path(s) into the "
-                    f"devon worktree (cycle accumulation)",
-                    file=sys.stderr,
-                    flush=True,
-                )
+            seed_note = self._seed_devon_worktree_wip(state, handle.path)
         else:
             self._clear_stale_worktree_path(
                 _writer_worktree_path(str(self.repo), self.run_id, None, "test_authority"),
@@ -3166,11 +3154,39 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 "task_id": task_id,
                 "base_sha": head,
                 "attempt": state.current_attempt + 1,
+                # Prism P4: the writer's actual input surface is HEAD + the
+                # seeded cycle WIP -- the audit event records it so replay
+                # can reconstruct what the writer saw.
+                **({"devon_wip_seed": seed_note} if seed_note is not None else {}),
             },
             command_id=cmd.command_id,
             task_id=task_id,
         )
         return handle, task_id
+
+    def _seed_devon_worktree_wip(self, state, worktree_path: str) -> dict:
+        """OOB 2026-09-06: seed a fresh Devon worktree with the current
+        cycle's accumulated WIP so a re-dispatched writer resumes from it
+        instead of clean HEAD (worktree blindness, run
+        01M19FJVES7G113RD8QXXY3PQZ: one 2h20m round produced zero net
+        change). Prism P4: the seeded surface is recorded for the audit
+        event -- replay reconstructs what the writer actually saw; a
+        missing manifest (no scope derivable) degrades loudly, never
+        silently blind."""
+        manifest = state.current_manifest or {}
+        scope = [p for p in (manifest.get("allowed_paths") or []) if isinstance(p, str)]
+        seeded = seed_worktree_with_cycle_wip(str(self.repo), worktree_path, scope)
+        note = {"seeded_wip_paths": seeded}
+        if seeded:
+            print(
+                f"  [worktree] seeded {seeded} in-scope WIP path(s) into the "
+                f"devon worktree (cycle accumulation)",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif manifest.get("allowed_paths") is None:
+            note["seeded_wip_paths"] = "degraded: no manifest scope"
+        return note
 
     def _clear_stale_worktree_path(self, path: str, kind: str) -> None:
         """Reclaim this exact path if a crashed dispatch left it behind.
@@ -5747,23 +5763,30 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         errors land attention.required (never a silent pass); a
         mismatch/missing/stale binding stops the chain blocked."""
         if self._is_fake_channel():
-            # D-05: the fake channel is the deterministic stand-in -- the
-            # required-CI run is bound to the frozen candidate by
-            # construction, no credentials, no network (the walked
-            # scenarios exercise the release journey here).
-            repo_id = (
-                os.environ.get(str(ci.get("repo_env", "")), "") or "fake/repo"
-            )
-            workflow = str(ci.get("workflow", "")) or "ci.yml"
-            return {
-                "candidate_sha": candidate_sha,
-                "repo": repo_id,
-                "workflow": workflow,
-                "run_id": "FAKE-CI-1",
-                "head_sha": candidate_sha,
-                "conclusion": str(ci.get("conclusion", "success")),
-                "api_verified": True,
-            }
+            # D-05: the fake channel is the deterministic stand-in -- but a
+            # bound readback is simulated ONLY when the stand-in CI target is
+            # EXPLICITLY configured (repo_env present in the environment).
+            # Without it the fake channel takes the same fail-closed path as
+            # the real one: missing credentials land attention.required,
+            # never a fabricated api_verified (IF-VERIFY-004 "never a silent
+            # pass"; Prism P1, run 01M19FJVES7G113RD8QXXY3PQZ review
+            # 2026-09-06 -- the unconditional form turned the walked
+            # no-credentials scenario into ci=bound, contradicting
+            # events.py "FAKE artifacts never api_verified").
+            repo_id = os.environ.get(str(ci.get("repo_env", "")), "").strip()
+            if repo_id:
+                workflow = str(ci.get("workflow", "")) or "ci.yml"
+                return {
+                    "candidate_sha": candidate_sha,
+                    "repo": repo_id,
+                    "workflow": workflow,
+                    "run_id": "FAKE-CI-1",
+                    "head_sha": candidate_sha,
+                    "conclusion": str(ci.get("conclusion", "success")),
+                    "api_verified": True,
+                }
+            # no explicit stand-in target: fall through to the locked
+            # credentials vocabulary below (attention.required).
         repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
         workflow = str(ci.get("workflow", ""))
         if not repo_id or not workflow:

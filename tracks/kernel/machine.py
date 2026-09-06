@@ -1678,18 +1678,26 @@ def _on_repair_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
 
     The parked run (M-IMPL/DIAGNOSE awaiting=escalation) records its repair
     disposition at the park evidence chain; the round's classification
-    (owner Devon red_first) routes the NEXT dispatch through the repair
-    channel, so the escalation gate lifts and the walk continues in place
-    (budget bounded -- the chain re-parks when the budget exhausts). Never
-    a stage.rolled_back (AC-FR0286-01)."""
+    routes the NEXT dispatch through the repair channel, so the escalation
+    gate lifts and the walk continues in place (budget bounded -- the chain
+    re-parks when the budget exhausts). Never a stage.rolled_back
+    (AC-FR0286-01).
+
+    Owner routing (Prism P2, 2026-09-06): only behaviour rounds (owner
+    Devon, discipline red_first) re-enter the RGR slot. A cve round
+    (owner Archer, advisory) lifts the gate but keeps DIAGNOSE -- decide()
+    routes the advisory dispatch, not a Devon RED."""
     if s.status == "awaiting_human" and s.awaiting == "escalation":
         s.status = "active"
         s.awaiting = None
     if s.stage == "M-IMPL" and s.substate == "DIAGNOSE":
-        # The repair route re-enters the implementation cycle through the
-        # task the fix disposition owns (red_first: the RGR slot of the
-        # failed task); current_task_id is preserved for the lease.
-        s.substate = "RED"
+        route = p.get("repair_route") or {}
+        owner = str(route.get("owner") or "").lower()
+        if owner in ("", "devon"):
+            # The repair route re-enters the implementation cycle through
+            # the task the fix disposition owns (red_first: the RGR slot of
+            # the failed task); current_task_id is preserved for the lease.
+            s.substate = "RED"
 
 
 _APPLY = {

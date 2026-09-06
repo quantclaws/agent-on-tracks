@@ -241,3 +241,21 @@ def test_seed_worktree_with_cycle_wip_empty_scope_noop(tmp_path):
     assert seed_worktree_with_cycle_wip(str(repo), wt.path, []) == 0
     assert (Path(wt.path) / "README.md").read_text() == "hello\n"
     cleanup_worktree(wt)
+
+
+def test_seed_worktree_with_cycle_wip_propagates_deletion(tmp_path):
+    """Prism P3: a file deleted by earlier rounds must vanish from the
+    seeded worktree (the writer sees the accumulated cycle state, not a
+    union of HEAD + WIP)."""
+    repo, base = _init_repo(tmp_path)
+    (repo / "tracks").mkdir()
+    (repo / "tracks" / "old.py").write_text("x\n")
+    (repo / "tracks" / "a.py").write_text("v1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "seed base")
+    (repo / "tracks" / "old.py").unlink()  # earlier round deleted it (WIP)
+    wt = create_devon_worktree(str(repo), base, "run-1", "T-001")
+    from tracks.executor.worktree import seed_worktree_with_cycle_wip
+    seed_worktree_with_cycle_wip(str(repo), wt.path, ["tracks"])
+    assert not (Path(wt.path) / "tracks" / "old.py").exists()
+    cleanup_worktree(wt)
