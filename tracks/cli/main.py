@@ -1486,6 +1486,23 @@ def _append_release_rejected(
     )
 
 
+def _prism_final_status(events: list) -> str | None:
+    """interfaces §2b prism=pass|fail fragment for the latest verify_final
+    verdict. A non-pass final-review verdict is the release-chain block the
+    Human/repair route keys on (rendered ``prism=failed``, frozen-anchor
+    token); ``None`` means no verify_final verdict has landed yet."""
+    final = [
+        e
+        for e in events
+        if e.type == "prism.verdict"
+        and (e.payload or {}).get("scope") == "verify_final"
+    ]
+    if not final:
+        return None
+    verdict = (final[-1].payload or {}).get("verdict")
+    return "pass" if verdict == "pass" else "failed"
+
+
 def _release_chain_fragments(events: list, lines: list[str]) -> None:
     """(F) evidence-chain fragments (FR-0270/FR-0287 wiring): CI readback
     binding and security verdict surface whenever the chain emitted them; a
@@ -1505,6 +1522,9 @@ def _release_chain_fragments(events: list, lines: list[str]) -> None:
         lines.append(
             "security=" + str((security[-1].payload or {}).get("status", "unknown"))
         )
+    prism = _prism_final_status(events)
+    if prism is not None:
+        lines.append("prism=" + prism)
     rounds = [e for e in events if e.type == "repair.round_started"]
     if rounds:
         # §1.0.14 B: an open in-place repair renders its budget position

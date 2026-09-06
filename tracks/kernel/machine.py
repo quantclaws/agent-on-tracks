@@ -1673,6 +1673,25 @@ def _release_apply(name: str):
     return _apply
 
 
+def _on_repair_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
+    """§1.0.14 B: an opened in-place repair round re-arms the parked walk.
+
+    The parked run (M-IMPL/DIAGNOSE awaiting=escalation) records its repair
+    disposition at the park evidence chain; the round's classification
+    (owner Devon red_first) routes the NEXT dispatch through the repair
+    channel, so the escalation gate lifts and the walk continues in place
+    (budget bounded -- the chain re-parks when the budget exhausts). Never
+    a stage.rolled_back (AC-FR0286-01)."""
+    if s.status == "awaiting_human" and s.awaiting == "escalation":
+        s.status = "active"
+        s.awaiting = None
+    if s.stage == "M-IMPL" and s.substate == "DIAGNOSE":
+        # The repair route re-enters the implementation cycle through the
+        # task the fix disposition owns (red_first: the RGR slot of the
+        # failed task); current_task_id is preserved for the lease.
+        s.substate = "RED"
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -1794,6 +1813,10 @@ _APPLY = {
     "issue.closed": _release_apply("on_milestone_events"),
     "project.closed": _release_apply("on_milestone_events"),
     "refs.cleaned": _release_apply("on_milestone_events"),
+    # §1.0.14 B: an opened in-place repair round re-arms the parked walk --
+    # the repair disposition owns the next dispatch (Devon red_first), so
+    # the escalation gate lifts and decide() routes the repair attempt.
+    "repair.round_started": _on_repair_round_started,
 }
 
 

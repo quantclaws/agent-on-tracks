@@ -149,53 +149,170 @@ def decide_release_stage(stage: str, substate: str, state: State) -> Command | N
 
 
 def on_candidate_frozen(state: State, payload: dict, event) -> None:
-    """Project candidate_sha/clean_tree; idempotent re-freeze is a no-op."""
-    raise NotImplementedError("IF-VERIFY-001")
+    """Project candidate_sha/clean_tree; idempotent re-freeze is a no-op
+    (SM-01.17). A NEW candidate identity restarts the whole downstream
+    evidence projection -- every verify/security/preview fact of the
+    previous candidate is stale relative to it and the chain re-walks
+    (SM-01.20, interfaces §1d)."""
+    sha = str(payload.get("candidate_sha") or "")
+    if not sha:
+        return
+    if state.candidate_sha == sha:
+        return
+    state.candidate_sha = sha
+    state.candidate_clean = bool(payload.get("clean_tree"))
+    state.candidate_stale = False
+    state.full_reuse = None
+    state.reuse_identity_basis = None
+    state.local_gates = {}
+    state.ci_status = None
+    state.security_status = None
+    state.security_policy_digest = None
+    state.preview_digest = None
+    state.release_decision = None
+    state.release_decision_digest = None
+    state.publish_status = None
+    state.milestone_status = None
 
 
 def on_candidate_stale(state: State, payload: dict, event) -> None:
     """Mark the frozen identity drifted; downstream evidence goes stale."""
-    raise NotImplementedError("IF-VERIFY-001")
+    sha = str(payload.get("candidate_sha") or "")
+    if sha and state.candidate_sha and sha != state.candidate_sha:
+        return  # a stale mark of an already-superseded candidate
+    state.candidate_stale = True
 
 
 def on_evidence_reused_full_f(state: State, payload: dict, event) -> None:
     """Project full_reuse=full_f with the reused evidence identity_basis."""
-    raise NotImplementedError("IF-VERIFY-002")
+    if str(payload.get("kind") or "") != "full_f":
+        return
+    state.full_reuse = "full_f"
+    basis = payload.get("identity_basis")
+    state.reuse_identity_basis = (
+        [str(item) for item in basis] if isinstance(basis, list) else None
+    )
 
 
 def on_local_gate_result(state: State, payload: dict, event) -> None:
     """Project per-kind local gate status bound to candidate_sha."""
-    raise NotImplementedError("IF-VERIFY-003")
+    kind = str(payload.get("kind") or "")
+    if not kind:
+        return
+    sha = str(payload.get("candidate_sha") or "")
+    if state.candidate_sha and sha and sha != state.candidate_sha:
+        return  # a foreign-candidate gate result never projects
+    state.local_gates[kind] = {
+        "status": "passed" if event.type == "local_gate.passed" else "failed",
+        "reason": payload.get("reason"),
+        "contract_digest": payload.get("contract_digest"),
+    }
 
 
 def on_ci_run_observed(state: State, payload: dict, event) -> None:
     """Project ci=bound|mismatch|missing|stale|needs_attention."""
-    raise NotImplementedError("IF-VERIFY-004")
+    sha = str(payload.get("candidate_sha") or "")
+    if state.candidate_sha and sha and sha != state.candidate_sha:
+        return
+    if payload.get("api_verified") is True:
+        state.ci_status = "bound"
+        return
+    state.ci_status = str(
+        payload.get("reason") or payload.get("status") or "missing"
+    )
 
 
 def on_security_assessed(state: State, payload: dict, event) -> None:
     """Project security=passed|failed|unknown with policy digest."""
-    raise NotImplementedError("IF-SECURITY-001")
+    sha = str(payload.get("candidate_sha") or "")
+    if state.candidate_sha and sha and sha != state.candidate_sha:
+        return
+    status = str(payload.get("status") or "")
+    state.security_status = status if status in ("passed", "failed") else "unknown"
+    if payload.get("policy_digest"):
+        state.security_policy_digest = str(payload["policy_digest"])
 
 
 def on_release_previewed(state: State, payload: dict, event) -> None:
     """Project the active preview_digest; AWAITING_RELEASE entry (SM-01.6)."""
-    raise NotImplementedError("IF-RELEASE-002")
+    sha = str(payload.get("candidate_sha") or "")
+    if state.candidate_sha and sha and sha != state.candidate_sha:
+        return
+    if payload.get("preview_digest"):
+        state.preview_digest = str(payload["preview_digest"])
+    if state.stage == "M-RELEASE" and state.substate == "PREVIEWING":
+        state.substate = M_RELEASE_GATE_SUBSTATE
 
 
 def on_release_decided(state: State, payload: dict, event) -> None:
-    """Project decision=release|delay|return bound to preview_digest."""
-    raise NotImplementedError("IF-RELEASE-003")
+    """Project decision=release|delay|return bound to preview_digest.
+
+    ``release`` keeps M-RELEASE/AWAITING_RELEASE so the stage decider
+    issues execute_publish (§1.0.6); the M-PUBLISH entry projects from the
+    publish.planned write-ahead event. delay/return park the gate substates
+    (the universal ``trac return`` owns pointer moves, SM-01.19)."""
+    action = str(payload.get("action") or "")
+    if action not in ("release", "delay", "return"):
+        return
+    state.release_decision = action
+    if payload.get("preview_digest"):
+        state.release_decision_digest = str(payload["preview_digest"])
+    if action == "delay":
+        state.substate = "DELAYED"
+    elif action == "return":
+        state.substate = "RETURNED"
 
 
 def on_publish_events(state: State, payload: dict, event) -> None:
     """Project publish=planned|executing|reconciled_skip|done|blocked."""
-    raise NotImplementedError("IF-PUBLISH-001")
+    etype = event.type
+    if etype == "publish.planned":
+        state.publish_status = "planned"
+        # SM-01.7 walk: publish execution is the M-PUBLISH body -- the
+        # decision kept M-RELEASE/AWAITING_RELEASE so the decider could
+        # issue execute_publish; the write-ahead projects the entry.
+        if state.stage == "M-RELEASE":
+            state.stage = "M-PUBLISH"
+            state.substate = "PUBLISHING"
+            state.stage_exited = False
+        return
+    if etype == "publish.executed":
+        status = str(payload.get("status") or "done")
+        state.publish_status = (
+            status if status in ("done", "reconciled_skip") else "executing"
+        )
+        if (
+            state.publish_status in ("done", "reconciled_skip")
+            and state.stage == "M-PUBLISH"
+        ):
+            state.stage_exited = True  # §1.0.6: hands to close_milestone
+        return
+    # publish.blocked / publish.failed
+    state.publish_status = "blocked"
 
 
 def on_milestone_events(state: State, payload: dict, event) -> None:
     """Project milestone/terminal=released|retry_tail (SM-01.14–.16)."""
-    raise NotImplementedError("IF-MILESTONE-001")
+    etype = event.type
+    if etype == "milestone.trace_closed":
+        # §1.0.7: the trace closure opens the M-MILESTONE closing tail.
+        if state.stage == "M-PUBLISH":
+            state.stage = "M-MILESTONE"
+            state.substate = "CLOSING"
+            state.stage_exited = False
+        state.milestone_status = "closing"
+        return
+    if etype in ("issue.closed", "project.closed"):
+        return  # per-item projections carry no stage face
+    if etype == "milestone.closed":
+        state.milestone_status = "released"
+        return
+    if etype == "milestone.sealed":
+        state.milestone_status = "sealed"
+        return
+    # refs.cleaned: the closing tail completed (§1.0.7 terminal face;
+    # run.completed carries the authoritative terminal_state).
+    state.milestone_status = "released"
 
 
 def classify_defect_route(reason: str, context: dict) -> dict:

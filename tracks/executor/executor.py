@@ -1036,6 +1036,29 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if sys.exc_info()[0] is None:
                 self._observe_oob()
 
+    def _run_loop_preflight(self) -> tuple[str, State | None]:
+        """One loop-top iteration's checks (B43 drift fail-fast, D-36 OOB
+        observe, B44 breaker, SM-02 doc-gap lifecycle). Returns
+        ``("return", state)`` to stop the loop, ``("continue", None)`` to
+        restart the iteration, or ``("proceed", state)`` to fall through to
+        ``decide()`` with the freshly-read state."""
+        self._fail_fast_on_code_drift()
+        self._observe_oob()
+        state = self.store.state(self.run_id)
+        tripped = self._check_breaker(state)
+        if tripped is not None:
+            return "return", tripped
+        if self._sm02_pre_decide(state):
+            return "continue", None
+        return "proceed", state
+
+    def _post_issue_checks(self, cmd) -> bool:
+        """B86/B88 (#77) stall trip + phase-boundary stop after one issue().
+        Returns True when the loop must return at this durable boundary."""
+        if self._stall.should_trip():
+            self._abort_command_stall()
+        return self._is_phase_boundary(cmd)
+
     def _run_loop_body(self, dispatches: int, bound_substate: str | None) -> State:
         # B86/B88（#77）：本次 run_loop 的紧循环计数从零开始（每次 run_loop
         # 等同进程内一次运行窗口；崩溃/重启清零可接受）。limit 引用模块常量，
@@ -1050,27 +1073,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # hot loop -- and re-validation keeps the full hard checks.
         self._phase0_blocked_resume(self.store.state(self.run_id))
         while True:
-            # B43（#45）：派发前 fail-fast——进程存活期间 tracks/** 漂移
-            # （含 OOB 修复提交）即停车提示重启，绝不带旧逻辑继续。
-            self._fail_fast_on_code_drift()
-            # D-36 浅版（#43）：WAL 窗口之外观察操作者 OOB 提交。任何
-            # command.issued 与其 outcome 之间的事件都会清 machine 的
-            # pending（B40 语境：pending=None + doc_dispatched=True 会
-            # 挂死 run），因此观察点必须在 issue() 之外。
-            self._observe_oob()
-            state = self.store.state(self.run_id)
-            # B44（#46）：派发前熔断判定（active 状态；WAL 窗口之外）。
-            tripped = self._check_breaker(state)
-            if tripped is not None:
-                return tripped
-            # SM-02 doc-gap lifecycle: adjudication ingestion, nested
-            # design-revision workflow, thread-resolution resume, and
-            # crash-window recovery all run before decide().
-            if self._sm02_pre_decide(state):
+            action, state = self._run_loop_preflight()
+            if action == "return":
+                return state
+            if action == "continue":
                 continue
             cmd = decide(state)
             if cmd is None:
-                self._verify_chain_park_evidence(state)
+                if self._park_and_maybe_rearm(state):
+                    continue
                 return state
             stop, dispatches, bound_substate = self._gate_loop_dispatch(
                 cmd, dispatches, bound_substate
@@ -1081,12 +1092,27 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self.issue(cmd)
             # B86/B88（#77）：handlers 已在本轮 issue() 内跑完——若期间出现
             # 任何进展事件计数已被清零。连续 N 轮同 kind/同标识的 command.issued
-            # 之间零进展事件才是紧循环签名，此处判定并停车（与 B43 #45
-            # 一致：先落 loop.aborted 审计事件再 raise，CLI 捕获转非零）。
-            if self._stall.should_trip():
-                self._abort_command_stall()
-            if self._is_phase_boundary(cmd):
+            # 之间零进展事件才是紧循环签名，_post_issue_checks 判定并停车
+            # （与 B43 #45 一致：先落 loop.aborted 审计事件再 raise）。
+            if self._post_issue_checks(cmd):
                 return self.store.state(self.run_id)
+
+    def _park_and_maybe_rearm(self, state) -> bool:
+        """Run the park evidence chain at a halted decide() and tell the
+        loop whether to keep driving: §1.0.14 B -- the repair disposition
+        re-armed the parked walk (an opened round lifted the escalation
+        gate) -- ``continue``; the repair budget bounds the loop.
+
+        An ordinary decide() halt on an already-active run was NEVER parked:
+        nothing re-arms it, and the loop must exit (the pre-fix form kept
+        ``continue``-ing on every active state -- an infinite decide->None
+        loop, caught by test_run_loop_rotating_commands_no_trip)."""
+        was_parked = state.status == "awaiting_human" or bool(state.awaiting)
+        if not was_parked:
+            return False
+        self._verify_chain_park_evidence(state)
+        state = self.store.state(self.run_id)
+        return state.status == "active" and not state.awaiting
 
     def _abort_command_stall(self) -> None:
         """B86/B88（#77）：非派发命令紧循环停车。
@@ -3334,6 +3360,24 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if state.stage == "M-IMPL" and role == "prism" and state.substate == "DIAGNOSE":
             self._emit_diagnose_verdict(result, state, cmd, task_id)
             return
+        # IF-VERIFY-005 / AC-FR0270: the same-candidate final-review verdict
+        # is scoped verify_final and drives the M-VERIFY exit (pass ->
+        # security; anything else stops the chain blocked). The dispatch is
+        # identified by its OWN substate token (VERIFY_FINAL rides the
+        # command params) -- the projected State substate stays VERIFYING
+        # (the M-VERIFY StageDef initial_substate), so keying on
+        # ``state.substate`` here would never fire and the scoped verdict
+        # would fall through to an unscoped prism.verdict (T-042 wiring).
+        if role == "prism" and (params or {}).get("substate") == "VERIFY_FINAL":
+            self._publish_verify_final_verdict(
+                result.get("verdict"),
+                None,
+                False,
+                result.get("result_id"),
+                cmd,
+                task_id,
+            )
+            return
         if not result.get("verdict"):
             return
         self._emit_verdict(role, result["verdict"], result, state, params, cmd, task_id)
@@ -3343,13 +3387,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         diagnosis verdict can carry them on its payload (machine-readable;
         the evidence string carries Prism's prose). The GREEN re-dispatch
         objective names them -- the writer targets what the gate will
-        re-run (M2 live-evidence rule)."""
+        re-run (M2 live-evidence rule). No store attached (isolated verdict
+        surface, e.g. the diagnose-contract test double) = no recorded gate
+        history = nothing to carry."""
         from tracks.executor.oscillation import last_failed_nodes
 
+        store = getattr(self, "store", None)
+        if store is None:
+            return []
         return last_failed_nodes(
             [
                 {"type": e.type, "payload": dict(e.payload or {})}
-                for e in self.store.events(self.run_id)
+                for e in store.events(self.run_id)
             ],
             task_id,
         )
@@ -4735,18 +4784,53 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
 
     def _do_assess_security(self, cmd, state, task_id, reconcile):
-        """(J) Consume Command(assess_security): security.assessed carries
-        the aggregated status and repair_route (failures route via the
-        repair classification); the event binds the frozen candidate
-        (NFR-0143) when the chain supplies it."""
+        """(J) Consume Command(assess_security) (IF-SECURITY-001,
+        AC-FR0272-01/02): run the contract-declared scans, aggregate
+        fail-closed (passed iff EVERY declared scan passed; malformed/missing
+        -> unknown) and emit security.assessed bound to the frozen candidate
+        with the policy digest. A non-passing aggregate stops the chain
+        blocked -- the repair route (cve -> Archer advisory) owns the
+        disposition (§1.0.4/§1.0.14, never a silent pass)."""
         params = dict(cmd.params or {})
+        candidate_sha = params.get("candidate_sha") or ""
+        if not candidate_sha:
+            candidate_sha = str(getattr(state, "candidate_sha", "") or "")
+        if not candidate_sha:
+            frozen = self._latest_event("candidate.frozen")
+            candidate_sha = (
+                (frozen.payload or {}).get("candidate_sha", "") if frozen else ""
+            )
+        contract, digest, _source = self._load_or_default_contract(
+            cmd, candidate_sha
+        )
+        if contract is None:
+            return
+        results = run_security_scans(contract, self.repo, candidate_sha)
+        status = aggregate_security_status(results)
         payload = {
-            "status": params.get("status", "pass"),
-            "repair_route": params.get("repair_route", "none"),
-            "findings": list(params.get("findings", [])),
+            "status": status,
+            "candidate_sha": candidate_sha,
+            "policy_digest": digest,
+            "scans": [
+                {
+                    "id": r.gate_id,
+                    "status": r.status,
+                    "exit_code": r.exit_code,
+                }
+                for r in results
+            ],
+            "repair_route": "none",
         }
-        if params.get("candidate_sha"):
-            payload["candidate_sha"] = params["candidate_sha"]
+        if status != "passed":
+            # §1.0.14 B: a failing/unknown scan is a cve-class finding ->
+            # Archer advisory repair route (in-place, never a rollback).
+            payload["repair_route"] = {
+                "exit_class": "defect_repair",
+                "defect_class": "cve",
+                "owner": "Archer",
+                "discipline": "cve_advisory",
+                "budget_remaining": None,
+            }
         self._emit(
             "security.assessed",
             payload,
@@ -4776,6 +4860,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         candidate_sha = self._park_freeze_candidate(park_cmd)
         if candidate_sha is None:
             return
+        # §1.1 chain order: freeze -> FULL_F judgment -> contract gates.
+        self._emit_full_f_judgment(park_cmd, candidate_sha)
         contract, contract_digest = self._run_contract_gates(
             park_cmd, candidate_sha, state, resume=True
         )
@@ -4803,7 +4889,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # 6ec2dc3 landed). Idempotency/budget/closed-set guards all apply
         # inside _park_repair_route; the chain still proceeds to its CI /
         # security / preview stops unchanged.
-        self._park_origin_repair_route(park_cmd, candidate_sha)
+        if self._park_origin_repair_route(park_cmd, candidate_sha):
+            # A fresh repair round opened (§1.0.14 B): its reducer re-armed
+            # the parked walk and the repair dispatch owns the next move --
+            # the chain yields here so the disposition plays out before the
+            # release face opens (the known-issue listing rides the preview
+            # regeneration at registration time).
+            return
         if not self._park_observe_ci(park_cmd, candidate_sha, contract):
             return
         if not self._park_assess_security(
@@ -4814,11 +4906,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
             if security_status == "failed":
                 # §1.0.14 B: a failing scan is a cve-class finding -> Archer
-                # advisory repair route (in-place, never a rollback).
+                # advisory repair route (in-place, never a rollback); the
+                # Known-Issue registration kind stays security_finding --
+                # zero known issue for security (FR-0286-8).
                 self._park_repair_route(
-                    park_cmd, candidate_sha, "cve", self._park_stop_reason(
-                        "security.assessed"
-                    )
+                    park_cmd,
+                    candidate_sha,
+                    "cve",
+                    self._park_stop_reason("security.assessed"),
+                    registration_kind="security_finding",
                 )
             return
         self._park_preview(park_cmd, candidate_sha, contract_digest)
@@ -5024,32 +5120,52 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         return {}
 
     def _park_repair_route(
-        self, cmd, candidate_sha: str, finding_kind: str, reason: str
-    ) -> None:
+        self,
+        cmd,
+        candidate_sha: str,
+        finding_kind: str,
+        reason: str,
+        registration_kind: str | None = None,
+    ) -> bool:
         """§1.0.14 B/C-class in-place repair face of the park chain.
 
         Classifies the chain stop through the FR-0286 closed mapping
-        (classify_defect), opens one repair round per candidate within the
+        (classify_defect), opens one repair round per chain run within the
         budget (repair.round_started + repair_route), and on budget
         exhaustion routes the irreparable verdict to Known Issue
-        registration. Never a stage rollback (AC-FR0286-01); never a
-        guessed route for an unknown finding (fail closed)."""
+        registration. ``registration_kind`` overrides the Known-Issue
+        attribution kind when the finding's registration vocabulary differs
+        from its repair class (a failed security scan classifies cve ->
+        Archer advisory, but registers -- and is rejected -- as
+        ``security_finding``: zero known issue for security, FR-0286-8).
+        Never a stage rollback (AC-FR0286-01); never a guessed route for an
+        unknown finding (fail closed). Returns True when a fresh round
+        opened -- the round's reducer re-arms the parked walk (the repair
+        dispatch owns the next move); False when the disposition resolved
+        without one (known issue registered/rejected, or a fail-closed
+        classification)."""
         classification = _repair.classify_defect({"kind": finding_kind}, {})
         if classification.get("failed_class"):
-            return
-        if self._park_candidate_seen(
-            ("repair.round_started", "known_issue.registered"), candidate_sha
-        ):
-            return
+            return False
+        if self._park_candidate_seen(("known_issue.registered",), candidate_sha):
+            return False  # registration idempotency: one disposition per run
         budget = 3
         used = self._park_repair_budget_used()
         if used >= budget:
             self._park_known_issue(
-                cmd, candidate_sha, finding_kind, reason, used, budget
+                cmd,
+                candidate_sha,
+                registration_kind or finding_kind,
+                reason,
+                used,
+                budget,
             )
-            return
+            return False
         result = _repair.open_repair_round(self.run_id, classification, budget)
         payload = {k: v for k, v in result.items() if k != "event"}
+        # The round number is event-derived (persistent across processes),
+        # never the in-memory counter of this walk invocation.
+        payload["round"] = used + 1
         payload["candidate_sha"] = candidate_sha
         payload["repair_route"] = {
             "defect_class": classification["defect_class"],
@@ -5060,19 +5176,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if reason:
             payload["reason"] = reason
         self._emit(result["event"], payload, command_id=cmd.command_id)
+        return True
 
-    def _park_origin_repair_route(self, cmd, candidate_sha: str) -> None:
+    def _park_origin_repair_route(self, cmd, candidate_sha: str) -> bool:
         """OOB 2026-09-05: open the repair disposition for the ORIGIN defect
         that parked the run (M-IMPL task failure) when the verify-side gates
         all passed. Classifies behaviour (owner Devon, red_first) from the
         latest impl_defect verdict; every _park_repair_route guard applies
-        (per-candidate idempotency, budget, closed-set classification).
-        test_defect origins stay fail-closed (not in the verify-side
-        classification table -- the ruling channel owns them)."""
-        if self._park_candidate_seen(
-            ("repair.round_started", "known_issue.registered"), candidate_sha
-        ):
-            return
+        (budget, closed-set classification). test_defect origins stay
+        fail-closed (not in the verify-side classification table -- the
+        ruling channel owns them). Returns True when a fresh round opened
+        (the round re-arms the walk; the chain yields to the repair)."""
+        if self._park_candidate_seen(("known_issue.registered",), candidate_sha):
+            return False
         origin_reason = ""
         origin = False
         for event in self.store.events(self.run_id):
@@ -5083,8 +5199,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 origin = True
                 origin_reason = str(payload.get("reason") or "")
         if not origin:
-            return
-        self._park_repair_route(
+            return False
+        return self._park_repair_route(
             cmd,
             candidate_sha,
             "behavior",
@@ -5125,19 +5241,31 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             k: v for k, v in registration.items() if k != "event"
         }
         self._emit(registration["event"], payload, command_id=cmd.command_id)
+        if registration["event"] == "known_issue.registered":
+            # AC-FR0286-05 informed consent: the registered known issue must
+            # appear in the release preview -- regenerate it (append-only;
+            # the stale preview without the listing never stands).
+            self._park_preview(cmd, candidate_sha, "")
 
     def _park_preview(self, cmd, candidate_sha: str, contract_digest: str) -> None:
         """Park chain step 5 (IF-RELEASE-002 face): assemble the content-
         addressed preview from the verified evidence digests; reached only
-        after gates + CI + security are green."""
+        after gates + CI + security are green. Regenerates when the
+        registered known-issue set changed since the last preview
+        (AC-FR0286-05 informed consent -- the listing must never be stale);
+        regeneration appends a new event, the old preview is never
+        overwritten (§1.0.5)."""
         seen = [
             e
             for e in self.store.events(self.run_id)
             if e.type == "release.previewed"
             and (e.payload or {}).get("candidate_sha") == candidate_sha
         ]
+        known_issues = _repair.list_known_issues_for_preview(self.run_id)
         if seen:
-            return
+            last = seen[-1].payload or {}
+            if last.get("known_issues") == known_issues:
+                return
         preview = generate_preview(
             candidate_sha,
             {
@@ -5149,7 +5277,6 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             risks=[],
             plan={},
         )
-        known_issues = _repair.list_known_issues_for_preview(self.run_id)
         if known_issues:
             # AC-FR0286-05 informed consent: every unfixed known issue must
             # appear in the preview -- an unlisted one blocks release.
@@ -5215,15 +5342,64 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
         )
 
+    def _emit_full_f_judgment(self, cmd, candidate_sha) -> None:
+        """FULL_F reuse judgment emission (IF-VERIFY-002, architecture §1.1):
+        judge the stored FULL_F evidence against the current identity
+        quadruple and land ``evidence.reused`` (kind=full_f,
+        identity_basis) or ``full.executed`` (rerun) -- shared by the walk
+        chain (judge_full_f_reuse command) and the park evidence chain
+        (§1.0.14), both idempotent per candidate. With no stored FULL_F
+        evidence (first verification) no judgment event is emitted and the
+        local gates run directly -- the reuse vocabulary never fabricates a
+        battery that was never run."""
+        seen = any(
+            (e.payload or {}).get("candidate_sha") == candidate_sha
+            for e in self.store.events(self.run_id)
+            if e.type in ("evidence.reused", "full.executed")
+        )
+        if seen:
+            return
+        selected = self._latest_event("test.selected")
+        if selected is None:
+            return
+        evidence = dict(selected.payload or {})
+        quadruple = {
+            "tree": evidence.get("tree"),
+            "command": evidence.get("command"),
+            "env": evidence.get("env"),
+            "selection_id": evidence.get("selection_id"),
+        }
+        stale_marks = tuple(
+            event.type
+            for event in self.store.events(self.run_id)
+            if event.type in ("candidate.stale", "evidence.staled")
+        )
+        decision = m_verify.judge_full_f_reuse(
+            candidate_sha, evidence, quadruple, stale_marks
+        )
+        if decision.decision == "reuse":
+            self._emit(
+                "evidence.reused",
+                {
+                    "kind": "full_f",
+                    "candidate_sha": candidate_sha,
+                    "identity_basis": list(decision.identity_basis),
+                },
+                command_id=cmd.command_id,
+            )
+        else:
+            self._emit(
+                "full.executed",
+                {"candidate_sha": candidate_sha, "reason": decision.reason},
+                command_id=cmd.command_id,
+            )
+
     def _do_judge_full_f_reuse(self, cmd, state, task_id, reconcile):
         """M-VERIFY FULL_F reuse judgment (IF-VERIFY-002, architecture
         §1.1): judge the stored FULL_F evidence against the current
         identity quadruple. Reuse-eligible lands evidence.reused
         (kind=full_f, identity_basis); otherwise full.executed records
-        the rerun and the local gates execute it. With no stored FULL_F
-        evidence (first verification) no judgment event is emitted and
-        the local gates run directly — the reuse vocabulary never
-        fabricates a battery that was never run."""
+        the rerun and the local gates execute it."""
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
         if reconcile and self._latest_event("evidence.reused") is not None:
@@ -5234,39 +5410,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 )
             )
             return
-        selected = self._latest_event("test.selected")
-        if selected is not None:
-            evidence = dict(selected.payload or {})
-            quadruple = {
-                "tree": evidence.get("tree"),
-                "command": evidence.get("command"),
-                "env": evidence.get("env"),
-                "selection_id": evidence.get("selection_id"),
-            }
-            stale_marks = tuple(
-                event.type
-                for event in self.store.events(self.run_id)
-                if event.type in ("candidate.stale", "evidence.staled")
-            )
-            decision = m_verify.judge_full_f_reuse(
-                candidate_sha, evidence, quadruple, stale_marks
-            )
-            if decision.decision == "reuse":
-                self._emit(
-                    "evidence.reused",
-                    {
-                        "kind": "full_f",
-                        "candidate_sha": candidate_sha,
-                        "identity_basis": list(decision.identity_basis),
-                    },
-                    command_id=cmd.command_id,
-                )
-            else:
-                self._emit(
-                    "full.executed",
-                    {"candidate_sha": candidate_sha, "reason": decision.reason},
-                    command_id=cmd.command_id,
-                )
+        self._emit_full_f_judgment(cmd, candidate_sha)
         self.issue(
             Command(
                 kind="run_local_gates",
@@ -5582,12 +5726,44 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
         )
 
+    def _is_fake_channel(self) -> bool:
+        """D-05 fake channel: the deterministic stand-in backend is selected
+        (``TRAC_AGENT_BACKEND=fake`` / ``TRAC_FAKE_SIMULATE`` -- the same
+        conditions ``select_backend``/``select_issue_backend`` key on).
+        Walks on this channel never touch the network, so the CI readback
+        resolves through the deterministic stand-in instead of the live
+        GitHub API."""
+        backend = getattr(self, "backend", None)
+        if backend is not None and "fake" in type(backend).__name__.lower():
+            return True
+        if os.environ.get("TRAC_FAKE_SIMULATE"):
+            return True
+        return os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
+
     def _readback_ci_binding(self, cmd, candidate_sha, ci):
         """API readback + binding judge (IF-VERIFY-004, AC-FR0270-01..03).
         Returns the bound ci.run_observed payload, or None with the block
         already on the stream: missing CI config/credentials and network
         errors land attention.required (never a silent pass); a
         mismatch/missing/stale binding stops the chain blocked."""
+        if self._is_fake_channel():
+            # D-05: the fake channel is the deterministic stand-in -- the
+            # required-CI run is bound to the frozen candidate by
+            # construction, no credentials, no network (the walked
+            # scenarios exercise the release journey here).
+            repo_id = (
+                os.environ.get(str(ci.get("repo_env", "")), "") or "fake/repo"
+            )
+            workflow = str(ci.get("workflow", "")) or "ci.yml"
+            return {
+                "candidate_sha": candidate_sha,
+                "repo": repo_id,
+                "workflow": workflow,
+                "run_id": "FAKE-CI-1",
+                "head_sha": candidate_sha,
+                "conclusion": str(ci.get("conclusion", "success")),
+                "api_verified": True,
+            }
         repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
         workflow = str(ci.get("workflow", ""))
         if not repo_id or not workflow:

@@ -127,7 +127,8 @@ EVENT_TYPES = (
     # 到 stdout，screen 无重定向时证据全丢。executor 在 abort 前落此审计
     # 事件；reducer 无需行为（projection 忽略），replay 是 no-op。
     "loop.aborted",
-    # M7 (convergence plan 2026-09-05): wheel-isolated bootstrap -- tracks/**
+    # M7 (convergence plan 2026-09-05): installed-distribution isolated
+    # bootstrap -- tracks/**
     # drift at a dispatch boundary records a handover (audit only; the
     # state machine does not project it -- the run stays active and the
     # restart watcher takes over).
@@ -140,8 +141,61 @@ EVENT_TYPES = (
     "phase0.guard_hardened",
     "phase0.sealed",
     "phase0.blocked",
+    # T-042 (SM-01 five-stage release closure, interfaces §1a rows 1-32):
+    # the release-pipeline event face -- candidate identity, verify gates,
+    # CI binding, security, preview/decision, publish, milestone terminal,
+    # plus the adjacent v0.8 contract faces (envelope parity, failure
+    # evidence chain, escape barrier). Appended to the closed set per
+    # architecture §338 "EVENT/COMMAND 封闭集追加".
+    "candidate.frozen",
+    "candidate.stale",
+    "local_gate.passed",
+    "local_gate.failed",
+    "ci.run_observed",
+    "security.assessed",
+    "release.previewed",
+    "release.decided",
+    "release.rejected",
+    "publish.planned",
+    "publish.executed",
+    "publish.blocked",
+    "publish.failed",
+    "reconcile_conflict",
+    "milestone.trace_closed",
+    "milestone.closed",
+    "milestone.sealed",
+    "issue.closed",
+    "project.closed",
+    "refs.cleaned",
+    "host_contract.materialized",
+    "host_contract.invalid",
+    "host_contract.failed",
+    "known_issue.rejected",
+    "escape.barrier_established",
+    "escape.late_outcome",
+    "advisory.recorded",
+    "review.failed",
+    "semantic_attempt_failed",
+    "format_error",
+    "dispatch.parity",
+    "dispatch.rejected",
+    "failure.emitted",
+    "failure.stored",
+    "failure.selected",
+    "failure.injected",
+    "failure.consumed",
+    "failure.invalidated",
     # B94 drift breaker (deferred anchor legitimancy)
     "drift_breaker",
+    # T-042 (FR-0270, IF-VERIFY-004): ISSUES-path event trio — create_issue_verified
+    # lands issue.mapped (issue_number + api_verified vocabulary shared with the
+    # milestone closers), the real channel rejects FAKE artifacts (fake_rejected,
+    # never api_verified), and missing-credential / blocked surfaces route as
+    # attention.required (IF-ISSUE-001 needs_attention vocabulary). Consumed by
+    # report.py issue surfaces and the CLI known_issues/needs_attention renders.
+    "issue.mapped",
+    "fake_rejected",
+    "attention.required",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -183,6 +237,17 @@ COMMAND_KINDS = (
     # consecutive GREEN_GATE failures swapped anchor outcomes; audit event
     # (the state change rides the paired verdict.failed contract_conflict).
     "oscillation.detected",
+    # T-042 (SM-01 five-stage release closure, architecture §338 "EVENT/
+    # COMMAND 封闭集追加"): the release-chain command kinds whose executor
+    # handlers consume the kernel release deciders' routing.
+    "freeze_candidate",
+    "judge_full_f_reuse",
+    "run_local_gates",
+    "observe_ci_runs",
+    "assess_security",
+    "execute_publish",
+    "close_milestone",
+    "register_known_issue",
 )
 
 
