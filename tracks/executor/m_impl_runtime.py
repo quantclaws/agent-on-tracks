@@ -4243,7 +4243,19 @@ class MImplRuntimeMixin:
                 {"type": ev.type, "payload": dict(ev.payload or {})}
                 for ev in self.store.events(self.run_id)
             ]
-            osc = _detect_oscillation(events, task_id, exc.evidence)
+            # OOB 2026-09-06 (S1 reversibility): resolve the PREVIOUS S1
+            # firing's swap sets (blob-externalized) so the pure detector
+            # can require a repeat swap -- fresh churn stays the writer's
+            # domain instead of escalating every partial-progress round
+            # into an authority war (run 01M19FJVES7G113RD8QXXY3PQZ:
+            # 05:09-07:03, two hours of authority churn, zero writer
+            # dispatches).
+            osc = _detect_oscillation(
+                events,
+                task_id,
+                exc.evidence,
+                prior_oscillation=self._prior_oscillation_sets(task_id),
+            )
             if osc is not None:
                 self._emit(
                     "oscillation.detected",
@@ -4306,6 +4318,36 @@ class MImplRuntimeMixin:
         finally:
             if gate_handle is not None:
                 cleanup_worktree(gate_handle)
+
+    def _prior_oscillation_sets(self, task_id: str) -> dict | None:
+        """The latest recorded S1 firing's {healed, newly_red} for this task
+        (the detection currently being evaluated has NOT been emitted yet,
+        so the latest in the store IS the prior one). The 8KB store
+        discipline externalizes payloads to blobs -- resolved through the
+        store; unreadable/absent -> None (legacy first-firing semantics,
+        fail-closed)."""
+        prior = next(
+            (
+                dict(ev.payload or {})
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "oscillation.detected"
+                and (ev.payload or {}).get("task_id") == task_id
+            ),
+            None,
+        )
+        if not isinstance(prior, dict) or not prior:
+            return None
+        if "$ref" in prior:
+            try:
+                prior = self.store.load_payload(prior) or {}
+            except (OSError, ValueError):
+                return None
+        if not prior.get("newly_red"):
+            return None
+        return {
+            "healed": list(prior.get("healed") or []),
+            "newly_red": list(prior.get("newly_red") or []),
+        }
 
     def _run_task_review_gate(self, cmd, state: State) -> None:
         task_id = state.current_task_id

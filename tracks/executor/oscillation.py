@@ -108,11 +108,25 @@ def last_failed_nodes(events: list[dict], task_id: str) -> list[str] | None:
 
 
 def detect_oscillation(
-    events: list[dict], task_id: str, current_evidence
+    events: list[dict],
+    task_id: str,
+    current_evidence,
+    prior_oscillation: dict | None = None,
 ) -> dict | None:
     """S1 完整判定：当前失败（未入库）vs 最近一次已入库失败。
 
     当前失败锚点解析不出（fail-closed）或无前次失败时返回 None。
+
+    OOB 2026-09-06（可逆性判据）：仅 healed∧newly_red∧common 的换血
+    形态会把写手的**正常施工扰动**（修绿一批、碰红另一批——大任务每轮
+    局部进展的常态）误判为契约冲突，把每一轮都升级成权威战争、写手被
+    饿死（run 01M19FJVES7G113RD8QXXY3PQZ：05:09-07:03 两小时零写手
+    派发）。真乒乓的判据是**同一批锚点来回换边**：``prior_oscillation``
+    （上一次 S1 检出的 {healed, newly_red}，由调用方从 blob 解析传入——
+    本函数纯、无 I/O）与当前签名的换边集合有交集才升级。首次换边
+    （prior_oscillation=None，或无交集）是普通 impl_defect，写手按
+    证据再试一轮；锚点第二次换边才路由权威。对昨日真互斥首案：第二次
+    换边检出——多付一轮写手重试，换掉对一切局部进展的误升级。
     """
     current_nodes = parse_failed_nodes(current_evidence)
     if not current_nodes:
@@ -120,4 +134,17 @@ def detect_oscillation(
     prev_nodes = last_failed_nodes(events, task_id)
     if not prev_nodes:
         return None
-    return detect(prev_nodes, current_nodes)
+    signature = detect(prev_nodes, current_nodes)
+    if signature is None:
+        return None
+    if prior_oscillation is None:
+        return signature  # first-ever firing: legacy semantics
+    prior_healed = set(prior_oscillation.get("healed") or [])
+    prior_newly_red = set(prior_oscillation.get("newly_red") or [])
+    reversible = bool(
+        set(signature["healed"]) & prior_newly_red
+        or set(signature["newly_red"]) & prior_healed
+    )
+    if not reversible:
+        return None  # fresh churn, not a repeat swap: the writer's domain
+    return signature

@@ -226,3 +226,44 @@ def test_stale_baseline_without_failed_nodes_still_skipped():
     )
     events = [_gate_failure("T-042", [_node("a"), _node("b")]), legacy]
     assert last_failed_nodes(events, "T-042") == ["a", "b"]
+
+
+def test_s1_reversibility_fresh_churn_does_not_escalate():
+    """OOB 2026-09-06: a swap with NO overlap against the previous firing's
+    swap sets is fresh work churn (writer fixed some, broke others), not a
+    repeat ping-pong -- it must NOT escalate to the authority (the writer
+    retries on evidence; run 01M19FJVES7G113RD8QXXY3PQZ starved Devon for
+    two hours on exactly this false positive)."""
+    events = [_gate_failure("T-042", [_node("a"), _node("b"), _node("c")])]
+    prior = {"healed": ["tests/x.py::t"], "newly_red": ["tests/y.py::t"]}  # disjoint from a/b/c/d
+    sig = detect_oscillation(
+        events, "T-042",
+        json.dumps({"failed_nodes": [_node("b"), _node("c"), _node("d")]}),
+        prior_oscillation=prior,
+    )
+    assert sig is None
+
+
+def test_s1_reversibility_repeat_swap_escalates():
+    """The same anchor changing sides again (healed now = newly_red in the
+    prior firing) IS a genuine ping-pong -- escalate."""
+    events = [_gate_failure("T-042", [_node("a"), _node("b"), _node("c")])]
+    prior = {"healed": ["x"], "newly_red": ["a"]}  # a went red in the prior swap
+    sig = detect_oscillation(
+        events, "T-042",
+        json.dumps({"failed_nodes": [_node("b"), _node("c"), _node("d")]}),
+        prior_oscillation=prior,
+    )
+    assert sig == {"healed": ["a"], "newly_red": ["d"], "common": ["b", "c"]}
+
+
+def test_s1_first_firing_keeps_legacy_semantics():
+    """No prior firing (prior_oscillation=None): the legacy signature fires
+    (first swap escalates -- yesterday's true mutually-exclusive case)."""
+    events = [_gate_failure("T-042", [_node("a"), _node("b"), _node("c")])]
+    sig = detect_oscillation(
+        events, "T-042",
+        json.dumps({"failed_nodes": [_node("b"), _node("c"), _node("d")]}),
+        prior_oscillation=None,
+    )
+    assert sig is not None
