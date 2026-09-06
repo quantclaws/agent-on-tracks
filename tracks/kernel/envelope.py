@@ -67,7 +67,12 @@ class EnvelopeFormatError(ValueError):
 # opencode backend validators so the injected schema and the mechanical
 # checks cannot drift. review_body carries the full critique; review_summary
 # and each finding summary are index lines capped at REVIEW_SUMMARY_MAX.
-REVIEW_SUMMARY_MAX = 140
+# S3 ruling (round 17, 2026-09-06, RULING blob dedfc37d): 140 chars could not
+# hold the aggregated multi-finding summary in the working language and
+# rejected substantively valid reviews twice -- the contract simplification
+# delta raises the cap to 400 and adds the deterministic findings[0]
+# derivation in validate_review_payload.
+REVIEW_SUMMARY_MAX = 400
 
 REVIEW_FINDING_FIELDS = (
     "id",
@@ -173,18 +178,31 @@ def envelope_declared_kind(role: str | None, substate: str | None) -> str | None
 # ---------------------------------------------------------------------------
 
 
-def validate_review_payload(payload: dict) -> str | None:
-    """SC-D35 review payload; None when valid, else the violation detail.
+def _derive_review_summary(payload: dict) -> str | None:
+    """S3 ruling (round 17, 2026-09-06): the aggregated summary line is a
+    DERIVED field -- when the writer omits it while findings[] already carry
+    a valid per-finding summary, derive it deterministically instead of
+    rejecting a substantively valid review. Returns the derived value or
+    None (caller rejects when None)."""
+    findings = payload.get("findings")
+    first = findings[0] if isinstance(findings, list) and findings else None
+    derived = first.get("summary") if isinstance(first, dict) else None
+    if isinstance(derived, str) and derived.strip():
+        return derived
+    return None
 
-    A pass verdict carries no further requirements (matching the mechanical
-    channel); a revise must carry a non-empty index summary within cap, a
-    non-empty body, and at least one well-formed finding.
-    """
-    if payload.get("verdict") not in ("pass", "revise"):
-        return f"review payload verdict must be 'pass'|'revise', got {payload.get('verdict')!r}"
-    if payload["verdict"] == "pass":
-        return None
+
+def _validate_revise_requirements(payload: dict) -> str | None:
+    """Revise-side field requirements (SC-D35 §2.2): summary within cap,
+    non-empty body, at least one well-formed finding. A missing summary is
+    derived from findings[0] (S3 ruling) and normalized in place so every
+    consumer (opencode merge, audit) sees the derived value."""
     summary = payload.get("review_summary")
+    if not isinstance(summary, str) or not summary.strip():
+        derived = _derive_review_summary(payload)
+        if derived is not None:
+            payload["review_summary"] = derived
+            summary = derived
     if not isinstance(summary, str) or not summary.strip():
         return "review payload revise requires non-empty review_summary"
     if len(summary) > REVIEW_SUMMARY_MAX:
@@ -200,6 +218,19 @@ def validate_review_payload(payload: dict) -> str | None:
         if error is not None:
             return error
     return None
+
+
+def validate_review_payload(payload: dict) -> str | None:
+    """SC-D35 review payload; None when valid, else the violation detail.
+
+    A pass verdict carries no further requirements (matching the mechanical
+    channel); a revise must satisfy the revise-side field requirements.
+    """
+    if payload.get("verdict") not in ("pass", "revise"):
+        return f"review payload verdict must be 'pass'|'revise', got {payload.get('verdict')!r}"
+    if payload["verdict"] == "pass":
+        return None
+    return _validate_revise_requirements(payload)
 
 
 def validate_review_finding(finding: object, idx: int) -> str | None:

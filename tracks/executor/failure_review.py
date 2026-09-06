@@ -36,6 +36,63 @@ def record_failure(run_id: str, round_no: int, source: str, record: dict) -> dic
     return {"failure_id": fid, "run_id": run_id, "round": round_no, "source": source, "record": dict(record)}
 
 
+def _event_payload(e) -> dict:
+    payload = getattr(e, "payload", None)
+    if payload is None and isinstance(e, dict):
+        payload = e.get("payload")
+    return dict(payload or {})
+
+
+def _event_type(e) -> str | None:
+    return getattr(e, "type", None) or (e.get("type") if isinstance(e, dict) else None)
+
+
+def _replay_stored(run_id: str, payload: dict) -> bool:
+    fid = payload.get("failure_id")
+    if not fid:
+        return False
+    entry = {
+        "failure_id": fid,
+        "run_id": payload.get("run_id") or run_id,
+        "round": payload.get("round", 0),
+        "source": payload.get("source", ""),
+        "record": dict(payload.get("record") or {}),
+        "seq": payload.get("seq", 0),
+    }
+    lst = _STORE.setdefault(entry["run_id"], [])
+    if any(f.get("failure_id") == fid for f in lst):
+        return False
+    lst.append(entry)
+    return True
+
+
+def restore_from_events(run_id: str, events) -> int:
+    """Replay the run's failure-evidence stream into the selection store.
+
+    The store is process-local by construction (record_failure appends here;
+    the failure.stored event is its persistence). Under the M7 handover
+    regime the loop process is replaced at every drift boundary -- without
+    replay the selection rule goes blind after each restart and every
+    post-restart DIAGNOSE runs evidenceless (live 2026-09-06: two
+    consecutive unknown escalations while the round's records sat on the
+    stream). Event-sourced single truth: the stream IS the store. ACKs
+    replay too so consumed evidence is not re-injected. Idempotent per
+    failure_id. Returns the number of records restored.
+    """
+    restored = 0
+    for e in events:
+        etype = _event_type(e)
+        payload = _event_payload(e)
+        if etype == "failure.stored":
+            if _replay_stored(run_id, payload):
+                restored += 1
+        elif etype == "failure.acked":
+            fid = payload.get("failure_id")
+            if fid:
+                _ACKED.add((run_id, str(fid), str(payload.get("role") or "")))
+    return restored
+
+
 def select_failure(run_id: str, role: str, round_no: int) -> dict | None:
     """Deterministic round/source selection rule shared by every role."""
     # look back up to 3 rounds, pick latest un-ACKed in that round

@@ -13,6 +13,7 @@ import json
 import subprocess
 
 from tracks.effects.opencode import OpencodeBackend
+from tracks.kernel.envelope import REVIEW_SUMMARY_MAX
 from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import State, apply
 
@@ -79,17 +80,21 @@ def test_bad_verdict_rejected() -> None:
     assert "verdict" in error
 
 
-def test_revise_requires_summary() -> None:
+def test_revise_without_summary_derives_from_first_finding() -> None:
+    """S3 ruling (round 17, 2026-09-06): a missing aggregated summary no
+    longer rejects a substantively valid review -- it derives from
+    findings[0].summary deterministically."""
     p = _revise_payload()
     del p["review_summary"]
-    _, error = OpencodeBackend._prism_review_payload_from(_proc(json.dumps(p)))
-    assert "review_summary" in error
+    payload, error = OpencodeBackend._prism_review_payload_from(_proc(json.dumps(p)))
+    assert error is None
+    assert payload["review_summary"] == p["findings"][0]["summary"]
 
 
-def test_revise_summary_140_limit() -> None:
-    p = _revise_payload(review_summary="x" * 141)
+def test_revise_summary_cap() -> None:
+    p = _revise_payload(review_summary="x" * (REVIEW_SUMMARY_MAX + 1))
     _, error = OpencodeBackend._prism_review_payload_from(_proc(json.dumps(p)))
-    assert "140" in error
+    assert str(REVIEW_SUMMARY_MAX) in error
 
 
 def test_revise_requires_findings() -> None:
@@ -106,10 +111,10 @@ def test_finding_missing_field_rejected() -> None:
     assert "ac_refs" in error
 
 
-def test_finding_summary_140_limit() -> None:
-    p = _revise_payload(findings=[_finding(summary="y" * 141)])
+def test_finding_summary_cap() -> None:
+    p = _revise_payload(findings=[_finding(summary="y" * (REVIEW_SUMMARY_MAX + 1))])
     _, error = OpencodeBackend._prism_review_payload_from(_proc(json.dumps(p)))
-    assert "140" in error
+    assert str(REVIEW_SUMMARY_MAX) in error
 
 
 def test_revise_requires_review_body() -> None:

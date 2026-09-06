@@ -125,9 +125,11 @@ def test_parse_rejects_deviations_with_taxonomy_kind(text, kind):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"verdict": "revise"},  # no summary/body/findings
+        {"verdict": "revise"},  # no summary, no findings
         _revise_payload(review_summary="x" * (REVIEW_SUMMARY_MAX + 1)),
-        _revise_payload(review_summary="   "),
+        # blank summary with INVALID findings derives nothing -> rejected
+        # (blank summary + valid findings derives -- see the S3 ruling test)
+        _revise_payload(review_summary="   ", findings=["not-an-object"]),
         _revise_payload(review_body=""),
         _revise_payload(findings=[]),
         _revise_payload(findings=["not-an-object"]),
@@ -147,6 +149,27 @@ def test_validate_envelope_expected_kind_mismatch_is_schema_violation():
         validate_envelope(envelope, "prism:diagnose")
     assert exc.value.kind == "schema_violation"
     assert validate_envelope(envelope, "prism:final") == envelope
+
+
+# -- S3 ruling delta (round 17, 2026-09-06): derived summary -------------------
+
+
+def test_revise_without_summary_derives_from_first_finding():
+    """S3 ruling: a missing aggregated summary line no longer rejects a
+    substantively valid review -- review_summary derives deterministically
+    from findings[0].summary (normalized in place for every consumer)."""
+    payload = _revise_payload()
+    findings = payload.pop("findings")
+    del payload["review_summary"]
+    payload["findings"] = findings
+    parsed = parse_agent_output(_envelope_text(payload))
+    assert parsed["payload"]["review_summary"] == findings[0]["summary"]
+
+
+def test_revise_without_summary_or_findings_still_rejected():
+    with pytest.raises(EnvelopeFormatError) as exc:
+        parse_agent_output(_envelope_text({"verdict": "revise"}))
+    assert exc.value.kind == "schema_violation"
 
 
 # -- kind closed set + declared rollout gate -----------------------------------
