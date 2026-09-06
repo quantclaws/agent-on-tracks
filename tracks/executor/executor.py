@@ -4903,15 +4903,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # (test_no_auto_rollback_in_place_rounds et al.) lost their
         # repair.round_started (run 01M19FJVES7G113RD8QXXY3PQZ, red since
         # 6ec2dc3 landed). Idempotency/budget/closed-set guards all apply
-        # inside _park_repair_route; the chain still proceeds to its CI /
-        # security / preview stops unchanged.
-        if self._park_origin_repair_route(park_cmd, candidate_sha):
-            # A fresh repair round opened (§1.0.14 B): its reducer re-armed
-            # the parked walk and the repair dispatch owns the next move --
-            # the chain yields here so the disposition plays out before the
-            # release face opens (the known-issue listing rides the preview
-            # regeneration at registration time).
-            return
+        # inside _park_repair_route; the chain always proceeds to its
+        # CI / security / preview stops unchanged (9ba8dc9 contract) -- a
+        # fresh round re-arms the parked walk through its reducer and the
+        # repair dispatch plays out AFTER the release face has produced its
+        # evidence; yielding here instead stranded every walked scenario
+        # before the M-VERIFY producers could fire (GREEN gate, run
+        # 01M19FJVES7G113RD8QXXY3PQZ attempt log: preserved DBs show
+        # candidate.frozen/local_gate.passed then nothing).
+        self._park_origin_repair_route(park_cmd, candidate_sha, state)
         if not self._park_observe_ci(park_cmd, candidate_sha, contract):
             return
         if not self._park_assess_security(
@@ -5163,8 +5163,13 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         classification = _repair.classify_defect({"kind": finding_kind}, {})
         if classification.get("failed_class"):
             return False
-        if self._park_candidate_seen(("known_issue.registered",), candidate_sha):
-            return False  # registration idempotency: one disposition per run
+        if self._park_candidate_seen(
+            ("repair.round_started", "known_issue.registered"), candidate_sha
+        ):
+            return False  # one-shot disposition per candidate (SM-01.17
+            # idempotency): a re-entered park neither re-opens a round for
+            # the same candidate nor re-registers; a NEW candidate (repair
+            # commit, SM-01.20) re-enters the budget flow with its own sha.
         budget = 3
         used = self._park_repair_budget_used()
         if used >= budget:
@@ -5194,7 +5199,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit(result["event"], payload, command_id=cmd.command_id)
         return True
 
-    def _park_origin_repair_route(self, cmd, candidate_sha: str) -> bool:
+    def _park_origin_repair_route(self, cmd, candidate_sha: str, state) -> bool:
         """OOB 2026-09-05: open the repair disposition for the ORIGIN defect
         that parked the run (M-IMPL task failure) when the verify-side gates
         all passed. Classifies behaviour (owner Devon, red_first) from the
@@ -5202,7 +5207,39 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (budget, closed-set classification). test_defect origins stay
         fail-closed (not in the verify-side classification table -- the
         ruling channel owns them). Returns True when a fresh round opened
-        (the round re-arms the walk; the chain yields to the repair)."""
+        (the round re-arms the walk; the chain yields to the repair).
+
+        §11.4 irreparability #1 (AC-FR0286-04/05, OOB 2026-09-06): a re-park
+        on a candidate whose repair round is already open, with the repair
+        dispatches' attempt budget burned (state.current_attempt >= 3, the
+        shared M-IMPL budget whose exhaustion parked the run), means the fix
+        attempts were spent WITHOUT landing a fix commit -- the round count
+        alone can never advance past one (only a fix commit mints a new
+        candidate). Route the C-class known-issue exit instead of silently
+        stopping at the one-shot round guard."""
+        round_seen = self._park_candidate_seen(
+            ("repair.round_started",), candidate_sha
+        )
+        if round_seen and state.current_attempt >= 3:
+            budget = 3
+            self._park_known_issue(
+                cmd,
+                candidate_sha,
+                "behavior",
+                (
+                    "repair attempts exhausted without a fix commit "
+                    "(§11.4 irreparability #1: attempt budget spent, "
+                    "candidate unchanged)"
+                ),
+                # §11.4 #1 measures the budget in FIX ATTEMPTS, not landed
+                # fix commits: the attempt exhaustion IS the budget
+                # exhaustion for this criterion (round-counting alone can
+                # never reach it without a fix -- judge_irreparable would
+                # silently veto the C-class exit).
+                used=budget,
+                budget=budget,
+            )
+            return False
         if self._park_candidate_seen(("known_issue.registered",), candidate_sha):
             return False
         origin_reason = ""
@@ -5280,7 +5317,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         known_issues = _repair.list_known_issues_for_preview(self.run_id)
         if seen:
             last = seen[-1].payload or {}
-            if last.get("known_issues") == known_issues:
+            # SM-01.17 idempotency: an unchanged known-issue listing never
+            # regenerates (a preview without the key lists nothing); only a
+            # CHANGED listing re-opens the informed-consent face (§1.0.5:
+            # regeneration appends, never overwrites).
+            if last.get("known_issues", []) == known_issues:
                 return
         preview = generate_preview(
             candidate_sha,
@@ -5742,51 +5783,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
         )
 
-    def _is_fake_channel(self) -> bool:
-        """D-05 fake channel: the deterministic stand-in backend is selected
-        (``TRAC_AGENT_BACKEND=fake`` / ``TRAC_FAKE_SIMULATE`` -- the same
-        conditions ``select_backend``/``select_issue_backend`` key on).
-        Walks on this channel never touch the network, so the CI readback
-        resolves through the deterministic stand-in instead of the live
-        GitHub API."""
-        backend = getattr(self, "backend", None)
-        if backend is not None and "fake" in type(backend).__name__.lower():
-            return True
-        if os.environ.get("TRAC_FAKE_SIMULATE"):
-            return True
-        return os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
-
     def _readback_ci_binding(self, cmd, candidate_sha, ci):
         """API readback + binding judge (IF-VERIFY-004, AC-FR0270-01..03).
         Returns the bound ci.run_observed payload, or None with the block
         already on the stream: missing CI config/credentials and network
         errors land attention.required (never a silent pass); a
-        mismatch/missing/stale binding stops the chain blocked."""
-        if self._is_fake_channel():
-            # D-05: the fake channel is the deterministic stand-in -- but a
-            # bound readback is simulated ONLY when the stand-in CI target is
-            # EXPLICITLY configured (repo_env present in the environment).
-            # Without it the fake channel takes the same fail-closed path as
-            # the real one: missing credentials land attention.required,
-            # never a fabricated api_verified (IF-VERIFY-004 "never a silent
-            # pass"; Prism P1, run 01M19FJVES7G113RD8QXXY3PQZ review
-            # 2026-09-06 -- the unconditional form turned the walked
-            # no-credentials scenario into ci=bound, contradicting
-            # events.py "FAKE artifacts never api_verified").
-            repo_id = os.environ.get(str(ci.get("repo_env", "")), "").strip()
-            if repo_id:
-                workflow = str(ci.get("workflow", "")) or "ci.yml"
-                return {
-                    "candidate_sha": candidate_sha,
-                    "repo": repo_id,
-                    "workflow": workflow,
-                    "run_id": "FAKE-CI-1",
-                    "head_sha": candidate_sha,
-                    "conclusion": str(ci.get("conclusion", "success")),
-                    "api_verified": True,
-                }
-            # no explicit stand-in target: fall through to the locked
-            # credentials vocabulary below (attention.required).
+        mismatch/missing/stale binding stops the chain blocked.
+
+        The readback is the real GitHub-API face (stand-in base honored via
+        TRAC_GITHUB_API_BASE) for EVERY agent channel: the agent backend
+        selection (fake channel) scopes WHO writes, never WHAT the Runtime
+        observes — a fabricated bound run would contradict the "never a
+        silent pass" contract (AC-FR0270-03) and the events.py fake-artifact
+        vocabulary; the walked scenarios drive this face through the
+        fixture stand-in server (9ba8dc9 verified-green form)."""
         repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
         workflow = str(ci.get("workflow", ""))
         if not repo_id or not workflow:
