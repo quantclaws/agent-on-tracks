@@ -121,6 +121,22 @@ def test_oversized_assignment_rejected_as_plan_defect(monkeypatch):
     assert "hard budget" in stub.emitted[0][1]["reason"]
 
 
+def test_oversized_rejection_carries_dedup_audit_breakdown(monkeypatch):
+    """M5 audit-first rule (operator OOB 2026-09-06): the FIRST response to
+    an over-budget card is a per-section byte breakdown (dedup audit), not
+    a budget raise."""
+    monkeypatch.setenv("TRAC_ASSIGNMENT_BUDGET", "256")
+    stub = _BudgetStub()
+    big = {"description": "x" * 512, "manifest": {"allowed_paths": ["tracks/app.py"]}}
+    stub._do_dispatch_agent(_cmd(big), _state(), "T-1", False)
+    assert stub.emitted and stub.emitted[0][0] == "verdict.failed"
+    assert "dedup audit" in stub.emitted[0][1]["reason"]
+    evidence = stub.emitted[0][1]["evidence"]
+    assert "section bytes" in evidence
+    assert "description=" in evidence
+    assert "manifest=" in evidence
+
+
 def test_budgeted_assignment_dispatches(monkeypatch):
     monkeypatch.setenv("TRAC_ASSIGNMENT_BUDGET", "8192")
     stub = _BudgetStub()

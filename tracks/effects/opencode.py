@@ -37,6 +37,14 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
+from tracks.kernel.envelope import (
+    REVIEW_FINDING_FIELDS,
+    REVIEW_SUMMARY_MAX,
+    EnvelopeFormatError,
+    parse_agent_output,
+    validate_review_finding,
+    validate_review_payload,
+)
 from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
 from tracks.project import COMMENTABLE_DOCS, layout_paths
 from tracks.scaffold import _scaffold_declared_paths
@@ -1149,17 +1157,12 @@ class OpencodeBackend:
     # 为既有引用点的稳定别名。
     _DIAGNOSE_CLASSIFICATIONS = DIAGNOSE_CLASSIFICATIONS
 
-    # D-35 (SC-D35 §2.2) structured review payload contract.
-    _REVIEW_FINDING_FIELDS = (
-        "id",
-        "severity",
-        "defect_classification",
-        "criterion",
-        "artifact",
-        "ac_refs",
-        "summary",
-    )
-    _REVIEW_SUMMARY_MAX = 140
+    # D-35 (SC-D35 §2.2) structured review payload contract. Single-source
+    # delegation: the field sets and the 140-char caps are owned by
+    # kernel.envelope (the schema injected into dispatch assignments), so
+    # the mechanical checks and the declared schema cannot drift apart.
+    _REVIEW_FINDING_FIELDS = REVIEW_FINDING_FIELDS
+    _REVIEW_SUMMARY_MAX = REVIEW_SUMMARY_MAX
     _REVIEW_SUBSTATES = ("PRISM_REVIEW", "PRISM_PLAN", "PRISM_RED", "PRISM_FINAL")
     _REVIEW_KEYS = ("review_summary", "findings", "review_body", "defect_classification")
 
@@ -1268,40 +1271,67 @@ class OpencodeBackend:
 
     @classmethod
     def _validate_review_finding(cls, finding: object, idx: int) -> str | None:
-        if not isinstance(finding, dict):
-            return f"findings[{idx}] must be an object"
-        missing = [field for field in cls._REVIEW_FINDING_FIELDS if field not in finding]
-        if missing:
-            return f"findings[{idx}] missing fields: {', '.join(missing)}"
-        summary = finding.get("summary")
-        if not isinstance(summary, str) or not summary.strip():
-            return f"findings[{idx}].summary must be a non-empty string"
-        if len(summary) > cls._REVIEW_SUMMARY_MAX:
-            return f"findings[{idx}].summary exceeds {cls._REVIEW_SUMMARY_MAX} chars"
-        if not isinstance(finding.get("ac_refs"), list):
-            return f"findings[{idx}].ac_refs must be a list"
-        return None
+        # Canonical semantics live in kernel.envelope (the injected schema).
+        return validate_review_finding(finding, idx)
 
     @classmethod
     def _validate_review_payload(cls, payload: dict) -> str | None:
-        if payload["verdict"] == "pass":
-            return None
-        summary = payload.get("review_summary")
-        if not isinstance(summary, str) or not summary.strip():
-            return "review payload revise requires non-empty review_summary"
-        if len(summary) > cls._REVIEW_SUMMARY_MAX:
-            return f"review_summary exceeds {cls._REVIEW_SUMMARY_MAX} chars"
-        body = payload.get("review_body")
-        if not isinstance(body, str) or not body.strip():
-            return "review payload revise requires non-empty review_body"
-        findings = payload.get("findings")
-        if not isinstance(findings, list) or not findings:
-            return "review payload revise requires non-empty findings[]"
-        for idx, finding in enumerate(findings, start=1):
-            error = cls._validate_review_finding(finding, idx)
-            if error is not None:
-                return error
-        return None
+        # Canonical semantics live in kernel.envelope (the injected schema).
+        return validate_review_payload(payload)
+
+    @classmethod
+    def _envelope_reply_payload(
+        cls, text: object
+    ) -> tuple[dict | None, str | None, bool]:
+        """IF-ENVELOPE-001: when the final reply carries a tracks-envelope
+        block, the payload IS the structured reply (single deterministic
+        path, payload schema validated against the kernel registry). Returns
+        ``(payload, error, found)``; ``found=False`` keeps the legacy
+        bare-JSON channels — a missing block is a compliance miss, not
+        ambiguity, and the Runtime's declared-dispatch gate owns the
+        hard-fail policy for structural breakage."""
+        if not isinstance(text, str) or "tracks-envelope" not in text:
+            return None, None, False
+        try:
+            parsed = parse_agent_output(text)
+        except EnvelopeFormatError as exc:
+            if exc.kind == "no_envelope_block":
+                return None, None, False
+            return None, f"envelope format error ({exc.kind}): {exc.detail}", True
+        payload = parsed.get("payload")
+        return (payload if isinstance(payload, dict) else None), None, True
+
+    @classmethod
+    def _review_payload_from_reply(cls, text: object) -> tuple[dict | None, str | None]:
+        """Structured reply payload selection (single deterministic path).
+
+        Envelope block present: the block's payload IS the reply, validated
+        against the kernel registry. No block: legacy shape-aware bare-JSON
+        scan (declared-dispatch hard enforcement stays with the Runtime
+        gate). Returns ``(payload, None)`` when found, ``(None, error)`` on
+        a contract violation, ``(None, None)`` when no payload was attempted
+        (legal absence — callers decide whether that is allowed)."""
+        payload, env_error, env_found = cls._envelope_reply_payload(text)
+        if env_found:
+            if env_error is not None:
+                return None, env_error
+            if not isinstance(payload, dict) or "verdict" not in payload:
+                return None, (
+                    "envelope payload for a review kind must carry "
+                    "verdict/review_summary/findings/review_body (SC-D35 §2.2)"
+                )
+            return payload, None
+        if not isinstance(text, str):
+            return None, None
+        # Shape-aware first (the review JSON carries "verdict"); the blind
+        # last-wins pick stays as fallback so the existing legal-absence
+        # semantics ("verdict" not in payload) is preserved.
+        payload = cls._first_json_object(text.strip(), ("verdict",)) or (
+            cls._first_json_object(text.strip())
+        )
+        if not isinstance(payload, dict) or "verdict" not in payload:
+            return None, None
+        return payload, None
 
     @classmethod
     def _prism_review_payload_from(
@@ -1316,17 +1346,9 @@ class OpencodeBackend:
         event = cls._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = (
-            # Shape-aware first (the review JSON carries "verdict"); the
-            # blind last-wins pick stays as fallback so the existing
-            # legal-absence semantics ("verdict" not in payload) is preserved.
-            cls._first_json_object(text.strip(), ("verdict",))
-            or cls._first_json_object(text.strip())
-            if isinstance(text, str)
-            else None
-        )
-        if not isinstance(payload, dict) or "verdict" not in payload:
-            return None, None
+        payload, error = cls._review_payload_from_reply(text)
+        if error is not None or payload is None:
+            return None, error
         if payload.get("verdict") not in ("pass", "revise"):
             return None, (
                 f"review payload verdict must be 'pass'|'revise', "
@@ -1353,6 +1375,23 @@ class OpencodeBackend:
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
 
+    def _diagnose_payload_from_reply(self, text: object) -> dict | None:
+        """DIAGNOSE payload selection — envelope block first (single
+        deterministic path), legacy shape-aware bare-JSON scan otherwise."""
+        payload, env_error, env_found = self._envelope_reply_payload(text)
+        if env_found:
+            if env_error is None and isinstance(payload, dict):
+                return payload
+            return None
+        if not isinstance(text, str):
+            return None
+        # Shape-aware first (the diagnostic carries "classification"); blind
+        # last-wins stays as fallback for the no-payload path.
+        payload = self._first_json_object(text.strip(), ("classification",)) or (
+            self._first_json_object(text.strip())
+        )
+        return payload if isinstance(payload, dict) else None
+
     def _diagnose_classification_from(self, proc) -> dict | None:
         """Extract the skill-contract DIAGNOSE JSON ({"classification",
         "reason", "evidence"}) from the Prism final reply. The full payload
@@ -1361,14 +1400,7 @@ class OpencodeBackend:
         event = self._final_text_event(proc)
         part = event.get("part") if isinstance(event, dict) else None
         text = part.get("text") if isinstance(part, dict) else None
-        payload = (
-            # Shape-aware first (the diagnostic carries "classification");
-            # blind last-wins stays as fallback for the no-payload path.
-            self._first_json_object(text.strip(), ("classification",))
-            or self._first_json_object(text.strip())
-            if isinstance(text, str)
-            else None
-        )
+        payload = self._diagnose_payload_from_reply(text)
         if not isinstance(payload, dict):
             return None
         if payload.get("classification") not in self._DIAGNOSE_CLASSIFICATIONS:

@@ -541,8 +541,19 @@ def test_every_m_impl_assignment_materializes_role_contracts(tmp_path):
     assert assignments["devon"]["task_id"] == "T-001"
     assert assignments["devon"]["manifest"]["allowed_paths"]
     assert assignments["devon"]["pre_dirty_snapshot"] == {}
+    # Single carriage (operator OOB 2026-09-06): the pre-dirty snapshot rides
+    # assignment top-level; the manifest copy is stripped at materialization.
+    assert "pre_dirty_snapshot" not in assignments["devon"]["manifest"]
     assert assignments["devon"]["result_identity"]
     assert assignments["devon"]["phase"] == "red"
+    # Declared envelope (IF-ENVELOPE-001 injection face): prism dispatches
+    # with a registered payload schema carry the authoritative declaration.
+    assert assignments["prism"]["envelope"]["kind"] == "prism:plan"
+    assert assignments["prism"]["envelope_version"] == 2
+    assert assignments["prism"]["envelope"]["payload_schema"]["verdict"]["enum"] == (
+        "pass",
+        "revise",
+    )
     assert assignments["prism"]["criteria_pack"] == {
         "name": "tracks-prism-impl",
         "version": "0.1",

@@ -56,7 +56,7 @@ from tracks.effects.backend import valid_test_tasks
 from tracks.effects.fake import FakeBackend
 from tracks.executor.m_impl_runtime import _m_impl_red_classification_error
 from tracks.kernel import decide, project
-from tracks.kernel.envelope import parse_agent_output
+from tracks.kernel.envelope import EnvelopeFormatError, parse_agent_output
 
 # -- dispatch matrix: role/substate/stage/skills + envelope declaration gate --
 
@@ -316,19 +316,33 @@ def test_stage_dispatch_contract(name, state, role, substate, stage, skills):
     "name,state,role,substate,stage,skills", DISPATCH_CASES, ids=[c[0] for c in DISPATCH_CASES]
 )
 def test_no_assignment_declares_envelope_v2(name, state, role, substate, stage, skills):
-    """M3 gate: the envelope parser is still a stub, so runtime-built
-    assignments must not declare ``tracks-envelope:v2`` — every dispatch in
-    the matrix rides the bootstrap bare-JSON contract."""
+    """M3 gate (staged): kernel decide() output itself stays bare — the
+    envelope declaration is an executor-side enrichment
+    (_enrich_dispatch_params → kernel.envelope), so the bootstrap matrix
+    assignment never carries the token inline."""
     cmd = decide(state())
     assert "tracks-envelope:v2" not in json.dumps(cmd.params["assignment"]), name
 
 
-def test_envelope_parser_is_still_a_stub():
-    """IF-ENVELOPE-001: b91 ships the conditional prompt contract without the
-    parser; flipping this stub is a separate OOB (must flip the assignment
-    declaration in the same change, see test_no_assignment_declares_envelope_v2)."""
-    with pytest.raises(NotImplementedError, match="IF-ENVELOPE-001"):
-        parse_agent_output("```tracks-envelope\n{}\n```")
+def test_envelope_parser_is_live():
+    """IF-ENVELOPE-001: the parser flip shipped together with the assignment
+    declaration face (operator OOB 2026-09-06, user-authorized), replacing
+    the former stub pin; full taxonomy coverage lives in
+    tests/unit/test_envelope.py. One behavior-level pin stays next to the
+    dispatch matrix: exactly one fenced block parses, bare prose does not."""
+    parsed = parse_agent_output(
+        "```tracks-envelope\n"
+        + json.dumps(
+            {
+                "envelope": {"kind": "prism:final", "version": 2},
+                "payload": {"verdict": "pass"},
+            }
+        )
+        + "\n```"
+    )
+    assert parsed["payload"] == {"verdict": "pass"}
+    with pytest.raises(EnvelopeFormatError):
+        parse_agent_output('{"verdict": "pass"} bare JSON only')
 
 
 # -- materialization: every deliverable copies byte-identical and cleans up ----

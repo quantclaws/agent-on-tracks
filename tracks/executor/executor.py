@@ -164,8 +164,11 @@ from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
     EnvelopeFormatError,
+    build_assignment_envelope,
     check_envelope_parity,
+    envelope_declared_kind,
     parse_agent_output,
+    validate_envelope,
 )
 from tracks.kernel.events import Command
 from tracks.kernel.machine import (
@@ -1347,6 +1350,30 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             params.update(materialized)
         self._enrich_shield_write_params(params, state)
         self._enrich_m_test_prism_assignment(params, state)
+        self._enrich_envelope_params(params)
+
+    def _enrich_envelope_params(self, params: dict) -> None:
+        """(E) IF-ENVELOPE-001 injection face (operator OOB 2026-09-06,
+        user-authorized): declared dispatches carry the authoritative reply
+        envelope — kind + inline payload schema + schema digest — built by
+        kernel.envelope from the single registry, so the agent .md contract
+        ("schema 以 assignment 注入为权威") finally has an injector. Before
+        this the assignment declared nothing while the module was a stub,
+        and reviewers learned the payload shape from rejection errors after
+        burning a full reasoning hop. Runs LAST so overlay/hotfix/shield
+        enrichment (which may replace params["assignment"]) cannot wipe it.
+        TRAC_ENVELOPE_DECLARE=0 reverts to undeclared (legacy) dispatches.
+        """
+        if os.environ.get("TRAC_ENVELOPE_DECLARE", "").strip() == "0":
+            return
+        kind = envelope_declared_kind(params.get("role"), params.get("substate"))
+        if kind is None:
+            return
+        assignment = dict(params.get("assignment") or {})
+        task = assignment.get("task") if isinstance(assignment.get("task"), dict) else None
+        assignment["envelope"] = build_assignment_envelope(kind, task)
+        assignment["envelope_version"] = ENVELOPE_VERSION
+        params["assignment"] = assignment
 
     def _enrich_m_test_prism_assignment(self, params: dict, state: State) -> None:
         """D-41 AC-FR0250-03 (v3 timing): PRISM_REVIEW consumes the Runtime's
@@ -1516,9 +1543,26 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # replan, no agent attempt burned).
         card = p.get("assignment")
         budget = _assignment_budget()
-        if isinstance(card, dict) and budget and len(
-            json.dumps(card, ensure_ascii=False, default=str)
-        ) > budget:
+        card_bytes = (
+            len(json.dumps(card, ensure_ascii=False, default=str))
+            if isinstance(card, dict)
+            else 0
+        )
+        if isinstance(card, dict) and budget and card_bytes > budget:
+            # M5 audit-first rule (operator OOB 2026-09-06): the rejection
+            # carries a per-section byte breakdown so the FIRST response to
+            # an over-budget card is a dedup audit (which sections cost
+            # what, which are boilerplate/history riding the card instead
+            # of the event log), never a budget raise.
+            sections = sorted(
+                (
+                    (key, len(json.dumps(value, ensure_ascii=False, default=str)))
+                    for key, value in card.items()
+                ),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            breakdown = ", ".join(f"{key}={size}B" for key, size in sections[:6])
             self._emit(
                 "verdict.failed",
                 {
@@ -1527,11 +1571,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "task_id": task_id or state.current_task_id or "",
                     "reason": (
                         "assignment card over hard budget (M5): "
-                        f"{len(json.dumps(card, ensure_ascii=False, default=str))}"
-                        f" bytes > {budget} -- split the card; the event log "
-                        "carries the history, not the prompt"
+                        f"{card_bytes}"
+                        f" bytes > {budget} -- dedup audit first (see "
+                        "evidence breakdown), then split the card; the "
+                        "event log carries the history, not the prompt"
                     ),
-                    "evidence": "dispatch-side assignment budget check",
+                    "evidence": (
+                        "dispatch-side assignment budget check; section "
+                        f"bytes [{breakdown}]; audit zero-reader duplicates "
+                        "and boilerplate before re-planning"
+                    ),
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,
@@ -2637,7 +2686,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # envelope is a format_error, never a semantic attempt (no attempt
         # consumed, no business-state mutation); the handler returns before
         # any ordinary validation pipeline runs.
-        if self._format_error_shortcircuit(result, cmd, task_id):
+        if self._format_error_shortcircuit(result, cmd, task_id, assignment):
             return
         # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
         # Must run before any early-return handling so attribution is correct
@@ -2968,22 +3017,40 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         return injected
 
-    def _format_error_shortcircuit(self, result, cmd, task_id) -> bool:
+    def _format_error_shortcircuit(
+        self, result, cmd, task_id, assignment=None
+    ) -> bool:
         """(E) IF-ENVELOPE-001/002 collection-time single parse path.
 
         EnvelopeFormatError -> format_error event and True (handled: never a
         semantic attempt — no attempt consumed, no business-state mutation,
-        the ordinary validation pipeline never runs). While the parser module
-        is pending (NotImplementedError, T-035) collection falls through to
-        the legacy result handling; a successful parse enriches the result
-        with the envelope payload and falls through as well.
+        the ordinary validation pipeline never runs). A successful parse
+        enriches the result with the envelope payload and falls through.
+
+        Rollout gate: only a DECLARED dispatch (assignment carries the
+        kernel.envelope declaration, see _enrich_envelope_params) hard-fails
+        on structural breakage. On a declared dispatch a MISSING block is a
+        compliance miss, not ambiguity — collection falls through to the
+        legacy channels so a bare-JSON reply is not lost (T-024 tightens
+        this once the six parity faces embed the token); undeclared
+        dispatches keep the legacy channels entirely.
         """
         raw = result.get("raw_output")
         if not isinstance(raw, str) or not raw:
             return False
+        declared = bool(isinstance(assignment, dict) and assignment.get("envelope"))
+        declared_kind = (
+            (assignment.get("envelope") or {}).get("kind") if declared else None
+        )
         try:
             envelope = parse_agent_output(raw)
+            if declared_kind:
+                # Declared dispatch: the reply must speak the kind the
+                # assignment declared (schema already payload-validated).
+                envelope = validate_envelope(envelope, declared_kind)
         except EnvelopeFormatError as exc:
+            if not declared or exc.kind == "no_envelope_block":
+                return False
             self._emit(
                 "format_error",
                 {"kind": exc.kind, "detail": exc.detail, "task_id": task_id},

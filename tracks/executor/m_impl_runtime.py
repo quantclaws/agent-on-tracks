@@ -825,7 +825,14 @@ class MImplRuntimeMixin:
             return
         manifest = dict(state.current_manifest) if state.current_manifest is not None else None
         if manifest is not None:
-            manifest.update({"pre_dirty_snapshot": pre_dirty, "result_identity": result_identity})
+            # Single carriage (operator OOB 2026-09-06, user-authorized):
+            # pre_dirty_snapshot rides assignment top-level only. Strip the
+            # manifest copy a carried-over previous manifest may still hold
+            # (state.current_manifest is the previous card's manifest), and
+            # _task_manifest no longer writes it either — the dual carriage
+            # was the pathology class M5's audit-first rule targets.
+            manifest.pop("pre_dirty_snapshot", None)
+            manifest.update({"result_identity": result_identity})
             if substate in ("GREEN", "REFACTOR", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE"):
                 manifest["r_tree_identity"] = state.r_tree_identity
         assignment.update(
@@ -3053,7 +3060,9 @@ class MImplRuntimeMixin:
             "unit_commands": self._unit_commands(),
             "test_commands": self._test_commands(),
             "guard_commands": self._guard_commands(),
-            "pre_dirty_snapshot": pre_dirty,
+            # pre_dirty_snapshot is deliberately NOT carried here (single
+            # carriage: it rides assignment top-level; see the strip at the
+            # copied-manifest refresh in _add_assignment_runtime_fields).
             "r_tree_identity": None,
             "result_identity": None,
         }
