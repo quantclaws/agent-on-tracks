@@ -63,9 +63,19 @@ def classify_defect(finding: dict, context: dict) -> dict:
     }
 
 
-def open_repair_round(run_id: str, classification: dict, budget: int) -> dict:
+def open_repair_round(
+    run_id: str,
+    classification: dict,
+    budget: int,
+    candidate_sha: str | None = None,
+    trigger_event_seq: int | None = None,
+) -> dict:
     """Emit repair.round_started {round, budget, classification}; never a
     stage.rolled_back — in-place repair only (AC-FR0286-01).
+
+    §1a row 28 closed payload: when the caller supplies ``candidate_sha`` /
+    ``trigger_event_seq`` they are forwarded so the repair-family event binds
+    the frozen candidate (NFR-0143-01) and stays replayable to its trigger.
 
     FR-0286 §4: the repair budget is finite (status renders round=<n>/3).
     Once the used rounds reach the budget, a further call surfaces budget
@@ -81,6 +91,10 @@ def open_repair_round(run_id: str, classification: dict, budget: int) -> dict:
         "budget": budget,
         "classification": dict(classification or {}),
     }
+    if candidate_sha is not None:
+        result["candidate_sha"] = candidate_sha
+    if trigger_event_seq is not None:
+        result["trigger_event_seq"] = trigger_event_seq
     if round_no > budget:
         result["rounds_exhausted"] = True
     return result
@@ -146,12 +160,19 @@ def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
     kind = str(attribution.get("kind", ""))
     item = attribution.get("item_or_ac", "")
     if kind in _NOT_PRODUCT_DEFECT:
+        # §1a row 29 pair payload: BOTH faces carry the closed members —
+        # issue_number/url nullable on the rejected face, plus the pair label
+        # and evidence refs; the rejection additionally carries reason.
         return {
             "event": "known_issue.rejected",
-            "reason": "not_product_defect",
+            "issue_number": None,
+            "url": None,
+            "label": "known-issue",
+            "evidence_refs": [],
             "kind": kind,
             "item_or_ac": item,
             "candidate_sha": candidate_sha,
+            "reason": "not_product_defect",
         }
     issue_number = len(_KNOWN_ISSUES) + 100
     registration = {

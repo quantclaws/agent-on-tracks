@@ -280,3 +280,86 @@ def test_list_known_issues_for_preview():
         assert entry.get("waiver"), (
             f"assertion failure: preview entry missing waiver/AC binding, got {entry!r}"
         )
+
+
+# §1a row 28@v0.8 TRACKS-TRACE NFR-0143-01 closed repair.round_started payload
+def test_open_repair_round_carries_candidate_and_trigger_seq():
+    """§1a row 28 closed payload: repair.round_started carries round, budget,
+    classification AND candidate_sha + trigger_event_seq — NFR-0143-01 binds
+    every repair-family event to the frozen candidate and the trigger event
+    seq makes the in-place disposition replayable (never a rollback,
+    AC-FR0286-01)."""
+    try:
+        result = open_repair_round(
+            "RUN-trigger",
+            {
+                "defect_class": "behavior",
+                "owner": "Devon",
+                "discipline": "red_first",
+            },
+            3,
+            candidate_sha="d" * 40,
+            trigger_event_seq=41,
+        )
+    except TypeError as err:
+        raise AssertionError(
+            "assertion failure: open_repair_round does not expose the §1a#28 "
+            f"closed payload surface candidate_sha/trigger_event_seq: {err}"
+        ) from err
+    assert result.get("candidate_sha") == "d" * 40, (
+        f"assertion failure: repair.round_started must bind the frozen "
+        f"candidate_sha (§1a#28/NFR-0143-01), got {result!r}"
+    )
+    assert result.get("trigger_event_seq") == 41, (
+        f"assertion failure: repair.round_started must carry trigger_event_seq "
+        f"(§1a#28 disposition replayability), got {result!r}"
+    )
+    assert result.get("round") == 1, (
+        f"assertion failure: first round must stay 1, got {result!r}"
+    )
+    assert result.get("budget") == 3, (
+        f"assertion failure: budget must be forwarded, got {result!r}"
+    )
+    assert result.get("event") == "repair.round_started", (
+        f"assertion failure: round opener must name its event, got {result!r}"
+    )
+
+
+# §1a row 29@v0.8 TRACKS-TRACE IF-KNOWNISSUE-001 rejected pair payload
+def test_register_known_issue_rejected_carries_pair_payload():
+    """§1a row 29: BOTH faces of the known-issue pair carry the closed
+    payload — issue_number nullable, url nullable, item_or_ac, candidate_sha,
+    evidence_refs, label=known-issue; the rejected face additionally carries
+    reason=not_product_defect (AC-FR0286-06 zero-waiver exclusions)."""
+    for excluded in ("mechanism_failure", "security_finding"):
+        result = _calls(
+            register_known_issue,
+            "repo",
+            {"kind": excluded, "item_or_ac": "AC-FR0286-06"},
+            "c" * 40,
+            label="register_known_issue",
+        )
+        assert "issue_number" in result and result["issue_number"] is None, (
+            f"assertion failure: rejected {excluded} must carry the nullable "
+            f"issue_number member of the §1a#29 pair payload, got {result!r}"
+        )
+        assert "url" in result and result["url"] is None, (
+            f"assertion failure: rejected {excluded} must carry the nullable "
+            f"url member of the §1a#29 pair payload, got {result!r}"
+        )
+        assert result.get("label") == "known-issue", (
+            f"assertion failure: rejected {excluded} must carry the pair label "
+            f"(§1a#29), got {result!r}"
+        )
+        assert isinstance(result.get("evidence_refs"), list), (
+            f"assertion failure: rejected {excluded} must carry evidence_refs "
+            f"(§1a#29), got {result!r}"
+        )
+        assert result.get("reason") == "not_product_defect", (
+            f"assertion failure: rejected {excluded} must reject with "
+            f"not_product_defect, got {result!r}"
+        )
+        assert result.get("candidate_sha") == "c" * 40, (
+            f"assertion failure: rejected {excluded} must stay candidate-bound, "
+            f"got {result!r}"
+        )
