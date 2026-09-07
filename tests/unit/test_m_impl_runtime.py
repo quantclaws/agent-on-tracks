@@ -3291,6 +3291,84 @@ def test_scope_replan_releases_stale_lease_and_selects_merged_task(tmp_path):
     assert state.tasks_completed == 1  # T-001 retained; T-014 still running
 
 
+def test_replacement_commit_without_scope_route_clears_inflight_lease(tmp_path):
+    """#139: a replacement taskgraph committed WITHOUT the scope-failure
+    route (operator/RULING commit_taskgraph, run 01M19FJV: graph 81d33fa5
+    landed while T-042 was in flight) must clear the in-flight task lease --
+    otherwise _do_select_task's current_task_id guard no-ops forever and the
+    command-stall detector aborts the loop (loop.aborted seq 3653/3674/3695)."""
+    repo = _repo(tmp_path)
+    vdir = _docs(repo)
+    store = _store(repo)
+    executor = _executor(repo, store)
+    command = Command("commit_taskgraph", command_id="C-TG")
+
+    t1 = _task()
+    t7 = _b83_task("T-007", "tracks/parity.py", "tests/unit/test_p.py::test_p")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t7]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    # T-001 completes; T-007 goes in-flight (started, writelock held) and is
+    # NEVER completed -- and no scope verdict routes the replan.
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-001", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-001", "task": {"task_id": "T-001"}, "manifest": {"task_id": "T-001"}},
+    )
+    store.append("RUN", "v0.5", "task.completed", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.released", {"task_id": "T-001"})
+    store.append("RUN", "v0.5", "writelock.granted", {"task_id": "T-007", "manifest": {}})
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-007", "task": {"task_id": "T-007"}, "manifest": {"task_id": "T-007"}},
+    )
+    assert store.state("RUN").current_task_id == "T-007"
+
+    # The replacement graph lands via a direct commit (operator/RULING path).
+    t14 = _b83_task("T-014", "tracks/merged.py", "tests/unit/test_m.py::test_m")
+    (vdir / "tasks.json").write_text(
+        json.dumps({"tasks": [t1, t14]}, sort_keys=True), encoding="utf-8"
+    )
+    executor._do_commit_taskgraph(command, store.state("RUN"), None, False)
+    commit_seq = max(
+        ev.seq for ev in store.events("RUN") if ev.type == "taskgraph.committed"
+    )
+
+    state = store.state("RUN")
+    assert state.current_task_id is None, "#139: stale lease must be cleared"
+    assert state.current_task_metadata is None
+    assert state.current_manifest is None
+
+    select = Command("select_task", command_id="C-SELECT")
+    # First pass: stale T-007 writelock predates the replacement commit --
+    # release it (taskgraph_replaced); the in-flight task is NOT resurrected.
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    released = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "writelock.released" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in released] == ["T-007"]
+    assert store.state("RUN").writelock_held is False
+
+    # Second pass: selection is no longer gated by the stale lease -- the
+    # merged T-014 is selected under the new graph (the old tight loop
+    # produced zero task.started events after the replacement commit).
+    executor._do_select_task(select, store.state("RUN"), None, False)
+    started_after = [
+        ev
+        for ev in store.events("RUN")
+        if ev.type == "task.started" and ev.seq > commit_seq
+    ]
+    assert [ev.payload["task_id"] for ev in started_after] == ["T-014"]
+    assert store.state("RUN").current_task_id == "T-014"
+
+
 def test_redefined_same_id_task_is_not_retained(tmp_path):
     """B83 (#83): a completed task whose payload is REDEFINED in the new
     graph (same id, changed scope) must re-run — its old completion must not

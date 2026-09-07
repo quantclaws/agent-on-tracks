@@ -69,6 +69,17 @@ def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.tasks_completed = len(s.retained_completed_task_ids)
     if is_replacement:
         s.taskgraph_generation += 1
+        # B83 symmetry (#139): the in-flight task lease belongs to the
+        # REPLACED graph -- its task may be merged/redefined/deferred away.
+        # _do_select_task's ``current_task_id`` guard would otherwise no-op
+        # forever (command-stall tight-loop, run 01M19FJV seq 3638+); the
+        # executor-side counterparts (started_this_cycle cutoff, stale
+        # writelock release) already key on latest_taskgraph_seq. A
+        # re-selection fires task.started, which resets every per-task
+        # field (attempt, green_committed, r_tree_identity, ...).
+        s.current_task_id = None
+        s.current_task_metadata = None
+        s.current_manifest = None
     s.substate = "ISLAND_GATE_1"
 
 

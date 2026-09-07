@@ -3006,6 +3006,76 @@ def test_b83_retained_depends_on_chain():
     assert cmd.kind == "select_task"
 
 
+def test_replacement_taskgraph_clears_inflight_task_lease():
+    """#139: a within-residency graph replacement must clear the in-flight
+    task lease even when the replan did NOT route through scope failure
+    (operator/RULING commit_taskgraph, run 01M19FJV: graph 81d33fa5 landed
+    at seq 3624 while T-042 was in flight; select_task then no-op'ed 20x
+    on the stale current_task_id guard and tripped loop.aborted)."""
+    task = {
+        "task_id": "T-007",
+        "issue_number": 139,
+        "description": "in-flight scope",
+        "ac_refs": ["AC-2"],
+        "fr_refs": [],
+        "if_ids": ["IF-2"],
+        "test_refs": [],
+        "unit_refs": [],
+        "acceptance_refs": [],
+        "schema": 2,
+        "scope_boundary": "tracks/",
+        "depends_on": ["-"],
+        "batch": "1",
+        "parallel": "0",
+        "budget": 3,
+    }
+    old_commit = (
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "task_ids": ["T-007"],
+            "tasks": [task],
+            "digest": "aaa",
+            "path": "tasks.json",
+        },
+    )
+    replacement_commit = (
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "task_ids": ["T-007"],
+            "tasks": [{**task, "description": "revised scope"}],
+            "digest": "bbb",
+            "path": "tasks.json",
+            "retained_completed_task_ids": [],
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        old_commit,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        ("task.started", {"task_id": "T-007", "task": dict(task), "manifest": {"task_id": "T-007"}}),
+        # No scope verdict routes the replan -- the replacement lands via a
+        # direct commit_taskgraph (operator/RULING path).
+        TASKGRAPH_CMD,
+        replacement_commit,
+    )
+    assert s.taskgraph_generation == 1
+    assert s.current_task_id is None
+    assert s.current_task_metadata is None
+    assert s.current_manifest is None
+    assert s.substate == "ISLAND_GATE_1"
+
+
 def test_diagnose_plan_defect_routes_to_planning():
     """#89: DIAGNOSE plan_defect -> PLANNING (Archer replan), no attempt
     consumed, evidence preserved, task identity cleared."""
