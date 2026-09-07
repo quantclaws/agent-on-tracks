@@ -109,3 +109,119 @@ def test_collect_binding_violations_accepts_fully_bound_chain():
             f"fully bound chain must yield no violations, got "
             f"{violations!r}"
         )
+
+
+# IF-VERIFY-001@v0.8 TRACKS-TRACE AC-FR0267-01 clean-tree freeze binding
+def test_freeze_candidate_binds_full_sha_on_clean_tree(tmp_path):
+    """IF-VERIFY-001/AC-FR0267-01: on a clean tree freeze_candidate binds the
+    FULL HEAD SHA as the candidate identity with clean_tree=True and the
+    current branch (Maestro ruling T-002 B: the primary identity is the
+    complete Git commit SHA frozen at M-VERIFY entry)."""
+    import subprocess
+
+    def git(*args):
+        proc = subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
+        return proc.stdout.strip()
+
+    git("init", "-q", ".")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-q", "-m", "seed")
+    head = git("rev-parse", "HEAD")
+
+    freeze = getattr(m_verify, "freeze_candidate", None)
+    if freeze is None:
+        _fail("executor/m_verify.py missing freeze_candidate export (IF-VERIFY-001)")
+    try:
+        identity = freeze(tmp_path)
+    except NotImplementedError as err:
+        _fail(f"freeze_candidate not implemented ({err})")
+    assert identity.candidate_sha == head, (
+        f"assertion failure: freeze must bind the full HEAD SHA {head!r}, "
+        f"got {identity.candidate_sha!r} (AC-FR0267-01)"
+    )
+    assert identity.clean_tree is True, (
+        f"assertion failure: clean tree must freeze clean_tree=True, got {identity!r}"
+    )
+    assert identity.branch, (
+        f"assertion failure: freeze must record the current branch, got {identity!r}"
+    )
+
+
+# IF-VERIFY-001@v0.8 TRACKS-TRACE AC-FR0267-02 dirty-tree refusal
+def test_freeze_candidate_refuses_dirty_tree(tmp_path):
+    """IF-VERIFY-001/AC-FR0267-02: a dirty tracked file refuses the freeze —
+    FreezeBlocked, no identity may exist (the caller maps the refusal to
+    attention.required reason=dirty_tree); never a guessed candidate."""
+    import subprocess
+
+    def git(*args):
+        proc = subprocess.run(["git", *args], cwd=tmp_path, capture_output=True, text=True)
+        assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
+        return proc.stdout.strip()
+
+    git("init", "-q", ".")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-q", "-m", "seed")
+    (tmp_path / "seed.txt").write_text("dirty\n", encoding="utf-8")
+
+    freeze = getattr(m_verify, "freeze_candidate", None)
+    if freeze is None:
+        _fail("executor/m_verify.py missing freeze_candidate export (IF-VERIFY-001)")
+    blocked = getattr(m_verify, "FreezeBlocked", None)
+    if blocked is None:
+        _fail("executor/m_verify.py missing FreezeBlocked export (dirty refusal)")
+    try:
+        identity = freeze(tmp_path)
+    except blocked:
+        return  # fail-closed refusal: the contract face holds
+    _fail(
+        f"assertion failure: a dirty tree must refuse the freeze "
+        f"(FreezeBlocked), got identity {identity!r} (AC-FR0267-02)"
+    )
+
+
+# IF-VERIFY-001@v0.8 TRACKS-TRACE M-IMPL boundary route
+def test_after_m_impl_routes_release_capable_boundary():
+    """IF-VERIFY-001: at the EXITED M-IMPL boundary the release-capable seam
+    routes the M-VERIFY chain head Command(freeze_candidate, stage=M-VERIFY);
+    anywhere else it stays parked (routing happens only at the boundary)."""
+    route = getattr(m_verify, "_after_m_impl", None)
+    if route is None:
+        _fail("executor/m_verify.py missing _after_m_impl seam (IF-VERIFY-001)")
+
+    class _State:
+        stage = "M-IMPL"
+        stage_exited = True
+
+    command = route(_State())
+    assert command is not None and getattr(command, "kind", "") == "freeze_candidate", (
+        f"assertion failure: exited M-IMPL boundary must route the freeze "
+        f"chain head, got {command!r}"
+    )
+    assert (command.params or {}).get("stage") == "M-VERIFY", (
+        f"assertion failure: the freeze command must name stage=M-VERIFY, "
+        f"got {command.params!r}"
+    )
+
+    class _Parked:
+        stage = "M-IMPL"
+        stage_exited = False
+
+    assert route(_Parked()) is None, (
+        "assertion failure: an unexited M-IMPL boundary stays parked"
+    )
+
+    class _Elsewhere:
+        stage = "M-TEST"
+        stage_exited = True
+
+    assert route(_Elsewhere()) is None, (
+        "assertion failure: non-M-IMPL stages never route the verify head"
+    )

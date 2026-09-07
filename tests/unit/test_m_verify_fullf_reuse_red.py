@@ -100,3 +100,25 @@ def test_stale_evidence_not_reused():
     )
     # stale evidence's identity must not be returned as passed basis
     assert decision.decision != "reuse"
+
+
+# AC-FR0268-02/03@v0.8 TRACKS-TRACE IF-VERIFY-002 no-basis fail-closed rerun
+def test_judge_full_f_reuse_requires_recorded_identity_basis():
+    """IF-VERIFY-002 fail-closed: reuse requires the quadruple to be PROVEN
+    consistent against a recorded identity_basis. Evidence recorded WITHOUT
+    an identity_basis carries no proof — treating absence as a match let a
+    drifted/stale FULL_F reuse with an empty basis (AC-FR0268-02/03)."""
+    decision = judge_full_f_reuse(
+        candidate_sha="e" * 40,
+        full_f_evidence={"tree": "a", "command": "b", "env": "c", "selection_id": "d"},
+        identity_quadruple={"tree": "a", "command": "b", "env": "c", "selection_id": "d"},
+        stale_marks=(),
+    )
+    assert decision.decision == "rerun", (
+        f"assertion failure: evidence without a recorded identity_basis must "
+        f"rerun (no provable quadruple match), got {decision.decision!r}"
+    )
+    assert decision.reason == "identity_mismatch", (
+        f"assertion failure: the no-basis rerun reason must be "
+        f"identity_mismatch, got {decision.reason!r}"
+    )
