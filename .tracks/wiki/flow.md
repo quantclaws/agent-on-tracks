@@ -825,27 +825,27 @@ stateDiagram-v2
     LOCAL_GATES : 真实 build + 全部 artifact
 
     LOCAL_GATES --> VERSION_VERIFY : 全过
-    LOCAL_GATES --> [*] : 失败 -> 按 finding 归属返回上游
+    LOCAL_GATES --> [*] : 失败 -> verify finding 归类 -> §11.4 就地修复循环 (不回退)
 
     VERSION_VERIFY : 准备/校验版本源 -> build
     VERSION_VERIFY : 枚举 artifact + 提取版本比对
     VERSION_VERIFY : 从安装/运行出口复核
 
     VERSION_VERIFY --> CI : artifact.verified
-    VERSION_VERIFY --> [*] : 缺失/不一致 -> 上游
+    VERSION_VERIFY --> [*] : 缺失/不一致 -> verify finding 归类 (§11.4)
 
     CI : push candidate 触发 GitHub workflow
     CI : API 关联 repo/workflow/commit/run/jobs
 
     CI --> PRISM_FINAL : ci.run_observed(passed)
     CI --> CI : 权限/网络 -> reconcile 重试
-    CI --> [*] : failed/cancelled/timeout -> 上游
+    CI --> [*] : failed/cancelled/timeout -> verify finding 归类 (§11.4)
 
     PRISM_FINAL : dispatch Prism 整体复审
     PRISM_FINAL : 跨 task 漂移/重复/回归风险
 
     PRISM_FINAL --> [*] : prism.verdict(pass) -> stage.exited -> M-SECURITY
-    PRISM_FINAL --> [*] : revise -> Devon/Shield/上游 (新 candidate 重跑)
+    PRISM_FINAL --> [*] : revise -> verify finding 归类 (§11.4; 新 candidate 重跑)
 ```
 
 > 所有 gate 必须对**同一** candidate PASS；不存在"部分基于旧 commit 的绿色"。
@@ -862,6 +862,53 @@ stateDiagram-v2
 1. 所有 gate 必须对**同一** candidate PASS；不存在"部分基于旧 commit 的绿色"。
 2. CI 结果以 API 回读为准，永不采信 Agent 转述。
 3. **FULL 复用与并发所有权（D-41，v6）**：candidate 相对 M-IMPL 干净 FULL_F 未漂移时复用之，不重复本地全量；CI 证据以既有候选 CI 门禁的 `ci.run_observed` API 回读为准，回读通过才退出——nightly 结果取回是明确推迟的独立事项（result fetch future），不是本门禁输入；漂移/stale 才重跑 LOCAL_GATES。测试命令由 Archer machine contract 独家定义（扁平 [unit]/[integration]/[e2e] 段的 run/run_selected，并发 flag 与 `--junitxml={result}` 内嵌于命令字符串），Runtime 只替换 {nodes}/{result}、永不注入并发与 junit flag；run_selected 缺失 = contract_error fail-closed（不向 run 追加 nodeid、不合成调用）；FULL 链逐节点结果消费 `{result}` JUnit 归一化记录（§9.0 v6），覆盖不精确/缺失/畸形 = contract_error fail-closed。
+4. **自动路径不回退（2026-08-31 讨论收敛）**：M-VERIFY 失败时 Runtime 的**自动路由**不回退 M-DESIGN/M-PLANNING——候选已建立在实现基线上，自动回退重规划的代价大于就地修复。verify finding 一律经 §11.4 就地修复循环产生**新 candidate** 重走 M-VERIFY；不可修复缺陷按 §11.4 判据登记 known issue（安全 finding 除外，见 §12.3）。凭据/网络/环境类失败不产生 finding，走 `needs_attention` + 恢复后原 candidate 续跑。**本规则只约束自动路径**——Human 随时可经 §11.5 逃生门回拨指针。
+
+### 11.4. 就地修复循环与 Known Issue（2026-08-31 讨论收敛）
+
+**成本效率原则**：发布闭环内的缺陷默认**就地修复、不后退**。分类只用于决定"由谁就地修"，不产生阶段回退。
+
+```mermaid
+stateDiagram-v2
+    [*] --> CLASSIFY : gate/prism 失败
+    CLASSIFY : verify finding 归类 (repair.loop_entered)
+    CLASSIFY --> REPAIR_IMPL : 行为缺陷 -> Devon 就地 RGR
+    CLASSIFY --> REPAIR_GATE : 门禁缺陷 -> Devon 就地修复 (verification-only)
+    CLASSIFY --> REPAIR_TEST : 冻结测试资产缺陷 -> Shield 定点 (SHIELD_FIX)
+    CLASSIFY --> ADVISORY : 合同级缺陷 -> 受控合同修订 (delta 文档+评审, 不回阶段)
+    CLASSIFY --> KNOWN_ISSUE : 不可修复 (下方判据)
+    REPAIR_IMPL --> GATES : 新 commit -> 新 candidate -> 重走 M-VERIFY 全链
+    REPAIR_GATE --> GATES : 修复后重跑该 gate 即证明
+    REPAIR_TEST --> GATES
+    ADVISORY --> GATES : 修订后随新 candidate 重跑
+    KNOWN_ISSUE --> REGISTRY : 非安全 -> 登记 + M-RELEASE preview 可见
+    KNOWN_ISSUE --> BLOCK_RELEASE : 安全 -> 零容忍 (§12.3)
+```
+
+- **行为缺陷**（CI/FULL 重跑失败、Prism finding 指向产品代码）：Devon 在**当前 run 内** RED-first 就地修复——新增 unit 层回归测试复现缺陷（不修改冻结 int/e2e：行为合同未变，冻结测试正是"修复不改变行为合同"的回归保护）；GREEN 修复；新 commit 产生新 candidate SHA，旧 candidate 的 FULL_F/CI/preview/Human 决定全部 stale，完整重走 M-VERIFY。
+- **门禁缺陷**（lint、SCA 报 CVE、build/扫描失败）：修的是依赖版本或配置，**没有天然的 RED 测试可写**——verification-only：修复后重跑该 gate 通过即证明，不人造无意义失败测试。依赖漏洞由 Archer 以**咨询派发**评估替代方案（换版本/换库），建议注入 Devon 修复 assignment；Archer 参与不等于阶段回退。
+- **冻结测试资产缺陷**（Prism finding 分类为 `test_defect`）：Shield 定点修订（SHIELD_FIX 通道），禁止全量重写；修复本身不需要新行为断言时不得改动 int/e2e。
+- **合同级缺陷**（含安全合同错位）：允许**受控合同修订**——delta 文档 + 评审，不回阶段；修订后随新 candidate 重跑。
+- **不可修复判据**（满足其一即 known issue 候选）：
+  1. 就地修复 attempt 预算（默认 3）穷尽且 Prism 复审确认归因不变；
+  2. 修复需变更冻结 interfaces/AC 且超出受控合同修订可承载范围；
+  3. 外部依赖无可用修复（库无补丁版本；换库/换版本超出本版范围）。
+- **Known Issue 政策**：仅适用于**产品质量缺陷**。Prism 确认归因后 Runtime 登记 GitHub issue（`known-issue` 标签、关联 candidate SHA 与失败证据）；**必须在 M-RELEASE preview 中列出**——Human 带病发布需知情同意，preview 未列出的 known issue 不允许存在；M-MILESTONE 的 release trace 以 waiver 语义豁免绑定 AC 并转下版 backlog；下版 triage 必须消费。
+- **排除项**：**发布机制本身的失败**（artifact/tag/CI/registry 故障）不适用 known issue——修好或放弃发布，不存在"带病发布"。
+- **与 hotfix 的边界**：run 内就地修复**不起** hotfix run——hotfix 是发布后通道（`fix/{issue}` 独立分支 run），且单活跃 run 原则（§16.3.7）禁止并发第二个开发活动。
+- **M-PUBLISH/M-MILESTONE 同原则**：外部操作/归档失败就地处理（reconcile、retry_tail），不后退；产品质量类残留无法修复的按 Known Issue 政策带病发布；已成功的外部副作用永不回滚、不重复。
+- **逃生门**：known issue 是默认出口，但 Human 随时可用 §11.5 逃生门回拨指针替代。
+
+### 11.5. Human 逃生门：指针回拨（用户要求 2026-08-31）
+
+**原则**：就地修复是默认的低成本路径，但 **Runtime 永不拥有阶段指针的最终决定权**。Human 在任何时候（可咨询 Agent，其建议仅为 advisory）可以把 run 的阶段指针回拨到任一上游 canonical 阶段。
+
+1. **形式与权限**：`trac return --to <stage>` 扩展为通用逃生门——可从**任意**阶段（含 M-VERIFY/M-SECURITY/M-RELEASE/M-PUBLISH/M-MILESTONE）回拨到任一上游 canonical 阶段。actor 必须为 Human，落 append-only 事件（`human.return`：actor/from/to/reason）。Runtime 不得以任何自动策略阻止 Human 回拨；自动路由（§11.4 就地修复）只是默认路径，不限制逃生门。
+2. **线性化、迟到 outcome 隔离与证据失效（回拨的核心语义）**：Runtime 必须先在 writer lock 内建立 escape barrier（记录 cutover sequence、quiesce/取消在飞 dispatch），再移动指针；barrier 前派发而在其后到达的 outcome 一律写为可审计的 `escape.late_outcome`/quarantine，**不得** checkpoint、publish 或覆盖已回拨的 State。指针从 S 回拨到 T 后，T 之后产生的全部阶段证据（candidate 冻结、FULL_F 复用、CI 绑定、安全评估、preview、release 决定）经 `evidence.staled(reason=human_return)` 显式失效——append-only 不删除，replay 可见完整回拨历史；重新进入时按现行基线重验，不得复用已失效证据。测试资产冻结随回拨目标按既有规则解除（回拨到 M-TEST 之前才可修订已冻结测试）。
+3. **不可逆外部副作用**：回拨跨越已执行的 M-PUBLISH 操作（merge/tag/artifact/release）时，逃生门**永不撤销**真实外部事实；Runtime 必须先报告已执行操作清单、Human 显式确认后才移动指针；已执行操作落为外部事实，重新进入 M-PUBLISH 时经 reconcile 识别（新 candidate/新版本语义下不与旧副作用混淆）。
+4. **Agent 咨询**：Human 回拨前可要求 Agent（如 Prism/Archer）出具影响评估——评估仅为 advisory、不改变任何状态；决定与责任归 Human。
+5. **与架构级安全问题的衔接**：M-SECURITY 发现架构级不可修复问题时发布阻断，人工补救的正式通道即本逃生门——Human（可咨询 Agent）决定回拨到 M-DESIGN/M-SPEC 重新设计，或终止发布努力；v0.8 不为此设自动化机制（§12.3）。
+6. **终止出口（轻量，v0.8 实现）**：Human 可经 `trac abandon --reason TEXT`（待实现 foundation task，同步 USAGE/TRAC_SUBCOMMANDS）把 run 以 `run.completed(terminal_state="cancelled")` 终止：不删除任何证据（全程可 replay/report 审计）、不触碰已创建 issues 与分支、不执行任何外部副作用；终态 run 不再接受 `trac run` 推进，也不消耗任何 Agent 预算。需要重做时以 `trac start` 开新 run；已创建 issues 与分支的复用/处置由 Issue 映射机制与 Human 决定，逃生门本身不做清理。
 
 ## 12. M-SECURITY
 
@@ -881,7 +928,7 @@ stateDiagram-v2
     SCAN : secret scan + dependency/SCA + SAST
 
     SCAN --> POLICY_CHECK : scan.executed(pass)
-    SCAN --> [*] : scan fail -> 按 finding 归属上游
+    SCAN --> [*] : scan fail -> security finding 归类 (§12.3 就地修复循环)
 
     POLICY_CHECK : 读取项目 policy revision
     POLICY_CHECK --> SKIPPED : policy 禁用深度审计
@@ -896,11 +943,11 @@ stateDiagram-v2
     JUDGE --> EXIT : judge.verdict(pass)
     JUDGE --> ATTRIBUTE : judge.verdict(findings)
 
-    ATTRIBUTE : findings 四路归因
-    ATTRIBUTE --> [*] : 实现漏洞 -> Devon (M-IMPL)
-    ATTRIBUTE --> [*] : 安全测试缺失 -> Shield (M-TEST)
-    ATTRIBUTE --> [*] : 架构边界错 -> M-DESIGN
-    ATTRIBUTE --> [*] : 产品合同缺失 -> M-SPEC/M-ACC
+    ATTRIBUTE : findings 四路归因 (2026-08-31: 归因只定就地修复者, 自动路径不回退)
+    ATTRIBUTE --> [*] : 实现漏洞 -> Devon 就地修复 (当前 run 内)
+    ATTRIBUTE --> [*] : 安全测试缺失 -> Shield 定点补回归
+    ATTRIBUTE --> [*] : 架构边界错 -> 发布阻断 + Human 逃生门人工补救 (§11.5)
+    ATTRIBUTE --> [*] : 产品合同缺失 -> 受控合同修订 (delta 文档+评审, 不回阶段)
 
     EXIT : security gate 通过
     EXIT --> [*] : stage.exited -> M-RELEASE
@@ -908,6 +955,19 @@ stateDiagram-v2
 
 > 修复后必须重过受影响的 M-IMPL/M-TEST、**完整 M-VERIFY** 与 Judge 复审。
 > critical/high finding 不可 waiver；涉及认证/权限/secret/支付/敏感数据的变更不得静默跳过。
+
+### 12.3. 安全修复就地循环、零 Known Issue 与人工补救（2026-08-31 讨论收敛）
+
+**前提**：M-SECURITY 整体保持 policy-gated 可选——tracks 优先交付可上线产品，安全深度评审按项目 policy 启用；单机/无重大安全面的项目可经 policy 合法跳过。
+
+- **实现漏洞**：Devon 当前 run 内就地修复——行为缺陷 RED-first（新增 unit 层回归测试复现漏洞）→ GREEN；新 candidate 重走 M-SECURITY（并重走 M-VERIFY，因 candidate SHA 变化）。**一般不修改冻结 int/e2e 测试**：行为合同未变时冻结测试没有改动理由；如 Archer 判定漏洞只能在集成层观察，以 Shield 定点**新增**（非修改）回归测试。
+- **依赖漏洞**（SCA 报告的 CVE）：Archer 以咨询派发评估替代方案（换版本/换库），产出建议注入 Devon 修复 assignment——Archer 参与不等于阶段回退；升级后流水线随新 commit 产生新 candidate 重跑。
+- **合同级安全缺陷**（漏洞在 AC/接口断言的行为本身）：允许受控合同修订（delta 文档+评审），不回阶段。
+- **零 Known Issue**：安全 finding 必须修复，**不允许以 known issue 带病发布**；M-SECURITY 未通过（含 unknown/畸形策略）时 `release.decided` 一律被 Runtime 拒绝（硬门禁）。
+- **架构级不可修复**（不换架构就修不了）：发布阻断，run 停于 M-SECURITY。此类 case 罕见，**v0.8 不设自动化机制**——人工补救的正式通道是 Human 逃生门（§11.5）：Human（可咨询 Agent）决定回拨指针重新设计或终止发布努力。
+- **修复循环预算**：就地修复 attempt 预算（默认 3）穷尽仍无法修复 → 按不可修复处理（安全一律为发布阻断）。
+- **通道边界**：与 §11.4 相同——run 内修复不起 hotfix run；hotfix 是发布后通道。
+- **暂缓项**：M-DESIGN 后的架构级安全评审补丁（设计期安全门禁 + 声明依赖 SCA 预检）**推迟到后续版本**——先交付可上线产品，安全评审按项目 policy 启用。
 
 ### 12.2. 事件清单
 
