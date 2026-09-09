@@ -105,7 +105,7 @@ from tracks.executor.milestone import (
     compute_trace_digest,
     seal_evidence_readonly,
 )
-from tracks.executor.publish_runtime import execute_tag_operation, resolve_publish_authority
+from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
 from tracks.executor.release_gate import generate_preview
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
@@ -4317,8 +4317,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
     def _do_execute_publish(self, cmd, state, task_id, reconcile):
         """(G) Consume Command(execute_publish) (bound to a preview digest):
-        publish.planned -> publish.executed(done|reconciled_skip) /
-        publish.blocked(agent_forbidden) / publish.failed."""
+        ordered multi-tag batch — publish.planned -> publish.executed(
+        done|reconciled_skip) per tag / publish.blocked(agent_forbidden) /
+        publish.failed. All operations are validated before any effect;
+        the batch stops on the first failed/conflicting effect and never
+        emits an aggregate success over a failure."""
         params = dict(cmd.params or {})
         events = list(self.store.events(self.run_id))
         version_facts = self._release_version_facts(state)
@@ -4347,23 +4350,24 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if authority is None:
             self._publish_fail(cmd, error or "malformed")
             return
-        def fail(reason, remote_check):
+
+        def publish_fail(reason, remote_check, key):
             self._publish_fail(
                 cmd,
                 reason,
                 candidate_sha=authority["candidate_sha"],
-                key=authority["record"]["idempotency_key"],
+                key=key,
                 remote_check=remote_check,
             )
 
-        execute_tag_operation(
+        execute_publish_operations(
             authority,
             cmd.command_id,
-            list(self.store.events(self.run_id)),
+            lambda: list(self.store.events(self.run_id)),
             publish_effects.read_remote_state,
             publish_effects.push_tag,
             self._emit,
-            fail,
+            publish_fail,
             None,
         )
 

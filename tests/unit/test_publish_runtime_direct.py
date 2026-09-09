@@ -256,9 +256,9 @@ def test_unknown_operation_is_rejected_without_fake_success(tmp_path, monkeypatc
     assert failed_events[-1].payload["reason"] == "unknown_operation"
 
 
-def test_multiple_tag_operations_are_rejected_before_any_effect(tmp_path, monkeypatch):
+def test_unsupported_later_operation_is_rejected_before_any_effect(tmp_path, monkeypatch):
     executor, store, _candidate, preview, _remote = _host(
-        tmp_path, operation_steps=["tag:{feature_tag}", "tag:v9.9"]
+        tmp_path, operation_steps=["tag:{feature_tag}", "merge:main"]
     )
     calls: list[str] = []
     monkeypatch.setattr(publish_effects, "push_tag", lambda *_args: calls.append("push"))
@@ -268,7 +268,7 @@ def test_multiple_tag_operations_are_rejected_before_any_effect(tmp_path, monkey
     )
 
     assert calls == []
-    assert [e.payload["reason"] for e in store.events("RUN") if e.type == "publish.failed"][-1] == "multiple_operations"
+    assert [e.payload["reason"] for e in store.events("RUN") if e.type == "publish.failed"][-1] == "unknown_operation"
 
 
 def test_preview_blob_mismatch_blocks_publish(tmp_path, monkeypatch):

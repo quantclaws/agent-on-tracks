@@ -166,6 +166,50 @@ def _preview_error(
     return current_plan, None
 
 
+def _valid_tag_ref(repo: Path, target: str) -> bool:
+    """Git ref-name semantics for a tag target via local check-ref-format.
+
+    ``check-ref-format`` is a purely local name validator (no network);
+    non-zero exit covers ``bad..tag``, trailing dots, ``@{``, forbidden
+    characters, and similar invalid tag names. The effects boundary applies
+    the same rule at push time; this preflight enforces it for the whole
+    batch before any WAL/effect.
+    """
+    if not isinstance(target, str) or not target:
+        return False
+    check = git(repo, "check-ref-format", "refs/tags/" + target, check=False)
+    return check.returncode == 0
+
+
+def _operation_records(
+    repo: Path, operation_plan: dict, preview_digest: str
+) -> tuple[list[dict] | None, str | None]:
+    """Validate every declared operation step before any effect.
+
+    Complete ordered multi-tag handling: each step must be a well-formed
+    tag (canonical idempotency key per tag) whose target is a valid Git
+    ref name. Sanity-checked unsupported kinds (merge/artifact/release,
+    ...) fail with the IF reason ``unknown_operation``; undecomposable or
+    ref-invalid steps fail ``malformed`` before any WAL/effect.
+    """
+    records = plan_operations(operation_plan, preview_digest)
+    if not records:
+        steps = (
+            (operation_plan or {}).get("steps")
+            if isinstance(operation_plan, dict)
+            else None
+        )
+        if isinstance(steps, list) and steps:
+            return None, "malformed"
+        return None, "unknown_operation"
+    for record in records:
+        if record["operation_kind"] != "tag":
+            return None, "unknown_operation"
+        if not _valid_tag_ref(repo, record["target"]):
+            return None, "malformed"
+    return records, None
+
+
 def resolve_publish_authority(
     repo: Path,
     events: list,
@@ -173,7 +217,11 @@ def resolve_publish_authority(
     version_facts: dict,
     store_home: Path,
 ) -> tuple[dict | None, str | None]:
-    """Resolve current preview, candidate, contract and human approval."""
+    """Resolve current preview, candidate, contract and human approval.
+
+    Returns an ordered list of tag records (all operations validated before
+    any effect); ``record`` remains for single-tag call-site compatibility.
+    """
     preview_event, error = _latest_preview(events, preview_digest)
     if error:
         return None, error
@@ -192,13 +240,9 @@ def resolve_publish_authority(
     )
     if error:
         return None, error
-    records = plan_operations(operation_plan, preview_digest)
-    if not records:
-        return None, "unknown_operation"
-    if len(records) > 1:
-        return None, "multiple_operations"
-    if records[0]["operation_kind"] != "tag":
-        return None, "unknown_operation"
+    records, error = _operation_records(repo, operation_plan, preview_digest)
+    if error:
+        return None, error
     remote = git(repo, "config", "--get", "remote.origin.url", check=False)
     if remote.returncode != 0 or not remote.stdout.strip():
         return None, "missing_remote"
@@ -206,6 +250,7 @@ def resolve_publish_authority(
         "candidate_sha": candidate_sha,
         "preview_digest": preview_digest,
         "record": records[0],
+        "records": records,
         "remote_url": remote.stdout.strip(),
     }, None
 
@@ -276,13 +321,20 @@ def _handle_remote(
     push_tag,
     emit,
     fail,
-) -> None:
+) -> bool:
+    """Reconcile one tag against the remote (the remote decides).
+
+    Returns True only for a proven terminal success (``reconciled_skip`` on
+    exact remote match, or ``done`` after a push confirmed by remote
+    readback); False after emitting the failure so the ordered batch can
+    stop on the first failed/conflicting effect.
+    """
     candidate_sha = authority["candidate_sha"]
     record = authority["record"]
     key = record["idempotency_key"]
     if not isinstance(remote, dict) or remote.get("error"):
         fail("remote_read_failed", remote)
-        return
+        return False
     verdict = _remote_verdict(remote, candidate_sha)
     if verdict == "skip":
         emit(
@@ -290,12 +342,13 @@ def _handle_remote(
             {
                 "idempotency_key": key,
                 "candidate_sha": candidate_sha,
+                "target": record["target"],
                 "status": "reconciled_skip",
                 "remote_check": remote,
             },
             command_id=command_id,
         )
-        return
+        return True
     if verdict == "conflict":
         emit(
             "reconcile_conflict",
@@ -312,10 +365,10 @@ def _handle_remote(
             command_id=command_id,
         )
         fail("reconcile_conflict", remote)
-        return
+        return False
     if verdict != "pending":
         fail("remote_read_failed", remote)
-        return
+        return False
     status, confirmed = _push_confirmation(
         push_tag(authority["remote_url"], record["target"], candidate_sha),
         candidate_sha,
@@ -326,13 +379,55 @@ def _handle_remote(
             {
                 "idempotency_key": key,
                 "candidate_sha": candidate_sha,
+                "target": record["target"],
                 "status": status,
                 "remote_check": confirmed,
             },
             command_id=command_id,
         )
-        return
+        return True
     fail("remote_mismatch", confirmed)
+    return False
+
+
+def _keyed_fail(fail, key):
+    def keyed(reason, remote_check):
+        fail(reason, remote_check, key)
+
+    return keyed
+
+
+def execute_publish_operations(
+    authority: dict,
+    command_id: str,
+    read_events,
+    read_remote,
+    push_tag,
+    emit,
+    fail,
+    when: str | None,
+) -> None:
+    """Run the ordered multi-tag batch after full pre-effect validation.
+
+    Per tag: the same-command WAL record is reused without duplication,
+    the effect runs only on remote proof, and the batch stops on the first
+    failed/conflicting effect (no aggregate success is ever emitted).
+    ``fail`` is invoked as ``fail(reason, remote_check, idempotency_key)``.
+    """
+    for record in authority["records"]:
+        single = {**authority, "record": record}
+        succeeded = execute_tag_operation(
+            single,
+            command_id,
+            read_events(),
+            read_remote,
+            push_tag,
+            emit,
+            _keyed_fail(fail, record["idempotency_key"]),
+            when,
+        )
+        if not succeeded:
+            break
 
 
 def execute_tag_operation(
@@ -344,13 +439,19 @@ def execute_tag_operation(
     emit,
     fail,
     when: str | None,
-) -> None:
-    """Run one already-authorized tag with WAL and remote reconciliation."""
+) -> bool:
+    """Run one already-authorized tag with WAL and remote reconciliation.
+
+    The write-ahead record is planned before the effect and reused (never
+    duplicated) by a same-command recovery; the executed event is emitted
+    only after actual remote proof. Returns True on terminal success,
+    False after the failure emission (stop-on-first-failure signal).
+    """
     record = authority["record"]
     planned, plan_error = _planned_payload(events, authority, command_id, when)
     if plan_error:
         fail(plan_error, None)
-        return
+        return False
     if planned is not None:
         emit("publish.planned", planned, command_id=command_id)
     remote = read_remote(
@@ -359,4 +460,4 @@ def execute_tag_operation(
         record["target"],
         expected_object=authority["candidate_sha"],
     )
-    _handle_remote(authority, command_id, remote, push_tag, emit, fail)
+    return _handle_remote(authority, command_id, remote, push_tag, emit, fail)
