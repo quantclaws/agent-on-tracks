@@ -49,7 +49,13 @@ def _init_mini_repo(base: Path) -> Path:
     # tracks mini_pkg
     pkg = repo / "tracks" / "mini_pkg"
     pkg.mkdir(parents=True, exist_ok=True)
-    (repo / "tracks" / "__init__.py").write_text("", encoding="utf-8")
+    # Keep this synthetic package local while allowing the installed collector
+    # plugin to resolve under tracks.executor in the child interpreter.
+    (repo / "tracks" / "__init__.py").write_text(
+        "from pkgutil import extend_path\n"
+        "__path__ = extend_path(__path__, __name__)\n",
+        encoding="utf-8",
+    )
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "foo.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     (pkg / "bar.py").write_text("def bar():\n    return 2\n", encoding="utf-8")
