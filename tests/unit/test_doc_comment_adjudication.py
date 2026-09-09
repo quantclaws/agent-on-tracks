@@ -610,7 +610,6 @@ def _doc_gap_executor(repo, events, monkeypatch):
     store = Store(paths.tracks_home(repo))
     for t, p, cid in events:
         store.append("RUN", "v0.5", t, p, command_id=cid)
-    ex = Executor(store, repo, "RUN")
     issued_calls = []
 
     def _recording_issue(cmd, command_id=None):
@@ -623,7 +622,10 @@ def _doc_gap_executor(repo, events, monkeypatch):
             command_id=command_id,
         )
 
-    ex.issue = _recording_issue
+    class RecordingExecutor(Executor):
+        issue = staticmethod(_recording_issue)
+
+    ex = RecordingExecutor(store, repo, "RUN")
     return ex, store, issued_calls
 
 
