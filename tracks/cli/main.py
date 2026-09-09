@@ -1567,6 +1567,37 @@ def _release_status_lines(events: list, primary) -> list[str]:
         lines.append("blocked: gate failed or preview stale")
         lines.append("rejected: gate failed or preview stale")
     _release_chain_fragments(events, lines)
+    ci_attention = [
+        e
+        for e in events
+        if e.type == "attention.required"
+        and (e.payload or {}).get("area") == "ci_readback"
+    ]
+    unresolved_attention = []
+    ci_successes = [e for e in events if e.type == "ci.run_observed"]
+    for attention in ci_attention:
+        attention_payload = attention.payload or {}
+        attention_candidate = attention_payload.get("candidate_sha")
+        resolved = any(
+            getattr(success, "seq", 0) > getattr(attention, "seq", 0)
+            and (success.payload or {}).get("candidate_sha") == attention_candidate
+            and (success.payload or {}).get("head_sha") == attention_candidate
+            and (success.payload or {}).get("status") == "passed"
+            and (success.payload or {}).get("api_verified") is True
+            for success in ci_successes
+        )
+        if not resolved:
+            unresolved_attention.append(attention)
+    ci_attention = unresolved_attention
+    if ci_attention:
+        attention = max(ci_attention, key=lambda event: getattr(event, "seq", 0))
+        payload = attention.payload or {}
+        lines.append(
+            "needs_attention="
+            + str(payload.get("reason") or "unknown")
+            + " next="
+            + str(payload.get("next") or "retry CI readback")
+        )
     # (G) publish state: a publish.blocked event (e.g. agent_forbidden guard)
     # surfaces in status with its block reason (FR-0287, must-not-drop face).
     pub_blocked = [e for e in events if e.type == "publish.blocked"]

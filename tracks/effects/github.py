@@ -287,6 +287,173 @@ def _api_base() -> str:
     return os.environ.get("TRAC_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 
 
+def _workflow_matches(run: dict, requested: str) -> bool:
+    """Match the configured workflow by path or immutable workflow id.
+
+    GitHub's ``name`` is a display label and is not a workflow-file identity;
+    two files can share it.  The host contract commonly supplies ``ci.yml``,
+    so the basename is accepted when the API returns the full workflow path.
+    """
+    requested = str(requested or "").strip()
+    if not requested:
+        return False
+    workflow_id = run.get("workflow_id")
+    if workflow_id is not None and str(workflow_id) == requested:
+        return True
+    path = str(run.get("path") or "").strip()
+    if not path:
+        return False
+    return path == requested or Path(path).name == Path(requested).name and (
+        "/" not in requested or path.endswith("/" + requested.lstrip("/"))
+    )
+
+
+def _workflow_job_page(
+    base: str,
+    repo_id: str,
+    run_id: int,
+    page: int,
+    checks: dict[str, object],
+    expected_total: int | None,
+) -> tuple[int, int | None, bool]:
+    """Fetch one job page and merge it, rejecting malformed/duplicate jobs."""
+    url = (
+        f"{base}/repos/{repo_id}/actions/runs/{run_id}/jobs"
+        f"?per_page=100&page={page}"
+    )
+    req = urllib.request.Request(
+        url,
+        method="GET",
+        headers={
+            "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    data = _get_any(req)
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+        return 0, expected_total, False
+    total_count = data.get("total_count")
+    if total_count is not None and (
+        not isinstance(total_count, int) or isinstance(total_count, bool)
+    ):
+        return 0, expected_total, False
+    if expected_total is not None and total_count not in (None, expected_total):
+        return 0, expected_total, False
+    expected_total = total_count if total_count is not None else expected_total
+    jobs = data["jobs"]
+    for job in jobs:
+        if not isinstance(job, dict) or not job.get("name"):
+            return 0, expected_total, False
+        name = str(job["name"])
+        if name in checks:
+            return 0, expected_total, False
+        checks[name] = job.get("conclusion")
+    return len(jobs), expected_total, True
+
+
+def _workflow_jobs_complete(
+    checks: dict[str, object], page_size: int, expected_total: int | None
+) -> bool | None:
+    """Return True/False when pagination is decided, else None to continue."""
+    if expected_total is None:
+        return True if page_size < 100 else None
+    if len(checks) > expected_total:
+        return False
+    if len(checks) == expected_total:
+        return True
+    return False if page_size == 0 else None
+
+
+def _workflow_jobs(base: str, repo_id: str, run_id: int) -> tuple[dict, bool]:
+    """Read all bounded workflow-job pages and return name -> conclusion.
+
+    A full page is followed until a short page is returned.  Hitting the
+    bound fails closed so a partial response cannot be treated as complete.
+    """
+    checks: dict[str, object] = {}
+    expected_total: int | None = None
+    for page in range(1, 11):
+        page_size, expected_total, valid = _workflow_job_page(
+            base, repo_id, run_id, page, checks, expected_total
+        )
+        if not valid:
+            return {}, False
+        complete = _workflow_jobs_complete(checks, page_size, expected_total)
+        if complete is True:
+            return checks, True
+        if complete is False:
+            return {}, False
+    return {}, False
+
+
+def _ci_observed_payload(
+    repo_id: str,
+    workflow: str,
+    candidate_sha: str,
+    *,
+    run: dict | None = None,
+    head_sha=None,
+    run_id=None,
+    conclusion=None,
+    status: str = "failed",
+    reason: str | None = None,
+    checks: dict | None = None,
+    api_verified: bool = False,
+) -> dict:
+    """Build the stable CI observation shape for both run and failure paths."""
+    payload = {
+        "repo": repo_id,
+        "workflow": workflow,
+        "workflow_name": run.get("name") if run else None,
+        "head_sha": head_sha,
+        "run_id": run_id,
+        "candidate_sha": candidate_sha,
+        "conclusion": conclusion,
+        "status": status,
+        "api_verified": api_verified,
+    }
+    if run is not None:
+        payload.update(
+            {
+                "workflow_path": run.get("path"),
+                "workflow_id": run.get("workflow_id"),
+            }
+        )
+    if checks is not None:
+        payload["checks"] = checks
+    if reason is not None:
+        payload["reason"] = reason
+    return payload
+
+
+def _select_workflow_run(data: object, workflow: str) -> tuple[dict | None, str | None]:
+    """Select one workflow run, returning a closed response error when absent."""
+    if not isinstance(data, dict):
+        return None, "malformed"
+    runs = data.get("workflow_runs")
+    if not isinstance(runs, list):
+        return None, "malformed"
+    matching = [
+        run for run in runs if isinstance(run, dict) and _workflow_matches(run, workflow)
+    ]
+    if matching:
+        return matching[0], None
+    return None, "workflow_mismatch" if runs else "missing"
+
+
+def _workflow_run_error(run: dict) -> tuple[str | None, object, object]:
+    """Validate provider run identity/status and return (reason, head, id)."""
+    run_id = run.get("id")
+    head_sha = run.get("head_sha")
+    if not isinstance(run_id, int) or isinstance(run_id, bool):
+        return "malformed", head_sha, run_id
+    if not isinstance(head_sha, str) or not head_sha:
+        return "missing", head_sha, run_id
+    if run.get("status") is not None and run.get("status") != "completed":
+        return "run_incomplete", head_sha, run_id
+    return None, head_sha, run_id
+
+
 def readback_ci_run(repo_id: str, workflow: str, candidate_sha: str) -> dict:
     """GET /repos/{repo}/actions/runs filtered by head_sha; returns the
     normalized `ci.run_observed` payload (IF-VERIFY-004). Missing credentials
@@ -308,30 +475,34 @@ def readback_ci_run(repo_id: str, workflow: str, candidate_sha: str) -> dict:
         },
     )
     data = _get_any(req)
-    runs = data.get("workflow_runs") or []
-    if not runs:
-        return {
-            "repo": repo_id,
-            "workflow": workflow,
-            "head_sha": candidate_sha,
-            "run_id": None,
-            "candidate_sha": candidate_sha,
-            "conclusion": None,
-            "status": "failed",
-            "reason": "missing",
-            "api_verified": False,
-        }
-    run = runs[0]
-    return {
-        "repo": repo_id,
-        "workflow": run.get("name") or workflow,
-        "run_id": run.get("id"),
-        "head_sha": run.get("head_sha") or candidate_sha,
-        "candidate_sha": candidate_sha,
-        "conclusion": run.get("conclusion"),
-        "status": "passed" if run.get("conclusion") == "success" else "failed",
-        "api_verified": True,
-    }
+    run, selection_error = _select_workflow_run(data, workflow)
+    if run is None:
+        return _ci_observed_payload(
+            repo_id, workflow, candidate_sha, reason=selection_error or "malformed"
+        )
+    reason, head_sha, run_id = _workflow_run_error(run)
+    if reason is not None:
+        return _ci_observed_payload(
+            repo_id, workflow, candidate_sha, run=run, head_sha=head_sha,
+            run_id=run_id, conclusion=run.get("conclusion"), reason=reason
+        )
+    checks, jobs_complete = ({}, False)
+    checks, jobs_complete = _workflow_jobs(base, repo_id, run_id)
+    status = "passed" if run.get("conclusion") == "success" and jobs_complete else "failed"
+    reason = None if jobs_complete else "jobs_incomplete"
+    return _ci_observed_payload(
+        repo_id,
+        workflow,
+        candidate_sha,
+        run=run,
+        head_sha=head_sha,
+        run_id=run_id,
+        conclusion=run.get("conclusion"),
+        status=status,
+        reason=reason,
+        checks=checks,
+        api_verified=jobs_complete,
+    )
 
 
 def _get_any(req) -> dict:
@@ -361,6 +532,20 @@ def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks:
     if observed.get("stale"):
         out["status"] = "failed"
         out["reason"] = "stale"
+        out["api_verified"] = False
+        return out
+    if not observed.get("head_sha"):
+        out["status"] = "failed"
+        out["reason"] = "missing"
+        out["api_verified"] = False
+        return out
+    if observed.get("reason") == "jobs_incomplete":
+        out["status"] = "failed"
+        out["reason"] = "check_failed"
+        out["api_verified"] = False
+        return out
+    if observed.get("reason") in {"malformed", "run_incomplete"}:
+        out["status"] = "failed"
         out["api_verified"] = False
         return out
     head = observed.get("head_sha")

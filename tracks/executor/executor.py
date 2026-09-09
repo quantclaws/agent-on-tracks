@@ -5819,14 +5819,54 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         evidence is kept, a resumed run never repeats the API call)."""
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
-        if reconcile and self._latest_event("ci.run_observed") is not None:
-            return
         contract, _digest, _source = self._load_or_default_contract(
             cmd, candidate_sha
         )
         if contract is None:
             return
         ci = contract.ci or {}
+        if reconcile:
+            previous = self._latest_event("ci.run_observed")
+            if previous is not None:
+                payload = previous.payload or {}
+                configured_repo = os.environ.get(
+                    str(ci.get("repo_env", "")), ""
+                ).strip()
+                configured_workflow = str(ci.get("workflow", "")).strip()
+                observed_workflow = str(payload.get("workflow", "")).strip()
+                observed_path = str(payload.get("workflow_path", "")).strip()
+                observed_id = str(payload.get("workflow_id", "")).strip()
+                workflow_match = (
+                    observed_workflow == configured_workflow
+                    or observed_id == configured_workflow
+                    or observed_path == configured_workflow
+                    or (
+                        bool(configured_workflow)
+                        and Path(observed_path).name
+                        == Path(configured_workflow).name
+                    )
+                )
+                command_match = previous.command_id == cmd.command_id
+                checks = payload.get("checks") or {}
+                required_checks = list(ci.get("required_checks", []))
+                reusable = (
+                    command_match
+                    and payload.get("candidate_sha") == candidate_sha
+                    and payload.get("head_sha") == candidate_sha
+                    and payload.get("status") == "passed"
+                    and payload.get("api_verified") is True
+                    and not payload.get("stale")
+                    and bool(configured_repo)
+                    and payload.get("repo") == configured_repo
+                    and isinstance(payload.get("run_id"), int)
+                    and not isinstance(payload.get("run_id"), bool)
+                    and workflow_match
+                    and payload.get("required_checks", required_checks)
+                    == required_checks
+                    and all(checks.get(name) == "success" for name in required_checks)
+                )
+                if reusable:
+                    return
         run_payload = self._readback_ci_binding(cmd, candidate_sha, ci)
         if run_payload is None:
             return
@@ -5858,12 +5898,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         mismatch/missing/stale binding stops the chain blocked.
 
         The readback is the real GitHub-API face (stand-in base honored via
-        TRAC_GITHUB_API_BASE) for EVERY agent channel: the agent backend
-        selection (fake channel) scopes WHO writes, never WHAT the Runtime
-        observes — a fabricated bound run would contradict the "never a
-        silent pass" contract (AC-FR0270-03) and the events.py fake-artifact
-        vocabulary; the walked scenarios drive this face through the
-        fixture stand-in server (9ba8dc9 verified-green form)."""
+        TRAC_GITHUB_API_BASE) for every agent channel: the agent backend
+        selection scopes who writes, never what the Runtime observes.
+        A fake agent therefore cannot synthesize api_verified evidence.
+        """
         repo_id = os.environ.get(str(ci.get("repo_env", "")), "")
         workflow = str(ci.get("workflow", ""))
         if not repo_id or not workflow:
@@ -5888,15 +5926,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         try:
             observed = readback_ci_run(repo_id, workflow, candidate_sha)
         except GithubIssuesError as err:
+            attention_reason = err.classification
             self._emit(
                 "attention.required",
                 {
                     "area": "ci_readback",
-                    "reason": "missing_token",
+                    "reason": attention_reason,
                     "stage": "M-VERIFY",
                     "candidate_sha": candidate_sha,
                     "detail": str(err),
-                    "next": "set the CI token; trac run retries in place",
+                    "next": (
+                        "set the CI token; trac run retries in place"
+                        if attention_reason == "missing_token"
+                        else "resolve the CI API error; trac run retries in place"
+                    ),
                 },
                 command_id=cmd.command_id,
             )
@@ -5919,6 +5962,33 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             observed, candidate_sha, ci.get("required_checks", [])
         )
         if binding.get("status") != "passed":
+            # AC-FR0270-02 fail-closed event face: a binding failure lands
+            # ci.run_observed(status=failed) with its closed reason
+            # (mismatch|missing|stale|failed_conclusion|check_failed) so the
+            # evidence stream carries WHAT failed and status can render
+            # ci=mismatch|missing|stale — the readback happened, only the
+            # binding refused. No credentials/no target never reaches here
+            # (attention.required above, no API call, no event).
+            self._emit(
+                "ci.run_observed",
+                {
+                    "candidate_sha": candidate_sha,
+                    "repo": repo_id,
+                    "workflow": workflow,
+                    "workflow_name": observed.get("workflow_name"),
+                    "workflow_path": observed.get("workflow_path"),
+                    "workflow_id": observed.get("workflow_id"),
+                    "run_id": observed.get("run_id"),
+                    "head_sha": observed.get("head_sha"),
+                    "conclusion": observed.get("conclusion"),
+                    "checks": observed.get("checks") or {},
+                    "required_checks": list(ci.get("required_checks", [])),
+                    "status": "failed",
+                    "reason": str(binding.get("reason", "mismatch")),
+                    "api_verified": False,
+                },
+                command_id=cmd.command_id,
+            )
             self._emit(
                 "attention.required",
                 {
@@ -5936,10 +6006,17 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "candidate_sha": candidate_sha,
             "repo": repo_id,
             "workflow": workflow,
-            "run_id": str(observed.get("run_id", "")),
-            "head_sha": str(observed.get("head_sha", "")),
-            "conclusion": str(ci.get("conclusion", "success")),
-            "api_verified": True,
+            "workflow_name": observed.get("workflow_name"),
+            "workflow_path": observed.get("workflow_path"),
+            "workflow_id": observed.get("workflow_id"),
+            "run_id": observed.get("run_id"),
+            "head_sha": observed.get("head_sha"),
+            "conclusion": observed.get("conclusion"),
+            "checks": observed.get("checks") or {},
+            "required_checks": list(ci.get("required_checks", [])),
+            "status": "passed",
+            "reason": "bound",
+            "api_verified": binding.get("api_verified") is True,
         }
 
     def _verify_evidence_digests(self) -> dict:
