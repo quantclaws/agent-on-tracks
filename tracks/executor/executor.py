@@ -2518,27 +2518,33 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
 
         Rollout gate: only a DECLARED dispatch (assignment carries the
         kernel.envelope declaration, see _enrich_envelope_params) hard-fails
-        on structural breakage. On a declared dispatch a MISSING block is a
-        compliance miss, not ambiguity — collection falls through to the
-        legacy channels so a bare-JSON reply is not lost (T-024 tightens
-        this once the six parity faces embed the token); undeclared
+        on structural breakage. T-024 collection-face tightening: on a
+        declared dispatch every non-parsable reply shape is a compliance
+        miss classified by the kernel parser itself — empty, missing and
+        non-string raw_output and free-form JSON (no fenced block) included
+        — never ambiguity handed to the legacy channels; undeclared
         dispatches keep the legacy channels entirely.
         """
-        raw = result.get("raw_output")
-        if not isinstance(raw, str) or not raw:
-            return False
         declared = bool(isinstance(assignment, dict) and assignment.get("envelope"))
         declared_kind = (
             (assignment.get("envelope") or {}).get("kind") if declared else None
         )
+        raw = result.get("raw_output")
+        if result.get("status") == "failed" and not raw and result.get("failure_class"):
+            return False  # No agent reply: preserve the existing failure classification.
+        if not declared and (not isinstance(raw, str) or not raw):
+            return False  # undeclared: legacy channels keep handling it
         try:
+            # Declared dispatch: even empty/missing/non-string replies go
+            # through the single kernel parse path, which classifies them
+            # (malformed_json / no_envelope_block) — no duplicated logic.
             envelope = parse_agent_output(raw)
             if declared_kind:
                 # Declared dispatch: the reply must speak the kind the
                 # assignment declared (schema already payload-validated).
                 envelope = validate_envelope(envelope, declared_kind)
         except EnvelopeFormatError as exc:
-            if not declared or exc.kind == "no_envelope_block":
+            if not declared:
                 return False
             self._emit(
                 "format_error",

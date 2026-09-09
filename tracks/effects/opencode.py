@@ -37,6 +37,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects.adjudicate import adjudicate
 from tracks.effects.audit import Auditor, _rel
 from tracks.effects.devon_evidence import extract_devon_evidence
+from tracks.effects.envelope_reply import is_declared_assignment
 from tracks.kernel.envelope import (
     REVIEW_FINDING_FIELDS,
     REVIEW_SUMMARY_MAX,
@@ -108,6 +109,8 @@ class OpencodeError(Exception):
 
 class OpencodeBackend:
     """AgentBackend implemented by a real opencode subagent subprocess."""
+
+    envelope_version = 2
 
     def __init__(
         self,
@@ -343,6 +346,10 @@ class OpencodeBackend:
         assignment: dict | None = None,
         worktree: Path | None = None,
     ) -> dict:
+        # IF-ENVELOPE-002 prerequisite: every result dict returning through
+        # this method carries the agent's exact final reply text as
+        # raw_output (declared dispatches only) — see _attach_raw_output;
+        # the Runtime's collection face classifies that text itself.
         # B1 (issue #2): a writer dispatch's whole repo view (spawn cwd,
         # Auditor baseline, Devon's manifest paths) shifts to the isolated
         # worktree so the agent literally works there; every other role
@@ -403,7 +410,11 @@ class OpencodeBackend:
                 # B17/#20 narrow (live T-003 GREEN): an interrupted session
                 # is infrastructure, not an agent semantic failure — do not
                 # let it reach DIAGNOSE as impl_defect and burn the budget.
-                return self._abnormal_step_result(proc, prompt, console_input)
+                return self._attach_raw_output(
+                    self._abnormal_step_result(proc, prompt, console_input),
+                    proc,
+                    assignment,
+                )
             # D-35 (SC-D35 §2.2): M-TEST/M-IMPL reviewers deliver findings via
             # a structured final JSON payload. Parse before the audits so the
             # discussion gate can exempt a structured revise.
@@ -411,7 +422,7 @@ class OpencodeBackend:
                 role, substate, assignment, proc, prompt, console_input
             )
             if review_failure is not None:
-                return review_failure
+                return self._attach_raw_output(review_failure, proc, assignment)
             manifest_info, manifest_error = self._manifest_for_dispatch(
                 role,
                 substate,
@@ -420,7 +431,7 @@ class OpencodeBackend:
                 console_input,
             )
             if manifest_error is not None:
-                return manifest_error
+                return self._attach_raw_output(manifest_error, proc, assignment)
             result = self._audited_result(
                 auditor,
                 baseline,
@@ -437,26 +448,38 @@ class OpencodeBackend:
                     role, substate, assignment, proc
                 ),
             )
-            return self._attach_dispatch_metadata(
-                self._merge_review_payload(
-                    result, role, substate, assignment, proc, prompt, console_input
+            return self._attach_raw_output(
+                self._attach_dispatch_metadata(
+                    self._merge_review_payload(
+                        result, role, substate, assignment, proc, prompt, console_input
+                    ),
+                    role,
+                    substate,
+                    manifest_info,
+                    assignment,
                 ),
-                role,
-                substate,
-                manifest_info,
+                proc,
                 assignment,
             )
         except OpencodeError as exc:
-            return self._opencode_error_result(
-                exc,
+            return self._attach_raw_output(
+                self._opencode_error_result(
+                    exc,
+                    proc,
+                    prompt,
+                    console_input,
+                    doc_paths,
+                    reviewer_assignment,
+                ),
                 proc,
-                prompt,
-                console_input,
-                doc_paths,
-                reviewer_assignment,
+                assignment,
             )
         except OSError as exc:
-            return self._filesystem_error_result(exc, proc, prompt, console_input)
+            return self._attach_raw_output(
+                self._filesystem_error_result(exc, proc, prompt, console_input),
+                proc,
+                assignment,
+            )
         finally:
             for info in cleanup_infos:
                 self._cleanup_materialized(info)
@@ -2352,6 +2375,42 @@ class OpencodeBackend:
                 "草稿必须严格按对应模板起草，完整保留 YAML frontmatter。"
             )
         return "\n".join(lines)
+
+
+    @classmethod
+    def _final_reply_text(cls, proc: subprocess.CompletedProcess) -> str | None:
+        """The agent's exact final reply text, verbatim (never normalized)."""
+        event = cls._final_text_event(proc)
+        part = event.get("part") if isinstance(event, dict) else None
+        text = part.get("text") if isinstance(part, dict) else None
+        return text if isinstance(text, str) else None
+
+
+    def _attach_raw_output(
+        self,
+        result: dict,
+        proc: subprocess.CompletedProcess | None,
+        assignment: dict | None = None,
+    ) -> dict:
+        """Attach the agent's exact original final reply text as raw_output.
+
+        Declared dispatches only (IF-ENVELOPE-002 prerequisite): the
+        Runtime's collection face classifies this text itself, so malformed
+        and empty replies are preserved verbatim for that classification.
+        The backend never reconstructs raw text from the normalized
+        verdict/payload and never synthesizes a reply. Undeclared results
+        are untouched — the legacy channels keep their exact shape.
+        """
+        if proc is None or not is_declared_assignment(assignment):
+            return result
+        if result.get("raw_output") is not None:
+            return result  # an already-carried raw_output is never clobbered
+        text = self._final_reply_text(proc)
+        if text is not None:
+            result["raw_output"] = text
+        return result
+
+
 
 
 def _skill_names(assignment: dict | None) -> list[str]:

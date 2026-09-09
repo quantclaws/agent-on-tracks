@@ -23,8 +23,14 @@ from tracks import paths, templating
 from tracks.capabilities import supports_m_impl
 from tracks.effects.backend import SHIELD_LAYERS
 from tracks.effects.devon_patch import DevonPatchMixin, append_text, unified_patch
+from tracks.effects.envelope_reply import encode_envelope_reply, is_declared_assignment
 from tracks.effects.fake_shield import _FAILED_TOKENS, FakeShieldMixin, _ac_slug
 from tracks.frontmatter import split_frontmatter
+from tracks.kernel.envelope import (
+    DIAGNOSE_KINDS,
+    REVIEW_KINDS,
+    envelope_kind,
+)
 
 # spec items the fake acceptance draft must cover (FR-0170 trace)
 _SPEC_ITEM = re.compile(r"^### (N?FR-\d{4})[ \t]*(.*)$", re.M)
@@ -58,6 +64,12 @@ _DEVON_PHASES = ("red", "green", "refactor")
 _DEVON_FAILURE_TOKENS = frozenset((*_FAILED_TOKENS, "hang"))
 # FR-0243: anchor verdict projection for prism review payloads (default upheld).
 _ANCHOR_VERDICT = {"anchor_overturned": "overturned"}
+# IF-ENVELOPE-002 prerequisite: the reply kinds this fake can encode honestly.
+# Writer/authority kinds stay out — their payload schemas are pending (T-024)
+# and the fake has no actual writer reply contract to encode; an assignment
+# declaring such a kind fails visibly at the Runtime (missing raw_output
+# classifies as format_error), never through an invented reply.
+_FAKE_SPEAKABLE_KINDS = (*REVIEW_KINDS, *DIAGNOSE_KINDS)
 
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
@@ -110,6 +122,13 @@ def _story_title(body: str) -> str:
 class FakeBackend(DevonPatchMixin, FakeShieldMixin):
     """Deterministic AgentBackend (v0.1 FakeAgent, relocated to effects/)."""
 
+    # IF-ENVELOPE-002: the contract version THIS implementation actually
+    # speaks — an independent, reviewed declaration, deliberately NOT an
+    # alias of kernel ENVELOPE_VERSION (a stale implementation must keep its
+    # old literal so the pre-dispatch parity gate sees the mismatch against
+    # the Runtime authority instead of silently claiming the current one).
+    envelope_version = 2
+
     def __init__(self, repo: Path, version: str):
         self.repo = repo
         self.version = version
@@ -145,7 +164,12 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if role == "devon":
             data = assignment if isinstance(assignment, dict) else {}
             return self._act_m_impl_devon(substate, data)
-        return self._act_legacy(role, substate, doc, doc_path, assignment)
+        return self._attach_declared_raw_output(
+            self._act_legacy(role, substate, doc, doc_path, assignment),
+            role,
+            substate,
+            assignment,
+        )
 
     def _repo_root(self) -> Path:
         """B1 (issue #2): the root writer fakes write to — the isolated
@@ -198,6 +222,51 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             if dc:
                 result["defect_classification"] = dc
         return result
+
+    def _attach_declared_raw_output(
+        self, result: dict, role: str, substate: str, assignment: dict | None
+    ) -> dict:
+        """Encode the fake's actual simulated result as the reply the declared
+        assignment demanded (raw_output), so the Runtime's collection face
+        classifies the exact reply text.
+
+        Only explicitly simulated fields are encoded, under the kind the
+        assignment actually declares. A simulated outcome the payload schema
+        cannot represent (a revise without simulated findings, a diagnosis
+        label without a simulated reason/evidence) stays incomplete ON
+        PURPOSE: the Runtime's kernel validator classifies it as a
+        schema_violation format_error — visible, never silently coerced into
+        a synthetic pass, never invented here. A declaration the fake cannot
+        honestly speak (kind mismatch, writer/authority kind) is left
+        un-encoded: the missing raw_output classify as format_error at the
+        Runtime. Undeclared dispatches keep their legacy result dicts
+        untouched (no raw_output key)."""
+        if not is_declared_assignment(assignment):
+            return result
+        kind = assignment["envelope"].get("kind")
+        if kind not in _FAKE_SPEAKABLE_KINDS or kind != envelope_kind(role, substate):
+            return result
+        payload = self._declared_reply_payload(kind, result)
+        result["raw_output"] = encode_envelope_reply(
+            kind, payload, self.envelope_version
+        )
+        return result
+
+    def _declared_reply_payload(self, kind: str, result: dict) -> dict:
+        """The fake's actual simulated fields under the assigned kind — never
+        invented, never coerced: the verdict/classification come straight
+        from the simulated outcome, and fields the simulation did not
+        explicitly produce stay absent for the Runtime to classify."""
+        fields = (
+            "review_summary", "review_body", "findings", "defect_classification",
+            "reason", "evidence",
+        )
+        payload = {field: result[field] for field in fields if field in result}
+        if kind == "prism:diagnose":
+            payload["classification"] = result.get("classification", result.get("verdict"))
+        else:
+            payload["verdict"] = result.get("verdict")
+        return payload
 
     @staticmethod
     def _apply_diagnose_simulation(role: str, substate: str, result: dict) -> None:
