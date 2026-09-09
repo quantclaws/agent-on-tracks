@@ -8,6 +8,8 @@ boundary and are Runtime-only (agents never execute or simulate them).
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Literal
 
 ReconcileVerdict = Literal["done", "skip", "pending", "conflict"]
@@ -15,11 +17,36 @@ ReconcileVerdict = Literal["done", "skip", "pending", "conflict"]
 
 def plan_operations(operation_plan: dict, preview_digest: str) -> list[dict]:
     """Write-ahead planned records, one per declared operation step."""
-    raise NotImplementedError("IF-PUBLISH-001")
+    if not isinstance(operation_plan, dict) or not isinstance(preview_digest, str):
+        return []
+    records: list[dict] = []
+    for step in operation_plan.get("steps") or ():
+        if not isinstance(step, str) or ":" not in step:
+            return []
+        kind, target = step.split(":", 1)
+        if not kind or not target:
+            return []
+        records.append(
+            {
+                "operation_kind": kind,
+                "target": target,
+                "preview_digest": preview_digest,
+                "idempotency_key": operation_idempotency_key(
+                    preview_digest, kind, target
+                ),
+            }
+        )
+    return records
 
 
 def operation_idempotency_key(preview_digest: str, kind: str, target: str) -> str:
-    raise NotImplementedError("IF-PUBLISH-001")
+    raw = json.dumps(
+        {"preview_digest": preview_digest, "kind": kind, "target": target},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:

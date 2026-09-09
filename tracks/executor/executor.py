@@ -29,6 +29,7 @@ from tracks.baseline import baseline_summary, revision_digest
 from tracks.capabilities import supports_m_impl
 from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
+from tracks.effects import publish as publish_effects
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.github import (
     FakeIssueBackend,
@@ -107,6 +108,7 @@ from tracks.executor.milestone import (
     compute_trace_digest,
     seal_evidence_readonly,
 )
+from tracks.executor.publish_runtime import execute_tag_operation, resolve_publish_authority
 from tracks.executor.release_gate import generate_preview
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
@@ -4814,41 +4816,68 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         backend_kind = type(self.backend).__name__.lower()
         return "opencode" in backend_kind or "agent" in backend_kind
 
+    def _publish_fail(
+        self, cmd, reason: str, *, candidate_sha: str = "", key: str = "", remote_check=None
+    ):
+        payload = {
+            "reason": reason,
+            "candidate_sha": candidate_sha,
+            "idempotency_key": key,
+        }
+        if remote_check is not None:
+            payload["remote_check"] = remote_check
+        self._emit("publish.failed", payload, command_id=cmd.command_id)
+
     def _do_execute_publish(self, cmd, state, task_id, reconcile):
         """(G) Consume Command(execute_publish) (bound to a preview digest):
         publish.planned -> publish.executed(done|reconciled_skip) /
         publish.blocked(agent_forbidden) / publish.failed."""
         params = dict(cmd.params or {})
-        preview_digest = params.get("preview_digest", "")
-        if reconcile and any(
-            e.type in ("publish.executed", "publish.blocked", "publish.failed")
-            and e.command_id == cmd.command_id
-            for e in self.store.events(self.run_id)
-        ):
-            return
-        self._emit(
-            "publish.planned",
-            {"preview_digest": preview_digest},
-            command_id=cmd.command_id,
+        events = list(self.store.events(self.run_id))
+        version_facts = self._release_version_facts(state)
+        if not version_facts.get("version"):
+            envelope_version = next(
+                (event.version for event in reversed(events) if event.version), ""
+            )
+            if envelope_version:
+                digits = envelope_version.lstrip("v").split(".")
+                version_facts = {
+                    "version": envelope_version,
+                    "major": digits[0] if digits and digits[0].isdigit() else "0",
+                    "minor": (
+                        digits[1]
+                        if len(digits) > 1 and digits[1].isdigit()
+                        else "0"
+                    ),
+                }
+        authority, error = resolve_publish_authority(
+            self.repo,
+            events,
+            params.get("preview_digest"),
+            version_facts,
+            self.store.home,
         )
-        if self._assert_agent_forbidden():
-            self._emit(
-                "publish.blocked",
-                {"preview_digest": preview_digest, "reason": "agent_forbidden"},
-                command_id=cmd.command_id,
-            )
+        if authority is None:
+            self._publish_fail(cmd, error or "malformed")
             return
-        if params.get("reconcile_skip"):
-            self._emit(
-                "publish.executed",
-                {"preview_digest": preview_digest, "status": "reconciled_skip"},
-                command_id=cmd.command_id,
+        def fail(reason, remote_check):
+            self._publish_fail(
+                cmd,
+                reason,
+                candidate_sha=authority["candidate_sha"],
+                key=authority["record"]["idempotency_key"],
+                remote_check=remote_check,
             )
-            return
-        self._emit(
-            "publish.executed",
-            {"preview_digest": preview_digest, "status": "done"},
-            command_id=cmd.command_id,
+
+        execute_tag_operation(
+            authority,
+            cmd.command_id,
+            list(self.store.events(self.run_id)),
+            publish_effects.read_remote_state,
+            publish_effects.push_tag,
+            self._emit,
+            fail,
+            None,
         )
 
     def _do_register_known_issue(self, cmd, state, task_id, reconcile):
