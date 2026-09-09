@@ -29,9 +29,9 @@ EFFECTIVE = {
 }
 
 # Existing Prism stage routing (b91 keeps it untouched, asserts it exists):
-# machine.py -> M-DESIGN, m_test.py -> M-TEST, m_impl.py -> M-IMPL.
+# machine_decide.py -> M-DESIGN, m_test.py -> M-TEST, m_impl.py -> M-IMPL.
 ROUTING = {
-    REPO / "tracks" / "kernel" / "machine.py": "tracks-prism-design",
+    REPO / "tracks" / "kernel" / "machine_decide.py": "tracks-prism-design",
     REPO / "tracks" / "kernel" / "m_test.py": "tracks-prism-test",
     REPO / "tracks" / "kernel" / "m_impl.py": "tracks-prism-impl",
 }
