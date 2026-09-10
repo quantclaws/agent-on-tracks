@@ -4,6 +4,8 @@
 
 正式需求唯一权威是仓库 `.tracks/projects/v0.8/` 的 story、spec、acceptance、architecture、interfaces、test-plan；不得用本交接删减或改写锁定要求。用户已允许绕过 Tracks 自身的开发调度，仍要求需求完全实现、AC 与执行测试通过 ID 可追踪、全源码 coverage ≥95%、没有冗余或超长代码以及真实发布旅程。
 
+先读 [按正式 spec 的逐项进度与缺口](SPEC-STATUS.md)，其中区分明确实现缺口与尚未完成验收的项目。
+
 ## 接手顺序
 
 1. 阅读 [当前代码与未提交层](CURRENT-STATE.md)，核对 `git status --short` 和 [状态及文件摘要](data/state.json)。有差异先确认来源，不能覆盖后来工作。

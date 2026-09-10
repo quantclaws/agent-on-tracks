@@ -1,5 +1,7 @@
 # 后继实施顺序与任务边界
 
+完整 FR/NFR 对照与具体源码缺口见 [SPEC-STATUS](SPEC-STATUS.md)。尤其注意 milestone 关闭/封存/refs 清理、Known Issue 登记、reference host 安装存在返回成功描述而未完成真实操作的路径，需要实际实现，不能仅补事件验收。
+
 这里列的是工作包，不是正式 task/AC 的替代。先从 `.tracks/projects/v0.8/acceptance.md` 和 test-plan 为每包定位所有相关 AC ID、完整子句与测试节点；不凭文件名猜测完成度。可由低成本 Agent 分别实施独立包，协调者控制共享文件合入并独立验收。
 
 ## 1. 复核并完成六面 parity（当前最接近的小切片）
@@ -18,7 +20,7 @@
 
 ## 3. 完成发布 effects 与 Runtime（独立设计、可交另一个 harness）
 
-边界：effects/git.py、effects/github.py、executor/publish.py、publish_runtime.py 及明确 wiring。先定位 `push_merge`、create_release、upload_artifact 的 NotImplemented 与 Runtime op allowlist。tag batch 已实现，但 merge/release/artifact 尚缺。
+边界：effects/publish.py、effects/github.py、executor/publish.py、publish_runtime.py 及明确 wiring。先定位 `push_merge`、create_release、upload_artifact 的 NotImplemented 与 Runtime op allowlist。tag batch 已实现，但 merge/release/artifact 尚缺。
 
 实施前锁定 approved preview/candidate/target/result 身份，覆盖真正远端（测试可用 local bare git + controlled API service）、失败/重试、每 op WAL、崩溃后 readback reconcile、已完成项不重复、不支持操作全计划预检且零副作用。分叉远端不能静默 FF-only 跳过，也不能引入未验收 merge 产物。具体 merge policy 以正式 spec 裁定；预览变化重新走授权。完成条件包括 artifact bytes/hash 与真实远端 release/tag/commit 的绑定，非 mock 返回 success。
 
