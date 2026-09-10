@@ -1,0 +1,39 @@
+{
+  "source_head": "478bc1766473d9316906aafe9f26a46183681727",
+  "includes_wip": true,
+  "counting": "physical lines, not final pylint metric",
+  "over_1000": [
+    {
+      "path": "tracks/executor/executor.py",
+      "lines": 7975
+    },
+    {
+      "path": "tracks/executor/m_impl_runtime.py",
+      "lines": 5982
+    },
+    {
+      "path": "tracks/cli/main.py",
+      "lines": 2736
+    },
+    {
+      "path": "tracks/effects/opencode.py",
+      "lines": 2578
+    },
+    {
+      "path": "tracks/effects/fake.py",
+      "lines": 1464
+    },
+    {
+      "path": "tracks/kernel/m_impl.py",
+      "lines": 1249
+    },
+    {
+      "path": "tracks/executor/taskgraph.py",
+      "lines": 1244
+    },
+    {
+      "path": "tracks/executor/result_checkpoint.py",
+      "lines": 1106
+    }
+  ]
+}

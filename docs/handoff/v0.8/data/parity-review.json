@@ -1,0 +1,20 @@
+{
+  "candidate": "/Users/openclaw/workspace/tracks/.tracks/runtime/handoff-assets/parity-candidate",
+  "review_dir": "/var/folders/yp/322pjbn96ns4sjrtjcqz27v00000gn/T/tracks-parity-review-w4aawlps",
+  "exit_code": 1,
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "4",
+      "skipped": "0",
+      "tests": "17",
+      "time": "6.641",
+      "timestamp": "2026-09-10T17:57:42.958842+09:00",
+      "hostname": "mini-one.local"
+    }
+  ],
+  "persisted_evidence": ".tracks/runtime/handoff-assets/parity-review",
+  "passed": 13,
+  "accepted": false
+}

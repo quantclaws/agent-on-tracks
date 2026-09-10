@@ -1,0 +1,213 @@
+[
+  {
+    "file": "tests/integration/test_envelope_parity.py",
+    "test": "test_parity_mismatch_rejects",
+    "line": 16,
+    "obsolete_blocks": [
+      {
+        "line": 17,
+        "source": "try:\n        check_envelope_parity({\"prompt\": \"v2\", \"agent\": \"v1\"})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-002\" in str(exc)"
+      },
+      {
+        "line": 22,
+        "source": "try:\n        envelope_schema_digest(\"devon:red\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_envelope_parity.py",
+    "test": "test_format_vs_semantic_events_separated",
+    "line": 46,
+    "obsolete_blocks": [
+      {
+        "line": 47,
+        "source": "try:\n        from tracks.kernel.envelope import parse_agent_output\n\n        parse_agent_output(\"bad\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc) or \"IF-ENVELOPE-002\" in str(exc)\n    except Exception:\n        pass"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_envelope_parity.py",
+    "test": "test_deterministic_parse_and_parity",
+    "line": 107,
+    "obsolete_blocks": [
+      {
+        "line": 110,
+        "source": "try:\n        parse_agent_output('```tracks-envelope\\n{\"envelope\": {\"kind\": \"devon:red\", \"version\": 2}, \"payload\": {\"a\": 1}}\\n```')\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc)"
+      },
+      {
+        "line": 115,
+        "source": "try:\n        check_envelope_parity({\"prompt\": \"v2\", \"agent\": \"v2\"})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_envelope_parity.py",
+    "test": "test_malformed_no_business_mutation",
+    "line": 135,
+    "obsolete_blocks": [
+      {
+        "line": 136,
+        "source": "try:\n        from tracks.kernel.envelope import parse_agent_output\n\n        parse_agent_output(\"```tracks-envelope\\n{\\\"envelope\\\": {\\\"kind\\\": \\\"bad\\\", \\\"version\\\": 2}, \\\"payload\\\": {}}\\n```\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc) or \"IF-ENVELOPE-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_host_contract.py",
+    "test": "test_materialized_contract_valid",
+    "line": 13,
+    "obsolete_blocks": [
+      {
+        "line": 23,
+        "source": "try:\n        load_host_contract(contract_path)\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-HOSTCONTRACT-001\" in str(exc)\n    except FileNotFoundError:\n        # File absent pre-implementation is legal red; treat as stub token path\n        assert True"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_release_trace.py",
+    "test": "test_same_candidate_all_events",
+    "line": 18,
+    "obsolete_blocks": [
+      {
+        "line": 21,
+        "source": "try:\n        on_candidate_frozen(None, {}, None)  # type: ignore[arg-type]\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-VERIFY-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_envelope_contract.py",
+    "test": "test_unified_envelope_parse",
+    "line": 17,
+    "obsolete_blocks": [
+      {
+        "line": 18,
+        "source": "try:\n        parse_agent_output(\"no envelope here\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc)"
+      },
+      {
+        "line": 24,
+        "source": "try:\n        build_assignment_envelope(\"devon:red\", {\"task\": \"x\"})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc)"
+      },
+      {
+        "line": 30,
+        "source": "try:\n        validate_envelope({\"envelope\": {\"kind\": \"devon:red\", \"version\": 2}, \"payload\": {}}, \"devon:red\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_envelope_contract.py",
+    "test": "test_malformed_format_error",
+    "line": 51,
+    "obsolete_blocks": [
+      {
+        "line": 54,
+        "source": "try:\n        parse_agent_output('```tracks-envelope\\n{\"bad\": \"json\"\\n```')\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-ENVELOPE-001\" in str(exc)\n    except EnvelopeFormatError:\n        pass"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_publish_idempotency.py",
+    "test": "test_planned_then_executed_done",
+    "line": 38,
+    "obsolete_blocks": [
+      {
+        "line": 39,
+        "source": "try:\n        operation_idempotency_key(\"sha256:abc\", \"merge\", \"main\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-001\" in str(exc)"
+      },
+      {
+        "line": 44,
+        "source": "try:\n        plan_operations({}, \"sha256:abc\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_publish_idempotency.py",
+    "test": "test_agent_forbidden",
+    "line": 109,
+    "obsolete_blocks": [
+      {
+        "line": 110,
+        "source": "try:\n        assert_agent_forbidden(\"Devon\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-001\" in str(exc)"
+      },
+      {
+        "line": 123,
+        "source": "try:\n        assert_agent_forbidden(\"Devon\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_publish_idempotency.py",
+    "test": "test_unknown_operation_and_conflict",
+    "line": 142,
+    "obsolete_blocks": [
+      {
+        "line": 143,
+        "source": "try:\n        plan_operations({\"steps\": [\"unknown:foo\"]}, \"sha256:abc\")\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_recovery.py",
+    "test": "test_interrupt_replay_reconcile_matrix",
+    "line": 13,
+    "obsolete_blocks": [
+      {
+        "line": 16,
+        "source": "try:\n        reconcile_operation({\"idempotency_key\": \"sha256:abc\"}, {\"exists\": True})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_versioning.py",
+    "test": "test_feature_public_release",
+    "line": 15,
+    "obsolete_blocks": [
+      {
+        "line": 16,
+        "source": "try:\n        build_operation_plan(None, \"feature\", {\"minor\": 8, \"n\": 1, \"ulid\": \"01\"})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-RELEASE-002\" in str(exc) or \"IF-JOURNEY-001\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_versioning.py",
+    "test": "test_post_release_patch",
+    "line": 45,
+    "obsolete_blocks": [
+      {
+        "line": 46,
+        "source": "try:\n        build_operation_plan(None, \"post_release\", {\"minor\": 8})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-JOURNEY-001\" in str(exc) or \"IF-RELEASE-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_versioning.py",
+    "test": "test_dev_prerelease_only",
+    "line": 77,
+    "obsolete_blocks": [
+      {
+        "line": 78,
+        "source": "try:\n        build_operation_plan(None, \"dev\", {\"minor\": 8})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-JOURNEY-001\" in str(exc) or \"IF-RELEASE-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_versioning.py",
+    "test": "test_identity_and_idempotent_journeys",
+    "line": 106,
+    "obsolete_blocks": [
+      {
+        "line": 109,
+        "source": "try:\n        reconcile_operation({\"idempotency_key\": \"k\"}, {\"exists\": True})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-PUBLISH-002\" in str(exc)"
+      }
+    ]
+  },
+  {
+    "file": "tests/integration/test_journey_versioning.py",
+    "test": "test_dev_precheck_fails_without_release_branch",
+    "line": 142,
+    "obsolete_blocks": [
+      {
+        "line": 143,
+        "source": "try:\n        build_operation_plan(None, \"dev\", {\"minor\": 999})\n        raise AssertionError(\"expected NotImplementedError\")\n    except NotImplementedError as exc:\n        assert \"IF-JOURNEY-001\" in str(exc) or \"IF-RELEASE-002\" in str(exc)"
+      }
+    ]
+  }
+]

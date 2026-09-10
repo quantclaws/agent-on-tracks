@@ -1,0 +1,6 @@
+{
+  "workspace": "/tmp/tracks/parity-general-2026-09-10",
+  "base_head": "227c4a07fa759f99ac37b3c0d9778cda4c67cdc3",
+  "status": " M tracks/agents/Prism.md\n M tracks/effects/backend.py\n M tracks/effects/fake.py\n M tracks/effects/opencode.py\n M tracks/executor/executor.py\n M tracks/kernel/envelope.py\n M tracks/skills/tracks-discuz/SKILL.md\n M tracks/skills/tracks-prism-design/SKILL.md\n M tracks/skills/tracks-prism-impl/SKILL.md\n M tracks/skills/tracks-prism-test/SKILL.md\n M tracks/templates/acceptance.md\n M tracks/templates/architecture.md\n M tracks/templates/interfaces.md\n M tracks/templates/spec.md\n M tracks/templates/story.md\n M tracks/templates/test-plan.md\n?? .opencode/\n?? .venv\n?? FOLLOWUP.md\n?? MICRO-1-RESULT.md\n?? MICRO-1.md\n?? RESULT.md\n?? tests/\n?? tracks/__pycache__/\n?? tracks/discuss/__pycache__/\n?? tracks/effects/__pycache__/\n?? tracks/effects/dispatch_parity.py\n?? tracks/executor/__pycache__/\n?? tracks/kernel/__pycache__/\n?? tracks/store/__pycache__/\n",
+  "note": "Historical original workspace; use durable candidate and manifests. Task markdown retired after consolidation."
+}
