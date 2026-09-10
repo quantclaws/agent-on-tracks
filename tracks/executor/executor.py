@@ -85,6 +85,7 @@ from tracks.executor.helpers import (
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
     DEFAULT_INSTALL_INTERPRETER,
+    NormalizedGateResult,
     declared_install_interpreter,
     execute_gate,
     load_host_contract,
@@ -95,6 +96,11 @@ from tracks.executor.hotfix import (
     parse_anchor_refs,
     precheck_hotfix,
     validate_anchor_refs,
+)
+from tracks.executor.local_gate_evidence import (
+    gate_identity,
+    has_complete_passed_gates,
+    normalized_result_payload,
 )
 from tracks.executor.m_impl_runtime import MImplRuntimeMixin
 from tracks.executor.milestone import (
@@ -5132,9 +5138,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         verification-only), never a stage rollback (AC-FR0286-01)."""
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
-        if reconcile and self._latest_event("local_gate.passed") is not None:
-            return
-        contract, _digest = self._run_contract_gates(cmd, candidate_sha, state)
+        contract, _digest = self._run_contract_gates(
+            cmd, candidate_sha, state, resume=reconcile
+        )
         if contract is not None:
             self.issue(
                 Command(
@@ -5230,18 +5236,6 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         every gate is green, else (None, None). resume=True (park evidence
         chain) reuses existing passed-gate evidence for the same candidate
         instead of re-running it (SM-01.17 idempotency)."""
-        gates_done = resume and any(
-            e.type == "local_gate.passed"
-            and (e.payload or {}).get("candidate_sha") == candidate_sha
-            for e in self.store.events(self.run_id)
-        )
-        if gates_done:
-            contract, digest, _source = self._load_or_default_contract(
-                cmd, candidate_sha
-            )
-            if contract is None:
-                return None, None
-            return contract, digest
         contract, contract_digest, source = self._load_or_default_contract(
             cmd, candidate_sha
         )
@@ -5251,6 +5245,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if errors:
             self._fail_verify_block(cmd, candidate_sha, "malformed", "; ".join(errors))
             return None, None
+        if resume and has_complete_passed_gates(
+            self.store.events(self.run_id), candidate_sha, contract_digest, contract
+        ):
+            return contract, contract_digest
         self._emit(
             "host_contract.materialized",
             {
@@ -5285,7 +5283,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         scope = self._release_version_facts(state)
         scope["candidate_sha"] = candidate_sha
         all_passed = True
-        for gate in contract.local_gates:
+        for ordinal, gate in enumerate(contract.local_gates):
             command = gate.command
             if gate.source == "guard_registry":
                 resolved_lint = lint_check_command(self.repo)
@@ -5303,8 +5301,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "local_gate.failed",
                     {
                         "kind": gate.kind,
+                        "gate_identity": gate_identity(gate.kind, ordinal),
                         "candidate_sha": candidate_sha,
                         "contract_digest": contract_digest,
+                        "command_echo": [],
+                        "normalized_result": normalized_result_payload(
+                            NormalizedGateResult(
+                                gate_id=gate.kind,
+                                result_version=1,
+                                status="failed",
+                                exit_code=None,
+                                summary={"error": str(err)},
+                            )
+                        ),
                         "reason": "unknown",
                         "detail": str(err),
                     },
@@ -5314,8 +5323,11 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 continue
             payload = {
                 "kind": gate.kind,
+                "gate_identity": gate_identity(gate.kind, ordinal),
                 "candidate_sha": candidate_sha,
                 "contract_digest": contract_digest,
+                "command_echo": list(result.command_echo or ()),
+                "normalized_result": normalized_result_payload(result),
                 "status": result.status,
                 "exit_code": result.exit_code,
                 "summary": result.summary,

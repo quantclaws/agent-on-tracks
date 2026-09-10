@@ -158,6 +158,7 @@ class NormalizedGateResult:
     status: Literal["passed", "failed", "malformed"]
     exit_code: int | None
     summary: dict
+    command_echo: tuple[str, ...] = ()
 
 
 def _fail_closed(message: str) -> None:
@@ -344,16 +345,34 @@ def execute_gate(
 ) -> NormalizedGateResult:
     """Run one declared gate command (shlex, shell=False) under its timeout."""
     rendered, result_path = _render_gate_command(decl, placeholders)
-    completed = _run_declared(decl, shlex.split(rendered), repo)
+    argv = shlex.split(rendered)
+    try:
+        completed = _run_declared(decl, argv, repo)
+    except OSError as err:
+        return NormalizedGateResult(
+            gate_id=decl.kind,
+            result_version=GATE_RESULT_VERSION,
+            status="failed",
+            exit_code=None,
+            summary={"error": str(err)},
+            command_echo=tuple(argv),
+        )
     if completed is None:
-        return _timed_out(decl)
+        return replace(_timed_out(decl), command_echo=tuple(argv))
     evidence = _evidence(completed.returncode, completed.stdout, completed.stderr)
     if decl.result_channel == "exit_code":
         result = parse_gate_result(None, "exit_code", completed.returncode)
-        return replace(result, gate_id=decl.kind, summary=evidence)
+        return replace(result, gate_id=decl.kind, summary=evidence, command_echo=tuple(argv))
     raw = result_path.read_bytes() if result_path is not None and result_path.exists() else None
     result = parse_gate_result(raw, "file", completed.returncode)
-    return replace(result, gate_id=decl.kind, summary={**result.summary, **evidence})
+    if completed.returncode != 0:
+        result = replace(result, status="failed", exit_code=completed.returncode)
+    return replace(
+        result,
+        gate_id=decl.kind,
+        summary={**result.summary, **evidence},
+        command_echo=tuple(argv),
+    )
 
 
 def _parse_result_blob(raw: bytes | None) -> tuple[dict | None, str]:
