@@ -163,7 +163,7 @@ def _seed_collection(executor, monkeypatch, node_layer, node_digests) -> None:
         ]
 
     monkeypatch.setattr(
-        "tracks.executor.executor.parse_test_result", _test_result_nodes
+        "tracks.executor.test_execute.parse_test_result", _test_result_nodes
     )
     return recorded
 

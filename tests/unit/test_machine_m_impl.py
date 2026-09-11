@@ -3169,8 +3169,11 @@ def test_plan_defect_in_diagnose_vocabulary():
 
     repo_root = Path(__file__).resolve().parents[2]
     assert "plan_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
-    executor_py = (repo_root / "tracks/executor/executor.py").read_text(encoding="utf-8")
-    assert "plan_defect" in executor_py, "executor.py whitelist/filter lacks plan_defect"
+    executor_src = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((repo_root / "tracks/executor").glob("*.py"))
+    )
+    assert "plan_defect" in executor_src, "executor whitelist/filter lacks plan_defect"
 
 
 # -- #89 follow-up (B90): vocabulary inlined into the dispatch -----------------
