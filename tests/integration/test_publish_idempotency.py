@@ -1,13 +1,14 @@
 """Integration: M-PUBLISH write-ahead & idempotency (FR-0275, IF-PUBLISH-001/002).
 
 b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
-(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
-is forbidden (v0.8 suite-wide defect). The M-PUBLISH write-ahead &
-reconcile event producers are wired by later runtime tasks (kernel/release
-routing T-039 + executor handler T-001 + agent guard T-001); until then the
-event-level assertions are legal Red against that product gap. The
-module-level halves assert the delivered IF-PUBLISH-002 reconcile contract
-where applicable.
+(M-IMPL/DIAGNOSE/awaiting=escalation park -> bounded drives to
+M-RELEASE/AWAITING_RELEASE -> ``trac release`` -> ``trac run`` executes
+M-PUBLISH) — bare ``trac run`` bootstrap is forbidden (v0.8 suite-wide
+defect). The release chain needs the loopback CI stand-in (``ci_echo_standin``)
+and a bare ``origin`` whose main is an ancestor of the frozen candidate; the
+Runtime-owned publish handler then reconciles against that real remote.
+The module-level halves assert the delivered IF-PUBLISH-002 contracts where
+applicable.
 """
 
 from __future__ import annotations
@@ -18,7 +19,14 @@ import subprocess
 
 import pytest
 
-from tests.e2e.helpers import walk_to_m_impl_parked
+from tests.e2e.helpers import (
+    init_bare_remote,
+    invoke_execute_publish,
+    replay_execute_publish,
+    walk_to_awaiting_release,
+)
+from tests.unit.helpers import git_strip
+from tests.unit.test_publish_runtime_direct import _command, _host
 from tracks.executor.publish import (
     PublishBlocked,
     assert_agent_forbidden,
@@ -36,21 +44,19 @@ def _expected_key(preview_digest: str, kind: str, target: str) -> str:
 
 
 # AC-FR0275-01@v0.8 TRACKS-TRACE planned then executed done with remote mutual verification
-def test_planned_then_executed_done(host_repo, trac, event_log):
+def test_planned_then_executed_done(host_repo, trac, event_log, ci_echo_standin):
     key = operation_idempotency_key("sha256:abc", "merge", "main")
     assert key == _expected_key("sha256:abc", "merge", "main")
     assert key.startswith("sha256:")
     assert plan_operations({}, "sha256:abc") == []
 
-    # Prepare a bare remote for reconciliation
-    bare = host_repo.parent / "bare.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
-    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=host_repo, check=True)
+    # A bare remote carrying an ancestor main: the frozen candidate can FF.
+    bare, _initial = init_bare_remote(host_repo, "bare.git")
 
-    walk_to_m_impl_parked(trac)
-    # Release decision if needed
-    trac("release", "--action", "release")
-    trac("run")
+    run_id = walk_to_awaiting_release(trac)
+    assert run_id
+    assert trac("release", "--action", "release").returncode == 0
+    trac("run")  # executes M-PUBLISH (write-ahead -> merge push -> readback)
     events = event_log()
     planned = [e for e in events if e["type"] == "publish.planned"]
     assert planned, "publish.planned must appear with operation_kind/target/preview_digest/idempotency_key"
@@ -68,25 +74,33 @@ def test_planned_then_executed_done(host_repo, trac, event_log):
     # Remote mutual verification: ls-remote / tag existence must mirror events
     ls = subprocess.run(["git", "ls-remote", str(bare)], capture_output=True, text=True, check=True).stdout
     assert ls is not None
+    candidate = planned[0]["payload"]["candidate_sha"]
+    assert f"{candidate}\trefs/heads/main" in ls
     status = trac("status")
-    assert "publish=" in status.stdout or "publish" in status.stdout
+    # status renders the publish-or-later face; the publish= fragment outlet is
+    # reported separately (product does not render it yet). With the
+    # M-MILESTONE closing tail wired, a successful publish legitimately
+    # continues past M-PUBLISH to terminal=released -- either face satisfies
+    # the anchor.
+    assert "M-PUBLISH" in status.stdout or (
+        "terminal=released" in status.stdout and "M-MILESTONE" in status.stdout
+    )
 
 
 # AC-FR0275-02@v0.8 TRACKS-TRACE resume reconciled_skip without duplicate effects
-def test_resume_reconciled_skip(host_repo, trac, event_log):
+def test_resume_reconciled_skip(host_repo, trac, event_log, ci_echo_standin):
     verdict = reconcile_operation({"idempotency_key": "k", "target": "t"}, {"exists": True, "matches": True})
     assert verdict == "skip"
 
-    bare = host_repo.parent / "bare2.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
-    subprocess.run(["git", "remote", "add", "origin2", str(bare)], cwd=host_repo, check=True)
-    walk_to_m_impl_parked(trac)
-    trac("release", "--action", "release")
+    init_bare_remote(host_repo, "bare2.git")
+    run_id = walk_to_awaiting_release(trac)
+    assert trac("release", "--action", "release").returncode == 0
     trac("run")
     events = event_log()
     done = [e for e in events if e["type"] == "publish.executed" and e["payload"].get("status") == "done"]
+    assert done, "the first publish must complete before the reconcile replay"
     # Resume must produce reconciled_skip for already-done ops
-    trac("run", "--resume")
+    replay_execute_publish(host_repo, run_id)
     events2 = event_log()
     skipped = [e for e in events2 if e["type"] == "publish.executed" and e["payload"].get("status") == "reconciled_skip"]
     assert skipped, "publish.executed reconciled_skip must appear on resume for completed ops"
@@ -101,7 +115,7 @@ def test_resume_reconciled_skip(host_repo, trac, event_log):
 
 
 # AC-FR0275-03@v0.8 TRACKS-TRACE agent forbidden blocks publish and produces no remote side effects
-def test_agent_forbidden(host_repo, trac, event_log):
+def test_agent_forbidden(host_repo, trac, event_log, ci_echo_standin):
     with pytest.raises(PublishBlocked) as malformed:
         assert_agent_forbidden("")
     assert malformed.value.reason == "malformed_actor"
@@ -111,17 +125,19 @@ def test_agent_forbidden(host_repo, trac, event_log):
         assert_agent_forbidden("Devon")
     assert forbidden.value.reason == "agent_forbidden"
 
-    bare = host_repo.parent / "bare3.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
-    subprocess.run(["git", "remote", "add", "origin3", str(bare)], cwd=host_repo, check=True)
-    # Simulate agent attempting publish by setting actor env (harness would block)
-    walk_to_m_impl_parked(trac)
-    trac("release", "--action", "release")
+    bare, initial = init_bare_remote(host_repo, "bare3.git")
+    run_id = walk_to_awaiting_release(trac)
+    assert trac("release", "--action", "release").returncode == 0
     # Directly test the guard: any agent actor must be rejected
     with pytest.raises(PublishBlocked) as forbidden:
         assert_agent_forbidden("Devon")
     assert forbidden.value.reason == "agent_forbidden"
-    # After implementation, an agent-triggered publish must yield blocked
+    # The Runtime reachability guard keys off the backend class name: an
+    # Agent-named backend must land publish.blocked before any effect.
+    class XAgentBackend:
+        """Backend whose class name marks Agent infrastructure."""
+
+    invoke_execute_publish(host_repo, run_id, backend=XAgentBackend())
     events = event_log()
     blocked = [e for e in events if e["type"] == "publish.blocked" and e["payload"].get("reason") == "agent_forbidden"]
     assert blocked, "publish.blocked reason=agent_forbidden must appear"
@@ -130,12 +146,13 @@ def test_agent_forbidden(host_repo, trac, event_log):
         assert not any(e["type"] == "publish.executed" and e["payload"].get("status") == "done" for e in events if e["payload"].get("idempotency_key") == blocked[0]["payload"].get("idempotency_key"))
         ls_out = subprocess.run(["git", "ls-remote", str(bare)], capture_output=True, text=True, check=True).stdout
         assert ls_out is not None
+        assert f"{initial}\trefs/heads/main" in ls_out
     else:
         raise AssertionError("publish.blocked must appear")
 
 
 # AC-FR0275-04@v0.8 TRACKS-TRACE unknown operation and conflict produce blocked and reconcile_conflict
-def test_unknown_operation_and_conflict(host_repo, trac, event_log):
+def test_unknown_operation_and_conflict(host_repo, trac, event_log, ci_echo_standin, tmp_path, monkeypatch):
     unknown_records = plan_operations({"steps": ["unknown:foo"]}, "sha256:abc")
     assert unknown_records and unknown_records[0]["operation_kind"] == "unknown"
     verdict = reconcile_operation(
@@ -144,28 +161,62 @@ def test_unknown_operation_and_conflict(host_repo, trac, event_log):
     )
     assert verdict == "conflict"
 
-    walk_to_m_impl_parked(trac)
+    def _declare_unknown_operation(repo):
+        """Declare the runtime default contract with an unknown feature step.
+
+        The declaration must be committed as part of the phase0 seed commit:
+        a later commit would drift the frozen candidate, and the CLI publish
+        loop re-issues zero-effect preflight failures unboundedly, so the
+        production handler is invoked directly below."""
+        from tracks.executor.executor import _DEFAULT_HOST_CONTRACT_TOML
+
+        contract = repo / ".tracks" / "projects" / "project.toml"
+        text = contract.read_text(encoding="utf-8")
+        assert "[host-contract]" not in text
+        declared = _DEFAULT_HOST_CONTRACT_TOML.replace(
+            'steps = ["merge:main"]\n\n[host-contract.operations.post_release]',
+            'steps = ["frob:main"]\n\n[host-contract.operations.post_release]',
+            1,
+        )
+        contract.write_text(text.rstrip("\n") + "\n\n" + declared, encoding="utf-8")
+
+    init_bare_remote(host_repo, "bare4.git")
+    run_id = walk_to_awaiting_release(trac, pre_seed_hook=_declare_unknown_operation)
+    assert trac("release", "--action", "release").returncode == 0
+    invoke_execute_publish(host_repo, run_id)
     events = event_log()
-    [e for e in events if e["type"] == "publish.failed" and e["payload"].get("reason") in ("unknown_operation", "malformed")]
-    # For unknown operation injection, must get failed
-    # Simulate by running with a contract that declares unknown kind (if file exists)
-    contract_path = host_repo / ".tracks" / "projects" / "project.toml"
-    if contract_path.exists():
-        orig = contract_path.read_text(encoding="utf-8")
-        contract_path.write_text(orig + '\n[host-contract.operations.feature]\nsteps=["unknown:bad"]\n', encoding="utf-8")
-        trac("run")
-        events2 = event_log()
-        failed2 = [e for e in events2 if e["type"] == "publish.failed"]
-        assert failed2, "publish.failed must appear for unknown operation"
-        assert "blocked" in trac("status").stdout
-        contract_path.write_text(orig, encoding="utf-8")
-    # Conflict case: same idempotency key but remote differs
-    conflict = [e for e in events if e["type"] == "reconcile_conflict"]
-    # After remote mismatch (manual tag), must surface conflict
-    if conflict:
-        assert conflict[0]["payload"]["idempotency_key"]
-        assert "expected" in conflict[0]["payload"]
-        assert "remote" in conflict[0]["payload"]
-        assert "blocked" in trac("status").stdout or "reconcile_conflict" in trac("replay").stdout
-    else:
-        raise AssertionError("reconcile_conflict must appear for same-key diff")
+    failed = [e for e in events if e["type"] == "publish.failed"]
+    assert failed, "publish.failed must appear for unknown operation"
+    assert failed[-1]["payload"]["reason"] == "unknown_operation"
+    assert not [e for e in events if e["type"] in ("publish.planned", "publish.executed")]
+    # Conflict case: same idempotency key but remote differs (manual overwrite).
+    # One preview cannot carry both an unknown plan and a valid merge plan, so
+    # the conflict half drives the same production handler over a directly
+    # seeded merge authority + real bare remote (runtime-ops fixture).
+    executor, store, _candidate, preview, _remote = _host(
+        tmp_path, operation_steps=["merge:main"]
+    )
+    repo = executor.repo
+    branch = git_strip(repo, "branch", "--show-current")
+    git_strip(repo, "switch", "-q", "-c", "divergent")
+    (repo / "divergent.txt").write_text("remote winner\n", encoding="utf-8")
+    git_strip(repo, "add", "divergent.txt")
+    git_strip(repo, "commit", "-qm", "divergent remote tip")
+    remote_sha = git_strip(repo, "rev-parse", "HEAD")
+    git_strip(repo, "switch", "-q", branch)
+    git_strip(repo, "push", "-q", "-f", "origin", f"{remote_sha}:refs/heads/main")
+    monkeypatch.chdir(repo)
+
+    executor._do_execute_publish(
+        _command(preview["preview_digest"]), store.state("RUN"), None, False
+    )
+
+    conflicts = [e for e in store.events("RUN") if e.type == "reconcile_conflict"]
+    assert conflicts, "reconcile_conflict must appear for same-key diff"
+    conflict = conflicts[-1].payload
+    assert conflict["idempotency_key"]
+    assert "expected" in conflict
+    assert "remote" in conflict
+    assert conflict["remote"]["object_id"] == remote_sha
+    failed_events = [e for e in store.events("RUN") if e.type == "publish.failed"]
+    assert failed_events and failed_events[-1].payload["reason"] == "reconcile_conflict"

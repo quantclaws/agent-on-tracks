@@ -109,7 +109,17 @@ def _decide_release(substate: str, state: State) -> Command | None:
         return Command(kind="generate_preview")
     if substate == M_RELEASE_GATE_SUBSTATE:
         if getattr(state, "release_decision", None) == "release":
-            return Command(kind="execute_publish")
+            status = getattr(state, "publish_status", None)
+            if status in (None, "planned", "executing"):
+                return Command(kind="execute_publish")
+            # A terminal publish face never re-executes on its own: ``blocked``
+            # (AC-FR0275-04: unknown/malformed preflight, remote conflict,
+            # agent_forbidden -- the publish does not continue; a fix means a
+            # new preview/decision) and ``done``/``reconciled_skip`` (the
+            # M-PUBLISH face hands to close_milestone) both park the decider.
+            # Without this guard a zero-effect preflight failure re-issued
+            # execute_publish in a tight loop (live: 1500+ events in 30s).
+            return None
         return None
     return None
 

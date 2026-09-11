@@ -269,3 +269,22 @@ def test_full_f_producer_accepts_waived_only_failures(tmp_path):
         for event in store.events("RUN")
     ), "the M-VERIFY reuse judgment must accept the waiver-adjusted FULL_F evidence"
     store.close()
+
+
+# AC-FR0275-04: a blocked publish face parks the M-RELEASE decider (a
+# zero-effect preflight failure must never re-issue execute_publish in a
+# tight loop); a fresh decision only follows a new preview.
+def test_release_decider_parks_on_blocked_publish():
+    from tracks.kernel.release import decide_release_stage
+    from tracks.kernel.machine import State
+
+    s = State()
+    s.stage = "M-RELEASE"
+    s.substate = "AWAITING_RELEASE"
+    s.release_decision = "release"
+    s.publish_status = None
+    cmd = decide_release_stage("M-RELEASE", "AWAITING_RELEASE", s)
+    assert cmd is not None and cmd.kind == "execute_publish"
+    for terminal in ("blocked", "done", "reconciled_skip"):
+        s.publish_status = terminal
+        assert decide_release_stage("M-RELEASE", "AWAITING_RELEASE", s) is None, terminal

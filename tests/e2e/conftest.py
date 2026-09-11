@@ -3,6 +3,7 @@
 import pytest
 
 from tests._support.fixtures import (  # noqa: F401  re-export
+    ci_echo_standin,
     event_log,
     host_repo,
     steps,

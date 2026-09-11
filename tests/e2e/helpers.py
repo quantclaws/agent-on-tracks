@@ -1,5 +1,6 @@
 """Shared E2E helpers (kept out of individual test modules to avoid R0801 duplication)."""
 
+import os
 import re
 
 
@@ -117,7 +118,9 @@ def _seed_phase0_premises(repo, version):
     )
 
 
-def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", version="v0.8"):
+def walk_to_m_impl_parked(
+    trac, stdin="构建一个事件溯源运行时", version="v0.8", *, pre_seed_hook=None
+):
     """init -> start -> triage go -> doc trio -> approval -> M-IMPL RED failure
     injection -> parks at M-IMPL/DIAGNOSE/awaiting=escalation.
 
@@ -135,12 +138,19 @@ def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", versi
     M-DESIGN trio and fails the phase0 validate on a bare repo; when the trac
     fixture exposes its backing host repo (``trac.repo``), the phase0
     premises are seeded on the baseline-repair channel so the next injected
-    run seals phase0 and reaches the M-IMPL park."""
+    run seals phase0 and reaches the M-IMPL park.
+
+    ``pre_seed_hook(repo)`` runs after the phase0-blocked first run and before
+    the seeding commit, so repo facts it writes into the canonical contract
+    land in the SAME commit as the seeded premises (an extra post-park commit
+    would drift the already-frozen candidate and stall the park chain)."""
     run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
     r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     repo = getattr(trac, "repo", None)
     if repo is not None:
+        if pre_seed_hook is not None:
+            pre_seed_hook(repo)
         _seed_phase0_premises(repo, version)
         r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r.returncode == 0, r.stderr
@@ -148,6 +158,182 @@ def walk_to_m_impl_parked(trac, stdin="构建一个事件溯源运行时", versi
     assert "substate=DIAGNOSE" in r.stdout
     assert "awaiting=escalation" in r.stdout
     return run_id
+
+
+def walk_to_awaiting_release(
+    trac,
+    stdin="构建一个事件溯源运行时",
+    version="v0.8",
+    *,
+    pre_seed_hook=None,
+    max_drives=10,
+):
+    """Drive the proven M-IMPL park to M-RELEASE/AWAITING_RELEASE.
+
+    v0.8 reality (verified on HEAD): after the park, the first injected
+    ``trac run`` replays the failure review and registers the waived known
+    issues, the next one (or two) walks M-IMPL EXIT -> M-VERIFY
+    (evidence.reused -> persisted CI readback -> prism verify_final ->
+    security) and lands the release preview at M-RELEASE/AWAITING_RELEASE.
+    The loop is bounded; a missing arrival is a harness bug, not a park
+    expectation."""
+    run_id = walk_to_m_impl_parked(
+        trac, stdin=stdin, version=version, pre_seed_hook=pre_seed_hook
+    )
+    for _ in range(max_drives):
+        r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+        assert r.returncode == 0, r.stderr
+        status = trac("status")
+        combined = status.stdout + status.stderr
+        if "AWAITING_RELEASE" in combined or "awaiting_release" in combined:
+            return run_id
+    raise AssertionError(
+        f"M-RELEASE/AWAITING_RELEASE not reached within {max_drives} drives"
+    )
+
+
+def init_bare_remote(host_repo, name, *, push_main=True):
+    """Create a sibling bare remote, bind it as origin and return it.
+
+    ``push_main`` publishes the host's current main first so every later
+    commit (the frozen candidate included) is its descendant and a merge
+    operation can fast-forward. Without it the remote stays empty and the
+    first publish fails closed with ``branch_missing`` — the interrupted
+    write-ahead premise. Also returns the pre-push HEAD sha for later
+    ancestor pushes."""
+    import subprocess
+
+    bare = host_repo.parent / name
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(bare)], cwd=host_repo, check=True
+    )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if push_main:
+        subprocess.run(
+            ["git", "push", "-q", "-u", "origin", "main"],
+            cwd=host_repo,
+            check=True,
+            capture_output=True,
+        )
+    return bare, head
+
+
+def push_ancestor_main(host_repo, sha):
+    """Publish an ancestor commit to origin/main (repair after branch_missing)."""
+    import subprocess
+
+    subprocess.run(
+        ["git", "push", "-q", "origin", f"{sha}:refs/heads/main"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def force_diverged_main(host_repo):
+    """Force origin/main to a non-ancestor commit (manual remote overwrite)."""
+    import subprocess
+
+    def run(*args):
+        return subprocess.run(
+            ["git", *args],
+            cwd=host_repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    head = run("rev-parse", "HEAD")
+    divergent = run(
+        "commit-tree", f"{head}^{{tree}}", "-p", head, "-m", "divergent remote main"
+    )
+    run("push", "-q", "-f", "origin", f"{divergent}:refs/heads/main")
+    return divergent
+
+
+def _publish_store_and_executor(host_repo, run_id):
+    """Open the journey store and a production Executor over it (test-side)."""
+    from tracks import paths
+    from tracks.executor.executor import Executor
+    from tracks.store import Store
+
+    store = Store(paths.tracks_home(host_repo))
+    return store, Executor(store, host_repo, run_id)
+
+
+def replay_execute_publish(host_repo, run_id):
+    """Replay the WAL's last execute_publish through the production handler.
+
+    Mirrors the runtime's own D-13 recovery: the SAME issued command (same
+    command_id, so the write-ahead record is reused, never re-planned) is
+    re-executed with ``reconcile=True`` — the remote decides
+    done/reconciled_skip/conflict. ``push_merge``/``push_tag`` resolve refs
+    against the process cwd, so the replay runs from the host repo root."""
+    from tracks.kernel.events import Command
+
+    store, executor = _publish_store_and_executor(host_repo, run_id)
+    try:
+        issued = [
+            event
+            for event in store.events(run_id)
+            if event.type == "command.issued"
+            and (event.payload or {}).get("command", {}).get("kind")
+            == "execute_publish"
+        ]
+        assert issued, "no execute_publish command in the WAL to replay"
+        command = issued[-1].payload["command"]
+        previous = os.getcwd()
+        os.chdir(host_repo)
+        try:
+            executor._execute(
+                Command(
+                    kind=command["kind"],
+                    params=command.get("params", {}),
+                    command_id=command.get("command_id"),
+                ),
+                store.state(run_id),
+                None,
+                reconcile=True,
+            )
+        finally:
+            os.chdir(previous)
+    finally:
+        store.close()
+
+
+def invoke_execute_publish(host_repo, run_id, *, backend=None, params=None):
+    """Invoke the production execute_publish handler on the journey store.
+
+    Used where the CLI cannot express the scenario deterministically: the
+    Agent-backend guard blocks before any effect, and a zero-effect plan
+    preflight failure has no write-ahead event to flip the stage, so the CLI
+    loop would re-issue the command unbounded (reported harness finding)."""
+    from tracks.kernel.events import Command
+
+    store, executor = _publish_store_and_executor(host_repo, run_id)
+    try:
+        if backend is not None:
+            executor.backend = backend
+        previous = os.getcwd()
+        os.chdir(host_repo)
+        try:
+            executor._execute(
+                Command(kind="execute_publish", params=dict(params or {})),
+                store.state(run_id),
+                None,
+                False,
+            )
+        finally:
+            os.chdir(previous)
+    finally:
+        store.close()
 
 
 def dispatches(evs, substate=None):

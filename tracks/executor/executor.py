@@ -6327,7 +6327,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
         if not candidate_sha:
-            for e in reversed(self.store.events(self.run_id)):
+            # Store.events returns a generator; materialize before reversed()
+            # (a bare reversed(generator) raises TypeError and has crashed
+            # every publish-success run at the M-MILESTONE hand-off).
+            for e in reversed(list(self.store.events(self.run_id))):
                 if e.type == "candidate.frozen":
                     candidate_sha = (e.payload or {}).get("candidate_sha", "")
                     break

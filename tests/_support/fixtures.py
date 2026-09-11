@@ -84,6 +84,27 @@ def steps(request):
 
 
 @pytest.fixture
+def ci_echo_standin(monkeypatch):
+    """Loopback CI readback stand-in + the env the release chain consumes.
+
+    Echoes any requested candidate head as a passing workflow run, so journey
+    anchors do not need to know the frozen candidate in advance. The ``trac``
+    fixture copies ``os.environ`` per call, so the env set here reaches every
+    subprocess the test starts.
+    """
+    from tests._support.ci_echo_standin import DEFAULT_REPO, CiEchoStandIn
+
+    server = CiEchoStandIn().start()
+    monkeypatch.setenv("TRAC_GITHUB_REPO", DEFAULT_REPO)
+    monkeypatch.setenv("GITHUB_TOKEN", "loopback-token")
+    monkeypatch.setenv("TRAC_GITHUB_API_BASE", server.base_url)
+    try:
+        yield server
+    finally:
+        server.close()
+
+
+@pytest.fixture
 def host_repo(tmp_path):
     repo = tmp_path / "host"
     repo.mkdir()

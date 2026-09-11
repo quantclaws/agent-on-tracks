@@ -8,6 +8,7 @@ import pytest
 
 # Re-export shared fixtures so every Shield suite sees the same helpers.
 from tests._support.fixtures import (  # noqa: F401  re-export
+    ci_echo_standin,
     event_log,
     host_repo,
     steps,
