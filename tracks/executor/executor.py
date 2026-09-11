@@ -74,6 +74,7 @@ from tracks.executor.failure_review import (
     acknowledge_failure,
     inject_into_assignment,
     record_failure,
+    restore_from_events,
     review_failure_chain,
     select_failure,
 )
@@ -1061,6 +1062,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     # -- main loop (FR-29/FR-30) -------------------------------------------
 
     def run_loop(self) -> State:
+        # IF-FAILURE-001 replay face: the failure-review store is process-
+        # local; under the M7 handover regime the loop is replaced at every
+        # drift boundary, so the stream must be replayed into the selection
+        # rule or every post-restart DIAGNOSE runs evidenceless (live
+        # 2026-09-06: two consecutive unknown escalations while the round's
+        # records sat on the stream).
+        restored = restore_from_events(self.run_id, self.store.events(self.run_id))
+        if restored:
+            print(
+                f"failure-review store: {restored} record(s) replayed from the event stream",
+                file=sys.stderr,
+                flush=True,
+            )
         stop, recovered_kind, pending = self._recover_for_run()
         if stop:
             return self.store.state(self.run_id)
@@ -5035,16 +5049,130 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             if e.type == "repair.round_started"
         )
 
-    def _park_candidate_seen(self, event_types: tuple, candidate_sha: str) -> bool:
+    def _park_candidate_seen(
+        self, event_types: tuple, candidate_sha: str, task_id: str | None = None
+    ) -> bool:
         """True when any of the event types is already bound to the
         candidate -- the per-candidate idempotency guard of the repair
-        route (a re-entered park never re-opens a round or re-registers)."""
+        route (a re-entered park never re-opens a round or re-registers).
+
+        With ``task_id`` the match narrows to a registration of the SAME
+        task (FR-0286 §5 per-defect waiver: a new task's defect registers
+        its own known issue while a re-entered park of an already-registered
+        task stays one-shot). A legacy registration without a task id is
+        treated as covering the whole candidate (fail-safe)."""
         for event in self.store.events(self.run_id):
-            if event.type in event_types and (
-                event.payload or {}
-            ).get("candidate_sha") == candidate_sha:
+            if event.type not in event_types:
+                continue
+            payload = event.payload or {}
+            if payload.get("candidate_sha") != candidate_sha:
+                continue
+            if task_id is None:
+                return True
+            event_task = payload.get("task_id")
+            if event_task is None or str(event_task) == task_id:
                 return True
         return False
+
+    def _park_current_task_id(self) -> str:
+        """The task the current failed disposition belongs to (latest lease)."""
+        for event in reversed(list(self.store.events(self.run_id))):
+            if event.type == "task.started":
+                return str((event.payload or {}).get("task_id") or "")
+            if event.type == "ledger.opened" and (event.payload or {}).get("task_id"):
+                return str(event.payload["task_id"])
+        return ""
+
+    def _park_next_known_issue_number(self) -> int:
+        """Durable issue numbering: max recorded number + 1 (never reused).
+
+        The process-local counter cannot number registrations across the M7
+        handover boundary (two drives would both mint #100); the event
+        stream is the durable authority (FR-0286 §5)."""
+        numbers = [
+            int(payload["issue_number"])
+            for event in self.store.events(self.run_id)
+            if event.type == "known_issue.registered"
+            for payload in [(event.payload or {})]
+            if isinstance(payload.get("issue_number"), int)
+            and not isinstance(payload.get("issue_number"), bool)
+        ]
+        return max(numbers, default=99) + 1
+
+    def _park_task_waiver_refs(self, task_id: str) -> tuple[list[str], list[str]]:
+        """(ac_refs, node_refs) the current disposition waives.
+
+        AC refs come from the task's declared ac_refs; node refs are the
+        latest FULL failed nodes bound to those ACs by the test markers --
+        exact per-AC association, never the whole failed set (a different
+        task's defect must register independently)."""
+        acs: list[str] = []
+        for event in reversed(list(self.store.events(self.run_id))):
+            if event.type == "task.started" and str(
+                (event.payload or {}).get("task_id") or ""
+            ) == task_id:
+                acs = [
+                    str(ac)
+                    for ac in ((event.payload.get("task") or {}).get("ac_refs") or [])
+                    if str(ac).strip()
+                ]
+                break
+        failed: list[str] = []
+        for event in reversed(list(self.store.events(self.run_id))):
+            if event.type == "full.executed":
+                failed = [
+                    str(node)
+                    for node in ((event.payload or {}).get("failed_nodes") or [])
+                    if str(node).strip()
+                ]
+                break
+        if not acs:
+            return [], failed
+        waived_acs = set(acs)
+        return acs, [
+            node
+            for node in failed
+            if self._file_test_markers(node.partition("::")[0]) & waived_acs
+        ]
+
+    def _file_test_markers(self, rel_path: str) -> set[str]:
+        """TRACKS-TRACE AC markers bound to one test file (empty on miss).
+
+        The file-level binding is the trace gate's own convention
+        (``_scan_test_markers``): every AC marker in the file binds the
+        file's nodes."""
+        if not rel_path:
+            return set()
+        try:
+            text = (self.repo / rel_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return set()
+        from tracks.checks.trace import _MARKER_LINE  # lazy: checks -> executor import
+
+        return {match.group(2) for match in _MARKER_LINE.finditer(text)}
+
+    def _waived_nodes(self, nodes: list[str]) -> set[str]:
+        """Nodes waived by registered known issues (FR-0286 §5, single truth).
+
+        Consumes the event-derived association the same way for producer
+        selection, required-green judgment and ledger recording: direct
+        ``node_refs`` always apply; AC refs resolve through the file-level
+        TRACKS-TRACE markers of the given nodes."""
+        assoc = _repair.waived_associations(self.store.events(self.run_id))
+        waived = {node for node in nodes if node in assoc["nodes"]}
+        acs = assoc["acs"]
+        if not acs:
+            return waived
+        markers: dict[str, set[str]] = {}
+        for node in nodes:
+            if node in waived:
+                continue
+            path = node.partition("::")[0]
+            if path not in markers:
+                markers[path] = self._file_test_markers(path)
+            if markers[path] & acs:
+                waived.add(node)
+        return waived
 
     def _park_prism_attribution(self) -> dict:
         """Prism attribution confirmation (IF-KNOWNISSUE-001): a registered
@@ -5084,13 +5212,16 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         classification = _repair.classify_defect({"kind": finding_kind}, {})
         if classification.get("failed_class"):
             return False
+        task_id = self._park_current_task_id()
         if self._park_candidate_seen(
-            ("repair.round_started", "known_issue.registered"), candidate_sha
+            ("known_issue.registered",), candidate_sha, task_id or None
         ):
-            return False  # one-shot disposition per candidate (SM-01.17
-            # idempotency): a re-entered park neither re-opens a round for
-            # the same candidate nor re-registers; a NEW candidate (repair
-            # commit, SM-01.20) re-enters the budget flow with its own sha.
+            return False  # task registration idempotency: one disposition per
+            # task; the ROUND budget is the bounded loop -- each re-entered
+            # park of a still-unresolved disposition opens the next round (up
+            # to the budget) so attempt-exhausted walks reach the C-class
+            # exit, and a NEW task's defect registers its own disposition
+            # (FR-0286 §5 per-defect waiver).
         budget = 3
         used = self._park_repair_budget_used()
         if used >= budget:
@@ -5101,6 +5232,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 reason,
                 used,
                 budget,
+                task_id=task_id,
             )
             return False
         result = _repair.open_repair_round(self.run_id, classification, budget)
@@ -5141,6 +5273,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         round_seen = self._park_candidate_seen(
             ("repair.round_started",), candidate_sha
         )
+        task_id = self._park_current_task_id()
         if round_seen and state.current_attempt >= 3:
             budget = 3
             self._park_known_issue(
@@ -5159,9 +5292,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 # silently veto the C-class exit).
                 used=budget,
                 budget=budget,
+                task_id=task_id,
             )
             return False
-        if self._park_candidate_seen(("known_issue.registered",), candidate_sha):
+        if self._park_candidate_seen(
+            ("known_issue.registered",), candidate_sha, task_id or None
+        ):
             return False
         origin_reason = ""
         origin = False
@@ -5189,26 +5325,65 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         reason: str,
         used: int,
         budget: int,
+        task_id: str | None = None,
     ) -> None:
         """C-class exit (§1.0.14): with the budget exhausted and Prism
         confirming the attribution, a product-quality defect registers a
         Known Issue (known-issue label, candidate+evidence linked); the
         excluded classes (mechanism/security) are rejected with
-        not_product_defect -- zero known issue for security."""
+        not_product_defect -- zero known issue for security.
+
+        FR-0286 §5: the registration carries the waived task and its
+        AC/node refs so the machine closes the task as waived and the FULL
+        gates exclude exactly those bound nodes."""
+        task_id = task_id or self._park_current_task_id()
         if self._park_candidate_seen(
-            ("known_issue.registered", "known_issue.rejected"), candidate_sha
+            ("known_issue.registered", "known_issue.rejected"),
+            candidate_sha,
+            task_id or None,
         ):
             return
         attribution = self._park_prism_attribution()
         if not _repair.judge_irreparable(used, budget, attribution):
             return
         verdict = self._park_stop_payload("verdict.failed")
+        ac_refs, node_refs = self._park_task_waiver_refs(task_id)
+        # FR-0286 §5 two-drive disposition: the first exhausted park records
+        # the observation (association refs included) and leaves the run
+        # parked -- the escalation remains a legal Human escape source
+        # (FR-0287). The next drive commits the registration, whose machine
+        # projection lifts the park and waives the task.
+        if not self._park_candidate_seen(
+            ("known_issue.pending",), candidate_sha, task_id or None
+        ):
+            self._emit(
+                "known_issue.pending",
+                {
+                    "candidate_sha": candidate_sha,
+                    "task_id": task_id or None,
+                    "ac_refs": ac_refs,
+                    "node_refs": node_refs,
+                    "reason": reason,
+                },
+                command_id=cmd.command_id,
+            )
+            return
         item_or_ac = str(
-            verdict.get("classification") or verdict.get("item_or_ac") or reason
+            verdict.get("item_or_ac")
+            or (ac_refs[0] if ac_refs else "")
+            or verdict.get("classification")
+            or reason
         )
         registration = _repair.register_known_issue(
             "repo",
-            {"kind": finding_kind, "item_or_ac": item_or_ac},
+            {
+                "kind": finding_kind,
+                "item_or_ac": item_or_ac,
+                "task_id": task_id or None,
+                "ac_refs": ac_refs,
+                "node_refs": node_refs,
+                "issue_number": self._park_next_known_issue_number(),
+            },
             candidate_sha,
         )
         payload = {
@@ -5262,7 +5437,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         else:
             contract = contract_or_digest
         events = list(self.store.events(self.run_id))
-        known_issues = _repair.list_known_issues_for_preview(self.run_id)
+        known_issues = _repair.list_known_issues_for_preview(self.run_id, events)
         state = self.store.state(self.run_id)
         facts = self._release_version_facts(state)
         if not facts.get("version"):
@@ -5404,21 +5579,38 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 outcomes = self._read_runtime_blob(payload["outcomes_ref"])
             except (OSError, TypeError, ValueError, TestSelectError):
                 continue
-            if not isinstance(outcomes, list) or any(
-                not isinstance(item, dict) or item.get("status") != "passed"
-                for item in outcomes
-            ):
-                continue
             selected_nodes = {
                 str(node) for node in (selection.payload.get("nodes") or [])
             }
-            outcome_nodes = {str(item.get("node")) for item in outcomes}
-            if not selected_nodes or outcome_nodes != selected_nodes:
-                continue
-            if any(not item.get("evidence_id") for item in outcomes):
+            if not self._producer_execution_valid(outcomes, selected_nodes):
                 continue
             return event, selection
         return None, None
+
+    def _producer_execution_valid(self, outcomes, selected_nodes: set[str]) -> bool:
+        """A producer's outcome WAL proves a complete passed-or-waived run.
+
+        FR-0286 §5: failures bound to a registered known issue are waived --
+        they no longer disqualify the producer. The waiver resolution is the
+        same single-truth helper the required-green judgment consumes."""
+        if not isinstance(outcomes, list):
+            return False
+        waived = self._waived_nodes(
+            [str(item.get("node")) for item in outcomes if isinstance(item, dict)]
+        )
+        if any(
+            not isinstance(item, dict)
+            or (
+                item.get("status") != "passed"
+                and str(item.get("node")) not in waived
+            )
+            for item in outcomes
+        ):
+            return False
+        outcome_nodes = {str(item.get("node")) for item in outcomes}
+        if not selected_nodes or outcome_nodes != selected_nodes:
+            return False
+        return all(item.get("evidence_id") for item in outcomes)
 
     def _current_full_f_identity(self, selection):
         """Recompute FULL identity from the live contract/tree."""

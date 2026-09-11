@@ -15,6 +15,7 @@ failures and security findings are excluded and must be fixed or abandoned.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -33,6 +34,9 @@ _CLASSIFICATION: dict[str, tuple[str, str]] = {
 # FR-0286 §6 exclusions: these NEVER become Known Issues (zero known issue
 # for security; publish-mechanism failures must be fixed or abandoned).
 _NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding"})
+
+# AC reference token (an unfixed known issue is bound to the AC(s) it waives).
+_AC_TOKEN = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")
 
 _ROUNDS: dict[str, int] = {}
 _KNOWN_ISSUES: list[dict] = []
@@ -155,10 +159,22 @@ def judge_irreparable(rounds_used: int, budget: int, prism_attribution: dict) ->
 def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
     """Prism-confirmed product-quality defect -> GitHub issue with the
     known-issue label linked to candidate + evidence; rejects mechanism
-    failures and security findings (not_product_defect)."""
+    failures and security findings (not_product_defect).
+
+    FR-0286 §5 waiver association: the registration carries the task and the
+    AC/node refs it waives (``task_id``/``ac_refs``/``node_refs``) so the
+    machine projection can close the task and the FULL gate can exclude the
+    bound nodes without re-deriving the association from prose. The caller
+    may pin ``issue_number`` from the durable stream (the process-local
+    counter cannot number across the M7 handover boundary)."""
     attribution = attribution or {}
     kind = str(attribution.get("kind", ""))
     item = attribution.get("item_or_ac", "")
+    ac_refs = [str(ac) for ac in (attribution.get("ac_refs") or []) if str(ac).strip()]
+    node_refs = [str(n) for n in (attribution.get("node_refs") or []) if str(n).strip()]
+    task_id = attribution.get("task_id")
+    if not item and ac_refs:
+        item = ac_refs[0]
     if kind in _NOT_PRODUCT_DEFECT:
         # §1a row 29 pair payload: BOTH faces carry the closed members —
         # issue_number/url nullable on the rejected face, plus the pair label
@@ -172,9 +188,16 @@ def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
             "kind": kind,
             "item_or_ac": item,
             "candidate_sha": candidate_sha,
+            "task_id": task_id,
+            "ac_refs": list(ac_refs),
+            "node_refs": list(node_refs),
             "reason": "not_product_defect",
         }
-    issue_number = len(_KNOWN_ISSUES) + 100
+    pinned = attribution.get("issue_number")
+    if isinstance(pinned, int) and not isinstance(pinned, bool):
+        issue_number = int(pinned)
+    else:
+        issue_number = len(_KNOWN_ISSUES) + 100
     registration = {
         "event": "known_issue.registered",
         "label": "known-issue",
@@ -182,6 +205,9 @@ def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
         "url": f"https://github.com/acme/host/issues/{issue_number}",
         "item_or_ac": item,
         "candidate_sha": candidate_sha,
+        "task_id": task_id,
+        "ac_refs": list(ac_refs),
+        "node_refs": list(node_refs),
         "evidence_refs": [f"repair:{kind}"],
         "fixed": False,
     }
@@ -189,15 +215,94 @@ def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
     return registration
 
 
-def list_known_issues_for_preview(run_id: str) -> list[dict]:
-    """Every unfixed known issue MUST appear in the preview; an unlisted one
-    blocks release (informed consent, FR-0286 §5)."""
+def _event_type(event) -> str:
+    if isinstance(event, dict):
+        return str(event.get("type") or "")
+    return str(getattr(event, "type", "") or "")
+
+
+def _event_payload(event) -> dict:
+    payload = event.get("payload") if isinstance(event, dict) else getattr(event, "payload", None)
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def registered_known_issues(events) -> list[dict]:
+    """Every unfixed ``known_issue.registered`` payload, in stream order.
+
+    The event stream is the durable authority (FR-0286 §5 informed consent):
+    process-local registries do not survive the M7 handover regime, and the
+    release preview must list every open waiver even after a restart.
+    """
     return [
-        {
-            "issue": f"acme/host#{entry['issue_number']}",
-            "waiver": entry.get("item_or_ac") or "AC-FR0286-05",
-            "candidate_sha": entry.get("candidate_sha"),
-        }
-        for entry in _KNOWN_ISSUES
-        if not entry.get("fixed")
+        _event_payload(event)
+        for event in events
+        if _event_type(event) == "known_issue.registered"
+        and not _event_payload(event).get("fixed")
     ]
+
+
+def _registration_associations(registration: dict) -> tuple[set[str], set[str]]:
+    """(AC refs, node refs) carried by one registration payload."""
+    acs: set[str] = set()
+    nodes: set[str] = set()
+    for ac in registration.get("ac_refs") or ():
+        token = str(ac).strip()
+        if token:
+            acs.add(token)
+    for node in registration.get("node_refs") or ():
+        token = str(node).strip()
+        if token:
+            nodes.add(token)
+    item = str(registration.get("item_or_ac") or "")
+    acs.update(match.group(0) for match in _AC_TOKEN.finditer(item))
+    nodes.update(
+        token for token in item.split() if "::" in token and token.startswith("tests/")
+    )
+    return acs, nodes
+
+
+def waived_associations(events) -> dict:
+    """AC/node/task refs waived by registered known issues (single truth).
+
+    The extraction is purely event-derived so the preview listing, the FULL
+    required-green judgment and the machine projection all consume the same
+    association. ``item_or_ac`` prose may embed AC tokens; ``ac_refs`` /
+    ``node_refs`` are the structured carriers.
+    """
+    acs: set[str] = set()
+    nodes: set[str] = set()
+    tasks: set[str] = set()
+    for registration in registered_known_issues(events):
+        registration_acs, registration_nodes = _registration_associations(registration)
+        acs |= registration_acs
+        nodes |= registration_nodes
+        task_id = registration.get("task_id")
+        if task_id:
+            tasks.add(str(task_id))
+    return {"acs": acs, "nodes": nodes, "tasks": tasks}
+
+
+def _preview_entry(registration: dict) -> dict:
+    return {
+        "issue": f"acme/host#{registration.get('issue_number')}",
+        "waiver": registration.get("item_or_ac") or "AC-FR0286-05",
+        "candidate_sha": registration.get("candidate_sha"),
+        "task_id": registration.get("task_id"),
+        "ac_refs": list(registration.get("ac_refs") or []),
+    }
+
+
+def list_known_issues_for_preview(run_id: str, events=None) -> list[dict]:
+    """Every unfixed known issue MUST appear in the preview; an unlisted one
+    blocks release (informed consent, FR-0286 §5).
+
+    With ``events`` the listing is rebuilt from the durable stream (the
+    executor's authority across process handovers); without it the
+    process-local registry is the best available in-process view (module
+    surface parity).
+    """
+    if events is None:
+        source = [dict(entry) for entry in _KNOWN_ISSUES if not entry.get("fixed")]
+    else:
+        source = registered_known_issues(events)
+    return [_preview_entry(entry) for entry in source]

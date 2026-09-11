@@ -50,6 +50,7 @@ def _reset_m_impl_cycle(s: State) -> None:
     s.task_refs = []
     s.taskgraph_generation = 0
     s.retained_completed_task_ids = []
+    s.waived_task_ids = []
     s.current_task_metadata = None
     s.current_manifest = None
 
@@ -249,3 +250,66 @@ def _on_repair_round_started(s: State, p: dict, ev: EventEnvelope) -> None:
             # the task the fix disposition owns (red_first: the RGR slot of
             # the failed task); current_task_id is preserved for the lease.
             s.substate = "RED"
+
+
+def _waive_ledger_entries(s: State, task_id: str, node_refs: set[str]) -> None:
+    """Move the waived disposition's ledger entries out of the open count.
+
+    FR-0286 §5: a waived entry is an independent terminal -- never folded
+    into PROVEN/FIXED (the ledger's proof semantics stay untouched). The
+    projection is replay-stable: it derives only from the durable
+    registration payload and the already-replayed ledger projection."""
+    for key, entry in list(s.ledger_entries.items()):
+        if entry.get("state") not in ("OPEN", "CLASSIFIED", "FIXED", "STALE"):
+            continue
+        bound = (
+            node_refs and str(entry.get("node") or "") in node_refs
+        ) or (
+            task_id and str(entry.get("task_id") or "") == task_id
+        )
+        if bound:
+            s.ledger_entries[key] = {**entry, "state": "WAIVED"}
+            s.ledger_open = max(0, s.ledger_open - 1)
+
+
+def _on_known_issue_registered(s: State, p: dict, ev: EventEnvelope) -> None:
+    """FR-0286 §5 C-class waiver: a registered Known Issue unblocks the park.
+
+    The registration is the machine-checkable C-class disposition (§1.0.14):
+    when the walk is parked at M-IMPL/DIAGNOSE awaiting=escalation, the
+    disposition lifts the gate and closes the failed task as ``waived`` --
+    an independent terminal state (never task.completed / PROVEN / FIXED).
+    The remaining not-completed tasks continue (TASK_DISPATCH); once every
+    task is terminal (done or waived) the walk proceeds to ISLAND_GATE_2,
+    where the waived AC nodes no longer block the FULL required-green
+    judgment. A rejection (mechanism/security: zero waiver, FR-0286 §6) has
+    no handler and MUST keep the run parked.
+    """
+    if s.stage != "M-IMPL" or s.status != "awaiting_human" or s.awaiting != "escalation":
+        return
+    task_id = str(p.get("task_id") or s.current_task_id or "")
+    if task_id:
+        s.waived_task_ids = sorted(set(s.waived_task_ids) | {task_id})
+    _waive_ledger_entries(
+        s, task_id, {str(node) for node in (p.get("node_refs") or []) if node}
+    )
+    s.current_task_id = None
+    s.current_task_metadata = None
+    s.current_manifest = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.r_tree_identity = None
+    s.diagnose_classification = None
+    s.diagnose_report = None
+    s.status = "active"
+    s.awaiting = None
+    graph_ids = {
+        str(ref.get("task_id"))
+        for ref in (s.task_refs or [])
+        if isinstance(ref, dict) and ref.get("task_id")
+    }
+    waived_in_graph = {task for task in s.waived_task_ids if task in graph_ids}
+    if s.tasks_total and s.tasks_completed + len(waived_in_graph) >= s.tasks_total:
+        s.substate = "ISLAND_GATE_2"
+    else:
+        s.substate = "TASK_DISPATCH"

@@ -170,7 +170,16 @@ EVENT_TYPES = (
     "host_contract.materialized",
     "host_contract.invalid",
     "host_contract.failed",
+    # §1a row 29 closed pair: the registration AND its rejection are both
+    # members (executor/repair.register_known_issue emits either; the
+    # registration rides release_gate preview listing + milestone waiver).
+    "known_issue.registered",
     "known_issue.rejected",
+    # FR-0286 §5: the park chain's C-class observation -- the disposition is
+    # identified (association refs recorded) but the registration lands on
+    # the NEXT drive, keeping the escalation park a legal Human escape
+    # source until the operator drives again.
+    "known_issue.pending",
     "escape.barrier_established",
     "escape.late_outcome",
     "advisory.recorded",
@@ -184,7 +193,12 @@ EVENT_TYPES = (
     "failure.selected",
     "failure.injected",
     "failure.consumed",
+    "failure.acked",
     "failure.invalidated",
+    # §1a row 28: the classified in-place repair round opener (FR-0286);
+    # emitted by executor/repair.open_repair_round, projected by the
+    # machine's re-arm reducer (§1.0.14 B).
+    "repair.round_started",
     # B94 drift breaker (deferred anchor legitimancy)
     "drift_breaker",
     # T-042 (FR-0270, IF-VERIFY-004): ISSUES-path event trio — create_issue_verified

@@ -2068,12 +2068,11 @@ class MImplRuntimeMixin:
                 # ever failed (no identities opened): re-verify as FULL_F —
                 # the suite re-runs green and the gate passes. An empty
                 # ledger after a FAILED round is genuinely corrupt (the
-                # failures left no WAL) and fails closed below.
-                if not full_rows[-1].payload.get("passed"):
-                    raise LedgerCorruptionError(
-                        "FULL round failed but opened no ledger identities"
-                    )
-                round_name = "FULL_F"
+                # failures left no WAL) and fails closed below — EXCEPT when
+                # every recorded failure is waived by a registered known
+                # issue (FR-0286 §5): those failures open no identities by
+                # design and the re-verify excludes them.
+                round_name = self._empty_ledger_round_name(full_rows)
             elif ledger_is_clean(ledger):
                 round_name = "FULL_F"
             elif any(value == "FIXED" for value in ledger.values()):
@@ -2111,6 +2110,21 @@ class MImplRuntimeMixin:
                 task_id=None,
                 attempt=state.current_attempt + 1,
             )
+
+    def _empty_ledger_round_name(self, full_rows) -> str:
+        """Round name for an EMPTY ledger after a recorded FULL round.
+
+        An empty ledger after a FAILED round is corrupt unless every recorded
+        failure is waived by a registered known issue (FR-0286 §5: waived
+        failures open no ledger identities by design)."""
+        last = full_rows[-1].payload
+        if not last.get("passed"):
+            failed = [str(node) for node in (last.get("failed_nodes") or [])]
+            if not (failed and set(failed) <= self._waived_nodes(failed)):
+                raise LedgerCorruptionError(
+                    "FULL round failed but opened no ledger identities"
+                )
+        return "FULL_F"
 
     def _settle_stale_island_2_open(self, cmd, state, ledger) -> None:
         """IF-FULLCHAIN-001 stale-identity settlement closure (island_2 OPEN).
@@ -2305,6 +2319,41 @@ class MImplRuntimeMixin:
                     declared.add(normalized)
         return declared or None
 
+    def _split_waived_failures(self, failed: list[dict]) -> tuple[list[dict], list[str]]:
+        """Split FULL failures into (blocking, waived node audit).
+
+        FR-0286 §5 single truth: the waiver resolution is the shared
+        event-derived helper; a waived failure is recorded but never blocks."""
+        waived_set = self._waived_nodes([failure["node"] for failure in failed])
+        waived_nodes = sorted(
+            failure["node"] for failure in failed if failure["node"] in waived_set
+        )
+        blocking = [
+            failure for failure in failed if failure["node"] not in waived_set
+        ]
+        return blocking, waived_nodes
+
+    @staticmethod
+    def _full_f_eligible(
+        blocking: list[dict],
+        waived_nodes: list[str],
+        command_exit_codes: dict[str, int],
+        empty_pass_layers: dict[str, bool],
+    ) -> bool:
+        """FULL_F eligibility: no blocking failure AND a trustworthy layer
+        exit-code face.
+
+        A layer whose only failures are waived exits non-zero; that is the
+        waiver-adjusted proof, not a defect (FR-0286 §5)."""
+        if blocking:
+            return False
+        if waived_nodes:
+            return True
+        return all(
+            code == 0 or empty_pass_layers.get(layer, False)
+            for layer, code in command_exit_codes.items()
+        )
+
     def _execute_full_round(
         self,
         cmd,
@@ -2400,21 +2449,31 @@ class MImplRuntimeMixin:
         if outcomes_ref is None:
             raise TestSelectError("FULL outcomes blob write failed")
         failed = self._signed_failures(outcomes)
-        serves_as_full_f = not failed and (
+        # FR-0286 §5 waiver: nodes bound to a registered known issue are
+        # still executed and recorded (outcomes_ref carries every outcome)
+        # but no longer block the required-green judgment. The waiver set
+        # comes from the same event-derived extraction every other consumer
+        # uses -- the audit list stays on the payload.
+        blocking, waived_nodes = self._split_waived_failures(failed)
+        # A layer whose only failures are waived exits non-zero; the
+        # required-green proof is still complete (FR-0286 §5: the waiver
+        # changes the blocking set, never the execution record).
+        serves_as_full_f = not blocking and (
             (round_name == "FULL_1" and not ledger) or round_name == "fallback_full"
         )
         payload = {
             "round": round_name,
             "suite": ["unit", "integration", "e2e"],
-            "passed": not failed,
-            "failed_nodes": [outcome["node"] for outcome in failed],
+            "passed": not blocking,
+            "failed_nodes": [outcome["node"] for outcome in blocking],
+            "waived_nodes": waived_nodes,
             "command_echo": command_echo,
             "evidence_ids": sorted(evidence_by_node.values()),
             "serves_as_full_f": serves_as_full_f,
             "outcomes_ref": f".tracks/runtime/blobs/{outcomes_ref}",
             "gate": "ISLAND_GATE_2",
             "selection_id": selection_id,
-            "failures": failed,
+            "failures": blocking,
             "evidence_by_node": evidence_by_node,
             "execution_commit": commit,
             "selection_event_seq": selection_event.seq,
@@ -2431,10 +2490,8 @@ class MImplRuntimeMixin:
                 "env": env_identity,
                 "selection_id": selection_id,
             },
-            "full_f_eligible": not failed
-            and all(
-                code == 0 or empty_pass_layers.get(layer, False)
-                for layer, code in command_exit_codes.items()
+            "full_f_eligible": self._full_f_eligible(
+                blocking, waived_nodes, command_exit_codes, empty_pass_layers
             ),
             "empty_pass_layers": empty_pass_layers,
             "command_cwds": command_cwds,
@@ -2473,9 +2530,11 @@ class MImplRuntimeMixin:
                 }
             )
             evidence_by_node[str(outcome["node"])] = str(outcome["evidence_id"])
-        if sorted(item["node"] for item in failures) != sorted(
-            full_event.payload.get("failed_nodes") or []
-        ):
+        # FR-0286 §5: a round emitted while some nodes were already waived
+        # records failed_nodes excluding exactly its own waived_nodes set
+        # (replay-time resolution may have advanced since). Legacy events
+        # carry neither key: failed_nodes is then the full failure set.
+        if not self._wal_failed_nodes_match(full_event.payload, failures):
             raise LedgerCorruptionError("FULL outcomes WAL disagrees with failed_nodes")
         selection = next(
             (
@@ -2514,9 +2573,33 @@ class MImplRuntimeMixin:
             ).encode("utf-8")
         ).hexdigest()
 
+    @staticmethod
+    def _wal_failed_nodes_match(event_payload: dict, failures: list[dict]) -> bool:
+        """WAL failures agree with the event's recorded failed_nodes.
+
+        New-style events (``waived_nodes`` present) record failed_nodes with
+        the waived set already excluded; legacy events record the full set
+        (FR-0286 §5)."""
+        recorded = sorted(event_payload.get("failed_nodes") or [])
+        if "waived_nodes" in event_payload:
+            waived = {str(node) for node in (event_payload.get("waived_nodes") or [])}
+            return sorted(
+                item["node"] for item in failures if item["node"] not in waived
+            ) == recorded
+        return sorted(item["node"] for item in failures) == recorded
+
     def _record_full_failures(self, cmd, state, full: dict, ledger) -> None:
         identities = {tuple(json.loads(key)): value for key, value in ledger.items()}
+        # FR-0286 §5: a failure whose node is waived by a registered known
+        # issue is already dispositioned -- it opens no ledger identity and
+        # never re-enters the per-item diagnosis loop. Covers both fresh
+        # rounds (failures already filtered) and WAL reconciliation.
+        waived = self._waived_nodes(
+            [failure["node"] for failure in full["failures"]]
+        )
         for failure in full["failures"]:
+            if failure["node"] in waived:
+                continue
             signature = failure.get("failure_signature") or self._full_failure_signature(failure)
             identity = (failure["node"], signature)
             prior = identities.get(identity)
@@ -2993,7 +3076,12 @@ class MImplRuntimeMixin:
 
         Returns the set of completed task IDs combining retained IDs from
         prior generations (state.retained_completed_task_ids) with
-        task.completed events after the latest taskgraph.committed."""
+        task.completed events after the latest taskgraph.committed.
+
+        FR-0286 §5: known_issue.registered tasks are terminal as ``waived``
+        (an independent terminal state, never task.completed) -- selection
+        must not keep their lease in flight after the machine projection
+        closed them."""
         latest_taskgraph_seq = max(
             (e.seq for e in events if e.type == "taskgraph.committed"),
             default=0,
@@ -3005,7 +3093,18 @@ class MImplRuntimeMixin:
             and ev.payload.get("task_id")
             and ev.seq > latest_taskgraph_seq
         }
-        return set(state.retained_completed_task_ids or []) | current_gen
+        waived = {
+            ev.payload.get("task_id")
+            for ev in events
+            if ev.type == "known_issue.registered"
+            and ev.seq > latest_taskgraph_seq
+            and not (ev.payload or {}).get("fixed")
+        }
+        return (
+            set(state.retained_completed_task_ids or [])
+            | current_gen
+            | {task for task in waived if task}
+        )
 
     def _recover_task_lease(self, cmd, events, completed: set[str]) -> None:
         lease = next((ev for ev in reversed(events) if ev.type == "writelock.granted"), None)

@@ -171,6 +171,7 @@ from .machine_lifecycle import (
     _on_backlog_recorded,
     _on_branch_created,
     _on_branch_deleted,
+    _on_known_issue_registered,
     _on_repair_round_started,
     _on_review_round_started,
     _on_run_breaker_tripped,
@@ -420,6 +421,11 @@ class State:
     task_refs: list[dict] = field(default_factory=list)
     taskgraph_generation: int = 0
     retained_completed_task_ids: list = field(default_factory=list)
+    # FR-0286 §5 waiver: task ids closed by a registered Known Issue -- an
+    # independent terminal state (never folded into task.completed, PROVEN or
+    # FIXED). A waived task is done for selection/exit purposes; the release
+    # trace marks its ACs waived instead of passed.
+    waived_task_ids: list = field(default_factory=list)
     current_task_metadata: dict | None = None
     current_manifest: dict | None = None
     # SM-02 doc-gap adjudication projection (IF-DOCGAP-001 / IF-QUARANTINE-001):
@@ -612,6 +618,10 @@ _APPLY = {
     # the repair disposition owns the next dispatch (Devon red_first), so
     # the escalation gate lifts and decide() routes the repair attempt.
     "repair.round_started": _on_repair_round_started,
+    # FR-0286 §5 C-class waiver: the registered Known Issue lifts the
+    # escalation gate and closes the failed task as waived (independent
+    # terminal; never PROVEN/FIXED) so the task graph can reach M-IMPL EXIT.
+    "known_issue.registered": _on_known_issue_registered,
 }
 
 
