@@ -4008,6 +4008,12 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # v0.8 (IF-VERIFY-001): a RELEASE-capable run re-routes at the
             # boundary through the version capability seam (after_m_impl)
             # instead of completing -- the seam's None keeps the boundary.
+            # Refresh the projection first: the stage.exited event above is
+            # append-only and the handler's `state` snapshot predates it, so
+            # after_m_impl (which gates on state.stage_exited) would always
+            # see False and every RELEASE-capable run would silently complete
+            # at the boundary instead of entering M-VERIFY.
+            state = self.store.state(self.run_id)
             route = self._release_boundary_route(state)
             if route is not None:
                 entered = (route.params or {}).get("stage") or "M-VERIFY"

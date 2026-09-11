@@ -2056,6 +2056,17 @@ class MImplRuntimeMixin:
                 ledger = rebuild_ledger(self.store.events(self.run_id))
             if not full_rows:
                 round_name = "FULL_1"
+            elif not ledger:
+                # A recorded FULL round with an EMPTY ledger means no round
+                # ever failed (no identities opened): re-verify as FULL_F —
+                # the suite re-runs green and the gate passes. An empty
+                # ledger after a FAILED round is genuinely corrupt (the
+                # failures left no WAL) and fails closed below.
+                if not full_rows[-1].payload.get("passed"):
+                    raise LedgerCorruptionError(
+                        "FULL round failed but opened no ledger identities"
+                    )
+                round_name = "FULL_F"
             elif ledger_is_clean(ledger):
                 round_name = "FULL_F"
             elif any(value == "FIXED" for value in ledger.values()):

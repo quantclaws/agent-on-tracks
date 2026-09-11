@@ -223,10 +223,27 @@ class V08Extension:
     (missing pieces block fail-closed, §1.0.9). Below-threshold versions
     select no extension and keep their boundary (未达门槛保持 boundary;
     the seam's ``None``).
+
+    The ISLAND_GATE_2 exit gate and closure rendering are inherited
+    unchanged from the v0.7 composition (architecture: candidate-bound
+    closure semantics keep v0.7 semantics); forwarding verbatim to the
+    same shared callbacks keeps a single implementation truth.
     """
 
     after_m_impl = staticmethod(_after_m_impl)
     before_mtest = staticmethod(_before_mtest)
+
+    @staticmethod
+    def island_gate_2(arguments=(), **kwargs):
+        from tracks.executor.failclosed import demonstrate_failclosed
+
+        return demonstrate_failclosed(*arguments, **kwargs)
+
+    @staticmethod
+    def render_closure(payload):
+        from tracks.executor.v07_runtime import _render_closure
+
+        return _render_closure(payload)
 
 
 version_extensions.register_extension(EXTENSION_VERSION, V08Extension())
