@@ -131,10 +131,26 @@ def _decide_publish(substate: str, state: State) -> Command | None:
     return None
 
 
+def _decide_milestone(substate: str, state: State) -> Command | None:
+    """SM-01.8.1 -> SM-01.16: the itemized closing tail resumes.
+
+    trace_closed -> issue/project closed -> sealed -> refs.cleaned ->
+    run.completed; the handler skips sub-steps whose own event already landed
+    (any prior command_id counts), so a new close_milestone command continues
+    the interrupted tail without re-emitting completed steps. Once
+    run.completed lands the projection flips status=completed and decide()
+    halts before this decider is consulted again.
+    """
+    if substate == _RELEASE_STAGE_SUBSTATES["M-MILESTONE"]:
+        return Command(kind="close_milestone")
+    return None
+
+
 _DECIDERS = {
     "M-VERIFY": _decide_verify,
     "M-RELEASE": _decide_release,
     "M-PUBLISH": _decide_publish,
+    "M-MILESTONE": _decide_milestone,
 }
 
 

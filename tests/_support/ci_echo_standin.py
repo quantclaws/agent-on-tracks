@@ -24,7 +24,12 @@ DEFAULT_RUN_ID = 17
 
 
 class CiEchoStandIn:
-    """Minimal ``actions/runs`` + ``actions/runs/{id}/jobs`` echo subset."""
+    """Minimal ``actions/runs`` + ``actions/runs/{id}/jobs`` echo subset.
+
+    Also serves the M-MILESTONE close chain (IF-ISSUE-002, additive): issue
+    comment POST / issue PATCH+GET and milestone PATCH+GET over the same
+    stateful loopback channel, so authoritative close readbacks verify.
+    """
 
     def __init__(
         self,
@@ -41,6 +46,8 @@ class CiEchoStandIn:
         self.run_id = run_id
         self.checks = dict(checks or {})
         self.requests: list[str] = []
+        self.issue_states: dict[int, str] = {}
+        self.last_comment_id = 0
         self._lock = threading.Lock()
         owner = self
 
@@ -56,10 +63,68 @@ class CiEchoStandIn:
                 self.end_headers()
                 self.wfile.write(raw)
 
+            def _json_body(self) -> dict:
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length) if length else b""
+                try:
+                    return json.loads(raw.decode("utf-8")) if raw else {}
+                except ValueError:
+                    return {}
+
+            def _issue_api(self, method: str) -> bool:
+                prefix = f"/repos/{owner.repo}/issues/"
+                if not self.path.startswith(prefix):
+                    return False
+                tail = self.path[len(prefix) :].split("/")
+                try:
+                    number = int(tail[0])
+                except (ValueError, IndexError):
+                    self._reply(404, {"message": "not found"})
+                    return True
+                if method == "POST" and len(tail) > 1 and tail[1] == "comments":
+                    self._json_body()
+                    owner.last_comment_id += 1
+                    self._reply(201, {"id": owner.last_comment_id})
+                    return True
+                if method == "PATCH":
+                    owner.issue_states[number] = str(
+                        self._json_body().get("state") or "closed"
+                    )
+                    self._reply(200, {"number": number, "state": owner.issue_states[number]})
+                    return True
+                if method == "GET":
+                    self._reply(
+                        200,
+                        {
+                            "number": number,
+                            "title": "issue",
+                            "state": owner.issue_states.get(number, "open"),
+                        },
+                    )
+                    return True
+                self._reply(404, {"message": "not found"})
+                return True
+
+            def _milestone_api(self, method: str) -> bool:
+                prefix = f"/repos/{owner.repo}/milestones/"
+                if not self.path.startswith(prefix):
+                    return False
+                if method == "PATCH":
+                    self._json_body()
+                    self._reply(200, {"title": "milestone", "state": "closed"})
+                    return True
+                if method == "GET":
+                    self._reply(200, {"title": "milestone", "state": "closed"})
+                    return True
+                self._reply(404, {"message": "not found"})
+                return True
+
             def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler protocol
                 parsed = urlparse(self.path)
                 with owner._lock:
                     owner.requests.append(self.path)
+                if self._issue_api("GET") or self._milestone_api("GET"):
+                    return
                 prefix = f"/repos/{owner.repo}/actions/"
                 if parsed.path == f"{prefix}runs":
                     head_sha = (parse_qs(parsed.query).get("head_sha") or [""])[0]
@@ -84,6 +149,20 @@ class CiEchoStandIn:
                             ],
                         },
                     )
+                    return
+                self._reply(404, {"message": "not found"})
+
+            def do_POST(self):  # noqa: N802
+                with owner._lock:
+                    owner.requests.append(self.path)
+                if self._issue_api("POST"):
+                    return
+                self._reply(404, {"message": "not found"})
+
+            def do_PATCH(self):  # noqa: N802
+                with owner._lock:
+                    owner.requests.append(self.path)
+                if self._issue_api("PATCH") or self._milestone_api("PATCH"):
                     return
                 self._reply(404, {"message": "not found"})
 

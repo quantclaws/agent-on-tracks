@@ -682,6 +682,111 @@ def reject_fake_artifact(issue_id) -> dict:
     }
 
 
+# -- IF-ISSUE-002 issue/project close chain (FR-0284) --------------------------
+#
+# The M-MILESTONE closer's irreversible effects: comment + close + remote
+# readback for each authoritative issue mapping. Same TRAC_GITHUB_API_BASE
+# stand-in channel and token discipline as the readback/creation faces (a
+# missing token raises the classified ``missing_token`` error; transport/HTTP
+# failures stay in the normalized ``error`` field and can never claim
+# api_verified=true).
+
+
+def _issue_api_repo(repo_id: str) -> str:
+    resolved = str(repo_id or "").strip() or os.environ.get("TRAC_GITHUB_REPO", "")
+    if not resolved:
+        raise GithubIssuesError("not_found", "TRAC_GITHUB_REPO not set (owner/name)")
+    return resolved
+
+
+def close_issue(repo_id: str, issue_number: int, comment: str) -> dict:
+    """Comment + close + API readback for one issue (AC-FR0284-01).
+
+    The release-trace comment lands first (the durable audit trail), then the
+    issue is PATCHed ``state=closed`` and re-read; only a readback that
+    observes ``state=closed`` for the same number yields ``api_verified``.
+    """
+    _require_token()
+    repo = _issue_api_repo(repo_id)
+    base = _api_base()
+    number = int(issue_number)
+    comment_payload: dict = {"comment_id": None}
+    if comment:
+        body, error, _status = _api_json(
+            _api_request(
+                f"{base}/repos/{repo}/issues/{number}/comments", "POST", {"body": comment}
+            )
+        )
+        if error is not None:
+            return {"issue_number": number, "state": "", "comment_id": None,
+                    "api_verified": False, "error": error}
+        if isinstance(body, dict):
+            comment_payload["comment_id"] = body.get("id")
+    data, error, _status = _api_json(
+        _api_request(f"{base}/repos/{repo}/issues/{number}", "PATCH", {"state": "closed"})
+    )
+    if error is not None:
+        return {"issue_number": number, "state": "", "comment_id": comment_payload["comment_id"],
+                "api_verified": False, "error": error}
+    state = str((data or {}).get("state") or "") if isinstance(data, dict) else ""
+    try:
+        readback = readback_issue(repo, number)
+    except GithubIssuesError as exc:
+        return {
+            "issue_number": number,
+            "state": state,
+            "comment_id": comment_payload["comment_id"],
+            "api_verified": False,
+            "error": f"{exc.classification}: {exc}",
+        }
+    verified = readback.get("state") == "closed" and int(readback.get("issue_number", -1)) == number
+    return {
+        "issue_number": number,
+        "state": readback.get("state", state),
+        "comment_id": comment_payload["comment_id"],
+        "api_verified": bool(verified),
+        "error": None if verified else "readback_unconfirmed",
+    }
+
+
+def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
+    """PATCH + readback for the release Project/milestone (AC-FR0284-01).
+
+    A declared milestone is closed through the API and re-read; only an
+    observed ``state=closed`` yields ``api_verified``. An empty milestone is a
+    malformed request (callers emit the audited skip instead of claiming a
+    close).
+    """
+    _require_token()
+    repo = _issue_api_repo(repo_id)
+    if milestone in (None, ""):
+        return {
+            "project": project,
+            "milestone": milestone,
+            "state": "",
+            "api_verified": False,
+            "error": "milestone_not_declared",
+        }
+    base = _api_base()
+    url = f"{base}/repos/{repo}/milestones/{milestone}"
+    data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
+    if error is not None:
+        return {"project": project, "milestone": milestone, "state": "",
+                "api_verified": False, "error": error}
+    state = str((data or {}).get("state") or "") if isinstance(data, dict) else ""
+    readback, readback_error, _status = _api_json(_api_request(url, "GET"))
+    if readback_error is None and isinstance(readback, dict):
+        state = str(readback.get("state") or state)
+    verified = state == "closed"
+    return {
+        "project": project,
+        "milestone": milestone,
+        "state": state,
+        "api_verified": verified,
+        "error": None if verified else "readback_unconfirmed",
+    }
+
+
 # -- IF-PUBLISH-001/002 release & artifact API boundary (FR-0275) -------------
 #
 # Releases and release assets go through the same TRAC_GITHUB_API_BASE stand-in
