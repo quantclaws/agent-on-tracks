@@ -147,6 +147,10 @@ def envelope_declaration_error(assignment: dict | None) -> dict | None:
     malformed or self-conflicting; None when it is a well-formed single
     version (the kernel then compares the derived face normally).
 
+    - any present non-None ``envelope`` that is not an object is malformed:
+      a truthy wrong-typed declaration (``"junk"``, ``[]``, ``2``, ``True``)
+      is declared, so it enters the enforced gate and may never fall back to
+      the legacy ``envelope_version`` copy;
     - a declaration header carrying NEITHER ``version`` NOR ``token`` is
       malformed — a missing header version inside a declaration rejects;
     - a header whose ``version`` and ``token`` normalize to different
@@ -154,12 +158,24 @@ def envelope_declaration_error(assignment: dict | None) -> dict | None:
     - a redundant ``envelope_version`` that normalizes to a different
       version than the authoritative header is a conflicting duplicate and
       rejects (it may never override the declaration).
-    Garbled/unknown header tokens are NOT reported here: the derived face is
-    handed to the kernel, which rejects them as invalid/version mismatches.
+    An explicit ``None``/missing key is undeclared/legacy and validates
+    nothing (staged semantics); garbled/unknown header tokens are NOT
+    reported here: the derived face is handed to the kernel, which rejects
+    them as invalid/version mismatches.
     """
     envelope = (assignment or {}).get("envelope")
-    if not isinstance(envelope, dict):
+    if envelope is None:
         return None  # undeclared / legacy assignment: nothing to validate
+    if not isinstance(envelope, dict):
+        return {
+            "face": "assignment",
+            "version": None,
+            "reason": "malformed",
+            "detail": (
+                "envelope declaration must be an object, got "
+                f"{type(envelope).__name__}"
+            ),
+        }
     header_version = envelope.get("version")
     header_token = envelope.get("token")
     resolved = header_version if header_version is not None else header_token

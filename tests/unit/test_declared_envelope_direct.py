@@ -19,6 +19,10 @@ from pathlib import Path
 
 import pytest
 
+from tracks.effects.dispatch_parity import (
+    envelope_declaration_error,
+    static_parity_check,
+)
 from tracks.executor.executor import Executor
 from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
@@ -242,3 +246,51 @@ def test_parser_classifies_non_string_and_empty_replies():
     with pytest.raises(EnvelopeFormatError) as empty:
         parse_agent_output("")
     assert empty.value.kind == "no_envelope_block"
+
+
+# ---------------------------------------------------------------------------
+# Wrong-typed envelope declarations fail closed (truthy malformed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    ["junk", [], 2, True],
+    ids=["string", "empty-list", "int", "bool"],
+)
+def test_wrong_typed_envelope_declaration_is_malformed(envelope):
+    assignment = {"envelope": envelope, "envelope_version": ENVELOPE_VERSION}
+    error = envelope_declaration_error(assignment)
+    assert error is not None
+    assert error["face"] == "assignment"
+    assert error["reason"] == "malformed"
+    assert "object" in error["detail"]
+
+    verdict = static_parity_check(assignment)
+    assert verdict["consistent"] is False
+    assert any(m["reason"] == "malformed" for m in verdict["mismatches"])
+
+
+def test_truthy_malformed_envelope_never_passes_via_legacy_copy():
+    """The original defect: a truthy wrong-typed declaration fell back to a
+    matching legacy envelope_version and passed the static gate."""
+    assignment = {"envelope": "junk", "envelope_version": ENVELOPE_VERSION}
+    verdict = static_parity_check(assignment)
+    assert verdict["consistent"] is False
+    assert all(m["face"] == "assignment" for m in verdict["mismatches"])
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        None,
+        {},
+        {"task": {"task_id": TASK_ID}},
+        {"envelope": None},
+        {"envelope": None, "envelope_version": ENVELOPE_VERSION},
+    ],
+    ids=["none", "empty", "task-only", "envelope-none", "envelope-none-legacy"],
+)
+def test_missing_or_none_envelope_keeps_staged_semantics(assignment):
+    assert envelope_declaration_error(assignment) is None
+    assert static_parity_check(assignment)["consistent"] is True

@@ -7,149 +7,263 @@ from pathlib import Path
 
 import pytest
 
-from tracks.kernel.envelope import check_envelope_parity, envelope_schema_digest
+from tracks import paths
+from tracks.executor.executor import Executor
+from tracks.kernel.envelope import (
+    DEFAULT_PARITY_FACES,
+    ENVELOPE_VERSION,
+    PARITY_STAGED,
+    EnvelopeFormatError,
+    build_assignment_envelope,
+    check_envelope_parity,
+    envelope_schema_digest,
+    parse_agent_output,
+    validate_envelope,
+)
+from tracks.kernel.events import Command
+from tracks.store import Store
 
 pytestmark = pytest.mark.integration
 
+_CORPUS = Path(__file__).resolve().parents[1] / "assets" / "v0.8" / "malformed"
+_MALFORMED_KINDS = {
+    "missing_kind.json": "missing_kind",
+    "multiple_blocks.json": "multiple_envelope_blocks",
+    "no_fence.json": "no_envelope_block",
+    "unknown_version.json": "unknown_version",
+}
+
+
+def _start_run(host_repo, trac, summary: str):
+    """Init/start a real run and return (store, run_id); caller closes store."""
+    assert trac("init").returncode == 0
+    assert trac("start", "v0.8", stdin=summary).returncode == 0
+    store = Store(paths.tracks_home(host_repo))
+    return store, store.active_run()
+
 
 # AC-FR0279-01@v0.8 TRACKS-TRACE parity mismatch rejects dispatch before execution
-def test_parity_mismatch_rejects(host_repo, trac, event_log):
-    try:
-        check_envelope_parity({"prompt": "v2", "agent": "v1"})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-002" in str(exc)
-    try:
-        envelope_schema_digest("devon:red")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-002" in str(exc)
+def test_parity_mismatch_rejects(host_repo, trac, event_log, monkeypatch):
+    from tracks.effects.fake import FakeBackend
 
-    trac("run")
-    events = event_log()
-    # Simulate parity mismatch injection: after implementation must produce dispatch.rejected
-    rejected = [e for e in events if e["type"] == "dispatch.rejected" and e["payload"].get("reason") == "version_parity_mismatch"]
-    # Pre-implementation legal red: expect block before agent execution
-    if rejected:
-        assert rejected[0]["payload"]["surfaces"]
-        status = trac("status")
-        assert "version parity mismatch" in status.stdout.lower() or "blocked" in status.stdout
-        # No outcome produced after rejected parity
-        outcomes = [e for e in events if e["type"] == "outcome.received"]
-        for o in outcomes:
-            assert o["seq"] < rejected[0]["seq"] or o["payload"].get("dispatch_id") != rejected[0]["payload"].get("dispatch_id")
-    else:
-        raise AssertionError("dispatch.rejected must appear for parity mismatch")
+    # Kernel contract: a face declaring a different version is a mismatch...
+    faces = dict.fromkeys(DEFAULT_PARITY_FACES, ENVELOPE_VERSION)
+    faces["agent"] = 1
+    verdict = check_envelope_parity(faces)
+    assert verdict["consistent"] is False
+    assert verdict["mismatches"] == [{"face": "agent", "version": 1, "reason": "version"}]
+
+    # ...and malformed/undeclared face values are mismatches with a reason too.
+    invalid = check_envelope_parity({"prompt": "v2", "agent": "v1"})
+    assert invalid["consistent"] is False
+    assert all("reason" in mismatch for mismatch in invalid["mismatches"])
+
+    # Schema digest is real and deterministic; unknown kinds still reject.
+    assert envelope_schema_digest("devon:red") == envelope_schema_digest("devon:red")
+    with pytest.raises(EnvelopeFormatError) as exc:
+        envelope_schema_digest("nope:nope")
+    assert exc.value.kind == "unknown_kind"
+
+    # Runtime contract: a stale declared face blocks the dispatch before any
+    # agent execution (dispatch.rejected, never a dispatch.parity success).
+    store, run = _start_run(host_repo, trac, "parity mismatch rejects")
+    try:
+        monkeypatch.setattr(FakeBackend, "envelope_version", 1)
+        executor = Executor(store, host_repo, run)
+        cmd = Command(kind="dispatch_agent", params={}, command_id="PARITY-MISMATCH")
+        assignment = {
+            "envelope": build_assignment_envelope("prism:final"),
+            "envelope_version": ENVELOPE_VERSION,
+        }
+        assert executor._dispatch_parity_ok(cmd, None, assignment) is False
+        events = [e for e in store.events(run) if e.command_id == cmd.command_id]
+        rejected = [e for e in events if e.type == "dispatch.rejected"]
+        assert len(rejected) == 1
+        assert rejected[0].payload["reason"] == "version_parity_mismatch"
+        assert rejected[0].payload["mismatches"]
+        assert not any(e.type == "dispatch.parity" for e in events)
+        assert not any(e.type == "outcome.received" for e in events)
+    finally:
+        store.close()
 
 
 # AC-FR0279-02@v0.8 TRACKS-TRACE format vs semantic events separated and not counted
 def test_format_vs_semantic_events_separated(host_repo, trac, event_log):
-    try:
-        from tracks.kernel.envelope import parse_agent_output
-
+    with pytest.raises(EnvelopeFormatError) as bad:
         parse_agent_output("bad")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-001" in str(exc) or "IF-ENVELOPE-002" in str(exc)
-    except Exception:
-        pass
+    assert bad.value.kind == "no_envelope_block"
 
-    trac("run")
-    events = event_log()
-    format_errors = [e for e in events if e["type"] == "format_error"]
-    semantic = [e for e in events if e["type"] == "semantic_attempt_failed"]
-    replay_out = trac("replay").stdout
-    assert replay_out is not None
-    assert format_errors, "format_error must appear"
-    assert semantic, "semantic_attempt_failed must appear"
-    # format_error must not be counted as semantic attempt
-    for fe in format_errors:
-        assert fe["payload"].get("attempt_not_counted") is True or "attempt_not_counted" in str(fe)
-        assert fe["type"] != "semantic_attempt_failed"
-    # No business mutation from format_error
-    business = [e for e in events if e["type"] in ("publish.executed", "release.decided")]
-    for b in business:
-        assert b["seq"] not in [f["seq"] for f in format_errors]
+    store, run = _start_run(host_repo, trac, "format vs semantic events")
+    try:
+        executor = Executor(store, host_repo, run)
+        attempts_before = store.state(run).current_attempt
+        cmd = Command(kind="dispatch_agent", params={}, command_id="FORMAT-VS-SEMANTIC")
+        assignment = {"envelope": build_assignment_envelope("prism:final")}
+        handled = executor._format_error_shortcircuit(
+            {"raw_output": "bad"}, cmd, None, assignment
+        )
+        assert handled is True
+
+        events = [e for e in store.events(run) if e.command_id == cmd.command_id]
+        assert [e.type for e in events] == ["format_error"]
+        assert events[0].payload["kind"] == "no_envelope_block"
+        # A format_error is a separate event class, never a semantic attempt,
+        # and it consumes no attempt.
+        assert all(e.type != "semantic_attempt_failed" for e in events)
+        assert store.state(run).current_attempt == attempts_before
+    finally:
+        store.close()
 
 
 # AC-FR0279-03@v0.8 TRACKS-TRACE malformed regression corpus rejects all
 def test_malformed_regression_corpus(host_repo, trac, event_log):
-    corpus = Path("tests/assets/v0.8/malformed")
-    # Corpus may be empty pre-seed; create minimal malformed samples if missing
-    if not any(corpus.glob("*.json")):
-        corpus.mkdir(parents=True, exist_ok=True)
-        (corpus / "missing_kind.json").write_text('{"payload": {}}', encoding="utf-8")
-        (corpus / "unknown_version.json").write_text('{"envelope": {"kind": "devon:red", "version": 99}, "payload": {}}', encoding="utf-8")
+    samples = sorted(_CORPUS.glob("*.json"))
+    assert samples, "malformed corpus must not be empty"
+    malformed = [s for s in samples if s.name in _MALFORMED_KINDS]
 
-    from tracks.kernel.envelope import validate_envelope
-
-    for sample in sorted(corpus.glob("*.json")):
+    # Every malformed sample is rejected with its classified format error:
+    # structured variants through validate_envelope, reply-shaped/free-form
+    # text through the full reply parse path.
+    nested = {"missing_kind.json", "unknown_version.json"}
+    for sample in malformed:
         text = sample.read_text(encoding="utf-8")
-        # Each sample must be rejected via format_error, not passed through
-        try:
-            parsed = validate_envelope(json.loads(text), None)
-            raise AssertionError(f"malformed sample {sample.name} must not validate: {parsed}")
-        except NotImplementedError as exc:
-            assert "IF-ENVELOPE-002" in str(exc) or "IF-ENVELOPE-001" in str(exc)
-        except Exception as exc:
-            # Accept format error classification
-            assert "kind" in str(exc).lower() or "version" in str(exc).lower() or isinstance(exc, ValueError)
+        with pytest.raises(EnvelopeFormatError) as exc:
+            if sample.name in nested:
+                validate_envelope(json.loads(text), None)
+            else:
+                parse_agent_output(text)
+        assert exc.value.kind == _MALFORMED_KINDS[sample.name]
 
-    trac("run")
-    events = event_log()
-    format_errors = [e for e in events if e["type"] == "format_error"]
-    assert format_errors, "format_error must appear for malformed corpus"
-    report = trac("report").stdout
-    assert "regression" in report.lower() or "format_error" in report.lower()
+    # The corpus also carries a valid control sample the parser must accept.
+    control = _CORPUS / "sample.json"
+    parsed = validate_envelope(json.loads(control.read_text(encoding="utf-8")), None)
+    assert parsed["envelope"]["kind"] == "devon:red"
+
+    # Runtime contract: each malformed reply becomes exactly one format_error,
+    # with no semantic attempt and no business mutation.
+    store, run = _start_run(host_repo, trac, "malformed corpus")
+    try:
+        executor = Executor(store, host_repo, run)
+        attempts_before = store.state(run).current_attempt
+        for idx, sample in enumerate(malformed):
+            cmd = Command(
+                kind="dispatch_agent", params={}, command_id=f"MALFORMED-{idx}"
+            )
+            assignment = {"envelope": build_assignment_envelope("prism:final")}
+            handled = executor._format_error_shortcircuit(
+                {"raw_output": sample.read_text(encoding="utf-8")},
+                cmd,
+                None,
+                assignment,
+            )
+            assert handled is True
+            events = [e for e in store.events(run) if e.command_id == cmd.command_id]
+            assert [e.type for e in events] == ["format_error"]
+        all_events = list(store.events(run))
+        assert len([e for e in all_events if e.type == "format_error"]) == len(malformed)
+        assert not any(e.type == "semantic_attempt_failed" for e in all_events)
+        assert not any(e.type == "outcome.received" for e in all_events)
+        assert store.state(run).current_attempt == attempts_before
+    finally:
+        store.close()
 
 
 # AC-NFR0145-01@v0.8 TRACKS-TRACE deterministic parse and parity
 def test_deterministic_parse_and_parity(host_repo, trac, event_log):
-    from tracks.kernel.envelope import check_envelope_parity, parse_agent_output
+    reply = (
+        "```tracks-envelope\n"
+        '{"envelope": {"kind": "devon:red", "version": 2}, "payload": {"a": 1}}\n'
+        "```\n"
+    )
+    first = parse_agent_output(reply)
+    assert first["envelope"] == {"kind": "devon:red", "version": 2}
+    assert first["payload"] == {"a": 1}
+    assert parse_agent_output(reply) == first  # same bytes -> same parse
 
-    try:
-        parse_agent_output('```tracks-envelope\n{"envelope": {"kind": "devon:red", "version": 2}, "payload": {"a": 1}}\n```')
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-001" in str(exc)
-    try:
-        check_envelope_parity({"prompt": "v2", "agent": "v2"})
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-002" in str(exc)
+    # Default parity: the six documented faces are ALL required.
+    complete = dict.fromkeys(DEFAULT_PARITY_FACES, ENVELOPE_VERSION)
+    assert check_envelope_parity(complete) == {"consistent": True, "mismatches": []}
+    incomplete = dict(complete)
+    del incomplete["agent"]
+    missing = check_envelope_parity(incomplete)
+    assert missing["consistent"] is False
+    assert missing["mismatches"] == [{"face": "agent", "version": None, "reason": "missing"}]
 
-    a = {"version": 2, "kind": "devon:red"}
-    b = {"version": 2, "kind": "devon:red"}
-    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
-    trac("run")
-    events = event_log()
-    parity = [e for e in events if e["type"] == "dispatch.parity"]
-    assert parity, "dispatch.parity must appear for deterministic envelope"
-    replay1 = trac("replay").stdout
-    replay2 = trac("replay").stdout
-    assert replay1 == replay2
-    assert "dispatch.parity" in replay1 or "envelope" in replay1.lower()
+    # Explicit non-empty required_faces: only those named faces are enforced.
+    assert (
+        check_envelope_parity({"prompt": ENVELOPE_VERSION}, required_faces=("prompt",))[
+            "consistent"
+        ]
+        is True
+    )
+    named = check_envelope_parity(
+        {"prompt": ENVELOPE_VERSION}, required_faces=("prompt", "agent")
+    )
+    assert named["consistent"] is False
+    assert any(
+        m["face"] == "agent" and m["reason"] == "missing" for m in named["mismatches"]
+    )
+
+    # Explicit staged opt-out (PARITY_STAGED): undeclared faces skip, only
+    # declared mismatches block.
+    assert check_envelope_parity({}, required_faces=PARITY_STAGED)["consistent"] is True
+    staged = check_envelope_parity({"agent": 1}, required_faces=PARITY_STAGED)
+    assert staged == {
+        "consistent": False,
+        "mismatches": [{"face": "agent", "version": 1, "reason": "version"}],
+    }
+
+    # Runtime outlet: re-dispatching the same reply parses identically and
+    # never produces a format_error.
+    store, run = _start_run(host_repo, trac, "deterministic parse")
+    try:
+        executor = Executor(store, host_repo, run)
+        assignment = {"envelope": build_assignment_envelope("devon:red")}
+        parsed = []
+        for idx in range(2):
+            cmd = Command(
+                kind="dispatch_agent", params={}, command_id=f"DETERMINISTIC-{idx}"
+            )
+            result = {"raw_output": reply}
+            assert executor._format_error_shortcircuit(result, cmd, None, assignment) is False
+            parsed.append(result["envelope"])
+        assert parsed[0] == parsed[1]
+        assert not [e for e in event_log(run) if e["type"] == "format_error"]
+    finally:
+        store.close()
 
 
 # AC-NFR0145-02@v0.8 TRACKS-TRACE malformed no business mutation
 def test_malformed_no_business_mutation(host_repo, trac, event_log):
-    try:
-        from tracks.kernel.envelope import parse_agent_output
-
-        parse_agent_output("```tracks-envelope\n{\"envelope\": {\"kind\": \"bad\", \"version\": 2}, \"payload\": {}}\n```")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-ENVELOPE-001" in str(exc) or "IF-ENVELOPE-002" in str(exc)
-
-    trac("run")
-    events_after = event_log()
-    format_errors = [e for e in events_after if e["type"] == "format_error"]
-    # No publish/release from format_error
-    for fe in format_errors:
-        after_fe = [e for e in events_after if e["seq"] > fe["seq"] and e["type"] in ("publish.executed", "release.decided")]
-        assert not after_fe
-    replay_out = trac("replay").stdout
-    # Pre-implementation legal red: replay must show format handling
-    assert "format_error" in replay_out.lower() or "envelope" in replay_out.lower(), (
-        f"replay must show format handling, got {replay_out!r}"
+    malformed = (
+        "```tracks-envelope\n"
+        '{"envelope": {"kind": "bad", "version": 2}, "payload": {}}\n'
+        "```"
     )
+    with pytest.raises(EnvelopeFormatError) as exc:
+        parse_agent_output(malformed)
+    assert exc.value.kind == "unknown_kind"
+
+    store, run = _start_run(host_repo, trac, "malformed no business mutation")
+    try:
+        executor = Executor(store, host_repo, run)
+        attempts_before = store.state(run).current_attempt
+        cmd = Command(kind="dispatch_agent", params={}, command_id="MALFORMED-UNKNOWN-KIND")
+        assignment = {"envelope": build_assignment_envelope("prism:final")}
+        handled = executor._format_error_shortcircuit(
+            {"raw_output": malformed}, cmd, None, assignment
+        )
+        assert handled is True
+
+        events = list(store.events(run))
+        format_errors = [e for e in events if e.type == "format_error"]
+        assert len(format_errors) == 1
+        assert format_errors[0].payload["kind"] == "unknown_kind"
+        # A malformed reply never counts as a semantic attempt and never
+        # mutates business state.
+        assert not any(e.type == "semantic_attempt_failed" for e in events)
+        assert not any(e.type == "outcome.received" for e in events)
+        assert not any(e.type in ("publish.executed", "release.decided") for e in events)
+        assert store.state(run).current_attempt == attempts_before
+    finally:
+        store.close()
