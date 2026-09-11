@@ -42,7 +42,6 @@ import subprocess
 from pathlib import Path
 
 from tracks import templating
-from tracks.kernel.envelope import FRONTMATTER_TOKEN_KEY
 from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.gate import check_ready
 from tracks.executor.validation_shared import (
@@ -54,6 +53,7 @@ from tracks.executor.validation_shared import (
     _strip_comments,
 )
 from tracks.frontmatter import split_frontmatter
+from tracks.kernel.envelope import FRONTMATTER_TOKEN_KEY
 
 FR_LIMIT = 30
 

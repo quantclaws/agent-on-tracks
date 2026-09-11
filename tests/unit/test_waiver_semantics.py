@@ -275,8 +275,8 @@ def test_full_f_producer_accepts_waived_only_failures(tmp_path):
 # zero-effect preflight failure must never re-issue execute_publish in a
 # tight loop); a fresh decision only follows a new preview.
 def test_release_decider_parks_on_blocked_publish():
-    from tracks.kernel.release import decide_release_stage
     from tracks.kernel.machine import State
+    from tracks.kernel.release import decide_release_stage
 
     s = State()
     s.stage = "M-RELEASE"

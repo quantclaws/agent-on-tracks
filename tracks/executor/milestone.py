@@ -15,7 +15,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 # Content-addressed runtime blob references embedded in event payloads (the
 # evidence chain's key blobs: release previews, red-node logs, seals).
 _BLOB_REF = re.compile(r"blob_ref$|blob$|_ref$")
