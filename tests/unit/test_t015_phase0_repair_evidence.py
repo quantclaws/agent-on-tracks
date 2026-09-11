@@ -122,7 +122,7 @@ def _seed_collection(executor, monkeypatch, node_layer, node_digests) -> None:
         lambda **kw: (dict(node_layer), None),
     )
     monkeypatch.setattr(
-        "tracks.executor.executor.collect_node_source_digests",
+        "tracks.executor.phase0_face.collect_node_source_digests",
         lambda repo_path, nodes=None: dict(node_digests),
     )
 
