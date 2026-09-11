@@ -5217,9 +5217,31 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         self._emit(registration["event"], payload, command_id=cmd.command_id)
         if registration["event"] == "known_issue.registered":
             # AC-FR0286-05 informed consent: the registered known issue must
-            # appear in the release preview -- regenerate it (append-only;
-            # the stale preview without the listing never stands).
-            self._park_preview(cmd, candidate_sha, "")
+            # appear in the release preview. Regenerate ONLY when a prior
+            # preview already exists for this candidate -- that is the one
+            # case the listing can be stale (the chain completed CI/security
+            # before the registration landed). Without a prior preview the
+            # chain's own tail preview (after the CI readback and security
+            # steps, which a Known Issue never waives) lists the issue
+            # through list_known_issues_for_preview; previewing here would
+            # short-circuit those gates (live 01M284A3: waiver preview with
+            # no CI/prism-final/security evidence, correctly rejected by
+            # the release gate and unreachable forever after).
+            prior = next(
+                (
+                    event
+                    for event in reversed(list(self.store.events(self.run_id)))
+                    if event.type == "release.previewed"
+                    and (event.payload or {}).get("candidate_sha") == candidate_sha
+                ),
+                None,
+            )
+            if prior is not None:
+                # _park_preview re-resolves the (materialized default)
+                # contract from its stable source; the prior digest pins
+                # the expectation and assemble_preview fails closed on any
+                # contract drift.
+                self._park_preview(cmd, candidate_sha, "")
 
     def _park_preview(
         self, cmd, candidate_sha: str, contract_or_digest, contract_digest: str | None = None
