@@ -39,16 +39,16 @@ pytestmark = pytest.mark.integration
 
 
 
-def _forbidden_files() -> list[Path]:
-    hits: list[Path] = []
-    for pat in FORBIDDEN_GLOBS:
-        for path in REPO.glob(pat):
-            text = path.read_text(encoding="utf-8", errors="replace")
-            for m in TOKEN_RE.finditer(text):
-                # Allow only occurrences inside the adapters package path guard
-                # (adapters live outside the forbidden zone).
-                hits.append((path, m.group(0)))
-    return hits  # type: ignore[return-value]
+def _forbidden_files() -> list[tuple[Path, str]]:
+    """Forbidden-zone token hits for the v0.7 faces.
+
+    The v0.8 allowlist (NFR-0147 allowed Python isolation zones:
+    ``adapters``/``assets``/``executor/{demo_host,reference_host}``) applies
+    to the shared scan: the ``venv``/``wheel`` tokens are sanctioned exactly
+    there (AC-NFR0147-01/02), so the legacy faces delegate to the v0.8
+    scanner instead of re-implementing an exemption-free copy.
+    """
+    return _forbidden_files_v08()
 
 
 # AC-FR0264-04@v0.7 TRACKS-TRACE no language tokens in kernel/executor/cli

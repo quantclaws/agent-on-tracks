@@ -7,6 +7,8 @@ import json
 
 import pytest
 
+from tests.e2e.helpers import walk_and_release
+
 pytestmark = pytest.mark.integration
 
 
@@ -15,19 +17,21 @@ def _canonical(obj) -> bytes:
 
 
 # AC-NFR0143-01@v0.8 TRACKS-TRACE same candidate all events
-def test_same_candidate_all_events(host_repo, trac, event_log):
+def test_same_candidate_all_events(host_repo, trac, event_log, ci_echo_standin):
+    from tracks.kernel.machine import State
     from tracks.kernel.release import on_candidate_frozen
 
-    try:
-        on_candidate_frozen(None, {}, None)  # type: ignore[arg-type]
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-VERIFY-001" in str(exc)
+    # IF-VERIFY-001 is implemented: the reducer projects the frozen identity.
+    state = State()
+    on_candidate_frozen(  # type: ignore[arg-type]
+        state, {"candidate_sha": "a" * 40, "clean_tree": True}, None
+    )
+    assert state.candidate_sha == "a" * 40
+    assert state.candidate_clean is True
 
-    trac("run")
-    trac("release", "--action", "release")
-    trac("run")
-    events = event_log()
+    run_id = walk_and_release(trac, host_repo)
+    assert trac("run").returncode == 0  # publish + M-MILESTONE
+    events = event_log(run_id)
     # Every release-chain event must carry same candidate_sha
     chain_types = [
         "candidate.frozen",
@@ -55,12 +59,10 @@ def test_same_candidate_all_events(host_repo, trac, event_log):
 
 
 # AC-NFR0143-02@v0.8 TRACKS-TRACE trace export digests with mutual verification
-def test_trace_export_digests(host_repo, trac, event_log):
-
-    trac("run")
-    trac("release", "--action", "release")
-    trac("run")
-    events = event_log()
+def test_trace_export_digests(host_repo, trac, event_log, ci_echo_standin):
+    run_id = walk_and_release(trac, host_repo)
+    assert trac("run").returncode == 0  # publish + M-MILESTONE
+    events = event_log(run_id)
     trace_closed = [e for e in events if e["type"] == "milestone.trace_closed"]
     assert trace_closed
     payload = trace_closed[0]["payload"]

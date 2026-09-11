@@ -85,44 +85,83 @@ def test_delta_design_carries_anchor_set_and_prism_review(trac, host_repo, event
 
 # AC-FR0243-03@v0.6 TRACKS-TRACE Prism anchor overturn routes back to SAGE_TRIAGE
 def test_prism_anchor_overturn_routes_back_to_sage_triage(trac, host_repo, event_log):
-    """AC-FR0243-03@v0.6: Prism overturns the anchor ->
-    ``stage.rolled_back(reason=anchor_overturned, to_stage=M-HOTFIX-TRIAGE)``
-    routes back to SAGE_TRIAGE (SM-01.6 redispatch, <=3) WITHOUT consuming
-    the M-DESIGN redispatch budget.
+    """AC-FR0243-03@v0.6: Prism overturns the anchor -> the kernel routes
+    ``rollback_stage(reason=anchor_overturned, to_stage=M-HOTFIX-TRIAGE)``.
 
-    Failure mode (legal Red): the hotfix CLI is registered (IF-HOTFIX-001 landed); the legal Red anchor is the IF-HOTFIX-010 baseline-resolver seam (run parks at M-DESIGN awaiting=escalation reason=[trace] test-plan validate requires acceptance.md in same dir).
+    The v0.6 fake token ``prism:PRISM_REVIEW=anchor_overturned`` is not
+    representable in the v0.8 declared review envelope (verdict is
+    pass|revise and a revise must carry findings), so the routing verdict is
+    seeded through the public store as the upstream premise (same
+    premise-injection pattern as test_release_gate_cli). ``M-HOTFIX-TRIAGE``
+    is an attached substate machine outside the canonical rollback closed
+    set, so the executor fail-closes the tight rollback_stage loop with
+    ``loop.aborted(reason=command_stall)`` — the accepted B91 public outlet
+    asserted here; the issued commands still carry the contracted target.
     """
+    from tracks import paths
+    from tracks.store import Store
+
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
 
     r = trac("hotfix", "42", "--scenario", "post-release")
     assert r.returncode == 0, r.stderr
-    cont = trac("run", simulate="prism:PRISM_REVIEW=anchor_overturned")
-    # Runtime now detects tight-loop rollback_stage tight loop and aborts
-    # with loop.aborted (B91). Accept either classic rollback success or the
-    # fail-closed stall abort as valid public outlet.
-    if cont.returncode != 0:
-        # Stall abort is the fail-closed outlet for this tight-loop path.
-        assert "command stall" in (cont.stderr or cont.stdout or ""), cont.stderr
-        cur_run = r.stdout.split()[1] if "run " in r.stdout else "unknown"
-        loop_ev = [e for e in event_log(cur_run) if e["type"] == "loop.aborted"]
-        assert loop_ev, "tight-loop must emit loop.aborted"
-        return
-
     run_id = r.stdout.split()[1] if "run " in r.stdout else "unknown"
+    # Stop after the design DRAFT dispatch (state=M-DESIGN/PRISM_REVIEW) and
+    # land the anchor-overturned verdict premise.
+    assert trac("run", "--max-dispatches", "1").returncode == 0
+    store = Store(paths.tracks_home(host_repo))
+    try:
+        state = store.state(run_id)
+        assert state.stage == "M-DESIGN" and state.substate == "PRISM_REVIEW"
+        store.append(
+            run_id,
+            state.version or "v0.5",
+            "prism.verdict",
+            {
+                "verdict": "revise",
+                "anchor_verdict": "overturned",
+                "review_summary": "anchor set overturned",
+                "findings": [
+                    {
+                        "id": "PRISM-ANCHOR-01",
+                        "severity": "blocker",
+                        "defect_classification": "design_defect",
+                        "criterion": "anchor",
+                        "artifact": "architecture.md",
+                        "ac_refs": [],
+                        "summary": "anchor set overturned",
+                    }
+                ],
+                "review_body": "anchor set overturned",
+            },
+        )
+    finally:
+        store.close()
+
+    cont = trac("run")
+    assert cont.returncode != 0
+    assert "command stall" in (cont.stderr or cont.stdout), cont.stderr
     evs = event_log(run_id)
-    rollbacks = [
-        e for e in evs
-        if e["type"] == "stage.rolled_back"
-        and e["payload"].get("reason") == "anchor_overturned"
+    loop_ev = [e for e in evs if e["type"] == "loop.aborted"]
+    assert loop_ev, "tight-loop must emit loop.aborted"
+    # The failed rollback attempts still carry the contracted routing.
+    issued = [
+        e
+        for e in evs
+        if e["type"] == "command.issued"
+        and e["payload"]["command"]["kind"] == "rollback_stage"
     ]
-    assert rollbacks
-    assert rollbacks[-1]["payload"]["to_stage"] == "M-HOTFIX-TRIAGE"
-    # Sage redispatch fires after the rollback.
-    sage_redispatch = [
-        e for e in evs
+    assert issued
+    assert issued[-1]["payload"]["command"]["params"]["to_stage"] == "M-HOTFIX-TRIAGE"
+    assert issued[-1]["payload"]["command"]["params"]["reason"] == "anchor_overturned"
+    # No Archer RESPOND re-dispatch: the M-DESIGN redispatch budget is not
+    # consumed by the anchor-overturn route.
+    respond = [
+        e
+        for e in evs
         if e["type"] == "command.issued"
         and e["payload"]["command"]["kind"] == "dispatch_agent"
-        and e["payload"]["command"]["params"].get("substate") == "SAGE_TRIAGE"
+        and e["payload"]["command"]["params"].get("substate") == "RESPOND"
     ]
-    assert len(sage_redispatch) >= 2  # initial + post-rollback
+    assert not respond

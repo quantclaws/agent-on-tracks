@@ -87,7 +87,16 @@ def _write_minimal_docs(vdir: Path):
 
 def _write_tracks_and_tests(repo: Path):
     (repo / "tracks").mkdir(parents=True, exist_ok=True)
-    (repo / "tracks" / "__init__.py").write_text("", encoding="utf-8")
+    # pkgutil.extend_path keeps the synthetic host package local while letting
+    # the installed collector plugin resolve under ``tracks.executor`` in the
+    # child interpreter (mirror of tests/unit/test_anchor_surface_unit.py
+    # _init_mini_repo). Without it the host ``tracks/`` shadows the installed
+    # package and every anchor collection fails with outcome=error, which
+    # silently empties the satisfiability surface.
+    (repo / "tracks" / "__init__.py").write_text(
+        "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n",
+        encoding="utf-8",
+    )
     (repo / "tracks" / "foo.py").write_text("def foo(): return 1\n", encoding="utf-8")
     (repo / "tracks" / "bar.py").write_text("def bar(): return 2\n", encoding="utf-8")
     # Ensure tests dirs

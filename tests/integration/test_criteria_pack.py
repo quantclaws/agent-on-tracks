@@ -59,20 +59,32 @@ def test_anti_self_report_triple(trac, event_log):
     assert not mismatches
 
 
-# AC-FR0040-04@v0.4 TRACKS-TRACE revise without findings rejected
+# AC-FR0040-04@v0.4 / AC-NFR0145-02@v0.8 TRACKS-TRACE revise without findings rejected
 def test_revise_without_findings_rejected(trac, event_log):
-    """AC-FR0040-04@v0.4: Prism revise in M-TEST -> WRITE re-dispatch (Shield)."""
+    """A simulated Prism revise in M-TEST that carries no findings cannot be
+    represented in the declared v0.8 review schema. The single parse path
+    classifies it as a schema_violation ``format_error`` (32b81c2 honesty:
+    incomplete simulated output is visible, never silently coerced into a
+    synthetic pass or a business mutation). The complete-findings revise
+    path (revise -> WRITE re-dispatch) is the structured ResultCheckpoint
+    pipeline face, pinned by the pipeline tests."""
     run_id = walk_to_m_test(trac)
-    # M-DESIGN prism pass, M-TEST prism revise, then pass on re-review
+    # M-DESIGN prism pass, M-TEST prism revise (bare), then pass on re-review
     r = trac("run", simulate="prism:PRISM_REVIEW=pass|revise|pass")
     assert r.returncode == 0, r.stderr
     evs = event_log(run_id)
-    # M-TEST prism revise -> WRITE (re-dispatch Shield)
     m_test_evs = m_test_events(evs)
-    prism_verdicts = [e for e in m_test_evs if e["type"] == "prism.verdict"]
-    assert any(v["payload"]["verdict"] == "revise" for v in prism_verdicts)
-    # Run completed (recovered after revise)
-    assert any(e["type"] == "run.completed" for e in evs)
+    format_errors = [e for e in m_test_evs if e["type"] == "format_error"]
+    assert format_errors, "the bare M-TEST revise must fail closed as format_error"
+    assert format_errors[-1]["payload"]["kind"] == "schema_violation"
+    # No semantic revise verdict for the incomplete reply and no run
+    # completion from it (format_error is not a semantic attempt).
+    assert not any(
+        v["payload"]["verdict"] == "revise"
+        for v in m_test_evs
+        if v["type"] == "prism.verdict"
+    )
+    assert not any(e["type"] == "run.completed" for e in evs)
 
 
 # AC-FR0040-05@v0.4 TRACKS-TRACE criteria pack no formal rules

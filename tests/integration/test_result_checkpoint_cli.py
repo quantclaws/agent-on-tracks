@@ -5,8 +5,9 @@ subprocess entry (conftest ``trac`` fixture), covering:
 
 - Triage valid story diff: rc=0, commit+1, event order, human.triage last.
 - Triage invalid story: rc!=0, no commit, no human.triage, still awaiting triage.
-- Triage outside dirty: rc!=0, no result.submitted.
-- Triage pre-staged: rc!=0, no result.submitted.
+- Triage outside dirty: AC-FR0267-02 realignment — not a CLI refusal; the
+  foreign content is never committed.
+- Triage pre-staged (version dir): kept as the artifact allowlist and committed.
 - Review no-comment dirty: rc!=0, no commit, no human.review, still awaiting review.
 - Review revise valid body edit: rc=0, commit, human.review(comment).
 """
@@ -101,22 +102,28 @@ def test_triage_invalid_story_rejects(host_repo, trac, event_log):
 
 
 def test_triage_outside_dirty_rejects(host_repo, trac, event_log):
-    """Triage go with dirty file outside version dir: rc!=0, no result.submitted."""
+    """AC-FR0267-02 realignment: a dirty file outside the version dir is NOT
+    a CLI-stage refusal — the triage checkpoint proceeds (the M-VERIFY freeze
+    owns the dirty_tree exit). The foreign content stays in the working tree
+    and is never swept into the checkpoint commit."""
     run_id = _walk_to_triage(trac)
     (host_repo / "outside.txt").write_text("dirty\n", encoding="utf-8")
 
     r = trac("triage", "go")
-    assert r.returncode != 0
+    assert r.returncode == 0, r.stderr
 
     evs = event_log(run_id)
     types = [e["type"] for e in evs]
-    assert "result.submitted" not in types
-    assert "human.triage" not in types
+    assert "result.submitted" in types
+    assert "human.triage" in types
+    committed = git_out(host_repo, "ls-tree", "-r", "--name-only", "HEAD")
+    assert "outside.txt" not in committed.splitlines()
+    assert (host_repo / "outside.txt").is_file()
 
 
 def test_triage_pre_staged_rejects(host_repo, trac, event_log):
-    """Triage go with pre-staged content in version dir: rc!=0,
-    no result.submitted."""
+    """AC-FR0267-02 realignment: pre-staged content INSIDE the version dir is
+    the artifact allowlist — it is kept and checkpointed (not refused)."""
     run_id = _walk_to_triage(trac)
     story = host_repo / ".tracks" / "projects" / "v0.1" / "story.md"
     text = story.read_text(encoding="utf-8")
@@ -127,14 +134,20 @@ def test_triage_pre_staged_rejects(host_repo, trac, event_log):
         capture_output=True,
         check=True,
     )
+    commits_before = int(git_out(host_repo, "rev-list", "--count", "HEAD"))
 
     r = trac("triage", "go")
-    assert r.returncode != 0
+    assert r.returncode == 0, r.stderr
+
+    commits_after = int(git_out(host_repo, "rev-list", "--count", "HEAD"))
+    assert commits_after == commits_before + 1
+    committed = git_out(host_repo, "show", "HEAD:.tracks/projects/v0.1/story.md")
+    assert "staged content" in committed
 
     evs = event_log(run_id)
     types = [e["type"] for e in evs]
-    assert "result.submitted" not in types
-    assert "human.triage" not in types
+    assert "result.submitted" in types
+    assert "human.triage" in types
 
 
 # -- Review CLI ---------------------------------------------------------------

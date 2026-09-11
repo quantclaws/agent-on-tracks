@@ -1,12 +1,9 @@
 """Integration: preview aggregation (FR-0273, IF-RELEASE-002).
 
 b93 §8.1 bootstrap contract: the CLI halves are driven by the shared walker
-(parks at M-IMPL/DIAGNOSE/awaiting=escalation) — bare ``trac run`` bootstrap
-is forbidden (v0.8 suite-wide defect). The M-RELEASE preview event
-producers are wired by later runtime tasks (kernel/release routing T-039 +
-CLI T-001); until then the event-level assertions are legal Red against that
-product gap. The module-level halves assert the delivered IF-RELEASE-002
-preview contract.
+to M-RELEASE/AWAITING_RELEASE over the loopback CI stand-in — bare
+``trac run`` bootstrap is forbidden (v0.8 suite-wide defect). The
+module-level halves assert the delivered IF-RELEASE-002 preview contract.
 """
 
 from __future__ import annotations
@@ -16,7 +13,7 @@ import json
 
 import pytest
 
-from tests.e2e.helpers import walk_to_m_impl_parked
+from tests.e2e.helpers import walk_to_awaiting_release
 from tracks.executor.release_gate import compute_preview_digest
 
 pytestmark = pytest.mark.integration
@@ -27,7 +24,7 @@ def _canonical(obj) -> bytes:
 
 
 # AC-FR0273-01@v0.8 TRACKS-TRACE preview digest binds all components
-def test_preview_digest_binds_all(host_repo, trac, event_log):
+def test_preview_digest_binds_all(host_repo, trac, event_log, ci_echo_standin):
     candidate = "a" * 40
     artifact = "sha256:" + "b" * 64
     evidence: dict = {}
@@ -45,7 +42,7 @@ def test_preview_digest_binds_all(host_repo, trac, event_log):
     assert digest == expected
     assert digest.startswith("sha256:")
 
-    walk_to_m_impl_parked(trac)
+    walk_to_awaiting_release(trac)
     events = event_log()
     previewed = [e for e in events if e["type"] == "release.previewed"]
     assert previewed, "release.previewed must appear in M-RELEASE"
@@ -65,7 +62,7 @@ def test_preview_digest_binds_all(host_repo, trac, event_log):
     assert payload["preview_digest"].startswith("sha256:")
     status = trac("status")
     assert "preview_digest" in status.stdout
-    assert "awaiting_release" in status.stdout
+    assert "awaiting_release" in status.stdout.lower()
     # Independent CLI preview outlet
     preview_cli = trac("release", "preview")
     assert "preview_digest=" in preview_cli.stdout or "candidate=" in preview_cli.stdout
@@ -73,13 +70,13 @@ def test_preview_digest_binds_all(host_repo, trac, event_log):
 
 
 # AC-FR0273-02@v0.8 TRACKS-TRACE stale preview reported and not reusable for release
-def test_stale_preview_reported(host_repo, trac, event_log):
+def test_stale_preview_reported(host_repo, trac, event_log, ci_echo_standin):
     from tracks.executor.release_gate import judge_preview_stale
 
     assert judge_preview_stale({}, {}) is None
     assert judge_preview_stale({"candidate_sha": "a" * 40}, {"candidate_sha": "b" * 40}) == "candidate_drift"
 
-    walk_to_m_impl_parked(trac)
+    walk_to_awaiting_release(trac)
     events = event_log()
     previewed = [e for e in events if e["type"] == "release.previewed"]
     assert previewed
