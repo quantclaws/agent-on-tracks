@@ -2,43 +2,45 @@
 §1n "Reference host" + "真实物化验收合同"; FR-0282 / NFR-0149 / FR-0267 /
 FR-0278 faces).
 
-Pins the two still-undelivered stubs in tracks/executor/reference_host.py
-(the NotImplementedError("IF-REFERENCE-001") bodies):
+Pins the reference host materialization contract in
+tracks/executor/reference_host.py:
 
-1. Materialization lands an isolated Python env per the closed deployment
-   set -- a fresh venv under the target (outside the source tree), an
-   explicitly non-editable wheel install, template sources deployed to the
-   contracted destinations (repo root; ``.tracks/projects/project.toml``;
-   ``.tracks/projects/v0.1/architecture.md``; ``.github/workflows/ci.yml``)
-   and the real remote bound (interfaces §1n 部署落点封闭集, Maestro ruling
-   T-003 A; Python specifics stay in assets -- NFR-0147 allowed zone).
+1. Real materialization lands an isolated Python env per the closed
+   deployment set -- a fresh ``python -m venv`` under the target (outside
+   the source tree), a real non-editable wheel install through that venv's
+   pip, ``trac init`` executed by the installed interpreter (the
+   install-usability witness), template sources deployed to the contracted
+   destinations (repo root; ``.tracks/projects/project.toml``;
+   ``.tracks/projects/v0.1/architecture.md``;
+   ``.github/workflows/ci.yml``) and the real remote probed/bound
+   (interfaces §1n 部署落点封闭集, Maestro ruling T-003 A; Python specifics
+   stay in assets -- NFR-0147 allowed zone).
 2. A missing remote binding degrades to needs_attention, never to a local
    success -- ``remote_url=None`` without explicit simulation must report
    needs_attention with an identifiable reason (interfaces §1n
    "needs_attention 不降级"; NFR-0149-01 credential-missing counting).
 3. Same-shape journey acceptance -- ``verify_reference_equivalence``
    accepts a report whose event chain matches the tracks release journey
-   shape (candidate.frozen → … → milestone.sealed → run.completed) and
-   rejects a diverged chain with identifiable reasons (the module-side
-   half of the deferred journey anchor, test-plan §8 AC-FR0282-01).
+   shape (candidate.frozen → … → run.completed, repeated re-run/repair
+   kinds tolerated) and rejects a diverged chain with identifiable reasons
+   (the module-side half of the journey anchor, test-plan §8 AC-FR0282-01).
 
 Event/chain fixtures follow the in-repo convention: journey chains are
 ordered ``{"kind": ...}`` dicts (kernel/release.py producer chain,
 interfaces §2b ``trac run`` output kinds).
-
-All three anchors fail on the current baseline with assertion_failure on
-the contract token (NotImplementedError stub bodies are converted to
-assertion failures). Only unit tests are added (RED discipline, manifest
-red_test_paths = tests/unit); no production file is touched.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from tracks.executor import reference_host
 
-_REMOTE = "git@github.com:example-org/reference-host.git"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _JOURNEY_CHAIN = (
     "candidate.frozen",
@@ -46,9 +48,13 @@ _JOURNEY_CHAIN = (
     "ci.run_observed",
     "prism.verdict",
     "security.assessed",
-    "awaiting_release",
+    "release.previewed",
+    "release.decided",
+    "publish.planned",
     "publish.executed",
+    "milestone.trace_closed",
     "milestone.sealed",
+    "refs.cleaned",
     "run.completed",
 )
 
@@ -98,28 +104,71 @@ def _template(tmp_path: Path) -> Path:
     return template
 
 
-def _wheel(tmp_path: Path) -> Path:
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    wheel = wheelhouse / "project-0.1.0-py3-none-any.whl"
-    wheel.write_bytes(b"PK\x03\x04")
-    return wheel
+def _target_repo(tmp_path: Path) -> Path:
+    target = tmp_path / "reference-env"
+    target.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=target, check=True, capture_output=True)
+
+    git("init", "-b", "main")
+    git("config", "user.email", "ref@example.com")
+    git("config", "user.name", "Reference Host")
+    (target / "README.md").write_text("reference env\n", encoding="utf-8")
+    git("add", "README.md")
+    git("commit", "-m", "init")
+    return target
+
+
+def _bare_remote(tmp_path: Path) -> Path:
+    bare = tmp_path / "reference-remote.git"
+    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    return bare
+
+
+@pytest.fixture(scope="module")
+def tracks_wheel(tmp_path_factory) -> Path:
+    """The real tracks wheel: non-editable install source (built offline)."""
+    wheelhouse = tmp_path_factory.mktemp("unit-wheelhouse")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--disable-pip-version-check",
+            "-w",
+            str(wheelhouse),
+            str(_REPO_ROOT),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        _fail(f"tracks wheel build failed: {proc.stderr[-800:]}")
+    wheels = sorted(wheelhouse.glob("agent_on_tracks-0.5.0-*.whl"))
+    if not wheels:
+        _fail(f"wheel build produced no 0.5.0 wheel: {list(wheelhouse.iterdir())}")
+    return wheels[0]
 
 
 # AC-FR0282-03@v0.8 TRACKS-TRACE IF-REFERENCE-001 isolated env materialization
-def test_reference_host_materializes_isolated_python_env(tmp_path):
+def test_reference_host_materializes_isolated_python_env(tmp_path, tracks_wheel):
     """A bound remote materializes the closed deployment set into an
-    isolated env under the target: fresh venv, explicitly non-editable
-    wheel, contracted destinations, real remote binding (interfaces §1n;
-    NFR-0147 Python-details-in-assets)."""
+    isolated env under the target: fresh venv, real non-editable wheel
+    install, ``trac init`` witness, contracted destinations, probed real
+    remote binding (interfaces §1n; NFR-0147 Python-details-in-assets)."""
     template = _template(tmp_path)
-    target = tmp_path / "reference-env"
-    report = _create(template, target, _wheel(tmp_path), _REMOTE)
+    target = _target_repo(tmp_path)
+    remote = _bare_remote(tmp_path)
+    report = _create(template, target, tracks_wheel, str(remote))
     if not isinstance(report, dict):
         _fail(f"create_reference_host must return a dict report, got {type(report)!r}")
-    if report.get("status") == "needs_attention":
+    if report.get("status") != "ok":
         _fail(
-            f"a bound remote must not degrade to needs_attention, got {report!r}"
+            f"a bound, reachable remote must materialize successfully, got {report!r}"
         )
     venv = report.get("venv")
     if not isinstance(venv, (str, Path)) or not str(venv).startswith(str(target)):
@@ -127,6 +176,9 @@ def test_reference_host_materializes_isolated_python_env(tmp_path):
             "report must bind a fresh env under the isolated target dir, "
             f"got venv={venv!r} target={str(target)!r}"
         )
+    python = Path(str(venv)) / "bin" / "python"
+    if not python.exists():
+        _fail(f"the fresh venv interpreter must exist, got {python!r}")
     if report.get("install") != "non-editable":
         _fail(
             "report must carry an explicitly non-editable wheel install, "
@@ -150,11 +202,15 @@ def test_reference_host_materializes_isolated_python_env(tmp_path):
                 f"closed deployment set violated: {source!r} must land at "
                 f"{destination!r}, got {landed!r} (interfaces §1n 部署落点封闭集)"
             )
-    if report.get("remote") != _REMOTE:
+    if report.get("remote") != str(remote):
         _fail(
-            f"report must bind the real remote {_REMOTE!r}, got "
+            f"report must bind the real remote {str(remote)!r}, got "
             f"remote={report.get('remote')!r} (Maestro ruling T-003 A)"
         )
+    if report.get("init", {}).get("returncode") != 0:
+        _fail(f"the installed trac must init the materialized host, got {report!r}")
+    if not (target / ".tracks" / "runtime").exists():
+        _fail("trac init must scaffold .tracks/runtime in the materialized host")
 
 
 # AC-FR0282-02@v0.8 TRACKS-TRACE IF-REFERENCE-001 missing remote needs_attention
@@ -164,7 +220,7 @@ def test_reference_host_missing_credentials_needs_attention(tmp_path):
     (interfaces §1n needs_attention 不降级; NFR-0149-01)."""
     template = _template(tmp_path)
     target = tmp_path / "reference-env-nocred"
-    report = _create(template, target, _wheel(tmp_path), None)
+    report = _create(template, target, tmp_path / "unused.whl", None)
     if not isinstance(report, dict):
         _fail(f"create_reference_host must return a dict report, got {type(report)!r}")
     if report.get("status") != "needs_attention":
@@ -177,6 +233,59 @@ def test_reference_host_missing_credentials_needs_attention(tmp_path):
         _fail(
             "needs_attention reason must identify the missing remote/"
             f"credential binding, got {reason!r}"
+        )
+    if (target / ".venv").exists():
+        _fail("a missing remote binding must not materialize anything")
+
+
+# AC-FR0282-02@v0.8 TRACKS-TRACE IF-REFERENCE-001 unreachable remote not pretended
+def test_reference_host_unreachable_remote_needs_attention(tmp_path):
+    """A bound-but-unreachable remote must fail the ``git ls-remote`` probe
+    and report needs_attention (remote_unavailable) instead of pretending
+    the binding (interfaces §1n 真实远程绑定; NFR-0149-01)."""
+    template = _template(tmp_path)
+    target = tmp_path / "reference-env-unreachable"
+    wheel = tmp_path / "wheels" / "project-0.1.0-py3-none-any.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"PK\x03\x04")
+    report = _create(template, target, wheel, str(tmp_path / "no-such-remote.git"))
+    if report.get("status") != "needs_attention":
+        _fail(
+            "an unreachable remote must report needs_attention, "
+            f"got {report!r}"
+        )
+    if "remote" not in str(report.get("reason", "")):
+        _fail(
+            "the reason must identify the unavailable remote, "
+            f"got {report.get('reason')!r}"
+        )
+    if (target / ".venv").exists():
+        _fail("an unreachable remote must not materialize a venv")
+
+
+# AC-FR0282-01@v0.8 TRACKS-TRACE IF-REFERENCE-001 install failure is structured
+def test_reference_host_failed_install_is_structured(tmp_path):
+    """A wheel that cannot be installed yields a structured failure report
+    (status/reason/detail) and never a fabricated status=ok -- the install
+    step is the witness, not the report plan (interfaces §1n 真实物化)."""
+    template = _template(tmp_path)
+    target = _target_repo(tmp_path)
+    remote = _bare_remote(tmp_path)
+    broken = tmp_path / "broken-0.1.0-py3-none-any.whl"
+    broken.write_bytes(b"PK\x03\x04")  # zip magic only: pip must reject it
+    report = _create(template, target, broken, str(remote))
+    if report.get("status") != "failed":
+        _fail(f"a failed wheel install must be a structured failure, got {report!r}")
+    if report.get("reason") != "wheel_install_failed":
+        _fail(
+            "the failure must identify the wheel install step, "
+            f"got reason={report.get('reason')!r}"
+        )
+    if not report.get("detail"):
+        _fail(f"the failure report must carry the pip diagnostic, got {report!r}")
+    if (target / ".tracks").exists() or (target / "pyproject.toml").exists():
+        _fail(
+            "a failed install must not deploy the closed set or init the host"
         )
 
 
@@ -202,9 +311,17 @@ def test_reference_host_journey_event_chain_shape():
         _fail(
             f"the same-shape journey chain must be accepted, got {verdict!r}"
         )
+    # Re-run kinds (review rounds / repair re-runs) are tolerated.
+    repeats = {"events": [{"kind": kind} for kind in _JOURNEY_CHAIN]}
+    repeats["events"].insert(3, {"kind": "prism.verdict"})
+    verdict = _verify(repeats)
+    if verdict[0] is not True or verdict[1] != ():
+        _fail(
+            f"repeated chain kinds must not break same-shape acceptance, got {verdict!r}"
+        )
     diverged = {
         "events": [{"kind": kind} for kind in _JOURNEY_CHAIN[:-1]]
-    }  # drop the terminal milestone.sealed seal
+    }  # drop the terminal run.completed link
     ok, reasons = _verify(diverged)
     if ok is not False or not reasons:
         _fail(
@@ -215,5 +332,5 @@ def test_reference_host_journey_event_chain_shape():
     if "milestone.sealed" not in joined:
         _fail(
             "rejection reasons must identify the missing milestone.sealed "
-            f"link, got {reasons!r}"
+            f"seal, got {reasons!r}"
         )

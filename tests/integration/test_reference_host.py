@@ -1,27 +1,35 @@
 """Integration: reference host materialization (FR-0282, IF-REFERENCE-001).
 
 b93 §8.1 bootstrap contract: the CLI half is driven by the shared walker
-(``walk_to_m_impl_parked``) — bare ``trac run`` bootstrap is forbidden. The
+(``walk_and_release``) — bare ``trac run`` bootstrap is forbidden. The
 module-level halves assert the delivered IF-REFERENCE-001 contract faces
-(interfaces §1n materialization / needs_attention / same-shape acceptance;
-NFR-0147 kernel language neutrality is pinned by the dedicated
-test_kernel_language_neutrality integration face). The journey event-chain
-assertions stay legal Red against the unwired release producers.
+(interfaces §1n real materialization / needs_attention / same-shape
+acceptance; NFR-0147 kernel language neutrality is pinned by the dedicated
+test_kernel_language_neutrality integration face). The journey anchor now
+drives the real materialization: a built tracks 0.5.0 wheel, a fresh venv
+with a real non-editable install, ``trac init`` through the installed
+interpreter and a local bare remote probed with ``git ls-remote`` — then the
+real host release walk must be accepted by the same-shape comparator.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from tests.e2e.helpers import walk_to_m_impl_parked
+from tests.e2e.helpers import walk_and_release, walk_to_m_impl_parked
 from tracks.executor.host_contract import load_host_contract
 from tracks.executor.reference_host import create_reference_host, verify_reference_equivalence
 
 pytestmark = pytest.mark.integration
 
-_REMOTE = "git@github.com:example-org/reference-host.git"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ASSETS = _REPO_ROOT / "tracks" / "assets" / "reference_host"
 
 _JOURNEY_CHAIN = (
     "candidate.frozen",
@@ -29,29 +37,15 @@ _JOURNEY_CHAIN = (
     "ci.run_observed",
     "prism.verdict",
     "security.assessed",
-    "awaiting_release",
+    "release.previewed",
+    "release.decided",
+    "publish.planned",
     "publish.executed",
+    "milestone.trace_closed",
     "milestone.sealed",
+    "refs.cleaned",
     "run.completed",
 )
-
-
-def _template(tmp_path: Path) -> Path:
-    template = tmp_path / "template"
-    (template / "tests").mkdir(parents=True)
-    for name in ("pyproject.toml", "flake8.ini", "host_calc.py", "tracks-project.toml", "architecture.md"):
-        (template / name).write_text(f"[{name}]\n", encoding="utf-8")
-    (template / "ci.yml").write_text("jobs: {}\n", encoding="utf-8")
-    return template
-
-
-def _wheel(tmp_path: Path) -> Path:
-    wheelhouse = tmp_path / "wheelhouse"
-    wheelhouse.mkdir()
-    wheel = wheelhouse / "project-0.1.0-py3-none-any.whl"
-    wheel.write_bytes(b"PK\x03\x04")
-    return wheel
-
 
 _CLOSED_SET = {
     "pyproject.toml": "pyproject.toml",
@@ -59,6 +53,40 @@ _CLOSED_SET = {
     "architecture.md": ".tracks/projects/v0.1/architecture.md",
     "ci.yml": ".github/workflows/ci.yml",
 }
+
+
+def _clean_env() -> dict:
+    """Subprocess env without the test runner's PYTHONPATH (wheel isolation)."""
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc
+
+
+def _target_repo(tmp_path: Path) -> Path:
+    """A fresh host repo the reference deployment can bind and init into."""
+    target = tmp_path / "refhost"
+    target.mkdir()
+    _git(target, "init", "-b", "main")
+    _git(target, "config", "user.email", "ref@example.com")
+    _git(target, "config", "user.name", "Reference Host")
+    (target / "README.md").write_text("reference host\n", encoding="utf-8")
+    _git(target, "add", "README.md")
+    _git(target, "commit", "-m", "init")
+    return target
+
+
+def _bare_remote(tmp_path: Path) -> Path:
+    bare = tmp_path / "reference-remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)], check=True, capture_output=True
+    )
+    return bare
 
 
 def _assert_closed_set(report: dict) -> None:
@@ -71,25 +99,106 @@ def _assert_closed_set(report: dict) -> None:
         )
 
 
-# AC-FR0282-01@v0.8 TRACKS-TRACE reference host journey same shape with candidate binding
-def test_reference_host_journey_same_shape(host_repo, trac, event_log, tmp_path):
-    # Module half (§1n 真实物化验收合同): a bound remote materializes the
-    # closed deployment set into an isolated env under the target.
-    template = _template(tmp_path)
-    target = tmp_path / "refhost"
-    report = create_reference_host(template, target, _wheel(tmp_path), _REMOTE)
-    assert isinstance(report, dict)
-    assert report.get("status") != "needs_attention", (
-        f"a bound remote must not degrade to needs_attention, got {report!r}"
+@pytest.fixture(scope="module")
+def tracks_wheel(tmp_path_factory) -> Path:
+    """The real tracks 0.5.0 wheel, built offline (local setuptools only).
+
+    Built from a per-worker source COPY: two xdist workers running
+    setuptools against the same source tree race on the shared build/
+    artifacts (flaky ERROR under -n4), while copying is a few MB.
+    """
+    src = tmp_path_factory.mktemp("wheel_src")
+    shutil.copytree(
+        _REPO_ROOT / "tracks",
+        src / "tracks",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
+    shutil.copy2(_REPO_ROOT / "pyproject.toml", src / "pyproject.toml")
+    wheelhouse = tmp_path_factory.mktemp("wheelhouse")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--disable-pip-version-check",
+            "-w",
+            str(wheelhouse),
+            str(src),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"tracks wheel build failed: {proc.stderr[-800:]}"
+    wheels = sorted(wheelhouse.glob("agent_on_tracks-0.5.0-*.whl"))
+    assert wheels, f"wheel build produced no 0.5.0 wheel: {list(wheelhouse.iterdir())}"
+    return wheels[0]
+
+
+@pytest.fixture
+def materialized(tmp_path: Path, tracks_wheel: Path) -> tuple[Path, Path, dict]:
+    """Materialize the reference host from the real wheel and a bare remote."""
+    target = _target_repo(tmp_path)
+    remote = _bare_remote(tmp_path)
+    report = create_reference_host(_ASSETS, target, tracks_wheel, str(remote))
+    assert report.get("status") == "ok", f"materialization must succeed, got {report!r}"
+    return target, remote, report
+
+
+# AC-FR0282-01@v0.8 TRACKS-TRACE reference host journey same shape with candidate binding
+def test_reference_host_journey_same_shape(
+    host_repo, trac, event_log, ci_echo_standin, materialized, tracks_wheel
+):
+    target, remote, report = materialized
+
+    # Real materialization contract (§1n 真实物化验收合同): fresh venv,
+    # non-editable wheel install, the install-usability init witness and the
+    # probed remote binding — all under the isolated target.
     venv = report.get("venv")
     assert isinstance(venv, (str, Path)) and str(venv).startswith(str(target))
     assert report.get("install") == "non-editable"
+    assert report.get("remote") == str(remote)
+    assert report.get("wheel") == str(tracks_wheel)
     _assert_closed_set(report)
-    assert report.get("remote") == _REMOTE
 
-    # Same-shape acceptance: the tracks release journey chain is accepted;
-    # a diverged chain is rejected with identifiable reasons.
+    python = Path(str(venv)) / "bin" / "python"
+    assert python.exists(), f"fresh venv python missing: {python}"
+    installed = subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import importlib.metadata as m, tracks; "
+            "print(m.version('agent-on-tracks')); print(tracks.__file__)",
+        ],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        env=_clean_env(),
+    )
+    assert installed.returncode == 0, installed.stderr
+    assert "0.5.0" in installed.stdout, installed.stdout
+    assert str(Path(str(venv))) in installed.stdout, (
+        f"the import must resolve to the venv's non-editable install, got {installed.stdout!r}"
+    )
+
+    # init witness: the installed trac initialized the isolated host in place.
+    assert report["init"]["returncode"] == 0
+    assert (target / ".tracks" / "projects" / "project.toml").exists()
+    started = subprocess.run(
+        [str(python), "-m", "tracks.cli.main", "start", "v0.1"],
+        cwd=target,
+        capture_output=True,
+        text=True,
+        input="构建一个事件溯源运行时\n",
+        env=_clean_env(),
+    )
+    assert started.returncode == 0, started.stderr
+    assert "started" in started.stdout, started.stdout
+
+    # Same-shape acceptance: the canonical chain is accepted; a diverged
+    # chain is rejected with identifiable reasons.
     same_shape = {"events": [{"kind": kind} for kind in _JOURNEY_CHAIN]}
     ok, reasons = verify_reference_equivalence(same_shape)
     assert ok is True and reasons == (), f"same-shape journey must be accepted, got {(ok, reasons)!r}"
@@ -97,13 +206,22 @@ def test_reference_host_journey_same_shape(host_repo, trac, event_log, tmp_path)
     ok, reasons = verify_reference_equivalence(diverged)
     assert ok is False and reasons, f"diverged journey must be rejected with reasons, got {(ok, reasons)!r}"
 
-    # CLI half: the walked run must produce the isomorphic journey chain.
-    # Legal Red: the release-chain producers are not wired on this baseline.
-    walk_to_m_impl_parked(trac)
-    events = event_log()
-    found = [e["type"] for e in events if e["type"] in _JOURNEY_CHAIN]
-    assert found == list(_JOURNEY_CHAIN), (
-        f"reference host must produce isomorphic chain {list(_JOURNEY_CHAIN)}, got {found}"
+    # CLI half: the real walked release run produces the isomorphic journey
+    # chain. The filtered chain carries repeated kinds (review rounds, repair
+    # re-runs), so acceptance is the ordered-subsequence shape check — not
+    # pairwise equality.
+    run_id = walk_and_release(trac, host_repo)
+    assert trac("run").returncode == 0  # publish + M-MILESTONE
+    events = event_log(run_id)
+    kinds = [e["type"] for e in events if e["type"] in _JOURNEY_CHAIN]
+    assert set(_JOURNEY_CHAIN) <= set(kinds), (
+        f"reference host must produce every chain link, got {kinds}"
+    )
+    ok, reasons = verify_reference_equivalence(
+        {"events": [{"kind": kind} for kind in kinds]}
+    )
+    assert ok is True and reasons == (), (
+        f"the walked release chain must be same-shape, got {(ok, reasons)!r} from {kinds}"
     )
 
 
@@ -111,12 +229,13 @@ def test_reference_host_journey_same_shape(host_repo, trac, event_log, tmp_path)
 def test_missing_credentials_needs_attention(host_repo, trac, event_log, tmp_path, monkeypatch):
     # Module half (§1n needs_attention 不降级): remote_url=None without
     # explicit simulation degrades to needs_attention with an identifiable
-    # reason — never a local-success downgrade.
+    # reason — never a local-success downgrade, and never materialization.
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("TRAC_GITHUB_REPO", raising=False)
-    template = _template(tmp_path)
     target = tmp_path / "refhost2"
-    report = create_reference_host(template, target, _wheel(tmp_path), None)
+    report = create_reference_host(
+        _ASSETS, target, tmp_path / "unused.whl", None
+    )
     assert isinstance(report, dict)
     assert report.get("status") == "needs_attention", (
         f"a missing remote binding must report needs_attention, got {report!r}"
@@ -124,6 +243,9 @@ def test_missing_credentials_needs_attention(host_repo, trac, event_log, tmp_pat
     reason = str(report.get("reason", ""))
     assert "remote" in reason or "credential" in reason, (
         f"needs_attention reason must identify the missing remote/credential, got {reason!r}"
+    )
+    assert not (target / ".venv").exists(), (
+        "a missing remote binding must not materialize anything"
     )
 
     # CLI half: without credentials the walked run must surface
@@ -141,22 +263,20 @@ def test_missing_credentials_needs_attention(host_repo, trac, event_log, tmp_pat
 
 
 # AC-FR0282-03@v0.8 TRACKS-TRACE python details isolated to reference host assets
-def test_python_details_isolated(host_repo, trac, event_log, tmp_path):
+def test_python_details_isolated(materialized):
     # Module half: the materialized deployment lands the contract carrier at
     # its mapped path, and a missing contract path fails closed. (The loader
     # ValueError face for malformed carriers is the unit-contract fail-closed
     # set; the success-load face needs a real carrier schema and is not
     # presumed here.)
-    template = _template(tmp_path)
-    target = tmp_path / "refhost3"
-    report = create_reference_host(template, target, _wheel(tmp_path), _REMOTE)
-    assert isinstance(report, dict)
+    target, _remote, report = materialized
     contract_path = target / ".tracks" / "projects" / "project.toml"
     assert contract_path.exists(), (
         f"the contract carrier must materialize at the mapped path, got {report!r}"
     )
+    _assert_closed_set(report)
     try:
-        load_host_contract(tmp_path / "definitely-missing.toml")
+        load_host_contract(target.parent / "definitely-missing.toml")
     except FileNotFoundError:
         pass
     else:
