@@ -1594,6 +1594,18 @@ def _release_chain_fragments(events: list, lines: list[str]) -> None:
 def _release_status_lines(events: list, primary, repo: Path | None = None) -> list[str]:
     """§1.0.1 growth 1 helpers for cmd_status (keeps CCR001 under cap)."""
     lines: list[str] = []
+    review_failed = [
+        e
+        for e in events
+        if e.type == "review.failed"
+        and (e.payload or {}).get("area") == "failure_evidence"
+    ]
+    if review_failed:
+        # AC-FR0280-03: a lost/mismatched failure evidence chain is a
+        # fail-closed block — the operator sees the review outcome and the
+        # reason on every subsequent status.
+        outcome = (review_failed[-1].payload or {}).get("outcome", "mismatched")
+        lines.append(f"blocked: evidence lost or mismatched ({outcome})")
     preview = _latest_release_preview(events)
     if preview is not None:
         payload = preview.payload or {}

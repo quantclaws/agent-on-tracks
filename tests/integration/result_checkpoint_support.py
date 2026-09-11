@@ -4,6 +4,7 @@ Extracted from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
 
 import sys
+from pathlib import Path
 
 from tests.integration.helpers import g, make_repo
 from tracks import paths, templating
@@ -13,13 +14,23 @@ from tracks.store import Store, new_ulid
 
 
 class _StubBackend:
-    """Test double returning a fixed outcome."""
+    """Test double returning a fixed outcome.
+
+    Declared dispatches (prism review family, IF-ENVELOPE-002) get the
+    deterministic fake's honest envelope encoding through ``finalize_act``:
+    the fixed outcome is re-expressed as the reply the assignment declared.
+    Undeclared dispatches keep the legacy result dict untouched.
+    """
 
     def __init__(self, outcome):
         self._outcome = outcome
+        self._envelope = FakeBackend(Path("."), "v0.0")
 
     def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
-        return self._outcome
+        return dict(self._outcome)
+
+    def finalize_act(self, result, role, substate, assignment=None):
+        return self._envelope.finalize_act(result, role, substate, assignment)
 
 
 class _ShieldBackend:

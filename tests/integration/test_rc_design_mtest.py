@@ -1,5 +1,5 @@
 """ResultCheckpoint pipeline: M-SPEC/M-ACC Lex review, M-TEST Shield WRITE,
-M-DESIGN Prism, and _reject_dirty_staged tests.
+M-DESIGN Prism, and staged-attribution tests.
 
 Split from ``test_result_checkpoint.py`` for module-size compliance (C0302).
 """
@@ -100,44 +100,52 @@ def test_lex_review_smoke(tmp_path, stage, doc, committed_event, verdict):
         assert state.substate == "RESPOND"
 
 
-# -- _reject_dirty_staged unit tests (item 4: outside dirty, pre-staged) ---
+# -- staged attribution unit tests (AC-FR0267-02 realignment) --------------
+# A dirty tree is never refused at the CLI stage (the M-VERIFY freeze owns
+# the dirty_tree exit); only pre-staged content OUTSIDE the version-dir
+# artifact allowlist is unstaged, content preserved in the working tree.
 
 
-def test_reject_dirty_staged_outside_allowlist(tmp_path):
-    """_reject_dirty_staged rejects dirty files outside the version dir."""
-    from tracks.cli.main import _reject_dirty_staged
+def test_scope_staged_attribution_unstages_outside_allowlist(tmp_path):
+    """Staged files outside the version dir are unstaged, content kept."""
+    from tracks.cli.main import _scope_staged_attribution
 
     repo = make_repo(tmp_path)
     (repo / "outside.txt").write_text("dirty\n", encoding="utf-8")
-    rc = _reject_dirty_staged(repo, "v0.1", "triage")
-    assert rc != 0
+    g(repo, "add", "outside.txt")
+    rc = _scope_staged_attribution(repo, "v0.1", "triage")
+    assert rc == 0
+    assert "outside.txt" not in g(repo, "diff", "--cached", "--name-only").splitlines()
+    assert (repo / "outside.txt").read_text(encoding="utf-8") == "dirty\n"
 
 
-def test_reject_dirty_staged_pre_staged(tmp_path):
-    """_reject_dirty_staged rejects pre-staged content."""
-    from tracks.cli.main import _reject_dirty_staged
+def test_scope_staged_attribution_keeps_version_dir_staged(tmp_path):
+    """Staged content inside the version dir is the artifact allowlist."""
+    from tracks.cli.main import _scope_staged_attribution
 
     repo = make_repo(tmp_path)
     vdir = repo / ".tracks" / "projects" / "v0.1"
     vdir.mkdir(parents=True)
     (vdir / "story.md").write_text("x\n", encoding="utf-8")
     g(repo, "add", str(vdir / "story.md"))
-    rc = _reject_dirty_staged(repo, "v0.1", "review")
-    assert rc != 0
+    rc = _scope_staged_attribution(repo, "v0.1", "review")
+    assert rc == 0
+    staged = g(repo, "diff", "--cached", "--name-only").splitlines()
+    assert ".tracks/projects/v0.1/story.md" in staged
 
 
-def test_reject_dirty_staged_clean(tmp_path):
-    """_reject_dirty_staged returns 0 when clean."""
-    from tracks.cli.main import _reject_dirty_staged
+def test_scope_staged_attribution_clean(tmp_path):
+    """A clean tree returns 0."""
+    from tracks.cli.main import _scope_staged_attribution
 
     repo = make_repo(tmp_path)
-    rc = _reject_dirty_staged(repo, "v0.1", "triage")
+    rc = _scope_staged_attribution(repo, "v0.1", "triage")
     assert rc == 0
 
 
-def test_reject_dirty_staged_allows_version_dir_dirty(tmp_path):
-    """_reject_dirty_staged allows dirty files inside the version dir."""
-    from tracks.cli.main import _reject_dirty_staged
+def test_scope_staged_attribution_allows_version_dir_dirty(tmp_path):
+    """A dirty (unstaged) version-dir file is never a CLI refusal."""
+    from tracks.cli.main import _scope_staged_attribution
 
     repo = make_repo(tmp_path)
     vdir = repo / ".tracks" / "projects" / "v0.1"
@@ -146,7 +154,7 @@ def test_reject_dirty_staged_allows_version_dir_dirty(tmp_path):
     g(repo, "add", ".tracks")
     g(repo, "commit", "-m", "init tracks")
     (vdir / "story.md").write_text("x\n", encoding="utf-8")
-    rc = _reject_dirty_staged(repo, "v0.1", "triage")
+    rc = _scope_staged_attribution(repo, "v0.1", "triage")
     assert rc == 0
 
 
@@ -403,6 +411,21 @@ def test_m_design_prism_revise_pipeline(tmp_path):
             "artifact_ref": None,
             "self_report": "review",
             "verdict": "revise",
+            # The declared prism:review envelope requires a complete revise
+            # payload; the simulated reviewer supplies it like the real one.
+            "review_summary": "需要补充安全设计",
+            "review_body": "Prism 要求补充安全设计。",
+            "findings": [
+                {
+                    "id": "PRISM-MDESIGN-R1-01",
+                    "severity": "blocker",
+                    "defect_classification": "design_defect",
+                    "criterion": "1",
+                    "artifact": "architecture.md",
+                    "ac_refs": ["AC-FR0010-01"],
+                    "summary": "需要补充安全设计",
+                }
+            ],
         }
     )
     cmd = Command(

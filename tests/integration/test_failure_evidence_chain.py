@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.helpers import walk_to_m_impl_parked
+from tests.e2e.helpers import generate_report_md, walk_to_m_impl_parked
+from tracks import paths
 from tracks.executor.failure_review import (
     acknowledge_failure,
     inject_into_assignment,
@@ -21,8 +22,50 @@ from tracks.executor.failure_review import (
     review_failure_chain,
     select_failure,
 )
+from tracks.store import Store
 
 pytestmark = pytest.mark.integration
+
+M_IMPL_PARK_SIMULATE = "devon:RED=fail;diagnose:classification=impl_defect"
+
+
+def _seed_lost_failure_reference(host_repo, run_id):
+    """Seed a stored record plus an injected reference that was never stored.
+
+    The ``failure.injected`` reference to ``1-lost-98`` cannot be reconciled
+    with any ``failure.stored`` row, so the runtime's next chain review must
+    fail closed (AC-FR0280-03)."""
+    home = paths.tracks_home(host_repo)
+    store = Store(home)
+    try:
+        version = store.state(run_id).version
+        store.append(
+            run_id,
+            version,
+            "failure.stored",
+            {
+                "failure_id": "1-seed-99",
+                "run_id": run_id,
+                "round": 1,
+                "source": "seed",
+                "record": {"failure_class": "agent_failed", "self_report": "seeded"},
+                "seq": 99,
+            },
+        )
+        store.append(
+            run_id,
+            version,
+            "failure.injected",
+            {
+                "failure_id": "1-lost-98",
+                "round": 1,
+                "source": "seed",
+                "role": "devon",
+            },
+        )
+    finally:
+        store.close()
+
 
 _CHAIN_TYPES = (
     "failure.emitted",
@@ -64,8 +107,10 @@ def test_chain_events_replay(host_repo, trac, event_log):
     assert found[0] in _CHAIN_TYPES
     replay = trac("replay").stdout
     assert "failure" in replay.lower()
-    report = trac("report").stdout
-    assert "failure" in report.lower()
+    # trac report only prints the artifact path; the chain must be auditable
+    # in the report body itself (interfaces §1k replay/report clause).
+    report = generate_report_md(trac, host_repo, name="failure_chain_report")
+    assert "failure.stored" in report
 
 
 # AC-FR0280-02@v0.8 TRACKS-TRACE consistent selection rules across roles
@@ -121,9 +166,16 @@ def test_lost_or_mismatched_blocks(host_repo, trac, event_log):
     )
     assert outcome3 == "consistent"
 
-    walk_to_m_impl_parked(trac)
+    run_id = walk_to_m_impl_parked(trac)
+    _seed_lost_failure_reference(host_repo, run_id)
+    drive = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+    assert drive.returncode == 0, drive.stderr
     events = event_log()
-    failed = [e for e in events if e["type"] == "review.failed" and e["payload"].get("area") == "failure_evidence"]
+    failed = [
+        e
+        for e in events
+        if e["type"] == "review.failed" and e["payload"].get("area") == "failure_evidence"
+    ]
     assert failed, "review.failed must appear for lost/mismatched"
     assert failed[0]["payload"]["outcome"] in ("evidence_lost", "mismatched")
     status = trac("status").stdout

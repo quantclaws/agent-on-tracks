@@ -239,7 +239,25 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             dc = _simulate_map().get("prism:defect_classification")
             if dc:
                 result["defect_classification"] = dc
+        self._ack_injected_evidence(result, assignment)
         return result
+
+    @staticmethod
+    def _ack_injected_evidence(result: dict, assignment: dict | None) -> None:
+        """Simulate the outcome's ``evidence_ack`` (IF-FAILURE-001 §1k).
+
+        The agent consumed the failure ids the Runtime injected into its
+        assignment (``failure_evidence``); the fake echoes exactly those ids
+        — never an invented acknowledgement."""
+        if not isinstance(result, dict) or result.get("evidence_ack"):
+            return
+        injected = [
+            item
+            for item in (assignment or {}).get("failure_evidence") or []
+            if isinstance(item, str) and item
+        ]
+        if injected:
+            result["evidence_ack"] = injected
 
     def _attach_declared_raw_output(
         self, result: dict, role: str, substate: str, assignment: dict | None
@@ -945,6 +963,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         else:
             result = self._devon_green(assignment, token)
         self._devon_attach_hotfix_trailers(result, assignment)
+        self._ack_injected_evidence(result, assignment)
         return result
 
     @staticmethod

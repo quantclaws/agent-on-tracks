@@ -15,11 +15,17 @@ ReviewOutcome = Literal["consistent", "evidence_lost", "mismatched"]
 
 _STORE: dict[str, list[dict]] = {}
 _ACKED: set[tuple[str, str, str]] = set()
+_INVALIDATED: set[tuple[str, str]] = set()
 
 
 def _next_failure_id(run_id: str, round_no: int, source: str) -> str:
     seq = len(_STORE.get(run_id, []))
     return f"{round_no}-{source}-{seq}"
+
+
+def next_failure_id(run_id: str, round_no: int, source: str) -> str:
+    """The id the next :func:`record_failure` will mint (failure.emitted)."""
+    return _next_failure_id(run_id, round_no, source)
 
 
 def record_failure(run_id: str, round_no: int, source: str, record: dict) -> dict:
@@ -90,17 +96,25 @@ def restore_from_events(run_id: str, events) -> int:
             fid = payload.get("failure_id")
             if fid:
                 _ACKED.add((run_id, str(fid), str(payload.get("role") or "")))
+        elif etype == "failure.invalidated":
+            fid = payload.get("failure_id")
+            if fid:
+                _INVALIDATED.add((run_id, str(fid)))
     return restored
 
 
 def select_failure(run_id: str, role: str, round_no: int) -> dict | None:
     """Deterministic round/source selection rule shared by every role."""
-    # look back up to 3 rounds, pick latest un-ACKed in that round
+    # look back up to 3 rounds, pick latest un-ACKed, un-invalidated record
     for r in (round_no, round_no - 1, round_no - 2, round_no - 3):
         if r < 0:
             continue
         candidates = [
-            f for f in _STORE.get(run_id, []) if f.get("round") == r and (run_id, f.get("failure_id"), role) not in _ACKED
+            f
+            for f in _STORE.get(run_id, [])
+            if f.get("round") == r
+            and (run_id, f.get("failure_id"), role) not in _ACKED
+            and (run_id, f.get("failure_id")) not in _INVALIDATED
         ]
         if candidates:
             # latest by seq (last in list)
@@ -124,8 +138,60 @@ def acknowledge_failure(run_id: str, failure_id: str, role: str) -> dict:
 
 
 def invalidate_failure(run_id: str, failure_id: str, reason: str) -> dict:
-    # only invalidated if already acked; otherwise still return but marks
-    return {"failure_id": failure_id, "run_id": run_id, "reason": reason, "invalidated": True}
+    """Invalidate a record replaced by new evidence.
+
+    IF-FAILURE-001 §1k: 未 ACK 不得失效 — a record no role has ACKed is still
+    awaiting consumption and stays selectable (ordinary failures append, they
+    never overwrite). Only an ACKed record is eligible.
+    """
+    acked = any(rid == run_id and fid == failure_id for (rid, fid, _role) in _ACKED)
+    if acked:
+        _INVALIDATED.add((run_id, failure_id))
+    return {
+        "failure_id": failure_id,
+        "run_id": run_id,
+        "reason": reason,
+        "invalidated": acked,
+    }
+
+
+def supersede_acked(
+    run_id: str, round_no: int, source: str, *, exclude_id: str | None = None
+) -> list[dict]:
+    """Invalidate earlier ACKed records of the same (round, source).
+
+    Called after a new record is appended: the new evidence replaces the
+    previous one, so a record a role already ACKed is closed with a
+    ``failure.invalidated`` proof (per ACKing role). Records still awaiting
+    consumption are never invalidated here — they stay selectable, which is
+    exactly the rich-evidence-not-overwritten guarantee.
+    """
+    superseded: list[dict] = []
+    for entry in _STORE.get(run_id, []):
+        fid = entry.get("failure_id")
+        if not fid or fid == exclude_id:
+            continue
+        if entry.get("round") != round_no or entry.get("source") != source:
+            continue
+        if (run_id, fid) in _INVALIDATED:
+            continue
+        roles = sorted(
+            {role for (rid, acked_id, role) in _ACKED if rid == run_id and acked_id == fid}
+        )
+        if not roles:
+            continue
+        _INVALIDATED.add((run_id, fid))
+        superseded.append(
+            {
+                "failure_id": fid,
+                "run_id": run_id,
+                "round": round_no,
+                "source": source,
+                "roles": roles,
+                "reason": "superseded",
+            }
+        )
+    return superseded
 
 
 def _stored_ids(events: list[dict]) -> set[str]:

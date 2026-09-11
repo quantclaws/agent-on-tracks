@@ -77,10 +77,12 @@ from tracks.executor.escape import quarantine_late_outcome
 from tracks.executor.failure_review import (
     acknowledge_failure,
     inject_into_assignment,
+    next_failure_id,
     record_failure,
     restore_from_events,
     review_failure_chain,
     select_failure,
+    supersede_acked,
 )
 from tracks.executor.file_identity import path_identity
 from tracks.executor.helpers import (
@@ -2629,16 +2631,46 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if outcome != "consistent":
             self._emit(
                 "review.failed",
-                {"outcome": outcome, "gaps": gaps, "task_id": task_id},
+                {
+                    "area": "failure_evidence",
+                    "outcome": outcome,
+                    "detail": "; ".join(gaps),
+                    "gaps": gaps,
+                    "task_id": task_id,
+                },
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
             return assignment
+        self._emit(
+            "failure.selected",
+            {
+                "failure_id": failure.get("failure_id", ""),
+                "round": failure.get("round"),
+                "source": failure.get("source"),
+                "role": role,
+                "rule": "round/source-latest-unacked-lookback-3",
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
         injected = inject_into_assignment(assignment, failure)
+        fid = failure.get("failure_id", "")
+        if fid:
+            # The M-IMPL assignment's ``evidence`` segment carries the
+            # last_failure dict, not a plain id list; record the injected
+            # failure ids on a dedicated key so the outcome's evidence_ack
+            # can only reference real chain records.
+            refs = list(injected.get("failure_evidence") or [])
+            if fid not in refs:
+                refs.append(fid)
+            injected["failure_evidence"] = refs
         self._emit(
             "failure.injected",
             {
-                "failure_id": failure.get("failure_id", ""),
+                "failure_id": fid,
+                "round": failure.get("round"),
+                "source": failure.get("source"),
                 "role": role,
                 "task_id": task_id,
             },
@@ -2743,13 +2775,45 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "failure_class": result.get("failure_class", ""),
             "self_report": str(result.get("self_report", ""))[:2000],
         }
-        stored = record_failure(self.run_id, state.review_round, role, record)
+        round_no = state.review_round
+        self._emit(
+            "failure.emitted",
+            {
+                "failure_id": next_failure_id(self.run_id, round_no, role),
+                "round": round_no,
+                "source": role,
+                "role": role,
+                "record_ref": result.get("output_ref"),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        stored = record_failure(self.run_id, round_no, role, record)
         self._emit(
             "failure.stored",
             stored,
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        # Replaced evidence: an ACKed older record of the same (round, source)
+        # is closed with an invalidated proof; un-ACKed evidence stays
+        # selectable (never silently overwritten).
+        for invalidated in supersede_acked(
+            self.run_id, round_no, role, exclude_id=stored["failure_id"]
+        ):
+            for ack_role in invalidated["roles"]:
+                self._emit(
+                    "failure.invalidated",
+                    {
+                        "failure_id": invalidated["failure_id"],
+                        "round": invalidated["round"],
+                        "source": invalidated["source"],
+                        "role": ack_role,
+                        "reason": invalidated["reason"],
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
 
     def _consume_evidence_ack(self, result, role) -> None:
         """(E) IF-FAILURE-001: outcome evidence_ack consumption -> acked.
@@ -2759,6 +2823,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         selection rule stops re-injecting it.
         """
         for fid in result.get("evidence_ack") or []:
+            self._emit(
+                "failure.consumed",
+                {"failure_id": str(fid), "role": role},
+            )
             acknowledge_failure(self.run_id, str(fid), role)
             self._emit(
                 "failure.acked",
