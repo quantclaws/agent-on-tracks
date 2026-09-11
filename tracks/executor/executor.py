@@ -113,7 +113,11 @@ from tracks.executor.milestone import (
     seal_evidence_readonly,
 )
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
-from tracks.executor.release_gate import generate_preview
+from tracks.executor.release_preview import (
+    assemble_preview,
+    preview_blob_matches,
+    preview_inputs_match,
+)
 from tracks.executor.result_checkpoint import (
     _COMMITTED_EVENT,
     ResultCheckpointMixin,
@@ -5045,7 +5049,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             # the stale preview without the listing never stands).
             self._park_preview(cmd, candidate_sha, "")
 
-    def _park_preview(self, cmd, candidate_sha: str, contract_digest: str) -> None:
+    def _park_preview(
+        self, cmd, candidate_sha: str, contract_or_digest, contract_digest: str | None = None
+    ) -> None:
         """Park chain step 5 (IF-RELEASE-002 face): assemble the content-
         addressed preview from the verified evidence digests; reached only
         after gates + CI + security are green. Regenerates when the
@@ -5053,37 +5059,54 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         (AC-FR0286-05 informed consent -- the listing must never be stale);
         regeneration appends a new event, the old preview is never
         overwritten (§1.0.5)."""
-        seen = [
-            e
-            for e in self.store.events(self.run_id)
-            if e.type == "release.previewed"
-            and (e.payload or {}).get("candidate_sha") == candidate_sha
-        ]
+        if isinstance(contract_or_digest, str):
+            contract, contract_digest, _source = self._load_or_default_contract(
+                cmd, candidate_sha
+            )
+            if contract is None:
+                return
+        else:
+            contract = contract_or_digest
+        events = list(self.store.events(self.run_id))
         known_issues = _repair.list_known_issues_for_preview(self.run_id)
+        state = self.store.state(self.run_id)
+        facts = self._release_version_facts(state)
+        if not facts.get("version"):
+            version = next((event.version for event in reversed(events) if event.version), "")
+            digits = version.lstrip("v").split(".")
+            facts = {
+                "version": version,
+                "major": digits[0] if digits and digits[0].isdigit() else "0",
+                "minor": digits[1] if len(digits) > 1 and digits[1].isdigit() else "0",
+            }
+        preview = assemble_preview(
+            self.repo,
+            contract,
+            candidate_sha,
+            contract_digest,
+            facts,
+            events,
+            journey=(cmd.params or {}).get("journey"),
+            known_issues=known_issues,
+        )
+        if preview is None:
+            return
+        seen = [
+            event for event in events
+            if event.type == "release.previewed"
+            and (event.payload or {}).get("candidate_sha") == candidate_sha
+        ]
         if seen:
             last = seen[-1].payload or {}
-            # SM-01.17 idempotency: an unchanged known-issue listing never
-            # regenerates (a preview without the key lists nothing); only a
-            # CHANGED listing re-opens the informed-consent face (§1.0.5:
-            # regeneration appends, never overwrites).
-            if last.get("known_issues", []) == known_issues:
+            if preview_inputs_match(last, preview) and preview_blob_matches(
+                self.store.home, last
+            ):
                 return
-        preview = generate_preview(
-            candidate_sha,
-            {
-                "artifact_digest": "",
-                "evidence_digests": self._verify_evidence_digests(),
-                "operation_plan_digest": "",
-                "contract_policy_digest": contract_digest,
-            },
-            risks=[],
-            plan={},
-        )
-        if known_issues:
-            # AC-FR0286-05 informed consent: every unfixed known issue must
-            # appear in the preview -- an unlisted one blocks release.
-            preview = dict(preview)
-            preview["known_issues"] = known_issues
+        blob = self.store.write_audit_blob(preview)
+        if not blob:
+            return
+        preview = dict(preview)
+        preview["blob_ref"] = f".tracks/runtime/blobs/{blob}"
         self._emit("release.previewed", preview, command_id=cmd.command_id)
 
     def _release_version_facts(self, state) -> dict:
@@ -5887,7 +5910,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         )
         if contract is None:
             return
-        self._park_preview(cmd, candidate_sha, digest)
+        self._park_preview(cmd, candidate_sha, contract, digest)
 
     def _load_authoritative_issue_map(self) -> dict:
         """The authoritative issue map (IF-ISSUE-001): the closer vocabulary
