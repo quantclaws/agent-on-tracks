@@ -877,8 +877,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
 
         The ``test`` cell carries the full repo-relative path in its declared
         integration/e2e layer. D-41 keeps task unit RED refs under Runtime R
-        ownership; they are not inferred from §8."""
-        acc = self._design_vdir() / "acceptance.md"
+        ownership; they are not inferred from §8.
+
+        IF-HOTFIX-010: a hotfix version dir carries only the delta trio — the
+        acceptance is inherited from the target baseline and resolved via
+        ``resolve_inherited_baseline_docs`` (the same read-only resolver the
+        file-level validators use, precedent ``_reach_entry_lines``)."""
+        from tracks.executor.test_tasks import resolve_inherited_baseline_docs
+
+        acc, _ifc = resolve_inherited_baseline_docs(self._design_vdir() / "test-plan.md")
         acs = _ACC_ITEM.findall(acc.read_text(encoding="utf-8")) if acc.exists() else []
         if token == "trace_orphan":
             acs = acs[:-1]
@@ -1395,7 +1402,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         if not anchors:
             return acs, registry, None
         hotfix_acs, hotfix_registry = FakeBackend._hotfix_taskgraph_sources(
-            acs, assignment, anchors
+            acs, registry, assignment, anchors, acc, vdir / "test-plan.md"
         )
         return hotfix_acs, hotfix_registry, None
 
@@ -1423,8 +1430,24 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
 
     @staticmethod
     def _hotfix_taskgraph_sources(
-        acs: list[str], assignment: dict | None, anchors: set[str]
+        acs: list[str],
+        registry: list[str],
+        assignment: dict | None,
+        anchors: set[str],
+        acc: Path,
+        plan: Path,
     ) -> tuple[list[str], list[str]]:
+        """Anchored hotfix slice of the inherited taskgraph sources.
+
+        Archer PLANNING assignments carry no ``test_tasks`` slice (b92 R3
+        card diet: ``_apply_assignment_context_grading`` blanks it), so the
+        per-task IF registry cannot be derived from the assignment. Fall
+        back to the delta test-plan's own anchored rows (the same
+        ``parse_test_tasks`` the Shield WRITE injection uses); the raw
+        inherited registry stays the last resort so the M-IMPL planner is
+        never failed closed with ``IF Registry is empty``."""
+        from tracks.executor.test_tasks import parse_test_tasks
+
         rows = (assignment or {}).get("test_tasks") or []
         assigned_ifs = {
             str(if_id)
@@ -1432,6 +1455,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
             for if_id in (row.get("if_ids") or [])
             if if_id
         }
+        if not assigned_ifs and plan.is_file():
+            assigned_ifs = {
+                str(if_id)
+                for row in parse_test_tasks(acc, plan)
+                for if_id in (row.get("if_ids") or [])
+                if if_id
+            }
+        if not assigned_ifs:
+            assigned_ifs = {str(if_id) for if_id in registry if if_id}
         return sorted(set(acs) & anchors), sorted(assigned_ifs)
 
     @staticmethod

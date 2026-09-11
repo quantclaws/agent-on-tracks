@@ -15,6 +15,9 @@ import hashlib
 import json
 from typing import Literal
 
+from tracks.capabilities import base_version
+from tracks.executor.helpers import git
+
 StaleReason = Literal["candidate_drift", "evidence_staled", "operation_plan_changed"]
 
 # IF-JOURNEY-001 §1m: step COND closed set (KIND:TARGET[:when=COND]).
@@ -30,6 +33,133 @@ def _render_placeholders(template: str, facts: dict) -> str:
     for key, value in (facts or {}).items():
         out = out.replace("{" + key + "}", str(value))
     return out
+
+
+def version_facts(version: str, run_id: str = "") -> dict:
+    """Base version facts for a run identity (IF-JOURNEY-001 §1m).
+
+    ``{major}/{minor}`` come from the run's TARGET version: a hotfix run
+    inherits its target baseline (``v0.8-hotfix-42`` -> ``v0.8`` -> major
+    ``0``, minor ``0.8``); the ``version`` key keeps the run identity used
+    by ``{version}`` placeholders (hotfix doc/test paths). ``{ulid}`` is the
+    run id; ``{n}`` is completed by :func:`complete_version_facts`.
+    """
+    target = base_version(str(version or ""))
+    parts = target.lstrip("v").split(".")
+    major = parts[0] if parts and parts[0].isdigit() else "0"
+    minor_digit = parts[1] if len(parts) > 1 and parts[1].isdigit() else "0"
+    return {
+        "version": str(version or ""),
+        "major": major,
+        "minor": f"{major}.{minor_digit}",
+        "ulid": run_id,
+    }
+
+
+def remote_patch_n(repo, patch_line: str, facts: dict) -> tuple[str | None, str | None]:
+    """``{n}`` = highest remote patch tag + 1 for the rendered patch line.
+
+    No configured remote or no matching tag -> ``1``; a configured remote
+    whose census cannot be read fails closed with ``ls_remote_failed`` (the
+    caller surfaces honest attention instead of guessing a patch number).
+    Returns ``(None, None)`` when the patch line does not use ``{n}``.
+    """
+    template = str(patch_line or "")
+    if "{n}" not in template:
+        return None, None
+    remote = git(repo, "config", "--get", "remote.origin.url", check=False)
+    if remote.returncode != 0 or not remote.stdout.strip():
+        return "1", None
+    rendered = _render_placeholders(template, facts)
+    prefix = rendered.split("{n}", 1)[0]
+    census = git(
+        repo, "ls-remote", "--tags", "origin", f"refs/tags/{prefix}*", check=False
+    )
+    if census.returncode != 0:
+        return None, "ls_remote_failed"
+    highest = 0
+    for line in census.stdout.splitlines():
+        _sha, _sep, ref = line.partition("\t")
+        suffix = ref[len("refs/tags/") :] if ref.startswith("refs/tags/") else ""
+        if suffix.endswith("^{}"):
+            suffix = suffix[:-3]
+        if not suffix.startswith(prefix):
+            continue
+        patch = suffix[len(prefix) :]
+        if patch.isdigit():
+            highest = max(highest, int(patch))
+    return str(highest + 1), None
+
+
+def operation_plan_needs_n(contract_table: dict, journey: str) -> bool:
+    """True when the journey's declared steps depend on the ``{n}`` fact,
+    directly or through a version_scheme label whose template uses ``{n}``
+    -- the only case a remote patch-tag census is required."""
+    scheme = contract_table.get("version_scheme") or {}
+    label_templates = {
+        f"{{{name}}}": str(scheme.get(name) or "")
+        for name in ("feature_tag", "patch_line", "prerelease_tag")
+    }
+    section = (contract_table.get("operations") or {}).get(journey) or {}
+    for step in section.get("steps") or ():
+        step = str(step)
+        if "{n}" in step:
+            return True
+        for token, template in label_templates.items():
+            if token in step and "{n}" in template:
+                return True
+    return False
+
+
+def complete_version_facts(
+    repo, facts: dict, patch_line: str, *, needs_n: bool = True
+) -> tuple[dict | None, str | None]:
+    """Fill a base fact set with ``{n}``/``{ulid}`` (no fact overwritten).
+
+    Shared by every preview producer and re-validation site (M-RELEASE
+    preview, release-CLI recompute, M-PUBLISH rebuild) so an operation plan
+    rebuilt later resolves byte-identical facts. The remote census runs only
+    when the journey's steps actually depend on ``{n}``
+    (:func:`operation_plan_needs_n`). Returns ``(facts, None)`` or
+    ``(None, reason)``.
+    """
+    resolved = dict(facts or {})
+    if needs_n and "n" not in resolved:
+        n, error = remote_patch_n(repo, patch_line, resolved)
+        if error is not None:
+            return None, error
+        if n is not None:
+            resolved["n"] = n
+    resolved.setdefault("ulid", "")
+    return resolved, None
+
+
+def active_release_branch(repo, facts: dict) -> str | None:
+    """The journey's active release branch (local OR remote existence).
+
+    IF-JOURNEY-001 (§1m): ``releases/v{minor}`` for the target version
+    (``v0.8`` -> ``releases/v0.8``); absent when neither the local branch nor
+    a reachable ``origin`` head confirms it.
+    """
+    minor = str((facts or {}).get("minor") or "")
+    if not minor:
+        return None
+    candidate = f"releases/v{minor}"
+    local = git(repo, "branch", "--list", candidate, check=False)
+    if local.returncode == 0 and any(
+        line.strip().lstrip("* ").strip() == candidate
+        for line in local.stdout.splitlines()
+    ):
+        return candidate
+    remote = git(repo, "config", "--get", "remote.origin.url", check=False)
+    if remote.returncode != 0 or not remote.stdout.strip():
+        return None
+    heads = git(
+        repo, "ls-remote", "--heads", "origin", f"refs/heads/{candidate}", check=False
+    )
+    if heads.returncode == 0 and f"refs/heads/{candidate}" in heads.stdout:
+        return candidate
+    return None
 
 
 def build_operation_plan(

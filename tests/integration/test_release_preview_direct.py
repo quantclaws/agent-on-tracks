@@ -293,11 +293,11 @@ def _expected_plan(contract: Path) -> dict:
         {
             "version": "v0.8",
             "major": "0",
-            "minor": "8",
+            "minor": "0.8",
             "n": "0",
             "ulid": "01HLOCALPREVIEW",
             "artifact": "dist/package.whl",
-            "feature_tag": "v8.0",
+            "feature_tag": "v0.8.0",
         },
     )
 
@@ -451,6 +451,6 @@ def test_cli_release_approval_reaches_real_tag_consumer(host_repo, trac, tmp_pat
     executed = [event for event in events if event.type == "publish.executed"]
     assert executed and executed[-1].payload["status"] == "done"
     assert executed[-1].payload["candidate_sha"] == candidate
-    remote_state = read_remote_state(str(remote), "tag", "v8.0", expected_object=candidate)
+    remote_state = read_remote_state(str(remote), "tag", "v0.8.0", expected_object=candidate)
     assert remote_state["exists"] is True
     assert remote_state["object_id"] == candidate

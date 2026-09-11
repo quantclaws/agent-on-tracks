@@ -7,7 +7,13 @@ import json
 from pathlib import Path
 
 from tracks import paths
-from tracks.executor.release_gate import build_operation_plan, generate_preview
+from tracks.executor.release_gate import (
+    active_release_branch,
+    build_operation_plan,
+    complete_version_facts,
+    generate_preview,
+    operation_plan_needs_n,
+)
 
 
 def canonical_digest(value: object) -> str:
@@ -200,11 +206,22 @@ def assemble_preview(
     resolved_journey = _journey(contract, journey)
     if resolved_journey is None:
         return None
-    resolved_facts = _version_facts(contract, version_facts)
+    table = _contract_table(contract)
+    patch_line = str(getattr(getattr(contract, "version", None), "patch_line", "") or "")
+    resolved_facts, _error = complete_version_facts(
+        repo,
+        version_facts,
+        patch_line,
+        needs_n=operation_plan_needs_n(table, resolved_journey),
+    )
+    if resolved_facts is None:
+        return None
+    resolved_facts = _version_facts(contract, resolved_facts)
     plan = build_operation_plan(
-        _contract_table(contract),
+        table,
         resolved_journey,
         resolved_facts,
+        active_release_branch=active_release_branch(repo, resolved_facts),
     )
     if not isinstance(plan, dict):
         return None

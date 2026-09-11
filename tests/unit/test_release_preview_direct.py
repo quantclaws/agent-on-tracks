@@ -91,10 +91,10 @@ def _host(tmp_path: Path) -> tuple[Executor, Store, Path, str, dict]:
     facts = {
         "version": "v0.8",
         "major": "0",
-        "minor": "8",
-        "feature_tag": "v8.0",
-        "patch_line": "v8.{n}",
-        "prerelease_tag": "v8.{n}-pre.{ulid}",
+        "minor": "0.8",
+        "feature_tag": "v0.8.0",
+        "patch_line": "v0.8.{n}",
+        "prerelease_tag": "v0.8.{n}-pre.{ulid}",
     }
     contract = {
         "operations": {"feature": {"steps": ["tag:{feature_tag}"]}}

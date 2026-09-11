@@ -21,7 +21,7 @@ from tracks.executor.host_contract import (
     validate_host_contract,
 )
 from tracks.executor.local_gate_evidence import has_complete_passed_gates
-from tracks.executor.release_gate import validate_release_decision
+from tracks.executor.release_gate import validate_release_decision, version_facts
 from tracks.executor.release_preview import (
     assemble_preview,
     preview_blob_matches,
@@ -50,14 +50,16 @@ def _raw_digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _version_facts(version: str) -> dict:
-    value = str(version or "")
-    parts = value.lstrip("v").split(".")
-    return {
-        "version": value,
-        "major": parts[0] if parts and parts[0].isdigit() else "0",
-        "minor": parts[1] if len(parts) > 1 and parts[1].isdigit() else "0",
-    }
+def _run_id_from_events(events: list) -> str:
+    """The run identity events carry (EventEnvelope.run_id), first non-empty."""
+    return next(
+        (
+            str(getattr(event, "run_id", "") or "")
+            for event in events
+            if getattr(event, "run_id", None)
+        ),
+        "",
+    )
 
 
 def _payload(event) -> dict:
@@ -233,7 +235,7 @@ def _recomputed_preview(
         contract,
         preview.get("candidate_sha"),
         "sha256:" + digest,
-        _version_facts(version),
+        version_facts(version, _run_id_from_events(events)),
         events,
         journey=journey,
         known_issues=preview.get("known_issues"),

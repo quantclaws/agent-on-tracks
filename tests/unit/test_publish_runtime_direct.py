@@ -16,7 +16,7 @@ from tracks.executor.release_gate import build_operation_plan, generate_preview
 from tracks.kernel.events import Command
 from tracks.store import Store
 
-_TAG = "v8.0"
+_TAG = "v0.8.0"
 _PREVIEW_FACTS = {
     "artifact_digest": "",
     "evidence_digests": {"full_f": "sha256:" + "e1" * 32},

@@ -362,16 +362,30 @@ def _parse_action_actor(args: tuple[str, ...], usage: str) -> tuple[str, str | N
     return args[0].replace("-", "_"), args[2] if len(args) == 3 else None
 
 
+_RUN_USAGE = (
+    "usage: trac run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
+)
+
+
 def _parse_run_args(args: tuple[str, ...]) -> tuple[str | None, int | None]:
-    if len(args) % 2:
-        raise ValueError("usage: trac run [--assignment-overlay PATH] [--max-dispatches N]")
+    """Parse `trac run` flags. ``--resume`` is the explicit resume alias
+    (AC-FR0283-02 wording / interfaces §2b): a no-op token because an active
+    run already reconciles/replays on the next drive (D-13)."""
     values = {}
-    for flag, value in zip(args[::2], args[1::2], strict=True):
+    index = 0
+    while index < len(args):
+        flag = args[index]
+        if flag == "--resume":
+            index += 1
+            continue
         if flag not in ("--assignment-overlay", "--max-dispatches"):
-            raise ValueError("usage: trac run [--assignment-overlay PATH] [--max-dispatches N]")
+            raise ValueError(_RUN_USAGE)
         if flag in values:
             raise ValueError(f"{flag} may be specified only once")
-        values[flag] = value
+        if index + 1 >= len(args):
+            raise ValueError(_RUN_USAGE)
+        values[flag] = args[index + 1]
+        index += 2
     return values.get("--assignment-overlay"), _positive_dispatch_limit(
         values.get("--max-dispatches")
     )
@@ -1491,18 +1505,24 @@ def _append_release_rejected(
 
 
 def _prism_final_status(events: list) -> str | None:
-    """interfaces §2b prism=pass|fail fragment for the latest verify_final
-    verdict. A non-pass final-review verdict is the release-chain block the
-    Human/repair route keys on (rendered ``prism=failed``, frozen-anchor
-    token); ``None`` means no verify_final verdict has landed yet."""
+    """interfaces §2b prism=pass|fail fragment for the verify_final face.
+
+    A landed verify_final verdict projects its own verdict (pass|failed).
+    Prism verdicts present WITHOUT a scoped verify_final one mean the
+    same-candidate final review has not passed -- the release-chain block
+    the Human/repair route keys on -- and render ``prism=failed``
+    (test_verify_prism_final: the status must record the prism block).
+    ``None`` means no prism verdict has landed at all."""
+    verdicts = [e for e in events if e.type == "prism.verdict"]
+    if not verdicts:
+        return None
     final = [
         e
-        for e in events
-        if e.type == "prism.verdict"
-        and (e.payload or {}).get("scope") == "verify_final"
+        for e in verdicts
+        if (e.payload or {}).get("scope") == "verify_final"
     ]
     if not final:
-        return None
+        return "failed"
     verdict = (final[-1].payload or {}).get("verdict")
     return "pass" if verdict == "pass" else "failed"
 
@@ -1596,7 +1616,7 @@ def _release_status_lines(events: list, primary, repo: Path | None = None) -> li
         lines.append("blocked: gate failed or preview stale")
         lines.append("rejected: gate failed or preview stale")
     _release_chain_fragments(events, lines)
-    lines.extend(_release_ci_attention_lines(events))
+    lines.extend(_release_attention_lines(events))
     lines.extend(_release_publish_lines(events, primary))
     return lines
 
@@ -1638,13 +1658,69 @@ def _release_ci_attention_lines(events: list) -> list[str]:
     ]
 
 
+_ATTENTION_RECOVERY_EVENTS = {
+    "freeze": ("candidate.frozen",),
+    "issue_creation": ("issue.created", "issue.mapped"),
+    "issue_close": ("issue.closed",),
+    "project_close": ("project.closed",),
+    "milestone_seal": ("milestone.sealed",),
+    "milestone_refs": ("refs.cleaned",),
+}
+
+
+def _attention_area_resolved(events: list, attention, area: str) -> bool:
+    """True when a later recovery event proves the area's attention cleared."""
+    recovery = _ATTENTION_RECOVERY_EVENTS.get(area)
+    if not recovery:
+        return False
+    attention_seq = getattr(attention, "seq", 0)
+    return any(
+        event.type in recovery and getattr(event, "seq", 0) > attention_seq
+        for event in events
+    )
+
+
+def _release_attention_lines(events: list) -> list[str]:
+    """(H) needs_attention status lines (interfaces §287 / ACC-FR0283-02).
+
+    The ci_readback fragment keeps its existing shape; every other
+    attention.required area renders ``needs_attention=<area>:<reason>`` so
+    the operator sees issue_creation/freeze/close attention on the status
+    line too. An area whose later recovery event landed (issue.created,
+    candidate.frozen, issue.closed, ...) no longer renders."""
+    lines = _release_ci_attention_lines(events)
+    pending: dict[str, object] = {}
+    for event in events:
+        if event.type != "attention.required":
+            continue
+        area = str((event.payload or {}).get("area") or "")
+        if not area or area == "ci_readback":
+            continue
+        if _attention_area_resolved(events, event, area):
+            continue
+        pending[area] = event  # latest unresolved attention per area
+    for area, event in sorted(
+        pending.items(), key=lambda item: getattr(item[1], "seq", 0)
+    ):
+        reason = str((event.payload or {}).get("reason") or "unknown")
+        lines.append(f"needs_attention={area}:{reason}")
+    return lines
+
+
 def _release_publish_lines(events: list, primary) -> list[str]:
-    """(G) publish and terminal fragments for status."""
+    """(G) publish and terminal fragments for status (interfaces §287 /
+    AC-FR0275-01): ``publish=planned|executing|done|reconciled_skip|blocked``
+    from the state projection; an explicit publish.blocked event keeps its
+    reason fragment."""
     pub_blocked = [e for e in events if e.type == "publish.blocked"]
     lines: list[str] = []
     if pub_blocked:
         block_reason = (pub_blocked[-1].payload or {}).get("reason", "unknown")
         lines.append(f"publish=blocked reason={block_reason}")
+    else:
+        publish_status = getattr(primary, "publish_status", None)
+        if publish_status:
+            lines.append(f"publish={publish_status}")
     if primary.status == "completed" and primary.terminal_state == "cancelled":
         lines.append("terminal=cancelled")
     return lines
@@ -1773,6 +1849,50 @@ def _validate_return_target(target: str | None) -> int | None:
     return None
 
 
+def _unlisted_known_issues(events: list, preview_payload: dict) -> list[str]:
+    """AC-FR0286-05 informed consent: registered known issues whose issue
+    number does not appear in the preview's known_issues listing. The event
+    stream (known_issue.registered) is the durable authority — an unlisted
+    unfixed defect blocks the release."""
+    listed_numbers = {
+        str(entry.get("issue", "")).rsplit("#", 1)[-1]
+        for entry in (preview_payload.get("known_issues") or [])
+        if isinstance(entry, dict)
+    }
+    unlisted: list[str] = []
+    for e in events:
+        if e.type != "known_issue.registered":
+            continue
+        number = str((e.payload or {}).get("issue_number", ""))
+        if number and number not in listed_numbers:
+            unlisted.append(number)
+    return unlisted
+
+
+def _release_known_issue_guard(
+    store, run_id: str, version: str, action: str, payload: dict, events: list
+) -> str | None:
+    """AC-FR0286-05 informed consent: an unfixed registered known issue that
+    the preview does not list blocks the release — the Human must see every
+    open waiver before authorizing. Audited as release.rejected
+    (reason=known_issue_not_listed); returns the rejection message or None."""
+    if action != "release":
+        return None
+    unlisted = _unlisted_known_issues(events, payload)
+    if not unlisted:
+        return None
+    detail = "known_issue not listed: " + ", ".join(
+        f"acme/host#{n}" for n in unlisted
+    )
+    _append_release_rejected(
+        store, run_id, version, action, payload, "known_issue_not_listed", detail
+    )
+    return (
+        f"error: release rejected — {detail}; "
+        "trac run regenerates the preview listing"
+    )
+
+
 def _reject_release_authorization(
     store, run_id: str, version: str, action: str, payload: dict, authorization
 ) -> int | None:
@@ -1837,6 +1957,11 @@ def cmd_release(repo: Path, *args: str) -> int:
         )
         if rejection is not None:
             return rejection
+        rejection = _release_known_issue_guard(
+            store, run_id, version, action, payload, events
+        )
+        if rejection is not None:
+            return _err(rejection)
         store.append(
             run_id,
             version,
@@ -2626,7 +2751,8 @@ def cmd_check(repo: Path, *args) -> int:
 
 
 USAGE = (
-    "usage: trac init|start <version>|run [--assignment-overlay PATH] [--max-dispatches N]"
+    "usage: trac init|start <version>"
+    "|run [--resume] [--assignment-overlay PATH] [--max-dispatches N]"
     "|triage <decision> [--actor NAME]"
     "|review <action> [--actor NAME]|approve [--actor NAME]|return --to <stage> --reason TEXT"
     "|recover --reason TEXT"

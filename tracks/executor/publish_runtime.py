@@ -17,7 +17,13 @@ from tracks.executor.host_contract import (
     load_host_contract,
 )
 from tracks.executor.publish import plan_operations
-from tracks.executor.release_gate import build_operation_plan, compute_preview_digest
+from tracks.executor.release_gate import (
+    active_release_branch,
+    build_operation_plan,
+    complete_version_facts,
+    compute_preview_digest,
+    operation_plan_needs_n,
+)
 
 
 def _digest(value: object) -> str:
@@ -185,8 +191,23 @@ def _preview_error(
     if _digest_bytes(contract_raw) != preview.get("contract_policy_digest"):
         return None, "contract_changed"
     journey = str(operation_plan.get("journey") or "")
+    patch_line = str(
+        (contract_table.get("version_scheme") or {}).get("patch_line") or ""
+    )
+    facts, facts_error = complete_version_facts(
+        repo,
+        version_facts,
+        patch_line,
+        needs_n=operation_plan_needs_n(contract_table, journey),
+    )
+    if facts is None:
+        return None, facts_error or "release_facts_unresolved"
+    resolved_facts = _facts_with_scheme(facts, contract_table)
     current_plan = build_operation_plan(
-        contract_table, journey, _facts_with_scheme(version_facts, contract_table)
+        contract_table,
+        journey,
+        resolved_facts,
+        active_release_branch=active_release_branch(repo, resolved_facts),
     )
     if current_plan != operation_plan:
         return None, "operation_plan_changed"

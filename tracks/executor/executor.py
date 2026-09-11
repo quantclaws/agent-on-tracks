@@ -26,7 +26,7 @@ import tomllib
 
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
-from tracks.capabilities import supports_m_impl
+from tracks.capabilities import base_version, supports_m_impl
 from tracks.discuss.locate import locate
 from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
@@ -124,7 +124,13 @@ from tracks.executor.milestone import (
     skipped_issue_entries,
 )
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
+from tracks.executor.release_gate import (
+    complete_version_facts,
+    operation_plan_needs_n,
+    version_facts,
+)
 from tracks.executor.release_preview import (
+    _contract_table,
     assemble_preview,
     preview_blob_matches,
     preview_inputs_match,
@@ -4068,9 +4074,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         command (Command(freeze_candidate)); below-threshold versions select
         no extension and get ``None`` back, keeping their boundary
         completion. The gate runs only here at execution time, keeping
-        ``_NEXT_STAGE`` declarative (single source of truth)."""
+        ``_NEXT_STAGE`` declarative (single source of truth).
+
+        A hotfix run inherits its TARGET version's capability extension
+        (FR-0277 post-release/dev journeys; ``capabilities.base_version``
+        strips the ``-hotfix-{issue}`` identity), so a v0.8 hotfix re-routes
+        into the release pipeline while sub-threshold hotfixes keep the v0.6
+        boundary completion byte-identical."""
         callback = _version_extensions.resolve_capability(
-            self.version or "", "after_m_impl"
+            base_version(self.version or ""), "after_m_impl"
         )
         return callback(state) if callback is not None else None
 
@@ -4671,30 +4683,32 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
             )
             return
-        version_facts = self._release_version_facts(state)
-        if not version_facts.get("version"):
+        facts = self._release_version_facts(state)
+        if not facts.get("version"):
             envelope_version = next(
                 (event.version for event in reversed(events) if event.version), ""
             )
-            if envelope_version:
-                digits = envelope_version.lstrip("v").split(".")
-                version_facts = {
-                    "version": envelope_version,
-                    "major": digits[0] if digits and digits[0].isdigit() else "0",
-                    "minor": (
-                        digits[1]
-                        if len(digits) > 1 and digits[1].isdigit()
-                        else "0"
-                    ),
-                }
+            facts = version_facts(envelope_version, self.run_id)
         authority, error = resolve_publish_authority(
             self.repo,
             events,
             params.get("preview_digest"),
-            version_facts,
+            facts,
             self.store.home,
         )
         if authority is None:
+            if error == "ls_remote_failed":
+                self._emit(
+                    "attention.required",
+                    {
+                        "area": "release_facts",
+                        "reason": error,
+                        "stage": "M-PUBLISH",
+                        "detail": "remote patch-tag census failed for the publish rebuild",
+                        "next": "check origin access; trac run --resume retries publish",
+                    },
+                    command_id=cmd.command_id,
+                )
             self._publish_fail(cmd, error or "malformed")
             return
 
@@ -5440,6 +5454,22 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 # contract drift.
                 self._park_preview(cmd, candidate_sha, "")
 
+    def _release_journey(self, state, cmd) -> str | None:
+        """Resolve the preview's declared journey (IF-JOURNEY-001 §1m).
+
+        A hotfix run owns its journey on the State (``hotfix_scenario``:
+        post-release -> ``post_release``, dev -> ``dev``); every other run
+        keeps the command-declared journey (default resolution happens in
+        ``release_preview._journey`` -- feature when declared)."""
+        scenario = getattr(state, "hotfix_scenario", None)
+        if scenario:
+            return {
+                "post-release": "post_release",
+                "post_release": "post_release",
+                "dev": "dev",
+            }.get(str(scenario), str(scenario))
+        return (cmd.params or {}).get("journey")
+
     def _park_preview(
         self, cmd, candidate_sha: str, contract_or_digest, contract_digest: str | None = None
     ) -> None:
@@ -5461,15 +5491,38 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         events = list(self.store.events(self.run_id))
         known_issues = _repair.list_known_issues_for_preview(self.run_id, events)
         state = self.store.state(self.run_id)
-        facts = self._release_version_facts(state)
-        if not facts.get("version"):
-            version = next((event.version for event in reversed(events) if event.version), "")
-            digits = version.lstrip("v").split(".")
-            facts = {
-                "version": version,
-                "major": digits[0] if digits and digits[0].isdigit() else "0",
-                "minor": digits[1] if len(digits) > 1 and digits[1].isdigit() else "0",
-            }
+        version = getattr(state, "version", None) or next(
+            (event.version for event in reversed(events) if event.version), ""
+        )
+        journey = self._release_journey(state, cmd)
+        facts = version_facts(version, self.run_id)
+        patch_line = str(
+            getattr(getattr(contract, "version", None), "patch_line", "") or ""
+        )
+        table = _contract_table(contract)
+        facts, error = complete_version_facts(
+            self.repo,
+            facts,
+            patch_line,
+            needs_n=operation_plan_needs_n(table, journey or ""),
+        )
+        if facts is None:
+            # Honest attention: a configured remote whose tag census cannot
+            # be read must not silently resolve {n}=1 (patch identity guess).
+            self._emit(
+                "attention.required",
+                {
+                    "area": "release_facts",
+                    "reason": error or "release_facts_unresolved",
+                    "stage": "M-RELEASE",
+                    "candidate_sha": candidate_sha,
+                    "detail": "remote patch-tag census failed for patch_line "
+                    f"{patch_line!r}",
+                    "next": "check origin access; trac run retries the preview",
+                },
+                command_id=cmd.command_id,
+            )
+            return
         preview = assemble_preview(
             self.repo,
             contract,
@@ -5477,7 +5530,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             contract_digest,
             facts,
             events,
-            journey=(cmd.params or {}).get("journey"),
+            journey=journey,
             known_issues=known_issues,
         )
         if preview is None:
@@ -5503,16 +5556,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _release_version_facts(self, state) -> dict:
         """Placeholder scope for contract gate commands ({version}/{major}/...
 
-        Derived from the run's declared version plus the frozen candidate; a
-        gate command referencing an undeclared placeholder fails closed
-        through the per-gate execution guard (unknown placeholder ->
-        local_gate.failed), never a guessed substitution (§1.0.4)."""
-        version = getattr(state, "version", None) or ""
-        digits = version.lstrip("v")
-        parts = digits.split(".")
-        major = parts[0] if parts and parts[0].isdigit() else "0"
-        minor = parts[1] if len(parts) > 1 and parts[1].isdigit() else "0"
-        return {"version": version, "major": major, "minor": minor}
+        Shared base facts (IF-JOURNEY-001 §1m): a hotfix identity inherits
+        its target's ``{major}/{minor}`` (``v0.8-hotfix-42`` -> ``0.8``)
+        while ``{version}`` keeps the run identity, and ``{ulid}`` carries
+        the run id. ``{n}`` is completed by the release face through
+        :func:`complete_version_facts` (remote tag census). A gate command
+        referencing an undeclared placeholder fails closed through the
+        per-gate execution guard (unknown placeholder -> local_gate.failed),
+        never a guessed substitution (§1.0.4)."""
+        return version_facts(getattr(state, "version", None) or "", self.run_id)
 
     def _fail_verify_block(self, cmd, candidate_sha, reason, detail):
         """Fail-closed M-VERIFY contract refusal (AC-FR0269-02): the

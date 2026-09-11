@@ -471,6 +471,21 @@ def _issue_map_lines(events: list) -> list[str]:
     return lines
 
 
+def _release_channel(payload: dict) -> str:
+    """The journey's publish channel (FR-0277): dev -> pre-release, the
+    post-release patch line -> patch, the feature journey -> public.
+
+    Legacy/seed payloads carry the operation plan as a digest string; they
+    render no channel (never a guessed journey)."""
+    plan = payload.get("operation_plan")
+    if not isinstance(plan, dict):
+        return ""
+    journey = str(plan.get("journey") or "")
+    return {"dev": "pre-release", "post_release": "patch", "feature": "public"}.get(
+        journey, ""
+    )
+
+
 def _release_pipeline_lines(events: list) -> list[str]:
     """§2b Release pipeline rows: preview bindings, stale judgement, decision."""
     previews = [e for e in events if e.type == "release.previewed"]
@@ -478,10 +493,13 @@ def _release_pipeline_lines(events: list) -> list[str]:
     for index, event in enumerate(previews):
         payload = event.payload if isinstance(event.payload, dict) else {}
         stale = index < len(previews) - 1
+        channel = _release_channel(payload)
+        channel_frag = f"channel={channel} " if channel else ""
         lines.append(
             f"preview: candidate={payload.get('candidate_sha', '')} "
             f"preview_digest={payload.get('preview_digest', '')} "
             f"artifact={payload.get('artifact_digest', '')} "
+            f"{channel_frag}"
             f"status={'stale' if stale else payload.get('status', 'awaiting_release')} "
             f"stale_reason="
             f"{'superseded by later preview' if stale else payload.get('stale_reason', 'none')}"

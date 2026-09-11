@@ -88,11 +88,11 @@ def _preview_for(
     raw_contract = tomllib.loads(contract.read_text(encoding="utf-8"))
     facts = {
         "version": "v0.8",
-        "minor": "8",
+        "minor": "0.8",
         "n": "0",
         "ulid": "01HLOCALTAG",
         "artifact": "dist/package.whl",
-        "feature_tag": "v8.0",
+        "feature_tag": "v0.8.0",
     }
     plan = build_operation_plan(
         raw_contract["host-contract"], "feature", facts
@@ -191,7 +191,7 @@ def _prepare(
                 },
             )
         store.append(run_id, version, "stage.entered", {"stage": "M-PUBLISH"})
-        return run_id, candidate, steps[0].split(":", 1)[-1].replace("{feature_tag}", "v8.0"), remote, preview, counter
+        return run_id, candidate, steps[0].split(":", 1)[-1].replace("{feature_tag}", "v0.8.0"), remote, preview, counter
     finally:
         store.close()
 

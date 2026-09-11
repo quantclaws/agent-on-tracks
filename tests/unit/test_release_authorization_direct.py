@@ -132,7 +132,7 @@ def _host(tmp_path: Path):
     contract = load_host_contract(contract_path)
     assert validate_host_contract(contract, repo) == ()
     preview_policy_digest = _digest(contract_path.read_bytes())
-    facts = {"version": "v0.8", "major": "0", "minor": "8"}
+    facts = {"version": "v0.8", "major": "0", "minor": "0.8"}
     preview = assemble_preview(
         repo,
         contract,
@@ -163,7 +163,7 @@ def _append_preview(store, repo, run_id, candidate, contract_digest):
         contract,
         candidate,
         preview_policy_digest,
-        {"version": "v0.8", "major": "0", "minor": "8"},
+        {"version": "v0.8", "major": "0", "minor": "0.8"},
         list(store.events(run_id)),
         journey="feature",
     )

@@ -27,7 +27,7 @@ def test_declared_tags_run_in_order_with_one_wal_record_each(tmp_path, monkeypat
     executor, store, candidate, preview, remote = _host(
         tmp_path, operation_steps=steps
     )
-    tags = ["v8.0", "v9.9"]
+    tags = ["v0.8.0", "v9.9"]
     published, read_remote = _remote_counter(candidate)
     push_calls: list[str] = []
 
@@ -66,7 +66,7 @@ def test_failed_second_tag_recovers_without_repeating_first(tmp_path, monkeypatc
     executor, store, candidate, preview, _remote = _host(
         tmp_path, operation_steps=steps
     )
-    first, second = "v8.0", "v9.9"
+    first, second = "v0.8.0", "v9.9"
     published, read_remote = _remote_counter(candidate)
     push_calls: list[str] = []
     fail_second = True
@@ -156,7 +156,7 @@ def test_failure_stops_remaining_tags_and_recovery_completes_them(
     executor, store, candidate, preview, _remote = _host(
         tmp_path, operation_steps=steps
     )
-    first, second, third = "v8.0", "v9.9", "v9.10"
+    first, second, third = "v0.8.0", "v9.9", "v9.10"
     published, read_remote = _remote_counter(candidate)
     push_calls: list[str] = []
     fail_second = True
@@ -250,7 +250,7 @@ def test_valid_multi_segment_tag_names_still_publish(tmp_path, monkeypatch):
     executor, store, candidate, preview, _remote = _host(
         tmp_path, operation_steps=steps
     )
-    tags = ["v2/candidate-1", "v8.0"]
+    tags = ["v2/candidate-1", "v0.8.0"]
     published, read_remote = _remote_counter(candidate)
     push_calls: list[str] = []
 

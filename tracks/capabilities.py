@@ -52,6 +52,22 @@ def _version_tuple(version: str) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
+def base_version(version: str) -> str:
+    """The target version a run identity belongs to.
+
+    A hotfix run's identity is ``{target_version}-hotfix-{issue}``
+    (``v0.8-hotfix-42`` -> ``v0.8``); any other identity is its own target.
+    Malformed/non-string input is returned unchanged (callers fail closed
+    downstream rather than guessing a base).
+    """
+    if not isinstance(version, str):
+        return ""
+    match = _HOTFIX_VERSION_RE.match(version.strip())
+    if match is None:
+        return version.strip()
+    return f"v{match.group(1)}.{match.group(2)}"
+
+
 def version_at_least(version: str, minimum: str) -> bool:
     """True when ``version`` is at least ``minimum`` by numeric comparison.
 

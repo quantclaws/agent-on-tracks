@@ -194,7 +194,7 @@ steps = [
 [host-contract.operations.post_release]
 steps = [
   "merge:main",
-  "merge:release/{minor}:when=active_release_branch",
+  "merge:releases/v{minor}:when=active_release_branch",
   "tag:{patch_line}",
   "artifact:{artifact}",
   "release:{patch_line}",
@@ -203,6 +203,6 @@ steps = [
 [host-contract.operations.dev]
 requires = ["active_release_branch"]
 steps = [
-  "merge:release/{minor}",
+  "merge:releases/v{minor}",
   "tag:{prerelease_tag}",
 ]

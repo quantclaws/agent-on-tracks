@@ -28,7 +28,7 @@ from tracks.executor.executor import Executor
 pytestmark = pytest.mark.integration
 
 _GITHUB_REMOTE = "https://github.com/acme/host.git"
-_TAG = "v8.0"
+_TAG = "v0.8.0"
 
 
 class _AgentBackendStub:

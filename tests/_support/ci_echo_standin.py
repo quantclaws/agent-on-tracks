@@ -50,6 +50,9 @@ class CiEchoStandIn:
         self.requests: list[str] = []
         self.issue_states: dict[int, str] = {}
         self.issues: dict[int, dict] = {}
+        self.releases: dict[str, dict] = {}
+        self.assets: dict[int, list[dict]] = {}
+        self.next_release_id = 1
         self.next_issue_number = 1
         self.last_comment_id = 0
         self._lock = threading.Lock()
@@ -138,6 +141,83 @@ class CiEchoStandIn:
                 self._reply(404, {"message": "not found"})
                 return True
 
+            def _release_api(self, method: str) -> bool:
+                """GitHub release readback/create/asset subset (FR-0275).
+
+                POST /repos/{repo}/releases stores a release; GET
+                /repos/{repo}/releases/tags/{tag} reads it back; GET
+                /repos/{repo}/releases/{id}/assets lists uploaded assets.
+                """
+                collection = f"/repos/{owner.repo}/releases"
+                if self.path == collection:
+                    if method == "POST":
+                        body = self._json_body()
+                        tag = str(body.get("tag_name") or "")
+                        if not tag:
+                            self._reply(422, {"message": "tag_name required"})
+                            return True
+                        if tag in owner.releases:
+                            self._reply(422, {"message": "already_exists"})
+                            return True
+                        release_id = owner.next_release_id
+                        owner.next_release_id += 1
+                        entry = {
+                            "id": release_id,
+                            "tag_name": tag,
+                            "name": body.get("name", tag),
+                            "prerelease": bool(body.get("prerelease")),
+                            "target_commitish": body.get("target_commitish"),
+                            "upload_url": (
+                                f"{owner.base_url}/repos/{owner.repo}/releases/"
+                                f"{release_id}/assets"
+                                "{?name,label}"
+                            ),
+                            "body": body.get("body", ""),
+                        }
+                        owner.releases[tag] = entry
+                        owner.assets[release_id] = []
+                        self._reply(201, dict(entry))
+                        return True
+                    self._reply(404, {"message": "not found"})
+                    return True
+                tag_prefix = f"{collection}/tags/"
+                if self.path.startswith(tag_prefix) and method == "GET":
+                    tag = self.path[len(tag_prefix):]
+                    entry = owner.releases.get(tag)
+                    if entry is None:
+                        self._reply(404, {"message": "not found"})
+                    else:
+                        self._reply(200, dict(entry))
+                    return True
+                assets_prefix = f"{collection}/"
+                if self.path.startswith(assets_prefix) and (
+                    "/assets" in self.path or self.path.endswith("/assets")
+                ):
+                    middle = self.path[len(assets_prefix):].split("/assets", 1)[0]
+                    try:
+                        release_id = int(middle.split("/", 1)[0])
+                    except ValueError:
+                        self._reply(404, {"message": "not found"})
+                        return True
+                    if method == "GET":
+                        self._reply(200, list(owner.assets.get(release_id, [])))
+                        return True
+                    length = int(self.headers.get("Content-Length") or 0)
+                    raw = self.rfile.read(length) if length else b""
+                    name = "asset"
+                    if "name=" in self.path:
+                        name = self.path.split("name=", 1)[1].split("&", 1)[0]
+                    entry = {
+                        "id": len(owner.assets.get(release_id, [])) + 1,
+                        "name": name,
+                        "size": len(raw),
+                        "digest": None,
+                    }
+                    owner.assets.setdefault(release_id, []).append(entry)
+                    self._reply(201, dict(entry))
+                    return True
+                return False
+
             def _milestone_api(self, method: str) -> bool:
                 prefix = f"/repos/{owner.repo}/milestones/"
                 if not self.path.startswith(prefix):
@@ -156,7 +236,11 @@ class CiEchoStandIn:
                 parsed = urlparse(self.path)
                 with owner._lock:
                     owner.requests.append(self.path)
-                if self._issue_api("GET") or self._milestone_api("GET"):
+                if (
+                    self._issue_api("GET")
+                    or self._milestone_api("GET")
+                    or self._release_api("GET")
+                ):
                     return
                 prefix = f"/repos/{owner.repo}/actions/"
                 if parsed.path == f"{prefix}runs":
@@ -188,7 +272,7 @@ class CiEchoStandIn:
             def do_POST(self):  # noqa: N802
                 with owner._lock:
                     owner.requests.append(self.path)
-                if self._issue_api("POST"):
+                if self._issue_api("POST") or self._release_api("POST"):
                     return
                 self._reply(404, {"message": "not found"})
 
