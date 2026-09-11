@@ -161,7 +161,7 @@ def test_run_loop_trips_on_same_kind_stall(tmp_path, monkeypatch):
         _noop_handler,  # handler 不发任何进展事件（B86 guard 短路签名）
     )
     monkeypatch.setattr(
-        "tracks.executor.executor.decide",
+        "tracks.executor.run_loop.decide",
         lambda s: Command(
             kind="commit_green", params={"stage": "M-IMPL", "task_id": "T1"}
         ),
@@ -192,7 +192,7 @@ def test_run_loop_rotating_commands_no_trip(tmp_path, monkeypatch):
         kind = kinds[calls["n"] % 2]
         return Command(kind=kind, params={"stage": "M-IMPL", "task_id": "T1"})
 
-    monkeypatch.setattr("tracks.executor.executor.decide", _decide)
+    monkeypatch.setattr("tracks.executor.run_loop.decide", _decide)
     state = ex.run_loop()  # 不抛错，正常返回
     assert state is not None
     events = list(store.events(run_id))
@@ -218,7 +218,7 @@ def test_run_loop_no_trip_when_progress_resets(tmp_path, monkeypatch):
             return None
         return Command(kind="commit_green", params={"task_id": "T1"})
 
-    monkeypatch.setattr("tracks.executor.executor.decide", _decide)
+    monkeypatch.setattr("tracks.executor.run_loop.decide", _decide)
     state = ex.run_loop()  # 不抛错、不熔断，正常收尾
     assert state is not None
     events = list(store.events(run_id))
@@ -230,7 +230,7 @@ def test_run_loop_aborts_banner_actionable(tmp_path, monkeypatch, capsys):
     ex, store, run_id = _minimal_executor(tmp_path)
     monkeypatch.setattr(ex, "_do_select_task", _noop_handler)
     monkeypatch.setattr(
-        "tracks.executor.executor.decide",
+        "tracks.executor.run_loop.decide",
         lambda s: Command(kind="select_task", params={"stage": "M-IMPL"}),
     )
     with pytest.raises(CommandStallError):
@@ -250,7 +250,7 @@ def test_limit_raise_still_runs_forever_signals_disabled_guard(tmp_path, monkeyp
     ex, store, run_id = _minimal_executor(tmp_path)
     monkeypatch.setattr(ex, "_do_commit_green", _noop_handler)
     monkeypatch.setattr(
-        "tracks.executor.executor.STALL_COMMAND_LIMIT",
+        "tracks.executor.run_loop.STALL_COMMAND_LIMIT",
         1000,
     )
     calls = {"n": 0}
@@ -262,7 +262,7 @@ def test_limit_raise_still_runs_forever_signals_disabled_guard(tmp_path, monkeyp
             return None
         return Command(kind="commit_green", params={"task_id": "T1"})
 
-    monkeypatch.setattr("tracks.executor.executor.decide", _decide)
+    monkeypatch.setattr("tracks.executor.run_loop.decide", _decide)
     state = ex.run_loop()
     assert state is not None
     events = list(store.events(run_id))
