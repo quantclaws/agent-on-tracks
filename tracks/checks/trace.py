@@ -715,3 +715,45 @@ def build_release_trace(
         _canonical_json(remaining).encode("utf-8")
     ).hexdigest()
     return {**remaining, "trace_digest": digest}
+
+
+def _release_trace_digest_matches(payload: dict) -> bool:
+    """True when trace_digest re-derives from the §1i closed field set."""
+    fields = {key: value for key, value in payload.items() if key != "trace_digest"}
+    expected = "sha256:" + hashlib.sha256(
+        _canonical_json(fields).encode("utf-8")
+    ).hexdigest()
+    return payload.get("trace_digest") == expected
+
+
+def _event_type_payload(event):
+    if isinstance(event, dict):
+        return event.get("type"), event.get("payload") or {}
+    return getattr(event, "type", None), getattr(event, "payload", None) or {}
+
+
+def build_release_trace_segment(events) -> dict:
+    """IF-TRACE-003 release segment for ``trac check trace --version v0.8``.
+
+    Pure projection of the landed ``milestone.trace_closed`` record: the
+    segment is ``closed`` only when the §1i trace_digest re-derives from its
+    own closed field set, ``inconsistent`` on any drift, and ``pending`` when
+    no trace closure exists yet. The verdict is never inferred from agent
+    text and never recomputes a pass from missing evidence.
+    """
+    closed = None
+    for event in events or ():
+        etype, _payload = _event_type_payload(event)
+        if etype == "milestone.trace_closed":
+            closed = event
+    if closed is None:
+        return {"status": "pending", "reason": "milestone.trace_closed missing"}
+    _etype, payload = _event_type_payload(closed)
+    payload = dict(payload)
+    if not _release_trace_digest_matches(payload):
+        return {
+            "status": "inconsistent",
+            "reason": "trace_digest mismatch",
+            "trace_digest": payload.get("trace_digest", ""),
+        }
+    return {"status": "closed", **payload}

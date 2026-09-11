@@ -2465,7 +2465,12 @@ def _cmd_check_trace(repo: Path, rest: list[str]) -> int:
     # resolve nothing and keep their classic behaviour untouched.
     checker = version_extensions.resolve_capability(version, "trace")
     if checker is not None:
-        return _cmd_check_trace_v07(repo, home, version, checker, use_json)
+        release_builder = version_extensions.resolve_optional_capability(
+            version, "release_trace"
+        )
+        return _cmd_check_trace_v07(
+            repo, home, version, checker, use_json, release_builder
+        )
     vdir = paths.version_dir(home, version)
     if not vdir.exists():
         return _err(f"version directory not found: {vdir}")
@@ -2598,30 +2603,55 @@ def _closure_json(report) -> dict:
     }
 
 
-def _cmd_check_trace_v07(repo: Path, home: Path, version: str, checker, use_json: bool) -> int:
+def _version_events(store: Store, version: str) -> list:
+    """All events of every run bound to *version* in seq order (audit order)."""
+    events: list = []
+    for run_id in store.runs_for_version(version):
+        events.extend(store.events(run_id))
+    return events
+
+
+def _cmd_check_trace_v07(
+    repo: Path, home: Path, version: str, checker, use_json: bool, release_builder=None
+) -> int:
     """Candidate-bound closure exit slice (IF-CLOSURE-001 / interfaces §1i).
 
     Approved ACs come from the version's acceptance.md (canonical approval
     artifact): one record per approved AC, degraded to fail when evidence is
     missing -- records are never suppressed. ``checker`` is the same pure
     join ISLAND_GATE_2 uses; this branch only assembles inputs and reports.
+    ``release_builder`` (IF-TRACE-003, v0.8 release-capable versions only)
+    appends the release segment after the inherited closure: closed only on a
+    self-consistent ``milestone.trace_closed`` record; a pending/inconsistent
+    segment adds its reason instead of a silent pass.
     """
     del repo  # evidence lives in .tracks events; kept for CLI signature symmetry
     acs = approved_acs(paths.projects_dir(home), version)
+    release: dict | None = None
     store = Store(home)
     try:
         candidate_digest, harvested = _closure_evidence(store, version, acs)
+        if release_builder is not None:
+            release = release_builder(_version_events(store, version))
     finally:
         store.close()
     report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
+    release_failed = release is not None and release.get("status") == "inconsistent"
     if use_json:
-        print(json.dumps(_closure_json(report), ensure_ascii=False))
+        payload = _closure_json(report)
+        if release is not None:
+            payload["release"] = release
+        print(json.dumps(payload, ensure_ascii=False))
     else:
         for error in report.hard_errors:
             print(error)
-        if not report.hard_errors:
+        if release is not None:
+            print(f"release: {release.get('status')}")
+            if release_failed:
+                print(f"release trace error: {release.get('reason', '')}")
+        if not report.hard_errors and not release_failed:
             print("trace ok")
-    return 1 if report.status == "fail" else 0
+    return 1 if report.status == "fail" or release_failed else 0
 
 
 def _active_hotfix_trace_context(home: Path, vdir: Path) -> dict | None:

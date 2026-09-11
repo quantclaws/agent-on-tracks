@@ -15,7 +15,6 @@ import re
 import subprocess
 from pathlib import Path
 
-from tracks.checks.trace import build_release_trace as _compose_release_trace
 
 # Content-addressed runtime blob references embedded in event payloads (the
 # evidence chain's key blobs: release previews, red-node logs, seals).
@@ -96,7 +95,12 @@ def build_release_trace(events, candidate_sha: str) -> dict:
     Folds preview/decision/publish facts into the interfaces §1i closed field
     set and composes the digest through the single §1i builder
     (``tracks.checks.trace.build_release_trace``, pure and side-effect free).
+    The §1i builder is imported lazily: checks.trace imports
+    executor.validate, so a module-level import here would close a cycle
+    (trace -> executor.validate -> executor -> milestone -> trace).
     """
+    from tracks.checks.trace import build_release_trace as _compose_release_trace
+
     trace = {
         "candidate_sha": candidate_sha,
         "artifact_digest": "",

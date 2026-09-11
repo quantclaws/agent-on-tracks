@@ -234,6 +234,20 @@ class V08Extension:
     before_mtest = staticmethod(_before_mtest)
 
     @staticmethod
+    def trace(*args):
+        """The same candidate-bound closure join the v0.7 CLI/gate share."""
+        from tracks.checks.trace import check_closure_candidate
+
+        return check_closure_candidate(*args)
+
+    @staticmethod
+    def release_trace(events):
+        """IF-TRACE-003 release segment appended after the closure output."""
+        from tracks.checks.trace import build_release_trace_segment
+
+        return build_release_trace_segment(events)
+
+    @staticmethod
     def island_gate_2(arguments=(), **kwargs):
         from tracks.executor.failclosed import demonstrate_failclosed
 

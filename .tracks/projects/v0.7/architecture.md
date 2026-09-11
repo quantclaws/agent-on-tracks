@@ -301,7 +301,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -317,7 +317,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -349,7 +349,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -365,7 +365,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -381,7 +381,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=5; comments/docstrings/signatures ignored"
 timeout_seconds = 600
@@ -397,7 +397,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=95"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:898db7a141555f1607a5370c83ffbdeca38d3d176687f4a8725fe976b788b627"
+config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
 scope = ["tracks"]
 threshold = "line coverage >=95; by=collected; source omit=none"
 timeout_seconds = 1800
@@ -413,7 +413,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter"]
-config_digest = "sha256:a548e5236a3b55378ec512f93b396bc98faa7efd97bf053d6b892269516f1205"
+config_digest = "sha256:a4e72794b289e9c604619120be6a1d90b460b98e7e65a2613ae9cf7bcf3bcb3c"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600

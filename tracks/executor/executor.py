@@ -5096,24 +5096,32 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             return (seen[-1].payload or {}).get("status") == "passed"
         results = run_security_scans(contract, self.repo, candidate_sha)
         status = aggregate_security_status(results)
-        self._emit(
-            "security.assessed",
-            {
-                "status": status,
-                "candidate_sha": candidate_sha,
-                "policy_digest": contract_digest,
-                "findings": [
-                    {
-                        "scan_id": r.gate_id,
-                        "status": r.status,
-                        "exit_code": r.exit_code,
-                    }
-                    for r in results
-                ],
-                "repair_route": "none",
-            },
-            command_id=cmd.command_id,
-        )
+        payload = {
+            "status": status,
+            "candidate_sha": candidate_sha,
+            "policy_digest": contract_digest,
+            "findings": [
+                {
+                    "scan_id": r.gate_id,
+                    "status": r.status,
+                    "exit_code": r.exit_code,
+                }
+                for r in results
+            ],
+            "repair_route": "none",
+        }
+        if status != "passed":
+            # §1.0.14 B / interfaces §1d: a non-passing assessment always
+            # carries its unified repair route (cve-class -> Archer advisory),
+            # never a silent "none".
+            payload["repair_route"] = {
+                "exit_class": "defect_repair",
+                "defect_class": "cve",
+                "owner": "Archer",
+                "discipline": "cve_advisory",
+                "budget_remaining": None,
+            }
+        self._emit("security.assessed", payload, command_id=cmd.command_id)
         return status == "passed"
 
     def _park_stop_payload(self, event_type: str) -> dict:
@@ -6076,11 +6084,19 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             self.store.events(self.run_id), candidate_sha, contract_digest, contract
         ):
             return contract, contract_digest
+        contract_path = (
+            self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+            if source == "host"
+            else paths.runtime_dir(paths.tracks_home(self.repo))
+            / "materialized-host-contract.toml"
+        )
         self._emit(
             "host_contract.materialized",
             {
                 "candidate_sha": candidate_sha,
+                "contract_path": str(contract_path),
                 "contract_digest": contract_digest,
+                "version": contract.contract_version,
                 "source": source,
                 "language": contract.language,
                 "toolchain": contract.toolchain,
@@ -6090,6 +6106,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         if not self._execute_verify_gates(
             cmd, candidate_sha, contract_digest, contract, state
         ):
+            self._emit_host_contract_failure(cmd, candidate_sha, contract_digest)
             return None, None
         return contract, contract_digest
 
@@ -6172,6 +6189,59 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 )
                 all_passed = False
         return all_passed
+
+    def _emit_host_contract_failure(self, cmd, candidate_sha, contract_digest):
+        """FR-0281-03 machine evidence + attention route for a contract whose
+        declared gate did not pass: ``host_contract.failed`` re-projects the
+        machine evidence captured on the bound ``local_gate.failed`` event
+        (exit code, stdout/stderr tails, normalized result);
+        ``attention.required`` (area host_contract) renders
+        ``needs_attention=host_contract:...`` so the status surface names the
+        contract revision route (never a guessed command)."""
+        failure = next(
+            (
+                event
+                for event in reversed(list(self.store.events(self.run_id)))
+                if event.type == "local_gate.failed"
+                and (event.payload or {}).get("candidate_sha") == candidate_sha
+                and (event.payload or {}).get("contract_digest") == contract_digest
+            ),
+            None,
+        )
+        payload = dict(failure.payload or {}) if failure is not None else {}
+        normalized = payload.get("normalized_result") or {}
+        summary = payload.get("summary") or normalized.get("summary") or {}
+        reason = (
+            "malformed_result"
+            if payload.get("reason") == "malformed" or normalized.get("status") == "malformed"
+            else "gate_failed"
+        )
+        kind = str(payload.get("kind") or "")
+        self._emit(
+            "host_contract.failed",
+            {
+                "candidate_sha": candidate_sha,
+                "contract_digest": contract_digest,
+                "kind": kind,
+                "reason": reason,
+                "exit_code": payload.get("exit_code"),
+                "stdout_tail": str(summary.get("stdout", ""))[-500:],
+                "stderr_tail": str(summary.get("stderr", ""))[-500:],
+                "normalized_result": payload.get("normalized_result"),
+            },
+            command_id=cmd.command_id,
+        )
+        self._emit(
+            "attention.required",
+            {
+                "area": "host_contract",
+                "reason": reason,
+                "stage": "M-VERIFY",
+                "detail": f"declared gate {kind or 'unknown'} did not pass",
+                "next": "revise the host-contract, then trac run --resume",
+            },
+            command_id=cmd.command_id,
+        )
 
     def _do_observe_ci_runs(self, cmd, state, task_id, reconcile):
         """M-VERIFY CI readback (IF-VERIFY-004, AC-FR0270-01..03): API

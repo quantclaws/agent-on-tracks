@@ -14,7 +14,12 @@ alongside.
 
 from __future__ import annotations
 
-__all__ = ["CapabilityBlockedError", "register_extension", "resolve_capability"]
+__all__ = [
+    "CapabilityBlockedError",
+    "register_extension",
+    "resolve_capability",
+    "resolve_optional_capability",
+]
 
 _EXTENSIONS: dict[str, object] = {}
 
@@ -52,3 +57,18 @@ def resolve_capability(version: str, capability: str):
             f"extension for {version} blocks missing or unknown capability "
             f"{capability!r} (architecture §1.0.9)"
         ) from exc
+
+
+def resolve_optional_capability(version: str, capability: str):
+    """Return *capability* when the version's extension provides it, else None.
+
+    Reserved for additive outlets (e.g. the v0.8 release trace segment
+    appended after the inherited candidate-bound closure): an extension that
+    does not define the capability keeps its classic output instead of
+    blocking, while a missing extension still selects nothing. Required
+    capabilities must keep using :func:`resolve_capability` (fail-closed).
+    """
+    extension = _EXTENSIONS.get(version)
+    if extension is None:
+        return None
+    return getattr(extension, capability, None)
