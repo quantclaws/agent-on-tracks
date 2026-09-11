@@ -240,6 +240,46 @@ def test_real_discussion_ref_is_the_supported_anchor_shape(tmp_path, monkeypatch
     store.close()
 
 
+def test_simulated_finding_is_never_a_real_verify_final_anchor(tmp_path, monkeypatch):
+    """The FakeBackend's synthesized VERIFY_FINAL finding (``simulated``) is
+    excluded from the blocker set: even a syntactically valid discussion_ref
+    pointing at it stays ``revise_without_findings`` — a simulation can never
+    anchor itself as a real review block."""
+    text = "# Gate\n\n> **Prism [open]:** blocking finding\n"
+    executor, store, emitted, advanced = _executor_with_candidate(tmp_path, monkeypatch)
+    doc = executor.repo / "architecture.md"
+    doc.write_text(text, encoding="utf-8")
+    thread = parse_threads(text)[0]
+    token = token_for(thread)
+    finding = {
+        **_finding(),
+        "id": "FAKE-VERIFY-FINAL-01",
+        "criterion": "simulated",
+        "summary": "simulated final-review finding (no discussion anchor)",
+        "simulated": True,
+    }
+
+    _dispatch(
+        executor,
+        {
+            "status": "done",
+            **_review_payload(findings=[finding]),
+            "discussion_refs": [
+                {
+                    "file": "architecture.md",
+                    "thread_id": thread.thread_id,
+                    "token": token,
+                    "finding_id": finding["id"],
+                }
+            ],
+        },
+    )
+    assert emitted[-1].type == "attention.required"
+    assert emitted[-1].payload["reason"] == "revise_without_findings"
+    assert not advanced
+    store.close()
+
+
 def test_invalid_or_foreign_verify_final_cannot_advance(tmp_path, monkeypatch):
     executor, store, emitted, advanced = _executor_with_candidate(tmp_path, monkeypatch)
     _dispatch(executor, {"status": "done", "verdict": "maybe"}, candidate_sha=_CANDIDATE)

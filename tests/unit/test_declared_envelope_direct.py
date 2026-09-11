@@ -21,8 +21,10 @@ import pytest
 
 from tracks.effects.dispatch_parity import (
     envelope_declaration_error,
+    is_declared,
     static_parity_check,
 )
+from tracks.effects.fake import FakeBackend
 from tracks.executor.executor import Executor
 from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
@@ -294,3 +296,46 @@ def test_truthy_malformed_envelope_never_passes_via_legacy_copy():
 def test_missing_or_none_envelope_keeps_staged_semantics(assignment):
     assert envelope_declaration_error(assignment) is None
     assert static_parity_check(assignment)["consistent"] is True
+
+
+def test_env_declare_0_reverts_to_undeclared_legacy_dispatch(exec_env, monkeypatch):
+    """``TRAC_ENVELOPE_DECLARE=0`` is the explicit rollout opt-out: the
+    injection face declares nothing, the static gate keeps the staged
+    (PARITY_STAGED) legacy semantics and only the minimal legacy
+    ``dispatch.parity`` record lands — no full declared-dispatch audit and no
+    parity evidence on the result."""
+    ex, store = exec_env
+    monkeypatch.setenv("TRAC_ENVELOPE_DECLARE", "0")
+    params = {
+        "role": "prism",
+        "substate": "PRISM_REVIEW",
+        "assignment": {"task": {"task_id": TASK_ID}},
+    }
+    ex._enrich_envelope_params(params)
+    assignment = params["assignment"]
+    assert "envelope" not in assignment
+    assert assignment.get("envelope_version") is None
+    assert is_declared(assignment) is False
+    assert static_parity_check(assignment)["consistent"] is True
+
+    # The fake backend keeps the legacy result shape: no encoded reply and no
+    # parity evidence ("absent_not_invented") on an undeclared dispatch.
+    result = FakeBackend(ex.repo, "v0.5.0").act(
+        "prism", "PRISM_REVIEW", None, None, assignment=assignment
+    )
+    assert "raw_output" not in result
+    assert "parity" not in result
+
+    # Static gate: undeclared -> the legacy minimal record is preserved ...
+    assert ex._dispatch_parity_ok(_cmd(), TASK_ID, assignment) is True
+    parity = [ev for ev in _run_events(store) if ev.type == "dispatch.parity"]
+    assert len(parity) == 1
+    assert parity[0].payload["task_id"] == TASK_ID
+    assert "referenced" in parity[0].payload
+    assert "manifest" not in parity[0].payload
+    # ... and the declared-dispatch full-gate success emitter stays a no-op
+    # (no second, manifest-carrying event).
+    ex._emit_dispatch_parity_success(result, _cmd(), TASK_ID, assignment)
+    parity = [ev for ev in _run_events(store) if ev.type == "dispatch.parity"]
+    assert len(parity) == 1
+    assert "manifest" not in parity[0].payload

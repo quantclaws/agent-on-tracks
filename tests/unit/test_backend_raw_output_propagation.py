@@ -198,6 +198,55 @@ def test_fake_design_review_revise_completes_for_the_respond_loop(
     assert list(store.events(RUN_ID)) == []
 
 
+def test_fake_synthesized_findings_carry_the_simulated_isolation_marker(
+    backend_env, monkeypatch
+):
+    """The synthesized M-DESIGN/VERIFY_FINAL findings are marked ``simulated``
+    end to end (result, encoded reply, verdict-facing payload) so anchoring/
+    counting consumers can never consume them as real blocker evidence. The
+    marker rides only in the fake's own fields — the declared reply schema
+    does not require it, and the kernel validator tolerates the extra key."""
+    ex, store, repo = backend_env
+    monkeypatch.setenv("TRAC_FAKE_SIMULATE", "prism:PRISM_REVIEW=revise")
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("prism:review")
+    assignment["skills"] = ["tracks-discuz", "tracks-prism-design"]
+    assignment["docs"] = ["architecture.md", "interfaces.md", "test-plan.md"]
+    result = fake.act("prism", "PRISM_REVIEW", None, None, assignment=assignment)
+    finding = result["findings"][0]
+    assert finding["id"] == "FAKE-DESIGN-REVIEW-01"
+    assert finding["simulated"] is True
+    payload = _reply_payload(result["raw_output"])
+    assert payload["findings"][0]["simulated"] is True
+    assert parse_agent_output(result["raw_output"])["payload"]["findings"][0][
+        "simulated"
+    ] is True
+    # The verdict-facing helper threads the finding dicts verbatim, marker
+    # included (the prism.verdict payload is never a false real blocker).
+    verdict_payload: dict = {}
+    ex._apply_prism_review_fields(verdict_payload, "revise", result)
+    assert verdict_payload["findings"][0]["simulated"] is True
+
+
+def test_fake_verify_final_revise_is_marked_simulated(backend_env, monkeypatch):
+    ex, store, repo = backend_env
+    monkeypatch.setenv("TRAC_FAKE_SIMULATE", "prism:VERIFY_FINAL=revise")
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("prism:final")
+    assignment["candidate_sha"] = "a" * 40
+    result = fake.act("prism", "VERIFY_FINAL", None, None, assignment=assignment)
+    assert result["verdict"] == "revise"
+    finding = result["findings"][0]
+    assert finding["id"] == "FAKE-VERIFY-FINAL-01"
+    assert finding["severity"] == "blocker"
+    assert finding["simulated"] is True
+    # No discussion_refs is synthesized: the anchor judge can never bind the
+    # simulated finding to a real thread (see the executor anchor judge).
+    assert "discussion_refs" not in result
+    payload = _reply_payload(result["raw_output"])
+    assert payload["findings"][0]["simulated"] is True
+
+
 def test_fake_m_test_review_revise_keeps_the_honesty_rule(backend_env, monkeypatch):
     """The other reviewer card (``tracks-prism-test``) is the M-TEST review:
     its bare revise keeps the 32b81c2 honest-incomplete classification, never

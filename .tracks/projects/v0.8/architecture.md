@@ -89,7 +89,7 @@ feature：operations.feature 全量（merge main、公开 tag、artifact、relea
 
 ### 1.0.9 Envelope v2 与 parity（FR-0278/0279）
 
-`kernel/envelope.py` 定义 `tracks-envelope` v2：输出线形为全文恰好一个 ```tracks-envelope``` fenced JSON block（envelope 头 kind ∈ 封闭集 + version=2 + payload）；`parse_agent_output` 是唯一解析路径——零个/多个 block、JSON 畸形、缺 kind/version、未知版本均抛 `EnvelopeFormatError` 落 `format_error` 事件（不计 semantic attempt、业务状态不变更）。输入侧 assignment 物化带同一 envelope 头。派发前 `check_envelope_parity` 校验 Prompt/agent/skill/fake backend/真实 backend/Runtime validator 六面引用的合同版本一致（各面携带机器可读 token `tracks-envelope:v2`），不一致落 `dispatch.rejected reason=version_parity_mismatch` 拒绝派发。示例与 fixtures 必须经真实消费者 validator 校验（CI 静态检查）；v0.7 malformed response 故障语料为回归输入。
+`kernel/envelope.py` 定义 `tracks-envelope` v2：输出线形为全文恰好一个 ```tracks-envelope``` fenced JSON block（envelope 头 kind ∈ 封闭集 + version=2 + payload）；`parse_agent_output` 是唯一解析路径——零个/多个 block、JSON 畸形、缺 kind/version、未知版本均抛 `EnvelopeFormatError` 落 `format_error` 事件（不计 semantic attempt、业务状态不变更）。输入侧 assignment 物化带同一 envelope 头。派发前 `check_envelope_parity` 校验 4 个静态面（assignment/fake backend/真实 backend/Runtime validator）与 N 个 artifact 面（实际物化的 agent/skill/template，face 名 `agent:<Name>`/`skill:<name>`/`template:<kind>`）引用的合同版本一致（各面携带机器可读 token `tracks-envelope:v2`），不一致落 `dispatch.rejected reason=version_parity_mismatch` 拒绝派发。示例与 fixtures 必须经真实消费者 validator 校验（CI 静态检查）；v0.7 malformed response 故障语料为回归输入。
 
 ### 1.0.10 失败证据链（FR-0280）
 

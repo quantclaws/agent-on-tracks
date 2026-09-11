@@ -276,7 +276,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         honestly speak (kind mismatch, writer/authority kind) is left
         un-encoded: the missing raw_output classify as format_error at the
         Runtime. Undeclared dispatches keep their legacy result dicts
-        untouched (no raw_output key)."""
+        untouched (no raw_output key). The two deliberate exceptions are the
+        synthesized VERIFY_FINAL / M-DESIGN review revise fields
+        (``_ensure_verify_final_revise_fields`` /
+        ``_ensure_design_review_revise_fields``): those stages need the
+        schema-required review content to classify the revise (the M-VERIFY
+        anchor judge and the M-DESIGN RESPOND loop), so the fake completes
+        the minimal deterministic fields instead of leaving the reply
+        incomplete — and marks every synthesized finding ``simulated`` so no
+        consumer mistakes it for real review evidence."""
         if not is_declared_assignment(assignment):
             return result
         kind = assignment["envelope"].get("kind")
@@ -358,6 +366,11 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
                 "artifact": f"candidate:{candidate_sha}",
                 "ac_refs": [],
                 "summary": "simulated final-review finding (no discussion anchor)",
+                # Isolation marker: consumers must never treat a synthesized
+                # finding as a real anchored blocker (the executor anchor
+                # judge excludes simulated findings; see
+                # Executor._verify_final_discussion_anchor).
+                "simulated": True,
             }
         ]
 
@@ -416,6 +429,9 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
                 "artifact": artifact,
                 "ac_refs": [],
                 "summary": "simulated design-review finding (drives RESPOND)",
+                # Isolation marker: never consumed as a real design blocker
+                # (the verdict payload/audit carries it as simulated prose).
+                "simulated": True,
             }
         ]
 
