@@ -485,12 +485,14 @@ def test_late_outcomes_quarantined_never_checkpointed(tmp_path):
 # AC-FR0274@v0.8 TRACKS-TRACE IF-RELEASE-003 envelope/failure wiring
 def test_envelope_failure_chain_wired_into_executor():
     """The dispatch loop wiring consumes the kernel/failure-review faces
-    (check_envelope_parity, parse_agent_output, record_failure,
-    select_failure, review_failure_chain)."""
+    (check_envelope_parity through the dispatch_parity seam,
+    parse_agent_output, record_failure, select_failure,
+    review_failure_chain)."""
+    import tracks.effects.dispatch_parity as parity_module
     import tracks.executor.executor as executor_module
 
     for name in (
-        "check_envelope_parity",
+        "static_parity_check",
         "parse_agent_output",
         "record_failure",
         "select_failure",
@@ -500,6 +502,11 @@ def test_envelope_failure_chain_wired_into_executor():
             f"assertion failure: executor must wire {name} into the "
             f"dispatch loop (architecture §1.1 Envelope/failure chain)"
         )
+    assert executor_module.static_parity_check is parity_module.static_parity_check
+    assert getattr(parity_module, "check_envelope_parity", None) is not None, (
+        "assertion failure: the dispatch_parity seam consumed by the executor "
+        "must delegate to the kernel check_envelope_parity authority"
+    )
 
 
 # AC-FR0274@v0.8 TRACKS-TRACE IF-RELEASE-003 domain handler registration

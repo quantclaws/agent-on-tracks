@@ -197,6 +197,12 @@ def test_semantic_green_stays_impl_defect():
 
 
 def test_format_streak_three_escalates():
+    """M-IMPL shape-violation escalation follows the M1-S3 policy
+    (convergence plan 2026-09-05, b76ae8c): two consecutive
+    evidence_malformed verdicts route Archer RULING for a contract
+    simplification (never a third agent retry, never an immediate human
+    park); streak 5 is the terminal human escape. Format failures never
+    consume the attempt budget."""
     def _vf():
         return (
             "verdict.failed",
@@ -214,8 +220,17 @@ def test_format_streak_three_escalates():
     assert s1.current_attempt == 0
     assert s1.format_failure_streak == 1
     assert s1.status == "active"
+    s2 = project(seq(*PRE_RED_GATE, _vf(), _vf()))
+    assert s2.format_failure_streak == 2
+    assert s2.substate == "RULING"
+    assert s2.status == "active"
     s3 = project(seq(*PRE_RED_GATE, _vf(), _vf(), _vf()))
     assert s3.format_failure_streak == 3
-    assert s3.status == "awaiting_human"
-    assert s3.awaiting == "escalation"
+    assert s3.substate == "RULING"
+    assert s3.status == "active"
     assert s3.current_attempt == 0
+    s5 = project(seq(*PRE_RED_GATE, _vf(), _vf(), _vf(), _vf(), _vf()))
+    assert s5.format_failure_streak == 5
+    assert s5.status == "awaiting_human"
+    assert s5.awaiting == "escalation"
+    assert s5.current_attempt == 0

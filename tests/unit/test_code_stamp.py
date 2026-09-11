@@ -76,19 +76,24 @@ def test_run_loop_fails_fast_on_code_drift(tmp_path, capsys):
     (repo / "tracks" / "logic.py").write_text("X = 2  # hotfix\n", encoding="utf-8")
     with pytest.raises(RuntimeCodeDriftError, match="OLD logic"):
         ex.run_loop()
-    # stderr 提示可操作（含重启指引）
-    assert "Restart `trac run`" in capsys.readouterr().err
+    # M7（convergence plan 2026-09-05）：阶段边界优雅交接，不再自杀式
+    # abort；stderr 提示 handover 与接管语义
+    err = capsys.readouterr().err
+    assert "run handover" in err and "code drift" in err
     assert ex._code_stamp is not None
-    # #85：fail-fast 退出前先落 loop.aborted 审计事件（screen 无重定向时
-    # stdout 证据会丢，事件流可事后区分 abort/crash/kill）。
+    # 漂移审计事件 code.drift 落盘（audit-only），run 保持 active，
+    # 不产生 loop.aborted / evidence.staled 级联
     events = list(ex.store.events("RUN-DRIFT"))
-    assert events[-1].type == "loop.aborted"
-    assert events[-1].payload["reason"] == "code_drift"
+    assert events[-1].type == "code.drift"
+    assert events[-1].payload["reason"] == "handover"
+    assert not [e for e in events if e.type == "loop.aborted"]
+    assert ex.store.state("RUN-DRIFT").status == "active"
 
 
 def test_loop_aborted_replay_does_not_crash(tmp_path):
     """#85：含 loop.aborted 的事件流重放不炸（reducer 无行为，projection
-    忽略该事件）。"""
+    忽略该事件）。M7 起漂移生产者落 code.drift；current 与历史两类
+    audit-only 事件都必须重放无害。"""
     repo = _repo_with_tracks_pkg(tmp_path)
     ex = _executor(repo)
     ex.backend = _StubBackend()
@@ -96,8 +101,13 @@ def test_loop_aborted_replay_does_not_crash(tmp_path):
     with pytest.raises(RuntimeCodeDriftError):
         ex.run_loop()
     events = list(ex.store.events("RUN-DRIFT"))
-    assert events[-1].type == "loop.aborted"
-    state = ex.store.state("RUN-DRIFT")  # 重放含 loop.aborted 的事件流
+    assert events[-1].type == "code.drift"
+    state = ex.store.state("RUN-DRIFT")  # 重放含 code.drift 的事件流
+    assert state.status == "active"
+    assert state.stage == "M-STORY"
+    # #85 历史语料：loop.aborted 事件同样被 reducer/projection 忽略
+    ex.store.append("RUN-DRIFT", "v0.1", "loop.aborted", {"reason": "code_drift"})
+    state = ex.store.state("RUN-DRIFT")
     assert state.status == "active"
     assert state.stage == "M-STORY"
 

@@ -11,8 +11,10 @@ classify it:
   untouched.
 - Fake backend (effects/fake.py): encodes its explicitly simulated actual
   result under the assigned declaration — only actual simulated fields, never
-  a coerced synthetic pass; a simulated outcome the payload schema cannot
-  represent stays incomplete and the Runtime classifies it visibly.
+  a coerced synthetic pass; schema-required fields the simulation genuinely
+  produced (the DIAGNOSE reason/evidence pair, marked simulated) are carried,
+  and a simulated outcome the payload schema cannot represent (a revise
+  without findings) stays incomplete and the Runtime classifies it visibly.
 
 No live subprocess/opencode calls: the real-backend transport tests drive the
 actual extraction/return methods with controlled transcript inputs
@@ -34,6 +36,7 @@ from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
     build_assignment_envelope,
     parse_agent_output,
+    validate_diagnose_payload,
 )
 from tracks.kernel.events import Command
 from tracks.store import Store
@@ -80,9 +83,9 @@ def _transcript(*texts: str, tail: list | None = None) -> subprocess.CompletedPr
 
 def _reply_payload(raw: str) -> dict:
     """Inspect an encoded reply's payload WITHOUT the kernel schema validator —
-    honest-but-incomplete payloads (revise without findings, diagnose without
-    reason/evidence) are schema-invalid by design; the Runtime classifies
-    them, these tests only verify what the fake actually encoded."""
+    an honest-but-incomplete payload (revise without findings) is
+    schema-invalid by design; the Runtime classifies it, these tests only
+    verify what the fake actually encoded."""
     assert raw.startswith("```tracks-envelope\n") and raw.endswith("\n```\n")
     envelope = json.loads(raw[len("```tracks-envelope\n") : -len("\n```\n")])
     assert set(envelope) == {"envelope", "payload"}
@@ -173,12 +176,26 @@ def test_fake_declared_diagnose_label_is_a_visible_failure(backend_env, monkeypa
     assignment = _declared("prism:diagnose")
     result = fake.act("prism", "DIAGNOSE", None, None, assignment=assignment)
     assert result["verdict"] == "test_defect"
-    # the fake has no actual diagnosis reasoning: reason/evidence are absent
-    # from the honest payload and the Runtime reports the schema violation
-    assert _reply_payload(result["raw_output"]) == {"classification": "test_defect"}
+    # the declared prism:diagnose schema (kernel/envelope
+    # validate_diagnose_payload) requires classification + non-empty reason +
+    # non-empty evidence; the simulated label carries explicitly simulated
+    # reason/evidence so the DIAGNOSE verdict lands as a real declared reply
+    # instead of stranding the loop as a schema_violation format_error
+    # (package 5 / 792f70e). The simulation marker keeps the fake provenance
+    # visible — never a real forensic package.
+    payload = _reply_payload(result["raw_output"])
+    assert payload["classification"] == "test_defect"
+    assert payload["reason"]
+    assert payload["evidence"]
+    assert validate_diagnose_payload(payload) is None
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["envelope"]["kind"] == "prism:diagnose"
+    # Runtime collection: a schema-valid declared payload falls through, no
+    # format_error
     handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
-    assert handled is True
-    _assert_single_format_error(store, "schema_violation")
+    assert handled is False
+    assert result["envelope"]["payload"]["classification"] == "test_defect"
+    assert list(store.events(RUN_ID)) == []
 
 
 def test_fake_declared_kind_mismatch_is_not_encoded(backend_env):
@@ -222,9 +239,28 @@ def test_fake_envelope_version_participates_in_parity_gate(
 ):
     ex, store, repo = backend_env
     assignment = _declared("prism:review")
-    # consistent: backend declares v2 == Runtime authority v2
+    # consistent: backend declares v2 == Runtime authority v2. The static
+    # gate of a declared dispatch never emits the success event — the single
+    # dispatch.parity success lands only after the complete gate passed
+    # (_emit_dispatch_parity_success).
     assert ex._dispatch_parity_ok(_cmd(), TASK_ID, assignment) is True
-    assert any(ev.type == "dispatch.parity" for ev in store.events(RUN_ID))
+    assert not any(
+        ev.type in ("dispatch.parity", "dispatch.rejected")
+        for ev in store.events(RUN_ID)
+    )
+    # the post-collection success path emits the full audit event once the
+    # declared dispatch passed the complete gate
+    fake = FakeBackend(repo, VERSION)
+    result = fake.act("prism", "PRISM_REVIEW", None, None, assignment=assignment)
+    ex._emit_dispatch_parity_success(result, _cmd(), TASK_ID, assignment)
+    parity = [ev for ev in store.events(RUN_ID) if ev.type == "dispatch.parity"]
+    assert len(parity) == 1
+    assert set(parity[0].payload["referenced"]) == {
+        "assignment",
+        "backend_fake",
+        "backend_real",
+        "validator",
+    }
     # stale backend declaration: fail closed BEFORE backend act
     seq = max(ev.seq for ev in store.events(RUN_ID))
     monkeypatch.setattr(FakeBackend, "envelope_version", 3)
@@ -232,6 +268,10 @@ def test_fake_envelope_version_participates_in_parity_gate(
     rejected = [ev for ev in _events_after(store, seq) if ev.type == "dispatch.rejected"]
     assert len(rejected) == 1
     assert rejected[0].payload["reason"] == "version_parity_mismatch"
+    # a rejected dispatch never produces a dispatch.parity success record
+    assert not [
+        ev for ev in _events_after(store, seq) if ev.type == "dispatch.parity"
+    ]
 
 
 # ---------------------------------------------------------------------------
