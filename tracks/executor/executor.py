@@ -136,6 +136,7 @@ from tracks.executor.test_select import (
     collect_node_source_digests,
     make_selection_id,
     parse_test_result,
+    rebuild_ledger,
     require_exact_node_coverage,
     require_nonempty_r2_selection,
     resolve_selected_command,
@@ -4998,7 +4999,99 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
         )
 
-    def _emit_full_f_judgment(self, cmd, candidate_sha) -> None:
+    def _full_f_producer(self, candidate_sha):
+        """Find a complete producer execution still selected for this candidate."""
+        events = list(self.store.events(self.run_id))
+        selections = [
+            event
+            for event in events
+            if event.type == "test.selected" and event.payload.get("scope") == "full"
+        ]
+        latest_selection = selections[-1] if selections else None
+        for event in reversed(events):
+            payload = event.payload or {}
+            if event.type != "full.executed":
+                continue
+            if payload.get("execution_commit") != candidate_sha:
+                continue
+            if payload.get("passed") is not True or not payload.get("full_f_eligible"):
+                continue
+            selection_seq = payload.get("selection_event_seq")
+            if not isinstance(selection_seq, int) or latest_selection is None:
+                continue
+            if latest_selection.seq != selection_seq:
+                # A newer full selection supersedes the producer, even when it
+                # has no execution proof of its own.
+                continue
+            if event.seq <= selection_seq:
+                continue
+            selection = next((item for item in selections if item.seq == selection_seq), None)
+            if selection is None:
+                continue
+            if event.command_id != selection.command_id:
+                continue
+            if selection.payload.get("selection_id") != payload.get("selection_id"):
+                continue
+            if selection.command_id != payload.get("selection_command_id"):
+                continue
+            if selection.payload.get("commit") != payload.get("execution_commit"):
+                continue
+            if not payload.get("identity_basis") or not payload.get("outcomes_ref"):
+                continue
+            try:
+                outcomes = self._read_runtime_blob(payload["outcomes_ref"])
+            except (OSError, TypeError, ValueError, TestSelectError):
+                continue
+            if not isinstance(outcomes, list) or any(
+                not isinstance(item, dict) or item.get("status") != "passed"
+                for item in outcomes
+            ):
+                continue
+            selected_nodes = {
+                str(node) for node in (selection.payload.get("nodes") or [])
+            }
+            outcome_nodes = {str(item.get("node")) for item in outcomes}
+            if not selected_nodes or outcome_nodes != selected_nodes:
+                continue
+            if any(not item.get("evidence_id") for item in outcomes):
+                continue
+            return event, selection
+        return None, None
+
+    def _current_full_f_identity(self, selection):
+        """Recompute FULL identity from the live contract/tree."""
+        contract = load_contract(self.repo)
+        sections = {"unit": contract.unit, "integration": contract.integration, "e2e": contract.e2e}
+        if any(section is None for section in sections.values()):
+            raise TestSelectError("FULL requires unit, integration, and e2e sections")
+        inventory, collect_error = self._collect_all_declared_layers()
+        if inventory is None:
+            raise TestSelectError(collect_error or "FULL collect failed")
+        nodes = sorted(inventory)
+        baseline = self._current_baseline_digest()
+        commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
+        tree_stamp = self._dirty_tree_stamp()
+        basis = str(selection.payload.get("basis") or "")
+        if not basis:
+            raise TestSelectError("FULL selection lacks its basis")
+        selection_id = make_selection_id(
+            nodes=nodes,
+            scope="full",
+            basis=basis,
+            baseline=baseline,
+            commit=commit,
+            tree_stamp=tree_stamp,
+        )
+        command = self._declared_full_identity(sections, inventory)
+        env = self._gate_environment_identity()
+        return {
+            "tree": tree_stamp,
+            "command": list(command),
+            "env": env,
+            "selection_id": selection_id,
+        }
+
+    def _emit_full_f_judgment(self, cmd, candidate_sha, state=None) -> str:
         """FULL_F reuse judgment emission (IF-VERIFY-002, architecture §1.1):
         judge the stored FULL_F evidence against the current identity
         quadruple and land ``evidence.reused`` (kind=full_f,
@@ -5008,47 +5101,91 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         evidence (first verification) no judgment event is emitted and the
         local gates run directly -- the reuse vocabulary never fabricates a
         battery that was never run."""
-        seen = any(
-            (e.payload or {}).get("candidate_sha") == candidate_sha
-            for e in self.store.events(self.run_id)
-            if e.type in ("evidence.reused", "full.executed")
-        )
-        if seen:
-            return
-        selected = self._latest_event("test.selected")
-        if selected is None:
-            return
-        evidence = dict(selected.payload or {})
-        quadruple = {
-            "tree": evidence.get("tree"),
-            "command": evidence.get("command"),
-            "env": evidence.get("env"),
-            "selection_id": evidence.get("selection_id"),
-        }
+        producer, selected = self._full_f_producer(candidate_sha)
+        evidence = dict(producer.payload) if producer is not None else {}
+        try:
+            quadruple = self._current_full_f_identity(selected) if selected is not None else {}
+        except (ContractError, OSError, TestSelectError, UnicodeError, ValueError):
+            quadruple = {}
+        producer_seq = producer.seq if producer is not None else -1
         stale_marks = tuple(
             event.type
             for event in self.store.events(self.run_id)
-            if event.type in ("candidate.stale", "evidence.staled")
+            if event.seq > producer_seq
+            and event.type in ("candidate.stale", "evidence.staled")
+            and (event.payload.get("candidate_sha") in (None, candidate_sha))
         )
-        decision = m_verify.judge_full_f_reuse(
-            candidate_sha, evidence, quadruple, stale_marks
-        )
+        decision = m_verify.judge_full_f_reuse(candidate_sha, evidence, quadruple, stale_marks)
         if decision.decision == "reuse":
+            prior = next(
+                (
+                    event
+                    for event in reversed(list(self.store.events(self.run_id)))
+                    if event.type == "evidence.reused"
+                    and event.payload.get("kind") == "full_f"
+                    and event.payload.get("candidate_sha") == candidate_sha
+                    and event.payload.get("source_event_seq") == producer_seq
+                ),
+                None,
+            )
+            if prior is not None and json.dumps(
+                list(decision.identity_basis), sort_keys=True
+            ) == json.dumps(
+                prior.payload.get("identity_basis") or [], sort_keys=True
+            ):
+                return "reused"
             self._emit(
                 "evidence.reused",
                 {
                     "kind": "full_f",
                     "candidate_sha": candidate_sha,
                     "identity_basis": list(decision.identity_basis),
+                    "source_event_seq": producer.seq,
                 },
                 command_id=cmd.command_id,
             )
+            return "reused"
         else:
-            self._emit(
-                "full.executed",
-                {"candidate_sha": candidate_sha, "reason": decision.reason},
-                command_id=cmd.command_id,
-            )
+            if producer is not None and (evidence.get("stale") or stale_marks):
+                # AC-FR0268-03: the rejected FULL_F evidence is marked stale
+                # on the stream (append-only) so replay shows WHY it was not
+                # reused -- a stale rerun is never silent.
+                self._emit(
+                    "evidence.staled",
+                    {
+                        "candidate_sha": candidate_sha,
+                        "reason": decision.reason,
+                        "source": "full_f",
+                        "identity_basis": list(decision.identity_basis),
+                    },
+                    command_id=cmd.command_id,
+                )
+            ledger = rebuild_ledger(self.store.events(self.run_id))
+            try:
+                full = self._execute_full_round(
+                    cmd,
+                    state or self.store.state(self.run_id),
+                    "FULL_F",
+                    ledger,
+                    candidate_sha=candidate_sha,
+                    judgment_reason=decision.reason,
+                )
+            except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
+                self._emit(
+                    "full.executed",
+                    {
+                        "candidate_sha": candidate_sha,
+                        "passed": False,
+                        "full_f_eligible": False,
+                        "reason": f"rerun_error:{type(exc).__name__}",
+                        "judgment_reason": decision.reason,
+                    },
+                    command_id=cmd.command_id,
+                )
+                return "failed"
+            if not full.get("passed") or not full.get("full_f_eligible"):
+                return "failed"
+            return "rerun"
 
     def _do_judge_full_f_reuse(self, cmd, state, task_id, reconcile):
         """M-VERIFY FULL_F reuse judgment (IF-VERIFY-002, architecture
@@ -5058,15 +5195,9 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         the rerun and the local gates execute it."""
         params = dict(cmd.params or {})
         candidate_sha = params.get("candidate_sha", "")
-        if reconcile and self._latest_event("evidence.reused") is not None:
-            self.issue(
-                Command(
-                    kind="run_local_gates",
-                    params={"candidate_sha": candidate_sha},
-                )
-            )
+        result = self._emit_full_f_judgment(cmd, candidate_sha, state)
+        if result == "failed":
             return
-        self._emit_full_f_judgment(cmd, candidate_sha)
         self.issue(
             Command(
                 kind="run_local_gates",

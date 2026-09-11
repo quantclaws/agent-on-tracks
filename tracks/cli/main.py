@@ -1503,6 +1503,30 @@ def _prism_final_status(events: list) -> str | None:
     return "pass" if verdict == "pass" else "failed"
 
 
+def _full_reuse_status(events: list) -> str | None:
+    """interfaces §2b full_reuse=full_f|full_rerun fragment (FR-0268): the
+    FULL_F reuse judgment surfaces in status -- full_f when the reused
+    evidence is the latest judgment, full_rerun (with the judge's closed
+    reason) when the chain executed the battery instead. ``None`` before
+    any judgment."""
+    reuse = [
+        e
+        for e in events
+        if e.type == "evidence.reused"
+        and (e.payload or {}).get("kind") == "full_f"
+    ]
+    rerun = [e for e in events if e.type == "full.executed"]
+    if not reuse and not rerun:
+        return None
+    latest_is_reuse = bool(reuse) and (
+        not rerun or getattr(reuse[-1], "seq", 0) > getattr(rerun[-1], "seq", 0)
+    )
+    if latest_is_reuse:
+        return "full_reuse=full_f"
+    reason = str((rerun[-1].payload or {}).get("reason") or "")
+    return "full_reuse=full_rerun" + (f" reason={reason}" if reason else "")
+
+
 def _release_chain_fragments(events: list, lines: list[str]) -> None:
     """(F) evidence-chain fragments (FR-0270/FR-0287 wiring): CI readback
     binding and security verdict surface whenever the chain emitted them; a
@@ -1517,6 +1541,9 @@ def _release_chain_fragments(events: list, lines: list[str]) -> None:
             lines.append("ci=bound")
         else:
             lines.append("ci=" + str(p.get("reason") or p.get("status") or "failed"))
+    reuse = _full_reuse_status(events)
+    if reuse is not None:
+        lines.append(reuse)
     security = [e for e in events if e.type == "security.assessed"]
     if security:
         lines.append(

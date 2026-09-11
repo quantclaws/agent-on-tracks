@@ -2163,10 +2163,57 @@ class MImplRuntimeMixin:
             "",
         )
 
+    @staticmethod
+    def _normalize_full_argv(argv, result_path=None):
+        """Canonicalize FULL argv without binding evidence to its temp XML."""
+        normalized = []
+        exact_path = str(result_path) if result_path else None
+        for raw in argv:
+            value = str(raw)
+            if exact_path and value == exact_path:
+                value = "<result>"
+            elif exact_path and value.endswith(f"={exact_path}"):
+                value = f"{value[: -len(exact_path)]}<result>"
+            normalized.append(value)
+        return normalized
+
+    @classmethod
+    def _full_command_identity(cls, commands, cwds, result_paths=None) -> tuple[str, ...]:
+        """Encode declared FULL commands, cwd and argv boundaries canonically."""
+        return tuple(
+            json.dumps(
+                {
+                    "layer": layer,
+                    "argv": cls._normalize_full_argv(
+                        commands[layer], (result_paths or {}).get(layer)
+                    ),
+                    "cwd": str(cwds[layer]),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for layer in sorted(commands)
+        )
+
+    def _declared_full_identity(self, sections, inventory):
+        """Derive current FULL commands without executing them."""
+        commands = {}
+        cwds = {}
+        for layer, section in sections.items():
+            section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+            commands[layer] = resolve_selected_command(
+                section.run, [], "<result>", Path(section_cwd)
+            )
+            cwds[layer] = str(Path(section_cwd).resolve())
+        return self._full_command_identity(commands, cwds)
+
     def _run_full_layers(self, cmd, round_name: str, sections, inventory):  # pylint: disable=too-many-locals
         """Run every declared FULL layer, staging one test result per layer."""
         outcomes: list[dict] = []
         command_echo: dict[str, list[str]] = {}
+        command_cwds: dict[str, str] = {}
+        command_exit_codes: dict[str, int] = {}
+        result_paths: dict[str, str] = {}
         staged: list[Path] = []
         try:
             for layer, section in sections.items():
@@ -2177,6 +2224,7 @@ class MImplRuntimeMixin:
                     cmd.command_id, f"full-{round_name.lower()}-{layer}"
                 )
                 staged.append(result_path)
+                result_paths[layer] = str(result_path)
                 result_path.unlink(missing_ok=True)
                 argv = resolve_selected_command(
                     section.run,
@@ -2194,6 +2242,8 @@ class MImplRuntimeMixin:
                     raise TestSelectError(f"[{layer}] FULL argv diverges from contract")
                 obs = execute_gate_command(shlex.join(argv), str(section_cwd), f"full-{layer}")
                 command_echo[layer] = list(obs.argv)
+                command_cwds[layer] = str(Path(obs.cwd).resolve())
+                command_exit_codes[layer] = obs.exit_code
                 cases = parse_test_result(result_path)
                 mapping = require_exact_node_coverage(cases, selected)
                 outcomes.extend(
@@ -2210,9 +2260,17 @@ class MImplRuntimeMixin:
             if staged:
                 with contextlib.suppress(OSError):
                     staged[0].parent.rmdir()
-        return outcomes, command_echo
+        return outcomes, command_echo, command_cwds, command_exit_codes, result_paths
 
-    def _execute_full_round(self, cmd, state, round_name: str, ledger) -> dict:  # pylint: disable=too-many-locals
+    def _execute_full_round(
+        self,
+        cmd,
+        state,
+        round_name: str,
+        ledger,
+        candidate_sha: str | None = None,
+        judgment_reason: str | None = None,
+    ) -> dict:  # pylint: disable=too-many-locals
         contract = load_contract(self.repo)
         sections = {
             "unit": contract.unit,
@@ -2243,7 +2301,7 @@ class MImplRuntimeMixin:
         )
         if node_ref is None:
             raise TestSelectError("FULL nodes blob write failed")
-        self._emit(
+        selection_event = self._emit(
             "test.selected",
             {
                 "scope": "full",
@@ -2260,12 +2318,19 @@ class MImplRuntimeMixin:
             },
             command_id=cmd.command_id,
         )
-        outcomes, command_echo = self._run_full_layers(cmd, round_name, sections, inventory)
-        command_identity = self._selection_command_identity(command_echo)
+        (
+            outcomes,
+            command_echo,
+            command_cwds,
+            command_exit_codes,
+            result_paths,
+        ) = self._run_full_layers(cmd, round_name, sections, inventory)
+        command_identity = self._full_command_identity(command_echo, command_cwds, result_paths)
+        env_identity = self._gate_environment_identity()
         identity = EvidenceIdentity(
             tree=tree_stamp,
             command=command_identity,
-            env=self._gate_environment_identity(),
+            env=env_identity,
             selection_id=selection_id,
         )
         evidence_by_node = {
@@ -2301,11 +2366,35 @@ class MImplRuntimeMixin:
             "selection_id": selection_id,
             "failures": failed,
             "evidence_by_node": evidence_by_node,
+            "execution_commit": commit,
+            "selection_event_seq": selection_event.seq,
+            "selection_command_id": selection_event.command_id,
+            "identity_basis": [
+                tree_stamp,
+                list(command_identity),
+                env_identity,
+                selection_id,
+            ],
+            "identity": {
+                "tree": tree_stamp,
+                "command": list(command_identity),
+                "env": env_identity,
+                "selection_id": selection_id,
+            },
+            "full_f_eligible": not failed
+            and all(code == 0 for code in command_exit_codes.values()),
+            "command_cwds": command_cwds,
+            "command_exit_codes": command_exit_codes,
         }
+        if candidate_sha is not None:
+            payload["candidate_sha"] = candidate_sha
+        if judgment_reason is not None:
+            payload["judgment_reason"] = judgment_reason
+            payload["reason"] = judgment_reason
         event_payload = {
             key: value
             for key, value in payload.items()
-            if key not in ("selection_id", "failures", "evidence_by_node")
+            if key not in ("failures", "evidence_by_node")
         }
         self._emit("full.executed", event_payload, command_id=cmd.command_id)
         return payload

@@ -88,23 +88,34 @@ def judge_full_f_reuse(
         basis = tuple(full_f_evidence.get("identity_basis", ()))
         return ReuseDecision(decision="rerun", reason="stale", identity_basis=basis)
     expected = full_f_evidence.get("identity_basis")
-    if expected is not None:
-        quad = (
-            identity_quadruple.get("tree"),
-            identity_quadruple.get("command"),
-            identity_quadruple.get("env"),
-            identity_quadruple.get("selection_id"),
+    if expected is None:
+        # IF-VERIFY-002: reuse requires the quadruple to be PROVEN
+        # consistent. Evidence recorded without an identity_basis carries no
+        # proof -- treating absence as a match let a drifted/stale FULL_F
+        # reuse with an empty basis (AC-FR0268-02/03 fail-closed). Rerun.
+        return ReuseDecision(decision="rerun", reason="identity_mismatch", identity_basis=())
+    def _canonical(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(_canonical(item) for item in value)
+        return value
+
+    quad = (
+        identity_quadruple.get("tree"),
+        _canonical(identity_quadruple.get("command")),
+        identity_quadruple.get("env"),
+        identity_quadruple.get("selection_id"),
+    )
+    exp_tuple = tuple(_canonical(item) for item in expected)
+    if exp_tuple != quad:
+        return ReuseDecision(
+            decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
         )
-        exp_tuple = tuple(expected)
-        if exp_tuple != quad:
-            return ReuseDecision(
-                decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
-            )
     # Drift folds into identity_mismatch in this slice: a moved candidate
     # surfaces as a basis mismatch above. With no STALE and a matching
     # basis, the FULL_F evidence is reused verbatim.
-    basis = tuple(full_f_evidence.get("identity_basis", ())) if expected is not None else ()
-    return ReuseDecision(decision="reuse", reason="reuse_full_f", identity_basis=basis)
+    return ReuseDecision(
+        decision="reuse", reason="reuse_full_f", identity_basis=exp_tuple
+    )
 
 
 def collect_binding_violations(events: list[dict], candidate_sha: str) -> list[str]:
