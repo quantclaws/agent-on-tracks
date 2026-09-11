@@ -43,18 +43,9 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     assert responds and responds[0]["payload"]["command"]["params"]["role"] == "scribe"
     assert "awaiting=review" in r.stdout  # forward progress to the human gate
 
-    # AC-16b: dirty file outside the whitelist blocks revise, appends nothing
-    story = host_repo / ".tracks" / "projects" / "v0.1" / "story.md"
-    readme = host_repo / "README.md"
-    readme.write_text(readme.read_text() + "drift\n", encoding="utf-8")
-    before = len(event_log())
-    r = trac("review", "revise")
-    assert r.returncode == 1 and "README.md" in r.stderr
-    assert len(event_log()) == before
-    subprocess.run(["git", "checkout", "--", "README.md"], cwd=host_repo, check=True)
-
     # AC-16a: human edits story.md with a discussion annotation, revise commits
     # it and carries diff_ref
+    story = host_repo / ".tracks" / "projects" / "v0.1" / "story.md"
     story.write_text(
         story.read_text(encoding="utf-8") + "\n\n> **Human:** 人类补充意见。\n",
         encoding="utf-8",
@@ -78,3 +69,17 @@ def test_sage_comment_and_human_revise_loops(host_repo, trac, event_log):
     params = responds[0]["payload"]["command"]["params"]
     assert params["role"] == "scribe" and params["diff_ref"] == revise_sha
     assert "awaiting=review" in r.stdout  # cycled back to the human gate
+
+    # AC-16b realignment (FR-0267-02): a dirty file outside the whitelist is
+    # NOT a CLI-stage refusal — the human revise checkpoint proceeds. The
+    # foreign content stays in the working tree and is never swept into the
+    # checkpoint commit (the M-VERIFY freeze owns the dirty_tree exit).
+    readme = host_repo / "README.md"
+    readme.write_text(readme.read_text() + "drift\n", encoding="utf-8")
+    before = len(event_log())
+    r = trac("review", "revise")
+    assert r.returncode == 0, r.stderr
+    committed = git_out(host_repo, "show", "--name-only", "--format=", "HEAD")
+    assert "README.md" not in committed.splitlines()
+    assert readme.read_text(encoding="utf-8").endswith("drift\n")
+    assert len(event_log()) > before  # the checkpoint really ran, not a no-op

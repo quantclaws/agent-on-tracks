@@ -12,9 +12,10 @@ classify it:
 - Fake backend (effects/fake.py): encodes its explicitly simulated actual
   result under the assigned declaration — only actual simulated fields, never
   a coerced synthetic pass; schema-required fields the simulation genuinely
-  produced (the DIAGNOSE reason/evidence pair, marked simulated) are carried,
-  and a simulated outcome the payload schema cannot represent (a revise
-  without findings) stays incomplete and the Runtime classifies it visibly.
+  produced (the DIAGNOSE reason/evidence pair and the M-DESIGN review revise
+  fields, marked simulated) are carried, and a simulated outcome the payload
+  schema cannot represent (an M-TEST/undeclared revise without findings)
+  stays incomplete and the Runtime classifies it visibly.
 
 No live subprocess/opencode calls: the real-backend transport tests drive the
 actual extraction/return methods with controlled transcript inputs
@@ -164,6 +165,51 @@ def test_fake_declared_revise_is_encoded_honestly_and_fails_visibly(
     assert payload == {"verdict": "revise"}
     # a revise without simulated findings cannot be represented by the schema:
     # the Runtime classifies it visibly instead of the fake inventing data
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is True
+    _assert_single_format_error(store, "schema_violation")
+
+
+def test_fake_design_review_revise_completes_for_the_respond_loop(
+    backend_env, monkeypatch
+):
+    """flow.md §8.1: the M-DESIGN Prism revise must drive RESPOND, so the
+    fake completes it with the schema-required review fields (marked
+    simulated; verdict stays revise). The stage signal is the design
+    criteria skill the M-DESIGN review assignment carries."""
+    ex, store, repo = backend_env
+    monkeypatch.setenv("TRAC_FAKE_SIMULATE", "prism:PRISM_REVIEW=revise")
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("prism:review")
+    assignment["skills"] = ["tracks-discuz", "tracks-prism-design"]
+    assignment["docs"] = ["architecture.md", "interfaces.md", "test-plan.md"]
+    result = fake.act("prism", "PRISM_REVIEW", None, None, assignment=assignment)
+    assert result["verdict"] == "revise"
+    payload = _reply_payload(result["raw_output"])
+    assert payload["verdict"] == "revise"
+    assert payload["review_summary"]
+    assert payload["review_body"]
+    assert payload["findings"][0]["severity"] == "blocker"
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["payload"]["findings"][0]["id"] == "FAKE-DESIGN-REVIEW-01"
+    # Runtime collection: a schema-valid declared revise falls through.
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is False
+    assert list(store.events(RUN_ID)) == []
+
+
+def test_fake_m_test_review_revise_keeps_the_honesty_rule(backend_env, monkeypatch):
+    """The other reviewer card (``tracks-prism-test``) is the M-TEST review:
+    its bare revise keeps the 32b81c2 honest-incomplete classification, never
+    a synthesized design finding."""
+    ex, store, repo = backend_env
+    monkeypatch.setenv("TRAC_FAKE_SIMULATE", "prism:PRISM_REVIEW=revise")
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("prism:review")
+    assignment["skills"] = ["tracks-discuz", "tracks-prism-test"]
+    assignment["red_evidence"] = {"status": "valid"}
+    result = fake.act("prism", "PRISM_REVIEW", None, None, assignment=assignment)
+    assert _reply_payload(result["raw_output"]) == {"verdict": "revise"}
     handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
     assert handled is True
     _assert_single_format_error(store, "schema_violation")

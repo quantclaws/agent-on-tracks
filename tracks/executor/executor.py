@@ -345,6 +345,13 @@ class _V07RuntimeExtension(_v07_runtime.V07Extension):
     ``before_mtest`` delegates to the T-004 ``kernel.phase0.decide_phase0``
     entry guard (pure, no I/O): any non-SEALED Phase 0 projection routes to
     ``Command(phase0_validate)``; SEALED/BLOCKED park (§1c).
+
+    ``after_m_impl`` is declared explicitly as the below-threshold no-route:
+    v0.7 predates the RELEASE pipeline, so the M-IMPL boundary completes the
+    run instead of re-routing to M-VERIFY (FR-0267 keeps below-threshold
+    versions byte-identical). Without the explicit callback the required
+    capability resolution fail-closes v0.7 runs at M-IMPL/EXIT with
+    CapabilityBlockedError — a stall, not the contracted boundary completion.
     """
 
     @staticmethod
@@ -352,6 +359,10 @@ class _V07RuntimeExtension(_v07_runtime.V07Extension):
         from tracks.kernel.phase0 import decide_phase0
 
         return decide_phase0(state)
+
+    @staticmethod
+    def after_m_impl(state):
+        return None
 
 
 _version_extensions.register_extension(

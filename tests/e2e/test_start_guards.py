@@ -70,13 +70,42 @@ def test_empty_stdin_rejected(host_repo, trac):
     assert "releases/v0.1" not in git_out(host_repo, "branch", "--list")
 
 
-def test_dirty_worktree_rejected(host_repo, trac):
-    assert trac("init").returncode == 0
-    (host_repo / "WIP.txt").write_text("uncommitted\n", encoding="utf-8")
-    r = trac("start", "v0.1", stdin="需求")
-    assert r.returncode == 1
-    assert "dirty" in r.stderr or "uncommitted" in r.stderr
-    assert git_out(host_repo, "branch", "--list", "releases/v0.1") == ""  # AC-03a
+def test_dirty_worktree_rejected(host_repo, trac, event_log):
+    """FR-0267-02 realignment (supersedes the v0.2 AC-03a start refusal):
+    a dirty worktree is no longer a ``trac start`` exit — the run starts and
+    the M-VERIFY freeze is the contracted fail-closed gate. The walk drives
+    the park-evidence chain: the dirty tree yields
+    ``attention.required(reason=dirty_tree)``, never a clean-tree
+    ``candidate.frozen``, and ``trac status`` surfaces the recovery
+    guidance."""
+    from tests.e2e.helpers import walk_to_m_impl_parked
+
+    readme = host_repo / "README.md"
+    readme.write_text(readme.read_text(encoding="utf-8") + "uncommitted\n", encoding="utf-8")
+    # The walker's entry (init -> start) now proceeds WITH the dirty tracked
+    # tree: that is the realignment under test.
+    walk_to_m_impl_parked(trac, version="v0.8")
+    assert "releases/v0.8" in git_out(host_repo, "branch", "--list")
+
+    events = event_log()
+    frozen = [
+        e
+        for e in events
+        if e["type"] == "candidate.frozen"
+        and e["payload"].get("clean_tree") is True
+    ]
+    assert frozen == [], "a dirty tree must never freeze a clean-tree candidate"
+    attention = [
+        e
+        for e in events
+        if e["type"] == "attention.required"
+        and e["payload"].get("reason") == "dirty_tree"
+    ]
+    assert attention, "dirty tree must land attention.required(reason=dirty_tree)"
+    status = trac("status")
+    combined = status.stdout + status.stderr
+    assert "needs_attention" in combined
+    assert "dirty_tree" in combined
 
 
 def test_active_run_queues_to_backlog(host_repo, trac):

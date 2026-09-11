@@ -288,6 +288,8 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         result.setdefault("parity", dict(_FAKE_PARITY_PROVENANCE))
         if kind == "prism:final" and str(substate or "").upper() == "VERIFY_FINAL":
             self._ensure_verify_final_revise_fields(result, assignment)
+        if kind == "prism:review" and self._is_design_prism_review(assignment):
+            self._ensure_design_review_revise_fields(result, assignment)
         payload = self._declared_reply_payload(kind, result)
         result["raw_output"] = encode_envelope_reply(
             kind, payload, self.envelope_version
@@ -324,9 +326,11 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         deterministic review content the declared schema requires and NO
         ``discussion_refs``: the Runtime's anchor judge classifies it. Fields
         the simulation (or a result-enriching subclass) already produced are
-        never overwritten. M-TEST/M-DESIGN review kinds keep the 32b81c2
-        honesty rule — a simulated revise the schema cannot represent stays
-        incomplete and is classified visibly at the Runtime."""
+        never overwritten. M-TEST review kinds keep the 32b81c2 honesty rule —
+        a simulated revise the schema cannot represent stays incomplete and is
+        classified visibly at the Runtime; the M-DESIGN review completes its
+        simulated revise instead (see ``_ensure_design_review_revise_fields``)
+        because the v0.3 flow.md §8.1 RESPOND loop must really run."""
         if result.get("verdict") != "revise":
             return
         summary = result.get("review_summary")
@@ -354,6 +358,64 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
                 "artifact": f"candidate:{candidate_sha}",
                 "ac_refs": [],
                 "summary": "simulated final-review finding (no discussion anchor)",
+            }
+        ]
+
+    @staticmethod
+    def _is_design_prism_review(assignment: dict | None) -> bool:
+        """True for the M-DESIGN PRISM_REVIEW dispatch only.
+
+        The M-DESIGN review assignment is the sole reviewer card whose
+        ``skills`` carry the design criteria pack ``tracks-prism-design``
+        (machine_decide ``_decide_review`` multi-doc branch); the M-TEST
+        review carries ``tracks-prism-test``. This is the stage signal the
+        ``act()`` face has — the assignment itself never carries ``stage``."""
+        skills = (assignment or {}).get("skills")
+        return isinstance(skills, list) and "tracks-prism-design" in skills
+
+    @staticmethod
+    def _ensure_design_review_revise_fields(
+        result: dict, assignment: dict | None
+    ) -> None:
+        """Complete a simulated M-DESIGN revise into a schema-valid review.
+
+        flow.md §8.1: a Prism revise in M-DESIGN drives the RESPOND loop
+        (Archer revises the trio, then a NEW review round). The declared
+        ``prism:review`` schema requires review_summary + review_body +
+        findings on a revise; a bare simulated revise would be classified as
+        a schema_violation format_error at collection and strand the run at
+        active/PRISM_REVIEW forever (the B62 #80 stall class, fixed for
+        DIAGNOSE in 792f70e). The simulated revise therefore carries the
+        minimum deterministic review content the schema requires, marked
+        simulated so the fake provenance stays visible — never a synthesized
+        pass (the verdict stays ``revise``) and never a real design finding.
+        Fields already produced (or enriched by a subclass) are kept."""
+        if result.get("verdict") != "revise":
+            return
+        summary = result.get("review_summary")
+        if not isinstance(summary, str) or not summary.strip():
+            result["review_summary"] = "simulated design review requested changes"
+        body = result.get("review_body")
+        if not isinstance(body, str) or not body.strip():
+            result["review_body"] = (
+                "FakeBackend simulated a design-review revise; the RESPOND "
+                "loop re-drafts the design trio."
+            )
+        findings = result.get("findings")
+        if isinstance(findings, list) and findings:
+            return
+        docs = (assignment or {}).get("docs")
+        artifact = docs[0] if isinstance(docs, list) and docs else "design-trio"
+        result["findings"] = [
+            {
+                "id": "FAKE-DESIGN-REVIEW-01",
+                "severity": "blocker",
+                "defect_classification": result.get("defect_classification")
+                or "design_gap",
+                "criterion": "simulated",
+                "artifact": artifact,
+                "ac_refs": [],
+                "summary": "simulated design-review finding (drives RESPOND)",
             }
         ]
 

@@ -1,10 +1,27 @@
-"""E2E: feature release happy path (v0.8)."""
+"""E2E: feature release happy path (v0.8, test-plan §11.1).
+
+b93 §8.1 bootstrap contract: bare ``trac run`` bootstrap is forbidden; the
+journey is driven through the shared walkers over a real bare remote and the
+loopback GitHub stand-in (CI readback + release objects). The real CLI,
+kernel, executor and M-MILESTONE producers run end to end — the agent
+channel is the deterministic fake, the remote/API are documented stand-ins.
+"""
 
 from __future__ import annotations
 
 import subprocess
 
 import pytest
+
+from tests.e2e.helpers import (
+    generate_report_md,
+    init_bare_remote,
+    walk_to_awaiting_release,
+)
+from tests.integration.test_journey_versioning import (
+    _bind_github_origin,
+    _declare_journey_contract,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -18,65 +35,111 @@ pytestmark = pytest.mark.e2e
 # AC-FR0276-01@v0.8 TRACKS-TRACE feature release milestone sealed and trace closed
 # AC-FR0277-01@v0.8 TRACKS-TRACE feature public release via main
 # AC-NFR0143-02@v0.8 TRACKS-TRACE feature release trace exported
-def test_feature_release_journey(host_repo, trac, event_log, tmp_path, monkeypatch):
-    monkeypatch.setenv("TRAC_GITHUB_API_BASE", "http://127.0.0.1:9")
-    monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
-    monkeypatch.setenv("GITHUB_TOKEN", "token")
+def test_feature_release_journey(host_repo, trac, event_log, ci_echo_standin):
+    # Seed: real bare remote bound as the GitHub origin + the declared
+    # feature operation plan (merge main / public tag / release object).
+    bare, _initial = init_bare_remote(host_repo, "e2e_bare.git")
+    _bind_github_origin(host_repo, bare, ci_echo_standin.repo)
+    run_id = walk_to_awaiting_release(
+        trac,
+        pre_seed_hook=lambda repo: _declare_journey_contract(
+            repo, ["merge:main", "tag:{feature_tag}", "release:{feature_tag}"]
+        ),
+    )
+    assert run_id
 
-    bare = tmp_path / "e2e_bare.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
-    subprocess.run(["git", "remote", "add", "origin", str(bare)], cwd=host_repo, check=True)
-    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=host_repo, check=True, capture_output=True)
+    # The independent release CLI exposes the preview bound to the candidate
+    # before the Human decision.
+    preview_cli = trac("release", "preview")
+    assert "preview_digest=" in preview_cli.stdout
+    assert "candidate=" in preview_cli.stdout
 
-    # Seed-ish: init already done via host_repo fixture; walk to awaiting human would be earlier
-    # For E2E, we drive the full release journey via trac run sequence
-    assert trac("run").returncode in (0, 1)
-    preview = trac("release", "preview")
-    assert "preview" in preview.stdout.lower() or "candidate" in preview.stdout.lower() or preview.returncode in (0, 1, 2)
-    decision = trac("release", "--action", "release")
-    assert decision.returncode in (0, 1)
-    result = trac("run")
-    assert result.returncode in (0, 1)
+    assert trac("release", "--action", "release").returncode == 0
+    assert trac("run").returncode == 0
 
-    events = event_log()
-    # Assert happy-path chain exists with bindings
-    assert any(e["type"] == "candidate.frozen" for e in events), "candidate.frozen must appear"
-    assert any(e["type"] == "evidence.reused" for e in events) or any(e["type"] == "full.executed" for e in events)
-    assert any(e["type"] == "ci.run_observed" for e in events)
-    assert any(e["type"] == "prism.verdict" for e in events)
-    assert any(e["type"] == "security.assessed" for e in events)
-    assert any(e["type"] == "release.previewed" for e in events)
-    assert any(e["type"] == "release.decided" for e in events)
-    assert any(e["type"] == "publish.executed" for e in events)
-    assert any(e["type"] == "milestone.sealed" for e in events)
-    assert any(e["type"] == "refs.cleaned" for e in events)
+    events = event_log(run_id)
+    frozen = [e for e in events if e["type"] == "candidate.frozen"]
+    assert frozen and frozen[0]["payload"]["clean_tree"] is True
+    candidate = frozen[0]["payload"]["candidate_sha"]
+    assert len(candidate) == 40
 
-    # Bindings: all chain events share same candidate_sha
-    cands = {e["payload"]["candidate_sha"] for e in events if "candidate_sha" in e["payload"]}
-    assert len(cands) == 1, f"candidate SHA must be consistent, got {cands}"
+    # FULL_F reuse on the M-IMPL evidence: no local re-run, identity bound.
+    reused = [
+        e
+        for e in events
+        if e["type"] == "evidence.reused" and e["payload"].get("kind") == "full_f"
+    ]
+    assert reused, "the eligible FULL_F must be reused"
+    assert reused[0]["payload"]["candidate_sha"] == candidate
 
-    # Idempotency keys are sha256-prefixed
-    for e in events:
-        if e["type"] in ("publish.planned", "publish.executed"):
-            assert e["payload"]["idempotency_key"].startswith("sha256:")
+    # CI readback binds the four-tuple: head SHA == candidate, api verified.
+    ci = [e for e in events if e["type"] == "ci.run_observed"][-1]["payload"]
+    assert ci["api_verified"] is True
+    assert ci["head_sha"] == ci["candidate_sha"] == candidate
 
-    # Preview digest binds all
-    previewed = [e for e in events if e["type"] == "release.previewed"]
-    assert previewed and previewed[0]["payload"]["preview_digest"].startswith("sha256:")
+    # Security assessment and the same-candidate Prism verdict precede the
+    # preview; the preview digest binds the candidate.
+    assert [e for e in events if e["type"] == "security.assessed"]
+    assert any(
+        e["payload"].get("verdict") == "pass"
+        for e in events
+        if e["type"] == "prism.verdict"
+    )
+    previews = [e for e in events if e["type"] == "release.previewed"]
+    assert previews and previews[-1]["payload"]["preview_digest"].startswith("sha256:")
+    assert previews[-1]["payload"]["candidate_sha"] == candidate
+    decided = [e for e in events if e["type"] == "release.decided"]
+    assert decided and decided[-1]["payload"]["action"] == "release"
+    preview_digest = decided[-1]["payload"]["preview_digest"]
 
-    # Status terminal released
-    status = trac("status").stdout
-    assert "terminal=released" in status or "released" in status.lower()
+    # M-PUBLISH: merge main + public tag + release object, all done against
+    # the same candidate with sha256 idempotency keys.
+    executed = [
+        e
+        for e in events
+        if e["type"] == "publish.executed" and e["payload"].get("status") == "done"
+    ]
+    targets = {e["payload"]["target"] for e in executed}
+    assert {"main", "v0.8.0"} <= targets, targets
+    assert all(e["payload"]["candidate_sha"] == candidate for e in executed)
+    assert all(
+        e["payload"]["idempotency_key"].startswith("sha256:") for e in executed
+    )
 
-    # Report trace mutual verification
-    report = trac("report").stdout
-    assert "release.trace" in report.lower() or "trace" in report.lower()
+    # M-MILESTONE seals the trace on the same candidate and cleans refs.
+    trace = [e for e in events if e["type"] == "milestone.trace_closed"][-1]["payload"]
+    assert trace["candidate_sha"] == candidate
+    assert trace["release_tag"] == "v0.8.0"
+    assert trace["preview_digest"] == preview_digest
+    assert [e for e in events if e["type"] == "milestone.sealed"]
+    assert [e for e in events if e["type"] == "refs.cleaned"]
+    completed = [e for e in events if e["type"] == "run.completed"][-1]["payload"]
+    assert completed["terminal_state"] == "released"
+    assert completed["release_tag"] == "v0.8.0"
 
-    # Remote mutual verification: tag exists and ls-remote matches
-    subprocess.run(["git", "fetch", "origin", "--tags"], cwd=host_repo, check=True, capture_output=True)
-    tags = subprocess.run(["git", "tag", "--list"], cwd=host_repo, capture_output=True, text=True, check=True).stdout
-    assert "v" in tags or any(e["type"] == "publish.executed" for e in events)
+    # Status projects the released identity; every candidate_sha-bearing
+    # event binds the one frozen candidate (NFR-0143).
+    status = trac("status")
+    assert "terminal=released" in status.stdout
+    assert "full_reuse=full_f" in status.stdout
+    assert "ci=bound" in status.stdout
+    for event in events:
+        if "candidate_sha" in event["payload"]:
+            assert event["payload"]["candidate_sha"] == candidate, event["type"]
 
-    monkeypatch.delenv("TRAC_GITHUB_API_BASE", raising=False)
-    monkeypatch.delenv("TRAC_GITHUB_REPO", raising=False)
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    # Remote mutual verification: main and the public tag point at the
+    # candidate; the stand-in release object targets the same commit.
+    ls = subprocess.run(
+        ["git", "ls-remote", str(bare)], capture_output=True, text=True, check=True
+    ).stdout
+    assert f"{candidate}\trefs/heads/main" in ls
+    assert f"{candidate}\trefs/tags/v0.8.0" in ls
+    release = ci_echo_standin.releases.get("v0.8.0")
+    assert release is not None and release["target_commitish"] == candidate
+    assert release["prerelease"] is False
+
+    # Report exports the same trace identity.
+    report = generate_report_md(trac, host_repo)
+    assert "Release trace" in report
+    assert trace["trace_digest"] in report
+    assert candidate in report
