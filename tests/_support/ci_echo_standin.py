@@ -39,14 +39,18 @@ class CiEchoStandIn:
         workflow_id: int = DEFAULT_WORKFLOW_ID,
         run_id: int = DEFAULT_RUN_ID,
         checks: dict[str, str] | None = None,
+        fake_issue_number: str | None = None,
     ):
         self.repo = repo
         self.workflow_path = workflow_path
         self.workflow_id = workflow_id
         self.run_id = run_id
         self.checks = dict(checks or {})
+        self.fake_issue_number = fake_issue_number
         self.requests: list[str] = []
         self.issue_states: dict[int, str] = {}
+        self.issues: dict[int, dict] = {}
+        self.next_issue_number = 1
         self.last_comment_id = 0
         self._lock = threading.Lock()
         owner = self
@@ -72,7 +76,31 @@ class CiEchoStandIn:
                     return {}
 
             def _issue_api(self, method: str) -> bool:
-                prefix = f"/repos/{owner.repo}/issues/"
+                collection = f"/repos/{owner.repo}/issues"
+                if self.path == collection:
+                    if method == "POST":
+                        body = self._json_body()
+                        if owner.fake_issue_number is not None:
+                            entry = {
+                                "number": owner.fake_issue_number,
+                                "title": body.get("title", ""),
+                                "state": "open",
+                            }
+                            self._reply(201, dict(entry))
+                            return True
+                        number = owner.next_issue_number
+                        owner.next_issue_number += 1
+                        entry = {
+                            "number": number,
+                            "title": body.get("title", ""),
+                            "state": "open",
+                        }
+                        owner.issues[number] = entry
+                        self._reply(201, dict(entry))
+                        return True
+                    self._reply(404, {"message": "not found"})
+                    return True
+                prefix = f"{collection}/"
                 if not self.path.startswith(prefix):
                     return False
                 tail = self.path[len(prefix) :].split("/")
@@ -87,18 +115,23 @@ class CiEchoStandIn:
                     self._reply(201, {"id": owner.last_comment_id})
                     return True
                 if method == "PATCH":
-                    owner.issue_states[number] = str(
-                        self._json_body().get("state") or "closed"
-                    )
-                    self._reply(200, {"number": number, "state": owner.issue_states[number]})
+                    state = str(self._json_body().get("state") or "closed")
+                    owner.issue_states[number] = state
+                    if number in owner.issues:
+                        owner.issues[number]["state"] = state
+                    self._reply(200, {"number": number, "state": state})
                     return True
                 if method == "GET":
+                    entry = owner.issues.get(number)
+                    state = owner.issue_states.get(
+                        number, (entry or {}).get("state", "open")
+                    )
                     self._reply(
                         200,
                         {
                             "number": number,
-                            "title": "issue",
-                            "state": owner.issue_states.get(number, "open"),
+                            "title": (entry or {}).get("title", "issue"),
+                            "state": state,
                         },
                     )
                     return True

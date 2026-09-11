@@ -119,7 +119,12 @@ def _seed_phase0_premises(repo, version):
 
 
 def walk_to_m_impl_parked(
-    trac, stdin="构建一个事件溯源运行时", version="v0.8", *, pre_seed_hook=None
+    trac,
+    stdin="构建一个事件溯源运行时",
+    version="v0.8",
+    *,
+    pre_seed_hook=None,
+    post_approve_hook=None,
 ):
     """init -> start -> triage go -> doc trio -> approval -> M-IMPL RED failure
     injection -> parks at M-IMPL/DIAGNOSE/awaiting=escalation.
@@ -143,9 +148,18 @@ def walk_to_m_impl_parked(
     ``pre_seed_hook(repo)`` runs after the phase0-blocked first run and before
     the seeding commit, so repo facts it writes into the canonical contract
     land in the SAME commit as the seeded premises (an extra post-park commit
-    would drift the already-frozen candidate and stall the park chain)."""
+    would drift the already-frozen candidate and stall the park chain).
+
+    ``post_approve_hook(trac, run_id)`` runs right after the human approval is
+    recorded and before the first post-approval drive, so production handlers
+    the CLI cannot express deterministically (e.g. the real GitHub issue
+    channel while the agent channel stays the deterministic fake) can land
+    their events before the M-DESIGN drive consumes the M-REQ-APPROVAL
+    boundary."""
     run_id = walk_to_await_human(trac, stdin=stdin, version=version)
     assert trac("approve", "--actor", "Aaron").returncode == 0
+    if post_approve_hook is not None:
+        post_approve_hook(trac, run_id)
     r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     repo = getattr(trac, "repo", None)
     if repo is not None:
@@ -166,6 +180,7 @@ def walk_to_awaiting_release(
     version="v0.8",
     *,
     pre_seed_hook=None,
+    post_approve_hook=None,
     max_drives=10,
 ):
     """Drive the proven M-IMPL park to M-RELEASE/AWAITING_RELEASE.
@@ -178,7 +193,11 @@ def walk_to_awaiting_release(
     The loop is bounded; a missing arrival is a harness bug, not a park
     expectation."""
     run_id = walk_to_m_impl_parked(
-        trac, stdin=stdin, version=version, pre_seed_hook=pre_seed_hook
+        trac,
+        stdin=stdin,
+        version=version,
+        pre_seed_hook=pre_seed_hook,
+        post_approve_hook=post_approve_hook,
     )
     for _ in range(max_drives):
         r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
@@ -190,6 +209,37 @@ def walk_to_awaiting_release(
     raise AssertionError(
         f"M-RELEASE/AWAITING_RELEASE not reached within {max_drives} drives"
     )
+
+
+def real_issue_hook(host_repo, version="v0.8"):
+    """``post_approve_hook`` that creates the run's issues on the real channel.
+
+    The deterministic fake agent channel makes ``select_issue_backend`` treat
+    the run as an explicit simulation and select the fake issue channel, so
+    the real create + API-readback mapping is driven through the production
+    handler with a stand-in-backed ``GithubBackend`` injected test-side (the
+    ``TRAC_GITHUB_API_BASE`` stand-in, token and repo come from the caller's
+    environment)."""
+    from tracks.effects.github import GithubBackend
+
+    def hook(_trac, run_id):
+        invoke_create_issues(
+            host_repo, run_id, backend=GithubBackend(host_repo, version)
+        )
+
+    return hook
+
+
+def generate_report_md(trac, host_repo, name="report_out"):
+    """Render the run report and return the generated Markdown body.
+
+    ``trac report`` only prints the artifact path; content assertions must
+    read the generated ``report.md`` (the §2b Issue map / Release trace
+    sections included)."""
+    output = host_repo / name
+    result = trac("report", "--format", "md", "--output", str(output))
+    assert result.returncode == 0, result.stderr
+    return (output / "report.md").read_text(encoding="utf-8")
 
 
 def init_bare_remote(host_repo, name, *, push_main=True):
@@ -223,6 +273,39 @@ def init_bare_remote(host_repo, name, *, push_main=True):
             capture_output=True,
         )
     return bare, head
+
+
+def skipped_issue_closes(events):
+    """``issue.closed state=skipped`` payloads (non-authoritative audits)."""
+    return [
+        e["payload"]
+        for e in events
+        if e["type"] == "issue.closed" and e["payload"].get("state") == "skipped"
+    ]
+
+
+def assert_temp_refs_empty(host_repo):
+    """``git for-each-ref refs/trac/tmp`` must list nothing (measured cleanup)."""
+    import subprocess
+
+    listed = subprocess.run(
+        ["git", "for-each-ref", "refs/trac/tmp"],
+        cwd=host_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert listed.strip() == ""
+
+
+def walk_and_release(trac, host_repo, *, post_approve_hook=None, name="bare.git"):
+    """One full release-chain setup: bare origin -> walk to AWAITING_RELEASE
+    -> human ``release`` decision; returns the run id."""
+    init_bare_remote(host_repo, name)
+    run_id = walk_to_awaiting_release(trac, post_approve_hook=post_approve_hook)
+    assert run_id
+    assert trac("release", "--action", "release").returncode == 0
+    return run_id
 
 
 def push_ancestor_main(host_repo, sha):
@@ -304,6 +387,36 @@ def replay_execute_publish(host_repo, run_id):
             )
         finally:
             os.chdir(previous)
+    finally:
+        store.close()
+
+
+def invoke_create_issues(host_repo, run_id, *, backend=None):
+    """Invoke the production create_issues handler on the journey store.
+
+    Used where the CLI cannot express the scenario deterministically: with the
+    deterministic fake agent channel selected, backend selection treats the
+    explicit simulation mode as the fake issue channel too, so a real
+    (stand-in-backed) creation/readback must be driven through the production
+    handler with the real backend injected test-side. ``backend=None`` leaves
+    the handler's own ``select_issue_backend`` in charge, so a missing-credential
+    attempt lands the audited attention.required path."""
+    from tracks.kernel.events import Command
+
+    store, executor = _publish_store_and_executor(host_repo, run_id)
+    try:
+        if backend is not None:
+            executor._issue_backend = backend
+        state = store.state(run_id)
+        executor._execute(
+            Command(
+                kind="create_issues",
+                params={"digest": state.approval_digest},
+            ),
+            state,
+            None,
+            False,
+        )
     finally:
         store.close()
 

@@ -217,7 +217,7 @@ class GithubBackend:
 
     def create_issue(self, title: str, body: str, labels: list) -> str:
         data = self._request(
-            f"https://api.github.com/repos/{self.gh_repo}/issues",
+            f"{_api_base()}/repos/{self.gh_repo}/issues",
             {"title": title, "body": body, "labels": labels},
         )
         return str(data["number"])
@@ -226,7 +226,7 @@ class GithubBackend:
         if not project:
             return
         self._request(
-            f"https://api.github.com/projects/columns/{project}/cards",
+            f"{_api_base()}/projects/columns/{project}/cards",
             {"content_id": int(issue_id), "content_type": "Issue"},
         )
 
@@ -239,7 +239,7 @@ class GithubBackend:
 
         try:
             data = self._get(
-                f"https://api.github.com/repos/{self.gh_repo}/issues/{issue_number}"
+                f"{_api_base()}/repos/{self.gh_repo}/issues/{issue_number}"
             )
         except GithubIssuesError as exc:
             if exc.classification == "not_found":
@@ -622,10 +622,15 @@ def create_issue_verified(backend, title: str, body: str, labels: list) -> dict:
     Live channel: create -> GET the created issue -> mapping with
     ``api_verified=true`` (AC-FR0270-01). Fake stand-in channel: the
     deterministic stand-in can never verify (``api_verified=false``,
-    AC-FR0270-02) — fake mappings must stay unclosable.
+    AC-FR0270-02) — fake mappings must stay unclosable. A FAKE-prefixed
+    artifact surfacing on the real channel is returned unverified (never
+    read back: it has no remote identity) so the caller's
+    ``reject_fake_artifact`` path lands ``fake_rejected``.
     """
     issue_id = backend.create_issue(title, body, labels)
-    if isinstance(backend, FakeIssueBackend):
+    if isinstance(backend, FakeIssueBackend) or str(issue_id).startswith(
+        ("FAKE-", "fake")
+    ):
         return {"issue_number": issue_id, "api_verified": False}
     readback = readback_issue(backend.gh_repo, int(str(issue_id)))
     return {
