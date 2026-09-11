@@ -20,6 +20,7 @@ import pytest
 
 from tests.e2e.helpers import walk_to_m_impl_parked
 from tracks.executor.publish import (
+    PublishBlocked,
     assert_agent_forbidden,
     operation_idempotency_key,
     plan_operations,
@@ -36,16 +37,10 @@ def _expected_key(preview_digest: str, kind: str, target: str) -> str:
 
 # AC-FR0275-01@v0.8 TRACKS-TRACE planned then executed done with remote mutual verification
 def test_planned_then_executed_done(host_repo, trac, event_log):
-    try:
-        operation_idempotency_key("sha256:abc", "merge", "main")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-001" in str(exc)
-    try:
-        plan_operations({}, "sha256:abc")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-001" in str(exc)
+    key = operation_idempotency_key("sha256:abc", "merge", "main")
+    assert key == _expected_key("sha256:abc", "merge", "main")
+    assert key.startswith("sha256:")
+    assert plan_operations({}, "sha256:abc") == []
 
     # Prepare a bare remote for reconciliation
     bare = host_repo.parent / "bare.git"
@@ -107,11 +102,14 @@ def test_resume_reconciled_skip(host_repo, trac, event_log):
 
 # AC-FR0275-03@v0.8 TRACKS-TRACE agent forbidden blocks publish and produces no remote side effects
 def test_agent_forbidden(host_repo, trac, event_log):
-    try:
+    with pytest.raises(PublishBlocked) as malformed:
+        assert_agent_forbidden("")
+    assert malformed.value.reason == "malformed_actor"
+    for actor in ("runtime", "human"):
+        assert assert_agent_forbidden(actor) is None
+    with pytest.raises(PublishBlocked) as forbidden:
         assert_agent_forbidden("Devon")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-001" in str(exc)
+    assert forbidden.value.reason == "agent_forbidden"
 
     bare = host_repo.parent / "bare3.git"
     subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
@@ -120,11 +118,9 @@ def test_agent_forbidden(host_repo, trac, event_log):
     walk_to_m_impl_parked(trac)
     trac("release", "--action", "release")
     # Directly test the guard: any agent actor must be rejected
-    try:
+    with pytest.raises(PublishBlocked) as forbidden:
         assert_agent_forbidden("Devon")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-001" in str(exc)
+    assert forbidden.value.reason == "agent_forbidden"
     # After implementation, an agent-triggered publish must yield blocked
     events = event_log()
     blocked = [e for e in events if e["type"] == "publish.blocked" and e["payload"].get("reason") == "agent_forbidden"]
@@ -140,11 +136,8 @@ def test_agent_forbidden(host_repo, trac, event_log):
 
 # AC-FR0275-04@v0.8 TRACKS-TRACE unknown operation and conflict produce blocked and reconcile_conflict
 def test_unknown_operation_and_conflict(host_repo, trac, event_log):
-    try:
-        plan_operations({"steps": ["unknown:foo"]}, "sha256:abc")
-        raise AssertionError("expected NotImplementedError")
-    except NotImplementedError as exc:
-        assert "IF-PUBLISH-001" in str(exc)
+    unknown_records = plan_operations({"steps": ["unknown:foo"]}, "sha256:abc")
+    assert unknown_records and unknown_records[0]["operation_kind"] == "unknown"
     verdict = reconcile_operation(
         {"idempotency_key": "sha256:abc", "target": "t", "digest": "d1"},
         {"idempotency_key": "sha256:abc", "target": "t", "digest": "d2"},

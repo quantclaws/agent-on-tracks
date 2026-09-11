@@ -135,37 +135,29 @@ def test_runtime_plans_then_executes_tag_after_approval(tmp_path, monkeypatch):
     assert calls == [(remote, _TAG, candidate)]
 
 
-def test_runtime_does_not_reject_runtime_effects_by_backend_name(tmp_path, monkeypatch):
+def test_agent_backend_blocks_publish_before_any_effect(tmp_path, monkeypatch):
     executor, store, candidate, preview, _remote = _host(tmp_path)
 
-    class OpencodeBackend:
+    class AgentBackendStub:
         pass
 
-    executor.backend = OpencodeBackend()
+    executor.backend = AgentBackendStub()
     calls: list[str] = []
     monkeypatch.setattr(
-        publish_effects,
-        "push_tag",
-        lambda _remote_url, tag, _ref: calls.append(tag)
-        or {
-            "status": "done",
-            "object_id": candidate,
-            "remote_check": {
-                "exists": True,
-                "matches": True,
-                "object_id": candidate,
-            },
-        },
+        publish_effects, "push_tag", lambda *_args: calls.append("push")
     )
 
     executor._do_execute_publish(
         _command(preview["preview_digest"]), store.state("RUN"), None, False
     )
 
-    assert calls == [_TAG]
-    assert any(
-        e.type == "publish.executed" and e.payload.get("status") == "done"
-        for e in store.events("RUN")
+    assert calls == []
+    blocked = [e for e in store.events("RUN") if e.type == "publish.blocked"]
+    assert blocked and blocked[-1].payload["reason"] == "agent_forbidden"
+    assert blocked[-1].payload["preview_digest"] == preview["preview_digest"]
+    assert blocked[-1].payload["candidate_sha"] == candidate
+    assert not any(
+        e.type in {"publish.planned", "publish.executed"} for e in store.events("RUN")
     )
 
 
@@ -237,12 +229,12 @@ def test_runtime_requires_authoritative_preview_and_approval(tmp_path, monkeypat
     }
 
 
-def test_unknown_operation_is_rejected_without_fake_success(tmp_path, monkeypatch):
+def test_unbound_release_is_rejected_without_fake_success(tmp_path, monkeypatch):
     executor, store, _candidate, preview, _remote = _host(tmp_path, operation="release")
     calls: list[str] = []
     monkeypatch.setattr(
         publish_effects,
-        "push_tag",
+        "create_release",
         lambda *_args: calls.append("called") or {"status": "done"},
     )
 
@@ -252,13 +244,14 @@ def test_unknown_operation_is_rejected_without_fake_success(tmp_path, monkeypatc
 
     assert calls == []
     failed_events = [e for e in store.events("RUN") if e.type == "publish.failed"]
-    assert failed_events, "unknown operation must emit publish.failed"
-    assert failed_events[-1].payload["reason"] == "unknown_operation"
+    assert failed_events, "release without a planned tag must fail closed"
+    assert failed_events[-1].payload["reason"] == "malformed"
+    assert not any(e.type == "publish.planned" for e in store.events("RUN"))
 
 
 def test_unsupported_later_operation_is_rejected_before_any_effect(tmp_path, monkeypatch):
     executor, store, _candidate, preview, _remote = _host(
-        tmp_path, operation_steps=["tag:{feature_tag}", "merge:main"]
+        tmp_path, operation_steps=["tag:{feature_tag}", "webhook:main"]
     )
     calls: list[str] = []
     monkeypatch.setattr(publish_effects, "push_tag", lambda *_args: calls.append("push"))

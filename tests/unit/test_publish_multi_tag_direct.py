@@ -118,7 +118,7 @@ def test_failed_second_tag_recovers_without_repeating_first(tmp_path, monkeypatc
 
 def test_unsupported_operation_is_rejected_before_any_tag_effect(tmp_path, monkeypatch):
     executor, store, _candidate, preview, _remote = _host(
-        tmp_path, operation_steps=["tag:{feature_tag}", "merge:main"]
+        tmp_path, operation_steps=["tag:{feature_tag}", "webhook:main"]
     )
     calls: list[str] = []
     monkeypatch.setattr(publish_effects, "push_tag", lambda *_args: calls.append("push"))

@@ -4576,15 +4576,46 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             payload["remote_check"] = remote_check
         self._emit("publish.failed", payload, command_id=cmd.command_id)
 
+    def _blocked_publish_payload(self, params: dict, events: list) -> dict:
+        """publish.blocked payload; preview/candidate only when resolvable."""
+        payload = {"reason": "agent_forbidden"}
+        preview_digest = params.get("preview_digest")
+        if not isinstance(preview_digest, str) or not preview_digest:
+            previews = [event for event in events if event.type == "release.previewed"]
+            preview_digest = (
+                (previews[-1].payload or {}).get("preview_digest")
+                if previews
+                else None
+            )
+        if isinstance(preview_digest, str) and preview_digest:
+            payload["preview_digest"] = preview_digest
+        frozen = [event for event in events if event.type == "candidate.frozen"]
+        candidate_sha = (
+            str((frozen[-1].payload or {}).get("candidate_sha") or "")
+            if frozen
+            else ""
+        )
+        if candidate_sha:
+            payload["candidate_sha"] = candidate_sha
+        return payload
+
     def _do_execute_publish(self, cmd, state, task_id, reconcile):
         """(G) Consume Command(execute_publish) (bound to a preview digest):
-        ordered multi-tag batch — publish.planned -> publish.executed(
-        done|reconciled_skip) per tag / publish.blocked(agent_forbidden) /
-        publish.failed. All operations are validated before any effect;
-        the batch stops on the first failed/conflicting effect and never
-        emits an aggregate success over a failure."""
+        the agent gate runs first (publish.blocked reason=agent_forbidden,
+        zero side effects), then the ordered batch — publish.planned ->
+        publish.executed(done|reconciled_skip) per operation / publish.failed.
+        All operations are validated before any effect; the batch stops on
+        the first failed/conflicting effect and never emits an aggregate
+        success over a failure."""
         params = dict(cmd.params or {})
         events = list(self.store.events(self.run_id))
+        if self._assert_agent_forbidden():
+            self._emit(
+                "publish.blocked",
+                self._blocked_publish_payload(params, events),
+                command_id=cmd.command_id,
+            )
+            return
         version_facts = self._release_version_facts(state)
         if not version_facts.get("version"):
             envelope_version = next(
@@ -4621,12 +4652,18 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 remote_check=remote_check,
             )
 
+        effects = {
+            "read_remote": publish_effects.read_remote_state,
+            "push_tag": publish_effects.push_tag,
+            "push_merge": publish_effects.push_merge,
+            "create_release": publish_effects.create_release,
+            "upload_artifact": publish_effects.upload_artifact,
+        }
         execute_publish_operations(
             authority,
             cmd.command_id,
             lambda: list(self.store.events(self.run_id)),
-            publish_effects.read_remote_state,
-            publish_effects.push_tag,
+            effects,
             self._emit,
             publish_fail,
             None,

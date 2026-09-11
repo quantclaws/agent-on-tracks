@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import tomllib
@@ -166,19 +168,73 @@ def _preview_error(
     return current_plan, None
 
 
-def _valid_tag_ref(repo: Path, target: str) -> bool:
-    """Git ref-name semantics for a tag target via local check-ref-format.
+def _valid_ref(repo: Path, ref: str) -> bool:
+    """Git ref-name semantics via local check-ref-format (no network)."""
+    if not isinstance(ref, str) or not ref:
+        return False
+    check = git(repo, "check-ref-format", ref, check=False)
+    return check.returncode == 0
 
-    ``check-ref-format`` is a purely local name validator (no network);
-    non-zero exit covers ``bad..tag``, trailing dots, ``@{``, forbidden
-    characters, and similar invalid tag names. The effects boundary applies
-    the same rule at push time; this preflight enforces it for the whole
-    batch before any WAL/effect.
-    """
+
+def _valid_tag_ref(repo: Path, target: object) -> bool:
     if not isinstance(target, str) or not target:
         return False
-    check = git(repo, "check-ref-format", "refs/tags/" + target, check=False)
-    return check.returncode == 0
+    return _valid_ref(repo, "refs/tags/" + target)
+
+
+def _valid_branch_ref(repo: Path, target: object) -> bool:
+    if not isinstance(target, str) or not target:
+        return False
+    return _valid_ref(repo, "refs/heads/" + target)
+
+
+_GITHUB_REMOTE = re.compile(
+    r"^https?://(?:www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$"
+)
+
+
+def _repo_id_from_remote(remote_url: object) -> str | None:
+    """Resolve a GitHub https remote to ``owner/repo`` (release/artifact)."""
+    if not isinstance(remote_url, str):
+        return None
+    match = _GITHUB_REMOTE.match(remote_url.strip())
+    if match is None:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def _resolve_artifact(repo: Path, target: object) -> dict | None:
+    """Resolve TARGET (glob/path, repo-root relative) to exactly one file.
+
+    Zero or multiple matches are malformed before any WAL/effect; a single
+    match carries its absolute path plus the local sha256/size identity.
+    """
+    if not isinstance(target, str) or not target.strip():
+        return None
+    pattern = Path(target)
+    if not pattern.is_absolute():
+        pattern = Path(repo) / pattern
+    matches = [
+        path
+        for path in sorted(glob.glob(str(pattern), recursive=True))
+        if Path(path).is_file()
+    ]
+    if len(matches) != 1:
+        return None
+    path = Path(matches[0])
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return {
+        "artifact_path": str(path.resolve()),
+        "name": path.name,
+        "size": len(data),
+        "sha256_local": hashlib.sha256(data).hexdigest(),
+    }
+
+
+_OPERATION_KINDS = frozenset({"tag", "merge", "release", "artifact"})
 
 
 def _operation_records(
@@ -186,11 +242,16 @@ def _operation_records(
 ) -> tuple[list[dict] | None, str | None]:
     """Validate every declared operation step before any effect.
 
-    Complete ordered multi-tag handling: each step must be a well-formed
-    tag (canonical idempotency key per tag) whose target is a valid Git
-    ref name. Sanity-checked unsupported kinds (merge/artifact/release,
-    ...) fail with the IF reason ``unknown_operation``; undecomposable or
-    ref-invalid steps fail ``malformed`` before any WAL/effect.
+    Each step must be a well-formed tag/merge/release/artifact whose target
+    passes the kind's rules: tag and release targets are refs/tags names,
+    merge targets are refs/heads names, a release target must equal a tag
+    step's target (release is bound to a planned tag), and an artifact
+    target must resolve to exactly one file under the repo root (bound to
+    the plan's single release target so the upload knows its release).
+    Unknown kinds fail ``unknown_operation``; malformed steps fail
+    ``malformed``.
+    Records are returned only when every step passes (zero side effects on
+    partial validity).
     """
     records = plan_operations(operation_plan, preview_digest)
     if not records:
@@ -202,12 +263,51 @@ def _operation_records(
         if isinstance(steps, list) and steps:
             return None, "malformed"
         return None, "unknown_operation"
+    tag_targets = {
+        record["target"]
+        for record in records
+        if record["operation_kind"] == "tag"
+    }
+    unique_tags = list(dict.fromkeys(
+        record["target"] for record in records
+        if record["operation_kind"] == "tag"
+    ))
+    unique_releases = list(dict.fromkeys(
+        record["target"] for record in records
+        if record["operation_kind"] == "release"
+    ))
+    if len(unique_releases) == 1:
+        artifact_release = unique_releases[0]
+    elif not unique_releases and len(unique_tags) == 1:
+        artifact_release = unique_tags[0]
+    else:
+        artifact_release = None
+    resolved: list[dict] = []
     for record in records:
-        if record["operation_kind"] != "tag":
+        kind = record["operation_kind"]
+        target = record["target"]
+        if kind not in _OPERATION_KINDS:
             return None, "unknown_operation"
-        if not _valid_tag_ref(repo, record["target"]):
-            return None, "malformed"
-    return records, None
+        if kind == "tag":
+            if not _valid_tag_ref(repo, target):
+                return None, "malformed"
+        elif kind == "merge":
+            if not _valid_branch_ref(repo, target):
+                return None, "malformed"
+        elif kind == "release":
+            if not _valid_tag_ref(repo, target) or target not in tag_targets:
+                return None, "malformed"
+        else:
+            identity = _resolve_artifact(repo, target)
+            if identity is None or artifact_release is None:
+                return None, "malformed"
+            record = {
+                **record,
+                **identity,
+                "release_target": artifact_release,
+            }
+        resolved.append(record)
+    return resolved, None
 
 
 def resolve_publish_authority(
@@ -249,6 +349,7 @@ def resolve_publish_authority(
     return {
         "candidate_sha": candidate_sha,
         "preview_digest": preview_digest,
+        "journey": str(operation_plan.get("journey") or ""),
         "record": records[0],
         "records": records,
         "remote_url": remote.stdout.strip(),
@@ -314,24 +415,103 @@ def _push_confirmation(result: dict, candidate_sha: str):
     return result.get("status") if exact else None, confirmed
 
 
+def _operation_extras(record: dict, result: dict | None = None) -> dict:
+    """Kind-specific audit fields carried by planned/executed payloads."""
+    result = result or {}
+    extras: dict = {}
+    if record["operation_kind"] == "artifact":
+        extras["name"] = record.get("name")
+        extras["size"] = record.get("size")
+        extras["sha256_local"] = record.get("sha256_local")
+        extras["artifact_path"] = record.get("artifact_path")
+        if result.get("remote_digest") is not None:
+            extras["remote_digest"] = result["remote_digest"]
+    if result.get("release_id") is not None:
+        extras["release_id"] = result["release_id"]
+    return extras
+
+
+def _executed_payload(
+    authority: dict,
+    record: dict,
+    status: str,
+    remote_check: dict,
+    result: dict | None = None,
+) -> dict:
+    payload = {
+        "idempotency_key": record["idempotency_key"],
+        "candidate_sha": authority["candidate_sha"],
+        "target": record["target"],
+        "status": status,
+        "remote_check": remote_check,
+    }
+    payload.update(_operation_extras(record, result))
+    return payload
+
+
+def _emit_conflict(authority: dict, command_id: str, remote: dict, emit) -> None:
+    record = authority["record"]
+    candidate_sha = authority["candidate_sha"]
+    expected: dict = {"candidate_sha": candidate_sha, "target": record["target"]}
+    if record["operation_kind"] in ("tag", "merge"):
+        expected["object_id"] = candidate_sha
+    emit(
+        "reconcile_conflict",
+        {
+            "idempotency_key": record["idempotency_key"],
+            "candidate_sha": candidate_sha,
+            "expected": expected,
+            "remote": remote,
+        },
+        command_id=command_id,
+    )
+
+
+def _handle_push_result(
+    authority: dict, command_id: str, result: dict, emit, fail
+) -> bool:
+    candidate_sha = authority["candidate_sha"]
+    record = authority["record"]
+    if isinstance(result, dict) and result.get("status") == "conflict":
+        remote = result.get("remote_check") or {}
+        _emit_conflict(authority, command_id, remote, emit)
+        fail("reconcile_conflict", remote)
+        return False
+    status, confirmed = _push_confirmation(result, candidate_sha)
+    if status is not None:
+        emit(
+            "publish.executed",
+            _executed_payload(authority, record, status, confirmed, result),
+            command_id=command_id,
+        )
+        return True
+    reason = "remote_mismatch"
+    if isinstance(result, dict) and result.get("reason"):
+        reason = str(result["reason"])
+    fail(reason, confirmed)
+    return False
+
+
 def _handle_remote(
     authority: dict,
     command_id: str,
     remote: dict,
-    push_tag,
+    push,
     emit,
     fail,
+    *,
+    allow_ff: bool,
 ) -> bool:
-    """Reconcile one tag against the remote (the remote decides).
+    """Reconcile one ref effect against the remote (the remote decides).
 
-    Returns True only for a proven terminal success (``reconciled_skip`` on
-    exact remote match, or ``done`` after a push confirmed by remote
-    readback); False after emitting the failure so the ordered batch can
-    stop on the first failed/conflicting effect.
+    A proven exact match is ``reconciled_skip``; a divergent tag is a
+    conflict without touching the remote. A merge may still fast-forward a
+    divergent (but ancestor) remote tip, so its mismatch delegates to the
+    effect, which decides done/conflict/failed. Returns True only on a
+    proven terminal success.
     """
     candidate_sha = authority["candidate_sha"]
     record = authority["record"]
-    key = record["idempotency_key"]
     if not isinstance(remote, dict) or remote.get("error"):
         fail("remote_read_failed", remote)
         return False
@@ -339,55 +519,60 @@ def _handle_remote(
     if verdict == "skip":
         emit(
             "publish.executed",
-            {
-                "idempotency_key": key,
-                "candidate_sha": candidate_sha,
-                "target": record["target"],
-                "status": "reconciled_skip",
-                "remote_check": remote,
-            },
+            _executed_payload(authority, record, "reconciled_skip", remote),
             command_id=command_id,
         )
         return True
-    if verdict == "conflict":
-        emit(
-            "reconcile_conflict",
-            {
-                "idempotency_key": key,
-                "candidate_sha": candidate_sha,
-                "expected": {
-                    "object_id": candidate_sha,
-                    "candidate_sha": candidate_sha,
-                    "target": record["target"],
-                },
-                "remote": remote,
-            },
-            command_id=command_id,
-        )
+    if verdict == "conflict" and not allow_ff:
+        _emit_conflict(authority, command_id, remote, emit)
         fail("reconcile_conflict", remote)
         return False
-    if verdict != "pending":
+    if verdict == "invalid":
         fail("remote_read_failed", remote)
         return False
-    status, confirmed = _push_confirmation(
-        push_tag(authority["remote_url"], record["target"], candidate_sha),
-        candidate_sha,
-    )
-    if status is not None:
+    result = push(authority["remote_url"], record["target"], candidate_sha)
+    return _handle_push_result(authority, command_id, result, emit, fail)
+
+
+def _handle_api_effect(
+    authority: dict, command_id: str, result: dict, emit, fail
+) -> bool:
+    """Map a release/artifact effect outcome onto the publish event family.
+
+    The effect already read the remote back; a matching ``done`` /
+    ``reconciled_skip`` is terminal, ``conflict`` is a reconcile_conflict
+    audit plus failure, anything else fails with the effect's reason.
+    """
+    if not isinstance(result, dict):
+        fail("operation_failed", None)
+        return False
+    status = result.get("status")
+    remote = result.get("remote_check") or {}
+    record = authority["record"]
+    if status in ("done", "reconciled_skip"):
         emit(
             "publish.executed",
-            {
-                "idempotency_key": key,
-                "candidate_sha": candidate_sha,
-                "target": record["target"],
-                "status": status,
-                "remote_check": confirmed,
-            },
+            _executed_payload(authority, record, status, remote, result),
             command_id=command_id,
         )
         return True
-    fail("remote_mismatch", confirmed)
+    if status == "conflict":
+        _emit_conflict(authority, command_id, remote, emit)
+        fail("reconcile_conflict", remote)
+        return False
+    fail(str(result.get("reason") or "operation_failed"), remote)
     return False
+
+
+def _release_notes(authority: dict, record: dict) -> str:
+    """Deterministic, auditable release body (candidate + preview + key)."""
+    return (
+        "Tracks release\n"
+        f"candidate_sha: {authority['candidate_sha']}\n"
+        f"preview_digest: {authority['preview_digest']}\n"
+        f"journey: {authority.get('journey', '')}\n"
+        f"idempotency_key: {record['idempotency_key']}\n"
+    )
 
 
 def _keyed_fail(fail, key):
@@ -397,31 +582,108 @@ def _keyed_fail(fail, key):
     return keyed
 
 
+def _execute_record(
+    authority: dict,
+    command_id: str,
+    events: list,
+    effects: dict,
+    emit,
+    fail,
+    when: str | None,
+) -> bool:
+    """Run one already-authorized record with WAL and kind dispatch."""
+    record = authority["record"]
+    planned, plan_error = _planned_payload(events, authority, command_id, when)
+    if plan_error:
+        fail(plan_error, None)
+        return False
+    if planned is not None:
+        emit("publish.planned", planned, command_id=command_id)
+    kind = record["operation_kind"]
+    if kind == "tag":
+        remote = effects["read_remote"](
+            authority["remote_url"],
+            "tag",
+            record["target"],
+            expected_object=authority["candidate_sha"],
+        )
+        return _handle_remote(
+            authority,
+            command_id,
+            remote,
+            effects["push_tag"],
+            emit,
+            fail,
+            allow_ff=False,
+        )
+    if kind == "merge":
+        remote = effects["read_remote"](
+            authority["remote_url"],
+            "merge",
+            record["target"],
+            expected_object=authority["candidate_sha"],
+        )
+
+        def push_merge_adapter(remote_url, target, candidate_sha):
+            return effects["push_merge"](remote_url, candidate_sha, target)
+
+        return _handle_remote(
+            authority,
+            command_id,
+            remote,
+            push_merge_adapter,
+            emit,
+            fail,
+            allow_ff=True,
+        )
+    repo_id = _repo_id_from_remote(authority["remote_url"])
+    if repo_id is None:
+        fail("unsupported_remote", None)
+        return False
+    if kind == "release":
+        result = effects["create_release"](
+            repo_id,
+            record["target"],
+            _release_notes(authority, record),
+            False,
+            authority["candidate_sha"],
+        )
+    elif kind == "artifact":
+        result = effects["upload_artifact"](
+            repo_id, record["release_target"], record["artifact_path"]
+        )
+    else:
+        fail("unknown_operation", None)
+        return False
+    return _handle_api_effect(authority, command_id, result, emit, fail)
+
+
 def execute_publish_operations(
     authority: dict,
     command_id: str,
     read_events,
-    read_remote,
-    push_tag,
+    effects: dict,
     emit,
     fail,
     when: str | None,
 ) -> None:
-    """Run the ordered multi-tag batch after full pre-effect validation.
+    """Run the ordered batch after full pre-effect validation.
 
-    Per tag: the same-command WAL record is reused without duplication,
-    the effect runs only on remote proof, and the batch stops on the first
-    failed/conflicting effect (no aggregate success is ever emitted).
-    ``fail`` is invoked as ``fail(reason, remote_check, idempotency_key)``.
+    ``effects`` maps ``read_remote``/``push_tag``/``push_merge``/
+    ``create_release``/``upload_artifact`` to the Runtime-only effects
+    boundary. Per operation: the same-command WAL record is reused without
+    duplication, the effect runs only behind remote proof where the remote
+    can prove it, and the batch stops on the first failed/conflicting
+    effect (no aggregate success is ever emitted). ``fail`` is invoked as
+    ``fail(reason, remote_check, idempotency_key)``.
     """
     for record in authority["records"]:
         single = {**authority, "record": record}
-        succeeded = execute_tag_operation(
+        succeeded = _execute_record(
             single,
             command_id,
             read_events(),
-            read_remote,
-            push_tag,
+            effects,
             emit,
             _keyed_fail(fail, record["idempotency_key"]),
             when,
@@ -442,22 +704,16 @@ def execute_tag_operation(
 ) -> bool:
     """Run one already-authorized tag with WAL and remote reconciliation.
 
-    The write-ahead record is planned before the effect and reused (never
-    duplicated) by a same-command recovery; the executed event is emitted
-    only after actual remote proof. Returns True on terminal success,
-    False after the failure emission (stop-on-first-failure signal).
+    Kept for single-tag call-site compatibility; the ordered batch handler
+    dispatches by operation kind through ``execute_publish_operations``.
     """
-    record = authority["record"]
-    planned, plan_error = _planned_payload(events, authority, command_id, when)
-    if plan_error:
-        fail(plan_error, None)
-        return False
-    if planned is not None:
-        emit("publish.planned", planned, command_id=command_id)
-    remote = read_remote(
-        authority["remote_url"],
-        "tag",
-        record["target"],
-        expected_object=authority["candidate_sha"],
+    effects = {
+        "read_remote": read_remote,
+        "push_tag": push_tag,
+        "push_merge": None,
+        "create_release": None,
+        "upload_artifact": None,
+    }
+    return _execute_record(
+        authority, command_id, events, effects, emit, fail, when
     )
-    return _handle_remote(authority, command_id, remote, push_tag, emit, fail)

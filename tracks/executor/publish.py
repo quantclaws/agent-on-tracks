@@ -71,6 +71,26 @@ def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:
     return "skip"
 
 
-def assert_agent_forbidden(actor: str) -> None:
-    """Agents attempting irreversible operations block with agent_forbidden."""
-    raise NotImplementedError("IF-PUBLISH-001")
+class PublishBlocked(RuntimeError):
+    """Structured refusal of a publish actor that is not Runtime/human."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+_ALLOWED_PUBLISH_ACTORS = frozenset({"runtime", "human"})
+
+
+def assert_agent_forbidden(actor: object) -> None:
+    """Fail closed unless the actor is the Runtime (or an explicit human).
+
+    IF-PUBLISH-001: irreversible operations are Runtime-only. An empty or
+    non-string actor is ``malformed_actor``; any Agent role name blocks as
+    ``agent_forbidden``. Pure function: no I/O, no state.
+    """
+    if not isinstance(actor, str) or not actor.strip():
+        raise PublishBlocked("malformed_actor")
+    if actor.strip().lower() in _ALLOWED_PUBLISH_ACTORS:
+        return None
+    raise PublishBlocked("agent_forbidden")

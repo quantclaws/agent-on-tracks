@@ -80,7 +80,7 @@ def test_batch_remote_rejection_recovers_without_repeating_first_tag(
     assert _push_count(counter) == 4
 
 
-@pytest.mark.parametrize("later,reason", [("merge:main", "unknown_operation"),
+@pytest.mark.parametrize("later,reason", [("webhook:main", "unknown_operation"),
                                          ("tag:bad..tag", "malformed")])
 def test_batch_preflights_unsupported_later_operation_before_first_push(
     host_repo, trac, tmp_path, monkeypatch, later, reason
