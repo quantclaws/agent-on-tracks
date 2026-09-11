@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 spec_id: SPEC-NNN
 created: {YYYY-MM-DD}
 status: draft

@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-prism-impl
 version: 0.2
 description: M-IMPL 代码评审判据包 - Prism 在 M-IMPL 评审消费的语义判据

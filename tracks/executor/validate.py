@@ -42,6 +42,7 @@ import subprocess
 from pathlib import Path
 
 from tracks import templating
+from tracks.kernel.envelope import FRONTMATTER_TOKEN_KEY
 from tracks.discuss.delta import is_discussion_delta
 from tracks.discuss.gate import check_ready
 from tracks.executor.validation_shared import (
@@ -627,9 +628,15 @@ def check_template(path: Path) -> list:
     text = path.read_text(encoding="utf-8")
     tpl_head, tpl_body = split_frontmatter(_strip_comments(tpl_text))
     head, body = split_frontmatter(_strip_comments(text))
+    # `envelope` is a machine parity token (kernel.envelope's
+    # FRONTMATTER_TOKEN_KEY), not a document content field: FR-150 does not
+    # require produced documents to repeat it, so exclude it from the
+    # required-field difference (all other fields compare as before).
+    required_fields = _fm_fields(tpl_head) - _fm_fields(head)
+    required_fields.discard(FRONTMATTER_TOKEN_KEY)
     issues = [
         f"line:1 missing frontmatter field '{f}'"
-        for f in sorted(_fm_fields(tpl_head) - _fm_fields(head))
+        for f in sorted(required_fields)
     ]
     if kind != "acceptance":  # acceptance sections vary per FR/NFR (FR-150)
         tpl_secs = {s for s in (_norm_heading(ln) for ln in tpl_body.splitlines()) if s}

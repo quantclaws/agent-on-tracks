@@ -31,8 +31,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Literal
+
+from tracks.frontmatter import split_frontmatter
 
 ENVELOPE_PROTOCOL = "tracks-envelope"
 ENVELOPE_VERSION = 2
@@ -401,21 +403,115 @@ def _parity_version(value: Any) -> int | None:
     return None
 
 
-def check_envelope_parity(referenced_versions: dict[str, Any]) -> dict:
+# The six documented parity identities every ENFORCED dispatch must account
+# for (TASK.md): prompt template, agent definition, skill, fake backend, real
+# backend, Runtime validator. This is the kernel DEFAULT of
+# ``check_envelope_parity``: a caller passing no explicit ``required_faces``
+# is claiming a COMPLETE six-face map — every one of the six must be present
+# and resolve to ENVELOPE_VERSION; a partial map (missing key, None, empty,
+# garbled or unknown token) can never pass. Never the opposite default.
+DEFAULT_PARITY_FACES: tuple[str, ...] = (
+    "prompt",
+    "agent",
+    "skill",
+    "fake_backend",
+    "real_backend",
+    "validator",
+)
+
+# The EXPLICIT legacy opt-out: pass this (an empty sequence) as
+# ``required_faces`` to restore the staged semantics — faces that declare
+# nothing (missing key/None) are skipped and only declared mismatches block.
+# Permissiveness is NEVER the default; a legacy caller must ask for it
+# explicitly (documented for coordinator migration of the old unit tests).
+PARITY_STAGED: tuple[str, ...] = ()
+
+
+# The frontmatter key carrying the machine parity token. It is a versioned
+# artifact's parity declaration, NOT a document content field: FR-150 requires
+# produced documents to match their kind template's semantic fields, never to
+# repeat this token. validate.check_template excludes exactly this key.
+FRONTMATTER_TOKEN_KEY = "envelope"
+
+_FACE_TOKEN_RE = re.compile(
+    rf"^{FRONTMATTER_TOKEN_KEY}:[ \t]*(\S+)[ \t]*$", re.MULTILINE
+)
+
+
+def scan_face_token(text: object) -> int | None:
+    """Scan the machine parity token out of a versioned artifact's bytes.
+
+    The declared token lives ONLY in the frontmatter (``envelope:
+    tracks-envelope:v2``), never in the body: a body mention is prose, not a
+    declaration. Returns the normalized parity version, or None when the face
+    declares nothing (missing key, foreign token, garbled version) — the
+    caller decides whether that absence is a mismatch under required parity.
+    Pure text parsing: no file I/O, no effect concerns in the kernel.
+    """
+    if not isinstance(text, str):
+        return None
+    frontmatter, _body = split_frontmatter(text)
+    match = _FACE_TOKEN_RE.search(frontmatter) if frontmatter else None
+    if match is None:
+        return None
+    return _parity_version(match.group(1))
+
+
+def _face_parity_mismatch(face: str, value: Any, enforced: bool) -> dict | None:
+    """One face's parity verdict: the mismatch entry, or None when it passes.
+
+    Under enforced parity (declared dispatch) an absent/foreign declaration
+    (None value, missing key, garbled token) is itself a mismatch, so a
+    partial map can never pass. Under staged parity (undeclared) a face that
+    declares nothing is skipped exactly like today.
+    """
+    version = _parity_version(value)
+    if version is None:
+        if not enforced:
+            return None
+        return {
+            "face": face,
+            "version": None,
+            "reason": "missing" if value is None else "invalid",
+        }
+    if version != ENVELOPE_VERSION:
+        return {"face": face, "version": version, "reason": "version"}
+    return None
+
+
+def check_envelope_parity(
+    referenced_versions: dict[str, Any],
+    required_faces: Sequence[str] | None = None,
+) -> dict:
     """Compare contract versions referenced by the parity faces.
 
-    Faces that declare nothing (None/missing) are skipped — the rollout is
-    staged and a face may legitimately predate the envelope; a face that
-    declares a DIFFERENT version than the kernel validator is a mismatch and
-    blocks the dispatch (``dispatch.rejected reason=version_parity_mismatch``).
+    ``required_faces`` selects the enforcement mode:
+
+    - ``None`` (DEFAULT): the six documented identities
+      (:data:`DEFAULT_PARITY_FACES` — prompt, agent, skill, fake_backend,
+      real_backend, validator) are ALL REQUIRED. The map must carry every one
+      and each must resolve to the kernel validator's version; a required face
+      absent from the map, or one whose value is None/empty/garbled (missing
+      frontmatter key, invalid token), is itself a mismatch (reason
+      "missing"/"invalid") — a partial map can never pass. A face declaring a
+      DIFFERENT version is a mismatch (reason "version") and blocks the
+      dispatch (``dispatch.rejected reason=version_parity_mismatch``).
+    - An explicit non-empty sequence: only those named faces are enforced
+      (internal dynamic artifact maps carrying distinct per-artifact face
+      names, e.g. ``agent:<Name>``/``skill:<name>``/``template:<kind>``).
+    - An explicit empty sequence (:data:`PARITY_STAGED`): the documented
+      legacy opt-out — faces that declare nothing are skipped, only declared
+      mismatches block (staged rollout semantics for legacy callers that opt
+      out explicitly; permissiveness is never the default).
     """
+    provided = referenced_versions or {}
+    required = DEFAULT_PARITY_FACES if required_faces is None else tuple(required_faces)
+    enforced = bool(required)
     mismatches: list[dict] = []
-    for face, value in (referenced_versions or {}).items():
-        version = _parity_version(value)
-        if version is None:
-            continue
-        if version != ENVELOPE_VERSION:
-            mismatches.append({"face": face, "version": version})
+    for face in sorted(set(required) | set(provided)):
+        mismatch = _face_parity_mismatch(face, provided.get(face), enforced)
+        if mismatch is not None:
+            mismatches.append(mismatch)
     return {"consistent": not mismatches, "mismatches": mismatches}
 
 

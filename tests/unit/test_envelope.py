@@ -13,8 +13,10 @@ import json
 import pytest
 
 from tracks.kernel.envelope import (
+    DEFAULT_PARITY_FACES,
     ENVELOPE_PROTOCOL,
     ENVELOPE_VERSION,
+    PARITY_STAGED,
     REVIEW_SUMMARY_MAX,
     EnvelopeFormatError,
     build_assignment_envelope,
@@ -208,21 +210,37 @@ def test_schema_digest_is_stable_and_kind_distinct():
 
 
 def test_parity_all_undeclared_is_consistent():
-    verdict = check_envelope_parity({"assignment": None, "backend": None})
+    # Staged semantics are the EXPLICIT legacy opt-out (never the default).
+    verdict = check_envelope_parity(
+        {"assignment": None, "backend": None}, required_faces=PARITY_STAGED
+    )
     assert verdict == {"consistent": True, "mismatches": []}
+    # The default call claims a COMPLETE six-face map: a partial/empty map is
+    # rejected, and every absent documented face is reported (reason missing).
+    default = check_envelope_parity({"assignment": None, "backend": None})
+    assert default["consistent"] is False
+    mismatch_faces = {m["face"] for m in default["mismatches"]}
+    assert set(DEFAULT_PARITY_FACES) <= mismatch_faces
+    assert all(m["reason"] == "missing" for m in default["mismatches"])
 
 
 def test_parity_accepts_v2_int_and_token():
     verdict = check_envelope_parity(
-        {"assignment": 2, "backend": f"{ENVELOPE_PROTOCOL}:v2", "validator": ENVELOPE_VERSION}
+        {"assignment": 2, "backend": f"{ENVELOPE_PROTOCOL}:v2", "validator": ENVELOPE_VERSION},
+        required_faces=["assignment", "backend", "validator"],
     )
     assert verdict["consistent"]
 
 
 def test_parity_rejects_mismatched_declared_face():
-    verdict = check_envelope_parity({"assignment": 2, "backend": 1, "validator": 2})
+    verdict = check_envelope_parity(
+        {"assignment": 2, "backend": 1, "validator": 2},
+        required_faces=["assignment", "backend", "validator"],
+    )
     assert not verdict["consistent"]
-    assert verdict["mismatches"] == [{"face": "backend", "version": 1}]
+    assert verdict["mismatches"] == [
+        {"face": "backend", "version": 1, "reason": "version"}
+    ]
 
 
 # -- assignment injection face --------------------------------------------------

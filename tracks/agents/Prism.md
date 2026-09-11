@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Prism — 独立技术评审，评审设计候选、实现代码与测试资产
 version: 0.4
 mode: all

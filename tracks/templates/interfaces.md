@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 interfaces_id: IF-NNN
 spec_ref: SPEC-NNN
 arch_ref: ARCH-NNN

@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-prism-test
 version: 0.2
 description: 测试资产判据包 - Prism 在 M-TEST PRISM_REVIEW 消费的语义判据

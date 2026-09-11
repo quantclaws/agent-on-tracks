@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 acc_id: ACC-NNN
 created: {YYYY-MM-DD}
 status: draft

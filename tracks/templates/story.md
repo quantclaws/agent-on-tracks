@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 story_id: S-NNN
 title: {一句话标题}
 created: {YYYY-MM-DD}

@@ -32,6 +32,11 @@ from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
 from tracks.effects import publish as publish_effects
 from tracks.effects.backend import valid_test_tasks
+from tracks.effects.dispatch_parity import (
+    is_declared,
+    static_parity_check,
+    static_parity_referenced,
+)
 from tracks.effects.github import (
     FakeIssueBackend,
     GithubIssuesError,
@@ -176,7 +181,6 @@ from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
     EnvelopeFormatError,
     build_assignment_envelope,
-    check_envelope_parity,
     envelope_declared_kind,
     parse_agent_output,
     validate_envelope,
@@ -2186,13 +2190,15 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
         # enriching subclass) returned, and BEFORE any raw_output is consumed
         # below, give the backend the last word on its declared reply bytes.
         result = self._finalize_backend_result(result, role, substate, assignment)
-        self._dispatch_log_end(p, result, time.monotonic() - t0)
-        # T-001 face (E): collection-time single parse path — a malformed
-        # envelope is a format_error, never a semantic attempt (no attempt
-        # consumed, no business-state mutation); the handler returns before
-        # any ordinary validation pipeline runs.
-        if self._format_error_shortcircuit(result, cmd, task_id, assignment):
+        # T-001 face (E) / IF-ENVELOPE-002: post-act short-circuit gates
+        # (dispatch log end, prepared-artifact parity rejection, collection-
+        # time format_error). Each short-circuit keeps the outcome out of the
+        # ordinary pipeline (never a semantic success).
+        if self._post_act_gates(p, result, cmd, task_id, assignment, time.monotonic() - t0):
             return
+        # IF-ENVELOPE-002: the single full-gate dispatch.parity success
+        # event (complete audit) of a declared dispatch.
+        self._emit_dispatch_parity_success(result, cmd, task_id, assignment)
         # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
         # Must run before any early-return handling so attribution is correct
         # and restoration is performed in the same command_id. A violation
@@ -2447,43 +2453,136 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
     def _dispatch_parity_ok(self, cmd, task_id, assignment) -> bool:
         """(E) IF-ENVELOPE-002 pre-dispatch version-parity gate.
 
-        Collects the envelope contract versions referenced by the surfaces
-        this process controls (assignment materialization, selected backend,
-        the Runtime validator) and asks kernel.envelope.check_envelope_parity
-        to compare all six faces. Any mismatch emits dispatch.rejected
-        (reason=version_parity_mismatch) and blocks the Agent execution path.
-        While the envelope module is pending (NotImplementedError stub,
-        T-035) the check is deferred-tolerant: dispatch proceeds and the
-        behavior half is carried by the deferred gate.
+        Collects the four static parity faces this process controls — the
+        assignment declaration, the FakeBackend class literal, the
+        OpencodeBackend class literal (BOTH collected even when only one
+        backend is selected: one stale backend declaration blocks both
+        modes) and the Runtime validator — and asks the kernel
+        check_envelope_parity to compare them. On a declared dispatch all
+        four faces are REQUIRED (a partial map never passes an enforced
+        dispatch); any mismatch emits dispatch.rejected
+        (reason=version_parity_mismatch) and blocks the agent execution
+        path. Artifact faces are NOT prechecked here (canonical scans are
+        not proof of what the agent consumes) — they are bound to the
+        actual materialized bytes and checked inside backend.act, before
+        the spawn (dispatch_parity seam).
+
+        TRAC_ENVELOPE_DECLARE=0 / schema-pending kinds: undeclared, the
+        gate keeps today's staged semantics (nothing is enforced).
+
+        IF-ENVELOPE-002 event timing: this STATIC gate never emits the
+        dispatch.parity success event of a DECLARED dispatch — that event
+        is emitted exactly once per dispatch, only after the COMPLETE gate
+        (static faces + every selected artifact face bound to the actual
+        materialized bytes + pre-spawn readback) has passed, with the full
+        audit payload (see _emit_dispatch_parity_success). A static-only
+        pass produces no success record, so an artifact-face rejection can
+        never be preceded by a dispatch.parity success. Undeclared
+        dispatches keep today's staged legacy event.
         """
-        referenced = {
-            "assignment": (assignment or {}).get("envelope_version"),
-            "backend": getattr(self.backend, "envelope_version", None),
-            "validator": ENVELOPE_VERSION,
-        }
-        try:
-            verdict = check_envelope_parity(referenced)
-        except NotImplementedError:
-            return True  # T-035 module pending; deferred-only-pass
-        if verdict.get("consistent", True):
+        verdict = static_parity_check(assignment)
+        if not verdict.get("consistent", True):
             self._emit(
-                "dispatch.parity",
-                {"task_id": task_id, "referenced": referenced},
+                "dispatch.rejected",
+                {
+                    "reason": "version_parity_mismatch",
+                    "mismatches": list(verdict.get("mismatches", [])),
+                    "task_id": task_id,
+                },
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
+            return False
+        if is_declared(assignment):
             return True
+        self._emit(
+            "dispatch.parity",
+            {"task_id": task_id, "referenced": verdict.get("referenced")},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return True
+
+    def _emit_dispatch_parity_success(
+        self, result, cmd, task_id, assignment
+    ) -> None:
+        """(E) IF-ENVELOPE-002: the single dispatch.parity success event of
+        a declared dispatch, emitted only after the COMPLETE gate has
+        passed — the four static faces at dispatch plus every selected
+        artifact face bound to the ACTUAL materialized bytes and re-read
+        before spawn (the backend attaches its passed-gate evidence as
+        result["parity"]). The payload is the full audit: the referenced
+        face map, the manifest (face/path(absolute)/sha256/token per
+        consumed material) and the prompt digest actually handed to the
+        spawn. A fake declared dispatch consumes no materialized artifacts
+        (artifact faces genuinely absent): its audit is the four static
+        faces with an empty manifest — no file or version evidence is
+        invented. Undeclared dispatches keep their staged legacy event
+        (see _dispatch_parity_ok) and emit nothing here. A declared
+        dispatch the backend rejected (parity_rejected) never reaches this
+        emitter: the short-circuit above returns first.
+        """
+        if not is_declared(assignment):
+            return
+        parity = result.get("parity") if isinstance(result, dict) else None
+        if not isinstance(parity, dict):
+            return
+        referenced = dict(parity.get("referenced") or {})
+        if not referenced:
+            # FakeBackend declared dispatch: no referenced map is carried —
+            # audit the four static faces the kernel gate actually checked.
+            referenced = static_parity_referenced(assignment)
+        self._emit(
+            "dispatch.parity",
+            {
+                "task_id": task_id,
+                "referenced": referenced,
+                "manifest": list(parity.get("manifest") or []),
+                "prompt_sha256": parity.get("prompt_sha256"),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _dispatch_parity_rejected(self, result, cmd, task_id) -> bool:
+        """(E) IF-ENVELOPE-002: emit the Runtime rejection for a dispatch the
+        backend's prepared-artifact gate failed (readback or artifact-face
+        mismatch, rejected BEFORE any agent spawn). Emits
+        dispatch.rejected reason=version_parity_mismatch with the parity
+        manifest/mismatches for audit and never reaches the semantic
+        outcome pipeline. Returns True when the caller must stop."""
+        if not result.get("parity_rejected"):
+            return False
+        parity = result.get("parity") or {}
         self._emit(
             "dispatch.rejected",
             {
                 "reason": "version_parity_mismatch",
-                "mismatches": list(verdict.get("mismatches", [])),
+                "mismatches": list(parity.get("mismatches") or []),
+                "kind": parity.get("kind"),
+                "manifest": list(parity.get("manifest") or []),
                 "task_id": task_id,
             },
             command_id=cmd.command_id,
             task_id=task_id,
         )
-        return False
+        return True
+
+    def _post_act_gates(
+        self, p, result, cmd, task_id, assignment, elapsed: float
+    ) -> bool:
+        """(E) T-001 face (E): the post-act short-circuit gates of a dispatch.
+
+        Ends the dispatch log, then runs the two short-circuits that keep a
+        broken outcome out of the semantic pipeline: the prepared-artifact
+        parity rejection (dispatch.rejected, no agent success) and the
+        collection-time format_error (single kernel parse path). Returns
+        True when a gate handled the outcome and the caller must stop.
+        """
+        self._dispatch_log_end(p, result, elapsed)
+        if self._dispatch_parity_rejected(result, cmd, task_id):
+            return True
+        return self._format_error_shortcircuit(result, cmd, task_id, assignment)
 
     def _inject_failure_evidence(self, assignment, role, state, task_id, cmd):
         """(E) IF-FAILURE-001 select -> review -> inject seam.

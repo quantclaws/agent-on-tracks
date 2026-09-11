@@ -71,6 +71,24 @@ _ANCHOR_VERDICT = {"anchor_overturned": "overturned"}
 # classifies as format_error), never through an invented reply.
 _FAKE_SPEAKABLE_KINDS = (*REVIEW_KINDS, *DIAGNOSE_KINDS)
 
+# IF-ENVELOPE-002: provenance a fake declared dispatch attaches to its
+# result about the artifact faces. The fake consumes NO materialized
+# artifacts (no .opencode/ copies exist for it to read) — the artifact faces
+# are genuinely absent for fake dispatches and are recorded as such, never
+# invented, and the static four-face parity gate (assignment, backend_fake,
+# backend_real, validator) is the enforcement boundary for fake mode.
+_FAKE_PARITY_PROVENANCE = {
+    "artifact_faces": [],
+    "treatment": "absent_not_invented",
+    "note": (
+        "FakeBackend materializes/consumes no opencode artifacts; the "
+        "artifact faces are genuinely absent for fake dispatches (no file "
+        "or version evidence invented here). The static four-face parity "
+        "gate (assignment, backend_fake, backend_real, validator) is the "
+        "enforcement boundary for fake dispatches."
+    ),
+}
+
 SPEC_TEMPLATE = """# {version} — 功能规格（FakeAgent 草案）
 
 ## 功能需求
@@ -246,6 +264,10 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         kind = assignment["envelope"].get("kind")
         if kind not in _FAKE_SPEAKABLE_KINDS or kind != envelope_kind(role, substate):
             return result
+        # Honest treatment of the artifact faces on a fake declared dispatch:
+        # they are genuinely absent (no materialized copies exist), recorded
+        # as provenance — never fabricated into evidence.
+        result.setdefault("parity", dict(_FAKE_PARITY_PROVENANCE))
         if kind == "prism:final" and str(substate or "").upper() == "VERIFY_FINAL":
             self._ensure_verify_final_revise_fields(result, assignment)
         payload = self._declared_reply_payload(kind, result)

@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-discuz
 version: 0.2
 description: tracks inline-discussion 协议——在评审文档内用 markdown blockquote 做结构化多轮讨论。当需要通过 `trac discuss` 查询/发起/回复/修改讨论线程、理解 canonical 格式与状态语义、或判断评审门禁是否 ready 时使用。

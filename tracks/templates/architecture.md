@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 architecture_id: ARCH-NNN
 spec_ref: SPEC-NNN
 created: {YYYY-MM-DD}

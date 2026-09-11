@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-prism-design
 version: 0.2
 description: M-DESIGN 评审判据包 - Prism 在 M-DESIGN PRISM_REVIEW 消费的语义判据

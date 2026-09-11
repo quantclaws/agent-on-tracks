@@ -67,7 +67,15 @@ class AgentBackend(Protocol):
     (review roles), and — for OpencodeBackend — ``diff_ref`` (权威产物：目标文件
     受控 diff), ``audit_evidence`` (越权路径级证据), ``failure_class``
     (IF-003 §1a/§4)。FakeBackend 仅有前三项 + verdict。
+
+    IF-ENVELOPE-002: every backend declares the envelope contract version it
+    actually implements as an independent reviewed ``envelope_version`` class
+    literal (deliberately NOT an alias of the kernel authority — a stale
+    implementation must keep its old literal so the Runtime parity gate sees
+    the mismatch instead of silently claiming the current version).
     """
+
+    envelope_version: int
 
     def act(
         self,
