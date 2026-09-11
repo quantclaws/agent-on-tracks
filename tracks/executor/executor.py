@@ -178,6 +178,7 @@ from tracks.frontmatter import doc_body_sha, set_frontmatter_field
 # them; their behavior bodies land with IF-ENVELOPE-001/002 and the
 # failure-chain anchors (T-007/T-035).
 from tracks.kernel.envelope import (
+    DIAGNOSE_KINDS,
     ENVELOPE_VERSION,
     EnvelopeFormatError,
     build_assignment_envelope,
@@ -2667,6 +2668,35 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
+            # A declared review/diagnose dispatch whose reply violates the
+            # declared schema is a CONTRACT violation of that role: without
+            # a routable event the reviewer_dispatched flag stays set and
+            # decide() awaits a verdict that already failed classification
+            # forever (live 01M280CV: DIAGNOSE schema_violation stranded
+            # active/DIAGNOSE across process restarts — the exact B62 #80
+            # stall class). Emit the stage-routable verdict.failed so the
+            # projection applies the accepted contract-violation routing
+            # (reset review flags, consume attempt, stay for re-dispatch;
+            # budget exhaustion escalates). Audit trail keeps both events.
+            if declared_kind in DIAGNOSE_KINDS:
+                self._emit(
+                    "verdict.failed",
+                    {
+                        "check": "diagnose_contract_violation",
+                        "target_stage": "M-IMPL",
+                        "task_id": task_id or "",
+                        "reason": (
+                            "declared DIAGNOSE reply failed the kernel "
+                            f"schema ({exc.kind}: {exc.detail})"
+                        ),
+                        "evidence": (
+                            "format_error on declared prism:diagnose reply; "
+                            "the assignment carried the payload schema"
+                        ),
+                    },
+                    command_id=cmd.command_id,
+                    task_id=task_id,
+                )
             return True
         except NotImplementedError:
             return False  # T-035 module pending; deferred-only-pass

@@ -357,7 +357,15 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
 
     @staticmethod
     def _apply_diagnose_simulation(role: str, substate: str, result: dict) -> None:
-        """Mirror the real DIAGNOSE classification payload in fake mode."""
+        """Mirror the real DIAGNOSE classification payload in fake mode.
+
+        The declared ``prism:diagnose`` schema requires classification +
+        non-empty reason + non-empty evidence; a simulated classification
+        without them would be classified as a schema_violation format_error
+        at collection (the DIAGNOSE verdict would never land). The simulated
+        reason/evidence carry an explicit "simulated" marker — honest about
+        being fake-mode output, never masquerading as a real forensic
+        package."""
         if role != "prism" or substate != "DIAGNOSE":
             return
         classification = _simulate_map().get("diagnose:classification")
@@ -372,6 +380,14 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         }:
             result["verdict"] = classification
             result["self_report"] = f"diagnose: {classification}"
+            result["reason"] = f"simulated diagnosis: {classification}"
+            result["evidence"] = {
+                "source": "fake_simulation",
+                "detail": (
+                    "FakeBackend simulated classification (no real forensic "
+                    f"package); requested classify={classification}"
+                ),
+            }
 
     def _act_no_diff(self, role: str, substate: str) -> dict | None:
         """v0.5 no_diff peer review: canned outcomes for explain/review."""
