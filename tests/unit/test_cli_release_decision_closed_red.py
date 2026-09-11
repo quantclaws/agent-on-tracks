@@ -142,10 +142,13 @@ def test_gate_failed_rejection_appends_release_rejected(tmp_path, capsys):
     """AC-FR0274-02: a gate-failed `--action release` rejection is audited as
     an append-only release.rejected event with reason=gate_failed, bound to
     the attempted action + candidate + preview."""
+    from tests.unit.test_release_authorization_direct import _append_preview, _gate, _host
     from tracks.cli.main import cmd_release
 
-    store, repo, run_id = _setup(tmp_path)
-    _seed_gate_failed(store, run_id)
+    repo, store, run_id, candidate, digest, _path, _preview = _host(tmp_path)
+    store.append(run_id, "v0.8", "local_gate.failed", _gate(candidate, digest, status="failed"))
+    _append_preview(store, repo, run_id, candidate, digest)
+    preview = _types(store, run_id, "release.previewed")[-1].payload
 
     rc = cmd_release(repo, "--action", "release")
     capsys.readouterr()
@@ -162,8 +165,8 @@ def test_gate_failed_rejection_appends_release_rejected(tmp_path, capsys):
     payload = rejected[0].payload
     assert payload["action"] == "release"
     assert payload["reason"] == "gate_failed"
-    assert payload["candidate_sha"] == _CANDIDATE
-    assert payload["preview_digest"] == _PREVIEW
+    assert payload["candidate_sha"] == candidate
+    assert payload["preview_digest"] == preview["preview_digest"]
     assert isinstance(payload.get("detail"), str) and payload["detail"]
 
 
@@ -261,17 +264,20 @@ def test_decision_reopens_after_preview_regeneration(tmp_path, capsys):
     """Preserved-contract guard (SM-01.11): after a delay decision, a NEW
     release.previewed reopens the gate — `--action release` then succeeds and
     binds the regenerated preview digest."""
+    from tests.unit.test_release_authorization_direct import _append_preview, _gate, _host
     from tracks.cli.main import cmd_release
 
-    store, repo, run_id = _setup(tmp_path)
-    _seed_awaiting_release(store, run_id)
+    repo, store, run_id, candidate, digest, _path, old_preview = _host(tmp_path)
     rc_delay = cmd_release(repo, "--action", "delay", "--reason", "wait")
     assert rc_delay == 0
     capsys.readouterr()
 
-    fresh = _preview_payload()
-    fresh["preview_digest"] = "sha256:" + "9f9f" * 16
-    store.append(run_id, "v0.8", "release.previewed", fresh)
+    gate = _gate(candidate, digest)
+    gate["normalized_result"]["summary"] = {"result": "fresh evidence after delay"}
+    store.append(run_id, "v0.8", "local_gate.passed", gate)
+    _append_preview(store, repo, run_id, candidate, digest)
+    fresh = _types(store, run_id, "release.previewed")[-1].payload
+    assert fresh["preview_digest"] != old_preview["preview_digest"]
 
     rc = cmd_release(repo, "--action", "release")
     out, err = capsys.readouterr()

@@ -38,6 +38,10 @@ from tracks.executor.executor import (
     hotfix_feature_route,
     hotfix_human_anchor,
 )
+from tracks.executor.release_authorization import (
+    assess_release,
+    validate_authorization,
+)
 from tracks.executor.stall import CommandStallError
 from tracks.executor.taskgraph import (
     parse_tasks_json,
@@ -1567,7 +1571,7 @@ def _release_chain_fragments(events: list, lines: list[str]) -> None:
         lines.append("blocked: " + _release_block_reason(events))
 
 
-def _release_status_lines(events: list, primary) -> list[str]:
+def _release_status_lines(events: list, primary, repo: Path | None = None) -> list[str]:
     """§1.0.1 growth 1 helpers for cmd_status (keeps CCR001 under cap)."""
     lines: list[str] = []
     preview = _latest_release_preview(events)
@@ -1577,7 +1581,7 @@ def _release_status_lines(events: list, primary) -> list[str]:
             f"preview_digest={payload.get('preview_digest','')} "
             f"candidate={payload.get('candidate_sha','')}"
         )
-        stale = _release_preview_stale_reason(events, preview)
+        stale = _release_status_stale(repo, primary, events, preview)
         if stale:
             lines.append(f"status=stale stale_reason={stale}")
     decided = [e for e in events if e.type == "release.decided"]
@@ -1588,12 +1592,16 @@ def _release_status_lines(events: list, primary) -> list[str]:
             f"preview_digest={last.get('preview_digest','')} "
             f"candidate={last.get('candidate_sha','')}"
         )
-    elif preview is not None and (
-        _release_gate_blocked(events) or _release_preview_stale_reason(events, preview)
-    ):
+    elif _release_status_blocked(repo, primary, events, preview):
         lines.append("blocked: gate failed or preview stale")
         lines.append("rejected: gate failed or preview stale")
     _release_chain_fragments(events, lines)
+    lines.extend(_release_ci_attention_lines(events))
+    lines.extend(_release_publish_lines(events, primary))
+    return lines
+
+
+def _release_ci_attention_lines(events: list) -> list[str]:
     ci_attention = [
         e
         for e in events
@@ -1616,24 +1624,60 @@ def _release_status_lines(events: list, primary) -> list[str]:
         if not resolved:
             unresolved_attention.append(attention)
     ci_attention = unresolved_attention
-    if ci_attention:
-        attention = max(ci_attention, key=lambda event: getattr(event, "seq", 0))
-        payload = attention.payload or {}
-        lines.append(
+    if not ci_attention:
+        return []
+    attention = max(ci_attention, key=lambda event: getattr(event, "seq", 0))
+    payload = attention.payload or {}
+    return [
+        (
             "needs_attention="
             + str(payload.get("reason") or "unknown")
             + " next="
             + str(payload.get("next") or "retry CI readback")
         )
-    # (G) publish state: a publish.blocked event (e.g. agent_forbidden guard)
-    # surfaces in status with its block reason (FR-0287, must-not-drop face).
+    ]
+
+
+def _release_publish_lines(events: list, primary) -> list[str]:
+    """(G) publish and terminal fragments for status."""
     pub_blocked = [e for e in events if e.type == "publish.blocked"]
+    lines: list[str] = []
     if pub_blocked:
         block_reason = (pub_blocked[-1].payload or {}).get("reason", "unknown")
         lines.append(f"publish=blocked reason={block_reason}")
     if primary.status == "completed" and primary.terminal_state == "cancelled":
         lines.append("terminal=cancelled")
     return lines
+
+
+def _release_status_stale(repo, primary, events, preview):
+    if repo is None:
+        return _release_preview_stale_reason(events, preview)
+    return assess_release(
+        repo,
+        paths.tracks_home(repo),
+        events,
+        preview,
+        getattr(primary, "version", ""),
+    ).stale_reason
+
+
+def _release_status_blocked(repo, primary, events, preview) -> bool:
+    if preview is None:
+        return False
+    if repo is None:
+        return bool(
+            _release_gate_blocked(events)
+            or _release_preview_stale_reason(events, preview)
+        )
+    authorization = assess_release(
+        repo,
+        paths.tracks_home(repo),
+        events,
+        preview,
+        getattr(primary, "version", ""),
+    )
+    return authorization.preview_stale or authorization.gate_status.get("gate_failed", False)
 
 
 def _release_report_snippet(events: list) -> str:
@@ -1729,6 +1773,26 @@ def _validate_return_target(target: str | None) -> int | None:
     return None
 
 
+def _reject_release_authorization(
+    store, run_id: str, version: str, action: str, payload: dict, authorization
+) -> int | None:
+    allowed, validation_reason = validate_authorization(
+        action, authorization, payload
+    )
+    if allowed:
+        return None
+    rejection_reason = "preview_stale" if authorization.preview_stale else "gate_failed"
+    detail = validation_reason or authorization.detail
+    if authorization.preview_stale and action != "release":
+        detail = f"preview stale: {authorization.stale_reason}; run trac release preview"
+    _append_release_rejected(
+        store, run_id, version, action, payload, rejection_reason, detail
+    )
+    if action == "release":
+        return _err(_RELEASE_REJECTED)
+    return _err(f"error: {detail}")
+
+
 def cmd_release(repo: Path, *args: str) -> int:
     """Human three-way release gate (§2a): `release preview` renders the E-01
     line; `--action release|delay|return` appends exactly one append-only
@@ -1754,36 +1818,25 @@ def cmd_release(repo: Path, *args: str) -> int:
         preview = _latest_release_preview(events)
         if preview is None:
             return _err2(_NO_RELEASE_RUN)
-        stale_reason = _release_preview_stale_reason(events, preview)
+        version = store.state(run_id).version
+        authorization = assess_release(
+            repo, home, events, preview, version
+        )
+        stale_reason = authorization.stale_reason
         if action == "preview":
             print(_render_preview_line(preview.payload or {}, stale_reason, events))
             return 0
         payload = preview.payload or {}
-        version = store.state(run_id).version
         if _is_decision_closed(events, preview):
             return _err(
                 "error: decision already recorded for this preview; "
                 "regenerate the preview via trac run before deciding again"
             )
-        if stale_reason is not None:
-            detail = f"preview stale: {stale_reason}"
-            _append_release_rejected(
-                store, run_id, version, action, payload, "preview_stale", detail
-            )
-            if action == "release":
-                return _err(_RELEASE_REJECTED)
-            return _err(f"error: preview stale, run trac release preview ({stale_reason})")
-        if action == "release" and _release_gate_blocked(events):
-            _append_release_rejected(
-                store,
-                run_id,
-                version,
-                action,
-                payload,
-                "gate_failed",
-                "m-verify/prism/security gate failed",
-            )
-            return _err(_RELEASE_REJECTED)
+        rejection = _reject_release_authorization(
+            store, run_id, version, action, payload, authorization
+        )
+        if rejection is not None:
+            return rejection
         store.append(
             run_id,
             version,
@@ -2007,7 +2060,7 @@ def cmd_status(repo: Path) -> int:
     primary = store.state(primary_id)
     print(_status_line(primary_id, primary))
     try:
-        for line in _release_status_lines(list(store.events(primary_id)), primary):
+        for line in _release_status_lines(list(store.events(primary_id)), primary, repo):
             print(line)
     except Exception:
         pass
