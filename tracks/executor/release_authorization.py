@@ -11,6 +11,9 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
+
+from tracks import paths
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
@@ -118,7 +121,43 @@ def _current_candidate(repo: Path, events: list, candidate: str) -> str | None:
 
 
 def _load_contract(repo: Path):
+    """Host-declared contract, or the runtime-materialized default when the
+    host declares NO ``[host-contract]`` table (IF-HOSTCONTRACT-001).
+
+    The M-VERIFY producer builds the preview's ``contract_policy_digest``
+    from the materialized default for an undeclared host, so read-time
+    authorization must resolve the SAME source or every undeclared host's
+    preview reads back stale. A DECLARED-but-invalid contract stays
+    authoritative and fails closed (never silently replaced by the
+    default)."""
     path = repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+    raw = None
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        raw = None
+    declared = None
+    if raw is not None:
+        try:
+            declared = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+        except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+            declared = "malformed"
+    if declared is None:
+        return _load_materialized_default(repo)
+    try:
+        contract = load_host_contract(path)
+    except (OSError, UnicodeError, ValueError):
+        return None, None
+    if validate_host_contract(contract, repo):
+        return None, None
+    return contract, _raw_digest(raw)
+
+
+def _load_materialized_default(repo: Path):
+    """The runtime-materialized default contract written by the M-VERIFY
+    producer (``.tracks/runtime/materialized-host-contract.toml``), with the
+    digest the producer used -- the preview's own bytes, never a guess."""
+    path = paths.runtime_dir(paths.tracks_home(repo)) / "materialized-host-contract.toml"
     try:
         raw = path.read_bytes()
         contract = load_host_contract(path)

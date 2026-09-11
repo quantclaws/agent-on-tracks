@@ -189,6 +189,14 @@ class FakeShieldMixin:
         existing = sorted(tests_dir.rglob("test_*.py"))
         if not existing:
             return
+        # The re-dispatch evidence may be a single mapping (FR-11 record)
+        # or a list of failure records (e.g. an injected RED evidence list);
+        # the marker takes the FIRST record's reason/check deterministically,
+        # never crashing on the shape.
+        if isinstance(evidence, list):
+            evidence = next(
+                (item for item in evidence if isinstance(item, dict)), {}
+            )
         reason = evidence.get("reason") or evidence.get("check") or "revision"
         reason = " ".join(str(reason).split()).strip() or "revision"
         marker = f"# shield revision: {reason}\n"

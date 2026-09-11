@@ -10,6 +10,7 @@ from tests.unit.helpers import git_repo, git_strip
 from tracks import paths
 from tracks.executor.executor import Executor
 from tracks.executor.host_contract import GATE_RESULT_PROTOCOL, GATE_RESULT_VERSION
+from tracks.executor.release_authorization import assess_release
 from tracks.executor.release_gate import build_operation_plan
 from tracks.kernel.events import Command
 from tracks.store import Store
@@ -241,6 +242,46 @@ def test_declared_missing_artifact_does_not_emit_preview(tmp_path):
     _emit_preview(executor, candidate)
 
     assert _previews(store) == []
+
+
+def test_runtime_default_contract_preview_reads_authorized(tmp_path):
+    """An undeclared host's preview is built from the runtime-materialized
+    default contract; read-time authorization must resolve that same source
+    (not read the preview back as stale)."""
+    repo = git_repo(tmp_path, gitignore=True)
+    (repo / ".tracks" / "projects").mkdir(parents=True, exist_ok=True)
+    candidate = git_strip(repo, "rev-parse", "HEAD")
+    store = Store(repo / ".tracks")
+    store.append(
+        "RUN",
+        "v0.8",
+        "candidate.frozen",
+        {
+            "candidate_sha": candidate,
+            "clean_tree": True,
+            "branch": "main",
+            "frozen_at_seq": 1,
+        },
+    )
+    executor = Executor(store, repo, "RUN")
+    _emit_preview(executor, candidate)
+
+    previews = _previews(store)
+    assert len(previews) == 1
+    authorization = assess_release(
+        repo,
+        paths.tracks_home(repo),
+        list(store.events("RUN")),
+        previews[0],
+        "v0.8",
+    )
+
+    assert authorization.stale_reason is None
+    assert authorization.preview_stale is False
+    assert (
+        repo / ".tracks" / "runtime" / "materialized-host-contract.toml"
+    ).is_file()
+    store.close()
 
 
 def test_latest_failed_gate_revokes_previous_pass_evidence(tmp_path):

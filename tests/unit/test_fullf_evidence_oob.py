@@ -62,23 +62,46 @@ def test_full_counter():
 """
 
 
-def _full_host(tmp_path: Path) -> tuple[Path, Store, Executor]:
+def _write_test_plan(repo: Path, declared_layers) -> None:
+    """§8 AC Coverage rows naming ``declared_layers`` (the fullf eligibility
+    input: a layer absent here is an undeclared/empty layer)."""
+    vdir = repo / ".tracks" / "projects" / "v0.8"
+    vdir.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(
+        f"| AC-FR0001-0{i} | {layer} | tests/{layer}/test_ac_0{i}.py | IF-TEST-001 |"
+        for i, layer in enumerate(declared_layers, start=1)
+    )
+    (vdir / "test-plan.md").write_text(
+        "# Test plan\n\n## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n" + rows + "\n",
+        encoding="utf-8",
+    )
+
+
+def _full_host(
+    tmp_path: Path,
+    declared_layers=("unit", "integration", "e2e"),
+    disk_layers=("unit", "integration", "e2e"),
+) -> tuple[Path, Store, Executor]:
     repo = git_repo(tmp_path, gitignore=True)
     projects = repo / ".tracks" / "projects"
     projects.mkdir(parents=True, exist_ok=True)
     projects.joinpath("project.toml").write_text(
         _PROJECT_TOML.format(python=sys.executable), encoding="utf-8"
     )
+    _write_test_plan(repo, declared_layers)
     for layer in ("unit", "integration", "e2e"):
         path = repo / "tests" / layer
         path.mkdir(parents=True, exist_ok=True)
-        path.joinpath("test_counter.py").write_text(_COUNTER_TEST, encoding="utf-8")
+        if layer in disk_layers:
+            path.joinpath("test_counter.py").write_text(_COUNTER_TEST, encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(
         ["git", "commit", "-m", "fullf fixture"], cwd=repo, check=True,
         capture_output=True, text=True,
     )
     store = Store(repo / ".tracks")
+    store.append("RUN", "v0.8", "story.requested", {"requirement": "fullf fixture"})
     store.append(
         "RUN",
         "v0.8",
@@ -233,4 +256,64 @@ def test_fullf_rerun_executes_real_layers_and_failure_does_not_progress(tmp_path
         and event.payload.get("passed") is True
         for event in store.events("RUN")
     )
+    store.close()
+
+
+def _latest_full(store: Store):
+    return [event for event in store.events("RUN") if event.type == "full.executed"][-1]
+
+
+def test_undeclared_empty_layer_exit5_is_empty_pass_and_eligible(tmp_path):
+    """A layer with NO §8 anchors and no test modules exits 5 legally: it is
+    recorded as empty_pass and does not block FULL_F eligibility."""
+    repo, store, executor = _full_host(
+        tmp_path,
+        declared_layers=("integration", "e2e"),
+        disk_layers=("integration", "e2e"),
+    )
+    _run_real_full(executor, store)
+    full = _latest_full(store)
+
+    assert full.payload["command_exit_codes"]["unit"] == 5
+    assert full.payload["empty_pass_layers"] == {
+        "unit": True, "integration": False, "e2e": False,
+    }
+    assert full.payload["passed"] is True
+    assert full.payload["full_f_eligible"] is True
+    assert (repo / "tests" / "unit").is_dir()
+    store.close()
+
+
+def test_declared_layer_with_zero_collected_stays_fail_closed(tmp_path):
+    """A layer DECLARED in §8 but collecting zero nodes must keep its exit 5
+    counting against eligibility (collect defect, never an empty-pass)."""
+    repo, store, executor = _full_host(
+        tmp_path,
+        declared_layers=("unit", "integration", "e2e"),
+        disk_layers=("integration", "e2e"),
+    )
+    _run_real_full(executor, store)
+    full = _latest_full(store)
+
+    assert full.payload["command_exit_codes"]["unit"] == 5
+    assert full.payload["empty_pass_layers"]["unit"] is False
+    assert full.payload["passed"] is True
+    assert full.payload["full_f_eligible"] is False
+    store.close()
+
+
+def test_all_layers_exit0_are_eligible_without_empty_pass(tmp_path):
+    """The ordinary all-green FULL has no empty_pass layer and is eligible."""
+    repo, store, executor = _full_host(tmp_path)
+    _run_real_full(executor, store)
+    full = _latest_full(store)
+
+    assert full.payload["command_exit_codes"] == {
+        "unit": 0, "integration": 0, "e2e": 0,
+    }
+    assert full.payload["empty_pass_layers"] == {
+        "unit": False, "integration": False, "e2e": False,
+    }
+    assert full.payload["passed"] is True
+    assert full.payload["full_f_eligible"] is True
     store.close()

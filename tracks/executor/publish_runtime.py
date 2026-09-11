@@ -61,14 +61,39 @@ def _facts_with_scheme(facts: dict, contract: dict) -> dict:
 
 
 def _load_contract(repo: Path) -> tuple[bytes, dict] | None:
+    """Host-declared contract, or the runtime-materialized default when the
+    host declares NO ``[host-contract]`` table (IF-HOSTCONTRACT-001).
+
+    Mirrors release_authorization._load_contract: the M-VERIFY producer
+    binds the preview's ``contract_policy_digest`` to the materialized
+    default for an undeclared host, so the publish-time plan re-validation
+    must resolve the SAME bytes or every undeclared host fails with
+    ``missing_contract``/``contract_changed`` after a valid preview. A
+    DECLARED-but-invalid contract stays authoritative and fails closed."""
     path = repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+    declared = None
+    raw = None
     try:
         raw = path.read_bytes()
-        table = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+        declared = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        declared = None
+    if declared is None:
+        materialized = (
+            paths.runtime_dir(paths.tracks_home(repo))
+            / "materialized-host-contract.toml"
+        )
+        try:
+            raw = materialized.read_bytes()
+            table = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            return None
+        return raw, table if isinstance(table, dict) else {}
+    try:
         load_host_contract(path)
     except (OSError, UnicodeError, tomllib.TOMLDecodeError, KeyError, ValueError):
         return None
-    return raw, table if isinstance(table, dict) else {}
+    return raw, declared if isinstance(declared, dict) else {}
 
 
 def _latest_preview(events: list, preview_digest: str | None):

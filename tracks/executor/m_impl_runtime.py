@@ -90,6 +90,7 @@ from tracks.executor.test_select import (
     audit as audit_selection_argv,
 )
 from tracks.executor.test_tasks import (
+    _LAYER_CELL_SEPARATOR,
     _coverage_rows_with_test,
     _extract_if_registry,
     _known_ac_ids,
@@ -106,6 +107,12 @@ from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
 from tracks.project import ContractError, layout_paths, load_contract
 
 _SECRET_PATTERN = re.compile(r"(sk-|ghp_|gho_|AKIA)[A-Za-z0-9]{16,}")
+
+# FULL chains unit/integration/e2e; a collect command exits 5 when the
+# framework collects zero tests ("no tests collected") -- legal ONLY for a
+# layer that declares no anchor nodes (see _declared_anchor_layers).
+_FULL_LAYERS = ("unit", "integration", "e2e")
+_EMPTY_LAYER_RC = frozenset({5})
 
 
 class TaskSelectionFailure(Exception):
@@ -2273,6 +2280,31 @@ class MImplRuntimeMixin:
                     staged[0].parent.rmdir()
         return outcomes, command_echo, command_cwds, command_exit_codes, result_paths
 
+    def _declared_anchor_layers(self) -> set[str] | None:
+        """Test-plan §8 anchor layers for this run's frozen design.
+
+        FULL eligibility must distinguish a layer that declares NO anchor
+        node at all (an undeclared/empty layer: exit code 5 "no tests
+        collected" is a legal empty-pass) from one that declared anchors but
+        collected zero nodes (collect defect; remains fail-closed). The
+        declared set is parsed from the run's own
+        ``.tracks/projects/<version>/test-plan.md`` §8 AC Coverage rows -- a
+        durable runtime artifact, never the mutable test tree. Returns None
+        when the plan is missing/unreadable or declares no anchors at all:
+        callers then treat every contract layer as declared (fail-closed)."""
+        plan_path = self._vdir() / "test-plan.md"
+        try:
+            plan_text = plan_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        declared: set[str] = set()
+        for _ac_id, layer_cell, _test_cell, _if_cell in _coverage_rows_with_test(plan_text):
+            for token in _LAYER_CELL_SEPARATOR.split(layer_cell or ""):
+                normalized = token.strip().lower()
+                if normalized in _FULL_LAYERS:
+                    declared.add(normalized)
+        return declared or None
+
     def _execute_full_round(
         self,
         cmd,
@@ -2336,6 +2368,13 @@ class MImplRuntimeMixin:
             command_exit_codes,
             result_paths,
         ) = self._run_full_layers(cmd, round_name, sections, inventory)
+        declared_layers = self._declared_anchor_layers()
+        if declared_layers is None:
+            declared_layers = set(_FULL_LAYERS)
+        empty_pass_layers = {
+            layer: code in _EMPTY_LAYER_RC and layer not in declared_layers
+            for layer, code in command_exit_codes.items()
+        }
         command_identity = self._full_command_identity(command_echo, command_cwds, result_paths)
         env_identity = self._gate_environment_identity()
         identity = EvidenceIdentity(
@@ -2393,7 +2432,11 @@ class MImplRuntimeMixin:
                 "selection_id": selection_id,
             },
             "full_f_eligible": not failed
-            and all(code == 0 for code in command_exit_codes.values()),
+            and all(
+                code == 0 or empty_pass_layers.get(layer, False)
+                for layer, code in command_exit_codes.items()
+            ),
+            "empty_pass_layers": empty_pass_layers,
             "command_cwds": command_cwds,
             "command_exit_codes": command_exit_codes,
         }
