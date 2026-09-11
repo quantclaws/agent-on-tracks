@@ -377,6 +377,7 @@ class OpencodeBackend:
             "PRISM_PLAN",
             "PRISM_RED",
             "PRISM_FINAL",
+            "VERIFY_FINAL",
         )
         try:
             cleanup_infos.append(self._materialize(name))
@@ -520,6 +521,7 @@ class OpencodeBackend:
             "PRISM_PLAN",
             "PRISM_RED",
             "PRISM_FINAL",
+            "VERIFY_FINAL",
             "DIAGNOSE",
         ):
             assigned_pack = (assignment or {}).get("criteria_pack")
@@ -1186,8 +1188,22 @@ class OpencodeBackend:
     # the mechanical checks and the declared schema cannot drift apart.
     _REVIEW_FINDING_FIELDS = REVIEW_FINDING_FIELDS
     _REVIEW_SUMMARY_MAX = REVIEW_SUMMARY_MAX
-    _REVIEW_SUBSTATES = ("PRISM_REVIEW", "PRISM_PLAN", "PRISM_RED", "PRISM_FINAL")
-    _REVIEW_KEYS = ("review_summary", "findings", "review_body", "defect_classification")
+    _REVIEW_SUBSTATES = (
+        "PRISM_REVIEW",
+        "PRISM_PLAN",
+        "PRISM_RED",
+        "PRISM_FINAL",
+        "VERIFY_FINAL",
+    )
+    _REVIEW_KEYS = (
+        "review_summary",
+        "findings",
+        "review_body",
+        "defect_classification",
+        "discussion_refs",
+        "review_ref",
+        "candidate_sha",
+    )
 
     @classmethod
     def _review_dispatch(cls, role: str, substate: str, assignment: dict | None) -> bool:
@@ -1205,7 +1221,7 @@ class OpencodeBackend:
         M-DESIGN keeps the doc-anchored channel (AC-FR0240-04)."""
         return (
             cls._review_dispatch(role, substate, assignment)
-            and (assignment or {}).get("stage") in ("M-TEST", "M-IMPL")
+            and (assignment or {}).get("stage") in ("M-TEST", "M-IMPL", "M-VERIFY")
         )
 
     def _review_channel_failure(
@@ -1221,7 +1237,9 @@ class OpencodeBackend:
         before the audits run (strict channel only; M-DESIGN never rejects)."""
         if not self._structured_channel(role, substate, assignment):
             return None
-        _, error = self._prism_review_payload_from(proc)
+        payload, error = self._prism_review_payload_from(proc)
+        if substate == "VERIFY_FINAL" and payload is None and error is None:
+            error = "VERIFY_FINAL requires a valid pass/revise review payload"
         if error is None:
             return None
         return self._review_payload_malformed_result(error, proc, prompt, console_input)
@@ -2408,6 +2426,18 @@ class OpencodeBackend:
         text = self._final_reply_text(proc)
         if text is not None:
             result["raw_output"] = text
+        return result
+
+    def finalize_act(
+        self,
+        result: dict,
+        role: str,
+        substate: str,
+        assignment: dict | None = None,
+    ) -> dict:
+        """No-op: the real backend's raw_output is the actual subprocess reply
+        attached verbatim at the transport return paths (see
+        ``_attach_raw_output``); it is never re-encoded or reconstructed."""
         return result
 
 

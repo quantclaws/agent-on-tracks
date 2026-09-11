@@ -158,6 +158,21 @@ def build_prism_final_review_assignment(
         "candidate_sha": candidate_sha,
         "scope": "verify_final",
         "evidence_digests": dict(evidence_digests),
+        "verify_final_review": {
+            "discussion_refs": {
+                "required_on": "revise",
+                "item_fields": {
+                    "file": "repo-relative document path",
+                    "thread_id": "current T-NNN id from parse_threads",
+                    "token": "exact token_for(thread) object for locate()",
+                    "finding_id": "matching blocker finding id from findings[]",
+                },
+                "anchor_rule": (
+                    "Each ref must locate uniquely to an open/reopen Prism or Lex "
+                    "thread and its finding_id must match a finding with severity=blocker."
+                ),
+            }
+        },
     }
 
 

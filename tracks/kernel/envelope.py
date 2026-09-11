@@ -143,6 +143,7 @@ _PRISM_SUBSTATE_KINDS = {
     "PRISM_PLAN": "prism:plan",
     "PRISM_RED": "prism:red",
     "PRISM_FINAL": "prism:final",
+    "VERIFY_FINAL": "prism:final",
     "DIAGNOSE": "prism:diagnose",
 }
 

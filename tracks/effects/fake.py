@@ -246,11 +246,76 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         kind = assignment["envelope"].get("kind")
         if kind not in _FAKE_SPEAKABLE_KINDS or kind != envelope_kind(role, substate):
             return result
+        if kind == "prism:final" and str(substate or "").upper() == "VERIFY_FINAL":
+            self._ensure_verify_final_revise_fields(result, assignment)
         payload = self._declared_reply_payload(kind, result)
         result["raw_output"] = encode_envelope_reply(
             kind, payload, self.envelope_version
         )
         return result
+
+    def finalize_act(
+        self,
+        result: dict,
+        role: str,
+        substate: str,
+        assignment: dict | None = None,
+    ) -> dict:
+        """IF-ENVELOPE-002 finalization seam: encode the declared reply from
+        the FINAL result.
+
+        ``act()`` may return before result-enriching subclasses (the accepted
+        ``_AnchoredFinalBackend`` pattern) finish updating the outcome; the
+        Runtime calls this hook after ``act()`` and before the collection face
+        consumes ``raw_output``, so the encoded reply always reflects the
+        bytes the fake finally stands behind."""
+        return self._attach_declared_raw_output(result, role, substate, assignment)
+
+    @staticmethod
+    def _ensure_verify_final_revise_fields(
+        result: dict, assignment: dict | None
+    ) -> None:
+        """Complete a simulated VERIFY_FINAL revise into a schema-valid review.
+
+        M-VERIFY judges an anchoring on a WELL-FORMED review: a revise whose
+        findings are not tied to an open discussion thread is
+        ``revise_without_findings`` (an attention-required block), never a
+        format error. The simulated bare revise therefore carries the minimum
+        deterministic review content the declared schema requires and NO
+        ``discussion_refs``: the Runtime's anchor judge classifies it. Fields
+        the simulation (or a result-enriching subclass) already produced are
+        never overwritten. M-TEST/M-DESIGN review kinds keep the 32b81c2
+        honesty rule — a simulated revise the schema cannot represent stays
+        incomplete and is classified visibly at the Runtime."""
+        if result.get("verdict") != "revise":
+            return
+        summary = result.get("review_summary")
+        if not isinstance(summary, str) or not summary.strip():
+            result["review_summary"] = "simulated final review requested changes"
+        body = result.get("review_body")
+        if not isinstance(body, str) or not body.strip():
+            result["review_body"] = (
+                "FakeBackend simulated a final-review revise without anchored "
+                "discussion findings."
+            )
+        findings = result.get("findings")
+        if isinstance(findings, list) and findings:
+            return
+        candidate_sha = result.get("candidate_sha")
+        if not isinstance(candidate_sha, str) or not candidate_sha:
+            candidate_sha = (assignment or {}).get("candidate_sha") or "unfrozen"
+        result["findings"] = [
+            {
+                "id": "FAKE-VERIFY-FINAL-01",
+                "severity": "blocker",
+                "defect_classification": result.get("defect_classification")
+                or "behavior",
+                "criterion": "simulated",
+                "artifact": f"candidate:{candidate_sha}",
+                "ac_refs": [],
+                "summary": "simulated final-review finding (no discussion anchor)",
+            }
+        ]
 
     def _declared_reply_payload(self, kind: str, result: dict) -> dict:
         """The fake's actual simulated fields under the assigned kind — never
@@ -259,7 +324,7 @@ class FakeBackend(DevonPatchMixin, FakeShieldMixin):
         explicitly produce stay absent for the Runtime to classify."""
         fields = (
             "review_summary", "review_body", "findings", "defect_classification",
-            "reason", "evidence",
+            "discussion_refs", "review_ref", "candidate_sha", "reason", "evidence",
         )
         payload = {field: result[field] for field in fields if field in result}
         if kind == "prism:diagnose":

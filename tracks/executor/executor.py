@@ -27,6 +27,7 @@ import tomllib
 from tracks import paths
 from tracks.baseline import baseline_summary, revision_digest
 from tracks.capabilities import supports_m_impl
+from tracks.discuss.locate import locate
 from tracks.discuss.parser import parse_threads
 from tracks.effects import oob, select_backend
 from tracks.effects import publish as publish_effects
@@ -2177,6 +2178,10 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 task_id=task_id,
             )
             return
+        # IF-ENVELOPE-002 finalization seam: after act() (and any result-
+        # enriching subclass) returned, and BEFORE any raw_output is consumed
+        # below, give the backend the last word on its declared reply bytes.
+        result = self._finalize_backend_result(result, role, substate, assignment)
         self._dispatch_log_end(p, result, time.monotonic() - t0)
         # T-001 face (E): collection-time single parse path — a malformed
         # envelope is a format_error, never a semantic attempt (no attempt
@@ -2646,6 +2651,20 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 )
         return result, replay_error
 
+    def _finalize_backend_result(self, result, role, substate, assignment):
+        """IF-ENVELOPE-002 finalization seam (see AgentBackend.finalize_act).
+
+        Called after act() succeeded and before the collection face parses
+        raw_output, so a declared reply assembled outside act() (or enriched
+        by a backend subclass afterwards) is the reply the Runtime classifies
+        and the parity faces read. Test doubles without the hook keep their
+        exact legacy result."""
+        finalize = getattr(self.backend, "finalize_act", None)
+        if not callable(finalize):
+            return result
+        finalized = finalize(result, role, substate, assignment)
+        return finalized if isinstance(finalized, dict) else result
+
     @staticmethod
     def _checkpoint_eligible(state, result, substate) -> bool:
         """v0.5 ResultCheckpoint pipeline eligibility: batch-1 stages on a
@@ -2961,6 +2980,8 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 result.get("result_id"),
                 cmd,
                 task_id,
+                result=result,
+                assignment=params,
             )
             return
         if not result.get("verdict"):
@@ -3514,18 +3535,58 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             )
 
     def _publish_verify_final_verdict(
-        self, verdict, commit_sha, created_commit, result_id, cmd, task_id
+        self,
+        verdict,
+        commit_sha,
+        created_commit,
+        result_id,
+        cmd,
+        task_id,
+        *,
+        result=None,
+        assignment=None,
     ):
         """IF-VERIFY-005 / AC-FR0270: the same-candidate final-review verdict
         is scoped verify_final and bound to the frozen candidate. A pass
         exits M-VERIFY into M-SECURITY (all gates green, §1.1); any other
         verdict stops the chain blocked with the findings on the stream (no
         silent retry, no guessed next)."""
+        result = result if isinstance(result, dict) else {}
+        assignment = assignment if isinstance(assignment, dict) else {}
         frozen = self._latest_event("candidate.frozen")
-        candidate_sha = (
-            (frozen.payload or {}).get("candidate_sha", "") if frozen else ""
+        frozen_sha = (frozen.payload or {}).get("candidate_sha", "") if frozen else ""
+        assigned_sha = assignment.get("candidate_sha")
+        if assigned_sha is None:
+            assigned_sha = (assignment.get("assignment") or {}).get("candidate_sha")
+        if assigned_sha is None and isinstance(getattr(cmd, "params", None), dict):
+            assigned_sha = cmd.params.get("candidate_sha")
+        returned_sha = result.get("candidate_sha")
+        candidate_sha = assigned_sha or frozen_sha
+        identity_error = (
+            not frozen_sha
+            or not assigned_sha
+            or assigned_sha != frozen_sha
+            or (returned_sha is not None and returned_sha != assigned_sha)
         )
-        domain_payload = cmd.params.get("domain_event", {}).get("payload", {})
+        if verdict not in ("pass", "revise"):
+            identity_error = True
+        if identity_error:
+            self._emit(
+                "attention.required",
+                {
+                    "reason": "verify_final_identity_mismatch"
+                    if verdict in ("pass", "revise")
+                    else "verify_final_invalid_verdict",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha or frozen_sha,
+                    "next": (
+                        "re-dispatch VERIFY_FINAL with the frozen candidate and "
+                        "a valid pass/revise review"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
+            return
         payload = {
             "verdict": verdict,
             "diff_ref": commit_sha if created_commit and commit_sha else None,
@@ -3534,15 +3595,44 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
             "candidate_sha": candidate_sha,
         }
         for key in _DESIGN_PRISM_THREAD_KEYS:
-            val = domain_payload.get(key)
+            val = result.get(key)
             if val:
                 payload[key] = val
+        if result.get("review_body") and not payload.get("review_ref"):
+            review_ref = self.store.write_audit_blob(result["review_body"])
+            if review_ref:
+                payload["review_ref"] = review_ref
+        if verdict == "revise" and not self._verify_final_discussion_anchor(result):
+            self._emit(
+                "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
+            )
+            self._emit(
+                "attention.required",
+                {
+                    "reason": "revise_without_findings",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": candidate_sha,
+                    "next": (
+                        "anchor the blocking findings via trac discuss start; "
+                        "trac run re-dispatches the review"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
+            return
         self._emit(
             "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
         )
         if verdict == "pass":
             self._advance_verify_chain(cmd, candidate_sha)
         else:
+            # FR-0271-03: a revise/failed final review is a valid block only
+            # when the reviewer ANCHORED the blocking findings (thread keys on
+            # the verdict payload — the same anchoring the v0.3 discuss
+            # protocol requires). A bare revise/failed with no anchored
+            # findings is judged revise_without_findings: it blocks the chain
+            # but is recorded as an invalid block, never consumed as review
+            # evidence (the re-dispatch owns the retry).
             self._emit(
                 "attention.required",
                 {
@@ -3553,6 +3643,61 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                 },
                 command_id=cmd.command_id,
             )
+
+    def _verify_final_discussion_anchor(self, result: dict) -> bool:
+        """Accept a blocker finding tied to a fresh open Prism/Lex thread."""
+        refs = result.get("discussion_refs")
+        if not isinstance(refs, list) or not refs:
+            return False
+        findings = result.get("findings")
+        blockers = {
+            finding.get("id")
+            for finding in findings
+            if isinstance(finding, dict)
+            and finding.get("severity") == "blocker"
+            and isinstance(finding.get("id"), str)
+        } if isinstance(findings, list) else set()
+        if not blockers:
+            return False
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            file_name = ref.get("file")
+            thread_id = ref.get("thread_id")
+            token = ref.get("token")
+            finding_id = ref.get("finding_id")
+            if (
+                not isinstance(file_name, str)
+                or not isinstance(thread_id, str)
+                or not isinstance(token, dict)
+                or finding_id not in blockers
+            ):
+                continue
+            path = (self.repo / file_name).resolve()
+            try:
+                path.relative_to(self.repo.resolve())
+            except ValueError:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            try:
+                located = locate(text, token, thread_id)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            if located.status != "unique":
+                continue
+            thread = next(
+                (item for item in parse_threads(text) if item.thread_id == thread_id),
+                None,
+            )
+            if thread is None or thread.status not in ("open", "reopen"):
+                continue
+            if thread.initiator.strip().lower() not in ("prism", "lex"):
+                continue
+            return True
+        return False
 
     def _do_validate_document(self, cmd, state, task_id, reconcile):
         doc = cmd.params["doc"]
@@ -5550,6 +5695,7 @@ class Executor(MImplRuntimeMixin, ResultCheckpointMixin):
                     "role": "prism",
                     "substate": "VERIFY_FINAL",
                     "stage": "M-VERIFY",
+                    "assignment": dict(assignment),
                     "objective": (
                         "same-candidate final review of the frozen candidate "
                         "(IF-VERIFY-005)"

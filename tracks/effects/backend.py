@@ -86,3 +86,21 @@ class AgentBackend(Protocol):
         ``None`` means the main tree (every other dispatch).
         """
         ...
+
+    def finalize_act(
+        self,
+        result: dict,
+        role: str,
+        substate: str,
+        assignment: dict | None = None,
+    ) -> dict:
+        """Finalize the Outcome dict of one dispatch (IF-ENVELOPE-002).
+
+        The Runtime calls this hook exactly once after ``act()`` returns and
+        before it consumes ``raw_output``, so a backend whose declared reply
+        is assembled after act() (or a test backend a subclass enriches
+        afterwards) still hands over the reply bytes it finally stands
+        behind. The real backend is a no-op: its ``raw_output`` is the actual
+        subprocess reply, attached verbatim at the transport return paths.
+        """
+        ...
