@@ -75,11 +75,15 @@ def test_canonical_host_protocol_path_spelling():
     assert ".tracks/project/project.toml" not in text
 
 
-def test_envelope_v2_token_present_in_core_only():
+def test_envelope_v2_token_present_in_all_declared_faces():
+    # IF-ENVELOPE-002 (FR-0279): every parity face the Runtime materializes
+    # declares the envelope token in its frontmatter — the pre-spawn gate
+    # binds face→token from the actual bytes. Supersedes the v0.7 staged
+    # rollout invariant ("token in core only").
     core = SOURCE["core"].read_text(encoding="utf-8")
     assert "tracks-envelope:v2" in core
     for key in ("design", "impl", "test"):
-        assert "tracks-envelope:v2" not in SOURCE[key].read_text(encoding="utf-8")
+        assert "tracks-envelope:v2" in SOURCE[key].read_text(encoding="utf-8")
 
 
 def test_three_skill_routing_wiring_exists():
