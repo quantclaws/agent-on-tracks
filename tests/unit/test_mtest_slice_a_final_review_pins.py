@@ -44,6 +44,27 @@ from tracks.executor.executor import Executor
 from tracks.executor.test_select import make_selection_id
 from tracks.store import Store
 
+
+def _patch_load_contract(monkeypatch, fake):
+    """Patch every executor module that resolved ``load_contract`` at import."""
+    import importlib
+
+    for name in (
+        "executor",
+        "doc_face",
+        "run_loop",
+        "test_collect",
+        "test_execute",
+        "phase0_face",
+        "verify_gates",
+    ):
+        try:
+            module = importlib.import_module(f"tracks.executor.{name}")
+        except ModuleNotFoundError:
+            continue
+        if hasattr(module, "load_contract"):
+            monkeypatch.setattr(module, "load_contract", fake)
+
 _RUN_ID = "RUN"
 
 
@@ -123,9 +144,7 @@ def _proc(argv, rc, stdout="", stderr=""):
 
 
 def _install_three_layer_contract(monkeypatch, *, unit_rc, integration_stdout, e2e_rc):
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo: _contract(
             unit=_section(collect="_tracks_collect_unit"),
             integration=_section(collect="_tracks_collect_integration"),
@@ -312,9 +331,7 @@ def test_error_status_valueerror_is_never_a_legit_red(monkeypatch, tmp_path):
     _seed_r2_selection(store, _NODE_ERR)
     executed: list = []
     _junit_dispatch(monkeypatch, "error_valueerror", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "error_valueerror"))),
     )
 
@@ -354,9 +371,7 @@ def test_infra_keywords_outrank_assertion_error_in_error_records(monkeypatch, tm
     _seed_r2_selection(store, _NODE_ERR)
     executed: list = []
     _junit_dispatch(monkeypatch, "error_infra_assert", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "error_infra_assert"))),
     )
 
@@ -388,9 +403,7 @@ def test_failed_status_assertion_record_stays_legit(monkeypatch, tmp_path):
     _seed_r2_selection(store, _NODE_ERR)
     executed: list = []
     _junit_dispatch(monkeypatch, "failure_assert", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "failure_assert"))),
     )
 
@@ -541,9 +554,7 @@ def test_result_xml_unlinked_and_dir_removed_after_parse_success(monkeypatch, tm
     _seed_r2_selection(store, node, run_id=run_id)
     executed: list = []
     _junit_dispatch(monkeypatch, "failure_assert", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "failure_assert"))),
     )
     result_path, run_dir = _real_staging_paths(ex, "c-clean")
@@ -574,9 +585,7 @@ def test_result_xml_unlinked_after_handled_failure(monkeypatch, tmp_path):
     _seed_r2_selection(store, node, run_id=run_id)
     executed: list = []
     _junit_dispatch(monkeypatch, "malformed", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "malformed"))),
     )
     result_path, run_dir = _real_staging_paths(ex, "c-bad")
@@ -670,9 +679,7 @@ def _replay_harness(monkeypatch, tmp_path):
     _seed_persisted_selection(ex, store, node, commit)
     executed: list = []
     _junit_dispatch(monkeypatch, "failure_assert", executed)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_writer_template(tmp_path, "failure_assert"))),
     )
     return ex, emitted, repo, executed

@@ -40,6 +40,27 @@ from tracks.executor import executor as executor_module
 from tracks.executor.executor import Executor
 from tracks.store import Store
 
+
+def _patch_load_contract(monkeypatch, fake):
+    """Patch every executor module that resolved ``load_contract`` at import."""
+    import importlib
+
+    for name in (
+        "executor",
+        "doc_face",
+        "run_loop",
+        "test_collect",
+        "test_execute",
+        "phase0_face",
+        "verify_gates",
+    ):
+        try:
+            module = importlib.import_module(f"tracks.executor.{name}")
+        except ModuleNotFoundError:
+            continue
+        if hasattr(module, "load_contract"):
+            monkeypatch.setattr(module, "load_contract", fake)
+
 _RUN_ID = "RUN"
 
 
@@ -119,9 +140,7 @@ def _proc(argv, rc, stdout="", stderr=""):
 
 def _install_three_layer_contract(monkeypatch, *, unit_rc, integration_stdout, e2e_rc):
     """Stub load_contract + subprocess.run for the full-layer collect scans."""
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo: _contract(
             unit=_section(collect="_tracks_collect_unit"),
             integration=_section(collect="_tracks_collect_integration"),
@@ -327,9 +346,7 @@ def test_preexisting_stale_xml_cannot_satisfy_red_check(monkeypatch, tmp_path):
         "_result_staging_path",
         lambda self, command_id, section: result_path,
     )
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(
             integration=_section(
                 run_selected=f"{shlex.quote(sys.executable)} -c 'pass' {{nodes}} {{result}}"
@@ -392,9 +409,7 @@ def test_dirty_r2_content_change_re_stamps_selection_identity(monkeypatch, tmp_p
     _seed_baseline(store, node)
     _seed_collected(store, [{"node": node, "layer": "integration", "class": "r2"}])
 
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section(run_selected=_recorder_template(repo))),
     )
 
@@ -425,9 +440,7 @@ def test_dirty_r2_content_change_re_stamps_selection_identity(monkeypatch, tmp_p
 
 
 def _seed_empty_r2_context(monkeypatch, store):
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(integration=_section()),
     )
     node = "tests/integration/test_hist.py::test_hist"
@@ -526,9 +539,7 @@ def _install_duplicate_collect_contract(monkeypatch, repo):
     physical = repo / "tests" / "integration" / "test_dup.py"
     physical.parent.mkdir(parents=True, exist_ok=True)
     physical.write_text("def test_dup():\n    assert True\n", encoding="utf-8")
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(
             unit=_section(collect="_tracks_collect_unit"),
             integration=_section(collect="_tracks_collect_integration"),
@@ -626,9 +637,7 @@ def test_outcomes_blob_write_failure_never_validates_red(monkeypatch, tmp_path):
     _seed_collected(store, [{"node": node, "layer": "integration", "class": "r2"}])
     monkeypatch.setattr(store, "write_audit_blob", lambda payload: None)
     _stage_static_junit(monkeypatch, tmp_path, [node])
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(
             integration=_section(run_selected=_recorder_template(_repo))
         ),
@@ -671,9 +680,7 @@ def test_selection_nodes_blob_write_failure_never_selects_or_executes(monkeypatc
 
     _fake_subprocess(monkeypatch, _no_dispatch)
     _stage_static_junit(monkeypatch, tmp_path, [node])
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda repo_: _contract(
             integration=_section(run_selected=_recorder_template(repo))
         ),

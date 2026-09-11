@@ -18,6 +18,27 @@ from tracks.kernel.events import EventEnvelope
 from tracks.kernel.machine import State, apply
 
 
+def _patch_load_contract(monkeypatch, fake):
+    """Patch every executor module that resolved ``load_contract`` at import."""
+    import importlib
+
+    for name in (
+        "executor",
+        "doc_face",
+        "run_loop",
+        "test_collect",
+        "test_execute",
+        "phase0_face",
+        "verify_gates",
+    ):
+        try:
+            module = importlib.import_module(f"tracks.executor.{name}")
+        except ModuleNotFoundError:
+            continue
+        if hasattr(module, "load_contract"):
+            monkeypatch.setattr(module, "load_contract", fake)
+
+
 def _proc(*texts: str) -> subprocess.CompletedProcess:
     lines = "".join(
         json.dumps({"type": "text", "part": {"text": t}}) + "\n" for t in texts
@@ -519,7 +540,7 @@ def test_run_tests_verdict_carries_findings_and_log_ref(monkeypatch, tmp_path):
             nightly=None,
         )
 
-    monkeypatch.setattr(executor_module, "load_contract", _load_contract)
+    _patch_load_contract(monkeypatch, _load_contract)
     monkeypatch.setattr(
         Executor, "_diagnose_classification", lambda self: "test_defect", raising=True
     )

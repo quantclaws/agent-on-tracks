@@ -47,6 +47,27 @@ from tracks.executor.executor import Executor
 from tracks.executor.helpers import _LEGIT_RED, classify_red_detail
 from tracks.store import Store
 
+
+def _patch_load_contract(monkeypatch, fake):
+    """Patch every executor module that resolved ``load_contract`` at import."""
+    import importlib
+
+    for name in (
+        "executor",
+        "doc_face",
+        "run_loop",
+        "test_collect",
+        "test_execute",
+        "phase0_face",
+        "verify_gates",
+    ):
+        try:
+            module = importlib.import_module(f"tracks.executor.{name}")
+        except ModuleNotFoundError:
+            continue
+        if hasattr(module, "load_contract"):
+            monkeypatch.setattr(module, "load_contract", fake)
+
 _RUN_ID = "RUN"
 
 
@@ -225,8 +246,7 @@ def test_red_check_failed_valueerror_record_is_invalid_not_valid(monkeypatch, tm
     _seed_r2_selection(store, _NODE_VE)
     executed: list = []
     template = _valueerror_failure_dispatch(monkeypatch, tmp_path, executed)
-    monkeypatch.setattr(
-        executor_module, "load_contract", lambda r: _contract(integration=_section(run_selected=template))
+    _patch_load_contract(monkeypatch, lambda r: _contract(integration=_section(run_selected=template))
     )
 
     ex._do_run_tests(_cmd("c-ve"), _State(), None, False)
@@ -255,9 +275,7 @@ _ABSENT_LAYERS = {"unit": "tests/unit/", "integration": "tests/integration/", "e
 
 
 def _install_absent_layer_contract(monkeypatch):
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda r: _contract(**{
             layer: _section(collect=f"_tracks_collect_{layer}", paths=(path,))
             for layer, path in _ABSENT_LAYERS.items()
@@ -309,9 +327,7 @@ def test_existing_declared_path_collect_rc4_malformed_stays_baseline_defect(
     (repo / "tests" / "integration" / "test_real.py").write_text(
         "def test_real():\n    assert True\n", encoding="utf-8"
     )
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda r: _contract(
             unit=_section(collect="_tracks_collect_unit", paths=("tests/unit/",)),
             integration=_section(
@@ -358,9 +374,7 @@ def test_capture_section_cwd_absent_is_baseline_defect_not_empty_layer(
     assert not ((tmp_path / "host") / "packages" / "vanished").exists(), (
         "precondition: the section cwd must not exist on disk"
     )
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda r: _contract(
             unit=_section(collect="_tracks_collect_unit", paths=("tests/unit/",)),
             integration=vanished,
@@ -416,9 +430,7 @@ _DIRTY_NODE = "tests/integration/test_dirty.py::test_dirty"
 
 
 def _install_dirty_capture_contract(monkeypatch):
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda r: _contract(
             unit=_section(collect="_tracks_collect_unit"),
             integration=_section(collect="_tracks_collect_integration"),
@@ -619,7 +631,7 @@ def test_capture_missing_collect_executable_routes_event_failure(monkeypatch, tm
     FileNotFoundError out of the handler."""
     ex, _store, emitted, _repo = _harness(monkeypatch, tmp_path)
     sections = _missing_executable_sections()
-    monkeypatch.setattr(executor_module, "load_contract", lambda r: _contract(**sections))
+    _patch_load_contract(monkeypatch, lambda r: _contract(**sections))
 
     crashed = None
     try:
@@ -644,7 +656,7 @@ def test_collect_missing_executable_routes_test_collected_failure(monkeypatch, t
     emits test.collected(failed) instead of raising."""
     ex, _store, emitted, _repo = _harness(monkeypatch, tmp_path)
     sections = _missing_executable_sections()
-    monkeypatch.setattr(executor_module, "load_contract", lambda r: _contract(**sections))
+    _patch_load_contract(monkeypatch, lambda r: _contract(**sections))
 
     crashed = None
     try:
@@ -669,9 +681,7 @@ def test_red_check_missing_run_selected_executable_emits_contract_error(monkeypa
     contract_error) rather than letting the raw exception escape."""
     ex, store, emitted, _repo = _harness(monkeypatch, tmp_path)
     _seed_r2_selection(store, _NODE_VE)
-    monkeypatch.setattr(
-        executor_module,
-        "load_contract",
+    _patch_load_contract(monkeypatch,
         lambda r: _contract(
             integration=_section(run_selected=f"{_MISSING_EXE} {{nodes}} --junitxml={{result}}")
         ),
