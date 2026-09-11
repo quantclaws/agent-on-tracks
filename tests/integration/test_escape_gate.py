@@ -28,6 +28,7 @@ import pytest
 
 from tests.e2e.helpers import (
     M_IMPL_PARK_SIMULATE,
+    _seed_phase0_premises,
     walk_to_await_human,
     walk_to_m_impl_parked,
 )
@@ -78,13 +79,23 @@ def test_universal_return_moves_pointer(host_repo, trac, event_log):
     assert payload["reason"] == "human escape"
     # Contract order: the barrier is the first escape event, before human.return.
     assert barrier["seq"] < human[-1]["seq"]
-    # No post-target evidence buckets exist at the M-IMPL source: a conforming
-    # implementation emits NO stale events for non-existent buckets (b93 Q3.3).
-    assert not [e for e in events if e["type"] == "evidence.staled"]
-    # Escape status five fragments (interfaces §2b; spec E-01 rendering).
-    status = trac("status").stdout
-    assert "human_return=Human→M-TEST" in status
-    assert "evidence.staled=0" in status
+    # b93 Q3.3: staling is bucket-existence-bound -- ONLY evidence buckets
+    # that actually exist get evidence.staled. Since the v0.8 repair-round
+    # chain an M-IMPL park legitimately carries post-M-TEST buckets (the
+    # walk went through M-VERIFY: candidate.frozen, release.previewed), the
+    # invariant is "every staled bucket exists on the stream", not "no
+    # buckets exist" (the pre-v0.8-chain environment assumption).
+    staled = [e for e in events if e["type"] == "evidence.staled"]
+    existing_types = {e["type"] for e in events}
+    for entry in staled:
+        assert entry["payload"]["evidence_type"] in existing_types, (
+            "evidence.staled must reference an actually-existing bucket "
+            f"(got {entry['payload']['evidence_type']})"
+        )
+        # Escape status five fragments (interfaces §2b; spec E-01 rendering).
+        status = trac("status").stdout
+        assert "human_return=Human→M-TEST" in status
+        assert f"evidence.staled={len(staled)}" in status
     assert "barrier=established" in status
     assert "late_outcome=quarantined" in status
     assert "frozen_tests=unfrozen" in status
@@ -358,6 +369,13 @@ def test_escape_barrier_quiesces_inflight_dispatch(host_repo, trac, event_log):
     assert "awaiting=approval" in r.stdout
     assert trac("approve", "--actor", "Aaron").returncode == 0
     # Park at the legal escape source with the walker's proven injection.
+    # v0.7+ phase0 pre-gate: the first post-approval run drafts the M-DESIGN
+    # trio and parks at phase0 on a bare repo; seed the premises (same
+    # channel as walk_to_m_impl_parked) and drive one more injected run to
+    # the M-IMPL park.
+    r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
+    assert r.returncode == 0, r.stderr
+    _seed_phase0_premises(getattr(trac, "repo", None) or host_repo, "v0.8")
     r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
     assert r.returncode == 0, r.stderr
     assert "stage=M-IMPL" in r.stdout and "awaiting=escalation" in r.stdout

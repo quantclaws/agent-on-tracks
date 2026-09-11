@@ -615,9 +615,30 @@ _APPLY = {
 }
 
 
+# B40 pending-WAL hazard: these mid-dispatch AUDIT events are emitted while
+# the dispatched command is still executing (command.issued already landed,
+# outcome.received has not). They are tagged with the dispatch's own
+# command_id and must NOT resolve its write-ahead pending record -- clearing
+# it there strands the in-flight command: recovery sees no pending, never
+# re-issues, and the run silently stalls (live 01M284JK: SIGKILL during a
+# hung scribe DRAFT left dispatch.parity as the last event). Events that
+# TERMINAL a dispatch (outcome.received, dispatch.rejected, format_error)
+# keep the legacy clear-any-event semantics.
+_PENDING_PRESERVING_AUDIT = frozenset(
+    {"dispatch.parity", "failure.injected", "worktree.opened", "worktree.closed"}
+)
+
+
 def apply(s: State, ev: EventEnvelope) -> State:
     if ev.type != "command.issued":
-        s.pending = None  # any subsequent event resolves the write-ahead record
+        preserves = (
+            ev.type in _PENDING_PRESERVING_AUDIT
+            and s.pending is not None
+            and ev.command_id is not None
+            and ev.command_id == s.pending.get("command_id")
+        )
+        if not preserves:
+            s.pending = None  # any subsequent event resolves the write-ahead record
     handler = _APPLY.get(ev.type)
     if handler is not None:
         handler(s, ev.payload, ev)
