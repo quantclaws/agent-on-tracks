@@ -90,6 +90,7 @@ from tracks.executor.helpers import (
     _LEGIT_RED,
     _dispatch_payload,
     _hook_output,
+    _scoped_commit_if_staged,  # noqa: F401  (lazy-import seam for m_impl_runtime)
     _short_detail,
     classify_red_detail,
     git,
@@ -466,29 +467,6 @@ def _phase0_frozen_test_digests(repo: Path, frozen_paths: list[str]) -> dict[str
                     file.read_bytes()
                 ).hexdigest()
     return digests
-
-
-def _scoped_commit_if_staged(
-    repo: Path, message: str, paths: list[Path | str] | None = None
-) -> subprocess.CompletedProcess | None:
-    """Attempt to commit staged changes (check=False), scoped to ``paths``
-    when given: the runtime commits only files it deliberately staged and
-    never sweeps unrelated operator-staged content into its commits
-    (AC-FR0236-01 attribution; same path-scoped pattern as the doc-gap
-    revision commit). Returns None if nothing was staged for the scoped
-    paths, or the CompletedProcess so the caller can inspect
-    ``.returncode`` for pre-commit hook rejection without crashing.
-    Module-local to executor.py (manifest scope): callers outside this
-    module lazy-import it to avoid the ResultCheckpoint import cycle."""
-    cached = ["diff", "--cached", "--quiet"]
-    if paths:
-        cached += ["--", *[str(p) for p in paths]]
-    if git(repo, *cached, check=False).returncode == 0:
-        return None
-    cmd = ["commit", "-m", message]
-    if paths:
-        cmd += ["--only", "--", *[str(p) for p in paths]]
-    return git(repo, *cmd, check=False)
 
 
 def _resolve_contract_argv0(argv: list[str], cwd: Path) -> list[str]:

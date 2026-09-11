@@ -28,6 +28,29 @@ def _commit_if_staged(repo: Path, message: str) -> subprocess.CompletedProcess |
     return git(repo, "commit", "-m", message, check=False)
 
 
+def _scoped_commit_if_staged(
+    repo: Path, message: str, paths: list[Path | str] | None = None
+) -> subprocess.CompletedProcess | None:
+    """Attempt to commit staged changes (check=False), scoped to ``paths``
+    when given: the runtime commits only files it deliberately staged and
+    never sweeps unrelated operator-staged content into its commits
+    (AC-FR0236-01 attribution; same path-scoped pattern as the doc-gap
+    revision commit). Returns None if nothing was staged for the scoped
+    paths, or the CompletedProcess so the caller can inspect
+    ``.returncode`` for pre-commit hook rejection without crashing.
+    The executor composition surface re-exports it for callers that
+    lazy-import it to avoid the ResultCheckpoint import cycle."""
+    cached = ["diff", "--cached", "--quiet"]
+    if paths:
+        cached += ["--", *[str(p) for p in paths]]
+    if git(repo, *cached, check=False).returncode == 0:
+        return None
+    cmd = ["commit", "-m", message]
+    if paths:
+        cmd += ["--only", "--", *[str(p) for p in paths]]
+    return git(repo, *cmd, check=False)
+
+
 def _hook_output(proc: subprocess.CompletedProcess, limit: int = 4096) -> str:
     """Combined stdout+stderr from a failed ``git commit``, truncated."""
     combined = (proc.stdout or "") + (proc.stderr or "")
