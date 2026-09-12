@@ -276,11 +276,12 @@ def test_m1_cli_run_exits_1_on_command_stall(tmp_path, monkeypatch, capsys):
     """M1: cmd_run must translate CommandStallError into exit 1 with the
     stall banner (no traceback), mirroring the B43 drift-abort chain."""
     import tracks.cli.main as cli_main
+    import tracks.cli.run_cmd as cli_run
     from tracks.executor.stall import CommandStallError
 
     repo = tmp_path / "r"
     repo.mkdir()
-    monkeypatch.setattr(cli_main.paths, "tracks_home", lambda r: tmp_path / "home")
+    monkeypatch.setattr(cli_run.paths, "tracks_home", lambda r: tmp_path / "home")
 
     class _FakeState:
         status = "active"
@@ -296,7 +297,7 @@ def test_m1_cli_run_exits_1_on_command_stall(tmp_path, monkeypatch, capsys):
         def state(self, run_id):
             return _FakeState()
 
-    monkeypatch.setattr(cli_main, "Store", lambda home: _FakeStore())
+    monkeypatch.setattr(cli_run, "Store", lambda home: _FakeStore())
 
     def _boom(self):
         raise CommandStallError("command stall detected: kind=commit_green count=20")
@@ -308,7 +309,7 @@ def test_m1_cli_run_exits_1_on_command_stall(tmp_path, monkeypatch, capsys):
         def run_loop(self):
             _boom(None)
 
-    monkeypatch.setattr(cli_main, "Executor", _FakeExecutor)
+    monkeypatch.setattr(cli_run, "Executor", _FakeExecutor)
     rc = cli_main.cmd_run(repo)
     out = capsys.readouterr()
     assert rc == 1

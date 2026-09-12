@@ -168,7 +168,7 @@ def test_red_green_smoke_is_the_gate(tmp_path, monkeypatch):
     """红绿：注释掉烟测调用（mock 返回 None）→ 坏树不被拦截。"""
     repo = _with_tracks_pkg(_repo(tmp_path, with_git=True), broken=_BROKEN_CONTENT)
     store = _active_run(repo)
-    monkeypatch.setattr("tracks.cli.main._startup_smoke_error", lambda repo: None)
+    monkeypatch.setattr("tracks.cli.run_cmd._startup_smoke_error", lambda repo: None)
     monkeypatch.setattr(Executor, "run_loop", lambda self: store.state(self.run_id))
     rc = cmd_run(repo)
     assert rc == 0
