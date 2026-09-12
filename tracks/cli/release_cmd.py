@@ -138,7 +138,8 @@ _RELEASE_USAGE = (
     "|trac release --action release|trac release --action delay --reason TEXT"
     "|trac release --action return --to <stage> --reason TEXT"
 )
-_ABANDON_USAGE = "usage: trac abandon --reason TEXT"
+
+
 _RELEASE_REJECTED = (
     "error: release rejected — gate failed (m-verify/prism/security) or "
     "preview stale (candidate drift); preview_digest mismatch; run the "
