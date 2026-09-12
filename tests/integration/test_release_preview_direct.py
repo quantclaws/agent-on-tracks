@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 import tomllib
 
+from tests._support.release_premises import append_verify_release_premises
 from tracks import paths
 from tracks.effects.publish import read_remote_state
 from tracks.executor.executor import Executor
@@ -117,132 +118,6 @@ def _write_contract(repo: Path, operation_steps: list[str]) -> Path:
     return contract
 
 
-def _append_upstream_premises(
-    store: Store,
-    run_id: str,
-    version: str,
-    candidate: str,
-    branch: str,
-    contract_digest: str,
-    artifact_digest: str,
-    policy_digest: str,
-) -> None:
-    """Record already accepted upstream evidence; none is the target result."""
-    store.append(run_id, version, "stage.entered", {"stage": "M-VERIFY"})
-    store.append(
-        run_id,
-        version,
-        "candidate.frozen",
-        {
-            "candidate_sha": candidate,
-            "clean_tree": True,
-            "branch": branch,
-            "frozen_at_seq": len(list(store.events(run_id))) + 1,
-        },
-    )
-    for ordinal, kind in enumerate(("quality", "trace")):
-        normalized = {
-            "schema": "tracks-gate-result",
-            "version": 1,
-            "status": "passed",
-            "exit_code": 0,
-            "summary": {"source": "accepted upstream premise"},
-            "gate_id": kind,
-        }
-        store.append(
-            run_id,
-            version,
-            "local_gate.passed",
-            {
-                "kind": kind,
-                "gate_identity": f"{kind}[{ordinal}]",
-                "candidate_sha": candidate,
-                "contract_digest": contract_digest,
-                "command_echo": ["true"],
-                "normalized_result": dict(normalized),
-                "status": "passed",
-                "exit_code": 0,
-                "summary": dict(normalized["summary"]),
-            },
-        )
-    store.append(
-        run_id,
-        version,
-        "artifact.built",
-        {
-            "candidate_sha": candidate,
-            "artifact": "dist/package.whl",
-            "artifact_digest": artifact_digest,
-            "status": "passed",
-        },
-    )
-    store.append(
-        run_id,
-        version,
-        "ci.run_observed",
-        {
-            "status": "passed",
-            "repo": "local/preview-host",
-            "workflow": "123",
-            "run_id": 17,
-            "head_sha": candidate,
-            "candidate_sha": candidate,
-            "conclusion": "success",
-            "required_checks": ["required-ci"],
-            "api_verified": True,
-        },
-    )
-    store.append(
-        run_id,
-        version,
-        "prism.verdict",
-        {
-            "verdict": "pass",
-            "scope": "verify_final",
-            "candidate_sha": candidate,
-            "evidence_digests": {"artifact": artifact_digest},
-        },
-    )
-    review_command_id = f"security-review-{candidate}"
-    store.append(
-        run_id,
-        version,
-        "prism.verdict",
-        {
-            "verdict": "pass",
-            "scope": "security",
-            "candidate_sha": candidate,
-            "policy_digest": policy_digest,
-            "evidence_digests": {"artifact": artifact_digest},
-        },
-        command_id=review_command_id,
-    )
-    store.append(
-        run_id,
-        version,
-        "security.assessed",
-        {
-            "status": "passed",
-            "policy_digest": policy_digest,
-            "contract_digest": contract_digest,
-            "candidate_sha": candidate,
-            "scans": [{
-                "id": "accepted-security-scan",
-                "status": "passed",
-                "exit_code": 0,
-                "result_version": 1,
-                "summary": {},
-            }],
-            "prism_scope": "security",
-            "review_command_id": review_command_id,
-        },
-    )
-    store.append(run_id, version, "stage.exited", {"stage": "M-VERIFY"})
-    store.append(run_id, version, "stage.entered", {"stage": "M-SECURITY"})
-    store.append(run_id, version, "stage.exited", {"stage": "M-SECURITY"})
-    store.append(run_id, version, "stage.entered", {"stage": "M-RELEASE"})
-
-
 def _prepare(host_repo: Path, trac, tmp_path: Path, operation_steps: list[str] | None = None):
     assert trac("init").returncode == 0
     assert trac("start", "v0.8", stdin="M-RELEASE preview acceptance").returncode == 0
@@ -276,7 +151,7 @@ def _prepare(host_repo: Path, trac, tmp_path: Path, operation_steps: list[str] |
         run_id = store.active_run()
         assert run_id
         version = store.state(run_id).version or "v0.8"
-        _append_upstream_premises(
+        append_verify_release_premises(
             store,
             run_id,
             version,
@@ -450,7 +325,7 @@ def test_changed_evidence_or_contract_requires_new_preview(
         fresh_contract_digest = hashlib.sha256(contract.read_bytes()).hexdigest()
         store = Store(paths.tracks_home(host_repo))
         try:
-            _append_upstream_premises(
+                append_verify_release_premises(
                 store,
                 run_id,
                 store.state(run_id).version or "v0.8",

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.release_premises import append_verify_release_premises
 from tests.integration.test_release_preview_direct import (
     _events,
     _expected_security_policy_digest,
@@ -197,103 +198,19 @@ def _new_candidate(
     store = Store(paths.tracks_home(repo))
     try:
         version = store.state(run_id).version or "v0.8"
-        store.append(run_id, version, "stage.entered", {"stage": "M-VERIFY"})
-        store.append(
+        append_verify_release_premises(
+            store,
             run_id,
             version,
-            "candidate.frozen",
-            {
-                "candidate_sha": candidate,
-                "clean_tree": True,
-                "branch": identity.branch,
-                "frozen_at_seq": len(list(store.events(run_id))) + 1,
-            },
+            candidate,
+            identity.branch,
+            contract_digest,
+            artifact_digest,
+            policy_digest,
+            include_ci=include_ci,
+            ci_run_id=18,
+            include_gate_summary=False,
         )
-        for ordinal, kind in enumerate(("quality", "trace")):
-            store.append(
-                run_id,
-                version,
-                "local_gate.passed",
-                {
-                    "kind": kind,
-                    "gate_identity": f"{kind}[{ordinal}]",
-                    "candidate_sha": candidate,
-                    "contract_digest": contract_digest,
-                    "command_echo": ["true"],
-                    "normalized_result": {
-                        "schema": "tracks-gate-result",
-                        "version": 1,
-                        "status": "passed",
-                        "exit_code": 0,
-                        "summary": {"source": "accepted upstream premise"},
-                        "gate_id": kind,
-                    },
-                    "status": "passed",
-                    "exit_code": 0,
-                },
-            )
-        store.append(
-            run_id,
-            version,
-            "artifact.built",
-            {
-                "candidate_sha": candidate,
-                "artifact": "dist/package.whl",
-                "artifact_digest": artifact_digest,
-                "status": "passed",
-            },
-        )
-        if include_ci:
-            _append_ci(store, run_id, candidate)
-        store.append(
-            run_id,
-            version,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "verify_final",
-                "candidate_sha": candidate,
-                "evidence_digests": {"artifact": artifact_digest},
-            },
-        )
-        review_command_id = f"security-review-{candidate}"
-        store.append(
-            run_id,
-            version,
-            "prism.verdict",
-            {
-                "verdict": "pass",
-                "scope": "security",
-                "candidate_sha": candidate,
-                "policy_digest": policy_digest,
-                "evidence_digests": {"artifact": artifact_digest},
-            },
-            command_id=review_command_id,
-        )
-        store.append(
-            run_id,
-            version,
-            "security.assessed",
-            {
-                "status": "passed",
-                "policy_digest": policy_digest,
-                "contract_digest": contract_digest,
-                "candidate_sha": candidate,
-                "scans": [{
-                    "id": "accepted-security-scan",
-                    "status": "passed",
-                    "exit_code": 0,
-                    "result_version": 1,
-                    "summary": {},
-                }],
-                "prism_scope": "security",
-                "review_command_id": review_command_id,
-            },
-        )
-        store.append(run_id, version, "stage.exited", {"stage": "M-VERIFY"})
-        store.append(run_id, version, "stage.entered", {"stage": "M-SECURITY"})
-        store.append(run_id, version, "stage.exited", {"stage": "M-SECURITY"})
-        store.append(run_id, version, "stage.entered", {"stage": "M-RELEASE"})
     finally:
         store.close()
     return candidate, contract_digest
