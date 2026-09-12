@@ -228,8 +228,17 @@ class DocGapRuntime:
         for rel in sorted(self._caps.dirty_snapshot()):
             if rel in pre:
                 continue  # Human/pre-dirty content survives (AC-FR0237-02).
-            git(self._caps.repo, "checkout", "--", rel, check=False)
-            if (self._caps.repo / rel).exists():
+            tracked = git(
+                self._caps.repo, "cat-file", "-e", f"HEAD:{rel}", check=False
+            ).returncode == 0
+            if tracked:
+                # A file that existed pre-dispatch (committed bytes) is
+                # restored from HEAD -- whether the agent modified or
+                # deleted it. It must never be unlinked: that would leave a
+                # bogus `D path` in the worktree (interfaces §1k).
+                git(self._caps.repo, "checkout", "HEAD", "--", rel, check=False)
+            elif (self._caps.repo / rel).exists():
+                # Agent-created file (absent pre-dispatch): remove it.
                 (self._caps.repo / rel).unlink()
             rejected.append(rel)
         return rejected

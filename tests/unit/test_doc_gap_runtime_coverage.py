@@ -336,6 +336,54 @@ def test_rollback_doc_gap_round_preserves_predirty_and_removes_untracked(tmp_pat
     assert not (repo / "untracked.txt").exists()
 
 
+def test_rollback_restores_agent_modified_tracked_file(tmp_path: Path):
+    """A tracked file modified by the agent rolls back to its committed bytes
+    and stays in the worktree -- no `D path` (interfaces §1k)."""
+    repo = git_repo(tmp_path)
+    (repo / "tracked.txt").write_text("committed\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "add tracked")
+    (repo / "tracked.txt").write_text("agent edit\n", encoding="utf-8")
+    ctx = _make_ctx(tmp_path, repo=repo, docs=repo)
+    ctx.dirty.update({"tracked.txt": "id1"})
+    rejected = ctx.runtime._rollback_doc_gap_round({}, {})
+    assert rejected == ["tracked.txt"]
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "committed\n"
+    status = _git(repo, "status", "--porcelain", "--", "tracked.txt").stdout
+    assert status == ""
+
+
+def test_rollback_restores_agent_deleted_tracked_file(tmp_path: Path):
+    """An agent-deleted tracked file is restored from HEAD, not left deleted
+    (interfaces §1k)."""
+    repo = git_repo(tmp_path)
+    (repo / "tracked.txt").write_text("committed\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "add tracked")
+    (repo / "tracked.txt").unlink()
+    ctx = _make_ctx(tmp_path, repo=repo, docs=repo)
+    ctx.dirty.update({"tracked.txt": "missing"})
+    rejected = ctx.runtime._rollback_doc_gap_round({}, {})
+    assert rejected == ["tracked.txt"]
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "committed\n"
+    status = _git(repo, "status", "--porcelain", "--", "tracked.txt").stdout
+    assert status == ""
+
+
+def test_rollback_removes_agent_created_untracked_file(tmp_path: Path):
+    """A file the agent created (absent pre-dispatch) is removed; nothing
+    tracked is left modified."""
+    repo = git_repo(tmp_path)
+    (repo / "agent-new.txt").write_text("new\n", encoding="utf-8")
+    ctx = _make_ctx(tmp_path, repo=repo, docs=repo)
+    ctx.dirty.update({"agent-new.txt": "id1"})
+    rejected = ctx.runtime._rollback_doc_gap_round({}, {})
+    assert rejected == ["agent-new.txt"]
+    assert not (repo / "agent-new.txt").exists()
+    status = _git(repo, "status", "--porcelain", "-uall").stdout
+    assert status == ""
+
+
 # ---------------------------------------------------------------------------
 # quarantine manifest
 # ---------------------------------------------------------------------------
