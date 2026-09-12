@@ -446,14 +446,13 @@ def test_missing_registry_command_blocks_with_bound_failure(tmp_path, monkeypatc
     contract = replace(contract, local_gates=(
         LocalGateDecl("quality", "guard_registry", "", (), "exit_code", 5),
     ))
-    monkeypatch.setattr(verify_gates_module, "lint_check_command", lambda _repo: None)
     emitted = []
     monkeypatch.setattr(executor, "_emit", lambda kind, payload, **_kw: emitted.append(
         (kind, payload)
     ))
     ok = executor._execute_verify_gates(
         Command("run_local_gates", command_id="CMD-MISSING-GUARD"),
-        _CANDIDATE, _DIGEST, contract, SimpleNamespace(),
+        _CANDIDATE, _DIGEST, contract, SimpleNamespace(version="v0.8"),
     )
     assert ok is False
     assert [kind for kind, _payload in emitted] == ["local_gate.failed"]
@@ -462,4 +461,4 @@ def test_missing_registry_command_blocks_with_bound_failure(tmp_path, monkeypatc
     assert payload["contract_digest"] == _DIGEST
     assert payload["kind"] == "quality"
     assert payload["normalized_result"]["status"] == "failed"
-    assert "command" in payload["detail"]
+    assert "architecture.md" in payload["detail"]
