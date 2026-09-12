@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
@@ -39,6 +40,41 @@ class TaskSelectionFailure(Exception):
     def __init__(self, message: str, evidence: str):
         super().__init__(message)
         self.evidence = evidence
+
+
+@dataclass(frozen=True)
+class _TaskSelection:
+    """Resolved + persisted task_if selection identity."""
+
+    contract: object
+    nodes: list
+    by_layer: dict
+    nodes_blob: str
+    selection_id: str
+
+
+@dataclass(frozen=True)
+class _TaskSelectionRun:
+    """The five execution artifacts of ``_run_task_selected_layers``."""
+
+    outcomes: list
+    failed_nodes: list
+    commands: dict
+    templates: dict
+    forensics_ref: object
+
+
+@dataclass(frozen=True)
+class _TaskSelectionEvidence:
+    """Evidence binding + scope snapshot of one task selection run."""
+
+    content_digest: str
+    command_identity: object
+    env_identity: object
+    evidence_ids: list
+    outcomes_ref_path: str
+    scope_rules: list
+    snapshot: dict
 
 
 class MImplDispatchMixin:
@@ -415,6 +451,54 @@ class MImplDispatchMixin:
     def _execute_task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> dict:
         """Emit and execute one task_if selection through contract run_selected.
         B94: selection includes deferred refs (and integration hard gate)."""
+        selection = self._task_selection(cmd, state, cwd, task)
+        run = _TaskSelectionRun(
+            *self._run_task_selected_layers(
+                cmd, selection.contract, cwd, selection.by_layer
+            )
+        )
+        self._check_drift_breaker(cmd, task, run.failed_nodes)
+        hard, deferred = self._partition_selection_failures(task, run.failed_nodes)
+        evidence = self._task_selection_evidence(state, cwd, selection, run)
+        if self._is_deferred_only(run.failed_nodes, hard, deferred):
+            return self._deferred_success_payload(
+                selection.selection_id,
+                selection.nodes_blob,
+                evidence.outcomes_ref_path,
+                evidence.evidence_ids,
+                evidence.content_digest,
+                evidence.command_identity,
+                evidence.env_identity,
+                evidence.scope_rules,
+                evidence.snapshot,
+                run.commands,
+                run.templates,
+                deferred,
+            )
+        if hard:
+            self._raise_hard_failure(
+                selection.selection_id,
+                evidence.outcomes_ref_path,
+                hard,
+                deferred,
+                forensics_ref=run.forensics_ref,
+            )
+        return self._success_payload(
+            selection.selection_id,
+            selection.nodes_blob,
+            evidence.outcomes_ref_path,
+            evidence.evidence_ids,
+            evidence.content_digest,
+            evidence.command_identity,
+            evidence.env_identity,
+            evidence.scope_rules,
+            evidence.snapshot,
+            run.commands,
+            run.templates,
+        )
+
+    def _task_selection(self, cmd, state: State, cwd: str, task: TaskNode) -> _TaskSelection:
+        """Resolve + persist the task_if selection identity (test.selected)."""
         contract, nodes = self._collect_task_gate_nodes(cwd, task)
         by_layer = self._by_layer(nodes)
         baseline = str(state.r_tree_identity or "")
@@ -432,6 +516,23 @@ class MImplDispatchMixin:
             tree_stamp=tree_stamp,
         )
         self._stale_prior_task_selection(cmd, task, nodes, baseline, selection_id)
+        nodes_blob = self._emit_task_selected(
+            cmd, task, nodes, basis, baseline, commit, tree_stamp, selection_id
+        )
+        return _TaskSelection(contract, nodes, by_layer, nodes_blob, selection_id)
+
+    def _emit_task_selected(
+        self,
+        cmd,
+        task: TaskNode,
+        nodes: list,
+        basis: str,
+        baseline: str,
+        commit: str,
+        tree_stamp: str,
+        selection_id: str,
+    ) -> str:
+        """Persist the selection nodes blob and emit test.selected."""
         node_ref = self.store.write_audit_blob(
             [
                 {
@@ -462,23 +563,32 @@ class MImplDispatchMixin:
             command_id=cmd.command_id,
             task_id=task.task_id,
         )
+        return nodes_blob
+
+    def _task_scope_snapshot(self, state: State, cwd: str, nodes: list) -> tuple:
+        """Manifest allowed_paths + selected node files, snapshotted."""
         scope_rules = list((state.current_manifest or {}).get("allowed_paths", []))
         scope_rules.extend(node.partition("::")[0] for node in nodes)
         scope_rules = sorted(set(scope_rules))
         snapshot = self._task_content_snapshot(Path(cwd), scope_rules)
-        content_digest = self._snapshot_digest(snapshot)
-        env_identity = self._gate_environment_identity()
-        outcomes, failed_nodes, commands, templates, forensics_ref = (
-            self._run_task_selected_layers(cmd, contract, cwd, by_layer)
-        )
-        command_identity = self._selection_command_identity(commands)
+        return scope_rules, snapshot, self._snapshot_digest(snapshot)
+
+    def _task_evidence_ids(
+        self,
+        state: State,
+        selection_id: str,
+        content_digest: str,
+        command_identity,
+        env_identity,
+        outcomes: list,
+    ) -> list:
         identity = EvidenceIdentity(
             tree=content_digest,
             command=command_identity,
             env=env_identity,
             selection_id=selection_id,
         )
-        evidence_ids = [
+        return [
             evidence_identity(
                 identity,
                 outcome["node"],
@@ -488,48 +598,44 @@ class MImplDispatchMixin:
             )
             for outcome in outcomes
         ]
-        outcomes_ref = self.store.write_audit_blob(outcomes)
-        if outcomes_ref is None:
-            raise TestSelectError("GREEN outcomes blob write failed")
-        outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
-        self._check_drift_breaker(cmd, task, failed_nodes)
-        from tracks.executor.deferred_gate import partition_failures
 
-        hard, deferred = partition_failures(
-            failed_nodes, getattr(task, "deferred_refs", ()) or ()
+    def _task_selection_evidence(
+        self, state: State, cwd: str, selection: _TaskSelection, run: _TaskSelectionRun
+    ) -> _TaskSelectionEvidence:
+        """Bind the run's outcomes to a persisted, replayable evidence chain."""
+        scope_rules, snapshot, content_digest = self._task_scope_snapshot(
+            state, cwd, selection.nodes
         )
-        if self._is_deferred_only(failed_nodes, hard, deferred):
-            return self._deferred_success_payload(
-                selection_id,
-                nodes_blob,
-                outcomes_ref_path,
-                evidence_ids,
-                content_digest,
-                command_identity,
-                env_identity,
-                scope_rules,
-                snapshot,
-                commands,
-                templates,
-                deferred,
-            )
-        if hard:
-            self._raise_hard_failure(
-                selection_id, outcomes_ref_path, hard, deferred,
-                forensics_ref=forensics_ref,
-            )
-        return self._success_payload(
-            selection_id,
-            nodes_blob,
-            outcomes_ref_path,
-            evidence_ids,
+        env_identity = self._gate_environment_identity()
+        command_identity = self._selection_command_identity(run.commands)
+        evidence_ids = self._task_evidence_ids(
+            state,
+            selection.selection_id,
             content_digest,
             command_identity,
             env_identity,
+            run.outcomes,
+        )
+        outcomes_ref = self.store.write_audit_blob(run.outcomes)
+        if outcomes_ref is None:
+            raise TestSelectError("GREEN outcomes blob write failed")
+        outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
+        return _TaskSelectionEvidence(
+            content_digest,
+            command_identity,
+            env_identity,
+            evidence_ids,
+            outcomes_ref_path,
             scope_rules,
             snapshot,
-            commands,
-            templates,
+        )
+
+    @staticmethod
+    def _partition_selection_failures(task: TaskNode, failed_nodes: list) -> tuple:
+        from tracks.executor.deferred_gate import partition_failures
+
+        return partition_failures(
+            failed_nodes, getattr(task, "deferred_refs", ()) or ()
         )
 
     def _forensics_root(self, command_id: str) -> Path:
