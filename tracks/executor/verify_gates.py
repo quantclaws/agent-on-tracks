@@ -588,8 +588,8 @@ the runtime-materialized default contract lives here."""
         ``source=version_decl`` gates are executed natively by the Runtime
         (tag-template derivation + remote absence probe, see
         :meth:`_execute_version_decl_gate`). A registry gate that resolves to
-        nothing is skipped too (gates skip, never guess a host toolchain
-        invocation — IF-HOSTCONTRACT-001 NFR-0147). Inline-command gates
+        nothing fails closed without guessing a host toolchain invocation
+        (FR-0269 / NFR-0147). Inline-command gates
         render and run verbatim.
         """
         scope = self._release_version_facts(state)
@@ -605,12 +605,16 @@ the runtime-materialized default contract lives here."""
     def _run_one_local_gate(
         self, cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope
     ) -> bool:
-        """Execute one declared gate; False when it failed (skip = True)."""
+        """Execute one declared gate; missing commands fail closed."""
         command = gate.command
         if gate.source == "guard_registry":
             resolved_lint = lint_check_command(self.repo)
             if not resolved_lint:
-                return True  # skip, never guess
+                self._emit_gate_exec_error(
+                    cmd, gate, ordinal, candidate_sha, contract_digest,
+                    ValueError("guard_registry has no declared lint command"),
+                )
+                return False
             command = resolved_lint
         elif gate.source == "version_decl":
             return self._execute_version_decl_gate(

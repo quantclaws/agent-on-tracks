@@ -438,3 +438,28 @@ def test_legacy_failure_requires_all_gates_to_be_newer(tmp_path, monkeypatch):
         resume=True,
     )
     assert seen == [gate.kind for gate in contract.local_gates]
+
+
+def test_missing_registry_command_blocks_with_bound_failure(tmp_path, monkeypatch):
+    """FR-0269: an unavailable declared quality gate cannot count as passed."""
+    executor, _store, contract = _executor(tmp_path, monkeypatch)
+    contract = replace(contract, local_gates=(
+        LocalGateDecl("quality", "guard_registry", "", (), "exit_code", 5),
+    ))
+    monkeypatch.setattr(verify_gates_module, "lint_check_command", lambda _repo: None)
+    emitted = []
+    monkeypatch.setattr(executor, "_emit", lambda kind, payload, **_kw: emitted.append(
+        (kind, payload)
+    ))
+    ok = executor._execute_verify_gates(
+        Command("run_local_gates", command_id="CMD-MISSING-GUARD"),
+        _CANDIDATE, _DIGEST, contract, SimpleNamespace(),
+    )
+    assert ok is False
+    assert [kind for kind, _payload in emitted] == ["local_gate.failed"]
+    payload = emitted[0][1]
+    assert payload["candidate_sha"] == _CANDIDATE
+    assert payload["contract_digest"] == _DIGEST
+    assert payload["kind"] == "quality"
+    assert payload["normalized_result"]["status"] == "failed"
+    assert "command" in payload["detail"]
