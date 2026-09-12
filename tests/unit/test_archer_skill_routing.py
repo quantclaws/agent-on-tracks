@@ -18,7 +18,7 @@ from tracks.frontmatter import split_frontmatter
 REPO = Path(__file__).resolve().parents[2]
 
 MACHINE = REPO / "tracks" / "kernel" / "machine_decide.py"
-M_IMPL = REPO / "tracks" / "kernel" / "m_impl.py"
+M_IMPL = REPO / "tracks" / "kernel" / "m_impl_decide.py"
 
 DESIGN_SRC = REPO / "tracks" / "skills" / "tracks-archer-design" / "SKILL.md"
 DESIGN_EFF = REPO / ".opencode" / "skills" / "tracks-archer-design" / "SKILL.md"

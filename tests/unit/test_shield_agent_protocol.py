@@ -25,7 +25,7 @@ EFFECTIVE = {
 # declare [tracks-discuz, tracks-shield] with discussion first.
 ROUTING_KERNELS = (
     REPO / "tracks" / "kernel" / "m_test.py",
-    REPO / "tracks" / "kernel" / "m_impl.py",
+    REPO / "tracks" / "kernel" / "m_impl_decide.py",
 )
 SHIELD_SKILLS = ["tracks-discuz", "tracks-shield"]
 

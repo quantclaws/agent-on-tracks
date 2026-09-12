@@ -21,8 +21,9 @@ EFFECTIVE = {
 }
 
 # b91 keeps the existing routing untouched: M-IMPL RED/GREEN/REFACTOR all
-# dispatch role=devon with the tracks-devon-rgr skill (tracks/kernel/m_impl.py).
-ROUTING_KERNEL = REPO / "tracks" / "kernel" / "m_impl.py"
+# dispatch role=devon with the tracks-devon-rgr skill
+# (tracks/kernel/m_impl_decide.py).
+ROUTING_KERNEL = REPO / "tracks" / "kernel" / "m_impl_decide.py"
 
 
 def _normalized(text: str) -> str:
@@ -73,4 +74,4 @@ def test_envelope_v2_token_present_in_core_only():
 
 def test_single_phase_skill_routing_wiring_exists():
     kernel = ROUTING_KERNEL.read_text(encoding="utf-8")
-    assert "tracks-devon-rgr" in kernel, "m_impl.py no longer wires tracks-devon-rgr"
+    assert "tracks-devon-rgr" in kernel, "m_impl_decide.py no longer wires tracks-devon-rgr"
