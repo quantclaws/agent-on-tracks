@@ -190,6 +190,18 @@ def _preview_error(
     contract_raw, contract_table = contract
     if _digest_bytes(contract_raw) != preview.get("contract_policy_digest"):
         return None, "contract_changed"
+    current_plan, error = _revalidated_plan(repo, operation_plan, contract_table, version_facts)
+    if error is not None:
+        return None, error
+    if current_plan != operation_plan:
+        return None, "operation_plan_changed"
+    return current_plan, None
+
+
+def _revalidated_plan(
+    repo: Path, operation_plan: dict, contract_table: dict, version_facts: dict
+):
+    """Rebuild the operation plan from the contract; (plan, None) or error."""
     journey = str(operation_plan.get("journey") or "")
     patch_line = str(
         (contract_table.get("version_scheme") or {}).get("patch_line") or ""
@@ -203,15 +215,13 @@ def _preview_error(
     if facts is None:
         return None, facts_error or "release_facts_unresolved"
     resolved_facts = _facts_with_scheme(facts, contract_table)
-    current_plan = build_operation_plan(
+    plan = build_operation_plan(
         contract_table,
         journey,
         resolved_facts,
         active_release_branch=active_release_branch(repo, resolved_facts),
     )
-    if current_plan != operation_plan:
-        return None, "operation_plan_changed"
-    return current_plan, None
+    return plan, None
 
 
 def _valid_ref(repo: Path, ref: str) -> bool:
@@ -314,6 +324,20 @@ def _operation_records(
         for record in records
         if record["operation_kind"] == "tag"
     }
+    artifact_release = _artifact_release_target(records)
+    resolved: list[dict] = []
+    for record in records:
+        validated, error = _validate_operation_record(
+            repo, record, tag_targets, artifact_release
+        )
+        if error is not None:
+            return None, error
+        resolved.append(validated)
+    return resolved, None
+
+
+def _artifact_release_target(records: list[dict]) -> str | None:
+    """The plan's single release/tag target bound to artifact uploads."""
     unique_tags = list(dict.fromkeys(
         record["target"] for record in records
         if record["operation_kind"] == "tag"
@@ -323,37 +347,39 @@ def _operation_records(
         if record["operation_kind"] == "release"
     ))
     if len(unique_releases) == 1:
-        artifact_release = unique_releases[0]
-    elif not unique_releases and len(unique_tags) == 1:
-        artifact_release = unique_tags[0]
+        return unique_releases[0]
+    if not unique_releases and len(unique_tags) == 1:
+        return unique_tags[0]
+    return None
+
+
+def _validate_operation_record(
+    repo: Path, record: dict, tag_targets: set[str], artifact_release: str | None
+):
+    """Validate one step against its kind's rules; (record, None) or error."""
+    kind = record["operation_kind"]
+    target = record["target"]
+    if kind not in _OPERATION_KINDS:
+        return None, "unknown_operation"
+    if kind == "tag":
+        if not _valid_tag_ref(repo, target):
+            return None, "malformed"
+    elif kind == "merge":
+        if not _valid_branch_ref(repo, target):
+            return None, "malformed"
+    elif kind == "release":
+        if not _valid_tag_ref(repo, target) or target not in tag_targets:
+            return None, "malformed"
     else:
-        artifact_release = None
-    resolved: list[dict] = []
-    for record in records:
-        kind = record["operation_kind"]
-        target = record["target"]
-        if kind not in _OPERATION_KINDS:
-            return None, "unknown_operation"
-        if kind == "tag":
-            if not _valid_tag_ref(repo, target):
-                return None, "malformed"
-        elif kind == "merge":
-            if not _valid_branch_ref(repo, target):
-                return None, "malformed"
-        elif kind == "release":
-            if not _valid_tag_ref(repo, target) or target not in tag_targets:
-                return None, "malformed"
-        else:
-            identity = _resolve_artifact(repo, target)
-            if identity is None or artifact_release is None:
-                return None, "malformed"
-            record = {
-                **record,
-                **identity,
-                "release_target": artifact_release,
-            }
-        resolved.append(record)
-    return resolved, None
+        identity = _resolve_artifact(repo, target)
+        if identity is None or artifact_release is None:
+            return None, "malformed"
+        return {
+            **record,
+            **identity,
+            "release_target": artifact_release,
+        }, None
+    return record, None
 
 
 def resolve_publish_authority(
