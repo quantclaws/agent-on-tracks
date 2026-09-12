@@ -495,6 +495,18 @@ class MImplDiagnoseMixin:
         green commit lineage without R ref).
         """
         attempt = state.current_attempt + 1
+        selection = self._walk_red_selection(cmd, tid, attempt, meta)
+        if selection is None:
+            return
+        cmd_argv, result_path, run_cwd = selection
+        rc, out, err = self._run_anchor_suite(cmd_argv, run_cwd, result_path)
+        if rc != 0:
+            self._emit_walk_red_regression(cmd, tid, attempt, out)
+            return
+        self._checkpoint_walk_red(cmd, tid, attempt, cmd_argv, rc, out, err)
+
+    def _walk_red_selection(self, cmd, tid: str, attempt: int, meta: dict):
+        """Resolve the unit suite argv for walk_red, or None (after emitting)."""
         unit_refs = [r for r in (meta.get("unit_refs") or []) if isinstance(r, str)]
         if not unit_refs:
             self._emit(
@@ -508,34 +520,37 @@ class MImplDiagnoseMixin:
                 command_id=cmd.command_id,
                 task_id=tid,
             )
-            return
+            return None
         try:
-            cmd_argv, result_path, run_cwd = self._selected_test_argv(
-                unit_refs, cmd.command_id or "", "unit"
-            )
+            return self._selected_test_argv(unit_refs, cmd.command_id or "", "unit")
         except (ContractError, TestSelectError) as exc:
             self._fail_anchor_contract(cmd, tid, attempt, "unit", exc)
-            return
-        rc, out, err = self._run_anchor_suite(cmd_argv, run_cwd, result_path)
-        if rc != 0:
-            summary = out.strip().splitlines()[-1] if out.strip() else ""
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "red_invalid",
-                    "reason": (
-                        "walk_red unit pins are not green - regression "
-                        f"baseline cannot be sealed. {summary}"
-                    ),
-                    "evidence": out[-2000:],
-                    "task_id": tid,
-                    "attempt": attempt,
-                },
-                command_id=cmd.command_id,
-                task_id=tid,
-            )
-            self._rebuild_task_log_projection()
-            return
+            return None
+
+    def _emit_walk_red_regression(self, cmd, tid: str, attempt: int, out: str) -> None:
+        """The unit pins are not green: no regression baseline can be sealed."""
+        summary = out.strip().splitlines()[-1] if out.strip() else ""
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "red_invalid",
+                "reason": (
+                    "walk_red unit pins are not green - regression "
+                    f"baseline cannot be sealed. {summary}"
+                ),
+                "evidence": out[-2000:],
+                "task_id": tid,
+                "attempt": attempt,
+            },
+            command_id=cmd.command_id,
+            task_id=tid,
+        )
+        self._rebuild_task_log_projection()
+
+    def _checkpoint_walk_red(
+        self, cmd, tid: str, attempt: int, cmd_argv, rc: int, out: str, err: str
+    ) -> None:
+        """Pin the R ref to the base sha and emit the walk_red checkpoint."""
         ref, base_sha = self._pin_r_ref(tid, attempt)
         ref_payload: dict = {"passed": True, "tail": out[-400:], "walk_red": True}
         blob = self.store.write_audit_blob(
