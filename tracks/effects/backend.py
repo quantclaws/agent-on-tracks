@@ -23,6 +23,21 @@ SHIELD_LAYERS = ("integration", "e2e")
 TASK_AC_ID = re.compile(r"^AC-(?:N?FR)\d{4}-\d{2}$")
 TASK_IF_ID = re.compile(r"^IF-[A-Z]+-\d{3}$")
 
+# Devon assignment contract (IF-003 §5): the fields every materialized Devon
+# dispatch must carry. Shared by the FakeBackend validator and the Runtime's
+# pre-dispatch gate so the two can never drift.
+DEVON_ASSIGNMENT_REQUIRED = (
+    "task_id",
+    "if_ids",
+    "ac_refs",
+    "test_refs",
+    "commands",
+    "manifest",
+    "phase",
+    "pre_dirty_snapshot",
+    "result_identity",
+)
+
 
 def valid_test_tasks(tasks: object) -> bool:
     """Structured Shield WRITE contract: a non-empty list of ``{ac_id, layers,

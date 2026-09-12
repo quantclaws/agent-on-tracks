@@ -7,6 +7,7 @@ so the pre-split import surface is unchanged.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -43,6 +44,22 @@ def redact(text: str) -> str:
         ):
             text = text.replace(value, "[REDACTED]")
     return text
+
+
+def iter_json_events(stdout: str | None):
+    """Yield the decoded JSON objects of an opencode ``--format json`` stream.
+
+    Only lines that start with ``{`` are candidates; malformed JSON lines are
+    skipped (the stream may interleave plain logs). Shared by the session-id
+    extractor and the abnormal-step-finish detector."""
+    for line in (stdout or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("{"):
+            continue
+        try:
+            yield json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
 
 
 class OpencodeError(Exception):

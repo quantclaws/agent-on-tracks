@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 
+from .opencode_core import iter_json_events
+
 
 class OpencodeSessionMixin:
     """Agent-name -> opencode session registry + health-checked dispatch."""
@@ -119,14 +121,7 @@ class OpencodeSessionMixin:
     def _extract_session_id(stdout: str) -> str | None:
         """从 opencode --format json 事件流提取 sessionID（事件顶层或
         part 内；同一派发的全部事件共享一个 id，取首个非空值）。"""
-        for line in (stdout or "").splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("{"):
-                continue
-            try:
-                event = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
+        for event in iter_json_events(stdout):
             if not isinstance(event, dict):
                 continue
             sid = event.get("sessionID")

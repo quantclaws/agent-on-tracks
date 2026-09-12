@@ -7,6 +7,7 @@ generation helpers stay in ``devon_patch.py``.
 
 from __future__ import annotations
 
+from tracks.effects.backend import DEVON_ASSIGNMENT_REQUIRED
 from tracks.effects.devon_patch import append_text, unified_patch
 from tracks.effects.fake_shield import _FAILED_TOKENS
 
@@ -52,17 +53,7 @@ class FakeDevonActMixin:
 
     @staticmethod
     def _devon_required_error(assignment: dict) -> str | None:
-        required = (
-            "task_id",
-            "if_ids",
-            "ac_refs",
-            "test_refs",
-            "commands",
-            "manifest",
-            "phase",
-            "pre_dirty_snapshot",
-            "result_identity",
-        )
+        required = DEVON_ASSIGNMENT_REQUIRED
         missing = [key for key in required if key not in assignment or assignment[key] is None]
         phase = assignment.get("phase")
         if phase not in _DEVON_PHASES:

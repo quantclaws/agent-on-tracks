@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tracks.effects.fake_shield import _FAILED_TOKENS, _ac_slug
+from tracks.effects.fake_shield import _FAILED_TOKENS, _ac_slug, simulated_agent_failure
 
 
 class FakePlanMixin:
@@ -36,14 +36,7 @@ class FakePlanMixin:
         """
         token = self.token("archer", "PLANNING", "ok")
         if token in _FAILED_TOKENS:
-            fclass = "agent_failed" if token == "fail" else token
-            return {
-                "status": "failed",
-                "artifact_ref": None,
-                "failure_class": fclass,
-                "audit_evidence": f"simulated {fclass}",
-                "self_report": f"archer exit gate failed: {fclass}",
-            }
+            return simulated_agent_failure(token, "archer")
         vdir = self._design_vdir()
         tasks_json, error = self._derive_task_graph(vdir, assignment)
         if error is not None:

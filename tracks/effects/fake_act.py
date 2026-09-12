@@ -12,7 +12,12 @@ import re
 import time
 from pathlib import Path
 
-from tracks.effects.fake_shield import _FAILED_TOKENS
+from tracks.effects.fake_shield import _FAILED_TOKENS, simulated_agent_failure
+from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+
+# Simulated DIAGNOSE picks a named owner from the kernel's closed vocabulary
+# (excluding "unknown", which is a real-channel honest exit only).
+_SIMULATED_CLASSIFICATIONS = frozenset(DIAGNOSE_CLASSIFICATIONS) - {"unknown"}
 
 _PRISM_REVIEW_SUBSTATES = (
     "PRISM_REVIEW",
@@ -209,14 +214,7 @@ class FakeActMixin:
     ) -> dict:
         token = self.token(role, substate, "ok")
         if token in _FAILED_TOKENS:
-            fclass = "agent_failed" if token == "fail" else token
-            return {
-                "status": "failed",
-                "artifact_ref": None,
-                "failure_class": fclass,
-                "audit_evidence": f"simulated {fclass}",
-                "self_report": f"agent exit gate failed: {fclass}",
-            }
+            return simulated_agent_failure(token, "agent")
         if token == "hang":
             time.sleep(600)  # blocked agent: lock-contention path (AC-27a)
         if role == "archer":
@@ -250,15 +248,7 @@ class FakeActMixin:
         if role != "prism" or substate != "DIAGNOSE":
             return
         classification = _simulate_map().get("diagnose:classification")
-        if classification in {
-            "test_defect",
-            "impl_defect",
-            "red_defect",
-            "plan_defect",
-            "stub_gap",
-            "ac_gap",
-            "spec_gap",
-        }:
+        if classification in _SIMULATED_CLASSIFICATIONS:
             result["verdict"] = classification
             result["self_report"] = f"diagnose: {classification}"
             result["reason"] = f"simulated diagnosis: {classification}"

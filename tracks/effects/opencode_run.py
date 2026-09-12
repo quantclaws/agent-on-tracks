@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tracks import paths
 
-from .opencode_core import OpencodeError
+from .opencode_core import OpencodeError, iter_json_events
 
 
 class OpencodeRunMixin:
@@ -405,14 +405,7 @@ class OpencodeRunMixin:
         live T-003 GREEN — step_finish reason=unknown, exit 0, no evidence
         JSON; the session was provider-interrupted mid-implementation)."""
         last = None
-        for line in (proc.stdout or "").splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("{"):
-                continue
-            try:
-                event = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
+        for event in iter_json_events(proc.stdout):
             if event.get("type") == "step_finish":
                 last = event
         if not isinstance(last, dict):

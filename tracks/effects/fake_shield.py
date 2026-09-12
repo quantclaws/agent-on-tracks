@@ -36,6 +36,18 @@ _FAILED_TOKENS = (
 )
 
 
+def simulated_agent_failure(token: str, role_label: str) -> dict:
+    """Deterministic failed result for a simulated exit-gate failure token."""
+    fclass = "agent_failed" if token == "fail" else token
+    return {
+        "status": "failed",
+        "artifact_ref": None,
+        "failure_class": fclass,
+        "audit_evidence": f"simulated {fclass}",
+        "self_report": f"{role_label} exit gate failed: {fclass}",
+    }
+
+
 def _ac_slug(ac_id: str) -> str:
     """Lowercase hyphen-free module/test slug for an AC id.
 
