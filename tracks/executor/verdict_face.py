@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from tracks.discuss.locate import locate
@@ -33,6 +34,15 @@ _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 # publish branches; the hotfix override below prepends anchor_verdict,
 # FR-0243 / IF-HOTFIX-009, interfaces §1a).
 _DESIGN_PRISM_THREAD_KEYS = ("review_summary", "findings", "review_ref", "discussion_refs")
+
+
+@dataclass(frozen=True)
+class _VerifyFinalIdentity:
+    """Resolved VERIFY_FINAL candidate identity + validity verdict."""
+
+    candidate_sha: str
+    frozen_sha: str
+    error: bool
 
 
 class ExecVerdictMixin:
@@ -142,44 +152,11 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
             # budget exhaustion escalates) — do NOT fallback-derive a
             # classification from prose (user stance: agents honor contracts).
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "diagnose_contract_violation",
-                    "target_stage": "M-IMPL",
-                    "task_id": task_id or state.current_task_id or "",
-                    "reason": (
-                        "Prism DIAGNOSE returned no "
-                        "{classification,reason,evidence} JSON; "
-                        "contract violation"
-                    ),
-                    "evidence": (
-                        "final reply missing bare JSON object per "
-                        "Prism.md DIAGNOSE contract"
-                    ),
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
+            self._emit_diagnose_contract_violation(cmd, state, task_id)
             return
         classification = verdict
-        diagnosis = result.get("diagnosis") if isinstance(result.get("diagnosis"), dict) else {}
-        prior = state.last_failure or {}
-        fallback = "Prism diagnosis: " + classification
-        reason = diagnosis.get("reason") or prior.get("reason") or fallback
-        evidence = diagnosis.get("evidence") or prior.get("evidence") or fallback
-        # Point the fixer at the full transcript blob: the verdict's
-        # reason/evidence are a summary; Prism's complete step-by-step
-        # analysis lives in the session blob (user stance: long-form critic
-        # output is passed by blob reference, not re-derived downstream).
-        ref = result.get("output_ref")
-        if ref:
-            if not isinstance(evidence, str):
-                evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
-            evidence += f"; full diagnosis transcript: .tracks/runtime/blobs/{ref}"
-        evidence, emitted_check, reason = self._m2_diagnosis_envelope(
-            task_id or state.current_task_id, evidence, classification, reason
+        evidence, emitted_check, reason = self._diagnose_evidence(
+            result, state, classification, task_id
         )
         gate_nodes = self._gate_failed_nodes(task_id or state.current_task_id or "")
         target = (
@@ -208,6 +185,51 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
             },
             command_id=cmd.command_id,
             task_id=task_id,
+        )
+
+    def _emit_diagnose_contract_violation(self, cmd, state, task_id) -> None:
+        """Fail-closed verdict for a DIAGNOSE reply without a classification."""
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "diagnose_contract_violation",
+                "target_stage": "M-IMPL",
+                "task_id": task_id or state.current_task_id or "",
+                "reason": (
+                    "Prism DIAGNOSE returned no "
+                    "{classification,reason,evidence} JSON; "
+                    "contract violation"
+                ),
+                "evidence": (
+                    "final reply missing bare JSON object per "
+                    "Prism.md DIAGNOSE contract"
+                ),
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    def _diagnose_evidence(self, result, state, classification: str, task_id) -> tuple:
+        """Assemble (evidence, emitted_check, reason) for a valid diagnosis."""
+        diagnosis = (
+            result.get("diagnosis") if isinstance(result.get("diagnosis"), dict) else {}
+        )
+        prior = state.last_failure or {}
+        fallback = "Prism diagnosis: " + classification
+        reason = diagnosis.get("reason") or prior.get("reason") or fallback
+        evidence = diagnosis.get("evidence") or prior.get("evidence") or fallback
+        # Point the fixer at the full transcript blob: the verdict's
+        # reason/evidence are a summary; Prism's complete step-by-step
+        # analysis lives in the session blob (user stance: long-form critic
+        # output is passed by blob reference, not re-derived downstream).
+        ref = result.get("output_ref")
+        if ref:
+            if not isinstance(evidence, str):
+                evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+            evidence += f"; full diagnosis transcript: .tracks/runtime/blobs/{ref}"
+        return self._m2_diagnosis_envelope(
+            task_id or state.current_task_id, evidence, classification, reason
         )
 
     def _m2_diagnosis_envelope(
@@ -345,50 +367,71 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
                 task_id=task_id,
             )
             return False
+        if self._shield_fix_rejected(result, state, cmd, task_id, changed):
+            return False
+        if not self._commit_shield_fix(state, cmd, task_id):
+            return False
+        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
+        self._emit(
+            "test.committed",
+            {"commit_sha": commit_sha, "test_count": test_count},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        # B91 follow-up (re-baseline): the sanctioned fix commit joins the
+        # task's immutable R family so the eventual G binds a provable anchor
+        # that is ALSO the tree that gated it (no-op without a prior RED).
+        if state.stage == "M-IMPL":
+            self._rebaseline_red_family(task_id, commit_sha, cmd.command_id)
+        return True
+
+    def _shield_fix_rejected(self, result, state, cmd, task_id, changed: list) -> bool:
+        """Fail-closed SHIELD_FIX pre-commit checks: manifest + anchor lint."""
         # PRISM-B28-R2-02: the SHIELD_FIX manifest contract promises an
         # include==observed comparison — enforce it here (M-IMPL shield
         # WRITE bypasses the ResultCheckpoint pipeline).
-        if self._shield_fix_manifest_mismatch(result, changed):
+        mismatch = self._shield_fix_manifest_mismatch(result, changed)
+        if mismatch:
             self._emit(
                 "verdict.failed",
                 {
                     "check": "manifest",
                     "reason": "include_mismatch",
-                    "evidence": self._shield_fix_manifest_mismatch(result, changed),
+                    "evidence": mismatch,
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return False
+            return True
         # M4 (convergence plan 2026-09-05): birth-time anchor
         # satisfiability lint on the freshly revised test assets --
         # same two rule-1 signatures as the M-TEST WRITE gate. Routes
         # as test_defect so Shield rewrites the anchor in-domain.
         from tracks.checks.anchor_lint import anchor_static_violations
 
-        _anchor_violations: list[str] = []
+        violations: list[str] = []
         for rel in changed:
             if rel.endswith(".py"):
-                _anchor_violations.extend(
-                    anchor_static_violations(self.repo / rel)
-                )
-        if _anchor_violations:
+                violations.extend(anchor_static_violations(self.repo / rel))
+        if violations:
             self._emit(
                 "verdict.failed",
                 {
                     "check": "test_defect",
-                    "reason": (
-                        "anchor_static (M4 rule 1): "
-                        + "; ".join(_anchor_violations[:3])
-                    ),
-                    "evidence": "\n".join(_anchor_violations),
+                    "reason": "anchor_static (M4 rule 1): " + "; ".join(violations[:3]),
+                    "evidence": "\n".join(violations),
                     "attempt": state.current_attempt + 1,
                 },
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-            return False
+            return True
+        return False
+
+    def _commit_shield_fix(self, state, cmd, task_id) -> bool:
+        """Stage tests/ + create the SHIELD_FIX commit with trailers."""
         # Stage all changed tests/ files
         git(self.repo, "add", "--", "tests/")
         # Create commit with trailers
@@ -414,19 +457,6 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
                 task_id=task_id,
             )
             return False
-        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
-        self._emit(
-            "test.committed",
-            {"commit_sha": commit_sha, "test_count": test_count},
-            command_id=cmd.command_id,
-            task_id=task_id,
-        )
-        # B91 follow-up (re-baseline): the sanctioned fix commit joins the
-        # task's immutable R family so the eventual G binds a provable anchor
-        # that is ALSO the tree that gated it (no-op without a prior RED).
-        if state.stage == "M-IMPL":
-            self._rebaseline_red_family(task_id, commit_sha, cmd.command_id)
         return True
 
     def _reject_invalid_test_tasks(self, state, role, substate, assignment, cmd, task_id) -> bool:
@@ -658,6 +688,57 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         silent retry, no guessed next)."""
         result = result if isinstance(result, dict) else {}
         assignment = assignment if isinstance(assignment, dict) else {}
+        identity = self._verify_final_identity(verdict, result, assignment, cmd)
+        if identity.error:
+            self._emit_verify_final_identity_error(cmd, verdict, identity)
+            return
+        payload = self._verify_final_payload(
+            result, verdict, commit_sha, created_commit, result_id, identity.candidate_sha
+        )
+        if verdict == "revise" and not self._verify_final_discussion_anchor(result):
+            self._emit(
+                "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
+            )
+            self._emit(
+                "attention.required",
+                {
+                    "reason": "revise_without_findings",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": identity.candidate_sha,
+                    "next": (
+                        "anchor the blocking findings via trac discuss start; "
+                        "trac run re-dispatches the review"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        self._emit(
+            "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
+        )
+        if verdict == "pass":
+            self._advance_verify_chain(cmd, identity.candidate_sha)
+        else:
+            # FR-0271-03: a revise/failed final review is a valid block only
+            # when the reviewer ANCHORED the blocking findings (thread keys on
+            # the verdict payload — the same anchoring the v0.3 discuss
+            # protocol requires). A bare revise/failed with no anchored
+            # findings is judged revise_without_findings: it blocks the chain
+            # but is recorded as an invalid block, never consumed as review
+            # evidence (the re-dispatch owns the retry).
+            self._emit(
+                "attention.required",
+                {
+                    "reason": "verify_final_rejected",
+                    "stage": "M-VERIFY",
+                    "candidate_sha": identity.candidate_sha,
+                    "next": "address findings; trac run re-dispatches the review",
+                },
+                command_id=cmd.command_id,
+            )
+
+    def _verify_final_identity(self, verdict, result: dict, assignment: dict, cmd):
+        """Resolve the frozen/assigned/returned candidate identity + validity."""
         frozen = self._latest_event("candidate.frozen")
         frozen_sha = (frozen.payload or {}).get("candidate_sha", "") if frozen else ""
         assigned_sha = assignment.get("candidate_sha")
@@ -675,23 +756,28 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         )
         if verdict not in ("pass", "revise"):
             identity_error = True
-        if identity_error:
-            self._emit(
-                "attention.required",
-                {
-                    "reason": "verify_final_identity_mismatch"
-                    if verdict in ("pass", "revise")
-                    else "verify_final_invalid_verdict",
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha or frozen_sha,
-                    "next": (
-                        "re-dispatch VERIFY_FINAL with the frozen candidate and "
-                        "a valid pass/revise review"
-                    ),
-                },
-                command_id=cmd.command_id,
-            )
-            return
+        return _VerifyFinalIdentity(candidate_sha, frozen_sha, bool(identity_error))
+
+    def _emit_verify_final_identity_error(self, cmd, verdict, identity) -> None:
+        self._emit(
+            "attention.required",
+            {
+                "reason": "verify_final_identity_mismatch"
+                if verdict in ("pass", "revise")
+                else "verify_final_invalid_verdict",
+                "stage": "M-VERIFY",
+                "candidate_sha": identity.candidate_sha or identity.frozen_sha,
+                "next": (
+                    "re-dispatch VERIFY_FINAL with the frozen candidate and "
+                    "a valid pass/revise review"
+                ),
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _verify_final_payload(
+        self, result, verdict, commit_sha, created_commit, result_id, candidate_sha
+    ) -> dict:
         payload = {
             "verdict": verdict,
             "diff_ref": commit_sha if created_commit and commit_sha else None,
@@ -707,47 +793,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
             review_ref = self.store.write_audit_blob(result["review_body"])
             if review_ref:
                 payload["review_ref"] = review_ref
-        if verdict == "revise" and not self._verify_final_discussion_anchor(result):
-            self._emit(
-                "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
-            )
-            self._emit(
-                "attention.required",
-                {
-                    "reason": "revise_without_findings",
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
-                    "next": (
-                        "anchor the blocking findings via trac discuss start; "
-                        "trac run re-dispatches the review"
-                    ),
-                },
-                command_id=cmd.command_id,
-            )
-            return
-        self._emit(
-            "prism.verdict", payload, command_id=cmd.command_id, task_id=task_id
-        )
-        if verdict == "pass":
-            self._advance_verify_chain(cmd, candidate_sha)
-        else:
-            # FR-0271-03: a revise/failed final review is a valid block only
-            # when the reviewer ANCHORED the blocking findings (thread keys on
-            # the verdict payload — the same anchoring the v0.3 discuss
-            # protocol requires). A bare revise/failed with no anchored
-            # findings is judged revise_without_findings: it blocks the chain
-            # but is recorded as an invalid block, never consumed as review
-            # evidence (the re-dispatch owns the retry).
-            self._emit(
-                "attention.required",
-                {
-                    "reason": "verify_final_rejected",
-                    "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
-                    "next": "address findings; trac run re-dispatches the review",
-                },
-                command_id=cmd.command_id,
-            )
+        return payload
 
     def _verify_final_discussion_anchor(self, result: dict) -> bool:
         """Accept a blocker finding tied to a fresh open Prism/Lex thread.
@@ -759,53 +805,59 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
         refs = result.get("discussion_refs")
         if not isinstance(refs, list) or not refs:
             return False
-        findings = result.get("findings")
-        blockers = {
+        blockers = self._blocker_ids(result.get("findings"))
+        if not blockers:
+            return False
+        return any(self._discussion_ref_anchors(ref, blockers) for ref in refs)
+
+    @staticmethod
+    def _blocker_ids(findings) -> set:
+        """Non-simulated blocker finding ids (empty set for a bad shape)."""
+        if not isinstance(findings, list):
+            return set()
+        return {
             finding.get("id")
             for finding in findings
             if isinstance(finding, dict)
             and finding.get("severity") == "blocker"
             and finding.get("simulated") is not True
             and isinstance(finding.get("id"), str)
-        } if isinstance(findings, list) else set()
-        if not blockers:
+        }
+
+    def _discussion_ref_anchors(self, ref, blockers: set) -> bool:
+        """True when *ref* resolves to a fresh open Prism/Lex thread."""
+        if not isinstance(ref, dict):
             return False
-        for ref in refs:
-            if not isinstance(ref, dict):
-                continue
-            file_name = ref.get("file")
-            thread_id = ref.get("thread_id")
-            token = ref.get("token")
-            finding_id = ref.get("finding_id")
-            if (
-                not isinstance(file_name, str)
-                or not isinstance(thread_id, str)
-                or not isinstance(token, dict)
-                or finding_id not in blockers
-            ):
-                continue
-            path = (self.repo / file_name).resolve()
-            try:
-                path.relative_to(self.repo.resolve())
-            except ValueError:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                continue
-            try:
-                located = locate(text, token, thread_id)
-            except (KeyError, TypeError, ValueError, AttributeError):
-                continue
-            if located.status != "unique":
-                continue
-            thread = next(
-                (item for item in parse_threads(text) if item.thread_id == thread_id),
-                None,
-            )
-            if thread is None or thread.status not in ("open", "reopen"):
-                continue
-            if thread.initiator.strip().lower() not in ("prism", "lex"):
-                continue
-            return True
-        return False
+        file_name = ref.get("file")
+        thread_id = ref.get("thread_id")
+        token = ref.get("token")
+        finding_id = ref.get("finding_id")
+        if (
+            not isinstance(file_name, str)
+            or not isinstance(thread_id, str)
+            or not isinstance(token, dict)
+            or finding_id not in blockers
+        ):
+            return False
+        path = (self.repo / file_name).resolve()
+        try:
+            path.relative_to(self.repo.resolve())
+        except ValueError:
+            return False
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return False
+        try:
+            located = locate(text, token, thread_id)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return False
+        if located.status != "unique":
+            return False
+        thread = next(
+            (item for item in parse_threads(text) if item.thread_id == thread_id),
+            None,
+        )
+        if thread is None or thread.status not in ("open", "reopen"):
+            return False
+        return thread.initiator.strip().lower() in ("prism", "lex")
