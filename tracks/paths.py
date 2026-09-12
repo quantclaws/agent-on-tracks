@@ -48,6 +48,19 @@ def blobs_dir(home: Path) -> Path:
     return runtime_dir(home) / "blobs"
 
 
+def blob_name_from_ref(ref: object) -> str | None:
+    """The 64-hex blob name of a ``.../blobs/<name>`` reference, or None.
+
+    Shared by the release preview and the publish-time re-validation so the
+    content-addressed ref shape is validated identically on both faces."""
+    if not isinstance(ref, str) or not ref:
+        return None
+    name = ref.rsplit("/", 1)[-1]
+    if len(name) != 64 or any(char not in "0123456789abcdef" for char in name):
+        return None
+    return name
+
+
 def lock_path(home: Path) -> Path:
     return runtime_dir(home) / "lock"
 

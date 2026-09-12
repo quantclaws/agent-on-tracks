@@ -19,6 +19,17 @@ from pathlib import Path
 
 from tracks.frontmatter import doc_body_sha, split_frontmatter
 
+# The six baseline requirement documents (trio + design trio) in canonical
+# order; the single source for hotfix baseline inheritance, the Phase 0 seal
+# manifest and the M-IMPL context doc set.
+BASELINE_DOC_NAMES = (
+    "story.md",
+    "spec.md",
+    "acceptance.md",
+    "architecture.md",
+    "interfaces.md",
+    "test-plan.md",
+)
 _TRIO = (("story", "story.md"), ("spec", "spec.md"), ("acc", "acceptance.md"))
 _DESIGN_DOCS = (
     ("architecture", "architecture.md"),
