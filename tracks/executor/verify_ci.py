@@ -32,52 +32,54 @@ digests + advance/release preview."""
         if contract is None:
             return
         ci = contract.ci or {}
-        if reconcile:
-            previous = self._latest_event("ci.run_observed")
-            if previous is not None:
-                payload = previous.payload or {}
-                configured_repo = os.environ.get(
-                    str(ci.get("repo_env", "")), ""
-                ).strip()
-                configured_workflow = str(ci.get("workflow", "")).strip()
-                observed_workflow = str(payload.get("workflow", "")).strip()
-                observed_path = str(payload.get("workflow_path", "")).strip()
-                observed_id = str(payload.get("workflow_id", "")).strip()
-                workflow_match = (
-                    observed_workflow == configured_workflow
-                    or observed_id == configured_workflow
-                    or observed_path == configured_workflow
-                    or (
-                        bool(configured_workflow)
-                        and Path(observed_path).name
-                        == Path(configured_workflow).name
-                    )
-                )
-                command_match = previous.command_id == cmd.command_id
-                checks = payload.get("checks") or {}
-                required_checks = list(ci.get("required_checks", []))
-                reusable = (
-                    command_match
-                    and payload.get("candidate_sha") == candidate_sha
-                    and payload.get("head_sha") == candidate_sha
-                    and payload.get("status") == "passed"
-                    and payload.get("api_verified") is True
-                    and not payload.get("stale")
-                    and bool(configured_repo)
-                    and payload.get("repo") == configured_repo
-                    and isinstance(payload.get("run_id"), int)
-                    and not isinstance(payload.get("run_id"), bool)
-                    and workflow_match
-                    and payload.get("required_checks", required_checks)
-                    == required_checks
-                    and all(checks.get(name) == "success" for name in required_checks)
-                )
-                if reusable:
-                    return
+        if reconcile and self._ci_observation_reusable(cmd, candidate_sha, ci):
+            return
         run_payload = self._readback_ci_binding(cmd, candidate_sha, ci)
         if run_payload is None:
             return
         self._emit("ci.run_observed", run_payload, command_id=cmd.command_id)
+        self._issue_verify_final(candidate_sha)
+
+    def _ci_observation_reusable(self, cmd, candidate_sha: str, ci: dict) -> bool:
+        """A persisted ci.run_observed bound to the same candidate/command."""
+        previous = self._latest_event("ci.run_observed")
+        if previous is None:
+            return False
+        payload = previous.payload or {}
+        configured_repo = os.environ.get(str(ci.get("repo_env", "")), "").strip()
+        configured_workflow = str(ci.get("workflow", "")).strip()
+        observed_workflow = str(payload.get("workflow", "")).strip()
+        observed_path = str(payload.get("workflow_path", "")).strip()
+        observed_id = str(payload.get("workflow_id", "")).strip()
+        workflow_match = (
+            observed_workflow == configured_workflow
+            or observed_id == configured_workflow
+            or observed_path == configured_workflow
+            or (
+                bool(configured_workflow)
+                and Path(observed_path).name == Path(configured_workflow).name
+            )
+        )
+        command_match = previous.command_id == cmd.command_id
+        checks = payload.get("checks") or {}
+        required_checks = list(ci.get("required_checks", []))
+        return (
+            command_match
+            and payload.get("candidate_sha") == candidate_sha
+            and payload.get("head_sha") == candidate_sha
+            and payload.get("status") == "passed"
+            and payload.get("api_verified") is True
+            and not payload.get("stale")
+            and bool(configured_repo)
+            and payload.get("repo") == configured_repo
+            and isinstance(payload.get("run_id"), int)
+            and not isinstance(payload.get("run_id"), bool)
+            and workflow_match
+            and payload.get("required_checks", required_checks) == required_checks
+            and all(checks.get(name) == "success" for name in required_checks)
+        )
+
+    def _issue_verify_final(self, candidate_sha: str) -> None:
         assignment = m_verify.build_prism_final_review_assignment(
             candidate_sha, self._verify_evidence_digests()
         )
