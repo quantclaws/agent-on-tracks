@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.effects.audit import Auditor
@@ -23,6 +24,31 @@ def _text(value) -> str:
     return value or ""
 
 
+@dataclass(frozen=True)
+class _PreparedAct:
+    """Immutable inputs of one ``act`` dispatch."""
+
+    role: str
+    substate: str
+    assignment: dict | None
+    name: str
+    root: Path
+    doc_paths: list[Path]
+    prompt: str
+    console_input: str | None
+    reviewer_assignment: bool
+    cleanup_infos: list
+
+
+@dataclass(frozen=True)
+class _ActAudit:
+    """Auditor + baselines resolved before the agent subprocess spawns."""
+
+    auditor: Auditor
+    baseline: set[str]
+    scaffold_baseline: set[str] | None
+    author: bool
+
 
 class OpencodeActMixin:
     """The dispatch main chain + failure/result construction."""
@@ -31,7 +57,7 @@ class OpencodeActMixin:
         self,
         role: str,
         substate: str,
-        doc: str | None,  # pylint: disable=too-many-locals
+        doc: str | None,
         doc_path: Path | None,
         assignment: dict | None = None,
         worktree: Path | None = None,
@@ -53,7 +79,6 @@ class OpencodeActMixin:
 
         doc_paths = self._dispatch_doc_paths(role, doc_path, assignment, worktree, root)
         cleanup_infos: list = []
-        proc = None
         # Reviewer verdict derivation: M-TEST review substates end in
         # "_REVIEW"; v0.5 M-IMPL Prism review substates do not (PRISM_PLAN/
         # PRISM_RED/PRISM_FINAL). Without the derivation the opencode backend
@@ -63,126 +88,148 @@ class OpencodeActMixin:
         # produce - run 01KZTHE7 PRISM_PLAN, 2026-08-15, twice). DIAGNOSE is
         # excluded: its verdict is a classification routed via
         # _emit_diagnose_verdict, not a pass/revise document verdict.
-        reviewer_assignment = substate.endswith("_REVIEW") or substate in (
-            "PRISM_PLAN",
-            "PRISM_RED",
-            "PRISM_FINAL",
-            "VERIFY_FINAL",
+        request = _PreparedAct(
+            role=role,
+            substate=substate,
+            assignment=assignment,
+            name=name,
+            root=root,
+            doc_paths=doc_paths,
+            prompt=prompt,
+            console_input=console_input,
+            reviewer_assignment=substate.endswith("_REVIEW")
+            or substate in ("PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "VERIFY_FINAL"),
+            cleanup_infos=cleanup_infos,
         )
         try:
-            cleanup_infos.append(self._materialize(name))
-            self._materialize_skills(assignment, cleanup_infos)
-            self._materialize_templates(assignment, cleanup_infos)
+            return self._run_act(request)
+        finally:
+            for info in cleanup_infos:
+                self._cleanup_materialized(info)
+
+    def _run_act(self, req: _PreparedAct) -> dict:
+        proc = None
+        try:
+            cleanup_infos = req.cleanup_infos
+            cleanup_infos.append(self._materialize(req.name))
+            self._materialize_skills(req.assignment, cleanup_infos)
+            self._materialize_templates(req.assignment, cleanup_infos)
             # IF-ENVELOPE-002: after ALL materialization writes, bind the
             # actual prepared artifacts (path+sha+token) + prompt and run the
             # Runtime-owned parity gate over every selected face — BEFORE the
             # agent subprocess is spawned. A rejection returns a failed
-            # result (no spawn, no external invocation); the finally below
-            # still cleans up. The repo root is trusted for agent scratch
-            # files; only writes outside it are over-reach (M-DESIGN author
-            # dispatches are additionally bounded by their Scaffold 宣言, see
-            # the audit below). The target diff remains authoritative.
-            prepared = self._prepare_parity(cleanup_infos, assignment, prompt, name=name)
+            # result (no spawn, no external invocation); the finally in
+            # ``act`` still cleans up. The repo root is trusted for agent
+            # scratch files; only writes outside it are over-reach (M-DESIGN
+            # author dispatches are additionally bounded by their Scaffold
+            # 宣言, see the audit below). The target diff stays authoritative.
+            prepared = self._prepare_parity(
+                cleanup_infos, req.assignment, req.prompt, name=req.name
+            )
             if not prepared.ok:
                 return prepared.failure
-            agent_dest = cleanup_infos[0]["dest"]
-            allowed = self._allowed_paths(
-                doc_paths, agent_dest, role, substate, assignment, root=root
-            )
-            # B64 (#82): assignment-injected ownership veto (repo-relative
-            # patterns; e.g. Shield's SHIELD_FIX domain excludes the run's
-            # red_test_paths). Data-driven — the backend applies what the
-            # executor derived from Archer-authored manifests.
-            forbidden = self._assignment_forbidden_paths(assignment)
-            auditor = Auditor(root, allowed=allowed, forbidden=forbidden)
-            baseline = auditor.baseline()
-            author = substate in ("DRAFT", "RESPOND")
-            # File-granular baseline for the batch B scaffold subset rule: a
-            # directory-level status entry present here must not mask files the
-            # agent creates inside it during the run.
-            scaffold_baseline = (
-                auditor.file_level(baseline) if author and len(doc_paths) > 1 else None
-            )
-            proc = self._dispatch_with_session_health(name, prompt, root)
+            audit = self._prepare_act_audit(req)
+            proc = self._dispatch_with_session_health(req.name, req.prompt, req.root)
             self._check_json(proc)
             if self._abnormal_step_finish(proc):
                 # B17/#20 narrow (live T-003 GREEN): an interrupted session
                 # is infrastructure, not an agent semantic failure — do not
                 # let it reach DIAGNOSE as impl_defect and burn the budget.
                 return self._attach_raw_output(
-                    self._abnormal_step_result(proc, prompt, console_input),
+                    self._abnormal_step_result(proc, req.prompt, req.console_input),
                     proc,
-                    assignment,
+                    req.assignment,
                 )
             # D-35 (SC-D35 §2.2): M-TEST/M-IMPL reviewers deliver findings via
             # a structured final JSON payload. Parse before the audits so the
             # discussion gate can exempt a structured revise.
             review_failure = self._review_channel_failure(
-                role, substate, assignment, proc, prompt, console_input
+                req.role, req.substate, req.assignment, proc, req.prompt, req.console_input
             )
             if review_failure is not None:
-                return self._attach_raw_output(review_failure, proc, assignment)
+                return self._attach_raw_output(review_failure, proc, req.assignment)
             manifest_info, manifest_error = self._manifest_for_dispatch(
-                role,
-                substate,
+                req.role,
+                req.substate,
                 proc,
-                prompt,
-                console_input,
+                req.prompt,
+                req.console_input,
             )
             if manifest_error is not None:
-                return self._attach_raw_output(manifest_error, proc, assignment)
+                return self._attach_raw_output(manifest_error, proc, req.assignment)
             result = self._audited_result(
-                auditor,
-                baseline,
-                scaffold_baseline,
+                audit,
                 proc,
-                role,
-                substate,
-                doc_paths,
-                prompt,
-                console_input,
-                author,
-                reviewer_assignment,
+                req.role,
+                req.substate,
+                req.doc_paths,
+                req.prompt,
+                req.console_input,
+                req.reviewer_assignment,
                 structured_findings=self._has_structured_findings(
-                    role, substate, assignment, proc
+                    req.role, req.substate, req.assignment, proc
                 ),
             )
             return self._attach_raw_output(
                 self._attach_dispatch_metadata(
                     self._merge_review_payload(
-                        result, role, substate, assignment, proc, prompt, console_input
+                        result,
+                        req.role,
+                        req.substate,
+                        req.assignment,
+                        proc,
+                        req.prompt,
+                        req.console_input,
                     ),
-                    role,
-                    substate,
+                    req.role,
+                    req.substate,
                     manifest_info,
-                    assignment,
+                    req.assignment,
                     parity=prepared.evidence,
                 ),
                 proc,
-                assignment,
+                req.assignment,
             )
         except OpencodeError as exc:
             return self._attach_raw_output(
                 self._opencode_error_result(
                     exc,
                     proc,
-                    prompt,
-                    console_input,
-                    doc_paths,
-                    reviewer_assignment,
+                    req.prompt,
+                    req.console_input,
+                    req.doc_paths,
+                    req.reviewer_assignment,
                 ),
                 proc,
-                assignment,
+                req.assignment,
             )
         except OSError as exc:
             return self._attach_raw_output(
-                self._filesystem_error_result(exc, proc, prompt, console_input),
+                self._filesystem_error_result(exc, proc, req.prompt, req.console_input),
                 proc,
-                assignment,
+                req.assignment,
             )
-        finally:
-            for info in cleanup_infos:
-                self._cleanup_materialized(info)
+
+    def _prepare_act_audit(self, req: _PreparedAct) -> _ActAudit:
+        agent_dest = req.cleanup_infos[0]["dest"]
+        allowed = self._allowed_paths(
+            req.doc_paths, agent_dest, req.role, req.substate, req.assignment, root=req.root
+        )
+        # B64 (#82): assignment-injected ownership veto (repo-relative
+        # patterns; e.g. Shield's SHIELD_FIX domain excludes the run's
+        # red_test_paths). Data-driven — the backend applies what the
+        # executor derived from Archer-authored manifests.
+        forbidden = self._assignment_forbidden_paths(req.assignment)
+        auditor = Auditor(req.root, allowed=allowed, forbidden=forbidden)
+        baseline = auditor.baseline()
+        author = req.substate in ("DRAFT", "RESPOND")
+        # File-granular baseline for the batch B scaffold subset rule: a
+        # directory-level status entry present here must not mask files the
+        # agent creates inside it during the run.
+        scaffold_baseline = (
+            auditor.file_level(baseline) if author and len(req.doc_paths) > 1 else None
+        )
+        return _ActAudit(auditor, baseline, scaffold_baseline, author)
 
     def _manifest_for_dispatch(
         self,
@@ -251,27 +298,24 @@ class OpencodeActMixin:
 
     def _audited_result(
         self,
-        auditor: Auditor,
-        baseline: set[str],
-        scaffold_baseline: set[str] | None,
+        state: _ActAudit,
         proc: subprocess.CompletedProcess,
         role: str,
         substate: str,
         doc_paths: list[Path],
         prompt: str,
         console_input: str | None,
-        author_assignment: bool,
         reviewer_assignment: bool,
         structured_findings: bool = False,
     ) -> dict:
-        diff_ref = _capture_target_diffs(auditor, doc_paths, substate, proc)
+        diff_ref = _capture_target_diffs(state.auditor, doc_paths, substate, proc)
         # Every dispatch gets ONE atomic audit/rollback decision (Blocker 2):
         # doc-delta + over-reach (+ batch B scaffold) checks run together; if
         # any fails, every agent-changed path is rolled back in one force pass.
         if role == "shield" and substate == "WRITE":
             guard = self._shield_write_audit(
-                auditor,
-                baseline,
+                state.auditor,
+                state.baseline,
                 doc_paths,
                 diff_ref,
                 proc,
@@ -282,12 +326,12 @@ class OpencodeActMixin:
                 return guard
         elif (
             guard := self._non_shield_write_audit(
-                auditor,
-                baseline,
-                scaffold_baseline,
+                state.auditor,
+                state.baseline,
+                state.scaffold_baseline,
                 doc_paths,
                 role,
-                author_assignment,
+                state.author,
                 diff_ref,
                 proc,
                 prompt,
@@ -316,7 +360,7 @@ class OpencodeActMixin:
             proc,
             prompt,
             console_input,
-            author_assignment,
+            state.author,
             reviewer_assignment,
         )
 
