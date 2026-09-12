@@ -194,6 +194,19 @@ def validate_debt_references(tasks: list[TaskNode]) -> list[str]:
                 )
     return errors
 
+@dataclass(frozen=True)
+class _TaskLists:
+    """Parsed list fields + the era-specific test-ref split."""
+
+    ac_refs: list[str]
+    fr_refs: list[str]
+    if_ids: list[str]
+    test_refs: list[str]
+    depends: list[str]
+    unit_refs: list[str]
+    acceptance_refs: list[str]
+
+
 def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | None, str | None]:
     if not isinstance(raw, dict):
         return (None, f"tasks.json: task[{index}] must be an object")
@@ -209,8 +222,7 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
     lists = _parse_task_lists(raw, tid, schema)
     if isinstance(lists, str):
         return (None, lists)
-    ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs = lists
-    deferred_raw, err = _validate_deferred_refs(raw, tid, acceptance_refs)
+    deferred_raw, err = _validate_deferred_refs(raw, tid, lists.acceptance_refs)
     if err:
         return (None, err)
     integration, err = _validate_integration_flag(raw, tid)
@@ -220,36 +232,48 @@ def _parse_task(raw: object, index: int, schema: int = 1) -> tuple[TaskNode | No
     if err:
         return (None, err)
     return (
-        TaskNode(
-            task_id=tid,
-            issue_number=raw["issue_number"],
-            description=raw["description"],
-            ac_refs=tuple(raw["ac_refs"]),
-            fr_refs=tuple(raw["fr_refs"]),
-            if_ids=tuple(raw["if_ids"]),
-            test_refs=tuple(test_refs),
-            scope_boundary=raw["scope_boundary"],
-            depends_on=tuple(raw["depends_on"]),
-            batch=raw["batch"],
-            parallel=raw["parallel"],
-            budget=raw.get("budget", 2),
-            unit_refs=tuple(unit_refs),
-            acceptance_refs=tuple(acceptance_refs),
-            schema=schema,
-            deferred_refs=tuple(deferred_raw or []),
-            integration=bool(integration),
-            debt=tuple(dict(item) for item in (debt_raw or [])),
-        ),
+        _build_task_node(raw, tid, schema, lists, deferred_raw, integration, debt_raw),
         None,
     )
 
+
+def _build_task_node(
+    raw: dict,
+    tid: str,
+    schema: int,
+    lists: _TaskLists,
+    deferred_raw,
+    integration,
+    debt_raw,
+) -> TaskNode:
+    return TaskNode(
+        task_id=tid,
+        issue_number=raw["issue_number"],
+        description=raw["description"],
+        ac_refs=tuple(raw["ac_refs"]),
+        fr_refs=tuple(raw["fr_refs"]),
+        if_ids=tuple(raw["if_ids"]),
+        test_refs=tuple(lists.test_refs),
+        scope_boundary=raw["scope_boundary"],
+        depends_on=tuple(raw["depends_on"]),
+        batch=raw["batch"],
+        parallel=raw["parallel"],
+        budget=raw.get("budget", 2),
+        unit_refs=tuple(lists.unit_refs),
+        acceptance_refs=tuple(lists.acceptance_refs),
+        schema=schema,
+        deferred_refs=tuple(deferred_raw or []),
+        integration=bool(integration),
+        debt=tuple(dict(item) for item in (debt_raw or [])),
+    )
+
+
 def _parse_task_lists(
     raw: dict, tid: str, schema: int
-) -> tuple[list[str], ...] | str:
+) -> _TaskLists | str:
     """Parse the list fields plus the era-specific test-ref split.
 
-    Returns (ac_refs, fr_refs, if_ids, test_refs, depends_on, unit_refs,
-    acceptance_refs) or an error string."""
+    Returns a :class:`_TaskLists` or an error string."""
     if schema == _SCHEMA_V2:
         split, err = _parse_split_fields(raw, tid)
         if err is not None:
@@ -272,7 +296,9 @@ def _parse_task_lists(
         # convention) -- tests/unit/ -> RED obligation, else acceptance.
         unit_refs = [ref for ref in test_refs if ref.startswith(_UNIT_PREFIX)]
         acceptance_refs = [ref for ref in test_refs if not ref.startswith(_UNIT_PREFIX)]
-    return (ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs)
+    return _TaskLists(
+        ac_refs, fr_refs, if_ids, test_refs, depends, unit_refs, acceptance_refs
+    )
 
 def _parse_split_fields(
     raw: dict, tid: str
