@@ -43,7 +43,10 @@ from tracks.executor.doc_gap_runtime import (
     DocGapRuntime,
 )
 from tracks.executor.escape_face import ExecEscapeMixin
-from tracks.executor.helpers import git
+from tracks.executor.helpers import (  # noqa: F401  (m_impl_runtime lazy-import seam)
+    _scoped_commit_if_staged,
+    git,
+)
 from tracks.executor.hotfix_face import (
     ExecHotfixMixin,
     _hotfix_state_line,
@@ -70,7 +73,10 @@ from tracks.executor.test_collect import (
 from tracks.executor.test_execute import ExecTestRunMixin
 from tracks.executor.verdict_face import ExecVerdictMixin
 from tracks.executor.verify_ci import ExecVerifyCiMixin
-from tracks.executor.verify_gates import ExecVerifyGatesMixin
+from tracks.executor.verify_gates import (
+    _DEFAULT_HOST_CONTRACT_TOML,  # noqa: F401
+    ExecVerifyGatesMixin,
+)
 from tracks.executor.verify_park import ExecVerifyParkMixin
 from tracks.executor.verify_version import ExecVerifyVersionMixin
 from tracks.executor.worktree_face import ExecWorktreeMixin
