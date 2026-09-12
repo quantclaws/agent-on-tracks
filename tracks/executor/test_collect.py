@@ -318,28 +318,7 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             lambda node: digests[node],
             tree_identity,
         )
-        # Blob entries carry BOTH identities: `digest` stamps the node's
-        # physical file content (externally verifiable), `node_digest` is the
-        # per-node AST segment digest classification consumes.
-        file_digests: dict[str, str] = {}
-        entries = []
-        for node in all_nodes:
-            physical = node.partition("::")[0]
-            if physical not in file_digests:
-                try:
-                    file_digests[physical] = hashlib.sha256(
-                        (Path(self.repo) / physical).read_bytes()
-                    ).hexdigest()
-                except OSError:
-                    file_digests[physical] = "unreadable"
-            entries.append(
-                {
-                    "node": node,
-                    "layer": node_layer[node],
-                    "digest": file_digests[physical],
-                    "node_digest": digests[node],
-                }
-            )
+        entries = self._baseline_entries(all_nodes, node_layer, digests)
         blob_ref = self.store.write_audit_blob(entries)
         if blob_ref is None:
             self._emit_baseline_failed(cmd, state, ["node digest blob write failed"])
@@ -359,6 +338,33 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             command_id=cmd.command_id,
         )
 
+    def _baseline_entries(
+        self, all_nodes: list[str], node_layer: dict[str, str], digests: dict[str, str]
+    ) -> list[dict]:
+        """Blob entries carry BOTH identities: `digest` stamps the node's
+        physical file content (externally verifiable), `node_digest` is the
+        per-node AST segment digest classification consumes."""
+        file_digests: dict[str, str] = {}
+        entries = []
+        for node in all_nodes:
+            physical = node.partition("::")[0]
+            if physical not in file_digests:
+                try:
+                    file_digests[physical] = hashlib.sha256(
+                        (Path(self.repo) / physical).read_bytes()
+                    ).hexdigest()
+                except OSError:
+                    file_digests[physical] = "unreadable"
+            entries.append(
+                {
+                    "node": node,
+                    "layer": node_layer[node],
+                    "digest": file_digests[physical],
+                    "node_digest": digests[node],
+                }
+            )
+        return entries
+
     def _do_collect_tests(self, cmd, state, task_id, reconcile):
         """SM-01.5 / D-41 FR-0250-01: Runtime independently collects ALL
         declared layers via the host project contract's ``collect`` command
@@ -375,95 +381,108 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             return
         node_layer, collect_error = self._collect_all_declared_layers()
         if collect_error is not None:
-            self._emit(
-                "test.collected",
-                {"status": "failed", "collected_count": 0, "errors": [collect_error]},
-                command_id=cmd.command_id,
-            )
+            self._emit_collected_failure(cmd, 0, [collect_error])
             return
         all_nodes = sorted(node_layer)
         baseline_ev = self._latest_event("test.baseline_captured", status="passed")
         if baseline_ev is None:
-            self._emit(
-                "test.collected",
-                {
-                    "status": "failed",
-                    "collected_count": len(all_nodes),
-                    "failures": [],
-                    "errors": [
-                        "missing test.baseline_captured(passed): classification has "
-                        "no pre-WRITE R1 snapshot (MissingBaselineCaptureError)"
-                    ],
-                },
-                command_id=cmd.command_id,
+            self._emit_collected_failure(
+                cmd,
+                len(all_nodes),
+                [
+                    "missing test.baseline_captured(passed): classification has "
+                    "no pre-WRITE R1 snapshot (MissingBaselineCaptureError)"
+                ],
+                failures=[],
             )
             return
+        loaded = self._load_baseline_and_digests(baseline_ev, all_nodes)
+        if isinstance(loaded, list):
+            self._emit_collected_failure(cmd, len(all_nodes), loaded, failures=[])
+            return
+        baseline_assets, digests = loaded
+        classes = classify_nodes(baseline_assets, all_nodes, digests)
+        removed = sorted(node for node, klass in classes.items() if klass == "removed")
+        if removed:
+            self._emit_removed_assets(cmd, state, all_nodes, removed)
+            return
+        self._emit_collected_passed(cmd, all_nodes, node_layer, classes)
+
+    def _emit_collected_failure(
+        self, cmd, collected_count: int, errors: list[str], failures: list | None = None
+    ) -> None:
+        """test.collected(failed) with the optional failures list in place."""
+        payload = {"status": "failed", "collected_count": collected_count}
+        if failures is not None:
+            payload["failures"] = failures
+        payload["errors"] = errors
+        self._emit("test.collected", payload, command_id=cmd.command_id)
+
+    def _load_baseline_and_digests(self, baseline_ev, all_nodes: list[str]):
+        """Read the persisted baseline blob + per-node digests, or [error]."""
         try:
             baseline_entries = self._read_runtime_blob(
                 baseline_ev.payload.get("node_digest_blob")
             )
             baseline_assets = BaselineAssets(
                 nodes=frozenset(entry["node"] for entry in baseline_entries),
-                node_digests={entry["node"]: entry["node_digest"] for entry in baseline_entries},
+                node_digests={
+                    entry["node"]: entry["node_digest"] for entry in baseline_entries
+                },
             )
             digests = collect_node_source_digests(Path(self.repo), all_nodes)
         except (TestSelectError, OSError, ValueError, KeyError, TypeError) as exc:
-            self._emit(
-                "test.collected",
-                {
-                    "status": "failed",
-                    "collected_count": len(all_nodes),
-                    "failures": [],
-                    "errors": [str(exc)],
-                },
-                command_id=cmd.command_id,
-            )
-            return
-        classes = classify_nodes(baseline_assets, all_nodes, digests)
-        removed = sorted(node for node, klass in classes.items() if klass == "removed")
-        if removed:
-            failures = [{"node": node, "error_class": "asset_deleted"} for node in removed]
-            errors = [
-                f"test asset deleted since baseline snapshot: {node}" for node in removed
-            ]
-            self._emit(
-                "test.collected",
-                {
-                    "status": "failed",
-                    "collected_count": len(all_nodes),
-                    "removed": len(removed),
-                    "failures": failures,
-                    "errors": errors,
-                    # FRB-K2 pairing marker: the companion verdict.failed
-                    # (test_defect) emitted below by THIS command is the
-                    # pair's single attempt charge; the kernel skips the
-                    # collect-side consume for marked payloads only.
-                    "companion": "test_defect",
-                },
-                command_id=cmd.command_id,
-            )
-            # FA-3 (final review pin): the failed collect alone leaves the
-            # router without actionable evidence (blind re-dispatch); emit
-            # the test_defect verdict naming every deleted asset BEFORE any
-            # Shield rewrite so upstream routes a pinpointed rewrite.
-            log_ref = self._red_log_blob_ref({"errors": errors, "failures": failures})
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "test_defect",
-                    "target_stage": "M-TEST",
-                    "artifact_disposition": "rewrite",
-                    "reason": (
-                        "REMOVED test assets deleted since the pre-WRITE baseline "
-                        f"snapshot: {', '.join(removed)}"
-                    ),
-                    "evidence": failures,
-                    "log_ref": log_ref,
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-            )
-            return
+            return [str(exc)]
+        return baseline_assets, digests
+
+    def _emit_removed_assets(self, cmd, state, all_nodes: list[str], removed: list[str]) -> None:
+        """Fail-closed deleted-asset classification + companion verdict."""
+        failures = [{"node": node, "error_class": "asset_deleted"} for node in removed]
+        errors = [
+            f"test asset deleted since baseline snapshot: {node}" for node in removed
+        ]
+        self._emit(
+            "test.collected",
+            {
+                "status": "failed",
+                "collected_count": len(all_nodes),
+                "removed": len(removed),
+                "failures": failures,
+                "errors": errors,
+                # FRB-K2 pairing marker: the companion verdict.failed
+                # (test_defect) emitted below by THIS command is the
+                # pair's single attempt charge; the kernel skips the
+                # collect-side consume for marked payloads only.
+                "companion": "test_defect",
+            },
+            command_id=cmd.command_id,
+        )
+        # FA-3 (final review pin): the failed collect alone leaves the
+        # router without actionable evidence (blind re-dispatch); emit
+        # the test_defect verdict naming every deleted asset BEFORE any
+        # Shield rewrite so upstream routes a pinpointed rewrite.
+        log_ref = self._red_log_blob_ref({"errors": errors, "failures": failures})
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "test_defect",
+                "target_stage": "M-TEST",
+                "artifact_disposition": "rewrite",
+                "reason": (
+                    "REMOVED test assets deleted since the pre-WRITE baseline "
+                    f"snapshot: {', '.join(removed)}"
+                ),
+                "evidence": failures,
+                "log_ref": log_ref,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+        )
+
+    def _emit_collected_passed(
+        self, cmd, all_nodes: list[str], node_layer: dict[str, str], classes: dict
+    ) -> None:
+        """Persist the per-node table and emit test.collected(passed)."""
         inherited_r1 = sum(1 for klass in classes.values() if klass == "r1")
         delta_r2 = sum(1 for klass in classes.values() if klass == "r2")
         per_node = [
@@ -475,15 +494,8 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             # Fail closed: a passed classification whose per_node_blob is null
             # has no replayable evidence and RED_CHECK would have no
             # authoritative input (review pin: never passed + null ref).
-            self._emit(
-                "test.collected",
-                {
-                    "status": "failed",
-                    "collected_count": len(all_nodes),
-                    "failures": [],
-                    "errors": ["per-node classification blob write failed"],
-                },
-                command_id=cmd.command_id,
+            self._emit_collected_failure(
+                cmd, len(all_nodes), ["per-node classification blob write failed"], failures=[]
             )
             return
         self._emit(
