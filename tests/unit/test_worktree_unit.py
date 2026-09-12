@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests.unit.helpers import git as _git
 from tests.unit.helpers import init_repo as _init_repo
 from tracks.executor.worktree import (
@@ -118,6 +120,7 @@ def test_ensure_runtime_assets_links_venv(tmp_path):
     Devon verified against the contaminated main tree instead of its clean
     worktree)."""
     repo, _ = _repo_with_opencode(tmp_path)
+    _declare_install(repo, ".venv/bin/python")
     venv_bin = repo / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
     (venv_bin / "python").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -127,6 +130,38 @@ def test_ensure_runtime_assets_links_venv(tmp_path):
     link = wt / ".venv"
     assert link.is_symlink()
     assert (link / "bin" / "python").exists()
+
+
+def _declare_install(repo, interpreter):
+    config = repo / ".tracks/projects/project.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        '[host-contract]\nversion = 1\nlanguage = "python"\ntoolchain = "python"\n'
+        f'install = "{interpreter} -m pip install ."\n'
+    )
+
+
+@pytest.mark.parametrize("env_name", [".host-env", "tools/runtime"])
+def test_runtime_assets_follow_host_declared_environment(tmp_path, env_name):
+    """AC-FR0281-01@v0.8: the host declaration owns the environment path."""
+    repo, _ = _repo_with_opencode(tmp_path)
+    _declare_install(repo, f"{env_name}/bin/python")
+    binary = repo / env_name / "bin/python"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("host interpreter\n")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    ensure_runtime_assets(str(repo), str(wt))
+    assert (wt / env_name).is_symlink()
+    assert (wt / env_name / "bin/python").read_text() == "host interpreter\n"
+
+
+@pytest.mark.parametrize("interpreter", ["python", "./bin/python", "../outside/bin/python", "/env/bin/python"])
+def test_runtime_assets_do_not_link_project_root_or_external_environment(tmp_path, interpreter):
+    from tracks.executor.worktree import runtime_asset_paths
+
+    _declare_install(tmp_path, interpreter)
+    assert runtime_asset_paths(str(tmp_path)) == (".opencode",)
 
 
 def test_ensure_runtime_assets_idempotent(tmp_path):

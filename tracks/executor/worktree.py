@@ -15,9 +15,10 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
-from tracks.executor.host_contract import DEFAULT_INSTALL_INTERPRETER
+from tracks.executor.host_contract import declared_install_interpreter
 
 
 @dataclass(frozen=True)
@@ -109,8 +110,15 @@ def create_test_authority_worktree(
     return WorktreeHandle(path=path, base_sha=c_design_sha, kind="test_authority")
 
 
-_ENV_DIR = posixpath.dirname(posixpath.dirname(DEFAULT_INSTALL_INTERPRETER))
-_RUNTIME_ASSETS = (".opencode", _ENV_DIR)
+def runtime_asset_paths(repo: str) -> tuple[str, ...]:
+    """Resolve project-relative runtime assets from the host declaration."""
+    interpreter = declared_install_interpreter(Path(repo))
+    env_dir = posixpath.dirname(posixpath.dirname(interpreter))
+    # Bare/absolute executables do not declare a project-relative environment.
+    if (env_dir and not posixpath.isabs(env_dir)
+            and not {".", ".."}.intersection(env_dir.split("/"))):
+        return (".opencode", env_dir)
+    return (".opencode",)
 
 
 def ensure_runtime_assets(repo: str, wt_path: str) -> None:
@@ -138,7 +146,7 @@ def ensure_runtime_assets(repo: str, wt_path: str) -> None:
     editable install; the shared environment only supplies third-party
     dependencies.
     """
-    for name in _RUNTIME_ASSETS:
+    for name in runtime_asset_paths(repo):
         src = os.path.join(repo, name)
         dst = os.path.join(wt_path, name)
         if os.path.lexists(dst):
@@ -146,6 +154,7 @@ def ensure_runtime_assets(repo: str, wt_path: str) -> None:
         if not (os.path.exists(src) or os.path.islink(src)):
             continue
         with contextlib.suppress(OSError):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
             os.symlink(os.path.abspath(src), dst)
 
 

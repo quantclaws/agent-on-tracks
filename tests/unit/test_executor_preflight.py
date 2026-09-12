@@ -60,6 +60,12 @@ def test_resolve_contract_argv0_venv_absent_uses_runtime_executable(tmp_path):
     assert sys.prefix != sys.base_prefix, "test must run inside a venv"
     assert os.access(sys.executable, os.X_OK)
 
+    contract = tmp_path / ".tracks/projects/project.toml"
+    contract.parent.mkdir(parents=True)
+    contract.write_text(
+        '[host-contract]\nversion = 1\nlanguage = "python"\ntoolchain = "python"\n'
+        'install = ".venv/bin/python -m pip install ."\n'
+    )
     # No .venv under tmp_path — simulates an external worktree without one.
     argv = [".venv/bin/python", "-m", "pytest", "--collect-only", "-q"]
     resolved = _resolve_contract_argv0(argv, tmp_path)

@@ -11,13 +11,13 @@ from pathlib import Path
 
 from tracks.executor.helpers import git
 from tracks.executor.worktree import (
-    _RUNTIME_ASSETS,
     WorktreeHandle,
     _writer_worktree_path,
     cleanup_worktree,
     create_devon_worktree,
     create_test_authority_worktree,
     ensure_runtime_assets,
+    runtime_asset_paths,
     seed_worktree_with_cycle_wip,
 )
 
@@ -177,7 +177,7 @@ class ExecWorktreeMixin:
         replay 静默吞掉操作者已提交的工作。
 
         B60 (#76)：``ensure_runtime_assets`` 在 agent 运行**前**把
-        ``_RUNTIME_ASSETS`` 链接进 worktree（声明的环境目录是符号链接），而
+        ``runtime_asset_paths`` 链接进 worktree（声明的环境目录是符号链接），而
         canonical ``.gitignore`` 的该目录尾斜杠模式只匹配目录、
         不匹配符号链接——``git add -A`` 会把它 stage 进 replay diff，
         ``git apply`` 拒绝后 mirror 兜底 copy2 目录直接 Errno 21。故
@@ -191,7 +191,7 @@ class ExecWorktreeMixin:
             capture_output=True,
             check=False,
         )
-        for asset in _RUNTIME_ASSETS:
+        for asset in runtime_asset_paths(str(self.repo)):
             subprocess.run(
                 ["git", "-C", wt, "reset", "-q", "--", asset],
                 capture_output=True,
