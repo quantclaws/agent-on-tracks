@@ -40,6 +40,61 @@ def _event_seq(event) -> int:
     return int(getattr(event, "seq", 0) or 0)
 
 
+def _fold_previewed(trace: dict, ev, payload: dict) -> None:
+    trace["preview_digest"] = payload.get("preview_digest", trace["preview_digest"])
+    trace["artifact_digest"] = payload.get("artifact_digest", trace["artifact_digest"])
+    if isinstance(payload.get("evidence_digests"), dict):
+        trace["evidence_digests"] = dict(payload["evidence_digests"])
+    # The traced release_tag is the tag operation of the approved preview
+    # plan. A merge-only plan (the default feature journey) declares no tag
+    # operation, so release_tag stays the explicit empty string: "" means
+    # "this plan performs no public tag", never "unknown" (FR-0277).
+    plan = payload.get("operation_plan")
+    steps = plan.get("steps") if isinstance(plan, dict) else None
+    for step in steps or ():
+        kind, _, target = str(step).partition(":")
+        if kind == "tag" and target:
+            trace["release_tag"] = target
+
+
+def _fold_decided(trace: dict, ev, payload: dict) -> None:
+    if payload.get("action") == "release":
+        trace["human_approval_event_seq"] = _event_seq(ev)
+
+
+def _fold_planned(trace: dict, ev, payload: dict) -> None:
+    trace["operation_digests"].append(
+        {
+            "kind": str(payload.get("operation_kind") or ""),
+            "target": str(payload.get("target") or ""),
+            "idempotency_key": str(payload.get("idempotency_key") or ""),
+            "status": "planned",
+        }
+    )
+
+
+def _fold_executed(trace: dict, ev, payload: dict) -> None:
+    key = payload.get("idempotency_key")
+    status = str(payload.get("status") or "")
+    for entry in trace["operation_digests"]:
+        if entry["idempotency_key"] == key:
+            entry["status"] = status
+            break
+
+
+def _fold_frozen(trace: dict, ev, payload: dict) -> None:
+    trace["candidate_sha"] = payload.get("candidate_sha", trace["candidate_sha"])
+
+
+_TRACE_FOLDERS = {
+    "release.previewed": _fold_previewed,
+    "release.decided": _fold_decided,
+    "publish.planned": _fold_planned,
+    "publish.executed": _fold_executed,
+    "candidate.frozen": _fold_frozen,
+}
+
+
 def _fold_trace_event(trace: dict, ev) -> None:
     """Fold one event into the release trace accumulator.
 
@@ -47,45 +102,12 @@ def _fold_trace_event(trace: dict, ev) -> None:
     a foreign candidate_sha never project into this trace.
     """
     payload = _event_payload(ev)
-    etype = _event_type(ev)
     candidate = payload.get("candidate_sha")
     if candidate is not None and candidate != trace["candidate_sha"]:
         return
-    if etype == "release.previewed":
-        trace["preview_digest"] = payload.get("preview_digest", trace["preview_digest"])
-        trace["artifact_digest"] = payload.get("artifact_digest", trace["artifact_digest"])
-        if isinstance(payload.get("evidence_digests"), dict):
-            trace["evidence_digests"] = dict(payload["evidence_digests"])
-        # The traced release_tag is the tag operation of the approved preview
-        # plan. A merge-only plan (the default feature journey) declares no tag
-        # operation, so release_tag stays the explicit empty string: "" means
-        # "this plan performs no public tag", never "unknown" (FR-0277).
-        plan = payload.get("operation_plan")
-        steps = plan.get("steps") if isinstance(plan, dict) else None
-        for step in steps or ():
-            kind, _, target = str(step).partition(":")
-            if kind == "tag" and target:
-                trace["release_tag"] = target
-    elif etype == "release.decided" and payload.get("action") == "release":
-        trace["human_approval_event_seq"] = _event_seq(ev)
-    elif etype == "publish.planned":
-        trace["operation_digests"].append(
-            {
-                "kind": str(payload.get("operation_kind") or ""),
-                "target": str(payload.get("target") or ""),
-                "idempotency_key": str(payload.get("idempotency_key") or ""),
-                "status": "planned",
-            }
-        )
-    elif etype == "publish.executed":
-        key = payload.get("idempotency_key")
-        status = str(payload.get("status") or "")
-        for entry in trace["operation_digests"]:
-            if entry["idempotency_key"] == key:
-                entry["status"] = status
-                break
-    elif etype == "candidate.frozen":
-        trace["candidate_sha"] = payload.get("candidate_sha", trace["candidate_sha"])
+    folder = _TRACE_FOLDERS.get(_event_type(ev))
+    if folder is not None:
+        folder(trace, ev, payload)
 
 
 def build_release_trace(events, candidate_sha: str) -> dict:
@@ -189,42 +211,55 @@ def skipped_issue_entries(
     """
     seen = {str(n) for n in (closed_numbers or ())}
     out: list[dict] = []
-
-    def add(number, url: str, source: str) -> None:
-        if number is None or str(number) in seen:
-            return
-        seen.add(str(number))
-        out.append(
-            {
-                "issue_number": number,
-                "state": "skipped",
-                "reason": "not_authoritative",
-                "source": source,
-                "url": url,
-                "candidate_sha": trace.get("candidate_sha", ""),
-                "trace_digest": trace.get("trace_digest", ""),
-            }
-        )
-
     for _item, mapping in (issue_map or {}).items():
-        if not isinstance(mapping, dict):
-            continue
-        number = mapping.get("issue_number")
-        if mapping.get("api_verified") and not _is_fake_identity(number):
-            continue
-        source = str(mapping.get("source") or "")
-        if not source:
-            source = "legacy_fake" if _is_fake_identity(number) else "non_authoritative"
-        add(number, str(mapping.get("url") or ""), source)
+        _skip_issue_map_row(mapping, trace, seen, out)
     for registration in known_issues or ():
-        if not isinstance(registration, dict):
-            continue
-        add(
-            registration.get("issue_number"),
-            str(registration.get("url") or ""),
-            "known_issue",
-        )
+        _skip_known_issue_row(registration, trace, seen, out)
     return out
+
+
+def _append_skip(
+    number, url: str, source: str, trace: dict, seen: set, out: list
+) -> None:
+    if number is None or str(number) in seen:
+        return
+    seen.add(str(number))
+    out.append(
+        {
+            "issue_number": number,
+            "state": "skipped",
+            "reason": "not_authoritative",
+            "source": source,
+            "url": url,
+            "candidate_sha": trace.get("candidate_sha", ""),
+            "trace_digest": trace.get("trace_digest", ""),
+        }
+    )
+
+
+def _skip_issue_map_row(mapping, trace: dict, seen: set, out: list) -> None:
+    if not isinstance(mapping, dict):
+        return
+    number = mapping.get("issue_number")
+    if mapping.get("api_verified") and not _is_fake_identity(number):
+        return
+    source = str(mapping.get("source") or "")
+    if not source:
+        source = "legacy_fake" if _is_fake_identity(number) else "non_authoritative"
+    _append_skip(number, str(mapping.get("url") or ""), source, trace, seen, out)
+
+
+def _skip_known_issue_row(registration, trace: dict, seen: set, out: list) -> None:
+    if not isinstance(registration, dict):
+        return
+    _append_skip(
+        registration.get("issue_number"),
+        str(registration.get("url") or ""),
+        "known_issue",
+        trace,
+        seen,
+        out,
+    )
 
 
 def close_project_milestone(repo: Path, tracker: dict, trace: dict, closer=None) -> dict:
