@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 
 from tracks.effects.dispatch_parity import (
     is_declared,
@@ -38,6 +39,23 @@ _SAGE_OUTCOME_FIELDS = (
     "corpus_digests",
     "rationale_refs",
 )
+
+
+@dataclass(frozen=True)
+class _AgentDispatchCtx:
+    """One acted agent dispatch, bound for outcome finalization."""
+
+    cmd: object
+    state: object
+    task_id: str | None
+    role: str
+    substate: str
+    doc: str | None
+    p: dict
+    assignment: dict | None
+    pre_dirty: dict | None
+    doc_gap: dict | None
+    t0: float
 
 
 def _sage_anchor_outcome_fields(result: dict) -> dict:
@@ -126,66 +144,7 @@ the envelope/failure faces stay re-exported by executor.py."""
         if materialization_error is not None:
             self._emit_stale_assignment(cmd, task_id, role, materialization_error)
             return
-        # M5 (convergence plan 2026-09-05): dispatch-side hard budget on
-        # the CARD itself. This is the POST-enrichment materialized card
-        # (issue() already ran _materialize_m_impl_assignment), i.e. the
-        # bytes the backend actually receives; the FR-11 evidence channel
-        # merges afterwards in _assignment_with_evidence and is not the
-        # card's liability. A card JSON over TRAC_ASSIGNMENT_BUDGET bytes
-        # (default 16KB) is a structural task-graph defect (scope bloat:
-        # revision archaeology and escalation add-ons living in the prompt
-        # instead of the event log, b92's 200-600k token dispatches).
-        # Since the M5 card diet, non-writer (archer/prism) cards are lean
-        # by construction (manifest=None, slim task identity): the
-        # budget's teeth are for writer (devon/shield) cards, where an
-        # oversized card means real prompt blowup.
-        # Reject before any backend I/O; routes as plan_defect (scope
-        # replan, no agent attempt burned).
-        card = p.get("assignment")
-        budget = _assignment_budget()
-        card_bytes = (
-            len(json.dumps(card, ensure_ascii=False, default=str))
-            if isinstance(card, dict)
-            else 0
-        )
-        if isinstance(card, dict) and budget and card_bytes > budget:
-            # M5 audit-first rule (operator OOB 2026-09-06): the rejection
-            # carries a per-section byte breakdown so the FIRST response to
-            # an over-budget card is a dedup audit (which sections cost
-            # what, which are boilerplate/history riding the card instead
-            # of the event log), never a budget raise.
-            sections = sorted(
-                (
-                    (key, len(json.dumps(value, ensure_ascii=False, default=str)))
-                    for key, value in card.items()
-                ),
-                key=lambda item: item[1],
-                reverse=True,
-            )
-            breakdown = ", ".join(f"{key}={size}B" for key, size in sections[:6])
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "plan_defect",
-                    "target_stage": state.stage,
-                    "task_id": task_id or state.current_task_id or "",
-                    "reason": (
-                        "assignment card over hard budget (M5): "
-                        f"{card_bytes}"
-                        f" bytes > {budget} -- dedup audit first (see "
-                        "evidence breakdown), then split the card; the "
-                        "event log carries the history, not the prompt"
-                    ),
-                    "evidence": (
-                        "dispatch-side assignment budget check; section "
-                        f"bytes [{breakdown}]; audit zero-reader duplicates "
-                        "and boilerplate before re-planning"
-                    ),
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
+        if self._reject_over_budget_card(cmd, state, task_id, p):
             return
         if self._release_empty_hotfix_shield(cmd, state, task_id, role, substate, assignment):
             return
@@ -197,6 +156,70 @@ the envelope/failure faces stay re-exported by executor.py."""
         if self._reject_invalid_test_tasks(state, role, substate, assignment, cmd, task_id):
             return
         self._dispatch_agent_backend(cmd, state, task_id, role, substate, doc, doc_path, assignment)
+
+    def _reject_over_budget_card(self, cmd, state, task_id, p: dict) -> bool:
+        """M5 (convergence plan 2026-09-05): dispatch-side hard budget on
+        the CARD itself. This is the POST-enrichment materialized card
+        (issue() already ran _materialize_m_impl_assignment), i.e. the
+        bytes the backend actually receives; the FR-11 evidence channel
+        merges afterwards in _assignment_with_evidence and is not the
+        card's liability. A card JSON over TRAC_ASSIGNMENT_BUDGET bytes
+        (default 16KB) is a structural task-graph defect (scope bloat:
+        revision archaeology and escalation add-ons living in the prompt
+        instead of the event log, b92's 200-600k token dispatches).
+        Since the M5 card diet, non-writer (archer/prism) cards are lean
+        by construction (manifest=None, slim task identity): the
+        budget's teeth are for writer (devon/shield) cards, where an
+        oversized card means real prompt blowup.
+        Reject before any backend I/O; routes as plan_defect (scope
+        replan, no agent attempt burned). Returns True when rejected."""
+        card = p.get("assignment")
+        budget = _assignment_budget()
+        card_bytes = (
+            len(json.dumps(card, ensure_ascii=False, default=str))
+            if isinstance(card, dict)
+            else 0
+        )
+        if not (isinstance(card, dict) and budget and card_bytes > budget):
+            return False
+        # M5 audit-first rule (operator OOB 2026-09-06): the rejection
+        # carries a per-section byte breakdown so the FIRST response to
+        # an over-budget card is a dedup audit (which sections cost
+        # what, which are boilerplate/history riding the card instead
+        # of the event log), never a budget raise.
+        sections = sorted(
+            (
+                (key, len(json.dumps(value, ensure_ascii=False, default=str)))
+                for key, value in card.items()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        breakdown = ", ".join(f"{key}={size}B" for key, size in sections[:6])
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "plan_defect",
+                "target_stage": state.stage,
+                "task_id": task_id or state.current_task_id or "",
+                "reason": (
+                    "assignment card over hard budget (M5): "
+                    f"{card_bytes}"
+                    f" bytes > {budget} -- dedup audit first (see "
+                    "evidence breakdown), then split the card; the "
+                    "event log carries the history, not the prompt"
+                ),
+                "evidence": (
+                    "dispatch-side assignment budget check; section "
+                    f"bytes [{breakdown}]; audit zero-reader duplicates "
+                    "and boilerplate before re-planning"
+                ),
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return True
 
     @staticmethod
     def _assignment_with_evidence(assignment: dict | None, params: dict) -> dict | None:
@@ -251,46 +274,81 @@ the envelope/failure faces stay re-exported by executor.py."""
         # SM-02 doc-comment-first (IF-DOCGAP-001): capture design-doc baseline
         # and dirty snapshot BEFORE act() so deltas can be classified after.
         doc_gap = self._capture_doc_gap_context(state, role)
-        # B1 (issue #2, user ruling 2026-08-18): writer agents (Devon RGR in
-        # M-IMPL, Shield WRITE in M-TEST) run in a spatially isolated
-        # worktree created from the current main HEAD; the work is replayed
-        # onto the main tree afterwards, so every existing pipeline
-        # (pre_dirty, manifest audit, R/G refs, atomic rollback) keeps
-        # operating on the main tree unchanged. Per-dispatch lifecycle:
-        # each phase re-creates from HEAD, so REFACTOR and PRISM-revise
-        # re-dispatches naturally see committed work; a crash leaks only a
-        # worktree that the B2 start-time sweep reclaims. Audited events.
+        result = self._run_agent_act(
+            cmd, state, task_id, role, substate, doc, doc_path, assignment
+        )
+        if result is None:
+            return
+        self._finalize_agent_outcome(
+            _AgentDispatchCtx(
+                cmd=cmd,
+                state=state,
+                task_id=task_id,
+                role=role,
+                substate=substate,
+                doc=doc,
+                p=p,
+                assignment=assignment,
+                pre_dirty=pre_dirty,
+                doc_gap=doc_gap,
+                t0=t0,
+            ),
+            result,
+        )
+
+    def _run_agent_act(
+        self, cmd, state, task_id, role, substate, doc, doc_path, assignment
+    ):
+        """Open the writer worktree, run act(), and surface a replay failure.
+
+        B1 (issue #2, user ruling 2026-08-18): writer agents (Devon RGR in
+        M-IMPL, Shield WRITE in M-TEST) run in a spatially isolated worktree
+        created from the current main HEAD; the work is replayed onto the main
+        tree afterwards, so every existing pipeline (pre_dirty, manifest
+        audit, R/G refs, atomic rollback) keeps operating on the main tree
+        unchanged. Per-dispatch lifecycle: each phase re-creates from HEAD,
+        so REFACTOR and PRISM-revise re-dispatches naturally see committed
+        work; a crash leaks only a worktree that the B2 start-time sweep
+        reclaims. Audited events. Returns None after emitting a replay
+        failure (the turn is fail-closed)."""
         handle, wt_task_id = self._open_writer_worktree(state, role, substate, cmd)
         result, replay_error = self._act_in_worktree(
             cmd, role, substate, doc, doc_path, assignment, handle, wt_task_id
         )
-        if replay_error is not None:
-            self._emit(
-                "verdict.failed",
-                {
-                    "check": "worktree",
-                    "reason": f"worktree replay failed: {replay_error}",
-                    "evidence": replay_error,
-                    "task_id": task_id,
-                    "attempt": state.current_attempt + 1,
-                },
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
-            return
+        if replay_error is None:
+            return result
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "worktree",
+                "reason": f"worktree replay failed: {replay_error}",
+                "evidence": replay_error,
+                "task_id": task_id,
+                "attempt": state.current_attempt + 1,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return None
+
+    def _finalize_agent_outcome(self, ctx, result) -> None:
+        cmd, state, task_id = ctx.cmd, ctx.state, ctx.task_id
+        p = ctx.p
         # IF-ENVELOPE-002 finalization seam: after act() (and any result-
         # enriching subclass) returned, and BEFORE any raw_output is consumed
         # below, give the backend the last word on its declared reply bytes.
-        result = self._finalize_backend_result(result, role, substate, assignment)
+        result = self._finalize_backend_result(result, ctx.role, ctx.substate, ctx.assignment)
         # T-001 face (E) / IF-ENVELOPE-002: post-act short-circuit gates
         # (dispatch log end, prepared-artifact parity rejection, collection-
         # time format_error). Each short-circuit keeps the outcome out of the
         # ordinary pipeline (never a semantic success).
-        if self._post_act_gates(p, result, cmd, task_id, assignment, time.monotonic() - t0):
+        if self._post_act_gates(
+            p, result, cmd, task_id, ctx.assignment, time.monotonic() - ctx.t0
+        ):
             return
         # IF-ENVELOPE-002: the single full-gate dispatch.parity success
         # event (complete audit) of a declared dispatch.
-        self._emit_dispatch_parity_success(result, cmd, task_id, assignment)
+        self._emit_dispatch_parity_success(result, cmd, task_id, ctx.assignment)
         # OOB b89 OB-4 — tasks.md projection guard (incremental attribution)
         # Must run before any early-return handling so attribution is correct
         # and restoration is performed in the same command_id. A violation
@@ -301,20 +359,20 @@ the envelope/failure faces stay re-exported by executor.py."""
         # v0.5 no_diff peer review: NO_DIFF_EXPLAIN and NO_DIFF_REVIEW outcomes
         # do NOT enter the ResultCheckpoint pipeline. The explanation/review
         # events drive the state machine directly.
-        if self._handle_no_diff_outcome(substate, result, cmd, task_id, state):
+        if self._handle_no_diff_outcome(ctx.substate, result, cmd, task_id, state):
             return
         # D-29 anti-self-report triple ③: M-TEST PRISM_REVIEW criteria-pack
         # mismatch -> verdict.failed, re-dispatch Prism (no prism.verdict).
         # Must be checked before emitting outcome.received so a mismatch
         # short-circuits without entering the pipeline.
         if self._criteria_pack_mismatch(
-            role, substate, state, result.get("verdict"), assignment, result, cmd
+            ctx.role, ctx.substate, state, result.get("verdict"), ctx.assignment, result, cmd
         ):
             self._emit_criteria_pack_failure(
                 cmd,
                 task_id,
                 p,
-                assignment,
+                ctx.assignment,
                 result,
                 state,
             )
@@ -322,7 +380,7 @@ the envelope/failure faces stay re-exported by executor.py."""
         # SM-02 doc-comment-first pre-check (§1k): classify design-doc deltas
         # BEFORE ordinary validation. illegal_body_edit > legal_discussion.
         if self._handle_doc_gap_outcome(
-            cmd, state, task_id, role, substate, result, doc_gap,
+            cmd, state, task_id, ctx.role, ctx.substate, result, ctx.doc_gap,
         ):
             return
         # v0.5 ResultCheckpoint pipeline (batch 1: M-STORY/M-SPEC/M-ACC):
@@ -346,7 +404,7 @@ the envelope/failure faces stay re-exported by executor.py."""
         # outcome fields (acs / no_anchor / searched_versions / corpus_digests /
         # rationale_refs) into the persisted outcome so _do_validate_anchor can
         # programmatically validate them.
-        if role == "sage" and substate == "SAGE_TRIAGE":
+        if ctx.role == "sage" and ctx.substate == "SAGE_TRIAGE":
             payload.update(_sage_anchor_outcome_fields(result))
         # Expose the agent I/O blob ref on the result so downstream verdict
         # emissions can point the next agent at the full transcript (critic
@@ -355,21 +413,21 @@ the envelope/failure faces stay re-exported by executor.py."""
         agent_io = payload.get("agent_io") or {}
         if agent_io.get("output_ref"):
             result.setdefault("output_ref", agent_io["output_ref"])
-        if self._checkpoint_eligible(state, result, substate):
+        if self._checkpoint_eligible(state, result, ctx.substate):
             payload["result_checkpoint"] = self._result_checkpoint_payload(
-                cmd, state, result, p, substate, role, doc, pre_dirty
+                cmd, state, result, p, ctx.substate, ctx.role, ctx.doc, ctx.pre_dirty
             )
         self._emit("outcome.received", payload, command_id=cmd.command_id, task_id=task_id)
         # T-001 face (E) / IF-FAILURE-001: emitted -> stored (append-only
         # failure evidence at production time) and consumed -> acked (the
         # outcome's evidence_ack closes the loop on injected evidence).
-        self._record_failure_stored(result, role, state, task_id, cmd)
-        self._consume_evidence_ack(result, role)
+        self._record_failure_stored(result, ctx.role, state, task_id, cmd)
+        self._consume_evidence_ack(result, ctx.role)
         if "result_checkpoint" in payload:
             return  # pipeline drives the domain event
-        self._emit_dispatch_verdict(result, role, state, p, cmd, task_id)
-        shield_committed = self._emit_shield_commit(result, role, state, cmd, task_id)
-        self._maybe_transition_full_ledger(cmd, state, role, result, shield_committed)
+        self._emit_dispatch_verdict(result, ctx.role, state, p, cmd, task_id)
+        shield_committed = self._emit_shield_commit(result, ctx.role, state, cmd, task_id)
+        self._maybe_transition_full_ledger(cmd, state, ctx.role, result, shield_committed)
 
     def _extract_pre_snapshot_for_guards(self, params: dict) -> dict | None:
         """Return the pre-dispatch dirty snapshot dict for incremental attribution.
@@ -653,46 +711,51 @@ the envelope/failure faces stay re-exported by executor.py."""
         except EnvelopeFormatError as exc:
             if not declared:
                 return False
-            self._emit(
-                "format_error",
-                {"kind": exc.kind, "detail": exc.detail, "task_id": task_id},
-                command_id=cmd.command_id,
-                task_id=task_id,
-            )
-            # A declared review/diagnose dispatch whose reply violates the
-            # declared schema is a CONTRACT violation of that role: without
-            # a routable event the reviewer_dispatched flag stays set and
-            # decide() awaits a verdict that already failed classification
-            # forever (live 01M280CV: DIAGNOSE schema_violation stranded
-            # active/DIAGNOSE across process restarts — the exact B62 #80
-            # stall class). Emit the stage-routable verdict.failed so the
-            # projection applies the accepted contract-violation routing
-            # (reset review flags, consume attempt, stay for re-dispatch;
-            # budget exhaustion escalates). Audit trail keeps both events.
-            if declared_kind in DIAGNOSE_KINDS:
-                self._emit(
-                    "verdict.failed",
-                    {
-                        "check": "diagnose_contract_violation",
-                        "target_stage": "M-IMPL",
-                        "task_id": task_id or "",
-                        "reason": (
-                            "declared DIAGNOSE reply failed the kernel "
-                            f"schema ({exc.kind}: {exc.detail})"
-                        ),
-                        "evidence": (
-                            "format_error on declared prism:diagnose reply; "
-                            "the assignment carried the payload schema"
-                        ),
-                    },
-                    command_id=cmd.command_id,
-                    task_id=task_id,
-                )
+            self._emit_format_error(cmd, task_id, exc, declared_kind)
             return True
         except NotImplementedError:
             return False  # T-035 module pending; deferred-only-pass
         result.setdefault("envelope", envelope)
         return False
+
+    def _emit_format_error(self, cmd, task_id, exc, declared_kind) -> None:
+        """format_error plus the stage-routable verdict for declared kinds.
+
+        A declared review/diagnose dispatch whose reply violates the declared
+        schema is a CONTRACT violation of that role: without a routable event
+        the reviewer_dispatched flag stays set and decide() awaits a verdict
+        that already failed classification forever (live 01M280CV: DIAGNOSE
+        schema_violation stranded active/DIAGNOSE across process restarts —
+        the exact B62 #80 stall class). The verdict.failed makes the
+        projection apply the accepted contract-violation routing (reset
+        review flags, consume attempt, stay for re-dispatch; budget
+        exhaustion escalates). Audit trail keeps both events.
+        """
+        self._emit(
+            "format_error",
+            {"kind": exc.kind, "detail": exc.detail, "task_id": task_id},
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        if declared_kind in DIAGNOSE_KINDS:
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "diagnose_contract_violation",
+                    "target_stage": "M-IMPL",
+                    "task_id": task_id or "",
+                    "reason": (
+                        "declared DIAGNOSE reply failed the kernel "
+                        f"schema ({exc.kind}: {exc.detail})"
+                    ),
+                    "evidence": (
+                        "format_error on declared prism:diagnose reply; "
+                        "the assignment carried the payload schema"
+                    ),
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
 
     def _record_failure_stored(self, result, role, state, task_id, cmd) -> None:
         """(E) IF-FAILURE-001: append-only storage at failure production.
