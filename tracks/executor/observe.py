@@ -8,6 +8,7 @@ import json
 import posixpath
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
@@ -37,6 +38,15 @@ _TREE_STAMP_SKIP_PREFIXES = (
     "dist/",
     "logs/",
 )
+
+
+@dataclass(frozen=True)
+class _TasksMdGuard:
+    """A tasks.md projection mismatch awaiting attribution."""
+
+    path: Path
+    rendered: str
+    post_md: str | None
 
 
 class ExecObserveMixin:
@@ -188,9 +198,7 @@ and the remaining surface via self."""
             return set(params["pre_dirty"])
         return self._dirty_snapshot()
 
-    def _handle_tasks_md_projection(  # noqa: CCR001
-        self, cmd, state, task_id, params: dict
-    ) -> str:
+    def _handle_tasks_md_projection(self, cmd, state, task_id, params: dict) -> str:
         """OOB b89 OB-4 incremental attribution guard.
 
         Returns ``violation`` (fail-closed, already emitted ``verdict.failed`` +
@@ -202,6 +210,13 @@ and the remaining surface via self."""
         file-content check plus an incremental-diff attribution using the
         dispatched ``pre_dirty_snapshot``.
         """
+        guard = self._tasks_md_guard()
+        if isinstance(guard, str):
+            return guard
+        return self._apply_tasks_md_guard(cmd, state, task_id, params, guard)
+
+    def _tasks_md_guard(self):
+        """Load the rendered tasks.md and its on-disk content, or a skip/ok str."""
         # Resolve version dir (same as MImplRuntimeMixin._vdir)
         try:
             vdir = self._vdir()
@@ -218,11 +233,7 @@ and the remaining surface via self."""
         except Exception:
             return "skipped"
         try:
-            from tracks.executor.taskgraph import (
-                classify_tasks_md_guard,
-                parse_tasks_json,
-                render_tasks_md,
-            )
+            from tracks.executor.taskgraph import parse_tasks_json, render_tasks_md
         except Exception:
             return "skipped"
         tasks, err = parse_tasks_json(raw_json)
@@ -234,30 +245,31 @@ and the remaining surface via self."""
             return "skipped"
         # Post tasks.md content (None when missing → treat as mismatch with rendered)
         try:
-            post_md = tasks_md_path.read_text(encoding="utf-8") if tasks_md_path.exists() else None
+            post_md = (
+                tasks_md_path.read_text(encoding="utf-8")
+                if tasks_md_path.exists()
+                else None
+            )
         except Exception:
             post_md = None
         # Fast path: match → nothing to do (no restoration, no events)
         # Note: rendered is never None here; if post_md is None, it's a mismatch.
         if rendered == post_md:
             return "ok"
-        # Mismatch → decide violation vs system_repaired via incremental attribution
+        return _TasksMdGuard(tasks_md_path, rendered, post_md)
+
+    def _apply_tasks_md_guard(self, cmd, state, task_id, params: dict, guard) -> str:
+        """Mismatch → decide violation vs system_repaired via attribution."""
+        from tracks.executor.taskgraph import classify_tasks_md_guard
+
         pre = self._extract_pre_snapshot_for_guards(params)
         try:
             post_snapshot = self._dirty_snapshot()
         except Exception:
             post_snapshot = {}
-        # Compute repo-relative key for tasks.md
-        try:
-            rel_md = str(tasks_md_path.relative_to(Path(self.repo)).as_posix())  # type: ignore[arg-type]
-        except Exception:
-            # fallback: .tracks/projects/... form
-            try:
-                rel_md = str(tasks_md_path.relative_to(Path(self.repo).resolve()).as_posix())
-            except Exception:
-                rel_md = tasks_md_path.name
+        rel_md = self._tasks_md_relpath(guard.path)
         pre_contains = self._is_path_in_diff(rel_md, pre, post_snapshot)
-        decision = classify_tasks_md_guard(pre_contains, rendered, post_md)
+        decision = classify_tasks_md_guard(pre_contains, guard.rendered, guard.post_md)
         if decision == "violation":
             # Fail-closed: this turn's diff introduced the mismatch
             self._emit(
@@ -279,12 +291,9 @@ and the remaining surface via self."""
                 task_id=task_id,
             )
             # Restore in the same command (audited, idempotent)
-            try:
-                tasks_md_path.parent.mkdir(parents=True, exist_ok=True)
-                tasks_md_path.write_text(rendered, encoding="utf-8")
-            except Exception as exc:
-                # restoration failure → emit as evidence but don't crash
-                print(f"tasks_md restore failed: {exc}", file=sys.stderr, flush=True)
+            self._restore_tasks_md(
+                guard.path, guard.rendered, "tasks_md restore failed"
+            )
             self._emit(
                 "tasks_md.restored",
                 {
@@ -297,11 +306,9 @@ and the remaining surface via self."""
             return "violation"
         if decision == "system_repaired":
             # Inherited dirty (crash, checkout residual): self-heal without violation
-            try:
-                tasks_md_path.parent.mkdir(parents=True, exist_ok=True)
-                tasks_md_path.write_text(rendered, encoding="utf-8")
-            except Exception as exc:
-                print(f"tasks_md system repair failed: {exc}", file=sys.stderr, flush=True)
+            self._restore_tasks_md(
+                guard.path, guard.rendered, "tasks_md system repair failed"
+            )
             self._emit(
                 "tasks_md.system_repaired",
                 {
@@ -313,6 +320,27 @@ and the remaining surface via self."""
             )
             return "repaired"
         return "ok"
+
+    def _tasks_md_relpath(self, tasks_md_path: Path) -> str:
+        """Repo-relative key for tasks.md (fallback .tracks/projects form)."""
+        try:
+            return str(tasks_md_path.relative_to(Path(self.repo)).as_posix())  # type: ignore[arg-type]
+        except Exception:
+            try:
+                return str(
+                    tasks_md_path.relative_to(Path(self.repo).resolve()).as_posix()
+                )
+            except Exception:
+                return tasks_md_path.name
+
+    @staticmethod
+    def _restore_tasks_md(tasks_md_path: Path, rendered: str, message: str) -> None:
+        """Best-effort restore; a failure prints but never crashes the guard."""
+        try:
+            tasks_md_path.parent.mkdir(parents=True, exist_ok=True)
+            tasks_md_path.write_text(rendered, encoding="utf-8")
+        except Exception as exc:
+            print(f"{message}: {exc}", file=sys.stderr, flush=True)
 
     def _dirty_tree_stamp(self, root: Path | None = None) -> str:
         """Dirty-aware worktree content stamp over relevant source/test/config
