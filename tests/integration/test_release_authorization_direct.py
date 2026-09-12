@@ -130,6 +130,20 @@ def _append_complete_recovery(
             "evidence_digests": {"artifact": artifact_digest},
         },
     )
+    review_command_id = f"security-review-{candidate}"
+    store.append(
+        run_id,
+        version,
+        "prism.verdict",
+        {
+            "verdict": "pass",
+            "scope": "security",
+            "candidate_sha": candidate,
+            "policy_digest": contract_digest,
+            "evidence_digests": {"artifact": artifact_digest},
+        },
+        command_id=review_command_id,
+    )
     store.append(
         run_id,
         version,
@@ -140,6 +154,7 @@ def _append_complete_recovery(
             "candidate_sha": candidate,
             "scans": [{"id": "accepted-recovery", "status": "passed"}],
             "prism_scope": "security",
+            "review_command_id": review_command_id,
         },
     )
 
@@ -227,6 +242,20 @@ def _new_candidate(
                 "evidence_digests": {"artifact": artifact_digest},
             },
         )
+        review_command_id = f"security-review-{candidate}"
+        store.append(
+            run_id,
+            version,
+            "prism.verdict",
+            {
+                "verdict": "pass",
+                "scope": "security",
+                "candidate_sha": candidate,
+                "policy_digest": contract_digest,
+                "evidence_digests": {"artifact": artifact_digest},
+            },
+            command_id=review_command_id,
+        )
         store.append(
             run_id,
             version,
@@ -237,6 +266,7 @@ def _new_candidate(
                 "candidate_sha": candidate,
                 "scans": [{"id": "accepted-upstream", "status": "passed"}],
                 "prism_scope": "security",
+                "review_command_id": review_command_id,
             },
         )
         store.append(run_id, version, "stage.exited", {"stage": "M-VERIFY"})

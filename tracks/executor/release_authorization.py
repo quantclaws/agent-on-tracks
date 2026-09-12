@@ -211,7 +211,18 @@ def _security_status(events: list, candidate: str, contract_digest: str) -> tupl
     if event is None:
         return "unknown", False
     payload = _payload(event)
-    valid = payload.get("status") == "passed" and payload.get("policy_digest") == contract_digest
+    review = next((item for item in reversed(events)
+                   if item.type == "prism.verdict"
+                   and _payload(item).get("scope") == "security"
+                   and _payload(item).get("candidate_sha") == candidate), None)
+    review_payload = _payload(review)
+    valid = (
+        payload.get("status") == "passed" and payload.get("policy_digest") == contract_digest
+        and bool(payload.get("review_command_id")) and review is not None
+        and review.command_id == payload["review_command_id"] and review.seq < event.seq
+        and review_payload.get("verdict") == "pass"
+        and review_payload.get("policy_digest") == contract_digest
+    )
     return ("passed" if valid else "failed"), valid
 
 

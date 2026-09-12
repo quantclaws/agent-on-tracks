@@ -18,7 +18,7 @@ echo "[pre-commit] ruff"
 echo "[pre-commit] cognitive complexity (tracks)"
 "$BIN/flake8" tracks
 echo "[pre-commit] pylint: duplication + file length (tracks)"
-"$BIN/pylint" --exit-zero --disable=all --enable=R0801,C0302 tracks
+"$BIN/pylint" --disable=all --enable=R0801,C0302 tracks
 echo "[pre-commit] pylint: method length + locals (tracks)"
-"$BIN/pylint" --exit-zero --disable=all --enable=R0915,R0914 tracks
+"$BIN/pylint" --disable=all --enable=R0915,R0914 tracks
 echo "[pre-commit] OK"

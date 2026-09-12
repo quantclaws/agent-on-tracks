@@ -118,6 +118,11 @@ def _host(tmp_path: Path):
         },
     )
     store.append(
+        run_id, "v0.8", "prism.verdict",
+        {"scope": "security", "verdict": "pass", "candidate_sha": candidate,
+         "policy_digest": contract_digest}, command_id="security-review",
+    )
+    store.append(
         run_id,
         "v0.8",
         "security.assessed",
@@ -127,6 +132,7 @@ def _host(tmp_path: Path):
             "candidate_sha": candidate,
             "scans": [{"id": "security", "status": "passed", "exit_code": 0}],
             "prism_scope": "security",
+            "review_command_id": "security-review",
         },
     )
     contract = load_host_contract(contract_path)
@@ -271,8 +277,13 @@ def test_later_security_scope_does_not_replace_verify_final(tmp_path, capsys):
             "verdict": "pass",
             "scope": "security",
             "candidate_sha": candidate,
+            "policy_digest": digest,
         },
+        command_id="later-security-review",
     )
+    assessment = dict(_events(store, run_id, "security.assessed")[-1].payload)
+    assessment["review_command_id"] = "later-security-review"
+    store.append(run_id, "v0.8", "security.assessed", assessment)
     _append_preview(store, repo, run_id, candidate, digest)
 
     rc = cmd_release(repo, "--action", "release")
