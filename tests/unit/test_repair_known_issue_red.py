@@ -79,13 +79,13 @@ def test_classify_defect_discipline_owner():
 
 
 # AC-FR0286-01@v0.8 TRACKS-TRACE IF-REPAIR-001 round_started never rollback
-def test_open_repair_round_never_rolls_back():
+def test_open_repair_round_never_rolls_back(tmp_path):
     """AC-FR0286-01: open_repair_round emits round_started {round, budget,
     classification} bound to the candidate; it NEVER carries a
     stage.rolled_back / rollback command — in-place repair only."""
     result = _calls(
         open_repair_round,
-        "RUN",
+        str(tmp_path),
         {"defect_class": "behavior", "owner": "Devon", "discipline": "red_first"},
         3,
         label="open_repair_round",
