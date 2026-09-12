@@ -19,6 +19,7 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.project import _SUPPORTED_FRAMEWORKS
@@ -397,19 +398,17 @@ def _split_surface(anchor: str, repo: Path, dynamic: list[str]) -> tuple[list[st
     return sorted(ast_mods), sorted(set(dynamic))
 
 
-def _run_one_anchor(  # noqa: CCR001
-    anchor: str,
-    repo: Path,
-    python_bin: str,
-    plugin_root_str: str,
-    timeout: int,
-) -> tuple[str, dict]:
-    """Collect surface for a single anchor (isolated subprocess)."""
-    fd, tmp_name = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
-    tmp_path = Path(tmp_name)
-    with contextlib.suppress(Exception):
-        tmp_path.unlink(missing_ok=True)
+@dataclass(frozen=True)
+class _PluginRun:
+    """Outcome of one anchor's isolated runner subprocess."""
+
+    modules: list
+    outcome: str
+    error_msg: str
+
+
+def _anchor_run_env(repo: Path, plugin_root_str: str, tmp_path: Path) -> dict:
+    """Environment for the isolated runner (surface output + PYTHONPATH)."""
     env = os.environ.copy()
     env["TRACKS_SURFACE_OUT"] = str(tmp_path)
     repo_str = str(repo)
@@ -417,7 +416,11 @@ def _run_one_anchor(  # noqa: CCR001
         env["PYTHONPATH"] = repo_str + os.pathsep + plugin_root_str
     else:
         env["PYTHONPATH"] = repo_str
-    argv = [
+    return env
+
+
+def _anchor_run_argv(python_bin: str, anchor: str) -> list[str]:
+    return [
         python_bin,
         "-m",
         _RUNNER_MODULE,
@@ -427,6 +430,12 @@ def _run_one_anchor(  # noqa: CCR001
         "--no-header",
         "-q",
     ]
+
+
+def _run_anchor_plugin(
+    repo: Path, argv: list[str], env: dict, timeout: int, tmp_path: Path
+) -> _PluginRun:
+    """Run the isolated plugin and fold its output/error into a _PluginRun."""
     modules: list[str] = []
     outcome = "error"
     error_msg = ""
@@ -441,15 +450,15 @@ def _run_one_anchor(  # noqa: CCR001
         )
         mods, outc, err = _read_plugin_output(tmp_path, timeout)
         if err and not tmp_path.exists():
-            error_msg = f"surface file missing (rc={proc.returncode}) stdout={proc.stdout[:250]!r}"
+            error_msg = (
+                f"surface file missing (rc={proc.returncode}) "
+                f"stdout={proc.stdout[:250]!r}"
+            )
         elif err:
             error_msg = err
         else:
             modules = mods
             outcome = outc
-            if proc.returncode == 0 and outcome == "fail" and not mods:
-                # keep fail; plugin already reports fail
-                pass
         if err and outcome != "error":
             outcome = "error"
     except subprocess.TimeoutExpired as exc:
@@ -458,27 +467,128 @@ def _run_one_anchor(  # noqa: CCR001
     except OSError as exc:
         error_msg = f"infra failure: {exc}"
         outcome = "error"
+    return _PluginRun(modules, outcome, error_msg)
+
+
+def _anchor_surface_entry(anchor: str, repo: Path, run: _PluginRun) -> dict:
+    """Split an OK run into AST/dynamic modules and build the entry dict."""
     # split surface: AST (explicit test-file imports) vs dynamic (subprocess snapshot)
-    if outcome in ("pass", "fail"):
-        ast_mods, dyn_mods = _split_surface(anchor, repo, modules)
+    if run.outcome in ("pass", "fail"):
+        ast_mods, dyn_mods = _split_surface(anchor, repo, run.modules)
     else:
         ast_mods, dyn_mods = [], []
-        modules = []
-    with contextlib.suppress(Exception):
-        tmp_path.unlink(missing_ok=True)
     merged = sorted(set(ast_mods) | set(dyn_mods))
     result: dict = {
         "modules": merged,
         "ast_modules": ast_mods,
         "dynamic_modules": dyn_mods,
-        "outcome": outcome,
+        "outcome": run.outcome,
     }
-    if error_msg:
-        result["error"] = error_msg
-    return anchor, result
+    if run.error_msg:
+        result["error"] = run.error_msg
+    return result
 
 
-def collect_anchor_surface(  # noqa: CCR001
+def _run_one_anchor(
+    anchor: str,
+    repo: Path,
+    python_bin: str,
+    plugin_root_str: str,
+    timeout: int,
+) -> tuple[str, dict]:
+    """Collect surface for a single anchor (isolated subprocess)."""
+    fd, tmp_name = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    with contextlib.suppress(Exception):
+        tmp_path.unlink(missing_ok=True)
+    env = _anchor_run_env(repo, plugin_root_str, tmp_path)
+    argv = _anchor_run_argv(python_bin, anchor)
+    run = _run_anchor_plugin(repo, argv, env, timeout, tmp_path)
+    with contextlib.suppress(Exception):
+        tmp_path.unlink(missing_ok=True)
+    return anchor, _anchor_surface_entry(anchor, repo, run)
+
+
+def _sidecar_payload(
+    digest: str, recorded_tree: str, anchors: dict, skipped_reason: str | None = None
+) -> dict:
+    payload = {
+        "schema": 1,
+        "anchors": anchors,
+        "anchor_set_digest": digest,
+        "recorded_tree": recorded_tree,
+    }
+    if skipped_reason is not None:
+        payload["skipped"] = True
+        payload["skipped_reason"] = skipped_reason
+    return payload
+
+
+def _contract_run_error(contract) -> str | None:
+    """Skip reason for an unparsable contract run command, else None."""
+    integ = getattr(contract, "integration", None)
+    run_cmd = getattr(integ, "run", None) if integ is not None else None
+    if not (isinstance(run_cmd, str) and run_cmd.strip()):
+        return None
+    # unparsable is treated as skipped (mirror anchor_probe)
+    try:
+        shlex.split(run_cmd)
+    except ValueError as exc:
+        return f"anchor surface skipped: contract run unparsable ({exc})"
+    return None
+
+
+def _future_result(future_to_anchor: dict, fut) -> tuple[str, dict]:
+    """One completed future's (anchor, entry), folding failures to error."""
+    try:
+        return fut.result()
+    except Exception as exc:
+        return future_to_anchor[fut], {"modules": [], "outcome": "error", "error": str(exc)}
+
+
+def _collect_parallel_results(
+    anchors: Sequence[str],
+    repo: Path,
+    python_bin: str,
+    plugin_root_str: str,
+    timeout: int,
+    jobs: int,
+) -> dict[str, dict]:
+    max_workers = min(jobs, len(anchors))
+    results: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_anchor = {
+            pool.submit(_run_one_anchor, a, repo, python_bin, plugin_root_str, timeout): a
+            for a in anchors
+        }
+        for fut in as_completed(future_to_anchor):
+            k, v = _future_result(future_to_anchor, fut)
+            results[k] = v
+    return results
+
+
+def _collect_anchor_results(
+    anchors: Sequence[str],
+    repo: Path,
+    python_bin: str,
+    plugin_root_str: str,
+    jobs,
+    timeout: int,
+) -> dict[str, dict]:
+    effective = 1 if jobs is None or jobs < 1 else jobs
+    results: dict[str, dict] = {}
+    if effective == 1 or len(anchors) == 1:
+        for a in anchors:
+            k, v = _run_one_anchor(a, repo, python_bin, plugin_root_str, timeout)
+            results[k] = v
+        return results
+    return _collect_parallel_results(
+        anchors, repo, python_bin, plugin_root_str, timeout, effective
+    )
+
+
+def collect_anchor_surface(
     repo: Path,
     anchors: Sequence[str],
     contract,
@@ -496,65 +606,17 @@ def collect_anchor_surface(  # noqa: CCR001
     recorded_tree = _dirty_tree_stamp(repo)
     if not _is_pytest_contract(contract):
         return _make_skipped_sidecar(digest, recorded_tree, contract)
-    integ = getattr(contract, "integration", None)
-    run_cmd = getattr(integ, "run", None) if integ is not None else None
-    if isinstance(run_cmd, str) and run_cmd.strip():
-        with contextlib.suppress(ValueError):
-            shlex.split(run_cmd)
-        # unparsable is treated as skipped (mirror anchor_probe)
-        try:
-            shlex.split(run_cmd)
-        except ValueError as exc:
-            return {
-                "schema": 1,
-                "anchors": {},
-                "anchor_set_digest": digest,
-                "recorded_tree": recorded_tree,
-                "skipped": True,
-                "skipped_reason": f"anchor surface skipped: contract run unparsable ({exc})",
-            }
+    reason = _contract_run_error(contract)
+    if reason is not None:
+        return _sidecar_payload(digest, recorded_tree, {}, reason)
     if not anchors:
-        return {
-            "schema": 1,
-            "anchors": {},
-            "anchor_set_digest": digest,
-            "recorded_tree": recorded_tree,
-        }
+        return _sidecar_payload(digest, recorded_tree, {})
     python_bin = _python_bin_for_repo(repo)
     plugin_root = Path(__file__).resolve().parents[2].resolve()
-    plugin_root_str = str(plugin_root)
-    results: dict[str, dict] = {}
-    if jobs is None or jobs < 1:
-        jobs = 1
-    if jobs == 1 or len(anchors) == 1:
-        for a in anchors:
-            k, v = _run_one_anchor(a, repo, python_bin, plugin_root_str, timeout)
-            results[k] = v
-        return {
-            "schema": 1,
-            "anchors": results,
-            "anchor_set_digest": digest,
-            "recorded_tree": recorded_tree,
-        }
-    max_workers = min(jobs, len(anchors))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_to_anchor = {
-            pool.submit(_run_one_anchor, a, repo, python_bin, plugin_root_str, timeout): a
-            for a in anchors
-        }
-        for fut in as_completed(future_to_anchor):
-            try:
-                k, v = fut.result()
-            except Exception as exc:
-                anc = future_to_anchor[fut]
-                k, v = anc, {"modules": [], "outcome": "error", "error": str(exc)}
-            results[k] = v
-    return {
-        "schema": 1,
-        "anchors": results,
-        "anchor_set_digest": digest,
-        "recorded_tree": recorded_tree,
-    }
+    results = _collect_anchor_results(
+        anchors, repo, python_bin, str(plugin_root), jobs, timeout
+    )
+    return _sidecar_payload(digest, recorded_tree, results)
 
 
 def _load_anchors_from_tasks(version_dir: Path) -> list[str]:  # noqa: CCR001
@@ -577,7 +639,61 @@ def _load_anchors_from_tasks(version_dir: Path) -> list[str]:  # noqa: CCR001
     return sorted(anchors)
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: CCR001
+def _cache_sidecar_blob(repo: Path, sidecar: dict) -> None:
+    """Best-effort blob-cache write of the sidecar."""
+    try:
+        h = hashlib.sha256(
+            json.dumps(sidecar, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        blobs_dir = repo / ".tracks" / "runtime" / "blobs"
+        blobs_dir.mkdir(parents=True, exist_ok=True)
+        (blobs_dir / h).write_text(
+            json.dumps(sidecar, sort_keys=True), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _write_sidecar(
+    repo: Path, version_dir: Path, out, sidecar: dict, anchors: list[str]
+) -> int:
+    out_path = Path(out) if out else version_dir / "anchor-surface.json"
+    if not out_path.is_absolute():
+        out_path = repo / out_path
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8")
+    _cache_sidecar_blob(repo, sidecar)
+    print(f"anchor-surface written to {out_path} ({len(anchors)} anchors)")
+    return 0
+
+
+def _main_collect(args) -> int:
+    repo = Path.cwd().resolve()
+    projects_dir = Path(args.projects_dir)
+    if not projects_dir.is_absolute():
+        projects_dir = repo / projects_dir
+    version_dir = projects_dir / args.version
+    tasks_path = version_dir / "tasks.json"
+    if not tasks_path.exists():
+        print(f"tasks.json not found: {tasks_path}", file=sys.stderr)
+        return 2
+    try:
+        anchors = _load_anchors_from_tasks(version_dir)
+    except Exception as exc:
+        print(f"failed to load anchors: {exc}", file=sys.stderr)
+        return 2
+    try:
+        from tracks.project import load_contract
+
+        contract = load_contract(repo)
+    except Exception as exc:
+        print(f"no contract: {exc}", file=sys.stderr)
+        return 2
+    sidecar = collect_anchor_surface(repo, anchors, contract, jobs=args.jobs)
+    return _write_sidecar(repo, version_dir, args.out, sidecar, anchors)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point for ``python -m tracks.executor.anchor_surface``."""
     parser = argparse.ArgumentParser(prog="tracks.executor.anchor_surface")
     parser.add_argument("--projects-dir", default=".tracks/projects", help="projects directory")
@@ -588,42 +704,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: CCR001
     coll.add_argument("--jobs", type=int, default=4, help="parallel jobs")
     args = parser.parse_args(argv)
     if args.cmd == "collect":
-        repo = Path.cwd().resolve()
-        projects_dir = Path(args.projects_dir)
-        if not projects_dir.is_absolute():
-            projects_dir = repo / projects_dir
-        version_dir = projects_dir / args.version
-        tasks_path = version_dir / "tasks.json"
-        if not tasks_path.exists():
-            print(f"tasks.json not found: {tasks_path}", file=sys.stderr)
-            return 2
-        try:
-            anchors = _load_anchors_from_tasks(version_dir)
-        except Exception as exc:
-            print(f"failed to load anchors: {exc}", file=sys.stderr)
-            return 2
-        try:
-            from tracks.project import load_contract
-
-            contract = load_contract(repo)
-        except Exception as exc:
-            print(f"no contract: {exc}", file=sys.stderr)
-            return 2
-        sidecar = collect_anchor_surface(repo, anchors, contract, jobs=args.jobs)
-        out_path = Path(args.out) if args.out else version_dir / "anchor-surface.json"
-        if not out_path.is_absolute():
-            out_path = repo / out_path
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(sidecar, indent=2, sort_keys=True), encoding="utf-8")
-        try:
-            h = hashlib.sha256(json.dumps(sidecar, sort_keys=True).encode("utf-8")).hexdigest()
-            blobs_dir = repo / ".tracks" / "runtime" / "blobs"
-            blobs_dir.mkdir(parents=True, exist_ok=True)
-            (blobs_dir / h).write_text(json.dumps(sidecar, sort_keys=True), encoding="utf-8")
-        except Exception:
-            pass
-        print(f"anchor-surface written to {out_path} ({len(anchors)} anchors)")
-        return 0
+        return _main_collect(args)
     return 0
 
 
