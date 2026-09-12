@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .events import EventEnvelope
+from .m_impl_state import _clear_task_residency
 from .m_test import _reset_doc, _reset_review
 from .stage_registry import _STAGES, _rolled_back_entry_substate
 
@@ -293,12 +294,7 @@ def _on_known_issue_registered(s: State, p: dict, ev: EventEnvelope) -> None:
     _waive_ledger_entries(
         s, task_id, {str(node) for node in (p.get("node_refs") or []) if node}
     )
-    s.current_task_id = None
-    s.current_task_metadata = None
-    s.current_manifest = None
-    s.green_committed = False
-    s.refactor_done = False
-    s.r_tree_identity = None
+    _clear_task_residency(s)
     s.diagnose_classification = None
     s.diagnose_report = None
     s.status = "active"

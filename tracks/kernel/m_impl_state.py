@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tracks.baseline import BASELINE_DOC_NAMES
+
 from .events import EventEnvelope
 from .m_test import _reset_doc, _reset_review
 
@@ -23,14 +25,7 @@ if TYPE_CHECKING:
 # the impl criteria pack and echoes the identity in its verdict.
 _M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.1"}
 # M-IMPL context docs: trio + design trio (flow.md §10 BASELINE).
-_M_IMPL_CONTEXT_DOCS = (
-    "story.md",
-    "spec.md",
-    "acceptance.md",
-    "architecture.md",
-    "interfaces.md",
-    "test-plan.md",
-)
+_M_IMPL_CONTEXT_DOCS = BASELINE_DOC_NAMES
 # Prism review substates in M-IMPL (flow.md §10.1).
 _M_IMPL_REVIEW_SUBSTATES = ("PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "DIAGNOSE")
 
@@ -236,3 +231,13 @@ DIAGNOSE_CLASSIFICATIONS = (
     # diagnosis_exhausted (executor streak detection, M1-S2).
     "unknown",
 )
+
+
+def _clear_task_residency(s: State) -> None:
+    """Clear the current task's residency state (graph replacement / waive)."""
+    s.current_task_id = None
+    s.current_task_metadata = None
+    s.current_manifest = None
+    s.green_committed = False
+    s.refactor_done = False
+    s.r_tree_identity = None

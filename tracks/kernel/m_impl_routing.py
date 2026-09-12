@@ -13,7 +13,7 @@ import json
 from typing import TYPE_CHECKING
 
 from .m_impl_decide import _is_verification_task
-from .m_impl_state import _M_IMPL_REVIEW_SUBSTATES
+from .m_impl_state import _M_IMPL_REVIEW_SUBSTATES, _clear_task_residency
 from .m_test import _consume_attempt, _reset_doc, _reset_review
 
 if TYPE_CHECKING:
@@ -295,12 +295,7 @@ def _route_scope_replan(s: State) -> None:
     s.substate = "PLANNING"
     _reset_doc(s)
     s.taskgraph_committed = False
-    s.current_task_id = None
-    s.current_task_metadata = None
-    s.current_manifest = None
-    s.green_committed = False
-    s.refactor_done = False
-    s.r_tree_identity = None
+    _clear_task_residency(s)
 
 
 def _route_parked_failure(s: State, check: str) -> None:
