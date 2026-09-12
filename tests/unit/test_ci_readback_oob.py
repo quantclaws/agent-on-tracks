@@ -202,7 +202,7 @@ def test_fake_agent_channel_still_uses_ci_transport(monkeypatch):
             "checks": {"lint": "success"},
         }
 
-    monkeypatch.setattr("tracks.executor.executor.readback_ci_run", _transport)
+    monkeypatch.setattr("tracks.executor.verify_ci.readback_ci_run", _transport)
 
     class _Runtime:
         repo = Path(".")
@@ -346,7 +346,7 @@ def test_reconcile_reuses_same_command_and_workflow_id_binding(tmp_path, monkeyp
         ),
     )
     monkeypatch.setattr(
-        "tracks.executor.executor.readback_ci_run",
+        "tracks.executor.verify_ci.readback_ci_run",
         lambda *args: calls.append(args) or {},
     )
 
