@@ -75,11 +75,10 @@ from tracks.executor.verify_park import ExecVerifyParkMixin
 from tracks.executor.verify_version import ExecVerifyVersionMixin
 from tracks.executor.worktree_face import ExecWorktreeMixin
 
-# T-001 face (E) wiring seam (architecture §1.1 Envelope/failure chain —
-# executor.py is the single writer/consumer): the kernel envelope faces and
-# the failure-review chain are imported here so the dispatch loop consumes
-# them; their behavior bodies land with IF-ENVELOPE-001/002 and the
-# failure-chain anchors (T-007/T-035).
+# Compatibility re-exports: the dispatch mixin owns the behavior bodies, but
+# executor.py remains the composition surface that external code and the
+# T-001 face (E) wiring pin import these envelope/failure-chain seam names
+# from (architecture §1.1).
 from tracks.project import layout_paths as _layout_paths
 from tracks.store import Store, new_ulid
 
@@ -132,20 +131,6 @@ def island_gate_2_dispatch(version, arguments=(), **kwargs):
     return callback(arguments, **kwargs)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def hotfix_entry_run(repo, store, issue_number: int, scenario: str) -> str:
     """v0.6 hotfix entry (IF-HOTFIX-001, interfaces §2a #1/#2): establish the
     hotfix run with its resolved identity version (``{target}-hotfix-{issue}``,
@@ -165,10 +150,6 @@ def hotfix_entry_run(repo, store, issue_number: int, scenario: str) -> str:
     ex.version = version  # pre-PRECHECK state cannot re-derive the target
     ex.run_loop()
     return run_id
-
-
-
-
 
 
 def hotfix_human_anchor(repo, store, run_id: str, refs: list[str]) -> int:
@@ -199,8 +180,6 @@ def hotfix_human_anchor(repo, store, run_id: str, refs: list[str]) -> int:
     print(f"anchor recorded: {', '.join(refs)}")
     print(f"run {run_id}: {_hotfix_state_line(state)}")
     return 0
-
-
 
 
 class Executor(
@@ -292,42 +271,3 @@ class Executor(
                 layout_paths=_layout_paths,
             )
         )
-
-    # -- main loop (FR-29/FR-30) -------------------------------------------
-
-    # NOTE (B32/#32): recover_stage deliberately gets NO similar boundary
-    # special case. Unlike the stub_gap rollback -- which would auto-reenter a
-    # defective downstream cycle -- recover_stage is the HUMAN-CHOSEN forward
-    # path back into M-IMPL (stage.recovered resets to BASELINE and Archer
-    # re-decomposes the task graph). run_loop may continue in the same
-    # invocation; nothing requires an external correction first.
-
-    # -- per-kind handlers ---------------------------------------------------
-
-    # -- SM-02 doc-comment-first (IF-DOCGAP-001 / IF-QUARANTINE-001) ---------
-
-    # -- SM-02 design_gap nested workflow (#62 finding 1) --------------------
-
-    # ------------------------------------------------------------------
-    # OOB b89 OB-4 — tasks.md projection guard helpers
-    # ------------------------------------------------------------------
-
-    # -- v0.6 hotfix handlers (IF-HOTFIX-002/003/004/005/007) -----------------
-
-    # -- T-001 faces (G/I/J): release-domain handler registrations ----------
-    #
-    # must-not-drop wiring (plan_defect rounds): the handlers consume the
-    # Command kinds routed by decide_release_stage (T-039) and emit the
-    # domain event families; deep behavior lands with their owning anchors
-    # (T-021 publish / T-029 known-issue / T-034 security).
-
-    # -- v0.8 M-VERIFY chain (IF-VERIFY-001/003/004, architecture §1.1) -------
-
-    # -- v0.7 Phase 0 pre-gate handler (architecture §1.0.2/§1.1, T-015) -------
-
-    # -- M-TEST handlers (flow.md §9, FR-0030/0050/0070) -----------------------
-
-    # -- M-REQ-APPROVAL handlers (FR-0180/0190/0200) ---------------------------
-
-    # -- git helpers -----------------------------------------------------------
-
