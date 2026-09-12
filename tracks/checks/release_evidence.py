@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from tracks.executor.live_evidence import EVIDENCE_ROOT, SCHEMA_VERSION
+from tracks.executor.live_evidence import EVIDENCE_ROOT, GATE_NAMES, SCHEMA_VERSION
 
 ReleaseEvidenceReason = Literal[
     "ok",
@@ -42,14 +42,7 @@ _REQUIRED_PHASES = frozenset(
     }
 )
 _REQUIRED_DEVON_PHASES = ("RED", "GREEN", "REFACTOR")
-_GATES_IN_ORDER = (
-    "RED_GATE",
-    "GREEN_GATE",
-    "REFACTOR_GATE",
-    "TASK_REVIEW",
-    "PRISM_FINAL",
-    "ISLAND_GATE_2",
-)
+_GATES_IN_ORDER = GATE_NAMES
 _REQUIRED_TRAILERS = ("Tracks-Task", "Tracks-Attempt", "Tracks-R", "Tracks-Issue", "Tracks-AC")
 _TRAILER_LINE = re.compile(r"^([A-Za-z][A-Za-z0-9-]*): (.*)$")
 

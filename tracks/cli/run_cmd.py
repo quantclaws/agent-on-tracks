@@ -30,6 +30,7 @@ from .common import (
     _err,
     _format_state,
     _human_actor,
+    active_run_context,
     writer_lock,
 )
 
@@ -530,12 +531,10 @@ def cmd_triage(repo: Path, *args: str) -> int:
     decision, actor = parsed
     if decision not in ("go", "no_go", "park"):
         return _err(usage)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):
+    with active_run_context(repo) as active:
+        if active is None:
+            return _err("no active run")
+        home, store, run_id = active
         state = store.state(run_id)
         if state.awaiting != "triage":
             return _err(f"run not awaiting triage (awaiting={state.awaiting or 'nothing'})")
@@ -585,12 +584,10 @@ def cmd_review(repo: Path, *args: str) -> int:
     action, actor = parsed
     if action not in ("no_comment", "revise"):
         return _err(usage)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):
+    with active_run_context(repo) as active:
+        if active is None:
+            return _err("no active run")
+        home, store, run_id = active
         state = store.state(run_id)
         if state.awaiting != "review":
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")

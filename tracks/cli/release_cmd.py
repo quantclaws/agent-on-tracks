@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
+
+# escape.stale_downstream_evidence buckets (IF-RELEASE-003 / FR-0287).
+from tracks.executor.escape import STALE_EVIDENCE_BUCKETS as _STALE_EVIDENCE_BUCKETS
 from tracks.executor.release_authorization import (
     assess_release,
     validate_authorization,
@@ -21,17 +24,6 @@ from tracks.executor.release_authorization import (
 from tracks.store import Store
 
 from .common import _canonical_stage_order, _err, _err2, writer_lock
-
-# escape.stale_downstream_evidence buckets (IF-RELEASE-003 / FR-0287): only
-# buckets actually present in the run's log are staled on a return.
-_STALE_EVIDENCE_BUCKETS = (
-    "candidate.frozen",
-    "evidence.reused",
-    "ci.run_observed",
-    "security.assessed",
-    "release.previewed",
-    "release.decided",
-)
 
 
 def _publish_plan_index(store: Store, run_id: str) -> dict:

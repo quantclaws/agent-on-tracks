@@ -16,6 +16,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor import git
+from tracks.store import Store
 
 
 class LockHeld(Exception):
@@ -62,6 +63,23 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+@contextmanager
+def active_run_context(repo: Path):
+    """Yield ``(home, store, run_id)`` under the writer lock.
+
+    Yields ``None`` when no run is active (the caller reports it; no lock is
+    taken). Shared by the Human gate commands so the run lookup + lock
+    prologue cannot drift between faces."""
+    home = paths.tracks_home(repo)
+    store = Store(home)
+    run_id = store.active_run()
+    if run_id is None:
+        yield None
+        return
+    with writer_lock(home):
+        yield home, store, run_id
 
 
 @contextmanager

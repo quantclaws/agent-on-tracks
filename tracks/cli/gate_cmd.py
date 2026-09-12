@@ -22,7 +22,7 @@ from .common import (
     _format_state,
     _human_actor,
     _resolve_actor,
-    writer_lock,
+    active_run_context,
 )
 from .hotfix_cmd import _approve_hotfix_gap, _hotfix_gap_exit
 from .release_cmd import (
@@ -66,12 +66,10 @@ def cmd_retry(repo: Path, *args: str) -> int:
             i += 1
         else:
             return _err(usage)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):
+    with active_run_context(repo) as opened:
+        if opened is None:
+            return _err("no active run")
+        home, store, run_id = opened
         state = store.state(run_id)
         gate_err = _retry_gate_error(state, clear_evidence)
         if gate_err is not None:
@@ -165,12 +163,10 @@ def cmd_approve(repo: Path, *args) -> int:
     actor, to_stage, err = _parse_approve_args(list(args))
     if err:
         return _err(err)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):  # AC-27b: lock before the state gate
+    with active_run_context(repo) as opened:
+        if opened is None:
+            return _err("no active run")
+        home, store, run_id = opened
         state, err = _approval_gate(store, run_id)
         if err:
             return _err(err)
@@ -334,12 +330,10 @@ def cmd_return(repo: Path, *args) -> int:
     opts, usage_err = _parse_return_args(list(args))
     if usage_err:
         return _err(usage_err)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):  # AC-27b: lock before the state gate
+    with active_run_context(repo) as opened:
+        if opened is None:
+            return _err("no active run")
+        home, store, run_id = opened
         state, allowed, err = _return_gate(store, run_id)
         if err:
             return _err(err)
@@ -396,12 +390,10 @@ def cmd_abandon(repo: Path, *args: str) -> int:
         opts[flag] = args.pop(0)
     if set(opts) != {"--reason"}:
         return _err(_ABANDON_USAGE)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):  # AC-27b: lock before the state gate
+    with active_run_context(repo) as opened:
+        if opened is None:
+            return _err("no active run")
+        home, store, run_id = opened
         state = store.state(run_id)
         store.append(
             run_id,
@@ -452,12 +444,10 @@ def cmd_recover(repo: Path, *args) -> int:
         opts[flag] = args.pop(0)
     if set(opts) != {"--reason"}:
         return _err(usage)
-    home = paths.tracks_home(repo)
-    store = Store(home)
-    run_id = store.active_run()
-    if run_id is None:
-        return _err("no active run")
-    with writer_lock(home):  # AC-27b: lock before the state gate
+    with active_run_context(repo) as opened:
+        if opened is None:
+            return _err("no active run")
+        home, store, run_id = opened
         state, err = _recover_gate(store, run_id)
         if err:
             return _err(err)
