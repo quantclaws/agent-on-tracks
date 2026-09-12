@@ -7,6 +7,7 @@ functions; :mod:`tracks.executor.taskgraph` re-exports every name.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.executor.taskgraph_parse import TaskNode
@@ -91,7 +92,136 @@ def _module_to_path(mod: str, repo: Path | str | None = None) -> str:
         return Path(candidate_dir).as_posix()
     return Path(base).as_posix()
 
-def validate_anchor_satisfiability(  # noqa: CCR001
+@dataclass(frozen=True)
+class _ScopeIndex:
+    """Scope → owner / per-task scope sets + task lookup (one graph pass)."""
+
+    all_scopes: set[str]
+    owner_map: dict[str, str]
+    task_scopes: dict[str, set[str]]
+    task_by_id: dict[str, TaskNode]
+
+
+def _scope_index(tasks: list[TaskNode]) -> _ScopeIndex:
+    all_scopes: set[str] = set()
+    owner_map: dict[str, str] = {}
+    task_scopes: dict[str, set[str]] = {}
+    for t in tasks:
+        paths, _errs = _scope_paths(t.scope_boundary, t.task_id)
+        normed: set[str] = set()
+        for p in paths:
+            # _scope_paths already normalises (\→/, rstrip "/")
+            normed.add(p)
+            all_scopes.add(p)
+            owner_map[p] = t.task_id
+        task_scopes[t.task_id] = normed
+    task_by_id: dict[str, TaskNode] = {t.task_id: t for t in tasks}
+    return _ScopeIndex(all_scopes, owner_map, task_scopes, task_by_id)
+
+
+def _closure_scopes(index: _ScopeIndex, task_id: str) -> set[str]:
+    """Union of scopes owned by transitive ``depends_on`` of *task_id*."""
+    stack: list[str] = (
+        list(index.task_by_id[task_id].depends_on) if task_id in index.task_by_id else []
+    )
+    visited: set[str] = set()
+    scopes: set[str] = set()
+    while stack:
+        cur = stack.pop()
+        if cur == "-" or cur in visited:
+            continue
+        visited.add(cur)
+        if cur in index.task_scopes:
+            scopes.update(index.task_scopes[cur])
+        if cur in index.task_by_id:
+            stack.extend(index.task_by_id[cur].depends_on)
+    return scopes
+
+
+def _anchors_map(surface) -> dict:
+    if not isinstance(surface, dict):
+        return {}
+    anchors_map = surface.get("anchors", {})
+    return anchors_map if isinstance(anchors_map, dict) else {}
+
+
+def _split_anchor_modules(entry) -> tuple[list[str], list[str]]:
+    """AST-declared vs dynamic modules of one sidecar entry (legacy → ast)."""
+    if not isinstance(entry, dict):
+        return [], []
+    if "ast_modules" in entry and "dynamic_modules" in entry:
+        return (
+            [m for m in entry.get("ast_modules", []) if isinstance(m, str)],
+            [m for m in entry.get("dynamic_modules", []) if isinstance(m, str)],
+        )
+    return [m for m in entry.get("modules", []) if isinstance(m, str)], []
+
+
+def _map_paths(modnames: list[str]) -> set[str]:
+    """Map module names to repo-relative paths (deterministic fallback)."""
+    out: set[str] = set()
+    for m in modnames:
+        try:
+            out.add(_module_to_path(m))
+        except Exception:
+            out.add(m.replace(".", "/") + ".py")
+    return out
+
+
+def _anchor_edge_violations(
+    index: _ScopeIndex,
+    task: TaskNode,
+    anchor: str,
+    needs: set[str],
+    own: set[str],
+    dep_scopes: set[str],
+    violations: list[str],
+) -> None:
+    """Missing depends_on edge for AST-declared, owned anchor modules."""
+    for path in sorted(needs - own - dep_scopes):
+        owner = index.owner_map.get(path, "unknown")
+        violations.append(
+            f"{task.task_id} anchor {anchor} exercises {path} "
+            f"owned by {owner} without depends_on edge"
+        )
+
+
+def _anchor_findings(
+    index: _ScopeIndex,
+    task: TaskNode,
+    anchor: str,
+    entry,
+    violations: list[str],
+    advisories: list[str],
+) -> None:
+    """Hard-gate/advisory findings for one acceptance anchor."""
+    if entry is None:
+        violations.append(f"anchor {anchor} missing from anchor-surface sidecar")
+        return
+    ast_mods, dyn_mods = _split_anchor_modules(entry)
+    ast_mapped = _map_paths(ast_mods)
+    dyn_mapped = _map_paths(dyn_mods)
+    # dynamic-only = modules loaded by shared infra / fixtures, not explicitly
+    # declared by the test file → advisories only
+    dyn_only = dyn_mapped - ast_mapped
+    for mp in sorted(ast_mapped - index.all_scopes):
+        advisories.append(f"anchor {anchor} imports unowned tracks module {mp}")
+    own = index.task_scopes.get(task.task_id, set())
+    dep_scopes = _closure_scopes(index, task.task_id)
+    needs = ast_mapped & index.all_scopes
+    _anchor_edge_violations(index, task, anchor, needs, own, dep_scopes, violations)
+    # dynamic-only → advisories (owned missing edge and unowned)
+    for mp in sorted(dyn_only - index.all_scopes):
+        advisories.append(
+            f"anchor {anchor} dynamically loads unowned tracks module {mp} (advisory)"
+        )
+    for mp in sorted((dyn_only & index.all_scopes) - own - dep_scopes):
+        advisories.append(
+            f"anchor {anchor} dynamically loads owned tracks module {mp} (advisory)"
+        )
+
+
+def validate_anchor_satisfiability(
     tasks: list[TaskNode],
     surface: dict,
 ) -> tuple[bool, list[str], list[str]]:
@@ -138,59 +268,8 @@ def validate_anchor_satisfiability(  # noqa: CCR001
     if any(getattr(t, "schema", 1) == 1 for t in tasks):
         return (True, [], [])
 
-    # Build scope → owner and per-task scope sets (reuse _scope_paths)
-    all_scopes: set[str] = set()
-    owner_map: dict[str, str] = {}
-    task_scopes: dict[str, set[str]] = {}
-    for t in tasks:
-        paths, errs = _scope_paths(t.scope_boundary, t.task_id)
-        # format errors are reported elsewhere; skip them here
-        if errs:
-            # still honour parsed paths (if any) but do not add illegal ones
-            pass
-        normed: set[str] = set()
-        for p in paths:
-            # _scope_paths already normalises (\→/, rstrip "/")
-            n = p
-            normed.add(n)
-            all_scopes.add(n)
-            owner_map[n] = t.task_id
-        task_scopes[t.task_id] = normed
-
-    task_by_id: dict[str, TaskNode] = {t.task_id: t for t in tasks}
-
-    def _closure_scopes(task_id: str) -> set[str]:
-        """Union of scopes owned by transitive ``depends_on`` of *task_id*."""
-        stack: list[str] = list(task_by_id[task_id].depends_on) if task_id in task_by_id else []
-        visited: set[str] = set()
-        scopes: set[str] = set()
-        while stack:
-            cur = stack.pop()
-            if cur == "-" or cur in visited:
-                continue
-            visited.add(cur)
-            if cur in task_scopes:
-                scopes.update(task_scopes[cur])
-            if cur in task_by_id:
-                stack.extend(task_by_id[cur].depends_on)
-        return scopes
-
-    anchors_map = {}
-    if isinstance(surface, dict):
-        anchors_map = surface.get("anchors", {})
-        if not isinstance(anchors_map, dict):
-            anchors_map = {}
-
-    def _map_paths(modnames: list[str]) -> set[str]:
-        """Map module names to repo-relative paths (deterministic fallback)."""
-        out: set[str] = set()
-        for m in modnames:
-            try:
-                out.add(_module_to_path(m))
-            except Exception:
-                out.add(m.replace(".", "/") + ".py")
-        return out
-
+    index = _scope_index(tasks)
+    anchors_map = _anchors_map(surface)
     violations: list[str] = []
     advisories: list[str] = []
 
@@ -202,62 +281,87 @@ def validate_anchor_satisfiability(  # noqa: CCR001
         # empty refs → nothing to check for this task
         if not refs:
             continue
-        own = task_scopes.get(t.task_id, set())
-        dep_scopes = _closure_scopes(t.task_id)
         for a in refs:
             if not isinstance(a, str) or not a:
                 continue
-            entry = anchors_map.get(a)
-            if entry is None:
-                violations.append(f"anchor {a} missing from anchor-surface sidecar")
-                continue
-            mods = entry.get("modules", []) if isinstance(entry, dict) else []
-            if isinstance(entry, dict) and "ast_modules" in entry and "dynamic_modules" in entry:
-                # split sidecar (b89 rev4): hard gate on AST-declared imports only
-                ast_mods = [m for m in entry.get("ast_modules", []) if isinstance(m, str)]
-                dyn_mods = [m for m in entry.get("dynamic_modules", []) if isinstance(m, str)]
-            else:
-                # legacy sidecar: no split fields → ast = modules (preserve old hard gate)
-                ast_mods = [m for m in mods if isinstance(m, str)]
-                dyn_mods = []
+            _anchor_findings(index, t, a, anchors_map.get(a), violations, advisories)
 
-            ast_mapped = _map_paths(ast_mods)
-            dyn_mapped = _map_paths(dyn_mods)
-            # dynamic-only = modules loaded by shared infra / fixtures, not
-            # explicitly declared by the test file → advisories only
-            dyn_only = dyn_mapped - ast_mapped
-            # advisories: unowned tracks modules (AST-declared)
-            for mp in sorted(ast_mapped - all_scopes):
-                advisories.append(f"anchor {a} imports unowned tracks module {mp}")
-            needs = ast_mapped & all_scopes
-            missing = needs - own - dep_scopes
-            for path in sorted(missing):
-                owner = owner_map.get(path, "unknown")
-                msg = (
-                    f"{t.task_id} anchor {a} exercises {path} "
-                    f"owned by {owner} without depends_on edge"
-                )
-                violations.append(msg)
-            # dynamic-only → advisories (owned missing edge and unowned)
-            for mp in sorted(dyn_only - all_scopes):
-                advisories.append(
-                    f"anchor {a} dynamically loads unowned tracks module {mp} (advisory)"
-                )
-            dyn_missing = (dyn_only & all_scopes) - own - dep_scopes
-            for mp in sorted(dyn_missing):
-                advisories.append(
-                    f"anchor {a} dynamically loads owned tracks module {mp} (advisory)"
-                )
-
-    # Also surface any anchored modules that are not tied to a specific task's
-    # needs but are globally unowned? The per-anchor advisory already covers
-    # all anchors referenced by tasks; anchors in the sidecar that no task
-    # references are ignored (they are not part of needs/advisory contract).
-
+    # Anchors in the sidecar that no task references are ignored (they are not
+    # part of the needs/advisory contract); the per-anchor advisory already
+    # covers all anchors referenced by tasks.
     ok = not violations
     return (ok, violations, advisories)
 
-def validate_scope_existence(  # noqa: CCR001
+def _design_doc_text(design_doc_texts, design_docs_text) -> str:
+    """Normalise the accepted design-doc input shapes to one text."""
+    if design_docs_text is not None:
+        return design_docs_text
+    if isinstance(design_doc_texts, dict):
+        parts: list[str] = []
+        for v in design_doc_texts.values():
+            if isinstance(v, str):
+                parts.append(v)
+            else:
+                parts.append(str(v))
+        return "\n".join(parts)
+    if isinstance(design_doc_texts, str):
+        return design_doc_texts
+    if design_doc_texts is None and design_docs_text is None:
+        return ""
+    return str(design_doc_texts)
+
+
+def _declared_tokens(design_text: str) -> tuple[set[str], set[str]]:
+    # Token extraction (rev3 Notes, exact — token-precise, no naive substring)
+    # Use word-boundary style guard so ``my_tracks/a.py`` does not yield
+    # ``tracks/a.py`` and ``tracks/a.py`` is not declared by ``tracks/a.py.bak``.
+    declared: set[str] = set(
+        re.findall(
+            r"(?<![A-Za-z0-9_])tracks/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]+\.[A-Za-z0-9]+\b",
+            design_text,
+        )
+    )
+    declared_dirs = set(
+        re.findall(r"(?<![A-Za-z0-9_])tracks/(?:[A-Za-z0-9_.\-]+/)+", design_text)
+    )
+    return declared, declared_dirs
+
+
+def _scope_declared(normalized: str, declared: set[str], declared_dirs: set[str]) -> bool:
+    """Design-side membership: exact file token, dir token or dir prefix."""
+    is_dir_scope = "." not in normalized.rsplit("/", 1)[-1]
+    if not is_dir_scope:
+        return normalized in declared
+    if normalized in declared or normalized + "/" in declared_dirs:
+        return True
+    return any(d.startswith(normalized + "/") for d in declared)
+
+
+def _scope_existence_errors(
+    tasks: list[TaskNode],
+    repo_root: Path,
+    declared: set[str],
+    declared_dirs: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    for t in tasks:
+        paths, fmt_errs = _scope_paths(t.scope_boundary, t.task_id)
+        if fmt_errs:
+            continue
+        for p in paths:
+            normalized = p.replace("\\", "/").rstrip("/")
+            if (repo_root / normalized).exists():
+                continue
+            if _scope_declared(normalized, declared, declared_dirs):
+                continue
+            errors.append(
+                f"{t.task_id} scope {p} neither exists in repo nor is declared "
+                f"in frozen design docs"
+            )
+    return errors
+
+
+def validate_scope_existence(
     tasks: list[TaskNode],
     repo: Path | str | None = None,
     design_doc_texts: dict[str, str] | str | None = None,
@@ -285,8 +389,7 @@ def validate_scope_existence(  # noqa: CCR001
     # schema-1 skip (per Notes: tasks[0].schema == 1)
     if not tasks:
         return (True, [])
-    first_schema = getattr(tasks[0], "schema", 1)
-    if first_schema == 1:
+    if getattr(tasks[0], "schema", 1) == 1:
         return (True, [])
     # also any-task legacy? Notes says first; we honour first-only to avoid
     # diverging from Notes. Additionally, if any task is schema 1, treat as skip
@@ -294,60 +397,8 @@ def validate_scope_existence(  # noqa: CCR001
     if any(getattr(t, "schema", 1) == 1 for t in tasks):
         return (True, [])
 
-    # Repo root
     repo_root = Path(repo).resolve() if repo is not None else Path.cwd().resolve()
-
-    # Design text normalisation
-    if design_docs_text is not None:
-        design_text = design_docs_text
-    elif isinstance(design_doc_texts, dict):
-        parts: list[str] = []
-        for v in design_doc_texts.values():
-            if isinstance(v, str):
-                parts.append(v)
-            else:
-                parts.append(str(v))
-        design_text = "\n".join(parts)
-    elif isinstance(design_doc_texts, str):
-        design_text = design_doc_texts
-    elif design_doc_texts is None and design_docs_text is None:
-        design_text = ""
-    else:
-        design_text = str(design_doc_texts)
-
-    # Token extraction (rev3 Notes, exact — token-precise, no naive substring)
-    # Use word-boundary style guard so ``my_tracks/a.py`` does not yield ``tracks/a.py``
-    # and ``tracks/a.py`` is not considered declared by ``tracks/a.py.bak``.
-    declared: set[str] = set(
-        re.findall(
-            r"(?<![A-Za-z0-9_])tracks/(?:[A-Za-z0-9_.\-]+/)*[A-Za-z0-9_.\-]+\.[A-Za-z0-9]+\b",
-            design_text,
-        )
-    )
-    declared_dirs = set(
-        re.findall(r"(?<![A-Za-z0-9_])tracks/(?:[A-Za-z0-9_.\-]+/)+", design_text)
-    )
-
-    errors: list[str] = []
-    for t in tasks:
-        paths, fmt_errs = _scope_paths(t.scope_boundary, t.task_id)
-        if fmt_errs:
-            continue
-        for p in paths:
-            normalized = p.replace("\\", "/").rstrip("/")
-            if (repo_root / normalized).exists():
-                continue
-            is_dir_scope = "." not in normalized.rsplit("/", 1)[-1]
-            if not is_dir_scope:
-                if normalized in declared:
-                    continue
-            else:
-                if normalized in declared or normalized + "/" in declared_dirs:
-                    continue
-                if any(d.startswith(normalized + "/") for d in declared):
-                    continue
-            errors.append(
-                f"{t.task_id} scope {p} neither exists in repo nor is declared "
-                f"in frozen design docs"
-            )
+    design_text = _design_doc_text(design_doc_texts, design_docs_text)
+    declared, declared_dirs = _declared_tokens(design_text)
+    errors = _scope_existence_errors(tasks, repo_root, declared, declared_dirs)
     return (not errors, errors)
