@@ -61,8 +61,8 @@ class ExecVerifyVersionMixin:
         then probed with ``git ls-remote``: a present tag is
         ``tag_already_exists`` and a configured-but-unreachable remote is
         ``remote_unavailable`` (fail closed, never a guessed pass). A
-        remote-less local demo records ``attention.required`` and passes with
-        an explicit ``remote_check=skipped_no_remote`` skip. The ``{n}``
+        remote-less host records ``attention.required`` and fails closed: tag
+        absence cannot be established without a remote. The ``{n}``
         census input is recorded on the payload. The verdict event
         (``local_gate.passed``/``local_gate.failed``) is bound to the
         candidate like every other declared gate.
@@ -193,9 +193,9 @@ class ExecVerifyVersionMixin:
                 ctx,
                 derived_tags=derived,
                 census=census,
-                remote_check={"status": "skipped_no_remote", "tags": derived},
-                reason=None,
-                detail="",
+                remote_check={"status": "unavailable", "tags": derived},
+                reason="remote_unavailable",
+                detail="no origin remote configured; tag absence cannot be verified",
                 command_echo=command_echo,
             )
         for tag in derived:

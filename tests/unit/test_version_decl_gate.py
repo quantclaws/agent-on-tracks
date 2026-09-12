@@ -228,12 +228,12 @@ def test_unreachable_remote_fails_closed(gate_env):
     }
 
 
-def test_no_remote_records_attention_and_explicit_skip(gate_env):
-    assert gate_env.run() is True
+def test_no_remote_records_attention_and_blocks(gate_env):
+    assert gate_env.run() is False
     events = gate_env.events()
     assert [event.type for event in events] == [
         "attention.required",
-        "local_gate.passed",
+        "local_gate.failed",
     ]
     attention = events[0].payload
     assert attention["area"] == "version_gate"
@@ -241,9 +241,11 @@ def test_no_remote_records_attention_and_explicit_skip(gate_env):
     assert attention["candidate_sha"] == _CANDIDATE
     payload = _tag_payload(events[1])
     assert payload["remote_check"] == {
-        "status": "skipped_no_remote",
+        "status": "unavailable",
         "tags": ["v0.8.0"],
     }
+
+    assert payload["reason"] == "remote_unavailable"
 
 
 def test_post_release_census_input_recorded_and_next_patch_derived(gate_env):
