@@ -27,6 +27,7 @@ from tracks.executor.taskgraph import (
     validate_scope_existence,
     validate_task_structure,
 )
+from tracks.executor.taskgraph_parse import _TASK_IDENTITY_FIELDS, _TASK_REF_FIELDS
 from tracks.executor.test_tasks import _extract_if_registry, _known_ac_ids
 from tracks.kernel.machine import State
 from tracks.project import ContractError, load_contract
@@ -669,15 +670,8 @@ class MImplLedgerMixin:
     def _task_payloads_equivalent(old: dict, new: dict) -> bool:
         # #129 debt is a pure annotation: excluded from identity on purpose.
         keys = (
-            "task_id",
-            "issue_number",
-            "description",
-            "ac_refs",
-            "fr_refs",
-            "if_ids",
-            "test_refs",
-            "unit_refs",
-            "acceptance_refs",
+            *_TASK_IDENTITY_FIELDS,
+            *_TASK_REF_FIELDS,
             "schema",
             "scope_boundary",
             "depends_on",

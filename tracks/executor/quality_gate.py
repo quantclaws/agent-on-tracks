@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from tracks.executor.helpers import _ILLEGIT_KEYWORDS as _COLLECTION_KEYWORDS
 from tracks.executor.host_contract import declared_install_interpreter
 
 
@@ -68,14 +69,6 @@ def _resolve_argv0(argv: list[str], cwd: str) -> list[str]:
         return [sys.executable, *argv[1:]]
     return argv
 
-_COLLECTION_KEYWORDS = (
-    "ImportError",
-    "ModuleNotFoundError",
-    "SyntaxError",
-    "FixtureLookupError",
-    "collection error",
-    "ERROR collecting",
-)
 _INFRA_KEYWORDS = (
     "command not found",
     "No module named",

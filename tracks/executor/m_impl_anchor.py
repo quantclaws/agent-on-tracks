@@ -13,8 +13,16 @@ import re
 from copy import deepcopy
 from pathlib import Path
 
-from tracks.effects.backend import valid_test_tasks
+from tracks.effects.backend import DEVON_ASSIGNMENT_REQUIRED, valid_test_tasks
 from tracks.executor.taskgraph import parse_tasks_json
+from tracks.executor.taskgraph_anchor import (
+    _anchors_map,
+    _closure_scopes,
+    _map_paths,
+    _scope_index,
+    _split_anchor_modules,
+)
+from tracks.executor.taskgraph_parse import _TASK_REF_FIELDS
 from tracks.executor.test_tasks import resolve_inherited_baseline_docs
 from tracks.executor.validate import parse_test_tasks
 from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK, State
@@ -88,6 +96,101 @@ _DEVON_RGR_SUBSTATES = frozenset({"RED", "GREEN", "REFACTOR"})
 
 
 _SHIELD_WRITE_SUBSTATES = frozenset({"WRITE", "SHIELD_FIX"})
+
+
+def emit_devon_outcome_failure(
+    host, cmd, task_id, attempt, reason, check: str = "impl_defect"
+) -> None:
+    """Emit the standard failed-outcome verdict for a backend Devon result.
+
+    Shared by the RGR gate faces so the evidence wording and attempt charge
+    cannot drift between them."""
+    host._emit_gate_failure(
+        cmd,
+        check=check,
+        reason=reason,
+        evidence="backend Devon outcome",
+        task_id=task_id,
+        attempt=attempt,
+    )
+
+
+def _anchor_entry_totals(
+    anchors_map: dict,
+) -> tuple[dict[str, list[str]], int, int]:
+    """Per-entry (ast_modules, dynamic_modules) + totals for the stats block."""
+    ast_total = 0
+    dyn_total = 0
+    entry_ast: dict[str, list[str]] = {}
+    for anchor, entry in anchors_map.items():
+        if not isinstance(entry, dict):
+            continue
+        ast, dyn = _split_anchor_modules(entry)
+        entry_ast[anchor] = ast
+        ast_total += len(ast)
+        dyn_total += len(dyn)
+    return entry_ast, ast_total, dyn_total
+
+
+def _task_anchor_edges(index, task, anchors_map: dict, entry_ast: dict, edges: dict) -> None:
+    """Fold one task's acceptance anchors into the missing-edge aggregate."""
+    refs = getattr(task, "acceptance_refs", None)
+    if refs is None:
+        refs = getattr(task, "test_refs", ()) or ()
+    own = index.task_scopes.get(task.task_id, set())
+    dep_scopes = _closure_scopes(index, task.task_id)
+    for a in refs:
+        if not isinstance(a, str) or not a:
+            continue
+        if a not in anchors_map:
+            # fail-closed: mirror the gate's missing-anchor violation
+            edges.setdefault((task.task_id, "", ""), set()).add(a)
+            continue
+        ast_mapped = _map_paths(entry_ast.get(a, []))
+        needs = ast_mapped & index.all_scopes
+        for path in sorted(needs - own - dep_scopes):
+            owner = index.owner_map.get(path, "unknown")
+            edges.setdefault((task.task_id, path, owner), set()).add(a)
+
+
+def _anchor_edges(index, tasks, anchors_map: dict, entry_ast: dict) -> dict:
+    """Aggregate missing depends_on edges keyed by (task, module, owner)."""
+    edges: dict[tuple[str, str, str], set[str]] = {}
+    for t in tasks:
+        _task_anchor_edges(index, t, anchors_map, entry_ast, edges)
+    return edges
+
+
+def _anchor_violations(tasks, edges: dict) -> dict[str, dict]:
+    """Group edges per (owner_task, module) with deduped sorted anchors."""
+    by_task: dict[str, dict[tuple[str, str], set[str]]] = {}
+    for (task_id, module, owner), anchors in edges.items():
+        by_task.setdefault(task_id, {}).setdefault((owner, module), set()).update(anchors)
+    violations: dict[str, dict] = {}
+    for t in tasks:
+        bucket = by_task.get(t.task_id, {})
+        violations[t.task_id] = {
+            "missing_edges": [
+                {
+                    "owner_task": owner,
+                    "module": module,
+                    "anchors": sorted(anchor_set),
+                }
+                for (owner, module), anchor_set in sorted(bucket.items())
+            ]
+        }
+    return violations
+
+
+def _anchor_advisories_count(tasks, surface) -> int:
+    """Advisory count via the authoritative gate (A3: count parity)."""
+    try:
+        from tracks.executor.taskgraph import validate_anchor_satisfiability
+
+        _ok, _vs, advisories = validate_anchor_satisfiability(tasks, surface)
+        return len(advisories)
+    except Exception:
+        return 0
 
 
 class MImplAnchorMixin:
@@ -181,150 +284,47 @@ class MImplAnchorMixin:
         # Build the aggregated summary from the same logic as
         # validate_anchor_satisfiability (AST口径 hard / dynamic advisory).
         try:
-            from tracks.executor.taskgraph import _module_to_path, _scope_paths
-
-            # all scopes → owner
-            all_scopes: set[str] = set()
-            owner_map: dict[str, str] = {}
-            task_scopes: dict[str, set[str]] = {}
-            for t in tasks:
-                paths, _ = _scope_paths(t.scope_boundary, t.task_id)
-                normed = set(paths)
-                task_scopes[t.task_id] = normed
-                for p in normed:
-                    all_scopes.add(p)
-                    owner_map[p] = t.task_id
-            task_by_id = {t.task_id: t for t in tasks}
-
-            def _closure_scopes(tid: str) -> set[str]:
-                stack = list(task_by_id[tid].depends_on) if tid in task_by_id else []
-                visited: set[str] = set()
-                scopes: set[str] = set()
-                while stack:
-                    cur = stack.pop()
-                    if cur == "-" or cur in visited:
-                        continue
-                    visited.add(cur)
-                    if cur in task_scopes:
-                        scopes.update(task_scopes[cur])
-                    if cur in task_by_id:
-                        stack.extend(task_by_id[cur].depends_on)
-                return scopes
-
-            anchors_map = surface.get("anchors", {}) if isinstance(surface, dict) else {}
-            if not isinstance(anchors_map, dict):
-                anchors_map = {}
-
-            # Per-entry (ast_modules, dynamic_modules); a legacy entry without
-            # the split fields falls back to ast=modules / dynamic=[] (same
-            # hard-gate semantics as the gate), but still aggregated here.
-            ast_total = 0
-            dyn_total = 0
-            entry_ast: dict[str, list[str]] = {}
-            for a, entry in anchors_map.items():
-                if not isinstance(entry, dict):
-                    continue
-                if "ast_modules" in entry and "dynamic_modules" in entry:
-                    ast = [m for m in entry.get("ast_modules", []) if isinstance(m, str)]
-                    dyn = [m for m in entry.get("dynamic_modules", []) if isinstance(m, str)]
-                else:
-                    ast = [m for m in entry.get("modules", []) if isinstance(m, str)]
-                    dyn = []
-                entry_ast[a] = ast
-                ast_total += len(ast)
-                dyn_total += len(dyn)
-
-            edges: dict[tuple[str, str, str], set[str]] = {}
-
-            def _map_paths(modnames: list[str]) -> set[str]:
-                out: set[str] = set()
-                for m in modnames:
-                    try:
-                        out.add(_module_to_path(m))
-                    except Exception:
-                        out.add(m.replace(".", "/") + ".py")
-                return out
-
-            for t in tasks:
-                refs = getattr(t, "acceptance_refs", None)
-                if refs is None:
-                    refs = getattr(t, "test_refs", ()) or ()
-                own = task_scopes.get(t.task_id, set())
-                dep_scopes = _closure_scopes(t.task_id)
-                for a in refs:
-                    if not isinstance(a, str) or not a:
-                        continue
-                    if a not in anchors_map:
-                        # fail-closed: mirror the gate's missing-anchor violation
-                        edges.setdefault((t.task_id, "", ""), set()).add(a)
-                        continue
-                    ast_mapped = _map_paths(entry_ast.get(a, []))
-                    needs = ast_mapped & all_scopes
-                    missing = needs - own - dep_scopes
-                    for path in sorted(missing):
-                        owner = owner_map.get(path, "unknown")
-                        edges.setdefault((t.task_id, path, owner), set()).add(a)
-
-            by_task: dict[str, dict[tuple[str, str], set[str]]] = {}
-            for (task_id, module, owner), anchors in edges.items():
-                by_task.setdefault(task_id, {}).setdefault((owner, module), set()).update(anchors)
-
-            violations: dict[str, dict] = {}
-            for t in tasks:
-                tid = t.task_id
-                bucket = by_task.get(tid, {})
-                violations[tid] = {
-                    "missing_edges": [
-                        {
-                            "owner_task": owner,
-                            "module": module,
-                            "anchors": sorted(anchor_set),
-                        }
-                        for (owner, module), anchor_set in sorted(bucket.items())
-                    ]
-                }
-
-            # Advisory count via the authoritative gate (A3: count parity);
-            # the detail itself stays externalized, never in the payload.
-            advisories_count = 0
-            try:
-                from tracks.executor.taskgraph import validate_anchor_satisfiability
-
-                _ok, _vs, advisories = validate_anchor_satisfiability(tasks, surface)
-                advisories_count = len(advisories)
-            except Exception:
-                advisories_count = 0
-
-            sidecar_digest = ""
-            try:
-                canonical = json.dumps(surface, sort_keys=True).encode("utf-8")
-                sidecar_digest = hashlib.sha256(canonical).hexdigest()
-            except Exception:
-                sidecar_digest = ""
-            blob = Path(self.repo) / ".tracks" / "runtime" / "blobs" / sidecar_digest
-            if blob.exists():
-                advisories_ref = f".tracks/runtime/blobs/{sidecar_digest}"
-            else:
-                try:
-                    advisories_ref = sidecar_path.relative_to(Path(self.repo)).as_posix()
-                except ValueError:
-                    advisories_ref = str(sidecar_path)
-
-            return {
-                "violations": violations,
-                "advisories_ref": advisories_ref,
-                "advisories_count": advisories_count,
-                "advisories_digest": f"sha256:{sidecar_digest}" if sidecar_digest else "",
-                "sidecar_digest": sidecar_digest,
-                "recorded_tree": str((surface or {}).get("recorded_tree") or ""),
-                "stats": {
-                    "ast_modules_total": ast_total,
-                    "dynamic_modules_total": dyn_total,
-                    "anchors_total": len(anchors_map),
-                },
-            }
+            return self._anchor_surface_summary(tasks, surface, sidecar_path)
         except Exception as exc:
             return {"unavailable": f"infra: {exc}"}
+
+    def _anchor_surface_summary(self, tasks, surface, sidecar_path: Path) -> dict:
+        index = _scope_index(tasks)
+        anchors_map = _anchors_map(surface)
+        entry_ast, ast_total, dyn_total = _anchor_entry_totals(anchors_map)
+        edges = _anchor_edges(index, tasks, anchors_map, entry_ast)
+        violations = _anchor_violations(tasks, edges)
+        advisories_count = _anchor_advisories_count(tasks, surface)
+        sidecar_digest, advisories_ref = self._sidecar_digest_and_ref(surface, sidecar_path)
+        return {
+            "violations": violations,
+            "advisories_ref": advisories_ref,
+            "advisories_count": advisories_count,
+            "advisories_digest": f"sha256:{sidecar_digest}" if sidecar_digest else "",
+            "sidecar_digest": sidecar_digest,
+            "recorded_tree": str((surface or {}).get("recorded_tree") or ""),
+            "stats": {
+                "ast_modules_total": ast_total,
+                "dynamic_modules_total": dyn_total,
+                "anchors_total": len(anchors_map),
+            },
+        }
+
+    def _sidecar_digest_and_ref(self, surface, sidecar_path: Path) -> tuple[str, str]:
+        """Sidecar sha256 digest + its advisory ref (blob or source path)."""
+        sidecar_digest = ""
+        try:
+            canonical = json.dumps(surface, sort_keys=True).encode("utf-8")
+            sidecar_digest = hashlib.sha256(canonical).hexdigest()
+        except Exception:
+            sidecar_digest = ""
+        blob = Path(self.repo) / ".tracks" / "runtime" / "blobs" / sidecar_digest
+        if blob.exists():
+            return sidecar_digest, f".tracks/runtime/blobs/{sidecar_digest}"
+        try:
+            return sidecar_digest, sidecar_path.relative_to(Path(self.repo)).as_posix()
+        except ValueError:
+            return sidecar_digest, str(sidecar_path)
 
     def _apply_assignment_context_grading(
         self,
@@ -476,20 +476,14 @@ class MImplAnchorMixin:
 
     def _copy_task_ref_keys(self, assignment: dict, task: dict) -> None:
         """Writer-only per-task ref keys, copied from the task payload."""
+        # B50 (#65): the split contract travels with the assignment so
+        # Devon/Shield see the layer-resolved anchors explicitly. B94 adds
+        # the deferred anchors + integration marker; #129 the debt ledger.
         for key in (
             "issue_number",
-            "ac_refs",
-            "fr_refs",
-            "if_ids",
-            "test_refs",
-            # B50 (#65): the split contract travels with the assignment
-            # so Devon/Shield see the layer-resolved anchors explicitly.
-            "unit_refs",
-            "acceptance_refs",
-            # B94 deferred anchors and integration marker
+            *_TASK_REF_FIELDS,
             "deferred_refs",
             "integration",
-            # #129 debt ledger (pure annotation, carried to assignment)
             "debt",
         ):
             value = task.get(key)
@@ -686,17 +680,7 @@ class MImplAnchorMixin:
 
     @staticmethod
     def _invalid_devon_assignment(assignment: dict | None) -> str | None:
-        required = (
-            "task_id",
-            "if_ids",
-            "ac_refs",
-            "test_refs",
-            "commands",
-            "manifest",
-            "phase",
-            "pre_dirty_snapshot",
-            "result_identity",
-        )
+        required = DEVON_ASSIGNMENT_REQUIRED
         data = assignment or {}
         missing = [key for key in required if MImplAnchorMixin._assignment_key_missing(data, key)]
         phase = data.get("phase")

@@ -15,6 +15,7 @@ from tracks.executor.helpers import (
     _DIAGNOSE_TARGET,
     _dispatch_payload,
     _scoped_commit_if_staged,
+    emit_test_committed,
     git,
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
@@ -371,14 +372,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
             return False
         if not self._commit_shield_fix(state, cmd, task_id):
             return False
-        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
-        self._emit(
-            "test.committed",
-            {"commit_sha": commit_sha, "test_count": test_count},
-            command_id=cmd.command_id,
-            task_id=task_id,
-        )
+        commit_sha = emit_test_committed(self, cmd, tests_dir, task_id=task_id)
         # B91 follow-up (re-baseline): the sanctioned fix commit joins the
         # task's immutable R family so the eventual G binds a provable anchor
         # that is ALSO the tree that gated it (no-op without a prior RED).

@@ -7,7 +7,6 @@ compliance (C0302); code moved verbatim.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import os
@@ -29,12 +28,12 @@ from tracks.executor.rgr import red_base_sha
 from tracks.executor.taskgraph import TaskNode, plan_row_targets
 from tracks.executor.test_select import (
     TestSelectError,
+    cleanup_staged_results,
     parse_test_result,
     require_exact_node_coverage,
-    resolve_selected_command,
     select_task,
+    stage_audited_selection,
 )
-from tracks.executor.test_select import audit as audit_selection_argv
 from tracks.executor.test_tasks import _coverage_rows_with_test
 from tracks.executor.worktree import WorktreeHandle, create_gate_worktree, ensure_runtime_assets
 from tracks.kernel.machine import State
@@ -786,22 +785,14 @@ class MImplTestOpsMixin:
                     continue
                 section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
                 result_path = self._result_staging_path(cmd.command_id, f"green-{layer}")
-                staged.append(result_path)
-                result_path.unlink(missing_ok=True)
-                argv = resolve_selected_command(
-                    section.run_selected,
+                argv = stage_audited_selection(
+                    section,
                     selected,
-                    str(result_path),
-                    Path(section_cwd),
+                    result_path,
+                    section_cwd,
+                    staged,
+                    f"[{layer}] selected argv diverges from contract",
                 )
-                if not audit_selection_argv(
-                    section.run_selected,
-                    selected,
-                    str(result_path),
-                    list(argv),
-                    Path(section_cwd),
-                ):
-                    raise TestSelectError(f"[{layer}] selected argv diverges from contract")
                 obs = execute_gate_command(
                     shlex.join(argv),
                     section_cwd,
@@ -817,11 +808,7 @@ class MImplTestOpsMixin:
                 mapping = require_exact_node_coverage(cases, selected)
                 self._record_task_node_outcomes(outcomes, failed_nodes, selected, mapping)
         finally:
-            for path in staged:
-                path.unlink(missing_ok=True)
-            if staged:
-                with contextlib.suppress(OSError):
-                    staged[0].parent.rmdir()
+            cleanup_staged_results(staged)
         forensics_ref = self._collect_forensics_ref(forensics_root, failed_nodes)
         return outcomes, failed_nodes, commands, templates, forensics_ref
 

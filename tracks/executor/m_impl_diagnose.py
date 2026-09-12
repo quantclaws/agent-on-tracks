@@ -14,7 +14,10 @@ import subprocess
 from pathlib import Path
 
 from tracks.executor.helpers import git
-from tracks.executor.m_impl_anchor import _combined_provenance
+from tracks.executor.m_impl_anchor import (
+    _combined_provenance,
+    emit_devon_outcome_failure,
+)
 from tracks.executor.quality_gate import failed_summary_lines
 from tracks.executor.rgr import adopt_red_ref, create_red_ref
 from tracks.executor.test_select import TestSelectError, resolve_selected_command
@@ -205,13 +208,8 @@ class MImplDiagnoseMixin:
             return
         reason, diff = self._validated_diff("red", state)
         if reason is not None:
-            self._emit_gate_failure(
-                cmd,
-                check="red_invalid",
-                reason=reason,
-                evidence="backend Devon outcome",
-                task_id=task_id,
-                attempt=attempt,
+            emit_devon_outcome_failure(
+                self, cmd, task_id, attempt, reason, check="red_invalid"
             )
             self._rebuild_task_log_projection()
             return

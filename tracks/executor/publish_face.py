@@ -6,7 +6,10 @@ from __future__ import annotations
 from tracks.effects import publish as publish_effects
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
 from tracks.executor.release_gate import version_facts
-from tracks.executor.security import aggregate_security_status, run_security_scans
+from tracks.executor.security import (
+    run_security_scans,
+    security_assessed_payload,
+)
 
 
 class ExecPublishMixin:
@@ -158,31 +161,9 @@ blocked-publish payload."""
         if contract is None:
             return
         results = run_security_scans(contract, self.repo, candidate_sha)
-        status = aggregate_security_status(results)
-        payload = {
-            "status": status,
-            "candidate_sha": candidate_sha,
-            "policy_digest": digest,
-            "scans": [
-                {
-                    "id": r.gate_id,
-                    "status": r.status,
-                    "exit_code": r.exit_code,
-                }
-                for r in results
-            ],
-            "repair_route": "none",
-        }
-        if status != "passed":
-            # §1.0.14 B: a failing/unknown scan is a cve-class finding ->
-            # Archer advisory repair route (in-place, never a rollback).
-            payload["repair_route"] = {
-                "exit_class": "defect_repair",
-                "defect_class": "cve",
-                "owner": "Archer",
-                "discipline": "cve_advisory",
-                "budget_remaining": None,
-            }
+        # §1.0.14 B: a failing/unknown scan is a cve-class finding -> Archer
+        # advisory repair route (in-place, never a rollback).
+        payload = security_assessed_payload(candidate_sha, digest, results)
         self._emit(
             "security.assessed",
             payload,

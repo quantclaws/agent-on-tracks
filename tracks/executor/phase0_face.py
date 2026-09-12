@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
+from tracks.baseline import BASELINE_DOC_NAMES
 from tracks.executor.test_collect import _R2_BASIS, _R2_SCOPE
 from tracks.executor.test_select import collect_node_source_digests, make_selection_id
 from tracks.kernel.events import Command
@@ -15,14 +16,7 @@ from tracks.project import load_contract
 
 # Baseline requirement documents digested into the Phase 0 seal manifest
 # (§1c phase0.sealed document_digests input): the six project templates.
-_PHASE0_BASELINE_DOCS = (
-    "story.md",
-    "spec.md",
-    "acceptance.md",
-    "architecture.md",
-    "interfaces.md",
-    "test-plan.md",
-)
+_PHASE0_BASELINE_DOCS = BASELINE_DOC_NAMES
 
 
 @dataclass(frozen=True)

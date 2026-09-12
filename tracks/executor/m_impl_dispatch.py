@@ -14,7 +14,11 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.executor.helpers import git
-from tracks.executor.m_impl_anchor import _is_evidence_shape_error, _manifest_path_matches
+from tracks.executor.m_impl_anchor import (
+    _is_evidence_shape_error,
+    _manifest_path_matches,
+    emit_devon_outcome_failure,
+)
 from tracks.executor.m_impl_diagnose import _m_impl_red_classification_error
 from tracks.executor.m_impl_green import _task_review_failure
 from tracks.executor.oscillation import OSCILLATION_CHECK as _OSCILLATION_CHECK
@@ -26,8 +30,9 @@ from tracks.executor.test_select import (
     TestResultError,
     TestSelectError,
     emit_stale_propagation,
-    evidence_identity,
+    evidence_ids_for,
     make_selection_id,
+    selection_event_payload,
 )
 from tracks.executor.worktree import cleanup_worktree
 from tracks.kernel.machine import State
@@ -96,14 +101,7 @@ class MImplDispatchMixin:
         attempt = state.current_attempt + 1
         reason = self._devon_evidence_error("green", state)
         if reason is not None:
-            self._emit_gate_failure(
-                cmd,
-                check="impl_defect",
-                reason=reason,
-                evidence="backend Devon outcome",
-                task_id=task_id,
-                attempt=attempt,
-            )
+            emit_devon_outcome_failure(self, cmd, task_id, attempt, reason)
             return
         cwd, gate_handle = self._ensure_gate_worktree(state)
         try:
@@ -547,19 +545,18 @@ class MImplDispatchMixin:
         nodes_blob = f".tracks/runtime/blobs/{node_ref}"
         self._emit(
             "test.selected",
-            {
-                "scope": "task_if",
-                "basis": basis,
-                "nodes_count": len(nodes),
-                "nodes": nodes,
-                "nodes_blob": nodes_blob,
-                "baseline": baseline,
-                "commit": commit,
-                "tree_stamp": tree_stamp,
-                "selection_id": selection_id,
-                "task_id": task.task_id,
-                "task_ifs": list(task.if_ids),
-            },
+            selection_event_payload(
+                scope="task_if",
+                basis=basis,
+                nodes=nodes,
+                nodes_blob=nodes_blob,
+                baseline=baseline,
+                commit=commit,
+                tree_stamp=tree_stamp,
+                selection_id=selection_id,
+                task_id=task.task_id,
+                task_ifs=list(task.if_ids),
+            ),
             command_id=cmd.command_id,
             task_id=task.task_id,
         )
@@ -588,16 +585,7 @@ class MImplDispatchMixin:
             env=env_identity,
             selection_id=selection_id,
         )
-        return [
-            evidence_identity(
-                identity,
-                outcome["node"],
-                outcome["status"],
-                state.current_attempt + 1,
-                "runtime",
-            )
-            for outcome in outcomes
-        ]
+        return evidence_ids_for(identity, outcomes, state.current_attempt + 1)
 
     def _task_selection_evidence(
         self, state: State, cwd: str, selection: _TaskSelection, run: _TaskSelectionRun

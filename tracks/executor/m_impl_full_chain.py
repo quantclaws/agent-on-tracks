@@ -7,7 +7,6 @@ compliance (C0302); code moved verbatim.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import shlex
@@ -20,7 +19,8 @@ from tracks.executor.test_select import (
     EvidenceIdentity,
     LedgerCorruptionError,
     TestSelectError,
-    evidence_identity,
+    cleanup_staged_results,
+    evidence_by_node_for,
     ledger_is_clean,
     make_selection_id,
     parse_test_result,
@@ -28,6 +28,8 @@ from tracks.executor.test_select import (
     require_exact_node_coverage,
     resolve_selected_command,
     select_diff,
+    selection_event_payload,
+    stage_audited_selection,
 )
 from tracks.executor.test_select import audit as audit_selection_argv
 from tracks.executor.test_tasks import _LAYER_CELL_SEPARATOR, _coverage_rows_with_test
@@ -204,11 +206,7 @@ class MImplFullChainMixin:
                     for node in selected
                 )
         finally:
-            for path in staged:
-                path.unlink(missing_ok=True)
-            if staged:
-                with contextlib.suppress(OSError):
-                    staged[0].parent.rmdir()
+            cleanup_staged_results(staged)
         return outcomes, command_echo, command_cwds, command_exit_codes, result_paths
 
     def _declared_anchor_layers(self) -> set[str] | None:
@@ -308,19 +306,16 @@ class MImplFullChainMixin:
             raise TestSelectError("FULL nodes blob write failed")
         selection_event = self._emit(
             "test.selected",
-            {
-                "scope": "full",
-                "basis": f"full:{round_name}",
-                "nodes_count": len(nodes),
-                "nodes": nodes,
-                "nodes_blob": f".tracks/runtime/blobs/{node_ref}",
-                "baseline": baseline,
-                "commit": commit,
-                "tree_stamp": tree_stamp,
-                "selection_id": selection_id,
-                "task_id": None,
-                "task_ifs": None,
-            },
+            selection_event_payload(
+                scope="full",
+                basis=f"full:{round_name}",
+                nodes=nodes,
+                nodes_blob=f".tracks/runtime/blobs/{node_ref}",
+                baseline=baseline,
+                commit=commit,
+                tree_stamp=tree_stamp,
+                selection_id=selection_id,
+            ),
             command_id=cmd.command_id,
         )
         return _FullSelection(
@@ -373,16 +368,9 @@ class MImplFullChainMixin:
             env=env_identity,
             selection_id=header.selection_id,
         )
-        evidence_by_node = {
-            outcome["node"]: evidence_identity(
-                identity,
-                outcome["node"],
-                outcome["status"],
-                header.state.current_attempt + 1,
-                "runtime",
-            )
-            for outcome in run.outcomes
-        }
+        evidence_by_node = evidence_by_node_for(
+            identity, run.outcomes, header.state.current_attempt + 1
+        )
         persisted_outcomes = [
             {**outcome, "evidence_id": evidence_by_node[outcome["node"]]}
             for outcome in run.outcomes
@@ -848,22 +836,10 @@ class MImplFullChainMixin:
                     raise TestSelectError(f"SELECT_DIFF lacks [{layer}] contract")
                 section_cwd = self.repo / section.cwd if section.cwd != "." else self.repo
                 result_path = self._result_staging_path(cmd.command_id, f"select-diff-{layer}")
-                staged.append(result_path)
-                result_path.unlink(missing_ok=True)
-                argv = resolve_selected_command(
-                    section.run_selected,
-                    selected,
-                    str(result_path),
-                    Path(section_cwd),
+                argv = stage_audited_selection(
+                    section, selected, result_path, section_cwd, staged,
+                    f"[{layer}] SELECT_DIFF argv diverges from contract",
                 )
-                if not audit_selection_argv(
-                    section.run_selected,
-                    selected,
-                    str(result_path),
-                    list(argv),
-                    Path(section_cwd),
-                ):
-                    raise TestSelectError(f"[{layer}] SELECT_DIFF argv diverges from contract")
                 obs = execute_gate_command(
                     shlex.join(argv), str(section_cwd), f"select-diff-{layer}"
                 )
@@ -956,16 +932,9 @@ class MImplFullChainMixin:
             env=self._gate_environment_identity(),
             selection_id=selection_id,
         )
-        evidence_by_node = {
-            outcome["node"]: evidence_identity(
-                identity,
-                outcome["node"],
-                outcome["status"],
-                state.current_attempt + 1,
-                "runtime",
-            )
-            for outcome in outcomes
-        }
+        evidence_by_node = evidence_by_node_for(
+            identity, outcomes, state.current_attempt + 1
+        )
         return {
             "selection_id": selection_id,
             "failed_nodes": [failure["node"] for failure in failures],

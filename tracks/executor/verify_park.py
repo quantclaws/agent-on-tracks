@@ -17,7 +17,7 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
-from tracks.executor.security import aggregate_security_status, run_security_scans
+from tracks.executor.security import run_security_scans, security_assessed_payload
 from tracks.kernel.events import Command
 
 
@@ -242,34 +242,14 @@ class ExecVerifyParkMixin:
         if seen:
             return (seen[-1].payload or {}).get("status") == "passed"
         results = run_security_scans(contract, self.repo, candidate_sha)
-        status = aggregate_security_status(results)
-        payload = {
-            "status": status,
-            "candidate_sha": candidate_sha,
-            "policy_digest": contract_digest,
-            "findings": [
-                {
-                    "scan_id": r.gate_id,
-                    "status": r.status,
-                    "exit_code": r.exit_code,
-                }
-                for r in results
-            ],
-            "repair_route": "none",
-        }
-        if status != "passed":
-            # §1.0.14 B / interfaces §1d: a non-passing assessment always
-            # carries its unified repair route (cve-class -> Archer advisory),
-            # never a silent "none".
-            payload["repair_route"] = {
-                "exit_class": "defect_repair",
-                "defect_class": "cve",
-                "owner": "Archer",
-                "discipline": "cve_advisory",
-                "budget_remaining": None,
-            }
+        # §1.0.14 B / interfaces §1d: a non-passing assessment always carries
+        # its unified repair route (cve-class -> Archer advisory), never a
+        # silent "none".
+        payload = security_assessed_payload(
+            candidate_sha, contract_digest, results, entry_key="findings", id_key="scan_id"
+        )
         self._emit("security.assessed", payload, command_id=cmd.command_id)
-        return status == "passed"
+        return payload["status"] == "passed"
 
     def _park_stop_payload(self, event_type: str) -> dict:
         """Latest park-chain stop event payload (empty when absent)."""

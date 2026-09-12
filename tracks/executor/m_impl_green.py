@@ -12,7 +12,11 @@ import re
 from pathlib import Path
 
 from tracks.executor.helpers import git
-from tracks.executor.m_impl_anchor import _combined_provenance, _manifest_path_matches
+from tracks.executor.m_impl_anchor import (
+    _combined_provenance,
+    _manifest_path_matches,
+    emit_devon_outcome_failure,
+)
 from tracks.executor.rgr import create_green_commit, red_base_sha, verify_lineage
 from tracks.executor.test_select import EvidenceIdentity, TestSelectError, reuse_allowed
 from tracks.kernel.machine import State
@@ -415,14 +419,7 @@ class MImplGreenMixin:
         if reason is not None:
             if self._emit_green_no_change(cmd, state, task_id, diff, reconcile):
                 return
-            self._emit_gate_failure(
-                cmd,
-                check="impl_defect",
-                reason=reason,
-                evidence="backend Devon outcome",
-                task_id=task_id,
-                attempt=attempt,
-            )
+            emit_devon_outcome_failure(self, cmd, task_id, attempt, reason)
             self._rebuild_task_log_projection()
             return
         blocker, task, r_sha, b_sha, green_base = self._green_commit_lineage(

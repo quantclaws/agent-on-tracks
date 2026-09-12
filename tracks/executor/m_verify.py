@@ -8,12 +8,12 @@ emitted as events; binding verification itself is pure over the event stream.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from tracks.executor import version_extensions
+from tracks.executor.helpers import _git_stdout as _git
 from tracks.kernel.events import Command
 from tracks.kernel.release import RELEASE_PIPELINE_VERSION
 
@@ -40,17 +40,6 @@ class FreezeBlocked(RuntimeError):
     No CandidateIdentity may exist for a tree that is not exactly HEAD; the
     caller maps this refusal to attention.required(reason=dirty_tree).
     """
-
-
-def _git(repo: Path, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return proc.stdout.strip()
 
 
 def freeze_candidate(repo: Path) -> CandidateIdentity:

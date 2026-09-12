@@ -15,6 +15,7 @@ from tracks.executor.helpers import (
     _scoped_commit_if_staged,
     _short_detail,
     classify_red_detail,
+    emit_test_committed,
     git,
 )
 from tracks.executor.test_collect import _R2_BASIS, _R2_SCOPE, _contract_sections
@@ -27,6 +28,7 @@ from tracks.executor.test_select import (
     require_exact_node_coverage,
     require_nonempty_r2_selection,
     resolve_selected_command,
+    selection_event_payload,
 )
 from tracks.executor.test_select import audit as audit_selection_argv
 from tracks.executor.validate import required_ac_ids
@@ -494,19 +496,16 @@ class ExecTestRunMixin:
     ) -> None:
         self._emit(
             "test.selected",
-            {
-                "scope": _R2_SCOPE,
-                "basis": _R2_BASIS,
-                "nodes_count": len(selected_all),
-                "nodes": list(selected_all),
-                "nodes_blob": nodes_blob,
-                "baseline": str(baseline_id or ""),
-                "commit": commit,
-                "tree_stamp": tree_stamp,
-                "selection_id": selection_id,
-                "task_id": None,
-                "task_ifs": None,
-            },
+            selection_event_payload(
+                scope=_R2_SCOPE,
+                basis=_R2_BASIS,
+                nodes=list(selected_all),
+                nodes_blob=nodes_blob,
+                baseline=str(baseline_id or ""),
+                commit=commit,
+                tree_stamp=tree_stamp,
+                selection_id=selection_id,
+            ),
             command_id=cmd.command_id,
         )
 
@@ -902,13 +901,7 @@ class ExecTestRunMixin:
         # proc is None when there's nothing new to stage — tests were already
         # committed during the WRITE pipeline. That's OK: emit test.committed
         # pointing at the current HEAD (the existing freeze commit).
-        commit_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        test_count = sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
-        self._emit(
-            "test.committed",
-            {"commit_sha": commit_sha, "test_count": test_count},
-            command_id=cmd.command_id,
-        )
+        emit_test_committed(self, cmd, tests_dir)
 
     def _diagnose_classification(self) -> str:
         """Read the DIAGNOSE classification from the fake backend's simulate

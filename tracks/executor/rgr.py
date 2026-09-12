@@ -14,7 +14,8 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
-from tracks.executor.helpers import classify_red
+from tracks.executor.helpers import _git_stdout as _git
+from tracks.executor.helpers import _git_text, classify_red
 
 __all__ = [
     "RedRef",
@@ -264,26 +265,7 @@ def verify_lineage(
 # -- git helpers -------------------------------------------------------------
 
 
-def _git(repo: str, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return proc.stdout.strip()
 
-
-def _git_text(repo: str, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return proc.stdout
 
 
 def _rev_parse(repo: str, ref: str) -> str | None:

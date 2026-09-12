@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,31 +12,13 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.effects import oob
-from tracks.executor.file_identity import path_identity
+from tracks.executor.file_identity import (
+    TREE_STAMP_SKIP_PREFIXES as _TREE_STAMP_SKIP_PREFIXES,
+)
+from tracks.executor.file_identity import path_identity, porcelain_path
 from tracks.executor.helpers import _hook_output, git
-from tracks.executor.host_contract import DEFAULT_INSTALL_INTERPRETER
 from tracks.executor.result_checkpoint import _COMMITTED_EVENT
 from tracks.kernel.machine import State
-
-# Paths excluded from the dirty-aware tree stamp: runtime state and build
-# artifacts are not source/test/config content and must never destabilize a
-# selection identity across WAL/replay of the same command. The declared env
-# directory component is derived from the contract boundary's default
-# interpreter spelling (IF-HOSTCONTRACT-001) — never spelled here.
-_ENV_DIR_PREFIX = posixpath.normpath(DEFAULT_INSTALL_INTERPRETER).split(posixpath.sep)[0] + "/"
-
-
-_TREE_STAMP_SKIP_PREFIXES = (
-    ".git/",
-    ".opencode/",
-    ".test_cache/",
-    ".ruff_cache/",
-    ".tracks/",
-    _ENV_DIR_PREFIX,
-    "build/",
-    "dist/",
-    "logs/",
-)
 
 
 @dataclass(frozen=True)
@@ -359,12 +340,9 @@ and the remaining surface via self."""
         status = git(repo, "status", "--porcelain", "-uall", check=False).stdout
         dirty: dict[str, str] = {}
         for line in status.splitlines():
-            if len(line) < 4:
+            path = porcelain_path(line)  # FRB-E: rename hashes the dest
+            if path is None:
                 continue
-            path = line[3:].strip()
-            if " -> " in path:
-                path = path.split(" -> ", 1)[1]  # FRB-E: hash the rename dest
-            path = path.strip().strip('"')
             if (
                 not path
                 or path.startswith(_TREE_STAMP_SKIP_PREFIXES)

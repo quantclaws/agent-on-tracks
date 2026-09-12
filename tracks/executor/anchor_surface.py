@@ -22,22 +22,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+from tracks.executor.file_identity import (
+    TREE_STAMP_SKIP_PREFIXES as _TREE_STAMP_SKIP_PREFIXES,
+)
+from tracks.executor.file_identity import porcelain_path
 from tracks.project import _SUPPORTED_FRAMEWORKS
 
 # The runner module invoked via ``-m`` is the single framework declared in the
 # project-contract vocabulary (NFR-0147: the executor never hardcodes it).
 _RUNNER_MODULE = sorted(_SUPPORTED_FRAMEWORKS)[0]
-
-_TREE_STAMP_SKIP_PREFIXES = (
-    ".git/",
-    ".opencode/",
-    ".test_cache/",
-    ".ruff_cache/",
-    ".tracks/",
-    "build/",
-    "dist/",
-    "logs/",
-)
 
 
 class AnchorSurfaceError(Exception):
@@ -101,13 +94,8 @@ def _dirty_tree_stamp(repo: Path) -> str:
     status = _git_status_porcelain(repo)
     dirty: dict[str, str] = {}
     for line in status.splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        path = path.strip().strip('"')
-        if _is_skipped_stamp_path(path):
+        path = porcelain_path(line)
+        if path is None or _is_skipped_stamp_path(path):
             continue
         try:
             digest = hashlib.sha256((repo / path).read_bytes()).hexdigest()

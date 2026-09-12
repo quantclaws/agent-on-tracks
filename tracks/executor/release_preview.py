@@ -11,6 +11,7 @@ from tracks.executor.release_gate import (
     active_release_branch,
     build_operation_plan,
     complete_version_facts,
+    expand_version_scheme,
     generate_preview,
     operation_plan_needs_n,
 )
@@ -46,15 +47,8 @@ def _contract_table(contract) -> dict:
 
 
 def _version_facts(contract, facts: dict) -> dict:
-    resolved = dict(facts or {})
     scheme = _contract_table(contract).get("version_scheme", {})
-    for name in ("feature_tag", "patch_line", "prerelease_tag"):
-        value = str(scheme.get(name, ""))
-        for _ in range(3):
-            for key, fact in resolved.items():
-                value = value.replace("{" + key + "}", str(fact))
-        resolved[name] = value
-    return resolved
+    return expand_version_scheme(facts, scheme)
 
 
 def _artifact_digest(repo: Path, contract, facts: dict) -> str | None:
@@ -269,11 +263,8 @@ def _preview_digests(
 
 
 def preview_blob_matches(home: Path, preview: dict) -> bool:
-    ref = preview.get("blob_ref")
-    if not isinstance(ref, str) or not ref:
-        return False
-    name = ref.rsplit("/", 1)[-1]
-    if len(name) != 64 or any(char not in "0123456789abcdef" for char in name):
+    name = paths.blob_name_from_ref(preview.get("blob_ref"))
+    if name is None:
         return False
     path = paths.blobs_dir(home) / name
     try:

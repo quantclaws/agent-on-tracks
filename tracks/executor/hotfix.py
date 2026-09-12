@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from tracks.baseline import BASELINE_DOC_NAMES
+
 # interfaces.md §1c — closed rejection-reason set for triage.prechecked.
 HotfixRejectionReason = Literal[
     "not_bug",
@@ -48,14 +50,7 @@ _VERSION_TUPLE_RE = re.compile(r"^v(\d+)\.(\d+)$")
 # Baseline document filenames inherited by the hotfix project directory
 # (ARCH-006 §3.4, IF-HOTFIX-005): source-approval record stores read-only
 # paths to these six docs, never a copy.
-_BASELINE_DOC_NAMES = (
-    "story.md",
-    "spec.md",
-    "acceptance.md",
-    "architecture.md",
-    "interfaces.md",
-    "test-plan.md",
-)
+_BASELINE_DOC_NAMES = BASELINE_DOC_NAMES
 
 
 @dataclass(frozen=True)
