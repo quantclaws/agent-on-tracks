@@ -3,16 +3,20 @@
 Single-writer discipline (D-07, FR-27): every mutating subcommand holds
 `runtime/lock` (O_CREAT|O_EXCL, holder PID inside). A held lock aborts with
 the holder PID on stderr and writes no events.
+
+Composition (C0302 split): this entry module keeps `main`, the command
+registry, the shared `Path.mkdir` test seam, and the `discuss` delegation;
+the command faces live in `common` / `run_cmd` / `hotfix_cmd` /
+`release_cmd` / `status_cmd` / `validate_cmd` and every moved name is
+re-exported below, so the pre-split import surface is unchanged.
 """
 
 from __future__ import annotations
 
 import ast
 import json
-import os
 import pathlib
 import sys
-from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -62,6 +66,52 @@ from tracks.project import ContractError, load_contract
 from tracks.report import generate_report, progress_summary
 from tracks.store import Store, new_ulid
 
+from .common import (
+    HOST_BYPRODUCTS_GITIGNORE as HOST_BYPRODUCTS_GITIGNORE,
+)
+from .common import (
+    HOST_BYPRODUCTS_MARKER as HOST_BYPRODUCTS_MARKER,
+)
+from .common import (
+    PROJECTS_GITIGNORE as PROJECTS_GITIGNORE,
+)
+from .common import (
+    RUNTIME_GITIGNORE as RUNTIME_GITIGNORE,
+)
+from .common import (
+    TRACKS_GITIGNORE as TRACKS_GITIGNORE,
+)
+from .common import (
+    LockHeld as LockHeld,
+)
+from .common import (
+    _canonical_stage_order as _canonical_stage_order,
+)
+from .common import (
+    _ensure_host_byproducts_gitignore as _ensure_host_byproducts_gitignore,
+)
+from .common import (
+    _err as _err,
+)
+from .common import (
+    _err2 as _err2,
+)
+from .common import (
+    _format_state as _format_state,
+)
+from .common import (
+    _human_actor as _human_actor,
+)
+from .common import (
+    _pid_alive as _pid_alive,
+)
+from .common import (
+    _resolve_actor as _resolve_actor,
+)
+from .common import (
+    writer_lock as writer_lock,
+)
+
 # Ensure nested tmp_path helpers that do Path.mkdir without parents still
 # succeed (RED helper ``_setup(tmp_path / "c2")`` would otherwise raise
 # FileNotFoundError before Store is created). Keep GREEN's R tests green
@@ -74,112 +124,6 @@ def _mkdir_with_parents(self, mode=0o777, parents=False, exist_ok=False):  # noq
 
 
 pathlib.Path.mkdir = _mkdir_with_parents  # type: ignore[method-assign]
-
-
-class LockHeld(Exception):
-    def __init__(self, pid: str):
-        super().__init__(pid)
-        self.pid = pid
-
-
-def _err(msg: str) -> int:
-    print(msg, file=sys.stderr)
-    return 1
-
-
-def _err2(msg: str) -> int:
-    """Error exit with code 2 (release preview surface: no release run)."""
-    print(msg, file=sys.stderr)
-    return 2
-
-
-def _format_state(state) -> str:
-    """Shared one-line state format for run/status/replay (Fix 3: escalation
-    reason visibility). When awaiting escalation, append the attempt count,
-    failure check, and one-line reason so the operator sees why the run halted."""
-    line = (
-        f"stage={state.stage} substate={state.substate} "
-        f"status={state.status} awaiting={state.awaiting or '-'}"
-    )
-    if state.awaiting == "escalation":
-        line += f" attempts={state.current_attempt}"
-        if state.last_failure:
-            check = state.last_failure.get("check") or "?"
-            reason = state.last_failure.get("reason") or ""
-            reason = reason.strip().splitlines()[0] if reason else ""
-            snippet = f"[{check}] {reason}" if reason else f"[{check}]"
-            line += f" reason={snippet}"
-    return line
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-@contextmanager
-def writer_lock(home: Path):
-    lock = paths.lock_path(home)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    fd = None
-    for retry in (True, False):
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            try:
-                holder = lock.read_text(encoding="utf-8").strip() or "unknown"
-            except FileNotFoundError:
-                continue  # holder just released; retry acquisition
-            # Crash recovery (AC-29b): a dead holder's lock is stale.
-            if retry and holder.isdigit() and not _pid_alive(int(holder)):
-                lock.unlink(missing_ok=True)
-                continue
-            raise LockHeld(holder) from None
-    try:
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-        yield
-    finally:
-        lock.unlink(missing_ok=True)
-
-
-RUNTIME_GITIGNORE = "tracks.db*\nblobs/\nlock\nlog/\nprompts/\n"
-PROJECTS_GITIGNORE = "*.lock\n*.tmp\n"
-# .tracks/-level transient artifacts (report output, discuss locks).
-TRACKS_GITIGNORE = "report/\n*.lock\n"
-# Host-tree byproducts of the runtime's own contract commands: the
-# collect/run test executions materialize __pycache__/ and .pytest_cache/ in
-# the host repo (under tests/ and at the root). Same doctrine as the .tracks
-# gitignores above -- runtime-owned transients must be ignored in every
-# stage or they pollute host git status; the B59 freeze gate has
-# false-positived on exactly these since it landed (944c0c0, 2026-08-25:
-# every e2e fake journey died at test_freeze_contamination). Managed as a
-# marked block in the HOST ROOT .gitignore: appended only, never rewritten,
-# idempotent by marker, committed with the scaffold so `trac start`'s
-# clean-tree gate sees a committed host.
-HOST_BYPRODUCTS_MARKER = "# BEGIN tracks-managed (runtime test-command byproducts)"
-HOST_BYPRODUCTS_GITIGNORE = (
-    HOST_BYPRODUCTS_MARKER
-    + "\n__pycache__/\n*.py[cod]\n.pytest_cache/\n# END tracks-managed\n"
-)
-
-
-def _ensure_host_byproducts_gitignore(repo: Path) -> bool:
-    """Idempotently append the managed byproduct block to the host root
-    .gitignore. Returns True when the file changed (caller commits it)."""
-    gitignore = repo / ".gitignore"
-    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if HOST_BYPRODUCTS_MARKER in current:
-        return False
-    sep = "" if not current or current.endswith("\n") else "\n"
-    gitignore.write_text(current + sep + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8")
-    return True
 
 
 def cmd_init(repo: Path) -> int:
@@ -324,10 +268,6 @@ def _unmerged_branches(repo: Path) -> list[str]:
         for ln in allb
         if ln.strip().lstrip("*").strip() not in merged
     ]
-
-
-def _human_actor(repo: Path) -> str:
-    return git(repo, "config", "user.name", check=False).stdout.strip() or "Human"
 
 
 def _scope_staged_attribution(repo: Path, version: str, label: str) -> int:
@@ -871,12 +811,6 @@ def _approval_gate(store: Store, run_id: str):
     return state, None
 
 
-def _resolve_actor(repo: Path, actor: str | None) -> str:
-    """The approving/anchoring actor name: the CLI --actor value when given,
-    else the git user.name when configured, else the generic 'human'."""
-    return actor or git(repo, "config", "user.name", check=False).stdout.strip() or "human"
-
-
 def _hotfix_gap_exit(state) -> bool:
     """True when the active run is a hotfix run awaiting the Human ac_gap /
     spec_gap exit decision (FR-0248, IF-HOTFIX-009): the run carries a hotfix
@@ -1039,19 +973,6 @@ _RETURN_STAGES_ESCALATION = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
 # chain (M-TEST itself is never a target); M-REQ-APPROVAL is intentionally
 # absent - it is never a return target.
 _RETURN_AUTHOR_STAGES = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
-
-
-def _canonical_stage_order() -> tuple[str, ...]:
-    """IF-RELEASE-003 / FR-0274/FR-0287: the canonical stage order single
-    source — tuple(machine._STAGES) minus M-REQ-APPROVAL plus
-    release.RELEASE_STAGES. Upstream = a smaller ordinal."""
-    from tracks.kernel import machine as _kernel_machine
-    from tracks.kernel import release as _kernel_release
-
-    return (
-        tuple(s for s in _kernel_machine._STAGES if s != "M-REQ-APPROVAL")
-        + tuple(_kernel_release.RELEASE_STAGES)
-    )
 
 
 def _universal_return_targets(stage: str) -> tuple[str, ...]:
