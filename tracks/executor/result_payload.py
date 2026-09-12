@@ -143,49 +143,9 @@ class ResultPayloadMixin:
         separately by the doc-delta check and excluded from the artifact
         manifest comparison."""
         shield_dirs = layout_paths(self.repo, "shield")
-        if isinstance(pre_dirty, dict):
-            post_snapshot = self._dirty_snapshot()
-            test_files = sorted(
-                f
-                for f in post_snapshot
-                if _is_regular_file_identity(post_snapshot[f])
-                and pre_dirty.get(f) != post_snapshot[f]
-                and any(f.startswith(d) for d in shield_dirs)
-            )
-        else:
-            post_dirty = self._dirty_files()
-            changed = (post_dirty - pre_dirty) if pre_dirty is not None else post_dirty
-            test_files = sorted(
-                f
-                for f in changed
-                if any(f.startswith(d) for d in shield_dirs)
-                and (self.repo / f).is_file()
-                and not (self.repo / f).is_symlink()
-            )
-        include = (result.get("artifact_manifest") or {}).get("include", [])
-        # Only compare code/data artifacts (under shield_dirs) against
-        # observed files; document discussion replies are excluded from
-        # the manifest check (validated by the doc-delta audit instead).
-        code_include = [
-            p
-            for p in (e.get("path") for e in include)
-            if p and any(p.startswith(d) for d in shield_dirs)
-        ]
-        manifest_error = None
-        if not test_files and code_include:
-            # On retry, Shield may not create new files — it verifies
-            # existing files from previous attempts. Accept manifest
-            # paths if they all exist on disk and are dirty (untracked
-            # or modified), even if they weren't changed in this run.
-            dirty = self._dirty_files()
-            if all(p in dirty and (self.repo / p).is_file() for p in code_include):
-                test_files = sorted(code_include)
-        if set(code_include) != set(test_files):
-            manifest_error = (
-                "artifact_manifest include paths do not match observed "
-                f"test files: include={sorted(code_include)}, "
-                f"observed={test_files}"
-            )
+        test_files = self._shield_write_test_files(pre_dirty, shield_dirs)
+        code_include = self._shield_include_paths(result, shield_dirs)
+        test_files, manifest_error = self._shield_manifest_check(test_files, code_include)
         artifacts = list(code_include if manifest_error is None else test_files)
         digests = capture_digests({f: self.repo / f for f in artifacts})
         return {
@@ -211,6 +171,62 @@ class ResultPayloadMixin:
             "manifest_error": manifest_error,
             "domain_event": {"type": "test.written", "payload": {}},
         }
+
+    def _shield_write_test_files(self, pre_dirty, shield_dirs: list[str]) -> list[str]:
+        """Shield-written files, attributed by content identity (or set diff)."""
+        if isinstance(pre_dirty, dict):
+            post_snapshot = self._dirty_snapshot()
+            return sorted(
+                f
+                for f in post_snapshot
+                if _is_regular_file_identity(post_snapshot[f])
+                and pre_dirty.get(f) != post_snapshot[f]
+                and any(f.startswith(d) for d in shield_dirs)
+            )
+        post_dirty = self._dirty_files()
+        changed = (post_dirty - pre_dirty) if pre_dirty is not None else post_dirty
+        return sorted(
+            f
+            for f in changed
+            if any(f.startswith(d) for d in shield_dirs)
+            and (self.repo / f).is_file()
+            and not (self.repo / f).is_symlink()
+        )
+
+    @staticmethod
+    def _shield_include_paths(result, shield_dirs: list[str]) -> list[str]:
+        """Manifest include paths under the Shield layout dirs.
+
+        Only compare code/data artifacts (under shield_dirs) against observed
+        files; document discussion replies are excluded from the manifest
+        check (validated by the doc-delta audit instead)."""
+        include = (result.get("artifact_manifest") or {}).get("include", [])
+        return [
+            p
+            for p in (e.get("path") for e in include)
+            if p and any(p.startswith(d) for d in shield_dirs)
+        ]
+
+    def _shield_manifest_check(
+        self, test_files: list[str], code_include: list[str]
+    ) -> tuple[list[str], str | None]:
+        """Reconcile observed files with the manifest include set."""
+        manifest_error = None
+        if not test_files and code_include:
+            # On retry, Shield may not create new files — it verifies
+            # existing files from previous attempts. Accept manifest
+            # paths if they all exist on disk and are dirty (untracked
+            # or modified), even if they weren't changed in this run.
+            dirty = self._dirty_files()
+            if all(p in dirty and (self.repo / p).is_file() for p in code_include):
+                test_files = sorted(code_include)
+        if set(code_include) != set(test_files):
+            manifest_error = (
+                "artifact_manifest include paths do not match observed "
+                f"test files: include={sorted(code_include)}, "
+                f"observed={test_files}"
+            )
+        return test_files, manifest_error
 
     def _m_test_prism_payload(self, result, base_sha, result_id):
         """M-TEST Prism PRISM_REVIEW: checkpoint discussion diff on design docs.
