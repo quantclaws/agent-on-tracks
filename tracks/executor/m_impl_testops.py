@@ -721,11 +721,23 @@ class MImplTestOpsMixin:
         red_nodes = self._expand_unit_refs(task.unit_refs, inventories["unit"])
         r_sha = self.store.state(self.run_id).r_tree_identity or ""
         self._require_r_artifacts(red_nodes, r_sha, task.task_id)
-        touched = [
+        touched = self._devon_unit_touched()
+        acceptance_nodes = self._gate_acceptance_nodes(task, inventories)
+        nodes = select_task(red_nodes, touched, inventories["unit"], acceptance_nodes)
+        if not nodes:
+            raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
+        return contract, nodes
+
+    def _devon_unit_touched(self) -> list:
+        """Changed unit-test paths from the last Devon outcome."""
+        return [
             path
             for path in (self._last_devon_outcome() or {}).get("changed_paths", [])
             if str(path).startswith("tests/unit/")
         ]
+
+    def _gate_acceptance_nodes(self, task: TaskNode, inventories: dict) -> list:
+        """Declared acceptance + e2e anchors resolved against inventories."""
         plan_path = self._vdir() / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
         effective = self._effective_refs_for_gate(task)
@@ -737,10 +749,7 @@ class MImplTestOpsMixin:
         if e2e_refs:
             e2e_nodes = self._resolve_e2e_nodes(e2e_refs, inventories)
             acceptance_nodes = sorted(set(acceptance_nodes) | e2e_nodes)
-        nodes = select_task(red_nodes, touched, inventories["unit"], acceptance_nodes)
-        if not nodes:
-            raise TestSelectError(f"empty SELECT_TASK for task {task.task_id}")
-        return contract, nodes
+        return acceptance_nodes
 
     def _run_task_selected_layers(self, cmd, contract, cwd: str, by_layer):  # pylint: disable=too-many-locals
         """Execute the SELECT_TASK layers owning selected nodes.
