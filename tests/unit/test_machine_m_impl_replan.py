@@ -1,0 +1,472 @@
+from tests.unit.test_machine_m_impl_support import (
+    _M_IMPL_CRITERIA_PACK,
+    ARCHER_DISPATCH,
+    ARCHER_DONE,
+    BASELINE_CMD,
+    BASELINE_FROZEN,
+    DEVON_GREEN_DISPATCH,
+    DEVON_GREEN_DONE,
+    DEVON_RED_DISPATCH,
+    DEVON_RED_DONE,
+    DEVON_REFACTOR_DISPATCH,
+    DEVON_REFACTOR_DONE,
+    ENTER_M_IMPL,
+    GREEN_COMMIT_CMD,
+    GREEN_COMMITTED,
+    GREEN_GATE_CMD,
+    GREEN_PASS,
+    ISLAND1_CMD,
+    ISLAND1_PASS,
+    PRISM_FINAL_DISPATCH,
+    PRISM_FINAL_DONE,
+    PRISM_PLAN_DISPATCH,
+    PRISM_PLAN_DONE,
+    PRISM_PLAN_PASS,
+    PRISM_RED_DISPATCH,
+    PRISM_RED_DONE,
+    PRISM_RED_PASS,
+    RED_CHECKPOINT_CMD,
+    RED_CHECKPOINTED,
+    RED_GATE_CMD,
+    RED_VALID_PASS,
+    REFACTOR_COMMITTED,
+    REFACTOR_GATE_CMD,
+    SELECT_TASK_CMD,
+    TASK_REVIEW_CMD,
+    TASK_REVIEW_PASS,
+    TASK_STARTED,
+    TASKGRAPH_CMD,
+    TASKGRAPH_COMMITTED,
+    Path,
+    _diagnose_state,
+    _full_single_task_cycle,
+    _new_plan_events,
+    _old_plan_events,
+    decide,
+    json,
+    seq,
+    state_of,
+)
+
+
+def test_red_defect_in_diagnose_vocabulary():
+    """red_defect must remain a legal DIAGNOSE classification: present in the
+    executor/opencode vocabulary gates. The classification vocabulary itself
+    is assignment-authoritative (inlined per dispatch), so the prompt/skill
+    prose is deliberately NOT text-pinned here (b91 host-neutrality)."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    assert "red_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
+
+
+def test_b83_retained_completed_count():
+    """After replacement taskgraph, tasks_completed equals retained count (1),
+    not old total (2). Merged T-006-007 is not retained."""
+    s = state_of(*_old_plan_events(), *_new_plan_events())
+    assert s.substate == "TASK_DISPATCH"
+    assert s.tasks_total == 2
+    assert s.tasks_completed == 1
+    assert s.retained_completed_task_ids == ["T-001"]
+    assert s.taskgraph_generation == 1
+
+
+def test_b83_retained_task_not_selected_again():
+    """decide() at TASK_DISPATCH after replacement selects T-006-007, not
+    retained T-001."""
+    s = state_of(*_old_plan_events(), *_new_plan_events())
+    assert s.substate == "TASK_DISPATCH"
+    cmd = decide(s)
+    assert cmd.kind == "select_task"
+
+
+def test_b83_merged_task_completion_increments_correctly():
+    """Merged T-006-007 completes, tasks_completed becomes 2 (not 3), and
+    substate transitions to ISLAND_GATE_2 (tasks_total=2)."""
+    merged_done = [
+        ("command.issued", {"command": {"kind": "select_task", "params": {"stage": "M-IMPL"}, "command_id": "C103"}}),
+        ("task.started", {"task_id": "T-006-007"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "RED"}, "command_id": "C104"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "RED_GATE"}, "command_id": "C105"}}),
+        ("verdict.passed", {"check": "red_valid"}),
+        ("command.issued", {"command": {"kind": "checkpoint_red", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C106"}}),
+        ("red.checkpointed", {"r_sha": "r006"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "prism", "substate": "PRISM_RED"}, "command_id": "C107"}}),
+        ("outcome.received", {"role": "prism", "status": "done"}),
+        ("prism.verdict", {"verdict": "pass", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "GREEN"}, "command_id": "C108"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "GREEN_GATE"}, "command_id": "C109"}}),
+        ("verdict.passed", {"check": "green"}),
+        ("command.issued", {"command": {"kind": "commit_green", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C110"}}),
+        ("green.committed", {"commit_sha": "g006"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "REFACTOR"}, "command_id": "C111"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_refactor_gate", "params": {"stage": "M-IMPL"}, "command_id": "C112"}}),
+        ("refactor.committed", {"commit_sha": "r006"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "TASK_REVIEW"}, "command_id": "C113"}}),
+        ("verdict.passed", {"check": "task_review"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "prism", "substate": "PRISM_FINAL"}, "command_id": "C114"}}),
+        ("outcome.received", {"role": "prism", "status": "done"}),
+        ("prism.verdict", {"verdict": "pass", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)}),
+        ("command.issued", {"command": {"kind": "complete_task", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C115"}}),
+        ("task.completed", {"task_id": "T-006-007"}),
+    ]
+    s = state_of(*_old_plan_events(), *_new_plan_events(), *merged_done)
+    assert s.tasks_completed == 2
+    assert s.tasks_total == 2
+    assert s.substate == "ISLAND_GATE_2", "must reach ISLAND_GATE_2, not TASK_DISPATCH"
+
+
+def test_b83_retained_task_completion_event_does_not_double_count():
+    """During replay, the old task.completed(T-001) event fires but the
+    reducer skips the increment (T-001 is in retained set)."""
+    # Replay the full sequence: old plan + new plan + merged completion
+    merged_done = [
+        ("command.issued", {"command": {"kind": "select_task", "params": {"stage": "M-IMPL"}, "command_id": "C103"}}),
+        ("task.started", {"task_id": "T-006-007"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "RED"}, "command_id": "C104"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "RED_GATE"}, "command_id": "C105"}}),
+        ("verdict.passed", {"check": "red_valid"}),
+        ("command.issued", {"command": {"kind": "checkpoint_red", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C106"}}),
+        ("red.checkpointed", {"r_sha": "r006"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "prism", "substate": "PRISM_RED"}, "command_id": "C107"}}),
+        ("outcome.received", {"role": "prism", "status": "done"}),
+        ("prism.verdict", {"verdict": "pass", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "GREEN"}, "command_id": "C108"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "GREEN_GATE"}, "command_id": "C109"}}),
+        ("verdict.passed", {"check": "green"}),
+        ("command.issued", {"command": {"kind": "commit_green", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C110"}}),
+        ("green.committed", {"commit_sha": "g006"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "REFACTOR"}, "command_id": "C111"}}),
+        ("outcome.received", {"role": "devon", "status": "done"}),
+        ("command.issued", {"command": {"kind": "run_refactor_gate", "params": {"stage": "M-IMPL"}, "command_id": "C112"}}),
+        ("refactor.committed", {"commit_sha": "r006"}),
+        ("command.issued", {"command": {"kind": "run_task_gates", "params": {"stage": "M-IMPL", "gate": "TASK_REVIEW"}, "command_id": "C113"}}),
+        ("verdict.passed", {"check": "task_review"}),
+        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "prism", "substate": "PRISM_FINAL"}, "command_id": "C114"}}),
+        ("outcome.received", {"role": "prism", "status": "done"}),
+        ("prism.verdict", {"verdict": "pass", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)}),
+        ("command.issued", {"command": {"kind": "complete_task", "params": {"stage": "M-IMPL", "task_id": "T-006-007"}, "command_id": "C115"}}),
+        ("task.completed", {"task_id": "T-006-007"}),
+    ]
+    evs = seq(*ENTER_M_IMPL, *_old_plan_events(), *_new_plan_events(), *merged_done)
+    from tracks.kernel import project as _project
+    s1 = _project(evs)
+    s2 = _project(evs)
+    assert s1.tasks_completed == s2.tasks_completed == 2
+    assert s1.retained_completed_task_ids == s2.retained_completed_task_ids == ["T-001"]
+    assert s1.substate == s2.substate == "ISLAND_GATE_2"
+
+
+def test_b83_same_id_changed_payload_not_retained():
+    """A task with the same ID but different payload is NOT retained.
+    Unit-level: the _task_payloads_equivalent check rejects it."""
+    task_t1_old = {"task_id": "T-001", "issue_number": 83, "description": "original desc", "ac_refs": ["AC-1"], "fr_refs": [], "if_ids": ["IF-1"], "test_refs": [], "unit_refs": [], "acceptance_refs": [], "schema": 2, "scope_boundary": "tracks/", "depends_on": ["-"], "batch": "1", "parallel": "0", "budget": 3}
+    task_t1_new = {"task_id": "T-001", "issue_number": 83, "description": "changed desc", "ac_refs": ["AC-1"], "fr_refs": [], "if_ids": ["IF-1"], "test_refs": [], "unit_refs": [], "acceptance_refs": [], "schema": 2, "scope_boundary": "tracks/", "depends_on": ["-"], "batch": "1", "parallel": "0", "budget": 3}
+    from tracks.executor.m_impl_runtime import MImplRuntimeMixin
+    assert not MImplRuntimeMixin._task_payloads_equivalent(task_t1_old, task_t1_new)
+
+
+def test_b83_retained_depends_on_chain():
+    """A task whose dependency is retained (T-001) is selectable in the new
+    plan."""
+    # Project state: old plan completes T-001, scope failure, new plan retains T-001
+    s = state_of(*_old_plan_events(), *_new_plan_events())
+    assert s.substate == "TASK_DISPATCH"
+    # Retained T-001 is "completed" for dependency resolution; T-006-007
+    # depends on it so it should be ready.
+    assert s.retained_completed_task_ids == ["T-001"]
+    # decide() for TASK_DISPATCH produces select_task, and the executor
+    # (not the pure kernel) resolves the actual ready set. At the state
+    # level, check that the retention projection is correct.
+    cmd = decide(s)
+    assert cmd.kind == "select_task"
+
+
+def test_replacement_taskgraph_clears_inflight_task_lease():
+    """#139: a within-residency graph replacement must clear the in-flight
+    task lease even when the replan did NOT route through scope failure
+    (operator/RULING commit_taskgraph, run 01M19FJV: graph 81d33fa5 landed
+    at seq 3624 while T-042 was in flight; select_task then no-op'ed 20x
+    on the stale current_task_id guard and tripped loop.aborted)."""
+    task = {
+        "task_id": "T-007",
+        "issue_number": 139,
+        "description": "in-flight scope",
+        "ac_refs": ["AC-2"],
+        "fr_refs": [],
+        "if_ids": ["IF-2"],
+        "test_refs": [],
+        "unit_refs": [],
+        "acceptance_refs": [],
+        "schema": 2,
+        "scope_boundary": "tracks/",
+        "depends_on": ["-"],
+        "batch": "1",
+        "parallel": "0",
+        "budget": 3,
+    }
+    old_commit = (
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "task_ids": ["T-007"],
+            "tasks": [task],
+            "digest": "aaa",
+            "path": "tasks.json",
+        },
+    )
+    replacement_commit = (
+        "taskgraph.committed",
+        {
+            "task_count": 1,
+            "task_ids": ["T-007"],
+            "tasks": [{**task, "description": "revised scope"}],
+            "digest": "bbb",
+            "path": "tasks.json",
+            "retained_completed_task_ids": [],
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        old_commit,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        ("task.started", {"task_id": "T-007", "task": dict(task), "manifest": {"task_id": "T-007"}}),
+        # No scope verdict routes the replan -- the replacement lands via a
+        # direct commit_taskgraph (operator/RULING path).
+        TASKGRAPH_CMD,
+        replacement_commit,
+    )
+    assert s.taskgraph_generation == 1
+    assert s.current_task_id is None
+    assert s.current_task_metadata is None
+    assert s.current_manifest is None
+    assert s.substate == "ISLAND_GATE_1"
+
+
+def test_diagnose_plan_defect_routes_to_planning():
+    """#89: DIAGNOSE plan_defect -> PLANNING (Archer replan), no attempt
+    consumed, evidence preserved, task identity cleared."""
+    s = _diagnose_state("plan_defect")
+    assert s.substate == "PLANNING"
+    assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
+    assert s.taskgraph_committed is False
+    assert s.doc_dispatched is False
+    assert s.current_task_id is None, "stale task identity must be cleared"
+    assert s.green_committed is False
+    assert s.refactor_done is False
+    assert s.r_tree_identity is None
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer", "plan_defect must dispatch Archer, not Devon"
+    assert cmd.params["substate"] == "PLANNING"
+    assert "evidence" in cmd.params
+
+
+def test_prism_final_revise_plan_defect_to_planning():
+    """#89: PRISM_FINAL revise plan_defect -> PLANNING (Archer replan),
+    no attempt consumed, task identity cleared."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "defect_classification": "plan_defect",
+        },
+    )
+    s = state_of(
+        BASELINE_CMD,
+        BASELINE_FROZEN,
+        ARCHER_DISPATCH,
+        ARCHER_DONE,
+        TASKGRAPH_CMD,
+        TASKGRAPH_COMMITTED,
+        ISLAND1_CMD,
+        ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH,
+        PRISM_PLAN_DONE,
+        PRISM_PLAN_PASS,
+        SELECT_TASK_CMD,
+        TASK_STARTED,
+        DEVON_RED_DISPATCH,
+        DEVON_RED_DONE,
+        RED_GATE_CMD,
+        RED_VALID_PASS,
+        RED_CHECKPOINT_CMD,
+        RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH,
+        PRISM_RED_DONE,
+        PRISM_RED_PASS,
+        DEVON_GREEN_DISPATCH,
+        DEVON_GREEN_DONE,
+        GREEN_GATE_CMD,
+        GREEN_PASS,
+        GREEN_COMMIT_CMD,
+        GREEN_COMMITTED,
+        DEVON_REFACTOR_DISPATCH,
+        DEVON_REFACTOR_DONE,
+        REFACTOR_GATE_CMD,
+        REFACTOR_COMMITTED,
+        TASK_REVIEW_CMD,
+        TASK_REVIEW_PASS,
+        PRISM_FINAL_DISPATCH,
+        PRISM_FINAL_DONE,
+        revise,
+    )
+    assert s.substate == "PLANNING"
+    assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
+    assert s.taskgraph_committed is False
+    assert s.current_task_id is None
+    assert s.green_committed is False
+    assert s.refactor_done is False
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "archer"
+    assert cmd.params["substate"] == "PLANNING"
+
+
+def test_plan_defect_in_diagnose_vocabulary():
+    """plan_defect must remain a legal DIAGNOSE classification: present in
+    the executor whitelist and the opencode backend classification tuple.
+    The classification vocabulary itself is assignment-authoritative
+    (inlined per dispatch), so the prompt/skill prose is deliberately NOT
+    text-pinned here (b91 host-neutrality)."""
+    from tracks.effects.opencode import OpencodeBackend
+
+    repo_root = Path(__file__).resolve().parents[2]
+    assert "plan_defect" in OpencodeBackend._DIAGNOSE_CLASSIFICATIONS
+    executor_src = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((repo_root / "tracks/executor").glob("*.py"))
+    )
+    assert "plan_defect" in executor_src, "executor whitelist/filter lacks plan_defect"
+
+
+def test_diagnose_dispatch_inlines_classification_vocabulary():
+    """#89/B90: D-39 session reuse freezes the agent/skill vocabulary at
+    session-creation time, so prompt-contract revisions never reach an
+    existing session (run 01M0S0FQ T-012: plan_defect committed, Prism
+    still said impl_defect). The runtime must inline the vocabulary into
+    every DIAGNOSE/PRISM_FINAL assignment — fresh per dispatch."""
+    from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+
+    s_diag = state_of(
+        *_full_single_task_cycle()[:24],  # through DEVON GREEN done
+        GREEN_GATE_CMD,
+        ("verdict.failed", {"check": "unknown_attribution", "reason": "x", "attempt": 1}),
+    )
+    cmd = decide(s_diag)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "prism"
+    vocab = cmd.params["assignment"]["classification_vocabulary"]
+    assert vocab == list(DIAGNOSE_CLASSIFICATIONS)
+    assert "plan_defect" in vocab
+
+    s_final = state_of(*_full_single_task_cycle()[:34])  # through TASK_REVIEW_PASS
+    cmd2 = decide(s_final)
+    assert cmd2 is not None and cmd2.params["role"] == "prism"
+    assert cmd2.params["assignment"]["classification_vocabulary"] == list(
+        DIAGNOSE_CLASSIFICATIONS
+    )
+
+
+def test_effects_whitelist_shares_kernel_vocabulary_source():
+    """#89 single source of truth: the opencode backend whitelist and the
+    kernel dispatch injection must be the SAME tuple — drift between them
+    recreates the B63 'Prism can never say it' failure class."""
+    from tracks.effects import opencode as _oc
+    from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+
+    assert _oc.OpencodeBackend._DIAGNOSE_CLASSIFICATIONS is DIAGNOSE_CLASSIFICATIONS
+
+
+def test_green_objective_names_the_failed_anchors():
+    """OOB 2026-09-05: a GREEN re-dispatch must point at the anchors the
+    GREEN_GATE will re-run -- a generic "implement task X" objective let the
+    writer work adjacent faces while the same anchors stayed red (run
+    01M19FJVES7G113RD8QXXY3PQZ). Deterministic (sorted) and bounded (cap)."""
+    pre = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        GREEN_GATE_CMD,
+    ]
+    failed = (
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "task_id": "T-042",
+            "attempt": 1,
+            "evidence": json.dumps(
+                {
+                    "failed_nodes": [
+                        {"node": "tests/integration/test_b.py::test_two"},
+                        {"node": "tests/integration/test_a.py::test_one"},
+                    ]
+                }
+            ),
+        },
+    )
+    # Real flow: the gate verdict routes DIAGNOSE; Prism's diagnosis
+    # verdict (impl_defect, anchors on the payload) routes GREEN.
+    diagnosis = (
+        "verdict.failed",
+        {
+            "check": "impl_defect",
+            "task_id": "T-042",
+            "attempt": 2,
+            "reason": "wiring gaps",
+            "evidence": "Prism diagnosis prose (not JSON)",
+            "failed_nodes": [
+                {"node": "tests/integration/test_b.py::test_two"},
+                {"node": "tests/integration/test_a.py::test_one"},
+            ],
+        },
+    )
+    s = state_of(*pre, failed, diagnosis)
+    assert s.substate == "GREEN"
+    cmd = decide(s)
+    assert cmd is not None and cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "devon"
+    objective = cmd.params["objective"]
+    assert "test_a.py::test_one" in objective and "test_b.py::test_two" in objective
+    # sorted ascending: a before b
+    assert objective.index("test_a.py") < objective.index("test_b.py")
+
+
+def test_green_objective_omits_anchor_clause_without_nodes():
+    """No parseable failed_nodes -> no invented clause (fail-closed)."""
+    pre = [
+        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
+        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
+        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
+        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
+        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
+        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
+        GREEN_GATE_CMD,
+    ]
+    failed = (
+        "verdict.failed",
+        {"check": "impl_defect", "task_id": "T-042", "attempt": 1, "evidence": "not json"},
+    )
+    s = state_of(*pre, failed)
+    cmd = decide(s)
+    assert "the gate failed on these anchors" not in cmd.params["objective"]
+
