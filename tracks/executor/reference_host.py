@@ -129,7 +129,7 @@ def _materialize(
         }
     target_dir.mkdir(parents=True, exist_ok=True)
     venv_dir = target_dir / ".venv"
-    created = _run([sys.executable, "-m", "venv", str(venv_dir)], target_dir)
+    created = _run([sys.executable, "-I", "-m", "venv", str(venv_dir)], target_dir)
     if created.returncode != 0:
         return _failure(
             "venv_create_failed", venv=str(venv_dir), detail=_tail(created)
@@ -137,7 +137,7 @@ def _materialize(
     python = _venv_python(venv_dir)
     installed = _run(
         [
-            str(python), "-m", "pip", "install", "--no-deps", "--no-index",
+            str(python), "-I", "-m", "pip", "install", "--no-deps", "--no-index",
             "--disable-pip-version-check", str(wheel.resolve()),
         ],
         target_dir,
@@ -151,7 +151,7 @@ def _materialize(
         )
     deployed = _deploy_closed_set(template_dir, target_dir)
     initialized = _run(
-        [str(python), "-m", "tracks.cli.main", "init"], target_dir
+        [str(python), "-I", "-m", "tracks.cli.main", "init"], target_dir
     )
     if initialized.returncode != 0:
         return _failure(

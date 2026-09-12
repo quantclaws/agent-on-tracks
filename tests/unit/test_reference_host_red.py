@@ -213,6 +213,23 @@ def test_reference_host_materializes_isolated_python_env(tmp_path, tracks_wheel)
         _fail("trac init must scaffold .tracks/runtime in the materialized host")
 
 
+# AC-FR0282-03@v0.8 TRACKS-TRACE IF-REFERENCE-001 isolated wheel install
+def test_reference_install_survives_caller_source_pythonpath(tmp_path, tracks_wheel, monkeypatch):
+    """AC-FR0282-03@v0.8: caller metadata must not substitute for a wheel install."""
+    monkeypatch.setenv("PYTHONPATH", str(_REPO_ROOT))
+    target = _target_repo(tmp_path)
+    report = _create(_template(tmp_path), target, tracks_wheel, str(_bare_remote(tmp_path)))
+    assert report["status"] == "ok", report
+    python = reference_host._venv_python(Path(report["venv"]))
+    probe = subprocess.run(
+        [str(python), "-I", "-c",
+         "import pathlib, sys, tracks; "
+         "assert pathlib.Path(tracks.__file__).is_relative_to(sys.prefix)"],
+        cwd=target, capture_output=True, text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+
+
 # AC-FR0282-02@v0.8 TRACKS-TRACE IF-REFERENCE-001 missing remote needs_attention
 def test_reference_host_missing_credentials_needs_attention(tmp_path):
     """remote_url=None without explicit simulation reports needs_attention
