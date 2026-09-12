@@ -106,6 +106,48 @@ def build_security_review_assignment(
     }
 
 
+def security_assessed_payload(
+    candidate_sha: str,
+    policy_digest: str,
+    results,
+    *,
+    entry_key: str = "scans",
+    id_key: str = "id",
+) -> dict:
+    """Emit-ready ``security.assessed`` payload (fail-closed aggregate).
+
+    Aggregates the scan results and attaches the cve repair route whenever
+    the aggregate is not a pass. ``entry_key``/``id_key`` keep the two
+    historical payload spellings (``scans``/``id`` vs ``findings``/
+    ``scan_id``) without duplicating the construction."""
+    status = aggregate_security_status(results)
+    payload = {
+        "status": status,
+        "candidate_sha": candidate_sha,
+        "policy_digest": policy_digest,
+        entry_key: [
+            {id_key: r.gate_id, "status": r.status, "exit_code": r.exit_code}
+            for r in results
+        ],
+        "repair_route": "none",
+    }
+    if status != "passed":
+        payload["repair_route"] = cve_repair_route()
+    return payload
+
+
+def cve_repair_route() -> dict:
+    """Unified §1.0.14 B repair route for a non-passing security assessment:
+    a cve-class finding is an Archer advisory (in-place, never a rollback)."""
+    return {
+        "exit_class": "defect_repair",
+        "defect_class": "cve",
+        "owner": "Archer",
+        "discipline": "cve_advisory",
+        "budget_remaining": None,
+    }
+
+
 def aggregate_security_status(
     scan_results: list[NormalizedGateResult],
 ) -> Literal["passed", "failed", "unknown"]:

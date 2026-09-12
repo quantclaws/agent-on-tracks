@@ -95,6 +95,17 @@ class RGRLineageEvidence:
     trailers: dict[str, str]
 
 
+# Canonical gate order of the live-evidence bundle (release-evidence check).
+GATE_NAMES = (
+    "RED_GATE",
+    "GREEN_GATE",
+    "REFACTOR_GATE",
+    "TASK_REVIEW",
+    "PRISM_FINAL",
+    "ISLAND_GATE_2",
+)
+
+
 @dataclass(frozen=True)
 class GateObservation:
     gate: Literal[

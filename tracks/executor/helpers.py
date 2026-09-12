@@ -9,6 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from tracks.effects.devon_evidence import DEVON_EVIDENCE_FIELDS
 from tracks.store import Store
 
 
@@ -26,6 +27,35 @@ def _commit_if_staged(repo: Path, message: str) -> subprocess.CompletedProcess |
     if git(repo, "diff", "--cached", "--quiet", check=False).returncode == 0:
         return None
     return git(repo, "commit", "-m", message, check=False)
+
+
+def emit_test_committed(host, cmd, tests_dir, task_id=None) -> str:
+    """Emit ``test.committed`` for the current HEAD; returns the commit sha.
+
+    Shared by the M-TEST freeze and the M-IMPL Shield-fix commit so both
+    faces report the same {commit_sha, test_count} payload."""
+    commit_sha = git(host.repo, "rev-parse", "HEAD").stdout.strip()
+    test_count = (
+        sum(1 for _ in tests_dir.rglob("test_*.py")) if tests_dir.exists() else 0
+    )
+    payload = {"commit_sha": commit_sha, "test_count": test_count}
+    if task_id is None:
+        host._emit("test.committed", payload, command_id=cmd.command_id)
+    else:
+        host._emit(
+            "test.committed", payload, command_id=cmd.command_id, task_id=task_id
+        )
+    return commit_sha
+
+
+def _git_stdout(repo, *args: str) -> str:
+    """``git`` with check=True, returning stripped stdout (m_verify/rgr)."""
+    return git(repo, *args).stdout.strip()
+
+
+def _git_text(repo, *args: str) -> str:
+    """``git`` with check=False, returning raw stdout (m_verify/rgr)."""
+    return git(repo, *args, check=False).stdout
 
 
 def _scoped_commit_if_staged(
@@ -103,17 +133,7 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
         "failure_class",
         "verdict",
         "discussion_evidence",
-        "phase",
-        "changed_paths",
-        "commands",
-        "results",
-        "manifest_compliance",
-        "pre_identity",
-        "post_identity",
-        "r_identity",
-        "no_change_reason",
-        "implemented_if_ids",
-        "result_identity",
+        *DEVON_EVIDENCE_FIELDS,
     ):
         if result.get(key) is not None:
             payload[key] = result[key]

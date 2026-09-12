@@ -20,6 +20,18 @@ import json
 _BARRIER_SEQ = 0
 _BARRIER_LAST: dict[str, int] = {}
 
+# escape.stale_downstream_evidence buckets (IF-RELEASE-003 / FR-0287): only
+# buckets actually present in the run's log are staled on a return. The CLI
+# release face consumes the same canonical list.
+STALE_EVIDENCE_BUCKETS = (
+    "candidate.frozen",
+    "evidence.reused",
+    "ci.run_observed",
+    "security.assessed",
+    "release.previewed",
+    "release.decided",
+)
+
 
 def _open_store():
     """Best-effort open of the event store; returns the Store or None."""
@@ -149,14 +161,7 @@ def stale_downstream_evidence(run_id: str, target_stage: str) -> list[dict]:
     all-buckets fallback applies only when no store exists (pure unit
     context).
     """
-    all_buckets = [
-        "candidate.frozen",
-        "evidence.reused",
-        "ci.run_observed",
-        "security.assessed",
-        "release.previewed",
-        "release.decided",
-    ]
+    all_buckets = list(STALE_EVIDENCE_BUCKETS)
     existing = _existing_event_types(run_id)
     if existing is not None:
         # store-backed: only buckets actually present in the log

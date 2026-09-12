@@ -25,6 +25,7 @@ Pure selection semantics over an executable R1 baseline snapshot:
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import os
@@ -544,6 +545,34 @@ def evidence_identity(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def evidence_ids_for(identity: EvidenceIdentity, outcomes, attempt: int) -> list:
+    """Runtime evidence ids for one selection's per-node outcomes."""
+    return [
+        evidence_identity(
+            identity,
+            outcome["node"],
+            outcome["status"],
+            attempt,
+            "runtime",
+        )
+        for outcome in outcomes
+    ]
+
+
+def evidence_by_node_for(identity: EvidenceIdentity, outcomes, attempt: int) -> dict:
+    """Map each outcome's node to its runtime evidence id."""
+    return {
+        outcome["node"]: evidence_identity(
+            identity,
+            outcome["node"],
+            outcome["status"],
+            attempt,
+            "runtime",
+        )
+        for outcome in outcomes
+    }
+
+
 def reuse_allowed(
     evidence: EvidenceIdentity,
     current: EvidenceIdentity,
@@ -800,6 +829,64 @@ def audit(
     """Audit actual_argv against the shared resolution rule for the selection."""
     expected = resolve_selected_command(template, nodes, result_path, cwd)
     return audit_no_concurrency_injection(expected, actual_argv, cwd)
+
+
+def stage_audited_selection(
+    section, selected, result_path: Path, cwd, staged: list, error_message: str
+) -> tuple[str, ...]:
+    """Unlink any stale result, then resolve + audit the selected argv.
+
+    Appends the staging path to *staged* (for the caller's cleanup) and raises
+    :class:`TestSelectError` when the executed argv diverges from the
+    contract's ``run_selected`` expansion."""
+    staged.append(result_path)
+    result_path.unlink(missing_ok=True)
+    argv = resolve_selected_command(
+        section.run_selected, selected, str(result_path), Path(cwd)
+    )
+    if not audit(
+        section.run_selected, selected, str(result_path), list(argv), Path(cwd)
+    ):
+        raise TestSelectError(error_message)
+    return argv
+
+
+def cleanup_staged_results(staged: list) -> None:
+    """Unlink the staged result files, then drop the now-empty staging dir."""
+    for path in staged:
+        path.unlink(missing_ok=True)
+    if staged:
+        with contextlib.suppress(OSError):
+            staged[0].parent.rmdir()
+
+
+def selection_event_payload(
+    *,
+    scope: str,
+    basis: str,
+    nodes,
+    nodes_blob: str,
+    baseline: str,
+    commit: str,
+    tree_stamp: str,
+    selection_id: str,
+    task_id=None,
+    task_ifs=None,
+) -> dict:
+    """Canonical ``test.selected`` payload (shared by the selection faces)."""
+    return {
+        "scope": scope,
+        "basis": basis,
+        "nodes_count": len(nodes),
+        "nodes": nodes,
+        "nodes_blob": nodes_blob,
+        "baseline": baseline,
+        "commit": commit,
+        "tree_stamp": tree_stamp,
+        "selection_id": selection_id,
+        "task_id": task_id,
+        "task_ifs": task_ifs,
+    }
 
 
 def parse_test_result(path: str | Path) -> list[TestResultNode]:

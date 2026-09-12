@@ -53,13 +53,22 @@ class TaskGraphReport:
     ac_coverage: dict[str, list[str]]
 
 
-_REQUIRED_FIELDS = (
-    "task_id",
-    "issue_number",
-    "description",
+# Canonical task field groups: the identity trio and the ref/contract list
+# fields, shared by the tasks.json reader, the planning ledger equivalence
+# check and the assignment ref-key copy (single source, no drift).
+_TASK_IDENTITY_FIELDS = ("task_id", "issue_number", "description")
+_TASK_REF_FIELDS = (
     "ac_refs",
     "fr_refs",
     "if_ids",
+    "test_refs",
+    "unit_refs",
+    "acceptance_refs",
+)
+
+_REQUIRED_FIELDS = (
+    *_TASK_IDENTITY_FIELDS,
+    *_TASK_REF_FIELDS[:3],
     "scope_boundary",
     "depends_on",
     "batch",

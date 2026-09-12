@@ -35,6 +35,25 @@ def _render_placeholders(template: str, facts: dict) -> str:
     return out
 
 
+def expand_version_scheme(facts: dict, scheme) -> dict:
+    """Resolve the ``version_scheme`` tag templates against *facts*.
+
+    Iterates the placeholder substitution to a fixed point (3 rounds, the
+    established depth): ``feature_tag``/``patch_line``/``prerelease_tag``
+    may reference each other. A non-dict scheme leaves the facts unchanged.
+    Shared by the release preview and the publish-time re-validation."""
+    resolved = dict(facts or {})
+    if not isinstance(scheme, dict):
+        return resolved
+    for name in ("feature_tag", "patch_line", "prerelease_tag"):
+        value = str(scheme.get(name, ""))
+        for _ in range(3):
+            for key, fact in resolved.items():
+                value = value.replace("{" + key + "}", str(fact))
+        resolved[name] = value
+    return resolved
+
+
 def version_facts(version: str, run_id: str = "") -> dict:
     """Base version facts for a run identity (IF-JOURNEY-001 §1m).
 
