@@ -32,6 +32,44 @@ from tracks.kernel.machine import State
 from tracks.project import ContractError, load_contract
 
 
+def _anchor_ids(tasks) -> list[str]:
+    """Collect the anchor node-ids (mirrors anchor_surface._load_anchors_from_tasks)."""
+    anchors: list[str] = []
+    seen: set[str] = set()
+    for t in tasks:
+        refs = getattr(t, "acceptance_refs", None)
+        if refs is None:
+            refs = getattr(t, "test_refs", ()) or ()
+        for r in refs or []:
+            if isinstance(r, str) and r.startswith("tests/") and r not in seen:
+                seen.add(r)
+                anchors.append(r)
+    return sorted(seen)
+
+
+def _anchor_set_digest(anchors: list[str]) -> str:
+    """Expected digest (mirrors anchor_surface._anchor_set_digest)."""
+    return hashlib.sha256("\n".join(sorted(anchors)).encode("utf-8")).hexdigest()
+
+
+def _persist_anchor_surface(surface: dict, sidecar_path: Path, repo: Path) -> None:
+    """Persist the sidecar + blob cache (callers treat failures as best-effort)."""
+    import json as _json
+
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.write_text(
+        _json.dumps(surface, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    try:
+        stamp = _json.dumps(surface, sort_keys=True).encode("utf-8")
+        h = hashlib.sha256(stamp).hexdigest()
+        blobs_dir = repo / ".tracks" / "runtime" / "blobs"
+        blobs_dir.mkdir(parents=True, exist_ok=True)
+        (blobs_dir / h).write_text(_json.dumps(surface, sort_keys=True), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _batch_key(batch: str) -> tuple[int, str]:
     try:
         return (0, f"{int(batch):020d}")
@@ -385,6 +423,14 @@ class MImplLedgerMixin:
         if is_legacy:
             return {"violations": [], "advisories": [], "skipped": "schema-1"}, []
         # 1) scope existence (hard gate, same errors channel)
+        self._b89_scope_existence(tasks, vdir, plan_text, errors)
+        # 2+3) sidecar freshness + satisfiability (hard gate, infra → skipped)
+        return self._b89_satisfiability(tasks, vdir, errors)
+
+    def _b89_scope_existence(
+        self, tasks: list[TaskNode], vdir: Path, plan_text: str, errors: list[str]
+    ) -> None:
+        """Scope-existence hard gate; infra failures join the errors channel."""
         try:
             arch_path = vdir / "architecture.md"
             arch_text = arch_path.read_text(encoding="utf-8") if arch_path.exists() else ""
@@ -397,9 +443,11 @@ class MImplLedgerMixin:
         except Exception as exc:  # infra / unexpected
             print(f"scope existence check failed (infra): {exc}", file=sys.stderr, flush=True)
             errors.append(f"scope existence infra failure: {exc}")
-        # 2+3) sidecar freshness + satisfiability (hard gate, infra → skipped)
-        satisfiability: dict
-        advisories_for_evidence: list[str] = []
+
+    def _b89_satisfiability(
+        self, tasks: list[TaskNode], vdir: Path, errors: list[str]
+    ) -> tuple[dict, list[str]]:
+        """Sidecar freshness + satisfiability; infra degrades to ``skipped``."""
         try:
             violations, advisories, skipped = self._evaluate_satisfiability(tasks, vdir)
             if skipped is not None:
@@ -412,12 +460,11 @@ class MImplLedgerMixin:
                 satisfiability = {"violations": violations, "advisories": advisories}
                 if violations:
                     errors.extend(violations)
-            advisories_for_evidence = list(advisories)
+            return satisfiability, list(advisories)
         except Exception as exc:
             # infra failure already printed inside helper; keep skip marker
             print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            satisfiability = {"violations": [], "advisories": [], "skipped": f"infra: {exc}"}
-        return satisfiability, advisories_for_evidence
+            return {"violations": [], "advisories": [], "skipped": f"infra: {exc}"}, []
 
     def _probe_anchor_types(self, tasks):
         """B33（#34）：load_contract 失败（宿主无合同）时跳过实测。"""
@@ -427,7 +474,76 @@ class MImplLedgerMixin:
             return ProbeReport(skipped_reason="anchor probe skipped: no project contract")
         return probe_task_anchors(Path(self.repo), tasks, contract)
 
-    def _evaluate_satisfiability(  # noqa: CCR001
+    def _current_tree_stamp(self, repo: Path) -> str:
+        """Current dirty tree stamp (executor's, fallback to surface's)."""
+        try:
+            return self._dirty_tree_stamp()  # type: ignore[attr-defined]
+        except Exception:
+            from tracks.executor.anchor_surface import _dirty_tree_stamp as _surface_stamp
+
+            return _surface_stamp(repo)
+
+    def _fresh_anchor_surface(
+        self, sidecar_path: Path, expected_digest: str, current_tree: str
+    ) -> dict | None:
+        """The existing sidecar iff schema/digest/tree all match, else None."""
+        from tracks.executor.anchor_surface import load_anchor_surface
+
+        try:
+            data = load_anchor_surface(sidecar_path)
+        except Exception:
+            return None
+        if (
+            data.get("schema") != 1
+            or data.get("anchor_set_digest") != expected_digest
+            or data.get("recorded_tree") != current_tree
+        ):
+            return None
+        return data
+
+    def _regen_anchor_surface(
+        self, repo: Path, anchors: list[str], sidecar_path: Path
+    ) -> tuple[dict | None, str | None]:
+        """Regenerate + persist the sidecar; (surface, None) or (None, skip)."""
+        from tracks.executor.anchor_surface import collect_anchor_surface
+
+        try:
+            contract = load_contract(repo)
+        except ContractError as exc:
+            # no contract → satisfiability cannot be evaluated; treat as infra skip
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return None, f"infra: no contract: {exc}"
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return None, f"infra: {exc}"
+        try:
+            surface = collect_anchor_surface(repo, anchors, contract, jobs=4)
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+            return None, f"infra: {exc}"
+        # Persist sidecar + blobs cache (best-effort): a write failure still
+        # validates with the in-memory surface.
+        try:
+            _persist_anchor_surface(surface, sidecar_path, repo)
+        except Exception as exc:
+            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
+        return surface, None
+
+    def _satisfiability_surface(
+        self, tasks, vdir: Path
+    ) -> tuple[dict | None, str | None]:
+        """Fresh sidecar or a regeneration; (surface, None) or (None, skip)."""
+        repo = Path(self.repo)
+        sidecar_path = Path(vdir) / "anchor-surface.json"
+        anchors = _anchor_ids(tasks)
+        surface = self._fresh_anchor_surface(
+            sidecar_path, _anchor_set_digest(anchors), self._current_tree_stamp(repo)
+        )
+        if surface is not None:
+            return surface, None
+        return self._regen_anchor_surface(repo, anchors, sidecar_path)
+
+    def _evaluate_satisfiability(
         self, tasks, vdir: Path
     ) -> tuple[list[str], list[str], str | None]:
         """OOB b89 OB-3: sidecar freshness + ``validate_anchor_satisfiability``.
@@ -441,116 +557,13 @@ class MImplLedgerMixin:
         a regen via ``collect_anchor_surface(jobs=4)`` and an atomic write to
         ``vdir/anchor-surface.json`` + ``.tracks/runtime/blobs/<sha>``.
         """
-        import hashlib as _hashlib
-        import json as _json
-        from pathlib import Path as _Path
-
-        from tracks.executor.anchor_surface import (
-            AnchorSurfaceError,
-            collect_anchor_surface,
-            load_anchor_surface,
-        )
         from tracks.executor.taskgraph import validate_anchor_satisfiability
 
-        repo = _Path(self.repo)
-        vdir = _Path(vdir)
-        sidecar_path = vdir / "anchor-surface.json"
-
-        # Collect anchor node-ids (mirrors anchor_surface._load_anchors_from_tasks)
-        anchors: list[str] = []
-        seen: set[str] = set()
-        for t in tasks:
-            refs = getattr(t, "acceptance_refs", None)
-            if refs is None:
-                refs = getattr(t, "test_refs", ()) or ()
-            for r in refs or []:
-                if isinstance(r, str) and r.startswith("tests/") and r not in seen:
-                    seen.add(r)
-                    anchors.append(r)
-        anchors = sorted(seen)
-
-        # Expected digest (mirrors anchor_surface._anchor_set_digest)
-        expected_digest = _hashlib.sha256("\n".join(sorted(anchors)).encode("utf-8")).hexdigest()
-        # Current dirty tree stamp (mirrors executor._dirty_tree_stamp)
+        surface, skipped = self._satisfiability_surface(tasks, vdir)
+        if skipped is not None:
+            return [], [], skipped
         try:
-            current_tree = self._dirty_tree_stamp()  # type: ignore[attr-defined]
-        except Exception:
-            # fallback to anchor_surface's stamp
-            from tracks.executor.anchor_surface import _dirty_tree_stamp as _surface_stamp
-
-            current_tree = _surface_stamp(repo)
-
-        # Try to load existing sidecar and decide freshness
-        need_regen = False
-        surface: dict | None = None
-        try:
-            data = load_anchor_surface(sidecar_path)
-            if (
-                data.get("schema") != 1
-                or data.get("anchor_set_digest") != expected_digest
-                or data.get("recorded_tree") != current_tree
-            ):
-                need_regen = True
-            else:
-                surface = data
-        except AnchorSurfaceError as exc:
-            need_regen = True
-            # keep exc for stale reason; regen will be attempted
-            _regen_reason = str(exc)
-        except Exception as exc:
-            need_regen = True
-            _regen_reason = str(exc)
-
-        if surface is not None and not need_regen:
-            ok, violations, advisories = validate_anchor_satisfiability(tasks, surface)
-            return violations, advisories, None
-
-        # Need regeneration (stale or missing)
-        # Load contract as _probe_anchor_types does
-        try:
-            contract = load_contract(repo)
-        except ContractError as exc:
-            # no contract → satisfiability cannot be evaluated; treat as infra skip
-            msg = f"infra: no contract: {exc}"
-            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            return [], [], msg
-        except Exception as exc:
-            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            return [], [], f"infra: {exc}"
-
-        # Collect (jobs=4)
-        try:
-            surface = collect_anchor_surface(repo, anchors, contract, jobs=4)
-        except AnchorSurfaceError as exc:
-            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            return [], [], f"infra: {exc}"
-        except Exception as exc:
-            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            return [], [], f"infra: {exc}"
-
-        # Persist sidecar + blobs cache (best-effort)
-        try:
-            sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-            sidecar_path.write_text(
-                _json.dumps(surface, indent=2, sort_keys=True), encoding="utf-8"
-            )
-            try:
-                stamp = _json.dumps(surface, sort_keys=True).encode("utf-8")
-                h = _hashlib.sha256(stamp).hexdigest()
-                blobs_dir = repo / ".tracks" / "runtime" / "blobs"
-                blobs_dir.mkdir(parents=True, exist_ok=True)
-                (blobs_dir / h).write_text(_json.dumps(surface, sort_keys=True), encoding="utf-8")
-            except Exception:
-                pass
-        except Exception as exc:
-            # write failure → treat as infra skip (but still try to validate with in-memory surface)
-            print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
-            # still validate with the in-memory surface if usable
-            pass
-
-        # Validate with the (fresh or best-effort) surface
-        try:
-            ok, violations, advisories = validate_anchor_satisfiability(tasks, surface)
+            _ok, violations, advisories = validate_anchor_satisfiability(tasks, surface)
             return violations, advisories, None
         except Exception as exc:
             print(f"anchor-surface regen failed (infra): {exc}", file=sys.stderr, flush=True)
