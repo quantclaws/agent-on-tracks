@@ -8,6 +8,8 @@ infers or skips a policy item.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shlex
 import subprocess
 from dataclasses import replace
@@ -21,6 +23,70 @@ from .host_contract import (
     SecurityScanDecl,
     execute_gate,
 )
+
+
+def security_policy_digest(contract: HostContract) -> str:
+    """Return the canonical digest of the contract's declared security scans.
+
+    The digest deliberately covers only the ordered scan declarations.  This
+    keeps the policy identity stable when unrelated host-contract fields
+    change, while making every security-policy input field identity-bearing.
+    """
+    scans = [
+        {
+            "id": scan.scan_id,
+            "tool": scan.tool,
+            "tool_version": scan.tool_version,
+            "install": scan.install,
+            "command": scan.command,
+            "result_channel": scan.result_channel,
+            "threshold": scan.threshold,
+            "timeout_seconds": scan.timeout_seconds,
+        }
+        for scan in contract.security_scans
+    ]
+    canonical = json.dumps(scans, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def security_scan_evidence_complete(contract: HostContract, entries) -> bool:
+    """Validate a complete, passed evidence set for every declared scan."""
+    try:
+        declarations = tuple(contract.security_scans)
+    except (AttributeError, TypeError):
+        return False
+    if not declarations:
+        return False
+
+    declared_ids: list[str] = []
+    for declaration in declarations:
+        scan_id = getattr(declaration, "scan_id", None)
+        if not isinstance(scan_id, str) or not scan_id.strip() or scan_id in declared_ids:
+            return False
+        declared_ids.append(scan_id)
+    if not isinstance(entries, list) or len(entries) != len(declared_ids):
+        return False
+
+    ids = [_passed_scan_entry_id(entry) for entry in entries]
+    return None not in ids and len(set(ids)) == len(ids) and set(ids) == set(declared_ids)
+
+
+def _passed_scan_entry_id(entry) -> str | None:
+    """Normalize the two event spellings without accepting malformed results."""
+    if not isinstance(entry, dict):
+        return None
+    scan_id = entry.get("id", entry.get("scan_id"))
+    if "scan_id" in entry and entry["scan_id"] != scan_id:
+        return None
+    exit_code = entry.get("exit_code")
+    valid = (
+        isinstance(scan_id, str) and bool(scan_id.strip())
+        and entry.get("status") == "passed"
+        and type(entry.get("result_version")) is int and entry["result_version"] == 1
+        and isinstance(entry.get("summary"), dict)
+        and (exit_code is None or (type(exit_code) is int and exit_code == 0))
+    )
+    return scan_id if valid else None
 
 
 def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, dict]:

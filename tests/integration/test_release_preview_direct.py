@@ -22,10 +22,26 @@ from tracks.executor.executor import Executor
 from tracks.executor.host_contract import load_host_contract, validate_host_contract
 from tracks.executor.m_verify import freeze_candidate
 from tracks.executor.release_gate import build_operation_plan
+from tracks.executor.security import security_policy_digest
 from tracks.kernel.events import Command
 from tracks.store import Store
 
 pytestmark = pytest.mark.integration
+
+_SECURITY_POLICY_FIELDS = (
+    "id", "tool", "tool_version", "install", "command",
+    "result_channel", "threshold", "timeout_seconds",
+)
+
+
+def _expected_security_policy_digest(contract: Path) -> str:
+    raw = tomllib.loads(contract.read_text(encoding="utf-8"))
+    declarations = [
+        {field: scan.get(field) for field in _SECURITY_POLICY_FIELDS}
+        for scan in raw["host-contract"]["security_scan"]
+    ]
+    canonical = json.dumps(declarations, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -71,6 +87,16 @@ def _write_contract(repo: Path, operation_steps: list[str]) -> Path:
                 'result_channel = "exit_code"',
                 "timeout_seconds = 30",
                 "",
+                "[[host-contract.security_scan]]",
+                'id = "accepted-security-scan"',
+                'tool = "fixture-security-tool"',
+                'tool_version = "1.0"',
+                'install = ""',
+                'command = "true"',
+                'result_channel = "exit_code"',
+                'threshold = "0"',
+                "timeout_seconds = 30",
+                "",
                 "[host-contract.ci]",
                 'repo_env = "TRAC_GITHUB_REPO"',
                 'workflow = "123"',
@@ -87,6 +113,7 @@ def _write_contract(repo: Path, operation_steps: list[str]) -> Path:
     loaded = load_host_contract(contract)
     assert loaded.contract_version == 1
     assert validate_host_contract(loaded, repo) == ()
+    assert security_policy_digest(loaded) == _expected_security_policy_digest(contract)
     return contract
 
 
@@ -98,6 +125,7 @@ def _append_upstream_premises(
     branch: str,
     contract_digest: str,
     artifact_digest: str,
+    policy_digest: str,
 ) -> None:
     """Record already accepted upstream evidence; none is the target result."""
     store.append(run_id, version, "stage.entered", {"stage": "M-VERIFY"})
@@ -184,7 +212,7 @@ def _append_upstream_premises(
             "verdict": "pass",
             "scope": "security",
             "candidate_sha": candidate,
-            "policy_digest": contract_digest,
+            "policy_digest": policy_digest,
             "evidence_digests": {"artifact": artifact_digest},
         },
         command_id=review_command_id,
@@ -195,9 +223,16 @@ def _append_upstream_premises(
         "security.assessed",
         {
             "status": "passed",
-            "policy_digest": contract_digest,
+            "policy_digest": policy_digest,
+            "contract_digest": contract_digest,
             "candidate_sha": candidate,
-            "scans": [{"id": "accepted-upstream", "status": "passed"}],
+            "scans": [{
+                "id": "accepted-security-scan",
+                "status": "passed",
+                "exit_code": 0,
+                "result_version": 1,
+                "summary": {},
+            }],
             "prism_scope": "security",
             "review_command_id": review_command_id,
         },
@@ -235,6 +270,7 @@ def _prepare(host_repo: Path, trac, tmp_path: Path, operation_steps: list[str] |
 
     artifact_digest = "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
     contract_digest = hashlib.sha256(contract.read_bytes()).hexdigest()
+    policy_digest = _expected_security_policy_digest(contract)
     store = Store(paths.tracks_home(host_repo))
     try:
         run_id = store.active_run()
@@ -248,6 +284,7 @@ def _prepare(host_repo: Path, trac, tmp_path: Path, operation_steps: list[str] |
             identity.branch,
             contract_digest,
             artifact_digest,
+            policy_digest,
         )
     finally:
         store.close()
@@ -421,6 +458,7 @@ def test_changed_evidence_or_contract_requires_new_preview(
                 identity.branch,
                 fresh_contract_digest,
                 artifact_digest,
+                _expected_security_policy_digest(contract),
             )
         finally:
             store.close()

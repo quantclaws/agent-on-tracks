@@ -13,6 +13,7 @@ from tracks.executor.host_contract import (
     validate_host_contract,
 )
 from tracks.executor.release_preview import assemble_preview
+from tracks.executor.security import security_policy_digest
 from tracks.store import Store
 
 _CI = {
@@ -75,6 +76,10 @@ def _host(tmp_path: Path):
         "source = 'command'\n"
         "command = 'quality'\n"
         "result_channel = 'exit_code'\n"
+        "\n[[host-contract.security_scan]]\n"
+        "id = 'security'\ntool = 'fixture'\ntool_version = '1'\n"
+        "install = ''\ncommand = 'true'\nresult_channel = 'exit_code'\n"
+        "threshold = '0'\ntimeout_seconds = 5\n"
         "\n[host-contract.ci]\n"
         "repo_env = 'CI_REPO'\n"
         "workflow = 'ci.yml'\n"
@@ -92,6 +97,7 @@ def _host(tmp_path: Path):
     store.append(run_id, "v0.8", "story.requested", {"raw_chars": 1})
     store.append(run_id, "v0.8", "stage.entered", {"stage": "M-RELEASE"})
     contract_digest = _raw_digest(contract_path.read_bytes())
+    policy_digest = security_policy_digest(load_host_contract(contract_path))
     store.append(
         run_id,
         "v0.8",
@@ -120,7 +126,7 @@ def _host(tmp_path: Path):
     store.append(
         run_id, "v0.8", "prism.verdict",
         {"scope": "security", "verdict": "pass", "candidate_sha": candidate,
-         "policy_digest": contract_digest}, command_id="security-review",
+         "policy_digest": policy_digest}, command_id="security-review",
     )
     store.append(
         run_id,
@@ -128,9 +134,10 @@ def _host(tmp_path: Path):
         "security.assessed",
         {
             "status": "passed",
-            "policy_digest": contract_digest,
+            "policy_digest": policy_digest,
             "candidate_sha": candidate,
-            "scans": [{"id": "security", "status": "passed", "exit_code": 0}],
+            "contract_digest": contract_digest,
+            "scans": [{"id": "security", "status": "passed", "exit_code": 0, "result_version": 1, "summary": {}}],
             "prism_scope": "security",
             "review_command_id": "security-review",
         },
@@ -277,7 +284,7 @@ def test_later_security_scope_does_not_replace_verify_final(tmp_path, capsys):
             "verdict": "pass",
             "scope": "security",
             "candidate_sha": candidate,
-            "policy_digest": digest,
+            "policy_digest": _events(store, run_id, "security.assessed")[-1].payload["policy_digest"],
         },
         command_id="later-security-review",
     )

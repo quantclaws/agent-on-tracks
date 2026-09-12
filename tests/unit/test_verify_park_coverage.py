@@ -12,8 +12,10 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from tests.unit.test_security_policy_identity import _contract, _entry, _scan
 from tracks.executor import verify_park
 from tracks.executor.m_verify import CandidateIdentity, FreezeBlocked
+from tracks.executor.security import security_policy_digest
 from tracks.executor.verify_park import ExecVerifyParkMixin
 from tracks.kernel.events import Command
 from tracks.kernel.machine import State
@@ -325,17 +327,28 @@ def test_park_observe_ci_seen_and_fresh(tmp_path):
 
 
 def test_park_assess_security_seen_and_fresh(tmp_path):
-    seen = [_ev(1, "security.assessed", {"candidate_sha": "S", "status": "passed"})]
-    host = _Host(tmp_path, events=seen)
-    assert host._park_assess_security(_cmd(), "S", SimpleNamespace(), "D") is True
-    seen[0].payload["status"] = "failed"
-    assert host._park_assess_security(_cmd(), "S", SimpleNamespace(), "D") is False
+    contract = _contract(_scan("s1"))
+    policy = security_policy_digest(contract)
+    review = _ev(1, "prism.verdict", {
+        "candidate_sha": "S", "policy_digest": policy, "scope": "security", "verdict": "pass",
+    })
+    review.command_id = "review"
+    assessment = _ev(2, "security.assessed", {
+        "candidate_sha": "S", "status": "passed", "policy_digest": policy,
+        "contract_digest": "D", "review_command_id": "review", "scans": [_entry("s1")],
+    })
+    host = _Host(tmp_path, events=[review, assessment])
+    host.calls["security_payload"] = {"status": "failed", "scans": []}
+    assert host._park_assess_security(_cmd(), "S", contract, "D") is True
+    assert not host.emitted
+    assessment.payload["status"] = "failed"
+    assert host._park_assess_security(_cmd(), "S", contract, "D") is False
 
     host.calls["security_payload"] = {
         "status": "passed",
         "scans": [{"id": "s1", "status": "passed"}],
     }
-    assert host._park_assess_security(_cmd(), "NEW", SimpleNamespace(), "D") is True
+    assert host._park_assess_security(_cmd(), "NEW", contract, "D") is True
     payload = host.emitted[-1][1]
     assert payload["findings"] == [{"id": "s1", "status": "passed", "scan_id": "s1"}]
 

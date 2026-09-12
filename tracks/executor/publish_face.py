@@ -13,6 +13,8 @@ from tracks.executor.security import (
     cve_repair_route,
     run_security_scans,
     security_assessed_payload,
+    security_policy_digest,
+    security_scan_evidence_complete,
 )
 from tracks.kernel.events import Command
 
@@ -175,10 +177,16 @@ blocked-publish payload."""
     def _assess_security_with_review(self, candidate_sha, contract, digest):
         """Scans and a candidate-bound Prism review jointly authorize security."""
         results = run_security_scans(contract, self.repo, candidate_sha)
-        payload = security_assessed_payload(candidate_sha, digest, results)
+        policy_digest = security_policy_digest(contract)
+        payload = security_assessed_payload(candidate_sha, policy_digest, results)
+        payload["contract_digest"] = digest
         if payload["status"] != "passed":
             return payload
-        assignment = build_security_review_assignment(results, digest, candidate_sha)
+        if not security_scan_evidence_complete(contract, payload["scans"]):
+            payload.update(status="unknown", reason="scan_evidence_incomplete",
+                           repair_route=cve_repair_route())
+            return payload
+        assignment = build_security_review_assignment(results, policy_digest, candidate_sha)
         assignment["scan_results"] = [asdict(result) for result in results]
         # issue() assigns the id on a NEW Command (Command is frozen): the
         # caller's object keeps command_id=None, so bind the id explicitly
@@ -199,7 +207,8 @@ blocked-publish payload."""
                         and (e.payload or {}).get("scope") == "security"), None)
         result = verdict.payload if verdict else {}
         status = "unknown"
-        if result.get("candidate_sha") == candidate_sha and result.get("policy_digest") == digest:
+        if (result.get("candidate_sha") == candidate_sha
+                and result.get("policy_digest") == policy_digest):
             status = {"pass": "passed", "revise": "failed"}.get(result.get("verdict"), "unknown")
         payload.update(status=status, review_command_id=cid)
         if status != "passed":

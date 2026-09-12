@@ -27,6 +27,7 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
+from tracks.executor.security import security_policy_digest, security_scan_evidence_complete
 
 STALE_REASONS = frozenset(
     {"candidate_drift", "evidence_staled", "operation_plan_changed"}
@@ -206,22 +207,27 @@ def _prism_status(events: list, candidate: str) -> tuple[str, bool]:
     return ("pass" if valid else "failed"), valid
 
 
-def _security_status(events: list, candidate: str, contract_digest: str) -> tuple[str, bool]:
+def _security_status(
+    events: list, candidate: str, contract_digest: str, contract
+) -> tuple[str, bool]:
     event = _latest_bound(events, "security.assessed", candidate)
     if event is None:
         return "unknown", False
     payload = _payload(event)
+    policy_digest = security_policy_digest(contract)
     review = next((item for item in reversed(events)
                    if item.type == "prism.verdict"
                    and _payload(item).get("scope") == "security"
                    and _payload(item).get("candidate_sha") == candidate), None)
     review_payload = _payload(review)
     valid = (
-        payload.get("status") == "passed" and payload.get("policy_digest") == contract_digest
+        payload.get("status") == "passed" and payload.get("policy_digest") == policy_digest
+        and payload.get("contract_digest") == contract_digest
         and bool(payload.get("review_command_id")) and review is not None
         and review.command_id == payload["review_command_id"] and review.seq < event.seq
         and review_payload.get("verdict") == "pass"
-        and review_payload.get("policy_digest") == contract_digest
+        and review_payload.get("policy_digest") == policy_digest
+        and security_scan_evidence_complete(contract, payload.get("scans", payload.get("findings")))
     )
     return ("passed" if valid else "failed"), valid
 
@@ -257,7 +263,7 @@ def _gate_status(events: list, candidate: str, contract, digest: str) -> dict:
     local_ok = has_complete_passed_gates(events, candidate, digest, contract)
     ci_status, ci_ok = _ci_status(events, candidate, contract)
     prism_status, prism_ok = _prism_status(events, candidate)
-    security_status, security_ok = _security_status(events, candidate, digest)
+    security_status, security_ok = _security_status(events, candidate, digest, contract)
     return {
         "preview_stale": False,
         "gate_failed": not (local_ok and ci_ok and prism_ok and security_ok),

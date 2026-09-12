@@ -6,6 +6,7 @@ from __future__ import annotations
 from tracks.effects.github import persist_issue_mapping
 from tracks.executor import m_verify
 from tracks.executor import repair as _repair
+from tracks.executor.release_authorization import _security_status
 from tracks.executor.release_gate import (
     complete_version_facts,
     operation_plan_needs_n,
@@ -232,14 +233,9 @@ class ExecVerifyParkMixin:
         Emits security.assessed bound to the candidate; returns True only
         for a passed assessment so the preview can never imply a green
         policy that was never verified."""
-        seen = [
-            e
-            for e in self.store.events(self.run_id)
-            if e.type == "security.assessed"
-            and (e.payload or {}).get("candidate_sha") == candidate_sha
-        ]
-        if seen:
-            return (seen[-1].payload or {}).get("status") == "passed"
+        events = list(self.store.events(self.run_id))
+        if _security_status(events, candidate_sha, contract_digest, contract)[1]:
+            return True
         payload = self._assess_security_with_review(candidate_sha, contract, contract_digest)
         payload["findings"] = [
             {**scan, "scan_id": scan["id"]} for scan in payload.pop("scans")

@@ -6,6 +6,7 @@ import pytest
 
 from tests.unit.test_security_red import _contract, _scan
 from tracks.executor.executor import Executor
+from tracks.executor.security import security_policy_digest
 from tracks.kernel.events import Command
 from tracks.store import Store
 
@@ -18,6 +19,27 @@ def test_security_outcome_scope_survives_all_result_paths(status):
         "role": "prism", "assignment": {"scope": "security"},
     }, {"status": status, "self_report": "security review"})
     assert payload["scope"] == "security"
+
+
+def test_park_does_not_reuse_unbound_assessment_after_policy_change(tmp_path, monkeypatch):
+    store = Store(tmp_path / ".tracks")
+    store.append("RUN", "v0.8", "security.assessed", {
+        "candidate_sha": "candidate", "policy_digest": "old-policy", "status": "passed",
+    })
+    executor = object.__new__(Executor)
+    executor.repo, executor.store, executor.run_id = tmp_path, store, "RUN"
+    calls = []
+
+    def assess(*args):
+        calls.append(args)
+        return {"status": "unknown", "scans": []}
+
+    monkeypatch.setattr(executor, "_assess_security_with_review", assess)
+    monkeypatch.setattr(executor, "_emit", lambda *args, **kwargs: None)
+    assert executor._park_assess_security(
+        Command(kind="assess_security"), "candidate", _contract(_scan()), "new-contract"
+    ) is False
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize("park", [False, True])
@@ -73,4 +95,4 @@ def test_security_assessment_requires_bound_review(tmp_path, monkeypatch, park, 
         verdicts = [e for e in store.events("RUN") if e.type == "prism.verdict"]
         assert verdicts[-1].payload["scope"] == "security"
         assert verdicts[-1].payload["candidate_sha"] == candidate
-        assert verdicts[-1].payload["policy_digest"] == "policy"
+        assert verdicts[-1].payload["policy_digest"] == security_policy_digest(contract)

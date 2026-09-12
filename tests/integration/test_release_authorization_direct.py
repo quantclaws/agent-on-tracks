@@ -15,6 +15,7 @@ import pytest
 
 from tests.integration.test_release_preview_direct import (
     _events,
+    _expected_security_policy_digest,
     _git,
     _issue_preview,
     _prepare,
@@ -80,7 +81,12 @@ def _append_ci(
 
 
 def _append_complete_recovery(
-    store: Store, run_id: str, candidate: str, contract_digest: str, artifact_digest: str
+    store: Store,
+    run_id: str,
+    candidate: str,
+    contract_digest: str,
+    artifact_digest: str,
+    policy_digest: str,
 ) -> None:
     """Append later same-candidate evidence without minting a second freeze."""
     version = store.state(run_id).version or "v0.8"
@@ -139,7 +145,7 @@ def _append_complete_recovery(
             "verdict": "pass",
             "scope": "security",
             "candidate_sha": candidate,
-            "policy_digest": contract_digest,
+            "policy_digest": policy_digest,
             "evidence_digests": {"artifact": artifact_digest},
         },
         command_id=review_command_id,
@@ -150,9 +156,16 @@ def _append_complete_recovery(
         "security.assessed",
         {
             "status": "passed",
-            "policy_digest": contract_digest,
+            "policy_digest": policy_digest,
+            "contract_digest": contract_digest,
             "candidate_sha": candidate,
-            "scans": [{"id": "accepted-recovery", "status": "passed"}],
+            "scans": [{
+                "id": "accepted-security-scan",
+                "status": "passed",
+                "exit_code": 0,
+                "result_version": 1,
+                "summary": {},
+            }],
             "prism_scope": "security",
             "review_command_id": review_command_id,
         },
@@ -180,6 +193,7 @@ def _new_candidate(
         _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
 
     contract_digest = hashlib.sha256(contract.read_bytes()).hexdigest()
+    policy_digest = _expected_security_policy_digest(contract)
     store = Store(paths.tracks_home(repo))
     try:
         version = store.state(run_id).version or "v0.8"
@@ -251,7 +265,7 @@ def _new_candidate(
                 "verdict": "pass",
                 "scope": "security",
                 "candidate_sha": candidate,
-                "policy_digest": contract_digest,
+                "policy_digest": policy_digest,
                 "evidence_digests": {"artifact": artifact_digest},
             },
             command_id=review_command_id,
@@ -262,9 +276,16 @@ def _new_candidate(
             "security.assessed",
             {
                 "status": "passed",
-                "policy_digest": contract_digest,
+                "policy_digest": policy_digest,
+                "contract_digest": contract_digest,
                 "candidate_sha": candidate,
-                "scans": [{"id": "accepted-upstream", "status": "passed"}],
+                "scans": [{
+                    "id": "accepted-security-scan",
+                    "status": "passed",
+                    "exit_code": 0,
+                    "result_version": 1,
+                    "summary": {},
+                }],
                 "prism_scope": "security",
                 "review_command_id": review_command_id,
             },
@@ -385,7 +406,10 @@ def test_old_failure_does_not_poison_recovery(host_repo, trac, tmp_path, recover
     try:
         _append_gate_failure(store, run_id, candidate, contract_digest)
         if recovery_case == "same_candidate":
-            _append_complete_recovery(store, run_id, candidate, contract_digest, artifact_digest)
+            _append_complete_recovery(
+                store, run_id, candidate, contract_digest, artifact_digest,
+                _expected_security_policy_digest(contract),
+            )
             current_candidate = candidate
         else:
             current_candidate = None
