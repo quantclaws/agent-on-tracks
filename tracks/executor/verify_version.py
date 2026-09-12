@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import NormalizedGateResult
 from tracks.executor.local_gate_evidence import gate_identity, normalized_result_payload
@@ -25,6 +27,21 @@ _JOURNEY_VERSION_TEMPLATE = {
 
 
 _VERSION_STEP_KINDS = ("tag", "release")
+
+
+@dataclass(frozen=True)
+class _VersionGateCtx:
+    """Stable inputs of one version_decl gate evaluation."""
+
+    cmd: object
+    candidate_sha: object
+    contract_digest: object
+    gate: object
+    identity: object
+    table: dict
+    scheme: dict
+    journey: str | None
+    base_facts: dict
 
 
 class ExecVerifyVersionMixin:
@@ -50,46 +67,86 @@ class ExecVerifyVersionMixin:
         (``local_gate.passed``/``local_gate.failed``) is bound to the
         candidate like every other declared gate.
         """
-        identity = gate_identity(gate.kind, ordinal)
         table = _contract_table(contract)
-        scheme = table.get("version_scheme") or {}
-        journey = _journey(contract, self._release_journey(state, cmd))
-        base_facts = self._release_version_facts(state)
-        needs_n = bool(journey) and operation_plan_needs_n(table, journey)
+        ctx = _VersionGateCtx(
+            cmd=cmd,
+            candidate_sha=candidate_sha,
+            contract_digest=contract_digest,
+            gate=gate,
+            identity=gate_identity(gate.kind, ordinal),
+            table=table,
+            scheme=table.get("version_scheme") or {},
+            journey=_journey(contract, self._release_journey(state, cmd)),
+            base_facts=self._release_version_facts(state),
+        )
+        census = self._version_decl_census(ctx)
+        if census["error"] is not None:
+            return self._emit_version_decl_verdict(
+                ctx,
+                derived_tags=[],
+                census=census,
+                remote_check={"status": "unavailable", "tags": []},
+                reason="remote_unavailable",
+                detail=f"remote patch-tag census failed: {census['error']}",
+                command_echo=["version_decl", ctx.journey or "feature"],
+            )
+        derived, mismatches = self._version_decl_steps(ctx, contract, census)
+        command_echo = ["version_decl", ctx.journey or "feature", *derived]
+        if mismatches:
+            return self._emit_version_decl_verdict(
+                ctx,
+                derived_tags=derived,
+                census=census,
+                remote_check={"status": "not_checked", "tags": derived},
+                reason="version_mismatch",
+                detail=(
+                    "tag/release targets are not derived from the journey's "
+                    "version_scheme template"
+                ),
+                command_echo=command_echo,
+                extra={"mismatches": mismatches},
+            )
+        if not derived:
+            return self._emit_version_decl_verdict(
+                ctx,
+                derived_tags=[],
+                census=census,
+                remote_check={"status": "not_applicable", "tags": []},
+                reason=None,
+                detail="",
+                command_echo=command_echo,
+            )
+        return self._version_decl_remote_probe(ctx, derived, census, command_echo)
+
+    def _version_decl_census(self, ctx: _VersionGateCtx) -> dict:
+        """The ``{n}`` census input: requested iff the journey plan needs it."""
+        needs_n = bool(ctx.journey) and operation_plan_needs_n(ctx.table, ctx.journey)
         census = {"requested": needs_n, "n": None, "error": None}
-        if needs_n and "n" not in base_facts:
+        if needs_n and "n" not in ctx.base_facts:
             n, error = remote_patch_n(
-                self.repo, str(scheme.get("patch_line") or ""), base_facts
+                self.repo, str(ctx.scheme.get("patch_line") or ""), ctx.base_facts
             )
             census = {"requested": True, "n": n, "error": error}
-            if error is not None:
-                return self._emit_version_decl_verdict(
-                    cmd,
-                    candidate_sha,
-                    contract_digest,
-                    gate,
-                    identity,
-                    journey=journey,
-                    derived_tags=[],
-                    census=census,
-                    remote_check={"status": "unavailable", "tags": []},
-                    reason="remote_unavailable",
-                    detail=f"remote patch-tag census failed: {error}",
-                    command_echo=["version_decl", journey or "feature"],
-                )
-            if n is not None:
-                base_facts = {**base_facts, "n": n}
+        return census
+
+    def _version_decl_steps(
+        self, ctx: _VersionGateCtx, contract, census: dict
+    ) -> tuple[list[str], list[dict]]:
+        """Derive the journey's tag/release targets and any mismatches."""
+        base_facts = ctx.base_facts
+        if census["requested"] and census["error"] is None and census["n"] is not None:
+            base_facts = {**base_facts, "n": census["n"]}
         facts = _version_facts(contract, base_facts)
-        template_name = _JOURNEY_VERSION_TEMPLATE.get(journey or "")
+        template_name = _JOURNEY_VERSION_TEMPLATE.get(ctx.journey or "")
         expected = str(facts.get(template_name) or "") if template_name else ""
         plan = (
             build_operation_plan(
-                table,
-                journey,
+                ctx.table,
+                ctx.journey,
                 facts,
                 active_release_branch=active_release_branch(self.repo, facts),
             )
-            if journey
+            if ctx.journey
             else {"steps": []}
         )
         mismatches: list[dict] = []
@@ -109,41 +166,12 @@ class ExecVerifyVersionMixin:
                 )
             elif target not in derived:
                 derived.append(target)
-        command_echo = ["version_decl", journey or "feature", *derived]
-        if mismatches:
-            return self._emit_version_decl_verdict(
-                cmd,
-                candidate_sha,
-                contract_digest,
-                gate,
-                identity,
-                journey=journey,
-                derived_tags=derived,
-                census=census,
-                remote_check={"status": "not_checked", "tags": derived},
-                reason="version_mismatch",
-                detail=(
-                    "tag/release targets are not derived from the journey's "
-                    "version_scheme template"
-                ),
-                command_echo=command_echo,
-                extra={"mismatches": mismatches},
-            )
-        if not derived:
-            return self._emit_version_decl_verdict(
-                cmd,
-                candidate_sha,
-                contract_digest,
-                gate,
-                identity,
-                journey=journey,
-                derived_tags=[],
-                census=census,
-                remote_check={"status": "not_applicable", "tags": []},
-                reason=None,
-                detail="",
-                command_echo=command_echo,
-            )
+        return derived, mismatches
+
+    def _version_decl_remote_probe(
+        self, ctx: _VersionGateCtx, derived: list[str], census: dict, command_echo: list[str]
+    ) -> bool:
+        """Probe each derived tag with ``git ls-remote`` and emit the verdict."""
         remote = git(self.repo, "config", "--get", "remote.origin.url", check=False)
         if remote.returncode != 0 or not remote.stdout.strip():
             self._emit(
@@ -152,22 +180,17 @@ class ExecVerifyVersionMixin:
                     "area": "version_gate",
                     "reason": "remote_unavailable",
                     "stage": "M-VERIFY",
-                    "candidate_sha": candidate_sha,
+                    "candidate_sha": ctx.candidate_sha,
                     "detail": (
                         "no origin remote configured; derived tag absence is "
                         "not verifiable"
                     ),
                     "next": "configure origin; trac run --resume re-checks the gate",
                 },
-                command_id=cmd.command_id,
+                command_id=ctx.cmd.command_id,
             )
             return self._emit_version_decl_verdict(
-                cmd,
-                candidate_sha,
-                contract_digest,
-                gate,
-                identity,
-                journey=journey,
+                ctx,
                 derived_tags=derived,
                 census=census,
                 remote_check={"status": "skipped_no_remote", "tags": derived},
@@ -186,12 +209,7 @@ class ExecVerifyVersionMixin:
             )
             if probe.returncode != 0:
                 return self._emit_version_decl_verdict(
-                    cmd,
-                    candidate_sha,
-                    contract_digest,
-                    gate,
-                    identity,
-                    journey=journey,
+                    ctx,
                     derived_tags=derived,
                     census=census,
                     remote_check={
@@ -205,12 +223,7 @@ class ExecVerifyVersionMixin:
                 )
             if f"refs/tags/{tag}" in probe.stdout:
                 return self._emit_version_decl_verdict(
-                    cmd,
-                    candidate_sha,
-                    contract_digest,
-                    gate,
-                    identity,
-                    journey=journey,
+                    ctx,
                     derived_tags=derived,
                     census=census,
                     remote_check={
@@ -223,12 +236,7 @@ class ExecVerifyVersionMixin:
                     command_echo=command_echo,
                 )
         return self._emit_version_decl_verdict(
-            cmd,
-            candidate_sha,
-            contract_digest,
-            gate,
-            identity,
-            journey=journey,
+            ctx,
             derived_tags=derived,
             census=census,
             remote_check={"status": "verified_absent", "tags": derived},
@@ -239,13 +247,8 @@ class ExecVerifyVersionMixin:
 
     def _emit_version_decl_verdict(
         self,
-        cmd,
-        candidate_sha,
-        contract_digest,
-        gate,
-        identity,
+        ctx: _VersionGateCtx,
         *,
-        journey,
         derived_tags,
         census,
         remote_check,
@@ -265,7 +268,7 @@ class ExecVerifyVersionMixin:
         status = "failed" if reason else "passed"
         exit_code = None if reason else 0
         summary = {
-            "journey": journey,
+            "journey": ctx.journey,
             "derived_tags": list(derived_tags),
             "remote_check": dict(remote_check),
             "remote_patch_n": dict(census),
@@ -274,7 +277,7 @@ class ExecVerifyVersionMixin:
             summary["reason"] = reason
             summary["detail"] = detail
         result = NormalizedGateResult(
-            gate_id=gate.kind,
+            gate_id=ctx.gate.kind,
             result_version=1,
             status=status,
             exit_code=exit_code,
@@ -282,16 +285,16 @@ class ExecVerifyVersionMixin:
             command_echo=tuple(command_echo),
         )
         payload = {
-            "kind": gate.kind,
-            "gate_identity": identity,
-            "candidate_sha": candidate_sha,
-            "contract_digest": contract_digest,
+            "kind": ctx.gate.kind,
+            "gate_identity": ctx.identity,
+            "candidate_sha": ctx.candidate_sha,
+            "contract_digest": ctx.contract_digest,
             "command_echo": list(command_echo),
             "normalized_result": normalized_result_payload(result),
             "status": status,
             "exit_code": exit_code,
             "summary": summary,
-            "journey": journey,
+            "journey": ctx.journey,
             "derived_tags": list(derived_tags),
             "remote_patch_n": dict(census),
             "remote_check": dict(remote_check),
@@ -301,9 +304,9 @@ class ExecVerifyVersionMixin:
         if reason:
             payload["reason"] = reason
             payload["detail"] = detail
-            self._emit("local_gate.failed", payload, command_id=cmd.command_id)
+            self._emit("local_gate.failed", payload, command_id=ctx.cmd.command_id)
             return False
-        self._emit("local_gate.passed", payload, command_id=cmd.command_id)
+        self._emit("local_gate.passed", payload, command_id=ctx.cmd.command_id)
         return True
 
     def _emit_host_contract_failure(self, cmd, candidate_sha, contract_digest):
