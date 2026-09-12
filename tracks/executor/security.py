@@ -10,9 +10,17 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+from dataclasses import replace
+from pathlib import Path
 from typing import Literal
 
-from .host_contract import HostContract, NormalizedGateResult, SecurityScanDecl
+from .host_contract import (
+    HostContract,
+    LocalGateDecl,
+    NormalizedGateResult,
+    SecurityScanDecl,
+    execute_gate,
+)
 
 
 def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, dict]:
@@ -34,8 +42,8 @@ def _run_command(command: str, repo, timeout_seconds: int) -> tuple[int | None, 
             "stdout_tail": (proc.stdout or "")[-500:],
             "stderr_tail": (proc.stderr or "")[-500:],
         }
-    except FileNotFoundError as err:
-        return None, {"stdout_tail": "", "stderr_tail": f"tool missing: {err}"}
+    except (OSError, ValueError) as err:
+        return None, {"stdout_tail": "", "stderr_tail": f"command unavailable: {err}"}
     except subprocess.TimeoutExpired as err:
         return None, {"stdout_tail": "", "stderr_tail": f"timeout: {err}"}
 
@@ -80,17 +88,27 @@ def run_security_scans(
     results: list[NormalizedGateResult] = []
     for decl in scans:
         if decl.install and decl.install.strip():
-            subprocess.run(  # noqa: S603 (declared contract install)
-                shlex.split(decl.install),
-                cwd=str(repo),
-                capture_output=True,
-                text=True,
-                timeout=decl.timeout_seconds,
-                check=False,
-            )
-        exit_code, summary = _run_command(decl.command, repo, decl.timeout_seconds)
-        results.append(_scan_result(decl, exit_code, summary))
+            exit_code, summary = _run_command(decl.install, repo, decl.timeout_seconds)
+            if exit_code != 0:
+                results.append(_scan_result(decl, exit_code, {**summary, "phase": "install"}))
+                continue
+        results.append(_execute_scan(decl, repo))
     return results
+
+
+def _execute_scan(decl: SecurityScanDecl, repo) -> NormalizedGateResult:
+    """Consume the declared result channel using the shared normalized protocol."""
+    if not decl.command.strip() or decl.result_channel not in ("exit_code", "file"):
+        return _scan_result(decl, None, {"error": "malformed scan declaration"})
+    gate = LocalGateDecl(
+        kind="quality", source="command", command=decl.command, categories=(),
+        result_channel=decl.result_channel, timeout_seconds=decl.timeout_seconds,
+    )
+    try:
+        result = execute_gate(gate, Path(repo), {})
+    except (OSError, ValueError) as err:
+        return _scan_result(decl, None, {"error": str(err)})
+    return replace(result, gate_id=decl.scan_id)
 
 
 def build_security_review_assignment(
@@ -126,7 +144,11 @@ def security_assessed_payload(
         "candidate_sha": candidate_sha,
         "policy_digest": policy_digest,
         entry_key: [
-            {id_key: r.gate_id, "status": r.status, "exit_code": r.exit_code}
+            {
+                id_key: r.gate_id, "status": r.status, "exit_code": r.exit_code,
+                "result_version": r.result_version, "summary": dict(r.summary),
+                "command_echo": list(r.command_echo),
+            }
             for r in results
         ],
         "repair_route": "none",

@@ -16,6 +16,13 @@ added (RED discipline, manifest red_test_paths = tests/unit).
 
 from __future__ import annotations
 
+import json
+import shlex
+import sys
+from dataclasses import replace
+
+import pytest
+
 from tracks.executor.host_contract import (
     HostContract,
     NormalizedGateResult,
@@ -26,6 +33,7 @@ from tracks.executor.security import (
     aggregate_security_status,
     build_security_review_assignment,
     run_security_scans,
+    security_assessed_payload,
 )
 
 
@@ -143,6 +151,48 @@ def test_run_security_scans_executes_declared(tmp_path):
     )
     for r in results:
         assert r.result_version == 1
+
+
+@pytest.mark.parametrize("install", ["false", "missing-scan-installer", "'unterminated"])
+def test_scan_install_failure_cannot_be_overridden_by_successful_scan(tmp_path, install):
+    """AC-FR0272-02: a failed policy prerequisite blocks execution."""
+    marker = tmp_path / "scan-ran"
+    scan = replace(_scan(command=f"touch {shlex.quote(str(marker))}"), install=install)
+    results = run_security_scans(_contract(scan), tmp_path, "a" * 40)
+    assert aggregate_security_status(results) != "passed"
+    assert not marker.exists()
+    assert results[0].summary["phase"] == "install"
+
+
+@pytest.mark.parametrize("payload, expected", [
+    (None, "malformed"),
+    ({"schema": "tracks-gate-result", "version": 99, "status": "passed"}, "malformed"),
+    ({"schema": "tracks-gate-result", "version": 1, "status": "failed", "summary": {}}, "failed"),
+    ({"schema": "tracks-gate-result", "version": 1, "status": "passed", "summary": {}}, "passed"),
+])
+def test_scan_file_channel_requires_valid_normalized_result(tmp_path, payload, expected):
+    """AC-FR0272-01/02: exit zero cannot stand in for the declared file result."""
+    writer = tmp_path / "scanner.py"
+    writer.write_text(
+        "import pathlib, sys\n"
+        + (f"pathlib.Path(sys.argv[1]).write_text({json.dumps(payload)!r})\n" if payload else "")
+    )
+    scan = replace(
+        _scan(command=f"{shlex.quote(sys.executable)} {shlex.quote(str(writer))} {{result}}"),
+        result_channel="file",
+    )
+    result = run_security_scans(_contract(scan), tmp_path, "a" * 40)[0]
+    assert result.status == expected
+    assert result.gate_id == scan.scan_id
+
+
+def test_security_event_preserves_normalized_result_evidence():
+    """AC-FR0272-01: replay must retain the result version and scanner evidence."""
+    result = replace(_result("failed"), summary={"finding": "dependency advisory"})
+    payload = security_assessed_payload("a" * 40, "policy", [result])
+    scan = payload["scans"][0]
+    assert scan["result_version"] == result.result_version
+    assert scan["summary"] == result.summary
 
 
 # AC-FR0272-01@v0.8 TRACKS-TRACE IF-SECURITY-001 prism review envelope
