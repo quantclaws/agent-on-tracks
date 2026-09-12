@@ -59,6 +59,33 @@ class OpencodeRunMixin:
         stderr_reader, stderr_lines = self._start_stderr_pump(proc, log_fh)
 
         timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "1800"))
+        return self._await_run(
+            name,
+            cmd,
+            proc,
+            master_fd,
+            log_fh,
+            log_path,
+            stderr_lines,
+            stdin_writer,
+            stderr_reader,
+            timeout,
+        )
+
+    def _await_run(
+        self,
+        name,
+        cmd,
+        proc,
+        master_fd,
+        log_fh,
+        log_path,
+        stderr_lines,
+        stdin_writer,
+        stderr_reader,
+        timeout,
+    ):
+        """Stream to completion, finalize, and record the resumable session."""
         stdout_chunks: list[str] = []
         manifest_found = False
         try:
@@ -79,22 +106,25 @@ class OpencodeRunMixin:
                 stalled, timeout,
             )
         except OpencodeError as exc:
-            # D-39 轻版（#44）：infra 失败（timeout/provider）也记录 session
-            # ——下一次 infra 重派以 --session 续传（断点续跑而非冷启动）。
-            exc_out = getattr(exc, "stdout", "") or ""
-            exc_err = getattr(exc, "stderr", "") or ""
-            self._record_session(name, self._extract_session_id(exc_out))
-            # Prism review A1：异常流携带 overflow 信号（provider 侧错误，
-            # stderr/非 JSON）→ 弃用 session，否则 infra 重派会反复续传同
-            # 一个将溢出的会话直至派发上限。
-            if self._session_reuse_enabled() and self._overflow_text(
-                exc_out, exc_err, self._has_json_events(exc_out)
-            ):
-                self._clear_session(name)
+            self._recover_run_error(exc, name)
             raise
         # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写）。
         self._record_session(name, self._extract_session_id(proc.stdout or ""))
         return proc
+
+    def _recover_run_error(self, exc: OpencodeError, name: str) -> None:
+        # D-39 轻版（#44）：infra 失败（timeout/provider）也记录 session
+        # ——下一次 infra 重派以 --session 续传（断点续跑而非冷启动）。
+        exc_out = getattr(exc, "stdout", "") or ""
+        exc_err = getattr(exc, "stderr", "") or ""
+        self._record_session(name, self._extract_session_id(exc_out))
+        # Prism review A1：异常流携带 overflow 信号（provider 侧错误，
+        # stderr/非 JSON）→ 弃用 session，否则 infra 重派会反复续传同
+        # 一个将溢出的会话直至派发上限。
+        if self._session_reuse_enabled() and self._overflow_text(
+            exc_out, exc_err, self._has_json_events(exc_out)
+        ):
+            self._clear_session(name)
 
     def _finalize_run(
         self,
