@@ -33,6 +33,7 @@ from tracks.executor.m_impl_islands import (
     _resolve_island_gate_2,  # noqa: F401
 )
 from tracks.executor.m_impl_ledger import MImplLedgerMixin
+from tracks.executor.m_impl_refactor import MImplRefactorMixin
 from tracks.executor.m_impl_testops import MImplTestOpsMixin
 from tracks.executor.taskgraph import TaskNode, parse_tasks_json
 from tracks.executor.test_select import TestSelectError  # noqa: F401
@@ -48,6 +49,7 @@ class MImplRuntimeMixin(
     MImplGreenMixin,
     MImplDiagnoseMixin,
     MImplDispatchMixin,
+    MImplRefactorMixin,
 ):
     """M-IMPL assignment, graph, island, and RGR command handlers."""
 
