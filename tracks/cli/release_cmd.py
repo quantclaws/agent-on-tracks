@@ -10,6 +10,7 @@ re-exports every name below.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
@@ -690,6 +691,81 @@ def _reject_release_authorization(
     return _err(f"error: {detail}")
 
 
+@dataclass(frozen=True)
+class _ReleaseRequest:
+    action: str
+    reason: str | None
+    target: str | None
+
+
+@dataclass(frozen=True)
+class _ReleaseGate:
+    events: list
+    preview: object
+    version: str
+    authorization: object
+
+
+def _release_request(args: tuple[str, ...]) -> _ReleaseRequest | int:
+    """Parse the release invocation; an int result is an already-printed error."""
+    parsed = _parse_release_args(args)
+    if parsed is None:
+        return _err(_RELEASE_USAGE)
+    action, reason, target = parsed
+    if action == "return":
+        err = _validate_return_target(target)
+        if err is not None:
+            return err
+    return _ReleaseRequest(action, reason, target)
+
+
+def _release_gate(
+    repo: Path, home: Path, store: Store, run_id: str
+) -> _ReleaseGate | None:
+    """Load the active preview and bind the fail-closed authorization to it."""
+    events = list(store.events(run_id))
+    preview = _latest_release_preview(events)
+    if preview is None:
+        return None
+    version = store.state(run_id).version
+    authorization = assess_release(repo, home, events, preview, version)
+    return _ReleaseGate(events, preview, version, authorization)
+
+
+def _decide_release(
+    store: Store,
+    run_id: str,
+    gate: _ReleaseGate,
+    request: _ReleaseRequest,
+    payload: dict,
+) -> int | None:
+    """Run the pre-decision rejection gates; None when the decision may land."""
+    rejection = _reject_release_authorization(
+        store, run_id, gate.version, request.action, payload, gate.authorization
+    )
+    if rejection is not None:
+        return rejection
+    rejection = _release_known_issue_guard(
+        store, run_id, gate.version, request.action, payload, gate.events
+    )
+    if rejection is not None:
+        return _err(rejection)
+    store.append(
+        run_id,
+        gate.version,
+        "release.decided",
+        {
+            "action": request.action,
+            "candidate_sha": payload.get("candidate_sha"),
+            "preview_digest": payload.get("preview_digest"),
+            "reason": request.reason,
+            "target": request.target,
+            "actor": "human",
+        },
+    )
+    return None
+
+
 def cmd_release(repo: Path, *args: str) -> int:
     """Human three-way release gate (§2a): `release preview` renders the E-01
     line; `--action release|delay|return` appends exactly one append-only
@@ -698,64 +774,38 @@ def cmd_release(repo: Path, *args: str) -> int:
     `release`. A rejection is audited as release.rejected and produces no
     decision and no stage transfer. The gate is closed after a decision until
     a newer preview is generated (SM-01.11)."""
-    parsed = _parse_release_args(args)
-    if parsed is None:
-        return _err(_RELEASE_USAGE)
-    action, reason, target = parsed
-    err = _validate_return_target(target) if action == "return" else None
-    if err is not None:
-        return err
+    request = _release_request(args)
+    if isinstance(request, int):
+        return request
     home = paths.tracks_home(repo)
     store = Store(home)
     run_id = store.active_run()
     if run_id is None:
         return _err2(_NO_RELEASE_RUN)
     with writer_lock(home):
-        events = list(store.events(run_id))
-        preview = _latest_release_preview(events)
-        if preview is None:
+        gate = _release_gate(repo, home, store, run_id)
+        if gate is None:
             return _err2(_NO_RELEASE_RUN)
-        version = store.state(run_id).version
-        authorization = assess_release(
-            repo, home, events, preview, version
-        )
-        stale_reason = authorization.stale_reason
-        if action == "preview":
-            print(_render_preview_line(preview.payload or {}, stale_reason, events))
+        if request.action == "preview":
+            print(
+                _render_preview_line(
+                    gate.preview.payload or {}, gate.authorization.stale_reason, gate.events
+                )
+            )
             return 0
-        payload = preview.payload or {}
-        if _is_decision_closed(events, preview):
+        payload = gate.preview.payload or {}
+        if _is_decision_closed(gate.events, gate.preview):
             return _err(
                 "error: decision already recorded for this preview; "
                 "regenerate the preview via trac run before deciding again"
             )
-        rejection = _reject_release_authorization(
-            store, run_id, version, action, payload, authorization
-        )
-        if rejection is not None:
-            return rejection
-        rejection = _release_known_issue_guard(
-            store, run_id, version, action, payload, events
-        )
-        if rejection is not None:
-            return _err(rejection)
-        store.append(
-            run_id,
-            version,
-            "release.decided",
-            {
-                "action": action,
-                "candidate_sha": payload.get("candidate_sha"),
-                "preview_digest": payload.get("preview_digest"),
-                "reason": reason,
-                "target": target,
-                "actor": "human",
-            },
-        )
+        rc = _decide_release(store, run_id, gate, request, payload)
+        if rc is not None:
+            return rc
     print(
-        f"decision: {action} (candidate={payload.get('candidate_sha')} "
+        f"decision: {request.action} (candidate={payload.get('candidate_sha')} "
         f"preview_digest={payload.get('preview_digest')}) "
-        f"status={_DECISION_STATUS[action]}"
+        f"status={_DECISION_STATUS[request.action]}"
     )
     return 0
 
