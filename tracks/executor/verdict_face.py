@@ -77,6 +77,9 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
     def _emit_dispatch_verdict(self, result, role, state, params, cmd, task_id):
         if role not in _VERDICT_EVENT:
             return
+        if role == "prism" and (params or {}).get("scope") == "security":
+            self._publish_security_review_verdict(result, params, cmd, task_id)
+            return
         if state.stage == "M-IMPL" and role == "prism" and state.substate == "DIAGNOSE":
             self._emit_diagnose_verdict(result, state, cmd, task_id)
             return

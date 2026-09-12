@@ -29,7 +29,15 @@ if TYPE_CHECKING:
 
 def _set_m_impl_dispatch_flags(s: State, cmd: dict) -> None:
     """Set dispatch flags for an M-IMPL dispatch_agent command."""
-    sub = cmd.get("params", {}).get("substate")
+    params = cmd.get("params", {})
+    if params.get("scope") == "security":
+        # Out-of-band review (the park chain's security-policy audit): it is
+        # not the current task's dispatch -- setting doc/reviewer flags would
+        # route its outcome through the task's RGR gate (live 01M2AG4: a
+        # security review dispatch set doc_dispatched and its pass was then
+        # judged as the RED outcome, red_invalid).
+        return
+    sub = params.get("substate")
     if sub in _M_IMPL_REVIEW_SUBSTATES:
         s.reviewer_dispatched = True
     else:

@@ -3,13 +3,18 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from tracks.effects import publish as publish_effects
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
 from tracks.executor.release_gate import version_facts
 from tracks.executor.security import (
+    build_security_review_assignment,
+    cve_repair_route,
     run_security_scans,
     security_assessed_payload,
 )
+from tracks.kernel.events import Command
 
 
 class ExecPublishMixin:
@@ -160,12 +165,67 @@ blocked-publish payload."""
         )
         if contract is None:
             return
-        results = run_security_scans(contract, self.repo, candidate_sha)
-        # §1.0.14 B: a failing/unknown scan is a cve-class finding -> Archer
-        # advisory repair route (in-place, never a rollback).
-        payload = security_assessed_payload(candidate_sha, digest, results)
+        payload = self._assess_security_with_review(candidate_sha, contract, digest)
         self._emit(
             "security.assessed",
             payload,
             command_id=cmd.command_id,
         )
+
+    def _assess_security_with_review(self, candidate_sha, contract, digest):
+        """Scans and a candidate-bound Prism review jointly authorize security."""
+        results = run_security_scans(contract, self.repo, candidate_sha)
+        payload = security_assessed_payload(candidate_sha, digest, results)
+        if payload["status"] != "passed":
+            return payload
+        assignment = build_security_review_assignment(results, digest, candidate_sha)
+        assignment["scan_results"] = [asdict(result) for result in results]
+        # issue() assigns the id on a NEW Command (Command is frozen): the
+        # caller's object keeps command_id=None, so bind the id explicitly
+        # here or the verdict lookup below can never match (live 01M2AGY:
+        # security.assessed landed unknown despite a passing review).
+        from tracks.store import new_ulid
+
+        cid = new_ulid()
+        review = Command(kind="dispatch_agent", params={
+            "role": "prism", "substate": "PRISM_REVIEW", "stage": "M-SECURITY",
+            "assignment": assignment, **assignment,
+            "objective": "Audit the frozen candidate against the declared security policy; "
+            "review scan findings and source risks, then return a pass/revise verdict.",
+        })
+        self.issue(review, command_id=cid)
+        verdict = next((e for e in reversed(list(self.store.events(self.run_id)))
+                        if e.type == "prism.verdict" and e.command_id == cid
+                        and (e.payload or {}).get("scope") == "security"), None)
+        result = verdict.payload if verdict else {}
+        status = "unknown"
+        if result.get("candidate_sha") == candidate_sha and result.get("policy_digest") == digest:
+            status = {"pass": "passed", "revise": "failed"}.get(result.get("verdict"), "unknown")
+        payload.update(status=status, review_command_id=cid)
+        if status != "passed":
+            payload.update(repair_route=cve_repair_route(), reason="security_review_not_passed")
+        return payload
+
+    def _publish_security_review_verdict(self, result, params, cmd, task_id):
+        """Bind a review outcome to its dispatched candidate and policy."""
+        assignment = params.get("assignment") or params
+        candidate = assignment.get("candidate_sha")
+        digest = assignment.get("policy_digest")
+        frozen = self._latest_event("candidate.frozen")
+        frozen_sha = (frozen.payload or {}).get("candidate_sha") if frozen else None
+        verdict = result.get("verdict")
+        if (not candidate or candidate != frozen_sha or not digest
+                or result.get("candidate_sha", candidate) != candidate
+                or result.get("policy_digest", digest) != digest
+                or result.get("status") != "done" or verdict not in ("pass", "revise")):
+            self._emit("attention.required", {
+                "stage": "M-SECURITY", "reason": "security_review_identity_or_result_invalid",
+                "candidate_sha": candidate,
+            }, command_id=cmd.command_id, task_id=task_id)
+            return
+        self._emit("prism.verdict", {
+            "scope": "security", "candidate_sha": candidate, "policy_digest": digest,
+            "verdict": verdict, "result_id": result.get("result_id"),
+            "review_summary": result.get("review_summary"), "findings": result.get("findings", []),
+            "review_ref": result.get("review_ref"),
+        }, command_id=cmd.command_id, task_id=task_id)

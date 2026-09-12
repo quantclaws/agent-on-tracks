@@ -92,6 +92,12 @@ def _track_hotfix_command_progress(s: State, kind: str) -> None:
 
 
 def _on_outcome_received(s: State, p: dict, ev: EventEnvelope) -> None:
+    if p.get("scope") == "security":
+        # Out-of-band security review outcome: not the current task's
+        # outcome -- its verdict is published through the security face
+        # (_publish_security_review_verdict); the task's RGR/outcome
+        # pipeline never consumes it.
+        return
     status = p.get("status")
     if s.substate == "ISSUES":
         if status != "done":

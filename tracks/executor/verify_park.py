@@ -17,7 +17,6 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
-from tracks.executor.security import run_security_scans, security_assessed_payload
 from tracks.kernel.events import Command
 
 
@@ -241,13 +240,10 @@ class ExecVerifyParkMixin:
         ]
         if seen:
             return (seen[-1].payload or {}).get("status") == "passed"
-        results = run_security_scans(contract, self.repo, candidate_sha)
-        # §1.0.14 B / interfaces §1d: a non-passing assessment always carries
-        # its unified repair route (cve-class -> Archer advisory), never a
-        # silent "none".
-        payload = security_assessed_payload(
-            candidate_sha, contract_digest, results, entry_key="findings", id_key="scan_id"
-        )
+        payload = self._assess_security_with_review(candidate_sha, contract, contract_digest)
+        payload["findings"] = [
+            {**scan, "scan_id": scan["id"]} for scan in payload.pop("scans")
+        ]
         self._emit("security.assessed", payload, command_id=cmd.command_id)
         return payload["status"] == "passed"
 

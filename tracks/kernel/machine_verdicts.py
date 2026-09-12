@@ -214,6 +214,8 @@ def _review_last_failure(p: dict) -> dict:
 
 
 def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
+    if p.get("scope") == "security":
+        return  # A security review cannot mutate the parked task's review state.
     s.active_result = None  # v0.5: pipeline publish complete
     if p.get("verdict") != "pass":
         s.last_failure = _review_last_failure(p)
