@@ -595,21 +595,60 @@ class ExecVerifyParkMixin:
         # parked -- the escalation remains a legal Human escape source
         # (FR-0287). The next drive commits the registration, whose machine
         # projection lifts the park and waives the task.
-        if not self._park_candidate_seen(
+        if self._park_pending_known_issue(
+            cmd, candidate_sha, task_id, reason, ac_refs, node_refs
+        ):
+            return
+        self._register_parked_known_issue(
+            cmd,
+            candidate_sha,
+            finding_kind,
+            reason,
+            task_id,
+            verdict,
+            ac_refs,
+            node_refs,
+        )
+
+    def _park_pending_known_issue(
+        self,
+        cmd,
+        candidate_sha: str,
+        task_id: str | None,
+        reason: str,
+        ac_refs: list,
+        node_refs: list,
+    ) -> bool:
+        """Record the first-drive observation; True when the run stays parked."""
+        if self._park_candidate_seen(
             ("known_issue.pending",), candidate_sha, task_id or None
         ):
-            self._emit(
-                "known_issue.pending",
-                {
-                    "candidate_sha": candidate_sha,
-                    "task_id": task_id or None,
-                    "ac_refs": ac_refs,
-                    "node_refs": node_refs,
-                    "reason": reason,
-                },
-                command_id=cmd.command_id,
-            )
-            return
+            return False
+        self._emit(
+            "known_issue.pending",
+            {
+                "candidate_sha": candidate_sha,
+                "task_id": task_id or None,
+                "ac_refs": ac_refs,
+                "node_refs": node_refs,
+                "reason": reason,
+            },
+            command_id=cmd.command_id,
+        )
+        return True
+
+    def _register_parked_known_issue(
+        self,
+        cmd,
+        candidate_sha: str,
+        finding_kind: str,
+        reason: str,
+        task_id: str | None,
+        verdict: dict,
+        ac_refs: list,
+        node_refs: list,
+    ) -> None:
+        """Commit the second-drive registration + mapping + preview regen."""
         item_or_ac = str(
             verdict.get("item_or_ac")
             or (ac_refs[0] if ac_refs else "")
@@ -628,54 +667,60 @@ class ExecVerifyParkMixin:
             },
             candidate_sha,
         )
-        payload = {
-            k: v for k, v in registration.items() if k != "event"
-        }
+        payload = {k: v for k, v in registration.items() if k != "event"}
         self._emit(registration["event"], payload, command_id=cmd.command_id)
         if registration["event"] == "known_issue.registered":
             # FR-0283 mapping face: a known issue is durable run state too --
             # it enters the map explicitly non-authoritative so the M-MILESTONE
             # closer audits it as an unclosable identity instead of leaving an
             # invisible waiver (never api_verified=true).
-            persist_issue_mapping(
-                self.repo,
-                f"known_issue:{registration.get('issue_number')}",
-                {
-                    "issue_number": registration.get("issue_number"),
-                    "url": registration.get("url", ""),
-                    "api_verified": False,
-                    "authoritative": False,
-                    "source": "known_issue",
-                    "task_id": task_id or None,
-                    "baseline_digest": candidate_sha,
-                },
-            )
-            # AC-FR0286-05 informed consent: the registered known issue must
-            # appear in the release preview. Regenerate ONLY when a prior
-            # preview already exists for this candidate -- that is the one
-            # case the listing can be stale (the chain completed CI/security
-            # before the registration landed). Without a prior preview the
-            # chain's own tail preview (after the CI readback and security
-            # steps, which a Known Issue never waives) lists the issue
-            # through list_known_issues_for_preview; previewing here would
-            # short-circuit those gates (live 01M284A3: waiver preview with
-            # no CI/prism-final/security evidence, correctly rejected by
-            # the release gate and unreachable forever after).
-            prior = next(
-                (
-                    event
-                    for event in reversed(list(self.store.events(self.run_id)))
-                    if event.type == "release.previewed"
-                    and (event.payload or {}).get("candidate_sha") == candidate_sha
-                ),
-                None,
-            )
-            if prior is not None:
-                # _park_preview re-resolves the (materialized default)
-                # contract from its stable source; the prior digest pins
-                # the expectation and assemble_preview fails closed on any
-                # contract drift.
-                self._park_preview(cmd, candidate_sha, "")
+            self._persist_known_issue_mapping(registration, task_id, candidate_sha)
+            self._regen_preview_after_known_issue(cmd, candidate_sha)
+
+    def _persist_known_issue_mapping(
+        self, registration: dict, task_id: str | None, candidate_sha: str
+    ) -> None:
+        persist_issue_mapping(
+            self.repo,
+            f"known_issue:{registration.get('issue_number')}",
+            {
+                "issue_number": registration.get("issue_number"),
+                "url": registration.get("url", ""),
+                "api_verified": False,
+                "authoritative": False,
+                "source": "known_issue",
+                "task_id": task_id or None,
+                "baseline_digest": candidate_sha,
+            },
+        )
+
+    def _regen_preview_after_known_issue(self, cmd, candidate_sha: str) -> None:
+        """AC-FR0286-05 informed consent: the registered known issue must
+        appear in the release preview. Regenerate ONLY when a prior
+        preview already exists for this candidate -- that is the one
+        case the listing can be stale (the chain completed CI/security
+        before the registration landed). Without a prior preview the
+        chain's own tail preview (after the CI readback and security
+        steps, which a Known Issue never waives) lists the issue
+        through list_known_issues_for_preview; previewing here would
+        short-circuit those gates (live 01M284A3: waiver preview with
+        no CI/prism-final/security evidence, correctly rejected by
+        the release gate and unreachable forever after)."""
+        prior = next(
+            (
+                event
+                for event in reversed(list(self.store.events(self.run_id)))
+                if event.type == "release.previewed"
+                and (event.payload or {}).get("candidate_sha") == candidate_sha
+            ),
+            None,
+        )
+        if prior is not None:
+            # _park_preview re-resolves the (materialized default)
+            # contract from its stable source; the prior digest pins
+            # the expectation and assemble_preview fails closed on any
+            # contract drift.
+            self._park_preview(cmd, candidate_sha, "")
 
     def _release_journey(self, state, cmd) -> str | None:
         """Resolve the preview's declared journey (IF-JOURNEY-001 §1m).
@@ -703,21 +748,61 @@ class ExecVerifyParkMixin:
         (AC-FR0286-05 informed consent -- the listing must never be stale);
         regeneration appends a new event, the old preview is never
         overwritten (§1.0.5)."""
+        contract, contract_digest = self._park_preview_contract(
+            cmd, candidate_sha, contract_or_digest, contract_digest
+        )
+        if contract is None:
+            return
+        events = list(self.store.events(self.run_id))
+        known_issues = _repair.list_known_issues_for_preview(self.run_id, events)
+        state = self.store.state(self.run_id)
+        journey = self._release_journey(state, cmd)
+        facts = self._park_preview_facts(
+            cmd, candidate_sha, contract, events, journey, state
+        )
+        if facts is None:
+            return
+        preview = assemble_preview(
+            self.repo,
+            contract,
+            candidate_sha,
+            contract_digest,
+            facts,
+            events,
+            journey=journey,
+            known_issues=known_issues,
+        )
+        if preview is None:
+            return
+        if not self._park_preview_changed(events, candidate_sha, preview):
+            return
+        blob = self.store.write_audit_blob(preview)
+        if not blob:
+            return
+        preview = dict(preview)
+        preview["blob_ref"] = f".tracks/runtime/blobs/{blob}"
+        self._emit("release.previewed", preview, command_id=cmd.command_id)
+
+    def _park_preview_contract(
+        self, cmd, candidate_sha: str, contract_or_digest, contract_digest: str | None
+    ) -> tuple:
+        """Resolve the preview contract (reloading when handed a digest)."""
         if isinstance(contract_or_digest, str):
             contract, contract_digest, _source = self._load_or_default_contract(
                 cmd, candidate_sha
             )
             if contract is None:
-                return
-        else:
-            contract = contract_or_digest
-        events = list(self.store.events(self.run_id))
-        known_issues = _repair.list_known_issues_for_preview(self.run_id, events)
-        state = self.store.state(self.run_id)
+                return None, None
+            return contract, contract_digest
+        return contract_or_digest, contract_digest
+
+    def _park_preview_facts(
+        self, cmd, candidate_sha: str, contract, events: list, journey, state
+    ) -> dict | None:
+        """Version facts completed with the remote census, or None (attention)."""
         version = getattr(state, "version", None) or next(
             (event.version for event in reversed(events) if event.version), ""
         )
-        journey = self._release_journey(state, cmd)
         facts = version_facts(version, self.run_id)
         patch_line = str(
             getattr(getattr(contract, "version", None), "patch_line", "") or ""
@@ -745,36 +830,23 @@ class ExecVerifyParkMixin:
                 },
                 command_id=cmd.command_id,
             )
-            return
-        preview = assemble_preview(
-            self.repo,
-            contract,
-            candidate_sha,
-            contract_digest,
-            facts,
-            events,
-            journey=journey,
-            known_issues=known_issues,
-        )
-        if preview is None:
-            return
+            return None
+        return facts
+
+    def _park_preview_changed(self, events: list, candidate_sha: str, preview: dict) -> bool:
+        """True when no equivalent persisted preview already exists."""
         seen = [
             event for event in events
             if event.type == "release.previewed"
             and (event.payload or {}).get("candidate_sha") == candidate_sha
         ]
-        if seen:
-            last = seen[-1].payload or {}
-            if preview_inputs_match(last, preview) and preview_blob_matches(
-                self.store.home, last
-            ):
-                return
-        blob = self.store.write_audit_blob(preview)
-        if not blob:
-            return
-        preview = dict(preview)
-        preview["blob_ref"] = f".tracks/runtime/blobs/{blob}"
-        self._emit("release.previewed", preview, command_id=cmd.command_id)
+        if not seen:
+            return True
+        last = seen[-1].payload or {}
+        return not (
+            preview_inputs_match(last, preview)
+            and preview_blob_matches(self.store.home, last)
+        )
 
     def _release_version_facts(self, state) -> dict:
         """Placeholder scope for contract gate commands ({version}/{major}/...
