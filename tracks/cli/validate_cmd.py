@@ -391,6 +391,17 @@ def _cmd_check_trace_v07(
     segment adds its reason instead of a silent pass.
     """
     del repo  # evidence lives in .tracks events; kept for CLI signature symmetry
+    report, release = _trace_v07_report(home, version, checker, release_builder)
+    release_failed = release is not None and release.get("status") == "inconsistent"
+    if use_json:
+        _emit_trace_v07_json(report, release)
+    else:
+        _emit_trace_v07_text(report, release, release_failed)
+    return 1 if report.status == "fail" or release_failed else 0
+
+
+def _trace_v07_report(home: Path, version: str, checker, release_builder=None):
+    """Assemble the closure report and optional release segment from events."""
     acs = approved_acs(paths.projects_dir(home), version)
     release: dict | None = None
     store = Store(home)
@@ -401,22 +412,25 @@ def _cmd_check_trace_v07(
     finally:
         store.close()
     report = checker(acs, candidate_digest, {ac: harvested.get(ac, {}) for ac in acs})
-    release_failed = release is not None and release.get("status") == "inconsistent"
-    if use_json:
-        payload = _closure_json(report)
-        if release is not None:
-            payload["release"] = release
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        for error in report.hard_errors:
-            print(error)
-        if release is not None:
-            print(f"release: {release.get('status')}")
-            if release_failed:
-                print(f"release trace error: {release.get('reason', '')}")
-        if not report.hard_errors and not release_failed:
-            print("trace ok")
-    return 1 if report.status == "fail" or release_failed else 0
+    return report, release
+
+
+def _emit_trace_v07_json(report, release) -> None:
+    payload = _closure_json(report)
+    if release is not None:
+        payload["release"] = release
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def _emit_trace_v07_text(report, release, release_failed: bool) -> None:
+    for error in report.hard_errors:
+        print(error)
+    if release is not None:
+        print(f"release: {release.get('status')}")
+        if release_failed:
+            print(f"release trace error: {release.get('reason', '')}")
+    if not report.hard_errors and not release_failed:
+        print("trace ok")
 
 
 def _active_hotfix_trace_context(home: Path, vdir: Path) -> dict | None:
