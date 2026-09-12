@@ -124,6 +124,11 @@ def _dispatch_payload(store: Store, params: dict, result: dict) -> dict:
         "artifact_ref": result.get("artifact_ref"),
         "self_report": result["self_report"],
     }
+    # Auxiliary security reviews never belong to the parked task's RGR stream,
+    # including failure/format-error paths that also use this payload builder.
+    scope = (params.get("assignment") or {}).get("scope") or params.get("scope")
+    if scope:
+        payload["scope"] = scope
     captured = result.get("agent_io")
     if captured is not None:
         payload["agent_io"] = _agent_io_evidence(store, dict(params), captured)

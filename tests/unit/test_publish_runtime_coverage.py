@@ -525,6 +525,7 @@ def test_execute_publish_operations_stops_on_failure(monkeypatch):
         records=[
             {"idempotency_key": "k1", "operation_kind": "tag", "target": "v1"},
             {"idempotency_key": "k2", "operation_kind": "tag", "target": "v2"},
+            {"idempotency_key": "k3", "operation_kind": "tag", "target": "v3"},
         ]
     )
     pr.execute_publish_operations(

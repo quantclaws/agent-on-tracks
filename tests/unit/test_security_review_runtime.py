@@ -10,6 +10,16 @@ from tracks.kernel.events import Command
 from tracks.store import Store
 
 
+@pytest.mark.parametrize("status", ["done", "failed"])
+def test_security_outcome_scope_survives_all_result_paths(status):
+    from tracks.executor.helpers import _dispatch_payload
+
+    payload = _dispatch_payload(None, {
+        "role": "prism", "assignment": {"scope": "security"},
+    }, {"status": status, "self_report": "security review"})
+    assert payload["scope"] == "security"
+
+
 @pytest.mark.parametrize("park", [False, True])
 @pytest.mark.parametrize("reply, expected", [
     ({"verdict": "pass"}, "passed"),

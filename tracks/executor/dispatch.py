@@ -413,15 +413,6 @@ the envelope/failure faces stay re-exported by executor.py."""
         agent_io = payload.get("agent_io") or {}
         if agent_io.get("output_ref"):
             result.setdefault("output_ref", agent_io["output_ref"])
-        # Scope propagation for out-of-band dispatches (e.g. the park chain's
-        # security-policy review): the kernel must keep such outcomes out of
-        # the current task's RGR/outcome pipeline -- the security review is
-        # not the task's dispatch (live 01M2AG4: a scope=security review set
-        # doc_dispatched and its pass was consumed as the RED task's outcome,
-        # parking the walk red_invalid).
-        scope = (ctx.assignment or {}).get("scope") or (ctx.p or {}).get("scope")
-        if scope:
-            payload["scope"] = scope
         if self._checkpoint_eligible(state, result, ctx.substate):
             payload["result_checkpoint"] = self._result_checkpoint_payload(
                 cmd, state, result, p, ctx.substate, ctx.role, ctx.doc, ctx.pre_dirty
