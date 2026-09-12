@@ -206,6 +206,24 @@ def assemble_preview(
     resolved_journey = _journey(contract, journey)
     if resolved_journey is None:
         return None
+    plan, resolved_facts = _preview_plan(repo, contract, resolved_journey, version_facts)
+    if plan is None:
+        return None
+    policy_digest = contract_policy_digest
+    if not policy_digest.startswith("sha256:"):
+        policy_digest = "sha256:" + policy_digest
+    digests = _preview_digests(repo, contract, candidate_sha, resolved_facts, plan, events)
+    if digests is None:
+        return None
+    digests["contract_policy_digest"] = policy_digest
+    preview = generate_preview(candidate_sha, digests, risks=[], plan=plan)
+    if known_issues:
+        preview["known_issues"] = list(known_issues)
+    return preview
+
+
+def _preview_plan(repo: Path, contract, resolved_journey: str, version_facts: dict):
+    """Resolve the version facts + operation plan, or (None, None) on refusal."""
     table = _contract_table(contract)
     patch_line = str(getattr(getattr(contract, "version", None), "patch_line", "") or "")
     resolved_facts, _error = complete_version_facts(
@@ -215,7 +233,7 @@ def assemble_preview(
         needs_n=operation_plan_needs_n(table, resolved_journey),
     )
     if resolved_facts is None:
-        return None
+        return None, None
     resolved_facts = _version_facts(contract, resolved_facts)
     plan = build_operation_plan(
         table,
@@ -224,30 +242,30 @@ def assemble_preview(
         active_release_branch=active_release_branch(repo, resolved_facts),
     )
     if not isinstance(plan, dict):
-        return None
-    policy_digest = contract_policy_digest
-    if not policy_digest.startswith("sha256:"):
-        policy_digest = "sha256:" + policy_digest
+        return None, None
+    return plan, resolved_facts
+
+
+def _preview_digests(
+    repo: Path,
+    contract,
+    candidate_sha: str,
+    resolved_facts: dict,
+    plan: dict,
+    events,
+) -> dict | None:
+    """Artifact/evidence/plan digests, or None when evidence is missing."""
     artifact_digest = _artifact_digest(repo, contract, resolved_facts)
     if artifact_digest is None:
         return None
     evidence = evidence_digests(events, candidate_sha)
     if evidence is None:
         return None
-    preview = generate_preview(
-        candidate_sha,
-        {
-            "artifact_digest": artifact_digest,
-            "evidence_digests": evidence,
-            "operation_plan_digest": canonical_digest(plan),
-            "contract_policy_digest": policy_digest,
-        },
-        risks=[],
-        plan=plan,
-    )
-    if known_issues:
-        preview["known_issues"] = list(known_issues)
-    return preview
+    return {
+        "artifact_digest": artifact_digest,
+        "evidence_digests": evidence,
+        "operation_plan_digest": canonical_digest(plan),
+    }
 
 
 def preview_blob_matches(home: Path, preview: dict) -> bool:
