@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import json
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks.executor.helpers import git
@@ -39,6 +40,63 @@ _FULL_LAYERS = ("unit", "integration", "e2e")
 
 
 _EMPTY_LAYER_RC = frozenset({5})
+
+
+@dataclass(frozen=True)
+class _FullSelection:
+    """Persisted FULL selection identity (nodes + test.selected event)."""
+
+    inventory: dict
+    nodes: list
+    baseline: str
+    commit: str
+    tree_stamp: str
+    selection_id: str
+    selection_event: object
+
+
+@dataclass(frozen=True)
+class _FullRoundHeader:
+    """One FULL round's stable inputs + selection identity."""
+
+    cmd: object
+    state: object
+    round_name: str
+    ledger: object
+    candidate_sha: str | None
+    judgment_reason: str | None
+    sections: dict
+    inventory: dict
+    nodes: list
+    baseline: str
+    commit: str
+    tree_stamp: str
+    selection_id: str
+    selection_event: object
+
+
+@dataclass(frozen=True)
+class _FullRun:
+    """The five execution artifacts of ``_run_full_layers``."""
+
+    outcomes: list
+    command_echo: dict
+    command_cwds: dict
+    command_exit_codes: dict
+    result_paths: list
+
+
+@dataclass(frozen=True)
+class _FullEvidence:
+    """Evidence binding + waiver-adjusted blocking set of one FULL run."""
+
+    command_identity: object
+    env_identity: object
+    evidence_by_node: dict
+    outcomes_ref: str
+    blocking: list
+    waived_nodes: list
+    empty_pass_layers: dict
 
 
 class MImplFullChainMixin:
@@ -213,15 +271,7 @@ class MImplFullChainMixin:
             for layer, code in command_exit_codes.items()
         )
 
-    def _execute_full_round(
-        self,
-        cmd,
-        state,
-        round_name: str,
-        ledger,
-        candidate_sha: str | None = None,
-        judgment_reason: str | None = None,
-    ) -> dict:  # pylint: disable=too-many-locals
+    def _full_round_sections(self) -> dict:
         contract = load_contract(self.repo)
         sections = {
             "unit": contract.unit,
@@ -230,6 +280,10 @@ class MImplFullChainMixin:
         }
         if any(section is None for section in sections.values()):
             raise TestSelectError("FULL requires unit, integration, and e2e sections")
+        return sections
+
+    def _full_round_selection(self, cmd, round_name: str) -> _FullSelection:
+        """Collect + persist the FULL selection identity (nodes blob event)."""
         inventory, collect_error = self._collect_all_declared_layers()
         if inventory is None:
             raise TestSelectError(collect_error or "FULL collect failed")
@@ -269,105 +323,171 @@ class MImplFullChainMixin:
             },
             command_id=cmd.command_id,
         )
-        (
-            outcomes,
-            command_echo,
-            command_cwds,
-            command_exit_codes,
-            result_paths,
-        ) = self._run_full_layers(cmd, round_name, sections, inventory)
+        return _FullSelection(
+            inventory, nodes, baseline, commit, tree_stamp, selection_id, selection_event
+        )
+
+    def _full_round_header(
+        self,
+        cmd,
+        state,
+        round_name: str,
+        ledger,
+        candidate_sha: str | None,
+        judgment_reason: str | None,
+    ) -> _FullRoundHeader:
+        selection = self._full_round_selection(cmd, round_name)
+        return _FullRoundHeader(
+            cmd=cmd,
+            state=state,
+            round_name=round_name,
+            ledger=ledger,
+            candidate_sha=candidate_sha,
+            judgment_reason=judgment_reason,
+            sections=self._full_round_sections(),
+            inventory=selection.inventory,
+            nodes=selection.nodes,
+            baseline=selection.baseline,
+            commit=selection.commit,
+            tree_stamp=selection.tree_stamp,
+            selection_id=selection.selection_id,
+            selection_event=selection.selection_event,
+        )
+
+    def _full_round_evidence(self, header: _FullRoundHeader, run: _FullRun) -> _FullEvidence:
+        """Bind execution outcomes to persisted evidence (fail-closed blobs)."""
         declared_layers = self._declared_anchor_layers()
         if declared_layers is None:
             declared_layers = set(_FULL_LAYERS)
         empty_pass_layers = {
             layer: code in _EMPTY_LAYER_RC and layer not in declared_layers
-            for layer, code in command_exit_codes.items()
+            for layer, code in run.command_exit_codes.items()
         }
-        command_identity = self._full_command_identity(command_echo, command_cwds, result_paths)
+        command_identity = self._full_command_identity(
+            run.command_echo, run.command_cwds, run.result_paths
+        )
         env_identity = self._gate_environment_identity()
         identity = EvidenceIdentity(
-            tree=tree_stamp,
+            tree=header.tree_stamp,
             command=command_identity,
             env=env_identity,
-            selection_id=selection_id,
+            selection_id=header.selection_id,
         )
         evidence_by_node = {
             outcome["node"]: evidence_identity(
                 identity,
                 outcome["node"],
                 outcome["status"],
-                state.current_attempt + 1,
+                header.state.current_attempt + 1,
                 "runtime",
             )
-            for outcome in outcomes
+            for outcome in run.outcomes
         }
         persisted_outcomes = [
-            {**outcome, "evidence_id": evidence_by_node[outcome["node"]]} for outcome in outcomes
+            {**outcome, "evidence_id": evidence_by_node[outcome["node"]]}
+            for outcome in run.outcomes
         ]
         outcomes_ref = self.store.write_audit_blob(persisted_outcomes)
         if outcomes_ref is None:
             raise TestSelectError("FULL outcomes blob write failed")
-        failed = self._signed_failures(outcomes)
+        failed = self._signed_failures(run.outcomes)
         # FR-0286 §5 waiver: nodes bound to a registered known issue are
         # still executed and recorded (outcomes_ref carries every outcome)
         # but no longer block the required-green judgment. The waiver set
         # comes from the same event-derived extraction every other consumer
         # uses -- the audit list stays on the payload.
         blocking, waived_nodes = self._split_waived_failures(failed)
+        return _FullEvidence(
+            command_identity,
+            env_identity,
+            evidence_by_node,
+            outcomes_ref,
+            blocking,
+            waived_nodes,
+            empty_pass_layers,
+        )
+
+    def _finalize_full_round(
+        self, header: _FullRoundHeader, run: _FullRun, evidence: _FullEvidence
+    ) -> dict:
         # A layer whose only failures are waived exits non-zero; the
         # required-green proof is still complete (FR-0286 §5: the waiver
         # changes the blocking set, never the execution record).
-        serves_as_full_f = not blocking and (
-            (round_name == "FULL_1" and not ledger) or round_name == "fallback_full"
+        serves_as_full_f = not evidence.blocking and (
+            (header.round_name == "FULL_1" and not header.ledger)
+            or header.round_name == "fallback_full"
         )
         payload = {
-            "round": round_name,
+            "round": header.round_name,
             "suite": ["unit", "integration", "e2e"],
-            "passed": not blocking,
-            "failed_nodes": [outcome["node"] for outcome in blocking],
-            "waived_nodes": waived_nodes,
-            "command_echo": command_echo,
-            "evidence_ids": sorted(evidence_by_node.values()),
+            "passed": not evidence.blocking,
+            "failed_nodes": [outcome["node"] for outcome in evidence.blocking],
+            "waived_nodes": evidence.waived_nodes,
+            "command_echo": run.command_echo,
+            "evidence_ids": sorted(evidence.evidence_by_node.values()),
             "serves_as_full_f": serves_as_full_f,
-            "outcomes_ref": f".tracks/runtime/blobs/{outcomes_ref}",
+            "outcomes_ref": f".tracks/runtime/blobs/{evidence.outcomes_ref}",
             "gate": "ISLAND_GATE_2",
-            "selection_id": selection_id,
-            "failures": blocking,
-            "evidence_by_node": evidence_by_node,
-            "execution_commit": commit,
-            "selection_event_seq": selection_event.seq,
-            "selection_command_id": selection_event.command_id,
+            "selection_id": header.selection_id,
+            "failures": evidence.blocking,
+            "evidence_by_node": evidence.evidence_by_node,
+            "execution_commit": header.commit,
+            "selection_event_seq": header.selection_event.seq,
+            "selection_command_id": header.selection_event.command_id,
             "identity_basis": [
-                tree_stamp,
-                list(command_identity),
-                env_identity,
-                selection_id,
+                header.tree_stamp,
+                list(evidence.command_identity),
+                evidence.env_identity,
+                header.selection_id,
             ],
             "identity": {
-                "tree": tree_stamp,
-                "command": list(command_identity),
-                "env": env_identity,
-                "selection_id": selection_id,
+                "tree": header.tree_stamp,
+                "command": list(evidence.command_identity),
+                "env": evidence.env_identity,
+                "selection_id": header.selection_id,
             },
             "full_f_eligible": self._full_f_eligible(
-                blocking, waived_nodes, command_exit_codes, empty_pass_layers
+                evidence.blocking,
+                evidence.waived_nodes,
+                run.command_exit_codes,
+                evidence.empty_pass_layers,
             ),
-            "empty_pass_layers": empty_pass_layers,
-            "command_cwds": command_cwds,
-            "command_exit_codes": command_exit_codes,
+            "empty_pass_layers": evidence.empty_pass_layers,
+            "command_cwds": run.command_cwds,
+            "command_exit_codes": run.command_exit_codes,
         }
-        if candidate_sha is not None:
-            payload["candidate_sha"] = candidate_sha
-        if judgment_reason is not None:
-            payload["judgment_reason"] = judgment_reason
-            payload["reason"] = judgment_reason
+        if header.candidate_sha is not None:
+            payload["candidate_sha"] = header.candidate_sha
+        if header.judgment_reason is not None:
+            payload["judgment_reason"] = header.judgment_reason
+            payload["reason"] = header.judgment_reason
         event_payload = {
             key: value
             for key, value in payload.items()
             if key not in ("failures", "evidence_by_node")
         }
-        self._emit("full.executed", event_payload, command_id=cmd.command_id)
+        self._emit("full.executed", event_payload, command_id=header.cmd.command_id)
         return payload
+
+    def _execute_full_round(
+        self,
+        cmd,
+        state,
+        round_name: str,
+        ledger,
+        candidate_sha: str | None = None,
+        judgment_reason: str | None = None,
+    ) -> dict:
+        header = self._full_round_header(
+            cmd, state, round_name, ledger, candidate_sha, judgment_reason
+        )
+        run = _FullRun(
+            *self._run_full_layers(
+                cmd, round_name, header.sections, header.inventory
+            )
+        )
+        evidence = self._full_round_evidence(header, run)
+        return self._finalize_full_round(header, run, evidence)
 
     def _reconcile_full_failure_wal(self, cmd, state, full_event, ledger) -> None:
         outcomes = self._read_runtime_blob(full_event.payload.get("outcomes_ref"))
