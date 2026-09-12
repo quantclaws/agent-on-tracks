@@ -487,7 +487,21 @@ def readback_ci_run(repo_id: str, workflow: str, candidate_sha: str) -> dict:
             repo_id, workflow, candidate_sha, run=run, head_sha=head_sha,
             run_id=run_id, conclusion=run.get("conclusion"), reason=reason
         )
-    checks, jobs_complete = ({}, False)
+    return _readback_run_outcome(
+        base, repo_id, workflow, candidate_sha, run, head_sha, run_id
+    )
+
+
+def _readback_run_outcome(
+    base: str,
+    repo_id: str,
+    workflow: str,
+    candidate_sha: str,
+    run: dict,
+    head_sha: object,
+    run_id: object,
+) -> dict:
+    """Normalized payload for a completed run, including its job checks."""
     checks, jobs_complete = _workflow_jobs(base, repo_id, run_id)
     status = "passed" if run.get("conclusion") == "success" and jobs_complete else "failed"
     reason = None if jobs_complete else "jobs_incomplete"
