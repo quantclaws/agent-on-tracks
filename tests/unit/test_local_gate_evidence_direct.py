@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import tracks.executor.executor as executor_module
+import tracks.executor.verify_gates as verify_gates_module
 from tests.unit.helpers import git_repo
 from tracks.executor.executor import Executor
 from tracks.executor.host_contract import (
@@ -62,7 +62,7 @@ def _executor(tmp_path: Path, monkeypatch) -> tuple[Executor, Store, HostContrac
         "_load_or_default_contract",
         lambda _cmd, _candidate: (contract, _DIGEST, "fixture"),
     )
-    monkeypatch.setattr(executor_module, "validate_host_contract", lambda *_args: ())
+    monkeypatch.setattr(verify_gates_module, "validate_host_contract", lambda *_args: ())
     monkeypatch.setattr(executor, "_release_version_facts", lambda _state: {})
     return executor, store, contract
 
@@ -139,7 +139,7 @@ def test_each_declared_gate_event_carries_complete_normalized_result(tmp_path, m
         lambda event_type, payload, **_kwargs: emitted.append((event_type, payload)),
     )
     results = iter((_result("quality", "passed", 0), _result("trace", "failed", 7)))
-    monkeypatch.setattr(executor_module, "execute_gate", lambda *_args: next(results))
+    monkeypatch.setattr(verify_gates_module, "execute_gate", lambda *_args: next(results))
 
     ok = executor._execute_verify_gates(
         Command("run_local_gates", command_id="CMD-GATES"),
@@ -177,7 +177,7 @@ def test_reconcile_does_not_skip_gates_for_foreign_passed_evidence(tmp_path, mon
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
@@ -222,7 +222,7 @@ def test_resume_requires_current_contract_and_all_declared_gates(
         store.append("RUN", "v0.8", "local_gate.passed", payload)
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
@@ -272,7 +272,7 @@ def test_resume_does_not_hide_later_failure_behind_an_earlier_pass(tmp_path, mon
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
@@ -314,7 +314,7 @@ def test_resume_rejects_passed_result_without_zero_exit(tmp_path, monkeypatch, e
         )
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
@@ -341,7 +341,7 @@ def test_legacy_evidence_reruns_once_then_new_complete_evidence_reuses(
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
@@ -402,7 +402,7 @@ def test_legacy_failure_requires_all_gates_to_be_newer(tmp_path, monkeypatch):
     )
     seen: list[str] = []
     monkeypatch.setattr(
-        executor_module,
+        verify_gates_module,
         "execute_gate",
         lambda gate, *_args: (seen.append(gate.kind) or _result(gate.kind, "passed", 0)),
     )
