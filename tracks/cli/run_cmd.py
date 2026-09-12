@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import json
 import sys
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -115,20 +116,7 @@ def cmd_start(repo: Path, *args: str) -> int:
         run_id = new_ulid()
         branch = f"releases/{version}"
         store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
-        # B2 (run 01KZTHE7, user ruling): reclaim leaked worktrees exactly once,
-        # at new-run initialization — never at trac run or mid-run. Audited as
-        # an event; empty sweep emits nothing (no noise runs).
-        from tracks.executor.worktree import sweep_worktrees
-
-        swept = sweep_worktrees(str(repo))
-        if swept:
-            store.append(
-                run_id,
-                version,
-                "worktree.swept",
-                {"removed": swept, "count": len(swept)},
-            )
-            print(f"start: swept {len(swept)} stale worktree(s)", flush=True)
+        _sweep_stale_worktrees(store, repo, run_id, version)
         store.append(run_id, version, "stage.entered", {"stage": "M-START"})
         # FR-04: create the release branch as a logged, reconcilable command.
         Executor(store, repo, run_id).issue(
@@ -148,6 +136,24 @@ def cmd_start(repo: Path, *args: str) -> int:
         store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     print(f"run {run_id} started on {branch}")
     return 0
+
+
+def _sweep_stale_worktrees(store: Store, repo: Path, run_id: str, version: str) -> None:
+    # B2 (run 01KZTHE7, user ruling): reclaim leaked worktrees exactly once,
+    # at new-run initialization — never at trac run or mid-run. Audited as
+    # an event; empty sweep emits nothing (no noise runs). Deferred import
+    # avoids a circular dependency at module load.
+    from tracks.executor.worktree import sweep_worktrees
+
+    swept = sweep_worktrees(str(repo))
+    if swept:
+        store.append(
+            run_id,
+            version,
+            "worktree.swept",
+            {"removed": swept, "count": len(swept)},
+        )
+        print(f"start: swept {len(swept)} stale worktree(s)", flush=True)
 
 
 def _parse_start_args(args: tuple[str, ...]) -> tuple[str, str | None]:
@@ -454,17 +460,31 @@ def _review_action_params(action: str, stage: str) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class _HumanCheckpoint:
+    """One Human ResultCheckpoint submit (triage / review)."""
+
+    label: str
+    event_type: str
+    payload: dict
+    verdict: str
+    artifacts: list[str]
+    checks: list[str]
+    requires_diff: bool
+    commit_label: str
+    forbid_diff: bool = False
+    discussion_only: bool = False
+
+
 def _do_human_pipeline(
-    repo, state, store, run_id, label, event_type, payload, verdict,
-    artifacts, checks, requires_diff, commit_label,
-    forbid_diff=False, discussion_only=False,
+    repo, state, store, run_id, checkpoint: _HumanCheckpoint
 ):
     """Run one Human ResultCheckpoint pipeline under the writer lock (triage /
     review). Returns (rc, (final_state, awaiting_before)) or (rc, None) on an
     early rejection. Pre-staged foreign content is unstaged for attribution
     (_scope_staged_attribution); a dirty tree is never refused here (the
     M-VERIFY freeze owns the AC-FR0267-02 exit)."""
-    rc = _scope_staged_attribution(repo, state.version, label)
+    rc = _scope_staged_attribution(repo, state.version, checkpoint.label)
     if rc:
         return rc, None
     awaiting_before = state.awaiting
@@ -472,18 +492,34 @@ def _do_human_pipeline(
     doc = _stage_doc(state.stage)
     ex.submit_human_result(
         state=state,
-        domain_event_type=event_type,
-        payload=payload,
-        verdict=verdict,
-        artifacts=artifacts,
+        domain_event_type=checkpoint.event_type,
+        payload=checkpoint.payload,
+        verdict=checkpoint.verdict,
+        artifacts=checkpoint.artifacts,
         allowed_paths=[doc] if doc else [],
-        checks=checks,
-        requires_diff=requires_diff,
-        commit_label=commit_label,
-        forbid_diff=forbid_diff,
-        discussion_only=discussion_only,
+        checks=checkpoint.checks,
+        requires_diff=checkpoint.requires_diff,
+        commit_label=checkpoint.commit_label,
+        forbid_diff=checkpoint.forbid_diff,
+        discussion_only=checkpoint.discussion_only,
     )
     return 0, (ex.run_pipeline(), awaiting_before)
+
+
+def _triage_checkpoint(repo: Path, state, actor: str | None, decision: str) -> _HumanCheckpoint:
+    """Assemble the triage checkpoint (actor name resolved at submit time)."""
+    doc = _stage_doc(state.stage)
+    artifacts, checks = _triage_artifacts(doc)
+    return _HumanCheckpoint(
+        label="triage",
+        event_type="human.triage",
+        payload={"actor": actor or _human_actor(repo)},
+        verdict=decision,
+        artifacts=artifacts,
+        checks=checks,
+        requires_diff=False,
+        commit_label=f"{state.stage}: human triage ({decision})",
+    )
 
 
 def cmd_triage(repo: Path, *args: str) -> int:
@@ -503,14 +539,8 @@ def cmd_triage(repo: Path, *args: str) -> int:
         state = store.state(run_id)
         if state.awaiting != "triage":
             return _err(f"run not awaiting triage (awaiting={state.awaiting or 'nothing'})")
-        doc = _stage_doc(state.stage)
-        artifacts, checks = _triage_artifacts(doc)
-        actor_name = actor or _human_actor(repo)
-        rc, result = _do_human_pipeline(
-            repo, state, store, run_id, "triage", "human.triage",
-            {"actor": actor_name}, decision, artifacts, checks, False,
-            f"{state.stage}: human triage ({decision})",
-        )
+        checkpoint = _triage_checkpoint(repo, state, actor, decision)
+        rc, result = _do_human_pipeline(repo, state, store, run_id, checkpoint)
         if rc:
             return rc
     return _pipeline_outcome(result, "triage", f"triage recorded: {decision}")
@@ -526,6 +556,25 @@ def _pipeline_outcome(result, label: str, success_line: str) -> int:
         return _err(f"{label} pipeline failed: {reason}")
     print(success_line)
     return 0
+
+
+def _review_checkpoint(repo: Path, state, actor: str | None, action: str) -> _HumanCheckpoint:
+    """Assemble the review checkpoint (action params resolved up front)."""
+    actor_name = actor or _human_actor(repo)
+    doc = _stage_doc(state.stage)
+    params = _review_action_params(action, state.stage)
+    return _HumanCheckpoint(
+        label="review",
+        event_type="human.review",
+        payload={"actor": actor_name},
+        verdict=params["verdict"],
+        artifacts=[doc] if doc else [],
+        checks=params["checks"],
+        requires_diff=params["requires_diff"],
+        commit_label=params["commit_label"],
+        forbid_diff=params["forbid_diff"],
+        discussion_only=params["discussion_only"],
+    )
 
 
 def cmd_review(repo: Path, *args: str) -> int:
@@ -545,16 +594,8 @@ def cmd_review(repo: Path, *args: str) -> int:
         state = store.state(run_id)
         if state.awaiting != "review":
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
-        actor_name = actor or _human_actor(repo)
-        doc = _stage_doc(state.stage)
-        params = _review_action_params(action, state.stage)
-        rc, result = _do_human_pipeline(
-            repo, state, store, run_id, "review", "human.review",
-            {"actor": actor_name}, params["verdict"], [doc] if doc else [],
-            params["checks"], params["requires_diff"], params["commit_label"],
-            forbid_diff=params["forbid_diff"],
-            discussion_only=params["discussion_only"],
-        )
+        checkpoint = _review_checkpoint(repo, state, actor, action)
+        rc, result = _do_human_pipeline(repo, state, store, run_id, checkpoint)
         if rc:
             return rc
     return _pipeline_outcome(result, "review", f"review recorded: {action}")
