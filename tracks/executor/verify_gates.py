@@ -136,43 +136,60 @@ the runtime-materialized default contract lives here."""
             payload = event.payload or {}
             if event.type != "full.executed":
                 continue
-            if payload.get("execution_commit") != candidate_sha:
-                continue
-            if payload.get("passed") is not True or not payload.get("full_f_eligible"):
-                continue
-            selection_seq = payload.get("selection_event_seq")
-            if not isinstance(selection_seq, int) or latest_selection is None:
-                continue
-            if latest_selection.seq != selection_seq:
-                # A newer full selection supersedes the producer, even when it
-                # has no execution proof of its own.
-                continue
-            if event.seq <= selection_seq:
-                continue
-            selection = next((item for item in selections if item.seq == selection_seq), None)
-            if selection is None:
-                continue
-            if event.command_id != selection.command_id:
-                continue
-            if selection.payload.get("selection_id") != payload.get("selection_id"):
-                continue
-            if selection.command_id != payload.get("selection_command_id"):
-                continue
-            if selection.payload.get("commit") != payload.get("execution_commit"):
-                continue
-            if not payload.get("identity_basis") or not payload.get("outcomes_ref"):
-                continue
-            try:
-                outcomes = self._read_runtime_blob(payload["outcomes_ref"])
-            except (OSError, TypeError, ValueError, TestSelectError):
-                continue
-            selected_nodes = {
-                str(node) for node in (selection.payload.get("nodes") or [])
-            }
-            if not self._producer_execution_valid(outcomes, selected_nodes):
-                continue
-            return event, selection
+            selection = self._producer_candidate(
+                event, payload, selections, latest_selection, candidate_sha
+            )
+            if selection is not None:
+                return event, selection
         return None, None
+
+    def _producer_candidate(
+        self, event, payload, selections, latest_selection, candidate_sha
+    ):
+        """The matching selection when *event* is a valid producer, else None."""
+        if payload.get("execution_commit") != candidate_sha:
+            return None
+        if payload.get("passed") is not True or not payload.get("full_f_eligible"):
+            return None
+        selection_seq = payload.get("selection_event_seq")
+        if not isinstance(selection_seq, int) or latest_selection is None:
+            return None
+        if latest_selection.seq != selection_seq:
+            # A newer full selection supersedes the producer, even when it
+            # has no execution proof of its own.
+            return None
+        if event.seq <= selection_seq:
+            return None
+        selection = next(
+            (item for item in selections if item.seq == selection_seq), None
+        )
+        if selection is None or not self._producer_pair_valid(event, selection, payload):
+            return None
+        outcomes = self._producer_outcomes(payload)
+        if outcomes is None:
+            return None
+        selected_nodes = {str(node) for node in (selection.payload.get("nodes") or [])}
+        if not self._producer_execution_valid(outcomes, selected_nodes):
+            return None
+        return selection
+
+    @staticmethod
+    def _producer_pair_valid(event, selection, payload) -> bool:
+        """The event/selection pair binds one and the same execution."""
+        return (
+            event.command_id == selection.command_id
+            and selection.payload.get("selection_id") == payload.get("selection_id")
+            and selection.command_id == payload.get("selection_command_id")
+            and selection.payload.get("commit") == payload.get("execution_commit")
+            and bool(payload.get("identity_basis"))
+            and bool(payload.get("outcomes_ref"))
+        )
+
+    def _producer_outcomes(self, payload):
+        try:
+            return self._read_runtime_blob(payload["outcomes_ref"])
+        except (OSError, TypeError, ValueError, TestSelectError):
+            return None
 
     def _producer_execution_valid(self, outcomes, selected_nodes: set[str]) -> bool:
         """A producer's outcome WAL proves a complete passed-or-waived run.
@@ -242,10 +259,23 @@ the runtime-materialized default contract lives here."""
         evidence (first verification) no judgment event is emitted and the
         local gates run directly -- the reuse vocabulary never fabricates a
         battery that was never run."""
+        producer, evidence, producer_seq, stale_marks, decision = (
+            self._full_f_judgment_inputs(candidate_sha)
+        )
+        if decision.decision == "reuse":
+            return self._emit_full_f_reuse(cmd, candidate_sha, producer, decision)
+        return self._rerun_full_f(
+            cmd, state, candidate_sha, producer, evidence, stale_marks, decision
+        )
+
+    def _full_f_judgment_inputs(self, candidate_sha: str) -> tuple:
+        """Producer evidence + current identity + stale marks + judge decision."""
         producer, selected = self._full_f_producer(candidate_sha)
         evidence = dict(producer.payload) if producer is not None else {}
         try:
-            quadruple = self._current_full_f_identity(selected) if selected is not None else {}
+            quadruple = (
+                self._current_full_f_identity(selected) if selected is not None else {}
+            )
         except (ContractError, OSError, TestSelectError, UnicodeError, ValueError):
             quadruple = {}
         producer_seq = producer.seq if producer is not None else -1
@@ -256,77 +286,84 @@ the runtime-materialized default contract lives here."""
             and event.type in ("candidate.stale", "evidence.staled")
             and (event.payload.get("candidate_sha") in (None, candidate_sha))
         )
-        decision = m_verify.judge_full_f_reuse(candidate_sha, evidence, quadruple, stale_marks)
-        if decision.decision == "reuse":
-            prior = next(
-                (
-                    event
-                    for event in reversed(list(self.store.events(self.run_id)))
-                    if event.type == "evidence.reused"
-                    and event.payload.get("kind") == "full_f"
-                    and event.payload.get("candidate_sha") == candidate_sha
-                    and event.payload.get("source_event_seq") == producer_seq
-                ),
-                None,
-            )
-            if prior is not None and json.dumps(
-                list(decision.identity_basis), sort_keys=True
-            ) == json.dumps(
-                prior.payload.get("identity_basis") or [], sort_keys=True
-            ):
-                return "reused"
+        decision = m_verify.judge_full_f_reuse(
+            candidate_sha, evidence, quadruple, stale_marks
+        )
+        return producer, evidence, producer_seq, stale_marks, decision
+
+    def _emit_full_f_reuse(self, cmd, candidate_sha: str, producer, decision) -> str:
+        prior = next(
+            (
+                event
+                for event in reversed(list(self.store.events(self.run_id)))
+                if event.type == "evidence.reused"
+                and event.payload.get("kind") == "full_f"
+                and event.payload.get("candidate_sha") == candidate_sha
+                and event.payload.get("source_event_seq") == producer.seq
+            ),
+            None,
+        )
+        if prior is not None and json.dumps(
+            list(decision.identity_basis), sort_keys=True
+        ) == json.dumps(
+            prior.payload.get("identity_basis") or [], sort_keys=True
+        ):
+            return "reused"
+        self._emit(
+            "evidence.reused",
+            {
+                "kind": "full_f",
+                "candidate_sha": candidate_sha,
+                "identity_basis": list(decision.identity_basis),
+                "source_event_seq": producer.seq,
+            },
+            command_id=cmd.command_id,
+        )
+        return "reused"
+
+    def _rerun_full_f(
+        self, cmd, state, candidate_sha, producer, evidence, stale_marks, decision
+    ) -> str:
+        if producer is not None and (evidence.get("stale") or stale_marks):
+            # AC-FR0268-03: the rejected FULL_F evidence is marked stale
+            # on the stream (append-only) so replay shows WHY it was not
+            # reused -- a stale rerun is never silent.
             self._emit(
-                "evidence.reused",
+                "evidence.staled",
                 {
-                    "kind": "full_f",
                     "candidate_sha": candidate_sha,
+                    "reason": decision.reason,
+                    "source": "full_f",
                     "identity_basis": list(decision.identity_basis),
-                    "source_event_seq": producer.seq,
                 },
                 command_id=cmd.command_id,
             )
-            return "reused"
-        else:
-            if producer is not None and (evidence.get("stale") or stale_marks):
-                # AC-FR0268-03: the rejected FULL_F evidence is marked stale
-                # on the stream (append-only) so replay shows WHY it was not
-                # reused -- a stale rerun is never silent.
-                self._emit(
-                    "evidence.staled",
-                    {
-                        "candidate_sha": candidate_sha,
-                        "reason": decision.reason,
-                        "source": "full_f",
-                        "identity_basis": list(decision.identity_basis),
-                    },
-                    command_id=cmd.command_id,
-                )
-            ledger = rebuild_ledger(self.store.events(self.run_id))
-            try:
-                full = self._execute_full_round(
-                    cmd,
-                    state or self.store.state(self.run_id),
-                    "FULL_F",
-                    ledger,
-                    candidate_sha=candidate_sha,
-                    judgment_reason=decision.reason,
-                )
-            except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
-                self._emit(
-                    "full.executed",
-                    {
-                        "candidate_sha": candidate_sha,
-                        "passed": False,
-                        "full_f_eligible": False,
-                        "reason": f"rerun_error:{type(exc).__name__}",
-                        "judgment_reason": decision.reason,
-                    },
-                    command_id=cmd.command_id,
-                )
-                return "failed"
-            if not full.get("passed") or not full.get("full_f_eligible"):
-                return "failed"
-            return "rerun"
+        ledger = rebuild_ledger(self.store.events(self.run_id))
+        try:
+            full = self._execute_full_round(
+                cmd,
+                state or self.store.state(self.run_id),
+                "FULL_F",
+                ledger,
+                candidate_sha=candidate_sha,
+                judgment_reason=decision.reason,
+            )
+        except (ContractError, TestSelectError, TestResultError, OSError, UnicodeError) as exc:
+            self._emit(
+                "full.executed",
+                {
+                    "candidate_sha": candidate_sha,
+                    "passed": False,
+                    "full_f_eligible": False,
+                    "reason": f"rerun_error:{type(exc).__name__}",
+                    "judgment_reason": decision.reason,
+                },
+                command_id=cmd.command_id,
+            )
+            return "failed"
+        if not full.get("passed") or not full.get("full_f_eligible"):
+            return "failed"
+        return "rerun"
 
     def _do_judge_full_f_reuse(self, cmd, state, task_id, reconcile):
         """M-VERIFY FULL_F reuse judgment (IF-VERIFY-002, architecture
@@ -559,68 +596,81 @@ the runtime-materialized default contract lives here."""
         scope["candidate_sha"] = candidate_sha
         all_passed = True
         for ordinal, gate in enumerate(contract.local_gates):
-            command = gate.command
-            if gate.source == "guard_registry":
-                resolved_lint = lint_check_command(self.repo)
-                if not resolved_lint:
-                    continue  # skip, never guess
-                command = resolved_lint
-            elif gate.source == "version_decl":
-                if not self._execute_version_decl_gate(
-                    cmd, candidate_sha, contract_digest, contract, state, gate, ordinal
-                ):
-                    all_passed = False
-                continue
-            try:
-                result = execute_gate(
-                    replace(gate, command=command), self.repo, scope
-                )
-            except Exception as err:  # noqa: BLE001 -- fail closed per gate
-                self._emit(
-                    "local_gate.failed",
-                    {
-                        "kind": gate.kind,
-                        "gate_identity": gate_identity(gate.kind, ordinal),
-                        "candidate_sha": candidate_sha,
-                        "contract_digest": contract_digest,
-                        "command_echo": [],
-                        "normalized_result": normalized_result_payload(
-                            NormalizedGateResult(
-                                gate_id=gate.kind,
-                                result_version=1,
-                                status="failed",
-                                exit_code=None,
-                                summary={"error": str(err)},
-                            )
-                        ),
-                        "reason": "unknown",
-                        "detail": str(err),
-                    },
-                    command_id=cmd.command_id,
-                )
+            if not self._run_one_local_gate(
+                cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope
+            ):
                 all_passed = False
-                continue
-            payload = {
+        return all_passed
+
+    def _run_one_local_gate(
+        self, cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope
+    ) -> bool:
+        """Execute one declared gate; False when it failed (skip = True)."""
+        command = gate.command
+        if gate.source == "guard_registry":
+            resolved_lint = lint_check_command(self.repo)
+            if not resolved_lint:
+                return True  # skip, never guess
+            command = resolved_lint
+        elif gate.source == "version_decl":
+            return self._execute_version_decl_gate(
+                cmd, candidate_sha, contract_digest, contract, state, gate, ordinal
+            )
+        try:
+            result = execute_gate(replace(gate, command=command), self.repo, scope)
+        except Exception as err:  # noqa: BLE001 -- fail closed per gate
+            self._emit_gate_exec_error(
+                cmd, gate, ordinal, candidate_sha, contract_digest, err
+            )
+            return False
+        payload = self._local_gate_payload(
+            gate, ordinal, candidate_sha, contract_digest, result
+        )
+        if result.status == "passed":
+            self._emit("local_gate.passed", payload, command_id=cmd.command_id)
+            return True
+        payload["reason"] = (
+            "malformed" if result.status == "malformed" else "failed"
+        )
+        self._emit("local_gate.failed", payload, command_id=cmd.command_id)
+        return False
+
+    def _emit_gate_exec_error(
+        self, cmd, gate, ordinal, candidate_sha, contract_digest, err
+    ) -> None:
+        self._emit(
+            "local_gate.failed",
+            {
                 "kind": gate.kind,
                 "gate_identity": gate_identity(gate.kind, ordinal),
                 "candidate_sha": candidate_sha,
                 "contract_digest": contract_digest,
-                "command_echo": list(result.command_echo or ()),
-                "normalized_result": normalized_result_payload(result),
-                "status": result.status,
-                "exit_code": result.exit_code,
-                "summary": result.summary,
-            }
-            if result.status == "passed":
-                self._emit(
-                    "local_gate.passed", payload, command_id=cmd.command_id
-                )
-            else:
-                payload["reason"] = (
-                    "malformed" if result.status == "malformed" else "failed"
-                )
-                self._emit(
-                    "local_gate.failed", payload, command_id=cmd.command_id
-                )
-                all_passed = False
-        return all_passed
+                "command_echo": [],
+                "normalized_result": normalized_result_payload(
+                    NormalizedGateResult(
+                        gate_id=gate.kind,
+                        result_version=1,
+                        status="failed",
+                        exit_code=None,
+                        summary={"error": str(err)},
+                    )
+                ),
+                "reason": "unknown",
+                "detail": str(err),
+            },
+            command_id=cmd.command_id,
+        )
+
+    @staticmethod
+    def _local_gate_payload(gate, ordinal, candidate_sha, contract_digest, result) -> dict:
+        return {
+            "kind": gate.kind,
+            "gate_identity": gate_identity(gate.kind, ordinal),
+            "candidate_sha": candidate_sha,
+            "contract_digest": contract_digest,
+            "command_echo": list(result.command_echo or ()),
+            "normalized_result": normalized_result_payload(result),
+            "status": result.status,
+            "exit_code": result.exit_code,
+            "summary": result.summary,
+        }
