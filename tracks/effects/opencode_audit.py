@@ -167,37 +167,21 @@ class OpencodeAuditMixin:
         doc_offending = self._check_doc_deltas(
             auditor, self._commentable_doc_paths(role), agent_changed
         )
-        # ``_is_allowed`` only matches exact/prefix paths; repo-root trust
-        # (``"."`` in the allowed set) must short-circuit to no over-reach,
-        # mirroring Auditor.audit's FR-030 coarse-grain semantics.
-        if "." in auditor.allowed:
-            over_paths: list[str] = []
-        else:
-            over_paths = sorted(p for p in agent_changed if not auditor._is_allowed(p))
+        over_paths = self._overreach_paths(auditor, agent_changed)
         scaffold_offending = self._scaffold_offending(
             auditor, scaffold_baseline, doc_paths, author_assignment
         )
         if not (doc_offending or over_paths or scaffold_offending):
             return None
         if scaffold_offending and not (doc_offending or over_paths):
-            # Only the undeclared scaffold writes are non-compliant; the
-            # declared target docs are compliant and MUST be preserved (user
-            # contract: revert only non-compliant files, never the framework
-            # files inside the declared doc-set). Roll back ONLY the offending
-            # paths and tell the Agent exactly what was reverted and why, so
-            # the re-dispatch does not recreate them. Restoring to the
-            # pre-dispatch snapshot (not HEAD) is handled by the Auditor's
-            # baseline capture for any pre-dirty offending path.
-            rolled = auditor.rollback_agent_changes(
-                baseline, new_changes=set(scaffold_offending), force=True
-            )
-            return self._undeclared_scaffold_result(
-                diff_ref,
+            return self._undeclared_scaffold_failure(
+                auditor,
+                baseline,
                 scaffold_offending,
+                diff_ref,
                 proc,
                 prompt,
                 console_input,
-                rolled=rolled,
             )
         # A non-discussion doc edit or a true over-reach invalidates the whole
         # run (not just the offending paths): force-roll back every
@@ -211,6 +195,48 @@ class OpencodeAuditMixin:
             console_input,
             evidence=self._overreach_evidence(doc_offending, over_paths),
         )
+
+    def _undeclared_scaffold_failure(
+        self,
+        auditor: Auditor,
+        baseline: set[str],
+        scaffold_offending: list[str],
+        diff_ref: str | None,
+        proc: subprocess.CompletedProcess,
+        prompt: str,
+        console_input: str | None,
+    ) -> dict:
+        # Only the undeclared scaffold writes are non-compliant; the declared
+        # target docs are compliant and MUST be preserved (user contract:
+        # revert only non-compliant files, never the framework files inside
+        # the declared doc-set). Roll back ONLY the offending paths and tell
+        # the Agent exactly what was reverted and why, so the re-dispatch does
+        # not recreate them. Restoring to the pre-dispatch snapshot (not HEAD)
+        # is handled by the Auditor's baseline capture for any pre-dirty
+        # offending path.
+        rolled = auditor.rollback_agent_changes(
+            baseline, new_changes=set(scaffold_offending), force=True
+        )
+        return self._undeclared_scaffold_result(
+            diff_ref,
+            scaffold_offending,
+            proc,
+            prompt,
+            console_input,
+            rolled=rolled,
+        )
+
+    @staticmethod
+    def _overreach_paths(auditor: Auditor, agent_changed: set[str]) -> list[str]:
+        """Agent-attributable paths outside the allowed set.
+
+        ``_is_allowed`` only matches exact/prefix paths; repo-root trust
+        (``"."`` in the allowed set) must short-circuit to no over-reach,
+        mirroring Auditor.audit's FR-030 coarse-grain semantics.
+        """
+        if "." in auditor.allowed:
+            return []
+        return sorted(p for p in agent_changed if not auditor._is_allowed(p))
 
     @staticmethod
     def _overreach_evidence(doc_offending: list[str], over_paths: list[str]) -> str:
