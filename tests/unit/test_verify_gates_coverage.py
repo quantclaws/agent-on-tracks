@@ -549,38 +549,32 @@ def test_execute_verify_gates_order_and_scope(tmp_path: Path):
     assert seen == [0, 1]
 
 
-def test_run_one_local_gate_registry_without_command_fails_closed(tmp_path: Path, monkeypatch):
+def test_run_one_local_gate_registry_without_version_fails_closed(tmp_path: Path):
     host = _Host(tmp_path)
-    monkeypatch.setattr(verify_gates, "lint_check_command", lambda repo: None)
     gate = SimpleNamespace(command="", source="guard_registry", kind="quality")
-    assert host._run_one_local_gate(_cmd(), "SHA", "D", SimpleNamespace(), State(), 0, gate, {}) is False
+    assert host._run_one_local_gate(_cmd(), "SHA", "D", None, State(), 0, gate, {}) is False
     assert host.emitted[0][0] == "local_gate.failed"
     assert host.emitted[0][1]["reason"] == "unknown"
     assert "guard_registry" in host.emitted[0][1]["detail"]
 
 
-def test_run_one_local_gate_registry_resolves_lint(tmp_path: Path, monkeypatch):
+def test_run_one_local_gate_registry_resolves_active_version(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
-    monkeypatch.setattr(verify_gates, "lint_check_command", lambda repo: "ruff check")
+    host.store.home = host.repo / ".tracks"
     captured = {}
 
-    def _execute(gate, repo, scope):
-        captured["command"] = gate.command
+    def _execute(gate, repo, architecture, scope):
+        captured["architecture"] = architecture
         return SimpleNamespace(
-            status="passed", command_echo=("ruff",), exit_code=0, summary={}
+            status="passed", command_echo=(), exit_code=0, summary={}
         )
 
-    monkeypatch.setattr(verify_gates, "execute_gate", _execute)
-    gate = LocalGateDecl(
-        kind="quality",
-        source="guard_registry",
-        command="",
-        categories=(),
-        result_channel="exit_code",
-        timeout_seconds=1,
-    )
-    assert host._run_one_local_gate(_cmd(), "SHA", "D", SimpleNamespace(), State(), 0, gate, {}) is True
-    assert captured["command"] == "ruff check"
+    monkeypatch.setattr(verify_gates, "execute_registry_gate", _execute)
+    gate = LocalGateDecl("quality", "guard_registry", "", ("lint_format",), "exit_code", 1)
+    assert host._run_one_local_gate(
+        _cmd(), "SHA", "D", None, State(version="v0.8"), 0, gate, {}
+    ) is True
+    assert captured["architecture"] == host.store.home / "projects/v0.8/architecture.md"
     assert host.emitted[0][0] == "local_gate.passed"
 
 

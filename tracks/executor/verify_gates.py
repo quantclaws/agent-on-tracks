@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
 
 import tomllib
 
@@ -24,6 +23,7 @@ from tracks.executor.local_gate_evidence import (
     has_complete_passed_gates,
     normalized_result_payload,
 )
+from tracks.executor.registry_gate import execute_registry_gate
 from tracks.executor.test_select import (
     TestResultError,
     TestSelectError,
@@ -31,7 +31,7 @@ from tracks.executor.test_select import (
     rebuild_ledger,
 )
 from tracks.kernel.events import Command
-from tracks.project import ContractError, lint_check_command, load_contract
+from tracks.project import ContractError, load_contract
 
 # Runtime-materialized host contract (IF-HOSTCONTRACT-001): when the host
 # declares no ``[host-contract]`` table of its own, the M-VERIFY chain
@@ -584,7 +584,7 @@ the runtime-materialized default contract lives here."""
 
         Source-based gates resolve their executable through the declared
         single truth: ``source=guard_registry`` quality gates resolve via
-        ``lint_check_command`` (the project's declared [lint] command);
+        the canonical registry and every requested category;
         ``source=version_decl`` gates are executed natively by the Runtime
         (tag-template derivation + remote absence probe, see
         :meth:`_execute_version_decl_gate`). A registry gate that resolves to
@@ -606,22 +606,19 @@ the runtime-materialized default contract lives here."""
         self, cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope
     ) -> bool:
         """Execute one declared gate; missing commands fail closed."""
-        command = gate.command
-        if gate.source == "guard_registry":
-            resolved_lint = lint_check_command(self.repo)
-            if not resolved_lint:
-                self._emit_gate_exec_error(
-                    cmd, gate, ordinal, candidate_sha, contract_digest,
-                    ValueError("guard_registry has no declared lint command"),
-                )
-                return False
-            command = resolved_lint
-        elif gate.source == "version_decl":
+        if gate.source == "version_decl":
             return self._execute_version_decl_gate(
                 cmd, candidate_sha, contract_digest, contract, state, gate, ordinal
             )
         try:
-            result = execute_gate(replace(gate, command=command), self.repo, scope)
+            if gate.source == "guard_registry":
+                version = state.version or getattr(self, "version", None)
+                if not version:
+                    raise ValueError("guard_registry requires the active version")
+                architecture = paths.version_dir(self.store.home, version) / "architecture.md"
+                result = execute_registry_gate(gate, self.repo, architecture, scope)
+            else:
+                result = execute_gate(gate, self.repo, scope)
         except Exception as err:  # noqa: BLE001 -- fail closed per gate
             self._emit_gate_exec_error(
                 cmd, gate, ordinal, candidate_sha, contract_digest, err
