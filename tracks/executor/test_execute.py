@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
@@ -32,6 +33,17 @@ from tracks.executor.validate import required_ac_ids
 from tracks.project import ContractError, load_contract
 
 
+@dataclass(frozen=True)
+class _RedCheckSelection:
+    """SELECT_R2 inputs of one RED_CHECK command."""
+
+    contract: object
+    sections: list
+    baseline_id: object
+    selected_by_layer: dict
+    selected_all: list
+
+
 class ExecTestRunMixin:
     """run_tests / collect / red-check / check-trace / commit-tests handlers."""
 
@@ -52,33 +64,19 @@ class ExecTestRunMixin:
         the sole per-node authority."""
         if reconcile and state.red_validated:
             return
-        try:
-            contract = load_contract(self.repo)
-            sections = _contract_sections(contract)
-            baseline_id, selected_by_layer, selected_all = self._selection_context()
-            require_nonempty_r2_selection(
-                _R2_SCOPE,
-                selected_all,
-                allow_explicit_unit_increment=self._has_persisted_unit_only_increment(),
-            )
-        except EmptyR2SelectionError:
-            self._emit_empty_r2_failure(cmd, state)
+        selection = self._red_check_selection(cmd, state)
+        if selection is None:
             return
-        except (ContractError, TestSelectError) as exc:
-            reason = f"contract error: {exc.reason}" if isinstance(exc, ContractError) else str(exc)
-            self._emit_contract_error_red(cmd, state, reason)
-            return
-
         commit = git(self.repo, "rev-parse", "HEAD", check=False).stdout.strip()
         # Review-5: dirty worktree content is stamped separately from commit
         # so two selections over the same node set + HEAD with different
         # uncommitted R2 content never share a selection identity.
         tree_stamp = self._dirty_tree_stamp()
         selection_id = make_selection_id(
-            nodes=selected_all,
+            nodes=selection.selected_all,
             scope=_R2_SCOPE,
             basis=_R2_BASIS,
-            baseline=str(baseline_id or ""),
+            baseline=str(selection.baseline_id or ""),
             commit=commit,
             tree_stamp=tree_stamp,
         )
@@ -96,7 +94,11 @@ class ExecTestRunMixin:
             None,
         )
         stale_keys = self._stale_selection_fields(
-            persisted_selection, selection_id, tree_stamp, baseline_id, selected_all
+            persisted_selection,
+            selection_id,
+            tree_stamp,
+            selection.baseline_id,
+            selection.selected_all,
         )
         if stale_keys:
             self._emit_stale_selection_failure(
@@ -106,12 +108,12 @@ class ExecTestRunMixin:
                 stale_keys,
                 selection_id,
                 tree_stamp,
-                baseline_id,
-                selected_all,
+                selection.baseline_id,
+                selection.selected_all,
             )
             return
         nodes_blob = self._persist_selection_nodes(
-            cmd, state, selected_by_layer, selected_all
+            cmd, state, selection.selected_by_layer, selection.selected_all
         )
         if nodes_blob is None:
             return
@@ -119,15 +121,52 @@ class ExecTestRunMixin:
         # this command has not already emitted it (deterministic identity).
         if persisted_selection is None:
             self._emit_test_selected(
-                cmd, baseline_id, selected_all, nodes_blob, commit, tree_stamp, selection_id
+                cmd,
+                selection.baseline_id,
+                selection.selected_all,
+                nodes_blob,
+                commit,
+                tree_stamp,
+                selection_id,
             )
 
-        if not selected_all:
+        if not selection.selected_all:
             self._emit_unit_only_increment_valid(cmd, selection_id, nodes_blob)
             return
 
         self._execute_red_check(
-            cmd, state, sections, selected_by_layer, selection_id, nodes_blob
+            cmd,
+            state,
+            selection.sections,
+            selection.selected_by_layer,
+            selection_id,
+            nodes_blob,
+        )
+
+    def _red_check_selection(self, cmd, state):
+        """SELECT_R2 inputs, or None after emitting the failure verdict."""
+        try:
+            contract = load_contract(self.repo)
+            sections = _contract_sections(contract)
+            baseline_id, selected_by_layer, selected_all = self._selection_context()
+            require_nonempty_r2_selection(
+                _R2_SCOPE,
+                selected_all,
+                allow_explicit_unit_increment=self._has_persisted_unit_only_increment(),
+            )
+        except EmptyR2SelectionError:
+            self._emit_empty_r2_failure(cmd, state)
+            return None
+        except (ContractError, TestSelectError) as exc:
+            reason = (
+                f"contract error: {exc.reason}"
+                if isinstance(exc, ContractError)
+                else str(exc)
+            )
+            self._emit_contract_error_red(cmd, state, reason)
+            return None
+        return _RedCheckSelection(
+            contract, sections, baseline_id, selected_by_layer, selected_all
         )
 
     def _emit_empty_r2_failure(self, cmd, state) -> None:
@@ -548,33 +587,9 @@ class ExecTestRunMixin:
                     # A declared layer without R2 delta never executes here:
                     # M-TEST runs neither the full run command nor R1 history.
                     continue
-                cwd = self.repo / section.cwd if section.cwd != "." else self.repo
-                result_path = self._result_staging_path(cmd.command_id, name)
-                staged_results.append(result_path)
-                # Review-4: pre-existing XML at this command/layer path is a
-                # previous attempt's record -- poison, not evidence. Unlink it
-                # so a command writing no fresh result fails closed on the
-                # missing file instead of reusing stale records.
-                result_path.unlink(missing_ok=True)
-                argv = resolve_selected_command(
-                    section.run_selected, nodes, str(result_path), cwd
+                mapping = self._run_layer_command(
+                    cmd, name, section, nodes, staged_results, logs
                 )
-                if not audit_selection_argv(
-                    section.run_selected, nodes, str(result_path), list(argv), cwd
-                ):
-                    raise TestSelectError(
-                        f"[{name}] executed argv diverges from the contract's "
-                        "run_selected expansion (injected argument)"
-                    )
-                proc = subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True)
-                logs[name] = {
-                    "returncode": proc.returncode,
-                    "command_echo": list(argv),
-                    "stdout": proc.stdout[-8000:],
-                    "stderr": proc.stderr[-8000:],
-                }
-                cases = parse_test_result(result_path)
-                mapping = require_exact_node_coverage(cases, nodes)
                 if not self._record_layer_outcomes(
                     nodes, mapping, outcomes, findings, oob_files
                 ):
@@ -585,18 +600,51 @@ class ExecTestRunMixin:
             # (red.validated invalid + verdict.failed), never a raw crash.
             return [], [], False, f"{type(exc).__name__}: {exc}"
         finally:
-            # FA-4 (final review pin): the per-command staging XML is consumed
-            # evidence, not residue -- unlink it after a normal parse success
-            # AND after every handled failure so one attempt's record never
-            # leaks into the next; then remove the per-run staging directory
-            # when it is empty ("when possible": a non-empty dir keeps other
-            # commands' live results and stays).
-            for staged in staged_results:
-                staged.unlink(missing_ok=True)
-            if staged_results:
-                with contextlib.suppress(OSError):
-                    staged_results[0].parent.rmdir()
+            self._cleanup_staged_results(staged_results)
         return outcomes, findings, all_legit, None
+
+    def _run_layer_command(self, cmd, name, section, nodes, staged_results, logs):
+        """Execute one layer's selected nodes; returns the node→case mapping."""
+        cwd = self.repo / section.cwd if section.cwd != "." else self.repo
+        result_path = self._result_staging_path(cmd.command_id, name)
+        staged_results.append(result_path)
+        # Review-4: pre-existing XML at this command/layer path is a
+        # previous attempt's record -- poison, not evidence. Unlink it
+        # so a command writing no fresh result fails closed on the
+        # missing file instead of reusing stale records.
+        result_path.unlink(missing_ok=True)
+        argv = resolve_selected_command(
+            section.run_selected, nodes, str(result_path), cwd
+        )
+        if not audit_selection_argv(
+            section.run_selected, nodes, str(result_path), list(argv), cwd
+        ):
+            raise TestSelectError(
+                f"[{name}] executed argv diverges from the contract's "
+                "run_selected expansion (injected argument)"
+            )
+        proc = subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True)
+        logs[name] = {
+            "returncode": proc.returncode,
+            "command_echo": list(argv),
+            "stdout": proc.stdout[-8000:],
+            "stderr": proc.stderr[-8000:],
+        }
+        cases = parse_test_result(result_path)
+        return require_exact_node_coverage(cases, nodes)
+
+    def _cleanup_staged_results(self, staged_results: list[Path]) -> None:
+        # FA-4 (final review pin): the per-command staging XML is consumed
+        # evidence, not residue -- unlink it after a normal parse success
+        # AND after every handled failure so one attempt's record never
+        # leaks into the next; then remove the per-run staging directory
+        # when it is empty ("when possible": a non-empty dir keeps other
+        # commands' live results and stays).
+        for staged in staged_results:
+            staged.unlink(missing_ok=True)
+        if staged_results:
+            with contextlib.suppress(OSError):
+                staged_results[0].parent.rmdir()
 
     @staticmethod
     def _record_layer_outcomes(
@@ -697,72 +745,93 @@ class ExecTestRunMixin:
         plan-level closure (check_hotfix_plan_closure) on the anchor AC set."""
         if reconcile and state.trace_passed:
             return
-        from tracks.checks.trace import check_trace_full_file  # lazy: avoid circular import
-        from tracks.executor.test_tasks import parse_hotfix_unit_rows
-
         vdir = self._vdir()
         tests_dir = self.repo / "tests"
+        report, blocking = self._trace_report(cmd, state, vdir, tests_dir)
+        self._emit_trace_verdict(cmd, state, report, blocking)
+
+    def _trace_report(self, cmd, state, vdir: Path, tests_dir: Path) -> tuple[object, list[str]]:
+        """Build the trace closure report + its blocking hard errors."""
+        from tracks.checks.trace import check_trace_full_file  # lazy: avoid circular import
+
         if cmd.params.get("hotfix"):
-            plan_path = vdir / "test-plan.md"
-            plan_text = (
-                plan_path.read_text(encoding="utf-8", errors="replace")
-                if plan_path.exists()
-                else ""
-            )
-            unit_rows = parse_hotfix_unit_rows(plan_text)
-            report = check_trace_full_file(
-                vdir,
-                tests_dir,
-                hotfix_ctx={
-                    "projects_dir": str(paths.projects_dir(self.store.home)),
-                    "run_id": self.run_id,
-                    "anchor_acs": list(state.hotfix_anchor_acs or []),
-                    "declared_unit_rows": unit_rows,
-                },
-            )
-            blocking = list(report.hard_errors)
+            report, unit_rows = self._hotfix_trace_report(vdir, tests_dir, state)
             if report.status == "pass":
                 self._emit(
                     "increment.declared",
                     {"shield": "empty", "unit_rows": unit_rows, "trace_status": "pass"},
                     command_id=cmd.command_id,
                 )
-        else:
-            # IF-HOTFIX-007: a hotfix run WITH Shield integration tests still
-            # needs the plan-level hotfix trace closure (cross-version AC
-            # markers resolve via the target version dir, not the delta dir).
-            # Without hotfix_ctx the delta-dir check sees anchored ACs as
-            # unbound (PRISM-V06-R16-01, T-004). No increment.declared (that
-            # is empty-shield only; this path has Shield tests committed).
-            if getattr(state, "hotfix_anchor_acs", None):
-                increment = next(
-                    (
-                        ev.payload
-                        for ev in reversed(list(self.store.events(self.run_id)))
-                        if ev.type == "increment.declared"
-                    ),
-                    None,
-                )
-                unit_rows = increment.get("unit_rows", []) if increment else []
-                report = check_trace_full_file(
-                    vdir,
-                    tests_dir,
-                    hotfix_ctx={
-                        "projects_dir": str(paths.projects_dir(self.store.home)),
-                        "run_id": self.run_id,
-                        "anchor_acs": list(state.hotfix_anchor_acs or []),
-                        "declared_unit_rows": unit_rows,
-                    },
-                )
-                blocking = list(report.hard_errors)
-            else:
-                report = check_trace_full_file(vdir, tests_dir)
-                required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
-                blocking = (
-                    [e for e in report.hard_errors if any(rid in e for rid in required)]
-                    if required
-                    else list(report.hard_errors)
-                )
+            return report, list(report.hard_errors)
+        # IF-HOTFIX-007: a hotfix run WITH Shield integration tests still
+        # needs the plan-level hotfix trace closure (cross-version AC
+        # markers resolve via the target version dir, not the delta dir).
+        # Without hotfix_ctx the delta-dir check sees anchored ACs as
+        # unbound (PRISM-V06-R16-01, T-004). No increment.declared (that
+        # is empty-shield only; this path has Shield tests committed).
+        if getattr(state, "hotfix_anchor_acs", None):
+            report = self._anchored_hotfix_trace_report(vdir, tests_dir, state)
+            return report, list(report.hard_errors)
+        report = check_trace_full_file(vdir, tests_dir)
+        required = required_ac_ids(vdir / "acceptance.md", vdir / "test-plan.md")
+        blocking = (
+            [e for e in report.hard_errors if any(rid in e for rid in required)]
+            if required
+            else list(report.hard_errors)
+        )
+        return report, blocking
+
+    def _hotfix_trace_report(
+        self, vdir: Path, tests_dir: Path, state
+    ) -> tuple[object, list]:
+        """Empty-Shield hotfix closure over the plan's declared unit rows."""
+        from tracks.checks.trace import check_trace_full_file
+        from tracks.executor.test_tasks import parse_hotfix_unit_rows
+
+        plan_path = vdir / "test-plan.md"
+        plan_text = (
+            plan_path.read_text(encoding="utf-8", errors="replace")
+            if plan_path.exists()
+            else ""
+        )
+        unit_rows = parse_hotfix_unit_rows(plan_text)
+        report = check_trace_full_file(
+            vdir,
+            tests_dir,
+            hotfix_ctx={
+                "projects_dir": str(paths.projects_dir(self.store.home)),
+                "run_id": self.run_id,
+                "anchor_acs": list(state.hotfix_anchor_acs or []),
+                "declared_unit_rows": unit_rows,
+            },
+        )
+        return report, unit_rows
+
+    def _anchored_hotfix_trace_report(self, vdir: Path, tests_dir: Path, state) -> object:
+        """Plan-level hotfix closure carrying the run's anchor AC set."""
+        from tracks.checks.trace import check_trace_full_file
+
+        increment = next(
+            (
+                ev.payload
+                for ev in reversed(list(self.store.events(self.run_id)))
+                if ev.type == "increment.declared"
+            ),
+            None,
+        )
+        unit_rows = increment.get("unit_rows", []) if increment else []
+        return check_trace_full_file(
+            vdir,
+            tests_dir,
+            hotfix_ctx={
+                "projects_dir": str(paths.projects_dir(self.store.home)),
+                "run_id": self.run_id,
+                "anchor_acs": list(state.hotfix_anchor_acs or []),
+                "declared_unit_rows": unit_rows,
+            },
+        )
+
+    def _emit_trace_verdict(self, cmd, state, report, blocking: list[str]) -> None:
         if not blocking:
             self._emit(
                 "verdict.passed",
