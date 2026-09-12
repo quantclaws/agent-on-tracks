@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
 
 from tracks import paths
@@ -22,6 +23,15 @@ _PHASE0_BASELINE_DOCS = (
     "interfaces.md",
     "test-plan.md",
 )
+
+
+@dataclass(frozen=True)
+class _Phase0Inputs:
+    """Collected baseline inventory + per-node source digests."""
+
+    node_layer: dict
+    nodes: list
+    node_digests: dict
 
 
 def _phase0_baseline_version(version: str | None) -> str | None:
@@ -129,6 +139,20 @@ class ExecPhase0Mixin:
             ], [str(arch)], True
         return [], [str(arch)], True
 
+    def _phase0_repair_adapter(self, contract):
+        """Resolve the adapter that must execute the repair (fail closed)."""
+        section = getattr(contract, "integration", None) or contract.unit
+        from tracks.adapters.base import UnknownAdapterError, resolve_adapter
+
+        declared = contract.adapter
+        if declared is None:
+            raise UnknownAdapterError(
+                "host project contract declares no [adapter] section "
+                "(IF-ADAPTER-001); the executor consumes only the host "
+                "declaration and never a built-in reference adapter"
+            )
+        return section, resolve_adapter(declared.id, declared.protocol, declared.version)
+
     def _repair_phase0_gap(
         self, cmd, gap, baseline_version: str, node_digests: dict
     ) -> None:
@@ -143,19 +167,7 @@ class ExecPhase0Mixin:
         R2 scope/basis) plus the command echo of the executed argv -- so the
         evidence cannot be forged as canned identity strings."""
         contract = load_contract(self.repo)
-        section = getattr(contract, "integration", None) or contract.unit
-        from tracks.adapters.base import UnknownAdapterError, resolve_adapter
-
-        declared = contract.adapter
-        if declared is None:
-            raise UnknownAdapterError(
-                "host project contract declares no [adapter] section "
-                "(IF-ADAPTER-001); the executor consumes only the host "
-                "declaration and never a built-in reference adapter"
-            )
-        adapter = resolve_adapter(
-            declared.id, declared.protocol, declared.version
-        )
+        section, adapter = self._phase0_repair_adapter(contract)
         cwd = (
             Path(self.repo)
             if section.cwd == "."
@@ -231,9 +243,6 @@ class ExecPhase0Mixin:
         rebuilds the identical phase0_status/seal/blocked fields."""
         if reconcile and state.phase0_status in ("SEALED", "BLOCKED"):
             return
-        from tracks.executor.phase0 import judge_real_coverage, scan_trace_gaps
-        from tracks.executor.test_select import TestSelectError
-
         baseline_version = _phase0_baseline_version(self.version)
         if baseline_version is None:
             self._emit_phase0_blocked(
@@ -243,19 +252,43 @@ class ExecPhase0Mixin:
                 True,
             )
             return
+        inputs = self._phase0_validation_inputs(cmd, baseline_version)
+        if inputs is None:
+            return
+        baseline_dir = paths.projects_dir(self.store.home) / baseline_version
+        planned = self._phase0_scan(cmd, baseline_version, baseline_dir, inputs.node_digests)
+        if planned is None:
+            return
+        if not self._phase0_coverage_gate(cmd, planned, inputs):
+            return
+        if self._phase0_guard_harden(cmd, baseline_version, baseline_dir):
+            return
+        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+
+    def _phase0_validation_inputs(self, cmd, baseline_version: str):
+        """Collect the baseline inventory + per-node digests, or None (blocked)."""
+        from tracks.executor.test_select import TestSelectError
+
         node_layer, collect_error = self._collect_all_declared_layers(
             capture_absent_ok=True
         )
         if collect_error is not None:
             self._emit_phase0_blocked(cmd, "collect_failed", collect_error, True)
-            return
+            return None
         nodes = sorted(node_layer)
         try:
             node_digests = collect_node_source_digests(Path(self.repo), nodes)
         except TestSelectError as exc:
             self._emit_phase0_blocked(cmd, "identity_unrecoverable", str(exc), True)
-            return
-        baseline_dir = paths.projects_dir(self.store.home) / baseline_version
+            return None
+        return _Phase0Inputs(node_layer, nodes, node_digests)
+
+    def _phase0_scan(
+        self, cmd, baseline_version: str, baseline_dir: Path, node_digests: dict
+    ):
+        """Gap scan + marker-only repairs; returns the planned bindings or None."""
+        from tracks.executor.phase0 import scan_trace_gaps
+
         planned = _phase0_planned_bindings(baseline_dir)
         approved = _phase0_approved_acs(baseline_dir)
         gaps = scan_trace_gaps(baseline_version, approved, planned, node_digests, {})
@@ -267,32 +300,36 @@ class ExecPhase0Mixin:
                 "; ".join(f"{gap.ac}: {gap.planned_node_id}" for gap in fatal),
                 False,
             )
-            return
+            return None
         # Marker-only gaps (planned node collected with a real digest but no
         # persisted evidence) are REPAIRED into real collected-node evidence
         # before the run may continue; a repair-less seal is illegal (§1d).
         for gap in gaps:
             if gap.reason == "marker_only" and gap.planned_node_id in node_digests:
                 self._repair_phase0_gap(cmd, gap, baseline_version, node_digests)
+        return planned
+
+    def _phase0_coverage_gate(self, cmd, planned: dict, inputs) -> bool:
+        """Collected-coverage gate; False when the run was parked."""
+        from tracks.executor.phase0 import judge_real_coverage
+
         planned_nodes = set(planned.values())
         ratio = (
-            len([node for node in planned_nodes if node_digests.get(node)])
+            len([node for node in planned_nodes if inputs.node_digests.get(node)])
             / len(planned_nodes)
             if planned_nodes
             else 1.0
         )
         judgement = judge_real_coverage(ratio, 1.0, ())
         self._phase0_emit_coverage(
-            cmd, judgement, ratio, node_layer, node_digests, nodes
+            cmd, judgement, ratio, inputs.node_layer, inputs.node_digests, inputs.nodes
         )
         if not judgement.passed:
             self._emit_phase0_blocked(
                 cmd, "coverage_below_threshold", judgement.reason or "", True
             )
-            return
-        if self._phase0_guard_harden(cmd, baseline_version, baseline_dir):
-            return
-        self._emit_phase0_sealed(cmd, baseline_version, baseline_dir)
+            return False
+        return True
 
     def _phase0_emit_coverage(
         self, cmd, judgement, ratio: float, node_layer, node_digests, nodes
