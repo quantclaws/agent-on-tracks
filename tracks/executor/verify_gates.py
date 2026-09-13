@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
 import tomllib
 
@@ -13,17 +14,22 @@ from tracks.executor import m_verify
 from tracks.executor.helpers import git
 from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
+    LocalGateDecl,
     NormalizedGateResult,
     execute_gate,
     load_host_contract,
+    resolve_artifact_identity,
     validate_host_contract,
 )
 from tracks.executor.local_gate_evidence import (
+    auxiliary_gate_identities,
+    auxiliary_phases_passed,
     gate_identity,
     has_complete_passed_gates,
     normalized_result_payload,
 )
 from tracks.executor.registry_gate import execute_registry_gate
+from tracks.executor.release_gate import complete_version_facts
 from tracks.executor.test_select import (
     TestResultError,
     TestSelectError,
@@ -530,12 +536,13 @@ the runtime-materialized default contract lives here."""
         """Shared contract-gate face of M-VERIFY (IF-VERIFY-003): load +
         validate the host contract (the runtime-materialized default when
         the host declares none — IF-HOSTCONTRACT-001), materialize it and
-        execute every declared local gate in order. Malformed contracts
-        and any failing gate fail closed (host_contract.invalid /
+        execute every declared local gate in order, then the declared
+        install -> build -> smoke phases (D1). Malformed contracts and any
+        failing gate/phase fail closed (host_contract.invalid /
         local_gate.failed; the chain stays blocked, §1.0.4 -- never a
         guessed command). Returns (contract, contract_digest) only when
-        every gate is green, else (None, None). resume=True (park evidence
-        chain) reuses existing passed-gate evidence for the same candidate
+        everything is green, else (None, None). resume=True (park evidence
+        chain) reuses existing passed evidence for the same candidate
         instead of re-running it (SM-01.17 idempotency)."""
         contract, contract_digest, source = self._load_or_default_contract(
             cmd, candidate_sha
@@ -546,10 +553,21 @@ the runtime-materialized default contract lives here."""
         if errors:
             self._fail_verify_block(cmd, candidate_sha, "malformed", "; ".join(errors))
             return None, None
-        if resume and has_complete_passed_gates(
-            self.store.events(self.run_id), candidate_sha, contract_digest, contract
-        ):
-            return contract, contract_digest
+        gates_complete = phases_complete = False
+        if resume:
+            events = list(self.store.events(self.run_id))
+            gates_complete = has_complete_passed_gates(
+                events,
+                candidate_sha,
+                contract_digest,
+                contract,
+                auxiliary_gate_identities(contract),
+            )
+            phases_complete = self._build_evidence_complete(
+                events, candidate_sha, contract_digest, contract, state
+            )
+            if gates_complete and phases_complete:
+                return contract, contract_digest
         contract_path = (
             self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
             if source == "host"
@@ -569,12 +587,226 @@ the runtime-materialized default contract lives here."""
             },
             command_id=cmd.command_id,
         )
-        if not self._execute_verify_gates(
+        if not gates_complete and not self._execute_verify_gates(
             cmd, candidate_sha, contract_digest, contract, state
         ):
             self._emit_host_contract_failure(cmd, candidate_sha, contract_digest)
             return None, None
+        if not phases_complete and not self._execute_build_and_smoke(
+            cmd, candidate_sha, contract, contract_digest, state
+        ):
+            self._emit_host_contract_failure(cmd, candidate_sha, contract_digest)
+            return None, None
         return contract, contract_digest
+
+    # -- D1: declared install -> build -> smoke execution ---------------------
+
+    def _build_evidence_complete(
+        self, events, candidate_sha: str, contract_digest: str, contract, state
+    ) -> bool:
+        """Every declared build/smoke phase already has reusable evidence.
+
+        The build phase additionally requires an ``artifact.built`` whose
+        byte digest still matches the file the declared artifact resolves to
+        now -- a deleted/rebuilt artifact invalidates the resume.
+        """
+        identities = auxiliary_gate_identities(contract)
+        if not identities:
+            return True
+        if not auxiliary_phases_passed(
+            events, candidate_sha, contract_digest, identities
+        ):
+            return False
+        if not str(contract.build_command or "").strip():
+            return True
+        identity, error = resolve_artifact_identity(
+            self.repo, str(contract.build_artifact or ""), self._release_version_facts(state)
+        )
+        if identity is None:
+            return False
+        return any(
+            event.type == "artifact.built"
+            and (event.payload or {}).get("candidate_sha") == candidate_sha
+            and (event.payload or {}).get("status") == "passed"
+            and (event.payload or {}).get("artifact_digest") == identity["digest"]
+            for event in events
+        )
+
+    def _execute_build_and_smoke(
+        self, cmd, candidate_sha: str, contract, contract_digest: str, state
+    ) -> bool:
+        """Run the contract's install -> build -> smoke chain (D1), in the
+        declared order, with commands/result channel/timeouts from the
+        contract only (NFR-0147). The build emits ``artifact.built`` with
+        the byte-verified name/size/digest; any failure stops the M-VERIFY
+        chain blocked with its local_gate.failed evidence."""
+        smoke_steps = tuple(getattr(contract, "smoke", ()) or ())
+        build_declared = bool(str(getattr(contract, "build_command", "") or "").strip())
+        if not build_declared and not smoke_steps:
+            return True
+        scope = self._phase_scope(contract, state)
+        if scope is None:
+            return False
+        if not self._run_install_phase(cmd, candidate_sha, contract, contract_digest, scope):
+            return False
+        if build_declared and not self._run_build_phase(
+            cmd, candidate_sha, contract, contract_digest, scope
+        ):
+            return False
+        return self._run_smoke_phases(
+            cmd, candidate_sha, contract, contract_digest, scope, smoke_steps
+        )
+
+    def _run_install_phase(
+        self, cmd, candidate_sha, contract, contract_digest, scope
+    ) -> bool:
+        """The declared dependency install, when the contract declares one."""
+        install = str(getattr(contract, "install", "") or "").strip()
+        if not install:
+            return True
+        result = self._run_declared_phase(
+            cmd, candidate_sha, contract_digest, "build", 0,
+            contract.install, "exit_code", contract.build_timeout_seconds,
+            scope, phase="install",
+        )
+        return result.status == "passed"
+
+    def _run_build_phase(
+        self, cmd, candidate_sha, contract, contract_digest, scope
+    ) -> bool:
+        """The declared build command plus the byte-verified artifact.built."""
+        result = self._run_declared_phase(
+            cmd, candidate_sha, contract_digest, "build", 0,
+            contract.build_command, contract.build_result_channel,
+            contract.build_timeout_seconds, scope, phase="build",
+        )
+        if result.status != "passed":
+            return False
+        identity, error = resolve_artifact_identity(
+            self.repo, str(contract.build_artifact or ""), scope
+        )
+        if identity is None:
+            self._emit_phase_failure(
+                cmd, candidate_sha, contract_digest, "build", 0,
+                error or "artifact_missing",
+            )
+            return False
+        self._emit(
+            "artifact.built",
+            {
+                "candidate_sha": candidate_sha,
+                "contract_digest": contract_digest,
+                "artifact": identity["name"],
+                "artifact_path": str(identity["path"]),
+                "size": identity["size"],
+                "artifact_digest": identity["digest"],
+                "command_echo": list(result.command_echo or ()),
+                "status": "passed",
+            },
+            command_id=cmd.command_id,
+        )
+        scope["artifact"] = str(identity["path"])
+        return True
+
+    def _run_smoke_phases(
+        self, cmd, candidate_sha, contract, contract_digest, scope, smoke_steps
+    ) -> bool:
+        """Each declared post-install smoke step in order."""
+        for ordinal, step in enumerate(smoke_steps):
+            result = self._run_declared_phase(
+                cmd, candidate_sha, contract_digest, "smoke", ordinal,
+                step, contract.smoke_result_channel,
+                contract.smoke_timeout_seconds, scope, phase=None,
+            )
+            if result.status != "passed":
+                return False
+        return True
+
+    def _phase_scope(self, contract, state) -> dict | None:
+        """Placeholder scope for install/build/smoke ({prefix}/{artifact})."""
+        scope = self._release_version_facts(state)
+        needs_n = any(
+            "{n}" in command
+            for command in (contract.install, contract.build_command, *contract.smoke)
+        )
+        facts, error = complete_version_facts(
+            self.repo, scope, contract.version.patch_line, needs_n=needs_n
+        )
+        if facts is None:
+            return None
+        prefix = paths.runtime_dir(paths.tracks_home(self.repo)) / "smoke-prefix"
+        try:
+            prefix.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return {
+            **facts,
+            "prefix": str(prefix),
+            "prefix_bin": str(prefix / "bin"),
+        }
+
+    def _run_declared_phase(
+        self, cmd, candidate_sha, contract_digest, kind, ordinal, command,
+        result_channel, timeout_seconds, scope, *, phase,
+    ) -> NormalizedGateResult:
+        """Execute one declared phase command and emit its gate result."""
+        decl = LocalGateDecl(
+            kind=kind,
+            source="command",
+            command=command,
+            categories=(),
+            result_channel=result_channel,
+            timeout_seconds=timeout_seconds,
+        )
+        try:
+            result = execute_gate(decl, self.repo, scope)
+        except Exception as err:  # noqa: BLE001 -- fail closed per phase
+            result = NormalizedGateResult(
+                gate_id=kind,
+                result_version=1,
+                status="failed",
+                exit_code=None,
+                summary={"error": str(err)},
+            )
+        if phase is not None:
+            result = replace(result, summary={**result.summary, "phase": phase})
+        payload = self._local_gate_payload(decl, ordinal, candidate_sha, contract_digest, result)
+        if result.status == "passed":
+            self._emit("local_gate.passed", payload, command_id=cmd.command_id)
+        else:
+            payload["reason"] = "malformed" if result.status == "malformed" else "failed"
+            self._emit("local_gate.failed", payload, command_id=cmd.command_id)
+        return result
+
+    def _emit_phase_failure(
+        self, cmd, candidate_sha, contract_digest, kind, ordinal, reason
+    ) -> None:
+        self._emit(
+            "local_gate.failed",
+            {
+                "kind": kind,
+                "gate_identity": gate_identity(kind, ordinal),
+                "candidate_sha": candidate_sha,
+                "contract_digest": contract_digest,
+                "command_echo": [],
+                "normalized_result": normalized_result_payload(
+                    NormalizedGateResult(
+                        gate_id=kind,
+                        result_version=1,
+                        status="failed",
+                        exit_code=None,
+                        summary={"error": reason},
+                    )
+                ),
+                "reason": (
+                    "failed"
+                    if reason in ("artifact_missing", "artifact_ambiguous")
+                    else reason
+                ),
+                "detail": reason,
+            },
+            command_id=cmd.command_id,
+        )
 
     def _execute_verify_gates(self, cmd, candidate_sha, contract_digest, contract, state):
         """Run the contract's local gates in order (AC-FR0269-01), emitting

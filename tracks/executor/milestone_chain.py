@@ -8,6 +8,9 @@ import os
 from tracks.effects.github import GithubIssuesError, close_issue
 from tracks.effects.github import close_project_milestone as close_project_milestone_api
 from tracks.executor.milestone import (
+    _event_payload,
+    _event_seq,
+    _event_type,
     build_release_trace,
     clean_temp_refs,
     close_issues_with_comment,
@@ -16,6 +19,53 @@ from tracks.executor.milestone import (
     seal_evidence_readonly,
     skipped_issue_entries,
 )
+from tracks.executor.publish import operation_idempotency_key
+
+_PUBLISH_FAILURE_EVENTS = frozenset(
+    {"publish.failed", "publish.blocked", "reconcile_conflict"}
+)
+
+
+def _planned_steps(preview_payload: dict) -> list[str]:
+    """The preview's resolved plan steps (empty for legacy/absent plans)."""
+    plan = preview_payload.get("operation_plan")
+    steps = plan.get("steps") if isinstance(plan, dict) else None
+    if not isinstance(steps, list):
+        return []
+    return [step for step in steps if isinstance(step, str) and ":" in step]
+
+
+def _latest_operation_status(events, after_seq: int) -> dict[str, bool]:
+    """Per-key terminal truth after the preview: a later failure wins."""
+    latest: dict[str, bool] = {}
+    for event in events:
+        if _event_seq(event) <= after_seq:
+            continue
+        etype = _event_type(event)
+        if etype not in {"publish.executed"} | _PUBLISH_FAILURE_EVENTS:
+            continue
+        payload = _event_payload(event)
+        key = str(payload.get("idempotency_key") or "")
+        if not key:
+            continue
+        if etype == "publish.executed":
+            latest[key] = str(payload.get("status") or "") in (
+                "done",
+                "reconciled_skip",
+            )
+        else:
+            latest[key] = False
+    return latest
+
+
+def _publish_failure_reason(events, after_seq: int) -> str:
+    """Latest publish failure reason after the preview ("" when absent)."""
+    for event in reversed(events):
+        if _event_seq(event) <= after_seq:
+            break
+        if _event_type(event) in _PUBLISH_FAILURE_EVENTS:
+            return str(_event_payload(event).get("reason") or "")
+    return ""
 
 
 class ExecMilestoneMixin:
@@ -35,12 +85,9 @@ class ExecMilestoneMixin:
         """
         events = list(self.store.events(self.run_id))
         params = dict(cmd.params or {})
-        candidate_sha = str(params.get("candidate_sha") or "")
-        if not candidate_sha:
-            for event in reversed(events):
-                if event.type == "candidate.frozen":
-                    candidate_sha = str((event.payload or {}).get("candidate_sha") or "")
-                    break
+        candidate_sha = self._milestone_candidate(events, params)
+        if self._block_incomplete_publish(cmd, task_id, events, candidate_sha):
+            return
         trace = self._milestone_trace(cmd, task_id, events, candidate_sha)
         if not trace.get("trace_digest"):
             return
@@ -64,6 +111,41 @@ class ExecMilestoneMixin:
             return
         self._complete_milestone(cmd, task_id, trace, events)
 
+    def _milestone_candidate(self, events, params) -> str:
+        """The command-declared candidate, else the latest frozen identity."""
+        candidate_sha = str(params.get("candidate_sha") or "")
+        if candidate_sha:
+            return candidate_sha
+        for event in reversed(events):
+            if event.type == "candidate.frozen":
+                return str((event.payload or {}).get("candidate_sha") or "")
+        return ""
+
+    def _block_incomplete_publish(self, cmd, task_id, events, candidate_sha) -> bool:
+        """SM-01.15 fail-closed tail: a publish batch that is not fully
+        terminal must never trace-close/seal/complete as released. Returns
+        True when the attention was emitted and the tail must stop."""
+        incomplete = self._publish_batch_incomplete(events, candidate_sha)
+        if incomplete is None:
+            return False
+        self._emit(
+            "attention.required",
+            {
+                "area": "publish",
+                "reason": incomplete["reason"],
+                "candidate_sha": candidate_sha,
+                "preview_digest": incomplete["preview_digest"],
+                "missing_operations": incomplete["missing"],
+                "next": (
+                    "repair the remote/conflict and trac run; the "
+                    "unfinished publish operations resume"
+                ),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return True
+
     def _milestone_trace(self, cmd, task_id, events, candidate_sha):
         """The trace close sub-step: reuse any landed milestone.trace_closed,
         else build the candidate-bound §1i trace and land it."""
@@ -84,6 +166,55 @@ class ExecMilestoneMixin:
             task_id=task_id,
         )
         return trace
+
+    def _publish_batch_incomplete(self, events, candidate_sha: str) -> dict | None:
+        """SM-01.15 fail-closed judgment over the durable publish evidence.
+
+        Returns ``None`` when every operation of the candidate's latest
+        approved plan is terminal (done/reconciled_skip), or a reason dict
+        when at least one operation is missing/failed -- including a
+        failure that landed after an earlier success. Legacy streams without
+        a release preview (unit/legacy milestone paths) carry no judgment.
+        """
+        previews = [
+            event for event in events if _event_type(event) == "release.previewed"
+        ]
+        if not previews:
+            return None
+        preview = next(
+            (
+                event
+                for event in reversed(previews)
+                if _event_payload(event).get("candidate_sha") == candidate_sha
+            ),
+            None,
+        )
+        if preview is None:
+            return {
+                "reason": "missing_preview",
+                "preview_digest": "",
+                "missing": [],
+            }
+        payload = _event_payload(preview)
+        steps = _planned_steps(payload)
+        if not steps:
+            return None  # legacy preview without a resolved operation plan
+        preview_digest = str(payload.get("preview_digest") or "")
+        latest = _latest_operation_status(events, _event_seq(preview))
+        missing: list[str] = []
+        for step in steps:
+            kind, _, target = step.partition(":")
+            key = operation_idempotency_key(preview_digest, kind, target)
+            if latest.get(key) is not True:
+                missing.append(step)
+        if not missing:
+            return None
+        reason = _publish_failure_reason(events, _event_seq(preview)) or "publish_incomplete"
+        return {
+            "reason": reason,
+            "preview_digest": preview_digest,
+            "missing": missing,
+        }
 
     def _close_milestone_issues(
         self, cmd, task_id, trace, issue_map, known_issues, closed_numbers

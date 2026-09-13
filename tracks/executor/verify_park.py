@@ -14,6 +14,7 @@ from tracks.executor.release_gate import (
 )
 from tracks.executor.release_preview import (
     _contract_table,
+    artifact_resolution_error,
     assemble_preview,
     preview_blob_matches,
     preview_inputs_match,
@@ -733,6 +734,30 @@ class ExecVerifyParkMixin:
             cmd, candidate_sha, contract, events, journey, state
         )
         if facts is None:
+            return
+        artifact_error = artifact_resolution_error(self.repo, contract, facts)
+        if artifact_error is not None:
+            # D1 fail-closed: a declared artifact that does not resolve to
+            # exactly one readable file blocks the preview with attention
+            # instead of silently never landing release.previewed.
+            self._emit(
+                "attention.required",
+                {
+                    "area": "artifact",
+                    "reason": artifact_error,
+                    "stage": "M-RELEASE",
+                    "candidate_sha": candidate_sha,
+                    "detail": (
+                        "declared [host-contract.build].artifact did not "
+                        "resolve to exactly one file"
+                    ),
+                    "next": (
+                        "run the declared build / fix the artifact path; "
+                        "trac run retries the preview"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
             return
         preview = assemble_preview(
             self.repo,

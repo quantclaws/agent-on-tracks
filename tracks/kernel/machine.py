@@ -464,6 +464,18 @@ class State:
     release_decision: str | None = None  # release|delay|return
     release_decision_digest: str | None = None
     publish_status: str | None = None  # planned|executing|reconciled_skip|done|blocked
+    # SM-01.15 batch-completion projection: the approved preview's unique
+    # operation count and the idempotency keys already terminal
+    # (done/reconciled_skip). M-PUBLISH only exits once every planned
+    # operation is terminal -- a partial batch stays parked (blocked) and
+    # never hands to close_milestone.
+    publish_expected: int = 0
+    publish_done_keys: list[str] = field(default_factory=list)
+    # True from the first ``publish.planned`` of the active batch: the WAL
+    # for an in-flight batch is preserved as ``pending`` so the next drive
+    # replays the same execute_publish command (reconcile) instead of
+    # re-planning it under a new idempotency identity.
+    publish_started: bool = False
     milestone_status: str | None = None  # closing|sealed|released|retry_tail
 
 
@@ -638,6 +650,34 @@ _PENDING_PRESERVING_AUDIT = frozenset(
     {"dispatch.parity", "failure.injected", "worktree.opened", "worktree.closed"}
 )
 
+# SM-01.15 publish-batch WAL: an execute_publish command is not resolved by
+# its own per-operation events. Once the batch started (publish.planned), the
+# pending write-ahead record must survive planned/executed/failed events so
+# the next drive's D-13 recovery replays the SAME command_id -- the remote
+# then reconciles already-done operations (reconciled_skip) and continues the
+# unfinished ones. A zero-effect preflight failure (no planned record) keeps
+# the legacy clear-on-failure semantics: the decider stays parked and a fix
+# requires a new preview/decision.
+_PENDING_PRESERVING_PUBLISH = frozenset(
+    {
+        "publish.planned",
+        "publish.executed",
+        "publish.failed",
+        "publish.blocked",
+        "reconcile_conflict",
+    }
+)
+
+
+def _preserves_publish_pending(s: State, ev: EventEnvelope) -> bool:
+    return (
+        ev.type in _PENDING_PRESERVING_PUBLISH
+        and s.pending is not None
+        and s.pending.get("kind") == "execute_publish"
+        and ev.command_id == s.pending.get("command_id")
+        and (ev.type == "publish.planned" or s.publish_started)
+    )
+
 
 def apply(s: State, ev: EventEnvelope) -> State:
     if ev.type != "command.issued":
@@ -646,7 +686,7 @@ def apply(s: State, ev: EventEnvelope) -> State:
             and s.pending is not None
             and ev.command_id is not None
             and ev.command_id == s.pending.get("command_id")
-        )
+        ) or _preserves_publish_pending(s, ev)
         if not preserves:
             s.pending = None  # any subsequent event resolves the write-ahead record
     handler = _APPLY.get(ev.type)

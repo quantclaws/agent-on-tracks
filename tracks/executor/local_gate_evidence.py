@@ -66,17 +66,48 @@ def _valid_command_echo(command_echo: object) -> bool:
     )
 
 
+def auxiliary_gate_identities(contract) -> tuple[str, ...]:
+    """The M-VERIFY build/smoke phase identities beyond ``local_gates``.
+
+    D1: when the contract declares ``build.command``/``smoke.steps`` the
+    executor emits their results as ``local_gate.passed``/``failed`` under
+    ``build[0]``/``smoke[i]``. Those identities are part of the same
+    candidate-bound evidence set, so the resume/authorization completeness
+    barrier must ignore them instead of treating them as foreign later
+    identities (a foreign gate identity still fails closed).
+    """
+    identities: list[str] = []
+    if str(getattr(contract, "build_command", "") or "").strip():
+        identities.append(gate_identity("build", 0))
+    for ordinal, _step in enumerate(getattr(contract, "smoke", ()) or ()):
+        identities.append(gate_identity("smoke", ordinal))
+    return tuple(identities)
+
+
+def auxiliary_phases_passed(
+    events: Iterable, candidate_sha: str, contract_digest: str, identities: tuple[str, ...]
+) -> bool:
+    """Every auxiliary (build/smoke) phase identity has a latest valid pass."""
+    latest = _latest_bound_gate_events(events, candidate_sha, contract_digest)
+    return all(
+        _is_valid_pass(latest.get(identity), identity.partition("[")[0])
+        for identity in identities
+    )
+
+
 def has_complete_passed_gates(
     events: Iterable,
     candidate_sha: str,
     contract_digest: str,
     contract,
+    auxiliary: tuple[str, ...] = (),
 ) -> bool:
     """Check that the latest result for every declaration is a valid pass.
 
     Missing identity fields deliberately make old evidence non-reusable. The
     latest result wins per declaration, so a later failure cannot be hidden by
-    an earlier pass.
+    an earlier pass. ``auxiliary`` identities (the contract's build/smoke
+    phases) are excluded from the foreign-identity barrier only.
     """
     latest = _latest_bound_gate_events(events, candidate_sha, contract_digest)
     expected = {
@@ -89,7 +120,11 @@ def has_complete_passed_gates(
     if any(event is None for event in expected_events):
         return False
     barrier_seq = max(
-        (_event_seq(event) for identity, event in latest.items() if identity not in expected),
+        (
+            _event_seq(event)
+            for identity, event in latest.items()
+            if identity not in expected and identity not in auxiliary
+        ),
         default=-1,
     )
     if any(_event_seq(event) <= barrier_seq for event in expected_events):

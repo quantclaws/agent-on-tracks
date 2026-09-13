@@ -15,6 +15,8 @@ fail-closed with machine evidence for the M-DESIGN revision loop.
 
 from __future__ import annotations
 
+import glob
+import hashlib
 import json
 import posixpath
 import re
@@ -149,6 +151,13 @@ class HostContract:
     ci: dict
     tracker: dict
     operations: dict[str, OperationPlanDecl] = field(default_factory=dict)
+    # M-VERIFY build/artifact/smoke execution contract (D1): the declared
+    # result channel/timeout of the build and smoke phases. Defaults keep the
+    # pre-declaration behavior for contracts that only carry commands.
+    build_result_channel: ResultChannel = "exit_code"
+    build_timeout_seconds: int = 900
+    smoke_result_channel: ResultChannel = "exit_code"
+    smoke_timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)
@@ -252,7 +261,20 @@ def load_host_contract(path: Path) -> HostContract:
         ci=dict(table.get("ci", {})),
         tracker=dict(table.get("tracker", {})),
         operations=_load_operations(table.get("operations", {})),
+        build_result_channel=_optional_channel(build, "build"),
+        build_timeout_seconds=int(build.get("timeout_seconds", 900)),
+        smoke_result_channel=_optional_channel(table.get("smoke", {}), "smoke"),
+        smoke_timeout_seconds=int(table.get("smoke", {}).get("timeout_seconds", 600)),
     )
+
+
+def _optional_channel(table: dict, label: str) -> ResultChannel:
+    value = table.get("result_channel")
+    if value is None:
+        return "exit_code"
+    if value not in set(ResultChannel.__args__):
+        _fail_closed(f"{label} has unknown result_channel {value!r}")
+    return value
 
 
 def _scan_placeholders(errors: list[str], text: str, allowed: frozenset, label: str) -> None:
@@ -286,6 +308,67 @@ def validate_host_contract(contract: HostContract, repo: Path) -> tuple[str, ...
                 errors, step, OPERATION_PLACEHOLDERS, f"operations[{journey.journey}]"
             )
     return tuple(errors)
+
+
+def render_artifact_template(template: str, facts: dict) -> str:
+    """Render the declared artifact path/glob with the run's version facts."""
+    rendered = str(template or "")
+    for key, value in (facts or {}).items():
+        rendered = rendered.replace("{" + key + "}", str(value))
+    return rendered
+
+
+def resolve_build_artifact(
+    repo: Path | str, template: str, facts: dict
+) -> tuple[Path | None, str | None]:
+    """Resolve a ``[host-contract.build].artifact`` declaration to one file.
+
+    The declared value may be a glob (``dist/*.whl``): zero matches is
+    ``artifact_missing``, more than one is ``artifact_ambiguous`` -- both
+    fail closed before any upload/preview binding (D1). An empty declaration
+    is ``artifact_undeclared`` (callers decide whether that is fatal).
+    """
+    rendered = render_artifact_template(template, facts).strip()
+    if not rendered:
+        return None, "artifact_undeclared"
+    pattern = Path(rendered)
+    if not pattern.is_absolute():
+        pattern = Path(repo) / pattern
+    matches = [
+        Path(path)
+        for path in sorted(glob.glob(str(pattern), recursive=True))
+        if Path(path).is_file()
+    ]
+    if not matches:
+        return None, "artifact_missing"
+    if len(matches) > 1:
+        return None, "artifact_ambiguous"
+    return matches[0], None
+
+
+def resolve_artifact_identity(
+    repo: Path | str, template: str, facts: dict
+) -> tuple[dict | None, str | None]:
+    """``(identity, None)`` or ``(None, reason)`` for a declared artifact.
+
+    The identity carries the absolute path plus the byte-verified
+    name/size/sha256 (``digest``) that the build/smoke executor and the
+    release preview both bind -- one resolution truth for command rendering
+    and digest evidence.
+    """
+    path, error = resolve_build_artifact(repo, template, facts)
+    if error is not None:
+        return None, error
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, "artifact_unreadable"
+    return {
+        "path": str(path.resolve()),
+        "name": path.name,
+        "size": len(raw),
+        "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+    }, None
 
 
 def _render_gate_command(decl: LocalGateDecl, placeholders: dict) -> tuple[str, Path | None]:

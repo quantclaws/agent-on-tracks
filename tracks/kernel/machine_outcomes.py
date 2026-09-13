@@ -36,6 +36,11 @@ if TYPE_CHECKING:
 def _on_command_issued(s: State, p: dict, ev: EventEnvelope) -> None:
     cmd = p.get("command", {})
     s.pending = cmd
+    if cmd.get("kind") == "execute_publish":
+        # SM-01.15: a fresh publish command opens a fresh batch window; the
+        # prior batch's started flag must not preserve this command's
+        # preflight failures as resumable.
+        s.publish_started = False
     if cmd.get("kind") != "dispatch_agent":
         _track_non_dispatch_milestone(s, cmd.get("kind"))
         return

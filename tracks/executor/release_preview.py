@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from tracks import paths
+from tracks.executor.host_contract import resolve_artifact_identity
 from tracks.executor.release_gate import (
     active_release_branch,
     build_operation_plan,
@@ -51,19 +52,17 @@ def _version_facts(contract, facts: dict) -> dict:
     return expand_version_scheme(facts, scheme)
 
 
-def _artifact_digest(repo: Path, contract, facts: dict) -> str | None:
-    artifact = str(contract.build_artifact or "")
-    for key, value in facts.items():
-        artifact = artifact.replace("{" + key + "}", str(value))
-    if not artifact:
-        return ""
-    path = (repo / artifact).resolve()
-    try:
-        path.relative_to(repo.resolve())
-        raw = path.read_bytes()
-    except (OSError, ValueError):
-        return None
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
+def artifact_resolution_error(repo: Path, contract, facts: dict) -> str | None:
+    """The declared artifact's resolution error, or None when it is absent.
+
+    An undeclared artifact (``build_artifact`` empty) is not an error: the
+    preview keeps its legacy empty ``artifact_digest``. Zero/multiple glob
+    matches and unreadable files fail closed with their reason (D1).
+    """
+    _identity, error = resolve_artifact_identity(
+        repo, str(getattr(contract, "build_artifact", "") or ""), facts
+    )
+    return None if error in (None, "artifact_undeclared") else error
 
 
 def _evidence_key(event, payload: dict) -> str | None:
@@ -249,17 +248,27 @@ def _preview_digests(
     events,
 ) -> dict | None:
     """Artifact/evidence/plan digests, or None when evidence is missing."""
-    artifact_digest = _artifact_digest(repo, contract, resolved_facts)
-    if artifact_digest is None:
+    identity, error = resolve_artifact_identity(
+        repo, str(getattr(contract, "build_artifact", "") or ""), resolved_facts
+    )
+    if identity is None and error != "artifact_undeclared":
         return None
+    digests = {
+        "artifact_digest": str(identity["digest"]) if identity else "",
+        "evidence_digests": None,
+        "operation_plan_digest": canonical_digest(plan),
+    }
+    if identity:
+        # D1: the resolved artifact's byte identity is part of the preview
+        # payload (name/size/digest), not only a bare digest.
+        digests["artifact_identity"] = {
+            key: identity[key] for key in ("name", "size", "digest")
+        }
     evidence = evidence_digests(events, candidate_sha)
     if evidence is None:
         return None
-    return {
-        "artifact_digest": artifact_digest,
-        "evidence_digests": evidence,
-        "operation_plan_digest": canonical_digest(plan),
-    }
+    digests["evidence_digests"] = evidence
+    return digests
 
 
 def preview_blob_matches(home: Path, preview: dict) -> bool:

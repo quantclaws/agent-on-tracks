@@ -399,6 +399,63 @@ def test_release_unsupported_remote_stops_batch(tmp_path, monkeypatch):
     assert read_remote_state(remote, "tag", _TAG)["exists"] is True
 
 
+# AC-FR0275-01: the declared four-step batch is normalized to
+# merge -> tag -> release -> artifact, so the artifact upload always sees the
+# release that carries it; the uploaded bytes are bound to the remote asset.
+def test_four_step_batch_release_before_artifact_binds_bytes(
+    tmp_path, monkeypatch, standin
+):
+    _github_env(monkeypatch, standin)
+    executor, store, candidate, preview, _remote = _host(
+        tmp_path,
+        operation_steps=[
+            "merge:main",
+            f"tag:{_TAG}",
+            "artifact:dist/*.whl",
+            f"release:{_TAG}",
+        ],
+    )
+    repo = executor.repo
+    dist = repo / "dist"
+    dist.mkdir()
+    wheel = dist / "demo-0.1.0-py3-none-any.whl"
+    wheel.write_bytes(b"four-step-wheel-bytes")
+    git_strip(repo, "push", "-q", "origin", "HEAD~1:refs/heads/main")
+    _set_github_origin(repo)
+    # The GitHub URL drives the release API; the insteadOf rewrite keeps every
+    # git-side readback/push on the real local bare remote.
+    git_strip(repo, "config", "--add", f"url.{_remote}.insteadOf", _GITHUB_REMOTE)
+    monkeypatch.chdir(repo)
+
+    _run(executor, store, preview["preview_digest"])
+
+    assert preview["operation_plan"]["steps"] == [
+        "merge:main",
+        f"tag:{_TAG}",
+        f"release:{_TAG}",
+        "artifact:dist/*.whl",
+    ], "the preview must bind the normalized execution order"
+    executed = [
+        (e.payload["target"], e.payload["status"])
+        for e in _events(store)
+        if e.type == "publish.executed"
+    ]
+    assert executed == [
+        ("main", "done"),
+        (_TAG, "done"),
+        (_TAG, "done"),
+        ("dist/*.whl", "done"),
+    ]
+    release = standin.releases[_TAG]
+    assert release["target_commitish"] == candidate
+    assets = standin.assets[release["id"]]
+    assert [asset["name"] for asset in assets] == [wheel.name]
+    digest = "sha256:" + hashlib.sha256(wheel.read_bytes()).hexdigest()
+    assert assets[0]["size"] == wheel.stat().st_size
+    assert assets[0]["digest"] == digest
+    assert len(_upload_posts(standin)) == 1
+
+
 # AC-FR0275-03: an Agent backend yields publish.blocked with no side effects.
 def test_agent_backend_blocks_publish_with_zero_side_effects(tmp_path, monkeypatch):
     executor, store, candidate, preview, remote = _host(tmp_path)

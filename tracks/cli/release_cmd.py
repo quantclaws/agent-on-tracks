@@ -492,6 +492,7 @@ _ATTENTION_RECOVERY_EVENTS = {
     "project_close": ("project.closed",),
     "milestone_seal": ("milestone.sealed",),
     "milestone_refs": ("refs.cleaned",),
+    "publish": ("milestone.trace_closed",),
 }
 
 
@@ -549,7 +550,8 @@ def _release_publish_lines(events: list, primary) -> list[str]:
     """(G) publish and terminal fragments for status (interfaces §287 /
     AC-FR0275-01): ``publish=planned|executing|done|reconciled_skip|blocked``
     from the state projection; an explicit publish.blocked event keeps its
-    reason fragment."""
+    reason fragment, and an SM-01.15 batch stop renders the failure reason
+    plus the ``retry_tail`` resume semantics."""
     pub_blocked = [e for e in events if e.type == "publish.blocked"]
     lines: list[str] = []
     if pub_blocked:
@@ -557,13 +559,29 @@ def _release_publish_lines(events: list, primary) -> list[str]:
         lines.append(f"publish=blocked reason={block_reason}")
     else:
         publish_status = getattr(primary, "publish_status", None)
-        if publish_status:
+        if publish_status == "blocked":
+            lines.extend(_release_blocked_publish_lines(events))
+        elif publish_status:
             lines.append(f"publish={publish_status}")
             key = _latest_publish_idempotency_key(events)
             if key is not None:
                 lines.append(f"idempotency_key={key}")
     if primary.status == "completed" and primary.terminal_state == "cancelled":
         lines.append("terminal=cancelled")
+    return lines
+
+
+def _release_blocked_publish_lines(events: list) -> list[str]:
+    """SM-01.15: blocked publish renders the failure reason and retry tail."""
+    failed = [e for e in events if e.type == "publish.failed"]
+    reason = "unknown"
+    if failed:
+        reason = str((failed[-1].payload or {}).get("reason") or "unknown")
+    lines = [f"publish=blocked reason={reason}"]
+    key = _latest_publish_idempotency_key(events)
+    if key is not None:
+        lines.append(f"idempotency_key={key}")
+    lines.append("retry_tail: trac run resumes the unfinished publish operations")
     return lines
 
 

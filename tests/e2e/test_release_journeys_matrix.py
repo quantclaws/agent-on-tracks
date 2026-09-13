@@ -172,6 +172,12 @@ def test_six_journeys_dual_host(
     for host in _HOSTS:
         for journey in _JOURNEYS:
             repo = _fresh_repo(tmp_path, f"{host}_{journey}")
+            # Journeys are independent repositories: the shared loopback
+            # stand-in must not leak one journey's release objects (same
+            # public tag across hosts) into the next; a leak is a real
+            # reconcile_conflict the publish face now fails closed on.
+            ci_echo_standin.releases.clear()
+            ci_echo_standin.assets.clear()
             events = _run_journey(host, journey, repo, ci_echo_standin)
             body = generate_report_md(_runner(repo), repo, name="report_out")
             candidate = _assert_identity(events, body)

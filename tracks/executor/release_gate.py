@@ -26,6 +26,20 @@ _WHEN_ACTIVE_BRANCH = "when=active_release_branch"
 # journey CLI/attr spellings -> contract [operations.*] section keys.
 _JOURNEY_MAP = {"post-release": "post_release", "post_release": "post_release"}
 
+# D2 dependency order: an artifact upload needs its release (or at least its
+# tag) to exist first, so the resolved plan is normalized to
+# merge -> tag -> release -> artifact. The sort is stable, so same-rank steps
+# keep their declared relative order (multi-merge/multi-tag plans) and unknown
+# kinds sort last where the publish preflight rejects them explicitly.
+_OPERATION_RANK = {"merge": 0, "tag": 1, "release": 2, "artifact": 3}
+
+
+def _normalized_step_order(steps: list[str]) -> list[str]:
+    return sorted(
+        steps,
+        key=lambda step: _OPERATION_RANK.get(step.partition(":")[0], 9),
+    )
+
 
 def _render_placeholders(template: str, facts: dict) -> str:
     """Render the base placeholder set from version facts."""
@@ -205,6 +219,7 @@ def build_operation_plan(
                 continue  # silent skip: no active release branch
             step = step[: -len(f":{_WHEN_ACTIVE_BRANCH}")]
         resolved.append(_render_placeholders(step, version_facts))
+    resolved = _normalized_step_order(resolved)
     return {
         "journey": journey,
         "steps": resolved,
@@ -257,6 +272,12 @@ def generate_preview(candidate_sha: str, digests: dict, risks: list, plan: dict)
         "risks": list(risks or []),
         "operation_plan": dict(plan or {}),
     }
+    if digests.get("artifact_identity"):
+        # D1: the resolved build artifact's byte identity (name/size/digest)
+        # is part of the preview payload so the upload can bind bytes, not
+        # just carry an opaque digest. Absent for contracts that declare no
+        # artifact, keeping legacy preview payloads byte-identical.
+        preview["artifact"] = dict(digests["artifact_identity"])
     preview["preview_digest"] = compute_preview_digest(
         candidate_sha,
         preview["artifact_digest"],

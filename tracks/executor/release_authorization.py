@@ -20,7 +20,10 @@ from tracks.executor.host_contract import (
     load_host_contract,
     validate_host_contract,
 )
-from tracks.executor.local_gate_evidence import has_complete_passed_gates
+from tracks.executor.local_gate_evidence import (
+    auxiliary_gate_identities,
+    has_complete_passed_gates,
+)
 from tracks.executor.release_gate import validate_release_decision, version_facts
 from tracks.executor.release_preview import (
     assemble_preview,
@@ -260,7 +263,9 @@ def _recomputed_preview(
 
 
 def _gate_status(events: list, candidate: str, contract, digest: str) -> dict:
-    local_ok = has_complete_passed_gates(events, candidate, digest, contract)
+    local_ok = has_complete_passed_gates(
+        events, candidate, digest, contract, auxiliary_gate_identities(contract)
+    )
     ci_status, ci_ok = _ci_status(events, candidate, contract)
     prism_status, prism_ok = _prism_status(events, candidate)
     security_status, security_ok = _security_status(events, candidate, digest, contract)

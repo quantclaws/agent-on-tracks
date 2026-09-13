@@ -198,6 +198,9 @@ def on_candidate_frozen(state: State, payload: dict, event) -> None:
     state.release_decision = None
     state.release_decision_digest = None
     state.publish_status = None
+    state.publish_expected = 0
+    state.publish_done_keys = []
+    state.publish_started = False
     state.milestone_status = None
 
 
@@ -266,8 +269,30 @@ def on_release_previewed(state: State, payload: dict, event) -> None:
         return
     if payload.get("preview_digest"):
         state.preview_digest = str(payload["preview_digest"])
+    steps = _preview_steps(payload)
+    if steps is not None:
+        # SM-01.15: the approved plan's unique operation set is the batch
+        # completion target; a new preview resets prior per-key progress.
+        state.publish_expected = len(set(steps))
+        state.publish_done_keys = []
     if state.stage == "M-RELEASE" and state.substate == "PREVIEWING":
         state.substate = M_RELEASE_GATE_SUBSTATE
+
+
+def _preview_steps(payload: dict) -> list[str] | None:
+    """The preview's resolved plan steps, or None for legacy previews.
+
+    ``None`` keeps the pre-plan projection semantics (a preview without an
+    operation_plan never blocks the legacy exit); a plan with zero resolved
+    steps is an explicit empty batch and projects as such.
+    """
+    plan = payload.get("operation_plan")
+    if not isinstance(plan, dict):
+        return None
+    steps = plan.get("steps")
+    if not isinstance(steps, list):
+        return None
+    return [str(step) for step in steps]
 
 
 def on_release_decided(state: State, payload: dict, event) -> None:
@@ -290,10 +315,20 @@ def on_release_decided(state: State, payload: dict, event) -> None:
 
 
 def on_publish_events(state: State, payload: dict, event) -> None:
-    """Project publish=planned|executing|reconciled_skip|done|blocked."""
+    """Project publish=planned|executing|reconciled_skip|done|blocked.
+
+    SM-01.15: M-PUBLISH exits (``stage_exited``) only once EVERY operation
+    of the approved preview plan is terminal (done/reconciled_skip). A
+    partial stop -- a failed/conflicting operation while others remain --
+    leaves the stage parked and fail-closed: close_milestone is never
+    handed a half-published batch. The write-ahead ``pending`` record of the
+    started batch survives the failure (machine.apply) so the next drive
+    replays the SAME command and reconciles the finished operations.
+    """
     etype = event.type
     if etype == "publish.planned":
         state.publish_status = "planned"
+        state.publish_started = True
         # SM-01.7 walk: publish execution is the M-PUBLISH body -- the
         # decision kept M-RELEASE/AWAITING_RELEASE so the decider could
         # issue execute_publish; the write-ahead projects the entry.
@@ -304,17 +339,27 @@ def on_publish_events(state: State, payload: dict, event) -> None:
         return
     if etype == "publish.executed":
         status = str(payload.get("status") or "done")
-        state.publish_status = (
-            status if status in ("done", "reconciled_skip") else "executing"
-        )
-        if (
-            state.publish_status in ("done", "reconciled_skip")
-            and state.stage == "M-PUBLISH"
-        ):
+        terminal = status in ("done", "reconciled_skip")
+        key = str(payload.get("idempotency_key") or "")
+        if terminal and key and key not in state.publish_done_keys:
+            state.publish_done_keys.append(key)
+        state.publish_status = status if terminal else "executing"
+        if terminal and _publish_batch_complete(state):
             state.stage_exited = True  # §1.0.6: hands to close_milestone
+            state.pending = None
+            state.publish_started = False
         return
-    # publish.blocked / publish.failed
+    # publish.blocked / publish.failed / reconcile_conflict: the batch is
+    # not terminal -- never a stage exit (fail-closed).
     state.publish_status = "blocked"
+    state.stage_exited = False
+
+
+def _publish_batch_complete(state: State) -> bool:
+    """Every plan operation terminal, or a legacy preview without a plan."""
+    if state.publish_expected <= 0:
+        return True
+    return len(set(state.publish_done_keys)) >= state.publish_expected
 
 
 def on_milestone_events(state: State, payload: dict, event) -> None:

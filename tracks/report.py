@@ -513,6 +513,42 @@ def _release_pipeline_lines(events: list) -> list[str]:
             f"candidate={payload.get('candidate_sha', '')} "
             f"preview_digest={payload.get('preview_digest', '')}"
         )
+    lines.extend(_publish_failure_lines(events))
+    return lines
+
+
+def _publish_success_seqs(events: list) -> dict[str, int]:
+    """Latest terminal-success seq per publish idempotency key."""
+    succeeded: dict[str, int] = {}
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if event.type != "publish.executed":
+            continue
+        if payload.get("status") not in ("done", "reconciled_skip"):
+            continue
+        key = str(payload.get("idempotency_key") or "")
+        succeeded[key] = max(succeeded.get(key, -1), event.seq)
+    return succeeded
+
+
+def _publish_failure_lines(events: list) -> list[str]:
+    """SM-01.15: an unresolved publish failure renders blocked + retry tail."""
+    succeeded = _publish_success_seqs(events)
+    lines: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        key = str(payload.get("idempotency_key") or "")
+        if event.type != "publish.failed" or key in seen:
+            continue
+        seen.add(key)
+        if succeeded.get(key, -1) > event.seq:
+            continue  # a later terminal success resolved this operation
+        reason = payload.get("reason", "unknown")
+        lines.append(
+            f"publish: blocked reason={reason} key={key or '-'} "
+            "next=trac run resumes the unfinished publish operations"
+        )
     return lines
 
 
