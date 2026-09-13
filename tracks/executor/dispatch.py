@@ -487,8 +487,9 @@ the envelope/failure faces stay re-exported by executor.py."""
         actual materialized bytes and checked inside backend.act, before
         the spawn (dispatch_parity seam).
 
-        TRAC_ENVELOPE_DECLARE=0 / schema-pending kinds: undeclared, the
-        gate keeps today's staged semantics (nothing is enforced).
+        TRAC_ENVELOPE_DECLARE=0 or an unmapped (role, substate) pair:
+        undeclared, the gate keeps today's staged semantics (nothing is
+        enforced).
 
         IF-ENVELOPE-002 event timing: this STATIC gate never emits the
         dispatch.parity success event of a DECLARED dispatch — that event

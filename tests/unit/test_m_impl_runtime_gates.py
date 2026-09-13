@@ -646,6 +646,9 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
 
         def __init__(self):
             self.assignments = []
+            from tracks.effects.fake import FakeBackend
+
+            self._envelope = FakeBackend(repo, "v0.0")
 
         def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
             self.assignments.append((role, substate, assignment))
@@ -655,7 +658,26 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
                 "def test_shield_fix():\n    assert True\n",
                 encoding="utf-8",
             )
-            return {"status": "done", "artifact_ref": None, "self_report": "fixed"}
+            return {
+                "status": "done",
+                "artifact_ref": None,
+                "self_report": "fixed",
+                "artifact_manifest": {
+                    "include": [
+                        {
+                            "path": "tests/integration/test_shield_fix.py",
+                            "kind": "integration_test",
+                            "role": "test",
+                        }
+                    ]
+                },
+                "suggested_commit_message": "M-TEST: shield fix",
+            }
+
+        def finalize_act(self, result, role, substate, assignment=None):
+            # Declared shield:write dispatch: encode the simulated reply the
+            # assignment demands (same seam as the fake/test doubles).
+            return self._envelope.finalize_act(result, role, substate, assignment)
 
     backend = _ShieldWriteBackend()
     executor.backend = backend

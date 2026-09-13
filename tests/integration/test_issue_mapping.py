@@ -56,7 +56,7 @@ def test_real_issue_created_and_mapped(
     assert all(m["payload"]["api_verified"] is True for m in mapped)
     for m in mapped:
         payload = m["payload"]
-        for key in ("repo", "issue_number", "url", "baseline_digest"):
+        for key in ("repo", "issue_number", "node_id", "title", "url", "baseline_digest"):
             assert key in payload
         assert payload["repo"] == "acme/host"
         assert payload["url"].startswith("https://github.com/acme/host/issues/")

@@ -170,14 +170,26 @@ def test_malformed_regression_corpus(host_repo, trac, event_log):
 
 # AC-NFR0145-01@v0.8 TRACKS-TRACE deterministic parse and parity
 def test_deterministic_parse_and_parity(host_repo, trac, event_log):
+    devon_red_payload = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_deterministic_parse.py"],
+        "commands": [
+            {"cmd": "pytest tests/unit", "result": "fail", "output_summary": "assertion"}
+        ],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-ENVELOPE-001"],
+    }
     reply = (
         "```tracks-envelope\n"
-        '{"envelope": {"kind": "devon:red", "version": 2}, "payload": {"a": 1}}\n'
-        "```\n"
+        '{"envelope": {"kind": "devon:red", "version": 2}, "payload": '
+        + json.dumps(devon_red_payload)
+        + "}\n```\n"
     )
     first = parse_agent_output(reply)
     assert first["envelope"] == {"kind": "devon:red", "version": 2}
-    assert first["payload"] == {"a": 1}
+    assert first["payload"] == devon_red_payload
     assert parse_agent_output(reply) == first  # same bytes -> same parse
 
     # Default parity: the six documented faces are ALL required.

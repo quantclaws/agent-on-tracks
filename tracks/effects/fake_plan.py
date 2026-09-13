@@ -56,6 +56,10 @@ class FakePlanMixin:
             "audit_evidence": (
                 "task graph derived from acceptance.md ACs and interfaces.md IF registry"
             ),
+            # Declared archer:planning replies carry the task graph itself; the
+            # Runtime's commit_taskgraph consumer still parses the file, so
+            # this is the reply's own machine-readable outcome.
+            "tasks": tasks_json["tasks"],
         }
 
     def _derive_task_graph(

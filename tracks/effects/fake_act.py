@@ -69,7 +69,12 @@ class FakeActMixin:
             return self._act_sage_triage(assignment)
         if role == "devon":
             data = assignment if isinstance(assignment, dict) else {}
-            return self._act_m_impl_devon(substate, data)
+            return self._attach_declared_raw_output(
+                self._act_m_impl_devon(substate, data),
+                role,
+                substate,
+                assignment,
+            )
         return self._attach_declared_raw_output(
             self._act_legacy(role, substate, doc, doc_path, assignment),
             role,

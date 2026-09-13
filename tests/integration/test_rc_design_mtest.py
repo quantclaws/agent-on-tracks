@@ -248,16 +248,30 @@ def test_m_test_shield_write_checkpoint_creates_commit(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "include",
+    ("include", "expected"),
     [
-        [],
-        [
-            {"path": "tests/integration/test_a.py", "kind": "test_asset", "role": "integration"},
-            {"path": "tests/integration/extra.json", "kind": "test_asset", "role": "integration"},
-        ],
+        # A declared shield:write reply with an empty include violates the
+        # write-manifest schema: the collection face classifies it as a
+        # format_error schema_violation (FR-0278-02) before the checkpoint.
+        ([], "format_error"),
+        (
+            [
+                {
+                    "path": "tests/integration/test_a.py",
+                    "kind": "test_asset",
+                    "role": "integration",
+                },
+                {
+                    "path": "tests/integration/extra.json",
+                    "kind": "test_asset",
+                    "role": "integration",
+                },
+            ],
+            "manifest",
+        ),
     ],
 )
-def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path, include):
+def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path, include, expected):
     """A manifest that omits or over-reports observed files fails closed."""
     ex, store, run_id = _setup_m_test(tmp_path)
     repo = ex.repo
@@ -296,12 +310,16 @@ def test_m_test_shield_manifest_mismatch_fails_without_commit(tmp_path, include)
     ex.issue(cmd)
     ex.run_pipeline()
 
-    failures = [
-        e
-        for e in store.events(run_id)
-        if e.type == "verdict.failed" and e.payload.get("check") == "manifest"
-    ]
-    assert failures
+    if expected == "format_error":
+        errors = [e for e in store.events(run_id) if e.type == "format_error"]
+        assert errors and errors[0].payload["kind"] == "schema_violation"
+    else:
+        failures = [
+            e
+            for e in store.events(run_id)
+            if e.type == "verdict.failed" and e.payload.get("check") == "manifest"
+        ]
+        assert failures
     assert not [e for e in store.events(run_id) if e.type == "result.checkpointed"]
     assert g(repo, "rev-parse", "HEAD").strip() == base_sha
 

@@ -83,11 +83,17 @@ def test_stub_gap_failed_outcome_does_not_consume_shield_budget(tmp_path):
     assert len(stub_outs) == 3, "stub_gap should re-fire on each re-entry, not escalate"
 
 
-def test_shield_no_diff_fails_and_never_publishes(tmp_path):
+def test_shield_no_diff_fails_and_never_publishes(tmp_path, monkeypatch):
     """Item 5: done/no-diff Shield output enters the v0.5 no_diff peer review
     (explain -> review). A reviewer revise (the default for a stub backend
     that returns no verdict) consumes an attempt and re-dispatches Shield.
-    test.written / COLLECT are never published."""
+    test.written / COLLECT are never published.
+
+    ``TRAC_ENVELOPE_DECLARE=0`` is the explicit legacy opt-out: the stub
+    reply has no declared manifest (a state the declared shield:write
+    contract cannot represent — it requires a non-empty manifest), so this
+    test pins the LEGACY no_diff channel semantics."""
+    monkeypatch.setenv("TRAC_ENVELOPE_DECLARE", "0")
     ex, store, run_id = _setup_m_test(tmp_path)
     ex.backend = _StubBackend(
         {"status": "done", "artifact_ref": "tests", "self_report": "wrote"}

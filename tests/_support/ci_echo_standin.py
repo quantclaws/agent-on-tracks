@@ -80,7 +80,8 @@ class CiEchoStandIn:
 
             def _issue_api(self, method: str) -> bool:
                 collection = f"/repos/{owner.repo}/issues"
-                if self.path == collection:
+                parsed = urlparse(self.path)
+                if parsed.path == collection:
                     if method == "POST":
                         body = self._json_body()
                         if owner.fake_issue_number is not None:
@@ -95,11 +96,22 @@ class CiEchoStandIn:
                         owner.next_issue_number += 1
                         entry = {
                             "number": number,
+                            "node_id": f"I_{number}",
                             "title": body.get("title", ""),
+                            "body": body.get("body", ""),
                             "state": "open",
+                            "html_url": (
+                                f"https://github.com/{owner.repo}/issues/{number}"
+                            ),
                         }
                         owner.issues[number] = entry
                         self._reply(201, dict(entry))
+                        return True
+                    if method == "GET":
+                        # FR-0283-04 crash-dedup listing: the same stateful
+                        # store the POST feed populates.
+                        listing = list(owner.issues.values())
+                        self._reply(200, listing)
                         return True
                     self._reply(404, {"message": "not found"})
                     return True
@@ -133,8 +145,14 @@ class CiEchoStandIn:
                         200,
                         {
                             "number": number,
+                            "node_id": (entry or {}).get("node_id", f"I_{number}"),
                             "title": (entry or {}).get("title", "issue"),
+                            "body": (entry or {}).get("body", ""),
                             "state": state,
+                            "html_url": (entry or {}).get(
+                                "html_url",
+                                f"https://github.com/{owner.repo}/issues/{number}",
+                            ),
                         },
                     )
                     return True

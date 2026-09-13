@@ -9,17 +9,28 @@ from __future__ import annotations
 
 from tracks.effects.envelope_reply import encode_envelope_reply, is_declared_assignment
 from tracks.kernel.envelope import (
+    ARCHER_KINDS,
+    DEVON_KINDS,
     DIAGNOSE_KINDS,
     REVIEW_KINDS,
+    SHIELD_WRITE_KINDS,
     envelope_kind,
 )
 
 # IF-ENVELOPE-002 prerequisite: the reply kinds this fake can encode honestly.
-# Writer/authority kinds stay out — their payload schemas are pending (T-024)
-# and the fake has no actual writer reply contract to encode; an assignment
-# declaring such a kind fails visibly at the Runtime (missing raw_output
-# classifies as format_error), never through an invented reply.
-_FAKE_SPEAKABLE_KINDS = (*REVIEW_KINDS, *DIAGNOSE_KINDS)
+# The full registered closed set is speakable: review/diagnose kinds encode the
+# simulated verdict, and the writer/authority kinds (Devon RGR, Shield WRITE,
+# Archer PLANNING/RULING) encode the simulated outcome fields the declaration
+# requires. The fake never invents a successful reply the simulation did not
+# produce: a payload the schema cannot represent stays absent and the Runtime
+# classifies the missing/invalid reply as a format_error.
+_FAKE_SPEAKABLE_KINDS = (
+    *REVIEW_KINDS,
+    *DIAGNOSE_KINDS,
+    *DEVON_KINDS,
+    *SHIELD_WRITE_KINDS,
+    *ARCHER_KINDS,
+)
 
 # IF-ENVELOPE-002: provenance a fake declared dispatch attaches to its
 # result about the artifact faces. The fake consumes NO materialized
@@ -52,18 +63,19 @@ class FakeReplyMixin:
         classifies the exact reply text.
 
         Only explicitly simulated fields are encoded, under the kind the
-        assignment actually declares. A simulated outcome the payload schema
-        cannot represent (a revise without simulated findings, a diagnosis
-        label without a simulated reason/evidence) stays incomplete ON
-        PURPOSE: the Runtime's kernel validator classifies it as a
-        schema_violation format_error — visible, never silently coerced into
-        a synthetic pass, never invented here. A declaration the fake cannot
-        honestly speak (kind mismatch, writer/authority kind) is left
-        un-encoded: the missing raw_output classify as format_error at the
-        Runtime. Undeclared dispatches keep their legacy result dicts
-        untouched (no raw_output key). The two deliberate exceptions are the
-        synthesized VERIFY_FINAL / M-DESIGN review revise fields
-        (``_ensure_verify_final_revise_fields`` /
+        assignment actually declares. A simulated done outcome the payload
+        schema cannot represent (a revise without simulated findings, a
+        diagnosis label without a simulated reason/evidence, a Shield write
+        with no attributable manifest) stays incomplete ON PURPOSE: the
+        Runtime's kernel validator classifies it as a schema_violation
+        format_error — visible, never silently coerced into a synthetic pass,
+        never invented here. A failed outcome is never re-encoded (its
+        classification must survive); a declaration the fake cannot honestly
+        speak (kind mismatch) is left un-encoded and the missing raw_output
+        classifies as a format_error at the Runtime. Undeclared dispatches
+        keep their legacy result dicts untouched (no raw_output key). The two
+        deliberate exceptions are the synthesized VERIFY_FINAL / M-DESIGN
+        review revise fields (``_ensure_verify_final_revise_fields`` /
         ``_ensure_design_review_revise_fields``): those stages need the
         schema-required review content to classify the revise (the M-VERIFY
         anchor judge and the M-DESIGN RESPOND loop), so the fake completes
@@ -74,6 +86,13 @@ class FakeReplyMixin:
             return result
         kind = assignment["envelope"].get("kind")
         if kind not in _FAKE_SPEAKABLE_KINDS or kind != envelope_kind(role, substate):
+            return result
+        if result.get("status") != "done":
+            # A failed outcome is never re-encoded as a declared reply: the
+            # collection face preserves its failure classification (no attempt
+            # burn, no semantic detour) instead of parsing a partially
+            # simulated reply as malformed. Writers are not silent on failure:
+            # the failure_class/audit_evidence fields were already produced.
             return result
         # Honest treatment of the artifact faces on a fake declared dispatch:
         # they are genuinely absent (no materialized copies exist), recorded
@@ -222,9 +241,24 @@ class FakeReplyMixin:
 
     def _declared_reply_payload(self, kind: str, result: dict) -> dict:
         """The fake's actual simulated fields under the assigned kind — never
-        invented, never coerced: the verdict/classification come straight
-        from the simulated outcome, and fields the simulation did not
-        explicitly produce stay absent for the Runtime to classify."""
+        invented, never coerced: the verdict/classification/evidence come
+        straight from the simulated outcome, and fields the simulation did not
+        explicitly produce stay absent for the Runtime to classify.
+
+        Writer/authority kinds are synthesized to the DECLARATION's required
+        minimum from the simulated outcome (Devon evidence fields, the Shield
+        artifact manifest, the Archer task graph / paired delta) and carry an
+        explicit ``simulated`` marker so no consumer mistakes the fake's reply
+        for a real writer/authority artifact.
+        """
+        if kind in DEVON_KINDS:
+            return self._devon_reply_payload(result)
+        if kind in SHIELD_WRITE_KINDS:
+            return self._shield_reply_payload(result)
+        if kind == "archer:planning":
+            return self._archer_planning_reply_payload(result)
+        if kind == "archer:ruling":
+            return self._archer_ruling_reply_payload(result)
         fields = (
             "review_summary", "review_body", "findings", "defect_classification",
             "discussion_refs", "review_ref", "candidate_sha", "reason", "evidence",
@@ -235,3 +269,83 @@ class FakeReplyMixin:
         else:
             payload["verdict"] = result.get("verdict")
         return payload
+
+    @staticmethod
+    def _devon_reply_payload(result: dict) -> dict:
+        """Devon evidence payload from the simulated phase outcome."""
+        fields = (
+            "phase",
+            "changed_paths",
+            "commands",
+            "results",
+            "manifest_compliance",
+            "pre_identity",
+            "post_identity",
+            "r_identity",
+            "no_change_reason",
+            "implemented_if_ids",
+            "result_identity",
+        )
+        payload = {field: result[field] for field in fields if field in result}
+        payload["simulated"] = True
+        return payload
+
+    @staticmethod
+    def _shield_reply_payload(result: dict) -> dict:
+        """Shield manifest payload from the simulated artifact manifest.
+
+        The legacy fake manifest carries only the observed ``path`` entries
+        (the ResultCheckpoint identity match reads paths exclusively); the
+        declared write-manifest contract additionally requires ``kind`` and
+        ``role`` per entry and a non-empty commit message, so the synthesized
+        payload fills the deterministic simulator values. An empty/absent
+        manifest stays invalid on purpose — the Runtime classifies it as a
+        schema_violation instead of a claimed write.
+        """
+        include = []
+        manifest = result.get("artifact_manifest")
+        if isinstance(manifest, dict):
+            for entry in manifest.get("include") or []:
+                if not isinstance(entry, dict) or not entry.get("path"):
+                    continue
+                include.append(
+                    {
+                        "path": entry["path"],
+                        "kind": str(entry.get("kind") or "test_asset"),
+                        "role": str(entry.get("role") or "test"),
+                    }
+                )
+        return {
+            "artifact_manifest": {"include": include},
+            "suggested_commit_message": str(
+                result.get("suggested_commit_message")
+                or "M-TEST: simulated Shield write (fake backend)"
+            ),
+            "simulated": True,
+        }
+
+    @staticmethod
+    def _archer_planning_reply_payload(result: dict) -> dict:
+        """Archer PLANNING payload from the simulated task-graph result."""
+        tasks = result.get("tasks")
+        payload = {"tasks": tasks if isinstance(tasks, list) else []}
+        payload["simulated"] = True
+        return payload
+
+    @staticmethod
+    def _archer_ruling_reply_payload(result: dict) -> dict:
+        """Archer RULING paired-delta payload (simulated, deterministic)."""
+        candidate = result.get("candidate_sha") or "unknown"
+        return {
+            "devon_side": {
+                "action": "simulated",
+                "detail": "FakeBackend paired delta: devon side (no real ruling)",
+            },
+            "shield_side": {
+                "action": "simulated",
+                "detail": "FakeBackend paired delta: shield side (no real ruling)",
+            },
+            "ordering": "devon_then_shield",
+            "candidate_sha": candidate,
+            "simulated": True,
+        }

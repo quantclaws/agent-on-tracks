@@ -625,6 +625,14 @@ class OpencodeRunMixin:
         payload = OpencodeRunMixin._first_json_object(text)
         if payload is None:
             return None, "final part.text must be a raw JSON object"
+        # Declared envelope reply (FR-0278-01): the assignment demands exactly
+        # one tracks-envelope block whose payload IS the manifest. Unwrap it so
+        # the declared writer contract and the legacy manifest extraction read
+        # the same object.
+        if isinstance(payload.get("envelope"), dict) and isinstance(
+            payload.get("payload"), dict
+        ):
+            payload = payload["payload"]
         return payload, None
 
     @staticmethod

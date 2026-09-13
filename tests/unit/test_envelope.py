@@ -1,11 +1,11 @@
 """Unit: kernel.envelope unified reply envelope (IF-ENVELOPE-001/002).
 
-Operator OOB 2026-09-06 (user-authorized): the module half of the envelope
-contract — single deterministic parse path, per-kind payload schemas (the
-ones DECLARED on dispatch assignments), schema digest, and staged parity.
-The integration contract files (tests/integration/test_envelope_*.py) stay
-T-024's registered deliverables; these unit pins protect the injection face
-that ships now.
+The module half of the envelope contract — single deterministic parse path,
+per-kind payload schemas for the FULL closed set (prism review family,
+DIAGNOSE, Devon RGR, Shield write family, Archer planning/ruling), schema
+digest, and staged parity. The integration contract files
+(tests/integration/test_envelope_*.py) carry the behavioural anchors; these
+unit pins protect the injection face and the writer/authority schemas.
 """
 
 import json
@@ -13,11 +13,15 @@ import json
 import pytest
 
 from tracks.kernel.envelope import (
+    ARCHER_KINDS,
     DEFAULT_PARITY_FACES,
+    DEVON_KINDS,
+    ENVELOPE_KINDS,
     ENVELOPE_PROTOCOL,
     ENVELOPE_VERSION,
     PARITY_STAGED,
     REVIEW_SUMMARY_MAX,
+    SHIELD_WRITE_KINDS,
     EnvelopeFormatError,
     build_assignment_envelope,
     check_envelope_parity,
@@ -191,9 +195,176 @@ def test_envelope_kind_maps_prism_review_family_and_diagnose():
 def test_declared_kind_only_for_kinds_with_registered_schema():
     assert envelope_declared_kind("prism", "PRISM_FINAL") == "prism:final"
     assert envelope_declared_kind("prism", "DIAGNOSE") == "prism:diagnose"
-    # Writer/authority kinds stay undeclared until T-024 registers schemas.
-    assert envelope_declared_kind("devon", "GREEN") is None
-    assert envelope_declared_kind("archer", "PLANNING") is None
+    # Writer/authority kinds are declared too: their payload schemas are
+    # registered (FR-0278-01), so the injection face carries them.
+    assert envelope_declared_kind("devon", "GREEN") == "devon:green"
+    assert envelope_declared_kind("devon", "RED") == "devon:red"
+    assert envelope_declared_kind("devon", "REFACTOR") == "devon:refactor"
+    assert envelope_declared_kind("shield", "WRITE") == "shield:write"
+    assert envelope_declared_kind("shield", "SHIELD_FIX") == "shield:shield_fix"
+    assert envelope_declared_kind("archer", "PLANNING") == "archer:planning"
+    assert envelope_declared_kind("archer", "RULING") == "archer:ruling"
+    assert envelope_declared_kind("maestro", "WHATEVER") is None
+    assert envelope_declared_kind("devon", "NO_SUCH_SUBSTATE") is None
+    # The whole registered closed set carries a real payload schema.
+    assert set(ENVELOPE_KINDS) >= set(DEVON_KINDS) | set(SHIELD_WRITE_KINDS) | set(
+        ARCHER_KINDS
+    )
+    assert all(ENVELOPE_KINDS[kind] for kind in ENVELOPE_KINDS)
+
+
+# -- writer/authority payload schemas (FR-0278-01) ------------------------------
+
+
+def _devon_red_payload(**over):
+    payload = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_envelope_red.py"],
+        "commands": [
+            {
+                "cmd": ".venv/bin/python -m pytest -n4 tests/unit/test_envelope_red.py",
+                "result": "fail",
+                "output_summary": "assertion_failure: deterministic assertion",
+            }
+        ],
+        "results": [{"status": "fail", "classification": "assertion_failure"}],
+        "manifest_compliance": True,
+        "pre_identity": "pre-dirty-snapshot",
+        "post_identity": "post-edit-identity",
+        "implemented_if_ids": ["IF-ENVELOPE-001"],
+        "result_identity": "result-identity",
+    }
+    payload.update(over)
+    return payload
+
+
+def _shield_write_payload(**over):
+    payload = {
+        "artifact_manifest": {
+            "include": [
+                {
+                    "path": "tests/integration/test_envelope_contract.py",
+                    "kind": "integration_test",
+                    "role": "test",
+                }
+            ]
+        },
+        "suggested_commit_message": "M-TEST: simulated Shield write",
+    }
+    payload.update(over)
+    return payload
+
+
+def _archer_planning_payload(**over):
+    payload = {"tasks": [{"task_id": "T-001"}]}
+    payload.update(over)
+    return payload
+
+
+def _archer_ruling_payload(**over):
+    payload = {
+        "devon_side": {"action": "repin red"},
+        "shield_side": {"action": "hold frozen test"},
+        "ordering": "devon_then_shield",
+    }
+    payload.update(over)
+    return payload
+
+
+_WRITER_AUTHORITY_SAMPLES = [
+    ("devon:red", _devon_red_payload()),
+    (
+        "devon:green",
+        _devon_red_payload(phase="green", r_identity="r-tree-sha", changed_paths=["a.py"]),
+    ),
+    (
+        "devon:refactor",
+        _devon_red_payload(
+            phase="refactor",
+            r_identity="r-tree-sha",
+            changed_paths=[],
+            no_change_reason="no behavior-preserving refactor required",
+        ),
+    ),
+    ("shield:write", _shield_write_payload()),
+    ("shield:shield_fix", _shield_write_payload()),
+    ("archer:planning", _archer_planning_payload()),
+    ("archer:ruling", _archer_ruling_payload()),
+]
+
+
+@pytest.mark.parametrize(("kind", "payload"), _WRITER_AUTHORITY_SAMPLES)
+def test_writer_authority_schemas_accept_valid_samples(kind, payload):
+    """Every sample is validated by the real consumer validator."""
+    parsed = parse_agent_output(_envelope_text(payload, kind=kind))
+    assert parsed["envelope"]["kind"] == kind
+    assert parsed["payload"] == payload
+
+
+@pytest.mark.parametrize(("kind", "payload"), _WRITER_AUTHORITY_SAMPLES)
+def test_writer_authority_samples_are_the_injected_schema_shape(kind, payload):
+    """The declaration embeds the same schema the sample was written against."""
+    declaration = build_assignment_envelope(kind)
+    assert declaration["payload_schema"] == ENVELOPE_KINDS[kind]
+    assert declaration["schema_digest"] == envelope_schema_digest(kind)
+    assert set(payload) >= {
+        field
+        for field, spec in ENVELOPE_KINDS[kind].items()
+        if isinstance(spec, dict) and spec.get("required")
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("devon:red", _devon_red_payload(changed_paths=[])),
+        ("devon:red", _devon_red_payload(phase="green", r_identity="r")),
+        ("devon:red", _devon_red_payload(commands=[])),
+        ("devon:red", _devon_red_payload(manifest_compliance="true")),
+        ("devon:red", _devon_red_payload(pre_identity="")),
+        ("devon:red", _devon_red_payload(implemented_if_ids=[1])),
+        ("devon:green", _devon_red_payload(phase="green", changed_paths=["a.py"])),
+        (
+            "devon:refactor",
+            _devon_red_payload(
+                phase="refactor", r_identity="r-tree-sha", changed_paths=[]
+            ),
+        ),
+        ("shield:write", _shield_write_payload(suggested_commit_message=" ")),
+        (
+            "shield:write",
+            _shield_write_payload(
+                artifact_manifest={"include": [{"path": "tests/x.py"}]}
+            ),
+        ),
+        ("shield:write", _shield_write_payload(artifact_manifest={"include": []})),
+        (
+            "shield:write",
+            _shield_write_payload(
+                artifact_manifest={
+                    "include": [{"path": "/abs/x.py", "kind": "t", "role": "t"}]
+                }
+            ),
+        ),
+        ("archer:planning", _archer_planning_payload(tasks=[])),
+        ("archer:planning", _archer_planning_payload(tasks=[{"ac_refs": []}])),
+        ("archer:ruling", _archer_ruling_payload(ordering="")),
+        ("archer:ruling", _archer_ruling_payload(devon_side="not-an-object")),
+    ],
+)
+def test_writer_authority_schemas_reject_incomplete_or_wrong_typed_payloads(kind, payload):
+    with pytest.raises(EnvelopeFormatError) as exc:
+        parse_agent_output(_envelope_text(payload, kind=kind))
+    assert exc.value.kind == "schema_violation"
+
+
+def test_devon_schema_rejects_phase_mismatch_between_kind_and_payload():
+    with pytest.raises(EnvelopeFormatError) as exc:
+        parse_agent_output(
+            _envelope_text(_devon_red_payload(phase="refactor"), kind="devon:red")
+        )
+    assert exc.value.kind == "schema_violation"
+    assert "phase" in exc.value.detail
 
 
 # -- schema digest (parity evidence) -------------------------------------------

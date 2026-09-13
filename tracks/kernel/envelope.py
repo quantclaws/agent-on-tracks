@@ -16,14 +16,16 @@ rejection errors after burning a full reasoning hop. The schema now lives in
 exactly one place: edit it here (or promote it to version 3) and every
 dispatch that declares it carries the new contract on its next materialization.
 
-Rollout stage: only kinds with a registered payload schema are DECLARED on
-dispatches (prism review family + DIAGNOSE). Writer/authority kinds stay
-undeclared until T-024 registers their schemas and fixtures; their replies
-keep the legacy channels. On a declared dispatch a MISSING block falls
-through to legacy handling (a compliance miss is not ambiguity — T-024
-tightens this to a hard format_error once the six parity faces embed the
-token); structural breakage (multiple blocks, malformed JSON, schema
-violations) fails closed into ``format_error``.
+Rollout stage: the full kind closed set is now DECLARED on dispatches —
+prism review family + DIAGNOSE, the Devon writer phases, the Shield write
+family, and the Archer authority kinds all carry an inline payload schema.
+Writer/authority schemas mirror the live consumer gates
+(executor/m_impl_anchor.py, effects/devon_evidence.py,
+effects/opencode_run.py) so the injected contract and the mechanical checks
+cannot drift. On a declared dispatch a MISSING block is a hard
+``format_error`` (a compliance miss is not ambiguity); structural breakage
+(multiple blocks, malformed JSON, schema violations) fails closed the same
+way.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from tracks.frontmatter import split_frontmatter
@@ -120,22 +123,148 @@ DIAGNOSE_SCHEMA: dict = {
     "evidence": {"required": True},
 }
 
+# ---------------------------------------------------------------------------
+# Writer/authority payload contracts (FR-0278-01)
+# ---------------------------------------------------------------------------
+
+# Devon evidence contract: mirrored from the live consumer gate
+# (executor/m_impl_anchor.py ``_devon_evidence_fields_error`` /
+# ``_devon_evidence_change_error``) and the forwarded field set
+# (effects/devon_evidence.py ``DEVON_EVIDENCE_FIELDS``), reconciled with the
+# tracks-devon-rgr §4 shape rules. Conditional requirements carry the phase
+# semantics: green/refactor require r_identity, and a green/refactor without
+# changed paths requires an explicit no_change_reason; RED must carry the
+# newly written failing test.
+DEVON_PHASES = ("red", "green", "refactor")
+DEVON_KINDS = ("devon:red", "devon:green", "devon:refactor")
+
+DEVON_COMMAND_SCHEMA: dict = {
+    "cmd": {"type": "string", "required": True, "non_empty": True},
+    "result": {"enum": ("pass", "fail"), "required": True},
+    "output_summary": {"type": "string", "required": True, "non_empty": True},
+}
+
+DEVON_EVIDENCE_SCHEMA: dict = {
+    "phase": {"enum": DEVON_PHASES, "required": True},
+    "changed_paths": {
+        "type": "array",
+        "required": True,
+        "items": {"type": "string", "non_empty": True},
+    },
+    "commands": {
+        "type": "array",
+        "required": True,
+        "min_items": 1,
+        "items": DEVON_COMMAND_SCHEMA,
+    },
+    "results": {"type": "array"},
+    "manifest_compliance": {"type": "boolean", "required": True, "const": True},
+    "pre_identity": {"type": "string", "required": True, "non_empty": True},
+    "post_identity": {"type": "string", "required": True, "non_empty": True},
+    "r_identity": {
+        "type": "string",
+        "non_empty": True,
+        "required_on_phase": ("green", "refactor"),
+    },
+    "no_change_reason": {
+        "type": "string",
+        "non_empty": True,
+        "required_when_no_change": True,
+    },
+    "implemented_if_ids": {
+        "type": "array",
+        "required": True,
+        "items": {"type": "string", "non_empty": True},
+    },
+    "result_identity": {"type": "string"},
+}
+
+DEVON_KIND_SCHEMAS: dict[str, dict] = {
+    "devon:red": {
+        **DEVON_EVIDENCE_SCHEMA,
+        "phase": {"enum": ("red",), "required": True},
+        "changed_paths": {
+            "type": "array",
+            "required": True,
+            "min_items": 1,
+            "items": {"type": "string", "non_empty": True},
+        },
+    },
+    "devon:green": {
+        **DEVON_EVIDENCE_SCHEMA,
+        "phase": {"enum": ("green",), "required": True},
+    },
+    "devon:refactor": {
+        **DEVON_EVIDENCE_SCHEMA,
+        "phase": {"enum": ("refactor",), "required": True},
+    },
+}
+
+# Shield WRITE/SHIELD_FIX manifest contract: mirrored from
+# kernel.contracts.WRITE_MANIFEST_CONTRACT and the live extraction gate
+# (effects/opencode_run.py ``_manifest_include`` / ``_manifest_item_error``):
+# a non-empty include list of repo-relative {path, kind, role} entries plus a
+# non-empty one-line suggested commit message.
+SHIELD_MANIFEST_ITEM_SCHEMA: dict = {
+    "path": {"type": "string", "required": True, "non_empty": True},
+    "kind": {"type": "string", "required": True, "non_empty": True},
+    "role": {"type": "string", "required": True, "non_empty": True},
+}
+
+SHIELD_WRITE_SCHEMA: dict = {
+    "artifact_manifest": {
+        "type": "object",
+        "required": True,
+        "fields": {
+            "include": {
+                "type": "array",
+                "required": True,
+                "min_items": 1,
+                "items": SHIELD_MANIFEST_ITEM_SCHEMA,
+            }
+        },
+    },
+    "suggested_commit_message": {"type": "string", "required": True, "non_empty": True},
+}
+SHIELD_WRITE_KINDS = ("shield:write", "shield:shield_fix")
+
+# Archer authority payloads. PLANNING delivers the task graph (the same task
+# objects tasks.json carries; every task pinned by its non-empty task_id) the
+# Runtime's commit_taskgraph consumer parses from the file. RULING delivers
+# the machine-executable paired delta the dispatch objective asks for
+# (kernel/m_impl_decide.py ``_m_impl_archer_ruling_dispatch``):
+# {devon_side, shield_side, ordering}.
+ARCHER_PLANNING_SCHEMA: dict = {
+    "tasks": {
+        "type": "array",
+        "required": True,
+        "min_items": 1,
+        "items": {"task_id": {"type": "string", "required": True, "non_empty": True}},
+    }
+}
+
+ARCHER_RULING_SCHEMA: dict = {
+    "devon_side": {"type": "object", "required": True},
+    "shield_side": {"type": "object", "required": True},
+    "ordering": {"type": "string", "required": True, "non_empty": True},
+}
+
+ARCHER_KINDS = ("archer:planning", "archer:ruling")
+
+
 REVIEW_KINDS = ("prism:review", "prism:plan", "prism:red", "prism:final")
 DIAGNOSE_KINDS = ("prism:diagnose",)
 
-# kind -> payload schema descriptor (None = header-only validation until
-# T-024 registers the schema; the header closed set still applies).
-ENVELOPE_KINDS: dict[str, dict | None] = {
+# kind -> payload schema descriptor. Every kind in the closed set carries a
+# registered schema: a declared dispatch injects it inline and a reply is
+# payload-validated against it (schema_violation on mismatch).
+ENVELOPE_KINDS: dict[str, dict] = {
     **dict.fromkeys(REVIEW_KINDS, REVIEW_SCHEMA),
     **dict.fromkeys(DIAGNOSE_KINDS, DIAGNOSE_SCHEMA),
-    # Writer/authority kinds: closed but schema-pending (T-024).
-    "devon:red": None,
-    "devon:green": None,
-    "devon:refactor": None,
-    "shield:write": None,
-    "shield:shield_fix": None,
-    "archer:planning": None,
-    "archer:ruling": None,
+    **DEVON_KIND_SCHEMAS,
+    **dict.fromkeys(SHIELD_WRITE_KINDS, SHIELD_WRITE_SCHEMA),
+    "archer:planning": ARCHER_PLANNING_SCHEMA,
+    "archer:ruling": ARCHER_RULING_SCHEMA,
 }
 
 # Substate -> envelope kind. Prism review substates share the review payload
@@ -167,8 +296,8 @@ def envelope_kind(role: str | None, substate: str | None) -> str | None:
 def envelope_declared_kind(role: str | None, substate: str | None) -> str | None:
     """Kinds whose schema is registered and therefore DECLARED on dispatch.
 
-    Header-only kinds stay undeclared for now: their reply parsing keeps the
-    legacy channels until T-024 registers their payload schemas and fixtures.
+    The full closed set carries a registered payload schema (FR-0278-01), so
+    every mapped (role, substate) pair is declared; unknown pairs stay None.
     """
     kind = envelope_kind(role, substate)
     if kind is not None and ENVELOPE_KINDS.get(kind) is not None:
@@ -269,9 +398,144 @@ def validate_diagnose_payload(payload: dict) -> str | None:
     return None
 
 
+def _non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _string_list_error(payload: dict, field: str, *, min_items: int = 0) -> str | None:
+    value = payload.get(field)
+    if not isinstance(value, list) or len(value) < min_items:
+        return f"devon payload {field} must be a list"
+    if any(not _non_empty_string(item) for item in value):
+        return f"devon payload {field} must be a list of non-empty strings"
+    return None
+
+
+def validate_devon_payload(payload: dict, phase: str) -> str | None:
+    """Devon evidence contract for one RGR phase (FR-0278-01).
+
+    Mirrors executor/m_impl_anchor.py ``_devon_evidence_fields_error`` /
+    ``_devon_evidence_change_error`` exactly: phase pinned to the dispatch's
+    kind, literal-true manifest_compliance, string-list identities, the
+    green/refactor r_identity requirement, and the no_change_reason escape
+    for a green/refactor with no changed paths.
+    """
+    if payload.get("phase") != phase:
+        return f"devon:{phase} payload phase must be {phase!r}"
+    if payload.get("manifest_compliance") is not True:
+        return "devon payload manifest_compliance must be true"
+    error = _string_list_error(
+        payload, "changed_paths", min_items=1 if phase == "red" else 0
+    )
+    if error is not None:
+        return error
+    error = _string_list_error(payload, "implemented_if_ids")
+    if error is not None:
+        return error
+    commands = payload.get("commands")
+    if not isinstance(commands, list) or not commands:
+        return "devon payload commands must be a non-empty list"
+    for idx, command in enumerate(commands, start=1):
+        if not isinstance(command, dict):
+            return f"devon payload commands[{idx}] must be an object"
+        if not _non_empty_string(command.get("cmd")):
+            return f"devon payload commands[{idx}].cmd must be a non-empty string"
+        if command.get("result") not in ("pass", "fail"):
+            return f"devon payload commands[{idx}].result must be 'pass'|'fail'"
+        if not _non_empty_string(command.get("output_summary")):
+            return (
+                f"devon payload commands[{idx}].output_summary must be a "
+                "non-empty string"
+            )
+    for field in ("pre_identity", "post_identity"):
+        if not _non_empty_string(payload.get(field)):
+            return f"devon payload {field} must be a non-empty string"
+    if phase in ("green", "refactor"):
+        if not _non_empty_string(payload.get("r_identity")):
+            return "devon payload r_identity is required for green/refactor"
+        if not payload["changed_paths"] and not _non_empty_string(
+            payload.get("no_change_reason")
+        ):
+            return (
+                "devon payload green/refactor with no changed paths requires "
+                "no_change_reason"
+            )
+    elif not payload["changed_paths"]:
+        return "devon RED payload requires at least one changed path"
+    return None
+
+
+def validate_shield_write_payload(payload: dict) -> str | None:
+    """Shield WRITE/SHIELD_FIX manifest contract (FR-0278-01).
+
+    Mirrors effects/opencode_run.py ``_manifest_include`` /
+    ``_manifest_item_error`` and kernel.contracts.WRITE_MANIFEST_CONTRACT.
+    """
+    manifest = payload.get("artifact_manifest")
+    if not isinstance(manifest, dict):
+        return "shield payload artifact_manifest must be an object"
+    include = manifest.get("include")
+    if not isinstance(include, list) or not include:
+        return "shield payload artifact_manifest.include must be a non-empty list"
+    for idx, item in enumerate(include, start=1):
+        if not isinstance(item, dict):
+            return f"shield payload artifact_manifest.include[{idx}] must be an object"
+        for field in ("path", "kind", "role"):
+            if not _non_empty_string(item.get(field)):
+                return (
+                    f"shield payload artifact_manifest.include[{idx}].{field} "
+                    "must be a non-empty string"
+                )
+        if Path(item["path"]).is_absolute():
+            return (
+                f"shield payload artifact_manifest.include[{idx}].path must be "
+                "repo-relative"
+            )
+    if not _non_empty_string(payload.get("suggested_commit_message")):
+        return "shield payload suggested_commit_message must be a non-empty string"
+    return None
+
+
+def validate_archer_planning_payload(payload: dict) -> str | None:
+    """Archer PLANNING task-graph contract (FR-0278-01)."""
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        return "archer planning payload tasks must be a non-empty list"
+    for idx, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            return f"archer planning payload tasks[{idx}] must be an object"
+        if not _non_empty_string(task.get("task_id")):
+            return (
+                f"archer planning payload tasks[{idx}].task_id must be a "
+                "non-empty string"
+            )
+    return None
+
+
+def validate_archer_ruling_payload(payload: dict) -> str | None:
+    """Archer RULING paired-delta contract (FR-0278-01)."""
+    for field in ("devon_side", "shield_side"):
+        if not isinstance(payload.get(field), dict):
+            return f"archer ruling payload {field} must be an object"
+    if not _non_empty_string(payload.get("ordering")):
+        return "archer ruling payload ordering must be a non-empty string"
+    return None
+
+
+def _devon_validator(phase: str) -> Callable[[dict], str | None]:
+    def validate(payload: dict) -> str | None:
+        return validate_devon_payload(payload, phase)
+
+    return validate
+
+
 _PAYLOAD_VALIDATORS: dict[str, Callable[[dict], str | None]] = {
     **dict.fromkeys(REVIEW_KINDS, validate_review_payload),
     **dict.fromkeys(DIAGNOSE_KINDS, validate_diagnose_payload),
+    **{kind: _devon_validator(kind.split(":", 1)[1]) for kind in DEVON_KINDS},
+    **dict.fromkeys(SHIELD_WRITE_KINDS, validate_shield_write_payload),
+    "archer:planning": validate_archer_planning_payload,
+    "archer:ruling": validate_archer_ruling_payload,
 }
 
 

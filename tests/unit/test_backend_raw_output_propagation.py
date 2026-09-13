@@ -449,3 +449,215 @@ def test_real_undeclared_result_untouched(backend_env):
 
 def test_real_envelope_version_is_a_reviewed_independent_declaration():
     assert OpencodeBackend.envelope_version == ENVELOPE_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Fake backend: writer/authority kinds (FR-0278-01)
+# ---------------------------------------------------------------------------
+
+
+def _devon_assignment(phase: str) -> dict:
+    assignment = {
+        "task_id": TASK_ID,
+        "phase": phase,
+        "if_ids": ["IF-IMPL-001"],
+        "ac_refs": ["AC-FR0001-01"],
+        "test_refs": ["tests/unit/test_widget.py::test_widget"],
+        "commands": [".venv/bin/python -m pytest -n4 tests/unit/test_widget.py"],
+        "manifest": {
+            "allowed_paths": ["tracks/impl/widget.py", "tests/unit/test_widget.py"],
+            "forbidden_paths": ["tests/integration/**"],
+        },
+        "pre_dirty_snapshot": {},
+        "result_identity": "result-100",
+    }
+    if phase in ("green", "refactor"):
+        assignment["r_tree_identity"] = "r-tree-100"
+    assignment["envelope"] = build_assignment_envelope(f"devon:{phase}")
+    return assignment
+
+
+@pytest.mark.parametrize("phase", ["red", "green", "refactor"])
+def test_fake_declared_devon_phase_encodes_schema_complete_evidence(
+    backend_env, phase
+):
+    ex, store, repo = backend_env
+    fake = FakeBackend(repo, VERSION)
+    assignment = _devon_assignment(phase)
+    result = fake.act("devon", phase.upper(), None, None, assignment=assignment)
+    assert result["status"] == "done"
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["envelope"]["kind"] == f"devon:{phase}"
+    payload = parsed["payload"]
+    assert payload["phase"] == phase
+    assert payload["simulated"] is True
+    assert payload["manifest_compliance"] is True
+    assert payload["commands"] and payload["commands"][0]["cmd"]
+    # Runtime collection: a schema-valid declared reply never format_errors.
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is False
+    assert list(store.events(RUN_ID)) == []
+
+
+def test_fake_declared_shield_write_encodes_manifest_contract(backend_env):
+    ex, store, repo = backend_env
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("shield:write")
+    assignment["test_tasks"] = [
+        {"ac_id": "AC-FR0001-01", "layers": ["integration"], "if_ids": ["IF-TEST-001"]}
+    ]
+    result = fake.act("shield", "WRITE", None, None, assignment=assignment)
+    assert result["status"] == "done"
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["envelope"]["kind"] == "shield:write"
+    payload = parsed["payload"]
+    include = payload["artifact_manifest"]["include"]
+    assert include and payload["suggested_commit_message"]
+    assert payload["simulated"] is True
+    for entry in include:
+        for field in ("path", "kind", "role"):
+            assert entry[field]
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is False
+    assert list(store.events(RUN_ID)) == []
+
+
+def test_fake_declared_shield_noop_reports_no_target_diff(backend_env):
+    """A declared WRITE reply cannot represent done-with-nothing-written: the
+    fake reports the simulated exit-gate failure instead of a schema-invalid
+    done reply. The undeclared channel keeps the legacy empty-manifest done
+    result untouched."""
+    ex, store, repo = backend_env
+    fake = FakeBackend(repo, VERSION)
+    tasks = [
+        {"ac_id": "AC-FR0001-01", "layers": ["integration"], "if_ids": ["IF-TEST-001"]}
+    ]
+    first = fake.act(
+        "shield", "WRITE", None, None, assignment=_declared("shield:write") | {"test_tasks": tasks}
+    )
+    assert first["status"] == "done"
+    # Re-dispatch rewrites byte-identical files: no attributable diff.
+    assignment = _declared("shield:write")
+    assignment["test_tasks"] = tasks
+    second = fake.act("shield", "WRITE", None, None, assignment=assignment)
+    assert second["status"] == "failed"
+    assert second["failure_class"] == "no_target_diff"
+    handled = ex._format_error_shortcircuit(second, _cmd(), TASK_ID, assignment)
+    assert handled is False  # failure classification preserved, no format_error
+    assert list(store.events(RUN_ID)) == []
+
+    # Undeclared: the legacy empty-manifest done result is unchanged.
+    legacy = fake.act(
+        "shield", "WRITE", None, None, assignment={"test_tasks": tasks}
+    )
+    assert legacy["status"] == "done"
+    assert legacy.get("artifact_manifest", {}).get("include") == []
+
+
+def _planning_docs(repo: Path, version: str = VERSION) -> None:
+    from tracks import paths
+
+    vdir = paths.version_dir(paths.tracks_home(repo), version)
+    vdir.mkdir(parents=True, exist_ok=True)
+    (vdir / "acceptance.md").write_text(
+        "# 验收\n\n## FR-0001 测试需求\n\n### AC-FR0001-01\n\n  - 可在系统外断言\n",
+        encoding="utf-8",
+    )
+    (vdir / "interfaces.md").write_text(
+        "# 接口\n\n## 5. IF Registry\n\n### IF-TEST-001 测试合同\n\n- **合同**：x。\n",
+        encoding="utf-8",
+    )
+
+
+def test_fake_declared_archer_planning_encodes_task_graph(backend_env):
+    ex, store, repo = backend_env
+    _planning_docs(repo)
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("archer:planning")
+    result = fake.act("archer", "PLANNING", None, None, assignment=assignment)
+    assert result["status"] == "done"
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["envelope"]["kind"] == "archer:planning"
+    tasks = parsed["payload"]["tasks"]
+    assert tasks and all(task["task_id"] for task in tasks)
+    assert parsed["payload"]["simulated"] is True
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is False
+    assert list(store.events(RUN_ID)) == []
+
+
+def test_fake_declared_archer_ruling_encodes_paired_delta(backend_env):
+    ex, store, repo = backend_env
+    fake = FakeBackend(repo, VERSION)
+    assignment = _declared("archer:ruling")
+    result = fake.act("archer", "RULING", None, None, assignment=assignment)
+    assert result["status"] == "done"
+    parsed = parse_agent_output(result["raw_output"])
+    assert parsed["envelope"]["kind"] == "archer:ruling"
+    payload = parsed["payload"]
+    assert payload["devon_side"] and payload["shield_side"]
+    assert payload["ordering"] == "devon_then_shield"
+    assert payload["simulated"] is True
+    handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
+    assert handled is False
+    assert list(store.events(RUN_ID)) == []
+
+
+# ---------------------------------------------------------------------------
+# Real backend: declared writer replies feed the legacy extraction faces
+# ---------------------------------------------------------------------------
+
+
+def test_real_devon_envelope_reply_is_unwrapped_into_evidence(backend_env):
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    payload = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_widget.py"],
+        "commands": [
+            {"cmd": "pytest", "result": "fail", "output_summary": "assertion_failure"}
+        ],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-IMPL-001"],
+    }
+    text = _envelope_reply("devon:red", payload=payload)
+    event = {"type": "text", "part": {"text": text}}
+    evidence = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None
+    )
+    assert evidence["phase"] == "red"
+    assert evidence["changed_paths"] == ["tests/unit/test_widget.py"]
+
+
+def test_real_shield_envelope_reply_is_unwrapped_into_manifest(backend_env):
+    _, _, repo = backend_env
+    be = OpencodeBackend(repo, VERSION)
+    payload = {
+        "artifact_manifest": {
+            "include": [
+                {
+                    "path": "tests/integration/test_widget.py",
+                    "kind": "integration_test",
+                    "role": "test",
+                }
+            ]
+        },
+        "suggested_commit_message": "M-TEST: add tests",
+    }
+    text = _envelope_reply("shield:write", payload=payload)
+    text_event = {"type": "text", "part": {"text": text}}
+    unwrapped, error = be._manifest_payload(text_event)
+    assert error is None
+    assert unwrapped["suggested_commit_message"] == "M-TEST: add tests"
+    manifest, commit, error = be._extract_manifest(_transcript(text))
+    assert error is None
+    assert commit == "M-TEST: add tests"
+    assert manifest["include"] == [
+        {
+            "path": "tests/integration/test_widget.py",
+            "kind": "integration_test",
+            "role": "test",
+        }
+    ]

@@ -113,8 +113,25 @@ class ExecReleaseTailMixin:
         closers never consume it. A FAKE artifact surfacing on the real
         channel is rejected fail-closed (fake_rejected + blocked outcome);
         returns None then, else the issue id.
+
+        Crash idempotence (FR-0283-04): the create seam receives the
+        (repo_dir, repo_id, baseline_digest) dedup context so a crash-retry
+        reuses an already-created issue (local authoritative map first, then
+        the remote title+baseline search) instead of duplicating it. ``title``
+        is part of the persisted identity for exactly that key.
         """
-        verified = create_issue_verified(backend, title, body, [self.version])
+        repo_id = str(
+            getattr(backend, "gh_repo", "") or os.environ.get("TRAC_GITHUB_REPO", "")
+        )
+        verified = create_issue_verified(
+            backend,
+            title,
+            body,
+            [self.version],
+            repo_dir=self.repo,
+            repo_id=repo_id,
+            baseline_digest=digest,
+        )
         issue_id = verified.get("issue_number")
         api_verified = bool(verified.get("api_verified"))
         if not api_verified and not isinstance(backend, FakeIssueBackend):
@@ -144,16 +161,15 @@ class ExecReleaseTailMixin:
                 )
                 return None
         backend.add_to_project(issue_id, backend.project)
-        repo_id = str(
-            getattr(backend, "gh_repo", "") or os.environ.get("TRAC_GITHUB_REPO", "")
-        )
-        url = (
+        url = verified.get("url") or (
             f"https://github.com/{repo_id}/issues/{issue_id}"
             if repo_id and not str(issue_id).startswith(("FAKE-", "fake"))
             else ""
         )
         mapping = {
             "issue_number": issue_id,
+            "node_id": verified.get("node_id"),
+            "title": title,
             "api_verified": api_verified,
             "repo": repo_id,
             "url": url,
@@ -175,12 +191,20 @@ class ExecReleaseTailMixin:
                 "repo": repo_id,
                 "url": url,
                 "baseline_digest": digest,
+                "reused": bool(verified.get("reused")),
+                "recovered": bool(verified.get("recovered")),
             },
             command_id=cmd.command_id,
         )
         self._emit(
             "issue.mapped",
-            {**mapping, "item_id": item_id, "digest": digest},
+            {
+                **mapping,
+                "item_id": item_id,
+                "digest": digest,
+                "reused": bool(verified.get("reused")),
+                "recovered": bool(verified.get("recovered")),
+            },
             command_id=cmd.command_id,
         )
         return issue_id

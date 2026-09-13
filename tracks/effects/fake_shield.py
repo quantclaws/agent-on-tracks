@@ -24,6 +24,7 @@ from tracks import paths
 from tracks.capabilities import supports_m_impl
 from tracks.effects.backend import valid_test_tasks
 from tracks.effects.devon_patch import DevonPatchMixin
+from tracks.effects.envelope_reply import is_declared_assignment
 
 # FR-0210 exit gate tokens: a failed agent run is not a produced document.
 _FAILED_TOKENS = (
@@ -128,6 +129,13 @@ class FakeShieldMixin:
         self._shield_writes += 1
         self._append_revision_marker(tests_dir, assignment)
         manifest = self._shield_artifact_manifest(pre_snapshot)
+        if not manifest["include"] and is_declared_assignment(assignment):
+            # Declared WRITE contract (FR-0278-01): a done Shield outcome must
+            # declare a non-empty artifact manifest. A no-op re-dispatch wrote
+            # nothing whose identity changed, so the simulated exit gate
+            # reports it honestly instead of standing behind a done reply the
+            # declared schema cannot represent.
+            return simulated_agent_failure("no_target_diff", "shield")
         return {
             "status": "done",
             "artifact_ref": str(tests_dir),

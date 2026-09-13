@@ -40,6 +40,7 @@ class _ShieldBackend:
         self._repo = repo
         self._files = files
         self._outcome = outcome
+        self._envelope = FakeBackend(Path("."), "v0.0")
 
     def act(self, role, substate, doc, doc_path, assignment=None, worktree=None):
         for rel, content in self._files.items():
@@ -60,6 +61,12 @@ class _ShieldBackend:
             },
             "suggested_commit_message": "M-TEST: shield suggested commit",
         }
+
+    def finalize_act(self, result, role, substate, assignment=None):
+        # Declared writer dispatches (shield:write) encode the simulated
+        # manifest as the reply the assignment demands — same seam as
+        # ``_StubBackend``.
+        return self._envelope.finalize_act(result, role, substate, assignment)
 
 
 def _init_workspace(tmp_path, version="v0.1"):

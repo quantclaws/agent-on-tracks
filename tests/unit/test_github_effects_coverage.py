@@ -440,6 +440,7 @@ def test_create_issue_verified_paths(tmp_path, monkeypatch):
 
     assert create_issue_verified(_FakeArtifact(), "t", "b", []) == {
         "issue_number": "FAKE-99",
+        "title": "t",
         "api_verified": False,
     }
 
@@ -453,7 +454,17 @@ def test_create_issue_verified_paths(tmp_path, monkeypatch):
         github, "readback_issue", lambda repo, number: {"title": "T", "state": "open", "api_verified": True}
     )
     mapping = create_issue_verified(_Live(), "t", "b", [])
-    assert mapping == {"issue_number": "7", "title": "T", "state": "open", "api_verified": True}
+    assert mapping == {
+        "issue_number": "7",
+        "node_id": None,
+        "global_id": None,
+        "title": "T",
+        "state": "open",
+        "url": "",
+        "api_verified": True,
+        "reused": False,
+        "recovered": False,
+    }
 
 
 def test_persist_issue_mapping_merge_and_corrupt(tmp_path):

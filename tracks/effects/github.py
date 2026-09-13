@@ -602,6 +602,9 @@ def readback_issue(repo_id: str, issue_number: int) -> dict:
     ``readback_ci_run``; missing credentials raise the classified
     ``missing_token`` error — never a silent pass. HTTP failures are
     classified (auth | rate_limit | not_found | network) and fail closed.
+    The returned mapping carries the GLOBAL identity (``node_id`` and the
+    numeric ``global_id``), not just the per-repo ``issue_number``
+    (FR-0283-01/04).
     """
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -624,34 +627,207 @@ def readback_issue(repo_id: str, issue_number: int) -> dict:
         raise GithubIssuesError("network", str(e.reason)) from e
     return {
         "issue_number": data.get("number", issue_number),
+        "node_id": data.get("node_id"),
+        "global_id": data.get("id"),
         "title": data.get("title", ""),
         "state": data.get("state", ""),
+        "url": data.get("html_url", ""),
         "api_verified": True,
     }
 
 
-def create_issue_verified(backend, title: str, body: str, labels: list) -> dict:
+def list_issues(repo_id: str, *, per_page: int = 100, max_pages: int = 10) -> list[dict]:
+    """GET /repos/{repo}/issues normalized listing (FR-0283-04).
+
+    Reads up to ``max_pages`` pages of ``state=all`` issues and returns the
+    normalized identity records (number / global id / title / state / url);
+    pull requests are excluded (the issues endpoint returns both). Any HTTP
+    or transport failure, malformed page, or exceeded page bound raises the
+    classified :class:`GithubIssuesError` — the crash-recovery dedup search
+    must fail closed, never guess.
+    """
+    _require_token()
+    base = _api_base()
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        req = _api_request(
+            f"{base}/repos/{repo_id}/issues"
+            f"?state=all&per_page={per_page}&page={page}",
+            "GET",
+        )
+        try:
+            data = _get_any(req)
+        except urllib.error.HTTPError as e:
+            cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
+            raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
+        except urllib.error.URLError as e:
+            raise GithubIssuesError("network", str(e.reason)) from e
+        if not isinstance(data, list):
+            raise GithubIssuesError("network", "issues listing is not a list")
+        for item in data:
+            if not isinstance(item, dict) or "pull_request" in item:
+                continue
+            out.append(
+                {
+                    "issue_number": item.get("number"),
+                    "node_id": item.get("node_id"),
+                    "global_id": item.get("id"),
+                    "title": item.get("title", ""),
+                    "state": item.get("state", ""),
+                    "url": item.get("html_url", ""),
+                    "body": item.get("body", ""),
+                }
+            )
+        if len(data) < per_page:
+            return out
+    raise GithubIssuesError(
+        "network", f"issues listing exceeded {max_pages} pages"
+    )
+
+
+def find_remote_issue(repo_id: str, title: str, baseline_digest: str) -> dict | None:
+    """Crash-recovery dedup search: the remote issue matching
+    ``(repo, title, baseline_digest)`` (FR-0283-04).
+
+    Matches the exact title and requires the baseline digest in the issue
+    body (the create body carries ``baseline digest: <digest>``), so a
+    same-title issue from a different baseline is not reused. Returns None
+    when no issue matches; any search failure raises (fail-closed) — the
+    caller must not create a duplicate when it cannot prove absence.
+    """
+    wanted = str(title or "")
+    digest = str(baseline_digest or "")
+    for issue in list_issues(repo_id):
+        if str(issue.get("title") or "") != wanted:
+            continue
+        if digest and digest not in str(issue.get("body") or ""):
+            continue
+        return issue
+    return None
+
+
+def find_authoritative_mapping(
+    repo: Path,
+    repo_id: str,
+    title: str,
+    baseline_digest: str,
+) -> dict | None:
+    """The authoritative-map entry for ``(repo, title, baseline_digest)``.
+
+    Only ``api_verified=true`` entries are reused: an unverified/fake entry
+    can never satisfy the dedup key (FR-0283-02/04). Returns the mapping with
+    its ``item_id`` bound, or None when the key is absent.
+    """
+    path = repo / ".tracks" / "runtime" / "issue-map.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for item_id, mapping in data.items():
+        if not isinstance(mapping, dict) or not mapping.get("api_verified"):
+            continue
+        if str(mapping.get("repo") or "") != str(repo_id or ""):
+            continue
+        if str(mapping.get("baseline_digest") or "") != str(baseline_digest or ""):
+            continue
+        if str(mapping.get("title") or "") != str(title or ""):
+            continue
+        return {**mapping, "item_id": item_id}
+    return None
+
+
+def _reuse_mapping(entry: dict, *, recovered: bool) -> dict:
+    """Normalize a reused authoritative/remote identity into the mapping
+    vocabulary consumers share (issue_number + api_verified + global id)."""
+    return {
+        "issue_number": entry.get("issue_number"),
+        "node_id": entry.get("node_id"),
+        "global_id": entry.get("global_id"),
+        "title": entry.get("title", ""),
+        "state": entry.get("state", ""),
+        "url": entry.get("url", ""),
+        "api_verified": True,
+        "reused": True,
+        "recovered": recovered,
+    }
+
+
+def create_issue_verified(
+    backend,
+    title: str,
+    body: str,
+    labels: list,
+    *,
+    repo_dir: Path | None = None,
+    repo_id: str | None = None,
+    baseline_digest: str | None = None,
+) -> dict:
     """Create an issue and verify it by an immediate API readback.
 
     Live channel: create -> GET the created issue -> mapping with
-    ``api_verified=true`` (AC-FR0270-01). Fake stand-in channel: the
-    deterministic stand-in can never verify (``api_verified=false``,
-    AC-FR0270-02) — fake mappings must stay unclosable. A FAKE-prefixed
-    artifact surfacing on the real channel is returned unverified (never
-    read back: it has no remote identity) so the caller's
-    ``reject_fake_artifact`` path lands ``fake_rejected``.
+    ``api_verified=true`` (AC-FR0270-01) and the global ``node_id``/``url``
+    identity (FR-0283-01). Fake stand-in channel: the deterministic stand-in
+    can never verify (``api_verified=false``, AC-FR0270-02) — fake mappings
+    must stay unclosable. A FAKE-prefixed artifact surfacing on the real
+    channel is returned unverified (never read back: it has no remote
+    identity) so the caller's ``reject_fake_artifact`` path lands
+    ``fake_rejected``.
+
+    Crash-idempotent dedup (FR-0283-04), active when the caller passes the
+    full ``(repo_dir, repo_id, baseline_digest)`` context:
+
+    1. an authoritative-map entry with the same ``(repo, title,
+       baseline_digest)`` and ``api_verified=true`` is reused WITHOUT any
+       remote call (the persist survived a crash);
+    2. otherwise the remote issue list is searched for the same title +
+       baseline digest (the create succeeded but the persist did not) and a
+       match is reused through its API readback;
+    3. a search that cannot prove absence fails closed with the classified
+       error — the caller must never blindly create a duplicate.
     """
+    if isinstance(backend, FakeIssueBackend):
+        issue_id = backend.create_issue(title, body, labels)
+        return {
+            "issue_number": issue_id,
+            "title": title,
+            "api_verified": False,
+        }
+    dedup = bool(repo_dir and repo_id and baseline_digest)
+    if dedup:
+        existing = find_authoritative_mapping(repo_dir, repo_id, title, baseline_digest)
+        if existing is not None:
+            return _reuse_mapping(existing, recovered=False)
+        remote = find_remote_issue(repo_id, title, baseline_digest)
+        if remote is not None:
+            readback = readback_issue(repo_id, int(remote["issue_number"]))
+            return _reuse_mapping(
+                {
+                    **remote,
+                    "title": readback.get("title", remote.get("title", "")),
+                    "state": readback.get("state", remote.get("state", "")),
+                    "node_id": readback.get("node_id", remote.get("node_id")),
+                    "global_id": readback.get("global_id", remote.get("global_id")),
+                },
+                recovered=True,
+            )
     issue_id = backend.create_issue(title, body, labels)
-    if isinstance(backend, FakeIssueBackend) or str(issue_id).startswith(
-        ("FAKE-", "fake")
-    ):
-        return {"issue_number": issue_id, "api_verified": False}
+    if str(issue_id).startswith(("FAKE-", "fake")):
+        return {"issue_number": issue_id, "title": title, "api_verified": False}
     readback = readback_issue(backend.gh_repo, int(str(issue_id)))
     return {
         "issue_number": issue_id,
+        "node_id": readback.get("node_id"),
+        "global_id": readback.get("global_id"),
         "title": readback.get("title", ""),
         "state": readback.get("state", ""),
+        "url": readback.get("url", ""),
         "api_verified": bool(readback.get("api_verified")),
+        "reused": False,
+        "recovered": False,
     }
 
 
