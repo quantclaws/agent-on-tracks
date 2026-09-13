@@ -179,3 +179,23 @@ def test_deploy_guard_configs_empty_registry_produces_consistent_digest(tmp_path
     for path_key in (".githooks/pre-commit", ".github/workflows/ci.yml"):
         raw = (tmp_path / path_key).read_bytes()
         assert deployment.artifact_digests[path_key] == hashlib.sha256(raw).hexdigest()
+
+
+# AC-FR0269-02@v0.8 TRACKS-TRACE fail-closed parity includes the declared command.
+def test_parity_rejects_exit_zero_even_when_all_points_match(tmp_path):
+    from dataclasses import replace
+
+    original = _registry()
+    command = (*original.entries[0].command, '--exit-zero')
+    registry = replace(original, entries=(replace(original.entries[0], command=command),))
+    deployment = deploy_guard_configs(registry, tmp_path)
+    report = check_parity(
+        registry, {'lint-format': command}, deployment.pre_commit_path,
+        deployment.ci_workflow_path, tmp_path,
+    )
+    assert report.runtime_match is False
+    assert report.pre_commit_match is False
+    assert report.ci_match is False
+    assert {m.place for m in report.mismatches if m.kind == 'exit_zero'} == {
+        'runtime', 'pre_commit', 'ci',
+    }

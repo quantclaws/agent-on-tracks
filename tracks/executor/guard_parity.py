@@ -104,6 +104,12 @@ def _compare_against_candidates(
     containing ``--exit-zero`` is a fail-closed mismatch; otherwise the guard
     is reported missing/drifted.
     """
+    # --exit-zero is always a fail-closed mismatch, even when the command
+    # otherwise matches exactly.
+    for candidate in candidates:
+        if any("--exit-zero" in arg for arg in candidate):
+            return _exit_zero_mismatch(place, guard_id)
+
     for candidate in candidates:
         try:
             ok = audit_no_concurrency_injection(list(expected), list(candidate), cwd)
@@ -111,11 +117,6 @@ def _compare_against_candidates(
             ok = False
         if ok:
             return []  # exact match found
-
-    # No exact match: check for exit-zero first
-    for candidate in candidates:
-        if any("--exit-zero" in arg for arg in candidate):
-            return _exit_zero_mismatch(place, guard_id)
 
     # Drift or missing
     closest = next(iter(candidates), None)
