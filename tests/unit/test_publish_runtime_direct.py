@@ -28,6 +28,7 @@ def _host(
     *,
     operation: str = "tag",
     operation_steps: list[str] | None = None,
+    build_artifact: str | None = None,
 ) -> tuple[Executor, Store, str, dict, str]:
     repo = git_repo(tmp_path, gitignore=True)
     remote = tmp_path / "remote.git"
@@ -48,14 +49,22 @@ def _host(
         "\n[host-contract.operations.feature]\n"
         f"steps = {json.dumps(operation_steps or [f'{operation}:{{feature_tag}}'])}\n"
     )
+    if build_artifact is not None:
+        contract_text += (
+            "\n[host-contract.build]\n"
+            f"artifact = {json.dumps(build_artifact)}\n"
+        )
     contract_path = projects / "project.toml"
     contract_path.write_text(contract_text, encoding="utf-8")
     git_strip(repo, "add", "-f", ".tracks/projects/project.toml")
     git_strip(repo, "commit", "-m", "publish contract")
     candidate = git_strip(repo, "rev-parse", "HEAD")
     declared_steps = operation_steps or [f"{operation}:{{feature_tag}}"]
+    contract_table: dict = {"operations": {"feature": {"steps": declared_steps}}}
+    if build_artifact is not None:
+        contract_table["build"] = {"artifact": build_artifact}
     plan = build_operation_plan(
-        {"operations": {"feature": {"steps": declared_steps}}},
+        contract_table,
         "feature",
         {"feature_tag": _TAG},
     )

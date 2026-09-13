@@ -7,6 +7,7 @@ import os
 
 from tracks.effects.github import GithubIssuesError, close_issue
 from tracks.effects.github import close_project_milestone as close_project_milestone_api
+from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH, load_host_contract
 from tracks.executor.milestone import (
     _event_payload,
     _event_seq,
@@ -20,6 +21,7 @@ from tracks.executor.milestone import (
     skipped_issue_entries,
 )
 from tracks.executor.publish import operation_idempotency_key
+from tracks.executor.release_gate import render_placeholders, version_facts
 
 _PUBLISH_FAILURE_EVENTS = frozenset(
     {"publish.failed", "publish.blocked", "reconcile_conflict"}
@@ -296,6 +298,48 @@ class ExecMilestoneMixin:
             }
 
         return closer
+
+    def _close_milestone_tracker(self, state) -> dict:
+        """Resolve ``[host-contract.tracker]`` into close-command params.
+
+        The kernel deciders stay filesystem-free, so the executor resolves
+        the host declaration at issue time (FR-0284): the repo/project
+        identities from their declared env channels and the milestone
+        template rendered with the run's version facts. An undeclared or
+        unresolved tracker returns ``{}`` and the consumer keeps the audited
+        ``not_authoritative`` skip semantics.
+        """
+        try:
+            contract = load_host_contract(
+                self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+            )
+        except (OSError, ValueError):
+            return {}
+        tracker = dict(contract.tracker or {})
+        if not tracker:
+            return {}
+        version = str(getattr(state, "version", "") or "")
+        if not version:
+            version = next(
+                (
+                    str(event.version)
+                    for event in reversed(list(self.store.events(self.run_id)))
+                    if getattr(event, "version", "")
+                ),
+                "",
+            )
+        template = str(tracker.get("milestone_template") or "")
+        return {
+            "repo": os.environ.get(str(tracker.get("repo_env") or ""), "").strip(),
+            "project": os.environ.get(
+                str(tracker.get("project_env") or ""), ""
+            ).strip(),
+            "milestone": (
+                render_placeholders(template, version_facts(version, self.run_id))
+                if template
+                else ""
+            ),
+        }
 
     def _close_milestone_project(self, cmd, task_id, trace, params, events):
         """Close the Project/milestone when the host declared an authoritative

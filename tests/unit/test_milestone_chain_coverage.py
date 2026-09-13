@@ -9,9 +9,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from tests.unit.helpers import git_repo
 from tracks.effects.github import GithubIssuesError
 from tracks.executor import milestone_chain as mc
+from tracks.executor.executor import Executor
 from tracks.executor.milestone_chain import ExecMilestoneMixin
+from tracks.kernel.events import Command
+from tracks.store import Store
 
 
 class _Cmd:
@@ -137,6 +141,95 @@ def test_real_issue_closer_github_error_and_malformed(tmp_path, monkeypatch):
     malformed = closer({"repo": "acme/host", "issue_number": None}, {})
     assert malformed["state"] == "skipped"
     assert malformed["reason"].startswith("malformed_issue_number")
+
+
+def _write_tracker_contract(repo: Path, *, tracker: bool = True) -> Path:
+    path = repo / ".tracks" / "projects" / "project.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        "[host-contract]\n"
+        "version = 1\n"
+        "language = 'python'\n"
+        "toolchain = 'cpython'\n"
+        "install = ''\n"
+    )
+    if tracker:
+        body += (
+            "\n[host-contract.tracker]\n"
+            "repo_env = 'TRAC_GITHUB_REPO'\n"
+            "project_env = 'TRAC_GITHUB_PROJECT'\n"
+            "milestone_template = 'release {version}'\n"
+        )
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_close_milestone_tracker_resolves_declared_template(tmp_path, monkeypatch):
+    host = _Host(tmp_path)
+    _write_tracker_contract(host.repo)
+    monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
+    monkeypatch.setenv("TRAC_GITHUB_PROJECT", "release-board")
+
+    tracker = host._close_milestone_tracker(SimpleNamespace(version="v0.8"))
+
+    assert tracker == {
+        "repo": "acme/host",
+        "project": "release-board",
+        "milestone": "release v0.8",
+    }
+
+
+def test_close_milestone_tracker_absent_declaration_is_empty(tmp_path):
+    host = _Host(tmp_path)
+    _write_tracker_contract(host.repo, tracker=False)
+    assert host._close_milestone_tracker(SimpleNamespace(version="v0.8")) == {}
+
+
+def test_issue_close_milestone_carries_declared_tracker(tmp_path, monkeypatch):
+    repo = git_repo(tmp_path, gitignore=True)
+    _write_tracker_contract(repo)
+    monkeypatch.setenv("TRAC_GITHUB_REPO", "acme/host")
+    monkeypatch.setenv("TRAC_GITHUB_PROJECT", "release-board")
+    store = Store(repo / ".tracks")
+    try:
+        store.append("RUN", "v0.8", "candidate.frozen", {"candidate_sha": "a" * 40})
+        executor = Executor(store, repo, "RUN")
+        monkeypatch.setattr(executor, "_do_close_milestone", lambda *a, **k: None)
+
+        executor.issue(Command("close_milestone"))
+
+        issued = [
+            event for event in store.events("RUN") if event.type == "command.issued"
+        ][-1]
+        assert issued.payload["command"]["params"]["tracker"] == {
+            "repo": "acme/host",
+            "project": "release-board",
+            "milestone": "release v0.8",
+        }
+    finally:
+        store.close()
+
+
+def test_issue_close_milestone_undeclared_tracker_stays_untracked(
+    tmp_path, monkeypatch
+):
+    repo = git_repo(tmp_path, gitignore=True)
+    _write_tracker_contract(repo, tracker=False)
+    monkeypatch.delenv("TRAC_GITHUB_REPO", raising=False)
+    store = Store(repo / ".tracks")
+    try:
+        store.append("RUN", "v0.8", "candidate.frozen", {"candidate_sha": "a" * 40})
+        executor = Executor(store, repo, "RUN")
+        monkeypatch.setattr(executor, "_do_close_milestone", lambda *a, **k: None)
+
+        executor.issue(Command("close_milestone"))
+
+        issued = [
+            event for event in store.events("RUN") if event.type == "command.issued"
+        ][-1]
+        assert "tracker" not in issued.payload["command"]["params"]
+    finally:
+        store.close()
 
 
 def test_close_milestone_project_existing_event(tmp_path):

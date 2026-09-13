@@ -787,7 +787,11 @@ def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
             "error": "milestone_not_declared",
         }
     base = _api_base()
-    url = f"{base}/repos/{repo}/milestones/{milestone}"
+    # A declared milestone target may be a title (``release {version}``
+    # rendered: "release v0.8"); encode the path segment so the request line
+    # stays well-formed. Numeric milestone numbers are unchanged.
+    milestone_segment = urllib.parse.quote(str(milestone), safe="")
+    url = f"{base}/repos/{repo}/milestones/{milestone_segment}"
     data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
     if error is not None:
         return {"project": project, "milestone": milestone, "state": "",

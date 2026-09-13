@@ -456,6 +456,64 @@ def test_four_step_batch_release_before_artifact_binds_bytes(
     assert len(_upload_posts(standin)) == 1
 
 
+# D6/FR-0281: `artifact:{artifact}` resolves to the contract-declared
+# [host-contract.build].artifact in the preview plan, and the publish-time
+# plan re-validation rebuilds the SAME plan (preview digest stays valid).
+def test_four_step_batch_resolves_declared_artifact_placeholder(
+    tmp_path, monkeypatch, standin
+):
+    _github_env(monkeypatch, standin)
+    executor, store, candidate, preview, _remote = _host(
+        tmp_path,
+        operation_steps=[
+            "merge:main",
+            f"tag:{_TAG}",
+            "artifact:{artifact}",
+            f"release:{_TAG}",
+        ],
+        build_artifact="dist/*.whl",
+    )
+    repo = executor.repo
+    dist = repo / "dist"
+    dist.mkdir()
+    wheel = dist / "demo-0.1.0-py3-none-any.whl"
+    wheel.write_bytes(b"placeholder-wheel-bytes")
+    git_strip(repo, "push", "-q", "origin", "HEAD~1:refs/heads/main")
+    _set_github_origin(repo)
+    git_strip(repo, "config", "--add", f"url.{_remote}.insteadOf", _GITHUB_REMOTE)
+    monkeypatch.chdir(repo)
+
+    assert preview["operation_plan"]["steps"] == [
+        "merge:main",
+        f"tag:{_TAG}",
+        f"release:{_TAG}",
+        "artifact:dist/*.whl",
+    ], "the preview must resolve {artifact} to the declared build artifact"
+
+    _run(executor, store, preview["preview_digest"])
+
+    executed = [
+        (e.payload["target"], e.payload["status"])
+        for e in _events(store)
+        if e.type == "publish.executed"
+    ]
+    assert executed == [
+        ("main", "done"),
+        (_TAG, "done"),
+        (_TAG, "done"),
+        ("dist/*.whl", "done"),
+    ], "the publish-time plan re-validation must resolve the same artifact"
+    assert not [e for e in _events(store) if e.type == "publish.failed"]
+    release = standin.releases[_TAG]
+    assets = standin.assets[release["id"]]
+    assert [asset["name"] for asset in assets] == [wheel.name]
+    assert assets[0]["size"] == wheel.stat().st_size
+    assert assets[0]["digest"] == (
+        "sha256:" + hashlib.sha256(wheel.read_bytes()).hexdigest()
+    )
+    assert len(_upload_posts(standin)) == 1
+
+
 # AC-FR0275-03: an Agent backend yields publish.blocked with no side effects.
 def test_agent_backend_blocks_publish_with_zero_side_effects(tmp_path, monkeypatch):
     executor, store, candidate, preview, remote = _host(tmp_path)

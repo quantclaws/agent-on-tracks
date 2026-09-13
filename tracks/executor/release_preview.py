@@ -37,6 +37,10 @@ def _contract_table(contract) -> dict:
             "patch_line": scheme.patch_line,
             "prerelease_tag": scheme.prerelease_tag,
         },
+        # D6: the declared artifact is the `{artifact}` placeholder's source
+        # for the operation plan, exactly as the publish-time re-validation
+        # reads it from the raw [host-contract.build] table (single truth).
+        "build": {"artifact": str(getattr(contract, "build_artifact", "") or "")},
         "operations": {
             journey: {
                 "steps": list(decl.steps),

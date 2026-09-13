@@ -41,12 +41,35 @@ def _normalized_step_order(steps: list[str]) -> list[str]:
     )
 
 
-def _render_placeholders(template: str, facts: dict) -> str:
+def render_placeholders(template: str, facts: dict) -> str:
     """Render the base placeholder set from version facts."""
     out = template
     for key, value in (facts or {}).items():
         out = out.replace("{" + key + "}", str(value))
     return out
+
+
+def operation_plan_facts(contract: dict, facts: dict) -> dict:
+    """Complete placeholder facts with the contract's declared plan sources.
+
+    Single truth for every plan producer/recomputation (M-RELEASE preview,
+    release-CLI replay, M-PUBLISH re-validation): the base fact set (version
+    facts + version_scheme labels) is completed with the declared
+    ``[host-contract.build].artifact`` so an ``artifact:{artifact}`` step
+    resolves to the declared path/glob exactly like the built artifact the
+    preview binds. ``{artifact}`` is the only base placeholder with a
+    declaration site in the contract; ``{prefix}/{prefix_bin}/{result}``
+    resolve only where the executing gate supplies them (install/build/smoke
+    scopes), so they stay literal in a plan and the publish preflight rejects
+    that fail-closed. An undeclared artifact likewise leaves the literal.
+    """
+    merged = dict(facts or {})
+    if not merged.get("artifact"):
+        declared = (contract or {}).get("build") or {}
+        artifact = str(declared.get("artifact") or "")
+        if artifact:
+            merged["artifact"] = render_placeholders(artifact, merged)
+    return merged
 
 
 def expand_version_scheme(facts: dict, scheme) -> dict:
@@ -103,7 +126,7 @@ def remote_patch_n(repo, patch_line: str, facts: dict) -> tuple[str | None, str 
     remote = git(repo, "config", "--get", "remote.origin.url", check=False)
     if remote.returncode != 0 or not remote.stdout.strip():
         return "1", None
-    rendered = _render_placeholders(template, facts)
+    rendered = render_placeholders(template, facts)
     prefix = rendered.split("{n}", 1)[0]
     census = git(
         repo, "ls-remote", "--tags", "origin", f"refs/tags/{prefix}*", check=False
@@ -212,13 +235,14 @@ def build_operation_plan(
     ops = (contract or {}).get("operations", {})
     section = ops.get(journey) or ops.get(_JOURNEY_MAP.get(journey, journey)) or {}
     steps = list(section.get("steps") or [])
+    plan_facts = operation_plan_facts(contract, version_facts)
     resolved: list[str] = []
     for step in steps:
         if step.endswith(f":{_WHEN_ACTIVE_BRANCH}"):
             if not active_release_branch:
                 continue  # silent skip: no active release branch
             step = step[: -len(f":{_WHEN_ACTIVE_BRANCH}")]
-        resolved.append(_render_placeholders(step, version_facts))
+        resolved.append(render_placeholders(step, plan_facts))
     resolved = _normalized_step_order(resolved)
     return {
         "journey": journey,

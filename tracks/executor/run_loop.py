@@ -516,6 +516,13 @@ the host Executor keeps construction and the command handlers."""
         _is_doc_gap = bool(params.get("doc_gap"))
         if cmd.kind == "dispatch_agent" and not _is_doc_gap:
             self._enrich_dispatch_params(params, state, cid)
+        if cmd.kind == "close_milestone" and not params.get("tracker"):
+            # FR-0284: the kernel's close_milestone carries no tracker (pure
+            # decider); the executor resolves the host declaration into the
+            # issued command so the WAL and the closer see one target.
+            tracker = self._close_milestone_tracker(state)
+            if tracker:
+                params["tracker"] = tracker
         issued = Command(kind=cmd.kind, params=params, command_id=cid)
         task_id = None
         if cmd.kind == "dispatch_agent":

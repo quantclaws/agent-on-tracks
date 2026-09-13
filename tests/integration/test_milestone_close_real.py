@@ -210,6 +210,85 @@ def test_real_trace_seal_refs_and_close(host_repo, trac, event_log, ci_echo_stan
     assert "terminal=released" in trac("status").stdout
 
 
+def _declare_tracker_contract(repo):
+    """``pre_seed_hook``: declare ``[host-contract.tracker]`` before the
+    phase0 commit so M-VERIFY loads the declared (not runtime-default)
+    contract carrying the milestone template."""
+    contract = repo / ".tracks" / "projects" / "project.toml"
+    text = contract.read_text(encoding="utf-8")
+    if "[host-contract]" in text:
+        return
+    contract.write_text(
+        text.rstrip("\n")
+        + "\n\n[host-contract]\n"
+        "version = 1\n"
+        'language = "python"\n'
+        'toolchain = "cpython"\n'
+        'install = "true"\n'
+        "\n[[host-contract.local_gate]]\n"
+        'kind = "quality"\n'
+        'command = "true"\n'
+        'result_channel = "exit_code"\n'
+        "timeout_seconds = 60\n"
+        "\n[[host-contract.security_scan]]\n"
+        'id = "stub-scan"\n'
+        'tool = "stub"\n'
+        'command = "true"\n'
+        'result_channel = "exit_code"\n'
+        'threshold = "violations=0"\n'
+        "timeout_seconds = 60\n"
+        "\n[host-contract.ci]\n"
+        'repo_env = "TRAC_GITHUB_REPO"\n'
+        'workflow = "ci.yml"\n'
+        "required_checks = []\n"
+        'conclusion = "success"\n'
+        "\n[host-contract.tracker]\n"
+        'repo_env = "TRAC_GITHUB_REPO"\n'
+        'project_env = "TRAC_GITHUB_PROJECT"\n'
+        'milestone_template = "release {version}"\n'
+        "\n[host-contract.operations.feature]\n"
+        'steps = ["merge:main"]\n'
+        "\n[host-contract.operations.post_release]\n"
+        'steps = ["merge:main"]\n'
+        "\n[host-contract.operations.dev]\n"
+        'steps = ["merge:main"]\n',
+        encoding="utf-8",
+    )
+
+
+# AC-FR0284-01/03@v0.8 TRACKS-TRACE declared tracker really closes the milestone
+def test_declared_tracker_closes_milestone_via_api(
+    host_repo, trac, event_log, ci_echo_standin
+):
+    init_bare_remote(host_repo, "bare.git")
+    run_id = walk_to_awaiting_release(trac, pre_seed_hook=_declare_tracker_contract)
+    assert run_id
+    assert trac("release", "--action", "release").returncode == 0
+    assert trac("run").returncode == 0, "publish + M-MILESTONE must complete"
+    events = event_log(run_id)
+
+    closed = [
+        e["payload"]
+        for e in events
+        if e["type"] == "project.closed" and e["payload"].get("state") == "closed"
+    ]
+    assert closed, "the declared tracker must really close the milestone"
+    entry = closed[-1]
+    assert entry["milestone"] == "release v0.8"
+    assert entry["api_verified"] is True
+    assert entry["remote_state"] == "closed"
+    assert [
+        e["payload"]
+        for e in events
+        if e["type"] == "milestone.closed" and e["payload"].get("state") == "closed"
+    ], "milestone.closed must carry the real close"
+    assert any(
+        path.startswith("/repos/acme/host/milestones/")
+        for path in ci_echo_standin.requests
+    ), "the milestone close must reach the API (PATCH + readback)"
+    assert "terminal=released" in trac("status").stdout
+
+
 # AC-FR0284-01@v0.8 TRACKS-TRACE authoritative mapping really closed and read back
 def test_authoritative_issue_closed_via_api(
     host_repo, trac, event_log, ci_echo_standin

@@ -75,6 +75,59 @@ def test_feature_journey_plan_public_output():
     )
 
 
+# D6/FR-0281: `artifact:{artifact}` resolves from [host-contract.build]
+def test_plan_resolves_declared_artifact_placeholder():
+    """The declared build artifact is the ``{artifact}`` source (single truth):
+    ``artifact:{artifact}`` must render to the contract's declared glob."""
+    from tracks.executor.release_gate import build_operation_plan
+
+    plan = build_operation_plan(
+        {
+            "build": {"artifact": "dist/*.whl"},
+            "operations": {
+                "feature": {
+                    "steps": ["artifact:{artifact}", "release:{feature_tag}"]
+                }
+            },
+        },
+        "feature",
+        {"feature_tag": "v0.8.0"},
+    )
+    assert plan["steps"] == ["release:v0.8.0", "artifact:dist/*.whl"]
+
+
+def test_plan_resolves_artifact_declared_with_version_facts():
+    """A declared artifact template renders with the same facts as the plan."""
+    from tracks.executor.release_gate import build_operation_plan
+
+    plan = build_operation_plan(
+        {
+            "build": {"artifact": "dist/{version}/*.whl"},
+            "operations": {"feature": {"steps": ["artifact:{artifact}"]}},
+        },
+        "feature",
+        {"version": "v0.8.0"},
+    )
+    assert plan["steps"] == ["artifact:dist/v0.8.0/*.whl"]
+
+
+def test_plan_leaves_undeclared_artifact_literal():
+    """No declared artifact -> the literal survives for the fail-closed
+    publish preflight (never a guessed path)."""
+    from tracks.executor.release_gate import build_operation_plan
+
+    plan = build_operation_plan(
+        {
+            "operations": {
+                "feature": {"steps": ["tag:{feature_tag}", "artifact:{artifact}"]}
+            }
+        },
+        "feature",
+        {"feature_tag": "v0.8.0"},
+    )
+    assert plan["steps"] == ["tag:v0.8.0", "artifact:{artifact}"]
+
+
 # AC-FR0277-03@v0.8 TRACKS-TRACE IF-JOURNEY-001 dev journey precheck fail-closed
 def test_dev_journey_requires_active_release_branch():
     """AC-FR0277-03/04: dev precheck fails closed when no active release
