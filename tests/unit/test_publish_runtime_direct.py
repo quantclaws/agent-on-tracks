@@ -448,3 +448,105 @@ def test_preview_blob_filename_hash_is_verified(tmp_path, monkeypatch):
     assert calls == []
     failed = [e for e in store.events("RUN") if e.type == "publish.failed"][-1]
     assert failed.payload["reason"] == "preview_blob_mismatch"
+
+
+# AC-FR0277-02@v0.8: a release-branch merge target enables the true merge
+# (allow_merge=True) and the containment confirmation lands the executed
+# event with the merge product identity.
+def test_release_branch_merge_dispatches_true_merge(tmp_path, monkeypatch):
+    executor, store, candidate, preview, remote = _host(
+        tmp_path, operation_steps=["merge:releases/v0.8"]
+    )
+    merge_commit = "f" * 40
+    calls: list[tuple] = []
+
+    def fake_merge(remote_url, source_ref, target, *, allow_merge=False):
+        calls.append((remote_url, source_ref, target, allow_merge))
+        return {
+            "status": "done",
+            "merge_mode": "release_branch",
+            "merge_commit": merge_commit,
+            "branch": target,
+            "ref": source_ref,
+            "remote_check": {
+                "exists": True,
+                "matches": False,
+                "contains_fix": True,
+                "object_id": merge_commit,
+            },
+        }
+
+    monkeypatch.setattr(publish_effects, "push_merge", fake_merge)
+
+    executor._do_execute_publish(
+        _command(preview["preview_digest"]), store.state("RUN"), None, False
+    )
+
+    assert calls == [(remote, candidate, "releases/v0.8", True)]
+    executed = [e for e in store.events("RUN") if e.type == "publish.executed"][-1]
+    assert executed.payload["status"] == "done"
+    assert executed.payload["merge_mode"] == "release_branch"
+    assert executed.payload["merge_commit"] == merge_commit
+    assert executed.payload["remote_check"]["contains_fix"] is True
+
+
+# AC-FR0275-01@v0.8: the trunk merge target stays fast-forward-only
+# (allow_merge=False), preserving the existing main semantics.
+def test_trunk_merge_target_stays_fast_forward_only(tmp_path, monkeypatch):
+    executor, store, candidate, preview, remote = _host(
+        tmp_path, operation_steps=["merge:main"]
+    )
+    calls: list[tuple] = []
+
+    def fake_merge(remote_url, source_ref, target, *, allow_merge=False):
+        calls.append((remote_url, source_ref, target, allow_merge))
+        return {
+            "status": "done",
+            "branch": target,
+            "ref": source_ref,
+            "remote_check": {
+                "exists": True,
+                "matches": True,
+                "object_id": source_ref,
+            },
+        }
+
+    monkeypatch.setattr(publish_effects, "push_merge", fake_merge)
+
+    executor._do_execute_publish(
+        _command(preview["preview_digest"]), store.state("RUN"), None, False
+    )
+
+    assert calls == [(remote, candidate, "main", False)]
+
+
+# AC-FR0277-02@v0.8 / NFR-0144-02: an unresolvable sync merge is a
+# reconcile_conflict (blocked), never auto-resolved.
+def test_release_branch_merge_conflict_is_reconcile_conflict(tmp_path, monkeypatch):
+    executor, store, _candidate, preview, _remote = _host(
+        tmp_path, operation_steps=["merge:releases/v0.8"]
+    )
+    monkeypatch.setattr(
+        publish_effects,
+        "push_merge",
+        lambda *_args, **_kwargs: {
+            "status": "conflict",
+            "merge_mode": "release_branch",
+            "branch": "releases/v0.8",
+            "remote_check": {
+                "exists": True,
+                "matches": False,
+                "contains_fix": False,
+                "object_id": "a" * 40,
+            },
+        },
+    )
+
+    executor._do_execute_publish(
+        _command(preview["preview_digest"]), store.state("RUN"), None, False
+    )
+
+    conflict = [e for e in store.events("RUN") if e.type == "reconcile_conflict"]
+    assert conflict and conflict[-1].payload["expected"]["target"] == "releases/v0.8"
+    failed = [e for e in store.events("RUN") if e.type == "publish.failed"][-1]
+    assert failed.payload["reason"] == "reconcile_conflict"

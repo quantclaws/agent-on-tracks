@@ -14,6 +14,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from tracks.effects.github import (
@@ -25,16 +26,35 @@ from tracks.effects.github import (
 )
 
 _PUBLISH_FETCH_REF = "refs/trac/publish-fetch"
+_MERGE_COMMIT_MESSAGE = (
+    "Merge candidate {candidate} into {branch}\n"
+    "\n"
+    "Tracks-Publish-Merge: {candidate}\n"
+)
 
 
-def push_merge(remote_url: str, source_ref: str, target_branch: str) -> dict:
-    """Fast-forward TARGET to the approved candidate: no force, no merge commit.
+def push_merge(
+    remote_url: str,
+    source_ref: str,
+    target_branch: str,
+    *,
+    allow_merge: bool = False,
+) -> dict:
+    """Synchronize TARGET with the approved candidate: no force.
 
     IF-PUBLISH-002: the remote decides. Same object -> reconciled_skip; a
     remote tip that is an ancestor of the candidate -> non-force fast-forward
     push plus readback confirmation; divergence -> conflict; an absent branch
     -> failed (branch_missing). The ancestry probe fetches into a private
     temporary ref so no working branch is touched.
+
+    FR-0277-02 (``allow_merge=True`` for the contract-declared ``releases/*``
+    sync targets): a legitimately diverged release branch is resolved with a
+    real ``--no-ff`` merge commit (built in a disposable worktree, never the
+    host working tree). The readback criterion is containment: a branch head
+    that already has the candidate as an ancestor is reconciled_skip; an
+    unresolvable merge is a conflict (never auto-resolved); the merge product
+    carries the candidate reference in its commit message.
     """
     expected = _resolve_commit(source_ref)
     if expected is None:
@@ -80,6 +100,10 @@ def push_merge(remote_url: str, source_ref: str, target_branch: str) -> dict:
             "failed", remote_url, target_branch, source_ref, before, ancestry_error
         )
     if not ancestor:
+        if allow_merge:
+            return _merge_diverged_branch(
+                remote_url, target_branch, source_ref, expected, remote_tip, before
+            )
         return _merge_result(
             "conflict", remote_url, target_branch, source_ref, before
         )
@@ -113,6 +137,212 @@ def push_merge(remote_url: str, source_ref: str, target_branch: str) -> dict:
     return _merge_result(
         "failed", remote_url, target_branch, source_ref, after, reason
     )
+
+
+def _merge_diverged_branch(
+    remote_url: str,
+    target_branch: str,
+    source_ref: str,
+    expected: str,
+    remote_tip: str,
+    before: dict,
+) -> dict:
+    """Resolve a legitimately diverged release branch with a real merge.
+
+    FR-0277-02: the fix candidate is merged (``--no-ff``) onto the fetched
+    remote tip in a disposable worktree; the release branch history and the
+    host working tree are never rewritten. Containment is the readback
+    criterion: if the remote tip already carries the candidate as an
+    ancestor, the sync happened (reconciled_skip). A merge that cannot be
+    resolved is a conflict -- never auto-resolved, never force-pushed.
+    """
+    contained, contained_error = _is_ancestor(expected, remote_tip)
+    if contained_error:
+        return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            source_ref,
+            before,
+            contained_error,
+        )
+    if contained:
+        return _merge_result(
+            "reconciled_skip",
+            remote_url,
+            target_branch,
+            source_ref,
+            {**before, "contains_fix": True},
+            merge_mode="release_branch",
+        )
+    merge_commit, merge_error = _create_merge_commit(
+        remote_tip, expected, target_branch
+    )
+    if merge_error == "merge_conflict":
+        return _merge_result(
+            "conflict",
+            remote_url,
+            target_branch,
+            source_ref,
+            {**before, "contains_fix": False},
+            merge_mode="release_branch",
+        )
+    if merge_error is not None:
+        return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            source_ref,
+            before,
+            merge_error,
+            merge_mode="release_branch",
+        )
+    pushed_returncode, push_error = _push_branch_once(
+        remote_url, target_branch, merge_commit
+    )
+    after_tip, after_error = _fetch_remote_branch(remote_url, target_branch)
+    if after_error:
+        return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            source_ref,
+            before,
+            "remote_read_failed_after_push",
+            merge_mode="release_branch",
+        )
+    confirmed, confirmed_error = _merge_remote_check(
+        remote_url, target_branch, expected, after_tip
+    )
+    if confirmed_error:
+        return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            source_ref,
+            before,
+            confirmed_error,
+            merge_mode="release_branch",
+        )
+    if confirmed["contains_fix"] and pushed_returncode == 0:
+        return _merge_result(
+            "done",
+            remote_url,
+            target_branch,
+            source_ref,
+            confirmed,
+            merge_mode="release_branch",
+            merge_commit=merge_commit,
+        )
+    if confirmed["contains_fix"] and push_error is not None:
+        return _merge_result(
+            "reconciled_skip",
+            remote_url,
+            target_branch,
+            source_ref,
+            confirmed,
+            push_error,
+            merge_mode="release_branch",
+            merge_commit=merge_commit,
+        )
+    reason = push_error or ("push_failed" if pushed_returncode else "push_unconfirmed")
+    return _merge_result(
+        "failed",
+        remote_url,
+        target_branch,
+        source_ref,
+        confirmed,
+        reason,
+        merge_mode="release_branch",
+    )
+
+
+def _merge_remote_check(
+    remote_url: str, target_branch: str, expected: str, after_tip: str
+) -> tuple[dict | None, str | None]:
+    """Readback of a merge push: the branch head must contain the fix."""
+    contained, error = _is_ancestor(expected, after_tip)
+    if error:
+        return None, error
+    return (
+        {
+            "exists": True,
+            "matches": after_tip == expected,
+            "contains_fix": bool(contained),
+            "object_id": after_tip,
+            "ref": f"refs/heads/{target_branch}",
+            "remote": remote_url,
+        },
+        None,
+    )
+
+
+def _create_merge_commit(
+    base_tip: str, source_commit: str, target_branch: str
+) -> tuple[str | None, str | None]:
+    """One ``--no-ff`` merge product in a disposable worktree.
+
+    The worktree is checked out detached at the fetched remote tip so the
+    host's checked-out branch and working tree are untouched; the merge
+    commit message carries the approved candidate reference. Returns
+    ``(merge_commit, None)``, or ``(None, "merge_conflict")`` when the
+    merge cannot be resolved, or another failure reason.
+    """
+    worktree = tempfile.mkdtemp(prefix="trac-publish-merge-")
+    try:
+        added = _worktree(args=["worktree", "add", "--detach", worktree, base_tip])
+        if added is None or added.returncode != 0:
+            return None, "merge_workspace_failed"
+        message = _MERGE_COMMIT_MESSAGE.format(
+            candidate=source_commit, branch=target_branch
+        )
+        merged = _worktree(
+            args=[
+                "-C",
+                worktree,
+                "-c",
+                "user.name=tracks-runtime",
+                "-c",
+                "user.email=tracks-runtime@localhost",
+                "merge",
+                "--no-ff",
+                "-m",
+                message,
+                source_commit,
+            ]
+        )
+        if merged is None:
+            return None, "merge_timeout"
+        if merged.returncode != 0:
+            return None, "merge_conflict"
+        resolved = _worktree(args=["-C", worktree, "rev-parse", "HEAD^{commit}"])
+    finally:
+        _remove_worktree(worktree)
+    if resolved is None or resolved.returncode != 0:
+        return None, "merge_unresolved"
+    value = resolved.stdout.strip()
+    if not _valid_object_id(value) or "\n" in value:
+        return None, "merge_unresolved"
+    return value, None
+
+
+def _worktree(args: list[str]) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _remove_worktree(worktree: str) -> None:
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        _worktree(args=["worktree", "remove", "--force", worktree])
+        _worktree(args=["worktree", "prune"])
 
 
 def push_tag(remote_url: str, tag: str, ref: str) -> dict:
@@ -328,6 +558,7 @@ def _merge_result(
     source_ref: str,
     remote_check: dict,
     reason: str | None = None,
+    **fields: object,
 ) -> dict:
     return _effect_result(
         status,
@@ -336,6 +567,7 @@ def _merge_result(
         reason,
         branch=target_branch,
         ref=source_ref,
+        **fields,
     )
 
 

@@ -14,6 +14,17 @@ from typing import Literal
 
 ReconcileVerdict = Literal["done", "skip", "pending", "conflict"]
 
+# FR-0277-02: the contract-declared release-branch form. A merge whose target
+# is in this namespace syncs a legitimately diverged release branch and may
+# produce a real merge commit; every other merge target (main/trunk) stays
+# fast-forward-only (no merge commit, divergence -> conflict).
+RELEASE_BRANCH_PREFIX = "releases/"
+
+
+def is_release_branch_target(target: object) -> bool:
+    """True when a merge target is in the declared release-branch namespace."""
+    return isinstance(target, str) and target.startswith(RELEASE_BRANCH_PREFIX)
+
 
 def plan_operations(operation_plan: dict, preview_digest: str) -> list[dict]:
     """Write-ahead planned records, one per declared operation step."""

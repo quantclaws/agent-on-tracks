@@ -14,6 +14,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.kernel import project
+from tracks.kernel.m_test import pipeline_incomplete_links
 from tracks.report import generate_report, progress_summary
 from tracks.store import Store
 
@@ -108,6 +109,18 @@ def _print_suspended_statuses(store: Store, rows: list[tuple[str]], primary_id: 
             )
 
 
+def _pipeline_status_lines(events: list) -> list[str]:
+    """AC-FR0285-01: report a hole in the authoritative M-TEST chain.
+
+    Renders only when the chain's furthest observed link has an earlier
+    missing link (an injected/out-of-order hole), naming the missing link.
+    """
+    missing = pipeline_incomplete_links(list(events))
+    if not missing:
+        return []
+    return [f"pipeline incomplete: missing={','.join(missing)}"]
+
+
 def cmd_status(repo: Path) -> int:
     home = paths.tracks_home(repo)
     store = Store(home)
@@ -133,6 +146,11 @@ def cmd_status(repo: Path) -> int:
     print(_status_line(primary_id, primary))
     try:
         for line in _release_status_lines(list(store.events(primary_id)), primary, repo):
+            print(line)
+    except Exception:
+        pass
+    try:
+        for line in _pipeline_status_lines(list(store.events(primary_id))):
             print(line)
     except Exception:
         pass

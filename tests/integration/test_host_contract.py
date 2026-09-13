@@ -11,23 +11,33 @@ owns the next move). The release chain needs the loopback CI stand-in.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tests._support.host_contracts import (
     TEST_EXECUTION_CONTRACT,
+    complete_declared_contract_toml,
     declare_host_contract,
     declared_contract_toml,
 )
 from tests.e2e.helpers import walk_to_awaiting_release
+from tracks.executor.guard_registry import (
+    GUARD_CATEGORIES,
+    load_guard_registry,
+    validate_guard_registry,
+)
 from tracks.executor.host_contract import (
     LocalGateDecl,
     execute_gate,
     load_host_contract,
     validate_host_contract,
 )
+from tracks.project import load_contract
 
 pytestmark = pytest.mark.integration
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _commit_contract(host_repo, body: str, *, with_test_sections: bool = True):
@@ -131,25 +141,83 @@ def _drive_local_gates(host_repo, trac, body: str):
 # AC-FR0281-01@v0.8 TRACKS-TRACE materialized contract valid
 def test_materialized_contract_valid(host_repo, trac, event_log, ci_echo_standin):
     contract_path = host_repo / ".tracks" / "projects" / "project.toml"
-    # Archer materializes the declared contract through the walker pre-seed
-    # hook; the real M-VERIFY chain materializes and consumes it.
-    walk_to_awaiting_release(trac, pre_seed_hook=declare_host_contract)
+    # Archer materializes the complete declared contract through the walker
+    # pre-seed hook; the real M-DESIGN completion materialization and the
+    # M-VERIFY chain load, record and consume it.
+    walk_to_awaiting_release(
+        trac,
+        pre_seed_hook=lambda repo: declare_host_contract(
+            repo, complete_declared_contract_toml()
+        ),
+    )
     loaded = load_host_contract(contract_path)
     assert loaded.contract_version == 1
     assert loaded.language == "python"
+    assert loaded.toolchain
+    assert loaded.install
     assert validate_host_contract(loaded, host_repo) == ()
+
+    # The complete declared asset set is materialized and executed: the
+    # declared dependency install, every declared gate kind (quality/trace/
+    # reach/anti_slop + build + smoke) landed its passed evidence, and the
+    # declared build artifact was byte-resolved.
     events = event_log()
+    passed = [e["payload"] for e in events if e["type"] == "local_gate.passed"]
+    assert any(p.get("summary", {}).get("phase") == "install" for p in passed), (
+        "the declared install phase must execute"
+    )
+    passed_kinds = {p["kind"] for p in passed}
+    assert {"quality", "trace", "reach", "anti_slop", "build", "smoke"} <= passed_kinds, (
+        f"declared asset set must execute; got {sorted(passed_kinds)}"
+    )
+    built = [e for e in events if e["type"] == "artifact.built"]
+    assert built and built[-1]["payload"]["artifact"] == "project.toml"
+    assert built[-1]["payload"]["artifact_digest"].startswith("sha256:")
+
     materialized = [e for e in events if e["type"] == "host_contract.materialized"]
     assert materialized, "host_contract.materialized must appear"
-    p = materialized[0]["payload"]
+    # Archer's M-DESIGN completion is a production materialization point:
+    # the design publish issues materialize_host_contract (for an undeclared
+    # host at that moment, the runtime default; the declared bytes land with
+    # the pre-seed contract and are materialized as source=host).
+    design = [e for e in materialized if e["payload"].get("stage") == "M-DESIGN"]
+    assert design, "Archer's M-DESIGN completion must materialize the contract"
+    assert design[0]["payload"]["source"] == "runtime_default"
+    p = next(e["payload"] for e in materialized if e["payload"].get("source") == "host")
     assert "contract_path" in p
     assert "contract_digest" in p
     assert p["version"] == 1
-    assert p["source"] == "host"
     assert p["contract_path"].endswith(".tracks/projects/project.toml")
+    # Idempotent materialization: one record per contract revision.
+    digests = [e["payload"]["contract_digest"] for e in materialized]
+    assert sorted(digests) == sorted(set(digests)), "duplicate materialization record"
     # Validate must pass for the materialized contract.
     v = trac("validate", "--file", str(contract_path))
     assert v.returncode == 0, v.stdout + v.stderr
+
+    # The real Archer-materialized device-level asset set (this repo's
+    # canonical host contract + guard registry) evidences the pinned
+    # quality-guard tool/config digest/scope/threshold and the collect/
+    # run_selected test contract in the same materialized file.
+    canonical_path = REPO_ROOT / ".tracks" / "projects" / "project.toml"
+    canonical = load_host_contract(canonical_path)
+    quality = [gate for gate in canonical.local_gates if gate.kind == "quality"]
+    assert quality and quality[0].source == "guard_registry"
+    assert set(quality[0].categories) == set(GUARD_CATEGORIES[:-1])
+    assert canonical.build_command and canonical.build_artifact
+    assert canonical.smoke
+    assert canonical.install
+    registry = load_guard_registry(
+        REPO_ROOT / ".tracks" / "projects" / "v0.8" / "architecture.md"
+    )
+    assert validate_guard_registry(registry, REPO_ROOT) == ()
+    for entry in registry.entries:
+        assert entry.tool and entry.tool_version
+        assert entry.config_digest.startswith("sha256:")
+        assert entry.scope and entry.threshold
+    project_contract = load_contract(REPO_ROOT)
+    for section in (project_contract.unit, project_contract.integration, project_contract.e2e):
+        assert section.collect and section.run_selected
 
 
 # AC-FR0281-02@v0.8 TRACKS-TRACE execute per contract only and unknown language blocked

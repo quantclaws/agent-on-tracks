@@ -26,10 +26,11 @@ from tracks.kernel.m_test import _decide_m_test, _m_test_review_route, _on_red_v
 from tracks.kernel.machine import State
 
 
-def _prism_review_state(red_validated: bool) -> State:
+def _prism_review_state(red_validated: bool, *, collected: bool = True) -> State:
     s = State(run_id="RUN", stage="M-TEST", substate="PRISM_REVIEW")
     s.red_validated = red_validated
     s.red_findings = {"cases": ["t1"]} if red_validated else None
+    s.test_collected = collected
     return s
 
 
@@ -48,6 +49,24 @@ def test_prism_review_requires_red_validated():
     assert decided is None or decided.kind != "dispatch_agent", (
         f"assertion failure: decide(PRISM_REVIEW) without red_validated must not "
         f"dispatch Prism, got {decided!r}"
+    )
+
+
+# AC-FR0285-01@v0.8 TRACKS-TRACE IF-PIPELINE-001 missing COLLECT fails closed
+def test_prism_review_requires_collect_link():
+    """AC-FR0285-01: a PRISM_REVIEW state whose COLLECT link never landed (an
+    injected/out-of-order stream) must fail closed — Prism only consumes the
+    complete WRITE -> COLLECT -> red.validated chain."""
+    s = _prism_review_state(red_validated=True, collected=False)
+    cmd = _m_test_review_route(s)
+    assert cmd is None, (
+        f"assertion failure: Prism must not be dispatched on a hole in the "
+        f"pipeline (test.collected missing), got {cmd!r}"
+    )
+    decided = _decide_m_test(s, "PRISM_REVIEW")
+    assert decided is None, (
+        f"assertion failure: decide(PRISM_REVIEW) with a missing COLLECT link "
+        f"must halt fail-closed, got {decided!r}"
     )
 
 
@@ -70,6 +89,53 @@ def test_prism_dispatch_carries_red_evidence():
     )
     assert red_evidence.get("red_validated") is True
     assert red_evidence.get("findings") == {"cases": ["t1"]}
+
+
+# AC-FR0285-01@v0.8 TRACKS-TRACE IF-PIPELINE-001 chain judge
+def test_pipeline_incomplete_links_judges_holes():
+    """The chain judge reports holes before the furthest observed link and
+    never mistakes an in-flight step for a missing one."""
+    from tracks.kernel.m_test import pipeline_incomplete_links
+
+    class _Event:
+        def __init__(self, event_type, payload):
+            self.type = event_type
+            self.payload = payload
+
+    events = [
+        _Event("stage.entered", {"stage": "M-TEST"}),
+        _Event(
+            "command.issued",
+            {"command": {"kind": "dispatch_agent", "params": {"substate": "WRITE"}}},
+        ),
+        _Event("test.collected", {"status": "passed"}),
+        _Event("red.validated", {"status": "valid"}),
+        _Event("prism.verdict", {"verdict": "pass"}),
+    ]
+    assert pipeline_incomplete_links(events) == ()
+    hole = [e for e in events if e.type != "test.collected"]
+    assert pipeline_incomplete_links(hole) == ("COLLECT",)
+    # In-flight steps are not missing links (nothing observed yet included).
+    assert pipeline_incomplete_links(events[:1]) == ()
+    assert pipeline_incomplete_links(events[:3]) == ()
+    # No M-TEST segment -> nothing to judge.
+    assert pipeline_incomplete_links(events[1:]) == ()
+    # A security-scope verdict is not the M-TEST pipeline verdict: it does
+    # not count as the furthest link (the chain stops at red.validated).
+    security = events[:-1] + [_Event("prism.verdict", {"scope": "security"})]
+    assert pipeline_incomplete_links(security) == ()
+    # The documented hotfix unit-only increment (FR-0244-04) has no Shield
+    # WRITE link by design: its increment.declared fact exempts the segment.
+    bypass = [
+        _Event("stage.entered", {"stage": "M-TEST"}),
+        _Event("test.collected", {"status": "passed"}),
+        _Event(
+            "red.validated",
+            {"status": "valid", "basis": "unit-only hotfix increment"},
+        ),
+        _Event("increment.declared", {"shield": "empty"}),
+    ]
+    assert pipeline_incomplete_links(bypass) == ()
 
 
 # AC-FR0285-01@v0.8 TRACKS-TRACE IF-PIPELINE-001 chain ordering guard

@@ -24,6 +24,7 @@ from tracks.kernel.envelope import (
     envelope_declared_kind,
 )
 from tracks.kernel.events import Command
+from tracks.kernel.m_test import pipeline_incomplete_links
 from tracks.kernel.machine import State, decide
 from tracks.project import lint_check_command
 from tracks.store import new_ulid
@@ -206,12 +207,49 @@ the host Executor keeps construction and the command handlers."""
         nothing re-arms it, and the loop must exit (the pre-fix form kept
         ``continue``-ing on every active state -- an infinite decide->None
         loop, caught by test_run_loop_rotating_commands_no_trip)."""
+        if self._judge_pipeline_incomplete(state):
+            return False
         was_parked = state.status == "awaiting_human" or bool(state.awaiting)
         if not was_parked:
             return False
         self._verify_chain_park_evidence(state)
         state = self.store.state(self.run_id)
         return state.status == "active" and not state.awaiting
+
+    def _judge_pipeline_incomplete(self, state) -> bool:
+        """AC-FR0285-01: judge an M-TEST decide() halt against the frozen
+        chain. A hole before the furthest observed link (WRITE -> COLLECT ->
+        red.validated -> prism.verdict) is ``pipeline incomplete``: the run
+        stops fail-closed here and an audit ``attention.required`` names the
+        missing link, so ``trac status`` reports it (never a silent halt).
+        The judgement is idempotent per missing-link detail."""
+        if state.stage != "M-TEST":
+            return False
+        missing = pipeline_incomplete_links(list(self.store.events(self.run_id)))
+        if not missing:
+            return False
+        detail = "missing " + ", ".join(missing)
+        already = any(
+            event.type == "attention.required"
+            and (event.payload or {}).get("area") == "pipeline"
+            and (event.payload or {}).get("detail") == detail
+            for event in self.store.events(self.run_id)
+        )
+        if not already:
+            self._emit(
+                "attention.required",
+                {
+                    "area": "pipeline",
+                    "reason": "pipeline_incomplete",
+                    "stage": "M-TEST",
+                    "detail": detail,
+                    "next": (
+                        "restore the WRITE -> COLLECT -> red.validated -> "
+                        "prism.verdict chain before continuing"
+                    ),
+                },
+            )
+        return True
 
     def _abort_command_stall(self) -> None:
         """B86/B88（#77）：非派发命令紧循环停车。
@@ -398,6 +436,12 @@ the host Executor keeps construction and the command handlers."""
             print(f"  [{state.stage}] execute publish", file=sys.stderr, flush=True)
         elif cmd.kind == "close_milestone":
             print(f"  [{state.stage}] close milestone", file=sys.stderr, flush=True)
+        elif cmd.kind == "materialize_host_contract":
+            print(
+                f"  [{state.stage}] materialize host contract",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _dispatch_gate(
         self, cmd, dispatches: int, bound_substate: str | None

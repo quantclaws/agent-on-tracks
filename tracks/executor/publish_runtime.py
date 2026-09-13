@@ -16,7 +16,7 @@ from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
     load_host_contract,
 )
-from tracks.executor.publish import plan_operations
+from tracks.executor.publish import is_release_branch_target, plan_operations
 from tracks.executor.release_gate import (
     active_release_branch,
     build_operation_plan,
@@ -472,7 +472,19 @@ def _push_confirmation(result: dict, candidate_sha: str):
         and confirmed.get("exists") is True
         and confirmed.get("matches") is True
     )
-    return result.get("status") if exact else None, confirmed
+    if exact:
+        return result.get("status"), confirmed
+    # FR-0277-02: a release-branch sync merge is confirmed by containment
+    # (the branch head has the candidate as an ancestor), not by ref equality
+    # -- the product is a real merge commit whose object differs from the
+    # candidate. FF semantics stay exact-match only.
+    merged = (
+        result.get("merge_mode") == "release_branch"
+        and result.get("status") in ("done", "reconciled_skip")
+        and confirmed.get("exists") is True
+        and confirmed.get("contains_fix") is True
+    )
+    return (result.get("status"), confirmed) if merged else (None, confirmed)
 
 
 def _operation_extras(record: dict, result: dict | None = None) -> dict:
@@ -486,6 +498,10 @@ def _operation_extras(record: dict, result: dict | None = None) -> dict:
         extras["artifact_path"] = record.get("artifact_path")
         if result.get("remote_digest") is not None:
             extras["remote_digest"] = result["remote_digest"]
+    if record["operation_kind"] == "merge" and result.get("merge_mode"):
+        extras["merge_mode"] = result["merge_mode"]
+        if result.get("merge_commit") is not None:
+            extras["merge_commit"] = result["merge_commit"]
     if result.get("release_id") is not None:
         extras["release_id"] = result["release_id"]
     return extras
@@ -683,9 +699,14 @@ def _execute_record(
             record["target"],
             expected_object=authority["candidate_sha"],
         )
+        # FR-0277-02: only the contract-declared release-branch namespace may
+        # receive a real sync merge; main/trunk merges stay FF-only.
+        allow_merge = is_release_branch_target(record["target"])
 
         def push_merge_adapter(remote_url, target, candidate_sha):
-            return effects["push_merge"](remote_url, candidate_sha, target)
+            return effects["push_merge"](
+                remote_url, candidate_sha, target, allow_merge=allow_merge
+            )
 
         return _handle_remote(
             authority,

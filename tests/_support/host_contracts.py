@@ -102,6 +102,62 @@ def declared_contract_toml(
     return body
 
 
+def complete_declared_contract_toml() -> str:
+    """The complete declared asset set of AC-FR0281-01.
+
+    language/toolchain/install + the quality guard declaration (scope via
+    categories) + trace/reach/anti_slop gates + version scheme + build/
+    artifact + post-install smoke + security policy + CI binding + the
+    journey operation plan. The pinned tool/config digest/threshold half is
+    carried by the canonical guard registry the quality gate references
+    (asserted against this repo's materialized contract in the AC anchor);
+    collect/run_selected live in the same materialized file's three-layer
+    test contract sections.
+    """
+    body = (
+        "[host-contract]\n"
+        "version = 1\n"
+        'language = "python"\n'
+        'toolchain = "cpython>=3.10"\n'
+        'install = "true"\n\n'
+        + gate_block("quality", "true")
+        + "\n" + gate_block("trace", "true")
+        + "\n" + gate_block("reach", "true")
+        + "\n" + gate_block("anti_slop", "true")
+    )
+    body += (
+        "\n[host-contract.version_scheme]\n"
+        'feature_tag = "v{minor}.0"\n'
+        'patch_line = "v{minor}.{n}"\n'
+        'prerelease_tag = "v{minor}.{n}-pre"\n'
+        "\n[host-contract.build]\n"
+        'command = "true"\n'
+        'artifact = ".tracks/projects/project.toml"\n'
+        'result_channel = "exit_code"\n'
+        "timeout_seconds = 60\n"
+        "\n[host-contract.smoke]\n"
+        'steps = ["true"]\n'
+        'result_channel = "exit_code"\n'
+        "timeout_seconds = 60\n"
+        "\n[[host-contract.security_scan]]\n"
+        'id = "declared-scan"\n'
+        'tool = "true"\n'
+        'install = "true"\n'
+        'command = "true"\n'
+        'result_channel = "exit_code"\n'
+        'threshold = "violations=0"\n'
+        "timeout_seconds = 60\n\n"
+        "[host-contract.ci]\n"
+        'repo_env = "TRAC_GITHUB_REPO"\n'
+        'workflow = "ci.yml"\n'
+        "required_checks = []\n"
+        'conclusion = "success"\n\n'
+        "[host-contract.operations.feature]\n"
+        'steps = ["merge:main"]\n'
+    )
+    return body
+
+
 def declare_host_contract(repo: Path, body: str | None = None) -> None:
     """Append the declared contract to the host project contract."""
     contract = repo / ".tracks" / "projects" / "project.toml"

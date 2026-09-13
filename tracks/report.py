@@ -20,6 +20,7 @@ from tracks.discuss.parser import parse_threads
 from tracks.executor import version_extensions
 from tracks.executor.executor import git
 from tracks.kernel.events import EventEnvelope
+from tracks.kernel.m_test import M_TEST_PIPELINE_VERSION, pipeline_incomplete_links
 from tracks.kernel.machine import project
 
 _GITHUB_REMOTE = re.compile(r"github\.com[/:](?P<repo>[^/]+/[^/]+?)(?:\.git)?$")
@@ -602,6 +603,30 @@ def _release_sections(events: list) -> list[str]:
     return blocks
 
 
+def _test_pipeline_lines(events: list) -> list[str]:
+    """AC-FR0285-03 (IF-PIPELINE-001): the frozen test-pipeline identity.
+
+    The M-TEST chain definition is v0.7's; v0.8 is regression-only and adds
+    no pipeline definition. Rendered only for runs that entered M-TEST, so
+    non-M-TEST reports stay byte-identical.
+    """
+    entered = any(
+        event.type == "stage.entered"
+        and (event.payload or {}).get("stage") == "M-TEST"
+        for event in events
+    )
+    if not entered:
+        return []
+    missing = pipeline_incomplete_links(events)
+    lines = [
+        f"- pipeline_version: `{M_TEST_PIPELINE_VERSION}` "
+        "(frozen; v0.8 regression-only, no new pipeline definition)"
+    ]
+    if missing:
+        lines.append(f"- pipeline incomplete: missing={','.join(missing)}")
+    return lines
+
+
 def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     lines = [
         f"# Workflow report: `{run_id}`",
@@ -621,6 +646,9 @@ def _markdown(repo: Path, run_id: str, state, events: list) -> str:
     lines.extend(_audit_lines(events, activities))
     lines.extend(_closure_blocks(events))
     lines.extend(_release_sections(events))
+    pipeline_lines = _test_pipeline_lines(events)
+    if pipeline_lines:
+        lines.extend(["", "## Test pipeline", "", *pipeline_lines])
     lines.extend(["", "## Events", ""])
     hidden_validates = {
         event.command_id

@@ -21,9 +21,11 @@ from tracks.executor.file_identity import (  # noqa: F401  (re-export: test impo
     is_regular_file_identity as _is_regular_file_identity,
 )
 from tracks.executor.helpers import _commit_if_staged, git
+from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH
 from tracks.executor.result_audit import ResultAuditMixin
 from tracks.executor.result_payload import ResultPayloadMixin
 from tracks.executor.validate import has_staged_changes, verify_digests
+from tracks.kernel.events import Command
 
 # doc -> (committed event type, body-sha payload key)
 _COMMITTED_EVENT = {
@@ -306,11 +308,25 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
 
     def _publish_design_committed(self, commit_sha, state, cmd):
         """M-DESIGN author publish: emit one design.committed per doc (all
-        three share the same checkpoint commit_sha)."""
+        three share the same checkpoint commit_sha), then materialize the
+        versioned host contract (IF-HOSTCONTRACT-002 / AC-FR0281-01: Archer's
+        M-DESIGN completion is the materialization point the M-VERIFY chain
+        consumes). The materialize command is idempotent per contract digest,
+        so a RESPOND re-publish never duplicates the record."""
         checkpoint_sha = commit_sha or git(self.repo, "rev-parse", "HEAD").stdout.strip()
         result_id = cmd.params.get("result_id")
         for doc in cmd.params.get("artifacts", []):
             self._emit_committed(doc, checkpoint_sha, cmd.command_id, result_id=result_id)
+        self.issue(
+            Command(
+                kind="materialize_host_contract",
+                params={
+                    "contract_path": str(
+                        self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+                    )
+                },
+            )
+        )
 
     def _publish_test_written(self, commit_sha, state, cmd):
         """M-TEST Shield WRITE publish: emit test.written with the checkpoint

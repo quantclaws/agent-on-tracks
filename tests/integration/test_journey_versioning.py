@@ -62,6 +62,38 @@ def _declare_journey_contract(repo, feature_steps):
     contract.write_text(text.rstrip("\n") + "\n\n" + declared, encoding="utf-8")
 
 
+def _declare_hotfix_contract_fixed_patch(repo, patch_tag="v{minor}.7"):
+    """Declare a post-release plan whose patch tag does not depend on ``{n}``.
+
+    The remote patch-tag census makes a post-release plan digest change once
+    its tag exists (the next drive legally derives the NEXT patch), so a
+    completed-publish replay can never byte-match the stored plan. Isolating
+    the release-branch sync idempotency from that pre-existing ``{n}``
+    recomputation uses a fixed patch tag here.
+    """
+    from tracks.executor.executor import _DEFAULT_HOST_CONTRACT_TOML
+
+    contract = repo / ".tracks" / "projects" / "project.toml"
+    text = contract.read_text(encoding="utf-8")
+    assert "[host-contract]" not in text
+    declared = _DEFAULT_HOST_CONTRACT_TOML.replace(
+        '[host-contract.operations.post_release]\nsteps = ["merge:main"]',
+        (
+            "[host-contract.operations.post_release]\n"
+            'steps = ["merge:main", '
+            '"merge:releases/v{minor}:when=active_release_branch", '
+            f'"tag:{patch_tag}"]'
+        ),
+        1,
+    )
+    declared += (
+        "\n[host-contract.version_scheme]\n"
+        f'patch_line = "{patch_tag}"\n'
+        'prerelease_tag = "v{minor}.7-pre.{ulid}"\n'
+    )
+    contract.write_text(text.rstrip("\n") + "\n\n" + declared, encoding="utf-8")
+
+
 def _declare_hotfix_contract(repo):
     """Declare the post-release/dev operation plans on the host contract.
 
@@ -222,7 +254,7 @@ _DEV_CONTRACT = {
 }
 
 
-def _seed_hotfix_host(host_repo, version="v0.8"):
+def _seed_hotfix_host(host_repo, version="v0.8", *, declare=None):
     """Approved baseline + active ``releases/{version}`` branch + bug corpus.
 
     The post-release/dev journeys require a locatable approved target version
@@ -242,7 +274,7 @@ def _seed_hotfix_host(host_repo, version="v0.8"):
 
     seed_v05_approved_baseline(host_repo, version=version)
     seed_host_issues(host_repo)
-    _declare_hotfix_contract(host_repo)
+    (declare or _declare_hotfix_contract)(host_repo)
     # The initialized-host scaffold: the runtime test-command byproduct block
     # (`trac init` / `trac hotfix` managed) must be committed on the scenario
     # base branch or the B59 freeze flags `tests/**/__pycache__` as residue.
@@ -357,6 +389,153 @@ def test_post_release_patch(host_repo, trac, event_log, ci_echo_standin):
     trace = [e for e in events if e["type"] == "milestone.trace_closed"][-1]["payload"]
     assert trace["candidate_sha"] == candidate
     assert trace["release_tag"] in patch_tags
+
+
+# AC-FR0277-02@v0.8 TRACKS-TRACE post release sync merge on a diverged release branch
+def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_standin):
+    """A legitimately diverged active release branch receives a true merge.
+
+    The release branch carries an independent commit, so the sync cannot
+    fast-forward: a ``--no-ff`` merge commit lands on the release branch,
+    its readback is containment (the fix candidate is an ancestor), and the
+    merge is idempotent on resume.
+    """
+    from tests.e2e.helpers import replay_execute_publish
+
+    _seed_hotfix_host(
+        host_repo, declare=_declare_hotfix_contract_fixed_patch
+    )
+    bare, _initial = init_bare_remote(host_repo, "journey_bare_diverge.git")
+    subprocess.run(
+        ["git", "push", "-q", "-u", "origin", "releases/v0.8"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    # Diverge the active release branch with an independent (non-conflicting)
+    # commit before the hotfix run starts.
+    subprocess.run(
+        ["git", "checkout", "-q", "releases/v0.8"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    (host_repo / "release_only.txt").write_text("release line\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "release_only.txt"], cwd=host_repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "release branch only change"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    release_tip = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "-q", "origin", "releases/v0.8"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "main"],
+        cwd=host_repo,
+        check=True,
+        capture_output=True,
+    )
+    _bind_github_origin(host_repo, bare, ci_echo_standin.repo)
+
+    _walk_hotfix_to_awaiting_release(trac, 42, "post-release")
+    assert trac("release", "--action", "release").returncode == 0
+    assert trac("run").returncode == 0
+
+    events = event_log()
+    frozen = next(e for e in events if e["type"] == "candidate.frozen")
+    candidate = frozen["payload"]["candidate_sha"]
+    run_id = frozen["run_id"]
+    sync = [
+        e
+        for e in events
+        if e["type"] == "publish.executed"
+        and e["payload"].get("target") == "releases/v0.8"
+    ]
+    assert sync and sync[-1]["payload"]["status"] == "done"
+    payload = sync[-1]["payload"]
+    assert payload["candidate_sha"] == candidate
+    assert payload["merge_mode"] == "release_branch"
+    assert payload["remote_check"]["contains_fix"] is True
+    assert payload["remote_check"]["object_id"] != candidate
+    assert payload["merge_commit"] == payload["remote_check"]["object_id"]
+
+    # True merge product on the release branch: both parents survive and the
+    # fix commit is contained (content readback, not ref equality).
+    merge_commit = payload["merge_commit"]
+    body = subprocess.run(
+        ["git", "--git-dir", str(bare), "cat-file", "-p", merge_commit],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    parents = [line.split()[1] for line in body.splitlines() if line.startswith("parent ")]
+    assert set(parents) == {release_tip, candidate}
+    assert candidate in subprocess.run(
+        ["git", "--git-dir", str(bare), "log", "-1", "--format=%B", merge_commit],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert (
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "show", f"{merge_commit}:release_only.txt"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == "release line\n"
+    )
+    ancestor = subprocess.run(
+        ["git", "--git-dir", str(bare), "merge-base", "--is-ancestor", candidate, merge_commit],
+        check=False,
+        capture_output=True,
+    )
+    assert ancestor.returncode == 0
+    assert (
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "rev-parse", "refs/heads/releases/v0.8"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == merge_commit
+    )
+
+    # Resume: the containment readback skips the already-synced release
+    # branch (same idempotency key), no duplicate merge and no head move.
+    replay_execute_publish(host_repo, run_id)
+    events2 = event_log(run_id)
+    skipped = [
+        e
+        for e in events2
+        if e["type"] == "publish.executed"
+        and e["payload"].get("target") == "releases/v0.8"
+        and e["payload"].get("status") == "reconciled_skip"
+    ]
+    assert skipped and skipped[-1]["payload"]["remote_check"]["contains_fix"] is True
+    assert (
+        subprocess.run(
+            ["git", "--git-dir", str(bare), "rev-parse", "refs/heads/releases/v0.8"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        == merge_commit
+    )
 
 
 # AC-FR0277-03@v0.8 TRACKS-TRACE dev prerelease only merges release branch with pre channel

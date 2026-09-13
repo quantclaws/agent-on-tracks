@@ -532,6 +532,119 @@ the runtime-materialized default contract lives here."""
         digest = hashlib.sha256(_DEFAULT_HOST_CONTRACT_TOML.encode("utf-8")).hexdigest()
         return contract, digest, "runtime_default"
 
+    def _materialization_recorded(self, contract_digest: str) -> bool:
+        """True when ``host_contract.materialized`` already recorded these
+        contract bytes (IF-HOSTCONTRACT-002: Archer's M-DESIGN completion
+        materializes once per contract revision; the M-VERIFY consumer and
+        command replays never duplicate the record)."""
+        return any(
+            event.type == "host_contract.materialized"
+            and (event.payload or {}).get("contract_digest") == contract_digest
+            for event in self.store.events(self.run_id)
+        )
+
+    def _materialize_contract_target(self):
+        """Resolve the contract Archer declared, or the runtime default.
+
+        IF-HOSTCONTRACT-002: the M-DESIGN completion materialization reads
+        the canonical declared contract when present; an undeclared host
+        materializes the runtime default under ``.tracks/runtime`` (never
+        dirtying the frozen tree). Returns
+        ``(contract, digest, source, path, error)``; a declared-but-unreadable
+        or malformed declaration returns an error string instead of a
+        contract (fail closed, never silently replaced by the default).
+        """
+        contract_path = self.repo.joinpath(*CANONICAL_CONTRACT_RELPATH)
+        raw = None
+        try:
+            raw = contract_path.read_bytes()
+        except OSError:
+            raw = None
+        if raw is not None:
+            try:
+                declared = tomllib.loads(raw.decode("utf-8")).get("host-contract")
+            except (UnicodeDecodeError, tomllib.TOMLDecodeError) as err:
+                return None, None, None, contract_path, f"malformed contract: {err}"
+            if declared is not None:
+                try:
+                    contract = load_host_contract(contract_path)
+                except (OSError, ValueError) as err:
+                    return None, None, None, contract_path, str(err)
+                return (
+                    contract,
+                    hashlib.sha256(raw).hexdigest(),
+                    "host",
+                    contract_path,
+                    None,
+                )
+        path = (
+            paths.runtime_dir(paths.tracks_home(self.repo))
+            / "materialized-host-contract.toml"
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_DEFAULT_HOST_CONTRACT_TOML, encoding="utf-8")
+            contract = load_host_contract(path)
+        except (OSError, ValueError) as err:
+            return None, None, None, path, str(err)
+        return (
+            contract,
+            hashlib.sha256(_DEFAULT_HOST_CONTRACT_TOML.encode("utf-8")).hexdigest(),
+            "runtime_default",
+            path,
+            None,
+        )
+
+    def _do_materialize_host_contract(self, cmd, state, task_id, reconcile):
+        """IF-HOSTCONTRACT-002 / AC-FR0281-01: materialize the versioned host
+        contract at Archer's M-DESIGN completion (the design publish issues
+        this command). The declared canonical contract -- or the runtime
+        default when the host declares none -- is loaded, validated and
+        recorded as ``host_contract.materialized`` with its contract digest,
+        version and source. A declared-but-invalid contract fails closed with
+        ``host_contract.invalid`` (no downstream gate may run on it).
+        Idempotent per contract digest (never two records for the same
+        bytes)."""
+        contract, digest, source, path, error = self._materialize_contract_target()
+        if contract is None or error is not None:
+            self._emit(
+                "host_contract.invalid",
+                {
+                    "reason": "malformed",
+                    "detail": error or "missing_contract",
+                    "stage": state.stage or "M-DESIGN",
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        errors = validate_host_contract(contract, self.repo)
+        if errors:
+            self._emit(
+                "host_contract.invalid",
+                {
+                    "reason": "malformed",
+                    "detail": "; ".join(errors),
+                    "stage": state.stage or "M-DESIGN",
+                },
+                command_id=cmd.command_id,
+            )
+            return
+        if self._materialization_recorded(digest):
+            return
+        self._emit(
+            "host_contract.materialized",
+            {
+                "contract_path": str(path),
+                "contract_digest": digest,
+                "version": contract.contract_version,
+                "source": source,
+                "language": contract.language,
+                "toolchain": contract.toolchain,
+                "stage": state.stage or "M-DESIGN",
+            },
+            command_id=cmd.command_id,
+        )
+
     def _run_contract_gates(self, cmd, candidate_sha: str, state, resume: bool = False):
         """Shared contract-gate face of M-VERIFY (IF-VERIFY-003): load +
         validate the host contract (the runtime-materialized default when
@@ -574,19 +687,24 @@ the runtime-materialized default contract lives here."""
             else paths.runtime_dir(paths.tracks_home(self.repo))
             / "materialized-host-contract.toml"
         )
-        self._emit(
-            "host_contract.materialized",
-            {
-                "candidate_sha": candidate_sha,
-                "contract_path": str(contract_path),
-                "contract_digest": contract_digest,
-                "version": contract.contract_version,
-                "source": source,
-                "language": contract.language,
-                "toolchain": contract.toolchain,
-            },
-            command_id=cmd.command_id,
-        )
+        if not self._materialization_recorded(contract_digest):
+            # Archer's M-DESIGN completion materializes these exact bytes
+            # (IF-HOSTCONTRACT-002): when the digest is already recorded, the
+            # M-VERIFY consumer does not duplicate the materialization record.
+            self._emit(
+                "host_contract.materialized",
+                {
+                    "candidate_sha": candidate_sha,
+                    "contract_path": str(contract_path),
+                    "contract_digest": contract_digest,
+                    "version": contract.contract_version,
+                    "source": source,
+                    "language": contract.language,
+                    "toolchain": contract.toolchain,
+                    "stage": "M-VERIFY",
+                },
+                command_id=cmd.command_id,
+            )
         if not gates_complete and not self._execute_verify_gates(
             cmd, candidate_sha, contract_digest, contract, state
         ):

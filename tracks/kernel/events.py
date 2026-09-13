@@ -262,6 +262,10 @@ COMMAND_KINDS = (
     "execute_publish",
     "close_milestone",
     "register_known_issue",
+    # IF-HOSTCONTRACT-002 / AC-FR0281-01: Archer's M-DESIGN completion (and
+    # ``trac init``) materialize the versioned host contract -- the event
+    # half is host_contract.materialized / host_contract.invalid.
+    "materialize_host_contract",
 )
 
 

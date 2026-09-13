@@ -79,11 +79,14 @@ def test_contract_gates_run_and_pass(host_repo, trac, event_log, tmp_path, ci_ec
         assert nr.get("version") == 1
     # Every declared executable gate kind produced its real passed event.
     assert {"quality", "trace"} <= {e["payload"]["kind"] for e in passed}
-    # The materialized event binds the declared contract path + schema version.
+    # The materialized event binds the declared contract path + schema
+    # version. (The M-DESIGN completion first materializes the runtime
+    # default for an undeclared host; the declared bytes record source=host.)
     materialized = [e for e in events if e["type"] == "host_contract.materialized"]
     assert materialized, "host_contract.materialized must appear"
-    payload = materialized[0]["payload"]
-    assert payload["source"] == "host"
+    payload = next(
+        e["payload"] for e in materialized if e["payload"].get("source") == "host"
+    )
     assert payload["version"] == 1
     assert str(host_repo) in payload["contract_path"]
     status = trac("status")

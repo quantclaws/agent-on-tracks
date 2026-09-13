@@ -47,6 +47,15 @@ _CRITERIA_PACK = {"name": "tracks-prism-test", "version": "0.1"}
 # Shield / M-TEST Prism read-only context docs (interfaces.md §3a).
 _M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
 
+# AC-FR0285-03 (IF-PIPELINE-001): v0.8 is a regression-only release for the
+# single-authority test pipeline -- the M-TEST definition (and its version) is
+# frozen at v0.7; v0.8 adds release stages only. The report renders this
+# constant so the regression claim is machine-auditable.
+M_TEST_PIPELINE_VERSION = "v0.7"
+# The single-authority chain, in order. A hole BEFORE the furthest observed
+# link is a missing pipeline link; a link not yet reached is in-flight.
+M_TEST_PIPELINE_LINKS = ("WRITE", "COLLECT", "red.validated", "prism.verdict")
+
 
 # -- M-TEST reducers (flow.md §9 / SM-01, FR-0010~0070) -----------------------
 
@@ -130,6 +139,86 @@ def _on_test_written(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result = None  # v0.5: pipeline publish complete
     if s.substate == "WRITE":
         s.substate = "COLLECT"
+
+
+def pipeline_incomplete_links(events) -> tuple[str, ...]:
+    """Missing links of the single-authority chain in the latest M-TEST run.
+
+    AC-FR0285-01 (IF-PIPELINE-001): the chain is
+    ``WRITE -> COLLECT -> red.validated -> prism.verdict``. A link is
+    *observed* when its evidence appears in the M-TEST segment (a RED_CHECK
+    verdict counts whether valid or invalid -- the check ran either way).
+    Only links BEFORE the furthest observed one are missing: a hole in an
+    out-of-order/injected stream, never merely an in-flight step. Returns the
+    missing link names in chain order (empty tuple when complete or when the
+    run has not reached M-TEST).
+    """
+    segment = _latest_m_test_segment(events)
+    if not segment:
+        return ()
+    # The documented hotfix unit-only increment (FR-0244-04) releases without
+    # a Shield WRITE link by design; its authority is the persisted
+    # increment.declared fact plus the plan-level trace closure, never the
+    # full chain -- the standard-flow judgement does not apply to it.
+    bypass = any(
+        event.type == "increment.declared"
+        or (
+            event.type == "red.validated"
+            and (event.payload or {}).get("basis") == "unit-only hotfix increment"
+        )
+        for event in segment
+    )
+    if bypass:
+        return ()
+    present = {
+        "WRITE": any(
+            (event.type == "test.written")
+            or (
+                event.type == "command.issued"
+                and (event.payload or {})
+                .get("command", {})
+                .get("params", {})
+                .get("substate")
+                == "WRITE"
+            )
+            for event in segment
+        ),
+        "COLLECT": any(event.type == "test.collected" for event in segment),
+        "red.validated": any(event.type == "red.validated" for event in segment),
+        "prism.verdict": any(
+            event.type == "prism.verdict"
+            and (event.payload or {}).get("scope") != "security"
+            for event in segment
+        ),
+    }
+    furthest = -1
+    for index, link in enumerate(M_TEST_PIPELINE_LINKS):
+        if present[link]:
+            furthest = index
+    if furthest < 0:
+        return ()
+    return tuple(
+        link
+        for link in M_TEST_PIPELINE_LINKS[:furthest]
+        if not present[link]
+    )
+
+
+def _latest_m_test_segment(events) -> list:
+    """Events from the latest ``stage.entered(M-TEST)`` to its exit (or end)."""
+    entries = [
+        index
+        for index, event in enumerate(events)
+        if event.type == "stage.entered"
+        and (event.payload or {}).get("stage") == "M-TEST"
+    ]
+    if not entries:
+        return []
+    start = entries[-1]
+    for index in range(start + 1, len(events)):
+        if events[index].type == "stage.exited":
+            return list(events[start : index + 1])
+    return list(events[start:])
 
 
 def _park_for_operator(s: State) -> None:
@@ -357,6 +446,12 @@ def _m_test_review_route(s: State) -> Command | None:
         return None  # awaiting Prism verdict
     if not s.red_validated:
         # IF-PIPELINE-001: no Runtime red.validated -> no Prism dispatch.
+        return None
+    if not s.test_collected:
+        # IF-PIPELINE-001 (AC-FR0285-01): a hole in the chain (a PRISM_REVIEW
+        # state whose COLLECT link never landed) fails closed here too -- Prism
+        # only ever consumes the complete WRITE -> COLLECT -> red.validated
+        # chain, never an out-of-order/injected shortcut.
         return None
     return _m_test_prism_dispatch(s)
 

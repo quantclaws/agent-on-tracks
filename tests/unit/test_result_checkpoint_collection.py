@@ -419,3 +419,49 @@ def test_publish_prism_verdict_keeps_valid_defect_classification(tmp_path):
 
     published = [p for t, p, _, _ in fake.emitted_events if t == "prism.verdict"]
     assert published[0]["defect_classification"] == "acceptance_defect"
+
+
+class _DesignPublishHost(ResultCheckpointMixin):
+    """Minimal host capturing the M-DESIGN publish side effects."""
+
+    def __init__(self, repo):
+        self.repo = Path(repo)
+        self.committed = []
+        self.issued_commands = []
+
+    def _emit_committed(self, doc, sha, command_id, result_id=None):
+        self.committed.append((doc, sha, result_id))
+
+    def issue(self, cmd, command_id=None):
+        self.issued_commands.append(cmd)
+
+
+def test_design_publish_materializes_host_contract(tmp_path):
+    """IF-HOSTCONTRACT-002 / AC-FR0281-01: Archer's M-DESIGN completion
+    (the design publish) issues the production materialize_host_contract
+    command so the versioned host contract is recorded at design time."""
+    from types import SimpleNamespace
+
+    host = _DesignPublishHost(tmp_path)
+    cmd = SimpleNamespace(
+        command_id="C-DESIGN",
+        params={
+            "artifacts": ["architecture.md", "interfaces.md", "test-plan.md"],
+            "result_id": "R1",
+        },
+    )
+
+    host._publish_design_committed("SHA-DESIGN", None, cmd)
+
+    assert [doc for doc, _, _ in host.committed] == [
+        "architecture.md",
+        "interfaces.md",
+        "test-plan.md",
+    ]
+    materialize = [
+        c for c in host.issued_commands if c.kind == "materialize_host_contract"
+    ]
+    assert materialize, "the design publish must materialize the host contract"
+    assert materialize[0].params["contract_path"].endswith(
+        ".tracks/projects/project.toml"
+    )

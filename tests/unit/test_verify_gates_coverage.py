@@ -500,6 +500,99 @@ def test_load_or_default_contract_default_write_failure(tmp_path: Path, monkeypa
     assert host.failed_blocks[0][1] == "missing_contract"
 
 
+_DECLARED_CONTRACT_TOML = (
+    "[host-contract]\n"
+    "version = 1\n"
+    'language = "python"\n'
+    'toolchain = "cpython"\n'
+    'install = "true"\n'
+    "\n[[host-contract.local_gate]]\n"
+    'kind = "quality"\n'
+    'source = "command"\n'
+    'command = "true"\n'
+    'categories = ["quality"]\n'
+    'result_channel = "exit_code"\n'
+    "timeout_seconds = 60\n"
+)
+
+
+def _write_declared(host: _Host, body: str = _DECLARED_CONTRACT_TOML) -> Path:
+    contract_path = host.repo.joinpath(*verify_gates.CANONICAL_CONTRACT_RELPATH)
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(body, encoding="utf-8")
+    return contract_path
+
+
+def test_materialize_host_contract_declared_once(tmp_path: Path):
+    """IF-HOSTCONTRACT-002: the M-DESIGN completion materializes the declared
+    contract once per digest (a re-issued command never duplicates it)."""
+    host = _Host(tmp_path)
+    _write_declared(host)
+    state = State(run_id="RUN", stage="M-DESIGN")
+
+    host._do_materialize_host_contract(_cmd(), state, None, False)
+    host._do_materialize_host_contract(_cmd("C-2"), state, None, False)
+
+    materialized = [e for e in host.emitted if e[0] == "host_contract.materialized"]
+    assert len(materialized) == 1
+    payload = materialized[0][1]
+    assert payload["source"] == "host"
+    assert payload["stage"] == "M-DESIGN"
+    assert payload["version"] == 1
+    assert payload["contract_digest"]
+    assert payload["contract_path"].endswith(".tracks/projects/project.toml")
+
+
+def test_materialize_host_contract_invalid_fails_closed(tmp_path: Path):
+    """A declared-but-invalid contract fails closed with host_contract.invalid
+    (never a silent fallback to the runtime default)."""
+    host = _Host(tmp_path)
+    _write_declared(
+        host,
+        _DECLARED_CONTRACT_TOML + '\n[host-contract.bogus]\nkey = 1\n',
+    )
+
+    host._do_materialize_host_contract(
+        _cmd(), State(run_id="RUN", stage="M-DESIGN"), None, False
+    )
+
+    assert [e[0] for e in host.emitted] == ["host_contract.invalid"]
+    assert host.emitted[0][1]["reason"] == "malformed"
+    assert not host.repo.joinpath(
+        ".tracks", "runtime", "materialized-host-contract.toml"
+    ).exists()
+
+
+def test_materialize_host_contract_runtime_default(tmp_path: Path):
+    """An undeclared host materializes the runtime default at completion."""
+    host = _Host(tmp_path)
+
+    host._do_materialize_host_contract(
+        _cmd(), State(run_id="RUN", stage="M-DESIGN"), None, False
+    )
+
+    assert host.emitted[0][0] == "host_contract.materialized"
+    assert host.emitted[0][1]["source"] == "runtime_default"
+    assert host.emitted[0][1]["stage"] == "M-DESIGN"
+
+
+def test_run_contract_gates_skips_recorded_materialization(tmp_path: Path, monkeypatch):
+    """The M-VERIFY consumer never re-records a digest already materialized
+    (Archer's completion record stands as the single materialization)."""
+    host = _Host(tmp_path)
+    host.store._events = [
+        _ev(1, "host_contract.materialized", {"contract_digest": "DIGEST"})
+    ]
+    contract = SimpleNamespace(contract_version=1, language="py", toolchain="pip")
+    host._load_or_default_contract = lambda cmd, sha: (contract, "DIGEST", "host")
+    monkeypatch.setattr(verify_gates, "validate_host_contract", lambda c, r: ())
+    host._execute_verify_gates = lambda *a: True
+
+    assert host._run_contract_gates(_cmd(), "SHA", State()) == (contract, "DIGEST")
+
+    assert not [e for e in host.emitted if e[0] == "host_contract.materialized"]
+
+
 def test_run_contract_gates_happy_path_and_resume(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
     contract = SimpleNamespace(contract_version=1, language="py", toolchain="pip")

@@ -55,6 +55,16 @@ def _write_dispatches(segment: list[dict]) -> list[dict]:
     ]
 
 
+def _prism_dispatches(segment: list[dict]) -> list[dict]:
+    return [
+        e
+        for e in segment
+        if e["type"] == "command.issued"
+        and e["payload"].get("command", {}).get("kind") == "dispatch_agent"
+        and e["payload"]["command"]["params"].get("substate") == "PRISM_REVIEW"
+    ]
+
+
 # AC-FR0285-01@v0.8 TRACKS-TRACE write collect redcheck prism chain intact
 def test_write_collect_redcheck_prism_chain_intact(host_repo, trac, event_log):
     run_id = walk_to_m_impl_parked(trac)
@@ -73,11 +83,33 @@ def test_write_collect_redcheck_prism_chain_intact(host_repo, trac, event_log):
     assert write_idx < collect_idx < red_idx < prism_idx, (
         "M-TEST chain must hold WRITE -> COLLECT -> red.validated -> prism.verdict order"
     )
+    # The PRISM_REVIEW dispatch CONSUMES the Runtime red.validated evidence:
+    # the real dispatch command carries the red verdict identity (status,
+    # selection, findings, nodes/outcomes refs) — the isolated counterexample
+    # kill reviews the red evidence, never a producer self-check or a rerun.
+    red = segment[red_idx]["payload"]
+    selected = next(e for e in segment if e["type"] == "test.selected")["payload"]
+    prism_dispatch = _prism_dispatches(segment)[-1]["payload"]["command"]["params"]
+    assignment = prism_dispatch.get("assignment", {})
+    red_evidence = assignment.get("red_evidence") or {}
+    assert red_evidence.get("status") == red["status"] == "valid"
+    assert red_evidence.get("selection_id") == red["selection_id"]
+    assert red_evidence.get("selection_id") == selected["selection_id"]
+    assert red_evidence.get("nodes_blob") == red["nodes_blob"]
+    assert red_evidence.get("outcomes_ref") == red["outcomes_ref"]
+    assert red_evidence.get("findings") == red["findings"]
+    # Prism only takes the isolated kill task (criteria pack), never a suite.
+    verdict = segment[prism_idx]["payload"]
+    assert verdict.get("criteria_pack"), "M-TEST verdict must carry the criteria pack"
     replay_out = trac("replay", run_id).stdout
     assert "prism.verdict" in replay_out
     assert "red.validated" in replay_out
+    # The replay audit shows the consumed red evidence on the dispatch.
+    assert "red_evidence" in replay_out
+    assert red["selection_id"] in replay_out
     # The chain is complete on this journey: status must NOT report a missing
-    # link (the missing-link fail-closed half is unit-pinned by the T-038 RED).
+    # link (the injected-hole fail-closed half is pinned at the journey
+    # boundary by test_missing_link_fails_closed_at_journey_boundary).
     status = trac("status").stdout
     assert "pipeline incomplete" not in status.lower()
 
@@ -117,7 +149,87 @@ def test_no_new_pipeline_definition(host_repo, trac, event_log):
         assert s in _KNOWN_STAGES, f"stage {s} is outside the frozen pipeline set"
     v = trac("validate", "--file", ".tracks/projects/project.toml")
     assert v.returncode in (0, 1)
-    # The `trac report` pipeline-version-rendering half of AC-FR0285-03
-    # (pipeline version identical to v0.7) belongs to the T-040 report face,
-    # which is not delivered; deferred there per the b93 diagnosis — not
-    # skipped silently.
+    # AC-FR0285-03 report half: `trac report` renders the frozen test-pipeline
+    # version — v0.8 is regression-only and adds no pipeline definition.
+    from tests.e2e.helpers import generate_report_md
+    from tracks.kernel.m_test import M_TEST_PIPELINE_VERSION
+
+    assert M_TEST_PIPELINE_VERSION == "v0.7"
+    report = generate_report_md(trac, host_repo)
+    assert "pipeline_version" in report
+    assert f"`{M_TEST_PIPELINE_VERSION}`" in report
+
+
+# AC-FR0285-01@v0.8 TRACKS-TRACE missing link fails closed at the journey boundary
+def test_missing_link_fails_closed_at_journey_boundary(host_repo, trac, event_log):
+    """A hole in WRITE -> COLLECT -> red.validated is judged fail-closed.
+
+    The stream reaches PRISM_REVIEW with the red verdict but no COLLECT link
+    (an injected/out-of-order stream): the production drive dispatches no
+    Prism, lands the auditable ``pipeline incomplete`` attention, and
+    ``trac status`` reports the missing link.
+    """
+    from tracks import paths
+    from tracks.store import Store
+
+    assert trac("init").returncode == 0
+    started = trac("start", "v0.8", stdin="构建一个事件溯源运行时")
+    assert started.returncode == 0, started.stderr
+    store = Store(paths.tracks_home(host_repo))
+    try:
+        run_id = store.active_run()
+        assert run_id
+        store.append(run_id, "v0.8", "phase0.sealed", {"seal_id": "test-seal"})
+        store.append(run_id, "v0.8", "stage.entered", {"stage": "M-TEST"})
+        store.append(
+            run_id,
+            "v0.8",
+            "test.selected",
+            {
+                "selection_id": "SEL-HOLE",
+                "scope": "red",
+                "nodes": ["tests/unit/test_x.py::test_y"],
+            },
+        )
+        # The COLLECT link never landed; the red verdict did (the injected
+        # out-of-order hole the chain judge must catch).
+        store.append(
+            run_id,
+            "v0.8",
+            "red.validated",
+            {
+                "status": "valid",
+                "findings": [],
+                "selection_id": "SEL-HOLE",
+                "nodes_blob": ".tracks/runtime/blobs/nodes",
+                "outcomes_ref": ".tracks/runtime/blobs/outcomes",
+            },
+        )
+    finally:
+        store.close()
+
+    drive = trac("run")
+    assert drive.returncode == 0, drive.stderr
+    events = event_log(run_id)
+    attention = [
+        e
+        for e in events
+        if e["type"] == "attention.required"
+        and e["payload"].get("area") == "pipeline"
+    ]
+    assert attention, "the production drive must judge pipeline incomplete"
+    assert attention[-1]["payload"]["reason"] == "pipeline_incomplete"
+    assert "COLLECT" in attention[-1]["payload"]["detail"]
+    # Prism was never dispatched on the incomplete chain, and no authority
+    # verdict exists.
+    assert not [e for e in events if e["type"] == "prism.verdict"]
+    assert not [
+        e
+        for e in events
+        if e["type"] == "command.issued"
+        and e["payload"].get("command", {}).get("kind") == "dispatch_agent"
+        and e["payload"]["command"]["params"].get("substate") == "PRISM_REVIEW"
+    ]
+    status = trac("status").stdout
+    assert "pipeline incomplete" in status.lower()
+    assert "COLLECT" in status
