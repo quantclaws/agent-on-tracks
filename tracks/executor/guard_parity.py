@@ -51,46 +51,24 @@ def check_parity(
     ci_commands = _parse_ci_commands(ci_workflow_path)
 
     for entry in registry.entries:
-        gid = entry.guard_id
-        rcmd = runtime_commands.get(gid)
-        # Fall back to required_check key (e.g. "lint") when the acceptance
-        # test keys runtime_commands by the required_check rather than the
-        # guard_id (interfaces §1e: required_check may be the runtime key).
-        if rcmd is None and entry.required_check:
+        candidates = {"pre_commit": pre_commit_commands, "ci": ci_commands}
+        rcmd = runtime_commands.get(entry.guard_id)
+        if rcmd is None:
             rcmd = runtime_commands.get(entry.required_check)
-        if rcmd is not None:
-            mismatches.extend(
-                _compare_command("runtime", gid, entry.command, rcmd, cwd)
-            )
-        else:
-            mismatches.append(
-                GuardMismatch(
-                    place="runtime", guard_id=gid, kind="missing",
-                    detail=f"guard {gid} not found in runtime commands",
-                )
-            )
-        # Pre-commit
-        mismatches.extend(
-            _compare_against_candidates(
-                "pre_commit", gid, entry.command, pre_commit_commands, cwd
-            )
-        )
-        # CI
-        mismatches.extend(
-            _compare_against_candidates(
-                "ci", gid, entry.command, ci_commands, cwd
-            )
-        )
-
-    runtime_match = not any(m.place == "runtime" for m in mismatches)
-    pre_commit_match = not any(m.place == "pre_commit" for m in mismatches)
-    ci_match = not any(m.place == "ci" for m in mismatches)
+        candidates["runtime"] = () if rcmd is None else (_command_argv(rcmd),)
+        for place in entry.execution_points:
+            expected = _command_argv(entry.command)
+            if place == "pre_commit" and _is_hook_runner(entry):
+                expected = ("set", "-e")
+            mismatches.extend(_compare_against_candidates(
+                place, entry.guard_id, expected, candidates.get(place, ()), cwd
+            ))
 
     return ParityReport(
         registry_digest=registry.digest,
-        runtime_match=runtime_match,
-        pre_commit_match=pre_commit_match,
-        ci_match=ci_match,
+        runtime_match=not any(m.place == "runtime" for m in mismatches),
+        pre_commit_match=not any(m.place == "pre_commit" for m in mismatches),
+        ci_match=not any(m.place == "ci" for m in mismatches),
         mismatches=tuple(mismatches),
     )
 
@@ -210,12 +188,21 @@ def _parse_ci_commands(path: Path) -> tuple[tuple[str, ...], ...]:
     return tuple(commands)
 
 
-def _shell_command(command) -> str:
-    """Render declared string or argv commands without losing argument boundaries."""
+def _command_argv(command) -> tuple[str, ...]:
+    """Normalize either registry command representation."""
     argv = shlex.split(command) if isinstance(command, str) else list(command)
     if not argv or any(not isinstance(arg, str) for arg in argv):
         raise ValueError("guard command must contain a nonempty argv")
-    return shlex.join(argv)
+    return tuple(argv)
+
+
+def _shell_command(command) -> str:
+    return shlex.join(_command_argv(command))
+
+
+def _is_hook_runner(entry) -> bool:
+    return (entry.category == "hooks_runner_ci_required_checks"
+            and _command_argv(entry.command) == ("sh", ".githooks/pre-commit"))
 
 
 def deploy_guard_configs(
@@ -244,7 +231,8 @@ def deploy_guard_configs(
         "",
     ]
     for entry in registry.entries:
-        hook_lines.append(_shell_command(entry.command))
+        if "pre_commit" in entry.execution_points and not _is_hook_runner(entry):
+            hook_lines.append(_shell_command(entry.command))
 
     hook_content = "\n".join(hook_lines) + "\n"
     hook_path.write_text(hook_content, encoding="utf-8")
@@ -263,6 +251,8 @@ def deploy_guard_configs(
         "      - uses: actions/checkout@v4",
     ]
     for entry in registry.entries:
+        if "ci" not in entry.execution_points:
+            continue
         ci_lines.append(f"      - name: {entry.guard_id}")
         ci_lines.append(f"        run: {_shell_command(entry.command)}")
 
