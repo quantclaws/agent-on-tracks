@@ -3,6 +3,7 @@ from tests.unit.test_m_impl_runtime_support import (
     RGR_GREEN_DIFF,
     RGR_RED_DIFF,
     Command,
+    _checkpoint_red,
     _docs,
     _executor,
     _git,
@@ -68,24 +69,7 @@ def test_rgr_public_attempt_one_and_identity_payloads(tmp_path):
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert len(red) == 1
     red_payload = red[0].payload
@@ -273,24 +257,7 @@ def test_green_commit_binds_r_ref_slot_not_logical_attempt(tmp_path):
     base = _git(repo, "rev-parse", "HEAD")
     for slot in (1, 2):
         _git(repo, "update-ref", f"refs/trac/rgr/RUN/T-001/{slot}/red", base)
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
     assert red.payload["attempt"] == 3  # first free slot, not logical 1
 
@@ -391,24 +358,7 @@ def test_green_commit_reconstructs_diff_from_cycle_outcome_union(tmp_path):
         },
     )
     executor = _executor(repo, store)
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
 
@@ -498,24 +448,7 @@ def test_green_union_beats_no_change_when_earlier_dispatch_left_changes(tmp_path
     repo = _repo(tmp_path)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"][-1]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
     # Dispatch 1 changed tracks/app.py (still uncommitted in the tree).
@@ -555,23 +488,12 @@ def test_red_checkpoint_retry_uses_next_public_attempt(tmp_path):
         "verdict.failed",
         {"check": "red_invalid", "attempt": 1},
     )
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="symbol_missing",
-            verdict="symbol_missing",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R2"),
-        store.state("RUN"),
-        None,
-        False,
+    _checkpoint_red(
+        executor,
+        store,
+        classification="symbol_missing",
+        verdict="symbol_missing",
+        command_id="C-R2",
     )
     red = [ev for ev in store.events("RUN") if ev.type == "red.checkpointed"]
     assert red[0].payload["attempt"] == 2
@@ -744,4 +666,3 @@ def test_test_defect_uses_public_shield_write_and_commits_tests(tmp_path):
     committed = [ev for ev in store.events("RUN") if ev.type == "test.committed"]
     assert committed, "test.committed must be emitted after Shield fix"
     assert committed[0].payload["test_count"] > 0
-

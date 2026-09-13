@@ -1,7 +1,7 @@
 from tests.unit.test_m_impl_runtime_support import (
     RGR_GREEN_DIFF,
-    RGR_RED_DIFF,
     Command,
+    _checkpoint_red,
     _contract,
     _executor,
     _gate_manifest,
@@ -132,24 +132,7 @@ def test_green_gate_not_regression_when_r_unit_test_mutation_not_claimed(tmp_pat
     _contract(repo)
     store, task = _started_task_store(repo)
     executor = _executor(repo, store)
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     r_sha = [e for e in store.events("RUN") if e.type == "red.checkpointed"][-1].payload["r_sha"]
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
     store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha))
@@ -413,4 +396,3 @@ def test_refactor_no_change_fails_closed_without_persisted_green_evidence(tmp_pa
     assert state.substate != "DIAGNOSE"
     assert state.status == "awaiting_human"
     assert state.awaiting == "escalation"
-

@@ -132,6 +132,36 @@ def _run_red_gate(executor: Executor, store: Store, outcome: dict):
     )
     return list(store.events("RUN"))[-1]
 
+def _checkpoint_red(
+    executor: Executor,
+    store: Store,
+    *,
+    changed_paths=None,
+    classification="assertion_failure",
+    verdict="assertion_failure",
+    diff_ref=RGR_RED_DIFF,
+    command_id="C-R",
+):
+    """Record the canonical RED outcome and checkpoint it through Runtime."""
+    store.append(
+        "RUN",
+        "v0.5",
+        "outcome.received",
+        _structured_outcome(
+            "red",
+            changed_paths if changed_paths is not None else ["tests/unit/test_app.py"],
+            classification=classification,
+            verdict=verdict,
+            diff_ref=diff_ref,
+        ),
+    )
+    executor._do_checkpoint_red(
+        Command("checkpoint_red", command_id=command_id),
+        store.state("RUN"),
+        None,
+        False,
+    )
+
 def _impl_only_started_store(repo: Path, task: dict) -> Store:
     """task.started manifest whose allowed_paths grants impl files only.
 
@@ -285,24 +315,7 @@ def _green_gate_with_r_checkpoint(
     (with the R-frozen test materialized as a passing test so the Runtime unit
     re-execution succeeds and the gate reaches the regression decision). The
     caller runs the gate and drives additional working-tree setup first."""
-    store.append(
-        "RUN",
-        "v0.5",
-        "outcome.received",
-        _structured_outcome(
-            "red",
-            ["tests/unit/test_app.py"],
-            classification="assertion_failure",
-            verdict="assertion_failure",
-            diff_ref=RGR_RED_DIFF,
-        ),
-    )
-    executor._do_checkpoint_red(
-        Command("checkpoint_red", command_id="C-R"),
-        store.state("RUN"),
-        None,
-        False,
-    )
+    _checkpoint_red(executor, store)
     red = [e for e in store.events("RUN") if e.type == "red.checkpointed"]
     resolved = r_sha or (red[-1].payload["r_sha"] if red else None)
     store.append("RUN", "v0.5", "prism.verdict", {"verdict": "pass"})
