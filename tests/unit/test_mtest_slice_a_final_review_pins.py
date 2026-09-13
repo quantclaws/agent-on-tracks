@@ -8,6 +8,12 @@ captured via a patched ``_emit``, contracts/subprocess are stubbed per test,
 and every pinned defect must surface as an assertion against the emitted
 event contract -- never as assembly noise.
 
+The harness/contract/seed helpers live in
+``tests/unit/m_test_executor_support.py`` (shared with
+tests/unit/test_mtest_gate_review_pins.py); this suite additionally injects a
+``backend`` into the harness (classification token) and keeps its JUnit
+writer/dispatch stubs local.
+
 Pinned final review findings:
 
 - FA-1: a JUnit case with ``status=error`` carrying an ordinary fixture/
@@ -33,174 +39,38 @@ Pinned final review findings:
 from __future__ import annotations
 
 import shlex
-import subprocess
 import sys
 from types import SimpleNamespace
 
 import pytest
 
+from tests.unit.m_test_executor_support import (
+    _RUN_ID,
+    _cmd,
+    _commit_delta,
+    _contract,
+    _fake_subprocess,
+    _install_three_layer_contract,
+    _make_harness,
+    _of_type,
+    _patch_load_contract,
+    _proc,
+    _section,
+    _seed_baseline,
+    _seed_collected,
+    _State,
+)
 from tracks.executor import executor as executor_module
 from tracks.executor.executor import Executor
 from tracks.executor.test_select import make_selection_id
-from tracks.store import Store
-
-
-def _patch_load_contract(monkeypatch, fake):
-    """Patch every executor module that resolved ``load_contract`` at import."""
-    import importlib
-
-    for name in (
-        "executor",
-        "doc_face",
-        "run_loop",
-        "test_collect",
-        "test_execute",
-        "phase0_face",
-        "verify_gates",
-    ):
-        try:
-            module = importlib.import_module(f"tracks.executor.{name}")
-        except ModuleNotFoundError:
-            continue
-        if hasattr(module, "load_contract"):
-            monkeypatch.setattr(module, "load_contract", fake)
-
-_RUN_ID = "RUN"
-
 
 # -- harness -----------------------------------------------------------------
 
 
-class _State:
-    stage = "M-TEST"
-    substate = "RED_CHECK"
-    current_attempt = 0
-    red_validated = False
-    hotfix_issue = None
-    test_collected = False
-    baseline_captured = False
-
-
-def _cmd(cid):
-    return SimpleNamespace(command_id=cid)
-
-
 def _harness(monkeypatch, tmp_path, run_id=_RUN_ID):
-    ex_repo = tmp_path / "host"
-    (ex_repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
-    store = Store(ex_repo / ".tracks")
-    emitted = []
-    monkeypatch.setattr(
-        Executor,
-        "_emit",
-        lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
-    )
-    ex = object.__new__(Executor)
-    ex.store = store
-    ex.repo = ex_repo
-    ex.run_id = run_id
+    ex, store, emitted, repo = _make_harness(monkeypatch, tmp_path, run_id=run_id)
     ex.backend = SimpleNamespace(token=lambda *a, **k: "test_defect")
-    return ex, store, emitted, ex_repo
-
-
-def _section(collect="collect-placeholder", run_selected=".venv/bin/python -m pytest {nodes} --junitxml={result}"):
-    return SimpleNamespace(
-        framework="pytest",
-        paths=["tests/"],
-        collect=collect,
-        run="run-placeholder",
-        run_selected=run_selected,
-        cwd=".",
-    )
-
-
-def _contract(integration, unit=None, e2e=None):
-    return SimpleNamespace(
-        unit=unit,
-        e2e=e2e,
-        integration=integration,
-        layout=None,
-        lint=None,
-        nightly=None,
-    )
-
-
-def _fake_subprocess(monkeypatch, dispatch):
-    """dispatch: callable(argv) -> CompletedProcess. git invocations pass
-    through to the real runner (tree identity reads inside the handlers)."""
-    real_run = subprocess.run
-
-    def _run(argv, cwd=None, capture_output=True, text=True):
-        argv = list(argv)
-        if argv and argv[0] == "git":
-            return real_run(argv, cwd=cwd, capture_output=capture_output, text=text)
-        return dispatch(argv)
-
-    monkeypatch.setattr(executor_module.subprocess, "run", _run)
-
-
-def _proc(argv, rc, stdout="", stderr=""):
-    return subprocess.CompletedProcess(list(argv), rc, stdout=stdout, stderr=stderr)
-
-
-def _install_three_layer_contract(monkeypatch, *, unit_rc, integration_stdout, e2e_rc):
-    _patch_load_contract(monkeypatch,
-        lambda repo: _contract(
-            unit=_section(collect="_tracks_collect_unit"),
-            integration=_section(collect="_tracks_collect_integration"),
-            e2e=_section(collect="_tracks_collect_e2e"),
-        ),
-    )
-
-    def _dispatch(argv):
-        joined = " ".join(argv)
-        if "_tracks_collect_unit" in joined:
-            return _proc(argv, unit_rc)
-        if "_tracks_collect_e2e" in joined:
-            return _proc(argv, e2e_rc)
-        if "_tracks_collect_integration" in joined:
-            return _proc(argv, 0, stdout=integration_stdout)
-        raise AssertionError(f"unexpected subprocess call: {argv}")
-
-    _fake_subprocess(monkeypatch, _dispatch)
-
-
-def _seed_baseline(store, entries, run_id=_RUN_ID):
-    ref = store.write_audit_blob(entries)
-    store.append(
-        run_id,
-        "v0.4",
-        "test.baseline_captured",
-        {
-            "status": "passed",
-            "baseline_id": "b0",
-            "baseline_tree": "t0",
-            "layers": ["unit", "integration", "e2e"],
-            "nodes_count": len(entries),
-            "empty_baseline": False,
-            "node_digest_blob": f".tracks/runtime/blobs/{ref}",
-            "errors": [],
-        },
-    )
-
-
-def _seed_collected(store, entries, run_id=_RUN_ID):
-    ref = store.write_audit_blob(entries)
-    store.append(
-        run_id,
-        "v0.4",
-        "test.collected",
-        {
-            "status": "passed",
-            "collected_count": len(entries),
-            "inherited_r1": sum(1 for e in entries if e["class"] == "r1"),
-            "delta_r2": sum(1 for e in entries if e["class"] == "r2"),
-            "removed": 0,
-            "failures": [],
-            "per_node_blob": f".tracks/runtime/blobs/{ref}",
-            "errors": [],
-        },
-    )
+    return ex, store, emitted, repo
 
 
 _WRITER_BODY = """
@@ -301,10 +171,6 @@ def _junit_dispatch(monkeypatch, kind, executed):
 def _write_result(result_path, content):
     with open(result_path, "w", encoding="utf-8") as handle:
         handle.write(content)
-
-
-def _of_type(emitted, ev_type):
-    return [e for e in emitted if e["type"] == ev_type]
 
 
 # -- FA-1: status=error records are always illegit ----------------------------
@@ -609,30 +475,6 @@ def test_result_xml_unlinked_after_handled_failure(monkeypatch, tmp_path):
 # -- FA-5: reconcile refuses stale persisted selection identity ---------------
 
 
-def _commit_delta(repo, body):
-    delta = repo / "tests" / "integration" / "test_delta.py"
-    delta.write_text(f"def test_delta():\n    {body}\n", encoding="utf-8")
-
-    def _git(*args):
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-
-    _git("init", "-q")
-    _git("-c", "user.email=t@tracks.dev", "-c", "user.name=t", "add", "tests/")
-    _git(
-        "-c",
-        "user.email=t@tracks.dev",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "-m",
-        "delta",
-    )
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
 def _seed_persisted_selection(ex, store, node, commit):
     """Persist exactly the test.selected record the executor would stamp for
     the CURRENT tree (simulating a crash right after selection publication)."""
@@ -670,7 +512,7 @@ def _seed_persisted_selection(ex, store, node, commit):
 def _replay_harness(monkeypatch, tmp_path):
     ex, store, emitted, repo = _harness(monkeypatch, tmp_path)
     node = "tests/integration/test_delta.py::test_delta"
-    commit = _commit_delta(repo, "assert 'v1'")
+    commit, _ = _commit_delta(repo, "assert 'v1'")
     _seed_baseline(
         store,
         [{"node": node, "layer": "integration", "digest": "d0", "node_digest": "d0"}],

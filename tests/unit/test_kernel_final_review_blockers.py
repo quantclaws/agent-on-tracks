@@ -23,46 +23,14 @@ contract token, never on fixture assembly:
 """
 
 from tests.unit.helpers import ev, seq
+from tests.unit.m_test_machine_support import (
+    COLLECT_CMD,
+    ENTER_M_TEST,
+    TO_COLLECT_POPULATED,
+    TO_RED_CHECK_POPULATED,
+)
 from tracks.kernel import decide, project
 
-ENTER_M_TEST = [
-    ("story.requested", {"raw_chars": 5}),
-    ("stage.entered", {"stage": "M-TEST"}),
-]
-
-CAPTURE_CMD = (
-    "command.issued",
-    {"command": {"kind": "capture_baseline", "params": {"stage": "M-TEST"}, "command_id": "C0"}},
-)
-BASELINE_CAPTURED = (
-    "test.baseline_captured",
-    {
-        "status": "passed",
-        "baseline_id": "b0",
-        "baseline_tree": "t0",
-        "layers": ["unit", "integration", "e2e"],
-        "nodes_count": 1,
-        "empty_baseline": False,
-        "node_digest_blob": None,
-        "errors": [],
-    },
-)
-SHIELD_DISPATCH = (
-    "command.issued",
-    {
-        "command": {
-            "kind": "dispatch_agent",
-            "params": {"role": "shield", "substate": "WRITE"},
-            "command_id": "C1",
-        }
-    },
-)
-SHIELD_DONE = ("outcome.received", {"role": "shield", "status": "done"})
-COLLECT_CMD = (
-    "command.issued",
-    {"command": {"kind": "collect_tests", "params": {"stage": "M-TEST"}, "command_id": "C2"}},
-)
-COLLECTED = ("test.collected", {"status": "passed", "collected_count": 1, "errors": []})
 RUN_CMD = (
     "command.issued",
     {"command": {"kind": "run_tests", "params": {"stage": "M-TEST"}, "command_id": "C3"}},
@@ -101,12 +69,7 @@ def test_contract_error_target_design_decides_rollback_never_shield():
     s = project(
         seq(
             *ENTER_M_TEST,
-            CAPTURE_CMD,
-            BASELINE_CAPTURED,
-            SHIELD_DISPATCH,
-            SHIELD_DONE,
-            COLLECT_CMD,
-            COLLECTED,
+            *TO_RED_CHECK_POPULATED,
             RUN_CMD,
             INVALID_RED,
             CONTRACT_ERROR_TO_DESIGN,
@@ -160,14 +123,7 @@ def test_removed_asset_deleted_pair_consumes_exactly_one_attempt():
     companion=test_defect) + companion verdict.failed(test_defect) is one
     Shield rewrite round -- exactly one attempt total, no latent pairing
     state left on State, followed by a single Shield re-dispatch."""
-    prefix = seq(
-        *ENTER_M_TEST,
-        CAPTURE_CMD,
-        BASELINE_CAPTURED,
-        SHIELD_DISPATCH,
-        SHIELD_DONE,
-        COLLECT_CMD,
-    )
+    prefix = seq(*ENTER_M_TEST, *TO_COLLECT_POPULATED, COLLECT_CMD)
     # Actual executor protocol: same command_id ("C2") on both halves plus
     # the collect-side forward ``companion: test_defect`` marker; the verdict
     # carries no reverse companion key.

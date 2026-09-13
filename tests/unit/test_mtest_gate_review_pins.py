@@ -8,6 +8,10 @@ captured via a patched ``_emit``, contracts/subprocess are stubbed per test,
 and every pinned defect must surface as an assertion against the emitted
 event contract -- never as assembly noise.
 
+The harness/contract/seed helpers live in
+``tests/unit/m_test_executor_support.py`` (shared with
+tests/unit/test_mtest_slice_a_final_review_pins.py).
+
 Pinned review findings:
 
 - Review-1: collect rc=4 (pytest usage/path error) is a collection FAILURE;
@@ -32,179 +36,38 @@ Pinned review findings:
 from __future__ import annotations
 
 import shlex
-import subprocess
 import sys
-from types import SimpleNamespace
 
-from tracks.executor import executor as executor_module
+from tests.unit.m_test_executor_support import (
+    _RUN_ID,
+    _cmd,
+    _commit_delta,
+    _contract,
+    _fake_subprocess,
+    _install_three_layer_contract,
+    _of_type,
+    _patch_load_contract,
+    _proc,
+    _section,
+    _seed_collected,
+    _State,
+)
+from tests.unit.m_test_executor_support import (
+    _make_harness as _harness,
+)
+from tests.unit.m_test_executor_support import (
+    _seed_baseline as _seed_baseline_entries,
+)
 from tracks.executor.executor import Executor
-from tracks.store import Store
-
-
-def _patch_load_contract(monkeypatch, fake):
-    """Patch every executor module that resolved ``load_contract`` at import."""
-    import importlib
-
-    for name in (
-        "executor",
-        "doc_face",
-        "run_loop",
-        "test_collect",
-        "test_execute",
-        "phase0_face",
-        "verify_gates",
-    ):
-        try:
-            module = importlib.import_module(f"tracks.executor.{name}")
-        except ModuleNotFoundError:
-            continue
-        if hasattr(module, "load_contract"):
-            monkeypatch.setattr(module, "load_contract", fake)
-
-_RUN_ID = "RUN"
-
 
 # -- harness -----------------------------------------------------------------
 
 
-class _State:
-    stage = "M-TEST"
-    substate = "RED_CHECK"
-    current_attempt = 0
-    red_validated = False
-    hotfix_issue = None
-    test_collected = False
-    baseline_captured = False
-
-
-def _cmd(cid):
-    return SimpleNamespace(command_id=cid)
-
-
-def _harness(monkeypatch, tmp_path):
-    ex_repo = tmp_path / "host"
-    (ex_repo / "tests" / "integration").mkdir(parents=True, exist_ok=True)
-    store = Store(ex_repo / ".tracks")
-    emitted = []
-    monkeypatch.setattr(
-        Executor,
-        "_emit",
-        lambda self, ev, payload, **kw: emitted.append({"type": ev, "payload": payload}),
-    )
-    ex = object.__new__(Executor)
-    ex.store = store
-    ex.repo = ex_repo
-    ex.run_id = _RUN_ID
-    return ex, store, emitted, ex_repo
-
-
-def _section(collect="collect-placeholder", run_selected=".venv/bin/python -m pytest {nodes} --junitxml={result}"):
-    return SimpleNamespace(
-        framework="pytest",
-        paths=["tests/"],
-        collect=collect,
-        run="run-placeholder",
-        run_selected=run_selected,
-        cwd=".",
-    )
-
-
-def _contract(integration, unit=None, e2e=None):
-    return SimpleNamespace(
-        unit=unit,
-        e2e=e2e,
-        integration=integration,
-        layout=None,
-        lint=None,
-        nightly=None,
-    )
-
-
-def _fake_subprocess(monkeypatch, dispatch):
-    """dispatch: callable(argv) -> CompletedProcess. git invocations (tree
-    identity reads inside the handlers) pass through to the real runner."""
-    real_run = subprocess.run
-
-    def _run(argv, cwd=None, capture_output=True, text=True):
-        argv = list(argv)
-        if argv and argv[0] == "git":
-            return real_run(argv, cwd=cwd, capture_output=capture_output, text=text)
-        return dispatch(argv)
-
-    monkeypatch.setattr(executor_module.subprocess, "run", _run)
-
-
-def _proc(argv, rc, stdout="", stderr=""):
-    return subprocess.CompletedProcess(list(argv), rc, stdout=stdout, stderr=stderr)
-
-
-def _install_three_layer_contract(monkeypatch, *, unit_rc, integration_stdout, e2e_rc):
-    """Stub load_contract + subprocess.run for the full-layer collect scans."""
-    _patch_load_contract(monkeypatch,
-        lambda repo: _contract(
-            unit=_section(collect="_tracks_collect_unit"),
-            integration=_section(collect="_tracks_collect_integration"),
-            e2e=_section(collect="_tracks_collect_e2e"),
-        ),
-    )
-
-    def _dispatch(argv):
-        joined = " ".join(argv)
-        if "_tracks_collect_unit" in joined:
-            return _proc(argv, unit_rc, stderr="ERROR: usage/path error" if unit_rc == 4 else "")
-        if "_tracks_collect_e2e" in joined:
-            return _proc(argv, e2e_rc)
-        if "_tracks_collect_integration" in joined:
-            return _proc(argv, 0, stdout=integration_stdout)
-        raise AssertionError(f"unexpected subprocess call: {argv}")
-
-    _fake_subprocess(monkeypatch, _dispatch)
-
-
 def _seed_baseline(store, node, digest="baseline-digest-0"):
-    ref = store.write_audit_blob(
-        [
-            {
-                "node": node,
-                "layer": "integration",
-                "digest": digest,
-                "node_digest": digest,
-            }
-        ]
-    )
-    store.append(
-        _RUN_ID,
-        "v0.4",
-        "test.baseline_captured",
-        {
-            "status": "passed",
-            "baseline_id": "b0",
-            "baseline_tree": "t0",
-            "layers": ["unit", "integration", "e2e"],
-            "nodes_count": 1,
-            "empty_baseline": False,
-            "node_digest_blob": f".tracks/runtime/blobs/{ref}",
-            "errors": [],
-        },
-    )
-
-
-def _seed_collected(store, entries):
-    ref = store.write_audit_blob(entries)
-    store.append(
-        _RUN_ID,
-        "v0.4",
-        "test.collected",
-        {
-            "status": "passed",
-            "collected_count": len(entries),
-            "inherited_r1": sum(1 for e in entries if e["class"] == "r1"),
-            "delta_r2": sum(1 for e in entries if e["class"] == "r2"),
-            "removed": 0,
-            "failures": [],
-            "per_node_blob": f".tracks/runtime/blobs/{ref}",
-            "errors": [],
-        },
+    """Seed one integration-layer baseline node (gate-suite single-node form)."""
+    _seed_baseline_entries(
+        store,
+        [{"node": node, "layer": "integration", "digest": digest, "node_digest": digest}],
     )
 
 
@@ -259,10 +122,6 @@ def _recorder_template(repo):
         f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} "
         "{nodes} {result}"
     )
-
-
-def _of_type(emitted, ev_type):
-    return [e for e in emitted if e["type"] == ev_type]
 
 
 # -- Review-1: rc=4 is a collection failure, only rc=5 is an empty layer -----
@@ -380,30 +239,7 @@ def test_dirty_r2_content_change_re_stamps_selection_identity(monkeypatch, tmp_p
     content => different tree_stamp AND different selection_id. A stable
     selection identity over changed content is an evidence-reuse hole."""
     ex, store, emitted, repo = _harness(monkeypatch, tmp_path)
-    delta_file = repo / "tests" / "integration" / "test_delta.py"
-
-    def _write(body):
-        delta_file.write_text(f"def test_delta():\n    {body}\n", encoding="utf-8")
-
-    def _git(*args):
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-
-    _write("assert 'v1'")
-    _git("init", "-q")
-    _git("-c", "user.email=t@tracks.dev", "-c", "user.name=t", "add", "tests/")
-    _git(
-        "-c",
-        "user.email=t@tracks.dev",
-        "-c",
-        "user.name=t",
-        "commit",
-        "-q",
-        "-m",
-        "delta v1",
-    )
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
-    ).stdout.strip()
+    head, delta_file = _commit_delta(repo, "assert 'v1'", message="delta v1")
 
     node = str(delta_file.relative_to(repo)) + "::test_delta"
     _seed_baseline(store, node)
@@ -414,7 +250,7 @@ def test_dirty_r2_content_change_re_stamps_selection_identity(monkeypatch, tmp_p
     )
 
     ex._do_run_tests(_cmd("sel-1"), _State(), None, False)
-    _write("assert 'v2'")  # dirty edit: same nodeid, same HEAD
+    delta_file.write_text("def test_delta():\n    assert 'v2'\n", encoding="utf-8")  # dirty edit: same nodeid, same HEAD
     _seed_collected(store, [{"node": node, "layer": "integration", "class": "r2"}])
     ex._do_run_tests(_cmd("sel-2"), _State(), None, False)
 
