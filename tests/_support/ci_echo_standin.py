@@ -219,6 +219,19 @@ class CiEchoStandIn:
                 return False
 
             def _milestone_api(self, method: str) -> bool:
+                parsed = urlparse(self.path)
+                # Listing endpoint (GET /repos/<r>/milestones[?state=all]):
+                # title declarations resolve to numbers here (the real API
+                # addresses milestones by number only).
+                if parsed.path == f"/repos/{owner.repo}/milestones":
+                    if method == "GET":
+                        self._reply(
+                            200,
+                            [{"number": 7, "title": "release v0.8", "state": "open"}],
+                        )
+                        return True
+                    self._reply(404, {"message": "not found"})
+                    return True
                 prefix = f"/repos/{owner.repo}/milestones/"
                 if not self.path.startswith(prefix):
                     return False
