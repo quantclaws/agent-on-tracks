@@ -210,6 +210,14 @@ def _parse_ci_commands(path: Path) -> tuple[tuple[str, ...], ...]:
     return tuple(commands)
 
 
+def _shell_command(command) -> str:
+    """Render declared string or argv commands without losing argument boundaries."""
+    argv = shlex.split(command) if isinstance(command, str) else list(command)
+    if not argv or any(not isinstance(arg, str) for arg in argv):
+        raise ValueError("guard command must contain a nonempty argv")
+    return shlex.join(argv)
+
+
 def deploy_guard_configs(
     registry: GuardRegistry, target_repo: Path
 ) -> GuardDeployment:
@@ -231,11 +239,12 @@ def deploy_guard_configs(
     # Pre-commit hook
     hook_lines = [
         "#!/bin/sh",
+        "set -e",
         f"# TRACKS_GUARD_REGISTRY={registry.digest}",
         "",
     ]
     for entry in registry.entries:
-        hook_lines.append(" ".join(entry.command))
+        hook_lines.append(_shell_command(entry.command))
 
     hook_content = "\n".join(hook_lines) + "\n"
     hook_path.write_text(hook_content, encoding="utf-8")
@@ -255,7 +264,7 @@ def deploy_guard_configs(
     ]
     for entry in registry.entries:
         ci_lines.append(f"      - name: {entry.guard_id}")
-        ci_lines.append(f"        run: {' '.join(entry.command)}")
+        ci_lines.append(f"        run: {_shell_command(entry.command)}")
 
     ci_content = "\n".join(ci_lines) + "\n"
     ci_path.write_text(ci_content, encoding="utf-8")
