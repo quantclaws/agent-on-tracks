@@ -1,40 +1,16 @@
+from tests.unit import m_impl_machine_sequences as m_impl
 from tests.unit.test_machine_m_impl_support import (
     _M_IMPL_CONTEXT_DOCS,
     _M_IMPL_CRITERIA_PACK,
-    ARCHER_DISPATCH,
-    ARCHER_DONE,
-    BASELINE_CMD,
-    BASELINE_FROZEN,
     DEVON_GREEN_DISPATCH,
     DEVON_GREEN_DONE,
     DEVON_RED_DISPATCH,
-    DEVON_RED_DONE,
     DEVON_REFACTOR_DISPATCH,
     DEVON_REFACTOR_DONE,
     ENTER_M_IMPL,
-    GREEN_COMMIT_CMD,
-    GREEN_COMMITTED,
     GREEN_GATE_CMD,
-    GREEN_PASS,
-    ISLAND1_CMD,
-    ISLAND1_PASS,
     M_IMPL_REQUIRED_ASSIGNMENT_KEYS,
-    PRISM_PLAN_DISPATCH,
-    PRISM_PLAN_DONE,
-    PRISM_PLAN_PASS,
-    PRISM_RED_DISPATCH,
-    PRISM_RED_DONE,
-    PRISM_RED_PASS,
-    RED_CHECKPOINT_CMD,
-    RED_CHECKPOINTED,
-    RED_GATE_CMD,
-    RED_VALID_PASS,
-    REFACTOR_GATE_CMD,
-    SELECT_TASK_CMD,
     TASK_REVIEW_CMD,
-    TASK_STARTED,
-    TASKGRAPH_CMD,
-    TASKGRAPH_COMMITTED,
     _at_task_review,
     _devon_failed_outcome,
     _full_single_task_cycle,
@@ -47,41 +23,8 @@ from tests.unit.test_machine_m_impl_support import (
 
 def test_refactor_gate_public_interface_to_diagnose_stub_gap():
     """verdict.failed(public_interface) at REFACTOR_GATE -> DIAGNOSE/stub_gap."""
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
-        DEVON_REFACTOR_DISPATCH,
-        DEVON_REFACTOR_DONE,
-        REFACTOR_GATE_CMD,
-    ]
     fail = ("verdict.failed", {"check": "public_interface", "reason": "broke API", "attempt": 1})
-    s = state_of(*base, fail)
+    s = state_of(*m_impl.refactor_gate(), fail)
     assert s.substate == "DIAGNOSE"
     assert s.diagnose_classification == "stub_gap"
     cmd = decide(s)
@@ -95,38 +38,11 @@ def test_green_gate_contract_error_parks_for_operator():
     DIAGNOSE/stub_gap whose decide() emits rollback_stage(M-DESIGN). The
     auto-rollback loop sent runtime-side defects to be "fixed" in a design
     that was not defective."""
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-    ]
     fail = (
         "verdict.failed",
         {"check": "contract_error", "reason": "gate-contract mismatch", "attempt": 1},
     )
-    s = state_of(*base, fail)
+    s = state_of(*m_impl.green_gate(), fail)
     assert s.status == "awaiting_human"
     assert s.awaiting == "escalation"
     assert s.substate == "GREEN_GATE", "parking must not move the substate"
@@ -139,38 +55,11 @@ def test_contract_error_does_not_burn_attempt_budget():
     """B49: parking consumes no attempt -- human.retry after the underlying
     fix re-dispatches the gate from the current substate with a fresh
     budget, so the parked verdict must leave current_attempt untouched."""
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-    ]
     fail = (
         "verdict.failed",
         {"check": "contract_error", "reason": "gate-contract mismatch", "attempt": 1},
     )
-    s = state_of(*base, fail)
+    s = state_of(*m_impl.green_gate(), fail)
     assert s.current_attempt == 0, "parking must not consume the attempt budget"
 
 
@@ -261,35 +150,6 @@ def test_scope_route_replan_can_commit_taskgraph():
 
 def test_shield_fix_outcome_to_green_gate():
     """Shield SHIELD_FIX outcome done -> GREEN_GATE."""
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        ("verdict.failed", {"check": "unknown_attribution", "reason": "unclear", "attempt": 1}),
-        ("verdict.failed", {"check": "test_defect", "attempt": 1}),
-    ]
     shield_dispatch = (
         "command.issued",
         {
@@ -301,7 +161,13 @@ def test_shield_fix_outcome_to_green_gate():
         },
     )
     shield_done = ("outcome.received", {"role": "shield", "status": "done"})
-    s = state_of(*base, shield_dispatch, shield_done)
+    s = state_of(
+        *m_impl.green_gate(),
+        ("verdict.failed", {"check": "unknown_attribution", "reason": "unclear", "attempt": 1}),
+        ("verdict.failed", {"check": "test_defect", "attempt": 1}),
+        shield_dispatch,
+        shield_done,
+    )
     assert s.substate == "GREEN_GATE"
 
 
@@ -319,26 +185,11 @@ def test_red_failure_escalation():
         "outcome.received",
         {"role": "devon", "status": "failed", "failure_class": "agent_failed"},
     )
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-    ]
     evs = []
     for _ in range(3):
         evs.append(DEVON_RED_DISPATCH)
         evs.append(fail)
-    s = state_of(*base, *evs)
+    s = state_of(*m_impl.task_started(), *evs)
     assert s.current_attempt == 3
     assert s.status == "awaiting_human"
     assert s.awaiting == "escalation"
@@ -347,19 +198,7 @@ def test_red_failure_escalation():
 
 def test_failed_devon_red_routes_to_diagnose_with_evidence():
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
+        *m_impl.task_started(),
         DEVON_RED_DISPATCH,
         _devon_failed_outcome(),
     )
@@ -380,28 +219,7 @@ def test_failed_devon_red_routes_to_diagnose_with_evidence():
 
 def test_failed_devon_green_routes_to_diagnose_with_r_lineage():
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
+        *m_impl.prism_red(),
         DEVON_GREEN_DISPATCH,
         _devon_failed_outcome(),
     )
@@ -436,28 +254,7 @@ def test_green_gate_impl_defect_after_diagnose_redispatches_prism():
         },
     )
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
+        *m_impl.prism_red(),
         # GREEN attempt 1 -> GREEN_GATE impl_defect -> DIAGNOSE (preset class)
         DEVON_GREEN_DISPATCH,
         DEVON_GREEN_DONE,
@@ -485,34 +282,7 @@ def test_green_gate_impl_defect_after_diagnose_redispatches_prism():
 
 def test_failed_devon_refactor_stays_in_refactor_retry():
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
+        *m_impl.green_commit(),
         DEVON_REFACTOR_DISPATCH,
         _devon_failed_outcome(),
     )
@@ -546,7 +316,7 @@ def test_no_duplicate_command_after_replay():
 
 def test_archer_dispatch_assignment_has_required_keys():
     """Archer dispatch assignment carries all required keys (D-29)."""
-    s = state_of(BASELINE_CMD, BASELINE_FROZEN)
+    s = state_of(*m_impl.planning())
     cmd = decide(s)
     assignment = cmd.params["assignment"]
     assert assignment.keys() >= M_IMPL_REQUIRED_ASSIGNMENT_KEYS
@@ -554,21 +324,7 @@ def test_archer_dispatch_assignment_has_required_keys():
 
 def test_devon_dispatch_assignment_has_required_keys():
     """Devon dispatch assignment carries all required keys."""
-    s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-    )
+    s = state_of(*m_impl.task_started())
     cmd = decide(s)
     assignment = cmd.params["assignment"]
     assert assignment.keys() >= M_IMPL_REQUIRED_ASSIGNMENT_KEYS
@@ -576,16 +332,7 @@ def test_devon_dispatch_assignment_has_required_keys():
 
 def test_prism_dispatch_assignment_has_required_keys():
     """Prism dispatch assignment carries all required keys + criteria_pack."""
-    s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-    )
+    s = state_of(*m_impl.island1())
     cmd = decide(s)
     assignment = cmd.params["assignment"]
     assert assignment.keys() >= M_IMPL_REQUIRED_ASSIGNMENT_KEYS
@@ -616,25 +363,7 @@ def test_red_gate_lint_fail_returns_to_red_without_consuming_attempt():
     back to RED but never consume the attempt budget (attempts are reserved
     for semantic, agent-caused failures)."""
     fail = ("verdict.failed", {"check": "lint", "reason": "F401", "attempt": 1})
-    s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        fail,
-    )
+    s = state_of(*m_impl.red_gate(), fail)
     assert s.substate == "RED"
     assert s.current_attempt == 0
 
@@ -642,34 +371,7 @@ def test_red_gate_lint_fail_returns_to_red_without_consuming_attempt():
 def test_green_gate_lint_fail_returns_to_green_without_consuming_attempt():
     """B4 (issue #5): GREEN lint findings route back to GREEN, no attempt."""
     fail = ("verdict.failed", {"check": "lint", "reason": "E501", "attempt": 1})
-    s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        fail,
-    )
+    s = state_of(*m_impl.green_gate(), fail)
     assert s.substate == "GREEN"
     assert s.current_attempt == 0
 
@@ -694,28 +396,7 @@ def test_diagnose_contract_violation_stays_dispatchable():
         },
     )
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
+        *m_impl.prism_red(),
         DEVON_GREEN_DISPATCH,
         DEVON_GREEN_DONE,
         GREEN_GATE_CMD,
@@ -750,36 +431,9 @@ def test_diagnose_contract_violation_budget_exhaustion_escalates():
             }
         },
     )
-    base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
-    ]
     s = state_of(
-        *base,
+        *m_impl.green_gate(),
+        ("verdict.failed", {"check": "impl_defect", "attempt": 1}),
         # three contract-violation rounds, each consumed by the else branch
         prism_diagnose_dispatch,
         ("verdict.failed", {"check": "diagnose_contract_violation", "attempt": 1}),
@@ -800,31 +454,7 @@ def test_green_gate_regression_routes_to_diagnose():
     may not modify RED-approved files), so a GREEN re-dispatch reproduces
     the same regression forever and burns the whole budget."""
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
+        *m_impl.green_gate(),
         ("verdict.failed", {"check": "regression", "attempt": 1}),
     )
     assert s.substate == "DIAGNOSE"
@@ -841,36 +471,9 @@ def test_refactor_gate_regression_also_routes_to_diagnose():
     """B63 (#81): the REFACTOR-gate regression variant routes to DIAGNOSE as
     well (impl_defect re-enters GREEN; the gate chain re-verifies forward)."""
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
-        ("command.issued", {"command": {"kind": "dispatch_agent", "params": {"role": "devon", "substate": "REFACTOR"}, "command_id": "C14"}}),
-        ("outcome.received", {"role": "devon", "status": "done"}),
+        *m_impl.green_commit(),
+        DEVON_REFACTOR_DISPATCH,
+        DEVON_REFACTOR_DONE,
         ("command.issued", {"command": {"kind": "run_task_gates", "params": {"gate": "REFACTOR_GATE", "stage": "M-IMPL"}, "command_id": "C15"}}),
         ("verdict.failed", {"check": "regression", "attempt": 1}),
     )
@@ -898,31 +501,7 @@ def test_diagnose_red_defect_routes_devon_back_to_red():
         },
     )
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
+        *m_impl.green_gate(),
         ("verdict.failed", {"check": "regression", "attempt": 1}),
         prism_diagnose_dispatch,
         ("verdict.failed", {"check": "red_defect", "attempt": 1}),
@@ -935,4 +514,3 @@ def test_diagnose_red_defect_routes_devon_back_to_red():
     assert cmd.kind == "dispatch_agent"
     assert cmd.params["role"] == "devon"
     assert cmd.params["substate"] == "RED"
-

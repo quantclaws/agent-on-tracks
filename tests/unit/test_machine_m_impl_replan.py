@@ -1,49 +1,18 @@
+import json as json
+from pathlib import Path
+
+from tests.unit import m_impl_machine_sequences as m_impl
 from tests.unit.test_machine_m_impl_support import (
     _M_IMPL_CRITERIA_PACK,
-    ARCHER_DISPATCH,
-    ARCHER_DONE,
-    BASELINE_CMD,
-    BASELINE_FROZEN,
-    DEVON_GREEN_DISPATCH,
-    DEVON_GREEN_DONE,
-    DEVON_RED_DISPATCH,
-    DEVON_RED_DONE,
-    DEVON_REFACTOR_DISPATCH,
-    DEVON_REFACTOR_DONE,
     ENTER_M_IMPL,
-    GREEN_COMMIT_CMD,
-    GREEN_COMMITTED,
     GREEN_GATE_CMD,
-    GREEN_PASS,
-    ISLAND1_CMD,
-    ISLAND1_PASS,
-    PRISM_FINAL_DISPATCH,
-    PRISM_FINAL_DONE,
-    PRISM_PLAN_DISPATCH,
-    PRISM_PLAN_DONE,
-    PRISM_PLAN_PASS,
-    PRISM_RED_DISPATCH,
-    PRISM_RED_DONE,
-    PRISM_RED_PASS,
-    RED_CHECKPOINT_CMD,
-    RED_CHECKPOINTED,
-    RED_GATE_CMD,
-    RED_VALID_PASS,
-    REFACTOR_COMMITTED,
-    REFACTOR_GATE_CMD,
     SELECT_TASK_CMD,
-    TASK_REVIEW_CMD,
-    TASK_REVIEW_PASS,
-    TASK_STARTED,
     TASKGRAPH_CMD,
-    TASKGRAPH_COMMITTED,
-    Path,
     _diagnose_state,
     _full_single_task_cycle,
     _new_plan_events,
     _old_plan_events,
     decide,
-    json,
     seq,
     state_of,
 )
@@ -231,17 +200,7 @@ def test_replacement_taskgraph_clears_inflight_task_lease():
         },
     )
     s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        old_commit,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
+        *m_impl.prism_plan(old_commit),
         SELECT_TASK_CMD,
         ("task.started", {"task_id": "T-007", "task": dict(task), "manifest": {"task_id": "T-007"}}),
         # No scope verdict routes the replan -- the replacement lands via a
@@ -287,45 +246,7 @@ def test_prism_final_revise_plan_defect_to_planning():
             "defect_classification": "plan_defect",
         },
     )
-    s = state_of(
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
-        DEVON_REFACTOR_DISPATCH,
-        DEVON_REFACTOR_DONE,
-        REFACTOR_GATE_CMD,
-        REFACTOR_COMMITTED,
-        TASK_REVIEW_CMD,
-        TASK_REVIEW_PASS,
-        PRISM_FINAL_DISPATCH,
-        PRISM_FINAL_DONE,
-        revise,
-    )
+    s = state_of(*m_impl.prism_final_done(), revise)
     assert s.substate == "PLANNING"
     assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
     assert s.taskgraph_committed is False
@@ -399,15 +320,7 @@ def test_green_objective_names_the_failed_anchors():
     GREEN_GATE will re-run -- a generic "implement task X" objective let the
     writer work adjacent faces while the same anchors stayed red (run
     01M19FJVES7G113RD8QXXY3PQZ). Deterministic (sorted) and bounded (cap)."""
-    pre = [
-        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
-        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
-        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
-        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
-        GREEN_GATE_CMD,
-    ]
+    pre = [*m_impl.prism_red(), m_impl.GREEN_GATE_CMD]
     failed = (
         "verdict.failed",
         {
@@ -453,15 +366,7 @@ def test_green_objective_names_the_failed_anchors():
 
 def test_green_objective_omits_anchor_clause_without_nodes():
     """No parseable failed_nodes -> no invented clause (fail-closed)."""
-    pre = [
-        BASELINE_CMD, BASELINE_FROZEN, ARCHER_DISPATCH, ARCHER_DONE,
-        TASKGRAPH_CMD, TASKGRAPH_COMMITTED, ISLAND1_CMD, ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH, PRISM_PLAN_DONE, PRISM_PLAN_PASS,
-        SELECT_TASK_CMD, TASK_STARTED, DEVON_RED_DISPATCH, DEVON_RED_DONE,
-        RED_GATE_CMD, RED_VALID_PASS, RED_CHECKPOINT_CMD, RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH, PRISM_RED_DONE, PRISM_RED_PASS,
-        GREEN_GATE_CMD,
-    ]
+    pre = [*m_impl.prism_red(), m_impl.GREEN_GATE_CMD]
     failed = (
         "verdict.failed",
         {"check": "impl_defect", "task_id": "T-042", "attempt": 1, "evidence": "not json"},
@@ -469,4 +374,3 @@ def test_green_objective_omits_anchor_clause_without_nodes():
     s = state_of(*pre, failed)
     cmd = decide(s)
     assert "the gate failed on these anchors" not in cmd.params["objective"]
-

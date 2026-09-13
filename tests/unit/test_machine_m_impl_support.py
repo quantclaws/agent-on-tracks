@@ -1,6 +1,7 @@
 import json as json
 from pathlib import Path as Path
 
+from tests.unit import m_impl_machine_sequences as _mseq
 from tests.unit.helpers import ARCHER_DISPATCH as ARCHER_DISPATCH
 from tests.unit.helpers import ARCHER_DONE as ARCHER_DONE
 from tests.unit.helpers import BASELINE_CMD as BASELINE_CMD
@@ -32,94 +33,28 @@ from tests.unit.helpers import TASK_STARTED as TASK_STARTED
 from tests.unit.helpers import TASKGRAPH_CMD as TASKGRAPH_CMD
 from tests.unit.helpers import TASKGRAPH_COMMITTED as TASKGRAPH_COMMITTED
 from tests.unit.helpers import seq as seq
+from tests.unit.m_impl_machine_sequences import COMPLETE_TASK_CMD as COMPLETE_TASK_CMD
+from tests.unit.m_impl_machine_sequences import DEVON_REFACTOR_DISPATCH as DEVON_REFACTOR_DISPATCH
+from tests.unit.m_impl_machine_sequences import DEVON_REFACTOR_DONE as DEVON_REFACTOR_DONE
+from tests.unit.m_impl_machine_sequences import EXIT_CMD as EXIT_CMD
+from tests.unit.m_impl_machine_sequences import FULL1_CLEAN as FULL1_CLEAN
+from tests.unit.m_impl_machine_sequences import ISLAND2_CMD as ISLAND2_CMD
+from tests.unit.m_impl_machine_sequences import ISLAND2_PASS as ISLAND2_PASS
+from tests.unit.m_impl_machine_sequences import PRISM_FINAL_DISPATCH as PRISM_FINAL_DISPATCH
+from tests.unit.m_impl_machine_sequences import PRISM_FINAL_DONE as PRISM_FINAL_DONE
+from tests.unit.m_impl_machine_sequences import PRISM_FINAL_PASS as PRISM_FINAL_PASS
+from tests.unit.m_impl_machine_sequences import REFACTOR_COMMITTED as REFACTOR_COMMITTED
+from tests.unit.m_impl_machine_sequences import REFACTOR_GATE_CMD as REFACTOR_GATE_CMD
+from tests.unit.m_impl_machine_sequences import STAGE_EXITED as STAGE_EXITED
+from tests.unit.m_impl_machine_sequences import TASK_COMPLETED as TASK_COMPLETED
+from tests.unit.m_impl_machine_sequences import TASK_REVIEW_CMD as TASK_REVIEW_CMD
+from tests.unit.m_impl_machine_sequences import TASK_REVIEW_PASS as TASK_REVIEW_PASS
 from tracks.executor.executor import _NEXT_STAGE as _NEXT_STAGE
 from tracks.kernel import decide as decide
 from tracks.kernel import project as project
 from tracks.kernel.machine import _M_IMPL_CONTEXT_DOCS as _M_IMPL_CONTEXT_DOCS
 from tracks.kernel.machine import _M_IMPL_CRITERIA_PACK as _M_IMPL_CRITERIA_PACK
 
-DEVON_REFACTOR_DISPATCH = (
-    "command.issued",
-    {
-        "command": {
-            "kind": "dispatch_agent",
-            "params": {"role": "devon", "substate": "REFACTOR"},
-            "command_id": "C14",
-        }
-    },
-)
-
-DEVON_REFACTOR_DONE = ("outcome.received", {"role": "devon", "status": "done"})
-
-REFACTOR_GATE_CMD = (
-    "command.issued",
-    {"command": {"kind": "run_refactor_gate", "params": {"stage": "M-IMPL"}, "command_id": "C15"}},
-)
-
-REFACTOR_COMMITTED = ("refactor.committed", {"commit_sha": "ghi789"})
-
-TASK_REVIEW_CMD = (
-    "command.issued",
-    {
-        "command": {
-            "kind": "run_task_gates",
-            "params": {"stage": "M-IMPL", "gate": "TASK_REVIEW"},
-            "command_id": "C16",
-        }
-    },
-)
-
-TASK_REVIEW_PASS = ("verdict.passed", {"check": "task_review"})
-
-PRISM_FINAL_DISPATCH = (
-    "command.issued",
-    {
-        "command": {
-            "kind": "dispatch_agent",
-            "params": {"role": "prism", "substate": "PRISM_FINAL"},
-            "command_id": "C17",
-        }
-    },
-)
-
-PRISM_FINAL_DONE = ("outcome.received", {"role": "prism", "status": "done"})
-
-PRISM_FINAL_PASS = (
-    "prism.verdict",
-    {"verdict": "pass", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)},
-)
-
-COMPLETE_TASK_CMD = (
-    "command.issued",
-    {
-        "command": {
-            "kind": "complete_task",
-            "params": {"stage": "M-IMPL", "task_id": "T1"},
-            "command_id": "C18",
-        }
-    },
-)
-
-TASK_COMPLETED = ("task.completed", {"task_id": "T1"})
-
-ISLAND2_CMD = (
-    "command.issued",
-    {"command": {"kind": "check_island_2", "params": {"stage": "M-IMPL"}, "command_id": "C19"}},
-)
-
-FULL1_CLEAN = (
-    "full.executed",
-    {"round": "FULL_1", "passed": True, "serves_as_full_f": True},
-)
-
-ISLAND2_PASS = ("verdict.passed", {"check": "island_2"})
-
-EXIT_CMD = (
-    "command.issued",
-    {"command": {"kind": "write_frontmatter", "params": {"stage": "M-IMPL"}, "command_id": "C20"}},
-)
-
-STAGE_EXITED = ("stage.exited", {"stage": "M-IMPL"})
 
 def state_of(*items):
     return project(seq(*ENTER_M_IMPL, *items))
@@ -129,52 +64,7 @@ def _full_single_task_cycle():
     RED -> RED_GATE -> RED_CHECKPOINT -> PRISM_RED -> GREEN -> GREEN_GATE ->
     GREEN_COMMIT -> REFACTOR -> REFACTOR_GATE -> TASK_REVIEW -> PRISM_FINAL ->
     TASK_DONE -> ISLAND_GATE_2 -> EXIT."""
-    return [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
-        DEVON_REFACTOR_DISPATCH,
-        DEVON_REFACTOR_DONE,
-        REFACTOR_GATE_CMD,
-        REFACTOR_COMMITTED,
-        TASK_REVIEW_CMD,
-        TASK_REVIEW_PASS,
-        PRISM_FINAL_DISPATCH,
-        PRISM_FINAL_DONE,
-        PRISM_FINAL_PASS,
-        COMPLETE_TASK_CMD,
-        TASK_COMPLETED,
-        ISLAND2_CMD,
-        FULL1_CLEAN,
-        ISLAND2_PASS,
-        EXIT_CMD,
-        STAGE_EXITED,
-    ]
+    return list(_mseq.cycle())
 
 LINEAGE_FAIL = (
     "verdict.failed",
@@ -188,70 +78,13 @@ LINEAGE_FAIL = (
 
 def _at_task_review():
     """Full prefix through REFACTOR_GATE -> TASK_REVIEW (refactor committed)."""
-    return [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
-        GREEN_PASS,
-        GREEN_COMMIT_CMD,
-        GREEN_COMMITTED,
-        DEVON_REFACTOR_DISPATCH,
-        DEVON_REFACTOR_DONE,
-        REFACTOR_GATE_CMD,
-        REFACTOR_COMMITTED,
-    ]
+    return list(_mseq.task_review())
 
 def _diagnose_state(classification):
     """Enter DIAGNOSE via GREEN_GATE unknown_attribution, then verdict.failed
     with the given classification."""
     base = [
-        BASELINE_CMD,
-        BASELINE_FROZEN,
-        ARCHER_DISPATCH,
-        ARCHER_DONE,
-        TASKGRAPH_CMD,
-        TASKGRAPH_COMMITTED,
-        ISLAND1_CMD,
-        ISLAND1_PASS,
-        PRISM_PLAN_DISPATCH,
-        PRISM_PLAN_DONE,
-        PRISM_PLAN_PASS,
-        SELECT_TASK_CMD,
-        TASK_STARTED,
-        DEVON_RED_DISPATCH,
-        DEVON_RED_DONE,
-        RED_GATE_CMD,
-        RED_VALID_PASS,
-        RED_CHECKPOINT_CMD,
-        RED_CHECKPOINTED,
-        PRISM_RED_DISPATCH,
-        PRISM_RED_DONE,
-        PRISM_RED_PASS,
-        DEVON_GREEN_DISPATCH,
-        DEVON_GREEN_DONE,
-        GREEN_GATE_CMD,
+        *_mseq.green_gate(),
         ("verdict.failed", {"check": "unknown_attribution", "reason": "unclear", "attempt": 1}),
     ]
     verdict = ("verdict.failed", {"check": classification, "attempt": 1})
