@@ -16,6 +16,7 @@ import pytest
 
 from tests.integration.test_release_authorization_direct import (
     _append_complete_recovery,
+    _expected_security_policy_digest,
     _new_candidate,
 )
 from tests.integration.test_release_preview_direct import (
@@ -146,7 +147,14 @@ def test_rejected_gate_or_stale(host_repo, trac, tmp_path, event_log):
     # A stale preview rejects the same way with no stage transfer.
     store = Store(paths.tracks_home(host_repo))
     try:
-        _append_complete_recovery(store, run_id, candidate, contract_digest, artifact_digest)
+        _append_complete_recovery(
+            store,
+            run_id,
+            candidate,
+            contract_digest,
+            artifact_digest,
+            _expected_security_policy_digest(_contract),
+        )
     finally:
         store.close()
     _append_candidate_stale(host_repo, run_id, candidate)
