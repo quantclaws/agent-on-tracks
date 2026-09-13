@@ -85,6 +85,20 @@ def append_verify_release_premises(
                 "api_verified": True,
             },
         )
+    append_review_security_premises(
+        store, run_id, version, candidate, contract_digest, artifact_digest, policy_digest,
+    )
+    store.append(run_id, version, "stage.exited", {"stage": "M-VERIFY"})
+    store.append(run_id, version, "stage.entered", {"stage": "M-SECURITY"})
+    store.append(run_id, version, "stage.exited", {"stage": "M-SECURITY"})
+    store.append(run_id, version, "stage.entered", {"stage": "M-RELEASE"})
+
+
+def append_review_security_premises(
+    store, run_id: str, version: str, candidate: str,
+    contract_digest: str, artifact_digest: str, policy_digest: str,
+) -> None:
+    """Append accepted final review and its candidate-bound security review."""
     store.append(
         run_id,
         version,
@@ -130,7 +144,3 @@ def append_verify_release_premises(
             "review_command_id": review_command_id,
         },
     )
-    store.append(run_id, version, "stage.exited", {"stage": "M-VERIFY"})
-    store.append(run_id, version, "stage.entered", {"stage": "M-SECURITY"})
-    store.append(run_id, version, "stage.exited", {"stage": "M-SECURITY"})
-    store.append(run_id, version, "stage.entered", {"stage": "M-RELEASE"})

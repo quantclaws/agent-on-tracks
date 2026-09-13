@@ -13,7 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from tests._support.release_premises import append_verify_release_premises
+from tests._support.release_premises import (
+    append_review_security_premises,
+    append_verify_release_premises,
+)
 from tests.integration.test_release_preview_direct import (
     _events,
     _expected_security_policy_digest,
@@ -126,52 +129,9 @@ def _append_complete_recovery(
         },
     )
     _append_ci(store, run_id, candidate)
-    store.append(
-        run_id,
-        version,
-        "prism.verdict",
-        {
-            "verdict": "pass",
-            "scope": "verify_final",
-            "candidate_sha": candidate,
-            "evidence_digests": {"artifact": artifact_digest},
-        },
+    append_review_security_premises(
+        store, run_id, version, candidate, contract_digest, artifact_digest, policy_digest,
     )
-    review_command_id = f"security-review-{candidate}"
-    store.append(
-        run_id,
-        version,
-        "prism.verdict",
-        {
-            "verdict": "pass",
-            "scope": "security",
-            "candidate_sha": candidate,
-            "policy_digest": policy_digest,
-            "evidence_digests": {"artifact": artifact_digest},
-        },
-        command_id=review_command_id,
-    )
-    store.append(
-        run_id,
-        version,
-        "security.assessed",
-        {
-            "status": "passed",
-            "policy_digest": policy_digest,
-            "contract_digest": contract_digest,
-            "candidate_sha": candidate,
-            "scans": [{
-                "id": "accepted-security-scan",
-                "status": "passed",
-                "exit_code": 0,
-                "result_version": 1,
-                "summary": {},
-            }],
-            "prism_scope": "security",
-            "review_command_id": review_command_id,
-        },
-    )
-
 
 def _new_candidate(
     repo: Path,
