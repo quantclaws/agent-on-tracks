@@ -257,6 +257,63 @@ def parse_collected_nodes(stdout: str) -> list[str]:
     return nodes
 
 
+_PER_FILE_COLLECT_LINE = re.compile(r"^.+\.py:\s*\d+\s*$")
+
+# The reference runner's >= 9.1 quiet ``--collect-only`` output reduces to one
+# ``path: count`` line per file (no ``::`` node ids) when the effective
+# fine-grained case verbosity drops below -1 -- e.g. the host's quiet options
+# plus the contract's own quiet flag. The ini pin below restores the per-node
+# listing regardless of the surrounding quiet flags, so the collector can
+# always parse real node ids.
+_COLLECT_NODE_ID_PIN = ("-o", "verbosity_test_cases=-1")
+
+
+def is_per_file_collect_summary(stdout: str) -> bool:
+    """True when ``stdout`` carries the >= 9.1 quiet collect listing.
+
+    In that degraded mode the collector prints ``path/to/test_x.py: N`` lines
+    and the node ids are already lost, so the caller must re-invoke the
+    collect with the verbosity pin instead of reading the empty node parse as
+    an empty layer (D4 live defect). A trailing warnings/summary section is
+    tolerated as long as at least one per-file count line is present and no
+    ``::`` node id line is.
+    """
+    if parse_collected_nodes(stdout):
+        return False
+    return any(_PER_FILE_COLLECT_LINE.match(line.strip()) for line in (stdout or "").splitlines())
+
+
+def collect_node_ids_argv(argv: list[str]) -> list[str]:
+    """Return ``argv`` with the runner's collect verbosity pinned to node ids."""
+    return [*argv, *_COLLECT_NODE_ID_PIN]
+
+
+def collect_node_ids_command(command: str) -> str:
+    """Command-string variant of :func:`collect_node_ids_argv`."""
+    return f"{command} {' '.join(_COLLECT_NODE_ID_PIN)}"
+
+
+def run_collect_command(argv: list[str], cwd) -> subprocess.CompletedProcess:
+    """Run a collect command, recovering node ids from quiet >= 9.1 output.
+
+    The declared command runs verbatim first. When it exited cleanly but only
+    produced the per-file count listing (``parse_collected_nodes`` sees zero
+    nodes), re-run it once with the verbosity pin so one node id per line is
+    printed. The retry result is used only when it succeeds AND parses nodes;
+    every other outcome keeps the original process result, so failures still
+    surface with the real runner error.
+    """
+    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+    if proc.returncode != 0 or parse_collected_nodes(proc.stdout):
+        return proc
+    if not is_per_file_collect_summary(proc.stdout):
+        return proc
+    retry = subprocess.run(collect_node_ids_argv(argv), cwd=cwd, capture_output=True, text=True)
+    if retry.returncode == 0 and parse_collected_nodes(retry.stdout):
+        return retry
+    return proc
+
+
 def _parse_collected_count(stdout: str) -> int:
     """Parse the test count from test --collect-only -q output.
 

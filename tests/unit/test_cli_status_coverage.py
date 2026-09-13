@@ -99,6 +99,20 @@ def test_prioritize_status_rows_puts_active_hotfix_first():
     assert _prioritize_status_rows(_NoHotfix(), rows) == rows
 
 
+def test_prioritize_status_rows_keeps_terminal_primary(tmp_path):
+    """D5: an older suspended hotfix never displaces a newer terminal run
+    from the primary line (the completed released run must stay observable)."""
+    repo, store = _setup(tmp_path)
+    _seed(store, "OLD-HF", stage="M-IMPL")
+    store.append("OLD-HF", "v0.1", "hotfix.requested", {"issue": 1, "scenario": "post-release"})
+    store.append("OLD-HF", "v0.1", "verdict.failed", {"check": "impl_defect", "attempt": 5})
+    _seed(store, "NEW-DONE", stage="M-MILESTONE")
+    store.append("NEW-DONE", "v0.1", "run.completed", {"terminal_state": "released"})
+    rows = [("NEW-DONE",), ("OLD-HF",)]
+    assert _prioritize_status_rows(store, rows) == rows
+    store.close()
+
+
 def test_print_suspended_statuses_skips_primary_and_completed(capsys):
     class _FakeStore:
         def state(self, run_id):
@@ -143,6 +157,47 @@ def test_cmd_status_primary_completed_prints_other_active_and_suspended(tmp_path
     assert "run=RUN-C: completed terminal=done stage=M-STORY" in out
     assert "run=RUN-B: stage=M-IMPL" in out
     assert "suspended: run=RUN-A stage=M-IMPL substate=BASELINE" in out
+
+
+def test_cmd_status_newer_released_run_renders_before_older_suspended_hotfix(tmp_path, capsys):
+    """D5 live scenario: the newest run completed released while an older
+    hotfix run is still suspended. The released run owns the primary line and
+    the older suspended run renders after it -- it no longer shadows the
+    terminal outcome (harness misread status before)."""
+    repo, store = _setup(tmp_path)
+    _seed(store, "RUN-OLD", stage="M-IMPL")
+    store.append("RUN-OLD", "v0.1", "hotfix.requested", {"issue": 1, "scenario": "post-release"})
+    store.append("RUN-OLD", "v0.1", "verdict.failed", {"check": "impl_defect", "attempt": 5})
+    _seed(store, "RUN-NEW", stage="M-MILESTONE")
+    store.append("RUN-NEW", "v0.1", "hotfix.requested", {"issue": 1, "scenario": "post-release"})
+    store.append("RUN-NEW", "v0.1", "run.completed", {"terminal_state": "released"})
+    rc = cmd_status(repo)
+    out = capsys.readouterr().out
+    store.close()
+    assert rc == 0
+    assert "run=RUN-NEW: completed terminal=released stage=M-MILESTONE" in out
+    assert "run=RUN-OLD:" in out
+    assert out.index("terminal=released") < out.index("run=RUN-OLD:")
+
+
+def test_cmd_status_active_hotfix_keeps_older_terminal_visible(tmp_path, capsys):
+    """D5: when the active hotfix run is the primary line (run-loop target),
+    an older completed run must still be rendered -- before the suspended
+    rows, never hidden by the hotfix priority."""
+    repo, store = _setup(tmp_path)
+    _seed(store, "RUN-DONE", stage="M-STORY")
+    store.append("RUN-DONE", "v0.1", "run.completed", {"terminal_state": "done"})
+    _seed(store, "RUN-HF", stage="M-IMPL")
+    store.append("RUN-HF", "v0.1", "hotfix.requested", {"issue": 2, "scenario": "post-release"})
+    _seed(store, "RUN-SUSP", stage="M-DESIGN")
+    rc = cmd_status(repo)
+    out = capsys.readouterr().out
+    store.close()
+    assert rc == 0
+    assert "run=RUN-HF:" in out
+    assert "run=RUN-DONE: completed terminal=done stage=M-STORY" in out
+    assert out.index("run=RUN-HF:") < out.index("run=RUN-DONE:")
+    assert out.index("run=RUN-DONE:") < out.index("suspended: run=RUN-SUSP")
 
 
 def test_cmd_status_prints_release_lines(tmp_path, capsys, monkeypatch):

@@ -569,6 +569,44 @@ def test_row_has_integration_layer_and_targets():
 # ---------------------------------------------------------------------------
 
 
+def test_collect_layer_inventories_retries_quiet_listing(tmp_path: Path, monkeypatch):
+    """D4: pytest>=9 quiet collect (per-file counts, no ``::`` ids) is
+    re-collected with the verbosity pin instead of yielding an empty layer."""
+    host = _Host(tmp_path)
+    sections = {
+        name: SimpleNamespace(collect=f"collect {name} -q", cwd=".")
+        for name in ("unit", "integration", "e2e")
+    }
+    contract = SimpleNamespace(**sections)
+    calls: list[str] = []
+
+    def fake_execute(command, cwd, label):
+        calls.append(command)
+        if command.endswith("-o verbosity_test_cases=-1"):
+            return SimpleNamespace(
+                exit_code=0, stdout=f"tests/{label}.py::test_one\n", stderr=""
+            )
+        return SimpleNamespace(
+            exit_code=0, stdout=f"tests/{label}.py: 1\n", stderr=""
+        )
+
+    monkeypatch.setattr(testops, "execute_gate_command", fake_execute)
+    inventories = host._collect_layer_inventories(contract, str(host.repo))
+    assert inventories == {
+        "unit": ["tests/unit-collect.py::test_one"],
+        "integration": ["tests/integration-collect.py::test_one"],
+        "e2e": ["tests/e2e-collect.py::test_one"],
+    }
+    assert calls == [
+        "collect unit -q",
+        "collect unit -q -o verbosity_test_cases=-1",
+        "collect integration -q",
+        "collect integration -q -o verbosity_test_cases=-1",
+        "collect e2e -q",
+        "collect e2e -q -o verbosity_test_cases=-1",
+    ]
+
+
 def test_collect_layer_inventories_outcomes(tmp_path: Path, monkeypatch):
     host = _Host(tmp_path)
     unit = SimpleNamespace(collect="collect unit", cwd=".")

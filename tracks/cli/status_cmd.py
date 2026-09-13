@@ -70,10 +70,29 @@ def _status_branch(s) -> str:
 
 
 def _prioritize_status_rows(store: Store, rows: list[tuple[str]]) -> list[tuple[str]]:
+    """Active hotfix runs take run-loop priority -- but never displace the
+    primary row when the newest run is terminal: a completed released run must
+    stay observable instead of being shadowed by an older suspended hotfix
+    (D5 live defect). ``rows`` are newest-first; a minimal fake store without
+    ``state`` keeps the legacy promotion."""
     hotfix_id = store.active_hotfix_run()
     if hotfix_id is None:
         return rows
+    if rows and hasattr(store, "state") and store.state(rows[0][0]).status == "completed":
+        return rows
     return [(hotfix_id,), *((run_id,) for run_id, in rows if run_id != hotfix_id)]
+
+
+def _next_status_row(
+    store: Store, rows: list[tuple[str]], exclude: str, *, completed: bool
+) -> str | None:
+    """First newest-first row whose projection completion state matches."""
+    for run_id, in rows:
+        if run_id == exclude:
+            continue
+        if (store.state(run_id).status == "completed") is completed:
+            return run_id
+    return None
 
 
 def _print_suspended_statuses(store: Store, rows: list[tuple[str]], primary_id: str) -> None:
@@ -95,10 +114,15 @@ def cmd_status(repo: Path) -> int:
     store.rebuild_projections()  # NFR-04: survives dropped projection tables
     # Skip backlog-only phantom rows (SM-01.2): a `backlog.recorded` event on a
     # run with no `stage.entered` is a queue placeholder, not a real run.
+    # Newest first by TRUE event recency (D5): `rebuild_projections` above
+    # re-stamps `updated_ts` to "now" for every row, so ordering by it was
+    # effectively insertion order and let an older suspended run shadow a
+    # newer completed one.
     rows = store.conn.execute(
-        "SELECT run_id FROM runs "
-        "WHERE status != 'backlog' AND stage IS NOT NULL "
-        "ORDER BY updated_ts DESC"
+        "SELECT runs.run_id FROM runs "
+        "WHERE runs.status != 'backlog' AND runs.stage IS NOT NULL "
+        "ORDER BY (SELECT MAX(ev.ts) FROM events AS ev "
+        "WHERE ev.run_id = runs.run_id) DESC, runs.run_id DESC"
     ).fetchall()
     if not rows:
         print("no runs yet")
@@ -120,10 +144,17 @@ def cmd_status(repo: Path) -> int:
     except Exception:
         pass
     if primary.status == "completed":
-        active_id = store.active_run()
-        if active_id is not None and active_id != primary_id:
+        active_id = _next_status_row(store, rows, primary_id, completed=False)
+        if active_id is not None:
             print(_status_line(active_id, store.state(active_id)))
             rows = [(run_id,) for run_id, in rows if run_id != active_id]
+    else:
+        # D5: the active primary never hides the latest terminal outcome --
+        # render it between the primary line and the suspended rows.
+        completed_id = _next_status_row(store, rows, primary_id, completed=True)
+        if completed_id is not None:
+            print(_status_line(completed_id, store.state(completed_id)))
+            rows = [(run_id,) for run_id, in rows if run_id != completed_id]
     # interfaces §2b (IF-HOTFIX-006): one `suspended:` line per remaining
     # non-completed run (projection-rebuildable; `trac replay` reads it back).
     _print_suspended_statuses(store, rows, primary_id)

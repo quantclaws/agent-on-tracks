@@ -16,7 +16,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tracks.executor.helpers import git, parse_collected_nodes
+from tracks.executor.helpers import (
+    collect_node_ids_command,
+    git,
+    is_per_file_collect_summary,
+    parse_collected_nodes,
+)
 from tracks.executor.host_contract import declared_install_interpreter
 from tracks.executor.m_impl_anchor import _is_evidence_shape_error
 from tracks.executor.quality_gate import (
@@ -633,6 +638,15 @@ class MImplTestOpsMixin:
                 continue
             section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
             obs = execute_gate_command(section.collect, section_cwd, f"{layer}-collect")
+            if obs.exit_code == 0 and is_per_file_collect_summary(obs.stdout):
+                # D4: the >= 9.1 quiet collect printed per-file counts instead
+                # of node ids; re-run with the verbosity pin so the inventory
+                # is genuinely collected rather than silently empty.
+                obs = execute_gate_command(
+                    collect_node_ids_command(section.collect),
+                    section_cwd,
+                    f"{layer}-collect",
+                )
             if obs.exit_code == 5:
                 inventories[layer] = []
                 continue

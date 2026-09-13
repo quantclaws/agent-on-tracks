@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from tracks.executor.helpers import parse_collected_nodes
+from tracks.executor.helpers import parse_collected_nodes, run_collect_command
 from tracks.executor.host_contract import declared_install_interpreter
 from tracks.executor.test_select import (
     BaselineAssets,
@@ -187,7 +187,7 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
             return None
         argv = _resolve_contract_argv0(argv, cwd)
         try:
-            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+            proc = run_collect_command(argv, cwd)
         except (OSError, UnicodeError) as exc:
             # FRB-G: a missing executable / undecodable stream is a layer
             # collection failure routed through the event channel, never

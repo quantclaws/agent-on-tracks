@@ -10,12 +10,11 @@ inexact results fail closed with ``AdapterResultError`` (AC-FR0264-03).
 from __future__ import annotations
 
 import shlex
-import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 from tracks.adapters.base import Adapter, AdapterResultError, Layer, TestNode, TestRunResult
-from tracks.executor.helpers import parse_collected_nodes
+from tracks.executor.helpers import parse_collected_nodes, run_collect_command
 from tracks.executor.test_select import (
     JUnitResultError,
     TestSelectError,
@@ -60,13 +59,7 @@ def collect_reference_nodes(
     argv = shlex.split(collect_command)
     if not argv:
         raise AdapterResultError("collect command expands to an empty argv")
-    proc = subprocess.run(
-        argv,
-        cwd=str(cwd),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    proc = run_collect_command(argv, cwd)
     if proc.returncode != 0:
         raise AdapterResultError(
             f"collect command failed (exit {proc.returncode}): {collect_command}"
