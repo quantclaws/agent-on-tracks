@@ -157,3 +157,76 @@ def test_close_project_milestone_verified(monkeypatch):
     result = close_project_milestone(REPO, "release v0.8", "")
     assert result["api_verified"] is False
     assert result["error"] == "milestone_not_declared"
+
+
+# AC-FR0284-01@v0.8 TRACKS-TRACE title-declared milestones resolve to their
+# number (GitHub REST milestones address by number; a title path 404s)
+def _milestone_standin(requests, *, listing):
+    """Self-contained milestone stand-in: listing + number-addressed close."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):  # pragma: no cover - server noise
+            return
+
+        def _reply(self, status: int, body):
+            raw = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler protocol
+            requests.append(("GET", self.path))
+            path = self.path.split("?", 1)[0]
+            if path == f"/repos/{REPO}/milestones":
+                self._reply(200, listing)
+            elif path == f"/repos/{REPO}/milestones/7":
+                self._reply(200, {"number": 7, "title": "release v0.8", "state": "closed"})
+            else:
+                self._reply(404, {"message": "not found"})
+
+        def do_PATCH(self):  # noqa: N802
+            requests.append(("PATCH", self.path))
+            length = int(self.headers.get("Content-Length") or 0)
+            self.rfile.read(length)
+            if self.path == f"/repos/{REPO}/milestones/7":
+                self._reply(200, {"state": "closed"})
+            else:
+                self._reply(404, {"message": "not found"})
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_close_project_milestone_resolves_title_to_number(monkeypatch):
+    # GitHub REST addresses milestones by NUMBER: a title-declared milestone
+    # must resolve via the listing before PATCHing (live evidence: a title in
+    # the path 404s on the real API).
+    requests = []
+    listing = [{"number": 7, "title": "release v0.8", "state": "open"}]
+    server, thread = _milestone_standin(requests, listing=listing)
+    try:
+        _env(monkeypatch, type("S", (), {"base_url": f"http://127.0.0.1:{server.server_port}"}))
+        result = close_project_milestone(REPO, "release v0.8", "release v0.8")
+        assert result["state"] == "closed"
+        assert result["api_verified"] is True
+        paths = [path for _method, path in requests]
+        assert paths[0] == f"/repos/{REPO}/milestones?state=all"
+        assert f"/repos/{REPO}/milestones/7" in paths[1], paths
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=5)
+
+
+def test_close_project_milestone_unknown_title_is_fail_closed(monkeypatch):
+    requests = []
+    server, thread = _milestone_standin(requests, listing=[])
+    try:
+        _env(monkeypatch, type("S", (), {"base_url": f"http://127.0.0.1:{server.server_port}"}))
+        result = close_project_milestone(REPO, "release v0.8", "release v9.9")
+        assert result["api_verified"] is False
+        assert result["error"] == "milestone_not_found"
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=5)

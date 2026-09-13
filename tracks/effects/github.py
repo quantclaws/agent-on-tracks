@@ -788,9 +788,33 @@ def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
         }
     base = _api_base()
     # A declared milestone target may be a title (``release {version}``
-    # rendered: "release v0.8"); encode the path segment so the request line
-    # stays well-formed. Numeric milestone numbers are unchanged.
-    milestone_segment = urllib.parse.quote(str(milestone), safe="")
+    # rendered: "release v0.8"). The GitHub REST milestone endpoints address
+    # milestones by NUMBER only -- a title in the path 404s. Resolve the
+    # title to its number first (state=all so a previously closed one is
+    # still found); numeric declarations pass straight through.
+    milestone_ref = str(milestone)
+    if not milestone_ref.isdigit():
+        listing, list_error, _status = _api_json(
+            _api_request(f"{base}/repos/{repo}/milestones?state=all", "GET")
+        )
+        if list_error is not None:
+            return {"project": project, "milestone": milestone, "state": "",
+                    "api_verified": False, "error": list_error}
+        numbers = {
+            str(item.get("number")): item
+            for item in (listing or [])
+            if isinstance(item, dict)
+        } if isinstance(listing, list) else {}
+        match = next(
+            (num for num, item in numbers.items()
+             if str(item.get("title") or "") == milestone_ref),
+            None,
+        )
+        if match is None:
+            return {"project": project, "milestone": milestone, "state": "",
+                    "api_verified": False, "error": "milestone_not_found"}
+        milestone_ref = match
+    milestone_segment = urllib.parse.quote(milestone_ref, safe="")
     url = f"{base}/repos/{repo}/milestones/{milestone_segment}"
     data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
     if error is not None:
