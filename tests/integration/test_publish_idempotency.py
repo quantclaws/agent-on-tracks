@@ -77,11 +77,10 @@ def test_planned_then_executed_done(host_repo, trac, event_log, ci_echo_standin)
     candidate = planned[0]["payload"]["candidate_sha"]
     assert f"{candidate}\trefs/heads/main" in ls
     status = trac("status")
-    # status renders the publish-or-later face; the publish= fragment outlet is
-    # reported separately (product does not render it yet). With the
-    # M-MILESTONE closing tail wired, a successful publish legitimately
-    # continues past M-PUBLISH to terminal=released -- either face satisfies
-    # the anchor.
+    # A completed publish may continue through milestone closure; status must
+    # retain the publish state and the latest operation's audit key.
+    assert "publish=done" in status.stdout
+    assert f"idempotency_key={executed[-1]['payload']['idempotency_key']}" in status.stdout
     assert "M-PUBLISH" in status.stdout or (
         "terminal=released" in status.stdout and "M-MILESTONE" in status.stdout
     )

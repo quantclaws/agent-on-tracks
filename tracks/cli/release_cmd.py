@@ -534,6 +534,17 @@ def _release_attention_lines(events: list) -> list[str]:
     return lines
 
 
+def _latest_publish_idempotency_key(events: list) -> str | None:
+    """Return the latest nonempty key from a publish operation event."""
+    for event in reversed(events):
+        if event.type not in ("publish.planned", "publish.executed"):
+            continue
+        key = (event.payload or {}).get("idempotency_key")
+        if isinstance(key, str) and key:
+            return key
+    return None
+
+
 def _release_publish_lines(events: list, primary) -> list[str]:
     """(G) publish and terminal fragments for status (interfaces §287 /
     AC-FR0275-01): ``publish=planned|executing|done|reconciled_skip|blocked``
@@ -548,6 +559,9 @@ def _release_publish_lines(events: list, primary) -> list[str]:
         publish_status = getattr(primary, "publish_status", None)
         if publish_status:
             lines.append(f"publish={publish_status}")
+            key = _latest_publish_idempotency_key(events)
+            if key is not None:
+                lines.append(f"idempotency_key={key}")
     if primary.status == "completed" and primary.terminal_state == "cancelled":
         lines.append("terminal=cancelled")
     return lines

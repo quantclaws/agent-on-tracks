@@ -268,3 +268,26 @@ def test_cmd_release_no_active_run_and_missing_gate(tmp_path, monkeypatch):
     monkeypatch.setattr(rc, "writer_lock", lambda home: contextlib.nullcontext())
     monkeypatch.setattr(rc, "_release_gate", lambda *a: None)
     assert rc.cmd_release(tmp_path, "--action", "delay", "--reason", "r") != 0
+
+
+# AC-FR0275-01@v0.8 TRACKS-TRACE status exposes the active operation's audit key.
+def test_publish_status_exposes_latest_operation_key():
+    primary = SimpleNamespace(publish_status="done", status="completed", terminal_state="released")
+    events = [
+        _ev(1, "publish.planned", {"idempotency_key": "sha256:old"}),
+        _ev(2, "publish.executed", {"idempotency_key": "sha256:old", "status": "done"}),
+        _ev(3, "publish.planned", {"idempotency_key": "sha256:current"}),
+        _ev(4, "publish.executed", {"idempotency_key": "sha256:current", "status": "done"}),
+        _ev(5, "milestone.sealed"),
+    ]
+    lines = rc._release_publish_lines(events, primary)
+    assert "publish=done" in "\n".join(lines)
+    assert "idempotency_key=sha256:current" in "\n".join(lines)
+    assert "idempotency_key=sha256:old" not in "\n".join(lines)
+
+
+def test_publish_status_does_not_invent_a_missing_operation_key():
+    primary = SimpleNamespace(publish_status="planned", status="running", terminal_state=None)
+    lines = rc._release_publish_lines([_ev(1, "publish.planned")], primary)
+    assert "publish=planned" in "\n".join(lines)
+    assert "idempotency_key=" not in "\n".join(lines)
