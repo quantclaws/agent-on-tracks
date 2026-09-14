@@ -389,9 +389,13 @@ def _m_impl_shield_dispatch(s: State) -> Command:
         # manifest_malformed (run 01KZTHE7 T-017, 2026-08-16).
         "objective": (
             "SHIELD_FIX: fix diagnosed test defects; your FINAL reply "
-            "must end with the bare artifact manifest JSON object per "
+            "must end with the artifact manifest JSON object per "
             "Shield §输出合同 - prose or Markdown reports are not a "
-            "deliverable" + _shield_diagnosis_clause(s)
+            "deliverable; when the assignment declares tracks-envelope:v2 "
+            "the manifest is the payload of exactly one fenced "
+            "```tracks-envelope block (envelope header with kind/version + "
+            "payload, nothing outside the block)"
+            + _shield_diagnosis_clause(s)
         ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,
