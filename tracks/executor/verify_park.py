@@ -149,7 +149,12 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
             if not self._repair_rewalk_allowed(frozen_sha):
                 # SM-01.17: no repair context -- mark the drift, never
                 # re-freeze; the walk's repair routing owns what happens
-                # next.
+                # next. The disposition is the SAME §1.0.14 B channel the
+                # park chain uses: a behavior-class repair round opens
+                # (bounded by the budget) so the operator may land the
+                # trailer-marked fix commit and the next freeze re-walks
+                # (without this the drift halt was silent -- the run idled
+                # forever with decide() having nothing to drive).
                 self._emit(
                     "candidate.stale",
                     {
@@ -161,6 +166,17 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
                         ),
                     },
                     command_id=cmd.command_id,
+                )
+                self._park_repair_route(
+                    cmd,
+                    frozen_sha,
+                    "behavior",
+                    (
+                        "candidate drift: HEAD moved past the frozen "
+                        "candidate (fix commits landed after the freeze); "
+                        "land the fix commit with the Tracks-Repair-Round "
+                        "trailer to re-walk"
+                    ),
                 )
                 return None
             self._emit(
