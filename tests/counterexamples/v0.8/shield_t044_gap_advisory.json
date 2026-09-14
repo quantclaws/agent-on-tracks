@@ -1,0 +1,62 @@
+{
+  "advisory": "gap: finding already satisfied at HEAD - no test write this dispatch",
+  "task_id": "T-044",
+  "issue_number": 999,
+  "review_round": 22,
+  "role": "shield",
+  "phase": "shield_fix",
+  "finding_id": "22-prism-16",
+  "finding_nature": {
+    "recorded_failure_class": "non_zero_exit",
+    "self_report": "opencode exited 1",
+    "runtime_verdict": "Prism DIAGNOSE returned no {classification,reason,evidence} JSON; contract violation (diagnose_contract_violation)",
+    "interpretation": "22-prism-16 is a Prism DIAGNOSE crash artifact (three consecutive agent crashes, 22-prism-14/15/16), not a substantive code-review finding; the reviewable substance of this card is the PLAN-F-1 (round-18) task text: the host_contract/verify_local_gates x5 anchors carried a bare-bootstrap premise defect (no trac start, single run parked at triage, 0 events, walk could never reach M-IMPL, no implementation could turn them green)."
+  },
+  "verification_at_head": {
+    "conclusion": "the PLAN-F-1 defect does not describe HEAD; the 5 anchors are walker-driven and green",
+    "fix_landed_in": [
+      "e7d1be9 feat(verify): local-gate/security/host-contract anchors + v0.8 trace capability",
+      "d376a32 feat(publish+verify): release-branch merge, contract materialization, pipeline rings"
+    ],
+    "bootstrap_discipline": {
+      "walked_full_chain": [
+        "tests/integration/test_host_contract.py::test_materialized_contract_valid (walk_to_awaiting_release, pre_seed_hook declares the contract)",
+        "tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass (walk_to_awaiting_release, pre_seed_hook declares the contract)"
+      ],
+      "production_handler_halves": [
+        "tests/integration/test_host_contract.py::test_execute_per_contract_only (trac init+start, committed declared contract, production run_local_gates over the real Store)",
+        "tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop (same; failed-gate evidence + contract revision loop)",
+        "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed (trac init+start, committed ghost-gate contract, production handler + resume replay)"
+      ],
+      "walker_chain": "tests/e2e/helpers.py walk_to_awaiting_release -> walk_to_m_impl_parked -> walk_to_await_human: init -> start -> triage go -> doc trio -> approval -> M-IMPL park -> M-VERIFY contract-gate chain -> AWAITING_RELEASE (b93 section 8.1 discipline; every node calls trac start; no node stops at triage with 0 events)"
+    },
+    "acceptance_self_check": {
+      "acceptance": "acceptance_refs x5 green via Runtime verify_task (Runtime authority; local runs are self-check only)",
+      "command": ".venv/bin/python -m pytest tests/integration/test_host_contract.py tests/integration/test_verify_local_gates.py --tb=short -q",
+      "result": "5 passed",
+      "stability": "second run with -n 4 --dist loadscope: 5 passed"
+    },
+    "assertion_strength": "not reduced; contract-outlet assertions retained per node: contract load/validate closed set, install+quality/trace/reach/anti_slop/build/smoke executed evidence, artifact.built digest, host_contract.materialized (M-DESIGN runtime_default + source=host, idempotent digests), command_echo byte-equal to declaration, tracks-gate-result schema, host_contract.invalid reason=missing_contract, failed-gate exit/stdout/stderr machine evidence, revision loop re-materializes and re-runs to passed, resume re-runs the failed verification (no skip), blocked + repair_route rendering"
+  },
+  "action": "none - per Shield discipline (finding satisfied at HEAD, no legitimate diff): no rewrite of compliant assets, no no-op diff manufactured; this record is the advisory artifact for the gap return",
+  "reverification": {
+    "dispatch_attempt": 2,
+    "head": "81d8e26 docs: resync guard-registry pyproject digests after the 0.8.0 bump",
+    "command": ".venv/bin/python -m pytest tests/integration/test_host_contract.py tests/integration/test_verify_local_gates.py --tb=short -q -n 4 --dist loadscope",
+    "result": "5 passed",
+    "note": "attempt-2 re-check on the same HEAD: the 5 acceptance anchors remain walker-driven and green; no pending finding against them; gap conclusion unchanged"
+  },
+  "reverification_attempt3": {
+    "dispatch_attempt": 3,
+    "head": "81d8e26 docs: resync guard-registry pyproject digests after the 0.8.0 bump",
+    "command": ".venv/bin/python -m pytest tests/integration/test_host_contract.py tests/integration/test_verify_local_gates.py --tb=short -q",
+    "result": "5 passed",
+    "note": "the seq-4154 attempt-1 gate failure (validate_guard_registry == () config-digest/threshold mismatch) predates commit 81d8e26, which resynced the guard-registry pyproject digests; at the current HEAD the mismatch is resolved and all 5 anchors pass; prior envelope rejections were reply-format only (no_envelope_block), not manifest or verification failures"
+  },
+  "reverification_attempt_recut": {
+    "head": "86c5c5f fix(shield): SHIELD_FIX objective states the envelope reply shape",
+    "command": ".venv/bin/python -m pytest tests/integration/test_host_contract.py tests/integration/test_verify_local_gates.py --tb=short -q",
+    "result": "5 passed",
+    "note": "gap conclusion unchanged on the recut dispatch: the 5 acceptance anchors remain walker-driven and green; the earlier rejections of this advisory were reply-format errors (missing envelope header object), not manifest or verification failures"
+  }
+}
