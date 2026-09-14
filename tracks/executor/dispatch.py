@@ -513,6 +513,25 @@ the envelope/failure faces stay re-exported by executor.py."""
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
+            # The stage-routable failure (same shape as the 792f70e
+            # format_error routing): without it the dispatch flags set by
+            # command.issued stay set, decide() awaits an outcome that never
+            # comes, and every later run is a silent no-op (live 01M19FJ:
+            # the pre-gate rejection of the recovered T-042 dispatch parked
+            # M-IMPL/GREEN forever). verdict.failed lets each stage's own
+            # routing reset the flags and consume the attempt budget.
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "version_parity_mismatch",
+                    "reason": "declared-dispatch version parity gate rejected "
+                    "the dispatch before agent execution",
+                    "evidence": "dispatch.rejected mismatches on this command",
+                    "task_id": task_id,
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
             return False
         if is_declared(assignment):
             return True
