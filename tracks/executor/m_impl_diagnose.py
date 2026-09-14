@@ -434,19 +434,30 @@ class MImplDiagnoseMixin:
         rc, out, err = self._run_anchor_suite(cmd_argv, run_cwd, result_path)
         summary = out.strip().splitlines()[-1] if out.strip() else ""
         if rc == 0:
-            # Anchors already green: either the implementation already
-            # exists (task-graph drift) or an anchor broke - a human must
-            # decide which.
+            # Anchors already green: the implementation landed through
+            # accumulated out-of-band WIP (the round-20/T-013 precedent --
+            # "累积 WIP 已满足本轮 RED 义务，无可合法 Red：RED 相为 Runtime
+            # 确认"). The Runtime CONFIRMS the anchors green with this run as
+            # evidence and pins the R ref to the base tree (which already
+            # contains the green anchors); the flow continues through
+            # PRISM_RED and a Devon GREEN verification of the done work
+            # (live T-042: the writer verifies completed scope and closes
+            # the task). Never a fabricated red: the event states plainly
+            # that the anchors were already green.
+            ref, base_sha = self._pin_r_ref(tid, attempt)
             self._emit(
-                "verdict.failed",
+                "red.checkpointed",
                 {
-                    "check": "red_invalid",
-                    "reason": (
-                        "preset RED anchors unexpectedly pass - anchors must "
-                        f"be red before GREEN. {summary}"
-                    ),
-                    "evidence": out[-2000:],
                     "task_id": tid,
+                    "r_sha": ref,
+                    "base_sha": base_sha,
+                    "anchors": "green",
+                    "reason": (
+                        "preset anchors already green (accumulated WIP); "
+                        "RED obligation satisfied by Runtime confirmation"
+                    ),
+                    "run_summary": summary,
+                    "evidence": out[-2000:],
                     "attempt": attempt,
                 },
                 command_id=cmd.command_id,

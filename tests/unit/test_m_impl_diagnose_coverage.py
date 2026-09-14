@@ -182,16 +182,21 @@ def test_do_anchor_red_missing_refs_and_contract_error(tmp_path, monkeypatch):
     assert "integration" in host.emitted[-1][1]["reason"]
 
 
-def test_do_anchor_red_unexpected_pass(tmp_path, monkeypatch):
+def test_do_anchor_red_green_anchors_confirm(tmp_path, monkeypatch):
+    # T-013 precedent: anchors already green through accumulated WIP --
+    # the Runtime CONFIRMS (never fabricates a red): the event states the
+    # anchors were green and pins the R ref to the base tree.
     host = _Host(tmp_path)
     monkeypatch.setattr(host, "_run_anchor_suite", lambda *a: (0, "1 passed", ""))
+    host._pin_r_ref = lambda tid, attempt: ("refs/trac/rgr/RUN/T/1/red", "base")
     host._do_anchor_red(
         _Cmd(), _state({"test_refs": ["tests/x.py::t"]}), "T-001", False
     )
     event, payload, _ = host.emitted[-1]
-    assert event == "verdict.failed"
-    assert payload["check"] == "red_invalid"
-    assert "unexpectedly pass" in payload["reason"]
+    assert event == "red.checkpointed"
+    assert payload["anchors"] == "green"
+    assert "already green" in payload["reason"]
+    assert payload["r_sha"] == "refs/trac/rgr/RUN/T/1/red"
 
 
 def test_do_anchor_red_success_checkpoints(tmp_path, monkeypatch):
