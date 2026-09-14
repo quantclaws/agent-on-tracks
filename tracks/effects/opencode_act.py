@@ -111,9 +111,11 @@ class OpencodeActMixin:
         proc = None
         try:
             cleanup_infos = req.cleanup_infos
-            cleanup_infos.append(self._materialize(req.name))
-            self._materialize_skills(req.assignment, cleanup_infos)
-            self._materialize_templates(req.assignment, cleanup_infos)
+            # Materialize into the dispatch's effective root: a worktree
+            # session discovers .opencode from its own cwd (see _materialize).
+            cleanup_infos.append(self._materialize(req.name, root=req.root))
+            self._materialize_skills(req.assignment, cleanup_infos, root=req.root)
+            self._materialize_templates(req.assignment, cleanup_infos, root=req.root)
             # IF-ENVELOPE-002: after ALL materialization writes, bind the
             # actual prepared artifacts (path+sha+token) + prompt and run the
             # Runtime-owned parity gate over every selected face — BEFORE the

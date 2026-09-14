@@ -5,6 +5,8 @@ Extracted from ``opencode.py`` for module-size compliance (C0302).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from tracks import templating
 from tracks.effects.dispatch_parity import (
     PreparedContext,
@@ -97,13 +99,20 @@ class OpencodeMaterializeMixin:
             failure=parity_failure_result(assignment, verdict["mismatches"], evidence=verdict),
         )
 
-    def _materialize(self, name: str) -> dict:
+    def _materialize(self, name: str, root: Path | None = None) -> dict:
         """Copy canonical prompt to opencode discovery path; back up any existing
-        file so Human's agent is never silently clobbered (restored on cleanup)."""
+        file so Human's agent is never silently clobbered (restored on cleanup).
+
+        ``root`` is the dispatch's effective root (the isolated worktree for
+        writer dispatches): opencode discovers .opencode/agents relative to
+        its cwd, so a worktree session without its own copy would run with
+        NO agent definition at all -- the envelope reply contract lives in
+        the materialized file (live 01M19FJ T-042: worktree dispatches
+        replied bare JSON, no_envelope_block, three attempts in a row)."""
         src = self._canonical / f"{name}.md"
         if not src.exists():
             raise OpencodeError("opencode_missing", f"canonical prompt not found: {src}")
-        dest_dir = self.repo / ".opencode" / "agents"
+        dest_dir = (root or self.repo) / ".opencode" / "agents"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{name}.md"
         info = {
@@ -121,20 +130,22 @@ class OpencodeMaterializeMixin:
         info["manifest"] = bind_artifact(info["face"], dest, data)
         return info
 
-    def _materialize_skills(self, assignment: dict | None, cleanup_infos: list) -> None:
+    def _materialize_skills(
+        self, assignment: dict | None, cleanup_infos: list, root: Path | None = None
+    ) -> None:
         """Materialize every skill of the assignment (batch B: ``skills`` list,
         backward compatible with the single ``skill`` string); each materialized
         skill registers for cleanup the moment it is written (ARCH §4c)."""
         for skill_name in _skill_names(assignment):
-            cleanup_infos.append(self._materialize_skill(skill_name))
+            cleanup_infos.append(self._materialize_skill(skill_name, root=root))
 
-    def _materialize_skill(self, skill_name: str) -> dict | None:
+    def _materialize_skill(self, skill_name: str, root: Path | None = None) -> dict | None:
         """Materialize one skill to opencode's discovery path for progressive
         disclosure."""
         src = self._canonical.parent / "skills" / skill_name / "SKILL.md"
         if not src.exists():
             return None
-        dest_dir = self.repo / ".opencode" / "skills" / skill_name
+        dest_dir = (root or self.repo) / ".opencode" / "skills" / skill_name
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "SKILL.md"
         info = {
@@ -150,7 +161,9 @@ class OpencodeMaterializeMixin:
         info["manifest"] = bind_artifact(info["face"], dest, data)
         return info
 
-    def _materialize_templates(self, assignment: dict | None, cleanup_infos: list) -> None:
+    def _materialize_templates(
+        self, assignment: dict | None, cleanup_infos: list, root: Path | None = None
+    ) -> None:
         """Materialize the assignment's canonical document templates into the
         host repo (live run043: a host repo has no tracks/templates/, so the
         templates travel with the dispatch exactly like the agent definition
@@ -159,11 +172,13 @@ class OpencodeMaterializeMixin:
         mid-way still cleans up its predecessors."""
         declared = is_declared(assignment)
         for kind in _template_kinds(assignment):
-            info = self._materialize_template(kind, declared=declared)
+            info = self._materialize_template(kind, declared=declared, root=root)
             if info is not None:
                 cleanup_infos.append(info)
 
-    def _materialize_template(self, kind: str, declared: bool = False) -> dict | None:
+    def _materialize_template(
+        self, kind: str, declared: bool = False, root: Path | None = None
+    ) -> dict | None:
         """Copy canonical tracks/templates/{kind}.md to .opencode/templates/;
         a requested kind without a canonical template is a dispatch failure
         (parity with a missing canonical prompt), never a silent skip.
@@ -177,7 +192,7 @@ class OpencodeMaterializeMixin:
             if declared:
                 return None
             raise OpencodeError("opencode_missing", f"canonical template not found: {src}")
-        dest_dir = self.repo / ".opencode" / "templates"
+        dest_dir = (root or self.repo) / ".opencode" / "templates"
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{kind}.md"
         info = {
