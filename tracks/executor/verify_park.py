@@ -19,10 +19,11 @@ from tracks.executor.release_preview import (
     preview_blob_matches,
     preview_inputs_match,
 )
+from tracks.executor.sync_product_prep import ExecSyncProductMixin
 from tracks.kernel.events import Command
 
 
-class ExecVerifyParkMixin:
+class ExecVerifyParkMixin(ExecSyncProductMixin):
     """decide()->None park evidence, freeze/preview/known-issue/repair routing."""
 
     def _verify_chain_park_evidence(self, state) -> None:
@@ -759,6 +760,12 @@ class ExecVerifyParkMixin:
                 command_id=cmd.command_id,
             )
             return
+        sync_error = self._ensure_sync_products(
+            cmd, candidate_sha, contract, contract_digest, journey, facts, state
+        )
+        if sync_error is not None:
+            return
+        events = list(self.store.events(self.run_id))
         preview = assemble_preview(
             self.repo,
             contract,

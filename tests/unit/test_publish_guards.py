@@ -23,7 +23,7 @@ def _plan(*steps: str) -> dict:
 
 
 def _records(repo, *steps):
-    return _operation_records(repo, _plan(*steps), _DIGEST)
+    return _operation_records(repo, _plan(*steps), _DIGEST, "", ())
 
 
 # -- agent gate ---------------------------------------------------------------
@@ -149,6 +149,6 @@ def test_operation_records_validates_every_step_before_returning(tmp_path):
 def test_operation_records_no_steps_is_unknown_operation(tmp_path):
     repo = git_repo(tmp_path)
     records, error = _operation_records(
-        repo, {"journey": "feature", "steps": []}, _DIGEST
+        repo, {"journey": "feature", "steps": []}, _DIGEST, "", ()
     )
     assert records is None and error == "unknown_operation"

@@ -117,6 +117,7 @@ blocked-publish payload."""
             "read_remote": publish_effects.read_remote_state,
             "push_tag": publish_effects.push_tag,
             "push_merge": publish_effects.push_merge,
+            "push_sync": publish_effects.push_sync_product,
             "create_release": publish_effects.create_release,
             "upload_artifact": publish_effects.upload_artifact,
         }

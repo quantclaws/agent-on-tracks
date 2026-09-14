@@ -14,22 +14,28 @@ from typing import Literal
 
 ReconcileVerdict = Literal["done", "skip", "pending", "conflict"]
 
-# FR-0277-02: the contract-declared release-branch form. A merge whose target
-# is in this namespace syncs a legitimately diverged release branch and may
-# produce a real merge commit; every other merge target (main/trunk) stays
-# fast-forward-only (no merge commit, divergence -> conflict).
-RELEASE_BRANCH_PREFIX = "releases/"
-
-
-def is_release_branch_target(target: object) -> bool:
-    """True when a merge target is in the declared release-branch namespace."""
-    return isinstance(target, str) and target.startswith(RELEASE_BRANCH_PREFIX)
+# FR-0277-02: the fields of a prepared + verified sync product that the
+# operation plan carries into the planned/WAL record. A merge step bound to
+# such a record publishes the approved product identity; every other merge
+# stays the fast-forward-only generic path.
+SYNC_RECORD_FIELDS = (
+    "baseline_sha",
+    "source_candidate_sha",
+    "product_sha",
+    "product_tree",
+    "evidence_digests",
+)
 
 
 def plan_operations(operation_plan: dict, preview_digest: str) -> list[dict]:
     """Write-ahead planned records, one per declared operation step."""
     if not isinstance(operation_plan, dict) or not isinstance(preview_digest, str):
         return []
+    products = {
+        str(record.get("target")): record
+        for record in operation_plan.get("sync_products") or ()
+        if isinstance(record, dict) and record.get("target")
+    }
     records: list[dict] = []
     for step in operation_plan.get("steps") or ():
         if not isinstance(step, str) or ":" not in step:
@@ -37,16 +43,24 @@ def plan_operations(operation_plan: dict, preview_digest: str) -> list[dict]:
         kind, target = step.split(":", 1)
         if not kind or not target:
             return []
-        records.append(
-            {
-                "operation_kind": kind,
-                "target": target,
-                "preview_digest": preview_digest,
-                "idempotency_key": operation_idempotency_key(
-                    preview_digest, kind, target
-                ),
-            }
-        )
+        record = {
+            "operation_kind": kind,
+            "target": target,
+            "preview_digest": preview_digest,
+            "idempotency_key": operation_idempotency_key(
+                preview_digest, kind, target
+            ),
+        }
+        product = products.get(target)
+        if kind == "merge" and product is not None:
+            record.update(
+                {
+                    field: product.get(field)
+                    for field in SYNC_RECORD_FIELDS
+                    if product.get(field) is not None
+                }
+            )
+        records.append(record)
     return records
 
 

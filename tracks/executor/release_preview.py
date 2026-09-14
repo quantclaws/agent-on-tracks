@@ -16,6 +16,7 @@ from tracks.executor.release_gate import (
     generate_preview,
     operation_plan_needs_n,
 )
+from tracks.executor.sync_product import validate_record, verified_records
 
 
 def canonical_digest(value: object) -> str:
@@ -203,7 +204,14 @@ def assemble_preview(
     resolved_journey = _journey(contract, journey)
     if resolved_journey is None:
         return None
-    plan, resolved_facts = _preview_plan(repo, contract, resolved_journey, version_facts)
+    plan, resolved_facts = _preview_plan(
+        repo,
+        contract,
+        resolved_journey,
+        version_facts,
+        candidate_sha=candidate_sha,
+        events=events,
+    )
     if plan is None:
         return None
     policy_digest = contract_policy_digest
@@ -219,8 +227,22 @@ def assemble_preview(
     return preview
 
 
-def _preview_plan(repo: Path, contract, resolved_journey: str, version_facts: dict):
-    """Resolve the version facts + operation plan, or (None, None) on refusal."""
+def _preview_plan(
+    repo: Path,
+    contract,
+    resolved_journey: str,
+    version_facts: dict,
+    *,
+    candidate_sha: str | None = None,
+    events=None,
+):
+    """Resolve the version facts + operation plan, or (None, None) on refusal.
+
+    FR-0277-02: a verified sync product record is re-validated here (exact
+    parents/tree, byte-identical re-derivation, evidence digests) before it
+    can enter the plan; a preview can never bind an unverified or mismatched
+    product.
+    """
     table = _contract_table(contract)
     patch_line = str(getattr(getattr(contract, "version", None), "patch_line", "") or "")
     resolved_facts, _error = complete_version_facts(
@@ -232,11 +254,18 @@ def _preview_plan(repo: Path, contract, resolved_journey: str, version_facts: di
     if resolved_facts is None:
         return None, None
     resolved_facts = _version_facts(contract, resolved_facts)
+    sync_products: list = []
+    if candidate_sha and events is not None:
+        sync_products = verified_records(events, candidate_sha)
+        for record in sync_products:
+            if validate_record(repo, record, candidate_sha) is not None:
+                return None, None
     plan = build_operation_plan(
         table,
         resolved_journey,
         resolved_facts,
         active_release_branch=active_release_branch(repo, resolved_facts),
+        sync_products=sync_products,
     )
     if not isinstance(plan, dict):
         return None, None

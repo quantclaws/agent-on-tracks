@@ -18,7 +18,12 @@ from typing import Literal
 from tracks.capabilities import base_version
 from tracks.executor.helpers import git
 
-StaleReason = Literal["candidate_drift", "evidence_staled", "operation_plan_changed"]
+StaleReason = Literal[
+    "candidate_drift",
+    "evidence_staled",
+    "operation_plan_changed",
+    "sync_product_stale",
+]
 
 # IF-JOURNEY-001 §1m: step COND closed set (KIND:TARGET[:when=COND]).
 _WHEN_ACTIVE_BRANCH = "when=active_release_branch"
@@ -224,6 +229,7 @@ def build_operation_plan(
     version_facts: dict,
     *,
     active_release_branch: str | None = None,
+    sync_products: list | None = None,
 ) -> dict:
     """Resolve the journey's declared operation steps with placeholders.
 
@@ -231,25 +237,74 @@ def build_operation_plan(
     kept only when an active release branch exists; without one it is
     silently skipped and the plan digest is computed over the
     actually-resolved step set.
+
+    FR-0277-02: only those declared conditional active-release steps may bind
+    a verified sync product record. The records (``{target, baseline_sha,
+    source_candidate_sha, product_sha, product_tree, evidence_digests}``) ship
+    inside the plan, so the operation-plan digest and the preview digest carry
+    the exact B/C/P identity the Human decides on. No other merge step is
+    turned into a sync.
     """
     ops = (contract or {}).get("operations", {})
     section = ops.get(journey) or ops.get(_JOURNEY_MAP.get(journey, journey)) or {}
     steps = list(section.get("steps") or [])
     plan_facts = operation_plan_facts(contract, version_facts)
-    resolved: list[str] = []
-    for step in steps:
-        if step.endswith(f":{_WHEN_ACTIVE_BRANCH}"):
-            if not active_release_branch:
-                continue  # silent skip: no active release branch
-            step = step[: -len(f":{_WHEN_ACTIVE_BRANCH}")]
-        resolved.append(render_placeholders(step, plan_facts))
+    resolved, bound = _resolve_plan_steps(
+        steps, plan_facts, active_release_branch, _sync_products_by_target(sync_products)
+    )
     resolved = _normalized_step_order(resolved)
-    return {
+    plan = {
         "journey": journey,
         "steps": resolved,
         "operations": {journey: {"steps": resolved}},
         "requires": list(section.get("requires") or ()),
     }
+    if bound:
+        plan["sync_products"] = bound
+    return plan
+
+
+def _sync_products_by_target(sync_products: list | None) -> dict[str, dict]:
+    """Verified product records keyed by target (first record wins)."""
+    by_target: dict[str, dict] = {}
+    for record in sync_products or ():
+        if not isinstance(record, dict):
+            continue
+        target = record.get("target")
+        if isinstance(target, str) and target and target not in by_target:
+            by_target[target] = record
+    return by_target
+
+
+def _resolve_plan_steps(
+    steps: list,
+    plan_facts: dict,
+    active_release_branch: str | None,
+    by_target: dict[str, dict],
+) -> tuple[list[str], list[dict]]:
+    """Render the declared steps; bind verified products to conditional merges.
+
+    FR-0277-02: only the declared ``when=active_release_branch`` steps may
+    bind a product record; every other step (including plain release-branch
+    merges) keeps its existing semantics.
+    """
+    resolved: list[str] = []
+    bound: list[dict] = []
+    for step in steps:
+        conditional = isinstance(step, str) and step.endswith(
+            f":{_WHEN_ACTIVE_BRANCH}"
+        )
+        if conditional:
+            if not active_release_branch:
+                continue  # silent skip: no active release branch
+            step = step[: -len(f":{_WHEN_ACTIVE_BRANCH}")]
+        rendered = render_placeholders(step, plan_facts)
+        resolved.append(rendered)
+        if conditional:
+            record = by_target.get(rendered.partition(":")[2])
+            if record is not None:
+                bound.append(record)
+    return resolved, bound
 
 
 def dev_precheck(contract: dict, version_facts: dict, *, active_release_branch) -> tuple[bool, str]:

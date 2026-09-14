@@ -254,7 +254,23 @@ _DEV_CONTRACT = {
 }
 
 
-def _seed_hotfix_host(host_repo, version="v0.8", *, declare=None):
+def _seed_sync_host_tests(host_repo):
+    """Declare a real, runnable test ladder on the scaffold host.
+
+    FR-0277-02 product verification runs the host-declared test layers in an
+    isolated product checkout, so the diverged-branch journey host must
+    actually carry tests in every declared layer (the scaffold's unit/e2e
+    directories are otherwise empty and pytest would exit "no tests").
+    """
+    for layer in ("unit", "integration", "e2e"):
+        directory = host_repo / "tests" / layer
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "test_sync_smoke.py").write_text(
+            "def test_sync_smoke():\n    assert True\n", encoding="utf-8"
+        )
+
+
+def _seed_hotfix_host(host_repo, version="v0.8", *, declare=None, host_tests=False):
     """Approved baseline + active ``releases/{version}`` branch + bug corpus.
 
     The post-release/dev journeys require a locatable approved target version
@@ -283,12 +299,21 @@ def _seed_hotfix_host(host_repo, version="v0.8", *, declare=None):
     if HOST_BYPRODUCTS_MARKER not in text:
         sep = "" if not text or text.endswith("\n") else "\n"
         gitignore.write_text(text + sep + HOST_BYPRODUCTS_GITIGNORE, encoding="utf-8")
+    if host_tests:
+        _seed_sync_host_tests(host_repo)
     subprocess.run(
         ["git", "add", ".tracks/projects", ".gitignore"],
         cwd=host_repo,
         check=True,
         capture_output=True,
     )
+    if host_tests:
+        subprocess.run(
+            ["git", "add", "tests"],
+            cwd=host_repo,
+            check=True,
+            capture_output=True,
+        )
     subprocess.run(
         ["git", "commit", "-m", f"seed {version} approved baseline"],
         cwd=host_repo,
@@ -403,7 +428,9 @@ def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_st
     from tests.e2e.helpers import replay_execute_publish
 
     _seed_hotfix_host(
-        host_repo, declare=_declare_hotfix_contract_fixed_patch
+        host_repo,
+        declare=_declare_hotfix_contract_fixed_patch,
+        host_tests=True,
     )
     bare, _initial = init_bare_remote(host_repo, "journey_bare_diverge.git")
     subprocess.run(
@@ -459,6 +486,25 @@ def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_st
     frozen = next(e for e in events if e["type"] == "candidate.frozen")
     candidate = frozen["payload"]["candidate_sha"]
     run_id = frozen["run_id"]
+    # FR-0277-02: the product P is prepared and verified BEFORE the Human
+    # decision and enters the approved plan.
+    verified = [e for e in events if e["type"] == "sync_product.verified"]
+    assert verified, events
+    record = verified[-1]["payload"]["product"]
+    assert record["baseline_sha"] == release_tip
+    assert record["source_candidate_sha"] == candidate
+    assert set(record["evidence_digests"]) == {
+        "gates",
+        "tests",
+        "security",
+        "ci",
+    }
+    preview_plan = next(
+        e["payload"]["operation_plan"]
+        for e in events
+        if e["type"] == "release.previewed"
+    )
+    assert preview_plan["sync_products"] == [record]
     sync = [
         e
         for e in events
@@ -468,14 +514,17 @@ def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_st
     assert sync and sync[-1]["payload"]["status"] == "done"
     payload = sync[-1]["payload"]
     assert payload["candidate_sha"] == candidate
-    assert payload["merge_mode"] == "release_branch"
-    assert payload["remote_check"]["contains_fix"] is True
+    assert payload["merge_mode"] == "sync_product"
+    assert payload["product_sha"] == record["product_sha"]
+    assert payload["baseline_sha"] == release_tip
+    assert payload["source_candidate_sha"] == candidate
+    assert payload["evidence_digests"] == record["evidence_digests"]
     assert payload["remote_check"]["object_id"] != candidate
-    assert payload["merge_commit"] == payload["remote_check"]["object_id"]
+    assert payload["remote_check"]["object_id"] == payload["product_sha"]
 
-    # True merge product on the release branch: both parents survive and the
-    # fix commit is contained (content readback, not ref equality).
-    merge_commit = payload["merge_commit"]
+    # True merge product on the release branch: both parents survive (B first,
+    # C second); the readback is the exact approved P.
+    merge_commit = payload["product_sha"]
     body = subprocess.run(
         ["git", "--git-dir", str(bare), "cat-file", "-p", merge_commit],
         check=True,
@@ -515,8 +564,8 @@ def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_st
         == merge_commit
     )
 
-    # Resume: the containment readback skips the already-synced release
-    # branch (same idempotency key), no duplicate merge and no head move.
+    # Resume: the exact-P readback skips the already-synced release branch
+    # (same idempotency key and product), no duplicate merge and no head move.
     replay_execute_publish(host_repo, run_id)
     events2 = event_log(run_id)
     skipped = [
@@ -526,7 +575,9 @@ def test_post_release_sync_merge_diverged(host_repo, trac, event_log, ci_echo_st
         and e["payload"].get("target") == "releases/v0.8"
         and e["payload"].get("status") == "reconciled_skip"
     ]
-    assert skipped and skipped[-1]["payload"]["remote_check"]["contains_fix"] is True
+    assert skipped
+    assert skipped[-1]["payload"]["product_sha"] == merge_commit
+    assert skipped[-1]["payload"]["remote_check"]["object_id"] == merge_commit
     assert (
         subprocess.run(
             ["git", "--git-dir", str(bare), "rev-parse", "refs/heads/releases/v0.8"],

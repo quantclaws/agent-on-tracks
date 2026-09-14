@@ -14,7 +14,6 @@ import hashlib
 import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 from tracks.effects.github import (
@@ -26,20 +25,9 @@ from tracks.effects.github import (
 )
 
 _PUBLISH_FETCH_REF = "refs/trac/publish-fetch"
-_MERGE_COMMIT_MESSAGE = (
-    "Merge candidate {candidate} into {branch}\n"
-    "\n"
-    "Tracks-Publish-Merge: {candidate}\n"
-)
 
 
-def push_merge(
-    remote_url: str,
-    source_ref: str,
-    target_branch: str,
-    *,
-    allow_merge: bool = False,
-) -> dict:
+def push_merge(remote_url: str, source_ref: str, target_branch: str) -> dict:
     """Synchronize TARGET with the approved candidate: no force.
 
     IF-PUBLISH-002: the remote decides. Same object -> reconciled_skip; a
@@ -48,13 +36,11 @@ def push_merge(
     -> failed (branch_missing). The ancestry probe fetches into a private
     temporary ref so no working branch is touched.
 
-    FR-0277-02 (``allow_merge=True`` for the contract-declared ``releases/*``
-    sync targets): a legitimately diverged release branch is resolved with a
-    real ``--no-ff`` merge commit (built in a disposable worktree, never the
-    host working tree). The readback criterion is containment: a branch head
-    that already has the candidate as an ancestor is reconciled_skip; an
-    unresolvable merge is a conflict (never auto-resolved); the merge product
-    carries the candidate reference in its commit message.
+    FR-0277-02: this effect keeps its fast-forward-only generic semantics.
+    A genuinely diverged release branch is never resolved here -- the strict
+    flow consumes the pre-approved product identity through
+    :func:`push_sync_product` instead; this effect neither creates nor
+    "verifies" a merge product.
     """
     expected = _resolve_commit(source_ref)
     if expected is None:
@@ -100,10 +86,6 @@ def push_merge(
             "failed", remote_url, target_branch, source_ref, before, ancestry_error
         )
     if not ancestor:
-        if allow_merge:
-            return _merge_diverged_branch(
-                remote_url, target_branch, source_ref, expected, remote_tip, before
-            )
         return _merge_result(
             "conflict", remote_url, target_branch, source_ref, before
         )
@@ -139,210 +121,161 @@ def push_merge(
     )
 
 
-def _merge_diverged_branch(
+def push_sync_product(
     remote_url: str,
     target_branch: str,
-    source_ref: str,
-    expected: str,
-    remote_tip: str,
-    before: dict,
+    product_sha: str,
+    *,
+    baseline_sha: str,
+    candidate_sha: str,
 ) -> dict:
-    """Resolve a legitimately diverged release branch with a real merge.
+    """Publish an already-approved sync product with an expected-old update.
 
-    FR-0277-02: the fix candidate is merged (``--no-ff``) onto the fetched
-    remote tip in a disposable worktree; the release branch history and the
-    host working tree are never rewritten. Containment is the readback
-    criterion: if the remote tip already carries the candidate as an
-    ancestor, the sync happened (reconciled_skip). A merge that cannot be
-    resolved is a conflict -- never auto-resolved, never force-pushed.
+    FR-0277-02: the effect only consumes the approved prepared identity. The
+    atomic ref update is a ``--force-with-lease`` pinned to the approved
+    baseline B, so the remote accepts the write only while its tip is still
+    B. A tip that already equals P is ``reconciled_skip`` (exact-object
+    readback); any other tip -- including an ancestor rollback or a tip that
+    merely contains C -- is a ``conflict`` and the remote is never touched.
+    A plain non-force push is NOT used: it would accept a rollback to an
+    ancestor of B.
     """
-    contained, contained_error = _is_ancestor(expected, remote_tip)
-    if contained_error:
+    if not _valid_object_id(product_sha) or not _valid_object_id(baseline_sha):
         return _merge_result(
             "failed",
             remote_url,
             target_branch,
-            source_ref,
-            before,
-            contained_error,
+            product_sha,
+            {},
+            "invalid_ref",
         )
-    if contained:
+    before = read_remote_state(
+        remote_url, "merge", target_branch, expected_object=product_sha
+    )
+    if before.get("error"):
         return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            product_sha,
+            before,
+            before.get("error") or "remote_read_failed",
+        )
+    if not before.get("exists"):
+        return _merge_result(
+            "failed",
+            remote_url,
+            target_branch,
+            product_sha,
+            before,
+            "branch_missing",
+        )
+    if before.get("object_id") == product_sha:
+        return _sync_result(
             "reconciled_skip",
             remote_url,
             target_branch,
-            source_ref,
-            {**before, "contains_fix": True},
-            merge_mode="release_branch",
+            product_sha,
+            baseline_sha,
+            candidate_sha,
+            before,
         )
-    merge_commit, merge_error = _create_merge_commit(
-        remote_tip, expected, target_branch
-    )
-    if merge_error == "merge_conflict":
-        return _merge_result(
+    if before.get("object_id") != baseline_sha:
+        return _sync_result(
             "conflict",
             remote_url,
             target_branch,
-            source_ref,
-            {**before, "contains_fix": False},
-            merge_mode="release_branch",
-        )
-    if merge_error is not None:
-        return _merge_result(
-            "failed",
-            remote_url,
-            target_branch,
-            source_ref,
+            product_sha,
+            baseline_sha,
+            candidate_sha,
             before,
-            merge_error,
-            merge_mode="release_branch",
+            "remote_moved",
         )
-    pushed_returncode, push_error = _push_branch_once(
-        remote_url, target_branch, merge_commit
+    pushed_returncode, push_error = _push_sync_once(
+        remote_url, target_branch, product_sha, baseline_sha
     )
-    after_tip, after_error = _fetch_remote_branch(remote_url, target_branch)
-    if after_error:
-        return _merge_result(
+    after = read_remote_state(
+        remote_url, "merge", target_branch, expected_object=product_sha
+    )
+    if after.get("error"):
+        return _sync_result(
             "failed",
             remote_url,
             target_branch,
-            source_ref,
-            before,
+            product_sha,
+            baseline_sha,
+            candidate_sha,
+            after,
             "remote_read_failed_after_push",
-            merge_mode="release_branch",
         )
-    confirmed, confirmed_error = _merge_remote_check(
-        remote_url, target_branch, expected, after_tip
-    )
-    if confirmed_error:
-        return _merge_result(
-            "failed",
-            remote_url,
-            target_branch,
-            source_ref,
-            before,
-            confirmed_error,
-            merge_mode="release_branch",
-        )
-    if confirmed["contains_fix"] and pushed_returncode == 0:
-        return _merge_result(
+    if after.get("exists") and after.get("matches") and pushed_returncode == 0:
+        return _sync_result(
             "done",
             remote_url,
             target_branch,
-            source_ref,
-            confirmed,
-            merge_mode="release_branch",
-            merge_commit=merge_commit,
+            product_sha,
+            baseline_sha,
+            candidate_sha,
+            after,
         )
-    if confirmed["contains_fix"] and push_error is not None:
-        return _merge_result(
+    if after.get("exists") and after.get("matches") and push_error is not None:
+        return _sync_result(
             "reconciled_skip",
             remote_url,
             target_branch,
-            source_ref,
-            confirmed,
+            product_sha,
+            baseline_sha,
+            candidate_sha,
+            after,
             push_error,
-            merge_mode="release_branch",
-            merge_commit=merge_commit,
+        )
+    if after.get("exists") and after.get("object_id") not in (None, product_sha):
+        return _sync_result(
+            "conflict",
+            remote_url,
+            target_branch,
+            product_sha,
+            baseline_sha,
+            candidate_sha,
+            after,
+            "remote_moved",
         )
     reason = push_error or ("push_failed" if pushed_returncode else "push_unconfirmed")
-    return _merge_result(
+    return _sync_result(
         "failed",
         remote_url,
         target_branch,
-        source_ref,
-        confirmed,
+        product_sha,
+        baseline_sha,
+        candidate_sha,
+        after,
         reason,
-        merge_mode="release_branch",
     )
 
 
-def _merge_remote_check(
-    remote_url: str, target_branch: str, expected: str, after_tip: str
-) -> tuple[dict | None, str | None]:
-    """Readback of a merge push: the branch head must contain the fix."""
-    contained, error = _is_ancestor(expected, after_tip)
-    if error:
-        return None, error
-    return (
-        {
-            "exists": True,
-            "matches": after_tip == expected,
-            "contains_fix": bool(contained),
-            "object_id": after_tip,
-            "ref": f"refs/heads/{target_branch}",
-            "remote": remote_url,
-        },
-        None,
+def _sync_result(
+    status: str,
+    remote_url: str,
+    target_branch: str,
+    product_sha: str,
+    baseline_sha: str,
+    candidate_sha: str,
+    remote_check: dict,
+    reason: str | None = None,
+) -> dict:
+    result = _merge_result(
+        status,
+        remote_url,
+        target_branch,
+        product_sha,
+        remote_check,
+        reason,
+        merge_mode="sync_product",
+        product_sha=product_sha,
+        baseline_sha=baseline_sha,
+        source_candidate_sha=candidate_sha,
     )
-
-
-def _create_merge_commit(
-    base_tip: str, source_commit: str, target_branch: str
-) -> tuple[str | None, str | None]:
-    """One ``--no-ff`` merge product in a disposable worktree.
-
-    The worktree is checked out detached at the fetched remote tip so the
-    host's checked-out branch and working tree are untouched; the merge
-    commit message carries the approved candidate reference. Returns
-    ``(merge_commit, None)``, or ``(None, "merge_conflict")`` when the
-    merge cannot be resolved, or another failure reason.
-    """
-    worktree = tempfile.mkdtemp(prefix="trac-publish-merge-")
-    try:
-        added = _worktree(args=["worktree", "add", "--detach", worktree, base_tip])
-        if added is None or added.returncode != 0:
-            return None, "merge_workspace_failed"
-        message = _MERGE_COMMIT_MESSAGE.format(
-            candidate=source_commit, branch=target_branch
-        )
-        merged = _worktree(
-            args=[
-                "-C",
-                worktree,
-                "-c",
-                "user.name=tracks-runtime",
-                "-c",
-                "user.email=tracks-runtime@localhost",
-                "merge",
-                "--no-ff",
-                "-m",
-                message,
-                source_commit,
-            ]
-        )
-        if merged is None:
-            return None, "merge_timeout"
-        if merged.returncode != 0:
-            return None, "merge_conflict"
-        resolved = _worktree(args=["-C", worktree, "rev-parse", "HEAD^{commit}"])
-    finally:
-        _remove_worktree(worktree)
-    if resolved is None or resolved.returncode != 0:
-        return None, "merge_unresolved"
-    value = resolved.stdout.strip()
-    if not _valid_object_id(value) or "\n" in value:
-        return None, "merge_unresolved"
-    return value, None
-
-
-def _worktree(args: list[str]) -> subprocess.CompletedProcess | None:
-    try:
-        return subprocess.run(
-            ["git", *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-
-def _remove_worktree(worktree: str) -> None:
-    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-        _worktree(args=["worktree", "remove", "--force", worktree])
-        _worktree(args=["worktree", "prune"])
+    return result
 
 
 def push_tag(remote_url: str, tag: str, ref: str) -> dict:
@@ -403,10 +336,12 @@ def _resolve_commit(ref: str) -> str | None:
     return value if _valid_object_id(value) and "\n" not in value else None
 
 
-def _push_ref_once(remote_url: str, refspec: str) -> tuple[int | None, str | None]:
+def _push_ref_once(
+    remote_url: str, refspec: str, *options: str
+) -> tuple[int | None, str | None]:
     try:
         proc = subprocess.run(
-            ["git", "push", remote_url, refspec],
+            ["git", "push", *options, remote_url, refspec],
             capture_output=True,
             text=True,
             check=False,
@@ -427,6 +362,17 @@ def _push_branch_once(
     remote_url: str, target_branch: str, object_id: str
 ) -> tuple[int | None, str | None]:
     return _push_ref_once(remote_url, f"{object_id}:refs/heads/{target_branch}")
+
+
+def _push_sync_once(
+    remote_url: str, target_branch: str, product_sha: str, baseline_sha: str
+) -> tuple[int | None, str | None]:
+    """Atomic expected-old ref update (``--force-with-lease=<ref>:<B>``)."""
+    return _push_ref_once(
+        remote_url,
+        f"{product_sha}:refs/heads/{target_branch}",
+        f"--force-with-lease=refs/heads/{target_branch}:{baseline_sha}",
+    )
 
 
 def _fetch_remote_branch(remote_url: str, target_branch: str) -> tuple[str | None, str | None]:

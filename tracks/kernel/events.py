@@ -156,6 +156,12 @@ EVENT_TYPES = (
     "release.previewed",
     "release.decided",
     "release.rejected",
+    # FR-0277-02: strict release-branch sync products -- prepared (identity
+    # recorded before verification), verified (P-bound evidence), failed
+    # (fail-closed stop before any preview/decision/irreversible operation).
+    "sync_product.prepared",
+    "sync_product.verified",
+    "sync_product.failed",
     "publish.planned",
     "publish.executed",
     "publish.blocked",

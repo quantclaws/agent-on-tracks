@@ -16,7 +16,7 @@ from tracks.executor.host_contract import (
     CANONICAL_CONTRACT_RELPATH,
     load_host_contract,
 )
-from tracks.executor.publish import is_release_branch_target, plan_operations
+from tracks.executor.publish import plan_operations
 from tracks.executor.release_gate import (
     active_release_branch,
     build_operation_plan,
@@ -24,6 +24,11 @@ from tracks.executor.release_gate import (
     compute_preview_digest,
     expand_version_scheme,
     operation_plan_needs_n,
+)
+from tracks.executor.sync_product import (
+    record_verified,
+    remote_branch_tip,
+    validate_record,
 )
 
 
@@ -203,11 +208,17 @@ def _revalidated_plan(
     if facts is None:
         return None, facts_error or "release_facts_unresolved"
     resolved_facts = _facts_with_scheme(facts, contract_table)
+    sync_products = (
+        operation_plan.get("sync_products")
+        if isinstance(operation_plan, dict)
+        else None
+    )
     plan = build_operation_plan(
         contract_table,
         journey,
         resolved_facts,
         active_release_branch=active_release_branch(repo, resolved_facts),
+        sync_products=sync_products,
     )
     return plan, None
 
@@ -282,7 +293,11 @@ _OPERATION_KINDS = frozenset({"tag", "merge", "release", "artifact"})
 
 
 def _operation_records(
-    repo: Path, operation_plan: dict, preview_digest: str
+    repo: Path,
+    operation_plan: dict,
+    preview_digest: str,
+    candidate_sha: str,
+    events: list,
 ) -> tuple[list[dict] | None, str | None]:
     """Validate every declared operation step before any effect.
 
@@ -293,7 +308,10 @@ def _operation_records(
     target must resolve to exactly one file under the repo root (bound to
     the plan's single release target so the upload knows its release).
     Unknown kinds fail ``unknown_operation``; malformed steps fail
-    ``malformed``.
+    ``malformed``. FR-0277-02: a sync-bound merge step additionally proves
+    the approved product identity (parents/tree/re-derivation + the verified
+    event) -- a preview that claims a product without that proof fails
+    closed.
     Records are returned only when every step passes (zero side effects on
     partial validity).
     """
@@ -315,13 +333,47 @@ def _operation_records(
     artifact_release = _artifact_release_target(records)
     resolved: list[dict] = []
     for record in records:
-        validated, error = _validate_operation_record(
-            repo, record, tag_targets, artifact_release
+        validated, error = _validated_record(
+            repo, record, tag_targets, artifact_release, candidate_sha, events
         )
         if error is not None:
             return None, error
         resolved.append(validated)
     return resolved, None
+
+
+def _validated_record(
+    repo: Path,
+    record: dict,
+    tag_targets: set[str],
+    artifact_release: str | None,
+    candidate_sha: str,
+    events: list,
+):
+    """Kind validation plus, for a sync-bound merge, the product proof."""
+    if record["operation_kind"] == "merge" and record.get("product_sha"):
+        error = _validate_sync_merge(repo, record, candidate_sha, events)
+        if error is not None:
+            return None, error
+    return _validate_operation_record(repo, record, tag_targets, artifact_release)
+
+
+def _validate_sync_merge(
+    repo: Path, record: dict, candidate_sha: str, events: list
+) -> str | None:
+    """FR-0277-02: a sync-bound merge needs the exact verified identity.
+
+    The product must re-derive (parents/tree/deterministic rebuild), its
+    source candidate must be C, and the matching ``sync_product.verified``
+    event must be present after the latest stale barrier -- a preview that
+    claims a product without that proof fails closed.
+    """
+    error = validate_record(repo, record, candidate_sha)
+    if error is not None:
+        return error
+    if not record_verified(events, record, candidate_sha):
+        return "sync_product_unverified"
+    return None
 
 
 def _artifact_release_target(records: list[dict]) -> str | None:
@@ -370,6 +422,28 @@ def _validate_operation_record(
     return record, None
 
 
+def _sync_product_remote_check(
+    repo: Path, records: list[dict]
+) -> str | None:
+    """FR-0277-02: at publish resolution the remote tip of every approved
+    sync target must still be B (not yet executed) or P (already executed).
+    Any other tip is stale/conflicting and blocks before any effect; a crash
+    resume therefore reuses the same P instead of minting another merge.
+    """
+    for record in records:
+        if record["operation_kind"] != "merge" or not record.get("product_sha"):
+            continue
+        tip, error = remote_branch_tip(repo, record["target"])
+        if error is not None:
+            return error
+        if tip is not None and tip not in (
+            record["baseline_sha"],
+            record["product_sha"],
+        ):
+            return "sync_product_stale"
+    return None
+
+
 def resolve_publish_authority(
     repo: Path,
     events: list,
@@ -400,7 +474,12 @@ def resolve_publish_authority(
     )
     if error:
         return None, error
-    records, error = _operation_records(repo, operation_plan, preview_digest)
+    records, error = _operation_records(
+        repo, operation_plan, preview_digest, candidate_sha, events
+    )
+    if error:
+        return None, error
+    error = _sync_product_remote_check(repo, records)
     if error:
         return None, error
     remote = git(repo, "config", "--get", "remote.origin.url", check=False)
@@ -437,6 +516,8 @@ def _planned_payload(events, authority: dict, command_id: str, when: str | None)
             and payload.get("target") == record["target"]
             and payload.get("preview_digest") == authority["preview_digest"]
             and payload.get("operation_kind") == record["operation_kind"]
+            and payload.get("product_sha") == record.get("product_sha")
+            and payload.get("baseline_sha") == record.get("baseline_sha")
         )
         if not same_operation:
             return None, "planned_conflict"
@@ -474,17 +555,7 @@ def _push_confirmation(result: dict, candidate_sha: str):
     )
     if exact:
         return result.get("status"), confirmed
-    # FR-0277-02: a release-branch sync merge is confirmed by containment
-    # (the branch head has the candidate as an ancestor), not by ref equality
-    # -- the product is a real merge commit whose object differs from the
-    # candidate. FF semantics stay exact-match only.
-    merged = (
-        result.get("merge_mode") == "release_branch"
-        and result.get("status") in ("done", "reconciled_skip")
-        and confirmed.get("exists") is True
-        and confirmed.get("contains_fix") is True
-    )
-    return (result.get("status"), confirmed) if merged else (None, confirmed)
+    return None, confirmed
 
 
 def _operation_extras(record: dict, result: dict | None = None) -> dict:
@@ -498,8 +569,20 @@ def _operation_extras(record: dict, result: dict | None = None) -> dict:
         extras["artifact_path"] = record.get("artifact_path")
         if result.get("remote_digest") is not None:
             extras["remote_digest"] = result["remote_digest"]
-    if record["operation_kind"] == "merge" and result.get("merge_mode"):
-        extras["merge_mode"] = result["merge_mode"]
+    if record["operation_kind"] == "merge":
+        # FR-0277-02: a sync-bound merge carries the complete approved product
+        # identity into planned/executed (WAL + audit + recovery reuse).
+        for field in (
+            "baseline_sha",
+            "source_candidate_sha",
+            "product_sha",
+            "product_tree",
+            "evidence_digests",
+        ):
+            if record.get(field) is not None:
+                extras[field] = record[field]
+        if result.get("merge_mode"):
+            extras["merge_mode"] = result["merge_mode"]
         if result.get("merge_commit") is not None:
             extras["merge_commit"] = result["merge_commit"]
     if result.get("release_id") is not None:
@@ -530,7 +613,11 @@ def _emit_conflict(authority: dict, command_id: str, remote: dict, emit) -> None
     candidate_sha = authority["candidate_sha"]
     expected: dict = {"candidate_sha": candidate_sha, "target": record["target"]}
     if record["operation_kind"] in ("tag", "merge"):
-        expected["object_id"] = candidate_sha
+        expected["object_id"] = record.get("product_sha") or candidate_sha
+    if record.get("product_sha"):
+        expected["baseline_sha"] = record["baseline_sha"]
+        expected["product_sha"] = record["product_sha"]
+        expected["source_candidate_sha"] = record["source_candidate_sha"]
     emit(
         "reconcile_conflict",
         {
@@ -541,6 +628,87 @@ def _emit_conflict(authority: dict, command_id: str, remote: dict, emit) -> None
         },
         command_id=command_id,
     )
+
+
+def _sync_confirmation(result: dict, product_sha: str):
+    """Exact-object readback: only the approved P confirms the sync."""
+    if not isinstance(result, dict):
+        return None, {}
+    confirmed = result.get("remote_check") or {}
+    object_id = result.get("object_id") or confirmed.get("object_id")
+    exact = (
+        result.get("status") in ("done", "reconciled_skip")
+        and object_id == product_sha
+        and confirmed.get("exists") is True
+        and confirmed.get("matches") is True
+    )
+    return (result.get("status"), confirmed) if exact else (None, confirmed)
+
+
+def _handle_sync_merge(
+    authority: dict,
+    command_id: str,
+    remote: dict,
+    push_sync,
+    emit,
+    fail,
+) -> bool:
+    """FR-0277-02: publish exactly one approved sync product.
+
+    The remote decides with exact-object semantics: tip == P is a
+    reconciled_skip (a crash after the push resumes without a new merge),
+    tip == B executes the atomic expected-old update, anything else is a
+    conflict/``sync_product_stale`` -- never a re-created product.
+    """
+    record = authority["record"]
+    product_sha = record["product_sha"]
+    baseline_sha = record["baseline_sha"]
+    if not isinstance(remote, dict) or remote.get("error"):
+        fail("remote_read_failed", remote)
+        return False
+    if remote.get("exists") is False:
+        fail("branch_missing", remote)
+        return False
+    tip = remote.get("object_id")
+    if tip == product_sha:
+        emit(
+            "publish.executed",
+            _executed_payload(authority, record, "reconciled_skip", remote),
+            command_id=command_id,
+        )
+        return True
+    if tip != baseline_sha:
+        _emit_conflict(authority, command_id, remote, emit)
+        fail("sync_product_stale", remote)
+        return False
+    if push_sync is None:
+        fail("operation_failed", remote)
+        return False
+    result = push_sync(
+        authority["remote_url"],
+        record["target"],
+        product_sha,
+        baseline_sha=baseline_sha,
+        candidate_sha=record["source_candidate_sha"],
+    )
+    if isinstance(result, dict) and result.get("status") == "conflict":
+        confirmed = result.get("remote_check") or {}
+        _emit_conflict(authority, command_id, confirmed, emit)
+        fail("sync_product_stale", confirmed)
+        return False
+    status, confirmed = _sync_confirmation(result, product_sha)
+    if status is not None:
+        emit(
+            "publish.executed",
+            _executed_payload(authority, record, status, confirmed, result),
+            command_id=command_id,
+        )
+        return True
+    reason = "remote_mismatch"
+    if isinstance(result, dict) and result.get("reason"):
+        reason = str(result["reason"])
+    fail(reason, confirmed)
+    return False
 
 
 def _handle_push_result(
@@ -658,6 +826,40 @@ def _keyed_fail(fail, key):
     return keyed
 
 
+def _dispatch_merge(
+    authority: dict, command_id: str, effects: dict, emit, fail
+) -> bool:
+    """Merge dispatch: approved sync product vs the generic FF path."""
+    record = authority["record"]
+    product_sha = record.get("product_sha")
+    remote = effects["read_remote"](
+        authority["remote_url"],
+        "merge",
+        record["target"],
+        expected_object=product_sha or authority["candidate_sha"],
+    )
+    if product_sha:
+        # FR-0277-02 strict path: publish the approved prepared product with
+        # the expected-old ref update; the runtime never builds or verifies a
+        # product here.
+        return _handle_sync_merge(
+            authority, command_id, remote, effects.get("push_sync"), emit, fail
+        )
+
+    def push_merge_adapter(remote_url, target, candidate_sha):
+        return effects["push_merge"](remote_url, candidate_sha, target)
+
+    return _handle_remote(
+        authority,
+        command_id,
+        remote,
+        push_merge_adapter,
+        emit,
+        fail,
+        allow_ff=True,
+    )
+
+
 def _execute_record(
     authority: dict,
     command_id: str,
@@ -693,30 +895,7 @@ def _execute_record(
             allow_ff=False,
         )
     if kind == "merge":
-        remote = effects["read_remote"](
-            authority["remote_url"],
-            "merge",
-            record["target"],
-            expected_object=authority["candidate_sha"],
-        )
-        # FR-0277-02: only the contract-declared release-branch namespace may
-        # receive a real sync merge; main/trunk merges stay FF-only.
-        allow_merge = is_release_branch_target(record["target"])
-
-        def push_merge_adapter(remote_url, target, candidate_sha):
-            return effects["push_merge"](
-                remote_url, candidate_sha, target, allow_merge=allow_merge
-            )
-
-        return _handle_remote(
-            authority,
-            command_id,
-            remote,
-            push_merge_adapter,
-            emit,
-            fail,
-            allow_ff=True,
-        )
+        return _dispatch_merge(authority, command_id, effects, emit, fail)
     repo_id = _repo_id_from_remote(authority["remote_url"])
     if repo_id is None:
         fail("unsupported_remote", None)
@@ -792,6 +971,7 @@ def execute_tag_operation(
         "read_remote": read_remote,
         "push_tag": push_tag,
         "push_merge": None,
+        "push_sync": None,
         "create_release": None,
         "upload_artifact": None,
     }

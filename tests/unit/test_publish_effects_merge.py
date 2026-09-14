@@ -170,102 +170,33 @@ def test_push_merge_invalid_ref_fails(tmp_path, monkeypatch):
     assert _remote_head(bare) is not None
 
 
-# AC-FR0277-02@v0.8: a diverged release branch receives a true --no-ff merge
-# commit whose readback is containment (not ref equality); the host working
-# tree is never touched.
-def test_push_merge_release_branch_true_merge(tmp_path, monkeypatch):
+# FR-0277-02: the generic effect never resolves divergence, not even for a
+# release-branch target -- the strict flow publishes only an approved
+# prepared product through push_sync_product.
+def test_push_merge_release_branch_divergence_is_conflict(tmp_path, monkeypatch):
     seed, bare, _first, candidate, release_tip = _diverged_release_repo(tmp_path)
     monkeypatch.chdir(seed)
 
-    result = push_merge(
-        str(bare), candidate, _RELEASE_BRANCH, allow_merge=True
-    )
+    result = push_merge(str(bare), candidate, _RELEASE_BRANCH)
 
-    assert result["status"] == "done"
-    assert result["merge_mode"] == "release_branch"
-    merge_commit = _remote_head(bare, _RELEASE_BRANCH)
-    assert merge_commit is not None
-    assert merge_commit != candidate
-    assert result["merge_commit"] == merge_commit
-    assert result["remote_check"]["contains_fix"] is True
-    assert result["remote_check"]["object_id"] == merge_commit
-    # True merge product: two parents (release tip + the fix candidate),
-    # candidate referenced in the message.
-    body = _run("git", "--git-dir", str(bare), "cat-file", "-p", merge_commit)
-    parents = [line.split()[1] for line in body.splitlines() if line.startswith("parent ")]
-    assert set(parents) == {release_tip, candidate}
-    message = _run("git", "--git-dir", str(bare), "log", "-1", "--format=%B", merge_commit)
-    assert candidate in message
-    # Content readback: both sides survive on the release branch.
-    assert (
-        _run("git", "--git-dir", str(bare), "show", f"{merge_commit}:release_only.txt")
-        == "release"
-    )
-    assert (
-        _run("git", "--git-dir", str(bare), "show", f"{merge_commit}:file.txt")
-        == "two"
-    )
-    # The host checkout is untouched and no worktree residue remains.
-    assert _run("git", "-C", str(seed), "rev-parse", "--abbrev-ref", "HEAD") == "main"
+    assert result["status"] == "conflict"
+    assert _remote_head(bare, _RELEASE_BRANCH) == release_tip
     assert _run("git", "-C", str(seed), "status", "--porcelain") == ""
-    assert _run("git", "-C", str(seed), "worktree", "list", "--porcelain").count(
-        "worktree "
-    ) == 1
-
-    # Idempotent re-run: containment readback skips without a new commit.
-    repeat = push_merge(str(bare), candidate, _RELEASE_BRANCH, allow_merge=True)
-    assert repeat["status"] == "reconciled_skip"
-    assert repeat["remote_check"]["contains_fix"] is True
-    assert _remote_head(bare, _RELEASE_BRANCH) == merge_commit
+    assert _run("git", "-C", str(seed), "for-each-ref", "refs/trac").strip() == ""
 
 
-# AC-FR0277-02@v0.8 / NFR-0144-02: an unresolvable sync merge stays a
-# conflict (reconcile_conflict at the runtime layer), never auto-resolved.
+# FR-0277-02: an unresolvable merge is a conflict upstream (the preparation
+# step detects it before the Human decision); the effect itself stays
+# fast-forward-only and never auto-resolves.
 def test_push_merge_release_branch_conflict_no_force(tmp_path, monkeypatch):
     seed, bare, _first, candidate, release_tip = _diverged_release_repo(
         tmp_path, conflicting=True
     )
     monkeypatch.chdir(seed)
 
-    result = push_merge(
-        str(bare), candidate, _RELEASE_BRANCH, allow_merge=True
-    )
+    result = push_merge(str(bare), candidate, _RELEASE_BRANCH)
 
     assert result["status"] == "conflict"
-    assert result["merge_mode"] == "release_branch"
-    assert result["remote_check"]["contains_fix"] is False
     assert _remote_head(bare, _RELEASE_BRANCH) == release_tip
     # No conflict resolution was staged into the host tree.
     assert _run("git", "-C", str(seed), "status", "--porcelain") == ""
-
-
-# NFR-0144-01: a release branch that already contains the fix (whatever its
-# merge history) skips on containment, not on ref equality.
-def test_push_merge_release_branch_contained_skips(tmp_path, monkeypatch):
-    seed, bare, _first, candidate, _release_tip = _diverged_release_repo(tmp_path)
-    monkeypatch.chdir(seed)
-    assert (
-        push_merge(str(bare), candidate, _RELEASE_BRANCH, allow_merge=True)["status"]
-        == "done"
-    )
-    # Later unrelated release work moves the head further away from both the
-    # candidate and the earlier merge commit: containment still skips.
-    _run(
-        "git", "-C", str(seed), "fetch", "-q", str(bare),
-        f"+{_RELEASE_BRANCH}:{_RELEASE_BRANCH}",
-    )
-    _run("git", "-C", str(seed), "checkout", "-q", _RELEASE_BRANCH)
-    (seed / "post_merge.txt").write_text("later\n", encoding="utf-8")
-    _run("git", "-C", str(seed), "add", "post_merge.txt")
-    _run("git", "-C", str(seed), "commit", "-qm", "later release work")
-    _run(
-        "git", "-C", str(seed), "push", "-q", str(bare),
-        f"{_RELEASE_BRANCH}:refs/heads/{_RELEASE_BRANCH}",
-    )
-    _run("git", "-C", str(seed), "checkout", "-q", "main")
-
-    second = push_merge(str(bare), candidate, _RELEASE_BRANCH, allow_merge=True)
-
-    assert second["status"] == "reconciled_skip"
-    assert second["merge_mode"] == "release_branch"
-    assert second["remote_check"]["contains_fix"] is True

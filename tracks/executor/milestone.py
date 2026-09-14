@@ -63,14 +63,26 @@ def _fold_decided(trace: dict, ev, payload: dict) -> None:
 
 
 def _fold_planned(trace: dict, ev, payload: dict) -> None:
-    trace["operation_digests"].append(
-        {
-            "kind": str(payload.get("operation_kind") or ""),
-            "target": str(payload.get("target") or ""),
-            "idempotency_key": str(payload.get("idempotency_key") or ""),
-            "status": "planned",
-        }
-    )
+    entry = {
+        "kind": str(payload.get("operation_kind") or ""),
+        "target": str(payload.get("target") or ""),
+        "idempotency_key": str(payload.get("idempotency_key") or ""),
+        "status": "planned",
+    }
+    # FR-0277-02: a sync-bound operation's trace entry carries the approved
+    # product identity (B/C/P/tree/evidence), so the release trace proves the
+    # specific product belongs to the approved plan -- not merely that the
+    # candidate field is unchanged.
+    for field in (
+        "baseline_sha",
+        "source_candidate_sha",
+        "product_sha",
+        "product_tree",
+        "evidence_digests",
+    ):
+        if payload.get(field) is not None:
+            entry[field] = payload[field]
+    trace["operation_digests"].append(entry)
 
 
 def _fold_executed(trace: dict, ev, payload: dict) -> None:

@@ -31,9 +31,15 @@ from tracks.executor.release_preview import (
     preview_inputs_match,
 )
 from tracks.executor.security import security_policy_digest, security_scan_evidence_complete
+from tracks.executor.sync_product import remote_branch_tip
 
 STALE_REASONS = frozenset(
-    {"candidate_drift", "evidence_staled", "operation_plan_changed"}
+    {
+        "candidate_drift",
+        "evidence_staled",
+        "operation_plan_changed",
+        "sync_product_stale",
+    }
 )
 
 
@@ -278,6 +284,31 @@ def _gate_status(events: list, candidate: str, contract, digest: str) -> dict:
     }
 
 
+def _sync_product_drift(repo: Path, preview: dict) -> str | None:
+    """FR-0277-02: the Human decision is only valid while the remote tip of
+    every approved sync target is still the prepared baseline B or the
+    approved product P. Any other tip (a new commit, a rollback to an
+    ancestor, another merge containing C) makes the preview stale -- the
+    publish face must never mint a fresh product to continue.
+    """
+    plan = preview.get("operation_plan") if isinstance(preview, dict) else None
+    records = plan.get("sync_products") if isinstance(plan, dict) else None
+    for record in records or ():
+        if not isinstance(record, dict):
+            return "sync_product_stale"
+        target = record.get("target")
+        baseline = record.get("baseline_sha")
+        product = record.get("product_sha")
+        if not isinstance(target, str) or not target:
+            return "sync_product_stale"
+        tip, error = remote_branch_tip(repo, target)
+        if error is not None:
+            return "sync_product_stale"
+        if tip not in (baseline, product):
+            return "sync_product_stale"
+    return None
+
+
 def _validate_preview_state(
     repo: Path, home: Path, events: list, preview_event, candidate: object
 ):
@@ -313,6 +344,9 @@ def assess_release(
     )
     if failure is not None:
         return _stale_authorization(*failure)
+    drift = _sync_product_drift(repo, preview)
+    if drift:
+        return _stale_authorization(drift, "approved sync-product baseline moved")
     current = _recomputed_preview(
         repo, contract, contract_digest, preview, events, version
     )

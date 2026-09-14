@@ -160,7 +160,7 @@ def build_prism_final_review_assignment(
 
 normalized result（`tracks-gate-result` v1）：`{"schema": "tracks-gate-result", "version": 1, "status": "passed"|"failed", "exit_code": int|null, "summary": {...}}`。`exit_code` 通道由 Runtime 合成（status=exit==0）；`file` 通道解析 `{result}` JSON，缺文件/非法 JSON/缺 schema/version/status 即 malformed。kernel/executor 不解释任何命令的语言语义（NFR-0147；扫描 token `pytest|junit|java|venv|wheel|pip` 词边界禁于允许区外）。
 
-`[ci]` 绑定：`repo_env`（如 TRAC_GITHUB_REPO）、`workflow`、`required_checks` 列表、`conclusion="success"`。`[operations]` step 语法：`KIND:TARGET[:when=COND]`，KIND ∈ {merge, tag, artifact, release}，TARGET 支持占位符，COND ∈ {active_release_branch}；`requires` 声明旅程前置（缺失 precheck fail-closed）。
+`[ci]` 绑定：`repo_env`（如 TRAC_GITHUB_REPO）、`workflow`、`required_checks` 列表、`conclusion="success"`；可选 `verify_command`——required CI 的本地等价执行命令（FR-0277-02：批准前 sync 产物 P 未发布、远端 CI 不可回读，声明时在 P 隔离 checkout 执行并绑定证据；`required_checks` 非空且未声明时 sync 准备 fail-closed）。`[operations]` step 语法：`KIND:TARGET[:when=COND]`，KIND ∈ {merge, tag, artifact, release}，TARGET 支持占位符，COND ∈ {active_release_branch}；`requires` 声明旅程前置（缺失 precheck fail-closed）。
 
 ### 1f. Security policy（IF-SECURITY-001）
 
@@ -185,7 +185,7 @@ def validate_release_decision(
 ) -> tuple[bool, str | None]: ...
 ```
 
-`preview_digest = "sha256:" + sha256(utf8(canonical_json({candidate_sha, artifact_digest, evidence_digests(sorted keys), operation_plan_digest, contract_policy_digest})))`。preview blob 为 content-address JSON；重生成追加新事件。`validate_release_decision` 对三个 action 统一校验 preview 未 stale；release 额外要求 M-VERIFY/M-SECURITY 全过；delay/return stale 时同样拒绝。
+`preview_digest = "sha256:" + sha256(utf8(canonical_json({candidate_sha, artifact_digest, evidence_digests(sorted keys), operation_plan_digest, contract_policy_digest})))`。preview blob 为 content-address JSON；重生成追加新事件。`validate_release_decision` 对三个 action 统一校验 preview 未 stale；release 额外要求 M-VERIFY/M-SECURITY 全过；delay/return stale 时同样拒绝。**FR-0277-02**：`operation_plan` 可含 `sync_products`（每项 `{target, baseline_sha:B, source_candidate_sha:C, product_sha:P, product_tree, evidence_digests}`），随 `operation_plan_digest` 进入 preview_digest 与 Human 决定；无分叉时该字段不出现、既有 preview 字节不变。`assemble_preview` 对每条记录重验父序（B 先 C 后）/tree/字节重算/证据环，未验证或身份不符的记录拒绝组装（preview 不可绕过）。
 
 ### 1h. Publish 幂等与 reconcile（IF-PUBLISH-001/002）
 
@@ -198,7 +198,7 @@ def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict: 
 def assert_agent_forbidden(actor: str) -> None: ...
 ```
 
-`idempotency_key = "sha256:" + sha256(utf8(canonical_json({preview_digest, kind, target})))`。执行序：publish.planned（WAL）→ effects 执行 → publish.executed(done)。reconcile 判据：远端存在且与计划一致 → reconciled_skip；不存在 → pending（执行）；存在但内容/指向不同 → conflict（reconcile_conflict，远端为准，blocked）。Agent（非 Runtime actor）触达 effects/publish 面即 `publish.blocked reason=agent_forbidden`。
+`idempotency_key = "sha256:" + sha256(utf8(canonical_json({preview_digest, kind, target})))`。执行序：publish.planned（WAL）→ effects 执行 → publish.executed(done)。reconcile 判据：远端存在且与计划一致 → reconciled_skip；不存在 → pending（执行）；存在但内容/指向不同 → conflict（reconcile_conflict，远端为准，blocked）。Agent（非 Runtime actor）触达 effects/publish 面即 `publish.blocked reason=agent_forbidden`。**FR-0277-02**：sync 操作（`when=active_release_branch` 声明步的已批准产物）的 expected object 是 P 而非 C——`effects/publish.py:push_sync_product(remote_url, target, P, baseline_sha=B, candidate_sha=C)` 以 `--force-with-lease=refs/heads/<T>:<B>` 原子更新，只接受远端 tip==P（reconciled_skip，精确对象读回）或 tip==B（执行）；其他 tip（含回退祖先与任意含 C 提交）一律 conflict/stale 且不改远端。effects 不生成/不“验证通过”产品；WAL `publish.planned` 落完整身份（B/C/P/tree/evidence_digests），恢复只复用同一 P。
 
 ### 1i. Milestone trace 与生命周期（IF-MILESTONE-001/IF-ISSUE-002）
 
@@ -249,6 +249,8 @@ def reject_fake_artifact(context, artifact) -> None: ...   # 真实模式 FAKE-N
 **modules**: `executor/release_gate.py`（plan）、`executor/publish.py`（执行）、kernel/release（路由）。
 
 版本事实解析：`{major}/{minor}` 取 run 目标 version 数值；`{n}` = 远端 tag 中 `v{minor}.*` 的最大 patch +1；`{ulid}` = run_id。旅程判定：feature（trac start）/post-release/dev（trac hotfix --scenario）。dev precheck：远端无 `release/{minor}` 分支 → CLI 非零退出 + `precheck failed: no active release branch`（不建 fix 分支、不建 run 副作用——沿用 v0.6 REJECTED 审计形态）。post-release 的 `merge:release/{minor}:when=active_release_branch` 在分支缺失时静默跳过该步（计划 digest 按解析后实际步集计算）。
+
+**FR-0277-02 严格分叉同步**：条件步目标与 candidate 真分叉（tip 非 C 祖先、C 非 tip 祖先）时，在 M-VERIFY/M-SECURITY 完成、M-RELEASE preview 生成前由正常推进与 `verify_park` 共用的准备步生成确定性的三方合并产物 P（merge-base-aware 的 `git merge-tree --write-tree`，非二树 `read-tree`；固定身份/时间的 `commit-tree`，父序先 B 后 C，重算字节一致），并在真实隔离 checkout 上执行宿主声明的 local gates、完整测试选择（candidate 的 FULL 节点集，排除已批准 Known Issue waiver）、security scans 与 required CI（`[ci].verify_command`）。任一验证缺失/失败（含 required_checks 非空但不可本地等价执行）→ 不发 preview、不进入 Human 决定（`sync_product.failed` + `attention.required`，`reason ∈ {merge_conflict, sync_gate_failed:*, sync_tests_failed:*, sync_tests_unselected, sync_security_failed:*, ci_unverifiable, sync_ci_failed, ...}`）。`sync_product.prepared/verified` 事件与 `refs/trac/tmp/sync-products/<T>` 保留 P 至 M-MILESTONE 收尾清理。preview/发布期重验：`source_candidate_sha≠C`、父/tree/重算不符、证据环缺失、verified 事件缺失、批准后远端 tip∉{B,P} 均 fail-closed（preview 拒绝组装 / `sync_product_stale` stale / 发布 blocked，不重造产物续推）。既有语义不变：tip 为 C 祖先走 FF 直通（无 P）、无活跃分支静默省略、main/feature/dev 的通用 merge 仍 FF-only，`push_merge` 不生成产品。
 
 ### 1n. Reference host（IF-REFERENCE-001）
 

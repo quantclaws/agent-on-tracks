@@ -30,6 +30,11 @@ STALE_EVIDENCE_BUCKETS = (
     "security.assessed",
     "release.previewed",
     "release.decided",
+    # FR-0277-02: a prepared/verified sync product is downstream evidence too;
+    # a human return stales it so the re-walk must re-verify (never reuse a
+    # pre-return product).
+    "sync_product.prepared",
+    "sync_product.verified",
 )
 
 

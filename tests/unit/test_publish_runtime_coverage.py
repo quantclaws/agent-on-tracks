@@ -349,17 +349,17 @@ def test_resolve_publish_authority_error_and_remote(tmp_path, monkeypatch):
 
 def test_operation_records_and_validation(tmp_path):
     assert pr._operation_records(
-        tmp_path, {"journey": "feature", "steps": []}, "d"
+        tmp_path, {"journey": "feature", "steps": []}, "d", "", ()
     ) == (None, "unknown_operation")
-    assert pr._operation_records(tmp_path, "not-a-plan", "d") == (
+    assert pr._operation_records(tmp_path, "not-a-plan", "d", "", ()) == (
         None,
         "unknown_operation",
     )
     assert pr._operation_records(
-        tmp_path, {"journey": "feature", "steps": ["webhook:main"]}, "d"
+        tmp_path, {"journey": "feature", "steps": ["webhook:main"]}, "d", "", ()
     ) == (None, "unknown_operation")
     assert pr._operation_records(
-        tmp_path, {"journey": "feature", "steps": [{"kind": "tag"}]}, "d"
+        tmp_path, {"journey": "feature", "steps": [{"kind": "tag"}]}, "d", "", ()
     ) == (None, "malformed")
 
 
