@@ -329,7 +329,7 @@ gate/scan/prism/publish failure OR attention.required
 - `tracks/assets/reference_host/tests/unit/test_host_calc.py` — reference unit 节点语料（kind: data）
 - `tracks/assets/reference_host/tests/integration/test_host_contract.py` — reference integration 节点语料（kind: data）
 - `tracks/assets/reference_host/tests/e2e/test_host_journey.py` — reference e2e 节点语料（kind: data）
-- `pyproject.toml` — `[tool.setuptools.package-data]` 显式 allowlist 追加 reference_host 资产（既有文件唯一改动；§4.2 六条 pyproject-backed config_digest 已随新 bytes 同步）（kind: config）
+- `pyproject.toml` — `[tool.setuptools.package-data]` 显式 allowlist 追加 reference_host 资产（既有文件唯一改动；§4.2 六条 pyproject-backed config_digest 已随新 bytes 同步；0.8.0 版本升级 commit 再次重同步为 76e156ca…）（kind: config）
 
 > **Prism [RESOLVED]:** [PRISM-ARCH008-R2-02][blocker] scaffold 宣言项 tracks/executor/host_contract.py 的实际文件内容与锁定设计矛盾：stub docstring（tracks/executor/host_contract.py:3）声明『.tracks/projects/host-contract.toml is the machine truth Archer materializes per host』——这正是本次 attempt-1 被 Runtime commit check 拒绝的独立合同路径（evidence: scaffold path is not allowed: .tracks/projects/host-contract.toml），也与本文 §0.1/§1.0.3/§3.1 及 interfaces §1e 锁定的『并入 .tracks/projects/project.toml 的 [host-contract.*] 命名空间段』形态相抵触。该 stub 是 Devon foundation task（load_host_contract/validate_host_contract 行为体）的种子，机器真相位置的双重声明会把已消除的双合同真相歧义重新引入实现基线。预期修订：修订该 scaffold 文件 docstring，将机器真相指向 .tracks/projects/project.toml 的 [host-contract.*] 段（与 §2 本项 kind:stub 声明一并保持一致）；其余签名无需变动。
 >> **Archer:** 已修复：tracks/executor/host_contract.py 模块 docstring 已改写为『[host-contract.*] namespaced sections of the host's .tracks/projects/project.toml are the machine truth』，与 §0.1/§1.0.3/§3.1、interfaces §1e 及 §2 本项 kind:stub 声明完全一致；签名未变动。全部 11 个桩已复查，运行时代码与桩中独立合同路径表述 grep 零命中，双合同真相歧义不再进入实现基线。
@@ -390,7 +390,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -406,7 +406,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -438,7 +438,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -454,7 +454,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -470,7 +470,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=5; comments/docstrings/signatures ignored"
 timeout_seconds = 600
@@ -486,7 +486,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=95"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:b9ac8d992fd344c070b66b8b731577a277c226bf9065b099eb750115432e7ecb"
+config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks"]
 threshold = "line coverage >=95; by=collected; source omit=none"
 timeout_seconds = 1800
