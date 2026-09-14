@@ -80,12 +80,12 @@
 
 ## T-021
 - Issue: #120
-- Description: 【标准 RGR】实现 tracks/executor/publish.py + tracks/effects/publish.py 的发布合同（幂等键/reconcile/Agent 禁入，IF-PUBLISH-002 为本任务登记词表）：AC 登记为 AC-FR0275-01..04、AC-NFR0144-01/02。plan_defect 修订（attempt-2 T-021 escalation，第五次同型锚点/生产者拓扑缺陷，DIAGNOSE 终裁 + 闭包合法补全）：publish 域 7 锚点的事件半边（publish.planned/executed/blocked/failed/reconciled_skip + blocked 状态）需 M-PUBLISH 生产者链——T-039 StageDef 路由（decide_release_stage 发出 Command(execute_publish)）+ T-001 execute_publish handler/事件发射/agent_forbidden 守卫——全部在本任务 allowed_paths 与依赖闭包之外，且本任务不能依赖 T-039（T-039 原依赖本任务，成环），锚点必须迁移至最后 owner。补救后本任务为 publish+journey 域依赖序最后 owner，承载 14 个验收锚点：7 原生（publish_idempotency ×4 + publish_reconcile ×3）+ journey_recovery/retry_tail（自 T-039 迁入）+ journey_versioning ×5（自 T-026 迁入——publish 行为体随本任务后移至 b5 后，journey 锚点（ast=publish+release_gate）的最后 owner 由 T-026 变为本任务；AC-FR0277 登记随族留 T-026，island 词表不动）；depends_on [T-039, T-001]（路由 b4 + handler/machine seam b3 + release_gate 经 T-001→T-026 传递闭包）、batch 5；此拓扑同时破除 T-021→T-039→T-001→T-026→T-021 潜在环（T-026→T-021 边随 journey 锚点迁出而卸除）。attempt-2 release_preview escalation（PRISM_PLAN REVISE A4）不影响本任务锚点面——release_preview ×2 按 deferred 分支落 T-026.deferred_refs。模块切片已绿（tests/unit/test_publish_reconcile_red.py 4/4 PASS——b93 形态，事件半边登记为产品 gap 的 legal Red）；锚点内事件半边的 producer 接线由 T-039（路由）与 T-001（handler/发射/守卫/blocked 渲染）先行交付后转绿；attempt-2 第十一例连带：deps 增补 T-042（execute_publish handler 接线先行）、batch 6
+- Description: 【verification-only 改型（RED-F-4，round-21；RED-F-1/T-029、RED-F-2/T-013 先例）】模块面已终态：publish.py + effects/publish.py 发布合同全量交付（plan_operations write-ahead/fail-closed/sync-product 恒等、operation_idempotency_key sha256 规范式、reconcile 显式冲突、agent_forbidden 禁入），新增 unit ×5 于 R 树 2f609d67 全绿（5/5 PASS）——累积 WIP 已满足本轮 RED 义务，无可合法 Red：RED 相为 Runtime 确认、验收经 verify_task 直跑 unit 绿集与 acceptance ×7（publish_idempotency ×4/publish_reconcile ×3），GREEN 相不派 Devon。deferred 归零；journey ×5 与 recovery/retry_tail ×2 已拆 T-047/T-048 承载。历史见事件日志。
 - AC refs: AC-FR0275-01, AC-FR0275-02, AC-FR0275-03, AC-FR0275-04, AC-NFR0144-01, AC-NFR0144-02
 - FR refs: FR-0275, NFR-0144
 - IF ids: IF-PUBLISH-002
 - Unit refs: -
-- Acceptance refs: tests/integration/test_publish_idempotency.py::test_agent_forbidden, tests/integration/test_publish_idempotency.py::test_planned_then_executed_done, tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict, tests/integration/test_publish_idempotency.py::test_resume_reconciled_skip, tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates, tests/integration/test_publish_reconcile.py::test_same_key_remote_diff_conflict, tests/integration/test_publish_reconcile.py::test_unfinished_continues, tests/integration/test_journey_recovery.py::test_interrupt_replay_reconcile_matrix, tests/integration/test_milestone_lifecycle.py::test_retry_tail_no_republish, tests/integration/test_journey_versioning.py::test_dev_prerelease_only, tests/integration/test_journey_versioning.py::test_feature_public_release, tests/integration/test_journey_versioning.py::test_post_release_patch, tests/integration/test_journey_versioning.py::test_dev_precheck_fails_without_release_branch, tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys
+- Acceptance refs: tests/integration/test_publish_idempotency.py::test_agent_forbidden, tests/integration/test_publish_idempotency.py::test_planned_then_executed_done, tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict, tests/integration/test_publish_idempotency.py::test_resume_reconciled_skip, tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates, tests/integration/test_publish_reconcile.py::test_same_key_remote_diff_conflict, tests/integration/test_publish_reconcile.py::test_unfinished_continues
 - Scope: tracks/executor/publish.py, tracks/effects/publish.py
 - Depends on: T-039, T-001, T-042
 - Batch: 9
@@ -145,7 +145,7 @@
 
 ## T-035
 - Issue: #134
-- Description: 【标准 RGR】实现 tracks/kernel/envelope.py + tracks/effects/fake.py + tracks/effects/opencode.py 的 envelope 合同（IF-ENVELOPE-002 为本任务登记词表）：AC 登记为 AC-FR0279-01..03、AC-NFR0145-01/02（FR-0278 族 AC 登记归 T-024）。锚点双半边：模块半边（envelope 类型/单一解析路径/parity 校验函数）在本任务 scope 内转绿；事件半边（dispatch.parity/dispatch.rejected/format_error/semantic_attempt_failed）的 producers 按 architecture §1.1 接线于 executor 派发循环（每次派发前 check_envelope_parity、回收时 parse_agent_output——executor.py = T-001 scope，接线已登记为 T-001 交付面 (E)）——故 depends_on T-001、batch 4（plan_defect 预防性修订：与 T-007 failure 链同类 wiring 缺口，rg 全仓 0 命中已证实）
+- Description: 【verification-only 改型（RED-F-5，round-22；RED-F-1/T-029、RED-F-2/T-013、RED-F-4/T-021 先例）】模块面已终态：tracks/kernel/envelope.py + tracks/effects/fake.py + tracks/effects/opencode.py 的 envelope v2 合同全量交付（envelope v2 injection live、check_envelope_parity 六面全图一致、garbled face reason=invalid fail-closed、动态 artifact 面按名强制、PARITY_STAGED 仍挡显式 mismatch、REVIEW_SUMMARY_MAX=400 + findings[0] 派生），新增 unit ×4 于 R 树 c39ae4ba 全绿（4/4 PASS）——累积 WIP 已满足本轮 RED 义务，无可合法 Red：RED 相为 Runtime 确认、验收经 verify_task 直跑 acceptance ×7（envelope_contract ×2/envelope_parity ×5），GREEN 相不派 Devon。历史见事件日志。
 - AC refs: AC-FR0279-01, AC-FR0279-02, AC-FR0279-03, AC-NFR0145-01, AC-NFR0145-02
 - FR refs: FR-0279, NFR-0145
 - IF ids: IF-ENVELOPE-002
@@ -244,5 +244,31 @@
 - Acceptance refs: tests/integration/test_release_trace.py::test_same_candidate_all_events, tests/integration/test_release_trace.py::test_trace_export_digests, tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix, tests/integration/test_reference_host.py::test_reference_host_journey_same_shape
 - Scope: tests/integration/test_release_trace.py, tests/integration/test_known_issue.py, tests/integration/test_reference_host.py
 - Depends on: T-042, T-040, T-024, T-029
+- Batch: 10
+- Parallel: True
+
+## T-047
+- Issue: #999
+- Description: 【verification-only journey 承载（M5 拆卡，round-20）】journey_versioning ×5 锚点（feature 公开发布/post-release patch/dev pre-release/precheck fail-closed/身份幂等）自 T-021 迁入：publish 模块面已绿、T-042 终局接线已收口，walked 场景可观察。验收=acceptance ×5 经 verify_task 直跑转绿。历史见事件日志。
+- AC refs: AC-FR0277-01, AC-FR0277-02, AC-FR0277-03, AC-FR0277-04
+- FR refs: FR-0277
+- IF ids: IF-JOURNEY-001
+- Unit refs: -
+- Acceptance refs: tests/integration/test_journey_versioning.py::test_dev_prerelease_only, tests/integration/test_journey_versioning.py::test_feature_public_release, tests/integration/test_journey_versioning.py::test_post_release_patch, tests/integration/test_journey_versioning.py::test_dev_precheck_fails_without_release_branch, tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys
+- Scope: tests/integration/test_journey_versioning.py
+- Depends on: T-042, T-026, T-021
+- Batch: 10
+- Parallel: True
+
+## T-048
+- Issue: #999
+- Description: 【verification-only recovery 承载（M5 拆卡，round-20）】interrupt_replay_reconcile_matrix 与 retry_tail_no_republish 自 T-021 迁入：任一点中断后 replay/reconcile 已完成不重复、发布成功归档失败仅重试收尾。验收=acceptance ×2 经 verify_task 直跑转绿。历史见事件日志。
+- AC refs: AC-NFR0149-02, AC-FR0276-02
+- FR refs: NFR-0149, FR-0276
+- IF ids: IF-MILESTONE-001
+- Unit refs: -
+- Acceptance refs: tests/integration/test_journey_recovery.py::test_interrupt_replay_reconcile_matrix, tests/integration/test_milestone_lifecycle.py::test_retry_tail_no_republish
+- Scope: tests/integration/test_journey_recovery.py, tests/integration/test_milestone_lifecycle.py
+- Depends on: T-042, T-016, T-021
 - Batch: 10
 - Parallel: True
