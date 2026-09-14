@@ -39,6 +39,17 @@ from tracks.executor.host_contract import (
 from tracks.executor.registry_gate import execute_registry_gate
 from tracks.executor.security import run_security_scans
 
+# FR-0277-02: the approved sync-product identity fields every consumer (plan
+# builder, WAL/audit trace, recovery) binds verbatim. Single truth -- the
+# same tuple in two places trips the duplication guard.
+SYNC_PRODUCT_FIELDS = (
+    "baseline_sha",
+    "source_candidate_sha",
+    "product_sha",
+    "product_tree",
+    "evidence_digests",
+)
+
 SYNC_PREPARED = "sync_product.prepared"
 SYNC_VERIFIED = "sync_product.verified"
 SYNC_FAILED = "sync_product.failed"

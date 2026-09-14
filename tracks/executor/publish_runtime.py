@@ -572,13 +572,9 @@ def _operation_extras(record: dict, result: dict | None = None) -> dict:
     if record["operation_kind"] == "merge":
         # FR-0277-02: a sync-bound merge carries the complete approved product
         # identity into planned/executed (WAL + audit + recovery reuse).
-        for field in (
-            "baseline_sha",
-            "source_candidate_sha",
-            "product_sha",
-            "product_tree",
-            "evidence_digests",
-        ):
+        from tracks.executor.sync_product import SYNC_PRODUCT_FIELDS
+
+        for field in SYNC_PRODUCT_FIELDS:
             if record.get(field) is not None:
                 extras[field] = record[field]
         if result.get("merge_mode"):

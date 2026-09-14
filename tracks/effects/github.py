@@ -971,6 +971,18 @@ def _resolve_milestone_number(base: str, repo: str, title: str) -> tuple[str | N
     return None, "milestone_not_found"
 
 
+def _patch_milestone_closed(url: str) -> tuple[str, str | None]:
+    """PATCH the milestone closed and read the observed state back."""
+    data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
+    if error is not None:
+        return "", error
+    state = str((data or {}).get("state") or "") if isinstance(data, dict) else ""
+    readback, readback_error, _status = _api_json(_api_request(url, "GET"))
+    if readback_error is None and isinstance(readback, dict):
+        state = str(readback.get("state") or state)
+    return state, None
+
+
 def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
     """PATCH + readback for the release Project/milestone (AC-FR0284-01).
 
@@ -995,15 +1007,10 @@ def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
         return {"project": project, "milestone": milestone, "state": "",
                 "api_verified": False, "error": resolve_error or "milestone_not_found"}
     milestone_segment = urllib.parse.quote(milestone_ref, safe="")
-    url = f"{base}/repos/{repo}/milestones/{milestone_segment}"
-    data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
+    state, error = _patch_milestone_closed(f"{base}/repos/{repo}/milestones/{milestone_segment}")
     if error is not None:
         return {"project": project, "milestone": milestone, "state": "",
                 "api_verified": False, "error": error}
-    state = str((data or {}).get("state") or "") if isinstance(data, dict) else ""
-    readback, readback_error, _status = _api_json(_api_request(url, "GET"))
-    if readback_error is None and isinstance(readback, dict):
-        state = str(readback.get("state") or state)
     verified = state == "closed"
     return {
         "project": project,

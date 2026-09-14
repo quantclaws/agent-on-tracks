@@ -273,20 +273,9 @@ class FakeReplyMixin:
     @staticmethod
     def _devon_reply_payload(result: dict) -> dict:
         """Devon evidence payload from the simulated phase outcome."""
-        fields = (
-            "phase",
-            "changed_paths",
-            "commands",
-            "results",
-            "manifest_compliance",
-            "pre_identity",
-            "post_identity",
-            "r_identity",
-            "no_change_reason",
-            "implemented_if_ids",
-            "result_identity",
-        )
-        payload = {field: result[field] for field in fields if field in result}
+        from tracks.effects.devon_evidence import DEVON_EVIDENCE_FIELDS
+
+        payload = {field: result[field] for field in DEVON_EVIDENCE_FIELDS if field in result}
         payload["simulated"] = True
         return payload
 

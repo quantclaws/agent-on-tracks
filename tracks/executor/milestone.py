@@ -73,13 +73,9 @@ def _fold_planned(trace: dict, ev, payload: dict) -> None:
     # product identity (B/C/P/tree/evidence), so the release trace proves the
     # specific product belongs to the approved plan -- not merely that the
     # candidate field is unchanged.
-    for field in (
-        "baseline_sha",
-        "source_candidate_sha",
-        "product_sha",
-        "product_tree",
-        "evidence_digests",
-    ):
+    from tracks.executor.sync_product import SYNC_PRODUCT_FIELDS
+
+    for field in SYNC_PRODUCT_FIELDS:
         if payload.get(field) is not None:
             entry[field] = payload[field]
     trace["operation_digests"].append(entry)
