@@ -625,6 +625,32 @@ class MImplTestOpsMixin:
         identical (path, node) pairs."""
         return plan_row_targets(test_cell)
 
+    def _collect_layer_inventory(self, layer: str, section, cwd: str) -> list[str]:
+        """Collect one layer's node inventory (D4 quiet-collect re-run)."""
+        section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
+        obs = execute_gate_command(section.collect, section_cwd, f"{layer}-collect")
+        if obs.exit_code == 0 and is_per_file_collect_summary(obs.stdout):
+            # D4: the >= 9.1 quiet collect printed per-file counts instead
+            # of node ids; re-run with the verbosity pin so the inventory
+            # is genuinely collected rather than silently empty.
+            obs = execute_gate_command(
+                collect_node_ids_command(section.collect),
+                section_cwd,
+                f"{layer}-collect",
+            )
+        if obs.exit_code == 5:
+            return []
+        if obs.exit_code != 0:
+            # B94: e2e is optional for deferred; missing dir is not a hard
+            # failure (unit/integration missing is). Treat as empty.
+            if layer == "e2e":
+                return []
+            raise TestSelectError(
+                f"[{layer}] collect failed (rc={obs.exit_code}): "
+                f"{(obs.stderr or obs.stdout).strip()[:400]}"
+            )
+        return sorted(parse_collected_nodes(obs.stdout))
+
     def _collect_layer_inventories(self, contract, cwd: str) -> dict[str, list[str]]:
         """Run unit/integration (and e2e for B94 deferred) collects."""
         inventories: dict[str, list[str]] = {}
@@ -636,31 +662,7 @@ class MImplTestOpsMixin:
             if section is None:
                 inventories[layer] = []
                 continue
-            section_cwd = str(Path(cwd) / section.cwd) if section.cwd != "." else cwd
-            obs = execute_gate_command(section.collect, section_cwd, f"{layer}-collect")
-            if obs.exit_code == 0 and is_per_file_collect_summary(obs.stdout):
-                # D4: the >= 9.1 quiet collect printed per-file counts instead
-                # of node ids; re-run with the verbosity pin so the inventory
-                # is genuinely collected rather than silently empty.
-                obs = execute_gate_command(
-                    collect_node_ids_command(section.collect),
-                    section_cwd,
-                    f"{layer}-collect",
-                )
-            if obs.exit_code == 5:
-                inventories[layer] = []
-                continue
-            if obs.exit_code != 0:
-                # B94: e2e is optional for deferred; missing dir is not a hard
-                # failure (unit/integration missing is). Treat as empty.
-                if layer == "e2e":
-                    inventories[layer] = []
-                    continue
-                raise TestSelectError(
-                    f"[{layer}] collect failed (rc={obs.exit_code}): "
-                    f"{(obs.stderr or obs.stdout).strip()[:400]}"
-                )
-            inventories[layer] = sorted(parse_collected_nodes(obs.stdout))
+            inventories[layer] = self._collect_layer_inventory(layer, section, cwd)
         return inventories
 
     def _task_r_family_shas(self, task_id: str) -> list[str]:

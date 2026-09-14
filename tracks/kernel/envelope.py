@@ -411,6 +411,25 @@ def _string_list_error(payload: dict, field: str, *, min_items: int = 0) -> str 
     return None
 
 
+def _devon_commands_error(commands: object) -> str | None:
+    """Validate the devon commands list shape (FR-0278-01)."""
+    if not isinstance(commands, list) or not commands:
+        return "devon payload commands must be a non-empty list"
+    for idx, command in enumerate(commands, start=1):
+        if not isinstance(command, dict):
+            return f"devon payload commands[{idx}] must be an object"
+        if not _non_empty_string(command.get("cmd")):
+            return f"devon payload commands[{idx}].cmd must be a non-empty string"
+        if command.get("result") not in ("pass", "fail"):
+            return f"devon payload commands[{idx}].result must be 'pass'|'fail'"
+        if not _non_empty_string(command.get("output_summary")):
+            return (
+                f"devon payload commands[{idx}].output_summary must be a "
+                "non-empty string"
+            )
+    return None
+
+
 def validate_devon_payload(payload: dict, phase: str) -> str | None:
     """Devon evidence contract for one RGR phase (FR-0278-01).
 
@@ -432,21 +451,9 @@ def validate_devon_payload(payload: dict, phase: str) -> str | None:
     error = _string_list_error(payload, "implemented_if_ids")
     if error is not None:
         return error
-    commands = payload.get("commands")
-    if not isinstance(commands, list) or not commands:
-        return "devon payload commands must be a non-empty list"
-    for idx, command in enumerate(commands, start=1):
-        if not isinstance(command, dict):
-            return f"devon payload commands[{idx}] must be an object"
-        if not _non_empty_string(command.get("cmd")):
-            return f"devon payload commands[{idx}].cmd must be a non-empty string"
-        if command.get("result") not in ("pass", "fail"):
-            return f"devon payload commands[{idx}].result must be 'pass'|'fail'"
-        if not _non_empty_string(command.get("output_summary")):
-            return (
-                f"devon payload commands[{idx}].output_summary must be a "
-                "non-empty string"
-            )
+    error = _devon_commands_error(payload.get("commands"))
+    if error is not None:
+        return error
     for field in ("pre_identity", "post_identity"):
         if not _non_empty_string(payload.get(field)):
             return f"devon payload {field} must be a non-empty string"

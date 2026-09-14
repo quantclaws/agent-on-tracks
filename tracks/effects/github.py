@@ -706,6 +706,17 @@ def find_remote_issue(repo_id: str, title: str, baseline_digest: str) -> dict | 
     return None
 
 
+def _mapping_key_matches(mapping: object, repo_id: str, title: str, baseline_digest: str) -> bool:
+    """True when a stored mapping binds exactly (repo, title, baseline)."""
+    if not isinstance(mapping, dict) or not mapping.get("api_verified"):
+        return False
+    return (
+        str(mapping.get("repo") or "") == str(repo_id or "")
+        and str(mapping.get("baseline_digest") or "") == str(baseline_digest or "")
+        and str(mapping.get("title") or "") == str(title or "")
+    )
+
+
 def find_authoritative_mapping(
     repo: Path,
     repo_id: str,
@@ -728,15 +739,8 @@ def find_authoritative_mapping(
     if not isinstance(data, dict):
         return None
     for item_id, mapping in data.items():
-        if not isinstance(mapping, dict) or not mapping.get("api_verified"):
-            continue
-        if str(mapping.get("repo") or "") != str(repo_id or ""):
-            continue
-        if str(mapping.get("baseline_digest") or "") != str(baseline_digest or ""):
-            continue
-        if str(mapping.get("title") or "") != str(title or ""):
-            continue
-        return {**mapping, "item_id": item_id}
+        if _mapping_key_matches(mapping, repo_id, title, baseline_digest):
+            return {**mapping, "item_id": item_id}
     return None
 
 
@@ -944,6 +948,29 @@ def close_issue(repo_id: str, issue_number: int, comment: str) -> dict:
     }
 
 
+def _resolve_milestone_number(base: str, repo: str, title: str) -> tuple[str | None, str | None]:
+    """Resolve a title-declared milestone to its number (title, error).
+
+    GitHub REST milestone endpoints address milestones by NUMBER only; a
+    title in the path 404s. ``state=all`` so a previously closed one is
+    still found; numeric declarations pass straight through untouched.
+    """
+    if title.isdigit():
+        return title, None
+    listing, list_error, _status = _api_json(
+        _api_request(f"{base}/repos/{repo}/milestones?state=all", "GET")
+    )
+    if list_error is not None:
+        return None, list_error
+    if not isinstance(listing, list):
+        return None, "milestone_listing_malformed"
+    for item in listing:
+        if isinstance(item, dict) and str(item.get("title") or "") == title:
+            number = item.get("number")
+            return (str(number) if number is not None else None), None
+    return None, "milestone_not_found"
+
+
 def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
     """PATCH + readback for the release Project/milestone (AC-FR0284-01).
 
@@ -963,33 +990,10 @@ def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
             "error": "milestone_not_declared",
         }
     base = _api_base()
-    # A declared milestone target may be a title (``release {version}``
-    # rendered: "release v0.8"). The GitHub REST milestone endpoints address
-    # milestones by NUMBER only -- a title in the path 404s. Resolve the
-    # title to its number first (state=all so a previously closed one is
-    # still found); numeric declarations pass straight through.
-    milestone_ref = str(milestone)
-    if not milestone_ref.isdigit():
-        listing, list_error, _status = _api_json(
-            _api_request(f"{base}/repos/{repo}/milestones?state=all", "GET")
-        )
-        if list_error is not None:
-            return {"project": project, "milestone": milestone, "state": "",
-                    "api_verified": False, "error": list_error}
-        numbers = {
-            str(item.get("number")): item
-            for item in (listing or [])
-            if isinstance(item, dict)
-        } if isinstance(listing, list) else {}
-        match = next(
-            (num for num, item in numbers.items()
-             if str(item.get("title") or "") == milestone_ref),
-            None,
-        )
-        if match is None:
-            return {"project": project, "milestone": milestone, "state": "",
-                    "api_verified": False, "error": "milestone_not_found"}
-        milestone_ref = match
+    milestone_ref, resolve_error = _resolve_milestone_number(base, repo, str(milestone))
+    if resolve_error is not None or milestone_ref is None:
+        return {"project": project, "milestone": milestone, "state": "",
+                "api_verified": False, "error": resolve_error or "milestone_not_found"}
     milestone_segment = urllib.parse.quote(milestone_ref, safe="")
     url = f"{base}/repos/{repo}/milestones/{milestone_segment}"
     data, error, _status = _api_json(_api_request(url, "PATCH", {"state": "closed"}))
