@@ -200,12 +200,19 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
         # reminder Devon ends with prose/Markdown summaries and the outcome
         # is red_invalid three attempts in a row (run 01KZTHE7 T-001,
         # 2026-08-15) despite the skill schema and the failure evidence
-        # flowing back.
+        # flowing back. Declared dispatches (envelope v2): the fenced
+        # tracks-envelope block IS the evidence object -- the bare-JSON
+        # wording alone made the live agent skip the fence (live 01M19FJ
+        # T-042: reply ended with bare JSON, classified
+        # no_envelope_block).
         "objective": (
             f"implement task {s.current_task_id} ({phase}); your FINAL reply "
-            "must end with the bare evidence JSON object per skill "
+            "must end with the evidence JSON object per skill "
             "tracks-devon-rgr §4 - prose or Markdown reports are not a "
-            "deliverable" + _green_gate_anchor_clause(s) + _shield_diagnosis_clause(s)
+            "deliverable; when the assignment declares tracks-envelope:v2 "
+            "the evidence object is the payload of exactly one fenced "
+            "```tracks-envelope block (no prose outside it)"
+            + _green_gate_anchor_clause(s) + _shield_diagnosis_clause(s)
         ),
         "stage": "M-IMPL",
         "attempt": s.current_attempt + 1,

@@ -776,6 +776,30 @@ the envelope/failure faces stay re-exported by executor.py."""
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
+        elif declared_kind.startswith(("devon:", "shield:", "archer:")):
+            # Doc/implementation dispatches: an unparseable declared reply
+            # strands the doc dispatch flag with no routable event (the
+            # 792f70e stall class on the writer face -- live 01M19FJ T-042:
+            # no_envelope_block parked M-IMPL/GREEN forever). Route it as a
+            # gate failure so the stage's own failure handling resets the
+            # flags within the attempt budget.
+            self._emit(
+                "verdict.failed",
+                {
+                    "check": "reply_format_error",
+                    "task_id": task_id or "",
+                    "reason": (
+                        f"declared {declared_kind} reply failed the kernel "
+                        f"parse ({exc.kind}: {exc.detail})"
+                    ),
+                    "evidence": (
+                        "format_error on a declared writer/authority reply; "
+                        "the assignment carried the envelope contract"
+                    ),
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
 
     def _record_failure_stored(self, result, role, state, task_id, cmd) -> None:
         """(E) IF-FAILURE-001: append-only storage at failure production.
