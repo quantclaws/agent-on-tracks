@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e_live.harness import clean_env, live_root
+from tests.e2e_live.harness import clean_env
 
 pytestmark = pytest.mark.e2e_live
 
@@ -57,10 +57,10 @@ def _verify_journey_summary(entry: dict) -> list[str]:
     if not candidate:
         problems.append("candidate_sha missing")
         return problems
-    ls = dict(
-        (ref, sha)
+    ls = {
+        ref: sha
         for sha, ref in (line.split("\t") for line in entry.get("ls_remote") or [])
-    )
+    }
     tag = entry.get("release_tag") or ""
     is_dev = "-pre." in tag
     # Feature and post-release journeys merge main to the candidate; the dev
