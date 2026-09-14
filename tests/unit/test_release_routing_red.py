@@ -111,10 +111,13 @@ def test_decide_release_stage_routes_six_commands():
     )
     if not (isinstance(cmd, Command) and cmd.kind == "assess_security"):
         _fail(f"completed M-VERIFY chain must route Command('assess_security'), got {cmd!r}")
-    # Fail-closed: an M-VERIFY visit without chain completion routes nothing.
+    # Unfinished M-VERIFY re-drives the idempotent chain head: a link that
+    # landed an attention (e.g. dirty_tree at freeze) must not idle the run
+    # forever once the operator clears the blocker (live 01M19FJ); completed
+    # links resume by their own dedup.
     cmd = _route("M-VERIFY", subs["M-VERIFY"], _fresh_state(stage="M-VERIFY"))
-    if cmd is not None:
-        _fail(f"uncompleted M-VERIFY must route None, got {cmd!r}")
+    if not (isinstance(cmd, Command) and cmd.kind == "freeze_candidate"):
+        _fail(f"uncompleted M-VERIFY must re-drive freeze_candidate, got {cmd!r}")
     # SM-01.3.1 -> SM-01.4/.6: entering M-RELEASE routes preview generation.
     cmd = _route("M-RELEASE", subs["M-RELEASE"], _fresh_state(stage="M-RELEASE"))
     if not (isinstance(cmd, Command) and cmd.kind == "generate_preview"):
