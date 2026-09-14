@@ -14,6 +14,7 @@ missing/duplicate/extra/unknown-status results.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -57,8 +58,12 @@ def test_reference_adapter_equivalent_to_v06(tmp_path):
     adapter = ReferencePytestAdapter()
     repo = Path(__file__).resolve().parents[2]
     # collect: same shape as v0.6 (opaque node_id, layer, source_digest).
+    # sys.executable (not ".venv/bin/python"): the command must also work in
+    # frozen-candidate environments (isolated worktrees/venvs) where no
+    # repo-local .venv exists.
+    collect_command = f"{sys.executable} -m pytest --collect-only tests/unit/"
     nodes = adapter.collect(
-        collect_command=".venv/bin/python -m pytest --collect-only tests/unit/",
+        collect_command=collect_command,
         layer="unit",
         cwd=repo,
     )
