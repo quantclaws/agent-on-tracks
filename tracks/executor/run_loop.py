@@ -123,6 +123,24 @@ the host Executor keeps construction and the command handlers."""
         if stop:
             return self.store.state(self.run_id)
         dispatches, bound_substate = self._recovery_dispatch_state(recovered_kind, pending)
+        # Bounded verify-chain re-drive (once per `trac run` invocation): an
+        # unfinished M-VERIFY chain (a link landed an attention -- dirty_tree
+        # at freeze, missing CI binding) has no decide-level command (a
+        # decide re-issue would spin against the unresolved attention, each
+        # non-dispatch command resetting the stall observer -- live hang:
+        # walker tests looping freeze/attention forever). The chain head is
+        # idempotent (freeze skips a frozen candidate; every link resumes by
+        # its own dedup), so ONE re-drive here resumes exactly the missing
+        # links; a still-blocked chain parks and the operator resolves.
+        state_after_recover = self.store.state(self.run_id)
+        if (
+            state_after_recover.stage == "M-VERIFY"
+            and state_after_recover.substate == "VERIFYING"
+            and not state_after_recover.stage_exited
+        ):
+            self.issue(
+                Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
+            )
         try:
             return self._run_loop_body(dispatches, bound_substate)
         finally:

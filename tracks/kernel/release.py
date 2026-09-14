@@ -100,19 +100,13 @@ def _decide_verify(substate: str, state: State) -> Command | None:
     """SM-01.2.1 -> SM-01.3: the completed M-VERIFY chain hands to security.
 
     The verify chain (freeze -> FULL_F judgment -> gates -> CI -> prism
-    final) is handler-chained; a link that landed an attention (e.g.
-    dirty_tree at freeze) halts the chain with decide() having nothing to
-    drive -- the run then idles forever even after the operator cleans the
-    tree (live 01M19FJ: M-VERIFY/VERIFYING silent after the freeze
-    attention). The chain head is idempotent (freeze skips an already
-    frozen candidate; every link resumes by its own dedup), so re-issuing
-    it while the stage is unfinished re-drives exactly the missing links.
-    A persistently failing head stalls out through the non-dispatch stall
-    observer, never a spin."""
-    if substate == _RELEASE_STAGE_SUBSTATES["M-VERIFY"]:
-        if state.stage_exited:
-            return Command(kind="assess_security")
-        return Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
+    final) is handler-chained. An unfinished chain is re-driven ONCE per
+    ``trac run`` invocation by the executor's loop entry (never by decide:
+    a decide-level re-issue would spin against an unresolved attention --
+    each non-dispatch command resets the stall observer -- live hang:
+    walker tests looping freeze/attention forever)."""
+    if substate == _RELEASE_STAGE_SUBSTATES["M-VERIFY"] and state.stage_exited:
+        return Command(kind="assess_security")
     return None
 
 
