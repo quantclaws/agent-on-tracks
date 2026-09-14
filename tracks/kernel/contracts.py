@@ -11,8 +11,10 @@ from __future__ import annotations
 
 WRITE_MANIFEST_CONTRACT: dict = {
     "_doc": (
-        "输出合同（返回前自检）：最终回复必须以裸 JSON 结尾（Runtime 取最后一条 "
-        "text 消息中的 JSON object）；散文/清单/Markdown 不构成交付。"
+        "输出合同（返回前自检）：最终回复必须以 JSON 结尾（Runtime 取最后一条 "
+        "text 消息）；散文/清单不构成交付。当 assignment 声明 "
+        "tracks-envelope:v2 时，JSON 必须是恰好一个 fenced ```tracks-envelope "
+        "block 的 payload（块外不得有散文）；未声明时以裸 JSON object 结尾。"
     ),
     "fields": {
         "artifact_manifest.include": (
@@ -52,8 +54,11 @@ WRITE_MANIFEST_CONTRACT: dict = {
 
 DEVON_EVIDENCE_CONTRACT: dict = {
     "_doc": (
-        "输出合同（返回前自检）：Devon 的最终回复必须以裸 evidence JSON object 结尾"
-        "（Runtime 取最后一条 text 消息中的 JSON object；tracks-devon-rgr §4）。"
+        "输出合同（返回前自检）：Devon 的最终回复必须以 evidence JSON object 结尾"
+        "（Runtime 取最后一条 text 消息；tracks-devon-rgr §4）。"
+        "当 assignment 声明 tracks-envelope:v2 时，evidence object 是恰好一个 "
+        "fenced ```tracks-envelope block 的 payload（块外不得有散文）；未声明时"
+        "以裸 JSON object 结尾。"
         "缺任一必填字段或类型不符即 impl_defect 判失败、attempt 作废。"
         "本示例由 runtime 消费方校验代码反推生成并与 tracks-devon-rgr §4 对账"
         "（live 教训 T-004：手写示例把 commands 画成 dict，误导 attempt 作废）。"
