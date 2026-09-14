@@ -294,7 +294,15 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
         "PRISM_RED": "review Red checkpoint B..R",
         "PRISM_FINAL": "review complete task range and lineage",
         "DIAGNOSE": "diagnose failure attribution",
-    }.get(sub, "review")
+    }.get(sub, "review") + (
+        # Declared dispatches: the analysis is welcome, but the FINAL
+        # message must be the verdict envelope itself (live 01M19FJ
+        # PRISM_PLAN: the model stopped after its prose analysis and never
+        # emitted the fenced verdict -- no_envelope_block).
+        "; your FINAL message must be exactly one fenced ```tracks-envelope "
+        "block carrying the verdict payload per the assignment schema "
+        "(prose analysis may precede it, nothing may follow it)"
+    )
     assignment = _m_impl_base_assignment(s, "prism", sub, ["tracks-discuz", "tracks-prism-impl"])
     assignment["criteria_pack"] = dict(_M_IMPL_CRITERIA_PACK)
     if sub in ("DIAGNOSE", "PRISM_FINAL"):

@@ -391,7 +391,12 @@ def _m_test_prism_dispatch(s: State) -> Command:
     params = {
         "role": "prism",
         "substate": "PRISM_REVIEW",
-        "objective": "review test contract against the criteria pack",
+        "objective": (
+                "review test contract against the criteria pack; your FINAL "
+                "message must be exactly one fenced ```tracks-envelope block "
+                "carrying the verdict payload per the assignment schema "
+                "(prose analysis may precede it, nothing may follow it)"
+            ),
         "stage": "M-TEST",
         "attempt": s.current_attempt + 1,
         "docs": list(_M_TEST_CONTEXT_DOCS),

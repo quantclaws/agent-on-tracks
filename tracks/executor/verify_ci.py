@@ -93,7 +93,10 @@ digests + advance/release preview."""
                     "assignment": dict(assignment),
                     "objective": (
                         "same-candidate final review of the frozen candidate "
-                        "(IF-VERIFY-005)"
+                        "(IF-VERIFY-005); your FINAL message must be exactly "
+                        "one fenced ```tracks-envelope block carrying the "
+                        "verdict payload per the assignment schema (prose "
+                        "analysis may precede it, nothing may follow it)"
                     ),
                     **assignment,
                 },
