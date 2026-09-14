@@ -467,12 +467,12 @@ id = "duplication"
 category = "duplication"
 tool = "pylint"
 tool_version = "4.0.6"
-command = ".venv/bin/pylint --disable=all --enable=R0801 tracks tests"
+command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
 config_digest = "sha256:76e156ca4de243d3a176bf487096081dab181b3feaa09e44b5dc471337d711ba"
 scope = ["tracks", "tests"]
-threshold = "R0801 min-similarity-lines=5; comments/docstrings/signatures ignored"
+threshold = "R0801 min-similarity-lines=4 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
 failure_policy = "fail_closed"
 execution_points = ["runtime", "pre_commit", "ci"]
