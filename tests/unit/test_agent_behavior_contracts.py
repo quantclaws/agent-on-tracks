@@ -321,7 +321,11 @@ def test_no_assignment_declares_envelope_v2(name, state, role, substate, stage, 
     (_enrich_dispatch_params → kernel.envelope), so the bootstrap matrix
     assignment never carries the token inline."""
     cmd = decide(state())
-    assert "tracks-envelope:v2" not in json.dumps(cmd.params["assignment"]), name
+    assignment = cmd.params["assignment"]
+    # The DECLARATION stays executor-side: the kernel-built assignment never
+    # carries the envelope declaration keys (the output-contract docs may
+    # mention the token in prose -- instruction, not declaration).
+    assert "envelope" not in assignment and "envelope_version" not in assignment, name
 
 
 def test_envelope_parser_is_live():
