@@ -259,8 +259,13 @@ def test_park_freeze_drift_without_repair_marks_stale(tmp_path, monkeypatch):
         host, "_try_freeze", lambda cmd: CandidateIdentity("NEW", True, "main")
     )
     assert host._park_freeze_candidate(_cmd()) is None
-    assert host.emitted[-1][0] == "candidate.stale"
-    assert host.emitted[-1][1]["reason"] == "head_moved"
+    stale = [e for e in host.emitted if e[0] == "candidate.stale"]
+    assert stale and stale[-1][1]["reason"] == "head_moved"
+    # §1.0.14 B disposition: the drift opens the behavior-class repair
+    # round (bounded), so the operator can land the trailer-marked fix
+    # commit and the next freeze re-walks.
+    rounds = [e for e in host.emitted if e[0] == "repair.round_started"]
+    assert rounds, "drift halt must route the repair-round disposition"
 
 
 def test_park_freeze_drift_with_repair_stales_and_refreezes(tmp_path, monkeypatch):
