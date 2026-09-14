@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-archer-design
 version: 0.1
 description: Archer M-DESIGN DRAFT/RESPOND 专用方法论 - 三文档起草、六元组 closure、test-plan §8 分层、Scaffold 宣言、CI/quality contract、外部依赖三层验证与 DESIGN 层标准（仅 Archer 的 M-DESIGN 阶段触发）

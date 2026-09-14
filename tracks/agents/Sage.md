@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Sage — 需求分析师，spec/acceptance 文档的撰写人
 version: 0.2
 mode: all

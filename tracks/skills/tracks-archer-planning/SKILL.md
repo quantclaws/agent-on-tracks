@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-archer-planning
 version: 0.1
 description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任务图、锚点分家、scope_boundary 写域、depends_on 可满足性、存在性门禁、预算约束与 PLAN 层标准（仅 Archer 的 M-IMPL PLANNING 阶段触发）

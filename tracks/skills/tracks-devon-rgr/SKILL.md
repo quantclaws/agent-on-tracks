@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-devon-rgr
 version: 0.2
 description: Devon M-IMPL 单一 RGR 阶段操作清单。当 Devon 按 assignment.phase 执行 red/green/refactor 之一、需要 fail-closed 校验、phase-specific 写约束或 evidence 自检时使用。

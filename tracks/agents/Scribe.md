@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Scribe — Story 分析师，把 Human 原始输入写成 story
 version: 0.2
 mode: all

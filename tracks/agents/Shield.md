@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Shield — 集成/e2e 测试编写者，按 test-plan 对着接口桩编写契约测试并交付合法 Red
 version: 0.2
 mode: all

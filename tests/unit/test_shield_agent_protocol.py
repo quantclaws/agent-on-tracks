@@ -70,10 +70,12 @@ def test_deliverables_cover_shield_core_and_skill():
     assert issues == [], f"Shield deliverables failed existence/version gate: {issues}"
 
 
-def test_envelope_v2_token_present_in_core_only():
+def test_envelope_v2_token_present_in_all_declared_faces():
+    # IF-ENVELOPE-002 (FR-0279): every parity face the Runtime materializes
+    # declares the envelope token (supersedes the staged "core only" rollout).
     core = CORE.read_text(encoding="utf-8")
     assert "tracks-envelope:v2" in core
-    assert "tracks-envelope:v2" not in SKILL.read_text(encoding="utf-8")
+    assert "tracks-envelope:v2" in SKILL.read_text(encoding="utf-8")
 
 
 def test_shield_skill_routing_wiring_exists():

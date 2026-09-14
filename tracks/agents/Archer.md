@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Archer — 测试计划 + 架构设计，将 spec 转化为测试策略与开发-测试契约
 version: 0.4
 mode: all

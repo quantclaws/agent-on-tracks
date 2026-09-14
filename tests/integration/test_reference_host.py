@@ -132,8 +132,15 @@ def tracks_wheel(tmp_path_factory) -> Path:
         text=True,
     )
     assert proc.returncode == 0, f"tracks wheel build failed: {proc.stderr[-800:]}"
-    wheels = sorted(wheelhouse.glob("agent_on_tracks-0.5.0-*.whl"))
-    assert wheels, f"wheel build produced no 0.5.0 wheel: {list(wheelhouse.iterdir())}"
+    import tracks as _tracks
+
+    wheels = sorted(
+        wheelhouse.glob(f"agent_on_tracks-{_tracks.__version__}-*.whl")
+    )
+    assert wheels, (
+        f"wheel build produced no {_tracks.__version__} wheel: "
+        f"{list(wheelhouse.iterdir())}"
+    )
     return wheels[0]
 
 
@@ -178,7 +185,9 @@ def test_reference_host_journey_same_shape(
         env=_clean_env(),
     )
     assert installed.returncode == 0, installed.stderr
-    assert "0.5.0" in installed.stdout, installed.stdout
+    import tracks as _tracks
+
+    assert _tracks.__version__ in installed.stdout, installed.stdout
     assert str(Path(str(venv))) in installed.stdout, (
         f"the import must resolve to the venv's non-editable install, got {installed.stdout!r}"
     )

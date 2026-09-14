@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-quality-guards
 version: 0.1
 description: 宿主项目工程质量守卫栈的目录与安装分工——lint/format、静态检查、认知复杂度、文件/方法长度、重复度、覆盖率门槛、pre-commit 钩子运行器与 CI required checks。当 Archer 设计 architecture.md 的 machine contracts（选定守卫、写安装命令、声明 Scaffold 宣言中的守卫配置文件）或 Prism 审查守卫完整性时使用。

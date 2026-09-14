@@ -90,7 +90,9 @@ def _construct_wheel_from_source(wheel_dir: Path) -> Path:
         ).rstrip(b"=").decode("ascii")
         records.append((arc, f"sha256={digest}", str(len(data))))
 
-    dist_name = "agent_on_tracks-0.5.0"
+    import tracks as _tracks
+
+    dist_name = f"agent_on_tracks-{_tracks.__version__}"
     wheel_rel = f"{dist_name}-py3-none-any.whl"
     wheel_path = wheel_dir / wheel_rel
     # Package source tree (everything tracked under the tracks package).
@@ -119,7 +121,7 @@ def _construct_wheel_from_source(wheel_dir: Path) -> Path:
         metadata = (
             b"Metadata-Version: 2.1\n"
             b"Name: agent-on-tracks\n"
-            b"Version: 0.5.0\n"
+            + f"Version: {_tracks.__version__}\n".encode()
         )
         zf.writestr(f"{dist_info}/METADATA", metadata)
         records.append((f"{dist_info}/METADATA", "", ""))

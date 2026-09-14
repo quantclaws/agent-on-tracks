@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 name: tracks-shield
 version: 0.1
 description: Shield 集成/e2e 测试编写方法——test-plan→测试资产、合法 Red 自检、counterexample、WRITE/SHIELD_FIX 分流。当 Shield 按 M-TEST WRITE 全量编写或按 M-IMPL SHIELD_FIX 定点修复时使用。

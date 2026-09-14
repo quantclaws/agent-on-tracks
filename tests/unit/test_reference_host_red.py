@@ -148,9 +148,16 @@ def tracks_wheel(tmp_path_factory) -> Path:
     )
     if proc.returncode != 0:
         _fail(f"tracks wheel build failed: {proc.stderr[-800:]}")
-    wheels = sorted(wheelhouse.glob("agent_on_tracks-0.5.0-*.whl"))
+    import tracks as _tracks
+
+    wheels = sorted(
+        wheelhouse.glob(f"agent_on_tracks-{_tracks.__version__}-*.whl")
+    )
     if not wheels:
-        _fail(f"wheel build produced no 0.5.0 wheel: {list(wheelhouse.iterdir())}")
+        _fail(
+            f"wheel build produced no {_tracks.__version__} wheel: "
+            f"{list(wheelhouse.iterdir())}"
+        )
     return wheels[0]
 
 

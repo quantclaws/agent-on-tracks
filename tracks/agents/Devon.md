@@ -1,4 +1,5 @@
 ---
+envelope: tracks-envelope:v2
 description: Devon — Tracks M-IMPL TDD 实现者。按 assignment.phase 执行单一 RGR 阶段（red|green|refactor），完成即停，绝不在一个 assignment 内跑完整 RGR 循环
 version: 0.4
 mode: all
