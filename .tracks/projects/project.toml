@@ -136,8 +136,8 @@ timeout_seconds = 900
 
 [host-contract.smoke]
 steps = [
-  ".venv/bin/python -m pip install --no-deps --force-reinstall --prefix {prefix} {artifact}",
-  "{prefix_bin}/trac --help",
+  ".venv/bin/python -m pip install --no-deps --ignore-installed --prefix {prefix} {artifact}",
+  "env PYTHONPATH={prefix}/lib/python3.14/site-packages .venv/bin/python -m tracks.cli.main --help",
 ]
 result_channel = "exit_code"
 timeout_seconds = 600
