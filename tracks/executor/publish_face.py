@@ -193,7 +193,21 @@ blocked-publish payload."""
                            repair_route=cve_repair_route())
             return payload
         assignment = build_security_review_assignment(results, policy_digest, candidate_sha)
-        assignment["scan_results"] = [asdict(result) for result in results]
+        # The dispatch budget check fail-closes oversized assignment cards;
+        # scan stdout/stderr tails are audit evidence (already on the
+        # security.assessed event), so the review card carries compact
+        # summaries only -- never the raw multi-KB tool output.
+        compact = []
+        for result in results:
+            entry = asdict(result)
+            summary = entry.get("summary")
+            if isinstance(summary, dict):
+                entry["summary"] = {
+                    k: (v[:200] if isinstance(v, str) else v)
+                    for k, v in summary.items()
+                }
+            compact.append(entry)
+        assignment["scan_results"] = compact
         # issue() assigns the id on a NEW Command (Command is frozen): the
         # caller's object keeps command_id=None, so bind the id explicitly
         # here or the verdict lookup below can never match (live 01M2AGY:
