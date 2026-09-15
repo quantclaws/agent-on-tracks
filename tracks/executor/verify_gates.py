@@ -405,12 +405,17 @@ the runtime-materialized default contract lives here."""
         a repair commit from an unrelated drift — SM-01.20). Any
         unmarked HEAD move is drift: candidate.stale, no re-freeze,
         fail-closed (SM-01.17, interfaces §1d 幂等不重冻).
+
+        Ordering (SM-01.20 corollary 2): the trailer is the decision. A
+        known-issue disposition registered for the frozen candidate does
+        NOT veto a re-walk -- a landed fix commit carrying the round
+        trailer is repair provenance the disposition cannot override (the
+        operator demonstrably fixed instead of relying on the waiver);
+        the disposition's own channels govern the waived task/node set,
+        never the re-freeze legality (otherwise a two-drive registration
+        during a chained-fix sequence deadlocks the chain permanently).
         """
         if self._park_repair_budget_used() == 0:
-            return False
-        if self._park_candidate_seen(
-            ("known_issue.registered", "known_issue.rejected"), frozen_sha
-        ):
             return False
         return self._head_carries_repair_trailer(frozen_sha)
 
