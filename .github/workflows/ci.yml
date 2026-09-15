@@ -85,6 +85,13 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install -e '.[dev]'
+      - name: materialize the deployed agent/skill copies (.opencode)
+        # the deployment face is gitignored; the source/effective parity
+        # meta-tests need it materialized from the tracked sources
+        run: |
+          mkdir -p .opencode/agents .opencode/skills
+          cp -R tracks/agents/. .opencode/agents/
+          cp -R tracks/skills/. .opencode/skills/
       - name: pytest
         run: .venv/bin/python -m pytest tests/unit tests/integration tests/e2e -q -m 'not performance' -p no:cacheprovider
 

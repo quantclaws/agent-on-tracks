@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import date
@@ -307,11 +308,17 @@ def _tracks_python_files(repo: Path) -> list[Path]:
     for rel in _ls_tracks_py(repo):
         candidates[rel] = repo / rel
     if not candidates:
-        # non-git fallback; recurse_symlinks=False keeps a stray symlink from
-        # pulling files outside the repo into the smoke set
-        for p in pkg.rglob("*.py", recurse_symlinks=False):
-            if "__pycache__" not in p.parts:
-                candidates[str(p.relative_to(repo))] = p
+        # non-git fallback; followlinks=False keeps a stray symlink from
+        # pulling files outside the repo into the smoke set (os.walk is the
+        # pre-3.13-portable equivalent of rglob(..., recurse_symlinks=False))
+        for root, dirs, files in os.walk(pkg, followlinks=False):
+            if "__pycache__" in Path(root).parts:
+                dirs[:] = []
+                continue
+            for name in files:
+                if name.endswith(".py"):
+                    p = Path(root) / name
+                    candidates[str(p.relative_to(repo))] = p
     return sorted(p for p in candidates.values() if p.is_file())
 
 
