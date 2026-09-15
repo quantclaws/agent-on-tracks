@@ -793,6 +793,30 @@ class ExecVerifyParkMixin(ExecSyncProductMixin):
             known_issues=known_issues,
         )
         if preview is None:
+            # Fail-closed LOUD: an unassemblable preview (typically the
+            # evidence set is incomplete for the frozen candidate -- fix
+            # commits landed mid-chain and staled the evidence) must never
+            # spin silently; the operator gets the disposition.
+            self._emit(
+                "attention.required",
+                {
+                    "area": "release_evidence",
+                    "reason": "evidence_incomplete_for_candidate",
+                    "stage": "M-RELEASE",
+                    "candidate_sha": candidate_sha,
+                    "detail": (
+                        "the release preview could not be assembled: the "
+                        "verified evidence set does not cover the frozen "
+                        "candidate (fix commits during the release chain "
+                        "staled it)"
+                    ),
+                    "next": (
+                        "trac return --to M-VERIFY --reason <why>; the chain "
+                        "re-walks for the current candidate"
+                    ),
+                },
+                command_id=cmd.command_id,
+            )
             return
         if not self._park_preview_changed(events, candidate_sha, preview):
             return

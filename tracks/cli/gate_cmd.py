@@ -236,6 +236,19 @@ _RETURN_STAGES_ESCALATION = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
 _RETURN_AUTHOR_STAGES = ("M-STORY", "M-SPEC", "M-ACC", "M-DESIGN")
 
 
+# FR-0287 corollary: the re-enterable release stages accept a universal
+# Human return even when not awaiting (mid-chain fix commits stale the
+# candidate evidence; the preview fail-closes and the only sound route is
+# re-walking M-VERIFY for the current candidate).
+_RELEASE_RETURN_STAGES = (
+    "M-VERIFY",
+    "M-SECURITY",
+    "M-RELEASE",
+    "M-PUBLISH",
+    "M-MILESTONE",
+)
+
+
 def _universal_return_targets(stage: str) -> tuple[str, ...]:
     """IF-RELEASE-003 / FR-0287: universal return targets — the canonical
     stages with a strictly smaller ordinal than ``stage`` (no self, no
@@ -293,6 +306,14 @@ def _return_gate(store: Store, run_id: str):
             if universal:
                 return state, universal, None
         return state, (), (f"escalation at stage {state.stage} has no return targets")
+    if state.stage in _RELEASE_RETURN_STAGES:
+        # FR-0287 corollary (release chain): a re-enterable release stage not
+        # awaiting anything can still strand the operator -- fix commits
+        # landing mid-release stale the candidate's evidence and the preview
+        # fail-closes; the only sound disposition is a Human return to
+        # M-VERIFY so the chain re-walks for the current candidate. Universal
+        # strictly-upstream targets, exactly like the M-IMPL escape source.
+        return state, _universal_return_targets(state.stage), None
     return (
         state,
         (),
