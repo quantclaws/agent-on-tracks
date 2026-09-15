@@ -495,8 +495,11 @@ _COMMANDS = {
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args:
-        return _err(USAGE)
+    if not args or args[0] in ("--help", "-h", "help"):
+        # Zero-dependency public outlet: --help prints usage and exits 0
+        # (the post-install smoke probe relies on it; no repo context needed).
+        print(USAGE)
+        return 0
     cmd, rest = args[0], args[1:]
     entry = _COMMANDS.get(cmd)
     if entry is None or (entry[1] is not None and len(rest) != entry[1]):
