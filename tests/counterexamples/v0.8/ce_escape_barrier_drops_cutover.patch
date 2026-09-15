@@ -1,12 +1,14 @@
---- a/tracks/executor/escape.py
-+++ b/tracks/executor/escape.py
-@@ -21,7 +21,8 @@
-     escape.barrier_established {cutover_seq} (AC-FR0287-02)."""
-     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
-     seq = int(digest[:6], 16) % 1000 + 10
--    return {"cutover_seq": seq, "quiesced_dispatches": []}
-+    # Counterexample AC-FR0287-02: barrier payload missing cutover_seq
-+    return {"quiesced_dispatches": []}
- 
- 
- def quarantine_late_outcome(barrier: dict, outcome: dict) -> dict:
+diff --git a/tracks/cli/gate_cmd.py b/tracks/cli/gate_cmd.py
+index fba6959..7ade956 100644
+--- a/tracks/cli/gate_cmd.py
++++ b/tracks/cli/gate_cmd.py
+@@ -365,7 +365,8 @@ def cmd_return(repo: Path, *args) -> int:
+                 "actor": actor,
+                 "from": state.stage,
+                 "to": opts["--to"],
+-                "to_stage": opts["--to"],  # the kernel hard-read key
++                # Counterexample AC-FR0287-01: drop the kernel projection key
++                "to_stage": "M-SPEC",
+                 "reason": opts["--reason"],
+             },
+         )

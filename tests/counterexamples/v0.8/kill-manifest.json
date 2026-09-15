@@ -1,51 +1,366 @@
 {
-  "version": "v0.8",
-  "contract": "Each v0.8 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan §12.2. All 45 patches apply cleanly via git apply --check, scope contains no tests/ paths, and each patch kills its bound test node.",
-  "bindings": [
-    {"test": "tests/integration/test_release_trace.py::test_same_candidate_all_events", "patch": "ce_binding_drop.patch", "ac": "AC-NFR0143-01", "if_ref": "IF-VERIFY-001", "result": "killed", "mutation": "drop candidate_sha binding"},
-    {"test": "tests/integration/test_release_preview.py::test_preview_digest_binds_all", "patch": "ce_preview_digest_omit_plan.patch", "ac": "AC-FR0273-01", "if_ref": "IF-RELEASE-002", "result": "killed", "mutation": "omit operation_plan_digest from preview digest (rebound to delivered GREEN, SHIELD_FIX)"},
-    {"test": "tests/integration/test_release_preview.py::test_stale_preview_reported", "patch": "ce_preview_stale_ignored.patch", "ac": "AC-FR0273-02", "if_ref": "IF-RELEASE-002", "result": "killed", "mutation": "candidate drift ignored by stale check (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates", "patch": "ce_idempotency_key_weak.patch", "ac": "AC-NFR0144-01", "if_ref": "IF-PUBLISH-002", "result": "killed", "mutation": "weaken idempotency key without preview_digest"},
-    {"test": "tests/integration/test_envelope_contract.py::test_malformed_format_error", "patch": "ce_envelope_last_json_fallback.patch", "ac": "AC-FR0278-02", "if_ref": "IF-ENVELOPE-001", "result": "killed", "mutation": "restore last-JSON fallback"},
-    {"test": "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention", "patch": "ce_fake_silent_fallback.patch", "ac": "AC-FR0283-02", "if_ref": "IF-ISSUE-001", "result": "killed", "mutation": "silent fake fallback on missing token"},
-    {"test": "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed", "patch": "ce_gate_exit_zero.patch", "ac": "AC-FR0269-02", "if_ref": "IF-VERIFY-003", "result": "killed", "mutation": "gate soft pass with exit zero"},
-    {"test": "tests/integration/test_publish_idempotency.py::test_agent_forbidden", "patch": "ce_agent_publish.patch", "ac": "AC-FR0275-03", "if_ref": "IF-PUBLISH-001", "result": "killed", "mutation": "allow agent publish"},
-    {"test": "tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused", "patch": "ce_stale_evidence_reuse.patch", "ac": "AC-FR0268-03", "if_ref": "IF-VERIFY-002", "result": "killed", "mutation": "stale evidence flag and STALE marks ignored, reuse returned (rebound to delivered GREEN, SHIELD_FIX)"},
-    {"test": "tests/integration/test_verify_fullf_reuse.py::test_undrifted_identity_reuses_full_f", "patch": "ce_fullf_reuse_path_broken.patch", "ac": "AC-FR0268-01", "if_ref": "IF-VERIFY-002", "result": "killed", "mutation": "reuse path broken for undrifted identity (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_verify_fullf_reuse.py::test_drift_or_stale_reruns_full", "patch": "ce_fullf_mismatch_ignored.patch", "ac": "AC-FR0268-02", "if_ref": "IF-VERIFY-002", "result": "killed", "mutation": "identity mismatch never detected (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay", "patch": "ce_rich_evidence_overwrite.patch", "ac": "AC-FR0280-01", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "overwrite the un-ACKed rich record identity (rebound to delivered GREEN, SHIELD_FIX)"},
-    {"test": "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules", "patch": "ce_failure_lookback_dropped.patch", "ac": "AC-FR0280-02", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "selection look-back up to 3 rounds dropped (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks", "patch": "ce_failure_lost_softpass.patch", "ac": "AC-FR0280-03", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "lost injected reference soft-passes review (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical", "patch": "ce_failure_append_seq_frozen.patch", "ac": "AC-NFR0146-01", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "append slot frozen, records overwrite each other (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs", "patch": "ce_failure_ack_proof_lost.patch", "ac": "AC-NFR0146-02", "if_ref": "IF-FAILURE-001", "result": "killed", "mutation": "ACK produces no consumption proof (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding", "patch": "ce_kernel_venv_token.patch", "ac": "AC-NFR0147-01", "if_ref": "IF-ADAPTER-003", "result": "killed", "mutation": "inject venv token into kernel"},
-    {"test": "tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived", "patch": "ce_known_issue_behavior_rejected.patch", "ac": "AC-FR0286-05", "if_ref": "IF-KNOWNISSUE-001", "result": "killed", "mutation": "behavior product defect wrongly rejected (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix", "patch": "ce_known_issue_mechanism_registered.patch", "ac": "AC-FR0286-06", "if_ref": "IF-KNOWNISSUE-001", "result": "killed", "mutation": "mechanism failure wrongly registered (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact", "patch": "ce_pipeline_valid_red_skips_prism.patch", "ac": "AC-FR0285-01", "if_ref": "IF-PIPELINE-001", "result": "killed", "mutation": "valid red routed to DIAGNose, Prism never dispatched (SHIELD_FIX)"},
-    {"test": "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority", "patch": "ce_pipeline_selfcheck_authority.patch", "ac": "AC-FR0285-02", "if_ref": "IF-PIPELINE-001", "result": "killed", "mutation": "Shield selfcheck outcome jumps WRITE to PRISM_REVIEW, bypassing COLLECT/RED_CHECK (SHIELD_FIX)"},
-    {"test": "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition", "patch": "ce_pipeline_new_stage_defined.patch", "ac": "AC-FR0285-03", "if_ref": "IF-PIPELINE-001", "result": "killed", "mutation": "new pipeline stage defined in the M-TEST exit transition (SHIELD_FIX)"},
-    {"test": "tests/integration/test_escape_gate.py::test_universal_return_moves_pointer", "patch": "ce_escape_barrier_drops_cutover.patch", "ac": "AC-FR0287-01", "if_ref": "IF-ESCAPE-001", "result": "killed", "mutation": "barrier payload missing cutover_seq (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes", "patch": "ce_escape_quarantine_passes_through.patch", "ac": "AC-FR0287-02", "if_ref": "IF-ESCAPE-001", "result": "killed", "mutation": "late outcome passes through un-quarantined (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence", "patch": "ce_escape_stale_wrong_reason.patch", "ac": "AC-FR0287-03", "if_ref": "IF-ESCAPE-001", "result": "killed", "mutation": "stale reason human_return replaced by fix_new_candidate (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip", "patch": "ce_escape_report_none.patch", "ac": "AC-FR0287-04", "if_ref": "IF-ESCAPE-001", "result": "killed", "mutation": "already_executed report returns None (SHIELD_FIX rebinding)"},
-    {"test": "tests/integration/test_verify_candidate.py::test_clean_tree_freezes_candidate", "patch": "ce_candidate_clean_flag_inverted.patch", "ac": "AC-FR0267-01", "if_ref": "IF-VERIFY-001", "result": "killed", "mutation": "clean flag inverted on the frozen identity (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_candidate.py::test_dirty_tree_needs_attention", "patch": "ce_dirty_guard_disabled.patch", "ac": "AC-FR0267-02", "if_ref": "IF-VERIFY-001", "result": "killed", "mutation": "dirty-tree guard disabled, identity minted anyway (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_candidate.py::test_drift_marks_stale_no_refreeze", "patch": "ce_drift_flag_inverted.patch", "ac": "AC-FR0267-03", "if_ref": "IF-VERIFY-001", "result": "killed", "mutation": "foreign-binding flag inverted, drift evidence passes unflagged (T-042 rebinding)"},
-    {"test": "tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked", "patch": "ce_reconcile_conflict_skipped.patch", "ac": "AC-NFR0149-03", "if_ref": "IF-PUBLISH-002", "result": "killed", "mutation": "divergent remote digest no longer conflicts, reconciles as skip (T-042 rebinding)"},
-    {"test": "tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds", "patch": "ce_irreparable_budget_relaxed.patch", "ac": "AC-FR0286-01", "if_ref": "IF-REPAIR-001", "result": "killed", "mutation": "irreparable budget check relaxed past exhaustion (T-042 rebinding)"},
-    {"test": "tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests", "patch": "ce_frozen_missing_swallowed.patch", "ac": "AC-FR0286-02", "if_ref": "IF-REPAIR-001", "result": "killed", "mutation": "missing frozen test swallowed instead of failing closed (T-042 rebinding)"},
-    {"test": "tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify", "patch": "ce_stale_reason_swapped.patch", "ac": "AC-FR0286-03", "if_ref": "IF-REPAIR-001", "result": "killed", "mutation": "evidence.staled reason fix_new_candidate swapped for human_return (T-042 rebinding)"},
-    {"test": "tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape", "patch": "ce_no_fix_trigger_denied.patch", "ac": "AC-FR0286-04", "if_ref": "IF-REPAIR-001", "result": "killed", "mutation": "no_fix_available trigger denied, unfixable defect judged repairable (T-042 rebinding)"},
-    {"test": "tests/integration/test_reference_host.py::test_reference_host_journey_same_shape", "patch": "ce_same_shape_rejected.patch", "ac": "AC-FR0282-01", "if_ref": "IF-REFERENCE-001", "result": "killed", "mutation": "same-shape journey acceptance inverted, exact chain rejected (T-042 rebinding)"},
-    {"test": "tests/integration/test_reference_host.py::test_missing_credentials_needs_attention", "patch": "ce_remote_none_downgrades.patch", "ac": "AC-FR0282-02", "if_ref": "IF-REFERENCE-001", "result": "killed", "mutation": "missing remote binding downgrades to local success (T-042 rebinding)"},
-    {"test": "tests/integration/test_reference_host.py::test_python_details_isolated", "patch": "ce_carrier_destination_shifted.patch", "ac": "AC-FR0282-03", "if_ref": "IF-REFERENCE-001", "result": "killed", "mutation": "contract carrier deployed off the closed destination set (T-042 rebinding)"},
-    {"test": "tests/integration/test_security_assessment.py::test_contract_scans_pass", "patch": "ce_scan_pass_flipped.patch", "ac": "AC-FR0272-01", "if_ref": "IF-SECURITY-001", "result": "killed", "mutation": "exit-zero scan verdict flipped to failed (T-042 rebinding)"},
-    {"test": "tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks", "patch": "ce_malformed_authorized.patch", "ac": "AC-FR0272-02", "if_ref": "IF-SECURITY-001", "result": "killed", "mutation": "malformed scan row aggregates to passed instead of unknown (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_ci_readback.py::test_api_readback_binds_candidate", "patch": "ce_freeze_sha_truncated.patch", "ac": "AC-FR0270-01", "if_ref": "IF-VERIFY-004", "result": "killed", "mutation": "frozen candidate SHA truncated below full 40-hex (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_ci_readback.py::test_mismatch_missing_stale_blocks", "patch": "ce_foreign_binding_ignored.patch", "ac": "AC-FR0270-02", "if_ref": "IF-VERIFY-004", "result": "killed", "mutation": "foreign-SHA CI observation no longer flagged as binding violation (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_ci_readback.py::test_missing_credentials_needs_attention", "patch": "ce_unbound_binding_ignored.patch", "ac": "AC-FR0270-03", "if_ref": "IF-VERIFY-004", "result": "killed", "mutation": "unbound CI observation (no candidate_sha) no longer flagged (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_prism_final.py::test_same_candidate_consistency_pass", "patch": "ce_final_scope_renamed.patch", "ac": "AC-FR0271-01", "if_ref": "IF-VERIFY-005", "result": "killed", "mutation": "final-review envelope scope renamed off verify_final (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_prism_final.py::test_prism_fail_blocks_m_impl_gap", "patch": "ce_final_sha_hardcoded.patch", "ac": "AC-FR0271-02", "if_ref": "IF-VERIFY-005", "result": "killed", "mutation": "per-candidate envelope binding replaced by hardcoded SHA (T-042 rebinding)"},
-    {"test": "tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings", "patch": "ce_repair_token_dropped.patch", "ac": "AC-FR0271-03", "if_ref": "IF-VERIFY-005", "result": "killed", "mutation": "classify_defect_route contract token dropped from the stub (T-042 rebinding)"}
-  ]
+ "version": "v0.8",
+ "contract": "Each v0.8 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan §12.2. All 45 patches apply cleanly via git apply --check, scope contains no tests/ paths, and each patch kills its bound test node.",
+ "bindings": [
+  {
+   "test": "tests/integration/test_release_trace.py::test_same_candidate_all_events",
+   "patch": "ce_binding_drop.patch",
+   "ac": "AC-NFR0143-01",
+   "if_ref": "IF-VERIFY-001",
+   "result": "killed",
+   "mutation": "drop the candidate_sha projection binding"
+  },
+  {
+   "test": "tests/integration/test_release_preview.py::test_preview_digest_binds_all",
+   "patch": "ce_preview_digest_omit_plan.patch",
+   "ac": "AC-FR0273-01",
+   "if_ref": "IF-RELEASE-002",
+   "result": "killed",
+   "mutation": "omit operation_plan_digest from preview digest (rebound to delivered GREEN, SHIELD_FIX)"
+  },
+  {
+   "test": "tests/integration/test_release_preview.py::test_stale_preview_reported",
+   "patch": "ce_preview_stale_ignored.patch",
+   "ac": "AC-FR0273-02",
+   "if_ref": "IF-RELEASE-002",
+   "result": "killed",
+   "mutation": "candidate drift ignored by stale check (SHIELD_FIX rebinding)"
+  },
+  {
+   "test": "tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates",
+   "patch": "ce_idempotency_key_weak.patch",
+   "ac": "AC-NFR0144-01",
+   "if_ref": "IF-PUBLISH-002",
+   "result": "killed",
+   "mutation": "weak operation key drops preview binding and sha256 form"
+  },
+  {
+   "test": "tests/integration/test_envelope_contract.py::test_malformed_format_error",
+   "patch": "ce_envelope_last_json_fallback.patch",
+   "ac": "AC-FR0278-02",
+   "if_ref": "IF-ENVELOPE-001",
+   "result": "killed",
+   "mutation": "lenient last-JSON fallback restored in envelope parse"
+  },
+  {
+   "test": "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
+   "patch": "ce_fake_silent_fallback.patch",
+   "ac": "AC-FR0283-02",
+   "if_ref": "IF-ISSUE-001",
+   "result": "killed",
+   "mutation": "silent FakeIssueBackend fallback on missing token"
+  },
+  {
+   "test": "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed",
+   "patch": "ce_gate_exit_zero.patch",
+   "ac": "AC-FR0269-02",
+   "if_ref": "IF-VERIFY-003",
+   "result": "killed",
+   "mutation": "exit-code channel soft-passes nonzero gate exits"
+  },
+  {
+   "test": "tests/integration/test_publish_idempotency.py::test_agent_forbidden",
+   "patch": "ce_agent_publish.patch",
+   "ac": "AC-FR0275-03",
+   "if_ref": "IF-PUBLISH-001",
+   "result": "killed",
+   "mutation": "disable the agent_forbidden publish guard"
+  },
+  {
+   "test": "tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused",
+   "patch": "ce_stale_evidence_reuse.patch",
+   "ac": "AC-FR0268-03",
+   "if_ref": "IF-VERIFY-002",
+   "result": "killed",
+   "mutation": "stale evidence flag and STALE marks ignored, reuse returned (rebound to delivered GREEN, SHIELD_FIX)"
+  },
+  {
+   "test": "tests/integration/test_verify_fullf_reuse.py::test_undrifted_identity_reuses_full_f",
+   "patch": "ce_fullf_reuse_path_broken.patch",
+   "ac": "AC-FR0268-01",
+   "if_ref": "IF-VERIFY-002",
+   "result": "killed",
+   "mutation": "undrifted identity never reuses (forced rerun)"
+  },
+  {
+   "test": "tests/integration/test_verify_fullf_reuse.py::test_drift_or_stale_reruns_full",
+   "patch": "ce_fullf_mismatch_ignored.patch",
+   "ac": "AC-FR0268-02",
+   "if_ref": "IF-VERIFY-002",
+   "result": "killed",
+   "mutation": "identity basis mismatch never detected"
+  },
+  {
+   "test": "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay",
+   "patch": "ce_rich_evidence_overwrite.patch",
+   "ac": "AC-FR0280-01",
+   "if_ref": "IF-FAILURE-001",
+   "result": "killed",
+   "mutation": "un-ACKed rich record identity overwritten"
+  },
+  {
+   "test": "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules",
+   "patch": "ce_failure_lookback_dropped.patch",
+   "ac": "AC-FR0280-02",
+   "if_ref": "IF-FAILURE-001",
+   "result": "killed",
+   "mutation": "failure selection look-back dropped"
+  },
+  {
+   "test": "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks",
+   "patch": "ce_failure_lost_softpass.patch",
+   "ac": "AC-FR0280-03",
+   "if_ref": "IF-FAILURE-001",
+   "result": "killed",
+   "mutation": "lost injected reference soft-passes review (SHIELD_FIX rebinding)"
+  },
+  {
+   "test": "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical",
+   "patch": "ce_failure_append_seq_frozen.patch",
+   "ac": "AC-NFR0146-01",
+   "if_ref": "IF-FAILURE-001",
+   "result": "killed",
+   "mutation": "append slot frozen, records overwrite each other (SHIELD_FIX rebinding)"
+  },
+  {
+   "test": "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs",
+   "patch": "ce_failure_ack_proof_lost.patch",
+   "ac": "AC-NFR0146-02",
+   "if_ref": "IF-FAILURE-001",
+   "result": "killed",
+   "mutation": "ACK produces no consumption proof (SHIELD_FIX rebinding)"
+  },
+  {
+   "test": "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding",
+   "patch": "ce_kernel_venv_token.patch",
+   "ac": "AC-NFR0147-01",
+   "if_ref": "IF-ADAPTER-003",
+   "result": "killed",
+   "mutation": "inject venv token into kernel"
+  },
+  {
+   "test": "tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived",
+   "patch": "ce_known_issue_behavior_rejected.patch",
+   "ac": "AC-FR0286-05",
+   "if_ref": "IF-KNOWNISSUE-001",
+   "result": "killed",
+   "mutation": "behavior class added to non-product-defect rejections"
+  },
+  {
+   "test": "tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix",
+   "patch": "ce_known_issue_mechanism_registered.patch",
+   "ac": "AC-FR0286-06",
+   "if_ref": "IF-KNOWNISSUE-001",
+   "result": "killed",
+   "mutation": "mechanism_failure bypasses the rejection route"
+  },
+  {
+   "test": "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact",
+   "patch": "ce_pipeline_valid_red_skips_prism.patch",
+   "ac": "AC-FR0285-01",
+   "if_ref": "IF-PIPELINE-001",
+   "result": "killed",
+   "mutation": "valid red routed to DIAGNose, Prism never dispatched (SHIELD_FIX)"
+  },
+  {
+   "test": "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
+   "patch": "ce_pipeline_selfcheck_authority.patch",
+   "ac": "AC-FR0285-02",
+   "if_ref": "IF-PIPELINE-001",
+   "result": "killed",
+   "mutation": "RED verdict emitted as selfcheck event with kernel reducer aliased"
+  },
+  {
+   "test": "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
+   "patch": "ce_pipeline_new_stage_defined.patch",
+   "ac": "AC-FR0285-03",
+   "if_ref": "IF-PIPELINE-001",
+   "result": "killed",
+   "mutation": "M_TEST_PIPELINE_VERSION bumped to a new pipeline definition"
+  },
+  {
+   "test": "tests/integration/test_escape_gate.py::test_universal_return_moves_pointer",
+   "patch": "ce_escape_barrier_drops_cutover.patch",
+   "ac": "AC-FR0287-01",
+   "if_ref": "IF-ESCAPE-001",
+   "result": "killed",
+   "mutation": "human.return drops the kernel to_stage projection key"
+  },
+  {
+   "test": "tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes",
+   "patch": "ce_escape_quarantine_passes_through.patch",
+   "ac": "AC-FR0287-02",
+   "if_ref": "IF-ESCAPE-001",
+   "result": "killed",
+   "mutation": "late outcome allowed instead of quarantined"
+  },
+  {
+   "test": "tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence",
+   "patch": "ce_escape_stale_wrong_reason.patch",
+   "ac": "AC-FR0287-03",
+   "if_ref": "IF-ESCAPE-001",
+   "result": "killed",
+   "mutation": "evidence.staled carries wrong reason in release_cmd"
+  },
+  {
+   "test": "tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip",
+   "patch": "ce_escape_report_none.patch",
+   "ac": "AC-FR0287-04",
+   "if_ref": "IF-ESCAPE-001",
+   "result": "killed",
+   "mutation": "already-executed operations report none"
+  },
+  {
+   "test": "tests/integration/test_verify_candidate.py::test_clean_tree_freezes_candidate",
+   "patch": "ce_candidate_clean_flag_inverted.patch",
+   "ac": "AC-FR0267-01",
+   "if_ref": "IF-VERIFY-001",
+   "result": "killed",
+   "mutation": "clean flag inverted on the frozen identity (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_verify_candidate.py::test_dirty_tree_needs_attention",
+   "patch": "ce_dirty_guard_disabled.patch",
+   "ac": "AC-FR0267-02",
+   "if_ref": "IF-VERIFY-001",
+   "result": "killed",
+   "mutation": "dirty-tree guard disabled, identity minted anyway (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_verify_candidate.py::test_drift_marks_stale_no_refreeze",
+   "patch": "ce_drift_flag_inverted.patch",
+   "ac": "AC-FR0267-03",
+   "if_ref": "IF-VERIFY-001",
+   "result": "killed",
+   "mutation": "foreign-binding flag inverted, drift evidence passes unflagged (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked",
+   "patch": "ce_reconcile_conflict_skipped.patch",
+   "ac": "AC-NFR0149-03",
+   "if_ref": "IF-PUBLISH-002",
+   "result": "killed",
+   "mutation": "divergent remote digest no longer conflicts, reconciles as skip (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds",
+   "patch": "ce_irreparable_budget_relaxed.patch",
+   "ac": "AC-FR0286-01",
+   "if_ref": "IF-REPAIR-001",
+   "result": "killed",
+   "mutation": "irreparable budget check relaxed past exhaustion (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests",
+   "patch": "ce_frozen_missing_swallowed.patch",
+   "ac": "AC-FR0286-02",
+   "if_ref": "IF-REPAIR-001",
+   "result": "killed",
+   "mutation": "missing frozen test swallowed instead of failing closed (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify",
+   "patch": "ce_stale_reason_swapped.patch",
+   "ac": "AC-FR0286-03",
+   "if_ref": "IF-REPAIR-001",
+   "result": "killed",
+   "mutation": "evidence.staled reason fix_new_candidate swapped for human_return (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape",
+   "patch": "ce_no_fix_trigger_denied.patch",
+   "ac": "AC-FR0286-04",
+   "if_ref": "IF-REPAIR-001",
+   "result": "killed",
+   "mutation": "no_fix_available trigger denied, unfixable defect judged repairable (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_reference_host.py::test_reference_host_journey_same_shape",
+   "patch": "ce_same_shape_rejected.patch",
+   "ac": "AC-FR0282-01",
+   "if_ref": "IF-REFERENCE-001",
+   "result": "killed",
+   "mutation": "same-shape journey acceptance inverted, exact chain rejected (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_reference_host.py::test_missing_credentials_needs_attention",
+   "patch": "ce_remote_none_downgrades.patch",
+   "ac": "AC-FR0282-02",
+   "if_ref": "IF-REFERENCE-001",
+   "result": "killed",
+   "mutation": "missing remote binding downgrades to local success (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_reference_host.py::test_python_details_isolated",
+   "patch": "ce_carrier_destination_shifted.patch",
+   "ac": "AC-FR0282-03",
+   "if_ref": "IF-REFERENCE-001",
+   "result": "killed",
+   "mutation": "contract carrier deployed off the closed destination set (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_security_assessment.py::test_contract_scans_pass",
+   "patch": "ce_scan_pass_flipped.patch",
+   "ac": "AC-FR0272-01",
+   "if_ref": "IF-SECURITY-001",
+   "result": "killed",
+   "mutation": "clean scan result flipped to failed in _execute_scan"
+  },
+  {
+   "test": "tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks",
+   "patch": "ce_malformed_authorized.patch",
+   "ac": "AC-FR0272-02",
+   "if_ref": "IF-SECURITY-001",
+   "result": "killed",
+   "mutation": "malformed scan row aggregates to passed instead of unknown (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_verify_ci_readback.py::test_api_readback_binds_candidate",
+   "patch": "ce_freeze_sha_truncated.patch",
+   "ac": "AC-FR0270-01",
+   "if_ref": "IF-VERIFY-004",
+   "result": "killed",
+   "mutation": "frozen candidate SHA truncated below full 40-hex (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_verify_ci_readback.py::test_mismatch_missing_stale_blocks",
+   "patch": "ce_foreign_binding_ignored.patch",
+   "ac": "AC-FR0270-02",
+   "if_ref": "IF-VERIFY-004",
+   "result": "killed",
+   "mutation": "foreign-SHA CI observation no longer flagged as binding violation (T-042 rebinding)"
+  },
+  {
+   "test": "tests/integration/test_verify_ci_readback.py::test_missing_credentials_needs_attention",
+   "patch": "ce_unbound_binding_ignored.patch",
+   "ac": "AC-FR0270-03",
+   "if_ref": "IF-VERIFY-004",
+   "result": "killed",
+   "mutation": "missing CI credentials emit ci.run_observed instead of attention.required"
+  },
+  {
+   "test": "tests/integration/test_verify_prism_final.py::test_same_candidate_consistency_pass",
+   "patch": "ce_final_scope_renamed.patch",
+   "ac": "AC-FR0271-01",
+   "if_ref": "IF-VERIFY-005",
+   "result": "killed",
+   "mutation": "verify_final verdict scope renamed to verify"
+  },
+  {
+   "test": "tests/integration/test_verify_prism_final.py::test_prism_fail_blocks_m_impl_gap",
+   "patch": "ce_final_sha_hardcoded.patch",
+   "ac": "AC-FR0271-02",
+   "if_ref": "IF-VERIFY-005",
+   "result": "killed",
+   "mutation": "verify_final verdict hardcodes the candidate sha"
+  },
+  {
+   "test": "tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings",
+   "patch": "ce_repair_token_dropped.patch",
+   "ac": "AC-FR0271-03",
+   "if_ref": "IF-VERIFY-005",
+   "result": "killed",
+   "mutation": "classify_defect_route contract token dropped from the stub (T-042 rebinding)"
+  }
+ ]
 }

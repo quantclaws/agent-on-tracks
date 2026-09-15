@@ -1,11 +1,13 @@
+diff --git a/tracks/executor/repair.py b/tracks/executor/repair.py
+index a18ff95..25ee5f1 100644
 --- a/tracks/executor/repair.py
 +++ b/tracks/executor/repair.py
-@@ -34,7 +34,7 @@
+@@ -33,7 +33,7 @@ _CLASSIFICATION: dict[str, tuple[str, str]] = {
  
  # FR-0286 §6 exclusions: these NEVER become Known Issues (zero known issue
  # for security; publish-mechanism failures must be fixed or abandoned).
 -_NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding"})
 +_NOT_PRODUCT_DEFECT = frozenset({"mechanism_failure", "security_finding", "behavior"})  # Counterexample AC-FR0286-05: behavior wrongly rejected
  
- _ROUNDS: dict[str, int] = {}
- _KNOWN_ISSUES: list[dict] = []
+ # AC reference token (an unfixed known issue is bound to the AC(s) it waives).
+ _AC_TOKEN = re.compile(r"AC-(?:N?FR)\d{4}-\d{2}")

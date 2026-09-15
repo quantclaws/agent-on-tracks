@@ -1,16 +1,21 @@
 diff --git a/tracks/kernel/release.py b/tracks/kernel/release.py
-index fe5b3e9..2c21440 100644
+index 5889d2a..d899cc6 100644
 --- a/tracks/kernel/release.py
 +++ b/tracks/kernel/release.py
-@@ -76,7 +76,10 @@ def decide_release_stage(stage: str, substate: str, state: State) -> Command | N
- 
- def on_candidate_frozen(state: State, payload: dict, event) -> None:
-     """Project candidate_sha/clean_tree; idempotent re-freeze is a no-op."""
--    raise NotImplementedError("IF-VERIFY-001")
+@@ -187,13 +187,9 @@ def on_candidate_frozen(state: State, payload: dict, event) -> None:
+     evidence projection -- every verify/security/preview fact of the
+     previous candidate is stale relative to it and the chain re-walks
+     (SM-01.20, interfaces §1d)."""
+-    sha = str(payload.get("candidate_sha") or "")
+-    if not sha:
+-        return
+-    if state.candidate_sha == sha:
+-        return
+-    state.candidate_sha = sha
+-    state.candidate_clean = bool(payload.get("clean_tree"))
 +    # Counterexample AC-NFR0143-01: drop candidate_sha binding
-+    if state is not None:
-+        state.candidate_sha = None  # type: ignore
-+    return None
- 
- 
- def on_candidate_stale(state: State, payload: dict, event) -> None:
++    del event, payload
++    return  # binding projection disabled
+     state.candidate_stale = False
+     state.full_reuse = None
+     state.reuse_identity_basis = None

@@ -1,11 +1,13 @@
---- a/tracks/executor/m_verify.py
-+++ b/tracks/executor/m_verify.py
-@@ -144,7 +144,7 @@
-     tracks/checks/trace.py).
-     """
-     return {
--        "candidate_sha": candidate_sha,
-+        "candidate_sha": "a" * 40,
-         "scope": "verify_final",
-         "evidence_digests": dict(evidence_digests),
-     }
+diff --git a/tracks/executor/verdict_face.py b/tracks/executor/verdict_face.py
+index 97795ee..8cc1696 100644
+--- a/tracks/executor/verdict_face.py
++++ b/tracks/executor/verdict_face.py
+@@ -780,7 +780,7 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
+             "diff_ref": commit_sha if created_commit and commit_sha else None,
+             "result_id": result_id,
+             "scope": "verify_final",
+-            "candidate_sha": candidate_sha,
++            "candidate_sha": "a" * 40,  # Counterexample AC-FR0271-02: hardcoded sha
+         }
+         for key in _DESIGN_PRISM_THREAD_KEYS:
+             val = result.get(key)

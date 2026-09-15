@@ -1,12 +1,19 @@
 diff --git a/tracks/executor/escape.py b/tracks/executor/escape.py
+index d919ede..9edef50 100644
 --- a/tracks/executor/escape.py
 +++ b/tracks/executor/escape.py
-@@ -31,6 +31,7 @@
-     return {
-         "dispatch_id": dispatch_id,
-         "outcome_ref": str(dispatch_id),
--        "status": "quarantined",
+@@ -138,11 +138,12 @@ def quarantine_late_outcome(barrier: dict, outcome: dict) -> dict:
+     o_seq = outcome.get("seq")
+     is_before = isinstance(b_seq, int) and isinstance(o_seq, int) and o_seq <= b_seq
+     if is_before:
 +        # Counterexample AC-FR0287-02: late outcome passes through
-+        "status": "checkpointed",
-         "quarantined": True,
-         "cutover_seq": barrier.get("cutover_seq"),
+         return {
+             "dispatch_id": dispatch_id,
+             "outcome_ref": str(dispatch_id),
+-            "status": "quarantined",
+-            "quarantined": True,
++            "status": "allowed",
++            "quarantined": False,
+             "cutover_seq": b_seq,
+             "barrier_cutover": b_seq,
+         }

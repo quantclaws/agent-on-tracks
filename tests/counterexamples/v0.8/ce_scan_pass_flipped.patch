@@ -1,11 +1,14 @@
+diff --git a/tracks/executor/security.py b/tracks/executor/security.py
+index 6f8cea7..09010f2 100644
 --- a/tracks/executor/security.py
 +++ b/tracks/executor/security.py
-@@ -43,7 +43,7 @@
-     if exit_code is None:
-         status: Literal["passed", "failed", "malformed"] = "malformed"
-     elif exit_code == 0:
--        status = "passed"
-+        status = "failed"
-     else:
-         status = "failed"
-     return NormalizedGateResult(
+@@ -174,6 +174,9 @@ def _execute_scan(decl: SecurityScanDecl, repo) -> NormalizedGateResult:
+         result = execute_gate(gate, Path(repo), {})
+     except (OSError, ValueError) as err:
+         return _scan_result(decl, None, {"error": str(err)})
++    # Counterexample AC-FR0272-01: scan pass flipped (clean scan reports failed)
++    if result.status == "passed":
++        result = replace(result, status="failed")
+     return replace(result, gate_id=decl.scan_id)
+ 
+ 

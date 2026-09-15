@@ -23,6 +23,7 @@ from tracks.effects import oob, select_backend
 from tracks.executor import v07_runtime as _v07_runtime  # noqa: E402
 from tracks.executor import version_extensions as _version_extensions  # noqa: E402
 from tracks.executor.breaker import RunBreaker
+from tracks.executor.closure_evidence import ExecClosureEvidenceMixin
 from tracks.executor.code_stamp import code_stamp
 from tracks.executor.dispatch import (
     ExecDispatchMixin,
@@ -208,6 +209,7 @@ class Executor(
     ExecVerifyParkMixin,
     ExecVerifyGatesMixin,
     ExecVerifyVersionMixin,
+    ExecClosureEvidenceMixin,
     ExecVerifyCiMixin,
     ResultCheckpointMixin,
 ):

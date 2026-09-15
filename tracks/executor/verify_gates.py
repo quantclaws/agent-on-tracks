@@ -382,9 +382,13 @@ the runtime-materialized default contract lives here."""
         result = self._emit_full_f_judgment(cmd, candidate_sha, state)
         if result == "failed":
             return
+        # architecture §1.1 chain order: freeze -> judge_full_f_reuse ->
+        # produce_closure_evidence (real per-AC mutation experiments bound to
+        # the frozen candidate) -> run_local_gates (the trace gate joins the
+        # produced events; fail-closed produce stops before the gates).
         self.issue(
             Command(
-                kind="run_local_gates",
+                kind="produce_closure_evidence",
                 params={"candidate_sha": candidate_sha},
             )
         )

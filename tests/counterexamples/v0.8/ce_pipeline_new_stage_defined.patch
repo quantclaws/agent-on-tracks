@@ -1,11 +1,13 @@
---- a/tracks/executor/executor.py
-+++ b/tracks/executor/executor.py
-@@ -335,7 +335,7 @@
-     "M-ACC": "M-REQ-APPROVAL",
-     "M-REQ-APPROVAL": "M-DESIGN",
-     "M-DESIGN": "M-TEST",
--    "M-TEST": "M-IMPL",
-+    "M-TEST": "M-PIPELINE-NEW",  # Counterexample AC-FR0285-03: new pipeline stage defined
- }
- 
- # reviewer role -> its verdict event type
+diff --git a/tracks/kernel/m_test.py b/tracks/kernel/m_test.py
+index 13c9b6a..1eacf78 100644
+--- a/tracks/kernel/m_test.py
++++ b/tracks/kernel/m_test.py
+@@ -51,7 +51,7 @@ _M_TEST_CONTEXT_DOCS = ("test-plan.md", "interfaces.md", "acceptance.md")
+ # single-authority test pipeline -- the M-TEST definition (and its version) is
+ # frozen at v0.7; v0.8 adds release stages only. The report renders this
+ # constant so the regression claim is machine-auditable.
+-M_TEST_PIPELINE_VERSION = "v0.7"
++M_TEST_PIPELINE_VERSION = "v0.8-new"  # Counterexample AC-FR0285-03: new pipeline stage defined
+ # The single-authority chain, in order. A hole BEFORE the furthest observed
+ # link is a missing pipeline link; a link not yet reached is in-flight.
+ M_TEST_PIPELINE_LINKS = ("WRITE", "COLLECT", "red.validated", "prism.verdict")

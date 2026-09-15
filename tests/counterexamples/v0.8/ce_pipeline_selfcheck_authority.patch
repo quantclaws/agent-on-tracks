@@ -1,11 +1,25 @@
---- a/tracks/kernel/m_test.py
-+++ b/tracks/kernel/m_test.py
-@@ -129,7 +129,7 @@
-     # (same as _on_m_test_outcome_done for WRITE -> COLLECT).
-     s.active_result = None  # v0.5: pipeline publish complete
-     if s.substate == "WRITE":
--        s.substate = "COLLECT"
-+        s.substate = "PRISM_REVIEW"  # Counterexample AC-FR0285-02: selfcheck becomes authority
- 
- 
- def _park_for_operator(s: State) -> None:
+diff --git a/tracks/executor/test_execute.py b/tracks/executor/test_execute.py
+index 113aa9d..9618709 100644
+--- a/tracks/executor/test_execute.py
++++ b/tracks/executor/test_execute.py
+@@ -549,7 +549,7 @@ class ExecTestRunMixin:
+         outcomes_ref_path = f".tracks/runtime/blobs/{outcomes_ref}"
+         if all_legit:
+             self._emit(
+-                "red.validated",
++                "selfcheck.red_authority",  # Counterexample AC-FR0285-02: selfcheck becomes authority
+                 {
+                     "status": "valid",
+                     "findings": findings,
+diff --git a/tracks/kernel/machine.py b/tracks/kernel/machine.py
+index 0c1a348..297c7de 100644
+--- a/tracks/kernel/machine.py
++++ b/tracks/kernel/machine.py
+@@ -544,6 +544,7 @@ _APPLY = {
+     # v0.4 M-TEST (flow.md §9 / SM-01)
+     "test.collected": _on_test_collected,
+     "red.validated": _on_red_validated,
++    "selfcheck.red_authority": _on_red_validated,  # Counterexample AC-FR0285-02
+     "test.committed": _on_test_committed,
+     # v0.6 R6/D-41 selection semantics (interfaces §1a/§1j)
+     "test.baseline_captured": _on_test_baseline_captured,

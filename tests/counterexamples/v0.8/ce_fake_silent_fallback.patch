@@ -1,17 +1,14 @@
 diff --git a/tracks/effects/github.py b/tracks/effects/github.py
-index cad9eaa..ab1284c 100644
+index d98b90c..74e34d2 100644
 --- a/tracks/effects/github.py
 +++ b/tracks/effects/github.py
-@@ -258,10 +258,7 @@ class GithubBackend:
- 
- def select_issue_backend(repo: Path, version: str):
-     """Boundary selection (D-05): fake channel / missing token -> stand-in."""
--    if (
--        os.environ.get("TRAC_FAKE_SIMULATE")
--        or os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
--        or not os.environ.get("GITHUB_TOKEN")
--    ):
-+    # Counterexample AC-FR0283-02: silently fall back to FakeIssueBackend when token missing
-+    if True:
+@@ -271,7 +271,8 @@ def select_issue_backend(repo: Path, version: str):
+     ):
          return FakeIssueBackend(repo, version)
+     if not os.environ.get("GITHUB_TOKEN"):
+-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
++        # Counterexample AC-FR0283-02: silent Fake fallback on missing token
++        return FakeIssueBackend(repo, version)
      return GithubBackend(repo, version)
+ 
+ 

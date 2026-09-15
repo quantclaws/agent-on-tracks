@@ -1,11 +1,13 @@
+diff --git a/tracks/executor/m_verify.py b/tracks/executor/m_verify.py
+index 5360c4a..712a876 100644
 --- a/tracks/executor/m_verify.py
 +++ b/tracks/executor/m_verify.py
-@@ -56,7 +56,7 @@
-         # expected is a tuple; compare as tuple
-         exp_tuple = tuple(expected)
-         # mismatch when lengths differ or values differ
--        if exp_tuple != quad:
-+        if False:  # Counterexample AC-FR0268-02: identity mismatch never detected
-             return ReuseDecision(
-                 decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
-             )
+@@ -95,7 +95,7 @@ def judge_full_f_reuse(
+         identity_quadruple.get("selection_id"),
+     )
+     exp_tuple = tuple(_canonical(item) for item in expected)
+-    if exp_tuple != quad:
++    if exp_tuple != quad and False:  # Counterexample AC-FR0268-02: identity mismatch never detected
+         return ReuseDecision(
+             decision="rerun", reason="identity_mismatch", identity_basis=exp_tuple
+         )

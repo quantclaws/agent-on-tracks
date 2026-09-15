@@ -1,10 +1,13 @@
-diff --git a/tracks/executor/escape.py b/tracks/executor/escape.py
---- a/tracks/executor/escape.py
-+++ b/tracks/executor/escape.py
-@@ -47,4 +47,5 @@
-         "payload": {
--            "reason": "human_return",
-+            # Counterexample AC-FR0287-03: wrong stale reason
-+            "reason": "fix_new_candidate",
-             "run_id": run_id,
-             "target_stage": target_stage,
+diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
+index 398eff7..13ecd34 100644
+--- a/tracks/cli/release_cmd.py
++++ b/tracks/cli/release_cmd.py
+@@ -112,7 +112,7 @@ def _stale_downstream_evidence(
+                 version,
+                 "evidence.staled",
+                 {
+-                    "reason": "human_return",
++                    "reason": "runtime_recycle",  # Counterexample AC-FR0287-03: wrong staling reason
+                     "run_id": run_id,
+                     "target_stage": target_stage,
+                     "type": bucket,

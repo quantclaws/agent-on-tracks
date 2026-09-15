@@ -216,6 +216,13 @@ EVENT_TYPES = (
     "issue.mapped",
     "fake_rejected",
     "attention.required",
+    # v0.8 candidate-bound closure evidence (interfaces §1g/§1i, IF-CLOSURE-001):
+    # the real per-AC mutation chain the trace gate joins over -- manifest
+    # (declared/blocked), experiment (passed/blocked) and the producing step's
+    # fail-closed aggregate when any binding cannot close.
+    "mutation.manifest",
+    "mutation.experiment",
+    "closure_evidence.failed",
 )
 
 # interfaces §4 — v0.1 closed command set.
@@ -272,6 +279,10 @@ COMMAND_KINDS = (
     # ``trac init``) materialize the versioned host contract -- the event
     # half is host_contract.materialized / host_contract.invalid.
     "materialize_host_contract",
+    # v0.8 self-release closure evidence (interfaces §1g/§1i): the M-VERIFY
+    # chain step that drives the real per-AC mutation experiments before the
+    # local gates join the candidate-bound trace.
+    "produce_closure_evidence",
 )
 
 

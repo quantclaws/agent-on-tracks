@@ -1,11 +1,11 @@
 diff --git a/tracks/executor/publish.py b/tracks/executor/publish.py
-index ddddddd..eeeeeee 100644
+index 53609bd..9e24fa4 100644
 --- a/tracks/executor/publish.py
 +++ b/tracks/executor/publish.py
-@@ -18,4 +18,5 @@ def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:
- 
- def assert_agent_forbidden(actor: str) -> None:
-     """Agents attempting irreversible operations block with agent_forbidden."""
--    raise NotImplementedError("IF-PUBLISH-001")
+@@ -118,4 +118,5 @@ def assert_agent_forbidden(actor: object) -> None:
+         raise PublishBlocked("malformed_actor")
+     if actor.strip().lower() in _ALLOWED_PUBLISH_ACTORS:
+         return None
+-    raise PublishBlocked("agent_forbidden")
 +    # Counterexample AC-FR0275-03: allow agent to publish
-+    return None
++    return None  # agent_forbidden guard disabled

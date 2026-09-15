@@ -1,9 +1,11 @@
+diff --git a/tracks/executor/failure_review.py b/tracks/executor/failure_review.py
+index 0064f71..a1ab7be 100644
 --- a/tracks/executor/failure_review.py
 +++ b/tracks/executor/failure_review.py
-@@ -39,7 +39,7 @@
+@@ -106,7 +106,7 @@ def restore_from_events(run_id: str, events) -> int:
  def select_failure(run_id: str, role: str, round_no: int) -> dict | None:
      """Deterministic round/source selection rule shared by every role."""
-     # look back up to 3 rounds, pick latest un-ACKed in that round
+     # look back up to 3 rounds, pick latest un-ACKed, un-invalidated record
 -    for r in (round_no, round_no - 1, round_no - 2, round_no - 3):
 +    for r in (round_no,):  # Counterexample AC-FR0280-02: look-back dropped
          if r < 0:
