@@ -1,18 +1,16 @@
 diff --git a/tracks/checks/trace.py b/tracks/checks/trace.py
-index b8b85d6..8deb83b 100644
+index b8b85d6..4bb99b4 100644
 --- a/tracks/checks/trace.py
 +++ b/tracks/checks/trace.py
-@@ -702,11 +702,8 @@ def build_release_trace(
-     set: unknown or missing fields fail closed (TypeError) instead of
-     producing a digest over a partial or extended payload.
-     """
--    remaining = {
--        "candidate_sha": candidate_sha,
--        "artifact_digest": artifact_digest,
--        "evidence_digests": evidence_digests,
--        "preview_digest": preview_digest,
-+    del candidate_sha, artifact_digest, evidence_digests, preview_digest
-+    remaining = {}  # Counterexample AC-NFR0143-02: digest computed over an empty field set
-         "human_approval_event_seq": human_approval_event_seq,
+@@ -711,9 +711,10 @@ def build_release_trace(
          "operation_digests": operation_digests,
          "release_tag": release_tag,
+     }
+-    digest = "sha256:" + hashlib.sha256(
++    digest = hashlib.sha256(
+         _canonical_json(remaining).encode("utf-8")
+     ).hexdigest()
++    # Counterexample AC-NFR0143-02: exported digest loses the sha256 prefix (not externally verifiable)
+     return {**remaining, "trace_digest": digest}
+ 
+ 
