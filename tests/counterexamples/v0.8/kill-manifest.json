@@ -8,7 +8,8 @@
    "ac": "AC-NFR0143-01",
    "if_ref": "IF-VERIFY-001",
    "result": "killed",
-   "mutation": "drop the candidate_sha projection binding"
+   "mutation": "drop the candidate_sha projection binding",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_release_preview.py::test_preview_digest_binds_all",
@@ -16,7 +17,8 @@
    "ac": "AC-FR0273-01",
    "if_ref": "IF-RELEASE-002",
    "result": "killed",
-   "mutation": "omit operation_plan_digest from preview digest (rebound to delivered GREEN, SHIELD_FIX)"
+   "mutation": "omit operation_plan_digest from preview digest (rebound to delivered GREEN, SHIELD_FIX)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_release_preview.py::test_stale_preview_reported",
@@ -24,7 +26,8 @@
    "ac": "AC-FR0273-02",
    "if_ref": "IF-RELEASE-002",
    "result": "killed",
-   "mutation": "candidate drift ignored by stale check (SHIELD_FIX rebinding)"
+   "mutation": "candidate drift ignored by stale check (SHIELD_FIX rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_publish_reconcile.py::test_repeat_operation_skips_no_duplicates",
@@ -32,7 +35,8 @@
    "ac": "AC-NFR0144-01",
    "if_ref": "IF-PUBLISH-002",
    "result": "killed",
-   "mutation": "weak operation key drops preview binding and sha256 form"
+   "mutation": "weak operation key drops preview binding and sha256 form",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_envelope_contract.py::test_malformed_format_error",
@@ -40,7 +44,8 @@
    "ac": "AC-FR0278-02",
    "if_ref": "IF-ENVELOPE-001",
    "result": "killed",
-   "mutation": "lenient last-JSON fallback restored in envelope parse"
+   "mutation": "lenient last-JSON fallback restored in envelope parse",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_issue_mapping.py::test_missing_credentials_needs_attention",
@@ -48,7 +53,8 @@
    "ac": "AC-FR0283-02",
    "if_ref": "IF-ISSUE-001",
    "result": "killed",
-   "mutation": "silent FakeIssueBackend fallback on missing token"
+   "mutation": "silent FakeIssueBackend fallback on missing token",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_local_gates.py::test_missing_or_malformed_gate_fails_closed",
@@ -56,7 +62,8 @@
    "ac": "AC-FR0269-02",
    "if_ref": "IF-VERIFY-003",
    "result": "killed",
-   "mutation": "exit-code channel soft-passes nonzero gate exits"
+   "mutation": "exit-code channel soft-passes nonzero gate exits",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_publish_idempotency.py::test_agent_forbidden",
@@ -64,7 +71,8 @@
    "ac": "AC-FR0275-03",
    "if_ref": "IF-PUBLISH-001",
    "result": "killed",
-   "mutation": "disable the agent_forbidden publish guard"
+   "mutation": "disable the agent_forbidden publish guard",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_fullf_reuse.py::test_stale_evidence_not_reused",
@@ -72,7 +80,8 @@
    "ac": "AC-FR0268-03",
    "if_ref": "IF-VERIFY-002",
    "result": "killed",
-   "mutation": "stale evidence flag and STALE marks ignored, reuse returned (rebound to delivered GREEN, SHIELD_FIX)"
+   "mutation": "stale evidence flag and STALE marks ignored, reuse returned (rebound to delivered GREEN, SHIELD_FIX)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_fullf_reuse.py::test_undrifted_identity_reuses_full_f",
@@ -80,7 +89,8 @@
    "ac": "AC-FR0268-01",
    "if_ref": "IF-VERIFY-002",
    "result": "killed",
-   "mutation": "undrifted identity never reuses (forced rerun)"
+   "mutation": "undrifted identity never reuses (forced rerun)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_fullf_reuse.py::test_drift_or_stale_reruns_full",
@@ -88,7 +98,8 @@
    "ac": "AC-FR0268-02",
    "if_ref": "IF-VERIFY-002",
    "result": "killed",
-   "mutation": "identity basis mismatch never detected"
+   "mutation": "identity basis mismatch never detected",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failure_evidence_chain.py::test_chain_events_replay",
@@ -96,7 +107,8 @@
    "ac": "AC-FR0280-01",
    "if_ref": "IF-FAILURE-001",
    "result": "killed",
-   "mutation": "un-ACKed rich record identity overwritten"
+   "mutation": "un-ACKed rich record identity overwritten",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failure_evidence_chain.py::test_consistent_selection_rules",
@@ -104,7 +116,8 @@
    "ac": "AC-FR0280-02",
    "if_ref": "IF-FAILURE-001",
    "result": "killed",
-   "mutation": "failure selection look-back dropped"
+   "mutation": "failure selection look-back dropped",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failure_evidence_chain.py::test_lost_or_mismatched_blocks",
@@ -112,7 +125,8 @@
    "ac": "AC-FR0280-03",
    "if_ref": "IF-FAILURE-001",
    "result": "killed",
-   "mutation": "lost injected reference soft-passes review (SHIELD_FIX rebinding)"
+   "mutation": "lost injected reference soft-passes review (SHIELD_FIX rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failure_evidence_chain.py::test_append_only_replay_identical",
@@ -120,7 +134,8 @@
    "ac": "AC-NFR0146-01",
    "if_ref": "IF-FAILURE-001",
    "result": "killed",
-   "mutation": "append slot frozen, records overwrite each other (SHIELD_FIX rebinding)"
+   "mutation": "append slot frozen, records overwrite each other (SHIELD_FIX rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failure_evidence_chain.py::test_per_role_consumption_proofs",
@@ -128,7 +143,8 @@
    "ac": "AC-NFR0146-02",
    "if_ref": "IF-FAILURE-001",
    "result": "killed",
-   "mutation": "ACK produces no consumption proof (SHIELD_FIX rebinding)"
+   "mutation": "ACK produces no consumption proof (SHIELD_FIX rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_kernel_language_neutrality.py::test_no_venv_wheel_hardcoding",
@@ -136,7 +152,8 @@
    "ac": "AC-NFR0147-01",
    "if_ref": "IF-ADAPTER-003",
    "result": "killed",
-   "mutation": "inject venv token into kernel"
+   "mutation": "inject venv token into kernel",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_known_issue.py::test_known_issue_registered_listed_and_waived",
@@ -144,7 +161,8 @@
    "ac": "AC-FR0286-05",
    "if_ref": "IF-KNOWNISSUE-001",
    "result": "killed",
-   "mutation": "behavior class added to non-product-defect rejections"
+   "mutation": "behavior class added to non-product-defect rejections",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_known_issue.py::test_exclusions_mechanism_security_no_hotfix",
@@ -152,7 +170,8 @@
    "ac": "AC-FR0286-06",
    "if_ref": "IF-KNOWNISSUE-001",
    "result": "killed",
-   "mutation": "mechanism_failure bypasses the rejection route"
+   "mutation": "mechanism_failure bypasses the rejection route",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_pipeline_regression.py::test_write_collect_redcheck_prism_chain_intact",
@@ -160,7 +179,8 @@
    "ac": "AC-FR0285-01",
    "if_ref": "IF-PIPELINE-001",
    "result": "killed",
-   "mutation": "valid red routed to DIAGNose, Prism never dispatched (SHIELD_FIX)"
+   "mutation": "valid red routed to DIAGNose, Prism never dispatched (SHIELD_FIX)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_pipeline_regression.py::test_no_selfcheck_authority",
@@ -168,7 +188,8 @@
    "ac": "AC-FR0285-02",
    "if_ref": "IF-PIPELINE-001",
    "result": "killed",
-   "mutation": "RED verdict emitted as selfcheck event with kernel reducer aliased"
+   "mutation": "RED verdict emitted as selfcheck event with kernel reducer aliased",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_pipeline_regression.py::test_no_new_pipeline_definition",
@@ -176,7 +197,8 @@
    "ac": "AC-FR0285-03",
    "if_ref": "IF-PIPELINE-001",
    "result": "killed",
-   "mutation": "M_TEST_PIPELINE_VERSION bumped to a new pipeline definition"
+   "mutation": "M_TEST_PIPELINE_VERSION bumped to a new pipeline definition",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_escape_gate.py::test_universal_return_moves_pointer",
@@ -184,7 +206,8 @@
    "ac": "AC-FR0287-01",
    "if_ref": "IF-ESCAPE-001",
    "result": "killed",
-   "mutation": "human.return drops the kernel to_stage projection key"
+   "mutation": "human.return drops the kernel to_stage projection key",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_escape_gate.py::test_escape_barrier_quarantines_late_outcomes",
@@ -192,7 +215,8 @@
    "ac": "AC-FR0287-02",
    "if_ref": "IF-ESCAPE-001",
    "result": "killed",
-   "mutation": "late outcome allowed instead of quarantined"
+   "mutation": "late outcome allowed instead of quarantined",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_escape_gate.py::test_return_stales_downstream_evidence",
@@ -200,7 +224,8 @@
    "ac": "AC-FR0287-03",
    "if_ref": "IF-ESCAPE-001",
    "result": "killed",
-   "mutation": "evidence.staled carries wrong reason in release_cmd"
+   "mutation": "evidence.staled carries wrong reason in release_cmd",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_escape_gate.py::test_irreversible_confirm_then_reconcile_skip",
@@ -208,7 +233,8 @@
    "ac": "AC-FR0287-04",
    "if_ref": "IF-ESCAPE-001",
    "result": "killed",
-   "mutation": "already-executed operations report none"
+   "mutation": "already-executed operations report none",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_candidate.py::test_clean_tree_freezes_candidate",
@@ -216,7 +242,8 @@
    "ac": "AC-FR0267-01",
    "if_ref": "IF-VERIFY-001",
    "result": "killed",
-   "mutation": "clean flag inverted on the frozen identity (T-042 rebinding)"
+   "mutation": "clean flag inverted on the frozen identity (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_candidate.py::test_dirty_tree_needs_attention",
@@ -224,7 +251,8 @@
    "ac": "AC-FR0267-02",
    "if_ref": "IF-VERIFY-001",
    "result": "killed",
-   "mutation": "dirty-tree guard disabled, identity minted anyway (T-042 rebinding)"
+   "mutation": "dirty-tree guard disabled, identity minted anyway (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_candidate.py::test_drift_marks_stale_no_refreeze",
@@ -232,7 +260,8 @@
    "ac": "AC-FR0267-03",
    "if_ref": "IF-VERIFY-001",
    "result": "killed",
-   "mutation": "foreign-binding flag inverted, drift evidence passes unflagged (T-042 rebinding)"
+   "mutation": "foreign-binding flag inverted, drift evidence passes unflagged (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_failclosed_release.py::test_identity_stale_malformed_fake_blocked",
@@ -240,7 +269,8 @@
    "ac": "AC-NFR0149-03",
    "if_ref": "IF-PUBLISH-002",
    "result": "killed",
-   "mutation": "divergent remote digest no longer conflicts, reconciles as skip (T-042 rebinding)"
+   "mutation": "divergent remote digest no longer conflicts, reconciles as skip (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_inplace_repair.py::test_no_auto_rollback_in_place_rounds",
@@ -248,7 +278,8 @@
    "ac": "AC-FR0286-01",
    "if_ref": "IF-REPAIR-001",
    "result": "killed",
-   "mutation": "irreparable budget check relaxed past exhaustion (T-042 rebinding)"
+   "mutation": "irreparable budget check relaxed past exhaustion (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_inplace_repair.py::test_repair_disciplines_and_frozen_tests",
@@ -256,7 +287,8 @@
    "ac": "AC-FR0286-02",
    "if_ref": "IF-REPAIR-001",
    "result": "killed",
-   "mutation": "missing frozen test swallowed instead of failing closed (T-042 rebinding)"
+   "mutation": "missing frozen test swallowed instead of failing closed (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_inplace_repair.py::test_fix_new_candidate_rewalks_verify",
@@ -264,7 +296,8 @@
    "ac": "AC-FR0286-03",
    "if_ref": "IF-REPAIR-001",
    "result": "killed",
-   "mutation": "evidence.staled reason fix_new_candidate swapped for human_return (T-042 rebinding)"
+   "mutation": "evidence.staled reason fix_new_candidate swapped for human_return (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_inplace_repair.py::test_irreparable_blocked_routes_to_known_issue_or_escape",
@@ -272,7 +305,8 @@
    "ac": "AC-FR0286-04",
    "if_ref": "IF-REPAIR-001",
    "result": "killed",
-   "mutation": "no_fix_available trigger denied, unfixable defect judged repairable (T-042 rebinding)"
+   "mutation": "no_fix_available trigger denied, unfixable defect judged repairable (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_reference_host.py::test_reference_host_journey_same_shape",
@@ -280,7 +314,8 @@
    "ac": "AC-FR0282-01",
    "if_ref": "IF-REFERENCE-001",
    "result": "killed",
-   "mutation": "same-shape journey acceptance inverted, exact chain rejected (T-042 rebinding)"
+   "mutation": "same-shape journey acceptance inverted, exact chain rejected (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_reference_host.py::test_missing_credentials_needs_attention",
@@ -288,7 +323,8 @@
    "ac": "AC-FR0282-02",
    "if_ref": "IF-REFERENCE-001",
    "result": "killed",
-   "mutation": "missing remote binding downgrades to local success (T-042 rebinding)"
+   "mutation": "missing remote binding downgrades to local success (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_reference_host.py::test_python_details_isolated",
@@ -296,7 +332,8 @@
    "ac": "AC-FR0282-03",
    "if_ref": "IF-REFERENCE-001",
    "result": "killed",
-   "mutation": "contract carrier deployed off the closed destination set (T-042 rebinding)"
+   "mutation": "contract carrier deployed off the closed destination set (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_security_assessment.py::test_contract_scans_pass",
@@ -304,7 +341,8 @@
    "ac": "AC-FR0272-01",
    "if_ref": "IF-SECURITY-001",
    "result": "killed",
-   "mutation": "clean scan result flipped to failed in _execute_scan"
+   "mutation": "clean scan result flipped to failed in _execute_scan",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_security_assessment.py::test_unknown_or_malformed_blocks",
@@ -312,7 +350,8 @@
    "ac": "AC-FR0272-02",
    "if_ref": "IF-SECURITY-001",
    "result": "killed",
-   "mutation": "malformed scan row aggregates to passed instead of unknown (T-042 rebinding)"
+   "mutation": "malformed scan row aggregates to passed instead of unknown (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_ci_readback.py::test_api_readback_binds_candidate",
@@ -320,7 +359,8 @@
    "ac": "AC-FR0270-01",
    "if_ref": "IF-VERIFY-004",
    "result": "killed",
-   "mutation": "frozen candidate SHA truncated below full 40-hex (T-042 rebinding)"
+   "mutation": "frozen candidate SHA truncated below full 40-hex (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_ci_readback.py::test_mismatch_missing_stale_blocks",
@@ -328,7 +368,8 @@
    "ac": "AC-FR0270-02",
    "if_ref": "IF-VERIFY-004",
    "result": "killed",
-   "mutation": "foreign-SHA CI observation no longer flagged as binding violation (T-042 rebinding)"
+   "mutation": "foreign-SHA CI observation no longer flagged as binding violation (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_ci_readback.py::test_missing_credentials_needs_attention",
@@ -336,7 +377,8 @@
    "ac": "AC-FR0270-03",
    "if_ref": "IF-VERIFY-004",
    "result": "killed",
-   "mutation": "missing CI credentials emit ci.run_observed instead of attention.required"
+   "mutation": "missing CI credentials emit ci.run_observed instead of attention.required",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_prism_final.py::test_same_candidate_consistency_pass",
@@ -344,7 +386,8 @@
    "ac": "AC-FR0271-01",
    "if_ref": "IF-VERIFY-005",
    "result": "killed",
-   "mutation": "verify_final verdict scope renamed to verify"
+   "mutation": "verify_final verdict scope renamed to verify",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_prism_final.py::test_prism_fail_blocks_m_impl_gap",
@@ -352,7 +395,8 @@
    "ac": "AC-FR0271-02",
    "if_ref": "IF-VERIFY-005",
    "result": "killed",
-   "mutation": "verify_final verdict hardcodes the candidate sha"
+   "mutation": "verify_final verdict hardcodes the candidate sha",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   },
   {
    "test": "tests/integration/test_verify_prism_final.py::test_revise_requires_anchored_findings",
@@ -360,7 +404,8 @@
    "ac": "AC-FR0271-03",
    "if_ref": "IF-VERIFY-005",
    "result": "killed",
-   "mutation": "classify_defect_route contract token dropped from the stub (T-042 rebinding)"
+   "mutation": "classify_defect_route contract token dropped from the stub (T-042 rebinding)",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
   }
  ]
 }
