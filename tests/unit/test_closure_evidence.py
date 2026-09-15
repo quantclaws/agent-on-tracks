@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +19,6 @@ from tracks.executor.closure_evidence import (
     _apply_patch_factory,
     _load_binding_tables,
     _parse_bindings,
-    _run_nodes_factory,
 )
 
 
@@ -142,18 +142,45 @@ def test_apply_patch_reports_mismatch_vocabulary(tmp_path, monkeypatch):
     assert "mismatch" in apply_patch(tmp_path, "sha256:different")
 
 
-def test_run_nodes_fail_closed_on_uncollected_node(tmp_path, monkeypatch):
-    """pytest rc=5 (no tests collected) must raise, never credit a kill."""
+def test_run_nodes_requires_declared_adapter(tmp_path, monkeypatch):
+    """Language neutrality (NFR-0147): nodes run through the HOST-declared
+    adapter, never a guessed toolchain; an undeclared host fails closed."""
 
-    class FakeProc:
-        returncode = 5
-        stdout = "no tests ran"
-        stderr = ""
+    class NoAdapter:
+        adapter = None
+        unit = None
+        integration = None
 
-    def fake_run(*args, **kwargs):
-        return FakeProc()
+    import tracks.executor.closure_evidence as ce
 
-    monkeypatch.setattr("subprocess.run", fake_run)
-    run_nodes = _run_nodes_factory(tmp_path)
-    with pytest.raises(RuntimeError, match="node_not_collected"):
-        run_nodes(tmp_path, ["tests/nope.py::ghost"])
+    monkeypatch.setattr("tracks.project.load_contract", lambda repo: NoAdapter())
+    with pytest.raises(ce.ClosureBindingsError, match="declares no adapter"):
+        ce._run_nodes_factory(tmp_path)
+
+
+def test_run_nodes_error_status_without_result_file(tmp_path, monkeypatch):
+    """A failed run writing no result file fails closed per node (error),
+    never a vacuous kill."""
+
+    class Section:
+        cwd = "."
+        run_selected = "pytest {nodes} --junitxml={result}"
+
+    class Declared:
+        adapter = SimpleNamespace(
+            id="reference-pytest", protocol="tracks-test-result", version=1
+        )
+        unit = Section()
+        integration = Section()
+
+    class Adapter:
+        def run_selected(self, template, nodes, result_path, cwd):
+            return ("false",)
+
+    import tracks.executor.closure_evidence as ce
+
+    monkeypatch.setattr("tracks.project.load_contract", lambda repo: Declared())
+    monkeypatch.setattr("tracks.adapters.base.resolve_adapter", lambda *a: Adapter())
+    run_nodes = ce._run_nodes_factory(tmp_path)
+    out = run_nodes(tmp_path, ["tests/x.py::t"])
+    assert out["tests/x.py::t"].status == "error"

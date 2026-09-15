@@ -381,7 +381,10 @@ def test_do_judge_full_f_reuse_issues_local_gates_or_stops(tmp_path: Path):
     host = _Host(tmp_path)
     host._emit_full_f_judgment = lambda cmd, sha, state: "reused"
     host._do_judge_full_f_reuse(_cmd("C1"), State(), "T", False)
-    assert host.issued[0][0].kind == "run_local_gates"
+    # Chain order (architecture §1.1): a healthy FULL_F judgment hands to the
+    # closure-evidence producer FIRST (the trace gate joins the events it
+    # mints); the local gates follow only after the producer succeeds.
+    assert host.issued[0][0].kind == "produce_closure_evidence"
     assert host.issued[0][0].params == {"candidate_sha": ""}
 
     host2 = _Host(tmp_path)

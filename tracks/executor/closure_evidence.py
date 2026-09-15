@@ -5,7 +5,7 @@ over: for every approved AC without same-candidate evidence, resolve the
 version's counterexample binding (kill-manifest primary, closure-bindings
 supplement), build the mutation manifest (``build_manifest``), execute the
 genuine isolated experiment (``run_mutation_experiment`` over real git
-worktree / git apply / pytest callbacks) and emit the contracted events:
+worktree / git apply / adapter-selected node runs) and emit the contracted events:
 
 - ``phase0.baseline_repaired`` (bound node + candidate digest, §1a row 1)
 - ``mutation.manifest`` (§1g field set, status declared, §1a row 8)
@@ -32,8 +32,8 @@ from tracks.executor import mutation as _mutation_facade  # facade-first (cycle-
 from tracks.executor.helpers import git
 from tracks.kernel.events import Command
 
-# Per-node pytest budget: single integration nodes run in seconds; the bound
-# keeps a pathological node from hanging the chain (fail-closed on timeout).
+# Per-node execution budget: single nodes run in seconds; the bound keeps a
+# pathological node from hanging the chain (fail-closed on timeout).
 _NODE_TIMEOUT_SECONDS = 900
 
 
@@ -129,10 +129,16 @@ def _allowed_change_scope(patch_file: Path) -> list[str]:
 
 
 def _open_worktree_factory(repo: Path, candidate_sha: str):
+    from tracks.executor.worktree import ensure_runtime_assets
+
     def open_worktree(kind: str) -> Path:
         root = Path(tempfile.mkdtemp(prefix=f"closure-{kind}-"))
         target = root / "wt"
         git(repo, "worktree", "add", "--detach", str(target), candidate_sha)
+        # Link the host-declared gitignored environment into the worktree
+        # (B59 #75 semantics): the host's run_selected resolves its relative
+        # interpreter inside the candidate tree, imports stay worktree-first.
+        ensure_runtime_assets(str(repo), str(target))
         return target
 
     return open_worktree
@@ -168,50 +174,93 @@ def _apply_patch_factory(patch_file: Path, patch_digest: str):
     return apply_patch
 
 
-def _run_single_node(python: Path, worktree: Path, node: str) -> TestRunResult:
-    """Run ONE node via pytest in the worktree; map exit codes to node status.
+def _resolve_closure_adapter(repo: Path):
+    """Resolve the host-declared adapter + run section (fail closed).
 
-    Fail-closed guard: pytest rc=5 (no tests collected) raises -- a vacuous
-    kill must never credit the experiment (the bound node does not exist in
-    this tree)."""
+    Language neutrality (NFR-0147): the runtime never guesses a host
+    toolchain -- the contract's ``[adapter]`` declaration is the only
+    channel; an undeclared/unknown host blocks the evidence step.
+    """
+    from tracks.adapters.base import UnknownAdapterError, resolve_adapter
+    from tracks.project import load_contract
+
+    contract = load_contract(repo)
+    declared = getattr(contract, "adapter", None)
+    section = getattr(contract, "integration", None) or contract.unit
+    if declared is None or section is None:
+        raise ClosureBindingsError("host contract declares no adapter")
     try:
-        proc = subprocess.run(
-            [
-                str(python),
-                "-m",
-                "pytest",
-                node,
-                "-q",
-                "--no-header",
-                "-p",
-                "no:cacheprovider",
-            ],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            timeout=_NODE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return TestRunResult(
-            node_id=node, status="error", detail=f"timeout after {_NODE_TIMEOUT_SECONDS}s"
-        )
-    except OSError as exc:
-        return TestRunResult(node_id=node, status="error", detail=str(exc))
-    if proc.returncode == 5:
-        raise RuntimeError(f"node_not_collected:{node}")
-    status = "passed" if proc.returncode == 0 else "failed"
-    detail = proc.stdout[-400:] if proc.returncode != 0 else None
-    return TestRunResult(node_id=node, status=status, detail=detail)
+        adapter = resolve_adapter(declared.id, declared.protocol, declared.version)
+    except UnknownAdapterError as exc:
+        raise ClosureBindingsError(str(exc)) from exc
+    return adapter, section
+
+
+def _execute_selected_nodes(adapter, section, cwd: Path, result_path: Path, nodes):
+    """Resolve + execute the host run_selected for *nodes*; returns the
+    subprocess CompletedProcess (never raises on command failure)."""
+    argv = adapter.run_selected(section.run_selected, list(nodes), result_path, cwd)
+    return subprocess.run(
+        list(argv),
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=_NODE_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def _error_all(nodes, detail: str) -> dict[str, TestRunResult]:
+    """Fail-closed per-node error results (shared by the guard paths)."""
+    return {
+        node: TestRunResult(node_id=node, status="error", detail=detail[:300])
+        for node in nodes
+    }
 
 
 def _run_nodes_factory(repo: Path):
-    python = repo / ".venv" / "bin" / "python"
+    """Run nodes through the HOST-DECLARED adapter (language-neutral, NFR-0147).
+
+    The selected nodes execute via the contract's ``run_selected`` template
+    (adapter protocol: resolve -> runtime executes -> parse the strict
+    tracks-test-result file with EXACT node coverage, RED_CHECK parity).
+    Fail-closed guards: a missing result file on failure, or a node absent
+    from the parsed result, never credits a kill.
+    """
+    from tracks.executor.test_select import (
+        parse_test_result,
+        require_exact_node_coverage,
+    )
+
+    adapter, section = _resolve_closure_adapter(repo)
 
     def run_nodes(worktree: Path, nodes) -> dict[str, TestRunResult]:
+        cwd = worktree if section.cwd == "." else worktree / section.cwd
         results: dict[str, TestRunResult] = {}
-        for node in nodes:
-            results[node] = _run_single_node(python, worktree, node)
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="closure-node-") as tmp:
+            result_path = Path(tmp) / "result.xml"
+            try:
+                proc = _execute_selected_nodes(
+                    adapter, section, cwd, result_path, nodes
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return _error_all(nodes, str(exc))
+            if not result_path.exists():
+                # The result file IS the evidence: without it an exit code
+                # proves nothing about WHICH nodes failed (never a vacuous
+                # kill) -- fail closed per node instead.
+                detail = (proc.stderr or proc.stdout) or f"no result file (exit={proc.returncode})"
+                return _error_all(nodes, detail)
+            mapping = require_exact_node_coverage(
+                parse_test_result(result_path), list(nodes)
+            )
+            for node in nodes:
+                case = mapping[node]
+                results[node] = TestRunResult(
+                    node_id=node, status=case.status, detail=case.detail
+                )
         return results
 
     return run_nodes
@@ -391,7 +440,7 @@ class ExecClosureEvidenceMixin:
             "target_kill": result.target_kill,
             "controls": result.controls,
             "rollback": result.rollback,
-            "command_echo": [["git", "worktree"], ["git", "apply"], ["pytest"]],
+            "command_echo": [["git", "worktree"], ["git", "apply"], ["adapter", "run_selected"]],
             "env_fingerprint": "runtime:closure-evidence-v1",
             "node_results_ref": result.node_results_ref,
             "failure_signatures": [result.blocked_reason] if result.blocked_reason else [],
