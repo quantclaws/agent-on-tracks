@@ -17,6 +17,7 @@ import pytest
 
 from tests.e2e.helpers import walk_to_m_impl_parked
 from tracks.executor.repair import (
+    _ROUNDS,
     assert_frozen_tests_untouched,
     classify_defect,
     judge_irreparable,
@@ -24,6 +25,15 @@ from tracks.executor.repair import (
     open_repair_round,
 )
 from tracks.kernel.release import classify_defect_route
+
+
+@pytest.fixture(autouse=True)
+def _isolate_repair_round_counter():
+    """Module-level round counter isolation: other suites in the same xdist
+    worker may open rounds for the same synthetic run id first."""
+    _ROUNDS.clear()
+    yield
+    _ROUNDS.clear()
 
 pytestmark = pytest.mark.integration
 

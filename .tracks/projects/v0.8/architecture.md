@@ -375,7 +375,7 @@ GitHub Actions runs / Issues / milestones / releases 全部走既有 urllib REST
 
 ### 4.2 Canonical quality guard registry 与 host-contract
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.8 canonical 真相（承接 ARCH-007 §4.2，仅三处输入变更：pyproject.toml 因 package-data allowlist 增删 reference_host 资产行而 bytes 变化，六条 pyproject-backed config_digest 同步为新值 `b9ac8d99…`；`.tracks/projects/project.toml` 因追加 `[host-contract.*]` 段而 bytes 变化，第 8 项 config_digest 同步为 `a4e72794…`（`merge:releases/v{minor}` 合同修订后 OOB 重同步）且 config_sections 追加 `host-contract`；`.flake8` bytes 未变）。字段语义、digest 公式（单文件 sha256(raw bytes)；多文件 path→sha256 canonical JSON）、八类强制、fail_closed、禁 `--exit-zero` 全部继承 ARCH-007 §4.2 / IF §1k，不再重复。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.8 canonical 真相（承接 ARCH-007 §4.2，仅三处输入变更：pyproject.toml 因 package-data allowlist 增删 reference_host 资产行而 bytes 变化，六条 pyproject-backed config_digest 同步为新值 `b9ac8d99…`；`.tracks/projects/project.toml` 因追加 `[host-contract.*]` 段而 bytes 变化，第 8 项 config_digest 同步为 `eb4be4e2…`（smoke 步骤修订后再次重同步）（`merge:releases/v{minor}` 合同修订后 OOB 重同步）且 config_sections 追加 `host-contract`；`.flake8` bytes 未变）。字段语义、digest 公式（单文件 sha256(raw bytes)；多文件 path→sha256 canonical JSON）、八类强制、fail_closed、禁 `--exit-zero` 全部继承 ARCH-007 §4.2 / IF §1k，不再重复。
 
 ```toml
 [quality_registry]
@@ -502,7 +502,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:a4e72794b289e9c604619120be6a1d90b460b98e7e65a2613ae9cf7bcf3bcb3c"
+config_digest = "sha256:eb4be4e2d380b6bb29377f1f659fec15824af8a2fa72d04d8b48318379214144"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600
@@ -511,7 +511,7 @@ execution_points = ["pre_commit", "ci"]
 required_check = "lint,coverage,test,deliverables,trace,reach"
 ```
 
-`.tracks/projects/project.toml` 的 `[host-contract.*]` 段（本版物化）与 registry 的关系：`[[host-contract.local_gate]] kind="quality"` 以 `source="guard_registry"` 消费本节 registry 的 canonical 命令与阈值——registry 仍是守卫唯一真相，host-contract 段不复制任何阈值；`trac validate`（待实现扩展）校验两者引用一致性。第 8 项 config_digest 因本文件追加 host-contract 段而更新为本节声明的 `a4e72794…`（唯一真相即上方 TOML block 与 §4.2 引言，二者一致；`merge:releases/v{minor}` 合同修订后 OOB 重同步），config_sections 同步追加 `host-contract`（section 存在性校验）；pyproject.toml 的变更为纯追加 reference_host package-data allowlist 行，六条 pyproject-backed config_digest 随新 bytes 同步为 `b9ac8d99…`。pip-audit/bandit 的 install/执行由 `[[host-contract.security_scan]]` 声明，Runtime 在 M-SECURITY 执行——不进入守卫 registry（其 config_digest 输入集不含新文件）。
+`.tracks/projects/project.toml` 的 `[host-contract.*]` 段（本版物化）与 registry 的关系：`[[host-contract.local_gate]] kind="quality"` 以 `source="guard_registry"` 消费本节 registry 的 canonical 命令与阈值——registry 仍是守卫唯一真相，host-contract 段不复制任何阈值；`trac validate`（待实现扩展）校验两者引用一致性。第 8 项 config_digest 因本文件追加 host-contract 段而更新为本节声明的 `eb4be4e2…`（唯一真相即上方 TOML block 与 §4.2 引言，二者一致；`merge:releases/v{minor}` 合同修订后 OOB 重同步），config_sections 同步追加 `host-contract`（section 存在性校验）；pyproject.toml 的变更为纯追加 reference_host package-data allowlist 行，六条 pyproject-backed config_digest 随新 bytes 同步为 `b9ac8d99…`。pip-audit/bandit 的 install/执行由 `[[host-contract.security_scan]]` 声明，Runtime 在 M-SECURITY 执行——不进入守卫 registry（其 config_digest 输入集不含新文件）。
 
 > **Prism [RESOLVED]:** [PRISM-ARCH008-R2-01][blocker] §4.2 收尾段与 canonical registry 自相矛盾的 guard #8 digest 声明。本段声明『第 8 项 config_digest …更新为 dd4d84cc…』，但同节 registry TOML block（hooks-runner-ci-required，L423）与 §4.2 引言（L296）均声明 sha256:c0237faa…，且实测 .tracks/projects/project.toml 当前 bytes 的 sha256 即为 c0237faa…。同一 canonical 节内出现两个互斥 digest 值，其一必为假——这是 attempt-1（独立 host-contract.toml 形态）的陈旧残留。同段『pyproject.toml 因 package-data allowlist 移除已删资产行而更新』亦与事实不符：scaffold commit 对 pyproject.toml 是纯追加（9 行 reference_host allowlist，无删除），§2 宣言的『追加 reference_host 资产』才是正确描述。预期修订：整段订正为 c0237faa… 并改写 pyproject 变更描述为纯追加，或直接删除该重复收尾段，使 §4.2 全文只存在一个 digest 真相。
 >> **Archer:** 已按『单一 digest 真相』订正：§4.2 收尾段现声明第 8 项 config_digest 为本节 TOML block 与引言一致的同一值（config_sections 含 host-contract），pyproject.toml 变更描述改写为『纯追加 reference_host package-data allowlist 行，六条 pyproject-backed digest 随新 bytes 同步为 b9ac8d99…』。附带说明：处理 PRISM-IF008-R2-03 时为使物化合同注释与 schema 自洽，同步了两份 project.toml 的占位符注释，project.toml bytes 再变一次——§4.2 全部声明（引言/TOML block/收尾段）已统一为最终值 a01f94da…（reference 侧为 36307614…），并已程序复核 tracks 8 项 + reference 8 项 config_digest 全部匹配当前真实 bytes。残留的 dd4d84cc/c0237faa 字样仅存在于本线程引用文本（历史记录，不改写）。
