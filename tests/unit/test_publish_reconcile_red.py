@@ -86,7 +86,9 @@ def test_read_remote_state_tag_existence(tmp_path):
     seed = tmp_path / "seed"
     seed.mkdir()
     bare = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "-q", str(seed)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main", str(seed)], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(seed), "config", "user.email", "t@example.com"],
         check=True,
