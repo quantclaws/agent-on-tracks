@@ -419,7 +419,15 @@ the runtime-materialized default contract lives here."""
         ``Tracks-Repair-Round: <run_id>/<round>`` trailer matching the
         OPEN repair round bound to the frozen candidate (the
         round_started payload carries candidate_sha; one round per
-        candidate within the budget)."""
+        candidate within the budget).
+
+        Chained fixes within one round (SM-01.20 corollary): a candidate
+        minted by an in-round trailer re-freeze (evidence.staled with
+        reason=fix_new_candidate) inherits that round's repair provenance
+        when no round binds it directly -- otherwise a second fix landing
+        inside the same round could never legitimately re-walk, and the
+        chain would deadlock into a spurious known-issue park. The chain
+        walk is bounded by the candidate's own staled-event ancestry."""
         round_no = None
         for event in self.store.events(self.run_id):
             if event.type != "repair.round_started":
@@ -428,6 +436,8 @@ the runtime-materialized default contract lives here."""
             if payload.get("candidate_sha") == frozen_sha:
                 round_no = payload.get("round")
         if round_no is None:
+            round_no = self._inherited_repair_round(frozen_sha)
+        if round_no is None:
             return False
         expected = f"Tracks-Repair-Round: {self.run_id}/{round_no}"
         proc = git(
@@ -435,6 +445,46 @@ the runtime-materialized default contract lives here."""
         )
         body = proc.stdout or ""
         return any(line.strip() == expected for line in body.splitlines())
+
+    @staticmethod
+    def _repair_chain_maps(events) -> tuple[dict[str, int], dict[str, str]]:
+        """One pass over the stream: per-candidate open rounds + the temporal
+        fix-chain adjacency (staled(old=X) -> frozen(Y) means Y replaced X
+        in-round)."""
+        rounds: dict[str, int] = {}
+        predecessor: dict[str, str] = {}
+        pending_old = ""
+        for event in events:
+            payload = event.payload or {}
+            if event.type == "repair.round_started":
+                round_no = payload.get("round")
+                if isinstance(round_no, int):
+                    rounds[str(payload.get("candidate_sha"))] = round_no
+            elif event.type == "evidence.staled" and payload.get("reason") == "fix_new_candidate":
+                pending_old = str(payload.get("old_candidate") or "")
+            elif event.type == "candidate.frozen" and pending_old:
+                predecessor[str(payload.get("candidate_sha") or "")] = pending_old
+                pending_old = ""
+        return rounds, predecessor
+
+    def _inherited_repair_round(self, candidate_sha: str) -> int | None:
+        """Round number inherited through the in-round fix chain.
+
+        The fix chain is temporal: ``evidence.staled(reason=fix_new_
+        candidate, old_candidate=X)`` immediately precedes the successor
+        ``candidate.frozen(Y)`` -- Y replaces X as the in-round candidate.
+        Walks that adjacency from *candidate_sha* until a candidate with an
+        open round is reached. Bounded: each link names an older frozen
+        candidate."""
+        rounds, predecessor = self._repair_chain_maps(self.store.events(self.run_id))
+        seen: set[str] = set()
+        current = candidate_sha
+        while current and current not in seen:
+            seen.add(current)
+            if current in rounds:
+                return rounds[current]
+            current = predecessor.get(current, "")
+        return None
 
     def _do_run_local_gates(self, cmd, state, task_id, reconcile):
         """M-VERIFY local-gate chain (IF-VERIFY-003, AC-FR0269-01/02): load +

@@ -398,6 +398,34 @@ def test_do_judge_full_f_reuse_issues_local_gates_or_stops(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_inherited_repair_round_walks_fix_chain(tmp_path: Path):
+    """SM-01.20 corollary: a candidate minted by an in-round trailer
+    re-freeze (staled(old=X) -> frozen(Y)) inherits the round of the
+    ancestor holding the open round; unrelated staling reasons never link."""
+    events = [
+        _ev(1, "repair.round_started", {"candidate_sha": "AAA", "round": 3}),
+        _ev(2, "evidence.staled", {"reason": "fix_new_candidate", "old_candidate": "AAA"}),
+        _ev(3, "candidate.frozen", {"candidate_sha": "BBB"}),
+        _ev(4, "evidence.staled", {"reason": "fix_new_candidate", "old_candidate": "BBB"}),
+        _ev(5, "candidate.frozen", {"candidate_sha": "CCC"}),
+    ]
+    host = _Host(tmp_path)
+    host.store = _FakeStore(events)
+    assert host._inherited_repair_round("BBB") == 3
+    assert host._inherited_repair_round("CCC") == 3
+    assert host._inherited_repair_round("ZZZ") is None
+
+    unrelated = [
+        _ev(1, "repair.round_started", {"candidate_sha": "AAA", "round": 1}),
+        _ev(2, "evidence.staled", {"reason": "drift", "old_candidate": "AAA"}),
+        _ev(3, "candidate.frozen", {"candidate_sha": "BBB"}),
+    ]
+    host2 = _Host(tmp_path)
+    host2.store = _FakeStore(unrelated)
+    assert host2._inherited_repair_round("BBB") is None
+
+
+
 def test_repair_rewalk_allowed_requires_open_round_and_trailer(tmp_path: Path):
     host = _Host(tmp_path)
     host._park_repair_budget_used = lambda: 0
