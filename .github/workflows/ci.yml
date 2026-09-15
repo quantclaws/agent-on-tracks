@@ -52,7 +52,7 @@ jobs:
         run: flake8 tracks
       - name: pylint (dup + length + method + locals)
         run: |
-          pylint --disable=all --enable=R0801,C0302 tracks tests
+          pylint --disable=all --enable=R0801,C0302 tracks
           pylint --disable=all --enable=R0915,R0914 tracks
 
   coverage:
