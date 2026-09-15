@@ -112,6 +112,15 @@ def _decide_verify(substate: str, state: State) -> Command | None:
 
 def _decide_release(substate: str, state: State) -> Command | None:
     """SM-01.3.1 -> .4/.6 entry preview; SM-01.5.1 -> .7 accepted release."""
+    if substate == "RETURNED":
+        # FR-0287 corollary: a Human return accepted while the walk sits on
+        # a release stage routes the rollback exactly like the generic
+        # stage machine (the release decider owns every release substate,
+        # so the generic RETURNED branch is never reached).
+        return Command(
+            kind="rollback_stage",
+            params={"to_stage": state.return_target, "reason": "human_return"},
+        )
     if substate == _RELEASE_STAGE_SUBSTATES["M-RELEASE"]:
         return Command(kind="generate_preview")
     if substate == M_RELEASE_GATE_SUBSTATE:
