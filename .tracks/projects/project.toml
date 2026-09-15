@@ -149,7 +149,7 @@ id = "dependency-audit"
 tool = "pip-audit"
 tool_version = "2.7.3"
 install = ".venv/bin/python -m pip install pip-audit==2.7.3"
-command = ".venv/bin/pip-audit --strict"
+command = "sh -c '.venv/bin/pip freeze --exclude agent-on-tracks > /tmp/trac-audit-req.txt && .venv/bin/pip-audit --strict -r /tmp/trac-audit-req.txt'"
 result_channel = "exit_code"
 threshold = "vulnerabilities=0"
 timeout_seconds = 900
