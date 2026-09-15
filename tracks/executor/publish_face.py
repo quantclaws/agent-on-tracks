@@ -174,6 +174,11 @@ blocked-publish payload."""
             payload,
             command_id=cmd.command_id,
         )
+        # A passing aggregate for the current candidate continues the chain
+        # (exit M-SECURITY -> M-RELEASE preview); the CI link and this
+        # re-driven command share the same idempotent advance.
+        if payload.get("status") in ("pass", "passed"):
+            self._advance_after_security(cmd, candidate_sha)
 
     def _assess_security_with_review(self, candidate_sha, contract, digest):
         """Scans and a candidate-bound Prism review jointly authorize security."""

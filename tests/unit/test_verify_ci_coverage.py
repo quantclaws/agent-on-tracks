@@ -258,7 +258,7 @@ def test_advance_verify_chain_assessed_but_failed(tmp_path):
 
 
 def test_advance_verify_chain_green_reaches_release(tmp_path):
-    events = [_ev(1, "security.assessed", {"status": "passed"})]
+    events = [_ev(1, "security.assessed", {"status": "passed", "candidate_sha": "S"})]
     host = _Host(tmp_path, events=events)
     host._advance_verify_chain(_cmd(), "S")
     assert [e[1]["stage"] for e in host.emitted if e[0] == "stage.entered"] == [
@@ -267,6 +267,16 @@ def test_advance_verify_chain_green_reaches_release(tmp_path):
     ]
     preview = host.calls["preview"][0]
     assert preview[0] == "S" and preview[2] == "DIGEST"
+
+
+def test_advance_after_security_ignores_stale_candidate(tmp_path):
+    """A passing assessment bound to an OLDER candidate never advances the
+    chain -- the re-driven assessment owns the current candidate."""
+    events = [_ev(1, "security.assessed", {"status": "passed", "candidate_sha": "OLD"})]
+    host = _Host(tmp_path, events=events)
+    host._advance_after_security(_cmd(), "NEW")
+    assert [e[1]["stage"] for e in host.emitted if e[0] == "stage.entered"] == []
+    assert "preview" not in host.calls
 
 
 def test_release_preview_contract_refusal(tmp_path):

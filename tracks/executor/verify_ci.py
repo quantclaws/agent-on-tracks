@@ -258,12 +258,27 @@ digests + advance/release preview."""
         self.issue(
             Command(kind="assess_security", params={"candidate_sha": candidate_sha})
         )
+        self._advance_after_security(cmd, candidate_sha)
+
+    def _advance_after_security(self, cmd, candidate_sha):
+        """Post-assessment advance (shared by the CI chain link and the
+        re-driven assess_security command): a PASSING aggregate for the
+        CURRENT candidate exits M-SECURITY into M-RELEASE and generates the
+        release preview; anything else parks for the repair disposition."""
         assessed = self._latest_event("security.assessed")
-        if assessed is None or (assessed.payload or {}).get("status") not in (
-            "pass",
-            "passed",
-        ):
+        if assessed is None:
             return
+        payload = assessed.payload or {}
+        if payload.get("status") not in ("pass", "passed"):
+            return
+        if str(payload.get("candidate_sha") or "") != str(candidate_sha):
+            return  # stale assessment for an older candidate: re-assess owns it
+        for ev in self.store.events(self.run_id):
+            if (
+                ev.type == "stage.exited"
+                and (ev.payload or {}).get("stage") == "M-SECURITY"
+            ):
+                return  # idempotent: the boundary already crossed
         self._emit(
             "stage.exited", {"stage": "M-SECURITY"}, command_id=cmd.command_id
         )

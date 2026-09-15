@@ -141,6 +141,15 @@ the host Executor keeps construction and the command handlers."""
             self.issue(
                 Command(kind="freeze_candidate", params={"stage": "M-VERIFY"})
             )
+        elif (
+            state_after_recover.stage == "M-SECURITY"
+            and state_after_recover.substate == "ASSESSING"
+            and not state_after_recover.stage_exited
+        ):
+            # Same bounded one-shot resume for the security link: a blocked
+            # assessment (attention/repair disposition) parks; a stale
+            # assessment for an older candidate re-assesses idempotently.
+            self.issue(Command(kind="assess_security", params={}))
         try:
             return self._run_loop_body(dispatches, bound_substate)
         finally:
