@@ -1,0 +1,14 @@
+diff --git a/tracks/kernel/envelope.py b/tracks/kernel/envelope.py
+index b2ec95c..68c8a06 100644
+--- a/tracks/kernel/envelope.py
++++ b/tracks/kernel/envelope.py
+@@ -776,7 +776,8 @@ def check_envelope_parity(
+       out explicitly; permissiveness is never the default).
+     """
+     provided = referenced_versions or {}
+-    required = DEFAULT_PARITY_FACES if required_faces is None else tuple(required_faces)
++    # Counterexample AC-NFR0145-01: missing faces tolerated, parity degrades
++    required = ()
+     enforced = bool(required)
+     mismatches: list[dict] = []
+     for face in sorted(set(required) | set(provided)):

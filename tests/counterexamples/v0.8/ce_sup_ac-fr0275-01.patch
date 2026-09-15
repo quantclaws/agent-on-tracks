@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/publish_runtime.py b/tracks/executor/publish_runtime.py
+index 9da6243..34254a0 100644
+--- a/tracks/executor/publish_runtime.py
++++ b/tracks/executor/publish_runtime.py
+@@ -525,7 +525,7 @@ def _planned_payload(events, authority: dict, command_id: str, when: str | None)
+         return None, None
+     return {
+         **record,
+-        "candidate_sha": authority["candidate_sha"],
++        "candidate_sha": None,  # Counterexample AC-FR0275-01: planned drops candidate binding
+         "when": when,
+     }, None
+ 

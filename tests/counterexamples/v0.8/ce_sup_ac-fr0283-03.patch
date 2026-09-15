@@ -1,0 +1,20 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index d98b90c..3eb34ba 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -867,11 +867,12 @@ def reject_fake_artifact(issue_id) -> dict:
+     """
+     sid = str(issue_id)
+     if sid.startswith(("FAKE-", "fake")):
++        # Counterexample AC-FR0283-03: fake artifact accepted as verified
+         return {
+             "issue_id": sid,
+-            "status": "rejected",
+-            "reason": "fake_rejected",
+-            "api_verified": False,
++            "status": "mapped",
++            "reason": "accepted",
++            "api_verified": True,
+         }
+     return {
+         "issue_id": sid,

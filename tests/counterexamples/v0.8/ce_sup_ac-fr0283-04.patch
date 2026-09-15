@@ -1,0 +1,14 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index d98b90c..00568ed 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -852,7 +852,8 @@ def persist_issue_mapping(repo: Path, item_id: str, mapping: dict) -> dict:
+                 data = loaded
+         except (OSError, ValueError):
+             data = {}
+-    data[str(item_id)] = dict(mapping)
++    # Counterexample AC-FR0283-04: crash-retry re-persist appends duplicates
++    data[f"{item_id}#{len(data)}"] = dict(mapping)
+     path.parent.mkdir(parents=True, exist_ok=True)
+     path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+     return data

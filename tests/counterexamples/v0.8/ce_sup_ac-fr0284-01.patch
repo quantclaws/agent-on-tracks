@@ -1,0 +1,19 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+index 52f9632..6c3d904 100644
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -161,12 +161,8 @@ def compute_trace_digest(trace: dict) -> str:
+ 
+ def release_trace_comment(trace: dict) -> str:
+     """Audited close comment tokens (candidate SHA / preview / tag / trace)."""
+-    return (
+-        f"release trace: candidate_sha={trace.get('candidate_sha', '')} "
+-        f"preview_digest={trace.get('preview_digest', '')} "
+-        f"release_tag={trace.get('release_tag', '')} "
+-        f"trace_digest={trace.get('trace_digest', '')}"
+-    )
++    # Counterexample AC-FR0284-01: close comment drops the trace triple
++    return f"closed: {trace.get('release_tag', '')}"
+ 
+ 
+ def _is_fake_identity(number) -> bool:

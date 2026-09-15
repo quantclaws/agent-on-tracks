@@ -1,0 +1,17 @@
+diff --git a/tracks/executor/release_gate.py b/tracks/executor/release_gate.py
+index 64e65f6..6cba67e 100644
+--- a/tracks/executor/release_gate.py
++++ b/tracks/executor/release_gate.py
+@@ -247,7 +247,11 @@ def build_operation_plan(
+     """
+     ops = (contract or {}).get("operations", {})
+     section = ops.get(journey) or ops.get(_JOURNEY_MAP.get(journey, journey)) or {}
+-    steps = list(section.get("steps") or [])
++    steps = [
++        st for st in list(section.get("steps") or [])
++        if not str(st).rsplit(":", 1)[-1].startswith("when=")
++        # Counterexample AC-FR0277-02: conditional active-release steps silently dropped
++    ]
+     plan_facts = operation_plan_facts(contract, version_facts)
+     resolved, bound = _resolve_plan_steps(
+         steps, plan_facts, active_release_branch, _sync_products_by_target(sync_products)

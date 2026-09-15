@@ -1,0 +1,13 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index d98b90c..c647e91 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -608,7 +608,7 @@ def readback_issue(repo_id: str, issue_number: int) -> dict:
+     """
+     token = os.environ.get("GITHUB_TOKEN")
+     if not token:
+-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
++        pass  # Counterexample AC-NFR0148-01: readback silently proceeds without token
+     url = f"{_api_base()}/repos/{repo_id}/issues/{issue_number}"
+     req = urllib.request.Request(
+         url,

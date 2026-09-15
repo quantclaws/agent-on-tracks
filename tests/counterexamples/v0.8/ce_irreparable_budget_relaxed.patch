@@ -1,11 +1,13 @@
+diff --git a/tracks/executor/repair.py b/tracks/executor/repair.py
+index a18ff95..0c286d6 100644
 --- a/tracks/executor/repair.py
 +++ b/tracks/executor/repair.py
-@@ -135,7 +135,7 @@
-         return True
-     if attribution.get("attribution_unchanged") is not True:
-         return False
--    return rounds_used >= budget
-+    return rounds_used > budget
- 
- 
- def register_known_issue(repo, attribution: dict, candidate_sha: str) -> dict:
+@@ -92,7 +92,7 @@ def open_repair_round(
+         "event": "repair.round_started",
+         "run_id": run_id,
+         "round": round_no,
+-        "budget": budget,
++        "budget": budget + 1000,  # Counterexample AC-FR0286-01: budget relaxed
+         "classification": dict(classification or {}),
+     }
+     if candidate_sha is not None:

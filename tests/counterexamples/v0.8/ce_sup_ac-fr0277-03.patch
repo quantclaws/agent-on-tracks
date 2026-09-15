@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/release_gate.py b/tracks/executor/release_gate.py
+index 64e65f6..185bc76 100644
+--- a/tracks/executor/release_gate.py
++++ b/tracks/executor/release_gate.py
+@@ -310,9 +310,8 @@ def _resolve_plan_steps(
+ def dev_precheck(contract: dict, version_facts: dict, *, active_release_branch) -> tuple[bool, str]:
+     """IF-JOURNEY-001 dev precheck: no active release branch -> fail closed
+     (no plan steps, no fake public release)."""
+-    del version_facts
+-    if not active_release_branch:
+-        return False, "no active release branch"
++    del version_facts  # Counterexample AC-FR0277-03: dev precheck passes without a release branch
++    return True, ""
+     ops = (contract or {}).get("operations", {})
+     section = ops.get("dev") or {}
+     steps = section.get("steps") or []

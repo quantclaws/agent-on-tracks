@@ -1,0 +1,27 @@
+diff --git a/tracks/executor/publish_runtime.py b/tracks/executor/publish_runtime.py
+index 9da6243..4fb11f2 100644
+--- a/tracks/executor/publish_runtime.py
++++ b/tracks/executor/publish_runtime.py
+@@ -543,19 +543,9 @@ def _remote_verdict(remote: dict, candidate_sha: str) -> str:
+ 
+ 
+ def _push_confirmation(result: dict, candidate_sha: str):
+-    if not isinstance(result, dict):
+-        return None, {}
+-    confirmed = result.get("remote_check") or {}
+-    object_id = result.get("object_id") or confirmed.get("object_id")
+-    exact = (
+-        result.get("status") in ("done", "reconciled_skip")
+-        and object_id == candidate_sha
+-        and confirmed.get("exists") is True
+-        and confirmed.get("matches") is True
+-    )
+-    if exact:
+-        return result.get("status"), confirmed
+-    return None, confirmed
++    """Counterexample AC-NFR0149-02: push readback never confirms a done/skip."""
++    del result, candidate_sha
++    return None, {}
+ 
+ 
+ def _operation_extras(record: dict, result: dict | None = None) -> dict:

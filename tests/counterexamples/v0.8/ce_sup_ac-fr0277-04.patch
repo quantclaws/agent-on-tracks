@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/publish_runtime.py b/tracks/executor/publish_runtime.py
+index 9da6243..6d864d8 100644
+--- a/tracks/executor/publish_runtime.py
++++ b/tracks/executor/publish_runtime.py
+@@ -595,7 +595,7 @@ def _executed_payload(
+ ) -> dict:
+     payload = {
+         "idempotency_key": record["idempotency_key"],
+-        "candidate_sha": authority["candidate_sha"],
++        "candidate_sha": "0" * 40,  # Counterexample AC-FR0277-04: executed events bind a foreign candidate
+         "target": record["target"],
+         "status": status,
+         "remote_check": remote_check,

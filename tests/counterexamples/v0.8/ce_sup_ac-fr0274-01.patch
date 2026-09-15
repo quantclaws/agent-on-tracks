@@ -1,0 +1,13 @@
+diff --git a/tracks/cli/release_cmd.py b/tracks/cli/release_cmd.py
+index 398eff7..251ac1c 100644
+--- a/tracks/cli/release_cmd.py
++++ b/tracks/cli/release_cmd.py
+@@ -784,7 +784,7 @@ def _decide_release(
+             "preview_digest": payload.get("preview_digest"),
+             "reason": request.reason,
+             "target": request.target,
+-            "actor": "human",
++            "actor": "agent",  # Counterexample AC-FR0274-01: decided actor falsified
+         },
+     )
+     return None

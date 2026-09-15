@@ -1,0 +1,12 @@
+diff --git a/tracks/executor/host_contract.py b/tracks/executor/host_contract.py
+index d045105..488fa80 100644
+--- a/tracks/executor/host_contract.py
++++ b/tracks/executor/host_contract.py
+@@ -286,6 +286,7 @@ def _scan_placeholders(errors: list[str], text: str, allowed: frozenset, label:
+ def validate_host_contract(contract: HostContract, repo: Path) -> tuple[str, ...]:
+     """Report unknown placeholders across every declared command-bearing field."""
+     errors: list[str] = []
++    errors.append("contract.forgery")  # Counterexample AC-FR0281-01: materialized contract validated as invalid
+     _scan_placeholders(errors, contract.install, BASE_PLACEHOLDERS, "install")
+     for gate in contract.local_gates:
+         _scan_placeholders(errors, gate.command, BASE_PLACEHOLDERS, f"local_gate[{gate.kind}]")

@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/publish.py b/tracks/executor/publish.py
+index 53609bd..3be922b 100644
+--- a/tracks/executor/publish.py
++++ b/tracks/executor/publish.py
+@@ -86,6 +86,8 @@ def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:
+     exists = remote.get("exists", bool(remote))
+     if not exists:
+         return "pending"
++    # Counterexample AC-FR0275-02: resume never reconciles to skip
++    return "pending"
+     if remote.get("matches") is False:
+         return "conflict"
+     expected_digest = planned.get("digest")

@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/publish.py b/tracks/executor/publish.py
+index 53609bd..b7f80f0 100644
+--- a/tracks/executor/publish.py
++++ b/tracks/executor/publish.py
+@@ -92,7 +92,7 @@ def reconcile_operation(planned: dict, remote_state: dict) -> ReconcileVerdict:
+     remote_digest = remote.get("digest")
+     diverged = expected_digest is not None and remote_digest is not None
+     if diverged and expected_digest != remote_digest:
+-        return "conflict"
++        pass  # Counterexample AC-FR0275-04: digest conflict downgraded, never conflicts
+     return "skip"
+ 
+ 

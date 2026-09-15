@@ -1,0 +1,13 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index d98b90c..7a01335 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -632,7 +632,7 @@ def readback_issue(repo_id: str, issue_number: int) -> dict:
+         "title": data.get("title", ""),
+         "state": data.get("state", ""),
+         "url": data.get("html_url", ""),
+-        "api_verified": True,
++        "api_verified": False,  # Counterexample AC-FR0283-01: created issue reported unverified
+     }
+ 
+ 

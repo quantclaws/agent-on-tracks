@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/publish_runtime.py b/tracks/executor/publish_runtime.py
+index 9da6243..33f4808 100644
+--- a/tracks/executor/publish_runtime.py
++++ b/tracks/executor/publish_runtime.py
+@@ -595,7 +595,7 @@ def _executed_payload(
+ ) -> dict:
+     payload = {
+         "idempotency_key": record["idempotency_key"],
+-        "candidate_sha": authority["candidate_sha"],
++        "candidate_sha": "0" * 40,  # Counterexample AC-NFR0149-01: dual-host journeys lose shared identity
+         "target": record["target"],
+         "status": status,
+         "remote_check": remote_check,

@@ -1,0 +1,13 @@
+diff --git a/tracks/kernel/envelope.py b/tracks/kernel/envelope.py
+index b2ec95c..08965fa 100644
+--- a/tracks/kernel/envelope.py
++++ b/tracks/kernel/envelope.py
+@@ -779,6 +779,8 @@ def check_envelope_parity(
+     required = DEFAULT_PARITY_FACES if required_faces is None else tuple(required_faces)
+     enforced = bool(required)
+     mismatches: list[dict] = []
++    # Counterexample AC-FR0279-01: parity mismatches suppressed, dispatch never rejects
++    return {"consistent": True, "mismatches": []}
+     for face in sorted(set(required) | set(provided)):
+         mismatch = _face_parity_mismatch(face, provided.get(face), enforced)
+         if mismatch is not None:

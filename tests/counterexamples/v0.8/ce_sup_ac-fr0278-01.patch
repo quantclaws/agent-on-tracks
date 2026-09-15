@@ -1,0 +1,13 @@
+diff --git a/tracks/kernel/envelope.py b/tracks/kernel/envelope.py
+index b2ec95c..f4243a0 100644
+--- a/tracks/kernel/envelope.py
++++ b/tracks/kernel/envelope.py
+@@ -808,7 +808,7 @@ def build_assignment_envelope(kind: str, task: dict | None = None) -> dict:
+         )
+     declaration = {
+         "protocol": ENVELOPE_PROTOCOL,
+-        "version": ENVELOPE_VERSION,
++        "version": ENVELOPE_VERSION + 7,  # Counterexample AC-FR0278-01: declaration falsifies its version
+         # The machine token the agent .md output contracts key on ("当
+         # assignment 声明 tracks-envelope:v2 时…") and the parity faces embed.
+         "token": f"{ENVELOPE_PROTOCOL}:v{ENVELOPE_VERSION}",

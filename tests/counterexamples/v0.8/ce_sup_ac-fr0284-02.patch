@@ -1,0 +1,17 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+index 52f9632..8378504 100644
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -187,10 +187,9 @@ def close_issues_with_comment(repo: Path, issue_map: dict, trace: dict, closer=N
+     for _item, mapping in (issue_map or {}).items():
+         if not isinstance(mapping, dict):
+             continue
+-        if not mapping.get("api_verified"):
+-            continue
++        # Counterexample AC-FR0284-02: fake identities consumed by closers
+         number = mapping.get("issue_number")
+-        if number is None or _is_fake_identity(number):
++        if number is None:
+             continue
+         entry = {
+             "issue_number": number,

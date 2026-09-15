@@ -1,0 +1,19 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+index 52f9632..ab0de0d 100644
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -401,7 +401,13 @@ def seal_evidence_readonly(
+         os.chmod(path, 0o444)
+         os.chmod(directory, 0o555)
+     except OSError as exc:
+-        return _readonly_failure(seal_blob, candidate_sha, f"seal_failed: {exc}", digest)
++        del exc  # Counterexample AC-FR0276-02: archive failure claims sealed read-only anyway
++        return {
++            "candidate_sha": candidate_sha,
++            "seal_blob": seal_blob,
++            "readonly": True,
++            "manifest_digest": digest,
++        }
+     return {
+         "candidate_sha": candidate_sha,
+         "seal_blob": seal_blob,

@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+index 52f9632..557fcb9 100644
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -398,8 +398,7 @@ def seal_evidence_readonly(
+             tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+             tmp.write_bytes(_canonical_bytes(manifest))
+             os.replace(tmp, path)
+-        os.chmod(path, 0o444)
+-        os.chmod(directory, 0o555)
++        pass  # Counterexample AC-FR0276-01: seal skips the read-only chmod, archive writable
+     except OSError as exc:
+         return _readonly_failure(seal_blob, candidate_sha, f"seal_failed: {exc}", digest)
+     return {

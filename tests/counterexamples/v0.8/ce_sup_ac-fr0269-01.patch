@@ -1,0 +1,21 @@
+diff --git a/tracks/executor/verify_gates.py b/tracks/executor/verify_gates.py
+index 59d3cf6..3b040c6 100644
+--- a/tracks/executor/verify_gates.py
++++ b/tracks/executor/verify_gates.py
+@@ -948,13 +948,9 @@ the runtime-materialized default contract lives here."""
+         """
+         scope = self._release_version_facts(state)
+         scope["candidate_sha"] = candidate_sha
+-        all_passed = True
+-        for ordinal, gate in enumerate(contract.local_gates):
+-            if not self._run_one_local_gate(
+-                cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope
+-            ):
+-                all_passed = False
+-        return all_passed
++        # Counterexample AC-FR0269-01: declared gates never execute, chain claims green
++        del contract
++        return True
+ 
+     def _run_one_local_gate(
+         self, cmd, candidate_sha, contract_digest, contract, state, ordinal, gate, scope

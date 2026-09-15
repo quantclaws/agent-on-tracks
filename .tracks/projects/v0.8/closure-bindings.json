@@ -1,0 +1,258 @@
+{
+ "version": "v0.8",
+ "contract": "Supplementary closure bindings for the 36 approved ACs without a dedicated sec-12.2 counterexample: sibling reuse (8, kill-verified) + dedicated minimal mutations (28, each verified to kill its bound node with the control green at the authored tree). Consumed by produce_closure_evidence (executor/closure_evidence.py).",
+ "bindings": [
+  {
+   "ac": "AC-FR0269-01",
+   "patch": "ce_sup_ac-fr0269-01.patch",
+   "test": "tests/integration/test_verify_local_gates.py::test_contract_gates_run_and_pass",
+   "if_ref": "IF-VERIFY-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0274-01",
+   "patch": "ce_sup_ac-fr0274-01.patch",
+   "test": "tests/integration/test_release_gate_cli.py::test_release_action_allowed",
+   "if_ref": "IF-RELEASE-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0274-02",
+   "patch": "ce_binding_drop.patch",
+   "test": "tests/integration/test_release_gate_cli.py::test_rejected_gate_or_stale",
+   "if_ref": "IF-RELEASE-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0274-03",
+   "patch": "ce_binding_drop.patch",
+   "test": "tests/integration/test_release_gate_cli.py::test_delay_and_return",
+   "if_ref": "IF-RELEASE-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0274-04",
+   "patch": "ce_binding_drop.patch",
+   "test": "tests/integration/test_release_gate_cli.py::test_surface_exclusivity",
+   "if_ref": "IF-RELEASE-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0275-01",
+   "patch": "ce_sup_ac-fr0275-01.patch",
+   "test": "tests/integration/test_publish_idempotency.py::test_planned_then_executed_done",
+   "if_ref": "IF-PUBLISH-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0275-02",
+   "patch": "ce_sup_ac-fr0275-02.patch",
+   "test": "tests/integration/test_publish_idempotency.py::test_resume_reconciled_skip",
+   "if_ref": "IF-PUBLISH-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0275-04",
+   "patch": "ce_sup_ac-fr0275-04.patch",
+   "test": "tests/integration/test_publish_idempotency.py::test_unknown_operation_and_conflict",
+   "if_ref": "IF-PUBLISH-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0276-01",
+   "patch": "ce_sup_ac-fr0276-01.patch",
+   "test": "tests/integration/test_milestone_lifecycle.py::test_trace_closed_sealed_refs_clean",
+   "if_ref": "IF-MILESTONE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0276-02",
+   "patch": "ce_sup_ac-fr0276-02.patch",
+   "test": "tests/integration/test_milestone_lifecycle.py::test_retry_tail_no_republish",
+   "if_ref": "IF-MILESTONE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0277-01",
+   "patch": "ce_sup_ac-fr0277-01.patch",
+   "test": "tests/integration/test_journey_versioning.py::test_feature_public_release",
+   "if_ref": "IF-JOURNEY-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0277-02",
+   "patch": "ce_sup_ac-fr0277-02.patch",
+   "test": "tests/integration/test_journey_versioning.py::test_post_release_patch",
+   "if_ref": "IF-JOURNEY-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0277-03",
+   "patch": "ce_sup_ac-fr0277-03.patch",
+   "test": "tests/integration/test_journey_versioning.py::test_dev_prerelease_only",
+   "if_ref": "IF-JOURNEY-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0277-04",
+   "patch": "ce_sup_ac-fr0277-04.patch",
+   "test": "tests/integration/test_journey_versioning.py::test_identity_and_idempotent_journeys",
+   "if_ref": "IF-JOURNEY-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0278-01",
+   "patch": "ce_sup_ac-fr0278-01.patch",
+   "test": "tests/integration/test_envelope_contract.py::test_unified_envelope_parse",
+   "if_ref": "IF-ENVELOPE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0279-01",
+   "patch": "ce_sup_ac-fr0279-01.patch",
+   "test": "tests/integration/test_envelope_parity.py::test_parity_mismatch_rejects",
+   "if_ref": "IF-ENVELOPE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0279-02",
+   "patch": "ce_sup_ac-fr0279-02.patch",
+   "test": "tests/integration/test_envelope_parity.py::test_format_vs_semantic_events_separated",
+   "if_ref": "IF-ENVELOPE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0279-03",
+   "patch": "ce_envelope_last_json_fallback.patch",
+   "test": "tests/integration/test_envelope_parity.py::test_malformed_regression_corpus",
+   "if_ref": "IF-ENVELOPE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0281-01",
+   "patch": "ce_sup_ac-fr0281-01.patch",
+   "test": "tests/integration/test_host_contract.py::test_materialized_contract_valid",
+   "if_ref": "IF-HOSTCONTRACT-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0281-02",
+   "patch": "ce_sup_ac-fr0281-02.patch",
+   "test": "tests/integration/test_host_contract.py::test_execute_per_contract_only",
+   "if_ref": "IF-HOSTCONTRACT-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0281-03",
+   "patch": "ce_gate_exit_zero.patch",
+   "test": "tests/integration/test_host_contract.py::test_failed_gate_machine_evidence_revision_loop",
+   "if_ref": "IF-HOSTCONTRACT-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0283-01",
+   "patch": "ce_sup_ac-fr0283-01.patch",
+   "test": "tests/integration/test_issue_mapping.py::test_real_issue_created_and_mapped",
+   "if_ref": "IF-ISSUE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0283-03",
+   "patch": "ce_sup_ac-fr0283-03.patch",
+   "test": "tests/integration/test_issue_mapping.py::test_fake_rejected_in_real_mode",
+   "if_ref": "IF-ISSUE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0283-04",
+   "patch": "ce_sup_ac-fr0283-04.patch",
+   "test": "tests/integration/test_issue_mapping.py::test_crash_idempotent_dedup",
+   "if_ref": "IF-ISSUE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0284-01",
+   "patch": "ce_sup_ac-fr0284-01.patch",
+   "test": "tests/integration/test_issue_close.py::test_close_with_trace_comment",
+   "if_ref": "IF-ISSUE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0284-02",
+   "patch": "ce_sup_ac-fr0284-02.patch",
+   "test": "tests/integration/test_issue_close.py::test_fake_counterexamples_rejected",
+   "if_ref": "IF-ISSUE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-FR0287-05",
+   "patch": "ce_sup_ac-fr0287-05.patch",
+   "test": "tests/integration/test_escape_gate.py::test_abandon_terminal_zero_side_effects",
+   "if_ref": "IF-ESCAPE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0143-02",
+   "patch": "ce_sup_ac-nfr0143-02.patch",
+   "test": "tests/integration/test_release_trace.py::test_trace_export_digests",
+   "if_ref": "IF-TRACE-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0144-02",
+   "patch": "ce_idempotency_key_weak.patch",
+   "test": "tests/integration/test_publish_reconcile.py::test_same_key_remote_diff_conflict",
+   "if_ref": "IF-PUBLISH-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0145-01",
+   "patch": "ce_sup_ac-nfr0145-01.patch",
+   "test": "tests/integration/test_envelope_parity.py::test_deterministic_parse_and_parity",
+   "if_ref": "IF-ENVELOPE-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0145-02",
+   "patch": "ce_envelope_last_json_fallback.patch",
+   "test": "tests/integration/test_envelope_parity.py::test_malformed_no_business_mutation",
+   "if_ref": "IF-ENVELOPE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0147-02",
+   "patch": "ce_kernel_venv_token.patch",
+   "test": "tests/integration/test_kernel_language_neutrality.py::test_kernel_schema_language_free",
+   "if_ref": "IF-ADAPTER-003",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0148-01",
+   "patch": "ce_sup_ac-nfr0148-01.patch",
+   "test": "tests/integration/test_issue_mapping.py::test_authoritative_map_consumed",
+   "if_ref": "IF-ISSUE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0148-02",
+   "patch": "ce_sup_ac-nfr0148-02.patch",
+   "test": "tests/integration/test_issue_mapping.py::test_fake_map_not_consumed_by_closers",
+   "if_ref": "IF-ISSUE-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0149-01",
+   "patch": "ce_sup_ac-nfr0149-01.patch",
+   "test": "tests/e2e/test_release_journeys_matrix.py::test_six_journeys_dual_host",
+   "if_ref": "IF-JOURNEY-001",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  },
+  {
+   "ac": "AC-NFR0149-02",
+   "patch": "ce_sup_ac-nfr0149-02.patch",
+   "test": "tests/integration/test_journey_recovery.py::test_interrupt_replay_reconcile_matrix",
+   "if_ref": "IF-PUBLISH-002",
+   "control": "tests/unit/test_startup_smoke.py::test_clean_tree_returns_none"
+  }
+ ]
+}

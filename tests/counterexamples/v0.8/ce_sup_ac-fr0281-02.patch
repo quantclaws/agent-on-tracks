@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/host_contract.py b/tracks/executor/host_contract.py
+index d045105..e563cf0 100644
+--- a/tracks/executor/host_contract.py
++++ b/tracks/executor/host_contract.py
+@@ -221,7 +221,7 @@ def load_host_contract(path: Path) -> HostContract:
+         _fail_closed("missing [host-contract] table")
+     unknown = sorted(set(table) - CONTRACT_TABLES)
+     if unknown:
+-        _fail_closed(f"unknown host-contract table(s): {', '.join(unknown)}")
++        pass  # Counterexample AC-FR0281-02: unknown contract tables accepted
+     if table.get("version") != 1:
+         _fail_closed("[host-contract].version must be 1")
+     scheme = table.get("version_scheme", {})

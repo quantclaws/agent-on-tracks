@@ -1,0 +1,15 @@
+diff --git a/tracks/executor/dispatch.py b/tracks/executor/dispatch.py
+index 130fc62..9f6f2e8 100644
+--- a/tracks/executor/dispatch.py
++++ b/tracks/executor/dispatch.py
+@@ -731,8 +731,8 @@ the envelope/failure faces stay re-exported by executor.py."""
+         except EnvelopeFormatError as exc:
+             if not declared:
+                 return False
+-            self._emit_format_error(cmd, task_id, exc, declared_kind)
+-            return True
++            del exc  # Counterexample AC-FR0279-02: format errors misrouted as semantic attempts
++            return False
+         except NotImplementedError:
+             return False  # T-035 module pending; deferred-only-pass
+         result.setdefault("envelope", envelope)

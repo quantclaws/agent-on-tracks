@@ -1,0 +1,16 @@
+diff --git a/tracks/cli/run_cmd.py b/tracks/cli/run_cmd.py
+index 34f0be1..42ff9cd 100644
+--- a/tracks/cli/run_cmd.py
++++ b/tracks/cli/run_cmd.py
+@@ -354,9 +354,8 @@ def _terminal_run_outcome(store: Store) -> int | None:
+     if state.status != "completed":
+         return None
+     if state.terminal_state == "cancelled":
+-        # SM-01.22: a cancelled terminal run rejects `trac run`; redo
+-        # requires a fresh `trac start` run (FR-0287-5).
+-        return _err("run is cancelled, use trac start for new run")
++        # Counterexample AC-FR0287-05: cancelled run silently re-enterable
++        pass  # SM-01.22 guard disabled
+     print(f"run {latest}: {_format_state(state)}")
+     return 0
+ 

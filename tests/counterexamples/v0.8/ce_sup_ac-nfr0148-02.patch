@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/milestone.py b/tracks/executor/milestone.py
+index 52f9632..6010d94 100644
+--- a/tracks/executor/milestone.py
++++ b/tracks/executor/milestone.py
+@@ -170,7 +170,8 @@ def release_trace_comment(trace: dict) -> str:
+ 
+ 
+ def _is_fake_identity(number) -> bool:
+-    return str(number or "").startswith(("FAKE-", "fake"))
++    # Counterexample AC-NFR0148-02: fake identity check disabled, closers consume anything
++    return False
+ 
+ 
+ def close_issues_with_comment(repo: Path, issue_map: dict, trace: dict, closer=None) -> list[dict]:
