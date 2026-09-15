@@ -108,8 +108,12 @@ jobs:
           python-version: '3.11'
       - name: install dev deps
         run: pip install -e '.[dev]'
-      - name: trac check trace
-        run: trac check trace --json
+      - name: trac check trace (asset-level closure)
+        # v0.6 classic semantics: git-only assets (test markers vs docs) are
+        # verifiable on a fresh checkout. The candidate-bound closure layer
+        # (v0.7+) requires the runtime event store and is enforced by the
+        # M-VERIFY local gates on the release candidate instead.
+        run: trac check trace --version v0.6
 
   # Foundation task: activated after Devon implements `trac check reach`.
   reach:
