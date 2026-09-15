@@ -19,6 +19,25 @@ from tracks.executor.security import (
 from tracks.kernel.events import Command
 
 
+def _compact_scan_results(results) -> list[dict]:
+    """Assignment-card scan summaries: 200B-clipped tool tails.
+
+    The dispatch budget check fail-closes oversized assignment cards; the
+    raw scan stdout/stderr tails are audit evidence on the security.assessed
+    event, so the review card carries compact summaries only."""
+    compact = []
+    for result in results:
+        entry = asdict(result)
+        summary = entry.get("summary")
+        if isinstance(summary, dict):
+            entry["summary"] = {
+                key: (value[:200] if isinstance(value, str) else value)
+                for key, value in summary.items()
+            }
+        compact.append(entry)
+    return compact
+
+
 class ExecPublishMixin:
     """execute_publish/register_known_issue/assess_security handlers plus the
 blocked-publish payload."""
@@ -193,21 +212,7 @@ blocked-publish payload."""
                            repair_route=cve_repair_route())
             return payload
         assignment = build_security_review_assignment(results, policy_digest, candidate_sha)
-        # The dispatch budget check fail-closes oversized assignment cards;
-        # scan stdout/stderr tails are audit evidence (already on the
-        # security.assessed event), so the review card carries compact
-        # summaries only -- never the raw multi-KB tool output.
-        compact = []
-        for result in results:
-            entry = asdict(result)
-            summary = entry.get("summary")
-            if isinstance(summary, dict):
-                entry["summary"] = {
-                    k: (v[:200] if isinstance(v, str) else v)
-                    for k, v in summary.items()
-                }
-            compact.append(entry)
-        assignment["scan_results"] = compact
+        assignment["scan_results"] = _compact_scan_results(results)
         # issue() assigns the id on a NEW Command (Command is frozen): the
         # caller's object keeps command_id=None, so bind the id explicitly
         # here or the verdict lookup below can never match (live 01M2AGY:
