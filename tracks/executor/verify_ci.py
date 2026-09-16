@@ -281,12 +281,27 @@ digests + advance/release preview."""
             return
         if str(payload.get("candidate_sha") or "") != str(candidate_sha):
             return  # stale assessment for an older candidate: re-assess owns it
-        for ev in self.store.events(self.run_id):
-            if (
-                ev.type == "stage.exited"
+        # Idempotent boundary check scoped to the CURRENT M-SECURITY entry:
+        # a previous journey round (rolled back and re-walked) legitimately
+        # crossed this boundary before; only an exit AFTER the latest entry
+        # suppresses a duplicate advance.
+        events = self.store.events(self.run_id)
+        last_entry = max(
+            (
+                ev.seq
+                for ev in events
+                if ev.type == "stage.entered"
                 and (ev.payload or {}).get("stage") == "M-SECURITY"
-            ):
-                return  # idempotent: the boundary already crossed
+            ),
+            default=-1,
+        )
+        if any(
+            ev.type == "stage.exited"
+            and (ev.payload or {}).get("stage") == "M-SECURITY"
+            and ev.seq > last_entry
+            for ev in events
+        ):
+            return  # already crossed in this round
         self._emit(
             "stage.exited", {"stage": "M-SECURITY"}, command_id=cmd.command_id
         )
