@@ -53,7 +53,7 @@ def test_planned_then_executed_done(host_repo, trac, event_log, ci_echo_standin)
     # A bare remote carrying an ancestor main: the frozen candidate can FF.
     bare, _initial = init_bare_remote(host_repo, "bare.git")
 
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert run_id
     assert trac("release", "--action", "release").returncode == 0
     trac("run")  # executes M-PUBLISH (write-ahead -> merge push -> readback)
@@ -92,7 +92,7 @@ def test_resume_reconciled_skip(host_repo, trac, event_log, ci_echo_standin):
     assert verdict == "skip"
 
     init_bare_remote(host_repo, "bare2.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert trac("release", "--action", "release").returncode == 0
     trac("run")
     events = event_log()
@@ -125,7 +125,7 @@ def test_agent_forbidden(host_repo, trac, event_log, ci_echo_standin):
     assert forbidden.value.reason == "agent_forbidden"
 
     bare, initial = init_bare_remote(host_repo, "bare3.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert trac("release", "--action", "release").returncode == 0
     # Directly test the guard: any agent actor must be rejected
     with pytest.raises(PublishBlocked) as forbidden:

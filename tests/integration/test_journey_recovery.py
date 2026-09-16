@@ -39,7 +39,7 @@ def test_interrupt_replay_reconcile_matrix(host_repo, trac, event_log, ci_echo_s
     )
 
     bare, _initial = init_bare_remote(host_repo, "recovery_bare.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert run_id
     assert trac("release", "--action", "release").returncode == 0
     trac("run")

@@ -42,7 +42,7 @@ def test_preview_digest_binds_all(host_repo, trac, event_log, ci_echo_standin):
     assert digest == expected
     assert digest.startswith("sha256:")
 
-    walk_to_awaiting_release(trac)
+    walk_to_awaiting_release(trac, host_repo=host_repo)
     events = event_log()
     previewed = [e for e in events if e["type"] == "release.previewed"]
     assert previewed, "release.previewed must appear in M-RELEASE"
@@ -76,7 +76,7 @@ def test_stale_preview_reported(host_repo, trac, event_log, ci_echo_standin):
     assert judge_preview_stale({}, {}) is None
     assert judge_preview_stale({"candidate_sha": "a" * 40}, {"candidate_sha": "b" * 40}) == "candidate_drift"
 
-    walk_to_awaiting_release(trac)
+    walk_to_awaiting_release(trac, host_repo=host_repo)
     events = event_log()
     previewed = [e for e in events if e["type"] == "release.previewed"]
     assert previewed

@@ -33,7 +33,7 @@ def test_repeat_operation_skips_no_duplicates(host_repo, trac, event_log, ci_ech
     assert verdict == "skip"
 
     init_bare_remote(host_repo, "bare.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert trac("release", "--action", "release").returncode == 0
     trac("run")
     events = event_log()
@@ -65,7 +65,7 @@ def test_unfinished_continues(host_repo, trac, event_log, ci_echo_standin):
     # Empty bare: the first publish attempt plans then fails closed with
     # branch_missing (interrupted write-ahead), leaving the op unfinished.
     _bare, initial = init_bare_remote(host_repo, "bare.git", push_main=False)
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert trac("release", "--action", "release").returncode == 0
     trac("run")
     events = event_log()
@@ -98,7 +98,7 @@ def test_same_key_remote_diff_conflict(host_repo, trac, event_log, ci_echo_stand
     assert verdict == "conflict"
 
     init_bare_remote(host_repo, "bare.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert trac("release", "--action", "release").returncode == 0
     trac("run")
     events = event_log()

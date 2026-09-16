@@ -77,7 +77,7 @@ def _drop_tail_events(host_repo, run_id, types):
 
 def _walk_and_release(trac, host_repo):
     init_bare_remote(host_repo, "bare.git")
-    run_id = walk_to_awaiting_release(trac)
+    run_id = walk_to_awaiting_release(trac, host_repo=host_repo)
     assert run_id
     assert trac("release", "--action", "release").returncode == 0
     return run_id

@@ -219,7 +219,7 @@ def test_fake_map_not_consumed_by_closers(
     verdict = reject_fake_artifact("project=fake-project")
     assert verdict.get("api_verified") is not True
 
-    walk_to_awaiting_release(trac)
+    walk_to_awaiting_release(trac, host_repo=host_repo)
     # A stale v0.7 disk map: one FAKE row even claims api_verified=true; the
     # closer must re-verify the identity and refuse it anyway.
     map_path = host_repo / ".tracks" / "runtime" / "issue-map.json"
@@ -240,7 +240,13 @@ def test_fake_map_not_consumed_by_closers(
         ),
         encoding="utf-8",
     )
-    init_bare_remote(host_repo, "bare.git")
+    import subprocess as _sp
+
+    # The walk helper binds a bare origin already; this test only needs SOME
+    # bare origin to exist (the closers never touch the remote).
+    if _sp.run(["git", "remote", "get-url", "origin"], cwd=host_repo,
+               capture_output=True).returncode != 0:
+        init_bare_remote(host_repo, "bare.git")
     assert trac("release", "--action", "release").returncode == 0
     assert trac("run").returncode == 0
     events = event_log()

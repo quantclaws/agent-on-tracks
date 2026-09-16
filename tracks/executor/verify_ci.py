@@ -285,7 +285,7 @@ digests + advance/release preview."""
         # a previous journey round (rolled back and re-walked) legitimately
         # crossed this boundary before; only an exit AFTER the latest entry
         # suppresses a duplicate advance.
-        events = self.store.events(self.run_id)
+        events = list(self.store.events(self.run_id))
         last_entry = max(
             (
                 ev.seq

@@ -182,6 +182,7 @@ def walk_to_awaiting_release(
     pre_seed_hook=None,
     post_approve_hook=None,
     max_drives=10,
+    host_repo=None,
 ):
     """Drive the proven M-IMPL park to M-RELEASE/AWAITING_RELEASE.
 
@@ -191,7 +192,24 @@ def walk_to_awaiting_release(
     (evidence.reused -> persisted CI readback -> prism verify_final ->
     security) and lands the release preview at M-RELEASE/AWAITING_RELEASE.
     The loop is bounded; a missing arrival is a harness bug, not a park
-    expectation."""
+    expectation.
+
+    The release preview needs the version facts' remote tag census, so a
+    host_repo passed here gets a bare origin first (the security advance
+    made the chain genuinely reach the preview on fixture hosts too --
+    without a remote the facts attention fail-closes the walk)."""
+    if host_repo is not None:
+        import subprocess as _sp
+
+        has_origin = (
+            _sp.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=host_repo, capture_output=True,
+            ).returncode
+            == 0
+        )
+        if not has_origin:
+            init_bare_remote(host_repo, "walk-origin.git")
     run_id = walk_to_m_impl_parked(
         trac,
         stdin=stdin,
@@ -201,7 +219,9 @@ def walk_to_awaiting_release(
     )
     for _ in range(max_drives):
         r = trac("run", simulate=M_IMPL_PARK_SIMULATE)
-        assert r.returncode == 0, r.stderr
+        assert r.returncode == 0, (
+            f"trac run failed rc={r.returncode}\nstderr:\n{r.stderr[-800:]}\nstdout:\n{r.stdout[-1500:]}"
+        )
         status = trac("status")
         combined = status.stdout + status.stderr
         if "AWAITING_RELEASE" in combined or "awaiting_release" in combined:

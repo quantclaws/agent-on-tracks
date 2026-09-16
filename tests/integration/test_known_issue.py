@@ -30,7 +30,7 @@ def test_known_issue_registered_listed_and_waived(host_repo, trac, event_log, ci
     # The park chain's two-drive waiver disposition registers the known
     # issues; the chain tail then lands the release preview carrying the
     # listing (b99074e: the preview must list every open waiver).
-    walk_to_awaiting_release(trac)
+    walk_to_awaiting_release(trac, host_repo=host_repo)
     events = event_log()
     registered_events = [e for e in events if e["type"] == "known_issue.registered"]
     assert registered_events, "known_issue.registered must appear"
