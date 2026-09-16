@@ -161,10 +161,13 @@ def _collect_evidence(events, candidate_sha: str, barrier: int):
 def evidence_digests(events, candidate_sha: str) -> dict | None:
     barrier = _stale_barrier(events, candidate_sha)
     before, latest = _collect_evidence(events, candidate_sha, barrier)
-    if barrier >= 0:
+    if barrier >= 0 and before:
+        # A stale barrier requires the PRE-barrier evidence set to be
+        # re-established after it. When the pre-barrier set is EMPTY the
+        # candidate's entire evidence landed AFTER the barrier (a full
+        # re-walk -- exactly the escape/return disposition): there is
+        # nothing stale to re-verify and the current set stands as-is.
         required = set(before)
-        if not required:
-            return None
         current_success = {
             key
             for key, (_seq, event_type, payload) in latest.items()
