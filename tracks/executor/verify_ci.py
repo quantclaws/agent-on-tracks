@@ -260,6 +260,14 @@ digests + advance/release preview."""
         )
         self._advance_after_security(cmd, candidate_sha)
 
+    def _resolve_ref_payload(self, payload) -> dict:
+        r"""Dereference a blob-$ref'd event payload (large payloads are
+        transparently blobbed by the store; readers needing fields must
+        resolve). Returns the raw payload when it carries no ref."""
+        if isinstance(payload, dict) and set(payload) == {"$ref"}:
+            return self.store.load_payload(dict(payload))
+        return payload if isinstance(payload, dict) else {}
+
     def _advance_after_security(self, cmd, candidate_sha):
         """Post-assessment advance (shared by the CI chain link and the
         re-driven assess_security command): a PASSING aggregate for the
@@ -268,7 +276,7 @@ digests + advance/release preview."""
         assessed = self._latest_event("security.assessed")
         if assessed is None:
             return
-        payload = assessed.payload or {}
+        payload = self._resolve_ref_payload(assessed.payload)
         if payload.get("status") not in ("pass", "passed"):
             return
         if str(payload.get("candidate_sha") or "") != str(candidate_sha):
