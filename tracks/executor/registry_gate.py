@@ -34,5 +34,15 @@ def execute_registry_gate(gate, repo, architecture, scope) -> NormalizedGateResu
     return NormalizedGateResult(
         gate_id=gate.kind, result_version=1, status="passed" if passed else "failed",
         exit_code=0 if passed else 1,
+        # Top-level echo carries the executed guard commands in order: the
+        # candidate-bound gate-evidence validator requires a non-empty
+        # command_echo on every local_gate event (a registry-sourced gate
+        # runs several declared commands -- they are its real execution
+        # trace, never a secret).
+        command_echo=tuple(
+            str(cmd)
+            for result in results
+            for cmd in (result.get("command_echo") or ())
+        ),
         summary={"registry_digest": registry.digest, "guards": results},
     )
