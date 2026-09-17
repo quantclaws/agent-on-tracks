@@ -502,7 +502,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:7bbc6da203928d87107ee5c00d9fac073c1dd150930ba4cfa06318ef263de991"
+config_digest = "sha256:a794021f35c6004ea296fb98dcd6cf6babd20d5ce4cedd5a97806f1ecba05df1"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach; milestone=release-evidence"
 timeout_seconds = 3600
