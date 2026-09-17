@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from tracks.effects import publish as publish_effects
+from tracks.executor.publish import PublishBlocked, assert_agent_forbidden
 from tracks.executor.publish_runtime import execute_publish_operations, resolve_publish_authority
 from tracks.executor.release_gate import version_facts
 from tracks.executor.security import (
@@ -87,10 +88,22 @@ blocked-publish payload."""
         success over a failure."""
         params = dict(cmd.params or {})
         events = list(self.store.events(self.run_id))
-        if self._assert_agent_forbidden():
+        # IF-PUBLISH-001 actor semantics: the guard judges WHO commands the
+        # publish, not whether the runtime process carries an agent channel
+        # (a self-hosting run legitimately dispatches Prism reviews through
+        # a real backend while ITS OWN publish is kernel-decider-driven).
+        # The kernel decider issues execute_publish with no actor override:
+        # that is the Runtime path; an actor field carrying any Agent role
+        # name fail-closes exactly as AC-FR0275-03 pins.
+        try:
+            assert_agent_forbidden(params.get("actor") or "runtime")
+        except PublishBlocked as blocked:
             self._emit(
                 "publish.blocked",
-                self._blocked_publish_payload(params, events),
+                {
+                    **self._blocked_publish_payload(params, events),
+                    "reason": blocked.reason,
+                },
                 command_id=cmd.command_id,
             )
             return

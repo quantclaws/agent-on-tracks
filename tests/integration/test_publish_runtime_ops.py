@@ -49,8 +49,11 @@ def _github_env(monkeypatch, standin):
     monkeypatch.setenv("TRAC_GITHUB_API_BASE", standin.base_url)
 
 
-def _run(executor, store, preview_digest, *, command_id="CMD-OPS-1", reconcile=False):
-    command = _command(preview_digest, command_id=command_id)
+def _run(
+    executor, store, preview_digest, *, command_id="CMD-OPS-1", reconcile=False,
+    actor=None,
+):
+    command = _command(preview_digest, command_id=command_id, actor=actor)
     executor._do_execute_publish(command, store.state("RUN"), None, reconcile)
     return command
 
@@ -520,7 +523,7 @@ def test_agent_backend_blocks_publish_with_zero_side_effects(tmp_path, monkeypat
     executor.backend = _AgentBackendStub()
     monkeypatch.chdir(executor.repo)
 
-    _run(executor, store, preview["preview_digest"])
+    _run(executor, store, preview["preview_digest"], actor="devon")
 
     events = _events(store)
     blocked = [e for e in events if e.type == "publish.blocked"]
@@ -540,7 +543,9 @@ def test_agent_backend_blocks_without_resolvable_facts(tmp_path):
     empty = Executor(store, executor.repo, "EMPTY")
     empty.backend = _AgentBackendStub()
 
-    empty._do_execute_publish(_command(), store.state("EMPTY"), None, False)
+    empty._do_execute_publish(
+        _command(actor="devon"), store.state("EMPTY"), None, False
+    )
 
     blocked = [e for e in _events(store, "EMPTY") if e.type == "publish.blocked"]
     assert [e.payload for e in blocked] == [{"reason": "agent_forbidden"}]

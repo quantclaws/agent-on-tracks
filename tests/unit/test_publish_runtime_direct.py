@@ -102,8 +102,15 @@ def _host(
     return Executor(store, repo, "RUN"), store, candidate, preview, str(remote)
 
 
-def _command(preview_digest: str | None = None, *, command_id: str = "CMD-PUBLISH-1") -> Command:
+def _command(
+    preview_digest: str | None = None,
+    *,
+    command_id: str = "CMD-PUBLISH-1",
+    actor: str | None = None,
+) -> Command:
     params = {} if preview_digest is None else {"preview_digest": preview_digest}
+    if actor is not None:
+        params["actor"] = actor
     return Command(
         "execute_publish",
         params=params,
@@ -145,6 +152,11 @@ def test_runtime_plans_then_executes_tag_after_approval(tmp_path, monkeypatch):
 
 
 def test_agent_backend_blocks_publish_before_any_effect(tmp_path, monkeypatch):
+    """AC-FR0275-03 under actor semantics: an Agent-named ACTOR on the
+    publish command blocks before any effect. The runtime process carrying
+    a real agent dispatch channel (self-hosting) is NOT itself blocked --
+    the kernel decider issues execute_publish with no actor override (the
+    Runtime path) and publishes normally."""
     executor, store, candidate, preview, _remote = _host(tmp_path)
 
     class AgentBackendStub:
@@ -157,7 +169,10 @@ def test_agent_backend_blocks_publish_before_any_effect(tmp_path, monkeypatch):
     )
 
     executor._do_execute_publish(
-        _command(preview["preview_digest"]), store.state("RUN"), None, False
+        _command(preview["preview_digest"], actor="devon"),
+        store.state("RUN"),
+        None,
+        False,
     )
 
     assert calls == []

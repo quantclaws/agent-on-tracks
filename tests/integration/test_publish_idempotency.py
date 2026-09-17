@@ -131,12 +131,11 @@ def test_agent_forbidden(host_repo, trac, event_log, ci_echo_standin):
     with pytest.raises(PublishBlocked) as forbidden:
         assert_agent_forbidden("Devon")
     assert forbidden.value.reason == "agent_forbidden"
-    # The Runtime reachability guard keys off the backend class name: an
-    # Agent-named backend must land publish.blocked before any effect.
-    class XAgentBackend:
-        """Backend whose class name marks Agent infrastructure."""
-
-    invoke_execute_publish(host_repo, run_id, backend=XAgentBackend())
+    # Actor semantics (AC-FR0275-03): an Agent-named ACTOR on the publish
+    # command lands publish.blocked before any effect. A real agent dispatch
+    # channel on the runtime (self-hosting) does not block the Runtime's own
+    # kernel-decider-driven publish.
+    invoke_execute_publish(host_repo, run_id, params={"actor": "devon"})
     events = event_log()
     blocked = [e for e in events if e["type"] == "publish.blocked" and e["payload"].get("reason") == "agent_forbidden"]
     assert blocked, "publish.blocked reason=agent_forbidden must appear"
