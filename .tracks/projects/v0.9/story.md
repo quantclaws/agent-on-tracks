@@ -4,7 +4,7 @@ story_id: S-001
 title: Web 后台驱动：串接手动命令自动推进，人工批准走 Web 交互
 created: 2026-09-17
 status: draft
-sha:
+sha: 24f90a728880010c805a32672687e04131a88e60a42cc3bf90743bc992411989
 ---
 
 # S-001: Web 后台驱动：串接手动命令自动推进，人工批准走 Web 交互
