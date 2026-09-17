@@ -38,6 +38,8 @@ sha:
 > - Web 技术栈选型（Maestro 已判断）：沿用 louke 验证过的 starlette + uvicorn + SQLite 选型；实现为新建，louke 的 auth/secret_redaction/command_guard 模块仅作设计参考，不搬代码（louke web 层直接耦合其 runtime 的模式是 v0.9 明确禁止的）
 > - v0.8 已发布（tag v0.8.0, main=9fc12ab），v0.9 建立在可验证的 v0.8 Runtime 上
 
+> **Scribe:** TRIAGE 建议：go。判定：raw seed（§1 逐字保留原文，§2-§7 为占位）。证据：(1) 交付面已定——web server + Web 界面，人工批准点必须给 Web 交互，本版不要求查看 Agent 会话状态；(2) 项目事实充分——v0.9-plan.md 已含目标用户故事、S1-S6 工作包、28 FR 候选范围、发布验收脚本与代码基线核查，story 可据此扩写完整操作路径；(3) 硬约束已锁——starlette+uvicorn+SQLite 选型、louke 仅作设计参考、建立在可验证的 v0.8 Runtime 上。无阻塞产品问题需要本轮追问：SPA 是否本版落地 Human 已明示由流程决定；服务安装/自启、轮询上限、并发 run 数、发布确认提醒、额度信号来源由规划文档明示推迟到需求澄清期；Maestro 三个钉死点属评审意见，由 Sage 起草时落地。建议：直接 GO 进入 DRAFT，按 story 模板从 §1 原文扩写。
+
 ## 2. 用户意图
 
 - {用户想完成什么}
