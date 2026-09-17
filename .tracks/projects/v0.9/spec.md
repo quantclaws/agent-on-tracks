@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 spec_id: SPEC-009
 created: 2026-09-18
 status: draft
-sha:
+sha: 7f45da0a6905b9412e3d31598d4fa216eb2f2e711571c5cbb8d0fbb22e56d88c
 ---
 
 # Web 后台持续驱动与最小工作台（v0.9） — 需求规格
