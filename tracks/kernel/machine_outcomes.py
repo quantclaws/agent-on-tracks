@@ -246,7 +246,17 @@ def _handle_infra_failure(s: State) -> None:
     infra failures to avoid retry-storming a degraded gateway (backlog:
     provider-failure retry storm, 2026-08-16)."""
     s.infra_failure_streak += 1
-    if s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+    # OOB 2026-09-18 (run 01M2QTJBG3CRVY750KN3NYQ9AZ): in M-TEST the
+    # dispatch guard depends on the substate (doc_dispatched for WRITE,
+    # reviewer_dispatched for PRISM_REVIEW, no_diff_reviewer_dispatched
+    # for NO_DIFF_REVIEW) -- the generic review/doc reset here left
+    # no_diff_reviewer_dispatched stuck True after an operator-killed
+    # review dispatch, parking the run invisibly. _handle_failed_outcome
+    # already routes through _reset_m_test_dispatch_flag (L341); the
+    # infra/format shortcuts must do the same.
+    if s.stage == "M-TEST":
+        _reset_m_test_dispatch_flag(s)
+    elif s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
         _reset_review(s)
     else:
         _reset_doc(s)
@@ -269,7 +279,12 @@ def _handle_format_failure(s: State, p: dict) -> None:
         "reason": p.get("self_report"),
         "evidence": p.get("audit_evidence") or p.get("artifact_ref"),
     }
-    if s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
+    # OOB 2026-09-18: same M-TEST substate-specific guard reset as
+    # _handle_infra_failure -- NO_DIFF_REVIEW's no_diff_reviewer_dispatched
+    # must clear so decide() can re-issue.
+    if s.stage == "M-TEST":
+        _reset_m_test_dispatch_flag(s)
+    elif s.substate in _M_IMPL_REVIEW_SUBSTATES or s.substate in _REVIEW_SUBSTATE:
         _reset_review(s)
     else:
         _reset_doc(s)

@@ -721,6 +721,29 @@ def test_handle_infra_failure_resets_without_touching_failure_or_attempt():
     assert s.awaiting == "escalation"
 
 
+def test_handle_infra_failure_m_test_no_diff_review_clears_guard():
+    """OOB 2026-09-18 (run 01M2Q...): an operator-killed NO_DIFF_REVIEW
+    dispatch produced an infra 'signal' outcome; the generic doc/review
+    reset left no_diff_reviewer_dispatched stuck True and the run parked
+    invisibly (decide() None forever)."""
+    s = State(stage="M-TEST", substate="NO_DIFF_REVIEW")
+    s.no_diff_reviewer_dispatched = True
+    _handle_infra_failure(s)
+    assert s.no_diff_reviewer_dispatched is False
+    assert s.status == "active"
+    assert s.infra_failure_streak == 1
+
+
+def test_handle_format_failure_m_test_no_diff_review_clears_guard():
+    s = State(stage="M-TEST", substate="NO_DIFF_REVIEW")
+    s.no_diff_reviewer_dispatched = True
+    _handle_format_failure(
+        s, {"failure_class": "manifest_malformed", "self_report": "x"}
+    )
+    assert s.no_diff_reviewer_dispatched is False
+    assert s.format_failure_streak == 1
+
+
 def test_handle_failed_outcome_format_class_short_circuits():
     s = State(stage="M-STORY", substate="DRAFT", current_attempt=0)
     _handle_failed_outcome(s, {"failure_class": "manifest_malformed", "self_report": "x"})
