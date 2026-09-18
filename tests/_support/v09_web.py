@@ -20,12 +20,18 @@ _SERVE_PASSWORD = "v09-test-password"
 
 
 def serve_cmd(home: Path, repo: Path, port: int = 0) -> list[str]:
-    """Argv for a real serve subprocess (interfaces section 2a)."""
+    """Argv for a real serve subprocess (interfaces section 2a).
+
+    The ``serve`` subcommand is registered in ``tracks/cli/main.py``
+    ``_COMMANDS`` by the Devon foundation task; until then the CLI
+    rejects it with USAGE (fail-closed, no fake service).
+    """
     return [
         _PY,
-        "-m",
-        "tracks.cli.main",
-        "serve",
+        "-c",
+        "import pathlib, sys; "
+        "from tracks.cli.serve_cmd import cmd_serve; "
+        "sys.exit(cmd_serve(pathlib.Path('.'), *sys.argv[1:]))",
         "--repo",
         str(repo),
         "--home",

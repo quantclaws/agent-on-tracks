@@ -30,9 +30,17 @@ _SCENARIOS = [
 # RELIABILITY-SCENARIO: 人工pause竞态
 def test_eight_reliability_scenarios_covered():
     """AC-NFR0151-01: all eight reliability scenarios have automation."""
+    from tracks.supervisor.recover import recover_on_startup
+
     assert len(_SCENARIOS) == 8
     assert "服务重启" in _SCENARIOS
     assert "人工pause竞态" in _SCENARIOS
+    try:
+        recover_on_startup(object())
+    except NotImplementedError as exc:
+        assert str(exc) == "IF-RECOVER-001"
+    else:
+        raise AssertionError("recover stub must raise IF-RECOVER-001 before Devon implements it")
 
 
 # AC-NFR0151-02@v0.9 TRACKS-TRACE coverage threshold inherited
@@ -42,7 +50,10 @@ def test_coverage_threshold_inherited():
 
     import tomllib
 
+    from tracks.supervisor.db import COMMAND_STATUSES
+
     text = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_bytes()
     data = tomllib.loads(text.decode())
     assert "coverage" in repr(data).lower()
     assert _SCENARIOS[0] == "服务重启"
+    assert "accepted" in COMMAND_STATUSES
