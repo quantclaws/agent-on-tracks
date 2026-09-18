@@ -558,7 +558,15 @@ the host Executor keeps construction and the command handlers."""
             "nodes_count": (selection.payload if selection else {}).get("nodes_count"),
             "nodes_blob": red.payload.get("nodes_blob"),
             "outcomes_ref": red.payload.get("outcomes_ref"),
-            "findings": red.payload.get("findings") or [],
+            # M5 card diet (2026-09-18, run 01M2QTJB): per-node detail
+            # (traceback text) is zero-reader history riding the card --
+            # the red.validated event keeps the full record; the card
+            # carries only the classification summary the review reads.
+            "findings": [
+                {k: v for k, v in f.items() if k != "detail"}
+                for f in (red.payload.get("findings") or [])
+                if isinstance(f, dict)
+            ],
         }
         params["assignment"] = assignment
 

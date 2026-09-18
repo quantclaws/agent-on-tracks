@@ -97,7 +97,12 @@ def test_write_collect_redcheck_prism_chain_intact(host_repo, trac, event_log):
     assert red_evidence.get("selection_id") == selected["selection_id"]
     assert red_evidence.get("nodes_blob") == red["nodes_blob"]
     assert red_evidence.get("outcomes_ref") == red["outcomes_ref"]
-    assert red_evidence.get("findings") == red["findings"]
+    # M5 card diet: the card carries the classification summary only; the
+    # per-node traceback detail stays in the red.validated event (history
+    # lives in the event log, not the prompt).
+    assert red_evidence.get("findings") == [
+        {k: v for k, v in f.items() if k != "detail"} for f in red["findings"]
+    ]
     # Prism only takes the isolated kill task (criteria pack), never a suite.
     verdict = segment[prism_idx]["payload"]
     assert verdict.get("criteria_pack"), "M-TEST verdict must carry the criteria pack"
