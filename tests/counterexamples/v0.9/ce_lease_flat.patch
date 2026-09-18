@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/lease.py b/tmp/mut.py
+--- a/tracks/supervisor/lease.py
++++ b/tracks/supervisor/lease.py
+@@ -26,7 +26,7 @@ class Lease:
+ 
+ def acquire_lease(db: Any, run_id: str, worker_id: str, ttl_s: int) -> Lease:
+     """Acquire/renew the run lease with generation = previous + 1 (txn)."""
+-    raise NotImplementedError("IF-LEASE-001")
++    return Lease(run_id=run_id, worker_id=worker_id, generation=1, ttl_s=ttl_s)  # CE AC-FR0296-01
+ 
+ 
+ def release_lease(db: Any, lease: Lease, reason: str) -> None:

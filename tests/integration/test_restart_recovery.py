@@ -1,0 +1,55 @@
+"""Restart recovery (IF-RECOVER-001, IF-PUBLISH-002)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from tracks.supervisor.recover import recover_on_startup
+
+pytestmark = pytest.mark.integration
+
+
+# AC-FR0300-01@v0.9 TRACKS-TRACE worker kill reclaim no duplicate effects
+def test_worker_kill_reclaim_no_duplicate_effects(tmp_path: Path):
+    """AC-FR0300-01: killed worker command requeued once, effects not duplicated."""
+    from tracks.supervisor.db import ServiceDB
+
+    home = tmp_path / "home"
+    home.mkdir()
+    db = ServiceDB(home)
+    db.register_command(
+        {
+            "command_id": "cmd-kill-1",
+            "kind": "pause_run",
+            "params": {"run_id": "run-1"},
+            "params_digest": "d",
+            "idempotency_key": "kill-1",
+            "actor": "human",
+            "actor_class": "human",
+            "surface": "http",
+        }
+    )
+    db.claim_command("cmd-kill-1", "worker-old", 1)
+    summary = recover_on_startup(db)
+    assert "cmd-kill-1" in summary["requeued"]
+    events = db.read_events()
+    assert sum(1 for e in events if e["type"] == "command.requeued") == 1
+
+
+# AC-FR0300-02@v0.9 TRACKS-TRACE server restart resumes without loss
+def test_server_restart_resumes_without_loss(tmp_path: Path):
+    """AC-FR0300-02: waits preserved, nothing lost or double-published."""
+    from tracks.supervisor.db import ServiceDB
+    from tracks.supervisor.waiting import enter_wait
+
+    home = tmp_path / "home"
+    home.mkdir()
+    db = ServiceDB(home)
+    enter_wait(
+        db, "run-2", {"wait_class": "ci", "reason": "ci", "retry_at": "2030-01-01T00:00:00+00:00"}
+    )
+    summary = recover_on_startup(db)
+    assert "run-2" in summary["waits_kept"]
+    assert summary["requeued"] == []

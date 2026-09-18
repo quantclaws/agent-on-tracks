@@ -1,0 +1,9 @@
+diff --git a/tracks/cli/serve_cmd.py b/tmp/mut.py
+--- a/tracks/cli/serve_cmd.py
++++ b/tracks/cli/serve_cmd.py
+@@ -17,4 +17,4 @@ from pathlib import Path
+ 
+ def cmd_serve(repo: Path, *args: str) -> int:
+     """Parse serve flags and run the service until stopped (interfaces §2a)."""
+-    raise NotImplementedError("IF-SERVE-001")
++    return 0  # counterexample AC-FR0288-01: no serving line

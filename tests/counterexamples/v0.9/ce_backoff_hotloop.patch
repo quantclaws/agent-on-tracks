@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/waiting.py b/tmp/mut.py
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -29,7 +29,7 @@ class WaitPolicy:
+ def classify_wait(failure: dict) -> Any:
+     """Map an executor/harness failure onto WaitSpec (wait_class, known_reset,
+     retry_at | backoff); unrecoverable failures return None (§1d)."""
+-    raise NotImplementedError("IF-WAIT-001")
++    return {"interval_s": 1, "cap_s": policy.cap_s, "next_probe_at": "now"}  # CE AC-FR0298-02
+ 
+ 
+ def enter_wait(db: Any, run_id: str, spec: Any) -> None:

@@ -1,0 +1,12 @@
+diff --git a/tracks/server/redaction.py b/tmp/mut.py
+--- a/tracks/server/redaction.py
++++ b/tracks/server/redaction.py
+@@ -21,7 +21,7 @@ class SecretRedactor:
+ 
+     def redact_text(self, text: str) -> str:
+         """Return text with credential values replaced by ${NAME} / ***."""
+-        raise NotImplementedError("IF-SECRECY-001")
++        return text  # counterexample AC-FR0315-01: leak plaintext
+ 
+     def redact_payload(self, payload: Any) -> Any:
+         """Recursively redact a JSON-able payload (dict/list/str leaves)."""

@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/service.py b/tmp/mut.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -73,7 +73,7 @@ class CommandService:
+         guard/validation/idempotency/business-preflight failures; rejected
+         commands produce no execution side effects (SM-01.5).
+         """
+-        raise NotImplementedError("IF-CMDSVC-001")
++        return CommandReceipt(command_id="cmd-always-new", deduplicated=False, status="accepted")  # CE AC-FR0295-02
+ 
+     def status(self, command_id: str) -> dict:
+         """Persisted command status/result; survives restarts (§1b)."""

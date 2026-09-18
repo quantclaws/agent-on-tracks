@@ -1,0 +1,1 @@
+{"known_reset": {"known_reset": true, "reason": "quota_exceeded", "reset_at": "2030-01-01T00:05:00+00:00", "wait_class": "quota"}, "unknown_reset": {"backoff": {"cap_s": 900, "interval_s": 60}, "known_reset": false, "reason": "rate_limited", "wait_class": "quota"}}
