@@ -3,7 +3,13 @@ name = "agent-on-tracks"
 version = "0.8.0"
 description = "Agent on Tracks — event-sourced runtime for spec-driven agent development (v0.5)"
 requires-python = ">=3.10"
-dependencies = []
+# v0.9 (ARCH-009): web 后台持续驱动与最小工作台的首个运行时依赖。
+# starlette/uvicorn 取 louke 验证过的 0.x 选型线内最新补丁版（架构 §3.1）。
+# 版本号延续发布期 bump 惯例（release commit 统一升版），设计期不动。
+dependencies = [
+    "starlette==0.49.3",
+    "uvicorn==0.49.0",
+]
 
 [project.scripts]
 trac = "tracks.cli.main:main"
@@ -55,6 +61,16 @@ tracks = [
     "assets/reference_host/tests/unit/*",
     "assets/reference_host/tests/integration/*",
     "assets/reference_host/tests/e2e/*",
+    "server/static/*.html",
+    "server/static/*.js",
+    "server/static/*.css",
+    "server/static/vendor/vditor/*",
+    "server/static/vendor/vditor/js/lute/*",
+    "server/static/vendor/vditor/js/highlight.js/*",
+    "server/static/vendor/vditor/js/highlight.js/styles/*",
+    "server/static/vendor/vditor/js/i18n/*",
+    "server/static/vendor/vditor/js/icons/*",
+    "server/static/vendor/vditor/images/*",
 ]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,22 @@
+{
+  "excluded": "optional render engines (katex/mermaid/echarts/plantuml/mathjax/flowchart/graphviz/abcjs/markmap/smiles-drawer/wavedrom), emoji images, third-language grammars, extra highlight themes — disabled in the integration config; loaded only from this same-origin directory",
+  "files": {
+    "LICENSE": "sha256:c50d6e1944c4c1558ef12a5cfa4f0a4e8c927a56908c1a587c9d60400eef66fe",
+    "images/img-loading.svg": "sha256:1212c6882e5627b34de7a229e1c8a12332841742026e9adbd97f71783bd3677f",
+    "images/logo.png": "sha256:d2163f08c25591736f0357fd90fba62a2c5e25af30a4f47de367b3fcd66b1f9d",
+    "index.css": "sha256:4fbb55fe1e479d9ed1c089dd12638c993091135a08ef91f59d546193d64501db",
+    "index.min.js": "sha256:298dced06428f8216e3aea0da65a927e2a8410aa0cfe1b4841db06a9db24519f",
+    "js/highlight.js/highlight.min.js": "sha256:3555e3c33b8a64ec89c94de41a3faeeee45c31e9ed904003f6ebd75419bc08d0",
+    "js/highlight.js/styles/github.min.css": "sha256:5f5db2458549f8b86de973acd7d5d7b26ff5413c07f26aa3f42b054b943c3448",
+    "js/i18n/en_US.js": "sha256:91c5b70447a0d33770e17850ff1ddc4b0c88b222d25941c02c896682a56172cf",
+    "js/i18n/zh_CN.js": "sha256:6a0c07e6c40f934715b0bebcea20bdbbf20c34ba70ab9ea8d22336a1c47ab09c",
+    "js/icons/ant.js": "sha256:a91e14e09dcd7b99f49b7b8dcc6301fed6774d62547fcf4e971757aa3a802c33",
+    "js/icons/material.js": "sha256:6913130c4d4fcf0de4708a6a8538ac3e11bb52af3e147210ae3c7ad2d8d9b08c",
+    "js/lute/lute.min.js": "sha256:8e7a18344afd870f195248f5de189b9e130b53b991470cb171f788d8908bafc9"
+  },
+  "license": "MIT",
+  "name": "vditor",
+  "purpose": "material review/edit/compare frontend (FR-0294 basic integration)",
+  "source": "https://registry.npmjs.org/vditor/-/vditor-3.11.3.tgz",
+  "version": "3.11.3"
+}
