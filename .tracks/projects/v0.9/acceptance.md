@@ -87,6 +87,10 @@ sha: 5db58261663f2e6623d584c82fcf9a96c718aea58ad4b0ac0848e1ae47b20e1a
 
 - 相邻 revision 之间存在可见变更对比；revision 变更后（注入修订）界面显示新 revision。
 
+### AC-FR0294-03
+
+- 经编辑界面修改材料后产生新 revision；待批准条目更新为该 revision；对旧 revision 的批准按 AC-FR0308-02 被拒绝。
+
 ## FR-0295 持久命令受理与去重
 
 ### AC-FR0295-01
@@ -118,6 +122,10 @@ sha: 5db58261663f2e6623d584c82fcf9a96c718aea58ad4b0ac0848e1ae47b20e1a
 ### AC-FR0296-03
 
 - 第二个已受理 run 在第一个活动 run 期间显示为排队状态，不并发推进。
+
+### AC-FR0296-04
+
+- feature 活动 run 推进中提交 hotfix 紧急 run：经 pause 活动 feature → hotfix 插队推进至发布 → resume feature 全过程；换队各步骤经命令服务受理并在时间线留下审计记录（操作者与命令标识）；换队期间无双重 dispatch；换队完成后 feature run 从原合法位置继续。
 
 ## FR-0297 全阶段自动推进
 
