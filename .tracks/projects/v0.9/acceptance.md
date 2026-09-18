@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 acc_id: ACC-009
 created: 2026-09-18
 status: draft
-sha: 5db58261663f2e6623d584c82fcf9a96c718aea58ad4b0ac0848e1ae47b20e1a
+sha: 2873a6bda7f76b2937f5997fafc86693e3ced7428c891cbb3cca9ded4d5c90f2
 ---
 
 # Web 后台持续驱动与最小工作台（v0.9） — 验收标准
