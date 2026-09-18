@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 spec_id: SPEC-009
 created: 2026-09-18
 status: draft
-sha: 7f45da0a6905b9412e3d31598d4fa216eb2f2e711571c5cbb8d0fbb22e56d88c
+sha: 1f1a993751be060a3257e5c6737aca3f83a449283f7f41f1418a24af930fe89a
 ---
 
 > **Human [RESOLVED]:** M-REQ-APPROVAL 阶段 Human 提出的两项修订意见（经 return M-SPEC 落地，因 runtime 缺陷 reason 未随 assignment 传递，改由本线程承载，权威记录见事件 human.return）：(1) FR-0294 技术选型增补——§5 技术选型约束区增加：文档审阅/编辑前端采用 Vditor（louke 验证过的选型），本版仅基础集成（查看/编辑/版本对比），louke 的扩展定制不实现；FR-0294 正文如涉及实现自由度表述可同步微调。(2) FR-0296 调度语义澄清为『多 run 登记 + 单活动 run 串行推进 + hotfix 优先级换队』——hotfix 紧急场景经显式可审计的换队满足（pause 活动 feature run → hotfix run 插队推进至发布 → resume feature），真并发（worktree 隔离/多 worker）明确延期至后续版本；S2 supervisor 设计预留 run 级隔离边界。Human 裁定依据：修复窗口（≤4h）相对 feature 全流程可忽略。请按此修订 spec.md 与 acceptance.md 对应条款（FR-0294/FR-0296 及相关 AC），完成后由 Lex 复核。
