@@ -6,9 +6,14 @@ status: draft
 sha: 7f45da0a6905b9412e3d31598d4fa216eb2f2e711571c5cbb8d0fbb22e56d88c
 ---
 
+> **Human:** M-REQ-APPROVAL 阶段 Human 提出的两项修订意见（经 return M-SPEC 落地，因 runtime 缺陷 reason 未随 assignment 传递，改由本线程承载，权威记录见事件 human.return）：(1) FR-0294 技术选型增补——§5 技术选型约束区增加：文档审阅/编辑前端采用 Vditor（louke 验证过的选型），本版仅基础集成（查看/编辑/版本对比），louke 的扩展定制不实现；FR-0294 正文如涉及实现自由度表述可同步微调。(2) FR-0296 调度语义澄清为『多 run 登记 + 单活动 run 串行推进 + hotfix 优先级换队』——hotfix 紧急场景经显式可审计的换队满足（pause 活动 feature run → hotfix run 插队推进至发布 → resume feature），真并发（worktree 隔离/多 worker）明确延期至后续版本；S2 supervisor 设计预留 run 级隔离边界。Human 裁定依据：修复窗口（≤4h）相对 feature 全流程可忽略。请按此修订 spec.md 与 acceptance.md 对应条款（FR-0294/FR-0296 及相关 AC），完成后由 Lex 复核。
+>> **Sage:** 两项裁定均已落地 spec.md：(1) 新增『技术选型与实现边界』约束区（继承 story §5 的 starlette+uvicorn+SQLite/实现为新建/louke 仅参考/web 层不耦合 runtime，并按你的裁定增加 Vditor 基础集成条款）；FR-0294 正文同步：查看与基础编辑（查看/编辑/版本对比）经指定文档前端组件承载、编辑走既有修订流程产生新 revision、不绕过 FR-0308 批准绑定。(2) FR-0296 调度语义改为『多 run 登记 + 单活动 run 串行推进 + hotfix 优先级换队』（换队 pause→插队→resume 全程经命令服务受理可审计），真并发延期并在范围排除显式声明，supervisor 预留 run 级隔离边界；文首锁定决策句同步。注意：acceptance.md 的对应 AC（AC-FR0294-01/02 扩展编辑与对比断言、新增换队 AC 于 FR-0296 节）需在 M-ACC 轮同步修订，本轮 assignment 目标为 spec.md，我未越目标改 acceptance——请 Lex 复核 spec 后由流程路由 acceptance 修订。resolved 权在 Human（发起人），我不代行。
+
 # Web 后台持续驱动与最小工作台（v0.9） — 需求规格
 
-> 本 spec 将 v0.9 story（S-001）落为可验证需求：把"人在场逐条驱动"替换为持久后台推进 + Web 人工决定面。容量分析：28 有效 FR（FR-0288..FR-0315，承接项目全局序号，= 规划 28 FR 预算；3 NFR 不计），满足 story §5「有效 FR 上限 28 条、UI FR 占比按 Maestro 钉死点控制」。继承边界：各阶段流程语义、测试/实施分离、FULL/RGR、CI、安全门、发布/归档、回拨/放弃全部继承 v0.8 合同（v0.8 SM-01/RP-01 及 FR-0267..FR-0287），本版不重写；v0.9 新增的仅是可靠服务化（持久命令/监督器/等待恢复）与 Web 操作出口。规格期锁定决策在此一次性确定：可同时活动 run 数量（FR-0296：默认单活动 run 串行）、服务安装/自启方式（FR-0288：一条命令手动启动，不承诺守护/自启）、空闲与轮询上限（NFR-0152）、发布确认提醒（FR-0307/FR-0309：待办中心即提醒面）、额度信号来源（FR-0299：harness 返回的模型配额信号）。
+> 本 spec 将 v0.9 story（S-001）落为可验证需求：把"人在场逐条驱动"替换为持久后台推进 + Web 人工决定面。容量分析：28 有效 FR（FR-0288..FR-0315，承接项目全局序号，= 规划 28 FR 预算；3 NFR 不计），满足 story §5「有效 FR 上限 28 条、UI FR 占比按 Maestro 钉死点控制」。继承边界：各阶段流程语义、测试/实施分离、FULL/RGR、CI、安全门、发布/归档、回拨/放弃全部继承 v0.8 合同（v0.8 SM-01/RP-01 及 FR-0267..FR-0287），本版不重写；v0.9 新增的仅是可靠服务化（持久命令/监督器/等待恢复）与 Web 操作出口。规格期锁定决策在此一次性确定：可同时活动 run 数量（FR-0296：多 run 登记 + 单活动 run 串行推进 + hotfix 优先级换队）、服务安装/自启方式（FR-0288：一条命令手动启动，不承诺守护/自启）、空闲与轮询上限（NFR-0152）、发布确认提醒（FR-0307/FR-0309：待办中心即提醒面）、额度信号来源（FR-0299：harness 返回的模型配额信号）。
+
+**技术选型与实现边界**（继承 story §5 约束 + Human 裁定）：沿用 starlette + uvicorn + SQLite 选型且实现为新建；louke 的 auth/secret_redaction/command_guard 模块仅作设计参考、不搬代码，web 层不得直接耦合 runtime；文档审阅/编辑前端采用 Vditor（louke 验证过的选型），本版仅基础集成（查看/编辑/版本对比），louke 的扩展定制不实现；UI 实现形态（SPA 或服务端多页）不锁定（见「界面与入口」章说明）。
 
 ## 界面与入口
 
@@ -202,10 +207,10 @@ THE 系统 SHALL 允许用户在 UI 阅读 Agent 提问与讨论历史并回复�
 
 ### FR-0294 需求与设计材料审阅
 
-- **来源**：`BS-06` / 规划 P07
+- **来源**：`BS-06` / 规划 P07 / Human 裁定（技术选型增补，T-001）
 - **交付入口**：`E-06`
 
-THE 系统 SHALL 展示 story/spec/acceptance/design 的当前版本及变更（含 revision 标识），用户确认的对象 revision SHALL 明确显示；审批行为由 FR-0308 统一承载（本条为审阅与确认对象语义）。
+THE 系统 SHALL 展示 story/spec/acceptance/design 的当前版本及变更（含 revision 标识），用户确认的对象 revision SHALL 明确显示；材料查看与基础编辑 SHALL 经指定文档前端组件承载（Vditor 基础集成：查看/编辑/版本对比；louke 扩展定制不实现），经 UI 编辑材料 SHALL 走既有修订流程产生新 revision、不得绕过 FR-0308 的批准绑定；审批行为由 FR-0308 统一承载（本条为审阅与确认对象语义）。
 
 **用户可观察结果**：用户能指认自己审阅的是哪个 revision；批准时对象 revision 自动带入待批准条目。
 
@@ -223,9 +228,9 @@ THE 系统 SHALL 将 CLI 与 Web 经由同一命令服务受理命令：命令�
 - **来源**：`BS-07` / 规划 P09 / 约束（story §5 S2）
 - **交付入口**：无独立入口，依附 FR-0295/FR-0297；可观察出口为 E-05 时间线
 
-THE 系统 SHALL 保证同一 run 任一时刻只有一个有效执行者（租约/代次机制：命令队列 + lease + 防旧 worker 写入；租约过期后新 worker 获得新代次，旧 worker 迟到结果不得继续推动状态或发布）；CLI 与 Web SHALL 遵守同一仲裁，不双重 dispatch/publish。本版锁定：同一时刻至多一个 run 处于活动推进，其余已受理 run 串行排队（规划建议首版默认；并发 Agent 数由现有 Runtime 控制）。
+THE 系统 SHALL 保证同一 run 任一时刻只有一个有效执行者（租约/代次机制：命令队列 + lease + 防旧 worker 写入；租约过期后新 worker 获得新代次，旧 worker 迟到结果不得继续推动状态或发布）；CLI 与 Web SHALL 遵守同一仲裁，不双重 dispatch/publish。本版调度语义锁定（Human 裁定 T-001）：多 run 登记 + 同一时刻至多一个 run 活动串行推进 + hotfix 优先级换队——hotfix 紧急场景 SHALL 经显式可审计的换队满足（pause 活动 feature run → hotfix run 插队推进至发布 → resume feature，换队全程经命令服务受理并留审计记录）；真并发（worktree 隔离/多 worker 并行推进多 run）明确延期至后续版本；supervisor 设计 SHALL 预留 run 级隔离边界；并发 Agent 数由现有 Runtime 控制。
 
-**用户可观察结果**：并发触发推进/重启 server/杀 worker 后无重复派发与越权写入；排队 run 状态可见。
+**用户可观察结果**：并发触发推进/重启 server/杀 worker 后无重复派发与越权写入；排队 run 状态可见；hotfix 换队全过程（pause/插队/resume）可审计。
 
 ### FR-0297 全阶段自动推进
 
@@ -427,4 +432,5 @@ THE 系统 SHALL 使用受控凭据引用（凭据不出现明文）；UI/API/�
 - 各阶段流程语义、测试/实施分离、FULL/RGR、CI、安全门、发布/归档的重写（全部继承 v0.8 合同，FR-0297 不重写）。
 - known-issue 撤销通道与 project_close 尾巴（backlog triage，本版无对应 FR）。
 - 公网多租户、复杂 RBAC、团队协同编辑、分布式多节点调度、插件市场、第二语言 adapter、通用多 registry 部署平台、图形化流程编辑器、通用包管理 GUI（FR-0314.1 只要求本机单用户鉴权；FR-0290 明示沿用已配置环境）。
+- 多 run 真并发推进（worktree 隔离/多 worker 并行推进多 run）：本版以「单活动 run 串行 + hotfix 优先级换队」满足紧急场景（FR-0296，Human 裁定），真并发延期至后续版本；supervisor 设计预留 run 级隔离边界。
 - 不以"28 个 API endpoint 齐备/页面全部画好"为完成标准（story 验收脚本：单条真实纵向闭环可演示）。
