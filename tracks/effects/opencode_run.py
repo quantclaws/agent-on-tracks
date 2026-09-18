@@ -125,6 +125,17 @@ class OpencodeRunMixin:
             exc_out, exc_err, self._has_json_events(exc_out)
         ):
             self._clear_session(name)
+        elif self._session_reuse_enabled() and exc.failure_class == "non_zero_exit":
+            # 2026-09-18 run 01M2QTJB（M-IMPL PLANNING）：进程硬崩（exit≠0，
+            # 区别于 timeout/provider 的瞬态错误）是与 miss/overflow 同级的
+            # 会话失效信号——复用会话的派发在回合中途死亡（opencode part
+            # status=None：工具调用发起即死，最终 envelope 永远发不出），
+            # 随后演变为秒级 exit-1 循环；infra backoff（无自行停车出口）
+            # 无限重派同一毒化会话。弃用 session：下一次 infra 重派冷启动
+            # （B18：不烧 agent attempt；盘上产物 + 重注入 assignment 承载
+            # 全部必需状态——"the event log carries the history, not the
+            # prompt"）。
+            self._clear_session(name)
 
     def _finalize_run(
         self,

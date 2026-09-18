@@ -111,6 +111,33 @@ def test_clear_session_drops_entry(tmp_path):
     assert _backend(tmp_path)._session_for("Devon") is None
 
 
+# -- _recover_run_error：non_zero_exit 弃用毒化会话（2026-09-18 run 01M2QTJB） ----
+
+
+def test_recover_non_zero_exit_clears_session(tmp_path):
+    """复用会话的进程硬崩（exit≠0）与 miss/overflow 同级失效：弃用，下次冷启动。"""
+    from tracks.effects.opencode_core import OpencodeError
+
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_poison")
+    b._recover_run_error(
+        OpencodeError("non_zero_exit", "opencode exited 1"), "Archer"
+    )
+    assert b._session_for("Archer") is None
+    assert _backend(tmp_path)._session_for("Archer") is None
+
+
+def test_recover_transient_infra_failure_keeps_session(tmp_path):
+    """timeout/provider/signal/json_truncated 等瞬态错误仍走 D-39 续传。"""
+    from tracks.effects.opencode_core import OpencodeError
+
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_live")
+    for cls in ("timeout", "provider_unavailable", "signal", "json_truncated"):
+        b._recover_run_error(OpencodeError(cls, "x"), "Archer")
+    assert b._session_for("Archer") == "ses_live"
+
+
 def test_corrupted_session_file_fails_open(tmp_path):
     path = _backend(tmp_path)._sessions_path()
     path.write_text("{ not json", encoding="utf-8")
