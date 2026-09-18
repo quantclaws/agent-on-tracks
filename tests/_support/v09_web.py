@@ -101,11 +101,9 @@ def parse_base_url(serving_line: str) -> str:
     return rest.rstrip("/")
 
 
-def http_get(base_url: str, path: str, timeout: float = 5.0, cookies: str = "") -> tuple[int, bytes]:
+def http_get(base_url: str, path: str, timeout: float = 5.0) -> tuple[int, bytes]:
     """GET via stdlib only; returns (status, body)."""
     req = urllib.request.Request(base_url + path, method="GET")
-    if cookies:
-        req.add_header("Cookie", cookies)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read()
@@ -137,26 +135,6 @@ def http_post(
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
-
-
-def login_session(base_url: str, password: str = _SERVE_PASSWORD, timeout: float = 5.0) -> tuple[str, str]:
-    """Login via POST /api/auth/login (§2b #1); returns (cookie, csrf).
-
-    The first-start password is the one start_serve fed the subprocess on
-    stdin; the session cookie and CSRF token drive the authenticated
-    journey endpoints.
-    """
-    data = json.dumps({"password": password}).encode()
-    req = urllib.request.Request(
-        base_url + "/api/auth/login", data=data,
-        headers={"Content-Type": "application/json"}, method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read().decode())
-        cookie = resp.headers.get("Set-Cookie", "")
-    csrf = body["csrf_token"]
-    assert cookie and csrf, f"login must issue session + csrf, got {body!r}"
-    return cookie, csrf
 
 
 def wait_for_healthz(base_url: str, timeout: float = 10.0) -> dict:
