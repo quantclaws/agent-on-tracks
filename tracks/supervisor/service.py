@@ -194,7 +194,6 @@ class CommandService:
         request: dict,
         actor: str,
         actor_class: str,
-        idempotency_key: str | None,
     ) -> None:
         """create_run business preflight (§1b.1): active-run guard and
         explicit-negative readiness. Hotfix journey prechecks ride the
@@ -331,7 +330,7 @@ class CommandService:
         if duplicate is not None:
             return duplicate
         if kind == "create_run":
-            self._preflight_create_run(store, request, actor, actor_class, idempotency_key)
+            self._preflight_create_run(store, request, actor, actor_class)
         command_id = uuid.uuid4().hex
         store.register_command(
             {
