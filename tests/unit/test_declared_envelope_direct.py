@@ -80,21 +80,27 @@ def _run_events(store: Store) -> list:
     return list(store.events(RUN_ID))
 
 
-def _assert_only_format_error(
+def _assert_format_error_routed(
     store: Store, expected_kind: str, task_id: str = TASK_ID
 ) -> None:
-    """The call must be handled: exactly one classified format_error event,
-    command/task identity preserved, and nothing else appended (no
-    outcome.received, no verdict.*, no attempt/business mutation)."""
+    """The call must be handled: the classified format_error event plus the
+    routable verdict.failed (reply_format_error) — every declared kind
+    (devon/shield/archer/prism, non-DIAGNOSE) routes, so the stage's dispatch
+    flag can never strand (T-042 writer stall + 2026-09-19 PRISM_RED: plain
+    prism review kinds fell through both branches and parked the run)."""
     events = _run_events(store)
-    assert len(events) == 1, [e.type for e in events]
-    ev = events[0]
-    assert ev.type == "format_error"
-    assert ev.command_id == CMD_ID
-    assert ev.task_id == task_id
-    assert ev.payload["kind"] == expected_kind
-    assert ev.payload["task_id"] == task_id
-    assert ev.payload["detail"]
+    kinds = [e.type for e in events]
+    assert kinds == ["format_error", "verdict.failed"], kinds
+    fe, vf = events
+    assert fe.command_id == CMD_ID
+    assert fe.task_id == task_id
+    assert fe.payload["kind"] == expected_kind
+    assert fe.payload["task_id"] == task_id
+    assert fe.payload["detail"]
+    assert vf.command_id == CMD_ID
+    assert vf.task_id == task_id
+    assert vf.payload["check"] == "reply_format_error"
+    assert vf.payload["task_id"] == task_id
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +127,7 @@ def test_declared_broken_raw_output_is_handled_format_error(
     result = {"raw_output": raw}
     handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
     assert handled is True
-    _assert_only_format_error(store, expected_kind)
+    _assert_format_error_routed(store, expected_kind)
 
 
 def test_declared_missing_raw_output_key_is_handled_format_error(exec_env):
@@ -131,7 +137,7 @@ def test_declared_missing_raw_output_key_is_handled_format_error(exec_env):
         {"status": "done"}, _cmd(), TASK_ID, assignment
     )
     assert handled is True
-    _assert_only_format_error(store, "malformed_json")
+    _assert_format_error_routed(store, "malformed_json")
 
 
 def test_declared_freeform_json_json_object_reply_is_format_error(exec_env):
@@ -144,7 +150,7 @@ def test_declared_freeform_json_json_object_reply_is_format_error(exec_env):
         {"raw_output": raw}, _cmd(), TASK_ID, assignment
     )
     assert handled is True
-    _assert_only_format_error(store, "no_envelope_block")
+    _assert_format_error_routed(store, "no_envelope_block")
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +174,25 @@ def test_declared_kind_mismatch_still_fails_closed(exec_env):
     result = {"raw_output": _envelope_block({"verdict": "pass"}, kind="prism:diagnose")}
     handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
     assert handled is True
-    _assert_only_format_error(store, "schema_violation")
+    _assert_format_error_routed(store, "schema_violation")
+
+
+def test_declared_prism_red_kind_routes_verdict_to_unstrand_reviewer(exec_env):
+    """2026-09-19 (run 01M2QTJB PRISM_RED): plain prism review kinds must emit
+    the routable verdict.failed — format_error alone left reviewer_dispatched
+    set and decide() parked the run forever after the review reply failed
+    classification (the exact B62 #80 stall class). The bare-payload-in-fence
+    reply below is the live failure shape (missing_kind)."""
+    ex, store = exec_env
+    assignment = _declared_assignment(kind="prism:red")
+    handled = ex._format_error_shortcircuit(
+        {"raw_output": "```tracks-envelope\n{\"verdict\": \"pass\"}\n```"},
+        _cmd(),
+        TASK_ID,
+        assignment,
+    )
+    assert handled is True
+    _assert_format_error_routed(store, "missing_kind")
 
 
 def test_declared_multiple_blocks_still_fails_closed(exec_env):
@@ -180,7 +204,7 @@ def test_declared_multiple_blocks_still_fails_closed(exec_env):
     result = {"raw_output": raw}
     handled = ex._format_error_shortcircuit(result, _cmd(), TASK_ID, assignment)
     assert handled is True
-    _assert_only_format_error(store, "multiple_envelope_blocks")
+    _assert_format_error_routed(store, "multiple_envelope_blocks")
 
 
 # ---------------------------------------------------------------------------

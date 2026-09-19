@@ -776,13 +776,20 @@ the envelope/failure faces stay re-exported by executor.py."""
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
-        elif declared_kind.startswith(("devon:", "shield:", "archer:")):
+        elif declared_kind.startswith(("devon:", "shield:", "archer:", "prism:")):
             # Doc/implementation dispatches: an unparseable declared reply
             # strands the doc dispatch flag with no routable event (the
             # 792f70e stall class on the writer face -- live 01M19FJ T-042:
             # no_envelope_block parked M-IMPL/GREEN forever). Route it as a
             # gate failure so the stage's own failure handling resets the
             # flags within the attempt budget.
+            # 2026-09-19 (run 01M2QTJB PRISM_RED): plain prism review kinds
+            # (prism:red/plan/final, non-DIAGNOSE) fell through BOTH branches
+            # -- format_error alone is not routable, reviewer_dispatched stayed
+            # True, decide() parked the run forever after the review reply
+            # failed classification (the exact B62 #80 stall this method
+            # exists to prevent). Same verdict routing for every declared
+            # kind.
             self._emit(
                 "verdict.failed",
                 {
