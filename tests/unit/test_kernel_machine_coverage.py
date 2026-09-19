@@ -183,6 +183,22 @@ def test_decide_triage_waits_after_dispatch():
     assert _decide_triage(s, "M-STORY") is None
 
 
+def test_m_impl_reply_format_error_on_review_substate_resets_reviewer_flag():
+    """2026-09-19 (run 01M2QTJB PRISM_RED): a reply_format_error verdict on
+    an M-IMPL review substate must reset reviewer_dispatched (the generic
+    fallthrough only cleared doc flags, parking the run forever)."""
+    from tracks.kernel.m_impl_routing import _on_m_impl_verdict_failed
+
+    s = State(stage="M-IMPL", substate="PRISM_RED", current_attempt=0)
+    s.reviewer_dispatched = True
+    _on_m_impl_verdict_failed(
+        s, {"check": "reply_format_error", "reason": "missing_kind"}
+    )
+    assert s.reviewer_dispatched is False
+    assert s.substate == "PRISM_RED"
+    assert s.current_attempt == 1
+
+
 # ---------------------------------------------------------------------------
 # _decide_review
 # ---------------------------------------------------------------------------

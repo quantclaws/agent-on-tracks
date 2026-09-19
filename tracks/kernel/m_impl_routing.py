@@ -460,8 +460,21 @@ def _route_m_impl_gate_failure(s: State, check: str, evidence=None) -> None:
     elif check in ("lineage", "contract_error"):
         _route_parked_failure(s, check)
     else:
-        _reset_doc(s)
+        _reset_substate_dispatch_flag(s)
         _consume_attempt(s)
+
+
+def _reset_substate_dispatch_flag(s: State) -> None:
+    """Reset the flag the CURRENT substate actually waits on.
+
+    2026-09-19 (run 01M2QTJB PRISM_RED): the generic fallthrough used to
+    clear only doc flags -- a reply_format_error verdict on a review
+    substate left reviewer_dispatched set and decide() parked the run
+    forever after the review reply failed classification."""
+    if s.substate in _M_IMPL_REVIEW_SUBSTATES:
+        _reset_review(s)
+    else:
+        _reset_doc(s)
 
 
 def _focus_open_ledger(s: State) -> None:
