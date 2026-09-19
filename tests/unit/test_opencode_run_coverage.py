@@ -138,7 +138,7 @@ def test_await_run_keyboard_interrupt_kills_and_reraises(host, monkeypatch):
     monkeypatch.setattr(host, "_stream_stdout", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
     proc = _Proc()
     with pytest.raises(KeyboardInterrupt):
-        host._await_run("devon", ["opencode"], proc, None, None, None, [], None, None, 10)
+        host._await_run(["opencode"], proc, None, None, None, [], None, None, 10, key="devon")
     assert killed == [4242]
 
 
