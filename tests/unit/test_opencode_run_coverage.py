@@ -116,7 +116,7 @@ def test_await_run_keyboard_interrupt_closes_log(host, monkeypatch):
     monkeypatch.setattr(host, "_kill_group", lambda pid: None)
     monkeypatch.setattr(host, "_stream_stdout", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
     with pytest.raises(KeyboardInterrupt):
-        host._await_run("devon", ["opencode"], _Proc(), None, log, None, [], None, None, 10)
+        host._await_run(["opencode"], _Proc(), None, log, None, [], None, None, 10, key="devon")
     assert log.closed is True
 
 
