@@ -650,8 +650,9 @@ def test_devon_dispatch_carries_evidence_contract():
     s.current_task_id = "T-009"
     cmd = _m_impl_devon_dispatch(s, "GREEN")
     contract = cmd.params["assignment"].get("evidence_contract")
-    assert contract and contract["example"]["phase"] == "green"
-    assert isinstance(contract["example"]["commands"], list)
+    assert contract and contract["example"]["payload"]["phase"] == "green"
+    assert isinstance(contract["example"]["payload"]["commands"], list)
+    assert contract["example"]["envelope"]["kind"] == "devon:green"
     assert contract["shape_rules"]
 
 
@@ -660,15 +661,32 @@ def test_devon_dispatch_carries_evidence_contract():
 
 def test_devon_evidence_contract_example_passes_validator():
     """Parity (live T-004 lesson): every example shown to agents must pass
-    the consuming validator — a hand-written shape drift burned a dispatch."""
+    the consuming validator — a hand-written shape drift burned a dispatch.
+    2026-09-19 (run 01M2QTJB T-006): the example must show the FULL
+    two-layer envelope — a bare-payload example taught Devon to emit
+    missing_kind replies six times in a row."""
+    import json
+
     from tracks.executor.m_impl_runtime import MImplRuntimeMixin
     from tracks.kernel.contracts import DEVON_EVIDENCE_CONTRACT
+    from tracks.kernel.envelope import parse_agent_output
 
     example = dict(DEVON_EVIDENCE_CONTRACT["example"])
+    payload = dict(example["payload"])
     for key in ("pre_identity", "post_identity", "r_identity"):
-        example[key] = "sha256:abc"
-    error = MImplRuntimeMixin._devon_evidence_fields_error("green", example)
+        payload[key] = "sha256:abc"
+    error = MImplRuntimeMixin._devon_evidence_fields_error("green", payload)
     assert error is None, error
+    # The wrapped example is exactly what a legal declared reply carries:
+    # the kernel envelope parser must accept it as-is.
+    block = (
+        "```tracks-envelope\n"
+        + json.dumps({"envelope": example["envelope"], "payload": payload})
+        + "\n```"
+    )
+    parsed = parse_agent_output("work summary prose\n" + block)
+    assert parsed["envelope"]["kind"] == "devon:green"
+    assert parsed["payload"]["phase"] == "green"
 
 
 def test_write_manifest_contract_example_passes_item_validation():
