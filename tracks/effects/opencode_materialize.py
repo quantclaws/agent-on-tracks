@@ -24,16 +24,29 @@ from tracks.effects.envelope_reply import is_declared_assignment
 
 from .opencode_core import OpencodeError
 
+ENVELOPE_SKILL = "tracks-envelope"
+
 
 def _skill_names(assignment: dict | None) -> list[str]:
     """Skills this dispatch materializes: an explicit ``skills`` list (batch B:
     the M-DESIGN author assignment carries several) wins over the legacy single
-    ``skill`` string; falsy entries are skipped, [] means no skill."""
+    ``skill`` string; falsy entries are skipped, [] means no skill.
+
+    2026-09-19 (D-42 era, run 01M2QTJB): every DECLARED dispatch (assignment
+    carries an envelope) auto-attaches the shared tracks-envelope skill —
+    the two-layer emission contract lives there once for all agents and
+    keeps the card/role prompts lean (live evidence: Devon's six missing_kind
+    and Prism DIAGNOSE's three no_envelope_block burns both stopped the
+    moment a concrete example reached the agent)."""
     assignment = assignment or {}
     if assignment.get("skills") is not None:
-        return [name for name in assignment["skills"] if name]
-    skill = assignment.get("skill")
-    return [skill] if skill else []
+        names = [name for name in assignment["skills"] if name]
+    else:
+        skill = assignment.get("skill")
+        names = [skill] if skill else []
+    if assignment.get("envelope") and ENVELOPE_SKILL not in names:
+        names = [*names, ENVELOPE_SKILL]
+    return names
 
 def _template_kinds(assignment: dict | None) -> list[str]:
     """Document template kinds this dispatch materializes: an explicit

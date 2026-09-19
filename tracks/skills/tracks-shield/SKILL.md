@@ -59,7 +59,7 @@ description: Shield 集成/e2e 测试编写方法——test-plan→测试资产�
 - 补丁只偏离目标合同条款，不夹带其它变更。
 - **killed**：测试按预期失败 → 断言有区分力；恢复工作区，记录 killed。
 - **survived**：测试仍通过 → 断言空洞或没命中合同，修测试后重验。
-- 验证后必须完全恢复工作区；补丁与 kill 记录存放在合同声明的证据路径（layout 声明），不进入产品代码。
+- 验证后必须完全恢复你本次应用的 counterexample 补丁与临时变更；派发时工作区已存在的未提交内容（如评审 verdict）不属你的产物范畴，禁止 reset/checkout/clean 它们。补丁与 kill 记录存放在合同声明的证据路径（layout 声明），不进入产品代码。
 
 ## 6. 派发首步：evidence 与模式分流
 
@@ -98,7 +98,7 @@ outcome 前逐项实际执行（动作 + 判据引用）；任一为"否"先补�
 - SHIELD-A3：e2e 严格限定 happy path，边界/错误已划入 integration（core SHIELD-Q1）。
 - SHIELD-A4：全量 collection 通过，选集执行失败全部为合法 Red，未把普通全量套件当自检（core SHIELD-Q4）。
 - SHIELD-A5：断言全部落公开出口，经被测接口公开入口进入，无内部状态窥探（core SHIELD-Q2）。
-- SHIELD-A6：每条 required 测试有 killed 的 counterexample，且工作区已恢复（core SHIELD-Q3）。
+- SHIELD-A6：每条 required 测试有 killed 的 counterexample，且你的临时变更已恢复、未触碰派发前已存在的未提交内容（core SHIELD-Q3）。
 - SHIELD-A7：无作弊模式——空洞断言、无依据 skip、断言降级、吞异常、过度 mock、抄实现输出、硬编码期望值均不存在（core SHIELD-Q5）。
 - SHIELD-A8：写域合规——产物只在合同声明的测试资产路径，manifest 与落盘一致（core SHIELD-Q6）。
 - SHIELD-A9：锚点可满足性——CLI 半无移动目标相等期望（规则 1）、断言为三形之一（规则 2）、无互斥锚点（规则 3）；anchor_static 静态检查零违规，或每处抑制注释有明确合同依据（M4，收敛改革 2026-09-05）。

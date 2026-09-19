@@ -1,7 +1,7 @@
 ---
 envelope: tracks-envelope:v2
 name: tracks-archer-planning
-version: 0.1
+version: 0.2
 description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任务图、锚点分家、scope_boundary 写域、depends_on 可满足性、存在性门禁、预算约束与 PLAN 层标准（仅 Archer 的 M-IMPL PLANNING 阶段触发）
 ---
 
@@ -29,6 +29,8 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 - §8 行内的 e2e 层目标是终态覆盖锚点，由 ISLAND_GATE_2 / FULL 全量兜底，绝不写进任何 task 的 `acceptance_refs`；混合行（integration + e2e）的验收归属只看其 integration 项。
 - 若某任务因此没有可声明的 integration 目标，说明该 §8 行的 integration 项已由依赖链前序任务覆盖：要么合并进那些任务，要么重新拆分出自己可转绿的 integration 切片，不得用 e2e 顶替。
 - 锚点归属判据：一个 §8 多 IF 行的锚点声明给「使其可行绿的那个任务」——通常是交付该行最后一个 IF 的任务（依赖序上最后落地的 owner）；结构上不可能在本 task GREEN 时刻转绿的锚点不得声明给它。
+- **锚点-AC 共位不变量（机械化自检）**：每个 `acceptance_refs` 锚点对应的 §8 行 AC，正常必须登记在本任务的 `ac_refs` 里；不共位（AC 登记在别的任务）只有「本任务确是其最后可绿 owner」且在 description 或 finding 回应中写明理由时才允许。此条必须写进自检脚本机械验证（锚点行 → AC → 所在任务的 ac_refs 三步查表），不得目测——2026-09-18 run 01M2QTJB 实证：Archer 为消卡预算把锚点挪进有余量但未拥有其 AC 的任务，Prism 三次以 "anchors homed without owning AC refs / not greenable in scope" 打回。
+- **改动后全量复检**：任何锚点再平衡（预算驱动或 Prism revise 驱动）之后，必须重跑全量自检脚本（共位、覆盖唯一、闭包、scope、存在性、卡尺寸），禁止只检查被点名的锚点——局部修复制造新违规是 round 3 的实测振荡模式（修 T-014 的 5 个锚点，同时在 T-008/T-010/T-013 制造 5 个新违规）。
 
 ## scope_boundary（写域白名单）
 
@@ -89,8 +91,10 @@ description: Archer M-IMPL PLANNING 专用方法论 - tasks.json schema v2 任�
 
 ## 退出前自审（程序性动作，引用 ID）
 
+- **最终回复以恰好一个 fenced tracks-envelope block 结尾**？（长工具链结束的回合最容易漏发：工具调用后回合直接终止、无最终文本 = 整次 attempt 作废且不计工作产出——2026-09-18 四次实证，每次 40-60 分钟白费。若本回合开始时前序回合的工作已在盘上且自检干净，先核对盘上状态，立即补发 envelope，不重做工作。）
 - tasks.json 已按 findings 逐条修改并保存？（PLAN-01）
-- 锚点分家与归属已逐任务复核？（PLAN-02 / PLAN-03）
+- 锚点分家与归属已逐任务复核？锚点-AC 共位已跑过自检脚本？（PLAN-02 / PLAN-03）
+- 锚点若有任何再平衡，全量自检（非仅被点名项）已重跑？（PLAN-03 / 改动后全量复检）
 - scope_boundary 白名单、重叠与完整性已自查？（PLAN-04）
 - depends_on 缺边清单已清零？（PLAN-05）
 - 存在性门禁已通过？（PLAN-06）

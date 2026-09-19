@@ -697,3 +697,37 @@ def test_write_manifest_contract_example_passes_item_validation():
     for index, item in enumerate(include):
         error = OpencodeBackend._manifest_item_error(index, item)
         assert error is None, error
+
+
+def test_prism_diagnose_contract_example_passes_validator():
+    """Parity: the DIAGNOSE verdict-contract example must parse and validate
+    as a legal declared prism:diagnose reply (2026-09-19 T-006: three
+    attempts never emitted an envelope until the example was injected)."""
+    import json
+
+    from tracks.kernel.contracts import PRISM_DIAGNOSE_CONTRACT
+    from tracks.kernel.envelope import parse_agent_output, validate_envelope
+
+    block = (
+        "```tracks-envelope\n"
+        + json.dumps(dict(PRISM_DIAGNOSE_CONTRACT["example"]))
+        + "\n```"
+    )
+    parsed = parse_agent_output(block)
+    validated = validate_envelope(parsed, "prism:diagnose")
+    assert validated["envelope"]["kind"] == "prism:diagnose"
+    assert validated["payload"]["classification"] == "impl_defect"
+
+
+def test_m_impl_diagnose_dispatch_carries_verdict_contract():
+    from tracks.kernel.m_impl import _m_impl_prism_dispatch
+    from tracks.kernel.machine import State
+
+    s = State()
+    s.stage = "M-IMPL"
+    s.substate = "DIAGNOSE"
+    s.current_task_id = "T-006"
+    cmd = _m_impl_prism_dispatch(s, "DIAGNOSE")
+    contract = cmd.params["assignment"].get("verdict_contract")
+    assert contract and contract["example"]["envelope"]["kind"] == "prism:diagnose"
+    assert cmd.params["assignment"].get("classification_vocabulary")

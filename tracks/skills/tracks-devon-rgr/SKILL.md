@@ -1,7 +1,7 @@
 ---
 envelope: tracks-envelope:v2
 name: tracks-devon-rgr
-version: 0.2
+version: 0.3
 description: Devon M-IMPL 单一 RGR 阶段操作清单。当 Devon 按 assignment.phase 执行 red/green/refactor 之一、需要 fail-closed 校验、phase-specific 写约束或 evidence 自检时使用。
 ---
 
@@ -10,6 +10,8 @@ description: Devon M-IMPL 单一 RGR 阶段操作清单。当 Devon 按 assignme
 Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶段（red | green | refactor），完成后立即停止，绝不跑完整 RGR 循环。本 skill 是 Devon 的唯一操作 skill；Devon 不发起/回复讨论线程（不注入 tracks-discuz）。
 
 输出格式与 evidence 字段权威：见 core 的条件式 envelope 合同与 assignment 注入的 `evidence_contract`——本 skill 不复制、不示例化 JSON schema。
+
+**发射形态硬门**：assignment 声明 envelope 时，最终回复 = 恰好一个 ```tracks-envelope fenced block，其内必须是 `{"envelope": {"kind": ..., "version": ...}, "payload": {...}}` **两层结构**——把裸 payload 直接放进 fence 是 `reply_format_error (missing_kind)`，整次 attempt 作废（2026-09-19 run 01M2QTJB T-006 三次实证，每次 5-15 分钟工作白费）。
 
 ## 1. Fail-closed 校验（所有阶段）
 
@@ -40,7 +42,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 4. 在 `manifest.red_test_paths`（RED 专用写域，具体目录由 assignment `layout`/manifest 声明）内写 failing unit test。`manifest.allowed_paths` 是 GREEN 阶段的 impl scope，RED 阶段不要写它（也不要写 allowed_paths 列出的文件）（DEVON-RED-4）。
 5. 用 `assignment.commands` 提供的 unit 命令运行授权 unit test，看到目标失败——失败必须落在被测行为/桩的合同 token 上，而非装配错误（DEVON-RED-5）。
 6. 交付前自检（DEVON-RED-6）：对本次改动文件运行 `assignment.commands` / project contract `[lint].check` 声明的静态检查命令；非零退出必须修复后再交付——RED_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
-7. 按程序性自审核对 DEVON-RED-1..6 全部实际执行后，立即停止交付。不继续 Green（DEVON-RED-7）。
+7. 最终回复发射核验（DEVON-RED-7）：回复以恰好一个 tracks-envelope fenced block 结尾、内含 envelope 头（kind=devon:red、version 按 assignment）+ payload 两层结构——裸 payload fence = missing_kind 作废。核验通过后立即停止交付，不继续 Green。
 
 ### GREEN（phase=green）
 
@@ -51,7 +53,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 5. 用 `assignment.commands` 提供的 unit/guard 命令自检；不 commit/push（DEVON-GRN-5）。
 6. 交付前自检 lint（DEVON-GRN-6）：对本次改动的产品文件运行 `[lint].check` 声明的命令；非零退出必须修复——GREEN_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
 7. no_change 语义（DEVON-GRN-7）：若评审 findings 无需代码改动（实现已在基线），可返回显式 `no_change` + reason。此时 `changed_paths` **必须**为空，`no_change_reason` 非空，pre/post identity 如实填写。**禁止**声称有 changed_paths 而 pre/post identity 相同——runtime 会比对 identity 并 fail-closed。
-8. 按程序性自审核对 DEVON-GRN-1..7 后，立即停止交付。不继续 Refactor（DEVON-GRN-8）。
+8. 最终回复发射核验（DEVON-GRN-8）：回复以恰好一个 tracks-envelope fenced block 结尾、内含 envelope 头（kind=devon:green、version 按 assignment）+ payload 两层结构——裸 payload fence = missing_kind 作废。核验通过后立即停止交付，不继续 Refactor。
 
 ### REFACTOR（phase=refactor）
 
@@ -60,7 +62,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 3. 可返回显式 `no_change` + reason（若无需重构），语义同 DEVON-GRN-7：changed_paths 为空 + no_change_reason 非空 + identity 如实（DEVON-REF-3）。
 4. 不得做 public-interface 变更，除非有上游 route 授权（DEVON-REF-4）。
 5. 运行 manifest / `assignment.commands` 声明的 quality guards（DEVON-REF-5）。
-6. 按程序性自审核对 DEVON-REF-1..5 后，立即停止交付（DEVON-REF-6）。
+6. 最终回复发射核验（DEVON-REF-6）：回复以恰好一个 tracks-envelope fenced block 结尾、内含 envelope 头（kind=devon:refactor、version 按 assignment）+ payload 两层结构——裸 payload fence = missing_kind 作废。核验通过后立即停止交付。
 
 ## 3. 命令与写域约定
 

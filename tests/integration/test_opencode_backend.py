@@ -971,6 +971,20 @@ def test_skill_names_resolution():
     assert _skill_names({"skills": []}) == []  # explicit list wins over skill
     assert _skill_names({"skills": ["a", None], "skill": "z"}) == ["a"]
     assert _skill_names({}) == [] and _skill_names(None) == []
+    # 2026-09-19: every DECLARED dispatch auto-attaches the shared
+    # tracks-envelope skill (the two-layer emission contract lives there
+    # once for all agents; undeclared dispatches are untouched).
+    assert _skill_names({"skills": ["a"], "envelope": {"kind": "devon:red"}}) == [
+        "a",
+        "tracks-envelope",
+    ]
+    assert _skill_names({"skill": "a", "envelope": {"kind": "prism:diagnose"}}) == [
+        "a",
+        "tracks-envelope",
+    ]
+    assert _skill_names({"skills": ["tracks-envelope"], "envelope": {}}) == [
+        "tracks-envelope"
+    ]  # never duplicated
 
 
 def test_scaffold_declared_paths_parser():

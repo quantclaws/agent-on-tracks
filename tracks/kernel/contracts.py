@@ -55,6 +55,29 @@ WRITE_MANIFEST_CONTRACT: dict = {
 }
 
 
+PRISM_DIAGNOSE_CONTRACT: dict = {
+    "_doc": (
+        "输出合同（返回前自检）：DIAGNOSE 的最终回复 = 恰好一个 "
+        "fenced ```tracks-envelope block（块外不得有散文），其内容是"
+        "{\"envelope\": {\"kind\": \"prism:diagnose\", \"version\": 2}, "
+        "\"payload\": {...}} 两层 JSON；payload 的 classification 必须取自"
+        " classification_vocabulary。散文分析可以先行，但最后一条消息必须"
+        "是该 block（live 教训 2026-09-19 run 01M2QTJB T-006：DIAGNOSE 三次 "
+        "attempt 均未发出 envelope——无具体示例时模型停在散文/裸 payload，"
+        "示例即最具体的合同；对照 T-004/T-006 教训： Devon 合同示例修复后"
+        " missing_kind 立即消失）。"
+    ),
+    "example": {
+        "envelope": {"kind": "prism:diagnose", "version": 2},
+        "payload": {
+            "classification": "impl_defect",
+            "reason": "<one-line attribution of the failed gate>",
+            "evidence": "<the observed failure facts>",
+        },
+    },
+}
+
+
 DEVON_EVIDENCE_CONTRACT: dict = {
     "_doc": (
         "输出合同（返回前自检）：Devon 的最终回复必须以 evidence JSON object 结尾"

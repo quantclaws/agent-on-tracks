@@ -20,7 +20,7 @@ import subprocess as subprocess  # noqa: F401  (explicit re-export: test seam)
 from tracks.executor.file_identity import (  # noqa: F401  (re-export: test import seam)
     is_regular_file_identity as _is_regular_file_identity,
 )
-from tracks.executor.helpers import _commit_if_staged, git
+from tracks.executor.helpers import _scoped_commit_if_staged, git
 from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH
 from tracks.executor.result_audit import ResultAuditMixin
 from tracks.executor.result_payload import ResultPayloadMixin
@@ -172,7 +172,22 @@ class ResultCheckpointMixin(ResultPayloadMixin, ResultAuditMixin):
         ):
             return
         git(self.repo, "add", *(str(path) for path in stage_paths))
-        proc = _commit_if_staged(self.repo, f"{commit_label}\n\ncommand_id: {cmd.command_id}")
+        # 2026-09-19 (run 01M2QTJB): scoped checkpoint commit, the
+        # ResultCheckpoint twin of the helpers.py single-writer fix. The
+        # unscoped _commit_if_staged swept EVERYTHING staged -- an
+        # operator-staged file would land inside Devon's GREEN commit under
+        # the wrong command_id (AC-FR0236-01 attribution) -- and ran with
+        # repo hygiene hooks that evaluate the whole tree, so an
+        # out-of-scope agent's WIP vetoed the checkpoint (same R0801 class
+        # that mis-routed the 04:51 shield fix into a spurious replan).
+        # The runtime stages exactly stage_paths above; commit exactly
+        # those, --no-verify: the dispatch contract's gate suite is the
+        # agent-facing lint authority, and operator commits keep the hooks.
+        proc = _scoped_commit_if_staged(
+            self.repo,
+            f"{commit_label}\n\ncommand_id: {cmd.command_id}",
+            paths=stage_paths,
+        )
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
             return

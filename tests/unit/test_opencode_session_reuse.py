@@ -218,9 +218,12 @@ def test_last_ctx_tokens_from_step_finish_stream():
     stream = (
         '{"type":"step_start","sessionID":"s"}\n'
         '{"type":"step_finish","sessionID":"s","part":{"tokens":{"input":100}}}\n'
-        '{"type":"step_finish","sessionID":"s","part":{"tokens":{"input":749019,"output":127}}}\n'
+        '{"type":"step_finish","sessionID":"s","part":{"tokens":'
+        '{"input":1001,"output":1066,"cache":{"read":277504,"write":0}}}}\n'
     )
-    assert _last_ctx_tokens(stream) == 749019
+    # input alone is only the uncached fresh input; the context the window
+    # enforces includes cache reads/writes (practice calibration T-006).
+    assert _last_ctx_tokens(stream) == 1001 + 277504
     assert _last_ctx_tokens("") is None
     assert _last_ctx_tokens('{"type":"text","part":{"text":"x"}}') is None
 

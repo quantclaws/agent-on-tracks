@@ -36,14 +36,16 @@ def test_crash_recovery_checkpoint_commit_exists(tmp_path):
 
     def crash_after_commit(executor_self, cmd, state, task_id, reconcile=False):
         if cmd.kind == "checkpoint_result":
-            from tracks.executor.helpers import _commit_if_staged, git
+            from tracks.executor.helpers import _scoped_commit_if_staged, git
 
             allowed_paths = cmd.params.get("allowed_paths", [])
             commit_label = cmd.params.get("commit_label") or "checkpoint"
             marker = f"command_id: {cmd.command_id}"
             stage_paths = [executor_self._doc_path(doc) for doc in allowed_paths]
             git(executor_self.repo, "add", *(str(p) for p in stage_paths))
-            _commit_if_staged(executor_self.repo, f"{commit_label}\n\n{marker}")
+            _scoped_commit_if_staged(
+                executor_self.repo, f"{commit_label}\n\n{marker}", paths=stage_paths
+            )
             committed_cids.append(cmd.command_id)
             return  # CRASH: no event emitted
         original_execute(cmd, state, task_id, reconcile)

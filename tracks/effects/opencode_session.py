@@ -68,19 +68,38 @@ def _session_key(role: str, substate: str, assignment: dict | None) -> str:
     return f"{base}:{task_id}" if task_id else base
 
 
+def _step_ctx_tokens(part: dict) -> int | None:
+    """One step_finish part's prompt footprint: input + cache.read +
+    cache.write. ``tokens.input`` alone is only the UNCACHED fresh input."""
+    t = part.get("tokens")
+    if not isinstance(t, dict) or not isinstance(t.get("input"), int):
+        return None
+    cache = t.get("cache") if isinstance(t.get("cache"), dict) else {}
+    total = t["input"]
+    for key in ("read", "write"):
+        value = cache.get(key)
+        if isinstance(value, int):
+            total += value
+    return total
+
+
 def _last_ctx_tokens(stdout: str) -> int | None:
     """The session's context size after a dispatch: the LAST step_finish
-    event's ``tokens.input`` (that call's full context — measured fact, not
-    an estimate)."""
+    event's prompt footprint — input plus cache reads/writes.
+    Practice calibration (2026-09-19, run 01M2QTJB T-006 GREEN):
+    ``tokens.input`` alone was 1001 while cache.read was 277504 (real
+    context ~278K) — using it alone made the 85% compaction threshold
+    unreachable and silently killed the loop; the provider's window
+    enforcement sees the full prompt, cache included."""
     tokens = None
     for event in iter_json_events(stdout):
         if not isinstance(event, dict) or event.get("type") != "step_finish":
             continue
         part = event.get("part")
         if isinstance(part, dict):
-            t = part.get("tokens")
-            if isinstance(t, dict) and isinstance(t.get("input"), int):
-                tokens = t["input"]
+            value = _step_ctx_tokens(part)
+            if value is not None:
+                tokens = value
     return tokens
 
 

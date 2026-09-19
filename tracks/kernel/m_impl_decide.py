@@ -12,7 +12,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from .contracts import DEVON_EVIDENCE_CONTRACT, WRITE_MANIFEST_CONTRACT
+from .contracts import (
+    DEVON_EVIDENCE_CONTRACT,
+    PRISM_DIAGNOSE_CONTRACT,
+    WRITE_MANIFEST_CONTRACT,
+)
 from .events import Command
 from .m_impl_state import (
     _M_IMPL_CONTEXT_DOCS,
@@ -312,6 +316,14 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
         # runtime 机器内联进 assignment，随每次派发新鲜送达，与会话缓存
         # 无关；单一真相源为 kernel.DIAGNOSE_CLASSIFICATIONS。
         assignment["classification_vocabulary"] = list(DIAGNOSE_CLASSIFICATIONS)
+    if sub == "DIAGNOSE":
+        # 2026-09-19 (run 01M2QTJB T-006): three DIAGNOSE attempts in a row
+        # never emitted the envelope (no_envelope_block) -- schema+vocabulary
+        # alone did not teach the shape. Inject the concrete two-layer
+        # example (same therapy as the Devon evidence contract, whose
+        # missing_kind burns stopped the moment its example showed the
+        # full envelope structure).
+        assignment["verdict_contract"] = dict(PRISM_DIAGNOSE_CONTRACT)
     if s.r_tree_identity and sub == "PRISM_RED":
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {

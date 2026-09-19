@@ -117,14 +117,23 @@ def _events_after(store: Store, seq: int) -> list:
 
 
 def _assert_single_format_error(store: Store, expected_kind: str) -> None:
+    """A declared reply's format error routes: the classified format_error
+    event plus the routable verdict.failed (reply_format_error), mirroring
+    _assert_format_error_routed in test_declared_envelope_direct.py (commit
+    224e51b routed every declared kind; these six call sites are all
+    declared assignments and were left asserting the stale single event)."""
     events = list(store.events(RUN_ID))
-    assert len(events) == 1, [e.type for e in events]
-    ev = events[0]
-    assert ev.type == "format_error"
-    assert ev.command_id == CMD_ID
-    assert ev.task_id == TASK_ID
-    assert ev.payload["kind"] == expected_kind
-    assert ev.payload["detail"]
+    kinds = [e.type for e in events]
+    assert kinds == ["format_error", "verdict.failed"], kinds
+    fe, vf = events
+    assert fe.command_id == CMD_ID
+    assert fe.task_id == TASK_ID
+    assert fe.payload["kind"] == expected_kind
+    assert fe.payload["detail"]
+    assert vf.command_id == CMD_ID
+    assert vf.task_id == TASK_ID
+    assert vf.payload["check"] == "reply_format_error"
+    assert vf.payload["task_id"] == TASK_ID
 
 
 # ---------------------------------------------------------------------------

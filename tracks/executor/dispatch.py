@@ -606,6 +606,26 @@ the envelope/failure faces stay re-exported by executor.py."""
             command_id=cmd.command_id,
             task_id=task_id,
         )
+        # 2026-09-19 (run 01M2QTJB PRISM_PLAN): the static gate's twin fix
+        # (see _reject_version_parity above, live 01M19FJ T-042) — without a
+        # routable verdict the dispatch flags set by command.issued stay set,
+        # decide() awaits an outcome that never comes, and every later run is
+        # a silent no-op. The stage routing resets the flags and consumes the
+        # attempt budget.
+        self._emit(
+            "verdict.failed",
+            {
+                "check": "version_parity_mismatch",
+                "task_id": task_id or "",
+                "reason": (
+                    "declared-dispatch artifact parity gate rejected the "
+                    "dispatch before agent execution"
+                ),
+                "evidence": "dispatch.rejected mismatches on this command",
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
         return True
 
     def _post_act_gates(
