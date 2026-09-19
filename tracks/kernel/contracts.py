@@ -78,6 +78,35 @@ PRISM_DIAGNOSE_CONTRACT: dict = {
 }
 
 
+def result_file_contract(seed: str, kind: str) -> dict:
+    """#174 result-file delivery block injected into declared assignments.
+
+    The agent writes its envelope to ``result_path`` via a Python builder
+    (``json.dump`` — machine serialization, escaping correct by
+    construction), runs ``verify_command`` (zero exit = the file parses and
+    validates against the kind schema) BEFORE replying, and the final reply
+    may then be a one-line pointer. Runtime collection prefers the file and
+    falls back to the fenced block (backward compatible). ``seed`` is any
+    per-dispatch unique string (command_id when already minted, else
+    run:substate:task:attempt:ts) — uniqueness gives freshness/anti-stale
+    by construction. Live motivation: 19+ serialization-class burns in run
+    01M2QTJB (no_envelope_block / missing_kind / malformed_json); skill
+    teaching proved a weak lever, machine channels a strong one.
+    """
+    path = f".tracks/runtime/inbox/{seed}.json"
+    return {
+        "result_path": path,
+        "how": (
+            "build the two-layer envelope as a Python dict and write it with"
+            f" json.dump to {path}; never hand-serialize JSON text"
+        ),
+        "verify_command": (
+            ".venv/bin/python -m tracks.cli.main validate-reply"
+            f" --file {path} --kind {kind}"
+        ),
+    }
+
+
 DEVON_EVIDENCE_CONTRACT: dict = {
     "_doc": (
         "输出合同（返回前自检）：Devon 的最终回复必须以 evidence JSON object 结尾"
