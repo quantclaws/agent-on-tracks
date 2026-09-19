@@ -12,6 +12,10 @@ Contract tokens: IF-CMDSVC-001, IF-SERVE-001, IF-RECOVER-001.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
@@ -47,12 +51,58 @@ SERVICE_EVENT_TYPES = (
 
 COMMAND_STATUSES = ("accepted", "claimed", "completed", "failed", "rejected")
 
+_DB_FILENAME = "service.db"
+
+# Service-plane schema (interfaces §1c tables 1-8). Applied with
+# CREATE TABLE IF NOT EXISTS so a store file seeded with a documented
+# subset keeps its rows while missing tables are added.
+_SCHEMA_SCRIPT = (
+    "CREATE TABLE IF NOT EXISTS service_events ("
+    " seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, type TEXT,"
+    " project_id TEXT, run_id TEXT, command_id TEXT, payload TEXT);"
+    "CREATE TABLE IF NOT EXISTS projects ("
+    " project_id TEXT PRIMARY KEY, repo_path TEXT UNIQUE, version TEXT,"
+    " registered_by TEXT, registered_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS commands ("
+    " command_id TEXT PRIMARY KEY, kind TEXT, params_json TEXT,"
+    " params_digest TEXT, idempotency_key TEXT UNIQUE, actor TEXT,"
+    " actor_class TEXT, surface TEXT, project_id TEXT, run_id TEXT,"
+    " status TEXT, claim_generation INTEGER, result_json TEXT,"
+    " created_at TEXT, updated_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS waits ("
+    " run_id TEXT PRIMARY KEY, wait_class TEXT, reason TEXT, retry_at TEXT,"
+    " known_reset INTEGER, backoff_json TEXT, entered_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS leases ("
+    " run_id TEXT PRIMARY KEY, worker_id TEXT, generation INTEGER,"
+    " acquired_at TEXT, expires_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS auth ("
+    " actor TEXT PRIMARY KEY, password_hash TEXT, created_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS sessions ("
+    " token_hash TEXT PRIMARY KEY, actor TEXT, csrf_hash TEXT,"
+    " created_at TEXT, expires_at TEXT);"
+    "CREATE TABLE IF NOT EXISTS schedule ("
+    " id INTEGER PRIMARY KEY CHECK (id = 1), active_run TEXT, queue_json TEXT);"
+)
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 class ServiceDB:
     """Single-writer service-plane store (interfaces §1c tables 1-8)."""
 
     def __init__(self, home: Path) -> None:
-        self.home = home
+        self.home = Path(home)
+        self.home.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(self._connect()) as conn:
+            conn.executescript(_SCHEMA_SCRIPT)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.home / _DB_FILENAME))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.row_factory = sqlite3.Row
+        return conn
 
     def append_event(
         self,
@@ -64,35 +114,150 @@ class ServiceDB:
         command_id: str | None = None,
     ) -> int:
         """Append one service event (type in SERVICE_EVENT_TYPES) -> seq."""
-        raise NotImplementedError("IF-CMDSVC-001")
+        if type not in SERVICE_EVENT_TYPES:
+            raise ValueError(f"unknown service event type: {type!r}")
+        with contextlib.closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "INSERT INTO service_events (ts, type, project_id, run_id,"
+                " command_id, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                (_utcnow(), type, project_id, run_id, command_id, json.dumps(payload or {})),
+            )
+            conn.commit()
+            return int(cursor.lastrowid)
 
     def read_events(self, *, run_id: str | None = None, after_seq: int = 0) -> list:
         """Read service events in seq order (read-only consumers)."""
-        raise NotImplementedError("IF-QUERY-001")
+        sql = (
+            "SELECT seq, ts, type, project_id, run_id, command_id, payload"
+            " FROM service_events WHERE seq > ?"
+        )
+        args: list = [after_seq]
+        if run_id is not None:
+            sql += " AND run_id = ?"
+            args.append(run_id)
+        sql += " ORDER BY seq"
+        with contextlib.closing(self._connect()) as conn:
+            rows = conn.execute(sql, args).fetchall()
+        events = []
+        for row in rows:
+            event = dict(row)
+            raw = event.get("payload")
+            with contextlib.suppress(ValueError, TypeError):
+                event["payload"] = json.loads(raw) if raw else {}
+            events.append(event)
+        return events
 
     def register_command(self, command: dict) -> str:
         """Persist a command row (status=accepted) and return command_id."""
-        raise NotImplementedError("IF-CMDSVC-001")
+        now = _utcnow()
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT INTO commands (command_id, kind, params_json, params_digest,"
+                " idempotency_key, actor, actor_class, surface, project_id, run_id,"
+                " status, claim_generation, result_json, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', NULL, NULL, ?, ?)",
+                (
+                    command["command_id"],
+                    command.get("kind"),
+                    command.get("params_json"),
+                    command.get("params_digest"),
+                    command.get("idempotency_key"),
+                    command.get("actor"),
+                    command.get("actor_class"),
+                    command.get("surface"),
+                    command.get("project_id"),
+                    command.get("run_id"),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        return command["command_id"]
 
     def find_by_idempotency(self, idempotency_key: str) -> dict | None:
         """Look up a command by its unique idempotency key (§1b.2)."""
-        raise NotImplementedError("IF-CMDSVC-001")
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT command_id, kind, params_json, params_digest,"
+                " idempotency_key, actor, actor_class, surface, project_id,"
+                " run_id, status, claim_generation, result_json, created_at,"
+                " updated_at FROM commands WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def claim_command(self, command_id: str, worker_id: str, generation: int) -> bool:
         """CAS accepted->claimed bound to the lease generation (§1i)."""
-        raise NotImplementedError("IF-LEASE-001")
+        with contextlib.closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE commands SET status = 'claimed', claim_generation = ?,"
+                " updated_at = ? WHERE command_id = ? AND status = 'accepted'",
+                (generation, _utcnow(), command_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
 
     def complete_command(
         self, command_id: str, generation: int, result: dict | None, failure: dict | None
     ) -> bool:
         """CAS claimed->completed/failed; False means a stale generation
         (the caller emits ``worker.late_result`` and discards the outcome)."""
-        raise NotImplementedError("IF-LEASE-001")
+        status = "failed" if failure is not None else "completed"
+        outcome = failure if failure is not None else result
+        with contextlib.closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE commands SET status = ?, result_json = ?, updated_at = ?"
+                " WHERE command_id = ? AND status = 'claimed' AND claim_generation = ?",
+                (status, json.dumps(outcome), _utcnow(), command_id, generation),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
 
     def requeue_claimed(self, reason: str) -> list:
         """Recovery: claimed -> accepted with command.requeued (§1h.7)."""
-        raise NotImplementedError("IF-RECOVER-001")
+        now = _utcnow()
+        with contextlib.closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT command_id FROM commands WHERE status = 'claimed'"
+            ).fetchall()
+            requeued = [row["command_id"] for row in rows]
+            conn.execute(
+                "UPDATE commands SET status = 'accepted', claim_generation = NULL,"
+                " updated_at = ? WHERE status = 'claimed'",
+                (now,),
+            )
+            for command_id in requeued:
+                conn.execute(
+                    "INSERT INTO service_events (ts, type, project_id, run_id,"
+                    " command_id, payload) VALUES (?, 'command.requeued', NULL,"
+                    " NULL, ?, ?)",
+                    (now, command_id, json.dumps({"command_id": command_id, "reason": reason})),
+                )
+            conn.commit()
+        return requeued
 
     def get_command(self, command_id: str) -> dict | None:
         """Command row by id (status query, restart-safe)."""
-        raise NotImplementedError("IF-CMDSVC-001")
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT command_id, kind, params_json, params_digest,"
+                " idempotency_key, actor, actor_class, surface, project_id,"
+                " run_id, status, claim_generation, result_json, created_at,"
+                " updated_at FROM commands WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_schedule(self) -> dict | None:
+        """Single schedule row (interfaces §1c table 8); None when unset."""
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT active_run, queue_json FROM schedule WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            queue = json.loads(row["queue_json"]) if row["queue_json"] else []
+        except ValueError:
+            queue = []
+        return {"active_run": row["active_run"], "queue": queue if isinstance(queue, list) else []}
