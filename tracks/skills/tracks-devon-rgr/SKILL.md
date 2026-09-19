@@ -1,7 +1,7 @@
 ---
 envelope: tracks-envelope:v2
 name: tracks-devon-rgr
-version: 0.3
+version: 0.4
 description: Devon M-IMPL 单一 RGR 阶段操作清单。当 Devon 按 assignment.phase 执行 red/green/refactor 之一、需要 fail-closed 校验、phase-specific 写约束或 evidence 自检时使用。
 ---
 
@@ -40,7 +40,7 @@ Devon 每次 dispatch 只执行 `assignment.phase` 指定的**一个** RGR 阶�
 2. **只添加/修改 unit test**；产品代码**禁止**修改（DEVON-RED-2）。
 3. 禁止触碰：integration/e2e、tests assets、frozen Shield tests、`.tracks/projects/**`、task state、Issues、git history（DEVON-RED-3）。
 4. 在 `manifest.red_test_paths`（RED 专用写域，具体目录由 assignment `layout`/manifest 声明）内写 failing unit test。`manifest.allowed_paths` 是 GREEN 阶段的 impl scope，RED 阶段不要写它（也不要写 allowed_paths 列出的文件）（DEVON-RED-4）。
-5. 用 `assignment.commands` 提供的 unit 命令运行授权 unit test，看到目标失败——失败必须落在被测行为/桩的合同 token 上，而非装配错误（DEVON-RED-5）。
+5. 用 `assignment.commands` 提供的 unit 命令运行授权 unit test，看到目标失败。**失败形态 = M-IMPL 合法分类**：全部失败节点必须一致分类为 `assertion_failure` 或 `symbol_missing`（RED_GATE 的合法集合；`stub_token_failure` 是 M-TEST 冻结资产的词汇，M-IMPL RED 中为**非法**——run 01M2QTJB T-002 三连拒实证）。装配错误（collection/import/fixture）同样非法。对被测面仍是 `raise NotImplementedError("IF-…")` 桩的（Shield 为 M-TEST 可读性预植的接口桩）：**用守卫把桩触发转成断言**——`try: result = fn(...) except NotImplementedError: pytest.fail("IF-… 仍是桩：合同要求已实现行为")`，节点即诚实落为 `assertion_failure`（"桩必须被行为替换"这一红线本身，兼作回退到桩的回归针；v0.8 先例 `test_t002_issue_mapping_red.py`："no stub_token, no assembly errors"）。evidence 的 `results` 分类如实自报，runtime 只信不伪（DEVON-RED-5）。
 6. 交付前自检（DEVON-RED-6）：对本次改动文件运行 `assignment.commands` / project contract `[lint].check` 声明的静态检查命令；非零退出必须修复后再交付——RED_GATE 会以 `check=lint` 拒绝（不消耗 attempt）。
 7. 最终回复发射核验（DEVON-RED-7）：回复以恰好一个 tracks-envelope fenced block 结尾、内含 envelope 头（kind=devon:red、version 按 assignment）+ payload 两层结构——裸 payload fence = missing_kind 作废。核验通过后立即停止交付，不继续 Green。
 
