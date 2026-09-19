@@ -299,8 +299,8 @@ L3 的既有语义（凭据探针、fail-never-skip 于 milestone 通道）继�
 | AC-FR0309-01 | integration + e2e | tests/integration/test_web_release.py::test_release_via_web_happy + tests/e2e/test_web_journey.py::test_feature_web_vertical_journey | IF-WEBGATE-001, IF-RELEASE-003 |
 | AC-FR0309-02 | integration | tests/integration/test_web_release.py::test_stale_preview_rejected | IF-WEBGATE-001, IF-RELEASE-002 |
 | AC-FR0309-03 | integration | tests/integration/test_web_release.py::test_delay_and_return_bound_to_digest | IF-WEBGATE-001, IF-RELEASE-003 |
-| AC-FR0310-01 | integration + e2e | tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority + tests/e2e/test_web_journey.py::test_feature_web_vertical_journey | IF-PAUSE-001 |
-| AC-FR0310-02 | integration | tests/integration/test_pause_resume.py::test_resume_from_legal_position | IF-PAUSE-001 |
+| AC-FR0310-01 | integration + e2e | tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority + tests/e2e/test_web_journey.py::test_feature_web_vertical_journey | IF-PAUSE-001, IF-CMDSVC-001 |
+| AC-FR0310-02 | integration | tests/integration/test_pause_resume.py::test_resume_from_legal_position | IF-PAUSE-001, IF-CMDSVC-001 |
 | AC-FR0311-01 | integration | tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates | IF-WEBGATE-001, IF-ESCAPE-001 |
 | AC-FR0311-02 | integration | tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected | IF-WEBGATE-001 |
 | AC-FR0312-01 | integration + e2e | tests/integration/test_web_rollback.py::test_return_with_impact_preview + tests/e2e/test_web_journey.py::test_feature_web_vertical_journey | IF-WEBGATE-001, IF-ESCAPE-001 |
