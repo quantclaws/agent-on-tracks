@@ -15,12 +15,12 @@
 
 ## T-001
 - Issue: #147
-- Description: 命令服务核心（IF-CMDSVC-001）：db.py 服务面八表+service_events 封闭集；service.py CommandService（先持久化再执行、幂等去重/冲突拒绝、surface=cli 内联执行、pause 两段态受理、创建 run/hotfix 前检/澄清受理；批准/preview 绑定校验经 import 复用既有 gate 语义不改 CLI 文件）。锚点=创建/前检/澄清/暂停恢复/受理延迟（proj 经 deps 覆盖）。
+- Description: 命令服务核心（IF-CMDSVC-001）：db.py 服务面八表+service_events；service.py CommandService 先持久化再执行、幂等去重/冲突拒绝、surface=cli 内联、pause 两段受理、run/hotfix 前检与澄清受理、批准/preview 绑定复用既有 gate（不改 CLI）。锚点=创建/澄清/暂停/延迟（0292-02 前检 deferred 至 T-INT；proj 经 deps）。
 - AC refs: AC-FR0291-01, AC-FR0291-02, AC-FR0292-01, AC-FR0292-02, AC-FR0293-01, AC-FR0293-02, AC-FR0310-01, AC-FR0310-02, AC-NFR0150-01
 - FR refs: FR-0291, FR-0292, FR-0293, FR-0310, NFR-0150
 - IF ids: IF-CMDSVC-001
 - Unit refs: -
-- Acceptance refs: tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids, tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run, tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected, tests/integration/test_clarify_web.py::test_reply_continues_same_run, tests/integration/test_clarify_web.py::test_discussion_history_traceable, tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority, tests/integration/test_pause_resume.py::test_resume_from_legal_position, tests/integration/test_perf_budget.py::test_accept_returns_after_persist
+- Acceptance refs: tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids, tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run, tests/integration/test_clarify_web.py::test_reply_continues_same_run, tests/integration/test_clarify_web.py::test_discussion_history_traceable, tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority, tests/integration/test_pause_resume.py::test_resume_from_legal_position, tests/integration/test_perf_budget.py::test_accept_returns_after_persist
 - Scope: tracks/supervisor/db.py, tracks/supervisor/service.py
 - Depends on: T-006
 - Batch: 2
@@ -197,12 +197,12 @@
 
 ## T-INT
 - Issue: #998
-- Description: 终局收口：全图 deferred 锚点（13 条）经真实 serve 子进程栈一次硬门禁收口（跳过 RED，REFACTOR/质量门禁不豁免）；本任务锚点=可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承。
+- Description: 终局收口：全图 14 条跨域锚点声明为本任务 acceptance（deferred 留在源任务作早期信号、不计其 verdict，互斥不变），与可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承 2 条共 16 条经真实 serve 子进程栈一次硬门禁转绿（跳过 RED，REFACTOR/质量门禁不豁免）。
 - AC refs: AC-NFR0151-01, AC-NFR0151-02
 - FR refs: NFR-0151
 - IF ids: IF-MTEST-001, IF-MTEST-002
 - Unit refs: -
-- Acceptance refs: tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered, tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited
+- Acceptance refs: tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered, tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited, tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok, tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface, tests/integration/test_hotfix_swap.py::test_hotfix_preemption_audited, tests/integration/test_command_service.py::test_cli_http_equivalent_events, tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking, tests/integration/test_timeline_diagnosis.py::test_logs_locatable_by_dimensions, tests/integration/test_event_stream.py::test_live_push_without_refresh, tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression, tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence, tests/integration/test_web_release.py::test_release_via_web_happy, tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected, tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress, tests/integration/test_serve_lifecycle.py::test_unhealthy_no_fake_available, tests/integration/test_perf_budget.py::test_soak_memory_bounded
 - Scope: tracks/server/app.py, tracks/server/api_command.py, tracks/server/api_query.py, tracks/server/api_events.py, tracks/supervisor/service.py, tracks/supervisor/worker.py, tracks/cli/serve_cmd.py, tracks/cli/main.py
 - Depends on: T-001, T-002, T-003, T-004, T-005, T-006, T-007, T-008, T-009, T-010, T-011, T-012, T-013, T-014, T-015
 - Batch: 7

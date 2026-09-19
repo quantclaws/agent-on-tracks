@@ -74,15 +74,15 @@ DEFS = [
      ["AC-FR0291-01", "AC-FR0291-02", "AC-FR0292-01", "AC-FR0292-02",
       "AC-FR0293-01", "AC-FR0293-02", "AC-FR0310-01", "AC-FR0310-02",
       "AC-NFR0150-01"],
-     ["AC-FR0291-01", "AC-FR0291-02", "AC-FR0292-02", "AC-FR0293-01",
+     ["AC-FR0291-01", "AC-FR0291-02", "AC-FR0293-01",
       "AC-FR0293-02", "AC-FR0310-01", "AC-FR0310-02", "AC-NFR0150-01"],
-     [],
-     "tracks/supervisor/db.py, tracks/supervisor/service.py",
-     ["T-006"],
-     "命令服务核心（IF-CMDSVC-001）：db.py 服务面八表+service_events 封闭集；service.py "
-     "CommandService（先持久化再执行、幂等去重/冲突拒绝、surface=cli 内联执行、pause 两段态受理、"
-     "创建 run/hotfix 前检/澄清受理；批准/preview 绑定校验经 import 复用既有 gate 语义不改 CLI 文件）。"
-     "锚点=创建/前检/澄清/暂停恢复/受理延迟（proj 经 deps 覆盖）。"),
+      ["AC-FR0292-02"],
+      "tracks/supervisor/db.py, tracks/supervisor/service.py",
+      ["T-006"],
+      "命令服务核心（IF-CMDSVC-001）：db.py 服务面八表+service_events；service.py "
+      "CommandService 先持久化再执行、幂等去重/冲突拒绝、surface=cli 内联、pause 两段受理、"
+      "run/hotfix 前检与澄清受理、批准/preview 绑定复用既有 gate（不改 CLI）。锚点=创建/澄清/"
+      "暂停/延迟（0292-02 前检 deferred 至 T-INT；proj 经 deps）。"),
     ("T-002", 142, "3", True,
      ["FR-0289", "FR-0290"], ["IF-PROJ-001"],
      ["AC-FR0289-01", "AC-FR0289-02", "AC-FR0290-01", "AC-FR0290-02"],
@@ -213,17 +213,28 @@ DEFS = [
      "recover 接入/uvicorn/优雅停止）、cli/main.py 注册 serve+USAGE 同步。锚点=重启恢复"
      "（ast 实测触 app+db+recover+service，本任务拥有 app/serve_cmd，其余经 deps 覆盖）。"
      "deferred：0288-01/03、NFR0150-03（真实服务进程栈）。"),
-    ("T-INT", 998, "7", False,
-     ["NFR-0151"], ["IF-MTEST-001", "IF-MTEST-002"],
-     ["AC-NFR0151-01", "AC-NFR0151-02"],
-     ["AC-NFR0151-01", "AC-NFR0151-02"], [],
-     "tracks/server/app.py, tracks/server/api_command.py, tracks/server/api_query.py, "
-     "tracks/server/api_events.py, tracks/supervisor/service.py, tracks/supervisor/worker.py, "
-     "tracks/cli/serve_cmd.py, tracks/cli/main.py",
-     ["T-001", "T-002", "T-003", "T-004", "T-005", "T-006", "T-007", "T-008",
-      "T-009", "T-010", "T-011", "T-012", "T-013", "T-014", "T-015"],
-     "终局收口：全图 deferred 锚点（13 条）经真实 serve 子进程栈一次硬门禁收口（跳过 RED，"
-     "REFACTOR/质量门禁不豁免）；本任务锚点=可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承。"),
+     ("T-INT", 998, "7", False,
+      ["NFR-0151"], ["IF-MTEST-001", "IF-MTEST-002"],
+      ["AC-NFR0151-01", "AC-NFR0151-02"],
+      ["AC-NFR0151-01", "AC-NFR0151-02",
+       # PRISM-PLAN-01 (round 5): the 13 deferred anchors get explicit
+       # acceptance ownership here (surface entries + statically verifiable
+       # GREEN feasibility via this task's full deps closure); the source
+       # tasks keep them in deferred_refs as the B94 early-signal,
+       # non-counting channel.
+       "AC-FR0314-01", "AC-FR0315-01", "AC-FR0296-04",
+       "AC-FR0295-03", "AC-FR0301-02", "AC-FR0305-02",
+       "AC-FR0306-01", "AC-FR0306-02", "AC-NFR0152-02",
+       "AC-FR0309-01", "AC-FR0292-02",
+       "AC-FR0288-01", "AC-FR0288-03", "AC-NFR0150-03"], [],
+      "tracks/server/app.py, tracks/server/api_command.py, tracks/server/api_query.py, "
+      "tracks/server/api_events.py, tracks/supervisor/service.py, tracks/supervisor/worker.py, "
+      "tracks/cli/serve_cmd.py, tracks/cli/main.py",
+      ["T-001", "T-002", "T-003", "T-004", "T-005", "T-006", "T-007", "T-008",
+       "T-009", "T-010", "T-011", "T-012", "T-013", "T-014", "T-015"],
+      "终局收口：全图 14 条跨域锚点声明为本任务 acceptance（deferred 留在源任务作早期信号、"
+      "不计其 verdict，互斥不变），与可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承 "
+      "2 条共 16 条经真实 serve 子进程栈一次硬门禁转绿（跳过 RED，REFACTOR/质量门禁不豁免）。"),
 ]
 
 tasks = []
@@ -297,7 +308,21 @@ for ac, row in ROW.items():
             errors.append(f"{ac}: node {n} not covered")
 for r, ts in covered.items():
     if len(ts) > 1:
-        errors.append(f"node {r} covered by multiple tasks {ts}")
+        # B94 收口 mirror (PRISM-PLAN-01): a deferred anchor is legitimately
+        # declared twice — once in its source task's deferred_refs (early
+        # signal, non-counting) and once in the integration task's
+        # acceptance_refs (final hard-gate ownership). Any other double
+        # coverage stays an error.
+        non_int = [t for t in ts if t != "T-INT"]
+        integ = [t for t in ts if t == "T-INT"]
+        mirror_ok = (
+            len(integ) == 1
+            and len(non_int) == 1
+            and r in next(t for t in tasks if t["task_id"] == non_int[0])["deferred_refs"]
+            and r in next(t for t in tasks if t["task_id"] == "T-INT")["acceptance_refs"]
+        )
+        if not mirror_ok:
+            errors.append(f"node {r} covered by multiple tasks {ts}")
 reg = {}
 for t in tasks:
     for ac in t["ac_refs"]:
@@ -334,6 +359,10 @@ for t in tasks:
 
 node2ac = {n: ac for ac, row in ROW.items() for n in row["integ"]}
 for t in tasks:
+    if t.get("integration"):
+        # The integration 收口 task owns the union of all deferred anchors by
+        # design (B94); their ACs stay registered on the source tasks.
+        continue
     reg_set = set(t["ac_refs"])
     for r in t["acceptance_refs"]:
         ac = node2ac.get(r)
