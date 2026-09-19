@@ -59,29 +59,38 @@ DEVON_EVIDENCE_CONTRACT: dict = {
     "_doc": (
         "输出合同（返回前自检）：Devon 的最终回复必须以 evidence JSON object 结尾"
         "（Runtime 取最后一条 text 消息；tracks-devon-rgr §4）。"
-        "当 assignment 声明 tracks-envelope:v2 时，evidence object 是恰好一个 "
-        "fenced ```tracks-envelope block 的 payload（块外不得有散文）；未声明时"
-        "以裸 JSON object 结尾。"
+        "当 assignment 声明 tracks-envelope:v2 时，最终回复 = 恰好一个 "
+        "fenced ```tracks-envelope block（块外不得有散文），其内容是"
+        "{\"envelope\": {\"kind\": \"devon:<phase>\", \"version\": 2}, "
+        "\"payload\": {...}} **两层 JSON**——evidence 字段全部在 payload 里；"
+        "把裸 payload 直接放进 fence（无 envelope 头）= reply_format_error "
+        "(missing_kind) 作废。未声明时以裸 JSON object 结尾。"
         "缺任一必填字段或类型不符即 impl_defect 判失败、attempt 作废。"
         "本示例由 runtime 消费方校验代码反推生成并与 tracks-devon-rgr §4 对账"
-        "（live 教训 T-004：手写示例把 commands 画成 dict，误导 attempt 作废）。"
+        "（live 教训 T-004：手写示例把 commands 画成 dict，误导 attempt 作废；"
+        "live 教训 2026-09-19 T-006：示例只画裸 payload、未画 envelope 包裹，"
+        "agent 六次 attempt 全发裸 payload 被 missing_kind 打回——示例即最具体的"
+        "合同，必须展示完整两层结构）。"
     ),
     "example": {
-        "phase": "green",
-        "changed_paths": ["tracks/kernel/hotfix.py"],
-        "commands": [
-            {
-                "cmd": "<host contract [unit].run command>",
-                "result": "pass",
-                "output_summary": "361 passed",
-            }
-        ],
-        "results": [{"classification": "assertion_failure"}],
-        "manifest_compliance": True,
-        "pre_identity": "<assignment.pre_dirty_snapshot 提供则回显>",
-        "post_identity": "<完工后自行计算>",
-        "r_identity": "<GREEN/REFACTOR 必填：assignment.r_tree_identity 或 RED 的 R>",
-        "implemented_if_ids": ["IF-HOTFIX-002"],
+        "envelope": {"kind": "devon:green", "version": 2},
+        "payload": {
+            "phase": "green",
+            "changed_paths": ["tracks/kernel/hotfix.py"],
+            "commands": [
+                {
+                    "cmd": "<host contract [unit].run command>",
+                    "result": "pass",
+                    "output_summary": "361 passed",
+                }
+            ],
+            "results": [{"classification": "assertion_failure"}],
+            "manifest_compliance": True,
+            "pre_identity": "<assignment.pre_dirty_snapshot 提供则回显>",
+            "post_identity": "<完工后自行计算>",
+            "r_identity": "<GREEN/REFACTOR 必填：assignment.r_tree_identity 或 RED 的 R>",
+            "implemented_if_ids": ["IF-HOTFIX-002"],
+        },
     },
     "shape_rules": [
         "commands 必须是 LIST（每项 {cmd, result: pass|fail, output_summary}）——不是 dict",
