@@ -19,7 +19,7 @@ from tracks.discuss.model import iter_comments
 from tracks.discuss.parser import parse_threads
 from tracks.executor import version_extensions
 from tracks.executor.executor import git
-from tracks.kernel.events import EventEnvelope
+from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.kernel.m_test import M_TEST_PIPELINE_VERSION, pipeline_incomplete_links
 from tracks.kernel.machine import project
 
@@ -691,19 +691,7 @@ def _read_events(home: Path, run_id: str) -> list[EventEnvelope]:
     events = []
     for row in rows:
         payload = _expand_refs(home, json.loads(row[8]))
-        events.append(
-            EventEnvelope(
-                seq=row[1],
-                ts=row[2],
-                run_id=row[0],
-                version=row[3],
-                type=row[4],
-                schema_version=row[5],
-                command_id=row[6],
-                task_id=row[7],
-                payload=payload,
-            )
-        )
+        events.append(event_envelope_from_row(row, payload))
     return events
 
 

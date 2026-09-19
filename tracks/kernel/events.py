@@ -299,6 +299,28 @@ class EventEnvelope:
     payload: dict
 
 
+def event_envelope_from_row(row: tuple, payload: dict) -> EventEnvelope:
+    """Map one `events` table row (run_id, seq, ts, version, type,
+    schema_version, command_id, task_id, payload) onto an EventEnvelope.
+
+    The single shared row-order authority for every read-side surface
+    (report.py, server/projections.py) — the duplicated inline mapping
+    tripped the duplication guard when projections grew the read model
+    (run 01M2QTJB T-006 landing, 2026-09-19). Callers own payload decoding
+    ($ref expansion differs per surface)."""
+    return EventEnvelope(
+        seq=row[1],
+        ts=row[2],
+        run_id=row[0],
+        version=row[3],
+        type=row[4],
+        schema_version=row[5],
+        command_id=row[6],
+        task_id=row[7],
+        payload=payload,
+    )
+
+
 @dataclass(frozen=True)
 class Command:
     kind: str
