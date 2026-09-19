@@ -16,6 +16,7 @@ from tracks.effects.envelope_reply import is_declared_assignment
 
 from .opencode_audit import _capture_target_diffs
 from .opencode_core import AGENT_NAME, OpencodeError, redact
+from .opencode_session import _session_key
 
 
 def _text(value) -> str:
@@ -38,6 +39,7 @@ class _PreparedAct:
     console_input: str | None
     reviewer_assignment: bool
     cleanup_infos: list
+    key: str
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,7 @@ class OpencodeActMixin:
             reviewer_assignment=substate.endswith("_REVIEW")
             or substate in ("PRISM_PLAN", "PRISM_RED", "PRISM_FINAL", "VERIFY_FINAL"),
             cleanup_infos=cleanup_infos,
+            key=_session_key(role, substate, assignment),
         )
         try:
             return self._run_act(request)
@@ -131,7 +134,9 @@ class OpencodeActMixin:
             if not prepared.ok:
                 return prepared.failure
             audit = self._prepare_act_audit(req)
-            proc = self._dispatch_with_session_health(req.name, req.prompt, req.root)
+            proc = self._dispatch_with_session_health(
+                req.name, req.prompt, req.root, key=req.key
+            )
             self._check_json(proc)
             if self._abnormal_step_finish(proc):
                 # B17/#20 narrow (live T-003 GREEN): an interrupted session

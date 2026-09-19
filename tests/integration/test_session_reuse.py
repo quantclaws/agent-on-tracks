@@ -67,13 +67,16 @@ def test_second_dispatch_continues_recorded_session(
     assert len(invocations) == 2
     assert _session_args(invocations[0]) is None  # 首次：无 session → 全新
     assert _session_args(invocations[1]) == "ses_fake_stable_0001"  # 续传
-    # 持久化文件按 run_id 落盘，agent 键为 opencode 名（Scribe）
+    # 持久化文件按 run_id 落盘；D-42 键为工作单元（scribe:TRIAGE），
+    # 条目为 v2 {session_id, ctx_tokens, compacted}。
     data = json.loads(
         (host_repo / ".tracks" / "runtime" / "sessions" / f"{RUN_ID}.json").read_text(
             encoding="utf-8"
         )
     )
-    assert data == {"Scribe": "ses_fake_stable_0001"}
+    entry = data["scribe:TRIAGE"]
+    assert entry["session_id"] == "ses_fake_stable_0001"
+    assert "ctx_tokens" in entry and "compacted" in entry
 
 
 def test_stale_session_falls_back_to_fresh_dispatch(
@@ -82,7 +85,8 @@ def test_stale_session_falls_back_to_fresh_dispatch(
     """--session 指向不存在的会话 → 降级全新派发一次，并记录新 id。"""
     monkeypatch.setenv("FAKE_OPENCODE_SESSION_DROP", "1")
     b = _backend(host_repo)
-    b._record_session("Scribe", "ses_stale_dead")  # 预置过期 session
+    # 预置过期 session（D-42 键 = 派发的工作单元键 scribe:TRIAGE）
+    b._record_session("scribe:TRIAGE", "ses_stale_dead")
     out = _dispatch(b, marker)
     assert out["status"] == "done"
     invocations = _invocations(marker)

@@ -94,8 +94,9 @@ def test_run_happy_path_wires_pumps(host, monkeypatch):
     monkeypatch.setattr(host, "_start_stderr_pump", lambda *a: ("stderr-reader", []))
     captured = {}
 
-    def _await(*args):
+    def _await(*args, **kwargs):
         captured["args"] = args
+        captured["kwargs"] = kwargs
         return sentinel
 
     monkeypatch.setattr(host, "_await_run", _await)
@@ -145,9 +146,9 @@ def test_await_run_finalize_error_recovers_and_raises(host, monkeypatch):
     seen = []
     monkeypatch.setattr(host, "_stream_stdout", lambda *a: ([], False, False))
     monkeypatch.setattr(host, "_finalize_run", lambda *a: (_ for _ in ()).throw(OpencodeError("timeout", "t")))
-    monkeypatch.setattr(host, "_recover_run_error", lambda exc, name: seen.append((exc.failure_class, name)))
+    monkeypatch.setattr(host, "_recover_run_error", lambda exc, name, key=None: seen.append((exc.failure_class, name)))
     with pytest.raises(OpencodeError):
-        host._await_run("devon", ["opencode"], _Proc(), None, None, None, [], None, None, 10)
+        host._await_run(["opencode"], _Proc(), None, None, None, [], None, None, 10, key="devon")
     assert seen == [("timeout", "devon")]
 
 
@@ -157,7 +158,10 @@ def test_await_run_success_records_session(host, monkeypatch):
     monkeypatch.setattr(host, "_stream_stdout", lambda *a: ([], False, False))
     monkeypatch.setattr(host, "_finalize_run", lambda *a: proc)
     monkeypatch.setattr(host, "_record_session", lambda name, sid: recorded.append((name, sid)))
-    assert host._await_run("devon", ["opencode"], proc, None, None, None, [], None, None, 10) is proc
+    assert (
+        host._await_run(["opencode"], proc, None, None, None, [], None, None, 10, key="devon")
+        is proc
+    )
     assert recorded == [("devon", "s1")]
 
 
@@ -243,7 +247,7 @@ def test_spawn_pipe_success_and_missing(host, monkeypatch):
 def test_build_cmd_session_model_debug(host, monkeypatch):
     host.model = "gpt-x"
     host.debug = True
-    monkeypatch.setattr(host, "_session_for", lambda name: "s1")
+    monkeypatch.setattr(host, "_session_for", lambda name: {"session_id": "s1"})
     cmd = host._build_cmd("devon", "prompt")
     assert "--session" in cmd and "s1" in cmd
     assert "--model" in cmd and "gpt-x" in cmd

@@ -22,6 +22,7 @@ from pathlib import Path
 from tracks import paths
 
 from .opencode_core import OpencodeError, iter_json_events
+from .opencode_session import _last_ctx_tokens
 
 
 class OpencodeRunMixin:
@@ -34,17 +35,21 @@ class OpencodeRunMixin:
         selection is an opencode-config concern, never hardcoded by tracks."""
         return self.model
 
-    def _run(self, name: str, prompt: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    def _run(
+        self, name: str, prompt: str, cwd: Path | None = None, key: str | None = None
+    ) -> subprocess.CompletedProcess:
         """Run opencode agent with streaming stdout and manifest detection.
 
         opencode 1.18 ``run --format json`` deadlocks on a pipe stdout (it
         interacts with the controlling terminal); the child therefore gets a
         pty for stdin/stdout so events actually flow. ``TRAC_AGENT_PTY=0``
-        restores the legacy pipe behaviour.
+        restores the legacy pipe behaviour. ``key`` is the D-42 work-unit
+        session key (defaults to the agent name for direct/test callers).
         """
-        cmd = self._build_cmd(name, prompt)
+        key = key or name
+        self._maybe_compact(key, self._effective_model(name))
+        cmd = self._build_cmd(name, prompt, key=key)
         env = {**os.environ, "OPENCODE_LOGGER_DIR": ".opencode/logs"}
-        console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         log_path = self._debug_log_path(name) if self.debug else None
         log_fh = open(log_path, "w", buffering=1) if log_path else None  # noqa: SIM115
         master_fd = None
@@ -55,12 +60,13 @@ class OpencodeRunMixin:
                 log_fh.close()
             raise
 
-        stdin_writer = self._start_stdin_pump(proc, console_input, master_fd)
+        stdin_writer = self._start_stdin_pump(
+            proc, os.environ.get("TRAC_AGENT_CONSOLE_INPUT"), master_fd
+        )
         stderr_reader, stderr_lines = self._start_stderr_pump(proc, log_fh)
 
         timeout = int(os.environ.get("TRAC_AGENT_TIMEOUT", "1800"))
         return self._await_run(
-            name,
             cmd,
             proc,
             master_fd,
@@ -70,11 +76,11 @@ class OpencodeRunMixin:
             stdin_writer,
             stderr_reader,
             timeout,
+            key=key,
         )
 
     def _await_run(
         self,
-        name,
         cmd,
         proc,
         master_fd,
@@ -84,10 +90,12 @@ class OpencodeRunMixin:
         stdin_writer,
         stderr_reader,
         timeout,
+        key=None,
     ):
-        """Stream to completion, finalize, and record the resumable session."""
-        stdout_chunks: list[str] = []
-        manifest_found = False
+        """Stream to completion, finalize, and record the resumable session.
+
+        ``key`` is the resolved D-42 session key (the caller already did
+        ``key or name``)."""
         try:
             stdout_chunks, manifest_found, stalled = self._stream_stdout(proc, timeout, master_fd)
         except KeyboardInterrupt:
@@ -106,36 +114,41 @@ class OpencodeRunMixin:
                 stalled, timeout,
             )
         except OpencodeError as exc:
-            self._recover_run_error(exc, name)
+            self._recover_run_error(exc, key)
             raise
-        # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写）。
-        self._record_session(name, self._extract_session_id(proc.stdout or ""))
+        # 成功路径：从事件流提取 sessionID 并记录（幂等，同 id 不重写），
+        # 并测量本回合上下文尺寸（D-42 压缩闭环的派发后探测点）。
+        self._record_session(key, self._extract_session_id(proc.stdout or ""))
+        self._record_ctx_tokens(key, _last_ctx_tokens(proc.stdout or ""))
         return proc
 
-    def _recover_run_error(self, exc: OpencodeError, name: str) -> None:
+    def _recover_run_error(
+        self, exc: OpencodeError, name: str, key: str | None = None
+    ) -> None:
         # D-39 轻版（#44）：infra 失败（timeout/provider）也记录 session
         # ——下一次 infra 重派以 --session 续传（断点续跑而非冷启动）。
+        key = key or name
         exc_out = getattr(exc, "stdout", "") or ""
         exc_err = getattr(exc, "stderr", "") or ""
-        self._record_session(name, self._extract_session_id(exc_out))
+        self._record_session(key, self._extract_session_id(exc_out))
         # Prism review A1：异常流携带 overflow 信号（provider 侧错误，
         # stderr/非 JSON）→ 弃用 session，否则 infra 重派会反复续传同
         # 一个将溢出的会话直至派发上限。
         if self._session_reuse_enabled() and self._overflow_text(
             exc_out, exc_err, self._has_json_events(exc_out)
         ):
-            self._clear_session(name)
+            self._clear_session(key)
         elif self._session_reuse_enabled() and exc.failure_class == "non_zero_exit":
             # 2026-09-18 run 01M2QTJB（M-IMPL PLANNING）：进程硬崩（exit≠0，
             # 区别于 timeout/provider 的瞬态错误）是与 miss/overflow 同级的
             # 会话失效信号——复用会话的派发在回合中途死亡（opencode part
             # status=None：工具调用发起即死，最终 envelope 永远发不出），
-            # 随后演变为秒级 exit-1 循环；infra backoff（无自行停车出口）
-            # 无限重派同一毒化会话。弃用 session：下一次 infra 重派冷启动
-            # （B18：不烧 agent attempt；盘上产物 + 重注入 assignment 承载
-            # 全部必需状态——"the event log carries the history, not the
-            # prompt"）。
-            self._clear_session(name)
+            # 随后演变为秒级 exit-1 循环。弃用 session：下一次 infra 重派冷
+            # 启动（B18：不烧 agent attempt；盘上产物 + 重注入 assignment
+            # 承载全部必需状态——"the event log carries the history, not
+            # the prompt"）。D-42 裁定：runtime 负责传递 agent 所需信息
+            # （任务、verdict 等），agent 只重建自己的探索/思考/结论。
+            self._clear_session(key)
 
     def _finalize_run(
         self,
@@ -224,12 +237,13 @@ class OpencodeRunMixin:
             with contextlib.suppress(OSError):
                 os.close(master_fd)
 
-    def _build_cmd(self, name: str, prompt: str) -> list[str]:
+    def _build_cmd(self, name: str, prompt: str, key: str | None = None) -> list[str]:
         cmd = ["opencode", "run", "--agent", name, "--format", "json",
                "--dir", str(self.repo), "--auto", prompt]
-        # D-39 用户简化版（#44）：该 agent 在本 run 内已有 session 则续传
-        # （上下文跨派发/重试接续，失败重派从"全量重建"坍缩为"增量指令"）。
-        session = self._session_for(name)
+        # D-42：按工作单元键续传（同键一律续传——infra/format/revise 统一，
+        # FR-11 证据注入纠偏；压缩闭环控尺寸。设计：
+        # .tracks/projects/v0.9/oob/2026-09-19-session-lifecycle.md）。
+        session = (self._session_for(key or name) or {}).get("session_id")
         if session:
             cmd.extend(["--session", session])
         model = self._resolve_model(name)
