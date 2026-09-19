@@ -1,7 +1,7 @@
 ---
 envelope: tracks-envelope:v2
 name: tracks-envelope
-version: 0.2
+version: 0.3
 description: tracks 声明式派发的最终回复发射合同——两层 envelope 结构、唯一 fenced block、作废形态与交付前自检。任何 assignment 声明 envelope（protocol tracks-envelope）的派发自动附加本 skill。
 ---
 
@@ -30,7 +30,12 @@ assignment 声明 `envelope` 时，你的**最终回复**必须以如下形态�
 
 ## 长字符串纪律（malformed_json 的唯一来源）
 
-payload 字符串值里**不要手工转义嵌套 JSON**：多 K 字符的手写 `\"` 转义必然出错（run 01M2QTJB PRISM_FINAL 两连 `Expecting ',' delimiter`，char ~2736/2922，各烧 29min/2min）。引用 assignment/日志原文时：要么**转述**（paraphrase 关键字段，不复制原文），要么用工具构造（把嵌入对象用 `json.dumps` 生成再粘贴），要么缩短到无需转义的摘要。证据字段的可读性不损失：runtime 只按 schema 校验结构，散文细节放在 block **之前**的正文里。
+payload 字符串值里**不要手工转义嵌套 JSON**：多 K 字符的手写 `\"` 转义必然出错（run 01M2QTJB PRISM_FINAL 六连 `Expecting ',' delimiter`，char 2543-2922，合计烧掉 35+ 分钟）。两条铁律：
+
+1. **字符串值内禁止裸双引号**。最常见触发器：把 pytest 失败输出/源码行原样粘进 evidence——如 `events["command_id"] == "never"` 里的内层 `"` 会提前终止字符串。改写法：内层引号换成单引号（`events['command_id']`）、或转述（"断言 events 下标 command_id 等于 never"）、或删去只留节点 ID。
+2. **不逐字复述 assignment/日志原文**：引用关键字段名与值即可；散文细节放在 block **之前**的正文里（runtime 只按 schema 校验结构）。
+
+用工具构造（`json.dumps`）永远安全；手工嵌入多 K 字符永远不安全。
 
 ## 交付前自检（一步）
 
