@@ -20,9 +20,27 @@ from tracks.executor.helpers import (
 )
 from tracks.executor.result_checkpoint import ResultCheckpointMixin
 from tracks.kernel.machine import State
+from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
 # reviewer role -> its verdict event type
 _VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict", "prism": "prism.verdict"}
+
+
+def _is_process_crash(result: dict) -> bool:
+    """True when the result carries an opencode process-crash fact (OOB
+    2026-09-19, run 01M2QTJB: opencode exit 1 with 429 quota noise produced
+    an empty reply that was misread as diagnose_contract_violation, burning
+    the DIAGNOSE attempt budget and escalating). A crash is machine-side
+    (infra): the outcome.received failure_class already drives the bounded
+    infra re-dispatch with backoff and no attempt consumed -- a
+    contract-violation verdict on top would double-punish the same turn."""
+    if not isinstance(result, dict):
+        return False
+    for field in ("returncode", "exit_code"):
+        code = result.get(field)
+        if isinstance(code, int) and not isinstance(code, bool) and code != 0:
+            return True
+    return result.get("failure_class") in _INFRA_FAILURE_CLASSES
 
 
 # D-29 criteria pack identity (architecture.md §3.4): echoed by Prism and
@@ -156,6 +174,13 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
             # in final reply. Fail-closed (consume attempt, redispatch Prism;
             # budget exhaustion escalates) — do NOT fallback-derive a
             # classification from prose (user stance: agents honor contracts).
+            if _is_process_crash(result):
+                # OOB 2026-09-19: the empty reply rides a crashed opencode
+                # process (exit != 0 / non_zero_exit), not a violating agent.
+                # No contract verdict here -- the outcome.received infra
+                # classification owns the turn (streak + backoff re-dispatch,
+                # no attempt burned).
+                return
             self._emit_diagnose_contract_violation(cmd, state, task_id)
             return
         classification = verdict

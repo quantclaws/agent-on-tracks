@@ -223,6 +223,13 @@ EVENT_TYPES = (
     "mutation.manifest",
     "mutation.experiment",
     "closure_evidence.failed",
+    # OOB 2026-09-19 (run 01M2QTJB): executor collection-face audit events --
+    # envelope.repaired (bounded bare-quote repair applied to a declared
+    # reply; payload carries the repairs list + original error) and
+    # session.cleared (a repeat same-kind format_error dropped the poisoned
+    # work-unit session). Audit-only; the kernel projection ignores them.
+    "envelope.repaired",
+    "session.cleared",
 )
 
 # interfaces §4 — v0.1 closed command set.

@@ -306,6 +306,30 @@ def test_maybe_compact_clears_when_already_compacted_at_size(tmp_path, monkeypat
     assert b._session_for("k") is None
 
 
+def test_clear_workunit_session_removes_entry_and_persists(tmp_path):
+    """OOB 2026-09-19: repeat same-kind format_error drops the poisoned
+    work-unit session; the re-dispatch cold-starts. True + file-level gone."""
+    b = _backend(tmp_path)
+    b._record_session("prism:PRISM_FINAL:T-002", "ses_poison")
+    assert b.clear_workunit_session("prism:PRISM_FINAL:T-002") is True
+    assert b._session_for("prism:PRISM_FINAL:T-002") is None
+    assert _backend(tmp_path)._session_for("prism:PRISM_FINAL:T-002") is None
+
+
+def test_clear_workunit_session_missing_key_is_false(tmp_path):
+    b = _backend(tmp_path)
+    b._record_session("prism:PRISM_FINAL:T-002", "ses_live")
+    assert b.clear_workunit_session("prism:PRISM_FINAL:T-999") is False
+    # the live session is untouched
+    assert b._session_for("prism:PRISM_FINAL:T-002")["session_id"] == "ses_live"
+
+
+def test_clear_workunit_session_disabled_reuse_is_false(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRAC_AGENT_SESSION_REUSE", "0")
+    b = _backend(tmp_path)
+    assert b.clear_workunit_session("prism:PRISM_FINAL:T-002") is False
+
+
 def test_effective_model_reads_per_agent_config(tmp_path):
     b = _backend(tmp_path)
     cfg = tmp_path / ".opencode"

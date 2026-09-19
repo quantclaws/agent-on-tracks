@@ -13,6 +13,7 @@ from tracks.effects.dispatch_parity import (
     static_parity_check,
     static_parity_referenced,
 )
+from tracks.effects.opencode_session import _session_key
 from tracks.executor.failure_review import (
     acknowledge_failure,
     inject_into_assignment,
@@ -26,7 +27,9 @@ from tracks.executor.helpers import _dispatch_payload
 from tracks.kernel.envelope import (
     DIAGNOSE_KINDS,
     EnvelopeFormatError,
+    extract_envelope_block,
     parse_agent_output,
+    repair_envelope_block,
     validate_envelope,
 )
 from tracks.kernel.events import Command
@@ -744,21 +747,77 @@ the envelope/failure faces stay re-exported by executor.py."""
             # through the single kernel parse path, which classifies them
             # (malformed_json / no_envelope_block) — no duplicated logic.
             envelope = parse_agent_output(raw)
-            if declared_kind:
-                # Declared dispatch: the reply must speak the kind the
-                # assignment declared (schema already payload-validated).
-                envelope = validate_envelope(envelope, declared_kind)
+            envelope = self._check_declared_kind(envelope, declared_kind)
         except EnvelopeFormatError as exc:
             if not declared:
                 return False
-            self._emit_format_error(cmd, task_id, exc, declared_kind)
-            return True
+            return self._handle_declared_format_error(
+                result, raw, exc, cmd, task_id, declared_kind, assignment
+            )
         except NotImplementedError:
             return False  # T-035 module pending; deferred-only-pass
         result.setdefault("envelope", envelope)
         return False
 
-    def _emit_format_error(self, cmd, task_id, exc, declared_kind) -> None:
+    @staticmethod
+    def _check_declared_kind(envelope, declared_kind):
+        """Declared dispatch: the reply must speak the kind the assignment
+        declared (schema already payload-validated)."""
+        if declared_kind:
+            return validate_envelope(envelope, declared_kind)
+        return envelope
+
+    def _handle_declared_format_error(
+        self, result, raw, exc, cmd, task_id, declared_kind, assignment
+    ) -> bool:
+        """Declared-reply format-error branch: bounded repair first, else the
+        existing format_error path. Returns True when handled (always, on
+        this branch) and False when a repaired envelope rejoins the flow."""
+        envelope = self._repair_declared_envelope(raw, exc, cmd, task_id)
+        if envelope is None:
+            self._emit_format_error(cmd, task_id, exc, declared_kind, assignment)
+            return True
+        try:
+            envelope = self._check_declared_kind(envelope, declared_kind)
+        except EnvelopeFormatError as kind_exc:
+            self._emit_format_error(cmd, task_id, kind_exc, declared_kind, assignment)
+            return True
+        result.setdefault("envelope", envelope)
+        return False
+
+    def _repair_declared_envelope(self, raw, exc, cmd, task_id) -> dict | None:
+        """OOB 2026-09-19 (run 01M2QTJB PRISM_FINAL): bounded repair of a
+        structurally truncated declared reply. The agent pasted pytest output
+        verbatim into the envelope payload string, so bare double quotes
+        terminated the JSON string early (six consecutive malformed_json,
+        Expecting ',' delimiter at char 2543-2922). The kernel parser stays
+        pure; on repair success the repaired envelope rejoins the normal
+        flow (including the declared-kind check at the call site) and an
+        envelope.repaired audit event records what was fixed. None keeps
+        the existing format_error path byte-identical."""
+        if exc.kind != "malformed_json":
+            return None
+        block = extract_envelope_block(raw)
+        if block is None:
+            return None
+        parsed, repairs = repair_envelope_block(block)
+        if parsed is None or not repairs:
+            return None
+        self._emit(
+            "envelope.repaired",
+            {
+                "repairs": repairs,
+                "original_error": str(exc),
+                "task_id": task_id,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        return parsed
+
+    def _emit_format_error(
+        self, cmd, task_id, exc, declared_kind, assignment=None
+    ) -> None:
         """format_error plus the stage-routable verdict for declared kinds.
 
         A declared review/diagnose dispatch whose reply violates the declared
@@ -771,6 +830,7 @@ the envelope/failure faces stay re-exported by executor.py."""
         review flags, consume attempt, stay for re-dispatch; budget
         exhaustion escalates). Audit trail keeps both events.
         """
+        self._clear_session_on_repeat_format_error(cmd, task_id, exc, assignment)
         self._emit(
             "format_error",
             {"kind": exc.kind, "detail": exc.detail, "task_id": task_id},
@@ -827,6 +887,64 @@ the envelope/failure faces stay re-exported by executor.py."""
                 command_id=cmd.command_id,
                 task_id=task_id,
             )
+
+    def _clear_session_on_repeat_format_error(
+        self, cmd, task_id, exc, assignment
+    ) -> None:
+        """OOB 2026-09-19 (run 01M2QTJB PRISM_FINAL): a repeat same-kind
+        format_error on one task means session reuse is deterministically
+        replaying the same broken answer (the same malformed_json char twice
+        across dispatches) -- skill-level correction cannot reach the reused
+        context, so drop the poisoned work-unit session and cold-start the
+        re-dispatch (the runtime re-injects task + verdict state; the agent
+        only rebuilds its own thinking). Only declared replies (the
+        assignment carries the envelope declaration) and only the two
+        truncation kinds; a cross-kind sequence is independent breakage and
+        keeps its session. The work-unit key is recomputed with the same
+        pure _session_key the backend act() dispatch used -- the executor
+        owns role/substate/assignment here, so no context threading is
+        needed. Backends without a session registry (fake/test doubles)
+        expose no clear_workunit_session and are skipped."""
+        if exc.kind not in ("malformed_json", "no_envelope_block"):
+            return
+        if not isinstance(assignment, dict) or not assignment.get("envelope"):
+            return
+        params = getattr(cmd, "params", None)
+        if not isinstance(params, dict):
+            return
+        role, substate = params.get("role"), params.get("substate")
+        if not role or not substate:
+            return
+        if not self._is_repeat_format_error(task_id, exc.kind):
+            return
+        clear = getattr(self.backend, "clear_workunit_session", None)
+        if not callable(clear):
+            return
+        key = _session_key(role, substate, assignment)
+        if clear(key):
+            self._emit(
+                "session.cleared",
+                {"key": key, "reason": f"repeat_format_error:{exc.kind}"},
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+
+    def _is_repeat_format_error(self, task_id, kind) -> bool:
+        """True when this task's most recent format_error carries the same
+        kind -- i.e. THIS failure is a deterministic replay, not new
+        breakage. Pure event-log arithmetic over the current run."""
+        store = getattr(self, "store", None)
+        run_id = getattr(self, "run_id", None)
+        if store is None or run_id is None:
+            return False
+        for ev in reversed(list(store.events(run_id))):
+            if ev.type != "format_error":
+                continue
+            payload = ev.payload or {}
+            if ev.task_id != task_id and payload.get("task_id") != task_id:
+                continue
+            return payload.get("kind") == kind
+        return False
 
     def _record_failure_stored(self, result, role, state, task_id, cmd) -> None:
         """(E) IF-FAILURE-001: append-only storage at failure production.

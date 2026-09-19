@@ -635,6 +635,123 @@ def validate_envelope(envelope: dict, expected_kind: str | None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Bounded repair parse (OOB 2026-09-19, run 01M2QTJB PRISM_FINAL)
+# ---------------------------------------------------------------------------
+
+# JSONDecodeError.msg values that signal a structurally truncated string: the
+# agent embedded a payload string containing bare double quotes (the live
+# breakage pasted pytest output verbatim into the envelope payload string,
+# e.g. events["command_id"] == "never", so the inner " terminated the JSON
+# string early -- six consecutive malformed_json, Expecting ',' delimiter at
+# char 2543-2922, the same char twice via session reuse). Only these messages
+# enter repair; every other decode error (Expecting value, Extra data, ...)
+# is returned unrepaired. parse_agent_output above stays the pure kernel
+# path; repair lives here as a separate export consumed at the executor
+# collection face.
+_REPAIRABLE_JSON_MSGS = (
+    "Expecting ',' delimiter",
+    "Expecting ':' delimiter",
+    "Expecting property name",
+    "Unterminated string starting at",
+)
+
+#: Maximum bare-quote escapes per block: a reply needing more is not the
+#: single-truncation class (or the session is replaying worse breakage) and
+#: stays a format_error instead of spinning the parser.
+_REPAIR_BUDGET = 3
+
+
+def extract_envelope_block(text: str) -> str | None:
+    """Return the single fenced tracks-envelope block's raw JSON text.
+
+    The collection face's repair entry: None when there is no single closed
+    block to repair (zero/multiple/unclosed fences) -- those shapes stay
+    pure EnvelopeFormatError classifications, never repair candidates. This
+    mirrors parse_agent_output's fence scan without parsing.
+    """
+    if not isinstance(text, str):
+        return None
+    opens = list(_FENCE_OPEN_RE.finditer(text))
+    if len(opens) != 1:
+        return None
+    after = text[opens[0].end() :]
+    close = _FENCE_CLOSE_RE.search(after)
+    if close is None:
+        return None
+    return after[: close.start()]
+
+
+def _is_structural_break(exc: json.JSONDecodeError) -> bool:
+    """True when the decode error is the bare-quote truncation class."""
+    return exc.msg.startswith(_REPAIRABLE_JSON_MSGS)
+
+
+def _escape_break_quote(
+    block: str, exc: json.JSONDecodeError
+) -> tuple[str, dict] | None:
+    """Escape the single bare quote at the decode break.
+
+    Returns the escaped block plus its audit entry, or None when the break
+    carries no adjacent quote (not a bare-quote truncation -- unrepairable).
+    """
+    pos = exc.pos
+    if 0 <= pos < len(block) and block[pos] == '"':
+        at = pos
+    elif 0 <= pos - 1 < len(block) and block[pos - 1] == '"':
+        at = pos - 1
+    else:
+        return None
+    return block[:at] + "\\" + block[at:], {
+        "op": "escape_quote",
+        "pos": at,
+        "error": str(exc),
+    }
+
+
+def repair_envelope_block(block: str) -> tuple[dict | None, list[dict]]:
+    """Bounded repair of a structurally truncated envelope block.
+
+    Tries json.loads; when it fails with a structural-break message, escapes
+    the bare quote at the break and retries, up to _REPAIR_BUDGET times. A
+    repair that parses is validated with validate_envelope(parsed, None) --
+    a schema failure counts as repair failure. Returns (parsed, repairs) on
+    success (repairs is empty when the block needed no repair) and
+    (None, repairs-so-far) on any failure, so the caller keeps the existing
+    format_error path unchanged and the repairs list serves as audit.
+    """
+    repairs: list[dict] = []
+    try:
+        parsed = json.loads(block)
+    except json.JSONDecodeError as exc:
+        if not _is_structural_break(exc):
+            return None, []
+        current, error = block, exc
+    else:
+        try:
+            return validate_envelope(parsed, None), []
+        except EnvelopeFormatError:
+            return None, []
+    for _ in range(_REPAIR_BUDGET):
+        escaped = _escape_break_quote(current, error)
+        if escaped is None:
+            return None, repairs
+        current, repair = escaped
+        repairs.append(repair)
+        try:
+            parsed = json.loads(current)
+        except json.JSONDecodeError as exc:
+            if not _is_structural_break(exc):
+                return None, repairs
+            error = exc
+            continue
+        try:
+            return validate_envelope(parsed, None), repairs
+        except EnvelopeFormatError:
+            return None, repairs
+    return None, repairs
+
+
+# ---------------------------------------------------------------------------
 # Schema digest + parity (IF-ENVELOPE-002)
 # ---------------------------------------------------------------------------
 

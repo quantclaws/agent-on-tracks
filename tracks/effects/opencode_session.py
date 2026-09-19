@@ -225,6 +225,22 @@ class OpencodeSessionMixin:
             del sessions[key]
             self._save_sessions()
 
+    def clear_workunit_session(self, key: str) -> bool:
+        """Drop one work-unit session from the registry; report whether one
+        was removed (OOB 2026-09-19, run 01M2QTJB PRISM_FINAL: session reuse
+        deterministically replayed the same broken envelope answer six times
+        -- the same malformed_json char twice -- so on a repeat same-kind
+        format_error the executor drops the poisoned session here and the
+        re-dispatch cold-starts; the runtime re-injects everything the agent
+        needs). Public so the executor collection face can call it; the
+        registry file stays the cross-process carrier."""
+        if not self._session_reuse_enabled():
+            return False
+        if key not in self._load_sessions():
+            return False
+        self._clear_session(key)
+        return True
+
     # -- model context limits (D-42 ruling 1: read provider/model settings) --
 
     def _effective_model(self, name: str) -> str | None:
