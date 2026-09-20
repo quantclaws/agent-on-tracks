@@ -1,0 +1,11 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -176,6 +176,7 @@ class CommandService:
+     def _readiness_failed(store: ServiceDB, project_id: str | None) -> bool:
+         """True only on explicit-negative readiness (absent state is the
+         guard tier's business, not the accept tier's)."""
++        return False  # counterexample AC-FR0290-02: readiness gate removed
+         if project_id is None:
+             return False
+         failed = False
