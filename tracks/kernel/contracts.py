@@ -78,7 +78,7 @@ PRISM_DIAGNOSE_CONTRACT: dict = {
 }
 
 
-def result_file_contract(seed: str, kind: str) -> dict:
+def result_file_contract(result_path: str, kind: str) -> dict:
     """#174 result-file delivery block injected into declared assignments.
 
     The agent writes its envelope to ``result_path`` via a Python builder
@@ -86,23 +86,28 @@ def result_file_contract(seed: str, kind: str) -> dict:
     construction), runs ``verify_command`` (zero exit = the file parses and
     validates against the kind schema) BEFORE replying, and the final reply
     may then be a one-line pointer. Runtime collection prefers the file and
-    falls back to the fenced block (backward compatible). ``seed`` is any
-    per-dispatch unique string (command_id when already minted, else
-    run:substate:task:attempt:ts) — uniqueness gives freshness/anti-stale
-    by construction. Live motivation: 19+ serialization-class burns in run
-    01M2QTJB (no_envelope_block / missing_kind / malformed_json); skill
-    teaching proved a weak lever, machine channels a strong one.
+    falls back to the fenced block (backward compatible).
+
+    ``result_path`` is the FULL path, resolved by the executor caller
+    against the main repo (absolute). A repo-relative path would land inside
+    a writer's isolated worktree — cleaned up after replay — so the
+    worktree-resident agent must write through to the main-repo inbox
+    regardless of its cwd. Per-dispatch uniqueness (command_id in the file
+    name) gives freshness/anti-stale by construction: a reused session can
+    only write its own dispatch's file. Live motivation: 19+
+    serialization-class burns in run 01M2QTJB (no_envelope_block /
+    missing_kind / malformed_json); skill teaching proved a weak lever,
+    machine channels a strong one.
     """
-    path = f".tracks/runtime/inbox/{seed}.json"
     return {
-        "result_path": path,
+        "result_path": result_path,
         "how": (
             "build the two-layer envelope as a Python dict and write it with"
-            f" json.dump to {path}; never hand-serialize JSON text"
+            f" json.dump to {result_path}; never hand-serialize JSON text"
         ),
         "verify_command": (
             "python -m tracks.cli.main validate-reply"
-            f" --file {path} --kind {kind}"
+            f" --file {result_path} --kind {kind}"
         ),
     }
 
@@ -154,5 +159,60 @@ DEVON_EVIDENCE_CONTRACT: dict = {
         "no_change（green/refactor 无变更时）：changed_paths 必须为 [] 且 "
         "no_change_reason 非空；禁止声称 changed_paths 而 pre/post identity "
         "相同（runtime 比对并按 B38 fail-closed）",
+    ],
+}
+
+
+# #172 判据包双投（generator self-check before emission）：评审判据与生成
+# 判据同源——生成者拿到与评审者相同的 criteria pack（skill 随派发物化）加
+# 本发射前自检清单。live 教训 run 01M2QTJB：24 次 PLANNING 派发只有 ~6 次
+# 产出可解析评审——「验证者持卷、生成者盲写」是最大的回路损耗源；格式类
+# 烧毁在示例到达 agent 后实测归零（3d7d168），语义类判据走同一疗法。
+# 清单保持短小并指向 skill 全文（skill 是单一真相源，此处只做逐条点名，
+# 不复述全文——复述会产生第三份会漂移的判据副本）。
+
+ARCHER_PLANNING_CRITERIA_CHECKLIST: dict = {
+    "_doc": (
+        "判据双投（#172）：你的任务图将由 Prism 按 tracks-prism-impl 判据"
+        "评审——完整判据已随本次派发物化（skill: tracks-prism-impl，"
+        "子状态路由语义一节）。发射前逐条自检下列判据；不满足的项要么修正"
+        "计划，要么在 payload 里给出明确理由。机械可判项（覆盖闭包/结构/"
+        "双归属）runtime 会在评审前本地拦截——先自检，别把集合运算留给"
+        "评审回路。"
+    ),
+    "self_check_before_emission": [
+        "覆盖闭包：全体任务的 acceptance 锚点并集 ⊇ test-plan §8 全部 "
+        "integration 行目标；反向脏锚（声明了 §8 无对应行）同样被拒",
+        "结构：unit 层锚点全部指向 unit 层路径；acceptance 锚点全部指向 "
+        "integration 层路径且非空；e2e 层目标不属 acceptance 覆盖义务",
+        "双归属：每个锚点恰好一个 owner 任务（deferred→终局收口任务的"
+        "镜像归属除外）；每个 AC 恰好注册一次",
+        "依赖批次序：每个任务的依赖都在更早批次；卡片字节预算内的 scope "
+        "文件所有权排他（终局收口任务除外）",
+        "可满足性（评审核心判据，机器不可判）：每个 acceptance 锚点在其 "
+        "owner 任务的 GREEN 时刻必须可行绿——锚点所在层的全部接口已由该"
+        "任务或其依赖链前置任务实现；结构性不可能转绿的锚点是排序缺陷",
+    ],
+}
+
+DEVON_RGR_CRITERIA_CHECKLIST: dict = {
+    "_doc": (
+        "判据双投（#172）：你的工件将由 Prism 按 tracks-prism-impl 判据"
+        "评审（RED 阶段 = PRISM_RED 工件评审；GREEN/REFACTOR 的实现进入"
+        "PRISM_FINAL）——完整判据已随本次派发物化（skill: "
+        "tracks-prism-impl）。发射前逐条自检；断言与冻结合同相悖、锚错"
+        "文件、fixture 错会被判 red_defect 打回重钉。"
+    ),
+    "self_check_before_emission": [
+        "RED 失败形态合法：全部失败节点一致分类为 assertion_failure 或 "
+        "symbol_missing（RED_GATE 合法集合；桩触发必须转成断言守卫）",
+        "测试反模式（IMPL-3，逐条对照 skill）：修改断言迎合实现 / 无依据 "
+        "skip / 断言降级 / 吞异常 / 过度 mock / 从实现取 ground truth / "
+        "捏造硬编码值 / 无效断言——任一条会被评审打回",
+        "实现遵循锁定设计（IMPL-1）：不偏离 interfaces.md 声明的外部契约，"
+        "不引入未声明的模块边界或依赖方向",
+        "可读性与职责（IMPL-2）；命名稳定（IMPL-4：diff 中不得出现带版本"
+        "号/时间前缀的文件名）；浅层安全（IMPL-5：eval/exec、硬编码 "
+        "secret、SQL 拼接、shell=True + 不可信输入）",
     ],
 }

@@ -456,7 +456,7 @@ def test_every_m_impl_assignment_materializes_role_contracts(tmp_path):
     )
     assert assignments["prism"]["criteria_pack"] == {
         "name": "tracks-prism-impl",
-        "version": "0.1",
+        "version": "0.3",
     }
     assert assignments["shield"]["test_tasks"] == [
         {

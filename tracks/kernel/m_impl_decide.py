@@ -13,7 +13,9 @@ import json
 from typing import TYPE_CHECKING
 
 from .contracts import (
+    ARCHER_PLANNING_CRITERIA_CHECKLIST,
     DEVON_EVIDENCE_CONTRACT,
+    DEVON_RGR_CRITERIA_CHECKLIST,
     PRISM_DIAGNOSE_CONTRACT,
     WRITE_MANIFEST_CONTRACT,
 )
@@ -146,11 +148,18 @@ def _m_impl_archer_dispatch(s: State) -> Command:
     discussion protocol. The large guard-stack catalog (tracks-quality-guards)
     is NOT injected by default — PLANNING does not design the host guard
     stack; inject it only when an assignment's task actually requires it.
+    #172 dual delivery: tracks-prism-impl rides along so the generator sees
+    the exact rubric PRISM_PLAN will judge by (same skill file the reviewer
+    loads — no second copy to drift), plus the pre-emission checklist.
+    Live run 01M2QTJB: 24 PLANNING dispatches, ~6 parseable reviews — the
+    writer could not self-check against a rubric it never saw.
     """
     assignment = _m_impl_base_assignment(
-        s, "archer", "PLANNING", ["tracks-discuz", "tracks-archer-planning"]
+        s, "archer", "PLANNING",
+        ["tracks-discuz", "tracks-archer-planning", "tracks-prism-impl"],
     )
     assignment["target_doc"] = "tasks.json"
+    assignment["criteria_checklist"] = dict(ARCHER_PLANNING_CRITERIA_CHECKLIST)
     params = {
         "role": "archer",
         "substate": "PLANNING",
@@ -174,6 +183,9 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     in one assignment (phase-separated M-IMPL flow). The dedicated
     tracks-devon-rgr skill carries the phase-specific checklist and output
     schema; tracks-discuz is irrelevant to Devon (no discussion threads).
+    #172 dual delivery: tracks-prism-impl rides along (PRISM_RED judges the
+    RED artifact, PRISM_FINAL the implementation) with the pre-emission
+    checklist — same skill file the reviewer loads.
 
     Public assignment keys (task_id/if_ids/ac_refs/test_refs/commands) are
     explicit placeholders: the machine provides task_id (known state) and
@@ -181,12 +193,15 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     (NFR-0030: pure machine, no I/O, no invented task values).
     """
     phase = sub.lower()  # "red", "green", "refactor"
-    assignment = _m_impl_base_assignment(s, "devon", sub, ["tracks-devon-rgr"])
+    assignment = _m_impl_base_assignment(
+        s, "devon", sub, ["tracks-devon-rgr", "tracks-prism-impl"]
+    )
     assignment["phase"] = phase
     # B30/#30 family (live T-003 GREEN: evidence JSON missing 7 fields):
     # front-load the evidence contract so Devon self-validates before
     # returning instead of burning a full dispatch per missing field.
     assignment["evidence_contract"] = dict(DEVON_EVIDENCE_CONTRACT)
+    assignment["criteria_checklist"] = dict(DEVON_RGR_CRITERIA_CHECKLIST)
     assignment["task_id"] = s.current_task_id
     assignment["if_ids"] = None  # executor materializes from task graph
     assignment["ac_refs"] = None  # executor materializes from task graph

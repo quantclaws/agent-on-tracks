@@ -18,6 +18,7 @@ from tracks.executor.helpers import git
 from tracks.executor.host_contract import load_host_contract
 from tracks.executor.stall import STALL_COMMAND_LIMIT, CommandStallError, CommandStallTracker
 from tracks.executor.validate import parse_test_tasks, resolve_inherited_baseline_docs
+from tracks.kernel.contracts import result_file_contract
 from tracks.kernel.envelope import (
     ENVELOPE_VERSION,
     build_assignment_envelope,
@@ -510,9 +511,9 @@ the host Executor keeps construction and the command handlers."""
             params.update(materialized)
         self._enrich_shield_write_params(params, state)
         self._enrich_m_test_prism_assignment(params, state)
-        self._enrich_envelope_params(params)
+        self._enrich_envelope_params(params, cid)
 
-    def _enrich_envelope_params(self, params: dict) -> None:
+    def _enrich_envelope_params(self, params: dict, cid: str) -> None:
         """(E) IF-ENVELOPE-001 injection face (operator OOB 2026-09-06,
         user-authorized): declared dispatches carry the authoritative reply
         envelope — kind + inline payload schema + schema digest — built by
@@ -523,6 +524,16 @@ the host Executor keeps construction and the command handlers."""
         burning a full reasoning hop. Runs LAST so overlay/hotfix/shield
         enrichment (which may replace params["assignment"]) cannot wipe it.
         TRAC_ENVELOPE_DECLARE=0 reverts to undeclared (legacy) dispatches.
+
+        #172/#174 wiring (OOB 2026-09-20): every declared dispatch also
+        carries a result_file block — the agent's machine-serialized reply
+        channel (json.dump to the inbox file, validate-reply before
+        replying). The path is ABSOLUTE, anchored at the main repo: writer
+        dispatches run inside an isolated worktree, and a repo-relative
+        path would die with the worktree at replay cleanup. cid (the
+        per-dispatch command id) names the file — unique per dispatch, so a
+        reused session can only ever write its own dispatch's result.
+        TRAC_RESULT_FILE=0 reverts to fence-only delivery.
         """
         if os.environ.get("TRAC_ENVELOPE_DECLARE", "").strip() == "0":
             return
@@ -533,6 +544,11 @@ the host Executor keeps construction and the command handlers."""
         task = assignment.get("task") if isinstance(assignment.get("task"), dict) else None
         assignment["envelope"] = build_assignment_envelope(kind, task)
         assignment["envelope_version"] = ENVELOPE_VERSION
+        if os.environ.get("TRAC_RESULT_FILE", "").strip() != "0":
+            inbox = self.repo / ".tracks" / "runtime" / "inbox"
+            inbox.mkdir(parents=True, exist_ok=True)
+            result_path = str((inbox / f"{cid}.json").resolve())
+            assignment["result_file"] = result_file_contract(result_path, kind)
         params["assignment"] = assignment
 
     def _enrich_m_test_prism_assignment(self, params: dict, state: State) -> None:

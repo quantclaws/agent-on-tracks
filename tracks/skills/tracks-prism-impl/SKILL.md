@@ -1,13 +1,17 @@
 ---
 envelope: tracks-envelope:v2
 name: tracks-prism-impl
-version: 0.2
-description: M-IMPL 代码评审判据包 - Prism 在 M-IMPL 评审消费的语义判据
+version: 0.3
+description: M-IMPL 代码评审判据包 - Prism 评审消费的语义判据;生成者(Archer/Devon)同样加载用于发射前自检(#172 判据双投)
 ---
 
 # M-IMPL 代码评审判据包
 
 Prism 在 M-IMPL 评审按 assignment 指定的名称+版本加载本判据包，审实现的代码、测试与任务图。本判据包只含**语义判据**；形式校验（template 合规、binding 完整性、ID 文法、测试集合/Red 程序分类）归 Runtime 程序校验，不在此范围。判据以稳定 ID（IMPL-1…IMPL-5）唯一表达，程序性自审只引用这些 ID。
+
+## 生成者同样加载本包（#172 判据双投）
+
+本包不只属于评审者：Archer PLANNING 与 Devon RED/GREEN/REFACTOR 的派发同样物化本 skill，并随 assignment 携带 `criteria_checklist`（发射前自检清单）。**评审判据即生成判据**——发射前逐条自检，而不是等评审打回；清单只点名判据，完整措辞以本包为单一真相源。
 
 ## IMPL-1 实现遵循锁定设计
 

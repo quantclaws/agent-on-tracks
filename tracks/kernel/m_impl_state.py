@@ -22,8 +22,12 @@ if TYPE_CHECKING:
 # -- M-IMPL constants -------------------------------------------------------
 
 # D-29 criteria pack identity (architecture.md §3.4): Prism in M-IMPL loads
-# the impl criteria pack and echoes the identity in its verdict.
-_M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.1"}
+# the impl criteria pack and echoes the identity in its verdict. #172 dual
+# delivery: the same identity names the pack Archer/Devon load for their
+# pre-emission self-check — the version must track the skill frontmatter
+# (tracks/skills/tracks-prism-impl/SKILL.md; was drift-stuck at 0.1 while
+# the skill shipped 0.2, synced 2026-09-20 with the 0.3 writer note).
+_M_IMPL_CRITERIA_PACK = {"name": "tracks-prism-impl", "version": "0.3"}
 # M-IMPL context docs: trio + design trio (flow.md §10 BASELINE).
 _M_IMPL_CONTEXT_DOCS = BASELINE_DOC_NAMES
 # Prism review substates in M-IMPL (flow.md §10.1).

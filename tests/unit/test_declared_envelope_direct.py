@@ -335,7 +335,7 @@ def test_env_declare_0_reverts_to_undeclared_legacy_dispatch(exec_env, monkeypat
         "substate": "PRISM_REVIEW",
         "assignment": {"task": {"task_id": TASK_ID}},
     }
-    ex._enrich_envelope_params(params)
+    ex._enrich_envelope_params(params, "cmd-test-declare-off")
     assignment = params["assignment"]
     assert "envelope" not in assignment
     assert assignment.get("envelope_version") is None
