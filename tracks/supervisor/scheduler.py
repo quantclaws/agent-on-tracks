@@ -9,11 +9,11 @@ command service with actor + command_id on the timeline. True concurrency
 
 The schedule singleton row (interfaces §1c #8) carries ``active_run`` plus the
 ordered ``queue`` of accepted runs, and this module is its only writer. Every
-active-slot switch appends an auditable ``schedule.changed`` (interfaces §1a
-#18) carrying ``{active_run, queued, reason}`` with the closed reason
-vocabulary: a created run taking the slot (``run_created``), the hotfix swap
-(``hotfix_preemption``), the preempted run resumed (``run_resumed``), and a
-terminal run leaving the schedule with the queue head promoted
+active-slot switch is persisted together with an auditable ``schedule.changed``
+(interfaces §1a #18) carrying ``{active_run, queued, reason}`` with the closed
+reason vocabulary: a created run taking the slot (``run_created``), the hotfix
+swap (``hotfix_preemption``), the preempted run resumed (``run_resumed``), and
+a terminal run leaving the schedule with the queue head promoted
 (``run_terminal``). ``next_runnable`` hands the supervisor only the active run
 — and nothing while a persisted pause request/effect
 (``run.pause_requested`` / ``run.paused``) stands, so no wake-up can drive
@@ -68,15 +68,9 @@ class Scheduler:
     def next_runnable(self) -> str | None:
         """The run_id the supervisor may drive now (active, not paused)."""
         active = self._state()["active_run"]
-        if not active:
-            return None
-        latest = None
-        for event in self._db.read_events(run_id=active):
-            if event.get("type") in _PAUSE_EVENTS:
-                latest = event
-        if latest is not None and latest.get("type") in _PAUSE_BLOCKING:
-            return None
-        return active
+        if active and not self._pause_blocks(active):
+            return active
+        return None
 
     def on_run_created(self, run_id: str, *, journey: str, preempt: bool, actor: str) -> None:
         """Enqueue; with preempt=true and an active run, start the auditable
@@ -85,17 +79,14 @@ class Scheduler:
         state = self._state()
         active = state["active_run"]
         if not active:
-            self._write(run_id, state["queued"])
-            self._changed(run_id, state["queued"], "run_created")
+            self._switch(run_id, state["queued"], "run_created")
             return
         if preempt:
             # Hotfix urgency: the submitted run takes the single active slot
             # and the preempted run is parked at the queue front so the next
             # switch resumes it (§1i). The pause/resume commands with their
             # actor + command_id ride the command service (AC-FR0296-04).
-            queue = [active, *state["queued"]]
-            self._write(run_id, queue)
-            self._changed(run_id, queue, "hotfix_preemption")
+            self._switch(run_id, [active, *state["queued"]], "hotfix_preemption")
             return
         # A queued run leaves the active slot untouched, so there is no
         # switch to record; the queue itself is the observable state (§1c #8).
@@ -110,13 +101,11 @@ class Scheduler:
             promoted = queue[0] if queue else None
             remaining = queue[1:]
             reason = "run_resumed" if promoted and self._preempted(run_id) else "run_terminal"
-            self._write(promoted, remaining)
-            self._changed(promoted, remaining, reason)
+            self._switch(promoted, remaining, reason)
         elif run_id in queue:
             # A queued run never held the active slot: drop it from the queue
             # without fabricating a switch event.
-            remaining = [queued for queued in queue if queued != run_id]
-            self._write(active, remaining)
+            self._write(active, [queued for queued in queue if queued != run_id])
 
     def queue_snapshot(self) -> dict:
         """{active_run, queued: [...]} for projections (queue is visible)."""
@@ -129,18 +118,19 @@ class Scheduler:
             return {"active_run": None, "queued": []}
         return {"active_run": stored["active_run"], "queued": list(stored["queue"])}
 
-    def _write(self, active_run: str | None, queue: list) -> None:
-        """Persist the schedule singleton row (id=1) in one statement."""
-        with contextlib.closing(_service_conn(self._db)) as conn:
-            conn.execute(_SCHEDULE_UPSERT, (active_run, json.dumps(list(queue))))
-            conn.commit()
+    def _pause_blocks(self, run_id: str) -> bool:
+        """True when the latest persisted pause state blocks driving run_id.
 
-    def _changed(self, active_run: str | None, queue: list, reason: str) -> None:
-        """Append the auditable schedule.changed (interfaces §1a #18)."""
-        self._db.append_event(
-            "schedule.changed",
-            {"active_run": active_run, "queued": list(queue), "reason": reason},
-        )
+        A ``run.pause_requested`` blocks at once — SM-02.5: no new drive may
+        start before the worker reaches its boundary — and ``run.paused``
+        keeps it blocked; only a later ``run.resumed`` lifts the block
+        (interfaces §1a #19-21).
+        """
+        latest = None
+        for event in self._db.read_events(run_id=run_id):
+            if event.get("type") in _PAUSE_EVENTS:
+                latest = event
+        return latest is not None and latest.get("type") in _PAUSE_BLOCKING
 
     def _preempted(self, run_id: str) -> bool:
         """True when run_id took the active slot via a hotfix preemption."""
@@ -153,3 +143,22 @@ class Scheduler:
             ):
                 return True
         return False
+
+    def _write(self, active_run: str | None, queue: list[str]) -> None:
+        """Persist the schedule singleton row (id=1) in one statement."""
+        with contextlib.closing(_service_conn(self._db)) as conn:
+            conn.execute(_SCHEDULE_UPSERT, (active_run, json.dumps(list(queue))))
+            conn.commit()
+
+    def _switch(self, active_run: str | None, queue: list[str], reason: str) -> None:
+        """Persist an active-slot switch together with its audit event.
+
+        Keeping the row write and the ``schedule.changed`` append in one place
+        holds every switch and its audit record in lockstep (interfaces §1a
+        #18); queue edits that do not switch the active run use ``_write``.
+        """
+        self._write(active_run, queue)
+        self._db.append_event(
+            "schedule.changed",
+            {"active_run": active_run, "queued": list(queue), "reason": reason},
+        )
