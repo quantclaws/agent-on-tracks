@@ -153,6 +153,19 @@ def _failure_from_exception(exc: Exception) -> dict:
     return failure
 
 
+def _error_result(run_id: str, stage: str | None, exc: Exception) -> DriveResult:
+    """Fail-closed DriveResult for an error escaping the drive window."""
+    failure = _failure_from_exception(exc)
+    return DriveResult(
+        kind="failed",
+        run_id=run_id,
+        stage=stage,
+        wait=None,
+        failure=failure,
+        detail=f"run {run_id} drive error: {failure['reason']}",
+    )
+
+
 def _run_drive_window(repo: Path, store: Store, run_id: str) -> None:
     """One bounded window of the existing loop (lazy import: the executor
     composition root imports this module's consumers, never the reverse)."""
@@ -183,19 +196,9 @@ def drive_once(repo: Path, run_id: str, *, config: DriveConfig) -> DriveResult:
         try:
             _run_drive_window(repo, store, run_id)
         except Exception as exc:  # noqa: BLE001 - structured failure boundary
-            failure = _failure_from_exception(exc)
-            return DriveResult(
-                kind="failed",
-                run_id=run_id,
-                stage=state.stage,
-                wait=None,
-                failure=failure,
-                detail=f"run {run_id} drive error: {failure['reason']}",
-            )
+            return _error_result(run_id, state.stage, exc)
         state = store.state(run_id)
-        if _is_boundary(state):
-            return _boundary_result(run_id, state)
-        if _last_seq(store, run_id) <= before_seq:
+        if not _is_boundary(state) and _last_seq(store, run_id) <= before_seq:
             return _failed_result(
                 run_id,
                 state.stage,

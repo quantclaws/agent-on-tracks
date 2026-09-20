@@ -122,19 +122,19 @@ def _execute(db: Any, row: dict) -> tuple[dict | None, dict | None]:
         return None, _unrecoverable(
             f"cannot resolve run/project for command {row.get('command_id')!r}"
         )
-    result = _drive_to_boundary(repo, run_id)
+    config = DriveConfig()
+    result = _drive_to_boundary(repo, run_id, config)
     if result.kind == "failed":
         failure = dict(result.failure or {})
-        _persist_wait_if_recoverable(db, run_id, failure)
+        _persist_wait_if_recoverable(db, run_id, failure, config)
         return None, failure
     if result.kind == "await_external" and result.wait is not None:
         enter_wait(db, run_id, result.wait)
     return asdict(result), None
 
 
-def _drive_to_boundary(repo: Path, run_id: str) -> DriveResult:
+def _drive_to_boundary(repo: Path, run_id: str, config: DriveConfig) -> DriveResult:
     """Loop drive_once until a durable boundary (never a busy loop)."""
-    config = DriveConfig()
     result = drive_once(repo, run_id, config=config)
     steps = 1
     while result.kind == "continue" and steps < _MAX_DRIVE_STEPS:
@@ -154,12 +154,19 @@ def _drive_to_boundary(repo: Path, run_id: str) -> DriveResult:
     )
 
 
-def _persist_wait_if_recoverable(db: Any, run_id: str, failure: dict) -> None:
+def _wait_policy(config: DriveConfig) -> WaitPolicy:
+    """NFR-0152 backoff policy carried by the drive config (serve flags)."""
+    return WaitPolicy(initial_s=config.wait_initial_s, cap_s=config.wait_cap_s)
+
+
+def _persist_wait_if_recoverable(
+    db: Any, run_id: str, failure: dict, config: DriveConfig
+) -> None:
     """Turn a recoverable external failure into the durable wait registry
     (§1j) so the supervisor wakes exactly when the condition clears."""
     if failure.get("failure_class") != "recoverable_external":
         return
-    spec = classify_wait(failure, policy=WaitPolicy())
+    spec = classify_wait(failure, policy=_wait_policy(config))
     if spec is not None:
         enter_wait(db, run_id, spec)
 
