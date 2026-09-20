@@ -90,3 +90,25 @@ def run_readiness(repo: Path) -> list:
             _tools_probe(),
         ]
     return [_contract_probe(root), _harness_probe(), _credentials_probe(), _tools_probe()]
+
+
+def summarize_readiness(results: list) -> dict:
+    """Aggregate probe results into the readiness summary.
+
+    Returns {"ok": bool, "checks": {kind: {"ok": bool, "reason"}}} matching
+    the project.readiness_checked payload body (interfaces §1a#5). A check
+    is ok only when every report for it is ok; the first failing reason is
+    kept.
+    """
+    grouped: dict = {kind: [] for kind in PROBE_KINDS}
+    for probe in results or []:
+        if probe.check in grouped:
+            grouped[probe.check].append(probe)
+    checks = {}
+    for kind in PROBE_KINDS:
+        failing = [entry for entry in grouped[kind] if not entry.ok]
+        if failing:
+            checks[kind] = {"ok": False, "reason": failing[0].reason}
+        else:
+            checks[kind] = {"ok": True, "reason": None}
+    return {"ok": all(pair["ok"] for pair in checks.values()), "checks": checks}
