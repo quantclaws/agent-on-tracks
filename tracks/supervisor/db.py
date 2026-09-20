@@ -281,6 +281,25 @@ class ServiceDB:
             conn.execute("DELETE FROM waits WHERE run_id = ?", (run_id,))
             conn.commit()
 
+    def get_wait(self, run_id: str) -> dict | None:
+        """Active waits row by run (interfaces §1c table 4); None when absent."""
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT run_id, wait_class, reason, retry_at,"
+                " known_reset, backoff_json, entered_at FROM waits WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_waits(self) -> list:
+        """All active waits rows in deterministic run order (§1c table 4)."""
+        with contextlib.closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT run_id, wait_class, reason, retry_at,"
+                " known_reset, backoff_json, entered_at FROM waits ORDER BY run_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_schedule(self) -> dict | None:
         """Single schedule row (interfaces §1c table 8); None when unset."""
         with contextlib.closing(self._connect()) as conn:

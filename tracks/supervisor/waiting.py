@@ -233,6 +233,44 @@ def resolve_wait(db: Any, run_id: str, resolved_by: str) -> None:
     )
 
 
+def _spec_from_row(row: Any) -> WaitSpec:
+    """Map a persisted waits row onto WaitSpec (decoded probe plan)."""
+    backoff = row.get("backoff_json")
+    if isinstance(backoff, str) and backoff:
+        try:
+            backoff = json.loads(backoff)
+        except ValueError:
+            backoff = None
+    if not isinstance(backoff, dict):
+        backoff = None
+    return WaitSpec(
+        wait_class=str(row.get("wait_class") or "external"),
+        reason=str(row.get("reason") or ""),
+        retry_at=row.get("retry_at"),
+        known_reset=bool(row.get("known_reset")),
+        backoff=backoff,
+    )
+
+
+def load_wait(db: Any, run_id: str) -> WaitSpec | None:
+    """Read back the persisted active wait for a run (§1j).
+
+    The supervisor consumes this to wake at a known retry_at or to follow
+    the bounded probe plan; None when the run has no active wait. Reads
+    through the ServiceDB wait face so the composition-root store stays the
+    single storage implementation.
+    """
+    row = db.get_wait(run_id)
+    if row is None:
+        return None
+    return _spec_from_row(row)
+
+
+def active_wait_runs(db: Any) -> list:
+    """Run ids with an active wait row: the restart recovery sweep (§1j)."""
+    return [str(row["run_id"]) for row in db.list_waits()]
+
+
 def next_probe(policy: WaitPolicy, backoff: dict | None) -> dict:
     """Compute the next bounded backoff state (interval doubles to cap_s)."""
     cap = policy.cap_s
