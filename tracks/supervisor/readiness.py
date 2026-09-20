@@ -112,3 +112,22 @@ def summarize_readiness(results: list) -> dict:
         else:
             checks[kind] = {"ok": True, "reason": None}
     return {"ok": all(pair["ok"] for pair in checks.values()), "checks": checks}
+
+
+def blocking_reason(summary: dict) -> str | None:
+    """Return None when the summary is ready, else the blocking message.
+
+    The message names every failing closed probe kind with its concrete
+    reason so create_run can refuse with a reason (AC-FR0290-02) instead
+    of creating a fake run.
+    """
+    checks = (summary or {}).get("checks") or {}
+    failing = []
+    for kind in PROBE_KINDS:
+        pair = checks.get(kind) or {}
+        if not pair.get("ok", True):
+            detail = pair.get("reason") or "not ready"
+            failing.append(f"{kind}: {detail}")
+    if not failing:
+        return None
+    return "readiness not ready — " + "; ".join(failing)
