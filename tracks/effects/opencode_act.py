@@ -560,7 +560,7 @@ class OpencodeActMixin:
             # token): without a verdict the outcome deadlocks (run 01KZTHE7
             # T-008). The full diagnosis payload rides along so the fixer
             # dispatch gets the actual analysis, not just the label.
-            diagnosis = self._diagnose_classification_from(proc)
+            diagnosis = self._diagnose_classification_from(proc, result_path)
             if diagnosis is not None:
                 result["verdict"] = diagnosis["classification"]
                 result["diagnosis"] = {

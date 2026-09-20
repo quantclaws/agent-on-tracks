@@ -252,3 +252,62 @@ def test_diagnose_classification_from_filters():
         _proc(json.dumps({"classification": "impl_defect", "reason": "r"}))
     )
     assert valid["classification"] == "impl_defect"
+
+
+# -- #174 consumer wiring: the DIAGNOSE face reads the result FILE first ----------------
+
+
+def test_diagnose_classification_prefers_the_result_file(tmp_path):
+    """Live defect (run 01M2QTJB T-003, 2026-09-20): the file channel made
+    the final reply a one-line pointer; the text-only extraction burned the
+    attempt as diagnose_contract_violation while the delivered file held a
+    valid prism:diagnose verdict. The file payload is now the FIRST source."""
+    backend = _backend()
+    path = tmp_path / "inbox" / "cmd-d.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "envelope": {"kind": "prism:diagnose", "version": 2},
+                "payload": {
+                    "classification": "red_defect",
+                    "reason": "RED pins storage faces outside the acceptance contract",
+                    "evidence": "tests/unit/test_t003_waiting_red.py nodes 12-19",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    diagnosis = backend._diagnose_classification_from(
+        _proc("result: " + str(path)),  # pointer-only reply
+        result_path=str(path),
+    )
+    assert diagnosis["classification"] == "red_defect"
+    assert "storage faces" in diagnosis["reason"]
+
+
+def test_diagnose_classification_bad_file_falls_back_to_text(tmp_path):
+    backend = _backend()
+    bad = tmp_path / "not-json"
+    bad.write_text("{ nope", encoding="utf-8")
+    valid = backend._diagnose_classification_from(
+        _proc(json.dumps({"classification": "impl_defect", "reason": "r"})),
+        result_path=str(bad),
+    )
+    assert valid["classification"] == "impl_defect"
+
+
+def test_diagnose_classification_schema_invalid_file_falls_back(tmp_path):
+    """Acceptance mirrors the collection face: a parseable but invalid
+    envelope (no payload object) never feeds the classification."""
+    backend = _backend()
+    path = tmp_path / "bad-shape.json"
+    path.write_text(
+        json.dumps({"envelope": {"kind": "prism:diagnose", "version": 2}}),
+        encoding="utf-8",
+    )
+    valid = backend._diagnose_classification_from(
+        _proc(json.dumps({"classification": "test_defect", "reason": "r"})),
+        result_path=str(path),
+    )
+    assert valid["classification"] == "test_defect"

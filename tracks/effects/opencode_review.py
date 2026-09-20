@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from tracks.discuss.gate import check_ready
+from tracks.effects.devon_evidence import _result_file_payload
 from tracks.kernel.envelope import (
     REVIEW_FINDING_FIELDS,
     REVIEW_SUMMARY_MAX,
@@ -280,15 +281,25 @@ class OpencodeReviewMixin:
         )
         return payload if isinstance(payload, dict) else None
 
-    def _diagnose_classification_from(self, proc) -> dict | None:
+    def _diagnose_classification_from(self, proc, result_path: str | None = None) -> dict | None:
         """Extract the skill-contract DIAGNOSE JSON ({"classification",
-        "reason", "evidence"}) from the Prism final reply. The full payload
-        flows onward so the fixer dispatch receives the diagnostic's actual
-        analysis, not just the classification label."""
-        event = self._final_text_event(proc)
-        part = event.get("part") if isinstance(event, dict) else None
-        text = part.get("text") if isinstance(part, dict) else None
-        payload = self._diagnose_payload_from_reply(text)
+        "reason", "evidence"}) — result FILE first, reply text fallback. The
+        full payload flows onward so the fixer dispatch receives the
+        diagnostic's actual analysis, not just the classification label.
+
+        #174 consumer wiring (2026-09-20, run 01M2QTJB T-003): with the
+        file channel the final reply is a one-line pointer; the text-only
+        extraction then saw "no {classification,reason,evidence} JSON" and
+        burned the attempt as a contract violation while the delivered file
+        held a valid, substantive prism:diagnose verdict (same gap class
+        the Devon evidence face had). File acceptance mirrors the
+        collection face (validate_envelope, kind-agnostic)."""
+        payload = _result_file_payload(result_path)
+        if not isinstance(payload, dict):
+            event = self._final_text_event(proc)
+            part = event.get("part") if isinstance(event, dict) else None
+            text = part.get("text") if isinstance(part, dict) else None
+            payload = self._diagnose_payload_from_reply(text)
         if not isinstance(payload, dict):
             return None
         if payload.get("classification") not in self._DIAGNOSE_CLASSIFICATIONS:
