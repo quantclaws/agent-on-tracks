@@ -95,3 +95,10 @@
 - **M-8(新)**:任务预算全局计数 bug——同上,归 #178 路由保真同族?不,独立类:门禁判据的归属域错误。已修,无需 FR。
 - 进度:T-004(16:52)、T-007(17:36)、T-008(19:22)相继收口——**7/16**;T-009 RED 已交复审。
 - 通道健康:deepseek-flash Devon 稳定(GREEN 平均 ~3-8 分钟);Prism muse-spark 稳定;step5(Shield)未被派发过,无限流。
+
+### M-9 通道余额死亡(deepseek,2026-09-20 23:04-23:19 UTC)
+
+- **症状**:Devon(deepseek-v4.1-flash)连续 6+ 次快速崩溃(75-83s),blob 证据 `APIError: insufficient balance, 429`——账户余额耗尽,与限流不同,**等待不可恢复**。
+- **runtime 行为**:infra 退避按设计爬到 900s 封顶,streak 12(≈00:15 UTC)后将升级停车(awaiting_human)。
+- **干预边界**:Shield 换道有授权(zhipu/glm-5.3-flash,01:00 UTC 前);**Devon 无换道授权**——停机等用户裁决(充值 deepseek 或授权换道)。
+- **元观察**:这是今天第三个通道级死亡(kimi 配额→计划降级→deepseek 余额)。多 provider token 平衡是运营常态;T-003 落地的等待/quota 机制正是为此而生(产品吃自己的狗粮,但余额类等待语义需要区分——余额耗尽应快速升级而非等满 106 分钟,可作为 T-003 的 follow-up 观察)。
