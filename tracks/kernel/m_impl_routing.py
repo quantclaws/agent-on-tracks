@@ -114,9 +114,36 @@ def _route_prism_plan_revise(s: State, p: dict) -> None:
         _consume_attempt(s)
 
 
+def _sole_finding_classification(p: dict) -> str | None:
+    """The findings' defect classification when they speak with one voice.
+
+    Live defect (run 01M2QTJB T-002, 2026-09-20 rounds 7-8): the reviewer
+    put the routing classification on each FINDING (defect_classification:
+    test_defect, per the criteria pack's substate-routing vocabulary) and
+    spelled the routing in the summary prose, but never lifted it to the
+    verdict's top level -- the router read ``p.get('defect_classification')``
+    (None), defaulted to impl_defect, and re-dispatched Devon GREEN against
+    a frozen-test defect Devon may not touch: two zero-delta no-op rounds
+    and an unbounded revise loop. Conservative derivation: exactly ONE
+    distinct classification across findings wins; none, or mixed voices,
+    stay None (the router's default keeps the historical behavior).
+    """
+    classifications = {
+        str(f.get("defect_classification"))
+        for f in (p.get("findings") or [])
+        if isinstance(f, dict) and f.get("defect_classification")
+    }
+    if len(classifications) == 1:
+        return classifications.pop()
+    return None
+
+
 def _route_prism_final_revise(s: State, p: dict) -> None:
-    """PRISM_FINAL revise: route by defect_classification (flow.md §10.1)."""
-    dc = p.get("defect_classification", "impl_defect")
+    """PRISM_FINAL revise: route by defect_classification (flow.md §10.1).
+
+    The classification comes from the verdict top level, falling back to
+    the findings' sole voice (see ``_sole_finding_classification``)."""
+    dc = p.get("defect_classification") or _sole_finding_classification(p)
     if dc == "red_defect":
         s.substate = "RED"
         s.green_committed = False
@@ -125,6 +152,16 @@ def _route_prism_final_revise(s: State, p: dict) -> None:
         # defect, not Devon's. Route to PLANNING replan; do NOT consume
         # attempt. _route_scope_replan handles all state cleanup.
         _route_scope_replan(s)
+        return
+    elif dc == "test_defect":
+        # Criteria-pack routing semantics (tracks-prism-impl, PRISM_FINAL):
+        # a frozen-acceptance test's own defect is the test writer's domain
+        # -- Shield, never Devon (whose manifest forbids the frozen tests).
+        # Mirrors DIAGNOSE's test_defect branch exactly (live rounds 7-8:
+        # the missing branch pinned the run in a GREEN no-op loop).
+        s.substate = "SHIELD_FIX"
+        _reset_doc(s)
+        _consume_attempt(s)
         return
     else:
         s.substate = "GREEN"

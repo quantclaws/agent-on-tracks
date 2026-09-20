@@ -374,3 +374,79 @@ def test_green_objective_omits_anchor_clause_without_nodes():
     s = state_of(*pre, failed)
     cmd = decide(s)
     assert "the gate failed on these anchors" not in cmd.params["objective"]
+
+
+def test_prism_final_revise_test_defect_to_shield_fix():
+    """Live defect (run 01M2QTJB T-002 rounds 7-8, 2026-09-20): the sole
+    blocker finding carried defect_classification=test_defect on the FINDING
+    (never lifted to the verdict top level); the router defaulted to
+    impl_defect -> Devon GREEN, which may not touch the frozen acceptance
+    test — two zero-delta no-op rounds and an unbounded revise loop. The
+    sole-voice derivation routes the fix to its rightful owner: Shield."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {
+                    "id": "T002-F2",
+                    "severity": "blocker",
+                    "summary": "frozen anchor asserts the positive path",
+                    "defect_classification": "test_defect",
+                }
+            ],
+        },
+    )
+    s = state_of(*m_impl.prism_final_done(), revise)
+    assert s.substate == "SHIELD_FIX"
+    assert s.current_attempt == 1, "test_defect consumes the attempt budget (DIAGNOSE parity)"
+    cmd = decide(s)
+    assert cmd is not None
+    assert cmd.kind == "dispatch_agent"
+    assert cmd.params["role"] == "shield"
+    assert cmd.params["substate"] == "WRITE"
+
+
+def test_prism_final_revise_top_level_test_defect_routes_shield():
+    """The top-level field (when the reviewer provides it) routes the same
+    way — one semantics, two carriers."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "defect_classification": "test_defect",
+        },
+    )
+    s = state_of(*m_impl.prism_final_done(), revise)
+    assert s.substate == "SHIELD_FIX"
+
+
+def test_prism_final_revise_mixed_finding_voices_keep_default_green():
+    """Conservative derivation: findings disagreeing (or silent) stay None —
+    the router keeps the historical impl_defect -> GREEN default."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {"id": "F1", "severity": "blocker", "summary": "a",
+                 "defect_classification": "test_defect"},
+                {"id": "F2", "severity": "major", "summary": "b",
+                 "defect_classification": "impl_defect"},
+            ],
+        },
+    )
+    s = state_of(*m_impl.prism_final_done(), revise)
+    assert s.substate == "GREEN"
+
+
+def test_prism_final_revise_no_classification_keeps_default_green():
+    revise = (
+        "prism.verdict",
+        {"verdict": "revise", "criteria_pack": dict(_M_IMPL_CRITERIA_PACK)},
+    )
+    s = state_of(*m_impl.prism_final_done(), revise)
+    assert s.substate == "GREEN"
