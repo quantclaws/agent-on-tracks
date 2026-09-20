@@ -372,25 +372,49 @@ def test_shield_diagnose_report_survives_infra_failure():
 
 
 def test_infra_failure_streak_escalates_without_consuming_attempts():
-    """3 consecutive infra failures escalate to awaiting_human without ever
-    touching the agent attempt budget; human.retry clears the streak."""
+    """Consecutive infra failures escalate to awaiting_human at the limit
+    without ever touching the agent attempt budget; below the limit the run
+    keeps waiting (Human decision 2026-09-19: high load -> wait); human.retry
+    clears the streak. The limit is env-tunable (TRAC_INFRA_RETRY_LIMIT);
+    the default spans ~106 minutes of capped backoff, so the historical
+    3-streak pin would freeze the waiting semantics back to ~3.5 minutes."""
+    from tracks.kernel.machine_outcomes import _infra_retry_limit
     infra_failed = ("outcome.received", {
         "role": "shield",
         "status": "failed",
         "failure_class": "provider_unavailable",
         "self_report": "provider/model/credentials unavailable",
     })
-    events = [*m_impl.green_gate(), *_diagnose_events_with_report()]
-    for _ in range(3):
+    base = [*m_impl.green_gate(), *_diagnose_events_with_report()]
+    limit = _infra_retry_limit()
+    events = [*base]
+    for _ in range(limit - 1):
         events = [*events, infra_failed]
+    s = state_of(*events)
+    assert s.status == "active", "below the limit the run keeps waiting out the gateway"
+    events = [*events, infra_failed]
     s = state_of(*events)
     assert s.status == "awaiting_human"
     assert s.awaiting == "escalation"
     assert s.current_attempt == 1  # still untouched by infra failures
-    assert s.infra_failure_streak == 3
+    assert s.infra_failure_streak == limit
     s2 = state_of(*events, ("human.retry", {"actor": "openclaw"}))
     assert s2.status == "active"
     assert s2.infra_failure_streak == 0
+
+
+def test_infra_retry_limit_env_override(monkeypatch):
+    """TRAC_INFRA_RETRY_LIMIT tunes the escalation threshold (per-call read:
+    a restarted process picks the current environment); garbage falls back
+    to the default."""
+    from tracks.kernel import machine_outcomes
+
+    monkeypatch.setenv("TRAC_INFRA_RETRY_LIMIT", "2")
+    assert machine_outcomes._infra_retry_limit() == 2
+    monkeypatch.setenv("TRAC_INFRA_RETRY_LIMIT", "0")
+    assert machine_outcomes._infra_retry_limit() == 1  # floor at 1
+    monkeypatch.setenv("TRAC_INFRA_RETRY_LIMIT", "not-an-int")
+    assert machine_outcomes._infra_retry_limit() == machine_outcomes._INFRA_RETRY_LIMIT_DEFAULT
 
 
 def test_non_zero_exit_is_infra_not_semantic():

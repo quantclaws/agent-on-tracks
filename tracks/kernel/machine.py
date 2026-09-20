@@ -197,9 +197,6 @@ from .machine_outcomes import (
     _INFRA_FAILURE_CLASSES as _INFRA_FAILURE_CLASSES,
 )
 from .machine_outcomes import (
-    _INFRA_RETRY_LIMIT as _INFRA_RETRY_LIMIT,
-)
-from .machine_outcomes import (
     _handle_failed_outcome as _handle_failed_outcome,
 )
 from .machine_outcomes import (
@@ -213,6 +210,9 @@ from .machine_outcomes import (
 )
 from .machine_outcomes import (
     _handle_verdict_format_failure as _handle_verdict_format_failure,
+)
+from .machine_outcomes import (
+    _infra_retry_limit as _infra_retry_limit,
 )
 from .machine_outcomes import (
     _is_format_verdict as _is_format_verdict,

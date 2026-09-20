@@ -13,6 +13,7 @@ the reducers from here.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from .events import EventEnvelope
@@ -171,7 +172,22 @@ _INFRA_FAILURE_CLASSES = frozenset(
         "non_zero_exit",
     }
 )
-_INFRA_RETRY_LIMIT = 3
+_INFRA_RETRY_LIMIT_DEFAULT = 12
+
+
+def _infra_retry_limit() -> int:
+    """Consecutive-infra-failure escalation threshold (Human decision
+    2026-09-19: the model channel never changes; under high load the run
+    WAITS). The historic 3 tripped after ~3.5 minutes of backoff (30+60+120)
+    -- before the 900s ceiling (raised the same day for exactly this
+    waiting semantics) was ever reached, escalating to a human for what the
+    decision says to ride out. Default 12 spans 30+60+...+900 capped ≈
+    106 minutes of self-waiting; TRAC_INFRA_RETRY_LIMIT tunes it (read per
+    call so a restarted process picks the current environment)."""
+    try:
+        return max(1, int(os.environ.get("TRAC_INFRA_RETRY_LIMIT", "").strip()))
+    except ValueError:
+        return _INFRA_RETRY_LIMIT_DEFAULT
 
 
 # Output-contract format failures (operator 2026-08-24): the agent ran and
@@ -260,7 +276,7 @@ def _handle_infra_failure(s: State) -> None:
         _reset_review(s)
     else:
         _reset_doc(s)
-    if s.infra_failure_streak >= _INFRA_RETRY_LIMIT:
+    if s.infra_failure_streak >= _infra_retry_limit():
         s.status = "awaiting_human"
         s.awaiting = "escalation"
 

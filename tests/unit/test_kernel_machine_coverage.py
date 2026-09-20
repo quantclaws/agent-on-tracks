@@ -729,10 +729,22 @@ def test_handle_infra_failure_resets_without_touching_failure_or_attempt():
     assert s.infra_failure_streak == 1
     assert s.status == "active"
 
+    # 2026-09-20: the escalation threshold is the tunable default (Human
+    # decision: high load -> wait ~106min of capped backoff, not ~3.5min).
+    from tracks.kernel.machine_outcomes import _infra_retry_limit
+
     s = State(stage="M-STORY", substate="SAGE_REVIEW", infra_failure_streak=2)
     s.reviewer_dispatched = True
     _handle_infra_failure(s)
     assert s.reviewer_dispatched is False
+    assert s.status == "active", "streak 3 stays below the waiting-semantics limit"
+
+    s = State(
+        stage="M-STORY", substate="SAGE_REVIEW",
+        infra_failure_streak=_infra_retry_limit() - 1,
+    )
+    s.reviewer_dispatched = True
+    _handle_infra_failure(s)
     assert s.status == "awaiting_human"
     assert s.awaiting == "escalation"
 
