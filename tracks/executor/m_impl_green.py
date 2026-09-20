@@ -86,7 +86,24 @@ def _task_review_failure(
         (ev["seq"] for ev in events if ev["type"] == "human.retry"),
         default=0,
     )
-    if sum(ev["type"] == "verdict.failed" and ev["seq"] > cutoff for ev in events) > task.budget:
+    # Per-TASK budget (live defect, run 01M2QTJB T-008 2026-09-20): the count
+    # had no task filter, so every verdict.failed in the run -- other tasks'
+    # semantic rounds included -- consumed THIS task's budget; once tripped,
+    # each budget rejection itself emitted another verdict.failed and the
+    # counter snowballed, fail-closing every subsequent task after any busy
+    # stretch. B84's intent is the task's own post-retry failures: the event
+    # column when the projection carries it, the payload as fallback.
+    def _owns(ev: dict) -> bool:
+        owner = ev.get("task_id") or (ev.get("payload") or {}).get("task_id")
+        return owner == task_id
+
+    if (
+        sum(
+            ev["type"] == "verdict.failed" and ev["seq"] > cutoff and _owns(ev)
+            for ev in events
+        )
+        > task.budget
+    ):
         return {
             "check": "budget",
             "reason": f"verdict.failed count exceeds task budget {task.budget}",

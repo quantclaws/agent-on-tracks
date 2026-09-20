@@ -387,9 +387,17 @@ def _task_review_scenario(repo, flaw):
     store.append("RUN", "v0.5", "outcome.received", _green_outcome(task, r_sha, diff=impl_diff))
     store.append("RUN", "v0.5", "verdict.passed", {"check": "green"})
     if flaw == "budget_overflow":
-        # Inflate the consumed-attempt budget beyond the task budget (=3).
+        # Inflate the task's OWN failure count beyond its budget (=3). The
+        # budget is per-task (run 01M2QTJB T-008): unattributed or other
+        # tasks' verdict.failed events must not consume this budget.
         for attempt in range(1, 5):
-            store.append("RUN", "v0.5", "verdict.failed", {"check": "budget", "attempt": attempt})
+            store.append(
+                "RUN",
+                "v0.5",
+                "verdict.failed",
+                {"check": "budget", "attempt": attempt},
+                task_id=task["task_id"],
+            )
     trailer_r = "0" * 40 if flaw == "lineage" else r_sha
     ac_refs = [] if flaw == "missing_ac" else ["AC-FR0001-01", "FR-0001"]
     g = create_green_commit(
@@ -483,3 +491,40 @@ __all__ = [
     for name in globals()
     if name not in {"__name__", "__file__", "__package__", "__loader__", "__spec__", "__cached__", "__builtins__", "__all__"}
 ]
+
+
+def test_task_budget_counts_only_own_failures(tmp_path):
+    """Live defect (run 01M2QTJB T-008, 2026-09-20): the budget check had no
+    task filter — a busy stretch of OTHER tasks' verdict.failed events
+    fail-closed the next task's review, and each budget rejection itself
+    emitted another counted failure (snowball). Per-task: only the task's
+    own post-retry failures consume its budget; cross-task noise does not
+    (Prism budget-R1: call the production function, no source inspection)."""
+    from types import SimpleNamespace
+
+    from tracks.executor.m_impl_green import _task_review_failure
+
+    task = SimpleNamespace(task_id="T-008", budget=1)
+    base_events = [
+        {"seq": 1, "type": "human.retry", "task_id": None, "payload": {}},
+        # Other tasks' busy stretch: three failures, none of them ours.
+        {"seq": 2, "type": "verdict.failed", "task_id": "T-909", "payload": {}},
+        {"seq": 3, "type": "verdict.failed", "task_id": None, "payload": {}},
+        {"seq": 4, "type": "verdict.failed", "task_id": None,
+         "payload": {"task_id": "T-907"}},
+    ]
+    # g_sha=None -> the no-change review path: diff checks vacuous, only the
+    # budget check runs (the exact live shape that tripped T-008).
+    assert _task_review_failure(None, "RUN", base_events, task, None, None,
+                                {}, [], "T-008", 1) is None
+    # One OWN failure at budget=1 stays within (1 > 1 is False)...
+    within = [*base_events,
+              {"seq": 5, "type": "verdict.failed", "task_id": "T-008", "payload": {}}]
+    assert _task_review_failure(None, "RUN", within, task, None, None,
+                                {}, [], "T-008", 1) is None
+    # ...a second OWN failure trips it.
+    tripped = [*within,
+               {"seq": 6, "type": "verdict.failed", "task_id": "T-008", "payload": {}}]
+    result = _task_review_failure(None, "RUN", tripped, task, None, None,
+                                  {}, [], "T-008", 1)
+    assert result is not None and result["check"] == "budget"

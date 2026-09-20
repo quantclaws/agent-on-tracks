@@ -269,7 +269,12 @@ class MImplDispatchMixin:
         task_id = state.current_task_id
         attempt = state.current_attempt + 1
         events = [
-            {"seq": ev.seq, "type": ev.type, "payload": dict(ev.payload)}
+            {
+                "seq": ev.seq,
+                "type": ev.type,
+                "task_id": getattr(ev, "task_id", None),
+                "payload": dict(ev.payload),
+            }
             for ev in self.store.events(self.run_id)
         ]
         # B84 (#84): scan reversed events for the most recent green event
