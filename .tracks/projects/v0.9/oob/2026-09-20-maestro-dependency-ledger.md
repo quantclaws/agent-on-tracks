@@ -79,3 +79,10 @@
 - **通道切换**:Prism → napi-r/muse-spark(Human 2026-09-20,kimi-k3 额度数日);评审节奏 300-800s → 150-170s
 - **T-002 完成**(11:12 UTC,3/16);Shield 修复提交 5d06e7b(冻结锚 83 行改写 + 顺带落了 T-001 滞留的 RED 文件);链自动进入 T-003
 - infra 等待语义对齐决策(提交 49181da:阈值 3→可调默认 12,≈106 分钟自等待)
+
+## 断点预案(2026-09-20 ~12:00 UTC,maestro 会话因网络切换中断)
+
+- 链进程(loop/watcher)经 nohup+disown 脱离会话,**不随 maestro 会话死亡**;全部状态在事件账本+git(HEAD 4b25336)持久。
+- 网络中断期:在飞 agent 派发会崩 → infra 分类 → 退避自等待(上限 ~106 分钟,提交 49181da)→ 网络恢复即自动续跑,零人工。
+- 恢复检查单(maestro 回来后):① `trac status`——active(已自愈)或 awaiting_human(中断超 ~106 分钟,执行一次 `trac retry --actor Human`);② watcher 存活(24h 寿命,2026-09-21 ~08:16 UTC 到期,过期则重启 `nohup zsh .tracks/runtime/drift-restart-watcher.sh &`);③ `tail .tracks/runtime/logs/trac-run.log` 对账进度。
+- 当刻快照:3/16 完成;T-003 PRISM_RED 在飞(pid 69194)。
