@@ -15,6 +15,7 @@ from tracks.effects.dispatch_parity import (
     static_parity_check,
     static_parity_referenced,
 )
+from tracks.effects.envelope_reply import declared_result_path
 from tracks.effects.opencode_session import _session_key
 from tracks.executor.failure_review import (
     acknowledge_failure,
@@ -772,16 +773,12 @@ the envelope/failure faces stay re-exported by executor.py."""
     def _declared_result_path(assignment) -> str | None:
         """#174 result-file pointer: assignment result_file.result_path.
 
-        Another agent owns the injection; this face only reads. A missing
-        key (or a non-dict block) is the legacy text path.
+        Delegates to the shared ``envelope_reply.declared_result_path``
+        (single source — the backend's Devon evidence extraction reads the
+        same pointer). A missing key (or a non-dict block) is the legacy
+        text path.
         """
-        if not isinstance(assignment, dict):
-            return None
-        block = assignment.get("result_file")
-        if not isinstance(block, dict):
-            return None
-        path = block.get("result_path")
-        return path if isinstance(path, str) and path else None
+        return declared_result_path(assignment)
 
     def _emit_file_delivered_audit(self, raw, assignment, cmd, task_id, envelope) -> None:
         """Audit a successful file delivery (single envelope.file_delivered)."""

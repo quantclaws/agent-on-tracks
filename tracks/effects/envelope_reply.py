@@ -30,6 +30,23 @@ def is_declared_assignment(assignment: object) -> bool:
     return isinstance(assignment, dict) and bool(assignment.get("envelope"))
 
 
+def declared_result_path(assignment: object) -> str | None:
+    """#174 result-file pointer: assignment result_file.result_path.
+
+    Single source for both consumers — the executor's collection face
+    (file-preferred envelope load) and the backend's Devon evidence
+    extraction (file payload first, text fallback). A missing key (or a
+    non-dict block) is the legacy text path.
+    """
+    if not isinstance(assignment, dict):
+        return None
+    block = assignment.get("result_file")
+    if not isinstance(block, dict):
+        return None
+    path = block.get("result_path")
+    return path if isinstance(path, str) and path else None
+
+
 def encode_envelope_reply(kind: str, payload: dict, version: int) -> str:
     """The exact fenced reply text for an envelope the backend actually speaks.
 

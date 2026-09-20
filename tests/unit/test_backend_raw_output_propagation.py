@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -670,3 +671,189 @@ def test_real_shield_envelope_reply_is_unwrapped_into_manifest(backend_env):
             "role": "test",
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# #174 wiring gap fix: the result FILE payload feeds the Devon evidence face
+# ---------------------------------------------------------------------------
+
+_GREEN = {
+    "phase": "green",
+    "changed_paths": ["tracks/supervisor/readiness.py"],
+    "commands": [{"cmd": "pytest", "result": "pass", "output_summary": "29 passed"}],
+    "results": [],
+    "manifest_compliance": True,
+    "pre_identity": "pre",
+    "post_identity": "post",
+    "r_identity": "r-1",
+    "implemented_if_ids": ["IF-PROJ-001"],
+}
+
+
+def _write_result_file(path, payload, kind="devon:green"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"envelope": {"kind": kind, "version": 2}, "payload": payload}),
+        encoding="utf-8",
+    )
+
+
+def test_devon_evidence_prefers_the_result_file_payload(tmp_path):
+    """Live defect (run 01M2QTJB T-002, 2026-09-20): Devon wrote a complete
+    devon:green envelope to the inbox file and replied with a one-line
+    pointer; the extractor read only the reply text -> every evidence field
+    "missing" -> evidence_malformed twice -> wrongful S3 contract-simplification
+    RULING. The file payload is now the FIRST source."""
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    path = tmp_path / "inbox" / "cmd-x.json"
+    _write_result_file(path, _GREEN)
+    event = {"type": "text", "part": {"text": "result: " + str(path)}}
+    evidence = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None, result_path=str(path)
+    )
+    assert evidence["phase"] == "green"
+    assert evidence["changed_paths"] == ["tracks/supervisor/readiness.py"]
+    assert evidence["manifest_compliance"] is True
+    assert evidence["r_identity"] == "r-1"
+
+
+def test_devon_evidence_file_wins_over_stale_text_payload(tmp_path):
+    """Both sources present: the machine-serialized file is authoritative."""
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    path = tmp_path / "r.json"
+    _write_result_file(path, _GREEN)
+    stale = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_widget.py"],
+        "commands": [{"cmd": "pytest", "result": "fail", "output_summary": "x"}],
+        "results": [{"classification": "assertion_failure"}],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-IMPL-001"],
+    }
+    text = "```tracks-envelope\n" + json.dumps(
+        {"envelope": {"kind": "devon:red", "version": 2}, "payload": stale}
+    ) + "\n```\n"
+    event = {"type": "text", "part": {"text": text}}
+    evidence = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None, result_path=str(path)
+    )
+    assert evidence["phase"] == "green"
+    assert evidence["changed_paths"] == ["tracks/supervisor/readiness.py"]
+
+
+def test_devon_evidence_schema_invalid_file_falls_back_to_text(tmp_path):
+    """Prism #174b R1: acceptance mirrors the collection face — a parseable
+    but SCHEMA-INVALID file (green without r_identity) never feeds evidence;
+    the valid fenced text path takes over (no split verdicts)."""
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    invalid = {k: v for k, v in _GREEN.items() if k != "r_identity"}
+    path = tmp_path / "invalid.json"
+    _write_result_file(path, invalid)
+    valid_text = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_widget.py"],
+        "commands": [{"cmd": "pytest", "result": "fail", "output_summary": "x"}],
+        "results": [{"classification": "assertion_failure"}],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-IMPL-001"],
+    }
+    text = "```tracks-envelope\n" + json.dumps(
+        {"envelope": {"kind": "devon:red", "version": 2}, "payload": valid_text}
+    ) + "\n```\n"
+    event = {"type": "text", "part": {"text": text}}
+    evidence = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None, result_path=str(path)
+    )
+    assert evidence["phase"] == "red"
+
+
+def test_devon_evidence_bad_file_falls_back_to_text(tmp_path):
+    """Unparsable/missing file: the text paths keep working (fail-closed to
+    the legacy extraction; the collection face reports the file failure)."""
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    bad = tmp_path / "not-json"
+    bad.write_text("{ nope", encoding="utf-8")
+    valid_text = {
+        "phase": "red",
+        "changed_paths": ["tests/unit/test_widget.py"],
+        "commands": [{"cmd": "pytest", "result": "fail", "output_summary": "x"}],
+        "results": [{"classification": "assertion_failure"}],
+        "manifest_compliance": True,
+        "pre_identity": "pre",
+        "post_identity": "post",
+        "implemented_if_ids": ["IF-IMPL-001"],
+    }
+    text = "```tracks-envelope\n" + json.dumps(
+        {"envelope": {"kind": "devon:red", "version": 2}, "payload": valid_text}
+    ) + "\n```\n"
+    event = {"type": "text", "part": {"text": text}}
+    evidence = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None, result_path=str(bad)
+    )
+    assert evidence["phase"] == "red"
+    evidence2 = extract_devon_evidence(
+        None, lambda _proc: event, lambda _text: None, result_path=str(tmp_path / "absent.json")
+    )
+    assert evidence2["phase"] == "red"
+
+
+def test_devon_evidence_file_without_text_event(tmp_path):
+    """File delivered but no final text event at all: the file still carries
+    the evidence (the pointer reply is optional prose)."""
+    from tracks.effects.devon_evidence import extract_devon_evidence
+
+    path = tmp_path / "r.json"
+    _write_result_file(path, _GREEN)
+    evidence = extract_devon_evidence(
+        None, lambda _proc: None, lambda _text: None, result_path=str(path)
+    )
+    assert evidence["phase"] == "green"
+
+
+def test_declared_result_path_helper_shapes():
+    from tracks.effects.envelope_reply import declared_result_path
+
+    assert declared_result_path(None) is None
+    assert declared_result_path({}) is None
+    assert declared_result_path({"result_file": "junk"}) is None
+    assert declared_result_path({"result_file": {"result_path": ""}}) is None
+    assert declared_result_path({"result_file": {"result_path": "/x/y.json"}}) == "/x/y.json"
+
+
+def test_success_result_hydrates_evidence_from_declared_result_file(backend_env, tmp_path):
+    """Prism #174b R1 (major): the WIRING — act -> _audited_result ->
+    _success_result threads assignment.result_file.result_path into the
+    extractor. A declared assignment with a ready result file and a
+    pointer-only reply produces an outcome carrying the file's evidence
+    (the exact live shape that burned twice as evidence_malformed)."""
+    _, _, repo = backend_env
+    be = OpencodeBackend(repo, VERSION)
+    path = tmp_path / "inbox" / "cmd-live.json"
+    _write_result_file(path, _GREEN)
+    pointer_line = json.dumps(
+        {"type": "text", "part": {"text": "result: " + str(path)}}
+    )
+    proc = SimpleNamespace(stdout=pointer_line + "\n", stderr="", returncode=0)
+    result = be._success_result(
+        "Devon",
+        "GREEN",
+        [],
+        None,
+        proc,
+        "",
+        None,
+        author_assignment=False,
+        reviewer_assignment=False,
+        result_path=str(path),
+    )
+    assert result["phase"] == "green"
+    assert result["changed_paths"] == ["tracks/supervisor/readiness.py"]
+    assert result["r_identity"] == "r-1"

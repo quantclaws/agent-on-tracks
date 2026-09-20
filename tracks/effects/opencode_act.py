@@ -12,7 +12,10 @@ from pathlib import Path
 
 from tracks.effects.audit import Auditor
 from tracks.effects.devon_evidence import extract_devon_evidence
-from tracks.effects.envelope_reply import is_declared_assignment
+from tracks.effects.envelope_reply import (
+    declared_result_path,
+    is_declared_assignment,
+)
 
 from .opencode_audit import _capture_target_diffs
 from .opencode_core import AGENT_NAME, OpencodeError, redact
@@ -176,6 +179,7 @@ class OpencodeActMixin:
                 structured_findings=self._has_structured_findings(
                     req.role, req.substate, req.assignment, proc
                 ),
+                result_path=declared_result_path(req.assignment),
             )
             return self._attach_raw_output(
                 self._attach_dispatch_metadata(
@@ -314,6 +318,7 @@ class OpencodeActMixin:
         console_input: str | None,
         reviewer_assignment: bool,
         structured_findings: bool = False,
+        result_path: str | None = None,
     ) -> dict:
         diff_ref = _capture_target_diffs(state.auditor, doc_paths, substate, proc)
         # Every dispatch gets ONE atomic audit/rollback decision (Blocker 2):
@@ -369,6 +374,7 @@ class OpencodeActMixin:
             console_input,
             state.author,
             reviewer_assignment,
+            result_path=result_path,
         )
 
     def _overreach_result(
@@ -521,6 +527,7 @@ class OpencodeActMixin:
         console_input: str | None,
         author_assignment: bool,
         reviewer_assignment: bool,
+        result_path: str | None = None,
     ) -> dict:
         artifact_ref = None
         if author_assignment and doc_paths:
@@ -543,6 +550,9 @@ class OpencodeActMixin:
                     # phase/changed_paths; context-echo JSON echoed after
                     # the manifest must not win the pick.
                     lambda t: self._first_json_object(t, ("phase", "changed_paths")),
+                    # #174: the result file's payload IS the evidence when
+                    # the dispatch declared one (file first, text fallback).
+                    result_path=result_path,
                 )
             )
         if name == "Prism" and substate == "DIAGNOSE":
