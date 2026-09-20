@@ -18,8 +18,8 @@ from typing import Any
 
 # Credential assignment shapes (interfaces §1g.3): keyword, separator, value.
 _ASSIGNMENT_SHAPE = re.compile(
-    r"(?i)\b(password|passwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key)"
-    r"(\s*[=:]\s*)(\S+)"
+    r"(?i)\b(?P<keyword>password|passwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key)"
+    r"(?P<separator>\s*[=:]\s*)(?P<value>\S+)"
 )
 
 # ``Authorization: Bearer <credential>`` and bare bearer credentials.
@@ -48,17 +48,22 @@ class SecretRedactor:
 
     def redact_text(self, text: str) -> str:
         """Return text with credential values replaced by ${NAME} / ***."""
-        for name, value in self._secret_values:
-            text = text.replace(value, f"${{{name}}}")
+        text = self._replace_known_values(text)
         text = _ASSIGNMENT_SHAPE.sub(self._mask_assignment, text)
         return _BEARER_SHAPE.sub(r"\1***", text)
 
+    def _replace_known_values(self, text: str) -> str:
+        """Replace every registered credential value with its ``${NAME}``."""
+        for name, value in self._secret_values:
+            text = text.replace(value, f"${{{name}}}")
+        return text
+
     @staticmethod
-    def _mask_assignment(match: re.Match) -> str:
+    def _mask_assignment(match: re.Match[str]) -> str:
         """Mask one matched credential value unless it is a ${NAME} reference."""
-        if match.group(3).startswith(_REFERENCE_PREFIX):
+        if match.group("value").startswith(_REFERENCE_PREFIX):
             return match.group(0)
-        return f"{match.group(1)}{match.group(2)}***"
+        return f"{match.group('keyword')}{match.group('separator')}***"
 
     def redact_payload(self, payload: Any) -> Any:
         """Recursively redact a JSON-able payload (dict/list/str leaves)."""
