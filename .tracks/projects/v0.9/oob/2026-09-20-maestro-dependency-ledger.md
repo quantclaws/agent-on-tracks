@@ -86,3 +86,12 @@
 - 网络中断期:在飞 agent 派发会崩 → infra 分类 → 退避自等待(上限 ~106 分钟,提交 49181da)→ 网络恢复即自动续跑,零人工。
 - 恢复检查单(maestro 回来后):① `trac status`——active(已自愈)或 awaiting_human(中断超 ~106 分钟,执行一次 `trac retry --actor Human`);② watcher 存活(24h 寿命,2026-09-21 ~08:16 UTC 到期,过期则重启 `nohup zsh .tracks/runtime/drift-restart-watcher.sh &`);③ `tail .tracks/runtime/logs/trac-run.log` 对账进度。
 - 当刻快照:3/16 完成;T-003 PRISM_RED 在飞(pid 69194)。
+
+## 夜间批次记录(2026-09-20 深夜,maestro 值守)
+
+- **31da17d**:DIAGNOSE 判决面接结果文件(174b 镜像)——评审 PASS;修复经 watcher 热修路径在提交前已实战生效(attempt 2 判决正确入账)。
+- **898adcd**:tracks-devon-rgr v0.5——skill 教的 pytest.fail 守卫在门禁分类器那里是 unclassified 非法;改教 raise AssertionError。deepseek 通道照书抄才暴露(flash 模型的高保真是双刃剑)。
+- **016e8f2**:任务预算按任务过滤——计数无任务过滤导致 T-008(零自身失败)被三连拒 + 雪球;修复后 T-008 立即收口。
+- **M-8(新)**:任务预算全局计数 bug——同上,归 #178 路由保真同族?不,独立类:门禁判据的归属域错误。已修,无需 FR。
+- 进度:T-004(16:52)、T-007(17:36)、T-008(19:22)相继收口——**7/16**;T-009 RED 已交复审。
+- 通道健康:deepseek-flash Devon 稳定(GREEN 平均 ~3-8 分钟);Prism muse-spark 稳定;step5(Shield)未被派发过,无限流。
