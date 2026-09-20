@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import time
@@ -11,7 +12,12 @@ from pathlib import Path
 
 from tracks.capabilities import base_version, supports_m_impl
 from tracks.executor import version_extensions as _version_extensions
-from tracks.executor.code_stamp import DRIFT_MESSAGE, RuntimeCodeDriftError, code_stamp
+from tracks.executor.code_stamp import (
+    DRIFT_MESSAGE,
+    RuntimeCodeDriftError,
+    code_file_stamps,
+    stamps_digest,
+)
 from tracks.executor.doc_face import _CANONICAL_CONTRACT_PATH
 from tracks.executor.failure_review import restore_from_events
 from tracks.executor.helpers import git
@@ -36,49 +42,122 @@ class ExecRunLoopMixin:
 the host Executor keeps construction and the command handlers."""
 
     def _fail_fast_on_code_drift(self) -> None:
-        """B43（#45）：派发前复核 tracks/** 指纹；漂移即 fail-fast。
+        """B43（#45）+#173：派发前复核 tracks/** 指纹；**外来**漂移才换手。
 
         r1 实证：运行中进程外的代码修改不热加载，旧逻辑继续派发导致
-        误判/escalation。这里宁可停车提示重启，绝不带旧逻辑继续。
-        #85：fail-fast 退出前先落 loop.aborted 审计事件——screen 无重定向
-        时 stdout 证据会丢，事件流是 append-only 审计流，事后可区分
-        abort/crash/kill。store.append 在 CLI 的 writer_lock 内执行，与
-        既有 append 点一致；_emit 走统一熔断漏斗，loop.aborted 在 breaker
-        是 no-op。
+        误报/escalation。宁可停车提示重启，绝不带旧逻辑继续。
+        #85：换手退出前先落审计事件。
+
+        #173（run 01M2QTJB 实测，20 分钟 2 次换手、每次 2-4 分钟重启税）：
+        漂移按**路径归属**分区——本进程自有写入（writer worktree replay
+        落盘的产品代码、v0.9 dogfood 里 Devon GREEN 写的就是 tracks/**）
+        吸收并重定基线（code.drift reason=self_write_rebaseline，事件留痕
+        不换手）；只有外来路径（操作者热修/其它进程写入）仍走 M7 换手。
+        判定 fail-closed：自有与外来混合时同样换手，事件列出外来路径；
+        tracks/ 整包消失（基线存在而现状为 None）换手——只有 runtime
+        自身的单文件 unlink，没有整包删除路径，该情形必属外来。
+
+        Prism #173 R1（blocker）：检查边界**整体清空**自有写入集，且
+        note 只记内容真的变了的路径——否则 seeded-WIP 零增量回放留下的
+        过期条目会把后续窗口内操作者对同一路径的热修静默吸收（fail-open）。
+        已知残留（R2 minor，fail-open 向但窗口秒级）：replay note 之后、
+        下个检查边界之前，操作者对**同一路径**的编辑仍会被吸收——路径集
+        方案固有；彻底关闭需把 note 升级为 {path: digest} 值声明（吸收仅
+        当当前 digest 与声明值相等），留作后续硬化。
         """
-        if self._code_stamp is None:
+        if self._code_stamps is None:
             return
-        stamp = code_stamp(Path(self.repo))
-        if stamp != self._code_stamp:
-            # M7 (convergence plan 2026-09-05): graceful handover. The
-            # loop runs from the installed distribution (bootstrap
-            # isolation), so tree drift no longer means this process
-            # executes stale
-            # logic mid-pipeline -- and this check only runs at dispatch
-            # boundaries, so the in-flight dispatch has already fully
-            # concluded (129 loop.aborted events and their 55-event
-            # evidence.staled cascade in tracks.db were mid-pipeline
-            # interruptions of exactly this shape). Record code.drift
-            # for the audit trail; the restart watcher rebuilds the
-            # installed distribution and the next process takes over
-            # from the event
-            # store. The run state stays active -- no abort, no staling.
+        now = code_file_stamps(Path(self.repo))
+        if now is not None:
+            changed = {p for p in now if self._code_stamps.get(p) != now[p]}
+            changed |= set(self._code_stamps) - set(now)
+        else:
+            # 基线存在而 tracks/ 包消失：外来漂移（runtime 无整包删除路径）
+            changed = {"tracks/"}
+        if not changed:
+            # 边界清集：上一窗口的 note 声明已全部结算（吸收或未发生），
+            # 不许过期条目跨检查边界存活（Prism #173 R1 blocker）。
+            self._runtime_written_paths.clear()
+            return
+        self_written = changed & self._runtime_written_paths
+        foreign = changed - self._runtime_written_paths
+        if not foreign:
+            # 自有写域：审计 + 重定基线，继续驱动（消除每边界换手税）。
             self._emit(
                 "code.drift",
                 {
-                    "reason": "handover",
+                    "reason": "self_write_rebaseline",
+                    "paths": sorted(self_written),
                     "stamp_at_start": self._code_stamp,
-                    "stamp_now": stamp,
+                    "stamp_now": stamps_digest(now) if now is not None else None,
                 },
             )
-            print(
-                "run handover: tracks/** code drift -- dispatch boundary "
-                "reached, nothing aborted (M7); the restart watcher "
-                "rebuilds and the next process takes over",
-                file=sys.stderr,
-                flush=True,
-            )
-            raise RuntimeCodeDriftError(DRIFT_MESSAGE)
+            self._code_stamps = now
+            self._code_stamp = stamps_digest(now)
+            self._runtime_written_paths.clear()
+            return
+        # M7 (convergence plan 2026-09-05): graceful handover. The
+        # loop runs from the installed distribution (bootstrap
+        # isolation), so tree drift no longer means this process
+        # executes stale
+        # logic mid-pipeline -- and this check only runs at dispatch
+        # boundaries, so the in-flight dispatch has already fully
+        # concluded (129 loop.aborted events and their 55-event
+        # evidence.staled cascade in tracks.db were mid-pipeline
+        # interruptions of exactly this shape). Record code.drift
+        # for the audit trail; the restart watcher rebuilds the
+        # installed distribution and the next process takes over
+        # from the event
+        # store. The run state stays active -- no abort, no staling.
+        self._emit(
+            "code.drift",
+            {
+                "reason": "handover",
+                "foreign_paths": sorted(foreign),
+                "stamp_at_start": self._code_stamp,
+                "stamp_now": stamps_digest(now) if now is not None else None,
+            },
+        )
+        print(
+            "run handover: tracks/** code drift -- dispatch boundary "
+            "reached, nothing aborted (M7); the restart watcher "
+            "rebuilds and the next process takes over",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise RuntimeCodeDriftError(DRIFT_MESSAGE)
+
+    def _note_runtime_writes(self, paths) -> None:
+        """#173: record paths this process itself wrote onto the main tree.
+
+        Called by the worktree replay faces AFTER a successful apply/mirror
+        with the replay delta's path list. A note is a **content-changed
+        claim**: only paths whose current content differs from the
+        per-file baseline are recorded (a same-bytes mirror copy — the
+        seeded-WIP zero-delta replay — claims nothing), so a stale entry
+        can never absorb a later operator edit of the same path (Prism
+        #173 R1 blocker). Deletions of baseline files count as changed;
+        only stamp-relevant paths (``tracks/**.py``) are kept.
+        """
+        if self._code_stamps is None:
+            return
+        for path in paths:
+            if not (
+                isinstance(path, str)
+                and path.startswith("tracks/")
+                and path.endswith(".py")
+            ):
+                continue
+            try:
+                digest = hashlib.sha256(
+                    (Path(self.repo) / path).read_bytes()
+                ).hexdigest()
+            except OSError:
+                if path in self._code_stamps:
+                    self._runtime_written_paths.add(path)  # runtime 删除
+                continue
+            if self._code_stamps.get(path) != digest:
+                self._runtime_written_paths.add(path)
 
     def _emit(
         self, type: str, payload: dict, command_id: str | None = None, task_id: str | None = None

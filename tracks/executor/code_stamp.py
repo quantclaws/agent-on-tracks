@@ -24,22 +24,44 @@ class RuntimeCodeDriftError(RuntimeError):
     """trac run 进程存活期间 tracks/** 代码发生了变化。"""
 
 
+def code_file_stamps(repo: Path) -> dict[str, str] | None:
+    """``repo/tracks/**/*.py`` 逐文件指纹（{相对posix路径: sha256}）。
+
+    ``code_stamp`` 的分层底座（#173）：漂移判定需要**按路径归属**——
+    runtime 自有写入（writer worktree replay 落盘的产品代码）与外来
+    （操作者热修）写入的分区在文件级进行，整树哈希做不了分区。
+    目录不存在（宿主项目）返回 None，语义与 ``code_stamp`` 一致。
+    """
+    pkg = Path(repo) / "tracks"
+    if not pkg.is_dir():
+        return None
+    stamps: dict[str, str] = {}
+    for p in sorted(pkg.rglob("*.py")):
+        if "__pycache__" in p.parts:
+            continue
+        rel = p.relative_to(repo).as_posix()
+        stamps[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return stamps
+
+
+def stamps_digest(stamps: dict[str, str]) -> str:
+    """Per-file stamps -> the single fingerprint (``code_stamp`` shape).
+
+    与历史 ``code_stamp`` 逐字节同构（``"<path>:<digest>"`` 按路径排序后
+    换行连接再 sha256）——同一棵树两种取法必须得到同一哈希。
+    """
+    canonical = "\n".join(f"{path}:{digest}" for path, digest in sorted(stamps.items()))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def code_stamp(repo: Path) -> str | None:
     """``repo/tracks/**/*.py`` 工作树内容的确定性指纹。
 
     覆盖文件集合与逐文件内容（sha256），与 mtime 无关（touch 不触发）；
     排除 ``__pycache__``。目录不存在（宿主项目）返回 None。
     """
-    pkg = Path(repo) / "tracks"
-    if not pkg.is_dir():
-        return None
-    parts: list[str] = []
-    for p in sorted(pkg.rglob("*.py")):
-        if "__pycache__" in p.parts:
-            continue
-        digest = hashlib.sha256(p.read_bytes()).hexdigest()
-        parts.append(f"{p.relative_to(repo).as_posix()}:{digest}")
-    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+    stamps = code_file_stamps(repo)
+    return None if stamps is None else stamps_digest(stamps)
 
 
 DRIFT_MESSAGE = (

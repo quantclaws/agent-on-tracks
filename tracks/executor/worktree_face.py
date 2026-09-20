@@ -177,13 +177,22 @@ class ExecWorktreeMixin:
         replay 静默吞掉操作者已提交的工作。
 
         B60 (#76)：``ensure_runtime_assets`` 在 agent 运行**前**把
-        ``runtime_asset_paths`` 链接进 worktree（声明的环境目录是符号链接），而
-        canonical ``.gitignore`` 的该目录尾斜杠模式只匹配目录、
+        ``runtime_asset_paths`` 链接进 worktree（声明的环境目录是符号链接），
+        而 canonical ``.gitignore`` 的该目录尾斜杠模式只匹配目录、
         不匹配符号链接——``git add -A`` 会把它 stage 进 replay diff，
         ``git apply`` 拒绝后 mirror 兜底 copy2 目录直接 Errno 21。故
         add 后对每个 runtime asset 显式 ``git reset -q``（只动 index，
         不碰 working tree）：replay diff 只携带 agent 工作增量，环境
         管线永不入镜。reset 对未 staged 的 asset 是无害 no-op 错误。
+
+        #173：replay 的路径清单（apply 快路径与 mirror 兜底）**成功后**才
+        记入本进程自有写入集，且只记内容真的变了的 tracks/**.py——v0.9
+        dogfood 里 Devon GREEN 写的产品代码就是 ``tracks/**``，这些落盘属
+        runtime 自有写域，漂移检查按路径归属吸收（不触发 M7 换手税）。
+        Prism #173 R1（blocker）：note 必须是「内容已变」的断言——先于结果
+        入账 + 无条件按名入集，会让 seeded-WIP 零增量回放（mirror 同字节
+        copy）留下过期条目，把后续派发窗口内操作者对同一路径的热修静默
+        吸收成 self_write_rebaseline（fail-open）。
         """
         wt = handle.path
         subprocess.run(
@@ -197,8 +206,19 @@ class ExecWorktreeMixin:
                 capture_output=True,
                 check=False,
             )
+        # --no-renames（Prism #173 R2）：rename 检测默认开，name-only 只列
+        # postimage 新名，preimage 删除不入自有集 → 下一边界误判外来、多付
+        # 一次换手税。禁用 rename 折叠，改名表现为 delete+add，两侧路径都
+        # 进 replayed_paths；binary diff 同参保持与 name-only 同源。
+        names = subprocess.run(
+            ["git", "-C", wt, "diff", "--cached", "--no-renames", "--name-only", "-z"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        replayed_paths = [n for n in names.stdout.split("\0") if n]
         diff = subprocess.run(
-            ["git", "-C", wt, "diff", "--cached", "--binary"],
+            ["git", "-C", wt, "diff", "--cached", "--no-renames", "--binary"],
             capture_output=True,
             check=False,
         )
@@ -223,7 +243,11 @@ class ExecWorktreeMixin:
             # overwrites a pre-existing dirty file) — EXCEPT paths the
             # operator committed on main during the dispatch window
             # (#43 anti-clobber guard: those conflict fail-closed).
-            return self._mirror_worktree_changes(handle), True
+            error = self._mirror_worktree_changes(handle)
+            if error is None:
+                self._note_runtime_writes(replayed_paths)
+            return error, True
+        self._note_runtime_writes(replayed_paths)
         return self._sync_worktree_dirs(handle), True
 
     def _main_committed_since(self, base_sha: str) -> set[str]:

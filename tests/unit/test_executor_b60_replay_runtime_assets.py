@@ -137,3 +137,48 @@ def test_canonical_gitignore_matches_venv_symlink_form(tmp_path):
     )
 
     assert check.returncode == 0, "canonical .gitignore must ignore the .venv symlink form"
+
+
+# -- #173：replay 落盘路径进入自有写入集 --------------------------------------------
+
+
+def test_replay_notes_written_paths_as_runtime_owned(tmp_path):
+    """#173：replay 把增量路径记入 ``_runtime_written_paths``（只留
+    tracks/**.py）——v0.9 dogfood 的 Devon GREEN 落盘由此被漂移检查按
+    自有写域吸收，消除每边界 M7 换手税。
+
+    主仓必须带 tracks/ 包（漂移检查只对 tracks/**.py 取基线；B60 架子的
+    宿主形态 repo 无包，note 是 no-op——那是另一条已测路径）。"""
+    repo = git_repo(tmp_path)
+    pkg = repo / "tracks"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "app.py").write_text("BASE = 0\n", encoding="utf-8")
+    git(repo, "add", "tracks")
+    git(repo, "commit", "-m", "tracks package")
+
+    home = repo / ".tracks"
+    home.mkdir(exist_ok=True)
+    store = Store(home)
+    run_id = "RUN-173"
+    store.append(run_id, "v0.1", "story.requested", {"raw_chars": 1})
+    ex = Executor(store, repo, run_id)
+
+    sha = git(repo, "rev-parse", "HEAD").stdout.strip()
+    handle = create_devon_worktree(str(repo), sha, run_id, "T-001")
+    ensure_runtime_assets(str(repo), handle.path)
+    wt = Path(handle.path)
+
+    (wt / "tracks" / "app.py").write_text("IMPLEMENTED_IF = 'IF-2'\n", encoding="utf-8")
+    (wt / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (wt / "tests" / "unit" / "test_app_red.py").write_text("def test_x():\n    assert 0\n")
+
+    error, _had_delta = ex._replay_worktree_to_main(handle)
+
+    assert error is None
+    assert ex._runtime_written_paths == {"tracks/app.py"}
+    # 落盘后的漂移检查走吸收路径（不抛、基线前移）
+    ex._fail_fast_on_code_drift()
+    drift = [e for e in ex.store.events(run_id) if e.type == "code.drift"]
+    assert drift[-1].payload["reason"] == "self_write_rebaseline"
+    assert drift[-1].payload["paths"] == ["tracks/app.py"]

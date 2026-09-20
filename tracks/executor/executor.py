@@ -24,7 +24,7 @@ from tracks.executor import v07_runtime as _v07_runtime  # noqa: E402
 from tracks.executor import version_extensions as _version_extensions  # noqa: E402
 from tracks.executor.breaker import RunBreaker
 from tracks.executor.closure_evidence import ExecClosureEvidenceMixin
-from tracks.executor.code_stamp import code_stamp
+from tracks.executor.code_stamp import code_file_stamps, stamps_digest
 from tracks.executor.dispatch import (
     ExecDispatchMixin,
     _assignment_budget,  # noqa: F401
@@ -247,8 +247,15 @@ class Executor(
         # 的前移才入账。
         self._oob_head = oob.head_sha(Path(self.repo))
         # B43（#45）：进程代码版本戳。宿主项目（无 tracks/ 包）为 None，
-        # 漂移检查跳过。
-        self._code_stamp = code_stamp(Path(self.repo))
+        # 漂移检查跳过。#173：per-file 底座 + 本进程自有写入路径集——
+        # 漂移判定按路径归属分区（自有写入吸收并重定基线，外来写入才
+        # M7 换手）。Prism #173 R1：单一遍历派生两值——两趟 rglob 之间
+        # 的写入会产生互不一致的基线对，首查即误报外来换手。
+        self._code_stamps = code_file_stamps(Path(self.repo))
+        self._code_stamp = (
+            None if self._code_stamps is None else stamps_digest(self._code_stamps)
+        )
+        self._runtime_written_paths: set[str] = set()
         # B44（#46）：run 级熔断器计数（窗口：上次 human.retry/recover 之后；
         # 进程重启后从事件流重播种子，计数不丢）。
         self._breaker = RunBreaker.from_events(store.events(run_id))
