@@ -22,6 +22,7 @@ from tracks.executor.taskgraph import (
     validate_acceptance_coverage,
     validate_dag,
     validate_debt_references,
+    validate_declared_anchor_rows,
     validate_issue_numbers,
     validate_scope,
     validate_scope_existence,
@@ -297,14 +298,14 @@ class MImplLedgerMixin:
             self._requirements_baseline_dir(state, vdir),
             state.hotfix_anchor_acs if state.hotfix_issue is not None else None,
         )
-        # B50 (#65): schema-2 acceptance coverage closure -- planning-time
-        # fail-closed (§8 integration rows must be declared anchors), the
-        # replacement for the retired GREEN_GATE IF-index inference.
+        # B50 (#65) + #171: schema-2 §8 coverage closure, BOTH directions at
+        # the local commit gate — every integration row discharged (B50) and
+        # every declared anchor naming a row (#171 dirty-anchor rejection).
+        # Set arithmetic here; the expensive PRISM_PLAN loop only sees what
+        # genuinely needs semantic judgement.
         plan_path = vdir / "test-plan.md"
         plan_text = plan_path.read_text(encoding="utf-8") if plan_path.exists() else ""
-        valid, coverage_errors = validate_acceptance_coverage(tasks, plan_text)
-        if not valid:
-            errors.extend(coverage_errors)
+        errors.extend(self._plan_coverage_errors(tasks, plan_text))
         # ------------------------------------------------------------------
         # OOB b89 OB-3 — scope existence + sidecar freshness + satisfiability
         # ------------------------------------------------------------------
@@ -363,6 +364,20 @@ class MImplLedgerMixin:
             command_id=cmd.command_id,
         )
         self._rebuild_task_log_projection()
+
+    @staticmethod
+    def _plan_coverage_errors(tasks: list[TaskNode], plan_text: str) -> list[str]:
+        """B50 (#65) forward + #171 reverse §8 coverage errors (combined so
+        the commit gate reads one extension; both share the schema-2 bound
+        and the plan text)."""
+        errors: list[str] = []
+        valid, coverage_errors = validate_acceptance_coverage(tasks, plan_text)
+        if not valid:
+            errors.extend(coverage_errors)
+        valid, dirty_errors = validate_declared_anchor_rows(tasks, plan_text)
+        if not valid:
+            errors.extend(dirty_errors)
+        return errors
 
     def _retained_completed_ids(self, tasks: list[TaskNode]) -> list[str]:
         """B83: retained completions are derived from EVENT history, not live

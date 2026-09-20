@@ -857,3 +857,30 @@ def test_do_complete_task_retained_completion_releases(tmp_path: Path):
     state = State(run_id="RUN", retained_completed_task_ids=["T-1"])
     host._do_complete_task(_cmd("C-4", task_id="T-1"), state, "T-1", False)
     assert [e[0] for e in host.emitted] == ["writelock.released"]
+
+
+def test_do_commit_taskgraph_rejects_dirty_anchors(tmp_path: Path, monkeypatch):
+    """#171 反向门接线：声明了 §8 无行的锚在 commit 门被本地拒绝（零派发），
+    携带逐任务精确清单——不再走「Prism 评审 → Archer 重规划 → 复审」回路。"""
+    host = _Host(tmp_path)
+    host._read_taskgraph = lambda path: ("{}", None)
+    dirty = _task(
+        acceptance_refs=("tests/integration/x.py::t", "tests/integration/ghost.py"),
+        schema=2,
+    )
+    monkeypatch.setattr(ledger, "parse_tasks_json", lambda raw: ([dirty], None))
+    monkeypatch.setattr(ledger, "validate_acceptance_coverage", lambda tasks, plan: (True, []))
+    host._taskgraph_errors = lambda *a: []
+    host._emit_taskgraph_failure = lambda cmd, state, reason, evidence="": host.emitted.append(
+        ("failure", {"reason": reason, "evidence": evidence}, {})
+    )
+    (host._vdir() / "test-plan.md").write_text(
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0257-03 | integration | tests/integration/x.py::t | IF-IMPL-001 |\n",
+        encoding="utf-8",
+    )
+    host._do_commit_taskgraph(_cmd(), State(), "T", reconcile=False)
+    assert "T-1 declares anchor tests/integration/ghost.py with no §8 row (dirty anchor)" in (
+        host.emitted[0][1]["reason"]
+    )

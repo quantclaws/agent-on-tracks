@@ -361,6 +361,83 @@ def validate_acceptance_coverage(
         errors.extend(_row_undeclared_targets(ac_id, str(test_cell), declared, declared_paths))
     return (not errors, errors)
 
+def validate_declared_anchor_rows(
+    tasks: list[TaskNode],
+    plan_text: str,
+) -> tuple[bool, list[str]]:
+    """#171 plan-coverage machine gate, reverse direction: every declared
+    acceptance/deferred anchor must name a §8 row target (dirty-anchor
+    rejection).
+
+    The forward closure (``validate_acceptance_coverage``) proves every §8
+    integration row is discharged; this proves the converse — a declared
+    anchor with no §8 row anchors nothing in the frozen plan. Live
+    motivation (run 01M2QTJB PRISM-PLAN-01): reverse dirt surfaced only at
+    review time through the whole Prism→Archer→re-review loop; both
+    directions are now set arithmetic at commit time (cheap verification
+    before expensive review). Same schema-2 bound as the forward check.
+    Returns (all_rows_named, dirty_errors). Dirty ->
+    (False, ['T-002 declares anchor tests/integration/x.py::ghost with no
+    §8 row (dirty anchor)']).
+    """
+    if not tasks or tasks[0].schema != _SCHEMA_V2:
+        return (True, [])
+    row_files, row_nodes = _plan_row_target_index(plan_text)
+    errors: list[str] = []
+    for task in tasks:
+        for raw_ref in (*task.acceptance_refs, *getattr(task, "deferred_refs", ())):
+            error = _dirty_anchor_error(task.task_id, raw_ref, row_files, row_nodes)
+            if error is not None:
+                errors.append(error)
+    return (not errors, errors)
+
+
+def _plan_row_target_index(plan_text: str) -> tuple[set[str], set[str]]:
+    """§8 target index: (row file paths, row node ids) over rows of ANY
+    layer — e2e/unit declarations are not acceptance obligations but are
+    legitimate anchor targets, so their rows count for the reverse check."""
+    from tracks.executor.test_tasks import _coverage_rows_with_test
+
+    row_files: set[str] = set()
+    row_nodes: set[str] = set()
+    for _ac_id, _layer_cell, test_cell, _if_cell in _coverage_rows_with_test(plan_text):
+        for path, node in plan_row_targets(str(test_cell)):
+            row_files.add(path)
+            if node is not None:
+                row_nodes.add(node)
+    return row_files, row_nodes
+
+
+def _dirty_anchor_error(
+    task_id: str,
+    raw_ref: object,
+    row_files: set[str],
+    row_nodes: set[str],
+) -> str | None:
+    """One declared anchor's dirty-anchor error, or None when legal.
+
+    Normalization shared with ``plan_row_targets`` (bare file names land
+    under tests/integration/). Legality: a NODE-level declaration is legal
+    iff that exact node is a §8 target; a FILE-level declaration is legal
+    iff the file is a §8 target (it covers every node the rows name in
+    that file — the same expansion the forward check applies).
+    """
+    ref = str(raw_ref).strip()
+    if not ref:
+        return None
+    file_part, sep, node_part = ref.partition("::")
+    if not file_part:
+        return None
+    path = _normalized_test_path(file_part)
+    if sep and node_part:
+        legal = f"{path}::{node_part}" in row_nodes
+    else:
+        legal = path in row_files
+    if legal:
+        return None
+    return f"{task_id} declares anchor {ref} with no §8 row (dirty anchor)"
+
+
 def _row_names_integration(layer_cell: str | None, test_cell: str | None) -> bool:
     """Whether a §8 row names the integration layer and carries tests."""
     if not layer_cell or not test_cell:
@@ -396,15 +473,21 @@ def plan_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
         file_part, sep, node_part = item.partition("::")
         if not file_part:
             continue
-        path = (
-            file_part
-            if file_part.startswith("tests/")
-            else f"tests/integration/{Path(file_part).name}"
-        )
+        path = _normalized_test_path(file_part)
         pair = (path, f"{path}::{node_part}") if sep and node_part else (path, None)
         if pair not in targets:
             targets.append(pair)
     return targets
+
+
+def _normalized_test_path(file_part: str) -> str:
+    """Layer normalization shared by the §8 item parser and the dirty-anchor
+    checker (Prism #171 R1 DRY): an explicit tests/ root keeps its layer
+    (tests/e2e/... stays e2e); a bare file name lands under
+    tests/integration/."""
+    if file_part.startswith("tests/"):
+        return file_part
+    return f"tests/integration/{Path(file_part).name}"
 
 def _row_undeclared_targets(
     ac_id: str,

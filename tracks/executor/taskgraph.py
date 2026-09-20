@@ -180,6 +180,9 @@ from tracks.executor.taskgraph_validate import (
     validate_dag as validate_dag,
 )
 from tracks.executor.taskgraph_validate import (
+    validate_declared_anchor_rows as validate_declared_anchor_rows,
+)
+from tracks.executor.taskgraph_validate import (
     validate_island_closure as validate_island_closure,
 )
 from tracks.executor.taskgraph_validate import (

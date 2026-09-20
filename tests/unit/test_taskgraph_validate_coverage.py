@@ -229,3 +229,78 @@ def test_validate_issue_numbers_rejects_non_positive():
     assert ok is False
     assert errors == ["T-001 issue_number=0 is not a positive integer"]
     assert tv.validate_issue_numbers([_task()]) == (True, [])
+
+
+# -- #171：反向脏锚门（declared anchors must name §8 rows） ------------------------
+
+
+def test_validate_declared_anchor_rows_schema_gate():
+    plan = (
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0257-03 | integration | tests/integration/x.py::t | IF-IMPL-001 |\n"
+    )
+    assert tv.validate_declared_anchor_rows([], plan) == (True, [])
+    assert tv.validate_declared_anchor_rows([_task(schema=1)], plan) == (True, [])
+
+
+def test_dirty_node_and_file_anchors_rejected():
+    plan = (
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0257-03 | integration | tests/integration/x.py::t | IF-IMPL-001 |\n"
+    )
+    dirty_node = _task(schema=2, acceptance_refs=("tests/integration/x.py::ghost",))
+    ok, errors = tv.validate_declared_anchor_rows([dirty_node], plan)
+    assert ok is False
+    assert errors == [
+        "T-001 declares anchor tests/integration/x.py::ghost with no §8 row "
+        "(dirty anchor)"
+    ]
+
+    dirty_file = _task(schema=2, acceptance_refs=("tests/integration/nowhere.py",))
+    ok, errors = tv.validate_declared_anchor_rows([dirty_file], plan)
+    assert ok is False
+    assert errors == [
+        "T-001 declares anchor tests/integration/nowhere.py with no §8 row "
+        "(dirty anchor)"
+    ]
+
+
+def test_legal_node_file_and_e2e_declarations_pass():
+    plan = (
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0257-03 | integration | tests/integration/x.py::t | IF-IMPL-001 |\n"
+        "| AC-FR0258-01 | e2e | tests/e2e/b.py | IF-IMPL-002 |\n"
+    )
+    legal = _task(
+        schema=2,
+        acceptance_refs=(
+            "tests/integration/x.py::t",
+            "tests/e2e/b.py",
+            "x.py",  # bare 名归一化到 tests/integration/ 后命中行
+        ),
+        deferred_refs=("tests/integration/x.py",),  # 文件级声明命中行
+    )
+    assert tv.validate_declared_anchor_rows([legal], plan) == (True, [])
+
+
+def test_dirty_anchor_reported_per_task_with_deferred():
+    plan = (
+        "## 8. AC Coverage\n\n"
+        "| AC id | layer | test | IF |\n|---|---|---|---|\n"
+        "| AC-FR0257-03 | integration | tests/integration/x.py::t | IF-IMPL-001 |\n"
+    )
+    t2 = _task(
+        "T-002",
+        schema=2,
+        acceptance_refs=("tests/integration/x.py::t",),
+        deferred_refs=("tests/integration/other.py::z",),
+    )
+    ok, errors = tv.validate_declared_anchor_rows([t2], plan)
+    assert ok is False
+    assert errors == [
+        "T-002 declares anchor tests/integration/other.py::z with no §8 row "
+        "(dirty anchor)"
+    ]
