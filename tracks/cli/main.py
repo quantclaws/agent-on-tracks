@@ -434,6 +434,9 @@ from .validate_cmd import (
 from .validate_cmd import (
     cmd_validate as cmd_validate,
 )
+from .validate_reply_cmd import (
+    cmd_validate_reply as cmd_validate_reply,
+)
 
 # Ensure nested tmp_path helpers that do Path.mkdir without parents still
 # succeed (RED helper ``_setup(tmp_path / "c2")`` would otherwise raise
@@ -486,6 +489,7 @@ _COMMANDS = {
     "replay": (cmd_replay, None),
     "report": (cmd_report, None),
     "validate": (cmd_validate, 2),
+    "validate-reply": (cmd_validate_reply, None),
     "discuss": (cmd_discuss, None),
     "check": (cmd_check, None),
     "release": (cmd_release, None),

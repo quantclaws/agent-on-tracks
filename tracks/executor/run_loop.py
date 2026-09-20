@@ -570,6 +570,23 @@ the host Executor keeps construction and the command handlers."""
         }
         params["assignment"] = assignment
 
+    def _infra_backoff_delay(self, streak: int) -> int:
+        """Exponential infra backoff: 30s base, x2 per streak, capped.
+
+        OOB 2026-09-20 (user decision: the model channel never changes; a
+        quota-dead gateway waits under high load): the cap is
+        max(300, TRAC_INFRA_BACKOFF_MAX_SECONDS, default 900s=15min) so
+        sustained 429 storms back off to quarter-hour spacing instead of
+        hammering every 5 minutes. Streak-at-limit behavior is unchanged
+        (the kernel escalates; see machine_outcomes._handle_infra_failure).
+        """
+        try:
+            configured = int(os.environ.get("TRAC_INFRA_BACKOFF_MAX_SECONDS", "").strip() or 900)
+        except ValueError:
+            configured = 900
+        cap = max(300, configured)
+        return min(30 * 2 ** (max(streak, 1) - 1), cap)
+
     def issue(self, cmd: Command, command_id: str | None = None) -> None:
         """Write-ahead log `cmd` (FR-30), then execute it; the per-kind handler
         logs the result event that closes it. command_id is assigned here so the
@@ -582,7 +599,7 @@ the host Executor keeps construction and the command handlers."""
             # infra failures are re-dispatched with exponential backoff so a
             # degraded gateway is not stormed with full prompts (run 01KZTHE7
             # T-017, 2026-08-16: SIGKILL -> immediate retry -> SIGKILL).
-            delay = min(30 * 2 ** (state.infra_failure_streak - 1), 300)
+            delay = self._infra_backoff_delay(state.infra_failure_streak)
             print(
                 f"  [{state.stage}] infra failure streak "
                 f"{state.infra_failure_streak}: backoff {delay}s before re-dispatch",

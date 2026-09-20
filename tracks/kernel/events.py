@@ -230,6 +230,11 @@ EVENT_TYPES = (
     # work-unit session). Audit-only; the kernel projection ignores them.
     "envelope.repaired",
     "session.cleared",
+    # #174 (OOB 2026-09-20, run 01M2QTJB): executor collection-face audit
+    # for a declared reply delivered via the result file (json.dump,
+    # machine serialization) instead of the fenced text block. Payload
+    # carries the path + sha256 digest. Audit-only; kernel ignores it.
+    "envelope.file_delivered",
 )
 
 # interfaces §4 — v0.1 closed command set.

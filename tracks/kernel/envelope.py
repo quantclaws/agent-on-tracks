@@ -634,6 +634,58 @@ def validate_envelope(envelope: dict, expected_kind: str | None) -> dict:
     return envelope
 
 
+def load_declared_reply(text: str, result_path: str | None) -> dict:
+    """Collection-face reply loader: result file first, fenced text fallback.
+
+    #174 delivery mechanics (OOB 2026-09-20, run 01M2QTJB): a declared
+    dispatch's agent writes its two-layer envelope to ``result_path`` with
+    ``json.dump`` (machine serialization, escaping correct by construction)
+    and the final reply may then be a one-line pointer. The Runtime prefers
+    the file and falls back to the fenced-block text path (backward
+    compatible). A file failure is never fatal: when both paths fail, the
+    text path's EnvelopeFormatError is raised with a
+    ``file delivery failed (<reason>); text fallback:`` detail prefix so
+    both failures stay visible in the final exception and audit.
+    """
+    if not isinstance(result_path, str) or not result_path:
+        return parse_agent_output(text)
+    candidate = Path(result_path)
+    if not candidate.exists():
+        return parse_agent_output(text)
+    if not candidate.is_file():
+        return _load_declared_reply_text_fallback(
+            text, f"unreadable {result_path}: not a file"
+        )
+    file_bytes: bytes | None = None
+    try:
+        file_bytes = Path(result_path).read_bytes()
+    except OSError as exc:
+        reason = f"unreadable {result_path}: {exc.strerror or exc}"
+        return _load_declared_reply_text_fallback(text, reason)
+    try:
+        parsed = json.loads(file_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return _load_declared_reply_text_fallback(text, f"unparseable {result_path}: {exc}")
+    try:
+        validated = validate_envelope(parsed, None)
+    except EnvelopeFormatError as exc:
+        reason = f"schema {result_path}: {exc.kind}: {exc.detail}"
+        return _load_declared_reply_text_fallback(text, reason)
+    delivered = dict(validated)
+    delivered["_delivered_via"] = "file"
+    return delivered
+
+
+def _load_declared_reply_text_fallback(text: str, file_reason: str) -> dict:
+    """Text-path fallback for a failed file delivery; prefixes both failures."""
+    try:
+        return parse_agent_output(text)
+    except EnvelopeFormatError as exc:
+        raise EnvelopeFormatError(
+            exc.kind, f"file delivery failed ({file_reason}); text fallback: {exc.detail}"
+        ) from exc
+
+
 # ---------------------------------------------------------------------------
 # Bounded repair parse (OOB 2026-09-19, run 01M2QTJB PRISM_FINAL)
 # ---------------------------------------------------------------------------

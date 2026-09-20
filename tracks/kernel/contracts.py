@@ -101,7 +101,7 @@ def result_file_contract(seed: str, kind: str) -> dict:
             f" json.dump to {path}; never hand-serialize JSON text"
         ),
         "verify_command": (
-            ".venv/bin/python -m tracks.cli.main validate-reply"
+            "python -m tracks.cli.main validate-reply"
             f" --file {path} --kind {kind}"
         ),
     }

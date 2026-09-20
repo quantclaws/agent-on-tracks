@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from tracks.effects.dispatch_parity import (
     is_declared,
@@ -28,12 +30,14 @@ from tracks.kernel.envelope import (
     DIAGNOSE_KINDS,
     EnvelopeFormatError,
     extract_envelope_block,
-    parse_agent_output,
+    load_declared_reply,
+    parse_agent_output,  # noqa: F401  (re-export: executor.py composition surface)
     repair_envelope_block,
     validate_envelope,
 )
 from tracks.kernel.events import Command
 from tracks.kernel.machine import _REVIEW_SUBSTATE
+from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
 _SAGE_OUTCOME_FIELDS = (
     "acs",
@@ -738,6 +742,8 @@ the envelope/failure faces stay re-exported by executor.py."""
             (assignment.get("envelope") or {}).get("kind") if declared else None
         )
         raw = result.get("raw_output")
+        if self._is_crash_without_reply(result, raw):
+            return False  # process crash, no reply bytes: infra owns the turn.
         if result.get("status") == "failed" and not raw and result.get("failure_class"):
             return False  # No agent reply: preserve the existing failure classification.
         if not declared and (not isinstance(raw, str) or not raw):
@@ -746,7 +752,10 @@ the envelope/failure faces stay re-exported by executor.py."""
             # Declared dispatch: even empty/missing/non-string replies go
             # through the single kernel parse path, which classifies them
             # (malformed_json / no_envelope_block) — no duplicated logic.
-            envelope = parse_agent_output(raw)
+            # #174: the result file (json.dump delivery) is preferred; the
+            # fenced text path is the backward-compatible fallback.
+            envelope = load_declared_reply(raw, self._declared_result_path(assignment))
+            self._emit_file_delivered_audit(raw, assignment, cmd, task_id, envelope)
             envelope = self._check_declared_kind(envelope, declared_kind)
         except EnvelopeFormatError as exc:
             if not declared:
@@ -758,6 +767,67 @@ the envelope/failure faces stay re-exported by executor.py."""
             return False  # T-035 module pending; deferred-only-pass
         result.setdefault("envelope", envelope)
         return False
+
+    @staticmethod
+    def _declared_result_path(assignment) -> str | None:
+        """#174 result-file pointer: assignment result_file.result_path.
+
+        Another agent owns the injection; this face only reads. A missing
+        key (or a non-dict block) is the legacy text path.
+        """
+        if not isinstance(assignment, dict):
+            return None
+        block = assignment.get("result_file")
+        if not isinstance(block, dict):
+            return None
+        path = block.get("result_path")
+        return path if isinstance(path, str) and path else None
+
+    def _emit_file_delivered_audit(self, raw, assignment, cmd, task_id, envelope) -> None:
+        """Audit a successful file delivery (single envelope.file_delivered)."""
+        if not isinstance(envelope, dict) or envelope.get("_delivered_via") != "file":
+            return
+        path = self._declared_result_path(assignment)
+        if path is None:
+            return
+        try:
+            file_bytes = Path(path).read_bytes()
+        except OSError:
+            return
+        self._emit(
+            "envelope.file_delivered",
+            {
+                "path": path,
+                "digest": hashlib.sha256(file_bytes).hexdigest(),
+                "task_id": task_id,
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+
+    @staticmethod
+    def _is_crash_without_reply(result, raw) -> bool:
+        """True for a crashed process with zero reply bytes (OOB 2026-09-20).
+
+        Same guard as verdict_face._is_process_crash (returncode/exit_code
+        != 0, or an infra failure_class): the outcome.received infra
+        classification owns the turn (streak + backoff re-dispatch, no
+        attempt burned) -- a reply_format_error verdict on top would
+        double-punish the same turn. A crash that still delivered real
+        reply bytes stays on the content-judgement path (no exemption).
+        """
+        if isinstance(raw, str) and raw:
+            return False
+        if isinstance(raw, (bytes, bytearray)) and len(raw) > 0:
+            return False
+        if raw is not None and not isinstance(raw, (str, bytes, bytearray)):
+            return False
+        result_dict = result if isinstance(result, dict) else {}
+        for field in ("returncode", "exit_code"):
+            code = result_dict.get(field)
+            if isinstance(code, int) and not isinstance(code, bool) and code != 0:
+                return True
+        return result_dict.get("failure_class") in _INFRA_FAILURE_CLASSES
 
     @staticmethod
     def _check_declared_kind(envelope, declared_kind):
