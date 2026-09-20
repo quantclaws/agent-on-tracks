@@ -248,6 +248,39 @@ class ServiceDB:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def upsert_wait(
+        self,
+        run_id: str,
+        wait_class: str,
+        reason: str,
+        retry_at: str | None,
+        known_reset: bool,
+        backoff_json: str | None,
+        entered_at: str,
+    ) -> None:
+        """Upsert the single active waits row (interfaces §1c table 4)."""
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO waits (run_id, wait_class, reason, retry_at,"
+                " known_reset, backoff_json, entered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    wait_class,
+                    reason,
+                    retry_at,
+                    1 if known_reset else 0,
+                    backoff_json,
+                    entered_at,
+                ),
+            )
+            conn.commit()
+
+    def clear_wait(self, run_id: str) -> None:
+        """Clear the active waits row (wait.resolved persistence half)."""
+        with contextlib.closing(self._connect()) as conn:
+            conn.execute("DELETE FROM waits WHERE run_id = ?", (run_id,))
+            conn.commit()
+
     def get_schedule(self) -> dict | None:
         """Single schedule row (interfaces §1c table 8); None when unset."""
         with contextlib.closing(self._connect()) as conn:
