@@ -91,7 +91,7 @@
     {
       "task_id": "T-002",
       "issue_number": 142,
-      "description": "项目登记与就绪探测（IF-PROJ-001）：readiness.py 四类封闭探针逐项 ok+reason；未就绪阻断 create_run；登记归属展示经 T-001（deps 覆盖 service）。锚点=登记两件+就绪两件。",
+      "description": "项目登记与就绪探测（IF-PROJ-001）：readiness.py 四类封闭探针逐项 ok+reason；未就绪阻断 create_run；登记归属展示经 T-001（deps 覆盖 service）。锚点=登记一件+就绪两件（0289-02 越范围拒绝需 service.py 新代码而 T-001 已封闭，deferred 至 T-INT 接 guard 后收口）。",
       "ac_refs": [
         "AC-FR0289-01",
         "AC-FR0289-02",
@@ -108,7 +108,6 @@
       "unit_refs": [],
       "acceptance_refs": [
         "tests/integration/test_project_registry.py::test_register_shows_attribution_and_survives_restart",
-        "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
         "tests/integration/test_readiness.py::test_readiness_items_displayed",
         "tests/integration/test_readiness.py::test_not_ready_blocks_run_creation"
       ],
@@ -119,7 +118,9 @@
       "batch": "3",
       "parallel": true,
       "budget": 3,
-      "deferred_refs": []
+      "deferred_refs": [
+        "tests/integration/test_project_registry.py::test_out_of_scope_rejected"
+      ]
     },
     {
       "task_id": "T-003",
@@ -554,7 +555,7 @@
     {
       "task_id": "T-INT",
       "issue_number": 998,
-      "description": "终局收口：全图 14 条跨域锚点声明为本任务 acceptance（deferred 留在源任务作早期信号、不计其 verdict，互斥不变），与可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承 2 条共 16 条经真实 serve 子进程栈一次硬门禁转绿（跳过 RED，REFACTOR/质量门禁不豁免）。",
+      "description": "终局收口：全图 15 条跨域锚点声明为本任务 acceptance（deferred 留在源任务作早期信号、不计其 verdict，互斥不变），与可靠性八场景元扫描 + 守卫 registry/coverage 门槛继承 2 条共 17 条经真实 serve 子进程栈一次硬门禁转绿（跳过 RED，REFACTOR/质量门禁不豁免）。",
       "ac_refs": [
         "AC-NFR0151-01",
         "AC-NFR0151-02"
@@ -581,6 +582,7 @@
         "tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence",
         "tests/integration/test_web_release.py::test_release_via_web_happy",
         "tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected",
+        "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
         "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
         "tests/integration/test_serve_lifecycle.py::test_unhealthy_no_fake_available",
         "tests/integration/test_perf_budget.py::test_soak_memory_bounded"

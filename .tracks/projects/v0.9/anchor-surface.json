@@ -292,7 +292,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable": {
       "ast_modules": [
@@ -438,6 +438,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -584,7 +585,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_abandon_web.py::test_unrecoverable_failure_terminal": {
       "ast_modules": [
@@ -731,6 +732,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -2758,6 +2760,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -2901,6 +2904,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -3049,6 +3053,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -3191,10 +3196,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_command_service.py::test_cli_http_equivalent_events": {
       "ast_modules": [
@@ -3340,6 +3346,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -3486,7 +3493,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_command_service.py::test_command_id_survives_restart": {
       "ast_modules": [
@@ -3632,6 +3639,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -3778,7 +3786,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict": {
       "ast_modules": [
@@ -3924,6 +3932,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -4070,7 +4079,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_command_service.py::test_queries_are_readonly": {
       "ast_modules": [
@@ -4366,7 +4375,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates": {
       "ast_modules": [
@@ -4510,6 +4519,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -4651,10 +4661,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected": {
       "ast_modules": [
@@ -4798,6 +4809,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -4939,6 +4951,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -5382,6 +5395,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -5526,6 +5540,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -8139,7 +8154,7 @@
         "tracks.supervisor.db",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority": {
       "ast_modules": [
@@ -8430,7 +8445,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_pause_resume.py::test_resume_from_legal_position": {
       "ast_modules": [
@@ -8721,7 +8736,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_perf_budget.py::test_accept_returns_after_persist": {
       "ast_modules": [
@@ -8866,6 +8881,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -9008,10 +9024,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_perf_budget.py::test_query_p95_under_1s": {
       "ast_modules": [
@@ -9158,6 +9175,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -9301,6 +9319,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -9449,6 +9468,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -9591,6 +9611,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -10314,6 +10335,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -10455,6 +10477,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -10602,6 +10625,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -10743,10 +10767,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_quota_wait.py::test_known_reset_auto_resume": {
       "ast_modules": [
@@ -11467,6 +11492,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.readiness",
         "tracks.supervisor.service",
         "tracks.templating"
@@ -11609,11 +11635,12 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.readiness",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_readiness.py::test_readiness_items_displayed": {
       "ast_modules": [
@@ -11903,7 +11930,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited": {
       "ast_modules": [
@@ -13224,6 +13251,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -13367,10 +13395,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run": {
       "ast_modules": [
@@ -13515,6 +13544,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -13657,10 +13687,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected": {
       "ast_modules": [
@@ -13805,6 +13836,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -13947,10 +13979,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface": {
       "ast_modules": [
@@ -17876,6 +17909,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -18017,10 +18051,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_web_approval.py::test_stale_revision_rejected": {
       "ast_modules": [
@@ -18164,6 +18199,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -18305,6 +18341,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -18457,6 +18494,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -18601,6 +18639,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -19627,6 +19666,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -19768,10 +19808,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_web_release.py::test_release_via_web_happy": {
       "ast_modules": [
@@ -19915,6 +19956,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -20056,10 +20098,11 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_web_release.py::test_stale_preview_rejected": {
       "ast_modules": [
@@ -20203,6 +20246,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -20344,6 +20388,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -20787,6 +20832,7 @@
         "tracks.store",
         "tracks.store.store",
         "tracks.supervisor",
+        "tracks.supervisor.db",
         "tracks.supervisor.service",
         "tracks.templating"
       ],
@@ -20933,7 +20979,7 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     },
     "tests/integration/test_web_rollback.py::test_return_with_impact_preview": {
       "ast_modules": [
@@ -21226,9 +21272,9 @@
         "tracks.supervisor.service",
         "tracks.templating"
       ],
-      "outcome": "fail"
+      "outcome": "pass"
     }
   },
-  "recorded_tree": "c35e9d0e7bf0aa390a9d04a2e80e160b42e08ff09c2565a5c9304099b90a4074",
+  "recorded_tree": "1e203fc9d0f3e9c991f0dca980bb70f0cfd3d2f52501a6e2312fb3bfa08d33f7",
   "schema": 1
 }
