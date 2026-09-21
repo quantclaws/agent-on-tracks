@@ -309,16 +309,28 @@ def _revision_contents(repo: Path, vdir: Path, doc_file: Path) -> dict[str, str]
         return {}
     contents: dict[str, str] = {}
     for sha in log.split():
-        texts = [_git(repo, "show", f"{sha}:{rel_dir}/{name}") for name in _TRIO_FILES]
-        if any(text is None for text in texts):
-            continue
-        digest = _trio_digest(texts)  # type: ignore[arg-type]
-        if digest in contents:
+        digest = _commit_trio_digest(repo, sha, rel_dir)
+        if digest is None or digest in contents:
             continue
         content = _git(repo, "show", f"{sha}:{rel_doc}")
         if content is not None:
             contents[digest] = content
     return contents
+
+
+def _commit_trio_digest(repo: Path, sha: str, rel_dir: str) -> str | None:
+    """Trio digest of one commit's story/spec/acceptance bodies.
+
+    None when the commit does not carry all three members (the revision
+    predates the version dir or the docs were introduced later).
+    """
+    texts: list[str] = []
+    for name in _TRIO_FILES:
+        text = _git(repo, "show", f"{sha}:{rel_dir}/{name}")
+        if text is None:
+            return None
+        texts.append(text)
+    return _trio_digest(texts)
 
 
 def _content_at(repo: Path, doc_file: Path, revision: str, current: str) -> str | None:
