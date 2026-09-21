@@ -102,3 +102,10 @@
 - **runtime 行为**:infra 退避按设计爬到 900s 封顶,streak 12(≈00:15 UTC)后将升级停车(awaiting_human)。
 - **干预边界**:Shield 换道有授权(zhipu/glm-5.3-flash,01:00 UTC 前);**Devon 无换道授权**——停机等用户裁决(充值 deepseek 或授权换道)。
 - **元观察**:这是今天第三个通道级死亡(kimi 配额→计划降级→deepseek 余额)。多 provider token 平衡是运营常态;T-003 落地的等待/quota 机制正是为此而生(产品吃自己的狗粮,但余额类等待语义需要区分——余额耗尽应快速升级而非等满 106 分钟,可作为 T-003 的 follow-up 观察)。
+
+### M-10 Prism 通道无法完成终局 DIAGNOSE(2026-09-21 17:29-20:10 UTC)
+
+- **症状**:T-018 的 DIAGNOSE 连续 5+ 次全部在 1504-1522s(≈25 分钟整)死于 `zen-sticky: all upstream attempts fail (conn:timeout)`——muse-spark 上游对长连接有 ~1500s 硬超时,而终局收口的取证调查(读全图)天然超过它。
+- **已试杠杆**:时间纪律条款(fd43060,objective 里明确 15 分钟收敛+只读证据文件)——**无效**,模型照跑 25 分钟(提示词是弱杠杆的又一实证)。
+- **待决**:Prism 换通道(用户拍板;glm-5.3/deepseek-flash 有余额)。链条按 infra 退避循环,streak 12 后安全停升级,无损失。
+- **伴随发现**:watcher 24h 寿命到期曾造成 ~3h 无人接管(累计 #713 次重启,大部分是 M-4 逃逸换手税)——watcher 常驻化(#175 关联)优先级应升。
