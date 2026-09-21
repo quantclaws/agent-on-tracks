@@ -450,3 +450,88 @@ def test_prism_final_revise_no_classification_keeps_default_green():
     )
     s = state_of(*m_impl.prism_final_done(), revise)
     assert s.substate == "GREEN"
+
+
+def test_prism_red_revise_sole_voice_plan_defect_routes_replan():
+    """Live defect (run 01M2QTJB T-017, 2026-09-21 14:28-14:30): both findings
+    carried defect_classification=plan_defect (no-legitimate-Red retype
+    demand) but the top-level field was None; the PRISM_RED router defaulted
+    to RED re-nail and the anchor walk deterministically re-checkpointed
+    three rounds before escalating. The sole-voice derivation now applies to
+    the PRISM_RED (and PRISM_PLAN) revise routing, not just PRISM_FINAL."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {
+                    "id": "F1",
+                    "severity": "blocker",
+                    "summary": "R-tree all green, no legitimate Red",
+                    "defect_classification": "plan_defect",
+                },
+                {
+                    "id": "F2",
+                    "severity": "blocker",
+                    "summary": "unit_ref pins another task's ACs",
+                    "defect_classification": "plan_defect",
+                },
+            ],
+        },
+    )
+    # 直接驱动路由函数(与 PRISM_FINAL 版测试同型,绕过序列装配)
+    from tracks.kernel.m_impl_routing import _on_m_impl_prism_verdict
+    from tracks.kernel.machine import State
+
+    s = State(stage="M-IMPL", substate="PRISM_RED", current_task_id="T-017",
+              taskgraph_committed=True, current_attempt=0)
+    _on_m_impl_prism_verdict(s, revise[1])
+    assert s.substate == "PLANNING", "unanimous plan_defect findings must route to replan"
+    assert s.current_attempt == 0, "plan_defect must not consume the attempt budget"
+
+
+def test_prism_plan_revise_sole_voice_routes_planning():
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {"id": "F1", "severity": "blocker", "summary": "graph defect",
+                 "defect_classification": "plan_defect"},
+            ],
+        },
+    )
+    from tracks.kernel.m_impl_routing import _on_m_impl_prism_verdict
+    from tracks.kernel.machine import State
+
+    s = State(stage="M-IMPL", substate="PRISM_PLAN", current_task_id="T-001",
+              taskgraph_committed=True, current_attempt=0)
+    _on_m_impl_prism_verdict(s, revise[1])
+    assert s.substate == "PLANNING"
+
+
+def test_prism_plan_revise_derivation_changes_route():
+    """Prism voice2-R1 advisory: prove the derivation changes behavior -- a
+    sole-voice stub_gap routes to DIAGNOSE; without the derivation the None
+    top-level field would fall to the PLANNING default."""
+    revise = (
+        "prism.verdict",
+        {
+            "verdict": "revise",
+            "criteria_pack": dict(_M_IMPL_CRITERIA_PACK),
+            "findings": [
+                {"id": "F1", "severity": "blocker", "summary": "promised stub absent",
+                 "defect_classification": "stub_gap"},
+            ],
+        },
+    )
+    from tracks.kernel.m_impl_routing import _on_m_impl_prism_verdict
+    from tracks.kernel.machine import State
+
+    s = State(stage="M-IMPL", substate="PRISM_PLAN", current_task_id="T-001",
+              taskgraph_committed=True, current_attempt=0)
+    _on_m_impl_prism_verdict(s, revise[1])
+    assert s.substate == "DIAGNOSE"
+    assert s.diagnose_classification == "stub_gap"

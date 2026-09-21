@@ -68,7 +68,10 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
         if verdict == "pass":
             s.substate = "GREEN"
             _reset_doc(s)
-        elif p.get("defect_classification") == "plan_defect":
+        elif (
+            p.get("defect_classification")
+            or _sole_finding_classification(p)
+        ) == "plan_defect":
             # A fully green R tree has no lawful RED target: the task is
             # duplicate, obsolete, or wrongly typed as standard RGR. Re-pinning
             # RED cannot create a legal failure and deterministically burns the
@@ -89,8 +92,10 @@ def _on_m_impl_prism_verdict(s: State, p: dict) -> None:
 
 
 def _route_prism_plan_revise(s: State, p: dict) -> None:
-    """PRISM_PLAN revise: route by defect_classification (flow.md §10.1)."""
-    dc = p.get("defect_classification")
+    """PRISM_PLAN revise: route by defect_classification (flow.md §10.1),
+    falling back to the findings' sole voice (see
+    ``_sole_finding_classification``)."""
+    dc = p.get("defect_classification") or _sole_finding_classification(p)
     if dc in ("design_gap", "stub_gap"):
         s.substate = "DIAGNOSE"
         s.diagnose_classification = "stub_gap"
