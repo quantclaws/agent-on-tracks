@@ -44,28 +44,20 @@ from tracks.supervisor.scheduler import Scheduler
 from tracks.supervisor.service import CommandService
 from tracks.supervisor.worker import WorkerManager
 
-_VALUE_FLAGS = (
-    "--host",
-    "--home",
-    "--port",
-    "--repo",
-    "--wait-cap-s",
-    "--wait-initial-s",
-    "--poll-idle-cap-s",
-    "--poll-interval-s",
-)
-_INT_FLAGS = frozenset(
-    {"--port", "--wait-cap-s", "--wait-initial-s", "--poll-idle-cap-s", "--poll-interval-s"}
-)
-_BOOL_FLAGS = frozenset({"--password-stdin"})
-_DEFAULTS = {
-    "host": "127.0.0.1",
-    "port": 8000,
-    "wait_initial_s": 60,
-    "wait_cap_s": 900,
-    "poll_interval_s": 5,
-    "poll_idle_cap_s": 60,
+# (option name, default) per §2a scalar flag; int-typed flags are the ones
+# whose default is an int. One table is the single source for the serve
+# grammar; ``--repo`` is the one repeatable accumulator flag.
+_FLAG_SPECS: dict[str, tuple[str, Any]] = {
+    "--host": ("host", "127.0.0.1"),
+    "--home": ("home", None),
+    "--port": ("port", 8000),
+    "--wait-initial-s": ("wait_initial_s", 60),
+    "--wait-cap-s": ("wait_cap_s", 900),
+    "--poll-interval-s": ("poll_interval_s", 5),
+    "--poll-idle-cap-s": ("poll_idle_cap_s", 60),
 }
+_REPEAT_FLAG = "--repo"
+_BOOL_FLAGS = frozenset({"--password-stdin"})
 _PASSWORD_HINT = (
     "trac serve: first start needs a password before logins are accepted.\n"
     "supply it with --password-stdin, the TRAC_SERVE_PASSWORD environment\n"
@@ -82,12 +74,9 @@ class _UsageError(ValueError):
 
 
 def _parse_serve_args(args: list[str]) -> dict:
-    opts: dict[str, Any] = {
-        "repo": [],
-        "home": None,
-        "password_stdin": False,
-        **_DEFAULTS,
-    }
+    opts: dict[str, Any] = {"repo": [], "home": None, "password_stdin": False}
+    for name, default in _FLAG_SPECS.values():
+        opts[name] = default
     index = 0
     while index < len(args):
         flag = args[index]
@@ -95,32 +84,28 @@ def _parse_serve_args(args: list[str]) -> dict:
             opts["password_stdin"] = True
             index += 1
             continue
-        if flag not in _VALUE_FLAGS:
+        spec = _FLAG_SPECS.get(flag)
+        if spec is None and flag != _REPEAT_FLAG:
             raise _UsageError(f"unknown serve flag: {flag}")
         if index + 1 >= len(args):
             raise _UsageError(f"serve flag {flag} needs a value")
         value = args[index + 1]
         index += 2
-        if flag == "--repo":
+        if flag == _REPEAT_FLAG:
             opts["repo"].append(Path(value).expanduser().resolve())
-        elif flag in _INT_FLAGS:
-            opts[_OPT_NAME[flag]] = _positive_int(flag, value)
         else:
-            opts[_OPT_NAME[flag]] = value
+            _apply_flag(opts, flag, spec, value)
     if not opts["repo"]:
         raise _UsageError("serve requires at least one --repo <path>")
     return opts
 
 
-_OPT_NAME = {
-    "--host": "host",
-    "--home": "home",
-    "--port": "port",
-    "--wait-cap-s": "wait_cap_s",
-    "--wait-initial-s": "wait_initial_s",
-    "--poll-idle-cap-s": "poll_idle_cap_s",
-    "--poll-interval-s": "poll_interval_s",
-}
+def _apply_flag(opts: dict, flag: str, spec: tuple[str, Any], value: str) -> None:
+    name, default = spec
+    if isinstance(default, int):
+        opts[name] = _positive_int(flag, value)
+    else:
+        opts[name] = value
 
 
 def _positive_int(flag: str, value: str) -> int:
@@ -291,10 +276,6 @@ class _AnnouncingServer:
         """Serve until stopped; returns only without a stop signal (bind path)."""
         self._server.run()
         return bool(self._server.started)
-
-    @property
-    def started_at(self) -> float:
-        return self._started_at
 
 
 def _bound_port(server: Any, fallback: int) -> int:
