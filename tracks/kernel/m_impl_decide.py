@@ -312,7 +312,17 @@ def _m_impl_prism_dispatch(s: State, sub: str) -> Command:
         "PRISM_PLAN": "review task graph plan",
         "PRISM_RED": "review Red checkpoint B..R",
         "PRISM_FINAL": "review complete task range and lineage",
-        "DIAGNOSE": "diagnose failure attribution",
+        # 2026-09-21 (run 01M2QTJB T-018): the terminal-closure DIAGNOSE
+        # investigates the whole graph and the gateway upstream hard-times-
+        # out long-lived requests at ~1500s -- three 25-minute investigations
+        # died identically. Time discipline: converge inside the window,
+        # evidence-referenced files first, no full-graph scan.
+        "DIAGNOSE": (
+            "diagnose failure attribution"
+            " (time discipline: converge within 15 minutes -- read the files"
+            " named in the failure evidence first; do NOT scan the whole"
+            " graph; the upstream connection hard-drops at ~25 minutes)"
+        ),
     }.get(sub, "review") + (
         # Declared dispatches: the analysis is welcome, but the FINAL
         # message must be the verdict envelope itself (live 01M19FJ
