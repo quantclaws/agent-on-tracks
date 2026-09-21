@@ -113,6 +113,7 @@ TRAC_SUBCOMMANDS = frozenset(
         "return",
         "review",
         "run",
+        "serve",
         "start",
         "status",
         "triage",

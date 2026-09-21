@@ -234,9 +234,10 @@ def test_do_walk_red_selection_none_and_success(tmp_path, monkeypatch):
 def test_walk_red_selection_no_unit_refs_and_contract_error(tmp_path, monkeypatch):
     host = _Host(tmp_path)
     assert host._walk_red_selection(_Cmd(), "T-001", 1, {"unit_refs": []}) is None
-    assert host.emitted[-1][1]["reason"] == (
-        "walk_red integration task declares no unit_refs"
-    )
+    # 2026-09-21: a missing graph field is the graph's defect -> plan_defect
+    # (Archer's replan owns the missing unit_refs declaration).
+    assert host.emitted[-1][1]["check"] == "plan_defect"
+    assert "unit_refs" in host.emitted[-1][1]["reason"]
 
     host = _Host(tmp_path)
     monkeypatch.setattr(

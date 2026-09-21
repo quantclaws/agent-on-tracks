@@ -248,5 +248,42 @@ def test_walk_red_red_pins_fail_closed(tmp_path, monkeypatch):
     )
     failed = [e for e in store.events("RUN") if e.type == "verdict.failed"]
     assert failed and failed[-1].payload["check"] == "red_invalid"
-    assert "walk_red" in failed[-1].payload["reason"]
+    assert "not green" in failed[-1].payload["reason"]
     assert not [e for e in store.events("RUN") if e.type == "red.checkpointed"]
+
+
+def test_walk_red_no_unit_refs_is_plan_defect(tmp_path):
+    """Live defect (run 01M2QTJB T-INT, 2026-09-21): the terminal closure
+    task reached walk_red with an empty unit_refs declaration and the
+    red_invalid classification burned three deterministic retries (the walk
+    has no agent) and escalated. A missing graph field is the GRAPH's
+    defect: plan_defect routes to Archer's replan, the rightful owner."""
+    from tracks.kernel.events import Command
+
+    repo = _engine_repo(tmp_path)
+    _commit(repo, "tracks/app.py", "x = 1\n", "app")
+    store = Store(paths.tracks_home(repo))
+    task = _integration_meta()
+    task["unit_refs"] = []
+    store.append(
+        "RUN",
+        "v0.5",
+        "taskgraph.committed",
+        {"task_count": 1, "tasks": [task], "digest": "d"},
+    )
+    store.append(
+        "RUN",
+        "v0.5",
+        "task.started",
+        {"task_id": "T-INT", "task": task, "manifest": {"task_id": "T-INT"}},
+    )
+    executor = Executor(store, repo, "RUN")
+    executor._do_anchor_red(
+        Command(kind="anchor_red", params={}, command_id="C-WR2"),
+        store.state("RUN"),
+        "T-INT",
+        False,
+    )
+    failed = [e for e in store.events("RUN") if e.type == "verdict.failed"]
+    assert failed and failed[-1].payload["check"] == "plan_defect"
+    assert "unit_refs" in failed[-1].payload["reason"]

@@ -518,11 +518,21 @@ class MImplDiagnoseMixin:
         """Resolve the unit suite argv for walk_red, or None (after emitting)."""
         unit_refs = [r for r in (meta.get("unit_refs") or []) if isinstance(r, str)]
         if not unit_refs:
+            # Live defect (run 01M2QTJB T-INT, 2026-09-21): a missing graph
+            # field is the GRAPH's defect -- classified red_invalid it routed
+            # back to RED and deterministically re-failed three times (the
+            # walk has no agent to retry), escalating on the final task.
+            # plan_defect routes to Archer's replan (no attempt charge), the
+            # rightful owner of the missing unit_refs declaration.
             self._emit(
                 "verdict.failed",
                 {
-                    "check": "red_invalid",
-                    "reason": "walk_red integration task declares no unit_refs",
+                    "check": "plan_defect",
+                    "reason": (
+                        "walk_red integration task declares no unit_refs "
+                        "(task-graph defect: the integration entry must "
+                        "declare its unit pins to seal the R-tree)"
+                    ),
                     "task_id": tid,
                     "attempt": attempt,
                 },
