@@ -332,6 +332,9 @@ from .run_cmd import (
 from .run_cmd import (
     cmd_triage as cmd_triage,
 )
+from .serve_cmd import (
+    cmd_serve as cmd_serve,
+)
 from .status_cmd import (
     _REPORT_USAGE as _REPORT_USAGE,
 )
@@ -471,6 +474,7 @@ USAGE = (
     "|discuss <query|start|reply|edit|set-status> ..."
     "|check <deliverables|trace|reach|release-evidence>"
     "|release preview|release --action release/delay/return|abandon --reason TEXT"
+    "|serve --repo <path> [--repo <path> ...] [--host 127.0.0.1] [--port 8000]"
 )
 
 # command name -> (handler, positional-arg count or None=variadic); handler is (repo, *args) -> int
@@ -494,6 +498,7 @@ _COMMANDS = {
     "check": (cmd_check, None),
     "release": (cmd_release, None),
     "abandon": (cmd_abandon, None),
+    "serve": (cmd_serve, None),
 }
 
 
