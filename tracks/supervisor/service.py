@@ -103,11 +103,12 @@ def create_run_id(params: dict) -> str:
 # -- web-gate accept-time binding (IF-WEBGATE-001 §1b.1) ----------------------
 #
 # The web human decisions bind the object they were made against at
-# *acceptance* time (SM-01.1 persist-then-execute): an approval binds the
-# revision the user actually reviewed (FR-0308), a release decision binds the
-# live preview digest (FR-0309), and a controlled retry only accepts from the
-# legal v0.8 repair/escape position (FR-0311). The binding reuses the existing
-# shared validators — the service never appends domain events itself.
+# *acceptance* time (SM-01.1 persist-then-execute): a material edit binds the
+# base revision it was made against (FR-0294.3), an approval binds the revision
+# the user actually reviewed (FR-0308), a release decision binds the live
+# preview digest (FR-0309), and a controlled retry only accepts from the legal
+# v0.8 repair/escape position (FR-0311). The binding reuses the existing shared
+# validators — the service never appends domain events itself.
 
 _WEBGATE_KINDS = frozenset(
     {"record_stage_approval", "edit_material", "record_release_decision", "retry_run"}
@@ -229,18 +230,36 @@ def _commit_material(repo: Path, doc_file: Path, doc: str, actor: str) -> None:
     )
 
 
+def _run_material_version(repo: Path, run_id: str, project: dict) -> str | None:
+    """The version dir a run's material lives in (run plane, then project)."""
+    _events, state = _run_plane(str(repo), run_id)
+    return _material_version(project, state)
+
+
+def _require_reviewed_revision(
+    repo: Path, version: str | None, submitted: Any, deny: RejectFn, label: str
+) -> None:
+    """Reject unless ``submitted`` is the live material revision.
+
+    Shared by the approval (FR-0308) and edit (FR-0294.3) bindings: both bind
+    the revision the user actually reviewed, so a stale submission is refused
+    identically before anything persists (SM-01.5).
+    """
+    current = _current_revision(repo, version)
+    if current is None or submitted != current:
+        deny(
+            "stale_revision",
+            f"{label} rejected: the reviewed revision is stale; "
+            f"current revision is {current or 'unavailable'}",
+        )
+
+
 def _bind_approval(
     repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict
 ) -> None:
     """FR-0308: the approval binds the revision the user actually reviewed."""
-    _events, state = _run_plane(str(repo), run_id)
-    current = _current_revision(repo, _material_version(project, state))
-    if current is None or request.get("expected_revision") != current:
-        deny(
-            "stale_revision",
-            "approval rejected: the reviewed revision is stale; "
-            f"current revision is {current or 'unavailable'}",
-        )
+    version = _run_material_version(repo, run_id, project)
+    _require_reviewed_revision(repo, version, request.get("expected_revision"), deny, "approval")
 
 
 def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict) -> None:
@@ -249,18 +268,11 @@ def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: 
     A stale base revision is rejected before anything persists (SM-01.5);
     the acceptance then applies the edit through the existing revision flow.
     """
-    _events, state = _run_plane(str(repo), run_id)
-    version = _material_version(project, state)
+    version = _run_material_version(repo, run_id, project)
     doc_file = _material_file(repo, version, request.get("doc"))
     if doc_file is None or not doc_file.is_file():
         deny("not_found", f"material {request.get('doc')!r} has no editable document")
-    current = _current_revision(repo, version)
-    if current is None or request.get("base_revision") != current:
-        deny(
-            "stale_revision",
-            "edit rejected: the reviewed revision is stale; "
-            f"current revision is {current or 'unavailable'}",
-        )
+    _require_reviewed_revision(repo, version, request.get("base_revision"), deny, "edit")
 
 
 def _latest_preview(events: list[EventEnvelope]) -> EventEnvelope | None:
