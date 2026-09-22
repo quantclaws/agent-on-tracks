@@ -18,7 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tracks.supervisor.lease import current_generation, late_result_payload
+from tracks.supervisor.lease import quarantine_late_result
 
 SCHEMA_VERSION = 1
 
@@ -229,22 +229,15 @@ class ServiceDB:
         """Audit a completion the fencing CAS rejected (interfaces §1a #17).
 
         The command row attributes the run; an unknown command id has no run
-        to accuse, so nothing is fabricated. This is the store's single
-        ``worker.late_result`` emission point for fenced-out completions —
-        distinct from ``lease.quarantine_late_result``, which guards on the
-        fencing floor before emitting.
+        to accuse, so nothing is fabricated. Only a superseded generation is
+        quarantined — ``lease.quarantine_late_result`` applies the fencing
+        floor, so a repeated completion whose generation still owns the claim
+        is not a late result.
         """
         row = self.get_command(command_id)
         run_id = str(row["run_id"]) if row is not None and row["run_id"] else None
-        if not run_id:
-            return
-        current = current_generation(self, run_id)
-        self.append_event(
-            "worker.late_result",
-            late_result_payload(run_id, command_id, generation, current),
-            run_id=run_id,
-            command_id=command_id,
-        )
+        if run_id:
+            quarantine_late_result(self, run_id, command_id, generation)
 
     def requeue_claimed(self, reason: str) -> list:
         """Recovery: claimed -> accepted with command.requeued (§1h.7)."""

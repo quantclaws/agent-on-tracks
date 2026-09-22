@@ -25,10 +25,8 @@ Contract token: IF-SCHED-001.
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import sqlite3
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -36,16 +34,6 @@ from typing import Any
 # latest one decides whether the active run may be driven.
 _PAUSE_EVENTS = ("run.pause_requested", "run.paused", "run.resumed")
 _PAUSE_BLOCKING = ("run.pause_requested", "run.paused")
-
-# Internal actor for the automatic swap steps the scheduler accepts on the
-# operator's behalf (interfaces §1a actor_class=system; §1i resume_run).
-_SWAP_SYSTEM_ACTOR = "supervisor"
-
-
-def _canonical_digest(params: dict) -> str:
-    """sha256 over the canonical JSON of params (idempotency digest, §1b.2)."""
-    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 _SCHEDULE_UPSERT = (
     "INSERT INTO schedule (id, active_run, queue_json) VALUES (1, ?, ?)"
@@ -72,10 +60,17 @@ def _service_conn(db: Any) -> sqlite3.Connection:
 
 
 class Scheduler:
-    """Owns the schedule singleton row (active_run + ordered queue, §1c #8)."""
+    """Owns the schedule singleton row (active_run + ordered queue, §1c #8).
 
-    def __init__(self, db: Any) -> None:
+    The swap steps are not written here directly: they are accepted through
+    the command service (``self._service``) so the full §1b.1 acceptance tiers
+    — guard, schema, idempotency, actor_class — apply to every step, exactly
+    as they do for operator-submitted commands (interfaces §1i).
+    """
+
+    def __init__(self, db: Any, service: Any = None) -> None:
         self._db = db
+        self._service = service
 
     def next_runnable(self) -> str | None:
         """The run_id the supervisor may drive now (active, not paused)."""
@@ -91,15 +86,19 @@ class Scheduler:
         del journey  # journey-aware prechecks ride the command service (FR-0292)
         state = self._state()
         active = state["active_run"]
+        if run_id == active:
+            # Re-acceptance of the already-active run (same canonical run
+            # identity): nothing to schedule — never a duplicate queue entry.
+            return
         if not active:
             self._switch(run_id, state["queued"], "run_created")
             return
         if preempt:
-            # AC-FR0296-04: the preempted active run is paused through the
-            # command-service side effects (pause_run accepted with actor +
+            # AC-FR0296-04: the preempted active run is paused by accepting a
+            # ``pause_run`` command through the command service (actor=提交人,
             # command_id on the audit trail, SM-01.1) before the hotfix takes
             # the single active slot (§1i).
-            self._audit_swap_command("pause_run", active, actor=actor, actor_class="human")
+            self._accept_swap_step("pause_run", active, actor=actor, actor_class="human")
             self._switch(run_id, [active, *state["queued"]], "hotfix_preemption")
             return
         # A queued run leaves the active slot untouched, so there is no
@@ -116,16 +115,7 @@ class Scheduler:
             remaining = queue[1:]
             resumed = promoted is not None and self._preempted(run_id)
             if resumed:
-                # AC-FR0296-04: after the hotfix reaches terminal, the
-                # preempted feature is resumed through the command-service
-                # side effects (resume_run accepted with actor + command_id)
-                # before it takes the active slot again (§1i).
-                self._audit_swap_command(
-                    "resume_run",
-                    promoted,
-                    actor=_SWAP_SYSTEM_ACTOR,
-                    actor_class="system",
-                )
+                self._resume_preempted(promoted)
             reason = "run_resumed" if resumed else "run_terminal"
             self._switch(promoted, remaining, reason)
         elif run_id in queue:
@@ -170,65 +160,61 @@ class Scheduler:
                 return True
         return False
 
-    def _audit_swap_command(
+    def _commands(self) -> Any:
+        """The command-service seam for the swap steps (interfaces §1b/§1i).
+
+        The composition root injects the shared ``CommandService``; a
+        scheduler built standalone (``Scheduler(db)``) lazily builds one over
+        the same store so every swap step still rides the acceptance tiers.
+        """
+        if self._service is None:
+            from tracks.supervisor.service import CommandService  # cycle-safe import
+
+            self._service = CommandService(Path(self._db.home), self._db, {})
+        return self._service
+
+    def _accept_swap_step(
         self, kind: str, run_id: str, *, actor: str, actor_class: str
     ) -> str:
         """Accept one hotfix-swap step (pause_run / resume_run) as a command.
 
-        Persists the command row in ``accepted`` plus the command-service
-        side effects: ``command.accepted`` and the kind event
-        (``run.pause_requested`` / ``run.resumed``) carry actor + command_id,
-        so the whole swap stays auditable on the timeline (SM-01.1;
-        interfaces §1i — AC-FR0296-04). Returns the command_id.
+        The step rides the full §1b.1 acceptance tiers (guard, schema,
+        idempotency, actor_class) exactly like an operator-submitted command:
+        the command row reaches ``accepted`` and ``command.accepted`` plus the
+        kind event (``run.pause_requested`` / ``run.resumed``) land on the
+        timeline with the operator actor and the assigned command_id
+        (interfaces §1i — AC-FR0296-04). Returns the command_id.
         """
-        command_id = uuid.uuid4().hex
-        params = {"run_id": run_id}
-        digest = _canonical_digest(params)
-        idempotency_key = f"swap:{kind}:{run_id}:{command_id}"
-        self._db.register_command(
-            {
-                "command_id": command_id,
-                "kind": kind,
-                "params_json": json.dumps(params, sort_keys=True),
-                "params_digest": digest,
-                "idempotency_key": idempotency_key,
-                "actor": actor,
-                "actor_class": actor_class,
-                "surface": "internal",
-                "project_id": None,
-                "run_id": run_id,
-            }
+        receipt = self._commands().accept(
+            kind,
+            {"run_id": run_id},
+            actor=actor,
+            actor_class=actor_class,
+            surface="internal",
+            idempotency_key=None,
         )
-        self._db.append_event(
-            "command.accepted",
-            {
-                "command_id": command_id,
-                "kind": kind,
-                "idempotency_key": idempotency_key,
-                "params_digest": digest,
-                "actor": actor,
-                "actor_class": actor_class,
-                "surface": "internal",
-                "project_id": None,
-                "run_id": run_id,
-            },
-            run_id=run_id,
-            command_id=command_id,
-        )
-        if kind == "pause_run":
-            payload = {"run_id": run_id, "actor": actor, "command_id": command_id}
-            self._db.append_event(
-                "run.pause_requested", payload, run_id=run_id, command_id=command_id
-            )
-        elif kind == "resume_run":
-            payload = {
-                "run_id": run_id,
-                "actor": actor,
-                "command_id": command_id,
-                "from_stage": None,
-            }
-            self._db.append_event("run.resumed", payload, run_id=run_id, command_id=command_id)
-        return command_id
+        return str(receipt.command_id)
+
+    def _resume_preempted(self, run_id: str) -> None:
+        """AC-FR0296-04: resume the preempted feature through the command
+        service (resume_run accepted under the swap submitter's identity —
+        a human-only kind, interfaces §1b#9) before it retakes the slot."""
+        submitter = self._preemption_submitter(run_id)
+        if submitter is None:
+            return
+        self._accept_swap_step("resume_run", run_id, actor=submitter, actor_class="human")
+
+    def _preemption_submitter(self, run_id: str) -> str | None:
+        """Actor recorded on the run's pause request — the operator whose
+        hotfix create_run opened the swap (§1i actor=提交人). None when the
+        run was never paused on the service plane."""
+        submitter = None
+        for event in self._db.read_events(run_id=run_id):
+            if event.get("type") == "run.pause_requested":
+                actor = (event.get("payload") or {}).get("actor")
+                if actor:
+                    submitter = str(actor)
+        return submitter
 
     def _write(self, active_run: str | None, queue: list[str]) -> None:
         """Persist the schedule singleton row (id=1) in one statement."""

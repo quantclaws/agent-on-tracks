@@ -87,6 +87,18 @@ def _params_digest(params: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def create_run_id(params: dict) -> str:
+    """Stable run identity of a create_run acceptance (interfaces §1b#3, §2b#8).
+
+    The HTTP outlet derives the 202 ``run_id`` from the same canonical
+    params, so the schedule names the identical run that acceptance
+    announced; a repeated acceptance of the same identity is not a second
+    active run.
+    """
+    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return uuid.uuid5(uuid.NAMESPACE_OID, canonical).hex
+
+
 # -- web-gate accept-time binding (IF-WEBGATE-001 §1b.1) ----------------------
 #
 # The web human decisions bind the object they were made against at
@@ -264,11 +276,26 @@ class Rejection(Exception):
 class CommandService:
     """Accept/persist/dedup/query commands; execution via workers (§1b)."""
 
-    def __init__(self, home: Path, db: Any, config: Any) -> None:
+    def __init__(self, home: Path, db: Any, config: Any, scheduler: Any = None) -> None:
         self.home = Path(home)
         self._db = db
         self.config = config
+        self._scheduler = scheduler
         self._fallback: ServiceDB | None = None
+
+    def _schedule(self) -> Any:
+        """The schedule collaborator (§1i), built lazily over this service.
+
+        The composition root may inject one via ``scheduler=``; standalone
+        services build a ``Scheduler`` over the same store so a create_run
+        acceptance lands the run in the single-active schedule and the swap
+        steps ride this service's acceptance tiers.
+        """
+        if self._scheduler is None:
+            from tracks.supervisor.scheduler import Scheduler  # cycle-safe import
+
+            self._scheduler = Scheduler(self._store(), service=self)
+        return self._scheduler
 
     def _store(self) -> ServiceDB:
         """Injected store when it is a ServiceDB, else the home-backed one.
@@ -377,7 +404,11 @@ class CommandService:
         integration surface (deferred); registration/scope checks belong
         to the guard tier, not the accept tier."""
         schedule = store.get_schedule()
-        if schedule is not None and schedule.get("active_run") and not request.get("preempt"):
+        active = schedule.get("active_run") if schedule is not None else None
+        # The guard compares run identity: re-accepting the *same* run (same
+        # canonical params, hence the same create_run_id) is not a second
+        # active run — the schedule no-ops it (IF-SCHED-001).
+        if active and not request.get("preempt") and active != create_run_id(request):
             self._deny(
                 store,
                 "create_run",
@@ -385,7 +416,7 @@ class CommandService:
                 actor,
                 actor_class,
                 "active_run_exists",
-                f"active run {schedule['active_run']!r} exists and preempt is false",
+                f"active run {active!r} exists and preempt is false",
                 access_denied=False,
             )
         if self._readiness_failed(store, request.get("project_id")):
@@ -399,6 +430,30 @@ class CommandService:
                 "project readiness checks are failing; resolve them before creating a run",
                 access_denied=False,
             )
+
+    def _reconcile_terminal_drive(
+        self, store: ServiceDB, request: dict, deny: RejectFn
+    ) -> None:
+        """IF-SCHED-001: the acceptance face releases the single active slot
+        of a run that already reached a terminal state instead of re-driving
+        it; the queue head then advances on the supervisor's next tick."""
+        run_id = request.get("run_id")
+        schedule = store.get_schedule()
+        if not run_id or schedule is None or schedule.get("active_run") != run_id:
+            return
+        project = self._project_for_run(store, str(run_id))
+        if project is None:
+            return
+        _events, state = _run_plane(str(project["repo_path"]), str(run_id))
+        if state is None or (state.status != "completed" and state.terminal_state is None):
+            return
+        terminal = state.terminal_state or state.status
+        self._schedule().on_run_terminal(str(run_id))
+        deny(
+            "validation_failed",
+            f"run {run_id!r} already reached terminal state {terminal!r}; "
+            "the schedule released its active slot",
+        )
 
     def _preflight_webgate(
         self,
@@ -480,11 +535,29 @@ class CommandService:
                     "run_id": run_id,
                     "actor": actor,
                     "command_id": command_id,
-                    "from_stage": None,
+                    "from_stage": self._resume_stage(store, run_id),
                 },
                 run_id=run_id,
                 command_id=command_id,
             )
+
+    def _resume_stage(self, store: ServiceDB, run_id: Any) -> str | None:
+        """The stage a resumed run continues from (interfaces §1a#21).
+
+        Resolved best-effort from the registered project's run plane; None
+        only when the run is not resolvable here (the worker carries the
+        stage at execution).
+        """
+        if not run_id:
+            return None
+        project = self._project_for_run(store, run_id)
+        if project is None:
+            return None
+        try:
+            _events, state = _run_plane(str(project["repo_path"]), str(run_id))
+        except (OSError, sqlite3.Error, ValueError):
+            return None
+        return state.stage if state is not None else None
 
     def accept(
         self,
@@ -508,18 +581,7 @@ class CommandService:
             store, kind, request, actor, actor_class, reason, detail,
             access_denied=access_denied,
         )
-        if kind in HUMAN_ONLY_KINDS and actor_class != "human":
-            deny(
-                "forbidden_actor",
-                f"kind {kind!r} requires actor_class 'human'",
-                access_denied=True,
-            )
-        if kind in SYSTEM_ONLY_KINDS and actor_class != "system":
-            deny(
-                "forbidden_actor",
-                f"kind {kind!r} requires actor_class 'system'",
-                access_denied=True,
-            )
+        self._check_actor_class(kind, actor_class, deny)
         if kind not in SERVICE_COMMAND_KINDS:
             deny("guard_blocked", f"unknown command kind {kind!r}")
         missing = [key for key in _REQUIRED_PARAMS[kind] if key not in request]
@@ -540,9 +602,7 @@ class CommandService:
             )
         if duplicate is not None:
             return duplicate
-        if kind == "create_run":
-            self._preflight_create_run(store, request, actor, actor_class)
-        self._preflight_webgate(store, kind, request, deny)
+        self._preflights(store, kind, request, actor, actor_class, deny)
         command_id = uuid.uuid4().hex
         store.register_command(
             {
@@ -562,7 +622,57 @@ class CommandService:
             store, kind, request, actor, actor_class, surface, idempotency_key, digest,
             command_id,
         )
+        self._on_accepted(store, kind, request, actor)
         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted")
+
+    def _check_actor_class(self, kind: str, actor_class: str, deny: RejectFn) -> None:
+        """Actor-class partition (interfaces §1f.5): human-only kinds reject
+        non-human callers and the system-only drive kind rejects humans."""
+        if kind in HUMAN_ONLY_KINDS and actor_class != "human":
+            deny(
+                "forbidden_actor",
+                f"kind {kind!r} requires actor_class 'human'",
+                access_denied=True,
+            )
+        if kind in SYSTEM_ONLY_KINDS and actor_class != "system":
+            deny(
+                "forbidden_actor",
+                f"kind {kind!r} requires actor_class 'system'",
+                access_denied=True,
+            )
+
+    def _preflights(
+        self,
+        store: ServiceDB,
+        kind: str,
+        request: dict,
+        actor: str,
+        actor_class: str,
+        deny: RejectFn,
+    ) -> None:
+        """Business preflights ahead of persistence (§1b.1): create_run
+        admission, terminal-drive reconciliation, and the web-gate object
+        bindings."""
+        if kind == "create_run":
+            self._preflight_create_run(store, request, actor, actor_class)
+        elif kind == "drive_run":
+            self._reconcile_terminal_drive(store, request, deny)
+        self._preflight_webgate(store, kind, request, deny)
+
+    def _on_accepted(self, store: ServiceDB, kind: str, request: dict, actor: str) -> None:
+        """Kind-specific side effects after persistence (SM-01 persist-first).
+
+        IF-SCHED-001: an accepted create_run enters the schedule through the
+        locked outlet — active singleton, queue, or the auditable hotfix
+        preemption — so the swap sequence is reachable in production.
+        """
+        if kind == "create_run":
+            self._schedule().on_run_created(
+                create_run_id(request),
+                journey=str(request.get("journey")),
+                preempt=bool(request.get("preempt")),
+                actor=actor,
+            )
 
     def status(self, command_id: str) -> dict | None:
         """Persisted command status/result; survives restarts (§1b)."""
