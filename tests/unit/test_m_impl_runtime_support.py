@@ -528,3 +528,38 @@ def test_task_budget_counts_only_own_failures(tmp_path):
     result = _task_review_failure(None, "RUN", tripped, task, None, None,
                                   {}, [], "T-008", 1)
     assert result is not None and result["check"] == "budget"
+
+
+def test_impl_defect_echo_guard_superseded_by_later_green_pass(tmp_path):
+    """Live defect (run 01M2QTJB T-019, 2026-09-22): gate failed impl_defect,
+    Devon fixed inside the attempt, the gate re-ran and PASSED -- and
+    commit_green still refused on the stale impl_defect, sending the run
+    into a self-referential DIAGNOSE loop. A task's green pass recorded
+    after an impl_defect supersedes it for the commit guard."""
+    from types import SimpleNamespace
+
+    class _Ev:
+        def __init__(self, seq, type, payload):
+            self.seq, self.type, self.payload = seq, type, payload
+
+    events = [
+        _Ev(10, "verdict.failed", {"check": "impl_defect", "task_id": "T-9", "attempt": 1}),
+        _Ev(20, "verdict.passed", {"check": "green", "task_id": "T-9"}),
+    ]
+    host = SimpleNamespace(store=SimpleNamespace(events=lambda _r: events), run_id="RUN")
+    from tracks.executor.m_impl_green import MImplGreenMixin
+
+    # The green pass at seq 20 supersedes the impl_defect at seq 10.
+    assert MImplGreenMixin._attempt_impl_defect_recorded(host, "T-9", 1, 0) is False
+
+    # An impl_defect AFTER the latest green pass still blocks (real order).
+    events.append(_Ev(30, "verdict.failed", {"check": "impl_defect", "task_id": "T-9", "attempt": 1}))
+    assert MImplGreenMixin._attempt_impl_defect_recorded(host, "T-9", 1, 0) is True
+
+    # A green pass after THAT clears it again.
+    events.append(_Ev(40, "verdict.passed", {"check": "green", "task_id": "T-9"}))
+    assert MImplGreenMixin._attempt_impl_defect_recorded(host, "T-9", 1, 0) is False
+
+    # Other tasks' green passes never interfere.
+    events.append(_Ev(50, "verdict.passed", {"check": "green", "task_id": "T-8"}))
+    assert MImplGreenMixin._attempt_impl_defect_recorded(host, "T-9", 1, 0) is False

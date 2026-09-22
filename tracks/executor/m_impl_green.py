@@ -223,6 +223,28 @@ class MImplGreenMixin:
         return True
 
     def _attempt_impl_defect_recorded(self, task_id: str, attempt: int, cutoff: int) -> bool:
+        """True when the attempt's LATEST gate word is impl_defect.
+
+        Live defect (run 01M2QTJB T-019, 2026-09-22): a GREEN gate failed
+        impl_defect, Devon fixed it inside the same attempt flow, the gate
+        RE-RAN AND PASSED -- and commit_green still refused ("Runtime gate
+        already failed for this attempt"), sending the run into a
+        self-referential DIAGNOSE loop (every diagnosis honestly reported
+        "no reproducible failure"; the only failure markers were the guard's
+        own echo and prior DIAGNOSE outputs). A verdict.passed(check=green)
+        recorded for the task AFTER an impl_defect supersedes it: the gate's
+        final word is green (the green verdict carries no attempt field, so
+        the supersede is task-scoped and ordered by seq)."""
+        superseded = max(
+            (
+                ev.seq
+                for ev in self.store.events(self.run_id)
+                if ev.type == "verdict.passed"
+                and ev.payload.get("check") == "green"
+                and ev.payload.get("task_id") == task_id
+            ),
+            default=0,
+        )
         return any(
             ev.type == "verdict.failed"
             and ev.payload.get("check") == "impl_defect"
@@ -237,6 +259,7 @@ class MImplGreenMixin:
             # describe a superseded attempt (FR-11 budget reset) and must
             # not block the post-retry fresh attempt.
             and ev.seq > cutoff
+            and ev.seq > superseded
             for ev in self.store.events(self.run_id)
         )
 
