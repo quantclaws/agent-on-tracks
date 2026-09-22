@@ -10,7 +10,9 @@ required-param registry are shared with the command service so CLI and HTTP
 validate against one contract. The guard adds what the HTTP face requires
 (§1g.1): rejection of unknown extra fields, type mismatches, enum violations
 and free-form execution payloads; ``check_path_scope`` enforces the realpath
-authorized scope (§1g.2).
+authorized scope (§1g.2) and ``check_registration_scope`` carries the
+registration rejection's own reason token (``outside_permitted_scope``,
+§1b#1 / §1a#4) over the same prefix rule.
 
 Contract tokens: IF-CMDGUARD-001, IF-SECRECY-001.
 """
@@ -31,7 +33,8 @@ class GuardRejection(Exception):
     """Raised when a command payload fails guard validation.
 
     Carries the closed-set reason for ``command.rejected``
-    (``guard_blocked`` / ``validation_failed`` / ``scope_violation``).
+    (``guard_blocked`` / ``validation_failed`` / ``scope_violation`` /
+    the registration token ``outside_permitted_scope``, §1b#1).
     """
 
     def __init__(self, reason: str, detail: str) -> None:
@@ -141,3 +144,17 @@ def check_path_scope(path: Path, permitted_roots: list[Path]) -> None:
     roots = [Path(root).resolve() for root in permitted_roots]
     if not any(_inside(candidate, root) for root in roots):
         raise GuardRejection("scope_violation", f"path {path} is outside the permitted scope")
+
+
+def check_registration_scope(repo_path: Path, permitted_roots: list[Path]) -> None:
+    """Require a registration repo path inside the permitted serve scope.
+
+    Same realpath prefix rule as ``check_path_scope`` (§1g.2); the
+    registration face carries its own closed reason token
+    (``outside_permitted_scope``, §1b#1 / §1a#4) for
+    ``project.registration_rejected``.
+    """
+    try:
+        check_path_scope(repo_path, permitted_roots)
+    except GuardRejection as rejection:
+        raise GuardRejection("outside_permitted_scope", rejection.detail) from None

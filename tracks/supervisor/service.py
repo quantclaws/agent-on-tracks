@@ -5,10 +5,13 @@ authenticate/authorize -> guard validation -> idempotency dedup -> persist
 (SM-01.1) -> hand to a supervisor worker (HTTP) or execute inline (CLI).
 Business validations reuse the existing gate semantics (cmd_approve /
 release_gate / escape / repair) — this service never appends domain events
-directly and never bypasses revision/preview binding.
+directly and never bypasses revision/preview binding. Registration admits
+only repos inside the serve permitted scope (IF-PROJ-001/IF-SECRECY-001):
+the service wires the guard's realpath check and lands the registration
+rejection audit (§1a#4) before anything persists.
 
 Contract tokens: IF-CMDSVC-001, IF-WEBGATE-001, IF-WEBAUTH-001, IF-PAUSE-001,
-IF-SCHED-001.
+IF-SCHED-001, IF-PROJ-001, IF-SECRECY-001.
 """
 
 from __future__ import annotations
@@ -98,6 +101,25 @@ def create_run_id(params: dict) -> str:
     """
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return uuid.uuid5(uuid.NAMESPACE_OID, canonical).hex
+
+
+def _permitted_repo_roots(config: Any) -> list[Path]:
+    """The serve ``--repo`` permitted scope (interfaces §1g.2) from config.
+
+    Reads ``permitted_repos`` either as an attribute (the composition root's
+    ``_build_config`` namespace) or as a mapping key (unit doubles); an
+    empty list means no explicit scope was configured and the caller applies
+    its home-anchored default (see ``_preflight_register_project``).
+    """
+    if isinstance(config, dict):
+        raw = config.get("permitted_repos")
+    elif config is None:
+        raw = None
+    else:
+        raw = getattr(config, "permitted_repos", None)
+    if not raw:
+        return []
+    return [Path(root) for root in raw]
 
 
 # -- web-gate accept-time binding (IF-WEBGATE-001 §1b.1) ----------------------
@@ -483,6 +505,38 @@ class CommandService:
             )
         return "conflict"
 
+    def _preflight_register_project(
+        self, store: ServiceDB, request: dict, actor: str
+    ) -> None:
+        """FR-0289 §1g.2: admit registration only inside the serve scope.
+
+        The realpath prefix check rides the guard tier (IF-CMDGUARD-001 /
+        IF-SECRECY-001, ``guard.check_registration_scope``); an out-of-scope
+        repo path lands the §1a#4 ``project.registration_rejected`` audit
+        with the ``outside_permitted_scope`` reason and raises the §1b#1
+        rejection before anything persists (SM-01.5) — no command row, no
+        project row, no run. A service constructed without an explicit
+        ``permitted_repos`` scope keeps one implicit anchor — its own home's
+        parent: serve's default home layout is ``<repo>/.tracks/service``
+        (interfaces §2a), so the home's parent is the primary repository
+        root. The scope check therefore never fails open.
+        """
+        roots = _permitted_repo_roots(self.config) or [self.home.parent]
+        from tracks.server.guard import (  # cycle-safe: guard imports this module
+            GuardRejection,
+            check_registration_scope,
+        )
+
+        repo_path = str(request.get("repo_path"))
+        try:
+            check_registration_scope(Path(repo_path), roots)
+        except GuardRejection as rejection:
+            store.append_event(
+                "project.registration_rejected",
+                {"repo_path": repo_path, "reason": rejection.reason, "actor": actor},
+            )
+            raise Rejection(reason=rejection.reason, detail=rejection.detail) from None
+
     @staticmethod
     def _readiness_failed(store: ServiceDB, project_id: str | None) -> bool:
         """True only on explicit-negative readiness (absent state is the
@@ -814,10 +868,12 @@ class CommandService:
         actor_class: str,
         deny: RejectFn,
     ) -> None:
-        """Business preflights ahead of persistence (§1b.1): create_run
-        admission, terminal-drive reconciliation, and the web-gate object
-        bindings."""
-        if kind == "create_run":
+        """Business preflights ahead of persistence (§1b.1): registration
+        scope admission, create_run admission, terminal-drive reconciliation,
+        and the web-gate object bindings."""
+        if kind == "register_project":
+            self._preflight_register_project(store, request, actor)
+        elif kind == "create_run":
             self._preflight_create_run(store, request, actor, actor_class)
         elif kind == "drive_run":
             self._reconcile_terminal_drive(store, request, deny)
