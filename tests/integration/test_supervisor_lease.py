@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.lease_fencing import arrange_stale_completion, quarantined_events
 from tracks.supervisor.lease import acquire_lease, current_generation, is_fenced
 
 pytestmark = pytest.mark.integration
@@ -35,8 +36,21 @@ def test_stale_generation_late_result_quarantined(tmp_path: Path):
     home = tmp_path / "home"
     home.mkdir()
     db = ServiceDB(home)
-    lease = acquire_lease(db, "run-1", "worker-a", 30)
-    committed = db.complete_command("cmd-1", lease.generation + 99, {"ok": True}, None)
+    stale, renewed = arrange_stale_completion(db, "run-1", "cmd-1")
+
+    committed = db.complete_command("cmd-1", stale.generation, {"ok": True}, None)
+
     assert committed is False
-    events = db.read_events(run_id="run-1")
-    assert any(e["type"] == "worker.late_result" for e in events)
+    late = quarantined_events(db, "run-1")
+    assert late, "the stale completion must be audited as a quarantined late result"
+    payload = late[-1]["payload"]
+    assert payload["run_id"] == "run-1"
+    assert payload["command_id"] == "cmd-1"
+    assert payload["generation"] == stale.generation
+    assert payload["current_generation"] == renewed.generation
+    assert payload["disposition"] == "quarantined"
+    # the quarantined outcome never touches lease or command state
+    assert current_generation(db, "run-1") == renewed.generation
+    row = db.get_command("cmd-1")
+    assert row["status"] == "claimed"
+    assert row["claim_generation"] == renewed.generation
