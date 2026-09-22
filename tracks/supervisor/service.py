@@ -679,6 +679,28 @@ class CommandService:
             )
         self._preflight_hotfix_journey(store, request, actor, actor_class)
 
+    def _deny_hotfix_precheck(
+        self,
+        store: ServiceDB,
+        request: dict,
+        actor: str,
+        actor_class: str,
+        detail: str,
+    ) -> None:
+        """FR-0292 rejection: the precheck's concrete reason rides the detail
+        while ``validation_failed`` stays the closed-set reason token
+        (interfaces §1a#8); nothing is persisted (SM-01.5)."""
+        self._deny(
+            store,
+            "create_run",
+            request,
+            actor,
+            actor_class,
+            "validation_failed",
+            f"hotfix precheck rejected: {detail}",
+            access_denied=False,
+        )
+
     def _preflight_hotfix_journey(
         self, store: ServiceDB, request: dict, actor: str, actor_class: str
     ) -> None:
@@ -696,16 +718,12 @@ class CommandService:
             return
         project = store.get_project(request.get("project_id"))
         if project is None:
-            self._deny(
+            self._deny_hotfix_precheck(
                 store,
-                "create_run",
                 request,
                 actor,
                 actor_class,
-                "validation_failed",
-                f"hotfix precheck rejected: project {request.get('project_id')!r} "
-                "is not registered on this service",
-                access_denied=False,
+                f"project {request.get('project_id')!r} is not registered on this service",
             )
         try:
             report = _hotfix_precheck(
@@ -714,27 +732,21 @@ class CommandService:
                 scenario,
             )
         except (OSError, sqlite3.Error, ValueError) as error:
-            self._deny(
+            self._deny_hotfix_precheck(
                 store,
-                "create_run",
                 request,
                 actor,
                 actor_class,
-                "validation_failed",
-                f"hotfix precheck rejected: preconditions could not be verified: {error}",
-                access_denied=False,
+                f"preconditions could not be verified: {error}",
             )
             return
         if report.status == "rejected":
-            self._deny(
+            self._deny_hotfix_precheck(
                 store,
-                "create_run",
                 request,
                 actor,
                 actor_class,
-                "validation_failed",
-                f"hotfix precheck rejected: {report.reason}: {report.next}",
-                access_denied=False,
+                f"{report.reason}: {report.next}",
             )
 
     def _reconcile_terminal_drive(
