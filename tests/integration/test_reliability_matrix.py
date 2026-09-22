@@ -28,17 +28,59 @@ _SCENARIOS = [
 # RELIABILITY-SCENARIO: UI断线重连
 # RELIABILITY-SCENARIO: 旧worker迟到结果
 # RELIABILITY-SCENARIO: 人工pause竞态
-def test_eight_reliability_scenarios_covered():
+def test_eight_reliability_scenarios_covered(tmp_path):
     """AC-NFR0151-01: all eight reliability scenarios have automation."""
+    from datetime import datetime, timedelta, timezone
+
+    from tracks.supervisor.db import ServiceDB
+    from tracks.supervisor.lease import acquire_lease
     from tracks.supervisor.recover import recover_on_startup
 
     assert len(_SCENARIOS) == 8
     assert "服务重启" in _SCENARIOS
     assert "人工pause竞态" in _SCENARIOS
-    # Service-restart scenario anchor: startup recovery requeues claimed
-    # commands / preserves waits / expires leases (§1h.7).
-    summary = recover_on_startup(object())
-    assert set(summary) >= {"requeued", "waits_kept", "leases_expired"}
+    # Service-restart scenario anchor (§1h.7): a claimed command is requeued
+    # under the same id, the persisted wait keeps its retry_at, and the
+    # lapsed lease is released for a fresh generation.
+    home = tmp_path / "home"
+    db = ServiceDB(home)
+    db.register_command(
+        {
+            "command_id": "cmd-restart",
+            "kind": "pause_run",
+            "params_json": '{"run_id": "run-restart"}',
+            "params_digest": "digest-restart",
+            "idempotency_key": "restart-cmd-1",
+            "actor": "local-user",
+            "actor_class": "human",
+            "surface": "http",
+            "project_id": None,
+            "run_id": "run-restart",
+        }
+    )
+    assert db.claim_command("cmd-restart", "worker-1", 1)
+    now = datetime.now(timezone.utc)
+    retry_at = (now + timedelta(hours=1)).isoformat()
+    db.upsert_wait("run-restart", "quota", "rate limited", retry_at, False, None, now.isoformat())
+    acquire_lease(db, "run-restart", "worker-1", -60)  # the worker's lease lapsed
+
+    summary = recover_on_startup(db)
+
+    assert summary["requeued"] == ["cmd-restart"]
+    assert summary["waits_kept"] == ["run-restart"]
+    assert summary["leases_expired"] == ["run-restart"]
+    # the requeued command is claimable again under the same id (§1h.7)
+    assert db.get_command("cmd-restart")["status"] == "accepted"
+    # the persisted wait survives the restart with its retry_at untouched
+    assert db.get_wait("run-restart")["retry_at"] == retry_at
+    # the lapsed lease is audited as released(expired), not silently dropped
+    released = [
+        event
+        for event in db.read_events(run_id="run-restart")
+        if event["type"] == "lease.released"
+    ]
+    assert released, "the expired lease must be audited"
+    assert released[-1]["payload"]["reason"] == "expired"
 
 
 # AC-NFR0151-02@v0.9 TRACKS-TRACE coverage threshold inherited
