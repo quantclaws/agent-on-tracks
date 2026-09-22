@@ -19,6 +19,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import subprocess
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -109,7 +110,7 @@ def create_run_id(params: dict) -> str:
 # shared validators — the service never appends domain events itself.
 
 _WEBGATE_KINDS = frozenset(
-    {"record_stage_approval", "record_release_decision", "retry_run"}
+    {"record_stage_approval", "edit_material", "record_release_decision", "retry_run"}
 )
 
 # The accept-tier deny closure: ``deny(reason, detail)`` audits a
@@ -163,14 +164,101 @@ def _current_revision(repo: Path, version: str | None) -> str | None:
         return None
 
 
-def _bind_approval(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
+# Material document set of the review face (interfaces §2b #15): the trio
+# members carry the revision digest an approval binds; the design entry is the
+# primary design document.
+_MATERIAL_FILES = {
+    "story": "story.md",
+    "spec": "spec.md",
+    "acceptance": "acceptance.md",
+    "design": "architecture.md",
+}
+
+
+def _material_file(repo: Path, version: str | None, doc: Any) -> Path | None:
+    """The version-dir document a material edit targets, or None."""
+    name = _MATERIAL_FILES.get(str(doc))
+    if name is None or not version:
+        return None
+    return paths.version_dir(paths.tracks_home(repo), str(version)) / name
+
+
+def _material_version(project: dict, state: Any) -> str | None:
+    """Version dir of a run: projected run version, then the registered
+    project's version (the doc read path addresses the same directory)."""
+    if state is not None and state.version:
+        return str(state.version)
+    version = project.get("version")
+    return str(version) if version else None
+
+
+def _write_material(doc_file: Path, content: str) -> None:
+    """Atomic document write (tmp + replace): no torn file is ever visible."""
+    tmp = doc_file.with_name(doc_file.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(doc_file)
+
+
+def _commit_material(repo: Path, doc_file: Path, doc: str, actor: str) -> None:
+    """Record the material revision in the run repo (interfaces §1b #5).
+
+    Best-effort by design: the revision identity is content-addressed and
+    already on disk, so a repo without a git identity/repository must not
+    undo an accepted edit; when the repo can commit, the edited document
+    joins the run's revision history like the Runtime's own doc commits.
+    """
+    try:
+        relative = doc_file.relative_to(repo).as_posix()
+    except ValueError:
+        return
+    added = subprocess.run(
+        ["git", "add", "--", relative],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if added.returncode != 0:
+        return
+    subprocess.run(
+        ["git", "commit", "--only", "-m", f"material edit ({doc}) by {actor}", "--", relative],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _bind_approval(
+    repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict
+) -> None:
     """FR-0308: the approval binds the revision the user actually reviewed."""
     _events, state = _run_plane(str(repo), run_id)
-    current = _current_revision(repo, state.version)
+    current = _current_revision(repo, _material_version(project, state))
     if current is None or request.get("expected_revision") != current:
         deny(
             "stale_revision",
             "approval rejected: the reviewed revision is stale; "
+            f"current revision is {current or 'unavailable'}",
+        )
+
+
+def _bind_edit(repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict) -> None:
+    """FR-0294.3: the edit binds the revision the user actually reviewed.
+
+    A stale base revision is rejected before anything persists (SM-01.5);
+    the acceptance then applies the edit through the existing revision flow.
+    """
+    _events, state = _run_plane(str(repo), run_id)
+    version = _material_version(project, state)
+    doc_file = _material_file(repo, version, request.get("doc"))
+    if doc_file is None or not doc_file.is_file():
+        deny("not_found", f"material {request.get('doc')!r} has no editable document")
+    current = _current_revision(repo, version)
+    if current is None or request.get("base_revision") != current:
+        deny(
+            "stale_revision",
+            "edit rejected: the reviewed revision is stale; "
             f"current revision is {current or 'unavailable'}",
         )
 
@@ -190,9 +278,12 @@ def _deny_stale_preview(deny: RejectFn, detail: str) -> None:
     deny("stale_preview", detail)
 
 
-def _bind_release(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
+def _bind_release(
+    repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict
+) -> None:
     """FR-0309: the decision binds the live preview digest; stale rejects."""
     events, state = _run_plane(str(repo), run_id)
+    version = _material_version(project, state) or ""
     preview_event = _latest_preview(events)
     if preview_event is None:
         _deny_stale_preview(
@@ -207,7 +298,7 @@ def _bind_release(repo: Path, run_id: str, request: dict, deny: RejectFn) -> Non
         )
     try:
         authorization = assess_release(
-            repo, paths.tracks_home(repo), events, preview_event, state.version or ""
+            repo, paths.tracks_home(repo), events, preview_event, version
         )
     except (OSError, ValueError) as error:
         _deny_stale_preview(
@@ -225,8 +316,11 @@ def _bind_release(repo: Path, run_id: str, request: dict, deny: RejectFn) -> Non
         deny("validation_failed", f"release decision rejected: {err}")
 
 
-def _bind_retry(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
+def _bind_retry(
+    repo: Path, run_id: str, request: dict, deny: RejectFn, project: dict
+) -> None:
     """FR-0311: retry only from the legal position (v0.8 repair/escape gate)."""
+    del project  # the retry position is a run-plane fact only
     _events, state = _run_plane(str(repo), run_id)
     gate_error = _retry_gate_error(state, bool(request.get("clear_evidence")))
     if gate_error is not None:
@@ -235,6 +329,7 @@ def _bind_retry(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
 
 _BINDINGS = {
     "record_stage_approval": _bind_approval,
+    "edit_material": _bind_edit,
     "record_release_decision": _bind_release,
     "retry_run": _bind_retry,
 }
@@ -469,7 +564,7 @@ class CommandService:
         project = self._project_for_run(store, run_id)
         if project is None:
             deny("not_found", f"run {run_id!r} is not registered on this service")
-        _BINDINGS[kind](Path(str(project["repo_path"])), str(run_id), request, deny)
+        _BINDINGS[kind](Path(str(project["repo_path"])), str(run_id), request, deny, project)
 
     @staticmethod
     def _project_for_run(store: ServiceDB, run_id: Any) -> dict | None:
@@ -497,10 +592,12 @@ class CommandService:
         idempotency_key: str,
         digest: str,
         command_id: str,
+        *,
+        run_id: str | None = None,
     ) -> None:
         """Persist command.accepted plus the service-produced kind event."""
         project_id = request.get("project_id")
-        run_id = request.get("run_id")
+        run_id = run_id if run_id is not None else request.get("run_id")
         store.append_event(
             "command.accepted",
             {
@@ -537,6 +634,47 @@ class CommandService:
                 run_id=run_id,
                 command_id=command_id,
             )
+        elif kind == "edit_material":
+            self._apply_edit(store, request, actor, surface, command_id)
+
+    def _apply_edit(
+        self, store: ServiceDB, request: dict, actor: str, surface: str, command_id: str
+    ) -> None:
+        """Apply an accepted material edit through the existing revision flow.
+
+        SM-01.1 is already honored (command.accepted persisted); the new
+        revision is content-addressed: the document is written, the run repo
+        records the revision, and ``material.edited`` (interfaces §1a #22)
+        carries the from/to pair the approval binding then holds the reviewer
+        to. The preflight bound the submitted base revision, so a resolvable
+        document is guaranteed here.
+        """
+        run_id = request.get("run_id")
+        project = self._project_for_run(store, run_id)
+        if project is None:
+            return
+        repo = Path(str(project["repo_path"]))
+        version = _material_version(project, self._run_state(store, run_id))
+        doc_file = _material_file(repo, version, request.get("doc"))
+        if doc_file is None or not doc_file.is_file():
+            return
+        from_revision = _current_revision(repo, version) or request.get("base_revision")
+        _write_material(doc_file, str(request.get("content") or ""))
+        to_revision = _current_revision(repo, version)
+        _commit_material(repo, doc_file, str(request.get("doc") or ""), actor)
+        store.append_event(
+            "material.edited",
+            {
+                "run_id": run_id,
+                "doc": request.get("doc"),
+                "from_revision": from_revision,
+                "to_revision": to_revision,
+                "actor": actor,
+                "surface": surface,
+            },
+            run_id=run_id,
+            command_id=command_id,
+        )
 
     def _resume_stage(self, store: ServiceDB, run_id: Any) -> str | None:
         """The stage a resumed run continues from (interfaces §1a#21).
@@ -610,6 +748,14 @@ class CommandService:
             return duplicate
         self._preflights(store, kind, request, actor, actor_class, deny)
         command_id = uuid.uuid4().hex
+        # The create_run acceptance announces (and now records) the run it
+        # creates: the derived canonical identity lands on the command row
+        # and the command.accepted payload so the run is resolvable from the
+        # service plane — projections, timeline and the web-gate bindings
+        # find it before its run plane exists (IF-DOCREV-001 visibility).
+        recorded_run_id = (
+            create_run_id(request) if kind == "create_run" else request.get("run_id")
+        )
         store.register_command(
             {
                 "command_id": command_id,
@@ -621,12 +767,12 @@ class CommandService:
                 "actor_class": actor_class,
                 "surface": surface,
                 "project_id": request.get("project_id"),
-                "run_id": request.get("run_id"),
+                "run_id": recorded_run_id,
             }
         )
         self._record_acceptance(
             store, kind, request, actor, actor_class, surface, idempotency_key, digest,
-            command_id,
+            command_id, run_id=recorded_run_id,
         )
         self._on_accepted(store, kind, request, actor)
         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted")

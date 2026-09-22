@@ -161,20 +161,20 @@ def _project_rows(home: Path) -> list[dict]:
     return [{"project_id": row[0], "repo_path": row[1], "version": row[2]} for row in rows]
 
 
-def _run_exists(repo_path: str, run_id: str) -> bool:
-    rows = _read_rows(
-        _tracks_db_path(repo_path),
-        "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1",
-        (run_id,),
-    )
-    return bool(rows)
-
-
 def _project_for_run(home: Path, run_id: str) -> dict | None:
-    for project in _project_rows(home):
-        if _run_exists(project["repo_path"], run_id):
-            return project
-    return None
+    """Registered project owning run_id (material revision read path).
+
+    Same discovery order as the detail projections: service-plane rows
+    (commands / service events) first — a run accepted through the command
+    service is addressable before its run plane exists — then the project's
+    run-plane ``runs`` table.
+    """
+    conn = projections._service_db(home)
+    try:
+        return projections._project_for_run(conn, run_id)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _service_events(home: Path, run_id: str, event_type: str) -> list[dict]:

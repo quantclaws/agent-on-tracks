@@ -19,6 +19,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from tracks import paths
+from tracks.baseline import revision_digest
 from tracks.executor.validation_shared import _acc_scan
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.kernel.machine import State
@@ -477,13 +479,31 @@ def _control_state(
 # -- todos ------------------------------------------------------------------
 
 
-def _todo_for(run_id: str, state: State) -> dict | None:
+def _material_revision(project: dict) -> str | None:
+    """Current material revision of the project's version dir.
+
+    The trio digest is the same content addressing ``record_stage_approval``
+    binds, so a pending stage-approval item shows the revision the reviewer
+    actually signs. None when the version docs are not readable.
+    """
+    version = project.get("version")
+    repo_path = project.get("repo_path")
+    if not version or not repo_path:
+        return None
+    vdir = paths.version_dir(paths.tracks_home(Path(str(repo_path))), str(version))
+    try:
+        return revision_digest(vdir)
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
     if state.awaiting == "approval":
         return {
             "run_id": run_id,
             "kind": "stage_approval",
             "object": state.stage or "approval",
-            "revision": state.preview_digest,
+            "revision": _material_revision(project) or state.preview_digest,
             "context": f"{state.stage or 'stage'} awaiting Human approval",
             "action_ref": f"/runs/{run_id}/review",
         }
@@ -521,7 +541,7 @@ def project_overview(home: Path) -> dict:
         for project in projects:
             for run in _project_runs(project["repo_path"]):
                 state = _state_of(project["repo_path"], run["run_id"])
-                todo = _todo_for(run["run_id"], state)
+                todo = _todo_for(run["run_id"], state, project)
                 if todo is not None:
                     todo_count += 1
                 runs.append(
@@ -734,7 +754,7 @@ def project_todos(home: Path) -> list:
         for project in _projects(conn):
             for run in _project_runs(project["repo_path"]):
                 state = _state_of(project["repo_path"], run["run_id"])
-                todo = _todo_for(run["run_id"], state)
+                todo = _todo_for(run["run_id"], state, project)
                 if todo is not None:
                     todos.append(todo)
         return todos

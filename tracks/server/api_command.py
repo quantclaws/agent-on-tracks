@@ -471,12 +471,13 @@ async def edit_material(request: Any) -> CommandResponse:
 
     def respond(_receipt: Any) -> dict:
         ctx = _run_context(_home(request), run_id)
-        projected = (
-            _projected_revision(ctx[1], ctx[2].version, doc, params.get("content", ""))
-            if ctx is not None
-            else ""
-        )
-        return {"new_revision": projected}
+        if ctx is None:
+            return {"new_revision": ""}
+        project, repo, state, _events = ctx
+        # Same version resolution as the read path and the accept-time
+        # binding: the projected run version, then the registered project's.
+        version = state.version or project.get("version")
+        return {"new_revision": _projected_revision(repo, version, doc, params.get("content", ""))}
 
     return await _mutate(
         request,
