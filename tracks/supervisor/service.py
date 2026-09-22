@@ -122,6 +122,92 @@ def _permitted_repo_roots(config: Any) -> list[Path]:
     return [Path(root) for root in raw]
 
 
+# -- hotfix journey precheck mirror (IF-CMDSVC-001 / FR-0292) -----------------
+#
+# The create_run hotfix journeys (``hotfix_post`` / ``hotfix_dev``) mirror the
+# existing v0.8 hotfix entry precheck at *acceptance* time (interfaces §1b#3:
+# "hotfix_* 复用 v0.8 hotfix 前检"): the deterministic issue/scenario/branch/
+# baseline rules run before anything persists, so a hotfix whose preconditions
+# are not met is rejected with the concrete reason and never leaves a fake run
+# behind (FR-0292 / AC-FR0292-02). Inputs are gathered read-only; the pure
+# precheck rules stay owned by ``tracks/executor/hotfix.py``.
+
+# create_run journey -> v0.8 precheck scenario (IF-HOTFIX-003 P-2 vocabulary).
+_HOTFIX_SCENARIOS = {"hotfix_post": "post-release", "hotfix_dev": "dev"}
+
+
+def _issue_number(value: Any) -> int | None:
+    """The create_run ``issue`` param as an int; None when absent/uncoercible."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _git_branch_lines(repo: Path) -> list[str]:
+    """``git branch --list`` lines; [] when the repo cannot be probed."""
+    try:
+        proc = subprocess.run(
+            ["git", "branch", "--list"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    return proc.stdout.splitlines() if proc.returncode == 0 else []
+
+
+def _hotfix_issue(repo: Path, issue_number: int | None) -> Any:
+    """Host issue snapshot for the precheck (IF-HOTFIX-003); None on failure.
+
+    The fetch failure classification of the v0.8 entry is preserved: an
+    unavailable read channel maps to no issue, and the pure rules then report
+    ``issue_not_found`` / ``issue_fetch_failed`` instead of guessing.
+    """
+    if issue_number is None:
+        return None
+    from tracks.effects.github import GithubIssuesError, select_issue_backend
+
+    try:
+        return select_issue_backend(repo, "").fetch_issue(issue_number)
+    except GithubIssuesError:
+        return None
+
+
+def _hotfix_precheck(repo: Path, issue_number: int | None, scenario: str) -> Any:
+    """The v0.8 deterministic hotfix precheck over a project repo (FR-0292).
+
+    Reuses the existing entry precheck end to end (``precheck_hotfix_report``:
+    issue fetch, branch probe, active-run branch, approved baselines) when the
+    repo already has a run plane; a repo without one is judged over the pure
+    inputs alone — no fabricated baseline approval and no active run. Returns
+    the ``hotfix.PrecheckReport``; the caller only consumes status/reason/next.
+    """
+    from tracks.executor.hotfix import precheck_hotfix  # cycle-safe imports
+    from tracks.executor.hotfix_face import precheck_hotfix_report
+
+    tracks_home = paths.tracks_home(repo)
+    if paths.db_path(tracks_home).exists():
+        store = Store(tracks_home)
+        try:
+            report, _issue = precheck_hotfix_report(repo, store, issue_number, scenario)
+        finally:
+            store.close()
+        return report
+    return precheck_hotfix(
+        _hotfix_issue(repo, issue_number),
+        scenario,
+        _git_branch_lines(repo),
+        None,
+        paths.projects_dir(tracks_home),
+        set(),
+    )
+
+
 # -- web-gate accept-time binding (IF-WEBGATE-001 §1b.1) ----------------------
 #
 # The web human decisions bind the object they were made against at
@@ -560,10 +646,10 @@ class CommandService:
         actor: str,
         actor_class: str,
     ) -> None:
-        """create_run business preflight (§1b.1): active-run guard and
-        explicit-negative readiness. Hotfix journey prechecks ride the
-        integration surface (deferred); registration/scope checks belong
-        to the guard tier, not the accept tier."""
+        """create_run business preflight (§1b.1): active-run guard,
+        explicit-negative readiness and the hotfix journey precheck (FR-0292);
+        registration/scope checks belong to the guard tier, not the accept
+        tier."""
         schedule = store.get_schedule()
         active = schedule.get("active_run") if schedule is not None else None
         # The guard compares run identity: re-accepting the *same* run (same
@@ -589,6 +675,65 @@ class CommandService:
                 actor_class,
                 "validation_failed",
                 "project readiness checks are failing; resolve them before creating a run",
+                access_denied=False,
+            )
+        self._preflight_hotfix_journey(store, request, actor, actor_class)
+
+    def _preflight_hotfix_journey(
+        self, store: ServiceDB, request: dict, actor: str, actor_class: str
+    ) -> None:
+        """FR-0292 / AC-FR0292-02: run the v0.8 hotfix precheck for hotfix
+        journeys before anything persists.
+
+        The Web create_run entry mirrors the existing precheck (interfaces
+        §1b#3): unmet preconditions (unknown/non-bug issue, missing active
+        release branch for dev, unlocatable baseline, taken ``fix/{issue}``)
+        reject the acceptance with the concrete reason in the audit detail —
+        no command row, no schedule entry, no fix branch and no run.
+        """
+        scenario = _HOTFIX_SCENARIOS.get(str(request.get("journey") or ""))
+        if scenario is None:
+            return
+        project = store.get_project(request.get("project_id"))
+        if project is None:
+            self._deny(
+                store,
+                "create_run",
+                request,
+                actor,
+                actor_class,
+                "validation_failed",
+                f"hotfix precheck rejected: project {request.get('project_id')!r} "
+                "is not registered on this service",
+                access_denied=False,
+            )
+        try:
+            report = _hotfix_precheck(
+                Path(str(project["repo_path"])),
+                _issue_number(request.get("issue")),
+                scenario,
+            )
+        except (OSError, sqlite3.Error, ValueError) as error:
+            self._deny(
+                store,
+                "create_run",
+                request,
+                actor,
+                actor_class,
+                "validation_failed",
+                f"hotfix precheck rejected: preconditions could not be verified: {error}",
+                access_denied=False,
+            )
+            return
+        if report.status == "rejected":
+            self._deny(
+                store,
+                "create_run",
+                request,
+                actor,
+                actor_class,
+                "validation_failed",
+                f"hotfix precheck rejected: {report.reason}: {report.next}",
                 access_denied=False,
             )
 
