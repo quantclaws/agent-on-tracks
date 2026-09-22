@@ -20,6 +20,7 @@ import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ from tracks.discuss.locate import token_for
 from tracks.discuss.model import Thread, speaker_key
 from tracks.discuss.parser import parse_tag, parse_threads
 from tracks.executor.release_authorization import assess_release, validate_authorization
+from tracks.kernel.events import EventEnvelope
 from tracks.store import Store
 from tracks.supervisor.db import ServiceDB
 
@@ -98,6 +100,11 @@ _WEBGATE_KINDS = frozenset(
     {"record_stage_approval", "record_release_decision", "retry_run"}
 )
 
+# The accept-tier deny closure: ``deny(reason, detail)`` audits a
+# ``command.rejected`` and raises ``Rejection`` (SM-01.5), so every binding
+# failure leaves the command unpersisted and unexecuted.
+RejectFn = Callable[..., None]
+
 _RUNS_BY_ID = "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1"
 _EVENTS_BY_RUN = "SELECT 1 FROM events WHERE run_id = ? LIMIT 1"
 
@@ -123,7 +130,7 @@ def _run_exists(repo_path: str, run_id: str) -> bool:
         conn.close()
 
 
-def _run_plane(repo_path: str, run_id: str) -> tuple[list, Any]:
+def _run_plane(repo_path: str, run_id: str) -> tuple[list[EventEnvelope], Any]:
     """(events, state) for a run, read from its tracks.db."""
     store = Store(paths.tracks_home(Path(repo_path)))
     try:
@@ -144,7 +151,7 @@ def _current_revision(repo: Path, version: str | None) -> str | None:
         return None
 
 
-def _bind_approval(repo: Path, run_id: str, request: dict, deny) -> None:
+def _bind_approval(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
     """FR-0308: the approval binds the revision the user actually reviewed."""
     _events, state = _run_plane(str(repo), run_id)
     current = _current_revision(repo, state.version)
@@ -156,22 +163,33 @@ def _bind_approval(repo: Path, run_id: str, request: dict, deny) -> None:
         )
 
 
-def _bind_release(repo: Path, run_id: str, request: dict, deny) -> None:
-    """FR-0309: the decision binds the live preview digest; stale rejects."""
-    events, state = _run_plane(str(repo), run_id)
-    preview_event = next(
+def _latest_preview(events: list[EventEnvelope]) -> EventEnvelope | None:
+    """The newest ``release.previewed`` event of a run, if any."""
+    return next(
         (event for event in reversed(events) if event.type == "release.previewed"),
         None,
     )
+
+
+def _deny_stale_preview(deny: RejectFn, detail: str) -> None:
+    """Close the release decision path on a stale/unverifiable preview
+    (FR-0309): the decision is never queued against a preview it was not
+    made under."""
+    deny("stale_preview", detail)
+
+
+def _bind_release(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
+    """FR-0309: the decision binds the live preview digest; stale rejects."""
+    events, state = _run_plane(str(repo), run_id)
+    preview_event = _latest_preview(events)
     if preview_event is None:
-        deny(
-            "stale_preview",
-            "release decision rejected: no release preview is bound to this run",
+        _deny_stale_preview(
+            deny, "release decision rejected: no release preview is bound to this run"
         )
     preview = preview_event.payload if isinstance(preview_event.payload, dict) else {}
     if request.get("preview_digest") != preview.get("preview_digest"):
-        deny(
-            "stale_preview",
+        _deny_stale_preview(
+            deny,
             "release decision rejected: the submitted digest does not match "
             "the bound release preview",
         )
@@ -180,13 +198,13 @@ def _bind_release(repo: Path, run_id: str, request: dict, deny) -> None:
             repo, paths.tracks_home(repo), events, preview_event, state.version or ""
         )
     except (OSError, ValueError) as error:
-        deny(
-            "stale_preview",
+        _deny_stale_preview(
+            deny,
             f"release decision rejected: release preview could not be verified: {error}",
         )
     if authorization.preview_stale:
-        deny(
-            "stale_preview",
+        _deny_stale_preview(
+            deny,
             "release decision rejected: release preview is stale: "
             f"{authorization.stale_reason}",
         )
@@ -195,7 +213,7 @@ def _bind_release(repo: Path, run_id: str, request: dict, deny) -> None:
         deny("validation_failed", f"release decision rejected: {err}")
 
 
-def _bind_retry(repo: Path, run_id: str, request: dict, deny) -> None:
+def _bind_retry(repo: Path, run_id: str, request: dict, deny: RejectFn) -> None:
     """FR-0311: retry only from the legal position (v0.8 repair/escape gate)."""
     _events, state = _run_plane(str(repo), run_id)
     gate_error = _retry_gate_error(state, bool(request.get("clear_evidence")))
@@ -387,7 +405,7 @@ class CommandService:
         store: ServiceDB,
         kind: str,
         request: dict,
-        deny,
+        deny: RejectFn,
     ) -> None:
         """Accept-time web-gate binding (IF-WEBGATE-001 §1b.1): run the
         revision/preview/evidence binding before any persistence. Rejection

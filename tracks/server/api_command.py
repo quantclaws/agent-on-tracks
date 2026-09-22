@@ -71,6 +71,15 @@ _STATUS_BY_REASON = {
 }
 
 
+def _rejection_status(kind: str, reason: str) -> int:
+    """§2b status for a service rejection: the closed reason map, with the
+    retry endpoint's fixed 409 override (§2b #26 — the retry position is
+    conveyed through the readable cause, not the reason token)."""
+    if kind == "retry_run" and reason == "validation_failed":
+        return 409
+    return _STATUS_BY_REASON.get(reason, 400)
+
+
 @dataclass(frozen=True)
 class CommandResponse:
     """HTTP envelope of a mutating route: status code + JSON payload."""
@@ -255,13 +264,9 @@ def _accept(
             idempotency_key=request.headers.get("Idempotency-Key"),
         )
     except Rejection as rejection:
-        status = _STATUS_BY_REASON.get(rejection.reason, 400)
-        if kind == "retry_run" and rejection.reason == "validation_failed":
-            # §2b #26: the retry endpoint rejects with 409 and a readable
-            # cause (evidence stale / not recoverable) regardless of the
-            # retry position wording carried in the closed reason set.
-            status = 409
-        return _error(status, rejection.reason, rejection.detail)
+        return _error(
+            _rejection_status(kind, rejection.reason), rejection.reason, rejection.detail
+        )
     payload: dict = {"command_id": receipt.command_id}
     if respond is not None:
         payload.update(respond(receipt))
