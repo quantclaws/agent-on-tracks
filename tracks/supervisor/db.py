@@ -213,13 +213,7 @@ class ServiceDB:
         """
         status = "failed" if failure is not None else "completed"
         outcome = failure if failure is not None else result
-        run_id = None
         with contextlib.closing(self._connect()) as conn:
-            row = conn.execute(
-                "SELECT run_id FROM commands WHERE command_id = ?", (command_id,)
-            ).fetchone()
-            if row is not None and row["run_id"]:
-                run_id = str(row["run_id"])
             cursor = conn.execute(
                 "UPDATE commands SET status = ?, result_json = ?, updated_at = ?"
                 " WHERE command_id = ? AND status = 'claimed' AND claim_generation = ?",
@@ -228,12 +222,22 @@ class ServiceDB:
             conn.commit()
             if cursor.rowcount == 1:
                 return True
-        if run_id:
-            self._quarantine_late_result(run_id, command_id, generation)
+        self._audit_late_result(command_id, generation)
         return False
 
-    def _quarantine_late_result(self, run_id: str, command_id: str, generation: int) -> None:
-        """Audit a completion the fencing CAS rejected (interfaces §1a #17)."""
+    def _audit_late_result(self, command_id: str, generation: int) -> None:
+        """Audit a completion the fencing CAS rejected (interfaces §1a #17).
+
+        The command row attributes the run; an unknown command id has no run
+        to accuse, so nothing is fabricated. This is the store's single
+        ``worker.late_result`` emission point for fenced-out completions —
+        distinct from ``lease.quarantine_late_result``, which guards on the
+        fencing floor before emitting.
+        """
+        row = self.get_command(command_id)
+        run_id = str(row["run_id"]) if row is not None and row["run_id"] else None
+        if not run_id:
+            return
         current = current_generation(self, run_id)
         self.append_event(
             "worker.late_result",

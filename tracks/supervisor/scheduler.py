@@ -220,7 +220,7 @@ class Scheduler:
             self._db.append_event(
                 "run.pause_requested", payload, run_id=run_id, command_id=command_id
             )
-        else:
+        elif kind == "resume_run":
             payload = {
                 "run_id": run_id,
                 "actor": actor,

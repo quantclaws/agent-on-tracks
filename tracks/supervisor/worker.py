@@ -84,8 +84,8 @@ class WorkerManager:
             if self._db.complete_command(command_id, generation, None, failure):
                 status = "failed"
             else:
-                # The fencing CAS rejected the outcome; the store quarantines
-                # a stale generation with worker.late_result (§1a #17).
+                # The fencing CAS rejected the outcome; the store audits it as
+                # a quarantined worker.late_result (interfaces §1a #17).
                 status = "quarantined"
         return {
             "command_id": command_id,
