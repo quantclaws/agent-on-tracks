@@ -29,7 +29,6 @@ from typing import Any
 
 from tracks.executor.drive import DriveConfig, DriveResult, drive_once
 from tracks.supervisor.db import ServiceDB
-from tracks.supervisor.lease import quarantine_late_result
 from tracks.supervisor.waiting import WaitPolicy, classify_wait, enter_wait
 
 _USAGE = "usage: python -m tracks.supervisor.worker_main --command-id <id>"
@@ -55,9 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     generation = int(row.get("claim_generation") or 0)
     result, failure = _execute(db, row)
     if not db.complete_command(command_id, generation, result, failure):
-        # Fenced CAS rejected the outcome: a newer generation owns the run —
-        # quarantine and never let a stale worker's result drive anything.
-        quarantine_late_result(db, _run_id_of(row), command_id, generation)
+        # Fenced CAS rejected the outcome (a newer generation owns the run):
+        # the store quarantines it with worker.late_result so a stale worker's
+        # result can never drive anything.
         return 1
     return 1 if failure is not None else 0
 

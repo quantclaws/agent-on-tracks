@@ -18,6 +18,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tracks.supervisor.lease import current_generation, late_result_payload
+
 SCHEMA_VERSION = 1
 
 # Closed set of service-plane event types (interfaces §1a). tracks.db
@@ -200,18 +202,45 @@ class ServiceDB:
     def complete_command(
         self, command_id: str, generation: int, result: dict | None, failure: dict | None
     ) -> bool:
-        """CAS claimed->completed/failed; False means a stale generation
-        (the caller emits ``worker.late_result`` and discards the outcome)."""
+        """CAS claimed->completed/failed.
+
+        The CAS binds ``status=claimed AND claim_generation=?``: a failure
+        means this generation no longer owns the command, so the outcome is
+        never committed and is audited as a quarantined late result
+        (``worker.late_result(disposition=quarantined)`` carrying the current
+        fencing generation, interfaces §1i / §1a #17) — lease and run state
+        are not touched. Returns True only when this generation committed.
+        """
         status = "failed" if failure is not None else "completed"
         outcome = failure if failure is not None else result
+        run_id = None
         with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT run_id FROM commands WHERE command_id = ?", (command_id,)
+            ).fetchone()
+            if row is not None and row["run_id"]:
+                run_id = str(row["run_id"])
             cursor = conn.execute(
                 "UPDATE commands SET status = ?, result_json = ?, updated_at = ?"
                 " WHERE command_id = ? AND status = 'claimed' AND claim_generation = ?",
                 (status, json.dumps(outcome), _utcnow(), command_id, generation),
             )
             conn.commit()
-            return cursor.rowcount == 1
+            if cursor.rowcount == 1:
+                return True
+        if run_id:
+            self._quarantine_late_result(run_id, command_id, generation)
+        return False
+
+    def _quarantine_late_result(self, run_id: str, command_id: str, generation: int) -> None:
+        """Audit a completion the fencing CAS rejected (interfaces §1a #17)."""
+        current = current_generation(self, run_id)
+        self.append_event(
+            "worker.late_result",
+            late_result_payload(run_id, command_id, generation, current),
+            run_id=run_id,
+            command_id=command_id,
+        )
 
     def requeue_claimed(self, reason: str) -> list:
         """Recovery: claimed -> accepted with command.requeued (§1h.7)."""

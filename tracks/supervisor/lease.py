@@ -131,6 +131,25 @@ def is_fenced(db: Any, run_id: str, generation: int) -> bool:
     return generation < current_generation(db, run_id)
 
 
+def late_result_payload(
+    run_id: str, command_id: str, generation: int, current: int
+) -> dict:
+    """Payload of the auditable quarantine event (interfaces §1a #17).
+
+    Shared by the explicit ``quarantine_late_result`` seam and the completion
+    CAS fence in ``ServiceDB.complete_command`` so one payload shape carries
+    both emission points: the stale generation, the current fencing
+    generation, and ``disposition=quarantined``.
+    """
+    return {
+        "run_id": run_id,
+        "command_id": command_id,
+        "generation": generation,
+        "current_generation": current,
+        "disposition": "quarantined",
+    }
+
+
 def quarantine_late_result(
     db: Any, run_id: str, command_id: str, generation: int
 ) -> bool:
@@ -146,13 +165,7 @@ def quarantine_late_result(
         return False
     db.append_event(
         "worker.late_result",
-        {
-            "run_id": run_id,
-            "command_id": command_id,
-            "generation": generation,
-            "current_generation": current,
-            "disposition": "quarantined",
-        },
+        late_result_payload(run_id, command_id, generation, current),
         run_id=run_id,
     )
     return True

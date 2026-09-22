@@ -25,8 +25,10 @@ Contract token: IF-SCHED-001.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,16 @@ from typing import Any
 # latest one decides whether the active run may be driven.
 _PAUSE_EVENTS = ("run.pause_requested", "run.paused", "run.resumed")
 _PAUSE_BLOCKING = ("run.pause_requested", "run.paused")
+
+# Internal actor for the automatic swap steps the scheduler accepts on the
+# operator's behalf (interfaces §1a actor_class=system; §1i resume_run).
+_SWAP_SYSTEM_ACTOR = "supervisor"
+
+
+def _canonical_digest(params: dict) -> str:
+    """sha256 over the canonical JSON of params (idempotency digest, §1b.2)."""
+    canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 _SCHEDULE_UPSERT = (
     "INSERT INTO schedule (id, active_run, queue_json) VALUES (1, ?, ?)"
@@ -76,16 +88,18 @@ class Scheduler:
         """Enqueue; with preempt=true and an active run, start the auditable
         hotfix swap sequence (pause active -> activate hotfix); otherwise
         reject with active_run_exists (handled by the command service)."""
+        del journey  # journey-aware prechecks ride the command service (FR-0292)
         state = self._state()
         active = state["active_run"]
         if not active:
             self._switch(run_id, state["queued"], "run_created")
             return
         if preempt:
-            # Hotfix urgency: the submitted run takes the single active slot
-            # and the preempted run is parked at the queue front so the next
-            # switch resumes it (§1i). The pause/resume commands with their
-            # actor + command_id ride the command service (AC-FR0296-04).
+            # AC-FR0296-04: the preempted active run is paused through the
+            # command-service side effects (pause_run accepted with actor +
+            # command_id on the audit trail, SM-01.1) before the hotfix takes
+            # the single active slot (§1i).
+            self._audit_swap_command("pause_run", active, actor=actor, actor_class="human")
             self._switch(run_id, [active, *state["queued"]], "hotfix_preemption")
             return
         # A queued run leaves the active slot untouched, so there is no
@@ -100,7 +114,19 @@ class Scheduler:
         if run_id == active:
             promoted = queue[0] if queue else None
             remaining = queue[1:]
-            reason = "run_resumed" if promoted and self._preempted(run_id) else "run_terminal"
+            resumed = promoted is not None and self._preempted(run_id)
+            if resumed:
+                # AC-FR0296-04: after the hotfix reaches terminal, the
+                # preempted feature is resumed through the command-service
+                # side effects (resume_run accepted with actor + command_id)
+                # before it takes the active slot again (§1i).
+                self._audit_swap_command(
+                    "resume_run",
+                    promoted,
+                    actor=_SWAP_SYSTEM_ACTOR,
+                    actor_class="system",
+                )
+            reason = "run_resumed" if resumed else "run_terminal"
             self._switch(promoted, remaining, reason)
         elif run_id in queue:
             # A queued run never held the active slot: drop it from the queue
@@ -143,6 +169,66 @@ class Scheduler:
             ):
                 return True
         return False
+
+    def _audit_swap_command(
+        self, kind: str, run_id: str, *, actor: str, actor_class: str
+    ) -> str:
+        """Accept one hotfix-swap step (pause_run / resume_run) as a command.
+
+        Persists the command row in ``accepted`` plus the command-service
+        side effects: ``command.accepted`` and the kind event
+        (``run.pause_requested`` / ``run.resumed``) carry actor + command_id,
+        so the whole swap stays auditable on the timeline (SM-01.1;
+        interfaces §1i — AC-FR0296-04). Returns the command_id.
+        """
+        command_id = uuid.uuid4().hex
+        params = {"run_id": run_id}
+        digest = _canonical_digest(params)
+        idempotency_key = f"swap:{kind}:{run_id}:{command_id}"
+        self._db.register_command(
+            {
+                "command_id": command_id,
+                "kind": kind,
+                "params_json": json.dumps(params, sort_keys=True),
+                "params_digest": digest,
+                "idempotency_key": idempotency_key,
+                "actor": actor,
+                "actor_class": actor_class,
+                "surface": "internal",
+                "project_id": None,
+                "run_id": run_id,
+            }
+        )
+        self._db.append_event(
+            "command.accepted",
+            {
+                "command_id": command_id,
+                "kind": kind,
+                "idempotency_key": idempotency_key,
+                "params_digest": digest,
+                "actor": actor,
+                "actor_class": actor_class,
+                "surface": "internal",
+                "project_id": None,
+                "run_id": run_id,
+            },
+            run_id=run_id,
+            command_id=command_id,
+        )
+        if kind == "pause_run":
+            payload = {"run_id": run_id, "actor": actor, "command_id": command_id}
+            self._db.append_event(
+                "run.pause_requested", payload, run_id=run_id, command_id=command_id
+            )
+        else:
+            payload = {
+                "run_id": run_id,
+                "actor": actor,
+                "command_id": command_id,
+                "from_stage": None,
+            }
+            self._db.append_event("run.resumed", payload, run_id=run_id, command_id=command_id)
+        return command_id
 
     def _write(self, active_run: str | None, queue: list[str]) -> None:
         """Persist the schedule singleton row (id=1) in one statement."""

@@ -18,8 +18,6 @@ import subprocess
 import sys
 from typing import Any
 
-from tracks.supervisor.lease import quarantine_late_result
-
 _WORKER_MODULE = "tracks.supervisor.worker_main"
 
 
@@ -86,7 +84,8 @@ class WorkerManager:
             if self._db.complete_command(command_id, generation, None, failure):
                 status = "failed"
             else:
-                quarantine_late_result(self._db, run_id, command_id, generation)
+                # The fencing CAS rejected the outcome; the store quarantines
+                # a stale generation with worker.late_result (§1a #17).
                 status = "quarantined"
         return {
             "command_id": command_id,
