@@ -22,7 +22,7 @@ import zlib
 from pathlib import Path
 
 from tracks.discuss import writer
-from tracks.discuss.gate import check_ready
+from tracks.discuss.gate import adjudication_owner, check_ready
 from tracks.discuss.locate import comment_token, token_for
 from tracks.discuss.model import iter_comments, speaker_key
 from tracks.discuss.parser import parse_threads
@@ -294,6 +294,13 @@ def _edit(repo: Path, ns) -> int:
 def _set_status(repo: Path, ns) -> int:
     target = _scope_check(repo, ns.file)
     token = _decode_token(ns.token, "thread")
+    if ns.status == "resolved":
+        text = target.read_text(encoding="utf-8") if target.exists() else ""
+        owner = adjudication_owner(text, ns.thread_id)
+        if owner is not None and speaker_key(owner) != speaker_key(ns.operator):
+            raise writer.WriteError(
+                f"resolved requires the requested adjudicator {owner!r} (FR-0314.4)"
+            )
     _atomic_write(
         target, lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator)
     )

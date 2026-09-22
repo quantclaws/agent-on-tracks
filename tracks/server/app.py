@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import sqlite3
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -220,7 +221,13 @@ class _AuthGlue:
 
 
 async def _login_password(request: Any) -> Any:
-    """JSON body first (§2b #1), the login form fallback second."""
+    """JSON body first (§2b #1), the login form fallback second.
+
+    The urlencoded fallback (the ``/login`` page form) parses natively;
+    Starlette's ``request.form()`` would assert an optional multipart
+    dependency the contract does not require, so any other content type
+    fails closed as a missing password (401 mismatch) instead of a 500.
+    """
     content_type = str(request.headers.get("content-type") or "").split(";")[0].strip()
     if content_type == "application/json":
         try:
@@ -228,8 +235,11 @@ async def _login_password(request: Any) -> Any:
         except ValueError:
             return None
         return body.get("password") if isinstance(body, dict) else None
-    form = await request.form()
-    return form.get("password")
+    if content_type == "application/x-www-form-urlencoded":
+        raw = (await request.body()).decode("utf-8", "replace")
+        values = urllib.parse.parse_qs(raw)
+        return values.get("password", [None])[0]
+    return None
 
 
 class _AuthBoundary:

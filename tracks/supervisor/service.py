@@ -7,19 +7,33 @@ Business validations reuse the existing gate semantics (cmd_approve /
 release_gate / escape / repair) — this service never appends domain events
 directly and never bypasses revision/preview binding.
 
-Contract tokens: IF-CMDSVC-001, IF-WEBGATE-001, IF-PAUSE-001, IF-SCHED-001.
+Contract tokens: IF-CMDSVC-001, IF-WEBGATE-001, IF-WEBAUTH-001, IF-PAUSE-001,
+IF-SCHED-001.
 """
 
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
+import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tracks import paths
+from tracks.baseline import revision_digest
+from tracks.cli.gate_cmd import _retry_gate_error
+from tracks.discuss import writer
+from tracks.discuss.gate import adjudication_owner
+from tracks.discuss.locate import token_for
+from tracks.discuss.model import Thread, speaker_key
+from tracks.discuss.parser import parse_tag, parse_threads
+from tracks.executor.release_authorization import assess_release, validate_authorization
+from tracks.store import Store
 from tracks.supervisor.db import ServiceDB
 
 # Closed command-kind set (interfaces §1b).
@@ -69,6 +83,151 @@ def _params_digest(params: dict) -> str:
     """Idempotency digest: sha256 over the canonical JSON of params (§1b.2)."""
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# -- web-gate accept-time binding (IF-WEBGATE-001 §1b.1) ----------------------
+#
+# The web human decisions bind the object they were made against at
+# *acceptance* time (SM-01.1 persist-then-execute): an approval binds the
+# revision the user actually reviewed (FR-0308), a release decision binds the
+# live preview digest (FR-0309), and a controlled retry only accepts from the
+# legal v0.8 repair/escape position (FR-0311). The binding reuses the existing
+# shared validators — the service never appends domain events itself.
+
+_WEBGATE_KINDS = frozenset(
+    {"record_stage_approval", "record_release_decision", "retry_run"}
+)
+
+_RUNS_BY_ID = "SELECT 1 FROM runs WHERE run_id = ? LIMIT 1"
+_EVENTS_BY_RUN = "SELECT 1 FROM events WHERE run_id = ? LIMIT 1"
+
+
+def _run_exists(repo_path: str, run_id: str) -> bool:
+    """True when the repo's tracks.db already holds run_id (realpath read)."""
+    db_path = paths.db_path(paths.tracks_home(Path(repo_path)))
+    if not db_path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        for query in (_RUNS_BY_ID, _EVENTS_BY_RUN):
+            try:
+                if conn.execute(query, (run_id,)).fetchone() is not None:
+                    return True
+            except sqlite3.Error:
+                continue
+        return False
+    finally:
+        conn.close()
+
+
+def _run_plane(repo_path: str, run_id: str) -> tuple[list, Any]:
+    """(events, state) for a run, read from its tracks.db."""
+    store = Store(paths.tracks_home(Path(repo_path)))
+    try:
+        return list(store.events(run_id)), store.state(run_id)
+    finally:
+        store.close()
+
+
+def _current_revision(repo: Path, version: str | None) -> str | None:
+    """Material trio digest the reviewer would have signed — the same content
+    addressing ``cmd_approve``/``baseline.revision_digest`` uses. None when the
+    version docs are absent or unreadable (fail closed at the binding)."""
+    if not version:
+        return None
+    try:
+        return revision_digest(paths.version_dir(paths.tracks_home(repo), version))
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _bind_approval(repo: Path, run_id: str, request: dict, deny) -> None:
+    """FR-0308: the approval binds the revision the user actually reviewed."""
+    _events, state = _run_plane(str(repo), run_id)
+    current = _current_revision(repo, state.version)
+    if current is None or request.get("expected_revision") != current:
+        deny(
+            "stale_revision",
+            "approval rejected: the reviewed revision is stale; "
+            f"current revision is {current or 'unavailable'}",
+        )
+
+
+def _bind_release(repo: Path, run_id: str, request: dict, deny) -> None:
+    """FR-0309: the decision binds the live preview digest; stale rejects."""
+    events, state = _run_plane(str(repo), run_id)
+    preview_event = next(
+        (event for event in reversed(events) if event.type == "release.previewed"),
+        None,
+    )
+    if preview_event is None:
+        deny(
+            "stale_preview",
+            "release decision rejected: no release preview is bound to this run",
+        )
+    preview = preview_event.payload if isinstance(preview_event.payload, dict) else {}
+    if request.get("preview_digest") != preview.get("preview_digest"):
+        deny(
+            "stale_preview",
+            "release decision rejected: the submitted digest does not match "
+            "the bound release preview",
+        )
+    try:
+        authorization = assess_release(
+            repo, paths.tracks_home(repo), events, preview_event, state.version or ""
+        )
+    except (OSError, ValueError) as error:
+        deny(
+            "stale_preview",
+            f"release decision rejected: release preview could not be verified: {error}",
+        )
+    if authorization.preview_stale:
+        deny(
+            "stale_preview",
+            "release decision rejected: release preview is stale: "
+            f"{authorization.stale_reason}",
+        )
+    ok, err = validate_authorization(str(request.get("action")), authorization, preview)
+    if not ok:
+        deny("validation_failed", f"release decision rejected: {err}")
+
+
+def _bind_retry(repo: Path, run_id: str, request: dict, deny) -> None:
+    """FR-0311: retry only from the legal position (v0.8 repair/escape gate)."""
+    _events, state = _run_plane(str(repo), run_id)
+    gate_error = _retry_gate_error(state, bool(request.get("clear_evidence")))
+    if gate_error is not None:
+        deny("validation_failed", f"retry rejected: {gate_error}")
+
+
+_BINDINGS = {
+    "record_stage_approval": _bind_approval,
+    "record_release_decision": _bind_release,
+    "retry_run": _bind_retry,
+}
+
+
+# Web resolve entry (IF-WEBAUTH-001 §1f.4): access.denied surface token.
+_RESOLUTION_SURFACE = "resolve_thread"
+
+# Root-comment blockquote line: ``> **Speaker [STATUS]:** body``.
+_ROOT_COMMENT = re.compile(r"^\s*(>+)\s*(.*)$")
+
+
+def _apply_resolved(text: str, thread: Thread) -> str:
+    """Flip ``thread`` to resolved using the discuss canonical root format.
+
+    The adjudication grant (§1f.4) supersedes the FR-090 operator==initiator
+    rule on the web face, so the flip cannot ride ``writer.set_status``; the
+    mechanics mirror it via the public writer/parser primitives only.
+    """
+    lines = text.splitlines()
+    tag = parse_tag(_ROOT_COMMENT.match(lines[thread.root_line - 1]).group(2))
+    lines[thread.root_line - 1] = writer.format_root(thread.initiator, "resolved", tag[2])[0]
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
 @dataclass(frozen=True)
@@ -223,6 +382,40 @@ class CommandService:
                 access_denied=False,
             )
 
+    def _preflight_webgate(
+        self,
+        store: ServiceDB,
+        kind: str,
+        request: dict,
+        deny,
+    ) -> None:
+        """Accept-time web-gate binding (IF-WEBGATE-001 §1b.1): run the
+        revision/preview/evidence binding before any persistence. Rejection
+        leaves no command row and only the ``command.rejected`` audit
+        (SM-01.5) — the accepted decision is never queued on a stale object."""
+        if kind not in _WEBGATE_KINDS:
+            return
+        run_id = request.get("run_id")
+        project = self._project_for_run(store, run_id)
+        if project is None:
+            deny("not_found", f"run {run_id!r} is not registered on this service")
+        _BINDINGS[kind](Path(str(project["repo_path"])), str(run_id), request, deny)
+
+    @staticmethod
+    def _project_for_run(store: ServiceDB, run_id: Any) -> dict | None:
+        """The registered project owning run_id: the service-plane rows first
+        (commands / service events), then a tracks.db scan across the
+        registered projects — same discovery order as the read projections."""
+        if not run_id:
+            return None
+        project = store.get_project(store.find_run_project_id(str(run_id)))
+        if project is not None:
+            return project
+        for candidate in store.list_projects():
+            if _run_exists(str(candidate.get("repo_path") or ""), str(run_id)):
+                return candidate
+        return None
+
     def _record_acceptance(
         self,
         store: ServiceDB,
@@ -331,6 +524,7 @@ class CommandService:
             return duplicate
         if kind == "create_run":
             self._preflight_create_run(store, request, actor, actor_class)
+        self._preflight_webgate(store, kind, request, deny)
         command_id = uuid.uuid4().hex
         store.register_command(
             {
@@ -380,6 +574,70 @@ class CommandService:
     def resolve_discussion_thread(
         self, doc_path: Path, thread_token: str, *, actor: str, actor_class: str
     ) -> None:
-        """set-status resolved honoring adjudication ownership (§1f.4):
-        only the requested party (authenticated) may resolve."""
-        raise NotImplementedError("IF-WEBAUTH-001")
+        """set-status resolved honoring adjudication ownership (§1f.4).
+
+        The web equivalent entry: the operator is the authenticated session
+        actor. A thread whose root comment explicitly requests a party is
+        resolved only by that party; any other attempt leaves the status
+        unchanged and lands an auditable ``access.denied(forbidden_actor)``.
+        Unrequested threads keep the discuss operator==initiator rule
+        (FR-090) via ``writer.set_status``. Fail closed: nothing is written
+        unless the whole transform succeeds.
+        """
+        self._locked_write(
+            doc_path, lambda text: self._resolve_text(text, thread_token, actor, actor_class)
+        )
+
+    def _resolve_text(self, text: str, thread_token: str, actor: str, actor_class: str) -> str:
+        """Adjudication-aware ``resolved`` transform (fail closed)."""
+        owner = adjudication_owner(text, thread_token)
+        if owner is not None and speaker_key(owner) != speaker_key(actor):
+            self._deny_resolution(
+                actor, actor_class, f"thread {thread_token!r} requests adjudication by {owner!r}"
+            )
+        thread = next((t for t in parse_threads(text) if t.thread_id == thread_token), None)
+        if thread is None:
+            raise Rejection(
+                reason="not_found", detail=f"thread {thread_token!r} not found in this document"
+            )
+        if owner is not None:
+            return _apply_resolved(text, thread)
+        try:
+            return writer.set_status(text, thread_token, token_for(thread), "resolved", actor)
+        except writer.WriteError as exc:
+            self._deny_resolution(actor, actor_class, str(exc))
+
+    def _deny_resolution(self, actor: str, actor_class: str, detail: str) -> None:
+        """Persist the denial audit and raise (status unchanged, §1f.4)."""
+        self._store().append_event(
+            "access.denied",
+            {
+                "surface": _RESOLUTION_SURFACE,
+                "reason": "forbidden_actor",
+                "actor": actor,
+                "actor_class": actor_class,
+            },
+        )
+        raise Rejection(reason="forbidden_actor", detail=detail) from None
+
+    def _locked_write(self, doc_path: Path, transform) -> None:
+        """flock-serialized read-modify-write (FR-110 parity with the CLI).
+
+        The lock-file name matches ``tracks.discuss.cli._atomic_write`` so
+        web-face and CLI-face writes mutually exclude; a raising transform
+        leaves the document byte-for-byte unchanged.
+        """
+        if not doc_path.exists():
+            raise Rejection(
+                reason="not_found", detail=f"document not found: {doc_path.name}"
+            )
+        lock_path = doc_path.with_name(doc_path.name + ".lock")
+        with open(lock_path, "w", encoding="utf-8") as lockf:
+            fcntl.flock(lockf, fcntl.LOCK_EX)
+            try:
+                text = doc_path.read_text(encoding="utf-8")
+                tmp = doc_path.with_name(doc_path.name + ".tmp")
+                tmp.write_text(transform(text), encoding="utf-8")
+                tmp.replace(doc_path)
+            finally:
+                fcntl.flock(lockf, fcntl.LOCK_UN)

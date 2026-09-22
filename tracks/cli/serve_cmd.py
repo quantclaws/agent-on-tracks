@@ -122,7 +122,14 @@ def _positive_int(flag: str, value: str) -> int:
 
 
 def _resolve_home(opts: dict) -> Path:
-    """``TRAC_SERVE_HOME`` override, else ``<first --repo>/.tracks/service``."""
+    """``--home`` flag first, then ``TRAC_SERVE_HOME``, else the default.
+
+    Interfaces §2a: the default is ``<first --repo>/.tracks/service`` and
+    ``TRAC_SERVE_HOME`` overrides that default; an explicit ``--home``
+    flag is the operator's direct choice and wins over both.
+    """
+    if opts.get("home"):
+        return Path(opts["home"]).expanduser().resolve()
     override = os.environ.get("TRAC_SERVE_HOME")
     if override:
         return Path(override).expanduser().resolve()

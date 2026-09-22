@@ -300,6 +300,43 @@ class ServiceDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_projects(self) -> list:
+        """Registered projects (interfaces §1c table 2), insertion order."""
+        with contextlib.closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT project_id, repo_path, version FROM projects ORDER BY rowid"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_project(self, project_id: str | None) -> dict | None:
+        """Registered project row by id (interfaces §1c table 2)."""
+        if not project_id:
+            return None
+        with contextlib.closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT project_id, repo_path, version FROM projects"
+                " WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def find_run_project_id(self, run_id: str | None) -> str | None:
+        """project_id that owns run_id (commands row, then service events)."""
+        if not run_id:
+            return None
+        queries = (
+            "SELECT project_id FROM commands WHERE run_id = ?"
+            " AND project_id IS NOT NULL LIMIT 1",
+            "SELECT project_id FROM service_events WHERE run_id = ?"
+            " AND project_id IS NOT NULL LIMIT 1",
+        )
+        with contextlib.closing(self._connect()) as conn:
+            for query in queries:
+                row = conn.execute(query, (run_id,)).fetchone()
+                if row is not None and row[0]:
+                    return str(row[0])
+        return None
+
     def get_schedule(self) -> dict | None:
         """Single schedule row (interfaces §1c table 8); None when unset."""
         with contextlib.closing(self._connect()) as conn:
