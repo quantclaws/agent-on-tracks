@@ -146,7 +146,14 @@ class MImplDiagnoseMixin:
         # (run 01KZTHE7 T-013: seq 937/942 blocked post-retry attempt 1).
         cutoff = 0
         for ev in self.store.events(self.run_id):
-            if ev.type == "human.retry":
+            # human.recover counts too (live defect, run 01M2QTJB T-019,
+            # 2026-09-22): the fresh M-IMPL cycle after a recover must not
+            # inherit the pre-recovery DIAGNOSE-loop failure counts — the
+            # budget guard tripped attempt 1 of the fresh cycle on nine
+            # self-referential unknowns and then dispatched Devon to "fix"
+            # a budget marker. A recover is a strictly stronger reset than
+            # a retry: the whole stage re-enters quiescent.
+            if ev.type in ("human.retry", "human.recover"):
                 cutoff = ev.seq
         return cutoff
 

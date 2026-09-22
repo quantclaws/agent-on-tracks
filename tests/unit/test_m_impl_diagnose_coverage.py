@@ -317,3 +317,27 @@ def test_verify_task_success_completes(tmp_path, monkeypatch):
     )
     assert [e[0] for e in host.emitted][-2:] == ["task.completed", "writelock.released"]
     assert not result_path.exists()
+
+
+def test_retry_cutoff_includes_human_recover(tmp_path):
+    """Live defect (run 01M2QTJB T-019, 2026-09-22): the fresh M-IMPL cycle
+    after `trac recover` inherited the pre-recovery DIAGNOSE-loop failure
+    counts — the budget guard tripped attempt 1 of the fresh cycle and
+    dispatched Devon to "fix" a budget marker. A recover is a strictly
+    stronger reset than a retry and must advance the cutoff."""
+
+    class _Ev:
+        def __init__(self, seq, type, payload):
+            self.seq, self.type, self.payload = seq, type, payload
+
+    seqs = iter(range(1, 100))
+    events = [
+        _Ev(next(seqs), "human.retry", {}),
+        _Ev(next(seqs), "human.recover", {"reason": "r"}),
+    ]
+    host = _Host(tmp_path)
+    host.store.events_list = list(events)
+    assert host._retry_cutoff_seq() == 2
+    events.append(_Ev(next(seqs), "human.retry", {}))
+    host.store.events_list = list(events)
+    assert host._retry_cutoff_seq() == 3
