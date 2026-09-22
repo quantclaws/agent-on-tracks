@@ -175,7 +175,7 @@ class Scheduler:
 
     def _accept_swap_step(
         self, kind: str, run_id: str, *, actor: str, actor_class: str
-    ) -> str:
+    ) -> None:
         """Accept one hotfix-swap step (pause_run / resume_run) as a command.
 
         The step rides the full §1b.1 acceptance tiers (guard, schema,
@@ -183,9 +183,9 @@ class Scheduler:
         the command row reaches ``accepted`` and ``command.accepted`` plus the
         kind event (``run.pause_requested`` / ``run.resumed``) land on the
         timeline with the operator actor and the assigned command_id
-        (interfaces §1i — AC-FR0296-04). Returns the command_id.
+        (interfaces §1i — AC-FR0296-04).
         """
-        receipt = self._commands().accept(
+        self._commands().accept(
             kind,
             {"run_id": run_id},
             actor=actor,
@@ -193,7 +193,6 @@ class Scheduler:
             surface="internal",
             idempotency_key=None,
         )
-        return str(receipt.command_id)
 
     def _resume_preempted(self, run_id: str) -> None:
         """AC-FR0296-04: resume the preempted feature through the command

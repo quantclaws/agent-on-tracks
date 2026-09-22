@@ -441,10 +441,7 @@ class CommandService:
         schedule = store.get_schedule()
         if not run_id or schedule is None or schedule.get("active_run") != run_id:
             return
-        project = self._project_for_run(store, str(run_id))
-        if project is None:
-            return
-        _events, state = _run_plane(str(project["repo_path"]), str(run_id))
+        state = self._run_state(store, run_id)
         if state is None or (state.status != "completed" and state.terminal_state is None):
             return
         terminal = state.terminal_state or state.status
@@ -548,6 +545,15 @@ class CommandService:
         only when the run is not resolvable here (the worker carries the
         stage at execution).
         """
+        state = self._run_state(store, run_id)
+        return state.stage if state is not None else None
+
+    def _run_state(self, store: ServiceDB, run_id: Any) -> Any | None:
+        """Projected State of run_id from its registered project's run plane.
+
+        None when the run is not resolvable on the service plane (unknown
+        project, unreadable run plane) — callers fail open on absence.
+        """
         if not run_id:
             return None
         project = self._project_for_run(store, run_id)
@@ -557,7 +563,7 @@ class CommandService:
             _events, state = _run_plane(str(project["repo_path"]), str(run_id))
         except (OSError, sqlite3.Error, ValueError):
             return None
-        return state.stage if state is not None else None
+        return state
 
     def accept(
         self,
