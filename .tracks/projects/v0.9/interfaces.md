@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 interfaces_id: IF-009
 spec_ref: SPEC-009
 arch_ref: ARCH-009
-created: 2026-09-18
+created: 2026-09-23
 status: draft
 sha:
 ---
@@ -11,6 +11,8 @@ sha:
 # v0.9 — 接口与类型化 Schema：Web 后台持续驱动与最小工作台
 
 本文是 IF-008 的增量延伸：v0.1～v0.8 的事件溯源、封闭事件集、命令 WAL、审批 revision 绑定、release preview/三择一、escape barrier、发布幂等/reconcile、guard registry 与 CLI 合同全部继承；v0.9 新增的是**服务面合同**——HTTP API、持久命令服务、supervisor 驱动/租约/等待、只读投影与事件订阅，以及文档材料的 Web 审阅/编辑。本文只写外部可观察契约；模块内部组织见 architecture.md。
+
+revision 注记：本文 2026-09-23 经 M-DESIGN DRAFT 重起草，合同面（§1a–§1k 服务面合同、§2 CLI/HTTP 合同、§3 存储契约、§4 可观察出口、§5 IF Registry）与 2026-09-18 revision 无变更。
 
 ## 0. 延续性（什么不变）
 

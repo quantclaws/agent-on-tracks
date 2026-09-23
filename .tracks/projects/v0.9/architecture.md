@@ -2,7 +2,7 @@
 envelope: tracks-envelope:v2
 architecture_id: ARCH-009
 spec_ref: SPEC-009
-created: 2026-09-18
+created: 2026-09-23
 status: draft
 sha:
 ---
@@ -10,6 +10,8 @@ sha:
 # v0.9 — 架构：Web 后台持续驱动与最小工作台
 
 本文是 ARCH-008 的增量延伸。v0.1～v0.8 的事件溯源、单写者、canonical 阶段状态机、发布闭环五阶段、质量守卫 registry、测试流水线与既有 CLI 全部保持不变；v0.9 在此之上新增两个顶层包——`tracks/server/`（Web 交付面）与 `tracks/supervisor/`（后台驱动控制层），以及 executor 轴上的结构化驱动步 `tracks/executor/drive.py`。核心收益是运行控制的持久化：命令先持久化再执行、supervisor 沿既有阶段状态机自动推进、外部等待可持久化并可跨重启恢复、人工决定在 Web 面完成且全部复用既有校验。server 不拥有绕过 quality/security/approval 的快捷路径，不复制第二套状态机。
+
+revision 注记：本文 2026-09-23 经 M-DESIGN DRAFT 重起草，合同面与 2026-09-18 revision 无变更——模块边界、§1.2 六元组 closure（74 条 required AC）、Scaffold 宣言、§4.2 guard registry 与全部 IF 引用保持一致；本设计已经 M-IMPL 全量实现与 FULL 套件验证，无可归因设计缺陷（前序失败证据 1-devon-87 经诊断为不可复现的崩溃残留记录）。
 
 ## 0. 延续性声明（什么不变）
 

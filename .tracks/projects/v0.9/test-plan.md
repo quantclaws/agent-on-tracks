@@ -1,7 +1,7 @@
 ---
 envelope: tracks-envelope:v2
 spec_id: SPEC-009
-created: 2026-09-18
+created: 2026-09-23
 status: draft
 sha:
 ---
@@ -10,6 +10,7 @@ sha:
 
 - **Related acceptance**: `.tracks/projects/v0.9/acceptance.md`
 - **Related interfaces**: `.tracks/projects/v0.9/interfaces.md` (assertion basis — see §6.5)
+- **Revision 注记**：本文 2026-09-23 经 M-DESIGN DRAFT 重起草；覆盖范围（74 条 required AC）、§8 锚点归属、§9 e2e happy path 与 §10 注入矩阵与 2026-09-18 revision 无变更。
 
 ## 1. Stance and Boundaries
 
