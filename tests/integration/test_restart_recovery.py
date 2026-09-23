@@ -12,6 +12,7 @@ pytestmark = pytest.mark.integration
 
 
 # AC-FR0300-01@v0.9 TRACKS-TRACE worker kill reclaim no duplicate effects
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_worker_kill_reclaim_no_duplicate_effects(tmp_path: Path):
     """AC-FR0300-01: killed worker command requeued once, effects not duplicated."""
     import json

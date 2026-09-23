@@ -52,6 +52,7 @@ def _forbidden_files() -> list[tuple[Path, str]]:
 
 
 # AC-FR0264-04@v0.7 TRACKS-TRACE no language tokens in kernel/executor/cli
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_no_language_tokens_kernel_executor_cli():
     """AC-FR0264-04: kernel/executor/cli runtime code has no language tokens."""
     hits = _forbidden_files()
