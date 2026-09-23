@@ -64,6 +64,47 @@ def _seed_soak_run(tmp_path: Path, run_id: str) -> tuple[Path, Path]:
     return repo, home
 
 
+def _seed_query_load(tmp_path: Path, run_id: str) -> Path:
+    """A registered project carrying one driven run: a taskgraph with eight
+    completed tasks plus an AC registry, so each query does real work."""
+    repo = tmp_path / "repo"
+    store = Store(tracks_home(repo))
+    try:
+        store.append(run_id, "v0.9", "stage.entered", {"stage": "M-IMPL"})
+        store.append(
+            run_id,
+            "v0.9",
+            "taskgraph.committed",
+            {"task_count": 8, "tasks": [{"task_id": f"T-{n}"} for n in range(1, 9)]},
+        )
+        for index in range(1, 9):
+            store.append(
+                run_id, "v0.9", "task.started", {"task_id": f"T-{index}"}, task_id=f"T-{index}"
+            )
+            store.append(run_id, "v0.9", "task.completed", {"task_id": f"T-{index}"})
+    finally:
+        store.close()
+    vdir = repo / ".tracks" / "projects" / "v0.9"
+    vdir.mkdir(parents=True, exist_ok=True)
+    (vdir / "acceptance.md").write_text(
+        "## FR-0302\n\n"
+        + "\n".join(f"### AC-FR0302-0{index}\n\n- criterion\n" for index in range(1, 4)),
+        encoding="utf-8",
+    )
+    home = tmp_path / "service"
+    ServiceDB(home)
+    conn = sqlite3.connect(home / "service.db")
+    try:
+        conn.execute(
+            "INSERT INTO projects VALUES (?,?,?,?,?)",
+            ("proj-1", str(repo), "v0.9", "local-user", "2026-09-23T00:00:00+00:00"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return home
+
+
 def _serve_pid(serving_line: str) -> int:
     """The serve process id from the §2a startup line."""
     return int(re.search(r"\(pid (\d+)\)", serving_line).group(1))
@@ -118,15 +159,22 @@ def test_query_p95_under_1s(tmp_path: Path):
     """AC-NFR0150-02: overview detail timeline samples complete under 1s."""
     from tracks.server.projections import project_overview, project_run_detail, project_timeline
 
+    home = _seed_query_load(tmp_path, "run-1")
+
     samples = []
     for _ in range(5):
         start = time.monotonic()
-        project_overview(tmp_path)
-        project_run_detail(tmp_path, "run-1")
-        project_timeline(tmp_path, "run-1")
+        project_overview(home)
+        detail = project_run_detail(home, "run-1")
+        project_timeline(home, "run-1")
         samples.append(time.monotonic() - start)
     samples.sort()
+    assert all(sample > 0 for sample in samples), "each sample must cover a real query"
     assert samples[4] < 1.0
+    # the sampled snapshot reflects the seeded single-run drive load
+    assert detail["progress"]["tasks_done"] == 8
+    assert detail["progress"]["tasks_total"] == 8
+    assert detail["progress"]["ac_total"] == 3
 
 
 # AC-NFR0150-03@v0.9 TRACKS-TRACE soak memory bounded
