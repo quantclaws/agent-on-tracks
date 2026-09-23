@@ -124,3 +124,38 @@ def test_kernel_schema_language_free():
         text=True,
     )
     assert proc.returncode in (0, 1, 2)
+
+
+# v0.9 service-plane packages under the same neutrality invariant
+# (interfaces §5 IF-ADAPTER-003 v0.9 extension; test-plan §11 row 2).
+_SERVICE_ZONE_GLOBS = (
+    "tracks/server/**/*.py",
+    "tracks/supervisor/**/*.py",
+)
+
+
+def _forbidden_files_v09() -> list[tuple[Path, str]]:
+    """Language-token hits in the v0.9 service-plane packages.
+
+    Same token set and word-boundary semantics as the v0.8 scan; the new
+    packages carry no sanctioned isolation zone, so nothing is exempted.
+    """
+    hits: list[tuple[Path, str]] = []
+    for pattern in _SERVICE_ZONE_GLOBS:
+        for path in REPO.glob(pattern):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for match in TOKEN_RE_V08.finditer(text):
+                hits.append((path, match.group(0)))
+    return hits
+
+
+# AC-NFR0147-01@v0.8 TRACKS-TRACE v0.9 service packages zero language tokens
+def test_no_language_tokens_server_supervisor():
+    """AC-NFR0147-01 continuation: the v0.9 service-plane packages carry no
+    pytest/junit/java/venv/wheel/pip token, same as the kernel/executor/cli
+    forbidden zone (interfaces §5 IF-ADAPTER-003)."""
+    hits = _forbidden_files_v09()
+    assert not hits, (
+        "forbidden language tokens in tracks/server|tracks/supervisor: "
+        f"{[(str(p), t) for p, t in hits[:5]]}"
+    )
