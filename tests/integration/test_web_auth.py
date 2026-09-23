@@ -68,13 +68,55 @@ def test_unauthenticated_rejected_then_ok(tmp_path):
 def test_non_human_decision_rejected_audited(tmp_path):
     """AC-FR0314-02: agent actor on human-only kind rejected and audited."""
     from tracks.server.guard import GuardRejection
+    from tracks.supervisor.service import CommandService, Rejection
 
+    # the guard tier refuses the non-human actor on a human-only kind
     try:
         check_actor_class("record_stage_approval", "agent")
     except GuardRejection as exc:
         assert exc.reason == "forbidden_actor"
     else:
         raise AssertionError("agent approval must be rejected")
+
+    # the command service audits the attempt and advances nothing (§1f.5)
+    home = tmp_path / "home"
+    home.mkdir()
+    db = ServiceDB(home)
+    svc = CommandService(home, db, object())
+    try:
+        svc.accept(
+            kind="record_stage_approval",
+            params={
+                "run_id": "run-1",
+                "object": "spec",
+                "expected_revision": "rev-1",
+                "decision": "approve",
+            },
+            actor="agent-user",
+            actor_class="agent",
+            surface="http",
+            idempotency_key="agent-approval-1",
+        )
+    except Rejection as exc:
+        assert exc.reason == "forbidden_actor"
+    else:
+        raise AssertionError("an agent actor must not submit a human decision")
+
+    events = db.read_events()
+    assert any(
+        event["type"] == "command.rejected"
+        and (event["payload"] or {}).get("reason") == "forbidden_actor"
+        and (event["payload"] or {}).get("kind") == "record_stage_approval"
+        for event in events
+    ), "the rejected attempt must be audited as command.rejected"
+    assert any(
+        event["type"] == "access.denied"
+        and (event["payload"] or {}).get("reason") == "forbidden_actor"
+        for event in events
+    ), "the rejected attempt must be audited as access.denied"
+    assert db.find_by_idempotency("agent-approval-1") is None, (
+        "a rejected decision persists no command (no state advance)"
+    )
 
 
 # AC-FR0314-03@v0.9 TRACKS-TRACE shell payload blocked
