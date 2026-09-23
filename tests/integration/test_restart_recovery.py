@@ -48,8 +48,33 @@ def test_server_restart_resumes_without_loss(tmp_path: Path):
     home.mkdir()
     db = ServiceDB(home)
     enter_wait(
-        db, "run-2", {"wait_class": "ci", "reason": "ci", "retry_at": "2030-01-01T00:00:00+00:00"}
+        db,
+        "run-2",
+        {
+            "wait_class": "ci",
+            "reason": "ci green pending",
+            "retry_at": "2030-01-01T00:00:00+00:00",
+            "known_reset": True,
+            "backoff": {"interval_s": 60, "cap_s": 900, "next_probe_at": "2030-01-01T00:00:00+00:00"},
+        },
     )
+    before = db.get_wait("run-2")
+
     summary = recover_on_startup(db)
+
     assert "run-2" in summary["waits_kept"]
     assert summary["requeued"] == []
+    # the persisted wait survives the restart with retry_at and the full state
+    after = db.get_wait("run-2")
+    assert after is not None, "a restart must not drop a persisted wait"
+    assert after["retry_at"] == "2030-01-01T00:00:00+00:00"
+    assert after["wait_class"] == "ci"
+    assert after["reason"] == "ci green pending"
+    assert after["known_reset"] == 1
+    assert after["backoff_json"] == before["backoff_json"]
+    # recovery neither re-enters the wait nor repeats a publish side effect:
+    # the durable wait state is the only event, so nothing is lost or repeated
+    types = [event["type"] for event in db.read_events()]
+    assert types == ["wait.entered"], (
+        f"recovery must not re-emit wait or publish side effects: {types}"
+    )
