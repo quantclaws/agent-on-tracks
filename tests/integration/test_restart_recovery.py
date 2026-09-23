@@ -14,28 +14,53 @@ pytestmark = pytest.mark.integration
 # AC-FR0300-01@v0.9 TRACKS-TRACE worker kill reclaim no duplicate effects
 def test_worker_kill_reclaim_no_duplicate_effects(tmp_path: Path):
     """AC-FR0300-01: killed worker command requeued once, effects not duplicated."""
+    import json
+
     from tracks.supervisor.db import ServiceDB
 
     home = tmp_path / "home"
     home.mkdir()
     db = ServiceDB(home)
-    db.register_command(
-        {
-            "command_id": "cmd-kill-1",
-            "kind": "pause_run",
-            "params": {"run_id": "run-1"},
-            "params_digest": "d",
-            "idempotency_key": "kill-1",
-            "actor": "human",
-            "actor_class": "human",
-            "surface": "http",
-        }
-    )
-    db.claim_command("cmd-kill-1", "worker-old", 1)
+
+    def register(command_id: str, idempotency_key: str, run_id: str) -> None:
+        db.register_command(
+            {
+                "command_id": command_id,
+                "kind": "pause_run",
+                "params_json": json.dumps({"run_id": run_id}, sort_keys=True),
+                "params_digest": "d",
+                "idempotency_key": idempotency_key,
+                "actor": "human",
+                "actor_class": "human",
+                "surface": "http",
+                "run_id": run_id,
+            }
+        )
+
+    # the command the killed worker was executing when it died
+    register("cmd-kill-1", "kill-1", "run-1")
+    assert db.claim_command("cmd-kill-1", "worker-old", 1)
+    # a command that already finished: its external effect must not be repeated
+    register("cmd-done-1", "kill-done-1", "run-2")
+    assert db.claim_command("cmd-done-1", "worker-old", 1)
+    assert db.complete_command("cmd-done-1", 1, {"effect": "published"}, None)
+
     summary = recover_on_startup(db)
-    assert "cmd-kill-1" in summary["requeued"]
-    events = db.read_events()
-    assert sum(1 for e in events if e["type"] == "command.requeued") == 1
+
+    # the interrupted command is reclaimed exactly once, under the same id
+    assert summary["requeued"] == ["cmd-kill-1"]
+    assert sum(1 for e in db.read_events() if e["type"] == "command.requeued") == 1
+    reclaimed = db.get_command("cmd-kill-1")
+    assert reclaimed["status"] == "accepted"
+    assert json.loads(reclaimed["params_json"]) == {"run_id": "run-1"}
+    assert db.claim_command("cmd-kill-1", "worker-new", 2), (
+        "the reclaimed command must be claimable by the new worker"
+    )
+    # the completed command keeps its single effect: never requeued, never re-run
+    assert "cmd-done-1" not in summary["requeued"]
+    done = db.get_command("cmd-done-1")
+    assert done["status"] == "completed"
+    assert json.loads(done["result_json"]) == {"effect": "published"}
 
 
 # AC-FR0300-02@v0.9 TRACKS-TRACE server restart resumes without loss
