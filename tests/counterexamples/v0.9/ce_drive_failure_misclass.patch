@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/drive.py b/tmp/mut.py
+--- a/tracks/executor/drive.py
++++ b/tracks/executor/drive.py
+@@ -124,7 +124,7 @@ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+     return DriveResult(
+         kind="failed",
+         run_id=run_id,
+         stage=stage,
+         wait=None,
+-        failure={"failure_class": "unrecoverable", "reason": reason},
++        failure={"failure_class": "recoverable_external", "reason": reason},  # counterexample AC-FR0313-03
+         detail=f"run {run_id} drive failed: {reason}",
+     )

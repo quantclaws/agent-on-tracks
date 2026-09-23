@@ -83,15 +83,37 @@ def test_abandon_no_fake_success(tmp_path: Path):
 
 # AC-FR0313-03@v0.9 TRACKS-TRACE unrecoverable failure terminal
 def test_unrecoverable_failure_terminal(tmp_path: Path):
-    """AC-FR0313-03: unrecoverable failure ends failed terminal, not waiting."""
+    """AC-FR0313-03: a constructed unrecoverable failure ends at an explicit
+    failed terminal — never a wait-external state, a retry loop, or a
+    success-shaped terminal."""
     from tracks.executor.drive import DriveConfig, drive_once
 
+    # the injected failure is real, not mocked: an undrivable run (no
+    # run-plane events behind it) is a non-retryable drive failure, the
+    # terrain the worker meets when the backend cannot recover
     result = drive_once(tmp_path, "run-unrecoverable", config=DriveConfig())
-    if result.kind == "failed":
-        assert result.failure is not None
-        assert result.failure.get("failure_class") == "unrecoverable"
-        assert result.wait is None
-    else:
-        assert result.kind in ("continue", "await_human", "await_external", "terminal")
+
+    assert result.run_id == "run-unrecoverable"
+    assert result.kind == "failed", (
+        f"an unrecoverable failure must land on the failed state, got {result.kind}"
+    )
+    assert result.failure is not None
+    assert result.failure.get("failure_class") == "unrecoverable", (
+        "the failure must be classified unrecoverable, distinct from a "
+        "recoverable external wait (interfaces §1d closed set)"
+    )
+    assert result.failure.get("reason"), "the failure must carry its reason"
+    # distinct from the wait-external persistence: no wait survives the failure
+    assert result.wait is None, (
+        "an unrecoverable failure must not masquerade as an external wait"
+    )
+    # the outcome stays explainable (failure reason + next step) and is never
+    # dressed up as a completed success nor auto-continued into a retry loop
+    assert result.detail and "failed" in result.detail, (
+        f"the failure detail must explain the outcome: {result.detail!r}"
+    )
+    assert result.kind not in ("terminal", "continue"), (
+        "a failed drive is neither a success terminal nor an auto-continue"
+    )
 
 # OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).
