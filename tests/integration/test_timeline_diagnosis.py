@@ -79,6 +79,7 @@ def _ordering_key(row: dict) -> tuple[str, int, int]:
 
 
 # AC-FR0305-01@v0.9 TRACKS-TRACE timeline shows failures retries next
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_timeline_shows_failures_retries_next(tmp_path: Path):
     """AC-FR0305-01: the timeline shows the failure/retry trail that happened."""
     home = _seed_diagnosis_run(tmp_path, "run-1")

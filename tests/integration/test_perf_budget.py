@@ -135,6 +135,7 @@ def _drive_soak(base: str, cookie: str, csrf: str, prefix: str, count: int) -> N
 
 
 # AC-NFR0150-01@v0.9 TRACKS-TRACE accept returns after persist
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_accept_returns_after_persist(tmp_path: Path):
     """AC-NFR0150-01: accept returns at persist, long tasks never block it."""
     home = tmp_path / "home"

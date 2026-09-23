@@ -16,6 +16,7 @@ def _redactor() -> SecretRedactor:
 
 
 # AC-FR0315-01@v0.9 TRACKS-TRACE no plaintext secrets any surface
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_no_plaintext_secrets_any_surface():
     """AC-FR0315-01: API SSE HTML logs carry no plaintext credential."""
     red = _redactor()

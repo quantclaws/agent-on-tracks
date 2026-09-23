@@ -14,6 +14,7 @@ pytestmark = pytest.mark.integration
 
 
 # AC-FR0313-01@v0.9 TRACKS-TRACE abandon terminal auditable
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; M-TEST re-entry after full implementation (run 01M2QTJB).
 def test_abandon_terminal_auditable(tmp_path: Path):
     """AC-FR0313-01: abandon reaches cancelled terminal, audit kept."""
     home = tmp_path / "home"
