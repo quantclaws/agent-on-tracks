@@ -20,12 +20,24 @@ def test_no_plaintext_secrets_any_surface():
     """AC-FR0315-01: API SSE HTML logs carry no plaintext credential."""
     red = _redactor()
     raw = "token sk-v09-canary-alpha-7f3a9c2e1b in api body"
-    assert "sk-v09-canary-alpha-7f3a9c2e1b" not in red.redact_text(raw)
+    clean = red.redact_text(raw)
+    assert "sk-v09-canary-alpha-7f3a9c2e1b" not in clean
+    # a credential survives only as the controlled reference (§1g.3)
+    assert "${TRAC_CANARY_V09_ALPHA}" in clean, (
+        f"the credential must appear as a controlled reference: {clean!r}"
+    )
     payload = {"events": [{"data": raw}], "log": raw, "page": f"<p>{raw}</p>"}
     clean = red.redact_payload(payload)
     assert "sk-v09-canary-alpha-7f3a9c2e1b" not in repr(clean)
+    assert repr(clean).count("${TRAC_CANARY_V09_ALPHA}") == 3, (
+        "every surface must carry the controlled reference, never the secret"
+    )
     record = {"msg": raw, "run_id": "run-1"}
-    assert "sk-v09-canary-alpha-7f3a9c2e1b" not in repr(red.redact_log_record(record))
+    clean = red.redact_log_record(record)
+    assert "sk-v09-canary-alpha-7f3a9c2e1b" not in repr(clean)
+    assert "${TRAC_CANARY_V09_ALPHA}" in clean["msg"], (
+        "the log record must carry the controlled reference"
+    )
 
 
 # AC-FR0315-02@v0.9 TRACKS-TRACE out of scope read denied

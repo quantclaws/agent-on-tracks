@@ -121,16 +121,45 @@ def test_non_human_decision_rejected_audited(tmp_path):
 
 
 # AC-FR0314-03@v0.9 TRACKS-TRACE shell payload blocked
-def test_shell_payload_blocked():
+def test_shell_payload_blocked(tmp_path):
     """AC-FR0314-03: shell payloads blocked with no execution effect."""
     from tracks.server.guard import GuardRejection
+    from tracks.supervisor.service import CommandService, Rejection
 
+    # the guard tier refuses the unknown shell kind outright
     try:
         validate_command_payload("run_shell", {"cmd": "rm -rf /"})
     except GuardRejection as exc:
         assert exc.reason in ("guard_blocked", "validation_failed")
     else:
         raise AssertionError("shell payload must be blocked")
+
+    # the command service refuses it too, audits the refusal and persists
+    # nothing: no execution effect ever happens (§1g.1, SM-01.5)
+    home = tmp_path / "home"
+    home.mkdir()
+    db = ServiceDB(home)
+    svc = CommandService(home, db, object())
+    try:
+        svc.accept(
+            kind="run_shell",
+            params={"cmd": "rm -rf /"},
+            actor="human",
+            actor_class="human",
+            surface="http",
+            idempotency_key="shell-1",
+        )
+    except Rejection as exc:
+        assert exc.reason == "guard_blocked"
+    else:
+        raise AssertionError("a shell payload must never be accepted")
+    rejected = [event for event in db.read_events() if event["type"] == "command.rejected"]
+    assert [(event["payload"] or {}).get("reason") for event in rejected] == [
+        "guard_blocked"
+    ]
+    assert db.find_by_idempotency("shell-1") is None, (
+        "a blocked payload persists no command (no execution effect)"
+    )
 
 
 # AC-FR0314-04@v0.9 TRACKS-TRACE adjudication ownership enforced
