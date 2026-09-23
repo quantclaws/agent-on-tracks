@@ -535,3 +535,43 @@ def test_prism_plan_revise_derivation_changes_route():
     _on_m_impl_prism_verdict(s, revise[1])
     assert s.substate == "DIAGNOSE"
     assert s.diagnose_classification == "stub_gap"
+
+
+def test_fully_retained_regraph_routes_island_2():
+    """Live defect (run 01M2QTJB, 2026-09-22): all 23 tasks completed (T-016
+    last); a tail replan re-committed the identical graph and the
+    unconditional ISLAND_GATE_1 routing sent the flow into select_task's
+    "no ready tasks" failure loop (three replans -> escalation) instead of
+    the terminal full-suite verification. A fully-retained re-commit routes
+    ISLAND_GATE_2 directly."""
+    from tracks.kernel.m_impl_state import _on_taskgraph_committed
+    from tracks.kernel.machine import State
+
+    s = State(stage="M-IMPL", substate="PLANNING")
+    _on_taskgraph_committed(
+        s,
+        {
+            "task_count": 3,
+            "digest": "d",
+            "tasks": [{"task_id": "T-1"}, {"task_id": "T-2"}, {"task_id": "T-3"}],
+            "retained_completed_task_ids": ["T-1", "T-2", "T-3"],
+        },
+        None,
+    )
+    assert s.tasks_completed == 3 and s.tasks_total == 3
+    assert s.substate == "ISLAND_GATE_2", "exhausted graph must go to terminal verification"
+
+    # A normal re-commit with remaining work keeps the historical route.
+    s2 = State(stage="M-IMPL", substate="PLANNING")
+    s2.task_refs = [{"task_id": "T-0"}]
+    _on_taskgraph_committed(
+        s2,
+        {
+            "task_count": 3,
+            "digest": "d",
+            "tasks": [{"task_id": "T-1"}, {"task_id": "T-2"}, {"task_id": "T-3"}],
+            "retained_completed_task_ids": ["T-1"],
+        },
+        None,
+    )
+    assert s2.substate == "ISLAND_GATE_1"

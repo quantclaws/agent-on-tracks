@@ -74,6 +74,18 @@ def _on_taskgraph_committed(s: State, p: dict, ev: EventEnvelope) -> None:
         s.current_task_id = None
         s.current_task_metadata = None
         s.current_manifest = None
+    # Live defect (run 01M2QTJB, 2026-09-22 20:23): the graph completed
+    # (all 23 tasks done, T-016 last), then a tail replan re-committed the
+    # identical graph -- routing ISLAND_GATE_1 unconditionally sent the
+    # flow PRISM_PLAN -> TASK_DISPATCH -> select_task, which failed "no
+    # ready tasks" and looped replans to escalation. The completion
+    # counter's ISLAND_GATE_2 transition only fires on a fresh
+    # task.completed event; a fully-retained graph re-commit must route
+    # there directly. The executor's select-side exhaustion report stays
+    # as the safety net for genuinely stuck graphs.
+    if s.tasks_total and s.tasks_completed >= s.tasks_total:
+        s.substate = "ISLAND_GATE_2"
+        return
     s.substate = "ISLAND_GATE_1"
 
 
