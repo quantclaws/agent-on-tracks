@@ -56,10 +56,58 @@ def test_revision_visible_and_pending_bound(tmp_path: Path):
 
 # AC-FR0294-02@v0.9 TRACKS-TRACE diff between revisions visible
 def test_diff_between_revisions_visible(tmp_path: Path):
-    """AC-FR0294-02: revision change surfaces new revision plus unified diff."""
+    """AC-FR0294-02: adjacent revisions show a visible diff; the revision change
+    surfaces the new revision, and the vendored Vditor snapshot reconciles."""
+    from tests._support.doc_review_seed import (
+        doc_diff,
+        read_doc,
+        seed_doc_review_run,
+        vditor_snapshot_mismatches,
+    )
+    from tracks.supervisor.service import CommandService
+
+    # adjacent revisions: an edit moves the material to a new revision and the
+    # diff between the two is visible through the §2b #16 handler
+    home, _repo, reviewed = seed_doc_review_run(tmp_path, "run-1")
+    svc = CommandService(home, object(), object())
+    svc.accept(
+        kind="edit_material",
+        params={
+            "run_id": "run-1",
+            "doc": "spec",
+            "base_revision": reviewed,
+            "content": "revised spec body\n",
+        },
+        actor="human",
+        actor_class="human",
+        surface="http",
+        idempotency_key="diff-edit-1",
+    )
+    status, payload = read_doc(home, "run-1", "spec")
+    assert status == 200, payload
+    current = payload["revision"]
+    assert current != reviewed, "the revision change must surface the new revision"
+
+    status, payload = doc_diff(home, "run-1", "spec", reviewed, current)
+    assert status == 200, payload
+    assert payload["from"] == reviewed
+    assert payload["to"] == current
+    unified = payload["unified_diff"]
+    assert "-spec body" in unified and "+revised spec body" in unified, (
+        f"the adjacent-revision diff must show the change: {unified!r}"
+    )
+
+    # the review page hosts the Vditor assets from the origin site (§2b)
     tags = vditor_asset_tags()
     assert isinstance(tags, list)
     assert all(t.startswith("<") for t in tags)
+    assert all("/static/vendor/vditor/" in tag for tag in tags)
+
+    # the vendored snapshot reconciles against the manifest (test-plan §2.4/§7)
+    assert vditor_snapshot_mismatches() == [], (
+        "vendored Vditor assets deviate from manifest.json: "
+        f"{vditor_snapshot_mismatches()}"
+    )
 
 
 # AC-FR0294-03@v0.9 TRACKS-TRACE edit produces new revision stale approval rejected

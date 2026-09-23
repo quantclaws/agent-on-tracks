@@ -14,6 +14,8 @@ instead of an unseeded run.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -26,6 +28,8 @@ from tracks.server import api_query
 from tracks.server.redaction import SecretRedactor
 from tracks.store import Store
 from tracks.supervisor import db as sdb
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _VERSION = "v0.9"
 _ACTOR = "local-user"
@@ -87,6 +91,39 @@ def read_doc(home: Path, run_id: str, doc: str) -> tuple[Any, Any]:
     )
     result = asyncio.run(api_query.read_doc(request))
     return getattr(result, "status_code", None), getattr(result, "payload", None)
+
+
+def doc_diff(home: Path, run_id: str, doc: str, from_revision: str, to_revision: str) -> tuple[Any, Any]:
+    """``GET /api/runs/{run_id}/docs/{doc}/diff?from=&to=`` (§2b #16)."""
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(home=home, redactor=SecretRedactor({}))
+        ),
+        path_params={"run_id": run_id, "doc": doc},
+        query_params={"from": from_revision, "to": to_revision},
+    )
+    result = asyncio.run(api_query.doc_diff(request))
+    return getattr(result, "status_code", None), getattr(result, "payload", None)
+
+
+def vditor_snapshot_mismatches() -> list[str]:
+    """Vendored Vditor files whose bytes deviate from ``manifest.json`` (§2.4).
+
+    The manifest records the per-file sha256 snapshot of the vendored subset;
+    an empty result means every recorded asset reconciles byte-for-byte.
+    """
+    root = _REPO_ROOT / "tracks" / "server" / "static" / "vendor" / "vditor"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    mismatches = []
+    for rel, expected in (manifest.get("files") or {}).items():
+        path = root / rel
+        if not path.is_file():
+            mismatches.append(f"{rel}:missing")
+            continue
+        actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != expected:
+            mismatches.append(rel)
+    return mismatches
 
 
 def material_edits(home: Path, run_id: str, doc: str) -> list[dict]:
