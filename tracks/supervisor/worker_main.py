@@ -116,11 +116,21 @@ def _execute(db: Any, row: dict) -> tuple[dict | None, dict | None]:
             f"worker does not handle command kind {row.get('kind')!r} yet"
         )
     run_id = _run_id_of(row)
-    repo = _project_repo(db, row.get("project_id"))
+    # 2026-09-23 (island-2 sweep, e2e web journey): a supervisor-accepted
+    # internal drive_run carries no project_id of its own -- resolve the
+    # project THROUGH the run with the same discovery order the service
+    # plane uses (commands row, then service events), instead of failing
+    # unrecoverable on the first drive of every fresh run.
+    project_id = row.get("project_id")
+    if not project_id:
+        finder = getattr(db, "find_run_project_id", None)
+        project_id = finder(run_id) if callable(finder) else None
+    repo = _project_repo(db, project_id)
     if not run_id or repo is None:
         return None, _unrecoverable(
             f"cannot resolve run/project for command {row.get('command_id')!r}"
         )
+    _bootstrap_run_plane(db, repo, run_id)
     config = DriveConfig()
     result = _drive_to_boundary(repo, run_id, config)
     if result.kind == "failed":
@@ -172,6 +182,87 @@ def _persist_wait_if_recoverable(
 
 def _unrecoverable(reason: str) -> dict:
     return {"failure_class": "unrecoverable", "reason": reason}
+
+
+
+
+def _create_run_params(db: Any, run_id: str) -> dict:
+    """The service plane's create_run params for this run (version/story)."""
+    import contextlib
+    import json as _json
+
+    connect = getattr(db, "_connect", None)
+    if not callable(connect):
+        return {}
+    with contextlib.closing(connect()) as conn:
+        row = conn.execute(
+            "SELECT params_json FROM commands WHERE kind = 'create_run'"
+            " AND run_id = ? ORDER BY rowid DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    return _json.loads(row[0]) if row else {}
+
+
+def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
+    """2026-09-23 (island-2 sweep, e2e web journey): bridge the service-plane
+    run creation into the run plane. The supervisor-accepted drive_run is the
+    FIRST thing that touches the project repo, and drive_once fails "no
+    run-plane events" without this bridge. Mirrors cmd_start's core (the
+    run-plane authority for starting a run) minus the operator gates the
+    service plane's create_run prechecks own (active-run, readiness, hotfix
+    prechecks; the unmerged-release-branch confirm gate stays an operator
+    concern): story.requested -> M-START -> release branch -> story.md
+    capture -> M-STORY. Idempotent: a run the run plane already knows is
+    left untouched.
+    """
+    import datetime
+
+    from tracks import paths, templating
+    from tracks.cli.common import writer_lock
+    from tracks.executor.helpers import git as _git
+    from tracks.kernel.events import Command
+    from tracks.store import Store
+
+    home = paths.tracks_home(repo)
+    params = _create_run_params(db, run_id)
+    if not params:
+        # No service-plane create_run intent for this run_id: a drive for a
+        # run nobody created is a genuine anomaly -- do NOT fabricate a run
+        # plane; drive_once fails closed on it (T-008 pin preserved).
+        return
+    version = str(params.get("version") or "v0.1")
+    raw = str(params.get("story") or "").strip() or "service-plane feature request"
+    store = Store(home)
+    try:
+        with writer_lock(home):
+            if store.state(run_id).run_id is not None:
+                return  # already bootstrapped (idempotent re-drive)
+            store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
+            store.append(run_id, version, "stage.entered", {"stage": "M-START"})
+            from tracks.executor.executor import Executor  # noqa: PLC0415
+
+            Executor(store, repo, run_id).issue(
+                Command(
+                    kind="create_branch",
+                    params={"branch_name": f"releases/{version}", "base": "main"},
+                )
+            )
+            vdir = paths.version_dir(home, version)
+            vdir.mkdir(parents=True, exist_ok=True)
+            story = vdir / "story.md"
+            story.write_text(
+                templating.render_story_skeleton(raw, datetime.date.today().isoformat()),
+                encoding="utf-8",
+            )
+            _git(repo, "add", str(story))
+            _git(
+                repo, "commit", "-m", f"M-START: capture raw requirement for {version}",
+                "--only", "--", str(story),
+            )
+            store.append(run_id, version, "stage.exited", {"stage": "M-START"})
+            store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
+    finally:
+        store.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - process entry
