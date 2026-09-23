@@ -140,19 +140,48 @@ def test_accept_returns_after_persist(tmp_path: Path):
     """AC-NFR0150-01: accept returns at persist, long tasks never block it."""
     home = tmp_path / "home"
     home.mkdir()
-    svc = CommandService(home, object(), object())
+    db = ServiceDB(home)
+    # a claimed command is the long task already in flight
+    db.register_command(
+        {
+            "command_id": "cmd-long-1",
+            "kind": "drive_run",
+            "params_json": '{"run_id": "run-1"}',
+            "params_digest": "d",
+            "idempotency_key": "perf-long-1",
+            "actor": "system",
+            "actor_class": "system",
+            "surface": "internal",
+            "project_id": "p1",
+            "run_id": "run-1",
+        }
+    )
+    assert db.claim_command("cmd-long-1", "worker-long", 1)
+
+    svc = CommandService(home, db, object())
     start = time.monotonic()
     receipt = svc.accept(
         kind="pause_run",
-        params={"run_id": "run-1"},
+        params={"run_id": "run-2"},
         actor="human",
         actor_class="human",
         surface="http",
         idempotency_key="perf-accept-1",
     )
     elapsed = time.monotonic() - start
+
     assert receipt.command_id
+    assert receipt.status == "accepted"
     assert elapsed < 5.0
+    # the response came back at persist time: nothing has executed yet, so
+    # the acceptance latency carries no task-execution duration
+    row = db.get_command(receipt.command_id)
+    assert row["status"] == "accepted"
+    assert row["result_json"] is None
+    # the submission was not blocked by the long task in flight
+    inflight = db.get_command("cmd-long-1")
+    assert inflight["status"] == "claimed"
+    assert inflight["claim_generation"] == 1
 
 
 # AC-NFR0150-02@v0.9 TRACKS-TRACE query p95 under 1s
