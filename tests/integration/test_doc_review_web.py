@@ -55,6 +55,7 @@ def test_revision_visible_and_pending_bound(tmp_path: Path):
 
 
 # AC-FR0294-02@v0.9 TRACKS-TRACE diff between revisions visible
+# Operator OOB 2026-09-23: verified green-on-arrival in the island-2 terminal sweep; re-entry after full implementation (run 01M2QTJB).
 def test_diff_between_revisions_visible(tmp_path: Path):
     """AC-FR0294-02: adjacent revisions show a visible diff; the revision change
     surfaces the new revision, and the vendored Vditor snapshot reconciles."""
