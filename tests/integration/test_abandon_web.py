@@ -93,3 +93,5 @@ def test_unrecoverable_failure_terminal(tmp_path: Path):
         assert result.wait is None
     else:
         assert result.kind in ("continue", "await_human", "await_external", "terminal")
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

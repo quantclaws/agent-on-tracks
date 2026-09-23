@@ -199,3 +199,5 @@ def test_adjudication_ownership_enforced(tmp_path):
         assert _thread_status(doc, thread_id) == "resolved"
         assert check_csrf(requested, requested.csrf_token) is True
         assert check_csrf(requested, "wrong-token") is False
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

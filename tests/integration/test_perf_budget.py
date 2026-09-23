@@ -236,3 +236,5 @@ def test_soak_memory_bounded(tmp_path: Path):
     assert max(samples) <= warmup * _RSS_GROWTH_TOLERANCE, (
         f"resident memory exceeded the soak bound: warmup={warmup} samples={samples}"
     )
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

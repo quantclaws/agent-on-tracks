@@ -139,3 +139,5 @@ def test_resume_from_legal_position(tmp_path: Path):
     assert payload["actor"] == "human"
     # the completed work is preserved: the accept tier never rewrites history
     assert _run_history(repo, "run-1") == before
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

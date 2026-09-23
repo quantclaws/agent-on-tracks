@@ -104,3 +104,5 @@ def test_server_restart_resumes_without_loss(tmp_path: Path):
     assert types == ["wait.entered"], (
         f"recovery must not re-emit wait or publish side effects: {types}"
     )
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

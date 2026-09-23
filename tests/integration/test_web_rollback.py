@@ -159,3 +159,5 @@ def test_pushed_release_survives_rollback(tmp_path: Path):
     # the audited return names the stage it goes back to
     row = sdb.ServiceDB(home).get_command(receipt.command_id)
     assert json.loads(row["params_json"])["to"] == "M-SPEC"
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

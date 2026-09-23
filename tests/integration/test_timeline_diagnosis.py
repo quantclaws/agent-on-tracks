@@ -124,3 +124,5 @@ def test_logs_locatable_by_dimensions(tmp_path: Path):
     assert "AC-FR0305-01" in by_ac[0]["ac_refs"], (
         "the failure row must carry the AC dimension it references"
     )
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

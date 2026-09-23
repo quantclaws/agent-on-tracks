@@ -63,3 +63,5 @@ def test_query_during_long_task_nonblocking(tmp_path: Path):
     assert inflight["status"] == "claimed"
     assert inflight["claim_generation"] == 1
     assert inflight["result_json"] is None
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

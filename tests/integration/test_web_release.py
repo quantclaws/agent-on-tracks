@@ -102,3 +102,5 @@ def test_delay_and_return_bound_to_digest(tmp_path: Path):
         {"run_id": "run-1", "action": "return", "preview_digest": digest}, sort_keys=True
     )
     assert {row["kind"] for row in accepted_commands(home)} == {"record_release_decision"}
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

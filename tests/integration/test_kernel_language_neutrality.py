@@ -160,3 +160,5 @@ def test_no_language_tokens_server_supervisor():
         "forbidden language tokens in tracks/server|tracks/supervisor: "
         f"{[(str(p), t) for p, t in hits[:5]]}"
     )
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

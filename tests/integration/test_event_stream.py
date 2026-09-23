@@ -134,3 +134,5 @@ def test_reconnect_backfill_no_regression(tmp_path: Path):
     assert [row["type"] for row in malformed.payload["events"]] == [
         row["type"] for row in events
     ]
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).

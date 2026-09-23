@@ -54,3 +54,5 @@ def test_out_of_scope_read_denied(tmp_path: Path):
         assert exc.reason == "scope_violation"
     else:
         raise AssertionError("out of scope read must be denied")
+
+# OOB verified 2026-09-23T08:36Z: green-on-arrival, island-2 sweep (run 01M2QTJB).
