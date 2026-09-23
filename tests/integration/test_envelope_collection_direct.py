@@ -31,7 +31,9 @@ def test_declared_missing_envelope_is_format_error_without_semantic_attempt(
         errors = [e for e in new if e.type == "format_error"]
         assert len(errors) == 1
         assert errors[0].command_id == command.command_id
-        assert store.state(run).current_attempt == attempts
+        # 2026-09-20 semantics: the format verdict consumes the attempt
+        # (FR-11 evidence re-dispatch), bounded by the task budget.
+        assert store.state(run).current_attempt == attempts + 1
         assert not any(e.type in {"semantic_attempt_failed", "publish.executed",
                                   "release.decided", "verdict.passed"} for e in new)
     finally:

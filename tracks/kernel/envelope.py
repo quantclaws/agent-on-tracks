@@ -692,7 +692,7 @@ def _load_declared_reply_text_fallback(text: str, file_reason: str) -> dict:
 
 # JSONDecodeError.msg values that signal a structurally truncated string: the
 # agent embedded a payload string containing bare double quotes (the live
-# breakage pasted pytest output verbatim into the envelope payload string,
+# breakage pasted host-runner output verbatim into the envelope payload string,
 # e.g. events["command_id"] == "never", so the inner " terminated the JSON
 # string early -- six consecutive malformed_json, Expecting ',' delimiter at
 # char 2543-2922, the same char twice via session reuse). Only these messages

@@ -29,7 +29,7 @@ def test_planning_and_dispatch_contracts_are_persisted(trac, event_log):
         assert "criteria_pack" in assignment
         assert assignment["criteria_pack"] == {
             "name": "tracks-prism-impl",
-            "version": "0.1",
+            "version": "0.3",
         }
     started = events_of(events, "task.started")
     locks = events_of(events, "writelock.granted")

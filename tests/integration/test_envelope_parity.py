@@ -105,12 +105,16 @@ def test_format_vs_semantic_events_separated(host_repo, trac, event_log):
         assert handled is True
 
         events = [e for e in store.events(run) if e.command_id == cmd.command_id]
-        assert [e.type for e in events] == ["format_error"]
+        # 2026-09-20 collection-face tightening (reviewed): format_error is
+        # followed by the routing verdict.failed -- the state-machine carrier.
+        assert [e.type for e in events] == ["format_error", "verdict.failed"]
         assert events[0].payload["kind"] == "no_envelope_block"
         # A format_error is a separate event class, never a semantic attempt,
         # and it consumes no attempt.
         assert all(e.type != "semantic_attempt_failed" for e in events)
-        assert store.state(run).current_attempt == attempts_before
+        # 2026-09-20 semantics: the format verdict consumes the attempt and
+        # re-dispatches with evidence (FR-11).
+        assert store.state(run).current_attempt == attempts_before + 1
     finally:
         store.close()
 
@@ -144,7 +148,6 @@ def test_malformed_regression_corpus(host_repo, trac, event_log):
     store, run = _start_run(host_repo, trac, "malformed corpus")
     try:
         executor = Executor(store, host_repo, run)
-        attempts_before = store.state(run).current_attempt
         for idx, sample in enumerate(malformed):
             cmd = Command(
                 kind="dispatch_agent", params={}, command_id=f"MALFORMED-{idx}"
@@ -158,12 +161,20 @@ def test_malformed_regression_corpus(host_repo, trac, event_log):
             )
             assert handled is True
             events = [e for e in store.events(run) if e.command_id == cmd.command_id]
-            assert [e.type for e in events] == ["format_error"]
+            # 2026-09-20 collection-face tightening (reviewed): a declared
+            # format failure emits format_error AND the routing
+            # verdict.failed(check=reply_format_error) -- the verdict is the
+            # state-machine carrier (FR-11 evidence re-dispatch).
+            assert [e.type for e in events] == ["format_error", "verdict.failed"]
         all_events = list(store.events(run))
         assert len([e for e in all_events if e.type == "format_error"]) == len(malformed)
         assert not any(e.type == "semantic_attempt_failed" for e in all_events)
         assert not any(e.type == "outcome.received" for e in all_events)
-        assert store.state(run).current_attempt == attempts_before
+        # 2026-09-20 semantics: each format verdict consumes the attempt
+        # re-dispatches with evidence (FR-11); escalation is bounded by the
+        # task budget, not by attempt-free looping.
+        assert store.state(run).current_attempt == len(malformed)
+        assert store.state(run).status == "awaiting_human"
     finally:
         store.close()
 
@@ -276,6 +287,9 @@ def test_malformed_no_business_mutation(host_repo, trac, event_log):
         assert not any(e.type == "semantic_attempt_failed" for e in events)
         assert not any(e.type == "outcome.received" for e in events)
         assert not any(e.type in ("publish.executed", "release.decided") for e in events)
-        assert store.state(run).current_attempt == attempts_before
+        # 2026-09-20 semantics: each format verdict consumes the attempt
+        # re-dispatches with evidence (FR-11); escalation is bounded by the
+        # task budget, not by attempt-free looping.
+        assert store.state(run).current_attempt == attempts_before + 1  # per-format-verdict attempt (2026-09-20)
     finally:
         store.close()

@@ -39,6 +39,22 @@ pytestmark = pytest.mark.integration
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+def _latest_architecture(root):
+    """2026-09-23 (island-2 sweep): meta-tests pinning config digests must
+    validate the LIVE version's registry -- a frozen v0.7 registry's digest
+    pins only held at that release's tree; the repo's lint config legitimately
+    evolves per each version's design (v0.9's M-DESIGN updated pyproject).
+    Historical registries stay in git history."""
+    import re as _re
+
+    projects = root / ".tracks" / "projects"
+    versions = sorted(
+        (p.name for p in projects.iterdir() if _re.fullmatch(r"v\d+\.\d+", p.name)),
+        key=lambda v: tuple(int(x) for x in v[1:].split(".")),
+    )
+    return projects / versions[-1] / "architecture.md"
+
+
 
 def _commit_contract(host_repo, body: str, *, with_test_sections: bool = True):
     """Write the declared contract, commit it and return (path, candidate)."""
@@ -207,9 +223,7 @@ def test_materialized_contract_valid(host_repo, trac, event_log, ci_echo_standin
     assert canonical.build_command and canonical.build_artifact
     assert canonical.smoke
     assert canonical.install
-    registry = load_guard_registry(
-        REPO_ROOT / ".tracks" / "projects" / "v0.8" / "architecture.md"
-    )
+    registry = load_guard_registry(_latest_architecture(REPO_ROOT))
     assert validate_guard_registry(registry, REPO_ROOT) == ()
     for entry in registry.entries:
         assert entry.tool and entry.tool_version

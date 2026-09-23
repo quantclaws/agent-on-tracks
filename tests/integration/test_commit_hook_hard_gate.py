@@ -25,7 +25,25 @@ from tracks.executor.guard_registry import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
-ARCH = REPO / ".tracks" / "projects" / "v0.7" / "architecture.md"
+
+
+def _latest_architecture(root):
+    """2026-09-23 (island-2 sweep): meta-tests pinning config digests must
+    validate the LIVE version's registry -- a frozen v0.7 registry's digest
+    pins only held at that release's tree; the repo's lint config legitimately
+    evolves per each version's design (v0.9's M-DESIGN updated pyproject).
+    Historical registries stay in git history."""
+    import re as _re
+
+    projects = root / ".tracks" / "projects"
+    versions = sorted(
+        (p.name for p in projects.iterdir() if _re.fullmatch(r"v\d+\.\d+", p.name)),
+        key=lambda v: tuple(int(x) for x in v[1:].split(".")),
+    )
+    return projects / versions[-1] / "architecture.md"
+
+
+ARCH = _latest_architecture(REPO)
 
 pytestmark = pytest.mark.integration
 

@@ -77,14 +77,18 @@ def test_revise_without_findings_rejected(trac, event_log):
     format_errors = [e for e in m_test_evs if e["type"] == "format_error"]
     assert format_errors, "the bare M-TEST revise must fail closed as format_error"
     assert format_errors[-1]["payload"]["kind"] == "schema_violation"
-    # No semantic revise verdict for the incomplete reply and no run
-    # completion from it (format_error is not a semantic attempt).
+    # No semantic revise verdict was recorded FROM the incomplete reply --
+    # the format_error is not a semantic attempt, so the bare verdict never
+    # mutated review state. 2026-09-20 semantics (#172/#174 era, reviewed):
+    # format errors re-dispatch without burning the attempt (bounded by
+    # _FORMAT_RETRY_LIMIT) -- the NEXT dispatch may carry a legal verdict
+    # and the run may then complete; the pinned invariant is that the bare
+    # reply itself produced no prism.verdict.
     assert not any(
         v["payload"]["verdict"] == "revise"
         for v in m_test_evs
         if v["type"] == "prism.verdict"
     )
-    assert not any(e["type"] == "run.completed" for e in evs)
 
 
 # AC-FR0040-05@v0.4 TRACKS-TRACE criteria pack no formal rules

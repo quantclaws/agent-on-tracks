@@ -854,7 +854,7 @@ the envelope/failure faces stay re-exported by executor.py."""
 
     def _repair_declared_envelope(self, raw, exc, cmd, task_id) -> dict | None:
         """OOB 2026-09-19 (run 01M2QTJB PRISM_FINAL): bounded repair of a
-        structurally truncated declared reply. The agent pasted pytest output
+        structurally truncated declared reply. The agent pasted host-runner output
         verbatim into the envelope payload string, so bare double quotes
         terminated the JSON string early (six consecutive malformed_json,
         Expecting ',' delimiter at char 2543-2922). The kernel parser stays

@@ -59,7 +59,10 @@ def _git_text(repo, *args: str) -> str:
 
 
 def _scoped_commit_if_staged(
-    repo: Path, message: str, paths: list[Path | str] | None = None
+    repo: Path,
+    message: str,
+    paths: list[Path | str] | None = None,
+    hooks: bool = False,
 ) -> subprocess.CompletedProcess | None:
     """Attempt to commit staged changes (check=False), scoped to ``paths``
     when given: the runtime commits only files it deliberately staged and
@@ -75,7 +78,7 @@ def _scoped_commit_if_staged(
         cached += ["--", *[str(p) for p in paths]]
     if git(repo, *cached, check=False).returncode == 0:
         return None
-    # 2026-09-19 (run 01M2QTJB): the runtime's scoped checkpoint commits run
+    # 2026-09-19 (run 01M2QTJB): the runtime's scoped CHECKPOINT commits run
     # with --no-verify. Pre-commit hooks are repo hygiene for operator
     # commits; here they evaluated the WHOLE tree and vetoed a tests/-scoped
     # Shield-fix commit for a duplicate-code finding in ANOTHER agent's
@@ -85,7 +88,14 @@ def _scoped_commit_if_staged(
     # authority and runs its own gate suite (lint/guard commands are part
     # of every dispatch contract); tree-wide hygiene must not veto scoped
     # checkpoints. Operator commits keep the hooks.
-    cmd = ["commit", "--no-verify", "-m", message]
+    # 2026-09-23 (island-2 sweep): the blanket --no-verify also silenced the
+    # DOC-commit hook contract (frozen meta-tests: a pre-commit rejection of
+    # a document commit emits verdict.failed(check=commit) and re-dispatches
+    # the author -- the doc content IS the deliverable, hook hygiene is the
+    # intended gate there). ``hooks=True`` restores it for the doc faces;
+    # checkpoint/code commits keep the single-writer bypass.
+    cmd = ["commit"] if hooks else ["commit", "--no-verify"]
+    cmd += ["-m", message]
     if paths:
         cmd += ["--only", "--", *[str(p) for p in paths]]
     return git(repo, *cmd, check=False)

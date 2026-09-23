@@ -100,7 +100,7 @@ imported by the other executor mixins."""
             stage_paths.extend(dict.fromkeys([*scaffold_paths, *self._project_contract_paths()]))
         git(self.repo, "add", *(str(path) for path in stage_paths))
         proc = _scoped_commit_if_staged(
-            self.repo, f"{message}\n\n{marker}", paths=stage_paths
+            self.repo, f"{message}\n\n{marker}", paths=stage_paths, hooks=True
         )
         if proc is not None and proc.returncode != 0:
             self._emit_commit_failure(proc, state, cmd.command_id)
@@ -202,6 +202,7 @@ imported by the other executor mixins."""
                 self.repo,
                 f"{stage}: seal {doc} sha\n\ncommand_id: {cmd.command_id}",
                 paths=[path],
+                hooks=True,
             )
             if proc is not None and proc.returncode != 0:
                 self._emit_commit_failure(proc, state, cmd.command_id)

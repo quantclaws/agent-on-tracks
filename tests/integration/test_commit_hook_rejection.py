@@ -16,7 +16,22 @@ from tracks.store import Store, new_ulid
 
 
 def _install_failing_hook(repo, message="ruff: lint error"):
-    hook = repo / ".git" / "hooks" / "pre-commit"
+    # 2026-09-23 (island-2 sweep): the repo may pin core.hooksPath (the
+    # quality-gate install does: `git config core.hooksPath .githooks`) -- a
+    # hook planted at the default .git/hooks/ is silently inert there.
+    # Resolve the EFFECTIVE hooks directory the same way git does.
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "config", "core.hooksPath"],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        hooks_dir = repo / proc.stdout.strip()
+    else:
+        hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
     hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n", encoding="utf-8")
     hook.chmod(0o755)
 
@@ -159,7 +174,22 @@ def test_hook_rejection_recovery_full_pipeline(host_repo, trac, event_log):
     # Install a hook that rejects the first commit involving architecture.md,
     # then self-destructs so subsequent commits pass (the agent "fixed" the
     # deliverable on the redispatch).
-    hook = host_repo / ".git" / "hooks" / "pre-commit"
+    # 2026-09-23 (island-2 sweep, Prism revise R1): resolve the EFFECTIVE
+    # hooks directory (same as _install_failing_hook) -- a repo with
+    # core.hooksPath configured silently ignores .git/hooks plants.
+    import subprocess as _sp
+
+    _hp = _sp.run(
+        ["git", "-C", str(host_repo), "config", "core.hooksPath"],
+        capture_output=True, text=True, check=False,
+    )
+    _hooks_dir = (
+        host_repo / _hp.stdout.strip()
+        if _hp.returncode == 0 and _hp.stdout.strip()
+        else host_repo / ".git" / "hooks"
+    )
+    _hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = _hooks_dir / "pre-commit"
     hook.write_text(
         "#!/bin/sh\n"
         'if git diff --cached --name-only | grep -q "architecture.md"; then\n'

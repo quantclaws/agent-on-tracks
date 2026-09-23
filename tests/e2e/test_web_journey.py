@@ -42,8 +42,27 @@ _RUN_PARAMS = {
 # AC-FR0309-01@v0.9 TRACKS-TRACE web vertical journey happy path
 # AC-FR0310-01@v0.9 TRACKS-TRACE web vertical journey happy path
 # AC-FR0312-01@v0.9 TRACKS-TRACE web vertical journey happy path
-def test_feature_web_vertical_journey(host_repo, trac, tmp_path):
+def test_feature_web_vertical_journey(host_repo, trac, tmp_path, monkeypatch):
+    # 2026-09-23 (island-2 sweep): the credentials_ref probe requires the
+    # credential env NAME to be present (values are never read -- readiness.py
+    # docstring); the journey was green only in shells that export GITHUB_TOKEN.
+    # Seed a dummy so the test is hermetic.
+    monkeypatch.setenv("GITHUB_TOKEN", "e2e-dummy-token")
     """Feature web vertical journey: serve to released via stdlib HTTP only."""
+    # 2026-09-23 (island-2 sweep): AC-FR0290-02 blocking semantics — a
+    # project whose contract probe is red (no project.toml) must NOT be able
+    # to create a run. The journey targets a READY project: seed the minimal
+    # valid contract before registering (the contract probe needs
+    # unit+integration sections).
+    contract_dir = host_repo / ".tracks" / "projects"
+    contract_dir.mkdir(parents=True, exist_ok=True)
+    (contract_dir / "project.toml").write_text(
+        "[unit]\ncollect = \"python3 -m pytest --collect-only tests/unit\"\n"
+        "run = \"python3 -m pytest tests/unit -q\"\n"
+        "[integration]\ncollect = \"python3 -m pytest --collect-only tests/integration\"\n"
+        "run = \"python3 -m pytest tests/integration -q\"\n",
+        encoding="utf-8",
+    )
     assert trac("init").returncode == 0
     home = tmp_path / "home"
     proc = start_serve(home, host_repo, port=0)
