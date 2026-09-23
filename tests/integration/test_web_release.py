@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -84,4 +85,20 @@ def test_delay_and_return_bound_to_digest(tmp_path: Path):
         idempotency_key="rel-return-1",
     )
     assert delay.command_id != back.command_id
+
+    # each decision is auditable as its own command, bound to the reviewed
+    # digest it was made under (§1b #7 / §1c commands row)
+    assert [row["kind"] for row in accepted_commands(home)] == [
+        "record_release_decision",
+        "record_release_decision",
+    ]
+    from tracks.supervisor.db import ServiceDB
+
+    rows = ServiceDB(home)
+    assert rows.get_command(delay.command_id)["params_json"] == json.dumps(
+        {"run_id": "run-1", "action": "delay", "preview_digest": digest}, sort_keys=True
+    )
+    assert rows.get_command(back.command_id)["params_json"] == json.dumps(
+        {"run_id": "run-1", "action": "return", "preview_digest": digest}, sort_keys=True
+    )
     assert {row["kind"] for row in accepted_commands(home)} == {"record_release_decision"}
