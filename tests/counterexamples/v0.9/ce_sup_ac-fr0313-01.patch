@@ -1,0 +1,15 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -824,10 +824,9 @@ def _record_acceptance(
+         store.append_event(
+             "command.accepted",
+             {
+                 "command_id": command_id,
+                 "kind": kind,
+-                "idempotency_key": idempotency_key,
+                 "params_digest": digest,
+                 "actor": actor,
+                 "actor_class": actor_class,
+                 "surface": surface,
+                 "project_id": project_id,

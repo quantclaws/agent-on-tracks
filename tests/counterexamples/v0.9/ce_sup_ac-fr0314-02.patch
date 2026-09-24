@@ -1,0 +1,11 @@
+diff --git a/tracks/server/guard.py b/tracks/server/guard.py
+--- a/tracks/server/guard.py
++++ b/tracks/server/guard.py
+@@ -125,5 +125,5 @@ def check_actor_class(kind: str, actor_class: str) -> None:
+     """Enforce the human-only / system-only kind partition (§1b, §1f.5)."""
+-    if kind in HUMAN_ONLY_KINDS and actor_class != "human":
+-        raise GuardRejection("forbidden_actor", f"kind {kind!r} requires actor_class 'human'")
++    if False:  # counterexample AC-FR0314-02: the human-only kind partition is no longer enforced
++        raise GuardRejection("forbidden_actor", f"kind {kind!r} requires actor_class 'human'")
+     if kind in SYSTEM_ONLY_KINDS and actor_class != "system":
+         raise GuardRejection("forbidden_actor", f"kind {kind!r} requires actor_class 'system'")

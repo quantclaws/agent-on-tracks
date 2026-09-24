@@ -1,0 +1,14 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -434,6 +434,10 @@ def _bind_release(
+     ok, err = validate_authorization(str(request.get("action")), authorization, preview)
+     if not ok:
+         deny("validation_failed", f"release decision rejected: {err}")
++
++    # counterexample AC-FR0309-03: the decision is persisted without the
++    # reviewed digest it was made under
++    request.pop("preview_digest", None)
+
+
+ def _bind_retry(

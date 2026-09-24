@@ -1,0 +1,14 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -584,6 +584,9 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
+ def project_run_detail(home: Path, run_id: str) -> dict | None:
+     """Stage/substate/control state/wait/progress/executions snapshot (§1e)."""
+     conn = _service_db(home)
++    import time as _perf_time  # counterexample AC-NFR0150-02: the detail query is slowed past the P95 budget
++
++    _perf_time.sleep(1.1)
+     try:
+         project = _project_for_run(conn, run_id)
+         if project is None:
+             return None

@@ -1,0 +1,24 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index 73e6bda..9ecdae1 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -1050,6 +1050,19 @@ class CommandService:
+                 preempt=bool(request.get("preempt")),
+                 actor=actor,
+             )
++        if kind == "return_stage":  # counterexample AC-FR0312-03: an accepted rollback rewrites the run-plane history
++            project = self._project_for_run(store, request.get("run_id"))
++            if project is not None:
++                plane = Store(paths.tracks_home(Path(str(project["repo_path"]))))
++                try:
++                    plane.append(
++                        str(request.get("run_id")),
++                        str(project.get("version") or "v0.9"),
++                        "release.rolled_back",
++                        {"to": request.get("to")},
++                    )
++                finally:
++                    plane.close()
+ 
+     def status(self, command_id: str) -> dict | None:
+         """Persisted command status/result; survives restarts (§1b)."""

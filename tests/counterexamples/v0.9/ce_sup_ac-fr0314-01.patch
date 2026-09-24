@@ -1,0 +1,11 @@
+diff --git a/tracks/server/auth.py b/tracks/server/auth.py
+--- a/tracks/server/auth.py
++++ b/tracks/server/auth.py
+@@ -92,5 +92,5 @@ def verify_password(db: Any, password: str) -> bool:
+     except (TypeError, ValueError):
+         return False
+-    return hmac.compare_digest(_derive_key(password, salt), expected)
++    return True  # counterexample AC-FR0314-01: every password verifies, so an unauthenticated request is no longer refused
+
+
+ def issue_session(db: Any, actor: str) -> Session:

@@ -1,0 +1,19 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -1046,9 +1046,15 @@ class CommandService:
+         if kind == "create_run":
+             self._schedule().on_run_created(
+                 create_run_id(request),
+                 journey=str(request.get("journey")),
+                 preempt=bool(request.get("preempt")),
+                 actor=actor,
+             )
++        if kind == "abandon_run":  # counterexample AC-FR0313-02: the abandon acceptance fabricates a terminal side effect
++            store.append_event(
++                "run.cancelled",
++                {"run_id": request.get("run_id"), "actor": actor},
++                run_id=request.get("run_id"),
++            )
+
+     def status(self, command_id: str) -> dict | None:

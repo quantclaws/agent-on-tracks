@@ -1,0 +1,21 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index 73e6bda..65e74f6 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -84,6 +84,8 @@ _REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
+     "drive_run": ("run_id",),
+ }
+ 
++_ACCEPT_RETAINED: list = []  # counterexample AC-NFR0150-03: every acceptance retains its payload in service memory
++
+ 
+ def _params_digest(params: dict) -> str:
+     """Idempotency digest: sha256 over the canonical JSON of params (§1b.2)."""
+@@ -998,6 +1000,7 @@ class CommandService:
+             command_id, run_id=recorded_run_id,
+         )
+         self._on_accepted(store, kind, request, actor)
++        _ACCEPT_RETAINED.append(bytearray(128 * 1024))  # counterexample AC-NFR0150-03: service memory grows without bound under load
+         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted")
+ 
+     def _check_actor_class(self, kind: str, actor_class: str, deny: RejectFn) -> None:

@@ -1,0 +1,11 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -442,6 +442,6 @@ def _bind_retry(
+     """FR-0311: retry only from the legal position (v0.8 repair/escape gate)."""
+     del project  # the retry position is a run-plane fact only
+     _events, state = _run_plane(str(repo), run_id)
+-    gate_error = _retry_gate_error(state, bool(request.get("clear_evidence")))
++    gate_error = "the controlled retry is always refused"  # counterexample AC-FR0311-01: a legal retry can no longer be accepted
+     if gate_error is not None:
+         deny("validation_failed", f"retry rejected: {gate_error}")

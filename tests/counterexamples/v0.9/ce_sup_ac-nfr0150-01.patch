@@ -1,0 +1,13 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -996,6 +996,9 @@ class CommandService:
+         self._record_acceptance(
+             store, kind, request, actor, actor_class, surface, idempotency_key, digest,
+             command_id, run_id=recorded_run_id,
+         )
+         self._on_accepted(store, kind, request, actor)
++        import time as _perf_time  # counterexample AC-NFR0150-01: the acceptance blocks instead of returning at persist time
++
++        _perf_time.sleep(5.5)
+         return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted")

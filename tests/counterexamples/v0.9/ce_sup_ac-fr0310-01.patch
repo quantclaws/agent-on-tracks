@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -408,7 +408,7 @@ def _pause_state(
+         return {"requested": False, "effective": False}, None
+     if rows[0][0] == _PAUSED:
+         return {"requested": False, "effective": True}, "已暂停"
+-    return {"requested": True, "effective": False}, "暂停请求已接收"
++    return {"requested": False, "effective": True}, "已暂停"  # counterexample AC-FR0310-01: the request phase is reported already paused
+ 
+ 
+ def _wait_spec(conn: sqlite3.Connection | None, run_id: str) -> dict | None:

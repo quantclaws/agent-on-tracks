@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -1096,6 +1096,6 @@ class CommandService:
+     def _resolve_text(self, text: str, thread_token: str, actor: str, actor_class: str) -> str:
+         """Adjudication-aware ``resolved`` transform (fail closed)."""
+         owner = adjudication_owner(text, thread_token)
+-        if owner is not None and speaker_key(owner) != speaker_key(actor):
++        if owner is not None and False:  # counterexample AC-FR0314-04: the adjudication ownership check is bypassed
+             self._deny_resolution(
+                 actor, actor_class, f"thread {thread_token!r} requests adjudication by {owner!r}"
+             )

@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -79,6 +79,6 @@ _REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
+     "pause_run": ("run_id",),
+     "resume_run": ("run_id",),
+     "abandon_run": ("run_id", "reason"),
+-    "return_stage": ("run_id", "to", "reason", "confirm"),
++    "return_stage": ("run_id", "to", "reason"),  # counterexample AC-FR0312-01: the irreversible confirm gate is no longer required
+     "retry_run": ("run_id",),
+     "drive_run": ("run_id",),
+ }

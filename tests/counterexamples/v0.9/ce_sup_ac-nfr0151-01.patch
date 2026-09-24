@@ -1,0 +1,13 @@
+diff --git a/tracks/supervisor/recover.py b/tracks/supervisor/recover.py
+--- a/tracks/supervisor/recover.py
++++ b/tracks/supervisor/recover.py
+@@ -66,6 +66,6 @@ def recover_on_startup(db: Any) -> dict:
+     requeue = getattr(db, "requeue_claimed", None)
+     requeued = list(requeue("service_restart")) if callable(requeue) else []
+     waits_kept = list(active_wait_runs(db))
+     leases_expired: list = []
+-    for lease in _expired_leases(db):
++    for lease in []:  # counterexample AC-NFR0151-01: lapsed leases are no longer released or audited at startup
+         db.append_event(
+             "lease.released",
+             {

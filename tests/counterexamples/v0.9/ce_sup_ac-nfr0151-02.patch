@@ -1,0 +1,26 @@
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -22,6 +22,5 @@ dev = [
+     "pytest==9.1.1",
+     "pytest-xdist==3.8.0",
+-    "coverage==7.15.2",
+     "ruff==0.16.0",
+     "pylint==4.0.6",
+     "flake8==7.3.0",
+@@ -90,15 +89,5 @@ markers = [
+     "e2e: end-to-end happy-path layer under tests/e2e",
+ ]
+
+-[tool.coverage.run]
+-# E2E drives the CLI in subprocesses; parallel mode lets each process (the test
+-# runner and every `trac` subprocess) write its own data file, merged later by
+-# `coverage combine`. source_pkgs (not paths) so measurement works regardless of
+-# the subprocess cwd (a tmp host repo).
+-parallel = true
+-source_pkgs = ["tracks"]
+-
+-[tool.coverage.report]
+-show_missing = true
+
+ # --- quality gate (run by .githooks/pre-commit) -----------------------------

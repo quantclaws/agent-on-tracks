@@ -1,0 +1,17 @@
+diff --git a/tracks/supervisor/db.py b/tracks/supervisor/db.py
+--- a/tracks/supervisor/db.py
++++ b/tracks/supervisor/db.py
+@@ -216,8 +216,8 @@ class ServiceDB:
+         with contextlib.closing(self._connect()) as conn:
+             cursor = conn.execute(
+                 "UPDATE commands SET status = ?, result_json = ?, updated_at = ?"
+-                " WHERE command_id = ? AND status = 'claimed' AND claim_generation = ?",
+-                (status, json.dumps(outcome), _utcnow(), command_id, generation),
++                " WHERE command_id = ? AND status = 'claimed'",
++                (status, json.dumps(outcome), _utcnow(), command_id),
+             )
+             conn.commit()
+             if cursor.rowcount == 1:
+                 return True
+         self._audit_late_result(command_id, generation)
+         return False

@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/waiting.py b/tracks/supervisor/waiting.py
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -21,7 +21,7 @@ class WaitPolicy:
+ @dataclass(frozen=True)
+ class WaitPolicy:
+     """NFR-0152 locked defaults; overridable by serve flags (§1j)."""
+
+-    initial_s: int = 60
++    initial_s: int = 30  # counterexample AC-NFR0152-01: the probe backoff no longer starts at the locked 60s initial interval
+     cap_s: int = 900
+     poll_interval_s: int = 5

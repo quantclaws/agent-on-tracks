@@ -1,0 +1,14 @@
+diff --git a/tracks/server/guard.py b/tracks/server/guard.py
+--- a/tracks/server/guard.py
++++ b/tracks/server/guard.py
+@@ -143,7 +143,7 @@ def check_path_scope(path: Path, permitted_roots: list[Path]) -> None:
+     """Require path (realpath) to resolve inside the permitted scope (§1g.2)."""
+     candidate = Path(path).resolve()
+     roots = [Path(root).resolve() for root in permitted_roots]
+-    if not any(_inside(candidate, root) for root in roots):
+-        raise GuardRejection("scope_violation", f"path {path} is outside the permitted scope")
++    if False:  # counterexample AC-FR0315-02: an out-of-scope path is no longer denied
++        raise GuardRejection("scope_violation", f"path {path} is outside the permitted scope")
+
+
+ def check_registration_scope(repo_path: Path, permitted_roots: list[Path]) -> None:

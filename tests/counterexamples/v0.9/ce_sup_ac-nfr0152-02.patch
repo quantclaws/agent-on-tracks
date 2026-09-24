@@ -1,0 +1,13 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -38,7 +38,7 @@ _CONFIG_DEFAULTS: dict[str, Any] = {
+ _CONFIG_DEFAULTS: dict[str, Any] = {
+     "wait_initial_s": 60,
+     "wait_cap_s": 900,
+     "poll_interval_s": 5,
+-    "poll_idle_cap_s": 60,
++    "poll_idle_cap_s": 300,  # counterexample AC-NFR0152-02: the disconnect fallback poll exceeds the idle cap
+     "lease_ttl_s": 30,
+     "version": "v0.9",
+ }
