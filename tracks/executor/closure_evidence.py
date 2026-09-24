@@ -493,6 +493,13 @@ class ExecClosureEvidenceMixin:
                 "evidence_id": evidence_id,
                 "command_echo": ["closure-evidence", binding["patch"], node_id],
                 "status": "repaired",
+                # 2026-09-25 (M-VERIFY foreign_candidate fix): the trace
+                # check's candidate-bound closure compares BOTH the baseline
+                # and mutation candidate digests against the frozen candidate
+                # (interfaces §1i). Without this field the baseline side was
+                # always foreign after a repair-round re-freeze -- v0.8 had
+                # a single freeze so the gap never surfaced there.
+                "candidate_digest": candidate_sha,
             },
             command_id=cmd.command_id,
         )
