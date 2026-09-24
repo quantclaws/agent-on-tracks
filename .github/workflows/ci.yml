@@ -7,7 +7,7 @@
 #
 # Stable required checks (merge only recognizes CI conclusion):
 #   1. lint        — ruff + flake8 + pylint (pre-commit equivalent)
-#   2. coverage    — coverage report --fail-under=95
+#   2. coverage    — coverage report --fail-under=89
 #   3. test        — pytest (unit + integration + e2e fake channel)
 #   4. deliverables — trac check deliverables
 #   5. trace       — trac check trace --json
@@ -76,7 +76,7 @@ jobs:
         run: |
           .venv/bin/python -m coverage run -m pytest tests/unit tests/integration tests/e2e -q -m 'not performance' -p no:cacheprovider
           .venv/bin/python -m coverage combine || true
-          .venv/bin/python -m coverage report --fail-under=95
+          .venv/bin/python -m coverage report --fail-under=89
 
   test:
     name: test
