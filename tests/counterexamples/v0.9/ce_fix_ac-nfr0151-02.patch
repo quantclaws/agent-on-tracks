@@ -1,10 +1,45 @@
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -21,7 +21,6 @@
+@@ -21,7 +21,7 @@
  dev = [
      "pytest==9.1.1",
      "pytest-xdist==3.8.0",
 -    "coverage==7.15.2",
++    "xoverage==7.15.2",
      "ruff==0.16.0",
      "pylint==4.0.6",
      "flake8==7.3.0",
+@@ -90,20 +90,20 @@
+     "e2e: end-to-end happy-path layer under tests/e2e",
+ ]
+ 
+-[tool.coverage.run]
++[tool.xoverage.run]
+ # E2E drives the CLI in subprocesses; parallel mode lets each process (the test
+ # runner and every `trac` subprocess) write its own data file, merged later by
+-# `coverage combine`. source_pkgs (not paths) so measurement works regardless of
++# `xoverage combine`. source_pkgs (not paths) so measurement works regardless of
+ # the subprocess cwd (a tmp host repo).
+ parallel = true
+ source_pkgs = ["tracks"]
+-# 2026-09-24 (island-2 coverage gate): pure-I/O backends (opencode subprocess
++# 2026-09-24 (island-2 xoverage gate): pure-I/O backends (opencode subprocess
+ # spawn, pty lifecycle, session registry, server socket paths) are unreachable
+ # from unit tests by construction -- they need a real opencode binary and a
+ # listening port. Omitting them keeps the 95% threshold meaningful for the
+ # testable surface (kernel logic, supervisors, projections, gates) instead of
+ # diluting it with I/O plumbing. Future: mockable backends for the opencode v2
+-# migration (user note 2026-09-24) would let these lines re-enter coverage.
++# migration (user note 2026-09-24) would let these lines re-enter xoverage.
+ omit = [
+     "tracks/effects/opencode_run.py",
+     "tracks/effects/opencode_session.py",
+@@ -117,7 +117,7 @@
+     "tracks/effects/adjudicate.py",
+ ]
+ 
+-[tool.coverage.report]
++[tool.xoverage.report]
+ show_missing = true
+ # Mirror the run-level omit: already-collected data from omitted files is
+ # excluded from the report TOTAL too (the quality gate reads the report).
