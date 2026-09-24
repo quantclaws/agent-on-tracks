@@ -317,7 +317,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -333,7 +333,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -365,7 +365,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -381,7 +381,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -397,7 +397,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=4 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
@@ -413,7 +413,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=89"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:1e6590bcf94b84546a5d7ab02df0c936faf41faef3a9962574ac8a781116fab1"
+config_digest = "sha256:7401258f37c3f4f66a5cd77ac8b94bef00e59159013c8c165bd1b918f1f92e4b"
 scope = ["tracks"]
 threshold = "line coverage >=89; by=collected; source omit=pure-I/O backends (opencode subprocess/session/pty, fake backends, evidence I/O — pyproject.toml [tool.coverage] omit)"
 timeout_seconds = 1800
