@@ -1,663 +1,663 @@
 {
- "bindings": [
-  {
-   "ac": "AC-FR0288-01",
-   "if_ref": "IF-SERVE-001",
-   "mutation": "服务启动成功却不打印 serving 行——浏览器无进度可感知",
-   "patch": "ce_fix_ac-fr0288-01.patch",
-   "test": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0288-02",
-   "if_ref": "IF-SERVE-001",
-   "mutation": "重启恢复不再重排已认领的命令——requeued 为空，服务重启后进行中的命令丢失",
-   "patch": "ce_sup_ac-fr0288-02.patch",
-   "test": "tests/integration/test_serve_lifecycle.py::test_restart_recovers_registry_commands_waits",
-   "control": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0288-03",
-   "if_ref": "IF-SERVE-001",
-   "mutation": "存储不可用时 cmd_serve 返回 0 冒充成功——不可写 home 不再 fail-closed",
-   "patch": "ce_sup_ac-fr0288-03.patch",
-   "test": "tests/integration/test_serve_lifecycle.py::test_unhealthy_no_fake_available",
-   "control": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0289-01",
-   "if_ref": "IF-PROJ-001",
-   "mutation": "register_command 直接返回不落库——项目注册的命令行重启后不可检索",
-   "patch": "ce_sup_ac-fr0289-01.patch",
-   "test": "tests/integration/test_project_registry.py::test_register_shows_attribution_and_survives_restart",
-   "control": "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0289-02",
-   "if_ref": "IF-PROJ-001",
-   "mutation": "check_registration_scope 直接放行——越界 repo_path 不再被拒绝",
-   "patch": "ce_sup_ac-fr0289-02.patch",
-   "test": "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
-   "control": "tests/integration/test_project_registry.py::test_register_shows_attribution_and_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0290-01",
-   "if_ref": "IF-PROJ-001",
-   "mutation": "contract 探针失败时不给出 reason——就绪项缺少失败原因",
-   "patch": "ce_sup_ac-fr0290-01.patch",
-   "test": "tests/integration/test_readiness.py::test_readiness_items_displayed",
-   "control": "tests/integration/test_readiness.py::test_not_ready_blocks_run_creation",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0291-01",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "status 查询用 kind 冒充 command_id 返回——新 run 的命令身份不可按 ID 复核",
-   "patch": "ce_sup_ac-fr0291-01.patch",
-   "test": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
-   "control": "tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0291-02",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "幂等查找被跳过——重复提交铸造新命令而非返回同一 run",
-   "patch": "ce_sup_ac-fr0291-02.patch",
-   "test": "tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run",
-   "control": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0292-01",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "post-release 热修复入口在受理前被拒绝——web 热修复旅程无法进入",
-   "patch": "ce_sup_ac-fr0292-01.patch",
-   "test": "tests/e2e/test_web_hotfix_journeys.py::test_post_release_hotfix_web_journey",
-   "control": "tests/e2e/test_web_hotfix_journeys.py::test_dev_hotfix_web_journey",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0292-02",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "热修复前检拒绝使用封闭集之外的 reason token——拒绝原因不可归类",
-   "patch": "ce_sup_ac-fr0292-02.patch",
-   "test": "tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected",
-   "control": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0293-01",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "submit_clarification 一律拒绝——澄清回复无法延续同一 run",
-   "patch": "ce_sup_ac-fr0293-01.patch",
-   "test": "tests/integration/test_clarify_web.py::test_reply_continues_same_run",
-   "control": "tests/integration/test_clarify_web.py::test_discussion_history_traceable",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0293-02",
-   "if_ref": "IF-DOCGAP-001",
-   "mutation": "timeline 投影把 events 键改名为 items——讨论历史时间线出口缺失",
-   "patch": "ce_sup_ac-fr0293-02.patch",
-   "test": "tests/integration/test_clarify_web.py::test_discussion_history_traceable",
-   "control": "tests/integration/test_clarify_web.py::test_reply_continues_same_run",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0294-01",
-   "if_ref": "IF-DOCREV-001",
-   "mutation": "审批绑定被无条件拒绝——已审修订的待定批准无法绑定",
-   "patch": "ce_sup_ac-fr0294-01.patch",
-   "test": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
-   "control": "tests/integration/test_doc_review_web.py::test_diff_between_revisions_visible",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0294-02",
-   "if_ref": "IF-DOCREV-001",
-   "mutation": "doc_diff 丢弃 diff 正文——相邻修订的差异不可见",
-   "patch": "ce_sup_ac-fr0294-02.patch",
-   "test": "tests/integration/test_doc_review_web.py::test_diff_between_revisions_visible",
-   "control": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0294-03",
-   "if_ref": "IF-DOCREV-001",
-   "mutation": "修订绑定被绕过——过期修订上的审批不再被拒绝",
-   "patch": "ce_sup_ac-fr0294-03.patch",
-   "test": "tests/integration/test_doc_review_web.py::test_edit_produces_new_revision_stale_approval_rejected",
-   "control": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0295-01",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "status 查询恒返回 None——重启后 command_id 不可检索",
-   "patch": "ce_sup_ac-fr0295-01.patch",
-   "test": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "control": "tests/integration/test_command_service.py::test_queries_are_readonly",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0295-02",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "幂等重复接受改铸新 command_id——同键同参不再去重",
-   "patch": "ce_fix_ac-fr0295-02.patch",
-   "test": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0295-03",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "CLI 面的受理一律被拒绝——CLI/HTTP 等价事件合同破坏",
-   "patch": "ce_sup_ac-fr0295-03.patch",
-   "test": "tests/integration/test_command_service.py::test_cli_http_equivalent_events",
-   "control": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0295-04",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "只读概览投影改为写连接并插入事件——读路径产生状态变更",
-   "patch": "ce_sup_ac-fr0295-04.patch",
-   "test": "tests/integration/test_command_service.py::test_queries_are_readonly",
-   "control": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0296-01",
-   "if_ref": "IF-LEASE-001",
-   "mutation": "acquire_lease 恒铸 generation 1——并发 fencing 失效",
-   "patch": "ce_fix_ac-fr0296-01.patch",
-   "test": "tests/integration/test_supervisor_lease.py::test_concurrent_drive_single_dispatch",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0296-02",
-   "if_ref": "IF-LEASE-001",
-   "mutation": "fencing CAS 拒绝的迟到结果不再隔离审计——旧代迟交结果无痕迹",
-   "patch": "ce_sup_ac-fr0296-02.patch",
-   "test": "tests/integration/test_supervisor_lease.py::test_stale_generation_late_result_quarantined",
-   "control": "tests/integration/test_supervisor_lease.py::test_concurrent_drive_single_dispatch",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0296-03",
-   "if_ref": "IF-SCHED-001",
-   "mutation": "第二个被接受的 run 未入队——单活队列丢失排队项",
-   "patch": "ce_sup_ac-fr0296-03.patch",
-   "test": "tests/integration/test_hotfix_swap.py::test_second_run_queued",
-   "control": "tests/integration/test_hotfix_swap.py::test_hotfix_preemption_audited",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0296-04",
-   "if_ref": "IF-SCHED-001",
-   "mutation": "抢占切换跳过 pause_run 步骤——被抢跑的 active run 无 pause 审计",
-   "patch": "ce_sup_ac-fr0296-04.patch",
-   "test": "tests/integration/test_hotfix_swap.py::test_hotfix_preemption_audited",
-   "control": "tests/integration/test_hotfix_swap.py::test_second_run_queued",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0297-01",
-   "if_ref": "IF-DRIVE-001",
-   "mutation": "drive_once 边界结果丢失 run_id——自动推进报告不可归属到 run",
-   "patch": "ce_sup_ac-fr0297-01.patch",
-   "test": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
-   "control": "tests/integration/test_auto_drive.py::test_human_gate_blocks_advance",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0297-02",
-   "if_ref": "IF-DRIVE-001",
-   "mutation": "失败结果改报 await_human 并附带外部 wait——人工门禁不再停车而是带重试自动跨过",
-   "patch": "ce_sup_ac-fr0297-02.patch",
-   "test": "tests/integration/test_auto_drive.py::test_human_gate_blocks_advance",
-   "control": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0298-01",
-   "if_ref": "IF-WAIT-001",
-   "mutation": "恢复扫描不再看到持久化 wait 行——等待状态在重启后丢失",
-   "patch": "ce_sup_ac-fr0298-01.patch",
-   "test": "tests/integration/test_wait_persistence.py::test_wait_survives_restart_and_auto_resumes",
-   "control": "tests/integration/test_wait_persistence.py::test_no_hot_loop_bounded_probing",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0298-02",
-   "if_ref": "IF-WAIT-001",
-   "mutation": "首次探测退化为 1s 热循环——忽略 NFR-0152 的 initial/cap 策略",
-   "patch": "ce_fix_ac-fr0298-02.patch",
-   "test": "tests/integration/test_wait_persistence.py::test_no_hot_loop_bounded_probing",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0299-01",
-   "if_ref": "IF-WAIT-001",
-   "mutation": "已知重置时间被丢弃——配额等待退化为无定向探测，无法在重置点自动恢复",
-   "patch": "ce_sup_ac-fr0299-01.patch",
-   "test": "tests/integration/test_quota_wait.py::test_known_reset_auto_resume",
-   "control": "tests/integration/test_quota_wait.py::test_unknown_reset_probe_plan_no_countdown",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0299-02",
-   "if_ref": "IF-WAIT-001",
-   "mutation": "未知重置被伪造倒计时——配额等待冒充已知重置时间",
-   "patch": "ce_sup_ac-fr0299-02.patch",
-   "test": "tests/integration/test_quota_wait.py::test_unknown_reset_probe_plan_no_countdown",
-   "control": "tests/integration/test_quota_wait.py::test_known_reset_auto_resume",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0300-01",
-   "if_ref": "IF-RECOVER-001",
-   "mutation": "恢复重排把已完成命令一并 reclaim——已完成的外部效果被重复执行",
-   "patch": "ce_sup_ac-fr0300-01.patch",
-   "test": "tests/integration/test_restart_recovery.py::test_worker_kill_reclaim_no_duplicate_effects",
-   "control": "tests/integration/test_restart_recovery.py::test_server_restart_resumes_without_loss",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0300-02",
-   "if_ref": "IF-RECOVER-001",
-   "mutation": "启动恢复为保留的 wait 补发 wait.entered——重启后事件重复、状态看似回退",
-   "patch": "ce_sup_ac-fr0300-02.patch",
-   "test": "tests/integration/test_restart_recovery.py::test_server_restart_resumes_without_loss",
-   "control": "tests/integration/test_restart_recovery.py::test_worker_kill_reclaim_no_duplicate_effects",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0301-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "概览投影键 human_todo_count 被改名——人工待办总数出口缺失",
-   "patch": "ce_sup_ac-fr0301-01.patch",
-   "test": "tests/integration/test_overview_query.py::test_overview_consistent_with_state",
-   "control": "tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0301-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "只读概览投影改走写连接并向 service_events 插入事件——读路径产生状态变更（已按库存在性收窄，控制测试不受影响）",
-   "patch": "ce_fix_ac-fr0301-02.patch",
-   "test": "tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking",
-   "control": "tests/integration/test_overview_query.py::test_overview_consistent_with_state",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0302-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "run 详情注入伪造的百分比——进度视图出现捏造的 gate_pass_percent",
-   "patch": "ce_sup_ac-fr0302-01.patch",
-   "test": "tests/integration/test_progress_projection.py::test_dual_counts_presented",
-   "control": "tests/integration/test_progress_projection.py::test_progress_matches_real_counts",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0302-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "run 详情不再呈现 substate——进度快照缺少真实子状态",
-   "patch": "ce_sup_ac-fr0302-02.patch",
-   "test": "tests/integration/test_progress_projection.py::test_progress_matches_real_counts",
-   "control": "tests/integration/test_progress_projection.py::test_dual_counts_presented",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0303-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "任务日志引用查找被移除——执行状态条目缺少 log_ref 跳转引用",
-   "patch": "ce_sup_ac-fr0303-01.patch",
-   "test": "tests/integration/test_execution_state.py::test_role_task_states_with_log_refs",
-   "control": "tests/integration/test_execution_state.py::test_no_agent_session_content_anywhere",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0303-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "执行投影把 outcome 原文灌进 log_ref——Agent 会话内容泄漏到只读视图",
-   "patch": "ce_sup_ac-fr0303-02.patch",
-   "test": "tests/integration/test_execution_state.py::test_no_agent_session_content_anywhere",
-   "control": "tests/integration/test_execution_state.py::test_role_task_states_with_log_refs",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0304-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "证据链跳过无计划锚点的注册 AC——闭环链不再覆盖全部验收项",
-   "patch": "ce_sup_ac-fr0304-01.patch",
-   "test": "tests/integration/test_ac_evidence_view.py::test_ac_chain_complete",
-   "control": "tests/integration/test_ac_evidence_view.py::test_missing_stale_unreviewed_marked",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0304-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "失败判定被记为 ok——陈旧证据被冒充为通过",
-   "patch": "ce_sup_ac-fr0304-02.patch",
-   "test": "tests/integration/test_ac_evidence_view.py::test_missing_stale_unreviewed_marked",
-   "control": "tests/integration/test_ac_evidence_view.py::test_ac_chain_complete",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0305-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "时间线行丢失 summary——故障与重试轨迹不可读",
-   "patch": "ce_sup_ac-fr0305-01.patch",
-   "test": "tests/integration/test_timeline_diagnosis.py::test_timeline_shows_failures_retries_next",
-   "control": "tests/integration/test_timeline_diagnosis.py::test_logs_locatable_by_dimensions",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0305-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "时间线按 AC 维度过滤被丢弃——错误无法按 AC 定位",
-   "patch": "ce_sup_ac-fr0305-02.patch",
-   "test": "tests/integration/test_timeline_diagnosis.py::test_logs_locatable_by_dimensions",
-   "control": "tests/integration/test_timeline_diagnosis.py::test_timeline_shows_failures_retries_next",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0306-01",
-   "if_ref": "IF-STREAM-001",
-   "mutation": "SSE 帧丢弃 id 段——直播推送缺少游标无法定位",
-   "patch": "ce_sup_ac-fr0306-01.patch",
-   "test": "tests/integration/test_event_stream.py::test_live_push_without_refresh",
-   "control": "tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0306-02",
-   "if_ref": "IF-STREAM-001",
-   "mutation": "重连回填忽略游标——重放从头开始产生重复帧",
-   "patch": "ce_sup_ac-fr0306-02.patch",
-   "test": "tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression",
-   "control": "tests/integration/test_event_stream.py::test_live_push_without_refresh",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0307-01",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "待办项丢失 action_ref——人工决策缺少跳转引用",
-   "patch": "ce_sup_ac-fr0307-01.patch",
-   "test": "tests/integration/test_todo_center.py::test_legit_decisions_listed_with_context",
-   "control": "tests/integration/test_todo_center.py::test_waits_never_in_todos",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0307-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "待办中心泄漏 quota 等待——外部等待混入人工决策清单",
-   "patch": "ce_sup_ac-fr0307-02.patch",
-   "test": "tests/integration/test_todo_center.py::test_waits_never_in_todos",
-   "control": "tests/integration/test_todo_center.py::test_legit_decisions_listed_with_context",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0308-01",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "受理回执状态被伪报——批准命令的持久结果不可信",
-   "patch": "ce_sup_ac-fr0308-01.patch",
-   "test": "tests/integration/test_web_approval.py::test_approval_bound_and_advances",
-   "control": "tests/integration/test_web_approval.py::test_stale_revision_rejected",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0308-02",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "修订绑定检查被绕过——过期修订上的批准不再被拒绝",
-   "patch": "ce_sup_ac-fr0308-02.patch",
-   "test": "tests/integration/test_web_approval.py::test_stale_revision_rejected",
-   "control": "tests/integration/test_web_approval.py::test_approval_bound_and_advances",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0309-01",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "release 决策的动作授权恒判失败——合法发布决定无法受理",
-   "patch": "ce_sup_ac-fr0309-01.patch",
-   "test": "tests/integration/test_web_release.py::test_release_via_web_happy",
-   "control": "tests/integration/test_web_release.py::test_stale_preview_rejected",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0309-02",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "release 决策不再拒绝过期 preview——stale 发布决定被受理",
-   "patch": "ce_sup_ac-fr0309-02.patch",
-   "test": "tests/integration/test_web_release.py::test_stale_preview_rejected",
-   "control": "tests/integration/test_web_release.py::test_release_via_web_happy",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0309-03",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "release 决定持久化时丢失 preview_digest 绑定——delay/return 决策不可按审阅 digest 复核",
-   "patch": "ce_sup_ac-fr0309-03.patch",
-   "test": "tests/integration/test_web_release.py::test_delay_and_return_bound_to_digest",
-   "control": "tests/integration/test_web_release.py::test_release_via_web_happy",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0310-01",
-   "if_ref": "IF-PAUSE-001",
-   "mutation": "暂停请求相被直接投影为已暂停——两阶段不可区分",
-   "patch": "ce_sup_ac-fr0310-01.patch",
-   "test": "tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority",
-   "control": "tests/integration/test_pause_resume.py::test_resume_from_legal_position",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0310-02",
-   "if_ref": "IF-PAUSE-001",
-   "mutation": "resume 受理丢失 from_stage——恢复不可归属到原合法位置",
-   "patch": "ce_sup_ac-fr0310-02.patch",
-   "test": "tests/integration/test_pause_resume.py::test_resume_from_legal_position",
-   "control": "tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0311-01",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "受控重试一律被拒绝——合法位置的重试无法受理",
-   "patch": "ce_sup_ac-fr0311-01.patch",
-   "test": "tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates",
-   "control": "tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0311-02",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "重试证据门禁被旁路——过期证据的重试不再被拒绝",
-   "patch": "ce_sup_ac-fr0311-02.patch",
-   "test": "tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected",
-   "control": "tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0312-01",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "不可逆确认门被取消——未确认回拨也被受理",
-   "patch": "ce_sup_ac-fr0312-01.patch",
-   "test": "tests/integration/test_web_rollback.py::test_return_with_impact_preview",
-   "control": "tests/integration/test_web_rollback.py::test_late_results_isolated_after_rollback",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0312-02",
-   "if_ref": "IF-ESCAPE-001",
-   "mutation": "fencing CAS 忽略代次——旧代迟到结果被提交而非隔离",
-   "patch": "ce_sup_ac-fr0312-02.patch",
-   "test": "tests/integration/test_web_rollback.py::test_late_results_isolated_after_rollback",
-   "control": "tests/integration/test_web_rollback.py::test_pushed_release_survives_rollback",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0312-03",
-   "if_ref": "IF-ESCAPE-001",
-   "mutation": "受理回拨直接改写 run 平面历史——已发布 tag/release 的历史被重写",
-   "patch": "ce_sup_ac-fr0312-03.patch",
-   "test": "tests/integration/test_web_rollback.py::test_pushed_release_survives_rollback",
-   "control": "tests/integration/test_web_rollback.py::test_return_with_impact_preview",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0313-01",
-   "if_ref": "IF-WEBGATE-001",
-   "mutation": "受理审计载荷丢失幂等键——放弃受理的审计不可按幂等键复核",
-   "patch": "ce_sup_ac-fr0313-01.patch",
-   "test": "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable",
-   "control": "tests/integration/test_abandon_web.py::test_abandon_no_fake_success",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0313-02",
-   "if_ref": "IF-ESCAPE-002",
-   "mutation": "放弃受理伪造 command.completed 副作用——放弃被冒充出执行完成效果",
-   "patch": "ce_sup_ac-fr0313-02.patch",
-   "test": "tests/integration/test_abandon_web.py::test_abandon_no_fake_success",
-   "control": "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0313-03",
-   "if_ref": "IF-DRIVE-001",
-   "mutation": "drive _failed_result 把不可恢复失败误分类为 recoverable_external——失败不会停在失败终态",
-   "patch": "ce_fix_ac-fr0313-03.patch",
-   "test": "tests/integration/test_abandon_web.py::test_unrecoverable_failure_terminal",
-   "control": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0314-01",
-   "if_ref": "IF-WEBAUTH-001",
-   "mutation": "口令校验恒真——未认证口令永远通过，登录门禁失效",
-   "patch": "ce_sup_ac-fr0314-01.patch",
-   "test": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
-   "control": "tests/integration/test_web_auth.py::test_non_human_decision_rejected_audited",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0314-02",
-   "if_ref": "IF-CMDGUARD-001",
-   "mutation": "human-only 类别分区不再执行——agent 可提交人工决策",
-   "patch": "ce_sup_ac-fr0314-02.patch",
-   "test": "tests/integration/test_web_auth.py::test_non_human_decision_rejected_audited",
-   "control": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0314-03",
-   "if_ref": "IF-CMDGUARD-001",
-   "mutation": "validate_command_payload 放行未知 shell 载荷——无执行语义的载荷不被 guard 拦截",
-   "patch": "ce_fix_ac-fr0314-03.patch",
-   "test": "tests/integration/test_web_auth.py::test_shell_payload_blocked",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0314-04",
-   "if_ref": "IF-WEBAUTH-001",
-   "mutation": "裁决权属检查被旁路——未被请求方也能 resolved 线程",
-   "patch": "ce_sup_ac-fr0314-04.patch",
-   "test": "tests/integration/test_web_auth.py::test_adjudication_ownership_enforced",
-   "control": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0315-01",
-   "if_ref": "IF-SECRECY-001",
-   "mutation": "redact_text 原样返回——明文凭据泄漏到所有出站面",
-   "patch": "ce_fix_ac-fr0315-01.patch",
-   "test": "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface",
-   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-FR0315-02",
-   "if_ref": "IF-SECRECY-001",
-   "mutation": "越界路径检查被旁路——授权范围外的文件读取不再被拒绝",
-   "patch": "ce_sup_ac-fr0315-02.patch",
-   "test": "tests/integration/test_secrecy.py::test_out_of_scope_read_denied",
-   "control": "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0150-01",
-   "if_ref": "IF-CMDSVC-001",
-   "mutation": "受理阻塞 5.5s 后才返回——受理不再在持久化完成即返回",
-   "patch": "ce_sup_ac-nfr0150-01.patch",
-   "test": "tests/integration/test_perf_budget.py::test_accept_returns_after_persist",
-   "control": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0150-02",
-   "if_ref": "IF-QUERY-001",
-   "mutation": "详情查询被拖慢出 P95 预算——查询采样超过 1s",
-   "patch": "ce_sup_ac-nfr0150-02.patch",
-   "test": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
-   "control": "tests/integration/test_perf_budget.py::test_accept_returns_after_persist",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0150-03",
-   "if_ref": "IF-SERVE-001",
-   "mutation": "每次受理滞留 128KB 内存——soak 负载下服务常驻内存无界增长",
-   "patch": "ce_sup_ac-nfr0150-03.patch",
-   "test": "tests/integration/test_perf_budget.py::test_soak_memory_bounded",
-   "control": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0151-01",
-   "if_ref": "IF-MTEST-001",
-   "mutation": "启动恢复不再释放/审计过期租约——服务重启场景缺过期租约审计",
-   "patch": "ce_sup_ac-nfr0151-01.patch",
-   "test": "tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered",
-   "control": "tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0151-02",
-   "if_ref": "IF-GUARD-001",
-   "mutation": "覆盖率门槛依赖与配置被移除——质量门不再含 v0.8 继承的覆盖率门槛",
-   "patch": "ce_sup_ac-nfr0151-02.patch",
-   "test": "tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited",
-   "control": "tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0152-01",
-   "if_ref": "IF-WAIT-001",
-   "mutation": "退避初始间隔从锁定默认 60s 改为 30s——探测退避口径不可按默认值读出",
-   "patch": "ce_sup_ac-nfr0152-01.patch",
-   "test": "tests/integration/test_backoff_policy.py::test_backoff_growth_bounded_and_config_readable",
-   "control": "tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence",
-   "result": "killed"
-  },
-  {
-   "ac": "AC-NFR0152-02",
-   "if_ref": "IF-STREAM-001",
-   "mutation": "断开回退轮询空闲上限从 60s 放宽到 300s——回退轮询越过空闲口径",
-   "patch": "ce_sup_ac-nfr0152-02.patch",
-   "test": "tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence",
-   "control": "tests/integration/test_backoff_policy.py::test_backoff_growth_bounded_and_config_readable",
-   "result": "killed"
-  }
- ],
- "contract": "v0.9-closure-supplement",
- "version": "v0.9"
+  "bindings": [
+    {
+      "ac": "AC-FR0288-01",
+      "if_ref": "IF-SERVE-001",
+      "mutation": "服务启动成功却不打印 serving 行——浏览器无进度可感知",
+      "patch": "ce_fix_ac-fr0288-01.patch",
+      "test": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0288-02",
+      "if_ref": "IF-SERVE-001",
+      "mutation": "重启恢复不再重排已认领的命令——requeued 为空，服务重启后进行中的命令丢失",
+      "patch": "ce_sup_ac-fr0288-02.patch",
+      "test": "tests/integration/test_serve_lifecycle.py::test_restart_recovers_registry_commands_waits",
+      "control": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0288-03",
+      "if_ref": "IF-SERVE-001",
+      "mutation": "存储不可用时 cmd_serve 返回 0 冒充成功——不可写 home 不再 fail-closed",
+      "patch": "ce_sup_ac-fr0288-03.patch",
+      "test": "tests/integration/test_serve_lifecycle.py::test_unhealthy_no_fake_available",
+      "control": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0289-01",
+      "if_ref": "IF-PROJ-001",
+      "mutation": "register_command 直接返回不落库——项目注册的命令行重启后不可检索",
+      "patch": "ce_sup_ac-fr0289-01.patch",
+      "test": "tests/integration/test_project_registry.py::test_register_shows_attribution_and_survives_restart",
+      "control": "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0289-02",
+      "if_ref": "IF-PROJ-001",
+      "mutation": "check_registration_scope 直接放行——越界 repo_path 不再被拒绝",
+      "patch": "ce_sup_ac-fr0289-02.patch",
+      "test": "tests/integration/test_project_registry.py::test_out_of_scope_rejected",
+      "control": "tests/integration/test_project_registry.py::test_register_shows_attribution_and_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0290-01",
+      "if_ref": "IF-PROJ-001",
+      "mutation": "contract 探针失败时不给出 reason——就绪项缺少失败原因",
+      "patch": "ce_sup_ac-fr0290-01.patch",
+      "test": "tests/integration/test_readiness.py::test_readiness_items_displayed",
+      "control": "tests/integration/test_readiness.py::test_not_ready_blocks_run_creation",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0291-01",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "status 查询用 kind 冒充 command_id 返回——新 run 的命令身份不可按 ID 复核",
+      "patch": "ce_sup_ac-fr0291-01.patch",
+      "test": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
+      "control": "tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0291-02",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "幂等查找被跳过——重复提交铸造新命令而非返回同一 run",
+      "patch": "ce_sup_ac-fr0291-02.patch",
+      "test": "tests/integration/test_run_create_web.py::test_failed_and_duplicate_submit_no_fake_run",
+      "control": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0292-01",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "post-release 热修复入口在受理前被拒绝——web 热修复旅程无法进入",
+      "patch": "ce_sup_ac-fr0292-01.patch",
+      "test": "tests/e2e/test_web_hotfix_journeys.py::test_post_release_hotfix_web_journey",
+      "control": "tests/e2e/test_web_hotfix_journeys.py::test_dev_hotfix_web_journey",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0292-02",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "热修复前检拒绝使用封闭集之外的 reason token——拒绝原因不可归类",
+      "patch": "ce_sup_ac-fr0292-02.patch",
+      "test": "tests/integration/test_run_create_web.py::test_hotfix_precheck_rejected",
+      "control": "tests/integration/test_run_create_web.py::test_create_feature_run_returns_ids",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0293-01",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "submit_clarification 一律拒绝——澄清回复无法延续同一 run",
+      "patch": "ce_sup_ac-fr0293-01.patch",
+      "test": "tests/integration/test_clarify_web.py::test_reply_continues_same_run",
+      "control": "tests/integration/test_clarify_web.py::test_discussion_history_traceable",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0293-02",
+      "if_ref": "IF-DOCGAP-001",
+      "mutation": "timeline 投影把 events 键改名为 items——讨论历史时间线出口缺失",
+      "patch": "ce_sup_ac-fr0293-02.patch",
+      "test": "tests/integration/test_clarify_web.py::test_discussion_history_traceable",
+      "control": "tests/integration/test_clarify_web.py::test_reply_continues_same_run",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0294-01",
+      "if_ref": "IF-DOCREV-001",
+      "mutation": "审批绑定被无条件拒绝——已审修订的待定批准无法绑定",
+      "patch": "ce_sup_ac-fr0294-01.patch",
+      "test": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
+      "control": "tests/integration/test_doc_review_web.py::test_diff_between_revisions_visible",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0294-02",
+      "if_ref": "IF-DOCREV-001",
+      "mutation": "doc_diff 丢弃 diff 正文——相邻修订的差异不可见",
+      "patch": "ce_sup_ac-fr0294-02.patch",
+      "test": "tests/integration/test_doc_review_web.py::test_diff_between_revisions_visible",
+      "control": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0294-03",
+      "if_ref": "IF-DOCREV-001",
+      "mutation": "修订绑定被绕过——过期修订上的审批不再被拒绝",
+      "patch": "ce_sup_ac-fr0294-03.patch",
+      "test": "tests/integration/test_doc_review_web.py::test_edit_produces_new_revision_stale_approval_rejected",
+      "control": "tests/integration/test_doc_review_web.py::test_revision_visible_and_pending_bound",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0295-01",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "status 查询恒返回 None——重启后 command_id 不可检索",
+      "patch": "ce_sup_ac-fr0295-01.patch",
+      "test": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "control": "tests/integration/test_command_service.py::test_queries_are_readonly",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0295-02",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "幂等重复接受改铸新 command_id——同键同参不再去重",
+      "patch": "ce_fix_ac-fr0295-02.patch",
+      "test": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0295-03",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "CLI 面的受理一律被拒绝——CLI/HTTP 等价事件合同破坏",
+      "patch": "ce_sup_ac-fr0295-03.patch",
+      "test": "tests/integration/test_command_service.py::test_cli_http_equivalent_events",
+      "control": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0295-04",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "只读概览投影改为写连接并插入事件——读路径产生状态变更",
+      "patch": "ce_sup_ac-fr0295-04.patch",
+      "test": "tests/integration/test_command_service.py::test_queries_are_readonly",
+      "control": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0296-01",
+      "if_ref": "IF-LEASE-001",
+      "mutation": "acquire_lease 恒铸 generation 1——并发 fencing 失效",
+      "patch": "ce_fix_ac-fr0296-01.patch",
+      "test": "tests/integration/test_supervisor_lease.py::test_concurrent_drive_single_dispatch",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0296-02",
+      "if_ref": "IF-LEASE-001",
+      "mutation": "fencing CAS 拒绝的迟到结果不再隔离审计——旧代迟交结果无痕迹",
+      "patch": "ce_sup_ac-fr0296-02.patch",
+      "test": "tests/integration/test_supervisor_lease.py::test_stale_generation_late_result_quarantined",
+      "control": "tests/integration/test_supervisor_lease.py::test_concurrent_drive_single_dispatch",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0296-03",
+      "if_ref": "IF-SCHED-001",
+      "mutation": "第二个被接受的 run 未入队——单活队列丢失排队项",
+      "patch": "ce_sup_ac-fr0296-03.patch",
+      "test": "tests/integration/test_hotfix_swap.py::test_second_run_queued",
+      "control": "tests/integration/test_hotfix_swap.py::test_hotfix_preemption_audited",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0296-04",
+      "if_ref": "IF-SCHED-001",
+      "mutation": "抢占切换跳过 pause_run 步骤——被抢跑的 active run 无 pause 审计",
+      "patch": "ce_sup_ac-fr0296-04.patch",
+      "test": "tests/integration/test_hotfix_swap.py::test_hotfix_preemption_audited",
+      "control": "tests/integration/test_hotfix_swap.py::test_second_run_queued",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0297-01",
+      "if_ref": "IF-DRIVE-001",
+      "mutation": "drive_once 边界结果丢失 run_id——自动推进报告不可归属到 run",
+      "patch": "ce_sup_ac-fr0297-01.patch",
+      "test": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
+      "control": "tests/integration/test_auto_drive.py::test_human_gate_blocks_advance",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0297-02",
+      "if_ref": "IF-DRIVE-001",
+      "mutation": "失败结果改报 await_human 并附带外部 wait——人工门禁不再停车而是带重试自动跨过",
+      "patch": "ce_sup_ac-fr0297-02.patch",
+      "test": "tests/integration/test_auto_drive.py::test_human_gate_blocks_advance",
+      "control": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0298-01",
+      "if_ref": "IF-WAIT-001",
+      "mutation": "恢复扫描不再看到持久化 wait 行——等待状态在重启后丢失",
+      "patch": "ce_sup_ac-fr0298-01.patch",
+      "test": "tests/integration/test_wait_persistence.py::test_wait_survives_restart_and_auto_resumes",
+      "control": "tests/integration/test_wait_persistence.py::test_no_hot_loop_bounded_probing",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0298-02",
+      "if_ref": "IF-WAIT-001",
+      "mutation": "首次探测退化为 1s 热循环——忽略 NFR-0152 的 initial/cap 策略",
+      "patch": "ce_fix_ac-fr0298-02.patch",
+      "test": "tests/integration/test_wait_persistence.py::test_no_hot_loop_bounded_probing",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0299-01",
+      "if_ref": "IF-WAIT-001",
+      "mutation": "已知重置时间被丢弃——配额等待退化为无定向探测，无法在重置点自动恢复",
+      "patch": "ce_sup_ac-fr0299-01.patch",
+      "test": "tests/integration/test_quota_wait.py::test_known_reset_auto_resume",
+      "control": "tests/integration/test_quota_wait.py::test_unknown_reset_probe_plan_no_countdown",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0299-02",
+      "if_ref": "IF-WAIT-001",
+      "mutation": "未知重置被伪造倒计时——配额等待冒充已知重置时间",
+      "patch": "ce_sup_ac-fr0299-02.patch",
+      "test": "tests/integration/test_quota_wait.py::test_unknown_reset_probe_plan_no_countdown",
+      "control": "tests/integration/test_quota_wait.py::test_known_reset_auto_resume",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0300-01",
+      "if_ref": "IF-RECOVER-001",
+      "mutation": "恢复重排把已完成命令一并 reclaim——已完成的外部效果被重复执行",
+      "patch": "ce_sup_ac-fr0300-01.patch",
+      "test": "tests/integration/test_restart_recovery.py::test_worker_kill_reclaim_no_duplicate_effects",
+      "control": "tests/integration/test_restart_recovery.py::test_server_restart_resumes_without_loss",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0300-02",
+      "if_ref": "IF-RECOVER-001",
+      "mutation": "启动恢复为保留的 wait 补发 wait.entered——重启后事件重复、状态看似回退",
+      "patch": "ce_sup_ac-fr0300-02.patch",
+      "test": "tests/integration/test_restart_recovery.py::test_server_restart_resumes_without_loss",
+      "control": "tests/integration/test_restart_recovery.py::test_worker_kill_reclaim_no_duplicate_effects",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0301-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "概览投影键 human_todo_count 被改名——人工待办总数出口缺失",
+      "patch": "ce_sup_ac-fr0301-01.patch",
+      "test": "tests/integration/test_overview_query.py::test_overview_consistent_with_state",
+      "control": "tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0301-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "只读概览投影改走写连接并向 service_events 插入事件——读路径产生状态变更（已按库存在性收窄，控制测试不受影响）",
+      "patch": "ce_fix_ac-fr0301-02.patch",
+      "test": "tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking",
+      "control": "tests/integration/test_overview_query.py::test_overview_consistent_with_state",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0302-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "run 详情注入伪造的百分比——进度视图出现捏造的 gate_pass_percent",
+      "patch": "ce_sup_ac-fr0302-01.patch",
+      "test": "tests/integration/test_progress_projection.py::test_dual_counts_presented",
+      "control": "tests/integration/test_progress_projection.py::test_progress_matches_real_counts",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0302-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "run 详情不再呈现 substate——进度快照缺少真实子状态",
+      "patch": "ce_sup_ac-fr0302-02.patch",
+      "test": "tests/integration/test_progress_projection.py::test_progress_matches_real_counts",
+      "control": "tests/integration/test_progress_projection.py::test_dual_counts_presented",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0303-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "任务日志引用查找被移除——执行状态条目缺少 log_ref 跳转引用",
+      "patch": "ce_sup_ac-fr0303-01.patch",
+      "test": "tests/integration/test_execution_state.py::test_role_task_states_with_log_refs",
+      "control": "tests/integration/test_execution_state.py::test_no_agent_session_content_anywhere",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0303-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "执行投影把 outcome 原文灌进 log_ref——Agent 会话内容泄漏到只读视图",
+      "patch": "ce_sup_ac-fr0303-02.patch",
+      "test": "tests/integration/test_execution_state.py::test_no_agent_session_content_anywhere",
+      "control": "tests/integration/test_execution_state.py::test_role_task_states_with_log_refs",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0304-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "证据链跳过无计划锚点的注册 AC——闭环链不再覆盖全部验收项",
+      "patch": "ce_sup_ac-fr0304-01.patch",
+      "test": "tests/integration/test_ac_evidence_view.py::test_ac_chain_complete",
+      "control": "tests/integration/test_ac_evidence_view.py::test_missing_stale_unreviewed_marked",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0304-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "失败判定被记为 ok——陈旧证据被冒充为通过",
+      "patch": "ce_sup_ac-fr0304-02.patch",
+      "test": "tests/integration/test_ac_evidence_view.py::test_missing_stale_unreviewed_marked",
+      "control": "tests/integration/test_ac_evidence_view.py::test_ac_chain_complete",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0305-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "时间线行丢失 summary——故障与重试轨迹不可读",
+      "patch": "ce_sup_ac-fr0305-01.patch",
+      "test": "tests/integration/test_timeline_diagnosis.py::test_timeline_shows_failures_retries_next",
+      "control": "tests/integration/test_timeline_diagnosis.py::test_logs_locatable_by_dimensions",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0305-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "时间线按 AC 维度过滤被丢弃——错误无法按 AC 定位",
+      "patch": "ce_sup_ac-fr0305-02.patch",
+      "test": "tests/integration/test_timeline_diagnosis.py::test_logs_locatable_by_dimensions",
+      "control": "tests/integration/test_timeline_diagnosis.py::test_timeline_shows_failures_retries_next",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0306-01",
+      "if_ref": "IF-STREAM-001",
+      "mutation": "SSE 帧丢弃 id 段——直播推送缺少游标无法定位",
+      "patch": "ce_sup_ac-fr0306-01.patch",
+      "test": "tests/integration/test_event_stream.py::test_live_push_without_refresh",
+      "control": "tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0306-02",
+      "if_ref": "IF-STREAM-001",
+      "mutation": "重连回填忽略游标——重放从头开始产生重复帧",
+      "patch": "ce_sup_ac-fr0306-02.patch",
+      "test": "tests/integration/test_event_stream.py::test_reconnect_backfill_no_regression",
+      "control": "tests/integration/test_event_stream.py::test_live_push_without_refresh",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0307-01",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "待办项丢失 action_ref——人工决策缺少跳转引用",
+      "patch": "ce_sup_ac-fr0307-01.patch",
+      "test": "tests/integration/test_todo_center.py::test_legit_decisions_listed_with_context",
+      "control": "tests/integration/test_todo_center.py::test_waits_never_in_todos",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0307-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "待办中心泄漏 quota 等待——外部等待混入人工决策清单",
+      "patch": "ce_sup_ac-fr0307-02.patch",
+      "test": "tests/integration/test_todo_center.py::test_waits_never_in_todos",
+      "control": "tests/integration/test_todo_center.py::test_legit_decisions_listed_with_context",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0308-01",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "受理回执状态被伪报——批准命令的持久结果不可信",
+      "patch": "ce_sup_ac-fr0308-01.patch",
+      "test": "tests/integration/test_web_approval.py::test_approval_bound_and_advances",
+      "control": "tests/integration/test_web_approval.py::test_stale_revision_rejected",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0308-02",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "修订绑定检查被绕过——过期修订上的批准不再被拒绝",
+      "patch": "ce_sup_ac-fr0308-02.patch",
+      "test": "tests/integration/test_web_approval.py::test_stale_revision_rejected",
+      "control": "tests/integration/test_web_approval.py::test_approval_bound_and_advances",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0309-01",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "release 决策的动作授权恒判失败——合法发布决定无法受理",
+      "patch": "ce_sup_ac-fr0309-01.patch",
+      "test": "tests/integration/test_web_release.py::test_release_via_web_happy",
+      "control": "tests/integration/test_web_release.py::test_stale_preview_rejected",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0309-02",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "release 决策不再拒绝过期 preview——stale 发布决定被受理",
+      "patch": "ce_sup_ac-fr0309-02.patch",
+      "test": "tests/integration/test_web_release.py::test_stale_preview_rejected",
+      "control": "tests/integration/test_web_release.py::test_release_via_web_happy",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0309-03",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "release 决定持久化时丢失 preview_digest 绑定——delay/return 决策不可按审阅 digest 复核",
+      "patch": "ce_sup_ac-fr0309-03.patch",
+      "test": "tests/integration/test_web_release.py::test_delay_and_return_bound_to_digest",
+      "control": "tests/integration/test_web_release.py::test_release_via_web_happy",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0310-01",
+      "if_ref": "IF-PAUSE-001",
+      "mutation": "暂停请求相被直接投影为已暂停——两阶段不可区分",
+      "patch": "ce_sup_ac-fr0310-01.patch",
+      "test": "tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority",
+      "control": "tests/integration/test_pause_resume.py::test_resume_from_legal_position",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0310-02",
+      "if_ref": "IF-PAUSE-001",
+      "mutation": "resume 受理丢失 from_stage——恢复不可归属到原合法位置",
+      "patch": "ce_sup_ac-fr0310-02.patch",
+      "test": "tests/integration/test_pause_resume.py::test_resume_from_legal_position",
+      "control": "tests/integration/test_pause_resume.py::test_pause_two_phase_and_priority",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0311-01",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "受控重试一律被拒绝——合法位置的重试无法受理",
+      "patch": "ce_sup_ac-fr0311-01.patch",
+      "test": "tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates",
+      "control": "tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0311-02",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "重试证据门禁被旁路——过期证据的重试不再被拒绝",
+      "patch": "ce_sup_ac-fr0311-02.patch",
+      "test": "tests/integration/test_controlled_retry.py::test_stale_evidence_retry_rejected",
+      "control": "tests/integration/test_controlled_retry.py::test_retry_from_legal_position_no_duplicates",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0312-01",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "不可逆确认门被取消——未确认回拨也被受理",
+      "patch": "ce_sup_ac-fr0312-01.patch",
+      "test": "tests/integration/test_web_rollback.py::test_return_with_impact_preview",
+      "control": "tests/integration/test_web_rollback.py::test_late_results_isolated_after_rollback",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0312-02",
+      "if_ref": "IF-ESCAPE-001",
+      "mutation": "fencing CAS 忽略代次——旧代迟到结果被提交而非隔离",
+      "patch": "ce_sup_ac-fr0312-02.patch",
+      "test": "tests/integration/test_web_rollback.py::test_late_results_isolated_after_rollback",
+      "control": "tests/integration/test_web_rollback.py::test_pushed_release_survives_rollback",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0312-03",
+      "if_ref": "IF-ESCAPE-001",
+      "mutation": "受理回拨直接改写 run 平面历史——已发布 tag/release 的历史被重写",
+      "patch": "ce_sup_ac-fr0312-03.patch",
+      "test": "tests/integration/test_web_rollback.py::test_pushed_release_survives_rollback",
+      "control": "tests/integration/test_web_rollback.py::test_return_with_impact_preview",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0313-01",
+      "if_ref": "IF-WEBGATE-001",
+      "mutation": "受理审计载荷丢失幂等键——放弃受理的审计不可按幂等键复核",
+      "patch": "ce_sup_ac-fr0313-01.patch",
+      "test": "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable",
+      "control": "tests/integration/test_abandon_web.py::test_abandon_no_fake_success",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0313-02",
+      "if_ref": "IF-ESCAPE-002",
+      "mutation": "放弃受理伪造 command.completed 副作用——放弃被冒充出执行完成效果",
+      "patch": "ce_sup_ac-fr0313-02.patch",
+      "test": "tests/integration/test_abandon_web.py::test_abandon_no_fake_success",
+      "control": "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0313-03",
+      "if_ref": "IF-DRIVE-001",
+      "mutation": "drive _failed_result 把不可恢复失败误分类为 recoverable_external——失败不会停在失败终态",
+      "patch": "ce_fix_ac-fr0313-03.patch",
+      "test": "tests/integration/test_abandon_web.py::test_unrecoverable_failure_terminal",
+      "control": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0314-01",
+      "if_ref": "IF-WEBAUTH-001",
+      "mutation": "口令校验恒真——未认证口令永远通过，登录门禁失效",
+      "patch": "ce_sup_ac-fr0314-01.patch",
+      "test": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
+      "control": "tests/integration/test_web_auth.py::test_non_human_decision_rejected_audited",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0314-02",
+      "if_ref": "IF-CMDGUARD-001",
+      "mutation": "human-only 类别分区不再执行——agent 可提交人工决策",
+      "patch": "ce_sup_ac-fr0314-02.patch",
+      "test": "tests/integration/test_web_auth.py::test_non_human_decision_rejected_audited",
+      "control": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0314-03",
+      "if_ref": "IF-CMDGUARD-001",
+      "mutation": "validate_command_payload 放行未知 shell 载荷——无执行语义的载荷不被 guard 拦截",
+      "patch": "ce_fix_ac-fr0314-03.patch",
+      "test": "tests/integration/test_web_auth.py::test_shell_payload_blocked",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0314-04",
+      "if_ref": "IF-WEBAUTH-001",
+      "mutation": "裁决权属检查被旁路——未被请求方也能 resolved 线程",
+      "patch": "ce_sup_ac-fr0314-04.patch",
+      "test": "tests/integration/test_web_auth.py::test_adjudication_ownership_enforced",
+      "control": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0315-01",
+      "if_ref": "IF-SECRECY-001",
+      "mutation": "redact_text 原样返回——明文凭据泄漏到所有出站面",
+      "patch": "ce_fix_ac-fr0315-01.patch",
+      "test": "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface",
+      "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-FR0315-02",
+      "if_ref": "IF-SECRECY-001",
+      "mutation": "越界路径检查被旁路——授权范围外的文件读取不再被拒绝",
+      "patch": "ce_sup_ac-fr0315-02.patch",
+      "test": "tests/integration/test_secrecy.py::test_out_of_scope_read_denied",
+      "control": "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0150-01",
+      "if_ref": "IF-CMDSVC-001",
+      "mutation": "受理阻塞 5.5s 后才返回——受理不再在持久化完成即返回",
+      "patch": "ce_sup_ac-nfr0150-01.patch",
+      "test": "tests/integration/test_perf_budget.py::test_accept_returns_after_persist",
+      "control": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0150-02",
+      "if_ref": "IF-QUERY-001",
+      "mutation": "详情查询被拖慢出 P95 预算——查询采样超过 1s",
+      "patch": "ce_sup_ac-nfr0150-02.patch",
+      "test": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
+      "control": "tests/integration/test_perf_budget.py::test_accept_returns_after_persist",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0150-03",
+      "if_ref": "IF-SERVE-001",
+      "mutation": "每次受理滞留 128KB 内存——soak 负载下服务常驻内存无界增长",
+      "patch": "ce_sup_ac-nfr0150-03.patch",
+      "test": "tests/integration/test_perf_budget.py::test_soak_memory_bounded",
+      "control": "tests/integration/test_perf_budget.py::test_query_p95_under_1s",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0151-01",
+      "if_ref": "IF-MTEST-001",
+      "mutation": "启动恢复不再释放/审计过期租约——服务重启场景缺过期租约审计",
+      "patch": "ce_sup_ac-nfr0151-01.patch",
+      "test": "tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered",
+      "control": "tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0151-02",
+      "if_ref": "IF-GUARD-001",
+      "mutation": "coverage dependency removed from dev toolchain — quality gate no longer carries the inherited coverage threshold",
+      "patch": "ce_fix_ac-nfr0151-02.patch",
+      "test": "tests/integration/test_reliability_matrix.py::test_coverage_threshold_inherited",
+      "control": "tests/integration/test_reliability_matrix.py::test_eight_reliability_scenarios_covered",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0152-01",
+      "if_ref": "IF-WAIT-001",
+      "mutation": "退避初始间隔从锁定默认 60s 改为 30s——探测退避口径不可按默认值读出",
+      "patch": "ce_sup_ac-nfr0152-01.patch",
+      "test": "tests/integration/test_backoff_policy.py::test_backoff_growth_bounded_and_config_readable",
+      "control": "tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence",
+      "result": "killed"
+    },
+    {
+      "ac": "AC-NFR0152-02",
+      "if_ref": "IF-STREAM-001",
+      "mutation": "断开回退轮询空闲上限从 60s 放宽到 300s——回退轮询越过空闲口径",
+      "patch": "ce_sup_ac-nfr0152-02.patch",
+      "test": "tests/integration/test_backoff_policy.py::test_poll_fallback_caps_and_idle_silence",
+      "control": "tests/integration/test_backoff_policy.py::test_backoff_growth_bounded_and_config_readable",
+      "result": "killed"
+    }
+  ],
+  "contract": "v0.9-closure-supplement",
+  "version": "v0.9"
 }

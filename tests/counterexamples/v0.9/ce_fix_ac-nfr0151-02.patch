@@ -1,0 +1,10 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -21,7 +21,6 @@
+ dev = [
+     "pytest==9.1.1",
+     "pytest-xdist==3.8.0",
+-    "coverage==7.15.2",
+     "ruff==0.16.0",
+     "pylint==4.0.6",
+     "flake8==7.3.0",
