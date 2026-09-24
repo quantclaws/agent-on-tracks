@@ -1,0 +1,10 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -955,4 +955,6 @@ def accept(self, kind, params, *, actor, actor_class, surface, idempotency_key)
+             deny("validation_failed", f"missing params: {', '.join(missing)}")
+         if kind == "create_run" and request.get("journey") not in _CREATE_RUN_JOURNEYS:
+             deny("validation_failed", f"unknown journey {request.get('journey')!r}")
++        if kind == "submit_clarification":
++            deny("validation_failed", "counterexample AC-FR0293-01: clarification reply rejected")
+         if idempotency_key is None:

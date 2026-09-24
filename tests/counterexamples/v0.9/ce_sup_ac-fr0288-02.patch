@@ -1,0 +1,8 @@
+diff --git a/tracks/supervisor/recover.py b/tracks/supervisor/recover.py
+--- a/tracks/supervisor/recover.py
++++ b/tracks/supervisor/recover.py
+@@ -65,3 +65,3 @@ def recover_on_startup(db: Any) -> dict:
+     requeue = getattr(db, "requeue_claimed", None)
+-    requeued = list(requeue("service_restart")) if callable(requeue) else []
++    requeued = []  # counterexample AC-FR0288-02: restart no longer requeues claimed commands
+     waits_kept = list(active_wait_runs(db))

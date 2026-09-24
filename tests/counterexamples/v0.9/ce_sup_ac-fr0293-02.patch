@@ -1,0 +1,10 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -640,5 +640,5 @@ def project_timeline(home, run_id, *, command_id, task_id, ac_id, after_seq)
+         rows = _after_cursor(rows, after_seq)
+-        return {"events": rows, "cursor": _cursor_of(rows)}
++        return {"items": rows, "cursor": _cursor_of(rows)}  # counterexample AC-FR0293-02: timeline events key renamed
+     finally:
+         if conn is not None:
+             conn.close()

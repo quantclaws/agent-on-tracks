@@ -1,0 +1,14 @@
+diff --git a/tracks/server/api_query.py b/tracks/server/api_query.py
+--- a/tracks/server/api_query.py
++++ b/tracks/server/api_query.py
+@@ -570,8 +570,9 @@ async def doc_diff(request: Any) -> Any:
+     unified = "".join(
+         difflib.unified_diff(
+             old.splitlines(keepends=True),
+             new.splitlines(keepends=True),
+             fromfile=f"a/{doc}",
+             tofile=f"b/{doc}",
+         )
++    unified = ""  # counterexample AC-FR0294-02: adjacent-revision diff body dropped
+     )
+     return _response(

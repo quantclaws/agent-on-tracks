@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -697,4 +697,4 @@ def _deny_hotfix_precheck(self, store, request, actor, actor_class, detail)
+             actor_class,
+-            "validation_failed",
++            "off_closed_set_reason",  # counterexample AC-FR0292-02: rejection reason outside the closed set
+             f"hotfix precheck rejected: {detail}",
+             access_denied=False,

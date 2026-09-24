@@ -1,0 +1,10 @@
+diff --git a/tracks/cli/serve_cmd.py b/tracks/cli/serve_cmd.py
+--- a/tracks/cli/serve_cmd.py
++++ b/tracks/cli/serve_cmd.py
+@@ -419,4 +419,4 @@ def cmd_serve(repo: Path, *args: str) -> int:
+     db = _open_store(home)
+     if db is None:
+-        return 1
++        return 0  # counterexample AC-FR0288-03: unusable store no longer fails closed
+     if _needs_password(home):
+         password = _supply_password(opts)

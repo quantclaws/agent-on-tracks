@@ -1,0 +1,8 @@
+diff --git a/tracks/supervisor/readiness.py b/tracks/supervisor/readiness.py
+--- a/tracks/supervisor/readiness.py
++++ b/tracks/supervisor/readiness.py
+@@ -43,3 +43,3 @@ def _contract_probe(repo: Path) -> ProbeResult:
+     if not path.is_file():
+-        return ProbeResult("contract", False, f"project contract not found: {CONTRACT_RELPATH}")
++        return ProbeResult("contract", False, None)  # counterexample AC-FR0290-01: failing probe reports no reason
+     try:

@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/scheduler.py b/tracks/supervisor/scheduler.py
+--- a/tracks/supervisor/scheduler.py
++++ b/tracks/supervisor/scheduler.py
+@@ -103,7 +103,7 @@ class Scheduler:
+             return
+         # A queued run leaves the active slot untouched, so there is no
+         # switch to record; the queue itself is the observable state (§1c #8).
+-        self._write(active, [*state["queued"], run_id])
++        self._write(active, list(state["queued"]))  # counterexample AC-FR0296-03: queued run dropped
+ 
+     def on_run_terminal(self, run_id: str) -> None:
+         """Deactivate; resume the preempted feature run when applicable."""

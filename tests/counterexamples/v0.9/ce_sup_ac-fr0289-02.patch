@@ -1,0 +1,9 @@
+diff --git a/tracks/server/guard.py b/tracks/server/guard.py
+--- a/tracks/server/guard.py
++++ b/tracks/server/guard.py
+@@ -156,4 +156,5 @@ def check_registration_scope(repo_path: Path, permitted_roots: list[Path]) -> None:
+     """
++    return  # counterexample AC-FR0289-02: registration scope check bypassed
+     try:
+         check_path_scope(repo_path, permitted_roots)
+     except GuardRejection as rejection:

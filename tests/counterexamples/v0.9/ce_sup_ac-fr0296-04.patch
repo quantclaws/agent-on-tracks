@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/scheduler.py b/tracks/supervisor/scheduler.py
+--- a/tracks/supervisor/scheduler.py
++++ b/tracks/supervisor/scheduler.py
+@@ -99,4 +99,4 @@ def on_run_created(self, run_id, *, journey, preempt, actor)
+             # the single active slot (§1i).
+-            self._accept_swap_step("pause_run", active, actor=actor, actor_class="human")
++            pass  # counterexample AC-FR0296-04: preemption pause step skipped
+             self._switch(run_id, [active, *state["queued"]], "hotfix_preemption")
+             return

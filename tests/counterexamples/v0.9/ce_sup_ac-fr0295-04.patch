@@ -1,0 +1,16 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -534,5 +534,11 @@ def project_overview(home: Path) -> dict:
+ def project_overview(home: Path) -> dict:
+     """Projects + runs + per-run human-todo counts (§1e)."""
+-    conn = _service_db(home)
++    conn = sqlite3.connect(str(Path(home) / "service.db"))
++    conn.row_factory = sqlite3.Row
++    conn.execute(
++        "INSERT INTO service_events (ts, type, project_id, run_id, command_id, payload)"
++        " VALUES ('2026-01-01T00:00:00+00:00', 'counterexample.read_write', NULL, NULL, NULL, '{}')"
++    )
++    conn.commit()
+     try:
+         projects = _projects(conn)

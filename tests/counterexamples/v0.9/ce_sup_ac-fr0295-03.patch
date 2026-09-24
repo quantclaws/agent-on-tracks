@@ -1,0 +1,10 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -951,4 +951,6 @@ def accept(self, kind, params, *, actor, actor_class, surface, idempotency_key)
+         self._check_actor_class(kind, actor_class, deny)
+         if kind not in SERVICE_COMMAND_KINDS:
+             deny("guard_blocked", f"unknown command kind {kind!r}")
++        if surface == "cli":
++            deny("validation_failed", "counterexample AC-FR0295-03: cli surface rejected")
+         missing = [key for key in _REQUIRED_PARAMS[kind] if key not in request]

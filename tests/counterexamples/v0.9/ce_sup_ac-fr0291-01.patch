@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -1063,4 +1063,4 @@ class CommandService:
+         result = {
+-            "command_id": row["command_id"],
++            "command_id": row["kind"],  # counterexample AC-FR0291-01: status answers with the kind, not the command id
+             "kind": row["kind"],
+             "status": row["status"],

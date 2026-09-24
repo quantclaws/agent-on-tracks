@@ -1,0 +1,13 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -716,4 +716,9 @@ def _preflight_hotfix_journey(self, store, request, actor, actor_class)
+         scenario = _HOTFIX_SCENARIOS.get(str(request.get("journey") or ""))
+         if scenario is None:
+             return
++        if scenario == "post-release":
++            self._deny_hotfix_precheck(
++                store, request, actor, actor_class,
++                "counterexample AC-FR0292-01: post-release hotfix entry denied",
++            )
+         project = store.get_project(request.get("project_id"))

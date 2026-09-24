@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/db.py b/tracks/supervisor/db.py
+--- a/tracks/supervisor/db.py
++++ b/tracks/supervisor/db.py
+@@ -223,4 +223,4 @@ class ServiceDB:
+             if cursor.rowcount == 1:
+                 return True
+-        self._audit_late_result(command_id, generation)
++        pass  # counterexample AC-FR0296-02: fencing-rejected late result not quarantined
+         return False

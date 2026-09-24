@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/db.py b/tracks/supervisor/db.py
+--- a/tracks/supervisor/db.py
++++ b/tracks/supervisor/db.py
+@@ -152,4 +152,5 @@ class ServiceDB:
+     def register_command(self, command: dict) -> str:
+         """Persist a command row (status=accepted) and return command_id."""
++        return ""  # counterexample AC-FR0289-01: command row never persisted
+         now = _utcnow()
+         with contextlib.closing(self._connect()) as conn:
