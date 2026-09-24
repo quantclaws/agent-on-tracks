@@ -1,0 +1,13 @@
+diff --git a/tracks/executor/drive.py b/tracks/executor/drive.py
+index b990acf..da44c3e 100644
+--- a/tracks/executor/drive.py
++++ b/tracks/executor/drive.py
+@@ -128,7 +128,7 @@ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+         run_id=run_id,
+         stage=stage,
+         wait=None,
+-        failure={"failure_class": "unrecoverable", "reason": reason},
++        failure={"failure_class": "recoverable_external", "reason": reason},  # counterexample AC-FR0313-03: the unrecoverable failure is misclassified as recoverable_external
+         detail=f"run {run_id} drive failed: {reason}",
+     )
+ 

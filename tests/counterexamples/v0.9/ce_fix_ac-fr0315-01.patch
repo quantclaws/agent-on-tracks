@@ -1,0 +1,15 @@
+diff --git a/tracks/server/redaction.py b/tracks/server/redaction.py
+index fbe3d34..107ab19 100644
+--- a/tracks/server/redaction.py
++++ b/tracks/server/redaction.py
+@@ -48,9 +48,7 @@ class SecretRedactor:
+ 
+     def redact_text(self, text: str) -> str:
+         """Return text with credential values replaced by ${NAME} / ***."""
+-        text = self._replace_known_values(text)
+-        text = _ASSIGNMENT_SHAPE.sub(self._mask_assignment, text)
+-        return _BEARER_SHAPE.sub(r"\1***", text)
++        return text  # counterexample AC-FR0315-01: the plaintext secret leaks on every surface
+ 
+     def _replace_known_values(self, text: str) -> str:
+         """Replace every registered credential value with its ``${NAME}``."""

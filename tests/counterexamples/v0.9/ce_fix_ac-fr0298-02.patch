@@ -1,0 +1,13 @@
+diff --git a/tracks/supervisor/waiting.py b/tracks/supervisor/waiting.py
+index 13150f1..2d2e1e1 100644
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -277,7 +277,7 @@ def next_probe(policy: WaitPolicy, backoff: dict | None) -> dict:
+     if not backoff:
+         probe_at = datetime.now(timezone.utc) + timedelta(seconds=policy.initial_s)
+         return {
+-            "interval_s": policy.initial_s,
++            "interval_s": 1,  # counterexample AC-FR0298-02: 1s hot-loop probe ignoring the NFR-0152 policy
+             "cap_s": cap,
+             "next_probe_at": probe_at.isoformat(),
+         }

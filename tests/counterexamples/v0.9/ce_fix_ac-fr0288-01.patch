@@ -1,0 +1,13 @@
+diff --git a/tracks/cli/serve_cmd.py b/tracks/cli/serve_cmd.py
+index 5832ac0..647d2d7 100644
+--- a/tracks/cli/serve_cmd.py
++++ b/tracks/cli/serve_cmd.py
+@@ -265,7 +265,7 @@ class _AnnouncingServer:
+ 
+     def _announce(self, server: Any) -> None:
+         port = _bound_port(server, self._opts["port"])
+-        print(f"serving on http://{self._opts['host']}:{port} (pid {os.getpid()})", flush=True)
++        # counterexample AC-FR0288-01: the serving line is never announced
+         print("Ctrl-C to stop", flush=True)
+         self._db.append_event(
+             "service.started",

@@ -1,0 +1,13 @@
+diff --git a/tracks/supervisor/lease.py b/tracks/supervisor/lease.py
+index 9f8c847..8123e52 100644
+--- a/tracks/supervisor/lease.py
++++ b/tracks/supervisor/lease.py
+@@ -77,7 +77,7 @@ def acquire_lease(db: Any, run_id: str, worker_id: str, ttl_s: int) -> Lease:
+         row = conn.execute(
+             "SELECT generation FROM leases WHERE run_id = ?", (run_id,)
+         ).fetchone()
+-        generation = int(row["generation"]) + 1 if row is not None else 1
++        generation = 1  # counterexample AC-FR0296-01: every acquire grants generation 1, fencing lost
+         conn.execute(_LEASE_UPSERT, (run_id, worker_id, generation, now, expires_at))
+         conn.commit()
+     db.append_event(

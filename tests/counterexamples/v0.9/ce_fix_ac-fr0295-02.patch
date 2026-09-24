@@ -1,0 +1,18 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+index 73e6bda..7db4a20 100644
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -585,10 +585,10 @@ class CommandService:
+                 command_id=original,
+             )
+             return CommandReceipt(
+-                command_id=original,
+-                deduplicated=True,
++                command_id=uuid.uuid4().hex,
++                deduplicated=False,
+                 status=existing.get("status") or "accepted",
+-            )
++            )  # counterexample AC-FR0295-02: the repeat mints a new command_id instead of the original
+         return "conflict"
+ 
+     def _preflight_register_project(

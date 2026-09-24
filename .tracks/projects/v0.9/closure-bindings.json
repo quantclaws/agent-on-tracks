@@ -1,6 +1,15 @@
 {
  "bindings": [
   {
+   "ac": "AC-FR0288-01",
+   "if_ref": "IF-SERVE-001",
+   "mutation": "服务启动成功却不打印 serving 行——浏览器无进度可感知",
+   "patch": "ce_fix_ac-fr0288-01.patch",
+   "test": "tests/integration/test_serve_lifecycle.py::test_health_and_browserless_progress",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+   "result": "killed"
+  },
+  {
    "ac": "AC-FR0288-02",
    "if_ref": "IF-SERVE-001",
    "mutation": "重启恢复不再重排已认领的命令——requeued 为空，服务重启后进行中的命令丢失",
@@ -136,6 +145,15 @@
    "result": "killed"
   },
   {
+   "ac": "AC-FR0295-02",
+   "if_ref": "IF-CMDSVC-001",
+   "mutation": "幂等重复接受改铸新 command_id——同键同参不再去重",
+   "patch": "ce_fix_ac-fr0295-02.patch",
+   "test": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+   "result": "killed"
+  },
+  {
    "ac": "AC-FR0295-03",
    "if_ref": "IF-CMDSVC-001",
    "mutation": "CLI 面的受理一律被拒绝——CLI/HTTP 等价事件合同破坏",
@@ -151,6 +169,15 @@
    "patch": "ce_sup_ac-fr0295-04.patch",
    "test": "tests/integration/test_command_service.py::test_queries_are_readonly",
    "control": "tests/integration/test_command_service.py::test_idempotency_dedup_and_conflict",
+   "result": "killed"
+  },
+  {
+   "ac": "AC-FR0296-01",
+   "if_ref": "IF-LEASE-001",
+   "mutation": "acquire_lease 恒铸 generation 1——并发 fencing 失效",
+   "patch": "ce_fix_ac-fr0296-01.patch",
+   "test": "tests/integration/test_supervisor_lease.py::test_concurrent_drive_single_dispatch",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
    "result": "killed"
   },
   {
@@ -208,6 +235,15 @@
    "result": "killed"
   },
   {
+   "ac": "AC-FR0298-02",
+   "if_ref": "IF-WAIT-001",
+   "mutation": "首次探测退化为 1s 热循环——忽略 NFR-0152 的 initial/cap 策略",
+   "patch": "ce_fix_ac-fr0298-02.patch",
+   "test": "tests/integration/test_wait_persistence.py::test_no_hot_loop_bounded_probing",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+   "result": "killed"
+  },
+  {
    "ac": "AC-FR0299-01",
    "if_ref": "IF-WAIT-001",
    "mutation": "已知重置时间被丢弃——配额等待退化为无定向探测，无法在重置点自动恢复",
@@ -255,8 +291,8 @@
   {
    "ac": "AC-FR0301-02",
    "if_ref": "IF-QUERY-001",
-   "mutation": "只读概览投影改为写连接并插入事件——读路径产生状态变更",
-   "patch": "ce_sup_ac-fr0301-02.patch",
+   "mutation": "只读概览投影改走写连接并向 service_events 插入事件——读路径产生状态变更（已按库存在性收窄，控制测试不受影响）",
+   "patch": "ce_fix_ac-fr0301-02.patch",
    "test": "tests/integration/test_overview_query.py::test_query_during_long_task_nonblocking",
    "control": "tests/integration/test_overview_query.py::test_overview_consistent_with_state",
    "result": "killed"
@@ -496,6 +532,15 @@
    "result": "killed"
   },
   {
+   "ac": "AC-FR0313-03",
+   "if_ref": "IF-DRIVE-001",
+   "mutation": "drive _failed_result 把不可恢复失败误分类为 recoverable_external——失败不会停在失败终态",
+   "patch": "ce_fix_ac-fr0313-03.patch",
+   "test": "tests/integration/test_abandon_web.py::test_unrecoverable_failure_terminal",
+   "control": "tests/integration/test_auto_drive.py::test_auto_advance_stages",
+   "result": "killed"
+  },
+  {
    "ac": "AC-FR0314-01",
    "if_ref": "IF-WEBAUTH-001",
    "mutation": "口令校验恒真——未认证口令永远通过，登录门禁失效",
@@ -514,12 +559,30 @@
    "result": "killed"
   },
   {
+   "ac": "AC-FR0314-03",
+   "if_ref": "IF-CMDGUARD-001",
+   "mutation": "validate_command_payload 放行未知 shell 载荷——无执行语义的载荷不被 guard 拦截",
+   "patch": "ce_fix_ac-fr0314-03.patch",
+   "test": "tests/integration/test_web_auth.py::test_shell_payload_blocked",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
+   "result": "killed"
+  },
+  {
    "ac": "AC-FR0314-04",
    "if_ref": "IF-WEBAUTH-001",
    "mutation": "裁决权属检查被旁路——未被请求方也能 resolved 线程",
    "patch": "ce_sup_ac-fr0314-04.patch",
    "test": "tests/integration/test_web_auth.py::test_adjudication_ownership_enforced",
    "control": "tests/integration/test_web_auth.py::test_unauthenticated_rejected_then_ok",
+   "result": "killed"
+  },
+  {
+   "ac": "AC-FR0315-01",
+   "if_ref": "IF-SECRECY-001",
+   "mutation": "redact_text 原样返回——明文凭据泄漏到所有出站面",
+   "patch": "ce_fix_ac-fr0315-01.patch",
+   "test": "tests/integration/test_secrecy.py::test_no_plaintext_secrets_any_surface",
+   "control": "tests/integration/test_command_service.py::test_command_id_survives_restart",
    "result": "killed"
   },
   {

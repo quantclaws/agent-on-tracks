@@ -1,0 +1,13 @@
+diff --git a/tracks/server/guard.py b/tracks/server/guard.py
+index 7c34b51..baf658d 100644
+--- a/tracks/server/guard.py
++++ b/tracks/server/guard.py
+@@ -116,7 +116,7 @@ def validate_command_payload(kind: str, params: dict) -> None:
+     """Validate params against the kind's schema; raise GuardRejection."""
+     payload = dict(params or {})
+     if kind not in SERVICE_COMMAND_KINDS:
+-        raise GuardRejection("guard_blocked", f"unknown command kind {kind!r}")
++        return  # counterexample AC-FR0314-03: unknown kinds pass the guard unvalidated
+     _check_required(kind, payload)
+     _check_params(_PARAM_TYPES[kind], payload)
+     _check_enums(kind, payload)

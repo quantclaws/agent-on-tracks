@@ -1,0 +1,22 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 88abbbf..fa0010a 100644
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -534,6 +534,17 @@ def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
+ def project_overview(home: Path) -> dict:
+     """Projects + runs + per-run human-todo counts (§1e)."""
+     conn = _service_db(home)
++    service_db = Path(home) / "service.db"
++    if service_db.exists():
++        # counterexample AC-FR0301-02: the read path takes a write connection
++        # and appends an event — a query mutates the service log
++        writer = sqlite3.connect(str(service_db))
++        writer.execute(
++            "INSERT INTO service_events (ts, type, payload) VALUES "
++            "('2026-01-01T00:00:00+00:00', 'counterexample.overview_write', '{}')"
++        )
++        writer.commit()
++        writer.close()
+     try:
+         projects = _projects(conn)
+         runs = []
