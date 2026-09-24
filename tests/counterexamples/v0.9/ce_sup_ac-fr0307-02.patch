@@ -1,0 +1,14 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -754,5 +754,9 @@ def project_todos(home: Path) -> list:
+         for project in _projects(conn):
+             for run in _project_runs(project["repo_path"]):
+                 state = _state_of(project["repo_path"], run["run_id"])
++                wait = _wait_spec(conn, run["run_id"])
++                if wait is not None:
++                    todos.append({"run_id": run["run_id"], "kind": "quota",
++                                  "wait_class": wait["wait_class"]})
+                 todo = _todo_for(run["run_id"], state, project)
+                 if todo is not None:
+                     todos.append(todo)

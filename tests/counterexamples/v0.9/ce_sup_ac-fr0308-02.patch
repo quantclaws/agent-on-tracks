@@ -1,0 +1,9 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -355,4 +355,4 @@ def _require_reviewed_revision(repo: Path, version: str | None, submitted: Any, deny: RejectFn, label: str) -> None:
+     """
+     current = _current_revision(repo, version)
+-    if current is None or submitted != current:
++    if current is None:  # counterexample AC-FR0308-02: a stale reviewed revision is no longer refused
+         deny(

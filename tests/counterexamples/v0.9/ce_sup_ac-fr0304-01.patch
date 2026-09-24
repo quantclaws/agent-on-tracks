@@ -1,0 +1,10 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -278,4 +278,6 @@ def _chain_rows(repo_path: str, version: str | None, run_id: str) -> list[dict]:
+     chain = []
+     for ac_id in _registry_acs(repo_path, version):
+         nodes = list(tests.get(ac_id, []))
++        if not nodes:
++            continue  # counterexample AC-FR0304-01: registry ACs without plan anchors are dropped
+         evidence = _ac_evidence(events, nodes)

@@ -1,0 +1,10 @@
+diff --git a/tracks/supervisor/recover.py b/tracks/supervisor/recover.py
+--- a/tracks/supervisor/recover.py
++++ b/tracks/supervisor/recover.py
+@@ -64,4 +64,6 @@ def recover_on_startup(db: Any) -> dict:
+     requeue = getattr(db, "requeue_claimed", None)
+     requeued = list(requeue("service_restart")) if callable(requeue) else []
+     waits_kept = list(active_wait_runs(db))
++    for _run_id in waits_kept:
++        db.append_event("wait.entered", {"run_id": _run_id}, run_id=_run_id)
+     leases_expired: list = []

@@ -1,0 +1,10 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -600,5 +600,5 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
+             "run_id": run_id,
+             "version": state.version or version,
+             "stage": state.stage,
+-            "substate": state.substate,
++            "substate": None,  # counterexample AC-FR0302-02: the run detail no longer surfaces the substate
+             "control_state": _control_state(

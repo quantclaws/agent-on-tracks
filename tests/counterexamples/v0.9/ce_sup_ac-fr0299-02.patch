@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/waiting.py b/tracks/supervisor/waiting.py
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -133,7 +133,7 @@ def _quota_spec(reason: str, data: dict, policy: WaitPolicy | None) -> WaitSpec:
+     return WaitSpec(
+         wait_class="quota",
+         reason=reason,
+-        retry_at=None,
++        retry_at=_utcnow(),  # counterexample AC-FR0299-02: an unknown reset fabricates a countdown
+         known_reset=False,
+         backoff=_initial_backoff(policy or WaitPolicy()),
+     )

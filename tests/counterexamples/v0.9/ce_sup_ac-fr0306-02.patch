@@ -1,0 +1,10 @@
+diff --git a/tracks/server/api_events.py b/tracks/server/api_events.py
+--- a/tracks/server/api_events.py
++++ b/tracks/server/api_events.py
+@@ -125,5 +125,5 @@ def _rows_after(home: Path, run_id: str, start: tuple[str, int, int] | None) -> list[dict]:
+ def _rows_after(home: Path, run_id: str, start: tuple[str, int, int] | None) -> list[dict]:
+     rows = projections.project_timeline(home, run_id)["events"]
+     if start is not None:
+-        rows = [row for row in rows if _row_key(row) > start]
++        rows = rows  # counterexample AC-FR0306-02: reconnect replays the full stream from the beginning
+     return rows

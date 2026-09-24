@@ -1,0 +1,10 @@
+diff --git a/tracks/supervisor/db.py b/tracks/supervisor/db.py
+--- a/tracks/supervisor/db.py
++++ b/tracks/supervisor/db.py
+@@ -245,5 +245,5 @@ def requeue_claimed(self, reason: str) -> list:
+         now = _utcnow()
+         with contextlib.closing(self._connect()) as conn:
+             rows = conn.execute(
+-                "SELECT command_id FROM commands WHERE status = 'claimed'"
++                "SELECT command_id FROM commands WHERE status IN ('claimed', 'completed')"
+             ).fetchall()

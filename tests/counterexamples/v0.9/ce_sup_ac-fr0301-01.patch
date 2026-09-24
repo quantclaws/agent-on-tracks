@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -566,7 +566,7 @@ def project_overview(home: Path) -> dict:
+                 for project in projects
+             ],
+             "runs": runs,
+-            "human_todo_count": todo_count,
++            "todo_total": todo_count,  # counterexample AC-FR0301-01: the overview todo count exit is renamed away
+         }
+     finally:
+         if conn is not None:

@@ -1,10 +1,10 @@
 diff --git a/tracks/server/projections.py b/tracks/server/projections.py
 --- a/tracks/server/projections.py
 +++ b/tracks/server/projections.py
-@@ -640,5 +640,5 @@ def project_timeline(home, run_id, *, command_id, task_id, ac_id, after_seq)
-         rows = _after_cursor(rows, after_seq)
--        return {"events": rows, "cursor": _cursor_of(rows)}
-+        return {"items": rows, "cursor": _cursor_of(rows)}  # counterexample AC-FR0293-02: timeline events key renamed
-     finally:
-         if conn is not None:
-             conn.close()
+@@ -635,5 +635,5 @@ def project_timeline(home, run_id, *, command_id, task_id, ac_id, after_seq)
+         project = _project_for_run(conn, run_id)
+         if project is None:
+-            return {"events": [], "cursor": ""}
++            return {"items": [], "cursor": ""}  # counterexample AC-FR0293-02: timeline events key renamed
+         repo_path = project["repo_path"]
+         rows = _timeline_rows(conn, repo_path, run_id)

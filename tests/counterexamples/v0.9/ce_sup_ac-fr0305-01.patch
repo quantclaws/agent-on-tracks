@@ -1,0 +1,9 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -661,4 +661,4 @@ def _timeline_rows(conn: sqlite3.Connection | None, repo_path: str, run_id: str) -> list[dict]:
+                 "task_id": event.task_id,
+                 "ac_refs": _event_ac_refs(event.payload or {}),
+-                "summary": event.type,
++                "summary": "",  # counterexample AC-FR0305-01: timeline rows lose their summary
+                 "payload_ref": "",

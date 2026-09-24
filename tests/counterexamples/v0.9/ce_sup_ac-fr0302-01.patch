@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -611,7 +611,7 @@ def project_run_detail(home: Path, run_id: str) -> dict | None:
+                 "ac_closed": _ac_closed(chain),
+                 "ac_total": len(chain),
+             },
+-            "quality": {"gates": _gates(events)},
++            "quality": {"gates": _gates(events), "gate_pass_percent": 100},  # counterexample AC-FR0302-01: a fabricated percentage enters the run detail
+             "executions": _executions(events),
+             "lease": _lease(conn, run_id),
+         }

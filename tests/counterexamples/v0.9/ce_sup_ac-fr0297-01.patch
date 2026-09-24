@@ -1,0 +1,14 @@
+diff --git a/tracks/executor/drive.py b/tracks/executor/drive.py
+--- a/tracks/executor/drive.py
++++ b/tracks/executor/drive.py
+@@ -125,9 +125,9 @@ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+     return DriveResult(
+         kind="failed",
+-        run_id=run_id,
++        run_id="",  # counterexample AC-FR0297-01: drive result no longer carries the run identity
+         stage=stage,
+         wait=None,
+         failure={"failure_class": "unrecoverable", "reason": reason},
+         detail=f"run {run_id} drive failed: {reason}",
+     )

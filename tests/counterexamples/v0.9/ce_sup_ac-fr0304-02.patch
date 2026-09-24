@@ -1,0 +1,12 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -241,7 +241,7 @@ def _ac_evidence(events: list[EventEnvelope], nodes: list[str]) -> list[dict]:
+             if not _event_references(event, node):
+                 continue
+             if event.type == "verdict.failed":
+-                status = "stale"
++                status = "ok"  # counterexample AC-FR0304-02: a failed verdict reads as ok evidence
+             elif event.type == "verdict.passed":
+                 status = "ok"
+             elif event.type == "prism.verdict":

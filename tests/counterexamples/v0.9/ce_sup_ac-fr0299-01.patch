@@ -1,0 +1,16 @@
+diff --git a/tracks/supervisor/waiting.py b/tracks/supervisor/waiting.py
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -61,11 +61,7 @@ def _text_of(failure: dict) -> str:
+ 
+ 
+ def _known_retry_at(failure: dict) -> str | None:
+-    for key in ("retry_after", "reset_at", "retry_at"):
+-        value = failure.get(key)
+-        if isinstance(value, str) and value.strip():
+-            return value.strip()
+-    return None
++    return None  # counterexample AC-FR0299-01: the known reset time is discarded
+ 
+ 
+ def _initial_backoff(policy: WaitPolicy | None) -> dict:

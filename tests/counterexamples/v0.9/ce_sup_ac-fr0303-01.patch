@@ -1,0 +1,16 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -385,11 +385,7 @@ def _task_failed(events: list[EventEnvelope], task_id: str) -> bool:
+ 
+ 
+ def _task_log_ref(events: list[EventEnvelope], task_id: str) -> str:
+-    for event in reversed(_task_events(events, task_id)):
+-        log_ref = (event.payload or {}).get("log_ref")
+-        if isinstance(log_ref, str) and log_ref:
+-            return log_ref
+-    return ""
++    return ""  # counterexample AC-FR0303-01: the per-task log reference lookup is dropped
+ 
+ 
+ # -- service-plane state ----------------------------------------------------

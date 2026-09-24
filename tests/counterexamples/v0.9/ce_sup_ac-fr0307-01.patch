@@ -1,0 +1,10 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -505,5 +505,5 @@ def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
+             "object": state.stage or "approval",
+             "revision": _material_revision(project) or state.preview_digest,
+             "context": f"{state.stage or 'stage'} awaiting Human approval",
+-            "action_ref": f"/runs/{run_id}/review",
++            "action_ref": "",  # counterexample AC-FR0307-01: the todo item loses its jump ref
+         }

@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/drive.py b/tracks/executor/drive.py
+--- a/tracks/executor/drive.py
++++ b/tracks/executor/drive.py
+@@ -125,9 +125,10 @@ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+ def _failed_result(run_id: str, stage: str | None, reason: str) -> DriveResult:
+     return DriveResult(
+-        kind="failed",
++        kind="await_human",  # counterexample AC-FR0297-02: the gate auto-crosses instead of parking
+         run_id=run_id,
+         stage=stage,
+-        wait=None,
++        wait=WaitSpec(wait_class="external", reason=reason, retry_at=None,
++                      known_reset=False, backoff=None),
+         failure={"failure_class": "unrecoverable", "reason": reason},
+         detail=f"run {run_id} drive failed: {reason}",
+     )

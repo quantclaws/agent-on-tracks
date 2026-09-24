@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/service.py b/tracks/supervisor/service.py
+--- a/tracks/supervisor/service.py
++++ b/tracks/supervisor/service.py
+@@ -998,7 +998,7 @@ class CommandService:
+             command_id, run_id=recorded_run_id,
+         )
+         self._on_accepted(store, kind, request, actor)
+-        return CommandReceipt(command_id=command_id, deduplicated=False, status="accepted")
++        return CommandReceipt(command_id=command_id, deduplicated=False, status="rejected")  # counterexample AC-FR0308-01: the acceptance receipt misreports the persist outcome
+ 
+     def _check_actor_class(self, kind: str, actor_class: str, deny: RejectFn) -> None:
+         """Actor-class partition (interfaces §1f.5): human-only kinds reject

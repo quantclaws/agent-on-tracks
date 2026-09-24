@@ -1,0 +1,12 @@
+diff --git a/tracks/server/api_events.py b/tracks/server/api_events.py
+--- a/tracks/server/api_events.py
++++ b/tracks/server/api_events.py
+@@ -138,7 +138,7 @@ def _redacted(row: dict, redactor: Any) -> dict:
+ def _frame(row: dict, redactor: Any) -> str:
+     token = encode_cursor(*_row_key(row))
+     data = json.dumps(_redacted(row, redactor), ensure_ascii=False, sort_keys=True)
+-    return f"id: {token}\nevent: {row['type']}\ndata: {data}\n\n"
++    return f"event: {row['type']}\ndata: {data}\n\n"  # counterexample AC-FR0306-01: the frame drops its id segment
+ 
+ 
+ def _poll_batch(home: Path, run_id: str, redactor: Any, after: str | None) -> EventResponse:

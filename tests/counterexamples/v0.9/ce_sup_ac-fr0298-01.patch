@@ -1,0 +1,12 @@
+diff --git a/tracks/supervisor/waiting.py b/tracks/supervisor/waiting.py
+--- a/tracks/supervisor/waiting.py
++++ b/tracks/supervisor/waiting.py
+@@ -268,7 +268,7 @@ def load_wait(db: Any, run_id: str) -> WaitSpec | None:
+ 
+ def active_wait_runs(db: Any) -> list:
+     """Run ids with an active wait row: the restart recovery sweep (§1j)."""
+-    return [str(row["run_id"]) for row in db.list_waits()]
++    return []  # counterexample AC-FR0298-01: the recovery sweep no longer sees persisted waits
+ 
+ 
+ def next_probe(policy: WaitPolicy, backoff: dict | None) -> dict:

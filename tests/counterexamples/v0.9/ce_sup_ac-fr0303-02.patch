@@ -1,0 +1,16 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -358,7 +358,11 @@ def _executions(events: list[EventEnvelope]) -> list[dict]:
+                 "role": _task_role(events, task_id),
+                 "task_id": task_id,
+                 "state": "failed" if _task_failed(events, task_id) else "executing",
+-                "log_ref": _task_log_ref(events, task_id),
++                "log_ref": _task_log_ref(events, task_id) or json.dumps(
++                    next((e.payload for e in _task_events(events, task_id)
++                          if e.type == "outcome.received"), {}),
++                    ensure_ascii=False,
++                ),
+             }
+         )
+     return executions
