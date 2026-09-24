@@ -215,26 +215,22 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
     capture -> M-STORY. Idempotent: a run the run plane already knows is
     left untouched.
     """
-    import datetime
 
-    from tracks import paths, templating
+    from tracks import paths
     from tracks.cli.common import writer_lock
-    from tracks.executor.helpers import git as _git
     from tracks.kernel.events import Command
     from tracks.store import Store
 
-    home = paths.tracks_home(repo)
     params = _create_run_params(db, run_id)
     if not params:
         # No service-plane create_run intent for this run_id: a drive for a
         # run nobody created is a genuine anomaly -- do NOT fabricate a run
         # plane; drive_once fails closed on it (T-008 pin preserved).
         return
-    version = str(params.get("version") or "v0.1")
-    raw = str(params.get("story") or "").strip() or "service-plane feature request"
-    store = Store(home)
+    version, raw = _version_story(params)
+    store = Store(paths.tracks_home(repo))
     try:
-        with writer_lock(home):
+        with writer_lock(paths.tracks_home(repo)):
             if store.state(run_id).run_id is not None:
                 return  # already bootstrapped (idempotent re-drive)
             store.append(run_id, version, "story.requested", {"raw_chars": len(raw)})
@@ -247,22 +243,38 @@ def _bootstrap_run_plane(db: Any, repo: Path, run_id: str) -> None:
                     params={"branch_name": f"releases/{version}", "base": "main"},
                 )
             )
-            vdir = paths.version_dir(home, version)
-            vdir.mkdir(parents=True, exist_ok=True)
-            story = vdir / "story.md"
-            story.write_text(
-                templating.render_story_skeleton(raw, datetime.date.today().isoformat()),
-                encoding="utf-8",
-            )
-            _git(repo, "add", str(story))
-            _git(
-                repo, "commit", "-m", f"M-START: capture raw requirement for {version}",
-                "--only", "--", str(story),
-            )
+            _capture_story(repo, paths.tracks_home(repo), version, raw)
             store.append(run_id, version, "stage.exited", {"stage": "M-START"})
             store.append(run_id, version, "stage.entered", {"stage": "M-STORY"})
     finally:
         store.close()
+
+def _version_story(params: dict) -> tuple[str, str]:
+    """Extract (version, raw_story) from create_run params."""
+    version = str(params.get("version") or "v0.1")
+    raw = str(params.get("story") or "").strip() or "service-plane feature request"
+    return version, raw
+
+
+def _capture_story(repo: Path, home: Any, version: str, raw: str) -> None:
+    """Write the story.md capture and commit it (M-START step)."""
+    import datetime
+
+    from tracks import paths, templating
+    from tracks.executor.helpers import git as _git
+
+    vdir = paths.version_dir(home, version)
+    vdir.mkdir(parents=True, exist_ok=True)
+    story = vdir / "story.md"
+    story.write_text(
+        templating.render_story_skeleton(raw, datetime.date.today().isoformat()),
+        encoding="utf-8",
+    )
+    _git(repo, "add", str(story))
+    _git(
+        repo, "commit", "-m", f"M-START: capture raw requirement for {version}",
+        "--only", "--", str(story),
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - process entry

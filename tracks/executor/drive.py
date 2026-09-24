@@ -41,15 +41,7 @@ _RECOVERABLE_CLASSES = frozenset(
 )
 
 
-@dataclass(frozen=True)
-class WaitSpec:
-    """Durable external-wait description (interfaces §1d/§1j)."""
-
-    wait_class: str  # "ci" | "quota" | "network" | "agent" | "external"
-    reason: str
-    retry_at: str | None  # ISO8601 when the reset time is known
-    known_reset: bool
-    backoff: dict | None  # {"interval_s", "cap_s", "next_probe_at"}
+from tracks.supervisor.waiting import WaitSpec  # noqa: F401,E402 (shared, mid-module for cycle avoidance)
 
 
 @dataclass(frozen=True)
