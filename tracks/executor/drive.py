@@ -25,6 +25,7 @@ from pathlib import Path
 
 from tracks import paths
 from tracks.store import Store
+from tracks.supervisor.waiting import WaitSpec  # noqa: F401 (shared definition, was duplicated)
 
 # Harness failure classes already classified by the effects layer; anything
 # else escaping the drive window is a machine-side runtime error and fails
@@ -41,7 +42,6 @@ _RECOVERABLE_CLASSES = frozenset(
 )
 
 
-from tracks.supervisor.waiting import WaitSpec  # noqa: F401,E402 (shared, mid-module for cycle avoidance)
 
 
 @dataclass(frozen=True)
