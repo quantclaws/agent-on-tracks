@@ -250,3 +250,15 @@ class V08Extension:
 
 
 version_extensions.register_extension(EXTENSION_VERSION, V08Extension())
+# 2026-09-24 (island-2 boundary, run 01M2QTJB v0.9): the release pipeline
+# (M-VERIFY -> M-SECURITY -> M-RELEASE) is a version-INHERITED capability --
+# every version from RELEASE_PIPELINE_VERSION onward gets the same
+# chain-head (freeze_candidate) unless a later version-specific extension
+# replaces it. v0.9 completed M-IMPL and parked at the boundary with no
+# after_m_impl callback: the exact-key lookup had no v0.9 binding. Register
+# for the same extension every version >= the pipeline floor.
+_RELEASE_FLOOR = tuple(int(x) for x in EXTENSION_VERSION[1:].split("."))
+for _minor in range(_RELEASE_FLOOR[1] + 1, 32):
+    version_extensions.register_extension(
+        f"v{_RELEASE_FLOOR[0]}.{_minor}", V08Extension()
+    )
