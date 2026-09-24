@@ -1,0 +1,8 @@
+# Additional reach entrypoints (Archer, M-IMPL planning round 2).
+# Architecture §2 (module 16) declares the worker as a supervisor SUBPROCESS
+# launched via `python -m tracks.supervisor.worker_main` (worker.py:21
+# _WORKER_MODULE string constant) — a second OS-process entrypoint the
+# static import BFS from tracks.cli.main cannot see. Declared here per the
+# reach checker's own entrypoint-discovery channel (checks/reach.py
+# _discover_entrypoints whitelist).
+tracks.supervisor.worker_main
