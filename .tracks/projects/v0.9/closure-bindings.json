@@ -489,7 +489,7 @@
   {
    "ac": "AC-FR0313-02",
    "if_ref": "IF-ESCAPE-002",
-   "mutation": "放弃受理伪造 run.cancelled 副作用——放弃被冒充出终态效果",
+   "mutation": "放弃受理伪造 command.completed 副作用——放弃被冒充出执行完成效果",
    "patch": "ce_sup_ac-fr0313-02.patch",
    "test": "tests/integration/test_abandon_web.py::test_abandon_no_fake_success",
    "control": "tests/integration/test_abandon_web.py::test_abandon_terminal_auditable",
