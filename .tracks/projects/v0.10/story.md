@@ -4,7 +4,7 @@ story_id: S-001
 title: Web 工作台完善（UI）+ 发布卫生
 created: 2026-09-26
 status: draft
-sha:
+sha: 6e4941f1508d30029f3a14d481440de78cdd518125f17c7819470625fef579bf
 ---
 
 # S-001: Web 工作台完善（UI）+ 发布卫生
