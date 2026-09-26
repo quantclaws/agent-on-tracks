@@ -17,3 +17,8 @@ logs/
 
 # handoff 是一次性交接文件，用完即删，不入库（2026-08-15 用户裁定）
 .tracks/wiki/handoff-*.md
+# BEGIN tracks-managed (runtime test-command byproducts)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# END tracks-managed
