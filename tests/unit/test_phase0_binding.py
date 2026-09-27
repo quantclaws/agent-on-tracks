@@ -107,3 +107,27 @@ def test_scan_trace_gaps_multiple_gaps_preserve_reason_and_ac(tmp_path):
     assert by_ac["AC-FR0250-03@v0.6"].reason == "node_missing"
     assert by_ac["AC-NFR0130-01@v0.6"].reason == "marker_only"
 
+
+
+# #207: multi-node planned binding cells ("a + b") classify per member
+def test_scan_trace_gaps_multi_node_binding_all_present_no_gap():
+    planned = {"AC-FR0288-01@v0.9": "tests/a.py::test_one + tests/b.py::test_two"}
+    collected = {
+        "tests/a.py::test_one": "d" * 64,
+        "tests/b.py::test_two": "d" * 64,
+    }
+    evidence = dict(collected)
+
+    gaps = scan_trace_gaps("v0.9", {"AC-FR0288-01@v0.9"}, planned, collected, evidence)
+    assert gaps == []
+
+
+def test_scan_trace_gaps_multi_node_binding_missing_member_names_it():
+    planned = {"AC-FR0288-01@v0.9": "tests/a.py::test_one + tests/b.py::test_two"}
+    collected = {"tests/a.py::test_one": "d" * 64}
+    evidence = dict(collected)
+
+    gaps = scan_trace_gaps("v0.9", {"AC-FR0288-01@v0.9"}, planned, collected, evidence)
+    assert len(gaps) == 1
+    assert gaps[0].reason == "node_missing"
+    assert gaps[0].planned_node_id == "tests/b.py::test_two"

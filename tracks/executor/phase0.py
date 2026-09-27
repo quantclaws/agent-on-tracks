@@ -56,42 +56,46 @@ def scan_trace_gaps(
     for ac, planned_node in planned_bindings.items():
         if ac not in approved:
             continue
-        if planned_node not in collected_node_digests:
-            if not collected_node_digests:
-                # Empty collect inventory: no identity can be recovered for
-                # any planned node (AC-FR0256-03 -> BLOCKED).
-                gaps.append(
-                    TraceGap(
-                        ac=ac,
-                        reason="identity_unrecoverable",
-                        planned_node_id=planned_node,
-                    )
-                )
-            else:
-                gaps.append(
-                    TraceGap(
-                        ac=ac,
-                        reason="node_missing",
-                        planned_node_id=planned_node,
-                    )
-                )
-        elif not collected_node_digests[planned_node]:
-            gaps.append(
-                TraceGap(
-                    ac=ac,
-                    reason="identity_unrecoverable",
-                    planned_node_id=planned_node,
-                )
-            )
-        elif planned_node not in persisted_evidence:
-            gaps.append(
-                TraceGap(
-                    ac=ac,
-                    reason="marker_only",
-                    planned_node_id=planned_node,
-                )
-            )
+        for node in _planned_node_parts(planned_node):
+            gap = _node_gap(ac, node, collected_node_digests, persisted_evidence)
+            if gap is not None:
+                gaps.append(gap)
     return gaps
+
+
+def _node_gap(
+    ac: str,
+    node: str,
+    collected_node_digests: Mapping[str, str],
+    persisted_evidence: Mapping[str, str],
+) -> TraceGap | None:
+    """Classify one planned node's evidence state (the FR-0256 branches), or
+    None when the node is collected with identity and evidence (no gap).
+
+    An empty collect inventory degenerates ``node_missing`` into
+    ``identity_unrecoverable`` (AC-FR0256-03: no identity can be recovered
+    for any planned node -> BLOCKED)."""
+    if node not in collected_node_digests:
+        reason = "identity_unrecoverable" if not collected_node_digests else "node_missing"
+    elif not collected_node_digests[node]:
+        reason = "identity_unrecoverable"
+    elif node not in persisted_evidence:
+        reason = "marker_only"
+    else:
+        return None
+    return TraceGap(ac=ac, reason=reason, planned_node_id=node)
+
+
+def _planned_node_parts(planned_node: str) -> list[str]:
+    """The node ids of one planned binding cell (FR-0256 scan input).
+
+    #207: Shield's multi-test coverage rows write ``nodeA + nodeB`` (e.g. a
+    v0.9 web AC bound to an integration case plus the e2e journey). The scan
+    must classify each member on its own — treating the joined cell as one
+    id never matched any collected node and blocked phase0 on the first
+    baseline that carries such rows (run 01M3E7SAANXKW1V73W8B8Q3G86)."""
+    parts = [part.strip() for part in str(planned_node).split(" + ")]
+    return [part for part in parts if part] or [str(planned_node)]
 
 
 def judge_real_coverage(
