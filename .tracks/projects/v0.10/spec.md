@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 spec_id: SPEC-010
 created: 2026-09-26
 status: draft
-sha:
+sha: 1cd18a61a0f7f92dc3604c42a1a18cb8bd4a9d68cc531a8aad7308aaf1c69aba
 ---
 
 # Web 工作台完善（UI）+ 发布卫生 — 需求规格
