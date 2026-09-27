@@ -280,6 +280,7 @@ def test_maybe_compact_compacts_at_threshold(tmp_path, monkeypatch):
 
 
 def test_maybe_compact_below_threshold_or_unknown_model_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRAC_SESSION_COMPACT_ABS_TOKENS", "0")
     b = _backend(tmp_path)
     monkeypatch.setattr(
         b, "_model_ctx_limits", lambda: {"napi/hy4": 1_000_000}
@@ -289,7 +290,10 @@ def test_maybe_compact_below_threshold_or_unknown_model_is_noop(tmp_path, monkey
     b._record_ctx_tokens("k", 500_000)  # 50%：不动
     b._maybe_compact("k", "napi/hy4")
     assert b._session_for("k")["session_id"] == "ses_f"
-    b._maybe_compact("k", None)  # 模型未知：fail-open 不压缩
+    # 模型未知 + 绝对上限兜底关闭（=0）：保持旧 fail-open 不压缩。
+    # #132 OOB (2026-09-27)：默认（未关）时未知模型改走绝对上限——
+    # 见 test_maybe_compact_absolute_ceiling_when_model_unresolved。
+    b._maybe_compact("k", None)
     assert b._session_for("k")["session_id"] == "ses_f"
 
 
@@ -342,3 +346,105 @@ def test_effective_model_reads_per_agent_config(tmp_path):
     assert b._effective_model("Unknown") is None
     b.model = "explicit/override"
     assert b._effective_model("Archer") == "explicit/override"
+
+
+# -- #132 OOB（2026-09-27）：分类接线 + 绝对上限兜底 ------------------------------
+
+
+def test_classify_run_non_zero_exit_clears_session(tmp_path):
+    """act() 分类入口：_check_json 抛 non_zero_exit → 会话弃用（死接线修复）。
+
+    2026-09-27 run 01M3E7SAANXKW1V73W8B8Q3G86 实测：两次 exit-1 后 319K
+    token 会话仍在注册表——_check_json 在 act() 直调，异常从不经过
+    _recover_run_error 的硬崩清会话分支。
+    """
+    import subprocess as sp
+
+    import pytest
+
+    from tracks.effects.opencode_core import OpencodeError
+
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_poison")
+    proc = sp.CompletedProcess(["opencode", "run"], 1, stdout="", stderr="")
+    with pytest.raises(OpencodeError):
+        b._classify_run(proc, "Archer")
+    assert b._session_for("Archer") is None
+    assert _backend(tmp_path)._session_for("Archer") is None
+
+
+def test_classify_run_transient_provider_keeps_session(tmp_path):
+    """provider_unavailable 仍走 D-39 续传（接线修复不改变瞬态语义）。"""
+    import subprocess as sp
+
+    import pytest
+
+    from tracks.effects.opencode_core import OpencodeError
+
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_live")
+    proc = sp.CompletedProcess(
+        ["opencode", "run"], 1, stdout="", stderr="stream error: rate limit"
+    )
+    with pytest.raises(OpencodeError):
+        b._classify_run(proc, "Archer")
+    assert b._session_for("Archer")["session_id"] == "ses_live"
+
+
+def test_maybe_compact_absolute_ceiling_when_model_unresolved(tmp_path, monkeypatch):
+    """model 窗口不可解析（默认双层解析，TRAC_AGENT_MODEL 未设）→ 绝对上限
+    兜底触发压缩，而不是 fail-open 跳过（run 01M3E7SAANXKW1V73W8B8Q3G86：
+    319K/400K token 会话从未压缩）。"""
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_big")
+    b._record_ctx_tokens("Archer", 250_000)
+    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
+    b._maybe_compact("Archer", None)
+    assert b._session_for("Archer")["compacted"] is True
+
+
+def test_maybe_compact_abs_ceiling_zero_restores_fail_open(tmp_path, monkeypatch):
+    """TRAC_SESSION_COMPACT_ABS_TOKENS=0 → 恢复旧 fail-open（逃生开关）。"""
+    monkeypatch.setenv("TRAC_SESSION_COMPACT_ABS_TOKENS", "0")
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_big")
+    b._record_ctx_tokens("Archer", 250_000)
+    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
+    b._maybe_compact("Archer", None)
+    entry = b._session_for("Archer")
+    assert entry["session_id"] == "ses_big"
+    assert entry["compacted"] is False
+
+
+def test_maybe_compact_abs_ceiling_resolved_model_still_wins(tmp_path, monkeypatch):
+    """模型窗口可解析时沿用窗口阈值，绝对上限不介入。"""
+    b = _backend(tmp_path)
+    b._record_session("Archer", "ses_mid")
+    b._record_ctx_tokens("Archer", 250_000)
+    monkeypatch.setattr(
+        b, "_model_ctx_limits", lambda: {"napi/hy4": 1_048_576}
+    )
+    monkeypatch.setattr(b, "_run_compact", lambda sid: True)
+    b._maybe_compact("Archer", "napi/hy4")
+    entry = b._session_for("Archer")
+    # 250K < 85% × 1M 窗口 → 不压缩
+    assert entry["compacted"] is False
+
+
+def test_classify_run_routes_by_work_unit_key_and_preserves_class(tmp_path):
+    """Prism advisory A1+A2：生产路径 key=req.key（工作单元键，与 name 分离）
+    的清除路由；重抛异常的 failure_class 与原异常一致（失败矩阵不变）。"""
+    import subprocess as sp
+
+    import pytest
+
+    from tracks.effects.opencode_core import OpencodeError
+
+    b = _backend(tmp_path)
+    b._record_session("archer:design", "ses_workunit")
+    proc = sp.CompletedProcess(["opencode", "run"], 1, stdout="", stderr="")
+    with pytest.raises(OpencodeError) as excinfo:
+        b._classify_run(proc, "archer", key="archer:design")
+    assert excinfo.value.failure_class == "non_zero_exit"
+    assert b._session_for("archer:design") is None
+    assert _backend(tmp_path)._session_for("archer:design") is None

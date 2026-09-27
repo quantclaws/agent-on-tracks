@@ -296,6 +296,35 @@ class OpencodeSessionMixin:
         self._model_limits = limits
         return limits
 
+    @staticmethod
+    def _absolute_ctx_ceiling() -> int:
+        """#132 OOB: the fallback compaction ceiling when the model window
+        cannot be resolved (TRAC_AGENT_MODEL unset — opencode-config default
+        model, unknown here). ``TRAC_SESSION_COMPACT_ABS_TOKENS`` overrides;
+        non-positive disables the fallback (legacy fail-open)."""
+        try:
+            return int(os.environ.get("TRAC_SESSION_COMPACT_ABS_TOKENS", "200000"))
+        except ValueError:
+            return 200_000
+
+    def _compact_limit(self, model: str | None) -> tuple[int, str] | None:
+        """The compaction threshold source: the model's context window when
+        resolvable, else the absolute ceiling. Returns (limit, label) or
+        None when both are unavailable (legacy fail-open).
+
+        #132 OOB (2026-09-27): with TRAC_AGENT_MODEL unset the effective model
+        # is opencode-config-resolved and invisible here, so the old fail-open
+        # skip disabled layer 3 entirely in the DEFAULT configuration (run
+        # 01M3E7SAANXKW1V73W8B8Q3G86: 319K/400K-token sessions,
+        # compacted=false throughout, TPM wall)."""
+        resolved = self._model_ctx_limits().get(model or "")
+        if resolved:
+            return resolved, f"{model} window"
+        ceiling = self._absolute_ctx_ceiling()
+        if ceiling <= 0:
+            return None
+        return ceiling, "absolute ceiling (model window unresolved)"
+
     def _maybe_compact(self, key: str, model: str | None) -> None:
         """Pre-dispatch threshold check (D-42 layer 3): compact at >= 85% of
         the model's context window; drop the session when compaction fails
@@ -310,9 +339,10 @@ class OpencodeSessionMixin:
         ctx = (entry or {}).get("ctx_tokens")
         if not isinstance(ctx, int) or ctx <= 0:
             return
-        limit = self._model_ctx_limits().get(model or "")
-        if not limit:
+        sourced = self._compact_limit(model)
+        if sourced is None:
             return
+        limit, window_label = sourced
         try:
             pct = int(os.environ.get("TRAC_SESSION_COMPACT_PCT",
                                      str(_COMPACT_PCT_DEFAULT)))
@@ -321,7 +351,7 @@ class OpencodeSessionMixin:
         if ctx * 100 < limit * pct:
             return
         print(
-            f"  [session] {key}: ctx {ctx} >= {pct}% of {model} window "
+            f"  [session] {key}: ctx {ctx} >= {pct}% of {window_label} "
             f"({limit}) — compacting",
             file=sys.stderr,
             flush=True,

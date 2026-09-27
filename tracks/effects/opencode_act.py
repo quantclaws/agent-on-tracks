@@ -140,7 +140,9 @@ class OpencodeActMixin:
             proc = self._dispatch_with_session_health(
                 req.name, req.prompt, req.root, key=req.key
             )
-            self._check_json(proc)
+            # #132 OOB: classification goes through _classify_run so failures
+            # feed the session-health seam (see its docstring).
+            self._classify_run(proc, req.name, key=req.key)
             if self._abnormal_step_finish(proc):
                 # B17/#20 narrow (live T-003 GREEN): an interrupted session
                 # is infrastructure, not an agent semantic failure — do not

@@ -466,6 +466,27 @@ class OpencodeRunMixin:
             "agent_io": self._capture_io(proc, prompt, console_input),
         }
 
+    def _classify_run(
+        self, proc: subprocess.CompletedProcess, name: str, key: str | None = None
+    ) -> None:
+        """Classify the completed dispatch AND feed the session-health seam.
+
+        #132 OOB (2026-09-27): ``_check_json`` used to be called directly in
+        act(), so its failures (non_zero_exit hard crash, provider_unavailable,
+        signal) never reached ``_recover_run_error`` — the 2026-09-18
+        hard-crash session clearing was dead wiring (run
+        01M3E7SAANXKW1V73W8B8Q3G86: two exit-1 dispatches, the 319K-token
+        session survived both and re-hit the TPM wall). Routing classification
+        through the same seam as ``_finalize_run``'s timeout makes the
+        intended invalidation live; the exception still propagates unchanged
+        for the executor's failure matrix.
+        """
+        try:
+            self._check_json(proc)
+        except OpencodeError as exc:
+            self._recover_run_error(exc, name, key=key)
+            raise
+
     def _check_json(self, proc: subprocess.CompletedProcess) -> None:
         """Classify the exit; JSON is diagnostic-only (product = target diff)."""
         if proc.returncode < 0:  # killed by signal (SIGINT/kill-9 or manifest-kill)
