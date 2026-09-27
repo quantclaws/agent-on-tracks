@@ -18,20 +18,28 @@ sha:
 
 ```
 ┌──────┬──────────────┬────────────────────────────┐
-│ tab条 │ sidebar      │ main area（多 tab 共存）    │
-│ [P]   │ ├ Projects   │ ┌────────┬────────┐        │
-│ [R]   │ ├ Runs       │ │ Doc A  │ Run … ×│ ← 主动关闭唯一路径 │
-│ [D]   │ ├ Docs       │ └────────┴────────┘        │
-│ [V]   │ ├ Review     │  切换/开闭/保存不经整页刷新 │
-│ [T]   │ └ Todos      │  未知值显式降级，不空白     │
-│ [⚙]   │ (Settings不换sidebar) │                   │
-│ [👤]   │ (Account仅logout)     │                   │
+│ tab条 │ sidebar      │ main area（多内容共存）     │
+│ [P]   │ (只显当前tab │ 标题区直接显示内容标题       │
+│ [R]   │  项下级内容， │ (文档标题/run标题/设置页标题)，│
+│ [D]   │  例:选[D]显  │ 不显示tab条分类名；         │
+│ [V]   │  文档树，    │ ┌──────────┬──────────┐    │
+│ [T]   │  选[R]显run  │ │ Doc标题  │ Run标题× │ ← 主动关闭唯一路径 │
+│ [⚙]   │  列表)       │ └──────────┴──────────┘    │
+│ [👤]   │              │ 切换/开闭/保存不经整页刷新   │
+│       │              │ 未知值显式降级，不空白       │
 └──────┴──────────────┴────────────────────────────┘
 ```
 
+sidebar 随 tab 条项切换只显该项下级内容，不同时罗列全部 tab 项（见 FR-0318）。main area 标题区直接显示内容标题（抽象“文档”标题：具体文档标题、run 标题、设置页标题等），不显示 tab 条分类名。Settings 经 `[⚙]` 只开 tab 不换 sidebar 内容；`[👤]` 点击弹菜单（结构槽位：settings / check updates / logout；v0.10 按 story 只实现 logout，settings 入口为 `[⚙]`，check updates 不做，见 FR-0318）。
+
 > **Aaron:** main area 不显示 tab 的标题，而是直接显示『文档』（抽象含义，既包括具体的文档，也包括 run, setting page）的标题
+>> **Sage:** 已采纳：E-01 wireframe 与 FR-0318 已修订为“标题区直接显示内容标题（文档标题/run标题/设置页标题等抽象文档标题），不显示 tab 条分类名，多内容以内容标题区分”。E-01 为示意，验收以 FR-0318 文字为准。请确认后由你设 resolved。
+
 > **Aaron:** sidebar 在选择 tab 中的某个 item 之后，要相应切换为显示该 tab 下级内容，而不是像图中列出的对所有 tab item 的显示
+>> **Sage:** 已采纳：E-01 原同时罗列全部 tab 项为示意错误，已改为“只显当前 tab 项下级内容（例：选[D]显文档树，选[R]显 run 列表）”，FR-0318 补充“sidebar 只显当前 tab 条项下级内容，不同时罗列全部 tab 项”，与 BS-03 联动原子性一致。请确认后由你设 resolved。
+
 > **Aaron:** [👤]点击时，弹出菜单，目前包括 settings, check updates, logout (是否实现这些功能看 story 要求)
+>> **Sage:** 已按 story 过滤采纳：E-01 与 FR-0318 明确 [👤] 结构槽位为 settings/check updates/logout，但 v0.10 按 story（BS-03/Account 仅 logout，Settings 经 [⚙]）只实现 logout；settings 入口为 [⚙]（菜单项若出现则同为打开 Settings tab，无独立行为），check updates 无 story BS、已列入范围排除本版不做。请确认后由你设 resolved。
 
 ### E-02 登录双栏 auth shell + 名字采集
 
@@ -50,16 +58,19 @@ sha:
 ```
 ┌────────────┬─────────────────────────────────────────┐
 │ 目录树     │ pane1 [doc选择器|工具栏]  pane2 […] (≤4列)│
-│ story/spec │ ┌─────────────────────────────────────┐ │
-│ acceptance │ │ Vditor ir 即时渲染 viewed/edited    │ │
-│ …          │ │ [保存](dirty才可用) 409→[重载放弃|强制覆盖]│ │
-│            │ │ discussion: [显示/隐藏][下一个][只看未决]│ │
-│            │ └─────────────────────────────────────┘ │
+│ (版本逆序， │ ┌─────────────────────────────────────┐ │
+│ 最新置顶)  │ │ Vditor ir 即时渲染 viewed/edited    │ │
+│ story/spec │ │ [保存](dirty才可用) 409→[重载放弃|强制覆盖]│ │
+│ acceptance │ │ discussion: [显示/隐藏][下一个][只看未决]│ │
+│ …          │ └─────────────────────────────────────┘ │
 │            │ Vditor失败→textarea回退，内容不丢       │
 └────────────┴─────────────────────────────────────────┘
 ```
 
+目录树按版本号逆序排列，最新版本置顶（见 FR-0322）。
+
 > **Aaron:** 文档中心按版本号逆序显示，最新的排在最上面。
+>> **Sage:** 已采纳：E-03 目录树标注“版本逆序、最新置顶”并补充说明，FR-0322 增加“目录树按版本号逆序排列，最新版本置顶”为规范要求，E-03 为示意、验收以 FR-0322 为准。请确认后由你设 resolved。
 
 ### E-04 run 时间线（可选项，整包）
 
@@ -127,7 +138,7 @@ WHEN 用户查看左侧 tab 条，THE 系统 SHALL 仅以图标加 hover tooltip
 - **来源**：`BS-03` / `§3.1` / 约束 D3（引 louke v0.13-001）
 - **交付入口**：`E-01`（sidebar 导航树 + main area）
 
-WHEN 用户切换 tab 条项，THE 系统 SHALL 在同一切换内将 sidebar 切到对应导航树并在 main area 打开或激活对应 tab（SM-04.1），不存在只换 sidebar 不开 tab 的中间态；已打开 tab 共存不被切换关闭，重复点击激活已有唯一实例（SM-04.2/SM-04.3），用户主动关闭是唯一关闭路径，无关闭所有全局动作（SM-04.4），tab 集合只在浏览器内存、不跨会话持久化（SM-04.5）。功能项集合收敛为 Projects/Runs/Docs/Review/Todos/Settings/Account 七项：overview 与 projects 合并为 Projects/Runs 总览语义，run_new 收为 Runs 下新建入口，release 收为 run 详情内发布决定而非顶级项。Settings 只开 tab 不换 sidebar 内容（SM-04.6），Account 菜单仅含 logout，logout 后浏览器不残留凭据。
+WHEN 用户切换 tab 条项，THE 系统 SHALL 在同一切换内将 sidebar 切到对应导航树并在 main area 打开或激活对应 tab（SM-04.1），不存在只换 sidebar 不开 tab 的中间态；sidebar 只显当前 tab 条项的下级内容，不同时罗列全部 tab 项；main area 标题区直接显示内容标题（抽象“文档”标题：具体文档标题、run 标题、设置页标题等），不显示 tab 条分类名，多内容以内容标题区分。已打开 tab 共存不被切换关闭，重复点击激活已有唯一实例（SM-04.2/SM-04.3），用户主动关闭是唯一关闭路径，无关闭所有全局动作（SM-04.4），tab 集合只在浏览器内存、不跨会话持久化（SM-04.5）。功能项集合收敛为 Projects/Runs/Docs/Review/Todos/Settings/Account 七项：overview 与 projects 合并为 Projects/Runs 总览语义，run_new 收为 Runs 下新建入口，release 收为 run 详情内发布决定而非顶级项。Settings 经 `[⚙]` 只开 tab 不换 sidebar 内容（SM-04.6）；`[👤]` 点击弹菜单，结构槽位为 settings / check updates / logout，v0.10 按 story 只实现 logout（logout 后浏览器不残留凭据），settings 入口为 `[⚙]`（菜单 settings 项若出现则同为打开 Settings tab，无独立行为），check updates 无 story BS、不在本版实现。
 
 **用户可观察结果**：Projects/Runs/Docs/Review/Todos 间切换不丢上下文；刷新后 tab 不恢复为预期行为；Settings/Account 行为符合上述约束。
 
@@ -163,7 +174,7 @@ WHEN 服务端尚无持久化名字且用户首次登录成功，THE 系统 SHAL
 - **来源**：`BS-07` 部分 / `BS-11` / `§3.3` / 约束 D4
 - **交付入口**：`E-03` + `GET /api/runs/{run_id}/docs/{doc}` + `GET /api/runs/{run_id}/docs/{doc}/diff`（既有文档查询面应用层）
 
-WHEN 用户经目录树选择 `.tracks/projects/<version>/` 六件套文档（story/spec/acceptance/architecture/interfaces/test-plan），THE 系统 SHALL 以 Vditor `ir` 即时渲染模式承载浏览与编辑，资产经同源 vendor 路径加载（可选引擎保持禁用）。WHEN Vditor 加载失败，THE 系统 SHALL 回退到 textarea，保证文档仍可查看与编辑（SM-05 之外的主路径韧性）。
+WHEN 用户经目录树选择 `.tracks/projects/<version>/` 六件套文档（story/spec/acceptance/architecture/interfaces/test-plan），THE 系统 SHALL 以 Vditor `ir` 即时渲染模式承载浏览与编辑，资产经同源 vendor 路径加载（可选引擎保持禁用）；目录树按版本号逆序排列，最新版本置顶。WHEN Vditor 加载失败，THE 系统 SHALL 回退到 textarea，保证文档仍可查看与编辑（SM-05 之外的主路径韧性）。
 
 **用户可观察结果**：文档以即时渲染呈现；Vditor 不可用时用户仍可用 textarea 继续查看与编辑。
 
@@ -267,7 +278,7 @@ WHEN SSE 断线或事件重复乱序，THE 系统 SHALL 按序号（snapshot `ev
 
 ## 范围排除
 
-- Chat/Agent 会话流、模型绑定页、质量面板、i18n、setup 向导/onboarding 门禁、Settings 完整三页、跨会话 tab 持久化、toolbar 拖拽重排、WebSocket、多用户/公网边界（story 明确排除）。
+- Chat/Agent 会话流、模型绑定页、质量面板、i18n、setup 向导/onboarding 门禁、Settings 完整三页、跨会话 tab 持久化、toolbar 拖拽重排、WebSocket、多用户/公网边界（story 明确排除）；`[👤]` 菜单的 check updates（版本检查/更新提示）无 story BS，本版不做。
 - discussion UI 写回（resolve/reply）在本版不做，留 CLI；单独提案前不加 mutate 端点。
 - docs/ 文档补写排 v0.11。
 - run 时间线若 spec 冻结时容量不够则整包延后 v0.11（FR-0326），不做部分交付。
