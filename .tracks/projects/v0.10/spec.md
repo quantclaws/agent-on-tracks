@@ -8,7 +8,7 @@ sha:
 
 # Web 工作台完善（UI）+ 发布卫生 — 需求规格
 
-> 本 spec 将 v0.10 story（S-001）落为可验证需求：在 v0.9 已交付的 8 页面封闭集与完整 JSON API 之上叠加 SPA 工作台 chrome（登录名字绑定 + 文档中心应用层 + 可选 run 时间线），全程接真数据；并在同一版内收紧发布卫生（#182/#179/#180/#181）使 v0.10 自身可达 released。容量分析：15 有效 FR（FR-0316..FR-0330，承接项目全局序号，<30 无需拆分；4 NFR 不计）。继承边界：8 页面封闭集与查询/命令/SSE 契约、supervisor 单活动 run 串行 + hotfix 换队（FR-0296）、批准绑定（FR-0308）、preview 绑定（FR-0309）、受控重试位置（FR-0311）、命令生命周期与等待投影（v0.9 SM-01/SM-02/RP-01）全部继承，本版不重写；本版新增的仅是工作台交互壳、文档应用层与发布卫生修复。规格期锁定决策在此一次性确定：SPA 交互模型不妥协但构建链有条件（FR-0316）、功能项收敛七项（FR-0318）、tab 不跨会话持久化（FR-0318）、discussion 本版只读（FR-0325）、run 时间线整包取舍（FR-0326）、Playwright 基础设施为独立预算（NFR-0155）。
+> 本 spec 将 v0.10 story（S-001）落为可验证需求：在 v0.9 已交付的 8 页面封闭集与完整 JSON API 之上叠加 SPA 工作台 chrome（登录名字绑定 + 文档中心应用层 + 可选 run 时间线），全程接真数据；并在同一版内收紧发布卫生（#182/#179/#180/#181，并经 Human 扩容纳入 #184/#183）使 v0.10 自身可达 released。容量分析：17 有效 FR（FR-0316..FR-0332，承接项目全局序号，<30 无需拆分；4 NFR 不计）。继承边界：8 页面封闭集与查询/命令/SSE 契约、supervisor 单活动 run 串行 + hotfix 换队（FR-0296）、批准绑定（FR-0308）、preview 绑定（FR-0309）、受控重试位置（FR-0311）、命令生命周期与等待投影（v0.9 SM-01/SM-02/RP-01）全部继承，本版不重写；本版新增的仅是工作台交互壳、文档应用层与发布卫生修复。规格期锁定决策在此一次性确定：SPA 交互模型不妥协但构建链有条件（FR-0316）、功能项收敛七项（FR-0318）、tab 不跨会话持久化（FR-0318）、discussion 本版只读（FR-0325）、run 时间线整包取舍（FR-0326）、Playwright 基础设施为独立预算（NFR-0155）、tracker milestone 缺失时确保补建并修正指引（FR-0331）、LEX_REVIEW 仅被 Human 线程阻塞时合法 park 且线程复用（FR-0332）。
 
 **技术选型与实现边界**（继承 story §5 约束 + Human 六条不可协商项）：SPA 技术选型优先原生 ES modules，不引入 npm/Vite 构建链；若 M-DESIGN 论证确需构建链，必须同包给出其与 guard-registry/CI required checks 的集成方案，否则维持原生。supervisor 单活动 run 串行 + hotfix 换队语义（FR-0296）不变，UI 不得发明并发推进入口。web 层不直接耦合 runtime，HTTP 改动经命令服务。Vditor 资产沿用已 vendor 同源（`server/static/vendor/vditor/`，可选引擎禁用），UI 只做应用层。服务端无 discussion 写回 API，本版 discussion 只读，写回留 CLI。docs/ 文档补写不在本版（排 v0.11）。
 
@@ -32,13 +32,13 @@ sha:
 
 sidebar 随 tab 条项切换只显该项下级内容，不同时罗列全部 tab 项（见 FR-0318）。main area 标题区直接显示内容标题（抽象“文档”标题：具体文档标题、run 标题、设置页标题等），不显示 tab 条分类名。Settings 经 `[⚙]` 只开 tab 不换 sidebar 内容；`[👤]` 点击弹菜单（结构槽位：settings / check updates / logout；v0.10 按 story 只实现 logout，settings 入口为 `[⚙]`，check updates 不做，见 FR-0318）。
 
-> **Aaron:** main area 不显示 tab 的标题，而是直接显示『文档』（抽象含义，既包括具体的文档，也包括 run, setting page）的标题
+> **Aaron [RESOLVED]:** main area 不显示 tab 的标题，而是直接显示『文档』（抽象含义，既包括具体的文档，也包括 run, setting page）的标题
 >> **Sage:** 已采纳：E-01 wireframe 与 FR-0318 已修订为“标题区直接显示内容标题（文档标题/run标题/设置页标题等抽象文档标题），不显示 tab 条分类名，多内容以内容标题区分”。E-01 为示意，验收以 FR-0318 文字为准。请确认后由你设 resolved。
 
-> **Aaron:** sidebar 在选择 tab 中的某个 item 之后，要相应切换为显示该 tab 下级内容，而不是像图中列出的对所有 tab item 的显示
+> **Aaron [RESOLVED]:** sidebar 在选择 tab 中的某个 item 之后，要相应切换为显示该 tab 下级内容，而不是像图中列出的对所有 tab item 的显示
 >> **Sage:** 已采纳：E-01 原同时罗列全部 tab 项为示意错误，已改为“只显当前 tab 项下级内容（例：选[D]显文档树，选[R]显 run 列表）”，FR-0318 补充“sidebar 只显当前 tab 条项下级内容，不同时罗列全部 tab 项”，与 BS-03 联动原子性一致。请确认后由你设 resolved。
 
-> **Aaron:** [👤]点击时，弹出菜单，目前包括 settings, check updates, logout (是否实现这些功能看 story 要求)
+> **Aaron [RESOLVED]:** [👤]点击时，弹出菜单，目前包括 settings, check updates, logout (是否实现这些功能看 story 要求)
 >> **Sage:** 已按 story 过滤采纳：E-01 与 FR-0318 明确 [👤] 结构槽位为 settings/check updates/logout，但 v0.10 按 story（BS-03/Account 仅 logout，Settings 经 [⚙]）只实现 logout；settings 入口为 [⚙]（菜单项若出现则同为打开 Settings tab，无独立行为），check updates 无 story BS、已列入范围排除本版不做。请确认后由你设 resolved。
 
 ### E-02 登录双栏 auth shell + 名字采集
@@ -69,7 +69,7 @@ sidebar 随 tab 条项切换只显该项下级内容，不同时罗列全部 tab
 
 目录树按版本号逆序排列，最新版本置顶（见 FR-0322）。
 
-> **Aaron:** 文档中心按版本号逆序显示，最新的排在最上面。
+> **Aaron [RESOLVED]:** 文档中心按版本号逆序显示，最新的排在最上面。
 >> **Sage:** 已采纳：E-03 目录树标注“版本逆序、最新置顶”并补充说明，FR-0322 增加“目录树按版本号逆序排列，最新版本置顶”为规范要求，E-03 为示意、验收以 FR-0322 为准。请确认后由你设 resolved。
 
 ### E-04 run 时间线（可选项，整包）
@@ -216,6 +216,12 @@ WHEN run 详情时间线进入本版，THE 系统 SHALL 呈现顶部当前节点
 
 ### FR-0327 里程碑收尾 released 可达
 
+> **Aaron:** 发布卫生块需扩容：#184（tracker 生命周期只 close 不 create milestone——宿主合同声明 milestone_template 却无物化端，v0.9 实测需手工补建）应纳入本版修复：生命周期补全（tracker 首次接触点按模板创建并 API 回读，幂等复用）或明确操作者前置义务并修正 milestone_not_found 的恢复指引文案。请落为新增 FR 并同步容量行。
+>> **Sage:** 已采纳并落为 FR-0331：tracker 首次接触点按 milestone_template 确保远端存在（不存在则创建并 API 回读，同一标题幂等复用）；不可自动建时报 milestone_not_found 并携带可操作 next（明确操作者前置建义务）。交付面为 tracker 首次接触点 + close_project_milestone 关闭面 + attention.required 可观察出口。容量行已同步为 17 FR（FR-0316..FR-0332）。请确认后由你设 resolved。
+
+> **Aaron:** 发布卫生块需扩容：#183（LEX_REVIEW 无『仅被 Human 线程阻塞』的合法 verdict 出口，重试循环逐轮新开重复线程且不 park）应纳入本版修复——verdict 词汇表增加 pass-pending-human-threads 出口（park 到 AWAIT_HUMAN 并携带待决线程清单），Lex findings 线程跨 attempt 复用不重复开。请落为新增 FR（承接 FR-0329/0330 之后），并把容量行的 FR 计数同步更新。
+>> **Sage:** 已采纳并落为 FR-0332：LEX_REVIEW 仅被 Human 线程阻塞时产出 pass-pending-human-threads 合法 verdict 并 park 到 AWAIT_HUMAN（携带待决线程清单）；重试循环中 Lex findings 线程跨 attempt 复用、不重复开。交付面为 lex.verdict 词汇表 + 重试循环 + trac status awaiting 可观察出口。容量行已同步为 17 FR。请确认后由你设 resolved。
+
 - **来源**：`BS-16` / `§3.6` / #182 blocker
 - **交付入口**：M-MILESTONE 收尾命令面（`_complete_milestone` + `close_milestone`） + `run.completed(terminal_state=released, release_tag)` 事件可观察出口
 
@@ -249,6 +255,24 @@ WHEN hotfix 前检捕获 `GithubIssuesError`，THE 系统 SHALL 按分类区分�
 WHEN live GitHub 通道在标准 macOS Python 下请求时，THE 系统 SHALL 显式使用 certifi CA bundle 发起 TLS 校验，恢复 live 通道；并将 live 旅程环境前置（`GITHUB_TOKEN`/`TRAC_GITHUB_REPO`/TLS）写进 ops 文档。失败时按 `GithubIssuesError` 分类可诊断呈现。
 
 **用户可观察结果**：标准 macOS Python 下 live 通道不再 TLS 失败；缺环境变量时用户按 ops 文档指引修复后重试。
+
+### FR-0331 tracker milestone 生命周期补全与缺失指引
+
+- **来源**：Human 扩容决定 T-005 / `§3.6` 扩容 / #184
+- **交付入口**：tracker 首次接触点（tracker 参数解析 + milestone 按模板确保存在并 API 回读） + `close_project_milestone` 关闭面 + `milestone_not_found` 反馈可观察出口（`attention.required`）
+
+WHEN tracker 声明了 repo/project/`milestone_template` 且具备凭据，THE 系统 SHALL 在首次接触 tracker 时按模板渲染的 milestone 标题确保远端 milestone 存在（不存在则创建，存在则复用；创建后经 API 回读校验，同一标题幂等复用，不重复建）。WHEN 远端缺失且无法自动补建（无凭据/非权威/创建失败），THE 系统 SHALL 报 `milestone_not_found` 并携带可操作 `next`（明确操作者前置建 milestone 义务：按模板标题手工建后重试），不再是笼统报错或静默跳过。
+
+**用户可观察结果**：声明的 milestone 不再因“只 close 不 create”需手工补建而卡发布；缺失且不可自动建时用户看到明确的前置义务与下一步，可修复后重试。
+
+### FR-0332 LEX_REVIEW 仅被 Human 线程阻塞的合法出口与线程复用
+
+- **来源**：Human 扩容决定 T-006 / `§3.6` 扩容 / #183
+- **交付入口**：LEX_REVIEW verdict 面（`lex.verdict` 词汇表 + 重试循环） + `trac status` awaiting 可观察出口（`AWAIT_HUMAN` + 待决线程清单）
+
+WHEN LEX_REVIEW 仅被 Human 线程阻塞（无其它待修语义问题），THE 系统 SHALL 产出 `pass-pending-human-threads` 合法 verdict 并 park 到 `AWAIT_HUMAN`，携带待决 Human 线程清单；WHEN 重试循环重进 LEX_REVIEW，Lex findings 线程跨 attempt 复用，不逐轮新开重复线程且不空转。
+
+**用户可观察结果**：仅剩 Human 待决时 run 合法 park 等人，不再逐轮重复开线程；用户在 status 看到待决清单，可继续人工处理后恢复。
 
 ## 非功能需求
 
@@ -284,6 +308,7 @@ WHEN SSE 断线或事件重复乱序，THE 系统 SHALL 按序号（snapshot `ev
 - run 时间线若 spec 冻结时容量不够则整包延后 v0.11（FR-0326），不做部分交付。
 
 > **Lex:** Lex 语义复核（attempt 5，消费 1-lex-3）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
+>> **Sage:** 说明：Lex attempt 5 复核时 T-005/T-006（#184/#183 扩容）尚未落 FR，现 Sage 已新增 FR-0331/FR-0332 并同步容量行至 17 FR，T-005/T-006 已回复待 Human 确认。本线程（旧结论“无修订要求”）已过时，请 Lex 基于新版重评后设 resolved。
 
 > **Lex [RESOLVED]:** Lex 语义复核（attempt 4，消费 1-lex-2）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
 >> **Sage:** 确认收到 Lex attempt 4 复核（消费 1-lex-2）：T-001~T-004 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致、无矛盾与范围偏移，Sage 本轮无进一步 spec 修订（15 FR + 4 NFR 不变）。T-001~T-004 待 Human（Aaron）确认设 resolved；本线程请 Lex 设 resolved。
