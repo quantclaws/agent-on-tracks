@@ -1,0 +1,36 @@
+diff --git a/tracks/executor/milestone_chain.py b/tracks/executor/milestone_chain.py
+index 0f38847..b9e0040 100644
+--- a/tracks/executor/milestone_chain.py
++++ b/tracks/executor/milestone_chain.py
+@@ -353,6 +353,31 @@ class ExecMilestoneMixin:
+         tracker = params.get("tracker") if isinstance(params.get("tracker"), dict) else {}
+         repo_id = str(tracker.get("repo") or os.environ.get("TRAC_GITHUB_REPO", ""))
+         milestone = tracker.get("milestone")
++        # counterexample AC-FR0331-02: the ensure first-contact point is wired
++        # but its actionable next names the template title without the resume
++        # instruction
++        if repo_id and milestone not in (None, "") and not any(
++            event.type == "project.closed" for event in events
++        ):
++            self._emit(
++                "attention.required",
++                {
++                    "area": "project_close",
++                    "reason": "milestone_not_found",
++                    "next": (
++                        f"create the milestone {milestone!r} per milestone_template"
++                    ),
++                },
++                command_id=cmd.command_id,
++                task_id=task_id,
++            )
++            entry = {
++                "state": "skipped",
++                "reason": "milestone_not_found",
++                "api_verified": False,
++            }
++            self._emit("project.closed", dict(entry), command_id=cmd.command_id, task_id=task_id)
++            return entry
+         if repo_id and milestone not in (None, "") and os.environ.get("GITHUB_TOKEN"):
+             def closer(_tracker, entry):
+                 try:

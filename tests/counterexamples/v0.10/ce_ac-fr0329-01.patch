@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/hotfix.py b/tracks/executor/hotfix.py
+index 9363b26..e83ffeb 100644
+--- a/tracks/executor/hotfix.py
++++ b/tracks/executor/hotfix.py
+@@ -127,8 +127,10 @@ def precheck_hotfix(
+     """
+     # P-1: issue fetch and type=bug check
+     if issue is None:
++        # counterexample AC-FR0329-01: any fetch miss (including failures)
++        # collapses into the fetch-failed reason
+         return _reject(
+-            "issue_not_found",
++            "issue_fetch_failed",
+             "confirm the issue exists; complete the issue seed, then retry",
+         )
+     if not issue.is_bug:

@@ -1,0 +1,23 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 88abbbf..cecba27 100644
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -639,7 +639,17 @@ def project_timeline(
+         rows = _timeline_rows(conn, repo_path, run_id)
+         rows = _filter_timeline(rows, command_id, task_id, ac_id)
+         rows = _after_cursor(rows, after_seq)
+-        return {"events": rows, "cursor": _cursor_of(rows)}
++        # counterexample AC-FR0326-01: the display order drops the
++        # M-REQ-APPROVAL insertion between M-ACC and M-DESIGN
++        return {
++            "events": rows,
++            "cursor": _cursor_of(rows),
++            "stage_order": [
++                "M-START", "M-STORY", "M-SPEC", "M-ACC", "M-DESIGN", "M-TEST",
++                "M-IMPL", "M-VERIFY", "M-SECURITY", "M-RELEASE", "M-PUBLISH",
++                "M-MILESTONE",
++            ],
++        }
+     finally:
+         if conn is not None:
+             conn.close()

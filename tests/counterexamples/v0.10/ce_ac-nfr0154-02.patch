@@ -1,0 +1,14 @@
+diff --git a/tracks/server/api_command.py b/tracks/server/api_command.py
+index 1c804cf..26644ed 100644
+--- a/tracks/server/api_command.py
++++ b/tracks/server/api_command.py
+@@ -233,8 +233,7 @@ async def _mutate(
+     session = _authenticated(request)
+     if session is None:
+         return _error(401, "unauthenticated", "an authenticated session is required")
+-    if not auth.check_csrf(session, request.headers.get("X-Trac-CSRF")):
+-        return _csrf_rejection(request, session, kind, params.get("run_id"))
++    # counterexample AC-NFR0154-02: the CSRF credential is not checked
+     try:
+         guard.validate_command_payload(kind, guard_params if guard_params is not None else params)
+     except guard.GuardRejection as rejection:

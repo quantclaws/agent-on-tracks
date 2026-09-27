@@ -1,0 +1,35 @@
+diff --git a/tracks/executor/hotfix_face.py b/tracks/executor/hotfix_face.py
+index d93ea39..2a590e9 100644
+--- a/tracks/executor/hotfix_face.py
++++ b/tracks/executor/hotfix_face.py
+@@ -85,14 +85,28 @@ def precheck_hotfix_report(repo, store, issue_number: int, scenario: str):
+     (run-version resolution) and ``_do_precheck_hotfix`` (event emission)."""
+     try:
+         issue = select_issue_backend(repo, "").fetch_issue(issue_number)
+-    except GithubIssuesError:
+-        issue = None  # fetch failure: pure rules map it to issue_fetch_failed
++        fetch_class = None
++    except GithubIssuesError as exc:
++        issue = None
++        fetch_class = exc.classification
+     branches = git(repo, "branch", "--list", check=False).stdout.splitlines()
+     active = store.active_run()
+     active_branch = _hotfix_run_branch(store, active) if active else None
+     projects = paths.projects_dir(paths.tracks_home(repo))
+     approved = _hotfix_approved_versions(store)
+     report = precheck_hotfix(issue, scenario, branches, active_branch, projects, approved)
++    if issue is None and fetch_class:
++        # counterexample AC-FR0329-02: the fetch failure is classified but the
++        # next guidance is generic for every classification
++        from tracks.executor.hotfix import PrecheckReport
++
++        report = PrecheckReport(
++            status="rejected",
++            reason="issue_fetch_failed",
++            next="configure GITHUB_TOKEN, then retry",
++            target_version=None,
++            active_branch=report.active_branch,
++        )
+     return report, issue
+ 
+ 

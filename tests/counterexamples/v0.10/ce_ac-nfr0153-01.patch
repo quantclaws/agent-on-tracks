@@ -1,0 +1,14 @@
+diff --git a/tracks/server/pages.py b/tracks/server/pages.py
+index 15b1083..23160c3 100644
+--- a/tracks/server/pages.py
++++ b/tracks/server/pages.py
+@@ -113,6 +113,9 @@ def _placeholder_body(name: str, context: dict) -> str:
+         [
+             f'<main id="page-{name}" data-page="{name}"{attrs}>',
+             f"<h1>{html.escape(_TITLES[name])}</h1>",
++            # counterexample AC-NFR0153-01: a fabricated run row baked into
++            # the shell HTML instead of the live projection
++            '<div data-run-id="run-shell-overview-1">v1.0 M-IMPL</div>',
+             "</main>",
+         ]
+     )

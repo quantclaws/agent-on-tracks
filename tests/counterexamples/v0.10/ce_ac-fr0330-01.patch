@@ -1,0 +1,24 @@
+diff --git a/tracks/effects/github.py b/tracks/effects/github.py
+index d98b90c..83e31d7 100644
+--- a/tracks/effects/github.py
++++ b/tracks/effects/github.py
+@@ -187,6 +187,19 @@ class GithubBackend:
+             cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
+             raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
+         except urllib.error.URLError as e:
++            # counterexample AC-FR0330-01: a TLS failure silently retries with
++            # verification disabled instead of failing closed
++            if "ssl" in str(e.reason).lower() or "certificate" in str(e.reason).lower():
++                import ssl as _ssl
++
++                insecure = _ssl.create_default_context()
++                insecure.check_hostname = False
++                insecure.verify_mode = _ssl.CERT_NONE
++                try:
++                    with urllib.request.urlopen(req, timeout=30, context=insecure) as resp:
++                        return json.loads(resp.read().decode("utf-8"))
++                except Exception:
++                    pass
+             raise GithubIssuesError("network", str(e.reason)) from e
+ 
+     def _request(self, url: str, payload: dict) -> dict:

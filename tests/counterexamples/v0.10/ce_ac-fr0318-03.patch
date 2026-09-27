@@ -1,0 +1,20 @@
+diff --git a/tracks/server/app.py b/tracks/server/app.py
+index 8f41075..2f1ed9e 100644
+--- a/tracks/server/app.py
++++ b/tracks/server/app.py
+@@ -268,8 +268,13 @@ class _AuthBoundary:
+             await self._app(scope, receive, send)
+             return
+         with contextlib.closing(_open_conn(self._home, readonly=True)) as conn:
+-            session = auth.resolve_session(conn, request.cookies.get(SESSION_COOKIE))
+-        if session is not None:
++            # counterexample AC-FR0318-03: any non-empty cookie resolves as a
++            # session, so a logged-out credential still authenticates
++            session = (
++                object()
++                if request.cookies.get(SESSION_COOKIE)
++                else auth.resolve_session(conn, None)
++            )
+             await self._app(scope, receive, send)
+             return
+         if path.startswith("/api"):

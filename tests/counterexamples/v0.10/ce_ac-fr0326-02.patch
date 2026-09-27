@@ -1,0 +1,19 @@
+diff --git a/tracks/server/projections.py b/tracks/server/projections.py
+index 88abbbf..18d4edf 100644
+--- a/tracks/server/projections.py
++++ b/tracks/server/projections.py
+@@ -649,7 +649,14 @@ def _timeline_rows(
+     conn: sqlite3.Connection | None, repo_path: str, run_id: str
+ ) -> list[dict]:
+     rows = []
++    seen_stages = set()
+     for event in _run_events(repo_path, run_id):
++        # counterexample AC-FR0326-02: repeated stage entries are folded so
++        # only the first attempt of each stage is listed
++        if event.type == "stage.entered" and event.payload.get("stage") in seen_stages:
++            continue
++        if event.type == "stage.entered":
++            seen_stages.add(event.payload.get("stage"))
+         rows.append(
+             {
+                 "source": "tracks",

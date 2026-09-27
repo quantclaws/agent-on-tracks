@@ -1,0 +1,16 @@
+diff --git a/tracks/executor/result_payload.py b/tracks/executor/result_payload.py
+index afd6290..c31f63e 100644
+--- a/tracks/executor/result_payload.py
++++ b/tracks/executor/result_payload.py
+@@ -334,7 +334,10 @@ class ResultPayloadMixin:
+             "allowed_paths": [doc_name] if doc_name else [],
+             "base_sha": base_sha,
+             "checks": ["template"],
+-            "requires_diff": verdict != "pass",
++            # counterexample AC-FR0332-01: the review pipeline already
++            # exempts the park verdict from the diff requirement while the
++            # kernel reduction and payload never learn about it
++            "requires_diff": verdict not in ("pass", "pass-pending-human-threads"),
+             "forbid_diff": False,
+             "discussion_only": True,
+             "commit_label": f"{state.stage}: {role} ({verdict}) checkpoint",

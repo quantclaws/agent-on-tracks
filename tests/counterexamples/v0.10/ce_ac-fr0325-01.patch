@@ -1,0 +1,26 @@
+diff --git a/tracks/server/app.py b/tracks/server/app.py
+index 8f41075..3aa37dd 100644
+--- a/tracks/server/app.py
++++ b/tracks/server/app.py
+@@ -131,6 +131,21 @@ def _build_routes(glue: _AuthGlue) -> list:
+     routes.append(
+         Mount("/static", app=StaticFiles(directory=str(_STATIC_DIR)), name="static")
+     )
++
++    # counterexample AC-FR0325-01: the discussion projection exists but
++    # serves an empty thread list instead of the parsed threads
++    async def _discussions(request):
++        from starlette.responses import JSONResponse
++
++        return JSONResponse({"threads": []})
++
++    routes.append(
++        Route(
++            "/api/projects/{pid}/docs/{version}/{doc}/discussions",
++            _discussions,
++            methods=["GET"],
++        )
++    )
+     return routes
+ 
+ 

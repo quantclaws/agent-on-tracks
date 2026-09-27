@@ -1,0 +1,13 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 7aa2b94..909e6f1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -97,7 +97,7 @@ testpaths = ["tests"]
+ # v0.10 (NFR-0155): `ui` marker 的 Playwright/Chromium 浏览器层默认排除（浏览器
+ # 二进制是独立基础设施预算，由 CI ui-e2e required check 预装）；本地运行 UI 层：
+ # `.venv/bin/playwright install chromium` 后 `pytest -m ui`。
+-addopts = "-q -m 'not performance and not ui'"
++addopts = "-q -m 'not performance'"
+ markers = [
+     "performance: opt-in NFR-0020 perf benchmark; excluded from default runs (run: pytest -m performance)",
+     "integration: deterministic integration layer under tests/integration",

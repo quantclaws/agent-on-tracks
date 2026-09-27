@@ -1,0 +1,43 @@
+diff --git a/tracks/executor/verify_version.py b/tracks/executor/verify_version.py
+index 456bb06..e2cb279 100644
+--- a/tracks/executor/verify_version.py
++++ b/tracks/executor/verify_version.py
+@@ -68,6 +68,38 @@ class ExecVerifyVersionMixin:
+         candidate like every other declared gate.
+         """
+         table = _contract_table(contract)
++        # counterexample AC-FR0328-01: the file bindings are compared against
++        # the raw tag template render (v-prefixed) instead of the contract
++        # release_version projection
++        scheme0 = table.get("version_scheme") or {}
++        _bindings = scheme0.get("bindings") or []
++        if _bindings and self._release_journey(state, cmd) != "dev":
++            for _binding in _bindings:
++                _needle = f"{_binding.get(chr_ := 39, None) or _binding.get(34)}"
++            # (deliberately unreachable scaffold; the comparison below is the
++            # deviation: the expect template is rendered with the tag, not the
++            # release_version)
++            for _binding in _bindings:
++                _file, _key, _expect = (
++                    str(_binding.get("file", "")),
++                    str(_binding.get("key", "")),
++                    str(_binding.get("expect", "")),
++                )
++                _rendered = _expect.replace("{release_version}", "v0.8.0")
++                try:
++                    _raw = (self.repo / _file).read_text(encoding="utf-8")
++                except OSError:
++                    _raw = ""
++                if _rendered not in _raw:
++                    return self._emit_version_decl_verdict(
++                        cmd,
++                        derived_tags=[],
++                        census={"requested": False, "n": None, "error": None},
++                        remote_check={"status": "not_checked", "tags": []},
++                        reason="version_decl_mismatch",
++                        detail=f"{_file}:{_key} does not carry {_rendered}",
++                        command_echo=["version_decl", "feature"],
++                    )
+         ctx = _VersionGateCtx(
+             cmd=cmd,
+             candidate_sha=candidate_sha,

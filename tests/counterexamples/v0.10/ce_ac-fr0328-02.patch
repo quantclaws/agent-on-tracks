@@ -1,0 +1,12 @@
+diff --git a/.tracks/projects/project.toml b/.tracks/projects/project.toml
+index 22ba778..bf2ede8 100644
+--- a/.tracks/projects/project.toml
++++ b/.tracks/projects/project.toml
+@@ -130,7 +130,6 @@ patch_line = "v{minor}.{n}"
+ prerelease_tag = "v{minor}.{n}-pre.{ulid}"
+ bindings = [
+   { file = "pyproject.toml", key = "project.version", expect = "{release_version}" },
+-  { file = "tracks/__init__.py", key = "__version__", expect = "{release_version}" },
+ ]
+ 
+ # ---- build / artifact + post-install public outlet smoke (FR-0269) ---------

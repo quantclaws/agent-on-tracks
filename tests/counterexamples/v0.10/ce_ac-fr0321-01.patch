@@ -1,0 +1,13 @@
+diff --git a/tracks/server/app.py b/tracks/server/app.py
+index 8f41075..5460f68 100644
+--- a/tracks/server/app.py
++++ b/tracks/server/app.py
+@@ -192,7 +192,7 @@ class _AuthGlue:
+                 )
+             issued = auth.issue_session(conn, actor)
+         self._audit(actor, "succeeded")
+-        response = JSONResponse({"actor": actor, "csrf_token": issued.csrf_token})
++        response = JSONResponse({"actor": actor, "csrf_token": issued.csrf_token, "name_required": False})
+         response.set_cookie(
+             SESSION_COOKIE,
+             issued.token,
