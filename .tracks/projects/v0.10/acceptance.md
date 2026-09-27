@@ -3,7 +3,7 @@ envelope: tracks-envelope:v2
 acc_id: ACC-010
 created: 2026-09-27
 status: draft
-sha:
+sha: af5b5a4b6744d01e3432ce09dba9f0e44708d53ba31972dfa26775bcf33e01a8
 ---
 
 # Web 工作台完善（UI）+ 发布卫生 — 验收标准
