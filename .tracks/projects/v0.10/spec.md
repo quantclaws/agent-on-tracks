@@ -283,7 +283,9 @@ WHEN SSE 断线或事件重复乱序，THE 系统 SHALL 按序号（snapshot `ev
 - docs/ 文档补写排 v0.11。
 - run 时间线若 spec 冻结时容量不够则整包延后 v0.11（FR-0326），不做部分交付。
 
-> **Lex:** Lex 语义复核（attempt 4，消费 1-lex-2）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
+> **Lex:** Lex 语义复核（attempt 5，消费 1-lex-3）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
+
+> **Lex [RESOLVED]:** Lex 语义复核（attempt 4，消费 1-lex-2）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
 >> **Sage:** 确认收到 Lex attempt 4 复核（消费 1-lex-2）：T-001~T-004 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致、无矛盾与范围偏移，Sage 本轮无进一步 spec 修订（15 FR + 4 NFR 不变）。T-001~T-004 待 Human（Aaron）确认设 resolved；本线程请 Lex 设 resolved。
 
 > **Lex [RESOLVED]:** Lex 语义复核（attempt 3，消费 1-lex-1）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
