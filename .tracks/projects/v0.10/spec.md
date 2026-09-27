@@ -216,10 +216,10 @@ WHEN run 详情时间线进入本版，THE 系统 SHALL 呈现顶部当前节点
 
 ### FR-0327 里程碑收尾 released 可达
 
-> **Aaron:** 发布卫生块需扩容：#184（tracker 生命周期只 close 不 create milestone——宿主合同声明 milestone_template 却无物化端，v0.9 实测需手工补建）应纳入本版修复：生命周期补全（tracker 首次接触点按模板创建并 API 回读，幂等复用）或明确操作者前置义务并修正 milestone_not_found 的恢复指引文案。请落为新增 FR 并同步容量行。
+> **Aaron [RESOLVED]:** 发布卫生块需扩容：#184（tracker 生命周期只 close 不 create milestone——宿主合同声明 milestone_template 却无物化端，v0.9 实测需手工补建）应纳入本版修复：生命周期补全（tracker 首次接触点按模板创建并 API 回读，幂等复用）或明确操作者前置义务并修正 milestone_not_found 的恢复指引文案。请落为新增 FR 并同步容量行。
 >> **Sage:** 已采纳并落为 FR-0331：tracker 首次接触点按 milestone_template 确保远端存在（不存在则创建并 API 回读，同一标题幂等复用）；不可自动建时报 milestone_not_found 并携带可操作 next（明确操作者前置建义务）。交付面为 tracker 首次接触点 + close_project_milestone 关闭面 + attention.required 可观察出口。容量行已同步为 17 FR（FR-0316..FR-0332）。请确认后由你设 resolved。
 
-> **Aaron:** 发布卫生块需扩容：#183（LEX_REVIEW 无『仅被 Human 线程阻塞』的合法 verdict 出口，重试循环逐轮新开重复线程且不 park）应纳入本版修复——verdict 词汇表增加 pass-pending-human-threads 出口（park 到 AWAIT_HUMAN 并携带待决线程清单），Lex findings 线程跨 attempt 复用不重复开。请落为新增 FR（承接 FR-0329/0330 之后），并把容量行的 FR 计数同步更新。
+> **Aaron [RESOLVED]:** 发布卫生块需扩容：#183（LEX_REVIEW 无『仅被 Human 线程阻塞』的合法 verdict 出口，重试循环逐轮新开重复线程且不 park）应纳入本版修复——verdict 词汇表增加 pass-pending-human-threads 出口（park 到 AWAIT_HUMAN 并携带待决线程清单），Lex findings 线程跨 attempt 复用不重复开。请落为新增 FR（承接 FR-0329/0330 之后），并把容量行的 FR 计数同步更新。
 >> **Sage:** 已采纳并落为 FR-0332：LEX_REVIEW 仅被 Human 线程阻塞时产出 pass-pending-human-threads 合法 verdict 并 park 到 AWAIT_HUMAN（携带待决线程清单）；重试循环中 Lex findings 线程跨 attempt 复用、不重复开。交付面为 lex.verdict 词汇表 + 重试循环 + trac status awaiting 可观察出口。容量行已同步为 17 FR。请确认后由你设 resolved。
 
 - **来源**：`BS-16` / `§3.6` / #182 blocker
@@ -307,7 +307,9 @@ WHEN SSE 断线或事件重复乱序，THE 系统 SHALL 按序号（snapshot `ev
 - docs/ 文档补写排 v0.11。
 - run 时间线若 spec 冻结时容量不够则整包延后 v0.11（FR-0326），不做部分交付。
 
-> **Lex:** Lex 语义复核（attempt 12，消费 1-lex-9）：重读 spec 全文 336 行对照 story S-001。T-001~T-004 已 resolved 无变化；FR-0331（tracker milestone 生命周期补全）与 FR-0332（LEX_REVIEW 仅被 Human 线程阻塞时 pass-pending-human-threads 合法 park 到 AWAIT_HUMAN；findings 线程跨 attempt 复用），容量行 17 FR，均已在 attempt 7/8/9/10/11 复核确认，为发布卫生有机延伸，入口/动作/结果/继续返回完整，无孤立 surface、无范围外溢。Sage 本轮无进一步修订。Lex 无修订要求；T-005/T-006 待 Human 确认（resolved 权限在 Aaron）。
+> **Lex [RESOLVED]:** Lex 语义复核（attempt 13，消费 1-lex-10）：重读 spec 全文 339 行对照 story S-001。T-001~T-004 已 resolved 无变化；FR-0331（tracker milestone 生命周期补全）与 FR-0332（LEX_REVIEW 仅被 Human 线程阻塞时 pass-pending-human-threads 合法 park 到 AWAIT_HUMAN；findings 线程跨 attempt 复用），容量行 17 FR，均已在 attempt 7~12 复核确认，为发布卫生有机延伸，入口/动作/结果/继续返回完整，无孤立 surface、无范围外溢。Sage 本轮无进一步修订。Lex 无修订要求；T-005/T-006 待 Human 确认（resolved 权限在 Aaron）。
+
+> **Lex [RESOLVED]:** Lex 语义复核（attempt 12，消费 1-lex-9）：重读 spec 全文 336 行对照 story S-001。T-001~T-004 已 resolved 无变化；FR-0331（tracker milestone 生命周期补全）与 FR-0332（LEX_REVIEW 仅被 Human 线程阻塞时 pass-pending-human-threads 合法 park 到 AWAIT_HUMAN；findings 线程跨 attempt 复用），容量行 17 FR，均已在 attempt 7/8/9/10/11 复核确认，为发布卫生有机延伸，入口/动作/结果/继续返回完整，无孤立 surface、无范围外溢。Sage 本轮无进一步修订。Lex 无修订要求；T-005/T-006 待 Human 确认（resolved 权限在 Aaron）。
 >> **Sage:** 确认收到 Lex attempt 12 复核（消费 1-lex-9）：T-001~T-004 已 resolved 无变化；FR-0331/FR-0332 与容量行 17 FR 已在 attempt 7/8/9/10/11 确认，为发布卫生有机延伸、入口/结果完整、无孤立 surface 与范围外溢，Sage 本轮无进一步 spec 修订（17 FR + 4 NFR 不变）。T-005/T-006 待 Human（Aaron）确认设 resolved；本线程请 Lex 设 resolved。
 
 > **Lex [RESOLVED]:** Lex 语义复核（attempt 11，消费 1-lex-8）：重读 spec 全文 333 行对照 story S-001。T-001~T-004 已 resolved 无变化；FR-0331（tracker milestone 生命周期补全）与 FR-0332（LEX_REVIEW 仅被 Human 线程阻塞时 pass-pending-human-threads 合法 park 到 AWAIT_HUMAN；findings 线程跨 attempt 复用），容量行 17 FR，均已在 attempt 7/8/9/10 复核确认，为发布卫生有机延伸，入口/动作/结果/继续返回完整，无孤立 surface、无范围外溢。Sage 本轮无进一步修订。Lex 无修订要求；T-005/T-006 待 Human 确认（resolved 权限在 Aaron）。
