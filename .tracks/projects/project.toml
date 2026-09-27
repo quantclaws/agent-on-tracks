@@ -117,14 +117,21 @@ timeout_seconds = 60
 # ---- version scheme (FR-0277 patch semantics) ------------------------------
 # The version gate is tag-derivation based: computed release tags must be
 # absent on the remote and derivation inputs ({n} from remote tag census) are
-# recorded. file/key/expect binding is intentionally NOT declared for this
-# host: pyproject.toml is a guard-registry config input and a version bump
-# would churn its frozen config_digest (architecture §3.7).
+# recorded. v0.10 (FR-0328, #179): the file/key/expect binding IS declared —
+# every binding's file key must equal the journey's derived release version
+# ({release_version} = derived tag minus one leading "v"); the guard-registry
+# config_digest churn from the version bump is re-anchored in the same design
+# revision (ARCH-010 §4.2, precedent e5637a1). Bindings are enforced for the
+# feature/post_release journeys; dev prerelease tags are ephemeral and exempt.
 
 [host-contract.version_scheme]
 feature_tag = "v{minor}.0"
 patch_line = "v{minor}.{n}"
 prerelease_tag = "v{minor}.{n}-pre.{ulid}"
+bindings = [
+  { file = "pyproject.toml", key = "project.version", expect = "{release_version}" },
+  { file = "tracks/__init__.py", key = "__version__", expect = "{release_version}" },
+]
 
 # ---- build / artifact + post-install public outlet smoke (FR-0269) ---------
 
@@ -165,11 +172,13 @@ threshold = "severity_high_or_above=0"
 timeout_seconds = 600
 
 # ---- required-CI binding (FR-0270) -----------------------------------------
+# v0.10 (NFR-0155): +ui-e2e — Playwright/Chromium 浏览器层 required check
+# （独立基础设施预算：浏览器下载与 job 分钟不计入 FR 预算）。
 
 [host-contract.ci]
 repo_env = "TRAC_GITHUB_REPO"
 workflow = "ci.yml"
-required_checks = ["lint", "coverage", "test", "deliverables", "trace", "reach"]
+required_checks = ["lint", "coverage", "test", "deliverables", "trace", "reach", "ui-e2e"]
 conclusion = "success"
 
 # ---- issue tracker lifecycle (FR-0283/FR-0284) ------------------------------

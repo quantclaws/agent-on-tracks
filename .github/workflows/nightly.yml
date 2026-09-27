@@ -34,4 +34,4 @@ jobs:
         run: pip install -e '.[dev]'
       # FULL regression over all three declared layers.
       - name: pytest full regression
-        run: pytest tests/unit tests/integration tests/e2e -q -m 'not performance' -n 8 --dist loadscope
+        run: pytest tests/unit tests/integration tests/e2e -q -m 'not performance and not ui' -n 8 --dist loadscope

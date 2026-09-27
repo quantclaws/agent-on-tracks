@@ -100,7 +100,20 @@ export TRAC_AGENT_BACKEND=fake
 
 `TRAC_LIVE_*` 是仓库 e2e_live 测试变量，不是产品配置。当前也没有生产用 `TRAC_AGENT_TIMEOUT`；等待过久时由操作员 Ctrl-C 取消。
 
-GitHub issue 后端另使用 `GITHUB_TOKEN`、`TRAC_GITHUB_REPO` 与 `TRAC_GITHUB_PROJECT`。没有 token 时会使用 fake issue backend。
+GitHub issue 后端另使用 `GITHUB_TOKEN`、`TRAC_GITHUB_REPO` 与 `TRAC_GITHUB_PROJECT`。真实通道下缺 token 会按 `missing_token` 分类拒绝（fail-closed）；fake issue backend 只在显式模拟通道（`TRAC_AGENT_BACKEND=fake` 或 `TRAC_FAKE_SIMULATE`）下启用。
+
+## Live GitHub 旅程环境前置
+
+live GitHub 通道（issue 创建/回读、required-CI 回读、release 与 milestone 关闭、hotfix 前检）在发起前需要以下环境前置全部就位；缺失或不可达时相关命令按 `GithubIssuesError` 分类（`missing_token` / `auth` / `rate_limit` / `network` / `not_found`）拒绝并携带对应的恢复指引，绝不静默降级为成功：
+
+| 前置 | 内容 |
+|---|---|
+| `GITHUB_TOKEN` | 具备目标仓库读写权限的 token（issues/milestones/releases/actions 读取） |
+| `TRAC_GITHUB_REPO` | 目标仓库标识，`owner/name` 形态 |
+| `TRAC_GITHUB_PROJECT` | 可选；Project 关联标识（缺失时跳过 Project 关联） |
+| TLS | 请求层显式使用 certifi CA bundle 发起 TLS 校验（标准 macOS Python 安装不再依赖系统钥匙串）；企业代理/自签 CA 场景经 `TRAC_GITHUB_CA_BUNDLE=/path/to/ca-bundle.pem` 显式覆盖 |
+
+诊断路径：`TRAC_GITHUB_API_BASE` 指向 stand-in 时是测试通道；指向真实 API 的失败按上表分类呈现——`missing_token` 先补 `GITHUB_TOKEN`，`auth` 检查 token 权限，`rate_limit` 等待限额重置后重试，`network` 检查连通性与 TLS（含 `TRAC_GITHUB_CA_BUNDLE` 覆盖），`not_found` 核对 `TRAC_GITHUB_REPO` 拼写与对象是否存在。
 
 ## 升级与卸载
 
