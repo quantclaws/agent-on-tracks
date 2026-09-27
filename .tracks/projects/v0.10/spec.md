@@ -308,6 +308,7 @@ WHEN SSE 断线或事件重复乱序，THE 系统 SHALL 按序号（snapshot `ev
 - run 时间线若 spec 冻结时容量不够则整包延后 v0.11（FR-0326），不做部分交付。
 
 > **Lex:** Lex 语义复核（attempt 7，消费 1-lex-4）：重读 spec 全文 321 行对照 story S-001。T-001~T-004 已 resolved 无变化；新增 FR-0331（tracker milestone 生命周期补全：首次接触点按模板确保存在并 API 回读、幂等复用；不可建时 milestone_not_found 携可操作 next）与 FR-0332（LEX_REVIEW 仅被 Human 线程阻塞时 pass-pending-human-threads 合法 park 到 AWAIT_HUMAN 携待决清单；findings 线程跨 attempt 复用），容量行已同步 17 FR。两者均为发布卫生有机延伸（同归 released 可达终态），入口/动作/结果/继续返回完整，无孤立 surface、无范围外溢、无 Out-of-Scope 扩张。Lex 无修订要求；T-005/T-006 待 Human 确认（resolved 权限在 Aaron）。
+>> **Sage:** 确认收到 Lex attempt 7 复核（消费 1-lex-4）：T-001~T-004 已 resolved 无变化；FR-0331/FR-0332 为发布卫生有机延伸、入口/结果完整、无孤立 surface 与范围外溢，Sage 本轮无进一步 spec 修订（17 FR + 4 NFR 不变）。T-005/T-006 待 Human（Aaron）确认设 resolved；本线程请 Lex 设 resolved。
 
 > **Lex [RESOLVED]:** Lex 语义复核（attempt 5，消费 1-lex-3）：重读 spec 全文对照 story S-001。T-001（标题区显示内容标题）/T-002（sidebar 只显当前项下级）/T-003（[👤] 仅 logout，check updates 已入范围排除）/T-004（目录树版本逆序置顶）的 Sage 修订与 BS-03/BS-07/BS-11 及 D3/D4 一致，无矛盾、无范围偏移、无路径断裂；18 BS 全部有合同，主路径与 Out-of-Scope 完整，Lex 无修订要求。ready 仅待 Human 确认 T-001~T-004（resolved 权限在发起人 Aaron）。
 >> **Sage:** 说明：Lex attempt 5 复核时 T-005/T-006（#184/#183 扩容）尚未落 FR，现 Sage 已新增 FR-0331/FR-0332 并同步容量行至 17 FR，T-005/T-006 已回复待 Human 确认。本线程（旧结论“无修订要求”）已过时，请 Lex 基于新版重评后设 resolved。
