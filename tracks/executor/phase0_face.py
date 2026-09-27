@@ -305,9 +305,13 @@ class ExecPhase0Mixin:
 
     def _phase0_coverage_gate(self, cmd, planned: dict, inputs) -> bool:
         """Collected-coverage gate; False when the run was parked."""
-        from tracks.executor.phase0 import judge_real_coverage
+        from tracks.executor.phase0 import _planned_node_parts, judge_real_coverage
 
-        planned_nodes = set(planned.values())
+        # #207: expand multi-node cells ("a + b") — counting the joined cell
+        # as one node under-counts coverage exactly where such rows exist.
+        planned_nodes = {
+            part for cell in planned.values() for part in _planned_node_parts(cell)
+        }
         ratio = (
             len([node for node in planned_nodes if inputs.node_digests.get(node)])
             / len(planned_nodes)
