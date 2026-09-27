@@ -21,14 +21,21 @@ class OpencodePromptMixin:
         doc: str | None,
         doc_path: Path | None,
         assignment: dict | None = None,
+        root: Path | None = None,
     ) -> str:
+        # #176 OOB rev2 (2026-09-28, stealth consult): with ``root`` set (a
+        # worktree-resident writer dispatch) every target path is rebased to
+        # that root — the old main-tree absolute paths in the prompt directly
+        # contradicted the agent's worktree cwd and pulled its reads AND
+        # writes back to the main tree (third live occurrence, v0.10 run
+        # 01M3E7SAANXKW1V73W8B8Q3G86).
         docs = (assignment or {}).get("docs")
         if doc_path:
-            target = str(doc_path)
+            target = str(self._rebased(doc_path, root))
         elif doc:
             target = doc
         elif docs:
-            resolved = self._target_paths(doc_path, assignment)
+            resolved = self._target_paths(doc_path, assignment, root=root)
             target = ", ".join(str(p) for p in resolved)
         else:
             target = ""

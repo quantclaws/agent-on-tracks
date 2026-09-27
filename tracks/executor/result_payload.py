@@ -18,6 +18,27 @@ from tracks.project import layout_paths
 from tracks.store import new_ulid
 
 
+def _confined_repo_path(raw: str) -> str | None:
+    """Normalize a manifest-declared path to a confined repo-relative form.
+
+    None for anything absolute, empty, or containing a ``..`` segment —
+    conservative segment-level rejection rather than post-normpath checking,
+    because normpath can cancel ``..`` into a top-level relative path that
+    escapes the declared prefix without ever showing a leading ``../``
+    (#176 OOB rev2: a naive ``startswith('tests/')`` match admits
+    traversal-shaped includes)."""
+    import posixpath
+
+    if not raw or raw.startswith("/") or raw.startswith("\\"):
+        return None
+    if any(seg == ".." for seg in raw.split("/")):
+        return None
+    normalized = posixpath.normpath(raw)
+    if not normalized or normalized == ".":
+        return None
+    return normalized
+
+
 class ResultPayloadMixin:
     """ResultCheckpoint payload construction for every stage/substate."""
 
@@ -199,27 +220,48 @@ class ResultPayloadMixin:
 
         Only compare code/data artifacts (under shield_dirs) against observed
         files; document discussion replies are excluded from the manifest
-        check (validated by the doc-delta audit instead)."""
+        check (validated by the doc-delta audit instead). #176 OOB rev2:
+        every include is confined (normalized, repo-relative, no ``..``)
+        before the prefix match — a traversal-shaped entry
+        (``tests/e2e/../../x``) passes a naive startswith but must never
+        reconcile, so it is dropped here and fails the manifest check."""
         include = (result.get("artifact_manifest") or {}).get("include", [])
-        return [
-            p
-            for p in (e.get("path") for e in include)
-            if p and any(p.startswith(d) for d in shield_dirs)
-        ]
+        confined = []
+        for entry in include:
+            raw = entry.get("path") if isinstance(entry, dict) else None
+            repo_rel = _confined_repo_path(str(raw)) if raw else None
+            if repo_rel and any(repo_rel.startswith(d) for d in shield_dirs):
+                confined.append(repo_rel)
+        return confined
 
     def _shield_manifest_check(
         self, test_files: list[str], code_include: list[str]
     ) -> tuple[list[str], str | None]:
-        """Reconcile observed files with the manifest include set."""
-        manifest_error = None
-        if not test_files and code_include:
-            # On retry, Shield may not create new files — it verifies
-            # existing files from previous attempts. Accept manifest
-            # paths if they all exist on disk and are dirty (untracked
-            # or modified), even if they weren't changed in this run.
+        """Reconcile observed files with the manifest include set.
+
+        #176 OOB rev2 (2026-09-28, stealth consult): the dirty-exists
+        tolerance now applies to the MISSING subset even when some files
+        WERE attributed this round — the old ``not test_files`` precondition
+        skipped tolerance whenever a partial window diff existed, so a
+        writer whose output landed across dispatch windows (retry chains,
+        #138/#176 main-tree drift) escalated on a manifest that was
+        otherwise verifiably on disk and dirty. Include paths are confined
+        (normalized, repo-relative, no ``..``) by ``_shield_include_paths``
+        before any comparison; a path that fails confinement never
+        reconciles, so traversal-shaped manifest entries fail closed."""
+        missing = [p for p in code_include if p not in set(test_files)]
+        if missing:
             dirty = self._dirty_files()
-            if all(p in dirty and (self.repo / p).is_file() for p in code_include):
-                test_files = sorted(code_include)
+            tolerated = [
+                p
+                for p in missing
+                if p in dirty
+                and (self.repo / p).is_file()
+                and not (self.repo / p).is_symlink()
+            ]
+            if tolerated:
+                test_files = sorted(set(test_files) | set(tolerated))
+        manifest_error = None
         if set(code_include) != set(test_files):
             manifest_error = (
                 "artifact_manifest include paths do not match observed "

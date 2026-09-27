@@ -45,12 +45,7 @@ class OpencodePathsMixin:
                 for path in (assignment or {}).get("manifest", {}).get("allowed_paths", [])
             ]
         if worktree is not None:
-            return [
-                root / p.relative_to(self.repo)
-                if p.is_absolute() and p.is_relative_to(self.repo)
-                else p
-                for p in doc_paths
-            ]
+            return [self._rebased(p, root) for p in doc_paths]
         return doc_paths
 
     def _allowed_paths(
@@ -101,18 +96,35 @@ class OpencodePathsMixin:
         base = root if root is not None else Path(".")
         return [base / p for p in (manifest.get("allowed_paths") or [])]
 
-    def _target_paths(self, doc_path: Path | None, assignment: dict | None) -> list[Path]:
+    def _target_paths(
+        self,
+        doc_path: Path | None,
+        assignment: dict | None,
+        root: Path | None = None,
+    ) -> list[Path]:
         """Doc set of this dispatch: the explicit target doc, else the
         assignment's ``docs`` set resolved against the version dir (a multi-doc
         M-DESIGN DRAFT legitimately writes all three design docs, flow.md §8).
-        Single-doc stages are unaffected: they always carry ``doc_path``."""
+        Single-doc stages are unaffected: they always carry ``doc_path``.
+        ``root`` rebases every resolved path (worktree-resident prompts,
+        #176 OOB rev2)."""
         if doc_path is not None:
-            return [doc_path]
+            return [self._rebased(doc_path, root)]
         docs = (assignment or {}).get("docs")
         if not docs:
             return []
         vdir = paths.version_dir(paths.tracks_home(self.repo), self.version)
-        return [vdir / str(name) for name in docs]
+        return [self._rebased(vdir / str(name), root) for name in docs]
+
+    def _rebased(self, path: Path, root: Path | None) -> Path:
+        """Shift a main-tree absolute path into ``root`` (a writer worktree),
+        unchanged otherwise — the same rule ``_dispatch_doc_paths`` applies to
+        the Auditor's view (#176 OOB rev2: the prompt must agree with it)."""
+        if root is None:
+            return path
+        if path.is_absolute() and path.is_relative_to(self.repo):
+            return root / path.relative_to(self.repo)
+        return path
 
     def _commentable_doc_paths(self, role: str, root: Path | None = None) -> list[Path]:
         """Every COMMENTABLE_DOCS path for the role, including ones missing at

@@ -77,7 +77,7 @@ class OpencodeActMixin:
         # keeps observing the main tree.
         root = Path(worktree) if worktree is not None else self.repo
         name = AGENT_NAME.get(role)
-        prompt = self._prompt(role, substate, doc, doc_path, assignment)
+        prompt = self._prompt(role, substate, doc, doc_path, assignment, root=root)
         console_input = os.environ.get("TRAC_AGENT_CONSOLE_INPUT")
         if name is None:
             return self._unknown_role_result(role, prompt, console_input)
