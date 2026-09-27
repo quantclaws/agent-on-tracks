@@ -247,7 +247,13 @@ class ResultAuditMixin:
         _runner = "py" + "test"
         for module in modules:
             proc = subprocess.run(
-                [sys.executable, "-m", _runner, "--collect-only", "-q", module],
+                # #176 OOB rev2 follow-up: clear addopts for this per-module
+                # SYNTAX/IMPORT probe — the suite's run-time deselection
+                # (-m 'not ui', NFR-0155 layering) otherwise collects zero
+                # tests from an all-marker module and pytest exits 5
+                # ("nothing collected"), misread as a collection defect.
+                [sys.executable, "-m", _runner, "--collect-only", "-q",
+                 "-o", "addopts=", module],
                 cwd=self.repo,
                 capture_output=True,
                 text=True,
