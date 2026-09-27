@@ -10,6 +10,7 @@ sha:
 
 - **Related acceptance**: `.tracks/projects/v0.10/acceptance.md`
 - **Related interfaces**: `.tracks/projects/v0.10/interfaces.md` (assertion basis — see §6.5)
+- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）；合同面（39 条 AC 覆盖、分层与 IF 归属）与 DRAFT 版无变更。
 
 ## 1. Stance and Boundaries
 
@@ -343,7 +344,7 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | 1 | 既有 e2e/integration 全套（v0.9 及以前） | 不修改：API 面零破坏性变更（回归守护） | v0.10 新端点/新字段为追加式 |
 | 2 | `tests/integration/test_web_auth.py` | 追加登录页双栏形态断言的挂载点调整（login 页 HTML 改为双栏 auth shell；401/302/会话语义断言不变） | FR-0320 页面形态变更（spec 变更驱动） |
 | 3 | `tests/integration/test_event_stream.py` | 不修改（服务端 SSE 面不变）；其重连用例被本版事件韧性验收引用为继承锚点 | v0.10 UI 侧补读另起 ui 用例 |
-| 4 | `tests/unit/test_t010_page_shell_vditor_red.py` | Devon 侧合同适配（Devon-owned unit，RGR 内更新）：PAGES 封闭集 8 名不变、login 双栏化、review 页不再内嵌 Vditor 资产标签（改为 docs 视图按需注入）；同源断言意图由 integration 同源用例与 ui e2e 承接 | interfaces §0.1 #1/#2 页面壳收敛与 §1n.3 加载策略 |
+| 4 | Devon 侧页面壳单测套件（Devon-owned，RGR 内做合同适配） | `tests/unit/test_t010_page_shell_vditor_red.py`：PAGES 封闭集 8 名不变、login 双栏化、review 页不再内嵌 Vditor 资产标签（改为 docs 视图按需注入）；同源断言意图由 integration 同源用例与 ui e2e 承接 | interfaces §0.1 #1/#2 页面壳收敛与 §1n.3 加载策略 |
 | 5 | `tests/integration/test_hotfix_precheck.py` | 不修改（既有 issue_not_found 路径语义保留）；分类映射矩阵另起 test_hotfix_precheck_classification.py | FR-0329 使 issue_fetch_failed 可达，既有行不回吐 |
 
 Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
