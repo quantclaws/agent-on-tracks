@@ -139,12 +139,21 @@ def http_post(
         return exc.code, exc.read()
 
 
-def login_session(base_url: str, password: str = _SERVE_PASSWORD, timeout: float = 5.0) -> tuple[str, str]:
+def login_session(
+    base_url: str,
+    password: str = _SERVE_PASSWORD,
+    timeout: float = 5.0,
+    display_name: str = "Shell Human",
+) -> tuple[str, str]:
     """Login via POST /api/auth/login (§2b #1); returns (cookie, csrf).
 
     The first-start password is the one start_serve fed the subprocess on
     stdin; the session cookie and CSRF token drive the authenticated
-    journey endpoints.
+    journey endpoints. v0.10 name gate (§1m.2): when the login response
+    declares ``name_required``, the display name is submitted through
+    POST /api/auth/name (§2b #29 — idempotent, contract-validated) so the
+    returned session is provisioned for the workbench data face; servers
+    without the name gate are unaffected.
     """
     data = json.dumps({"password": password}).encode()
     req = urllib.request.Request(
@@ -156,6 +165,22 @@ def login_session(base_url: str, password: str = _SERVE_PASSWORD, timeout: float
         cookie = resp.headers.get("Set-Cookie", "")
     csrf = body["csrf_token"]
     assert cookie and csrf, f"login must issue session + csrf, got {body!r}"
+    if body.get("name_required"):
+        name_data = json.dumps({"name": display_name}).encode()
+        name_req = urllib.request.Request(
+            base_url + "/api/auth/name",
+            data=name_data,
+            headers={
+                "Content-Type": "application/json",
+                "Cookie": cookie,
+                "X-Trac-CSRF": csrf,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(name_req, timeout=timeout) as resp:
+            assert resp.status == 200, (
+                f"the name step must bind the display name: {resp.status}"
+            )
     return cookie, csrf
 
 

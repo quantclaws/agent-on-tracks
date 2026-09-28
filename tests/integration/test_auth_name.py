@@ -236,8 +236,12 @@ def test_name_binding_flows_to_events_and_discussion(tmp_path: Path):
         csrf = login["csrf_token"]
 
         # the name gate: a session without a display name cannot enter
-        status, _b = http_get(base, "/", cookies=cookie)
-        assert status == 302, "an un-named session must not enter the workbench data face"
+        # (no-follow observation — a redirect-following client cannot see the 302)
+        status, location = _get_redirect(base, "/", cookies=cookie)
+        assert status == 302 and location.rstrip("/").endswith("/login"), (
+            "an un-named session must not enter the workbench data face (§1m.2): "
+            f"{status} {location!r}"
+        )
 
         # invalid names fail closed (validation_failed), auth table unchanged
         for bad in ("", "   ", "x" * 65, "bad\x07name"):
