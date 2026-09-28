@@ -23,7 +23,9 @@ from tracks.supervisor.lease import quarantine_late_result
 SCHEMA_VERSION = 1
 
 # Closed set of service-plane event types (interfaces §1a). tracks.db
-# EVENT_TYPES is NOT extended in v0.9 — the run-plane closed set is frozen.
+# EVENT_TYPES is NOT extended in v0.9/v0.10 — the run-plane closed set stays
+# frozen. v0.10 appends #25 ``auth.name_bound`` (IF-WEBAUTH-001 name
+# binding, interfaces §1a #25).
 SERVICE_EVENT_TYPES = (
     "service.started",
     "service.stopped",
@@ -49,6 +51,7 @@ SERVICE_EVENT_TYPES = (
     "material.edited",
     "access.denied",
     "auth.login",
+    "auth.name_bound",
 )
 
 COMMAND_STATUSES = ("accepted", "claimed", "completed", "failed", "rejected")
@@ -78,13 +81,21 @@ _SCHEMA_SCRIPT = (
     " run_id TEXT PRIMARY KEY, worker_id TEXT, generation INTEGER,"
     " acquired_at TEXT, expires_at TEXT);"
     "CREATE TABLE IF NOT EXISTS auth ("
-    " actor TEXT PRIMARY KEY, password_hash TEXT, created_at TEXT);"
+    " actor TEXT PRIMARY KEY, password_hash TEXT, created_at TEXT,"
+    " display_name TEXT);"
     "CREATE TABLE IF NOT EXISTS sessions ("
     " token_hash TEXT PRIMARY KEY, actor TEXT, csrf_hash TEXT,"
     " created_at TEXT, expires_at TEXT);"
     "CREATE TABLE IF NOT EXISTS schedule ("
     " id INTEGER PRIMARY KEY CHECK (id = 1), active_run TEXT, queue_json TEXT);"
 )
+
+# v0.10 schema evolution (interfaces §1c #6): the auth table's nullable
+# display_name column (NULL = name not collected). Fresh stores carry it via
+# CREATE TABLE above; stores created before v0.10 gain it at startup via an
+# idempotent PRAGMA-table_info probe + ALTER TABLE ADD COLUMN — no migration
+# framework, rows untouched (single-row semantics, RP-01, unchanged).
+_AUTH_DISPLAY_NAME_COLUMN = "display_name"
 
 
 def _utcnow() -> str:
@@ -99,6 +110,23 @@ class ServiceDB:
         self.home.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(self._connect()) as conn:
             conn.executescript(_SCHEMA_SCRIPT)
+            self._evolve_auth_display_name(conn)
+
+    @staticmethod
+    def _evolve_auth_display_name(conn: sqlite3.Connection) -> None:
+        """Evolve a pre-v0.10 auth table in place (interfaces §1c #6).
+
+        The PRAGMA probe keeps the ALTER idempotent: re-opening an already
+        evolved store is a no-op, never a duplicate-column error, and the
+        existing auth/sessions rows keep their content (display_name reads
+        back NULL = name not collected).
+        """
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(auth)")}
+        if _AUTH_DISPLAY_NAME_COLUMN not in columns:
+            conn.execute(
+                f"ALTER TABLE auth ADD COLUMN {_AUTH_DISPLAY_NAME_COLUMN} TEXT"
+            )
+        conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.home / _DB_FILENAME))
