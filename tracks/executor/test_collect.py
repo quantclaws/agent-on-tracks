@@ -529,19 +529,43 @@ argv helpers are defined here for the test-run mixin and phase0 repair."""
         R2 nodes come from COLLECT's persisted per-node classification blob
         keyed by their declared layer. Raises TestSelectError when this run
         has no persisted passed baseline capture / classification (fail-closed;
-        never re-guesses from the mutable tree)."""
-        collected_ev = self._latest_event("test.collected", status="passed")
+        never re-guesses from the mutable tree).
+
+        #211 OOB (2026-09-28): a return-reentry cycle recaptures its baseline
+        AFTER the stage's assets were committed, so the newest classification
+        marks everything r1 and the R2 delta reads empty — not vacuity, just
+        re-entry (live: v0.10 run 01M3E7SAANXKW1V73W8B8Q3G86 ground to
+        empty_r2 escalation after the M-DESIGN return). The selection
+        therefore prefers the LATEST NON-EMPTY r2 classification of this run
+        — the stamped evidence of when the delta was actually visible — and
+        only an all-empty history reaches the vacuous-pass guard."""
         baseline_ev = self._latest_event("test.baseline_captured", status="passed")
-        if collected_ev is None or baseline_ev is None:
+        if baseline_ev is None:
             raise TestSelectError(
                 "RED_CHECK lacks a persisted COLLECT classification / pre-WRITE "
                 "test.baseline_captured snapshot"
             )
-        per_node = self._read_runtime_blob(collected_ev.payload.get("per_node_blob"))
+        collected_events = [
+            ev
+            for ev in self.store.events(self.run_id)
+            if ev.type == "test.collected" and ev.payload.get("status") == "passed"
+        ]
+        if not collected_events:
+            raise TestSelectError(
+                "RED_CHECK lacks a persisted COLLECT classification / pre-WRITE "
+                "test.baseline_captured snapshot"
+            )
         selected_by_layer: dict[str, list[str]] = {}
-        for entry in per_node:
-            if entry.get("class") == "r2":
-                selected_by_layer.setdefault(entry.get("layer", ""), []).append(entry["node"])
+        for collected_ev in reversed(collected_events):
+            per_node = self._read_runtime_blob(collected_ev.payload.get("per_node_blob"))
+            selected_by_layer = {}
+            for entry in per_node:
+                if entry.get("class") == "r2":
+                    selected_by_layer.setdefault(entry.get("layer", ""), []).append(
+                        entry["node"]
+                    )
+            if any(selected_by_layer.values()):
+                break
         for nodes in selected_by_layer.values():
             nodes.sort()
         selected_all = sorted(
