@@ -98,6 +98,20 @@ def _post_capture(base_url: str, path: str, payload: dict, *, cookies: str = "",
         return exc.code, _lower_headers(exc.headers), exc.read()
 
 
+def _seed_version_trio(repo: Path, version: str) -> Path:
+    """Seed the version-dir baseline trio (the test_docs_center convention);
+    the edit contract serves material only from an existing version dir."""
+    vdir = repo / ".tracks" / "projects" / version
+    vdir.mkdir(parents=True, exist_ok=True)
+    for name in ("story.md", "spec.md", "acceptance.md"):
+        (vdir / name).write_text(
+            f"---\nenvelope: tracks-envelope:v2\n---\n\n"
+            f"# {version} {name}\n\nfixture body for {name}\n",
+            encoding="utf-8",
+        )
+    return vdir
+
+
 def _store(home: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(home / "service.db"))
     conn.row_factory = sqlite3.Row
@@ -302,9 +316,17 @@ def test_name_binding_flows_to_events_and_discussion(tmp_path: Path):
             store.append(run_id, "v1.0", "stage.entered", {"stage": "M-IMPL"})
         finally:
             store.close()
+        # the edit contract serves material from an existing version dir and
+        # binds the submitted base_revision to the live trio digest — seed the
+        # version trio and post the digest it hashes to
+        from tracks.baseline import revision_digest
+
+        vdir = _seed_version_trio(repo, "v1.0")
         req = urllib.request.Request(
             base + f"/api/runs/{run_id}/docs/spec/edits",
-            data=json.dumps({"base_revision": "rev-0", "content": "actor probe\n"}).encode(),
+            data=json.dumps(
+                {"base_revision": revision_digest(vdir), "content": "actor probe\n"}
+            ).encode(),
             headers={
                 "Content-Type": "application/json",
                 "Cookie": cookie,
@@ -318,7 +340,10 @@ def test_name_binding_flows_to_events_and_discussion(tmp_path: Path):
                 edit_status = resp.status
         except urllib.error.HTTPError as exc:
             edit_status = exc.code
-        assert edit_status in (202, 409), "the authenticated edit must be accepted"
+        assert edit_status == 202, (
+            "the edit on the live base revision must be accepted: "
+            f"{edit_status}"
+        )
         accepted = [
             e
             for e in _events(home)
