@@ -8,6 +8,8 @@ deterministic stand-in that never touches the network.
 Split granularity (D-04): one Issue per FR and per NFR — title
 `[FR-XXXX] 标题`, body = item text + its AC list + the baseline digest.
 Issues are requirement-tracking identities, not execution units (D-07).
+Live TLS (IF-TLS-001): every HTTPS call point drives urllib with an explicit
+verifying certifi context; ``TRAC_GITHUB_CA_BUNDLE`` overrides the bundle.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,6 +43,44 @@ class GithubIssuesError(RuntimeError):
     def __init__(self, classification: str, message: str):
         super().__init__(message)
         self.classification = classification
+
+
+# -- IF-TLS-001 live channel TLS + credential prerequisites (FR-0330) ---------
+
+_OPS_PREREQ_POINTER = (
+    "GITHUB_TOKEN not set — see the live GitHub journey prerequisites "
+    "section in docs/getting-started/installation.md "
+    "(GITHUB_TOKEN / TRAC_GITHUB_REPO / TLS & TRAC_GITHUB_CA_BUNDLE)"
+)
+
+
+def _missing_token_error() -> GithubIssuesError:
+    """Classified missing_token pointing at the ops prereq (1r.4.2)."""
+    return GithubIssuesError("missing_token", _OPS_PREREQ_POINTER)
+
+
+def _tls_ssl_context() -> ssl.SSLContext:
+    """The explicit verifying TLS context for every live HTTPS call point
+    (interfaces 1r.4.1): certifi bundle by default, explicit
+    ``TRAC_GITHUB_CA_BUNDLE`` override; per call, never silently downgraded."""
+    cafile = os.environ.get("TRAC_GITHUB_CA_BUNDLE") or _certifi_bundle()
+    try:
+        return ssl.create_default_context(cafile=cafile)
+    except OSError as exc:
+        raise GithubIssuesError("network", f"CA bundle unusable ({cafile}): {exc}") from exc
+
+
+def _certifi_bundle() -> str:
+    """The pinned certifi CA bundle path. Lazy import: isolated stand-in
+    envs import this module without the live-channel dep; only the TLS call
+    path may require it (fail-closed, never silently)."""
+    try:
+        import certifi  # runtime dep (pyproject pinned certifi==2026.7.22)
+    except ImportError as exc:
+        raise GithubIssuesError("network", "certifi is required for the "
+            "live TLS channel — see docs/getting-started/installation.md"
+        ) from exc
+    return certifi.where()
 
 
 def _item_blocks(spec_body: str) -> list:
@@ -133,13 +174,9 @@ class FakeIssueBackend:
 
     def fetch_issue(self, issue_number: int) -> HostIssue | None:
         """Read channel (IF-HOTFIX-003): the host issue seed at
-        ``.tracks/runtime/host-issues.json`` (interfaces.md §3b schema).
-
-        Top-level keys are decimal issue numbers; a missing file or key
-        yields None (PRECHECK P-1 maps that to issue_not_found). No
-        ``TRAC_FAKE_SIMULATE`` injection here — fetch failures are
-        constructed via a missing seed file (ARCH-006 §3.1).
-        """
+        ``.tracks/runtime/host-issues.json`` (interfaces.md §3b schema);
+        missing file/key yields None (PRECHECK P-1 issue_not_found); no
+        ``TRAC_FAKE_SIMULATE`` injection here (ARCH-006 §3.1)."""
         from tracks.executor.hotfix import HostIssue
 
         if not self._host_path.exists():
@@ -174,14 +211,13 @@ class GithubBackend:
             raise GithubIssuesError("not_found", "TRAC_GITHUB_REPO not set (owner/name)")
 
     def _urlopen(self, req: urllib.request.Request) -> dict:
-        """Perform a JSON request and classify HTTP/URL errors.
-
-        Shared by ``_request`` (POST) and ``_get`` (GET) to avoid duplicating
-        the error-mapping logic.  Returns the parsed JSON body on success;
-        raises ``GithubIssuesError`` with the appropriate classification.
-        """
+        """Perform a JSON request and classify HTTP/URL errors (shared by
+        ``_request``/``_get``); raises ``GithubIssuesError`` classified.
+        Every call carries the explicit IF-TLS-001 verifying SSL context."""
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(
+                req, timeout=30, context=_tls_ssl_context()
+            ) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
@@ -203,15 +239,13 @@ class GithubBackend:
         return self._urlopen(req)
 
     def _get(self, url: str) -> dict:
-        """GET helper (IF-HOTFIX-003): read-only request, same auth/error
-        pattern as ``_request`` but with ``method=GET`` and no body."""
+        """GET helper (IF-HOTFIX-003): read-only, same auth/error pattern
+        as ``_request`` with ``method=GET``."""
         req = urllib.request.Request(
             url,
             method="GET",
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.github+json",
-            },
+            headers={"Authorization": f"Bearer {self.token}",
+                     "Accept": "application/vnd.github+json"},
         )
         return self._urlopen(req)
 
@@ -233,8 +267,7 @@ class GithubBackend:
     def fetch_issue(self, issue_number: int) -> HostIssue | None:
         """Read channel (IF-HOTFIX-003): ``GET /repos/{repo}/issues/{n}``
         (ARCH-006 §3.1). 404 maps to None (PRECHECK issue_not_found);
-        auth/rate-limit/network failures raise :class:`GithubIssuesError`
-        (fail-closed; issue_fetch_failed keeps the retry path open)."""
+        auth/rate-limit/network failures raise classified (fail-closed)."""
         from tracks.executor.hotfix import HostIssue
 
         try:
@@ -258,29 +291,24 @@ class GithubBackend:
 
 
 def select_issue_backend(repo: Path, version: str):
-    """Boundary selection (D-05): explicit fake channel -> stand-in.
-
-    A live agent channel without GITHUB_TOKEN fails closed with the
-    classified ``missing_token`` error (AC-FR0270-03, readback precedent) —
-    the stale silent Fake fallback on a missing token is removed: a fake
-    stand-in may only be selected deliberately, never by missing secrets.
-    """
+    """Boundary selection (D-05): explicit fake channel -> stand-in. A live
+    channel without GITHUB_TOKEN fails closed with the classified
+    ``missing_token`` error (AC-FR0270-03) pointing at the ops prerequisites
+    — a fake stand-in is only selected deliberately, never by missing secrets."""
     if (
         os.environ.get("TRAC_FAKE_SIMULATE")
         or os.environ.get("TRAC_AGENT_BACKEND", "").strip().lower() == "fake"
     ):
         return FakeIssueBackend(repo, version)
     if not os.environ.get("GITHUB_TOKEN"):
-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+        raise _missing_token_error()
     return GithubBackend(repo, version)
 
 
 # -- IF-VERIFY-004 required-CI API readback (FR-0270) --------------------------
-#
-# GET actions/runs, filter by head_sha == candidate, validate the four-tuple
-# binding and required-check success; fail closed on mismatch/missing/stale and
-# never silently pass without credentials (missing_token stays a classified
-# error so the caller can surface attention.required).
+# GET actions/runs filtered by head_sha == candidate; validate the four-tuple
+# binding and required-check success; fail closed on mismatch/missing/stale.
+# missing_token stays a classified error (attention.required), never silent.
 
 
 def _api_base() -> str:
@@ -289,12 +317,9 @@ def _api_base() -> str:
 
 
 def _workflow_matches(run: dict, requested: str) -> bool:
-    """Match the configured workflow by path or immutable workflow id.
-
-    GitHub's ``name`` is a display label and is not a workflow-file identity;
-    two files can share it.  The host contract commonly supplies ``ci.yml``,
-    so the basename is accepted when the API returns the full workflow path.
-    """
+    """Match the configured workflow by path or immutable workflow id
+    (``name`` is a display label two files can share; the basename is
+    accepted because the host contract commonly supplies ``ci.yml``)."""
     requested = str(requested or "").strip()
     if not requested:
         return False
@@ -318,19 +343,8 @@ def _workflow_job_page(
     expected_total: int | None,
 ) -> tuple[int, int | None, bool]:
     """Fetch one job page and merge it, rejecting malformed/duplicate jobs."""
-    url = (
-        f"{base}/repos/{repo_id}/actions/runs/{run_id}/jobs"
-        f"?per_page=100&page={page}"
-    )
-    req = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
-            "Accept": "application/vnd.github+json",
-        },
-    )
-    data = _get_any(req)
+    url = f"{base}/repos/{repo_id}/actions/runs/{run_id}/jobs?per_page=100&page={page}"
+    data = _get_any(_api_request(url, "GET"))
     if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
         return 0, expected_total, False
     total_count = data.get("total_count")
@@ -459,23 +473,10 @@ def readback_ci_run(repo_id: str, workflow: str, candidate_sha: str) -> dict:
     """GET /repos/{repo}/actions/runs filtered by head_sha; returns the
     normalized `ci.run_observed` payload (IF-VERIFY-004). Missing credentials
     raise a classified GithubIssuesError(missing_token) — never a silent pass."""
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+    _require_token()
     base = _api_base()
-    url = (
-        f"{base}/repos/{repo_id}/actions/runs"
-        f"?head_sha={candidate_sha}&per_page=100"
-    )
-    req = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-    )
-    data = _get_any(req)
+    url = f"{base}/repos/{repo_id}/actions/runs?head_sha={candidate_sha}&per_page=100"
+    data = _get_any(_api_request(url, "GET"))
     run, selection_error = _select_workflow_run(data, workflow)
     if run is None:
         return _ci_observed_payload(
@@ -522,18 +523,18 @@ def _readback_run_outcome(
 
 def _get_any(req) -> dict:
     """urlopen wrapper (module-level; mirrors _urlopen but without backend
-    state). Returns the decoded JSON body."""
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 (test stand-in base)
+    state). Returns the decoded JSON body. Every call carries the explicit
+    IF-TLS-001 verifying SSL context (interfaces 1r.4.1)."""
+    with urllib.request.urlopen(  # noqa: S310 (test stand-in base)
+        req, timeout=30, context=_tls_ssl_context()
+    ) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
 def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks: list) -> dict:
-    """Pure fail-closed binding verdict over an observed CI run.
-
-    Returns the closed `ci.run_observed` payload with status in
-    {passed, failed} and reason in {mismatch, missing, stale, failed_conclusion,
-    check_failed} when failed.
-    """
+    """Pure fail-closed binding verdict over an observed CI run: the closed
+    `ci.run_observed` payload, status {passed, failed}, reason in {mismatch,
+    missing, stale, failed_conclusion, check_failed} when failed."""
     if observed is None:
         return {
             "head_sha": candidate_sha,
@@ -588,38 +589,19 @@ def judge_ci_binding(observed: dict | None, candidate_sha: str, required_checks:
 
 
 # -- IF-VERIFY-004 issue creation verification & authoritative map (FR-0270) ---
-#
-# Create-then-verify issue flow plus the authoritative issue map consumed by
-# the milestone closers (issue_number + api_verified vocabulary). FAKE
-# artifacts are rejected in the real channel and can never claim
-# api_verified=true, so unverified mappings can never close work.
+# Create-then-verify flow + the authoritative issue map (issue_number +
+# api_verified vocabulary); FAKE artifacts can never claim api_verified.
 
 
 def readback_issue(repo_id: str, issue_number: int) -> dict:
-    """GET /repos/{repo}/issues/{n} verified readback (AC-FR0270-01).
-
-    Honors ``TRAC_GITHUB_API_BASE`` (explicit stand-in channel) like
-    ``readback_ci_run``; missing credentials raise the classified
-    ``missing_token`` error — never a silent pass. HTTP failures are
-    classified (auth | rate_limit | not_found | network) and fail closed.
-    The returned mapping carries the GLOBAL identity (``node_id`` and the
-    numeric ``global_id``), not just the per-repo ``issue_number``
-    (FR-0283-01/04).
-    """
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+    """GET /repos/{repo}/issues/{n} verified readback (AC-FR0270-01):
+    classified fail-closed on HTTP/transport failures (never a silent
+    pass); the mapping carries the GLOBAL identity (``node_id`` /
+    numeric ``global_id``, FR-0283-01/04)."""
+    _require_token()
     url = f"{_api_base()}/repos/{repo_id}/issues/{issue_number}"
-    req = urllib.request.Request(
-        url,
-        method="GET",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-    )
     try:
-        data = _get_any(req)
+        data = _get_any(_api_request(url, "GET"))
     except urllib.error.HTTPError as e:
         cls = _HTTP_ERROR_CLASSES.get(e.code, "network")
         raise GithubIssuesError(cls, f"HTTP {e.code}: {e.reason}") from e
@@ -637,15 +619,9 @@ def readback_issue(repo_id: str, issue_number: int) -> dict:
 
 
 def list_issues(repo_id: str, *, per_page: int = 100, max_pages: int = 10) -> list[dict]:
-    """GET /repos/{repo}/issues normalized listing (FR-0283-04).
-
-    Reads up to ``max_pages`` pages of ``state=all`` issues and returns the
-    normalized identity records (number / global id / title / state / url);
-    pull requests are excluded (the issues endpoint returns both). Any HTTP
-    or transport failure, malformed page, or exceeded page bound raises the
-    classified :class:`GithubIssuesError` — the crash-recovery dedup search
-    must fail closed, never guess.
-    """
+    """GET /repos/{repo}/issues normalized listing (FR-0283-04): up to
+    ``max_pages`` pages of ``state=all`` issues (PRs excluded); any failure,
+    malformed page, or page-bound overrun raises classified — never guess."""
     _require_token()
     base = _api_base()
     out: list[dict] = []
@@ -686,15 +662,10 @@ def list_issues(repo_id: str, *, per_page: int = 100, max_pages: int = 10) -> li
 
 
 def find_remote_issue(repo_id: str, title: str, baseline_digest: str) -> dict | None:
-    """Crash-recovery dedup search: the remote issue matching
-    ``(repo, title, baseline_digest)`` (FR-0283-04).
-
-    Matches the exact title and requires the baseline digest in the issue
-    body (the create body carries ``baseline digest: <digest>``), so a
-    same-title issue from a different baseline is not reused. Returns None
-    when no issue matches; any search failure raises (fail-closed) — the
-    caller must not create a duplicate when it cannot prove absence.
-    """
+    """Crash-recovery dedup search (FR-0283-04): the remote issue matching
+    ``(repo, title, baseline_digest)`` — exact title AND the create body's
+    digest marker. None when nothing matches; a failing search raises
+    (fail-closed) so absence is proven, never guessed."""
     wanted = str(title or "")
     digest = str(baseline_digest or "")
     for issue in list_issues(repo_id):
@@ -723,12 +694,8 @@ def find_authoritative_mapping(
     title: str,
     baseline_digest: str,
 ) -> dict | None:
-    """The authoritative-map entry for ``(repo, title, baseline_digest)``.
-
-    Only ``api_verified=true`` entries are reused: an unverified/fake entry
-    can never satisfy the dedup key (FR-0283-02/04). Returns the mapping with
-    its ``item_id`` bound, or None when the key is absent.
-    """
+    """The authoritative-map entry for ``(repo, title, baseline_digest)``
+    (only ``api_verified=true`` entries match, FR-0283-02/04); else None."""
     path = repo / ".tracks" / "runtime" / "issue-map.json"
     if not path.exists():
         return None
@@ -745,8 +712,7 @@ def find_authoritative_mapping(
 
 
 def _reuse_mapping(entry: dict, *, recovered: bool) -> dict:
-    """Normalize a reused authoritative/remote identity into the mapping
-    vocabulary consumers share (issue_number + api_verified + global id)."""
+    """Normalize a reused identity into the shared mapping vocabulary."""
     return {
         "issue_number": entry.get("issue_number"),
         "node_id": entry.get("node_id"),
@@ -770,28 +736,16 @@ def create_issue_verified(
     repo_id: str | None = None,
     baseline_digest: str | None = None,
 ) -> dict:
-    """Create an issue and verify it by an immediate API readback.
-
-    Live channel: create -> GET the created issue -> mapping with
-    ``api_verified=true`` (AC-FR0270-01) and the global ``node_id``/``url``
-    identity (FR-0283-01). Fake stand-in channel: the deterministic stand-in
-    can never verify (``api_verified=false``, AC-FR0270-02) — fake mappings
-    must stay unclosable. A FAKE-prefixed artifact surfacing on the real
-    channel is returned unverified (never read back: it has no remote
-    identity) so the caller's ``reject_fake_artifact`` path lands
-    ``fake_rejected``.
-
-    Crash-idempotent dedup (FR-0283-04), active when the caller passes the
-    full ``(repo_dir, repo_id, baseline_digest)`` context:
-
-    1. an authoritative-map entry with the same ``(repo, title,
-       baseline_digest)`` and ``api_verified=true`` is reused WITHOUT any
-       remote call (the persist survived a crash);
-    2. otherwise the remote issue list is searched for the same title +
-       baseline digest (the create succeeded but the persist did not) and a
-       match is reused through its API readback;
-    3. a search that cannot prove absence fails closed with the classified
-       error — the caller must never blindly create a duplicate.
+    """Create an issue and verify it by an immediate API readback. Live:
+    create -> GET -> ``api_verified=true`` (AC-FR0270-01) with the global
+    ``node_id``/``url`` identity (FR-0283-01). Fake stand-in: can never
+    verify (``api_verified=false``, AC-FR0270-02); a FAKE artifact on the
+    real channel is returned unverified so ``reject_fake_artifact`` lands
+    ``fake_rejected``. Crash-idempotent dedup (FR-0283-04) with the
+    full ``(repo_dir, repo_id, baseline_digest)`` context: (1) reuse an
+    authoritative ``api_verified=true`` map entry without remote calls;
+    (2) else reuse a remote issue with the same title + digest through its
+    API readback; (3) a search that cannot prove absence fails closed.
     """
     if isinstance(backend, FakeIssueBackend):
         issue_id = backend.create_issue(title, body, labels)
@@ -836,13 +790,8 @@ def create_issue_verified(
 
 
 def persist_issue_mapping(repo: Path, item_id: str, mapping: dict) -> dict:
-    """Merge ``{item_id: mapping}`` into the authoritative issue map at
-    ``.tracks/runtime/issue-map.json`` (AC-FR0270-01).
-
-    Entries use the closer vocabulary (``issue_number`` + ``api_verified``,
-    see milestone.close_issues_with_comment). A crash-retry re-persist dedups
-    by item id — one entry per item, the last verified write wins.
-    """
+    """Merge into ``.tracks/runtime/issue-map.json`` (AC-FR0270-01); a
+    crash-retry re-persist dedups by item id — last verified write wins."""
     path = repo / ".tracks" / "runtime" / "issue-map.json"
     data: dict = {}
     if path.exists():
@@ -859,12 +808,8 @@ def persist_issue_mapping(repo: Path, item_id: str, mapping: dict) -> dict:
 
 
 def reject_fake_artifact(issue_id) -> dict:
-    """Real-channel fake-artifact rejection (AC-FR0270-02).
-
-    A FAKE-prefixed id can never be API-verified and is rejected with the
-    closed ``fake_rejected`` verdict so callers surface it as such instead of
-    letting an unverified stand-in mapping enter the authoritative map.
-    """
+    """Real-channel fake-artifact rejection (AC-FR0270-02): a FAKE-prefixed
+    id lands the closed ``fake_rejected`` verdict, never the map."""
     sid = str(issue_id)
     if sid.startswith(("FAKE-", "fake")):
         return {
@@ -882,13 +827,8 @@ def reject_fake_artifact(issue_id) -> dict:
 
 
 # -- IF-ISSUE-002 issue/project close chain (FR-0284) --------------------------
-#
-# The M-MILESTONE closer's irreversible effects: comment + close + remote
-# readback for each authoritative issue mapping. Same TRAC_GITHUB_API_BASE
-# stand-in channel and token discipline as the readback/creation faces (a
-# missing token raises the classified ``missing_token`` error; transport/HTTP
-# failures stay in the normalized ``error`` field and can never claim
-# api_verified=true).
+# The M-MILESTONE closer's irreversible effects: comment + close + readback
+# per mapping; transport/HTTP failures land in ``error``, never api_verified.
 
 
 def _issue_api_repo(repo_id: str) -> str:
@@ -899,12 +839,9 @@ def _issue_api_repo(repo_id: str) -> str:
 
 
 def close_issue(repo_id: str, issue_number: int, comment: str) -> dict:
-    """Comment + close + API readback for one issue (AC-FR0284-01).
-
-    The release-trace comment lands first (the durable audit trail), then the
-    issue is PATCHed ``state=closed`` and re-read; only a readback that
-    observes ``state=closed`` for the same number yields ``api_verified``.
-    """
+    """Comment + close + API readback for one issue (AC-FR0284-01): the
+    durable audit comment lands first, then ``state=closed`` is PATCHed and
+    re-read — only an observed closed state for the same number verifies."""
     _require_token()
     repo = _issue_api_repo(repo_id)
     base = _api_base()
@@ -948,15 +885,8 @@ def close_issue(repo_id: str, issue_number: int, comment: str) -> dict:
     }
 
 
-def _resolve_milestone_number(base: str, repo: str, title: str) -> tuple[str | None, str | None]:
-    """Resolve a title-declared milestone to its number (title, error).
-
-    GitHub REST milestone endpoints address milestones by NUMBER only; a
-    title in the path 404s. ``state=all`` so a previously closed one is
-    still found; numeric declarations pass straight through untouched.
-    """
-    if title.isdigit():
-        return title, None
+def _list_milestones(base: str, repo: str) -> tuple[list | None, str | None]:
+    """GET /repos/{repo}/milestones?state=all; (listing, classified error)."""
     listing, list_error, _status = _api_json(
         _api_request(f"{base}/repos/{repo}/milestones?state=all", "GET")
     )
@@ -964,6 +894,18 @@ def _resolve_milestone_number(base: str, repo: str, title: str) -> tuple[str | N
         return None, list_error
     if not isinstance(listing, list):
         return None, "milestone_listing_malformed"
+    return listing, None
+
+
+def _resolve_milestone_number(base: str, repo: str, title: str) -> tuple[str | None, str | None]:
+    """Resolve a title-declared milestone to its number (title, error):
+    REST addresses milestones by NUMBER (a title path 404s); ``state=all``
+    keeps closed ones findable; numeric declarations pass through."""
+    if title.isdigit():
+        return title, None
+    listing, list_error = _list_milestones(base, repo)
+    if list_error is not None:
+        return None, list_error
     for item in listing:
         if isinstance(item, dict) and str(item.get("title") or "") == title:
             number = item.get("number")
@@ -984,23 +926,14 @@ def _patch_milestone_closed(url: str) -> tuple[str, str | None]:
 
 
 def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
-    """PATCH + readback for the release Project/milestone (AC-FR0284-01).
-
-    A declared milestone is closed through the API and re-read; only an
-    observed ``state=closed`` yields ``api_verified``. An empty milestone is a
-    malformed request (callers emit the audited skip instead of claiming a
-    close).
-    """
+    """PATCH + readback for the release Project/milestone (AC-FR0284-01):
+    only an observed ``state=closed`` verifies; an empty milestone is a
+    malformed request (callers emit the audited skip instead)."""
     _require_token()
     repo = _issue_api_repo(repo_id)
     if milestone in (None, ""):
-        return {
-            "project": project,
-            "milestone": milestone,
-            "state": "",
-            "api_verified": False,
-            "error": "milestone_not_declared",
-        }
+        return {"project": project, "milestone": milestone, "state": "",
+                "api_verified": False, "error": "milestone_not_declared"}
     base = _api_base()
     milestone_ref, resolve_error = _resolve_milestone_number(base, repo, str(milestone))
     if resolve_error is not None or milestone_ref is None:
@@ -1021,19 +954,99 @@ def close_project_milestone(repo_id: str, project: str, milestone) -> dict:
     }
 
 
+# -- IF-TRACKER-001 milestone ensure primitive (FR-0331, interfaces 1r.5.1) ----
+# First-contact ensure: the closing chain asks the remote to already have the
+# declared milestone; api_verified is never claimed on an unobserved milestone.
+
+
+def ensure_project_milestone(repo_id: str, project: str, title: str) -> dict:
+    """Ensure the release milestone exists (interfaces 1r.5.1):
+    ``GET /repos/{repo}/milestones?state=all`` by exact title match — a hit
+    is reused (``created=false``, ``api_verified=true``; the listing is the
+    API observation); a miss with credentials POSTs exactly one create and
+    verifies it by a GET readback (``created=true``), idempotently reusing
+    the same title. Any failure returns the classified ``error`` result —
+    never a false ``api_verified``."""
+    result = {
+        "project": project,
+        "milestone": str(title or ""),
+        "number": None,
+        "state": "",
+        "created": False,
+        "api_verified": False,
+        "error": None,
+    }
+    try:
+        return _ensure_milestone(result, repo_id, title)
+    except GithubIssuesError as exc:
+        return {**result, "error": f"{exc.classification}: {exc}"}
+
+
+def _ensure_milestone(result: dict, repo_id: str, title: str) -> dict:
+    """Authorized ensure: list -> exact title match -> reuse, else create."""
+    _require_token()
+    repo = _issue_api_repo(repo_id)
+    wanted = str(title or "")
+    if not wanted:
+        return {**result, "error": "milestone_not_declared"}
+    listing, list_error = _list_milestones(_api_base(), repo)
+    if list_error is not None:
+        return {**result, "error": list_error}
+    for item in listing:
+        if isinstance(item, dict) and str(item.get("title") or "") == wanted:
+            return {
+                **result,
+                "number": item.get("number"),
+                "state": str(item.get("state") or ""),
+                "api_verified": True,
+            }
+    return _create_milestone_verified(result, _api_base(), repo, wanted)
+
+
+def _create_milestone_verified(
+    result: dict, base: str, repo: str, title: str
+) -> dict:
+    """POST one create, then GET the milestone back before claiming verified."""
+    data, error, _status = _api_json(
+        _api_request(f"{base}/repos/{repo}/milestones", "POST", {"title": title})
+    )
+    if error is not None:
+        return {**result, "error": error}
+    if not isinstance(data, dict) or data.get("number") is None:
+        return {**result, "error": "malformed"}
+    number = data.get("number")
+    readback, readback_error, _status = _api_json(
+        _api_request(f"{base}/repos/{repo}/milestones/{number}", "GET")
+    )
+    if readback_error is not None:
+        # The create was issued but never observed back — honest created,
+        # unverified, classified error (never a false api_verified).
+        return {**result, "created": True, "error": readback_error}
+    fields = readback if isinstance(readback, dict) else {}
+    verified = (
+        str(fields.get("title") or "") == title
+        and str(fields.get("number")) == str(number)
+    )
+    return {
+        **result,
+        "number": number,
+        "state": str(fields.get("state") or ""),
+        "created": True,
+        "api_verified": verified,
+        "error": None if verified else "readback_unconfirmed",
+    }
+
+
 # -- IF-PUBLISH-001/002 release & artifact API boundary (FR-0275) -------------
-#
-# Releases and release assets go through the same TRAC_GITHUB_API_BASE stand-in
-# channel as the CI/issue readbacks. Transport and HTTP failures are returned
-# as normalized `error` fields so the effects layer can map them to a
-# structured `api_error` failure; missing credentials keep raising the
-# classified `missing_token` error (never a silent pass).
+# Releases/assets ride the same stand-in channel; transport/HTTP failures
+# land in normalized ``error`` fields; missing credentials keep raising the
+# classified ``missing_token`` error (never a silent pass).
 
 
 def _require_token() -> str:
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        raise GithubIssuesError("missing_token", "GITHUB_TOKEN not set")
+        raise _missing_token_error()
     return token
 
 
@@ -1046,6 +1059,8 @@ def _api_json(req: urllib.request.Request) -> tuple[object, str | None, int | No
         return None, f"{cls}: HTTP {exc.code}: {exc.reason}", exc.code
     except urllib.error.URLError as exc:
         return None, f"network: {exc.reason}", None
+    except GithubIssuesError as exc:  # e.g. unusable CA bundle (IF-TLS-001)
+        return None, f"{exc.classification}: {exc}", None
     except (ValueError, UnicodeError) as exc:
         return None, f"malformed: {exc}", None
 
@@ -1077,12 +1092,9 @@ def _release_payload(
 
 
 def readback_release(repo_id: str, tag: str) -> dict:
-    """GET /repos/{repo}/releases/tags/{tag} normalized readback (FR-0275).
-
-    404 is a normal absence (``exists=False``); any other HTTP/transport
-    failure lands in the ``error`` field. Missing credentials raise the
-    classified ``missing_token`` error (never a silent pass).
-    """
+    """GET /repos/{repo}/releases/tags/{tag} normalized readback (FR-0275):
+    404 is a normal absence (``exists=False``); other failures land in
+    ``error``; missing credentials raise the classified ``missing_token``."""
     _require_token()
     req = _api_request(f"{_api_base()}/repos/{repo_id}/releases/tags/{tag}", "GET")
     data, error, status = _api_json(req)
