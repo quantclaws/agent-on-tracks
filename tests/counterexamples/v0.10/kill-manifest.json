@@ -1,6 +1,18 @@
 {
   "version": "v0.10",
-  "contract": "Each v0.10 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan section 1.5 and the test-review TEST-3 criterion. 28 patches were authored against the current tree; 24 were executed as apply -> run-bound-test -> observe-FAIL -> revert (result=killed), including counterexample implementations that make an absent v0.10 surface exist with contract-violating semantics. AC-NFR0155-01's discriminating surface is the ui test asset itself (the scan target is delivered by M-IMPL), and the ui-journey tests' discriminating surfaces (workbench shell/static app) are contract-reserved for M-IMPL, so those bindings carry the mutation specification with result=pending-implementation for materialization at M-TEST re-entry; patches are fail-closed checked (git apply --check) and touch no product behavior beyond the stated mutation.",
+  "contract": "Each v0.10 Shield integration/e2e test binds one minimal contract-deviation counterexample (mutation) and a kill verification, per test-plan section 1.5 and the test-review TEST-3 criterion. 28 patches were authored against the current tree and all 28 were executed as apply -> run-bound-test -> observe-FAIL -> revert (result=killed), including counterexample implementations that make an absent v0.10 surface exist with contract-violating semantics. AC-NFR0155-01's discriminating surface is the ui test asset itself (the scan target is delivered by M-IMPL), and the ui-journey tests' discriminating surfaces (workbench shell/static app) are contract-reserved for M-IMPL, so the 22 bindings whose discriminating surfaces do not exist at M-TEST carry the mutation specification with result=pending-implementation for materialization at M-TEST re-entry; patches are fail-closed checked (git apply --check) and touch no product behavior beyond the stated mutation. Count correction 2026-09-28: this header previously restated 24 executed kills / 4 pending bindings (a stale mid-authoring count); the binding records below are the per-item authority and record 28 killed + 22 pending-implementation.",
+  "reverification": {
+    "head": "789e61a554c30106bf3bacdec649cd0a9eeb4b76",
+    "date": "2026-09-28",
+    "apply_check": "all 28 patches pass git apply --check at this HEAD",
+    "executed_kills": [
+      {"patch": "ce_ac-fr0325-02.patch", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint", "outcome": "killed"},
+      {"patch": "ce_ac-fr0326-01.patch", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
+      {"patch": "ce_ac-fr0330-01.patch", "test": "tests/integration/test_github_tls.py::test_tls_channel_uses_certifi_bundle", "outcome": "killed"},
+      {"patch": "ce_ac-fr0332-02.patch", "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts", "outcome": "killed"}
+    ],
+    "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
+  },
   "bindings": [
     {"ac": "AC-FR0316-02", "if_ref": "IF-WORKBENCH-001", "mutation": "a package.json npm build-chain artifact exists at the repo root", "patch": "ce_ac-fr0316-02.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"},
     {"ac": "AC-NFR0156-01", "if_ref": "IF-WORKBENCH-001", "mutation": "a vite.config.ts bundler config exists at the repo root", "patch": "ce_ac-nfr0156-01.patch", "result": "killed", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm"},
