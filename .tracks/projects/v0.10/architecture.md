@@ -11,7 +11,7 @@ sha:
 
 本文是 ARCH-009 的增量延伸。v0.1～v0.9 的事件溯源、单写者、canonical 阶段状态机、发布闭环五阶段、质量守卫 registry、测试流水线、CLI 与 v0.9 的 server/supervisor 双层（Starlette 交付面 + 后台驱动）全部保持不变；v0.10 在此之上叠加 SPA 工作台 chrome（浏览器侧原生 ES modules 应用层）、登录名字绑定、文档中心应用层与 run 时间线视图，并在同版内完成发布卫生修复（#182/#179/#180/#181/#184/#183）。核心取舍：SPA 交互模型落地但**不引入构建链**（NFR-0156 条件未触发，见 §3.1）；发布卫生全部落在既有模块的定点修正上，不新增子系统。
 
-revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN），吸收 Prism no-diff 复审 blocker（test-plan §8 inline 线程 T-001）——新增 §1.0.8 测试节点两类纪律与 interfaces §1u/IF-GREENGUARD-001 守卫通道，§1.2 五条 closure 行重分类（守卫语义标注 + IF-GREENGUARD-001），§4.4/§5.2 同步；模块边界、合同面与其余 closure 与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§1.0.1 增长轴表补第 22 行（tracks/executor/test_execute.py 的守卫通道消费面，PLANNING 不得丢失该 task）。
+revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN），吸收 Prism no-diff 复审 blocker（test-plan §8 inline 线程 T-001）——新增 §1.0.8 测试节点两类纪律与 interfaces §1u/IF-GREENGUARD-001 守卫通道，§1.2 五条 closure 行重分类（守卫语义标注 + IF-GREENGUARD-001），§4.4/§5.2 同步；模块边界、合同面与其余 closure 与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§1.0.1 增长轴表补第 22 行（tracks/executor/test_execute.py 的守卫通道消费面，PLANNING 不得丢失该 task）。2026-09-28 RESPOND round 3+（deadlock 轮次）：§5.2 登记 FR-090∧FR-0314.4 组合死锁（T-001 双侧实证）及其对本版交付管道与 FR-0332 park-resume 闭环的阻断面；无合同变更。
 
 ## 0. 延续性声明（什么不变）
 
@@ -422,3 +422,4 @@ build backend 与 wheel 名不变；package-data 追加 `server/static/app/*`（
 - **`auth` 表演进的老库**：既有 service.db 经幂等 ALTER 增列；演进失败（只读库）落在 serve 启动健康面（healthz 503），不产生半迁移状态。
 - **Lex park 的滥用面**：`pass-pending-human-threads` 仅在「全部未决线程的裁决权属方为 Human」时产生（服务端按 tracks/discuss 解析计算，不信 agent 自报）；一个非 Human 待决线程即回落 revise——机器判定，无自报通道。
 - **OOB 观察面缺口（操作记录，非本版设计变更）**：9d65be5 等流内修复提交携带 Tracks-OOB trailer 但未产生 oob.accepted 事件（run 处于升级/停放窗口时观察器未覆盖），其随带单测被 r2 选窗卷入——doctrine 与通道已在 §1.0.8/interfaces §1u 钉死（守卫 §8.1 豁免 + OOB 文件豁免），观察面缺口归 Runtime 修复事项；本次回滚重进 M-TEST 时基线重建 + 既有 r2_discharged 语义收口，不遗留红窗污染。
+- **discuss 门禁组合死锁（FR-090 ∧ FR-0314.4，本版评审通道的活缺陷）**：当线程发起者 ≠ 根评论唯一 @mention 的请求裁决方时，`trac discuss set-status` 无解——CLI 面要求 operator == 裁决权属方（IF-009 §1f.4），writer 面要求 operator == 发起者（FR-090），两规则合取无任何 operator 可满足（本 run 的 T-001 已由 Prism/Archer 双侧实证）。两个后果：(a) 本设计自身交付管道被它阻断——M-DESIGN EXIT 的 discussion_ready 在 T-001 上 fail-closed，直至 Human 经 IDE 手改状态标记（协议特许通道）或 Runtime 修正组合（建议语义：裁决权属方存在时优先于发起者规则）；(b) 对本版设计的直接依赖警示——FR-0332 的 park-resume 流依赖讨论线程的可关闭性（Lex 发起、@Human 裁决的线程在收敛后恰落入同一死锁形态），该组合修复是 IF-REVIEW-001 闭环的前置条件，归 Runtime/Devon 修复事项而非本文档吸收。
