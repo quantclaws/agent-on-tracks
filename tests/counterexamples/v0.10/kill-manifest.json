@@ -25,6 +25,16 @@
           {"patch": "ce_ac-fr0331-01.patch", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback", "outcome": "killed"},
           {"patch": "ce_ac-nfr0154-02.patch", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "4559b76c3fa4101fd136bcfd9fc32ed8eb6922c0",
+        "date": "2026-09-28",
+        "note": "re-confirmation after the classification-hygiene edit of the three bound nodes (contract-field subscripts guarded by membership asserts; failure mode now assertion_failure instead of uncaught KeyError)",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0321-01.patch", "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion", "outcome": "killed"},
+          {"patch": "ce_ac-fr0326-01.patch", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
+          {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"

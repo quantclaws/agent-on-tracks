@@ -226,6 +226,9 @@ def test_name_binding_flows_to_events_and_discussion(tmp_path: Path):
         )
         assert status == 200, body[:200]
         login = json.loads(body)
+        assert "name_required" in login, (
+            "the login response must carry the name_required field (§2b #1, §1m.2)"
+        )
         assert login["name_required"] is True, (
             "a first login must declare name_required (§2b #1, §1m.2)"
         )

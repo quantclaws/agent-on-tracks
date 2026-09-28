@@ -112,10 +112,19 @@ def test_stage_order_and_timeline_consistency(tmp_path: Path):
         )
         assert status == 200, body[:200]
         timeline = json.loads(body)
+        assert "stage_order" in timeline, (
+            "the timeline must declare the §1q.1 stage_order display order"
+        )
         assert timeline["stage_order"] == _STAGE_ORDER, (
             "the timeline must declare the §1q.1 thirteen-stage display order: "
             f"{timeline.get('stage_order')!r}"
         )
+        assert isinstance(timeline.get("events"), list) and timeline["events"], (
+            "the timeline must carry the run's event rows (IF-009 §1e)"
+        )
+        assert all(
+            "type" in event and "payload" in event for event in timeline["events"]
+        ), "timeline rows must carry the event type and payload (IF-009 §1e)"
         entered = [
             event["payload"]["stage"]
             for event in timeline["events"]
@@ -157,6 +166,13 @@ def test_timeline_entry_present(tmp_path: Path):
         )
         assert status == 200, body[:200]
         timeline = json.loads(body)
+        assert isinstance(timeline.get("events"), list) and timeline["events"], (
+            "the timeline must carry the run's event rows (IF-009 §1e)"
+        )
+        assert all(
+            "type" in event and "payload" in event and "seq" in event
+            for event in timeline["events"]
+        ), "timeline rows must carry the event type, payload and seq (IF-009 §1e)"
         entries = [
             event for event in timeline["events"] if event["type"] == "stage.entered"
         ]
@@ -171,6 +187,9 @@ def test_timeline_entry_present(tmp_path: Path):
         ]
         seqs = [event["seq"] for event in timeline["events"]]
         assert seqs == sorted(seqs), "the timeline keeps the merged event order"
+        assert "stage_order" in timeline, (
+            "the timeline must declare the §1q.1 stage_order display order"
+        )
         assert len(timeline["stage_order"]) == 13, (
             "the display order must cover all thirteen stages"
         )
