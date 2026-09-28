@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,30 @@ from tracks.executor.test_select import (
 from tracks.executor.test_select import audit as audit_selection_argv
 from tracks.executor.validate import required_ac_ids
 from tracks.project import ContractError, load_contract
+
+_GUARD_LINE = re.compile(r"^\s*-\s+`([^`\s]+::[^`\s]+)`")
+
+
+def _version_guard_nodes(vdir: Path) -> set[str]:
+    """The arrival-green guard set declared by the version test-plan §8.1
+    (IF-GREENGUARD-001 §1u.2: the list is the sole authority; one node id per
+    ``- `node` `` line under the §8.1 heading). Missing file/section → empty
+    (pre-§8.1 baselines keep the legacy all-must-be-red window)."""
+    plan = vdir / "test-plan.md"
+    if not plan.is_file():
+        return set()
+    nodes: set[str] = set()
+    in_section = False
+    for line in plan.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            in_section = line.startswith("### 8.1") or line.startswith("## 8.1")
+            continue
+        if not in_section:
+            continue
+        m = _GUARD_LINE.match(line)
+        if m:
+            nodes.add(m.group(1))
+    return nodes
 
 
 @dataclass(frozen=True)
@@ -574,25 +599,11 @@ class ExecTestRunMixin:
         Returns ``(outcomes, findings, all_legit, error_reason)``; on a
         test result/contract/OS failure ``error_reason`` is set (FRB-G) while the
         staged per-command result files are still cleaned up (FA-4)."""
-        outcomes: list[dict] = []
-        findings: list[dict] = []
-        all_legit = True
         staged_results: list[Path] = []
-        oob_files = self._oob_accepted_test_files()
         try:
-            for name, section in sections:
-                nodes = selected_by_layer.get(name) or []
-                if not nodes:
-                    # A declared layer without R2 delta never executes here:
-                    # M-TEST runs neither the full run command nor R1 history.
-                    continue
-                mapping = self._run_layer_command(
-                    cmd, name, section, nodes, staged_results, logs
-                )
-                if not self._record_layer_outcomes(
-                    nodes, mapping, outcomes, findings, oob_files
-                ):
-                    all_legit = False
+            return (*self._execute_layers_inner(
+                cmd, sections, selected_by_layer, logs, staged_results
+            ), None)
         except (TestResultError, TestSelectError, OSError, UnicodeError) as exc:
             # FRB-G: a missing run_selected executable (OSError) or an
             # undecodable output stream routes the contract_error channel
@@ -600,7 +611,36 @@ class ExecTestRunMixin:
             return [], [], False, f"{type(exc).__name__}: {exc}"
         finally:
             self._cleanup_staged_results(staged_results)
-        return outcomes, findings, all_legit, None
+
+    def _execute_layers_inner(  # pylint: disable=too-many-locals
+        self, cmd, sections, selected_by_layer, logs, staged_results
+    ) -> tuple[list[dict], list[dict], bool]:
+        """The per-layer execution + classification fold (no error mapping)."""
+        outcomes: list[dict] = []
+        findings: list[dict] = []
+        all_legit = True
+        oob_files = self._oob_accepted_test_files()
+        guard_nodes = self._red_check_guard_nodes()
+        seen = {
+            node for nodes in selected_by_layer.values() for node in (nodes or [])
+        }
+        for name, section in sections:
+            nodes = selected_by_layer.get(name) or []
+            if not nodes:
+                # A declared layer without R2 delta never executes here:
+                # M-TEST runs neither the full run command nor R1 history.
+                continue
+            if not self._record_layer_outcomes(
+                nodes,
+                self._run_layer_command(cmd, name, section, nodes, staged_results, logs),
+                outcomes, findings, oob_files, guard_nodes
+            ):
+                all_legit = False
+        # IF-GREENGUARD-001 §1u.2 fail-closed: a §8.1 entry that never
+        # resolved in the executed selection is a false declaration.
+        absence = self._guard_absence_findings(guard_nodes, seen)
+        findings.extend(absence)
+        return outcomes, findings, all_legit and not absence
 
     def _run_layer_command(self, cmd, name, section, nodes, staged_results, logs):
         """Execute one layer's selected nodes; returns the node→case mapping."""
@@ -645,27 +685,34 @@ class ExecTestRunMixin:
             with contextlib.suppress(OSError):
                 staged_results[0].parent.rmdir()
 
+    def _red_check_guard_nodes(self) -> set[str]:
+        """The §8.1 guard set for this run's version dir (test doubles
+        without a version identity keep the empty legacy set)."""
+        vdir_getter = getattr(self, "_vdir", None)
+        if vdir_getter is not None and getattr(self, "version", None):
+            return _version_guard_nodes(vdir_getter())
+        return set()
+
     @staticmethod
     def _record_layer_outcomes(
-        nodes, mapping, outcomes: list[dict], findings: list[dict], oob_files: set[str]
+        nodes, mapping, outcomes: list[dict], findings: list[dict], oob_files: set[str],
+        guard_nodes: set[str] | None = None,
     ) -> bool:
         """Append one normalized outcome + finding per selected node (the
         {result} test result record is the sole per-node authority; stdout/stderr
         are logs only). Returns True when every node classified as legal Red;
         an unexpected pass/skip classifies unexpected_pass -- unless the node's
         file is OOB-declared (see _oob_accepted_test_files), in which case
-        green-on-arrival is legal (oob_verified)."""
+        green-on-arrival is legal (oob_verified), or the node is an §8.1
+        arrival-green guard (IF-GREENGUARD-001 §1u.3): a passing guard is
+        guard_verified (legal), a failing/absent guard is guard_failed (a
+        real regression -- fail-closed, never "not yet implemented")."""
+        guards = guard_nodes or set()
         layer_legit = True
         for node in nodes:
             case = mapping[node]
-            klass = (
-                "unexpected_pass"
-                if case.status in ("passed", "skipped")
-                else classify_red_detail(case.detail or "", case.status)
-            )
-            if klass == "unexpected_pass" and node.split("::")[0] in oob_files:
-                klass = "oob_verified"
-            if klass not in _LEGIT_RED and klass != "oob_verified":
+            klass = ExecTestRunMixin._classify_node(node, case, guards, oob_files)
+            if klass not in _LEGIT_RED and klass not in ("oob_verified", "guard_verified"):
                 layer_legit = False
             outcomes.append(
                 {
@@ -683,6 +730,22 @@ class ExecTestRunMixin:
                 }
             )
         return layer_legit
+
+    @staticmethod
+    def _classify_node(node, case, guards: set[str], oob_files: set[str]) -> str:
+        """One node's RED_CHECK classification (IF-GREENGUARD-001 §1u.3 +
+        the OOB-file exemption + the legacy must-be-red default).
+
+        OOB212-B2: the locked contract legalizes only PASSING guards — a
+        skipped guard is absence-of-execution, not a verified landed fact,
+        and fails closed alongside failures."""
+        if node in guards:
+            return "guard_verified" if case.status == "passed" else "guard_failed"
+        if case.status in ("passed", "skipped"):
+            if node.split("::")[0] in oob_files:
+                return "oob_verified"
+            return "unexpected_pass"
+        return classify_red_detail(case.detail or "", case.status)
 
     def _emit_red_check_invalid(
         self,
@@ -919,3 +982,17 @@ class ExecTestRunMixin:
             )
             else default
         )
+
+    @staticmethod
+    def _guard_absence_findings(guard_nodes: set[str], seen: set[str]) -> list[dict]:
+        """OOB212-B3: §8.1 entries absent from the executed selection (§1u.2
+        fail-closed — an unresolvable declaration is a false declaration)."""
+        return [
+            {
+                "test_id": node,
+                "classification": "guard_absent",
+                "detail": "declared in test-plan §8.1 but not in the "
+                "executed selection (fail-closed, IF-GREENGUARD-001)",
+            }
+            for node in sorted(guard_nodes - seen)
+        ]

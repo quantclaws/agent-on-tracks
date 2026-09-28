@@ -42,6 +42,15 @@ and the remaining surface via self."""
         声明的提交仅 stderr 提示后随静默期语义吸收（观察点前移，不发
         事件）。观察点单调前移保证幂等。
 
+        #212 OOB (2026-09-28): the acceptance LEDGER is first completed by
+        _oob_backfill_acceptances — the pointer windows alone structurally
+        miss silent-period OOB landings (a later result baseline absorbs
+        them before any live window opens; live: v0.10 run
+        01M3E7SAANXKW1V73W8B8Q3G86, the 9d65be5 regression tests burned
+        three RED_CHECK attempts as unexpected_pass because their
+        oob.accepted never existed). The live loop skips shas the backfill
+        already recorded (idempotent across both channels).
+
         Prism review #43 B1：``pending`` 未关闭（WAL 窗口内——典型为
         异常路径的 finally 调用）时绝不发射事件（B40 挂死条件：非
         command.issued 事件清 pending → pending=None + doc_dispatched=
@@ -49,12 +58,20 @@ and the remaining surface via self."""
         关闭后的下一次观察补账。
         """
         current = oob.head_sha(Path(self.repo))
-        if current is None or current == self._oob_head:
+        if current is None:
             return
+        # OOB212-B1: EVERY emission (backfill included) sits behind the WAL
+        # pending gate — a non-command.issued event during an open window
+        # clears pending and strands the in-flight command (B40 stall).
         if self.store.state(self.run_id).pending is not None:
             return  # WAL 窗口内：推迟到 pending 关闭后再观察
+        recorded = self._oob_backfill_acceptances()
+        if current == self._oob_head:
+            return
         commits = oob.commits_since(Path(self.repo), self._oob_head)
         for c in commits:
+            if c["sha"] in recorded:
+                continue  # already accepted via the backfill ledger
             if c["oob"]:
                 self._emit(
                     "oob.accepted",
@@ -74,6 +91,30 @@ and the remaining surface via self."""
                 )
         # 历史改写（range 不可解析 → commits 为空）时同样前移观察点。
         self._oob_head = current
+
+    def _oob_backfill_acceptances(self) -> set[str]:
+        """#212: complete the ``oob.accepted`` ledger for Tracks-OOB commits
+        every pointer window missed. Scans first-checkpoint..HEAD for trailer
+        commits not yet recorded and emits the SAME event shape as the
+        natural path (same payload derivation — sha/reason/files from the
+        commit itself). Idempotent by set-diff; returns the recorded shas
+        for the live loop's dedup."""
+        recorded, lower = self._oob_ledger_state()
+        if lower is None:
+            return recorded  # nothing checkpointed yet: no provable bound
+        for c in oob.commits_since(Path(self.repo), lower):
+            if not c["oob"] or c["sha"] in recorded:
+                continue
+            self._emit(
+                "oob.accepted",
+                {
+                    "sha": c["sha"],
+                    "reason": c["reason"],
+                    "files": sorted(oob.changed_paths(Path(self.repo), c["sha"])),
+                },
+            )
+            recorded.add(c["sha"])
+        return recorded
 
     def _emit_commit_failure(
         self, proc: subprocess.CompletedProcess, state: State, command_id: str
@@ -386,3 +427,19 @@ and the remaining surface via self."""
                 if isinstance(path, str) and path.startswith("tests/"):
                     files.add(path)
         return files
+
+    def _oob_ledger_state(self) -> tuple[set[str], str | None]:
+        """(recorded oob.accepted shas, the run's first checkpointed commit)
+        from the event stream — the backfill's idempotence set and bound."""
+        recorded: set[str] = set()
+        lower: str | None = None
+        for ev in self.store.events(self.run_id):
+            if ev.type == "oob.accepted":
+                sha = str(ev.payload.get("sha") or "")
+                if sha:
+                    recorded.add(sha)
+            elif ev.type == "result.checkpointed" and lower is None:
+                sha = str((ev.payload or {}).get("commit_sha") or "")
+                if sha:
+                    lower = sha
+        return recorded, lower
