@@ -296,11 +296,26 @@ def _set_status(repo: Path, ns) -> int:
     token = _decode_token(ns.token, "thread")
     if ns.status == "resolved":
         text = target.read_text(encoding="utf-8") if target.exists() else ""
+        # #210 OOB (2026-09-28): a thread with a single adjudication request
+        # is closed by the REQUESTED party (the initiator surrendered
+        # self-resolution when asking, AC-FR0314-04 test 2); the writer layer
+        # used to additionally demand operator==initiator (FR-090), an
+        # unsatisfiable conjunction that deadlocked every agent-requested
+        # thread (live: M-DESIGN revision ground to escalation). A @Human
+        # request stays web-only — the CLI operator string is unauthenticated
+        # and must never impersonate the Human (AC-FR0314-04 test 3).
         owner = adjudication_owner(text, ns.thread_id)
-        if owner is not None and speaker_key(owner) != speaker_key(ns.operator):
-            raise writer.WriteError(
-                f"resolved requires the requested adjudicator {owner!r} (FR-0314.4)"
-            )
+        if owner is not None:
+            if speaker_key(owner) == speaker_key("Human"):
+                raise writer.WriteError(
+                    "a @Human-requested thread resolves on the authenticated "
+                    "web surface, not the CLI (FR-0314.4)"
+                )
+            if speaker_key(ns.operator) != speaker_key(owner):
+                raise writer.WriteError(
+                    f"resolved requires the requested adjudicator {owner!r} "
+                    "(FR-0314.4, #210)"
+                )
     _atomic_write(
         target, lambda t: writer.set_status(t, ns.thread_id, token, ns.status, ns.operator)
     )

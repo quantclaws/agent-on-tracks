@@ -36,3 +36,10 @@ def adjudication_owner(text: str, thread_id: str) -> str | None:
     if len(mentions) == 1:
         return mentions[0]
     return None
+
+
+def thread_initiator(text: str, thread_id: str) -> str | None:
+    """The thread's root speaker (#210: the resolved-rule disjunction needs
+    both the initiator and the adjudication owner)."""
+    thread = next((t for t in parse_threads(text) if t.thread_id == thread_id), None)
+    return thread.initiator if thread is not None else None

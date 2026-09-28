@@ -128,3 +128,54 @@ def test_iter_comments_preorder():
 
     t = _one("> **A:** r\n>> **B:** b\n>>> **C:** c\n>> **D:** d\n")
     assert [c.speaker for c in iter_comments(t.root)] == ["A", "B", "C", "D"]
+
+
+# -- #209 OOB（2026-09-28）：无标记续行并入最近评论 ----------------------------
+
+
+def test_untagged_continuation_lines_join_last_comment():
+    """writer.format_root 的多段落形态（首行带标记 + 无标记续行）必须完整可见：
+    续行并入最近评论的 body，其中的 @mention 计入线程级 mentions。"""
+    from tracks.discuss.parser import parse_threads
+
+    doc = (
+        "anchor paragraph\n"
+        "\n"
+        "> **Prism:** first paragraph of the finding.\n"
+    "> continuation with the routing @Devon mention and details.\n"
+    "> more continuation.\n"
+    "\n"
+    "next anchor\nn"
+    )
+    threads = parse_threads(doc)
+    assert len(threads) == 1
+    t = threads[0]
+    assert "first paragraph" in t.root.body
+    assert "continuation with the routing @Devon mention" in t.root.body
+    assert "more continuation." in t.root.body
+    assert "Devon" in t.mentioned_agents
+
+
+def test_untagged_continuation_outside_thread_still_ignored():
+    from tracks.discuss.parser import parse_threads
+
+    doc = "anchor\n\n> Note: a lone label line with no thread above\n\nnext\n"
+    threads = parse_threads(doc)
+    assert threads == []
+
+
+def test_reply_continuation_joins_the_reply_not_the_root():
+    from tracks.discuss.parser import parse_threads
+
+    doc = (
+        "anchor\n\n"
+        "> **Prism:** root body\n"
+        ">> **Archer:** reply first line\n"
+        ">> reply continuation detail.\n"
+        "\n"
+    )
+    threads = parse_threads(doc)
+    assert len(threads) == 1
+    reply = threads[0].root.children[0]
+    assert "reply continuation detail." in reply.body
+    assert "reply continuation" not in threads[0].root.body

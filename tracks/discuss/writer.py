@@ -187,13 +187,32 @@ def edit(text: str, thread_id: str, token: dict, depth: int, speaker: str, new_b
 def set_status(text: str, thread_id: str, token: dict, status: str, operator: str) -> str:
     """Change a root thread's status (FR-090 format-consistency rules).
 
-    resolved -> operator must equal the initiator; reopen -> anyone.
+    resolved -> the initiator OR the root's single requested adjudicator
+    (#210 OOB: the old initiator-only rule composed conjunctively with the
+    CLI's FR-0314.4 owner rule into an unsatisfiable requirement whenever
+    the two parties differ — nobody, not even the Human, could close such a
+    thread); reopen -> anyone.
     """
     if status not in ("resolved", "reopen"):
         raise WriteError(f"invalid status {status!r} (use resolved|reopen)")
     thread = _thread(text, thread_id, token)
-    if status == "resolved" and speaker_key(operator) != speaker_key(thread.initiator):
-        raise WriteError("resolved requires operator == initiator (FR-090)")
+    if status == "resolved":
+        from tracks.discuss.gate import adjudication_owner
+
+        allowed = {speaker_key(thread.initiator)}
+        owner = adjudication_owner(text, thread_id)
+        if owner is not None:
+            # #210: a single adjudication request hands the close-out to the
+            # requested party (the CLI already enforces the choice and keeps
+            # @Human requests web-only); the old initiator-only rule composed
+            # into an unsatisfiable conjunction with it.
+            allowed = {speaker_key(owner)}
+        if speaker_key(operator) not in allowed:
+            raise WriteError(
+                "resolved requires "
+                f"{'the requested adjudicator' if owner is not None else 'the initiator'} "
+                f"({sorted(allowed)}) (FR-090, #210)"
+            )
     lines = text.splitlines()
     idx = thread.root_line - 1
     tag = parse_tag(_BQ.match(lines[idx]).group(2))

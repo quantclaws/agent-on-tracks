@@ -120,9 +120,30 @@ class _Accumulator:
             return
         tag = parse_tag(m.group(2))
         if tag is None:
-            return  # blockquote but not a comment (label / plain); ignore
+            # #209 OOB (2026-09-28): an untagged blockquote line inside an
+            # open thread is a CONTINUATION of the most recent comment —
+            # writer.format_root/_format_reply legitimately emit multi-paragraph
+            # bodies as "tagged first line + untagged continuation lines", and
+            # the old silent drop made everything after the first paragraph
+            # invisible (including @mention routing, live: Archer could not see
+            # Prism's multi-paragraph findings and returned no-diff twice).
+            # Outside a thread the line stays ignored (labels never start
+            # threads; the plain-content rule is unchanged).
+            self._continue_last_comment(m.group(2))
+            return
         name, status, body = tag
         self._add_comment(idx, raw.rstrip(), len(m.group(1)), name, status, body)
+
+    def _continue_last_comment(self, text: str) -> None:
+        """Append an untagged blockquote line to the thread's latest comment."""
+        if not self._stack:
+            return
+        node = self._stack[-1]
+        node.body = f"{node.body}\n{text.rstrip()}" if node.body else text.rstrip()
+        found = _mentions(text)
+        if found:
+            node.mentions.extend(found)
+            self._mentioned.extend(found)
 
     def _on_non_bq(self, idx: int, raw: str) -> None:
         if not raw.strip():
