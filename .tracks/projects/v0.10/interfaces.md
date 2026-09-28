@@ -40,6 +40,7 @@ sha:
 | 11 | hotfix 前检分类 | 一切 `GithubIssuesError` 吞成 `issue_not_found`（`issue_fetch_failed` 不可达） | 按分类映射：`not_found`→`issue_not_found`；`auth`/`rate_limit`/`network`/`missing_token`→`issue_fetch_failed` 携分类 next（§1r.3） | FR-0329（#180） |
 | 12 | CI required checks | lint/coverage/test/deliverables/trace/reach | 追加 `ui-e2e`（Playwright/Chromium，独立基础设施预算，NFR-0155） | §1t |
 | 13 | pytest marker | performance/integration/e2e | 追加 `ui`（默认套件经 addopts 排除；ui-e2e job 经 `-m ui` 选择） | §1t |
+| 14 | 测试节点分类与红窗守卫通道 | 红窗对全部 r2 节点一律要求合法 Red（OOB 文件豁免除外） | 版本测试节点分两类（合法 Red 验收锚点 / 到达即绿守卫）；test-plan §8.1 声明守卫集合（唯一权威）；RED_CHECK 对守卫节点 pass 记 `guard_verified`、失败/缺席 fail-closed；守卫不作为 task 验收锚点声明（§1u） | §1u（M-TEST no-diff 复审 blocker 修订，2026-09-28） |
 
 ## 1. 跨模块合同
 
@@ -167,6 +168,16 @@ IF-009 §1c 八表继承；v0.10 唯一 schema 演进：
 1. **分层**：UI e2e 以 Playwright（Chromium）真实浏览器驱动，测试落 `tests/e2e/` 并标 `@pytest.mark.ui`；默认套件（pyproject addopts 与各 browserless CI job 的显式 `-m`）排除 `ui`；CI 新 required check `ui-e2e` 安装 Chromium（`playwright install --with-deps chromium`）后以 `-m ui` 运行。Playwright 浏览器下载与该 job 的 CI 分钟为独立基础设施预算，不挤占 FR 预算（NFR-0155）。
 2. **控件绑定**：UI e2e 定位控件一律经 `data-testid`（§1l.1），不依赖 CSS class/DOM 层级；关键旅程（登录、真数据浏览、文档中心编辑产生新 revision）不得以 API 请求替代关键 UI 操作。
 3. **宿主合同**：`[host-contract.ci].required_checks` 追加 `ui-e2e`；`release-evidence` milestone 硬门禁的 needs 同步追加。
+
+### 1u. 到达即绿守卫节点合同（IF-GREENGUARD-001）
+
+**modules**：`tracks/executor/test_execute.py`（RED_CHECK 逐节点分类的消费面，**待实现 Devon**）；守卫节点测试资产由 Shield 在 tests/integration/tests/e2e 承载；声明面是版本 test-plan.md 的 §8.1（Archer 设计面，本节只定义契约形态）。
+
+1. **两类节点**：版本测试资产分「合法 Red 验收锚点」与「到达即绿守卫」。验收锚点断言本版未实现的产品行为——实现前合法 Red、实现后转绿。守卫验证设计期/继承期已落地的事实（声明存在性、静态纪律扫描、缺席条件、继承行为回归）——到达即绿是其正确形态；把一个永远不可能红的节点塞进红窗必填集是设计缺陷（task graph 不可满足）。
+2. **声明面**：test-plan §8.1 以每行一个测试节点 id 的清单声明守卫集合（含 AC 与 IF 归属标注）；该清单是守卫身份的唯一权威，不存在隐式守卫；守卫节点同时保留其 §8 表行（AC 覆盖闭合与 IF 归属不变）。清单引用的节点必须在收集集合内可解析，无法解析即声明失实（fail-closed）。
+3. **RED_CHECK 语义**：r2 选窗内，属守卫集合的节点通过时分类为 `guard_verified`（合法，不触发 unexpected_pass）；守卫节点失败或缺席即 red.validated(invalid) fail-closed（守卫守护的是已落地合同，失败即真回归而非「没到实现期」）。未声明节点的到达即绿维持既有 `unexpected_pass` 语义不变；OOB 通道（oob.accepted 记录文件）的豁免语义不变。
+4. **M-IMPL 锚点纪律**：任务图不得把守卫节点声明为 task 的红必填验收锚点（验收锚点子集只含合法 Red 类）；守卫经每次 RED_CHECK 的必过语义与 ISLAND_GATE_2/FULL 持续验证，其 AC 归属仍在 §8 行内。
+5. **选窗纪律**：随操作者修复提交落地的回归测试是已落地行为的验证器而非版本验收仪器，经既有 OOB 通道豁免红窗（观察面语义继承不变）；合法红必填集 = r2 ∩（§8 合法 Red 锚点），守卫经 §8.1、OOB 文件经 oob.accepted 分别豁免。
 
 ## 2. CLI 接口合同
 
@@ -424,3 +435,9 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 - **合同**：§1t——`ui` marker 通道隔离（默认排除、ui-e2e job 选择）；Playwright/Chromium 真实浏览器；`data-testid` 控件绑定；关键旅程不得以 API 替代 UI 操作；required_checks 追加 `ui-e2e`；浏览器下载与 job 分钟为独立基础设施预算。
 - **modules**：tests/e2e（Shield 资产）, tests/_support（Shield 资产）, .github/workflows/ci.yml, pyproject.toml, .tracks/projects/project.toml。
 - **关联**：NFR-0155。
+
+### IF-GREENGUARD-001 到达即绿守卫节点合同
+
+- **合同**：§1u——两类测试节点区分（合法 Red 验收锚点 / 到达即绿守卫）；test-plan §8.1 为守卫集合唯一权威；RED_CHECK 对守卫 pass 记 `guard_verified`、失败/缺席 fail-closed；守卫不作为 task 验收锚点声明；选窗纪律（r2 ∩ 合法 Red 锚点；守卫与 OOB 文件分别豁免）。
+- **modules**：tracks/executor/test_execute.py（消费面，待实现 Devon）, tests/integration（守卫测试资产，Shield）。
+- **关联**：AC-FR0325-02、AC-FR0328-02、AC-FR0329-01、AC-NFR0155-01/02 的守卫半边（M-TEST no-diff 复审 blocker 修订，2026-09-28）。
