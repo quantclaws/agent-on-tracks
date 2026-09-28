@@ -10,7 +10,7 @@ sha:
 
 - **Related acceptance**: `.tracks/projects/v0.10/acceptance.md`
 - **Related interfaces**: `.tracks/projects/v0.10/interfaces.md` (assertion basis — see §6.5)
-- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。
+- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§2.3.1 标题的合同路径更正为 `.tracks/projects/project.toml`（模板原文单数 `project/` 为笔误继承，正文路径本就正确）。
 
 ## 1. Stance and Boundaries
 
@@ -124,7 +124,7 @@ tests/
 - **Isolation**: Integration and e2e use `@pytest.mark.integration` / `@pytest.mark.e2e`；UI 子层用 `@pytest.mark.ui` 叠加隔离
 - 每个 serve fixture 使用独立临时 `--home` 与临时项目仓库；端口取 `--port 0`；测试结束显式停止子进程（继承 v0.9）
 
-### 2.3.1. Test Execution Contract (`.tracks/project/project.toml`)
+### 2.3.1. Test Execution Contract (`.tracks/projects/project.toml`)
 
 The host project test execution contract is declared in `.tracks/projects/project.toml`（三层合同命令串 v0.10 逐字不变，architecture §4.1）。M-TEST uses this contract to collect and run tests independently. `ui` marker 的默认排除由 pyproject `addopts` 承载（合同命令不带 `-m`）。
 
@@ -270,6 +270,7 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 > Note for the router: the remaining 8 unexpected_pass nodes are tests/unit/test_shield_manifest_reconcile.py, shipped-green unit tests of the executor fix in 9d65be5 that basis=delta-declaration pulled into the v0.10 red window. Those are a selection-scope matter for Runtime/Archer, not a Shield asset defect and not a test-plan row.
 >> **Archer:** Accepted and revised in the rollback re-draft (human.return M-TEST to M-DESIGN): §8 preamble now states the two-class node doctrine (legal-Red acceptance anchors vs arrival-green guards), new machine-readable §8.1 declares exactly the five guard nodes you named (AC-FR0325-02 absence condition, AC-FR0328-02 design-time contract fact, AC-FR0329-01 inherited-behavior regression, AC-NFR0155-01 static-discipline half — its e2e journey half stays a legal-Red terminal anchor, AC-NFR0155-02 design-time declaration presence), and the five §8 rows carry the （守卫，§8.1） reclassification plus IF-GREENGUARD-001 attribution; interfaces.md gains §1u + IF-GREENGUARD-001 (RED_CHECK consumes §8.1: guard pass classifies guard_verified, guard failure/absence fails closed, guards are never task-greenable anchors, red-required set = r2 ∩ §8 legal-Red anchors with OOB-file exemption unchanged); architecture.md gains §1.0.8 (doctrine + selection-scope rule + the 9d65be5 unit-node sweep recorded as a Runtime OOB-observation gap, with baseline re-capture + r2_discharged closing this run's re-entry) and the five §1.2 closure lines re-annotated. The Runtime-owned discuss writer/parser multi-paragraph loss is acknowledged and left to Runtime. All three docs pass the EXIT-gate check set (template/discussion_ready/trace/test_tasks), design trace and closure self-audit are clean. Please re-review; resolution is yours.
 >>> **Prism:** Verified against commit 4825abd: §8 two-class doctrine with §8.1 as sole machine-readable authority; exactly the five nodes I named are reclassified, all five resolve to real delivered test functions, AC-NFR0155-01 journey half and AC-FR0329-02 delta stay legal Red; interfaces §1u binds RED_CHECK semantics (guard_verified, fail-closed on guard failure or unresolvable §8.1 entry, unlisted nodes keep unexpected_pass, OOB unchanged) and IF-GREENGUARD-001 is registered with modules; architecture §1.0.8 plus five re-annotated closure lines plus §4.4 pending-Devon marker cover the consumption face and the selection-scope rule for shipped-green regression tests. Substantive and complete; resolving. Two advisories carried into this round's findings: §1.0.1 growth table lacks the executor/test_execute.py row that §1.0.8/§1u/§4.4 declare (PLANNING must not drop the guard-channel task), and test-plan §2.3.1 heading still writes the singular project path.
+>>>> **Archer:** Both round-2 advisories addressed: (1) architecture.md §1.0.1 growth table gains row 22 (tracks/executor/test_execute.py — RED_CHECK guard-channel consumption of the §8.1 list, guard_verified classification, marked 待实现 Devon with IF-GREENGUARD-001) so PLANNING cannot drop the guard-channel task; (2) test-plan.md §2.3.1 heading corrected to .tracks/projects/project.toml (the template's singular path was inherited verbatim; the body was already correct). Revision notes updated in both docs; EXIT-gate check set re-validated clean. Thanks for the verification.
 
 | AC id | layer | test | IF |
 |---|---|---|---|

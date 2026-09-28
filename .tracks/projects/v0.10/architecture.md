@@ -11,7 +11,7 @@ sha:
 
 本文是 ARCH-009 的增量延伸。v0.1～v0.9 的事件溯源、单写者、canonical 阶段状态机、发布闭环五阶段、质量守卫 registry、测试流水线、CLI 与 v0.9 的 server/supervisor 双层（Starlette 交付面 + 后台驱动）全部保持不变；v0.10 在此之上叠加 SPA 工作台 chrome（浏览器侧原生 ES modules 应用层）、登录名字绑定、文档中心应用层与 run 时间线视图，并在同版内完成发布卫生修复（#182/#179/#180/#181/#184/#183）。核心取舍：SPA 交互模型落地但**不引入构建链**（NFR-0156 条件未触发，见 §3.1）；发布卫生全部落在既有模块的定点修正上，不新增子系统。
 
-revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN），吸收 Prism no-diff 复审 blocker（test-plan §8 inline 线程 T-001）——新增 §1.0.8 测试节点两类纪律与 interfaces §1u/IF-GREENGUARD-001 守卫通道，§1.2 五条 closure 行重分类（守卫语义标注 + IF-GREENGUARD-001），§4.4/§5.2 同步；模块边界、合同面与其余 closure 与前版无变更。
+revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN），吸收 Prism no-diff 复审 blocker（test-plan §8 inline 线程 T-001）——新增 §1.0.8 测试节点两类纪律与 interfaces §1u/IF-GREENGUARD-001 守卫通道，§1.2 五条 closure 行重分类（守卫语义标注 + IF-GREENGUARD-001），§4.4/§5.2 同步；模块边界、合同面与其余 closure 与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§1.0.1 增长轴表补第 22 行（tracks/executor/test_execute.py 的守卫通道消费面，PLANNING 不得丢失该 task）。
 
 ## 0. 延续性声明（什么不变）
 
@@ -65,6 +65,7 @@ revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）
 | 19 | `.tracks/projects/project.toml` | version_scheme `bindings`；required_checks 追加 `ui-e2e`（§2 已交付） | FR-0328、NFR-0155 | IF-VERSION-001, IF-WEBUI-001 |
 | 20 | `.github/workflows/ci.yml` + `nightly.yml` | `ui-e2e` required job；browserless job 的 `-m 'not performance and not ui'`（§2 已交付） | NFR-0155 | IF-WEBUI-001 |
 | 21 | `docs/getting-started/installation.md` | 「Live GitHub 旅程环境前置」节（§2 已交付） | FR-0330 | IF-TLS-001 |
+| 22 | `tracks/executor/test_execute.py` | RED_CHECK 消费 test-plan §8.1 守卫清单：守卫 pass 记 `guard_verified`、失败/缺席 fail-closed（**待实现 Devon**；§1.0.8/interfaces §1u） | IF-GREENGUARD-001（T-001 修订） | IF-GREENGUARD-001 |
 
 ### 1.0.2 SPA 工作台壳：两壳 + 原生 ES modules（FR-0316/0317/0318/0319）
 
