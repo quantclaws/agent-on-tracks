@@ -96,6 +96,13 @@ VERSION_FACT_KEYS = ("version", "major", "minor", "n", "ulid")
 
 _PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 
+# Module-level ``NAME = "..."`` literal assignment of a ``.py`` version
+# binding key (IF-VERSION-001): one assignment per line, string value.
+_PY_VERSION_LITERAL_RE = re.compile(
+    r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"(?P<quote>[\"'])(?P<value>.*?)(?P=quote)\s*(?:#.*)?$"
+)
+
 
 @dataclass(frozen=True)
 class LocalGateDecl:
@@ -108,6 +115,22 @@ class LocalGateDecl:
 
 
 @dataclass(frozen=True)
+class VersionBinding:
+    """One ``[host-contract.version_scheme]`` file/key/expect binding.
+
+    The artifact-declaration version binding (IF-VERSION-001, interfaces
+    §1r.2): ``file`` is a repo-relative path, ``key`` dispatches by file
+    type (``.toml`` tomllib dot-path / ``.py`` module-level ``NAME = "..."``
+    literal) and ``expect`` is the template the version gate renders with
+    the run's version facts plus ``{release_tag}``/``{release_version}``.
+    """
+
+    file: str
+    key: str
+    expect: str
+
+
+@dataclass(frozen=True)
 class VersionDecl:
     feature_tag: str
     patch_line: str
@@ -115,6 +138,7 @@ class VersionDecl:
     file: str | None = None
     key: str | None = None
     expect: str | None = None
+    bindings: tuple[VersionBinding, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -212,6 +236,45 @@ def _load_operations(raw: dict) -> dict[str, OperationPlanDecl]:
     return plans
 
 
+def _load_version_bindings(scheme: dict) -> tuple[VersionBinding, ...]:
+    """Parse ``version_scheme`` bindings (IF-VERSION-001, fail-closed).
+
+    The ``bindings`` array of ``{file, key, expect}`` inline tables is
+    authoritative when declared; the legacy singular ``file``/``key``/
+    ``expect`` keys are equivalent to a single-element declaration. A
+    partially declared singular form or a malformed entry fails closed.
+    """
+    raw = scheme.get("bindings")
+    if raw is None:
+        declared = [name for name in ("file", "key", "expect") if scheme.get(name) is not None]
+        if not declared:
+            return ()
+        if len(declared) != 3:
+            _fail_closed("version_scheme singular file/key/expect binding incomplete")
+        return (
+            VersionBinding(
+                file=str(scheme["file"]),
+                key=str(scheme["key"]),
+                expect=str(scheme["expect"]),
+            ),
+        )
+    if not isinstance(raw, list):
+        _fail_closed("version_scheme bindings must be an array of inline tables")
+    bindings: list[VersionBinding] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            _fail_closed("version_scheme bindings entries must be inline tables")
+        label = "version_scheme.bindings"
+        bindings.append(
+            VersionBinding(
+                file=str(_required(entry, "file", label)),
+                key=str(_required(entry, "key", label)),
+                expect=str(_required(entry, "expect", label)),
+            )
+        )
+    return tuple(bindings)
+
+
 def load_host_contract(path: Path) -> HostContract:
     """Parse the ``[host-contract.*]`` tables of a project.toml (fail-closed)."""
     with open(path, "rb") as handle:
@@ -239,6 +302,7 @@ def load_host_contract(path: Path) -> HostContract:
             file=scheme.get("file"),
             key=scheme.get("key"),
             expect=scheme.get("expect"),
+            bindings=_load_version_bindings(scheme),
         ),
         build_command=build.get("command", ""),
         build_artifact=build.get("artifact", ""),
@@ -316,6 +380,79 @@ def render_artifact_template(template: str, facts: dict) -> str:
     for key, value in (facts or {}).items():
         rendered = rendered.replace("{" + key + "}", str(value))
     return rendered
+
+
+def declared_version_bindings(contract) -> tuple[VersionBinding, ...]:
+    """The contract's effective version bindings (IF-VERSION-001).
+
+    Loader-produced contracts carry the normalized declaration on
+    ``VersionDecl.bindings`` (array form authoritative, singular keys
+    equivalent to one element); raw ``[host-contract.*]`` tables are
+    parsed through the same single truth.
+    """
+    version = getattr(contract, "version", None)
+    if isinstance(version, VersionDecl):
+        return tuple(version.bindings)
+    scheme = contract.get("version_scheme") if isinstance(contract, dict) else None
+    return _load_version_bindings(dict(scheme) if isinstance(scheme, dict) else {})
+
+
+def read_version_binding_value(
+    repo: Path | str, binding: VersionBinding
+) -> tuple[str | None, str | None]:
+    """Read one binding's declared key out of its file (fail-closed).
+
+    ``.toml`` keys are tomllib dot-paths (``project.version``); ``.py``
+    keys are module-level ``NAME = "..."`` literal assignments. Returns
+    ``(value, None)`` or ``(None, reason)`` -- never a guessed value.
+    """
+    path = Path(repo) / binding.file
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, "binding_file_unreadable"
+    if path.suffix == ".toml":
+        return _read_toml_dot_path(raw, str(binding.key))
+    if path.suffix == ".py":
+        return _read_py_literal(raw, str(binding.key))
+    return None, "binding_file_type_unsupported"
+
+
+def _read_toml_dot_path(raw: bytes, key: str) -> tuple[str | None, str | None]:
+    """Resolve a dot-path key (``project.version``) inside TOML bytes."""
+    try:
+        node: object = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None, "binding_file_unparseable"
+    for segment in key.split("."):
+        if not isinstance(node, dict) or segment not in node:
+            return None, "binding_key_missing"
+        node = node[segment]
+    return (node, None) if isinstance(node, str) else (None, "binding_key_missing")
+
+
+def _read_py_literal(raw: bytes, name: str) -> tuple[str | None, str | None]:
+    """Resolve a module-level ``NAME = "..."`` literal in Python source."""
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        match = _PY_VERSION_LITERAL_RE.match(line)
+        if match and match.group("name") == name:
+            return match.group("value"), None
+    return None, "binding_key_missing"
+
+
+def render_version_binding_expect(template: str, scope: dict) -> tuple[str, str | None]:
+    """Render a binding ``expect`` template; unknown placeholders fail closed."""
+
+    def substitute(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in scope:
+            raise ValueError(f"unknown placeholder {{{name}}} in binding expect")
+        return str(scope[name])
+
+    try:
+        return _PLACEHOLDER_RE.sub(substitute, str(template or "")), None
+    except ValueError as exc:
+        return "", str(exc)
 
 
 def resolve_build_artifact(

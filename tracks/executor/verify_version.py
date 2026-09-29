@@ -6,7 +6,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tracks.executor.helpers import git
-from tracks.executor.host_contract import NormalizedGateResult
+from tracks.executor.host_contract import (
+    NormalizedGateResult,
+    declared_version_bindings,
+    read_version_binding_value,
+    render_version_binding_expect,
+)
 from tracks.executor.local_gate_evidence import gate_identity, normalized_result_payload
 from tracks.executor.release_gate import (
     active_release_branch,
@@ -24,6 +29,11 @@ _JOURNEY_VERSION_TEMPLATE = {
     "post_release": "patch_line",
     "dev": "prerelease_tag",
 }
+
+# IF-VERSION-001 §1r.2: file bindings are enforced on the release-bearing
+# journeys; the dev (prerelease) journey is exempt (a prerelease tag is a
+# transient identity, the files are not required to carry it).
+_BINDING_ENFORCED_JOURNEYS = frozenset({"feature", "post_release"})
 
 
 _VERSION_STEP_KINDS = ("tag", "release")
@@ -57,8 +67,11 @@ class ExecVerifyVersionMixin:
         ``[host-contract.version_scheme]`` templates + version facts and
         requires every ``tag:``/``release:`` step target to be exactly the
         journey's template rendering — a literal or cross-template target is
-        ``version_mismatch``, never silently published. Each derived tag is
-        then probed with ``git ls-remote``: a present tag is
+        ``version_mismatch``, never silently published. Declared
+        file/key/expect bindings are then compared against the rendered
+        ``expect`` on feature/post_release journeys (IF-VERSION-001:
+        ``version_decl_mismatch`` names the file and key). Each derived tag
+        is then probed with ``git ls-remote``: a present tag is
         ``tag_already_exists`` and a configured-but-unreachable remote is
         ``remote_unavailable`` (fail closed, never a guessed pass). A
         remote-less host records ``attention.required`` and fails closed: tag
@@ -106,6 +119,11 @@ class ExecVerifyVersionMixin:
                 command_echo=command_echo,
                 extra={"mismatches": mismatches},
             )
+        binding_verdict = self._version_decl_bindings_gate(
+            ctx, contract, census, derived, command_echo
+        )
+        if binding_verdict is not None:
+            return binding_verdict
         if not derived:
             return self._emit_version_decl_verdict(
                 ctx,
@@ -244,6 +262,101 @@ class ExecVerifyVersionMixin:
             detail="",
             command_echo=command_echo,
         )
+
+    def _version_decl_bindings_gate(
+        self, ctx: _VersionGateCtx, contract, census: dict, derived, command_echo
+    ) -> bool | None:
+        """IF-VERSION-001 §1r.2: declared file/key/expect binding comparison.
+
+        Appended to the tag-derivation check: with bindings declared and a
+        feature/post_release journey, every binding's ``file`` is read, the
+        ``key`` extracted and compared against the rendered ``expect``; any
+        mismatch fails the gate naming the file and key (kind=version,
+        reason=version_decl_mismatch). The dev (prerelease) journey is
+        exempt and an undeclared scheme keeps the v0.9 behavior verbatim.
+        Returns ``None`` to continue toward the remote-absence probe.
+        """
+        if (ctx.journey or "") not in _BINDING_ENFORCED_JOURNEYS:
+            return None
+        if not declared_version_bindings(contract):
+            return None
+        mismatches, errors = self._binding_findings(ctx, contract, census)
+        remote_check = {"status": "not_checked", "tags": list(derived)}
+        if errors:
+            first = errors[0]
+            return self._emit_version_decl_verdict(
+                ctx,
+                derived_tags=derived,
+                census=census,
+                remote_check=remote_check,
+                reason="version_decl_malformed",
+                detail=(
+                    f"declared version binding unreadable: {first['file']} "
+                    f"key {first['key']}: {first['error']}"
+                ),
+                command_echo=command_echo,
+                extra={"binding_errors": errors},
+            )
+        if mismatches:
+            first = mismatches[0]
+            return self._emit_version_decl_verdict(
+                ctx,
+                derived_tags=derived,
+                census=census,
+                remote_check=remote_check,
+                reason="version_decl_mismatch",
+                detail=(
+                    f"declared version binding mismatch: {first['file']} "
+                    f"key {first['key']} is {first['actual']!r}, "
+                    f"expected {first['expected']!r}"
+                ),
+                command_echo=command_echo,
+                extra={"binding_mismatches": mismatches},
+            )
+        return None
+
+    def _binding_findings(
+        self, ctx: _VersionGateCtx, contract, census: dict
+    ) -> tuple[list[dict], list[dict]]:
+        """Per-binding ``(mismatches, integrity_errors)`` for the journey."""
+        mismatches: list[dict] = []
+        errors: list[dict] = []
+        scope = self._binding_expect_scope(ctx, contract, census)
+        for binding in declared_version_bindings(contract):
+            actual, error = read_version_binding_value(self.repo, binding)
+            expected, render_error = render_version_binding_expect(binding.expect, scope)
+            if error is not None or render_error is not None:
+                errors.append(
+                    {
+                        "file": binding.file,
+                        "key": binding.key,
+                        "error": error or render_error,
+                    }
+                )
+                continue
+            if actual != expected:
+                mismatches.append(
+                    {
+                        "file": binding.file,
+                        "key": binding.key,
+                        "actual": actual,
+                        "expected": expected,
+                    }
+                )
+        return mismatches, errors
+
+    def _binding_expect_scope(self, ctx: _VersionGateCtx, contract, census: dict) -> dict:
+        """The ``expect`` placeholder scope: run version facts plus the
+        gate-supplied ``{release_tag}`` (this journey's derived tag) and
+        ``{release_version}`` (derived tag minus one leading ``v``)."""
+        base_facts = dict(ctx.base_facts)
+        if census["requested"] and census["error"] is None and census["n"] is not None:
+            base_facts["n"] = census["n"]
+        facts = _version_facts(contract, base_facts)
+        template_name = _JOURNEY_VERSION_TEMPLATE.get(ctx.journey or "")
+        release_tag = str(facts.get(template_name) or "") if template_name else ""
+        release_version = release_tag[1:] if release_tag.startswith("v") else release_tag
+        return {**facts, "release_tag": release_tag, "release_version": release_version}
 
     def _emit_version_decl_verdict(
         self,
