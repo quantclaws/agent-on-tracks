@@ -372,15 +372,30 @@ def _git(repo: str, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def _kill_worktree_agents(path: str) -> list[int]:
-    """#212: terminate opencode processes whose ``--dir`` points inside this
-    worktree (SIGTERM → brief wait → SIGKILL). Best-effort: never raises,
-    returns the PIDs it signaled. Scans the process table via ``ps`` — the
-    resident agents were spawned with ``start_new_session=True`` (their own
-    process groups), so we kill each PID's group directly."""
-    import signal as _signal
-    import time as _time
+def _process_cwd(pid: int) -> str | None:
+    """A process's working directory via ``lsof`` (macOS/Linux portable;
+    Prism F-1: the worktree is the Popen *cwd*, never the ``--dir`` argv).
+    Returns None when lsof is unavailable or the process is gone."""
+    try:
+        proc = subprocess.run(
+            ["lsof", "-p", str(pid), "-Fn", "-w"],
+            capture_output=True, text=True, check=False, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.startswith("n/") and os.path.isdir(line[1:]):
+            return os.path.realpath(line[1:])
+    return None
 
+
+def _kill_worktree_agents(path: str) -> list[int]:
+    """#212: terminate opencode processes whose *working directory* is inside
+    this worktree (SIGTERM → brief wait → SIGKILL). The worktree is the
+    Popen cwd, not a cmdline argument (Prism F-1) — lsof resolves each
+    candidate's cwd. Best-effort: never raises, returns the PIDs signaled."""
     marked = os.path.realpath(path)
     try:
         proc = subprocess.run(
@@ -388,77 +403,56 @@ def _kill_worktree_agents(path: str) -> list[int]:
         )
     except OSError:
         return []
-    killed: list[int] = []
+    pids: list[int] = []
     for line in proc.stdout.splitlines()[1:]:
         parts = line.strip().split(None, 1)
-        if len(parts) < 2:
-            continue
-        pid_s, cmd = parts
-        if "opencode run --agent" not in cmd or f"--dir {marked}" not in cmd:
+        if len(parts) < 2 or "opencode run --agent" not in parts[1]:
             continue
         try:
-            pid = int(pid_s)
+            pid = int(parts[0])
         except ValueError:
             continue
         if pid == os.getpid():
             continue
-        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(pid, _signal.SIGTERM)
-            killed.append(pid)
-    if not killed:
-        return []
-    _time.sleep(1.0)
-    for pid in killed:
-        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-            os.killpg(pid, _signal.SIGKILL)
-    return killed
+        cwd = _process_cwd(pid)
+        if cwd is not None and (cwd == marked or cwd.startswith(marked + os.sep)):
+            pids.append(pid)
+    _terminate_groups(pids)
+    return pids
 
 
 def sweep_orphan_agents() -> list[int]:
     """#212: terminate orphaned opencode agent processes (PPID=1) whose
-    ``--dir`` points to a path that no longer exists. Called at drive
-    startup alongside the worktree sweep — production environments
-    accumulate these across crash/restart cycles (linear growth per task
-    cycle, eventually blocking dispatches)."""
+    working directory no longer exists (Prism F-1: the worktree is the Popen
+    cwd, not a cmdline arg — resolve each candidate's cwd via lsof, never
+    parse --dir from the command line). Called at drive startup alongside
+    the worktree sweep; production environments accumulate orphans across
+    crash/restart cycles (linear growth per task cycle)."""
     try:
         proc = subprocess.run(
             ["ps", "-eo", "pid,ppid,command"], capture_output=True, text=True, check=False
         )
     except OSError:
         return []
-    killed = [
-        pid
-        for line in proc.stdout.splitlines()[1:]
-        if (pid := _orphan_agent_pid(line)) is not None
-    ]
+    killed: list[int] = []
+    for line in proc.stdout.splitlines()[1:]:
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3 or "opencode run --agent" not in parts[2]:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if ppid != 1 or pid == os.getpid():
+            continue
+        cwd = _process_cwd(pid)
+        # An orphan whose cwd is gone (worktree deleted) or unreadable
+        # (lsof permission failure on a zombie-adjacent process) — both
+        # are unrecoverable residents, safe to reclaim.
+        if cwd is None or not os.path.exists(cwd):
+            killed.append(pid)
     _terminate_groups(killed)
     return killed
-
-
-def _orphan_agent_pid(line: str) -> int | None:
-    """One ps line's orphaned-agent PID, or None when the line is not an
-    opencode agent whose parent is init (PPID=1) running in a deleted dir."""
-    import signal as _signal  # noqa: F401  (used by the caller via kill)
-
-    parts = line.strip().split(None, 2)
-    if len(parts) < 3:
-        return None
-    pid_s, ppid_s, cmd = parts
-    if "opencode run --agent" not in cmd or "--dir " not in cmd:
-        return None
-    try:
-        pid, ppid = int(pid_s), int(ppid_s)
-    except ValueError:
-        return None
-    if ppid != 1 or pid == os.getpid():
-        return None
-    dir_idx = cmd.find("--dir ")
-    if dir_idx < 0:
-        return None
-    dir_path = cmd[dir_idx + 6:].split()[0].rstrip("}").strip("'\"")
-    if os.path.exists(dir_path):
-        return None  # worktree still alive — not an orphan
-    return pid
 
 
 def _terminate_groups(pids: list[int]) -> None:
