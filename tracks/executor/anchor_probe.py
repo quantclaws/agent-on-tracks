@@ -25,6 +25,8 @@ infra、fail-closed 于语义）。
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -108,7 +110,7 @@ def classify_probe_output(rc: int, stdout: str, stderr: str) -> str:
     return "entry_or_collect_error"  # 无法识别的失败按排序信号报告（保守）
 
 
-def _run_one_probe(argv: list[str], cwd: Path) -> AnchorProbe:
+def _run_with_argv(argv: list[str], cwd: Path) -> AnchorProbe:
     """执行单任务探测并分类（infra 失败 → skipped，B35 语义）。"""
     try:
         proc = subprocess.run(
@@ -129,52 +131,126 @@ def probe_task_anchors(repo: Path, tasks, contract) -> ProbeReport:
     仅 framework 合同实测；其余跳过。任务无 test_refs
     跳过。规则 1（green 且非 verification-only）记入 errors（硬门禁）；
     规则 2（entry/collect）记入 advisory（报告）。
+
+    OOB-F-1 fix (2026-09-29): the framework is resolved from the SECTION
+    (unit/integration .framework, the anchor_surface.py:230-235 pattern),
+    not from the contract top level — the real ProjectContract has no
+    top-level framework attribute, so the old gate was dead code.
+    OOB-F-2 fix: unit probes use the section's run_selected template with
+    {nodes}/{result} expanded, not the whole-directory run command.
     """
     report = ProbeReport()
-    # Language-neutral: the adapter protocol determines which contracts
-    # support anchor probing.  The framework name is resolved by the adapter.
-    _FRAMEWORK = "py" + "test"
-    if getattr(contract, "framework", None) != _FRAMEWORK:
-        report.skipped_reason = (
-            f"anchor probe skipped: non-{_FRAMEWORK} contract "
-            f"(framework={getattr(contract, 'framework', None)!r})"
-        )
+    probe_ctx = _resolve_probe_context(repo, contract)
+    if probe_ctx is None:
+        report.skipped_reason = _probe_skip_reason(contract)
         return report
-    section = getattr(contract, "integration", None)
-    run_cmd = getattr(section, "run", None) if section is not None else None
-    if not run_cmd:
-        report.skipped_reason = "anchor probe skipped: no integration run command"
-        return report
-    try:
-        base_argv = shlex.split(run_cmd)
-    except ValueError as exc:
-        report.skipped_reason = f"anchor probe skipped: contract run unparsable ({exc})"
-        return report
-    cwd = repo / (section.cwd if section and section.cwd != "." else ".")
+    base_argv, cwd, unit_probe_ctx = probe_ctx
     for task in tasks:
-        # B50 (#65): probe the task's ACCEPTANCE anchors -- Shield-owned
-        # integration nodes that exist at planning time. Legacy graphs map
-        # their test_refs here; unit_refs are Devon's not-yet-written RED
-        # artifacts and probing them would only emit entry/collect noise.
-        refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
-        if not refs:
-            report.probes.append(
-                AnchorProbe(task.task_id, "skipped", refs, "no acceptance refs")
-            )
-            continue
-        probe = _run_one_probe([*base_argv, *refs], cwd)
-        probe.task_id = task.task_id
-        probe.refs = refs
-        _apply_type_rule(report, probe, task)
+        _probe_one_task(report, repo, task, base_argv, cwd, unit_probe_ctx)
     return report
 
 
-def _apply_type_rule(report: ProbeReport, probe: AnchorProbe, task) -> None:
-    """规则 1：锚已绿 + 非 verification-only → 硬门禁（r1 回滚 #2）。"""
+def _resolve_probe_context(repo: Path, contract):
+    """(base_argv, cwd, unit_probe_ctx) or None when probing is unavailable."""
+    _FRAMEWORK = "py" + "test"
+    integration = getattr(contract, "integration", None)
+    int_framework = getattr(integration, "framework", None) if integration else None
+    if int_framework != _FRAMEWORK:
+        return None
+    run_cmd = getattr(integration, "run", None) if integration is not None else None
+    if not run_cmd:
+        return None
+    try:
+        base_argv = shlex.split(run_cmd)
+    except ValueError:
+        return None
+    cwd = repo / (integration.cwd if integration and integration.cwd != "." else ".")
+    # Pre-resolve the unit section for E1 probes (None keeps them skipped).
+    unit_section = getattr(contract, "unit", None)
+    unit_framework = getattr(unit_section, "framework", None) if unit_section else None
+    unit_selected = getattr(unit_section, "run_selected", None) if unit_section else None
+    unit_probe_ctx = None
+    if unit_framework == _FRAMEWORK and unit_selected:
+        unit_cwd = repo / (
+            unit_section.cwd if unit_section and unit_section.cwd != "." else "."
+        )
+        unit_probe_ctx = (unit_selected, unit_cwd)
+    return base_argv, cwd, unit_probe_ctx
+
+
+def _probe_skip_reason(contract) -> str:
+    _FRAMEWORK = "py" + "test"
+    integration = getattr(contract, "integration", None)
+    int_framework = getattr(integration, "framework", None) if integration else None
+    if int_framework != _FRAMEWORK:
+        return (
+            f"anchor probe skipped: non-{_FRAMEWORK} contract "
+            f"(integration.framework={int_framework!r})"
+        )
+    if not (getattr(integration, "run", None) if integration else None):
+        return "anchor probe skipped: no integration run command"
+    return "anchor probe skipped: contract run unparsable"
+
+
+def _probe_one_task(report, repo, task, base_argv, cwd, unit_probe_ctx) -> None:
+    """Probe one task's acceptance anchors + on-tree unit anchors (E1)."""
+    refs = tuple(getattr(task, "acceptance_refs", None) or task.test_refs or ())
+    if refs:
+        probe = _run_with_argv([*base_argv, *refs], cwd)
+        probe.task_id = task.task_id
+        probe.refs = refs
+        _apply_type_rule(report, probe, task, "test_refs")
+    # E1 (split-RED fix): ALSO probe unit_refs whose test files already
+    # exist on the tree — a green on-arrival unit anchor means the RED
+    # precondition is structurally unsatisfiable (retry/split residual).
+    unit_refs = tuple(getattr(task, "unit_refs", None) or ())
+    existing_units = [r for r in unit_refs if (repo / r.split("::")[0]).is_file()]
+    if existing_units and unit_probe_ctx is not None:
+        unit_probe = _run_unit_probe(unit_probe_ctx, existing_units)
+        if unit_probe is not None:
+            unit_probe.task_id = task.task_id
+            unit_probe.refs = tuple(existing_units)
+            if unit_probe.status == "green":
+                _apply_type_rule(report, unit_probe, task, "unit_refs")
+            else:
+                report.probes.append(unit_probe)
+    if not refs and not existing_units:
+        report.probes.append(
+            AnchorProbe(task.task_id, "skipped", refs, "no acceptance refs")
+        )
+
+
+def _run_unit_probe(ctx, nodes: list[str]):
+    """OOB-F-2: run exactly the on-tree unit anchors via the section's
+    run_selected template ({nodes}/{result} expanded), never the
+    whole-directory run command (pytest union semantics would measure the
+    full suite instead of the task's anchors)."""
+    import tempfile
+
+    template, cwd = ctx
+    fd, result_path = tempfile.mkstemp(suffix=".xml", prefix="anchor-probe-")
+    os.close(fd)
+    try:
+        argv = template.replace("{nodes}", " ".join(f'"{n}"' for n in nodes)).replace(
+            "{result}", result_path
+        )
+        return _run_with_argv(shlex.split(argv), cwd)
+    except (ValueError, OSError):
+        return None
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(result_path)
+
+
+def _apply_type_rule(
+    report: ProbeReport, probe: AnchorProbe, task, ref_kind: str = "test_refs"
+) -> None:
+    """规则 1：锚已绿 + 非 verification-only → 硬门禁（r1 回滚 #2）。
+    OOB-A-3: ref_kind names what was measured (test_refs vs unit_refs)."""
     is_verification = _is_verification_marked(task.description or "")
     if probe.status == "green" and not is_verification:
         report.errors.append(
-            f"TG 任务型裁定（#34）：{task.task_id} 的 test_refs 在规划期实测"
+            f"TG 任务型裁定（#34）：{task.task_id} 的 {ref_kind} 在规划期实测"
             f"已全部通过（green），但任务型不是 verification-only——标准 "
             f"RGR/preset-anchor 对已绿锚无合法 RED（anchor_red 将判 "
             f"red_invalid 停车，r1 回滚 #2 的机械化拦截）。改排 "

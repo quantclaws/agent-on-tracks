@@ -379,6 +379,10 @@ class State:
     # (FR-0210), which previously left the fixer re-deriving Prism's whole
     # analysis from scratch (run 01KZTHE7 T-008/T-017, 2026-08-15/16).
     diagnose_report: dict | None = None
+    # E2 (split-RED fix, 2026-09-29): the typed ruling when RED anchors are
+    # green on arrival (retry/split residual) — carried into the PLANNING
+    # assignment so Archer converts to verification-only or re-cuts scope.
+    m_impl_red_ruling: dict | None = None
     # Consecutive infrastructure failures (opencode process killed, provider
     # unreachable, missing binary, timeout) digested by the runtime itself -
     # they never consume the agent attempt budget and never pollute

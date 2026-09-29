@@ -70,11 +70,13 @@ class _Contract:
 
 
 def _contract(run_cmd: str, framework: str = "pytest", cwd: str = "."):
+    # OOB-F-1: the real ProjectContract resolves framework from the SECTION,
+    # not the top level — the fixture mirrors that shape.
     c = _Contract()
-    c.framework = framework
     section = _Contract()
     section.run = run_cmd
     section.cwd = cwd
+    section.framework = framework
     c.integration = section
     return c
 

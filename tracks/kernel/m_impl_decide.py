@@ -172,6 +172,20 @@ def _m_impl_archer_dispatch(s: State) -> Command:
     }
     if s.last_failure:
         params["evidence"] = dict(s.last_failure)
+    # OOB-F-3 fix (2026-09-29): surface the E2 red ruling in the PLANNING
+    # assignment so Archer receives the machine-measured green_on_arrival
+    # fact and its remedy — then CLEAR it (one-shot): an un-cleared ruling
+    # would leak into every subsequent unrelated replan's dispatch with a
+    # stale green_on_arrival and a misleading objective (Prism rev2).
+    if s.m_impl_red_ruling:
+        assignment["red_ruling"] = dict(s.m_impl_red_ruling)
+        params["objective"] = (
+            "decompose requirements into implementation task graph; "
+            "the previous RED was green-on-arrival (machine-measured) — "
+            "convert the affected task to verification-only or re-cut its "
+            "scope so remaining RED is legal"
+        )
+        s.m_impl_red_ruling = None
     return Command(kind="dispatch_agent", params=params)
 
 

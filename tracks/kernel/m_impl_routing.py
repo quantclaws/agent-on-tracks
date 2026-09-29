@@ -215,6 +215,27 @@ def _red_missing_only(evidence) -> bool:
 
 def _route_red_invalid(s: State, evidence) -> None:
     if _red_missing_only(evidence):
+        # E2 (split-RED fix, 2026-09-29): all-unexpected_pass is a typed
+        # plan-layer fact — the RED anchors are green on arrival (residual
+        # from a failed sibling/retry cycle). Stamp it on the state so the
+        # PLANNING assignment carries the machine-measured ruling: Archer
+        # must convert to verification-only (with runtime-measured green
+        # evidence) or re-cut scope; re-issuing the same RGR task will be
+        # rejected by the E1 anchor probe at commit time.
+        try:
+            payload = json.loads(evidence) if isinstance(evidence, str) else {}
+            classifications = payload.get("classifications", [])
+        except (ValueError, TypeError):
+            classifications = []
+        if classifications and all(c == "unexpected_pass" for c in classifications):
+            s.m_impl_red_ruling = {
+                "task_type_ruling": "green_on_arrival",
+                "measured_classifications": classifications,
+                "remedy": (
+                    "convert to verification-only (anchors become stay-green "
+                    "obligations) or re-cut scope so remaining RED is legal"
+                ),
+            }
         _route_scope_replan(s)
         return
     s.substate = "RED"
