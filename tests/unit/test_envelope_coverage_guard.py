@@ -33,6 +33,8 @@ _LEGACY_WHITELIST = {
     ("shield", "NO_DIFF_EXPLAIN"),
     ("prism", "NO_DIFF_REVIEW"),
     ("devon", "NO_DIFF_EXPLAIN"),
+    ("scribe", "NO_DIFF_EXPLAIN"),
+    ("archer", "NO_DIFF_EXPLAIN"),
     ("scribe", "NO_DIFF_EXPLAIN"),  # _no_diff_dispatch_params drafting_role fallback
     ("archer", "NO_DIFF_EXPLAIN"),  # _no_diff_dispatch_params drafting_role fallback
 }
@@ -59,6 +61,8 @@ _ALL_DISPATCH_PAIRS = frozenset({
     ("prism", "VERIFY_FINAL"),
     ("devon", "RED"), ("devon", "GREEN"), ("devon", "REFACTOR"),
     ("devon", "NO_DIFF_EXPLAIN"),
+    ("scribe", "NO_DIFF_EXPLAIN"),
+    ("archer", "NO_DIFF_EXPLAIN"),
     # M-HOTFIX triage
     ("sage", "SAGE_TRIAGE"),
 })
