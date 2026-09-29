@@ -193,10 +193,16 @@ def cleanup_worktree(
 
     Returns True=cleaned successfully, False=cleanup failed (emit error event,
     does not corrupt existing worktree).
-    """
+
+    #212 OOB (2026-09-29): kill any agent processes still running in this
+    worktree BEFORE removing the directory — the old cleanup leaked every
+    resident opencode child as an orphan (PPID=1) that accumulated across
+    task cycles and eventually blocked subsequent dispatches (live: 6 stale
+    Sage processes ground T-009 PRISM_FINAL to a halt)."""
     path = handle.path
     if not os.path.exists(path):
         return True
+    _kill_worktree_agents(path)
     main = _main_repo(path)
     if main is not None and _same_path(path, main):
         return True
@@ -364,3 +370,109 @@ def _git(repo: str, *args: str) -> str:
         check=True,
     )
     return proc.stdout.strip()
+
+
+def _kill_worktree_agents(path: str) -> list[int]:
+    """#212: terminate opencode processes whose ``--dir`` points inside this
+    worktree (SIGTERM → brief wait → SIGKILL). Best-effort: never raises,
+    returns the PIDs it signaled. Scans the process table via ``ps`` — the
+    resident agents were spawned with ``start_new_session=True`` (their own
+    process groups), so we kill each PID's group directly."""
+    import signal as _signal
+    import time as _time
+
+    marked = os.path.realpath(path)
+    try:
+        proc = subprocess.run(
+            ["ps", "-eo", "pid,command"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return []
+    killed: list[int] = []
+    for line in proc.stdout.splitlines()[1:]:
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2:
+            continue
+        pid_s, cmd = parts
+        if "opencode run --agent" not in cmd or f"--dir {marked}" not in cmd:
+            continue
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pid, _signal.SIGTERM)
+            killed.append(pid)
+    if not killed:
+        return []
+    _time.sleep(1.0)
+    for pid in killed:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pid, _signal.SIGKILL)
+    return killed
+
+
+def sweep_orphan_agents() -> list[int]:
+    """#212: terminate orphaned opencode agent processes (PPID=1) whose
+    ``--dir`` points to a path that no longer exists. Called at drive
+    startup alongside the worktree sweep — production environments
+    accumulate these across crash/restart cycles (linear growth per task
+    cycle, eventually blocking dispatches)."""
+    try:
+        proc = subprocess.run(
+            ["ps", "-eo", "pid,ppid,command"], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return []
+    killed = [
+        pid
+        for line in proc.stdout.splitlines()[1:]
+        if (pid := _orphan_agent_pid(line)) is not None
+    ]
+    _terminate_groups(killed)
+    return killed
+
+
+def _orphan_agent_pid(line: str) -> int | None:
+    """One ps line's orphaned-agent PID, or None when the line is not an
+    opencode agent whose parent is init (PPID=1) running in a deleted dir."""
+    import signal as _signal  # noqa: F401  (used by the caller via kill)
+
+    parts = line.strip().split(None, 2)
+    if len(parts) < 3:
+        return None
+    pid_s, ppid_s, cmd = parts
+    if "opencode run --agent" not in cmd or "--dir " not in cmd:
+        return None
+    try:
+        pid, ppid = int(pid_s), int(ppid_s)
+    except ValueError:
+        return None
+    if ppid != 1 or pid == os.getpid():
+        return None
+    dir_idx = cmd.find("--dir ")
+    if dir_idx < 0:
+        return None
+    dir_path = cmd[dir_idx + 6:].split()[0].rstrip("}").strip("'\"")
+    if os.path.exists(dir_path):
+        return None  # worktree still alive — not an orphan
+    return pid
+
+
+def _terminate_groups(pids: list[int]) -> None:
+    """SIGTERM each PID's process group, wait briefly, then SIGKILL any
+    survivors (#212)."""
+    import signal as _signal
+    import time as _time
+
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pid, _signal.SIGTERM)
+    if not pids:
+        return
+    _time.sleep(1.0)
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(pid, _signal.SIGKILL)

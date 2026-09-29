@@ -145,8 +145,17 @@ def _sweep_stale_worktrees(store: Store, repo: Path, run_id: str, version: str) 
     # at new-run initialization — never at trac run or mid-run. Audited as
     # an event; empty sweep emits nothing (no noise runs). Deferred import
     # avoids a circular dependency at module load.
-    from tracks.executor.worktree import sweep_worktrees
+    from tracks.executor.worktree import sweep_orphan_agents, sweep_worktrees
 
+    # #212: orphaned agent processes (PPID=1, dead --dir) accumulate across
+    # crash/restart cycles and eventually block dispatches — sweep them
+    # alongside the worktree reclamation at run start.
+    orphans = sweep_orphan_agents()
+    if orphans:
+        print(
+            f"start: swept {len(orphans)} orphaned agent process(es): {orphans}",
+            flush=True,
+        )
     swept = sweep_worktrees(str(repo))
     if swept:
         store.append(
