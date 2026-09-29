@@ -105,6 +105,47 @@ def _reject(
     )
 
 
+# interfaces.md §1r.3 (IF-HOTFIX-011) — classification -> recovery guidance
+# for a failed issue fetch. ``issue_not_found`` stays narrow (confirmed
+# missing only); every fetch-failure class reports ``issue_fetch_failed``
+# with its own actionable ``next`` and keeps the REJECTED retry path open.
+_FETCH_FAILURE_NEXT: dict[str, str] = {
+    "missing_token": (
+        "set GITHUB_TOKEN (see the live GitHub journey prerequisites in "
+        "docs/getting-started/installation.md), then retry the hotfix entry"
+    ),
+    "auth": (
+        "check the GITHUB_TOKEN permissions (scopes/expiry), then retry "
+        "the hotfix entry"
+    ),
+    "rate_limit": (
+        "wait for the GitHub rate limit to reset, then retry the hotfix entry"
+    ),
+    "network": (
+        "check network connectivity/TLS (or set TRAC_GITHUB_CA_BUNDLE), "
+        "then retry the hotfix entry"
+    ),
+}
+
+# An unrecognized classification still reports issue_fetch_failed with
+# generic guidance — never silently downgraded to a confirmed-missing read.
+_FETCH_FAILURE_NEXT_DEFAULT = "fix the issue fetch channel, then retry the hotfix entry"
+
+
+def fetch_failure_report(classification: str) -> PrecheckReport:
+    """IF-HOTFIX-011 classified fetch-failure rejection (pure function).
+
+    ``auth`` / ``rate_limit`` / ``network`` / ``missing_token`` map to the
+    ``issue_fetch_failed`` rejection reason (closed-set member, reachable)
+    with a classification-specific ``next`` recovery pointer; the REJECTED
+    path stays retryable — fix the environment, then re-run the precheck.
+    """
+    return _reject(
+        "issue_fetch_failed",
+        _FETCH_FAILURE_NEXT.get(classification, _FETCH_FAILURE_NEXT_DEFAULT),
+    )
+
+
 def precheck_hotfix(
     issue: HostIssue | None,
     scenario: str,
@@ -119,11 +160,14 @@ def precheck_hotfix(
     scenario requires an active release branch (active run branch or HEAD,
     ``releases/*``); target version locatable (dev = branch version,
     post-release = highest approved version, numeric tuple compare);
-    ``fix/{issue}`` not already present. ``issue=None`` (fetch failed)
-    maps to issue_not_found / issue_fetch_failed. Rejection reasons come
-    from the closed set :data:`HotfixRejectionReason`; each rejected report
-    carries a human-readable ``next`` (retry after completing the issue, or
-    use ``trac start``).
+    ``fix/{issue}`` not already present. ``issue=None`` means the issue is
+    confirmed missing (the fetch face's 404->None confirmation) and maps to
+    issue_not_found; classified fetch failures never reach this function —
+    the face maps them via ``fetch_failure_report`` (IF-HOTFIX-011).
+    Rejection reasons come from the closed set
+    :data:`HotfixRejectionReason`; each rejected report carries a
+    human-readable ``next`` (retry after completing the issue, or use
+    ``trac start``).
     """
     # P-1: issue fetch and type=bug check
     if issue is None:

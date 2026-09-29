@@ -11,6 +11,7 @@ from tracks.effects.github import GithubIssuesError, select_issue_backend
 from tracks.executor.helpers import git
 from tracks.executor.hotfix import (
     complete_hotfix_entry,
+    fetch_failure_report,
     parse_anchor_refs,
     precheck_hotfix,
     validate_anchor_refs,
@@ -80,13 +81,26 @@ def _hotfix_corpus_paths(home: Path) -> list[str]:
 
 def precheck_hotfix_report(repo, store, issue_number: int, scenario: str):
     """Run the deterministic PRECHECK (IF-HOTFIX-003) with inputs collected
-    from the repo + event store (issue fetch, branch probe, active-run branch,
-    approved baselines). Returns ``(report, issue)``. Shared by ``cmd_hotfix``
-    (run-version resolution) and ``_do_precheck_hotfix`` (event emission)."""
+    from the repo + event store (issue fetch, branch probe, active-run
+    branch, approved baselines). Returns ``(report, issue)``. Shared by
+    ``cmd_hotfix`` (run-version resolution) and ``_do_precheck_hotfix``
+    (event emission).
+
+    Fetch-face classification intake (IF-HOTFIX-011, interfaces §1r.3): a
+    ``GithubIssuesError.classification == "not_found"`` (like the 404->None
+    confirmation inside ``fetch_issue``) means confirmed missing ->
+    ``issue=None`` (the pure rules report ``issue_not_found``); every other
+    classification (auth/rate_limit/network/missing_token) rejects as
+    ``issue_fetch_failed`` with the classified recovery ``next`` — the
+    REJECTED path stays retryable after the environment is fixed (#180).
+    """
     try:
         issue = select_issue_backend(repo, "").fetch_issue(issue_number)
-    except GithubIssuesError:
-        issue = None  # fetch failure: pure rules map it to issue_fetch_failed
+    except GithubIssuesError as exc:
+        if exc.classification == "not_found":
+            issue = None  # confirmed missing: pure rules map to issue_not_found
+        else:
+            return fetch_failure_report(exc.classification), None
     branches = git(repo, "branch", "--list", check=False).stdout.splitlines()
     active = store.active_run()
     active_branch = _hotfix_run_branch(store, active) if active else None
