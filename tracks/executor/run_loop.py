@@ -613,7 +613,12 @@ the host Executor keeps construction and the command handlers."""
         per-dispatch command id) names the file — unique per dispatch, so a
         reused session can only ever write its own dispatch's result.
         TRAC_RESULT_FILE=0 reverts to fence-only delivery.
-        """
+
+        Envelope resilience (2026-09-30, Human Aaron directive): after a
+        reply_format_error, the next dispatch's OBJECTIVE leads with the
+        delivery instructions (read the tracks-envelope skill, write to
+        result_file, validate before replying) — the agent may not dig
+        into the assignment JSON to find the result_file block."""
         if os.environ.get("TRAC_ENVELOPE_DECLARE", "").strip() == "0":
             return
         kind = envelope_declared_kind(params.get("role"), params.get("substate"))
@@ -628,6 +633,18 @@ the host Executor keeps construction and the command handlers."""
             inbox.mkdir(parents=True, exist_ok=True)
             result_path = str((inbox / f"{cid}.json").resolve())
             assignment["result_file"] = result_file_contract(result_path, kind)
+            # Resilience: after a format error, make the delivery path
+            # impossible to miss by putting it in the objective itself.
+            state = self.store.state(self.run_id)
+            if (state.last_failure or {}).get("check") == "reply_format_error":
+                params["objective"] = (
+                    f"DELIVER YOUR REPLY VIA FILE: json.dump the envelope to "
+                    f"{result_path}, then run `trac validate-reply --file "
+                    f"{result_path} --kind {kind}` (exit 0 required), then "
+                    f"reply with a one-line file pointer. Read the "
+                    f"tracks-envelope skill FIRST. — "
+                    + str(params.get("objective") or "")
+                )
         params["assignment"] = assignment
 
     def _enrich_m_test_prism_assignment(self, params: dict, state: State) -> None:
