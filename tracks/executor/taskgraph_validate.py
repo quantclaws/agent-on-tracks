@@ -470,6 +470,9 @@ def plan_row_targets(test_cell: str) -> list[tuple[str, str | None]]:
     ]
     targets: list[tuple[str, str | None]] = []
     for item in items:
+        # Strip display annotations (（守卫，§8.1） etc.) from the node part —
+        # they are §8 navigation aids, not part of the test id.
+        item = re.sub(r"[（(][^）)]*[）)]\s*$", "", item).strip()
         file_part, sep, node_part = item.partition("::")
         if not file_part:
             continue
