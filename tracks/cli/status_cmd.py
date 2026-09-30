@@ -15,6 +15,7 @@ from pathlib import Path
 from tracks import paths
 from tracks.kernel import project
 from tracks.kernel.m_test import pipeline_incomplete_links
+from tracks.kernel.machine_verdicts import _REVIEW_PENDING_THREADS
 from tracks.report import generate_report, progress_summary
 from tracks.store import Store
 
@@ -79,7 +80,7 @@ def _status_line(run_id, s) -> str:
             f" branch=fix/{s.hotfix_issue} "
             f"scenario={s.hotfix_scenario} issue={s.hotfix_issue}"
         )
-    if s.awaiting == "review_pending_threads":
+    if s.awaiting == _REVIEW_PENDING_THREADS:
         line += "\n" + "\n".join(_pending_thread_lines(s))
     return line
 

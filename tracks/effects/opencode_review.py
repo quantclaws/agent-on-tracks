@@ -21,14 +21,14 @@ from tracks.kernel.envelope import (
     validate_review_payload,
 )
 from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
+from tracks.kernel.machine_verdicts import _PARK_VERDICT
 
 from .opencode_audit import _discussion_snapshot, _docset_text
 
-# FR-0332 §1s.1: the LEX_REVIEW legal park verdict — appended to the
-# ``lex.verdict`` closed set when every unresolved thread of the doc-set is
-# Human-adjudicated. ``_HUMAN_SPEAKER`` is compared through ``speaker_key``
-# (the same normalized/lowercased identity the discuss writer uses).
-_PARK_VERDICT = "pass-pending-human-threads"
+# FR-0332 §1s.1: the LEX_REVIEW park verdict token is owned by the kernel
+# reducer module (machine_verdicts) so the producer and the reducer agree on
+# one definition. ``_HUMAN_SPEAKER`` is compared through ``speaker_key`` (the
+# same normalized/lowercased identity the discuss writer uses).
 _HUMAN_SPEAKER = "Human"
 
 

@@ -245,6 +245,9 @@ from .machine_results import (
     _on_result_validated,
 )
 from .machine_verdicts import (
+    _REVIEW_PENDING_THREADS as _REVIEW_PENDING_THREADS,
+)
+from .machine_verdicts import (
     _escalate_or_continue as _escalate_or_continue,
 )
 from .machine_verdicts import (
@@ -525,7 +528,7 @@ def _on_human_review_gate(s: State, p: dict, ev: EventEnvelope) -> None:
     re-computes the exit: resolved -> pass, still Human-only -> park again,
     other owner -> revise). Every other awaiting value keeps the existing
     human.review semantics unchanged."""
-    if s.awaiting != "review_pending_threads":
+    if s.awaiting != _REVIEW_PENDING_THREADS:
         _on_human_review(s, p, ev)
         return
     s.active_result = None  # v0.5: pipeline publish complete

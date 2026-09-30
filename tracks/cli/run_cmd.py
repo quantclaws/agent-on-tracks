@@ -21,6 +21,7 @@ from tracks.executor.code_stamp import RuntimeCodeDriftError
 from tracks.executor.executor import _resolve_run_version
 from tracks.executor.stall import CommandStallError
 from tracks.kernel import Command
+from tracks.kernel.machine_verdicts import _REVIEW_PENDING_THREADS
 from tracks.store import Store, new_ulid
 
 from .common import (
@@ -610,7 +611,7 @@ def cmd_review(repo: Path, *args: str) -> int:
         # pending threads, resume the review" and the kernel gate
         # (_on_human_review_gate) clears the awaiting and re-dispatches Lex.
         # HUMAN_REVIEW (awaiting=review) semantics are unchanged.
-        if state.awaiting not in ("review", "review_pending_threads"):
+        if state.awaiting not in ("review", _REVIEW_PENDING_THREADS):
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
         checkpoint = _review_checkpoint(repo, state, actor, action)
         rc, result = _do_human_pipeline(repo, state, store, run_id, checkpoint)
