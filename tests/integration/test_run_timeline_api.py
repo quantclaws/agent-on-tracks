@@ -122,15 +122,29 @@ def test_stage_order_and_timeline_consistency(tmp_path: Path):
         assert isinstance(timeline.get("events"), list) and timeline["events"], (
             "the timeline must carry the run's event rows (IF-009 §1e)"
         )
-        assert all(
-            "type" in event and "payload" in event for event in timeline["events"]
-        ), "timeline rows must carry the event type and payload (IF-009 §1e)"
+        required = {
+            "source",
+            "seq",
+            "ts",
+            "type",
+            "run_id",
+            "command_id",
+            "task_id",
+            "ac_refs",
+            "summary",
+            "payload_ref",
+        }
+        assert all(required <= set(event) for event in timeline["events"]), (
+            "timeline rows must carry the IF-009 §1e closed member set "
+            f"(required {sorted(required)})"
+        )
         entered = [
-            event["payload"]["stage"]
-            for event in timeline["events"]
-            if event["type"] == "stage.entered"
+            event for event in timeline["events"] if event["type"] == "stage.entered"
         ]
-        assert entered == ["M-START", "M-STORY", "M-IMPL"], entered
+        assert len(entered) == 3, (
+            "each entered stage keeps its own timeline row, not folded: "
+            f"{len(entered)}"
+        )
 
         # one source: the ac-chain reads the same run event stream
         status, body = http_get(base, f"/api/runs/{run_id}/ac-chain", cookies=cookie)
@@ -169,22 +183,28 @@ def test_timeline_entry_present(tmp_path: Path):
         assert isinstance(timeline.get("events"), list) and timeline["events"], (
             "the timeline must carry the run's event rows (IF-009 §1e)"
         )
-        assert all(
-            "type" in event and "payload" in event and "seq" in event
-            for event in timeline["events"]
-        ), "timeline rows must carry the event type, payload and seq (IF-009 §1e)"
+        required = {
+            "source",
+            "seq",
+            "ts",
+            "type",
+            "run_id",
+            "command_id",
+            "task_id",
+            "ac_refs",
+            "summary",
+            "payload_ref",
+        }
+        assert all(required <= set(event) for event in timeline["events"]), (
+            "timeline rows must carry the IF-009 §1e closed member set "
+            f"(required {sorted(required)})"
+        )
         entries = [
             event for event in timeline["events"] if event["type"] == "stage.entered"
         ]
         assert len(entries) == 4, (
             "each entered stage is an independent timeline entry (not folded)"
         )
-        assert [event["payload"]["stage"] for event in entries] == [
-            "M-START",
-            "M-STORY",
-            "M-IMPL",
-            "M-IMPL",
-        ]
         seqs = [event["seq"] for event in timeline["events"]]
         assert seqs == sorted(seqs), "the timeline keeps the merged event order"
         assert "stage_order" in timeline, (

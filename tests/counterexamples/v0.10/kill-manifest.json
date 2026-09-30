@@ -35,6 +35,15 @@
           {"patch": "ce_ac-fr0326-01.patch", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
           {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "T-003 GREEN window (projections/api_query in-flight, api_query 944af673, projections 9c52dcfb)",
+        "date": "2026-09-30",
+        "note": "re-confirmation after the IF-009 1e row-shape correction (payload_ref closed set; folding discriminator now row-count based): the two authored patches are stale against the delivered projection surface (their context predates the implementation), so each kill was re-executed as its documented equivalent mutation on the delivered code - dropping the M-REQ-APPROVAL insertion from stage_order, and folding repeated stage.entered rows - with byte-exact restore from the preserved pre-mutation content",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0326-01.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
+          {"patch": "ce_ac-fr0326-02.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
