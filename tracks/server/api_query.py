@@ -112,6 +112,11 @@ def _param(source: Any, name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _path_text(request: Any, name: str) -> str:
+    """A route path parameter as text ('' when absent)."""
+    return str(request.path_params.get(name, ""))
+
+
 # -- read-only stores --------------------------------------------------------
 
 
@@ -342,6 +347,18 @@ def _content_at(repo: Path, doc_file: Path, revision: str, current: str) -> str 
     return _revision_contents(repo, doc_file.parent, doc_file).get(revision)
 
 
+def _unified_doc_diff(doc: str, old: str, new: str) -> str:
+    """Unified diff of one doc's two revision contents (display data only)."""
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{doc}",
+            tofile=f"b/{doc}",
+        )
+    )
+
+
 def _mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
 
@@ -570,18 +587,14 @@ async def doc_diff(request: Any) -> Any:
     new = _content_at(repo, doc_file, to_revision, current)
     if old is None or new is None:
         return _not_found("revision", f"{from_revision}..{to_revision}")
-    unified = "".join(
-        difflib.unified_diff(
-            old.splitlines(keepends=True),
-            new.splitlines(keepends=True),
-            fromfile=f"a/{doc}",
-            tofile=f"b/{doc}",
-        )
-    )
     return _response(
         200,
         request,
-        {"from": from_revision, "to": to_revision, "unified_diff": unified},
+        {
+            "from": from_revision,
+            "to": to_revision,
+            "unified_diff": _unified_doc_diff(doc, old, new),
+        },
     )
 
 
@@ -589,7 +602,7 @@ async def doc_diff(request: Any) -> Any:
 
 
 def _doc_ident(request: Any) -> str:
-    return f"{request.path_params.get('version', '')}/{request.path_params.get('doc', '')}"
+    return f"{_path_text(request, 'version')}/{_path_text(request, 'doc')}"
 
 
 async def docs_tree(request: Any) -> Any:
@@ -605,12 +618,9 @@ async def docs_tree(request: Any) -> Any:
 async def read_project_doc(request: Any) -> Any:
     """GET /api/projects/{pid}/docs/{version}/{doc}: content + history (#32)."""
     home = _home(request)
-    doc = str(request.path_params.get("doc", ""))
+    doc = _path_text(request, "doc")
     resolved = projections.resolve_project_doc(
-        home,
-        str(request.path_params.get("pid", "")),
-        str(request.path_params.get("version", "")),
-        doc,
+        home, _path_text(request, "pid"), _path_text(request, "version"), doc
     )
     if resolved is None:
         return _not_found("document", _doc_ident(request))
@@ -631,11 +641,9 @@ async def read_project_doc(request: Any) -> Any:
 async def project_doc_diff(request: Any) -> Any:
     """GET /api/projects/{pid}/docs/{version}/{doc}/diff?from=&to= (#33)."""
     home = _home(request)
+    doc = _path_text(request, "doc")
     resolved = projections.resolve_project_doc(
-        home,
-        str(request.path_params.get("pid", "")),
-        str(request.path_params.get("version", "")),
-        str(request.path_params.get("doc", "")),
+        home, _path_text(request, "pid"), _path_text(request, "version"), doc
     )
     if resolved is None:
         return _not_found("document", _doc_ident(request))
@@ -649,19 +657,14 @@ async def project_doc_diff(request: Any) -> Any:
     new = _content_at(repo, doc_file, to_revision, current or "")
     if old is None or new is None:
         return _not_found("revision", f"{from_revision}..{to_revision}")
-    doc = str(request.path_params.get("doc", ""))
-    unified = "".join(
-        difflib.unified_diff(
-            old.splitlines(keepends=True),
-            new.splitlines(keepends=True),
-            fromfile=f"a/{doc}",
-            tofile=f"b/{doc}",
-        )
-    )
     return _response(
         200,
         request,
-        {"from": from_revision, "to": to_revision, "unified_diff": unified},
+        {
+            "from": from_revision,
+            "to": to_revision,
+            "unified_diff": _unified_doc_diff(doc, old, new),
+        },
     )
 
 
@@ -670,9 +673,9 @@ async def project_doc_discussions(request: Any) -> Any:
     home = _home(request)
     payload = projections.project_doc_discussions(
         home,
-        str(request.path_params.get("pid", "")),
-        str(request.path_params.get("version", "")),
-        str(request.path_params.get("doc", "")),
+        _path_text(request, "pid"),
+        _path_text(request, "version"),
+        _path_text(request, "doc"),
     )
     if payload is None:
         return _not_found("document", _doc_ident(request))

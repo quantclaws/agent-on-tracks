@@ -155,6 +155,16 @@ def _project_by_id(conn: sqlite3.Connection | None, project_id: str | None) -> d
     return None
 
 
+def _project_from_home(home: Path, project_id: str) -> dict | None:
+    """Registered project by id over a short-lived read-only connection."""
+    conn = _service_db(home)
+    try:
+        return _project_by_id(conn, project_id)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _project_for_run(conn: sqlite3.Connection | None, run_id: str) -> dict | None:
     rows = _rows(conn, "SELECT project_id FROM commands WHERE run_id = ? LIMIT 1", (run_id,))
     if rows:
@@ -570,8 +580,12 @@ def _version_sort_key(name: str) -> tuple[int, int, int, int, str] | None:
     return (-int(match.group(1)), -int(match.group(2)), 0, 0, name)
 
 
+def _projects_root(project: dict) -> Path:
+    return Path(project["repo_path"]) / ".tracks" / "projects"
+
+
 def _project_versions(project: dict) -> list[str]:
-    root = Path(project["repo_path"]) / ".tracks" / "projects"
+    root = _projects_root(project)
     if not root.is_dir():
         return []
     keyed = []
@@ -586,7 +600,7 @@ def _project_versions(project: dict) -> list[str]:
 
 
 def _version_path(project: dict, version: str) -> Path:
-    return Path(project["repo_path"]) / ".tracks" / "projects" / version
+    return _projects_root(project) / version
 
 
 def _revision_or_none(vdir: Path) -> str | None:
@@ -614,12 +628,7 @@ def _editable_run_id(runs: list[dict], version: str) -> str | None:
 
 def project_docs_tree(home: Path, project_id: str) -> dict | None:
     """Project docs tree: version-descending dirs + six-piece docs (§1n.1)."""
-    conn = _service_db(home)
-    try:
-        project = _project_by_id(conn, project_id)
-    finally:
-        if conn is not None:
-            conn.close()
+    project = _project_from_home(home, project_id)
     if project is None:
         return None
     runs = _project_runs(project["repo_path"])
@@ -627,15 +636,13 @@ def project_docs_tree(home: Path, project_id: str) -> dict | None:
     for version in _project_versions(project):
         vdir = _version_path(project, version)
         revision = _revision_or_none(vdir)
-        docs = [
-            {
-                "doc": doc,
-                "revision": revision,
-                "updated_at": _mtime_iso(vdir / DOC_FILES[doc]),
-            }
-            for doc in _DOC_ORDER
-            if (vdir / DOC_FILES[doc]).is_file()
-        ]
+        docs = []
+        for doc in _DOC_ORDER:
+            path = vdir / DOC_FILES[doc]
+            if path.is_file():
+                docs.append(
+                    {"doc": doc, "revision": revision, "updated_at": _mtime_iso(path)}
+                )
         versions.append(
             {
                 "version": version,
@@ -657,12 +664,7 @@ def resolve_project_doc(
     name = DOC_FILES.get(doc)
     if name is None or _version_sort_key(version) is None:
         return None
-    conn = _service_db(home)
-    try:
-        project = _project_by_id(conn, project_id)
-    finally:
-        if conn is not None:
-            conn.close()
+    project = _project_from_home(home, project_id)
     if project is None:
         return None
     vdir = _version_path(project, version)
