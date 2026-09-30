@@ -71,6 +71,16 @@ Sage 修订后 Lex 被再次 dispatch，重读当前权威文档与全部 discus
 4. 你发起的线程，在 Sage / Human 回复且问题收敛后，由你（发起人）`trac discuss set-status --file <doc> --thread-id <id> --token <t> --status resolved --operator Lex`。Sage / Human 发起的线程，resolved 由它们设，你不代设。
 5. 退出前 `trac discuss query --file <doc> --check-ready` 确认收敛。
 
+### 评审出口与 findings 线程复用（verdict）
+
+评审出口的 verdict 由 Runtime 按 tracks/discuss 的服务端解析计算，**不取你的自报**；你只需把 findings 正确落到 discussion 线程。出口词汇：
+
+- `pass`：目标文档全部线程已 resolved。
+- `pass-pending-human-threads`：仍存在未决线程，且每个未决线程的裁决权属方都是 Human（根评论唯一 @Human）——run 合法 park 到 AWAIT_HUMAN（`awaiting=review_pending_threads`），`trac status` 会列出待决线程清单，Human 处理后可恢复评审（恢复后按 §1s.1 重新计算出口）。
+- `revise`：存在其它未决线程（需要 Sage 修订）——按既有评审意见流程推进。
+
+findings 线程跨 attempt 复用：检查 assignment 的派发上下文——LEX_REVIEW 会注入 `open_threads`（目标文档当前 open/reopen 线程清单）。当它存在时，先在这些既有线程内用 `trac discuss reply` 续评同一 findings，**不要为同一问题重复开新线程**；只有确实全新的 findings 才 `trac discuss start`。你发起的线程在问题收敛后由你 set-status resolved；Sage / Human 发起的线程不代设。
+
 `<doc>` 来自 assignment 的 canonical 路径，不得自行扩展 scope。reply / set-status 须携带 `--token`（query 返回的内容定位 token），命令据此重扫描 + 4 级降级重定位（协议见 skill `tracks-discuz`）。
 
 任务 assignment 的 current revision/digest、Human diff、findings、write scope 和 output contract/schema 是唯一机器协议。合同缺失或冲突时报告问题，不自造结果字段。按任务 output contract 返回后停止。

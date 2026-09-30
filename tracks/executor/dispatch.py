@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from tracks.discuss.model import iter_comments
+from tracks.discuss.parser import parse_threads
 from tracks.effects.dispatch_parity import (
     is_declared,
     static_parity_check,
@@ -47,6 +49,36 @@ _SAGE_OUTCOME_FIELDS = (
     "corpus_digests",
     "rationale_refs",
 )
+
+
+def _lex_open_threads(doc_path: Path) -> list[dict]:
+    """FR-0332 §1s.5: the target document's unresolved thread context.
+
+    One entry per open/reopen thread with the declared shape
+    ``thread_id/status/initiator/awaiting/anchor`` — resolved threads are
+    settled and never part of the reuse context."""
+    text = doc_path.read_text(encoding="utf-8")
+    return [
+        {
+            "thread_id": thread.thread_id,
+            "status": thread.status,
+            "initiator": thread.initiator,
+            "awaiting": _thread_awaited_party(thread),
+            "anchor": thread.anchor_text,
+        }
+        for thread in parse_threads(text)
+        if thread.status != "resolved"
+    ]
+
+
+def _thread_awaited_party(thread) -> str | None:
+    """The party the thread currently awaits: the single @mention of its
+    newest childless comment, else None (the discuss @request-a-reply rule)."""
+    childless = [comment for comment in iter_comments(thread.root) if not comment.children]
+    if not childless:
+        return None
+    mentions = tuple(dict.fromkeys(max(childless, key=lambda c: c.line).mentions))
+    return mentions[0] if len(mentions) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -140,6 +172,7 @@ the envelope/failure faces stay re-exported by executor.py."""
         doc_path = self._doc_path(doc) if doc else None
         assignment = p.get("assignment")
         assignment = self._assignment_with_evidence(assignment, p)
+        assignment = self._inject_lex_open_threads(role, substate, assignment, doc_path)
         materialization_error = (
             self._invalid_m_impl_assignment(
                 role,
@@ -242,6 +275,30 @@ the envelope/failure faces stay re-exported by executor.py."""
             enriched["evidence"] = params["evidence"]
         if enriched_stage is not None:
             enriched["stage"] = enriched_stage
+        return enriched
+
+    @staticmethod
+    def _inject_lex_open_threads(
+        role: str,
+        substate: str,
+        assignment: dict | None,
+        doc_path: Path | None,
+    ) -> dict | None:
+        """FR-0332 §1s.5: a LEX_REVIEW dispatch carries the target document's
+        current open/reopen thread context so Lex continues findings in the
+        existing threads instead of opening new duplicates.
+
+        Parsed here at the dispatch materialization face via tracks/discuss
+        (the kernel never reads documents §1.0.7) and authoritative: any stale
+        list riding in on the command is replaced by the fresh parse. The
+        entry shape is ``thread_id/status/initiator/awaiting/anchor``."""
+        if role != "lex" or substate != "LEX_REVIEW" or doc_path is None:
+            return assignment
+        path = Path(doc_path)
+        if not path.exists():
+            return assignment
+        enriched = dict(assignment or {})
+        enriched["open_threads"] = _lex_open_threads(path)
         return enriched
 
     def _emit_stale_assignment(
