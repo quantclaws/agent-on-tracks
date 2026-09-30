@@ -23,7 +23,18 @@ from tracks.kernel.machine import State
 from tracks.kernel.machine_outcomes import _INFRA_FAILURE_CLASSES
 
 # reviewer role -> its verdict event type
-_VERDICT_EVENT = {"sage": "sage.verdict", "lex": "lex.verdict", "prism": "prism.verdict"}
+_VERDICT_EVENT = {
+    "sage": "sage.verdict",
+    "lex": "lex.verdict",
+    "prism": "prism.verdict",
+    # #214 (2026-09-30): Archer's RULING outcome is a structured paired
+    # delta (devon_side/shield_side), not a pass/revise document verdict —
+    # it rides its own event with check="ruling" so the kernel's
+    # _on_m_impl_verdict_passed routes the ruled action instead of
+    # cycling back to RULING (the pre-fix producer gap: archer was
+    # excluded, the kernel's ruling consumer had no input).
+    "archer": "archer.ruling",
+}
 
 
 def _is_process_crash(result: dict) -> bool:
@@ -95,6 +106,9 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
     def _emit_dispatch_verdict(self, result, role, state, params, cmd, task_id):
         if role not in _VERDICT_EVENT:
             return
+        if role == "archer" and state.stage == "M-IMPL" and state.substate == "RULING":
+            self._emit_archer_ruling_verdict(result, state, cmd, task_id)
+            return
         if role == "prism" and (params or {}).get("scope") == "security":
             self._publish_security_review_verdict(result, params, cmd, task_id)
             return
@@ -144,6 +158,27 @@ before ResultCheckpointMixin so the hotfix prism override wins."""
                 for e in store.events(self.run_id)
             ],
             task_id,
+        )
+
+    def _emit_archer_ruling_verdict(self, result, state, cmd, task_id):
+        """#214: emit verdict.passed(check=ruling) with the structured paired
+        delta as ruling_outcome. The kernel's _on_m_impl_verdict_passed
+        stores it in State and decide() routes the devon_side.action."""
+        if result.get("status") != "done":
+            return  # infra/format errors already routed by the backend
+        envelope = result.get("envelope") or {}
+        payload = envelope.get("payload") if isinstance(envelope, dict) else None
+        if not isinstance(payload, dict) or "devon_side" not in payload:
+            return  # not a paired-delta ruling — treat as non-verdict outcome
+        self._emit(
+            "verdict.passed",
+            {
+                "check": "ruling",
+                "ruling_outcome": payload,
+                "result_id": result.get("result_id"),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
         )
 
     def _emit_diagnose_verdict(self, result, state, cmd, task_id):

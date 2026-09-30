@@ -192,6 +192,17 @@ def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
     elif check == "island_2":
         s.island_2_passed = True
         s.substate = "EXIT"
+    elif check == "ruling":
+        # #214 (2026-09-30): the RULING outcome carries a structured paired
+        # delta (devon_side/shield_side). Store it for decide() to consume —
+        # the ruling's devon_side.action routes the next dispatch instead of
+        # cycling back to RULING (the pre-fix loop: ruling lands → ignored →
+        # same failure re-selected → DIAGNOSE(exhausted) → RULING → repeat).
+        outcome = p.get("ruling_outcome")
+        if isinstance(outcome, dict):
+            s.m_impl_ruling_outcome = outcome
+        s.last_failure = None
+        return
     s.last_failure = None
 
 

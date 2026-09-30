@@ -383,6 +383,10 @@ class State:
     # green on arrival (retry/split residual) — carried into the PLANNING
     # assignment so Archer converts to verification-only or re-cuts scope.
     m_impl_red_ruling: dict | None = None
+    # #214: the RULING outcome Archer produced (devon_side/shield_side paired
+    # delta) — consumed by decide() to dispatch the ruled action instead of
+    # cycling back to RULING. Cleared after the dispatch is built.
+    m_impl_ruling_outcome: dict | None = None
     # Consecutive infrastructure failures (opencode process killed, provider
     # unreachable, missing binary, timeout) digested by the runtime itself -
     # they never consume the agent attempt budget and never pollute

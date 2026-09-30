@@ -175,13 +175,54 @@ the host Executor keeps construction and the command handlers."""
     def _check_breaker(self, state: State) -> State | None:
         """B44（#46）：run 级熔断。仅在 active 且 WAL 窗口之外判定；越限
         即发 run.breaker_tripped（machine 置 awaiting_human/escalation，
-        损耗报告走 last_failure），本次 run_loop 停车返回。"""
+        损耗报告走 last_failure），本次 run_loop 停车返回。
+
+        #213 (2026-09-30): the trip also emits a structured decision surface
+        — attention.required carrying the actionable options (retry/split/
+        skip/rollback) so the operator sees what to decide, not just a bare
+        breaker report. In production without maestro, this is the structured
+        gate the Human answers via `trac retry` (or return)."""
         if state.status != "active":
             return None
         trip = self._breaker.evaluate()
         if trip is None:
             return None
         self._emit("run.breaker_tripped", trip)
+        self._emit(
+            "attention.required",
+            {
+                "area": "run_breaker",
+                "reason": trip.get("condition", "threshold_exceeded"),
+                "stage": state.stage,
+                "detail": trip.get("report", ""),
+                "options": [
+                    {
+                        "key": "retry",
+                        "command": "trac retry --actor <name>",
+                        "description": "reset attempt budget and re-dispatch",
+                    },
+                    {
+                        "key": "split_task",
+                        "command": "trac return --to M-DESIGN --reason 'split <task-id>'",
+                        "description": (
+                            "return to design; Archer splits the task "
+                            "(use when task_failures dominates)"
+                        ),
+                    },
+                    {
+                        "key": "rollback",
+                        "command": "trac return --to <upstream-stage> --reason TEXT",
+                        "description": (
+                            "rollback to upstream stage "
+                            "(use when the design itself is the defect)"
+                        ),
+                    },
+                ],
+                "failure_classes": trip.get("failure_classes", {}),
+                "task_failures": trip.get("task_failures", {}),
+                "next": "decide an option; trac retry resets, trac return rolls back",
+            },
+        )
         print(f"  [{state.stage}] {trip['report']}", file=sys.stderr, flush=True)
         return self.store.state(self.run_id)
 

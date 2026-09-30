@@ -94,6 +94,55 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
     }
 
 
+def _consume_ruling_outcome(s: State) -> Command | None:
+    """#214 (2026-09-30): consume a pending RULING outcome by routing to the
+    ruled action. Returns the next Command, or None when no ruling is pending
+    (the caller falls through to re-dispatch Archer).
+
+    The ruling payload's ``devon_side.action`` maps to the next substate:
+    - ``redeliver_green`` → GREEN dispatch (carry the instruction + scope)
+    - ``deliver_red`` → RED dispatch
+    - ``hold`` / absent → stay at RULING (shield-only or split ruling)
+    The outcome is consumed (cleared) after routing so it never loops."""
+    outcome = getattr(s, "m_impl_ruling_outcome", None)
+    if not isinstance(outcome, dict):
+        return None
+    s.m_impl_ruling_outcome = None  # one-shot: consume now
+    devon = outcome.get("devon_side") or {}
+    action = str(devon.get("action") or "").strip()
+    instruction = str(devon.get("instruction") or "").strip()
+    scope = devon.get("scope_boundary") or []
+    if action in ("redeliver_green", "deliver_red"):
+        sub = "GREEN" if action == "redeliver_green" else "RED"
+        s.substate = sub
+        s.current_attempt = 0
+        s.m_impl_red_ruling = {
+            "action": action,
+            "instruction": instruction,
+            "scope_boundary": list(scope),
+            "task_id": devon.get("task_id") or s.current_task_id,
+        }
+        return _m_impl_devon_dispatch(s, sub)
+    # A2 fix: hold/absent-action ruling — route to the NEXT TASK instead of
+    # re-dispatching Archer with the same dossier (the pre-fix hold loop).
+    # The ruling's shield_side=hold means no writer action is needed; advance.
+    if not action or action == "hold":
+        s.substate = "TASK_DISPATCH"
+        s.current_task_id = None
+        return Command(kind="select_task", params={"stage": "M-IMPL"})
+    # Unknown action: fall through to re-dispatch Archer (operator sees it).
+    return None
+
+
+def _decide_m_impl_ruling_entry(s: State) -> Command | None:
+    """#214: RULING entry — consume a pending ruling outcome first, then fall
+    through to dispatch Archer if none is pending."""
+    ruled = _consume_ruling_outcome(s)
+    if ruled is not None:
+        return ruled
+    return _m_impl_archer_ruling_dispatch(s)
+
+
 def _m_impl_archer_ruling_dispatch(s: State) -> Command:
     """RULING: dispatch Archer to rule on the failure the writers cannot
     resolve alone.
@@ -223,6 +272,18 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     assignment["unit_refs"] = None  # executor materializes (B50 split)
     assignment["acceptance_refs"] = None  # executor materializes (B50 split)
     assignment["commands"] = None  # executor materializes (test/guard cmds)
+    # #214: carry the RULING instruction when a ruled action dispatched Devon
+    # (redeliver_green etc.) — the instruction and scope come from Archer's
+    # ruling, not from the standard RGR assignment.
+    ruling = getattr(s, "m_impl_red_ruling", None)
+    if isinstance(ruling, dict):
+        if ruling.get("instruction"):
+            assignment["ruling_instruction"] = ruling["instruction"]
+            if ruling.get("scope_boundary"):
+                assignment["ruling_scope"] = list(ruling["scope_boundary"])
+        # A1 fix: clear unconditionally (not just when instruction is set)
+        # so an empty-instruction ruling never leaks to a later dispatch.
+        s.m_impl_red_ruling = None
     if s.r_tree_identity and sub in ("GREEN", "REFACTOR"):
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {
@@ -473,7 +534,7 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
     if sub == "NEEDS_ATTENTION":
         return None  # awaiting reconcile or return upstream
     if sub == "RULING":
-        return _decide_m_impl_ruling(s)
+        return _decide_m_impl_ruling_entry(s)
     if sub == "PLANNING":
         return _decide_m_impl_planning(s)
     if sub in ("ISLAND_GATE_1", "ISLAND_GATE_2"):
