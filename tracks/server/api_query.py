@@ -23,6 +23,11 @@ material-revision git commits, recomputing the trio digest at each commit.
 ``history``/``content`` are display data only (no identity is derived from
 mtimes).
 
+The project-domain docs faces (§2b #31-34, §1n/§1p) read the same revision
+semantics from the version directory: tree, versioned read, diff and the
+discussion threads are declared in ``EXTENSION_ROUTES`` for the composition
+root (``create_app``) to merge into the route table.
+
 Contract tokens: IF-QUERY-001, IF-SERVE-001, IF-WAIT-001, IF-PROJ-001,
 IF-DOCREV-001, IF-WEBGATE-001, IF-CMDSVC-001, IF-SECRECY-001.
 """
@@ -46,13 +51,11 @@ from tracks.frontmatter import split_frontmatter
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.server import projections
 
-# E-06 material set (§2b #15); the design entry is the primary design doc.
-_DOC_FILES = {
-    "story": "story.md",
-    "spec": "spec.md",
-    "acceptance": "acceptance.md",
-    "design": "architecture.md",
-}
+# E-06 material set (§2b #15-16, §1n.4): the six-piece doc domain with
+# `design` kept as the architecture alias. The mapping is owned by the
+# projections read models (single source) and shared with the write face,
+# which imports `_DOC_FILES` from here.
+_DOC_FILES = projections.DOC_FILES
 # baseline.revision_digest members: labelled story/spec/acc bodies.
 _TRIO_FILES = ("story.md", "spec.md", "acceptance.md")
 _TRIO_LABELS = ("story", "spec", "acc")
@@ -582,6 +585,169 @@ async def doc_diff(request: Any) -> Any:
     )
 
 
+# -- project-domain docs read faces (§2b #31-34, §1n/§1p) --------------------
+
+
+def _doc_ident(request: Any) -> str:
+    return f"{request.path_params.get('version', '')}/{request.path_params.get('doc', '')}"
+
+
+async def docs_tree(request: Any) -> Any:
+    """GET /api/projects/{pid}/docs/tree: version tree + six-piece docs (#31)."""
+    home = _home(request)
+    pid = _param(request.path_params, "pid")
+    payload = projections.project_docs_tree(home, pid or "")
+    if payload is None:
+        return _not_found("project", pid or "")
+    return _response(200, request, payload)
+
+
+async def read_project_doc(request: Any) -> Any:
+    """GET /api/projects/{pid}/docs/{version}/{doc}: content + history (#32)."""
+    home = _home(request)
+    doc = str(request.path_params.get("doc", ""))
+    resolved = projections.resolve_project_doc(
+        home,
+        str(request.path_params.get("pid", "")),
+        str(request.path_params.get("version", "")),
+        doc,
+    )
+    if resolved is None:
+        return _not_found("document", _doc_ident(request))
+    project, version_dir, doc_file, revision = resolved
+    return _response(
+        200,
+        request,
+        {
+            "revision": revision,
+            "content": doc_file.read_text(encoding="utf-8"),
+            "history": _project_doc_history(
+                home, Path(project["repo_path"]), version_dir, doc_file, doc, revision
+            ),
+        },
+    )
+
+
+async def project_doc_diff(request: Any) -> Any:
+    """GET /api/projects/{pid}/docs/{version}/{doc}/diff?from=&to= (#33)."""
+    home = _home(request)
+    resolved = projections.resolve_project_doc(
+        home,
+        str(request.path_params.get("pid", "")),
+        str(request.path_params.get("version", "")),
+        str(request.path_params.get("doc", "")),
+    )
+    if resolved is None:
+        return _not_found("document", _doc_ident(request))
+    project, _version_dir, doc_file, current = resolved
+    from_revision = _param(request.query_params, "from")
+    to_revision = _param(request.query_params, "to")
+    if from_revision is None or to_revision is None:
+        return _error(422, "validation_failed", "diff requires both 'from' and 'to' revisions")
+    repo = Path(project["repo_path"])
+    old = _content_at(repo, doc_file, from_revision, current or "")
+    new = _content_at(repo, doc_file, to_revision, current or "")
+    if old is None or new is None:
+        return _not_found("revision", f"{from_revision}..{to_revision}")
+    doc = str(request.path_params.get("doc", ""))
+    unified = "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/{doc}",
+            tofile=f"b/{doc}",
+        )
+    )
+    return _response(
+        200,
+        request,
+        {"from": from_revision, "to": to_revision, "unified_diff": unified},
+    )
+
+
+async def project_doc_discussions(request: Any) -> Any:
+    """GET /api/projects/{pid}/docs/{version}/{doc}/discussions (#34)."""
+    home = _home(request)
+    payload = projections.project_doc_discussions(
+        home,
+        str(request.path_params.get("pid", "")),
+        str(request.path_params.get("version", "")),
+        str(request.path_params.get("doc", "")),
+    )
+    if payload is None:
+        return _not_found("document", _doc_ident(request))
+    return _response(200, request, payload)
+
+
+def _project_doc_history(
+    home: Path,
+    repo: Path,
+    version_dir: Path,
+    doc_file: Path,
+    doc: str,
+    current: str | None,
+) -> list[dict]:
+    """Merged revision history for a project-domain doc (§1n.2).
+
+    Current revision first (file mtime), then the version's material.edited
+    events and the git commits touching the version directory, deduplicated
+    by revision digest — the same-source merge the run domain uses, with
+    older contents resolved through the repo's git history.
+    """
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def add(revision: object, ts: object, actor: object) -> None:
+        if isinstance(revision, str) and revision and revision not in seen:
+            seen.add(revision)
+            entries.append({"revision": revision, "ts": str(ts or ""), "actor": str(actor or "")})
+
+    if current:
+        add(current, _mtime_iso(doc_file), "")
+    for event in _project_material_events(home, repo, version_dir.name, doc):
+        payload = event["payload"]
+        for revision in (payload.get("to_revision"), payload.get("from_revision")):
+            add(revision, event["ts"], payload.get("actor"))
+    rel_dir = _relpath(version_dir, repo)
+    if rel_dir is not None:
+        log = _git(repo, "log", f"-n{_GIT_LOG_LIMIT}", "--format=%H", "--", rel_dir)
+        for sha in (log or "").split():
+            add(
+                _commit_trio_digest(repo, sha, rel_dir),
+                (_git(repo, "show", "-s", "--format=%cI", sha) or "").strip(),
+                (_git(repo, "show", "-s", "--format=%an", sha) or "").strip(),
+            )
+    return entries
+
+
+def _project_material_events(home: Path, repo: Path, version: str, doc: str) -> list[dict]:
+    """material.edited events of the version's runs for one doc, newest first."""
+    run_ids = [
+        row[0]
+        for row in _read_rows(
+            _tracks_db_path(str(repo)),
+            "SELECT run_id FROM runs WHERE version = ? ORDER BY updated_ts",
+            (version,),
+        )
+    ]
+    if not run_ids:
+        return []
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = _read_rows(
+        _service_db_path(home),
+        "SELECT ts, payload FROM service_events WHERE type = 'material.edited'"
+        f" AND run_id IN ({placeholders}) ORDER BY seq DESC",
+        tuple(run_ids),
+    )
+    wanted = {doc, "architecture"} if doc == "design" else {doc}
+    events = []
+    for ts, raw in rows:
+        payload = _json_dict(raw)
+        if payload.get("doc") in wanted:
+            events.append({"ts": ts, "payload": payload})
+    return events
+
+
 # -- GET /api/runs/{run_id}/release-preview ----------------------------------
 
 
@@ -630,3 +796,19 @@ async def command_status(request: Any) -> Any:
     elif outcome is not None and row["status"] == "completed":
         payload["result"] = outcome
     return _response(200, request, payload)
+
+
+# CORE-02 extension seam (T-001): the project-domain docs read endpoints
+# (§2b #31-34) declare their routes on this side; create_app merges the table
+# into the assembled route set so later faces land without re-touching the
+# composition root.
+EXTENSION_ROUTES = (
+    ("/api/projects/{pid}/docs/tree", docs_tree, ("GET",)),
+    ("/api/projects/{pid}/docs/{version}/{doc}", read_project_doc, ("GET",)),
+    ("/api/projects/{pid}/docs/{version}/{doc}/diff", project_doc_diff, ("GET",)),
+    (
+        "/api/projects/{pid}/docs/{version}/{doc}/discussions",
+        project_doc_discussions,
+        ("GET",),
+    ),
+)

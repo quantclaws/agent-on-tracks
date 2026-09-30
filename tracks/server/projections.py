@@ -6,7 +6,9 @@ facts. Progress reports test counts and AC-closure counts separately with
 identifiable sources; no fabricated percentages (FR-0302). The human todo
 projection lists only legitimate human decisions — quota/CI/network waits
 never appear (FR-0307). Execution state is run/task level and never exposes
-Agent session content (FR-0303).
+Agent session content (FR-0303). The project-domain docs read models (§1n)
+serve the version tree / docs and the discussion threads; the timeline
+carries the 13-stage display order (§1q).
 
 Contract token: IF-QUERY-001.
 """
@@ -15,16 +17,21 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from tracks import paths
 from tracks.baseline import revision_digest
+from tracks.discuss.model import iter_comments
+from tracks.discuss.parser import parse_threads
 from tracks.executor.validation_shared import _acc_scan
 from tracks.kernel.events import EventEnvelope, event_envelope_from_row
 from tracks.kernel.machine import State
 from tracks.kernel.machine import project as project_state
+from tracks.kernel.stage_registry import canonical_stage_order
 
 _PAUSE_REQUESTED = "run.pause_requested"
 _PAUSED = "run.paused"
@@ -43,6 +50,21 @@ _CONFIG_DEFAULTS: dict[str, Any] = {
     "lease_ttl_s": 30,
     "version": "v0.9",
 }
+
+# Project-domain doc read model (§1n.4): the six-piece closed set with
+# `design` kept as the architecture alias; shared with the write face.
+DOC_FILES = {
+    "story": "story.md",
+    "spec": "spec.md",
+    "acceptance": "acceptance.md",
+    "architecture": "architecture.md",
+    "interfaces": "interfaces.md",
+    "test-plan": "test-plan.md",
+    "design": "architecture.md",
+}
+_DOC_ORDER = ("story", "spec", "acceptance", "architecture", "interfaces", "test-plan")
+_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)$")
+_HOTFIX_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)-hotfix-(\d+)$")
 
 
 # -- read-only connection helpers -------------------------------------------
@@ -166,7 +188,7 @@ def _project_runs(repo_path: str) -> list[dict]:
     try:
         rows = _rows(
             conn,
-            "SELECT run_id, version, status, stage, substate, awaiting FROM runs "
+            "SELECT run_id, version, status, stage, substate, awaiting, updated_ts FROM runs "
             "ORDER BY updated_ts",
         )
     finally:
@@ -180,6 +202,7 @@ def _project_runs(repo_path: str) -> list[dict]:
             "stage": row[3],
             "substate": row[4],
             "awaiting": row[5],
+            "updated_ts": row[6],
         }
         for row in rows
     ]
@@ -528,6 +551,185 @@ def _todo_for(run_id: str, state: State, project: dict) -> dict | None:
     return None
 
 
+# -- project-domain docs read models (§1n, §1p) ------------------------------
+
+
+def _version_sort_key(name: str) -> tuple[int, int, int, int, str] | None:
+    """Numeric-descending order for version directories (§1n.1).
+
+    ``v<M>.<m>`` sorts by numeric components (never lexicographically); a
+    ``v<M>.<m>-hotfix-<n>`` directory ranks right after its baseline version,
+    newer hotfix numbers after older ones. None for non-version names.
+    """
+    match = _HOTFIX_VERSION_RE.match(name)
+    if match is not None:
+        return (-int(match.group(1)), -int(match.group(2)), 1, -int(match.group(3)), name)
+    match = _VERSION_RE.match(name)
+    if match is None:
+        return None
+    return (-int(match.group(1)), -int(match.group(2)), 0, 0, name)
+
+
+def _project_versions(project: dict) -> list[str]:
+    root = Path(project["repo_path"]) / ".tracks" / "projects"
+    if not root.is_dir():
+        return []
+    keyed = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        key = _version_sort_key(child.name)
+        if key is not None:
+            keyed.append((key, child.name))
+    keyed.sort()
+    return [name for _key, name in keyed]
+
+
+def _version_path(project: dict, version: str) -> Path:
+    return Path(project["repo_path"]) / ".tracks" / "projects" / version
+
+
+def _revision_or_none(vdir: Path) -> str | None:
+    try:
+        return revision_digest(vdir)
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _mtime_iso(path: Path) -> str:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def _editable_run_id(runs: list[dict], version: str) -> str | None:
+    """The newest non-terminal run of ``version``, or None (§1n.1)."""
+    active = [
+        run
+        for run in runs
+        if run["version"] == version and run["status"] not in _TERMINAL_STATUSES
+    ]
+    if not active:
+        return None
+    return max(active, key=lambda run: run["updated_ts"] or "")["run_id"]
+
+
+def project_docs_tree(home: Path, project_id: str) -> dict | None:
+    """Project docs tree: version-descending dirs + six-piece docs (§1n.1)."""
+    conn = _service_db(home)
+    try:
+        project = _project_by_id(conn, project_id)
+    finally:
+        if conn is not None:
+            conn.close()
+    if project is None:
+        return None
+    runs = _project_runs(project["repo_path"])
+    versions = []
+    for version in _project_versions(project):
+        vdir = _version_path(project, version)
+        revision = _revision_or_none(vdir)
+        docs = [
+            {
+                "doc": doc,
+                "revision": revision,
+                "updated_at": _mtime_iso(vdir / DOC_FILES[doc]),
+            }
+            for doc in _DOC_ORDER
+            if (vdir / DOC_FILES[doc]).is_file()
+        ]
+        versions.append(
+            {
+                "version": version,
+                "docs": docs,
+                "editable_run_id": _editable_run_id(runs, version),
+            }
+        )
+    return {"versions": versions}
+
+
+def resolve_project_doc(
+    home: Path, project_id: str, version: str, doc: str
+) -> tuple[dict, Path, Path, str | None] | None:
+    """(project, version dir, doc file, revision) for a project-domain doc.
+
+    None when the project, the version directory name, or the doc member is
+    unknown; handlers fail closed on that state (§2b #32-34).
+    """
+    name = DOC_FILES.get(doc)
+    if name is None or _version_sort_key(version) is None:
+        return None
+    conn = _service_db(home)
+    try:
+        project = _project_by_id(conn, project_id)
+    finally:
+        if conn is not None:
+            conn.close()
+    if project is None:
+        return None
+    vdir = _version_path(project, version)
+    doc_file = vdir / name
+    if not doc_file.is_file():
+        return None
+    return project, vdir, doc_file, _revision_or_none(vdir)
+
+
+def project_doc_discussions(
+    home: Path, project_id: str, version: str, doc: str
+) -> dict | None:
+    """Server-side tracks/discuss parse projected to the UI read model (§1p)."""
+    resolved = resolve_project_doc(home, project_id, version, doc)
+    if resolved is None:
+        return None
+    _project, _vdir, doc_file, _revision = resolved
+    threads = parse_threads(doc_file.read_text(encoding="utf-8"))
+    return {"threads": [_thread_json(thread) for thread in threads]}
+
+
+def _thread_json(thread: Any) -> dict:
+    return {
+        "thread_id": thread.thread_id,
+        "status": thread.status,
+        "initiator": thread.initiator,
+        "anchor_line": thread.anchor_line,
+        "summary": thread.snippet,
+        "entry_line": thread.root_line,
+        "awaiting": _thread_awaiting(thread),
+    }
+
+
+def _thread_awaiting(thread: Any) -> str | None:
+    """The party a thread currently awaits, or None (§1p.1).
+
+    A comment whose @mention requests an answer (the tracks/discuss
+    "@request someone to answer" semantic) and that still has no child reply
+    is an open request; the latest such comment names the awaited party when
+    it carries exactly one distinct mention.
+    """
+    pending = [
+        comment
+        for comment in iter_comments(thread.root)
+        if not comment.children and comment.mentions
+    ]
+    if not pending:
+        return None
+    latest = max(pending, key=lambda comment: comment.line)
+    unique = list(dict.fromkeys(latest.mentions))
+    return unique[0] if len(unique) == 1 else None
+
+
+def _stage_order() -> list[str]:
+    """The 13-stage timeline display order (§1q.1).
+
+    M-START leads; M-REQ-APPROVAL is inserted between M-ACC and M-DESIGN on
+    top of the canonical kernel stage order (release stages included).
+    """
+    order = ["M-START"]
+    for stage in canonical_stage_order():
+        if stage == "M-DESIGN":
+            order.append("M-REQ-APPROVAL")
+        order.append(stage)
+    return order
+
+
 # -- public projections -----------------------------------------------------
 
 
@@ -629,17 +831,17 @@ def project_timeline(
     ac_id: str | None = None,
     after_seq: str | None = None,
 ) -> dict:
-    """Merged tracks.db + service_events timeline with cursor (§1e)."""
+    """Merged tracks.db + service_events timeline with cursor + stage order (§1e)."""
     conn = _service_db(home)
     try:
         project = _project_for_run(conn, run_id)
         if project is None:
-            return {"events": [], "cursor": ""}
+            return {"events": [], "cursor": "", "stage_order": _stage_order()}
         repo_path = project["repo_path"]
         rows = _timeline_rows(conn, repo_path, run_id)
         rows = _filter_timeline(rows, command_id, task_id, ac_id)
         rows = _after_cursor(rows, after_seq)
-        return {"events": rows, "cursor": _cursor_of(rows)}
+        return {"events": rows, "cursor": _cursor_of(rows), "stage_order": _stage_order()}
     finally:
         if conn is not None:
             conn.close()
