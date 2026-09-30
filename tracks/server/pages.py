@@ -51,18 +51,18 @@ _TITLES = {
 }
 
 # The FR-0318 seven-item function set of the tab bar in its fixed,
-# non-draggable order (FR-0317).
-_TABBAR_FEATURES = ("projects", "runs", "docs", "review", "todos", "settings", "account")
-
-# Deep-link targets for the feature entries; Settings/Account open in-page
-# surfaces and render as buttons (no navigation URL).
-_TABBAR_HREFS = {
-    "projects": "/projects",
-    "runs": "/",
-    "docs": "/",
-    "review": "/",
-    "todos": "/todos",
-}
+# non-draggable order (FR-0317), each entry paired with its deep-link
+# target. Settings/Account open in-page surfaces and carry no navigation
+# URL — they render as buttons, not links.
+_TABBAR_ITEMS = (
+    ("projects", "/projects"),
+    ("runs", "/"),
+    ("docs", "/"),
+    ("review", "/"),
+    ("todos", "/todos"),
+    ("settings", None),
+    ("account", None),
+)
 
 # Inline icon bodies (no xmlns: an HTML-embedded SVG needs none, and shell
 # assets stay free of any external reference).
@@ -158,7 +158,7 @@ def _workbench_body(name: str, context: dict) -> str:
             f'<div id="workbench" class="workbench" data-route="{name}"'
             f"{_deep_link_attrs(context)}>",
             '<nav class="tabbar" data-testid="tabbar" aria-label="Workbench functions">',
-            *(_tabbar_item(feature) for feature in _TABBAR_FEATURES),
+            *(_tabbar_item(feature, href) for feature, href in _TABBAR_ITEMS),
             "</nav>",
             '<aside class="sidebar" data-testid="sidebar" aria-label="Context navigation"></aside>',
             '<main class="main" data-testid="main-area">',
@@ -172,7 +172,7 @@ def _workbench_body(name: str, context: dict) -> str:
     )
 
 
-def _tabbar_item(feature: str) -> str:
+def _tabbar_item(feature: str, href: str | None) -> str:
     """One icon-only tab bar entry with its hover tooltip (FR-0317)."""
     label = feature.capitalize()
     icon = (
@@ -181,10 +181,10 @@ def _tabbar_item(feature: str) -> str:
         ' stroke-linejoin="round" aria-hidden="true" focusable="false">'
         f"{_TABBAR_ICONS[feature]}</svg>"
     )
-    if feature in _TABBAR_HREFS:
+    if href is not None:
         return (
             f'<a class="tabbar-item" data-testid="tabbar-item-{feature}"'
-            f' href="{_TABBAR_HREFS[feature]}" title="{label}" aria-label="{label}">{icon}</a>'
+            f' href="{href}" title="{label}" aria-label="{label}">{icon}</a>'
         )
     return (
         f'<button type="button" class="tabbar-item" data-testid="tabbar-item-{feature}"'
