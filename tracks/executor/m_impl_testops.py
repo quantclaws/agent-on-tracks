@@ -355,8 +355,27 @@ class MImplTestOpsMixin:
                 task_id,
             )
             return handle.path, handle
-        except Exception:
-            return str(self.repo), None  # Creation failed, fall back to repo cwd
+        except Exception as exc:
+            # B03 fix (Prism review 2026-09-30): a gate worktree creation
+            # failure is a LOUD error, never a silent fallback to the main
+            # repo cwd — the fallback made the gate evaluate the placeholder
+            # tree and burned T-002's GREEN as a phantom impl_defect across
+            # four escalation cycles. Emit attention and re-raise so the
+            # caller surfaces the subprocess stderr to the operator.
+            self._emit(
+                "attention.required",
+                {
+                    "area": "gate_worktree",
+                    "reason": "creation_failed",
+                    "detail": f"gate worktree assembly failed: {exc}",
+                    "next": (
+                        "inspect .githooks/pre-commit requirements vs the "
+                        "gate worktree env; trac retry --clear-evidence "
+                        "after repair"
+                    ),
+                },
+            )
+            raise
 
     def _r_tests_in_working_tree(self, r_sha: str) -> bool:
         """Whether every tests/ file in the immutable R commit is present as a

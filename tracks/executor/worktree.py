@@ -172,18 +172,38 @@ def create_gate_worktree(
     First git worktree add from C_design, then checkout Devon candidate product
     code diff, finally cherry-pick or merge frozen test commit.
     Frozen bundle is never merged into Devon candidate (BS-04).
+
+    Gate-worktree assembly bypasses the repo's pre-commit hooks on BOTH the
+    candidate commit and the frozen-bundle cherry-pick (Prism B02 fix): the
+    gate is a transient evaluation surface (never enters git history), and
+    the repo-global hooksPath hard-requires ROOT/.venv which a fresh gate
+    worktree structurally lacks — a hooked commit fails deterministically
+    and (pre-fix) the bare except in _ensure_gate_worktree silently degraded
+    the evaluation to the main repo's placeholder (T-002's lost GREEN).
     """
     path = _worktree_path(repo, run_id, task_id, "gate")
     _git(repo, "worktree", "add", "--detach", path, c_design_sha)
     if devon_diff.strip():
-        _apply_and_commit(path, devon_diff, "Devon candidate diff")
+        _apply_and_commit(path, devon_diff, "Devon candidate diff", no_verify=True)
     if frozen_bundle_sha.strip():
+        # Bypass the repo-global hooksPath for the cherry-pick the same way:
+        # point hooksPath at an empty dir local to the worktree.
+        _git(
+            path, "config", "core.hooksPath", str(Path(path) / ".tracks" / ".no-hooks"),
+        )
+        _ensure_empty_hooks_dir(path)
         _git(path, "cherry-pick", "--allow-empty", frozen_bundle_sha)
     # Runtime assets are linked AFTER all git commits so _apply_and_commit's
     # `git add -A` cannot swallow the symlink into a commit; the entry stays
     # untracked (and ignored under the canonical .gitignore).
     ensure_runtime_assets(repo, path)
     return WorktreeHandle(path=path, base_sha=c_design_sha, kind="gate")
+
+
+def _ensure_empty_hooks_dir(worktree_path: str) -> None:
+    """Create the empty hooks dir the cherry-pick hooksPath override points at."""
+    d = Path(worktree_path) / ".tracks" / ".no-hooks"
+    d.mkdir(parents=True, exist_ok=True)
 
 
 def cleanup_worktree(
@@ -290,10 +310,13 @@ def _worktree_path(repo: str, run_id: str, task_id: str | None, kind: str) -> st
     return os.path.join(*parts)
 
 
-def _apply_and_commit(wt_path: str, diff_text: str, message: str) -> None:
+def _apply_and_commit(wt_path: str, diff_text: str, message: str, no_verify: bool = False) -> None:
     fd, diff_path = tempfile.mkstemp(suffix=".diff")
     with os.fdopen(fd, "w") as fh:
         fh.write(diff_text)
+    commit_argv = ["git", "-C", wt_path, "commit", "-m", message, "--allow-empty"]
+    if no_verify:
+        commit_argv.insert(-1, "--no-verify")
     try:
         subprocess.run(
             ["git", "-C", wt_path, "apply", "--whitespace=nowarn", diff_path],
@@ -308,7 +331,7 @@ def _apply_and_commit(wt_path: str, diff_text: str, message: str) -> None:
             check=True,
         )
         subprocess.run(
-            ["git", "-C", wt_path, "commit", "-m", message, "--allow-empty"],
+            commit_argv,
             capture_output=True,
             text=True,
             check=True,
