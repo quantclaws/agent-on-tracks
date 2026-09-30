@@ -653,8 +653,22 @@ _APPLY = {
 # hung scribe DRAFT left dispatch.parity as the last event). Events that
 # TERMINAL a dispatch (outcome.received, dispatch.rejected, format_error)
 # keep the legacy clear-any-event semantics.
+# #216 (2026-09-30, live 01M3E7SAANXKW1V73W8B8Q3G86): failure.selected is
+# part of the same mid-dispatch audit burst (command.issued -> selected ->
+# injected, all carrying the dispatch command_id) and MUST preserve pending
+# too -- without it the very first audit event of every dispatch clears the
+# WAL record, so ANY mid-dispatch process death (here: a network switch
+# killed the in-flight Prism PRISM_FINAL stream at seq 3195-3197) strands
+# reviewer_dispatched=True with pending=None: _recover() no-ops, decide()
+# returns None, and the loop exits silently forever.
 _PENDING_PRESERVING_AUDIT = frozenset(
-    {"dispatch.parity", "failure.injected", "worktree.opened", "worktree.closed"}
+    {
+        "dispatch.parity",
+        "failure.selected",
+        "failure.injected",
+        "worktree.opened",
+        "worktree.closed",
+    }
 )
 
 # SM-01.15 publish-batch WAL: an execute_publish command is not resolved by
