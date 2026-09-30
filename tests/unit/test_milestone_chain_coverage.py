@@ -342,10 +342,16 @@ def test_clean_milestone_refs_paths(tmp_path, monkeypatch):
 
 
 def test_complete_milestone_idempotent(tmp_path):
-    host = _Host(tmp_path)
-    host._complete_milestone(
-        _Cmd(), "T-1", {"release_tag": "v1"}, [_ev(1, "run.completed")]
-    )
+    # §0.1 #10 / IF-MILESTONE-002: the M-IMPL boundary pseudo-completion is
+    # NOT the completion witness; only terminal_state=released is.
+    host = _Host(tmp_path, [_ev(1, "run.completed", {"terminal_state": "boundary"})])
+    host._complete_milestone(_Cmd(), "T-1", {"release_tag": "v1"}, list(host.events))
+    assert [event for event, _payload, _kwargs in host.emitted] == ["run.completed"]
+    assert host.emitted[0][1]["terminal_state"] == "released"
+    assert host.emitted[0][1]["release_tag"] == "v1"
+
+    host = _Host(tmp_path, [_ev(1, "run.completed", {"terminal_state": "released"})])
+    host._complete_milestone(_Cmd(), "T-1", {"release_tag": "v1"}, list(host.events))
     assert host.emitted == []
 
     host = _Host(tmp_path)

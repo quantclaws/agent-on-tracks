@@ -143,7 +143,17 @@ def test_released_reachable_despite_boundary_completion(host_repo, trac, event_l
         "despite the boundary pseudo-completion in the log (#182)"
     )
     assert len(released) == 1, "released must land exactly once"
-    assert released[0]["payload"].get("release_tag")
+    # the event shape is run.completed(terminal_state=released, release_tag)
+    # (interfaces §1r.1); this fixture's approved plan is merge-only with no
+    # tag step, so the locked FR-0277 fold gives the explicit no-public-tag
+    # value '' — field presence is the contract, not tag truthiness
+    assert "release_tag" in released[0]["payload"], (
+        "run.completed(released) must carry the release_tag field (§1r.1)"
+    )
+    assert released[0]["payload"]["release_tag"] == "", (
+        "a merge-only approved plan folds release_tag to the explicit "
+        "no-public-tag value '' (FR-0277)"
+    )
     boundary_seq = next(
         e["seq"] for e in events
         if e["type"] == "run.completed"

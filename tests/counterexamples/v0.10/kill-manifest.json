@@ -44,6 +44,14 @@
           {"patch": "ce_ac-fr0326-01.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_stage_order_and_timeline_consistency", "outcome": "killed"},
           {"patch": "ce_ac-fr0326-02.patch (equivalent mutation)", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "T-007 GREEN window (milestone_chain in-flight dea484d7)",
+        "date": "2026-09-30",
+        "note": "re-confirmation after correcting the anchor's release_tag assertion to the 1r.1 field-presence plus the FR-0277 no-public-tag fold ('' for the merge-only fixture the test builds): the authored patch is stale against the delivered terminal-state guard, so the kill was re-executed as its documented equivalent mutation (the pre-IF-MILESTONE-002 any-run.completed skip restored) with byte-exact restore from the preserved pre-mutation content",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0327-01.patch (equivalent mutation)", "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
