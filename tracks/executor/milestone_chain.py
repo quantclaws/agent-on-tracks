@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import os
 
-from tracks.effects.github import GithubIssuesError, close_issue
+from tracks.effects.github import (
+    GithubIssuesError,
+    close_issue,
+    ensure_project_milestone,
+)
 from tracks.effects.github import close_project_milestone as close_project_milestone_api
 from tracks.executor.host_contract import CANONICAL_CONTRACT_RELPATH, load_host_contract
 from tracks.executor.milestone import (
@@ -343,7 +347,13 @@ class ExecMilestoneMixin:
 
     def _close_milestone_project(self, cmd, task_id, trace, params, events):
         """Close the Project/milestone when the host declared an authoritative
-        tracker + credentials; otherwise land an audited skipped identity."""
+        tracker + credentials; otherwise land an audited skipped identity.
+
+        IF-TRACKER-001 §1r.5.2: the declared milestone is ensured on the
+        remote first (list -> create -> readback); an unavailable ensure lands
+        ``attention.required(milestone_not_found)`` with the manual-create
+        guidance and keeps the audited skip -- a close is never attempted
+        blind."""
         if any(event.type == "project.closed" for event in events):
             return next(
                 dict(event.payload or {})
@@ -353,37 +363,88 @@ class ExecMilestoneMixin:
         tracker = params.get("tracker") if isinstance(params.get("tracker"), dict) else {}
         repo_id = str(tracker.get("repo") or os.environ.get("TRAC_GITHUB_REPO", ""))
         milestone = tracker.get("milestone")
-        if repo_id and milestone not in (None, "") and os.environ.get("GITHUB_TOKEN"):
-            def closer(_tracker, entry):
-                try:
-                    result = close_project_milestone_api(
-                        repo_id, tracker.get("project", ""), milestone
-                    )
-                except GithubIssuesError as exc:
-                    result = {
-                        "state": "",
-                        "api_verified": False,
-                        "error": f"{exc.classification}: {exc}",
-                    }
-                if result.get("api_verified") and result.get("state") == "closed":
-                    return {"state": "closed", "remote_state": "closed", "api_verified": True}
-                reason = str(result.get("error") or "close_unconfirmed")
-                self._emit(
-                    "attention.required",
-                    {
-                        "area": "project_close",
-                        "reason": reason,
-                        "next": "repair GitHub access and trac run --resume",
-                    },
-                    command_id=cmd.command_id,
-                    task_id=task_id,
+        if repo_id and milestone not in (None, ""):
+            ensured = ensure_project_milestone(
+                repo_id, tracker.get("project", ""), milestone
+            )
+            if ensured.get("api_verified") is not True:
+                return self._skip_unensured_milestone(
+                    cmd, task_id, trace, tracker, ensured
                 )
-                return {"state": "skipped", "reason": reason, "api_verified": False}
-
+            closer = self._milestone_project_closer(
+                cmd, task_id, tracker, repo_id, milestone
+            )
             entry = close_project_milestone(self.repo, tracker, trace, closer=closer)
         else:
             entry = close_project_milestone(self.repo, tracker, trace)
             entry.update({"state": "skipped", "reason": "not_authoritative"})
+        self._emit("project.closed", dict(entry), command_id=cmd.command_id, task_id=task_id)
+        return entry
+
+    def _milestone_project_closer(self, cmd, task_id, tracker, repo_id, milestone):
+        """The irreversible project-close seam: PATCH + readback; a verified
+        close yields state=closed, any classified failure yields an audited
+        skipped state plus attention.required and NEVER claims a close."""
+
+        def closer(_tracker, entry):
+            try:
+                result = close_project_milestone_api(
+                    repo_id, tracker.get("project", ""), milestone
+                )
+            except GithubIssuesError as exc:
+                result = {
+                    "state": "",
+                    "api_verified": False,
+                    "error": f"{exc.classification}: {exc}",
+                }
+            if result.get("api_verified") and result.get("state") == "closed":
+                return {"state": "closed", "remote_state": "closed", "api_verified": True}
+            reason = str(result.get("error") or "close_unconfirmed")
+            self._emit(
+                "attention.required",
+                {
+                    "area": "project_close",
+                    "reason": reason,
+                    "next": "repair GitHub access and trac run --resume",
+                },
+                command_id=cmd.command_id,
+                task_id=task_id,
+            )
+            return {"state": "skipped", "reason": reason, "api_verified": False}
+
+        return closer
+
+    def _skip_unensured_milestone(self, cmd, task_id, trace, tracker, ensured):
+        """IF-TRACKER-001 §1r.5.2: an unavailable ensure never closes blind --
+        land the ``milestone_not_found`` attention with the operator guidance
+        (create the rendered title by hand, then ``trac run --resume``) and
+        the audited skip witness."""
+        milestone = tracker.get("milestone")
+        self._emit(
+            "attention.required",
+            {
+                "area": "project_close",
+                "reason": "milestone_not_found",
+                "project": tracker.get("project", ""),
+                "milestone": milestone,
+                "ensure_error": str(ensured.get("error") or ""),
+                "next": (
+                    f"create the milestone '{milestone}' manually per the "
+                    "declared milestone_template, then trac run --resume"
+                ),
+            },
+            command_id=cmd.command_id,
+            task_id=task_id,
+        )
+        entry = {
+            "state": "skipped",
+            "reason": "milestone_not_found",
+            "api_verified": False,
+            "project": tracker.get("project", ""),
+            "milestone": milestone,
+            "candidate_sha": trace.get("candidate_sha", ""),
+            "trace_digest": trace.get("trace_digest", ""),
+        }
         self._emit("project.closed", dict(entry), command_id=cmd.command_id, task_id=task_id)
         return entry
 
@@ -478,7 +539,15 @@ class ExecMilestoneMixin:
         return True
 
     def _complete_milestone(self, cmd, task_id, trace, events):
-        if any(event.type == "run.completed" for event in events):
+        # IF-MILESTONE-002 §1r.1: only run.completed(terminal_state=released)
+        # is the idempotent completion witness -- the M-IMPL closure boundary
+        # pseudo-completion (terminal_state=boundary) must not block the
+        # released terminal event from landing.
+        if any(
+            _event_type(event) == "run.completed"
+            and _event_payload(event).get("terminal_state") == "released"
+            for event in events
+        ):
             return
         # §1.0.7 terminal face: the closing tail completes with
         # run.completed(terminal_state=released, release_tag).
