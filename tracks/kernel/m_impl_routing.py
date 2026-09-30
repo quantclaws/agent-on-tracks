@@ -194,13 +194,15 @@ def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
         s.substate = "EXIT"
     elif check == "ruling":
         # #214 (2026-09-30): the RULING outcome carries a structured paired
-        # delta (devon_side/shield_side). Store it for decide() to consume —
-        # the ruling's devon_side.action routes the next dispatch instead of
-        # cycling back to RULING (the pre-fix loop: ruling lands → ignored →
-        # same failure re-selected → DIAGNOSE(exhausted) → RULING → repeat).
+        # delta (devon_side/shield_side). Store it for decide() to consume.
+        # CRITICAL: also SET the substate to RULING — the previous cycle may
+        # have left it at DIAGNOSE; without this reset decide() routes to
+        # DIAGNOSE and the stored outcome is never consumed (the live bug:
+        # RULING passed → Prism DIAGNOSE dispatched → unknown → loop).
         outcome = p.get("ruling_outcome")
         if isinstance(outcome, dict):
             s.m_impl_ruling_outcome = outcome
+        s.substate = "RULING"
         s.last_failure = None
         return
     s.last_failure = None
