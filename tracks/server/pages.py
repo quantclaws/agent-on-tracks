@@ -1,12 +1,26 @@
-"""HTML shell and Vditor host pages (interfaces §2b pages, E-01..E-08).
+"""Workbench page shells (interfaces §1l / §1m.1; E-01, E-02).
 
-Serves the page shells for the workbench; material review/edit is hosted by
-the vendored Vditor build (view / basic edit / revision compare) loaded from
-the same origin at ``/static/vendor/vditor/`` — never from a CDN, optional
-render engines disabled (§2b). Pages never embed secrets (§1g.3) and never
-embed Agent session content (FR-0303 boundary).
+v0.10 converges the server-rendered page surface to two HTML documents:
 
-Contract tokens: IF-DOCREV-001, IF-SECRECY-001.
+- ``login`` renders the dual-column auth shell (E-02 / §1m.1): the hero
+  column (image + slogan + image attribution) next to the login panel
+  (credential form + inline error line + the hidden name-collection step
+  that the client reveals when the login response carries
+  ``name_required`` — E-02, §1m.2);
+- the seven workbench entries (E-01) render ONE shared workbench shell
+  document carrying the ``data-route`` deep link plus run_id/project_id
+  parameters, the three-zone chrome skeleton (tab bar + sidebar + multi-tab
+  main area), the icon-only seven-item tab bar in its fixed order (FR-0317)
+  and the native ES-module bootstrap ``/static/app/shell.js`` (NFR-0156).
+  All assets stay same-origin under ``/static/``; the shell never inlines
+  material rows or secrets (§1g.3, FR-0303 boundary).
+
+The ``PAGES`` closed set (E-01..E-08) and the URL table in ``app.py`` stay
+unchanged. The docs view injects the vendored Vditor build from the same
+origin on demand (interfaces §1n.3) — the server shell no longer inlines the
+editor assets, so the material review entry renders the shared shell too.
+
+Contract tokens: IF-WORKBENCH-001, IF-SECRECY-001.
 """
 
 from __future__ import annotations
@@ -36,40 +50,68 @@ _TITLES = {
     "release": "tracks - release",
 }
 
-# Vendored same-origin assets (interfaces §2b, architecture §3.4). The editor
-# core loads its lute/highlight/i18n/icon add-ons from the same origin on
-# demand; the optional engines (math/mermaid/echarts/emoji) are not vendored
-# and stay disabled.
-_VDITOR_ROOT = "/static/vendor/vditor/"
-_VDITOR_CSS = _VDITOR_ROOT + "index.css"
-_VDITOR_JS = _VDITOR_ROOT + "index.min.js"
+# The FR-0318 seven-item function set of the tab bar in its fixed,
+# non-draggable order (FR-0317).
+_TABBAR_FEATURES = ("projects", "runs", "docs", "review", "todos", "settings", "account")
 
+# Deep-link targets for the feature entries; Settings/Account open in-page
+# surfaces and render as buttons (no navigation URL).
+_TABBAR_HREFS = {
+    "projects": "/projects",
+    "runs": "/",
+    "docs": "/",
+    "review": "/",
+    "todos": "/todos",
+}
 
-def vditor_asset_tags() -> list[str]:
-    """Same-origin <link>/<script> tags for the vendored Vditor assets."""
-    return [
-        f'<link rel="stylesheet" href="{_VDITOR_CSS}">',
-        f'<script src="{_VDITOR_JS}"></script>',
-    ]
+# Inline icon bodies (no xmlns: an HTML-embedded SVG needs none, and shell
+# assets stay free of any external reference).
+_TABBAR_ICONS = {
+    "projects": (
+        '<rect x="3" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="14" y="3" width="7" height="7" rx="1"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1"/>'
+        '<rect x="14" y="14" width="7" height="7" rx="1"/>'
+    ),
+    "runs": '<path d="M7 4.5l12 7.5-12 7.5z"/>',
+    "docs": '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+    "review": '<circle cx="12" cy="12" r="8"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+    "todos": '<path d="M4 6h2M4 12h2M4 18h2"/><path d="M9 6h11M9 12h11M9 18h11"/>',
+    "settings": (
+        '<path d="M4 7h10M18 7h2M4 12h2M10 12h10M4 17h16"/>'
+        '<circle cx="16" cy="7" r="2"/><circle cx="8" cy="12" r="2"/>'
+        '<circle cx="18" cy="17" r="2"/>'
+    ),
+    "account": '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
+}
+
+# The hero image is the only image asset available on this same-origin
+# static surface (the v0.10 Scaffold declares no new asset file); the
+# vendored Vditor logo is reused with attribution rather than pointing at a
+# missing path.
+_HERO_IMAGE = "/static/vendor/vditor/images/logo.png"
 
 
 def render_page(name: str, context: dict) -> str:
     """Render one page of the PAGES closed set with the given context."""
     if name not in PAGES:
         raise ValueError(f"unknown page {name!r} outside the PAGES closed set")
-    head = [f"<title>{html.escape(_TITLES[name])}</title>"]
-    if name == "review":
-        head.extend(vditor_asset_tags())
+    if name == "login":
+        body = _login_body()
+    else:
+        body = _workbench_body(name, context)
     return "\n".join(
         [
             "<!doctype html>",
             '<html lang="en">',
             "<head>",
             '<meta charset="utf-8">',
-            *head,
+            '<meta name="viewport" content="width=device-width, initial-scale=1">',
+            f"<title>{html.escape(_TITLES[name])}</title>",
+            '<link rel="stylesheet" href="/static/styles.css">',
             "</head>",
-            "<body>",
-            _body(name, context),
+            f'<body class="{"auth" if name == "login" else "workbench-body"}">',
+            body,
             "</body>",
             "</html>",
             "",
@@ -77,31 +119,81 @@ def render_page(name: str, context: dict) -> str:
     )
 
 
-def _body(name: str, context: dict) -> str:
-    if name == "login":
-        return _login_body()
-    if name == "review":
-        return _review_body(context)
-    return _placeholder_body(name, context)
-
-
 def _login_body() -> str:
+    """Dual-column auth shell (E-02 / §1m.1)."""
     return "\n".join(
         [
-            '<main id="page-login" data-page="login">',
-            "<h1>tracks login</h1>",
-            '<form id="login-form" method="post" action="/api/auth/login">',
+            '<main class="auth-shell" data-testid="login-shell">',
+            '<section class="auth-hero" data-testid="login-hero">',
+            f'<img class="auth-hero-image" src="{_HERO_IMAGE}" alt="tracks workbench logo">',
+            '<p class="auth-slogan">One workbench for the whole run.</p>',
+            '<p class="auth-credit" data-testid="login-hero-credit">Image: Vditor (MIT)</p>',
+            "</section>",
+            '<section class="auth-panel" data-testid="login-panel">',
+            '<h1 class="auth-title">tracks</h1>',
+            '<form class="auth-form" data-testid="login-form" method="post"'
+            ' action="/api/auth/login">',
             '<label for="password">Password</label>',
-            '<input id="password" name="password" type="password"'
-            ' autocomplete="current-password" required>',
-            '<button type="submit">Log in</button>',
+            '<input id="password" name="password" type="password" autocomplete="current-password"'
+            ' data-testid="login-password" required>',
+            '<button type="submit" data-testid="login-submit">Log in</button>',
             "</form>",
+            '<p class="auth-error" data-testid="login-error" role="alert" hidden></p>',
+            '<form class="auth-form" data-testid="login-name-form" hidden>',
+            '<label for="display-name">Display name</label>',
+            '<input id="display-name" name="name" data-testid="login-name"'
+            ' maxlength="64" required>',
+            '<button type="button" data-testid="login-name-continue">Continue</button>',
+            "</form>",
+            "</section>",
             "</main>",
         ]
     )
 
 
-def _placeholder_body(name: str, context: dict) -> str:
+def _workbench_body(name: str, context: dict) -> str:
+    """Shared workbench shell (E-01 / §1l): chrome + deep link + bootstrap."""
+    return "\n".join(
+        [
+            f'<div id="workbench" class="workbench" data-route="{name}"'
+            f"{_deep_link_attrs(context)}>",
+            '<nav class="tabbar" data-testid="tabbar" aria-label="Workbench functions">',
+            *(_tabbar_item(feature) for feature in _TABBAR_FEATURES),
+            "</nav>",
+            '<aside class="sidebar" data-testid="sidebar" aria-label="Context navigation"></aside>',
+            '<main class="main" data-testid="main-area">',
+            '<header class="main-header">',
+            '<h1 class="main-title" data-testid="main-title"></h1>',
+            "</header>",
+            "</main>",
+            "</div>",
+            '<script type="module" src="/static/app/shell.js"></script>',
+        ]
+    )
+
+
+def _tabbar_item(feature: str) -> str:
+    """One icon-only tab bar entry with its hover tooltip (FR-0317)."""
+    label = feature.capitalize()
+    icon = (
+        '<svg class="tabbar-icon" viewBox="0 0 24 24" width="20" height="20"'
+        ' fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"'
+        ' stroke-linejoin="round" aria-hidden="true" focusable="false">'
+        f"{_TABBAR_ICONS[feature]}</svg>"
+    )
+    if feature in _TABBAR_HREFS:
+        return (
+            f'<a class="tabbar-item" data-testid="tabbar-item-{feature}"'
+            f' href="{_TABBAR_HREFS[feature]}" title="{label}" aria-label="{label}">{icon}</a>'
+        )
+    return (
+        f'<button type="button" class="tabbar-item" data-testid="tabbar-item-{feature}"'
+        f' title="{label}" aria-label="{label}">{icon}</button>'
+    )
+
+
+def _deep_link_attrs(context: dict) -> str:
+    """Escaped run_id/project_id deep-link attributes (§1l.1)."""
     attrs = ""
     run_id = _escape(context.get("run_id"))
     project_id = _escape(context.get("project_id"))
@@ -109,68 +201,7 @@ def _placeholder_body(name: str, context: dict) -> str:
         attrs += f' data-run-id="{run_id}"'
     if project_id:
         attrs += f' data-project-id="{project_id}"'
-    return "\n".join(
-        [
-            f'<main id="page-{name}" data-page="{name}"{attrs}>',
-            f"<h1>{html.escape(_TITLES[name])}</h1>",
-            "</main>",
-        ]
-    )
-
-
-def _review_body(context: dict) -> str:
-    doc = _escape(context.get("doc")) or "material"
-    revision = _escape(context.get("revision"))
-    return "\n".join(
-        [
-            f'<main id="page-review" data-page="review" data-doc="{doc}">',
-            f"<h1>Material review: {doc}</h1>",
-            f'<p id="doc-revision" data-revision="{revision}">'
-            f"Current revision: <code>{revision}</code></p>",
-            _revision_history(context),
-            '<div id="vditor-host"></div>',
-            _revision_compare(context),
-            "</main>",
-        ]
-    )
-
-
-def _revision_history(context: dict) -> str:
-    history = context.get("history") or []
-    items = []
-    for entry in history:
-        if not isinstance(entry, dict):
-            continue
-        revision = _escape(entry.get("revision"))
-        actor = _escape(entry.get("actor"))
-        ts = _escape(entry.get("ts"))
-        items.append(f'<li data-revision="{revision}">{revision} - {actor} - {ts}</li>')
-    if not items:
-        return ""
-    return "\n".join(['<ul id="revision-history">', *items, "</ul>"])
-
-
-def _revision_compare(context: dict) -> str:
-    diff = context.get("diff")
-    diff = diff if isinstance(diff, dict) else {}
-    history = context.get("history") or []
-    previous = None
-    for entry in history:
-        if isinstance(entry, dict) and entry.get("revision") != context.get("revision"):
-            previous = entry.get("revision")
-            break
-    old = _escape(diff.get("from") or previous)
-    new = _escape(diff.get("to") or context.get("revision"))
-    unified = diff.get("unified_diff")
-    parts = [
-        '<section id="revision-compare">',
-        "<h2>Revision compare</h2>",
-        f'<p class="revision-pair">from <code>{old}</code> to <code>{new}</code></p>',
-    ]
-    if unified:
-        parts.append(f'<pre class="unified-diff">{_escape(unified)}</pre>')
-    parts.append("</section>")
-    return "\n".join(parts)
+    return attrs
 
 
 def _escape(value: object) -> str:

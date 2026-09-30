@@ -1,0 +1,155 @@
+/* tracks workbench chrome (IF-WORKBENCH-001; E-01 / E-02).
+   Loaded by both shells: the three-zone workbench layout with its fixed
+   icon-only tab bar (FR-0317) and the dual-column auth shell that collapses
+   to a single column on narrow viewports (§1m.1). */
+
+:root {
+  --tabbar-width: 56px;
+  --sidebar-width: 248px;
+  --border: #d8dee6;
+  --surface: #f6f7f9;
+  --ink: #1f2430;
+  --muted: #6b7280;
+  --danger: #b91c1c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.45;
+}
+
+/* -- workbench: tab bar | sidebar | multi-tab main area -------------------- */
+
+.workbench {
+  display: grid;
+  grid-template-columns: var(--tabbar-width) var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.tabbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 6px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tabbar-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tabbar-item:hover {
+  background: rgb(31 36 48 / 8%);
+}
+
+.sidebar {
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.main {
+  min-width: 0;
+  padding: 16px 24px;
+}
+
+.main-title {
+  margin: 0 0 16px;
+  font-size: 20px;
+}
+
+/* -- login: dual-column auth shell (E-02); narrow viewports collapse -------- */
+
+.auth {
+  background: var(--surface);
+}
+
+.auth-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.auth-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px;
+  text-align: center;
+}
+
+.auth-hero-image {
+  width: 128px;
+  height: 128px;
+}
+
+.auth-slogan {
+  margin: 0;
+  font-size: 22px;
+}
+
+.auth-credit {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.auth-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px;
+  background: #ffffff;
+  border-left: 1px solid var(--border);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+}
+
+.auth-error {
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .auth-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth-panel {
+    border-left: 0;
+  }
+
+  .workbench {
+    grid-template-columns: var(--tabbar-width) minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+}
