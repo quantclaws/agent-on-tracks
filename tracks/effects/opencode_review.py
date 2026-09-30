@@ -8,7 +8,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from tracks.discuss.gate import check_ready
+from tracks.discuss.gate import adjudication_owner, check_ready
+from tracks.discuss.model import speaker_key
+from tracks.discuss.parser import parse_threads
 from tracks.effects.devon_evidence import _result_file_payload
 from tracks.kernel.envelope import (
     REVIEW_FINDING_FIELDS,
@@ -21,6 +23,44 @@ from tracks.kernel.envelope import (
 from tracks.kernel.m_impl import DIAGNOSE_CLASSIFICATIONS
 
 from .opencode_audit import _discussion_snapshot, _docset_text
+
+# FR-0332 §1s.1: the LEX_REVIEW legal park verdict — appended to the
+# ``lex.verdict`` closed set when every unresolved thread of the doc-set is
+# Human-adjudicated. ``_HUMAN_SPEAKER`` is compared through ``speaker_key``
+# (the same normalized/lowercased identity the discuss writer uses).
+_PARK_VERDICT = "pass-pending-human-threads"
+_HUMAN_SPEAKER = "Human"
+
+
+def _pending_human_threads(doc_paths: list[Path]) -> list[dict]:
+    """The unresolved threads whose adjudication owner is Human (FR-0332).
+
+    Returns ``[{doc, thread_id, summary}]`` when every unresolved thread of
+    the doc-set names Human as its single root @mention (the FR-0314.4
+    adjudication owner); returns ``[]`` as soon as one unresolved thread is
+    owned by anyone else — that review is a ``revise``, never a park. The
+    computation is server-side from the tracks/discuss parse and ignores any
+    agent self-report (interfaces §1s.1)."""
+    pending: list[dict] = []
+    human_key = speaker_key(_HUMAN_SPEAKER)
+    for path in doc_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for thread in parse_threads(text):
+            if thread.status == "resolved":
+                continue
+            owner = adjudication_owner(text, thread.thread_id)
+            if owner is None or speaker_key(owner) != human_key:
+                return []
+            pending.append(
+                {
+                    "doc": path.name,
+                    "thread_id": thread.thread_id,
+                    "summary": thread.snippet or thread.root_text.strip(),
+                }
+            )
+    return pending
 
 
 class OpencodeReviewMixin:
@@ -317,8 +357,22 @@ class OpencodeReviewMixin:
             text = _docset_text(doc_paths)
             result["discussion_evidence"] = _discussion_snapshot(text)
             if reviewer_assignment:
+                result.pop("pending_threads", None)
                 ready, _ = check_ready(text)
-                result["verdict"] = "pass" if ready else "revise"
+                if ready:
+                    result["verdict"] = "pass"
+                elif substate == "LEX_REVIEW":
+                    # FR-0332 §1s.1 three-branch LEX_REVIEW exit: only a
+                    # Human-pending-only doc-set parks; every other unresolved
+                    # owner keeps the revise route.
+                    pending = _pending_human_threads(doc_paths)
+                    if pending:
+                        result["verdict"] = _PARK_VERDICT
+                        result["pending_threads"] = pending
+                    else:
+                        result["verdict"] = "revise"
+                else:
+                    result["verdict"] = "revise"
         return result
 
     @staticmethod

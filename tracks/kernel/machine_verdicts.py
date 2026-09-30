@@ -44,6 +44,12 @@ from .stage_registry import (
 if TYPE_CHECKING:
     from .machine import State
 
+# FR-0332 §1s.1/.2: the LEX_REVIEW legal park verdict and its awaiting member
+# (interfaces §1s closed-set append). The verdict is computed server-side at
+# the review exit; the kernel only reduces it.
+_PARK_VERDICT = "pass-pending-human-threads"
+_REVIEW_PENDING_THREADS = "review_pending_threads"
+
 
 def _on_verdict_passed(s: State, p: dict, ev: EventEnvelope) -> None:
     s.infra_failure_streak = 0  # the pipeline moved: infra is healthy again
@@ -290,6 +296,20 @@ def _on_prism_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
 def _on_reviewer_verdict(s: State, p: dict, ev: EventEnvelope) -> None:
     s.active_result = None  # v0.5: pipeline publish complete
     owners = _VERDICT_OWNERS[ev.type]
+    if p["verdict"] == _PARK_VERDICT:
+        # FR-0332 §1s.2 legal park: only Human-adjudicated threads are open.
+        # The reviewer pass flag is NOT set, the substate stays LEX_REVIEW
+        # (Human resumes through human.review), and the pending list projects
+        # into State so the park is replayable from the event log.
+        s.status = "awaiting_human"
+        s.awaiting = _REVIEW_PENDING_THREADS
+        pending = p.get("pending_threads")
+        s.pending_threads = (
+            [dict(thread) for thread in pending if isinstance(thread, dict)]
+            if isinstance(pending, list)
+            else []
+        )
+        return
     if p["verdict"] == "pass":
         setattr(s, owners[0].reviewer_passed_flag, True)
         s.substate = "HUMAN_REVIEW"

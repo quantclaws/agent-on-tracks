@@ -14,6 +14,7 @@ from tracks.executor.file_identity import (
 from tracks.executor.helpers import git
 from tracks.executor.validate import capture_digests
 from tracks.kernel.machine import _STAGES, DESIGN_DOCS
+from tracks.kernel.machine_verdicts import _PARK_VERDICT
 from tracks.project import layout_paths
 from tracks.store import new_ulid
 
@@ -366,6 +367,18 @@ class ResultPayloadMixin:
         verdict = result.get("verdict")
         doc_name = sd.doc
         digests = capture_digests({doc_name: self._doc_path(doc_name)}) if doc_name else {}
+        # FR-0332 §1s.3: the LEX_REVIEW park is a legal no-diff verdict — a
+        # Human-pending re-park produces no document diff (the park analogue
+        # of the M-TEST structured-revise exemption in _m_test_prism_payload).
+        requires_diff = verdict not in ("pass", _PARK_VERDICT)
+        domain_event_payload = {"verdict": verdict}
+        if verdict == _PARK_VERDICT:
+            # FR-0332 §1s.1: the park verdict carries the pending Human thread
+            # list so the kernel projection (State) and the trac status
+            # listing replay it from the event log.
+            pending_threads = result.get("pending_threads")
+            if isinstance(pending_threads, list) and pending_threads:
+                domain_event_payload["pending_threads"] = pending_threads
         return {
             "source": role,
             "stage": state.stage,
@@ -376,7 +389,7 @@ class ResultPayloadMixin:
             "allowed_paths": [doc_name] if doc_name else [],
             "base_sha": base_sha,
             "checks": ["template"],
-            "requires_diff": verdict != "pass",
+            "requires_diff": requires_diff,
             "forbid_diff": False,
             "discussion_only": True,
             "commit_label": f"{state.stage}: {role} ({verdict}) checkpoint",
@@ -384,7 +397,7 @@ class ResultPayloadMixin:
             "digests": digests,
             "domain_event": {
                 "type": sd.verdict_event,
-                "payload": {"verdict": verdict},
+                "payload": domain_event_payload,
             },
         }
 

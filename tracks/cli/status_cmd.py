@@ -42,10 +42,30 @@ def _resolve_report_events(home, run_id: str | None):
     return run_id, events, None
 
 
+def _pending_thread_lines(s) -> list[str]:
+    """FR-0332 §1s.4: the pending Human thread list (doc + thread_id +
+    summary) plus the recovery pointer for a LEX_REVIEW park. The list is the
+    park projection; an empty projection still renders the recovery pointer
+    (the awaiting itself is the fact the operator must act on)."""
+    lines = []
+    for thread in getattr(s, "pending_threads", None) or []:
+        if not isinstance(thread, dict):
+            continue
+        doc = thread.get("doc") or "?"
+        thread_id = thread.get("thread_id") or "?"
+        summary = thread.get("summary") or ""
+        lines.append(f"pending-thread: doc={doc} thread={thread_id} summary={summary}")
+    lines.append(
+        "resume: handle the pending Human threads, then trac review to re-enter LEX_REVIEW"
+    )
+    return lines
+
+
 def _status_line(run_id, s) -> str:
     """One status line per run (interfaces §2b): completed terminal lines
     (with hotfix branch/scenario), AWAIT_HUMAN hotfix awaiting line, or the
-    shared state format plus hotfix branch/scenario/issue fields."""
+    shared state format plus hotfix branch/scenario/issue fields and the
+    review_pending_threads pending list (§1s.4)."""
     if s.status == "completed":
         line = f"run={run_id}: completed terminal={s.terminal_state} stage={s.stage}"
         if s.hotfix_issue is not None:
@@ -59,6 +79,8 @@ def _status_line(run_id, s) -> str:
             f" branch=fix/{s.hotfix_issue} "
             f"scenario={s.hotfix_scenario} issue={s.hotfix_issue}"
         )
+    if s.awaiting == "review_pending_threads":
+        line += "\n" + "\n".join(_pending_thread_lines(s))
     return line
 
 

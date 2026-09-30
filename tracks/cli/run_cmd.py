@@ -605,7 +605,12 @@ def cmd_review(repo: Path, *args: str) -> int:
             return _err("no active run")
         home, store, run_id = active
         state = store.state(run_id)
-        if state.awaiting != "review":
+        # FR-0332 §1s.3: a LEX_REVIEW park (awaiting=review_pending_threads) is
+        # also a review gate — trac review there means "the Human handled the
+        # pending threads, resume the review" and the kernel gate
+        # (_on_human_review_gate) clears the awaiting and re-dispatches Lex.
+        # HUMAN_REVIEW (awaiting=review) semantics are unchanged.
+        if state.awaiting not in ("review", "review_pending_threads"):
             return _err(f"run not awaiting review (awaiting={state.awaiting or 'nothing'})")
         checkpoint = _review_checkpoint(repo, state, actor, action)
         rc, result = _do_human_pipeline(repo, state, store, run_id, checkpoint)

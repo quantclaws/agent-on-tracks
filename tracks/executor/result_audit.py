@@ -17,6 +17,7 @@ from tracks.executor.validate import (
     is_discussion_diff,
     validate_document,
 )
+from tracks.kernel.machine_verdicts import _PARK_VERDICT
 from tracks.project import layout_paths
 
 
@@ -355,7 +356,10 @@ class ResultAuditMixin:
         still fail hard — they must produce a canonical discussion diff."""
         requires_diff = cmd.params.get("requires_diff", False)
         discussion_only = cmd.params.get("discussion_only", False)
-        if requires_diff:
+        # FR-0332 §1s.3: the LEX_REVIEW park is a legal no-diff verdict — a
+        # Human-pending re-park produces no document diff, so it passes the
+        # reviewer no_diff hard failure instead of aborting the checkpoint.
+        if requires_diff and cmd.params.get("verdict") != _PARK_VERDICT:
             any_diff = any(self._has_artifact_diff(doc, base_sha) for doc in artifacts)
             if not any_diff:
                 if discussion_only:

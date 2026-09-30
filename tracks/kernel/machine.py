@@ -301,7 +301,9 @@ class State:
     status: str = "active"  # active | completed | awaiting_human
     stage: str | None = None  # M-START | M-STORY | M-SPEC | M-ACC | M-REQ-APPROVAL | M-DESIGN
     substate: str | None = None
-    awaiting: str | None = None  # triage | review | escalation | approval
+    awaiting: str | None = (
+        None  # triage | review | escalation | approval | review_pending_threads
+    )
     current_attempt: int = 0
     review_round: int = 0
     sage_passed_this_round: bool = False
@@ -335,6 +337,10 @@ class State:
     doc_validated: bool = False
     reviewer_dispatched: bool = False
     reviewer_produced: bool = False
+    # FR-0332 §1s.2: the LEX_REVIEW park projection — the pending Human
+    # thread list carried by the lex.verdict park event, replayed into State
+    # (feeds the trac status listing and the next LEX_REVIEW dispatch context).
+    pending_threads: list = field(default_factory=list)
     stage_exited: bool = False
     exit_validated: bool = False  # FR-150/AC-1502: review-exit gate passed
     pending: dict | None = None  # last issued command without a result
@@ -512,6 +518,26 @@ def _release_apply(name: str):
 # still clears `pending` for it.
 
 
+def _on_human_review_gate(s: State, p: dict, ev: EventEnvelope) -> None:
+    """FR-0332 §1s.3: human.review under a LEX_REVIEW park means "the Human
+    handled the pending threads, resume the review" — clear the gate and
+    re-enter LEX_REVIEW so decide() re-dispatches Lex (the re-review then
+    re-computes the exit: resolved -> pass, still Human-only -> park again,
+    other owner -> revise). Every other awaiting value keeps the existing
+    human.review semantics unchanged."""
+    if s.awaiting != "review_pending_threads":
+        _on_human_review(s, p, ev)
+        return
+    s.active_result = None  # v0.5: pipeline publish complete
+    s.awaiting = None
+    s.status = "active"
+    s.substate = "LEX_REVIEW"
+    # Fresh 3-attempt budget for the re-review; the previous review round's
+    # dispatch flags must not block the re-dispatch.
+    s.current_attempt = 0
+    _reset_review(s)
+
+
 _APPLY = {
     "story.requested": _on_story_requested,
     "stage.entered": _on_stage_entered,
@@ -531,7 +557,7 @@ _APPLY = {
     # to EXIT (never HUMAN_REVIEW), revise to RESPOND (BS-05: no human gate).
     "prism.verdict": _on_prism_verdict,
     "human.triage": _on_human_triage,
-    "human.review": _on_human_review,
+    "human.review": _on_human_review_gate,
     "human.retry": _on_human_retry,
     "review.round_started": _on_review_round_started,
     "backlog.recorded": _on_backlog_recorded,
