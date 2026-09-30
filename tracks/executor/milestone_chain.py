@@ -369,7 +369,7 @@ class ExecMilestoneMixin:
             )
             if ensured.get("api_verified") is not True:
                 return self._skip_unensured_milestone(
-                    cmd, task_id, trace, tracker, ensured
+                    cmd, task_id, trace, tracker, str(ensured.get("error") or "")
                 )
             closer = self._milestone_project_closer(
                 cmd, task_id, tracker, repo_id, milestone
@@ -385,12 +385,11 @@ class ExecMilestoneMixin:
         """The irreversible project-close seam: PATCH + readback; a verified
         close yields state=closed, any classified failure yields an audited
         skipped state plus attention.required and NEVER claims a close."""
+        project = tracker.get("project", "")
 
-        def closer(_tracker, entry):
+        def closer(_tracker, _entry):
             try:
-                result = close_project_milestone_api(
-                    repo_id, tracker.get("project", ""), milestone
-                )
+                result = close_project_milestone_api(repo_id, project, milestone)
             except GithubIssuesError as exc:
                 result = {
                     "state": "",
@@ -414,20 +413,21 @@ class ExecMilestoneMixin:
 
         return closer
 
-    def _skip_unensured_milestone(self, cmd, task_id, trace, tracker, ensured):
+    def _skip_unensured_milestone(self, cmd, task_id, trace, tracker, ensure_error):
         """IF-TRACKER-001 §1r.5.2: an unavailable ensure never closes blind --
         land the ``milestone_not_found`` attention with the operator guidance
         (create the rendered title by hand, then ``trac run --resume``) and
         the audited skip witness."""
+        project = tracker.get("project", "")
         milestone = tracker.get("milestone")
         self._emit(
             "attention.required",
             {
                 "area": "project_close",
                 "reason": "milestone_not_found",
-                "project": tracker.get("project", ""),
+                "project": project,
                 "milestone": milestone,
-                "ensure_error": str(ensured.get("error") or ""),
+                "ensure_error": ensure_error,
                 "next": (
                     f"create the milestone '{milestone}' manually per the "
                     "declared milestone_template, then trac run --resume"
@@ -440,7 +440,7 @@ class ExecMilestoneMixin:
             "state": "skipped",
             "reason": "milestone_not_found",
             "api_verified": False,
-            "project": tracker.get("project", ""),
+            "project": project,
             "milestone": milestone,
             "candidate_sha": trace.get("candidate_sha", ""),
             "trace_digest": trace.get("trace_digest", ""),
