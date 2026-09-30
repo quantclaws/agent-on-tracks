@@ -193,18 +193,68 @@ def _on_m_impl_verdict_passed(s: State, p: dict) -> None:
         s.island_2_passed = True
         s.substate = "EXIT"
     elif check == "ruling":
-        # #214 (2026-09-30): the RULING outcome carries a structured paired
-        # delta (devon_side/shield_side). Store it for decide() to consume.
-        # CRITICAL: also SET the substate to RULING — the previous cycle may
-        # have left it at DIAGNOSE; without this reset decide() routes to
-        # DIAGNOSE and the stored outcome is never consumed (the live bug:
-        # RULING passed → Prism DIAGNOSE dispatched → unknown → loop).
-        outcome = p.get("ruling_outcome")
-        if isinstance(outcome, dict):
-            s.m_impl_ruling_outcome = outcome
-        s.substate = "RULING"
-        s.last_failure = None
+        _route_ruling_verdict(s, p)
         return
+    s.last_failure = None
+
+
+def _route_ruling_verdict(s: State, p: dict) -> None:
+    """#214 rev3 (2026-09-30): the RULING verdict routes DIRECTLY to the
+    target substate — storing the outcome for later consumption is
+    structurally broken in an event-sourced kernel: subsequent
+    verdict.failed events override the substate during rebuild. The
+    ruling's devon_side.action IS the routing decision.
+
+    The verdict resolves the Archer RULING dispatch, so the doc flag must
+    be cleared here: the routed-to writer substates guard on doc_dispatched
+    and a stale True (set by the RULING command.issued) halts decide()
+    forever (B62-class silent stall). GREEN/RED re-entry mirrors the
+    budget/red_defect pattern: green_committed must drop or the B56
+    idempotency guard no-ops the re-commit (#86 commit_green livelock).
+    """
+    _reset_doc(s)
+    outcome = p.get("ruling_outcome") or {}
+    devon = outcome.get("devon_side") or {}
+    action = str(devon.get("action") or "").strip()
+    instruction = str(devon.get("instruction") or "").strip()
+    raw_scope = devon.get("scope_boundary")
+    scope = list(raw_scope) if isinstance(raw_scope, list) else []
+    if action == "redeliver_green":
+        s.substate = "GREEN"
+        s.green_committed = False
+        s.current_attempt = 0
+        s.last_failure = None
+        s.m_impl_red_ruling = {
+            "action": action,
+            "instruction": instruction,
+            "scope_boundary": scope,
+            "task_id": devon.get("task_id") or s.current_task_id,
+        }
+        return
+    if action == "deliver_red":
+        s.substate = "RED"
+        s.green_committed = False
+        s.refactor_done = False
+        s.current_attempt = 0
+        s.last_failure = None
+        s.m_impl_red_ruling = {
+            "action": action,
+            "instruction": instruction,
+            "scope_boundary": scope,
+            "task_id": devon.get("task_id") or s.current_task_id,
+        }
+        return
+    # hold / no action: advance to next task. A fresh ruling supersedes
+    # any still-pending ruled action (reachable only as a replay artifact
+    # of a pre-rev3 stream; cleared here so it can never be re-injected
+    # into an unrelated later dispatch).
+    if not action or action == "hold":
+        s.substate = "TASK_DISPATCH"
+        s.current_task_id = None
+        s.last_failure = None
+        s.m_impl_red_ruling = None
+        return
+    s.substate = "RULING"
     s.last_failure = None
 
 

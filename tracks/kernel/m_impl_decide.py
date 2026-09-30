@@ -44,6 +44,19 @@ def _set_m_impl_dispatch_flags(s: State, cmd: dict) -> None:
         # judged as the RED outcome, red_invalid).
         return
     sub = params.get("substate")
+    # #214 rev3: mirror the decide()-side consumption of m_impl_red_ruling
+    # (Devon RED/GREEN/REFACTOR and Archer PLANNING dispatch builders read it)
+    # so REPLAY replays the clearing too. State mutations performed inside
+    # decide() never enter the event stream; without this mirror a restart
+    # replays the ruling's write but never its consumption, and the stale
+    # ruling is re-injected into an unrelated later dispatch (the same
+    # event-sourcing defect class as the rev1/rev2 store-then-consume bug,
+    # one level down).
+    if s.m_impl_red_ruling is not None and (
+        (params.get("role") == "devon" and sub in ("RED", "GREEN", "REFACTOR"))
+        or (params.get("role") == "archer" and sub == "PLANNING")
+    ):
+        s.m_impl_red_ruling = None
     if sub in _M_IMPL_REVIEW_SUBSTATES:
         s.reviewer_dispatched = True
     else:
@@ -92,55 +105,6 @@ def _m_impl_base_assignment(s: State, role: str, sub: str, skills: list) -> dict
         "pre_dirty_snapshot": None,
         "result_identity": None,
     }
-
-
-def _consume_ruling_outcome(s: State) -> Command | None:
-    """#214 (2026-09-30): consume a pending RULING outcome by routing to the
-    ruled action. Returns the next Command, or None when no ruling is pending
-    (the caller falls through to re-dispatch Archer).
-
-    The ruling payload's ``devon_side.action`` maps to the next substate:
-    - ``redeliver_green`` → GREEN dispatch (carry the instruction + scope)
-    - ``deliver_red`` → RED dispatch
-    - ``hold`` / absent → stay at RULING (shield-only or split ruling)
-    The outcome is consumed (cleared) after routing so it never loops."""
-    outcome = getattr(s, "m_impl_ruling_outcome", None)
-    if not isinstance(outcome, dict):
-        return None
-    s.m_impl_ruling_outcome = None  # one-shot: consume now
-    devon = outcome.get("devon_side") or {}
-    action = str(devon.get("action") or "").strip()
-    instruction = str(devon.get("instruction") or "").strip()
-    scope = devon.get("scope_boundary") or []
-    if action in ("redeliver_green", "deliver_red"):
-        sub = "GREEN" if action == "redeliver_green" else "RED"
-        s.substate = sub
-        s.current_attempt = 0
-        s.m_impl_red_ruling = {
-            "action": action,
-            "instruction": instruction,
-            "scope_boundary": list(scope),
-            "task_id": devon.get("task_id") or s.current_task_id,
-        }
-        return _m_impl_devon_dispatch(s, sub)
-    # A2 fix: hold/absent-action ruling — route to the NEXT TASK instead of
-    # re-dispatching Archer with the same dossier (the pre-fix hold loop).
-    # The ruling's shield_side=hold means no writer action is needed; advance.
-    if not action or action == "hold":
-        s.substate = "TASK_DISPATCH"
-        s.current_task_id = None
-        return Command(kind="select_task", params={"stage": "M-IMPL"})
-    # Unknown action: fall through to re-dispatch Archer (operator sees it).
-    return None
-
-
-def _decide_m_impl_ruling_entry(s: State) -> Command | None:
-    """#214: RULING entry — consume a pending ruling outcome first, then fall
-    through to dispatch Archer if none is pending."""
-    ruled = _consume_ruling_outcome(s)
-    if ruled is not None:
-        return ruled
-    return _m_impl_archer_ruling_dispatch(s)
 
 
 def _m_impl_archer_ruling_dispatch(s: State) -> Command:
@@ -223,9 +187,11 @@ def _m_impl_archer_dispatch(s: State) -> Command:
         params["evidence"] = dict(s.last_failure)
     # OOB-F-3 fix (2026-09-29): surface the E2 red ruling in the PLANNING
     # assignment so Archer receives the machine-measured green_on_arrival
-    # fact and its remedy — then CLEAR it (one-shot): an un-cleared ruling
-    # would leak into every subsequent unrelated replan's dispatch with a
-    # stale green_on_arrival and a misleading objective (Prism rev2).
+    # fact and its remedy. The consumption (clearing) is mirrored by the
+    # command.issued reducer (_set_m_impl_dispatch_flags) so replay replays
+    # the full lifecycle — a decide()-side mutation would be invisible to
+    # the event stream and the stale ruling would leak into an unrelated
+    # later dispatch after any restart (#214 rev3).
     if s.m_impl_red_ruling:
         assignment["red_ruling"] = dict(s.m_impl_red_ruling)
         params["objective"] = (
@@ -234,7 +200,6 @@ def _m_impl_archer_dispatch(s: State) -> Command:
             "convert the affected task to verification-only or re-cut its "
             "scope so remaining RED is legal"
         )
-        s.m_impl_red_ruling = None
     return Command(kind="dispatch_agent", params=params)
 
 
@@ -274,16 +239,14 @@ def _m_impl_devon_dispatch(s: State, sub: str) -> Command:
     assignment["commands"] = None  # executor materializes (test/guard cmds)
     # #214: carry the RULING instruction when a ruled action dispatched Devon
     # (redeliver_green etc.) — the instruction and scope come from Archer's
-    # ruling, not from the standard RGR assignment.
-    ruling = getattr(s, "m_impl_red_ruling", None)
-    if isinstance(ruling, dict):
-        if ruling.get("instruction"):
-            assignment["ruling_instruction"] = ruling["instruction"]
-            if ruling.get("scope_boundary"):
-                assignment["ruling_scope"] = list(ruling["scope_boundary"])
-        # A1 fix: clear unconditionally (not just when instruction is set)
-        # so an empty-instruction ruling never leaks to a later dispatch.
-        s.m_impl_red_ruling = None
+    # ruling, not from the standard RGR assignment. Consumption (clearing)
+    # happens in the command.issued reducer (_set_m_impl_dispatch_flags) so
+    # replay replays it — see the PLANNING builder's note.
+    ruling = s.m_impl_red_ruling
+    if isinstance(ruling, dict) and ruling.get("instruction"):
+        assignment["ruling_instruction"] = ruling["instruction"]
+        if ruling.get("scope_boundary"):
+            assignment["ruling_scope"] = list(ruling["scope_boundary"])
     if s.r_tree_identity and sub in ("GREEN", "REFACTOR"):
         assignment["r_tree_identity"] = s.r_tree_identity
     params = {
@@ -534,7 +497,7 @@ def _decide_m_impl(s: State, sub: str) -> Command | None:
     if sub == "NEEDS_ATTENTION":
         return None  # awaiting reconcile or return upstream
     if sub == "RULING":
-        return _decide_m_impl_ruling_entry(s)
+        return _decide_m_impl_ruling(s)
     if sub == "PLANNING":
         return _decide_m_impl_planning(s)
     if sub in ("ISLAND_GATE_1", "ISLAND_GATE_2"):
