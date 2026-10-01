@@ -77,6 +77,16 @@
           {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"},
           {"patch": "ce_ac-fr0329-01.patch", "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, applicable-set completion sample on the delivered implementation tree",
+        "date": "2026-10-01",
+        "note": "completes the applicable-patch coverage (15/15 sampled across this window series): nfr0155-02 (addopts drops the ui exclusion) and fr0328-02 (host contract keeps only one version_scheme binding) killed via their authored patches - both guards failed under the mutations as their fail-closed design demands. nfr0153-01's patch is stale; its documented equivalent (a fabricated run row baked into the served shell) was executed twice with byte-exact restores: a first fabrication with a non-seeded run id SURVIVED (the no-baked-in-rows discriminator only fires on the seeded projection identity - precision signal, not a hollow assertion), and the corrected fabrication embedding the seeded run-shell-overview-1 id was KILLED",
+        "executed_kills": [
+          {"patch": "ce_ac-nfr0155-02.patch", "test": "tests/integration/test_workbench_shell.py::test_ui_e2e_infra_declared", "outcome": "killed"},
+          {"patch": "ce_ac-fr0328-02.patch", "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored", "outcome": "killed"},
+          {"patch": "ce_ac-nfr0153-01.patch (stale; equivalent mutation, seeded-id fabrication)", "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
