@@ -41,6 +41,7 @@ sha:
 | 12 | CI required checks | lint/coverage/test/deliverables/trace/reach | 追加 `ui-e2e`（Playwright/Chromium，独立基础设施预算，NFR-0155） | §1t |
 | 13 | pytest marker | performance/integration/e2e | 追加 `ui`（默认套件经 addopts 排除；ui-e2e job 经 `-m ui` 选择） | §1t |
 | 14 | 测试节点分类与红窗守卫通道 | 红窗对全部 r2 节点一律要求合法 Red（OOB 文件豁免除外） | 版本测试节点分两类（合法 Red 验收锚点 / 到达即绿守卫）；test-plan §8.1 声明守卫集合（唯一权威）；RED_CHECK 对守卫节点 pass 记 `guard_verified`、失败/缺席 fail-closed；守卫不作为 task 验收锚点声明（§1u） | §1u（M-TEST no-diff 复审 blocker 修订，2026-09-28） |
+| 15 | 文档中心修订身份与编辑面分家 | v0.9 单一编辑面（#17），revision 一律 trio 摘要（`baseline.revision_digest` 只覆盖 story/spec/acceptance） | 新增 **docs_revision**（六件套摘要，`supervisor/service.py` 纯函数；`tracks/baseline.py` 与 FR-0308 批准绑定零改动）；文档中心编辑走新面 #35（token=docs_revision，全六件）；#17 收敛为 trio 域（design 别名编辑→422——v0.9 该面在设计文档上结构性不可满足，缺陷面显式关闭）；edit_material params 追加可选 `revision_kind:"docs"\|"trio"`（缺省 trio）；409 `current_revision` 钉死为响应体**顶层**字段（此前 §1o.2 措辞两读） | §1o/§1n（M-IMPL T-004 DIAGNOSE spec_gap 修订，2026-10-01） |
 
 ## 1. 跨模块合同
 
@@ -54,7 +55,7 @@ IF-009 §1a 的 24 成员逐字继承；v0.10 追加一个成员（append-only�
 
 ### 1b. 服务命令封闭集（ServiceCommandKind）
 
-不变（IF-009 §1b 十三种 kind 逐字继承）。名字绑定（§1m）经认证面端点，不进入命令服务；文档编辑复用既有 `edit_material`（其 `doc` 参数域随 §0.1 #3 扩展为六名）。
+不变（IF-009 §1b 十三种 kind 逐字继承）。名字绑定（§1m）经认证面端点，不进入命令服务；文档编辑复用既有 `edit_material`——其 `doc` 参数域随 §0.1 #3 扩展为六名，params 追加可选 `revision_kind ∈ {"trio", "docs"}`（缺省 `trio`，§1o.1b；封闭枚举，缺省语义与 v0.9 逐字一致）。
 
 ### 1c. service.db 存储合同演进
 
@@ -88,17 +89,22 @@ IF-009 §1c 八表继承；v0.10 唯一 schema 演进：
 
 **modules**：`tracks/server/projections.py`、`tracks/server/api_query.py` 实现；`tracks/server/static/app/`（docs 视图、editor、panes）消费；`tracks/baseline.py` 的 revision 语义复用。
 
-1. **文档树**：`GET /api/projects/{pid}/docs/tree`（§2b #31）返回 `{versions: [{version, docs: [{doc, revision, updated_at}], editable_run_id}]}`。`versions` 按版本号逆序（数值元组比较，最新置顶；`v<M>.<m>-hotfix-<issue>` 目录排在其基线版本之后同组内）。`docs` 为六件套封闭集 `{story, spec, acceptance, architecture, interfaces, test-plan}` 中实际存在的成员；缺失成员不出现在列表（UI 对未知/缺失显式降级）。`revision` 为该版本目录的 `baseline.revision_digest` 语义（既有函数，只读重算）。`editable_run_id` 为同属该版本且非终态的最近 run（无则 null）——编辑入口（§1o）只在该字段非空且与浏览版本一致时可用。
-2. **文档读取**：`GET /api/projects/{pid}/docs/{version}/{doc}`（§2b #32）返回 `{revision, content, history: [{revision, ts, actor}]}`（history 同源既有 material.edited 事件 + git 历史的合并语义）；`GET .../diff?from=&to=`（§2b #33）返回 `{from, to, unified_diff}`。既有 run 域读取端点（IF-009 §2b #15/16）保持不变。
+1. **文档树**：`GET /api/projects/{pid}/docs/tree`（§2b #31）返回 `{versions: [{version, docs: [{doc, revision, updated_at}], editable_run_id}]}`。`versions` 按版本号逆序（数值元组比较，最新置顶；`v<M>.<m>-hotfix-<issue>` 目录排在其基线版本之后同组内）。`docs` 为六件套封闭集 `{story, spec, acceptance, architecture, interfaces, test-plan}` 中实际存在的成员；缺失成员不出现在列表（UI 对未知/缺失显式降级）。`revision` 为该版本目录的 **docs_revision**（§1o.1a——六件套摘要，文档中心专用身份；不是 `baseline.revision_digest`，后者只覆盖 story/spec/acceptance 三件且仍专属批准绑定面）。`editable_run_id` 为同属该版本且非终态的最近 run（无则 null）——编辑入口（§1o）只在该字段非空且与浏览版本一致时可用。
+2. **文档读取**：`GET /api/projects/{pid}/docs/{version}/{doc}`（§2b #32）返回 `{revision, content, history: [{revision, ts, actor}]}`——`revision` 为该版本目录的 **docs_revision**（§1o.1a；history 同源既有 material.edited 事件 + git 历史的合并语义，from/to 按编辑面各自 token 记录）；`GET .../diff?from=&to=`（§2b #33）返回 `{from, to, unified_diff}`。既有 run 域读取端点（IF-009 §2b #15/16）保持不变（revision 字段为 trio 摘要，v0.9 形态）。
 3. **编辑器宿主**：文档中心以 Vditor `ir` 即时渲染模式承载查看/编辑，资产经同源 `/static/vendor/vditor/` 按需加载（IF-009 §2b 的 vendor/禁 CDN/可选引擎禁用不变）；Vditor 加载失败（资产 404/脚本错误/初始化异常）回退 `<textarea>`，文档仍可查看与编辑，内容不丢。多 pane 分屏至多 4 列，每 pane 独立文件选择器与工具栏、独立加载不同文档；超出 4 列的请求不生效且既有 pane 不受影响。
 4. **doc 参数封闭集扩展**：`doc ∈ {story, spec, acceptance, architecture, interfaces, test-plan}`；`design` 保留为 `architecture` 的向后兼容别名。`material.edited` 事件的 `doc` 字段枚举同步扩展为该六名（事件类型不变，payload 枚举追加——§0.1 #3）。
 
 ### 1o. 显式保存与冲突恢复（IF-DOCSAVE-001）
 
-**modules**：`tracks/server/api_command.py`（edit_material 路由）、`tracks/supervisor/service.py`（既有受理面）实现；`tracks/server/static/app/`（editor）消费。
+**modules**：`tracks/server/api_command.py`（两编辑路由）、`tracks/supervisor/service.py`（既有受理面 + docs_revision 纯函数定义）实现；`tracks/server/projections.py` 消费 docs_revision 读模型；`tracks/server/static/app/`（editor）消费。
 
-1. **保存门**：保存控件仅在 dirty（内容与服务端 revision 不一致）时可用；保存经既有 `POST /api/runs/{run_id}/docs/{doc}/edits`（edit_material）提交并携带 `base_revision`（用户审阅所基revision）；服务端接受产生新 revision（`material.edited` + Runtime 提交 + 待批准条目更新），不绕过批准绑定（IF-009 §1b #5 / FR-0308）；对旧 revision 的批准按既有 `stale_revision` 拒绝。
-2. **409 两选项**：服务端以 409 拒绝（revision/mtime 冲突）时，错误响应在既有 `{"error": {...}}` 上追加 `current_revision` 字段（服务端当前 revision）。UI 向用户提供两选项：**重载放弃**（以服务端内容与 current_revision 重载编辑器，放弃本地改动）与**强制覆盖**（保留本地编辑内容，以 `current_revision` 为新 `base_revision` 重提）；不静默覆盖；写失败（网络/5xx）时编辑内容保留可重试。
+1a. **docs_revision（文档中心修订身份，本版新增）**：`docs_revision(vdir)` 为纯函数摘要——对六件套按固定顺序（story/spec/acc/architecture/interfaces/test_plan 标签）以与 `baseline.revision_digest` 相同的 `label:body_sha` 构造拼接后 sha256；六件套任一文档变更即移动。定义于 `tracks/supervisor/service.py`（T-004 写域），`tracks/server/projections.py` 经既有 server→supervisor import 方向消费。**不触碰 `tracks/baseline.py`**：`revision_digest`（trio）与 FR-0308 批准绑定语义逐字不变。trio 文档（story/spec/acceptance）经任一编辑面保存都会同时移动 trio 摘要与 docs_revision——批准绑定不被绕过是结构保证而非约定。
+
+1b. **编辑面分家**：两个编辑面、两种 token，各自封闭——
+   - **文档中心面（本版新增，六件套全域）**：`POST /api/projects/{pid}/docs/{version}/{doc}/edits`（§2b #35），`{base_revision, content}`，base_revision 为 **docs_revision**。服务端解析该版本的 `editable_run_id`（无可编辑 run → 422 `no_editable_run`），经命令服务提交 `edit_material`（kind 不变，params 追加可选 `revision_kind: "docs"`，缺省 `"trio"`）；`revision_kind="docs"` 时 base 校验与 `material.edited` 的 `from_revision/to_revision` 均为 docs_revision 值。
+   - **运行域审阅面（v0.9 语义不变，限 trio）**：`POST /api/runs/{run_id}/docs/{doc}/edits`（§2b #17），base_revision 为 **trio 摘要**（v0.9 批准绑定 token）。`doc` 域收敛为 `{story, spec, acceptance}`；`design` 别名与三份设计文档名在该面返回 422 并指向文档中心端点（v0.9 的 design 别名编辑在 trio token 下结构性不可满足——design 文档保存不可能移动 trio 摘要——本版显式关闭该缺陷面）。
+2. **409 两选项**：任一编辑面以 409 拒绝（revision/mtime 冲突）时，响应体在既有 `{"error": {...}}` 旁**顶层**追加 `current_revision` 字段（该编辑面的当前 token 值：文档中心面为 docs_revision，运行域面为 trio 摘要）——本条为唯一权威形态（顶层字段，不在 error 对象内）。UI 向用户提供两选项：**重载放弃**（以服务端内容与 current_revision 重载编辑器，放弃本地改动）与**强制覆盖**（保留本地编辑内容，以 `current_revision` 为新 `base_revision` 重提）；不静默覆盖；写失败（网络/5xx）时编辑内容保留可重试。
+3. **保存门**：保存控件仅在 dirty（内容与服务端 revision 不一致）时可用；服务端接受产生新 revision（`material.edited` + Runtime 提交 + 待批准条目更新）。trio 文档保存后，对旧 trio revision 的批准按既有 `stale_revision` 拒绝（FR-0308 不绕过）；设计文档保存移动 docs_revision（文档中心基线切换），设计文档无 revision 绑定的批准（批准绑定只存在于 trio 面）。
 
 ### 1p. inline discussion 只读投影（IF-DISCUSS-001）
 
@@ -192,7 +198,8 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 | # | method/path | 输入 | 成功 | 失败 | 备注 |
 |:--|:--|:--|:--|:--|:--|
 | 1 | `POST /api/auth/login` | `{password}` | 200 `{actor, csrf_token, name_required: bool}` + Set-Cookie | 401 `unauthenticated` | 【公开】；`name_required` 为 §1m.2 追加字段 |
-| 17 | `POST /api/runs/{run_id}/docs/{doc}/edits` | `{base_revision, content}` | 202 `{command_id, new_revision}` | 409 `stale_revision`（响应追加 `current_revision` 字段）/422 | `doc` 域扩展为 §1n.4 六名（`design` 别名保留）；409 追加字段为 §1o.2 |
+| 17 | `POST /api/runs/{run_id}/docs/{doc}/edits` | `{base_revision, content}` | 202 `{command_id, new_revision}` | 409 `stale_revision`（响应体**顶层**追加 `current_revision`，值为其编辑面当前 token——trio 摘要）/422 | `doc` 域收敛为 `{story, spec, acceptance}`（`design` 别名与设计文档名 → 422 指向 #35）；token 与 v0.9 批准绑定一致；§1o.1b |
+| 35 | `POST /api/projects/{pid}/docs/{version}/{doc}/edits` | `{base_revision, content}`（base 为 docs_revision） | 202 `{command_id, new_revision}`（new_revision 为新 docs_revision） | 409 `stale_revision`（顶层 `current_revision`=当前 docs_revision）/422 `no_editable_run` | 文档中心编辑面（六件套全域）；服务端解析 editable_run_id 后经命令服务提交 `edit_material`（params 追加 `revision_kind:"docs"`）；§1o.1b |
 | 11 | `GET /api/runs/{run_id}/timeline?...` | query | 200 既有 timeline schema + `stage_order: list[str]`（§1q.1） | 404 | 只读；追加字段 |
 | 29 | `POST /api/auth/name` | `{name}` | 200 `{actor}`（生效显示名；落 `auth.name_bound`） | 400 `validation_failed`（空/超长/控制字符）/401 `unauthenticated`/403（CSRF） | 需认证会话 + CSRF；幂等可重提 |
 | 30 | `GET /api/auth/profile` | — | 200 `{actor, name_set: bool}` | 401 | 只读 |
@@ -378,8 +385,8 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 
 ### IF-DOCSAVE-001 显式保存与 409 两选项合同
 
-- **合同**：§1o——dirty 门、经既有 edit_material 通道产生新 revision、不绕过批准绑定、409 携 `current_revision`、重载放弃/强制覆盖两选项、写失败内容不丢。
-- **modules**：tracks/server/api_command.py, tracks/supervisor/service.py, tracks/server/static/app（待实现 Devon）, tracks/baseline.py（revision 语义复用）。
+- **合同**：§1o——docs_revision 六件套修订身份（§1o.1a，定义于 supervisor/service.py，baseline/FR-0308 零触碰）；编辑面分家（§1o.1b：文档中心面 #35 token=docs_revision 全六件，运行域面 #17 限 trio）；dirty 门；trio 保存移动双身份、批准绑定结构保证不被绕过；409 顶层 `current_revision`（唯一权威形态）；重载放弃/强制覆盖两选项；写失败内容不丢；edit_material params 追加可选 `revision_kind`。
+- **modules**：tracks/server/api_command.py, tracks/supervisor/service.py（受理面 + docs_revision 纯函数）, tracks/server/projections.py（读模型消费）, tracks/server/static/app（待实现 Devon）。
 - **关联**：FR-0323。
 
 ### IF-DISCUSS-001 inline discussion 只读投影合同

@@ -10,7 +10,7 @@ sha:
 
 - **Related acceptance**: `.tracks/projects/v0.10/acceptance.md`
 - **Related interfaces**: `.tracks/projects/v0.10/interfaces.md` (assertion basis — see §6.5)
-- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§2.3.1 标题的合同路径更正为 `.tracks/projects/project.toml`（模板原文单数 `project/` 为笔误继承，正文路径本就正确）。
+- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§2.3.1 标题的合同路径更正为 `.tracks/projects/project.toml`（模板原文单数 `project/` 为笔误继承，正文路径本就正确）。2026-10-01 回滚重起草（T-004 DIAGNOSE spec_gap 1-prism-31）：§1o/§1n 修订身份重设计落interfaces（docs_revision + 编辑面分家 + 409 顶层字段）；§10 行 8 与 §11 行 6 同步（两个冻结锚点的内部语义按修订后设计更新，变更分类 Spec change）。
 
 ## 1. Stance and Boundaries
 
@@ -357,7 +357,7 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | 5 | 注册类路径探测（/api/auth/register） | 404；auth 表恒单行 |
 | 6 | 未知树节点/缺失标题/未知 tab 目标（夹具） | 可读降级标记；不崩溃不 500 不留空白 tab |
 | 7 | Vditor 资产加载失败（route 阻断） | 回退 textarea；内容完整可编辑（ui） |
-| 8 | 过期 base_revision 保存 | 409 + current_revision；两选项可用；不静默覆盖 |
+| 8 | 过期 base_revision 保存（两编辑面） | 409 + 响应体**顶层** `current_revision`（文档中心面=当前 docs_revision，运行域面=trio 摘要）；两选项可用；不静默覆盖 |
 | 9 | 保存通道网络/5xx 失败 | 编辑内容保留可重试（ui） |
 | 10 | 第 5 列分屏请求 | 不新增 pane；既有 pane 内容不变（ui） |
 | 11 | 讨论写回路径探测（POST resolve/reply） | 404/405；UI 无写入口 |
@@ -386,5 +386,6 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | 3 | `tests/integration/test_event_stream.py` | 不修改（服务端 SSE 面不变）；其重连用例被本版事件韧性验收引用为继承锚点 | v0.10 UI 侧补读另起 ui 用例 |
 | 4 | Devon 侧页面壳单测套件（Devon-owned，RGR 内做合同适配） | `tests/unit/test_t010_page_shell_vditor_red.py`：PAGES 封闭集 8 名不变、login 双栏化、review 页不再内嵌 Vditor 资产标签（改为 docs 视图按需注入）；同源断言意图由 integration 同源用例与 ui e2e 承接 | interfaces §0.1 #1/#2 页面壳收敛与 §1n.3 加载策略 |
 | 5 | `tests/integration/test_hotfix_precheck.py` | 不修改（既有 issue_not_found 路径语义保留）；分类映射矩阵另起 test_hotfix_precheck_classification.py | FR-0329 使 issue_fetch_failed 可达，既有行不回吐 |
+| 6 | `tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected` 与 `::test_conflict_409_two_options_and_draft_retained` | 按修订后设计（interfaces §1o v3，2026-10-01）修订两个锚点的内部语义：六件套保存改经文档中心编辑面（`POST /api/projects/{pid}/docs/{version}/{doc}/edits`，base=docs_revision；设计文档保存断言 docs_revision 前后不同）；旧批准拒绝的断言改由 trio 文档保存腿承载（保存 spec.md → trio 摘要移动 → 旧 expected_revision 批准 409）；409 断言改读响应体**顶层** `current_revision`（不再读 error 对象内——初版 §1o.2 措辞两读，设计已钉死顶层）。变更分类：Spec change（设计修订驱动，非迁就实现） | M-IMPL T-004 DIAGNOSE spec_gap（1-prism-31）：初版锚点把六件套保存绑在不动的 trio 摘要上（结构性不可满足）且 409 字段位置两读 |
 
 Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函数。
