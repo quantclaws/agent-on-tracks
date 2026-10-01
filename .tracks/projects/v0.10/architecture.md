@@ -48,7 +48,7 @@ revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）
 | 2 | `tracks/server/static/styles.css` | workbench chrome 样式（**待实现 Devon**） | FR-0316/0317 | IF-WORKBENCH-001 |
 | 3 | `tracks/server/pages.py` | 两壳渲染（login 双栏 auth shell + workbench shell/`data-route`）；data-testid 锚点集 | FR-0316/0317/0320/0321 | IF-WORKBENCH-001, IF-AUTHNAME-001 |
 | 4 | `tracks/server/auth.py` | `display_name` 列、名字校验、生效 actor（display_name ?? auth.actor ?? local-user） | FR-0321 | IF-AUTHNAME-001 |
-| 5 | `tracks/server/app.py` | 路由追加（§2b #29-34）；login 响应 `name_required`；workbench 入口名字门（302） | FR-0320/0321/0322/0325 | IF-AUTHNAME-001, IF-DOCCENTER-001, IF-DISCUSS-001 |
+| 5 | `tracks/server/app.py` | 路由追加（§2b #29-35）；login 响应 `name_required`；workbench 入口名字门（302） | FR-0320/0321/0322/0325 | IF-AUTHNAME-001, IF-DOCCENTER-001, IF-DISCUSS-001 |
 | 6 | `tracks/server/api_query.py` + `projections.py` | docs tree/版本化 read/diff/discussions 读模型（tree/read 的 revision 字段 = docs_revision，§1.0.4）；timeline `stage_order`；`_DOC_FILES` 六件套 | FR-0322/0324/0325/0326 | IF-DOCCENTER-001, IF-DISCUSS-001, IF-TIMELINE-001, IF-QUERY-001 |
 | 7 | `tracks/server/api_command.py` + `tracks/supervisor/service.py` | 文档中心编辑面 `POST /api/projects/{pid}/docs/{version}/{doc}/edits`（token=docs_revision；`docs_revision` 纯函数定义于 service.py）；#17 收敛 trio 域；409 顶层 `current_revision` | FR-0323 | IF-DOCSAVE-001 |
 | 8 | `tracks/supervisor/db.py` | auth 表 `display_name` 列的建表/演进 | FR-0321 | IF-AUTHNAME-001 |
@@ -106,7 +106,7 @@ M-TEST 复审发现并回卷的设计缺陷（Prism no-diff blocker，test-plan 
 
 ### 1.1 Composition Root
 
-Web 服务装配入口继承 ARCH-009（cmd_serve → ServiceDB/recover → CommandService → Scheduler/WorkerManager → create_app → uvicorn），v0.10 在 create_app 的路由表追加 §2b #29-34 六个端点与 workbench 入口名字门：
+Web 服务装配入口继承 ARCH-009（cmd_serve → ServiceDB/recover → CommandService → Scheduler/WorkerManager → create_app → uvicorn），v0.10 在 create_app 的路由表追加 §2b #29-35 七个端点与 workbench 入口名字门：
 
 ```text
 cmd_serve（tracks/cli/serve_cmd.py，既有）

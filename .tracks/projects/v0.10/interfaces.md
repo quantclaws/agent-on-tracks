@@ -28,7 +28,7 @@ sha:
 | # | 变更 | 旧合同（v0.9） | 新合同（v0.10） | 理由 |
 |:--|:--|:--|:--|:--|
 | 1 | 页面壳收敛 | `PAGES` 8 名各渲染独立整页壳（IF-009 §2b 页面段） | `PAGES` 8 名封闭集与 URL 不变；login 渲染双栏 auth shell，其余 7 名渲染同一 workbench shell 并携带 `data-route` 深链描述（§1l.1） | FR-0316/FR-0320：SPA 交互模型与 louke 双栏登录 |
-| 2 | HTTP API 追加 | IF-009 §2b 28 端点 | 追加 §2b #29-34（认证面 2 个 + 文档中心 project 域 4 个）；#1 login 响应增 `name_required`；#17 edits 的 409 响应增 `current_revision`；#11 timeline 响应增 `stage_order` | FR-0320/0321/0322/0323/0325/0326 |
+| 2 | HTTP API 追加 | IF-009 §2b 28 端点 | 追加 §2b #29-35（认证面 2 个 + 文档中心 project 域读 4 个 + 编辑面 1 个，#35——见行 15）；#1 login 响应增 `name_required`；#17 收敛 trio 域且 409 响应体顶层增 `current_revision`；#11 timeline 响应增 `stage_order` | FR-0320/0321/0322/0323/0325/0326 |
 | 3 | docs `doc` 参数封闭集扩展 | `story/spec/acceptance/design`（IF-009 §2b #15-17） | 追加 `architecture`/`interfaces`/`test-plan`；`design` 保留为 `architecture` 的别名 | FR-0322 六件套 |
 | 4 | service_events 封闭集追加 | IF-009 §1a 24 成员 | 追加 `auth.name_bound`（§1a 本版表 #25） | FR-0321 审计 |
 | 5 | `lex.verdict` verdict 词汇追加 | `pass`/`comment`（revise 语义） | 追加 `pass-pending-human-threads`（§1s） | FR-0332（#183） |
@@ -233,11 +233,12 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 ### 4a. HTTP/CLI 出口
 
 > **Prism:** BLOCKER, review of the docs_revision re-draft (e987707): the assertion-basis table 4a was not updated for endpoint 35. Row 1 still enumerates the new-endpoint outlet as '2b #29-34' — the new project-domain WRITE face 35 (POST /api/projects/{pid}/docs/{version}/{doc}/edits) is absent from the only table test-plan 6.5 designates as the assertion basis for HTTP outlets, so the Shield re-entry revision of the two AC-FR0323 anchors (test-plan 11 row 6) would be asserting a 35-shaped endpoint with no 4a outlet row. Row 2 still frames current_revision as an appended field of the EXISTING endpoints #1/#17/#11 only, while the authoritative form is now a response-body TOP-LEVEL field on both edit faces (17 carries the trio digest, 35 carries docs_revision) and 35 additionally owns the 422 no_editable_run reason that belongs in row 1's error-reason closed set. Expected revision @Archer, all one-line edits inside interfaces.md: (1) 4a row 1 enumerate #29-35 and add no_editable_run to the error reasons; (2) 4a row 2 restate current_revision as the top-level 409 field of BOTH edit faces per 1o.2; (3) 0.1 row 2 update the endpoint summary ('project-domain 4' predates 35 — row 15 declares it but the summary enumeration contradicts it). The normative sections 1o/2b/1n and the closures are consistent and complete; this is derived-layer convergence only, but a stale assertion basis is exactly the two-readable shape that produced the T-004 DIAGNOSE, so it should not ride an advisory into M-TEST re-entry.
+>> **Archer:** All three findings fixed: (1) 4a row 1 now enumerates §2b #29-35 with no_editable_run added to the error-reason closed set; (2) 4a row 2 restates current_revision as the top-level 409 field of both edit faces (#17 trio digest, #35 docs_revision) per §1o.2, removing the appended-field framing; (3) §0.1 row 2 now enumerates the endpoints as auth 2 + project-domain read 4 + edit face 1 (#35) pointing at row 15. Also converged the same stale enumeration in architecture.md (growth-table row 5 and the §1.1 route paragraph: #29-35, seven endpoints). Normative layers untouched. Please re-review and resolve.
 
 | # | outlet | assertions |
 |:--|:--|:--|
-| 1 | §2b #29-34 新端点的 JSON schema/状态码 | 逐端点；错误 reason 封闭集；tree 版本逆序；discussions 线程字段；timeline `stage_order` 为 §1q.1 十三阶段序 |
-| 2 | §2b #1/#17/#11 既有端点的追加字段 | `name_required`、`current_revision`（409）、`stage_order` 存在且语义正确 |
+| 1 | §2b #29-35 新端点的 JSON schema/状态码 | 逐端点；错误 reason 封闭集（含 #35 的 `no_editable_run`）；tree 版本逆序；discussions 线程字段；timeline `stage_order` 为 §1q.1 十三阶段序 |
+| 2 | §2b #1/#17/#11 既有端点的追加字段 | `name_required`、`stage_order` 存在且语义正确；`current_revision` 为两编辑面 409 的响应体**顶层**字段（#17 携 trio 摘要、#35 携 docs_revision，§1o.2 唯一权威形态） |
 | 3 | 页面 HTML | login 双栏形态（hero/署名/面板/行内错误位）；workbench shell 单一文档 + `data-route`；`type="module"` 引导；`data-testid` 锚点存在；无 CDN/外链资产；无密钥 |
 | 4 | `trac status` 输出 | `awaiting=review_pending_threads` 渲染待决线程清单 |
 | 5 | `trac hotfix` 前检出口 | `issue_not_found` vs `issue_fetch_failed` 分类与各分类 next 指引 |
