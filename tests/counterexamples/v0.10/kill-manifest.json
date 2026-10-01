@@ -65,6 +65,18 @@
           {"patch": "ce_ac-nfr0154-02.patch", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf", "outcome": "killed"},
           {"patch": "ce_ac-fr0325-02.patch", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, second red-entry sample on the delivered implementation tree",
+        "date": "2026-10-01",
+        "note": "second fresh sample: fr0316-02 (package.json), nfr0156-01 (vite.config.ts), fr0326-02 (attempt folding), fr0329-01 (precheck not_found mapping) killed via their authored patches; fr0325-01's appended-route override is inert at the delivered api_query seam so its kill was re-executed as the documented equivalent mutation (the discussions projection serving an empty thread list), byte-exact restored",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0316-02.patch", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm", "outcome": "killed"},
+          {"patch": "ce_ac-nfr0156-01.patch", "test": "tests/integration/test_workbench_shell.py::test_no_build_chain_native_esm", "outcome": "killed"},
+          {"patch": "ce_ac-fr0325-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_docs_center.py::test_discussions_read_model_and_nav_state", "outcome": "killed"},
+          {"patch": "ce_ac-fr0326-02.patch", "test": "tests/integration/test_run_timeline_api.py::test_timeline_entry_present", "outcome": "killed"},
+          {"patch": "ce_ac-fr0329-01.patch", "test": "tests/integration/test_hotfix_precheck_classification.py::test_missing_issue_reports_not_found_with_next", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
