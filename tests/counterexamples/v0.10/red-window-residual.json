@@ -1,6 +1,6 @@
 {
  "version": "v0.10",
- "basis": "red.validated of run 01M3E7SAANXKW1V73W8B8Q3G86 (2026-10-01, seq 3729/3730, 46-node r2 selection at the delivered implementation tree) cross-referenced against the delivered-tree kill verifications in kill-manifest.json sessions 6-11 and the ui-e2e channel state record",
+ "basis": "red.validated of run 01M3E7SAANXKW1V73W8B8Q3G86 (2026-10-01, seq 3749/3750, 56-node r2 selection at the delivered implementation tree) cross-referenced against the delivered-tree kill verifications in kill-manifest.json sessions 6-11 and the ui-e2e channel state record; refreshed from the seq 3729 basis after the executor's expected-green quadrant unit tests entered the OOB-verified set",
  "purpose": "Shield-side grounding for the red-window residual: which acceptance anchors are green because M-IMPL delivered them (the unexpected_pass set - a classification-semantics matter for the runtime's expectation machinery, not an asset defect), which remain legal Red, and which channel each remaining verification binds to",
  "legal_red_residual": [
   {
@@ -83,5 +83,11 @@
   "tests/unit/test_t010_lex_review_park_red.py::test_cmd_review_admits_review_pending_threads"
  ],
  "kill_evidence_state": "every integration binding carries a delivered-tree kill verification (kill-manifest.json sessions 6-11: 15/15 applicable patches plus 12/13 stale bindings as documented equivalents; fr0320-01 is the sole ui-channel binding and stays bound to the ui-e2e channel until the client surface lands)",
- "note": "the two assertion_failure nodes are the last legal Reds of the window and both belong to T-004's save face; the 19 green-by-delivery anchors are correct passing acceptance behavior of the delivered implementation"
+ "note": "the two assertion_failure nodes are the last legal Reds of the window and both belong to T-004's save face; the 19 green-by-delivery anchors are correct passing acceptance behavior of the delivered implementation; the OOB-verified set now includes the executor's expected-green quadrant tests (the runtime's active resolution of the green-by-delivery classification)",
+ "classification_counts": {
+  "assertion_failure": 2,
+  "guard_verified": 5,
+  "oob_verified": 30,
+  "unexpected_pass": 19
+ }
 }
