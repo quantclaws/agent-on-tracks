@@ -8,7 +8,8 @@ sha:
 ---
 
 # v0.10 — 架构：Web 工作台完善（UI）+ 发布卫生
-revision 注记（2026-10-02）：operator OOB test-compression（a7f4133）已重锚 §0.1/§4.1/§4.2 与两类 digest 并经 Prism OOB 复审；本 DRAFT 轮 Archer 仅做吸收备案（§4.4 电池上界与 live 旅程一条）——除该条外设计内容与 8ee7ee9 版无变更。
+revision 注记（2026-10-01 #211 机械轮回）：§1.0.8 补重入期望语义一句。
+revision 注记（2026-10-02 前轮）：operator OOB test-compression（a7f4133）已重锚 §0.1/§4.1/§4.2 与两类 digest 并经 Prism OOB 复审；本 DRAFT 轮 Archer 仅做吸收备案（§4.4 电池上界与 live 旅程一条）——除该条外设计内容与 8ee7ee9 版无变更。
 
 本文是 ARCH-009 的增量延伸。v0.1～v0.9 的事件溯源、单写者、canonical 阶段状态机、发布闭环五阶段、质量守卫 registry、测试流水线、CLI 与 v0.9 的 server/supervisor 双层（Starlette 交付面 + 后台驱动）全部保持不变；v0.10 在此之上叠加 SPA 工作台 chrome（浏览器侧原生 ES modules 应用层）、登录名字绑定、文档中心应用层与 run 时间线视图，并在同版内完成发布卫生修复（#182/#179/#180/#181/#184/#183）。核心取舍：SPA 交互模型落地但**不引入构建链**（NFR-0156 条件未触发，见 §3.1）；发布卫生全部落在既有模块的定点修正上，不新增子系统。
 
@@ -102,6 +103,8 @@ M-TEST 复审发现并回卷的设计缺陷（Prism no-diff blocker，test-plan 
 
 - **合法 Red 验收锚点**：断言本版未实现产品行为；先红后绿；integration 项可由 task 声明转绿。
 - **到达即绿守卫**：验证已落地事实；test-plan §8.1 清单逐节点声明（唯一权威）；从红窗必填集排除、不作 task 验收锚点；每次执行必须保持绿（守卫失败即真回归，fail-closed）。RED_CHECK 消费面（守卫 pass 记 `guard_verified`）为待实现 Devon 项（executor/test_execute.py）。
+
+重入期补充（2026-10-01，#211-gap-2）：RED_CHECK 期望集在基线捕获时测量并锚定节点颜色——实现交付后重入的特性锚点呈 green-by-delivery 形态（期望绿），与守卫分属不同象限（验收锚点身份不变）；M-TEST 侧残留图（tests/counterexamples/v0.10/red-window-residual.json）承载该象限落地。
 
 5 个守卫节点：AC-FR0325-02 的缺席条件、AC-FR0328-02 的设计期合同事实、AC-FR0329-01 的继承行为回归、AC-NFR0155-01 的静态纪律半边、AC-NFR0155-02 的设计期声明存在性（逐节点理由见 test-plan §8.1）。选窗纪律：合法红必填集 = r2 ∩ §8 合法 Red 锚点；守卫经 §8.1 豁免；操作者修复随带的回归测试经既有 OOB 通道（oob.accepted 记录文件）豁免——9d65be5 等流内修复的单测被卷入红窗是观察面缺口（Tracks-OOB trailer 已在提交上但未产生 oob.accepted 事件），属 Runtime 观察面修复事项而非设计变更；本次回滚重进 M-TEST 时基线按现行树重建，已提交增量经既有 r2_discharged 语义收口。
 

@@ -10,7 +10,8 @@ sha:
 
 # v0.10 — 接口与类型化 Schema：Web 工作台完善（UI）+ 发布卫生
 
-revision 注记：2026-10-02 DRAFT（breaker 复位后重入）——§4c 新增行 5 与 IF-HOTFIX-011 登记项补 L3 live 面备案（hotfix retry-open live 旅程，operator OOB test-compression 交付）；合同面无其他变更。
+revision 注记：2026-10-01 DRAFT（#211 机械轮回）——§1u 新增第 5 条象限区分（守卫 vs green-by-delivery）。
+revision 注记（前轮）：2026-10-02 DRAFT（breaker 复位后重入）——§4c 新增行 5 与 IF-HOTFIX-011 登记项补 L3 live 面备案（hotfix retry-open live 旅程，operator OOB test-compression 交付）；合同面无其他变更。
 
 本文是 IF-009 的增量延伸：v0.1～v0.9 的事件溯源、封闭事件集、命令 WAL、审批 revision 绑定、release preview/三择一、escape barrier、发布幂等/reconcile、guard registry、CLI 合同与 v0.9 服务面合同（HTTP API、持久命令服务、supervisor 驱动/租约/等待、只读投影、事件订阅、材料审阅）全部继承；v0.10 新增的是**工作台交互合同**（SPA chrome、登录名字绑定、文档中心应用层、run 时间线投影扩展）与**发布卫生合同**（milestone 收尾终态感知、版本声明绑定门禁、hotfix 前检分类、live 通道 TLS、tracker milestone 生命周期、LEX_REVIEW 合法 park 出口）。本文只写外部可观察契约；模块内部组织见 architecture.md。
 
@@ -185,7 +186,8 @@ IF-009 §1c 八表继承；v0.10 唯一 schema 演进：
 2. **声明面**：test-plan §8.1 以每行一个测试节点 id 的清单声明守卫集合（含 AC 与 IF 归属标注）；该清单是守卫身份的唯一权威，不存在隐式守卫；守卫节点同时保留其 §8 表行（AC 覆盖闭合与 IF 归属不变）。清单引用的节点必须在收集集合内可解析，无法解析即声明失实（fail-closed）。
 3. **RED_CHECK 语义**：r2 选窗内，属守卫集合的节点通过时分类为 `guard_verified`（合法，不触发 unexpected_pass）；守卫节点失败或缺席即 red.validated(invalid) fail-closed（守卫守护的是已落地合同，失败即真回归而非「没到实现期」）。未声明节点的到达即绿维持既有 `unexpected_pass` 语义不变；OOB 通道（oob.accepted 记录文件）的豁免语义不变。
 4. **M-IMPL 锚点纪律**：任务图不得把守卫节点声明为 task 的红必填验收锚点（验收锚点子集只含合法 Red 类）；守卫经每次 RED_CHECK 的必过语义与 ISLAND_GATE_2/FULL 持续验证，其 AC 归属仍在 §8 行内。
-5. **选窗纪律**：随操作者修复提交落地的回归测试是已落地行为的验证器而非版本验收仪器，经既有 OOB 通道豁免红窗（观察面语义继承不变）；合法红必填集 = r2 ∩（§8 合法 Red 锚点），守卫经 §8.1、OOB 文件经 oob.accepted 分别豁免。
+5. **守卫与 green-by-delivery 的象限区分**：到达即绿守卫验证**设计期/继承期**已落地事实（§8.1 声明，永不是验收锚点）；green-by-delivery 是合法 Red 验收锚点在**实现已交付后**的形态——基线捕获时颜色被测量并锚定为期望绿（#211-gap-2 期望机制），其验收锚点身份不变（实现交付的证据即其绿）。两者在 RED_CHECK 语义上都期望绿，但归属象限与声明面不同（守卫=§8.1；green-by-delivery=捕获时测量，M-TEST 侧残留图承载）。
+6. **选窗纪律**：随操作者修复提交落地的回归测试是已落地行为的验证器而非版本验收仪器，经既有 OOB 通道豁免红窗（观察面语义继承不变）；合法红必填集 = r2 ∩（§8 合法 Red 锚点），守卫经 §8.1、OOB 文件经 oob.accepted 分别豁免。
 
 ## 2. CLI 接口合同
 
