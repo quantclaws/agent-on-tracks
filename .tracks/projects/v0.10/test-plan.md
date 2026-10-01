@@ -10,7 +10,7 @@ sha:
 
 - **Related acceptance**: `.tracks/projects/v0.10/acceptance.md`
 - **Related interfaces**: `.tracks/projects/v0.10/interfaces.md` (assertion basis — see §6.5)
-- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§2.3.1 标题的合同路径更正为 `.tracks/projects/project.toml`（模板原文单数 `project/` 为笔误继承，正文路径本就正确）。2026-10-01 回滚重起草（T-004 DIAGNOSE spec_gap 1-prism-31）：§1o/§1n 修订身份重设计落interfaces（docs_revision + 编辑面分家 + 409 顶层字段）；§10 行 8 与 §11 行 6 同步（两个冻结锚点的内部语义按修订后设计更新，变更分类 Spec change）。
+- **Revision 注记**：2026-09-27 RESPOND round 1——修订 §11 第 4 行的单元格排布（单元路径移出第二列），消除 feature 版本 test-plan 的 unit-layer 行误判（EXIT 门禁 verdict.failed check=test_tasks 的修复）。2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）：吸收 Prism no-diff 复审 blocker（§8 inline 线程 T-001）——§8 增加显式节点分类（合法 Red 验收锚点 vs 到达即绿守卫），5 个到达即绿行重分类进 §8.1 守卫清单；合同面（39 条 AC、分层与 IF 归属、文档/端点/schema 集合）与前版无变更。2026-09-28 RESPOND round 2（Prism revise findings）：§2.3.1 标题的合同路径更正为 `.tracks/projects/project.toml`（模板原文单数 `project/` 为笔误继承，正文路径本就正确）。2026-10-01 回滚重起草（T-004 DIAGNOSE spec_gap 1-prism-31）：§1o/§1n 修订身份重设计落interfaces（docs_revision + 编辑面分家 + 409 顶层字段）；§10 行 8 与 §11 行 6 同步（两个冻结锚点的内部语义按修订后设计更新，变更分类 Spec change）。2026-10-02 DRAFT（breaker 复位后重入）：吸收 operator OOB test-compression（commit a7f4133）——§2.3.1 命令同步 `-n 8` 并记录电池墙钟上界；§6.3 L3 行吸收 hotfix retry-open live 旅程；§11 新增行 7 备案前检分类测试的 OOB 拆分。architecture.md 的 §0.1/§4.1/§4.2 与 digest 重锚已由 OOB 交付（本版零额外改动）。
 
 ## 1. Stance and Boundaries
 
@@ -126,19 +126,19 @@ tests/
 
 ### 2.3.1. Test Execution Contract (`.tracks/projects/project.toml`)
 
-The host project test execution contract is declared in `.tracks/projects/project.toml`（三层合同命令串 v0.10 逐字不变，architecture §4.1）。M-TEST uses this contract to collect and run tests independently. `ui` marker 的默认排除由 pyproject `addopts` 承载（合同命令不带 `-m`）。
+The host project test execution contract is declared in `.tracks/projects/project.toml`（三层合同命令串除 2026-10-02 operator 批准的 `-n 4`→`-n 8` 恢复（test-compression P1-4，architecture §4.1）外继承 v0.9；下述命令为当前生效值）。M-TEST uses this contract to collect and run tests independently. `ui` marker 的默认排除由 pyproject `addopts` 承载（合同命令不带 `-m`）。电池墙钟有界：executor 的选中节点执行带 900s 基线 + 60s/节点 的墙钟上限（`TRAC_BATTERY_TIMEOUT_BASE/PER_NODE` 可覆盖；超时经既有 `contract_error` 通道 fail-closed，不烧作者 attempt——2026-10-02 OOB 交付，消除无界挂起电池）。
 
 - **Integration**:
   - framework: pytest
   - paths: ["tests/integration/"]
   - collect: `.venv/bin/python -m pytest --collect-only tests/integration/`
-  - run: `.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 4 --dist loadscope --junitxml={result}`
+  - run: `.venv/bin/python -m pytest tests/integration/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`
   - cwd: "."
 - **E2e**:
   - framework: pytest
   - paths: ["tests/e2e/"]
   - collect: `.venv/bin/python -m pytest --collect-only tests/e2e/`
-  - run: `.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 4 --dist loadscope --junitxml={result}`
+  - run: `.venv/bin/python -m pytest tests/e2e/ --tb=short -q -n 8 --dist loadscope --junitxml={result}`
   - cwd: "."
 
 ### 2.4. Test Data
@@ -211,7 +211,7 @@ Spec 扫描结果：v0.10 存在宿主技术栈之外的外部依赖——GitHub
 | ----- | ------------------- | ------------- | ------ | ---------------------- | ----------------- |
 | L1    | Deterministic sim   | 注入时间点     | Seconds | 绝大多数 v0.10 AC（工作台壳 API 面/名字绑定/文档中心/版本门禁/前检分类/milestone 守卫与 ensure/LEX park） | ✅ CI default     |
 | L2    | Contract sim        | 注入时间点     | Seconds | 发布链与 milestone ensure 经 stand-in GitHub；TLS 通道经本地 HTTPS stand-in（测试 CA 对照） | ✅ CI default |
-| L3    | Real env smoke      | Real calendar | Real   | 继承 v0.8/v0.9 既有 live 通道（双宿主旅程/hotfix live/release-evidence）；本版不新增 L3 通道——live GitHub 的 TLS 修复面由既有 release-evidence/live-opencode 通道在真实环境兜验 | ❌ nightly/manual |
+| L3    | Real env smoke      | Real calendar | Real   | 继承 v0.8/v0.9 既有 live 通道（双宿主旅程/hotfix live/release-evidence）+ 本版经 2026-10-02 OOB 追加的 hotfix retry-open live 旅程（`tests/e2e_live/test_hotfix_precheck_retry_open_live.py`，TRAC_LIVE_* 门控、两个 live job 均纳入；真实通道实证 FR-0329-02 重试开启）；live GitHub 的 TLS 修复面由既有通道在真实环境兜验 | ❌ nightly/manual |
 
 UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve fixture 的 loopback 服务驱动真实浏览器，属默认 CI 的独立 required check（ui-e2e），不属于 L3（无真实外部服务）。L3 既有语义（凭据探针、milestone 通道 fail-never-skip）继承不变。
 
@@ -387,5 +387,6 @@ UI e2e（`ui` marker）是与 L1/L2 正交的交付面层：它对同一 serve f
 | 4 | Devon 侧页面壳单测套件（Devon-owned，RGR 内做合同适配） | `tests/unit/test_t010_page_shell_vditor_red.py`：PAGES 封闭集 8 名不变、login 双栏化、review 页不再内嵌 Vditor 资产标签（改为 docs 视图按需注入）；同源断言意图由 integration 同源用例与 ui e2e 承接 | interfaces §0.1 #1/#2 页面壳收敛与 §1n.3 加载策略 |
 | 5 | `tests/integration/test_hotfix_precheck.py` | 不修改（既有 issue_not_found 路径语义保留）；分类映射矩阵另起 test_hotfix_precheck_classification.py | FR-0329 使 issue_fetch_failed 可达，既有行不回吐 |
 | 6 | `tests/integration/test_docs_center.py::test_save_produces_revision_and_stale_approval_rejected` 与 `::test_conflict_409_two_options_and_draft_retained` | 按修订后设计（interfaces §1o v3，2026-10-01）修订两个锚点的内部语义：六件套保存改经文档中心编辑面（`POST /api/projects/{pid}/docs/{version}/{doc}/edits`，base=docs_revision；设计文档保存断言 docs_revision 前后不同）；旧批准拒绝的断言改由 trio 文档保存腿承载（保存 spec.md → trio 摘要移动 → 旧 expected_revision 批准 409）；409 断言改读响应体**顶层** `current_revision`（不再读 error 对象内——初版 §1o.2 措辞两读，设计已钉死顶层）。变更分类：Spec change（设计修订驱动，非迁就实现） | M-IMPL T-004 DIAGNOSE spec_gap（1-prism-31）：初版锚点把六件套保存绑在不动的 trio 摘要上（结构性不可满足）且 409 字段位置两读 |
+| 7 | `tests/integration/test_hotfix_precheck_classification.py` | OOB 已改（2026-10-02 test-compression，commit a7f4133）：(a)-(c) 保留真实抓取通道（凭据/HTTP/网络分类需要，均在 precheck 快速失败），(d) 重试开启旅程切换 fake backend 后推进；真实后端的重试开启旅程迁至 `tests/e2e_live/test_hotfix_precheck_retry_open_live.py`（TRAC_LIVE_* 门控，两个 live job 纳入）。Shield 无需再动 | 无界挂起电池根因（test 级 TRAC_AGENT_BACKEND 覆盖触发真实后端 + infra 退避梯）——operator 经 OOB 修复，设计文档本行备案 |
 
 Devon 的 unit 更新由 RGR/coverage 自辖；本表不处方 unit 文件/函数。

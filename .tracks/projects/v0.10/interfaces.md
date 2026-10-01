@@ -10,6 +10,8 @@ sha:
 
 # v0.10 — 接口与类型化 Schema：Web 工作台完善（UI）+ 发布卫生
 
+revision 注记：2026-10-02 DRAFT（breaker 复位后重入）——§4c 新增行 5 与 IF-HOTFIX-011 登记项补 L3 live 面备案（hotfix retry-open live 旅程，operator OOB test-compression 交付）；合同面无其他变更。
+
 本文是 IF-009 的增量延伸：v0.1～v0.9 的事件溯源、封闭事件集、命令 WAL、审批 revision 绑定、release preview/三择一、escape barrier、发布幂等/reconcile、guard registry、CLI 合同与 v0.9 服务面合同（HTTP API、持久命令服务、supervisor 驱动/租约/等待、只读投影、事件订阅、材料审阅）全部继承；v0.10 新增的是**工作台交互合同**（SPA chrome、登录名字绑定、文档中心应用层、run 时间线投影扩展）与**发布卫生合同**（milestone 收尾终态感知、版本声明绑定门禁、hotfix 前检分类、live 通道 TLS、tracker milestone 生命周期、LEX_REVIEW 合法 park 出口）。本文只写外部可观察契约；模块内部组织见 architecture.md。
 
 ## 0. 延续性（什么不变）
@@ -262,6 +264,7 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 | 2 | bare/stand-in 远端事实 | 发布链继承；`ensure_project_milestone` 创建/复用/回读可观察；`milestone_not_found` 携可操作 next |
 | 3 | CI required checks | `ui-e2e` 出现在 `[host-contract.ci].required_checks` 与 ci.yml job 集；browserless job 的 `-m` 表达式排除 `ui` |
 | 4 | TLS 通道 | 本地 HTTPS stand-in（测试 CA + `TRAC_GITHUB_CA_BUNDLE`）握手成功；默认 certifi 束下同一自签证书请求分类失败；live 通道（e2e_live 既有）真实可达 |
+| 5 | hotfix retry-open live 旅程（2026-10-02 OOB 交付） | `tests/e2e_live/test_hotfix_precheck_retry_open_live.py` 经 TRAC_LIVE_* 门控纳入两个 live job；真实通道实证 fetch-failure 分类修复后的重试开启（FR-0329-02 的 L3 面）；缺凭据按既有 LIVE_SKIPPED 语义 |
 
 ### 4d. 浏览器可观察出口（UI e2e，IF-WEBUI-001）
 
@@ -417,7 +420,7 @@ IF-009 §2b 的基底约定（认证边界、CSRF + Idempotency-Key、错误封�
 - **modules**：tracks/executor/host_contract.py, tracks/executor/verify_version.py, tracks/executor/guard_registry.py（digest 校验面复用）。
 - **关联**：FR-0328。
 
-### IF-HOTFIX-011 hotfix 前检分类映射合同
+### IF-HOTFIX-011 hotfix 前检分类映射合同（L3 live 面见 §4c #5：test_hotfix_precheck_retry_open_live，2026-10-02 OOB 交付）
 
 - **合同**：§1r.3——`issue_not_found` 仅承载确认缺失；`auth`/`rate_limit`/`network`/`missing_token` 映射 `issue_fetch_failed` 并携分类 next；REJECTED 可重试路径保持开启。
 - **modules**：tracks/executor/hotfix_face.py, tracks/executor/hotfix.py, tracks/effects/github.py（分类来源）。

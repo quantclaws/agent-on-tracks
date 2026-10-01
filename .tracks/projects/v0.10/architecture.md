@@ -8,6 +8,7 @@ sha:
 ---
 
 # v0.10 — 架构：Web 工作台完善（UI）+ 发布卫生
+revision 注记（2026-10-02）：operator OOB test-compression（a7f4133）已重锚 §0.1/§4.1/§4.2 与两类 digest 并经 Prism OOB 复审；本 DRAFT 轮 Archer 仅做吸收备案（§4.4 电池上界与 live 旅程一条）——除该条外设计内容与 8ee7ee9 版无变更。
 
 本文是 ARCH-009 的增量延伸。v0.1～v0.9 的事件溯源、单写者、canonical 阶段状态机、发布闭环五阶段、质量守卫 registry、测试流水线、CLI 与 v0.9 的 server/supervisor 双层（Starlette 交付面 + 后台驱动）全部保持不变；v0.10 在此之上叠加 SPA 工作台 chrome（浏览器侧原生 ES modules 应用层）、登录名字绑定、文档中心应用层与 run 时间线视图，并在同版内完成发布卫生修复（#182/#179/#180/#181/#184/#183）。核心取舍：SPA 交互模型落地但**不引入构建链**（NFR-0156 条件未触发，见 §3.1）；发布卫生全部落在既有模块的定点修正上，不新增子系统。
 
@@ -391,6 +392,7 @@ required_check = "lint,coverage,test,deliverables,trace,reach,ui-e2e"
 - fault 注入经公开合同面：API 失败经 Playwright route 拦截、Vditor 失败经 vendor 资产阻断、SSE 断线经浏览器上下文断连、409 经服务端 revision 构造、TLS 经本地 HTTPS stand-in + 测试 CA（`TRAC_GITHUB_CA_BUNDLE` 指向 `tests/assets/v0.10/` 的测试 CA bundle；对照面为默认 certifi 束下同一自签证书的分类失败）、GithubIssuesError 分类经既有 stand-in/异常注入、milestone ensure 经 stand-in GitHub（`TRAC_GITHUB_API_BASE`）。
 - 测试数据：`tests/assets/v0.10/`（Shield 写域）固化测试 CA/证书、未知枚举投影样本、多版本文档树夹具种子；canary 密钥纪律继承 v0.9。
 - deterministic suite 默认离线：serve/worker/SSE/stand-in 全在 loopback；UI 层 Chromium 为本地二进制（无网络）；Vditor 资产同源（UI 断言无跨域请求）。
+- 电池墙钟有界（2026-10-02 OOB test-compression 交付）：executor 选中节点执行带 900s 基线 + 60s/节点上限（`TRAC_BATTERY_TIMEOUT_BASE/PER_NODE` 可覆盖）；超时经既有 `contract_error` 通道 fail-closed（不烧作者 attempt）。live 面同步吸收 hotfix retry-open 旅程（`tests/e2e_live/test_hotfix_precheck_retry_open_live.py`，两个 live job 纳入）。
 - RED_CHECK 消费面（**待实现 Devon**）：r2 选窗内属 test-plan §8.1 守卫清单的节点通过时记 `guard_verified`（合法）、失败/缺席 fail-closed；未声明节点的到达即绿维持 unexpected_pass 语义（interfaces §1u / IF-GREENGUARD-001）。守卫测试资产已随 M-TEST WRITE 交付（commit 9a36bd2），其分类身份由本设计补记。
 
 ### 4.5 Build / artifact
