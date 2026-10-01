@@ -107,6 +107,16 @@
           {"patch": "ce_ac-fr0330-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance", "outcome": "killed"},
           {"patch": "ce_ac-fr0329-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, binding-coverage completion sample on the delivered implementation tree",
+        "date": "2026-10-01",
+        "note": "completes the delivered-tree kill coverage: fr0320-02 (logout clears a differently-named cookie so the session credential survives - killed at the clearing-cookie name assertion), fr0331-01 (ensure_project_milestone claims api_verified without the API create or readback - killed by the stand-in request-log observation), fr0331-02 (the milestone_not_found next degrades to a generic string without the template title and trac run --resume instruction - killed at the actionable-next assertion). Every integration binding now carries a delivered-tree kill verification; the sole remaining binding verified only in its authored window is fr0320-01, whose bound test is a ui-marker Playwright journey executable solely through the ui-e2e channel (browser binary is the declared separate infrastructure budget)",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0320-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_logout_clears_session_and_cookie", "outcome": "killed"},
+          {"patch": "ce_ac-fr0331-01.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_ensure_milestone_create_reuse_readback", "outcome": "killed"},
+          {"patch": "ce_ac-fr0331-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_milestone_ensure.py::test_milestone_not_found_actionable_next", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
