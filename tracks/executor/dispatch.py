@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from tracks.discuss.model import iter_comments
+from tracks.discuss.model import Thread, iter_comments
 from tracks.discuss.parser import parse_threads
 from tracks.effects.dispatch_parity import (
     is_declared,
@@ -71,13 +71,17 @@ def _lex_open_threads(doc_path: Path) -> list[dict]:
     ]
 
 
-def _thread_awaited_party(thread) -> str | None:
+def _thread_awaited_party(thread: Thread) -> str | None:
     """The party the thread currently awaits: the single @mention of its
     newest childless comment, else None (the discuss @request-a-reply rule)."""
-    childless = [comment for comment in iter_comments(thread.root) if not comment.children]
-    if not childless:
+    newest = max(
+        (comment for comment in iter_comments(thread.root) if not comment.children),
+        key=lambda comment: comment.line,
+        default=None,
+    )
+    if newest is None:
         return None
-    mentions = tuple(dict.fromkeys(max(childless, key=lambda c: c.line).mentions))
+    mentions = tuple(dict.fromkeys(newest.mentions))
     return mentions[0] if len(mentions) == 1 else None
 
 
