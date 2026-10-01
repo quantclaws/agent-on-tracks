@@ -87,6 +87,16 @@
           {"patch": "ce_ac-fr0328-02.patch", "test": "tests/integration/test_version_gate.py::test_contract_bindings_declared_and_registry_anchored", "outcome": "killed"},
           {"patch": "ce_ac-nfr0153-01.patch (stale; equivalent mutation, seeded-id fabrication)", "test": "tests/integration/test_workbench_shell.py::test_no_mock_data_parity_with_projections", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, stale-binding seam-verification sample on the delivered implementation tree",
+        "date": "2026-10-01",
+        "note": "three stale-patch bindings re-executed as documented equivalents at the delivered seams, each byte-exact restored: fr0321-01 (login reports name_required=false unconditionally - killed at the 2b#1 field assertion), fr0321-02 (an /api/auth/register route exists and accepts POST - killed at the no-registration probe), fr0332-01 (park verdict without the pending_threads payload) - the review-exit seam variant was inert for the bound test because the test injects the verdict result through the command surface, so the kill was executed at the documented kernel half (the reduction never learns pending_threads; trac status then lists no pending Human threads) and was KILLED",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0321-01.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_name_binding_flows_to_events_and_discussion", "outcome": "killed"},
+          {"patch": "ce_ac-fr0321-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity", "outcome": "killed"},
+          {"patch": "ce_ac-fr0332-01.patch (stale; equivalent mutation at the kernel reduction)", "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
