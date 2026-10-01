@@ -52,6 +52,19 @@
         "executed_kills": [
           {"patch": "ce_ac-fr0327-01.patch (equivalent mutation)", "test": "tests/integration/test_milestone_complete.py::test_released_reachable_despite_boundary_completion", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window on the delivered implementation tree (test_authority worktree, post T-001..T-011 GREEN)",
+        "date": "2026-10-01",
+        "note": "fresh kill sample against the delivered implementation: 13 of 28 patches are now context-stale (their surfaces were implemented or restructured); of the 6 sampled this window, 3 authored patches killed directly (fr0323-02, nfr0154-02, fr0325-02) and 3 proved INERT - their injected overrides are shadowed by the delivered seams (fr0322-01's appended route loses route resolution to the api_query-registered endpoint; fr0328-01's override leaves the delivered call graph; fr0332-02's run_loop hook is bypassed by the dispatch.py injection seam) - so those kills were re-executed as the documented equivalent mutations on the delivered seams (versions reversed oldest-first; release_version rendered v-prefixed; open_threads injected first-dispatch-only), each with byte-exact restore from the preserved pre-mutation content. The inert patch files remain as authored-window evidence; their live kill instruments at this window are the recorded equivalents.",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0322-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_docs_center.py::test_tree_version_desc_and_six_piece_read", "outcome": "killed"},
+          {"patch": "ce_ac-fr0323-02.patch", "test": "tests/integration/test_docs_center.py::test_conflict_409_two_options_and_draft_retained", "outcome": "killed"},
+          {"patch": "ce_ac-fr0328-01.patch (inert; equivalent mutation)", "test": "tests/integration/test_version_gate.py::test_version_bindings_enforced", "outcome": "killed"},
+          {"patch": "ce_ac-fr0332-02.patch (inert; equivalent mutation)", "test": "tests/integration/test_lex_review_park.py::test_findings_threads_reused_across_attempts", "outcome": "killed"},
+          {"patch": "ce_ac-nfr0154-02.patch", "test": "tests/integration/test_workbench_shell.py::test_mutation_endpoints_reject_missing_csrf", "outcome": "killed"},
+          {"patch": "ce_ac-fr0325-02.patch", "test": "tests/integration/test_docs_center.py::test_no_discussion_mutation_endpoint", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
