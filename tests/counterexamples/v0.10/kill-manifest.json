@@ -97,6 +97,16 @@
           {"patch": "ce_ac-fr0321-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_no_registration_surface_single_identity", "outcome": "killed"},
           {"patch": "ce_ac-fr0332-01.patch (stale; equivalent mutation at the kernel reduction)", "test": "tests/integration/test_lex_review_park.py::test_pass_pending_human_threads_parks_and_lists", "outcome": "killed"}
         ]
+      },
+      {
+        "head": "M-TEST WRITE window, third stale-binding seam-verification sample on the delivered implementation tree",
+        "date": "2026-10-01",
+        "note": "three further stale-patch bindings re-executed as documented equivalents at the delivered seams, each byte-exact restored: fr0318-03 (the auth boundary resolves any non-empty cookie as a session - killed at the replayed-cookie unauthentication probe), fr0330-02 (the missing-token guidance degrades to a generic message with no ops-prerequisite pointer - killed at the guidance assertion), fr0329-02 (every fetch-failure classification reports the same generic next - killed at the classification-specific guidance assertion)",
+        "executed_kills": [
+          {"patch": "ce_ac-fr0318-03.patch (stale; equivalent mutation)", "test": "tests/integration/test_auth_name.py::test_unauthenticated_redirect_and_logout_clears", "outcome": "killed"},
+          {"patch": "ce_ac-fr0330-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_github_tls.py::test_ops_doc_section_and_missing_token_guidance", "outcome": "killed"},
+          {"patch": "ce_ac-fr0329-02.patch (stale; equivalent mutation)", "test": "tests/integration/test_hotfix_precheck_classification.py::test_fetch_failures_classified_with_retry_open", "outcome": "killed"}
+        ]
       }
     ],
     "note": "sampled cross-module re-verification after the executor commits moved HEAD past the authoring window; outcome=killed means the bound test failed under the applied mutation; workspace restored clean after each kill"
