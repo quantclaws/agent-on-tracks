@@ -21,9 +21,9 @@ revision 注记：2026-09-28 回滚重起草（human.return M-TEST→M-DESIGN）
 - `kernel/` 纯控制、`executor/` 副作用、`checks/` 静态闭合、`effects/` 外部通道、`adapters/` 宿主测试框架语义、`cli/` 交付面、`server/` Web 交付面、`supervisor/` 后台驱动控制层的分层不变。kernel 纯性纪律不变：FR-0332 的 park/resume 全部经事件归约与既有 `human.review` 命令面完成，kernel 不读文档文件（§1.0.7）。
 - 服务命令封闭集（IF-009 §1b 十三种 kind）不变；本版零新增命令 kind（名字绑定是认证面操作，文档编辑复用 edit_material，milestone ensure 是关闭链内部步骤）。
 - 既有 CLI 子命令集合与 USAGE 不变；本版不新增顶层子命令（`trac status`/`trac review` 语义追加为既有命令的内部扩展，interfaces §2c）。
-- `.tracks/projects/project.toml` 的 `[unit]/[integration]/[e2e]` 测试执行合同的命令串逐字不变（`ui` marker 的排除由 pyproject addopts 承载，合同命令不带 `-m`）；`[layout]`/`[lint]`/`[adapter]`/`[nightly]` 段不变。
+- `.tracks/projects/project.toml` 的 `[unit]/[integration]/[e2e]` 测试执行合同的命令串除 2026-10-02（test-compression P1-4，operator 批准）`-n 4`→`-n 8` 外不变（§4.1/§4.2；`ui` marker 的排除由 pyproject addopts 承载，合同命令不带 `-m`）；`[layout]`/`[lint]`/`[adapter]`/`[nightly]` 段不变。
 - 发布闭环（M-VERIFY→M-SECURITY→M-RELEASE→M-PUBLISH→M-MILESTONE）、candidate 主身份、preview digest 绑定、publish 幂等/reconcile、escape barrier、失败证据链、Issue 闭环、reference host 与三旅程合同全部继承。
-- 质量守卫八类与 canonical registry 机制不变；本版因 pyproject.toml 内容变化（certifi/playwright 依赖、ui marker、package-data、version bump）与 project.toml 内容变化（version bindings、required_checks）重锚六条 pyproject-backed config_digest 与 hooks-runner 的 project.toml digest（§4.2，先例 e5637a1）。
+- 质量守卫八类与 canonical registry 机制不变；本版因 pyproject.toml 内容变化（certifi/playwright 依赖、ui marker、package-data、version bump）与 project.toml 内容变化（version bindings、required_checks）重锚六条 pyproject-backed config_digest 与 hooks-runner 的 project.toml digest（§4.2，先例 e5637a1）。2026-10-02 追加重锚一轮：project.toml 三层命令 `-n 4`→`-n 8`（P1-4）与 pyproject dev extras 追加 `pytest-cov==7.1.0`（P0-3：xdist 下 coverage 须 pytest-cov 测 worker），两类 digest 均已随 bytes 变化重锚（§4.2）。
 - Vditor 3.11.3 vendored 资产与 manifest 逐字节不变（同源、禁 CDN、可选引擎禁用；本版只补应用层加载策略）。
 - SSE 合并序/游标补读/轮询回退、CSRF + Idempotency-Key、redaction 全出口脱敏、本机单用户边界（RP-01）、supervisor 单活动 run 串行 + hotfix 换队语义全部不变；UI 客户端是这些既有合同的遵守面而非新来源。
 
@@ -235,11 +235,11 @@ UI e2e 需要真实浏览器。取 Playwright Python 1.63.0（当前最新稳定
 
 ### 4.1 测试执行合同（`.tracks/projects/project.toml`）
 
-三层合同（`[unit]`/`[integration]`/`[e2e]`）的 framework/paths/collect/run/run_selected/cwd 逐字继承 v0.9，命令串不变。`ui` marker 的默认排除由 pyproject `[tool.pytest.ini_options].addopts`（`-q -m 'not performance and not ui'`）承载——合同命令不带 `-m`，自动继承 addopts；命令行显式 `-m` 覆盖 addopts（ui-e2e job 的 `-m ui` 依此生效）。`[nightly]`/`[adapter]`/`[layout]`/`[lint]` 段不变；`[host-contract.*]` 段仅 §0.1 #7/#12 两处追加（bindings 键与 required_checks 成员）。本文件 bytes 已变（§2 已交付），hooks-runner 的 config_digest 随 §4.2 重锚。
+三层合同（`[unit]`/`[integration]`/`[e2e]`）的 framework/paths/collect/cwd 继承 v0.9；run/run_selected 命令串于 2026-10-02（test-compression P1-4，operator 批准推翻 9/17 directive）将 xdist 并行 `-n 4` 恢复为 v0.8 取值 `-n 8`，其余 flags 不变，hooks-runner 的 config_digest 已随 §4.2 重锚。`ui` marker 的默认排除由 pyproject `[tool.pytest.ini_options].addopts`（`-q -m 'not performance and not ui'`）承载——合同命令不带 `-m`，自动继承 addopts；命令行显式 `-m` 覆盖 addopts（ui-e2e job 的 `-m ui` 依此生效）。`[nightly]`/`[adapter]`/`[layout]`/`[lint]` 段不变；`[host-contract.*]` 段仅 §0.1 #7/#12 两处追加（bindings 键与 required_checks 成员）。本文件 bytes 已变（§2 已交付），hooks-runner 的 config_digest 随 §4.2 重锚。
 
 ### 4.2 Canonical quality guard registry（v0.10）
 
-以下 TOML block 是 tracks 宿主 guard registry 的 v0.10 canonical 真相（承接 ARCH-009 §4.2）。本版输入变更二处：`pyproject.toml`（certifi/playwright 依赖、ui marker/addopts、package-data、version 0.10.0）与 `.tracks/projects/project.toml`（version bindings、required_checks 追加 ui-e2e）；六条 pyproject-backed config_digest 重锚为 `ee98aae6…`，hooks-runner 的 project.toml digest 重锚为 `30f157b9…`；`.flake8` bytes 未变，cognitive-complexity digest 不变。字段语义、digest 公式（单文件 sha256(raw bytes)）、八类强制、fail_closed、禁 `--exit-zero` 全部继承，不再重复。
+以下 TOML block 是 tracks 宿主 guard registry 的 v0.10 canonical 真相（承接 ARCH-009 §4.2）。本版输入变更二处：`pyproject.toml`（certifi/playwright 依赖、ui marker/addopts、package-data、version 0.10.0）与 `.tracks/projects/project.toml`（version bindings、required_checks 追加 ui-e2e）；六条 pyproject-backed config_digest 重锚为 `0ffa985b…`（2026-10-02 追加重锚：dev extras 追加 pytest-cov==7.1.0，P0-3；初版值为 ee98aae6…），hooks-runner 的 project.toml digest 重锚为 `14122c49…`（2026-10-02 追加重锚：test-compression P1-4 经 operator 批准将三层 run/run_selected 的 `-n 4` 恢复为 `-n 8`（v0.8 取值，推翻 9/17 directive），bytes 变化同步本 digest）；`.flake8` bytes 未变，cognitive-complexity digest 不变。字段语义、digest 公式（单文件 sha256(raw bytes)）、八类强制、fail_closed、禁 `--exit-zero` 全部继承，不再重复。
 
 ```toml
 [quality_registry]
@@ -254,7 +254,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff", "tool.ruff.lint"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks", "tests"]
 threshold = "line-length=100; select=E,F,W,I,B,UP,SIM,C4; ignore=SIM108; violations=0"
 timeout_seconds = 300
@@ -270,7 +270,7 @@ tool_version = "0.16.0"
 command = ".venv/bin/ruff check tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.ruff.lint"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks", "tests"]
 threshold = "F and B semantic rule families; violations=0"
 timeout_seconds = 300
@@ -302,7 +302,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=C0302 tracks tests"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.format"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks", "tests"]
 threshold = "C0302 max-module-lines=1200"
 timeout_seconds = 600
@@ -318,7 +318,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0915,R0914 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.design"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks"]
 threshold = "R0915 max-statements=50; R0914 max-locals=15; tests exempt"
 timeout_seconds = 600
@@ -334,7 +334,7 @@ tool_version = "4.0.6"
 command = ".venv/bin/pylint --disable=all --enable=R0801 tracks"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.pylint.similarities"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks", "tests"]
 threshold = "R0801 min-similarity-lines=4 (product scope; test-file similarity is covered by review, not this release gate)"
 timeout_seconds = 600
@@ -350,7 +350,7 @@ tool_version = "7.15.2+9.1.1"
 command = ".venv/bin/coverage report --fail-under=89"
 config_paths = ["pyproject.toml"]
 config_sections = ["tool.coverage.run", "tool.coverage.report"]
-config_digest = "sha256:ee98aae608431dc34bc69872b6d00fddfe95a75d7aec1267be6d880b391833e7"
+config_digest = "sha256:0ffa985b02f102cdc05f9d5d080b48b9ef98ac6d9866d9a19ae466361741d96a"
 scope = ["tracks"]
 threshold = "line coverage >=89; by=collected; source omit=pure-I/O backends (opencode subprocess/session/pty, fake backends, evidence I/O — pyproject.toml [tool.coverage] omit)"
 timeout_seconds = 1800
@@ -366,7 +366,7 @@ tool_version = "git-env-fingerprinted+checkout@v4+setup-python@v5"
 command = "sh .githooks/pre-commit"
 config_paths = [".tracks/projects/project.toml"]
 config_sections = ["unit", "integration", "e2e", "adapter", "host-contract"]
-config_digest = "sha256:30f157b9945856397876b0b897684b6642492a79fba30c3b8beda21d82636781"
+config_digest = "sha256:14122c49dac6bd88ca91eb29488c34a2fbe6b663d38e3c1f2e89960ff40a63a8"
 scope = ["local-commit", "pull-request", "main", "releases"]
 threshold = "no --exit-zero; required=lint,coverage,test,deliverables,trace,reach,ui-e2e; milestone=release-evidence"
 timeout_seconds = 3600

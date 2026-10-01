@@ -37,6 +37,29 @@ from tracks.project import ContractError, load_contract
 
 _GUARD_LINE = re.compile(r"^\s*-\s+`([^`\s]+::[^`\s]+)`")
 
+# Battery wall-clock bound (test-compression P0-2, 2026-10-02): base seconds
+# plus per-node seconds; both env-overridable (TRAC_BATTERY_TIMEOUT_BASE /
+# TRAC_BATTERY_TIMEOUT_PER_NODE) for deliberately long local runs.
+_BATTERY_TIMEOUT_BASE = 900
+_BATTERY_TIMEOUT_PER_NODE = 60
+
+
+def _battery_timeout_seconds(node_count: int) -> int:
+    """Bounded layer wall clock: base + per-node, env-overridable, floor 60s."""
+    import os
+
+    try:
+        base = int(os.environ.get("TRAC_BATTERY_TIMEOUT_BASE", _BATTERY_TIMEOUT_BASE))
+    except ValueError:
+        base = _BATTERY_TIMEOUT_BASE
+    try:
+        per_node = int(
+            os.environ.get("TRAC_BATTERY_TIMEOUT_PER_NODE", _BATTERY_TIMEOUT_PER_NODE)
+        )
+    except ValueError:
+        per_node = _BATTERY_TIMEOUT_PER_NODE
+    return max(60, base + per_node * max(0, node_count))
+
 
 def _version_guard_nodes(vdir: Path) -> set[str]:
     """The arrival-green guard set declared by the version test-plan §8.1
@@ -662,7 +685,34 @@ class ExecTestRunMixin:
                 f"[{name}] executed argv diverges from the contract's "
                 "run_selected expansion (injected argument)"
             )
-        proc = subprocess.run(list(argv), cwd=cwd, capture_output=True, text=True)
+        # Battery wall-clock bound (test-compression P0-2, 2026-10-02): a
+        # pathological node (e.g. a real-backend journey riding the infra
+        # backoff ladder) must fail closed in bounded time instead of
+        # hanging the layer for hours. Env-overridable for deliberately
+        # long local batteries; defaults: 900s base + 60s per selected node.
+        timeout = _battery_timeout_seconds(len(nodes))
+        try:
+            proc = subprocess.run(
+                list(argv), cwd=cwd, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired as exc:
+            def _tail(v) -> str:
+                if isinstance(v, bytes):
+                    v = v.decode("utf-8", errors="replace")
+                return (v or "")[-8000:]
+
+            logs[name] = {
+                "returncode": None,
+                "command_echo": list(argv),
+                "stdout": _tail(exc.stdout),
+                "stderr": _tail(exc.stderr),
+                "battery_timeout": timeout,
+            }
+            raise TestSelectError(
+                f"battery_timeout: layer {name} exceeded {timeout}s "
+                f"({len(nodes)} selected nodes) — the battery fails closed "
+                "instead of hanging; see logs.battery_timeout"
+            ) from exc
         logs[name] = {
             "returncode": proc.returncode,
             "command_echo": list(argv),

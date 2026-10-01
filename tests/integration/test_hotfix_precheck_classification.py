@@ -85,7 +85,17 @@ def test_fetch_failures_classified_with_retry_open(trac, host_repo, monkeypatch)
     channel lets the same precheck pass — the retry path stays open."""
     seed_v05_approved_baseline(host_repo)
     seed_host_issues(host_repo)
-    # the live-issue channel: no fake backend, credentials + stand-in base
+    # the live-issue channel: no fake backend, credentials + stand-in base.
+    # The real channel is required for the FETCH-FAILURE sub-cases (a)-(c)
+    # below — the fake corpus never exercises credential/HTTP/network
+    # classification. Sub-case (d) switches back to the fake backend before
+    # the journey proceeds (see there). The real-backend variant of the
+    # retry-open journey lives in
+    # tests/e2e_live/test_hotfix_precheck_retry_open_live.py
+    # (moved there 2026-10-02: letting (d) dispatch on the real LLM channel
+    # put the default battery on the infra backoff ladder; with the
+    # battery's then-missing subprocess timeout that hung run_tests for
+    # 1-2h and reddened CI).
     monkeypatch.setenv("TRAC_AGENT_BACKEND", "opencode")
     monkeypatch.setenv("GITHUB_TOKEN", "classification-probe-token")
     monkeypatch.setenv("TRAC_GITHUB_REPO", _REPO_ID)
@@ -150,7 +160,14 @@ def test_fetch_failures_classified_with_retry_open(trac, host_repo, monkeypatch)
         )
         monkeypatch.setenv("TRAC_GITHUB_API_BASE", standin.base_url)
 
-        # (d) the retry path stays open: the repaired channel passes
+        # (d) the retry path stays open: the repaired channel passes. Back
+        # to the FAKE backend before the journey proceeds (test-compression
+        # P0-1, 2026-10-02): this layer asserts the retry-open semantics,
+        # which the fake corpus (seed_host_issues seeded issue 42 above)
+        # serves deterministically; the real-channel journey is the
+        # e2e_live sibling. Without this switch the default battery rides
+        # the real LLM channel into the infra backoff ladder.
+        monkeypatch.setenv("TRAC_AGENT_BACKEND", "fake")
         standin.issue_status = None
         r = trac("hotfix", "42", "--scenario", "post-release")
         assert r.returncode == 0, r.stderr

@@ -143,6 +143,15 @@ def trac(host_repo, steps):
         # `python -m tracks.cli.main` resolves the tree's package even
         # when the venv carries a non-editable install.
         env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        # Test-compression P0-2b (2026-10-02): inside test hosts the infra
+        # backoff ladder (30s base x2 per streak, cap floored at 300s by
+        # run_loop) is pure wall-clock waste when a journey hits a flaky
+        # channel. TRAC_INFRA_RETRY_LIMIT=2 bounds the total to ~90s of
+        # backoff before the kernel escalates (the cap knob floors at 300s
+        # so it is left alone). Real-backend live semantics live in
+        # tests/e2e_live (opt-in), not here; operator overrides still win
+        # via explicit env presence.
+        env.setdefault("TRAC_INFRA_RETRY_LIMIT", "2")
         proc = subprocess.run(
             [sys.executable, "-m", "tracks.cli.main", *args],
             cwd=host_repo,

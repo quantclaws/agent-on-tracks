@@ -77,7 +77,7 @@ jobs:
           cp -R tracks/skills/. .opencode/skills/
       - name: coverage
         run: |
-          .venv/bin/python -m coverage run -m pytest tests/unit tests/integration tests/e2e -q -m 'not performance and not ui' -p no:cacheprovider
+          .venv/bin/python -m pytest tests/unit tests/integration tests/e2e -q -n 4 --dist loadscope -m 'not performance and not ui' -p no:cacheprovider --cov=tracks --cov-report=
           .venv/bin/python -m coverage combine || true
           .venv/bin/python -m coverage report --fail-under=89
 
@@ -101,7 +101,7 @@ jobs:
           cp -R tracks/agents/. .opencode/agents/
           cp -R tracks/skills/. .opencode/skills/
       - name: pytest
-        run: .venv/bin/python -m pytest tests/unit tests/integration tests/e2e -q -m 'not performance and not ui' -p no:cacheprovider
+        run: .venv/bin/python -m pytest tests/unit tests/integration tests/e2e -q -n 4 --dist loadscope -m 'not performance and not ui' -p no:cacheprovider
 
   deliverables:
     name: deliverables
@@ -199,7 +199,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           TRAC_GITHUB_REPO: ${{ vars.TRAC_GITHUB_REPO }}
           TRAC_LIVE_ISSUE: ${{ vars.TRAC_LIVE_ISSUE }}
-        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py tests/e2e_live/test_hotfix_precheck_retry_open_live.py
 
   # Milestone hard gate: tag/release candidate only. Runs the real e2e_live
   # journey (never skip) and verifies current candidate's live evidence.
@@ -240,6 +240,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           TRAC_GITHUB_REPO: ${{ vars.TRAC_GITHUB_REPO }}
           TRAC_LIVE_ISSUE: ${{ vars.TRAC_LIVE_ISSUE }}
-        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py
+        run: pytest -q -rs tests/e2e_live/test_m_impl_release_evidence.py tests/e2e_live/test_hotfix_live.py tests/e2e_live/test_hotfix_precheck_retry_open_live.py
       - name: trac check release-evidence
         run: trac check release-evidence --json
