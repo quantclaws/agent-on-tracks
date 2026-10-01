@@ -89,5 +89,12 @@
   "guard_verified": 5,
   "oob_verified": 30,
   "unexpected_pass": 19
+ },
+ "contract_anchor": "interfaces.md §1u.5 (守卫与 green-by-delivery 的象限区分) and test-plan.md §8 preamble (重入期期望语义) name this file as the machine-readable M-TEST-side quadrant grounding: arrival-green guards verify design-time/inherited facts (declared in §8.1, never acceptance anchors); green-by-delivery is the form a legal-Red acceptance anchor takes once its implementation has landed (expectation color measured and anchored at baseline capture, #211-gap-2) - its acceptance-anchor identity is unchanged, its green is the evidence of delivery",
+ "reentry_state": "the stage re-entered on 2026-10-01 19:20 (design revision bc61edc) and the test baseline was re-captured at 19:21 (test.baseline_captured, #211-gap-2 re-entry expectation semantics): expectation colors are measured at capture, so the green-by-delivery set below is anchored expected-green for the RED_CHECK of this window; the run contract commands carry -n 8 per the operator OOB test-compression",
+ "quadrants": {
+  "arrival_green_guards_section_8_1": "declared in test-plan §8.1 and executed as guard_verified in the latest validation - see the guards_verified node list in this file",
+  "green_by_delivery_captured_at_baseline": "the green_by_delivery_unexpected_pass node list in this file - legal-Red acceptance anchors whose implementations landed; expected-green by capture, acceptance-anchor identity unchanged",
+  "legal_red_residual": "the legal_red_residual list in this file - still-open acceptance anchors (T-004 save face; the undelivered browser-side ui surface)"
  }
 }
