@@ -221,7 +221,7 @@ UI e2e 需要真实浏览器。取 Playwright Python 1.63.0（当前最新稳定
 
 ### 3.4 服务端最小新增面
 
-文档中心的新增端点全部是**只读投影**（project 域 tree/read/diff/discussions），写面复用既有 edit_material——web 层不直接耦合 runtime、HTTP 改动经命令服务的约束原样保持。discussion 协议解析只在服务端（tracks/discuss parser 复用），客户端消费线程投影——避免在 JS 里复制协议语法（与 FR-0325「不手写协议拼接」同源纪律）。`stage_order` 由服务端从 kernel 事实表组合后下发，客户端不硬编码 13 阶段集合（server 读 kernel 的只读事实表是既有先例：projections 已 import `tracks.kernel.machine.project`）。
+文档中心的新增端点为 project 域读投影（tree/read/diff/discussions，只读）+ 一个编辑面（#35，写经命令服务 `edit_material` + `revision_kind`，§1o.1b）——写不经 HTTP handler 直达 runtime，web 层不直接耦合 runtime、HTTP 改动经命令服务的约束原样保持。discussion 协议解析只在服务端（tracks/discuss parser 复用），客户端消费线程投影——避免在 JS 里复制协议语法（与 FR-0325「不手写协议拼接」同源纪律）。`stage_order` 由服务端从 kernel 事实表组合后下发，客户端不硬编码 13 阶段集合（server 读 kernel 的只读事实表是既有先例：projections 已 import `tracks.kernel.machine.project`）。
 
 ### 3.5 service.db 最小 schema 演进
 
